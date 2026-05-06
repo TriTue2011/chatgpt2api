@@ -150,12 +150,14 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
                 if not delta:
                     continue
                 buffer += delta
-                buffer = re.sub(r'\s*\ue200.*?\ue201\s*', '', buffer)
+                # Use [ \t]* instead of \s* to avoid eating newlines, which breaks markdown lists
+                buffer = re.sub(r'[ \t]*\ue200.*?\ue201[ \t]*', '', buffer)
                 buffer = CITATION_RE.sub("", buffer)
                 buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
                 
                 # Strip Markdown for TTS
                 buffer = re.sub(r'[*#_]', '', buffer)
+                buffer = re.sub(r'-{3,}', '', buffer)
                 buffer = re.sub(r'(?m)^\s*[-+]\s+', '', buffer)
                 buffer = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', buffer)
                 
@@ -169,12 +171,14 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
             else:
                 yield event
         if buffer:
-            buffer = re.sub(r'\s*\ue200.*?\ue201\s*', '', buffer)
+            # Use [ \t]* instead of \s* to avoid eating newlines, which breaks markdown lists
+            buffer = re.sub(r'[ \t]*\ue200.*?\ue201[ \t]*', '', buffer)
             buffer = CITATION_RE.sub("", buffer)
             buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
             
             # Strip Markdown for TTS
             buffer = re.sub(r'[*#_]', '', buffer)
+            buffer = re.sub(r'-{3,}', '', buffer)
             buffer = re.sub(r'(?m)^\s*[-+]\s+', '', buffer)
             buffer = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', buffer)
             

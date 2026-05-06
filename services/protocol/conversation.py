@@ -90,7 +90,8 @@ def _strip_system_hints(text: str) -> str:
     cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
     
     # Strip new OpenAI PUA-based citation markers (e.g. \ue200cite\ue202turn0search3\ue201)
-    cleaned = re.sub(r'\s*\ue200.*?\ue201\s*', '', cleaned)
+    # Use [ \t]* instead of \s* to avoid eating newlines, which breaks markdown lists
+    cleaned = re.sub(r'[ \t]*\ue200.*?\ue201[ \t]*', '', cleaned)
     
     # Primary regex
     cleaned = CITATION_RE.sub("", cleaned)
@@ -99,6 +100,7 @@ def _strip_system_hints(text: str) -> str:
     
     # Clean markdown for TTS
     cleaned = re.sub(r'[*#_]', '', cleaned)
+    cleaned = re.sub(r'-{3,}', '', cleaned)
     cleaned = re.sub(r'(?m)^\s*[-+]\s+', '', cleaned)
     cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)
     
