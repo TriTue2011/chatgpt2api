@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 
 TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', re.DOTALL)
 TOOL_CALL_DIRECT_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)>(.*?)</\1>', re.DOTALL)
+TOOL_CALL_SELF_CLOSING_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']\s*/>', re.DOTALL)
+TOOL_CALL_DIRECT_SELF_CLOSING_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)\s*/>', re.DOTALL)
 JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
 CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
 # Strip ChatGPT internal citation markers, e.g. citeturn0search7, 【4†citeturn0search8】
@@ -37,14 +39,14 @@ def _build_tool_prompt(tools: list[dict[str, Any]], tool_choice: Any = None) -> 
         desc = f.get("description") or "No description provided."
         lines.append(f"Tool `{name}`: {desc}")
         params = f.get("parameters") or {}
-        required = params.get("required") or []
-        if required:
-            # Only show schema when there are required params; otherwise model will try to use optional ones
+        properties = params.get("properties") or {}
+        if properties:
+            # Show schema when there are properties; allows using optional ones (e.g. Home Assistant HassTurnOn `name`)
             schema_text = json.dumps(params, ensure_ascii=False, indent=2)
             lines.append("Arguments JSON schema:")
             lines.append(schema_text)
         else:
-            # No required params → call with {} to prevent hallucinated optional param values
+            # Truly no params defined
             lines.append("Arguments JSON schema: {}")
             lines.append(f"  >> `{name}` requires NO arguments. You MUST call it with exactly: {{}}")
 
@@ -138,13 +140,17 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
         # Format 1: <tool_call name="ToolName">args</tool_call>
         for m in TOOL_CALL_RE.finditer(block_content):
             _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
+        for m in TOOL_CALL_SELF_CLOSING_RE.finditer(block_content):
+            _add((m.group(1) or "").strip(), "{}")
 
         # Format 2: <ToolName>args</ToolName>  (alternate model output)
         if not found_any:
             for m in TOOL_CALL_DIRECT_RE.finditer(block_content):
                 _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
+            for m in TOOL_CALL_DIRECT_SELF_CLOSING_RE.finditer(block_content):
+                _add((m.group(1) or "").strip(), "{}")
 
-        return "" if found_any else original
+        return ""
 
     TOOL_BLOCK_RE = re.compile(r"```xml\s*(.*?)```", re.DOTALL | re.IGNORECASE)
     cleaned = TOOL_BLOCK_RE.sub(_replace, text)
