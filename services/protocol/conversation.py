@@ -88,7 +88,10 @@ def _strip_system_hints(text: str) -> str:
         return text
     cleaned = CONTROL_TOKEN_RE.sub("", text)
     cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
+    # Primary regex
     cleaned = CITATION_RE.sub("", cleaned)
+    # Fallback brute-force regex to catch any remaining citeturn words without destroying whitespace
+    cleaned = re.sub(r'[^\s]*citeturn[^\s]*', '', cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
