@@ -8,7 +8,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.*?)["\']>(.*?)</tool_call>', re.DOTALL)
+TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', re.DOTALL)
+TOOL_CALL_DIRECT_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)>(.*?)</\1>', re.DOTALL)
 JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
 CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
 
@@ -95,37 +96,36 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
 
     def _replace(match: re.Match[str]) -> str:
         block_content = match.group(1)
-        original = match.group(0)  # full match including fences
+        original = match.group(0)
         if not block_content:
             return ""
 
         found_any = False
-        for call_match in TOOL_CALL_RE.finditer(block_content):
-            name = (call_match.group(1) or "").strip()
-            raw_args = (call_match.group(2) or "").strip()
+
+        def _add(name: str, raw_args: str) -> None:
+            nonlocal found_any
             if not name:
-                continue
-
-            arguments = raw_args
+                return
             try:
-                parsed_args = json.loads(raw_args)
-                arguments = json.dumps(parsed_args, ensure_ascii=False)
+                arguments = json.dumps(json.loads(raw_args), ensure_ascii=False)
             except json.JSONDecodeError:
-                # Invalid JSON args → fallback to {} to prevent HA's orjson.loads from crashing
                 arguments = "{}"
-
             tool_calls.append({
                 "id": f"call_{uuid.uuid4().hex}",
                 "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": arguments,
-                }
+                "function": {"name": name, "arguments": arguments},
             })
             found_any = True
 
-        # Only strip the block if we actually extracted tool calls from it.
-        # If no tool_call tags found, the model used ```xml for formatting → preserve it.
+        # Format 1: <tool_call name="ToolName">args</tool_call>
+        for m in TOOL_CALL_RE.finditer(block_content):
+            _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
+
+        # Format 2: <ToolName>args</ToolName>  (alternate model output)
+        if not found_any:
+            for m in TOOL_CALL_DIRECT_RE.finditer(block_content):
+                _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
+
         return "" if found_any else original
 
     TOOL_BLOCK_RE = re.compile(r"```xml\s*(.*?)```", re.DOTALL | re.IGNORECASE)
