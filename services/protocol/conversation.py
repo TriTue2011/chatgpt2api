@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 
 TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.*?)["\']>(.*?)</tool_call>', re.DOTALL)
