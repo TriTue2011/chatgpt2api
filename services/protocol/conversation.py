@@ -95,9 +95,11 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
 
     def _replace(match: re.Match[str]) -> str:
         block_content = match.group(1)
+        original = match.group(0)  # full match including fences
         if not block_content:
             return ""
 
+        found_any = False
         for call_match in TOOL_CALL_RE.finditer(block_content):
             name = (call_match.group(1) or "").strip()
             raw_args = (call_match.group(2) or "").strip()
@@ -120,7 +122,11 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
                     "arguments": arguments,
                 }
             })
-        return ""
+            found_any = True
+
+        # Only strip the block if we actually extracted tool calls from it.
+        # If no tool_call tags found, the model used ```xml for formatting → preserve it.
+        return "" if found_any else original
 
     TOOL_BLOCK_RE = re.compile(r"```xml\s*(.*?)```", re.DOTALL | re.IGNORECASE)
     cleaned = TOOL_BLOCK_RE.sub(_replace, text)
