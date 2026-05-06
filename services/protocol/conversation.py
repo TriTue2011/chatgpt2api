@@ -12,6 +12,8 @@ TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>'
 TOOL_CALL_DIRECT_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)>(.*?)</\1>', re.DOTALL)
 JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
 CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
+# Strip ChatGPT internal citation markers, e.g. citeturn0search7, citeturn0news3
+CITATION_RE = re.compile(r'\s*citeturn\d+\w+\d*', re.IGNORECASE)
 
 
 # Exact XML_WRAP_HINT from Gemini-FastAPI
@@ -81,11 +83,12 @@ def _build_tool_prompt(tools: list[dict[str, Any]], tool_choice: Any = None) -> 
 
 
 def _strip_system_hints(text: str) -> str:
-    """Remove system-level hint text injected into messages. Mirrors Gemini-FastAPI _strip_system_hints."""
+    """Remove system-level hint text and ChatGPT internal markers from responses."""
     if not text:
         return text
     cleaned = CONTROL_TOKEN_RE.sub("", text)
     cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
+    cleaned = CITATION_RE.sub("", cleaned)
     return cleaned.strip()
 
 def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
