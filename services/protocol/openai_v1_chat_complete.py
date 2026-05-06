@@ -154,6 +154,11 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
                 buffer = CITATION_RE.sub("", buffer)
                 buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
                 
+                # Strip Markdown for TTS
+                buffer = re.sub(r'[*#_]', '', buffer)
+                buffer = re.sub(r'(?m)^\s*[-+]\s+', '', buffer)
+                buffer = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', buffer)
+                
                 # If a citation marker has started but not finished, hold the buffer
                 if "\ue200" in buffer and "\ue201" not in buffer:
                     continue
@@ -167,6 +172,12 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
             buffer = re.sub(r'\s*\ue200.*?\ue201\s*', '', buffer)
             buffer = CITATION_RE.sub("", buffer)
             buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
+            
+            # Strip Markdown for TTS
+            buffer = re.sub(r'[*#_]', '', buffer)
+            buffer = re.sub(r'(?m)^\s*[-+]\s+', '', buffer)
+            buffer = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', buffer)
+            
             yield {"type": "conversation.delta", "delta": buffer}
 
             

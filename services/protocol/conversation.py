@@ -96,6 +96,12 @@ def _strip_system_hints(text: str) -> str:
     cleaned = CITATION_RE.sub("", cleaned)
     # Fallback brute-force regex to catch any remaining citeturn words without destroying whitespace
     cleaned = re.sub(r'[^\s]*citeturn[^\s]*', '', cleaned, flags=re.IGNORECASE)
+    
+    # Clean markdown for TTS
+    cleaned = re.sub(r'[*#_]', '', cleaned)
+    cleaned = re.sub(r'(?m)^\s*[-+]\s+', '', cleaned)
+    cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)
+    
     return cleaned.strip()
 
 def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
