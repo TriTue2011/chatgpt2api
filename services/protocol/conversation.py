@@ -359,6 +359,19 @@ def assistant_history_messages(messages: list[dict[str, Any]]) -> list[str]:
 
 
 def build_image_prompt(prompt: str, size: str | None) -> str:
+    # Auto-detect aspect ratio from prompt to override default size
+    prompt_lower = prompt.lower()
+    if "16:9" in prompt_lower:
+        size = "16:9"
+    elif "9:16" in prompt_lower:
+        size = "9:16"
+    elif "4:3" in prompt_lower:
+        size = "4:3"
+    elif "3:4" in prompt_lower:
+        size = "3:4"
+    elif "1:1" in prompt_lower:
+        size = "1:1"
+
     if not size:
         return prompt
     if size not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
