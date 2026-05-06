@@ -102,9 +102,6 @@ def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Ite
     # Collect the entire response
     content, tool_calls = collect_chat_content_and_tools(stream_conversation_events(backend, request))
     
-    with open("./debug.log", "a", encoding="utf-8") as f:
-        f.write(f"\n--- BUFFERED START ---\nRAW CONTENT: {repr(content)}\n")
-
     # If we have text, we parse it to extract and remove any injected tool calls
     if content:
         # Import here to avoid circular dependencies if any, or just use the parsing logic
@@ -113,9 +110,6 @@ def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Ite
         content = cleaned_content
         if extracted_tool_calls:
             tool_calls.extend(extracted_tool_calls)
-            
-    with open("./debug.log", "a", encoding="utf-8") as f:
-        f.write(f"CLEANED CONTENT: {repr(content)}\n--- BUFFERED END ---\n")
 
         
     # Yield role start chunk (always first, separately - matches Gemini-FastAPI exactly)
@@ -150,27 +144,30 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
     
     def _filtered_events():
         buffer = ""
-        with open("./debug.log", "a", encoding="utf-8") as f:
-            f.write(f"\n--- FILTERED START ---\n")
         for event in stream_conversation_events(backend, request):
             if event.get("type") == "conversation.delta":
                 delta = str(event.get("delta") or "")
                 if not delta:
                     continue
                 buffer += delta
+                buffer = re.sub(r'\s*\ue200.*?\ue201\s*', '', buffer)
                 buffer = CITATION_RE.sub("", buffer)
                 buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
+                
+                # If a citation marker has started but not finished, hold the buffer
+                if "\ue200" in buffer and "\ue201" not in buffer:
+                    continue
+                    
                 if len(buffer) > 50:
                     yield {"type": "conversation.delta", "delta": buffer[:-30]}
                     buffer = buffer[-30:]
             else:
                 yield event
         if buffer:
+            buffer = re.sub(r'\s*\ue200.*?\ue201\s*', '', buffer)
             buffer = CITATION_RE.sub("", buffer)
             buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
             yield {"type": "conversation.delta", "delta": buffer}
-        with open("./debug.log", "a", encoding="utf-8") as f:
-            f.write(f"--- FILTERED END ---\n")
 
             
     for event in _filtered_events():

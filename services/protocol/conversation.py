@@ -88,6 +88,10 @@ def _strip_system_hints(text: str) -> str:
         return text
     cleaned = CONTROL_TOKEN_RE.sub("", text)
     cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
+    
+    # Strip new OpenAI PUA-based citation markers (e.g. \ue200cite\ue202turn0search3\ue201)
+    cleaned = re.sub(r'\s*\ue200.*?\ue201\s*', '', cleaned)
+    
     # Primary regex
     cleaned = CITATION_RE.sub("", cleaned)
     # Fallback brute-force regex to catch any remaining citeturn words without destroying whitespace
