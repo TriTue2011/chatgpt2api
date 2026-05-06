@@ -139,7 +139,29 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
     sent_role = False
     model = request.model
     
-    for event in stream_conversation_events(backend, request):
+    from services.protocol.conversation import CITATION_RE
+    
+    def _filtered_events():
+        buffer = ""
+        for event in stream_conversation_events(backend, request):
+            if event.get("type") == "conversation.delta":
+                delta = str(event.get("delta") or "")
+                if not delta:
+                    continue
+                buffer += delta
+                buffer = CITATION_RE.sub("", buffer)
+                buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
+                if len(buffer) > 50:
+                    yield {"type": "conversation.delta", "delta": buffer[:-30]}
+                    buffer = buffer[-30:]
+            else:
+                yield event
+        if buffer:
+            buffer = CITATION_RE.sub("", buffer)
+            buffer = re.sub(r'[^\s]*citeturn[^\s]*', '', buffer, flags=re.IGNORECASE)
+            yield {"type": "conversation.delta", "delta": buffer}
+            
+    for event in _filtered_events():
         if event.get("type") == "conversation.delta":
             delta_text = str(event.get("delta") or "")
             if not delta_text:
@@ -163,6 +185,7 @@ def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterat
     if not sent_role:
         yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
     yield completion_chunk(model, {}, "stop", completion_id, created)
+
 
 
 def collect_chat_content_and_tools(events: Iterable[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
