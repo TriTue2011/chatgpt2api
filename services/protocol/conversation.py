@@ -23,23 +23,28 @@ def _build_tool_prompt(tools: list[dict[str, Any]]) -> str:
         name = f.get("name")
         desc = f.get("description") or "No description provided."
         lines.append(f"Tool `{name}`: {desc}")
-        if f.get("parameters"):
-            schema_text = json.dumps(f.get("parameters"), ensure_ascii=False, indent=2)
+        params = f.get("parameters") or {}
+        required = params.get("required") or []
+        if params:
+            schema_text = json.dumps(params, ensure_ascii=False, indent=2)
             lines.append("Arguments JSON schema:")
             lines.append(schema_text)
+            if not required:
+                lines.append(f"  >> `{name}` has NO required parameters. Call it with empty {{}}.  Do NOT invent or guess values.")
         else:
-            lines.append("Arguments JSON schema: {}")
+            lines.append(f"  >> `{name}` takes no parameters. Call it with: {{}}")
 
     lines.append("\nCRITICAL RULES:")
-    lines.append("1. When the user's intent can be resolved by a tool, call the tool IMMEDIATELY without asking for confirmation or additional information.")
-    lines.append("2. When you decide to call a tool you MUST respond with nothing except a single fenced block exactly like the template below.")
-    lines.append("3. The fenced block MUST use ```xml as the opening fence and ``` as the closing fence. Do not add text before or after it.")
+    lines.append("1. When the user's intent can be resolved by a tool, call the tool IMMEDIATELY without asking for confirmation.")
+    lines.append("2. NEVER invent, guess, or hallucinate parameter values. Only use values you are 100% certain of from the conversation.")
+    lines.append("3. If a tool has no required parameters, ALWAYS call it with empty arguments: {}")
+    lines.append("4. When you call a tool, respond with ONLY a single fenced block:")
     lines.append("```xml")
-    lines.append('<tool_call name="tool_name">{"argument": "value"}</tool_call>')
+    lines.append('<tool_call name="tool_name">{}</tool_call>')
     lines.append("```")
-    lines.append("4. Use double quotes for JSON keys and values. If you omit the fenced block or include any extra text, the system will assume you are NOT calling a tool.")
-    lines.append("5. If multiple tool calls are required, include multiple <tool_call> entries inside the same fenced block.")
-    lines.append("6. Without a tool call, reply normally and do NOT emit any ```xml fence.")
+    lines.append("5. Do NOT add text before or after the xml block.")
+    lines.append("6. If multiple tool calls are needed, include multiple <tool_call> tags in the same block.")
+    lines.append("7. Without a tool call, reply normally without any ```xml fence.")
     return "\n".join(lines)
 
 def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
