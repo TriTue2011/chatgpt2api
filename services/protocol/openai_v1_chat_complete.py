@@ -111,8 +111,8 @@ def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Ite
         if extracted_tool_calls:
             tool_calls.extend(extracted_tool_calls)
         
-    # Yield role start chunk (always first, separately - matches Gemini-FastAPI streaming pattern)
-    yield completion_chunk(model, {"role": "assistant", "content": None}, None, completion_id, created)
+    # Yield role start chunk (always first, separately - matches Gemini-FastAPI exactly)
+    yield completion_chunk(model, {"role": "assistant"}, None, completion_id, created)
 
     # Yield cleaned text in segments
     if content:

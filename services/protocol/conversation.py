@@ -109,7 +109,8 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
                 parsed_args = json.loads(raw_args)
                 arguments = json.dumps(parsed_args, ensure_ascii=False)
             except json.JSONDecodeError:
-                pass
+                # Invalid JSON args → fallback to {} to prevent HA's orjson.loads from crashing
+                arguments = "{}"
 
             tool_calls.append({
                 "id": f"call_{uuid.uuid4().hex}",
