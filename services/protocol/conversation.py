@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.*?)["\']>(.*?)</tool_call>', re.DOTALL)
 JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
+CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
 
 
 # Exact XML_WRAP_HINT from Gemini-FastAPI
@@ -20,7 +21,8 @@ _XML_WRAP_HINT = (
 )
 
 
-def _build_tool_prompt(tools: list[dict[str, Any]]) -> str:
+def _build_tool_prompt(tools: list[dict[str, Any]], tool_choice: Any = None) -> str:
+    """Generate a system prompt chunk describing available tools. Mirrors Gemini-FastAPI _build_tool_prompt."""
     if not tools:
         return ""
     lines: list[str] = [
@@ -43,6 +45,22 @@ def _build_tool_prompt(tools: list[dict[str, Any]]) -> str:
             lines.append("Arguments JSON schema: {}")
             lines.append(f"  >> `{name}` requires NO arguments. You MUST call it with exactly: {{}}")
 
+    # Handle tool_choice (mirrors Gemini-FastAPI)
+    if tool_choice == "none":
+        lines.append(
+            "For this request you must not call any tool. Provide the best possible natural language answer."
+        )
+    elif tool_choice == "required":
+        lines.append(
+            "You must call at least one tool before responding to the user. Do not provide a final user-facing answer until a tool call has been issued."
+        )
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        target = (tool_choice.get("function") or {}).get("name", "")
+        if target:
+            lines.append(
+                f"You are required to call the tool named `{target}`. Do not call any other tool."
+            )
+
     lines.append(
         "When you decide to call a tool you MUST respond with nothing except a single fenced block exactly like the template below."
     )
@@ -59,6 +77,15 @@ def _build_tool_prompt(tools: list[dict[str, Any]]) -> str:
         "If multiple tool calls are required, include multiple <tool_call> entries inside the same fenced block. Without a tool call, reply normally and do NOT emit any ```xml fence."
     )
     return "\n".join(lines)
+
+
+def _strip_system_hints(text: str) -> str:
+    """Remove system-level hint text injected into messages. Mirrors Gemini-FastAPI _strip_system_hints."""
+    if not text:
+        return text
+    cleaned = CONTROL_TOKEN_RE.sub("", text)
+    cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
+    return cleaned.strip()
 
 def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
     if not text:
@@ -93,10 +120,10 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
                 }
             })
         return ""
-    
+
     TOOL_BLOCK_RE = re.compile(r"```xml\s*(.*?)```", re.DOTALL | re.IGNORECASE)
     cleaned = TOOL_BLOCK_RE.sub(_replace, text)
-    
+
     # Also support JSON fallback as previously added
     if not tool_calls:
         def _replace_json(match: re.Match[str]) -> str:
@@ -113,6 +140,8 @@ def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]
             return ""
         cleaned = JSON_TOOL_CALL_RE.sub(_replace_json, cleaned)
 
+    # Strip injected hints so they don't leak into the final user-visible response
+    cleaned = _strip_system_hints(cleaned)
     return cleaned.strip(), tool_calls
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -199,13 +228,13 @@ def message_text(content: Any) -> str:
     return ""
 
 
-def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
     normalized = []
-    
+
     # Inject global system prompt and tools documentation
     system_instructions = config.global_system_prompt or ""
     if tools:
-        system_instructions += _build_tool_prompt(tools)
+        system_instructions += _build_tool_prompt(tools, tool_choice=tool_choice)
     
     if system_instructions:
         normalized.append({"role": "system", "content": system_instructions})

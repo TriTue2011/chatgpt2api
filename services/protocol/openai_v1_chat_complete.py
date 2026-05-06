@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 import json
@@ -70,6 +71,29 @@ def completion_response(
     }
 
 
+def _iter_stream_segments(text: str, chunk_size: int = 64):
+    """Yield stream segments while keeping words intact. Mirrors Gemini-FastAPI _iter_stream_segments."""
+    if not text:
+        return
+    token_pattern = re.compile(r"\s+|\S+\s*")
+    pending = ""
+    for match in token_pattern.finditer(text):
+        token = match.group(0)
+        if len(token) > chunk_size:
+            if pending:
+                yield pending
+                pending = ""
+            for idx in range(0, len(token), chunk_size):
+                yield token[idx: idx + chunk_size]
+            continue
+        if pending and len(pending) + len(token) > chunk_size:
+            yield pending
+            pending = ""
+        pending += token
+    if pending:
+        yield pending
+
+
 def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Iterator[dict[str, Any]]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -87,26 +111,21 @@ def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Ite
         if extracted_tool_calls:
             tool_calls.extend(extracted_tool_calls)
         
-    sent_role = False
-    
-    # Yield cleaned text
+    # Yield role start chunk (always first, separately - matches Gemini-FastAPI streaming pattern)
+    yield completion_chunk(model, {"role": "assistant", "content": None}, None, completion_id, created)
+
+    # Yield cleaned text in segments
     if content:
-        sent_role = True
-        yield completion_chunk(model, {"role": "assistant", "content": content}, None, completion_id, created)
-        
-    # Yield tool calls
+        for segment in _iter_stream_segments(content):
+            yield completion_chunk(model, {"content": segment}, None, completion_id, created)
+
+    # Yield tool calls (with index, as required by OpenAI streaming spec)
     if tool_calls:
         tool_calls_delta = [{**call, "index": idx} for idx, call in enumerate(tool_calls)]
-        if not sent_role:
-            sent_role = True
-            yield completion_chunk(model, {"role": "assistant", "tool_calls": tool_calls_delta}, None, completion_id, created)
-        else:
-            yield completion_chunk(model, {"tool_calls": tool_calls_delta}, None, completion_id, created)
+        yield completion_chunk(model, {"tool_calls": tool_calls_delta}, None, completion_id, created)
         yield completion_chunk(model, {}, "tool_calls", completion_id, created)
         return
 
-    if not sent_role:
-        yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
     yield completion_chunk(model, {}, "stop", completion_id, created)
 
 def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterator[dict[str, Any]]:
@@ -191,7 +210,7 @@ def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]], li
     model = str(body.get("model") or "auto").strip() or "auto"
     tools = body.get("tools")
     tool_choice = body.get("tool_choice")
-    messages = normalize_messages(chat_messages_from_body(body), tools=tools)
+    messages = normalize_messages(chat_messages_from_body(body), tools=tools, tool_choice=tool_choice)
     return model, messages, tools, tool_choice
 
 
