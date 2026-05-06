@@ -248,12 +248,20 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                 normalized.append(msg)
 
     # Inject XML tool-call hint into last user message (Gemini-FastAPI XML_WRAP_HINT behaviour)
+    # This prevents the model from hallucinating answers from static context.
     if tools:
-        XML_TOOL_HINT = "\n\n[If a tool call is needed to answer this, output ONLY the ```xml block. Do not ask questions.]"
+        XML_TOOL_HINT = (
+            "\n\n[SYSTEM INSTRUCTION: The static context only lists device names - "
+            "it does NOT contain any current states, sensor readings, or live values. "
+            "If this question requires live home data, current status, or any real-time value, "
+            "you MUST call the appropriate tool immediately. "
+            "Output ONLY the ```xml tool call block - no text before or after. "
+            "Do NOT guess. Do NOT answer from static context. Do NOT ask follow-up questions before calling the tool.]"
+        )
         for i in range(len(normalized) - 1, -1, -1):
             if normalized[i].get("role") == "user":
                 existing = normalized[i].get("content") or ""
-                if isinstance(existing, str) and XML_TOOL_HINT not in existing:
+                if isinstance(existing, str) and "SYSTEM INSTRUCTION:" not in existing:
                     normalized[i] = dict(normalized[i])
                     normalized[i]["content"] = existing + XML_TOOL_HINT
                 break
