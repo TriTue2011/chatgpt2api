@@ -158,6 +158,12 @@ def collect_chat_content_and_tools(events: Iterable[dict[str, Any]]) -> tuple[st
     return "".join(parts), tool_calls
 
 
+# Backward-compatible alias used by anthropic_v1_messages.py
+def collect_chat_content(events: Iterable[dict[str, Any]]) -> str:
+    content, _ = collect_chat_content_and_tools(events)
+    return content
+
+
 def chat_messages_from_body(body: dict[str, Any]) -> list[dict[str, Any]]:
     messages = body.get("messages")
     if isinstance(messages, list) and messages:
