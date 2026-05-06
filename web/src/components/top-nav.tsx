@@ -11,15 +11,15 @@ import { cn } from "@/lib/utils";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 
 const adminNavItems = [
-  { href: "/image", label: "画图" },
-  { href: "/accounts", label: "号池管理" },
-  { href: "/register", label: "注册机" },
-  { href: "/image-manager", label: "图片管理" },
-  { href: "/logs", label: "日志管理" },
-  { href: "/settings", label: "设置" },
+  { href: "/image", label: "Vẽ ảnh" },
+  { href: "/accounts", label: "Quản lý tài khoản" },
+  { href: "/register", label: "Đăng ký" },
+  { href: "/image-manager", label: "Quản lý ảnh" },
+  { href: "/logs", label: "Nhật ký hệ thống" },
+  { href: "/settings", label: "Cài đặt" },
 ];
 
-const userNavItems = [{ href: "/image", label: "画图" }];
+const userNavItems = [{ href: "/image", label: "Vẽ ảnh" }];
 
 export function TopNav() {
   const pathname = usePathname();
@@ -61,7 +61,7 @@ export function TopNav() {
   }
 
   const navItems = session.role === "admin" ? adminNavItems : userNavItems;
-  const roleLabel = session.role === "admin" ? "管理员" : "普通用户";
+  const roleLabel = session.role === "admin" ? "Quản trị viên" : "Người dùng";
   const displayName = session.name.trim() || roleLabel;
 
   return (
@@ -89,7 +89,7 @@ export function TopNav() {
             className="ml-auto shrink-0 py-1 text-xs text-stone-400 transition hover:text-stone-700 sm:hidden"
             onClick={() => void handleLogout()}
           >
-            退出
+            Đăng xuất
           </button>
         </div>
         <nav className="hide-scrollbar -mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 sm:mx-0 sm:justify-center sm:gap-8 sm:overflow-visible sm:px-0">
@@ -124,7 +124,7 @@ export function TopNav() {
             className="py-1 text-xs text-stone-400 transition hover:text-stone-700 sm:text-sm"
             onClick={() => void handleLogout()}
           >
-            退出
+            Đăng xuất
           </button>
         </div>
       </div>
