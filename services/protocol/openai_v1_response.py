@@ -114,7 +114,7 @@ def response_created(response_id: str, model: str, created: int) -> dict[str, An
     }
 
 
-def response_completed(response_id: str, model: str, created: int, output: list[dict[str, Any]]) -> dict[str, Any]:
+def response_completed(response_id: str, model: str, created: int, output: list[dict[str, Any]], usage: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "type": "response.completed",
         "response": {
@@ -127,12 +127,15 @@ def response_completed(response_id: str, model: str, created: int, output: list[
             "model": model,
             "output": output,
             "parallel_tool_calls": False,
+            "usage": usage or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
         },
     }
 
 
 def stream_text_response(backend, body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     model = str(body.get("model") or "auto").strip() or "auto"
+    tools = body.get("tools") or None
+    tool_choice = body.get("tool_choice") or None
     messages = messages_from_input(body.get("input"), body.get("instructions"))
     response_id = f"resp_{uuid.uuid4().hex}"
     item_id = f"msg_{uuid.uuid4().hex}"
@@ -140,7 +143,54 @@ def stream_text_response(backend, body: dict[str, Any]) -> Iterator[dict[str, An
     full_text = ""
     yield response_created(response_id, model, created)
     yield {"type": "response.output_item.added", "output_index": 0, "item": text_output_item("", item_id, "in_progress")}
-    request = ConversationRequest(model=model, messages=messages)
+    
+    from services.protocol.conversation import normalize_messages, stream_conversation_events, extract_and_remove_tool_calls
+    normalized = normalize_messages(messages, tools=tools)
+    request = ConversationRequest(model=model, messages=normalized, tools=tools, tool_choice=tool_choice)
+    
+    # Buffer if tools present to extract tool calls cleanly
+    if tools:
+        from services.protocol.openai_v1_chat_complete import collect_chat_content_and_tools
+        content, tool_calls_raw = collect_chat_content_and_tools(stream_conversation_events(backend, request))
+        cleaned_content, extracted_tool_calls = extract_and_remove_tool_calls(content)
+        if extracted_tool_calls:
+            tool_calls_raw.extend(extracted_tool_calls)
+        
+        if tool_calls_raw:
+            # Emit tool call items
+            for i, tc in enumerate(tool_calls_raw):
+                fn = tc.get("function", {})
+                tc_item = {
+                    "type": "function_call",
+                    "id": tc.get("id", f"fc_{uuid.uuid4().hex}"),
+                    "call_id": tc.get("id", f"fc_{uuid.uuid4().hex}"),
+                    "name": fn.get("name", ""),
+                    "arguments": fn.get("arguments", "{}"),
+                    "status": "completed",
+                }
+                yield {"type": "response.output_item.added", "output_index": i, "item": tc_item}
+                yield {"type": "response.output_item.done", "output_index": i, "item": tc_item}
+            output_items = [{
+                "type": "function_call",
+                "id": tc.get("id", f"fc_{uuid.uuid4().hex}"),
+                "call_id": tc.get("id", f"fc_{uuid.uuid4().hex}"),
+                "name": tc.get("function", {}).get("name", ""),
+                "arguments": tc.get("function", {}).get("arguments", "{}"),
+                "status": "completed",
+            } for tc in tool_calls_raw]
+            yield response_completed(response_id, model, created, output_items)
+            return
+        
+        # No tool calls - stream as text
+        if cleaned_content:
+            full_text = cleaned_content
+            yield {"type": "response.output_text.delta", "item_id": item_id, "output_index": 0, "content_index": 0, "delta": full_text}
+        yield {"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "content_index": 0, "text": full_text}
+        item = text_output_item(full_text, item_id, "completed")
+        yield {"type": "response.output_item.done", "output_index": 0, "item": item}
+        yield response_completed(response_id, model, created, [item])
+        return
+    
     for delta in stream_text_deltas(backend, request):
         full_text += delta
         yield {"type": "response.output_text.delta", "item_id": item_id, "output_index": 0, "content_index": 0, "delta": delta}
@@ -148,6 +198,7 @@ def stream_text_response(backend, body: dict[str, Any]) -> Iterator[dict[str, An
     item = text_output_item(full_text, item_id, "completed")
     yield {"type": "response.output_item.done", "output_index": 0, "item": item}
     yield response_completed(response_id, model, created, [item])
+
 
 
 def stream_image_response(image_outputs: Iterable[ImageOutput], prompt: str, model: str) -> Iterator[dict[str, Any]]:

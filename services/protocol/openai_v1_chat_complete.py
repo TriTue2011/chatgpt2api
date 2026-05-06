@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import json
 from typing import Any, Iterable, Iterator
 
 from fastapi import HTTPException
@@ -17,6 +18,7 @@ from services.protocol.conversation import (
     normalize_messages,
     stream_image_outputs_with_pool,
     stream_text_deltas,
+    stream_conversation_events,
     text_backend,
 )
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
@@ -37,9 +39,19 @@ def completion_response(
     content: str,
     created: int | None = None,
     messages: list[dict[str, Any]] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     prompt_tokens = count_message_tokens(messages, model) if messages else 0
     completion_tokens = count_text_tokens(content, model) if messages else 0
+    
+    message = {"role": "assistant", "content": content}
+    finish_reason = "stop"
+    
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+        message["content"] = None
+        finish_reason = "tool_calls"
+        
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
         "object": "chat.completion",
@@ -47,8 +59,8 @@ def completion_response(
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
+            "message": message,
+            "finish_reason": finish_reason,
         }],
         "usage": {
             "prompt_tokens": prompt_tokens,
@@ -58,32 +70,92 @@ def completion_response(
     }
 
 
-def stream_text_chat_completion(backend, messages: list[dict[str, Any]], model: str) -> Iterator[dict[str, Any]]:
+def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Iterator[dict[str, Any]]:
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+    model = request.model
+    
+    # Collect the entire response
+    content, tool_calls = collect_chat_content_and_tools(stream_conversation_events(backend, request))
+    
+    # If we have text, we parse it to extract and remove any injected tool calls
+    if content:
+        # Import here to avoid circular dependencies if any, or just use the parsing logic
+        from services.protocol.conversation import extract_and_remove_tool_calls
+        cleaned_content, extracted_tool_calls = extract_and_remove_tool_calls(content)
+        content = cleaned_content
+        if extracted_tool_calls:
+            tool_calls.extend(extracted_tool_calls)
+        
+    sent_role = False
+    
+    # Yield cleaned text
+    if content:
+        sent_role = True
+        yield completion_chunk(model, {"role": "assistant", "content": content}, None, completion_id, created)
+        
+    # Yield tool calls
+    if tool_calls:
+        if not sent_role:
+            sent_role = True
+            yield completion_chunk(model, {"role": "assistant", "tool_calls": tool_calls}, None, completion_id, created)
+        else:
+            yield completion_chunk(model, {"tool_calls": tool_calls}, None, completion_id, created)
+        yield completion_chunk(model, {}, "tool_calls", completion_id, created)
+        return
+
+    if not sent_role:
+        yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
+    yield completion_chunk(model, {}, "stop", completion_id, created)
+
+def stream_text_chat_completion(backend, request: ConversationRequest) -> Iterator[dict[str, Any]]:
+    if request.tools:
+        # Buffer and process at the end to reliably extract injected tool calls
+        yield from _buffered_tool_chat_completion(backend, request)
+        return
+
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
-    request = ConversationRequest(model=model, messages=messages)
-    for delta_text in stream_text_deltas(backend, request):
-        if not sent_role:
-            sent_role = True
-            yield completion_chunk(model, {"role": "assistant", "content": delta_text}, None, completion_id, created)
-        else:
-            yield completion_chunk(model, {"content": delta_text}, None, completion_id, created)
+    model = request.model
+    
+    for event in stream_conversation_events(backend, request):
+        if event.get("type") == "conversation.delta":
+            delta_text = str(event.get("delta") or "")
+            if not delta_text:
+                continue
+            if not sent_role:
+                sent_role = True
+                yield completion_chunk(model, {"role": "assistant", "content": delta_text}, None, completion_id, created)
+            else:
+                yield completion_chunk(model, {"content": delta_text}, None, completion_id, created)
+        
+        elif event.get("type") == "conversation.tool_calls":
+            tool_calls = event.get("tool_calls") or []
+            if not sent_role:
+                sent_role = True
+                yield completion_chunk(model, {"role": "assistant", "tool_calls": tool_calls}, None, completion_id, created)
+            else:
+                yield completion_chunk(model, {"tool_calls": tool_calls}, None, completion_id, created)
+            yield completion_chunk(model, {}, "tool_calls", completion_id, created)
+            return
+
     if not sent_role:
         yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
     yield completion_chunk(model, {}, "stop", completion_id, created)
 
 
-def collect_chat_content(chunks: Iterable[dict[str, Any]]) -> str:
+def collect_chat_content_and_tools(events: Iterable[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     parts: list[str] = []
-    for chunk in chunks:
-        choices = chunk.get("choices")
-        first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
-        delta = first.get("delta") if isinstance(first.get("delta"), dict) else {}
-        content = str(delta.get("content") or "")
-        if content:
-            parts.append(content)
-    return "".join(parts)
+    tool_calls: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("type") == "conversation.delta":
+            delta = str(event.get("delta") or "")
+            if delta:
+                parts.append(delta)
+        elif event.get("type") == "conversation.tool_calls":
+            tool_calls.extend(event.get("tool_calls") or [])
+    return "".join(parts), tool_calls
 
 
 def chat_messages_from_body(body: dict[str, Any]) -> list[dict[str, Any]]:
@@ -108,10 +180,12 @@ def chat_image_args(body: dict[str, Any]) -> tuple[str, str, int, list[tuple[byt
     return model, prompt, parse_image_count(body.get("n")), images
 
 
-def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]] | None, Any]:
     model = str(body.get("model") or "auto").strip() or "auto"
-    messages = normalize_messages(chat_messages_from_body(body))
-    return model, messages
+    tools = body.get("tools")
+    tool_choice = body.get("tool_choice")
+    messages = normalize_messages(chat_messages_from_body(body), tools=tools)
+    return model, messages, tools, tool_choice
 
 
 def image_result_content(result: dict[str, Any]) -> str:
@@ -175,10 +249,22 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     if body.get("stream"):
         if is_image_chat_request(body):
             return image_chat_events(body)
-        model, messages = text_chat_parts(body)
-        return stream_text_chat_completion(text_backend(), messages, model)
+        model, messages, tools, tool_choice = text_chat_parts(body)
+        request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+        return stream_text_chat_completion(text_backend(), request)
+    
     if is_image_chat_request(body):
         return image_chat_response(body)
-    model, messages = text_chat_parts(body)
-    request = ConversationRequest(model=model, messages=messages)
-    return completion_response(model, collect_text(text_backend(), request), messages=messages)
+        
+    model, messages, tools, tool_choice = text_chat_parts(body)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    content, tool_calls = collect_chat_content_and_tools(stream_conversation_events(text_backend(), request))
+    
+    if content:
+        from services.protocol.conversation import extract_and_remove_tool_calls
+        cleaned_content, extracted_tool_calls = extract_and_remove_tool_calls(content)
+        content = cleaned_content
+        if extracted_tool_calls:
+            tool_calls.extend(extracted_tool_calls)
+            
+    return completion_response(model, content, messages=messages, tool_calls=tool_calls)
