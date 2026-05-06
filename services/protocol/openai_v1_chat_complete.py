@@ -96,11 +96,12 @@ def _buffered_tool_chat_completion(backend, request: ConversationRequest) -> Ite
         
     # Yield tool calls
     if tool_calls:
+        tool_calls_delta = [{**call, "index": idx} for idx, call in enumerate(tool_calls)]
         if not sent_role:
             sent_role = True
-            yield completion_chunk(model, {"role": "assistant", "tool_calls": tool_calls}, None, completion_id, created)
+            yield completion_chunk(model, {"role": "assistant", "tool_calls": tool_calls_delta}, None, completion_id, created)
         else:
-            yield completion_chunk(model, {"tool_calls": tool_calls}, None, completion_id, created)
+            yield completion_chunk(model, {"tool_calls": tool_calls_delta}, None, completion_id, created)
         yield completion_chunk(model, {}, "tool_calls", completion_id, created)
         return
 
