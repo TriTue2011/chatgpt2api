@@ -17,11 +17,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Cài đặt hệ thống: git (Git backend), libpq-dev + gcc (PostgreSQL), openssl (mã hóa backup)
+# Thêm libnss3 và ca-certificates để hỗ trợ curl_cffi giả lập trình duyệt chuẩn xác nhất
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libpq-dev \
     gcc \
     openssl \
+    ca-certificates \
+    libnss3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Cài uv - trình quản lý package Python nhanh nhất
