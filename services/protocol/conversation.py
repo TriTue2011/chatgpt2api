@@ -259,6 +259,67 @@ def message_text(content: Any) -> str:
     return ""
 
 
+# Maximum payload size in bytes before triggering truncation.
+# ChatGPT backend limit is ~100 KB; we use 80 KB to be safe.
+_MAX_PAYLOAD_BYTES = 80_000
+
+
+def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop oldest non-system messages when the serialized payload exceeds the size limit.
+
+    This prevents HTTP 413 (Request Entity Too Large) errors from the ChatGPT backend.
+    Home Assistant accumulates the entire conversation history (including tool call results)
+    across multiple iterations, which can easily exceed the limit.
+
+    Strategy:
+    1. Keep all system messages (they define behavior and tools).
+    2. Drop oldest non-system messages until under the threshold.
+    3. If still over limit, truncate the system message (usually HA entity list).
+    4. If still over limit, truncate the last user message content as a last resort.
+    """
+    payload = json.dumps(messages, ensure_ascii=False, default=str)
+    if len(payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+        return messages
+
+    # Separate system messages from the rest
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs = [m for m in messages if m.get("role") != "system"]
+
+    # Drop oldest non-system messages until under limit
+    while other_msgs:
+        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+        if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+            break
+        other_msgs.pop(0)
+
+    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
+    # If still over limit, truncate the last system message (typically the HA entity list)
+    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        if system_msgs:
+            last_sys = system_msgs[-1]
+            if isinstance(last_sys.get("content"), str):
+                content = last_sys["content"]
+                excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+                allowed_len = max(500, len(content) - excess - 200)
+                if len(content) > allowed_len:
+                    last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
+                    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
+    # If still over limit, truncate last user content
+    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        last_user = other_msgs[-1]
+        if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
+            content = last_user["content"]
+            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+            allowed_len = max(500, len(content) - excess - 200)
+            if len(content) > allowed_len:
+                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
+
+    result = system_msgs + other_msgs
+    return result
+
+
 def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
     normalized = []
 
@@ -349,6 +410,9 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                     normalized[i] = dict(normalized[i])
                     normalized[i]["content"] = existing + _XML_WRAP_HINT
                 break
+
+    # Truncate oversized payload to prevent HTTP 413 errors
+    normalized = _truncate_messages(normalized)
     return normalized
 
 
