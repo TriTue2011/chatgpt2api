@@ -338,5 +338,19 @@ class AccountService:
             "items": self.list_accounts(),
         }
 
+    def initialize_from_env(self) -> None:
+        """从环境变量 CHATGPT_TOKEN_1, CHATGPT_TOKEN_2... 中自动导入账号"""
+        import os
+        tokens = []
+        # 扫描 CHATGPT_TOKEN_1 到 CHATGPT_TOKEN_100 ( hoặc more if needed )
+        for i in range(1, 101):
+            token = os.getenv(f"CHATGPT_TOKEN_{i}")
+            if token and token.strip():
+                tokens.append(token.strip())
+        
+        if tokens:
+            print(f"[account-service] Found {len(tokens)} accounts from environment variables. Initializing...")
+            self.add_accounts(tokens)
+
 
 account_service = AccountService(config.get_storage_backend())

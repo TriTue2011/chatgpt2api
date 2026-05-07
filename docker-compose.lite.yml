@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # Cách 1: Một container quản lý nhiều tài khoản (Khuyên dùng cho tiết kiệm tài nguyên)
+  chatgpt-multi:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    container_name: chatgpt2api-multi
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    volumes:
+      - ./data_multi:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=your_admin_key
+      - CHATGPT_TOKEN_1=ey... (Access Token 1)
+      - CHATGPT_TOKEN_2=ey... (Access Token 2)
+      - CHATGPT_TOKEN_3=ey... (Access Token 3)
+
+  # Cách 2: Chia nhỏ thành các container riêng biệt (Giống ví dụ gemini-fastapi)
+  chatgpt-node-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    container_name: chatgpt2api-node-1
+    restart: unless-stopped
+    ports:
+      - "3031:80"
+    volumes:
+      - ./data_node1:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=admin_node1
+      - CHATGPT_TOKEN_1=ey... (Chỉ dùng 1 token cho node này)
+
+  chatgpt-node-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    container_name: chatgpt2api-node-2
+    restart: unless-stopped
+    ports:
+      - "3032:80"
+    volumes:
+      - ./data_node2:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=admin_node2
+      - CHATGPT_TOKEN_1=ey... (Token khác cho node này)

@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        account_service.initialize_from_env()
         stop_event = Event()
         thread = start_limited_account_watcher(stop_event)
         backup_service.start()
