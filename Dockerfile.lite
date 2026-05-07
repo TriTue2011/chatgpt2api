@@ -1,40 +1,51 @@
-FROM python:3.13-slim AS app
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+FROM --platform=$TARGETPLATFORM python:3.13-slim AS app
+
+ARG TARGETPLATFORM
+ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
+    # Bỏ qua mirror Aliyun khi build trên GitHub Actions / máy ngoài Trung Quốc
+    UV_INDEX_URL=https://pypi.org/simple \
     TIKTOKEN_CACHE_DIR=/app/data/tiktoken_cache
 
 WORKDIR /app
 
-# 安装基础依赖
+# Cài đặt hệ thống: git (Git backend), libpq-dev + gcc (PostgreSQL), openssl (mã hóa backup)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libpq-dev \
     gcc \
     openssl \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Cài uv - trình quản lý package Python nhanh nhất
 RUN pip install --no-cache-dir uv
 
-# Sao chép file quản lý thư viện
+# Cài dependencies Python trước (tận dụng Docker cache layer)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --index-url https://pypi.org/simple
 
-# Sao chép mã nguồn (Bỏ qua web/)
+# Sao chép mã nguồn - KHÔNG copy config.json (sẽ được mount từ ngoài vào)
 COPY main.py ./
-COPY config.json ./
 COPY VERSION ./
 COPY api ./api
 COPY services ./services
 COPY utils ./utils
-COPY scripts ./scripts
 
-# Tạo thư mục dữ liệu
-RUN mkdir -p /app/data
+# Tạo thư mục dữ liệu và tiktoken cache
+RUN mkdir -p /app/data/tiktoken_cache
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:80/api/health')" || exit 1
 
 EXPOSE 80
 
-# Chạy trực tiếp qua uvicorn (không dùng run.sh để tối giản nhất)
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]
+# Dùng trực tiếp uvicorn từ venv (không cần uv run, nhẹ hơn)
+CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]

@@ -1,84 +1,183 @@
 # Hướng Dẫn Cài Đặt & Sử Dụng ChatGPT2API Cho Home Assistant
 
-ChatGPT2API là dự án cho phép biến tài khoản ChatGPT Web của bạn thành một API chuẩn OpenAI. Phiên bản này đã được tùy chỉnh đặc biệt để lọc sạch các ký tự định dạng (Markdown, dấu gạch ngang, tiêu đề...) nhằm tương thích hoàn hảo 100% với hệ thống giọng nói (Text-To-Speech) của loa thông minh như Phicomm R1 qua Home Assistant.
+ChatGPT2API biến tài khoản ChatGPT Web thành một API chuẩn OpenAI, tương thích hoàn hảo với Home Assistant và các loa thông minh như Phicomm R1 qua hệ thống giọng nói TTS.
 
 ---
 
-## 1. Cài Đặt Hệ Thống (Bằng Docker)
+## Mục Lục
+1. [Cách Lấy Access Token](#1-cách-lấy-access-token)
+2. [Cài Đặt Bản Đầy Đủ (Có Web UI)](#2-cài-đặt-bản-đầy-đủ-có-web-ui)
+3. [Cài Đặt Bản Lite (Không Web UI - Khuyên Dùng Cho LXC/Server)](#3-cài-đặt-bản-lite-không-web-ui)
+4. [Dùng Portainer](#4-dùng-portainer)
+5. [Tích Hợp Vào Home Assistant](#5-tích-hợp-vào-home-assistant)
+6. [Tối Ưu Hóa Cho Loa Thông Minh TTS](#6-tối-ưu-hóa-cho-loa-thông-minh-tts)
 
-Yêu cầu máy chủ (Ubuntu/Debian, Raspberry Pi, Debian trên Home Assistant...) đã cài đặt sẵn `docker` và `docker-compose`.
+---
+
+## 1. Cách Lấy Access Token
+
+1. Mở trình duyệt ẩn danh (Incognito) → Đăng nhập vào [chatgpt.com](https://chatgpt.com).
+2. Mở tab mới, dán link: `https://chatgpt.com/api/auth/session`
+3. Tìm chuỗi bắt đầu bằng `eyJhbG...` nằm sau `"accessToken":` → Copy toàn bộ chuỗi đó.
+
+> ⚠️ **Không đăng xuất** ChatGPT trên trình duyệt đó, nếu không token sẽ bị hủy.
+
+---
+
+## 2. Cài Đặt Bản Đầy Đủ (Có Web UI)
 
 ```bash
-# Clone source code
+git clone https://github.com/TriTue2011/chatgpt2api.git
+cd chatgpt2api
+docker compose up -d --build
+```
+
+Sau khi chạy:
+- **Web quản lý**: `http://[IP]:3030`
+- **API Endpoint**: `http://[IP]:3030/v1`
+
+---
+
+## 3. Cài Đặt Bản Lite (Không Web UI)
+
+Bản Lite nhẹ hơn ~70%, build nhanh hơn 10 lần, phù hợp cho LXC, Proxmox, VPS nhỏ.
+Tài khoản được nạp qua **biến môi trường** thay vì Web UI.
+
+### Cách 1: Dùng Image Dựng Sẵn Từ GitHub (Nhanh nhất)
+
+```bash
 git clone https://github.com/TriTue2011/chatgpt2api.git
 cd chatgpt2api
 
-# Khởi chạy hệ thống (tự động build)
-docker-compose up -d --build
+# Tạo file cấu hình
+cp .env.example .env
+nano .env  # Điền AUTH_KEY và TOKEN_1, TOKEN_2...
+
+# Chạy ngay (không cần build, tải image về dùng luôn)
+docker compose -f docker-compose.lite.yml up chatgpt-multi -d
 ```
 
-Sau khi chạy xong, hệ thống sẽ mở 2 cổng:
-- Web Quản lý: `http://[IP_MÁY_CHỦ]:3000`
-- API Endpoint: `http://[IP_MÁY_CHỦ]:3000/v1`
-
----
-
-## 2. Cách Lấy Access Token / Session Của ChatGPT
-
-Để hệ thống hoạt động, bạn cần cấp cho nó tài khoản ChatGPT. Cách an toàn và đơn giản nhất là lấy `access_token` từ trình duyệt:
-
-1. Mở trình duyệt ẩn danh (Incognito) và đăng nhập vào trang [chatgpt.com](https://chatgpt.com).
-2. Sau khi đăng nhập thành công, mở tab mới và dán đường link này vào thanh địa chỉ:
-   `https://chatgpt.com/api/auth/session`
-3. Trình duyệt sẽ hiển thị một đoạn mã JSON. Bạn tìm chuỗi bắt đầu bằng `eyJhbG...` nằm sau chữ `"accessToken":`.
-4. Copy toàn bộ chuỗi Access Token đó (nó rất dài).
-
-*Lưu ý: Không đăng xuất (Log out) ChatGPT trên trình duyệt đó, nếu không token sẽ bị hủy.*
-
----
-
-## 3. Cách Gán Tài Khoản Vào ChatGPT2API
-
-1. Truy cập vào Web UI quản lý của hệ thống: `http://[IP_MÁY_CHỦ]:3000`
-2. Đăng nhập bằng Auth Key. Mặc định trong file `config.json` là: `chatgpt2api` (bạn có thể đổi tùy ý).
-3. Tại giao diện chính, chuyển sang tab **Tài khoản (Account Pool)**.
-4. Bấm vào nút **Nhập Access Token (Import Access Token)**.
-5. Dán đoạn Access Token bạn vừa copy ở Bước 2 vào ô trống, mỗi token nằm trên 1 dòng nếu bạn có nhiều tài khoản.
-6. Bấm **Xác nhận (Confirm)**. Hệ thống sẽ tự động kiểm tra xem tài khoản là Plus hay Thường, và đưa vào trạng thái Hoạt động (Active).
-
----
-
-## 4. Tích Hợp Vào Home Assistant
-
-Để sử dụng ChatGPT2API làm não bộ cho trợ lý ảo của Home Assistant, bạn cần cấu hình tích hợp **OpenAI Conversation** (Hoặc các bản mod tương tự như Local OpenAI).
-
-1. Vào Home Assistant -> **Cài đặt (Settings)** -> **Thiết bị & Dịch vụ (Devices & Services)**.
-2. Thêm tích hợp **OpenAI Conversation**.
-3. Điền các thông số sau:
-   - **API Key**: `chatgpt2api` (Phải khớp với `auth-key` trong config.json)
-   - **Base URL**: `http://[IP_MÁY_CHỦ_CỦA_BẠN]:3000/v1`
-4. Bấm Xác nhận. 
-5. Sau khi thêm xong, cấu hình Integration và chọn mô hình (Model) là `auto` hoặc `gpt-4o`.
-
----
-
-## 5. Tối Ưu Hóa Cho Loa Thông Minh (TTS)
-
-Tuy bản thân ChatGPT2API đã tự động lọc sạch các mã Markdown (dấu `#`, `*`, `- `) khi trả về, nhưng để câu văn tự nhiên nhất khi phát qua loa, bạn cần thêm System Prompt vào Home Assistant.
-
-Vào **Cài đặt -> Trợ lý giọng nói -> Chọn Trợ lý của bạn -> Phần Chỉ thị (Instructions)**, dán đoạn sau:
-
-> *"Bạn là trợ lý ảo nhà thông minh. Hãy trả lời cực kỳ ngắn gọn, tự nhiên và giống văn nói của con người để hệ thống TTS có thể đọc mượt mà. Tuyệt đối KHÔNG sử dụng các ký tự định dạng (như dấu sao *, dấu thăng #, gạch đầu dòng -). Không dùng danh sách liệt kê, hạn chế tối đa ngoặc đơn. Trả lời thẳng vào trọng tâm câu hỏi. QUAN TRỌNG: Ngay cả khi lấy dữ liệu từ Web Search, tuyệt đối không được dùng định dạng liệt kê."*
-
----
-
-## 6. Cập Nhật Code (Khi có bản sửa lỗi mới)
-
-Nếu có bản cập nhật mới trên Github, bạn chỉ cần thực hiện 3 lệnh sau để nâng cấp:
+### Cách 2: Tự Build Image
 
 ```bash
-cd /opt/chatgpt2api
-docker-compose down
-git pull origin main
-docker-compose up -d --build
+# Build image bản Lite
+docker build -f Dockerfile.lite -t chatgpt2api:lite .
+
+# Sau đó sửa docker-compose.lite.yml, thay dòng:
+#   image: ghcr.io/tritue2011/chatgpt2api-lite:latest
+# Thành:
+#   image: chatgpt2api:lite
+docker compose -f docker-compose.lite.yml up chatgpt-multi -d
+```
+
+### File `.env` Mẫu
+
+```env
+# Key xác thực (bắt buộc)
+AUTH_KEY=mat_khau_cua_ban
+
+# Cổng chạy
+PORT=3030
+
+# Token ChatGPT (lấy từ bước 1)
+TOKEN_1=eyJhbGci...
+TOKEN_2=eyJhbGci...  # Thêm nhiều token nếu có nhiều tài khoản
+```
+
+### Chạy Nhiều Node Riêng Biệt (Giống Gemini FastAPI)
+
+```bash
+# Mỗi node 1 cổng, 1 tài khoản
+docker compose -f docker-compose.lite.yml up chatgpt-1 chatgpt-2 chatgpt-3 -d
+# Node 1: http://[IP]:3031
+# Node 2: http://[IP]:3032
+# Node 3: http://[IP]:3033
+```
+
+---
+
+## 4. Dùng Portainer
+
+### Cách A: Deploy qua Stack (Đơn giản nhất)
+
+1. Vào **Portainer** → **Stacks** → **Add Stack**.
+2. Đặt tên stack (ví dụ: `chatgpt2api`).
+3. Chọn **"Web editor"** và dán nội dung sau vào:
+
+```yaml
+services:
+  chatgpt2api:
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
+    container_name: chatgpt2api
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    volumes:
+      - /opt/chatgpt2api/data:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=mat_khau_cua_ban
+      - CHATGPT_TOKEN_1=eyJhbGci...TOKEN_1...
+      - CHATGPT_TOKEN_2=eyJhbGci...TOKEN_2...
+```
+
+4. Bấm **Deploy the stack**.
+
+### Cách B: Deploy Nhiều Node Qua Stack
+
+```yaml
+services:
+  chatgpt-1:
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
+    container_name: chatgpt2api-1
+    restart: unless-stopped
+    ports:
+      - "3031:80"
+    volumes:
+      - /opt/chatgpt2api/data-1:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=mat_khau_cua_ban
+      - CHATGPT_TOKEN_1=eyJhbGci...TOKEN_1...
+
+  chatgpt-2:
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
+    container_name: chatgpt2api-2
+    restart: unless-stopped
+    ports:
+      - "3032:80"
+    volumes:
+      - /opt/chatgpt2api/data-2:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=mat_khau_cua_ban
+      - CHATGPT_TOKEN_1=eyJhbGci...TOKEN_2...
+```
+
+> 💡 **Mỗi node** có thể dùng chung **API Key** nhưng có **Token** và **cổng** khác nhau.
+
+---
+
+## 5. Tích Hợp Vào Home Assistant
+
+1. Vào **Settings → Devices & Services → Add Integration**.
+2. Tìm và cài **OpenAI Conversation**.
+3. Điền:
+   - **API Key**: `mat_khau_cua_ban` (khớp với `AUTH_KEY` trong `.env`)
+   - **Base URL**: `http://[IP_MÁY_CHỦ]:3030/v1`
+4. Bấm **Submit**. Chọn model `auto` hoặc `gpt-4o`.
+
+---
+
+## 6. Tối Ưu Hóa Cho Loa Thông Minh TTS
+
+Vào **Settings → Voice Assistants → [Trợ lý của bạn] → Instructions**, dán:
+
+> *"Bạn là trợ lý ảo nhà thông minh. Hãy trả lời cực kỳ ngắn gọn, tự nhiên và giống văn nói của con người để hệ thống TTS có thể đọc mượt mà. Tuyệt đối KHÔNG sử dụng các ký tự định dạng (như dấu sao *, dấu thăng #, gạch đầu dòng -). Không dùng danh sách liệt kê, hạn chế tối đa ngoặc đơn. Trả lời thẳng vào trọng tâm câu hỏi."*
+
+---
+
+## 7. Cập Nhật
+
+```bash
+cd chatgpt2api
+docker compose -f docker-compose.lite.yml pull
+docker compose -f docker-compose.lite.yml up -d
 ```

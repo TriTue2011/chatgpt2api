@@ -1,69 +1,67 @@
 services:
 
-  # ============================================================
-  # Cách 1: 1 container chứa nhiều tài khoản (tiết kiệm RAM)
+  # ================================================================
+  # CÁCH 1: 1 container quản lý nhiều tài khoản (Khuyên dùng)
   # Chạy: docker compose -f docker-compose.lite.yml up chatgpt-multi -d
-  # ============================================================
+  # ================================================================
   chatgpt-multi:
-    build:
-      context: .
-      dockerfile: Dockerfile.lite
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
+    # Hoặc tự build: uncomment 3 dòng dưới và comment dòng image ở trên
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile.lite
     container_name: chatgpt2api
     restart: unless-stopped
-    network_mode: host
     ports:
       - "${PORT:-3030}:80"
     volumes:
-      - /opt/chatgpt2api/data:/app/data
+      - ./data:/app/data
     environment:
       - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
       - CHATGPT_TOKEN_1=${TOKEN_1}
-      - CHATGPT_TOKEN_2=${TOKEN_2}
-      - CHATGPT_TOKEN_3=${TOKEN_3}
-      - CHATGPT_TOKEN_4=${TOKEN_4}
+      - CHATGPT_TOKEN_2=${TOKEN_2:-}
+      - CHATGPT_TOKEN_3=${TOKEN_3:-}
+      - CHATGPT_TOKEN_4=${TOKEN_4:-}
+      # Tuỳ chọn:
+      # - CHATGPT2API_BASE_URL=http://192.168.1.100:3030
 
-  # ============================================================
-  # Cách 2: Chia nhỏ mỗi container 1 tài khoản (giống Gemini)
+  # ================================================================
+  # CÁCH 2: Nhiều container riêng biệt - mỗi node 1 tài khoản
+  # Giống cách chạy gemini-fastapi
   # Chạy: docker compose -f docker-compose.lite.yml up chatgpt-1 chatgpt-2 -d
-  # ============================================================
+  # ================================================================
   chatgpt-1:
-    build:
-      context: .
-      dockerfile: Dockerfile.lite
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
     container_name: ${NAME_1:-chatgpt2api-1}
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${PORT_1:-3031}:80"
     volumes:
-      - /opt/${NAME_1:-chatgpt2api-1}/data:/app/data
+      - ./data-1:/app/data
     environment:
       - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
-      - CHATGPT2API_BASE_URL=http://0.0.0.0:${PORT_1:-3031}
       - CHATGPT_TOKEN_1=${TOKEN_1}
 
   chatgpt-2:
-    build:
-      context: .
-      dockerfile: Dockerfile.lite
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
     container_name: ${NAME_2:-chatgpt2api-2}
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${PORT_2:-3032}:80"
     volumes:
-      - /opt/${NAME_2:-chatgpt2api-2}/data:/app/data
+      - ./data-2:/app/data
     environment:
       - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
-      - CHATGPT2API_BASE_URL=http://0.0.0.0:${PORT_2:-3032}
       - CHATGPT_TOKEN_1=${TOKEN_2}
 
   chatgpt-3:
-    build:
-      context: .
-      dockerfile: Dockerfile.lite
+    image: ghcr.io/tritue2011/chatgpt2api-lite:latest
     container_name: ${NAME_3:-chatgpt2api-3}
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "${PORT_3:-3033}:80"
     volumes:
-      - /opt/${NAME_3:-chatgpt2api-3}/data:/app/data
+      - ./data-3:/app/data
     environment:
       - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
-      - CHATGPT2API_BASE_URL=http://0.0.0.0:${PORT_3:-3033}
       - CHATGPT_TOKEN_1=${TOKEN_3}

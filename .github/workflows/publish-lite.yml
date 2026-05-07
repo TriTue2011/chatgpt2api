@@ -55,5 +55,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Dùng GitHub Actions cache để tăng tốc build lần sau
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Override UV index URL để không dùng mirror Aliyun khi build trên GitHub
+          build-args: |
+            UV_INDEX_URL=https://pypi.org/simple
