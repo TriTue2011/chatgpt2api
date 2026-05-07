@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 
 from api import accounts, ai, image_tasks, register, system
 from api.support import resolve_web_asset, start_limited_account_watcher
-from services.account_service import account_service
 from services.backup_service import backup_service
 from services.config import config
 
