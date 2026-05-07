@@ -364,7 +364,7 @@ class OpenAIBackendAPI:
         payload = {
             "action": "next",
             "messages": self._api_messages_to_conversation_messages(messages),
-            "model": model,
+            "model": self._sanitize_model_slug(model),
             "parent_message_id": new_uuid(),
             "conversation_mode": {"kind": "primary_assistant"},
             "conversation_origin": None,
@@ -397,6 +397,16 @@ class OpenAIBackendAPI:
             payload["tool_choice"] = tool_choice
         return payload
 
+    def _sanitize_model_slug(self, model: str) -> str:
+        """Sàng lọc tên model để tránh lỗi 413/400 khi người dùng nhập tên lạ."""
+        model = str(model or "").strip().lower()
+        # Các model chuẩn được hỗ trợ bởi ChatGPT Web
+        valid_slugs = {"auto", "gpt-4", "gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini", "gpt-4-gizmo"}
+        if model in valid_slugs:
+            return model
+        # Nếu là gpt-5 hoặc bất kỳ tên lạ nào, tự động đưa về auto cho an toàn
+        return "auto"
+
     def _image_model_slug(self, model: str) -> str:
         """把标准图片模型名映射到底层 model slug。"""
         model = str(model or "").strip()
@@ -406,7 +416,8 @@ class OpenAIBackendAPI:
             return "gpt-5-3"
         if model == CODEX_IMAGE_MODEL:
             return model
-        return "auto"
+        # Dùng bộ lọc chuẩn nếu không phải model đặc biệt
+        return self._sanitize_model_slug(model)
 
     def _image_headers(self, path: str, requirements: ChatRequirements, conduit_token: str = "", accept: str = "*/*") -> \
             Dict[str, str]:
