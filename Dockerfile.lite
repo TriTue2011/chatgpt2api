@@ -50,5 +50,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 
 EXPOSE 80
 
-# Dùng uv run để khởi động giống hệt bản đầy đủ
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]
+# Dùng trực tiếp uvicorn từ venv (không cần uv run, nhẹ hơn)
+CMD [".venv/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]
