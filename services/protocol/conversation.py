@@ -381,13 +381,13 @@ def build_image_prompt(prompt: str, size: str | None) -> str:
     if not size:
         return prompt
     if size not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
-        return f"{prompt.strip()}\n\n输出图片，宽高比为 {size}。"
+        return f"{prompt.strip()}\n\nYêu cầu: Xuất hình ảnh với tỷ lệ khung hình là {size}."
     hint = {
-        "1:1": "输出为 1:1 正方形构图，主体居中，适合正方形画幅。",
-        "16:9": "输出为 16:9 横屏构图，适合宽画幅展示。",
-        "9:16": "输出为 9:16 竖屏构图，适合竖版画幅展示。",
-        "4:3": "输出为 4:3 比例，兼顾宽度与高度，适合展示画面细节。",
-        "3:4": "输出为 3:4 比例，纵向构图，适合人物肖像或竖向场景。",
+        "1:1": "Yêu cầu: Xuất ảnh với bố cục vuông 1:1, chủ thể nằm ở trung tâm, phù hợp với khung hình vuông.",
+        "16:9": "Yêu cầu: Xuất ảnh với bố cục ngang 16:9, phù hợp với màn hình rộng (landscape).",
+        "9:16": "Yêu cầu: Xuất ảnh với bố cục dọc 9:16, phù hợp với màn hình điện thoại (portrait).",
+        "4:3": "Yêu cầu: Xuất ảnh với tỷ lệ 4:3, cân bằng giữa chiều rộng và chiều cao, phù hợp để thể hiện chi tiết bối cảnh.",
+        "3:4": "Yêu cầu: Xuất ảnh với tỷ lệ 3:4, bố cục dọc, phù hợp cho ảnh chân dung nhân vật hoặc cảnh dọc.",
     }[size]
     return f"{prompt.strip()}\n\n{hint}"
 
