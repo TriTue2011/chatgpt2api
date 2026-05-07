@@ -61,6 +61,10 @@ def create_router(app_version: str) -> APIRouter:
     async def get_version():
         return {"version": app_version}
 
+    @router.get("/api/health")
+    async def health_check():
+        return {"status": "ok", "version": app_version}
+
     @router.get("/api/settings")
     async def get_settings(authorization: str | None = Header(default=None)):
         require_admin(authorization)
