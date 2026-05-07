@@ -169,7 +169,8 @@ class ConfigStore:
     @property
     def refresh_account_interval_minute(self) -> int:
         try:
-            return int(self.data.get("refresh_account_interval_minute", 5))
+            # Khống chế tối thiểu 1 phút để tránh vòng lặp vô hạn
+            return max(1, int(self.data.get("refresh_account_interval_minute", 5)))
         except (TypeError, ValueError):
             return 5
 
