@@ -341,11 +341,28 @@ class AccountService:
 
     def initialize_from_env(self) -> None:
         """Tự động nạp tài khoản từ biến môi trường CHATGPT_TOKEN_1, CHATGPT_TOKEN_2..."""
+        import json
         tokens = []
         for i in range(1, 101):
-            token = os.getenv(f"CHATGPT_TOKEN_{i}")
-            if token and token.strip():
-                tokens.append(token.strip())
+            val = os.getenv(f"CHATGPT_TOKEN_{i}")
+            if not val or not val.strip():
+                continue
+            
+            val = val.strip()
+            # Nếu người dùng dán nguyên cả đoạn JSON từ /api/auth/session
+            if val.startswith("{") and "accessToken" in val:
+                try:
+                    data = json.loads(val)
+                    token = data.get("accessToken")
+                    if token:
+                        tokens.append(token)
+                        print(f"[account-service] Đã tự động lọc accessToken từ JSON cho CHATGPT_TOKEN_{i}")
+                        continue
+                except Exception:
+                    pass
+            
+            # Nếu là token thuần túy
+            tokens.append(val)
 
         if tokens:
             print(f"[account-service] Tìm thấy {len(tokens)} tài khoản từ biến môi trường, đang nạp vào hệ thống...")
