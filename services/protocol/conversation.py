@@ -5,175 +5,7 @@ import hashlib
 import json
 import re
 import time
-import uuid
 from dataclasses import dataclass, field
-
-TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', re.DOTALL)
-TOOL_CALL_DIRECT_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)>(.*?)</\1>', re.DOTALL)
-TOOL_CALL_SELF_CLOSING_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']\s*/>', re.DOTALL)
-TOOL_CALL_DIRECT_SELF_CLOSING_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)\s*/>', re.DOTALL)
-JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
-CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
-# Strip ChatGPT internal citation markers, e.g. citeturn0search7, 【4†citeturn0search8】
-CITATION_RE = re.compile(r'【?[0-9†]*\s*citeturn[^\s】]*\s*】?', re.IGNORECASE)
-
-
-# Exact XML_WRAP_HINT from Gemini-FastAPI
-_XML_WRAP_HINT = (
-    "\nYou MUST wrap every tool call response inside a single fenced block exactly like:\n"
-    '```xml\n<tool_call name="tool_name">{"arg": "value"}</tool_call>\n```\n'
-    "Do not surround the fence with any other text or whitespace; otherwise the call will be ignored.\n"
-)
-
-
-def _build_tool_prompt(tools: list[dict[str, Any]], tool_choice: Any = None) -> str:
-    """Generate a system prompt chunk describing available tools. Mirrors Gemini-FastAPI _build_tool_prompt."""
-    if not tools:
-        return ""
-    lines: list[str] = [
-        "You can invoke the following developer tools. Call a tool only when it is required and follow the JSON schema exactly when providing arguments."
-    ]
-    for tool in tools:
-        f = tool.get("function", {})
-        name = f.get("name")
-        desc = f.get("description") or "No description provided."
-        lines.append(f"Tool `{name}`: {desc}")
-        params = f.get("parameters") or {}
-        properties = params.get("properties") or {}
-        if properties:
-            # Show schema when there are properties; allows using optional ones (e.g. Home Assistant HassTurnOn `name`)
-            schema_text = json.dumps(params, ensure_ascii=False, indent=2)
-            lines.append("Arguments JSON schema:")
-            lines.append(schema_text)
-        else:
-            # Truly no params defined
-            lines.append("Arguments JSON schema: {}")
-            lines.append(f"  >> `{name}` requires NO arguments. You MUST call it with exactly: {{}}")
-
-    # Handle tool_choice (mirrors Gemini-FastAPI)
-    if tool_choice == "none":
-        lines.append(
-            "For this request you must not call any tool. Provide the best possible natural language answer."
-        )
-    elif tool_choice == "required":
-        lines.append(
-            "You must call at least one tool before responding to the user. Do not provide a final user-facing answer until a tool call has been issued."
-        )
-    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
-        target = (tool_choice.get("function") or {}).get("name", "")
-        if target:
-            lines.append(
-                f"You are required to call the tool named `{target}`. Do not call any other tool."
-            )
-
-    lines.append(
-        "When you decide to call a tool you MUST respond with nothing except a single fenced block exactly like the template below."
-    )
-    lines.append(
-        "The fenced block MUST use ```xml as the opening fence and ``` as the closing fence. Do not add text before or after it."
-    )
-    lines.append("```xml")
-    lines.append('<tool_call name="tool_name">{"argument": "value"}</tool_call>')
-    lines.append("```")
-    lines.append(
-        "Use double quotes for JSON keys and values. If you omit the fenced block or include any extra text, the system will assume you are NOT calling a tool and your request will fail."
-    )
-    lines.append(
-        "If multiple tool calls are required, include multiple <tool_call> entries inside the same fenced block. Without a tool call, reply normally and do NOT emit any ```xml fence."
-    )
-    return "\n".join(lines)
-
-
-def _strip_system_hints(text: str) -> str:
-    """Remove system-level hint text and ChatGPT internal markers from responses."""
-    if not text:
-        return text
-    cleaned = CONTROL_TOKEN_RE.sub("", text)
-    cleaned = cleaned.replace(_XML_WRAP_HINT, "").replace(_XML_WRAP_HINT.strip(), "")
-    
-    # Strip new OpenAI PUA-based citation markers (e.g. \ue200cite\ue202turn0search3\ue201)
-    # Use [ \t]* instead of \s* to avoid eating newlines, which breaks markdown lists
-    cleaned = re.sub(r'[ \t]*\ue200.*?\ue201[ \t]*', '', cleaned)
-    
-    # Primary regex
-    cleaned = CITATION_RE.sub("", cleaned)
-    # Fallback brute-force regex to catch any remaining citeturn words without destroying whitespace
-    cleaned = re.sub(r'[^\s]*citeturn[^\s]*', '', cleaned, flags=re.IGNORECASE)
-    
-    # Clean markdown for TTS
-    cleaned = re.sub(r'[*#_]', '', cleaned)
-    cleaned = re.sub(r'-{3,}', '', cleaned)
-    cleaned = re.sub(r'(?m)^\s*[-+]\s+', '', cleaned)
-    cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)
-    
-    return cleaned.strip()
-
-def extract_and_remove_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
-    if not text:
-        return text, []
-
-    tool_calls: list[dict[str, Any]] = []
-
-    def _replace(match: re.Match[str]) -> str:
-        block_content = match.group(1)
-        original = match.group(0)
-        if not block_content:
-            return ""
-
-        found_any = False
-
-        def _add(name: str, raw_args: str) -> None:
-            nonlocal found_any
-            if not name:
-                return
-            try:
-                arguments = json.dumps(json.loads(raw_args), ensure_ascii=False)
-            except json.JSONDecodeError:
-                arguments = "{}"
-            tool_calls.append({
-                "id": f"call_{uuid.uuid4().hex}",
-                "type": "function",
-                "function": {"name": name, "arguments": arguments},
-            })
-            found_any = True
-
-        # Format 1: <tool_call name="ToolName">args</tool_call>
-        for m in TOOL_CALL_RE.finditer(block_content):
-            _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
-        for m in TOOL_CALL_SELF_CLOSING_RE.finditer(block_content):
-            _add((m.group(1) or "").strip(), "{}")
-
-        # Format 2: <ToolName>args</ToolName>  (alternate model output)
-        if not found_any:
-            for m in TOOL_CALL_DIRECT_RE.finditer(block_content):
-                _add((m.group(1) or "").strip(), (m.group(2) or "").strip())
-            for m in TOOL_CALL_DIRECT_SELF_CLOSING_RE.finditer(block_content):
-                _add((m.group(1) or "").strip(), "{}")
-
-        return ""
-
-    TOOL_BLOCK_RE = re.compile(r"```xml\s*(.*?)```", re.DOTALL | re.IGNORECASE)
-    cleaned = TOOL_BLOCK_RE.sub(_replace, text)
-
-    # Also support JSON fallback as previously added
-    if not tool_calls:
-        def _replace_json(match: re.Match[str]) -> str:
-            path = match.group(1).strip()
-            args = match.group(2).strip()
-            tool_calls.append({
-                "id": f"call_{uuid.uuid4().hex}",
-                "type": "function",
-                "function": {
-                    "name": path,
-                    "arguments": args,
-                }
-            })
-            return ""
-        cleaned = JSON_TOOL_CALL_RE.sub(_replace_json, cleaned)
-
-    # Strip injected hints so they don't leak into the final user-visible response
-    cleaned = _strip_system_hints(cleaned)
-    return cleaned.strip(), tool_calls
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -259,21 +91,13 @@ def message_text(content: Any) -> str:
     return ""
 
 
-def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
+def normalize_messages(messages: object, system: Any = None) -> list[dict[str, Any]]:
     normalized = []
-
-    # Inject global system prompt and tools documentation
-    system_instructions = config.global_system_prompt or ""
-    if tools:
-        system_instructions += _build_tool_prompt(tools, tool_choice=tool_choice)
-    
-    if system_instructions:
-        normalized.append({"role": "system", "content": system_instructions})
-        
+    if config.global_system_prompt:
+        normalized.append({"role": "system", "content": config.global_system_prompt})
     system_text = message_text(system)
     if system_text:
         normalized.append({"role": "system", "content": system_text})
-        
     if isinstance(messages, list):
         for message in messages:
             if not isinstance(message, dict):
@@ -281,37 +105,6 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
             role = message.get("role", "user")
             content = message.get("content", "")
             text = message_text(content)
-            
-            # Map 'developer' role to 'system' (Gemini-FastAPI compat)
-            if role == "developer":
-                role = "system"
-            
-            # Map 'tool' role to 'user' for Web ChatGPT visibility
-            # Preserve tool_call_id in the text so the model understands context
-            if role == "tool":
-                role = "user"
-                tool_call_id = message.get("tool_call_id") or ""
-                tool_name = message.get("name") or ""
-                header = "[Tool Result]"
-                if tool_name:
-                    header += f" {tool_name}"
-                if tool_call_id:
-                    header += f" (id: {tool_call_id})"
-                # Detect tool failure to prevent infinite retry loops
-                failure_suffix = ""
-                try:
-                    result_data = json.loads(text) if text else {}
-                    if isinstance(result_data, dict) and result_data.get("success") is False:
-                        err = result_data.get("error") or "unknown error"
-                        failure_suffix = (
-                            f"\n\n[STOP: Tool call FAILED: \"{err}\". "
-                            "Do NOT retry this tool. Do NOT call any tool again. "
-                            "Respond to the user in plain language explaining the issue.]"
-                        )
-                except (json.JSONDecodeError, TypeError):
-                    pass
-                text = f"{header}: {text}{failure_suffix}"
-
             images: list[tuple[bytes, str]] = []
             if role == "user":
                 images.extend(extract_image_from_message_content(content))
@@ -330,25 +123,7 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                     parts.append({"type": "image", "data": data, "mime": mime})
                 normalized.append({"role": role, "content": parts})
             else:
-                msg = {"role": role, "content": text}
-                if "tool_calls" in message:
-                    msg["tool_calls"] = message["tool_calls"]
-                if "tool_call_id" in message:
-                    msg["tool_call_id"] = message["tool_call_id"]
-                if "name" in message:
-                    msg["name"] = message["name"]
-                normalized.append(msg)
-
-    # Inject XML tool-call hint into last user message (mirrors Gemini-FastAPI _append_xml_hint_to_last_user_message)
-    if tools:
-        hint_stripped = _XML_WRAP_HINT.strip()
-        for i in range(len(normalized) - 1, -1, -1):
-            if normalized[i].get("role") == "user":
-                existing = normalized[i].get("content") or ""
-                if isinstance(existing, str) and hint_stripped not in existing:
-                    normalized[i] = dict(normalized[i])
-                    normalized[i]["content"] = existing + _XML_WRAP_HINT
-                break
+                normalized.append({"role": role, "content": text})
     return normalized
 
 
@@ -365,29 +140,16 @@ def assistant_history_messages(messages: list[dict[str, Any]]) -> list[str]:
 
 
 def build_image_prompt(prompt: str, size: str | None) -> str:
-    # Auto-detect aspect ratio from prompt to override default size
-    prompt_lower = prompt.lower()
-    if "16:9" in prompt_lower:
-        size = "16:9"
-    elif "9:16" in prompt_lower:
-        size = "9:16"
-    elif "4:3" in prompt_lower:
-        size = "4:3"
-    elif "3:4" in prompt_lower:
-        size = "3:4"
-    elif "1:1" in prompt_lower:
-        size = "1:1"
-
     if not size:
         return prompt
     if size not in {"1:1", "16:9", "9:16", "4:3", "3:4"}:
-        return f"{prompt.strip()}\n\nYêu cầu: Xuất hình ảnh với tỷ lệ khung hình là {size}."
+        return f"{prompt.strip()}\n\n输出图片，宽高比为 {size}。"
     hint = {
-        "1:1": "Yêu cầu: Xuất ảnh với bố cục vuông 1:1, chủ thể nằm ở trung tâm, phù hợp với khung hình vuông.",
-        "16:9": "Yêu cầu: Xuất ảnh với bố cục ngang 16:9, phù hợp với màn hình rộng (landscape).",
-        "9:16": "Yêu cầu: Xuất ảnh với bố cục dọc 9:16, phù hợp với màn hình điện thoại (portrait).",
-        "4:3": "Yêu cầu: Xuất ảnh với tỷ lệ 4:3, cân bằng giữa chiều rộng và chiều cao, phù hợp để thể hiện chi tiết bối cảnh.",
-        "3:4": "Yêu cầu: Xuất ảnh với tỷ lệ 3:4, bố cục dọc, phù hợp cho ảnh chân dung nhân vật hoặc cảnh dọc.",
+        "1:1": "输出为 1:1 正方形构图，主体居中，适合正方形画幅。",
+        "16:9": "输出为 16:9 横屏构图，适合宽画幅展示。",
+        "9:16": "输出为 9:16 竖屏构图，适合竖版画幅展示。",
+        "4:3": "输出为 4:3 比例，兼顾宽度与高度，适合展示画面细节。",
+        "3:4": "输出为 3:4 比例，纵向构图，适合人物肖像或竖向场景。",
     }[size]
     return f"{prompt.strip()}\n\n{hint}"
 
@@ -462,8 +224,6 @@ class ConversationRequest:
     response_format: str = "b64_json"
     base_url: str | None = None
     message_as_error: bool = False
-    tools: list[dict[str, Any]] | None = None
-    tool_choice: Any = None
 
 
 @dataclass
@@ -522,27 +282,6 @@ def assistant_message_text(message: dict[str, Any]) -> str:
     if not isinstance(parts, list):
         return ""
     return "".join(part for part in parts if isinstance(part, str))
-
-
-def assistant_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
-    # 1. Native Web Tool Call Detection
-    recipient = str(message.get("recipient") or "").strip()
-    if recipient and recipient != "all":
-        metadata = message.get("metadata") or {}
-        if metadata.get("is_visually_hidden_from_chat"):
-            content = message.get("content") or {}
-            parts = content.get("parts") or []
-            arguments = "".join(part for part in parts if isinstance(part, str))
-            return [{
-                "id": message.get("id") or f"call_{uuid.uuid4().hex}",
-                "type": "function",
-                "function": {
-                    "name": recipient.split(".")[-1],
-                    "arguments": arguments,
-                }
-            }]
-            
-    return []
 
 
 def strip_history(text: str, history_text: str = "") -> str:
@@ -703,18 +442,6 @@ def iter_conversation_payloads(payloads: Iterator[str], history_text: str = "",
             history_index += 1
             state.text = ""
             continue
-
-        # Handle Tool Calls
-        for candidate in (event, event.get("v")):
-            if not isinstance(candidate, dict):
-                continue
-            message = candidate.get("message")
-            if isinstance(message, dict) and (message.get("author") or {}).get("role") == "assistant":
-                tool_calls = assistant_tool_calls(message)
-                if tool_calls:
-                    yield conversation_base_event("conversation.tool_calls", state, raw=event, tool_calls=tool_calls)
-                    continue
-
         next_text = assistant_text(event, state.text, history_text)
         if next_text != state.text:
             delta = next_text[len(state.text):] if next_text.startswith(state.text) else next_text
@@ -731,10 +458,8 @@ def conversation_events(
     prompt: str = "",
     images: list[str] | None = None,
     size: str | None = None,
-    tools: list[dict[str, Any]] | None = None,
-    tool_choice: Any = None,
 ) -> Iterator[dict[str, Any]]:
-    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []), tools=tools)
+    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []))
     image_model = str(model or "").strip() in IMAGE_MODELS
     history_text = "" if image_model else assistant_history_text(normalized)
     history_messages = [] if image_model else assistant_history_messages(normalized)
@@ -745,8 +470,6 @@ def conversation_events(
         prompt=final_prompt,
         images=images if image_model else None,
         system_hints=["picture_v2"] if image_model else None,
-        tools=tools,
-        tool_choice=tool_choice,
     )
     yield from iter_conversation_payloads(payloads, history_text, history_messages)
 
@@ -755,7 +478,7 @@ def text_backend() -> OpenAIBackendAPI:
     return OpenAIBackendAPI(access_token=account_service.get_text_access_token())
 
 
-def stream_conversation_events(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[dict[str, Any]]:
+def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[str]:
     attempted_tokens: set[str] = set()
     token = getattr(backend, "access_token", "")
     emitted = False
@@ -766,17 +489,13 @@ def stream_conversation_events(backend: OpenAIBackendAPI, request: ConversationR
             attempted_tokens.add(token)
         try:
             active_backend = OpenAIBackendAPI(access_token=token)
-            for event in conversation_events(
-                active_backend,
-                messages=request.messages,
-                model=request.model,
-                prompt=request.prompt,
-                tools=request.tools,
-                tool_choice=request.tool_choice,
-            ):
-                if event:
+            for event in conversation_events(active_backend, messages=request.messages, model=request.model, prompt=request.prompt):
+                if event.get("type") != "conversation.delta":
+                    continue
+                delta = str(event.get("delta") or "")
+                if delta:
                     emitted = True
-                    yield event
+                    yield delta
             account_service.mark_text_used(token)
             return
         except Exception as exc:
@@ -787,14 +506,6 @@ def stream_conversation_events(backend: OpenAIBackendAPI, request: ConversationR
                 if token:
                     continue
             raise
-
-
-def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[str]:
-    for event in stream_conversation_events(backend, request):
-        if event.get("type") == "conversation.delta":
-            delta = str(event.get("delta") or "")
-            if delta:
-                yield delta
 
 
 def collect_text(backend: OpenAIBackendAPI, request: ConversationRequest) -> str:

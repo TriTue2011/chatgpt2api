@@ -80,9 +80,7 @@ def sanitize_sub2api_servers(servers: list[dict]) -> list[dict]:
 
 
 def start_limited_account_watcher(stop_event: Event) -> Thread:
-    # Đảm bảo interval tối thiểu là 1 phút (60s) để tránh vòng lặp vô hạn gây tốn CPU
-    refresh_min = config.refresh_account_interval_minute
-    interval_seconds = max(60, refresh_min * 60) if refresh_min is not None else 300
+    interval_seconds = config.refresh_account_interval_minute * 60
 
     def worker() -> None:
         while not stop_event.is_set():

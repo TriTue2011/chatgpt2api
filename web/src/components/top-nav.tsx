@@ -79,7 +79,7 @@ export function TopNav() {
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 py-1 text-sm text-stone-400 transition hover:text-stone-700"
-            aria-label="GitHub repository"
+            aria-label="Kho mã GitHub"
           >
             <Github className="size-4" />
             <span className="hidden md:inline">GitHub</span>

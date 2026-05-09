@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -38,7 +38,7 @@ export function ProxySettingsCard() {
       setFormUrl(data.proxy.url);
       setFormEnabled(data.proxy.enabled);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "加载代理配置失败");
+      toast.error(error instanceof Error ? error.message : "加载代理配置thất bại");
     } finally {
       setIsLoading(false);
     }
@@ -58,7 +58,7 @@ export function ProxySettingsCard() {
 
   const handleSave = async () => {
     if (formEnabled && !formUrl.trim()) {
-      toast.error("启用代理时必须填写代理地址");
+      toast.error("启用代理时必须填写Địa chỉ proxy");
       return;
     }
     setIsSaving(true);
@@ -70,9 +70,9 @@ export function ProxySettingsCard() {
       setSettings(data.proxy);
       setFormUrl(data.proxy.url);
       setFormEnabled(data.proxy.enabled);
-      toast.success("代理配置已保存");
+      toast.success("代理配置Đã Lưu");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      toast.error(error instanceof Error ? error.message : "Lưuthất bại");
     } finally {
       setIsSaving(false);
     }
@@ -81,7 +81,7 @@ export function ProxySettingsCard() {
   const handleTest = async () => {
     const candidate = formUrl.trim();
     if (!candidate) {
-      toast.error("请先填写代理地址");
+      toast.error("请先填写Địa chỉ proxy");
       return;
     }
     setIsTesting(true);
@@ -95,7 +95,7 @@ export function ProxySettingsCard() {
         toast.error(`代理不可用：${data.result.error ?? "未知错误"}`);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "测试代理失败");
+      toast.error(error instanceof Error ? error.message : "Kiểm tra proxythất bại");
     } finally {
       setIsTesting(false);
     }
@@ -134,7 +134,7 @@ export function ProxySettingsCard() {
               <div className="space-y-0.5">
                 <div className="text-sm font-medium text-stone-800">启用代理</div>
                 <div className="text-sm text-stone-500">
-                  关闭后 chatgpt.com 请求会直连。保存后立即生效，无需重启。
+                  关闭后 chatgpt.com 请求会直连。Lưu后立即生效，无需重启。
                 </div>
               </div>
             </label>
@@ -142,7 +142,7 @@ export function ProxySettingsCard() {
             <div className="space-y-2">
               <label className="flex items-center gap-1.5 text-sm font-medium text-stone-700">
                 <PlugZap className="size-3.5" />
-                代理地址
+                Địa chỉ proxy
               </label>
               <Input
                 value={formUrl}
@@ -180,7 +180,7 @@ export function ProxySettingsCard() {
                 disabled={isSaving || !dirty}
               >
                 {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-                保存
+                Lưu
               </Button>
               <Button
                 variant="outline"
@@ -189,7 +189,7 @@ export function ProxySettingsCard() {
                 disabled={isTesting}
               >
                 {isTesting ? <LoaderCircle className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
-                测试连通
+                Kiểm tra kết nối
               </Button>
             </div>
           </div>
@@ -198,3 +198,5 @@ export function ProxySettingsCard() {
     </Card>
   );
 }
+
+

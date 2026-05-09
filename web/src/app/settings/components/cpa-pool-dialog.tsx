@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Eye, EyeOff, Link2, LoaderCircle, Save, Unplug } from "lucide-react";
 
@@ -34,14 +34,14 @@ export function CPAPoolDialog() {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent showCloseButton={false} className="rounded-2xl p-6">
         <DialogHeader className="gap-2">
-          <DialogTitle>{editingPool ? "编辑连接" : "添加连接"}</DialogTitle>
+          <DialogTitle>{editingPool ? "Chỉnh sửakết nối" : "Thêm kết nối"}</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {editingPool ? "修改 CPA 连接信息" : "添加一个新的 CLIProxyAPI 连接"}
+            {editingPool ? "修改 CPA kết nối信息" : "添加一个新的 CLIProxyAPI kết nối"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-stone-700">名称（可选）</label>
+            <label className="text-sm font-medium text-stone-700">Tên（tùy chọn）</label>
             <Input
               value={formName}
               onChange={(event) => setFormName(event.target.value)}
@@ -91,7 +91,7 @@ export function CPAPoolDialog() {
             onClick={() => setDialogOpen(false)}
             disabled={isSavingPool}
           >
-            取消
+            Hủy
           </Button>
           <Button
             className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
@@ -99,10 +99,12 @@ export function CPAPoolDialog() {
             disabled={isSavingPool}
           >
             {isSavingPool ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {editingPool ? "保存修改" : "添加"}
+            {editingPool ? "Lưu修改" : "添加"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DayPicker } from "react-day-picker";
+import { vi } from "date-fns/locale";
 
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ function Calendar({
         Chevron: ({ orientation }) =>
           orientation === "left" ? <ChevronLeft className="size-4" /> : <ChevronRight className="size-4" />,
       }}
+      locale={vi}
       {...props}
     />
   );

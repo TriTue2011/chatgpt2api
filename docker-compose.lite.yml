@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    container_name: chatgpt2api-lite
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # === REQUIRED: Authentication key ===
+      # Used by hass_local_openai_llm to authenticate API calls
+      - CHATGPT2API_AUTH_KEY=sk-your-secret-key
+
+      # === REQUIRED: ChatGPT tokens (at least one) ===
+      # Multiple accounts supported via numbered env vars
+      - CHATGPT_TOKEN_1=your_chatgpt_token_here
+      # - CHATGPT_TOKEN_2=another_token
+      # - CHATGPT_TOKEN_3=third_token
+
+      # === OPTIONAL: Storage backend ===
+      # Supported: json (default), sqlite, postgres, git
+      - STORAGE_BACKEND=json
+
+      # === OPTIONAL: Database URL (for sqlite/postgres) ===
+      # - DATABASE_URL=sqlite:///app/data/accounts.db
+      # - DATABASE_URL=postgresql://user:password@host:5432/dbname
+
+      # === OPTIONAL: Global system prompt ===
+      # - GLOBAL_SYSTEM_PROMPT=You are a helpful assistant.

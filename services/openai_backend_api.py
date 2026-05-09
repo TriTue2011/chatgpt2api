@@ -359,9 +359,9 @@ class OpenAIBackendAPI:
             })
         return conversation_messages
 
-    def _conversation_payload(self, messages: list[Dict[str, Any]], model: str, timezone: str, tools: Optional[list[Dict[str, Any]]] = None, tool_choice: Any = None) -> Dict[str, Any]:
+    def _conversation_payload(self, messages: list[Dict[str, Any]], model: str, timezone: str) -> Dict[str, Any]:
         """把标准 messages 构造成 web 对话请求体。"""
-        payload = {
+        return {
             "action": "next",
             "messages": self._api_messages_to_conversation_messages(messages),
             "model": model,
@@ -375,7 +375,7 @@ class OpenAIBackendAPI:
             "history_and_training_disabled": True,
             "reset_rate_limits": False,
             "suggestions": [],
-            "supported_encodings": ["v1"],
+            "supported_encodings": [],
             "system_hints": [],
             "timezone": timezone,
             "timezone_offset_min": -480,
@@ -391,11 +391,6 @@ class OpenAIBackendAPI:
                 "screen_width": 2560,
             },
         }
-        if tools:
-            payload["tools"] = tools
-        if tool_choice:
-            payload["tool_choice"] = tool_choice
-        return payload
 
     def _image_model_slug(self, model: str) -> str:
         """把标准图片模型名映射到底层 model slug。"""
@@ -797,8 +792,6 @@ class OpenAIBackendAPI:
             prompt: str = "",
             images: Optional[list[str]] = None,
             system_hints: Optional[list[str]] = None,
-            tools: Optional[list[Dict[str, Any]]] = None,
-            tool_choice: Any = None,
     ) -> Iterator[str]:
         system_hints = system_hints or []
         if "picture_v2" in system_hints:
@@ -809,7 +802,7 @@ class OpenAIBackendAPI:
         self._bootstrap()
         requirements = self._get_chat_requirements()
         path, timezone = self._chat_target()
-        payload = self._conversation_payload(normalized, model, timezone, tools=tools, tool_choice=tool_choice)
+        payload = self._conversation_payload(normalized, model, timezone)
         response = self.session.post(
             self.base_url + path,
             headers=self._conversation_headers(path, requirements),

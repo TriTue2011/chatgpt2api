@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Import, LoaderCircle, Search } from "lucide-react";
 import { useMemo } from "react";
@@ -64,9 +64,9 @@ export function ImportBrowserDialog() {
     <Dialog open={browserOpen} onOpenChange={setBrowserOpen}>
       <DialogContent showCloseButton={false} className="max-h-[90vh] max-w-5xl rounded-2xl p-6">
         <DialogHeader className="gap-2">
-          <DialogTitle>选择要导入的账号</DialogTitle>
+          <DialogTitle>chọn要导入的账号</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {browserPool ? `来自 ${browserPool.name || browserPool.base_url}` : "读取到的远程账号列表"}
+            {browserPool ? `来自 ${browserPool.name || browserPool.base_url}` : "Đọc到的远程账号列表"}
           </DialogDescription>
         </DialogHeader>
 
@@ -98,7 +98,7 @@ export function ImportBrowserDialog() {
               className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700"
               onClick={() => toggleSelectAllFiltered(!allFilteredSelected)}
             >
-              {allFilteredSelected ? "取消全选" : "全选筛选结果"}
+              {allFilteredSelected ? "Hủy全选" : "Chọn tất cả kết quả lọc"}
             </Button>
           </div>
         </div>
@@ -107,9 +107,9 @@ export function ImportBrowserDialog() {
           <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3 text-sm text-stone-500">
             <div className="flex items-center gap-3">
               <Checkbox checked={allFilteredSelected} onCheckedChange={(checked) => toggleSelectAllFiltered(Boolean(checked))} />
-              <span>筛选结果 {filteredFiles.length} 个</span>
+              <span>Kết quả lọc {filteredFiles.length} 个</span>
             </div>
-            <span>已选 {selectedNames.length} 个</span>
+            <span>Đã chọn {selectedNames.length} 个</span>
           </div>
           <div className="max-h-[420px] overflow-auto">
             {pagedFiles.length === 0 ? (
@@ -145,7 +145,7 @@ export function ImportBrowserDialog() {
               onClick={() => setFilePage(Math.max(1, safeFilePage - 1))}
               disabled={safeFilePage <= 1}
             >
-              上一页
+              Trang trước
             </Button>
             <span>
               {safeFilePage}/{filePageCount}
@@ -156,7 +156,7 @@ export function ImportBrowserDialog() {
               onClick={() => setFilePage(Math.min(filePageCount, safeFilePage + 1))}
               disabled={safeFilePage >= filePageCount}
             >
-              下一页
+              Trang sau
             </Button>
           </div>
         </div>
@@ -168,7 +168,7 @@ export function ImportBrowserDialog() {
             onClick={() => setBrowserOpen(false)}
             disabled={isStartingImport}
           >
-            取消
+            Hủy
           </Button>
           <Button
             className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
@@ -176,10 +176,12 @@ export function ImportBrowserDialog() {
             disabled={isStartingImport || selectedNames.length === 0}
           >
             {isStartingImport ? <LoaderCircle className="size-4 animate-spin" /> : <Import className="size-4" />}
-            导入选中账号
+            Nhập tài khoản đã chọn
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+
