@@ -58,11 +58,11 @@ def completion_response(
     }
 
 
-def stream_text_chat_completion(backend, messages: list[dict[str, Any]], model: str) -> Iterator[dict[str, Any]]:
+def stream_text_chat_completion(backend, messages: list[dict[str, Any]], model: str, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> Iterator[dict[str, Any]]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
-    request = ConversationRequest(model=model, messages=messages)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     for delta_text in stream_text_deltas(backend, request):
         if not sent_role:
             sent_role = True
@@ -108,10 +108,16 @@ def chat_image_args(body: dict[str, Any]) -> tuple[str, str, int, list[tuple[byt
     return model, prompt, parse_image_count(body.get("n")), images
 
 
-def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]] | None, Any]:
     model = str(body.get("model") or "auto").strip() or "auto"
-    messages = normalize_messages(chat_messages_from_body(body))
-    return model, messages
+    messages = chat_messages_from_body(body)
+    tools = body.get("tools")
+    if isinstance(tools, list) and tools:
+        tools = [t for t in tools if isinstance(t, dict)]
+    else:
+        tools = None
+    tool_choice = body.get("tool_choice")
+    return model, messages, tools, tool_choice
 
 
 def image_result_content(result: dict[str, Any]) -> str:
@@ -175,10 +181,10 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     if body.get("stream"):
         if is_image_chat_request(body):
             return image_chat_events(body)
-        model, messages = text_chat_parts(body)
-        return stream_text_chat_completion(text_backend(), messages, model)
+        model, messages, tools, tool_choice = text_chat_parts(body)
+        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     if is_image_chat_request(body):
         return image_chat_response(body)
-    model, messages = text_chat_parts(body)
-    request = ConversationRequest(model=model, messages=messages)
+    model, messages, tools, tool_choice = text_chat_parts(body)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     return completion_response(model, collect_text(text_backend(), request), messages=messages)

@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -16,6 +17,87 @@ from services.config import config
 from services.openai_backend_api import OpenAIBackendAPI
 from utils.helper import IMAGE_MODELS, extract_image_from_message_content
 from utils.log import logger
+
+TOOL_CALL_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', re.DOTALL)
+TOOL_CALL_DIRECT_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)>(.*?)</\1>', re.DOTALL)
+TOOL_CALL_SELF_CLOSING_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']\s*/>', re.DOTALL)
+TOOL_CALL_DIRECT_SELF_CLOSING_RE = re.compile(r'<([A-Z][A-Za-z0-9_]*?)\s*/>', re.DOTALL)
+JSON_TOOL_CALL_RE = re.compile(r'\{\s*"path"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{.*?\})\s*\}', re.DOTALL)
+CONTROL_TOKEN_RE = re.compile(r'<\|im_(?:start|end)\|>')
+# Strip ChatGPT internal citation markers, e.g. citeturn0search7, 【4†citeturn0search8】
+CITATION_RE = re.compile(r'【?[0-9†]*\s*citeturn[^\s】]*\s*】?', re.IGNORECASE)
+
+
+# Exact XML_WRAP_HINT from Gemini-FastAPI
+_XML_WRAP_HINT = (
+    "\nYou MUST wrap every tool call response inside a single fenced block exactly like:\n"
+    '```xml\n<tool_call name="tool_name">{"arg": "value"}</tool_call>\n```\n'
+    "Do not surround the fence with any other text or whitespace; otherwise the call will be ignored.\n"
+)
+
+
+def _build_tool_prompt(tools: list[dict[str, Any]], tool_choice: Any = None) -> str:
+    """Generate a system prompt chunk describing available tools. Mirrors Gemini-FastAPI _build_tool_prompt."""
+    if not tools:
+        return ""
+    lines: list[str] = [
+        "You can invoke the following developer tools. Call a tool only when it is required and follow the JSON schema exactly when providing arguments."
+    ]
+    for tool in tools:
+        f = tool.get("function", {})
+        name = f.get("name")
+        desc = f.get("description") or "No description provided."
+        lines.append(f"Tool `{name}`: {desc}")
+        params = f.get("parameters") or {}
+        properties = params.get("properties") or {}
+        if properties:
+            schema_text = json.dumps(params, ensure_ascii=False, indent=2)
+            lines.append("Arguments JSON schema:")
+            lines.append(schema_text)
+        else:
+            lines.append("Arguments JSON schema: {}")
+            lines.append(f"  >> `{name}` requires NO arguments. You MUST call it with exactly: {{}}")
+
+    if tool_choice == "none":
+        lines.append(
+            "For this request you must not call any tool. Provide the best possible natural language answer."
+        )
+    elif tool_choice == "required":
+        lines.append(
+            "You must call at least one tool before responding to the user. Do not provide a final user-facing answer until a tool call has been issued."
+        )
+    elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        target = (tool_choice.get("function") or {}).get("name", "")
+        if target:
+            lines.append(
+                f"You are required to call the tool named `{target}`. Do not call any other tool."
+            )
+
+    lines.append(
+        "When you decide to call a tool you MUST respond with nothing except a single fenced block exactly like the template below."
+    )
+    lines.append(
+        "The fenced block MUST use ```xml as the opening fence and ``` as the closing fence. Do not add text before or after it."
+    )
+    lines.append("```xml")
+    lines.append('<tool_call name="tool_name">{"argument": "value"}</tool_call>')
+    lines.append("```")
+    lines.append(
+        "Use double quotes for JSON keys and values. If you omit the fenced block or include any extra text, the system will assume you are NOT calling a tool and your request will fail."
+    )
+    lines.append(
+        "If multiple tool calls are required, include multiple <tool_call> entries inside the same fenced block. Without a tool call, reply normally and do NOT emit any ```xml fence."
+    )
+    return "\n".join(lines)
+
+
+def _strip_system_hints(text: str) -> str:
+    """Remove system-level hint text and ChatGPT internal markers from responses."""
+    if not text:
+        return text
+    text = CONTROL_TOKEN_RE.sub("", text)
+    text = CITATION_RE.sub("", text)
+    return text.strip()
 
 
 class ImageGenerationError(Exception):
@@ -91,13 +173,82 @@ def message_text(content: Any) -> str:
     return ""
 
 
-def normalize_messages(messages: object, system: Any = None) -> list[dict[str, Any]]:
+# Maximum payload size in bytes before triggering truncation.
+# ChatGPT backend limit is ~100 KB; we use 80 KB to be safe.
+_MAX_PAYLOAD_BYTES = 80_000
+
+
+def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop oldest non-system messages when the serialized payload exceeds the size limit.
+
+    This prevents HTTP 413 (Request Entity Too Large) errors from the ChatGPT backend.
+    Home Assistant accumulates the entire conversation history (including tool call results)
+    across multiple iterations, which can easily exceed the limit.
+
+    Strategy:
+    1. Keep all system messages (they define behavior and tools).
+    2. Drop oldest non-system messages until under the threshold.
+    3. If still over limit, truncate the system message (usually HA entity list).
+    4. If still over limit, truncate the last user message content as a last resort.
+    """
+    payload = json.dumps(messages, ensure_ascii=False, default=str)
+    if len(payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+        return messages
+
+    # Separate system messages from the rest
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs = [m for m in messages if m.get("role") != "system"]
+
+    # Drop oldest non-system messages until under limit
+    while other_msgs:
+        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+        if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+            break
+        other_msgs.pop(0)
+
+    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
+    # If still over limit, truncate the last system message (typically the HA entity list)
+    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        if system_msgs:
+            last_sys = system_msgs[-1]
+            if isinstance(last_sys.get("content"), str):
+                content = last_sys["content"]
+                excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+                allowed_len = max(500, len(content) - excess - 200)
+                if len(content) > allowed_len:
+                    last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
+                    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+
+    # If still over limit, truncate last user content
+    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        last_user = other_msgs[-1]
+        if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
+            content = last_user["content"]
+            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+            allowed_len = max(500, len(content) - excess - 200)
+            if len(content) > allowed_len:
+                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
+
+    result = system_msgs + other_msgs
+    return result
+
+
+def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
     normalized = []
-    if config.global_system_prompt:
-        normalized.append({"role": "system", "content": config.global_system_prompt})
+
+    # Inject global system prompt and tools documentation
+    system_instructions = config.global_system_prompt or ""
+    if tools:
+        system_instructions += _build_tool_prompt(tools, tool_choice=tool_choice)
+
+    if system_instructions:
+        normalized.append({"role": "system", "content": system_instructions})
+
     system_text = message_text(system)
     if system_text:
         normalized.append({"role": "system", "content": system_text})
+
     if isinstance(messages, list):
         for message in messages:
             if not isinstance(message, dict):
@@ -105,6 +256,37 @@ def normalize_messages(messages: object, system: Any = None) -> list[dict[str, A
             role = message.get("role", "user")
             content = message.get("content", "")
             text = message_text(content)
+
+            # Map 'developer' role to 'system' (Gemini-FastAPI compat)
+            if role == "developer":
+                role = "system"
+
+            # Map 'tool' role to 'user' for Web ChatGPT visibility
+            # Preserve tool_call_id in the text so the model understands context
+            if role == "tool":
+                role = "user"
+                tool_call_id = message.get("tool_call_id") or ""
+                tool_name = message.get("name") or ""
+                header = "[Tool Result]"
+                if tool_name:
+                    header += f" {tool_name}"
+                if tool_call_id:
+                    header += f" (id: {tool_call_id})"
+                # Detect tool failure to prevent infinite retry loops
+                failure_suffix = ""
+                try:
+                    result_data = json.loads(text) if text else {}
+                    if isinstance(result_data, dict) and result_data.get("success") is False:
+                        err = result_data.get("error") or "unknown error"
+                        failure_suffix = (
+                            f"\n\n[STOP: Tool call FAILED: \"{err}\". "
+                            "Do NOT retry this tool. Do NOT call any tool again. "
+                            "Respond to the user in plain language explaining the issue.]"
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                text = f"{header}: {text}{failure_suffix}"
+
             images: list[tuple[bytes, str]] = []
             if role == "user":
                 images.extend(extract_image_from_message_content(content))
@@ -123,7 +305,28 @@ def normalize_messages(messages: object, system: Any = None) -> list[dict[str, A
                     parts.append({"type": "image", "data": data, "mime": mime})
                 normalized.append({"role": role, "content": parts})
             else:
-                normalized.append({"role": role, "content": text})
+                msg = {"role": role, "content": text}
+                if "tool_calls" in message:
+                    msg["tool_calls"] = message["tool_calls"]
+                if "tool_call_id" in message:
+                    msg["tool_call_id"] = message["tool_call_id"]
+                if "name" in message:
+                    msg["name"] = message["name"]
+                normalized.append(msg)
+
+    # Inject XML tool-call hint into last user message (mirrors Gemini-FastAPI _append_xml_hint_to_last_user_message)
+    if tools:
+        hint_stripped = _XML_WRAP_HINT.strip()
+        for i in range(len(normalized) - 1, -1, -1):
+            if normalized[i].get("role") == "user":
+                existing = normalized[i].get("content") or ""
+                if isinstance(existing, str) and hint_stripped not in existing:
+                    normalized[i] = dict(normalized[i])
+                    normalized[i]["content"] = existing + _XML_WRAP_HINT
+                break
+
+    # Truncate oversized payload to prevent HTTP 413 errors
+    normalized = _truncate_messages(normalized)
     return normalized
 
 
@@ -224,6 +427,8 @@ class ConversationRequest:
     response_format: str = "b64_json"
     base_url: str | None = None
     message_as_error: bool = False
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any = None
 
 
 @dataclass
@@ -458,9 +663,24 @@ def conversation_events(
     prompt: str = "",
     images: list[str] | None = None,
     size: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: Any = None,
 ) -> Iterator[dict[str, Any]]:
-    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []))
+    normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []), tools=tools, tool_choice=tool_choice)
     image_model = str(model or "").strip() in IMAGE_MODELS
+
+    if not image_model:
+        last_user_text = ""
+        for msg in reversed(normalized):
+            if str(msg.get("role") or "") == "user":
+                last_user_text = str(msg.get("content") or "").strip().lower()
+                break
+        if any(keyword in last_user_text for keyword in ("trạng thái nhà", "tình trạng nhà", "nhà đang", "state house", "home status")):
+            normalized.insert(0, {
+                "role": "system",
+                "content": "For smart-home status questions, call available live context/tool first (such as GetLiveContext) before answering. Do not answer from assumptions.",
+            })
+
     history_text = "" if image_model else assistant_history_text(normalized)
     history_messages = [] if image_model else assistant_history_messages(normalized)
     final_prompt = prompt_with_global_system(build_image_prompt(prompt, size)) if image_model else prompt
@@ -470,6 +690,8 @@ def conversation_events(
         prompt=final_prompt,
         images=images if image_model else None,
         system_hints=["picture_v2"] if image_model else None,
+        tools=tools,
+        tool_choice=tool_choice,
     )
     yield from iter_conversation_payloads(payloads, history_text, history_messages)
 
@@ -478,7 +700,7 @@ def text_backend() -> OpenAIBackendAPI:
     return OpenAIBackendAPI(access_token=account_service.get_text_access_token())
 
 
-def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[str]:
+def stream_conversation_events(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[dict[str, Any]]:
     attempted_tokens: set[str] = set()
     token = getattr(backend, "access_token", "")
     emitted = False
@@ -489,13 +711,17 @@ def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) 
             attempted_tokens.add(token)
         try:
             active_backend = OpenAIBackendAPI(access_token=token)
-            for event in conversation_events(active_backend, messages=request.messages, model=request.model, prompt=request.prompt):
-                if event.get("type") != "conversation.delta":
-                    continue
-                delta = str(event.get("delta") or "")
-                if delta:
+            for event in conversation_events(
+                active_backend,
+                messages=request.messages,
+                model=request.model,
+                prompt=request.prompt,
+                tools=request.tools,
+                tool_choice=request.tool_choice,
+            ):
+                if event:
                     emitted = True
-                    yield delta
+                    yield event
             account_service.mark_text_used(token)
             return
         except Exception as exc:
@@ -506,6 +732,15 @@ def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) 
                 if token:
                     continue
             raise
+
+
+def stream_text_deltas(backend: OpenAIBackendAPI, request: ConversationRequest) -> Iterator[str]:
+    for event in stream_conversation_events(backend, request):
+        if event.get("type") != "conversation.delta":
+            continue
+        delta = str(event.get("delta") or "")
+        if delta:
+            yield delta
 
 
 def collect_text(backend: OpenAIBackendAPI, request: ConversationRequest) -> str:
