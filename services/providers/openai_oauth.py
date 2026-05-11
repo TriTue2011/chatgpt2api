@@ -168,7 +168,6 @@ class CodexOAuthProvider:
             resp = requests.post(
                 CODEX_URL, headers=headers, json=body,
                 timeout=300, stream=True,
-                impersonate="chrome110",
             )
 
             if resp.status_code == 401:
