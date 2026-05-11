@@ -361,8 +361,8 @@ def _handle_openai_oauth_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Use Codex OAuth token to call OpenAI API directly — same as 9router."""
-    from services.providers.openai_oauth import openai_oauth
+    """Use Codex OAuth token to call chatgpt.com/backend-api/codex/responses — same as 9router."""
+    from services.providers.openai_oauth import codex_oauth
 
     pure_model = model[3:] if model.startswith("cx/") else model
     if not pure_model or pure_model == "auto":
@@ -382,7 +382,7 @@ def _handle_openai_oauth_chat(
 
     while True:
         try:
-            token = openai_oauth.get_token_for_request(attempted)
+            token = codex_oauth.get_token_for_request(attempted)
         except RuntimeError as exc:
             return completion_response(model=model, content=str(exc), messages=messages)
 
@@ -392,13 +392,13 @@ def _handle_openai_oauth_chat(
 
         try:
             if stream:
-                return openai_oauth.chat_completions(
+                return codex_oauth.chat_completions(
                     access_token=token, messages=messages, model=pure_model,
                     stream=True, temperature=temperature, max_tokens=max_tokens,
                     tools=tools, tool_choice=tool_choice,
                 )
             else:
-                result = openai_oauth.chat_completions(
+                result = codex_oauth.chat_completions(
                     access_token=token, messages=messages, model=pure_model,
                     stream=False, temperature=temperature, max_tokens=max_tokens,
                     tools=tools, tool_choice=tool_choice,
@@ -408,7 +408,7 @@ def _handle_openai_oauth_chat(
         except Exception as exc:
             last_error = str(exc)
             if "expired" in last_error.lower() or "401" in last_error:
-                account_service.remove_invalid_token(token, "openai_oauth")
+                account_service.remove_invalid_token(token, "codex_oauth")
                 continue
             break
 

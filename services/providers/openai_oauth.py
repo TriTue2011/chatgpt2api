@@ -1,20 +1,17 @@
 """
-OpenAI OAuth Provider — use Codex OAuth tokens to call OpenAI API directly.
+Codex OAuth Provider — uses 9router Codex tokens to call chatgpt.com/backend-api/codex/responses.
 
-9router's Codex tokens are OpenAI OAuth tokens — they work with api.openai.com
-exactly like API keys. No 24KB limit, no browser impersonation, no PoW.
+This is the EXACT same endpoint 9router uses. No api.openai.com — the tokens
+work with chatgpt.com's Codex Responses API. No 24KB limit, native tool calling.
 
-Flow:
-1. Import 9router backup → extract Codex tokens → store as type="codex"
-2. When model uses cx/ prefix → pick a Codex token → call api.openai.com/v1/chat/completions
-3. Token refresh via OAuth (port from 9router tokenRefresh.js)
-
-This is the SAME as how 9router does ChatGPT via OAuth.
+Format: OpenAI Responses API (not chat/completions).
 """
 
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from typing import Any, Iterator
 
 from curl_cffi import requests
@@ -23,125 +20,244 @@ from services.config import config
 from services.account_service import account_service
 from utils.log import logger
 
-OPENAI_API_BASE = "https://api.openai.com"
+CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
+CODEX_HEADERS = {
+    "originator": "codex-cli",
+    "User-Agent": "codex-cli/1.0.18 (Windows; x64)",
+    "Content-Type": "application/json",
+    "Accept": "text/event-stream",
+}
 
 
-class OpenAIOAuthProvider:
-    """OpenAI API via OAuth token (from 9router Codex provider).
+def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
+                              tool_choice: Any = None, instructions: str | None = None) -> dict[str, Any]:
+    """Convert OpenAI chat format → Codex Responses API format."""
+    body: dict[str, Any] = {"stream": True}
 
-    Uses access_token as Bearer token to api.openai.com.
-    """
+    input_items: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text_parts.append(str(part.get("text", "")))
+            content = " ".join(text_parts)
+        else:
+            content = str(content or "")
+
+        if role == "system":
+            instructions = (instructions or "") + "\n" + content
+            continue
+
+        responses_role = "user" if role == "user" else "assistant"
+        input_items.append({"role": responses_role, "content": content})
+
+    body["input"] = input_items
+
+    if instructions and instructions.strip():
+        body["instructions"] = instructions.strip()
+
+    if tools:
+        body["tools"] = [{
+            "type": "function",
+            "name": t.get("function", {}).get("name", ""),
+            "description": t.get("function", {}).get("description", ""),
+            "parameters": t.get("function", {}).get("parameters", {}),
+        } for t in tools if isinstance(t, dict)]
+
+    if tool_choice:
+        body["tool_choice"] = tool_choice
+
+    return body
+
+
+def _responses_to_chat_chunk(event: dict[str, Any], model: str, completion_id: str, created: int) -> dict[str, Any] | None:
+    """Convert Codex Responses SSE event → OpenAI chat completion chunk."""
+    event_type = event.get("type", "")
+
+    if event_type == "response.output_text.delta":
+        delta = event.get("delta", "")
+        return {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
+        }
+
+    if event_type == "response.output_item.done":
+        item = event.get("item", {})
+        if item.get("type") == "function_call":
+            return {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": item.get("call_id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": item.get("name", ""),
+                            "arguments": item.get("arguments", ""),
+                        },
+                    }]
+                }, "finish_reason": None}],
+            }
+
+    if event_type == "response.completed":
+        return {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+
+    if event_type == "error":
+        return {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {
+                "content": f"Codex error: {event.get('message', 'unknown')}"
+            }, "finish_reason": "stop"}],
+        }
+
+    return None
+
+
+class CodexOAuthProvider:
+    """Direct Codex OAuth — no 9router dependency."""
 
     def chat_completions(
         self,
         access_token: str,
         messages: list[dict[str, Any]],
         model: str = "auto",
-        stream: bool = False,
+        stream: bool = True,
         temperature: float | None = None,
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
         **kwargs,
     ) -> dict[str, Any] | Iterator[str]:
-        """Send chat request to OpenAI API using OAuth token."""
+        """Call Codex Responses API with OAuth token."""
 
-        body: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": stream,
-        }
+        body = _chat_to_responses_input(messages, tools, tool_choice)
+
+        if model and model != "auto":
+            body["model"] = model
         if temperature is not None:
             body["temperature"] = temperature
-        if max_tokens is not None:
-            body["max_tokens"] = max_tokens
-        if tools:
-            body["tools"] = tools
-        if tool_choice:
-            body["tool_choice"] = tool_choice
-        body.update(kwargs)
 
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream" if stream else "application/json",
-        }
-
-        url = f"{OPENAI_API_BASE}/v1/chat/completions"
+        headers = dict(CODEX_HEADERS)
+        headers["Authorization"] = f"Bearer {access_token}"
+        headers["Accept"] = "text/event-stream" if stream else "application/json"
+        body["stream"] = stream
 
         logger.info({
-            "event": "openai_oauth_request",
-            "model": model,
+            "event": "codex_request",
+            "model": model or "auto",
             "stream": stream,
             "message_count": len(messages),
         })
 
         try:
             resp = requests.post(
-                url, headers=headers, json=body, timeout=300, stream=stream
+                CODEX_URL, headers=headers, json=body,
+                timeout=300, stream=stream,
+                impersonate="chrome110",
             )
 
             if resp.status_code == 401:
-                raise RuntimeError("OpenAI OAuth token expired or invalid")
-            if resp.status_code == 429:
-                raise RuntimeError("OpenAI rate limited")
+                raise RuntimeError("Codex OAuth token expired — refresh needed")
             if resp.status_code >= 400:
                 error_text = ""
                 try:
                     error_text = resp.text[:500]
                 except Exception:
                     pass
-                raise RuntimeError(f"OpenAI error: status={resp.status_code}, body={error_text}")
+                raise RuntimeError(f"Codex error {resp.status_code}: {error_text[:200]}")
 
             if stream:
-                return self._stream_response(resp)
+                return self._stream_response(resp, model or "auto")
             else:
-                return resp.json()
+                return self._non_stream_response(resp, model or "auto", messages)
 
         except requests.RequestsError as exc:
-            raise RuntimeError(f"OpenAI connection failed: {exc}") from exc
+            raise RuntimeError(f"Codex connection failed: {exc}") from exc
 
-    def _stream_response(self, response) -> Iterator[str]:
-        """Pass through SSE from OpenAI API."""
+    def _stream_response(self, response, model: str) -> Iterator[str]:
+        """Convert Codex SSE → OpenAI-compatible SSE chunks."""
+        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+        created = int(time.time())
+        sent_role = False
+
         try:
             for raw_line in response.iter_lines():
                 if not raw_line:
                     continue
                 line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-                yield line + "\n"
-        except Exception as exc:
-            logger.error({"event": "openai_oauth_stream_error", "error": str(exc)})
-            error_chunk = json.dumps({
-                "error": {"message": str(exc), "type": "stream_error"}
-            }, ensure_ascii=False)
-            yield f"data: {error_chunk}\n\n"
-            yield "data: [DONE]\n\n"
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
 
-    def list_models(self, access_token: str) -> list[dict[str, Any]]:
-        """Fetch available models from OpenAI API."""
-        try:
-            resp = requests.get(
-                f"{OPENAI_API_BASE}/v1/models",
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            models = data.get("data") or []
-            return [
-                {
-                    "id": f"cx/{m.get('id', '')}",
-                    "object": "model",
-                    "created": m.get("created", 0),
-                    "owned_by": m.get("owned_by", "openai-oauth"),
-                }
-                for m in models
-                if isinstance(m, dict)
-            ]
+                chunk = _responses_to_chat_chunk(event, model, completion_id, created)
+                if chunk:
+                    if not sent_role and chunk["choices"][0]["delta"].get("content"):
+                        chunk["choices"][0]["delta"]["role"] = "assistant"
+                        sent_role = True
+                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
         except Exception as exc:
-            logger.warning({"event": "openai_models_error", "error": str(exc)})
-            return []
+            logger.error({"event": "codex_stream_error", "error": str(exc)})
+
+        yield "data: [DONE]\n\n"
+
+    def _non_stream_response(self, response, model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Handle non-streaming Codex response."""
+        data = response.json()
+        output_text = ""
+        tool_calls = []
+
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for content_item in item.get("content", []):
+                    if content_item.get("type") == "output_text":
+                        output_text += content_item.get("text", "")
+            elif item.get("type") == "function_call":
+                tool_calls.append({
+                    "id": item.get("call_id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", ""),
+                    },
+                })
+
+        message = {"role": "assistant", "content": output_text}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+
+        from services.protocol.openai_v1_chat_complete import count_message_tokens, count_text_tokens
+
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": count_message_tokens(messages, model),
+                "completion_tokens": count_text_tokens(output_text, model),
+                "total_tokens": count_message_tokens(messages, model) + count_text_tokens(output_text, model),
+            },
+        }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
         """Get next available Codex OAuth token from account pool."""
@@ -156,11 +272,11 @@ class OpenAIOAuthProvider:
                 and token not in excluded
             ]
             if not candidates:
-                raise RuntimeError("No Codex OAuth tokens available. Import 9router backup first.")
+                raise RuntimeError("No Codex OAuth tokens. Import 9router backup or add OAuth token.")
             token = candidates[account_service._index % len(candidates)]
             account_service._index += 1
             return token
 
 
 # Singleton
-openai_oauth = OpenAIOAuthProvider()
+codex_oauth = CodexOAuthProvider()
