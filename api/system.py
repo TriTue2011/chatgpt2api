@@ -59,6 +59,12 @@ class LogDeleteRequest(BaseModel):
 class BackupDeleteRequest(BaseModel):
     key: str = ""
 
+class Import9RouterRequest(BaseModel):
+    path: str = ""
+
+class RestoreRequest(BaseModel):
+    path: str = ""
+
 
 def create_router(app_version: str) -> APIRouter:
     router = APIRouter()
@@ -231,13 +237,7 @@ def create_router(app_version: str) -> APIRouter:
 
     # ── Backup / Restore (local full-state) ──
 
-    class RestoreRequest(BaseModel):
-        path: str = ""
-
-    class Import9RouterRequest(BaseModel):
-        path: str = ""
-
-    @router.post("/api/v1/import-9router")
+    @router.post("/api/v1/backup")
     async def import_9router_backup(
         body: Import9RouterRequest,
         authorization: str | None = Header(default=None),
