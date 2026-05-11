@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from typing import Any, Iterable, Iterator
@@ -199,6 +200,8 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
     if route.provider == "opencode":
         return _handle_opencode_chat(model, messages, body.get("stream"), body)
+    elif route.provider == "ninerouter":
+        return _handle_ninerouter_chat(model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "chatgpt":
         return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
     else:
@@ -345,3 +348,97 @@ def _opencode_completion_response(
             content=f"OpenCode error: {exc}",
             messages=messages,
         )
+
+
+def _handle_ninerouter_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Proxy chat to 9router — 9router handles all OAuth tokens (Claude/Codex/Copilot/...)."""
+    from services.providers.ninerouter import ninerouter_proxy
+
+    # Strip 9r/ prefix
+    pure_model = model[3:] if model.startswith("9r/") else model
+    if not pure_model or pure_model == "auto":
+        pure_model = "auto"
+
+    logger.info({
+        "event": "ninerouter_chat",
+        "model": pure_model,
+        "stream": stream,
+        "message_count": len(messages),
+    })
+
+    temperature = body.get("temperature")
+    max_tokens = body.get("max_tokens")
+
+    try:
+        if stream:
+            return _stream_ninerouter_response(
+                pure_model, messages, temperature, max_tokens, tools, tool_choice
+            )
+        else:
+            result = ninerouter_proxy.chat_completions(
+                messages=messages,
+                model=pure_model,
+                stream=False,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+            )
+            # 9router returns OpenAI-compatible format — pass through
+            return result
+
+    except Exception as exc:
+        logger.error({"event": "ninerouter_fatal", "error": str(exc)})
+        return completion_response(
+            model=model,
+            content=f"9router error: {exc}",
+            messages=messages,
+        )
+
+
+def _stream_ninerouter_response(
+    model: str,
+    messages: list[dict[str, Any]],
+    temperature: float | None,
+    max_tokens: int | None,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+) -> Iterator[dict[str, Any]]:
+    """Stream SSE from 9router — pass through directly."""
+    from services.providers.ninerouter import ninerouter_proxy
+
+    try:
+        sse_stream = ninerouter_proxy.chat_completions(
+            messages=messages,
+            model=model,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+
+        for line in sse_stream:
+            line = line.rstrip("\n")
+            if line.startswith("data: "):
+                payload = line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                    yield chunk
+                except Exception:
+                    continue
+
+    except Exception as exc:
+        logger.error({"event": "ninerouter_stream_error", "error": str(exc)})
+        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+        created = int(time.time())
+        yield completion_chunk(model, {"role": "assistant", "content": f"9router error: {exc}"}, "stop", completion_id, created)

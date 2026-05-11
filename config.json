@@ -70,7 +70,7 @@
     "max_levels": 15
   },
   "combo_models": {
-    "ha-agent": ["oc/auto", "chatgpt/auto"],
+    "ha-agent": ["9r/auto", "oc/auto", "chatgpt/auto"],
     "ha-agent-image": ["sdwebui/stable-diffusion", "chatgpt/gpt-image-2"]
   },
   "search": {
@@ -79,5 +79,9 @@
     "auto_detect": true,
     "max_results": 3,
     "inject_as": "user_message"
+  },
+  "ninerouter": {
+    "base_url": "http://localhost:20128",
+    "api_key": ""
   }
 }

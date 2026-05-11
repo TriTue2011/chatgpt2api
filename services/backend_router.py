@@ -19,6 +19,7 @@ from utils.helper import IMAGE_MODELS
 
 # Provider prefixes ported from 9router src/shared/constants/providers.js
 PROVIDER_PREFIXES: dict[str, str] = {
+    "9r/": "ninerouter",
     "oc/": "opencode",
     "ocg/": "opencode_go",
     "gw/": "grok_web",
