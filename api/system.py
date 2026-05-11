@@ -255,21 +255,20 @@ def create_router(app_version: str) -> APIRouter:
         return result
 
     @router.post("/api/v1/import-9router-upload")
-    async def import_9router_backup_upload(request: Request, authorization: str | None = Header(default=None)):
+    async def import_9router_backup_upload(
+        body: dict,
+        authorization: str | None = Header(default=None),
+    ):
         """Import token từ nội dung file backup 9router (upload trực tiếp)."""
         require_admin(authorization)
-        try:
-            raw_body = await request.body()
-            data = json.loads(raw_body.decode("utf-8"))
-        except Exception:
+        if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail={"error": "Invalid JSON body"})
 
         def _import():
-            # Save to temp file then import
             import tempfile
             import os
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
-                json.dump(data, f)
+                json.dump(body, f)
                 tmp_path = f.name
             try:
                 return import_9router_backup_from_api(tmp_path)

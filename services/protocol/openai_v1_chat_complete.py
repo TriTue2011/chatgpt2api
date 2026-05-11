@@ -199,16 +199,16 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     route = backend_router.route(model, messages)
 
     if route.provider == "opencode":
-        return _handle_opencode_chat(model, messages, body.get("stream"), body)
+        return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
     elif route.provider == "openai_oauth":
-        return _handle_openai_oauth_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+        return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "gemini_free":
-        return _handle_gemini_chat(model, messages, body.get("stream"), body)
+        return _handle_gemini_chat(route.model, messages, body.get("stream"), body)
     elif route.provider == "chatgpt":
-        return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+        return _handle_chatgpt_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     else:
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt"})
-        return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+        return _handle_chatgpt_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
 
 
 def _handle_chatgpt_chat(
