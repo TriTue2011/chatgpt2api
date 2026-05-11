@@ -19,7 +19,7 @@ from services.config import config
 from utils.log import logger
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_DEFAULT_MODEL = "gemini-2.0-flash"
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def _openai_to_gemini_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

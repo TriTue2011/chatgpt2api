@@ -177,7 +177,7 @@ class GeminiGrounding(SearchBackend):
       }
     """
 
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
     def __init__(self):
         self._key_index = 0
