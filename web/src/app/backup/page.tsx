@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive, ArrowLeftRight } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ export default function BackupPage() {
   const [importPath, setImportPath] = useState("");
   const [importing, setImporting] = useState(false);
   const [uploadDrag, setUploadDrag] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchBackups();
@@ -61,30 +62,6 @@ export default function BackupPage() {
     }
   }
 
-  async function import9Router() {
-    const path = importPath.trim();
-    if (!path) {
-      setMessage("Vui lòng nhập đường dẫn file backup 9router");
-      return;
-    }
-    setImporting(true);
-    setMessage("");
-    try {
-      const data = await request.post("/api/v1/import-9router", { path });
-      const result = data.data as any;
-      if (result?.ok) {
-        setMessage(result.message || `Đã import ${result.imported_tokens || 0} token`);
-        await fetchBackups();
-      } else {
-        setMessage(`Lỗi: ${result?.errors?.join(", ") || "Import thất bại"}`);
-      }
-    } catch (e: any) {
-      setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
-    } finally {
-      setImporting(false);
-    }
-  }
-
   async function handleFileUpload(file: File) {
     setImporting(true);
     setMessage("");
@@ -105,6 +82,30 @@ export default function BackupPage() {
       } else {
         setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
       }
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function import9Router() {
+    const path = importPath.trim();
+    if (!path) {
+      setMessage("Vui lòng nhập đường dẫn file backup");
+      return;
+    }
+    setImporting(true);
+    setMessage("");
+    try {
+      const data = await request.post("/api/v1/import-9router", { path });
+      const result = data.data as any;
+      if (result?.ok) {
+        setMessage(result.message || `Đã import ${result.imported_tokens || 0} token`);
+        await fetchBackups();
+      } else {
+        setMessage(`Lỗi: ${result?.errors?.join(", ") || "Import thất bại"}`);
+      }
+    } catch (e: any) {
+      setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
     } finally {
       setImporting(false);
     }
@@ -136,22 +137,18 @@ export default function BackupPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Sao lưu & Phục hồi</h1>
-          <p className="mt-1 text-sm text-stone-400">
-            Sao lưu toàn bộ state (tài khoản, config, provider, combo, ảnh) ra file JSON
+          <h1 className="text-2xl font-bold tracking-tight">Sao lưu & Phục hồi</h1>
+          <p className="mt-1 text-sm text-stone-500">
+            Sao lưu toàn bộ state (tài khoản, config, provider, combo) ra file JSON
           </p>
         </div>
         <button
           type="button"
           onClick={createBackup}
           disabled={creating}
-          className="inline-flex items-center gap-2 rounded-lg bg-stone-50 px-4 py-2.5 text-sm font-medium text-stone-950 transition hover:bg-white disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-800 disabled:opacity-50"
         >
-          {creating ? (
-            <RefreshCw className="size-4 animate-spin" />
-          ) : (
-            <Download className="size-4" />
-          )}
+          {creating ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
           {creating ? "Đang tạo..." : "Tạo sao lưu mới"}
         </button>
       </div>
@@ -159,15 +156,66 @@ export default function BackupPage() {
       {message && (
         <div className={cn(
           "rounded-lg px-4 py-3 text-sm",
-          message.startsWith("Lỗi") ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400",
+          message.startsWith("Lỗi") ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600",
         )}>
           {message}
         </div>
       )}
 
+      {/* Import từ 9router */}
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <ArrowLeftRight className="size-5 text-amber-600" />
+          <h3 className="text-sm font-semibold text-stone-900">Import từ 9router</h3>
+        </div>
+        <p className="text-xs text-stone-500 mb-3">
+          Nhập file backup từ 9router để lấy token Codex OAuth. Token được thêm vào cả pool chat (cx/) và pool ảnh.
+        </p>
+
+        {/* Chọn file + kéo thả */}
+        <div
+          className={cn(
+            "rounded-xl border-2 border-dashed p-6 text-center transition cursor-pointer",
+            uploadDrag ? "border-amber-400 bg-amber-100" : "border-stone-200 hover:border-amber-300 bg-white",
+          )}
+          onClick={() => fileRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setUploadDrag(true); }}
+          onDragLeave={() => setUploadDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setUploadDrag(false);
+            const file = e.dataTransfer.files?.[0];
+            if (file) handleFileUpload(file);
+          }}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,.json.gz"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFileUpload(file);
+              e.target.value = "";
+            }}
+          />
+          <Upload className="size-6 text-stone-300 mx-auto mb-1" />
+          <p className="text-sm text-stone-500">Click chọn file hoặc kéo thả vào đây</p>
+          <p className="text-xs text-stone-400 mt-1">Hỗ trợ .json và .json.gz</p>
+        </div>
+
+        {importing && (
+          <div className="flex items-center gap-2 mt-3 text-amber-600 text-sm">
+            <RefreshCw className="size-4 animate-spin" />
+            Đang import...
+          </div>
+        )}
+      </div>
+
+      {/* Backup list */}
       {backups.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
-          <HardDrive className="size-12 mb-3 opacity-50" />
+        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
+          <HardDrive className="size-12 mb-3 opacity-30" />
           <p>Chưa có sao lưu nào</p>
           <p className="text-xs mt-1">Tạo sao lưu đầu tiên để bảo vệ dữ liệu</p>
         </div>
@@ -176,12 +224,12 @@ export default function BackupPage() {
           {backups.map((backup) => (
             <div
               key={backup.filename}
-              className="flex items-center justify-between rounded-xl border border-stone-800 bg-stone-900/50 px-5 py-4"
+              className="flex items-center justify-between rounded-xl border border-stone-200 bg-white px-5 py-4"
             >
               <div className="flex items-center gap-4">
                 <Archive className="size-5 text-stone-400" />
                 <div>
-                  <p className="text-sm font-medium text-white">{backup.filename}</p>
+                  <p className="text-sm font-medium">{backup.filename}</p>
                   <p className="text-xs text-stone-500">
                     {formatSize(backup.size_bytes)} · {formatDate(backup.created_at)}
                   </p>
@@ -190,7 +238,7 @@ export default function BackupPage() {
               <button
                 type="button"
                 onClick={() => deleteBackup(backup.filename)}
-                className="rounded-md p-2 text-stone-500 transition hover:bg-red-500/10 hover:text-red-400"
+                className="rounded-md p-2 text-stone-400 transition hover:bg-red-50 hover:text-red-500"
                 title="Xóa"
               >
                 <Trash2 className="size-4" />
@@ -199,40 +247,6 @@ export default function BackupPage() {
           ))}
         </div>
       )}
-
-      {/* Import từ 9router */}
-      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <ArrowLeftRight className="size-5 text-amber-400" />
-          <h3 className="text-sm font-semibold text-white">Import từ 9router</h3>
-        </div>
-        <p className="text-xs text-stone-400 mb-3">
-          Nhập file backup từ 9router để lấy token Codex OAuth (ChatGPT qua OpenAI API).
-          Token sẽ được tự động thêm vào pool với type "codex".
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <input
-            type="text"
-            value={importPath}
-            onChange={(e) => setImportPath(e.target.value)}
-            placeholder="Đường dẫn file backup 9router (vd: /app/data/db.json)"
-            className="min-w-[320px] flex-1 rounded-lg border border-stone-700 bg-stone-800 px-3 py-2 text-sm text-white placeholder:text-stone-500 focus:border-amber-500 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={import9Router}
-            disabled={importing || !importPath.trim()}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500/20 px-4 py-2 text-sm font-medium text-amber-400 transition hover:bg-amber-500/30 disabled:opacity-40 border border-amber-500/30"
-          >
-            {importing ? (
-              <RefreshCw className="size-4 animate-spin" />
-            ) : (
-              <Upload className="size-4" />
-            )}
-            {importing ? "Đang import..." : "Import từ 9router"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
