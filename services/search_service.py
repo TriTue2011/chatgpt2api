@@ -392,9 +392,18 @@ class SearchService:
         cfg = self._get_config()
         return str(cfg.get("inject_as") or "user_message").strip()
 
+    def _get_active_backend(self) -> str:
+        """Get actual search backend to use, auto-upgrading chatgpt→gemini if key available."""
+        if self.backend_name == "chatgpt":
+            from services.providers.gemini_free import gemini_provider
+            if gemini_provider.api_key:
+                return "gemini"
+        return self.backend_name
+
     def search(self, query: str) -> list[dict[str, str]]:
         """Execute search using configured backend."""
-        backend = SEARCH_BACKENDS.get(self.backend_name, SEARCH_BACKENDS["chatgpt"])
+        backend_name = self._get_active_backend()
+        backend = SEARCH_BACKENDS.get(backend_name, SEARCH_BACKENDS["chatgpt"])
         return backend.search(query, self.max_results)
 
     def process_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -406,8 +415,11 @@ class SearchService:
             return messages
 
         if self.backend_name == "chatgpt":
-            # ChatGPT built-in search — no injection needed
-            return messages
+            # Auto-detect Gemini if key configured, otherwise skip
+            from services.providers.gemini_free import gemini_provider
+            if not gemini_provider.api_key:
+                return messages  # No search backend available
+            # else: fall through to use Gemini search
 
         if self.auto_detect and not needs_search(messages):
             return messages
