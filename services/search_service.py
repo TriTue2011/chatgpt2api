@@ -165,55 +165,95 @@ class BraveSearch(SearchBackend):
 
 
 class GeminiGrounding(SearchBackend):
-    """Google Search grounding via Gemini API (free tier: 15 RPM)."""
+    """Google Search grounding via Gemini API (free tier: 15 RPM per key).
+
+    Supports multiple API keys — round-robin when one hits rate limit.
+    Config in config.json:
+      "providers": {
+        "gemini_free": {
+          "api_key": "AIza...",        // single key
+          "api_keys": ["AIza...", ...]  // or multiple keys (auto round-robin)
+        }
+      }
+    """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
-        provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
-        api_key = str(provider_config.get("api_key") or "").strip()
+    def __init__(self):
+        self._key_index = 0
+        self._rate_limited: dict[str, float] = {}  # key → locked_until timestamp
 
+    def _get_keys(self) -> list[str]:
+        provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
+        single = str(provider_config.get("api_key") or "").strip()
+        multi = provider_config.get("api_keys") or []
+        if not isinstance(multi, list):
+            multi = []
+        keys = [k.strip() for k in multi if k.strip()]
+        if single and single not in keys:
+            keys.insert(0, single)
+        return keys
+
+    def _next_key(self) -> str | None:
+        keys = self._get_keys()
+        if not keys:
+            return None
+        import time
+        now = time.time()
+        for _ in range(len(keys)):
+            key = keys[self._key_index % len(keys)]
+            self._key_index += 1
+            locked_until = self._rate_limited.get(key, 0)
+            if now < locked_until:
+                continue
+            return key
+        return keys[0]  # all limited, return first anyway
+
+    def _mark_limited(self, key: str) -> None:
+        import time
+        self._rate_limited[key] = time.time() + 60
+        logger.warning({"event": "gemini_rate_limited", "key_prefix": key[:10]})
+
+    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
+        api_key = self._next_key()
         if not api_key:
-            logger.warning({"event": "gemini_grounding_no_api_key"})
+            logger.warning({"event": "gemini_no_api_key"})
             return []
 
         try:
             resp = requests.post(
                 f"{self.BASE_URL}?key={api_key}",
                 headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": query}]}],
-                    "tools": [{"google_search": {}}],
-                },
+                json={"contents": [{"parts": [{"text": query}]}], "tools": [{"google_search": {}}]},
                 timeout=30,
             )
+
+            if resp.status_code == 429:
+                self._mark_limited(api_key)
+                return self.search(query, max_results)  # retry with next key
+
             if resp.status_code != 200:
-                logger.warning({"event": "gemini_grounding_error", "status": resp.status_code})
+                logger.warning({"event": "gemini_error", "status": resp.status_code})
                 return []
 
             data = resp.json()
             results: list[dict[str, str]] = []
-
-            # Extract grounding metadata from Gemini response
             candidates = data.get("candidates") or []
-            for candidate in candidates:
-                grounding = candidate.get("groundingMetadata") or {}
+            for c in candidates:
+                grounding = c.get("groundingMetadata") or {}
                 chunks = grounding.get("groundingChunks") or []
-                supports = grounding.get("groundingSupports") or []
                 sources = grounding.get("webSearchQueries") or []
-
                 for chunk in chunks[:max_results]:
                     web = chunk.get("web") or {}
                     results.append({
-                        "title": str(web.get("title") or sources[0] if sources else query),
+                        "title": str(web.get("title") or (sources[0] if sources else query)),
                         "snippet": str(web.get("snippet") or ""),
                         "url": str(web.get("uri") or ""),
                     })
-
             return results[:max_results]
 
         except Exception as exc:
-            logger.warning({"event": "gemini_grounding_exception", "error": str(exc)})
+            logger.warning({"event": "gemini_exception", "error": str(exc)})
             return []
 
 
