@@ -139,7 +139,7 @@ class CodexOAuthProvider:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
         **kwargs,
-    ) -> dict[str, Any] | Iterator[str]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Call Codex Responses API with OAuth token."""
 
         instructions = None
@@ -189,8 +189,8 @@ class CodexOAuthProvider:
         except requests.RequestsError as exc:
             raise RuntimeError(f"Codex connection failed: {exc}") from exc
 
-    def _stream_response(self, response, model: str) -> Iterator[str]:
-        """Convert Codex SSE → OpenAI-compatible SSE chunks."""
+    def _stream_response(self, response, model: str) -> Iterator[dict[str, Any]]:
+        """Convert Codex SSE → OpenAI chat completion chunks (dicts)."""
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
         sent_role = False
@@ -216,12 +216,22 @@ class CodexOAuthProvider:
                     if not sent_role and chunk["choices"][0]["delta"].get("content"):
                         chunk["choices"][0]["delta"]["role"] = "assistant"
                         sent_role = True
-                    yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+                    yield chunk
 
         except Exception as exc:
             logger.error({"event": "codex_stream_error", "error": str(exc)})
 
-        yield "data: [DONE]\n\n"
+        if not sent_role:
+            yield {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+            }
+        yield {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
 
     def _non_stream_response(self, response, model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Handle non-streaming Codex response."""
