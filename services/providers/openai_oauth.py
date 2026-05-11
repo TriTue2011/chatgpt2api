@@ -145,11 +145,13 @@ class CodexOAuthProvider:
         instructions = None
         body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
 
-        # Codex requires these three to be set
+        # Codex requires these four to be set
         model = model if model and model != "auto" else CODEX_DEFAULT_MODEL
         body["model"] = model
         body["store"] = False
         body["stream"] = True  # Codex requires streaming
+        if "instructions" not in body or not body.get("instructions"):
+            body["instructions"] = "You are a helpful assistant."
 
         if temperature is not None:
             body["temperature"] = temperature
