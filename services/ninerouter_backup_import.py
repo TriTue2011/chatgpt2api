@@ -219,6 +219,13 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
         try:
             # Add to pool — works for both cx/ chat and image generation
             account_service.add_accounts(tokens)
+            # Set default quota for Codex OAuth tokens (fetch_remote_info may fail)
+            for token in tokens:
+                account_service.update_account(token, {
+                    "image_quota_unknown": True,  # Codex tokens can generate images
+                    "quota": 10,  # Conservative default
+                    "status": "正常",
+                })
             imported = len(tokens)
             skipped = 0
             logger.info({

@@ -153,12 +153,27 @@ def create_router() -> APIRouter:
         if not tokens:
             raise HTTPException(status_code=400, detail={"error": "tokens is required"})
         result = account_service.add_accounts(tokens)
-        refresh_result = account_service.refresh_accounts(tokens)
+        # Skip refresh for JWT/OAuth tokens (they use different auth flow)
+        chatgpt_tokens = [t for t in tokens if not t.startswith("eyJ")]
+        if chatgpt_tokens:
+            refresh_result = account_service.refresh_accounts(chatgpt_tokens)
+            refreshed = refresh_result.get("refreshed", 0)
+            errors = refresh_result.get("errors", [])
+        else:
+            # JWT tokens: set default quota and mark as image-capable
+            for token in tokens:
+                account_service.update_account(token, {
+                    "image_quota_unknown": True,
+                    "quota": 10,
+                    "status": "正常",
+                })
+            refreshed = len(tokens)
+            errors = []
         return {
             **result,
-            "refreshed": refresh_result.get("refreshed", 0),
-            "errors": refresh_result.get("errors", []),
-            "items": refresh_result.get("items", result.get("items", [])),
+            "refreshed": refreshed,
+            "errors": errors,
+            "items": refresh_result.get("items", result.get("items", [])) if chatgpt_tokens else result.get("items", []),
         }
 
     @router.post("/api/accounts/oauth")
