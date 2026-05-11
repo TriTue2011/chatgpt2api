@@ -172,13 +172,18 @@ class CodexOAuthProvider:
             )
 
             if resp.status_code == 401:
-                raise RuntimeError("Codex OAuth token expired — refresh needed")
+                raise RuntimeError("Codex OAuth token expired")
             if resp.status_code >= 400:
                 error_text = ""
                 try:
                     error_text = resp.text[:500]
                 except Exception:
                     pass
+                logger.error({
+                    "event": "codex_upstream_error",
+                    "status": resp.status_code,
+                    "error": error_text,
+                })
                 raise RuntimeError(f"Codex error {resp.status_code}: {error_text[:200]}")
 
             if stream:
