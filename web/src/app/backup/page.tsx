@@ -173,6 +173,40 @@ export default function BackupPage() {
           ))}
         </div>
       )}
+
+      {/* Import từ 9router */}
+      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <ArrowLeftRight className="size-5 text-amber-400" />
+          <h3 className="text-sm font-semibold text-white">Import từ 9router</h3>
+        </div>
+        <p className="text-xs text-stone-400 mb-3">
+          Nhập file backup từ 9router để lấy token Codex OAuth (ChatGPT qua OpenAI API).
+          Token sẽ được tự động thêm vào pool với type "codex".
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <input
+            type="text"
+            value={importPath}
+            onChange={(e) => setImportPath(e.target.value)}
+            placeholder="Đường dẫn file backup 9router (vd: /app/data/db.json)"
+            className="min-w-[320px] flex-1 rounded-lg border border-stone-700 bg-stone-800 px-3 py-2 text-sm text-white placeholder:text-stone-500 focus:border-amber-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={import9Router}
+            disabled={importing || !importPath.trim()}
+            className="inline-flex items-center gap-2 rounded-lg bg-amber-500/20 px-4 py-2 text-sm font-medium text-amber-400 transition hover:bg-amber-500/30 disabled:opacity-40 border border-amber-500/30"
+          >
+            {importing ? (
+              <RefreshCw className="size-4 animate-spin" />
+            ) : (
+              <Upload className="size-4" />
+            )}
+            {importing ? "Đang import..." : "Import từ 9router"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
