@@ -19,6 +19,7 @@ from utils.helper import IMAGE_MODELS
 
 # Provider prefixes ported from 9router src/shared/constants/providers.js
 PROVIDER_PREFIXES: dict[str, str] = {
+    "9r/": "ninerouter",
     "cx/": "openai_oauth",
     "oc/": "opencode",
     "ocg/": "opencode_go",
@@ -98,6 +99,7 @@ class BackendRouter:
 
     # Default model per provider (for "auto" resolution)
     PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+        "ninerouter": "auto",
         "openai_oauth": "auto",
         "opencode": "nemotron-3-super-free",
         "chatgpt": "auto",

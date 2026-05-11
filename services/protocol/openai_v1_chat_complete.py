@@ -200,6 +200,8 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
     if route.provider == "opencode":
         return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
+    elif route.provider == "ninerouter":
+        return _handle_ninerouter_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "openai_oauth":
         return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "gemini_free":
