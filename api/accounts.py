@@ -153,10 +153,6 @@ def create_router() -> APIRouter:
         if not tokens:
             raise HTTPException(status_code=400, detail={"error": "tokens is required"})
         result = account_service.add_accounts(tokens)
-        # Also add JWT/OAuth tokens as codex type for chat
-        jwt_tokens = [t for t in tokens if t.startswith("eyJ")]
-        if jwt_tokens:
-            account_service.add_accounts_with_type(jwt_tokens, account_type="codex")
         refresh_result = account_service.refresh_accounts(tokens)
         return {
             **result,

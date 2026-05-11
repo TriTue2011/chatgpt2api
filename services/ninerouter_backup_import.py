@@ -217,14 +217,8 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            # Add as codex type (for cx/auto chat via Codex API)
-            account_service.add_accounts_with_type(tokens, account_type="codex")
-            # Also add as regular accounts (for image generation via gpt-image-2)
-            # Only add tokens that don't already exist
-            existing = {a.get("access_token", "") for a in account_service.list_accounts()}
-            new_tokens = [t for t in tokens if t not in existing]
-            if new_tokens:
-                account_service.add_accounts(new_tokens)
+            # Add to pool — works for both cx/ chat and image generation
+            account_service.add_accounts(tokens)
             imported = len(tokens)
             skipped = 0
             logger.info({
