@@ -191,13 +191,13 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
     model, messages, tools, tool_choice = text_chat_parts(body)
 
-    # Apply search injection if enabled (non-ChatGPT backends)
-    search_enabled = search_service.is_enabled
-    if search_enabled and search_service.backend_name != "chatgpt":
-        messages = search_service.process_messages(messages)
-
-    # Route to appropriate backend
+    # Route to determine provider
     route = backend_router.route(model, messages)
+
+    # Apply search injection for non-ChatGPT backends (Codex, OpenCode, Gemini don't have built-in search)
+    if search_service.is_enabled:
+        if route.provider not in ("chatgpt",):
+            messages = search_service.process_messages(messages)
 
     if route.provider == "opencode":
         return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
