@@ -20,6 +20,7 @@ from services.protocol.conversation import (
     stream_text_deltas,
     text_backend,
 )
+from services.account_service import account_service
 from services.backend_router import backend_router
 from services.search_service import search_service
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
