@@ -186,10 +186,39 @@ class CodexOAuthProvider:
                 })
                 raise RuntimeError(f"Codex error {resp.status_code}: {error_text[:200]}")
 
+            # Codex always streams — collect if caller requested non-streaming
             if stream:
                 return self._stream_response(resp, model or "auto")
             else:
-                return self._non_stream_response(resp, model or "auto", messages)
+                # Collect stream into single response
+                text = ""
+                tool_calls = []
+                for chunk in self._stream_response(resp, model or "auto"):
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    text += delta.get("content", "")
+                    if delta.get("tool_calls"):
+                        tool_calls.extend(delta["tool_calls"])
+                    if delta.get("finish_reason") == "stop":
+                        break
+
+                message = {"role": "assistant", "content": text}
+                if tool_calls:
+                    message["tool_calls"] = tool_calls
+
+                from services.protocol.openai_v1_chat_complete import count_message_tokens, count_text_tokens
+
+                return {
+                    "id": f"chatcmpl-{uuid.uuid4().hex}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": model or "auto",
+                    "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": count_message_tokens(messages, model or "auto"),
+                        "completion_tokens": count_text_tokens(text, model or "auto"),
+                        "total_tokens": count_message_tokens(messages, model or "auto") + count_text_tokens(text, model or "auto"),
+                    },
+                }
 
         except requests.RequestsError as exc:
             raise RuntimeError(f"Codex connection failed: {exc}") from exc
