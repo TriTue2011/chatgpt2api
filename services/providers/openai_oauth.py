@@ -153,8 +153,13 @@ class CodexOAuthProvider:
         if "instructions" not in body or not body.get("instructions"):
             body["instructions"] = "You are a helpful assistant."
 
-        if temperature is not None:
-            body["temperature"] = temperature
+        # Codex rejects these parameters — strip them (like 9router does)
+        for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty",
+                     "max_tokens", "max_output_tokens", "max_completion_tokens",
+                     "n", "seed", "logprobs", "top_logprobs", "user",
+                     "stream_options", "safety_identifier", "metadata",
+                     "parallel_tool_calls", "tool_choice", "tools"):
+            body.pop(key, None)
 
         headers = dict(CODEX_HEADERS)
         headers["Authorization"] = f"Bearer {access_token}"
