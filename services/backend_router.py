@@ -95,6 +95,14 @@ class BackendRouter:
     # Payload threshold for free ChatGPT accounts (24KB)
     FREE_PAYLOAD_LIMIT = 24_000
 
+    # Default model per provider (for "auto" resolution)
+    PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+        "opencode": "nemotron-3-super-free",
+        "chatgpt": "auto",
+        "gemini_free": "gemini-2.0-flash",
+        "openrouter": "openai/gpt-4o",
+    }
+
     @staticmethod
     def resolve_model(model_str: str) -> tuple[str, str]:
         """Parse model string → (provider, model_name).
@@ -158,6 +166,10 @@ class BackendRouter:
         """
         provider, resolved_model = self.resolve_model(model)
         is_image = self.is_image_model(model)
+
+        # Resolve "auto" to provider's default model
+        if resolved_model == "auto" or not resolved_model:
+            resolved_model = self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
 
         # Calculate payload size if not provided
         if payload_size is None and messages:

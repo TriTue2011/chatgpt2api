@@ -18,6 +18,7 @@ from services.state_backup import state_backup
 from services.backend_router import backend_router
 from services.providers.opencode import opencode_provider
 from services.rate_limit_backoff import rate_limit_backoff
+from services.ninerouter_backup_import import import_9router_backup_from_api
 
 
 def _create_backup() -> dict:
@@ -232,6 +233,26 @@ def create_router(app_version: str) -> APIRouter:
 
     class RestoreRequest(BaseModel):
         path: str = ""
+
+    class Import9RouterRequest(BaseModel):
+        path: str = ""
+
+    @router.post("/api/v1/import-9router")
+    async def import_9router_backup(
+        body: Import9RouterRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        """Import token từ file backup 9router vào chatgpt2api."""
+        require_admin(authorization)
+        path = (body.path or "").strip()
+        if not path:
+            raise HTTPException(status_code=400, detail={"error": "path is required"})
+
+        def _import():
+            return import_9router_backup_from_api(path)
+
+        result = await run_in_threadpool(_import)
+        return result
 
     @router.post("/api/v1/backup")
     async def create_local_backup(authorization: str | None = Header(default=None)):
