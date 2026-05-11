@@ -76,20 +76,22 @@ def extract_chatgpt_tokens(data: dict[str, Any]) -> list[str]:
             continue
 
         provider = str(conn.get("provider") or "").strip().lower()
-        conn_data = conn.get("data") or {}
-        if not isinstance(conn_data, dict):
-            continue
 
-        access_token = str(conn_data.get("accessToken") or "").strip()
+        # accessToken can be at top level OR nested in "data" field
+        access_token = str(conn.get("accessToken") or "")
+        if not access_token:
+            conn_data = conn.get("data") or {}
+            if isinstance(conn_data, dict):
+                access_token = str(conn_data.get("accessToken") or "")
 
         # ChatGPT-compatible providers
         if provider in ("codex", "cursor", "openai"):
             if access_token and access_token.startswith("eyJ"):
-                tokens.append(access_token)
+                tokens.append(access_token.strip())
                 logger.info({
                     "event": "9router_import_token",
                     "provider": provider,
-                    "connection": str(conn.get("connectionName") or conn.get("id") or "")[:30],
+                    "connection": str(conn.get("name") or conn.get("id") or "")[:30],
                 })
 
     return tokens
@@ -116,20 +118,23 @@ def extract_all_oauth_tokens(data: dict[str, Any]) -> list[dict[str, Any]]:
             continue
 
         provider = str(conn.get("provider") or "").strip().lower()
-        conn_data = conn.get("data") or {}
-        if not isinstance(conn_data, dict):
-            continue
 
-        access_token = str(conn_data.get("accessToken") or "").strip()
+        # accessToken can be at top level OR nested in "data" field
+        access_token = str(conn.get("accessToken") or "")
+        if not access_token:
+            conn_data = conn.get("data") or {}
+            if isinstance(conn_data, dict):
+                access_token = str(conn_data.get("accessToken") or "")
+
         if not access_token:
             continue
 
         all_tokens.append({
             "provider": provider,
-            "name": str(conn.get("connectionName") or conn.get("id") or provider),
-            "access_token": access_token,
-            "refresh_token": str(conn_data.get("refreshToken") or "").strip() or None,
-            "expires_at": str(conn_data.get("expiresAt") or "").strip() or None,
+            "name": str(conn.get("name") or conn.get("id") or provider),
+            "access_token": access_token.strip(),
+            "refresh_token": str(conn.get("refreshToken") or "").strip() or None,
+            "expires_at": str(conn.get("expiresAt") or "").strip() or None,
         })
 
     return all_tokens
