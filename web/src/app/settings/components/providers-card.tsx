@@ -151,6 +151,20 @@ export function ProvidersCard() {
                       <Input value={p.api_token || ""} onChange={(e) => updateProvider(name, "api_token", e.target.value)}
                         placeholder="API Token" className="h-8 rounded-lg border-stone-200 text-xs" />
                     </>
+                  ) : name === "gemini_free" || name === "serper" ? (
+                    <div className="space-y-1">
+                      <textarea
+                        value={[p.api_key || "", ...(p.api_keys || [])].filter(Boolean).join("\n")}
+                        onChange={(e) => {
+                          const keys = e.target.value.split("\n").map(k => k.trim()).filter(Boolean);
+                          updateProvider(name, "api_key", keys[0] || "");
+                          updateProvider(name, "api_keys", keys);
+                        }}
+                        placeholder="Mỗi dòng 1 API key (hỗ trợ nhiều key, tự động round-robin khi hết quota)"
+                        className="w-full h-16 rounded-lg border border-stone-200 text-xs p-2 resize-y"
+                      />
+                      <p className="text-[10px] text-stone-400">Nhiều key → tự chuyển khi hết quota (429)</p>
+                    </div>
                   ) : (
                     <Input value={p.api_key || ""} onChange={(e) => updateProvider(name, "api_key", e.target.value)}
                       placeholder="API key" className="h-8 rounded-lg border-stone-200 text-xs" />
