@@ -21,6 +21,7 @@ from utils.helper import IMAGE_MODELS
 PROVIDER_PREFIXES: dict[str, str] = {
     "9r/": "ninerouter",
     "cx/": "openai_oauth",
+    "codex/": "openai_oauth",
     "oc/": "opencode",
     "ocg/": "opencode_go",
     "gw/": "grok_web",
