@@ -164,6 +164,9 @@ class CodexOAuthProvider:
             "model": model,
             "stream": True,
             "message_count": len(messages),
+            "body_keys": list(body.keys()),
+            "has_instructions": bool(body.get("instructions")),
+            "input_count": len(body.get("input", [])),
         })
 
         try:
