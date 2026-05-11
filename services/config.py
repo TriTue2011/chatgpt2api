@@ -12,6 +12,7 @@ from services.storage.base import StorageBackend
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = BASE_DIR / "config.json"
+CONFIG_DATA_FILE = DATA_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 BACKUP_STATE_FILE = DATA_DIR / "backup_state.json"
 
@@ -153,10 +154,17 @@ class ConfigStore:
             )
 
     def _load(self) -> dict[str, object]:
+        # Load from data dir first (persists across restarts), fallback to root
+        if CONFIG_DATA_FILE.exists():
+            return _read_json_object(CONFIG_DATA_FILE, name="data/config.json")
         return _read_json_object(self.path, name="config.json")
 
     def _save(self) -> None:
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_DATA_FILE.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # Also sync to root if different (backward compat)
+        if self.path != CONFIG_DATA_FILE:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     @property
     def auth_key(self) -> str:
