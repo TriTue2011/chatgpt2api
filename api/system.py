@@ -20,6 +20,7 @@ from services.backend_router import backend_router
 from services.providers.opencode import opencode_provider
 from services.rate_limit_backoff import rate_limit_backoff
 from services.ninerouter_backup_import import import_9router_backup_from_api
+from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_chatgpt_session_url, detect_token_type
 
 
 def _create_backup() -> dict:
@@ -381,5 +382,41 @@ def create_router(app_version: str) -> APIRouter:
             available = opencode_provider.is_available
             return {"provider": provider_id, "available": available}
         raise HTTPException(status_code=404, detail={"error": f"unknown provider: {provider_id}"})
+
+    # ── OAuth Login ──
+
+    @router.get("/api/oauth/codex/start")
+    async def start_codex_oauth(authorization: str | None = Header(default=None)):
+        """Generate Codex OAuth URL for user to login."""
+        require_admin(authorization)
+        base_url = config.base_url or "http://localhost:3030"
+        result = get_codex_auth_url(base_url)
+        return result
+
+    @router.get("/api/oauth/codex/callback")
+    async def codex_oauth_callback(code: str = "", state: str = ""):
+        """Handle Codex OAuth callback — exchange code for token."""
+        if not code or not state:
+            raise HTTPException(status_code=400, detail={"error": "Missing code or state"})
+        try:
+            result = exchange_codex_code(code, state)
+            return result
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)})
+
+    @router.get("/api/oauth/session-url")
+    async def get_session_url(authorization: str | None = Header(default=None)):
+        """Return chatgpt.com session URL for getting image token."""
+        require_admin(authorization)
+        return {"url": get_chatgpt_session_url()}
+
+    @router.post("/api/oauth/detect-token")
+    async def detect_token(body: dict, authorization: str | None = Header(default=None)):
+        """Detect token type (codex vs google)."""
+        require_admin(authorization)
+        token = str(body.get("token") or "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail={"error": "token is required"})
+        return {"type": detect_token_type(token)}
 
     return router
