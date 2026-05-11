@@ -261,6 +261,13 @@ export async function createAccounts(tokens: string[]) {
   });
 }
 
+export async function createOAuthAccounts(tokens: string[], accountType = "codex") {
+  return httpRequest<AccountMutationResponse>("/api/accounts/oauth", {
+    method: "POST",
+    body: { tokens, type: accountType },
+  });
+}
+
 export async function deleteAccounts(tokens: string[]) {
   return httpRequest<AccountMutationResponse>("/api/accounts", {
     method: "DELETE",

@@ -26,10 +26,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { createAccounts, type Account } from "@/lib/api";
+import { createAccounts, createOAuthAccounts, type Account } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type ImportMethod = "menu" | "token" | "session" | "cpa";
+type ImportMethod = "menu" | "token" | "session" | "cpa" | "oauth";
 
 type AccountImportDialogProps = {
   disabled?: boolean;
@@ -217,6 +217,28 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     }
   };
 
+  const handleImportOAuth = async () => {
+    const oauthTokens = splitTokens(tokenInput);
+    if (oauthTokens.length === 0) {
+      toast.error("Vui lòng nhập ít nhất một OAuth Token");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const data = await createOAuthAccounts(oauthTokens, "codex");
+      onImported(data.items);
+      setOpen(false);
+      resetState();
+      toast.success(`Đã thêm ${data.added ?? 0} tài khoản Codex OAuth, bỏ qua ${data.skipped ?? 0} trùng lặp`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Nhập OAuth thất bại";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleCpaSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
@@ -289,6 +311,66 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               <div className="space-y-1">
                 <div className="text-sm font-medium text-stone-800">Nhập từ tệp TXT</div>
                 <div className="text-sm leading-6 text-stone-500">Hỗ trợ tệp `.txt`, nội dung tệp mỗi dòng một Token.</div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl border-stone-200 bg-white"
+                onClick={() => txtInputRef.current?.click()}
+                disabled={isSubmitting}
+              >
+                <FileText className="size-4" />
+                Chọn TXT
+              </Button>
+            </div>
+          </div>
+          <input
+            ref={txtInputRef}
+            type="file"
+            accept=".txt,text/plain"
+            className="hidden"
+            onChange={(event) => void handleTxtSelected(event)}
+          />
+        </div>
+      );
+    }
+
+    if (method === "oauth") {
+      const tokenCount = splitTokens(tokenInput).length;
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setMethod("menu")}
+              className="inline-flex items-center gap-1 text-sm text-stone-500 transition hover:text-stone-800"
+            >
+              <ArrowLeft className="size-4" />
+              Quay lại
+            </button>
+            <span className="text-xs text-stone-400">Đã nhận diện {tokenCount} Token OAuth</span>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+            <div className="font-medium">Token OAuth từ 9router</div>
+            <div>
+              Dán Codex OAuth token từ backup 9router. Các token này gọi thẳng OpenAI API (api.openai.com) — không giới hạn 24KB, không cần browser impersonation.
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-700">OAuth Token (Codex)</label>
+            <Textarea
+              placeholder="Mỗi dòng một OAuth Token (JWT: eyJ...)..."
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+              className="min-h-56 resize-none rounded-xl border-stone-200 font-mono text-xs"
+            />
+          </div>
+          <div className="rounded-2xl border border-dashed border-stone-200 bg-stone-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-stone-800">Nhập từ tệp TXT</div>
+                <div className="text-sm leading-6 text-stone-500">Hỗ trợ tệp `.txt`, mỗi dòng một Token.</div>
               </div>
               <Button
                 type="button"
@@ -432,6 +514,12 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
             resetState();
             router.push("/settings");
           }}
+        />
+        <MethodCard
+          title="Nhập OAuth Token (9router)"
+          description="Dán Codex OAuth token từ backup 9router. Gọi thẳng OpenAI API — không giới hạn 24KB."
+          icon={KeyRound}
+          onClick={() => setMethod("oauth")}
         />
         <MethodCard
           title="Nhập từ máy chủ Sub2API"

@@ -161,6 +161,17 @@ def create_router() -> APIRouter:
             "items": refresh_result.get("items", result.get("items", [])),
         }
 
+    @router.post("/api/accounts/oauth")
+    async def create_oauth_accounts(body: dict, authorization: str | None = Header(default=None)):
+        """Add OAuth tokens (Codex from 9router) with custom type."""
+        require_admin(authorization)
+        tokens = [str(t or "").strip() for t in (body.get("tokens") or []) if str(t or "").strip()]
+        if not tokens:
+            raise HTTPException(status_code=400, detail={"error": "tokens is required"})
+        account_type = str(body.get("type") or "codex").strip()
+        result = account_service.add_accounts_with_type(tokens, account_type)
+        return {"items": result.get("items", []), "added": result.get("added", 0), "skipped": result.get("skipped", 0)}
+
     @router.delete("/api/accounts")
     async def delete_accounts(body: AccountDeleteRequest, authorization: str | None = Header(default=None)):
         require_admin(authorization)

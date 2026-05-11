@@ -19,6 +19,7 @@ export default function BackupPage() {
   const [message, setMessage] = useState("");
   const [importPath, setImportPath] = useState("");
   const [importing, setImporting] = useState(false);
+  const [uploadDrag, setUploadDrag] = useState(false);
 
   useEffect(() => {
     fetchBackups();
@@ -79,6 +80,31 @@ export default function BackupPage() {
       }
     } catch (e: any) {
       setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleFileUpload(file: File) {
+    setImporting(true);
+    setMessage("");
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const data = await request.post("/api/v1/import-9router-upload", json);
+      const result = data.data as any;
+      if (result?.ok) {
+        setMessage(result.message || `Đã import ${result.imported_tokens || 0} token từ ${file.name}`);
+        await fetchBackups();
+      } else {
+        setMessage(`Lỗi: ${result?.errors?.join(", ") || "Import thất bại"}`);
+      }
+    } catch (e: any) {
+      if (e instanceof SyntaxError) {
+        setMessage("Lỗi: File không phải JSON hợp lệ");
+      } else {
+        setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
+      }
     } finally {
       setImporting(false);
     }
