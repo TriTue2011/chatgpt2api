@@ -100,7 +100,7 @@ class BackendRouter:
     # Default model per provider (for "auto" resolution)
     PROVIDER_DEFAULT_MODELS: dict[str, str] = {
         "ninerouter": "auto",
-        "openai_oauth": "auto",
+        "openai_oauth": "gpt-5.3-codex",
         "opencode": "nemotron-3-super-free",
         "chatgpt": "auto",
         "gemini_free": "gemini-2.0-flash",

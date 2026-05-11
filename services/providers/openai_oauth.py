@@ -21,6 +21,7 @@ from services.account_service import account_service
 from utils.log import logger
 
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
+CODEX_DEFAULT_MODEL = "gpt-5.3-codex"
 CODEX_HEADERS = {
     "originator": "codex-cli",
     "User-Agent": "codex-cli/1.0.18 (Windows; x64)",
@@ -141,29 +142,32 @@ class CodexOAuthProvider:
     ) -> dict[str, Any] | Iterator[str]:
         """Call Codex Responses API with OAuth token."""
 
-        body = _chat_to_responses_input(messages, tools, tool_choice)
+        instructions = None
+        body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
 
-        if model and model != "auto":
-            body["model"] = model
+        # Codex requires these three to be set
+        model = model if model and model != "auto" else CODEX_DEFAULT_MODEL
+        body["model"] = model
+        body["store"] = False
+        body["stream"] = True  # Codex requires streaming
+
         if temperature is not None:
             body["temperature"] = temperature
 
         headers = dict(CODEX_HEADERS)
         headers["Authorization"] = f"Bearer {access_token}"
-        headers["Accept"] = "text/event-stream" if stream else "application/json"
-        body["stream"] = stream
 
         logger.info({
             "event": "codex_request",
-            "model": model or "auto",
-            "stream": stream,
+            "model": model,
+            "stream": True,
             "message_count": len(messages),
         })
 
         try:
             resp = requests.post(
                 CODEX_URL, headers=headers, json=body,
-                timeout=300, stream=stream,
+                timeout=300, stream=True,
                 impersonate="chrome110",
             )
 
