@@ -237,7 +237,7 @@ def create_router(app_version: str) -> APIRouter:
 
     # ── Backup / Restore (local full-state) ──
 
-    @router.post("/api/v1/backup")
+    @router.post("/api/v1/import-9router")
     async def import_9router_backup(
         body: Import9RouterRequest,
         authorization: str | None = Header(default=None),
