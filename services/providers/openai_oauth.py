@@ -158,7 +158,7 @@ class CodexOAuthProvider:
                      "max_tokens", "max_output_tokens", "max_completion_tokens",
                      "n", "seed", "logprobs", "top_logprobs", "user",
                      "stream_options", "safety_identifier", "metadata",
-                     "parallel_tool_calls", "tool_choice", "tools"):
+                     "parallel_tool_calls"):
             body.pop(key, None)
 
         headers = dict(CODEX_HEADERS)
