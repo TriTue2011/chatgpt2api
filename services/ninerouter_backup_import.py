@@ -212,9 +212,11 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            result = account_service.add_accounts(tokens)
-            imported = result.get("added", 0)
-            skipped = result.get("skipped", 0)
+            # Mark these as codex-type tokens (OAuth, not web cookies)
+            for token in tokens:
+                account_service.add_accounts_with_type([token], account_type="codex")
+            imported = len(tokens)
+            skipped = 0
             logger.info({
                 "event": "9router_backup_imported",
                 "tokens_found": len(tokens),

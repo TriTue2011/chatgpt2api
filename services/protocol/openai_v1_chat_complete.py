@@ -200,12 +200,13 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
     if route.provider == "opencode":
         return _handle_opencode_chat(model, messages, body.get("stream"), body)
-    elif route.provider == "ninerouter":
-        return _handle_ninerouter_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+    elif route.provider == "openai_oauth":
+        return _handle_openai_oauth_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+    elif route.provider == "gemini_free":
+        return _handle_gemini_chat(model, messages, body.get("stream"), body)
     elif route.provider == "chatgpt":
         return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
     else:
-        # Unknown provider — fallback to ChatGPT
         logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt"})
         return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
 
@@ -350,7 +351,7 @@ def _opencode_completion_response(
         )
 
 
-def _handle_ninerouter_chat(
+def _handle_openai_oauth_chat(
     model: str,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
@@ -358,19 +359,85 @@ def _handle_ninerouter_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Proxy chat to 9router — 9router handles all OAuth tokens (Claude/Codex/Copilot/...)."""
-    from services.providers.ninerouter import ninerouter_proxy
+    """Use Codex OAuth token to call OpenAI API directly — same as 9router."""
+    from services.providers.openai_oauth import openai_oauth
 
-    # Strip 9r/ prefix
-    pure_model = model[3:] if model.startswith("9r/") else model
+    pure_model = model[3:] if model.startswith("cx/") else model
     if not pure_model or pure_model == "auto":
         pure_model = "auto"
 
     logger.info({
-        "event": "ninerouter_chat",
+        "event": "openai_oauth_chat",
         "model": pure_model,
         "stream": stream,
-        "message_count": len(messages),
+    })
+
+    temperature = body.get("temperature")
+    max_tokens = body.get("max_tokens")
+
+    attempted: set[str] = set()
+    last_error = ""
+
+    while True:
+        try:
+            token = openai_oauth.get_token_for_request(attempted)
+        except RuntimeError as exc:
+            return completion_response(model=model, content=str(exc), messages=messages)
+
+        if token in attempted:
+            break
+        attempted.add(token)
+
+        try:
+            if stream:
+                return openai_oauth.chat_completions(
+                    access_token=token, messages=messages, model=pure_model,
+                    stream=True, temperature=temperature, max_tokens=max_tokens,
+                    tools=tools, tool_choice=tool_choice,
+                )
+            else:
+                result = openai_oauth.chat_completions(
+                    access_token=token, messages=messages, model=pure_model,
+                    stream=False, temperature=temperature, max_tokens=max_tokens,
+                    tools=tools, tool_choice=tool_choice,
+                )
+                account_service.mark_text_used(token)
+                return result
+        except Exception as exc:
+            last_error = str(exc)
+            if "expired" in last_error.lower() or "401" in last_error:
+                account_service.remove_invalid_token(token, "openai_oauth")
+                continue
+            break
+
+    return completion_response(
+        model=model,
+        content=f"OpenAI OAuth error: {last_error}",
+        messages=messages,
+    )
+
+
+def _handle_gemini_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Gemini AI Studio chat — free 15 RPM or paid via API key."""
+    from services.providers.gemini_free import gemini_provider, GEMINI_DEFAULT_MODEL
+
+    pure_model = model
+    for prefix in ("gemini/", "gemini_free/"):
+        if model.startswith(prefix):
+            pure_model = model[len(prefix):]
+            break
+    if not pure_model or pure_model == "auto":
+        pure_model = GEMINI_DEFAULT_MODEL
+
+    logger.info({
+        "event": "gemini_chat",
+        "model": pure_model,
+        "stream": stream,
     })
 
     temperature = body.get("temperature")
@@ -378,67 +445,16 @@ def _handle_ninerouter_chat(
 
     try:
         if stream:
-            return _stream_ninerouter_response(
-                pure_model, messages, temperature, max_tokens, tools, tool_choice
+            result = gemini_provider.chat_completions(
+                messages=messages, model=pure_model, stream=True,
+                temperature=temperature, max_tokens=max_tokens,
             )
+            return result  # Already yields OpenAI-compatible SSE
         else:
-            result = ninerouter_proxy.chat_completions(
-                messages=messages,
-                model=pure_model,
-                stream=False,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                tools=tools,
-                tool_choice=tool_choice,
+            return gemini_provider.chat_completions(
+                messages=messages, model=pure_model, stream=False,
+                temperature=temperature, max_tokens=max_tokens,
             )
-            # 9router returns OpenAI-compatible format — pass through
-            return result
-
     except Exception as exc:
-        logger.error({"event": "ninerouter_fatal", "error": str(exc)})
-        return completion_response(
-            model=model,
-            content=f"9router error: {exc}",
-            messages=messages,
-        )
-
-
-def _stream_ninerouter_response(
-    model: str,
-    messages: list[dict[str, Any]],
-    temperature: float | None,
-    max_tokens: int | None,
-    tools: list[dict[str, Any]] | None,
-    tool_choice: Any,
-) -> Iterator[dict[str, Any]]:
-    """Stream SSE from 9router — pass through directly."""
-    from services.providers.ninerouter import ninerouter_proxy
-
-    try:
-        sse_stream = ninerouter_proxy.chat_completions(
-            messages=messages,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-        )
-
-        for line in sse_stream:
-            line = line.rstrip("\n")
-            if line.startswith("data: "):
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                    yield chunk
-                except Exception:
-                    continue
-
-    except Exception as exc:
-        logger.error({"event": "ninerouter_stream_error", "error": str(exc)})
-        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-        created = int(time.time())
-        yield completion_chunk(model, {"role": "assistant", "content": f"9router error: {exc}"}, "stop", completion_id, created)
+        logger.error({"event": "gemini_fatal", "error": str(exc)})
+        return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)

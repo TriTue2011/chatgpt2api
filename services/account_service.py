@@ -228,6 +228,34 @@ class AccountService:
                             {"added": added, "skipped": skipped})
         return {"added": added, "skipped": skipped, "items": items}
 
+    def add_accounts_with_type(self, tokens: list[str], account_type: str = "codex") -> dict:
+        """Add accounts with a specific type (e.g. 'codex' for 9router OAuth tokens)."""
+        tokens = list(dict.fromkeys(token for token in tokens if token))
+        if not tokens:
+            return {"added": 0, "skipped": 0, "items": self.list_accounts()}
+
+        with self._lock:
+            added = 0
+            skipped = 0
+            for access_token in tokens:
+                current = self._accounts.get(access_token)
+                if current is not None:
+                    skipped += 1
+                    continue
+                added += 1
+                account = self._normalize_account({
+                    "access_token": access_token,
+                    "type": account_type,
+                    "status": "正常",
+                })
+                if account is not None:
+                    self._accounts[access_token] = account
+            self._save_accounts()
+            items = [dict(item) for item in self._accounts.values()]
+            log_service.add(LOG_TYPE_ACCOUNT, f"Thêm {added} tài khoản {account_type}, bỏ qua {skipped}",
+                            {"added": added, "skipped": skipped, "type": account_type})
+        return {"added": added, "skipped": skipped, "items": items}
+
     def delete_accounts(self, tokens: list[str]) -> dict:
         target_set = set(token for token in tokens if token)
         if not target_set:

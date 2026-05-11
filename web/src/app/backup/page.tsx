@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive } from "lucide-react";
+import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive, ArrowLeftRight } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +17,8 @@ export default function BackupPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
+  const [importPath, setImportPath] = useState("");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     fetchBackups();
@@ -55,6 +57,30 @@ export default function BackupPage() {
       setMessage("Đã xóa sao lưu");
     } catch (e: any) {
       setMessage(`Lỗi: ${e?.message || "Không thể xóa"}`);
+    }
+  }
+
+  async function import9Router() {
+    const path = importPath.trim();
+    if (!path) {
+      setMessage("Vui lòng nhập đường dẫn file backup 9router");
+      return;
+    }
+    setImporting(true);
+    setMessage("");
+    try {
+      const data = await request.post("/api/v1/import-9router", { path });
+      const result = data.data as any;
+      if (result?.ok) {
+        setMessage(result.message || `Đã import ${result.imported_tokens || 0} token`);
+        await fetchBackups();
+      } else {
+        setMessage(`Lỗi: ${result?.errors?.join(", ") || "Import thất bại"}`);
+      }
+    } catch (e: any) {
+      setMessage(`Lỗi: ${e?.message || "Import thất bại"}`);
+    } finally {
+      setImporting(false);
     }
   }
 
