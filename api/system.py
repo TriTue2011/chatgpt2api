@@ -14,6 +14,22 @@ from services.image_service import delete_images, download_images_zip, get_image
 from services.image_tags_service import delete_tag, get_all_tags, set_tags
 from services.log_service import log_service
 from services.proxy_service import test_proxy
+from services.state_backup import state_backup
+from services.backend_router import backend_router
+from services.providers.opencode import opencode_provider
+from services.rate_limit_backoff import rate_limit_backoff
+
+
+def _create_backup() -> dict:
+    """Create local full-state backup."""
+    payload = state_backup.export_all()
+    filepath = state_backup.save_to_file(payload)
+    return {
+        "status": "ok",
+        "path": str(filepath),
+        "size_bytes": filepath.stat().st_size,
+        "created_at": payload["created_at"],
+    }
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -211,5 +227,110 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         count = delete_tag(tag)
         return {"ok": True, "removed_from": count}
+
+    # ── Backup / Restore (local full-state) ──
+
+    class RestoreRequest(BaseModel):
+        path: str = ""
+
+    @router.post("/api/v1/backup")
+    async def create_local_backup(authorization: str | None = Header(default=None)):
+        """Export toàn bộ state ra file JSON và lưu local."""
+        require_admin(authorization)
+        result = await run_in_threadpool(_create_backup)
+        return result
+
+    @router.get("/api/v1/backups")
+    async def list_local_backups(authorization: str | None = Header(default=None)):
+        """Danh sách backup local."""
+        require_admin(authorization)
+        return {"backups": state_backup.list_backups()}
+
+    @router.post("/api/v1/restore")
+    async def restore_from_backup(
+        body: RestoreRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        """Phục hồi state từ file backup local."""
+        require_admin(authorization)
+        path = (body.path or "").strip()
+        if not path:
+            raise HTTPException(status_code=400, detail={"error": "path is required"})
+
+        def _restore():
+            payload = state_backup.load_from_file(path)
+            return state_backup.import_all(payload)
+
+        report = await run_in_threadpool(_restore)
+        return report.to_dict()
+
+    @router.delete("/api/v1/backups/{filename}")
+    async def delete_local_backup(filename: str, authorization: str | None = Header(default=None)):
+        """Xóa một file backup local."""
+        require_admin(authorization)
+        ok = state_backup.delete_backup(filename)
+        return {"ok": ok}
+
+    # ── Health / Providers ──
+
+    @router.get("/api/v1/health")
+    async def system_health(authorization: str | None = Header(default=None)):
+        """Trạng thái hệ thống: backends, providers, accounts."""
+        require_admin(authorization)
+        from services.account_service import account_service
+        accounts = account_service.list_accounts()
+        backoff_stats = rate_limit_backoff.get_stats()
+
+        return {
+            "status": "ok",
+            "version": app_version,
+            "accounts": {
+                "total": len(accounts),
+                "active": sum(1 for a in accounts if a.get("status") == "正常"),
+                "limited": sum(1 for a in accounts if a.get("status") == "限流"),
+                "error": sum(1 for a in accounts if a.get("status") in ("异常", "禁用")),
+            },
+            "backoff": backoff_stats,
+            "opencode": {
+                "available": opencode_provider.is_available,
+            },
+        }
+
+    @router.get("/api/v1/providers")
+    async def list_providers(authorization: str | None = Header(default=None)):
+        """Danh sách provider đang active."""
+        require_admin(authorization)
+        provider_configs = config.data.get("providers") or {}
+
+        providers = []
+        for name, cfg in provider_configs.items():
+            if isinstance(cfg, dict):
+                providers.append({
+                    "name": name,
+                    "enabled": cfg.get("enabled", False),
+                    "noAuth": cfg.get("noAuth", False),
+                    "has_api_key": bool(cfg.get("api_key")),
+                    "has_base_url": bool(cfg.get("base_url")),
+                })
+
+        return {"providers": providers}
+
+    @router.get("/api/v1/providers/{provider_id}/models")
+    async def provider_models(provider_id: str, authorization: str | None = Header(default=None)):
+        """Lấy danh sách model của một provider."""
+        require_admin(authorization)
+        if provider_id == "opencode":
+            models = opencode_provider.list_models()
+            return {"models": models}
+        return {"models": []}
+
+    @router.post("/api/v1/providers/{provider_id}/test")
+    async def test_provider(provider_id: str, authorization: str | None = Header(default=None)):
+        """Test kết nối đến một provider."""
+        require_admin(authorization)
+        if provider_id == "opencode":
+            available = opencode_provider.is_available
+            return {"provider": provider_id, "available": available}
+        raise HTTPException(status_code=404, detail={"error": f"unknown provider: {provider_id}"})
 
     return router

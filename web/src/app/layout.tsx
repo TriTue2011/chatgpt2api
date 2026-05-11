@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
-import { TopNav } from "@/components/top-nav";
+import { Sidebar } from "@/components/sidebar";
 
 export const metadata: Metadata = {
-  title: "Quản lý tài khoản ChatGPT",
-  description: "Bảng điều khiển quản lý cụm tài khoản ChatGPT",
+  title: "chatgpt2api — Bảng điều khiển",
+  description: "Bảng điều khiển quản lý tài khoản ChatGPT, nhà cung cấp AI, tạo ảnh, sao lưu",
 };
 
 export const viewport: Viewport = {
@@ -13,7 +13,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: "#f0ebe3",
+  themeColor: "#0c0a09",
 };
 
 export default function RootLayout({
@@ -22,21 +22,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" suppressHydrationWarning>
+    <html lang="vi" className="dark" suppressHydrationWarning>
       <body
         className="antialiased"
         style={{
           fontFamily:
-            '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
+            '"Inter","SF Pro Display","SF Pro Text","Helvetica Neue",sans-serif',
         }}
       >
-        <Toaster position="top-center" richColors offset={48} />
-        <main className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.92),_rgba(245,239,231,0.96)_42%,_rgba(240,235,227,0.99)_100%)] px-4 pt-0 pb-2 text-stone-900 sm:px-6 sm:pt-2 lg:px-8">
-          <div className="mx-auto box-border flex min-h-screen max-w-[1440px] flex-col gap-2 pt-[env(safe-area-inset-top)] sm:gap-5 sm:pt-0">
-            <TopNav />
-            {children}
-          </div>
-        </main>
+        <Toaster position="top-right" richColors offset={48} />
+        <div className="flex min-h-screen bg-stone-950 text-stone-100">
+          <Sidebar />
+          <main className="flex-1 overflow-x-hidden pl-16 lg:pl-56">
+            <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8">
+              {children}
+            </div>
+          </main>
+        </div>
       </body>
     </html>
   );

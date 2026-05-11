@@ -19,7 +19,10 @@ from services.protocol.conversation import (
     stream_text_deltas,
     text_backend,
 )
+from services.backend_router import backend_router
+from services.search_service import search_service
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
+from utils.log import logger
 
 
 def completion_chunk(model: str, delta: dict[str, Any], finish_reason: str | None = None, completion_id: str = "", created: int | None = None) -> dict[str, Any]:
@@ -178,13 +181,167 @@ def stream_image_chat_completion(image_outputs: Iterable[ImageOutput], model: st
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    if body.get("stream"):
-        if is_image_chat_request(body):
-            return image_chat_events(body)
-        model, messages, tools, tool_choice = text_chat_parts(body)
-        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
+    # Image chat requests always use existing DALL-E flow
     if is_image_chat_request(body):
+        if body.get("stream"):
+            return image_chat_events(body)
         return image_chat_response(body)
+
     model, messages, tools, tool_choice = text_chat_parts(body)
+
+    # Apply search injection if enabled (non-ChatGPT backends)
+    search_enabled = search_service.is_enabled
+    if search_enabled and search_service.backend_name != "chatgpt":
+        messages = search_service.process_messages(messages)
+
+    # Route to appropriate backend
+    route = backend_router.route(model, messages)
+
+    if route.provider == "opencode":
+        return _handle_opencode_chat(model, messages, body.get("stream"), body)
+    elif route.provider == "chatgpt":
+        return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+    else:
+        # Unknown provider — fallback to ChatGPT
+        logger.warning({"event": "unknown_provider", "provider": route.provider, "fallback": "chatgpt"})
+        return _handle_chatgpt_chat(model, messages, tools, tool_choice, body.get("stream"), body)
+
+
+def _handle_chatgpt_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Existing ChatGPT flow — unchanged."""
+    if stream:
+        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     return completion_response(model, collect_text(text_backend(), request), messages=messages)
+
+
+def _handle_opencode_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """OpenCode chat — no 24KB payload limit, no auth required."""
+    from services.providers.opencode import opencode_provider
+
+    # Strip oc/ prefix if present
+    opencode_model = model
+    if model.startswith("oc/"):
+        opencode_model = model[3:]
+    elif model == "auto":
+        opencode_model = "auto"
+
+    logger.info({
+        "event": "opencode_chat_routed",
+        "model": opencode_model,
+        "stream": stream,
+        "message_count": len(messages),
+    })
+
+    temperature = float(body.get("temperature") or 0.7)
+    max_tokens = body.get("max_tokens")
+
+    if stream:
+        return _stream_opencode_response(opencode_model, messages, temperature, max_tokens, body)
+    else:
+        return _opencode_completion_response(opencode_model, messages, temperature, max_tokens)
+
+
+def _stream_opencode_response(
+    model: str,
+    messages: list[dict[str, Any]],
+    temperature: float,
+    max_tokens: int | None,
+    body: dict[str, Any],
+) -> Iterator[dict[str, Any]]:
+    """Stream response from OpenCode, yielding OpenAI-compatible SSE chunks."""
+    from services.providers.opencode import opencode_provider
+
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+    sent_role = False
+
+    try:
+        sse_stream = opencode_provider.chat_completions(
+            messages=messages,
+            model=model,
+            stream=True,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        for line in sse_stream:
+            if line.startswith("data: "):
+                payload = line[6:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = __import__("json").loads(payload)
+                    # Pass through existing OpenAI format
+                    chunk["id"] = completion_id
+                    chunk["created"] = created
+                    chunk["model"] = model
+                    # Ensure role is set on first chunk
+                    choices = chunk.get("choices", [])
+                    if choices and not sent_role:
+                        delta = choices[0].get("delta", {})
+                        if "role" not in delta:
+                            chunk["choices"][0]["delta"] = {"role": "assistant", "content": delta.get("content", "")}
+                        sent_role = True
+                    yield chunk
+                except Exception:
+                    continue
+
+        if not sent_role:
+            yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
+        yield completion_chunk(model, {}, "stop", completion_id, created)
+
+    except Exception as exc:
+        logger.error({"event": "opencode_stream_fatal", "error": str(exc)})
+        yield completion_chunk(model, {"role": "assistant", "content": f"OpenCode error: {exc}"}, "stop", completion_id, created)
+
+
+def _opencode_completion_response(
+    model: str,
+    messages: list[dict[str, Any]],
+    temperature: float,
+    max_tokens: int | None,
+) -> dict[str, Any]:
+    """Non-streaming response from OpenCode."""
+    from services.providers.opencode import opencode_provider
+
+    try:
+        result = opencode_provider.chat_completions(
+            messages=messages,
+            model=model,
+            stream=False,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        content = ""
+        choices = result.get("choices", [])
+        if choices and isinstance(choices[0], dict):
+            content = str(choices[0].get("message", {}).get("content", "") or "")
+
+        return completion_response(
+            model=model,
+            content=content,
+            messages=messages,
+            created=int(result.get("created") or time.time()),
+        )
+
+    except Exception as exc:
+        logger.error({"event": "opencode_completion_error", "error": str(exc)})
+        return completion_response(
+            model=model,
+            content=f"OpenCode error: {exc}",
+            messages=messages,
+        )

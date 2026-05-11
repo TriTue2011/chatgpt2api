@@ -46,5 +46,38 @@
       "images": false
     }
   },
-  "image_account_concurrency": 3
+  "image_account_concurrency": 3,
+  "backends": {
+    "chat": ["chatgpt", "opencode", "gemini_free", "openrouter"],
+    "image": ["chatgpt", "sdwebui", "huggingface", "cloudflare"],
+    "default_chat": "auto",
+    "default_image": "1792x1024"
+  },
+  "providers": {
+    "opencode": {"enabled": true, "noAuth": true},
+    "gemini_free": {"enabled": false, "api_key": ""},
+    "openrouter": {"enabled": false, "api_key": ""},
+    "sdwebui": {"enabled": false, "base_url": "http://localhost:7860"},
+    "huggingface": {"enabled": false, "api_key": ""},
+    "cloudflare_ai": {"enabled": false, "account_id": "", "api_token": ""},
+    "serper": {"enabled": false, "api_key": ""},
+    "searxng": {"enabled": false, "base_url": "http://localhost:8080"},
+    "brave": {"enabled": false, "api_key": ""}
+  },
+  "rate_limit": {
+    "backoff_base_ms": 2000,
+    "backoff_max_ms": 300000,
+    "max_levels": 15
+  },
+  "combo_models": {
+    "ha-agent": ["oc/auto", "chatgpt/auto"],
+    "ha-agent-image": ["sdwebui/stable-diffusion", "chatgpt/gpt-image-2"]
+  },
+  "search": {
+    "enabled": true,
+    "backend": "chatgpt",
+    "auto_detect": true,
+    "max_results": 3,
+    "inject_as": "user_message"
+  }
 }

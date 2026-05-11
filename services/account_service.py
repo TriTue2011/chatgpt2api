@@ -10,8 +10,14 @@ from services.log_service import (
     LOG_TYPE_ACCOUNT,
     log_service,
 )
+from services.rate_limit_backoff import rate_limit_backoff
 from services.storage.base import StorageBackend
 from utils.helper import anonymize_token
+from utils.log import logger
+
+
+# NoAuth providers — virtual connections (port from 9router FREE_PROVIDERS)
+NO_AUTH_PROVIDERS = {"opencode"}
 
 
 class AccountService:
@@ -337,6 +343,113 @@ class AccountService:
             "errors": errors,
             "items": self.list_accounts(),
         }
+
+
+    def get_health_score(self, access_token: str) -> float:
+        """Calculate health score for an account (0.0-1.0).
+
+        Ported from 9router health scoring pattern:
+        - 0.35: rate-limit status
+        - 0.20: response latency (placeholder)
+        - 0.20: concurrency saturation
+        - 0.15: token last used recency
+        - 0.10: success/fail ratio
+        """
+        account = self.get_account(access_token)
+        if not account:
+            return 0.0
+
+        score = 0.0
+
+        # Rate-limit status (0.35)
+        status = str(account.get("status") or "正常")
+        if status == "正常":
+            score += 0.35
+        elif status == "限流":
+            score += 0.0
+        else:
+            score += 0.1
+
+        # Concurrency saturation (0.20)
+        max_conc = max(1, int(config.image_account_concurrency or 1))
+        inflight = int(self._image_inflight.get(access_token, 0))
+        saturation = inflight / max_conc
+        score += (1 - saturation) * 0.20
+
+        # Token recency (0.15)
+        last_used = account.get("last_used_at")
+        if last_used:
+            try:
+                from datetime import datetime
+                last_dt = datetime.strptime(str(last_used), "%Y-%m-%d %H:%M:%S")
+                age_minutes = (datetime.now() - last_dt).total_seconds() / 60
+                if age_minutes < 5:
+                    score += 0.15
+                elif age_minutes < 30:
+                    score += 0.10
+                else:
+                    score += 0.03
+            except (ValueError, TypeError):
+                score += 0.05
+        else:
+            score += 0.05
+
+        # Success/fail ratio (0.10)
+        success = int(account.get("success") or 0)
+        fail = int(account.get("fail") or 0)
+        total = success + fail
+        if total > 0:
+            score += (success / total) * 0.10
+        else:
+            score += 0.05
+
+        # Latency placeholder (0.20) — default to mid-range
+        score += 0.10
+
+        return max(0.0, min(1.0, score))
+
+    def get_provider_credentials(
+        self,
+        provider_id: str,
+        exclude_connection_ids: set[str] | None = None,
+        model: str = "",
+    ) -> dict[str, Any] | None:
+        """Get credentials for a provider, supporting noAuth virtual connections.
+
+        Ported from 9router src/sse/services/auth.js getProviderCredentials().
+        Returns None if no credentials available.
+
+        For noAuth providers (opencode): returns a virtual connection with
+        id="noauth" and accessToken="public".
+        """
+        # Check for noAuth provider first (port from 9router FREE_PROVIDERS check)
+        if provider_id in NO_AUTH_PROVIDERS:
+            return {
+                "id": "noauth",
+                "connectionName": "Public",
+                "isActive": True,
+                "accessToken": "public",
+                "noAuth": True,
+            }
+
+        # For chatgpt provider, use existing token pool
+        if provider_id == "chatgpt":
+            token = self.get_text_access_token(exclude_connection_ids)
+            if not token:
+                return None
+            return {
+                "id": anonymize_token(token),
+                "connectionName": "ChatGPT",
+                "isActive": True,
+                "accessToken": token,
+                "noAuth": False,
+            }
+
+        return None
+
+    def is_noauth_provider(self, provider_id: str) -> bool:
+        """Check if a provider uses noAuth virtual connections."""
+        return provider_id in NO_AUTH_PROVIDERS
 
 
 account_service = AccountService(config.get_storage_backend())
