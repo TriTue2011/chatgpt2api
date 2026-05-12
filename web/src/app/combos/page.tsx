@@ -156,7 +156,7 @@ export default function CombosPage() {
 
       {/* Add new combo */}
       <div className="rounded-xl border border-stone-200 bg-white/80 p-5">
-        <h3 className="mb-3 text-sm font-semibold text-white">Thêm combo mới</h3>
+        <h3 className="mb-3 text-sm font-semibold text-stone-900">Thêm combo mới</h3>
 
         {/* Combo name */}
         <div className="mb-3">
@@ -165,7 +165,7 @@ export default function CombosPage() {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Tên combo (vd: ha-agent)"
-            className="w-full rounded-lg border border-stone-200 bg-stone-100 px-3 py-2 text-sm text-white placeholder:text-stone-500 focus:border-stone-500 focus:outline-none"
+            className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-500 focus:outline-none"
           />
         </div>
 
@@ -220,7 +220,7 @@ export default function CombosPage() {
                 className={cn(
                   "px-3 py-1.5 transition",
                   filterCap === cap
-                    ? "bg-stone-200 text-white"
+                    ? "bg-stone-900 text-white"
                     : "text-stone-500 hover:text-stone-700",
                 )}
               >
@@ -234,7 +234,7 @@ export default function CombosPage() {
             <button
               type="button"
               onClick={() => setDropdownOpen(!dropdownOpen)}
-              className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-stone-100 px-3 py-2 text-sm text-white hover:border-stone-600 transition"
+              className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition"
             >
               <span className="text-stone-500">Chọn model để thêm vào chuỗi fallback...</span>
               <ChevronDown className="size-4 text-stone-500" />
@@ -298,7 +298,7 @@ export default function CombosPage() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Combine className="size-4 text-stone-500" />
-                  <h3 className="font-semibold text-white">{name}</h3>
+                  <h3 className="font-semibold text-stone-900">{name}</h3>
                   <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] text-stone-500">
                     {models.length} model
                   </span>
