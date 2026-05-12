@@ -23,6 +23,7 @@ const PROVIDER_META: Record<string, { label: string; desc: string; icon: string;
   serper: { label: "Serper.dev", desc: "Google Search API — 2.5K req/tháng miễn phí", icon: "🔍", color: "#3B82F6" },
   searxng: { label: "SearXNG", desc: "Tự host — không giới hạn, riêng tư", icon: "🔎", color: "#6B7280" },
   brave: { label: "Brave Search", desc: "Brave Search API — 2K req/tháng miễn phí", icon: "🦁", color: "#FB923C" },
+  nvidia_nim: { label: "NVIDIA NIM", desc: "80+ model qua NVIDIA — chat + vision + tạo ảnh FLUX", icon: "🟢", color: "#76B900" },
 };
 
 export default function ProvidersPage() {
