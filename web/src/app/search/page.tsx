@@ -103,10 +103,10 @@ export default function SearchPage() {
           <label className="text-xs text-stone-500 w-16">Model:</label>
           <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
             className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-900 focus:border-stone-500 focus:outline-none">
-            <option value="gemini-3-flash-preview">gemini-3-flash-preview (mới nhất)</option>
-            <option value="gemini-2.5-flash">gemini-2.5-flash (nhanh, rẻ)</option>
-            <option value="gemini-2.5-pro">gemini-2.5-pro (mạnh nhất)</option>
-            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (nhanh nhất)</option>
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview (Preview)</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash (Stable)</option>
+            <option value="gemini-2.5-pro-preview-07-02">gemini-2.5-pro-preview-07-02 (Preview)</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash (Stable)</option>
           </select>
         </div>
         <p className="text-xs text-stone-400 mt-1">Free 15 RPM. Có thể nhập nhiều key cách nhau dấu phẩy</p>

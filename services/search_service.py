@@ -177,7 +177,7 @@ class GeminiGrounding(SearchBackend):
 
     def _get_model(self) -> str:
         cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
-        return str(cfg.get("model") or "gemini-2.5-flash")
+        return str(cfg.get("model") or "gemini-3-flash-preview")
 
     def _get_keys(self) -> list[str]:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
