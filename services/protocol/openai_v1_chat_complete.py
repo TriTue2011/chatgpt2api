@@ -397,67 +397,87 @@ def _opencode_completion_response(
         )
 
 
+# ── Helper for entity_id → domain conversion ──
+
+def _convert_params(params):
+    """Convert OpenCode params to HA-compatible format (entity_ids → domain)."""
+    if isinstance(params, dict) and "entity_ids" in params:
+        eids = params["entity_ids"]
+        if isinstance(eids, list) and eids:
+            domains = list(set(eid.split(".")[0] for eid in eids if isinstance(eid, str)))
+            return {"domain": domains}
+    if isinstance(params, list):
+        if all(isinstance(x, str) for x in params):
+            if any("." in str(x) for x in params):
+                domains = list(set(str(x).split(".")[0] for x in params))
+                return {"domain": domains}
+            return {"entities": params}
+        return {"entities": params}
+    if not isinstance(params, dict):
+        return {}
+    return params
+
+
 def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
     """Parse text tool calls from OpenCode response.
 
-    Supports formats:
-      '{"action": "GetLiveContext", "params": {...}}'
-      'GetLiveContext\\n{...json...}'
+    Only extract if the response is PURELY a tool call (no conversational answer).
+    If there's text after the tool call JSON, assume it's already a complete answer.
     """
     if not text:
         return None
     import re as _re
 
+    # Check if this is a pure tool call — first non-whitespace is a tool name or JSON
+    stripped = text.strip()
+
+    # If text contains both a tool call AND a conversational answer (after the JSON),
+    # the answer is the main intent — don't extract tool call
+    # Pattern: "ToolName\n{json}\n\nAnswer text..." → already answered, skip
+
     # Format 1: JSON with "action" key
-    match = _re.search(r'\{[^{}]*"action"\s*:\s*"([^"]+)"\s*[,}][^{}]*\}', text)
+    match = _re.search(r'\{[^{}]*"action"\s*:\s*"([^"]+)"\s*[,}][^{}]*\}', stripped)
     if match:
-        try:
-            data = json.loads(match.group(0))
-            action = data.get("action", "")
-            params = data.get("params") or data.get("entity_ids") or data.get("domain") or {}
-            if isinstance(params, list):
-                params = {"entities": params}
-            if action:
+        # Only use if this is MOSTLY a tool call (not followed by long text)
+        after_json = stripped[match.end():].strip()
+        if len(after_json) < 50:  # Short or no follow-up text → pure tool call
+            try:
+                data = json.loads(match.group(0))
+                action = data.get("action", "")
+                params = _convert_params(data.get("params") or data.get("entity_ids") or data.get("domain") or {})
+                if action:
+                    return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                             "function": {"name": action, "arguments": json.dumps(params, ensure_ascii=False)}}]
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    # Format 2: ToolName\n{JSON}
+    match = _re.search(r'^([A-Z][A-Za-z0-9_]+)\s*\n\s*(\[[^\]]*\]|\{[^{}]*\})', stripped)
+    if match:
+        after_json = stripped[match.end():].strip()
+        if len(after_json) < 50:
+            try:
+                tool_name = match.group(1)
+                params = _convert_params(json.loads(match.group(2)))
+                if not isinstance(params, dict): params = {}
                 return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
-                         "function": {"name": action, "arguments": json.dumps(params, ensure_ascii=False)}}]
-        except (json.JSONDecodeError, AttributeError):
-            pass
+                         "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
+            except (json.JSONDecodeError, AttributeError):
+                pass
 
-    # Format 2: ToolName followed by JSON (anywhere, not just end)
-    # Matches: "GetLiveContext\n{\n  \"entity_ids\": [...]\n}"
-    match = _re.search(r'([A-Z][A-Za-z0-9_]+)\s*\n\s*(\[[^\]]*\]|\{[^{}]*\})', text)
+    # Format 3: {"tool": "X"} or {"name": "X"}
+    match = _re.search(r'\{\s*"(?:tool|name)"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', stripped, _re.DOTALL)
     if match:
-        tool_name = match.group(1)
-        try:
-            params = json.loads(match.group(2))
-            if isinstance(params, list):
-                if all(isinstance(x, str) for x in params) and any("." in str(x) for x in params):
-                    params = {"entity_ids": params}
-                else:
-                    params = {"entities": params}
-            elif not isinstance(params, dict):
-                params = {}
-            return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
-                     "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
-        except (json.JSONDecodeError, AttributeError):
-            pass
-
-    # Format 3: {"tool": "X", "parameters": {...}} or {"name": "X", "parameters": {...}}
-    match = _re.search(r'\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', text, _re.DOTALL)
-    if not match:
-        match = _re.search(r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', text, _re.DOTALL)
-    if match:
-        try:
-            tool_name = match.group(1)
-            params = json.loads(match.group(2))
-            if isinstance(params, list):
-                params = {"entities": params}
-            elif not isinstance(params, dict):
-                params = {}
-            return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
-                     "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
-        except (json.JSONDecodeError, AttributeError):
-            pass
+        after_json = stripped[match.end():].strip()
+        if len(after_json) < 50:
+            try:
+                tool_name = match.group(1)
+                params = _convert_params(json.loads(match.group(2)))
+                if not isinstance(params, dict): params = {}
+                return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                         "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
+            except (json.JSONDecodeError, AttributeError):
+                pass
 
     return None
 
