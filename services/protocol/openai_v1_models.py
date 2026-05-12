@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -282,12 +283,47 @@ def _apply_fallback(provider: str) -> set[str]:
     return set(FALLBACK_MODELS.get(provider, []))
 
 
-def list_models() -> dict[str, Any]:
-    """Return available models — dynamically fetched from all configured provider APIs.
+# ── Model cache ──
+_models_cache: dict[str, Any] | None = None
+_cache_timestamp: float = 0.0
+_cache_ttl: float = 300.0  # 5 min
+_cache_config_hash: str = ""
 
-    Fetches in parallel from: ChatGPT tokens, Gemini API, OpenCode API, OpenRouter API.
-    Falls back to static model list if a provider's API is unreachable.
-    """
+
+def _config_hash() -> str:
+    import hashlib, json as _json
+    raw = _json.dumps({
+        "cp": config.data.get("custom_providers") or {},
+        "ms": config.data.get("model_settings") or {},
+    }, sort_keys=True, default=str)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def invalidate_models_cache():
+    """Clear cache when config changes. Call from API endpoints after save."""
+    global _models_cache, _cache_timestamp, _cache_config_hash
+    _models_cache = None
+    _cache_timestamp = 0.0
+    _cache_config_hash = ""
+
+
+def list_models(force_refresh: bool = False) -> dict[str, Any]:
+    """Return available models — cached for 5 min unless config changes."""
+    global _models_cache, _cache_timestamp, _cache_config_hash
+
+    current_hash = _config_hash()
+    cache_valid = (
+        _models_cache is not None
+        and not force_refresh
+        and (time.time() - _cache_timestamp) < _cache_ttl
+        and _cache_config_hash == current_hash
+    )
+    if cache_valid:
+        logger.info({"event": "list_models_cache_hit", "age": round(time.time() - _cache_timestamp, 1)})
+        return dict(_models_cache)  # type: ignore[arg-type]
+
+    logger.info({"event": "list_models_refresh", "reason": "expired" if _models_cache else "first_load"})
+
     data: list[dict[str, Any]] = []
 
     # Fetch from all built-in providers in parallel
@@ -433,4 +469,10 @@ def list_models() -> dict[str, Any]:
             })
 
     logger.info({"event": "list_models_done", "total_models": len(data)})
+    # Save to cache
+    _models_cache = {"object": "list", "data": data}
+    _cache_timestamp = time.time()
+    _cache_config_hash = current_hash
+    logger.info({"event": "list_models_cached", "total": len(data)})
+
     return {"object": "list", "data": data}

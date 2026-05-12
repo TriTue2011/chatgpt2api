@@ -565,6 +565,8 @@ def create_router(app_version: str) -> APIRouter:
         }
         config.data["custom_providers"] = custom_providers
         config._save()
+        from services.protocol.openai_v1_models import invalidate_models_cache
+        invalidate_models_cache()
 
         return {
             "custom_providers": custom_providers,
@@ -583,6 +585,8 @@ def create_router(app_version: str) -> APIRouter:
             del custom_providers[provider_id]
             config.data["custom_providers"] = custom_providers
             config._save()
+            from services.protocol.openai_v1_models import invalidate_models_cache
+            invalidate_models_cache()
             return {"deleted": True, "provider_id": provider_id}
         raise HTTPException(status_code=404, detail={"error": f"provider '{provider_id}' not found"})
 
@@ -715,6 +719,8 @@ def create_router(app_version: str) -> APIRouter:
             "default_models": defaults,
         }
         config._save()
+        from services.protocol.openai_v1_models import invalidate_models_cache
+        invalidate_models_cache()
         return {"model_settings": config.data["model_settings"], "saved": True}
 
     return router

@@ -66,10 +66,11 @@ def create_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/v1/models")
-    async def list_models(authorization: str | None = Header(default=None)):
+    async def list_models(request: Request, authorization: str | None = Header(default=None)):
         require_identity(authorization)
+        force_refresh = request.query_params.get("refresh", "").lower() == "true"
         try:
-            return await run_in_threadpool(openai_v1_models.list_models)
+            return await run_in_threadpool(openai_v1_models.list_models, force_refresh)
         except Exception as exc:
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
 
