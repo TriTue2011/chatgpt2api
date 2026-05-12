@@ -49,9 +49,18 @@ def generate_pkce() -> dict[str, str]:
 
 
 def get_codex_auth_url(base_url: str = "http://localhost:3030") -> dict[str, str]:
-    """Generate Codex OAuth authorization URL with PKCE."""
+    """Generate Codex OAuth authorization URL with PKCE.
+
+    IMPORTANT: redirect_uri MUST be localhost for Codex CLI OAuth.
+    OpenAI only trusts localhost redirects — remote IPs require phone verification.
+    If chatgpt2api is not on your local machine, use the manual exchange flow:
+    1. Open auth_url in browser
+    2. Authorize
+    3. Copy the full redirect URL (localhost:3030/auth/callback?code=...)
+    4. POST that URL to /api/oauth/codex/exchange
+    """
     pkce = generate_pkce()
-    redirect_uri = f"{base_url.rstrip('/')}/auth/callback"
+    redirect_uri = "http://localhost:3030/auth/callback"
 
     params = {
         "response_type": "code",
