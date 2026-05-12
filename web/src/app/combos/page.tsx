@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Combine, Plus, Trash2, ArrowDown, MessageSquare,
-  ImageIcon, Eye, X, ChevronDown,
+  ImageIcon, Eye, X, ChevronDown, Save,
 } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
@@ -67,8 +67,12 @@ export default function CombosPage() {
       await request.post("/api/settings", { combo_models: updated });
       setCombos(updated);
       setError("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     } catch (e: any) {
       setError(e?.message || "Lỗi lưu");
+      // Reload to restore previous state on error
+      loadAll();
     }
   }
 
@@ -83,16 +87,14 @@ export default function CombosPage() {
     saveCombos(updated);
     setNewName("");
     setSelectedModels([]);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   }
 
   function removeCombo(name: string) {
     const updated = { ...combos };
     delete updated[name];
+    // Optimistic update — remove from UI immediately
+    setCombos(updated);
     saveCombos(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   }
 
   function addModelToSelection(modelId: string) {
@@ -132,9 +134,19 @@ export default function CombosPage() {
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Mô hình kết hợp</h1>
-          {saved && <span className="text-xs text-emerald-600 font-medium animate-in fade-in">✓ Đã lưu</span>}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight text-stone-900">Mô hình kết hợp</h1>
+            {saved && <span className="text-xs text-emerald-600 font-medium">✓ Đã lưu</span>}
+          </div>
+          <button
+            type="button"
+            onClick={() => saveCombos(combos)}
+            className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 transition"
+          >
+            <Save className="size-4" />
+            Lưu tất cả
+          </button>
         </div>
         <p className="mt-1 text-sm text-stone-500">
           Combo model tự động fallback qua nhiều provider theo thứ tự ưu tiên. Chọn model từ danh sách đã bật trong Quản lý Model.
