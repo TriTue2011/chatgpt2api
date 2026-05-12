@@ -64,15 +64,17 @@ export default function CombosPage() {
 
   async function saveCombos(updated: ComboModels) {
     try {
-      await request.post("/api/settings", { combo_models: updated });
-      setCombos(updated);
+      const res = await request.post("/api/settings", { combo_models: updated });
+      const returned = (res.data as any)?.config?.combo_models || {};
+      setCombos(returned);
       setError("");
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e: any) {
-      setError(e?.message || "Lỗi lưu");
+      const msg = e?.response?.data?.detail?.error || e?.message || "Lỗi lưu";
+      setError(msg);
       // Reload to restore previous state on error
-      loadAll();
+      await loadAll();
     }
   }
 
