@@ -3,6 +3,8 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from curl_cffi import requests
+
 from services.account_service import account_service
 from services.openai_backend_api import OpenAIBackendAPI
 from services.config import config
@@ -10,28 +12,193 @@ from utils.helper import IMAGE_MODELS, anonymize_token
 from utils.log import logger
 
 
-# Static provider models (always available regardless of ChatGPT tokens)
-STATIC_MODELS = [
-    # OpenCode free models
-    {"id": "oc/auto", "object": "model", "created": 0, "owned_by": "opencode"},
-    {"id": "oc/nemotron-3-super-free", "object": "model", "created": 0, "owned_by": "opencode"},
-    {"id": "oc/minimax-m2.5-free", "object": "model", "created": 0, "owned_by": "opencode"},
-    {"id": "oc/ring-2.6-1t-free", "object": "model", "created": 0, "owned_by": "opencode"},
-    {"id": "oc/trinity-large-preview-free", "object": "model", "created": 0, "owned_by": "opencode"},
-    # Codex OAuth models
-    {"id": "cx/auto", "object": "model", "created": 0, "owned_by": "openai-oauth"},
-    # Gemini models
-    {"id": "gemini_free/auto", "object": "model", "created": 0, "owned_by": "google"},
-    {"id": "gemini_free/gemini-2.5-flash", "object": "model", "created": 0, "owned_by": "google"},
-    # Combo models
-    {"id": "ha-agent", "object": "model", "created": 0, "owned_by": "chatgpt2api"},
-    # ChatGPT models
-    {"id": "chatgpt/auto", "object": "model", "created": 0, "owned_by": "chatgpt"},
-]
+# Fallback static models — used when API fetch fails
+FALLBACK_MODELS = {
+    "opencode": [
+        "oc/auto",
+        "oc/nemotron-3-super-free",
+        "oc/minimax-m2.5-free",
+        "oc/ring-2.6-1t-free",
+        "oc/trinity-large-preview-free",
+    ],
+    "gemini_free": [
+        "gemini_free/auto",
+        "gemini_free/gemini-2.5-flash",
+    ],
+    "openai_oauth": [
+        "cx/auto",
+    ],
+    "chatgpt2api": [
+        "ha-agent",
+        "chatgpt/auto",
+    ],
+}
+
+GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+OPENCODE_MODELS_URL = "https://opencode.ai/zen/v1/models"
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
-def _fetch_models_for_token(token: str) -> tuple[str, set[str]]:
-    """Fetch available model IDs for a single token. Returns (token_anon, model_id_set)."""
+def _get_gemini_keys() -> list[str]:
+    cfg = config.data.get("providers") or {}
+    gemini_cfg = cfg.get("gemini_free") or {}
+    single = str(gemini_cfg.get("api_key") or "").strip()
+    multi = gemini_cfg.get("api_keys") or []
+    if not isinstance(multi, list):
+        multi = []
+    keys = [k.strip() for k in multi if k.strip()]
+    if single and single not in keys:
+        keys.insert(0, single)
+    return keys
+
+
+def _fetch_gemini_models() -> set[str]:
+    """Fetch available models from Gemini API. Returns set of model IDs with gemini_free/ prefix."""
+    keys = _get_gemini_keys()
+    if not keys:
+        logger.info({"event": "list_models_gemini_skip", "reason": "no_api_key"})
+        return set()
+
+    for key in keys:
+        try:
+            resp = requests.get(f"{GEMINI_MODELS_URL}?key={key}", timeout=10)
+            if resp.status_code != 200:
+                continue
+            models = set()
+            for item in resp.json().get("models", []):
+                name = str(item.get("name", "")).replace("models/", "")
+                methods = item.get("supportedGenerationMethods") or []
+                if "generateContent" in methods:
+                    models.add(f"gemini_free/{name}")
+            if models:
+                logger.info({"event": "list_models_gemini_fetched", "count": len(models)})
+                return models
+        except Exception as exc:
+            logger.warning({"event": "list_models_gemini_error", "error": str(exc)})
+            continue
+
+    return set()
+
+
+def _fetch_opencode_models() -> set[str]:
+    """Fetch available free models from OpenCode API. Returns set of model IDs with oc/ prefix."""
+    try:
+        resp = requests.get(
+            OPENCODE_MODELS_URL,
+            headers={"Authorization": "Bearer public", "x-opencode-client": "desktop"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.warning({"event": "list_models_opencode_failed", "status": resp.status_code})
+            return set()
+
+        models = set()
+        for item in resp.json().get("data", []):
+            slug = str(item.get("id") or "").strip()
+            if not slug:
+                continue
+            # Only include free models (ending in -free)
+            if slug.endswith("-free"):
+                models.add(f"oc/{slug}")
+        if models:
+            logger.info({"event": "list_models_opencode_fetched", "count": len(models)})
+            return models
+    except Exception as exc:
+        logger.warning({"event": "list_models_opencode_error", "error": str(exc)})
+
+    return set()
+
+
+def _fetch_openrouter_models() -> set[str]:
+    """Fetch available models from OpenRouter API. Returns set of model IDs with openrouter/ prefix."""
+    cfg = config.data.get("providers") or {}
+    or_cfg = cfg.get("openrouter") or {}
+    api_key = str(or_cfg.get("api_key") or "").strip()
+    if not api_key:
+        return set()
+
+    try:
+        resp = requests.get(
+            OPENROUTER_MODELS_URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            logger.warning({"event": "list_models_openrouter_failed", "status": resp.status_code})
+            return set()
+
+        models = set()
+        for item in resp.json().get("data", []):
+            slug = str(item.get("id") or "").strip()
+            if slug:
+                models.add(f"openrouter/{slug}")
+        if models:
+            logger.info({"event": "list_models_openrouter_fetched", "count": len(models)})
+            return models
+    except Exception as exc:
+        logger.warning({"event": "list_models_openrouter_error", "error": str(exc)})
+
+    return set()
+
+
+def _fetch_chatgpt_token_models() -> set[str]:
+    """Fetch models from all ChatGPT tokens, compute intersection."""
+    active_tokens: list[str] = []
+    with account_service._lock:
+        for token, account in account_service._accounts.items():
+            if not token or token == "public":
+                continue
+            status = str(account.get("status") or "")
+            if status in {"禁用", "异常"}:
+                continue
+            if str(account.get("type") or "") == "codex" and token.startswith("eyJ"):
+                continue
+            active_tokens.append(token)
+
+    if not active_tokens:
+        # Fallback: anon
+        try:
+            result = OpenAIBackendAPI().list_models()
+            models = set()
+            for item in result.get("data", []):
+                if isinstance(item, dict) and item.get("id"):
+                    models.add(str(item["id"]))
+            logger.info({"event": "list_models_chatgpt_anon", "count": len(models)})
+            return models
+        except Exception as exc:
+            logger.warning({"event": "list_models_anon_failed", "error": str(exc)})
+            return set()
+
+    # Parallel fetch from all tokens
+    token_sets: list[set[str]] = []
+    with ThreadPoolExecutor(max_workers=min(8, len(active_tokens))) as executor:
+        futures = {
+            executor.submit(_fetch_models_for_token, token): token
+            for token in active_tokens
+        }
+        for future in as_completed(futures):
+            _, model_set = future.result()
+            if model_set is not None:
+                token_sets.append(model_set)
+
+    if not token_sets:
+        return set()
+
+    # Intersection
+    common = token_sets[0].copy()
+    for s in token_sets[1:]:
+        common &= s
+
+    logger.info({
+        "event": "list_models_chatgpt_intersection",
+        "total_tokens": len(active_tokens),
+        "successful": len(token_sets),
+        "common_count": len(common),
+    })
+    return common
+
+
+def _fetch_models_for_token(token: str) -> tuple[str, set[str] | None]:
     try:
         api = OpenAIBackendAPI(access_token=token)
         result = api.list_models()
@@ -45,98 +212,86 @@ def _fetch_models_for_token(token: str) -> tuple[str, set[str]]:
         return (anonymize_token(token), None)
 
 
+def _apply_fallback(provider: str) -> set[str]:
+    """Get fallback models for a provider when API fetch fails."""
+    return set(FALLBACK_MODELS.get(provider, []))
+
+
 def list_models() -> dict[str, Any]:
-    """Return available models — auto-fetch from all ChatGPT tokens, compute intersection."""
+    """Return available models — dynamically fetched from all configured provider APIs.
+
+    Fetches in parallel from: ChatGPT tokens, Gemini API, OpenCode API, OpenRouter API.
+    Falls back to static model list if a provider's API is unreachable.
+    """
     data: list[dict[str, Any]] = []
 
-    # Collect all active ChatGPT tokens (non-JWT, non-codex)
-    active_tokens: list[str] = []
-    with account_service._lock:
-        for token, account in account_service._accounts.items():
-            if not token or token == "public":
-                continue
-            status = str(account.get("status") or "")
-            if status in {"禁用", "异常"}:
-                continue
-            # Skip JWT-only tokens (codex OAuth) — they can't query /backend-api/models
-            if str(account.get("type") or "") == "codex" and token.startswith("eyJ"):
-                continue
-            active_tokens.append(token)
+    # Fetch from all providers in parallel
+    provider_fetchers = {
+        "chatgpt": _fetch_chatgpt_token_models,
+        "gemini_free": _fetch_gemini_models,
+        "opencode": _fetch_opencode_models,
+        "openrouter": _fetch_openrouter_models,
+    }
 
-    # Fetch models from all tokens in parallel
-    if active_tokens:
-        token_model_sets: dict[str, set[str]] = {}
-        failed_tokens: list[str] = []
-        with ThreadPoolExecutor(max_workers=min(8, len(active_tokens))) as executor:
-            futures = {
-                executor.submit(_fetch_models_for_token, token): token
-                for token in active_tokens
-            }
-            for future in as_completed(futures):
-                token_anon, model_set = future.result()
-                if model_set is not None:
-                    token_model_sets[token_anon] = model_set
-                else:
-                    failed_tokens.append(token_anon)
+    all_models: dict[str, set[str]] = {}
+    with ThreadPoolExecutor(max_workers=len(provider_fetchers)) as executor:
+        futures = {
+            executor.submit(fetcher): name
+            for name, fetcher in provider_fetchers.items()
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                models = future.result()
+                if models:
+                    all_models[name] = models
+            except Exception as exc:
+                logger.warning({"event": "list_models_provider_failed", "provider": name, "error": str(exc)})
 
-        if token_model_sets:
-            # Compute intersection — only models available to ALL tokens
-            all_sets = list(token_model_sets.values())
-            common_models = all_sets[0].copy()
-            for s in all_sets[1:]:
-                common_models &= s
+    # Build seen set to avoid duplicates
+    seen: set[str] = set()
 
-            logger.info({
-                "event": "list_models_intersection",
-                "total_tokens": len(active_tokens),
-                "successful": len(token_model_sets),
-                "failed": len(failed_tokens),
-                "common_count": len(common_models),
-            })
-
-            for slug in sorted(common_models):
+    # Add dynamically fetched models
+    for provider_name, models in sorted(all_models.items()):
+        for model_id in sorted(models):
+            if model_id not in seen:
+                seen.add(model_id)
                 data.append({
-                    "id": slug,
+                    "id": model_id,
                     "object": "model",
                     "created": 0,
-                    "owned_by": "chatgpt",
-                    "permission": [],
-                    "root": slug,
-                    "parent": None,
+                    "owned_by": provider_name,
                 })
-        else:
-            logger.warning({"event": "list_models_all_failed", "tokens_attempted": len(active_tokens)})
-    else:
-        # Fallback: try anon (no token)
-        try:
-            result = OpenAIBackendAPI().list_models()
-            for item in result.get("data", []):
-                if isinstance(item, dict):
-                    data.append(item)
-        except Exception as exc:
-            logger.warning({"event": "list_models_anon_failed", "error": str(exc)})
 
-    seen = {str(item.get("id") or "").strip() for item in data if isinstance(item, dict)}
+    # Apply fallbacks for providers that returned nothing
+    for provider_name in ["opencode", "gemini_free", "openai_oauth", "chatgpt2api"]:
+        if provider_name not in all_models:
+            for model_id in sorted(_apply_fallback(provider_name)):
+                if model_id not in seen:
+                    seen.add(model_id)
+                    data.append({
+                        "id": model_id,
+                        "object": "model",
+                        "created": 0,
+                        "owned_by": provider_name,
+                    })
 
     # Add image models
     for model in sorted(IMAGE_MODELS):
         if model not in seen:
+            seen.add(model)
             data.append({
                 "id": model, "object": "model", "created": 0,
                 "owned_by": "chatgpt2api", "permission": [],
                 "root": model, "parent": None,
             })
 
-    # Add static provider models (OpenCode, Codex, combos)
-    for model_info in STATIC_MODELS:
-        if model_info["id"] not in seen:
-            data.append(model_info)
-
     # Add combo models from config
     combos = config.data.get("combo_models") or {}
     if isinstance(combos, dict):
         for combo_name in combos:
             if combo_name not in seen:
+                seen.add(combo_name)
                 data.append({
                     "id": combo_name, "object": "model", "created": 0,
                     "owned_by": "chatgpt2api",
@@ -148,10 +303,12 @@ def list_models() -> dict[str, Any]:
         for provider_name, provider_cfg in providers.items():
             if isinstance(provider_cfg, dict) and provider_cfg.get("enabled"):
                 provider_id = f"{provider_name}/auto"
-                if provider_id not in seen and provider_name not in ("gemini_free", "serper", "searxng", "brave"):
+                if provider_id not in seen and provider_name not in ("gemini_free", "openrouter", "serper", "searxng", "brave"):
+                    seen.add(provider_id)
                     data.append({
                         "id": provider_id, "object": "model", "created": 0,
                         "owned_by": provider_name,
                     })
 
+    logger.info({"event": "list_models_done", "total_models": len(data)})
     return {"object": "list", "data": data}
