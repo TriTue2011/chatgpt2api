@@ -24,6 +24,8 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "codex/": "openai_oauth",
     "oc/": "opencode",
     "ocg/": "opencode_go",
+    "gemini_free/": "gemini_free",
+    "gemini/": "gemini_free",
     "gw/": "grok_web",
     "pw/": "perplexity_web",
     "gc/": "gemini_cli",
