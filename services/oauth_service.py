@@ -51,15 +51,18 @@ def generate_pkce() -> dict[str, str]:
 def get_codex_auth_url(base_url: str = "http://localhost:3030") -> dict[str, str]:
     """Generate Codex OAuth authorization URL with PKCE."""
     pkce = generate_pkce()
-    redirect_uri = f"{base_url.rstrip('/')}/api/oauth/codex/callback"
+    redirect_uri = f"{base_url.rstrip('/')}/auth/callback"
 
     params = {
+        "response_type": "code",
         "client_id": CODEX_CLIENT_ID,
         "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": CODEX_SCOPE,
+        "scope": "openid profile email offline_access",
         "code_challenge": pkce["code_challenge"],
         "code_challenge_method": "S256",
+        "id_token_add_organizations": "true",
+        "codex_cli_simplified_flow": "true",
+        "originator": "codex_cli_rs",
         "state": pkce["state"],
     }
 

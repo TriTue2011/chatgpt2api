@@ -401,6 +401,28 @@ def create_router(app_version: str) -> APIRouter:
         )
         return result
 
+    @router.get("/auth/callback")
+    async def codex_auth_callback(code: str = "", state: str = ""):
+        """Handle Codex OAuth callback (matches 9router path)."""
+        if not code or not state:
+            raise HTTPException(status_code=400, detail={"error": "Missing code or state"})
+        try:
+            result = exchange_codex_code(code, state)
+            return HTMLResponse(content=f"""
+            <html><body style="font-family:sans-serif;padding:40px;text-align:center">
+            <h2>{result['message']}</h2>
+            <p>Bạn có thể đóng tab này.</p>
+            <script>setTimeout(function(){{window.close()}},3000)</script>
+            </body></html>
+            """)
+        except Exception as exc:
+            return HTMLResponse(content=f"""
+            <html><body style="font-family:sans-serif;padding:40px;text-align:center">
+            <h2 style="color:red">Lỗi: {str(exc)}</h2>
+            <p>Copy URL này và dùng API exchange thủ công.</p>
+            </body></html>
+            """, status_code=400)
+
     @router.get("/api/oauth/codex/callback")
     async def codex_oauth_callback(code: str = "", state: str = ""):
         """Handle Codex OAuth callback — exchange code for token."""
