@@ -307,6 +307,12 @@ class ConfigStore:
         next_data.pop("backup_state", None)
         self.data = next_data
         self._save()
+        # Invalidate model cache when settings change (combo_models, providers, etc.)
+        try:
+            from services.protocol.openai_v1_models import invalidate_models_cache
+            invalidate_models_cache()
+        except Exception:
+            pass
         return self.get()
 
     def get_backup_settings(self) -> dict[str, object]:
