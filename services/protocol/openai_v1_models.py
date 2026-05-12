@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -283,11 +284,33 @@ def _apply_fallback(provider: str) -> set[str]:
     return set(FALLBACK_MODELS.get(provider, []))
 
 
-# ── Model cache ──
+# ── Persistent model cache (disk) ──
+import os as _os
+_CACHE_FILE = config.DATA_DIR / "models_cache.json"
 _models_cache: dict[str, Any] | None = None
-_cache_timestamp: float = 0.0
-_cache_ttl: float = 300.0  # 5 min
 _cache_config_hash: str = ""
+
+
+def _load_cache_from_disk() -> dict[str, Any] | None:
+    """Load cached model list from disk. Returns None if not found or corrupted."""
+    try:
+        if _CACHE_FILE.exists():
+            data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "data" in data:
+                logger.info({"event": "models_cache_disk_loaded", "count": len(data.get("data", []))})
+                return data
+    except Exception:
+        pass
+    return None
+
+
+def _save_cache_to_disk(data: dict[str, Any]):
+    """Persist model list to disk."""
+    try:
+        _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        logger.warning({"event": "models_cache_save_error", "error": str(exc)})
 
 
 def _config_hash() -> str:
@@ -301,28 +324,39 @@ def _config_hash() -> str:
 
 def invalidate_models_cache():
     """Clear cache when config changes. Call from API endpoints after save."""
-    global _models_cache, _cache_timestamp, _cache_config_hash
+    global _models_cache, _cache_config_hash
     _models_cache = None
-    _cache_timestamp = 0.0
     _cache_config_hash = ""
+    try:
+        if _CACHE_FILE.exists():
+            _CACHE_FILE.unlink()
+    except Exception:
+        pass
 
 
 def list_models(force_refresh: bool = False) -> dict[str, Any]:
-    """Return available models — cached for 5 min unless config changes."""
-    global _models_cache, _cache_timestamp, _cache_config_hash
+    """Return available models — cached to disk, refresh only on config change or manual refresh."""
+    global _models_cache, _cache_config_hash
+
+    # Load from disk on first access
+    if _models_cache is None:
+        _models_cache = _load_cache_from_disk()
+        _cache_config_hash = _config_hash()
 
     current_hash = _config_hash()
-    cache_valid = (
-        _models_cache is not None
-        and not force_refresh
-        and (time.time() - _cache_timestamp) < _cache_ttl
-        and _cache_config_hash == current_hash
-    )
-    if cache_valid:
-        logger.info({"event": "list_models_cache_hit", "age": round(time.time() - _cache_timestamp, 1)})
+    config_changed = _cache_config_hash != current_hash
+
+    # Use cache if: loaded from disk, not forced, and config hasn't changed
+    if _models_cache is not None and not force_refresh and not config_changed:
+        logger.info({"event": "list_models_cache_hit"})
         return dict(_models_cache)  # type: ignore[arg-type]
 
-    logger.info({"event": "list_models_refresh", "reason": "expired" if _models_cache else "first_load"})
+    if force_refresh:
+        logger.info({"event": "list_models_manual_refresh"})
+    elif config_changed:
+        logger.info({"event": "list_models_config_changed"})
+    else:
+        logger.info({"event": "list_models_first_load"})
 
     data: list[dict[str, Any]] = []
 
@@ -469,10 +503,11 @@ def list_models(force_refresh: bool = False) -> dict[str, Any]:
             })
 
     logger.info({"event": "list_models_done", "total_models": len(data)})
-    # Save to cache
-    _models_cache = {"object": "list", "data": data}
-    _cache_timestamp = time.time()
+    # Save to persistent disk cache
+    result = {"object": "list", "data": data}
+    _models_cache = result
     _cache_config_hash = current_hash
-    logger.info({"event": "list_models_cached", "total": len(data)})
+    _save_cache_to_disk(result)
+    logger.info({"event": "list_models_cached_to_disk", "total": len(data)})
 
-    return {"object": "list", "data": data}
+    return result

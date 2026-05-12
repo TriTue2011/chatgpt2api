@@ -410,6 +410,17 @@ class SearchService:
         cfg = self._get_config()
         return str(cfg.get("inject_as") or "user_message").strip()
 
+    @property
+    def search_combo(self) -> list[str]:
+        """Ordered list of search backends to try (combo/fallback)."""
+        cfg = self._get_config()
+        combo = cfg.get("search_combo")
+        if isinstance(combo, list) and combo:
+            return [str(b).strip() for b in combo if str(b).strip() in SEARCH_BACKENDS]
+        # Default: single backend from config
+        backend = self._get_active_backend()
+        return [backend] if backend in SEARCH_BACKENDS else ["chatgpt"]
+
     def _get_active_backend(self) -> str:
         """Get actual search backend to use, auto-upgrading chatgpt→gemini if key available."""
         if self.backend_name == "chatgpt":
@@ -419,10 +430,37 @@ class SearchService:
         return self.backend_name
 
     def search(self, query: str) -> list[dict[str, str]]:
-        """Execute search using configured backend."""
-        backend_name = self._get_active_backend()
-        backend = SEARCH_BACKENDS.get(backend_name, SEARCH_BACKENDS["chatgpt"])
-        return backend.search(query, self.max_results)
+        """Execute search using configured backends in combo order. Falls back on failure."""
+        if self.backend_name == "chatgpt" and len(self.search_combo) == 1 and self.search_combo[0] == "chatgpt":
+            # Auto-upgrade to gemini if key available
+            backend_name = self._get_active_backend()
+        else:
+            backend_name = None
+
+        combo = self.search_combo
+
+        for backend_name in combo:
+            backend = SEARCH_BACKENDS.get(backend_name)
+            if not backend:
+                continue
+
+            # Skip chatgpt backend — it's passthrough (no injection)
+            if backend_name == "chatgpt":
+                logger.info({"event": "search_combo_chatgpt_skip", "reason": "passthrough"})
+                return []
+
+            logger.info({"event": "search_try_backend", "backend": backend_name, "query_len": len(query)})
+            try:
+                results = backend.search(query, self.max_results)
+                if results:
+                    logger.info({"event": "search_success", "backend": backend_name, "results": len(results)})
+                    return results
+                logger.warning({"event": "search_empty", "backend": backend_name})
+            except Exception as exc:
+                logger.warning({"event": "search_backend_error", "backend": backend_name, "error": str(exc)})
+
+        logger.warning({"event": "search_all_backends_failed", "tried": combo})
+        return []
 
     def process_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Process messages: detect if search needed, execute, inject results.
