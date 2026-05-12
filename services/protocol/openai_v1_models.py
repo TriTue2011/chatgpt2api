@@ -9,7 +9,7 @@ from curl_cffi import requests
 
 from services.account_service import account_service
 from services.openai_backend_api import OpenAIBackendAPI
-from services.config import config
+from services.config import config, DATA_DIR
 from utils.helper import IMAGE_MODELS, anonymize_token
 from utils.log import logger
 
@@ -286,7 +286,7 @@ def _apply_fallback(provider: str) -> set[str]:
 
 # ── Persistent model cache (disk) ──
 import os as _os
-_CACHE_FILE = config.DATA_DIR / "models_cache.json"
+_CACHE_FILE = DATA_DIR / "models_cache.json"
 _models_cache: dict[str, Any] | None = None
 _cache_config_hash: str = ""
 
