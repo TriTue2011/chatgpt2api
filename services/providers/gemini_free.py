@@ -81,6 +81,7 @@ class GeminiProvider:
             body["systemInstruction"] = system_instruction
         if gemini_tools:
             body["tools"] = gemini_tools
+            body["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
         if temperature is not None:
             body["generationConfig"]["temperature"] = temperature
         if max_tokens:
