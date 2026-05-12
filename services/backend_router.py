@@ -104,7 +104,7 @@ class BackendRouter:
         "openai_oauth": "gpt-5.3-codex",
         "opencode": "nemotron-3-super-free",
         "chatgpt": "auto",
-        "gemini_free": "gemini-2.0-flash",
+        "gemini_free": "gemini-2.5-flash",
         "openrouter": "openai/gpt-4o",
     }
 

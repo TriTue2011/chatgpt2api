@@ -18,6 +18,9 @@ STATIC_MODELS = [
     {"id": "oc/trinity-large-preview-free", "object": "model", "created": 0, "owned_by": "opencode"},
     # Codex OAuth models
     {"id": "cx/auto", "object": "model", "created": 0, "owned_by": "openai-oauth"},
+    # Gemini models
+    {"id": "gemini_free/auto", "object": "model", "created": 0, "owned_by": "google"},
+    {"id": "gemini_free/gemini-2.5-flash", "object": "model", "created": 0, "owned_by": "google"},
     # Combo models
     {"id": "ha-agent", "object": "model", "created": 0, "owned_by": "chatgpt2api"},
     # ChatGPT models
