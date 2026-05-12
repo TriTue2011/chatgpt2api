@@ -15,6 +15,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  Sparkles,
 } from "lucide-react";
 
 import webConfig from "@/constants/common-env";
@@ -27,6 +28,7 @@ const navItems = [
   { href: "/", label: "Tổng quan", icon: LayoutDashboard },
   { href: "/accounts", label: "Tài khoản", icon: Users },
   { href: "/providers", label: "Nhà cung cấp", icon: Cpu },
+  { href: "/models", label: "Quản lý Model", icon: Sparkles },
   { href: "/combos", label: "Mô hình kết hợp", icon: Combine },
   { href: "/image", label: "Vẽ ảnh", icon: ImageIcon },
   { href: "/image-manager", label: "Thư viện ảnh", icon: Archive },
@@ -35,7 +37,7 @@ const navItems = [
   { href: "/settings", label: "Cài đặt", icon: Settings },
 ];
 
-const adminOnlyPaths = ["/accounts", "/providers", "/combos", "/image-manager", "/search", "/backup", "/settings"];
+const adminOnlyPaths = ["/accounts", "/providers", "/models", "/combos", "/image-manager", "/search", "/backup", "/settings"];
 
 export function Sidebar() {
   const pathname = usePathname();

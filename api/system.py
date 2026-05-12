@@ -479,4 +479,79 @@ def create_router(app_version: str) -> APIRouter:
             raise HTTPException(status_code=400, detail={"error": "token is required"})
         return {"type": detect_token_type(token)}
 
+    # ── Model Settings ──
+
+    @router.get("/api/v1/model-settings")
+    async def get_model_settings(authorization: str | None = Header(default=None)):
+        """Lấy cấu hình model (enabled models + defaults per provider)."""
+        require_admin(authorization)
+        ms = config.data.get("model_settings") or {}
+        if not isinstance(ms, dict):
+            ms = {}
+        return {
+            "model_settings": {
+                "enabled_models": ms.get("enabled_models") or {},
+                "default_models": ms.get("default_models") or {},
+            }
+        }
+
+    @router.get("/api/v1/available-models")
+    async def get_available_models(authorization: str | None = Header(default=None)):
+        """Lấy toàn bộ model có sẵn từ tất cả provider API (không filter)."""
+        require_admin(authorization)
+        from services.protocol.openai_v1_models import (
+            _fetch_chatgpt_token_models,
+            _fetch_gemini_models,
+            _fetch_opencode_models,
+            _fetch_openrouter_models,
+            _apply_fallback,
+        )
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        provider_fetchers = {
+            "chatgpt": _fetch_chatgpt_token_models,
+            "gemini_free": _fetch_gemini_models,
+            "opencode": _fetch_opencode_models,
+            "openrouter": _fetch_openrouter_models,
+        }
+
+        all_models: dict[str, list[str]] = {}
+        with ThreadPoolExecutor(max_workers=len(provider_fetchers)) as executor:
+            futures = {executor.submit(fetcher): name for name, fetcher in provider_fetchers.items()}
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    models = future.result()
+                    if models:
+                        all_models[name] = sorted(models)
+                except Exception:
+                    pass
+
+        # Fallbacks for providers that returned nothing
+        for provider_name in ["opencode", "gemini_free", "openai_oauth", "chatgpt2api"]:
+            if provider_name not in all_models:
+                all_models[provider_name] = sorted(_apply_fallback(provider_name))
+
+        return {"providers": all_models}
+
+    @router.post("/api/v1/model-settings")
+    async def save_model_settings(body: dict, authorization: str | None = Header(default=None)):
+        """Lưu cấu hình model."""
+        require_admin(authorization)
+        model_settings = body.get("model_settings")
+        if not isinstance(model_settings, dict):
+            raise HTTPException(status_code=400, detail={"error": "model_settings is required"})
+        enabled = model_settings.get("enabled_models")
+        defaults = model_settings.get("default_models")
+        if not isinstance(enabled, dict):
+            enabled = {}
+        if not isinstance(defaults, dict):
+            defaults = {}
+        config.data["model_settings"] = {
+            "enabled_models": enabled,
+            "default_models": defaults,
+        }
+        config._save()
+        return {"model_settings": config.data["model_settings"], "saved": True}
+
     return router

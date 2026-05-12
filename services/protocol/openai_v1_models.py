@@ -310,5 +310,43 @@ def list_models() -> dict[str, Any]:
                         "owned_by": provider_name,
                     })
 
+    # Apply model_settings filter — only return models user has enabled
+    model_settings = config.data.get("model_settings") or {}
+    if isinstance(model_settings, dict):
+        enabled_by_provider = model_settings.get("enabled_models") or {}
+        if isinstance(enabled_by_provider, dict) and enabled_by_provider:
+            # Build a flat set of all explicitly enabled model IDs
+            all_enabled: set[str] = set()
+            for provider_models in enabled_by_provider.values():
+                if isinstance(provider_models, list):
+                    for m in provider_models:
+                        if isinstance(m, str) and m.strip():
+                            all_enabled.add(m.strip())
+
+            # Also always allow special models: combos, image models, auto variants
+            always_allow = {
+                "ha-agent", "chatgpt/auto", "cx/auto", "oc/auto",
+                "gemini_free/auto",
+            }
+            all_enabled |= always_allow
+
+            # Add combo model names from config
+            combos = config.data.get("combo_models") or {}
+            if isinstance(combos, dict):
+                all_enabled |= set(combos.keys())
+
+            # Add image models
+            all_enabled |= set(IMAGE_MODELS)
+
+            # Filter
+            before = len(data)
+            data = [item for item in data if str(item.get("id") or "").strip() in all_enabled]
+            logger.info({
+                "event": "list_models_filtered",
+                "before": before,
+                "after": len(data),
+                "enabled_rules": len(enabled_by_provider),
+            })
+
     logger.info({"event": "list_models_done", "total_models": len(data)})
     return {"object": "list", "data": data}
