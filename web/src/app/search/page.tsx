@@ -95,14 +95,14 @@ export default function SearchPage() {
       {/* Gemini API Key */}
       <div className="rounded-2xl border border-stone-200 bg-white p-5">
         <h3 className="text-sm font-semibold mb-3">Gemini API Key</h3>
-        <input type="password" value={geminiKey}
+        <input type="text" value={geminiKey}
           onChange={(e) => setGeminiKey(e.target.value)}
           placeholder="AIzaSy... (lấy tại aistudio.google.com/apikey)"
-          className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-stone-400 focus:outline-none" />
+          className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-300" />
         <div className="flex items-center gap-3 mt-2">
           <label className="text-xs text-stone-500 w-16">Model:</label>
           <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
-            className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs focus:border-stone-400 focus:outline-none">
+            className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-900 focus:border-stone-500 focus:outline-none">
             <option value="gemini-2.5-flash">gemini-2.5-flash (nhanh, rẻ)</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (mạnh nhất)</option>
             <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (nhanh nhất)</option>
