@@ -298,6 +298,10 @@ def needs_search(messages: list[dict[str, Any]]) -> bool:
     if not last_text:
         return False
 
+    # Skip AI task / image analysis prompts (long prompts with JSON templates)
+    if len(last_text) > 500 and ("{" in last_text and "}" in last_text and "json" in last_text.lower()):
+        return False
+
     # Check against search intent patterns
     for pattern in SEARCH_INTENT_PATTERNS:
         if re.search(pattern, last_text):
