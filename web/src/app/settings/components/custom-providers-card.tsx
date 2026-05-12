@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { request } from "@/lib/request";
 
 type CustomProvider = {
@@ -29,7 +30,14 @@ export function CustomProvidersCard() {
     setLoading(true);
     try {
       const data = await request.get("/api/v1/custom-providers");
-      setProviders((data.data as any)?.custom_providers || {});
+      const raw = (data.data as any)?.custom_providers || {};
+      // Combine api_key + api_keys into a multi-line string for display
+      const merged: Record<string, CustomProvider> = {};
+      for (const [id, p] of Object.entries(raw) as any) {
+        const keys = [p.api_key || "", ...(p.api_keys || [])].filter(Boolean);
+        merged[id] = { ...p, api_key: [...new Set(keys)].join("\n") };
+      }
+      setProviders(merged);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -54,10 +62,18 @@ export function CustomProvidersCard() {
     const prefix = form.prefix.trim() || form.name.trim().toLowerCase().replace(/\s+/g, "_");
     const providerId = prefix;
 
+    // Split multi-line keys
+    const keyList = form.api_key.split("\n").map(k => k.trim()).filter(Boolean);
+
     setSaving(providerId);
     try {
       await request.post("/api/v1/custom-providers", {
-        provider: { ...form, prefix },
+        provider: {
+          ...form,
+          prefix,
+          api_key: keyList[0] || "",
+          api_keys: keyList,
+        },
       });
       toast.success(`Đã lưu provider "${form.name}"!`);
       resetForm();
@@ -131,9 +147,11 @@ export function CustomProvidersCard() {
                   placeholder="VD: https://api.deepseek.com" className="mt-1 h-9 rounded-lg border-stone-200 text-sm font-mono" />
               </div>
               <div className="sm:col-span-2">
-                <label className="text-xs text-stone-600">API Key</label>
-                <Input value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                  placeholder="sk-..." type="password" className="mt-1 h-9 rounded-lg border-stone-200 text-sm font-mono" />
+                <label className="text-xs text-stone-600">API Keys (mỗi dòng 1 key)</label>
+                <Textarea value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                  placeholder={"sk-...\nsk-..."}
+                  className="mt-1 min-h-20 rounded-xl border-stone-200 font-mono text-xs" />
+                <p className="text-xs text-stone-400 mt-1">Nhiều key → tự động round-robin khi rate limit</p>
               </div>
             </div>
             <div className="flex gap-2 justify-end">

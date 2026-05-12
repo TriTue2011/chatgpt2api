@@ -60,8 +60,33 @@ class CustomOpenAIProvider:
     def __init__(self, provider_config: dict[str, Any]):
         self.cfg = provider_config
         self.base_url = str(provider_config.get("base_url") or "").rstrip("/")
-        self.api_key = str(provider_config.get("api_key") or "")
         self.name = str(provider_config.get("name") or "Custom")
+        self._key_index = 0
+        self._rate_limited: dict[str, float] = {}
+
+    def _get_keys(self) -> list[str]:
+        """Get all configured API keys (supports multi-key)."""
+        single = str(self.cfg.get("api_key") or "").strip()
+        multi = self.cfg.get("api_keys") or []
+        if not isinstance(multi, list):
+            multi = []
+        keys = [k.strip() for k in multi if k.strip()]
+        if single and single not in keys:
+            keys.insert(0, single)
+        return keys
+
+    @property
+    def api_key(self) -> str:
+        keys = self._get_keys()
+        if not keys:
+            return ""
+        now = time.time()
+        for _ in range(len(keys)):
+            key = keys[self._key_index % len(keys)]
+            self._key_index += 1
+            if self._rate_limited.get(key, 0) < now:
+                return key
+        return min(keys, key=lambda k: self._rate_limited.get(k, 0))
 
     @property
     def is_available(self) -> bool:
@@ -136,6 +161,21 @@ class CustomOpenAIProvider:
                 timeout=300,
                 stream=stream,
             )
+
+            if resp.status_code == 429:
+                # Rate limited — mark key and retry with next
+                current_key = self.api_key
+                self._rate_limited[current_key] = time.time() + 60
+                attempted = getattr(self, "_attempted_keys", set())
+                attempted.add(current_key)
+                self._attempted_keys = attempted
+                if len(attempted) < len(self._get_keys()):
+                    return self.chat_completions(
+                        messages=messages, model=model, stream=stream,
+                        temperature=temperature, max_tokens=max_tokens,
+                        tools=tools, tool_choice=tool_choice, **kwargs,
+                    )
+                raise RuntimeError(f"[{self.name}] All API keys rate limited")
 
             if resp.status_code >= 400:
                 error_text = ""

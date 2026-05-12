@@ -506,16 +506,26 @@ def create_router(app_version: str) -> APIRouter:
 
         base_url = str(provider.get("base_url") or "").strip().rstrip("/")
         api_key = str(provider.get("api_key") or "").strip()
+        api_keys = provider.get("api_keys") or []
+        if not isinstance(api_keys, list):
+            api_keys = []
+        api_keys = [k.strip() for k in api_keys if k.strip()]
+        # Support api_key + api_keys combination
+        if api_key and api_key not in api_keys:
+            api_keys.insert(0, api_key)
         name = str(provider.get("name") or provider_id).strip()
         enabled = provider.get("enabled", True)
         prefix = str(provider.get("prefix") or provider_id).strip().lower().replace(" ", "_")
 
-        # Validate: test connection
+        # Validate: test connection with first key
+        test_key = api_keys[0] if api_keys else api_key
+        if not test_key:
+            raise HTTPException(status_code=400, detail={"error": "At least one API key is required"})
         try:
             from curl_cffi import requests as cffi_req
             resp = cffi_req.get(
                 f"{base_url}/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={"Authorization": f"Bearer {test_key}"},
                 timeout=10,
             )
             if resp.status_code >= 400:
@@ -538,7 +548,8 @@ def create_router(app_version: str) -> APIRouter:
         custom_providers[provider_id] = {
             "name": name,
             "base_url": base_url,
-            "api_key": api_key,
+            "api_key": api_keys[0] if api_keys else "",
+            "api_keys": api_keys,
             "prefix": prefix,
             "enabled": enabled,
         }
