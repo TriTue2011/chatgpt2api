@@ -1,13 +1,19 @@
 # chatgpt2api — OpenAI-compatible AI Gateway
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/tritue2011/chatgpt2api)](https://github.com/TriTue2011/chatgpt2api/pkgs/container/chatgpt2api)
+[![Docker Pulls](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/TriTue2011/chatgpt2api/pkgs/container/chatgpt2api)
 [![GitHub Actions](https://github.com/TriTue2011/chatgpt2api/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/TriTue2011/chatgpt2api/actions)
 
 OpenAI-compatible API gateway tích hợp **ChatGPT Web, Codex OAuth, OpenCode free, Gemini, DALL-E, SD WebUI**. Dùng làm AI agent backend cho Home Assistant.
 
-**Tài liệu đầy đủ:** [README.md](./homeassistant-addon/README.md)
+## Cài đặt nhanh
 
-## Quick Start
+### Home Assistant Addon
+
+[![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FTriTue2011%2Fhas-addons)
+
+Hoặc thủ công: **Settings → Add-ons → Add-on Store → ⋮ → Repositories** → thêm `https://github.com/TriTue2011/has-addons` → tìm **chatgpt2api** → Install.
+
+### Docker
 
 ```bash
 docker run -d --name chatgpt2api --restart unless-stopped \
@@ -19,63 +25,80 @@ docker run -d --name chatgpt2api --restart unless-stopped \
 
 Mở `http://localhost:3030` → đăng nhập `sk-your-key`.
 
-## Cài qua Home Assistant Addon Store
+### Docker Compose (Portainer)
 
-**Bước 1:** Vào HA → **Settings → Addons → Addon Store → 3 chấm (góc phải trên) → Repositories**
+```yaml
+services:
+  chatgpt2api:
+    image: ghcr.io/tritue2011/chatgpt2api:latest
+    container_name: chatgpt2api
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    volumes:
+      - data:/app/data
+    environment:
+      CHATGPT2API_AUTH_KEY: sk-your-key
 
-**Bước 2:** Thêm URL: `https://github.com/TriTue2011/chatgpt2api`
+volumes:
+  data: {}
+```
 
-**Bước 3:** Vào Addon Store → tìm **chatgpt2api** → **Install**
+## Cấu hình Home Assistant
 
-**Bước 4:** Vào tab **Configuration** → sửa `auth_key` → **Save**
-
-**Bước 5:** **Start** → mở Web UI → vào `http://HA_IP:3030`
-
-Sau khi cài, vào HA **Settings → Devices & Services → Add Integration → OpenAI Conversation**:
+Settings → Devices → Add Integration → **OpenAI Conversation** (hoặc Local OpenAI):
 
 | Field | Value |
 |-------|-------|
 | Base URL | `http://localhost:3030/v1` |
-| API Key | `sk-chatgpt2api` (hoặc key bạn đặt) |
+| API Key | key bạn đã đặt |
 | Model | `ha-agent` |
-
-## Cấu hình Home Assistant
-
-```yaml
-# OpenAI Conversation hoặc Local OpenAI
-base_url: http://IP:3030/v1
-api_key: sk-your-key
-model: ha-agent
-```
 
 ## Model chính
 
-| Model | Chat | Tool Call | Ảnh | Token |
-|-------|------|-----------|-----|-------|
-| `ha-agent` | ✅ | ✅ | ✅ | Auto |
-| `oc/auto` | ✅ | ✅ | ❌ | Free |
-| `cx/auto` | ✅ | ✅ | ❌ | OAuth |
-| `gemini_free/auto` | ✅ | ✅ | ❌ | API key |
-| `chatgpt/auto` | ✅ | ✅ | ✅ | Web |
+| Model | Chat | Tool Call | Ảnh | Token | Giới hạn |
+|-------|------|-----------|-----|-------|----------|
+| `ha-agent` | ✅ | ✅ | ✅ | Auto | Tự fallback |
+| `oc/auto` | ✅ | ✅ | ❌ | **Không cần** | Không |
+| `cx/auto` | ✅ | ✅ | ❌ | OAuth (9router) | Không |
+| `gemini_free/auto` | ✅ | ✅ | ❌ | API key | 15 RPM |
+| `chatgpt/auto` | ✅ | ✅ | ✅ | Web cookie | 24KB (free) |
 
-## Tính năng
+## Thêm tài khoản
+
+### Token ChatGPT (chat + ảnh)
+1. Đăng nhập https://chatgpt.com
+2. Vào https://chatgpt.com/api/auth/session → copy `accessToken`
+3. Web UI → **Tài khoản** → **Nhập tài khoản** → paste
+
+### Import backup 9router
+Web UI → **Sao lưu** → kéo thả file backup `.json`. Token Codex OAuth tự động thêm.
+
+### Gemini API key (chat + search)
+1. Lấy key tại https://aistudio.google.com/apikey (free 15 RPM)
+2. Web UI → **Cài đặt → Gemini** → dán key → chọn model → Lưu
+
+## Tính năng chính
 
 - **Multi-provider**: ChatGPT, Codex OAuth, OpenCode free, Gemini, OpenRouter
-- **Image generation**: DALL-E (gpt-image-2), SD WebUI, HuggingFace FLUX
-- **Search**: Google Search qua Gemini/Serper/SearXNG, tự động inject kết quả
-- **Multi-account**: Round-robin token pool, tự fallback khi rate limit
-- **Combo models**: Tự động thử model khác khi lỗi
+- **Tạo ảnh**: DALL-E (gpt-image-2), SD WebUI, HuggingFace FLUX  
+- **Search**: Google Search qua Gemini, tự động inject kết quả vào prompt
+- **Multi-account**: Round-robin token, tự fallback khi rate limit
+- **Combo models**: Tự động thử model khác khi lỗi (vd: `ha-agent`)
 - **Backup/Restore**: Export/import toàn bộ state
 - **Web UI**: Dashboard tiếng Việt, quản lý tài khoản + provider
-- **Import 9router**: Kéo thả file backup 9router
+- **Native tool calling**: GetLiveContext, GetEntityState... cho HA
+
+## Troubleshooting
+
+**413 / "Error talking to API"**: Payload quá 24KB → dùng `oc/auto`, `cx/auto`, hoặc `gemini_free/auto`.
+
+**Token hết quota (429)**: Hệ thống tự round-robin. Với Gemini, thêm nhiều key (mỗi dòng 1 key).
+
+**Search không có kết quả**: Vào **Cài đặt → Gemini** kiểm tra API key.
+
+**Addon không hiện trong store**: Refresh (Ctrl+F5), Check for updates, hoặc kiểm tra Supervisor logs.
 
 ## License
 
 MIT
-
-## Credits
-
-- [9router](https://github.com/TriTue2011/9router) — OAuth architectures
-- [chatgpt2api](https://github.com/TriTue2011/chatgpt2api) — ChatGPT Web API, Web UI
-- [local_openai](https://github.com/skye-harris/hass_local_openai_llm) — HA integration
-- OpenCode.ai, Google Gemini — Free APIs
