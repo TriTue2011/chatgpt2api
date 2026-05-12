@@ -103,6 +103,7 @@ export default function SearchPage() {
           <label className="text-xs text-stone-500 w-16">Model:</label>
           <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
             className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-900 focus:border-stone-500 focus:outline-none">
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview (mới nhất)</option>
             <option value="gemini-2.5-flash">gemini-2.5-flash (nhanh, rẻ)</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (mạnh nhất)</option>
             <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (nhanh nhất)</option>

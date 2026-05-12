@@ -70,6 +70,7 @@ export function GeminiCard() {
           <label className="text-sm text-stone-700">Model:</label>
           <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
             className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900">
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview (mới nhất)</option>
             <option value="gemini-2.5-flash">gemini-2.5-flash (nhanh, rẻ, 15 RPM free)</option>
             <option value="gemini-2.5-pro">gemini-2.5-pro (mạnh nhất, trả phí)</option>
             <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (nhanh nhất)</option>

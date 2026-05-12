@@ -218,8 +218,8 @@ class GeminiGrounding(SearchBackend):
 
         try:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{self._get_model()}:generateContent?key={api_key}",
-                headers={"Content-Type": "application/json"},
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self._get_model()}:generateContent",
+                headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json={"contents": [{"parts": [{"text": query}]}], "tools": [{"google_search": {}}]},
                 timeout=30,
             )

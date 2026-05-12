@@ -87,14 +87,14 @@ class GeminiProvider:
         if max_tokens:
             body["generationConfig"]["maxOutputTokens"] = max_tokens
 
-        url = f"{GEMINI_BASE_URL}/models/{model}:streamGenerateContent?key={self.api_key}&alt=sse"
+        url = f"{GEMINI_BASE_URL}/models/{model}:streamGenerateContent?alt=sse"
 
         logger.info({"event": "gemini_request", "model": model, "has_tools": bool(gemini_tools)})
 
         try:
             resp = requests.post(
-                url, headers={"Content-Type": "application/json"}, json=body,
-                timeout=300, stream=True,
+                url, headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
+                json=body, timeout=300, stream=True,
             )
             if resp.status_code == 429:
                 # Mark this key and retry with next one
