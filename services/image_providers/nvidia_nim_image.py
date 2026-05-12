@@ -89,14 +89,28 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             logger.error({"event": "nvidia_image_parse_error", "error": str(exc)})
             return None
 
-        # Response format: {"image": "base64..."} or {"images": [...]} or {"data": [...]}
-        image_b64 = data.get("image") or ""
+        # Response format: {"artifacts":[{"base64":"..."}]} or {"image":"..."}
+        image_b64 = ""
+
+        # NVIDIA returns artifacts array with base64
+        artifacts = data.get("artifacts") or []
+        if isinstance(artifacts, list) and artifacts:
+            first = artifacts[0]
+            if isinstance(first, dict):
+                image_b64 = first.get("base64") or first.get("image") or ""
+            elif isinstance(first, str):
+                image_b64 = first
+
+        if not image_b64:
+            # Try direct image field
+            image_b64 = data.get("image") or ""
+
         if not image_b64:
             images = data.get("images") or data.get("data") or []
             if isinstance(images, list) and images:
                 first = images[0]
                 if isinstance(first, dict):
-                    image_b64 = first.get("image") or first.get("b64_json") or first.get("url") or ""
+                    image_b64 = first.get("image") or first.get("b64_json") or first.get("url") or first.get("base64") or ""
                 elif isinstance(first, str):
                     image_b64 = first
 
