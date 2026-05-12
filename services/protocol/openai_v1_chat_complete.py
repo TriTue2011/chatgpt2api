@@ -191,14 +191,36 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
     model, messages, tools, tool_choice = text_chat_parts(body)
 
-    # Route to determine provider
+    # Check if this is a combo model — try each model until success
+    if backend_router.is_combo(model):
+        routes = backend_router.route_combo(model)
+        last_error = ""
+        for route in routes:
+            try:
+                logger.info({"event": "combo_try", "combo": model, "provider": route.provider, "model": route.model})
+                if search_service.is_enabled and route.provider != "chatgpt":
+                    messages_copy = search_service.process_messages(messages)
+                else:
+                    messages_copy = messages
+                return _dispatch(route, messages_copy, tools, tool_choice, body)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
+                continue
+        return completion_response(model=model, content=f"All providers failed. Last error: {last_error[:200]}", messages=messages)
+
+    # Single model — route directly
     route = backend_router.route(model, messages)
 
-    # Apply search injection for non-ChatGPT backends (Codex, OpenCode, Gemini don't have built-in search)
-    if search_service.is_enabled:
-        if route.provider not in ("chatgpt",):
-            messages = search_service.process_messages(messages)
+    # Apply search injection for non-ChatGPT backends
+    if search_service.is_enabled and route.provider != "chatgpt":
+        messages = search_service.process_messages(messages)
 
+    return _dispatch(route, messages, tools, tool_choice, body)
+
+
+def _dispatch(route, messages, tools, tool_choice, body):
+    """Dispatch to the correct provider handler."""
     if route.provider == "opencode":
         return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
     elif route.provider == "ninerouter":
