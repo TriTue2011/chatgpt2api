@@ -315,16 +315,11 @@ def inject_search_results(
         return messages
 
     # Format search results
-    lines = ["[Kết quả tìm kiếm thực tế — hãy dùng thông tin này để trả lời chính xác]"]
+    lines = ["Dưới đây là kết quả tìm kiếm Google MỚI NHẤT. Hãy trả lời DỰA TRÊN các thông tin này, trích dẫn số liệu cụ thể:"]
     for i, r in enumerate(results, 1):
         title = r.get("title", "")
         snippet = r.get("snippet", "")
-        url = r.get("url", "")
-        lines.append(f"{i}. {title}")
-        if snippet:
-            lines.append(f"   {snippet}")
-        if url:
-            lines.append(f"   Nguồn: {url}")
+        lines.append(f"{i}. {title}: {snippet}")
 
     search_text = "\n".join(lines)
 
