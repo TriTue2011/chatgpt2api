@@ -516,7 +516,8 @@ def _handle_openai_oauth_chat(
                 return result
         except Exception as exc:
             last_error = str(exc)
-            if "expired" in last_error.lower() or "401" in last_error:
+            # Retry with next token on auth failures and rate limits
+            if any(x in last_error.lower() for x in ("expired", "401", "429", "rate")):
                 account_service.remove_invalid_token(token, "codex_oauth")
                 continue
             break
