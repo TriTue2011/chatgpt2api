@@ -11,6 +11,7 @@ import {
   CircleOff,
   Copy,
   Download,
+  ExternalLink,
   LoaderCircle,
   Pencil,
   RefreshCw,
@@ -385,6 +386,13 @@ function AccountsPageContent() {
               setPage(1);
             }}
           />
+          <a
+            href="/settings"
+            className="inline-flex items-center gap-1.5 h-10 rounded-xl border border-stone-200 bg-white/80 px-4 text-sm text-stone-600 hover:bg-white hover:text-stone-900 transition"
+          >
+            <ExternalLink className="size-3.5" />
+            Custom APIs
+          </a>
           <Button
             variant="outline"
             className="h-10 rounded-xl border-stone-200 bg-white/80 px-4 text-stone-700 hover:bg-white"
