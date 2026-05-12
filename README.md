@@ -1,93 +1,61 @@
-# Hướng Dẫn Cài Đặt & Sử Dụng ChatGPT2API Cho Home Assistant
+# chatgpt2api — OpenAI-compatible AI Gateway
 
-ChatGPT2API là dự án cho phép biến tài khoản ChatGPT Web của bạn thành một API chuẩn OpenAI. Phiên bản này đã được tùy chỉnh đặc biệt để lọc sạch các ký tự định dạng (Markdown, dấu gạch ngang, tiêu đề...) nhằm tương thích hoàn hảo 100% với hệ thống giọng nói (Text-To-Speech) của loa thông minh như Phicomm R1 qua Home Assistant.
+[![Docker Pulls](https://img.shields.io/docker/pulls/tritue2011/chatgpt2api)](https://github.com/TriTue2011/chatgpt2api/pkgs/container/chatgpt2api)
+[![GitHub Actions](https://github.com/TriTue2011/chatgpt2api/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/TriTue2011/chatgpt2api/actions)
 
----
+OpenAI-compatible API gateway tích hợp **ChatGPT Web, Codex OAuth, OpenCode free, Gemini, DALL-E, SD WebUI**. Dùng làm AI agent backend cho Home Assistant.
 
-## 1. Cài Đặt Hệ Thống (Bằng Docker)
+**Tài liệu đầy đủ:** [README.md](./homeassistant-addon/README.md)
 
-Yêu cầu máy chủ (Ubuntu/Debian, Raspberry Pi, Debian trên Home Assistant...) đã cài đặt sẵn `docker` và `docker-compose`.
-
-```bash
-# Clone source code
-git clone https://github.com/TriTue2011/chatgpt2api.git
-cd chatgpt2api
-
-# Khởi chạy hệ thống (tự động build)
-docker-compose up -d --build
-```
-
-Sau khi chạy xong, hệ thống sẽ mở 2 cổng:
-- Web Quản lý: `http://[IP_MÁY_CHỦ]:3000`
-- API Endpoint: `http://[IP_MÁY_CHỦ]:3000/v1`
-
----
-
-## 2. Cách Lấy Access Token / Session Của ChatGPT
-
-Để hệ thống hoạt động, bạn cần cấp cho nó tài khoản ChatGPT. Cách an toàn và đơn giản nhất là lấy `access_token` từ trình duyệt:
-
-1. Mở trình duyệt ẩn danh (Incognito) và đăng nhập vào trang [chatgpt.com](https://chatgpt.com).
-2. Sau khi đăng nhập thành công, mở tab mới và dán đường link này vào thanh địa chỉ:
-   `https://chatgpt.com/api/auth/session`
-3. Trình duyệt sẽ hiển thị một đoạn mã JSON. Bạn tìm chuỗi bắt đầu bằng `eyJhbG...` nằm sau chữ `"accessToken":`.
-4. Copy toàn bộ chuỗi Access Token đó (nó rất dài).
-
-*Lưu ý: Không đăng xuất (Log out) ChatGPT trên trình duyệt đó, nếu không token sẽ bị hủy.*
-
----
-
-## 3. Cách Gán Tài Khoản Vào ChatGPT2API
-
-1. Truy cập vào Web UI quản lý của hệ thống: `http://[IP_MÁY_CHỦ]:3000`
-2. Đăng nhập bằng Auth Key. Mặc định trong file `config.json` là: `chatgpt2api` (bạn có thể đổi tùy ý).
-3. Tại giao diện chính, chuyển sang tab **Tài khoản (Account Pool)**.
-4. Bấm vào nút **Nhập Access Token (Import Access Token)**.
-5. Dán đoạn Access Token bạn vừa copy ở Bước 2 vào ô trống, mỗi token nằm trên 1 dòng nếu bạn có nhiều tài khoản.
-6. Bấm **Xác nhận (Confirm)**. Hệ thống sẽ tự động kiểm tra xem tài khoản là Plus hay Thường, và đưa vào trạng thái Hoạt động (Active).
-
----
-
-## 4. Tích Hợp Vào Home Assistant
-
-Để sử dụng ChatGPT2API làm não bộ cho trợ lý ảo của Home Assistant, bạn cần cấu hình tích hợp **OpenAI Conversation** (Hoặc các bản mod tương tự như Local OpenAI).
-
-1. Vào Home Assistant -> **Cài đặt (Settings)** -> **Thiết bị & Dịch vụ (Devices & Services)**.
-2. Thêm tích hợp **OpenAI Conversation**.
-3. Điền các thông số sau:
-   - **API Key**: `chatgpt2api` (Phải khớp với `auth-key` trong config.json)
-   - **Base URL**: `http://[IP_MÁY_CHỦ_CỦA_BẠN]:3000/v1`
-4. Bấm Xác nhận. 
-5. Sau khi thêm xong, cấu hình Integration và chọn mô hình (Model) là `auto` hoặc `gpt-4o`.
-
----
-
-## 5. Tối Ưu Hóa Cho Loa Thông Minh (TTS)
-
-Tuy bản thân ChatGPT2API đã tự động lọc sạch các mã Markdown (dấu `#`, `*`, `- `) khi trả về, nhưng để câu văn tự nhiên nhất khi phát qua loa, bạn cần thêm System Prompt vào Home Assistant.
-
-Vào **Cài đặt -> Trợ lý giọng nói -> Chọn Trợ lý của bạn -> Phần Chỉ thị (Instructions)**, dán đoạn sau:
-
-> *"Bạn là trợ lý ảo nhà thông minh. Hãy trả lời cực kỳ ngắn gọn, tự nhiên và giống văn nói của con người để hệ thống TTS có thể đọc mượt mà. Tuyệt đối KHÔNG sử dụng các ký tự định dạng (như dấu sao *, dấu thăng #, gạch đầu dòng -). Không dùng danh sách liệt kê, hạn chế tối đa ngoặc đơn. Trả lời thẳng vào trọng tâm câu hỏi. QUAN TRỌNG: Ngay cả khi lấy dữ liệu từ Web Search, tuyệt đối không được dùng định dạng liệt kê."*
-
-Mẫu promt
-```
-You are a voice assistant. Always reply in the exact same language as the user.
-OUTPUT RULES: Plain text only. No markdown, no emojis, no asterisks, no code blocks. One paragraph, max 200 characters. Use normal punctuation. Optimized for text-to-speech.
-TOOL RULES: Use tools whenever the request requires live data or actions. Never hallucinate answers. If a tool fails or returns an error, silently try an alternative. Ask the user only if a required parameter is truly missing.
-FOLLOW-UP: End every plain-text answer with a short conversational question. Skip follow-up after tool calls, after music plays, or when the user says goodbye/thanks.
-MUSIC: To play music on the Phicomm R1 speaker, always use the AIBOX-Phicomm-R1 tool. On success, end with a cheerful wish to enjoy the music — no follow-up question.
-ERRORS: If all tools fail, reply with one plain sentence explaining the issue in the user's language.
-```
----
-
-## 6. Cập Nhật Code (Khi có bản sửa lỗi mới)
-
-Nếu có bản cập nhật mới trên Github, bạn chỉ cần thực hiện 3 lệnh sau để nâng cấp:
+## Quick Start
 
 ```bash
-cd /opt/chatgpt2api
-docker-compose down
-git pull origin main
-docker-compose up -d --build
+docker run -d --name chatgpt2api --restart unless-stopped \
+  -p 3030:80 \
+  -v chatgpt2api_data:/app/data \
+  -e CHATGPT2API_AUTH_KEY=sk-your-key \
+  ghcr.io/tritue2011/chatgpt2api:latest
 ```
+
+Mở `http://localhost:3030` → đăng nhập `sk-your-key`.
+
+## Cấu hình Home Assistant
+
+```yaml
+# OpenAI Conversation hoặc Local OpenAI
+base_url: http://IP:3030/v1
+api_key: sk-your-key
+model: ha-agent
+```
+
+## Model chính
+
+| Model | Chat | Tool Call | Ảnh | Token |
+|-------|------|-----------|-----|-------|
+| `ha-agent` | ✅ | ✅ | ✅ | Auto |
+| `oc/auto` | ✅ | ✅ | ❌ | Free |
+| `cx/auto` | ✅ | ✅ | ❌ | OAuth |
+| `gemini_free/auto` | ✅ | ✅ | ❌ | API key |
+| `chatgpt/auto` | ✅ | ✅ | ✅ | Web |
+
+## Tính năng
+
+- **Multi-provider**: ChatGPT, Codex OAuth, OpenCode free, Gemini, OpenRouter
+- **Image generation**: DALL-E (gpt-image-2), SD WebUI, HuggingFace FLUX
+- **Search**: Google Search qua Gemini/Serper/SearXNG, tự động inject kết quả
+- **Multi-account**: Round-robin token pool, tự fallback khi rate limit
+- **Combo models**: Tự động thử model khác khi lỗi
+- **Backup/Restore**: Export/import toàn bộ state
+- **Web UI**: Dashboard tiếng Việt, quản lý tài khoản + provider
+- **Import 9router**: Kéo thả file backup 9router
+
+## License
+
+MIT
+
+## Credits
+
+- [9router](https://github.com/TriTue2011/9router) — OAuth architectures
+- [chatgpt2api](https://github.com/TriTue2011/chatgpt2api) — ChatGPT Web API, Web UI
+- [local_openai](https://github.com/skye-harris/hass_local_openai_llm) — HA integration
+- OpenCode.ai, Google Gemini — Free APIs
