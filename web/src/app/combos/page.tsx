@@ -12,7 +12,8 @@ type ModelInfo = {
   id: string;
   owned_by: string;
   capability: string;
-  capability_label: string;
+  capabilities: string[];
+  capability_labels: string[];
   enabled: boolean;
 };
 
@@ -63,19 +64,24 @@ export default function CombosPage() {
   }
 
   async function saveCombos(updated: ComboModels) {
+    // Optimistic UI update first
+    setCombos(updated);
+    setSaved(true);
+    setError("");
     try {
       const res = await request.post("/api/settings", { combo_models: updated });
-      const returned = (res.data as any)?.config?.combo_models || {};
+      const cfg = (res.data as any)?.config || {};
+      const returned = cfg.combo_models || {};
       setCombos(returned);
-      setError("");
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      if (JSON.stringify(returned) !== JSON.stringify(updated)) {
+        console.warn("Combo save mismatch, server returned:", returned);
+      }
     } catch (e: any) {
       const msg = e?.response?.data?.detail?.error || e?.message || "Lỗi lưu";
       setError(msg);
-      // Reload to restore previous state on error
-      await loadAll();
+      await loadAll(); // Reload from server to restore correct state
     }
+    setTimeout(() => setSaved(false), 2000);
   }
 
   function addCombo() {
@@ -112,15 +118,18 @@ export default function CombosPage() {
 
   const filteredModels = allModels.filter(m => {
     if (filterCap === "all") return true;
-    return m.capability === filterCap;
+    return (m.capabilities || [m.capability]).includes(filterCap);
   });
 
   const availableForSelection = filteredModels.filter(m => !selectedModels.includes(m.id));
 
-  // Counts
+  // Counts (a model can have multiple capabilities)
   const counts = { chat: 0, vision: 0, image: 0 };
   for (const m of allModels) {
-    if (m.capability in counts) counts[m.capability as keyof typeof counts]++;
+    const caps = m.capabilities || [m.capability];
+    for (const c of caps) {
+      if (c in counts) counts[c as keyof typeof counts]++;
+    }
   }
 
   if (loading) {
@@ -203,9 +212,10 @@ export default function CombosPage() {
                   </span>
                   <CapIcon className="size-3 shrink-0 text-stone-500" />
                   <span className="flex-1 text-xs font-mono text-stone-800 truncate">{modelId}</span>
-                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[cap])}>
-                    {info?.capability_label || "Chat"}
-                  </span>
+                  {(info?.capability_labels || [info?.capability_label || "Chat"]).map((label: string) => {
+                    const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                    return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
+                  })}
                   <button
                     type="button"
                     onClick={() => removeModelFromSelection(idx)}
@@ -272,8 +282,10 @@ export default function CombosPage() {
                       >
                         <CapIcon className="size-3 shrink-0 text-stone-500" />
                         <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
-                        <span className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[m.capability])}>
-                          {m.capability_label}
+                        {(m.capability_labels || [m.capability_label || "Chat"]).map((label: string) => {
+                          const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                          return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
+                        })}
                         </span>
                         <span className="text-[10px] text-stone-600">{m.owned_by}</span>
                       </button>
@@ -349,9 +361,10 @@ export default function CombosPage() {
                       )}>
                         {modelId}
                       </span>
-                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[cap])}>
-                        {info?.capability_label || "Chat"}
-                      </span>
+                      {(info?.capability_labels || [info?.capability_label || "Chat"]).map((label: string) => {
+                        const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                        return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
+                      })}
                       {idx < models.length - 1 && (
                         <ArrowDown className="size-3 text-stone-600" />
                       )}

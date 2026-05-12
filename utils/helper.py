@@ -38,17 +38,10 @@ _IMAGE_GEN_PROVIDER_PREFIXES = {
     "runwayml/",     # RunwayML
 }
 # Providers where specific models support vision (multimodal)
-_VISION_PROVIDER_PREFIXES = {
-    "gemini_free/",  # All Google Gemini models are natively multimodal
-    "gemini/",       # Alternative gemini prefix
-    "cx/",           # Codex OAuth → GPT-4+ models, all support vision
-    "codex/",        # Alternative codex prefix
-    "chatgpt/",      # ChatGPT Web models (GPT-4o+) all support vision
-}
+# KEEP EMPTY — models are primarily CHAT, only tag vision if name has keywords
+_VISION_PROVIDER_PREFIXES: set[str] = set()
 # Custom providers that are Gemini-based → all models support vision
-_VISION_CUSTOM_PROVIDERS = {
-    "geminiapi",     # Gemini API server
-}
+_VISION_CUSTOM_PROVIDERS: set[str] = set()
 # Individual model keywords for vision (used for nv/ and other providers)
 _VISION_KEYWORDS = {
     "vision", "multimodal", "-vl", "-vlm", "fuyu", "kosmos",
@@ -65,51 +58,61 @@ _VISION_KEYWORDS = {
 }
 
 
-def classify_model_capability(model_id: str) -> str:
-    """Classify a model by capability: 'image', 'vision', or 'chat'.
+def classify_model_capability(model_id: str) -> list[str]:
+    """Classify a model by capabilities: ['chat'], ['chat','vision'], ['image'], etc.
 
     Image Gen: models that generate images (FLUX, SD, DALL-E)
     Vision: models that can analyze/understand images (multimodal)
-    Chat: text-only models (default)
+    Chat: text models (all models are at least chat-capable)
     """
     mid = str(model_id or "").strip().lower()
+    caps: list[str] = []
 
-    # Check image gen prefixes first
+    # Check image gen first
+    is_image = False
     for prefix in _IMAGE_GEN_PREFIXES:
         if mid.startswith(prefix):
-            return "image"
+            caps.append("image")
+            is_image = True
+            break
+    if not is_image:
+        for prefix in _IMAGE_GEN_PROVIDER_PREFIXES:
+            if mid.startswith(prefix):
+                caps.append("image")
+                is_image = True
+                break
+    if not is_image:
+        for kw in _IMAGE_GEN_KEYWORDS:
+            if kw in mid:
+                caps.append("image")
+                break
 
-    # Check image gen provider-level (all models from these providers are image gen)
-    for prefix in _IMAGE_GEN_PROVIDER_PREFIXES:
-        if mid.startswith(prefix):
-            return "image"
-
-    # Check image gen keywords (for chatgpt/gpt-image-2, dall-e, etc.)
-    for kw in _IMAGE_GEN_KEYWORDS:
-        if kw in mid:
-            return "image"
-
-    # Check provider-level vision (all models from these providers support vision)
+    # Check vision capability
     for prefix in _VISION_PROVIDER_PREFIXES:
         if mid.startswith(prefix):
-            return "vision"
+            caps.append("vision")
+            break
+    else:
+        for cp_prefix in _VISION_CUSTOM_PROVIDERS:
+            if mid.startswith(f"{cp_prefix}/"):
+                caps.append("vision")
+                break
+        else:
+            for kw in _VISION_KEYWORDS:
+                if kw in mid:
+                    caps.append("vision")
+                    break
 
-    # Check custom providers that are Gemini-based
-    for cp_prefix in _VISION_CUSTOM_PROVIDERS:
-        if mid.startswith(f"{cp_prefix}/"):
-            return "vision"
+    # All models support chat (unless they're pure image gen with no text)
+    if not is_image:
+        caps.append("chat")
 
-    # Check vision keywords in model name
-    for kw in _VISION_KEYWORDS:
-        if kw in mid:
-            return "vision"
-
-    return "chat"
+    return caps if caps else ["chat"]
 
 
 def get_model_capability_label(cap: str) -> str:
     """Human-readable label for model capability."""
-    return {"chat": "Chat", "vision": "Phân tích ảnh", "image": "Tạo ảnh"}.get(cap, "Chat")
+    return {"chat": "Chat", "vision": "Phân tích ảnh", "image": "Tạo ảnh"}.get(cap, cap)
 
 
 def new_uuid() -> str:

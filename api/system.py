@@ -680,24 +680,30 @@ def create_router(app_version: str) -> APIRouter:
             mid = str(model.get("id") or "").strip()
             if not mid:
                 continue
-            cap = classify_model_capability(mid)
+            caps = classify_model_capability(mid)
             enriched.append({
                 "id": mid,
                 "owned_by": str(model.get("owned_by") or ""),
-                "capability": cap,
-                "capability_label": get_model_capability_label(cap),
+                "capability": caps[0] if caps else "chat",  # Primary capability
+                "capabilities": caps,  # All capabilities
+                "capability_labels": [get_model_capability_label(c) for c in caps],
                 "enabled": _is_model_enabled(mid, enabled_by_provider),
             })
 
-        cap_order = {"chat": 0, "vision": 1, "image": 2}
-        enriched.sort(key=lambda m: (cap_order.get(m["capability"], 9), m["id"]))
+        # Sort: chat first, then vision, then image
+        def _sort_key(m):
+            caps = m.get("capabilities", ["chat"])
+            if "image" in caps: return 2
+            if "vision" in caps: return 1
+            return 0
+        enriched.sort(key=lambda m: (_sort_key(m), m["id"]))
 
         return {
             "models": enriched,
             "counts": {
-                "chat": sum(1 for m in enriched if m["capability"] == "chat"),
-                "vision": sum(1 for m in enriched if m["capability"] == "vision"),
-                "image": sum(1 for m in enriched if m["capability"] == "image"),
+                "chat": sum(1 for m in enriched if "chat" in (m.get("capabilities") or ["chat"])),
+                "vision": sum(1 for m in enriched if "vision" in (m.get("capabilities") or [])),
+                "image": sum(1 for m in enriched if "image" in (m.get("capabilities") or [])),
             },
         }
 
