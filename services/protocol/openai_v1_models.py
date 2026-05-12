@@ -297,6 +297,17 @@ def _load_cache_from_disk() -> dict[str, Any] | None:
         if _CACHE_FILE.exists():
             data = json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "data" in data:
+                # Verify cache consistency: combo_models in cache should match config
+                cache_combos = set()
+                for m in data.get("data", []):
+                    mid = str(m.get("id") or "")
+                    # Check if this is a combo model (owned_by == "chatgpt2api" and in combos)
+                    if m.get("owned_by") == "chatgpt2api":
+                        cache_combos.add(mid)
+                current_combos = set((config.data.get("combo_models") or {}).keys())
+                if cache_combos != current_combos:
+                    logger.info({"event": "models_cache_stale_combos", "cache": list(cache_combos), "config": list(current_combos)})
+                    return None
                 logger.info({"event": "models_cache_disk_loaded", "count": len(data.get("data", []))})
                 return data
     except Exception:
