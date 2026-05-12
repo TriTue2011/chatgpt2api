@@ -22,9 +22,22 @@ _IMAGE_GEN_PREFIXES = {
 }
 _IMAGE_GEN_KEYWORDS = {
     "flux", "stable-diffusion", "sdxl", "dall-e", "gpt-image",
-    "image-generation", "image_generation",
+    "image-generation", "image_generation", "imagen",
 }
-# Providers where ALL models support vision (multimodal by default)
+# Providers where ALL models support image generation
+_IMAGE_GEN_PROVIDER_PREFIXES = {
+    "nv-image/",     # NVIDIA image gen (FLUX, SD)
+    "sdwebui/",      # Stable Diffusion WebUI
+    "comfyui/",      # ComfyUI
+    "huggingface/",  # HuggingFace inference
+    "bfl/",          # Black Forest Labs
+    "stability/",    # Stability AI
+    "fal-ai/",       # Fal.ai
+    "cloudflare/",   # Cloudflare AI
+    "recraft/",      # Recraft
+    "runwayml/",     # RunwayML
+}
+# Providers where specific models support vision (multimodal)
 _VISION_PROVIDER_PREFIXES = {
     "gemini_free/",  # All Google Gemini models are natively multimodal
     "gemini/",       # Alternative gemini prefix
@@ -66,7 +79,12 @@ def classify_model_capability(model_id: str) -> str:
         if mid.startswith(prefix):
             return "image"
 
-    # Check image gen keywords
+    # Check image gen provider-level (all models from these providers are image gen)
+    for prefix in _IMAGE_GEN_PROVIDER_PREFIXES:
+        if mid.startswith(prefix):
+            return "image"
+
+    # Check image gen keywords (for chatgpt/gpt-image-2, dall-e, etc.)
     for kw in _IMAGE_GEN_KEYWORDS:
         if kw in mid:
             return "image"

@@ -37,6 +37,7 @@ export default function CombosPage() {
   const [newName, setNewName] = useState("");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
   const [filterCap, setFilterCap] = useState<string>("all");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -82,12 +83,16 @@ export default function CombosPage() {
     saveCombos(updated);
     setNewName("");
     setSelectedModels([]);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
   function removeCombo(name: string) {
     const updated = { ...combos };
     delete updated[name];
     saveCombos(updated);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
   function addModelToSelection(modelId: string) {
@@ -127,7 +132,10 @@ export default function CombosPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-white">Mô hình kết hợp</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Mô hình kết hợp</h1>
+          {saved && <span className="text-xs text-emerald-600 font-medium animate-in fade-in">✓ Đã lưu</span>}
+        </div>
         <p className="mt-1 text-sm text-stone-500">
           Combo model tự động fallback qua nhiều provider theo thứ tự ưu tiên. Chọn model từ danh sách đã bật trong Quản lý Model.
         </p>
