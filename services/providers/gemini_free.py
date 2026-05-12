@@ -142,13 +142,14 @@ def _parse_gemini_stream(response, model: str) -> Iterator[dict[str, Any]]:
                     text = part.get("text", "")
                     if text:
                         accumulated_text += text
-                        delta = {"content": text}
                         if not sent_role:
-                            delta["role"] = "assistant"
                             sent_role = True
+                            yield {"id": completion_id, "object": "chat.completion.chunk",
+                                   "created": created, "model": model,
+                                   "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
                         yield {"id": completion_id, "object": "chat.completion.chunk",
                                "created": created, "model": model,
-                               "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+                               "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
 
                     # Function call response (native!)
                     func_call = part.get("functionCall")
