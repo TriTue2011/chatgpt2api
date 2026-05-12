@@ -423,6 +423,25 @@ def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
         except (json.JSONDecodeError, AttributeError):
             pass
 
+    # Format 2: ToolName followed by JSON (anywhere, not just end)
+    # Matches: "GetLiveContext\n{\n  \"entity_ids\": [...]\n}"
+    match = _re.search(r'([A-Z][A-Za-z0-9_]+)\s*\n\s*(\[[^\]]*\]|\{[^{}]*\})', text)
+    if match:
+        tool_name = match.group(1)
+        try:
+            params = json.loads(match.group(2))
+            if isinstance(params, list):
+                if all(isinstance(x, str) for x in params) and any("." in str(x) for x in params):
+                    params = {"entity_ids": params}
+                else:
+                    params = {"entities": params}
+            elif not isinstance(params, dict):
+                params = {}
+            return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                     "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
     # Format 3: {"tool": "X", "parameters": {...}} or {"name": "X", "parameters": {...}}
     match = _re.search(r'\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', text, _re.DOTALL)
     if not match:
