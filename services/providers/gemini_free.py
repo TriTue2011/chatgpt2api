@@ -11,6 +11,8 @@ Translates OpenAI format → Gemini format (port from 9router open-sse/translato
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from typing import Any, Iterator
 
 from curl_cffi import requests
