@@ -22,6 +22,7 @@ from services.protocol.conversation import (
 )
 from services.account_service import account_service
 from services.backend_router import backend_router
+from services.config import config
 from services.search_service import search_service
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
 from utils.log import logger
@@ -564,7 +565,9 @@ def _handle_gemini_chat(
             pure_model = model[len(prefix):]
             break
     if not pure_model or pure_model == "auto":
-        pure_model = GEMINI_DEFAULT_MODEL
+        # Use user's configured model from settings, fallback to default
+        provider_cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
+        pure_model = str(provider_cfg.get("model") or "") or GEMINI_DEFAULT_MODEL
 
     logger.info({"event": "gemini_chat", "model": pure_model})
 

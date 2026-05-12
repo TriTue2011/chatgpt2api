@@ -174,9 +174,11 @@ class BackendRouter:
         provider, resolved_model = self.resolve_model(model)
         is_image = self.is_image_model(model)
 
-        # Resolve "auto" to provider's default model
+        # Resolve "auto" to provider's default model (check user config first)
         if resolved_model == "auto" or not resolved_model:
-            resolved_model = self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
+            provider_cfg = (config.data.get("providers") or {}).get(provider) or {}
+            user_model = str(provider_cfg.get("model") or "").strip()
+            resolved_model = user_model or self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
 
         # Calculate payload size if not provided
         if payload_size is None and messages:
