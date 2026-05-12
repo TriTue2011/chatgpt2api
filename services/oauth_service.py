@@ -75,7 +75,15 @@ def get_codex_auth_url(base_url: str = "http://localhost:3030") -> dict[str, str
         "state": pkce["state"],
     }
 
-    auth_url = f"{CODEX_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    # Build query string manually to use %20 instead of + (like 9router does)
+    query_parts = []
+    for k, v in params.items():
+        encoded_key = urllib.parse.quote(str(k), safe="")
+        encoded_val = urllib.parse.quote(str(v), safe="")
+        query_parts.append(f"{encoded_key}={encoded_val}")
+    query_string = "&".join(query_parts)
+
+    auth_url = f"{CODEX_AUTH_URL}?{query_string}"
 
     # Store PKCE data temporarily (in-memory, short-lived)
     _pending_auths[pkce["state"]] = {
