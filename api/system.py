@@ -386,11 +386,14 @@ def create_router(app_version: str) -> APIRouter:
     # ── OAuth Login ──
 
     @router.get("/api/oauth/codex/start")
-    async def start_codex_oauth(authorization: str | None = Header(default=None)):
+    async def start_codex_oauth(request: Request, authorization: str | None = Header(default=None)):
         """Generate Codex OAuth URL for user to login."""
         require_admin(authorization)
-        base_url = config.base_url or "http://localhost:3030"
-        result = get_codex_auth_url(base_url)
+        # Use request host or config base_url for redirect URI
+        host = request.headers.get("host", "localhost:3030")
+        scheme = "https" if request.url.scheme == "https" else "http"
+        base = config.base_url or f"{scheme}://{host}"
+        result = get_codex_auth_url(base)
         return result
 
     @router.get("/api/oauth/codex/callback")
