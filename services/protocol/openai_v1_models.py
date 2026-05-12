@@ -30,6 +30,11 @@ FALLBACK_MODELS = {
     ],
     "nvidia_nim": [
         "nv/auto",
+        "nv-image/black-forest-labs/flux.2-klein-4b",
+        "nv-image/black-forest-labs/flux.1-dev",
+        "nv-image/black-forest-labs/flux_1-schnell",
+        "nv-image/stabilityai/stable-diffusion-3-medium",
+        "nv-image/stabilityai/stable-diffusion-xl",
     ],
     "chatgpt2api": [
         "ha-agent",
@@ -175,6 +180,22 @@ def _fetch_nvidia_models() -> set[str]:
                 slug = str(item.get("id") or "").strip()
                 if slug:
                     models.add(f"nv/{slug}")
+
+            # NVIDIA image gen models are on a separate API (ai.api.nvidia.com/v1/genai/)
+            # There's no list endpoint, so we hardcode known models with nv-image/ prefix
+            nv_image_models = [
+                "nv-image/black-forest-labs/flux.2-klein-4b",
+                "nv-image/black-forest-labs/flux.1-dev",
+                "nv-image/black-forest-labs/flux_1-schnell",
+                "nv-image/stabilityai/stable-diffusion-3-medium",
+                "nv-image/stabilityai/stable-diffusion-xl",
+                "nv-image/stabilityai/stable-video-diffusion",
+            ]
+            cfg = config.data.get("providers") or {}
+            nv_cfg = cfg.get("nvidia_nim") or {}
+            if nv_cfg.get("enabled", True):
+                models.update(nv_image_models)
+
             if models:
                 logger.info({"event": "list_models_nvidia_fetched", "count": len(models)})
                 return models
