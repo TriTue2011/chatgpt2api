@@ -42,10 +42,36 @@ def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[st
 
         if isinstance(content, list):
             text_parts = []
+            image_parts = []
             for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    text_parts.append(str(part.get("text", "")))
-            content = " ".join(text_parts)
+                if isinstance(part, dict):
+                    if part.get("type") == "text":
+                        text_parts.append(str(part.get("text", "")))
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            header, b64 = url.split(",", 1)
+                            mime = header.split(";")[0].replace("data:", "")
+                            image_parts.append({"type": "input_image", "image_url": url})
+                        elif url:
+                            image_parts.append({"type": "input_image", "image_url": url})
+                    elif part.get("type") == "input_image":
+                        image_parts.append(part)
+            content = " ".join(text_parts) if text_parts else ""
+            # Build Responses-format content with images
+            if image_parts:
+                items = []
+                if content:
+                    items.append({"type": "input_text", "text": content})
+                for img in image_parts:
+                    img_url = img.get("image_url", "")
+                    if isinstance(img_url, str) and img_url.startswith("data:"):
+                        # Inline base64 image
+                        items.append({"type": "input_image", "image_url": img_url})
+                    elif isinstance(img_url, str):
+                        items.append({"type": "input_image", "image_url": img_url})
+                input_items.append({"role": "user", "content": items})
+                continue
         else:
             content = str(content or "")
 
