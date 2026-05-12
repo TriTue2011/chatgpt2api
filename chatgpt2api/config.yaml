@@ -1,31 +1,19 @@
 name: "chatgpt2api"
 version: "1.2.0"
 slug: "chatgpt2api"
-description: "OpenAI-compatible API gateway — ChatGPT, Codex OAuth, OpenCode free, Gemini, image generation (DALL-E)"
+description: "OpenAI-compatible API gateway — ChatGPT, Codex OAuth, OpenCode free, Gemini, DALL-E"
 arch:
   - amd64
   - aarch64
 startup: application
 boot: auto
 host_network: true
-ports:
-  3030/tcp: 3030
-ports_description:
-  3030/tcp: "chatgpt2api Web UI + API"
 options:
   auth_key: "sk-chatgpt2api"
-  log_level: "info"
 schema:
   auth_key: password
-  log_level: list(info|debug|warning|error)
-map:
-  - type: homeassistant_config
-    read_only: false
-    path: /config
 image: ghcr.io/tritue2011/chatgpt2api
 webui: "http://[HOST]:3030"
-ingress: false
 panel_icon: "mdi:robot"
 panel_title: "chatgpt2api"
 init: false
-stage: stable
