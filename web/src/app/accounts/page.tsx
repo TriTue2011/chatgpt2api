@@ -387,31 +387,6 @@ function AccountsPageContent() {
           />
           <Button
             variant="outline"
-            className="h-10 rounded-xl border-blue-200 bg-blue-50/80 px-4 text-blue-700 hover:bg-blue-100"
-            onClick={async () => {
-              try {
-                const { request: req } = await import("@/lib/request");
-                const data = await req.get("/api/oauth/codex/start");
-                const url = (data.data as any)?.auth_url;
-                if (url) window.open(url, "_blank");
-              } catch (e) {
-                toast.error("Không thể tạo OAuth URL");
-              }
-            }}
-          >
-            <KeyRound className="size-4" />
-            Login Codex OAuth
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl border-amber-200 bg-amber-50/80 px-4 text-amber-700 hover:bg-amber-100"
-            onClick={() => window.open("https://chatgpt.com/api/auth/session", "_blank")}
-          >
-            <KeyRound className="size-4" />
-            Lấy token tạo ảnh
-          </Button>
-          <Button
-            variant="outline"
             className="h-10 rounded-xl border-stone-200 bg-white/80 px-4 text-stone-700 hover:bg-white"
             onClick={() => downloadTokens(accounts)}
             disabled={accounts.length === 0}
