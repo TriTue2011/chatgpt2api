@@ -177,7 +177,11 @@ class GeminiGrounding(SearchBackend):
 
     def _get_model(self) -> str:
         cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
-        return str(cfg.get("model") or "gemini-3-flash-preview")
+        model = str(cfg.get("model") or "gemini-2.5-flash")
+        # Preview models may not support search grounding yet — fallback
+        if "preview" in model:
+            return "gemini-2.5-flash"
+        return model
 
     def _get_keys(self) -> list[str]:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
@@ -224,7 +228,7 @@ class GeminiGrounding(SearchBackend):
 
         try:
             resp = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{self._get_model()}:generateContent",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self._get_model()}:generateContent?key={api_key}",
                 headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                 json={"contents": [{"parts": [{"text": query}]}], "tools": [{"google_search": {}}]},
                 timeout=30,
@@ -235,7 +239,7 @@ class GeminiGrounding(SearchBackend):
                 return self.search(query, max_results)  # retry with next key
 
             if resp.status_code != 200:
-                logger.warning({"event": "gemini_error", "status": resp.status_code})
+                logger.warning({"event": "gemini_error", "status": resp.status_code, "body": resp.text[:200]})
                 return []
 
             data = resp.json()
