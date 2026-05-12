@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from api.support import require_admin, require_identity, resolve_image_base_url
@@ -389,11 +389,16 @@ def create_router(app_version: str) -> APIRouter:
     async def start_codex_oauth(request: Request, authorization: str | None = Header(default=None)):
         """Generate Codex OAuth URL for user to login."""
         require_admin(authorization)
-        # Use request host or config base_url for redirect URI
         host = request.headers.get("host", "localhost:3030")
         scheme = "https" if request.url.scheme == "https" else "http"
         base = config.base_url or f"{scheme}://{host}"
         result = get_codex_auth_url(base)
+        result["help"] = (
+            "1. Mở URL trên trong browser. "
+            "2. Đăng nhập và authorize. "
+            "3. Sau khi redirect, copy TOÀN Bộ URL trên thanh địa chỉ. "
+            "4. Dán URL đó vào POST /api/oauth/codex/exchange với body {\"redirect_url\": \"URL_DA_COPY\"}"
+        )
         return result
 
     @router.get("/api/oauth/codex/callback")
@@ -401,6 +406,36 @@ def create_router(app_version: str) -> APIRouter:
         """Handle Codex OAuth callback — exchange code for token."""
         if not code or not state:
             raise HTTPException(status_code=400, detail={"error": "Missing code or state"})
+        try:
+            result = exchange_codex_code(code, state)
+            return HTMLResponse(content=f"""
+            <html><body style="font-family:sans-serif;padding:40px;text-align:center">
+            <h2>{result['message']}</h2>
+            <p>Bạn có thể đóng tab này.</p>
+            <script>setTimeout(function(){{window.close()}},3000)</script>
+            </body></html>
+            """)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail={"error": str(exc)})
+
+    class CodexExchangeRequest(BaseModel):
+        redirect_url: str = ""
+
+    @router.post("/api/oauth/codex/exchange")
+    async def codex_oauth_exchange(body: CodexExchangeRequest, authorization: str | None = Header(default=None)):
+        """Exchange Codex OAuth code manually — user pastes redirect URL."""
+        require_admin(authorization)
+        from urllib.parse import urlparse, parse_qs
+        url = (body.redirect_url or "").strip()
+        if not url:
+            raise HTTPException(status_code=400, detail={"error": "redirect_url is required"})
+        # Replace localhost with actual host if needed
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        code = (params.get("code") or [""])[0]
+        state = (params.get("state") or [""])[0]
+        if not code or not state:
+            raise HTTPException(status_code=400, detail={"error": "URL không chứa code và state. Copy TOÀN Bộ URL sau khi redirect."})
         try:
             result = exchange_codex_code(code, state)
             return result
