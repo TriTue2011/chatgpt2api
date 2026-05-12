@@ -24,15 +24,31 @@ _IMAGE_GEN_KEYWORDS = {
     "flux", "stable-diffusion", "sdxl", "dall-e", "gpt-image",
     "image-generation", "image_generation",
 }
+# Providers where ALL models support vision (multimodal by default)
+_VISION_PROVIDER_PREFIXES = {
+    "gemini_free/",  # All Google Gemini models are natively multimodal
+    "gemini/",       # Alternative gemini prefix
+    "cx/",           # Codex OAuth → GPT-4+ models, all support vision
+    "codex/",        # Alternative codex prefix
+    "chatgpt/",      # ChatGPT Web models (GPT-4o+) all support vision
+}
+# Custom providers that are Gemini-based → all models support vision
+_VISION_CUSTOM_PROVIDERS = {
+    "geminiapi",     # Gemini API server
+}
+# Individual model keywords for vision (used for nv/ and other providers)
 _VISION_KEYWORDS = {
     "vision", "multimodal", "-vl", "-vlm", "fuyu", "kosmos",
-    "gemma-3", "gemma-4", "nvclip", "vila", "trellis",
-    "phi-3-vision", "phi-4-multimodal",
-    "llama-3.2-11b-vision", "llama-3.2-90b-vision",
+    "gemma-2", "gemma-3", "gemma-4", "gemma-7b", "nvclip", "vila", "trellis",
+    "phi-3-vision", "phi-4-multimodal", "phi-3.5-moe",
+    "llama-3.2-11b", "llama-3.2-90b", "llama-4-maverick",
     "nemotron-nano-12b-v2-vl", "nemotron-3-nano-omni",
     "bevformer", "sparsedrive", "streampetr", "visual-changenet",
     "cosmos-predict1", "nv-dinov2", "nv-grounding-dino",
-    "retail-object-detection",
+    "retail-object-detection", "codegemma",
+    "gpt-4o", "gpt-4-turbo", "gpt-4.1", "gpt-5",
+    "deepseek-v4",  # v4 series may support vision
+    "yi-large", "sarvam",
 }
 
 
@@ -40,7 +56,7 @@ def classify_model_capability(model_id: str) -> str:
     """Classify a model by capability: 'image', 'vision', or 'chat'.
 
     Image Gen: models that generate images (FLUX, SD, DALL-E)
-    Vision: models that can analyze/understand images
+    Vision: models that can analyze/understand images (multimodal)
     Chat: text-only models (default)
     """
     mid = str(model_id or "").strip().lower()
@@ -55,14 +71,20 @@ def classify_model_capability(model_id: str) -> str:
         if kw in mid:
             return "image"
 
-    # Check vision keywords
+    # Check provider-level vision (all models from these providers support vision)
+    for prefix in _VISION_PROVIDER_PREFIXES:
+        if mid.startswith(prefix):
+            return "vision"
+
+    # Check custom providers that are Gemini-based
+    for cp_prefix in _VISION_CUSTOM_PROVIDERS:
+        if mid.startswith(f"{cp_prefix}/"):
+            return "vision"
+
+    # Check vision keywords in model name
     for kw in _VISION_KEYWORDS:
         if kw in mid:
             return "vision"
-
-    # Models with nv/ prefix that are NOT vision → these are pure chat
-    # But let's be conservative: nv/ models that match vision keywords = vision
-    # Others with nv/ = chat (the model IDs from NVIDIA that don't have vision keywords)
 
     return "chat"
 
