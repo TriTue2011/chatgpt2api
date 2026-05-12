@@ -16,6 +16,7 @@ const SEARCH_BACKENDS = [
 export default function SearchPage() {
   const [config, setConfig] = useState<any>({});
   const [geminiKey, setGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -30,7 +31,9 @@ export default function SearchPage() {
       const cfg = (data.data as any)?.config || {};
       setConfig(cfg.search || { enabled: true, backend: "chatgpt", auto_detect: true, max_results: 3, inject_as: "user_message" });
       const providers = cfg.providers || {};
-      setGeminiKey((providers.gemini_free || {}).api_key || "");
+      const geminiCfg = providers.gemini_free || {};
+      setGeminiKey(geminiCfg.api_key || "");
+      setGeminiModel(geminiCfg.model || "gemini-2.5-flash");
     } catch (e) {
       console.error(e);
     } finally {
@@ -50,6 +53,7 @@ export default function SearchPage() {
           gemini_free: {
             enabled: true,
             api_key: geminiKey,
+            model: geminiModel,
           },
         },
       });
@@ -95,6 +99,15 @@ export default function SearchPage() {
           onChange={(e) => setGeminiKey(e.target.value)}
           placeholder="AIzaSy... (lấy tại aistudio.google.com/apikey)"
           className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-stone-400 focus:outline-none" />
+        <div className="flex items-center gap-3 mt-2">
+          <label className="text-xs text-stone-500 w-16">Model:</label>
+          <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
+            className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs focus:border-stone-400 focus:outline-none">
+            <option value="gemini-2.5-flash">gemini-2.5-flash (nhanh, rẻ)</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro (mạnh nhất)</option>
+            <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (nhanh nhất)</option>
+          </select>
+        </div>
         <p className="text-xs text-stone-400 mt-1">Free 15 RPM. Có thể nhập nhiều key cách nhau dấu phẩy</p>
       </div>
 
