@@ -128,7 +128,7 @@ export default function BackupPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-stone-400">Đang tải...</p>
+        <p className="text-stone-500">Đang tải...</p>
       </div>
     );
   }
@@ -138,7 +138,7 @@ export default function BackupPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Sao lưu & Phục hồi</h1>
-          <p className="mt-1 text-sm text-stone-400">
+          <p className="mt-1 text-sm text-stone-500">
             Sao lưu toàn bộ state (tài khoản, config, provider, combo) ra file JSON
           </p>
         </div>
@@ -146,7 +146,7 @@ export default function BackupPage() {
           type="button"
           onClick={createBackup}
           disabled={creating}
-          className="inline-flex items-center gap-2 rounded-xl bg-stone-800 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-800 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-stone-100 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-100 disabled:opacity-50"
         >
           {creating ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
           {creating ? "Đang tạo..." : "Tạo sao lưu mới"}
@@ -166,9 +166,9 @@ export default function BackupPage() {
       <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
         <div className="flex items-center gap-2 mb-3">
           <ArrowLeftRight className="size-5 text-amber-600" />
-          <h3 className="text-sm font-semibold text-stone-100">Import từ 9router</h3>
+          <h3 className="text-sm font-semibold text-stone-900">Import từ 9router</h3>
         </div>
-        <p className="text-xs text-stone-400 mb-3">
+        <p className="text-xs text-stone-500 mb-3">
           Nhập file backup từ 9router để lấy token Codex OAuth. Token được thêm vào cả pool chat (cx/) và pool ảnh.
         </p>
 
@@ -176,7 +176,7 @@ export default function BackupPage() {
         <div
           className={cn(
             "rounded-xl border-2 border-dashed p-6 text-center transition cursor-pointer",
-            uploadDrag ? "border-amber-400 bg-amber-100" : "border-stone-700 hover:border-amber-300 bg-white",
+            uploadDrag ? "border-amber-400 bg-amber-100" : "border-stone-200 hover:border-amber-300 bg-white",
           )}
           onClick={() => fileRef.current?.click()}
           onDragOver={(e) => { e.preventDefault(); setUploadDrag(true); }}
@@ -199,9 +199,9 @@ export default function BackupPage() {
               e.target.value = "";
             }}
           />
-          <Upload className="size-6 text-stone-300 mx-auto mb-1" />
-          <p className="text-sm text-stone-400">Click chọn file hoặc kéo thả vào đây</p>
-          <p className="text-xs text-stone-400 mt-1">Hỗ trợ .json và .json.gz</p>
+          <Upload className="size-6 text-stone-700 mx-auto mb-1" />
+          <p className="text-sm text-stone-500">Click chọn file hoặc kéo thả vào đây</p>
+          <p className="text-xs text-stone-500 mt-1">Hỗ trợ .json và .json.gz</p>
         </div>
 
         {importing && (
@@ -214,7 +214,7 @@ export default function BackupPage() {
 
       {/* Backup list */}
       {backups.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
+        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
           <HardDrive className="size-12 mb-3 opacity-30" />
           <p>Chưa có sao lưu nào</p>
           <p className="text-xs mt-1">Tạo sao lưu đầu tiên để bảo vệ dữ liệu</p>
@@ -224,13 +224,13 @@ export default function BackupPage() {
           {backups.map((backup) => (
             <div
               key={backup.filename}
-              className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900 px-5 py-4"
+              className="flex items-center justify-between rounded-xl border border-stone-200 bg-white px-5 py-4"
             >
               <div className="flex items-center gap-4">
-                <Archive className="size-5 text-stone-400" />
+                <Archive className="size-5 text-stone-500" />
                 <div>
                   <p className="text-sm font-medium">{backup.filename}</p>
-                  <p className="text-xs text-stone-400">
+                  <p className="text-xs text-stone-500">
                     {formatSize(backup.size_bytes)} · {formatDate(backup.created_at)}
                   </p>
                 </div>
@@ -238,7 +238,7 @@ export default function BackupPage() {
               <button
                 type="button"
                 onClick={() => deleteBackup(backup.filename)}
-                className="rounded-md p-2 text-stone-400 transition hover:bg-red-50 hover:text-red-500"
+                className="rounded-md p-2 text-stone-500 transition hover:bg-red-50 hover:text-red-500"
                 title="Xóa"
               >
                 <Trash2 className="size-4" />

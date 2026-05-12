@@ -84,7 +84,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Bảng điều khiển</h1>
-        <p className="mt-1 text-sm text-stone-400">
+        <p className="mt-1 text-sm text-stone-500">
           Tổng quan hệ thống chatgpt2api v{health?.version || "..."}
         </p>
       </div>
@@ -96,16 +96,16 @@ export default function DashboardPage() {
           return (
             <div
               key={card.label}
-              className="rounded-xl border border-stone-800 bg-stone-900/50 p-5"
+              className="rounded-xl border border-stone-200 bg-white/80 p-5"
             >
               <div className="mb-3 flex items-center gap-2">
                 <div className={cn("rounded-lg p-2", card.bg)}>
                   <Icon className={cn("size-4", card.color)} />
                 </div>
-                <span className="text-xs text-stone-400">{card.label}</span>
+                <span className="text-xs text-stone-500">{card.label}</span>
               </div>
               <p className={cn("text-2xl font-bold", card.color)}>{card.value}</p>
-              <p className="mt-1 text-xs text-stone-400">{card.sub}</p>
+              <p className="mt-1 text-xs text-stone-500">{card.sub}</p>
             </div>
           );
         })}
@@ -124,10 +124,10 @@ export default function DashboardPage() {
           <a
             key={link.href}
             href={link.href}
-            className="rounded-xl border border-stone-800 bg-stone-900/50 p-4 transition hover:border-stone-600 hover:bg-stone-900"
+            className="rounded-xl border border-stone-200 bg-white/80 p-4 transition hover:border-stone-600 hover:bg-stone-900"
           >
             <p className="text-sm font-medium text-white">{link.label}</p>
-            <p className="mt-1 text-xs text-stone-400">{link.desc}</p>
+            <p className="mt-1 text-xs text-stone-500">{link.desc}</p>
           </a>
         ))}
       </div>

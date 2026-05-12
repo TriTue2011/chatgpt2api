@@ -67,13 +67,13 @@ export function ImageSidebar({
       <div className="flex h-full min-h-0 flex-col gap-2 py-1 sm:gap-3 sm:py-2">
         {!hideActionButtons && (
           <div className="flex items-center gap-2">
-            <Button className="h-10 flex-1 rounded-xl bg-stone-800 text-white hover:bg-stone-800" onClick={onCreateDraft}>
+            <Button className="h-10 flex-1 rounded-xl bg-stone-900 text-white hover:bg-stone-100" onClick={onCreateDraft}>
               <MessageSquarePlus className="size-4" />
               Hội thoại mới
             </Button>
             <Button
               variant="outline"
-              className="h-10 rounded-xl border-stone-700 bg-white/85 px-3 text-stone-600 hover:bg-white"
+              className="h-10 rounded-xl border-stone-200 bg-white/85 px-3 text-stone-600 hover:bg-white"
               onClick={() => void onClearHistory()}
               disabled={conversations.length === 0}
             >
@@ -89,12 +89,12 @@ export function ImageSidebar({
           )}
         >
           {isLoadingHistory ? (
-            <div className="flex items-center gap-2 px-2 py-3 text-sm text-stone-400">
+            <div className="flex items-center gap-2 px-2 py-3 text-sm text-stone-500">
               <LoaderCircle className="size-4 animate-spin" />
               Đang tải lịch sử hội thoại
             </div>
           ) : conversations.length === 0 ? (
-            <div className="px-2 py-3 text-sm leading-6 text-stone-400">Chưa có lịch sử tạo ảnh. Lịch sử sẽ hiện ở đây sau khi bạn tạo ảnh.</div>
+            <div className="px-2 py-3 text-sm leading-6 text-stone-500">Chưa có lịch sử tạo ảnh. Lịch sử sẽ hiện ở đây sau khi bạn tạo ảnh.</div>
           ) : (
             conversations.map((conversation) => {
               const active = conversation.id === selectedConversationId;
@@ -107,7 +107,7 @@ export function ImageSidebar({
                     hideActionButtons ? "px-4 py-3.5" : "px-3 py-2 sm:py-3",
                     active
                       ? "border-stone-900 bg-black/[0.035] text-stone-950"
-                      : "border-transparent text-stone-300 hover:border-stone-300 hover:bg-white/40",
+                      : "border-transparent text-stone-700 hover:border-stone-300 hover:bg-white/40",
                   )}
                 >
                   <button
@@ -127,13 +127,13 @@ export function ImageSidebar({
                             if (e.key === "Escape") cancelRename();
                           }}
                           onClick={(e) => e.stopPropagation()}
-                          className="w-full truncate rounded border border-stone-300 bg-stone-900 px-1 py-0.5 text-sm outline-none focus:border-stone-500"
+                          className="w-full truncate rounded border border-stone-300 bg-white px-1 py-0.5 text-sm outline-none focus:border-stone-500"
                         />
                       ) : (
                         <span className="truncate">{conversation.title}</span>
                       )}
                     </div>
-                    <div className={cn("mt-1 text-xs", active ? "text-stone-400" : "text-stone-400")}>
+                    <div className={cn("mt-1 text-xs", active ? "text-stone-500" : "text-stone-500")}>
                       {conversation.turns.length} lượt · {formatConversationTime(conversation.updatedAt)}
                     </div>
                     {stats.running > 0 || stats.queued > 0 ? (
@@ -151,7 +151,7 @@ export function ImageSidebar({
                     <button
                       type="button"
                       onClick={(e) => startRename(conversation, e)}
-                      className="inline-flex size-7 items-center justify-center rounded-md text-stone-400 hover:bg-stone-700 hover:text-stone-600"
+                      className="inline-flex size-7 items-center justify-center rounded-md text-stone-500 hover:bg-stone-200 hover:text-stone-600"
                       aria-label="Đổi tên hội thoại"
                     >
                       <Pencil className="size-3.5" />
@@ -159,7 +159,7 @@ export function ImageSidebar({
                     <button
                       type="button"
                       onClick={() => void onDeleteConversation(conversation.id)}
-                      className="inline-flex size-7 items-center justify-center rounded-md text-stone-400 hover:bg-stone-700 hover:text-rose-500"
+                      className="inline-flex size-7 items-center justify-center rounded-md text-stone-500 hover:bg-stone-200 hover:text-rose-500"
                       aria-label="Xóa hội thoại"
                     >
                       <Trash2 className="size-4" />

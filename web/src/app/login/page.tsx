@@ -46,27 +46,27 @@ export default function LoginPage() {
   if (isCheckingAuth) {
     return (
       <div className="grid min-h-[calc(100vh-1rem)] w-full place-items-center px-4 py-6">
-        <LoaderCircle className="size-5 animate-spin text-stone-400" />
+        <LoaderCircle className="size-5 animate-spin text-stone-500" />
       </div>
     );
   }
 
   return (
     <div className="grid min-h-[calc(100vh-1rem)] w-full place-items-center px-4 py-6">
-      <Card className="w-full max-w-[505px] rounded-[30px] border-stone-800 bg-white/95 shadow-[0_28px_90px_rgba(28,25,23,0.10)]">
+      <Card className="w-full max-w-[505px] rounded-[30px] border-stone-200 bg-white/95 shadow-[0_28px_90px_rgba(28,25,23,0.10)]">
         <CardContent className="space-y-7 p-6 sm:p-8">
           <div className="space-y-4 text-center">
-            <div className="mx-auto inline-flex size-14 items-center justify-center rounded-[18px] bg-stone-800 text-white shadow-sm">
+            <div className="mx-auto inline-flex size-14 items-center justify-center rounded-[18px] bg-stone-900 text-white shadow-sm">
               <LockKeyhole className="size-5" />
             </div>
             <div className="space-y-2">
               <h1 className="text-3xl font-semibold tracking-tight text-stone-950">Chào mừng trở lại</h1>
-              <p className="text-sm leading-6 text-stone-400">Nhập mã khóa để tiếp tục sử dụng quản lý tài khoản và tạo ảnh.</p>
+              <p className="text-sm leading-6 text-stone-500">Nhập mã khóa để tiếp tục sử dụng quản lý tài khoản và tạo ảnh.</p>
             </div>
           </div>
 
           <div className="space-y-3">
-            <label htmlFor="auth-key" className="block text-sm font-medium text-stone-300">
+            <label htmlFor="auth-key" className="block text-sm font-medium text-stone-700">
               Mã khóa (Auth Key)
             </label>
             <Input
@@ -80,12 +80,12 @@ export default function LoginPage() {
                 }
               }}
               placeholder="Nhập mã khóa của bạn"
-              className="h-13 rounded-2xl border-stone-700 bg-stone-900 px-4"
+              className="h-13 rounded-2xl border-stone-200 bg-white px-4"
             />
           </div>
 
           <Button
-            className="h-13 w-full rounded-2xl bg-stone-800 text-white hover:bg-stone-800"
+            className="h-13 w-full rounded-2xl bg-stone-900 text-white hover:bg-stone-100"
             onClick={() => void handleLogin()}
             disabled={isSubmitting}
           >

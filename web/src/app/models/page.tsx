@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Save, Sparkles } from "lucide-react";
+import { Check, RefreshCw, Save, Sparkles } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +104,7 @@ export default function ModelsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-stone-400">Đang tải danh sách model từ API...</p>
+        <p className="text-stone-500">Đang tải danh sách model từ API...</p>
       </div>
     );
   }
@@ -115,7 +115,7 @@ export default function ModelsPage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Quản lý Model</h1>
-          <p className="mt-1 text-sm text-stone-400">
+          <p className="mt-1 text-sm text-stone-500">
             Chọn model hiển thị cho Home Assistant. Model không được chọn sẽ bị ẩn khỏi /v1/models.
           </p>
         </div>
@@ -128,8 +128,8 @@ export default function ModelsPage() {
             saved
               ? "bg-emerald-600 text-white"
               : dirty
-                ? "bg-stone-900 text-stone-950 hover:bg-stone-200"
-                : "bg-stone-800 text-stone-400 cursor-not-allowed",
+                ? "bg-stone-900 text-white hover:bg-stone-200"
+                : "bg-stone-100 text-stone-500 cursor-not-allowed",
           )}
         >
           {saved ? <Check className="size-4" /> : <Save className="size-4" />}
@@ -138,8 +138,8 @@ export default function ModelsPage() {
       </div>
 
       {/* Info banner */}
-      <div className="rounded-lg border border-stone-800 bg-stone-900/50 p-3">
-        <p className="text-xs text-stone-400">
+      <div className="rounded-lg border border-stone-200 bg-white/80 p-3">
+        <p className="text-xs text-stone-500">
           <Sparkles className="inline size-3 mr-1" />
           Model <strong>auto</strong> tự động chọn model tốt nhất dựa trên cài đặt mặc định bên dưới.
           Các model chính (<code>ha-agent</code>, <code>chatgpt/auto</code>, <code>oc/auto</code>, <code>cx/auto</code>) luôn được hiển thị.
@@ -147,7 +147,7 @@ export default function ModelsPage() {
       </div>
 
       {providers.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
+        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
           <Sparkles className="size-12 mb-3 opacity-50" />
           <p>Chưa có model nào</p>
           <p className="text-xs mt-1">Thêm tài khoản hoặc API key để lấy danh sách model</p>
@@ -170,19 +170,19 @@ export default function ModelsPage() {
           return (
             <div
               key={provider}
-              className="rounded-xl border border-stone-800 bg-stone-900/50 overflow-hidden"
+              className="rounded-xl border border-stone-200 bg-white/80 overflow-hidden"
             >
               {/* Provider header */}
-              <div className="flex items-center gap-3 px-5 py-3 border-b border-stone-800 bg-stone-900/80">
+              <div className="flex items-center gap-3 px-5 py-3 border-b border-stone-200 bg-stone-900/80">
                 <span
                   className="size-3 rounded-full shrink-0"
                   style={{ backgroundColor: meta.color }}
                 />
                 <h3 className="font-semibold text-white text-sm">{meta.label}</h3>
-                <span className="text-xs text-stone-400">{models.length} model</span>
+                <span className="text-xs text-stone-500">{models.length} model</span>
                 {defaultModel && (
-                  <span className="ml-auto text-[10px] text-stone-400">
-                    Mặc định: <span className="text-stone-300 font-mono">{defaultModel.replace(provider + "/", "")}</span>
+                  <span className="ml-auto text-[10px] text-stone-500">
+                    Mặc định: <span className="text-stone-700 font-mono">{defaultModel.replace(provider + "/", "")}</span>
                   </span>
                 )}
               </div>
@@ -192,16 +192,16 @@ export default function ModelsPage() {
                 {/* Core models first */}
                 {coreModels.length > 0 && (
                   <div className="mb-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-500">
                       Model chính (luôn hiện)
                     </p>
                     <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
                       {coreModels.map((modelId) => (
                         <div
                           key={modelId}
-                          className="flex items-center gap-2 rounded-lg px-3 py-1.5 bg-stone-950/50"
+                          className="flex items-center gap-2 rounded-lg px-3 py-1.5 bg-white/50"
                         >
-                          <span className="flex-1 text-xs font-mono text-stone-300 truncate">
+                          <span className="flex-1 text-xs font-mono text-stone-700 truncate">
                             {modelId}
                           </span>
                         </div>
@@ -214,7 +214,7 @@ export default function ModelsPage() {
                 {regularModels.length > 0 && (
                   <div>
                     <div className="mb-2 flex items-center justify-between">
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-stone-500">
                         {hasFilter ? "Chọn model để hiển thị" : "Tất cả model đang hiển thị (bấm để ẩn)"}
                       </p>
                       {hasFilter && (
@@ -228,7 +228,7 @@ export default function ModelsPage() {
                               return { ...prev, enabled_models: e };
                             });
                           }}
-                          className="text-[10px] text-stone-400 hover:text-stone-300 transition"
+                          className="text-[10px] text-stone-500 hover:text-stone-700 transition"
                         >
                           Bật tất cả
                         </button>
@@ -253,7 +253,7 @@ export default function ModelsPage() {
                                 "size-5 rounded border-2 flex items-center justify-center shrink-0 transition",
                                 enabled
                                   ? "border-emerald-500 bg-emerald-500/20"
-                                  : "border-stone-700 bg-stone-800/50",
+                                  : "border-stone-200 bg-stone-100/50",
                               )}
                             >
                               {enabled && <Check className="size-3 text-emerald-400" />}
@@ -263,7 +263,7 @@ export default function ModelsPage() {
                             <span
                               className={cn(
                                 "flex-1 text-xs font-mono truncate transition",
-                                enabled ? "text-stone-200" : "text-stone-600",
+                                enabled ? "text-stone-800" : "text-stone-600",
                               )}
                             >
                               {shortName}
@@ -277,7 +277,7 @@ export default function ModelsPage() {
                                 "text-[10px] px-2 py-0.5 rounded border transition opacity-0 group-hover:opacity-100",
                                 isDefault
                                   ? "border-amber-500/50 text-amber-400 bg-amber-500/10 opacity-100"
-                                  : "border-stone-800 text-stone-600 hover:border-stone-700 hover:text-stone-400",
+                                  : "border-stone-200 text-stone-600 hover:border-stone-200 hover:text-stone-500",
                               )}
                               title="Đặt làm mặc định"
                             >

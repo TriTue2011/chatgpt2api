@@ -62,7 +62,7 @@ export default function ProvidersPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-stone-400">Đang tải...</p>
+        <p className="text-stone-500">Đang tải...</p>
       </div>
     );
   }
@@ -72,7 +72,7 @@ export default function ProvidersPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-white">Nhà cung cấp AI</h1>
-        <p className="mt-1 text-sm text-stone-400">
+        <p className="mt-1 text-sm text-stone-500">
           Quản lý các nhà cung cấp AI bên ngoài — miễn phí và có API key
         </p>
       </div>
@@ -92,14 +92,14 @@ export default function ProvidersPage() {
           return (
             <div
               key={provider.name}
-              className="rounded-xl border border-stone-800 bg-stone-900/50 p-5 transition hover:border-stone-700"
+              className="rounded-xl border border-stone-200 bg-white/80 p-5 transition hover:border-stone-200"
             >
               <div className="mb-3 flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">{meta.icon}</span>
                   <div>
                     <h3 className="font-semibold text-white">{meta.label}</h3>
-                    <p className="text-xs text-stone-400">{meta.desc}</p>
+                    <p className="text-xs text-stone-500">{meta.desc}</p>
                   </div>
                 </div>
                 <span
@@ -107,7 +107,7 @@ export default function ProvidersPage() {
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
                     provider.enabled
                       ? "bg-emerald-500/10 text-emerald-400"
-                      : "bg-stone-800 text-stone-400",
+                      : "bg-stone-100 text-stone-500",
                   )}
                 >
                   {provider.enabled ? (
@@ -145,7 +145,7 @@ export default function ProvidersPage() {
                     type="button"
                     disabled={isTesting}
                     onClick={() => testProvider(provider.name)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-medium text-stone-300 transition hover:bg-stone-700 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-200 disabled:opacity-50"
                   >
                     {isTesting ? (
                       <RefreshCw className="size-3 animate-spin" />
@@ -170,7 +170,7 @@ export default function ProvidersPage() {
                     href="https://opencode.ai"
                     target="_blank"
                     rel="noreferrer"
-                    className="ml-auto text-xs text-stone-400 transition hover:text-stone-300"
+                    className="ml-auto text-xs text-stone-500 transition hover:text-stone-700"
                   >
                     <ExternalLink className="size-3" />
                   </a>
@@ -182,7 +182,7 @@ export default function ProvidersPage() {
       </div>
 
       {providers.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
+        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
           <Cpu className="size-12 mb-3 opacity-50" />
           <p>Chưa có nhà cung cấp nào được cấu hình</p>
           <p className="text-xs mt-1">Thêm provider vào config.json để bắt đầu</p>

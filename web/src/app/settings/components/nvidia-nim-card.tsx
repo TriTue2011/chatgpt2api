@@ -46,15 +46,15 @@ export function NvidiaNimCard() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-400" /></CardContent></Card>;
+  if (loading) return <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
 
   return (
-    <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
+    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center gap-2">
           <span className="inline-flex size-5 items-center justify-center rounded text-xs font-bold" style={{backgroundColor: "#76B900", color: "#000"}}>N</span>
-          <h3 className="text-sm font-semibold text-stone-100">NVIDIA NIM</h3>
-          <span className="text-[10px] text-stone-400">build.nvidia.com</span>
+          <h3 className="text-sm font-semibold text-stone-900">NVIDIA NIM</h3>
+          <span className="text-[10px] text-stone-500">build.nvidia.com</span>
         </div>
 
         <label className="flex items-center gap-2 text-sm">
@@ -63,21 +63,21 @@ export function NvidiaNimCard() {
         </label>
 
         <div className="space-y-2">
-          <label className="text-sm text-stone-300">API Keys (mỗi dòng 1 key)</label>
+          <label className="text-sm text-stone-700">API Keys (mỗi dòng 1 key)</label>
           <Textarea value={apiKey} onChange={(e) => setApiKey(e.target.value)}
             placeholder={"nvapi-xxx...\nnvapi-yyy..."}
-            className="min-h-24 rounded-xl border-stone-700 bg-stone-800 font-mono text-xs" />
-          <p className="text-xs text-stone-400">Nhiều key → tự động round-robin khi rate limit. Lấy tại build.nvidia.com</p>
+            className="min-h-24 rounded-xl border-stone-200 bg-stone-100 font-mono text-xs" />
+          <p className="text-xs text-stone-500">Nhiều key → tự động round-robin khi rate limit. Lấy tại build.nvidia.com</p>
         </div>
 
-        <div className="p-3 rounded-lg bg-stone-800 text-xs text-stone-400 space-y-1">
+        <div className="p-3 rounded-lg bg-stone-100 text-xs text-stone-500 space-y-1">
           <p><strong>Chat:</strong> Dùng prefix <code className="bg-stone-200 px-1 rounded">nv/</code> — ví dụ: <code className="bg-stone-200 px-1 rounded">nv/openai/gpt-oss-120b</code></p>
           <p><strong>Tạo ảnh:</strong> Dùng prefix <code className="bg-stone-200 px-1 rounded">nv-image/</code> — ví dụ: <code className="bg-stone-200 px-1 rounded">nv-image/black-forest-labs/flux.2-klein-4b</code></p>
           <p><strong>Vision:</strong> Dùng model vision qua <code className="bg-stone-200 px-1 rounded">nv/google/gemma-4-31b-it</code></p>
         </div>
 
         <div className="flex justify-end">
-          <Button className="h-10 rounded-xl bg-stone-800 px-5 text-white hover:bg-stone-800"
+          <Button className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
             onClick={() => void save()} disabled={saving}>
             {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
             Lưu

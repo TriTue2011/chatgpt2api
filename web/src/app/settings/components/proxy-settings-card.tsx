@@ -47,7 +47,7 @@ export function ProxySettingsCard() {
   };
 
   return (
-    <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
+    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
       <CardContent className="space-y-6 p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-center gap-3">
@@ -56,7 +56,7 @@ export function ProxySettingsCard() {
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Proxy toàn cục</h2>
-              <p className="text-sm text-stone-400">为系统中的出站请求配置统一代理，Lưu后会立即生效。</p>
+              <p className="text-sm text-stone-500">为系统中的出站请求配置统一代理，Lưu后会立即生效。</p>
             </div>
           </div>
           <Badge variant={proxy.trim() ? "success" : "secondary"} className="w-fit rounded-md px-2.5 py-1">
@@ -66,12 +66,12 @@ export function ProxySettingsCard() {
 
         {isLoadingConfig ? (
           <div className="flex items-center justify-center py-10">
-            <LoaderCircle className="size-5 animate-spin text-stone-400" />
+            <LoaderCircle className="size-5 animate-spin text-stone-500" />
           </div>
         ) : (
           <>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-stone-300">Địa chỉ proxy</label>
+              <label className="text-sm font-medium text-stone-700">Địa chỉ proxy</label>
               <Input
                 value={proxy}
                 onChange={(event) => {
@@ -79,9 +79,9 @@ export function ProxySettingsCard() {
                   setTestResult(null);
                 }}
                 placeholder="http://user:pass@127.0.0.1:7890"
-                className="h-11 rounded-xl border-stone-700 bg-white"
+                className="h-11 rounded-xl border-stone-200 bg-white"
               />
-              <p className="text-sm text-stone-400">
+              <p className="text-sm text-stone-500">
                 留空表示不使用代理。请按完整地址填写，例如 `http://127.0.0.1:7890`、`http://người dùng名:密码@127.0.0.1:7890` 或 `socks5://127.0.0.1:7890`。
               </p>
             </div>
@@ -103,7 +103,7 @@ export function ProxySettingsCard() {
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
-                className="h-10 rounded-xl border-stone-700 bg-stone-900 px-5 text-stone-300"
+                className="h-10 rounded-xl border-stone-200 bg-white px-5 text-stone-700"
                 onClick={() => void handleTest()}
                 disabled={isTesting || isLoadingConfig}
               >
@@ -111,7 +111,7 @@ export function ProxySettingsCard() {
                 Kiểm tra proxy
               </Button>
               <Button
-                className="h-10 rounded-xl bg-stone-800 px-5 text-white hover:bg-stone-800"
+                className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
                 onClick={() => void saveConfig()}
                 disabled={isSavingConfig}
               >

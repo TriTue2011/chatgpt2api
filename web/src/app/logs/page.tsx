@@ -138,31 +138,31 @@ function LogsContent() {
     <section className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <div className="text-xs font-semibold tracking-[0.18em] text-stone-400 uppercase">Logs</div>
+          <div className="text-xs font-semibold tracking-[0.18em] text-stone-500 uppercase">Logs</div>
           <h1 className="text-2xl font-semibold tracking-tight">Quản lý nhật ký</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <Select value={type} onValueChange={setType}>
-            <SelectTrigger className="h-10 w-[150px] rounded-xl border-stone-700 bg-white"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-10 w-[150px] rounded-xl border-stone-200 bg-white"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value={LogType.Call}>Nhật ký cuộc gọi</SelectItem>
               <SelectItem value={LogType.Account}>Nhật ký quản lý tài khoản</SelectItem>
             </SelectContent>
           </Select>
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
-          <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-700 bg-stone-900 px-4 text-stone-300">
+          <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700">
             Xóa bộ lọc
           </Button>
-          <Button onClick={() => void loadLogs()} disabled={isLoading} className="h-10 rounded-xl bg-stone-800 px-4 text-white hover:bg-stone-800">
+          <Button onClick={() => void loadLogs()} disabled={isLoading} className="h-10 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100">
             {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Search className="size-4" />}
             Truy vấn
           </Button>
         </div>
       </div>
 
-      <Card className="overflow-hidden rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
+      <Card className="overflow-hidden rounded-2xl border-stone-200 bg-white/90 shadow-sm">
         <CardContent className="p-0">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-5 py-4">
             <div className="flex flex-wrap items-center gap-3 text-sm text-stone-600">
               <span>Tổng cộng {items.length} mục</span>
               <label className="flex items-center gap-2">
@@ -176,14 +176,14 @@ function LogsContent() {
               {selectedIds.length > 0 ? <span>Đã chọn {selectedIds.length} mục</span> : null}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" className="h-8 rounded-lg px-3 text-stone-400" onClick={() => void loadLogs()} disabled={isLoading}>
+              <Button variant="ghost" className="h-8 rounded-lg px-3 text-stone-500" onClick={() => void loadLogs()} disabled={isLoading}>
                 <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
                 Làm mới
               </Button>
-              <button type="button" className="text-sm text-stone-400 hover:text-stone-100 disabled:text-stone-300" onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0 || isDeleting}>
+              <button type="button" className="text-sm text-stone-500 hover:text-stone-900 disabled:text-stone-700" onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0 || isDeleting}>
                 Bỏ chọn
               </button>
-              <Button variant="outline" className="h-8 rounded-lg border-rose-200 bg-stone-900 px-3 text-rose-600 hover:bg-rose-50" onClick={() => setDeletingItems(items.filter((item) => selectedSet.has(item.id)))} disabled={selectedIds.length === 0 || isDeleting}>
+              <Button variant="outline" className="h-8 rounded-lg border-rose-200 bg-white px-3 text-rose-600 hover:bg-rose-50" onClick={() => setDeletingItems(items.filter((item) => selectedSet.has(item.id)))} disabled={selectedIds.length === 0 || isDeleting}>
                 <Trash2 className="size-4" />
                 Xóa mục đã chọn
               </Button>
@@ -231,24 +231,24 @@ function LogsContent() {
                                 <button
                                   key={`${url}-${imageIndex}`}
                                   type="button"
-                                  className="relative size-9 overflow-hidden rounded-lg border border-stone-700 bg-stone-100"
+                                  className="relative size-9 overflow-hidden rounded-lg border border-stone-200 bg-stone-100"
                                   onClick={() => openLogImage(item, imageIndex)}
                                   title="Xem trước ảnh"
                                 >
                                   <ImageThumbnail src={url} thumbnailSrc={getImageThumbnailUrl(url)} className="h-full w-full" />
                                 </button>
                               ))}
-                              {urls.length > 3 ? <span className="text-xs text-stone-400">+{urls.length - 3}</span> : null}
+                              {urls.length > 3 ? <span className="text-xs text-stone-500">+{urls.length - 3}</span> : null}
                             </div>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-xs text-stone-400">
+                            <span className="inline-flex items-center gap-1 text-xs text-stone-500">
                               <ImageIcon className="size-3.5" />
                               -
                             </span>
                           )}
                         </TableCell>
                       ) : null}
-                      <TableCell className="max-w-[420px] truncate text-stone-400">{item.summary || "-"}</TableCell>
+                      <TableCell className="max-w-[420px] truncate text-stone-500">{item.summary || "-"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
                           <Button variant="ghost" className="h-8 rounded-lg px-3 text-stone-600" onClick={() => openDetail(item)}>
@@ -265,32 +265,32 @@ function LogsContent() {
               </TableBody>
             </Table>
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-stone-800 px-4 py-3 text-sm text-stone-400">
+          <div className="flex items-center justify-end gap-2 border-t border-stone-200 px-4 py-3 text-sm text-stone-500">
             <span>Trang {safePage} / {pageCount}, Tổng cộng {items.length} mục</span>
-            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-700 bg-white" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-200 bg-white" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
               <ChevronLeft className="size-4" />
             </Button>
-            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-700 bg-white" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>
+            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-200 bg-white" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>
               <ChevronRight className="size-4" />
             </Button>
           </div>
-          {!isLoading && items.length === 0 ? <div className="px-6 py-14 text-center text-sm text-stone-400">Không tìm thấy nhật ký</div> : null}
+          {!isLoading && items.length === 0 ? <div className="px-6 py-14 text-center text-sm text-stone-500">Không tìm thấy nhật ký</div> : null}
         </CardContent>
       </Card>
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="flex h-[min(88vh,860px)] w-[min(92vw,920px)] flex-col overflow-hidden rounded-2xl p-0">
-          <DialogHeader className="shrink-0 border-b border-stone-800 px-6 py-5">
+          <DialogHeader className="shrink-0 border-b border-stone-200 px-6 py-5">
             <DialogTitle>Chi tiết nhật ký</DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto px-6 py-5">
             <div className="space-y-4">
-              <div className="grid gap-3 rounded-xl border border-stone-700 bg-stone-900 p-4 text-sm text-stone-600 md:grid-cols-2">
+              <div className="grid gap-3 rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-600 md:grid-cols-2">
                 {Object.entries(detailLog?.detail || {})
                   .filter(([key, value]) => key !== "urls" && typeof value !== "object")
                   .map(([key, value]) => (
                     <div key={key} className="flex items-start justify-between gap-4">
-                      <span className="text-stone-400">{key}</span>
-                      <span className="text-right font-medium break-all text-stone-300">{String(value)}</span>
+                      <span className="text-stone-500">{key}</span>
+                      <span className="text-right font-medium break-all text-stone-700">{String(value)}</span>
                     </div>
                   ))}
               </div>
@@ -300,7 +300,7 @@ function LogsContent() {
                     <button
                       key={url}
                       type="button"
-                      className="aspect-square overflow-hidden rounded-xl border border-stone-700 bg-stone-100"
+                      className="aspect-square overflow-hidden rounded-xl border border-stone-200 bg-stone-100"
                       onClick={() => {
                         setLightboxIndex(index);
                         setLightboxOpen(true);
@@ -311,7 +311,7 @@ function LogsContent() {
                   ))}
                 </div>
               ) : null}
-              <pre className="max-h-[72vh] overflow-auto rounded-xl border border-stone-700 bg-stone-800 p-4 text-xs leading-6 text-stone-300">
+              <pre className="max-h-[72vh] overflow-auto rounded-xl border border-stone-200 bg-stone-100 p-4 text-xs leading-6 text-stone-700">
                 {JSON.stringify(detailLog?.detail || {}, null, 2)}
               </pre>
             </div>
@@ -351,7 +351,7 @@ function LogsContent() {
 export default function LogsPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin"]);
   if (isCheckingAuth || !session || session.role !== "admin") {
-    return <div className="flex min-h-[40vh] items-center justify-center"><LoaderCircle className="size-5 animate-spin text-stone-400" /></div>;
+    return <div className="flex min-h-[40vh] items-center justify-center"><LoaderCircle className="size-5 animate-spin text-stone-500" /></div>;
   }
   return <LogsContent />;
 }

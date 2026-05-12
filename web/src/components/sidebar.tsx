@@ -79,21 +79,21 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-stone-800 bg-stone-950/90 backdrop-blur-xl transition-all duration-200",
+        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-stone-200 bg-white/90 backdrop-blur-xl transition-all duration-200",
         collapsed ? "w-16" : "w-56",
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-stone-800 px-3">
+      <div className="flex h-14 items-center gap-2 border-b border-stone-200 px-3">
         {!collapsed && (
-          <Link href="/" className="text-[15px] font-bold tracking-tight text-stone-100">
+          <Link href="/" className="text-[15px] font-bold tracking-tight text-stone-900">
             chatgpt2api
           </Link>
         )}
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
-          className="ml-auto rounded-md p-1 text-stone-400 hover:bg-stone-700 hover:text-stone-200"
+          className="ml-auto rounded-md p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-800"
         >
           {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
         </button>
@@ -111,8 +111,8 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 active
-                  ? "bg-stone-800 text-stone-100"
-                  : "text-stone-400 hover:bg-stone-800/50 hover:text-stone-200",
+                  ? "bg-stone-100 text-stone-900"
+                  : "text-stone-500 hover:bg-stone-100/50 hover:text-stone-800",
               )}
               title={collapsed ? item.label : undefined}
             >
@@ -124,18 +124,18 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom: user + version + logout */}
-      <div className="border-t border-stone-800 px-3 py-3">
+      <div className="border-t border-stone-200 px-3 py-3">
         {!collapsed && (
           <div className="mb-2 space-y-0.5">
-            <p className="text-xs font-medium text-stone-300 truncate">{displayName}</p>
-            <p className="text-[10px] text-stone-400">{roleLabel} · v{webConfig.appVersion}</p>
+            <p className="text-xs font-medium text-stone-700 truncate">{displayName}</p>
+            <p className="text-[10px] text-stone-500">{roleLabel} · v{webConfig.appVersion}</p>
           </div>
         )}
         <button
           type="button"
           onClick={() => void handleLogout()}
           className={cn(
-            "flex items-center gap-2 rounded-md text-xs text-stone-400 transition hover:text-stone-300",
+            "flex items-center gap-2 rounded-md text-xs text-stone-500 transition hover:text-stone-700",
             collapsed ? "justify-center w-full py-1" : "w-full",
           )}
           title="Đăng xuất"
