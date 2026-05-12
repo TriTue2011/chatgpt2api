@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, CheckCircle2, Globe, Database, ArrowUp, ArrowDown, GripVertical } from "lucide-react";
+import { Search, CheckCircle2, Globe, Database, ArrowUp, ArrowDown, Cpu } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -12,17 +12,24 @@ const SEARCH_BACKENDS = [
   { value: "brave", label: "Brave Search", desc: "Brave Search API — 2.000 req/tháng miễn phí", icon: Search },
 ];
 
+type CustomProvider = {
+  name: string;
+  prefix: string;
+};
+
 export default function SearchPage() {
   const [config, setConfig] = useState<any>({});
   const [combo, setCombo] = useState<string[]>([]);
   const [geminiKey, setGeminiKey] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash");
+  const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     fetchConfig();
+    fetchCustomProviders();
   }, []);
 
   async function fetchConfig() {
@@ -41,6 +48,35 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function fetchCustomProviders() {
+    try {
+      const data = await request.get("/api/v1/custom-providers");
+      const providers = (data.data as any)?.custom_providers || {};
+      const list: CustomProvider[] = Object.entries(providers).map(([id, p]: any) => ({
+        name: p.name || id,
+        prefix: p.prefix || id,
+      }));
+      setCustomProviders(list);
+    } catch (e) { console.error(e); }
+  }
+
+  function backendLabel(key: string): string {
+    const builtin = SEARCH_BACKENDS.find(b => b.value === key);
+    if (builtin) return builtin.label;
+    if (key.startsWith("custom:")) {
+      const cpId = key.slice(7);
+      const cp = customProviders.find(p => p.prefix === cpId);
+      return cp ? `${cp.name} (Custom API)` : key;
+    }
+    return key;
+  }
+
+  function backendDesc(key: string): string {
+    if (key.startsWith("custom:")) return "Dùng model chat của custom provider để tìm kiếm";
+    const builtin = SEARCH_BACKENDS.find(b => b.value === key);
+    return builtin?.desc || "";
   }
 
   function toggleBackend(backend: string) {
@@ -88,6 +124,17 @@ export default function SearchPage() {
     }
   }
 
+  // All available backends: builtin + custom providers
+  const allBackends = [
+    ...SEARCH_BACKENDS,
+    ...customProviders.map(cp => ({
+      value: `custom:${cp.prefix}`,
+      label: `${cp.name} (Custom API)`,
+      desc: `Dùng model của ${cp.name} để tìm kiếm — gửi prompt search đến chat endpoint`,
+      icon: Cpu,
+    })),
+  ];
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><p className="text-stone-500">Đang tải...</p></div>;
   }
@@ -97,7 +144,7 @@ export default function SearchPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-stone-900">Cấu hình tìm kiếm</h1>
         <p className="mt-1 text-sm text-stone-500">
-          Khi dùng model không có search built-in (cx/, oc/...), hệ thống sẽ tự tìm kiếm. Combo: thử lần lượt, backend trước lỗi → backend sau.
+          Khi dùng model không có search built-in (cx/, oc/...), hệ thống sẽ tự tìm kiếm. Combo: thử lần lượt, backend trước lỗi → backend sau. Có thể dùng custom provider để search.
         </p>
       </div>
 
@@ -138,16 +185,16 @@ export default function SearchPage() {
           Thứ tự tìm kiếm (Combo)
         </h3>
         <p className="text-xs text-stone-500 mb-4">
-          Tích chọn backend và sắp xếp thứ tự ưu tiên. Backend đầu tiên được thử trước, nếu lỗi → thử backend tiếp theo.
+          Tích chọn backend và sắp xếp thứ tự ưu tiên. Backend đầu tiên được thử trước, nếu lỗi → thử backend tiếp theo. Có thể thêm custom provider làm search backend.
         </p>
 
         {/* Selected backends in priority order */}
         {combo.length > 0 && (
           <div className="space-y-1 mb-4">
             {combo.map((backend, idx) => {
-              const info = SEARCH_BACKENDS.find(b => b.value === backend);
+              const info = allBackends.find(b => b.value === backend);
               if (!info) return null;
-              const Icon = info.icon;
+              const Icon = info.icon || Search;
               return (
                 <div key={backend} className="flex items-center gap-2 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2.5">
                   <span className={cn(
@@ -157,7 +204,10 @@ export default function SearchPage() {
                     {idx + 1}
                   </span>
                   <Icon className="size-4 text-stone-500" />
-                  <span className="flex-1 text-sm text-stone-800">{info.label}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-stone-800">{info.label}</span>
+                    <p className="text-[10px] text-stone-400 truncate">{info.desc}</p>
+                  </div>
                   <button onClick={() => moveBackend(backend, "up")} disabled={idx === 0}
                     className="p-0.5 text-stone-400 hover:text-stone-700 disabled:opacity-30">
                     <ArrowUp className="size-3.5" />
@@ -176,8 +226,8 @@ export default function SearchPage() {
 
         {/* Available backends to add */}
         <div className="space-y-1">
-          {SEARCH_BACKENDS.filter(b => !combo.includes(b.value)).map(b => {
-            const Icon = b.icon;
+          {allBackends.filter(b => !combo.includes(b.value)).map(b => {
+            const Icon = b.icon || Search;
             return (
               <button key={b.value} type="button"
                 onClick={() => toggleBackend(b.value)}
@@ -202,10 +252,10 @@ export default function SearchPage() {
       <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
         <div className="flex items-center gap-2">
           <Globe className="size-4 text-stone-500" />
-          <span className="text-sm font-medium text-stone-700">ChatGPT (có sẵn)</span>
+          <span className="text-sm font-medium text-stone-700">ChatGPT & Custom API</span>
         </div>
         <p className="text-xs text-stone-500 mt-1">
-          Model <code className="bg-stone-200 px-1 rounded">chatgpt/auto</code> tự tìm kiếm web nội bộ — không cần cấu hình search combo. Combo search chỉ dùng cho model không có search built-in.
+          Model <code className="bg-stone-200 px-1 rounded">chatgpt/auto</code> tự tìm kiếm web nội bộ. Custom provider (như <code className="bg-stone-200 px-1 rounded">geminiapi</code>) gửi prompt search đến chat model — phù hợp với Gemini API có Google grounding.
         </p>
       </div>
 

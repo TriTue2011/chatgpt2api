@@ -270,6 +270,107 @@ class GeminiGrounding(SearchBackend):
             return []
 
 
+class CustomProviderSearch(SearchBackend):
+    """Use a custom provider's chat model for search (e.g., Gemini API server).
+
+    Sends the query as a chat message with search instruction. Useful for
+    Gemini-compatible APIs that support Google grounding natively.
+    """
+
+    def __init__(self, provider_id: str = ""):
+        self.provider_id = provider_id
+
+    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
+        if not self.provider_id:
+            return []
+
+        from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
+        providers = get_custom_providers()
+        cfg = providers.get(self.provider_id)
+        if not cfg:
+            return []
+
+        provider = CustomOpenAIProvider(cfg)
+        prefix = str(cfg.get("prefix") or self.provider_id)
+
+        # Get first available model from this provider
+        models = provider.list_models()
+        if not models:
+            return []
+
+        # Pick the first model (usually the best/fastest one)
+        model_id = str(models[0].get("id") or "").replace(f"{prefix}/", "")
+        if not model_id:
+            return []
+
+        try:
+            result = provider.chat_completions(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Tìm kiếm trên Google: {query}\n\n"
+                        f"Hãy trả lời với thông tin thực tế, cập nhật mới nhất. "
+                        f"Trả về tối đa {max_results} kết quả với định dạng:\n"
+                        f"1. [Tiêu đề](URL): mô tả ngắn\n"
+                        f"2. [Tiêu đề](URL): mô tả ngắn"
+                    ),
+                }],
+                model=model_id,
+                stream=False,
+                max_tokens=1000,
+                temperature=0.3,
+            )
+
+            content = ""
+            if isinstance(result, dict):
+                choices = result.get("choices") or []
+                if choices:
+                    content = str(choices[0].get("message", {}).get("content") or "")
+
+            if not content:
+                return []
+
+            # Parse the response into structured results
+            results: list[dict[str, str]] = []
+            import re
+            lines = content.strip().split("\n")
+            for line in lines[:max_results]:
+                # Parse "1. [Title](URL): description" or "1. Title: description"
+                match = re.match(r"\d+\.\s*\[?(.+?)\]?(?:\((.+?)\))?:\s*(.*)", line.strip())
+                if match:
+                    results.append({
+                        "title": match.group(1).strip(),
+                        "url": match.group(2) or "",
+                        "snippet": match.group(3).strip(),
+                    })
+                elif line.strip() and len(results) < max_results:
+                    # Fallback: use whole line as snippet
+                    text = re.sub(r"^\d+\.\s*", "", line.strip())
+                    if text and len(text) > 10:
+                        results.append({
+                            "title": text[:80],
+                            "url": "",
+                            "snippet": text,
+                        })
+
+            if results:
+                logger.info({
+                    "event": "custom_provider_search_ok",
+                    "provider": self.provider_id,
+                    "model": model_id,
+                    "results": len(results),
+                })
+            return results
+
+        except Exception as exc:
+            logger.warning({
+                "event": "custom_provider_search_error",
+                "provider": self.provider_id,
+                "error": str(exc),
+            })
+            return []
+
+
 # Backend registry
 SEARCH_BACKENDS: dict[str, SearchBackend] = {
     "chatgpt": ChatGPTSearch(),
@@ -279,6 +380,35 @@ SEARCH_BACKENDS: dict[str, SearchBackend] = {
     "brave": BraveSearch(),
 }
 
+
+def get_all_search_backends() -> dict[str, dict[str, str]]:
+    """Get all available search backends including custom providers."""
+    backends = dict(SEARCH_BACKENDS)
+    # Add custom providers as potential search backends
+    from services.providers.custom_openai import get_custom_providers
+    for cp_id, cp_cfg in get_custom_providers().items():
+        key = f"custom:{cp_id}"
+        if key not in backends:
+            backends[key] = CustomProviderSearch(cp_id)
+    return {k: {"name": getattr(v, "provider_id", k) if hasattr(v, "provider_id") else k,
+                "label": _get_backend_label(k)} for k, v in backends.items()}
+
+
+def _get_backend_label(key: str) -> str:
+    labels = {
+        "chatgpt": "ChatGPT (có sẵn)",
+        "gemini": "Gemini Google Search",
+        "serper": "Serper.dev",
+        "searxng": "SearXNG (tự cài)",
+        "brave": "Brave Search",
+    }
+    if key.startswith("custom:"):
+        cp_id = key[len("custom:"):]
+        from services.providers.custom_openai import get_custom_providers
+        providers = get_custom_providers()
+        cfg = providers.get(cp_id) or {}
+        return f"{cfg.get('name', cp_id)} (Custom API)"
+    return labels.get(key, key)
 
 def needs_search(messages: list[dict[str, Any]]) -> bool:
     """Analyze last user message to detect search intent.
@@ -416,10 +546,24 @@ class SearchService:
         cfg = self._get_config()
         combo = cfg.get("search_combo")
         if isinstance(combo, list) and combo:
-            return [str(b).strip() for b in combo if str(b).strip() in SEARCH_BACKENDS]
+            valid = set(SEARCH_BACKENDS.keys())
+            # Also allow custom provider backends
+            from services.providers.custom_openai import get_custom_providers
+            for cp_id in get_custom_providers():
+                valid.add(f"custom:{cp_id}")
+            return [str(b).strip() for b in combo if str(b).strip() in valid]
         # Default: single backend from config
         backend = self._get_active_backend()
         return [backend] if backend in SEARCH_BACKENDS else ["chatgpt"]
+
+    def _get_backend(self, name: str):
+        """Get a search backend by name, including custom providers."""
+        if name in SEARCH_BACKENDS:
+            return SEARCH_BACKENDS[name]
+        if name.startswith("custom:"):
+            cp_id = name[len("custom:"):]
+            return CustomProviderSearch(cp_id)
+        return None
 
     def _get_active_backend(self) -> str:
         """Get actual search backend to use, auto-upgrading chatgpt→gemini if key available."""
@@ -431,23 +575,22 @@ class SearchService:
 
     def search(self, query: str) -> list[dict[str, str]]:
         """Execute search using configured backends in combo order. Falls back on failure."""
-        if self.backend_name == "chatgpt" and len(self.search_combo) == 1 and self.search_combo[0] == "chatgpt":
-            # Auto-upgrade to gemini if key available
-            backend_name = self._get_active_backend()
-        else:
-            backend_name = None
-
         combo = self.search_combo
 
         for backend_name in combo:
-            backend = SEARCH_BACKENDS.get(backend_name)
+            backend = self._get_backend(backend_name)
             if not backend:
                 continue
 
             # Skip chatgpt backend — it's passthrough (no injection)
-            if backend_name == "chatgpt":
-                logger.info({"event": "search_combo_chatgpt_skip", "reason": "passthrough"})
-                return []
+            if backend_name == "chatgpt" or backend_name.startswith("custom:"):
+                # ChatGPT handles search internally via chat model — skip injection
+                # Custom providers: let's inject their search results
+                if backend_name == "chatgpt":
+                    logger.info({"event": "search_combo_chatgpt_skip", "reason": "passthrough"})
+                    return []
+                # custom provider — search and inject results
+                pass
 
             logger.info({"event": "search_try_backend", "backend": backend_name, "query_len": len(query)})
             try:
