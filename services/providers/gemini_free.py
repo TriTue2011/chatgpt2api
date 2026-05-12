@@ -26,9 +26,29 @@ class GeminiProvider:
 
     @property
     def api_key(self) -> str:
+        """Get next available API key (round-robin)."""
+        keys = self._get_keys()
+        if not keys:
+            return ""
+        key = keys[self._key_index % len(keys)]
+        self._key_index += 1
+        return key
+
+    def _get_keys(self) -> list[str]:
         cfg = config.data.get("providers") or {}
         gemini_cfg = cfg.get("gemini_free") or {}
-        return str(gemini_cfg.get("api_key") or "").strip()
+        single = str(gemini_cfg.get("api_key") or "").strip()
+        multi = gemini_cfg.get("api_keys") or []
+        if not isinstance(multi, list):
+            multi = []
+        keys = [k.strip() for k in multi if k.strip()]
+        if single and single not in keys:
+            keys.insert(0, single)
+        return keys
+
+    def __init__(self):
+        self._key_index = 0
+        self._rate_limited: dict[str, float] = {}
 
     @property
     def is_available(self) -> bool:
@@ -47,6 +67,9 @@ class GeminiProvider:
         """Send chat request to Gemini API with native tool calling support."""
         if not self.api_key:
             raise RuntimeError("Gemini API key not configured")
+
+        # Clear attempted keys for this request
+        self._attempted_keys: set = set()
 
         contents, system_instruction, gemini_tools = _convert_request(messages, tools)
 
@@ -72,6 +95,17 @@ class GeminiProvider:
                 url, headers={"Content-Type": "application/json"}, json=body,
                 timeout=300, stream=True,
             )
+            if resp.status_code == 429:
+                # Mark this key and retry with next one
+                self._rate_limited[self.api_key] = time.time() + 60
+                next_key = self.api_key  # _api_key rotates via property
+                if next_key and next_key not in getattr(self, '_attempted_keys', set()):
+                    if not hasattr(self, '_attempted_keys'):
+                        self._attempted_keys: set = set()
+                    self._attempted_keys.add(self.api_key)
+                    if len(self._attempted_keys) < len(self._get_keys()):
+                        return self.chat_completions(messages=messages, model=model, tools=tools, **kwargs)
+                raise RuntimeError("All Gemini API keys rate limited. Try again later.")
             if resp.status_code != 200:
                 raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:200]}")
             return _parse_gemini_stream(resp, model)
