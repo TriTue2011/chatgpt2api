@@ -208,7 +208,13 @@ class GeminiGrounding(SearchBackend):
     def _mark_limited(self, key: str) -> None:
         import time
         self._rate_limited[key] = time.time() + 60
-        logger.warning({"event": "gemini_rate_limited", "key_prefix": key[:10]})
+        # Log only once per key per minute
+        last_log = getattr(self, '_last_log', {})
+        now = time.time()
+        if key not in last_log or now - last_log[key] > 60:
+            last_log[key] = now
+            self._last_log = last_log
+            logger.warning({"event": "gemini_rate_limited", "key_prefix": key[:10]})
 
     def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
         api_key = self._next_key()
