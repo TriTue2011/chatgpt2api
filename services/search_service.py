@@ -424,7 +424,15 @@ class SearchService:
         query = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
-                query = str(msg.get("content") or "").strip()
+                content = msg.get("content", "")
+                # Handle list content format [{"type":"text","text":"..."}]
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            query = str(part.get("text") or "").strip()
+                            break
+                elif isinstance(content, str):
+                    query = content.strip()
                 break
 
         if not query:
