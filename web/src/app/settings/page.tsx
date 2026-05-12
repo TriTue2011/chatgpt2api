@@ -9,6 +9,7 @@ import { BackupSettingsCard } from "./components/backup-settings-card";
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
 import { NvidiaNimCard } from "./components/nvidia-nim-card";
+import { CustomProvidersCard } from "./components/custom-providers-card";
 import { CPAPoolDialog } from "./components/cpa-pool-dialog";
 import { CPAPoolsCard } from "./components/cpa-pools-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
@@ -70,6 +71,7 @@ function SettingsPageContent() {
         <ConfigCard />
         <GeminiCard />
         <NvidiaNimCard />
+        <CustomProvidersCard />
         <BackupSettingsCard />
         <UserKeysCard />
         <CPAPoolsCard />

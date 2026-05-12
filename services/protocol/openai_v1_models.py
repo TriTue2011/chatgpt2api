@@ -269,7 +269,7 @@ def list_models() -> dict[str, Any]:
     """
     data: list[dict[str, Any]] = []
 
-    # Fetch from all providers in parallel
+    # Fetch from all built-in providers in parallel
     provider_fetchers = {
         "chatgpt": _fetch_chatgpt_token_models,
         "gemini_free": _fetch_gemini_models,
@@ -277,6 +277,25 @@ def list_models() -> dict[str, Any]:
         "openrouter": _fetch_openrouter_models,
         "nvidia_nim": _fetch_nvidia_models,
     }
+
+    # Add custom providers dynamically
+    from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
+    custom_providers = get_custom_providers()
+    for cp_id, cp_cfg in custom_providers.items():
+        provider = CustomOpenAIProvider(cp_cfg)
+        # Capture by closure
+        def make_fetcher(p=provider, pid=cp_id):
+            def fetcher():
+                models = set()
+                for m in p.list_models():
+                    mid = str(m.get("id") or "").strip()
+                    if mid:
+                        models.add(mid)
+                if models:
+                    logger.info({"event": "list_models_custom", "provider": pid, "count": len(models)})
+                return models
+            return fetcher
+        provider_fetchers[f"custom:{cp_id}"] = make_fetcher()
 
     all_models: dict[str, set[str]] = {}
     with ThreadPoolExecutor(max_workers=len(provider_fetchers)) as executor:

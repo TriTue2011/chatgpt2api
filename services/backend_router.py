@@ -136,6 +136,13 @@ class BackendRouter:
             if model_str.startswith(prefix):
                 return (provider, model_str[len(prefix):])
 
+        # Check custom providers (dynamic, configured via UI)
+        from services.providers.custom_openai import resolve_custom_provider
+        custom_cfg, custom_rest = resolve_custom_provider(model_str)
+        if custom_cfg is not None:
+            provider_id = str(custom_cfg.get("prefix") or "")
+            return (f"custom:{provider_id}", custom_rest)
+
         # Default: use ChatGPT
         return ("chatgpt", model_str)
 

@@ -483,6 +483,88 @@ def create_router(app_version: str) -> APIRouter:
             raise HTTPException(status_code=400, detail={"error": "token is required"})
         return {"type": detect_token_type(token)}
 
+    # ── Custom Providers ──
+
+    @router.get("/api/v1/custom-providers")
+    async def list_custom_providers(authorization: str | None = Header(default=None)):
+        """Lấy danh sách custom providers."""
+        require_admin(authorization)
+        from services.providers.custom_openai import get_custom_providers
+        return {"custom_providers": get_custom_providers()}
+
+    @router.post("/api/v1/custom-providers")
+    async def save_custom_provider(body: dict, authorization: str | None = Header(default=None)):
+        """Thêm hoặc cập nhật một custom provider."""
+        require_admin(authorization)
+        provider = body.get("provider") or {}
+        if not isinstance(provider, dict):
+            raise HTTPException(status_code=400, detail={"error": "provider object is required"})
+
+        provider_id = str(provider.get("prefix") or provider.get("name") or "").strip().lower().replace(" ", "_")
+        if not provider_id:
+            raise HTTPException(status_code=400, detail={"error": "provider prefix or name is required"})
+
+        base_url = str(provider.get("base_url") or "").strip().rstrip("/")
+        api_key = str(provider.get("api_key") or "").strip()
+        name = str(provider.get("name") or provider_id).strip()
+        enabled = provider.get("enabled", True)
+        prefix = str(provider.get("prefix") or provider_id).strip().lower().replace(" ", "_")
+
+        # Validate: test connection
+        try:
+            from curl_cffi import requests as cffi_req
+            resp = cffi_req.get(
+                f"{base_url}/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": f"Cannot connect to {base_url}: HTTP {resp.status_code}"},
+                )
+        except Exception as exc:
+            if not isinstance(exc, HTTPException):
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": f"Cannot connect to {base_url}: {exc}"},
+                )
+            raise
+
+        # Save to config
+        custom_providers = dict(config.data.get("custom_providers") or {})
+        if not isinstance(custom_providers, dict):
+            custom_providers = {}
+        custom_providers[provider_id] = {
+            "name": name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "prefix": prefix,
+            "enabled": enabled,
+        }
+        config.data["custom_providers"] = custom_providers
+        config._save()
+
+        return {
+            "custom_providers": custom_providers,
+            "saved": True,
+            "provider_id": provider_id,
+        }
+
+    @router.delete("/api/v1/custom-providers/{provider_id}")
+    async def delete_custom_provider(provider_id: str, authorization: str | None = Header(default=None)):
+        """Xóa một custom provider."""
+        require_admin(authorization)
+        custom_providers = dict(config.data.get("custom_providers") or {})
+        if not isinstance(custom_providers, dict):
+            custom_providers = {}
+        if provider_id in custom_providers:
+            del custom_providers[provider_id]
+            config.data["custom_providers"] = custom_providers
+            config._save()
+            return {"deleted": True, "provider_id": provider_id}
+        raise HTTPException(status_code=404, detail={"error": f"provider '{provider_id}' not found"})
+
     # ── Model Settings ──
 
     @router.get("/api/v1/model-settings")

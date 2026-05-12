@@ -1,0 +1,263 @@
+"""
+Custom OpenAI-compatible Provider — generic proxy for any OpenAI-compatible API.
+
+Users can add custom APIs via UI (Settings → Custom Providers) without writing code.
+Each provider gets a unique prefix. Models are auto-fetched from {base_url}/v1/models.
+
+Config stored in config.data["custom_providers"]:
+{
+  "deepseek": {
+    "name": "DeepSeek",
+    "base_url": "https://api.deepseek.com",
+    "api_key": "sk-...",
+    "prefix": "deepseek",
+    "enabled": true
+  }
+}
+"""
+
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from typing import Any, Iterator
+
+from curl_cffi import requests
+
+from services.config import config
+from utils.log import logger
+
+
+def get_custom_providers() -> dict[str, dict[str, Any]]:
+    """Get all enabled custom providers from config."""
+    providers = config.data.get("custom_providers") or {}
+    if not isinstance(providers, dict):
+        return {}
+    return {
+        k: v for k, v in providers.items()
+        if isinstance(v, dict) and v.get("enabled", True)
+    }
+
+
+def resolve_custom_provider(model: str) -> tuple[dict[str, Any] | None, str]:
+    """Check if model matches any custom provider prefix.
+    Returns (provider_config, stripped_model) or (None, original_model).
+    """
+    for provider_id, cfg in get_custom_providers().items():
+        prefix = str(cfg.get("prefix") or provider_id).strip()
+        if not prefix:
+            continue
+        full_prefix = f"{prefix}/"
+        if model.startswith(full_prefix):
+            return (cfg, model[len(full_prefix):])
+    return (None, model)
+
+
+class CustomOpenAIProvider:
+    """Generic OpenAI-compatible provider — proxies to any OpenAI-compatible endpoint."""
+
+    def __init__(self, provider_config: dict[str, Any]):
+        self.cfg = provider_config
+        self.base_url = str(provider_config.get("base_url") or "").rstrip("/")
+        self.api_key = str(provider_config.get("api_key") or "")
+        self.name = str(provider_config.get("name") or "Custom")
+
+    @property
+    def is_available(self) -> bool:
+        if not self.base_url or not self.api_key:
+            return False
+        try:
+            resp = requests.get(
+                f"{self.base_url}/v1/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=10,
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    def chat_completions(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "",
+        stream: bool = False,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
+        **kwargs,
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
+        """Forward chat request to custom API endpoint."""
+        if not self.base_url:
+            raise RuntimeError(f"Custom provider '{self.name}' has no base URL configured")
+        if not self.api_key:
+            raise RuntimeError(f"Custom provider '{self.name}' has no API key configured")
+
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": stream,
+        }
+        if temperature is not None:
+            body["temperature"] = temperature
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        if tools:
+            body["tools"] = tools
+        if tool_choice:
+            body["tool_choice"] = tool_choice
+
+        # Pass through common extra params
+        for key in ("top_p", "frequency_penalty", "presence_penalty", "seed", "response_format"):
+            if key in kwargs and kwargs[key] is not None:
+                body[key] = kwargs[key]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        if stream:
+            headers["Accept"] = "text/event-stream"
+
+        logger.info({
+            "event": "custom_provider_request",
+            "provider": self.name,
+            "base_url": self.base_url,
+            "model": model,
+            "stream": stream,
+        })
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v1/chat/completions",
+                headers=headers,
+                json=body,
+                timeout=300,
+                stream=stream,
+            )
+
+            if resp.status_code >= 400:
+                error_text = ""
+                try:
+                    error_text = resp.text[:500]
+                except Exception:
+                    pass
+                logger.error({
+                    "event": "custom_provider_error",
+                    "provider": self.name,
+                    "status": resp.status_code,
+                    "error": error_text,
+                })
+                raise RuntimeError(f"[{self.name}] Error {resp.status_code}: {error_text[:200]}")
+
+            if stream:
+                return self._stream_response(resp, model)
+            else:
+                return self._non_stream_response(resp, model)
+
+        except requests.RequestsError as exc:
+            raise RuntimeError(f"[{self.name}] Connection failed: {exc}") from exc
+
+    def _stream_response(self, response, model: str) -> Iterator[dict[str, Any]]:
+        """Parse SSE stream → OpenAI chunks (passthrough — already OpenAI format)."""
+        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+        created = int(time.time())
+        sent_role = False
+
+        try:
+            for raw_line in response.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+
+                # Pass through OpenAI-format chunks as-is (they're already correct)
+                choices = chunk.get("choices") or []
+                for choice in choices:
+                    delta = choice.get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        if not sent_role:
+                            sent_role = True
+                            yield {
+                                "id": completion_id, "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                            }
+                    # Yield the chunk as-is with our IDs
+                    yield {
+                        "id": completion_id, "object": "chat.completion.chunk",
+                        "created": created, "model": model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": delta,
+                            "finish_reason": choice.get("finish_reason"),
+                        }],
+                    }
+
+        except Exception as exc:
+            logger.error({"event": "custom_provider_stream_error", "provider": self.name, "error": str(exc)})
+
+        yield {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+
+    def _non_stream_response(self, response, model: str) -> dict[str, Any]:
+        """Handle non-streaming response (passthrough)."""
+        data = response.json()
+        # Return as-is — already OpenAI format
+        return data
+
+    def list_models(self) -> list[dict[str, Any]]:
+        """Fetch available models from custom API, prefixed with provider prefix."""
+        if not self.base_url or not self.api_key:
+            return []
+
+        prefix = str(self.cfg.get("prefix") or "").strip()
+        if not prefix:
+            return []
+
+        try:
+            resp = requests.get(
+                f"{self.base_url}/v1/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return []
+
+            models = []
+            for item in resp.json().get("data", []):
+                slug = str(item.get("id") or "").strip()
+                if slug:
+                    # If the model ID already has the prefix, don't double-prefix
+                    if slug.startswith(f"{prefix}/"):
+                        display_id = slug
+                    else:
+                        display_id = f"{prefix}/{slug}"
+                    models.append({
+                        "id": display_id,
+                        "object": "model",
+                        "created": item.get("created", 0),
+                        "owned_by": str(item.get("owned_by") or self.name),
+                    })
+            return models
+        except Exception as exc:
+            logger.warning({
+                "event": "custom_provider_list_models_error",
+                "provider": self.name,
+                "error": str(exc),
+            })
+            return []
