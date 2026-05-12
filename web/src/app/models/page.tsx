@@ -128,8 +128,8 @@ export default function ModelsPage() {
             saved
               ? "bg-emerald-600 text-white"
               : dirty
-                ? "bg-white text-stone-950 hover:bg-stone-200"
-                : "bg-stone-800 text-stone-500 cursor-not-allowed",
+                ? "bg-stone-900 text-stone-950 hover:bg-stone-200"
+                : "bg-stone-800 text-stone-400 cursor-not-allowed",
           )}
         >
           {saved ? <Check className="size-4" /> : <Save className="size-4" />}
@@ -147,7 +147,7 @@ export default function ModelsPage() {
       </div>
 
       {providers.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
+        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
           <Sparkles className="size-12 mb-3 opacity-50" />
           <p>Chưa có model nào</p>
           <p className="text-xs mt-1">Thêm tài khoản hoặc API key để lấy danh sách model</p>
@@ -179,9 +179,9 @@ export default function ModelsPage() {
                   style={{ backgroundColor: meta.color }}
                 />
                 <h3 className="font-semibold text-white text-sm">{meta.label}</h3>
-                <span className="text-xs text-stone-500">{models.length} model</span>
+                <span className="text-xs text-stone-400">{models.length} model</span>
                 {defaultModel && (
-                  <span className="ml-auto text-[10px] text-stone-500">
+                  <span className="ml-auto text-[10px] text-stone-400">
                     Mặc định: <span className="text-stone-300 font-mono">{defaultModel.replace(provider + "/", "")}</span>
                   </span>
                 )}
@@ -192,7 +192,7 @@ export default function ModelsPage() {
                 {/* Core models first */}
                 {coreModels.length > 0 && (
                   <div className="mb-3">
-                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-500">
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-stone-400">
                       Model chính (luôn hiện)
                     </p>
                     <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -214,7 +214,7 @@ export default function ModelsPage() {
                 {regularModels.length > 0 && (
                   <div>
                     <div className="mb-2 flex items-center justify-between">
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-stone-500">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
                         {hasFilter ? "Chọn model để hiển thị" : "Tất cả model đang hiển thị (bấm để ẩn)"}
                       </p>
                       {hasFilter && (
@@ -228,7 +228,7 @@ export default function ModelsPage() {
                               return { ...prev, enabled_models: e };
                             });
                           }}
-                          className="text-[10px] text-stone-500 hover:text-stone-300 transition"
+                          className="text-[10px] text-stone-400 hover:text-stone-300 transition"
                         >
                           Bật tất cả
                         </button>

@@ -19,7 +19,7 @@ export function BaseUrlCard() {
   const baseUrl = String(config?.base_url || "");
 
   return (
-    <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
       <CardContent className="space-y-6 p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-center gap-3">
@@ -28,7 +28,7 @@ export function BaseUrlCard() {
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Địa chỉ cơ sở</h2>
-              <p className="text-sm text-stone-500">设置 `CHATGPT2API_BASE_URL` 的本地配置值，Lưu后立即生效。</p>
+              <p className="text-sm text-stone-400">设置 `CHATGPT2API_BASE_URL` 的本地配置值，Lưu后立即生效。</p>
             </div>
           </div>
           <Badge variant={baseUrl.trim() ? "success" : "secondary"} className="w-fit rounded-md px-2.5 py-1">
@@ -43,19 +43,19 @@ export function BaseUrlCard() {
         ) : (
           <>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-stone-700">Base URL</label>
+              <label className="text-sm font-medium text-stone-300">Base URL</label>
               <Input
                 value={baseUrl}
                 onChange={(event) => setBaseUrl(event.target.value)}
                 placeholder="https://example.com"
-                className="h-11 rounded-xl border-stone-200 bg-white"
+                className="h-11 rounded-xl border-stone-700 bg-white"
               />
-              <p className="text-sm text-stone-500">留空则使用环境变量或默认值，Lưu时会自动去掉首尾空格。</p>
+              <p className="text-sm text-stone-400">留空则使用环境变量或默认值，Lưu时会自动去掉首尾空格。</p>
             </div>
 
             <div className="flex justify-end">
               <Button
-                className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+                className="h-10 rounded-xl bg-stone-800 px-5 text-white hover:bg-stone-800"
                 onClick={() => void saveConfig()}
                 disabled={isSavingConfig}
               >

@@ -58,7 +58,7 @@ export function ProvidersCard() {
 
   if (isLoadingConfig || !config) {
     return (
-      <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+      <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
         <CardContent className="flex items-center justify-center p-10">
           <LoaderCircle className="size-5 animate-spin text-stone-400" />
         </CardContent>
@@ -72,14 +72,14 @@ export function ProvidersCard() {
   const ninerouter = config.ninerouter || {};
 
   return (
-    <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
       <CardContent className="space-y-6 p-6">
 
         {/* ── Providers ── */}
         <div>
           <div className="flex items-center gap-2 mb-4">
-            <Cpu className="size-5 text-stone-700" />
-            <h3 className="text-sm font-semibold text-stone-900">Nhà cung cấp AI</h3>
+            <Cpu className="size-5 text-stone-300" />
+            <h3 className="text-sm font-semibold text-stone-100">Nhà cung cấp AI</h3>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             {Object.entries({
@@ -95,9 +95,9 @@ export function ProvidersCard() {
             } as Record<string, any>).map(([name, meta]) => {
               const p = providers[name] || {};
               return (
-                <div key={name} className="rounded-xl border border-stone-200 bg-stone-50 p-3 space-y-2">
+                <div key={name} className="rounded-xl border border-stone-700 bg-stone-800 p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-stone-700">{name}</span>
+                    <span className="text-sm font-medium text-stone-300">{name}</span>
                     <label className="flex items-center gap-1 text-xs">
                       <input type="checkbox" checked={p.enabled !== false}
                         onChange={(e) => {
@@ -105,7 +105,7 @@ export function ProvidersCard() {
                           newProviders[name] = { ...p, enabled: e.target.checked };
                           setField("providers", newProviders);
                         }}
-                        className="size-3 accent-stone-900" />
+                        className="size-3 accent-stone-400" />
                       Bật
                     </label>
                   </div>
@@ -120,21 +120,21 @@ export function ProvidersCard() {
                           np[name] = { ...p, account_id: e.target.value };
                           setField("providers", np);
                         }}
-                        placeholder="Account ID" className="h-8 rounded-lg border-stone-200 text-xs" />
+                        placeholder="Account ID" className="h-8 rounded-lg border-stone-700 text-xs" />
                       <Input value={p.api_token || ""}
                         onChange={(e) => {
                           const np = { ...providers };
                           np[name] = { ...p, api_token: e.target.value };
                           setField("providers", np);
                         }}
-                        placeholder="API Token" className="h-8 rounded-lg border-stone-200 text-xs" />
+                        placeholder="API Token" className="h-8 rounded-lg border-stone-700 text-xs" />
                     </>
                   ) : meta.type === "textarea" ? (
                     <div className="space-y-1">
                       <textarea value={meta.state}
                         onChange={(e) => meta.setState(e.target.value)}
                         placeholder="Mỗi dòng 1 API key"
-                        className="w-full h-16 rounded-lg border border-stone-200 text-xs p-2 resize-y" />
+                        className="w-full h-16 rounded-lg border border-stone-700 text-xs p-2 resize-y" />
                       <div className="flex justify-between items-center">
                         <p className="text-[10px] text-stone-400">Nhiều key → tự chuyển khi hết quota</p>
                         <button type="button" onClick={() => meta.setState("")}
@@ -149,7 +149,7 @@ export function ProvidersCard() {
                         setField("providers", np);
                       }}
                       placeholder={meta.placeholder || "API key"}
-                      className="h-8 rounded-lg border-stone-200 text-xs" />
+                      className="h-8 rounded-lg border-stone-700 text-xs" />
                   )}
                 </div>
               );
@@ -160,31 +160,31 @@ export function ProvidersCard() {
         {/* ── Backends ── */}
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <Sliders className="size-5 text-stone-700" />
-            <h3 className="text-sm font-semibold text-stone-900">Backend mặc định</h3>
+            <Sliders className="size-5 text-stone-300" />
+            <h3 className="text-sm font-semibold text-stone-100">Backend mặc định</h3>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="space-y-1">
-              <label className="text-xs text-stone-500">Default Chat Model</label>
+              <label className="text-xs text-stone-400">Default Chat Model</label>
               <Input value={backends.default_chat || "auto"}
                 onChange={(e) => setField("backends", { ...backends, default_chat: e.target.value })}
-                className="h-9 rounded-lg border-stone-200 text-sm" />
+                className="h-9 rounded-lg border-stone-700 text-sm" />
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-stone-500">Default Image Size</label>
+              <label className="text-xs text-stone-400">Default Image Size</label>
               <select value={backends.default_image || "1792x1024"}
                 onChange={(e) => setField("backends", { ...backends, default_image: e.target.value })}
-                className="w-full h-9 rounded-lg border-stone-200 text-sm bg-white">
+                className="w-full h-9 rounded-lg border-stone-700 text-sm bg-white">
                 <option value="1024x1024">1024x1024 (1:1)</option>
                 <option value="1792x1024">1792x1024 (16:9)</option>
                 <option value="1024x1792">1024x1792 (9:16)</option>
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-stone-500">9router URL</label>
+              <label className="text-xs text-stone-400">9router URL</label>
               <Input value={ninerouter.base_url || "http://localhost:20128"}
                 onChange={(e) => setField("ninerouter", { ...ninerouter, base_url: e.target.value })}
-                className="h-9 rounded-lg border-stone-200 text-sm" />
+                className="h-9 rounded-lg border-stone-700 text-sm" />
             </div>
           </div>
         </div>
@@ -192,8 +192,8 @@ export function ProvidersCard() {
         {/* ── Rate Limit ── */}
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <Sliders className="size-5 text-stone-700" />
-            <h3 className="text-sm font-semibold text-stone-900">Rate Limit Backoff</h3>
+            <Sliders className="size-5 text-stone-300" />
+            <h3 className="text-sm font-semibold text-stone-100">Rate Limit Backoff</h3>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {[
@@ -202,10 +202,10 @@ export function ProvidersCard() {
               ["Max Levels", "max_levels", 15],
             ].map(([label, key, def]) => (
               <div key={key} className="space-y-1">
-                <label className="text-xs text-stone-500">{label}</label>
+                <label className="text-xs text-stone-400">{label}</label>
                 <Input value={(rateLimit as any)[key] || def}
                   onChange={(e) => setField("rate_limit", { ...rateLimit, [key]: parseInt(e.target.value) || def })}
-                  className="h-9 rounded-lg border-stone-200 text-sm" />
+                  className="h-9 rounded-lg border-stone-700 text-sm" />
               </div>
             ))}
           </div>
@@ -214,8 +214,8 @@ export function ProvidersCard() {
         {/* ── Combo ── */}
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <Combine className="size-5 text-stone-700" />
-            <h3 className="text-sm font-semibold text-stone-900">Combo Models</h3>
+            <Combine className="size-5 text-stone-300" />
+            <h3 className="text-sm font-semibold text-stone-100">Combo Models</h3>
           </div>
           <Textarea value={comboText}
             onChange={(e) => {
@@ -228,12 +228,12 @@ export function ProvidersCard() {
               setField("combo_models", combos);
             }}
             placeholder="ha-agent=oc/auto,cx/auto,chatgpt/auto"
-            className="min-h-24 rounded-xl border-stone-200 bg-white font-mono text-xs" />
+            className="min-h-24 rounded-xl border-stone-700 bg-stone-900 font-mono text-xs" />
           <p className="text-xs text-stone-400 mt-1">Mỗi dòng: tên=model1,model2. Thứ tự = thứ tự fallback.</p>
         </div>
 
         <div className="flex justify-end">
-          <Button className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+          <Button className="h-10 rounded-xl bg-stone-800 px-5 text-white hover:bg-stone-800"
             onClick={() => {
               // Sync textarea values before save
               updateProviderConfig("gemini_free", geminiKeys);

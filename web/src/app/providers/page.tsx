@@ -107,7 +107,7 @@ export default function ProvidersPage() {
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
                     provider.enabled
                       ? "bg-emerald-500/10 text-emerald-400"
-                      : "bg-stone-800 text-stone-500",
+                      : "bg-stone-800 text-stone-400",
                   )}
                 >
                   {provider.enabled ? (
@@ -170,7 +170,7 @@ export default function ProvidersPage() {
                     href="https://opencode.ai"
                     target="_blank"
                     rel="noreferrer"
-                    className="ml-auto text-xs text-stone-500 transition hover:text-stone-300"
+                    className="ml-auto text-xs text-stone-400 transition hover:text-stone-300"
                   >
                     <ExternalLink className="size-3" />
                   </a>
@@ -182,7 +182,7 @@ export default function ProvidersPage() {
       </div>
 
       {providers.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-stone-500">
+        <div className="flex flex-col items-center justify-center py-20 text-stone-400">
           <Cpu className="size-12 mb-3 opacity-50" />
           <p>Chưa có nhà cung cấp nào được cấu hình</p>
           <p className="text-xs mt-1">Thêm provider vào config.json để bắt đầu</p>

@@ -105,7 +105,7 @@ export default function DashboardPage() {
                 <span className="text-xs text-stone-400">{card.label}</span>
               </div>
               <p className={cn("text-2xl font-bold", card.color)}>{card.value}</p>
-              <p className="mt-1 text-xs text-stone-500">{card.sub}</p>
+              <p className="mt-1 text-xs text-stone-400">{card.sub}</p>
             </div>
           );
         })}
@@ -127,7 +127,7 @@ export default function DashboardPage() {
             className="rounded-xl border border-stone-800 bg-stone-900/50 p-4 transition hover:border-stone-600 hover:bg-stone-900"
           >
             <p className="text-sm font-medium text-white">{link.label}</p>
-            <p className="mt-1 text-xs text-stone-500">{link.desc}</p>
+            <p className="mt-1 text-xs text-stone-400">{link.desc}</p>
           </a>
         ))}
       </div>

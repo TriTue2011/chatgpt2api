@@ -92,7 +92,7 @@ export function ImageResults({
             Biến ý tưởng thành hình ảnh
           </h1>
           <p
-            className="mx-auto mt-3 max-w-[280px] text-sm italic tracking-[0.01em] text-stone-500 sm:mt-4 sm:max-w-none sm:text-[15px]"
+            className="mx-auto mt-3 max-w-[280px] text-sm italic tracking-[0.01em] text-stone-400 sm:mt-4 sm:max-w-none sm:text-[15px]"
             style={{
               fontFamily: '"Palatino Linotype","Book Antiqua","URW Palladio L","Times New Roman",serif',
             }}
@@ -129,7 +129,7 @@ export function ImageResults({
           <div key={turn.id} className="flex flex-col gap-3 sm:gap-4">
             {!turn.promptDeleted ? (
               <div className="flex justify-end">
-                <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-900 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
+                <div className="max-w-[90%] px-1 py-1 text-[14px] leading-6 text-stone-100 sm:max-w-[82%] sm:text-[15px] sm:leading-7">
                   <div className="mb-1.5 flex flex-wrap justify-end gap-2 text-[11px] text-stone-400 sm:mb-2">
                     <span>Lượt {turnIndex + 1}</span>
                     <span>
@@ -143,7 +143,7 @@ export function ImageResults({
                     <button
                       type="button"
                       onClick={() => void onReuseTurnConfig(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-900"
+                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 text-[11px] font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-100"
                     >
                       Dùng lại cấu hình
                     </button>
@@ -165,14 +165,14 @@ export function ImageResults({
                 <div className="w-full p-1">
                   {turn.referenceImages.length > 0 ? (
                     <div className="mb-4 flex flex-col items-end">
-                      <div className="mb-3 text-xs font-medium text-stone-500">Ảnh tham chiếu lượt này</div>
+                      <div className="mb-3 text-xs font-medium text-stone-400">Ảnh tham chiếu lượt này</div>
                       <div className="flex flex-wrap justify-end gap-3">
                         {turn.referenceImages.map((image, index) => (
                           <div key={`${turn.id}-${image.name}-${index}`} className="flex flex-col items-end gap-2">
                             <button
                               type="button"
                               onClick={() => onOpenLightbox(referenceLightboxImages, index)}
-                              className="group relative h-24 w-24 overflow-hidden border border-stone-200/80 bg-stone-100/60 text-left transition hover:border-stone-300"
+                              className="group relative h-24 w-24 overflow-hidden border border-stone-700/80 bg-stone-100/60 text-left transition hover:border-stone-300"
                               aria-label={`Xem trước ảnh tham chiếu ${image.name || index + 1}`}
                             >
                               <img
@@ -184,7 +184,7 @@ export function ImageResults({
                             <Button
                               variant="outline"
                               size="sm"
-                              className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                              className="rounded-full border-stone-700 bg-stone-900 text-stone-300 hover:bg-stone-800"
                               onClick={() => onContinueEdit(selectedConversation.id, image)}
                             >
                               <Sparkles className="size-4" />
@@ -196,7 +196,7 @@ export function ImageResults({
                     </div>
                   ) : null}
 
-                  <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-500 sm:mb-4 sm:gap-2 sm:text-xs">
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11px] text-stone-400 sm:mb-4 sm:gap-2 sm:text-xs">
                     <span className="rounded-full bg-stone-100 px-3 py-1">{turn.count} ảnh</span>
                     <span className="rounded-full bg-stone-100 px-3 py-1">{getTurnStatusLabel(turn.status)}</span>
                     {turn.status === "queued" ? (
@@ -237,7 +237,7 @@ export function ImageResults({
                               />
                             </button>
                             <div className="flex flex-col gap-1 px-0.5 py-1 text-[10px] sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:px-3 sm:py-3 sm:text-xs">
-                              <div className="min-w-0 text-stone-500">
+                              <div className="min-w-0 text-stone-400">
                                 <span>Kết quả {index + 1}</span>
                                 {imageMeta ? <span className="block text-stone-400 sm:ml-2 sm:inline">{imageMeta}</span> : null}
                               </div>
@@ -245,7 +245,7 @@ export function ImageResults({
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
+                                  className="h-7 w-7 rounded-full border-stone-700 bg-stone-900 px-0 text-[10px] text-stone-300 hover:bg-stone-800 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
                                   onClick={() => onContinueEdit(selectedConversation.id, image)}
                                   aria-label="Thêm vào chỉnh sửa"
                                 >
@@ -255,7 +255,7 @@ export function ImageResults({
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-50 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
+                                  className="h-7 w-7 rounded-full border-stone-700 bg-stone-900 px-0 text-[10px] text-stone-300 hover:bg-stone-800 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
                                   onClick={() => void downloadStoredImage(image, index)}
                                   aria-label="Tải xuống"
                                 >
@@ -288,7 +288,7 @@ export function ImageResults({
                               <button
                                 type="button"
                                 onClick={() => void onRetryImage(selectedConversation.id, turn.id, image.id)}
-                                className="rounded-full bg-white px-2 py-1 text-[10px] font-medium text-rose-600 shadow-sm transition hover:bg-rose-100 sm:px-3 sm:text-xs"
+                                className="rounded-full bg-stone-900 px-2 py-1 text-[10px] font-medium text-rose-600 shadow-sm transition hover:bg-rose-100 sm:px-3 sm:text-xs"
                               >
                                 Thử lại ảnh này
                               </button>
@@ -301,7 +301,7 @@ export function ImageResults({
                         <div
                           key={image.id}
                           className={cn(
-                            "break-inside-avoid overflow-hidden rounded-xl border border-stone-200/80 bg-stone-100/80 sm:rounded-none",
+                            "break-inside-avoid overflow-hidden rounded-xl border border-stone-700/80 bg-stone-100/80 sm:rounded-none",
                             turn.size === "1:1" && "aspect-square",
                             turn.size === "16:9" && "aspect-video",
                             turn.size === "9:16" && "aspect-[9/16]",
@@ -310,8 +310,8 @@ export function ImageResults({
                             !["1:1", "16:9", "9:16", "4:3", "3:4"].includes(turn.size) && "aspect-square",
                           )}
                         >
-                          <div className="flex h-full flex-col items-center justify-center gap-1.5 px-2 py-3 text-center text-stone-500 sm:gap-3 sm:px-6 sm:py-8">
-                            <div className="rounded-full bg-white p-2 shadow-sm sm:p-3">
+                          <div className="flex h-full flex-col items-center justify-center gap-1.5 px-2 py-3 text-center text-stone-400 sm:gap-3 sm:px-6 sm:py-8">
+                            <div className="rounded-full bg-stone-900 p-2 shadow-sm sm:p-3">
                               {turn.status === "queued" ? (
                                 <Clock3 className="size-4 sm:size-5" />
                               ) : (
@@ -335,7 +335,7 @@ export function ImageResults({
                     <button
                       type="button"
                       onClick={() => void onRegenerateTurn(selectedConversation.id, turn.id)}
-                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-500 transition hover:bg-stone-200 hover:text-stone-900"
+                      className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-medium text-stone-400 transition hover:bg-stone-200 hover:text-stone-100"
                     >
                       <RotateCcw className="size-3" />
                       Làm lại tất cả

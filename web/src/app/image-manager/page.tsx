@@ -259,19 +259,19 @@ function ImageManagerContent() {
     <section className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-1">
-          <div className="text-xs font-semibold tracking-[0.18em] text-stone-500 uppercase">Images</div>
+          <div className="text-xs font-semibold tracking-[0.18em] text-stone-400 uppercase">Images</div>
           <h1 className="text-2xl font-semibold tracking-tight">图片管理</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <DateRangeFilter startDate={startDate} endDate={endDate} onChange={(start, end) => { setStartDate(start); setEndDate(end); }} />
-          <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700">
+          <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-700 bg-stone-900 px-4 text-stone-300">
             清除筛选条件
           </Button>
-          <Button onClick={() => void loadImages()} disabled={isLoading} className="h-10 rounded-xl bg-stone-950 px-4 text-white hover:bg-stone-800">
+          <Button onClick={() => void loadImages()} disabled={isLoading} className="h-10 rounded-xl bg-stone-800 px-4 text-white hover:bg-stone-800">
             {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Search className="size-4" />}
             查询
           </Button>
-          <Button variant="outline" onClick={() => setDeleteMode("filtered")} disabled={isDeleting || items.length === 0 || (!startDate && !endDate)} className="h-10 rounded-xl border-rose-200 bg-white px-4 text-rose-600 hover:bg-rose-50">
+          <Button variant="outline" onClick={() => setDeleteMode("filtered")} disabled={isDeleting || items.length === 0 || (!startDate && !endDate)} className="h-10 rounded-xl border-rose-200 bg-stone-900 px-4 text-rose-600 hover:bg-rose-50">
             <Trash2 className="size-4" />
             删除匹配日期
           </Button>
@@ -280,7 +280,7 @@ function ImageManagerContent() {
 
       {allTags.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-stone-500">
+          <span className="text-xs font-medium text-stone-400">
             <Tag className="mr-1 inline size-3.5" />
             标签筛选：
           </span>
@@ -326,9 +326,9 @@ function ImageManagerContent() {
         </div>
       ) : null}
 
-      <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
+      <Card className="rounded-2xl border-stone-800 bg-stone-900/90 shadow-sm">
         <CardContent className="p-0">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-800 px-5 py-4">
             <div className="flex flex-wrap items-center gap-3 text-sm text-stone-600">
               <ImageIcon className="size-4" />
               共 {filteredItems.length} 张
@@ -344,18 +344,18 @@ function ImageManagerContent() {
               {selectedPaths.length > 0 ? <span>已选 {selectedPaths.length} 张</span> : null}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="ghost" className="h-8 rounded-lg px-3 text-stone-500" onClick={() => void loadImages()} disabled={isLoading}>
+              <Button variant="ghost" className="h-8 rounded-lg px-3 text-stone-400" onClick={() => void loadImages()} disabled={isLoading}>
                 <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
                 刷新
               </Button>
-              <button type="button" className="text-sm text-stone-500 hover:text-stone-900 disabled:text-stone-300" onClick={() => setSelectedPaths([])} disabled={selectedPaths.length === 0 || isDeleting}>
+              <button type="button" className="text-sm text-stone-400 hover:text-stone-100 disabled:text-stone-300" onClick={() => setSelectedPaths([])} disabled={selectedPaths.length === 0 || isDeleting}>
                 取消选择
               </button>
-              <Button variant="outline" className="h-8 rounded-lg border-stone-200 bg-white px-3 text-stone-600 hover:bg-stone-50" onClick={() => void handleBatchDownload()} disabled={selectedPaths.length === 0 || isDownloading || isDeleting}>
+              <Button variant="outline" className="h-8 rounded-lg border-stone-700 bg-stone-900 px-3 text-stone-600 hover:bg-stone-800" onClick={() => void handleBatchDownload()} disabled={selectedPaths.length === 0 || isDownloading || isDeleting}>
                 {isDownloading ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
                 下载所选
               </Button>
-              <Button variant="outline" className="h-8 rounded-lg border-rose-200 bg-white px-3 text-rose-600 hover:bg-rose-50" onClick={() => setDeleteMode("selected")} disabled={selectedPaths.length === 0 || isDeleting}>
+              <Button variant="outline" className="h-8 rounded-lg border-rose-200 bg-stone-900 px-3 text-rose-600 hover:bg-rose-50" onClick={() => setDeleteMode("selected")} disabled={selectedPaths.length === 0 || isDeleting}>
                 <Trash2 className="size-4" />
                 删除所选
               </Button>
@@ -365,7 +365,7 @@ function ImageManagerContent() {
             {currentRows.map((item) => {
               const imageIndex = filteredItems.findIndex((row) => row.url === item.url);
               return (
-              <div key={item.rel} className="group border-r border-b border-stone-100 p-4 transition hover:bg-stone-50">
+              <div key={item.rel} className="group border-r border-b border-stone-800 p-4 transition hover:bg-stone-800">
                 <div className="relative">
                   <button
                     type="button"
@@ -401,9 +401,9 @@ function ImageManagerContent() {
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
-                <div className="mt-3 space-y-2 text-xs text-stone-500">
+                <div className="mt-3 space-y-2 text-xs text-stone-400">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1 font-medium text-stone-700">
+                    <div className="flex items-center gap-1 font-medium text-stone-300">
                       <CalendarDays className="size-3.5" />
                       {item.created_at}
                     </div>
@@ -411,7 +411,7 @@ function ImageManagerContent() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 rounded-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+                        className="size-8 rounded-lg text-stone-400 hover:bg-stone-700 hover:text-stone-300"
                         onClick={() => void handleSingleDownload(item)}
                         title="下载图片"
                       >
@@ -420,7 +420,7 @@ function ImageManagerContent() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="size-8 rounded-lg text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+                        className="size-8 rounded-lg text-stone-400 hover:bg-stone-700 hover:text-stone-300"
                         onClick={() => {
                           void navigator.clipboard.writeText(item.url);
                           toast.success("图片地址已复制");
@@ -460,7 +460,7 @@ function ImageManagerContent() {
                       </PopoverTrigger>
                       <PopoverContent align="start" className="w-56 p-2">
                         <div className="space-y-2">
-                          <div className="text-xs font-medium text-stone-500">添加标签</div>
+                          <div className="text-xs font-medium text-stone-400">添加标签</div>
                           <div className="flex gap-1">
                             <Input
                               value={tagInput}
@@ -484,7 +484,7 @@ function ImageManagerContent() {
                             </Button>
                           </div>
                           {allTags.filter((t) => !(item.tags ?? []).includes(t)).length > 0 ? (
-                            <div className="flex flex-wrap gap-1 border-t border-stone-100 pt-2">
+                            <div className="flex flex-wrap gap-1 border-t border-stone-800 pt-2">
                               {allTags.filter((t) => !(item.tags ?? []).includes(t)).map((tag) => (
                                 <button
                                   key={tag}
@@ -494,7 +494,7 @@ function ImageManagerContent() {
                                     setTagEditTarget(null);
                                   }}
                                 >
-                                  <Badge variant="outline" className="cursor-pointer rounded-md text-[10px] hover:bg-stone-100">
+                                  <Badge variant="outline" className="cursor-pointer rounded-md text-[10px] hover:bg-stone-700">
                                     {tag}
                                   </Badge>
                                 </button>
@@ -509,16 +509,16 @@ function ImageManagerContent() {
               </div>
             )})}
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-stone-100 px-4 py-3 text-sm text-stone-500">
+          <div className="flex items-center justify-end gap-2 border-t border-stone-800 px-4 py-3 text-sm text-stone-400">
             <span>第 {safePage} / {pageCount} 页，共 {filteredItems.length} 张</span>
-            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-200 bg-white" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-700 bg-white" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
               <ChevronLeft className="size-4" />
             </Button>
-            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-200 bg-white" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>
+            <Button variant="outline" size="icon" className="size-9 rounded-lg border-stone-700 bg-white" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>
               <ChevronRight className="size-4" />
             </Button>
           </div>
-          {!isLoading && filteredItems.length === 0 ? <div className="px-6 py-14 text-center text-sm text-stone-500">没有找到图片</div> : null}
+          {!isLoading && filteredItems.length === 0 ? <div className="px-6 py-14 text-center text-sm text-stone-400">没有找到图片</div> : null}
         </CardContent>
       </Card>
 
@@ -531,15 +531,15 @@ function ImageManagerContent() {
             确定要删除这张图片吗？此操作不可恢复。
           </p>
           {deleteTarget ? (
-            <div className="flex items-center gap-3 overflow-hidden rounded-xl border border-stone-200 bg-stone-50 p-3">
+            <div className="flex items-center gap-3 overflow-hidden rounded-xl border border-stone-700 bg-stone-800 p-3">
               <img
                 src={deleteTarget.thumbnail_url || deleteTarget.url}
                 alt=""
                 className="size-16 shrink-0 rounded-lg object-cover"
                 onError={(e) => { if (e.currentTarget.src !== deleteTarget.url) e.currentTarget.src = deleteTarget.url; }}
               />
-              <div className="min-w-0 overflow-hidden text-xs text-stone-500">
-                <div className="truncate font-medium text-stone-700">{deleteTarget.name}</div>
+              <div className="min-w-0 overflow-hidden text-xs text-stone-400">
+                <div className="truncate font-medium text-stone-300">{deleteTarget.name}</div>
                 <div className="truncate">{deleteTarget.created_at}</div>
                 <div>{formatSize(deleteTarget.size)}</div>
               </div>

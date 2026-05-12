@@ -41,16 +41,16 @@ export function CPAPoolDialog() {
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-stone-700">Tên（tùy chọn）</label>
+            <label className="text-sm font-medium text-stone-300">Tên（tùy chọn）</label>
             <Input
               value={formName}
               onChange={(event) => setFormName(event.target.value)}
               placeholder="例如：主号池、备用池"
-              className="h-11 rounded-xl border-stone-200 bg-white"
+              className="h-11 rounded-xl border-stone-700 bg-white"
             />
           </div>
           <div className="space-y-2">
-            <label className="flex items-center gap-1.5 text-sm font-medium text-stone-700">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-stone-300">
               <Link2 className="size-3.5" />
               CPA 地址
             </label>
@@ -58,11 +58,11 @@ export function CPAPoolDialog() {
               value={formBaseUrl}
               onChange={(event) => setFormBaseUrl(event.target.value)}
               placeholder="http://your-cpa-host:8317"
-              className="h-11 rounded-xl border-stone-200 bg-white"
+              className="h-11 rounded-xl border-stone-700 bg-white"
             />
           </div>
           <div className="space-y-2">
-            <label className="flex items-center gap-1.5 text-sm font-medium text-stone-700">
+            <label className="flex items-center gap-1.5 text-sm font-medium text-stone-300">
               <Unplug className="size-3.5" />
               Management Secret Key
             </label>
@@ -72,7 +72,7 @@ export function CPAPoolDialog() {
                 value={formSecretKey}
                 onChange={(event) => setFormSecretKey(event.target.value)}
                 placeholder={editingPool ? "留空则不修改密钥" : "CPA 管理密钥"}
-                className="h-11 rounded-xl border-stone-200 bg-white pr-10"
+                className="h-11 rounded-xl border-stone-700 bg-stone-900 pr-10"
               />
               <button
                 type="button"
@@ -87,14 +87,14 @@ export function CPAPoolDialog() {
         <DialogFooter className="pt-2">
           <Button
             variant="secondary"
-            className="h-10 rounded-xl bg-stone-100 px-5 text-stone-700 hover:bg-stone-200"
+            className="h-10 rounded-xl bg-stone-100 px-5 text-stone-300 hover:bg-stone-200"
             onClick={() => setDialogOpen(false)}
             disabled={isSavingPool}
           >
             Hủy
           </Button>
           <Button
-            className="h-10 rounded-xl bg-stone-950 px-5 text-white hover:bg-stone-800"
+            className="h-10 rounded-xl bg-stone-800 px-5 text-white hover:bg-stone-800"
             onClick={() => void savePool()}
             disabled={isSavingPool}
           >
