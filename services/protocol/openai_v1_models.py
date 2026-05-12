@@ -39,7 +39,6 @@ FALLBACK_MODELS = {
         "nv-image/stabilityai/stable-diffusion-xl",
     ],
     "chatgpt2api": [
-        "ha-agent",
         "chatgpt/auto",
     ],
 }
