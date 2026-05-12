@@ -165,23 +165,15 @@ class BraveSearch(SearchBackend):
 
 
 class GeminiGrounding(SearchBackend):
-    """Google Search grounding via Gemini API (free tier: 15 RPM per key).
-
-    Supports multiple API keys — round-robin when one hits rate limit.
-    Config in config.json:
-      "providers": {
-        "gemini_free": {
-          "api_key": "AIza...",        // single key
-          "api_keys": ["AIza...", ...]  // or multiple keys (auto round-robin)
-        }
-      }
-    """
-
-    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    """Google Search grounding via Gemini API. Uses model from providers.gemini_free.model."""
 
     def __init__(self):
         self._key_index = 0
-        self._rate_limited: dict[str, float] = {}  # key → locked_until timestamp
+        self._rate_limited: dict[str, float] = {}
+
+    def _get_model(self) -> str:
+        cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
+        return str(cfg.get("model") or "gemini-2.5-flash")
 
     def _get_keys(self) -> list[str]:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
@@ -222,7 +214,7 @@ class GeminiGrounding(SearchBackend):
 
         try:
             resp = requests.post(
-                f"{self.BASE_URL}?key={api_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self._get_model()}:generateContent?key={api_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": query}]}], "tools": [{"google_search": {}}]},
                 timeout=30,
