@@ -22,15 +22,19 @@ from curl_cffi import requests
 from services.config import config
 from utils.log import logger
 
+# Vietnamese word character class (includes diacritics)
+_VI_WORD = r"[a-zA-ZàáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđĐ]+"
+
 # Keywords that trigger search intent detection
 SEARCH_INTENT_PATTERNS = [
-    r"(?:giá|bao nhiêu|mấy nghìn|mấy triệu)\s+\w+",
-    r"(?:hôm nay|hôm qua|tuần này|tháng này|năm nay)\s+\w+",
-    r"(?:thời tiết|nhiệt độ|dự báo)\s+\w+",
-    r"(?:tin tức|tin mới|báo chí)\s+\w+",
-    r"(?:kết quả|tỉ số|trận đấu)\s+\w+",
+    rf"(?:giá|bao nhiêu|mấy nghìn|mấy triệu)\s+{_VI_WORD}",
+    rf"(?:hôm nay|hôm qua|tuần này|tháng này|năm nay)\s+{_VI_WORD}",
+    rf"(?:thời tiết|nhiệt độ|dự báo)\s+{_VI_WORD}",
+    rf"(?:tin tức|tin mới|báo chí)\s+{_VI_WORD}",
+    rf"(?:kết quả|tỉ số|trận đấu)\s+{_VI_WORD}",
     r"\b(?:search|tìm kiếm|tìm hiểu|tra cứu)\b",
     r"\b(?:ai là|ở đâu|khi nào|thế nào|làm sao)\b",
+    r"\b(?:giá|hỏi\s+giá)\b",
 ]
 
 
