@@ -522,6 +522,26 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           onClick={() => setMethod("oauth")}
         />
         <MethodCard
+          title="Đăng nhập Codex OAuth"
+          description="Mở trang OpenAI để đăng nhập và lấy token OAuth tự động."
+          icon={KeyRound}
+          onClick={async () => {
+            try {
+              const { request: req } = await import("@/lib/request");
+              const data = await req.get("/api/oauth/codex/start");
+              const url = (data.data as any)?.auth_url;
+              if (url) window.open(url, "_blank", "width=600,height=700");
+              else toast.error("Không thể tạo URL OAuth");
+            } catch (e) { toast.error("Lỗi tạo OAuth URL"); }
+          }}
+        />
+        <MethodCard
+          title="Lấy token tạo ảnh"
+          description="Mở chatgpt.com — đăng nhập → copy JSON → paste vào mục Session JSON ở trên."
+          icon={KeyRound}
+          onClick={() => window.open("https://chatgpt.com/api/auth/session", "_blank")}
+        />
+        <MethodCard
           title="Nhập từ máy chủ Sub2API"
           description="Vào trang cài đặt để cấu hình máy chủ Sub2API, sau đó chọn tài khoản OpenAI để nhập."
           icon={ServerCog}
