@@ -177,11 +177,8 @@ class GeminiGrounding(SearchBackend):
 
     def _get_model(self) -> str:
         cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
-        model = str(cfg.get("model") or "gemini-2.5-flash")
-        # Preview models may not support search grounding yet — fallback
-        if "preview" in model:
-            return "gemini-2.5-flash"
-        return model
+        # Use search-specific model if set, otherwise use chat model
+        return str(cfg.get("search_model") or cfg.get("model") or "gemini-2.5-flash")
 
     def _get_keys(self) -> list[str]:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
