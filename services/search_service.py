@@ -326,7 +326,7 @@ def inject_search_results(
     result = list(messages)
 
     if inject_as == "system_message":
-        # Add as system message (before the last user message)
+        # Add as system message before the last user message
         insert_pos = len(result)
         for i in range(len(result) - 1, -1, -1):
             if result[i].get("role") == "user":
@@ -341,6 +341,12 @@ def inject_search_results(
                 if isinstance(content, str):
                     result[i] = dict(result[i])
                     result[i]["content"] = f"{search_text}\n\n---\nCâu hỏi của người dùng: {content}"
+                elif isinstance(content, list):
+                    # HA format: [{"type":"text","text":"..."}]
+                    result[i] = dict(result[i])
+                    # Prepend search as a separate text part
+                    search_part = {"type": "text", "text": search_text}
+                    result[i]["content"] = [search_part] + [dict(c) for c in content]
                 break
 
     return result
