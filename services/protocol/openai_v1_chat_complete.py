@@ -343,7 +343,7 @@ def _opencode_completion_response(
     temperature: float,
     max_tokens: int | None,
 ) -> dict[str, Any]:
-    """Non-streaming response from OpenCode."""
+    """Non-streaming response from OpenCode — parse text JSON into native tool_calls."""
     from services.providers.opencode import opencode_provider
 
     try:
@@ -360,12 +360,26 @@ def _opencode_completion_response(
         if choices and isinstance(choices[0], dict):
             content = str(choices[0].get("message", {}).get("content", "") or "")
 
-        return completion_response(
-            model=model,
-            content=content,
-            messages=messages,
-            created=int(result.get("created") or time.time()),
-        )
+        # Parse text JSON tool calls into native format
+        tool_calls = _extract_tool_calls_from_text(content)
+        message = {"role": "assistant", "content": ""}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        else:
+            message["content"] = content
+
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": count_message_tokens(messages, model),
+                "completion_tokens": count_text_tokens(content, model),
+                "total_tokens": count_message_tokens(messages, model) + count_text_tokens(content, model),
+            },
+        }
 
     except Exception as exc:
         logger.error({"event": "opencode_completion_error", "error": str(exc)})
@@ -374,6 +388,40 @@ def _opencode_completion_response(
             content=f"OpenCode error: {exc}",
             messages=messages,
         )
+
+
+def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
+    """Parse JSON tool call from text response (OpenCode format).
+
+    Example: '{"action": "GetLiveContext", "params": {}}'
+    Returns native tool_calls format.
+    """
+    if not text:
+        return None
+    import re as _re
+    # Try to find JSON object with action key
+    match = _re.search(r'\{[^{}]*"action"\s*:\s*"([^"]+)"\s*[,}][^{}]*\}', text)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+        action = data.get("action", "")
+        if not action:
+            return None
+        # Also try params/entity_ids/domain
+        params = data.get("params") or data.get("entity_ids") or data.get("domain") or {}
+        if isinstance(params, list):
+            params = {"entities": params}
+        return [{
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": action,
+                "arguments": json.dumps(params, ensure_ascii=False),
+            },
+        }]
+    except (json.JSONDecodeError, AttributeError):
+        return None
 
 
 def _handle_openai_oauth_chat(
