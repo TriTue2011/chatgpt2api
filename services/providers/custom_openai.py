@@ -261,7 +261,11 @@ class CustomOpenAIProvider:
         return data
 
     def list_models(self) -> list[dict[str, Any]]:
-        """Fetch available models from custom API, prefixed with provider prefix."""
+        """Fetch available models from custom API, prefixed with provider prefix.
+
+        If /v1/models returns empty, falls back to probing /v1/chat/completions
+        with a fake model name and parsing the error message for available models.
+        """
         if not self.base_url or not self.api_key:
             return []
 
@@ -269,35 +273,77 @@ class CustomOpenAIProvider:
         if not prefix:
             return []
 
+        models: list[dict[str, Any]] = []
+
+        # Try standard /v1/models endpoint first
         try:
             resp = requests.get(
                 f"{self.base_url}/v1/models",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=15,
             )
-            if resp.status_code != 200:
-                return []
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                if isinstance(data, list) and data:
+                    for item in data:
+                        slug = str(item.get("id") or "").strip()
+                        if slug:
+                            if slug.startswith(f"{prefix}/"):
+                                display_id = slug
+                            else:
+                                display_id = f"{prefix}/{slug}"
+                            models.append({
+                                "id": display_id,
+                                "object": "model",
+                                "created": item.get("created", 0),
+                                "owned_by": str(item.get("owned_by") or self.name),
+                            })
+        except Exception:
+            pass
 
-            models = []
-            for item in resp.json().get("data", []):
-                slug = str(item.get("id") or "").strip()
-                if slug:
-                    # If the model ID already has the prefix, don't double-prefix
-                    if slug.startswith(f"{prefix}/"):
-                        display_id = slug
-                    else:
-                        display_id = f"{prefix}/{slug}"
-                    models.append({
-                        "id": display_id,
-                        "object": "model",
-                        "created": item.get("created", 0),
-                        "owned_by": str(item.get("owned_by") or self.name),
-                    })
-            return models
-        except Exception as exc:
-            logger.warning({
-                "event": "custom_provider_list_models_error",
-                "provider": self.name,
-                "error": str(exc),
-            })
-            return []
+        # Fallback: if models list is empty, probe chat endpoint to discover models
+        if not models:
+            try:
+                import re
+                resp = requests.post(
+                    f"{self.base_url}/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "__discover_models__",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "max_tokens": 1,
+                    },
+                    timeout=15,
+                )
+                detail = ""
+                try:
+                    detail = resp.json().get("detail", "")
+                except Exception:
+                    detail = resp.text[:500] if resp.text else ""
+
+                # Parse: "Available models: model1, model2, model3"
+                if isinstance(detail, str) and "Available models:" in detail:
+                    parts = detail.split("Available models:", 1)[1].strip().rstrip(".")
+                    found_models = [m.strip() for m in parts.split(",") if m.strip()]
+                    for slug in found_models:
+                        if slug and slug != "unspecified":
+                            display_id = f"{prefix}/{slug}"
+                            models.append({
+                                "id": display_id,
+                                "object": "model",
+                                "created": 0,
+                                "owned_by": self.name,
+                            })
+                    if models:
+                        logger.info({
+                            "event": "custom_provider_models_fallback",
+                            "provider": self.name,
+                            "count": len(models),
+                        })
+            except Exception:
+                pass
+
+        return models
