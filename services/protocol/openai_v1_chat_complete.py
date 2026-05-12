@@ -398,37 +398,45 @@ def _opencode_completion_response(
 
 
 def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
-    """Parse JSON tool call from text response (OpenCode format).
+    """Parse text tool calls from OpenCode response.
 
-    Example: '{"action": "GetLiveContext", "params": {}}'
-    Returns native tool_calls format.
+    Supports formats:
+      '{"action": "GetLiveContext", "params": {...}}'
+      'GetLiveContext\\n{...json...}'
     """
     if not text:
         return None
     import re as _re
-    # Try to find JSON object with action key
+
+    # Format 1: JSON with "action" key
     match = _re.search(r'\{[^{}]*"action"\s*:\s*"([^"]+)"\s*[,}][^{}]*\}', text)
-    if not match:
-        return None
-    try:
-        data = json.loads(match.group(0))
-        action = data.get("action", "")
-        if not action:
-            return None
-        # Also try params/entity_ids/domain
-        params = data.get("params") or data.get("entity_ids") or data.get("domain") or {}
-        if isinstance(params, list):
-            params = {"entities": params}
-        return [{
-            "id": f"call_{uuid.uuid4().hex[:12]}",
-            "type": "function",
-            "function": {
-                "name": action,
-                "arguments": json.dumps(params, ensure_ascii=False),
-            },
-        }]
-    except (json.JSONDecodeError, AttributeError):
-        return None
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            action = data.get("action", "")
+            params = data.get("params") or data.get("entity_ids") or data.get("domain") or {}
+            if isinstance(params, list):
+                params = {"entities": params}
+            if action:
+                return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                         "function": {"name": action, "arguments": json.dumps(params, ensure_ascii=False)}}]
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    # Format 2: ToolName\n{...JSON params...}
+    match = _re.search(r'([A-Z][A-Za-z0-9_]+)\s*\n\s*(\{.*?\})\s*$', text, _re.DOTALL)
+    if match:
+        tool_name = match.group(1)
+        try:
+            params = json.loads(match.group(2))
+            if isinstance(params, list):
+                params = {"entities": params}
+            return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
+                     "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    return None
 
 
 def _handle_openai_oauth_chat(
@@ -528,17 +536,20 @@ def _handle_gemini_chat(
     max_tokens = body.get("max_tokens")
 
     try:
+        # Gemini stream is tricky — always use non-streaming internally
+        result = gemini_provider.chat_completions(
+            messages=messages, model=pure_model, stream=False,
+            temperature=temperature, max_tokens=max_tokens,
+        )
         if stream:
-            result = gemini_provider.chat_completions(
-                messages=messages, model=pure_model, stream=True,
-                temperature=temperature, max_tokens=max_tokens,
-            )
-            return result  # Already yields OpenAI-compatible SSE
+            # Simulate streaming for HA compatibility
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+            created = int(time.time())
+            yield completion_chunk(model, {"role": "assistant", "content": content}, None, completion_id, created)
+            yield completion_chunk(model, {}, "stop", completion_id, created)
         else:
-            return gemini_provider.chat_completions(
-                messages=messages, model=pure_model, stream=False,
-                temperature=temperature, max_tokens=max_tokens,
-            )
+            return result
     except Exception as exc:
         logger.error({"event": "gemini_fatal", "error": str(exc)})
         return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)
