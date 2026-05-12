@@ -290,20 +290,18 @@ def _stream_opencode_response(
     max_tokens: int | None,
     body: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
-    """Stream response from OpenCode, yielding OpenAI-compatible SSE chunks."""
+    """Stream response from OpenCode — extract tool calls from text if present."""
     from services.providers.opencode import opencode_provider
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
+    accumulated = ""
 
     try:
         sse_stream = opencode_provider.chat_completions(
-            messages=messages,
-            model=model,
-            stream=True,
-            temperature=temperature,
-            max_tokens=max_tokens,
+            messages=messages, model=model, stream=True,
+            temperature=temperature, max_tokens=max_tokens,
         )
 
         for line in sse_stream:
@@ -312,21 +310,30 @@ def _stream_opencode_response(
                 if payload == "[DONE]":
                     break
                 try:
-                    chunk = __import__("json").loads(payload)
-                    # Pass through existing OpenAI format
+                    chunk = json.loads(payload)
+                    delta_text = ""
+                    choices = chunk.get("choices", [])
+                    if choices and isinstance(choices[0], dict):
+                        delta_text = str(choices[0].get("delta", {}).get("content", "") or "")
+                    accumulated += delta_text
                     chunk["id"] = completion_id
                     chunk["created"] = created
                     chunk["model"] = model
-                    # Ensure role is set on first chunk
-                    choices = chunk.get("choices", [])
-                    if choices and not sent_role:
-                        delta = choices[0].get("delta", {})
-                        if "role" not in delta:
-                            chunk["choices"][0]["delta"] = {"role": "assistant", "content": delta.get("content", "")}
+                    if delta_text and not sent_role:
+                        chunk["choices"][0]["delta"] = {"role": "assistant", "content": delta_text}
                         sent_role = True
                     yield chunk
                 except Exception:
                     continue
+
+        # On completion, check if response contains tool calls
+        tool_calls = _extract_tool_calls_from_text(accumulated)
+        if tool_calls:
+            yield {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": None}],
+            }
 
         if not sent_role:
             yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
