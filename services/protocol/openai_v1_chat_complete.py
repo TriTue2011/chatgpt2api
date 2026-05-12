@@ -448,7 +448,11 @@ def _handle_gemini_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Gemini AI Studio chat — free 15 RPM or paid via API key."""
+    """Gemini AI Studio chat — free 15 RPM or paid via API key.
+
+    Gemini uses XML tool calls — strip tools from request to avoid
+    confusing HA which expects native tool_calls format.
+    """
     from services.providers.gemini_free import gemini_provider, GEMINI_DEFAULT_MODEL
 
     pure_model = model
