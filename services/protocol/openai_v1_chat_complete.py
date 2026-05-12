@@ -423,25 +423,18 @@ def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
         except (json.JSONDecodeError, AttributeError):
             pass
 
-    # Format 2: ToolName\n{...JSON object...} or ToolName\n[...JSON array...]
-    match = _re.search(r'([A-Z][A-Za-z0-9_]+)\s*\n\s*(\[.*?\]|\{.*?\})\s*$', text, _re.DOTALL)
+    # Format 3: {"tool": "X", "parameters": {...}} or {"name": "X", "parameters": {...}}
+    match = _re.search(r'\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', text, _re.DOTALL)
+    if not match:
+        match = _re.search(r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{.*?\}|\[.*?\])\s*\}', text, _re.DOTALL)
     if match:
-        tool_name = match.group(1)
         try:
+            tool_name = match.group(1)
             params = json.loads(match.group(2))
-            # If params is a list of entity IDs, wrap properly
             if isinstance(params, list):
-                # Could be a list of entity_ids or a list of domain strings
-                if all(isinstance(x, str) for x in params):
-                    # Check if they look like entity IDs (contain ".")
-                    if any("." in str(x) for x in params):
-                        params = {"entity_ids": params}
-                    else:
-                        params = {"entities": params}
-                else:
-                    params = {"entities": params}
+                params = {"entities": params}
             elif not isinstance(params, dict):
-                params = {"params": params}
+                params = {}
             return [{"id": f"call_{uuid.uuid4().hex[:12]}", "type": "function",
                      "function": {"name": tool_name, "arguments": json.dumps(params, ensure_ascii=False)}}]
         except (json.JSONDecodeError, AttributeError):
