@@ -14,6 +14,63 @@ from utils.log import logger
 IMAGE_MODELS = {"gpt-image-2", "codex-gpt-image-2"}
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
+# Model capability classification
+_IMAGE_GEN_PREFIXES = {
+    "nv-image/", "sdwebui/", "comfyui/", "huggingface/",
+    "bfl/", "stability/", "fal-ai/", "cloudflare/",
+    "recraft/", "runwayml/",
+}
+_IMAGE_GEN_KEYWORDS = {
+    "flux", "stable-diffusion", "sdxl", "dall-e", "gpt-image",
+    "image-generation", "image_generation",
+}
+_VISION_KEYWORDS = {
+    "vision", "multimodal", "-vl", "-vlm", "fuyu", "kosmos",
+    "gemma-3", "gemma-4", "nvclip", "vila", "trellis",
+    "phi-3-vision", "phi-4-multimodal",
+    "llama-3.2-11b-vision", "llama-3.2-90b-vision",
+    "nemotron-nano-12b-v2-vl", "nemotron-3-nano-omni",
+    "bevformer", "sparsedrive", "streampetr", "visual-changenet",
+    "cosmos-predict1", "nv-dinov2", "nv-grounding-dino",
+    "retail-object-detection",
+}
+
+
+def classify_model_capability(model_id: str) -> str:
+    """Classify a model by capability: 'image', 'vision', or 'chat'.
+
+    Image Gen: models that generate images (FLUX, SD, DALL-E)
+    Vision: models that can analyze/understand images
+    Chat: text-only models (default)
+    """
+    mid = str(model_id or "").strip().lower()
+
+    # Check image gen prefixes first
+    for prefix in _IMAGE_GEN_PREFIXES:
+        if mid.startswith(prefix):
+            return "image"
+
+    # Check image gen keywords
+    for kw in _IMAGE_GEN_KEYWORDS:
+        if kw in mid:
+            return "image"
+
+    # Check vision keywords
+    for kw in _VISION_KEYWORDS:
+        if kw in mid:
+            return "vision"
+
+    # Models with nv/ prefix that are NOT vision → these are pure chat
+    # But let's be conservative: nv/ models that match vision keywords = vision
+    # Others with nv/ = chat (the model IDs from NVIDIA that don't have vision keywords)
+
+    return "chat"
+
+
+def get_model_capability_label(cap: str) -> str:
+    """Human-readable label for model capability."""
+    return {"chat": "Chat", "vision": "Phân tích ảnh", "image": "Tạo ảnh"}.get(cap, "Chat")
+
 
 def new_uuid() -> str:
     return str(uuid.uuid4())

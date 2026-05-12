@@ -23,6 +23,16 @@ from services.ninerouter_backup_import import import_9router_backup_from_api
 from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_chatgpt_session_url, detect_token_type
 
 
+def _is_model_enabled(model_id: str, enabled_by_provider: dict) -> bool:
+    """Check if a model is in the enabled list. If no providers configured, all models are enabled."""
+    if not enabled_by_provider:
+        return True
+    for provider_models in enabled_by_provider.values():
+        if isinstance(provider_models, list) and model_id in provider_models:
+            return True
+    return False
+
+
 def _create_backup() -> dict:
     """Create local full-state backup."""
     payload = state_backup.export_all()
@@ -601,6 +611,7 @@ def create_router(app_version: str) -> APIRouter:
             _fetch_gemini_models,
             _fetch_opencode_models,
             _fetch_openrouter_models,
+            _fetch_nvidia_models,
             _apply_fallback,
         )
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -610,7 +621,18 @@ def create_router(app_version: str) -> APIRouter:
             "gemini_free": _fetch_gemini_models,
             "opencode": _fetch_opencode_models,
             "openrouter": _fetch_openrouter_models,
+            "nvidia_nim": _fetch_nvidia_models,
         }
+
+        # Add custom providers
+        from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
+        for cp_id, cp_cfg in get_custom_providers().items():
+            provider = CustomOpenAIProvider(cp_cfg)
+            def make_fetcher(p=provider):
+                def fetcher():
+                    return {str(m.get("id") or "").strip() for m in p.list_models() if str(m.get("id") or "").strip()}
+                return fetcher
+            provider_fetchers[f"custom:{cp_id}"] = make_fetcher()
 
         all_models: dict[str, list[str]] = {}
         with ThreadPoolExecutor(max_workers=len(provider_fetchers)) as executor:
@@ -624,12 +646,56 @@ def create_router(app_version: str) -> APIRouter:
                 except Exception:
                     pass
 
-        # Fallbacks for providers that returned nothing
-        for provider_name in ["opencode", "gemini_free", "openai_oauth", "chatgpt2api"]:
+        for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "chatgpt2api"]:
             if provider_name not in all_models:
                 all_models[provider_name] = sorted(_apply_fallback(provider_name))
 
         return {"providers": all_models}
+
+    @router.get("/api/v1/models-with-capabilities")
+    async def get_models_with_capabilities(authorization: str | None = Header(default=None)):
+        """Lấy danh sách model kèm phân loại capability (chat/vision/image)."""
+        require_admin(authorization)
+        from utils.helper import classify_model_capability, get_model_capability_label
+
+        # Get enabled models from model_settings
+        ms = config.data.get("model_settings") or {}
+        if not isinstance(ms, dict):
+            ms = {}
+        enabled_by_provider = ms.get("enabled_models") or {}
+        if not isinstance(enabled_by_provider, dict):
+            enabled_by_provider = {}
+
+        # Fetch all available models
+        from services.protocol.openai_v1_models import list_models
+        result = list_models()
+        all_models = result.get("data", [])
+
+        enriched: list[dict] = []
+        for model in all_models:
+            mid = str(model.get("id") or "").strip()
+            if not mid:
+                continue
+            cap = classify_model_capability(mid)
+            enriched.append({
+                "id": mid,
+                "owned_by": str(model.get("owned_by") or ""),
+                "capability": cap,
+                "capability_label": get_model_capability_label(cap),
+                "enabled": _is_model_enabled(mid, enabled_by_provider),
+            })
+
+        cap_order = {"chat": 0, "vision": 1, "image": 2}
+        enriched.sort(key=lambda m: (cap_order.get(m["capability"], 9), m["id"]))
+
+        return {
+            "models": enriched,
+            "counts": {
+                "chat": sum(1 for m in enriched if m["capability"] == "chat"),
+                "vision": sum(1 for m in enriched if m["capability"] == "vision"),
+                "image": sum(1 for m in enriched if m["capability"] == "image"),
+            },
+        }
 
     @router.post("/api/v1/model-settings")
     async def save_model_settings(body: dict, authorization: str | None = Header(default=None)):
