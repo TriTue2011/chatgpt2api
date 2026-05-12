@@ -125,7 +125,7 @@ class GeminiProvider:
         temperature: float | None = None,
         max_tokens: int | None = None,
         **kwargs,
-    ) -> dict[str, Any] | Iterator[str]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Send chat request to Gemini API.
 
         Translates OpenAI format → Gemini format internally.
@@ -217,11 +217,8 @@ class GeminiProvider:
             },
         }
 
-    def _stream_response(self, response, model: str) -> Iterator[str]:
-        """Convert Gemini SSE → OpenAI-compatible SSE chunks."""
-        import time
-        import uuid
-
+    def _stream_response(self, response, model: str) -> Iterator[dict[str, Any]]:
+        """Convert Gemini SSE → OpenAI chat completion chunks (dicts)."""
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
         sent_role = False
@@ -257,41 +254,32 @@ class GeminiProvider:
                         if text:
                             if not sent_role:
                                 sent_role = True
-                                yield json.dumps({
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created,
-                                    "model": model,
+                                yield {
+                                    "id": completion_id, "object": "chat.completion.chunk",
+                                    "created": created, "model": model,
                                     "choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": None}],
-                                }, ensure_ascii=False) + "\n"
+                                }
                             else:
-                                yield json.dumps({
-                                    "id": completion_id,
-                                    "object": "chat.completion.chunk",
-                                    "created": created,
-                                    "model": model,
+                                yield {
+                                    "id": completion_id, "object": "chat.completion.chunk",
+                                    "created": created, "model": model,
                                     "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
-                                }, ensure_ascii=False) + "\n"
+                                }
 
         except Exception as exc:
             logger.error({"event": "gemini_stream_error", "error": str(exc)})
 
         if not sent_role:
-            yield json.dumps({
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model,
+            yield {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
                 "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-            }, ensure_ascii=False) + "\n"
-        yield json.dumps({
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
+            }
+        yield {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }, ensure_ascii=False) + "\n"
-        yield "data: [DONE]\n"
+        }
 
 
 # Singleton
