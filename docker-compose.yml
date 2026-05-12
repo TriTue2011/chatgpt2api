@@ -29,10 +29,8 @@ services:
       - "3000:80"
 
     volumes:
-      # Dữ liệu persistent: accounts, ảnh, backup, logs
+      # Dữ liệu persistent: accounts, config, models cache, ảnh, backup, logs
       - chatgpt2api_data:/app/data
-      # Config — mount riêng để dễ chỉnh sửa
-      - ./config.json:/app/config.json
 
     environment:
       # [BẮT BUỘC] Auth key bảo vệ API
