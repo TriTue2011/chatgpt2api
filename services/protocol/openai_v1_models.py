@@ -28,6 +28,9 @@ FALLBACK_MODELS = {
     "openai_oauth": [
         "cx/auto",
     ],
+    "nvidia_nim": [
+        "nv/auto",
+    ],
     "chatgpt2api": [
         "ha-agent",
         "chatgpt/auto",
@@ -37,6 +40,7 @@ FALLBACK_MODELS = {
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 OPENCODE_MODELS_URL = "https://opencode.ai/zen/v1/models"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+NVIDIA_MODELS_URL = "https://integrate.api.nvidia.com/v1/models"
 
 
 def _get_gemini_keys() -> list[str]:
@@ -141,6 +145,46 @@ def _fetch_openrouter_models() -> set[str]:
     return set()
 
 
+def _fetch_nvidia_models() -> set[str]:
+    """Fetch available models from NVIDIA NIM API. Returns set of model IDs with nv/ prefix."""
+    cfg = config.data.get("providers") or {}
+    nv_cfg = cfg.get("nvidia_nim") or {}
+    single = str(nv_cfg.get("api_key") or "").strip()
+    multi = nv_cfg.get("api_keys") or []
+    if not isinstance(multi, list):
+        multi = []
+    keys = [k.strip() for k in multi if k.strip()]
+    if single and single not in keys:
+        keys.insert(0, single)
+
+    if not keys:
+        logger.info({"event": "list_models_nvidia_skip", "reason": "no_api_key"})
+        return set()
+
+    for key in keys:
+        try:
+            resp = requests.get(
+                f"{NVIDIA_MODELS_URL}",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            models = set()
+            for item in resp.json().get("data", []):
+                slug = str(item.get("id") or "").strip()
+                if slug:
+                    models.add(f"nv/{slug}")
+            if models:
+                logger.info({"event": "list_models_nvidia_fetched", "count": len(models)})
+                return models
+        except Exception as exc:
+            logger.warning({"event": "list_models_nvidia_error", "error": str(exc)})
+            continue
+
+    return set()
+
+
 def _fetch_chatgpt_token_models() -> set[str]:
     """Fetch models from all ChatGPT tokens, compute intersection."""
     active_tokens: list[str] = []
@@ -231,6 +275,7 @@ def list_models() -> dict[str, Any]:
         "gemini_free": _fetch_gemini_models,
         "opencode": _fetch_opencode_models,
         "openrouter": _fetch_openrouter_models,
+        "nvidia_nim": _fetch_nvidia_models,
     }
 
     all_models: dict[str, set[str]] = {}
@@ -264,7 +309,7 @@ def list_models() -> dict[str, Any]:
                 })
 
     # Apply fallbacks for providers that returned nothing
-    for provider_name in ["opencode", "gemini_free", "openai_oauth", "chatgpt2api"]:
+    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "chatgpt2api"]:
         if provider_name not in all_models:
             for model_id in sorted(_apply_fallback(provider_name)):
                 if model_id not in seen:

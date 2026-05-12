@@ -381,6 +381,10 @@ def create_router(app_version: str) -> APIRouter:
         if provider_id == "opencode":
             available = opencode_provider.is_available
             return {"provider": provider_id, "available": available}
+        if provider_id == "nvidia_nim":
+            from services.providers.nvidia_nim import nvidia_nim_provider
+            available = nvidia_nim_provider.is_available
+            return {"provider": provider_id, "available": available}
         raise HTTPException(status_code=404, detail={"error": f"unknown provider: {provider_id}"})
 
     # ── OAuth Login ──

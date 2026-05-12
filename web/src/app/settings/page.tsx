@@ -8,6 +8,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { BackupSettingsCard } from "./components/backup-settings-card";
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
+import { NvidiaNimCard } from "./components/nvidia-nim-card";
 import { CPAPoolDialog } from "./components/cpa-pool-dialog";
 import { CPAPoolsCard } from "./components/cpa-pools-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
@@ -68,6 +69,7 @@ function SettingsPageContent() {
       <section className="space-y-6">
         <ConfigCard />
         <GeminiCard />
+        <NvidiaNimCard />
         <BackupSettingsCard />
         <UserKeysCard />
         <CPAPoolsCard />

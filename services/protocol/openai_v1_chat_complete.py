@@ -230,6 +230,8 @@ def _dispatch(route, messages, tools, tool_choice, body):
         return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "gemini_free":
         return _handle_gemini_chat(route.model, messages, body.get("stream"), body)
+    elif route.provider == "nvidia_nim":
+        return _handle_nvidia_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "chatgpt":
         return _handle_chatgpt_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     else:
@@ -606,3 +608,45 @@ def _handle_gemini_chat(
     except Exception as exc:
         logger.error({"event": "gemini_fatal", "error": str(exc)})
         return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)
+
+
+def _handle_nvidia_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """NVIDIA NIM chat — OpenAI-compatible proxy, no format conversion needed."""
+    from services.providers.nvidia_nim import nvidia_nim_provider
+
+    pure_model = model
+    if model.startswith("nv/"):
+        pure_model = model[3:]
+
+    logger.info({"event": "nvidia_nim_chat", "model": pure_model, "stream": stream})
+
+    temperature = body.get("temperature")
+    max_tokens = body.get("max_tokens")
+
+    try:
+        result = nvidia_nim_provider.chat_completions(
+            messages=messages, model=pure_model, stream=stream,
+            temperature=temperature, max_tokens=max_tokens,
+            tools=tools, tool_choice=tool_choice,
+            top_p=body.get("top_p"),
+            frequency_penalty=body.get("frequency_penalty"),
+            presence_penalty=body.get("presence_penalty"),
+        )
+        if stream:
+            return result
+        else:
+            return result
+    except Exception as exc:
+        logger.error({"event": "nvidia_nim_fatal", "error": str(exc)})
+        return completion_response(
+            model=model,
+            content=f"NVIDIA NIM error: {exc}",
+            messages=messages,
+        )

@@ -1,0 +1,145 @@
+"""
+NVIDIA NIM Image Generation Adapter.
+
+Endpoint: https://ai.api.nvidia.com/v1/genai/{model}
+Auth: Bearer token from build.nvidia.com
+Format: Custom request/response — needs conversion to/from OpenAI format.
+
+Example model: black-forest-labs/flux.2-klein-4b
+"""
+
+from __future__ import annotations
+
+import base64
+from typing import Any
+
+from curl_cffi import requests
+
+from services.image_providers._base import (
+    BaseImageAdapter,
+    now_sec,
+    size_to_width_height,
+)
+from services.config import config
+from utils.log import logger
+
+
+class NvidiaNimImageAdapter(BaseImageAdapter):
+    """NVIDIA NIM Image Generation adapter.
+
+    Uses NVIDIA's image generation endpoint (different from chat endpoint).
+    """
+
+    BASE_URL = "https://ai.api.nvidia.com/v1/genai"
+
+    def _get_keys(self) -> list[str]:
+        cfg = config.data.get("providers") or {}
+        nv_cfg = cfg.get("nvidia_nim") or {}
+        single = str(nv_cfg.get("api_key") or "").strip()
+        multi = nv_cfg.get("api_keys") or []
+        if not isinstance(multi, list):
+            multi = []
+        keys = [k.strip() for k in multi if k.strip()]
+        if single and single not in keys:
+            keys.insert(0, single)
+        return keys
+
+    def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
+        return f"{self.BASE_URL}/{model}"
+
+    def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
+        prompt = str(body.get("prompt") or "")
+        size = str(body.get("size") or "1792x1024")
+        w, h = size_to_width_height(size)
+
+        return {
+            "prompt": prompt,
+            "width": w,
+            "height": h,
+            "seed": body.get("seed", 0),
+            "steps": body.get("steps", 4),
+        }
+
+    def build_headers(
+        self,
+        credentials: dict[str, Any] | None,
+        request_body: dict[str, Any],
+        model: str,
+        body: dict[str, Any],
+    ) -> dict[str, str]:
+        # Use API key from provider config
+        keys = self._get_keys()
+        api_key = keys[0] if keys else ""
+        if credentials and isinstance(credentials, dict):
+            api_key = str(credentials.get("apiKey") or credentials.get("accessToken") or api_key)
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def parse_response(self, response: Any) -> dict[str, Any] | None:
+        """Parse NVIDIA image gen response → OpenAI image format."""
+        if not hasattr(response, "json"):
+            return None
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            logger.error({"event": "nvidia_image_parse_error", "error": str(exc)})
+            return None
+
+        # Response format: {"image": "base64..."} or {"images": [...]} or {"data": [...]}
+        image_b64 = data.get("image") or ""
+        if not image_b64:
+            images = data.get("images") or data.get("data") or []
+            if isinstance(images, list) and images:
+                first = images[0]
+                if isinstance(first, dict):
+                    image_b64 = first.get("image") or first.get("b64_json") or first.get("url") or ""
+                elif isinstance(first, str):
+                    image_b64 = first
+
+        if not image_b64:
+            logger.error({"event": "nvidia_image_no_data", "keys": list(data.keys())[:5]})
+            return None
+
+        # If it's a URL, convert to base64
+        if image_b64.startswith("http"):
+            from services.image_providers._base import url_to_base64
+            image_b64 = url_to_base64(image_b64)
+
+        return {"data": [{"b64_json": image_b64}]}
+
+    def normalize(self, parsed: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
+        """Convert parsed result → OpenAI image response format."""
+        data = parsed.get("data") or []
+        normalized_data = []
+        for item in data:
+            b64 = item.get("b64_json") or ""
+            if b64:
+                if not b64.startswith("data:"):
+                    b64 = f"data:image/png;base64,{b64}"
+                normalized_data.append({"b64_json": b64, "revised_prompt": str(body.get("prompt") or "")})
+
+        if not normalized_data:
+            return {"created": now_sec(), "data": []}
+
+        return {"created": now_sec(), "data": normalized_data}
+
+    def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
+        """Test connectivity to NVIDIA image gen endpoint."""
+        try:
+            keys = self._get_keys()
+            api_key = keys[0] if keys else ""
+            resp = requests.get(
+                "https://integrate.api.nvidia.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+
+nvidia_nim_image_adapter = NvidiaNimImageAdapter()

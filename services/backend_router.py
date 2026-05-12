@@ -36,6 +36,7 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "cu/": "cursor",
     "cc/": "claude",
     "cx/": "codex",
+    "nv/": "nvidia_nim",
 }
 
 # NoAuth providers — no credentials needed (port from 9router FREE_PROVIDERS)
@@ -51,6 +52,7 @@ API_KEY_PROVIDERS: set[str] = {
     "mistral",
     "perplexity",
     "together",
+    "nvidia_nim",
 }
 
 # Image providers from 9router image adapter system
@@ -64,6 +66,7 @@ IMAGE_PROVIDER_PREFIXES: dict[str, str] = {
     "cloudflare/": "cloudflare_ai",
     "recraft/": "recraft",
     "runwayml/": "runwayml",
+    "nv-image/": "nvidia_nim_image",
 }
 
 
@@ -108,6 +111,7 @@ class BackendRouter:
         "chatgpt": "auto",
         "gemini_free": "gemini-3-flash-preview",
         "openrouter": "openai/gpt-4o",
+        "nvidia_nim": "openai/gpt-oss-120b",
     }
 
     @staticmethod

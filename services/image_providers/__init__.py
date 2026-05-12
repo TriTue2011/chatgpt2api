@@ -16,6 +16,7 @@ from services.image_providers.fal_ai import FalAIAdapter
 from services.image_providers.stability import StabilityAIAdapter
 from services.image_providers.bfl import BFLAdapter
 from services.image_providers.gemini_image import GeminiImageAdapter
+from services.image_providers.nvidia_nim_image import NvidiaNimImageAdapter
 
 
 # Registry — matches 9router ADAPTERS mapping
@@ -27,6 +28,7 @@ IMAGE_ADAPTERS: dict[str, BaseImageAdapter] = {
     "stability_ai": StabilityAIAdapter(),
     "black_forest_labs": BFLAdapter(),
     "gemini": GeminiImageAdapter(),
+    "nvidia_nim_image": NvidiaNimImageAdapter(),
 }
 
 
