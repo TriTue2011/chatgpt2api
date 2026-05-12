@@ -627,10 +627,10 @@ def create_router(app_version: str) -> APIRouter:
         # Add custom providers
         from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
         for cp_id, cp_cfg in get_custom_providers().items():
-            provider = CustomOpenAIProvider(cp_cfg)
-            def make_fetcher(p=provider):
+            def make_fetcher(cfg=cp_cfg):
+                provider = CustomOpenAIProvider(cfg)
                 def fetcher():
-                    return {str(m.get("id") or "").strip() for m in p.list_models() if str(m.get("id") or "").strip()}
+                    return {str(m.get("id") or "").strip() for m in provider.list_models() if str(m.get("id") or "").strip()}
                 return fetcher
             provider_fetchers[f"custom:{cp_id}"] = make_fetcher()
 

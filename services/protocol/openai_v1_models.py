@@ -303,17 +303,16 @@ def list_models() -> dict[str, Any]:
     from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
     custom_providers = get_custom_providers()
     for cp_id, cp_cfg in custom_providers.items():
-        provider = CustomOpenAIProvider(cp_cfg)
-        # Capture by closure
-        def make_fetcher(p=provider, pid=cp_id):
+        def make_fetcher(cfg=cp_cfg):
+            provider = CustomOpenAIProvider(cfg)
             def fetcher():
                 models = set()
-                for m in p.list_models():
+                for m in provider.list_models():
                     mid = str(m.get("id") or "").strip()
                     if mid:
                         models.add(mid)
                 if models:
-                    logger.info({"event": "list_models_custom", "provider": pid, "count": len(models)})
+                    logger.info({"event": "list_models_custom", "provider": provider.name, "count": len(models)})
                 return models
             return fetcher
         provider_fetchers[f"custom:{cp_id}"] = make_fetcher()
