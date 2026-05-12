@@ -19,6 +19,26 @@ docker run -d --name chatgpt2api --restart unless-stopped \
 
 Mở `http://localhost:3030` → đăng nhập `sk-your-key`.
 
+## Cài qua Home Assistant Addon Store
+
+**Bước 1:** Vào HA → **Settings → Addons → Addon Store → 3 chấm (góc phải trên) → Repositories**
+
+**Bước 2:** Thêm URL: `https://github.com/TriTue2011/chatgpt2api`
+
+**Bước 3:** Vào Addon Store → tìm **chatgpt2api** → **Install**
+
+**Bước 4:** Vào tab **Configuration** → sửa `auth_key` → **Save**
+
+**Bước 5:** **Start** → mở Web UI → vào `http://HA_IP:3030`
+
+Sau khi cài, vào HA **Settings → Devices & Services → Add Integration → OpenAI Conversation**:
+
+| Field | Value |
+|-------|-------|
+| Base URL | `http://localhost:3030/v1` |
+| API Key | `sk-chatgpt2api` (hoặc key bạn đặt) |
+| Model | `ha-agent` |
+
 ## Cấu hình Home Assistant
 
 ```yaml
