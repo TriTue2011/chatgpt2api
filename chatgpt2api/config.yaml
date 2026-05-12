@@ -1,28 +1,31 @@
-name: "ChatGPT2API"
-description: "Biến ChatGPT Web thành OpenAI API chuẩn. Tương thích hoàn hảo với Home Assistant Voice Assistant (Phicomm R1)."
-version: "1.0.0"
+name: "chatgpt2api"
+version: "1.2.0"
 slug: "chatgpt2api"
-init: false
+description: "OpenAI-compatible API gateway — ChatGPT, Codex OAuth, OpenCode free, Gemini, image generation (DALL-E)"
 arch:
-  - aarch64
   - amd64
-  - armhf
-  - armv7
-  - i386
+  - aarch64
 startup: application
 boot: auto
-map_network: false
+host_network: true
 ports:
-  80/tcp: 3000
+  3030/tcp: 3030
 ports_description:
-  80/tcp: "Web Interface & API Port (Mặc định 3000)"
-environment:
-  HA_ADDON: "true"
+  3030/tcp: "chatgpt2api Web UI + API"
 options:
-  auth_key: "chatgpt2api"
-  base_url: ""
-  proxy: ""
+  auth_key: "sk-chatgpt2api"
+  log_level: "info"
 schema:
-  auth_key: str
-  base_url: str?
-  proxy: str?
+  auth_key: password
+  log_level: list(info|debug|warning|error)
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+image: ghcr.io/tritue2011/chatgpt2api
+webui: "http://[HOST]:3030"
+ingress: false
+panel_icon: "mdi:robot"
+panel_title: "chatgpt2api"
+init: false
+stage: stable
