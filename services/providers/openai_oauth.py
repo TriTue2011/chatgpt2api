@@ -32,7 +32,15 @@ CODEX_HEADERS = {
 
 def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
                               tool_choice: Any = None, instructions: str | None = None) -> dict[str, Any]:
-    """Convert OpenAI chat format → Codex Responses API format."""
+    """Convert OpenAI chat format → Codex Responses API format.
+
+    Handles the full conversation flow including tool calls:
+    - system → instructions
+    - user → input_item (role="user")
+    - assistant (text) → input_item (role="assistant")
+    - assistant (tool_calls) → function_call items
+    - tool (result) → function_call_output items
+    """
     body: dict[str, Any] = {"stream": True}
 
     input_items: list[dict[str, Any]] = []
@@ -79,8 +87,43 @@ def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[st
             instructions = (instructions or "") + "\n" + content
             continue
 
-        responses_role = "user" if role == "user" else "assistant"
-        input_items.append({"role": responses_role, "content": content})
+        # Tool call result → function_call_output in Responses API
+        if role == "tool":
+            tool_call_id = str(msg.get("tool_call_id") or "")
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": tool_call_id,
+                "output": content,
+            })
+            continue
+
+        # Assistant message with tool_calls → function_call items
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                # First, add any text content the assistant said before calling tools
+                if content and content.strip():
+                    input_items.append({"role": "assistant", "content": content})
+                # Then add each function_call as an item
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        fn = tc.get("function") or {}
+                        input_items.append({
+                            "type": "function_call",
+                            "call_id": str(tc.get("id") or ""),
+                            "name": str(fn.get("name") or ""),
+                            "arguments": str(fn.get("arguments") or ""),
+                        })
+                continue
+            # Regular assistant text response
+            input_items.append({"role": "assistant", "content": content})
+            continue
+
+        # User message
+        if role == "user":
+            input_items.append({"role": "user", "content": content})
+        else:
+            input_items.append({"role": "user", "content": content})
 
     body["input"] = input_items
 
