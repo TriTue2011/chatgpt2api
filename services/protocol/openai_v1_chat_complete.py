@@ -522,7 +522,7 @@ def _handle_gemini_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Gemini AI Studio chat — free 15 RPM or paid via API key."""
+    """Gemini AI Studio chat — native function calling support."""
     from services.providers.gemini_free import gemini_provider, GEMINI_DEFAULT_MODEL
 
     pure_model = model
@@ -533,30 +533,40 @@ def _handle_gemini_chat(
     if not pure_model or pure_model == "auto":
         pure_model = GEMINI_DEFAULT_MODEL
 
-    logger.info({"event": "gemini_chat", "model": pure_model, "stream": stream})
+    logger.info({"event": "gemini_chat", "model": pure_model})
 
     temperature = body.get("temperature")
     max_tokens = body.get("max_tokens")
+    tools = body.get("tools")
+    tool_choice = body.get("tool_choice")
 
     try:
-        result = gemini_provider.chat_completions(
-            messages=messages, model=pure_model, stream=False,
+        # Gemini always streams via SSE API — iterator handles both cases
+        result_iter = gemini_provider.chat_completions(
+            messages=messages, model=pure_model,
             temperature=temperature, max_tokens=max_tokens,
+            tools=tools, tool_choice=tool_choice,
         )
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-
         if stream:
-            return _gemini_stream_wrapper(model, content)
+            return result_iter
         else:
-            return result
+            # Collect stream into single response
+            content = ""
+            tc = []
+            for chunk in result_iter:
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                content += delta.get("content", "")
+                if delta.get("tool_calls"):
+                    tc = delta["tool_calls"]
+            msg = {"role": "assistant", "content": content}
+            if tc:
+                msg["tool_calls"] = tc
+            return {
+                "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion",
+                "created": int(time.time()), "model": pure_model,
+                "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            }
     except Exception as exc:
         logger.error({"event": "gemini_fatal", "error": str(exc)})
         return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)
-
-
-def _gemini_stream_wrapper(model: str, content: str) -> Iterator[dict[str, Any]]:
-    """Wrap non-streaming Gemini response into streaming chunks for HA."""
-    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    created = int(time.time())
-    yield completion_chunk(model, {"role": "assistant", "content": content}, None, completion_id, created)
-    yield completion_chunk(model, {}, "stop", completion_id, created)
