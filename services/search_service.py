@@ -242,15 +242,25 @@ class GeminiGrounding(SearchBackend):
             data = resp.json()
             results: list[dict[str, str]] = []
             candidates = data.get("candidates") or []
+
+            # Get the model's search-grounded text for actual data
+            model_text = ""
+            for c in candidates:
+                parts = (c.get("content") or {}).get("parts") or []
+                model_text = " ".join(p.get("text", "") for p in parts if isinstance(p, dict))
+
             for c in candidates:
                 grounding = c.get("groundingMetadata") or {}
                 chunks = grounding.get("groundingChunks") or []
                 sources = grounding.get("webSearchQueries") or []
                 for chunk in chunks[:max_results]:
                     web = chunk.get("web") or {}
+                    snippet = str(web.get("snippet") or "")
+                    if not snippet:
+                        snippet = model_text[:300]  # Fallback to model response
                     results.append({
                         "title": str(web.get("title") or (sources[0] if sources else query)),
-                        "snippet": str(web.get("snippet") or ""),
+                        "snippet": snippet,
                         "url": str(web.get("uri") or ""),
                     })
             return results[:max_results]
