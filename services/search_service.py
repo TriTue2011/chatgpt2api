@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from curl_cffi import requests
@@ -233,7 +234,13 @@ class GeminiGrounding(SearchBackend):
 
             if resp.status_code == 429:
                 self._mark_limited(api_key)
-                return self.search(query, max_results)  # retry with next key
+                # Check if any keys are still available
+                now = time.time()
+                available = [k for k in self._get_keys() if self._rate_limited.get(k, 0) < now]
+                if available:
+                    return self.search(query, max_results)  # retry with next key
+                logger.warning({"event": "gemini_all_keys_rate_limited"})
+                return []  # All keys limited — return empty to trigger combo fallback
 
             if resp.status_code != 200:
                 logger.warning({"event": "gemini_error", "status": resp.status_code, "body": resp.text[:200]})
