@@ -70,7 +70,7 @@ def create_router() -> APIRouter:
         require_identity(authorization)
         force_refresh = request.query_params.get("refresh", "").lower() == "true"
         try:
-            return await run_in_threadpool(openai_v1_models.list_models, force_refresh)
+            return await run_in_threadpool(openai_v1_models.list_models, force_refresh, True)
         except Exception as exc:
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
 
