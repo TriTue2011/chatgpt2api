@@ -27,6 +27,9 @@ def _is_model_enabled(model_id: str, enabled_by_provider: dict) -> bool:
     """Check if a model is in the enabled list. If no providers configured, all models are enabled."""
     if not enabled_by_provider:
         return True
+    # Core models always enabled
+    if model_id in {"cx/auto", "oc/auto", "chatgpt/auto", "gemini_free/auto", "ha-agent"}:
+        return True
     for provider_models in enabled_by_provider.values():
         if isinstance(provider_models, list) and model_id in provider_models:
             return True
