@@ -108,11 +108,30 @@ export default function ModelsPage() {
     setSettings(prev => {
       const enabled: Record<string, string[]> = {};
       for (const provider of Object.keys(available)) {
-        // Only keep core auto models
         enabled[provider] = (available[provider] || []).filter(m =>
           CORE_MODELS.includes(m)
         );
       }
+      return { ...prev, enabled_models: enabled };
+    });
+  }
+
+  function selectAllProvider(provider: string) {
+    setDirty(true);
+    setSaved(false);
+    setSettings(prev => {
+      const enabled = { ...prev.enabled_models };
+      enabled[provider] = [...(available[provider] || [])];
+      return { ...prev, enabled_models: enabled };
+    });
+  }
+
+  function deselectAllProvider(provider: string) {
+    setDirty(true);
+    setSaved(false);
+    setSettings(prev => {
+      const enabled = { ...prev.enabled_models };
+      enabled[provider] = (available[provider] || []).filter(m => CORE_MODELS.includes(m));
       return { ...prev, enabled_models: enabled };
     });
   }
@@ -253,22 +272,22 @@ export default function ModelsPage() {
                       <p className="text-[10px] font-medium uppercase tracking-wider text-stone-500">
                         {hasFilter ? "Chọn model để hiển thị" : "Tất cả model đang hiển thị (bấm để ẩn)"}
                       </p>
-                      {hasFilter && (
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setDirty(true);
-                            setSettings((prev) => {
-                              const e = { ...prev.enabled_models };
-                              delete e[provider];
-                              return { ...prev, enabled_models: e };
-                            });
-                          }}
+                          onClick={() => selectAllProvider(provider)}
                           className="text-[10px] text-stone-500 hover:text-stone-700 transition"
                         >
-                          Bật tất cả
+                          Chọn tất cả
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => deselectAllProvider(provider)}
+                          className="text-[10px] text-red-400 hover:text-red-600 transition"
+                        >
+                          Bỏ chọn tất cả
+                        </button>
+                      </div>
                     </div>
                     <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
                       {regularModels.map((modelId) => {
