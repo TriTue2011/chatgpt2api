@@ -102,6 +102,21 @@ export default function ModelsPage() {
     }
   }
 
+  function deselectAll() {
+    setDirty(true);
+    setSaved(false);
+    setSettings(prev => {
+      const enabled: Record<string, string[]> = {};
+      for (const provider of Object.keys(available)) {
+        // Only keep core auto models
+        enabled[provider] = (available[provider] || []).filter(m =>
+          CORE_MODELS.includes(m)
+        );
+      }
+      return { ...prev, enabled_models: enabled };
+    });
+  }
+
   const providers = Object.keys(available);
 
   if (loading) {
@@ -131,6 +146,13 @@ export default function ModelsPage() {
           >
             <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
             {refreshing ? "Đang tải..." : "Làm mới"}
+          </button>
+          <button
+            type="button"
+            onClick={deselectAll}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-xs text-red-500 hover:bg-red-50 transition"
+          >
+            Bỏ chọn tất cả
           </button>
           <button
             type="button"
