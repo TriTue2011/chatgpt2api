@@ -55,7 +55,7 @@ export default function CombosPage() {
       ]);
       const config = (comboRes.data as any)?.config || {};
       setCombos(config.combo_models || {});
-      setAllModels((modelsRes.data as any)?.models || []);
+      setAllModels((modelsRes.data as any)?.models?.filter((m: any) => m.enabled !== false) || []);
     } catch (e) {
       console.error("Failed to load", e);
     } finally {
@@ -123,9 +123,10 @@ export default function CombosPage() {
 
   const availableForSelection = filteredModels.filter(m => !selectedModels.includes(m.id));
 
-  // Counts (a model can have multiple capabilities)
+  // Counts (only enabled models)
   const counts = { chat: 0, vision: 0, image: 0 };
   for (const m of allModels) {
+    if (m.enabled === false) continue;
     const caps = m.capabilities || [m.capability];
     for (const c of caps) {
       if (c in counts) counts[c as keyof typeof counts]++;
@@ -160,7 +161,7 @@ export default function CombosPage() {
           </button>
         </div>
         <p className="mt-1 text-sm text-stone-500">
-          Combo model tự động fallback qua nhiều provider theo thứ tự ưu tiên. Chọn model từ danh sách đã bật trong Quản lý Model.
+          Combo model tự động fallback qua nhiều provider theo thứ tự ưu tiên. Chỉ hiển thị model đã bật trong Quản lý Model.
         </p>
       </div>
 
