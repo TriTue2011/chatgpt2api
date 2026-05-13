@@ -224,11 +224,14 @@ class CodexOAuthProvider:
 
         # Codex rejects these parameters — strip them (like 9router does)
         for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty",
-                     "max_tokens", "max_output_tokens", "max_completion_tokens",
                      "n", "seed", "logprobs", "top_logprobs", "user",
                      "stream_options", "safety_identifier", "metadata",
                      "parallel_tool_calls"):
             body.pop(key, None)
+
+        # Pass max_tokens as max_output_tokens (Responses API format)
+        # If not specified, use a generous default so responses aren't cut off
+        body["max_output_tokens"] = max_tokens if max_tokens else 4096
 
         headers = dict(CODEX_HEADERS)
         headers["Authorization"] = f"Bearer {access_token}"
