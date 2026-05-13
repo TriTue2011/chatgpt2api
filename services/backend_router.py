@@ -245,22 +245,9 @@ class BackendRouter:
         )
 
     def route_combo(self, combo_name: str) -> list[BackendRoute]:
-        """Resolve a combo model into its fallback chain.
-
-        Combo models are defined in config.json:
-        {
-            "combo_models": {
-                "ha-agent": ["opencode/nemotron-free", "chatgpt/auto"],
-                "ha-agent-image": ["sdwebui/stable-diffusion", "chatgpt/gpt-image-2"]
-            }
-        }
-        """
-        combos = (config.data.get("combo_models") or {})
-        if not isinstance(combos, dict):
-            return []
-
-        models = combos.get(combo_name)
-        if not isinstance(models, list) or not models:
+        """Resolve a combo model into its fallback chain (case-insensitive)."""
+        models = self._get_combo_models(combo_name)
+        if not models:
             return []
 
         routes: list[BackendRoute] = []
@@ -271,9 +258,23 @@ class BackendRouter:
         return routes
 
     def is_combo(self, model_str: str) -> bool:
-        """Check if a model string is a combo name."""
+        """Check if a model string is a combo name (case-insensitive)."""
         combos = config.data.get("combo_models") or {}
-        return isinstance(combos, dict) and model_str in combos
+        if not isinstance(combos, dict):
+            return False
+        model_lower = model_str.lower().strip()
+        return any(k.lower().strip() == model_lower for k in combos)
+
+    def _get_combo_models(self, combo_name: str) -> list[str] | None:
+        """Get combo model list by name (case-insensitive)."""
+        combos = config.data.get("combo_models") or {}
+        if not isinstance(combos, dict):
+            return None
+        name_lower = combo_name.lower().strip()
+        for k, v in combos.items():
+            if k.lower().strip() == name_lower and isinstance(v, list):
+                return v
+        return None
 
 
 # Singleton
