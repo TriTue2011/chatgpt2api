@@ -150,14 +150,15 @@ def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[st
                 if prefix in content:
                     # Move search results to instructions
                     search_instruction = (
-                        "QUAN TRỌNG: Dưới đây là kết quả tìm kiếm thực tế. "
-                        "Bạn PHẢI trả lời dựa trên các thông tin này, trích dẫn số liệu cụ thể. "
-                        "Không được nói 'tôi không có thông tin thực tế' hoặc hỏi lại người dùng.\n\n"
+                        "Thông tin tham khảo từ tìm kiếm:\n\n"
                         + content
+                        + "\n\nLưu ý: Ưu tiên dùng công cụ (tool) để lấy thông tin nhà. "
+                        "Chỉ dùng thông tin tìm kiếm bên trên cho các câu hỏi về thế giới bên ngoài "
+                        "(giá cả, thời tiết, tin tức, sự kiện...)."
                     )
                     body["instructions"] = (body.get("instructions", "") + "\n\n" + search_instruction).strip()
-                    # Replace the user message with a short summary
-                    input_items[i] = {"role": "user", "content": "Hãy trả lời dựa trên thông tin tìm kiếm được cung cấp."}
+                    # Keep the original user message intact so tool calling still works
+                    # (don't replace it — just add instructions)
                     break
         break  # Only check the last user message
 
