@@ -56,6 +56,8 @@ Sau khi chạy:
 - API: `http://IP:3030/v1/chat/completions`
 - Đăng nhập Web UI bằng `your_secret_key_here`
 
+> **Quan trọng**: Volume `chatgpt2api_data` lưu TOÀN Bộ dữ liệu: accounts, API keys (Gemini, NVIDIA, DeepSeek...), custom providers, model settings, combos, ảnh, backup. **Không được xóa volume này** nếu không muốn mất hết cài đặt.
+
 ---
 
 ## Cài đặt qua Docker Compose / Portainer
@@ -69,16 +71,38 @@ services:
     ports:
       - "3030:80"
     volumes:
-      - data:/app/data
+      # [QUAN TRỌNG] Volume này lưu toàn bộ dữ liệu — API keys, accounts, cài đặt
+      - chatgpt2api_data:/app/data
     environment:
+      # [BẮT BUỘC] Đổi thành key bảo mật của bạn
       CHATGPT2API_AUTH_KEY: your_secret_key_here
       STORAGE_BACKEND: json
 
 volumes:
-  data: {}
+  chatgpt2api_data:
+    # Đặt tên cố định để không bị mất khi docker compose down
+    name: chatgpt2api_data
 ```
 
 **Portainer:** Stacks → Add Stack → Web Editor → paste nội dung trên → Deploy.
+
+### Cập nhật lên phiên bản mới (giữ nguyên dữ liệu)
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Volume có tên cố định `chatgpt2api_data` → **API keys, accounts, cài đặt không bị mất** khi pull image mới.
+
+> **Cảnh báo**: KHÔNG dùng `docker compose down -v` vì `-v` sẽ xóa volume → mất hết dữ liệu. Nếu cần xóa container để làm lại, dùng `docker compose down` (không có `-v`).
+
+### Kiểm tra dữ liệu đã lưu
+
+```bash
+# Xem config đã lưu (bao gồm API keys)
+docker exec chatgpt2api cat /app/data/config.json | grep -o '"nvidia_nim":{[^}]*}' 
+```
 
 ---
 
@@ -233,6 +257,20 @@ Backend hỗ trợ:
 ---
 
 ## Troubleshooting
+
+### "Mất API key Gemini/NVIDIA/DeepSeek sau khi cập nhật"
+
+**Nguyên nhân**: Volume name không cố định, hoặc dùng `docker compose down -v`.
+
+**Cách fix**:
+1. Đảm bảo `docker-compose.yml` có volume với `name:` cố định:
+   ```yaml
+   volumes:
+     chatgpt2api_data:
+       name: chatgpt2api_data
+   ```
+2. Khi cập nhật, chỉ dùng: `docker compose pull && docker compose up -d`
+3. **Không dùng** `docker compose down -v` (cờ `-v` xóa volume)
 
 ### "Error talking to API" / HTTP 413
 
