@@ -230,8 +230,9 @@ class CodexOAuthProvider:
             body.pop(key, None)
 
         # Pass max_tokens as max_output_tokens (Responses API format)
-        # If not specified, use a generous default so responses aren't cut off
-        body["max_output_tokens"] = max_tokens if max_tokens else 4096
+        # Only if explicitly provided — don't set a default (Codex may reject it)
+        if max_tokens:
+            body["max_output_tokens"] = max_tokens
 
         headers = dict(CODEX_HEADERS)
         headers["Authorization"] = f"Bearer {access_token}"
