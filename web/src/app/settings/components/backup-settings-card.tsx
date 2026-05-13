@@ -297,7 +297,7 @@ export function BackupSettingsCard() {
             {isRunningBackup || backupState?.running ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
             Sao lưu ngay
           </Button>
-          <Button className="h-9 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100" onClick={() => void saveConfig()} disabled={isSavingConfig}>
+          <Button className="h-9 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800" onClick={() => void saveConfig()} disabled={isSavingConfig}>
             {isSavingConfig ? <LoaderCircle className="size-4 animate-spin" /> : <CloudUpload className="size-4" />}
             Lưu cấu hình
           </Button>

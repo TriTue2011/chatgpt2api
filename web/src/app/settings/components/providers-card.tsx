@@ -233,7 +233,7 @@ export function ProvidersCard() {
         </div>
 
         <div className="flex justify-end">
-          <Button className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+          <Button className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
             onClick={() => {
               // Sync textarea values before save
               updateProviderConfig("gemini_free", geminiKeys);

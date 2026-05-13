@@ -118,7 +118,7 @@ export function CustomProvidersCard() {
             <span className="text-[10px] text-stone-500">{entries.length} provider</span>
           </div>
           {!adding && (
-            <Button className="h-8 rounded-lg bg-stone-100 px-3 text-xs text-white hover:bg-stone-100"
+            <Button className="h-8 rounded-lg bg-stone-900 px-3 text-xs text-white hover:bg-stone-800"
               onClick={() => setAdding(true)}>
               <Plus className="size-3.5 mr-1" /> Thêm API
             </Button>
@@ -157,7 +157,7 @@ export function CustomProvidersCard() {
             <div className="flex gap-2 justify-end">
               <Button className="h-8 rounded-lg border border-stone-200 bg-stone-100 text-xs text-stone-500 hover:bg-stone-200"
                 onClick={resetForm}>Hủy</Button>
-              <Button className="h-8 rounded-lg bg-stone-100 px-4 text-xs text-white hover:bg-stone-100"
+              <Button className="h-8 rounded-lg bg-stone-900 px-4 text-xs text-white hover:bg-stone-800"
                 onClick={() => void saveProvider()} disabled={saving !== null}>
                 {saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                 Lưu

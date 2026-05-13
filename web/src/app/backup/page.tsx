@@ -146,7 +146,7 @@ export default function BackupPage() {
           type="button"
           onClick={createBackup}
           disabled={creating}
-          className="inline-flex items-center gap-2 rounded-xl bg-stone-100 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-100 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-800 disabled:opacity-50"
         >
           {creating ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
           {creating ? "Đang tạo..." : "Tạo sao lưu mới"}

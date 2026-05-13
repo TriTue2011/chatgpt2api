@@ -33,7 +33,7 @@ export function CPAPoolsCard() {
           </div>
           <div className="flex items-center gap-2">
             {pools.length > 0 ? <Badge className="rounded-md px-2.5 py-1">{pools.length} 个kết nối</Badge> : null}
-            <Button className="h-9 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100" onClick={openAddDialog}>
+            <Button className="h-9 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800" onClick={openAddDialog}>
               <Plus className="size-4" />
               Thêm kết nối
             </Button>

@@ -85,7 +85,7 @@ export default function LoginPage() {
           </div>
 
           <Button
-            className="h-13 w-full rounded-2xl bg-stone-900 text-white hover:bg-stone-100"
+            className="h-13 w-full rounded-2xl bg-stone-900 text-white hover:bg-stone-800"
             onClick={() => void handleLogin()}
             disabled={isSubmitting}
           >

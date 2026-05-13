@@ -85,7 +85,7 @@ function MethodCard({
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-2xl border border-stone-200 bg-white p-0 text-left transition hover:border-stone-300 hover:bg-stone-100"
+      className="w-full rounded-2xl border border-stone-200 bg-white p-0 text-left transition hover:border-stone-300 hover:bg-stone-800"
     >
       <Card className="rounded-2xl border-0 bg-transparent shadow-none">
         <CardContent className="flex items-start gap-4 p-4">
@@ -459,7 +459,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
             </div>
             <Button
               type="button"
-              className="mt-4 rounded-xl bg-stone-900 text-white hover:bg-stone-100"
+              className="mt-4 rounded-xl bg-stone-900 text-white hover:bg-stone-800"
               onClick={() => cpaInputRef.current?.click()}
               disabled={isSubmitting}
             >
@@ -561,7 +561,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <Button
-          className="h-10 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100"
+          className="h-10 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800"
           onClick={() => setOpen(true)}
           disabled={disabled}
         >
@@ -603,7 +603,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
             </Button>
             {method === "token" ? (
               <Button
-                className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+                className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
                 onClick={() => void handleImportTokenText()}
                 disabled={footerDisabled}
               >
@@ -613,7 +613,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
             ) : null}
             {method === "session" ? (
               <Button
-                className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+                className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
                 onClick={() => void handleImportSessionJson()}
                 disabled={footerDisabled}
               >
@@ -624,7 +624,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
             {method === "cpa" ? (
               <Button
                 className={cn(
-                  "h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100",
+                  "h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800",
                   !pendingCpaImport ? "hidden" : "",
                 )}
                 onClick={() => setConfirmOpen(true)}
@@ -660,7 +660,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
               Quay lại
             </Button>
             <Button
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void submitTokens(pendingCpaImport?.tokens ?? [], "Nhập CPA JSON hoàn tất")}
               disabled={isSubmitting || !pendingCpaImport}
             >

@@ -15,7 +15,7 @@ function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {
 }
 
 function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
-  return <tr className={cn("border-b border-stone-200 transition-colors hover:bg-stone-100/70", className)} {...props} />;
+  return <tr className={cn("border-b border-stone-200 transition-colors hover:bg-stone-800/70", className)} {...props} />;
 }
 
 function TableHead({ className, ...props }: React.ComponentProps<"th">) {

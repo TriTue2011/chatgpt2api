@@ -117,7 +117,7 @@ export function ImportBrowserDialog() {
             ) : (
               <div className="divide-y divide-stone-100">
                 {pagedFiles.map((item) => (
-                  <label key={item.name} className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-stone-100">
+                  <label key={item.name} className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-stone-800">
                     <Checkbox
                       checked={selectedNames.includes(item.name)}
                       onCheckedChange={(checked) => toggleFile(item.name, Boolean(checked))}
@@ -171,7 +171,7 @@ export function ImportBrowserDialog() {
             Hủy
           </Button>
           <Button
-            className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+            className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
             onClick={() => void startImport()}
             disabled={isStartingImport || selectedNames.length === 0}
           >

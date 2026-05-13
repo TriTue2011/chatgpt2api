@@ -278,7 +278,7 @@ export default function CombosPage() {
                         key={m.id}
                         type="button"
                         onClick={() => addModelToSelection(m.id)}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-stone-100 transition"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-stone-800 transition"
                       >
                         <CapIcon className="size-3 shrink-0 text-stone-500" />
                         <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>

@@ -69,7 +69,7 @@ export function RegisterCard() {
                 <h2 className="text-lg font-semibold tracking-tight">Cấu hình đăng ký</h2>
               </div>
             </div>
-            <Button className="h-9 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100" onClick={() => void save()} disabled={isSaving || config.enabled}>
+            <Button className="h-9 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800" onClick={() => void save()} disabled={isSaving || config.enabled}>
               {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
               Lưu cấu hình
             </Button>
@@ -265,7 +265,7 @@ export function RegisterCard() {
               ))}
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <Button className="h-10 rounded-xl bg-stone-100 px-3 text-white hover:bg-stone-100" onClick={() => void toggle()} disabled={isSaving}>
+              <Button className="h-10 rounded-xl bg-stone-900 px-3 text-white hover:bg-stone-800" onClick={() => void toggle()} disabled={isSaving}>
                 {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : config.enabled ? <Square className="size-4" /> : <Play className="size-4" />}
                 {config.enabled ? "Dừng" : "Bắt đầu"}
               </Button>

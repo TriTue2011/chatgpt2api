@@ -184,7 +184,7 @@ export function ImageResults({
                             <Button
                               variant="outline"
                               size="sm"
-                              className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-100"
+                              className="rounded-full border-stone-200 bg-white text-stone-700 hover:bg-stone-800"
                               onClick={() => onContinueEdit(selectedConversation.id, image)}
                             >
                               <Sparkles className="size-4" />
@@ -245,7 +245,7 @@ export function ImageResults({
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-100 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
+                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-800 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
                                   onClick={() => onContinueEdit(selectedConversation.id, image)}
                                   aria-label="Thêm vào chỉnh sửa"
                                 >
@@ -255,7 +255,7 @@ export function ImageResults({
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-100 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
+                                  className="h-7 w-7 rounded-full border-stone-200 bg-white px-0 text-[10px] text-stone-700 hover:bg-stone-800 sm:h-8 sm:w-fit sm:px-3 sm:text-xs"
                                   onClick={() => void downloadStoredImage(image, index)}
                                   aria-label="Tải xuống"
                                 >

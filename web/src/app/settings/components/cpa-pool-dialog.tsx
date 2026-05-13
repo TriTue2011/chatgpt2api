@@ -94,7 +94,7 @@ export function CPAPoolDialog() {
             Hủy
           </Button>
           <Button
-            className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+            className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
             onClick={() => void savePool()}
             disabled={isSavingPool}
           >

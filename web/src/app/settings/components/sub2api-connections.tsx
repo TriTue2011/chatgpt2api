@@ -399,7 +399,7 @@ export function Sub2APIConnections() {
             <div className="flex items-center gap-2">
               {servers.length > 0 ? <Badge className="rounded-md px-2.5 py-1">{servers.length} 个kết nối</Badge> : null}
               <Button
-                className="h-9 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100"
+                className="h-9 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800"
                 onClick={openAddDialog}
               >
                 <Plus className="size-4" />
@@ -717,7 +717,7 @@ export function Sub2APIConnections() {
               Hủy
             </Button>
             <Button
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void handleSave()}
               disabled={isSaving}
             >
@@ -798,7 +798,7 @@ export function Sub2APIConnections() {
                   {pagedAccounts.map((item) => (
                     <label
                       key={item.id}
-                      className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-stone-100"
+                      className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-stone-800"
                     >
                       <Checkbox
                         checked={selectedIds.includes(item.id)}
@@ -871,7 +871,7 @@ export function Sub2APIConnections() {
               Hủy
             </Button>
             <Button
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void handleStartImport()}
               disabled={isStartingImport || selectedIds.length === 0}
             >

@@ -185,7 +185,7 @@ export function UserKeysCard() {
                 <p className="text-sm text-stone-500">为普通người dùngTạo专用密钥；普通người dùng只能进入画图页，不能查看设置和号池。</p>
               </div>
             </div>
-            <Button className="h-9 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100" onClick={() => setIsDialogOpen(true)}>
+            <Button className="h-9 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800" onClick={() => setIsDialogOpen(true)}>
               <Plus className="size-4" />
               Tạo khóa người dùng
             </Button>
@@ -311,7 +311,7 @@ export function UserKeysCard() {
             </Button>
             <Button
               type="button"
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void handleCreate()}
               disabled={isCreating}
             >
@@ -407,7 +407,7 @@ export function UserKeysCard() {
             </Button>
             <Button
               type="button"
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void handleEdit()}
               disabled={editingItem ? pendingIds.has(editingItem.id) : false}
             >

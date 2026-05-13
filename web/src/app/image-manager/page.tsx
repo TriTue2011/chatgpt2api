@@ -267,7 +267,7 @@ function ImageManagerContent() {
           <Button variant="outline" onClick={clearFilters} className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700">
             清除筛选条件
           </Button>
-          <Button onClick={() => void loadImages()} disabled={isLoading} className="h-10 rounded-xl bg-stone-100 px-4 text-white hover:bg-stone-100">
+          <Button onClick={() => void loadImages()} disabled={isLoading} className="h-10 rounded-xl bg-stone-900 px-4 text-white hover:bg-stone-800">
             {isLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Search className="size-4" />}
             查询
           </Button>
@@ -351,7 +351,7 @@ function ImageManagerContent() {
               <button type="button" className="text-sm text-stone-500 hover:text-stone-900 disabled:text-stone-700" onClick={() => setSelectedPaths([])} disabled={selectedPaths.length === 0 || isDeleting}>
                 取消选择
               </button>
-              <Button variant="outline" className="h-8 rounded-lg border-stone-200 bg-white px-3 text-stone-600 hover:bg-stone-100" onClick={() => void handleBatchDownload()} disabled={selectedPaths.length === 0 || isDownloading || isDeleting}>
+              <Button variant="outline" className="h-8 rounded-lg border-stone-200 bg-white px-3 text-stone-600 hover:bg-stone-800" onClick={() => void handleBatchDownload()} disabled={selectedPaths.length === 0 || isDownloading || isDeleting}>
                 {isDownloading ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
                 下载所选
               </Button>
@@ -365,7 +365,7 @@ function ImageManagerContent() {
             {currentRows.map((item) => {
               const imageIndex = filteredItems.findIndex((row) => row.url === item.url);
               return (
-              <div key={item.rel} className="group border-r border-b border-stone-200 p-4 transition hover:bg-stone-100">
+              <div key={item.rel} className="group border-r border-b border-stone-200 p-4 transition hover:bg-stone-800">
                 <div className="relative">
                   <button
                     type="button"

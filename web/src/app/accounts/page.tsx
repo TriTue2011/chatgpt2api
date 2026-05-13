@@ -442,7 +442,7 @@ function AccountsPageContent() {
               Hủy
             </Button>
             <Button
-              className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+              className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
               onClick={() => void handleUpdateAccount()}
               disabled={isUpdating}
             >
@@ -625,7 +625,7 @@ function AccountsPageContent() {
                     return (
                       <tr
                         key={account.access_token}
-                        className="border-b border-stone-200/80 text-sm text-stone-600 transition-colors hover:bg-stone-100/70"
+                        className="border-b border-stone-200/80 text-sm text-stone-600 transition-colors hover:bg-stone-800/70"
                       >
                         <td className="px-4 py-3">
                           <Checkbox
@@ -787,7 +787,7 @@ function AccountsPageContent() {
                       className={cn(
                         "h-10 min-w-10 shrink-0 rounded-lg px-3",
                         item === safePage
-                          ? "bg-stone-900 text-white hover:bg-stone-100"
+                          ? "bg-stone-900 text-white hover:bg-stone-800"
                           : "border-stone-200 bg-white text-stone-700",
                       )}
                       onClick={() => setPage(item)}
