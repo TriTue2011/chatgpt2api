@@ -144,8 +144,38 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     base_url_str = str(body.get("base_url") or "") or None
     stream = bool(body.get("stream"))
 
-    # Route to determine provider
+    # Combo model support — try each model in the combo until one succeeds
+    if backend_router.is_combo(model):
+        routes = backend_router.route_combo(model)
+        last_error = ""
+        for route in routes:
+            try:
+                if route.is_image or route.provider == "chatgpt":
+                    return _handle_single_image(route, body)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning({
+                    "event": "image_combo_fallback",
+                    "model": route.model,
+                    "error": last_error,
+                })
+                continue
+        raise RuntimeError(f"All image models in combo '{model}' failed: {last_error}")
+
+    # Single model routing
     route = backend_router.route(model)
+    return _handle_single_image(route, body)
+
+
+def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Handle image generation for a single model (adapter or ChatGPT DALL-E)."""
+    prompt = str(body.get("prompt") or "")
+    model = str(body.get("model") or "gpt-image-2")
+    n = int(body.get("n") or 1)
+    size = body.get("size")
+    response_format = str(body.get("response_format") or "b64_json")
+    base_url_str = str(body.get("base_url") or "") or None
+    stream = bool(body.get("stream"))
 
     # If routed to a non-ChatGPT image provider, use adapter
     if route.provider != "chatgpt" and route.is_image:
@@ -171,7 +201,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     # Default: use existing ChatGPT DALL-E flow (unchanged)
     outputs = stream_image_outputs_with_pool(ConversationRequest(
         prompt=prompt,
-        model=model,
+        model=route.model if route.model != "auto" else model,
         n=n,
         size=size,
         response_format=response_format,
