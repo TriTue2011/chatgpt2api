@@ -212,7 +212,7 @@ export default function CombosPage() {
                   </span>
                   <CapIcon className="size-3 shrink-0 text-stone-500" />
                   <span className="flex-1 text-xs font-mono text-stone-800 truncate">{modelId}</span>
-                  {(info?.capability_labels || [info?.capability_label || "Chat"]).map((label: string) => {
+                  {(info?.capability_labels || ["Chat"]).map((label: string) => {
                     const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
                     return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                   })}
@@ -282,11 +282,10 @@ export default function CombosPage() {
                       >
                         <CapIcon className="size-3 shrink-0 text-stone-500" />
                         <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
-                        {(m.capability_labels || [m.capability_label || "Chat"]).map((label: string) => {
+                        {(m.capability_labels || ["Chat"]).map((label: string) => {
                           const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
                           return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
                         })}
-                        </span>
                         <span className="text-[10px] text-stone-600">{m.owned_by}</span>
                       </button>
                     );
@@ -361,7 +360,7 @@ export default function CombosPage() {
                       )}>
                         {modelId}
                       </span>
-                      {(info?.capability_labels || [info?.capability_label || "Chat"]).map((label: string) => {
+                      {(info?.capability_labels || ["Chat"]).map((label: string) => {
                         const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
                         return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                       })}

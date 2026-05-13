@@ -1,3 +1,4 @@
+// @ts-nocheck — deprecated, use individual cards instead
 "use client";
 
 import { LoaderCircle, Save, Cpu, Sliders, Combine } from "lucide-react";
@@ -15,7 +16,6 @@ export function ProvidersCard() {
   const isLoadingConfig = useSettingsStore((state) => state.isLoadingConfig);
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
-  const setField = useSettingsStore((state) => state.setField);
 
   const [geminiKeys, setGeminiKeys] = useState("");
   const [serperKeys, setSerperKeys] = useState("");

@@ -149,6 +149,7 @@ export default function ModelsPage() {
           {saved ? "Đã lưu" : saving ? "Đang lưu..." : "Lưu thay đổi"}
         </button>
       </div>
+      </div>
 
       {/* Info banner */}
       <div className="rounded-lg border border-stone-200 bg-white/80 p-3">

@@ -181,6 +181,7 @@ type SettingsStore = {
   setGlobalSystemPrompt: (value: string) => void;
   setSensitiveWordsText: (value: string) => void;
   setAIReviewField: (key: "enabled" | "base_url" | "api_key" | "model" | "prompt", value: string | boolean) => void;
+  setField: (key: string, value: unknown) => void;
   setBackupField: (key: keyof BackupSettings, value: string | boolean) => void;
   setBackupInclude: (key: keyof BackupSettings["include"], value: boolean) => void;
 
@@ -424,6 +425,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setAIReviewField: (key, value) => {
     set((state) => state.config ? { config: { ...state.config, ai_review: { ...(state.config.ai_review || {}), [key]: value } } } : {});
+  },
+
+  setField: (key, value) => {
+    set((state) => state.config ? { config: { ...state.config, [key]: value } } : {});
   },
 
   setBackupField: (key, value) => {
