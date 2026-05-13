@@ -43,7 +43,7 @@ export function GeminiCard() {
         api_keys: keyList,
         model: geminiModel,
       };
-      await request.post("/api/settings", { ...config, providers, search: { ...(config.search || {}), enabled: true, backend: "gemini" } });
+      await request.post("/api/settings", { providers });
       toast.success("Đã lưu!");
     } catch (e: any) { toast.error(e?.message || "Lỗi lưu"); }
     finally { setSaving(false); }

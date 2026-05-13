@@ -32,6 +32,7 @@ export function NvidiaNimCard() {
     setSaving(true);
     try {
       const keyList = apiKey.split("\n").map(k => k.trim()).filter(Boolean);
+      // Fetch current providers to merge with
       const cfg = await request.get("/api/settings");
       const config = (cfg.data as any)?.config || {};
       const providers = { ...(config.providers || {}) };
@@ -40,7 +41,8 @@ export function NvidiaNimCard() {
         api_key: keyList[0] || "",
         api_keys: keyList,
       };
-      await request.post("/api/settings", { ...config, providers });
+      // Only send providers — avoid overwriting other settings
+      await request.post("/api/settings", { providers });
       toast.success("Đã lưu NVIDIA NIM!");
     } catch (e: any) { toast.error(e?.message || "Lỗi lưu"); }
     finally { setSaving(false); }
