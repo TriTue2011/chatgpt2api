@@ -33,8 +33,18 @@ IMAGE_ADAPTERS: dict[str, BaseImageAdapter] = {
 
 
 def get_image_adapter(provider: str) -> BaseImageAdapter | None:
-    """Look up an image adapter by provider key."""
-    return IMAGE_ADAPTERS.get(provider)
+    """Look up an image adapter by provider key.
+
+    For custom providers (custom: prefix), returns a generic adapter
+    that uses the chat completions endpoint for image generation.
+    """
+    if provider in IMAGE_ADAPTERS:
+        return IMAGE_ADAPTERS[provider]
+    if provider.startswith("custom:"):
+        from services.image_providers.custom_openai_image import CustomOpenAIImageAdapter
+        cp_id = provider[len("custom:"):]
+        return CustomOpenAIImageAdapter(cp_id)
+    return None
 
 
 def is_image_provider(provider: str) -> bool:
