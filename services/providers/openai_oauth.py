@@ -130,6 +130,37 @@ def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[st
     if instructions and instructions.strip():
         body["instructions"] = instructions.strip()
 
+    # ── Search result handling ──
+    # If the last user message contains search results, move them to instructions
+    # so Codex treats them as high-priority context (not just user text).
+    search_prefixes = [
+        "Dưới đây là kết quả tìm kiếm",
+        "Dưới đây là kết quả Google",
+        "Kết quả tìm kiếm:",
+        "Here are the search results",
+        "Search results:",
+    ]
+    for i in range(len(input_items) - 1, -1, -1):
+        item = input_items[i]
+        if item.get("role") != "user":
+            continue
+        content = item.get("content", "")
+        if isinstance(content, str):
+            for prefix in search_prefixes:
+                if prefix in content:
+                    # Move search results to instructions
+                    search_instruction = (
+                        "QUAN TRỌNG: Dưới đây là kết quả tìm kiếm thực tế. "
+                        "Bạn PHẢI trả lời dựa trên các thông tin này, trích dẫn số liệu cụ thể. "
+                        "Không được nói 'tôi không có thông tin thực tế' hoặc hỏi lại người dùng.\n\n"
+                        + content
+                    )
+                    body["instructions"] = (body.get("instructions", "") + "\n\n" + search_instruction).strip()
+                    # Replace the user message with a short summary
+                    input_items[i] = {"role": "user", "content": "Hãy trả lời dựa trên thông tin tìm kiếm được cung cấp."}
+                    break
+        break  # Only check the last user message
+
     if tools:
         body["tools"] = [{
             "type": "function",
