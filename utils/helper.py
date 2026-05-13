@@ -40,6 +40,10 @@ _IMAGE_GEN_PROVIDER_PREFIXES = {
 # Providers where specific models support vision (multimodal)
 # KEEP EMPTY — models are primarily CHAT, only tag vision if name has keywords
 _VISION_PROVIDER_PREFIXES: set[str] = set()
+# Custom providers that support image generation
+_IMAGE_GEN_CUSTOM_PROVIDERS = {
+    "geminiapi",     # Gemini API server — supports image gen via /v1/responses
+}
 # Custom providers that are Gemini-based → all models support vision
 _VISION_CUSTOM_PROVIDERS: set[str] = set()
 # Individual model keywords for vision (used for nv/ and other providers)
@@ -84,6 +88,11 @@ def classify_model_capability(model_id: str) -> list[str]:
     if not is_image:
         for kw in _IMAGE_GEN_KEYWORDS:
             if kw in mid:
+                caps.append("image")
+                break
+    if not is_image:
+        for cp_prefix in _IMAGE_GEN_CUSTOM_PROVIDERS:
+            if mid.startswith(f"{cp_prefix}/"):
                 caps.append("image")
                 break
 
