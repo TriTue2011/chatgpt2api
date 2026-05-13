@@ -488,8 +488,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
 
                 # Also always allow special models: combos, image models, auto variants
                 always_allow = {
-                    "ha-agent", "chatgpt/auto", "cx/auto", "oc/auto",
-                    "gemini_free/auto",
+                    "cx/auto", "oc/auto", "chatgpt/auto", "gemini_free/auto",
                 }
                 all_enabled |= always_allow
 
