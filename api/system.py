@@ -607,54 +607,25 @@ def create_router(app_version: str) -> APIRouter:
         }
 
     @router.get("/api/v1/available-models")
-    async def get_available_models(authorization: str | None = Header(default=None)):
-        """Lấy toàn bộ model có sẵn từ tất cả provider API (không filter)."""
+    async def get_available_models(authorization: str | None = Header(default=None), refresh: str = ""):
+        """Lấy toàn bộ model có sẵn từ cache (nhanh). Thêm ?refresh=true để tải lại."""
         require_admin(authorization)
-        from services.protocol.openai_v1_models import (
-            _fetch_chatgpt_token_models,
-            _fetch_gemini_models,
-            _fetch_opencode_models,
-            _fetch_openrouter_models,
-            _fetch_nvidia_models,
-            _apply_fallback,
-        )
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        provider_fetchers = {
-            "chatgpt": _fetch_chatgpt_token_models,
-            "gemini_free": _fetch_gemini_models,
-            "opencode": _fetch_opencode_models,
-            "openrouter": _fetch_openrouter_models,
-            "nvidia_nim": _fetch_nvidia_models,
-        }
-
-        # Add custom providers
-        from services.providers.custom_openai import get_custom_providers, CustomOpenAIProvider
-        for cp_id, cp_cfg in get_custom_providers().items():
-            def make_fetcher(cfg=cp_cfg):
-                provider = CustomOpenAIProvider(cfg)
-                def fetcher():
-                    return {str(m.get("id") or "").strip() for m in provider.list_models() if str(m.get("id") or "").strip()}
-                return fetcher
-            provider_fetchers[f"custom:{cp_id}"] = make_fetcher()
-
-        all_models: dict[str, list[str]] = {}
-        with ThreadPoolExecutor(max_workers=len(provider_fetchers)) as executor:
-            futures = {executor.submit(fetcher): name for name, fetcher in provider_fetchers.items()}
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    models = future.result()
-                    if models:
-                        all_models[name] = sorted(models)
-                except Exception:
-                    pass
-
-        for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "chatgpt2api"]:
-            if provider_name not in all_models:
-                all_models[provider_name] = sorted(_apply_fallback(provider_name))
-
-        return {"providers": all_models}
+        from services.protocol.openai_v1_models import list_models
+        force = refresh.lower() == "true"
+        result = list_models(force_refresh=force)
+        # Group models by owned_by
+        grouped: dict[str, list[str]] = {}
+        for item in result.get("data", []):
+            owner = str(item.get("owned_by") or "chatgpt")
+            mid = str(item.get("id") or "").strip()
+            if mid:
+                if owner not in grouped:
+                    grouped[owner] = []
+                grouped[owner].append(mid)
+        # Sort each group
+        for owner in grouped:
+            grouped[owner].sort()
+        return {"providers": grouped}
 
     @router.get("/api/v1/models-with-capabilities")
     async def get_models_with_capabilities(authorization: str | None = Header(default=None)):

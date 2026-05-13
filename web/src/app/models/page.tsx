@@ -28,16 +28,18 @@ export default function ModelsPage() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(forceRefresh = false) {
+    if (forceRefresh) setRefreshing(true); else setLoading(true);
     try {
+      const params = forceRefresh ? "?refresh=true" : "";
       const [availRes, settingsRes] = await Promise.all([
-        request.get("/api/v1/available-models"),
+        request.get(`/api/v1/available-models${params}`),
         request.get("/api/v1/model-settings"),
       ]);
       setAvailable((availRes.data as any)?.providers || {});
@@ -46,6 +48,7 @@ export default function ModelsPage() {
       console.error("Failed to load model data", e);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -114,21 +117,31 @@ export default function ModelsPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Quản lý Model</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Quản lý Model</h1>
           <p className="mt-1 text-sm text-stone-500">
             Chọn model hiển thị cho Home Assistant. Model không được chọn sẽ bị ẩn khỏi /v1/models.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={save}
-          disabled={!dirty || saving}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition",
-            saved
-              ? "bg-emerald-600 text-white"
-              : dirty
-                ? "bg-stone-900 text-white hover:bg-stone-200"
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs text-stone-600 hover:bg-stone-100 transition disabled:opacity-50"
+          >
+            <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+            {refreshing ? "Đang tải..." : "Làm mới"}
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!dirty || saving}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition",
+              saved
+                ? "bg-emerald-600 text-white"
+                : dirty
+                  ? "bg-stone-900 text-white hover:bg-stone-800"
                 : "bg-stone-100 text-stone-500 cursor-not-allowed",
           )}
         >
