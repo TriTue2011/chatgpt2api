@@ -38,9 +38,7 @@ FALLBACK_MODELS = {
         "nv-image/stabilityai/stable-diffusion-3-medium",
         "nv-image/stabilityai/stable-diffusion-xl",
     ],
-    "chatgpt2api": [
-        "chatgpt/auto",
-    ],
+    "chatgpt2api": [],
 }
 
 GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"

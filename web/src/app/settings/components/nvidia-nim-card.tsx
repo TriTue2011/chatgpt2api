@@ -77,7 +77,7 @@ export function NvidiaNimCard() {
         </div>
 
         <div className="flex justify-end">
-          <Button className="h-10 rounded-xl bg-stone-100 px-5 text-white hover:bg-stone-100"
+          <Button className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
             onClick={() => void save()} disabled={saving}>
             {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
             Lưu

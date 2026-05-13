@@ -156,7 +156,7 @@ export default function CombosPage() {
             className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 transition"
           >
             <Save className="size-4" />
-            Lưu tất cả
+            Lưu
           </button>
         </div>
         <p className="mt-1 text-sm text-stone-500">
