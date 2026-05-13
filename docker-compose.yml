@@ -30,7 +30,8 @@ services:
 
     volumes:
       # Dữ liệu persistent: accounts, config, models cache, ảnh, backup, logs
-      - chatgpt2api_data:/app/data
+      # Dùng bind mount đến thư mục thật trên host → không bao giờ mất khi build lại
+      - ./chatgpt2api-data:/app/data
 
     environment:
       # [BẮT BUỘC] Auth key bảo vệ API
@@ -53,6 +54,4 @@ services:
       retries: 3
       start_period: 15s
 
-volumes:
-  chatgpt2api_data:
-    name: chatgpt2api_data
+# Không cần khai báo volumes ở cuối nữa — dùng bind mount ./chatgpt2api-data

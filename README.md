@@ -71,17 +71,14 @@ services:
     ports:
       - "3030:80"
     volumes:
-      # [QUAN TRỌNG] Volume này lưu toàn bộ dữ liệu — API keys, accounts, cài đặt
-      - chatgpt2api_data:/app/data
+      # [QUAN TRỌNG] Bind mount → thư mục thật trên host, không bao giờ mất khi build lại
+      - ./chatgpt2api-data:/app/data
     environment:
       # [BẮT BUỘC] Đổi thành key bảo mật của bạn
       CHATGPT2API_AUTH_KEY: your_secret_key_here
       STORAGE_BACKEND: json
 
-volumes:
-  chatgpt2api_data:
-    # Đặt tên cố định để không bị mất khi docker compose down
-    name: chatgpt2api_data
+# Không cần khai báo volumes ở cuối nếu dùng bind mount
 ```
 
 **Portainer:** Stacks → Add Stack → Web Editor → paste nội dung trên → Deploy.
@@ -93,16 +90,7 @@ docker compose pull
 docker compose up -d
 ```
 
-Volume có tên cố định `chatgpt2api_data` → **API keys, accounts, cài đặt không bị mất** khi pull image mới.
-
-> **Cảnh báo**: KHÔNG dùng `docker compose down -v` vì `-v` sẽ xóa volume → mất hết dữ liệu. Nếu cần xóa container để làm lại, dùng `docker compose down` (không có `-v`).
-
-### Kiểm tra dữ liệu đã lưu
-
-```bash
-# Xem config đã lưu (bao gồm API keys)
-docker exec chatgpt2api cat /app/data/config.json | grep -o '"nvidia_nim":{[^}]*}' 
-```
+Dữ liệu trong `./chatgpt2api-data/` (thư mục thật trên host) **không bao giờ mất** khi pull image mới.
 
 ---
 
