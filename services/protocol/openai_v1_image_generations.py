@@ -24,7 +24,8 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
     """Handle image generation through an adapter (sdwebui, huggingface, etc.)."""
     adapter = get_image_adapter(route.provider)
     if not adapter:
-        raise RuntimeError(f"No image adapter for provider: {route.provider}")
+        # Custom providers don't have image adapters — raise to trigger combo fallback
+        raise RuntimeError(f"Provider '{route.provider}' does not support image generation")
 
     prompt = str(body.get("prompt") or "")
     n = max(1, min(4, int(body.get("n") or 1)))
@@ -150,7 +151,8 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         last_error = ""
         for route in routes:
             try:
-                if route.is_image or route.provider == "chatgpt":
+                # Try all models in combo: image models + custom providers (may support image gen)
+                if route.is_image or route.provider == "chatgpt" or route.provider.startswith("custom:"):
                     return _handle_single_image(route, body)
             except Exception as exc:
                 last_error = str(exc)
@@ -178,7 +180,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
     stream = bool(body.get("stream"))
 
     # If routed to a non-ChatGPT image provider, use adapter
-    if route.provider != "chatgpt" and route.is_image:
+    if route.provider != "chatgpt" and (route.is_image or route.provider.startswith("custom:")):
         logger.info({
             "event": "image_routed_to_adapter",
             "provider": route.provider,
@@ -192,11 +194,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
                 "provider": route.provider,
                 "error": str(exc),
             })
-            # Fallback to ChatGPT DALL-E if adapter fails
-            if route.fallback_providers and "chatgpt" in route.fallback_providers:
-                logger.info({"event": "image_fallback_to_chatgpt"})
-            else:
-                raise
+            raise  # Re-raise to trigger combo fallback
 
     # Default: use existing ChatGPT DALL-E flow (unchanged)
     outputs = stream_image_outputs_with_pool(ConversationRequest(
