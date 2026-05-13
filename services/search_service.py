@@ -232,15 +232,13 @@ class GeminiGrounding(SearchBackend):
                 timeout=30,
             )
 
-            if resp.status_code == 429:
+            if resp.status_code in (429, 403):
                 self._mark_limited(api_key)
-                # Thử key tiếp theo chưa bị giới hạn
                 now = time.time()
                 available = [k for k in self._get_keys() if self._rate_limited.get(k, 0) < now]
                 if available:
                     return self.search(query, max_results)
-                # Hết key → trả rỗng để combo thử backend khác
-                logger.warning({"event": "gemini_all_keys_rate_limited"})
+                logger.warning({"event": "gemini_all_keys_blocked", "status": resp.status_code})
                 return []
 
             if resp.status_code != 200:
