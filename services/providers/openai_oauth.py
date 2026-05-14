@@ -391,7 +391,7 @@ class CodexOAuthProvider:
         }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
-        """Get next available token from account pool (any type)."""
+        """Get next available Codex OAuth token (JWT only — not web session tokens)."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
             candidates = [
@@ -400,9 +400,11 @@ class CodexOAuthProvider:
                 if item.get("status") not in {"禁用", "异常"}
                 and (token := item.get("access_token") or "")
                 and token not in excluded
+                # Only use Codex OAuth tokens (JWT starting with eyJ)
+                and token.startswith("eyJ")
             ]
             if not candidates:
-                raise RuntimeError("No tokens available. Add tokens via Web UI or import 9router backup.")
+                raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
             token = candidates[account_service._index % len(candidates)]
             account_service._index += 1
             return token
