@@ -29,7 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createAccounts, createOAuthAccounts, type Account } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type ImportMethod = "menu" | "token" | "session" | "cpa" | "oauth";
+type ImportMethod = "menu" | "token" | "session" | "cpa" | "oauth" | "oauth_flow";
 
 type AccountImportDialogProps = {
   disabled?: boolean;
@@ -108,6 +108,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
   const [method, setMethod] = useState<ImportMethod>("menu");
   const [tokenInput, setTokenInput] = useState("");
   const [sessionInput, setSessionInput] = useState("");
+  const [oauthRedirectUrl, setOauthRedirectUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingCpaImport, setPendingCpaImport] = useState<PendingCpaImport | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -485,6 +486,63 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
       );
     }
 
+    if (method === "oauth_flow") {
+      return (
+        <div className="space-y-4">
+          <button type="button" onClick={() => setMethod("menu")}
+            className="inline-flex items-center gap-1 text-sm text-stone-500 transition hover:text-stone-800">
+            <ArrowLeft className="size-4" /> Quay lại
+          </button>
+
+          <div className="rounded-2xl border border-stone-200 bg-stone-100 p-4">
+            <div className="mb-2 text-sm font-medium">Bước 1: Đăng nhập OpenAI</div>
+            <p className="text-sm text-stone-600 mb-3">Nhấn nút để mở trang đăng nhập OpenAI. Sau khi đăng nhập, trình duyệt sẽ chuyển hướng đến localhost (có thể báo lỗi "không thể kết nối").</p>
+            <Button variant="outline" className="bg-white"
+              onClick={async () => {
+                try {
+                  const { request: req } = await import("@/lib/request");
+                  const data = await req.get("/api/oauth/codex/start");
+                  const url = (data.data as any)?.auth_url;
+                  if (url) window.open(url, "_blank", "width=600,height=700");
+                  else toast.error("Không thể tạo URL OAuth");
+                } catch (e) { toast.error("Lỗi tạo OAuth URL"); }
+              }}>
+              Mở trang Đăng nhập OpenAI
+            </Button>
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-stone-100 p-4">
+            <div className="mb-2 text-sm font-medium">Bước 2: Dán URL callback</div>
+            <p className="text-sm text-stone-600 mb-3">Sau khi đăng nhập, copy TOÀN Bộ URL trên thanh địa chỉ (bắt đầu bằng http://localhost:3030...) và dán vào đây:</p>
+            <Textarea
+              placeholder="http://localhost:3030/auth/callback?code=..."
+              value={oauthRedirectUrl}
+              onChange={(e) => setOauthRedirectUrl(e.target.value)}
+              className="min-h-24 resize-none rounded-xl border-stone-300 font-mono text-xs mb-3"
+            />
+            <Button className="w-full bg-stone-900 text-white hover:bg-stone-800"
+              disabled={!oauthRedirectUrl || isSubmitting}
+              onClick={async () => {
+                setIsSubmitting(true);
+                try {
+                  const { request: req } = await import("@/lib/request");
+                  await req.post("/api/oauth/codex/exchange", { redirect_url: oauthRedirectUrl });
+                  toast.success("Đăng nhập thành công! Token đã được thêm.");
+                  setOpen(false);
+                  resetState();
+                  onImported([]);
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Xác thực thất bại");
+                } finally { setIsSubmitting(false); }
+              }}>
+              {isSubmitting ? <LoaderCircle className="mr-2 size-4 animate-spin" /> : null}
+              Xác nhận và Lưu Token
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
         <MethodCard
@@ -523,17 +581,9 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
         />
         <MethodCard
           title="Đăng nhập Codex OAuth"
-          description="Mở trang OpenAI để đăng nhập và lấy token OAuth tự động."
+          description="Đăng nhập bằng tài khoản OpenAI để lấy token OAuth (hỗ trợ Docker/Server)."
           icon={KeyRound}
-          onClick={async () => {
-            try {
-              const { request: req } = await import("@/lib/request");
-              const data = await req.get("/api/oauth/codex/start");
-              const url = (data.data as any)?.auth_url;
-              if (url) window.open(url, "_blank", "width=600,height=700");
-              else toast.error("Không thể tạo URL OAuth");
-            } catch (e) { toast.error("Lỗi tạo OAuth URL"); }
-          }}
+          onClick={() => setMethod("oauth_flow")}
         />
         <MethodCard
           title="Lấy token tạo ảnh"
