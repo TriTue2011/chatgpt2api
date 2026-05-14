@@ -353,10 +353,10 @@ function AccountsPageContent() {
     <>
       <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-1">
-          <div className="text-xs font-semibold tracking-[0.18em] text-stone-500 uppercase">
+          <div className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase">
             Account Pool
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-900">Quản lý tài khoản</h1>
+          <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Quản lý tài khoản</h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -459,19 +459,29 @@ function AccountsPageContent() {
             const Icon = item.icon;
             const value = summary[item.key];
             return (
-              <Card key={item.key} className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
-                <CardContent className="p-4">
-                  <div className="mb-4 flex items-start justify-between">
-                    <span className="text-xs font-medium text-stone-500">{item.label}</span>
-                    <Icon className="size-4 text-stone-500" />
+              <div
+                key={item.key}
+                className={cn(
+                  "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5",
+                  "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+                  "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+                )}
+              >
+                {/* Top gradient line */}
+                <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-[13px] font-semibold text-slate-500">{item.label}</span>
+                  <div className="flex size-9 items-center justify-center rounded-[10px] bg-slate-50">
+                    <Icon className="size-[18px] text-slate-400" />
                   </div>
-                  <div className={cn("text-[1.75rem] font-semibold tracking-tight", item.color)}>
-                    <span className={typeof value === "number" ? "" : "text-[1.1rem]"}>
-                      {typeof value === "number" ? formatCompact(value) : value}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+                <div className={cn("text-[26px] font-bold tracking-tight leading-none", item.color)}>
+                  <span className={typeof value === "number" ? "" : "text-[16px]"}>
+                    {typeof value === "number" ? formatCompact(value) : value}
+                  </span>
+                </div>
+              </div>
             );
           })}
         </div>
@@ -552,14 +562,15 @@ function AccountsPageContent() {
           </Card>
         ) : null}
 
-        <Card
+        <div
           className={cn(
-            "overflow-hidden rounded-2xl border-stone-200 bg-white/90 shadow-sm",
+            "overflow-hidden rounded-[16px] border border-black/[0.04] bg-white",
+            "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
             isLoading && accounts.length === 0 ? "hidden" : "",
           )}
         >
-          <CardContent className="space-y-0 p-0">
-            <div className="flex flex-col gap-3 border-b border-stone-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-0 p-0">
+            <div className="flex flex-col gap-3 border-b border-black/[0.04] bg-slate-50/50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
                 <Button
                   variant="ghost"
@@ -598,7 +609,7 @@ function AccountsPageContent() {
 
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] text-left">
-                <thead className="border-b border-stone-200 text-[11px] text-stone-500 uppercase tracking-[0.18em]">
+                <thead className="border-b border-black/[0.04] bg-slate-50/30 text-[11.5px] font-semibold text-slate-500 uppercase tracking-wider">
                   <tr>
                     <th className="w-12 px-4 py-3">
                       <Checkbox
@@ -625,9 +636,9 @@ function AccountsPageContent() {
                     return (
                       <tr
                         key={account.access_token}
-                        className="border-b border-stone-200/80 text-sm text-stone-600 transition-colors hover:bg-stone-800/70"
+                        className="border-b border-black/[0.02] text-[13.5px] text-slate-600 transition-colors hover:bg-slate-50/80"
                       >
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3.5">
                           <Checkbox
                             checked={selectedIds.includes(account.access_token)}
                             onCheckedChange={(checked) => {
@@ -738,7 +749,7 @@ function AccountsPageContent() {
               ) : null}
             </div>
 
-            <div className="border-t border-stone-200 px-4 py-4">
+            <div className="border-t border-black/[0.04] bg-slate-50/30 px-5 py-4">
               <div className="flex items-center justify-center gap-3 overflow-x-auto whitespace-nowrap">
                 <div className="shrink-0 text-sm text-stone-500">
                 Hiển thị {filteredAccounts.length === 0 ? 0 : startIndex + 1} -{" "}
@@ -807,8 +818,8 @@ function AccountsPageContent() {
                 </Button>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </section>
     </>
   );

@@ -141,37 +141,37 @@ export default function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-stone-900">Cấu hình tìm kiếm</h1>
-        <p className="mt-1 text-sm text-stone-500">
-          Khi dùng model không có search built-in (cx/, oc/...), hệ thống sẽ tự tìm kiếm. Combo: thử lần lượt, backend trước lỗi → backend sau. Có thể dùng custom provider để search.
+      <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
+        <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Cấu hình tìm kiếm</h1>
+        <p className="text-[14px] text-slate-500">
+          Khi dùng model không có search built-in (cx/, oc/...), hệ thống sẽ tự tìm kiếm. Combo: thử lần lượt, backend trước lỗi → backend sau.
         </p>
       </div>
 
       {/* Enable */}
-      <div className="rounded-2xl border border-stone-200 bg-white p-5">
+      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
         <label className="flex items-center gap-3 cursor-pointer">
           <input type="checkbox" checked={config.enabled !== false}
             onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
-            className="size-4 accent-stone-400" />
+            className="size-4 accent-indigo-500" />
           <div>
-            <span className="text-sm font-medium text-stone-900">Bật tìm kiếm tự động</span>
-            <p className="text-xs text-stone-500">Tự động phát hiện câu hỏi cần tìm kiếm và bổ sung kết quả</p>
+            <span className="text-[14px] font-semibold text-slate-900">Bật tìm kiếm tự động</span>
+            <p className="text-[13px] text-slate-500">Tự động phát hiện câu hỏi cần tìm kiếm và bổ sung kết quả</p>
           </div>
         </label>
       </div>
 
       {/* Gemini API Key */}
-      <div className="rounded-2xl border border-stone-200 bg-white p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-3">Gemini API Key</h3>
+      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+        <h3 className="text-[15px] font-bold text-slate-900 mb-3">Gemini API Key</h3>
         <input type="text" value={geminiKey}
           onChange={(e) => setGeminiKey(e.target.value)}
           placeholder="AIzaSy... (lấy tại aistudio.google.com/apikey)"
-          className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-500 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-300" />
-        <div className="flex items-center gap-3 mt-2">
-          <label className="text-xs text-stone-500 w-16">Model:</label>
+          className="w-full rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13.5px] text-slate-900 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-300" />
+        <div className="flex items-center gap-3 mt-3">
+          <label className="text-[13px] text-slate-500 w-16">Model:</label>
           <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
-            className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs text-stone-900 focus:border-stone-500 focus:outline-none">
+            className="rounded-[10px] border border-slate-200 bg-slate-50 px-2 py-1.5 text-[13px] text-slate-900 focus:border-indigo-400 focus:outline-none">
             <option value="gemini-3-flash-preview">gemini-3-flash-preview (Preview)</option>
             <option value="gemini-2.5-flash">gemini-2.5-flash (Stable)</option>
             <option value="gemini-2.0-flash">gemini-2.0-flash (Stable)</option>
@@ -180,8 +180,8 @@ export default function SearchPage() {
       </div>
 
       {/* Search Combo */}
-      <div className="rounded-2xl border border-stone-200 bg-white p-5">
-        <h3 className="text-sm font-semibold text-stone-900 mb-4">
+      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+        <h3 className="text-[15px] font-bold text-slate-900 mb-3">
           Thứ tự tìm kiếm (Combo)
         </h3>
         <p className="text-xs text-stone-500 mb-4">
@@ -263,7 +263,7 @@ export default function SearchPage() {
       <div className="flex justify-end gap-3">
         {msg && <span className={cn("text-sm", msg.startsWith("Lỗi") ? "text-red-500" : "text-emerald-600")}>{msg}</span>}
         <button type="button" onClick={save} disabled={saving}
-          className="rounded-xl bg-stone-900 px-6 py-2.5 text-sm font-medium text-white hover:bg-stone-800 disabled:opacity-50">
+          className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
           {saving ? "Đang lưu..." : "Lưu cài đặt"}
         </button>
       </div>

@@ -112,8 +112,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* Nav Items */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {visibleItems.map((item) => {
           const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
           const Icon = item.icon;
@@ -122,17 +121,22 @@ export function Sidebar() {
               key={item.href}
               href={item.href}
               className={cn(
-                "relative flex items-center gap-3 rounded-md px-3 py-2.5 text-[13.5px] font-medium transition-all duration-200",
+                "relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-all duration-200",
                 active
-                  ? "bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-indigo-300 border border-indigo-500/20"
-                  : "text-[#8b949e] hover:bg-white/5 hover:text-[#f0f6fc]"
+                  ? "bg-gradient-to-r from-indigo-500/20 to-violet-500/10 text-indigo-300 shadow-[inset_0_0_0_1px_rgba(99,102,241,0.2)]"
+                  : "text-[#8b949e] hover:bg-white/5 hover:text-[#f0f6fc] hover:translate-x-0.5"
               )}
               title={collapsed ? item.label : undefined}
             >
               {active && (
-                <div className="absolute left-0 top-1/2 h-[60%] w-[3px] -translate-y-1/2 rounded-r-[3px] bg-gradient-to-br from-indigo-500 to-violet-500" />
+                <div className="absolute left-0 top-1/2 h-[55%] w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500" />
               )}
-              <Icon className={cn("size-[18px] shrink-0", active && "text-indigo-400")} />
+              <div className={cn(
+                "flex size-[30px] shrink-0 items-center justify-center rounded-[10px] transition-all duration-200",
+                active ? "bg-indigo-500/20" : "group-hover:bg-white/5"
+              )}>
+                <Icon className={cn("size-[17px] shrink-0", active ? "text-indigo-400" : "text-[#8b949e]")} />
+              </div>
               {!collapsed && <span className="truncate">{item.label}</span>}
             </Link>
           );

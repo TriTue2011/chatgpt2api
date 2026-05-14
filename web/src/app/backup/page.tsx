@@ -135,10 +135,10 @@ export default function BackupPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Sao lưu & Phục hồi</h1>
-          <p className="mt-1 text-sm text-stone-500">
+      <div className="flex items-start justify-between border-b border-black/[0.04] pb-5">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Sao lưu &amp; Phục hồi</h1>
+          <p className="text-[14px] text-slate-500">
             Sao lưu toàn bộ state (tài khoản, config, provider, combo) ra file JSON
           </p>
         </div>
@@ -146,7 +146,7 @@ export default function BackupPage() {
           type="button"
           onClick={createBackup}
           disabled={creating}
-          className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-stone-800 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-[12px] bg-slate-900 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
         >
           {creating ? <RefreshCw className="size-4 animate-spin" /> : <Download className="size-4" />}
           {creating ? "Đang tạo..." : "Tạo sao lưu mới"}
@@ -163,10 +163,12 @@ export default function BackupPage() {
       )}
 
       {/* Import từ 9router */}
-      <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
+      <div className="rounded-[16px] border border-amber-200/60 bg-gradient-to-br from-amber-50 to-orange-50/40 p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
         <div className="flex items-center gap-2 mb-3">
-          <ArrowLeftRight className="size-5 text-amber-600" />
-          <h3 className="text-sm font-semibold text-stone-900">Import từ 9router</h3>
+          <div className="flex size-9 items-center justify-center rounded-[10px] bg-amber-100">
+            <ArrowLeftRight className="size-[18px] text-amber-600" />
+          </div>
+          <h3 className="text-[15px] font-bold text-slate-900">Import từ 9router</h3>
         </div>
         <p className="text-xs text-stone-500 mb-3">
           Nhập file backup từ 9router để lấy token Codex OAuth. Token được thêm vào cả pool chat (cx/) và pool ảnh.
@@ -224,13 +226,19 @@ export default function BackupPage() {
           {backups.map((backup) => (
             <div
               key={backup.filename}
-              className="flex items-center justify-between rounded-xl border border-stone-200 bg-white px-5 py-4"
+              className={cn(
+                "flex items-center justify-between rounded-[14px] border border-black/[0.04] bg-white px-5 py-4",
+                "shadow-[0_1px_3px_rgba(0,0,0,0.04),0_2px_8px_rgba(0,0,0,0.03)]",
+                "transition-all hover:shadow-[0_2px_8px_rgba(99,102,241,0.10)]"
+              )}
             >
               <div className="flex items-center gap-4">
-                <Archive className="size-5 text-stone-500" />
+                <div className="flex size-10 items-center justify-center rounded-[10px] bg-indigo-50">
+                  <Archive className="size-[18px] text-indigo-500" />
+                </div>
                 <div>
-                  <p className="text-sm font-medium">{backup.filename}</p>
-                  <p className="text-xs text-stone-500">
+                  <p className="text-[14px] font-semibold text-slate-900">{backup.filename}</p>
+                  <p className="text-[12px] text-slate-500">
                     {formatSize(backup.size_bytes)} · {formatDate(backup.created_at)}
                   </p>
                 </div>
@@ -238,7 +246,7 @@ export default function BackupPage() {
               <button
                 type="button"
                 onClick={() => deleteBackup(backup.filename)}
-                className="rounded-md p-2 text-stone-500 transition hover:bg-red-50 hover:text-red-500"
+                className="rounded-[10px] p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
                 title="Xóa"
               >
                 <Trash2 className="size-4" />

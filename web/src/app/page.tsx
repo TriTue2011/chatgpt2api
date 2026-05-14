@@ -82,9 +82,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-white">Bảng điều khiển</h1>
-        <p className="mt-1 text-sm text-stone-500">
+      <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
+        <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Bảng điều khiển</h1>
+        <p className="text-[14px] text-slate-500">
           Tổng quan hệ thống chatgpt2api v{health?.version || "..."}
         </p>
       </div>
@@ -96,16 +96,25 @@ export default function DashboardPage() {
           return (
             <div
               key={card.label}
-              className="rounded-xl border border-stone-200 bg-white/80 p-5"
+              className={cn(
+                "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5 md:p-6",
+                "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+                "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+              )}
             >
-              <div className="mb-3 flex items-center gap-2">
-                <div className={cn("rounded-lg p-2", card.bg)}>
-                  <Icon className={cn("size-4", card.color)} />
+              {/* Top gradient line */}
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[13px] font-semibold text-slate-500">{card.label}</span>
+                <div className={cn("flex size-10 items-center justify-center rounded-[12px]", card.bg)}>
+                  <Icon className={cn("size-[22px]", card.color)} />
                 </div>
-                <span className="text-xs text-stone-500">{card.label}</span>
               </div>
-              <p className={cn("text-2xl font-bold", card.color)}>{card.value}</p>
-              <p className="mt-1 text-xs text-stone-500">{card.sub}</p>
+              <p className="text-[28px] font-bold tracking-tight text-slate-900 leading-none">{card.value}</p>
+              <p className="mt-2 flex items-center gap-1.5 text-[12px] font-medium text-slate-500">
+                {card.sub}
+              </p>
             </div>
           );
         })}
@@ -124,10 +133,19 @@ export default function DashboardPage() {
           <a
             key={link.href}
             href={link.href}
-            className="rounded-xl border border-stone-200 bg-white/80 p-4 transition hover:border-stone-600 hover:bg-stone-900"
+            className={cn(
+              "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5",
+              "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+              "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]",
+              "hover:border-indigo-500/20"
+            )}
           >
-            <p className="text-sm font-medium text-white">{link.label}</p>
-            <p className="mt-1 text-xs text-stone-500">{link.desc}</p>
+            <div className="flex flex-col h-full justify-center">
+              <p className="text-[15px] font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                {link.label}
+              </p>
+              <p className="mt-1.5 text-[13px] text-slate-500">{link.desc}</p>
+            </div>
           </a>
         ))}
       </div>

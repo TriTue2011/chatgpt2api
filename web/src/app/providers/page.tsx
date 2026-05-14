@@ -70,9 +70,9 @@ export default function ProvidersPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-white">Nhà cung cấp AI</h1>
-        <p className="mt-1 text-sm text-stone-500">
+      <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
+        <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Nhà cung cấp AI</h1>
+        <p className="text-[14px] text-slate-500">
           Quản lý các nhà cung cấp AI bên ngoài — miễn phí và có API key
         </p>
       </div>
@@ -92,14 +92,19 @@ export default function ProvidersPage() {
           return (
             <div
               key={provider.name}
-              className="rounded-xl border border-stone-200 bg-white/80 p-5 transition hover:border-stone-200"
+              className={cn(
+                "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5",
+                "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+                "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+              )}
             >
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="mb-3 flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl">{meta.icon}</span>
                   <div>
-                    <h3 className="font-semibold text-white">{meta.label}</h3>
-                    <p className="text-xs text-stone-500">{meta.desc}</p>
+                    <h3 className="font-semibold text-slate-900">{meta.label}</h3>
+                    <p className="text-xs text-slate-500">{meta.desc}</p>
                   </div>
                 </div>
                 <span

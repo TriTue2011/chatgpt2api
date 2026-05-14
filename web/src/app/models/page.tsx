@@ -149,10 +149,10 @@ export default function ModelsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Quản lý Model</h1>
-          <p className="mt-1 text-sm text-stone-500">
+      <div className="flex items-start justify-between border-b border-black/[0.04] pb-5">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Quản lý Model</h1>
+          <p className="text-[14px] text-slate-500">
             Chọn model hiển thị cho Home Assistant. Model không được chọn sẽ bị ẩn khỏi /v1/models.
           </p>
         </div>
@@ -178,12 +178,12 @@ export default function ModelsPage() {
             onClick={save}
             disabled={!dirty || saving}
             className={cn(
-              "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition",
+              "inline-flex items-center gap-2 rounded-[12px] px-4 py-2 text-[14px] font-medium transition",
               saved
                 ? "bg-emerald-600 text-white"
                 : dirty
-                  ? "bg-stone-900 text-white hover:bg-stone-800"
-                : "bg-stone-100 text-stone-500 cursor-not-allowed",
+                  ? "bg-slate-900 text-white hover:bg-slate-800"
+                : "bg-slate-100 text-slate-500 cursor-not-allowed",
           )}
         >
           {saved ? <Check className="size-4" /> : <Save className="size-4" />}
@@ -225,25 +225,32 @@ export default function ModelsPage() {
           return (
             <div
               key={provider}
-              className="rounded-xl border border-stone-200 bg-white/80 overflow-hidden"
+              className={cn(
+                "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white",
+                "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+                "transition-all duration-300 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+              )}
             >
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               {/* Provider header */}
-              <div className="flex items-center gap-3 px-5 py-3 border-b border-stone-200 bg-stone-900/80">
+              <div className="flex items-center gap-3 px-6 py-4 border-b border-black/[0.04] bg-slate-50/50">
                 <span
-                  className="size-3 rounded-full shrink-0"
+                  className="size-3 rounded-full shrink-0 shadow-sm"
                   style={{ backgroundColor: meta.color }}
                 />
-                <h3 className="font-semibold text-white text-sm">{meta.label}</h3>
-                <span className="text-xs text-stone-500">{models.length} model</span>
+                <h3 className="font-bold text-slate-900 text-[15px]">{meta.label}</h3>
+                <span className="rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[11px] font-medium text-slate-500 shadow-sm">
+                  {models.length} model
+                </span>
                 {defaultModel && (
-                  <span className="ml-auto text-[10px] text-stone-500">
-                    Mặc định: <span className="text-stone-700 font-mono">{defaultModel.replace(provider + "/", "")}</span>
+                  <span className="ml-auto text-[11px] text-slate-500">
+                    Mặc định: <span className="text-slate-900 font-mono font-medium">{defaultModel.replace(provider + "/", "")}</span>
                   </span>
                 )}
               </div>
 
               {/* Model list */}
-              <div className="p-3">
+              <div className="p-5">
                 {/* Core models first */}
                 {coreModels.length > 0 && (
                   <div className="mb-3">

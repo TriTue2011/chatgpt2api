@@ -145,22 +145,22 @@ export default function CombosPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-stone-900">Mô hình kết hợp</h1>
-            {saved && <span className="text-xs text-emerald-600 font-medium">✓ Đã lưu</span>}
+            <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Mô hình kết hợp</h1>
+            {saved && <span className="text-[13px] text-emerald-600 font-medium">✓ Đã lưu</span>}
           </div>
           <button
             type="button"
             onClick={() => saveCombos(combos)}
-            className="inline-flex items-center gap-2 rounded-xl bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800 transition"
+            className="inline-flex items-center gap-2 rounded-[12px] bg-slate-900 px-4 py-2 text-[14px] font-medium text-white hover:bg-slate-800 transition"
           >
             <Save className="size-4" />
             Lưu
           </button>
         </div>
-        <p className="mt-1 text-sm text-stone-500">
+        <p className="text-[14px] text-slate-500">
           Combo model tự động fallback qua nhiều provider theo thứ tự ưu tiên. Chỉ hiển thị model đã bật trong Quản lý Model.
         </p>
       </div>
@@ -179,8 +179,11 @@ export default function CombosPage() {
       </div>
 
       {/* Add new combo */}
-      <div className="rounded-xl border border-stone-200 bg-white/80 p-5">
-        <h3 className="mb-3 text-sm font-semibold text-stone-900">Thêm combo mới</h3>
+      <div className={cn(
+        "rounded-[16px] border border-black/[0.04] bg-white p-6",
+        "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]"
+      )}>
+        <h3 className="mb-4 text-[15px] font-bold text-slate-900">Thêm combo mới</h3>
 
         {/* Combo name */}
         <div className="mb-3">
@@ -320,19 +323,26 @@ export default function CombosPage() {
       ) : (
         <div className="space-y-3">
           {comboEntries.map(([name, models]) => (
-            <div key={name} className="rounded-xl border border-stone-200 bg-white/80 p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Combine className="size-4 text-stone-500" />
-                  <h3 className="font-semibold text-stone-900">{name}</h3>
-                  <span className="rounded-md bg-stone-100 px-2 py-0.5 text-[10px] text-stone-500">
+            <div key={name} className={cn(
+              "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-6",
+              "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
+              "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+            )}>
+              <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-9 items-center justify-center rounded-[10px] bg-slate-50">
+                    <Combine className="size-[18px] text-slate-400" />
+                  </div>
+                  <h3 className="text-[16px] font-bold tracking-tight text-slate-900">{name}</h3>
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
                     {models.length} model
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => removeCombo(name)}
-                  className="rounded-md p-1.5 text-stone-500 transition hover:bg-red-500/10 hover:text-red-400"
+                  className="rounded-[10px] p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-500"
                 >
                   <Trash2 className="size-4" />
                 </button>
