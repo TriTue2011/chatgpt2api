@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { LoaderCircle, PlugZap, Save } from "lucide-react";
 import { useState } from "react";
@@ -59,18 +59,22 @@ export function ConfigCard() {
 
   if (isLoadingConfig) {
     return (
-      <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
-        <CardContent className="flex items-center justify-center p-10">
-          <LoaderCircle className="size-5 animate-spin text-stone-500" />
-        </CardContent>
-      </Card>
+      <div className="rounded-[16px] border border-black/[0.04] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+        <div className="flex items-center justify-center p-10">
+          <LoaderCircle className="size-5 animate-spin text-slate-400" />
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
-      <CardContent className="space-y-4 p-6">
-        <div className="rounded-xl border border-stone-200 bg-stone-100 px-4 py-3 text-sm leading-6 text-stone-600">
+    <div className="rounded-[16px] border border-black/[0.04] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+      <div className="border-b border-black/[0.04] bg-slate-50/50 px-6 py-4">
+        <h2 className="text-[15px] font-bold text-slate-900">Cấu hình hệ thống</h2>
+        <p className="text-[13px] text-slate-500 mt-0.5">Proxy, rate limit, tự động xóa tài khoản và kiểm duyệt AI</p>
+      </div>
+      <div className="space-y-4 p-6">
+        <div className="rounded-[10px] border border-indigo-100 bg-indigo-50/50 px-4 py-3 text-[13px] leading-6 text-indigo-700">
           Mã khóa đăng nhập quản trị viên tiếp tục được đọc từ cấu hình triển khai và không còn hiển thị trên trang này; nếu bạn cần phân phối cho người khác, vui lòng tạo mã khóa người dùng bình thường bên dưới.
         </div>
         <div className="grid gap-4 md:grid-cols-2">
@@ -247,7 +251,7 @@ export function ConfigCard() {
 
         <div className="flex justify-end">
           <Button
-            className="h-10 rounded-xl bg-stone-900 px-5 text-white hover:bg-stone-800"
+            className="h-10 rounded-[12px] bg-indigo-600 px-5 text-white hover:bg-indigo-700 shadow-md shadow-indigo-200"
             onClick={() => void saveConfig()}
             disabled={isSavingConfig}
           >
@@ -255,8 +259,8 @@ export function ConfigCard() {
             Lưu
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 

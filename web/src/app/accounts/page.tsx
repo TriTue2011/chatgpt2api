@@ -76,12 +76,36 @@ const statusMeta: Record<
 };
 
 const metricCards = [
-  { key: "total", label: "Tổng số tài khoản", color: "text-stone-900", icon: UserRound },
-  { key: "active", label: "Hoạt động", color: "text-emerald-600", icon: CheckCircle2 },
-  { key: "limited", label: "Bị giới hạn", color: "text-orange-500", icon: CircleAlert },
-  { key: "abnormal", label: "Bị lỗi", color: "text-rose-500", icon: CircleOff },
-  { key: "disabled", label: "Đã vô hiệu", color: "text-stone-500", icon: Ban },
-  { key: "quota", label: "Hạn mức còn lại", color: "text-blue-500", icon: RefreshCw },
+  {
+    key: "total", label: "Tổng tài khoản", icon: UserRound,
+    gradient: "from-indigo-500 to-blue-600", shadow: "shadow-indigo-200",
+    bg: "from-indigo-50/80 to-blue-50/80", textColor: "text-indigo-900", labelColor: "text-indigo-600",
+  },
+  {
+    key: "active", label: "Hoạt động", icon: CheckCircle2,
+    gradient: "from-emerald-500 to-teal-600", shadow: "shadow-emerald-200",
+    bg: "from-emerald-50/80 to-teal-50/80", textColor: "text-emerald-900", labelColor: "text-emerald-600",
+  },
+  {
+    key: "limited", label: "Bị giới hạn", icon: CircleAlert,
+    gradient: "from-amber-500 to-orange-500", shadow: "shadow-amber-200",
+    bg: "from-amber-50/80 to-orange-50/80", textColor: "text-amber-900", labelColor: "text-amber-600",
+  },
+  {
+    key: "abnormal", label: "Bị lỗi", icon: CircleOff,
+    gradient: "from-rose-500 to-red-600", shadow: "shadow-rose-200",
+    bg: "from-rose-50/80 to-red-50/80", textColor: "text-rose-900", labelColor: "text-rose-600",
+  },
+  {
+    key: "disabled", label: "Đã vô hiệu", icon: Ban,
+    gradient: "from-slate-400 to-slate-500", shadow: "shadow-slate-200",
+    bg: "from-slate-50/80 to-slate-100/80", textColor: "text-slate-700", labelColor: "text-slate-500",
+  },
+  {
+    key: "quota", label: "Hạn mức còn lại", icon: RefreshCw,
+    gradient: "from-sky-500 to-cyan-600", shadow: "shadow-sky-200",
+    bg: "from-sky-50/80 to-cyan-50/80", textColor: "text-sky-900", labelColor: "text-sky-600",
+  },
 ] as const;
 
 function isUnlimitedImageQuotaAccount(account: Account) {
@@ -351,18 +375,17 @@ function AccountsPageContent() {
 
   return (
     <>
-      <section className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-1">
-          <div className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase">
-            Account Pool
-          </div>
-          <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Quản lý tài khoản</h1>
+      <section className="flex flex-col gap-4 border-b border-black/[0.04] pb-6 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase mb-1">Account Pool</p>
+          <h1 className="text-[26px] font-bold tracking-tight text-slate-900">Quản lý tài khoản</h1>
+          <p className="text-[14px] text-slate-500 mt-0.5">Quản lý token và trạng thái tài khoản ChatGPT</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
-            className="h-10 rounded-xl border-stone-200 bg-stone-900/80 px-4 text-stone-700 hover:bg-white"
+            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
             onClick={() => void loadAccounts()}
             disabled={isLoading || isRefreshing || isDeleting}
           >
@@ -371,12 +394,12 @@ function AccountsPageContent() {
           </Button>
           <Button
             variant="outline"
-            className="h-10 rounded-xl border-stone-200 bg-stone-900/80 px-4 text-stone-700 hover:bg-white"
+            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
             onClick={() => void handleRefreshAccounts(accounts.map((item) => item.access_token))}
             disabled={isLoading || isRefreshing || isDeleting || accounts.length === 0}
           >
             <RefreshCw className={cn("size-4", isRefreshing ? "animate-spin" : "")} />
-            Làm mới tất cả thông tin và hạn mức
+            Làm mới tất cả
           </Button>
           <AccountImportDialog
             disabled={isLoading || isRefreshing || isDeleting}
@@ -388,19 +411,19 @@ function AccountsPageContent() {
           />
           <a
             href="/settings"
-            className="inline-flex items-center gap-1.5 h-10 rounded-xl border border-stone-200 bg-stone-900/80 px-4 text-sm text-stone-600 hover:bg-white hover:text-stone-900 transition"
+            className="inline-flex items-center gap-1.5 h-10 rounded-[12px] border border-black/[0.08] bg-white px-4 text-[13px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
           >
             <ExternalLink className="size-3.5" />
             Custom APIs
           </a>
           <Button
             variant="outline"
-            className="h-10 rounded-xl border-stone-200 bg-stone-900/80 px-4 text-stone-700 hover:bg-white"
+            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
             onClick={() => downloadTokens(accounts)}
             disabled={accounts.length === 0}
           >
             <Download className="size-4" />
-            Xuất tất cả Token
+            Xuất Token
           </Button>
         </div>
       </section>
@@ -454,7 +477,7 @@ function AccountsPageContent() {
       </Dialog>
 
       <section className="space-y-3">
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {metricCards.map((item) => {
             const Icon = item.icon;
             const value = summary[item.key];
@@ -462,24 +485,25 @@ function AccountsPageContent() {
               <div
                 key={item.key}
                 className={cn(
-                  "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5",
-                  "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
-                  "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+                  "rounded-xl border-0 p-4",
+                  `bg-gradient-to-br ${item.bg}`,
+                  `shadow-lg ${item.shadow}`
                 )}
               >
-                {/* Top gradient line */}
-                <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                
-                <div className="mb-4 flex items-center justify-between">
-                  <span className="text-[13px] font-semibold text-slate-500">{item.label}</span>
-                  <div className="flex size-9 items-center justify-center rounded-[10px] bg-slate-50">
-                    <Icon className="size-[18px] text-slate-400" />
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className={cn("text-[11px] font-semibold mb-1", item.labelColor)}>{item.label}</p>
+                    <p className={cn("text-2xl font-bold leading-none", item.textColor)}>
+                      {typeof value === "number" ? formatCompact(value) : value}
+                    </p>
                   </div>
-                </div>
-                <div className={cn("text-[26px] font-bold tracking-tight leading-none", item.color)}>
-                  <span className={typeof value === "number" ? "" : "text-[16px]"}>
-                    {typeof value === "number" ? formatCompact(value) : value}
-                  </span>
+                  <div className={cn(
+                    "size-9 rounded-full flex items-center justify-center shrink-0",
+                    `bg-gradient-to-br ${item.gradient}`,
+                    `shadow-md ${item.shadow}`
+                  )}>
+                    <Icon className="size-4 text-white" />
+                  </div>
                 </div>
               </div>
             );
