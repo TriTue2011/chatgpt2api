@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
+import { useLangStore } from "@/store/lang";
+import { translations, TranslationKey } from "@/lib/i18n";
 
 type ModelInfo = {
   id: string;
@@ -32,6 +34,8 @@ const CAP_ICONS: Record<string, typeof MessageSquare> = {
 };
 
 export default function CombosPage() {
+  const { lang } = useLangStore();
+  const t = (key: TranslationKey) => translations[lang][key] || key;
   const [combos, setCombos] = useState<ComboModels>({});
   const [allModels, setAllModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +81,7 @@ export default function CombosPage() {
         console.warn("Combo save mismatch, server returned:", returned);
       }
     } catch (e: any) {
-      const msg = e?.response?.data?.detail?.error || e?.message || "Lỗi lưu";
+      const msg = e?.response?.data?.detail?.error || e?.message || t("saveError");
       setError(msg);
       await loadAll(); // Reload from server to restore correct state
     }
@@ -88,7 +92,7 @@ export default function CombosPage() {
     const name = newName.trim();
     if (!name) return;
     if (selectedModels.length < 2) {
-      setError("Cần ít nhất 2 model trong 1 combo (để fallback)");
+      setError(t("atLeastTwoModels"));
       return;
     }
     const updated = { ...combos, [name]: [...selectedModels] };
@@ -148,8 +152,8 @@ export default function CombosPage() {
       <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Mô hình kết hợp</h1>
-            {saved && <span className="text-[13px] text-emerald-600 font-medium">✓ Đã lưu</span>}
+            <h1 className="text-[24px] font-bold tracking-tight text-slate-900">{t("combosTitle")}</h1>
+            {saved && <span className="text-[13px] text-emerald-600 font-medium">✓ {t("saved")}</span>}
           </div>
           <button
             type="button"
@@ -168,13 +172,13 @@ export default function CombosPage() {
       {/* Model stats */}
       <div className="flex gap-3 flex-wrap">
         <span className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-xs text-blue-400">
-          <MessageSquare className="size-3" /> Chat: {counts.chat}
+          <MessageSquare className="size-3" /> {t("chat")}: {counts.chat}
         </span>
         <span className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 px-3 py-1.5 text-xs text-purple-400">
-          <Eye className="size-3" /> Phân tích ảnh: {counts.vision}
+          <Eye className="size-3" /> {t("vision")}: {counts.vision}
         </span>
         <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-400">
-          <ImageIcon className="size-3" /> Tạo ảnh: {counts.image}
+          <ImageIcon className="size-3" /> {t("imageGen")}: {counts.image}
         </span>
       </div>
 
@@ -183,7 +187,7 @@ export default function CombosPage() {
         "rounded-[16px] border border-black/[0.04] bg-white p-6",
         "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]"
       )}>
-        <h3 className="mb-4 text-[15px] font-bold text-slate-900">Thêm combo mới</h3>
+        <h3 className="mb-4 text-[15px] font-bold text-slate-900">{t("addNewCombo")}</h3>
 
         {/* Combo name */}
         <div className="mb-3">
@@ -191,7 +195,7 @@ export default function CombosPage() {
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
-            placeholder="Tên combo (vd: ha-agent)"
+            placeholder={t("comboNamePlaceholder")}
             className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-500 focus:outline-none"
           />
         </div>
@@ -200,7 +204,7 @@ export default function CombosPage() {
         {selectedModels.length > 0 && (
           <div className="mb-3 space-y-1.5">
             <p className="text-[10px] font-medium uppercase tracking-wider text-stone-500">
-              Thứ tự fallback ({selectedModels.length} model)
+              {t("fallbackOrder").replace("{count}", String(selectedModels.length))}
             </p>
             {selectedModels.map((modelId, idx) => {
               const info = allModels.find(m => m.id === modelId);
@@ -217,7 +221,7 @@ export default function CombosPage() {
                   <CapIcon className="size-3 shrink-0 text-stone-500" />
                   <span className="flex-1 text-xs font-mono text-stone-800 truncate">{modelId}</span>
                   {(info?.capability_labels || ["Chat"]).map((label: string) => {
-                    const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                    const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
                     return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                   })}
                   <button
@@ -252,7 +256,7 @@ export default function CombosPage() {
                     : "text-stone-500 hover:text-stone-700",
                 )}
               >
-                {cap === "all" ? "Tất cả" : cap === "chat" ? "Chat" : cap === "vision" ? "Vision" : "Tạo ảnh"}
+                {cap === "all" ? t("all") : cap === "chat" ? t("chat") : cap === "vision" ? t("vision") : t("imageGen")}
               </button>
             ))}
           </div>
@@ -264,7 +268,7 @@ export default function CombosPage() {
               onClick={() => setDropdownOpen(!dropdownOpen)}
               className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition"
             >
-              <span className="text-stone-500">Chọn model để thêm vào chuỗi fallback...</span>
+              <span className="text-stone-500">{t("selectModelPlaceholder")}</span>
               <ChevronDown className="size-4 text-stone-500" />
             </button>
 
@@ -272,7 +276,7 @@ export default function CombosPage() {
               <div className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl">
                 {availableForSelection.length === 0 ? (
                   <p className="px-3 py-4 text-xs text-stone-500 text-center">
-                    {filterCap !== "all" ? "Không có model nào trong danh mục này" : "Tất cả model đã được chọn"}
+                    {filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}
                   </p>
                 ) : (
                   availableForSelection.map(m => {
@@ -287,7 +291,7 @@ export default function CombosPage() {
                         <CapIcon className="size-3 shrink-0 text-stone-500" />
                         <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
                         {(m.capability_labels || ["Chat"]).map((label: string) => {
-                          const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                          const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
                           return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
                         })}
                         <span className="text-[10px] text-stone-600">{m.owned_by}</span>
@@ -317,8 +321,8 @@ export default function CombosPage() {
       {comboEntries.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-stone-500">
           <Combine className="size-12 mb-3 opacity-50" />
-          <p>Chưa có combo model nào</p>
-          <p className="text-xs mt-1">Tạo combo đầu tiên để tự động fallback khi provider lỗi</p>
+          <p>{t("noCombos")}</p>
+          <p className="text-xs mt-1">{t("createFirstCombo")}</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -336,7 +340,7 @@ export default function CombosPage() {
                   </div>
                   <h3 className="text-[16px] font-bold tracking-tight text-slate-900">{name}</h3>
                   <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-                    {models.length} model
+                    {models.length} {t("models")}
                   </span>
                 </div>
                 <button
@@ -372,7 +376,7 @@ export default function CombosPage() {
                         {modelId}
                       </span>
                       {(info?.capability_labels || ["Chat"]).map((label: string) => {
-                        const capKey = label === "Chat" ? "chat" : label === "Phân tích ảnh" ? "vision" : "image";
+                        const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
                         return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                       })}
                       {idx < models.length - 1 && (

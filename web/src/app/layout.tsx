@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { useLangStore } from "@/store/lang";
 
 export const metadata: Metadata = {
   title: "chatgpt2api — Bảng điều khiển",
@@ -21,8 +22,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { lang } = useLangStore();
   return (
-    <html lang="vi" suppressHydrationWarning>
+    <html lang={lang} suppressHydrationWarning>
       <body
         className="antialiased"
         style={{

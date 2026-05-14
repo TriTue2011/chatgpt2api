@@ -21,25 +21,29 @@ import {
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
 import { cn } from "@/lib/utils";
+import { useLangStore } from "@/store/lang";
+import { translations, TranslationKey } from "@/lib/i18n";
 import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 
 // ── Vietnamese nav items ──
 const navItems = [
-  { href: "/", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/accounts", label: "Tài khoản", icon: Users },
-  { href: "/providers", label: "Nhà cung cấp", icon: Cpu },
-  { href: "/models", label: "Quản lý Model", icon: Sparkles },
-  { href: "/combos", label: "Mô hình kết hợp", icon: Combine },
-  { href: "/image", label: "Vẽ ảnh", icon: ImageIcon },
-  { href: "/image-manager", label: "Thư viện ảnh", icon: Archive },
-  { href: "/search", label: "Tìm kiếm", icon: Search },
-  { href: "/backup", label: "Sao lưu", icon: Archive },
-  { href: "/settings", label: "Cài đặt", icon: Settings },
+  { href: "/", labelKey: "nav_overview" as TranslationKey, icon: LayoutDashboard },
+  { href: "/accounts", labelKey: "nav_accounts" as TranslationKey, icon: Users },
+  { href: "/providers", labelKey: "nav_providers" as TranslationKey, icon: Cpu },
+  { href: "/models", labelKey: "nav_models" as TranslationKey, icon: Sparkles },
+  { href: "/combos", labelKey: "nav_combos" as TranslationKey, icon: Combine },
+  { href: "/image", labelKey: "nav_image" as TranslationKey, icon: ImageIcon },
+  { href: "/image-manager", labelKey: "nav_imageLibrary" as TranslationKey, icon: Archive },
+  { href: "/search", labelKey: "nav_search" as TranslationKey, icon: Search },
+  { href: "/backup", labelKey: "nav_backup" as TranslationKey, icon: Archive },
+  { href: "/settings", labelKey: "nav_settings" as TranslationKey, icon: Settings },
 ];
 
 const adminOnlyPaths = ["/accounts", "/providers", "/models", "/combos", "/image-manager", "/search", "/backup", "/settings"];
 
 export function Sidebar() {
+  const { lang } = useLangStore();
+  const t = (key: TranslationKey) => translations[lang][key] || key;
   const pathname = usePathname();
   const router = useRouter();
   const [session, setSession] = useState<StoredAuthSession | null | undefined>(undefined);
@@ -69,8 +73,8 @@ export function Sidebar() {
   if (pathname === "/login" || session === undefined || !session) return null;
 
   const isAdmin = session.role === "admin";
-  const displayName = session.name.trim() || (isAdmin ? "Quản trị viên" : "Người dùng");
-  const roleLabel = isAdmin ? "Quản trị viên" : "Người dùng";
+  const displayName = session.name.trim() || (isAdmin ? t("admin") : t("user"));
+  const roleLabel = isAdmin ? t("admin") : t("user");
 
   const visibleItems = isAdmin
     ? navItems
@@ -95,7 +99,7 @@ export function Sidebar() {
                 chatgpt2api
               </span>
               <span className="text-[11px] text-[#8b949e]">
-                Quản lý hệ thống
+                {t("systemManagement")}
               </span>
             </div>
           </Link>
@@ -126,7 +130,7 @@ export function Sidebar() {
                   ? "bg-gradient-to-r from-indigo-500/20 to-violet-500/10 text-indigo-300 shadow-[inset_0_0_0_1px_rgba(99,102,241,0.2)]"
                   : "text-[#8b949e] hover:bg-white/5 hover:text-[#f0f6fc] hover:translate-x-0.5"
               )}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? t(item.labelKey) : undefined}
             >
               {active && (
                 <div className="absolute left-0 top-1/2 h-[55%] w-[3px] -translate-y-1/2 rounded-r-full bg-gradient-to-b from-indigo-400 to-violet-500" />
@@ -167,10 +171,10 @@ export function Sidebar() {
             "flex items-center gap-2 rounded-md text-[13px] font-medium text-[#8b949e] transition hover:bg-white/5 hover:text-[#f0f6fc]",
             collapsed ? "justify-center w-full py-2.5" : "w-full px-3 py-2"
           )}
-          title="Đăng xuất"
+          title={t("logout")}
         >
           <LogOut className="size-[18px]" />
-          {!collapsed && "Đăng xuất"}
+          {!collapsed && t("logout")}
         </button>
       </div>
     </aside>

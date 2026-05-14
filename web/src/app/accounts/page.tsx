@@ -56,12 +56,12 @@ import { translations, TranslationKey } from "@/lib/i18n";
 
 import { AccountImportDialog } from "./components/account-import-dialog";
 
-const accountStatusOptions: { label: string; value: AccountStatus | "all" }[] = [
-  { label: "Tất cả trạng thái", value: "all" },
-  { label: "Bình thường", value: "正常" },
-  { label: "Giới hạn", value: "限流" },
-  { label: "Lỗi", value: "异常" },
-  { label: "Vô hiệu hóa", value: "禁用" },
+const accountStatusOptions: { labelKey: TranslationKey; value: AccountStatus | "all" }[] = [
+  { labelKey: "allStatus", value: "all" },
+  { labelKey: "status_normal", value: "正常" },
+  { labelKey: "status_limited", value: "限流" },
+  { labelKey: "status_error", value: "异常" },
+  { labelKey: "status_disabled", value: "禁用" },
 ];
 
 const statusMeta: Record<
@@ -79,32 +79,32 @@ const statusMeta: Record<
 
 const metricCards = [
   {
-    key: "total", label: "Tổng tài khoản", icon: UserRound,
+    key: "total", labelKey: "totalAccounts" as TranslationKey, icon: UserRound,
     gradient: "from-indigo-500 to-blue-600", shadow: "shadow-indigo-200",
     bg: "from-indigo-50/80 to-blue-50/80", textColor: "text-indigo-900", labelColor: "text-indigo-600",
   },
   {
-    key: "active", label: "Hoạt động", icon: CheckCircle2,
+    key: "active", labelKey: "active" as TranslationKey, icon: CheckCircle2,
     gradient: "from-emerald-500 to-teal-600", shadow: "shadow-emerald-200",
     bg: "from-emerald-50/80 to-teal-50/80", textColor: "text-emerald-900", labelColor: "text-emerald-600",
   },
   {
-    key: "limited", label: "Bị giới hạn", icon: CircleAlert,
+    key: "limited", labelKey: "limited" as TranslationKey, icon: CircleAlert,
     gradient: "from-amber-500 to-orange-500", shadow: "shadow-amber-200",
     bg: "from-amber-50/80 to-orange-50/80", textColor: "text-amber-900", labelColor: "text-amber-600",
   },
   {
-    key: "abnormal", label: "Bị lỗi", icon: CircleOff,
+    key: "abnormal", labelKey: "abnormal" as TranslationKey, icon: CircleOff,
     gradient: "from-rose-500 to-red-600", shadow: "shadow-rose-200",
     bg: "from-rose-50/80 to-red-50/80", textColor: "text-rose-900", labelColor: "text-rose-600",
   },
   {
-    key: "disabled", label: "Đã vô hiệu", icon: Ban,
+    key: "disabled", labelKey: "disabled" as TranslationKey, icon: Ban,
     gradient: "from-slate-400 to-slate-500", shadow: "shadow-slate-200",
     bg: "from-slate-50/80 to-slate-100/80", textColor: "text-slate-700", labelColor: "text-slate-500",
   },
   {
-    key: "quota", label: "Hạn mức còn lại", icon: RefreshCw,
+    key: "quota", labelKey: "quotaRemaining" as TranslationKey, icon: RefreshCw,
     gradient: "from-sky-500 to-cyan-600", shadow: "shadow-sky-200",
     bg: "from-sky-50/80 to-cyan-50/80", textColor: "text-sky-900", labelColor: "text-sky-600",
   },
@@ -330,7 +330,7 @@ function AccountsPageContent() {
 
   const accountTypeOptions = useMemo(
     () => [
-      { label: "Tất cả các loại", value: "all" },
+      { label: "{t("allTypes")}", value: "all" },
       ...Array.from(new Set(accounts.map(displayAccountType))).map((type) => ({ label: type, value: type })),
     ],
     [accounts],
@@ -446,8 +446,8 @@ function AccountsPageContent() {
       <section className="flex flex-col gap-4 border-b border-black/[0.04] pb-6 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase mb-1">Account Pool</p>
-          <h1 className="text-[26px] font-bold tracking-tight text-slate-900">Quản lý tài khoản</h1>
-          <p className="text-[14px] text-slate-500 mt-0.5">Quản lý token và trạng thái tài khoản ChatGPT</p>
+          <h1 className="text-[26px] font-bold tracking-tight text-slate-900">{t("title")}</h1>
+          <p className="text-[14px] text-slate-500 mt-0.5">{t("subtitle")}</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -499,14 +499,14 @@ function AccountsPageContent() {
       <Dialog open={Boolean(editingAccount)} onOpenChange={(open) => (!open ? setEditingAccount(null) : null)}>
         <DialogContent showCloseButton={false} className="rounded-2xl p-6">
           <DialogHeader className="gap-2">
-            <DialogTitle>Sửa tài khoản</DialogTitle>
+            <DialogTitle>{t("editStatus")}</DialogTitle>
             <DialogDescription className="text-sm leading-6">
-              Thay đổi trạng thái tài khoản thủ công.
+              {t("editStatusDesc")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-stone-700">Trạng thái</label>
+              <label className="text-sm font-medium text-stone-700">{t("status")}</label>
               <Select value={editStatus} onValueChange={(value) => setEditStatus(value as AccountStatus)}>
                 <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
                   <SelectValue />
@@ -560,7 +560,7 @@ function AccountsPageContent() {
               >
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className={cn("text-[11px] font-semibold mb-1", item.labelColor)}>{item.label}</p>
+                    <p className={cn("text-[11px] font-semibold mb-1", item.labelColor)}>{t(item.labelKey)}</p>
                     <p className={cn("text-2xl font-bold leading-none", item.textColor)}>
                       {typeof value === "number" ? formatCompact(value) : value}
                     </p>
@@ -582,7 +582,7 @@ function AccountsPageContent() {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold tracking-tight">Danh sách tài khoản</h2>
+            <h2 className="text-lg font-semibold tracking-tight">{t("title")}</h2>
             <Badge variant="secondary" className="rounded-lg bg-stone-200 px-2 py-0.5 text-stone-700">
               {filteredAccounts.length}
             </Badge>
@@ -597,7 +597,7 @@ function AccountsPageContent() {
                   setQuery(event.target.value);
                   setPage(1);
                 }}
-                placeholder="Tìm kiếm Email"
+                placeholder={t("searchPlaceholder")}
                 className="h-10 rounded-xl border-stone-200 bg-white/85 pl-10"
               />
             </div>
@@ -647,8 +647,8 @@ function AccountsPageContent() {
                 <LoaderCircle className="size-5 animate-spin" />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-medium text-stone-700">Đang tải tài khoản</p>
-                <p className="text-sm text-stone-500">Đang đồng bộ danh sách và trạng thái từ backend.</p>
+                <p className="text-sm font-medium text-stone-700">{t("loadingAccounts")}</p>
+                <p className="text-sm text-stone-500">{t("syncingAccounts")}</p>
               </div>
             </CardContent>
           </Card>
@@ -671,7 +671,7 @@ function AccountsPageContent() {
                   disabled={selectedTokens.length === 0 || isRefreshing}
                 >
                   {isRefreshing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                  Làm mới tài khoản đã chọn
+                  {t("refreshSelected")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -680,7 +680,7 @@ function AccountsPageContent() {
                   disabled={abnormalTokens.length === 0 || isDeleting}
                 >
                   {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                  Xóa tài khoản lỗi
+                  {t("deleteError")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -689,11 +689,11 @@ function AccountsPageContent() {
                   disabled={selectedTokens.length === 0 || isDeleting}
                 >
                   {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                  Xóa mục đã chọn
+                  {t("deleteSelected")}
                 </Button>
                 {selectedIds.length > 0 ? (
                   <span className="rounded-lg bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-600">
-                    Đã chọn {selectedIds.length} mục
+                    {t("selectedCount").replace("{count}", String(selectedIds.length))}
                   </span>
                 ) : null}
               </div>
@@ -702,12 +702,12 @@ function AccountsPageContent() {
             <div className="divide-y divide-black/[0.03]">
               {/* Table header */}
               <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1.5fr_1fr_auto] items-center gap-4 border-b border-black/[0.04] bg-slate-50/60 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                <span>Tài khoản</span>
-                <span>Loại · Trạng thái</span>
-                <span>Hạn mức ảnh</span>
-                <span>Thời gian dùng gần nhất</span>
-                <span>Yêu cầu</span>
-                <span className="w-24">Hành động</span>
+                <span>{t("account")}</span>
+                <span>{t("typeStatus")}</span>
+                <span>{t("imageQuota")}</span>
+                <span>{t("lastUsed")}</span>
+                <span>{t("requests")}</span>
+                <span className="w-24">{t("actions")}</span>
               </div>
 
               {currentRows.map((account) => {

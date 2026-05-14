@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Cpu, CheckCircle2, XCircle, Wrench, RefreshCw, ExternalLink } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
+import { useLangStore } from "@/store/lang";
+import { translations, TranslationKey } from "@/lib/i18n";
 
 type ProviderInfo = {
   name: string;
@@ -27,6 +29,8 @@ const PROVIDER_META: Record<string, { label: string; desc: string; icon: string;
 };
 
 export default function ProvidersPage() {
+  const { lang } = useLangStore();
+  const t = (key: TranslationKey) => translations[lang][key] || key;
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -71,7 +75,7 @@ export default function ProvidersPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-1 border-b border-black/[0.04] pb-5">
-        <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Nhà cung cấp AI</h1>
+        <h1 className="text-[24px] font-bold tracking-tight text-slate-900">{t("providersTitle")}</h1>
         <p className="text-[14px] text-slate-500">
           Quản lý các nhà cung cấp AI bên ngoài — miễn phí và có API key
         </p>
@@ -120,7 +124,7 @@ export default function ProvidersPage() {
                   ) : (
                     <XCircle className="size-3" />
                   )}
-                  {provider.enabled ? "Đã bật" : "Đã tắt"}
+                  {provider.enabled ? t("enabledText") : t("disabledText")}
                 </span>
               </div>
 
@@ -128,17 +132,17 @@ export default function ProvidersPage() {
               <div className="mb-4 flex flex-wrap gap-1.5">
                 {provider.noAuth && (
                   <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-400">
-                    Không cần API key
+                    {t("noApiKeyNeeded")}
                   </span>
                 )}
                 {provider.has_api_key && (
                   <span className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-400">
-                    Đã cấu hình API key
+                    {t("apiKeyConfigured")}
                   </span>
                 )}
                 {provider.has_base_url && (
                   <span className="rounded-md bg-purple-500/10 px-2 py-0.5 text-[10px] font-medium text-purple-400">
-                    Đã cấu hình URL
+                    {t("baseUrlConfigured")}
                   </span>
                 )}
               </div>
@@ -157,7 +161,7 @@ export default function ProvidersPage() {
                     ) : (
                       <Wrench className="size-3" />
                     )}
-                    {isTesting ? "Đang kiểm tra..." : "Kiểm tra kết nối"}
+                    {isTesting ? t("testing") : t("checkConnection")}
                   </button>
                 )}
                 {testResult !== undefined && (
@@ -167,7 +171,7 @@ export default function ProvidersPage() {
                       testResult ? "text-emerald-400" : "text-red-400",
                     )}
                   >
-                    {testResult ? "Kết nối OK" : "Lỗi kết nối"}
+                    {testResult ? t("connectionOk") : t("connectionError")}
                   </span>
                 )}
                 {provider.name === "opencode" && (
@@ -189,8 +193,8 @@ export default function ProvidersPage() {
       {providers.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-stone-500">
           <Cpu className="size-12 mb-3 opacity-50" />
-          <p>Chưa có nhà cung cấp nào được cấu hình</p>
-          <p className="text-xs mt-1">Thêm provider vào config.json để bắt đầu</p>
+          <p>{t("noProviders")}</p>
+          <p className="text-xs mt-1">{t("addProviderInConfig")}</p>
         </div>
       )}
     </div>
