@@ -51,6 +51,8 @@ import {
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
+import { useLangStore } from "@/store/lang";
+import { translations, TranslationKey } from "@/lib/i18n";
 
 import { AccountImportDialog } from "./components/account-import-dialog";
 
@@ -133,7 +135,8 @@ function formatQuota(account: Account) {
   return String(Math.max(0, account.quota));
 }
 
-function formatRestoreAt(value?: string | null) {
+function formatRestoreAt(value: string | null | undefined, lang: "vi" | "en") {
+  const t = translations[lang];
   if (!value) {
     return { absolute: "—", relative: "" };
   }
@@ -147,7 +150,7 @@ function formatRestoreAt(value?: string | null) {
   const totalHours = Math.ceil(diffMs / (1000 * 60 * 60));
   const days = Math.floor(totalHours / 24);
   const hours = totalHours % 24;
-  const relative = diffMs > 0 ? `Còn ${days}d ${hours}h` : "Đã đến lúc phục hồi";
+  const relative = diffMs > 0 ? `${t.restoreIn} ${days}d ${hours}h` : t.readyToRestore;
 
   const pad = (num: number) => String(num).padStart(2, "0");
   const absolute = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
@@ -189,27 +192,29 @@ function displayAccountType(account: Account) {
   return account.type || "Free";
 }
 
-function translateStatus(status: string) {
+function translateStatus(status: string, lang: "vi" | "en") {
+  const t = translations[lang];
   switch (status) {
-    case "正常": return "Bình thường";
-    case "限流": return "Giới hạn";
-    case "异常": return "Lỗi";
-    case "禁用": return "Vô hiệu";
+    case "正常": return t.status_normal;
+    case "限流": return t.status_limited;
+    case "异常": return t.status_error;
+    case "禁用": return t.status_disabled;
     default: return status;
   }
 }
 
-function formatRelativeTime(value?: string | null): string {
+function formatRelativeTime(value: string | null | undefined, lang: "vi" | "en"): string {
+  const t = translations[lang];
   if (!value) return "—";
   const date = new Date(value);
   if (isNaN(date.getTime())) return value;
   const diffMs = Date.now() - date.getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "Vừa xong";
-  if (mins < 60) return `${mins} phút trước`;
+  if (mins < 1) return t.justNow;
+  if (mins < 60) return `${mins} ${t.minsAgo}`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} giờ trước`;
-  return `${Math.floor(hrs / 24)} ngày trước`;
+  if (hrs < 24) return `${hrs} ${t.hrsAgo}`;
+  return `${Math.floor(hrs / 24)} ${t.daysAgo}`;
 }
 
 function QuotaBar({
@@ -250,6 +255,8 @@ function QuotaBar({
 }
 
 function AccountsPageContent() {
+  const { lang, setLang } = useLangStore();
+  const t = (key: TranslationKey) => translations[lang][key] || key;
   const didLoadRef = useRef(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -755,7 +762,7 @@ function AccountsPageContent() {
                         </Badge>
                         <Badge variant={status.badge} className="inline-flex items-center gap-1 rounded-md text-[11px] px-1.5">
                           <StatusIcon className="size-3" />
-                          {translateStatus(account.status)}
+                          {translateStatus(account.status, lang)}
                         </Badge>
                       </div>
 
@@ -771,7 +778,7 @@ function AccountsPageContent() {
 
                       {/* Last used */}
                       <div className="hidden lg:block text-[12px] text-slate-400">
-                        {formatRelativeTime(account.last_used_at)}
+                        {formatRelativeTime(account.last_used_at, lang)}
                       </div>
 
                       {/* Success/fail */}
@@ -794,7 +801,7 @@ function AccountsPageContent() {
                           className="rounded-lg p-1.5 hover:bg-slate-100 hover:text-slate-700 transition"
                           onClick={() => void handleRefreshAccounts([account.access_token])}
                           disabled={isRefreshing}
-                          title="Làm mới"
+                          title={t("refresh")}
                         >
                           <RefreshCw className={cn("size-3.5", isRefreshing ? "animate-spin" : "")} />
                         </button>
@@ -802,7 +809,7 @@ function AccountsPageContent() {
                           className="rounded-lg p-1.5 hover:bg-rose-50 hover:text-rose-500 transition"
                           onClick={() => void handleDeleteTokens([account.access_token])}
                           disabled={isDeleting}
-                          title="Xóa"
+                          title={t("delete")}
                         >
                           <Trash2 className="size-3.5" />
                         </button>
@@ -832,7 +839,7 @@ function AccountsPageContent() {
                                         account.status === "限流" ? "bg-amber-400" :
                                         account.status === "异常" ? "bg-rose-400" : "bg-slate-300"
                                       )} />
-                                      {translateStatus(account.status)}
+                                      {translateStatus(account.status, lang)}
                                     </Badge>
                                     <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
                                       {displayAccountType(account)}
@@ -844,7 +851,7 @@ function AccountsPageContent() {
                                 </div>
                                 <div className="flex gap-1">
                                   <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(account.access_token); toast.success("Token đã sao chép"); }} title="Copy token"><Copy className="size-3.5" /></button>
-                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void handleRefreshAccounts([account.access_token]); }} disabled={isRefreshing} title="Làm mới"><RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} /></button>
+                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void handleRefreshAccounts([account.access_token]); }} disabled={isRefreshing} title={t("refresh")}><RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} /></button>
                                 </div>
                               </div>
 
@@ -856,7 +863,7 @@ function AccountsPageContent() {
                                   <span className="ml-auto text-[12px] font-bold text-violet-600">∞ không giới hạn</span>
                                 </div>
                               ) : !imageQuotaUnknown(account) ? (
-                                <QuotaBar label="Ảnh (image)" used={Math.max(0, 100 - quotaVal)} max={100} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at).relative : undefined} />
+                                <QuotaBar label="Ảnh (image)" used={Math.max(0, 100 - quotaVal)} max={100} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at, lang).relative : undefined} />
                               ) : (
                                 <div className="flex items-center gap-1.5">
                                   <span className="size-2 rounded-full bg-slate-300" />
@@ -868,17 +875,17 @@ function AccountsPageContent() {
                               {account.limits_progress?.map((lp, i) => (
                                 <QuotaBar
                                   key={i}
-                                  label={lp.feature_name ?? `Limit ${i + 1}`}
+                                  label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`}
                                   used={Math.max(0, (lp as any).total ?? 100) - (lp.remaining ?? 0)}
                                   max={(lp as any).total ?? Math.max(lp.remaining ?? 0, 40)}
-                                  resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after).relative : undefined}
+                                  resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined}
                                 />
                               ))}
 
                               {/* Last used */}
                               <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
                                 <span>Dùng lần cuối</span>
-                                <span className="font-medium text-slate-600">{formatRelativeTime(account.last_used_at)}</span>
+                                <span className="font-medium text-slate-600">{formatRelativeTime(account.last_used_at, lang)}</span>
                               </div>
                             </div>
 
@@ -921,8 +928,8 @@ function AccountsPageContent() {
                               {/* Restore at */}
                               {account.restore_at && (
                                 <div className="rounded-[8px] bg-amber-50 border border-amber-100 px-3 py-2 text-[11px]">
-                                  <p className="font-medium text-amber-700">Phục hồi: {formatRestoreAt(account.restore_at).relative}</p>
-                                  <p className="text-amber-500">{formatRestoreAt(account.restore_at).absolute}</p>
+                                  <p className="font-medium text-amber-700">Phục hồi: {formatRestoreAt(account.restore_at, lang).relative}</p>
+                                  <p className="text-amber-500">{formatRestoreAt(account.restore_at, lang).absolute}</p>
                                 </div>
                               )}
 
