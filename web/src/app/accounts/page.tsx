@@ -202,17 +202,38 @@ function formatRelativeTime(value?: string | null): string {
   return `${Math.floor(hrs / 24)} ngày trước`;
 }
 
-function QuotaBar({ value, max, color }: { value: number; max: number; color: string }) {
-  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
-  const barColor = pct > 70 ? "bg-emerald-500" : pct > 30 ? "bg-amber-400" : "bg-rose-500";
+function QuotaBar({
+  label, used, max, resetAfter
+}: { label: string; used: number; max: number; resetAfter?: string | null }) {
+  const pct = max > 0 ? Math.min(100, Math.round((used / max) * 100)) : 0;
+  const remaining = Math.max(0, max - used);
+  const remainPct = 100 - pct;
+  const dotColor = remainPct > 70 ? "bg-emerald-500" : remainPct > 30 ? "bg-amber-400" : "bg-rose-500";
+  const barColor = remainPct > 70 ? "bg-emerald-500" : remainPct > 30 ? "bg-amber-400" : "bg-rose-500";
   return (
-    <div className="w-full">
-      <div className="flex justify-between text-[11px] text-slate-500 mb-1">
-        <span className={color}>{value}</span>
-        <span>{pct}%</span>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`size-2 rounded-full shrink-0 ${dotColor}`} />
+          <span className="text-[11px] font-medium text-slate-500">{label}</span>
+        </div>
+        {resetAfter && (
+          <span className="text-[10px] text-slate-400 shrink-0">in {resetAfter}</span>
+        )}
       </div>
-      <div className="h-1.5 w-full rounded-full bg-slate-100">
-        <div className={`h-full rounded-full ${barColor} transition-all`} style={{ width: `${pct}%` }} />
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${barColor}`}
+            style={{ width: `${remainPct}%` }}
+          />
+        </div>
+        <span className="text-[11px] text-slate-500 shrink-0 w-20 text-right">
+          {remaining} / {max}
+        </span>
+        <span className={`text-[11px] font-bold shrink-0 w-8 text-right ${dotColor.replace('bg-', 'text-')}`}>
+          {remainPct}%
+        </span>
       </div>
     </div>
   );
@@ -778,13 +799,144 @@ function AccountsPageContent() {
                       </div>
                     </div>
 
-                    {/* Expanded detail panel */}
+                    {/* Expanded detail panel — 9router style */}
                     <div className={cn(
                       "grid transition-all duration-300 ease-in-out",
                       isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
                     )}>
                       <div className="overflow-hidden">
-                        <div className="border-t border-indigo-100 bg-indigo-50/40 px-5 py-4 space-y-4">
+                        <div className="border-t border-indigo-100 bg-slate-50/60 px-5 py-4 space-y-4">
+
+                          {/* 9router-style quota card grid */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                            {/* Image quota card */}
+                            <div className="rounded-[12px] border border-black/[0.05] bg-white p-4 shadow-sm space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-[13px] font-bold text-slate-800">{account.email ?? maskToken(account.access_token)}</p>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
+                                      <span className={cn("size-1.5 rounded-full mr-0.5",
+                                        account.status === "正常" ? "bg-emerald-400" :
+                                        account.status === "限流" ? "bg-amber-400" :
+                                        account.status === "异常" ? "bg-rose-400" : "bg-slate-300"
+                                      )} />
+                                      {account.status}
+                                    </Badge>
+                                    <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
+                                      {displayAccountType(account)}
+                                    </Badge>
+                                    {account.default_model_slug && (
+                                      <span className="text-[10px] text-slate-400">#{account.default_model_slug}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(account.access_token); toast.success("Token đã sao chép"); }} title="Copy token"><Copy className="size-3.5" /></button>
+                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void handleRefreshAccounts([account.access_token]); }} disabled={isRefreshing} title="Làm mới"><RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} /></button>
+                                </div>
+                              </div>
+
+                              {/* Image quota bar */}
+                              {isUnlimited ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="size-2 rounded-full bg-violet-500" />
+                                  <span className="text-[11px] font-medium text-slate-500">Ảnh</span>
+                                  <span className="ml-auto text-[12px] font-bold text-violet-600">∞ không giới hạn</span>
+                                </div>
+                              ) : !imageQuotaUnknown(account) ? (
+                                <QuotaBar label="Ảnh (image)" used={Math.max(0, 100 - quotaVal)} max={100} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at).relative : undefined} />
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="size-2 rounded-full bg-slate-300" />
+                                  <span className="text-[11px] text-slate-400">Quota không rõ</span>
+                                </div>
+                              )}
+
+                              {/* All limits_progress bars */}
+                              {account.limits_progress?.map((lp, i) => (
+                                <QuotaBar
+                                  key={i}
+                                  label={lp.feature_name ?? `Limit ${i + 1}`}
+                                  used={Math.max(0, (lp as any).total ?? 100) - (lp.remaining ?? 0)}
+                                  max={(lp as any).total ?? Math.max(lp.remaining ?? 0, 40)}
+                                  resetAfter={lp.reset_after}
+                                />
+                              ))}
+
+                              {/* Last used */}
+                              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
+                                <span>Dùng lần cuối</span>
+                                <span className="font-medium text-slate-600">{formatRelativeTime(account.last_used_at)}</span>
+                              </div>
+                            </div>
+
+                            {/* Requests stats card */}
+                            <div className="rounded-[12px] border border-black/[0.05] bg-white p-4 shadow-sm space-y-3">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thống kê yêu cầu</p>
+
+                              {/* Success/fail bars */}
+                              <div className="space-y-3">
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="size-2 rounded-full bg-emerald-500" />
+                                      <span className="text-[11px] font-medium text-slate-500">Thành công</span>
+                                    </div>
+                                    <span className="text-[11px] font-bold text-emerald-600">{account.success}</span>
+                                  </div>
+                                  {(account.success + account.fail) > 0 && (
+                                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.round(account.success / (account.success + account.fail) * 100)}%` }} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="size-2 rounded-full bg-rose-500" />
+                                      <span className="text-[11px] font-medium text-slate-500">Thất bại</span>
+                                    </div>
+                                    <span className="text-[11px] font-bold text-rose-500">{account.fail}</span>
+                                  </div>
+                                  {(account.success + account.fail) > 0 && (
+                                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                      <div className="h-full bg-rose-500 rounded-full" style={{ width: `${Math.round(account.fail / (account.success + account.fail) * 100)}%` }} />
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Restore at */}
+                              {account.restore_at && (
+                                <div className="rounded-[8px] bg-amber-50 border border-amber-100 px-3 py-2 text-[11px]">
+                                  <p className="font-medium text-amber-700">Phục hồi: {formatRestoreAt(account.restore_at).relative}</p>
+                                  <p className="text-amber-500">{formatRestoreAt(account.restore_at).absolute}</p>
+                                </div>
+                              )}
+
+                              {/* Action buttons */}
+                              <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-100" onClick={e => e.stopPropagation()}>
+                                <button
+                                  className="flex items-center gap-1 rounded-[8px] border border-black/[0.06] bg-white px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 transition"
+                                  onClick={() => openEditDialog(account)}
+                                >
+                                  <Pencil className="size-3" /> Sửa trạng thái
+                                </button>
+                                <button
+                                  className="flex items-center gap-1 rounded-[8px] border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-50 transition"
+                                  onClick={() => void handleDeleteTokens([account.access_token])}
+                                  disabled={isDeleting}
+                                >
+                                  <Trash2 className="size-3" /> Xóa
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                           {/* Top info row */}
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             {/* Image quota */}
@@ -933,11 +1085,7 @@ function AccountsPageContent() {
                       </div>
                     </div>
                   </div>
-                );
               })}
-                </tbody>
-              </table>
-
               {!isLoading && currentRows.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
                   <div className="rounded-xl bg-stone-100 p-3 text-stone-500">
