@@ -31,9 +31,9 @@ export default function RootLayout({
         }}
       >
         <Toaster position="top-right" richColors offset={48} />
-        <div className="flex min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.92),_rgba(245,239,231,0.96)_42%,_rgba(240,235,227,0.99)_100%)] text-stone-900">
+        <div className="flex min-h-screen bg-[#f4f6fb] text-stone-900 font-sans">
           <Sidebar />
-          <main className="flex-1 overflow-x-hidden pl-16 lg:pl-56">
+          <main className="flex-1 overflow-x-hidden pl-16 lg:pl-64">
             <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6 lg:px-8">
               {children}
             </div>

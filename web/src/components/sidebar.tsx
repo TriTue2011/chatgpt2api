@@ -79,28 +79,41 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-stone-200 bg-white/90 backdrop-blur-xl transition-all duration-200",
-        collapsed ? "w-16" : "w-56",
+        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-white/5 bg-[#0d1117] transition-all duration-200",
+        collapsed ? "w-16" : "w-64",
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-stone-200 px-3">
+      <div className="flex h-[60px] items-center gap-3 border-b border-white/5 px-4">
         {!collapsed && (
-          <Link href="/" className="text-[15px] font-bold tracking-tight text-stone-900">
-            chatgpt2api
+          <Link href="/" className="flex items-center gap-3 no-underline">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 text-white shadow-[0_4px_16px_rgba(99,102,241,0.4)]">
+              <LayoutDashboard className="size-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[14px] font-bold tracking-tight text-[#f0f6fc] leading-tight">
+                chatgpt2api
+              </span>
+              <span className="text-[11px] text-[#8b949e]">
+                Quản lý hệ thống
+              </span>
+            </div>
           </Link>
         )}
         <button
           type="button"
           onClick={() => setCollapsed(!collapsed)}
-          className="ml-auto rounded-md p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-800"
+          className={cn(
+            "rounded-md p-1.5 text-[#8b949e] transition hover:bg-white/5 hover:text-white",
+            collapsed ? "mx-auto" : "ml-auto"
+          )}
         >
           {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
         </button>
       </div>
 
       {/* Nav Items */}
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-3">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {visibleItems.map((item) => {
           const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
           const Icon = item.icon;
@@ -109,38 +122,50 @@ export function Sidebar() {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "relative flex items-center gap-3 rounded-md px-3 py-2.5 text-[13.5px] font-medium transition-all duration-200",
                 active
-                  ? "bg-stone-100 text-stone-900"
-                  : "text-stone-500 hover:bg-stone-800/50 hover:text-stone-800",
+                  ? "bg-gradient-to-br from-indigo-500/20 to-violet-500/10 text-indigo-300 border border-indigo-500/20"
+                  : "text-[#8b949e] hover:bg-white/5 hover:text-[#f0f6fc]"
               )}
               title={collapsed ? item.label : undefined}
             >
-              <Icon className="size-4 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
+              {active && (
+                <div className="absolute left-0 top-1/2 h-[60%] w-[3px] -translate-y-1/2 rounded-r-[3px] bg-gradient-to-br from-indigo-500 to-violet-500" />
+              )}
+              <Icon className={cn("size-[18px] shrink-0", active && "text-indigo-400")} />
+              {!collapsed && <span className="truncate">{item.label}</span>}
             </Link>
           );
         })}
       </nav>
 
       {/* Bottom: user + version + logout */}
-      <div className="border-t border-stone-200 px-3 py-3">
+      <div className="border-t border-white/5 p-3">
         {!collapsed && (
-          <div className="mb-2 space-y-0.5">
-            <p className="text-xs font-medium text-stone-700 truncate">{displayName}</p>
-            <p className="text-[10px] text-stone-500">{roleLabel} · v{webConfig.appVersion}</p>
+          <div className="mb-3 flex items-center gap-3 rounded-lg p-2 transition hover:bg-white/5 cursor-pointer">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 text-[14px] font-bold text-white">
+              {displayName.charAt(0).toUpperCase()}
+            </div>
+            <div className="flex flex-col overflow-hidden">
+              <span className="truncate text-[13px] font-semibold text-[#f0f6fc]">
+                {displayName}
+              </span>
+              <span className="truncate text-[11px] text-[#8b949e]">
+                {roleLabel} · v{webConfig.appVersion}
+              </span>
+            </div>
           </div>
         )}
         <button
           type="button"
           onClick={() => void handleLogout()}
           className={cn(
-            "flex items-center gap-2 rounded-md text-xs text-stone-500 transition hover:text-stone-700",
-            collapsed ? "justify-center w-full py-1" : "w-full",
+            "flex items-center gap-2 rounded-md text-[13px] font-medium text-[#8b949e] transition hover:bg-white/5 hover:text-[#f0f6fc]",
+            collapsed ? "justify-center w-full py-2.5" : "w-full px-3 py-2"
           )}
           title="Đăng xuất"
         >
-          <LogOut className="size-3.5" />
+          <LogOut className="size-[18px]" />
           {!collapsed && "Đăng xuất"}
         </button>
       </div>
