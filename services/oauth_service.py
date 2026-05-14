@@ -120,6 +120,7 @@ def exchange_codex_code(code: str, state: str) -> dict[str, Any]:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data=body,
         timeout=30,
+        impersonate="chrome110",
     )
 
     if resp.status_code != 200:
