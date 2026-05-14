@@ -174,11 +174,13 @@ class ConfigStore:
 
     @property
     def auth_key(self) -> str:
-        key = _normalize_auth_key(os.getenv("CHATGPT2API_AUTH_KEY") or self.data.get("auth-key"))
-        # HA addon fallback: read from /data/options.json
+        # Priority: 1) ENV var  2) HA addon config  3) config.json
+        key = _normalize_auth_key(os.getenv("CHATGPT2API_AUTH_KEY"))
         if _is_invalid_auth_key(key):
             addon_options = _read_json_object(Path("/data/options.json"), name="HA addon options")
             key = _normalize_auth_key(addon_options.get("auth_key") or "")
+        if _is_invalid_auth_key(key):
+            key = _normalize_auth_key(str(self.data.get("auth-key") or ""))
         return key
 
     @property
