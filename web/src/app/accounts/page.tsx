@@ -189,6 +189,16 @@ function displayAccountType(account: Account) {
   return account.type || "Free";
 }
 
+function translateStatus(status: string) {
+  switch (status) {
+    case "正常": return "Bình thường";
+    case "限流": return "Giới hạn";
+    case "异常": return "Lỗi";
+    case "禁用": return "Vô hiệu";
+    default: return status;
+  }
+}
+
 function formatRelativeTime(value?: string | null): string {
   if (!value) return "—";
   const date = new Date(value);
@@ -218,7 +228,7 @@ function QuotaBar({
           <span className="text-[11px] font-medium text-slate-500">{label}</span>
         </div>
         {resetAfter && (
-          <span className="text-[10px] text-slate-400 shrink-0">in {resetAfter}</span>
+          <span className="text-[10px] text-slate-400 shrink-0">{resetAfter}</span>
         )}
       </div>
       <div className="flex items-center gap-2">
@@ -745,7 +755,7 @@ function AccountsPageContent() {
                         </Badge>
                         <Badge variant={status.badge} className="inline-flex items-center gap-1 rounded-md text-[11px] px-1.5">
                           <StatusIcon className="size-3" />
-                          {account.status}
+                          {translateStatus(account.status)}
                         </Badge>
                       </div>
 
@@ -822,7 +832,7 @@ function AccountsPageContent() {
                                         account.status === "限流" ? "bg-amber-400" :
                                         account.status === "异常" ? "bg-rose-400" : "bg-slate-300"
                                       )} />
-                                      {account.status}
+                                      {translateStatus(account.status)}
                                     </Badge>
                                     <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
                                       {displayAccountType(account)}
@@ -861,7 +871,7 @@ function AccountsPageContent() {
                                   label={lp.feature_name ?? `Limit ${i + 1}`}
                                   used={Math.max(0, (lp as any).total ?? 100) - (lp.remaining ?? 0)}
                                   max={(lp as any).total ?? Math.max(lp.remaining ?? 0, 40)}
-                                  resetAfter={lp.reset_after}
+                                  resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after).relative : undefined}
                                 />
                               ))}
 
