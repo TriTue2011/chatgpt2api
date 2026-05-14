@@ -60,7 +60,7 @@ def get_codex_auth_url(base_url: str = "http://localhost:3030") -> dict[str, str
     4. POST that URL to /api/oauth/codex/exchange
     """
     pkce = generate_pkce()
-    redirect_uri = "http://localhost:3030/auth/callback"
+    redirect_uri = "http://localhost:1455/auth/callback"
 
     params = {
         "response_type": "code",

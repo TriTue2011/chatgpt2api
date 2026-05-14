@@ -406,7 +406,7 @@ def create_router(app_version: str) -> APIRouter:
     async def start_codex_oauth(request: Request, authorization: str | None = Header(default=None)):
         """Generate Codex OAuth URL for user to login."""
         require_admin(authorization)
-        host = request.headers.get("host", "localhost:3030")
+        host = request.headers.get("host", "localhost:1455")
         scheme = "https" if request.url.scheme == "https" else "http"
         base = config.base_url or f"{scheme}://{host}"
         result = get_codex_auth_url(base)

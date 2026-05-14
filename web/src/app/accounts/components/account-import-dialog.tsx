@@ -513,9 +513,9 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
 
           <div className="rounded-2xl border border-stone-200 bg-stone-100 p-4">
             <div className="mb-2 text-sm font-medium">Bước 2: Dán URL callback</div>
-            <p className="text-sm text-stone-600 mb-3">Sau khi đăng nhập, copy TOÀN Bộ URL trên thanh địa chỉ (bắt đầu bằng http://localhost:3030...) và dán vào đây:</p>
+            <p className="text-sm text-stone-600 mb-3">Sau khi đăng nhập, copy TOÀN Bộ URL trên thanh địa chỉ (bắt đầu bằng http://localhost:1455...) và dán vào đây:</p>
             <Textarea
-              placeholder="http://localhost:3030/auth/callback?code=..."
+              placeholder="http://localhost:1455/auth/callback?code=..."
               value={oauthRedirectUrl}
               onChange={(e) => setOauthRedirectUrl(e.target.value)}
               className="min-h-24 resize-none rounded-xl border-stone-300 font-mono text-xs mb-3"
