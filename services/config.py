@@ -120,6 +120,12 @@ def _load_settings() -> LoadedSettings:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     raw_config = _read_json_object(CONFIG_FILE, name="config.json")
     auth_key = _normalize_auth_key(os.getenv("CHATGPT2API_AUTH_KEY") or raw_config.get("auth-key"))
+
+    # HA addon fallback: read from /data/options.json if auth_key still empty
+    if _is_invalid_auth_key(auth_key):
+        addon_options = _read_json_object(Path("/data/options.json"), name="HA addon options")
+        auth_key = _normalize_auth_key(addon_options.get("auth_key") or "")
+
     if _is_invalid_auth_key(auth_key):
         raise ValueError(
             "❌ auth-key 未设置！\n"
@@ -266,11 +272,16 @@ class ConfigStore:
 
     @property
     def base_url(self) -> str:
-        return str(
+        url = str(
             os.getenv("CHATGPT2API_BASE_URL")
             or self.data.get("base_url")
             or ""
         ).strip().rstrip("/")
+        # HA addon fallback
+        if not url:
+            addon_options = _read_json_object(Path("/data/options.json"), name="HA addon options")
+            url = str(addon_options.get("base_url") or "").strip().rstrip("/")
+        return url
 
     @property
     def app_version(self) -> str:
