@@ -19,6 +19,7 @@ from services.state_backup import state_backup
 from services.backend_router import backend_router
 from services.providers.opencode import opencode_provider
 from services.rate_limit_backoff import rate_limit_backoff
+from services.quota_watcher import quota_watcher
 from services.ninerouter_backup_import import import_9router_backup_from_api
 from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_chatgpt_session_url, detect_token_type
 
@@ -354,6 +355,7 @@ def create_router(app_version: str) -> APIRouter:
                 "error": sum(1 for a in accounts if a.get("status") in ("异常", "禁用")),
             },
             "backoff": backoff_stats,
+            "quota_watcher": quota_watcher.get_stats(),
             "opencode": {
                 "available": opencode_provider.is_available,
             },

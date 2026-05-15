@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from threading import Event
 
@@ -12,6 +13,8 @@ from api import accounts, ai, image_tasks, register, system
 from api.support import resolve_web_asset, start_limited_account_watcher
 from services.backup_service import backup_service
 from services.config import config
+from services.karpathy_guidelines import refresh_guidelines
+from services.quota_watcher import quota_watcher
 
 
 def create_app() -> FastAPI:
@@ -23,9 +26,13 @@ def create_app() -> FastAPI:
         thread = start_limited_account_watcher(stop_event)
         backup_service.start()
         config.cleanup_old_images()
+        # Fetch latest Karpathy guidelines + start quota watcher (fire-and-forget)
+        refresh_guidelines()
+        watcher_task = asyncio.create_task(quota_watcher.start())
         try:
             yield
         finally:
+            await quota_watcher.stop()
             stop_event.set()
             thread.join(timeout=1)
             backup_service.stop()
