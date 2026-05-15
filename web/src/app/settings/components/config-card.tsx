@@ -150,20 +150,40 @@ export function ConfigCard() {
             <p className="text-xs text-stone-500">Tự động xóa hình ảnh cục bộ từ bao nhiêu ngày trước.</p>
           </div>
           <div className="space-y-2">
-            <label className="text-sm text-stone-700">Tỷ lệ ảnh mặc định</label>
+            <label className="text-sm text-stone-700">Kích thước ảnh mặc định</label>
             <select
               value={String((config as any)?.default_image_size || "1792x1024")}
               onChange={(e) => setField("default_image_size", e.target.value)}
               className="h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700"
             >
-              <option value="1792x1024">16:9 (1792×1024)</option>
-              <option value="1024x1024">1:1 (1024×1024)</option>
-              <option value="1024x1792">9:16 (1024×1792)</option>
-              <option value="768x768">1:1 (768×768)</option>
-              <option value="768x1344">9:16 (768×1344)</option>
-              <option value="1344x768">16:9 (1344×768)</option>
+              <optgroup label="▸ 16:9 (Landscape)">
+                <option value="1792x1024">1792×1024 (16:9) — Mặc định</option>
+                <option value="1344x768">1344×768 (16:9)</option>
+              </optgroup>
+              <optgroup label="▸ 9:16 (Portrait)">
+                <option value="1024x1792">1024×1792 (9:16)</option>
+                <option value="768x1344">768×1344 (9:16)</option>
+              </optgroup>
+              <optgroup label="▸ 1:1 (Square)">
+                <option value="1024x1024">1024×1024 (1:1)</option>
+                <option value="768x768">768×768 (1:1)</option>
+                <option value="512x512">512×512 (1:1)</option>
+                <option value="256x256">256×256 (1:1)</option>
+              </optgroup>
+              <optgroup label="▸ 4:3">
+                <option value="1792x1344">1792×1344 (4:3)</option>
+                <option value="1200x896">1200×896 (4:3)</option>
+              </optgroup>
+              <optgroup label="▸ 3:2">
+                <option value="1536x1024">1536×1024 (3:2)</option>
+                <option value="1264x848">1264×848 (3:2)</option>
+              </optgroup>
+              <optgroup label="▸ Khác">
+                <option value="768x1024">768×1024 (3:4)</option>
+                <option value="1024x768">1024×768 (4:3)</option>
+              </optgroup>
             </select>
-            <p className="text-xs text-stone-500">Kích thước mặc định cho tất cả model tạo ảnh (GPT, Gemini, NVIDIA...).</p>
+            <p className="text-xs text-stone-500">Áp dụng cho tất cả model: GPT, Gemini, NVIDIA, SD, FLUX...</p>
           </div>
             <Input
               value={String(config?.image_poll_timeout_secs || "")}

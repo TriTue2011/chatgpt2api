@@ -261,7 +261,11 @@ class ConfigStore:
 
     @property
     def default_image_size(self) -> str:
-        return str(self.data.get("default_image_size") or "1792x1024").strip()
+        size = str(self.data.get("default_image_size") or "1792x1024").strip()
+        # Validate: must be WxH format
+        if "x" in size:
+            return size
+        return "1792x1024"
 
     @property
     def images_dir(self) -> Path:
