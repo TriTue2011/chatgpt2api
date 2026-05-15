@@ -84,21 +84,9 @@ class GeminiImageAdapter(BaseImageAdapter):
             "responseModalities": ["TEXT", "IMAGE"],
         }
 
-        # Default to 16:9 like Gemini (matching the API default)
-        ratio = self._SIZE_TO_RATIO.get(size, "16:9")
-        img_config: dict[str, str] = {"aspectRatio": ratio}
-
-        # 1792 width or explicit quality → higher resolution
-        if "1792" in size or "2K" in str(body.get("quality") or ""):
-            img_config["imageSize"] = "2K"
-        elif "4K" in str(body.get("quality") or ""):
-            img_config["imageSize"] = "4K"
-
-        # Direct aspect ratio override
-        if body.get("aspect_ratio"):
-            img_config["aspectRatio"] = str(body["aspect_ratio"])
-
-        gen_config["responseFormat"] = {"image": img_config}
+        # Note: generateContent does NOT support responseFormat.
+        # Aspect ratio and image size are controlled via model-specific parameters
+        # that vary by model version. Default is model-dependent.
 
         return {
             "contents": [{"parts": parts}],
