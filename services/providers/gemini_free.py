@@ -115,8 +115,41 @@ class GeminiProvider:
 
 
 def _convert_request(messages, tools):
-    """Convert OpenAI format → Gemini format with vision support."""
+    """Convert OpenAI format → Gemini format with vision + video support."""
     import base64 as b64
+
+    VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm", ".wmv", ".mpeg", ".mpg", ".3gpp", ".flv", ".mkv"}
+
+    def _is_video_url(url: str) -> bool:
+        """Check if URL points to a video file."""
+        import os
+        # Check extension
+        for ext in VIDEO_EXTENSIONS:
+            if ext in url.lower().split("?")[0]:
+                return True
+        return False
+
+    def _data_url_part(data_url: str, ptype: str = "image") -> dict | None:
+        """Parse data: URL → Gemini inlineData part."""
+        if not data_url.startswith("data:"):
+            return None
+        header, data = data_url.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "")
+        return {"inlineData": {"mimeType": mime, "data": data}}
+
+    def _fetch_url_part(url: str) -> dict | None:
+        """Fetch URL and return Gemini inlineData part."""
+        try:
+            from curl_cffi import requests as cffi_requests
+            resp = cffi_requests.get(url, timeout=60, impersonate="chrome110")
+            if resp.status_code == 200:
+                img_data = b64.b64encode(resp.content).decode()
+                ctype = resp.headers.get("content-type", "image/jpeg")
+                return {"inlineData": {"mimeType": ctype, "data": img_data}}
+        except Exception:
+            pass
+        return None
+
     contents = []
     system_parts = []
 
@@ -133,24 +166,24 @@ def _convert_request(messages, tools):
                 ptype = p.get("type", "")
                 if ptype == "text":
                     text_content += p.get("text", "") + " "
-                elif ptype == "image_url":
-                    img_url = p.get("image_url", {}).get("url", "")
-                    if img_url.startswith("data:"):
-                        # data:image/jpeg;base64,<data>
-                        header, data = img_url.split(",", 1)
-                        mime = header.split(";")[0].replace("data:", "")
-                        parts.append({"inlineData": {"mimeType": mime, "data": data}})
-                    elif img_url.startswith("http"):
-                        # URL-based image — fetch and encode
-                        try:
-                            from curl_cffi import requests as cffi_requests
-                            resp = cffi_requests.get(img_url, timeout=30, impersonate="chrome110")
-                            if resp.status_code == 200:
-                                img_data = b64.b64encode(resp.content).decode()
-                                ctype = resp.headers.get("content-type", "image/jpeg")
-                                parts.append({"inlineData": {"mimeType": ctype, "data": img_data}})
-                        except Exception:
-                            pass
+                elif ptype in ("image_url", "video_url"):
+                    media_url = (p.get("image_url") or p.get("video_url") or {}).get("url", "")
+                    if not media_url:
+                        continue
+                    part = _data_url_part(media_url)
+                    if not part:
+                        part = _fetch_url_part(media_url)
+                    if part:
+                        parts.append(part)
+                elif ptype == "file_data":
+                    fd = p.get("file_data", {})
+                    file_uri = fd.get("file_uri", "")
+                    if file_uri.startswith("data:"):
+                        part = _data_url_part(file_uri)
+                    elif file_uri.startswith("http"):
+                        part = _fetch_url_part(file_uri)
+                    if part:
+                        parts.append(part)
             if text_content.strip():
                 parts.insert(0, {"text": text_content.strip()})
             content = text_content.strip()
