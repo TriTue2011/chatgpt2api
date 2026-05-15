@@ -64,9 +64,9 @@ export function ImportBrowserDialog() {
     <Dialog open={browserOpen} onOpenChange={setBrowserOpen}>
       <DialogContent showCloseButton={false} className="max-h-[90vh] max-w-5xl rounded-2xl p-6">
         <DialogHeader className="gap-2">
-          <DialogTitle>chọn要导入的账号</DialogTitle>
+          <DialogTitle>Chọn tài khoản cần nhập</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {browserPool ? `来自 ${browserPool.name || browserPool.base_url}` : "Đọc到的远程账号列表"}
+            {browserPool ? `来自 ${browserPool.name || browserPool.base_url}` : "Danh sách tài khoản từ xa"}
           </DialogDescription>
         </DialogHeader>
 
@@ -98,7 +98,7 @@ export function ImportBrowserDialog() {
               className="h-10 rounded-xl border-stone-200 bg-white px-4 text-stone-700"
               onClick={() => toggleSelectAllFiltered(!allFilteredSelected)}
             >
-              {allFilteredSelected ? "Hủy全选" : "Chọn tất cả kết quả lọc"}
+              {allFilteredSelected ? "Bỏ chọn tất cả" : "Chọn tất cả kết quả lọc"}
             </Button>
           </div>
         </div>
@@ -113,7 +113,7 @@ export function ImportBrowserDialog() {
           </div>
           <div className="max-h-[420px] overflow-auto">
             {pagedFiles.length === 0 ? (
-              <div className="flex items-center justify-center py-12 text-sm text-stone-500">没有匹配的远程账号</div>
+              <div className="flex items-center justify-center py-12 text-sm text-stone-500">Không có tài khoản từ xa phù hợp</div>
             ) : (
               <div className="divide-y divide-stone-100">
                 {pagedFiles.map((item) => (

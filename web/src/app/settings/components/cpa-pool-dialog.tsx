@@ -45,14 +45,14 @@ export function CPAPoolDialog() {
             <Input
               value={formName}
               onChange={(event) => setFormName(event.target.value)}
-              placeholder="例如：主号池、备用池"
+              placeholder="VD: Kho chính, kho dự phòng"
               className="h-11 rounded-xl border-stone-200 bg-white"
             />
           </div>
           <div className="space-y-2">
             <label className="flex items-center gap-1.5 text-sm font-medium text-stone-700">
               <Link2 className="size-3.5" />
-              CPA 地址
+              Địa chỉ CPA
             </label>
             <Input
               value={formBaseUrl}
@@ -71,7 +71,7 @@ export function CPAPoolDialog() {
                 type={showSecret ? "text" : "password"}
                 value={formSecretKey}
                 onChange={(event) => setFormSecretKey(event.target.value)}
-                placeholder={editingPool ? "留空则不sửa密钥" : "CPA 管理密钥"}
+                placeholder={editingPool ? "Để trống nếu không sửa khóa" : "Khóa quản lý CPA"}
                 className="h-11 rounded-xl border-stone-200 bg-white pr-10"
               />
               <button

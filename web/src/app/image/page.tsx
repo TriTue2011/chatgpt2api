@@ -882,7 +882,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-${index + 1}.png`, image.type),
         );
         if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
-          throw new Error("未找到có thể用于继续编辑的ảnh tham khảo");
+          throw new Error("Không tìm thấy ảnh tham khảo để tiếp tục chỉnh sửa");
         }
 
         const pendingImages = activeTurn.images.filter((image) => image.status === "loading");

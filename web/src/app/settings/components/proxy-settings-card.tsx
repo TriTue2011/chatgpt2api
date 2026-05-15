@@ -82,7 +82,7 @@ export function ProxySettingsCard() {
                 className="h-11 rounded-xl border-stone-200 bg-white"
               />
               <p className="text-sm text-stone-500">
-                留空表示不使用代理。请按完整地址填写，例如 `http://127.0.0.1:7890`、`http://người dùng名:密码@127.0.0.1:7890` 或 `socks5://127.0.0.1:7890`。
+                Để trống nếu không dùng proxy. Nhập địa chỉ đầy đủ, VD: `http://127.0.0.1:7890`、`http://tên:mật khẩu@127.0.0.1:7890` 或 `socks5://127.0.0.1:7890`。
               </p>
             </div>
 
