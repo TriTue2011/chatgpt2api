@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from threading import Event
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
