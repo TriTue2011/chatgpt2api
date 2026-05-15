@@ -69,8 +69,8 @@ class QuotaWatcher:
             return
         self._running = True
         self._rebuild()
-        self._task = asyncio.create_task(self._loop())
         logger.info({"event": "quota_watcher_started", "accounts": len(self._heap)})
+        self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
         """Stop the background watcher loop."""
@@ -89,20 +89,26 @@ class QuotaWatcher:
 
     def _rebuild(self):
         """Rebuild the min-heap from all accounts."""
-        accounts = account_service.list_accounts()
+        try:
+            accounts = account_service.list_accounts()
+        except Exception as e:
+            logger.error({"event": "quota_watcher_rebuild_error", "error": str(e)})
+            return
         now = time.time()
 
         self._heap.clear()
         self._index.clear()
 
+        count = 0
         for account in accounts:
+            if not isinstance(account, dict):
+                continue
             acc_id = account.get("access_token", "")
             if not acc_id:
                 continue
 
-            status = account.get("status", "")
+            status = str(account.get("status", ""))
             quota = int(account.get("quota") or 0)
-            restore_at = account.get("restore_at")
 
             # Skip disabled/abnormal accounts
             if status in ("禁用", "异常"):
@@ -114,6 +120,9 @@ class QuotaWatcher:
             item = QuotaCheckItem(next_check_at=next_check, account_id=acc_id)
             heapq.heappush(self._heap, item)
             self._index[acc_id] = item
+            count += 1
+
+        logger.info({"event": "quota_watcher_rebuilt", "accounts": count, "total_in_pool": len(accounts)})
 
     def _next_check_time(self, account: dict[str, Any], now: float) -> float:
         """Calculate when this account should next be checked.
@@ -158,9 +167,17 @@ class QuotaWatcher:
 
     async def _loop(self):
         """Main event loop — process due items, sleep until next."""
+        last_rebuild = time.time()
+        rebuild_interval = 1800  # Full rebuild every 30 minutes
+
         while self._running:
             try:
                 now = time.time()
+
+                # Periodic full rebuild to catch new/removed accounts
+                if now - last_rebuild >= rebuild_interval:
+                    self._rebuild()
+                    last_rebuild = now
 
                 # Process all due items
                 while self._heap and self._heap[0].next_check_at <= now:
