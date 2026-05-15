@@ -79,19 +79,21 @@ class GeminiImageAdapter(BaseImageAdapter):
             "responseModalities": ["TEXT", "IMAGE"],
         }
 
-        # Map size to Gemini aspect ratio + image size
-        ratio = self._SIZE_TO_RATIO.get(size)
-        if ratio:
-            img_config: dict[str, str] = {"aspectRatio": ratio}
-            # 1792 width → 2K resolution
-            if "1792" in size or "2K" in str(body.get("quality") or ""):
-                img_config["imageSize"] = "2K"
-            elif "4K" in str(body.get("quality") or ""):
-                img_config["imageSize"] = "4K"
-            gen_config["responseFormat"] = {"image": img_config}
-        # Support direct aspect ratio specification
-        elif body.get("aspect_ratio"):
-            gen_config["responseFormat"] = {"image": {"aspectRatio": str(body["aspect_ratio"])}}
+        # Default to 16:9 like Gemini (matching the API default)
+        ratio = self._SIZE_TO_RATIO.get(size, "16:9")
+        img_config: dict[str, str] = {"aspectRatio": ratio}
+
+        # 1792 width or explicit quality → higher resolution
+        if "1792" in size or "2K" in str(body.get("quality") or ""):
+            img_config["imageSize"] = "2K"
+        elif "4K" in str(body.get("quality") or ""):
+            img_config["imageSize"] = "4K"
+
+        # Direct aspect ratio override
+        if body.get("aspect_ratio"):
+            img_config["aspectRatio"] = str(body["aspect_ratio"])
+
+        gen_config["responseFormat"] = {"image": img_config}
 
         return {
             "contents": [{"parts": parts}],
