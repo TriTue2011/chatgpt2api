@@ -149,11 +149,11 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
       if ((data.errors?.length ?? 0) > 0) {
         const firstError = data.errors?.[0]?.error;
         toast.error(
-          `${successText ?? "Nhập hoàn tất"}，Thêm mới ${data.added ?? 0} mục，Đã làm mới ${data.refreshed ?? 0} mục，Thất bại ${data.errors?.length ?? 0} mục${firstError ? `，Lỗi đầu tiên: ${firstError}` : ""}`,
+          `${successText ?? "Nhập hoàn tất"}, Thêm mới ${data.added ?? 0} mục, Đã làm mới ${data.refreshed ?? 0} mục, Thất bại ${data.errors?.length ?? 0} mục${firstError ? `, Lỗi đầu tiên: ${firstError}` : ""}`,
         );
       } else {
         toast.success(
-          `${successText ?? "Nhập hoàn tất"}，Thêm mới ${data.added ?? 0} mục，Bỏ qua ${data.skipped ?? 0} mục trùng lặp，Đã tự động làm mới thông tin tài khoản`,
+          `${successText ?? "Nhập hoàn tất"}, Thêm mới ${data.added ?? 0} mục, Bỏ qua ${data.skipped ?? 0} mục trùng lặp, Đã tự động làm mới thông tin tài khoản`,
         );
       }
     } catch (error) {
