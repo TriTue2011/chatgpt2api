@@ -231,8 +231,9 @@ class CodexOAuthProvider:
 
         # Pass max_tokens as max_output_tokens (Responses API format)
         # Only if explicitly provided — don't set a default (Codex may reject it)
-        if max_tokens:
-            body["max_output_tokens"] = max_tokens
+        # NOTE: Codex Responses API rejects max_output_tokens — don't pass it
+        # if max_tokens:
+        #     body["max_output_tokens"] = max_tokens
 
         headers = dict(CODEX_HEADERS)
         headers["Authorization"] = f"Bearer {access_token}"
@@ -259,13 +260,18 @@ class CodexOAuthProvider:
             if resp.status_code >= 400:
                 error_text = ""
                 try:
-                    # Must read raw content since stream=True prevents .text from working
-                    raw = resp.content
+                    # Read raw bytes — stream=True may prevent .text/.content from working
+                    raw = b""
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        if chunk:
+                            raw += chunk if isinstance(chunk, bytes) else chunk.encode()
+                            if len(raw) > 10000:
+                                break
                     if raw:
                         error_text = raw.decode("utf-8", errors="ignore")[:1000]
                 except Exception:
                     try:
-                        error_text = resp.text[:1000]
+                        error_text = (resp.text or "")[:1000]
                     except Exception:
                         pass
                 # Also log response headers for debugging
