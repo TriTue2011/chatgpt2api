@@ -259,13 +259,17 @@ class CodexOAuthProvider:
             if resp.status_code >= 400:
                 error_text = ""
                 try:
-                    error_text = resp.text[:500]
+                    error_text = resp.text[:1000]
                 except Exception:
                     pass
+                # Also log response headers for debugging
+                resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
                 logger.error({
                     "event": "codex_upstream_error",
                     "status": resp.status_code,
                     "error": error_text,
+                    "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
+                    "url": CODEX_URL,
                 })
                 raise RuntimeError(f"Codex error {resp.status_code}: {error_text[:200]}")
 
