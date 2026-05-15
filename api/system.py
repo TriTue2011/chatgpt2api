@@ -25,6 +25,50 @@ from services.ninerouter_backup_import import import_9router_backup_from_api
 from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_chatgpt_session_url, detect_token_type
 
 
+def _check_gemini_status() -> dict:
+    """Check Gemini API and Gemini-FastAPI health."""
+    result = {
+        "gemini_api": "unknown",
+        "geminiapi": "unknown",
+        "models_count": 0,
+    }
+    # Check Gemini API directly
+    try:
+        provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
+        api_key = provider_config.get("api_key") or ""
+        if api_key:
+            import requests as req
+            resp = req.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                timeout=10
+            )
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                result["gemini_api"] = "available"
+                result["models_count"] = len(models)
+            else:
+                result["gemini_api"] = f"error_{resp.status_code}"
+        else:
+            result["gemini_api"] = "no_key"
+    except Exception as e:
+        result["gemini_api"] = f"error: {str(e)[:50]}"
+
+    # Check Geminiapi custom provider
+    try:
+        cp_config = (config.data.get("custom_providers") or {}).get("geminiapi") or {}
+        base_url = cp_config.get("base_url") or "http://172.16.10.200:8002"
+        import requests as req
+        resp = req.get(f"{base_url}/health", timeout=5)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            result["geminiapi"] = "available"
+        else:
+            result["geminiapi"] = f"error_{resp.status_code}"
+    except Exception as e:
+        result["geminiapi"] = f"error: {str(e)[:50]}"
+
+    return result
+
+
 def _is_model_enabled(model_id: str, enabled_by_provider: dict) -> bool:
     """Check if a model is in the enabled list. If no providers configured, all models are enabled."""
     if not enabled_by_provider:
@@ -361,6 +405,7 @@ def create_router(app_version: str) -> APIRouter:
             "opencode": {
                 "available": opencode_provider.is_available,
             },
+            "gemini": _check_gemini_status(),
         }
 
     @router.get("/api/v1/providers")
