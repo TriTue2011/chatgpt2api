@@ -160,8 +160,7 @@
 
 /* ── Pastel card with 3D depth ── */
 .card-3d {
-  background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(248,250,255,0.9));
-  border: 1px solid rgba(0,0,0,0.12);
+  border: 1px solid rgba(0,0,0,0.10);
   box-shadow:
     0 1px 3px rgba(0,0,0,0.04),
     0 4px 12px rgba(0,0,0,0.04),
@@ -178,14 +177,14 @@
     inset 0 1px 0 rgba(255,255,255,1);
 }
 
-/* Card tints per section */
-.card-tint-indigo  { background: linear-gradient(135deg, rgba(238,242,255,0.95), rgba(224,231,255,0.9)); }
-.card-tint-emerald { background: linear-gradient(135deg, rgba(236,253,245,0.95), rgba(209,250,229,0.9)); }
-.card-tint-amber   { background: linear-gradient(135deg, rgba(255,251,235,0.95), rgba(254,243,199,0.9)); }
-.card-tint-rose    { background: linear-gradient(135deg, rgba(255,241,242,0.95), rgba(255,228,230,0.9)); }
-.card-tint-sky     { background: linear-gradient(135deg, rgba(240,249,255,0.95), rgba(224,242,254,0.9)); }
-.card-tint-violet  { background: linear-gradient(135deg, rgba(245,243,255,0.95), rgba(237,233,254,0.9)); }
-.card-tint-slate   { background: linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.9)); }
+/* Card tints per section — clearly visible pastel colors */
+.card-tint-indigo  { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }
+.card-tint-emerald { background: linear-gradient(135deg, #d1fae5, #a7f3d0); }
+.card-tint-amber   { background: linear-gradient(135deg, #fef3c7, #fde68a); }
+.card-tint-rose    { background: linear-gradient(135deg, #ffe4e6, #fecdd3); }
+.card-tint-sky     { background: linear-gradient(135deg, #e0f2fe, #bae6fd); }
+.card-tint-violet  { background: linear-gradient(135deg, #ede9fe, #ddd6fe); }
+.card-tint-slate   { background: linear-gradient(135deg, #e9eef3, #dce3ea); }
 
 @layer utilities {
   .hide-scrollbar {
