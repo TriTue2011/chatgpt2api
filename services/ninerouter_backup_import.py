@@ -217,12 +217,12 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            # Add to pool — one token serves both free (chat+images) and codex (cx/auto)
-            result = account_service.add_accounts_with_type(tokens, "free,codex")
+            # Add to pool as codex type — get_token_for_request filters by type=codex
+            result = account_service.add_accounts_with_type(tokens, "codex")
             for token in tokens:
                 account_service.update_account(token, {
                     "image_quota_unknown": False,
-                    "quota": 10,  # Initial default — backend refresh will update to real quota
+                    "quota": 10,
                     "status": "active",
                 })
             imported = result.get("added", 0) + result.get("updated", 0)

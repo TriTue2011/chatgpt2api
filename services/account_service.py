@@ -309,10 +309,6 @@ class AccountService:
             current = self._accounts.get(access_token)
             if current is None:
                 return None
-            # Preserve multi-type (e.g. "free,codex") — don't let API override with single type
-            existing_type = str(current.get("type") or "free")
-            if "type" in updates and "," in existing_type and "," not in str(updates["type"] or ""):
-                del updates["type"]
             account = self._normalize_account({**current, **updates, "access_token": access_token})
             if account is None:
                 return None
