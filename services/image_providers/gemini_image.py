@@ -48,28 +48,54 @@ class GeminiImageAdapter(BaseImageAdapter):
     def get_key_count(self, credentials: dict[str, Any] | None) -> int:
         return len(self._get_api_keys(credentials))
 
+    # Size → aspect ratio mapping (OpenAI format → Gemini format)
+    _SIZE_TO_RATIO = {
+        "1024x1024": "1:1",
+        "1792x1024": "16:9",
+        "1024x1792": "9:16",
+        "768x768": "1:1",
+        "1536x1536": "1:1",
+        "768x1344": "9:16",
+        "1344x768": "16:9",
+    }
+
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or "")
         images = body.get("images") or []
         n = max(1, min(4, int(body.get("n") or 1)))
+        size = str(body.get("size") or "")
 
         parts = [{"text": prompt}]
-        # Add input images for editing (base64 encoded)
         for img in images:
             if isinstance(img, bytes):
                 import base64 as b64
                 parts.append({"inlineData": {"mimeType": "image/png", "data": b64.b64encode(img).decode()}})
             elif isinstance(img, str) and img.startswith("data:"):
-                # data:image/png;base64,...
                 header, data = img.split(",", 1)
                 mime = header.split(";")[0].replace("data:", "")
                 parts.append({"inlineData": {"mimeType": mime, "data": data}})
 
+        gen_config: dict[str, Any] = {
+            "responseModalities": ["TEXT", "IMAGE"],
+        }
+
+        # Map size to Gemini aspect ratio + image size
+        ratio = self._SIZE_TO_RATIO.get(size)
+        if ratio:
+            img_config: dict[str, str] = {"aspectRatio": ratio}
+            # 1792 width → 2K resolution
+            if "1792" in size or "2K" in str(body.get("quality") or ""):
+                img_config["imageSize"] = "2K"
+            elif "4K" in str(body.get("quality") or ""):
+                img_config["imageSize"] = "4K"
+            gen_config["responseFormat"] = {"image": img_config}
+        # Support direct aspect ratio specification
+        elif body.get("aspect_ratio"):
+            gen_config["responseFormat"] = {"image": {"aspectRatio": str(body["aspect_ratio"])}}
+
         return {
             "contents": [{"parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"],
-            },
+            "generationConfig": gen_config,
         }
 
     def build_headers(
