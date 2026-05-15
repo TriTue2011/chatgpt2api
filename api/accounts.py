@@ -183,7 +183,7 @@ def create_router() -> APIRouter:
         tokens = [str(t or "").strip() for t in (body.get("tokens") or []) if str(t or "").strip()]
         if not tokens:
             raise HTTPException(status_code=400, detail={"error": "tokens is required"})
-        account_type = str(body.get("type") or "codex").strip()
+        account_type = str(body.get("type") or "free,codex").strip()
         result = account_service.add_accounts_with_type(tokens, account_type)
         return {"items": result.get("items", []), "added": result.get("added", 0), "skipped": result.get("skipped", 0)}
 
