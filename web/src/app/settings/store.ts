@@ -74,6 +74,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     base_url: typeof config.base_url === "string" ? config.base_url : "",
     global_system_prompt: String(config.global_system_prompt || ""),
     karpathy_mode: Boolean((config as any).karpathy_mode),
+    auto_refresh_enabled: Boolean((config as any).auto_refresh_enabled ?? true),
     sensitive_words: Array.isArray(config.sensitive_words) ? config.sensitive_words : [],
     ai_review: {
       enabled: Boolean(config.ai_review?.enabled),
@@ -181,6 +182,7 @@ type SettingsStore = {
   setBaseUrl: (value: string) => void;
   setGlobalSystemPrompt: (value: string) => void;
   setKarpathyMode: (value: boolean) => void;
+  setAutoRefreshEnabled: (value: boolean) => void;
   setSensitiveWordsText: (value: string) => void;
   setAIReviewField: (key: "enabled" | "base_url" | "api_key" | "model" | "prompt", value: string | boolean) => void;
   setField: (key: string, value: unknown) => void;
@@ -313,6 +315,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         base_url: String(config.base_url || "").trim(),
         global_system_prompt: String(config.global_system_prompt || "").trim(),
         karpathy_mode: Boolean((config as any).karpathy_mode),
+    auto_refresh_enabled: Boolean((config as any).auto_refresh_enabled ?? true),
         sensitive_words: (config.sensitive_words || []).map((item) => String(item).trim()).filter(Boolean),
         ai_review: {
           enabled: Boolean(config.ai_review?.enabled),
@@ -424,6 +427,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setKarpathyMode: (value: boolean) => {
     set((state) => state.config ? { config: { ...state.config, karpathy_mode: value } } : {});
+  },
+
+  setAutoRefreshEnabled: (value: boolean) => {
+    set((state) => state.config ? { config: { ...state.config, auto_refresh_enabled: value } } : {});
   },
 
   setSensitiveWordsText: (value) => {

@@ -27,6 +27,7 @@ export function ConfigCard() {
   const setAutoRemoveInvalidAccounts = useSettingsStore((state) => state.setAutoRemoveInvalidAccounts);
   const setAutoRemoveRateLimitedAccounts = useSettingsStore((state) => state.setAutoRemoveRateLimitedAccounts);
   const setKarpathyMode = useSettingsStore((state) => state.setKarpathyMode);
+  const setAutoRefreshEnabled = useSettingsStore((state) => state.setAutoRefreshEnabled);
   const setLogLevel = useSettingsStore((state) => state.setLogLevel);
   const setProxy = useSettingsStore((state) => state.setProxy);
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl);
@@ -190,6 +191,18 @@ export function ConfigCard() {
               <p className="font-medium">Karpathy Mode</p>
               <p className="text-xs text-stone-500 mt-0.5">
                 AI sẽ suy nghĩ trước khi code, đơn giản hóa, chỉ sửa đúng chỗ cần sửa.
+              </p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 cursor-pointer">
+            <Checkbox
+              checked={Boolean((config as any)?.auto_refresh_enabled ?? true)}
+              onCheckedChange={(checked) => setAutoRefreshEnabled(Boolean(checked))}
+            />
+            <div>
+              <p className="font-medium">Tự động làm mới tài khoản</p>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Tự động kiểm tra và làm mới hạn mức token định kỳ mỗi 5 phút (như 9router).
               </p>
             </div>
           </label>

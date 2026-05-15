@@ -256,6 +256,10 @@ class ConfigStore:
         return _normalize_bool(self.data.get("karpathy_mode"), False)
 
     @property
+    def auto_refresh_enabled(self) -> bool:
+        return _normalize_bool(self.data.get("auto_refresh_enabled"), True)
+
+    @property
     def images_dir(self) -> Path:
         path = DATA_DIR / "images"
         path.mkdir(parents=True, exist_ok=True)
