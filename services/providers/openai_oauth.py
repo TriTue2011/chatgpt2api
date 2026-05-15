@@ -401,30 +401,29 @@ class CodexOAuthProvider:
         }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
-        """Get next available JWT token for Codex OAuth (accepts both free and codex type)."""
+        """Get next available JWT token for Codex OAuth."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
-            all_accounts = list(account_service._accounts.values())
-            candidates = [
-                token
-                for item in all_accounts
-                if item.get("status") not in {"disabled", "error"}
-                and (token := item.get("access_token") or "")
-                and token not in excluded
-                and token.startswith("eyJ")
-            ]
-            if not candidates:
-                logger.error({
-                    "event": "codex_no_tokens",
-                    "total_accounts": len(all_accounts),
-                    "jwt_accounts": sum(1 for i in all_accounts if str(i.get("access_token","")).startswith("eyJ")),
-                    "active_jwt": sum(1 for i in all_accounts if str(i.get("access_token","")).startswith("eyJ") and i.get("status") not in {"disabled","error"}),
-                    "sample_statuses": [i.get("status") for i in all_accounts[:3]],
-                })
-                raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
-            token = candidates[account_service._index % len(candidates)]
-            account_service._index += 1
-            return token
+            # Take ANY valid JWT token — no type filter
+            all_tokens = list(account_service._accounts.items())
+            logger.info({
+                "event": "codex_token_pool",
+                "total": len(all_tokens),
+                "sample_keys": [str(k)[:20] for k, v in all_tokens[:3]],
+                "sample_statuses": [v.get("status") for k, v in all_tokens[:3]],
+            })
+            for key, item in all_tokens:
+                status = item.get("status", "")
+                if status in ("disabled", "error"):
+                    continue
+                token = item.get("access_token") or key
+                if not token or not str(token).startswith("eyJ"):
+                    continue
+                if token in excluded:
+                    continue
+                logger.info({"event": "codex_token_found", "token_preview": str(token)[:30]})
+                return str(token)
+            raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
 
 
 # Singleton
