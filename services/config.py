@@ -252,6 +252,10 @@ class ConfigStore:
         return str(self.data.get("global_system_prompt") or "").strip()
 
     @property
+    def karpathy_mode(self) -> bool:
+        return _normalize_bool(self.data.get("karpathy_mode"), False)
+
+    @property
     def images_dir(self) -> Path:
         path = DATA_DIR / "images"
         path.mkdir(parents=True, exist_ok=True)

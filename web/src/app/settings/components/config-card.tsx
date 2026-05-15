@@ -26,6 +26,7 @@ export function ConfigCard() {
   const setImageAccountConcurrency = useSettingsStore((state) => state.setImageAccountConcurrency);
   const setAutoRemoveInvalidAccounts = useSettingsStore((state) => state.setAutoRemoveInvalidAccounts);
   const setAutoRemoveRateLimitedAccounts = useSettingsStore((state) => state.setAutoRemoveRateLimitedAccounts);
+  const setKarpathyMode = useSettingsStore((state) => state.setKarpathyMode);
   const setLogLevel = useSettingsStore((state) => state.setLogLevel);
   const setProxy = useSettingsStore((state) => state.setProxy);
   const setBaseUrl = useSettingsStore((state) => state.setBaseUrl);
@@ -175,6 +176,18 @@ export function ConfigCard() {
               onCheckedChange={(checked) => setAutoRemoveRateLimitedAccounts(Boolean(checked))}
             />
             Tự động xóa tài khoản bị giới hạn
+          </label>
+          <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 cursor-pointer">
+            <Checkbox
+              checked={Boolean((config as any)?.karpathy_mode)}
+              onCheckedChange={(checked) => setKarpathyMode(Boolean(checked))}
+            />
+            <div>
+              <p className="font-medium">Karpathy Mode</p>
+              <p className="text-xs text-stone-500 mt-0.5">
+                AI sẽ suy nghĩ trước khi code, đơn giản hóa, chỉ sửa đúng chỗ cần sửa.
+              </p>
+            </div>
           </label>
           <div className="space-y-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
             <div>
