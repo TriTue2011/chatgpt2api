@@ -61,70 +61,91 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
     # Generate n images
     all_data: list[dict[str, Any]] = []
     stream_outputs: list[ImageOutput] = []
+    # Get key count for retry
+    max_keys = getattr(adapter, 'get_key_count', lambda c: 1)(credentials)
 
     for idx in range(n):
-        try:
-            url = adapter.build_url(route.model, credentials)
-            req_body = adapter.build_body(route.model, body)
-            headers = adapter.build_headers(credentials, req_body, route.model, body)
-
-            logger.info({
-                "event": "image_adapter_request",
-                "provider": route.provider,
-                "model": route.model,
-                "url": url,
-            })
-
-            resp = cffi_requests.post(
-                url,
-                headers=headers,
-                json=req_body if "Content-Type" in str(headers) and "json" in str(headers).lower() else None,
-                data=json.dumps(req_body).encode("utf-8") if "Content-Type" not in str(headers) or "json" in str(headers).lower() else req_body,
-                timeout=300,
-            )
-
-            if resp.status_code >= 400:
-                error_text = ""
+        last_error = ""
+        for key_try in range(max(max_keys, 1)):
+            try:
+                # Try with key_index for adapters that support key rotation
                 try:
-                    error_text = resp.text[:500]
-                except Exception:
-                    pass
-                logger.error({
-                    "event": "image_adapter_error",
+                    url = adapter.build_url(route.model, credentials, key_try)
+                except TypeError:
+                    url = adapter.build_url(route.model, credentials)
+                req_body = adapter.build_body(route.model, body)
+                headers = adapter.build_headers(credentials, req_body, route.model, body)
+
+                logger.info({
+                    "event": "image_adapter_request",
                     "provider": route.provider,
-                    "status": resp.status_code,
-                    "error": error_text,
+                    "model": route.model,
+                    "url": url[:120],
+                    "key_try": key_try,
                 })
-                raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code}")
 
-            # Try custom parse_response first (async adapters)
-            parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
+                resp = cffi_requests.post(
+                    url,
+                    headers=headers,
+                    json=req_body,
+                    timeout=300,
+                )
 
-            if parsed is None:
-                # Default: parse JSON + normalize
-                try:
-                    raw_json = resp.json()
-                except Exception:
-                    # Binary response (image bytes)
-                    raw_json = {"image_bytes": resp.content}
-                parsed = raw_json
+                if resp.status_code >= 400:
+                    error_text = ""
+                    try:
+                        error_text = resp.text[:500]
+                    except Exception:
+                        pass
+                    if resp.status_code in (400, 429) and key_try < max_keys - 1:
+                        logger.warning({
+                            "event": "image_adapter_retry",
+                            "provider": route.provider,
+                            "status": resp.status_code,
+                            "key_try": key_try,
+                            "error": error_text[:200],
+                        })
+                        last_error = error_text
+                        continue  # try next key
+                    logger.error({
+                        "event": "image_adapter_error",
+                        "provider": route.provider,
+                        "status": resp.status_code,
+                        "error": error_text,
+                    })
+                    raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code}")
 
-            normalized = adapter.normalize(parsed, body)
-            data_items = normalized.get("data") or []
-            all_data.extend(data_items)
+                # Try custom parse_response first (async adapters)
+                parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
 
-            if stream:
-                stream_outputs.append(ImageOutput(
-                    kind="result",
-                    model=body.get("model", "unknown"),
-                    index=idx + 1,
-                    total=n,
-                    data=data_items,
-                ))
+                if parsed is None:
+                    # Default: parse JSON + normalize
+                    try:
+                        raw_json = resp.json()
+                    except Exception:
+                        # Binary response (image bytes)
+                        raw_json = {"image_bytes": resp.content}
+                    parsed = raw_json
 
-        except Exception as exc:
-            logger.error({"event": "image_adapter_fatal", "provider": route.provider, "error": str(exc)})
-            raise RuntimeError(f"Image generation failed: {exc}") from exc
+                normalized = adapter.normalize(parsed, body)
+                data_items = normalized.get("data") or []
+                all_data.extend(data_items)
+
+                if stream:
+                    stream_outputs.append(ImageOutput(
+                        kind="result",
+                        model=body.get("model", "unknown"),
+                        index=idx + 1,
+                        total=n,
+                        data=data_items,
+                    ))
+                break  # success — stop trying keys
+
+            except Exception as exc:
+                logger.error({"event": "image_adapter_fatal", "provider": route.provider, "error": str(exc)})
+                if key_try < max_keys - 1:
+                    continue  # try next key
+                raise RuntimeError(f"Image generation failed: {exc}") from exc
 
     if stream and stream_outputs:
         # Yield stream chunks

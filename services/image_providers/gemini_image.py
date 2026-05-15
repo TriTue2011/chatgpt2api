@@ -37,14 +37,16 @@ class GeminiImageAdapter(BaseImageAdapter):
         single = str(credentials.get("apiKey") or credentials.get("api_key") or "")
         return [single] if single else []
 
-    def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
+    def build_url(self, model: str, credentials: dict[str, Any] | None, key_index: int = 0) -> str:
         api_key = ""
         if credentials and isinstance(credentials, dict):
             keys = self._get_api_keys(credentials)
             if keys:
-                self._key_index = (self._key_index + 1) % len(keys)
-                api_key = keys[self._key_index]
+                api_key = keys[key_index % len(keys)]
         return f"{self.BASE_URL}/{model}:generateContent?key={api_key}"
+
+    def get_key_count(self, credentials: dict[str, Any] | None) -> int:
+        return len(self._get_api_keys(credentials))
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or "")
