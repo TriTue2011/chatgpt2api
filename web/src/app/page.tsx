@@ -107,11 +107,11 @@ export default function DashboardPage() {
       trend: null,
     },
     {
-      label: "OpenCode",
-      value: opencodeAvailable ? "Online" : "Offline",
-      sub: "miễn phí · không giới hạn",
-      icon: Zap,
-      color: opencodeAvailable ? "violet" as const : "slate" as const,
+      label: "Gemini",
+      value: (health as any)?.gemini?.gemini_api === "available" ? "Online" : "Lỗi",
+      sub: `${(health as any)?.gemini?.models_count ?? "—"} models · FastAPI ${(health as any)?.gemini?.geminiapi_port ?? "?"}`,
+      icon: Sparkles,
+      color: (health as any)?.gemini?.gemini_api === "available" ? "violet" as const : "slate" as const,
       trend: null,
     },
   ];
