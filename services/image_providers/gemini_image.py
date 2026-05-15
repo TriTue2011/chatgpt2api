@@ -19,16 +19,31 @@ from utils.log import logger
 class GeminiImageAdapter(BaseImageAdapter):
     """Gemini Imagen image generation adapter.
 
-    Model format: gemini/imagen-3.0-generate-001
+    Model format: gemini-image/imagen-3.0-generate-001
     Uses Gemini generateContent API with image generation config.
+    Supports API key rotation from api_keys array.
     """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    _key_index: int = 0
+
+    def _get_api_keys(self, credentials: dict[str, Any] | None) -> list[str]:
+        """Get all available API keys from credentials."""
+        if not credentials or not isinstance(credentials, dict):
+            return []
+        keys = credentials.get("apiKeys") or credentials.get("api_keys") or []
+        if isinstance(keys, list) and keys:
+            return [str(k) for k in keys if k]
+        single = str(credentials.get("apiKey") or credentials.get("api_key") or "")
+        return [single] if single else []
 
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         api_key = ""
         if credentials and isinstance(credentials, dict):
-            api_key = str(credentials.get("apiKey") or credentials.get("accessToken") or "")
+            keys = self._get_api_keys(credentials)
+            if keys:
+                self._key_index = (self._key_index + 1) % len(keys)
+                api_key = keys[self._key_index]
         return f"{self.BASE_URL}/{model}:generateContent?key={api_key}"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:

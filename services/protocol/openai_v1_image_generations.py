@@ -50,6 +50,7 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
     else:
         credentials = {
             "apiKey": str(provider_config.get("api_key") or ""),
+            "apiKeys": provider_config.get("api_keys") or [],
             "accessToken": str(provider_config.get("api_key") or ""),
         }
 
