@@ -242,9 +242,9 @@ export default function DashboardPage() {
         <span className="text-slate-300">·</span>
         <span>Cooldown: <strong className="text-slate-700">{health?.model_cooldown?.total_tracked ?? 0}</strong> tracked, <strong className="text-amber-600">{health?.model_cooldown?.cooling ?? 0}</strong> cooling</span>
         <span className="text-slate-300">·</span>
-        <span>Gemini API: <strong className={(health as any)?.gemini?.gemini_api === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.gemini_api ?? "..."}</strong></span>
+        <span>Gemini API: <strong className={(health as any)?.gemini?.gemini_api === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.gemini_api ?? "..."}</strong> ({(health as any)?.gemini?.models_count ?? 0} models)</span>
         <span className="text-slate-300">·</span>
-        <span>Geminiapi: <strong className={(health as any)?.gemini?.geminiapi === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.geminiapi ?? "..."}</strong></span>
+        <span>Gemini-FastAPI: <strong className={(health as any)?.gemini?.geminiapi === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.geminiapi ?? "..."}</strong> port {(health as any)?.gemini?.geminiapi_port ?? "?"} · {(health as any)?.gemini?.geminiapi_entries ?? 0} entries</span>
       </div>
 
       {/* ── Quick Access ── */}

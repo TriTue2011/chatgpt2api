@@ -53,18 +53,25 @@ def _check_gemini_status() -> dict:
     except Exception as e:
         result["gemini_api"] = f"error: {str(e)[:50]}"
 
-    # Check Geminiapi custom provider
+    # Check Geminiapi custom provider (Gemini-FastAPI on port 8002/8003)
     try:
         cp_config = (config.data.get("custom_providers") or {}).get("geminiapi") or {}
         base_url = cp_config.get("base_url") or "http://172.16.10.200:8002"
         import requests as req
         resp = req.get(f"{base_url}/health", timeout=5)
-        if resp.status_code == 200 and resp.json().get("ok"):
-            result["geminiapi"] = "available"
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok"):
+                result["geminiapi"] = "available"
+                result["geminiapi_port"] = base_url.split(":")[-1] if ":" in base_url else "unknown"
+                result["geminiapi_clients"] = len(data.get("clients") or {})
+                result["geminiapi_entries"] = data.get("storage", {}).get("entries", 0)
+            else:
+                result["geminiapi"] = f"error: {data.get('error', 'unknown')}"
         else:
             result["geminiapi"] = f"error_{resp.status_code}"
     except Exception as e:
-        result["geminiapi"] = f"error: {str(e)[:50]}"
+        result["geminiapi"] = f"offline"
 
     return result
 
