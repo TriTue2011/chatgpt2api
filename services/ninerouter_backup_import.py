@@ -222,7 +222,7 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
             for token in tokens:
                 account_service.update_account(token, {
                     "image_quota_unknown": False,
-                    "quota": 10,
+                    "quota": 10,  # Initial default — backend refresh will update to real quota
                     "status": "active",
                 })
             imported = result.get("added", 0) + result.get("updated", 0)

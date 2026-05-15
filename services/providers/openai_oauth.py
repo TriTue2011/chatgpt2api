@@ -404,9 +404,17 @@ class CodexOAuthProvider:
         """Get next available JWT token for Codex OAuth. Accepts any JWT token."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
+            all_items = list(account_service._accounts.values())
+            logger.info({
+                "event": "codex_debug",
+                "total_accounts": len(all_items),
+                "statuses": [i.get("status") for i in all_items],
+                "types": [i.get("type") for i in all_items],
+                "has_jwt": sum(1 for i in all_items if str(i.get("access_token","")).startswith("eyJ")),
+            })
             candidates = [
                 token
-                for item in account_service._accounts.values()
+                for item in all_items
                 if item.get("status") not in ("disabled", "error")
                 and (token := item.get("access_token") or "")
                 and token.startswith("eyJ")
