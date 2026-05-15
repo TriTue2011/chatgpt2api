@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { LoaderCircle, Save, Cpu } from "lucide-react";
@@ -49,10 +49,10 @@ export function GeminiCard() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
+  if (loading) return <Card className="rounded-2xl card-3d card-tint-slate"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
 
   return (
-    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl card-3d card-tint-slate">
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center gap-2"><Cpu className="size-5 text-stone-700" /><h3 className="text-sm font-semibold text-stone-900">Gemini AI Studio</h3></div>
 

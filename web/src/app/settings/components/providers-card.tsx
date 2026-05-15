@@ -1,4 +1,4 @@
-// @ts-nocheck — deprecated, use individual cards instead
+﻿// @ts-nocheck — deprecated, use individual cards instead
 "use client";
 
 import { LoaderCircle, Save, Cpu, Sliders, Combine } from "lucide-react";
@@ -58,7 +58,7 @@ export function ProvidersCard() {
 
   if (isLoadingConfig || !config) {
     return (
-      <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+      <Card className="rounded-2xl card-3d card-tint-slate">
         <CardContent className="flex items-center justify-center p-10">
           <LoaderCircle className="size-5 animate-spin text-stone-500" />
         </CardContent>
@@ -72,7 +72,7 @@ export function ProvidersCard() {
   const ninerouter = config.ninerouter || {};
 
   return (
-    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl card-3d card-tint-slate">
       <CardContent className="space-y-6 p-6">
 
         {/* ── Providers ── */}

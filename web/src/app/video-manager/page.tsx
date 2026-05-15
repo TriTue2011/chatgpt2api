@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { Film, Download, Trash2, LoaderCircle, Play } from "lucide-react";
@@ -89,7 +89,7 @@ export default function VideoManagerPage() {
           <LoaderCircle className="size-8 animate-spin text-stone-400" />
         </div>
       ) : videos.length === 0 ? (
-        <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+        <Card className="rounded-2xl card-3d card-tint-slate">
           <CardContent className="flex flex-col items-center py-16 text-center">
             <Film className="size-16 text-stone-300" />
             <p className="mt-4 text-stone-500">Chưa có video nào</p>
@@ -99,7 +99,7 @@ export default function VideoManagerPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {videos.map((video) => (
-            <Card key={video.path} className="group rounded-2xl border-stone-200 bg-white/90 shadow-sm hover:shadow-md transition-all">
+            <Card key={video.path} className="group rounded-2xl card-3d card-tint-slate hover:shadow-md transition-all">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100">

@@ -149,7 +149,7 @@ export default function SearchPage() {
       </div>
 
       {/* Enable */}
-      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+      <div className="rounded-[16px] p-5 card-3d card-tint-slate">
         <label className="flex items-center gap-3 cursor-pointer">
           <input type="checkbox" checked={config.enabled !== false}
             onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
@@ -162,7 +162,7 @@ export default function SearchPage() {
       </div>
 
       {/* Gemini API Key */}
-      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+      <div className="rounded-[16px] p-5 card-3d card-tint-slate">
         <h3 className="text-[15px] font-bold text-slate-900 mb-3">Gemini API Key</h3>
         <input type="text" value={geminiKey}
           onChange={(e) => setGeminiKey(e.target.value)}
@@ -180,7 +180,7 @@ export default function SearchPage() {
       </div>
 
       {/* Search Combo */}
-      <div className="rounded-[16px] border border-black/[0.04] bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+      <div className="rounded-[16px] p-5 card-3d card-tint-slate">
         <h3 className="text-[15px] font-bold text-slate-900 mb-3">
           Thứ tự tìm kiếm (Combo)
         </h3>

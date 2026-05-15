@@ -267,9 +267,17 @@ export default function DashboardPage() {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "group relative flex items-center gap-4 rounded-2xl border border-slate-200/60 bg-white/70 backdrop-blur-sm p-4",
+                  "group relative flex items-center gap-4 rounded-2xl p-4",
+                  "card-3d",
+                  link.color === "indigo"  ? "card-tint-indigo"  :
+                  link.color === "emerald" ? "card-tint-emerald" :
+                  link.color === "amber"   ? "card-tint-amber"   :
+                  link.color === "violet"  ? "card-tint-violet"  :
+                  link.color === "rose"    ? "card-tint-rose"    :
+                  link.color === "sky"     ? "card-tint-sky"     :
+                                             "card-tint-slate",
                   "shadow-sm transition-all duration-300",
-                  "hover:-translate-y-1 hover:shadow-xl hover:border-indigo-200/60",
+                  "hover:-translate-y-1 hover:shadow-xl",
                   "active:translate-y-0 active:shadow-sm"
                 )}
               >

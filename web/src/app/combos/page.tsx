@@ -186,8 +186,8 @@ export default function CombosPage() {
 
       {/* Add new combo */}
       <div className={cn(
-        "rounded-[16px] border border-black/[0.04] bg-white p-6",
-        "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]"
+        "rounded-[16px] p-6",
+        "card-3d card-tint-slate"
       )}>
         <h3 className="mb-4 text-[15px] font-bold text-slate-900">{t("addNewCombo")}</h3>
 
@@ -330,9 +330,9 @@ export default function CombosPage() {
         <div className="space-y-3">
           {comboEntries.map(([name, models]) => (
             <div key={name} className={cn(
-              "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-6",
-              "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
-              "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+              "group relative overflow-hidden rounded-[16px] p-6",
+              "card-3d card-tint-slate",
+              "transition-all duration-300 hover:-translate-y-1"
             )}>
               <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="mb-4 flex items-center justify-between">

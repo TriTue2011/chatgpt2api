@@ -163,7 +163,7 @@ export default function BackupPage() {
       )}
 
       {/* Import từ 9router */}
-      <div className="rounded-[16px] border border-amber-200/60 bg-gradient-to-br from-amber-50 to-orange-50/40 p-5 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+      <div className="rounded-[16px] p-5 card-3d card-tint-amber">
         <div className="flex items-center gap-2 mb-3">
           <div className="flex size-9 items-center justify-center rounded-[10px] bg-amber-100">
             <ArrowLeftRight className="size-[18px] text-amber-600" />
@@ -227,9 +227,9 @@ export default function BackupPage() {
             <div
               key={backup.filename}
               className={cn(
-                "flex items-center justify-between rounded-[14px] border border-black/[0.04] bg-white px-5 py-4",
-                "shadow-[0_1px_3px_rgba(0,0,0,0.04),0_2px_8px_rgba(0,0,0,0.03)]",
-                "transition-all hover:shadow-[0_2px_8px_rgba(99,102,241,0.10)]"
+                "flex items-center justify-between rounded-[14px] px-5 py-4",
+                "card-3d card-tint-slate",
+                "transition-all"
               )}
             >
               <div className="flex items-center gap-4">

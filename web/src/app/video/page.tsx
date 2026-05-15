@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -80,7 +80,7 @@ export default function VideoPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+        <Card className="rounded-2xl card-3d card-tint-slate">
           <CardContent className="space-y-4 p-6">
             <div className="space-y-2">
               <label className="text-sm font-medium text-stone-700">Mô tả video</label>
@@ -147,7 +147,7 @@ export default function VideoPage() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+        <Card className="rounded-2xl card-3d card-tint-slate">
           <CardContent className="flex min-h-[350px] flex-col items-center justify-center p-6">
             {generating ? (
               <div className="flex flex-col items-center gap-4 text-stone-500">

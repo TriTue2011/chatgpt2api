@@ -97,9 +97,9 @@ export default function ProvidersPage() {
             <div
               key={provider.name}
               className={cn(
-                "group relative overflow-hidden rounded-[16px] border border-black/[0.04] bg-white p-5",
-                "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
-                "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_12px_rgba(99,102,241,0.14),0_12px_40px_rgba(0,0,0,0.08)]"
+                "group relative overflow-hidden rounded-[16px] p-5",
+                "card-3d card-tint-slate",
+                "transition-all duration-300 hover:-translate-y-1"
               )}
             >
               <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />

@@ -62,7 +62,7 @@ export function ConfigCard() {
 
   if (isLoadingConfig) {
     return (
-      <div className="rounded-[16px] border border-black/[0.04] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]">
+      <div className="rounded-[16px] card-3d card-tint-slate">
         <div className="flex items-center justify-center p-10">
           <LoaderCircle className="size-5 animate-spin text-slate-400" />
         </div>

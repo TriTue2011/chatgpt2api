@@ -161,7 +161,7 @@
 /* ── Pastel card with 3D depth ── */
 .card-3d {
   background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(248,250,255,0.9));
-  border: 1px solid rgba(255,255,255,0.8);
+  border: 1px solid rgba(0,0,0,0.12);
   box-shadow:
     0 1px 3px rgba(0,0,0,0.04),
     0 4px 12px rgba(0,0,0,0.04),
@@ -170,7 +170,7 @@
   backdrop-filter: blur(8px);
 }
 .card-3d:hover {
-  border-color: rgba(99,102,241,0.25);
+  border-color: rgba(99,102,241,0.35);
   box-shadow:
     0 1px 3px rgba(0,0,0,0.06),
     0 8px 24px rgba(99,102,241,0.08),

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { LoaderCircle, Plus, Save, Trash2, ExternalLink } from "lucide-react";
@@ -104,12 +104,12 @@ export function CustomProvidersCard() {
     } catch (e: any) { toast.error(e?.message || "Lỗi cập nhật"); }
   }
 
-  if (loading) return <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
+  if (loading) return <Card className="rounded-2xl card-3d card-tint-slate"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
 
   const entries = Object.entries(providers);
 
   return (
-    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl card-3d card-tint-slate">
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

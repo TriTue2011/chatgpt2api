@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { LoaderCircle, Save, Cpu } from "lucide-react";
@@ -48,10 +48,10 @@ export function NvidiaNimCard() {
     finally { setSaving(false); }
   }
 
-  if (loading) return <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
+  if (loading) return <Card className="rounded-2xl card-3d card-tint-slate"><CardContent className="flex justify-center p-10"><LoaderCircle className="size-5 animate-spin text-stone-500" /></CardContent></Card>;
 
   return (
-    <Card className="rounded-2xl border-stone-200 bg-white/90 shadow-sm">
+    <Card className="rounded-2xl card-3d card-tint-slate">
       <CardContent className="space-y-4 p-6">
         <div className="flex items-center gap-2">
           <span className="inline-flex size-5 items-center justify-center rounded text-xs font-bold" style={{backgroundColor: "#76B900", color: "#000"}}>N</span>
