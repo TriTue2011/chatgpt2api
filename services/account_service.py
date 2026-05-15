@@ -237,10 +237,17 @@ class AccountService:
         with self._lock:
             added = 0
             skipped = 0
+            updated = 0
             for access_token in tokens:
                 current = self._accounts.get(access_token)
                 if current is not None:
-                    skipped += 1
+                    # Update existing token's type if it was imported as wrong type
+                    if str(current.get("type") or "") != str(account_type):
+                        current["type"] = account_type
+                        updated += 1
+                        logger.info({"event": "account_type_updated", "token": anonymize_token(access_token), "new_type": account_type})
+                    else:
+                        skipped += 1
                     continue
                 added += 1
                 account = self._normalize_account({
@@ -252,9 +259,9 @@ class AccountService:
                     self._accounts[access_token] = account
             self._save_accounts()
             items = [dict(item) for item in self._accounts.values()]
-            log_service.add(LOG_TYPE_ACCOUNT, f"Thêm {added} tài khoản {account_type}, bỏ qua {skipped}",
-                            {"added": added, "skipped": skipped, "type": account_type})
-        return {"added": added, "skipped": skipped, "items": items}
+            log_service.add(LOG_TYPE_ACCOUNT, f"Thêm {added} tài khoản {account_type}, cập nhật {updated}, bỏ qua {skipped}",
+                            {"added": added, "skipped": skipped, "updated": updated, "type": account_type})
+        return {"added": added, "skipped": skipped, "updated": updated, "items": items}
 
     def delete_accounts(self, tokens: list[str]) -> dict:
         target_set = set(token for token in tokens if token)
