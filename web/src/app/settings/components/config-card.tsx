@@ -185,15 +185,8 @@ export function ConfigCard() {
             </select>
             <p className="text-xs text-stone-500">Áp dụng cho tất cả model: GPT, Gemini, NVIDIA, SD, FLUX...</p>
           </div>
-            <Input
-              value={String(config?.image_poll_timeout_secs || "")}
-              onChange={(event) => setImagePollTimeoutSecs(event.target.value)}
-              placeholder="120"
-              className="h-10 rounded-xl border-stone-200 bg-white"
-            />
-            <p className="text-xs text-stone-500">Tính bằng giây, thời gian tối đa để chờ kết quả hình ảnh từ thượng nguồn.</p>
-          </div>
           <div className="space-y-2">
+            <label className="text-sm text-stone-700">Thời gian chờ thăm dò hình ảnh</label>
             <label className="text-sm text-stone-700">Số luồng hình ảnh trên mỗi tài khoản</label>
             <Input
               value={String(config?.image_account_concurrency || "")}
