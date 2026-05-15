@@ -188,33 +188,33 @@ class LoggedCall:
         try:
             result = await run_in_threadpool(handler, *args)
         except ImageGenerationError as exc:
-            self.log("调用失败", status="failed", error=str(exc))
+            self.log("Gọi thất bại", status="failed", error=str(exc))
             return _image_error_response(exc)
         except HTTPException as exc:
-            self.log("调用失败", status="failed", error=str(exc.detail))
+            self.log("Gọi thất bại", status="failed", error=str(exc.detail))
             raise
         except Exception as exc:
-            self.log("调用失败", status="failed", error=str(exc))
+            self.log("Gọi thất bại", status="failed", error=str(exc))
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
 
         if isinstance(result, dict):
-            self.log("调用完成", result)
+            self.log("Gọi thành công", result)
             return result
 
         sender = anthropic_sse_stream if sse == "anthropic" else sse_json_stream
         try:
             has_first, first = await run_in_threadpool(_next_item, result)
         except ImageGenerationError as exc:
-            self.log("调用失败", status="failed", error=str(exc))
+            self.log("Gọi thất bại", status="failed", error=str(exc))
             return _image_error_response(exc)
         except HTTPException as exc:
-            self.log("调用失败", status="failed", error=str(exc.detail))
+            self.log("Gọi thất bại", status="failed", error=str(exc.detail))
             raise
         except Exception as exc:
-            self.log("调用失败", status="failed", error=str(exc))
+            self.log("Gọi thất bại", status="failed", error=str(exc))
             raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
         if not has_first:
-            self.log("流式调用结束")
+            self.log("Kết thúc stream")
             return StreamingResponse(sender(()), media_type="text/event-stream")
         return StreamingResponse(sender(self.stream(itertools.chain([first], result))), media_type="text/event-stream")
 
@@ -227,11 +227,11 @@ class LoggedCall:
                 yield item
         except Exception as exc:
             failed = True
-            self.log("流式调用失败", status="failed", error=str(exc), urls=urls)
+            self.log("流式Gọi thất bại", status="failed", error=str(exc), urls=urls)
             raise
         finally:
             if not failed:
-                self.log("流式调用结束", urls=urls)
+                self.log("Kết thúc stream", urls=urls)
 
     def log(self, suffix: str, result: object = None, status: str = "success", error: str = "",
             urls: list[str] | None = None) -> None:

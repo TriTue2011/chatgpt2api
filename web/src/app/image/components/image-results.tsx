@@ -177,7 +177,7 @@ export function ImageResults({
                             >
                               <img
                                 src={image.dataUrl}
-                                alt={image.name || `参考图 ${index + 1}`}
+                                alt={image.name || `ảnh tham khảo ${index + 1}`}
                                 className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                               />
                             </button>

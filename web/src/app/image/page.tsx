@@ -882,7 +882,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           dataUrlToFile(image.dataUrl, image.name || `${activeTurn.id}-${index + 1}.png`, image.type),
         );
         if (activeTurn.mode === "edit" && referenceFiles.length === 0) {
-          throw new Error("未找到có thể用于继续编辑的参考图");
+          throw new Error("未找到có thể用于继续编辑的ảnh tham khảo");
         }
 
         const pendingImages = activeTurn.images.filter((image) => image.status === "loading");
@@ -1004,7 +1004,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setSelectedConversationId(conversationId);
       await persistConversation(nextConversation);
       void runConversationQueue(conversationId);
-      toast.success("已加入重新生成队列");
+      toast.success("Đã thêm vào hàng đợi tạo lại");
     },
     [runConversationQueue],
   );
@@ -1073,7 +1073,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const handleSubmit = async () => {
     const prompt = imagePrompt.trim();
     if (!prompt) {
-      toast.error("请输入提示词");
+      toast.error("Vui lòng nhập prompt");
       return;
     }
 

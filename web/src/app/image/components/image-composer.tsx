@@ -113,11 +113,11 @@ export function ImageComposer({
                     setLightboxOpen(true);
                   }}
                   className="group size-14 overflow-hidden rounded-2xl border border-stone-200 bg-stone-100 transition hover:border-stone-300 sm:size-16"
-                  aria-label={`预览参考图 ${image.name || index + 1}`}
+                  aria-label={`预览ảnh tham khảo ${image.name || index + 1}`}
                 >
                   <img
                     src={image.dataUrl}
-                    alt={image.name || `参考图 ${index + 1}`}
+                    alt={image.name || `ảnh tham khảo ${index + 1}`}
                     className="h-full w-full object-cover"
                   />
                 </button>
@@ -128,7 +128,7 @@ export function ImageComposer({
                     onRemoveReferenceImage(index);
                   }}
                   className="absolute -right-1 -top-1 inline-flex size-5 items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 transition hover:border-stone-300 hover:text-stone-800"
-                  aria-label={`移除参考图 ${image.name || index + 1}`}
+                  aria-label={`移除ảnh tham khảo ${image.name || index + 1}`}
                 >
                   <X className="size-3" />
                 </button>

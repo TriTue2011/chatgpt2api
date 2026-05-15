@@ -17,10 +17,10 @@ from utils.log import logger
 
 # Status migration: Chinese → English (backward compatible)
 _STATUS_MIGRATION = {
-    "active": "active",
-    "limited": "limited",
-    "error": "error",
-    "disabled": "disabled",
+    "正常": "active",
+    "限流": "limited",
+    "异常": "error",
+    "禁用": "disabled",
 }
 _STATUS_REVERSE = {v: k for k, v in _STATUS_MIGRATION.items()}
 
@@ -190,7 +190,7 @@ class AccountService:
             return False
         removed = bool(self.delete_accounts([access_token])["removed"])
         if removed:
-            log_service.add(LOG_TYPE_ACCOUNT, "自动移除异常账号",
+            log_service.add(LOG_TYPE_ACCOUNT, "Tự động xóa tài khoản lỗi",
                             {"source": event, "token": anonymize_token(access_token)})
         elif access_token:
             self.update_account(access_token, {"status": "error", "quota": 0})
@@ -242,7 +242,7 @@ class AccountService:
                     self._accounts[access_token] = account
             self._save_accounts()
             items = [dict(item) for item in self._accounts.values()]
-            log_service.add(LOG_TYPE_ACCOUNT, f"新增 {added} 个账号，跳过 {skipped} 个",
+            log_service.add(LOG_TYPE_ACCOUNT, f"新增 {added}  tài khoản，跳过 {skipped} 个",
                             {"added": added, "skipped": skipped})
         return {"added": added, "skipped": skipped, "items": items}
 
@@ -298,7 +298,7 @@ class AccountService:
                 else:
                     self._index = 0
                 self._save_accounts()
-                log_service.add(LOG_TYPE_ACCOUNT, f"删除 {removed} 个账号", {"removed": removed})
+                log_service.add(LOG_TYPE_ACCOUNT, f"删除 {removed}  tài khoản", {"removed": removed})
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 
@@ -315,11 +315,11 @@ class AccountService:
             if account.get("status") == "limited" and config.auto_remove_rate_limited_accounts:
                 self._accounts.pop(access_token, None)
                 self._save_accounts()
-                log_service.add(LOG_TYPE_ACCOUNT, "自动移除限流账号", {"token": anonymize_token(access_token)})
+                log_service.add(LOG_TYPE_ACCOUNT, "Tự động xóa tài khoản giới hạn", {"token": anonymize_token(access_token)})
                 return None
             self._accounts[access_token] = account
             self._save_accounts()
-            log_service.add(LOG_TYPE_ACCOUNT, "更新账号",
+            log_service.add(LOG_TYPE_ACCOUNT, "Cập nhật tài khoản",
                             {"token": anonymize_token(access_token), "status": account.get("status")})
             return dict(account)
         return None
@@ -352,7 +352,7 @@ class AccountService:
             if account.get("status") == "limited" and config.auto_remove_rate_limited_accounts:
                 self._accounts.pop(access_token, None)
                 self._save_accounts()
-                log_service.add(LOG_TYPE_ACCOUNT, "自动移除限流账号", {"token": anonymize_token(access_token)})
+                log_service.add(LOG_TYPE_ACCOUNT, "Tự động xóa tài khoản giới hạn", {"token": anonymize_token(access_token)})
                 return None
             self._accounts[access_token] = account
             self._save_accounts()

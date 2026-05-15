@@ -28,7 +28,7 @@ export function CPAPoolsCard() {
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">CPA kết nối管理</h2>
-              <p className="text-sm text-stone-500">先配置kết nối，再按需查询远程账号并chọn导入到本地号池。</p>
+              <p className="text-sm text-stone-500">先配置kết nối，再按需Tìm kiếm远程账号并chọn导入到本地号池。</p>
             </div>
           </div>
           <div className="flex items-center gap-2">

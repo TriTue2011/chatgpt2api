@@ -155,7 +155,7 @@ export function Sub2APIConnections() {
             window.clearInterval(pollTimerRef.current);
             pollTimerRef.current = null;
           }
-          toast.error(error instanceof Error ? error.message : "查询导入进度thất bại");
+          toast.error(error instanceof Error ? error.message : "Tìm kiếm导入进度thất bại");
         });
     }, 1500);
 
@@ -392,7 +392,7 @@ export function Sub2APIConnections() {
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Sub2API kết nối管理</h2>
                 <p className="text-sm text-stone-500">
-                  配置 Sub2API 服务器sau，có thể查询其trong OpenAI OAuth 账号并批量导入本地号池。
+                  配置 Sub2API 服务器sau，có thểTìm kiếm其trong OpenAI OAuth 账号并批量导入本地号池。
                 </p>
               </div>
             </div>
