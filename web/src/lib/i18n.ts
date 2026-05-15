@@ -115,6 +115,8 @@ export const translations = {
     nav_combos: "Mô hình kết hợp",
     nav_image: "Vẽ ảnh",
     nav_imageLibrary: "Thư viện ảnh",
+    nav_video: "Tạo video",
+    nav_videoLibrary: "Thư viện video",
     nav_search: "Tìm kiếm",
     nav_backup: "Sao lưu",
     nav_settings: "Cài đặt",

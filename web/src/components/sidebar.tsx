@@ -18,6 +18,8 @@ import {
   Sparkles,
   PanelLeftClose,
   PanelLeft,
+  Video,
+  Film,
 } from "lucide-react";
 
 import webConfig from "@/constants/common-env";
@@ -35,12 +37,14 @@ const navItems = [
   { href: "/combos",         labelKey: "nav_combos"         as TranslationKey, icon: Combine },
   { href: "/image",          labelKey: "nav_image"          as TranslationKey, icon: ImageIcon },
   { href: "/image-manager",  labelKey: "nav_imageLibrary"   as TranslationKey, icon: Archive },
+  { href: "/video",          labelKey: "nav_video"          as TranslationKey, icon: Video },
+  { href: "/video-manager",  labelKey: "nav_videoLibrary"   as TranslationKey, icon: Film },
   { href: "/search",         labelKey: "nav_search"         as TranslationKey, icon: Search },
   { href: "/backup",         labelKey: "nav_backup"         as TranslationKey, icon: Archive },
   { href: "/settings",       labelKey: "nav_settings"       as TranslationKey, icon: Settings },
 ];
 
-const adminOnlyPaths = ["/accounts", "/providers", "/models", "/combos", "/image-manager", "/search", "/backup", "/settings"];
+const adminOnlyPaths = ["/accounts", "/providers", "/models", "/combos", "/image-manager", "/video-manager", "/search", "/backup", "/settings"];
 
 type SidebarProps = {
   collapsed: boolean;
