@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard, Users, Cpu, Activity,
-  ArrowRight, Sparkles, Combine, ImageIcon,
+  Users, Cpu, Sparkles, Combine, ImageIcon,
   Search, Archive, Settings, RefreshCw,
+  ArrowRight, ShieldCheck, Activity, Bell,
+  TrendingUp, Zap, ChevronRight,
 } from "lucide-react";
 
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -19,6 +20,19 @@ type HealthData = {
   accounts: { total: number; active: number; limited: number; error: number };
   backoff: { total_accounts_tracked: number; total_locked_models: number };
   opencode: { available: boolean };
+  quota_watcher?: { heap_size: number; running: boolean };
+  model_cooldown?: { total_tracked: number; cooling: number };
+};
+
+// ── Premium gradient presets ──
+const gradients = {
+  indigo:  "from-indigo-500 via-blue-500 to-indigo-600",
+  emerald: "from-emerald-400 via-teal-500 to-emerald-600",
+  amber:   "from-amber-400 via-orange-500 to-amber-600",
+  violet:  "from-violet-500 via-purple-500 to-violet-600",
+  rose:    "from-rose-400 via-pink-500 to-rose-600",
+  sky:     "from-sky-400 via-cyan-500 to-sky-600",
+  slate:   "from-slate-500 via-slate-600 to-slate-700",
 };
 
 export default function DashboardPage() {
@@ -26,15 +40,17 @@ export default function DashboardPage() {
   const [session, setSession] = useState<any>(null);
   const [health, setHealth] = useState<HealthData | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  const loadHealth = async () => {
+  const loadHealth = useCallback(async () => {
     try {
       const data = await request.get("/api/v1/health");
-      setHealth((data.data as any) || null);
+      const h = (data.data as any) || null;
+      setHealth(h);
     } catch {
-      // Health endpoint may not be available
+      // health may be unavailable
     }
-  };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -44,126 +60,163 @@ export default function DashboardPage() {
       if (!sess) { router.replace("/login"); return; }
       setSession(sess);
       await loadHealth();
+      setMounted(true);
     };
     void init();
     return () => { active = false; };
-  }, [router]);
+  }, [router, loadHealth]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadHealth();
-    setRefreshing(false);
+    setTimeout(() => setRefreshing(false), 400);
   };
 
   if (!session) return null;
 
+  const totalAccounts     = health?.accounts?.total ?? 0;
+  const activeAccounts    = health?.accounts?.active ?? 0;
+  const limitedAccounts   = (health?.accounts?.limited ?? 0) + (health?.accounts?.error ?? 0);
+  const opencodeAvailable = health?.opencode?.available ?? false;
+  const version           = health?.version || "…";
+
+  // ── Stat cards ──
   const statCards = [
     {
       label: "Tổng tài khoản",
-      value: health?.accounts?.total ?? "—",
+      value: totalAccounts,
       sub: "trong pool",
       icon: Users,
-      gradient: "from-indigo-500 to-blue-600",
-      shadow: "shadow-indigo-200",
-      bg: "from-indigo-50/80 to-blue-50/80",
-      textColor: "text-indigo-900",
-      labelColor: "text-indigo-600",
+      color: "indigo" as const,
+      trend: null,
     },
     {
       label: "Hoạt động",
-      value: health?.accounts?.active ?? "—",
+      value: activeAccounts,
       sub: "đang dùng được",
-      icon: Activity,
-      gradient: "from-emerald-500 to-teal-600",
-      shadow: "shadow-emerald-200",
-      bg: "from-emerald-50/80 to-teal-50/80",
-      textColor: "text-emerald-900",
-      labelColor: "text-emerald-600",
+      icon: ShieldCheck,
+      color: "emerald" as const,
+      trend: totalAccounts > 0 ? Math.round((activeAccounts / totalAccounts) * 100) + "%" : "—",
     },
     {
-      label: "Bị giới hạn",
-      value: health?.accounts?.limited ?? "—",
-      sub: `${health?.accounts?.error ?? "—"} lỗi`,
-      icon: LayoutDashboard,
-      gradient: "from-amber-500 to-orange-500",
-      shadow: "shadow-amber-200",
-      bg: "from-amber-50/80 to-orange-50/80",
-      textColor: "text-amber-900",
-      labelColor: "text-amber-600",
+      label: "Bị giới hạn / Lỗi",
+      value: limitedAccounts,
+      sub: health?.model_cooldown?.cooling ? `${health.model_cooldown.cooling} đang cooling` : "cần chú ý",
+      icon: Activity,
+      color: limitedAccounts > 0 ? "amber" as const : "slate" as const,
+      trend: null,
     },
     {
       label: "OpenCode",
-      value: health?.opencode?.available ? "Sẵn sàng" : "Tắt",
+      value: opencodeAvailable ? "Online" : "Offline",
       sub: "miễn phí · không giới hạn",
-      icon: Cpu,
-      gradient: health?.opencode?.available ? "from-violet-500 to-purple-600" : "from-slate-400 to-slate-500",
-      shadow: health?.opencode?.available ? "shadow-violet-200" : "shadow-slate-200",
-      bg: health?.opencode?.available ? "from-violet-50/80 to-purple-50/80" : "from-slate-50/80 to-slate-100/80",
-      textColor: health?.opencode?.available ? "text-violet-900" : "text-slate-700",
-      labelColor: health?.opencode?.available ? "text-violet-600" : "text-slate-500",
+      icon: Zap,
+      color: opencodeAvailable ? "violet" as const : "slate" as const,
+      trend: null,
     },
   ];
 
+  // ── Quick access cards ──
   const quickLinks = [
-    { label: "Tài khoản", desc: "Quản lý token & pool ChatGPT", href: "/accounts", icon: Users, color: "from-indigo-500 to-blue-600", shadow: "shadow-indigo-200" },
-    { label: "Nhà cung cấp", desc: "OpenCode, Gemini, OpenRouter...", href: "/providers", icon: Cpu, color: "from-violet-500 to-purple-600", shadow: "shadow-violet-200" },
-    { label: "Quản lý Model", desc: "Bật/tắt model cho từng provider", href: "/models", icon: Sparkles, color: "from-sky-500 to-cyan-600", shadow: "shadow-sky-200" },
-    { label: "Mô hình kết hợp", desc: "Combo fallback tự động", href: "/combos", icon: Combine, color: "from-emerald-500 to-teal-600", shadow: "shadow-emerald-200" },
-    { label: "Vẽ ảnh", desc: "DALL-E, SD WebUI, FLUX...", href: "/image", icon: ImageIcon, color: "from-rose-500 to-pink-600", shadow: "shadow-rose-200" },
-    { label: "Tìm kiếm", desc: "Gemini, Serper, SearXNG...", href: "/search", icon: Search, color: "from-amber-500 to-orange-500", shadow: "shadow-amber-200" },
-    { label: "Sao lưu", desc: "Backup & restore hệ thống", href: "/backup", icon: Archive, color: "from-slate-600 to-slate-700", shadow: "shadow-slate-200" },
-    { label: "Cài đặt", desc: "Proxy, rate limit, system prompt...", href: "/settings", icon: Settings, color: "from-slate-500 to-slate-600", shadow: "shadow-slate-200" },
+    { label: "Tài khoản",  desc: "Quản lý token & pool",          href: "/accounts",      icon: Users,     color: "indigo"  as const },
+    { label: "Providers",  desc: "OpenCode, Gemini, Codex…",       href: "/providers",      icon: Cpu,       color: "violet"  as const },
+    { label: "Quản lý Model", desc: "Bật/tắt model từng provider", href: "/models",         icon: Sparkles,  color: "sky"     as const },
+    { label: "Mô hình kết hợp", desc: "Combo fallback tự động",    href: "/combos",         icon: Combine,   color: "emerald" as const },
+    { label: "Tạo ảnh",     desc: "DALL-E, SD, FLUX…",             href: "/image",          icon: ImageIcon, color: "rose"    as const },
+    { label: "Tìm kiếm",    desc: "Gemini, Serper, SearXNG…",      href: "/search",         icon: Search,    color: "amber"   as const },
+    { label: "Sao lưu",     desc: "Backup & restore hệ thống",     href: "/backup",         icon: Archive,   color: "slate"   as const },
+    { label: "Cài đặt",     desc: "Proxy, rate limit, prompt…",    href: "/settings",       icon: Settings,  color: "slate"   as const },
   ];
+
+  // ── Skeleton for loading ──
+  if (!mounted) {
+    return (
+      <div className="space-y-8 animate-pulse">
+        <div className="h-20 bg-white/60 rounded-2xl" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1,2,3,4].map(i => <div key={i} className="h-32 bg-white/60 rounded-2xl" />)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
-      {/* Page Header */}
-      <div className="flex items-center justify-between border-b border-black/[0.04] pb-6">
-        <div>
-          <p className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase mb-1">Tổng quan</p>
-          <h1 className="text-[26px] font-bold tracking-tight text-slate-900">Bảng điều khiển</h1>
-          <p className="text-[14px] text-slate-500 mt-0.5">
-            chatgpt2api v{health?.version || "..."} · Hệ thống quản lý AI tập trung
+      {/* ── Page Header ── */}
+      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-3">
+            <div className="flex size-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/25">
+              <TrendingUp className="size-4 text-white" />
+            </div>
+            <p className="text-[11px] font-bold tracking-[0.2em] text-indigo-500 uppercase">Tổng quan</p>
+          </div>
+          <h1 className="text-[28px] font-extrabold tracking-tight text-slate-900">
+            Bảng điều khiển
+          </h1>
+          <p className="text-sm text-slate-500">
+            chatgpt2api <span className="font-mono text-slate-400">v{version}</span> · Hệ thống quản lý AI tập trung
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded-[12px] border border-black/[0.06] bg-white px-4 py-2.5 text-[13px] font-medium text-slate-600 shadow-sm transition hover:bg-slate-50 hover:shadow disabled:opacity-50"
-        >
-          <RefreshCw className={cn("size-4", refreshing && "animate-spin")} />
-          Làm mới
-        </button>
-      </div>
+        <div className="flex items-center gap-3">
+          {/* Live indicator */}
+          <div className="hidden sm:flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+            </span>
+            Hệ thống hoạt động
+          </div>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-semibold text-slate-600 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 hover:shadow-md disabled:opacity-60"
+          >
+            <RefreshCw className={cn("size-4 transition-transform", refreshing && "animate-spin")} />
+            Làm mới
+          </button>
+        </div>
+      </header>
 
-      {/* Stat Cards — ql_tro style */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((card) => {
           const Icon = card.icon;
+          const g = gradients[card.color];
           return (
             <div
               key={card.label}
-              className={cn(
-                "rounded-xl border-0 p-4 md:p-5",
-                `bg-gradient-to-br ${card.bg}`,
-                `shadow-lg ${card.shadow}`
-              )}
+              className="group relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white/80 backdrop-blur-sm p-5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:border-slate-300"
             >
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className={cn("text-[11px] md:text-xs font-semibold mb-1", card.labelColor)}>
+              {/* subtle gradient glow on hover */}
+              <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+
+              <div className="relative flex items-start justify-between">
+                <div className="space-y-2">
+                  <p className="text-[11px] font-bold tracking-widest text-slate-400 uppercase">
                     {card.label}
                   </p>
-                  <p className={cn("text-2xl md:text-3xl font-bold leading-none", card.textColor)}>
+                  <p className="text-[32px] font-extrabold leading-none tracking-tight text-slate-900">
                     {card.value}
                   </p>
-                  <p className="text-[11px] text-slate-500 mt-1.5">{card.sub}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-slate-500">{card.sub}</p>
+                    {card.trend && (
+                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                        {card.trend}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className={cn(
-                  "size-10 rounded-full flex items-center justify-center shrink-0",
-                  `bg-gradient-to-br ${card.gradient}`,
-                  `shadow-md ${card.shadow}`
+                  "flex size-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br shadow-lg",
+                  g,
+                  card.color === "indigo"  ? "shadow-indigo-500/20"  :
+                  card.color === "emerald" ? "shadow-emerald-500/20" :
+                  card.color === "amber"   ? "shadow-amber-500/20"   :
+                  card.color === "violet"  ? "shadow-violet-500/20"  :
+                                             "shadow-slate-500/15"
                 )}>
                   <Icon className="size-5 text-white" />
                 </div>
@@ -173,42 +226,62 @@ export default function DashboardPage() {
         })}
       </div>
 
-      {/* Quick Navigation */}
-      <div>
-        <h2 className="text-[13px] font-bold tracking-widest text-slate-400 uppercase mb-4">Truy cập nhanh</h2>
+      {/* ── System sub-status bar ── */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/60 bg-white/60 px-4 py-2.5 text-xs text-slate-500">
+        <span className="font-semibold text-slate-700">Trạng thái hệ thống</span>
+        <span className="text-slate-300">·</span>
+        <span>Backoff: <strong className="text-slate-700">{health?.backoff?.total_locked_models ?? 0}</strong> model locked</span>
+        <span className="text-slate-300">·</span>
+        <span>Quota Watcher: <strong className={cn(health?.quota_watcher?.running ? "text-emerald-600" : "text-amber-600")}>{health?.quota_watcher?.running ? "Đang chạy" : "Tắt"}</strong></span>
+        {health?.quota_watcher?.heap_size ? (
+          <>
+            <span className="text-slate-300">·</span>
+            <span><strong className="text-slate-700">{health.quota_watcher.heap_size}</strong> trong hàng đợi</span>
+          </>
+        ) : null}
+        <span className="text-slate-300">·</span>
+        <span>Cooldown: <strong className="text-slate-700">{health?.model_cooldown?.total_tracked ?? 0}</strong> tracked, <strong className="text-amber-600">{health?.model_cooldown?.cooling ?? 0}</strong> cooling</span>
+      </div>
+
+      {/* ── Quick Access ── */}
+      <section>
+        <div className="mb-4 flex items-center gap-3">
+          <h2 className="text-[13px] font-bold tracking-[0.15em] text-slate-400 uppercase">Truy cập nhanh</h2>
+          <div className="h-px flex-1 bg-slate-100" />
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {quickLinks.map((link) => {
             const Icon = link.icon;
+            const g = gradients[link.color];
             return (
               <a
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "group flex items-center gap-4 rounded-[16px] border border-black/[0.04] bg-white p-4",
-                  "shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_16px_rgba(0,0,0,0.04)]",
-                  "transition-all duration-200 hover:-translate-y-0.5",
-                  "hover:shadow-[0_4px_16px_rgba(99,102,241,0.12),0_12px_40px_rgba(0,0,0,0.08)]"
+                  "group relative flex items-center gap-4 rounded-2xl border border-slate-200/60 bg-white/70 backdrop-blur-sm p-4",
+                  "shadow-sm transition-all duration-300",
+                  "hover:-translate-y-1 hover:shadow-xl hover:border-indigo-200/60",
+                  "active:translate-y-0 active:shadow-sm"
                 )}
               >
                 <div className={cn(
-                  "size-10 shrink-0 rounded-full flex items-center justify-center",
-                  `bg-gradient-to-br ${link.color}`,
-                  `shadow-md ${link.shadow}`
+                  "flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-md transition-transform duration-300 group-hover:scale-105",
+                  g,
                 )}>
-                  <Icon className="size-4 text-white" />
+                  <Icon className="size-[18px] text-white" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[14px] font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                  <p className="text-[14px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
                     {link.label}
                   </p>
-                  <p className="text-[12px] text-slate-500 truncate">{link.desc}</p>
+                  <p className="text-[12px] text-slate-500 truncate mt-0.5">{link.desc}</p>
                 </div>
-                <ArrowRight className="size-4 text-slate-300 shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-400" />
+                <ChevronRight className="size-4 text-slate-300 shrink-0 transition-all duration-300 group-hover:translate-x-1 group-hover:text-indigo-400" />
               </a>
             );
           })}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
