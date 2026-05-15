@@ -720,9 +720,10 @@ def create_router(app_version: str) -> APIRouter:
                 "enabled": _is_model_enabled(mid, enabled_by_provider),
             })
 
-        # Sort: chat first, then vision, then image
+        # Sort: chat first, then vision, then image, then video
         def _sort_key(m):
             caps = m.get("capabilities", ["chat"])
+            if "video" in caps: return 3
             if "image" in caps: return 2
             if "vision" in caps: return 1
             return 0
@@ -734,6 +735,7 @@ def create_router(app_version: str) -> APIRouter:
                 "chat": sum(1 for m in enriched if "chat" in (m.get("capabilities") or ["chat"])),
                 "vision": sum(1 for m in enriched if "vision" in (m.get("capabilities") or [])),
                 "image": sum(1 for m in enriched if "image" in (m.get("capabilities") or [])),
+                "video": sum(1 for m in enriched if "video" in (m.get("capabilities") or [])),
             },
         }
 

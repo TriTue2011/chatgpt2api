@@ -37,10 +37,14 @@ _IMAGE_GEN_PROVIDER_PREFIXES = {
     "recraft/",      # Recraft
     "runwayml/",     # RunwayML
 }
-# Providers where specific models support vision (multimodal)
-# KEEP EMPTY — models are primarily CHAT, only tag vision if name has keywords
-_VISION_PROVIDER_PREFIXES: set[str] = set()
-# Custom providers that support image generation
+# Providers where ALL models support video analysis
+_VIDEO_PROVIDER_PREFIXES: set[str] = {
+    "gemini_free/",   # Gemini API supports video input
+    "cx/",            # Codex supports video via multimodal
+}
+_VIDEO_CUSTOM_PROVIDERS: set[str] = {
+    "geminiapi",      # Gemini-FastAPI supports video
+}
 _IMAGE_GEN_CUSTOM_PROVIDERS = {
     "geminiapi",     # Gemini API server — supports image gen via /v1/responses
 }
@@ -116,12 +120,25 @@ def classify_model_capability(model_id: str) -> list[str]:
     if not is_image:
         caps.append("chat")
 
+    # Check video analysis capability
+    for prefix in _VIDEO_PROVIDER_PREFIXES:
+        if mid.startswith(prefix):
+            if "video" not in caps:
+                caps.append("video")
+            break
+    else:
+        for cp_prefix in _VIDEO_CUSTOM_PROVIDERS:
+            if mid.startswith(f"{cp_prefix}/"):
+                if "video" not in caps:
+                    caps.append("video")
+                break
+
     return caps if caps else ["chat"]
 
 
 def get_model_capability_label(cap: str) -> str:
     """Human-readable label for model capability."""
-    return {"chat": "Chat", "vision": "Phân tích ảnh", "image": "Tạo ảnh"}.get(cap, cap)
+    return {"chat": "Chat", "vision": "Phân tích ảnh", "image": "Tạo ảnh", "video": "Phân tích video"}.get(cap, cap)
 
 
 def new_uuid() -> str:

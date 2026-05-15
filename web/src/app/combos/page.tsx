@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   Combine, Plus, Trash2, ArrowDown, MessageSquare,
-  ImageIcon, Eye, X, ChevronDown, Save,
+  ImageIcon, Eye, X, ChevronDown, Save, Video, Camera,
 } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
@@ -25,12 +25,14 @@ const CAP_COLORS: Record<string, string> = {
   chat: "bg-blue-500/10 text-blue-400 border-blue-500/20",
   vision: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   image: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  video: "bg-rose-500/10 text-rose-400 border-rose-500/20",
 };
 
 const CAP_ICONS: Record<string, typeof MessageSquare> = {
   chat: MessageSquare,
   vision: Eye,
   image: ImageIcon,
+  video: Video,
 };
 
 export default function CombosPage() {
@@ -128,7 +130,7 @@ export default function CombosPage() {
   const availableForSelection = filteredModels.filter(m => !selectedModels.includes(m.id));
 
   // Counts (only enabled models)
-  const counts = { chat: 0, vision: 0, image: 0 };
+  const counts = { chat: 0, vision: 0, image: 0, video: 0 };
   for (const m of allModels) {
     if (m.enabled === false) continue;
     const caps = m.capabilities || [m.capability];
@@ -221,7 +223,7 @@ export default function CombosPage() {
                   <CapIcon className="size-3 shrink-0 text-stone-500" />
                   <span className="flex-1 text-xs font-mono text-stone-800 truncate">{modelId}</span>
                   {(info?.capability_labels || ["Chat"]).map((label: string) => {
-                    const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
+                    const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                     return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                   })}
                   <button
@@ -244,7 +246,7 @@ export default function CombosPage() {
         <div className="flex gap-2 mb-3">
           {/* Capability filter */}
           <div className="flex rounded-lg border border-stone-200 overflow-hidden text-xs">
-            {(["all", "chat", "vision", "image"] as const).map(cap => (
+            {(["all", "chat", "vision", "image", "video"] as const).map(cap => (
               <button
                 key={cap}
                 type="button"
@@ -256,7 +258,7 @@ export default function CombosPage() {
                     : "text-stone-500 hover:text-stone-700",
                 )}
               >
-                {cap === "all" ? t("all") : cap === "chat" ? t("chat") : cap === "vision" ? t("vision") : t("imageGen")}
+                {cap === "all" ? t("all") : cap === "chat" ? t("chat") : cap === "vision" ? t("vision") : cap === "video" ? "Video" : t("imageGen")}
               </button>
             ))}
           </div>
@@ -291,7 +293,7 @@ export default function CombosPage() {
                         <CapIcon className="size-3 shrink-0 text-stone-500" />
                         <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
                         {(m.capability_labels || ["Chat"]).map((label: string) => {
-                          const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
+                          const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                           return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
                         })}
                         <span className="text-[10px] text-stone-600">{m.owned_by}</span>
@@ -376,7 +378,7 @@ export default function CombosPage() {
                         {modelId}
                       </span>
                       {(info?.capability_labels || ["Chat"]).map((label: string) => {
-                        const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : "image";
+                        const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                         return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border", CAP_COLORS[capKey])}>{label}</span>;
                       })}
                       {idx < models.length - 1 && (
