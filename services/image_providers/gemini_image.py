@@ -50,12 +50,23 @@ class GeminiImageAdapter(BaseImageAdapter):
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or "")
+        images = body.get("images") or []
         n = max(1, min(4, int(body.get("n") or 1)))
 
+        parts = [{"text": prompt}]
+        # Add input images for editing (base64 encoded)
+        for img in images:
+            if isinstance(img, bytes):
+                import base64 as b64
+                parts.append({"inlineData": {"mimeType": "image/png", "data": b64.b64encode(img).decode()}})
+            elif isinstance(img, str) and img.startswith("data:"):
+                # data:image/png;base64,...
+                header, data = img.split(",", 1)
+                mime = header.split(";")[0].replace("data:", "")
+                parts.append({"inlineData": {"mimeType": mime, "data": data}})
+
         return {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
+            "contents": [{"parts": parts}],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
             },
