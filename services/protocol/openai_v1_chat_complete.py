@@ -23,9 +23,32 @@ from services.protocol.conversation import (
 from services.account_service import account_service
 from services.backend_router import backend_router
 from services.config import config
+from services.model_cooldown import model_cooldown
 from services.search_service import search_service
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
 from utils.log import logger
+
+
+def _extract_status(error_text: str) -> int:
+    """Extract HTTP status code from error message text."""
+    import re
+    text = str(error_text)
+    match = re.search(r'\b(4\d\d|5\d\d|error\s+(\d+))', text, re.IGNORECASE)
+    if match:
+        code = match.group(2) or match.group(1)
+        try:
+            return int(code)
+        except ValueError:
+            pass
+    # Check for keyword patterns
+    lower = text.lower()
+    if "401" in lower or "unauthorized" in lower: return 401
+    if "402" in lower: return 402
+    if "403" in lower or "forbidden" in lower: return 403
+    if "404" in lower: return 404
+    if "429" in lower or "rate" in lower or "quota" in lower: return 429
+    if "503" in lower or "502" in lower or "500" in lower: return 500
+    return 0
 
 
 def completion_chunk(model: str, delta: dict[str, Any], finish_reason: str | None = None, completion_id: str = "", created: int | None = None) -> dict[str, Any]:
@@ -198,15 +221,33 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         last_error = ""
         for route in routes:
             try:
+                # Check cooldown before trying this provider
+                cooldown = model_cooldown.get_cooldown_info(route.model)
+                if cooldown:
+                    logger.warning({"event": "model_cooldown_skip", "model": route.model, **cooldown})
+                    last_error = cooldown["message"]
+                    continue
+
                 logger.info({"event": "combo_try", "combo": model, "provider": route.provider, "model": route.model})
                 if search_service.is_enabled and route.provider != "chatgpt":
                     messages_copy = search_service.process_messages(messages)
                 else:
                     messages_copy = messages
-                return _dispatch(route, messages_copy, tools, tool_choice, body)
+                result = _dispatch(route, messages_copy, tools, tool_choice, body)
+                # Record success on cooldown manager
+                model_cooldown.record_success("combo:" + model, route.model)
+                return result
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
+                # Record failure for per-model cooldown
+                model_cooldown.record_failure(
+                    account_id="combo:" + model,
+                    model=route.model,
+                    status_code=_extract_status(last_error),
+                    error_body=last_error,
+                    provider=route.provider,
+                )
                 continue
         return completion_response(model=model, content=f"All providers failed. Last error: {last_error[:200]}", messages=messages)
 

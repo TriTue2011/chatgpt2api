@@ -17,6 +17,7 @@ from services.log_service import log_service
 from services.proxy_service import test_proxy
 from services.state_backup import state_backup
 from services.backend_router import backend_router
+from services.model_cooldown import model_cooldown
 from services.providers.opencode import opencode_provider
 from services.rate_limit_backoff import rate_limit_backoff
 from services.quota_watcher import quota_watcher
@@ -356,6 +357,7 @@ def create_router(app_version: str) -> APIRouter:
             },
             "backoff": backoff_stats,
             "quota_watcher": quota_watcher.get_stats(),
+            "model_cooldown": model_cooldown.get_stats(),
             "opencode": {
                 "available": opencode_provider.is_available,
             },
