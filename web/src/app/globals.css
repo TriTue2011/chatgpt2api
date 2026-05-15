@@ -118,7 +118,7 @@
   }
   html,
   body {
-    background: #f4f6fb;
+    background: #f0f2f8;
     overscroll-behavior: none;
   }
 
@@ -126,6 +126,66 @@
     @apply text-foreground;
   }
 }
+
+/* ── Decorative 3D floating circles background ── */
+.bg-circles {
+  position: relative;
+  overflow: hidden;
+}
+.bg-circles::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    /* Large circles */
+    radial-gradient(circle at 5% 10%, rgba(99,102,241,0.06) 0%, transparent 40%),
+    radial-gradient(circle at 95% 15%, rgba(139,92,246,0.05) 0%, transparent 35%),
+    radial-gradient(circle at 15% 85%, rgba(59,130,246,0.04) 0%, transparent 45%),
+    radial-gradient(circle at 85% 90%, rgba(168,85,247,0.06) 0%, transparent 40%),
+    /* Medium circles */
+    radial-gradient(circle at 30% 30%, rgba(99,102,241,0.07) 0%, transparent 25%),
+    radial-gradient(circle at 70% 35%, rgba(236,72,153,0.04) 0%, transparent 30%),
+    radial-gradient(circle at 50% 70%, rgba(34,197,94,0.04) 0%, transparent 28%),
+    radial-gradient(circle at 10% 55%, rgba(249,115,22,0.04) 0%, transparent 25%),
+    /* Small accent circles */
+    radial-gradient(circle at 80% 60%, rgba(59,130,246,0.05) 0%, transparent 20%),
+    radial-gradient(circle at 45% 15%, rgba(168,85,247,0.04) 0%, transparent 18%),
+    radial-gradient(circle at 60% 80%, rgba(236,72,153,0.03) 0%, transparent 22%),
+    radial-gradient(circle at 25% 45%, rgba(34,197,94,0.03) 0%, transparent 20%);
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* ── Pastel card with 3D depth ── */
+.card-3d {
+  background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(248,250,255,0.9));
+  border: 1px solid rgba(255,255,255,0.8);
+  box-shadow:
+    0 1px 3px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.04),
+    0 8px 24px rgba(0,0,0,0.03),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+  backdrop-filter: blur(8px);
+}
+.card-3d:hover {
+  border-color: rgba(99,102,241,0.25);
+  box-shadow:
+    0 1px 3px rgba(0,0,0,0.06),
+    0 8px 24px rgba(99,102,241,0.08),
+    0 16px 48px rgba(0,0,0,0.06),
+    inset 0 1px 0 rgba(255,255,255,1);
+}
+
+/* Card tints per section */
+.card-tint-indigo  { background: linear-gradient(135deg, rgba(238,242,255,0.95), rgba(224,231,255,0.9)); }
+.card-tint-emerald { background: linear-gradient(135deg, rgba(236,253,245,0.95), rgba(209,250,229,0.9)); }
+.card-tint-amber   { background: linear-gradient(135deg, rgba(255,251,235,0.95), rgba(254,243,199,0.9)); }
+.card-tint-rose    { background: linear-gradient(135deg, rgba(255,241,242,0.95), rgba(255,228,230,0.9)); }
+.card-tint-sky     { background: linear-gradient(135deg, rgba(240,249,255,0.95), rgba(224,242,254,0.9)); }
+.card-tint-violet  { background: linear-gradient(135deg, rgba(245,243,255,0.95), rgba(237,233,254,0.9)); }
+.card-tint-slate   { background: linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.9)); }
 
 @layer utilities {
   .hide-scrollbar {

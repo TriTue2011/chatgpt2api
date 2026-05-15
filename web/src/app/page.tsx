@@ -187,11 +187,16 @@ export default function DashboardPage() {
           return (
             <div
               key={card.label}
-              className="group relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white/80 backdrop-blur-sm p-5 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:border-slate-300"
+              className={cn(
+                "group relative overflow-hidden rounded-2xl p-5 transition-all duration-300 hover:-translate-y-0.5",
+                "card-3d",
+                card.color === "indigo"  ? "card-tint-indigo"  :
+                card.color === "emerald" ? "card-tint-emerald" :
+                card.color === "amber"   ? "card-tint-amber"   :
+                card.color === "violet"  ? "card-tint-violet"  :
+                                           "card-tint-slate"
+              )}
             >
-              {/* subtle gradient glow on hover */}
-              <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-
               <div className="relative flex items-start justify-between">
                 <div className="space-y-2">
                   <p className="text-[11px] font-bold tracking-widest text-slate-400 uppercase">
