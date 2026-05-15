@@ -157,11 +157,11 @@ class AccountService:
         excluded = set(excluded_tokens or set())
         with self._lock:
             candidates = [
-                token
+                (account.get("original_token") or account.get("access_token") or "")
                 for account in self._accounts.values()
                 if account.get("status") not in {"disabled", "error"}
-                   and (token := account.get("access_token") or "")
-                   and token not in excluded
+                   and (account.get("original_token") or account.get("access_token") or "")
+                   and (account.get("original_token") or account.get("access_token") or "") not in excluded
             ]
             if not candidates:
                 return ""

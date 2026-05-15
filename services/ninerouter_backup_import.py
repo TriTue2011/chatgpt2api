@@ -217,17 +217,26 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            # Add to pool with combined type — one token serves both free (images) and codex (chat)
-            result = account_service.add_accounts_with_type(tokens, "free,codex")
-            # Set default quota for OAuth JWT tokens
+            # Create TWO entries per token: one for free (chat+images), one for codex (cx/auto)
+            added_free = 0
+            added_codex = 0
             for token in tokens:
-                account_service.update_account(token, {
-                    "image_quota_unknown": False,  # Free tokens DO track image quota
-                    "quota": 10,  # Conservative default
-                    "status": "active",
-                })
-            imported = result.get("added", 0) + result.get("updated", 0)
-            skipped = result.get("skipped", 0)
+                # Free entry — used by chatgpt/auto, image generation
+                free_result = account_service.add_accounts_with_type([f"{token}:free"], "free")
+                added_free += free_result.get("added", 0)
+                # Codex entry — used by cx/auto, Codex Responses API
+                codex_result = account_service.add_accounts_with_type([f"{token}:codex"], "codex")
+                added_codex += codex_result.get("added", 0)
+                # Set quota for both
+                for suffix in (":free", ":codex"):
+                    account_service.update_account(f"{token}{suffix}", {
+                        "image_quota_unknown": False,
+                        "quota": 10,
+                        "status": "active",
+                        "original_token": token,  # keep reference to original JWT
+                    })
+            imported = added_free + added_codex
+            skipped = 0
             logger.info({
                 "event": "9router_backup_imported",
                 "tokens_found": len(tokens),
