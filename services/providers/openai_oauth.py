@@ -404,15 +404,23 @@ class CodexOAuthProvider:
         """Get next available JWT token for Codex OAuth (accepts both free and codex type)."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
+            all_accounts = list(account_service._accounts.values())
             candidates = [
                 token
-                for item in account_service._accounts.values()
+                for item in all_accounts
                 if item.get("status") not in {"disabled", "error"}
                 and (token := item.get("access_token") or "")
                 and token not in excluded
                 and token.startswith("eyJ")
             ]
             if not candidates:
+                logger.error({
+                    "event": "codex_no_tokens",
+                    "total_accounts": len(all_accounts),
+                    "jwt_accounts": sum(1 for i in all_accounts if str(i.get("access_token","")).startswith("eyJ")),
+                    "active_jwt": sum(1 for i in all_accounts if str(i.get("access_token","")).startswith("eyJ") and i.get("status") not in {"disabled","error"}),
+                    "sample_statuses": [i.get("status") for i in all_accounts[:3]],
+                })
                 raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
             token = candidates[account_service._index % len(candidates)]
             account_service._index += 1
