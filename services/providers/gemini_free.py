@@ -115,24 +115,56 @@ class GeminiProvider:
 
 
 def _convert_request(messages, tools):
-    """Convert OpenAI format → Gemini format."""
+    """Convert OpenAI format → Gemini format with vision support."""
+    import base64 as b64
     contents = []
     system_parts = []
 
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
+        parts = []
+
         if isinstance(content, list):
-            text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-            content = " ".join(text_parts)
+            text_content = ""
+            for p in content:
+                if not isinstance(p, dict):
+                    continue
+                ptype = p.get("type", "")
+                if ptype == "text":
+                    text_content += p.get("text", "") + " "
+                elif ptype == "image_url":
+                    img_url = p.get("image_url", {}).get("url", "")
+                    if img_url.startswith("data:"):
+                        # data:image/jpeg;base64,<data>
+                        header, data = img_url.split(",", 1)
+                        mime = header.split(";")[0].replace("data:", "")
+                        parts.append({"inlineData": {"mimeType": mime, "data": data}})
+                    elif img_url.startswith("http"):
+                        # URL-based image — fetch and encode
+                        try:
+                            from curl_cffi import requests as cffi_requests
+                            resp = cffi_requests.get(img_url, timeout=30, impersonate="chrome110")
+                            if resp.status_code == 200:
+                                img_data = b64.b64encode(resp.content).decode()
+                                ctype = resp.headers.get("content-type", "image/jpeg")
+                                parts.append({"inlineData": {"mimeType": ctype, "data": img_data}})
+                        except Exception:
+                            pass
+            if text_content.strip():
+                parts.insert(0, {"text": text_content.strip()})
+            content = text_content.strip()
         else:
             content = str(content or "")
+            parts = [{"text": content}]
 
         if role == "system":
             system_parts.append(content)
             continue
 
-        contents.append({"role": "user" if role == "user" else "model", "parts": [{"text": content}]})
+        if not parts:
+            parts = [{"text": content}]
+        contents.append({"role": "user" if role == "user" else "model", "parts": parts})
 
     si = {"parts": [{"text": "\n".join(system_parts)}]} if system_parts else None
 

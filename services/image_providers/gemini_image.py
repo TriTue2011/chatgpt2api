@@ -62,6 +62,12 @@ class GeminiImageAdapter(BaseImageAdapter):
             return None
 
         data = response.json()
+
+        # Check for error
+        if "error" in data:
+            err = data["error"]
+            raise RuntimeError(f"Gemini API error {err.get('status','')}: {err.get('message','')[:200]}")
+
         images = []
 
         candidates = data.get("candidates") or []
