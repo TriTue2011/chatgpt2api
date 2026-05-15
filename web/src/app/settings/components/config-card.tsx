@@ -34,6 +34,7 @@ export function ConfigCard() {
   const setGlobalSystemPrompt = useSettingsStore((state) => state.setGlobalSystemPrompt);
   const setSensitiveWordsText = useSettingsStore((state) => state.setSensitiveWordsText);
   const setAIReviewField = useSettingsStore((state) => state.setAIReviewField);
+  const setField = useSettingsStore((state) => state.setField);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
   const handleTestProxy = async () => {
@@ -149,7 +150,21 @@ export function ConfigCard() {
             <p className="text-xs text-stone-500">Tự động xóa hình ảnh cục bộ từ bao nhiêu ngày trước.</p>
           </div>
           <div className="space-y-2">
-            <label className="text-sm text-stone-700">Thời gian chờ thăm dò hình ảnh</label>
+            <label className="text-sm text-stone-700">Tỷ lệ ảnh mặc định</label>
+            <select
+              value={String((config as any)?.default_image_size || "1792x1024")}
+              onChange={(e) => setField("default_image_size", e.target.value)}
+              className="h-10 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm text-stone-700"
+            >
+              <option value="1792x1024">16:9 (1792×1024)</option>
+              <option value="1024x1024">1:1 (1024×1024)</option>
+              <option value="1024x1792">9:16 (1024×1792)</option>
+              <option value="768x768">1:1 (768×768)</option>
+              <option value="768x1344">9:16 (768×1344)</option>
+              <option value="1344x768">16:9 (1344×768)</option>
+            </select>
+            <p className="text-xs text-stone-500">Kích thước mặc định cho tất cả model tạo ảnh (GPT, Gemini, NVIDIA...).</p>
+          </div>
             <Input
               value={String(config?.image_poll_timeout_secs || "")}
               onChange={(event) => setImagePollTimeoutSecs(event.target.value)}

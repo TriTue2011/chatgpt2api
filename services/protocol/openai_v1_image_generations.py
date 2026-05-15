@@ -170,7 +170,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     prompt = str(body.get("prompt") or "")
     model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)
-    size = body.get("size") or "1792x1024"  # default 16:9
+    size = body.get("size") or config.default_image_size  # configurable default (16:9)
     response_format = str(body.get("response_format") or "b64_json")
     base_url_str = str(body.get("base_url") or "") or None
     stream = bool(body.get("stream"))
@@ -204,7 +204,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
     prompt = str(body.get("prompt") or "")
     model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)
-    size = body.get("size") or "1792x1024"  # default 16:9
+    size = body.get("size") or config.default_image_size  # configurable default (16:9)
     response_format = str(body.get("response_format") or "b64_json")
     base_url_str = str(body.get("base_url") or "") or None
     stream = bool(body.get("stream"))

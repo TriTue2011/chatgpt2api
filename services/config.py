@@ -260,6 +260,10 @@ class ConfigStore:
         return _normalize_bool(self.data.get("auto_refresh_enabled"), True)
 
     @property
+    def default_image_size(self) -> str:
+        return str(self.data.get("default_image_size") or "1792x1024").strip()
+
+    @property
     def images_dir(self) -> Path:
         path = DATA_DIR / "images"
         path.mkdir(parents=True, exist_ok=True)
