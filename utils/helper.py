@@ -37,34 +37,39 @@ _IMAGE_GEN_PROVIDER_PREFIXES = {
     "recraft/",      # Recraft
     "runwayml/",     # RunwayML
 }
-# Providers where specific models support vision (multimodal)
-_VISION_PROVIDER_PREFIXES: set[str] = set()
-# Providers where ALL models support video analysis
-_VIDEO_PROVIDER_PREFIXES: set[str] = {
-    "gemini_free/",   # Gemini API supports video input
-    "cx/",            # Codex supports video via multimodal
+# Providers where ALL models support vision (multimodal)
+_VISION_PROVIDER_PREFIXES: set[str] = {
+    "cx/",            # Codex supports image input natively
+    "gemini_free/",   # Gemini API supports image input
 }
-_VIDEO_CUSTOM_PROVIDERS: set[str] = {
-    "geminiapi",      # Gemini-FastAPI supports video
-}
+# Custom providers that support image generation
 _IMAGE_GEN_CUSTOM_PROVIDERS = {
     "geminiapi",     # Gemini API server — supports image gen via /v1/responses
 }
-# Custom providers that are Gemini-based → all models support vision
-_VISION_CUSTOM_PROVIDERS: set[str] = set()
+# Custom providers where ALL models support vision
+_VISION_CUSTOM_PROVIDERS: set[str] = {
+    "geminiapi",      # Gemini-FastAPI supports image input
+}
 # Individual model keywords for vision (used for nv/ and other providers)
 _VISION_KEYWORDS = {
-    "vision", "multimodal", "-vl", "-vlm", "fuyu", "kosmos",
-    "gemma-2", "gemma-3", "gemma-4", "gemma-7b", "nvclip", "vila", "trellis",
+    "gemma-2", "gemma-3", "gemma-4", "gemma-7b",
+    "fuyu", "kosmos", "nvclip", "vila", "trellis",
     "phi-3-vision", "phi-4-multimodal", "phi-3.5-moe",
     "llama-3.2-11b", "llama-3.2-90b", "llama-4-maverick",
     "nemotron-nano-12b-v2-vl", "nemotron-3-nano-omni",
     "bevformer", "sparsedrive", "streampetr", "visual-changenet",
     "cosmos-predict1", "nv-dinov2", "nv-grounding-dino",
     "retail-object-detection", "codegemma",
-    "gpt-4o", "gpt-4-turbo", "gpt-4.1", "gpt-5",
-    "deepseek-v4",  # v4 series may support vision
     "yi-large", "sarvam",
+}
+# Providers where ALL models support video analysis
+_VIDEO_PROVIDER_PREFIXES: set[str] = {
+    "cx/",            # Codex supports video via multimodal
+    "gemini_free/",   # Gemini API supports video input
+}
+# Custom providers where ALL models support video
+_VIDEO_CUSTOM_PROVIDERS: set[str] = {
+    "geminiapi",      # Gemini-FastAPI supports video
 }
 
 
