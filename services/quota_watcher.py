@@ -111,7 +111,7 @@ class QuotaWatcher:
             quota = int(account.get("quota") or 0)
 
             # Skip disabled/abnormal accounts
-            if status in ("禁用", "异常"):
+            if status in ("disabled", "error"):
                 continue
 
             # Determine next check time
@@ -139,7 +139,7 @@ class QuotaWatcher:
         last_used = account.get("last_used_at")
 
         # Rate-limited: check right after restore_at
-        if status == "限流" and restore_at:
+        if status == "limited" and restore_at:
             try:
                 restore_ts = _parse_iso_timestamp(restore_at)
                 if restore_ts and restore_ts > now:
@@ -264,7 +264,7 @@ class QuotaWatcher:
         restore_at = account.get("restore_at")
 
         # Rate-limited: check if restore time has passed
-        if status == "限流":
+        if status == "limited":
             if restore_at:
                 try:
                     restore_ts = _parse_iso_timestamp(restore_at)
@@ -279,7 +279,7 @@ class QuotaWatcher:
             return True
 
         # Abnormal: should refresh to check if recovered
-        if status == "异常":
+        if status == "error":
             return True
 
         return False

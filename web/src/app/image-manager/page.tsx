@@ -107,7 +107,7 @@ function ImageManagerContent() {
       setSelectedPaths((current) => current.filter((path) => data.items.some((item) => imageKey(item) === path)));
       setPage(1);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "加载图片失败");
+      toast.error(error instanceof Error ? error.message : "Không tải được ảnh");
     } finally {
       setIsLoading(false);
     }
@@ -131,9 +131,9 @@ function ImageManagerContent() {
       await deleteManagedImages({ paths: [deleteTarget.rel] });
       setItems((prev) => prev.filter((item) => item.rel !== deleteTarget.rel));
       setSelectedPaths((prev) => prev.filter((p) => p !== imageKey(deleteTarget)));
-      toast.success("图片已删除");
+      toast.success("Đã xóa ảnh");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除失败");
+      toast.error(error instanceof Error ? error.message : "Không xóa được");
     } finally {
       setIsDeleting(false);
       closeDialog();
@@ -147,7 +147,7 @@ function ImageManagerContent() {
       const tagsData = await fetchImageTags();
       setAllTags(tagsData.tags);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "设置标签失败");
+      toast.error(error instanceof Error ? error.message : "Không đặt được nhãn");
     }
   };
 
@@ -156,7 +156,7 @@ function ImageManagerContent() {
     if (!tag) return;
     const current = item.tags ?? [];
     if (current.includes(tag)) {
-      toast.error("标签已存在");
+      toast.error("nhãn已存trong");
       return;
     }
     void handleSetTags(item, [...current, tag]);
@@ -185,9 +185,9 @@ function ImageManagerContent() {
         ...item,
         tags: (item.tags ?? []).filter((t) => t !== tag),
       })));
-      toast.success(`标签"${tag}"已删除，影响 ${result.removed_from} 张图片`);
+      toast.success(`nhãn"${tag}"已删除，影响 ${result.removed_from} 张图片`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除标签失败");
+      toast.error(error instanceof Error ? error.message : "Không xóa được nhãn");
     }
   };
 
@@ -227,7 +227,7 @@ function ImageManagerContent() {
       setSelectedPaths([]);
       await loadImages();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除图片失败");
+      toast.error(error instanceof Error ? error.message : "Không xóa được ảnh");
     } finally {
       setIsDeleting(false);
     }
@@ -282,7 +282,7 @@ function ImageManagerContent() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-stone-500">
             <Tag className="mr-1 inline size-3.5" />
-            标签筛选：
+            nhãn筛选：
           </span>
           {allTags.map((tag) => {
             const isPressing = pressingTag === tag;
@@ -349,7 +349,7 @@ function ImageManagerContent() {
                 刷新
               </Button>
               <button type="button" className="text-sm text-stone-500 hover:text-stone-900 disabled:text-stone-700" onClick={() => setSelectedPaths([])} disabled={selectedPaths.length === 0 || isDeleting}>
-                取消选择
+                取消chọn
               </button>
               <Button variant="outline" className="h-8 rounded-lg border-stone-200 bg-white px-3 text-stone-600 hover:bg-stone-800" onClick={() => void handleBatchDownload()} disabled={selectedPaths.length === 0 || isDownloading || isDeleting}>
                 {isDownloading ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
@@ -453,19 +453,19 @@ function ImageManagerContent() {
                         <button
                           type="button"
                           className="inline-flex size-5 items-center justify-center rounded-full border border-dashed border-stone-300 text-stone-500 hover:border-stone-500 hover:text-stone-600"
-                          title="添加标签"
+                          title="thêmnhãn"
                         >
                           <Plus className="size-3" />
                         </button>
                       </PopoverTrigger>
                       <PopoverContent align="start" className="w-56 p-2">
                         <div className="space-y-2">
-                          <div className="text-xs font-medium text-stone-500">添加标签</div>
+                          <div className="text-xs font-medium text-stone-500">thêmnhãn</div>
                           <div className="flex gap-1">
                             <Input
                               value={tagInput}
                               onChange={(e) => setTagInput(e.target.value)}
-                              placeholder="输入标签名"
+                              placeholder="输入nhãn名"
                               className="h-8 text-xs"
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") {
@@ -528,7 +528,7 @@ function ImageManagerContent() {
             <DialogTitle className="pr-8">确认删除</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-stone-600">
-            确定要删除这张图片吗？此操作不可恢复。
+            确定要删除这张图片吗？此操作不có thể恢复。
           </p>
           {deleteTarget ? (
             <div className="flex items-center gap-3 overflow-hidden rounded-xl border border-stone-200 bg-stone-100 p-3">
@@ -570,7 +570,7 @@ function ImageManagerContent() {
             <DialogTitle>{deleteMode === "filtered" ? "删除匹配日期的图片" : "删除所选图片"}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-stone-600">
-            确认删除 {selectedCount} 张图片吗？删除后无法恢复。
+            确认删除 {selectedCount} 张图片吗？删除sau无法恢复。
           </p>
           <DialogFooter>
             <Button variant="outline" className="rounded-xl" onClick={() => setDeleteMode(null)} disabled={isDeleting}>
@@ -586,10 +586,10 @@ function ImageManagerContent() {
       <Dialog open={Boolean(tagDeleteTarget)} onOpenChange={(open) => { if (!open) setTagDeleteTarget(null); }}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle>删除标签</DialogTitle>
+            <DialogTitle>删除nhãn</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-stone-600">
-            确定要删除标签 <span className="font-semibold">"{tagDeleteTarget}"</span> 吗？将从所有图片中移除该标签。
+            确定要删除nhãn <span className="font-semibold">"{tagDeleteTarget}"</span> 吗？将从所有图片中移除该nhãn。
           </p>
           <DialogFooter>
             <Button variant="outline" className="rounded-xl" onClick={() => setTagDeleteTarget(null)}>

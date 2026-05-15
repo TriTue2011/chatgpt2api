@@ -15,6 +15,22 @@ from services.storage.base import StorageBackend
 from utils.helper import anonymize_token
 from utils.log import logger
 
+# Status migration: Chinese → English (backward compatible)
+_STATUS_MIGRATION = {
+    "active": "active",
+    "limited": "limited",
+    "error": "error",
+    "disabled": "disabled",
+}
+_STATUS_REVERSE = {v: k for k, v in _STATUS_MIGRATION.items()}
+
+DISPLAY_STATUS = {
+    "active": "Hoạt động",
+    "limited": "Giới hạn",
+    "error": "Lỗi",
+    "disabled": "Vô hiệu",
+}
+
 
 # NoAuth providers — virtual connections (port from 9router FREE_PROVIDERS)
 NO_AUTH_PROVIDERS = {"opencode"}
@@ -46,7 +62,7 @@ class AccountService:
     def _is_image_account_available(account: dict) -> bool:
         if not isinstance(account, dict):
             return False
-        if account.get("status") in {"禁用", "限流", "异常"}:
+        if account.get("status") in {"disabled", "limited", "error"}:
             return False
         if bool(account.get("image_quota_unknown")):
             return True
@@ -61,7 +77,9 @@ class AccountService:
         normalized = dict(item)
         normalized["access_token"] = access_token
         normalized["type"] = normalized.get("type") or "free"
-        normalized["status"] = normalized.get("status") or "正常"
+        # Auto-migrate Chinese status to English
+        raw_status = normalized.get("status") or "active"
+        normalized["status"] = _STATUS_MIGRATION.get(raw_status, raw_status)
         normalized["quota"] = max(0, int(normalized.get("quota") if normalized.get("quota") is not None else 0))
         normalized["image_quota_unknown"] = bool(normalized.get("image_quota_unknown"))
         normalized["email"] = normalized.get("email") or None
@@ -141,7 +159,7 @@ class AccountService:
             candidates = [
                 token
                 for account in self._accounts.values()
-                if account.get("status") not in {"禁用", "异常"}
+                if account.get("status") not in {"disabled", "error"}
                    and (token := account.get("access_token") or "")
                    and token not in excluded
             ]
@@ -168,14 +186,14 @@ class AccountService:
 
     def remove_invalid_token(self, access_token: str, event: str) -> bool:
         if not config.auto_remove_invalid_accounts:
-            self.update_account(access_token, {"status": "异常", "quota": 0})
+            self.update_account(access_token, {"status": "error", "quota": 0})
             return False
         removed = bool(self.delete_accounts([access_token])["removed"])
         if removed:
             log_service.add(LOG_TYPE_ACCOUNT, "自动移除异常账号",
                             {"source": event, "token": anonymize_token(access_token)})
         elif access_token:
-            self.update_account(access_token, {"status": "异常", "quota": 0})
+            self.update_account(access_token, {"status": "error", "quota": 0})
         return removed
 
     def get_account(self, access_token: str) -> dict | None:
@@ -194,7 +212,7 @@ class AccountService:
             return [
                 token
                 for item in self._accounts.values()
-                if item.get("status") == "限流"
+                if item.get("status") == "limited"
                    and (token := item.get("access_token") or "")
             ]
 
@@ -253,7 +271,7 @@ class AccountService:
                 account = self._normalize_account({
                     "access_token": access_token,
                     "type": account_type,
-                    "status": "正常",
+                    "status": "active",
                 })
                 if account is not None:
                     self._accounts[access_token] = account
@@ -291,7 +309,7 @@ class AccountService:
             account = self._normalize_account({**current, **updates, "access_token": access_token})
             if account is None:
                 return None
-            if account.get("status") == "限流" and config.auto_remove_rate_limited_accounts:
+            if account.get("status") == "limited" and config.auto_remove_rate_limited_accounts:
                 self._accounts.pop(access_token, None)
                 self._save_accounts()
                 log_service.add(LOG_TYPE_ACCOUNT, "自动移除限流账号", {"token": anonymize_token(access_token)})
@@ -319,16 +337,16 @@ class AccountService:
                 if not image_quota_unknown:
                     next_item["quota"] = max(0, int(next_item.get("quota") or 0) - 1)
                 if not image_quota_unknown and next_item["quota"] == 0:
-                    next_item["status"] = "限流"
+                    next_item["status"] = "limited"
                     next_item["restore_at"] = next_item.get("restore_at") or None
-                elif next_item.get("status") == "限流":
-                    next_item["status"] = "正常"
+                elif next_item.get("status") == "limited":
+                    next_item["status"] = "active"
             else:
                 next_item["fail"] = int(next_item.get("fail") or 0) + 1
             account = self._normalize_account(next_item)
             if account is None:
                 return None
-            if account.get("status") == "限流" and config.auto_remove_rate_limited_accounts:
+            if account.get("status") == "limited" and config.auto_remove_rate_limited_accounts:
                 self._accounts.pop(access_token, None)
                 self._save_accounts()
                 log_service.add(LOG_TYPE_ACCOUNT, "自动移除限流账号", {"token": anonymize_token(access_token)})
@@ -397,10 +415,10 @@ class AccountService:
         score = 0.0
 
         # Rate-limit status (0.35)
-        status = str(account.get("status") or "正常")
-        if status == "正常":
+        status = str(account.get("status") or "active")
+        if status == "active":
             score += 0.35
-        elif status == "限流":
+        elif status == "limited":
             score += 0.0
         else:
             score += 0.1

@@ -224,7 +224,7 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
                 account_service.update_account(token, {
                     "image_quota_unknown": True,  # Codex tokens can generate images
                     "quota": 10,  # Conservative default
-                    "status": "正常",
+                    "status": "active",
                 })
             imported = result.get("added", 0) + result.get("updated", 0)
             skipped = result.get("skipped", 0)

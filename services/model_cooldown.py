@@ -159,7 +159,7 @@ class ModelCooldownManager:
             if not acc_id:
                 continue
             status = acc.get("status", "")
-            if status in ("禁用", "异常"):
+            if status in ("disabled", "error"):
                 continue
             if self.is_available(acc_id, model):
                 available.append(acc)
@@ -180,7 +180,7 @@ class ModelCooldownManager:
             if not acc_id:
                 continue
             status = acc.get("status", "")
-            if status in ("禁用", "异常"):
+            if status in ("disabled", "error"):
                 continue
             model_accounts.append(acc)
             state = self._states.get(acc_id, {}).get(model)

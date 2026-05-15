@@ -397,7 +397,7 @@ class CodexOAuthProvider:
             candidates = [
                 token
                 for item in account_service._accounts.values()
-                if item.get("status") not in {"禁用", "异常"}
+                if item.get("status") not in {"disabled", "error"}
                 and (token := item.get("access_token") or "")
                 and token not in excluded
                 and token.startswith("eyJ")

@@ -351,9 +351,9 @@ def create_router(app_version: str) -> APIRouter:
             "version": app_version,
             "accounts": {
                 "total": len(accounts),
-                "active": sum(1 for a in accounts if a.get("status") == "正常"),
-                "limited": sum(1 for a in accounts if a.get("status") == "限流"),
-                "error": sum(1 for a in accounts if a.get("status") in ("异常", "禁用")),
+                "active": sum(1 for a in accounts if a.get("status") == "active"),
+                "limited": sum(1 for a in accounts if a.get("status") == "limited"),
+                "error": sum(1 for a in accounts if a.get("status") in ("error", "disabled")),
             },
             "backoff": backoff_stats,
             "quota_watcher": quota_watcher.get_stats(),

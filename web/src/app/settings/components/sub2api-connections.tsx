@@ -197,7 +197,7 @@ export function Sub2APIConnections() {
 
   const handleFetchGroups = async () => {
     if (!editingServer) {
-      toast.error("请先Lưukết nối后再拉取nhóm");
+      toast.error("请先Lưukết nốisau再lấynhóm");
       return;
     }
     setIsLoadingGroups(true);
@@ -210,7 +210,7 @@ export function Sub2APIConnections() {
         toast.success(`Đọc到 ${data.groups.length} 个nhóm`);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "拉取nhómthất bại");
+      toast.error(error instanceof Error ? error.message : "lấynhómthất bại");
     } finally {
       setIsLoadingGroups(false);
     }
@@ -392,7 +392,7 @@ export function Sub2APIConnections() {
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Sub2API kết nối管理</h2>
                 <p className="text-sm text-stone-500">
-                  配置 Sub2API 服务器后，可查询其中的 OpenAI OAuth 账号并批量导入本地号池。
+                  配置 Sub2API 服务器sau，có thể查询其trong OpenAI OAuth 账号并批量导入本地号池。
                 </p>
               </div>
             </div>
@@ -417,7 +417,7 @@ export function Sub2APIConnections() {
               <ServerCog className="size-8 text-stone-700" />
               <div className="space-y-1">
                 <p className="text-sm font-medium text-stone-600">暂无 Sub2API kết nối</p>
-                <p className="text-sm text-stone-500">点击「Thêm kết nối」Lưu你的 Sub2API 信息。</p>
+                <p className="text-sm text-stone-500">nhấn击「Thêm kết nối」Lưu你的 Sub2API thông tin。</p>
               </div>
             </div>
           ) : (
@@ -539,10 +539,10 @@ export function Sub2APIConnections() {
           <div className="rounded-xl bg-stone-100 px-4 py-3 text-sm leading-6 text-stone-500">
             <p className="font-medium text-stone-600">Hướng dẫn sử dụng</p>
             <ul className="mt-1 list-inside list-disc space-y-0.5">
-              <li>输入 Sub2API 地址和管理员账户（或 Admin API Key），Lưu为一个kết nối。</li>
-              <li>点击某个kết nối的「Đồng bộ」会拉取其中 platform=openai 且 type=oauth 的账号列表。</li>
-              <li>勾选需要的账号后后端会并发拉取 access_token，自动导入本地号池并Làm mớiTrạng thái。</li>
-              <li>仅会Đọc sub2api 凭据中的 access_token；refresh_token 等字段不会写入本地。</li>
+              <li>输入 Sub2API 地址和管理员账户（或 Admin API Key），Lưu为mộtkết nối。</li>
+              <li>nhấn击某个kết nối的「Đồng bộ」会lấy其中 platform=openai 且 type=oauth 的账号列表。</li>
+              <li>勾选需要的账号sausau端会并发lấy access_token，自动导入本地号池并Làm mớiTrạng thái。</li>
+              <li>仅会Đọc sub2api 凭据trong access_token；refresh_token 等字段不会写入本地。</li>
             </ul>
           </div>
         </CardContent>
@@ -553,7 +553,7 @@ export function Sub2APIConnections() {
           <DialogHeader className="gap-2">
             <DialogTitle>{editingServer ? "Chỉnh sửakết nối" : "Thêm kết nối"}</DialogTitle>
             <DialogDescription className="text-sm leading-6">
-              {editingServer ? "修改 Sub2API kết nối信息" : "添加一个新的 Sub2API kết nối"}
+              {editingServer ? "sửa Sub2API kết nốithông tin" : "thêmmộtmới Sub2API kết nối"}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -614,7 +614,7 @@ export function Sub2APIConnections() {
                       type={showSecret ? "text" : "password"}
                       value={formPassword}
                       onChange={(event) => setFormPassword(event.target.value)}
-                      placeholder={editingServer ? "留空则不修改密码" : "Mật khẩu quản trị"}
+                      placeholder={editingServer ? "留空则不sửa密码" : "Mật khẩu quản trị"}
                       className="h-11 rounded-xl border-stone-200 bg-white pr-10"
                     />
                     <button
@@ -638,7 +638,7 @@ export function Sub2APIConnections() {
                     type={showSecret ? "text" : "password"}
                     value={formApiKey}
                     onChange={(event) => setFormApiKey(event.target.value)}
-                    placeholder={editingServer ? "留空则不修改密钥" : "Sub2API Admin API Key"}
+                    placeholder={editingServer ? "留空则不sửa密钥" : "Sub2API Admin API Key"}
                     className="h-11 rounded-xl border-stone-200 bg-white pr-10"
                   />
                   <button
@@ -697,12 +697,12 @@ export function Sub2APIConnections() {
                     ) : (
                       <RefreshCcw className="size-3.5" />
                     )}
-                    {remoteGroups ? "重新拉取" : "拉取nhóm"}
+                    {remoteGroups ? "重新lấy" : "lấynhóm"}
                   </Button>
                 </div>
               ) : (
                 <div className="text-xs text-stone-500">
-                  添加完kết nối后可在Chỉnh sửa对话框里点「拉取nhóm」chọn具体nhóm。
+                  thêm完kết nốisaucó thểtrongChỉnh sửahộp thoạinàynhấn「lấynhóm」chọncụ thểnhóm。
                 </div>
               )}
             </div>
@@ -722,7 +722,7 @@ export function Sub2APIConnections() {
               disabled={isSaving}
             >
               {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-              {editingServer ? "Lưu修改" : "添加"}
+              {editingServer ? "Lưusửa" : "thêm"}
             </Button>
           </DialogFooter>
         </DialogContent>

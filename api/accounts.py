@@ -165,7 +165,7 @@ def create_router() -> APIRouter:
                 account_service.update_account(token, {
                     "image_quota_unknown": True,
                     "quota": 10,
-                    "status": "正常",
+                    "status": "active",
                 })
             refreshed = len(tokens)
             errors = []

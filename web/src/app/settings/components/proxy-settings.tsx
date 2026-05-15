@@ -38,7 +38,7 @@ export function ProxySettingsCard() {
       setFormUrl(data.proxy.url);
       setFormEnabled(data.proxy.enabled);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "加载代理配置thất bại");
+      toast.error(error instanceof Error ? error.message : "tải代理配置thất bại");
     } finally {
       setIsLoading(false);
     }
@@ -58,7 +58,7 @@ export function ProxySettingsCard() {
 
   const handleSave = async () => {
     if (formEnabled && !formUrl.trim()) {
-      toast.error("启用代理时必须填写Địa chỉ proxy");
+      toast.error("kích hoạt代理时必须填写Địa chỉ proxy");
       return;
     }
     setIsSaving(true);
@@ -90,9 +90,9 @@ export function ProxySettingsCard() {
       const data = await testProxy(candidate);
       setTestResult(data.result);
       if (data.result.ok) {
-        toast.success(`代理可用（${data.result.latency_ms} ms，HTTP ${data.result.status}）`);
+        toast.success(`代理có thể用（${data.result.latency_ms} ms，HTTP ${data.result.status}）`);
       } else {
-        toast.error(`代理不可用：${data.result.error ?? "未知错误"}`);
+        toast.error(`代理不có thể用：${data.result.error ?? "未知错误"}`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Kiểm tra proxythất bại");
@@ -132,9 +132,9 @@ export function ProxySettingsCard() {
                 onChange={(event) => setFormEnabled(event.target.checked)}
               />
               <div className="space-y-0.5">
-                <div className="text-sm font-medium text-stone-800">启用代理</div>
+                <div className="text-sm font-medium text-stone-800">kích hoạt代理</div>
                 <div className="text-sm text-stone-500">
-                  关闭后 chatgpt.com 请求会直连。Lưu后立即生效，无需重启。
+                  关闭sau chatgpt.com 请求会直连。Lưusau立即生效，无需重启。
                 </div>
               </div>
             </label>
@@ -165,10 +165,10 @@ export function ProxySettingsCard() {
               >
                 {testResult.ok ? (
                   <>
-                    代理可用：HTTP {testResult.status}，用时 {testResult.latency_ms} ms
+                    代理có thể用：HTTP {testResult.status}，用时 {testResult.latency_ms} ms
                   </>
                 ) : (
-                  <>代理不可用：{testResult.error ?? "未知错误"}（用时 {testResult.latency_ms} ms）</>
+                  <>代理不có thể用：{testResult.error ?? "未知错误"}（用时 {testResult.latency_ms} ms）</>
                 )}
               </div>
             ) : null}

@@ -213,7 +213,7 @@ def _fetch_chatgpt_token_models() -> set[str]:
             if not token or token == "public":
                 continue
             status = str(account.get("status") or "")
-            if status in {"禁用", "异常"}:
+            if status in {"disabled", "error"}:
                 continue
             if str(account.get("type") or "") == "codex" and token.startswith("eyJ"):
                 continue

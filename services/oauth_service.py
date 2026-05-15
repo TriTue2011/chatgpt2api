@@ -136,7 +136,7 @@ def exchange_codex_code(code: str, state: str) -> dict[str, Any]:
         account_service.update_account(access_token, {
             "image_quota_unknown": True,
             "quota": 10,
-            "status": "正常",
+            "status": "active",
         })
 
     return {

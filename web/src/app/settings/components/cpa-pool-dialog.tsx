@@ -36,7 +36,7 @@ export function CPAPoolDialog() {
         <DialogHeader className="gap-2">
           <DialogTitle>{editingPool ? "Chỉnh sửakết nối" : "Thêm kết nối"}</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {editingPool ? "修改 CPA kết nối信息" : "添加一个新的 CLIProxyAPI kết nối"}
+            {editingPool ? "sửa CPA kết nốithông tin" : "thêmmộtmới CLIProxyAPI kết nối"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -71,7 +71,7 @@ export function CPAPoolDialog() {
                 type={showSecret ? "text" : "password"}
                 value={formSecretKey}
                 onChange={(event) => setFormSecretKey(event.target.value)}
-                placeholder={editingPool ? "留空则不修改密钥" : "CPA 管理密钥"}
+                placeholder={editingPool ? "留空则不sửa密钥" : "CPA 管理密钥"}
                 className="h-11 rounded-xl border-stone-200 bg-white pr-10"
               />
               <button
@@ -99,7 +99,7 @@ export function CPAPoolDialog() {
             disabled={isSavingPool}
           >
             {isSavingPool ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {editingPool ? "Lưu修改" : "添加"}
+            {editingPool ? "Lưusửa" : "thêm"}
           </Button>
         </DialogFooter>
       </DialogContent>

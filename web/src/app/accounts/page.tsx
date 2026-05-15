@@ -58,10 +58,10 @@ import { AccountImportDialog } from "./components/account-import-dialog";
 
 const accountStatusOptions: { labelKey: TranslationKey; value: AccountStatus | "all" }[] = [
   { labelKey: "allStatus", value: "all" },
-  { labelKey: "status_normal", value: "正常" },
-  { labelKey: "status_limited", value: "限流" },
-  { labelKey: "status_error", value: "异常" },
-  { labelKey: "status_disabled", value: "禁用" },
+  { labelKey: "status_normal", value: "active" },
+  { labelKey: "status_limited", value: "limited" },
+  { labelKey: "status_error", value: "error" },
+  { labelKey: "status_disabled", value: "disabled" },
 ];
 
 const statusMeta: Record<
@@ -71,10 +71,10 @@ const statusMeta: Record<
     badge: ComponentProps<typeof Badge>["variant"];
   }
 > = {
-  正常: { icon: CheckCircle2, badge: "success" },
-  限流: { icon: CircleAlert, badge: "warning" },
-  异常: { icon: CircleOff, badge: "danger" },
-  禁用: { icon: Ban, badge: "secondary" },
+  active: { icon: CheckCircle2, badge: "success" },
+  limited: { icon: CircleAlert, badge: "warning" },
+  error: { icon: CircleOff, badge: "danger" },
+  disabled: { icon: Ban, badge: "secondary" },
 };
 
 const metricCards = [
@@ -161,7 +161,7 @@ function formatRestoreAt(value: string | null | undefined, lang: "vi" | "en") {
 }
 
 function formatQuotaSummary(accounts: Account[]) {
-  const availableAccounts = accounts.filter((account) => account.status === "正常");
+  const availableAccounts = accounts.filter((account) => account.status === "active");
   if (availableAccounts.some(isUnlimitedImageQuotaAccount)) {
     return "∞";
   }
@@ -195,10 +195,10 @@ function displayAccountType(account: Account) {
 function translateStatus(status: string, lang: "vi" | "en") {
   const t = translations[lang];
   switch (status) {
-    case "正常": return t.status_normal;
-    case "限流": return t.status_limited;
-    case "异常": return t.status_error;
-    case "禁用": return t.status_disabled;
+    case "active": return t.status_normal;
+    case "limited": return t.status_limited;
+    case "error": return t.status_error;
+    case "disabled": return t.status_disabled;
     default: return status;
   }
 }
@@ -267,7 +267,7 @@ function AccountsPageContent() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState("10");
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
-  const [editStatus, setEditStatus] = useState<AccountStatus>("正常");
+  const [editStatus, setEditStatus] = useState<AccountStatus>("active");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -319,10 +319,10 @@ function AccountsPageContent() {
 
   const summary = useMemo(() => {
     const total = accounts.length;
-    const active = accounts.filter((item) => item.status === "正常").length;
-    const limited = accounts.filter((item) => item.status === "限流").length;
-    const abnormal = accounts.filter((item) => item.status === "异常").length;
-    const disabled = accounts.filter((item) => item.status === "禁用").length;
+    const active = accounts.filter((item) => item.status === "active").length;
+    const limited = accounts.filter((item) => item.status === "limited").length;
+    const abnormal = accounts.filter((item) => item.status === "error").length;
+    const disabled = accounts.filter((item) => item.status === "disabled").length;
     const quota = formatQuotaSummary(accounts);
 
     return { total, active, limited, abnormal, disabled, quota };
@@ -342,7 +342,7 @@ function AccountsPageContent() {
   }, [accounts, selectedIds]);
 
   const abnormalTokens = useMemo(() => {
-    return accounts.filter((item) => item.status === "异常").map((item) => item.access_token);
+    return accounts.filter((item) => item.status === "error").map((item) => item.access_token);
   }, [accounts]);
 
   const paginationItems = useMemo(() => {
@@ -736,9 +736,9 @@ function AccountsPageContent() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div className={cn(
                           "size-9 shrink-0 rounded-full flex items-center justify-center",
-                          account.status === "正常" ? "bg-gradient-to-br from-indigo-500 to-blue-600 shadow-sm shadow-indigo-200"
-                          : account.status === "限流" ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-sm shadow-amber-200"
-                          : account.status === "异常" ? "bg-gradient-to-br from-rose-500 to-red-600 shadow-sm shadow-rose-200"
+                          account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600 shadow-sm shadow-indigo-200"
+                          : account.status === "limited" ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-sm shadow-amber-200"
+                          : account.status === "error" ? "bg-gradient-to-br from-rose-500 to-red-600 shadow-sm shadow-rose-200"
                           : "bg-slate-200"
                         )}>
                           <UserRound className="size-4 text-white" />
@@ -835,9 +835,9 @@ function AccountsPageContent() {
                                   <div className="flex items-center gap-2 mt-0.5">
                                     <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
                                       <span className={cn("size-1.5 rounded-full mr-0.5",
-                                        account.status === "正常" ? "bg-emerald-400" :
-                                        account.status === "限流" ? "bg-amber-400" :
-                                        account.status === "异常" ? "bg-rose-400" : "bg-slate-300"
+                                        account.status === "active" ? "bg-emerald-400" :
+                                        account.status === "limited" ? "bg-amber-400" :
+                                        account.status === "error" ? "bg-rose-400" : "bg-slate-300"
                                       )} />
                                       {translateStatus(account.status, lang)}
                                     </Badge>
