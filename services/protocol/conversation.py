@@ -239,6 +239,14 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
 
     # Inject global system prompt and tools documentation
     system_instructions = config.global_system_prompt or ""
+
+    # Inject Karpathy guidelines if mode enabled
+    if config.karpathy_mode:
+        from services.karpathy_guidelines import load_guidelines
+        karpathy_prompt = load_guidelines()
+        if karpathy_prompt:
+            system_instructions = karpathy_prompt + "\n\n" + system_instructions
+
     if tools:
         system_instructions += _build_tool_prompt(tools, tool_choice=tool_choice)
 
