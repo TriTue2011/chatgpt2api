@@ -73,6 +73,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
     proxy: typeof config.proxy === "string" ? config.proxy : "",
     base_url: typeof config.base_url === "string" ? config.base_url : "",
     global_system_prompt: String(config.global_system_prompt || ""),
+    karpathy_mode: Boolean((config as any).karpathy_mode),
     sensitive_words: Array.isArray(config.sensitive_words) ? config.sensitive_words : [],
     ai_review: {
       enabled: Boolean(config.ai_review?.enabled),
@@ -179,6 +180,7 @@ type SettingsStore = {
   setProxy: (value: string) => void;
   setBaseUrl: (value: string) => void;
   setGlobalSystemPrompt: (value: string) => void;
+  setKarpathyMode: (value: boolean) => void;
   setSensitiveWordsText: (value: string) => void;
   setAIReviewField: (key: "enabled" | "base_url" | "api_key" | "model" | "prompt", value: string | boolean) => void;
   setField: (key: string, value: unknown) => void;
@@ -310,6 +312,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         proxy: config.proxy.trim(),
         base_url: String(config.base_url || "").trim(),
         global_system_prompt: String(config.global_system_prompt || "").trim(),
+        karpathy_mode: Boolean((config as any).karpathy_mode),
         sensitive_words: (config.sensitive_words || []).map((item) => String(item).trim()).filter(Boolean),
         ai_review: {
           enabled: Boolean(config.ai_review?.enabled),
@@ -417,6 +420,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setGlobalSystemPrompt: (value) => {
     set((state) => state.config ? { config: { ...state.config, global_system_prompt: value } } : {});
+  },
+
+  setKarpathyMode: (value: boolean) => {
+    set((state) => state.config ? { config: { ...state.config, karpathy_mode: value } } : {});
   },
 
   setSensitiveWordsText: (value) => {
