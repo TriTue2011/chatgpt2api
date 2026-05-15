@@ -47,7 +47,7 @@ export function ProxySettingsCard() {
   };
 
   return (
-    <Card className="rounded-2xl card-3d card-tint-slate">
+    <Card className="rounded-2xl card-3d card-tint-sky">
       <CardContent className="space-y-6 p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-center gap-3">

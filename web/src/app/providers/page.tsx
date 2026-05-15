@@ -15,17 +15,17 @@ type ProviderInfo = {
   has_base_url: boolean;
 };
 
-const PROVIDER_META: Record<string, { label: string; desc: string; icon: string; color: string }> = {
-  opencode: { label: "OpenCode", desc: "Miễn phí, không cần API key — qua opencode.ai", icon: "🆓", color: "#E87040" },
-  gemini_free: { label: "Gemini AI Studio", desc: "Google Gemini với Google Search — free 15 RPM", icon: "🔮", color: "#8E6CEE" },
-  openrouter: { label: "OpenRouter", desc: "27+ model miễn phí, 200 req/ngày", icon: "🔀", color: "#6366F1" },
-  sdwebui: { label: "Stable Diffusion WebUI", desc: "Tạo ảnh local qua AUTOMATIC1111 — miễn phí, không giới hạn", icon: "🎨", color: "#10B981" },
-  huggingface: { label: "HuggingFace", desc: "Inference API — FLUX, SDXL miễn phí", icon: "🤗", color: "#F59E0B" },
-  cloudflare_ai: { label: "Cloudflare AI", desc: "Workers AI — FLUX schnell miễn phí", icon: "☁️", color: "#F6821F" },
-  serper: { label: "Serper.dev", desc: "Google Search API — 2.5K req/tháng miễn phí", icon: "🔍", color: "#3B82F6" },
-  searxng: { label: "SearXNG", desc: "Tự host — không giới hạn, riêng tư", icon: "🔎", color: "#6B7280" },
-  brave: { label: "Brave Search", desc: "Brave Search API — 2K req/tháng miễn phí", icon: "🦁", color: "#FB923C" },
-  nvidia_nim: { label: "NVIDIA NIM", desc: "80+ model qua NVIDIA — chat + vision + tạo ảnh FLUX", icon: "🟢", color: "#76B900" },
+const PROVIDER_META: Record<string, { label: string; desc: string; icon: string; color: string; tint: string }> = {
+  opencode: { label: "OpenCode", desc: "Miễn phí, không cần API key — qua opencode.ai", icon: "🆓", color: "#E87040", tint: "amber" },
+  gemini_free: { label: "Gemini AI Studio", desc: "Google Gemini với Google Search — free 15 RPM", icon: "🔮", color: "#8E6CEE", tint: "violet" },
+  openrouter: { label: "OpenRouter", desc: "27+ model miễn phí, 200 req/ngày", icon: "🔀", color: "#6366F1", tint: "indigo" },
+  sdwebui: { label: "Stable Diffusion WebUI", desc: "Tạo ảnh local qua AUTOMATIC1111 — miễn phí, không giới hạn", icon: "🎨", color: "#10B981", tint: "emerald" },
+  huggingface: { label: "HuggingFace", desc: "Inference API — FLUX, SDXL miễn phí", icon: "🤗", color: "#F59E0B", tint: "amber" },
+  cloudflare_ai: { label: "Cloudflare AI", desc: "Workers AI — FLUX schnell miễn phí", icon: "☁️", color: "#F6821F", tint: "amber" },
+  serper: { label: "Serper.dev", desc: "Google Search API — 2.5K req/tháng miễn phí", icon: "🔍", color: "#3B82F6", tint: "sky" },
+  searxng: { label: "SearXNG", desc: "Tự host — không giới hạn, riêng tư", icon: "🔎", color: "#6B7280", tint: "slate" },
+  brave: { label: "Brave Search", desc: "Brave Search API — 2K req/tháng miễn phí", icon: "🦁", color: "#FB923C", tint: "amber" },
+  nvidia_nim: { label: "NVIDIA NIM", desc: "80+ model qua NVIDIA — chat + vision + tạo ảnh FLUX", icon: "🟢", color: "#76B900", tint: "emerald" },
 };
 
 export default function ProvidersPage() {
@@ -98,7 +98,13 @@ export default function ProvidersPage() {
               key={provider.name}
               className={cn(
                 "group relative overflow-hidden rounded-[16px] p-5",
-                "card-3d card-tint-slate",
+                "card-3d",
+                meta.tint === "indigo" ? "card-tint-indigo" :
+                meta.tint === "emerald" ? "card-tint-emerald" :
+                meta.tint === "amber" ? "card-tint-amber" :
+                meta.tint === "violet" ? "card-tint-violet" :
+                meta.tint === "sky" ? "card-tint-sky" :
+                "card-tint-slate",
                 "transition-all duration-300 hover:-translate-y-1"
               )}
             >

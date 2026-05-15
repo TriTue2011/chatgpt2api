@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive, ArrowLeftRight } from "lucide-react";
@@ -228,7 +228,7 @@ export default function BackupPage() {
               key={backup.filename}
               className={cn(
                 "flex items-center justify-between rounded-[14px] px-5 py-4",
-                "card-3d card-tint-slate",
+                "card-3d card-tint-indigo",
                 "transition-all"
               )}
             >

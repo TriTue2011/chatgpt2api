@@ -10,13 +10,13 @@ type ModelSettings = {
   default_models: Record<string, string>;
 };
 
-const PROVIDER_LABELS: Record<string, { label: string; color: string }> = {
-  chatgpt: { label: "ChatGPT", color: "#10A37F" },
-  opencode: { label: "OpenCode", color: "#E87040" },
-  gemini_free: { label: "Gemini", color: "#8E6CEE" },
-  openrouter: { label: "OpenRouter", color: "#6366F1" },
-  openai_oauth: { label: "Codex OAuth", color: "#00A67E" },
-  chatgpt2api: { label: "Hệ thống (combo)", color: "#F59E0B" },
+const PROVIDER_LABELS: Record<string, { label: string; color: string; tint: string }> = {
+  chatgpt: { label: "ChatGPT", color: "#10A37F", tint: "emerald" },
+  opencode: { label: "OpenCode", color: "#E87040", tint: "amber" },
+  gemini_free: { label: "Gemini", color: "#8E6CEE", tint: "violet" },
+  openrouter: { label: "OpenRouter", color: "#6366F1", tint: "indigo" },
+  openai_oauth: { label: "Codex OAuth", color: "#00A67E", tint: "emerald" },
+  chatgpt2api: { label: "Hệ thống (combo)", color: "#F59E0B", tint: "amber" },
 };
 
 const CORE_MODELS = ["ha-agent", "chatgpt/auto", "oc/auto", "gemini_free/auto", "cx/auto"];
@@ -227,7 +227,12 @@ export default function ModelsPage() {
               key={provider}
               className={cn(
                 "group relative overflow-hidden rounded-[16px]",
-                "card-3d card-tint-slate",
+                "card-3d",
+                meta.tint === "indigo" ? "card-tint-indigo" :
+                meta.tint === "emerald" ? "card-tint-emerald" :
+                meta.tint === "amber" ? "card-tint-amber" :
+                meta.tint === "violet" ? "card-tint-violet" :
+                "card-tint-slate",
                 "transition-all duration-300"
               )}
             >

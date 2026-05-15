@@ -641,7 +641,7 @@ function AccountsPageContent() {
         </div>
 
         {isLoading && accounts.length === 0 ? (
-          <Card className="rounded-2xl card-3d card-tint-slate">
+          <Card className="rounded-2xl card-3d card-tint-emerald">
             <CardContent className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
               <div className="rounded-xl bg-stone-100 p-3 text-stone-500">
                 <LoaderCircle className="size-5 animate-spin" />
@@ -657,7 +657,7 @@ function AccountsPageContent() {
         <div
           className={cn(
             "overflow-hidden rounded-[16px]",
-            "card-3d card-tint-slate",
+            "card-3d card-tint-emerald",
             isLoading && accounts.length === 0 ? "hidden" : "",
           )}
         >
@@ -828,7 +828,7 @@ function AccountsPageContent() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 
                             {/* Image quota card */}
-                            <div className="rounded-[12px] p-4 card-3d card-tint-slate space-y-3">
+                            <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
                               <div className="flex items-center justify-between">
                                 <div>
                                   <p className="text-[13px] font-bold text-slate-800">{account.email ?? maskToken(account.access_token)}</p>
@@ -890,7 +890,7 @@ function AccountsPageContent() {
                             </div>
 
                             {/* Requests stats card */}
-                            <div className="rounded-[12px] p-4 card-3d card-tint-slate space-y-3">
+                            <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thống kê yêu cầu</p>
 
                               {/* Success/fail bars */}

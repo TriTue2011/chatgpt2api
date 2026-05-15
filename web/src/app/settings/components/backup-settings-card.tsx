@@ -98,7 +98,7 @@ export function BackupSettingsCard() {
 
   if (isLoadingConfig) {
     return (
-      <Card className="rounded-2xl card-3d card-tint-slate">
+      <Card className="rounded-2xl card-3d card-tint-amber">
         <CardContent className="flex items-center justify-center p-10">
           <LoaderCircle className="size-5 animate-spin text-stone-500" />
         </CardContent>
@@ -165,7 +165,7 @@ export function BackupSettingsCard() {
 
   return (
     <>
-      <Card className="rounded-2xl card-3d card-tint-slate">
+      <Card className="rounded-2xl card-3d card-tint-amber">
         <CardContent className="space-y-6 p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">

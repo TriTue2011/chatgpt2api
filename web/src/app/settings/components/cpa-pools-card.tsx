@@ -19,7 +19,7 @@ export function CPAPoolsCard() {
   const browseFiles = useSettingsStore((state) => state.browseFiles);
 
   return (
-    <Card className="rounded-2xl card-3d card-tint-slate">
+    <Card className="rounded-2xl card-3d card-tint-indigo">
       <CardContent className="space-y-6 p-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">

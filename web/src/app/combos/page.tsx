@@ -35,6 +35,8 @@ const CAP_ICONS: Record<string, typeof MessageSquare> = {
   video: Video,
 };
 
+const TINT_CYCLE = ["card-tint-indigo", "card-tint-emerald", "card-tint-amber", "card-tint-violet", "card-tint-sky", "card-tint-rose"] as const;
+
 export default function CombosPage() {
   const { lang } = useLangStore();
   const t = (key: TranslationKey) => translations[lang][key] || key;
@@ -331,7 +333,8 @@ export default function CombosPage() {
           {comboEntries.map(([name, models]) => (
             <div key={name} className={cn(
               "group relative overflow-hidden rounded-[16px] p-6",
-              "card-3d card-tint-slate",
+              "card-3d",
+              TINT_CYCLE[idx % TINT_CYCLE.length],
               "transition-all duration-300 hover:-translate-y-1"
             )}>
               <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
