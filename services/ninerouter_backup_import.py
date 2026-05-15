@@ -217,8 +217,8 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            # Add to pool — works for both cx/ chat and image generation
-            account_service.add_accounts(tokens)
+            # Add to pool as codex type — these are OAuth JWT tokens from 9router
+            result = account_service.add_accounts_with_type(tokens, "codex")
             # Set default quota for Codex OAuth tokens (fetch_remote_info may fail)
             for token in tokens:
                 account_service.update_account(token, {
@@ -226,8 +226,8 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
                     "quota": 10,  # Conservative default
                     "status": "正常",
                 })
-            imported = len(tokens)
-            skipped = 0
+            imported = result.get("added", 0) + result.get("updated", 0)
+            skipped = result.get("skipped", 0)
             logger.info({
                 "event": "9router_backup_imported",
                 "tokens_found": len(tokens),

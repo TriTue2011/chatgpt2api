@@ -391,7 +391,7 @@ class CodexOAuthProvider:
         }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
-        """Get next available Codex OAuth token (JWT only — not web session tokens)."""
+        """Get next available JWT token for Codex OAuth (accepts both free and codex type)."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
             candidates = [
@@ -400,7 +400,6 @@ class CodexOAuthProvider:
                 if item.get("status") not in {"禁用", "异常"}
                 and (token := item.get("access_token") or "")
                 and token not in excluded
-                # Only use Codex OAuth tokens (JWT starting with eyJ)
                 and token.startswith("eyJ")
             ]
             if not candidates:
