@@ -141,7 +141,7 @@ export function Sidebar() {
               )}>
                 <Icon className={cn("size-[17px] shrink-0", active ? "text-indigo-400" : "text-[#8b949e]")} />
               </div>
-              {!collapsed && <span className="truncate">{item.label}</span>}
+              {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
             </Link>
           );
         })}
