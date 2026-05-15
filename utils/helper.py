@@ -37,6 +37,8 @@ _IMAGE_GEN_PROVIDER_PREFIXES = {
     "recraft/",      # Recraft
     "runwayml/",     # RunwayML
 }
+# Providers where specific models support vision (multimodal)
+_VISION_PROVIDER_PREFIXES: set[str] = set()
 # Providers where ALL models support video analysis
 _VIDEO_PROVIDER_PREFIXES: set[str] = {
     "gemini_free/",   # Gemini API supports video input
