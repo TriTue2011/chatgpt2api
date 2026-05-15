@@ -401,29 +401,17 @@ class CodexOAuthProvider:
         }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
-        """Get next available Codex token — type=codex entries from 9router import."""
+        """Get next available JWT token for Codex OAuth. Accepts any JWT token."""
         excluded = set(exclude_tokens or set())
         with account_service._lock:
-            candidates = []
-            for key, item in account_service._accounts.items():
-                if item.get("status") in ("disabled", "error"):
-                    continue
-                if str(item.get("type") or "") != "codex":
-                    continue
-                # Get the real JWT token (stored in original_token or access_token)
-                original = item.get("original_token") or item.get("access_token") or ""
-                if not original.startswith("eyJ"):
-                    continue
-                if original in excluded:
-                    continue
-                candidates.append(original)
-
-            logger.info({
-                "event": "codex_token_pool",
-                "total": len(account_service._accounts),
-                "codex_candidates": len(candidates),
-            })
-
+            candidates = [
+                token
+                for item in account_service._accounts.values()
+                if item.get("status") not in ("disabled", "error")
+                and (token := item.get("access_token") or "")
+                and token.startswith("eyJ")
+                and token not in excluded
+            ]
             if not candidates:
                 raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
             token = candidates[account_service._index % len(candidates)]
