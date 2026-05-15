@@ -259,9 +259,15 @@ class CodexOAuthProvider:
             if resp.status_code >= 400:
                 error_text = ""
                 try:
-                    error_text = resp.text[:1000]
+                    # Must read raw content since stream=True prevents .text from working
+                    raw = resp.content
+                    if raw:
+                        error_text = raw.decode("utf-8", errors="ignore")[:1000]
                 except Exception:
-                    pass
+                    try:
+                        error_text = resp.text[:1000]
+                    except Exception:
+                        pass
                 # Also log response headers for debugging
                 resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
                 logger.error({
