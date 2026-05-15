@@ -259,11 +259,14 @@ class AccountService:
             for access_token in tokens:
                 current = self._accounts.get(access_token)
                 if current is not None:
-                    # Update existing token's type if it was imported as wrong type
-                    if str(current.get("type") or "") != str(account_type):
-                        current["type"] = account_type
+                    # Merge type: add new type to existing (e.g. existing "free" + new "codex" → "free,codex")
+                    existing_types = set(str(current.get("type") or "").split(","))
+                    new_types = set(str(account_type).split(","))
+                    merged = ",".join(sorted(existing_types | new_types))
+                    if merged != str(current.get("type") or ""):
+                        current["type"] = merged
                         updated += 1
-                        logger.info({"event": "account_type_updated", "token": anonymize_token(access_token), "new_type": account_type})
+                        logger.info({"event": "account_type_merged", "token": anonymize_token(access_token), "new_type": merged})
                     else:
                         skipped += 1
                     continue

@@ -217,12 +217,12 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     if tokens:
         try:
-            # Add to pool as codex type — these are OAuth JWT tokens from 9router
-            result = account_service.add_accounts_with_type(tokens, "codex")
-            # Set default quota for Codex OAuth tokens (fetch_remote_info may fail)
+            # Add to pool with combined type — one token serves both free (images) and codex (chat)
+            result = account_service.add_accounts_with_type(tokens, "free,codex")
+            # Set default quota for OAuth JWT tokens
             for token in tokens:
                 account_service.update_account(token, {
-                    "image_quota_unknown": True,  # Codex tokens can generate images
+                    "image_quota_unknown": False,  # Free tokens DO track image quota
                     "quota": 10,  # Conservative default
                     "status": "active",
                 })
