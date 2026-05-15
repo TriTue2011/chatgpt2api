@@ -58,9 +58,6 @@ class GeminiImageAdapter(BaseImageAdapter):
             }],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
-                "imageGenerationConfig": {
-                    "numberOfImages": n,
-                },
             },
         }
 
