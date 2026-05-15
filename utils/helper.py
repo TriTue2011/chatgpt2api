@@ -11,7 +11,7 @@ from curl_cffi import requests
 from fastapi import HTTPException
 from utils.log import logger
 
-IMAGE_MODELS = {"gpt-image-2", "codex-gpt-image-2"}
+IMAGE_MODELS = {"gpt-image-2", "codex-gpt-image-2", "gemini-image/imagen-3.0-generate-001", "gemini-image/gemini-2.5-flash-image", "gemini-image/gemini-3.1-flash-image-preview"}
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
 # Model capability classification

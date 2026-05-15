@@ -15,6 +15,7 @@ from services.protocol.conversation import (
     stream_image_outputs_with_pool,
 )
 from services.backend_router import backend_router
+from services.config import config
 from services.image_providers import get_image_adapter, is_noauth_image_provider
 from services.image_providers._base import now_sec
 from utils.log import logger
@@ -34,7 +35,14 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
     stream = bool(body.get("stream"))
 
     # Build credentials from config
-    provider_config = (__import__("services.config").config.data.get("providers") or {}).get(route.provider) or {}
+    provider_key = route.provider
+    providers_cfg = config.data.get("providers") or {}
+    provider_config = providers_cfg.get(provider_key) or {}
+    # Map image adapter key → chat provider key for credentials
+    if not provider_config and provider_key == "gemini":
+        provider_config = providers_cfg.get("gemini_free") or {}
+    elif not provider_config and provider_key == "nvidia_nim_image":
+        provider_config = providers_cfg.get("nvidia_nim") or {}
 
     credentials = {}
     if route.no_auth:
