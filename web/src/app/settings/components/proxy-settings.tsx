@@ -38,7 +38,7 @@ export function ProxySettingsCard() {
       setFormUrl(data.proxy.url);
       setFormEnabled(data.proxy.enabled);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "tải代理配置thất bại");
+      toast.error(error instanceof Error ? error.message : "Không tải được cấu hình proxy");
     } finally {
       setIsLoading(false);
     }
@@ -70,7 +70,7 @@ export function ProxySettingsCard() {
       setSettings(data.proxy);
       setFormUrl(data.proxy.url);
       setFormEnabled(data.proxy.enabled);
-      toast.success("代理配置Đã Lưu");
+      toast.success("Đã lưu cấu hình proxy");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Lưuthất bại");
     } finally {
@@ -110,9 +110,9 @@ export function ProxySettingsCard() {
               <Wifi className="size-5 text-stone-600" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold tracking-tight">上游代理配置</h2>
+              <h2 className="text-lg font-semibold tracking-tight">Cấu hình proxy</h2>
               <p className="text-sm text-stone-500">
-                为 chatgpt.com 的请求配置出网代理，适合国内服务器部署；Sub2API / CPA 请求不受影响。
+                Cấu hình proxy cho request đến chatgpt.com. Sub2API / CPA không bị ảnh hưởng.
               </p>
             </div>
           </div>

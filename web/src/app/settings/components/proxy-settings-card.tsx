@@ -56,7 +56,7 @@ export function ProxySettingsCard() {
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Proxy toàn cục</h2>
-              <p className="text-sm text-stone-500">为系统中的出站请求配置统一代理，Lưu后会立即生效。</p>
+              <p className="text-sm text-stone-500">Cấu hình proxy cho các request đi ra, lưu lại có hiệu lực ngay.</p>
             </div>
           </div>
           <Badge variant={proxy.trim() ? "success" : "secondary"} className="w-fit rounded-md px-2.5 py-1">
@@ -116,7 +116,7 @@ export function ProxySettingsCard() {
                 disabled={isSavingConfig}
               >
                 {isSavingConfig ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-                Lưu配置
+                Lưu
               </Button>
             </div>
           </>
