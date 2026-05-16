@@ -830,8 +830,21 @@ def stream_image_outputs(
 
 
 def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[ImageOutput]:
-    if str(request.model or "").strip() not in IMAGE_MODELS:
-        raise ImageGenerationError("unsupported image model,supported models: " + ", ".join(IMAGE_MODELS))
+    model = str(request.model or "").strip()
+    # Support combo models: resolve to first image-capable model in the combo
+    if model not in IMAGE_MODELS:
+        from services.backend_router import backend_router
+        if backend_router.is_combo(model):
+            routes = backend_router.route_combo(model)
+            for route in routes:
+                if route.model in IMAGE_MODELS:
+                    request.model = route.model
+                    model = route.model
+                    break
+            else:
+                raise ImageGenerationError("unsupported image model,supported models: " + ", ".join(IMAGE_MODELS))
+        else:
+            raise ImageGenerationError("unsupported image model,supported models: " + ", ".join(IMAGE_MODELS))
 
     emitted = False
     last_error = ""
