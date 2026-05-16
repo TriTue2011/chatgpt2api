@@ -173,37 +173,24 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[82px] resize-none rounded-[24px] border-2 border-indigo-200 bg-indigo-50/50 px-4 pt-4 pb-2 text-[15px] font-medium leading-6 text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:border-indigo-400 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7 dark:bg-[#1a1a1a] dark:border-indigo-500/30 dark:text-[#ededed] dark:placeholder:text-[#6b7280]"
+              className="min-h-[120px] resize-none rounded-[24px] border-2 border-indigo-200 bg-indigo-50/50 px-4 pt-4 pb-4 text-[16px] font-semibold leading-7 text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:border-indigo-400 sm:min-h-[160px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-6 dark:bg-[#1a1a1a] dark:border-indigo-500/30 dark:text-[#ededed] dark:placeholder:text-[#6b7280]"
             />
 
-            <div className="rounded-b-[24px] border-t border-stone-200 bg-white px-3 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:rounded-b-none sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6" onClick={(event) => event.stopPropagation()}>
+            <div className="rounded-b-[24px] border-t border-stone-200 bg-white px-3 pb-3 pt-2 sm:px-6 sm:pb-4 sm:pt-3" onClick={(event) => event.stopPropagation()}>
               <div className="flex items-end justify-between gap-2 sm:gap-3">
-                <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-3 sm:overflow-visible sm:pb-0">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 shrink-0 rounded-full border-stone-200 bg-white px-3 text-xs font-medium text-stone-700 shadow-none sm:h-10 sm:px-4 sm:text-sm"
-                    onClick={onPickReferenceImage}
-                    aria-label={referenceImages.length > 0 ? "Thêm ảnh tham khảo" : "上传"}
-                  >
-                    <ImagePlus className="size-3.5 sm:size-4" />
-                    <span className="hidden sm:inline">{referenceImages.length > 0 ? "Thêm ảnh tham chiếu" : "Tải lên"}</span>
-                  </Button>
-                  <div className="shrink-0 rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-600 sm:px-3 sm:py-2 sm:text-xs">
-                    <span className="hidden sm:inline">Hạn mức còn lại </span>{availableQuota}
-                  </div>
+                <div className="hide-scrollbar flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:flex-wrap sm:gap-2 sm:overflow-visible sm:pb-0">
                   {activeTaskCount > 0 && (
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
-                      {activeTaskCount}<span className="hidden sm:inline"> tác vụ đang xử lý</span>
+                      {activeTaskCount}<span className="hidden sm:inline"> đang xử lý</span>
                     </div>
                   )}
                   {imageModels.length > 0 && (
-                    <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
+                    <div className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 sm:px-3">
                       <select
                         value={model}
                         onChange={(e) => onModelChange(e.target.value)}
-                        className="h-7 bg-transparent text-xs font-medium text-stone-700 focus:outline-none sm:h-8 sm:text-sm max-w-[140px] truncate"
+                        className="h-7 bg-transparent text-xs font-medium text-stone-700 focus:outline-none max-w-[130px] truncate"
                       >
                         {imageModels.map(m => (
                           <option key={m.id} value={m.id}>{m.label}</option>
@@ -211,8 +198,7 @@ export function ImageComposer({
                       </select>
                     </div>
                   )}
-                  <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
-                    <span className="hidden text-[11px] font-medium text-stone-700 sm:inline sm:text-sm">Số lượng</span>
+                  <div className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-stone-200 bg-white px-2 sm:px-3">
                     <Input
                       type="number"
                       inputMode="numeric"
