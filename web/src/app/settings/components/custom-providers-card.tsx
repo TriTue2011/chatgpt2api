@@ -20,6 +20,7 @@ type CustomProvider = {
 
 // Provider presets — one-click add for popular AI APIs
 const PROVIDER_PRESETS: { id: string; name: string; base_url: string; prefix: string; api_style: string; icon: string; color: string }[] = [
+  { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1", prefix: "openai", api_style: "openai", icon: "OA", color: "#10A37F" },
   { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com", prefix: "deepseek", api_style: "deepseek", icon: "DS", color: "#4D6BFE" },
   { id: "groq", name: "Groq", base_url: "https://api.groq.com/openai/v1", prefix: "groq", api_style: "openai", icon: "GQ", color: "#F55036" },
   { id: "xai", name: "xAI (Grok)", base_url: "https://api.x.ai/v1", prefix: "xai", api_style: "openai", icon: "XA", color: "#1DA1F2" },
