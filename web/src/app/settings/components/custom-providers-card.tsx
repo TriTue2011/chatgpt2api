@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
-import { LoaderCircle, Plus, Save, Trash2, ExternalLink, Zap, ChevronDown } from "lucide-react";
+import { LoaderCircle, Plus, Save, Trash2, ExternalLink, Zap, ChevronDown, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -237,8 +237,8 @@ export function CustomProvidersCard() {
                 </div>
                 <div className="flex gap-1">
                   <button onClick={() => startEdit(id)}
-                    className="rounded p-1 text-stone-500 hover:bg-stone-200 hover:text-stone-500">
-                    <Save className="size-3.5" />
+                    className="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700" title="Chỉnh sửa">
+                    <Pencil className="size-3.5" />
                   </button>
                   <button onClick={() => deleteProvider(id)}
                     className="rounded p-1 text-stone-500 hover:bg-red-50 hover:text-red-500">
