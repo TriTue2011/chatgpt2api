@@ -103,7 +103,7 @@ def classify_model_capability(model_id: str) -> list[str]:
                 break
     if not is_image:
         for cp_prefix in _IMAGE_GEN_CUSTOM_PROVIDERS:
-            if mid.startswith(f"{cp_prefix}/"):
+            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, geminiapi2, etc.
                 caps.append("image")
                 break
 
@@ -114,7 +114,7 @@ def classify_model_capability(model_id: str) -> list[str]:
             break
     else:
         for cp_prefix in _VISION_CUSTOM_PROVIDERS:
-            if mid.startswith(f"{cp_prefix}/"):
+            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, etc.
                 caps.append("vision")
                 break
         else:
@@ -135,7 +135,7 @@ def classify_model_capability(model_id: str) -> list[str]:
             break
     else:
         for cp_prefix in _VIDEO_CUSTOM_PROVIDERS:
-            if mid.startswith(f"{cp_prefix}/"):
+            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, etc.
                 if "video" not in caps:
                     caps.append("video")
                 break

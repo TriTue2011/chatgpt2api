@@ -113,10 +113,10 @@ function buildLayout(instances: any[], accounts: any, activeProviders: string[])
       items.push({ id: inst.id, name: inst.name, status: inst.status, isAccount: false, isUsed: false });
     }
   } else {
-    // Only include instances that have been used
+    // Only include instances that have been used (exact prefix match)
     for (const inst of instances) {
       const pfx = (inst.prefix || inst.id || "").toLowerCase();
-      const isUsed = activeSet.has(pfx) || Array.from(activeSet).some(a => pfx.startsWith(a) || a.startsWith(pfx));
+      const isUsed = activeSet.has(pfx); // exact match only
       items.push({ id: inst.id, name: inst.name, status: inst.status, isAccount: false, isUsed });
     }
   }
@@ -189,14 +189,7 @@ export default function DashboardPage() {
   const geminiInstances: any[] = gemini.instances || [];
   const customOnline = geminiInstances.filter((i: any) => i.status === "available" || i.status === "partial").length;
   const { nodes, edges } = useMemo(() => {
-    const activeProviders = (usage as any)?.activeProviders || [];
-    // Show only providers that have actual recent usage
-    const filteredInstances = geminiInstances.filter((i: any) => {
-      if (activeProviders.length === 0) return true; // fallback: show all
-      const pfx = i.prefix || i.id || "";
-      return activeProviders.some((ap: string) => pfx === ap || ap === pfx || pfx.startsWith(ap) || ap.startsWith(pfx));
-    });
-    return buildLayout(filteredInstances, health?.accounts, (usage as any)?.activeProviders || []);
+    return buildLayout(geminiInstances, health?.accounts, (usage as any)?.activeProviders || []);
   }, [geminiInstances, health?.accounts, usage]);
   const chartData = useMemo(() => {
     if (!usage?.totalRequests) return [];
