@@ -43,17 +43,29 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
         prompt = str(body.get("prompt") or "")
         size = str(body.get("size") or "1792x1024")
         w, h = size_to_width_height(size)
+        image_data = body.get("image") or body.get("image_data")  # from edit endpoint
+
+        content: list[dict[str, Any]] = []
+        if image_data:
+            # Image edit mode: include original image + editing instruction
+            content.append({
+                "type": "text",
+                "text": f"Edit this image based on the following instruction: {prompt}\nSize: {w}x{h}\nReturn the edited image as a base64 data URL."
+            })
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{image_data}"}
+            })
+        else:
+            # Image generation mode
+            content.append({
+                "type": "text",
+                "text": f"Generate an image based on this description: {prompt}\nSize: {w}x{h}\nReturn the image as a base64 data URL."
+            })
 
         return {
             "model": model,
-            "messages": [{
-                "role": "user",
-                "content": (
-                    f"Generate an image based on this description: {prompt}\n"
-                    f"Size: {w}x{h}\n"
-                    f"Return the image as a base64 data URL."
-                ),
-            }],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": 4096,
             "temperature": 0.9,
         }
