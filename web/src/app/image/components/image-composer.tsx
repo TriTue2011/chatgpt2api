@@ -173,7 +173,7 @@ export function ImageComposer({
                   void onSubmit();
                 }
               }}
-              className="min-h-[82px] resize-none rounded-[24px] border-2 border-stone-300 bg-stone-50 px-4 pt-4 pb-2 text-[15px] font-medium leading-6 text-stone-900 shadow-none placeholder:text-stone-400 focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:border-indigo-400 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7 dark:bg-[#1a1a1a] dark:border-[#444] dark:text-[#ededed] dark:placeholder:text-[#6b7280]"
+              className="min-h-[82px] resize-none rounded-[24px] border-2 border-indigo-200 bg-indigo-50/50 px-4 pt-4 pb-2 text-[15px] font-medium leading-6 text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:border-indigo-400 sm:min-h-[148px] sm:rounded-[32px] sm:px-6 sm:pt-6 sm:pb-20 sm:leading-7 dark:bg-[#1a1a1a] dark:border-indigo-500/30 dark:text-[#ededed] dark:placeholder:text-[#6b7280]"
             />
 
             <div className="rounded-b-[24px] border-t border-stone-200 bg-white px-3 pb-3 pt-2 sm:absolute sm:inset-x-0 sm:bottom-0 sm:rounded-b-none sm:border-t-0 sm:bg-gradient-to-t sm:from-white sm:via-white/95 sm:to-transparent sm:px-6 sm:pb-4 sm:pt-6" onClick={(event) => event.stopPropagation()}>
