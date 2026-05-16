@@ -32,28 +32,85 @@ def _check_gemini_status() -> dict:
     result = {
         "gemini_api": "unknown",
         "models_count": 0,
-        "instances": [],  # list of all custom provider instances with status
+        "instances": [],  # list of all provider instances with per-key status
     }
 
-    # Check Gemini API directly
-    try:
-        provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
-        api_key = provider_config.get("api_key") or ""
-        if api_key:
+    # Check Gemini API with ALL keys individually
+    provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
+    gemini_single_key = str(provider_config.get("api_key") or "").strip()
+    gemini_multi_keys = provider_config.get("api_keys") or []
+    if not isinstance(gemini_multi_keys, list):
+        gemini_multi_keys = []
+    gemini_all_keys = [k.strip() for k in gemini_multi_keys if k.strip()]
+    if gemini_single_key and gemini_single_key not in gemini_all_keys:
+        gemini_all_keys.insert(0, gemini_single_key)
+
+    gemini_key_statuses = []
+    gemini_available = 0
+    total_models = 0
+
+    for key in gemini_all_keys:
+        ks = {"key_preview": key[:12] + "..." + key[-4:] if len(key) > 20 else key, "status": "unknown", "error": None, "models": 0}
+        try:
             resp = req.get(
-                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
                 timeout=10
             )
             if resp.status_code == 200:
                 models = resp.json().get("models", [])
-                result["gemini_api"] = "available"
-                result["models_count"] = len(models)
+                ks["status"] = "available"
+                ks["models"] = len(models)
+                gemini_available += 1
+                total_models = max(total_models, len(models))
+            elif resp.status_code == 429:
+                ks["status"] = "rate_limited"
+                ks["error"] = "Rate limit exceeded — too many requests"
+            elif resp.status_code in (401, 403):
+                ks["status"] = "auth_error"
+                ks["error"] = f"HTTP {resp.status_code} — API key invalid"
             else:
-                result["gemini_api"] = f"error_{resp.status_code}"
-        else:
-            result["gemini_api"] = "no_key"
-    except Exception as e:
-        result["gemini_api"] = f"error: {str(e)[:50]}"
+                ks["status"] = f"error_{resp.status_code}"
+                try:
+                    ks["error"] = resp.json().get("error", {}).get("message", str(resp.status_code))
+                except Exception:
+                    ks["error"] = str(resp.status_code)
+        except Exception as e:
+            ks["status"] = "network_error"
+            ks["error"] = str(e)[:80]
+        gemini_key_statuses.append(ks)
+
+    # Overall Gemini status
+    if gemini_available == len(gemini_all_keys) and len(gemini_all_keys) > 0:
+        result["gemini_api"] = "available"
+    elif gemini_available > 0:
+        result["gemini_api"] = "partial"
+    elif any(k["status"] == "rate_limited" for k in gemini_key_statuses):
+        result["gemini_api"] = "rate_limited"
+    elif any(k["status"] == "auth_error" for k in gemini_key_statuses):
+        result["gemini_api"] = "auth_error"
+    elif gemini_all_keys:
+        result["gemini_api"] = gemini_key_statuses[0]["status"]
+    else:
+        result["gemini_api"] = "no_key"
+    result["models_count"] = total_models
+
+    # Add Gemini as an instance with per-key details
+    if gemini_all_keys:
+        result["instances"].append({
+            "id": "gemini_free",
+            "name": "Gemini API",
+            "prefix": "gemini_free",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "status": result["gemini_api"],
+            "port": "443",
+            "models": total_models,
+            "clients": 0,
+            "entries": 0,
+            "total_keys": len(gemini_all_keys),
+            "available_keys": gemini_available,
+            "keys": gemini_key_statuses,
+            "error": next((k["error"] for k in gemini_key_statuses if k["status"] != "available" and k["error"]), None),
+        })
 
     # Check ALL custom providers (all ports/instances) with per-key status
     custom_providers = config.data.get("custom_providers") or {}
