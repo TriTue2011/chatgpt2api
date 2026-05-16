@@ -103,7 +103,24 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
 
         choices = data.get("choices") or []
         for choice in choices:
-            content = choice.get("message", {}).get("content") or ""
+            msg = choice.get("message") or {}
+            content = msg.get("content") or ""
+            if not content:
+                continue
+
+            # Handle array content (multi-part)
+            if isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict):
+                        if part.get("type") == "text":
+                            parts.append(str(part.get("text") or ""))
+                        elif part.get("type") == "image_url":
+                            url = str(part.get("image_url", {}).get("url") or "")
+                            if url:
+                                parts.append(f"![]({url})")
+                content = "\n".join(parts)
+
             if not content:
                 continue
 
