@@ -11,14 +11,15 @@ import {
   CircleAlert,
   CircleOff,
   Copy,
+  Cpu,
   Download,
   ExternalLink,
-  FolderTree,
-  List,
   LoaderCircle,
   Pencil,
   RefreshCw,
   Search,
+  Server,
+  Sparkles,
   Trash2,
   UserRound,
 } from "lucide-react";
@@ -264,9 +265,10 @@ function AccountsPageContent() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "tree">("list");
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  const [providerTree, setProviderTree] = useState<any[]>([]);
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<AccountStatus | "all">("all");
   const [page, setPage] = useState(1);
@@ -302,7 +304,17 @@ function AccountsPageContent() {
     }
     didLoadRef.current = true;
     void loadAccounts();
+    void fetchProviderTree();
   }, []);
+
+  const fetchProviderTree = async () => {
+    try {
+      const data = await request.get("/api/v1/provider-tree");
+      setProviderTree((data.data as any)?.tree || []);
+    } catch {
+      // non-critical
+    }
+  };
 
   const filteredAccounts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -669,30 +681,6 @@ function AccountsPageContent() {
               {filteredAccounts.length}
             </Badge>
           </div>
-          <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-white p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode("list")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
-                viewMode === "list" ? "bg-stone-900 text-white" : "text-stone-500 hover:text-stone-700"
-              )}
-            >
-              <List className="size-3.5" />
-              DS
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("tree")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
-                viewMode === "tree" ? "bg-stone-900 text-white" : "text-stone-500 hover:text-stone-700"
-              )}
-            >
-              <FolderTree className="size-3.5" />
-              Cây
-            </button>
-          </div>
         </div>
 
         {isLoading && accounts.length === 0 ? (
@@ -709,528 +697,245 @@ function AccountsPageContent() {
           </Card>
         ) : null}
 
-        {/* Tree View */}
-        {viewMode === "tree" && !isLoading && (
+        {/* 3-Level Provider Tree */}
+        {!isLoading && (
           <div className="space-y-2">
-            {groupedAccounts.map((group) => {
-              const isExpanded = expandedGroups.has(group.type);
-              const total = group.items.length;
+            {providerTree.map((provider: any) => {
+              const isProviderOpen = expandedProviders.has(provider.provider);
               const tintClass =
-                group.type === "pro" || group.type === "prolite" ? "card-tint-violet" :
-                group.type === "codex" ? "card-tint-emerald" :
-                group.type === "free" ? "card-tint-sky" :
-                "card-tint-slate";
+                provider.provider === "ChatGPT" ? "card-tint-emerald" :
+                provider.provider === "Providers" ? "card-tint-indigo" :
+                "card-tint-violet";
+              const Icon = provider.icon === "chatgpt" ? Sparkles :
+                provider.icon === "cpu" ? Cpu : Server;
               return (
-                <div key={group.type} className="rounded-[16px] card-3d overflow-hidden">
-                  {/* Group header */}
+                <div key={provider.provider} className="rounded-[16px] card-3d overflow-hidden">
+                  {/* Level 1: Provider header */}
                   <button
                     type="button"
-                    onClick={() => toggleGroup(group.type)}
+                    onClick={() => {
+                      setExpandedProviders(prev => {
+                        const next = new Set(prev);
+                        if (next.has(provider.provider)) next.delete(provider.provider);
+                        else next.add(provider.provider);
+                        return next;
+                      });
+                    }}
                     className={cn(
                       "flex w-full items-center gap-3 px-5 py-4 text-left transition-colors",
                       tintClass,
-                      isExpanded && "border-b border-black/[0.04]"
+                      isProviderOpen && "border-b border-black/[0.04]"
                     )}
                   >
                     <ChevronDown className={cn(
                       "size-4 text-slate-400 transition-transform",
-                      isExpanded && "rotate-180"
+                      isProviderOpen && "rotate-180"
                     )} />
+                    <div className="flex size-9 items-center justify-center rounded-xl bg-white/60">
+                      <Icon className="size-4 text-slate-500" />
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[14px] font-bold text-slate-800">{group.type}</span>
-                        <Badge variant="secondary" className="rounded-md bg-white/60 text-[10px] px-1.5 text-slate-500">
-                          {total} tk
-                        </Badge>
-                      </div>
+                      <span className="text-[15px] font-bold text-slate-800">{provider.provider}</span>
                     </div>
-                    <div className="flex items-center gap-3 text-[11px]">
-                      <span className="flex items-center gap-1">
-                        <span className="size-1.5 rounded-full bg-emerald-500" />
-                        <span className="text-emerald-600 font-medium">{group.active}</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="size-1.5 rounded-full bg-amber-500" />
-                        <span className="text-amber-600 font-medium">{group.limited}</span>
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <span className="size-1.5 rounded-full bg-rose-500" />
-                        <span className="text-rose-500 font-medium">{group.error}</span>
-                      </span>
-                    </div>
+                    <Badge variant="secondary" className="rounded-md bg-white/60 text-[11px] px-2 text-slate-500">
+                      {provider.total} mục
+                    </Badge>
                   </button>
 
-                  {/* Group items */}
-                  {isExpanded && (
+                  {/* Level 2: Sub-items */}
+                  {isProviderOpen && (
                     <div className="divide-y divide-black/[0.03]">
-                      {group.items.map((account) => {
-                        const status = statusMeta[account.status];
-                        const StatusIcon = status.icon;
-                        const isUnlimited = isUnlimitedImageQuotaAccount(account);
-                        const quotaVal = Math.max(0, account.quota);
-                        const quotaDisplay = isUnlimited ? "∞" : imageQuotaUnknown(account) ? "?" : String(quotaVal);
+                      {/* ChatGPT: groups by account type */}
+                      {provider.type === "accounts" && provider.groups?.map((group: any) => {
+                        const isGroupOpen = expandedGroups.has(`${provider.provider}/${group.key}`);
                         return (
-                          <div
-                            key={account.access_token}
-                            className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 cursor-pointer transition-colors"
-                            onClick={() => setExpandedId(expandedId === account.access_token ? null : account.access_token)}
-                          >
-                            <div className={cn(
-                              "size-8 shrink-0 rounded-full flex items-center justify-center",
-                              account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600"
-                              : account.status === "limited" ? "bg-gradient-to-br from-amber-400 to-orange-500"
-                              : account.status === "error" ? "bg-gradient-to-br from-rose-500 to-red-600"
-                              : "bg-slate-200"
-                            )}>
-                              <UserRound className="size-3.5 text-white" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[13px] font-semibold text-slate-800 truncate max-w-[160px]">
-                                  {account.email ?? maskToken(account.access_token)}
-                                </span>
-                                <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
-                                  <StatusIcon className="size-2.5" />
-                                  {translateStatus(account.status, lang)}
-                                </Badge>
-                              </div>
-                              <div className="text-[11px] text-slate-400 font-mono truncate">
-                                {maskToken(account.access_token)}
-                              </div>
-                            </div>
-                            <div className="hidden sm:flex items-center gap-3 text-[12px]">
-                              <span className="text-emerald-600 font-medium">{account.success}✓</span>
-                              <span className="text-rose-400">{account.fail}✗</span>
-                            </div>
-                            <div className="text-[12px] font-bold">
-                              {isUnlimited
-                                ? <span className="text-violet-600">∞</span>
-                                : imageQuotaUnknown(account)
-                                ? <span className="text-slate-400">?</span>
-                                : <span className={quotaVal > 0 ? "text-emerald-600" : "text-rose-500"}>{quotaDisplay}</span>
-                              }
-                            </div>
-                            <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
-                              <button
-                                className="rounded-lg p-1 hover:bg-slate-100 hover:text-slate-700"
-                                onClick={() => openEditDialog(account)}
-                                title="Chỉnh sửa"
-                              >
-                                <Pencil className="size-3" />
-                              </button>
-                              <button
-                                className="rounded-lg p-1 hover:bg-rose-50 hover:text-rose-500"
-                                onClick={() => void handleDeleteTokens([account.access_token])}
-                                title={t("delete")}
-                              >
-                                <Trash2 className="size-3" />
-                              </button>
-                            </div>
+                          <div key={group.key}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setExpandedGroups(prev => {
+                                  const next = new Set(prev);
+                                  const gid = `${provider.provider}/${group.key}`;
+                                  if (next.has(gid)) next.delete(gid);
+                                  else next.add(gid);
+                                  return next;
+                                });
+                              }}
+                              className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-slate-50/60 transition-colors"
+                            >
+                              <ChevronDown className={cn(
+                                "size-3.5 text-slate-400 transition-transform",
+                                isGroupOpen && "rotate-180"
+                              )} />
+                              <span className="flex-1 text-[13px] font-semibold text-slate-700">{group.label}</span>
+                              <Badge variant="secondary" className="rounded-md bg-slate-100 text-[10px] px-1.5 text-slate-500">
+                                {group.count}
+                              </Badge>
+                              <span className="flex items-center gap-1 text-[10px] text-emerald-600">{group.active} active</span>
+                              <span className="flex items-center gap-1 text-[10px] text-amber-600">{group.limited} limited</span>
+                              {group.error > 0 && (
+                                <span className="flex items-center gap-1 text-[10px] text-rose-500">{group.error} err</span>
+                              )}
+                            </button>
+
+                            {/* Level 3: Individual accounts */}
+                            {isGroupOpen && group.accounts?.map((account: Account) => {
+                              const accountExpanded = expandedId === account.access_token;
+                              const status = statusMeta[account.status];
+                              const StatusIcon = status.icon;
+                              const isUnlimited = isUnlimitedImageQuotaAccount(account);
+                              const quotaVal = Math.max(0, account.quota);
+                              return (
+                                <div key={account.access_token}>
+                                  <div
+                                    className={cn(
+                                      "flex items-center gap-3 pl-12 pr-5 py-2.5 hover:bg-slate-50/60 cursor-pointer transition-colors",
+                                      accountExpanded && "bg-indigo-50/40"
+                                    )}
+                                    onClick={() => setExpandedId(accountExpanded ? null : account.access_token)}
+                                  >
+                                    <div className={cn(
+                                      "size-7 shrink-0 rounded-full flex items-center justify-center",
+                                      account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600"
+                                      : account.status === "limited" ? "bg-gradient-to-br from-amber-400 to-orange-500"
+                                      : account.status === "error" ? "bg-gradient-to-br from-rose-500 to-red-600"
+                                      : "bg-slate-200"
+                                    )}>
+                                      <UserRound className="size-3 text-white" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[12px] font-medium text-slate-700 truncate max-w-[140px]">
+                                          {account.email ?? maskToken(account.access_token)}
+                                        </span>
+                                        <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
+                                          <StatusIcon className="size-2.5" />
+                                          {translateStatus(account.status, lang)}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    <div className="hidden sm:flex items-center gap-2 text-[11px]">
+                                      <span className="text-emerald-600">{account.success}✓</span>
+                                      <span className="text-rose-400">{account.fail}✗</span>
+                                    </div>
+                                    <div className="text-[11px] font-bold">
+                                      {isUnlimited ? <span className="text-violet-600">∞</span>
+                                        : imageQuotaUnknown(account) ? <span className="text-slate-400">?</span>
+                                        : <span className={quotaVal > 0 ? "text-emerald-600" : "text-rose-500"}>{quotaVal}</span>
+                                      }
+                                    </div>
+                                    <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
+                                      <button className="rounded p-0.5 hover:bg-slate-100 hover:text-slate-700" onClick={() => openEditDialog(account)}><Pencil className="size-3" /></button>
+                                      <button className="rounded p-0.5 hover:bg-rose-50 hover:text-rose-500" onClick={() => void handleDeleteTokens([account.access_token])}><Trash2 className="size-3" /></button>
+                                    </div>
+                                  </div>
+                                  {/* Account expanded detail */}
+                                  {accountExpanded && (
+                                    <div className="pl-12 pr-5 pb-3 bg-slate-50/50 border-t border-indigo-100">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
+                                        <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
+                                          <div className="flex items-center justify-between">
+                                            <div>
+                                              <p className="text-[13px] font-bold text-slate-800">{account.email ?? maskToken(account.access_token)}</p>
+                                              <div className="flex items-center gap-2 mt-0.5">
+                                                <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
+                                                  <span className={cn("size-1.5 rounded-full mr-0.5",
+                                                    account.status === "active" ? "bg-emerald-400" :
+                                                    account.status === "limited" ? "bg-amber-400" :
+                                                    account.status === "error" ? "bg-rose-400" : "bg-slate-300"
+                                                  )} />
+                                                  {translateStatus(account.status, lang)}
+                                                </Badge>
+                                                <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
+                                                  {displayAccountType(account)}
+                                                </Badge>
+                                              </div>
+                                            </div>
+                                          </div>
+                                          {isUnlimited ? (
+                                            <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-violet-500" /><span className="text-[11px] text-slate-500">Ảnh:</span><span className="text-[12px] font-bold text-violet-600">∞ không giới hạn</span></div>
+                                          ) : !imageQuotaUnknown(account) ? (
+                                            <QuotaBar label="Ảnh" used={Math.max(0, 100 - quotaVal)} max={100} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at, lang).relative : undefined} />
+                                          ) : null}
+                                          {account.limits_progress?.map((lp, i) => (
+                                            <QuotaBar key={i} label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`} used={Math.max(0, (lp as any).total ?? 100) - (lp.remaining ?? 0)} max={(lp as any).total ?? Math.max(lp.remaining ?? 0, 40)} resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined} />
+                                          ))}
+                                          <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
+                                            <span>Dùng lần cuối</span>
+                                            <span className="font-medium text-slate-600">{formatRelativeTime(account.last_used_at, lang)}</span>
+                                          </div>
+                                        </div>
+                                        <div className="rounded-[12px] p-4 card-3d card-tint-sky space-y-3">
+                                          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thống kê yêu cầu</p>
+                                          <div className="space-y-3">
+                                            <div className="space-y-1.5">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-emerald-500" /><span className="text-[11px] text-slate-500">Thành công</span></div>
+                                                <span className="text-[11px] font-bold text-emerald-600">{account.success}</span>
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-rose-500" /><span className="text-[11px] text-slate-500">Thất bại</span></div>
+                                                <span className="text-[11px] font-bold text-rose-500">{account.fail}</span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })}
+
+                      {/* Providers / Custom APIs: instance rows */}
+                      {(provider.type === "providers" || provider.type === "custom") && provider.instances?.map((inst: any) => (
+                        <div key={inst.id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors">
+                          <div className={cn(
+                            "size-2 rounded-full shrink-0",
+                            inst.status === "available" ? "bg-emerald-500" :
+                            inst.status === "configured" ? "bg-sky-500" :
+                            inst.status === "offline" ? "bg-rose-500" : "bg-amber-500"
+                          )} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-medium text-slate-700">{inst.name}</span>
+                              {inst.prefix && <code className="text-[11px] text-slate-400">{inst.prefix}/</code>}
+                            </div>
+                            {inst.base_url && <div className="text-[11px] text-slate-400 truncate">{inst.base_url}</div>}
+                          </div>
+                          {inst.has_key !== undefined && (
+                            <span className="text-[10px] text-slate-400">{inst.has_key ? inst.key_preview : "Chưa có key"}</span>
+                          )}
+                          {inst.port !== undefined && <span className="text-[11px] text-slate-400">:{inst.port}</span>}
+                          <span className={cn(
+                            "text-[11px] font-medium",
+                            inst.status === "available" ? "text-emerald-600" :
+                            inst.status === "configured" ? "text-sky-600" :
+                            inst.status === "offline" ? "text-rose-500" : "text-amber-600"
+                          )}>
+                            {inst.status}
+                          </span>
+                          {inst.models > 0 && <span className="text-[11px] text-slate-400">{inst.models} models</span>}
+                          {inst.error && <span className="text-[10px] text-rose-400 max-w-[200px] truncate">{inst.error}</span>}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               );
             })}
-            {groupedAccounts.length === 0 && (
+            {providerTree.length === 0 && (
               <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center card-3d card-tint-slate rounded-[16px]">
-                <Search className="size-5 text-stone-400" />
-                <p className="text-sm text-stone-500">Không có tài khoản nào phù hợp</p>
+                <Search className="size-5 text-slate-400" />
+                <p className="text-sm text-slate-500">Chưa có dữ liệu provider nào</p>
               </div>
             )}
           </div>
-        )}
-
-        {viewMode === "list" && (
-        <div
-          className={cn(
-            "overflow-hidden rounded-[16px]",
-            "card-main",
-            isLoading && accounts.length === 0 ? "hidden" : "",
-          )}
-        >
-          <div className="space-y-0 p-0">
-            <div className="flex flex-col gap-3 border-b border-black/[0.04] bg-slate-50/50 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
-                <Button
-                  variant="ghost"
-                  className="h-8 rounded-lg px-3 text-stone-500 hover:bg-stone-200"
-                  onClick={() => void handleRefreshAccounts(selectedTokens)}
-                  disabled={selectedTokens.length === 0 || isRefreshing}
-                >
-                  {isRefreshing ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-                  {t("refreshSelected")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-8 rounded-lg px-3 text-rose-500 hover:bg-rose-50 hover:text-rose-600"
-                  onClick={() => void handleDeleteTokens(abnormalTokens)}
-                  disabled={abnormalTokens.length === 0 || isDeleting}
-                >
-                  {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                  {t("deleteError")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-8 rounded-lg px-3 text-rose-500 hover:bg-rose-50 hover:text-rose-600"
-                  onClick={() => void handleDeleteTokens(selectedTokens)}
-                  disabled={selectedTokens.length === 0 || isDeleting}
-                >
-                  {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                  {t("deleteSelected")}
-                </Button>
-                {selectedIds.length > 0 ? (
-                  <span className="rounded-lg bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-600">
-                    {t("selectedCount").replace("{count}", String(selectedIds.length))}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="divide-y divide-black/[0.03]">
-              {/* Table header */}
-              <div className="hidden lg:grid grid-cols-[2fr_1fr_1fr_1.5fr_1fr_auto] items-center gap-4 border-b border-black/[0.04] bg-slate-50/60 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                <span>{t("account")}</span>
-                <span>{t("typeStatus")}</span>
-                <span>{t("imageQuota")}</span>
-                <span>{t("lastUsed")}</span>
-                <span>{t("requests")}</span>
-                <span className="w-24">{t("actions")}</span>
-              </div>
-
-              {currentRows.map((account) => {
-                const status = statusMeta[account.status];
-                const StatusIcon = status.icon;
-                const isExpanded = expandedId === account.access_token;
-                const quotaVal = Math.max(0, account.quota);
-                const isUnlimited = isUnlimitedImageQuotaAccount(account);
-                const quotaDisplay = isUnlimited ? "∞" : imageQuotaUnknown(account) ? "?" : String(quotaVal);
-
-                // Chat limits from limits_progress
-                const chatLimit = account.limits_progress?.find(l => l.feature_name?.toLowerCase().includes("chat") || l.feature_name?.toLowerCase().includes("message") || l.feature_name?.toLowerCase().includes("gpt"));
-                const imageLimit = account.limits_progress?.find(l => l.feature_name?.toLowerCase().includes("image") || l.feature_name?.toLowerCase().includes("dall") || l.feature_name?.toLowerCase().includes("gpt-image"));
-
-                return (
-                  <div key={account.access_token} className="group">
-                    {/* Collapsed row — click to expand */}
-                    <div
-                      className={cn(
-                        "grid grid-cols-[auto_2fr_auto] lg:grid-cols-[2fr_1fr_1fr_1.5fr_1fr_auto] items-center gap-3 lg:gap-4 px-5 py-3.5 cursor-pointer transition-colors",
-                        isExpanded ? "bg-indigo-50/60" : "hover:bg-slate-50/60"
-                      )}
-                      onClick={() => setExpandedId(isExpanded ? null : account.access_token)}
-                    >
-                      {/* Account identity */}
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={cn(
-                          "size-9 shrink-0 rounded-full flex items-center justify-center",
-                          account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600 shadow-sm shadow-indigo-200"
-                          : account.status === "limited" ? "bg-gradient-to-br from-amber-400 to-orange-500 shadow-sm shadow-amber-200"
-                          : account.status === "error" ? "bg-gradient-to-br from-rose-500 to-red-600 shadow-sm shadow-rose-200"
-                          : "bg-slate-200"
-                        )}>
-                          <UserRound className="size-4 text-white" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[13px] font-semibold text-slate-800 truncate max-w-[140px]">
-                              {account.email ?? maskToken(account.access_token)}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-slate-400 font-mono truncate">
-                            {maskToken(account.access_token)}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Type + Status */}
-                      <div className="hidden lg:flex items-center gap-1.5 flex-wrap">
-                        <Badge variant="secondary" className="rounded-md bg-slate-100 text-slate-600 text-[11px] px-1.5">
-                          {displayAccountType(account)}
-                        </Badge>
-                        <Badge variant={status.badge} className="inline-flex items-center gap-1 rounded-md text-[11px] px-1.5">
-                          <StatusIcon className="size-3" />
-                          {translateStatus(account.status, lang)}
-                        </Badge>
-                      </div>
-
-                      {/* Image quota */}
-                      <div className="hidden lg:block text-[13px] font-bold">
-                        {isUnlimited
-                          ? <span className="text-violet-600">∞ ảnh</span>
-                          : imageQuotaUnknown(account)
-                          ? <span className="text-slate-400">?</span>
-                          : <span className={quotaVal > 0 ? "text-emerald-600" : "text-rose-500"}>{quotaDisplay} ảnh</span>
-                        }
-                      </div>
-
-                      {/* Last used */}
-                      <div className="hidden lg:block text-[12px] text-slate-400">
-                        {formatRelativeTime(account.last_used_at, lang)}
-                      </div>
-
-                      {/* Success/fail */}
-                      <div className="hidden lg:flex items-center gap-2 text-[12px]">
-                        <span className="text-emerald-600 font-medium">{account.success}✓</span>
-                        <span className="text-rose-400">{account.fail}✗</span>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
-                        <button
-                          className="rounded-lg p-1.5 hover:bg-slate-100 hover:text-slate-700 transition"
-                          onClick={() => openEditDialog(account)}
-                          disabled={isUpdating}
-                          title="Chỉnh sửa"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                        <button
-                          className="rounded-lg p-1.5 hover:bg-slate-100 hover:text-slate-700 transition"
-                          onClick={() => void handleRefreshAccounts([account.access_token])}
-                          disabled={isRefreshing}
-                          title={t("refresh")}
-                        >
-                          <RefreshCw className={cn("size-3.5", isRefreshing ? "animate-spin" : "")} />
-                        </button>
-                        <button
-                          className="rounded-lg p-1.5 hover:bg-rose-50 hover:text-rose-500 transition"
-                          onClick={() => void handleDeleteTokens([account.access_token])}
-                          disabled={isDeleting}
-                          title={t("delete")}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Expanded detail panel — 9router style */}
-                    <div className={cn(
-                      "grid transition-all duration-300 ease-in-out",
-                      isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
-                    )}>
-                      <div className="overflow-hidden">
-                        <div className="border-t border-indigo-100 bg-slate-50/60 px-5 py-4 space-y-4">
-
-                          {/* 9router-style quota card grid */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-                            {/* Image quota card */}
-                            <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-[13px] font-bold text-slate-800">{account.email ?? maskToken(account.access_token)}</p>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
-                                      <span className={cn("size-1.5 rounded-full mr-0.5",
-                                        account.status === "active" ? "bg-emerald-400" :
-                                        account.status === "limited" ? "bg-amber-400" :
-                                        account.status === "error" ? "bg-rose-400" : "bg-slate-300"
-                                      )} />
-                                      {translateStatus(account.status, lang)}
-                                    </Badge>
-                                    <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
-                                      {displayAccountType(account)}
-                                    </Badge>
-                                    {account.default_model_slug && (
-                                      <span className="text-[10px] text-slate-400">#{account.default_model_slug}</span>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="flex gap-1">
-                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void navigator.clipboard.writeText(account.access_token); toast.success("Token đã sao chép"); }} title="Copy token"><Copy className="size-3.5" /></button>
-                                  <button className="rounded-lg p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition" onClick={(e) => { e.stopPropagation(); void handleRefreshAccounts([account.access_token]); }} disabled={isRefreshing} title={t("refresh")}><RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} /></button>
-                                </div>
-                              </div>
-
-                              {/* Image quota bar */}
-                              {isUnlimited ? (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="size-2 rounded-full bg-violet-500" />
-                                  <span className="text-[11px] font-medium text-slate-500">Ảnh</span>
-                                  <span className="ml-auto text-[12px] font-bold text-violet-600">∞ không giới hạn</span>
-                                </div>
-                              ) : !imageQuotaUnknown(account) ? (
-                                <QuotaBar label="Ảnh (image)" used={Math.max(0, 100 - quotaVal)} max={100} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at, lang).relative : undefined} />
-                              ) : (
-                                <div className="flex items-center gap-1.5">
-                                  <span className="size-2 rounded-full bg-slate-300" />
-                                  <span className="text-[11px] text-slate-400">Quota không rõ</span>
-                                </div>
-                              )}
-
-                              {/* All limits_progress bars */}
-                              {account.limits_progress?.map((lp, i) => (
-                                <QuotaBar
-                                  key={i}
-                                  label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`}
-                                  used={Math.max(0, (lp as any).total ?? 100) - (lp.remaining ?? 0)}
-                                  max={(lp as any).total ?? Math.max(lp.remaining ?? 0, 40)}
-                                  resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined}
-                                />
-                              ))}
-
-                              {/* Last used */}
-                              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-100">
-                                <span>Dùng lần cuối</span>
-                                <span className="font-medium text-slate-600">{formatRelativeTime(account.last_used_at, lang)}</span>
-                              </div>
-                            </div>
-
-                            {/* Requests stats card */}
-                            <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
-                              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thống kê yêu cầu</p>
-
-                              {/* Success/fail bars */}
-                              <div className="space-y-3">
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="size-2 rounded-full bg-emerald-500" />
-                                      <span className="text-[11px] font-medium text-slate-500">Thành công</span>
-                                    </div>
-                                    <span className="text-[11px] font-bold text-emerald-600">{account.success}</span>
-                                  </div>
-                                  {(account.success + account.fail) > 0 && (
-                                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.round(account.success / (account.success + account.fail) * 100)}%` }} />
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="size-2 rounded-full bg-rose-500" />
-                                      <span className="text-[11px] font-medium text-slate-500">Thất bại</span>
-                                    </div>
-                                    <span className="text-[11px] font-bold text-rose-500">{account.fail}</span>
-                                  </div>
-                                  {(account.success + account.fail) > 0 && (
-                                    <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                                      <div className="h-full bg-rose-500 rounded-full" style={{ width: `${Math.round(account.fail / (account.success + account.fail) * 100)}%` }} />
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Restore at */}
-                              {account.restore_at && (
-                                <div className="rounded-[8px] bg-amber-50 border border-amber-100 px-3 py-2 text-[11px]">
-                                  <p className="font-medium text-amber-700">Phục hồi: {formatRestoreAt(account.restore_at, lang).relative}</p>
-                                  <p className="text-amber-500">{formatRestoreAt(account.restore_at, lang).absolute}</p>
-                                </div>
-                              )}
-
-                              {/* Action buttons */}
-                              <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-100" onClick={e => e.stopPropagation()}>
-                                <button
-                                  className="flex items-center gap-1 rounded-[8px] border border-black/[0.06] bg-white px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 hover:bg-indigo-50 transition"
-                                  onClick={() => openEditDialog(account)}
-                                >
-                                  <Pencil className="size-3" /> Sửa trạng thái
-                                </button>
-                                <button
-                                  className="flex items-center gap-1 rounded-[8px] border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-rose-500 hover:bg-rose-50 transition"
-                                  onClick={() => void handleDeleteTokens([account.access_token])}
-                                  disabled={isDeleting}
-                                >
-                                  <Trash2 className="size-3" /> Xóa
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {!isLoading && currentRows.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
-                  <div className="rounded-xl bg-stone-100 p-3 text-stone-500">
-                    <Search className="size-5" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-stone-700">Không có tài khoản nào phù hợp</p>
-                    <p className="text-sm text-stone-500">Thử điều chỉnh bộ lọc hoặc từ khóa tìm kiếm.</p>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="border-t border-black/[0.04] bg-slate-50/30 px-5 py-4">
-              <div className="flex items-center justify-center gap-3 overflow-x-auto whitespace-nowrap">
-                <div className="shrink-0 text-sm text-stone-500">
-                Hiển thị {filteredAccounts.length === 0 ? 0 : startIndex + 1} -{" "}
-                {Math.min(startIndex + Number(pageSize), filteredAccounts.length)} /{" "}
-                {filteredAccounts.length} mục
-                </div>
-
-                <span className="shrink-0 text-sm leading-none text-stone-500">
-                  Trang {safePage} / {pageCount}
-                </span>
-                <Select
-                  value={pageSize}
-                  onValueChange={(value) => {
-                    setPageSize(value);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="h-10 w-[108px] shrink-0 rounded-lg border-stone-200 bg-white text-sm leading-none">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="10">10 / trang</SelectItem>
-                    <SelectItem value="20">20 / trang</SelectItem>
-                    <SelectItem value="50">50 / trang</SelectItem>
-                    <SelectItem value="100">100 / trang</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="size-10 shrink-0 rounded-lg border-stone-200 bg-white"
-                  disabled={safePage <= 1}
-                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                >
-                  <ChevronLeft className="size-4" />
-                </Button>
-                {paginationItems.map((item, index) =>
-                  item === "..." ? (
-                    <span key={`ellipsis-${index}`} className="px-1 text-sm text-stone-500">
-                      ...
-                    </span>
-                  ) : (
-                    <Button
-                      key={item}
-                      variant={item === safePage ? "default" : "outline"}
-                      className={cn(
-                        "h-10 min-w-10 shrink-0 rounded-lg px-3",
-                        item === safePage
-                          ? "bg-stone-900 text-white hover:bg-stone-800"
-                          : "border-stone-200 bg-white text-stone-700",
-                      )}
-                      onClick={() => setPage(item)}
-                    >
-                      {item}
-                    </Button>
-                  ),
-                )}
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="size-10 shrink-0 rounded-lg border-stone-200 bg-white"
-                  disabled={safePage >= pageCount}
-                  onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))}
-                >
-                  <ChevronRight className="size-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
         )}
       </section>
     </>

@@ -107,11 +107,19 @@ export default function DashboardPage() {
       trend: null,
     },
     {
-      label: "Gemini",
+      label: "Gemini API",
       value: (health as any)?.gemini?.gemini_api === "available" ? "Online" : "Lỗi",
-      sub: `${(health as any)?.gemini?.models_count ?? "—"} models · FastAPI ${(health as any)?.gemini?.geminiapi_port ?? "?"}`,
+      sub: `${(health as any)?.gemini?.models_count ?? "—"} models`,
       icon: Sparkles,
       color: (health as any)?.gemini?.gemini_api === "available" ? "violet" as const : "slate" as const,
+      trend: null,
+    },
+    {
+      label: "Custom APIs",
+      value: (health as any)?.gemini?.instances?.filter((i: any) => i.status === "available").length ?? 0,
+      sub: `trên ${(health as any)?.gemini?.instances?.length ?? 0} instance`,
+      icon: Cpu,
+      color: "sky" as const,
       trend: null,
     },
   ];
@@ -248,8 +256,12 @@ export default function DashboardPage() {
         <span>Cooldown: <strong className="text-slate-700">{health?.model_cooldown?.total_tracked ?? 0}</strong> tracked, <strong className="text-amber-600">{health?.model_cooldown?.cooling ?? 0}</strong> cooling</span>
         <span className="text-slate-300">·</span>
         <span>Gemini API: <strong className={(health as any)?.gemini?.gemini_api === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.gemini_api ?? "..."}</strong> ({(health as any)?.gemini?.models_count ?? 0} models)</span>
-        <span className="text-slate-300">·</span>
-        <span>Gemini-FastAPI: <strong className={(health as any)?.gemini?.geminiapi === "available" ? "text-emerald-600" : "text-rose-500"}>{(health as any)?.gemini?.geminiapi ?? "..."}</strong> port {(health as any)?.gemini?.geminiapi_port ?? "?"} · {(health as any)?.gemini?.geminiapi_entries ?? 0} entries</span>
+        {(health as any)?.gemini?.instances?.map((inst: any) => (
+          <span key={inst.id}>
+            <span className="text-slate-300">·</span>
+            <span>{inst.name}: <strong className={inst.status === "available" ? "text-emerald-600" : "text-rose-500"}>{inst.status}</strong> port {inst.port}{inst.models > 0 ? ` · ${inst.models} models` : ""}{inst.clients > 0 ? ` · ${inst.clients} clients` : ""}{inst.error ? ` · ${inst.error}` : ""}</span>
+          </span>
+        ))}
       </div>
 
       {/* ── Quick Access ── */}

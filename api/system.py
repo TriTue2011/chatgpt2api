@@ -26,18 +26,20 @@ from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_
 
 
 def _check_gemini_status() -> dict:
-    """Check Gemini API and Gemini-FastAPI health."""
+    """Check Gemini API and ALL custom provider instances (all ports)."""
+    import requests as req
+
     result = {
         "gemini_api": "unknown",
-        "geminiapi": "unknown",
         "models_count": 0,
+        "instances": [],  # list of all custom provider instances with status
     }
+
     # Check Gemini API directly
     try:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
         api_key = provider_config.get("api_key") or ""
         if api_key:
-            import requests as req
             resp = req.get(
                 f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
                 timeout=10
@@ -53,25 +55,61 @@ def _check_gemini_status() -> dict:
     except Exception as e:
         result["gemini_api"] = f"error: {str(e)[:50]}"
 
-    # Check Geminiapi custom provider (Gemini-FastAPI on port 8002/8003)
-    try:
-        cp_config = (config.data.get("custom_providers") or {}).get("geminiapi") or {}
-        base_url = cp_config.get("base_url") or "http://172.16.10.200:8002"
-        import requests as req
-        resp = req.get(f"{base_url}/health", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("ok"):
-                result["geminiapi"] = "available"
-                result["geminiapi_port"] = base_url.split(":")[-1] if ":" in base_url else "unknown"
-                result["geminiapi_clients"] = len(data.get("clients") or {})
-                result["geminiapi_entries"] = data.get("storage", {}).get("entries", 0)
-            else:
-                result["geminiapi"] = f"error: {data.get('error', 'unknown')}"
+    # Check ALL custom providers (all ports/instances)
+    custom_providers = config.data.get("custom_providers") or {}
+    for cp_id, cp_cfg in custom_providers.items():
+        if not isinstance(cp_cfg, dict) or not cp_cfg.get("enabled", True):
+            continue
+        base_url = cp_cfg.get("base_url") or ""
+        name = cp_cfg.get("name") or cp_id
+        prefix = cp_cfg.get("prefix") or cp_id
+
+        instance = {
+            "id": cp_id,
+            "name": name,
+            "prefix": prefix,
+            "base_url": base_url,
+            "status": "unknown",
+            "port": base_url.split(":")[-1].rstrip("/") if ":" in base_url else "—",
+            "models": 0,
+            "clients": 0,
+            "entries": 0,
+            "error": None,
+        }
+
+        if not base_url:
+            instance["status"] = "no_url"
         else:
-            result["geminiapi"] = f"error_{resp.status_code}"
-    except Exception as e:
-        result["geminiapi"] = f"offline"
+            try:
+                resp = req.get(f"{base_url}/health", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        instance["status"] = "available"
+                        instance["clients"] = len(data.get("clients") or {})
+                        instance["entries"] = data.get("storage", {}).get("entries", 0)
+                    else:
+                        instance["status"] = "error"
+                        instance["error"] = data.get("error", "unknown")
+                else:
+                    instance["status"] = f"http_{resp.status_code}"
+                    # Try /v1/models as fallback for standard OpenAI-compatible APIs
+                    try:
+                        resp2 = req.get(f"{base_url}/v1/models", timeout=5)
+                        if resp2.status_code == 200:
+                            data2 = resp2.json()
+                            models_list = data2.get("data") or data2.get("models") or []
+                            instance["status"] = "available"
+                            instance["models"] = len(models_list)
+                        else:
+                            instance["error"] = f"/v1/models returned {resp2.status_code}"
+                    except Exception:
+                        instance["error"] = f"health={resp.status_code}, /v1/models unreachable"
+            except Exception as e:
+                instance["status"] = "offline"
+                instance["error"] = str(e)[:80]
+
+        result["instances"].append(instance)
 
     return result
 
