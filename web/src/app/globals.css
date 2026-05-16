@@ -79,37 +79,37 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #1a1a1a;
+  --foreground: #ededed;
+  --card: #262626;
+  --card-foreground: #ededed;
+  --popover: #262626;
+  --popover-foreground: #ededed;
+  --primary: #e56a4a;
+  --primary-foreground: #ffffff;
+  --secondary: #303030;
+  --secondary-foreground: #ededed;
+  --muted: #303030;
+  --muted-foreground: #9ca3af;
+  --accent: #303030;
+  --accent-foreground: #ededed;
+  --destructive: #ef4444;
+  --border: #333333;
+  --input: #3a3a3a;
+  --ring: #e56a4a;
+  --chart-1: #e56a4a;
+  --chart-2: #22c55e;
+  --chart-3: #fbbf24;
+  --chart-4: #60a5fa;
+  --chart-5: #ec4899;
+  --sidebar: #1e1e1e;
+  --sidebar-foreground: #ededed;
+  --sidebar-primary: #e56a4a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #303030;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: #e56a4a;
 }
 
 @layer base {
@@ -204,6 +204,43 @@
 .card-tint-sky     { background: linear-gradient(135deg, #eef7ff 0%, #e0f0ff 100%); }
 .card-tint-violet  { background: linear-gradient(135deg, #f5f0ff 0%, #ede4ff 100%); }
 .card-tint-slate   { background: linear-gradient(135deg, #f5f7fa 0%, #edf1f6 100%); }
+
+/* ── Dark mode (9router-compatible) ── */
+.dark .card-3d {
+  border-color: rgba(255,255,255,0.08);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 4px 8px rgba(0,0,0,0.15), 0 8px 20px rgba(0,0,0,0.1);
+}
+.dark .card-3d:hover {
+  border-color: rgba(229,106,74,0.3);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 16px rgba(229,106,74,0.08), 0 16px 36px rgba(0,0,0,0.2);
+}
+.dark .card-main {
+  background: linear-gradient(135deg, #262626 0%, #242424 100%);
+  border-color: rgba(255,255,255,0.06);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 4px 10px rgba(0,0,0,0.15), 0 10px 28px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.dark .card-main:hover {
+  border-color: rgba(229,106,74,0.2);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 18px rgba(229,106,74,0.06), 0 20px 44px rgba(0,0,0,0.25);
+}
+.dark .card-tint-indigo  { background: linear-gradient(135deg, #1e2030 0%, #1a1c2e 100%); }
+.dark .card-tint-emerald { background: linear-gradient(135deg, #1a2a20 0%, #162418 100%); }
+.dark .card-tint-amber   { background: linear-gradient(135deg, #2a2418 0%, #262016 100%); }
+.dark .card-tint-rose    { background: linear-gradient(135deg, #2a1a1c 0%, #261618 100%); }
+.dark .card-tint-sky     { background: linear-gradient(135deg, #1a2430 0%, #16202e 100%); }
+.dark .card-tint-violet  { background: linear-gradient(135deg, #221e30 0%, #1e1a2e 100%); }
+.dark .card-tint-slate   { background: linear-gradient(135deg, #222222 0%, #1e1e1e 100%); }
+.dark body {
+  background: #1a1a1a;
+  color: #ededed;
+}
+.dark .bg-circles::before {
+  background:
+    radial-gradient(circle at 5% 10%, rgba(229,106,74,0.05) 0%, transparent 40%),
+    radial-gradient(circle at 95% 15%, rgba(229,106,74,0.03) 0%, transparent 35%),
+    radial-gradient(circle at 15% 85%, rgba(96,165,250,0.03) 0%, transparent 45%),
+    radial-gradient(circle at 85% 90%, rgba(229,106,74,0.04) 0%, transparent 40%);
+}
 
 @layer utilities {
   .hide-scrollbar {
