@@ -1256,6 +1256,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onModelChange={setImageModel}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
+            onPickLibraryImage={() => window.open("/image-manager", "_blank")}
             onReferenceImageChange={handleReferenceImageChange}
             onRemoveReferenceImage={handleRemoveReferenceImage}
           />
