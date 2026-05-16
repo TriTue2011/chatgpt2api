@@ -273,9 +273,15 @@ class LoggedCall:
                 usage = result.get("usage") or {}
                 prompt_tokens = usage.get("prompt_tokens", 0)
                 completion_tokens = usage.get("completion_tokens", 0)
-            # Fallback: estimate from request/stream content
+            # Fallback: use tiktoken for accurate prompt token counting
             if prompt_tokens == 0 and self.request_text:
-                prompt_tokens = max(1, len(self.request_text) // 4)
+                try:
+                    from services.protocol.conversation import encoding_for_model
+                    enc = encoding_for_model(self.model)
+                    prompt_tokens = max(1, len(enc.encode(self.request_text)))
+                except Exception:
+                    prompt_tokens = max(1, len(self.request_text) // 4)
+            # Completion: estimate from streamed content length
             if completion_tokens == 0:
                 stream_len = getattr(self, "_stream_content_len", 0)
                 if stream_len > 0:
