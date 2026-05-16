@@ -1093,6 +1093,40 @@ function AccountsPageContent() {
                                     </div>
                                   </div>
                                 </div>
+                                {/* Per-key status card */}
+                                {inst.keys && inst.keys.length > 0 && (
+                                  <div className="rounded-[12px] p-4 card-3d card-tint-indigo space-y-3 md:col-span-2">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                        API Keys ({inst.available_keys}/{inst.total_keys} active)
+                                      </p>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {inst.keys.map((keyInfo: any, ki: number) => (
+                                        <div key={ki} className="flex items-center gap-3 rounded-[8px] bg-white/60 px-3 py-2">
+                                          <span className={cn("size-2 rounded-full shrink-0",
+                                            keyInfo.status === "available" ? "bg-emerald-500" :
+                                            keyInfo.status === "auth_error" ? "bg-rose-500" :
+                                            keyInfo.status === "rate_limited" ? "bg-amber-500" :
+                                            keyInfo.status === "network_error" ? "bg-rose-400" :
+                                            "bg-slate-300"
+                                          )} />
+                                          <code className="text-[11px] text-slate-500 flex-1">{keyInfo.key_preview}</code>
+                                          <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded",
+                                            keyInfo.status === "available" ? "bg-emerald-500/10 text-emerald-600" :
+                                            keyInfo.status === "auth_error" ? "bg-rose-500/10 text-rose-500" :
+                                            keyInfo.status === "rate_limited" ? "bg-amber-500/10 text-amber-600" :
+                                            "bg-slate-100 text-slate-500"
+                                          )}>
+                                            {keyInfo.status}
+                                          </span>
+                                          {keyInfo.models > 0 && <span className="text-[10px] text-slate-400">{keyInfo.models} models</span>}
+                                          {keyInfo.error && <span className="text-[10px] text-rose-400 max-w-[140px] truncate">{keyInfo.error}</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )}

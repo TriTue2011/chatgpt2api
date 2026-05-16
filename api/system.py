@@ -55,7 +55,7 @@ def _check_gemini_status() -> dict:
     except Exception as e:
         result["gemini_api"] = f"error: {str(e)[:50]}"
 
-    # Check ALL custom providers (all ports/instances)
+    # Check ALL custom providers (all ports/instances) with per-key status
     custom_providers = config.data.get("custom_providers") or {}
     for cp_id, cp_cfg in custom_providers.items():
         if not isinstance(cp_cfg, dict) or not cp_cfg.get("enabled", True):
@@ -64,51 +64,96 @@ def _check_gemini_status() -> dict:
         name = cp_cfg.get("name") or cp_id
         prefix = cp_cfg.get("prefix") or cp_id
 
+        # Collect all API keys (single + multi)
+        single_key = str(cp_cfg.get("api_key") or "").strip()
+        multi_keys = cp_cfg.get("api_keys") or []
+        if not isinstance(multi_keys, list):
+            multi_keys = []
+        all_keys = [k.strip() for k in multi_keys if k.strip()]
+        if single_key and single_key not in all_keys:
+            all_keys.insert(0, single_key)
+
+        # Auto-detect API style
+        is_deepseek = "deepseek.com" in base_url
+        models_path = "/models" if is_deepseek else "/v1/models"
+        chat_path = "/chat/completions" if is_deepseek else "/v1/chat/completions"
+
+        # Check each key's status
+        key_statuses = []
+        available_keys = 0
+        for key in all_keys:
+            key_status = {"key_preview": key[:12] + "..." + key[-4:] if len(key) > 20 else key, "status": "unknown", "error": None}
+            try:
+                resp = req.get(f"{base_url}{models_path}", headers={"Authorization": f"Bearer {key}"}, timeout=8)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models_list = data.get("data") or data.get("models") or []
+                    key_status["status"] = "available"
+                    key_status["models"] = len(models_list)
+                    available_keys += 1
+                elif resp.status_code == 401 or resp.status_code == 403:
+                    key_status["status"] = "auth_error"
+                    key_status["error"] = f"HTTP {resp.status_code} — API key invalid"
+                elif resp.status_code == 429:
+                    key_status["status"] = "rate_limited"
+                    key_status["error"] = "Rate limited"
+                elif resp.status_code >= 500:
+                    key_status["status"] = "server_error"
+                    key_status["error"] = f"HTTP {resp.status_code}"
+                else:
+                    key_status["status"] = f"http_{resp.status_code}"
+                    key_status["error"] = f"HTTP {resp.status_code}"
+            except Exception as e:
+                key_status["status"] = "network_error"
+                key_status["error"] = str(e)[:80]
+            key_statuses.append(key_status)
+
+        # Determine overall status
+        if available_keys == len(all_keys) and len(all_keys) > 0:
+            overall_status = "available"
+        elif available_keys > 0:
+            overall_status = "partial"
+        elif any(k["status"] == "auth_error" for k in key_statuses):
+            overall_status = "auth_error"
+        elif any(k["status"] == "network_error" for k in key_statuses):
+            overall_status = "network_error"
+        else:
+            overall_status = key_statuses[0]["status"] if key_statuses else "no_keys"
+
+        # Also check /health for geminiapi-style providers
+        clients = 0
+        entries = 0
+        if not is_deepseek:
+            try:
+                resp = req.get(f"{base_url}/health", timeout=4)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        clients = len(data.get("clients") or {})
+                        entries = data.get("storage", {}).get("entries", 0)
+            except Exception:
+                pass
+
         instance = {
             "id": cp_id,
             "name": name,
             "prefix": prefix,
             "base_url": base_url,
-            "status": "unknown",
+            "status": overall_status,
             "port": base_url.split(":")[-1].rstrip("/") if ":" in base_url else "—",
-            "models": 0,
-            "clients": 0,
-            "entries": 0,
+            "models": sum(k.get("models", 0) for k in key_statuses),
+            "clients": clients,
+            "entries": entries,
+            "total_keys": len(all_keys),
+            "available_keys": available_keys,
+            "keys": key_statuses,
             "error": None,
         }
-
-        if not base_url:
-            instance["status"] = "no_url"
-        else:
-            try:
-                resp = req.get(f"{base_url}/health", timeout=5)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data.get("ok"):
-                        instance["status"] = "available"
-                        instance["clients"] = len(data.get("clients") or {})
-                        instance["entries"] = data.get("storage", {}).get("entries", 0)
-                    else:
-                        instance["status"] = "error"
-                        instance["error"] = data.get("error", "unknown")
-                else:
-                    instance["status"] = f"http_{resp.status_code}"
-                    # Auto-detect models path based on API style
-                    models_path = "/models" if "deepseek.com" in base_url else "/v1/models"
-                    try:
-                        resp2 = req.get(f"{base_url}{models_path}", timeout=5)
-                        if resp2.status_code == 200:
-                            data2 = resp2.json()
-                            models_list = data2.get("data") or data2.get("models") or []
-                            instance["status"] = "available"
-                            instance["models"] = len(models_list)
-                        else:
-                            instance["error"] = f"{models_path} returned {resp2.status_code}"
-                    except Exception:
-                        instance["error"] = f"health={resp.status_code}, {models_path} unreachable"
-            except Exception as e:
-                instance["status"] = "offline"
-                instance["error"] = str(e)[:80]
+        # Set primary error from first failing key
+        for k in key_statuses:
+            if k["status"] != "available" and k["error"]:
+                instance["error"] = k["error"]
+                break
 
         result["instances"].append(instance)
 
