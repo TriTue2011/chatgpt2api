@@ -330,7 +330,7 @@ export default function CombosPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {comboEntries.map(([name, models]) => (
+          {comboEntries.map(([name, models], idx) => (
             <div key={name} className={cn(
               "group relative overflow-hidden rounded-[16px] p-6",
               "card-3d",

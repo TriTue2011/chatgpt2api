@@ -314,17 +314,18 @@ function AccountsPageContent() {
   const buildProviderTree = async () => {
     const tree: any[] = [];
     try {
-      // Fetch custom providers + providers list
       const [cpRes, provRes] = await Promise.all([
         request.get("/api/v1/custom-providers"),
         request.get("/api/v1/providers"),
       ]);
-      const customProviders = (cpRes.data as any)?.custom_providers || {};
-      const providers = (provRes.data as any)?.providers || [];
+      const cpData = cpRes.data || {};
+      const customProviders = cpData.custom_providers || {};
+      const provData = provRes.data || {};
+      const providers = provData.providers || [];
 
-      // ── Built-in providers from /api/v1/providers ──
-      const builtinList: any[] = [];
+      // ── Built-in providers ──
       const knownBuiltins = new Set(["opencode", "gemini_free", "openrouter", "nvidia_nim", "sdwebui", "huggingface", "cloudflare_ai", "serper", "searxng", "brave"]);
+      const builtinList: any[] = [];
       for (const p of providers) {
         if (knownBuiltins.has(p.name) && p.enabled) {
           builtinList.push({
@@ -332,7 +333,7 @@ function AccountsPageContent() {
             name: p.name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
             has_key: p.has_api_key,
             key_preview: p.has_api_key ? "API key" : p.noAuth ? "Không cần key" : "Chưa có key",
-            status: p.enabled ? "configured" : "disabled",
+            status: "configured",
             models: 0,
           });
         }
