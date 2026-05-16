@@ -12,6 +12,8 @@ type ImageComposerProps = {
   prompt: string;
   imageCount: string;
   imageSize: string;
+  model: string;
+  imageModels: Array<{ id: string; label: string }>;
   availableQuota: string;
   activeTaskCount: number;
   referenceImages: Array<{ name: string; dataUrl: string }>;
@@ -20,6 +22,7 @@ type ImageComposerProps = {
   onPromptChange: (value: string) => void;
   onImageCountChange: (value: string) => void;
   onImageSizeChange: (value: string) => void;
+  onModelChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
@@ -30,6 +33,8 @@ export function ImageComposer({
   prompt,
   imageCount,
   imageSize,
+  model,
+  imageModels,
   availableQuota,
   activeTaskCount,
   referenceImages,
@@ -38,6 +43,7 @@ export function ImageComposer({
   onPromptChange,
   onImageCountChange,
   onImageSizeChange,
+  onModelChange,
   onSubmit,
   onPickReferenceImage,
   onReferenceImageChange,
@@ -190,6 +196,19 @@ export function ImageComposer({
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
                       <LoaderCircle className="size-3 animate-spin" />
                       {activeTaskCount}<span className="hidden sm:inline"> tác vụ đang xử lý</span>
+                    </div>
+                  )}
+                  {imageModels.length > 0 && (
+                    <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
+                      <select
+                        value={model}
+                        onChange={(e) => onModelChange(e.target.value)}
+                        className="h-7 bg-transparent text-xs font-medium text-stone-700 focus:outline-none sm:h-8 sm:text-sm max-w-[140px] truncate"
+                      >
+                        {imageModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
                   <div className="flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-stone-200 bg-white px-2 py-0.5 sm:h-auto sm:gap-2 sm:px-3 sm:py-1">
