@@ -25,6 +25,7 @@ type ImageComposerProps = {
   onModelChange: (value: string) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
+  onPickLibraryImage: () => void;
   onReferenceImageChange: (files: File[]) => void | Promise<void>;
   onRemoveReferenceImage: (index: number) => void;
 };
@@ -46,6 +47,7 @@ export function ImageComposer({
   onModelChange,
   onSubmit,
   onPickReferenceImage,
+  onPickLibraryImage,
   onReferenceImageChange,
   onRemoveReferenceImage,
 }: ImageComposerProps) {
@@ -187,6 +189,15 @@ export function ImageComposer({
                   >
                     <ImagePlus className="size-3.5" />
                     <span className="hidden sm:inline ml-1">Tải ảnh</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 shrink-0 rounded-full border-stone-200 bg-white px-2.5 text-xs font-medium text-stone-700 shadow-none"
+                    onClick={onPickLibraryImage}
+                  >
+                    <ImagePlus className="size-3.5" />
+                    <span className="hidden sm:inline ml-1">Thư viện</span>
                   </Button>
                   {activeTaskCount > 0 && (
                     <div className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs">
