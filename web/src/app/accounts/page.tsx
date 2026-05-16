@@ -327,71 +327,70 @@ function AccountsPageContent() {
       const customProviders = (cpRes.data as any)?.custom_providers || {};
 
       const tree: any[] = [];
+      const gemini = health.gemini || {};
 
-      // Built-in providers from health
+      // ── Built-in providers ──
       const builtinList: any[] = [];
-      // Gemini from health
-      if (health.gemini?.gemini_api === "available") {
+      if (gemini.gemini_api === "available" || gemini.gemini_api === "no_key") {
         builtinList.push({
           id: "gemini_free",
           name: "Gemini API",
-          has_key: true,
-          key_preview: "Google AI Studio",
+          has_key: gemini.gemini_api === "available",
+          key_preview: gemini.gemini_api === "available" ? "Google AI Studio" : "Chưa có key",
           base_url: "generativelanguage.googleapis.com",
-          status: "available",
-          models: health.gemini?.models_count || 0,
+          status: gemini.gemini_api === "available" ? "available" : gemini.gemini_api,
+          models: gemini.models_count || 0,
         });
       }
       if (builtinList.length > 0) {
-        tree.push({
-          provider: "Providers",
-          icon: "cpu",
-          type: "providers",
-          instances: builtinList,
-          total: builtinList.length,
+        tree.push({ provider: "Providers", icon: "cpu", type: "providers", instances: builtinList, total: builtinList.length });
+      }
+
+      // ── Custom APIs ──
+      const customList: any[] = [];
+      const seenIds = new Set<string>();
+
+      // New format: instances array from health check
+      const instances = gemini.instances || [];
+      for (const inst of instances) {
+        seenIds.add(inst.id);
+        customList.push({
+          id: inst.id, name: inst.name, prefix: inst.prefix,
+          base_url: inst.base_url, port: inst.port,
+          status: inst.status, models: inst.models || inst.clients || 0, error: inst.error,
         });
       }
 
-      // Custom providers
-      const customList: any[] = [];
-      const instances = health.gemini?.instances || [];
-      for (const inst of instances) {
-        customList.push({
-          id: inst.id,
-          name: inst.name,
-          prefix: inst.prefix,
-          base_url: inst.base_url,
-          port: inst.port,
-          status: inst.status,
-          models: inst.models || inst.clients || 0,
-          error: inst.error,
-        });
+      // Old format: single geminiapi field
+      if (instances.length === 0 && gemini.geminiapi) {
+        const oldInst: any = {
+          id: "geminiapi", name: "Geminiapi", prefix: "geminiapi",
+          base_url: `http://172.16.10.200:${gemini.geminiapi_port || "8002"}`,
+          port: gemini.geminiapi_port || "8002",
+          status: gemini.geminiapi === "available" ? "available" : gemini.geminiapi,
+          models: 0, error: null,
+        };
+        if (gemini.geminiapi_clients) oldInst.clients = gemini.geminiapi_clients;
+        if (gemini.geminiapi_entries) oldInst.entries = gemini.geminiapi_entries;
+        seenIds.add("geminiapi");
+        customList.push(oldInst);
       }
-      // Also add any custom providers not covered by health check
+
+      // All custom providers from config (catch any not covered above)
       for (const [cpId, cpCfg] of Object.entries(customProviders)) {
-        if (!customList.find(c => c.id === cpId)) {
-          const cfg = cpCfg as any;
-          const baseUrl = cfg.base_url || "";
-          customList.push({
-            id: cpId,
-            name: cfg.name || cpId,
-            prefix: cfg.prefix || cpId,
-            base_url: baseUrl,
-            port: baseUrl.split(":").pop() || "—",
-            status: "unknown",
-            models: 0,
-            error: null,
-          });
-        }
-      }
-      if (customList.length > 0) {
-        tree.push({
-          provider: "Custom APIs",
-          icon: "server",
-          type: "custom",
-          instances: customList,
-          total: customList.length,
+        if (seenIds.has(cpId)) continue;
+        const cfg = cpCfg as any;
+        if (!cfg.enabled && cfg.enabled !== undefined) continue;
+        const baseUrl = cfg.base_url || "";
+        customList.push({
+          id: cpId, name: cfg.name || cpId, prefix: cfg.prefix || cpId,
+          base_url: baseUrl, port: baseUrl.split(":").pop() || "—",
+          status: "unknown", models: 0, error: null,
         });
+      }
+
+      if (customList.length > 0) {
+        tree.push({ provider: "Custom APIs", icon: "server", type: "custom", instances: customList, total: customList.length });
       }
 
       setProviderTree(tree);
