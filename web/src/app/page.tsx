@@ -176,15 +176,13 @@ export default function DashboardPage() {
   const geminiInstances: any[] = gemini.instances || [];
   const customOnline = geminiInstances.filter((i: any) => i.status === "available" || i.status === "partial").length;
   const { nodes, edges } = useMemo(() => {
-    const activeProviders = (usage as any)?.activeProviders || [];
-    // Filter topology: only show providers that have actual usage
-    const filteredInstances = activeProviders.length > 0
-      ? geminiInstances.filter((i: any) => {
-          // Always show ChatGPT accounts if used
-          const pfx = i.prefix || i.id || "";
-          return activeProviders.some((ap: string) => pfx.includes(ap) || ap.includes(pfx) || i.id === ap || i.id === "gemini_free");
-        })
-      : geminiInstances; // fallback: show all if no usage data yet
+    // Show all instances that are available or have recent usage
+    const filteredInstances = geminiInstances.filter((i: any) => {
+      if (i.status === "available" || i.status === "partial") return true;
+      const activeProviders = (usage as any)?.activeProviders || [];
+      const pfx = i.prefix || i.id || "";
+      return activeProviders.some((ap: string) => pfx.includes(ap) || ap.includes(pfx));
+    });
     return buildLayout(filteredInstances, health?.accounts);
   }, [geminiInstances, health?.accounts, usage]);
   const chartData = useMemo(() => {
