@@ -943,38 +943,76 @@ function AccountsPageContent() {
                         );
                       })}
 
-                      {/* Providers / Custom APIs: instance rows */}
-                      {(provider.type === "providers" || provider.type === "custom") && provider.instances?.map((inst: any) => (
-                        <div key={inst.id} className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors">
-                          <div className={cn(
-                            "size-2 rounded-full shrink-0",
-                            inst.status === "available" ? "bg-emerald-500" :
-                            inst.status === "configured" ? "bg-sky-500" :
-                            inst.status === "offline" ? "bg-rose-500" : "bg-amber-500"
-                          )} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[13px] font-medium text-slate-700">{inst.name}</span>
-                              {inst.prefix && <code className="text-[11px] text-slate-400">{inst.prefix}/</code>}
+                      {/* Providers / Custom APIs: expandable instance rows */}
+                      {(provider.type === "providers" || provider.type === "custom") && provider.instances?.map((inst: any) => {
+                        const isInstOpen = expandedGroups.has(`inst:${inst.id}`);
+                        return (
+                        <div key={inst.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedGroups(prev => {
+                                const next = new Set(prev);
+                                const gid = `inst:${inst.id}`;
+                                if (next.has(gid)) next.delete(gid);
+                                else next.add(gid);
+                                return next;
+                              });
+                            }}
+                            className="flex w-full items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors text-left"
+                          >
+                            <ChevronDown className={cn("size-3.5 text-slate-400 transition-transform shrink-0", isInstOpen && "rotate-180")} />
+                            <div className={cn("size-2 rounded-full shrink-0", inst.status === "available" ? "bg-emerald-500" : inst.status === "offline" ? "bg-rose-500" : inst.status === "configured" ? "bg-sky-500" : "bg-amber-500")} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[13px] font-medium text-slate-700">{inst.name}</span>
+                                {inst.prefix && <code className="text-[11px] text-slate-400">{inst.prefix}/</code>}
+                              </div>
+                              {inst.base_url && <div className="text-[11px] text-slate-400 truncate">{inst.base_url}</div>}
                             </div>
-                            {inst.base_url && <div className="text-[11px] text-slate-400 truncate">{inst.base_url}</div>}
-                          </div>
-                          {inst.has_key !== undefined && (
-                            <span className="text-[10px] text-slate-400">{inst.has_key ? inst.key_preview : "Chưa có key"}</span>
+                            {inst.port && inst.port !== "—" && <span className="text-[11px] text-slate-400">:{inst.port}</span>}
+                            <span className={cn("text-[11px] font-medium", inst.status === "available" ? "text-emerald-600" : inst.status === "offline" ? "text-rose-500" : inst.status === "configured" ? "text-sky-600" : "text-amber-600")}>
+                              {inst.status}
+                            </span>
+                            {inst.models > 0 && <span className="text-[11px] text-slate-400">{inst.models} models</span>}
+                          </button>
+
+                          {/* Expanded: API key details */}
+                          {isInstOpen && (
+                            <div className="pl-12 pr-5 pb-3 bg-slate-50/50 border-t border-slate-100">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
+                                <div className="rounded-[12px] p-4 card-3d card-tint-sky space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thông tin API</p>
+                                  <div className="space-y-2 text-[12px]">
+                                    <div className="flex justify-between"><span className="text-slate-500">Base URL</span><span className="text-slate-700 font-mono text-[11px] truncate max-w-[200px]">{inst.base_url || "—"}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Prefix</span><code className="text-[11px] text-slate-600">{inst.prefix || "—"}</code></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Port</span><span className="text-slate-700">{inst.port || "—"}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Trạng thái</span><span className={cn("font-medium", inst.status === "available" ? "text-emerald-600" : "text-rose-500")}>{inst.status}</span></div>
+                                    {inst.has_key !== undefined && (
+                                      <div className="flex justify-between"><span className="text-slate-500">API Key</span><span className="text-slate-700 text-[11px]">{inst.has_key ? inst.key_preview : "Chưa có key"}</span></div>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-2">
+                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Số liệu</p>
+                                  <div className="space-y-2 text-[12px]">
+                                    <div className="flex justify-between"><span className="text-slate-500">Models</span><span className="text-slate-700 font-bold">{inst.models || 0}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Clients</span><span className="text-slate-700 font-bold">{inst.clients || 0}</span></div>
+                                    <div className="flex justify-between"><span className="text-slate-500">Entries</span><span className="text-slate-700 font-bold">{inst.entries || 0}</span></div>
+                                    {inst.error && (
+                                      <div className="pt-2 border-t border-slate-100">
+                                        <p className="text-[11px] font-medium text-rose-500 mb-1">Lỗi</p>
+                                        <p className="text-[11px] text-rose-400 break-all">{inst.error}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           )}
-                          {inst.port !== undefined && <span className="text-[11px] text-slate-400">:{inst.port}</span>}
-                          <span className={cn(
-                            "text-[11px] font-medium",
-                            inst.status === "available" ? "text-emerald-600" :
-                            inst.status === "configured" ? "text-sky-600" :
-                            inst.status === "offline" ? "text-rose-500" : "text-amber-600"
-                          )}>
-                            {inst.status}
-                          </span>
-                          {inst.models > 0 && <span className="text-[11px] text-slate-400">{inst.models} models</span>}
-                          {inst.error && <span className="text-[10px] text-rose-400 max-w-[200px] truncate">{inst.error}</span>}
                         </div>
-                      ))}
+                      );
+                      })}
                     </div>
                   )}
                 </div>

@@ -93,16 +93,17 @@ def _check_gemini_status() -> dict:
                         instance["error"] = data.get("error", "unknown")
                 else:
                     instance["status"] = f"http_{resp.status_code}"
-                    # Try /v1/models as fallback for standard OpenAI-compatible APIs
+                    # Auto-detect models path based on API style
+                    models_path = "/models" if "deepseek.com" in base_url else "/v1/models"
                     try:
-                        resp2 = req.get(f"{base_url}/v1/models", timeout=5)
+                        resp2 = req.get(f"{base_url}{models_path}", timeout=5)
                         if resp2.status_code == 200:
                             data2 = resp2.json()
                             models_list = data2.get("data") or data2.get("models") or []
                             instance["status"] = "available"
                             instance["models"] = len(models_list)
                         else:
-                            instance["error"] = f"/v1/models returned {resp2.status_code}"
+                            instance["error"] = f"{models_path} returned {resp2.status_code}"
                     except Exception:
                         instance["error"] = f"health={resp.status_code}, /v1/models unreachable"
             except Exception as e:
