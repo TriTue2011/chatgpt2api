@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Combine, Plus, Trash2, ArrowDown, MessageSquare,
   ImageIcon, Eye, X, ChevronDown, Save, Video, Camera,
-  Pencil, Check,
+  Pencil, Check, ArrowUp,
 } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
@@ -62,10 +62,11 @@ function ModelChainView({ models, allModels, t }: { models: string[]; allModels:
   );
 }
 
-function ComboEditView({ editModels, allModels, filteredModels, dropdownOpen, setDropdownOpen, removeFromEdit, addToEdit, cancelEdit, saveEdit }: {
+function ComboEditView({ editModels, allModels, filteredModels, dropdownOpen, setDropdownOpen, removeFromEdit, addToEdit, moveUpInEdit, moveDownInEdit, cancelEdit, saveEdit }: {
   editModels: string[]; allModels: ModelInfo[]; filteredModels: ModelInfo[];
   dropdownOpen: boolean; setDropdownOpen: (v: boolean) => void;
   removeFromEdit: (idx: number) => void; addToEdit: (id: string) => void;
+  moveUpInEdit: (idx: number) => void; moveDownInEdit: (idx: number) => void;
   cancelEdit: () => void; saveEdit: () => void;
 }) {
   return (
@@ -81,6 +82,10 @@ function ComboEditView({ editModels, allModels, filteredModels, dropdownOpen, se
                 <span className={cn("text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shrink-0", idx === 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-stone-200 text-stone-500")}>{idx + 1}</span>
                 <CapIcon className="size-3 shrink-0 text-stone-500" />
                 <span className="rounded-lg px-3 py-1.5 text-xs font-mono bg-stone-100 text-stone-700 flex-1">{modelId}</span>
+                <div className="flex flex-col gap-0.5">
+                  <button type="button" onClick={() => moveUpInEdit(idx)} disabled={idx === 0} className="rounded p-0.5 text-stone-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"><ArrowUp className="size-3" /></button>
+                  <button type="button" onClick={() => moveDownInEdit(idx)} disabled={idx === editModels.length - 1} className="rounded p-0.5 text-stone-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30"><ArrowDown className="size-3" /></button>
+                </div>
                 <button type="button" onClick={() => removeFromEdit(idx)} className="rounded p-0.5 text-stone-400 hover:bg-rose-50 hover:text-rose-500"><X className="size-3.5" /></button>
               </div>
             );
@@ -131,6 +136,7 @@ export default function CombosPage() {
   const [saved, setSaved] = useState(false);
   const [filterCap, setFilterCap] = useState<string>("all");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [editDropdownOpen, setEditDropdownOpen] = useState(false);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -180,6 +186,18 @@ export default function CombosPage() {
   function cancelEdit() { setEditingCombo(null); setEditModels([]); }
   function addToEdit(modelId: string) { if (!editModels.includes(modelId)) setEditModels([...editModels, modelId]); }
   function removeFromEdit(idx: number) { setEditModels(editModels.filter((_, i) => i !== idx)); }
+  function moveUpInEdit(idx: number) {
+    if (idx <= 0) return;
+    const updated = [...editModels];
+    [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+    setEditModels(updated);
+  }
+  function moveDownInEdit(idx: number) {
+    if (idx >= editModels.length - 1) return;
+    const updated = [...editModels];
+    [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+    setEditModels(updated);
+  }
   function saveEdit() {
     if (!editingCombo || editModels.length < 2) return;
     saveCombos({ ...combos, [editingCombo]: [...editModels] });
@@ -322,7 +340,7 @@ export default function CombosPage() {
                 </div>
               </div>
               {isEditing ? (
-                <ComboEditView editModels={editModels} allModels={allModels} filteredModels={filteredModels} dropdownOpen={dropdownOpen} setDropdownOpen={setDropdownOpen} removeFromEdit={removeFromEdit} addToEdit={addToEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} />
+                <ComboEditView editModels={editModels} allModels={allModels} filteredModels={filteredModels} dropdownOpen={editDropdownOpen} setDropdownOpen={setEditDropdownOpen} removeFromEdit={removeFromEdit} addToEdit={addToEdit} moveUpInEdit={moveUpInEdit} moveDownInEdit={moveDownInEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} />
               ) : (
                 <ModelChainView models={models} allModels={allModels} t={t} />
               )}
