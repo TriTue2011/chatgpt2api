@@ -90,27 +90,35 @@ function RouterNode({ data }: { data: any }) {
 
 const nodeTypes = { provider: ProviderNode, router: RouterNode };
 
-function buildLayout(instances: any[], accounts: any) {
+function buildLayout(instances: any[], accounts: any, activeProviders: string[]) {
   const items: any[] = [];
 
   // Add ChatGPT/Codex as a node if accounts exist
   if (accounts?.total > 0) {
+    const isUsed = accounts.active > 0 || activeProviders.includes("chatgpt") || activeProviders.includes("codex") || activeProviders.length === 0;
     items.push({
       id: "chatgpt",
       name: `ChatGPT (${accounts.active}/${accounts.total})`,
       status: accounts.active > 0 ? "available" : "error",
       isAccount: true,
+      isUsed,
     });
   }
 
-  // Add provider instances
-  for (const inst of instances) {
-    items.push({
-      id: inst.id,
-      name: inst.name,
-      status: inst.status,
-      isAccount: false,
-    });
+  // Determine which instances are actually used
+  const activeSet = new Set(activeProviders.map((p: string) => p.toLowerCase()));
+  if (activeProviders.length === 0) {
+    // No usage data yet — show all as pending
+    for (const inst of instances) {
+      items.push({ id: inst.id, name: inst.name, status: inst.status, isAccount: false, isUsed: false });
+    }
+  } else {
+    // Only include instances that have been used
+    for (const inst of instances) {
+      const pfx = (inst.prefix || inst.id || "").toLowerCase();
+      const isUsed = activeSet.has(pfx) || Array.from(activeSet).some(a => pfx.startsWith(a) || a.startsWith(pfx));
+      items.push({ id: inst.id, name: inst.name, status: inst.status, isAccount: false, isUsed });
+    }
   }
 
   const count = items.length;
@@ -118,18 +126,23 @@ function buildLayout(instances: any[], accounts: any) {
 
   const routerW = 140; const routerH = 44;
   const rx = 320; const ry = 200;
-  const activeCount = items.filter(i => i.status === "available" || i.status === "partial").length;
-  const nodes: any[] = [{ id: "router", type: "router", position: { x: -routerW / 2, y: -routerH / 2 }, data: { activeCount }, draggable: false }];
+  const usedCount = items.filter(i => i.isUsed).length;
+  const nodes: any[] = [{ id: "router", type: "router", position: { x: -routerW / 2, y: -routerH / 2 }, data: { activeCount: usedCount }, draggable: false }];
   const edges: any[] = [];
 
   items.forEach((item, i) => {
     const active = item.status === "available" || item.status === "partial";
-    const color = item.isAccount ? "#10A37F" : active ? "#22c55e" : item.status === "partial" ? "#fbbf24" : "#ef4444";
+    const color = item.isUsed
+      ? (item.isAccount ? "#10A37F" : active ? "#22c55e" : item.status === "partial" ? "#fbbf24" : "#ef4444")
+      : "#9ca3af"; // gray for unused
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
     const cx = rx * Math.cos(angle); const cy = ry * Math.sin(angle);
     const nodeW = 180; const nodeH = 30;
     nodes.push({ id: `provider-${item.id}`, type: "provider", position: { x: cx - nodeW / 2, y: cy - nodeH / 2 }, data: { label: item.name, color, active, textIcon: (item.name || "?").slice(0, 2).toUpperCase() }, draggable: false });
-    edges.push({ id: `e-${item.id}`, source: "router", target: `provider-${item.id}`, animated: active, style: { stroke: color, strokeWidth: active ? 2.5 : 1, opacity: active ? 0.9 : 0.3 } });
+    // Only create edges for providers that are actually used
+    if (item.isUsed) {
+      edges.push({ id: `e-${item.id}`, source: "router", target: `provider-${item.id}`, animated: color !== "#9ca3af", style: { stroke: color, strokeWidth: 2.5, opacity: 0.9 } });
+    }
   });
   return { nodes, edges };
 }
@@ -183,7 +196,7 @@ export default function DashboardPage() {
       const pfx = i.prefix || i.id || "";
       return activeProviders.some((ap: string) => pfx === ap || ap === pfx || pfx.startsWith(ap) || ap.startsWith(pfx));
     });
-    return buildLayout(filteredInstances, health?.accounts);
+    return buildLayout(filteredInstances, health?.accounts, (usage as any)?.activeProviders || []);
   }, [geminiInstances, health?.accounts, usage]);
   const chartData = useMemo(() => {
     if (!usage?.totalRequests) return [];
