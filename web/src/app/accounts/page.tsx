@@ -748,7 +748,7 @@ function AccountsPageContent() {
 
       {/* Stat cards */}
       <section className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-6">
           {metricCards.map((item) => {
             const Icon = item.icon;
             const value = summary[item.key];
@@ -756,23 +756,22 @@ function AccountsPageContent() {
               <div
                 key={item.key}
                 className={cn(
-                  "rounded-xl p-3 card-3d",
+                  "rounded-xl p-2.5 card-3d",
                   `bg-gradient-to-br ${item.bg}`,
                 )}
               >
                 <div className="flex items-start justify-between gap-1">
                   <div className="min-w-0">
                     <p className={cn("text-[10px] font-semibold mb-0.5 truncate", item.labelColor)}>{t(item.labelKey)}</p>
-                    <p className={cn("text-xl font-bold leading-none", item.textColor)}>
+                    <p className={cn("text-lg font-bold leading-none", item.textColor)}>
                       {typeof value === "number" ? formatCompact(value) : value}
                     </p>
                   </div>
                   <div className={cn(
-                    "size-7 rounded-full flex items-center justify-center shrink-0",
+                    "size-6 rounded-full flex items-center justify-center shrink-0",
                     `bg-gradient-to-br ${item.gradient}`,
-                    `shadow-sm ${item.shadow}`
                   )}>
-                    <Icon className="size-3.5 text-white" />
+                    <Icon className="size-3 text-white" />
                   </div>
                 </div>
               </div>
