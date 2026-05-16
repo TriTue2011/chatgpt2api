@@ -176,12 +176,12 @@ export default function DashboardPage() {
   const geminiInstances: any[] = gemini.instances || [];
   const customOnline = geminiInstances.filter((i: any) => i.status === "available" || i.status === "partial").length;
   const { nodes, edges } = useMemo(() => {
-    // Show all instances that are available or have recent usage
+    const activeProviders = (usage as any)?.activeProviders || [];
+    // Show only providers that have actual recent usage
     const filteredInstances = geminiInstances.filter((i: any) => {
-      if (i.status === "available" || i.status === "partial") return true;
-      const activeProviders = (usage as any)?.activeProviders || [];
+      if (activeProviders.length === 0) return true; // fallback: show all
       const pfx = i.prefix || i.id || "";
-      return activeProviders.some((ap: string) => pfx.includes(ap) || ap.includes(pfx));
+      return activeProviders.some((ap: string) => pfx === ap || ap === pfx || pfx.startsWith(ap) || ap.startsWith(pfx));
     });
     return buildLayout(filteredInstances, health?.accounts);
   }, [geminiInstances, health?.accounts, usage]);
