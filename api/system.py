@@ -595,6 +595,27 @@ def create_router(app_version: str) -> APIRouter:
             "totalAccounts": len(accounts),
         }
 
+    @router.get("/api/v1/usage/recent")
+    async def recent_requests(authorization: str | None = Header(default=None)):
+        """Recent API requests from log."""
+        require_admin(authorization)
+        try:
+            items = log_service.list(type="call", limit=25)
+            result = []
+            for item in items:
+                d = item.get("detail") or {}
+                result.append({
+                    "model": d.get("model") or "unknown",
+                    "endpoint": d.get("endpoint") or "",
+                    "status": d.get("status") or "success",
+                    "duration_ms": d.get("duration_ms") or 0,
+                    "started_at": d.get("started_at") or "",
+                    "error": d.get("error") or "",
+                })
+            return {"requests": result}
+        except Exception:
+            return {"requests": []}
+
     @router.get("/api/v1/providers")
     async def list_providers(authorization: str | None = Header(default=None)):
         """Danh sách provider đang active."""

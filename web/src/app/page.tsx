@@ -116,6 +116,7 @@ export default function DashboardPage() {
   const [session, setSession] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
+  const [recentReqs, setRecentReqs] = useState<any[]>([]);
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [period, setPeriod] = useState("today");
@@ -123,12 +124,14 @@ export default function DashboardPage() {
 
   const loadHealth = useCallback(async () => {
     try {
-      const [hRes, uRes] = await Promise.all([
+      const [hRes, uRes, rRes] = await Promise.all([
         request.get("/api/v1/health"),
         request.get("/api/v1/usage/stats"),
+        request.get("/api/v1/usage/recent"),
       ]);
       setHealth((hRes.data as any) || null);
       setUsage((uRes.data as any) || null);
+      setRecentReqs(((rRes.data as any)?.requests) || []);
     } catch { /* health may be unavailable */ }
   }, []);
 
@@ -241,17 +244,20 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-[#2a2a2a]/50">
-                    {Array.from({ length: 20 }, (_, i) => ({
-                      model: "chatgpt/auto", promptTokens: Math.floor(Math.random() * 500) + 200, completionTokens: Math.floor(Math.random() * 300) + 30,
-                      timestamp: new Date(Date.now() - (i + 1) * 86400000).toISOString(), ok: true,
-                    })).map((r, i) => (
-                      <tr key={i} className="hover:bg-slate-50/60 dark:hover:bg-[#262626]/60 transition-colors">
-                        <td className="py-1.5"><span className="block w-1.5 h-1.5 rounded-full bg-[#22c55e]" /></td>
-                        <td className="py-1.5 font-mono truncate max-w-[120px] text-slate-700 dark:text-[#ededed]" title={r.model}>{r.model}</td>
-                        <td className="py-1.5 text-right whitespace-nowrap"><span className="text-[#e56a4a]">{fmt(r.promptTokens)}↑</span> <span className="text-[#22c55e]">{fmt(r.completionTokens)}↓</span></td>
-                        <td className="py-1.5 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap">{timeAgo(r.timestamp)}</td>
-                      </tr>
-                    ))}
+                    {recentReqs.length === 0 ? (
+                      <tr><td colSpan={4} className="py-8 text-center text-slate-400 dark:text-slate-500 text-sm">No requests yet.</td></tr>
+                    ) : (
+                      recentReqs.map((r: any, i: number) => (
+                        <tr key={i} className="hover:bg-slate-50/60 dark:hover:bg-[#262626]/60 transition-colors">
+                          <td className="py-1.5"><span className={cn("block w-1.5 h-1.5 rounded-full", r.status === "success" ? "bg-[#22c55e]" : "bg-[#ef4444]")} /></td>
+                          <td className="py-1.5 font-mono truncate max-w-[120px] text-slate-700 dark:text-[#ededed]" title={r.model}>{r.model}</td>
+                          <td className="py-1.5 text-right whitespace-nowrap">
+                            <span className="text-slate-400 dark:text-slate-500">{r.duration_ms}ms</span>
+                          </td>
+                          <td className="py-1.5 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap">{timeAgo(r.started_at)}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
