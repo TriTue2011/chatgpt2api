@@ -524,6 +524,58 @@ function AccountsPageContent() {
             Xuất Token
           </Button>
         </div>
+
+        {/* Filter bar — right below action buttons */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 pt-2">
+          <div className="relative w-full sm:max-w-[280px]">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              placeholder={t("searchPlaceholder")}
+              className="h-9 rounded-xl border-slate-200 bg-white pl-10 w-full text-sm"
+            />
+          </div>
+          <Select
+            value={typeFilter}
+            onValueChange={(value) => {
+              setTypeFilter(value);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white w-[130px] text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {accountTypeOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value as AccountStatus | "all");
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white w-[130px] text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {accountStatusOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {t(option.labelKey)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </section>
 
       <Dialog open={Boolean(editingAccount)} onOpenChange={(open) => (!open ? setEditingAccount(null) : null)}>
@@ -573,58 +625,6 @@ function AccountsPageContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Filter bar — centered at top */}
-      <section className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center sm:gap-3">
-        <div className="relative w-full max-w-[360px]">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(1);
-            }}
-            placeholder={t("searchPlaceholder")}
-            className="h-10 rounded-xl border-slate-200 bg-white pl-10 w-full"
-          />
-        </div>
-        <Select
-          value={typeFilter}
-          onValueChange={(value) => {
-            setTypeFilter(value);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {accountTypeOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={statusFilter}
-          onValueChange={(value) => {
-            setStatusFilter(value as AccountStatus | "all");
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {accountStatusOptions.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </section>
 
       {/* Stat cards */}
       <section className="space-y-3">
