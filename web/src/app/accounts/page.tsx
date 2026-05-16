@@ -7,11 +7,14 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   CircleAlert,
   CircleOff,
   Copy,
   Download,
   ExternalLink,
+  FolderTree,
+  List,
   LoaderCircle,
   Pencil,
   RefreshCw,
@@ -261,6 +264,8 @@ function AccountsPageContent() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "tree">("list");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<AccountStatus | "all">("all");
@@ -335,6 +340,31 @@ function AccountsPageContent() {
     ],
     [accounts],
   );
+
+  const groupedAccounts = useMemo(() => {
+    const groups = new Map<string, Account[]>();
+    for (const acc of filteredAccounts) {
+      const type = displayAccountType(acc);
+      const list = groups.get(type);
+      if (list) list.push(acc);
+      else groups.set(type, [acc]);
+    }
+    return Array.from(groups.entries()).map(([type, items]) => {
+      const active = items.filter(a => a.status === "active").length;
+      const limited = items.filter(a => a.status === "limited").length;
+      const error = items.filter(a => a.status === "error").length;
+      return { type, items, active, limited, error };
+    });
+  }, [filteredAccounts]);
+
+  function toggleGroup(type: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
 
   const selectedTokens = useMemo(() => {
     const selectedSet = new Set(selectedIds);
@@ -544,6 +574,59 @@ function AccountsPageContent() {
         </DialogContent>
       </Dialog>
 
+      {/* Filter bar — centered at top */}
+      <section className="flex flex-col items-center gap-3 sm:flex-row sm:justify-center sm:gap-3">
+        <div className="relative w-full max-w-[360px]">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+            placeholder={t("searchPlaceholder")}
+            className="h-10 rounded-xl border-slate-200 bg-white pl-10 w-full"
+          />
+        </div>
+        <Select
+          value={typeFilter}
+          onValueChange={(value) => {
+            setTypeFilter(value);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {accountTypeOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={statusFilter}
+          onValueChange={(value) => {
+            setStatusFilter(value as AccountStatus | "all");
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="h-10 rounded-xl border-slate-200 bg-white w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {accountStatusOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </section>
+
+      {/* Stat cards */}
       <section className="space-y-3">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {metricCards.map((item) => {
@@ -553,9 +636,8 @@ function AccountsPageContent() {
               <div
                 key={item.key}
                 className={cn(
-                  "rounded-xl border-0 p-4",
+                  "rounded-xl p-4 card-3d",
                   `bg-gradient-to-br ${item.bg}`,
-                  `shadow-lg ${item.shadow}`
                 )}
               >
                 <div className="flex items-start justify-between">
@@ -580,63 +662,36 @@ function AccountsPageContent() {
       </section>
 
       <section className="space-y-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold tracking-tight">{t("title")}</h2>
             <Badge variant="secondary" className="rounded-lg bg-stone-200 px-2 py-0.5 text-stone-700">
               {filteredAccounts.length}
             </Badge>
           </div>
-
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="relative min-w-[260px]">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-stone-500" />
-              <Input
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setPage(1);
-                }}
-                placeholder={t("searchPlaceholder")}
-                className="h-10 rounded-xl border-stone-200 bg-white/85 pl-10"
-              />
-            </div>
-            <Select
-              value={typeFilter}
-              onValueChange={(value) => {
-                setTypeFilter(value);
-                setPage(1);
-              }}
+          <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-white p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                viewMode === "list" ? "bg-stone-900 text-white" : "text-stone-500 hover:text-stone-700"
+              )}
             >
-              <SelectTrigger className="h-10 w-full rounded-xl border-stone-200 bg-white/85 lg:w-[150px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {accountTypeOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={statusFilter}
-              onValueChange={(value) => {
-                setStatusFilter(value as AccountStatus | "all");
-                setPage(1);
-              }}
+              <List className="size-3.5" />
+              DS
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("tree")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition",
+                viewMode === "tree" ? "bg-stone-900 text-white" : "text-stone-500 hover:text-stone-700"
+              )}
             >
-              <SelectTrigger className="h-10 w-full rounded-xl border-stone-200 bg-white/85 lg:w-[150px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {accountStatusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <FolderTree className="size-3.5" />
+              Cây
+            </button>
           </div>
         </div>
 
@@ -654,6 +709,141 @@ function AccountsPageContent() {
           </Card>
         ) : null}
 
+        {/* Tree View */}
+        {viewMode === "tree" && !isLoading && (
+          <div className="space-y-2">
+            {groupedAccounts.map((group) => {
+              const isExpanded = expandedGroups.has(group.type);
+              const total = group.items.length;
+              const tintClass =
+                group.type === "pro" || group.type === "prolite" ? "card-tint-violet" :
+                group.type === "codex" ? "card-tint-emerald" :
+                group.type === "free" ? "card-tint-sky" :
+                "card-tint-slate";
+              return (
+                <div key={group.type} className="rounded-[16px] card-3d overflow-hidden">
+                  {/* Group header */}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.type)}
+                    className={cn(
+                      "flex w-full items-center gap-3 px-5 py-4 text-left transition-colors",
+                      tintClass,
+                      isExpanded && "border-b border-black/[0.04]"
+                    )}
+                  >
+                    <ChevronDown className={cn(
+                      "size-4 text-slate-400 transition-transform",
+                      isExpanded && "rotate-180"
+                    )} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[14px] font-bold text-slate-800">{group.type}</span>
+                        <Badge variant="secondary" className="rounded-md bg-white/60 text-[10px] px-1.5 text-slate-500">
+                          {total} tk
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px]">
+                      <span className="flex items-center gap-1">
+                        <span className="size-1.5 rounded-full bg-emerald-500" />
+                        <span className="text-emerald-600 font-medium">{group.active}</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="size-1.5 rounded-full bg-amber-500" />
+                        <span className="text-amber-600 font-medium">{group.limited}</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="size-1.5 rounded-full bg-rose-500" />
+                        <span className="text-rose-500 font-medium">{group.error}</span>
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* Group items */}
+                  {isExpanded && (
+                    <div className="divide-y divide-black/[0.03]">
+                      {group.items.map((account) => {
+                        const status = statusMeta[account.status];
+                        const StatusIcon = status.icon;
+                        const isUnlimited = isUnlimitedImageQuotaAccount(account);
+                        const quotaVal = Math.max(0, account.quota);
+                        const quotaDisplay = isUnlimited ? "∞" : imageQuotaUnknown(account) ? "?" : String(quotaVal);
+                        return (
+                          <div
+                            key={account.access_token}
+                            className="flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 cursor-pointer transition-colors"
+                            onClick={() => setExpandedId(expandedId === account.access_token ? null : account.access_token)}
+                          >
+                            <div className={cn(
+                              "size-8 shrink-0 rounded-full flex items-center justify-center",
+                              account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600"
+                              : account.status === "limited" ? "bg-gradient-to-br from-amber-400 to-orange-500"
+                              : account.status === "error" ? "bg-gradient-to-br from-rose-500 to-red-600"
+                              : "bg-slate-200"
+                            )}>
+                              <UserRound className="size-3.5 text-white" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[13px] font-semibold text-slate-800 truncate max-w-[160px]">
+                                  {account.email ?? maskToken(account.access_token)}
+                                </span>
+                                <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
+                                  <StatusIcon className="size-2.5" />
+                                  {translateStatus(account.status, lang)}
+                                </Badge>
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-mono truncate">
+                                {maskToken(account.access_token)}
+                              </div>
+                            </div>
+                            <div className="hidden sm:flex items-center gap-3 text-[12px]">
+                              <span className="text-emerald-600 font-medium">{account.success}✓</span>
+                              <span className="text-rose-400">{account.fail}✗</span>
+                            </div>
+                            <div className="text-[12px] font-bold">
+                              {isUnlimited
+                                ? <span className="text-violet-600">∞</span>
+                                : imageQuotaUnknown(account)
+                                ? <span className="text-slate-400">?</span>
+                                : <span className={quotaVal > 0 ? "text-emerald-600" : "text-rose-500"}>{quotaDisplay}</span>
+                              }
+                            </div>
+                            <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
+                              <button
+                                className="rounded-lg p-1 hover:bg-slate-100 hover:text-slate-700"
+                                onClick={() => openEditDialog(account)}
+                                title="Chỉnh sửa"
+                              >
+                                <Pencil className="size-3" />
+                              </button>
+                              <button
+                                className="rounded-lg p-1 hover:bg-rose-50 hover:text-rose-500"
+                                onClick={() => void handleDeleteTokens([account.access_token])}
+                                title={t("delete")}
+                              >
+                                <Trash2 className="size-3" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {groupedAccounts.length === 0 && (
+              <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center card-3d card-tint-slate rounded-[16px]">
+                <Search className="size-5 text-stone-400" />
+                <p className="text-sm text-stone-500">Không có tài khoản nào phù hợp</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {viewMode === "list" && (
         <div
           className={cn(
             "overflow-hidden rounded-[16px]",
@@ -1041,6 +1231,7 @@ function AccountsPageContent() {
             </div>
           </div>
         </div>
+        )}
       </section>
     </>
   );
