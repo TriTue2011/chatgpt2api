@@ -98,14 +98,14 @@ function ComboEditView({ editModels, allModels, filteredModels, dropdownOpen, se
           <ChevronDown className="size-4 text-stone-500" />
         </button>
         {dropdownOpen && (
-          <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl">
+          <div className="absolute z-50 mt-1 w-[420px] left-0 max-h-[320px] overflow-y-auto rounded-xl border border-stone-200 bg-white shadow-2xl">
             {filteredModels.filter(m => !editModels.includes(m.id)).length === 0 ? (
-              <p className="px-3 py-4 text-xs text-stone-500 text-center">Đã thêm tất cả model</p>
+              <p className="px-4 py-6 text-sm text-stone-400 text-center">Đã thêm tất cả model</p>
             ) : (
               filteredModels.filter(m => !editModels.includes(m.id)).map(m => (
-                <button key={m.id} type="button" onClick={() => { addToEdit(m.id); setDropdownOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-stone-100 transition">
-                  <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
-                  <span className="text-[10px] text-stone-600">{m.owned_by}</span>
+                <button key={m.id} type="button" onClick={() => { addToEdit(m.id); setDropdownOpen(false); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
+                  <span className="text-[13px] font-mono text-stone-800 truncate flex-1">{m.id}</span>
+                  <span className="text-[10px] text-stone-400">{m.owned_by}</span>
                 </button>
               ))
             )}
@@ -289,23 +289,27 @@ export default function CombosPage() {
               <span className="text-stone-500">{t("selectModelPlaceholder")}</span><ChevronDown className="size-4 text-stone-500" />
             </button>
             {dropdownOpen && (
-              <div className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-xl">
-                {availableForSelection.length === 0 ? (
-                  <p className="px-3 py-4 text-xs text-stone-500 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
-                ) : availableForSelection.map(m => {
-                  const CapIcon = CAP_ICONS[m.capability] || MessageSquare;
-                  return (
-                    <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-stone-100 transition">
-                      <CapIcon className="size-3 shrink-0 text-stone-500" />
-                      <span className="text-stone-800 font-mono truncate flex-1">{m.id}</span>
-                      {(m.capability_labels || ["Chat"]).map((label: string) => {
-                        const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
-                        return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
-                      })}
-                      <span className="text-[10px] text-stone-600">{m.owned_by}</span>
-                    </button>
-                  );
-                })}
+              <div className="absolute z-50 mt-1 w-[420px] max-h-[420px] left-0 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-2xl">
+                <div className="overflow-y-auto max-h-[420px]">
+                  {availableForSelection.length === 0 ? (
+                    <p className="px-4 py-6 text-sm text-stone-400 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
+                  ) : availableForSelection.map(m => {
+                    const CapIcon = CAP_ICONS[m.capability] || MessageSquare;
+                    return (
+                      <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
+                        <CapIcon className="size-4 shrink-0 text-stone-400" />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[13px] font-mono text-stone-800 truncate block">{m.id}</span>
+                          <span className="text-[10px] text-stone-400">{m.owned_by}</span>
+                        </div>
+                        {(m.capability_labels || ["Chat"]).map((label: string) => {
+                          const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
+                          return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
+                        })}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
