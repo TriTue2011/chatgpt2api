@@ -314,48 +314,40 @@ function AccountsPageContent() {
   const buildProviderTree = async () => {
     const tree: any[] = [];
     try {
-      const [cpRes, provRes] = await Promise.all([
-        request.get("/api/v1/custom-providers"),
-        request.get("/api/v1/providers"),
-      ]);
-      const cpData = cpRes.data || {};
-      const customProviders = cpData.custom_providers || {};
-      const provData = provRes.data || {};
-      const providers = provData.providers || [];
+      // Use same data source as dashboard: /api/v1/health (has gemini.instances)
+      const healthRes = await request.get("/api/v1/health");
+      const health = (healthRes.data as any) || {};
+      const gemini = health.gemini || {};
 
-      // ── Built-in providers ──
-      const knownBuiltins = new Set(["opencode", "gemini_free", "openrouter", "nvidia_nim", "sdwebui", "huggingface", "cloudflare_ai", "serper", "searxng", "brave"]);
+      // ── Built-in Providers from health ──
       const builtinList: any[] = [];
-      for (const p of providers) {
-        if (knownBuiltins.has(p.name) && p.enabled) {
-          builtinList.push({
-            id: p.name,
-            name: p.name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-            has_key: p.has_api_key,
-            key_preview: p.has_api_key ? "API key" : p.noAuth ? "Không cần key" : "Chưa có key",
-            status: "configured",
-            models: 0,
-          });
-        }
-      }
-      if (builtinList.length > 0) {
-        tree.push({ provider: "Providers", icon: "cpu", type: "providers", instances: builtinList, total: builtinList.length });
-      }
-
-      // ── Custom APIs ──
-      const customList: any[] = [];
-      for (const [cpId, cpCfg] of Object.entries(customProviders)) {
-        const cfg = cpCfg as any;
-        if (cfg.enabled === false) continue;
-        const baseUrl = cfg.base_url || "";
-        customList.push({
-          id: cpId, name: cfg.name || cpId, prefix: cfg.prefix || cpId,
-          base_url: baseUrl, port: baseUrl.split(":").pop() || "—",
-          status: "configured", models: 0, error: null,
+      if (gemini.gemini_api === "available") {
+        builtinList.push({
+          id: "gemini_free",
+          name: "Gemini API",
+          has_key: true,
+          key_preview: "Google AI Studio",
+          status: "available",
+          models: gemini.models_count || 0,
         });
       }
-      if (customList.length > 0) {
-        tree.push({ provider: "Custom APIs", icon: "server", type: "custom", instances: customList, total: customList.length });
+      // Also check providers from health data
+      for (const inst of (gemini.instances || [])) {
+        builtinList.push({
+          id: inst.id,
+          name: inst.name,
+          prefix: inst.prefix,
+          base_url: inst.base_url,
+          port: inst.port,
+          status: inst.status,
+          models: inst.models || inst.clients || 0,
+          clients: inst.clients || 0,
+          entries: inst.entries || 0,
+          error: inst.error || null,
+        });
+      }
+      if (builtinList.length > 0) {
+        tree.push({ provider: "Providers & APIs", icon: "server", type: "providers", instances: builtinList, total: builtinList.length });
       }
     } catch (e) {
       console.error("buildProviderTree failed:", e);
