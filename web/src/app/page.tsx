@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Users, Cpu, Sparkles, Combine, ImageIcon,
@@ -123,26 +123,25 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [router, loadHealth]);
 
-  const accountChart = useMemo(() => [
-    { label: "Hoạt động", value: health?.accounts?.active ?? 0, color: "#10B981" },
-    { label: "Giới hạn", value: health?.accounts?.limited ?? 0, color: "#F59E0B" },
-    { label: "Lỗi", value: health?.accounts?.error ?? 0, color: "#EF4444" },
-  ], [health]);
-
-  const geminiInstances: any[] = (health as any)?.gemini?.instances || [];
-  const customOnline = geminiInstances.filter((i: any) => i.status === "available").length;
-  const instanceChart = useMemo(() => [
-    { label: "Online", value: customOnline, color: "#10B981" },
-    { label: "Offline/Error", value: geminiInstances.length - customOnline, color: "#F59E0B" },
-  ], [customOnline, geminiInstances.length]);
-
   if (!session) return null;
 
   const totalAccounts = health?.accounts?.total ?? 0;
   const activeAccounts = health?.accounts?.active ?? 0;
   const limitedAccounts = (health?.accounts?.limited ?? 0) + (health?.accounts?.error ?? 0);
   const geminiStatus = (health as any)?.gemini;
+  const geminiInstances: any[] = geminiStatus?.instances || [];
+  const customOnline = geminiInstances.filter((i: any) => i.status === "available").length;
   const version = health?.version || "…";
+
+  const accountChart = [
+    { label: "Hoạt động", value: health?.accounts?.active ?? 0, color: "#10B981" },
+    { label: "Giới hạn", value: health?.accounts?.limited ?? 0, color: "#F59E0B" },
+    { label: "Lỗi", value: health?.accounts?.error ?? 0, color: "#EF4444" },
+  ];
+  const instanceChart = [
+    { label: "Online", value: customOnline, color: "#10B981" },
+    { label: "Offline/Error", value: geminiInstances.length - customOnline, color: "#F59E0B" },
+  ];
 
   if (!mounted) {
     return (
