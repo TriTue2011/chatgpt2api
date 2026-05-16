@@ -116,7 +116,7 @@ export default function DashboardPage() {
     },
     {
       label: "Custom APIs",
-      value: (health as any)?.gemini?.instances?.filter((i: any) => i.status === "available").length ?? 0,
+      value: (health as any)?.gemini?.instances?.filter((i: any) => i.status === "available")?.length ?? 0,
       sub: `trên ${(health as any)?.gemini?.instances?.length ?? 0} instance`,
       icon: Cpu,
       color: "sky" as const,
