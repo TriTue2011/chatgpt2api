@@ -1,13 +1,14 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
-import { LoaderCircle, Plus, Save, Trash2, ExternalLink } from "lucide-react";
+import { LoaderCircle, Plus, Save, Trash2, ExternalLink, Zap, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { request } from "@/lib/request";
+import { cn } from "@/lib/utils";
 
 type CustomProvider = {
   name: string;
@@ -16,6 +17,23 @@ type CustomProvider = {
   prefix: string;
   enabled: boolean;
 };
+
+// Provider presets — one-click add for popular AI APIs
+const PROVIDER_PRESETS: { id: string; name: string; base_url: string; prefix: string; api_style: string; icon: string; color: string }[] = [
+  { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com", prefix: "deepseek", api_style: "deepseek", icon: "DS", color: "#4D6BFE" },
+  { id: "groq", name: "Groq", base_url: "https://api.groq.com/openai/v1", prefix: "groq", api_style: "openai", icon: "GQ", color: "#F55036" },
+  { id: "xai", name: "xAI (Grok)", base_url: "https://api.x.ai/v1", prefix: "xai", api_style: "openai", icon: "XA", color: "#1DA1F2" },
+  { id: "mistral", name: "Mistral AI", base_url: "https://api.mistral.ai/v1", prefix: "mistral", api_style: "openai", icon: "MI", color: "#FF7000" },
+  { id: "together", name: "Together AI", base_url: "https://api.together.xyz/v1", prefix: "together", api_style: "openai", icon: "TG", color: "#0F6FFF" },
+  { id: "fireworks", name: "Fireworks AI", base_url: "https://api.fireworks.ai/inference/v1", prefix: "fireworks", api_style: "openai", icon: "FW", color: "#7B2EF2" },
+  { id: "cerebras", name: "Cerebras", base_url: "https://api.cerebras.ai/v1", prefix: "cerebras", api_style: "openai", icon: "CB", color: "#FF4F00" },
+  { id: "perplexity", name: "Perplexity", base_url: "https://api.perplexity.ai", prefix: "perplexity", api_style: "openai", icon: "PP", color: "#20808D" },
+  { id: "cohere", name: "Cohere", base_url: "https://api.cohere.ai/v1", prefix: "cohere", api_style: "openai", icon: "CO", color: "#39594D" },
+  { id: "siliconflow", name: "SiliconFlow", base_url: "https://api.siliconflow.cn/v1", prefix: "siliconflow", api_style: "openai", icon: "SF", color: "#5B6EF5" },
+  { id: "hyperbolic", name: "Hyperbolic", base_url: "https://api.hyperbolic.xyz/v1", prefix: "hyperbolic", api_style: "openai", icon: "HY", color: "#00D4FF" },
+  { id: "nebius", name: "Nebius AI", base_url: "https://api.studio.nebius.ai/v1", prefix: "nebius", api_style: "openai", icon: "NB", color: "#6C5CE7" },
+  { id: "openrouter", name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", prefix: "openrouter", api_style: "openai", icon: "OR", color: "#F97316" },
+];
 
 export function CustomProvidersCard() {
   const [providers, setProviders] = useState<Record<string, CustomProvider>>({});
@@ -130,6 +148,35 @@ export function CustomProvidersCard() {
         {/* Add/Edit form */}
         {adding && (
           <div className="space-y-3 rounded-xl border border-stone-200 bg-stone-100 p-4">
+            {/* Provider presets quick-select */}
+            {!form.prefix && (
+              <div>
+                <label className="text-xs font-medium text-stone-500 flex items-center gap-1 mb-2">
+                  <Zap className="size-3 text-amber-500" /> Chọn nhanh từ danh sách:
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
+                  {PROVIDER_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => setForm({
+                        ...form,
+                        name: preset.name,
+                        prefix: preset.prefix,
+                        base_url: preset.base_url,
+                      })}
+                      className="flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                    >
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded text-[9px] font-bold text-white" style={{ backgroundColor: preset.color }}>
+                        {preset.icon}
+                      </span>
+                      <span className="truncate">{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-stone-400 mt-1.5">Chọn preset → form tự điền. Sau đó nhập API Key và Lưu.</p>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-xs text-stone-500">Tên hiển thị</label>
