@@ -286,7 +286,8 @@ export default function DashboardPage() {
                           <td className="py-1.5"><span className={cn("block w-1.5 h-1.5 rounded-full", r.status === "success" ? "bg-[#22c55e]" : "bg-[#ef4444]")} /></td>
                           <td className="py-1.5 font-mono truncate max-w-[120px] text-slate-700 dark:text-[#ededed]" title={r.model}>{r.model}</td>
                           <td className="py-1.5 text-right whitespace-nowrap">
-                            <span className="text-slate-400 dark:text-slate-500">{r.duration_ms}ms</span>
+                            <span className="text-[#e56a4a]">{fmt(r.promptTokens)}↑</span>{" "}
+                            <span className="text-[#22c55e]">{fmt(r.completionTokens)}↓</span>
                           </td>
                           <td className="py-1.5 text-right text-slate-400 dark:text-slate-500 whitespace-nowrap">{timeAgo(r.started_at)}</td>
                         </tr>
