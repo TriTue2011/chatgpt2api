@@ -62,7 +62,7 @@ export function ConfigCard() {
 
   if (isLoadingConfig) {
     return (
-      <div className="rounded-[16px] card-3d card-tint-indigo">
+      <div className="rounded-[16px] card-main">
         <div className="flex items-center justify-center p-10">
           <LoaderCircle className="size-5 animate-spin text-slate-400" />
         </div>
@@ -71,7 +71,7 @@ export function ConfigCard() {
   }
 
   return (
-    <div className="rounded-[16px] card-3d card-tint-indigo">
+    <div className="rounded-[16px] card-main">
       <div className="border-b border-black/[0.04] bg-slate-50/50 px-6 py-4">
         <h2 className="text-[15px] font-bold text-slate-900">Cấu hình hệ thống</h2>
         <p className="text-[13px] text-slate-500 mt-0.5">Proxy, rate limit, tự động xóa tài khoản và kiểm duyệt AI</p>

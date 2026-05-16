@@ -232,7 +232,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── System sub-status bar ── */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/60 bg-white/60 px-4 py-2.5 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-3 rounded-xl card-main px-4 py-2.5 text-xs text-slate-500">
         <span className="font-semibold text-slate-700">Trạng thái hệ thống</span>
         <span className="text-slate-300">·</span>
         <span>Backoff: <strong className="text-slate-700">{health?.backoff?.total_locked_models ?? 0}</strong> model locked</span>

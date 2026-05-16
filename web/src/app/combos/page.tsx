@@ -189,7 +189,7 @@ export default function CombosPage() {
       {/* Add new combo */}
       <div className={cn(
         "rounded-[16px] p-6",
-        "card-3d card-tint-slate"
+        "card-main"
       )}>
         <h3 className="mb-4 text-[15px] font-bold text-slate-900">{t("addNewCombo")}</h3>
 

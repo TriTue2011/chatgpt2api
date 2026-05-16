@@ -180,7 +180,7 @@ export default function SearchPage() {
       </div>
 
       {/* Search Combo */}
-      <div className="rounded-[16px] p-5 card-3d card-tint-sky">
+      <div className="rounded-[16px] p-5 card-main">
         <h3 className="text-[15px] font-bold text-slate-900 mb-3">
           Thứ tự tìm kiếm (Combo)
         </h3>

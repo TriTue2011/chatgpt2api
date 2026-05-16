@@ -847,7 +847,7 @@ function AccountsPageContent() {
         <div
           className={cn(
             "overflow-hidden rounded-[16px]",
-            "card-3d card-tint-emerald",
+            "card-main",
             isLoading && accounts.length === 0 ? "hidden" : "",
           )}
         >

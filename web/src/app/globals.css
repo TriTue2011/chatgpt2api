@@ -158,33 +158,52 @@
   will-change: transform;
 }
 
-/* ── Pastel card with 3D depth ── */
+/* ── 2026 Aurora "Bóng" Card System ── */
+
+/* Base card — no background, just border + shadow */
 .card-3d {
-  border: 1px solid rgba(0,0,0,0.10);
+  border: 1px solid rgba(0,0,0,0.08);
   box-shadow:
-    0 1px 3px rgba(0,0,0,0.04),
-    0 4px 12px rgba(0,0,0,0.04),
-    0 8px 24px rgba(0,0,0,0.03),
-    inset 0 1px 0 rgba(255,255,255,0.9);
-  backdrop-filter: blur(8px);
+    0 1px 2px rgba(0,0,0,0.02),
+    0 4px 8px rgba(0,0,0,0.03),
+    0 8px 20px rgba(0,0,0,0.04);
+  transition: all 0.3s ease;
 }
 .card-3d:hover {
-  border-color: rgba(99,102,241,0.35);
+  border-color: rgba(0,0,0,0.14);
   box-shadow:
-    0 1px 3px rgba(0,0,0,0.06),
-    0 8px 24px rgba(99,102,241,0.08),
-    0 16px 48px rgba(0,0,0,0.06),
+    0 1px 2px rgba(0,0,0,0.03),
+    0 8px 16px rgba(0,0,0,0.05),
+    0 16px 36px rgba(0,0,0,0.06);
+}
+
+/* Main white card — for the largest card in 2-3 card layouts */
+.card-main {
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfe 100%);
+  border: 1px solid rgba(0,0,0,0.07);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.02),
+    0 4px 10px rgba(0,0,0,0.03),
+    0 10px 28px rgba(0,0,0,0.05),
+    inset 0 1px 0 rgba(255,255,255,0.8);
+}
+.card-main:hover {
+  border-color: rgba(99,102,241,0.18);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.03),
+    0 8px 18px rgba(99,102,241,0.06),
+    0 20px 44px rgba(0,0,0,0.07),
     inset 0 1px 0 rgba(255,255,255,1);
 }
 
-/* Card tints per section — clearly visible pastel colors */
-.card-tint-indigo  { background: linear-gradient(135deg, #e0e7ff, #c7d2fe); }
-.card-tint-emerald { background: linear-gradient(135deg, #d1fae5, #a7f3d0); }
-.card-tint-amber   { background: linear-gradient(135deg, #fef3c7, #fde68a); }
-.card-tint-rose    { background: linear-gradient(135deg, #ffe4e6, #fecdd3); }
-.card-tint-sky     { background: linear-gradient(135deg, #e0f2fe, #bae6fd); }
-.card-tint-violet  { background: linear-gradient(135deg, #ede9fe, #ddd6fe); }
-.card-tint-slate   { background: linear-gradient(135deg, #e9eef3, #dce3ea); }
+/* Aurora "bóng" tints — colored light cast on card surface */
+.card-tint-indigo  { background: linear-gradient(135deg, #edf0ff 0%, #e2e7ff 100%); }
+.card-tint-emerald { background: linear-gradient(135deg, #eaf8f0 0%, #daf0e3 100%); }
+.card-tint-amber   { background: linear-gradient(135deg, #fff8ec 0%, #fff0d8 100%); }
+.card-tint-rose    { background: linear-gradient(135deg, #fff0f2 0%, #ffe4e8 100%); }
+.card-tint-sky     { background: linear-gradient(135deg, #eef7ff 0%, #e0f0ff 100%); }
+.card-tint-violet  { background: linear-gradient(135deg, #f5f0ff 0%, #ede4ff 100%); }
+.card-tint-slate   { background: linear-gradient(135deg, #f5f7fa 0%, #edf1f6 100%); }
 
 @layer utilities {
   .hide-scrollbar {
