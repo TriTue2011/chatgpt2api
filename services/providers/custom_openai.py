@@ -64,6 +64,22 @@ class CustomOpenAIProvider:
         self._key_index = 0
         self._rate_limited: dict[str, float] = {}
 
+        # Detect API style from base_url or explicit config
+        api_style = str(provider_config.get("api_style") or "").strip().lower()
+        if not api_style:
+            # Auto-detect: DeepSeek uses no /v1 prefix
+            if "deepseek.com" in self.base_url:
+                api_style = "deepseek"
+            else:
+                api_style = "openai"
+
+        if api_style == "deepseek":
+            self._models_path = "/models"
+            self._chat_path = "/chat/completions"
+        else:
+            self._models_path = "/v1/models"
+            self._chat_path = "/v1/chat/completions"
+
     def _get_keys(self) -> list[str]:
         """Get all configured API keys (supports multi-key)."""
         single = str(self.cfg.get("api_key") or "").strip()
@@ -94,7 +110,7 @@ class CustomOpenAIProvider:
             return False
         try:
             resp = requests.get(
-                f"{self.base_url}/v1/models",
+                f"{self.base_url}{self._models_path}",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=10,
             )
@@ -155,7 +171,7 @@ class CustomOpenAIProvider:
 
         try:
             resp = requests.post(
-                f"{self.base_url}/v1/chat/completions",
+                f"{self.base_url}{self._chat_path}",
                 headers=headers,
                 json=body,
                 timeout=300,
@@ -275,10 +291,10 @@ class CustomOpenAIProvider:
 
         models: list[dict[str, Any]] = []
 
-        # Try standard /v1/models endpoint first
+        # Try standard models endpoint first
         try:
             resp = requests.get(
-                f"{self.base_url}/v1/models",
+                f"{self.base_url}{self._models_path}",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=15,
             )
@@ -306,7 +322,7 @@ class CustomOpenAIProvider:
             try:
                 import re
                 resp = requests.post(
-                    f"{self.base_url}/v1/chat/completions",
+                    f"{self.base_url}{self._chat_path}",
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",

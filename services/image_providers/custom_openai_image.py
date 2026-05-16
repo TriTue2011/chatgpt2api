@@ -34,6 +34,9 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         cfg = self._get_provider_config()
         base_url = str(cfg.get("base_url") or "").rstrip("/") if cfg else ""
+        # Detect API style
+        if "deepseek.com" in base_url:
+            return f"{base_url}/chat/completions"
         return f"{base_url}/v1/chat/completions"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -135,8 +138,10 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
         keys = cfg.get("api_keys") or [str(cfg.get("api_key") or "")]
         api_key = keys[0] if keys else ""
         try:
+            # Detect API style for models endpoint
+            models_path = "/models" if "deepseek.com" in base_url else "/v1/models"
             resp = requests.get(
-                f"{base_url}/v1/models",
+                f"{base_url}{models_path}",
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10,
             )
