@@ -73,10 +73,18 @@ def _check_gemini_status() -> dict:
         if single_key and single_key not in all_keys:
             all_keys.insert(0, single_key)
 
-        # Auto-detect API style
-        is_deepseek = "deepseek.com" in base_url
-        models_path = "/models" if is_deepseek else "/v1/models"
-        chat_path = "/chat/completions" if is_deepseek else "/v1/chat/completions"
+        # Auto-detect API style and paths
+        is_no_v1 = "deepseek.com" in base_url or "perplexity.ai" in base_url
+        base_has_v1 = base_url.rstrip("/").endswith("/v1")
+        if is_no_v1:
+            models_path = "/models" if "deepseek.com" in base_url else "/v1/models"
+            chat_path = "/chat/completions" if "deepseek.com" in base_url else "/v1/chat/completions"
+        elif base_has_v1:
+            models_path = "/models"
+            chat_path = "/chat/completions"
+        else:
+            models_path = "/v1/models"
+            chat_path = "/v1/chat/completions"
 
         # Check each key's status
         key_statuses = []

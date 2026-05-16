@@ -64,19 +64,28 @@ class CustomOpenAIProvider:
         self._key_index = 0
         self._rate_limited: dict[str, float] = {}
 
-        # Detect API style from base_url or explicit config
+        # Detect API style: some providers don't use /v1 prefix
         api_style = str(provider_config.get("api_style") or "").strip().lower()
         if not api_style:
-            # Auto-detect: DeepSeek uses no /v1 prefix
             if "deepseek.com" in self.base_url:
                 api_style = "deepseek"
+            elif "perplexity.ai" in self.base_url:
+                api_style = "deepseek"  # Perplexity also uses no /v1
             else:
                 api_style = "openai"
+
+        # Determine paths: avoid double /v1 when base_url already includes it
+        base_has_v1 = self.base_url.rstrip("/").endswith("/v1")
 
         if api_style == "deepseek":
             self._models_path = "/models"
             self._chat_path = "/chat/completions"
+        elif base_has_v1:
+            # Base URL already includes /v1 (e.g. https://api.groq.com/openai/v1)
+            self._models_path = "/models"
+            self._chat_path = "/chat/completions"
         else:
+            # Standard OpenAI format: base_url has no /v1 suffix
             self._models_path = "/v1/models"
             self._chat_path = "/v1/chat/completions"
 
