@@ -20,6 +20,10 @@ type CustomProvider = {
 
 // Provider presets — one-click add for popular AI APIs
 const PROVIDER_PRESETS: { id: string; name: string; base_url: string; prefix: string; api_style: string; icon: string; color: string }[] = [
+  { id: "geminiapi1", name: "Gemini Custom 1", base_url: "http://172.16.10.200:8000", prefix: "geminiapi1", api_style: "openai", icon: "G1", color: "#4285F4" },
+  { id: "geminiapi2", name: "Gemini Custom 2", base_url: "http://172.16.10.200:8001", prefix: "geminiapi2", api_style: "openai", icon: "G2", color: "#4285F4" },
+  { id: "geminiapi3", name: "Gemini Custom 3", base_url: "http://172.16.10.200:8002", prefix: "geminiapi3", api_style: "openai", icon: "G3", color: "#4285F4" },
+  { id: "geminiapi4", name: "Gemini Custom 4", base_url: "http://172.16.10.200:8003", prefix: "geminiapi4", api_style: "openai", icon: "G4", color: "#4285F4" },
   { id: "openai", name: "OpenAI", base_url: "https://api.openai.com/v1", prefix: "openai", api_style: "openai", icon: "OA", color: "#10A37F" },
   { id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com", prefix: "deepseek", api_style: "deepseek", icon: "DS", color: "#4D6BFE" },
   { id: "groq", name: "Groq", base_url: "https://api.groq.com/openai/v1", prefix: "groq", api_style: "openai", icon: "GQ", color: "#F55036" },
