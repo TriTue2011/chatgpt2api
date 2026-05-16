@@ -5,7 +5,7 @@ import json
 import itertools
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -276,7 +276,7 @@ class LoggedCall:
                 duration_ms=int((time.time() - self.started) * 1000),
                 status=status,
                 error=error,
-                started_at=datetime.fromtimestamp(self.started).strftime("%Y-%m-%d %H:%M:%S"),
+                started_at=datetime.fromtimestamp(self.started, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             )
         except Exception:
             pass

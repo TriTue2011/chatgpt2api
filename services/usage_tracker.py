@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 from services.config import DATA_DIR
@@ -34,7 +35,7 @@ def log_usage(
         "duration_ms": duration_ms,
         "status": status,
         "error": error,
-        "started_at": started_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "started_at": started_at or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     try:
         USAGE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
