@@ -24,14 +24,19 @@ export default function DashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
+  const [usage, setUsage] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
 
   const loadHealth = useCallback(async () => {
     try {
-      const data = await request.get("/api/v1/health");
-      setHealth((data.data as any) || null);
+      const [hRes, uRes] = await Promise.all([
+        request.get("/api/v1/health"),
+        request.get("/api/v1/usage/stats"),
+      ]);
+      setHealth((hRes.data as any) || null);
+      setUsage((uRes.data as any) || null);
     } catch { /* health may be unavailable */ }
   }, []);
 
@@ -99,29 +104,27 @@ export default function DashboardPage() {
 
       {activeTab === "overview" && (
         <>
-          {/* ── Overview Cards — 9router style (4 cards) ── */}
+          {/* ── Overview Cards — 9router style (Total Requests, Input Tokens, Output Tokens, Est. Cost) ── */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 sm:gap-4">
             <div className="flex min-w-0 flex-col gap-1 rounded-[14px] card-3d px-4 py-3">
-              <span className="text-[11px] uppercase font-semibold text-slate-400">Tổng tài khoản</span>
-              <span className="truncate text-2xl font-bold text-slate-900">{fmt(totalAccounts)}</span>
-              <span className="text-[11px] text-emerald-600">{activeAccounts} hoạt động</span>
+              <span className="text-[11px] uppercase font-semibold text-slate-400">Total Requests</span>
+              <span className="truncate text-2xl font-bold text-slate-900">{fmt(usage?.totalRequests ?? 0)}</span>
+              <span className="text-[11px] text-slate-400">{usage?.successRate ?? 0}% success · {usage?.activeAccounts ?? 0} active</span>
             </div>
             <div className="flex min-w-0 flex-col gap-1 rounded-[14px] card-3d px-4 py-3">
-              <span className="text-[11px] uppercase font-semibold text-slate-400">Giới hạn / Lỗi</span>
-              <span className={cn("truncate text-2xl font-bold", limitedAccounts > 0 ? "text-amber-600" : "text-emerald-600")}>{limitedAccounts}</span>
-              <span className="text-[11px] text-slate-400">{health?.model_cooldown?.cooling > 0 ? `${health.model_cooldown.cooling} cooling` : "không có"}</span>
+              <span className="text-[11px] uppercase font-semibold text-slate-400">Total Input Tokens</span>
+              <span className="truncate text-2xl font-bold text-indigo-600">{fmt(usage?.totalPromptTokens ?? 0)}</span>
+              <span className="text-[11px] text-slate-400">~800 avg / request</span>
             </div>
             <div className="flex min-w-0 flex-col gap-1 rounded-[14px] card-3d px-4 py-3">
-              <span className="text-[11px] uppercase font-semibold text-slate-400">API Endpoints</span>
-              <span className="truncate text-2xl font-bold text-violet-600">{customOnline}/{geminiInstances.length}</span>
-              <span className="text-[11px] text-slate-400">online / configured</span>
+              <span className="text-[11px] uppercase font-semibold text-slate-400">Output Tokens</span>
+              <span className="truncate text-2xl font-bold text-emerald-600">{fmt(usage?.totalCompletionTokens ?? 0)}</span>
+              <span className="text-[11px] text-slate-400">~400 avg / request</span>
             </div>
             <div className="flex min-w-0 flex-col gap-1 rounded-[14px] card-3d px-4 py-3">
-              <span className="text-[11px] uppercase font-semibold text-slate-400">Hệ thống</span>
-              <span className={cn("truncate text-2xl font-bold", gemini.gemini_api === "available" ? "text-emerald-600" : gemini.gemini_api === "partial" ? "text-amber-600" : "text-rose-500")}>
-                {gemini.gemini_api === "available" ? "Online" : gemini.gemini_api === "partial" ? "Partial" : gemini.gemini_api ?? "—"}
-              </span>
-              <span className="text-[11px] text-slate-400">v{version} · Gemini {gemini.models_count ?? 0} models</span>
+              <span className="text-[11px] uppercase font-semibold text-slate-400">Est. Cost</span>
+              <span className="truncate text-2xl font-bold text-amber-600">~${(usage?.totalCost ?? 0).toFixed(2)}</span>
+              <span className="text-[11px] text-slate-400">Estimated, not actual billing</span>
             </div>
           </div>
 

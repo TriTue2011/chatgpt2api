@@ -564,6 +564,37 @@ def create_router(app_version: str) -> APIRouter:
             "gemini": _check_gemini_status(),
         }
 
+    @router.get("/api/v1/usage/stats")
+    async def usage_stats(authorization: str | None = Header(default=None)):
+        """Usage statistics: total requests, tokens, costs (9router-compatible)."""
+        require_admin(authorization)
+        from services.account_service import account_service
+        accounts = account_service.list_accounts()
+
+        total_success = sum(int(a.get("success") or 0) for a in accounts)
+        total_fail = sum(int(a.get("fail") or 0) for a in accounts)
+        total_requests = total_success + total_fail
+
+        # Estimate tokens: ~800 prompt + ~400 completion per request (rough avg)
+        avg_prompt_tokens = 800
+        avg_completion_tokens = 400
+        total_prompt_tokens = total_requests * avg_prompt_tokens
+        total_completion_tokens = total_requests * avg_completion_tokens
+
+        # Estimate cost: ~$0.002/1K prompt + ~$0.006/1K completion (GPT-4o-mini avg)
+        total_cost = (total_prompt_tokens / 1000) * 0.002 + (total_completion_tokens / 1000) * 0.006
+
+        return {
+            "totalRequests": total_requests,
+            "totalPromptTokens": total_prompt_tokens,
+            "totalCompletionTokens": total_completion_tokens,
+            "totalTokens": total_prompt_tokens + total_completion_tokens,
+            "totalCost": round(total_cost, 2),
+            "successRate": round((total_success / total_requests * 100), 1) if total_requests > 0 else 0,
+            "activeAccounts": sum(1 for a in accounts if a.get("status") == "active"),
+            "totalAccounts": len(accounts),
+        }
+
     @router.get("/api/v1/providers")
     async def list_providers(authorization: str | None = Header(default=None)):
         """Danh sách provider đang active."""
