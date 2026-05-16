@@ -105,7 +105,7 @@ def _check_gemini_status() -> dict:
                         else:
                             instance["error"] = f"{models_path} returned {resp2.status_code}"
                     except Exception:
-                        instance["error"] = f"health={resp.status_code}, /v1/models unreachable"
+                        instance["error"] = f"health={resp.status_code}, {models_path} unreachable"
             except Exception as e:
                 instance["status"] = "offline"
                 instance["error"] = str(e)[:80]
