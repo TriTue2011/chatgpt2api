@@ -943,68 +943,154 @@ function AccountsPageContent() {
                         );
                       })}
 
-                      {/* Providers / Custom APIs: expandable instance rows */}
+                      {/* Providers / Custom APIs: rows like ChatGPT accounts */}
                       {(provider.type === "providers" || provider.type === "custom") && provider.instances?.map((inst: any) => {
-                        const isInstOpen = expandedGroups.has(`inst:${inst.id}`);
+                        const isInstOpen = expandedId === `inst:${inst.id}`;
+                        const instStatusLabel = inst.status === "available" ? "active" : inst.status === "offline" ? "error" : inst.status === "configured" ? "active" : "limited";
+                        const instStatusColor = inst.status === "available" ? "bg-gradient-to-br from-indigo-500 to-blue-600" :
+                          inst.status === "offline" ? "bg-gradient-to-br from-rose-500 to-red-600" :
+                          inst.status === "configured" ? "bg-gradient-to-br from-sky-500 to-cyan-600" : "bg-slate-200";
                         return (
                         <div key={inst.id}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setExpandedGroups(prev => {
-                                const next = new Set(prev);
-                                const gid = `inst:${inst.id}`;
-                                if (next.has(gid)) next.delete(gid);
-                                else next.add(gid);
-                                return next;
-                              });
-                            }}
-                            className="flex w-full items-center gap-3 px-5 py-3 hover:bg-slate-50/60 transition-colors text-left"
+                          {/* Collapsed row — like ChatGPT account row */}
+                          <div
+                            className={cn(
+                              "flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors",
+                              isInstOpen ? "bg-indigo-50/60" : "hover:bg-slate-50/60"
+                            )}
+                            onClick={() => setExpandedId(isInstOpen ? null : `inst:${inst.id}`)}
                           >
-                            <ChevronDown className={cn("size-3.5 text-slate-400 transition-transform shrink-0", isInstOpen && "rotate-180")} />
-                            <div className={cn("size-2 rounded-full shrink-0", inst.status === "available" ? "bg-emerald-500" : inst.status === "offline" ? "bg-rose-500" : inst.status === "configured" ? "bg-sky-500" : "bg-amber-500")} />
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[13px] font-medium text-slate-700">{inst.name}</span>
-                                {inst.prefix && <code className="text-[11px] text-slate-400">{inst.prefix}/</code>}
-                              </div>
-                              {inst.base_url && <div className="text-[11px] text-slate-400 truncate">{inst.base_url}</div>}
+                            <div className={cn("size-8 shrink-0 rounded-full flex items-center justify-center", instStatusColor)}>
+                              <Server className="size-3.5 text-white" />
                             </div>
-                            {inst.port && inst.port !== "—" && <span className="text-[11px] text-slate-400">:{inst.port}</span>}
-                            <span className={cn("text-[11px] font-medium", inst.status === "available" ? "text-emerald-600" : inst.status === "offline" ? "text-rose-500" : inst.status === "configured" ? "text-sky-600" : "text-amber-600")}>
-                              {inst.status}
-                            </span>
-                            {inst.models > 0 && <span className="text-[11px] text-slate-400">{inst.models} models</span>}
-                          </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[13px] font-semibold text-slate-800 truncate">{inst.name}</span>
+                                <span className={cn(
+                                  "inline-flex items-center gap-1 rounded-md text-[10px] px-1.5 py-0",
+                                  inst.status === "available" ? "bg-emerald-500/10 text-emerald-600" :
+                                  inst.status === "offline" ? "bg-rose-500/10 text-rose-500" :
+                                  "bg-slate-100 text-slate-500"
+                                )}>
+                                  {inst.status}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {inst.prefix && <code className="text-[10px] text-slate-400">{inst.prefix}/</code>}
+                                {inst.port && inst.port !== "—" && <span className="text-[10px] text-slate-400">:{inst.port}</span>}
+                                {inst.base_url && <span className="text-[10px] text-slate-400 truncate max-w-[250px]">{inst.base_url}</span>}
+                              </div>
+                            </div>
+                            <div className="hidden sm:flex items-center gap-3 text-[11px]">
+                              {inst.models > 0 && <span className="text-slate-500">{inst.models} models</span>}
+                              {inst.clients > 0 && <span className="text-sky-600">{inst.clients} clients</span>}
+                            </div>
+                            <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
+                              {inst.error && <span className="text-[10px] text-rose-400 max-w-[120px] truncate">{inst.error}</span>}
+                            </div>
+                          </div>
 
-                          {/* Expanded: API key details */}
+                          {/* Expanded detail panel — same style as ChatGPT accounts */}
                           {isInstOpen && (
-                            <div className="pl-12 pr-5 pb-3 bg-slate-50/50 border-t border-slate-100">
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3">
-                                <div className="rounded-[12px] p-4 card-3d card-tint-sky space-y-2">
-                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Thông tin API</p>
-                                  <div className="space-y-2 text-[12px]">
-                                    <div className="flex justify-between"><span className="text-slate-500">Base URL</span><span className="text-slate-700 font-mono text-[11px] truncate max-w-[200px]">{inst.base_url || "—"}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Prefix</span><code className="text-[11px] text-slate-600">{inst.prefix || "—"}</code></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Port</span><span className="text-slate-700">{inst.port || "—"}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Trạng thái</span><span className={cn("font-medium", inst.status === "available" ? "text-emerald-600" : "text-rose-500")}>{inst.status}</span></div>
-                                    {inst.has_key !== undefined && (
-                                      <div className="flex justify-between"><span className="text-slate-500">API Key</span><span className="text-slate-700 text-[11px]">{inst.has_key ? inst.key_preview : "Chưa có key"}</span></div>
-                                    )}
+                            <div className="border-t border-indigo-100 bg-slate-50/60 px-5 py-4">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {/* Connection info card */}
+                                <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <div>
+                                      <p className="text-[13px] font-bold text-slate-800">{inst.name}</p>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <span className={cn(
+                                          "inline-flex items-center gap-0.5 rounded text-[10px] px-1.5 py-0",
+                                          inst.status === "available" ? "bg-emerald-500/10 text-emerald-600" :
+                                          inst.status === "offline" ? "bg-rose-500/10 text-rose-500" :
+                                          "bg-slate-100 text-slate-500"
+                                        )}>
+                                          <span className={cn("size-1.5 rounded-full",
+                                            inst.status === "available" ? "bg-emerald-400" :
+                                            inst.status === "offline" ? "bg-rose-400" : "bg-slate-300"
+                                          )} />
+                                          {inst.status}
+                                        </span>
+                                        {inst.prefix && <code className="text-[10px] text-slate-400 bg-slate-100 rounded px-1">{inst.prefix}/</code>}
+                                      </div>
+                                    </div>
                                   </div>
-                                </div>
-                                <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-2">
-                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Số liệu</p>
+
                                   <div className="space-y-2 text-[12px]">
-                                    <div className="flex justify-between"><span className="text-slate-500">Models</span><span className="text-slate-700 font-bold">{inst.models || 0}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Clients</span><span className="text-slate-700 font-bold">{inst.clients || 0}</span></div>
-                                    <div className="flex justify-between"><span className="text-slate-500">Entries</span><span className="text-slate-700 font-bold">{inst.entries || 0}</span></div>
-                                    {inst.error && (
-                                      <div className="pt-2 border-t border-slate-100">
-                                        <p className="text-[11px] font-medium text-rose-500 mb-1">Lỗi</p>
-                                        <p className="text-[11px] text-rose-400 break-all">{inst.error}</p>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="size-2 rounded-full bg-indigo-500" />
+                                      <span className="text-slate-500">Base URL</span>
+                                      <span className="ml-auto text-[11px] text-slate-700 font-mono truncate max-w-[180px]">{inst.base_url || "—"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="size-2 rounded-full bg-sky-500" />
+                                      <span className="text-slate-500">Port</span>
+                                      <span className="ml-auto text-[11px] font-bold text-slate-700">{inst.port || "—"}</span>
+                                    </div>
+                                    {inst.has_key !== undefined && (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="size-2 rounded-full bg-violet-500" />
+                                        <span className="text-slate-500">API Key</span>
+                                        <span className="ml-auto text-[11px] text-slate-600">{inst.has_key ? inst.key_preview : "Chưa có key"}</span>
                                       </div>
                                     )}
+                                  </div>
+
+                                  {inst.error && (
+                                    <div className="rounded-[8px] bg-rose-50 border border-rose-100 px-3 py-2 text-[11px]">
+                                      <p className="font-medium text-rose-700">Lỗi kết nối</p>
+                                      <p className="text-rose-500 break-all">{inst.error}</p>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Metrics card */}
+                                <div className="rounded-[12px] p-4 card-3d card-tint-sky space-y-3">
+                                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Số liệu hoạt động</p>
+                                  <div className="space-y-3">
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="size-2 rounded-full bg-emerald-500" />
+                                          <span className="text-[11px] text-slate-500">Models</span>
+                                        </div>
+                                        <span className="text-[11px] font-bold text-emerald-600">{inst.models || 0}</span>
+                                      </div>
+                                      {(inst.models || 0) > 0 && (
+                                        <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                          <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(100, (inst.models || 0) * 10)}%` }} />
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="size-2 rounded-full bg-sky-500" />
+                                          <span className="text-[11px] text-slate-500">Clients</span>
+                                        </div>
+                                        <span className="text-[11px] font-bold text-sky-600">{inst.clients || 0}</span>
+                                      </div>
+                                      {(inst.clients || 0) > 0 && (
+                                        <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                          <div className="h-full bg-sky-500 rounded-full" style={{ width: `${Math.min(100, (inst.clients || 0) * 20)}%` }} />
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="size-2 rounded-full bg-violet-500" />
+                                          <span className="text-[11px] text-slate-500">Entries</span>
+                                        </div>
+                                        <span className="text-[11px] font-bold text-violet-600">{inst.entries || 0}</span>
+                                      </div>
+                                      {(inst.entries || 0) > 0 && (
+                                        <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                                          <div className="h-full bg-violet-500 rounded-full" style={{ width: `${Math.min(100, (inst.entries || 0) * 2)}%` }} />
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               </div>
