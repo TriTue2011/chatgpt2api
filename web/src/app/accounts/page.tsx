@@ -308,16 +308,11 @@ function AccountsPageContent() {
   }, []);
 
   const fetchProviderTree = async () => {
-    try {
-      const data = await request.get("/api/v1/provider-tree");
-      setProviderTree((data.data as any)?.tree || []);
-    } catch {
-      // Build fallback from health + custom providers
-      await buildFallbackTree();
-    }
+    // Always build tree from same data sources as dashboard (health + custom-providers)
+    await buildTreeFromHealth();
   };
 
-  const buildFallbackTree = async () => {
+  const buildTreeFromHealth = async () => {
     try {
       const [healthRes, cpRes] = await Promise.all([
         request.get("/api/v1/health"),
@@ -329,63 +324,66 @@ function AccountsPageContent() {
       const tree: any[] = [];
       const gemini = health.gemini || {};
 
-      // ── Built-in providers ──
+      // ── Built-in Providers ──
       const builtinList: any[] = [];
-      if (gemini.gemini_api === "available" || gemini.gemini_api === "no_key") {
+
+      // Gemini API (from health, same as dashboard)
+      if (gemini.gemini_api) {
         builtinList.push({
           id: "gemini_free",
           name: "Gemini API",
           has_key: gemini.gemini_api === "available",
-          key_preview: gemini.gemini_api === "available" ? "Google AI Studio" : "Chưa có key",
+          key_preview: gemini.gemini_api === "available" ? "Google AI Studio" : gemini.gemini_api,
           base_url: "generativelanguage.googleapis.com",
           status: gemini.gemini_api === "available" ? "available" : gemini.gemini_api,
           models: gemini.models_count || 0,
         });
       }
+
       if (builtinList.length > 0) {
         tree.push({ provider: "Providers", icon: "cpu", type: "providers", instances: builtinList, total: builtinList.length });
       }
 
-      // ── Custom APIs ──
+      // ── Custom APIs (same source as dashboard status bar) ──
       const customList: any[] = [];
       const seenIds = new Set<string>();
 
-      // New format: instances array from health check
-      const instances = gemini.instances || [];
+      // New format: instances array
+      const instances: any[] = gemini.instances || [];
       for (const inst of instances) {
         seenIds.add(inst.id);
         customList.push({
           id: inst.id, name: inst.name, prefix: inst.prefix,
           base_url: inst.base_url, port: inst.port,
-          status: inst.status, models: inst.models || inst.clients || 0, error: inst.error,
+          status: inst.status, models: inst.models || inst.clients || 0,
+          clients: inst.clients || 0, entries: inst.entries || 0,
+          error: inst.error || null,
         });
       }
 
-      // Old format: single geminiapi field
+      // Old format fallback: single geminiapi field
       if (instances.length === 0 && gemini.geminiapi) {
-        const oldInst: any = {
+        seenIds.add("geminiapi");
+        customList.push({
           id: "geminiapi", name: "Geminiapi", prefix: "geminiapi",
           base_url: `http://172.16.10.200:${gemini.geminiapi_port || "8002"}`,
           port: gemini.geminiapi_port || "8002",
           status: gemini.geminiapi === "available" ? "available" : gemini.geminiapi,
-          models: 0, error: null,
-        };
-        if (gemini.geminiapi_clients) oldInst.clients = gemini.geminiapi_clients;
-        if (gemini.geminiapi_entries) oldInst.entries = gemini.geminiapi_entries;
-        seenIds.add("geminiapi");
-        customList.push(oldInst);
+          models: 0, clients: gemini.geminiapi_clients || 0,
+          entries: gemini.geminiapi_entries || 0, error: null,
+        });
       }
 
-      // All custom providers from config (catch any not covered above)
+      // Merge with custom providers from config (catch any not in health)
       for (const [cpId, cpCfg] of Object.entries(customProviders)) {
         if (seenIds.has(cpId)) continue;
         const cfg = cpCfg as any;
-        if (!cfg.enabled && cfg.enabled !== undefined) continue;
+        if (cfg.enabled === false) continue;
         const baseUrl = cfg.base_url || "";
         customList.push({
           id: cpId, name: cfg.name || cpId, prefix: cfg.prefix || cpId,
           base_url: baseUrl, port: baseUrl.split(":").pop() || "—",
-          status: "unknown", models: 0, error: null,
+          status: "unknown", models: 0, clients: 0, entries: 0, error: null,
         });
       }
 
@@ -395,7 +393,7 @@ function AccountsPageContent() {
 
       setProviderTree(tree);
     } catch {
-      // silent
+      // silent — tree will just show ChatGPT accounts
     }
   };
 
