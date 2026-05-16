@@ -308,93 +308,58 @@ function AccountsPageContent() {
   }, []);
 
   const fetchProviderTree = async () => {
-    // Always build tree from same data sources as dashboard (health + custom-providers)
-    await buildTreeFromHealth();
+    await buildProviderTree();
   };
 
-  const buildTreeFromHealth = async () => {
+  const buildProviderTree = async () => {
+    const tree: any[] = [];
     try {
-      const [healthRes, cpRes] = await Promise.all([
-        request.get("/api/v1/health"),
+      // Fetch custom providers + providers list
+      const [cpRes, provRes] = await Promise.all([
         request.get("/api/v1/custom-providers"),
+        request.get("/api/v1/providers"),
       ]);
-      const health = (healthRes.data as any) || {};
       const customProviders = (cpRes.data as any)?.custom_providers || {};
+      const providers = (provRes.data as any)?.providers || [];
 
-      const tree: any[] = [];
-      const gemini = health.gemini || {};
-
-      // ── Built-in Providers ──
+      // ── Built-in providers from /api/v1/providers ──
       const builtinList: any[] = [];
-
-      // Gemini API (from health, same as dashboard)
-      if (gemini.gemini_api) {
-        builtinList.push({
-          id: "gemini_free",
-          name: "Gemini API",
-          has_key: gemini.gemini_api === "available",
-          key_preview: gemini.gemini_api === "available" ? "Google AI Studio" : gemini.gemini_api,
-          base_url: "generativelanguage.googleapis.com",
-          status: gemini.gemini_api === "available" ? "available" : gemini.gemini_api,
-          models: gemini.models_count || 0,
-        });
+      const knownBuiltins = new Set(["opencode", "gemini_free", "openrouter", "nvidia_nim", "sdwebui", "huggingface", "cloudflare_ai", "serper", "searxng", "brave"]);
+      for (const p of providers) {
+        if (knownBuiltins.has(p.name) && p.enabled) {
+          builtinList.push({
+            id: p.name,
+            name: p.name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            has_key: p.has_api_key,
+            key_preview: p.has_api_key ? "API key" : p.noAuth ? "Không cần key" : "Chưa có key",
+            status: p.enabled ? "configured" : "disabled",
+            models: 0,
+          });
+        }
       }
-
       if (builtinList.length > 0) {
         tree.push({ provider: "Providers", icon: "cpu", type: "providers", instances: builtinList, total: builtinList.length });
       }
 
-      // ── Custom APIs (same source as dashboard status bar) ──
+      // ── Custom APIs ──
       const customList: any[] = [];
-      const seenIds = new Set<string>();
-
-      // New format: instances array
-      const instances: any[] = gemini.instances || [];
-      for (const inst of instances) {
-        seenIds.add(inst.id);
-        customList.push({
-          id: inst.id, name: inst.name, prefix: inst.prefix,
-          base_url: inst.base_url, port: inst.port,
-          status: inst.status, models: inst.models || inst.clients || 0,
-          clients: inst.clients || 0, entries: inst.entries || 0,
-          error: inst.error || null,
-        });
-      }
-
-      // Old format fallback: single geminiapi field
-      if (instances.length === 0 && gemini.geminiapi) {
-        seenIds.add("geminiapi");
-        customList.push({
-          id: "geminiapi", name: "Geminiapi", prefix: "geminiapi",
-          base_url: `http://172.16.10.200:${gemini.geminiapi_port || "8002"}`,
-          port: gemini.geminiapi_port || "8002",
-          status: gemini.geminiapi === "available" ? "available" : gemini.geminiapi,
-          models: 0, clients: gemini.geminiapi_clients || 0,
-          entries: gemini.geminiapi_entries || 0, error: null,
-        });
-      }
-
-      // Merge with custom providers from config (catch any not in health)
       for (const [cpId, cpCfg] of Object.entries(customProviders)) {
-        if (seenIds.has(cpId)) continue;
         const cfg = cpCfg as any;
         if (cfg.enabled === false) continue;
         const baseUrl = cfg.base_url || "";
         customList.push({
           id: cpId, name: cfg.name || cpId, prefix: cfg.prefix || cpId,
           base_url: baseUrl, port: baseUrl.split(":").pop() || "—",
-          status: "unknown", models: 0, clients: 0, entries: 0, error: null,
+          status: "configured", models: 0, error: null,
         });
       }
-
       if (customList.length > 0) {
         tree.push({ provider: "Custom APIs", icon: "server", type: "custom", instances: customList, total: customList.length });
       }
-
-      setProviderTree(tree);
-    } catch {
-      // silent — tree will just show ChatGPT accounts
+    } catch (e) {
+      console.error("buildProviderTree failed:", e);
     }
+    setProviderTree(tree);
   };
 
   const filteredAccounts = useMemo(() => {
