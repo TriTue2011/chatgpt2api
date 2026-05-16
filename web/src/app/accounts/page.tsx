@@ -315,40 +315,42 @@ function AccountsPageContent() {
   const buildProviderTree = async () => {
     const tree: any[] = [];
     try {
-      // Use same data source as dashboard: /api/v1/health (has gemini.instances)
       const healthRes = await request.get("/api/v1/health");
       const health = (healthRes.data as any) || {};
       const gemini = health.gemini || {};
+      const instances: any[] = gemini.instances || [];
 
-      // ── Built-in Providers from health ──
-      const builtinList: any[] = [];
-      if (gemini.gemini_api === "available") {
-        builtinList.push({
-          id: "gemini_free",
-          name: "Gemini API",
-          has_key: true,
-          key_preview: "Google AI Studio",
-          status: "available",
-          models: gemini.models_count || 0,
+      // ── Gemini API: separate branch like ChatGPT, each key is a row ──
+      const geminiInst = instances.find((i: any) => i.id === "gemini_free");
+      if (geminiInst && geminiInst.keys?.length > 0) {
+        tree.push({
+          provider: "Gemini API",
+          icon: "gemini",
+          type: "gemini_keys",
+          total: geminiInst.keys.length,
+          available: geminiInst.available_keys || 0,
+          status: geminiInst.status,
+          models: geminiInst.models || 0,
+          keys: geminiInst.keys.map((k: any) => ({
+            id: k.key_preview,
+            key_preview: k.key_preview,
+            status: k.status,
+            models: k.models || 0,
+            error: k.error || null,
+          })),
         });
       }
-      // Also check providers from health data
-      for (const inst of (gemini.instances || [])) {
-        builtinList.push({
-          id: inst.id,
-          name: inst.name,
-          prefix: inst.prefix,
-          base_url: inst.base_url,
-          port: inst.port,
-          status: inst.status,
-          models: inst.models || inst.clients || 0,
-          clients: inst.clients || 0,
-          entries: inst.entries || 0,
-          error: inst.error || null,
+
+      // ── Other Custom Providers ──
+      const otherInsts = instances.filter((i: any) => i.id !== "gemini_free");
+      if (otherInsts.length > 0) {
+        tree.push({
+          provider: "Providers & APIs",
+          icon: "server",
+          type: "providers",
+          instances: otherInsts,
+          total: otherInsts.length,
         });
-      }
-      if (builtinList.length > 0) {
-        tree.push({ provider: "Providers & APIs", icon: "server", type: "providers", instances: builtinList, total: builtinList.length });
       }
     } catch (e) {
       console.error("buildProviderTree failed:", e);
@@ -755,9 +757,11 @@ function AccountsPageContent() {
               const isProviderOpen = expandedProviders.has(provider.provider);
               const tintClass =
                 provider.provider === "ChatGPT" ? "card-tint-emerald" :
-                provider.provider === "Providers" ? "card-tint-indigo" :
-                "card-tint-violet";
+                provider.provider === "Gemini API" ? "card-tint-violet" :
+                provider.provider === "Providers & APIs" ? "card-tint-indigo" :
+                "card-tint-slate";
               const Icon = provider.icon === "chatgpt" ? Sparkles :
+                provider.icon === "gemini" ? Sparkles :
                 provider.icon === "cpu" ? Cpu : Server;
               return (
                 <div key={provider.provider} className="rounded-[16px] card-3d overflow-hidden">
@@ -940,6 +944,47 @@ function AccountsPageContent() {
                               );
                             })}
                           </div>
+                        );
+                      })}
+
+                      {/* Gemini API: per-key rows like ChatGPT accounts */}
+                      {provider.type === "gemini_keys" && provider.keys?.map((keyInfo: any) => {
+                        const keyStatus = keyInfo.status;
+                        const statusColor = keyStatus === "available" ? "bg-gradient-to-br from-indigo-500 to-blue-600" :
+                          keyStatus === "rate_limited" ? "bg-gradient-to-br from-amber-400 to-orange-500" :
+                          keyStatus === "auth_error" ? "bg-gradient-to-br from-rose-500 to-red-600" :
+                          "bg-slate-200";
+                        return (
+                        <div key={keyInfo.id}>
+                          <div className={cn(
+                            "flex items-center gap-3 px-5 py-3 hover:bg-slate-50/60 cursor-pointer transition-colors",
+                          )}>
+                            <div className={cn("size-8 shrink-0 rounded-full flex items-center justify-center", statusColor)}>
+                              <span className="text-[10px] font-bold text-white">K</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[13px] font-semibold text-slate-800">API Key</span>
+                                <code className="text-[11px] text-slate-400">{keyInfo.key_preview}</code>
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className={cn(
+                                  "inline-flex items-center gap-1 rounded-md text-[10px] px-1.5 py-0",
+                                  keyStatus === "available" ? "bg-emerald-500/10 text-emerald-600" :
+                                  keyStatus === "rate_limited" ? "bg-amber-500/10 text-amber-600" :
+                                  keyStatus === "auth_error" ? "bg-rose-500/10 text-rose-500" :
+                                  "bg-slate-100 text-slate-500"
+                                )}>
+                                  {keyStatus}
+                                </span>
+                                {keyInfo.models > 0 && <span className="text-[10px] text-slate-400">{keyInfo.models} models</span>}
+                              </div>
+                            </div>
+                            {keyInfo.error && (
+                              <span className="text-[10px] text-rose-400 max-w-[180px] truncate text-right">{keyInfo.error}</span>
+                            )}
+                          </div>
+                        </div>
                         );
                       })}
 
