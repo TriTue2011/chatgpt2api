@@ -21,6 +21,7 @@ def log_usage(
     duration_ms: int = 0,
     status: str = "success",
     error: str = "",
+    started_at: str = "",
 ) -> None:
     """Log a single API request's usage data."""
     entry = {
@@ -33,6 +34,7 @@ def log_usage(
         "duration_ms": duration_ms,
         "status": status,
         "error": error,
+        "started_at": started_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     try:
         USAGE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

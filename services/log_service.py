@@ -273,6 +273,7 @@ class LoggedCall:
                 duration_ms=int((time.time() - self.started) * 1000),
                 status=status,
                 error=error,
+                started_at=datetime.fromtimestamp(self.started).strftime("%Y-%m-%d %H:%M:%S"),
             )
         except Exception:
             pass
