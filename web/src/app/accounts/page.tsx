@@ -593,32 +593,20 @@ function AccountsPageContent() {
 
   return (
     <>
-      <section className="flex flex-col gap-4 border-b border-black/[0.04] pb-6 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="text-[11px] font-bold tracking-widest text-indigo-500 uppercase mb-1">Account Pool</p>
-          <h1 className="text-[26px] font-bold tracking-tight text-slate-900">{t("title")}</h1>
-          <p className="text-[14px] text-slate-500 mt-0.5">{t("subtitle")}</p>
+      {/* ── Header: multi-row layout ── */}
+      <section className="space-y-3">
+        {/* Row 1: Title + count */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-[22px] font-bold tracking-tight text-slate-900">{t("title")}</h1>
+            <Badge variant="secondary" className="rounded-lg bg-stone-200 px-2.5 py-0.5 text-sm text-stone-700">
+              {filteredAccounts.length} tài khoản
+            </Badge>
+          </div>
         </div>
 
+        {/* Row 2: Import / Export */}
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
-            onClick={() => void loadAccounts()}
-            disabled={isLoading || isRefreshing || isDeleting}
-          >
-            <RefreshCw className={cn("size-4", isLoading ? "animate-spin" : "")} />
-            Làm mới
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
-            onClick={() => void handleRefreshAccounts(accounts.map((item) => item.access_token))}
-            disabled={isLoading || isRefreshing || isDeleting || accounts.length === 0}
-          >
-            <RefreshCw className={cn("size-4", isRefreshing ? "animate-spin" : "")} />
-            Làm mới tất cả
-          </Button>
           <AccountImportDialog
             disabled={isLoading || isRefreshing || isDeleting}
             onImported={(items) => {
@@ -629,44 +617,56 @@ function AccountsPageContent() {
           />
           <a
             href="/settings"
-            className="inline-flex items-center gap-1.5 h-10 rounded-[12px] border border-black/[0.08] bg-white px-4 text-[13px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
+            className="inline-flex items-center gap-1.5 h-9 rounded-lg border border-black/[0.08] bg-white px-3.5 text-[13px] font-medium text-slate-600 hover:bg-slate-50 transition"
           >
             <ExternalLink className="size-3.5" />
-            Custom APIs
+            Custom API
           </a>
           <Button
             variant="outline"
-            className="h-10 rounded-[12px] border-black/[0.08] bg-white px-4 text-slate-600 shadow-sm hover:bg-slate-50"
+            className="h-9 rounded-lg border-black/[0.08] bg-white px-3.5 text-[13px] text-slate-600 hover:bg-slate-50"
             onClick={() => downloadTokens(accounts)}
             disabled={accounts.length === 0}
           >
-            <Download className="size-4" />
+            <Download className="size-3.5" />
             Xuất Token
           </Button>
         </div>
 
-        {/* Filter bar — right below action buttons */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3 pt-2">
-          <div className="relative w-full sm:max-w-[280px]">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
+        {/* Row 3: Refresh + Search + Filters */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+          <Button
+            variant="outline"
+            className="h-9 rounded-lg border-black/[0.08] bg-white px-3 text-[13px] text-slate-600 hover:bg-slate-50"
+            onClick={() => void loadAccounts()}
+            disabled={isLoading || isRefreshing || isDeleting}
+          >
+            <RefreshCw className={cn("size-3.5 mr-1.5", isLoading ? "animate-spin" : "")} />
+            Làm mới
+          </Button>
+          <Button
+            variant="outline"
+            className="h-9 rounded-lg border-black/[0.08] bg-white px-3 text-[13px] text-slate-600 hover:bg-slate-50"
+            onClick={() => void handleRefreshAccounts(accounts.map((item) => item.access_token))}
+            disabled={isLoading || isRefreshing || isDeleting || accounts.length === 0}
+          >
+            <RefreshCw className={cn("size-3.5 mr-1.5", isRefreshing ? "animate-spin" : "")} />
+            Làm mới tất cả
+          </Button>
+
+          <div className="flex-1" />
+
+          <div className="relative w-full sm:w-[200px]">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-slate-400" />
             <Input
               value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setPage(1);
-              }}
-              placeholder={t("searchPlaceholder")}
-              className="h-9 rounded-xl border-slate-200 bg-white pl-10 w-full text-sm"
+              onChange={(event) => { setQuery(event.target.value); setPage(1); }}
+              placeholder="Tìm kiếm..."
+              className="h-9 rounded-lg border-slate-200 bg-white pl-8 w-full text-sm"
             />
           </div>
-          <Select
-            value={typeFilter}
-            onValueChange={(value) => {
-              setTypeFilter(value);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white w-[130px] text-sm">
+          <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
+            <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white w-[110px] text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -677,14 +677,8 @@ function AccountsPageContent() {
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={statusFilter}
-            onValueChange={(value) => {
-              setStatusFilter(value as AccountStatus | "all");
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white w-[130px] text-sm">
+          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value as AccountStatus | "all"); setPage(1); }}>
+            <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white w-[120px] text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -781,14 +775,7 @@ function AccountsPageContent() {
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold tracking-tight">{t("title")}</h2>
-            <Badge variant="secondary" className="rounded-lg bg-stone-200 px-2 py-0.5 text-stone-700">
-              {filteredAccounts.length}
-            </Badge>
-          </div>
-        </div>
+        {/* Tree View */}
 
         {isLoading && accounts.length === 0 ? (
           <Card className="rounded-2xl card-3d card-tint-emerald">
