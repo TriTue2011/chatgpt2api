@@ -90,23 +90,46 @@ function RouterNode({ data }: { data: any }) {
 
 const nodeTypes = { provider: ProviderNode, router: RouterNode };
 
-function buildLayout(instances: any[]) {
-  const count = instances.length;
+function buildLayout(instances: any[], accounts: any) {
+  const items: any[] = [];
+
+  // Add ChatGPT/Codex as a node if accounts exist
+  if (accounts?.total > 0) {
+    items.push({
+      id: "chatgpt",
+      name: `ChatGPT (${accounts.active}/${accounts.total})`,
+      status: accounts.active > 0 ? "available" : "error",
+      isAccount: true,
+    });
+  }
+
+  // Add provider instances
+  for (const inst of instances) {
+    items.push({
+      id: inst.id,
+      name: inst.name,
+      status: inst.status,
+      isAccount: false,
+    });
+  }
+
+  const count = items.length;
   if (count === 0) return { nodes: [], edges: [] };
 
   const routerW = 140; const routerH = 44;
   const rx = 320; const ry = 200;
-  const nodes: any[] = [{ id: "router", type: "router", position: { x: -routerW / 2, y: -routerH / 2 }, data: { activeCount: instances.filter(i => i.status === "available").length }, draggable: false }];
+  const activeCount = items.filter(i => i.status === "available" || i.status === "partial").length;
+  const nodes: any[] = [{ id: "router", type: "router", position: { x: -routerW / 2, y: -routerH / 2 }, data: { activeCount }, draggable: false }];
   const edges: any[] = [];
 
-  instances.forEach((inst, i) => {
-    const active = inst.status === "available";
-    const color = active ? "#22c55e" : inst.status === "partial" ? "#fbbf24" : "#ef4444";
+  items.forEach((item, i) => {
+    const active = item.status === "available" || item.status === "partial";
+    const color = item.isAccount ? "#10A37F" : active ? "#22c55e" : item.status === "partial" ? "#fbbf24" : "#ef4444";
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
     const cx = rx * Math.cos(angle); const cy = ry * Math.sin(angle);
     const nodeW = 180; const nodeH = 30;
-    nodes.push({ id: `provider-${inst.id}`, type: "provider", position: { x: cx - nodeW / 2, y: cy - nodeH / 2 }, data: { label: inst.name, color, active, imageUrl: null, textIcon: (inst.name || "?").slice(0, 2).toUpperCase() }, draggable: false });
-    edges.push({ id: `e-${inst.id}`, source: "router", target: `provider-${inst.id}`, animated: active, style: { stroke: active ? "#22c55e" : "#333", strokeWidth: active ? 2.5 : 1, opacity: active ? 0.9 : 0.3 } });
+    nodes.push({ id: `provider-${item.id}`, type: "provider", position: { x: cx - nodeW / 2, y: cy - nodeH / 2 }, data: { label: item.name, color, active, textIcon: (item.name || "?").slice(0, 2).toUpperCase() }, draggable: false });
+    edges.push({ id: `e-${item.id}`, source: "router", target: `provider-${item.id}`, animated: active, style: { stroke: color, strokeWidth: active ? 2.5 : 1, opacity: active ? 0.9 : 0.3 } });
   });
   return { nodes, edges };
 }
@@ -152,7 +175,7 @@ export default function DashboardPage() {
   const gemini = (health as any)?.gemini || {};
   const geminiInstances: any[] = gemini.instances || [];
   const customOnline = geminiInstances.filter((i: any) => i.status === "available" || i.status === "partial").length;
-  const { nodes, edges } = useMemo(() => buildLayout(geminiInstances), [geminiInstances]);
+  const { nodes, edges } = useMemo(() => buildLayout(geminiInstances, health?.accounts), [geminiInstances, health?.accounts]);
   const chartData = useMemo(() => {
     if (!usage?.totalRequests) return [];
     const d = [];
