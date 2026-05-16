@@ -408,14 +408,16 @@ def format_image_result(
             continue
         revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
         if response_format == "b64_json":
+            clean_b64 = b64_json.split(",", 1)[1] if b64_json.startswith("data:") else b64_json
             data.append({
                 "b64_json": b64_json,
-                "url": save_image_bytes(base64.b64decode(b64_json), base_url),
+                "url": save_image_bytes(base64.b64decode(clean_b64), base_url),
                 "revised_prompt": revised_prompt,
             })
         else:
+            clean_b64 = b64_json.split(",", 1)[1] if b64_json.startswith("data:") else b64_json
             data.append({
-                "url": save_image_bytes(base64.b64decode(b64_json), base_url),
+                "url": save_image_bytes(base64.b64decode(clean_b64), base_url),
                 "revised_prompt": revised_prompt,
             })
     result: dict[str, Any] = {"created": created or int(time.time()), "data": data}
