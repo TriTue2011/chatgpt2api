@@ -93,22 +93,33 @@ function ComboEditView({ editModels, allModels, filteredModels, dropdownOpen, se
         </div>
       )}
       <div className="relative">
-        <button type="button" onClick={() => setDropdownOpen(!dropdownOpen)} className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition">
+        <button type="button" onClick={() => setDropdownOpen(true)} className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition">
           <span className="text-stone-500">+ Thêm model vào chuỗi</span>
           <ChevronDown className="size-4 text-stone-500" />
         </button>
         {dropdownOpen && (
-          <div className="absolute z-50 mt-1 w-[420px] left-0 max-h-[320px] overflow-y-auto rounded-xl border border-stone-200 bg-white shadow-2xl">
-            {filteredModels.filter(m => !editModels.includes(m.id)).length === 0 ? (
-              <p className="px-4 py-6 text-sm text-stone-400 text-center">Đã thêm tất cả model</p>
-            ) : (
-              filteredModels.filter(m => !editModels.includes(m.id)).map(m => (
-                <button key={m.id} type="button" onClick={() => { addToEdit(m.id); setDropdownOpen(false); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
-                  <span className="text-[13px] font-mono text-stone-800 truncate flex-1">{m.id}</span>
-                  <span className="text-[10px] text-stone-400">{m.owned_by}</span>
-                </button>
-              ))
-            )}
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+            <div className="bg-white rounded-2xl shadow-2xl w-[720px] max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100 shrink-0">
+                <h3 className="text-[15px] font-bold text-slate-900">Thêm Model vào chuỗi</h3>
+                <button onClick={() => setDropdownOpen(false)} className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700"><X className="size-5" /></button>
+              </div>
+              <div className="overflow-y-auto flex-1 p-2">
+                {filteredModels.filter(m => !editModels.includes(m.id)).length === 0 ? (
+                  <p className="px-4 py-8 text-sm text-stone-400 text-center">Đã thêm tất cả model</p>
+                ) : (
+                  filteredModels.filter(m => !editModels.includes(m.id)).map(m => (
+                    <button key={m.id} type="button" onClick={() => { addToEdit(m.id); setDropdownOpen(false); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left rounded-lg transition mb-0.5 hover:bg-stone-50 border border-transparent">
+                      <span className="text-[13px] font-mono text-stone-800 truncate flex-1">{m.id}</span>
+                      <span className="text-[10px] text-stone-400">{m.owned_by}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="px-5 py-3 border-t border-stone-100 shrink-0 text-right">
+                <button onClick={() => setDropdownOpen(false)} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800">Xong</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -287,23 +298,29 @@ export default function CombosPage() {
             ))}
           </div>
           <div className="relative flex-1">
-            <button type="button" onClick={() => setDropdownOpen(!dropdownOpen)} className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition">
-              <span className="text-stone-500">{t("selectModelPlaceholder")}</span><ChevronDown className="size-4 text-stone-500" />
+            <button type="button" onClick={() => setDropdownOpen(true)} className="flex w-full items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 hover:border-stone-600 transition">
+              <span className="text-stone-500">{selectedModels.length > 0 ? `Đã chọn ${selectedModels.length} model` : t("selectModelPlaceholder")}</span><ChevronDown className="size-4 text-stone-500" />
             </button>
             {dropdownOpen && (
-              <>
-                <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setDropdownOpen(false)} />
-                <div className="absolute z-50 mt-1 w-[640px] max-h-[70vh] left-0 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-2xl flex flex-col">
-                  <div className="p-3 border-b border-stone-100 shrink-0">
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+                <div className="bg-white rounded-2xl shadow-2xl w-[720px] max-h-[80vh] flex flex-col">
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100 shrink-0">
+                    <h3 className="text-[15px] font-bold text-slate-900">Chọn Model</h3>
+                    <button onClick={() => setDropdownOpen(false)} className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700"><X className="size-5" /></button>
+                  </div>
+                  <div className="p-3 border-b border-stone-50 shrink-0">
                     <input autoFocus className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none" placeholder="Tìm model... (lọc theo tên)" onChange={(e) => setModelSearch(e.target.value)} />
                   </div>
-                  <div className="overflow-y-auto flex-1">
+                  <div className="overflow-y-auto flex-1 p-2">
                     {availableForSelection.length === 0 ? (
-                      <p className="px-4 py-6 text-sm text-stone-400 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
+                      <p className="px-4 py-8 text-sm text-stone-400 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
                     ) : availableForSelection.map(m => {
                       const CapIcon = CAP_ICONS[m.capability] || MessageSquare;
+                      const isSelected = selectedModels.includes(m.id);
                       return (
-                        <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
+                        <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)}
+                          className={cn("flex w-full items-center gap-3 px-4 py-2.5 text-left rounded-lg transition mb-0.5",
+                            isSelected ? "bg-emerald-50 border border-emerald-200" : "hover:bg-stone-50 border border-transparent")}>
                           <CapIcon className="size-4 shrink-0 text-stone-400" />
                           <div className="flex-1 min-w-0">
                             <span className="text-[13px] font-mono text-stone-800 truncate block">{m.id}</span>
@@ -313,12 +330,17 @@ export default function CombosPage() {
                             const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
                             return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
                           })}
+                          {isSelected && <Check className="size-4 text-emerald-500 shrink-0" />}
                         </button>
                       );
                     })}
                   </div>
+                  <div className="px-5 py-3 border-t border-stone-100 shrink-0 flex justify-between">
+                    <span className="text-xs text-stone-400">{availableForSelection.length} model có sẵn</span>
+                    <button onClick={() => setDropdownOpen(false)} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800">Xong</button>
+                  </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
           <button type="button" onClick={addCombo} disabled={!newName.trim() || selectedModels.length < 2} className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-4 py-2 text-sm font-medium text-stone-950 transition hover:bg-white disabled:opacity-40 shrink-0">
