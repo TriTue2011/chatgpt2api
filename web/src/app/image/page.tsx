@@ -347,6 +347,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
   const [imageSize, setImageSize] = useState("");
+  const [imageModel, setImageModel] = useState("gpt-image-2");
+  const [imageModels, setImageModels] = useState<Array<{ id: string; label: string }>>([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -468,11 +470,28 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     };
 
     void loadQuota();
+    void loadImageModels();
     window.addEventListener("focus", handleFocus);
     return () => {
       window.removeEventListener("focus", handleFocus);
     };
   }, [isAdmin, loadQuota]);
+
+  const loadImageModels = useCallback(async () => {
+    try {
+      const { request } = await import("@/lib/request");
+      const data = await request.get("/api/v1/models-with-capabilities");
+      const models = ((data.data as any)?.models || []) as any[];
+      const imgModels = models
+        .filter((m: any) => (m.capabilities || []).includes("image") && m.enabled !== false)
+        .map((m: any) => ({ id: m.id, label: m.id }));
+      setImageModels(imgModels);
+      // Auto-select first available if current not in list
+      if (imgModels.length > 0 && !imgModels.find(m => m.id === imageModel)) {
+        setImageModel(imgModels[0].id);
+      }
+    } catch { /* non-critical */ }
+  }, []);
 
   useEffect(() => {
     if (!selectedConversation) {
@@ -1088,7 +1107,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const draftTurn: ImageTurn = {
       id: turnId,
       prompt,
-      model: "gpt-image-2",
+      model: imageModel,
       mode: effectiveImageMode,
       referenceImages: effectiveImageMode === "edit" ? referenceImages : [],
       count: parsedCount,
@@ -1224,6 +1243,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             prompt={imagePrompt}
             imageCount={imageCount}
             imageSize={imageSize}
+            model={imageModel}
+            imageModels={imageModels}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
             referenceImages={referenceImages}
@@ -1232,6 +1253,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onPromptChange={setImagePrompt}
             onImageCountChange={(value) => setImageCount(value ? clampImageCount(value) : "")}
             onImageSizeChange={setImageSize}
+            onModelChange={setImageModel}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
             onReferenceImageChange={handleReferenceImageChange}
