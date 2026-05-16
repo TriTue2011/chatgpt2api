@@ -188,7 +188,7 @@ def _check_gemini_status() -> dict:
         # Also check /health for geminiapi-style providers
         clients = 0
         entries = 0
-        if not is_deepseek:
+        if not is_no_v1:
             try:
                 resp = req.get(f"{base_url}/health", timeout=4)
                 if resp.status_code == 200:
