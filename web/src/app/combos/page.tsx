@@ -137,6 +137,7 @@ export default function CombosPage() {
   const [filterCap, setFilterCap] = useState<string>("all");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [editDropdownOpen, setEditDropdownOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
 
   useEffect(() => { loadAll(); }, []);
 
@@ -211,6 +212,7 @@ export default function CombosPage() {
   function removeModelFromSelection(idx: number) { setSelectedModels(selectedModels.filter((_, i) => i !== idx)); }
 
   const filteredModels = allModels.filter(m => {
+    if (modelSearch && !m.id.toLowerCase().includes(modelSearch.toLowerCase())) return false;
     if (filterCap === "all") return true;
     return (m.capabilities || [m.capability]).includes(filterCap);
   });
@@ -289,28 +291,34 @@ export default function CombosPage() {
               <span className="text-stone-500">{t("selectModelPlaceholder")}</span><ChevronDown className="size-4 text-stone-500" />
             </button>
             {dropdownOpen && (
-              <div className="absolute z-50 mt-1 w-[420px] max-h-[420px] left-0 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-2xl">
-                <div className="overflow-y-auto max-h-[420px]">
-                  {availableForSelection.length === 0 ? (
-                    <p className="px-4 py-6 text-sm text-stone-400 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
-                  ) : availableForSelection.map(m => {
-                    const CapIcon = CAP_ICONS[m.capability] || MessageSquare;
-                    return (
-                      <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
-                        <CapIcon className="size-4 shrink-0 text-stone-400" />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-[13px] font-mono text-stone-800 truncate block">{m.id}</span>
-                          <span className="text-[10px] text-stone-400">{m.owned_by}</span>
-                        </div>
-                        {(m.capability_labels || ["Chat"]).map((label: string) => {
-                          const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
-                          return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
-                        })}
-                      </button>
-                    );
-                  })}
+              <>
+                <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setDropdownOpen(false)} />
+                <div className="absolute z-50 mt-1 w-[640px] max-h-[70vh] left-0 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-2xl flex flex-col">
+                  <div className="p-3 border-b border-stone-100 shrink-0">
+                    <input autoFocus className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-stone-400 focus:outline-none" placeholder="Tìm model... (lọc theo tên)" onChange={(e) => setModelSearch(e.target.value)} />
+                  </div>
+                  <div className="overflow-y-auto flex-1">
+                    {availableForSelection.length === 0 ? (
+                      <p className="px-4 py-6 text-sm text-stone-400 text-center">{filterCap !== "all" ? t("noModelsInCategory") : t("allModelsSelected")}</p>
+                    ) : availableForSelection.map(m => {
+                      const CapIcon = CAP_ICONS[m.capability] || MessageSquare;
+                      return (
+                        <button key={m.id} type="button" onClick={() => addModelToSelection(m.id)} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-stone-50 transition border-b border-stone-50 last:border-0">
+                          <CapIcon className="size-4 shrink-0 text-stone-400" />
+                          <div className="flex-1 min-w-0">
+                            <span className="text-[13px] font-mono text-stone-800 truncate block">{m.id}</span>
+                            <span className="text-[10px] text-stone-400">{m.owned_by}</span>
+                          </div>
+                          {(m.capability_labels || ["Chat"]).map((label: string) => {
+                            const capKey = label === "Chat" ? "chat" : label === t("vision") ? "vision" : label === "Phân tích ảnh" ? "vision" : label === "Video" ? "video" : label === "Phân tích video" ? "video" : "image";
+                            return <span key={label} className={cn("text-[10px] px-1.5 py-0.5 rounded border shrink-0", CAP_COLORS[capKey])}>{label}</span>;
+                          })}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
           <button type="button" onClick={addCombo} disabled={!newName.trim() || selectedModels.length < 2} className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-4 py-2 text-sm font-medium text-stone-950 transition hover:bg-white disabled:opacity-40 shrink-0">
