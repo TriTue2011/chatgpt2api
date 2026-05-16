@@ -106,6 +106,21 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
             if content.startswith('/9j/') or content.startswith('iVBOR'):
                 return {"data": [{"b64_json": content}]}
 
+            # Try markdown image syntax: ![alt](url)
+            md_match = re.search(r'!\[[^\]]*\]\(([^)]+)\)', content)
+            if md_match:
+                from services.image_providers._base import url_to_base64
+                try:
+                    img_url = md_match.group(1)
+                    cfg = self._get_provider_config()
+                    if cfg and img_url.startswith("/"):
+                        base = str(cfg.get("base_url") or "").rstrip("/")
+                        img_url = base + img_url
+                    b64 = url_to_base64(img_url)
+                    return {"data": [{"b64_json": b64}]}
+                except Exception:
+                    pass
+
             # If the response contains a URL to an image (absolute or relative)
             url_match = re.search(r'https?://[^\s"\')\]]+\.(?:png|jpg|jpeg|webp)[^\s"\')\]]*', content)
             if not url_match:
