@@ -312,7 +312,91 @@ function AccountsPageContent() {
       const data = await request.get("/api/v1/provider-tree");
       setProviderTree((data.data as any)?.tree || []);
     } catch {
-      // non-critical
+      // Build fallback from health + custom providers
+      await buildFallbackTree();
+    }
+  };
+
+  const buildFallbackTree = async () => {
+    try {
+      const [healthRes, cpRes] = await Promise.all([
+        request.get("/api/v1/health"),
+        request.get("/api/v1/custom-providers"),
+      ]);
+      const health = (healthRes.data as any) || {};
+      const customProviders = (cpRes.data as any)?.custom_providers || {};
+
+      const tree: any[] = [];
+
+      // Built-in providers from health
+      const builtinList: any[] = [];
+      // Gemini from health
+      if (health.gemini?.gemini_api === "available") {
+        builtinList.push({
+          id: "gemini_free",
+          name: "Gemini API",
+          has_key: true,
+          key_preview: "Google AI Studio",
+          base_url: "generativelanguage.googleapis.com",
+          status: "available",
+          models: health.gemini?.models_count || 0,
+        });
+      }
+      if (builtinList.length > 0) {
+        tree.push({
+          provider: "Providers",
+          icon: "cpu",
+          type: "providers",
+          instances: builtinList,
+          total: builtinList.length,
+        });
+      }
+
+      // Custom providers
+      const customList: any[] = [];
+      const instances = health.gemini?.instances || [];
+      for (const inst of instances) {
+        customList.push({
+          id: inst.id,
+          name: inst.name,
+          prefix: inst.prefix,
+          base_url: inst.base_url,
+          port: inst.port,
+          status: inst.status,
+          models: inst.models || inst.clients || 0,
+          error: inst.error,
+        });
+      }
+      // Also add any custom providers not covered by health check
+      for (const [cpId, cpCfg] of Object.entries(customProviders)) {
+        if (!customList.find(c => c.id === cpId)) {
+          const cfg = cpCfg as any;
+          const baseUrl = cfg.base_url || "";
+          customList.push({
+            id: cpId,
+            name: cfg.name || cpId,
+            prefix: cfg.prefix || cpId,
+            base_url: baseUrl,
+            port: baseUrl.split(":").pop() || "—",
+            status: "unknown",
+            models: 0,
+            error: null,
+          });
+        }
+      }
+      if (customList.length > 0) {
+        tree.push({
+          provider: "Custom APIs",
+          icon: "server",
+          type: "custom",
+          instances: customList,
+          total: customList.length,
+        });
+      }
+
+      setProviderTree(tree);
+    } catch {
+      // silent
     }
   };
 
