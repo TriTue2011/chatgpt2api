@@ -117,7 +117,7 @@ class QuotaWatcher:
             # Determine next check time
             next_check = self._next_check_time(account, now)
 
-            item = QuotaCheckItem(next_check_at=next_check, account_id=acc_id)
+            item = QuotaCheckItem(next_check_at=next_check, account_id=acc_id, provider="chatgpt")
             heapq.heappush(self._heap, item)
             self._index[acc_id] = item
             count += 1

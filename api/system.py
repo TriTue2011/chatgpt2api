@@ -566,55 +566,17 @@ def create_router(app_version: str) -> APIRouter:
 
     @router.get("/api/v1/usage/stats")
     async def usage_stats(authorization: str | None = Header(default=None)):
-        """Usage statistics: total requests, tokens, costs (9router-compatible)."""
+        """Usage statistics: total requests, tokens, costs from actual usage log."""
         require_admin(authorization)
-        from services.account_service import account_service
-        accounts = account_service.list_accounts()
-
-        total_success = sum(int(a.get("success") or 0) for a in accounts)
-        total_fail = sum(int(a.get("fail") or 0) for a in accounts)
-        total_requests = total_success + total_fail
-
-        # Estimate tokens: ~800 prompt + ~400 completion per request (rough avg)
-        avg_prompt_tokens = 800
-        avg_completion_tokens = 400
-        total_prompt_tokens = total_requests * avg_prompt_tokens
-        total_completion_tokens = total_requests * avg_completion_tokens
-
-        # Estimate cost: ~$0.002/1K prompt + ~$0.006/1K completion (GPT-4o-mini avg)
-        total_cost = (total_prompt_tokens / 1000) * 0.002 + (total_completion_tokens / 1000) * 0.006
-
-        return {
-            "totalRequests": total_requests,
-            "totalPromptTokens": total_prompt_tokens,
-            "totalCompletionTokens": total_completion_tokens,
-            "totalTokens": total_prompt_tokens + total_completion_tokens,
-            "totalCost": round(total_cost, 2),
-            "successRate": round((total_success / total_requests * 100), 1) if total_requests > 0 else 0,
-            "activeAccounts": sum(1 for a in accounts if a.get("status") == "active"),
-            "totalAccounts": len(accounts),
-        }
+        from services.usage_tracker import get_usage_stats
+        return get_usage_stats()
 
     @router.get("/api/v1/usage/recent")
     async def recent_requests(authorization: str | None = Header(default=None)):
-        """Recent API requests from log."""
+        """Recent API requests from usage log."""
         require_admin(authorization)
-        try:
-            items = log_service.list(type="call", limit=25)
-            result = []
-            for item in items:
-                d = item.get("detail") or {}
-                result.append({
-                    "model": d.get("model") or "unknown",
-                    "endpoint": d.get("endpoint") or "",
-                    "status": d.get("status") or "success",
-                    "duration_ms": d.get("duration_ms") or 0,
-                    "started_at": d.get("started_at") or "",
-                    "error": d.get("error") or "",
-                })
-            return {"requests": result}
-        except Exception:
-            return {"requests": []}
+        from services.usage_tracker import get_recent_requests
+        return {"requests": get_recent_requests()}
 
     @router.get("/api/v1/providers")
     async def list_providers(authorization: str | None = Header(default=None)):

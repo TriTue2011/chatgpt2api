@@ -255,3 +255,24 @@ class LoggedCall:
         if collected_urls:
             detail["urls"] = list(dict.fromkeys(collected_urls))
         log_service.add(LOG_TYPE_CALL, f"{self.summary}{suffix}", detail)
+
+        # Also log to usage tracker for dashboard stats
+        try:
+            from services.usage_tracker import log_usage
+            prompt_tokens = 0
+            completion_tokens = 0
+            if isinstance(result, dict):
+                usage = result.get("usage") or {}
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+            log_usage(
+                model=self.model,
+                endpoint=self.endpoint,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                duration_ms=int((time.time() - self.started) * 1000),
+                status=status,
+                error=error,
+            )
+        except Exception:
+            pass
