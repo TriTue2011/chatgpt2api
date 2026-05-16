@@ -232,11 +232,6 @@ def _is_model_enabled(model_id: str, enabled_by_provider: dict) -> bool:
     # Core models + image models always enabled
     if model_id in {"cx/auto", "oc/auto", "chatgpt/auto", "gemini_free/auto", "gpt-image-2", "codex-gpt-image-2"}:
         return True
-    # Extract provider prefix from model ID (e.g. "geminiapi1/gemini-3-flash" → "geminiapi1")
-    provider = model_id.split("/")[0] if "/" in model_id else ""
-    # If this provider has no filtering configured, all its models are enabled
-    if provider and provider not in enabled_by_provider:
-        return True
     for provider_models in enabled_by_provider.values():
         if isinstance(provider_models, list) and model_id in provider_models:
             return True
