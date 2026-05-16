@@ -265,6 +265,9 @@ class LoggedCall:
                 usage = result.get("usage") or {}
                 prompt_tokens = usage.get("prompt_tokens", 0)
                 completion_tokens = usage.get("completion_tokens", 0)
+            # Fallback: estimate prompt tokens from request text if no usage data
+            if prompt_tokens == 0 and completion_tokens == 0 and self.request_text:
+                prompt_tokens = max(1, len(self.request_text) // 4)  # rough: ~4 chars per token
             log_usage(
                 model=self.model,
                 endpoint=self.endpoint,
