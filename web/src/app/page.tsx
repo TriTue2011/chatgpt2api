@@ -146,14 +146,10 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [router, loadHealth]);
 
-  if (!session) return null;
-
   const gemini = (health as any)?.gemini || {};
   const geminiInstances: any[] = gemini.instances || [];
   const customOnline = geminiInstances.filter((i: any) => i.status === "available" || i.status === "partial").length;
   const { nodes, edges } = useMemo(() => buildLayout(geminiInstances), [geminiInstances]);
-
-  // Chart data
   const chartData = useMemo(() => {
     if (!usage?.totalRequests) return [];
     const d = [];
@@ -164,6 +160,8 @@ export default function DashboardPage() {
     }
     return d;
   }, [usage]);
+
+  if (!session) return null;
 
   if (!mounted) {
     return (
