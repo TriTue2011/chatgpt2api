@@ -221,9 +221,17 @@ class LoggedCall:
     def stream(self, items):
         urls: list[str] = []
         failed = False
+        self._stream_content_len = 0
         try:
             for item in items:
                 urls.extend(_collect_urls(item))
+                # Collect streaming content length for token estimation
+                if isinstance(item, dict):
+                    choices = item.get("choices") or []
+                    for c in choices:
+                        delta = c.get("delta") or {}
+                        content = delta.get("content") or ""
+                        self._stream_content_len += len(content)
                 yield item
         except Exception as exc:
             failed = True
@@ -265,9 +273,13 @@ class LoggedCall:
                 usage = result.get("usage") or {}
                 prompt_tokens = usage.get("prompt_tokens", 0)
                 completion_tokens = usage.get("completion_tokens", 0)
-            # Fallback: estimate prompt tokens from request text if no usage data
-            if prompt_tokens == 0 and completion_tokens == 0 and self.request_text:
-                prompt_tokens = max(1, len(self.request_text) // 4)  # rough: ~4 chars per token
+            # Fallback: estimate from request/stream content
+            if prompt_tokens == 0 and self.request_text:
+                prompt_tokens = max(1, len(self.request_text) // 4)
+            if completion_tokens == 0:
+                stream_len = getattr(self, "_stream_content_len", 0)
+                if stream_len > 0:
+                    completion_tokens = max(1, stream_len // 4)
             log_usage(
                 model=self.model,
                 endpoint=self.endpoint,
