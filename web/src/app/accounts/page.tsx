@@ -365,9 +365,34 @@ function AccountsPageContent() {
       const active = items.filter(a => a.status === "active").length;
       const limited = items.filter(a => a.status === "limited").length;
       const error = items.filter(a => a.status === "error").length;
-      return { type, items, active, limited, error };
+      return { key: type, label: type, count: items.length, items, active, limited, error };
     });
   }, [filteredAccounts]);
+
+  // Merge filtered accounts + provider tree for unified tree view
+  const mergedTree = useMemo(() => {
+    const tree: any[] = [];
+
+    // ChatGPT branch from filtered accounts
+    if (groupedAccounts.length > 0) {
+      tree.push({
+        provider: "ChatGPT",
+        icon: "chatgpt",
+        type: "accounts",
+        groups: groupedAccounts,
+        total: filteredAccounts.length,
+      });
+    }
+
+    // Providers + Custom APIs from backend tree
+    for (const branch of providerTree) {
+      if (branch.type !== "accounts") {
+        tree.push(branch);
+      }
+    }
+
+    return tree;
+  }, [groupedAccounts, filteredAccounts, providerTree]);
 
   function toggleGroup(type: string) {
     setExpandedGroups(prev => {
@@ -700,7 +725,7 @@ function AccountsPageContent() {
         {/* 3-Level Provider Tree */}
         {!isLoading && (
           <div className="space-y-2">
-            {providerTree.map((provider: any) => {
+            {mergedTree.map((provider: any) => {
               const isProviderOpen = expandedProviders.has(provider.provider);
               const tintClass =
                 provider.provider === "ChatGPT" ? "card-tint-emerald" :
@@ -779,7 +804,7 @@ function AccountsPageContent() {
                             </button>
 
                             {/* Level 3: Individual accounts */}
-                            {isGroupOpen && group.accounts?.map((account: Account) => {
+                            {isGroupOpen && group.items?.map((account: Account) => {
                               const accountExpanded = expandedId === account.access_token;
                               const status = statusMeta[account.status];
                               const StatusIcon = status.icon;
@@ -929,7 +954,7 @@ function AccountsPageContent() {
                 </div>
               );
             })}
-            {providerTree.length === 0 && (
+            {mergedTree.length === 0 && (
               <div className="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center card-3d card-tint-slate rounded-[16px]">
                 <Search className="size-5 text-slate-400" />
                 <p className="text-sm text-slate-500">Chưa có dữ liệu provider nào</p>
