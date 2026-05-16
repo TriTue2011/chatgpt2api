@@ -138,3 +138,31 @@ def get_recent_requests(limit: int = 25) -> list[dict]:
     except Exception:
         pass
     return result
+
+
+def get_active_providers(hours: int = 24) -> list[str]:
+    """Return list of model prefixes that have been used in the last N hours.
+    Used to filter topology to show only actively used providers."""
+    if not USAGE_LOG_PATH.exists():
+        return []
+
+    cutoff = time.time() - hours * 3600
+    used_models: set[str] = set()
+    try:
+        lines = USAGE_LOG_PATH.read_text(encoding="utf-8").splitlines()
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("ts", 0) < cutoff:
+                continue
+            model = entry.get("model", "")
+            if not model:
+                continue
+            # Extract provider prefix (e.g., "chatgpt/auto" → "chatgpt")
+            prefix = model.split("/")[0] if "/" in model else model
+            used_models.add(prefix)
+    except Exception:
+        pass
+    return sorted(used_models)

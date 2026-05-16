@@ -568,8 +568,10 @@ def create_router(app_version: str) -> APIRouter:
     async def usage_stats(authorization: str | None = Header(default=None)):
         """Usage statistics: total requests, tokens, costs from actual usage log."""
         require_admin(authorization)
-        from services.usage_tracker import get_usage_stats
-        return get_usage_stats()
+        from services.usage_tracker import get_usage_stats, get_active_providers
+        stats = get_usage_stats()
+        stats["activeProviders"] = get_active_providers()
+        return stats
 
     @router.get("/api/v1/usage/recent")
     async def recent_requests(authorization: str | None = Header(default=None)):
