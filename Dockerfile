@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     libpq-dev \
     gcc \
+    ca-certificates \
     openssl \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -41,6 +42,8 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
+# Ensure curl_cffi with impersonation support (includes libcurl-impersonate)
+RUN uv pip install --system curl-cffi --force-reinstall
 
 COPY main.py ./
 COPY config.json ./
