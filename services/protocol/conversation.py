@@ -354,6 +354,10 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
             if role == "developer":
                 role = "system"
 
+            # Map 'tool_result' role (HA format) to 'tool' first
+            if role == "tool_result":
+                role = "tool"
+
             # Map 'tool' role to 'user' for Web ChatGPT visibility
             # Preserve tool_call_id in the text so the model understands context
             if role == "tool":
