@@ -205,14 +205,27 @@ class CustomOpenAIProvider:
             if resp.status_code >= 400:
                 error_text = ""
                 try:
-                    error_text = resp.text[:500]
+                    # Try to read error body — may fail for streaming responses
+                    if not stream:
+                        error_text = (resp.text or "")[:500]
+                    else:
+                        raw = b""
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk:
+                                raw += chunk if isinstance(chunk, bytes) else chunk.encode()
+                                if len(raw) > 5000:
+                                    break
+                        error_text = raw.decode("utf-8", errors="ignore")[:500] if raw else ""
                 except Exception:
                     pass
+                # Also log response headers for debugging
+                resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
                 logger.error({
                     "event": "custom_provider_error",
                     "provider": self.name,
                     "status": resp.status_code,
                     "error": error_text,
+                    "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
                 })
                 raise RuntimeError(f"[{self.name}] Error {resp.status_code}: {error_text[:200]}")
 
