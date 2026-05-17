@@ -196,6 +196,7 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     """RTK-inspired smart message compression.
 
     Strategies (ordered by priority):
+    0. Deduplicate consecutive identical tool results (HA sends duplicates)
     1. Compress tool result content (keep head+tail, not just truncate)
     2. Deduplicate repeated assistant messages
     3. Drop oldest non-system messages
@@ -203,6 +204,18 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     5. Compress last user message (head+tail)
     """
     import copy
+
+    # Step 0: Deduplicate consecutive identical tool/user messages
+    deduped = []
+    for msg in messages:
+        if deduped and msg.get("role") in ("tool", "user") and msg.get("tool_call_id"):
+            prev = deduped[-1]
+            if (prev.get("role") == msg.get("role") and
+                prev.get("tool_call_id") == msg.get("tool_call_id") and
+                prev.get("content") == msg.get("content")):
+                continue  # Skip duplicate
+        deduped.append(msg)
+    messages = deduped
 
     payload = json.dumps(messages, ensure_ascii=False, default=str)
     if len(payload.encode("utf-8")) <= max_bytes:
