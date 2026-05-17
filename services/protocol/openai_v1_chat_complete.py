@@ -286,7 +286,7 @@ def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     """Undo normalize_messages tool→user conversion for OpenAI API compatibility."""
     import re
     result: list[dict[str, Any]] = []
-    tool_id_pattern = re.compile(r'\[tool_call_id:\s*([^\]]+)\]')
+    tool_id_pattern = re.compile(r'\[toolu_vrtx_([^\]]+)\]')
 
     for msg in messages:
         if msg.get("role") != "user":

@@ -312,6 +312,18 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
             })
             raise  # Re-raise to trigger combo fallback
 
+    # For chatgpt/ DALL-E: skip if token is api.openai.com (no image gen on OpenAI API)
+    if route.provider == "chatgpt":
+        from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API
+        token = ""
+        try:
+            from services.account_service import account_service as _acct
+            token = _acct.get_text_access_token()
+        except Exception:
+            pass
+        if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
+            raise RuntimeError("api.openai.com token does not support DALL-E image generation")
+
     # Default: use existing ChatGPT DALL-E flow (unchanged)
     outputs = stream_image_outputs_with_pool(ConversationRequest(
         prompt=prompt,
