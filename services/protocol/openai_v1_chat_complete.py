@@ -285,25 +285,21 @@ def _dispatch(route, messages, tools, tool_choice, body):
 def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Undo normalize_messages tool→user conversion for OpenAI API compatibility.
 
-    normalize_messages converts: role=tool → role=user, content="[Tool Result] name (id: xxx): result"
-    OpenAI API needs: role=tool, tool_call_id=xxx, content=result
+    normalize_messages preserves tool_call_id field even when converting to user role.
+    We check for that field to restore proper tool messages.
     """
     import re
     result: list[dict[str, Any]] = []
-    tool_pattern = re.compile(r'^\[Tool Result\](?:\s+\S+)?\s*\(id:\s*([^)]+)\):\s*')
     stop_pattern = re.compile(r'\n\n\[STOP:.*$', re.DOTALL)
 
     for msg in messages:
-        if msg.get("role") != "user":
-            result.append(msg)
-            continue
-        content = str(msg.get("content") or "")
-        m = tool_pattern.match(content)
-        if m:
-            call_id = m.group(1).strip()
-            clean = content[m.end():].strip()
-            clean = stop_pattern.sub("", clean).strip()
-            result.append({"role": "tool", "tool_call_id": call_id, "content": clean})
+        tool_call_id = str(msg.get("tool_call_id") or "")
+        if msg.get("role") == "user" and tool_call_id:
+            # This was originally a tool message — restore it
+            content = str(msg.get("content") or "")
+            # Strip [STOP:...] failure suffix if present
+            content = stop_pattern.sub("", content).strip()
+            result.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
         else:
             result.append(msg)
     return result
