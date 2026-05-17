@@ -205,15 +205,15 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     """
     import copy
 
-    # Step 0: Deduplicate consecutive identical tool/user messages
+    # Step 0: Deduplicate consecutive tool messages by tool_call_id (HA sends twice)
+    seen_tool_ids = set()
     deduped = []
     for msg in messages:
-        if deduped and msg.get("role") in ("tool", "user") and msg.get("tool_call_id"):
-            prev = deduped[-1]
-            if (prev.get("role") == msg.get("role") and
-                prev.get("tool_call_id") == msg.get("tool_call_id") and
-                prev.get("content") == msg.get("content")):
-                continue  # Skip duplicate
+        tid = msg.get("tool_call_id") or ""
+        if tid and msg.get("role") in ("tool", "tool_result", "user"):
+            if tid in seen_tool_ids:
+                continue  # Skip duplicate tool result
+            seen_tool_ids.add(tid)
         deduped.append(msg)
     messages = deduped
 
