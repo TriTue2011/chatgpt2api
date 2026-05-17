@@ -16,6 +16,8 @@ import {
   ExternalLink,
   LoaderCircle,
   Pencil,
+  Power,
+  PowerOff,
   RefreshCw,
   Search,
   Server,
@@ -537,6 +539,18 @@ function AccountsPageContent() {
     setEditStatus(account.status);
   };
 
+  const handleToggleAccount = async (account: Account) => {
+    const newStatus: AccountStatus = account.status === "disabled" ? "active" : "disabled";
+    try {
+      const data = await updateAccount(account.access_token, { status: newStatus });
+      setAccounts(data.items);
+      setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      toast.success(newStatus === "disabled" ? "Đã vô hiệu hóa tài khoản" : "Đã kích hoạt tài khoản");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Thay đổi trạng thái thất bại");
+    }
+  };
+
   const handleUpdateAccount = async () => {
     if (!editingAccount) {
       return;
@@ -898,6 +912,13 @@ function AccountsPageContent() {
                                     </div>
                                     <div className="flex items-center gap-1 text-slate-400" onClick={e => e.stopPropagation()}>
                                       <button className="rounded p-0.5 hover:bg-slate-100 hover:text-slate-700" onClick={() => openEditDialog(account)}><Pencil className="size-3" /></button>
+                                      <button
+                                        className="rounded p-0.5 hover:bg-amber-50 hover:text-amber-600"
+                                        onClick={() => void handleToggleAccount(account)}
+                                        title={account.status === "disabled" ? "Kích hoạt" : "Vô hiệu hóa"}
+                                      >
+                                        {account.status === "disabled" ? <Power className="size-3" /> : <PowerOff className="size-3" />}
+                                      </button>
                                       <button className="rounded p-0.5 hover:bg-rose-50 hover:text-rose-500" onClick={() => void handleDeleteTokens([account.access_token])}><Trash2 className="size-3" /></button>
                                     </div>
                                   </div>
