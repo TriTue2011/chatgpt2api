@@ -29,16 +29,29 @@ FALLBACK_MODELS = {
     ],
     "openai_oauth": [
         "cx/auto",
-        "cx/gpt-5.3-codex",
-        "cx/gpt-4.1",
-        "cx/gpt-4.1-mini",
-        "cx/gpt-4.1-nano",
-        "cx/gpt-4o",
-        "cx/gpt-4o-mini",
-        "cx/o3",
-        "cx/o3-mini",
-        "cx/o4-mini",
-        "cx/gpt-5",
+        # GPT 5.5
+        "cx/gpt-5.5", "cx/gpt-5.5-review",
+        # GPT 5.4
+        "cx/gpt-5.4", "cx/gpt-5.4-review",
+        # GPT 5.3 Codex + effort variants
+        "cx/gpt-5.3-codex", "cx/gpt-5.3-codex-review",
+        "cx/gpt-5.3-codex-xhigh", "cx/gpt-5.3-codex-xhigh-review",
+        "cx/gpt-5.3-codex-high", "cx/gpt-5.3-codex-high-review",
+        "cx/gpt-5.3-codex-low", "cx/gpt-5.3-codex-low-review",
+        "cx/gpt-5.3-codex-none", "cx/gpt-5.3-codex-none-review",
+        "cx/gpt-5.3-codex-spark", "cx/gpt-5.3-codex-spark-review",
+        # GPT 5.2 Codex
+        "cx/gpt-5.2-codex", "cx/gpt-5.2-codex-review",
+        "cx/gpt-5.2", "cx/gpt-5.2-review",
+        # GPT 5.1 Codex + variants
+        "cx/gpt-5.1-codex", "cx/gpt-5.1-codex-review",
+        "cx/gpt-5.1-codex-mini", "cx/gpt-5.1-codex-mini-review",
+        "cx/gpt-5.1-codex-mini-high", "cx/gpt-5.1-codex-mini-high-review",
+        "cx/gpt-5.1-codex-max", "cx/gpt-5.1-codex-max-review",
+        "cx/gpt-5.1", "cx/gpt-5.1-review",
+        # GPT 5 Codex
+        "cx/gpt-5-codex", "cx/gpt-5-codex-review",
+        "cx/gpt-5-codex-mini", "cx/gpt-5-codex-mini-review",
     ],
     "nvidia_nim": [
         "nv/auto",
@@ -216,8 +229,11 @@ def _fetch_nvidia_models() -> set[str]:
 
 
 def _fetch_codex_models() -> set[str]:
-    """Fetch models from Codex OAuth tokens (chatgpt.com/backend-api/models) → cx/ prefix."""
+    """Fetch models from Codex OAuth tokens + hardcoded 9router models."""
     from services.openai_backend_api import OpenAIBackendAPI
+
+    # Always include hardcoded Codex models (not returned by API)
+    models = set(_apply_fallback("openai_oauth"))
 
     codex_tokens: list[str] = []
     with account_service._lock:
@@ -231,11 +247,11 @@ def _fetch_codex_models() -> set[str]:
                 codex_tokens.append(token)
 
     if not codex_tokens:
-        logger.info({"event": "list_models_codex_skip", "reason": "no_codex_tokens"})
-        return set()
+        logger.info({"event": "list_models_codex_skip", "reason": "no_codex_tokens",
+                      "hardcoded_count": len(models)})
+        return models
 
-    models = set()
-    for token in codex_tokens[:3]:  # Try up to 3 tokens
+    for token in codex_tokens[:3]:
         try:
             api = OpenAIBackendAPI(access_token=token)
             result = api.list_models()
@@ -243,10 +259,10 @@ def _fetch_codex_models() -> set[str]:
                 slug = str(item.get("id") or "").strip()
                 if slug:
                     models.add(f"cx/{slug}")
-            if models:
-                models.add("cx/auto")
-                logger.info({"event": "list_models_codex_fetched", "count": len(models)})
-                return models
+            logger.info({"event": "list_models_codex_fetched",
+                          "api_count": len(models) - len(_apply_fallback("openai_oauth")),
+                          "total": len(models)})
+            return models
         except Exception as exc:
             logger.warning({"event": "list_models_codex_token_failed", "error": str(exc)})
             continue
