@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { History, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { History, LoaderCircle, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { ImageComposer } from "@/app/image/components/image-composer";
