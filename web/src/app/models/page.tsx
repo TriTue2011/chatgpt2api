@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, RefreshCw, Save, Sparkles } from "lucide-react";
+import { Check, ChevronDown, RefreshCw, Save, Sparkles } from "lucide-react";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +29,7 @@ export default function ModelsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(Object.keys(PROVIDER_LABELS)));
 
   useEffect(() => {
     loadData();
@@ -136,6 +137,15 @@ export default function ModelsPage() {
     });
   }
 
+  function toggleCollapse(provider: string) {
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(provider)) next.delete(provider);
+      else next.add(provider);
+      return next;
+    });
+  }
+
   const providers = Object.keys(available);
 
   if (loading) {
@@ -237,8 +247,16 @@ export default function ModelsPage() {
               )}
             >
               <div className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-indigo-500 to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-              {/* Provider header */}
-              <div className="flex items-center gap-3 px-6 py-4 border-b border-black/[0.04] bg-slate-50/50">
+              {/* Provider header — click to expand */}
+              <button
+                type="button"
+                onClick={() => toggleCollapse(provider)}
+                className="flex items-center gap-3 px-6 py-4 border-b border-black/[0.04] bg-slate-50/50 w-full text-left hover:bg-slate-100/50 transition-colors"
+              >
+                <ChevronDown className={cn(
+                  "size-4 text-slate-400 transition-transform",
+                  !collapsed.has(provider) && "rotate-180"
+                )} />
                 <span
                   className="size-3 rounded-full shrink-0 shadow-sm"
                   style={{ backgroundColor: meta.color }}
@@ -252,9 +270,10 @@ export default function ModelsPage() {
                     Mặc định: <span className="text-slate-900 font-mono font-medium">{defaultModel.replace(provider + "/", "")}</span>
                   </span>
                 )}
-              </div>
+              </button>
 
-              {/* Model list */}
+              {/* Model list — collapsible */}
+              {!collapsed.has(provider) && (
               <div className="p-5">
                 {/* Core models first */}
                 {coreModels.length > 0 && (
@@ -357,6 +376,7 @@ export default function ModelsPage() {
                   </div>
                 )}
               </div>
+              )} {/* end collapsed */}
             </div>
           );
         })}
