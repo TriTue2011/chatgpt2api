@@ -98,8 +98,9 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
                 edit_body = dict(body)
                 edit_body["images"] = images  # raw bytes from upload
                 req_body = adapter.build_body(route.model, edit_body)
+                headers = adapter.build_headers(credentials, req_body, route.model, body)
 
-                resp = cffi_requests.post(url, json=req_body, timeout=300)
+                resp = cffi_requests.post(url, headers=headers, json=req_body, timeout=300)
 
                 if resp.status_code >= 400:
                     error_text = ""
