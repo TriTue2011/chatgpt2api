@@ -216,6 +216,30 @@ class CodexOAuthProvider:
 
         # Codex requires these four to be set
         model = model if model and model != "auto" else CODEX_DEFAULT_MODEL
+
+        # Parse 9router effort/review suffixes from model name
+        # e.g. gpt-5.3-codex-xhigh-review → model: gpt-5.3-codex, effort: xhigh, review: True
+        _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none", "spark"}
+        _suffixes = model.split("-")
+        _effort = None
+        _review = False
+        _seen: list[str] = []
+        for _s in reversed(_suffixes):
+            if _s == "review":
+                _review = True
+            elif _s in _EFFORT_LEVELS and _effort is None:
+                _effort = _s
+            else:
+                _seen.insert(0, _s)
+        if _effort or _review:
+            model = "-".join(_seen)
+            if _effort and _effort != "spark":
+                body["reasoning"] = {"effort": _effort}
+            if _review:
+                body["include"] = body.get("include", []) or []
+                if isinstance(body["include"], list):
+                    body["include"].append("reasoning")
+
         body["model"] = model
         body["store"] = False
         body["stream"] = True  # Codex requires streaming

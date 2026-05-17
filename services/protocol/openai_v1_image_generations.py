@@ -32,21 +32,11 @@ def _needs_translation(text: str) -> bool:
 
 
 def _translate_prompt(prompt: str) -> str:
-    """Translate non-English prompt → English using Gemini Free."""
+    """Translate non-English prompt → English using ChatGPT (Codex OAuth)."""
     if not _needs_translation(prompt):
         return prompt
     if prompt in _translation_cache:
         return _translation_cache[prompt]
-
-    cfg = config.data.get("providers") or {}
-    gemini_cfg = cfg.get("gemini_free") or {}
-    api_key = str(gemini_cfg.get("api_key") or "").strip()
-    if not api_key:
-        keys = gemini_cfg.get("api_keys") or []
-        if isinstance(keys, list) and keys:
-            api_key = str(keys[0]).strip()
-    if not api_key:
-        return prompt
 
     translate_prompt = (
         "Translate the following image generation prompt to English. "
@@ -56,28 +46,61 @@ def _translate_prompt(prompt: str) -> str:
         + prompt
     )
 
+    # Try ChatGPT via Codex OAuth
     try:
-        resp = cffi_requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": translate_prompt}]}],
-                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
-            },
-            timeout=15,
+        from services.providers.openai_oauth import codex_oauth
+
+        token = codex_oauth.get_token_for_request()
+        result = codex_oauth.chat_completions(
+            access_token=token,
+            messages=[{"role": "user", "content": translate_prompt}],
+            model="gpt-5.3-codex",
+            stream=False,
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            candidates = data.get("candidates") or []
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                translated = "".join(p.get("text", "") for p in parts).strip()
+        if isinstance(result, dict):
+            choices = result.get("choices") or []
+            if choices:
+                translated = str(choices[0].get("message", {}).get("content", "")).strip()
                 if translated:
-                    logger.info({"event": "prompt_translated", "original": prompt[:120], "english": translated[:250]})
+                    logger.info({"event": "prompt_translated", "source": "chatgpt",
+                                  "original": prompt[:120], "english": translated[:250]})
                     _translation_cache[prompt] = translated
                     return translated
     except Exception as exc:
-        logger.warning({"event": "translation_error", "error": str(exc)})
+        logger.warning({"event": "translation_chatgpt_failed", "error": str(exc)[:100]})
+
+    # Fallback: Gemini Free
+    cfg = config.data.get("providers") or {}
+    gemini_cfg = cfg.get("gemini_free") or {}
+    api_key = str(gemini_cfg.get("api_key") or "").strip()
+    if not api_key:
+        keys = gemini_cfg.get("api_keys") or []
+        if isinstance(keys, list) and keys:
+            api_key = str(keys[0]).strip()
+    if api_key:
+        try:
+            resp = cffi_requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": translate_prompt}]}],
+                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+                },
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates") or []
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    translated = "".join(p.get("text", "") for p in parts).strip()
+                    if translated:
+                        logger.info({"event": "prompt_translated", "source": "gemini",
+                                      "original": prompt[:120], "english": translated[:250]})
+                        _translation_cache[prompt] = translated
+                        return translated
+        except Exception as exc:
+            logger.warning({"event": "translation_gemini_failed", "error": str(exc)[:100]})
 
     return prompt
 
