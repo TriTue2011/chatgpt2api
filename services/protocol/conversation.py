@@ -177,61 +177,114 @@ def message_text(content: Any) -> str:
 # ChatGPT backend limit is ~100 KB; we use 80 KB to be safe.
 _MAX_PAYLOAD_BYTES = 80_000
 
+# RTK-inspired compression thresholds
+_RTK_TOOL_RESULT_MAX = 600   # Keep first+last chars of tool results
+_RTK_ASSISTANT_DEDUP = True   # Collapse repeated assistant content
+_RTK_SYSTEM_ENTITY_TRIM = 0.7  # Keep 70% of system entity list when truncating
 
-def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop oldest non-system messages when the serialized payload exceeds the size limit.
 
-    This prevents HTTP 413 (Request Entity Too Large) errors from the ChatGPT backend.
-    Home Assistant accumulates the entire conversation history (including tool call results)
-    across multiple iterations, which can easily exceed the limit.
+def _rtk_compress_tool_result(content: str) -> str:
+    """RTK-style: compress large tool call results (keep head + tail)."""
+    if len(content) <= _RTK_TOOL_RESULT_MAX:
+        return content
+    head = content[:_RTK_TOOL_RESULT_MAX // 2]
+    tail = content[-(_RTK_TOOL_RESULT_MAX // 2):]
+    return f"{head}\n\n[... {len(content) - _RTK_TOOL_RESULT_MAX} chars compressed ...]\n\n{tail}"
 
-    Strategy:
-    1. Keep all system messages (they define behavior and tools).
-    2. Drop oldest non-system messages until under the threshold.
-    3. If still over limit, truncate the system message (usually HA entity list).
-    4. If still over limit, truncate the last user message content as a last resort.
+
+def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX_PAYLOAD_BYTES) -> list[dict[str, Any]]:
+    """RTK-inspired smart message compression.
+
+    Strategies (ordered by priority):
+    1. Compress tool result content (keep head+tail, not just truncate)
+    2. Deduplicate repeated assistant messages
+    3. Drop oldest non-system messages
+    4. Truncate system message (keep structure)
+    5. Compress last user message (head+tail)
     """
+    import copy
+
     payload = json.dumps(messages, ensure_ascii=False, default=str)
-    if len(payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+    if len(payload.encode("utf-8")) <= max_bytes:
         return messages
 
-    # Separate system messages from the rest
-    system_msgs = [m for m in messages if m.get("role") == "system"]
-    other_msgs = [m for m in messages if m.get("role") != "system"]
+    # Deep copy to avoid mutating original
+    msgs = copy.deepcopy(messages)
 
-    # Drop oldest non-system messages until under limit
+    # Step 1: Compress large tool results (RTK-style: keep head+tail)
+    for msg in msgs:
+        if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+            msg["content"] = _rtk_compress_tool_result(msg["content"])
+        # Also compress large user messages with data dumps
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            content = msg["content"]
+            if len(content) > 3000:
+                head = content[:1000]
+                tail = content[-1000:]
+                msg["content"] = f"{head}\n\n[... {len(content) - 2000} chars compressed ...]\n\n{tail}"
+
+    payload = json.dumps(msgs, ensure_ascii=False, default=str)
+    if len(payload.encode("utf-8")) <= max_bytes:
+        return msgs
+
+    # Step 2: Deduplicate repeated assistant messages
+    if _RTK_ASSISTANT_DEDUP:
+        seen: dict[str, int] = {}
+        for i, msg in enumerate(msgs):
+            if msg.get("role") == "assistant" and isinstance(msg.get("content"), str):
+                key = msg["content"][:80]
+                if key in seen:
+                    msgs[seen[key]]["content"] += f" [repeated {i - seen[key]}x]"
+                    msg["content"] = "[see above]"
+                else:
+                    seen[key] = i
+        # Remove placeholder messages
+        msgs = [m for m in msgs if not (m.get("role") == "assistant" and m.get("content") == "[see above]")]
+
+    payload = json.dumps(msgs, ensure_ascii=False, default=str)
+    if len(payload.encode("utf-8")) <= max_bytes:
+        return msgs
+
+    # Step 3: Drop oldest non-system messages
+    system_msgs = [m for m in msgs if m.get("role") == "system"]
+    other_msgs = [m for m in msgs if m.get("role") != "system"]
     while other_msgs:
         test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
-        if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+        if len(test_payload.encode("utf-8")) <= max_bytes:
             break
         other_msgs.pop(0)
 
+    # Step 4: Truncate system message (keep first 70% + last 30%)
     test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+    if len(test_payload.encode("utf-8")) > max_bytes and system_msgs:
+        last_sys = system_msgs[-1]
+        if isinstance(last_sys.get("content"), str):
+            content = last_sys["content"]
+            excess = len(test_payload.encode("utf-8")) - max_bytes
+            keep = max(500, int(len(content) * _RTK_SYSTEM_ENTITY_TRIM))
+            allowed = max(300, len(content) - excess - 200)
+            if len(content) > min(keep, allowed):
+                cutoff = min(keep, allowed)
+                last_sys["content"] = content[:cutoff] + "\n\n[... System entities truncated ...]"
 
-    # If still over limit, truncate the last system message (typically the HA entity list)
-    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
-        if system_msgs:
-            last_sys = system_msgs[-1]
-            if isinstance(last_sys.get("content"), str):
-                content = last_sys["content"]
-                excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
-                allowed_len = max(500, len(content) - excess - 200)
-                if len(content) > allowed_len:
-                    last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
-                    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
-
-    # If still over limit, truncate last user content
-    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+    # Step 5: Compress last user message (head+tail)
+    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+    if len(test_payload.encode("utf-8")) > max_bytes and other_msgs:
         last_user = other_msgs[-1]
         if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
             content = last_user["content"]
-            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
-            allowed_len = max(500, len(content) - excess - 200)
-            if len(content) > allowed_len:
-                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
+            excess = len(test_payload.encode("utf-8")) - max_bytes
+            allowed = max(300, len(content) - excess - 100)
+            if len(content) > allowed:
+                half = max(150, allowed // 2)
+                last_user["content"] = content[:half] + "\n\n[... truncated ...]\n\n" + content[-half:]
 
-    result = system_msgs + other_msgs
-    return result
+    return system_msgs + other_msgs
+
+
+def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """RTK-enhanced message compression."""
+    return _rtk_compress_messages(messages, _MAX_PAYLOAD_BYTES)
 
 
 def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:
