@@ -131,8 +131,8 @@ def exchange_codex_code(code: str, state: str) -> dict[str, Any]:
     refresh_token = token_data.get("refresh_token", "")
 
     if access_token:
-        # Add to account pool with default quota for both chat and images
-        account_service.add_accounts([access_token])
+        # Add to account pool as codex type (for cx/ models)
+        account_service.add_accounts_with_type([access_token], "codex")
         account_service.update_account(access_token, {
             "image_quota_unknown": True,
             "quota": 10,
