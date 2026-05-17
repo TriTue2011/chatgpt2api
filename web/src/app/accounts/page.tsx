@@ -295,6 +295,7 @@ function AccountsPageContent() {
   const [pageSize, setPageSize] = useState("10");
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [editStatus, setEditStatus] = useState<AccountStatus>("active");
+  const [editType, setEditType] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -537,6 +538,7 @@ function AccountsPageContent() {
   const openEditDialog = (account: Account) => {
     setEditingAccount(account);
     setEditStatus(account.status);
+    setEditType(account.type || "free");
   };
 
   const handleToggleAccount = async (account: Account) => {
@@ -560,6 +562,7 @@ function AccountsPageContent() {
     try {
       const data = await updateAccount(editingAccount.access_token, {
         status: editStatus,
+        type: editType,
       });
       setAccounts(data.items);
       setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
@@ -705,6 +708,19 @@ function AccountsPageContent() {
                         {option.label}
                       </SelectItem>
                     ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-700">Loại (type)</label>
+              <Select value={editType} onValueChange={setEditType}>
+                <SelectTrigger className="h-11 rounded-xl border-stone-200 bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="free">free (ChatGPT Session)</SelectItem>
+                  <SelectItem value="codex">codex (OAuth / 9router)</SelectItem>
+                  <SelectItem value="go">go</SelectItem>
                 </SelectContent>
               </Select>
             </div>
