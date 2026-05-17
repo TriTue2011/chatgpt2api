@@ -370,6 +370,12 @@ class AccountService:
         except InvalidAccessTokenError:
             self.remove_invalid_token(access_token, event)
             raise
+        except Exception as exc:
+            msg = str(exc).lower()
+            if any(k in msg for k in ("openssl", "tls", "invalid library", "curl: (35)")):
+                logger.warning({"event": "fetch_remote_tls_skip", "token": anonymize_token(access_token), "error": str(exc)[:120]})
+                return self.get_account(access_token)  # Return existing data unchanged
+            raise
         return self.update_account(access_token, result)
 
     def refresh_accounts(self, access_tokens: list[str]) -> dict[str, Any]:
