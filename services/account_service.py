@@ -395,6 +395,10 @@ class AccountService:
         if not access_token:
             raise ValueError("access_token is required")
 
+        # Skip refresh for api.openai.com tokens — they can't call chatgpt.com
+        if detect_token_audience(access_token) == _TOKEN_AUDIENCE_OPENAI_API:
+            return self.get_account(access_token)
+
         try:
             from services.openai_backend_api import InvalidAccessTokenError, OpenAIBackendAPI
             result = OpenAIBackendAPI(access_token).get_user_info()
