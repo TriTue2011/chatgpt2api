@@ -35,6 +35,18 @@ CODEX_REDIRECT_URI = "http://localhost:3030/api/oauth/codex/callback"
 CODEX_SCOPE = "openid profile email offline_access model.request model.read"
 
 
+def _curl_post(url: str, **kwargs) -> requests.Response:
+    """POST with impersonate fallback on TLS errors (LXC compatibility)."""
+    try:
+        return requests.post(url, impersonate="chrome110", **kwargs)
+    except Exception as e:
+        msg = str(e).lower()
+        if any(k in msg for k in ("openssl", "tls", "invalid library")):
+            logger.warning({"event": "oauth_tls_fallback", "url": url[:60]})
+            return requests.post(url, **kwargs)
+        raise
+
+
 def generate_pkce() -> dict[str, str]:
     """Generate PKCE code verifier and challenge."""
     code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
@@ -115,12 +127,11 @@ def exchange_codex_code(code: str, state: str) -> dict[str, Any]:
         "grant_type": "authorization_code",
     }
 
-    resp = requests.post(
+    resp = _curl_post(
         CODEX_TOKEN_URL,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data=body,
         timeout=30,
-        impersonate="chrome110",
     )
 
     if resp.status_code != 200:
