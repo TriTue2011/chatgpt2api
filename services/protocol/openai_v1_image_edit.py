@@ -13,11 +13,14 @@ from services.protocol.conversation import (
     stream_image_chunks,
     stream_image_outputs_with_pool,
 )
+from services.protocol.openai_v1_image_generations import _translate_prompt
 from utils.log import logger
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     prompt = str(body.get("prompt") or "")
+    prompt = _translate_prompt(prompt)
+    body = {**body, "prompt": prompt}
     images = body.get("images") or []
     model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)

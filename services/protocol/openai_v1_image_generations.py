@@ -54,7 +54,7 @@ def _translate_prompt(prompt: str) -> str:
         result = codex_oauth.chat_completions(
             access_token=token,
             messages=[{"role": "user", "content": translate_prompt}],
-            model="gpt-5.3-codex",
+            model="auto",
             stream=False,
         )
         if isinstance(result, dict):
