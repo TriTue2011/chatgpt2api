@@ -26,11 +26,16 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     base_url = str(body.get("base_url") or "") or None
 
     # Check if this is an adapter model (gemini-image, nv-image, sdwebui, etc.)
-    route = backend_router.parse_model(model)
-    adapter = get_image_adapter(route.provider) if route else None
+    provider, resolved_model = backend_router.resolve_model(model)
+    adapter = get_image_adapter(provider) if provider else None
 
     if adapter:
-        return _handle_adapter_edit(adapter, route, body, prompt, images, n, response_format, base_url)
+        # Build a simple route-like object
+        class _Route:
+            provider = provider
+            model = resolved_model
+            is_image = True
+        return _handle_adapter_edit(adapter, _Route(), body, prompt, images, n, response_format, base_url)
 
     # Default: ChatGPT DALL-E pipeline
     encoded_images = encode_images(images)
