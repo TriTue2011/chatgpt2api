@@ -21,7 +21,8 @@ from services.account_service import account_service
 from utils.log import logger
 
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
-CODEX_DEFAULT_MODEL = "gpt-5.3-codex"
+CODEX_DEFAULT_MODEL = "gpt-5.5"  # First try; fallback chain: 5.5 → 5.4 → 5.3-codex
+CODEX_AUTO_FALLBACK = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
 CODEX_HEADERS = {
     "originator": "codex-cli",
     "User-Agent": "codex-cli/1.0.18 (Windows; x64)",
@@ -212,139 +213,145 @@ class CodexOAuthProvider:
         """Call Codex Responses API with OAuth token."""
 
         instructions = None
-        body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
+        base_body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
 
-        # Codex requires these four to be set
-        model = model if model and model != "auto" else CODEX_DEFAULT_MODEL
+        # Resolve model — auto uses fallback chain: 5.5 → 5.4 → 5.3-codex
+        is_auto = not model or model == "auto"
+        models_to_try = CODEX_AUTO_FALLBACK if is_auto else [model]
 
-        # Parse 9router effort/review suffixes from model name
-        # e.g. gpt-5.3-codex-xhigh-review → model: gpt-5.3-codex, effort: xhigh, review: True
-        _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none"}
-        _suffixes = model.split("-")
-        _effort = None
-        _review = False
-        _seen: list[str] = []
-        for _s in reversed(_suffixes):
-            if _s == "review":
-                _review = True
-            elif _s in _EFFORT_LEVELS and _effort is None:
-                _effort = _s
-            else:
-                _seen.insert(0, _s)
-        if _effort or _review:
-            model = "-".join(_seen)
-            if _effort:
-                body["reasoning"] = {"effort": _effort}
-            if _review:
-                body["include"] = body.get("include", []) or []
-                if isinstance(body["include"], list):
-                    body["include"].append("reasoning")
+        last_error = ""
+        for try_idx, try_model in enumerate(models_to_try):
+            if try_idx > 0:
+                logger.warning({"event": "codex_fallback", "from": models_to_try[try_idx-1],
+                                "to": try_model})
 
-        body["model"] = model
-        body["store"] = False
-        body["stream"] = True  # Codex requires streaming
-        if "instructions" not in body or not body.get("instructions"):
-            body["instructions"] = "You are a helpful assistant."
+            body = dict(base_body)  # fresh copy each attempt
+            resolved_model = try_model
 
-        # Codex rejects these parameters — strip them (like 9router does)
-        for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty",
-                     "n", "seed", "logprobs", "top_logprobs", "user",
-                     "stream_options", "safety_identifier", "metadata",
-                     "parallel_tool_calls"):
-            body.pop(key, None)
+            # Parse 9router effort/review suffixes from model name
+            _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none"}
+            _suffixes = resolved_model.split("-")
+            _effort = None
+            _review = False
+            _seen: list[str] = []
+            for _s in reversed(_suffixes):
+                if _s == "review":
+                    _review = True
+                elif _s in _EFFORT_LEVELS and _effort is None:
+                    _effort = _s
+                else:
+                    _seen.insert(0, _s)
+            if _effort or _review:
+                resolved_model = "-".join(_seen)
+                if _effort:
+                    body["reasoning"] = {"effort": _effort}
+                if _review:
+                    body["include"] = body.get("include", []) or []
+                    if isinstance(body["include"], list):
+                        body["include"].append("reasoning")
 
-        # Pass max_tokens as max_output_tokens (Responses API format)
-        # Only if explicitly provided — don't set a default (Codex may reject it)
-        # NOTE: Codex Responses API rejects max_output_tokens — don't pass it
-        # if max_tokens:
-        #     body["max_output_tokens"] = max_tokens
+            body["model"] = resolved_model
+            body["store"] = False
+            body["stream"] = True
+            if "instructions" not in body or not body.get("instructions"):
+                body["instructions"] = "You are a helpful assistant."
 
-        headers = dict(CODEX_HEADERS)
-        headers["Authorization"] = f"Bearer {access_token}"
+            for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty",
+                         "n", "seed", "logprobs", "top_logprobs", "user",
+                         "stream_options", "safety_identifier", "metadata",
+                         "parallel_tool_calls"):
+                body.pop(key, None)
 
-        logger.info({
-            "event": "codex_request",
-            "model": model,
-            "stream": True,
-            "message_count": len(messages),
-            "body_keys": list(body.keys()),
-            "has_instructions": bool(body.get("instructions")),
-            "input_count": len(body.get("input", [])),
-        })
+            headers = dict(CODEX_HEADERS)
+            headers["Authorization"] = f"Bearer {access_token}"
 
-        try:
-            resp = requests.post(
-                CODEX_URL, headers=headers, json=body,
-                timeout=300, stream=True,
-                impersonate="chrome110",
-            )
+            logger.info({
+                "event": "codex_request",
+                "model": resolved_model,
+                "try": try_idx + 1,
+                "message_count": len(messages),
+            })
 
-            if resp.status_code == 401:
-                raise RuntimeError("Codex OAuth token expired")
-            if resp.status_code >= 400:
-                error_text = ""
-                try:
-                    # Read raw bytes — stream=True may prevent .text/.content from working
-                    raw = b""
-                    for chunk in resp.iter_content(chunk_size=8192):
-                        if chunk:
-                            raw += chunk if isinstance(chunk, bytes) else chunk.encode()
-                            if len(raw) > 10000:
-                                break
-                    if raw:
-                        error_text = raw.decode("utf-8", errors="ignore")[:1000]
-                except Exception:
+            try:
+                resp = requests.post(
+                    CODEX_URL, headers=headers, json=body,
+                    timeout=300, stream=True,
+                    impersonate="chrome110",
+                )
+
+                if resp.status_code == 401:
+                    raise RuntimeError("Codex OAuth token expired")
+                if resp.status_code >= 400:
+                    error_text = ""
                     try:
-                        error_text = (resp.text or "")[:1000]
+                        raw = b""
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            if chunk:
+                                raw += chunk if isinstance(chunk, bytes) else chunk.encode()
+                                if len(raw) > 10000:
+                                    break
+                        if raw:
+                            error_text = raw.decode("utf-8", errors="ignore")[:1000]
                     except Exception:
-                        pass
-                # Also log response headers for debugging
-                resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
-                logger.error({
-                    "event": "codex_upstream_error",
-                    "status": resp.status_code,
-                    "error": error_text,
-                    "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
-                    "url": CODEX_URL,
-                })
-                raise RuntimeError(f"Codex error {resp.status_code}: {error_text[:200]}")
+                        try:
+                            error_text = (resp.text or "")[:1000]
+                        except Exception:
+                            pass
+                    resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
+                    logger.error({
+                        "event": "codex_upstream_error",
+                        "status": resp.status_code,
+                        "model": resolved_model,
+                        "error": error_text,
+                        "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
+                    })
+                    msg = f"Codex error {resp.status_code}: {error_text[:200]}"
+                    if try_idx < len(models_to_try) - 1:
+                        last_error = msg
+                        continue
+                    raise RuntimeError(msg)
 
-            # Codex always streams — collect if caller requested non-streaming
-            if stream:
-                return self._stream_response(resp, model or "auto")
-            else:
-                # Collect stream into single response
-                text = ""
-                tool_calls = []
-                for chunk in self._stream_response(resp, model or "auto"):
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    text += delta.get("content", "")
-                    if delta.get("tool_calls"):
-                        tool_calls.extend(delta["tool_calls"])
-                    if delta.get("finish_reason") == "stop":
-                        break
+                # Success
+                if stream:
+                    return self._stream_response(resp, resolved_model)
+                else:
+                    text = ""
+                    tool_calls = []
+                    for chunk in self._stream_response(resp, resolved_model):
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        text += delta.get("content", "")
+                        if delta.get("tool_calls"):
+                            tool_calls.extend(delta["tool_calls"])
+                        if delta.get("finish_reason") == "stop":
+                            break
 
-                message = {"role": "assistant", "content": text}
-                if tool_calls:
-                    message["tool_calls"] = tool_calls
+                    message = {"role": "assistant", "content": text}
+                    if tool_calls:
+                        message["tool_calls"] = tool_calls
 
-                from services.protocol.openai_v1_chat_complete import count_message_tokens, count_text_tokens
+                    from services.protocol.openai_v1_chat_complete import count_message_tokens, count_text_tokens
 
-                return {
-                    "id": f"chatcmpl-{uuid.uuid4().hex}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": model or "auto",
-                    "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-                    "usage": {
-                        "prompt_tokens": count_message_tokens(messages, model or "auto"),
-                        "completion_tokens": count_text_tokens(text, model or "auto"),
-                        "total_tokens": count_message_tokens(messages, model or "auto") + count_text_tokens(text, model or "auto"),
-                    },
-                }
+                    return {
+                        "id": f"chatcmpl-{uuid.uuid4().hex}",
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": resolved_model,
+                        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+                        "usage": {
+                            "prompt_tokens": count_message_tokens(messages, resolved_model),
+                            "completion_tokens": count_text_tokens(text, resolved_model),
+                            "total_tokens": count_message_tokens(messages, resolved_model) + count_text_tokens(text, resolved_model),
+                        },
+                    }
 
-        except requests.RequestsError as exc:
-            raise RuntimeError(f"Codex connection failed: {exc}") from exc
+            except requests.RequestsError as exc:
+                msg = f"Codex connection failed: {exc}"
+                if try_idx < len(models_to_try) - 1:
+                    last_error = msg
+                    continue
+                raise RuntimeError(msg) from exc
+
+        raise RuntimeError(f"All Codex models failed: {last_error}")
 
     def _stream_response(self, response, model: str) -> Iterator[dict[str, Any]]:
         """Convert Codex SSE → OpenAI chat completion chunks (dicts)."""
