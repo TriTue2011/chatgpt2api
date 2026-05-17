@@ -234,6 +234,100 @@
   background: #1a1a1a;
   color: #ededed;
 }
+
+/* ── Global dark mode overrides for Tailwind hardcoded colors ── */
+/* Text colors */
+.dark .text-stone-900,
+.dark .text-stone-800,
+.dark .text-stone-700,
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700 { color: #e0e0e0 !important; }
+
+.dark .text-stone-600,
+.dark .text-slate-600 { color: #c0c0c0 !important; }
+
+.dark .text-stone-500,
+.dark .text-slate-500,
+.dark .text-stone-400 { color: #a0a0a0 !important; }
+
+.dark .text-stone-300 { color: #707070 !important; }
+
+/* Backgrounds */
+.dark .bg-white { background: #262626 !important; }
+.dark .bg-stone-50,
+.dark .bg-slate-50 { background: #1e1e1e !important; }
+.dark .bg-stone-100,
+.dark .bg-slate-100 { background: #2a2a2a !important; }
+.dark .bg-stone-200 { background: #333333 !important; }
+
+/* Borders */
+.dark .border-stone-200,
+.dark .border-slate-200 { border-color: #333333 !important; }
+.dark .border-stone-100 { border-color: #2a2a2a !important; }
+.dark .border-stone-300 { border-color: #404040 !important; }
+.dark .border-black\/\[0\.08\] { border-color: rgba(255,255,255,0.08) !important; }
+
+/* Hover states */
+.dark .hover\:bg-stone-50:hover,
+.dark .hover\:bg-slate-50:hover { background: #2a2a2a !important; }
+.dark .hover\:bg-slate-100:hover { background: #303030 !important; }
+.dark .hover\:bg-stone-100:hover { background: #303030 !important; }
+.dark .hover\:text-stone-700:hover,
+.dark .hover\:text-stone-800:hover,
+.dark .hover\:text-slate-700:hover,
+.dark .hover\:text-slate-800:hover { color: #ffffff !important; }
+
+/* Indigo/blue backgrounds in dark */
+.dark .bg-indigo-50\/40 { background: rgba(99,102,241,0.1) !important; }
+.dark .bg-indigo-50\/60 { background: rgba(99,102,241,0.15) !important; }
+.dark .border-indigo-100 { border-color: rgba(99,102,241,0.15) !important; }
+
+/* Placeholder / input */
+.dark .placeholder\:text-stone-400::placeholder { color: #707070 !important; }
+
+/* Select trigger */
+.dark .bg-stone-900 { background: #1a1a1a !important; }
+.dark .bg-stone-800 { background: #262626 !important; }
+
+/* Badge */
+.dark .bg-stone-900\/10 { background: rgba(255,255,255,0.08) !important; }
+
+/* Dialog overlay */
+.dark .bg-stone-900\/50 { background: rgba(0,0,0,0.6) !important; }
+
+/* Status colors in dark — keep them readable */
+.dark .text-emerald-600,
+.dark .text-emerald-900 { color: #4ade80 !important; }
+.dark .text-amber-600,
+.dark .text-amber-900 { color: #fbbf24 !important; }
+.dark .text-rose-500,
+.dark .text-rose-600 { color: #f87171 !important; }
+.dark .text-sky-600,
+.dark .text-sky-900 { color: #60a5fa !important; }
+.dark .text-indigo-600,
+.dark .text-indigo-900 { color: #818cf8 !important; }
+.dark .text-violet-600 { color: #a78bfa !important; }
+
+/* Emerald label in dark */
+.dark .text-emerald-500 { color: #34d399 !important; }
+.dark .text-amber-400 { color: #fbbf24 !important; }
+
+/* Success/fail counters */
+.dark .text-emerald-400 { color: #34d399 !important; }
+.dark .text-rose-400 { color: #f87171 !important; }
+
+/* Input backgrounds */
+.dark .bg-rose-50 { background: rgba(248,113,113,0.1) !important; }
+.dark .bg-amber-50 { background: rgba(251,191,36,0.1) !important; }
+.dark .border-rose-100 { border-color: rgba(248,113,113,0.2) !important; }
+.dark .border-amber-200 { border-color: rgba(251,191,36,0.2) !important; }
+
+/* Custom accent cards in dark */
+.dark .bg-emerald-500\/10 { background: rgba(52,211,153,0.1) !important; }
+.dark .bg-amber-500\/10 { background: rgba(251,191,36,0.1) !important; }
+.dark .bg-rose-500\/10 { background: rgba(248,113,113,0.1) !important; }
+.dark .bg-indigo-500\/10 { background: rgba(99,102,241,0.1) !important; }
 .dark .bg-circles::before {
   background:
     radial-gradient(circle at 5% 10%, rgba(229,106,74,0.05) 0%, transparent 40%),
