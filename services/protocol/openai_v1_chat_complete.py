@@ -282,6 +282,27 @@ def _dispatch(route, messages, tools, tool_choice, body):
         return _handle_chatgpt_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
 
 
+def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Undo normalize_messages tool→user conversion for OpenAI API compatibility."""
+    import re
+    result: list[dict[str, Any]] = []
+    tool_id_pattern = re.compile(r'\[tool_call_id:\s*([^\]]+)\]')
+
+    for msg in messages:
+        if msg.get("role") != "user":
+            result.append(msg)
+            continue
+        content = str(msg.get("content") or "")
+        m = tool_id_pattern.search(content)
+        if m:
+            call_id = m.group(1).strip()
+            clean = tool_id_pattern.sub("", content).strip()
+            result.append({"role": "tool", "tool_call_id": call_id, "content": clean})
+        else:
+            result.append(msg)
+    return result
+
+
 def _handle_chatgpt_chat(
     model: str,
     messages: list[dict[str, Any]],
@@ -304,11 +325,14 @@ def _handle_chatgpt_chat(
         logger.info({"event": "chatgpt_openai_api_routed"})
         # Map chatgpt.com model names to valid OpenAI API models
         openai_model = model if model != "auto" else "gpt-4.1-mini"
-        # Strip chatgpt/ prefix if present
         if openai_model.startswith("chatgpt/"):
             openai_model = openai_model[len("chatgpt/"):]
         if openai_model == "auto":
             openai_model = "gpt-4.1-mini"
+
+        # Undo tool→user conversion: OpenAI API needs native tool role messages
+        messages = _restore_tool_messages(messages)
+
         return _handle_custom_openai_chat(
             "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
             force_token=token,
