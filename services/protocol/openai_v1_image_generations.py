@@ -113,7 +113,7 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
                         "status": resp.status_code,
                         "error": error_text,
                     })
-                    raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code}")
+                    raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code} detail={error_text[:300]}")
 
                 # Try custom parse_response first (async adapters)
                 parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None

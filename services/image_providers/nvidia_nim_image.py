@@ -5,6 +5,9 @@ Endpoint: https://ai.api.nvidia.com/v1/genai/{model}
 Auth: Bearer token from build.nvidia.com
 Format: Custom request/response — needs conversion to/from OpenAI format.
 
+Supported aspect ratios (from NVIDIA docs):
+  1:1, 16:9, 9:16, 5:4, 4:5, 3:2, 2:3
+
 Example model: black-forest-labs/flux.2-klein-4b
 """
 
@@ -22,6 +25,41 @@ from services.image_providers._base import (
 )
 from services.config import config
 from utils.log import logger
+
+
+# NVIDIA-supported resolutions per aspect ratio
+# klein model max ~1M pixels; standard model max ~2M pixels
+_NVIDIA_SIZE_MAP: dict[str, tuple[int, int]] = {
+    "1024x1024": (1024, 1024),    # 1:1
+    "1152x768":  (1152, 768),     # 3:2
+    "768x1152":  (768, 1152),     # 2:3
+    "1280x1024": (1280, 1024),    # 5:4
+    "1024x1280": (1024, 1280),    # 4:5
+    "1344x768":  (1344, 768),     # 16:9
+    "768x1344":  (768, 1344),     # 9:16
+}
+_NVIDIA_DEFAULT_SIZE = "1024x1024"
+
+
+def _nvidia_size(size: str | None) -> tuple[int, int]:
+    """Map OpenAI size → NVIDIA-compatible resolution."""
+    if not size:
+        return _NVIDIA_SIZE_MAP[_NVIDIA_DEFAULT_SIZE]
+    if size in _NVIDIA_SIZE_MAP:
+        return _NVIDIA_SIZE_MAP[size]
+    # Try parsing WxH from existing SIZE_MAP, then map to closest nvidia size
+    w, h = size_to_width_height(size)
+    # Find best match by aspect ratio
+    target_ratio = w / h if h else 1.0
+    best = _NVIDIA_SIZE_MAP[_NVIDIA_DEFAULT_SIZE]
+    best_diff = float("inf")
+    for nw, nh in _NVIDIA_SIZE_MAP.values():
+        n_ratio = nw / nh if nh else 1.0
+        diff = abs(target_ratio - n_ratio)
+        if diff < best_diff:
+            best_diff = diff
+            best = (nw, nh)
+    return best
 
 
 class NvidiaNimImageAdapter(BaseImageAdapter):
@@ -49,15 +87,15 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
         prompt = str(body.get("prompt") or "")
-        size = str(body.get("size") or "1792x1024")
-        w, h = size_to_width_height(size)
+        size = str(body.get("size") or "")
+        w, h = _nvidia_size(size if size else None)
 
         return {
             "prompt": prompt,
             "width": w,
             "height": h,
-            "seed": body.get("seed", 0),
-            "steps": body.get("steps", 4),
+            "seed": int(body.get("seed", 0)),
+            "steps": int(body.get("steps", 4)),
         }
 
     def build_headers(
