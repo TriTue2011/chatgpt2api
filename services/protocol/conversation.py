@@ -283,8 +283,40 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
 
 
 def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """RTK-enhanced message compression."""
-    return _rtk_compress_messages(messages, _MAX_PAYLOAD_BYTES)
+    """Drop oldest non-system messages when the serialized payload exceeds the size limit."""
+    payload = json.dumps(messages, ensure_ascii=False, default=str)
+    if len(payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+        return messages
+
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs = [m for m in messages if m.get("role") != "system"]
+
+    while other_msgs:
+        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+        if len(test_payload.encode("utf-8")) <= _MAX_PAYLOAD_BYTES:
+            break
+        other_msgs.pop(0)
+
+    test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+    if len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES and system_msgs:
+        last_sys = system_msgs[-1]
+        if isinstance(last_sys.get("content"), str):
+            content = last_sys["content"]
+            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+            allowed_len = max(500, len(content) - excess - 200)
+            if len(content) > allowed_len:
+                last_sys["content"] = content[:allowed_len] + "\n\n[System prompt truncated due to size limits]"
+
+    if other_msgs and len(test_payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        last_user = other_msgs[-1]
+        if last_user.get("role") == "user" and isinstance(last_user.get("content"), str):
+            content = last_user["content"]
+            excess = len(test_payload.encode("utf-8")) - _MAX_PAYLOAD_BYTES
+            allowed_len = max(500, len(content) - excess - 200)
+            if len(content) > allowed_len:
+                last_user["content"] = content[:allowed_len] + "\n\n[Content truncated due to size limits]"
+
+    return system_msgs + other_msgs
 
 
 def normalize_messages(messages: object, system: Any = None, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> list[dict[str, Any]]:

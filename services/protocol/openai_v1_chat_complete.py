@@ -291,6 +291,10 @@ def _handle_chatgpt_chat(
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """ChatGPT flow — auto-detects token type and routes to correct API."""
+    # RTK-style compression for large payloads (chatgpt/ only)
+    from services.protocol.conversation import _rtk_compress_messages
+    messages = _rtk_compress_messages(messages, 24_000)
+
     # Pick token preferring api.openai.com audience (for chatgpt/ models)
     from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
     token = account_service.get_text_access_token()
