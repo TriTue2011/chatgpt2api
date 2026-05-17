@@ -285,6 +285,57 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     return _handle_single_image(route, body)
 
 
+def _handle_custom_openai_image(body: dict[str, Any], token: str) -> dict[str, Any]:
+    """Generate images via OpenAI API (api.openai.com) for web session tokens."""
+    from curl_cffi import requests as cffi_requests
+    prompt = str(body.get("prompt") or "")
+    n = max(1, min(4, int(body.get("n") or 1)))
+    size = str(body.get("size") or "1024x1024")
+    response_format = str(body.get("response_format") or "b64_json")
+
+    resp = cffi_requests.post(
+        "https://api.openai.com/v1/images/generations",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "dall-e-3",
+            "prompt": prompt,
+            "n": n,
+            "size": size,
+            "response_format": response_format,
+        },
+        timeout=120,
+    )
+    if resp.status_code >= 400:
+        err = ""
+        try:
+            err = resp.text[:500]
+        except Exception:
+            pass
+        raise RuntimeError(f"OpenAI image gen error {resp.status_code}: {err[:300]}")
+
+    data = resp.json()
+    images = data.get("data") or []
+    result_data = []
+    for img in images:
+        b64 = img.get("b64_json") or ""
+        url = img.get("url") or ""
+        if b64:
+            result_data.append({"b64_json": f"data:image/png;base64,{b64}"})
+        elif url:
+            from services.image_providers._base import url_to_base64
+            try:
+                b64_data = url_to_base64(url)
+                result_data.append({"b64_json": f"data:image/png;base64,{b64_data}"})
+            except Exception:
+                result_data.append({"url": url})
+
+    base_url_str = str(body.get("base_url") or "") or None
+    return format_image_result(result_data, prompt, response_format, base_url_str)
+
+
 def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Handle image generation for a single model (adapter or ChatGPT DALL-E)."""
     prompt = str(body.get("prompt") or "")
@@ -312,7 +363,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
             })
             raise  # Re-raise to trigger combo fallback
 
-    # For chatgpt/ DALL-E: skip if token is api.openai.com (no image gen on OpenAI API)
+    # For chatgpt/ DALL-E: route api.openai.com tokens through OpenAI API image endpoint
     if route.provider == "chatgpt":
         from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API
         token = ""
@@ -322,7 +373,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
         except Exception:
             pass
         if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
-            raise RuntimeError("api.openai.com token does not support DALL-E image generation")
+            return _handle_custom_openai_image(body, token)
 
     # Default: use existing ChatGPT DALL-E flow (unchanged)
     outputs = stream_image_outputs_with_pool(ConversationRequest(
