@@ -182,6 +182,23 @@ function maskToken(token?: string) {
   return `${token.slice(0, 16)}...${token.slice(-8)}`;
 }
 
+function tryDecodeJwtEmail(token?: string): string | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = JSON.parse(atob(parts[1]));
+    const profile = payload?.["https://api.openai.com/profile"];
+    return typeof profile?.email === "string" ? profile.email : null;
+  } catch {
+    return null;
+  }
+}
+
+function accountLabel(account: Account) {
+  return account.email || tryDecodeJwtEmail(account.access_token) || maskToken(account.access_token);
+}
+
 function downloadTokens(accounts: Account[]) {
   const content = `${accounts.map((account) => account.access_token).join("\n")}\n`;
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -861,7 +878,7 @@ function AccountsPageContent() {
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5">
                                         <span className="text-[12px] font-medium text-slate-700 truncate max-w-[140px]">
-                                          {account.email ?? maskToken(account.access_token)}
+                                          {accountLabel(account)}
                                         </span>
                                         <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
                                           <StatusIcon className="size-2.5" />
@@ -891,7 +908,7 @@ function AccountsPageContent() {
                                         <div className="rounded-[12px] p-4 card-3d card-tint-emerald space-y-3">
                                           <div className="flex items-center justify-between">
                                             <div>
-                                              <p className="text-[13px] font-bold text-slate-800">{account.email ?? maskToken(account.access_token)}</p>
+                                              <p className="text-[13px] font-bold text-slate-800">{accountLabel(account)}</p>
                                               <div className="flex items-center gap-2 mt-0.5">
                                                 <Badge variant={status.badge} className="inline-flex items-center gap-0.5 rounded text-[10px] px-1 py-0">
                                                   <span className={cn("size-1.5 rounded-full mr-0.5",

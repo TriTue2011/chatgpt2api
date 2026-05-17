@@ -618,7 +618,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           <Upload className="size-4" />
           Nhập tài khoản
         </Button>
-        <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+        <DialogContent showCloseButton={false} className="rounded-2xl p-6 max-h-[85vh] overflow-y-auto">
           <DialogHeader className="gap-2">
             <DialogTitle>
               {method === "menu"
