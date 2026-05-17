@@ -298,8 +298,15 @@ def _handle_chatgpt_chat(
     # If token is api.openai.com type → route through OpenAI API provider
     if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
         logger.info({"event": "chatgpt_openai_api_routed"})
+        # Map chatgpt.com model names to valid OpenAI API models
+        openai_model = model if model != "auto" else "gpt-4.1-mini"
+        # Strip chatgpt/ prefix if present
+        if openai_model.startswith("chatgpt/"):
+            openai_model = openai_model[len("chatgpt/"):]
+        if openai_model == "auto":
+            openai_model = "gpt-4.1-mini"
         return _handle_custom_openai_chat(
-            "custom:openai", model, messages, tools, tool_choice, stream, body,
+            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
             force_token=token,
         )
 
