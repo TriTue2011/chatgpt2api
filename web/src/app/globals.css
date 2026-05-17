@@ -328,6 +328,23 @@
 .dark .bg-amber-500\/10 { background: rgba(251,191,36,0.1) !important; }
 .dark .bg-rose-500\/10 { background: rgba(248,113,113,0.1) !important; }
 .dark .bg-indigo-500\/10 { background: rgba(99,102,241,0.1) !important; }
+
+/* Stat card gradient backgrounds in dark */
+.dark .from-indigo-50\/80 { --tw-gradient-from: rgba(99,102,241,0.08) !important; }
+.dark .to-blue-50\/80 { --tw-gradient-to: rgba(59,130,246,0.08) !important; }
+.dark .from-emerald-50\/80 { --tw-gradient-from: rgba(52,211,153,0.08) !important; }
+.dark .to-teal-50\/80 { --tw-gradient-to: rgba(45,212,191,0.08) !important; }
+.dark .from-amber-50\/80 { --tw-gradient-from: rgba(251,191,36,0.08) !important; }
+.dark .to-orange-50\/80 { --tw-gradient-to: rgba(249,115,22,0.08) !important; }
+.dark .from-rose-50\/80 { --tw-gradient-from: rgba(248,113,113,0.08) !important; }
+.dark .to-red-50\/80 { --tw-gradient-to: rgba(239,68,68,0.08) !important; }
+.dark .from-sky-50\/80 { --tw-gradient-from: rgba(56,189,248,0.08) !important; }
+.dark .to-cyan-50\/80 { --tw-gradient-to: rgba(6,182,212,0.08) !important; }
+.dark .from-slate-50\/80 { --tw-gradient-from: rgba(148,163,184,0.06) !important; }
+.dark .to-slate-100\/80 { --tw-gradient-to: rgba(148,163,184,0.06) !important; }
+
+/* Card inner background */
+.dark .bg-white\/60 { background: rgba(255,255,255,0.04) !important; }
 .dark .bg-circles::before {
   background:
     radial-gradient(circle at 5% 10%, rgba(229,106,74,0.05) 0%, transparent 40%),
