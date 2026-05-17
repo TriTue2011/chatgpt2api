@@ -42,8 +42,6 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-# Ensure curl_cffi with impersonation support (includes libcurl-impersonate)
-RUN uv pip install --system curl-cffi --force-reinstall
 
 COPY main.py ./
 COPY config.json ./

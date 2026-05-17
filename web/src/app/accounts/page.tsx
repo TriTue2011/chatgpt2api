@@ -898,6 +898,11 @@ function AccountsPageContent() {
                                           <StatusIcon className="size-2.5" />
                                           {translateStatus(account.status, lang)}
                                         </Badge>
+                                        {account.type && account.type !== account.plan ? (
+                                          <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+                                            {account.type}
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                     </div>
                                     <div className="hidden sm:flex items-center gap-2 text-[11px]">
@@ -942,6 +947,11 @@ function AccountsPageContent() {
                                                 <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-slate-100 text-slate-500">
                                                   {displayAccountType(account)}
                                                 </Badge>
+                                                {account.type && account.type !== account.plan ? (
+                                                  <Badge variant="secondary" className="rounded text-[10px] px-1 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+                                                    {account.type}
+                                                  </Badge>
+                                                ) : null}
                                               </div>
                                             </div>
                                           </div>
