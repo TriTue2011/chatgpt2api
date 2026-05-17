@@ -43,7 +43,9 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
         prompt = str(body.get("prompt") or "")
         size = str(body.get("size") or "1792x1024")
         w, h = size_to_width_height(size)
-        image_data = body.get("image") or body.get("image_data")  # from edit endpoint
+        image_data = body.get("image") or body.get("image_data")  # from edit endpoint (base64)
+        # Also handle images from _handle_adapter_edit (list of (bytes, filename, mime) tuples)
+        images_raw = body.get("images") or []
 
         content: list[dict[str, Any]] = []
         if image_data:
@@ -56,6 +58,22 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
                 "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{image_data}"}
             })
+        elif images_raw and len(images_raw) > 0:
+            # Image edit with raw upload bytes
+            import base64 as _b64
+            content.append({
+                "type": "text",
+                "text": f"Edit this image based on the following instruction: {prompt}\nSize: {w}x{h}\nReturn the edited image as a base64 data URL."
+            })
+            for img_tuple in images_raw[:1]:  # Take first image
+                if isinstance(img_tuple, (list, tuple)) and len(img_tuple) > 0:
+                    img_bytes = img_tuple[0] if isinstance(img_tuple[0], bytes) else img_tuple
+                else:
+                    img_bytes = img_tuple if isinstance(img_tuple, bytes) else str(img_tuple).encode()
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{_b64.b64encode(img_bytes).decode()}"}
+                })
         else:
             # Image generation mode
             content.append({
