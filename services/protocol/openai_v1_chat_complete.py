@@ -283,20 +283,26 @@ def _dispatch(route, messages, tools, tool_choice, body):
 
 
 def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Undo normalize_messages tool→user conversion for OpenAI API compatibility."""
+    """Undo normalize_messages tool→user conversion for OpenAI API compatibility.
+
+    normalize_messages converts: role=tool → role=user, content="[Tool Result] name (id: xxx): result"
+    OpenAI API needs: role=tool, tool_call_id=xxx, content=result
+    """
     import re
     result: list[dict[str, Any]] = []
-    tool_id_pattern = re.compile(r'\[toolu_vrtx_([^\]]+)\]')
+    tool_pattern = re.compile(r'^\[Tool Result\](?:\s+\S+)?\s*\(id:\s*([^)]+)\):\s*')
+    stop_pattern = re.compile(r'\n\n\[STOP:.*$', re.DOTALL)
 
     for msg in messages:
         if msg.get("role") != "user":
             result.append(msg)
             continue
         content = str(msg.get("content") or "")
-        m = tool_id_pattern.search(content)
+        m = tool_pattern.match(content)
         if m:
             call_id = m.group(1).strip()
-            clean = tool_id_pattern.sub("", content).strip()
+            clean = content[m.end():].strip()
+            clean = stop_pattern.sub("", clean).strip()
             result.append({"role": "tool", "tool_call_id": call_id, "content": clean})
         else:
             result.append(msg)
