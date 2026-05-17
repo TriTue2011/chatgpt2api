@@ -290,7 +290,36 @@ def _handle_chatgpt_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Existing ChatGPT flow — unchanged."""
+    """ChatGPT flow — auto-detects token type and routes to correct API."""
+    # Get token from pool and check if it's an OpenAI API token
+    try:
+        token = account_service.get_text_access_token()
+    except RuntimeError:
+        token = ""
+
+    # Try decoding JWT to detect token audience
+    use_openai_api = False
+    if token and token.startswith("eyJ"):
+        try:
+            import base64 as _b64, json as _json
+            parts = token.split(".")
+            if len(parts) >= 2:
+                payload = _json.loads(_b64.urlsafe_b64decode(parts[1] + "=="))
+                aud = payload.get("aud", "")
+                if isinstance(aud, list):
+                    aud = aud[0] if aud else ""
+                if "api.openai.com" in str(aud) and "chatgpt.com" not in str(aud):
+                    use_openai_api = True
+                    logger.info({"event": "chatgpt_openai_api_token_detected", "aud": str(aud)[:80]})
+        except Exception:
+            pass
+
+    if use_openai_api:
+        return _handle_custom_openai_chat(
+            "custom:openai", model, messages, tools, tool_choice, stream, body,
+            force_token=token,
+        )
+
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
@@ -703,21 +732,29 @@ def _handle_custom_openai_chat(
     tool_choice: Any,
     stream: bool,
     body: dict[str, Any],
+    force_token: str = "",
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Custom OpenAI-compatible provider — generic proxy."""
+    """Custom OpenAI-compatible provider — generic proxy.
+
+    If force_token is provided, it overrides the provider's configured API key.
+    Used for OpenAI API tokens detected from chatgpt/ requests.
+    """
     from services.providers.custom_openai import CustomOpenAIProvider, get_custom_providers
 
     # Extract provider ID from "custom:deepseek" format
     provider_id = provider_key[len("custom:"):]
 
     providers = get_custom_providers()
-    cfg = providers.get(provider_id)
+    cfg = dict(providers.get(provider_id) or {})
     if not cfg:
         return completion_response(
             model=model,
             content=f"Custom provider '{provider_id}' not found or disabled",
             messages=messages,
         )
+
+    if force_token:
+        cfg["api_key"] = force_token
 
     provider = CustomOpenAIProvider(cfg)
 
