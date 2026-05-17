@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from typing import Any, Iterator
 
 from curl_cffi import requests as cffi_requests
@@ -20,6 +21,66 @@ from services.image_providers import get_image_adapter, is_noauth_image_provider
 from services.image_providers._base import now_sec
 from utils.log import logger
 
+_NON_EN = re.compile(r'[^\x00-\x7F]')
+
+# Translation cache: {original: english}
+_translation_cache: dict[str, str] = {}
+
+
+def _needs_translation(text: str) -> bool:
+    return bool(_NON_EN.search(text))
+
+
+def _translate_prompt(prompt: str) -> str:
+    """Translate non-English prompt → English using Gemini Free."""
+    if not _needs_translation(prompt):
+        return prompt
+    if prompt in _translation_cache:
+        return _translation_cache[prompt]
+
+    cfg = config.data.get("providers") or {}
+    gemini_cfg = cfg.get("gemini_free") or {}
+    api_key = str(gemini_cfg.get("api_key") or "").strip()
+    if not api_key:
+        keys = gemini_cfg.get("api_keys") or []
+        if isinstance(keys, list) and keys:
+            api_key = str(keys[0]).strip()
+    if not api_key:
+        return prompt
+
+    translate_prompt = (
+        "Translate the following image generation prompt to English. "
+        "Output ONLY the English translation. Be faithful and detailed, "
+        "preserve all visual descriptions, lighting, style, composition, "
+        "camera angles, mood. Output ONLY the translated prompt, nothing else:\n\n"
+        + prompt
+    )
+
+    try:
+        resp = cffi_requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": translate_prompt}]}],
+                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                translated = "".join(p.get("text", "") for p in parts).strip()
+                if translated:
+                    logger.info({"event": "prompt_translated", "original": prompt[:120], "english": translated[:250]})
+                    _translation_cache[prompt] = translated
+                    return translated
+    except Exception as exc:
+        logger.warning({"event": "translation_error", "error": str(exc)})
+
+    return prompt
+
 
 def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Handle image generation through an adapter (sdwebui, huggingface, etc.)."""
@@ -29,6 +90,8 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
         raise RuntimeError(f"Provider '{route.provider}' does not support image generation")
 
     prompt = str(body.get("prompt") or "")
+    prompt = _translate_prompt(prompt)
+    body = {**body, "prompt": prompt}
     n = max(1, min(4, int(body.get("n") or 1)))
     response_format = str(body.get("response_format") or "b64_json")
     base_url_str = str(body.get("base_url") or "") or None
