@@ -27,6 +27,15 @@ FALLBACK_MODELS = {
         "gemini_free/auto",
         "gemini_free/gemini-2.5-flash",
     ],
+    "chatgpt": [
+        "chatgpt/auto",
+        "chatgpt/gpt-4.1-mini",
+        "chatgpt/gpt-4.1-nano",
+        "chatgpt/gpt-4o",
+        "chatgpt/gpt-4o-mini",
+        "chatgpt/o3-mini",
+        "chatgpt/o4-mini",
+    ],
     "openai_oauth": [
         "cx/auto",
         # GPT 5.5
@@ -492,7 +501,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
                 })
 
     # Apply fallbacks for providers that returned nothing
-    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "chatgpt2api"]:
+    for provider_name in ["opencode", "gemini_free", "chatgpt", "openai_oauth", "nvidia_nim", "chatgpt2api"]:
         if provider_name not in all_models:
             for model_id in sorted(_apply_fallback(provider_name)):
                 if model_id not in seen:
