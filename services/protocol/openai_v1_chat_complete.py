@@ -291,35 +291,26 @@ def _handle_chatgpt_chat(
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """ChatGPT flow — auto-detects token type and routes to correct API."""
-    # Get token from pool and check if it's an OpenAI API token
-    try:
-        token = account_service.get_text_access_token()
-    except RuntimeError:
-        token = ""
+    # Pick token preferring api.openai.com audience (for chatgpt/ models)
+    from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
+    token = account_service.get_text_access_token()
 
-    # Try decoding JWT to detect token audience
-    use_openai_api = False
-    if token and token.startswith("eyJ"):
-        try:
-            import base64 as _b64, json as _json
-            parts = token.split(".")
-            if len(parts) >= 2:
-                payload = _json.loads(_b64.urlsafe_b64decode(parts[1] + "=="))
-                aud = payload.get("aud", "")
-                if isinstance(aud, list):
-                    aud = aud[0] if aud else ""
-                if "api.openai.com" in str(aud) and "chatgpt.com" not in str(aud):
-                    use_openai_api = True
-                    logger.info({"event": "chatgpt_openai_api_token_detected", "aud": str(aud)[:80]})
-        except Exception:
-            pass
-
-    if use_openai_api:
+    # If token is api.openai.com type → route through OpenAI API provider
+    if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
+        logger.info({"event": "chatgpt_openai_api_routed"})
         return _handle_custom_openai_chat(
             "custom:openai", model, messages, tools, tool_choice, stream, body,
             force_token=token,
         )
 
+    if token and detect_token_audience(token) in ("unknown", _TOKEN_AUDIENCE_CHATGPT):
+        # Route through chatgpt.com backend
+        if stream:
+            return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
+        request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+        return completion_response(model, collect_text(text_backend(), request), messages=messages)
+
+    # Fallback: no token or unknown type
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)

@@ -15,6 +15,33 @@ from services.storage.base import StorageBackend
 from utils.helper import anonymize_token
 from utils.log import logger
 
+# Token audience values for routing
+_TOKEN_AUDIENCE_CHATGPT = "chatgpt.com"
+_TOKEN_AUDIENCE_OPENAI_API = "api.openai.com"
+
+
+def detect_token_audience(access_token: str) -> str:
+    """Decode JWT to determine which API the token works with."""
+    if not access_token or not access_token.startswith("eyJ"):
+        return "unknown"
+    try:
+        import base64, json
+        parts = access_token.split(".")
+        if len(parts) >= 2:
+            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            aud = payload.get("aud", "")
+            if isinstance(aud, list):
+                aud = aud[0] if aud else ""
+            aud_str = str(aud).lower()
+            if "api.openai.com" in aud_str and "chatgpt.com" not in aud_str:
+                return _TOKEN_AUDIENCE_OPENAI_API
+            if "chatgpt.com" in aud_str:
+                return _TOKEN_AUDIENCE_CHATGPT
+    except Exception:
+        pass
+    return "unknown"
+
 # Status migration: Chinese → English (backward compatible)
 _STATUS_MIGRATION = {
     "正常": "active",
@@ -78,6 +105,7 @@ class AccountService:
         normalized["access_token"] = access_token
         normalized["type"] = normalized.get("type") or "free"
         normalized["plan"] = normalized.get("plan") or None
+        normalized["audience"] = normalized.get("audience") or detect_token_audience(access_token)
         # Auto-migrate Chinese status to English
         raw_status = normalized.get("status") or "active"
         normalized["status"] = _STATUS_MIGRATION.get(raw_status, raw_status)
