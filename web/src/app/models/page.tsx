@@ -29,7 +29,7 @@ export default function ModelsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set(Object.keys(PROVIDER_LABELS)));
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadData();
@@ -45,6 +45,9 @@ export default function ModelsPage() {
       ]);
       setAvailable((availRes.data as any)?.providers || {});
       setSettings((settingsRes.data as any)?.model_settings || { enabled_models: {}, default_models: {} });
+      // Auto-collapse all providers on first load
+      const provs = Object.keys((availRes.data as any)?.providers || {});
+      setCollapsed(prev => prev.size === 0 ? new Set(provs) : prev);
     } catch (e) {
       console.error("Failed to load model data", e);
     } finally {
