@@ -29,6 +29,16 @@ FALLBACK_MODELS = {
     ],
     "openai_oauth": [
         "cx/auto",
+        "cx/gpt-5.3-codex",
+        "cx/gpt-4.1",
+        "cx/gpt-4.1-mini",
+        "cx/gpt-4.1-nano",
+        "cx/gpt-4o",
+        "cx/gpt-4o-mini",
+        "cx/o3",
+        "cx/o3-mini",
+        "cx/o4-mini",
+        "cx/gpt-5",
     ],
     "nvidia_nim": [
         "nv/auto",
@@ -205,6 +215,45 @@ def _fetch_nvidia_models() -> set[str]:
     return set()
 
 
+def _fetch_codex_models() -> set[str]:
+    """Fetch models from Codex OAuth tokens (chatgpt.com/backend-api/models) → cx/ prefix."""
+    from services.openai_backend_api import OpenAIBackendAPI
+
+    codex_tokens: list[str] = []
+    with account_service._lock:
+        for token, account in account_service._accounts.items():
+            if not token or token == "public":
+                continue
+            status = str(account.get("status") or "")
+            if status in {"disabled", "error"}:
+                continue
+            if str(account.get("type") or "") == "codex" and token.startswith("eyJ"):
+                codex_tokens.append(token)
+
+    if not codex_tokens:
+        logger.info({"event": "list_models_codex_skip", "reason": "no_codex_tokens"})
+        return set()
+
+    models = set()
+    for token in codex_tokens[:3]:  # Try up to 3 tokens
+        try:
+            api = OpenAIBackendAPI(access_token=token)
+            result = api.list_models()
+            for item in result.get("data", []):
+                slug = str(item.get("id") or "").strip()
+                if slug:
+                    models.add(f"cx/{slug}")
+            if models:
+                models.add("cx/auto")
+                logger.info({"event": "list_models_codex_fetched", "count": len(models)})
+                return models
+        except Exception as exc:
+            logger.warning({"event": "list_models_codex_token_failed", "error": str(exc)})
+            continue
+
+    return models
+
+
 def _fetch_chatgpt_token_models() -> set[str]:
     """Fetch models from all ChatGPT tokens, compute intersection."""
     active_tokens: list[str] = []
@@ -371,6 +420,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     # Fetch from all built-in providers in parallel
     provider_fetchers = {
         "chatgpt": _fetch_chatgpt_token_models,
+        "openai_oauth": _fetch_codex_models,
         "gemini_free": _fetch_gemini_models,
         "opencode": _fetch_opencode_models,
         "openrouter": _fetch_openrouter_models,
