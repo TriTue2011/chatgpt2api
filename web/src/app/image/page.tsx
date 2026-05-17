@@ -766,11 +766,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     try {
       const { request } = await import("@/lib/request");
       const data = await request.get("/api/images?limit=50");
-      const images = ((data.data as any)?.images || []) as any[];
-      setLibraryImages(images.map((img: any) => ({
-        url: img.url || `/images/${img.path || img.filename}`,
-        name: img.filename || img.name || "image",
-      })));
+      const items = ((data.data as any)?.items || []) as any[];
+      setLibraryImages(items.map((img: any) => {
+        const url = img.url || `/images/${img.path || img.filename}`;
+        const name = img.filename || url.split("/").pop() || "image";
+        return { url, name };
+      }));
     } catch { setLibraryOpen(false); }
   }, []);
 
