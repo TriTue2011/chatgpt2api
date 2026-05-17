@@ -38,7 +38,7 @@ _NVIDIA_SIZE_MAP: dict[str, tuple[int, int]] = {
     "1344x768":  (1344, 768),     # 16:9
     "768x1344":  (768, 1344),     # 9:16
 }
-_NVIDIA_DEFAULT_SIZE = "1024x1024"
+_NVIDIA_DEFAULT_SIZE = "1344x768"  # 16:9
 
 
 def _nvidia_size(size: str | None) -> tuple[int, int]:
