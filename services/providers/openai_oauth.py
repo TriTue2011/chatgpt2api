@@ -219,7 +219,7 @@ class CodexOAuthProvider:
 
         # Parse 9router effort/review suffixes from model name
         # e.g. gpt-5.3-codex-xhigh-review → model: gpt-5.3-codex, effort: xhigh, review: True
-        _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none", "spark"}
+        _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none"}
         _suffixes = model.split("-")
         _effort = None
         _review = False
@@ -233,7 +233,7 @@ class CodexOAuthProvider:
                 _seen.insert(0, _s)
         if _effort or _review:
             model = "-".join(_seen)
-            if _effort and _effort != "spark":
+            if _effort:
                 body["reasoning"] = {"effort": _effort}
             if _review:
                 body["include"] = body.get("include", []) or []
