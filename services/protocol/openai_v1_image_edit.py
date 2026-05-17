@@ -65,6 +65,12 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
     if not provider_config and provider_key == "gemini":
         provider_config = providers_cfg.get("gemini_free") or {}
 
+    # For custom providers, get config from custom_providers
+    if not provider_config and provider_key.startswith("custom:"):
+        cp_id = provider_key[len("custom:"):]
+        custom_cfg = (config.data.get("custom_providers") or {}).get(cp_id) or {}
+        provider_config = custom_cfg
+
     credentials = {
         "apiKey": str(provider_config.get("api_key") or ""),
         "apiKeys": provider_config.get("api_keys") or [],
