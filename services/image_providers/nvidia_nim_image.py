@@ -95,7 +95,7 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             "width": w,
             "height": h,
             "seed": int(body.get("seed", 0)),
-            "steps": int(body.get("steps", 4)),
+            "steps": max(5, int(body.get("steps", 5))),
         }
 
     def build_headers(
