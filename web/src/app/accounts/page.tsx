@@ -705,7 +705,7 @@ function AccountsPageContent() {
                     .filter((option) => option.value !== "all")
                     .map((option) => (
                       <SelectItem key={option.value} value={option.value}>
-                        {option.label}
+                        {t(option.labelKey)}
                       </SelectItem>
                     ))}
                 </SelectContent>
