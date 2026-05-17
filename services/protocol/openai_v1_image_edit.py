@@ -75,6 +75,12 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
         "apiKey": str(provider_config.get("api_key") or ""),
         "apiKeys": provider_config.get("api_keys") or [],
     }
+    logger.info({
+        "event": "image_edit_credentials",
+        "provider_key": provider_key,
+        "has_api_key": bool(credentials.get("apiKey")),
+        "api_keys_count": len(credentials.get("apiKeys", [])),
+    })
 
     max_keys = getattr(adapter, 'get_key_count', lambda c: 1)(credentials)
     all_data = []
