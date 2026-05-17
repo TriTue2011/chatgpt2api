@@ -218,15 +218,21 @@ class BackendRouter:
         if provider == "chatgpt":
             # If payload is large and we have free providers, suggest fallback
             if payload_size and payload_size > self.FREE_PAYLOAD_LIMIT:
-                # Check if OpenCode is enabled in config
-                opencode_config = (config.data.get("providers") or {}).get("opencode") or {}
-                if opencode_config.get("enabled", True):
-                    return BackendRoute(
-                        provider="opencode",
-                        model=model if model != "auto" else "auto",
-                        no_auth=True,
-                        fallback_providers=["chatgpt"],
-                    )
+                # Don't redirect if active accounts exist (OpenAI API handles large payloads)
+                from services.account_service import account_service as _acct2
+                has_active = any(
+                    a.get("status") == "active"
+                    for a in _acct2._accounts.values()
+                )
+                if not has_active:
+                    opencode_config = (config.data.get("providers") or {}).get("opencode") or {}
+                    if opencode_config.get("enabled", True):
+                        return BackendRoute(
+                            provider="opencode",
+                            model=model if model != "auto" else "auto",
+                            no_auth=True,
+                            fallback_providers=["chatgpt"],
+                        )
 
             # Use ChatGPT as normal
             return BackendRoute(
