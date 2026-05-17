@@ -453,7 +453,6 @@ class CodexOAuthProvider:
                 token
                 for item in all_items
                 if item.get("status") not in ("disabled", "error")
-                and "codex" in str(item.get("type") or "").split(",")
                 and (token := item.get("access_token") or "")
                 and token.startswith("eyJ")
                 and token not in excluded
