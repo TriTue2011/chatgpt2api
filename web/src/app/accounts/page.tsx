@@ -213,7 +213,7 @@ function downloadTokens(accounts: Account[]) {
 }
 
 function displayAccountType(account: Account) {
-  return account.type || "Free";
+  return account.plan || account.type || "Free";
 }
 
 function translateStatus(status: string, lang: "vi" | "en") {

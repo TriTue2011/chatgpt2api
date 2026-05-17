@@ -8,6 +8,7 @@ export type AuthRole = "admin" | "user";
 export type Account = {
   access_token: string;
   type: AccountType;
+  plan?: string | null;
   status: AccountStatus;
   quota: number;
   image_quota_unknown?: boolean;

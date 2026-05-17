@@ -77,6 +77,7 @@ class AccountService:
         normalized = dict(item)
         normalized["access_token"] = access_token
         normalized["type"] = normalized.get("type") or "free"
+        normalized["plan"] = normalized.get("plan") or None
         # Auto-migrate Chinese status to English
         raw_status = normalized.get("status") or "active"
         normalized["status"] = _STATUS_MIGRATION.get(raw_status, raw_status)

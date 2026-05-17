@@ -206,7 +206,7 @@ class OpenAIBackendAPI:
         result = {
             "email": me_payload.get("email"),
             "user_id": me_payload.get("id"),
-            "type": plan_type,
+            "plan": plan_type,
             "quota": quota,
             "image_quota_unknown": image_quota_unknown,
             "limits_progress": limits_progress,
