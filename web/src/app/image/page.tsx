@@ -358,6 +358,8 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [availableQuota, setAvailableQuota] = useState("Đang tải...");
   const [lightboxImages, setLightboxImages] = useState<ImageLightboxItem[]>([]);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryImages, setLibraryImages] = useState<Array<{url: string; name: string}>>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [deleteConfirm, setDeleteConfirm] = useState<
     | { type: "one"; id: string }
@@ -758,6 +760,29 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     });
     setReferenceImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
   }, []);
+
+  const handlePickLibraryImage = useCallback(async () => {
+    setLibraryOpen(true);
+    try {
+      const { request } = await import("@/lib/request");
+      const data = await request.get("/api/images?limit=50");
+      const images = ((data.data as any)?.images || []) as any[];
+      setLibraryImages(images.map((img: any) => ({
+        url: img.url || `/images/${img.path || img.filename}`,
+        name: img.filename || img.name || "image",
+      })));
+    } catch { setLibraryOpen(false); }
+  }, []);
+
+  const handleSelectLibraryImage = useCallback(async (imgUrl: string) => {
+    try {
+      const resp = await fetch(imgUrl);
+      const blob = await resp.blob();
+      const file = new File([blob], "library-ref.png", { type: blob.type || "image/png" });
+      await handleReferenceImageChange([file]);
+    } catch { /* ignore */ }
+    setLibraryOpen(false);
+  }, [handleReferenceImageChange]);
 
   const handleContinueEdit = useCallback(
     async (conversationId: string, image: StoredImage | StoredReferenceImage) => {
@@ -1256,7 +1281,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onModelChange={setImageModel}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}
-            onPickLibraryImage={() => window.open("/image-manager", "_blank")}
+            onPickLibraryImage={handlePickLibraryImage}
             onReferenceImageChange={handleReferenceImageChange}
             onRemoveReferenceImage={handleRemoveReferenceImage}
           />
@@ -1291,6 +1316,28 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
           </DialogContent>
         </Dialog>
       ) : null}
+
+      {/* Library image picker modal */}
+      {libraryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setLibraryOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[720px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100">
+              <h3 className="text-[15px] font-bold text-slate-900">Chọn ảnh từ thư viện</h3>
+              <button onClick={() => setLibraryOpen(false)} className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100"><X className="size-5" /></button>
+            </div>
+            <div className="overflow-y-auto p-4 grid grid-cols-4 gap-3">
+              {libraryImages.length === 0 ? (
+                <p className="col-span-4 text-center py-8 text-sm text-stone-400">Chưa có ảnh nào trong thư viện</p>
+              ) : libraryImages.map((img, i) => (
+                <button key={i} onClick={() => handleSelectLibraryImage(img.url)}
+                  className="aspect-square rounded-xl overflow-hidden border-2 border-stone-200 hover:border-indigo-400 transition cursor-pointer bg-stone-100">
+                  <img src={img.url} alt={img.name} className="w-full h-full object-cover" loading="lazy" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
