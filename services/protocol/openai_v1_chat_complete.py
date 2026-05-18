@@ -348,16 +348,21 @@ def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str,
                         if isinstance(url, str) and url.startswith("data:"):
                             new_parts.append(part)  # Already base64
                         elif isinstance(url, str) and url.startswith("http"):
-                            # Download and convert to base64
+                            # Download and convert to base64 (OpenAI can't fetch external URLs)
                             try:
-                                resp = cffi_requests.get(url, timeout=15)
-                                resp.raise_for_status()
-                                b64 = base64.b64encode(resp.content).decode("ascii")
-                                mime = resp.headers.get("content-type", "image/jpeg")
-                                new_parts.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                # Use standard requests for image downloads (no impersonation needed)
+                                import urllib.request
+                                req = urllib.request.Request(url, headers={
+                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                                 })
+                                with urllib.request.urlopen(req, timeout=15) as resp:
+                                    img_data = resp.read()
+                                    mime = resp.headers.get("Content-Type", "image/jpeg")
+                                    b64 = base64.b64encode(img_data).decode("ascii")
+                                    new_parts.append({
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                    })
                             except Exception as e:
                                 logger.warning({"event": "image_download_failed", "url": url[:120], "error": str(e)[:100]})
                         continue
