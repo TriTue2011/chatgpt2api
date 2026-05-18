@@ -865,9 +865,9 @@ def create_router(app_version: str) -> APIRouter:
         if not isinstance(enabled_by_provider, dict):
             enabled_by_provider = {}
 
-        # Fetch all available models
+        # Fetch all available models (unfiltered — UI decides what to show)
         from services.protocol.openai_v1_models import list_models
-        result = list_models()
+        result = list_models(apply_filter=False)
         all_models = result.get("data", [])
 
         enriched: list[dict] = []
