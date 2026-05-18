@@ -300,7 +300,7 @@ def _fetch_chatgpt_token_models() -> set[str]:
             models = set()
             for item in result.get("data", []):
                 if isinstance(item, dict) and item.get("id"):
-                    models.add(str(item["id"]))
+                    models.add(f"chatgpt/{str(item['id'])}")
             logger.info({"event": "list_models_chatgpt_anon", "count": len(models)})
             return models
         except Exception as exc:
@@ -322,10 +322,11 @@ def _fetch_chatgpt_token_models() -> set[str]:
     if not token_sets:
         return set()
 
-    # Intersection
-    common = token_sets[0].copy()
+    # Intersection — add chatgpt/ prefix
+    common = {f"chatgpt/{m}" for m in token_sets[0]}
     for s in token_sets[1:]:
-        common &= s
+        prefixed = {f"chatgpt/{m}" for m in s}
+        common &= prefixed
 
     logger.info({
         "event": "list_models_chatgpt_intersection",

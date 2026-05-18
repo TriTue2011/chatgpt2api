@@ -20,6 +20,7 @@ from utils.helper import IMAGE_MODELS
 # Provider prefixes ported from 9router src/shared/constants/providers.js
 PROVIDER_PREFIXES: dict[str, str] = {
     "9r/": "ninerouter",
+    "chatgpt/": "chatgpt",
     "cx/": "openai_oauth",
     "codex/": "openai_oauth",
     "oc/": "opencode",
