@@ -269,7 +269,7 @@ def _dispatch(route, messages, tools, tool_choice, body):
         rtk_threshold = 24_000
     else:
         rtk_on = config.rtk_other_enabled
-        rtk_threshold = 50_000
+        rtk_threshold = 80_000
     if rtk_on:
         from services.protocol.conversation import _rtk_compress_messages
         messages = _rtk_compress_messages(messages, rtk_threshold)
@@ -392,11 +392,11 @@ def _handle_chatgpt_chat(
     if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
         logger.info({"event": "chatgpt_openai_api_routed"})
         # Map chatgpt.com model names to valid OpenAI API models
-        openai_model = model if model != "auto" else "gpt-4.1-mini"
+        openai_model = model if model != "auto" else "gpt-4o"
         if openai_model.startswith("chatgpt/"):
             openai_model = openai_model[len("chatgpt/"):]
         if openai_model == "auto":
-            openai_model = "gpt-4.1-mini"
+            openai_model = "gpt-4o"
         # Ensure stream is bool (HA may send null)
         stream = bool(body.get("stream"))
 
