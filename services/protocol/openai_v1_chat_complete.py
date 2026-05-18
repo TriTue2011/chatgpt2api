@@ -401,39 +401,49 @@ def _handle_chatgpt_chat(
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """ChatGPT flow — auto-detects token type and routes to correct API."""
-    # Pick token preferring api.openai.com audience (for chatgpt/ models)
     from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
     token = account_service.get_text_access_token()
 
-    # OpenAI API routing: works on AMD64, may fail (500) on ARM64/addon
-    use_openai_api = False
-    if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
-        # Auto-detect: try OpenAI API if not on ARM64
+    # Check if token is api.openai.com type
+    is_openai_token = token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API
+
+    if is_openai_token:
         import platform
         is_arm = platform.machine() in ("aarch64", "arm64", "armv7l")
-        use_openai_api = not is_arm
 
-    if use_openai_api:
-        logger.info({"event": "chatgpt_openai_api_routed"})
-        # Map chatgpt.com model names to valid OpenAI API models
-        default_model = config.openai_default_model or "gpt-4o"
-        openai_model = model if model != "auto" else default_model
-        if openai_model.startswith("chatgpt/"):
-            openai_model = openai_model[len("chatgpt/"):]
-        if openai_model == "auto":
-            openai_model = default_model
-        stream = bool(body.get("stream"))
+        if is_arm and tools:
+            # ARM64 + tools → relay to local OpenAI-compatible endpoint
+            relay = (config.data.get("openai_relay_url") or "").strip()
+            if relay:
+                logger.info({"event": "chatgpt_relay_tools", "relay": relay})
+                return _handle_custom_openai_chat(
+                    "custom:openai", model if model != "auto" else "gpt-4o",
+                    _restore_tool_messages(messages), tools, tool_choice,
+                    bool(body.get("stream")), body,
+                    force_token=token, force_base_url=relay,
+                )
 
-        messages = _restore_tool_messages(messages)
-        messages = _convert_images_for_openai(messages)
-        _ensure_openai_provider()
+        if not is_arm:
+            # AMD64 → OpenAI API (native tools, fast)
+            logger.info({"event": "chatgpt_openai_api_routed"})
+            default_model = config.openai_default_model or "gpt-4o"
+            openai_model = model if model != "auto" else default_model
+            if openai_model.startswith("chatgpt/"):
+                openai_model = openai_model[len("chatgpt/"):]
+            if openai_model == "auto":
+                openai_model = default_model
+            stream = bool(body.get("stream"))
 
-        return _handle_custom_openai_chat(
-            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
-            force_token=token,
-        )
+            messages = _restore_tool_messages(messages)
+            messages = _convert_images_for_openai(messages)
+            _ensure_openai_provider()
 
-    # chatgpt.com backend (original repo behavior)
+            return _handle_custom_openai_chat(
+                "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
+                force_token=token,
+            )
+
+    # chatgpt.com backend (ARM64 no tools, or no openai token)
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
@@ -846,11 +856,12 @@ def _handle_custom_openai_chat(
     stream: bool,
     body: dict[str, Any],
     force_token: str = "",
+    force_base_url: str = "",
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Custom OpenAI-compatible provider — generic proxy.
 
     If force_token is provided, it overrides the provider's configured API key.
-    Used for OpenAI API tokens detected from chatgpt/ requests.
+    If force_base_url is provided, it overrides the provider's base URL.
     """
     from services.providers.custom_openai import CustomOpenAIProvider, get_custom_providers
 
@@ -868,6 +879,8 @@ def _handle_custom_openai_chat(
 
     if force_token:
         cfg["api_key"] = force_token
+    if force_base_url:
+        cfg["base_url"] = force_base_url.rstrip("/")
 
     provider = CustomOpenAIProvider(cfg)
 
