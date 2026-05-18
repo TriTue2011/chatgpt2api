@@ -213,8 +213,9 @@ function downloadTokens(accounts: Account[]) {
 }
 
 function displayAccountType(account: Account) {
-  // Show internal type (free/codex/go) for non-standard types, plan otherwise
-  if (account.type === "go" || account.type === "codex") return account.type;
+  // go and free → same ChatGPT group; codex stays separate
+  if (account.type === "go") return "free";
+  if (account.type === "codex") return "codex";
   return account.plan || account.type || "Free";
 }
 

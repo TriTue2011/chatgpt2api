@@ -836,7 +836,7 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         from services.protocol.openai_v1_models import list_models
         force = refresh.lower() == "true"
-        result = list_models(force_refresh=force)
+        result = list_models(force_refresh=force, apply_filter=False)
         # Group models by owned_by
         grouped: dict[str, list[str]] = {}
         for item in result.get("data", []):
