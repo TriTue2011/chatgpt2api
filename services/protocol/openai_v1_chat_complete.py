@@ -315,8 +315,11 @@ def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert internal image format → OpenAI vision API format."""
+    """Convert internal image format → OpenAI vision API format.
+    Downloads HTTP URLs and converts to base64 (OpenAI can't fetch external URLs).
+    """
     import base64
+    from curl_cffi import requests as cffi_requests
     result: list[dict[str, Any]] = []
     for msg in messages:
         content = msg.get("content")
@@ -341,8 +344,22 @@ def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str,
                             })
                         continue
                     elif ptype == "image_url":
-                        # Pass through — already in OpenAI format (data: or https://)
-                        new_parts.append(part)
+                        url = part.get("image_url", {}).get("url", "")
+                        if isinstance(url, str) and url.startswith("data:"):
+                            new_parts.append(part)  # Already base64
+                        elif isinstance(url, str) and url.startswith("http"):
+                            # Download and convert to base64
+                            try:
+                                resp = cffi_requests.get(url, timeout=15)
+                                resp.raise_for_status()
+                                b64 = base64.b64encode(resp.content).decode("ascii")
+                                mime = resp.headers.get("content-type", "image/jpeg")
+                                new_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                })
+                            except Exception as e:
+                                logger.warning({"event": "image_download_failed", "url": url[:120], "error": str(e)[:100]})
                         continue
                 new_parts.append(part)
             result.append({**msg, "content": new_parts})
