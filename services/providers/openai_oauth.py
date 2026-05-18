@@ -32,20 +32,10 @@ CODEX_HEADERS = {
 
 
 def _is_openai_api_only(token: str) -> bool:
-    """Check if token only works with api.openai.com (not chatgpt.com)."""
-    try:
-        import base64, json
-        parts = token.split(".")
-        if len(parts) >= 2:
-            padded = parts[1] + "=" * (-len(parts[1]) % 4)
-            payload = json.loads(base64.urlsafe_b64decode(padded))
-            cid = str(payload.get("client_id") or "")
-            # Web session client_id — only works with api.openai.com
-            if cid == "app_X8zY6vV2wQ9tR3dE7nK1jL5gH":
-                return True
-    except Exception:
-        pass
-    return False
+    """Check if token only works with api.openai.com (not chatgpt.com).
+    Detected by: no user_id set (never successfully refreshed from chatgpt.com).
+    """
+    return False  # Let the account's refresh status determine eligibility
 
 
 def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
