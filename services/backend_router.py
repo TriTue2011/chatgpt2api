@@ -210,8 +210,10 @@ class BackendRouter:
             # Filter to enabled models only (model_settings)
             enabled = self._get_enabled_models(provider)
             if enabled:
-                if resolved_model == "auto" or resolved_model not in enabled:
-                    resolved_model = enabled[0]  # First enabled model
+                # Skip "auto" entries — placeholders, not real API models
+                real_models = [m for m in enabled if m not in ("auto", f"{provider}/auto")]
+                if real_models and (resolved_model == "auto" or resolved_model not in real_models):
+                    resolved_model = real_models[0]  # First real enabled model
 
         # Calculate payload size if not provided
         if payload_size is None and messages:

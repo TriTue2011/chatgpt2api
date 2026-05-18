@@ -414,9 +414,11 @@ def _handle_chatgpt_chat(
         if model == "auto" or model == "chatgpt/auto":
             # Pick from enabled chatgpt models, or fall back to default_model
             ms = config.data.get("model_settings") or {}
-            enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
+            all_enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
+            # Filter out "auto" entries — they're placeholders, not real API models
+            enabled = [m for m in (all_enabled or []) if m not in ("auto", "chatgpt/auto")] if all_enabled else None
             if enabled and default_model not in enabled:
-                openai_model = enabled[0]  # First enabled model
+                openai_model = enabled[0]  # First real enabled model
             else:
                 openai_model = default_model
         else:
