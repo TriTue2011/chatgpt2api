@@ -414,6 +414,25 @@ def normalize_messages(messages: object, system: Any = None, tools: list[dict[st
                 for data, mime in images:
                     parts.append({"type": "image", "data": data, "mime": mime})
                 normalized.append({"role": role, "content": parts})
+            elif isinstance(content, list):
+                # Preserve original list content (may have image_url with HTTP URLs)
+                preserved = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") in ("image_url", "input_image"):
+                        preserved.append(part)
+                    elif isinstance(part, dict) and part.get("type") == "text":
+                        preserved.append(part)
+                if preserved:
+                    normalized.append({"role": role, "content": preserved})
+                else:
+                    msg = {"role": role, "content": text}
+                    if "tool_calls" in message:
+                        msg["tool_calls"] = message["tool_calls"]
+                    if "tool_call_id" in message:
+                        msg["tool_call_id"] = message["tool_call_id"]
+                    if "name" in message:
+                        msg["name"] = message["name"]
+                    normalized.append(msg)
             else:
                 msg = {"role": role, "content": text}
                 if "tool_calls" in message:

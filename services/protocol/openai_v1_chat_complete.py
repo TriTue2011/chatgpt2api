@@ -323,22 +323,28 @@ def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str,
         if isinstance(content, list):
             new_parts = []
             for part in content:
-                if isinstance(part, dict) and part.get("type") == "image":
-                    data = part.get("data")
-                    mime = part.get("mime", "image/png")
-                    if isinstance(data, bytes):
-                        b64 = base64.b64encode(data).decode("ascii")
-                        new_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime};base64,{b64}"},
-                        })
-                    elif isinstance(data, str) and data.startswith("data:"):
-                        new_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": data},
-                        })
-                else:
-                    new_parts.append(part)
+                if isinstance(part, dict):
+                    ptype = part.get("type", "")
+                    if ptype == "image":
+                        data = part.get("data")
+                        mime = part.get("mime", "image/png")
+                        if isinstance(data, bytes):
+                            b64 = base64.b64encode(data).decode("ascii")
+                            new_parts.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime};base64,{b64}"},
+                            })
+                        elif isinstance(data, str) and data.startswith("data:"):
+                            new_parts.append({
+                                "type": "image_url",
+                                "image_url": {"url": data},
+                            })
+                        continue
+                    elif ptype == "image_url":
+                        # Pass through — already in OpenAI format (data: or https://)
+                        new_parts.append(part)
+                        continue
+                new_parts.append(part)
             result.append({**msg, "content": new_parts})
         else:
             result.append(msg)
