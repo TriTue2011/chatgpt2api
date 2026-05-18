@@ -10,8 +10,23 @@ import time
 from services.storage.base import StorageBackend
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = BASE_DIR / "data"
-CONFIG_FILE = BASE_DIR / "config.json"
+
+# Auto-detect HA addon persistent storage
+_ADDON_DATA = Path("/data/chatgpt2api")
+if _ADDON_DATA.exists():
+    DATA_DIR = _ADDON_DATA
+else:
+    DATA_DIR = BASE_DIR / "data"
+
+CONFIG_FILE = DATA_DIR / "config.json"
+
+# On first run in addon, copy default config if not present
+if _ADDON_DATA.exists() and not CONFIG_FILE.exists():
+    _default_config = BASE_DIR / "config.json"
+    if _default_config.exists():
+        import shutil
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_default_config, CONFIG_FILE)
 CONFIG_DATA_FILE = DATA_DIR / "config.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 BACKUP_STATE_FILE = DATA_DIR / "backup_state.json"
