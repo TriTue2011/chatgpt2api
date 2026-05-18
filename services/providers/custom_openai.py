@@ -109,6 +109,8 @@ class CustomOpenAIProvider:
                     token = (acc.get("access_token") or "").strip()
                     if token.startswith("eyJ") and acc.get("status") == "active":
                         keys = [token]
+                        from utils.log import logger
+                        logger.info({"event": "openai_auto_key", "token_preview": token[:20] + "...", "email": acc.get("email")})
                         break
             except Exception:
                 pass
@@ -240,6 +242,9 @@ class CustomOpenAIProvider:
                     "provider": self.name,
                     "status": resp.status_code,
                     "error": error_text,
+                    "model_sent": body.get("model"),
+                    "msg_count": len(body.get("messages", [])),
+                    "key_preview": (self.api_key or "")[:15] + "...",
                     "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
                 })
                 raise RuntimeError(f"[{self.name}] Error {resp.status_code}: {error_text[:200]}")
