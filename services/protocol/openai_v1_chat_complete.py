@@ -375,6 +375,23 @@ def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str,
     return result
 
 
+def _ensure_openai_provider():
+    """Auto-create openai custom provider if missing (for web session routing)."""
+    from services.providers.custom_openai import get_custom_providers
+    providers = get_custom_providers()
+    if "openai" not in providers:
+        cfg = config.data
+        cfg.setdefault("custom_providers", {})["openai"] = {
+            "name": "OpenAI",
+            "prefix": "openai",
+            "base_url": "https://api.openai.com",
+            "api_key": "sk-auto-created",
+            "enabled": True,
+        }
+        config._save()
+        logger.info({"event": "openai_provider_auto_created"})
+
+
 def _handle_chatgpt_chat(
     model: str,
     messages: list[dict[str, Any]],
@@ -407,30 +424,13 @@ def _handle_chatgpt_chat(
         # Convert internal image format → OpenAI vision API format
         messages = _convert_images_for_openai(messages)
 
-        # Ensure openai custom provider exists for web session routing
+        # Ensure openai custom provider exists
         _ensure_openai_provider()
 
         return _handle_custom_openai_chat(
             "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
             force_token=token,
         )
-
-
-def _ensure_openai_provider():
-    """Auto-create openai custom provider if missing (for web session routing)."""
-    from services.providers.custom_openai import get_custom_providers
-    providers = get_custom_providers()
-    if "openai" not in providers:
-        cfg = config.data
-        cfg.setdefault("custom_providers", {})["openai"] = {
-            "name": "OpenAI",
-            "prefix": "openai",
-            "base_url": "https://api.openai.com",
-            "api_key": "sk-auto-created",
-            "enabled": True,
-        }
-        config._save()
-        logger.info({"event": "openai_provider_auto_created"})
 
     if token and detect_token_audience(token) in ("unknown", _TOKEN_AUDIENCE_CHATGPT):
         # Route through chatgpt.com backend
