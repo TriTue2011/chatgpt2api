@@ -416,10 +416,21 @@ def _handle_chatgpt_chat(
         for i, msg in enumerate(messages):
             c = msg.get("content")
             if isinstance(c, list):
-                types = [p.get("type","?") for p in c if isinstance(p, dict)]
-                logger.info({"event": "openai_msg_debug", "idx": i, "role": msg.get("role"), "content_types": types})
-            elif isinstance(c, str) and len(c) > 100:
-                logger.info({"event": "openai_msg_debug", "idx": i, "role": msg.get("role"), "content_len": len(c)})
+                types = []
+                for p in c:
+                    if isinstance(p, dict):
+                        t = p.get("type","?")
+                        if t == "image":
+                            d = p.get("data")
+                            types.append(f"image(data:{type(d).__name__})")
+                        elif t == "image_url":
+                            u = str(p.get("image_url",{}).get("url",""))[:30]
+                            types.append(f"image_url({u}...)")
+                        else:
+                            types.append(t)
+                logger.info({"event": "openai_msg_debug2", "idx": i, "role": msg.get("role"), "content_types": types})
+            elif isinstance(c, str):
+                logger.info({"event": "openai_msg_debug2", "idx": i, "role": msg.get("role"), "content_str_len": len(c)})
 
         return _handle_custom_openai_chat(
             "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
