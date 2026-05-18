@@ -10,6 +10,8 @@ from fastapi import HTTPException
 from services.protocol.conversation import (
     ConversationRequest,
     ImageOutput,
+    TOOL_CALL_RE,
+    TOOL_CALL_SELF_CLOSING_RE,
     collect_image_outputs,
     collect_text,
     count_message_tokens,
@@ -438,9 +440,72 @@ def _handle_chatgpt_chat(
 
     # chatgpt.com backend (ARM64 or no openai token)
     if stream:
-        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
+        return _stream_chatgpt_addon(text_backend(), messages, model, tools, tool_choice)
+    return _chatgpt_addon_completion(model, messages, tools, tool_choice)
+
+
+def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice):
+    """Stream from chatgpt.com backend, extracting XML tool calls from response."""
+    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+    created = int(time.time())
+    sent_role = False
+    accumulated = ""
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
-    return completion_response(model, collect_text(text_backend(), request), messages=messages)
+    for delta_text in stream_text_deltas(backend, request):
+        accumulated += delta_text
+        if not sent_role:
+            sent_role = True
+            yield completion_chunk(model, {"role": "assistant", "content": delta_text}, None, completion_id, created)
+        else:
+            yield completion_chunk(model, {"content": delta_text}, None, completion_id, created)
+
+    if tools:
+        tool_calls = _extract_xml_tool_calls_from_text(accumulated)
+        if tool_calls:
+            yield {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": None}],
+            }
+
+    if not sent_role:
+        yield completion_chunk(model, {"role": "assistant", "content": ""}, None, completion_id, created)
+    yield completion_chunk(model, {}, "stop", completion_id, created)
+
+
+def _chatgpt_addon_completion(model, messages, tools, tool_choice):
+    """Non-streaming chatgpt.com backend, extracting XML tool calls from response."""
+    backend = text_backend()
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    content = collect_text(backend, request)
+
+    if tools:
+        tool_calls = _extract_xml_tool_calls_from_text(content)
+        if tool_calls:
+            return {
+                "id": f"chatcmpl-{uuid.uuid4().hex}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": "stop",
+                }],
+                "usage": {
+                    "prompt_tokens": count_message_tokens(messages, model),
+                    "completion_tokens": count_text_tokens(content, model),
+                    "total_tokens": count_message_tokens(messages, model) + count_text_tokens(content, model),
+                },
+            }
+
+    return completion_response(model, content, messages=messages)
 
 
 def _handle_opencode_chat(
@@ -672,6 +737,67 @@ def _extract_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
                 pass
 
     return None
+
+
+def _extract_xml_tool_calls_from_text(text: str) -> list[dict[str, Any]] | None:
+    """Parse XML-wrapped tool calls from chatgpt.com backend text responses.
+
+    The AI is instructed by _build_tool_prompt to wrap tool calls in:
+    ```xml
+    <tool_call name="tool_name">{"arg": "value"}</tool_call>
+    ```
+
+    Returns OpenAI-format tool_calls list, or None if no tool calls found.
+    """
+    if not text or not text.strip():
+        return None
+
+    import re as _re
+
+    # Prefer matches inside ```xml ... ``` fenced blocks
+    fence_pattern = _re.compile(r'```(?:xml)?\s*\n?(.*?)```', _re.DOTALL)
+    fence_matches = fence_pattern.findall(text)
+    search_text = " ".join(fence_matches) if fence_matches else text
+
+    tool_calls = []
+    seen_names: set[str] = set()
+
+    for match in TOOL_CALL_RE.finditer(search_text):
+        name = match.group(1).strip()
+        args_text = match.group(2).strip()
+        try:
+            args = json.loads(args_text) if args_text else {}
+            if not isinstance(args, dict):
+                args = {}
+        except (json.JSONDecodeError, TypeError):
+            logger.warning({"event": "xml_tool_call_parse_failed", "name": name, "args_raw": args_text[:200]})
+            continue
+
+        if name in seen_names:
+            continue
+        seen_names.add(name)
+
+        tool_calls.append({
+            "id": f"call_{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(args, ensure_ascii=False),
+            },
+        })
+
+    # Self-closing <tool_call name="X"/>
+    for match in TOOL_CALL_SELF_CLOSING_RE.finditer(search_text):
+        name = match.group(1).strip()
+        if name not in seen_names:
+            seen_names.add(name)
+            tool_calls.append({
+                "id": f"call_{uuid.uuid4().hex[:12]}",
+                "type": "function",
+                "function": {"name": name, "arguments": "{}"},
+            })
+
+    return tool_calls if tool_calls else None
 
 
 def _handle_openai_oauth_chat(
