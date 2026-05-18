@@ -238,6 +238,16 @@ class ConfigStore:
         return [level for item in levels if (level := str(item or "").strip().lower()) in allowed]
 
     @property
+    def rtk_enabled(self) -> bool:
+        """RTK message compression for all providers."""
+        val = self.data.get("rtk_enabled", True)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in {"1", "true", "yes", "on"}
+        return True
+
+    @property
     def sensitive_words(self) -> list[str]:
         words = self.data.get("sensitive_words")
         return [word for item in words if (word := str(item or "").strip())] if isinstance(words, list) else []
