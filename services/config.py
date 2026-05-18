@@ -14,8 +14,21 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 # Auto-detect HA addon persistent storage
 # /data/options.json is the definitive signal we're in an HA addon
 _IS_ADDON = Path("/data/options.json").exists()
-_ADDON_DATA = Path("/data/chatgpt2api")
-if _IS_ADDON or _ADDON_DATA.exists():
+_ADDON_DATA = Path("/config/chatgpt2api")
+_LEGACY_ADDON_DATA = Path("/data/chatgpt2api")
+
+# Migrate from old /data/ location if needed
+if _IS_ADDON and _LEGACY_ADDON_DATA.exists() and not _ADDON_DATA.exists():
+    import shutil as _shutil
+    _ADDON_DATA.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _LEGACY_ADDON_DATA.rename(_ADDON_DATA)
+    except OSError:
+        _shutil.copytree(_LEGACY_ADDON_DATA, _ADDON_DATA)
+
+if _IS_ADDON:
+    DATA_DIR = _ADDON_DATA
+elif _ADDON_DATA.exists():
     DATA_DIR = _ADDON_DATA
 else:
     DATA_DIR = BASE_DIR / "data"
