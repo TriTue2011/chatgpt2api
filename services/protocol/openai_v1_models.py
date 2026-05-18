@@ -514,6 +514,14 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
                         "owned_by": provider_name,
                     })
 
+    # Always add OpenAI API models to chatgpt (for web session routing)
+    openai_extra = ["chatgpt/gpt-4o", "chatgpt/gpt-4o-mini", "chatgpt/gpt-4.1-mini",
+                    "chatgpt/gpt-4.1-nano", "chatgpt/o3-mini", "chatgpt/o4-mini"]
+    for mid in openai_extra:
+        if mid not in seen:
+            seen.add(mid)
+            data.append({"id": mid, "object": "model", "created": 0, "owned_by": "chatgpt"})
+
     # Add image models
     for model in sorted(IMAGE_MODELS):
         if model not in seen:
