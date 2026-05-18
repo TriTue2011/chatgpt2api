@@ -404,6 +404,15 @@ def _handle_chatgpt_chat(
         # Convert internal image format → OpenAI vision API format
         messages = _convert_images_for_openai(messages)
 
+        # Debug: log message content structure
+        for i, msg in enumerate(messages):
+            c = msg.get("content")
+            if isinstance(c, list):
+                types = [p.get("type","?") for p in c if isinstance(p, dict)]
+                logger.info({"event": "openai_msg_debug", "idx": i, "role": msg.get("role"), "content_types": types})
+            elif isinstance(c, str) and len(c) > 100:
+                logger.info({"event": "openai_msg_debug", "idx": i, "role": msg.get("role"), "content_len": len(c)})
+
         return _handle_custom_openai_chat(
             "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
             force_token=token,
