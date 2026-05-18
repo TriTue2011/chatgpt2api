@@ -646,6 +646,15 @@ function AccountsPageContent() {
             <RefreshCw className={cn("size-3.5 mr-1.5", isRefreshing ? "animate-spin" : "")} />
             Làm mới tất cả
           </Button>
+          <Button
+            variant="outline"
+            className="h-9 rounded-lg border-black/[0.08] bg-white px-3 text-[13px] text-slate-600 hover:bg-slate-50"
+            onClick={() => void handleRefreshAccounts(selectedTokens)}
+            disabled={isLoading || isRefreshing || isDeleting || selectedTokens.length === 0}
+          >
+            <RefreshCw className={cn("size-3.5 mr-1.5", isRefreshing ? "animate-spin" : "")} />
+            Làm mới đã chọn ({selectedTokens.length})
+          </Button>
 
           <div className="flex-1" />
 
