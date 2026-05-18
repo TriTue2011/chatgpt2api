@@ -866,6 +866,8 @@ def stream_image_outputs(
         total: int = 1,
 ) -> Iterator[ImageOutput]:
     last: dict[str, Any] = {}
+    all_file_ids: list[str] = []
+    all_sediment_ids: list[str] = []
     for event in conversation_events(
             backend,
             prompt=request.prompt,
@@ -874,6 +876,13 @@ def stream_image_outputs(
             size=request.size,
     ):
         last = event
+        # Accumulate image IDs from all events (ChatGPT may return multiple)
+        for fid in (event.get("file_ids") or []):
+            if fid not in all_file_ids:
+                all_file_ids.append(str(fid))
+        for sid in (event.get("sediment_ids") or []):
+            if sid not in all_sediment_ids:
+                all_sediment_ids.append(str(sid))
         if event.get("type") == "conversation.delta":
             yield ImageOutput(
                 kind="progress",
@@ -896,8 +905,8 @@ def stream_image_outputs(
             )
 
     conversation_id = str(last.get("conversation_id") or "")
-    file_ids = [str(item) for item in last.get("file_ids") or []]
-    sediment_ids = [str(item) for item in last.get("sediment_ids") or []]
+    file_ids = all_file_ids or [str(item) for item in last.get("file_ids") or []]
+    sediment_ids = all_sediment_ids or [str(item) for item in last.get("sediment_ids") or []]
     message = str(last.get("text") or "").strip()
     is_text_response = last.get("tool_invoked") is False or last.get("turn_use_case") == "text"
     logger.info({
