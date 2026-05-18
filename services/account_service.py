@@ -339,9 +339,6 @@ class AccountService:
             current = self._accounts.get(access_token)
             if current is None:
                 return None
-            # Preserve disabled status across refreshes
-            if str(current.get("status") or "") == "disabled" and updates.get("status") == "active":
-                updates = {**updates, "status": "disabled"}
             account = self._normalize_account({**current, **updates, "access_token": access_token})
             if account is None:
                 return None
