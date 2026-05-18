@@ -116,6 +116,8 @@ class CustomOpenAIProvider:
                                   "emails": [a.get("email") for a in account_service.list_accounts()
                                             if a.get("status") == "active" and (a.get("access_token") or "").startswith("eyJ")]})
                     keys = jwt_keys
+            except Exception:
+                pass
 
         return keys
 
