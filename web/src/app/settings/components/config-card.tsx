@@ -258,6 +258,16 @@ export function ConfigCard() {
               </p>
             </div>
           </label>
+          <div className="space-y-2 rounded-xl border border-stone-200 bg-white px-4 py-3">
+            <label className="text-sm font-medium text-stone-700">Model mặc định cho Web Session (OpenAI API)</label>
+            <p className="text-xs text-stone-500">Dùng khi chatgpt/auto route qua api.openai.com. Ví dụ: gpt-4o, gpt-4.1-mini.</p>
+            <Input
+              value={String((config as any)?.openai_default_model ?? "gpt-4o")}
+              onChange={(e) => setField("openai_default_model", e.target.value)}
+              placeholder="gpt-4o"
+              className="h-10 rounded-xl border-stone-200 bg-white"
+            />
+          </div>
           <div className="space-y-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
             <div>
               <label className="text-sm text-stone-700">Mức độ nhật ký console</label>
