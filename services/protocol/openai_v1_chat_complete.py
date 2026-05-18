@@ -314,6 +314,37 @@ def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     return result
 
 
+def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert internal image format → OpenAI vision API format."""
+    import base64
+    result: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image":
+                    data = part.get("data")
+                    mime = part.get("mime", "image/png")
+                    if isinstance(data, bytes):
+                        b64 = base64.b64encode(data).decode("ascii")
+                        new_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        })
+                    elif isinstance(data, str) and data.startswith("data:"):
+                        new_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": data},
+                        })
+                else:
+                    new_parts.append(part)
+            result.append({**msg, "content": new_parts})
+        else:
+            result.append(msg)
+    return result
+
+
 def _handle_chatgpt_chat(
     model: str,
     messages: list[dict[str, Any]],
@@ -339,6 +370,9 @@ def _handle_chatgpt_chat(
 
         # Undo tool→user conversion: OpenAI API needs native tool role messages
         messages = _restore_tool_messages(messages)
+
+        # Convert internal image format → OpenAI vision API format
+        messages = _convert_images_for_openai(messages)
 
         return _handle_custom_openai_chat(
             "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
