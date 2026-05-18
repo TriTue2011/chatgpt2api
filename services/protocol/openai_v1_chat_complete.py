@@ -373,6 +373,8 @@ def _handle_chatgpt_chat(
             openai_model = openai_model[len("chatgpt/"):]
         if openai_model == "auto":
             openai_model = "gpt-4.1-mini"
+        # Ensure stream is bool (HA may send null)
+        stream = bool(body.get("stream"))
 
         # Undo tool→user conversion: OpenAI API needs native tool role messages
         messages = _restore_tool_messages(messages)
