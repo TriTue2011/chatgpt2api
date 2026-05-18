@@ -207,6 +207,14 @@ def stream_image_chat_completion(image_outputs: Iterable[ImageOutput], model: st
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    # Debug: log raw message structure from HA
+    msgs = body.get("messages") or []
+    for i, m in enumerate(msgs):
+        c = m.get("content")
+        if isinstance(c, list):
+            types = [str(p.get("type","?")) + ("(data)" if p.get("type")=="image_url" and "data:" in str(p.get("image_url",{}).get("url","")) else "(url)" if p.get("type")=="image_url" else "") for p in c if isinstance(p, dict)]
+            logger.info({"event": "raw_msg_debug", "idx": i, "role": str(m.get("role")), "content_types": types})
+
     # Image chat requests always use existing DALL-E flow
     if is_image_chat_request(body):
         if body.get("stream"):
