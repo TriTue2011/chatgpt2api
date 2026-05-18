@@ -101,19 +101,21 @@ class CustomOpenAIProvider:
         if single and single not in keys:
             keys.insert(0, single)
 
-        # Auto-use JWT token if only placeholder key is configured (addon default)
+        # Auto-use JWT tokens from account pool if only placeholder key is configured
         if keys == ["sk-auto-created"] or keys == ["sk-placeholder"]:
             try:
                 from services.account_service import account_service
+                jwt_keys = []
                 for acc in account_service.list_accounts():
                     token = (acc.get("access_token") or "").strip()
                     if token.startswith("eyJ") and acc.get("status") == "active":
-                        keys = [token]
-                        from utils.log import logger
-                        logger.info({"event": "openai_auto_key", "token_preview": token[:20] + "...", "email": acc.get("email")})
-                        break
-            except Exception:
-                pass
+                        jwt_keys.append(token)
+                if jwt_keys:
+                    from utils.log import logger
+                    logger.info({"event": "openai_auto_key", "key_count": len(jwt_keys),
+                                  "emails": [a.get("email") for a in account_service.list_accounts()
+                                            if a.get("status") == "active" and (a.get("access_token") or "").startswith("eyJ")]})
+                    keys = jwt_keys
 
         return keys
 
