@@ -28,13 +28,14 @@ def detect_token_audience(access_token: str) -> str:
         import base64, json
         parts = access_token.split(".")
         if len(parts) >= 2:
-            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            # Fix base64 padding: JWT uses base64url without padding
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
             aud = payload.get("aud", "")
             if isinstance(aud, list):
                 aud = aud[0] if aud else ""
             aud_str = str(aud).lower()
-            if "api.openai.com" in aud_str and "chatgpt.com" not in aud_str:
+            if "api.openai.com" in aud_str:
                 return _TOKEN_AUDIENCE_OPENAI_API
             if "chatgpt.com" in aud_str:
                 return _TOKEN_AUDIENCE_CHATGPT
@@ -396,20 +397,23 @@ class AccountService:
             raise ValueError("access_token is required")
 
         # Skip refresh for api.openai.com tokens — they can't call chatgpt.com
-        if detect_token_audience(access_token) == _TOKEN_AUDIENCE_OPENAI_API:
+        aud = detect_token_audience(access_token)
+        if aud == _TOKEN_AUDIENCE_OPENAI_API:
             return self.get_account(access_token)
 
         try:
             from services.openai_backend_api import InvalidAccessTokenError, OpenAIBackendAPI
             result = OpenAIBackendAPI(access_token).get_user_info()
         except InvalidAccessTokenError:
-            self.remove_invalid_token(access_token, event)
+            # Only set error for chatgpt.com tokens that get 401 (genuinely invalid)
+            if aud == _TOKEN_AUDIENCE_CHATGPT:
+                self.remove_invalid_token(access_token, event)
             raise
         except Exception as exc:
             msg = str(exc).lower()
             if any(k in msg for k in ("openssl", "tls", "invalid library", "curl: (35)")):
                 logger.warning({"event": "fetch_remote_tls_skip", "token": anonymize_token(access_token), "error": str(exc)[:120]})
-                return self.get_account(access_token)  # Return existing data unchanged
+                return self.get_account(access_token)
             raise
         return self.update_account(access_token, result)
 
