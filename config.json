@@ -64,6 +64,15 @@
     "searxng": {"enabled": false, "base_url": "http://localhost:8080"},
     "brave": {"enabled": false, "api_key": ""}
   },
+  "custom_providers": {
+    "openai": {
+      "name": "OpenAI",
+      "prefix": "openai",
+      "base_url": "https://api.openai.com",
+      "api_key": "sk-auto-created",
+      "enabled": true
+    }
+  },
   "rate_limit": {
     "backoff_base_ms": 2000,
     "backoff_max_ms": 300000,
