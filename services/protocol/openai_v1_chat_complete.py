@@ -435,9 +435,18 @@ def _handle_chatgpt_chat(
         )
 
     # chatgpt.com backend (free account — no openai token)
+    from services.config import _IS_ADDON
+    if _IS_ADDON:
+        # Addon: XML tool call parsing + force hint for HA
+        if stream:
+            return _stream_chatgpt_addon(text_backend(), messages, model, tools, tool_choice)
+        return _chatgpt_addon_completion(model, messages, tools, tool_choice)
+
+    # Docker: original behavior, no XML parsing
     if stream:
-        return _stream_chatgpt_addon(text_backend(), messages, model, tools, tool_choice)
-    return _chatgpt_addon_completion(model, messages, tools, tool_choice)
+        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    return completion_response(model, collect_text(text_backend(), request), messages=messages)
 
 
 # Device keywords that should trigger tool call forcing
