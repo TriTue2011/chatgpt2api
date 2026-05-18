@@ -213,6 +213,8 @@ function downloadTokens(accounts: Account[]) {
 }
 
 function displayAccountType(account: Account) {
+  // Show internal type (free/codex/go) for non-standard types, plan otherwise
+  if (account.type === "go" || account.type === "codex") return account.type;
   return account.plan || account.type || "Free";
 }
 
