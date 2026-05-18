@@ -542,7 +542,7 @@ function AccountsPageContent() {
   };
 
   const handleToggleAccount = async (account: Account) => {
-    const newStatus: AccountStatus = account.status === "disabled" ? "active" : "disabled";
+    const newStatus: AccountStatus = account.status === "active" ? "disabled" : "active";
     try {
       const data = await updateAccount(account.access_token, { status: newStatus });
       setAccounts(data.items);
@@ -896,6 +896,18 @@ function AccountsPageContent() {
                                     )}
                                     onClick={() => setExpandedId(accountExpanded ? null : account.access_token)}
                                   >
+                                    <Checkbox
+                                      className="size-4"
+                                      checked={selectedIds.includes(account.access_token)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onCheckedChange={(checked) => {
+                                        if (checked) {
+                                          setSelectedIds(prev => [...prev, account.access_token]);
+                                        } else {
+                                          setSelectedIds(prev => prev.filter(id => id !== account.access_token));
+                                        }
+                                      }}
+                                    />
                                     <div className={cn(
                                       "size-7 shrink-0 rounded-full flex items-center justify-center",
                                       account.status === "active" ? "bg-gradient-to-br from-indigo-500 to-blue-600"
