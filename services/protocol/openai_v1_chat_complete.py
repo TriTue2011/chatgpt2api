@@ -407,38 +407,34 @@ def _handle_chatgpt_chat(
     token = account_service.get_text_access_token()
 
     if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
-        import platform
-        is_arm = platform.machine() in ("aarch64", "arm64", "armv7l")
+        # OpenAI API — native tools, all architectures
+        logger.info({"event": "chatgpt_openai_api_routed"})
+        default_model = config.openai_default_model or "gpt-4o"
 
-        if not is_arm:
-            # AMD64 → OpenAI API (native tools, fast)
-            logger.info({"event": "chatgpt_openai_api_routed"})
-            default_model = config.openai_default_model or "gpt-4o"
-
-            if model == "auto" or model == "chatgpt/auto":
-                # Pick from enabled chatgpt models, or fall back to default_model
-                ms = config.data.get("model_settings") or {}
-                enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
-                if enabled and default_model not in enabled:
-                    openai_model = enabled[0]  # First enabled model
-                else:
-                    openai_model = default_model
+        if model == "auto" or model == "chatgpt/auto":
+            # Pick from enabled chatgpt models, or fall back to default_model
+            ms = config.data.get("model_settings") or {}
+            enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
+            if enabled and default_model not in enabled:
+                openai_model = enabled[0]  # First enabled model
             else:
-                openai_model = model
-            if openai_model.startswith("chatgpt/"):
-                openai_model = openai_model[len("chatgpt/"):]
-            stream = bool(body.get("stream"))
+                openai_model = default_model
+        else:
+            openai_model = model
+        if openai_model.startswith("chatgpt/"):
+            openai_model = openai_model[len("chatgpt/"):]
+        stream = bool(body.get("stream"))
 
-            messages = _restore_tool_messages(messages)
-            messages = _convert_images_for_openai(messages)
-            _ensure_openai_provider()
+        messages = _restore_tool_messages(messages)
+        messages = _convert_images_for_openai(messages)
+        _ensure_openai_provider()
 
-            return _handle_custom_openai_chat(
-                "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
-                force_token=token,
-            )
+        return _handle_custom_openai_chat(
+            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
+            force_token=token,
+        )
 
-    # chatgpt.com backend (ARM64 or no openai token)
+    # chatgpt.com backend (free account — no openai token)
     if stream:
         return _stream_chatgpt_addon(text_backend(), messages, model, tools, tool_choice)
     return _chatgpt_addon_completion(model, messages, tools, tool_choice)
