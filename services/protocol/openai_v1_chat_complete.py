@@ -400,46 +400,8 @@ def _handle_chatgpt_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """ChatGPT flow — auto-detects token type and routes to correct API."""
-    # Pick token preferring api.openai.com audience (for chatgpt/ models)
-    from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
-    token = account_service.get_text_access_token()
-
-    # If token is api.openai.com type → route through OpenAI API provider
-    if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
-        logger.info({"event": "chatgpt_openai_api_routed"})
-        # Map chatgpt.com model names to valid OpenAI API models
-        default_model = config.openai_default_model or "gpt-4o"
-        openai_model = model if model != "auto" else default_model
-        if openai_model.startswith("chatgpt/"):
-            openai_model = openai_model[len("chatgpt/"):]
-        if openai_model == "auto":
-            openai_model = default_model
-        # Ensure stream is bool (HA may send null)
-        stream = bool(body.get("stream"))
-
-        # Undo tool→user conversion: OpenAI API needs native tool role messages
-        messages = _restore_tool_messages(messages)
-
-        # Convert internal image format → OpenAI vision API format
-        messages = _convert_images_for_openai(messages)
-
-        # Ensure openai custom provider exists
-        _ensure_openai_provider()
-
-        return _handle_custom_openai_chat(
-            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
-            force_token=token,
-        )
-
-    if token and detect_token_audience(token) in ("unknown", _TOKEN_AUDIENCE_CHATGPT):
-        # Route through chatgpt.com backend
-        if stream:
-            return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
-        request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
-        return completion_response(model, collect_text(text_backend(), request), messages=messages)
-
-    # Fallback: no token or unknown type
+    """ChatGPT flow — uses chatgpt.com backend (like original repo)."""
+    # Use chatgpt.com backend for all chatgpt/ requests
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
