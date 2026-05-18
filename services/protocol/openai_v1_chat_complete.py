@@ -444,8 +444,68 @@ def _handle_chatgpt_chat(
     return _chatgpt_addon_completion(model, messages, tools, tool_choice)
 
 
+# Device keywords that should trigger tool call forcing
+_FORCE_TOOL_KEYWORDS = [
+    "trạng thái", "bật", "tắt", "mở", "đóng", "kiểm tra",
+    "đèn", "quạt", "cửa", "điều hòa", "máy lạnh", "camera",
+    "cảm biến", "công tắc", "ổ cắm", "rèm", "bình nóng lạnh",
+    "tivi", "ti vi", "loa", "máy bơm", "nhiệt độ", "độ ẩm",
+    "phòng khách", "phòng ngủ", "phòng học", "phòng bếp",
+    "ban công", "nhà tắm", "nhà vệ sinh", "hành lang", "sân",
+    "tầng", "cầu thang", "garage", "cổng",
+]
+
+
+def _has_device_keyword(text: str) -> bool:
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in _FORCE_TOOL_KEYWORDS)
+
+
+def _inject_tool_force_hint(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Inject a system hint forcing tool call when user asks about devices.
+
+    Only applies when GetLiveContext is in the tool list and the last user message
+    contains device-related keywords.
+    """
+    if not tools:
+        return messages
+
+    has_live_context = any(
+        isinstance(t, dict) and str(t.get("function", {}).get("name", "")).strip() == "GetLiveContext"
+        for t in tools
+    )
+    if not has_live_context:
+        return messages
+
+    last_user = ""
+    for m in reversed(messages):
+        if isinstance(m, dict) and str(m.get("role", "")).strip() == "user":
+            last_user = str(m.get("content", "") or "")
+            break
+
+    if not _has_device_keyword(last_user):
+        return messages
+
+    force_hint = (
+        "\n\nIMPORTANT: The user is asking about a smart home device. "
+        "You MUST call the GetLiveContext tool FIRST to get the current device state. "
+        "Do NOT guess or use stale data — always check live state via GetLiveContext. "
+        "Respond with ONLY the tool call XML block."
+    )
+
+    msgs = list(messages)
+    for i, m in enumerate(msgs):
+        if isinstance(m, dict) and str(m.get("role", "")).strip() == "system":
+            msgs[i] = {**m, "content": str(m.get("content", "") or "") + force_hint}
+            return msgs
+
+    msgs.insert(0, {"role": "system", "content": force_hint})
+    return msgs
+
+
 def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice):
     """Stream from chatgpt.com backend, extracting XML tool calls from response."""
+    messages = _inject_tool_force_hint(messages, tools)
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
@@ -477,6 +537,7 @@ def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice):
 
 def _chatgpt_addon_completion(model, messages, tools, tool_choice):
     """Non-streaming chatgpt.com backend, extracting XML tool calls from response."""
+    messages = _inject_tool_force_hint(messages, tools)
     backend = text_backend()
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     content = collect_text(backend, request)
