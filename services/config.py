@@ -275,7 +275,7 @@ class ConfigStore:
     @property
     def openai_default_model(self) -> str:
         """Default model for web session routed through OpenAI API."""
-        return str(self.data.get("openai_default_model") or "gpt-4o").strip()
+        return str(self.data.get("openai_default_model") or "gpt-4o-mini").strip()
 
     @property
     def sensitive_words(self) -> list[str]:
