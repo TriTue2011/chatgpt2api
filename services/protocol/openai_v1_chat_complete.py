@@ -271,14 +271,16 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
 def _dispatch(route, messages, tools, tool_choice, body):
     """Dispatch to the correct provider handler."""
-    # RTK compression: chatgpt uses rtk_enabled, others use rtk_other_enabled
+    # RTK compression: chatgpt at 24KB limit, others at 80KB
     if route.provider == "chatgpt":
         rtk_on = config.rtk_enabled
+        rtk_threshold = 24_000
     else:
         rtk_on = config.rtk_other_enabled
+        rtk_threshold = 80_000
     if rtk_on:
         from services.protocol.conversation import _rtk_compress_messages
-        messages = _rtk_compress_messages(messages, 24_000)
+        messages = _rtk_compress_messages(messages, rtk_threshold)
 
     if route.provider == "opencode":
         return _handle_opencode_chat(route.model, messages, body.get("stream"), body)
