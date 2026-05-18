@@ -412,11 +412,19 @@ def _handle_chatgpt_chat(
             # AMD64 → OpenAI API (native tools, fast)
             logger.info({"event": "chatgpt_openai_api_routed"})
             default_model = config.openai_default_model or "gpt-4o"
-            openai_model = model if model != "auto" else default_model
+
+            if model == "auto" or model == "chatgpt/auto":
+                # Pick from enabled chatgpt models, or fall back to default_model
+                ms = config.data.get("model_settings") or {}
+                enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
+                if enabled and default_model not in enabled:
+                    openai_model = enabled[0]  # First enabled model
+                else:
+                    openai_model = default_model
+            else:
+                openai_model = model
             if openai_model.startswith("chatgpt/"):
                 openai_model = openai_model[len("chatgpt/"):]
-            if openai_model == "auto":
-                openai_model = default_model
             stream = bool(body.get("stream"))
 
             messages = _restore_tool_messages(messages)

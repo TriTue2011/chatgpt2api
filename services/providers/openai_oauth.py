@@ -224,7 +224,19 @@ class CodexOAuthProvider:
 
         # Resolve model — auto uses fallback chain: 5.5 → 5.4 → 5.3-codex
         is_auto = not model or model == "auto"
-        models_to_try = CODEX_AUTO_FALLBACK if is_auto else [model]
+        if is_auto:
+            # Filter fallback chain to only enabled models
+            from services.config import config as _cfg
+            ms = _cfg.data.get("model_settings") or {}
+            enabled_models = (ms.get("enabled_models") or {}).get("openai_oauth") if isinstance(ms, dict) else None
+            if enabled_models:
+                models_to_try = [m for m in CODEX_AUTO_FALLBACK if m in enabled_models]
+                if not models_to_try:
+                    models_to_try = [enabled_models[0]]  # Fallback to first enabled
+            else:
+                models_to_try = list(CODEX_AUTO_FALLBACK)
+        else:
+            models_to_try = [model]
 
         last_error = ""
         for try_idx, try_model in enumerate(models_to_try):

@@ -168,6 +168,20 @@ class BackendRouter:
         except Exception:
             return 0
 
+    @staticmethod
+    def _get_enabled_models(provider: str) -> list[str] | None:
+        """Return list of enabled model IDs for a provider, or None if no filter."""
+        ms = config.data.get("model_settings") or {}
+        if not isinstance(ms, dict):
+            return None
+        enabled = ms.get("enabled_models") or {}
+        if not isinstance(enabled, dict) or not enabled:
+            return None
+        provider_enabled = enabled.get(provider)
+        if not provider_enabled:
+            return None  # No filter for this provider
+        return [m for m in provider_enabled if isinstance(m, str) and m.strip()]
+
     def route(
         self,
         model: str,
@@ -192,6 +206,12 @@ class BackendRouter:
             provider_cfg = (config.data.get("providers") or {}).get(provider) or {}
             user_model = str(provider_cfg.get("model") or "").strip()
             resolved_model = user_model or self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
+
+            # Filter to enabled models only (model_settings)
+            enabled = self._get_enabled_models(provider)
+            if enabled:
+                if resolved_model == "auto" or resolved_model not in enabled:
+                    resolved_model = enabled[0]  # First enabled model
 
         # Calculate payload size if not provided
         if payload_size is None and messages:
