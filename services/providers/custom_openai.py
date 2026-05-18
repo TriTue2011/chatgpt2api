@@ -90,7 +90,9 @@ class CustomOpenAIProvider:
             self._chat_path = "/v1/chat/completions"
 
     def _get_keys(self) -> list[str]:
-        """Get all configured API keys (supports multi-key)."""
+        """Get all configured API keys (supports multi-key).
+        Auto-injects JWT token from account pool if API key is a placeholder.
+        """
         single = str(self.cfg.get("api_key") or "").strip()
         multi = self.cfg.get("api_keys") or []
         if not isinstance(multi, list):
@@ -98,6 +100,19 @@ class CustomOpenAIProvider:
         keys = [k.strip() for k in multi if k.strip()]
         if single and single not in keys:
             keys.insert(0, single)
+
+        # Auto-use JWT token if only placeholder key is configured (addon default)
+        if keys == ["sk-auto-created"] or keys == ["sk-placeholder"]:
+            try:
+                from services.account_service import account_service
+                for acc in account_service.list_accounts():
+                    token = (acc.get("access_token") or "").strip()
+                    if token.startswith("eyJ") and acc.get("status") == "active":
+                        keys = [token]
+                        break
+            except Exception:
+                pass
+
         return keys
 
     @property
