@@ -244,6 +244,83 @@ Backend hỗ trợ:
 
 ---
 
+## Cấu hình Conversation Agent với Local OpenAI LLM
+
+Sử dụng [Local OpenAI LLM](https://github.com/skye-harris/hass_local_openai_llm) để kết nối Home Assistant với chatgpt2api.
+
+### Cài đặt Local OpenAI LLM
+
+1. Vào HACS → **⋮** → **Custom repositories**
+2. Thêm URL: `https://github.com/skye-harris/hass_local_openai_llm` → Category: **Integration**
+3. Cài đặt **Local OpenAI LLM** → Restart HA
+4. Vào **Settings → Devices & Services → Add Integration** → tìm **Local OpenAI LLM**
+
+### Cấu hình
+
+| Trường | Giá trị |
+|---|---|
+| **Server URL** | `http://172.16.10.200:3030/v1` |
+| **API Key** | Auth key của bạn (mặc định: `sk-chatgpt2api`) |
+| **Model** | `chatgpt/auto` hoặc combo model (vd: `AI Agent`) |
+| **Maximum tokens** | 2000-4000 |
+
+### Prompt khuyên dùng
+
+**Prompt cơ bản (nhanh, gọn):**
+```
+You are a smart home assistant integrated with Home Assistant.
+Answer all questions truthfully and helpfully.
+Use tools when the request requires current home state or actions.
+Format responses clearly using markdown: use bold headers, emoji icons, and line breaks to make information easy to read.
+Keep answers concise but well-structured; add detail only when the user asks for it.
+Be friendly, warm, and occasionally light-humored.
+When something unusual, risky, or out of the ordinary is detected, give a clear warning in a caring tone.
+Always respond in Vietnamese unless the user writes in another language.
+```
+
+**Prompt chi tiết (có bảng biểu):**
+```
+You are a smart home assistant integrated with Home Assistant.
+Answer all questions truthfully and helpfully.
+Use tools when the request requires current home state or actions.
+Format responses clearly using markdown: use bold headers, emoji icons, and tables where appropriate to make information easy to read.
+Keep answers concise but well-structured; add detail only when the user asks for it.
+Be friendly, warm, and occasionally light-humored — like a knowledgeable assistant who actually cares.
+When something unusual, risky, or out of the ordinary is detected, give a clear and helpful warning in a caring tone.
+Always respond in Vietnamese unless the user writes in another language.
+```
+
+### Model prefixes
+
+| Prefix | Provider | Giới hạn | Tool Calling |
+|---|---|---|---|
+| `chatgpt/` | ChatGPT Web Session | Không (API key) | ✅ |
+| `cx/` | Codex OAuth (9router) | Không | ✅ |
+| `oc/` | OpenCode Free | Không | ✅ |
+| `gemini_free/` | Gemini API | Có (theo key) | ✅ |
+| `nv/` | NVIDIA NIM | Có (theo key) | ✅ |
+
+### Combo Model (Fallback)
+
+Tạo combo model trong Settings → Combo để tự động fallback khi provider lỗi:
+
+```
+AI Agent = chatgpt/auto, cx/auto, oc/auto
+```
+
+Request sẽ thử `chatgpt/auto` trước → lỗi → `cx/auto` → lỗi → `oc/auto`.
+
+### Tạo ảnh
+
+| Prefix | Provider |
+|---|---|
+| `gpt-image-2` | ChatGPT DALL-E |
+| `nv-image/` | NVIDIA FLUX |
+| `gemini-image/` | Gemini Imagen |
+| `sdwebui/` | Stable Diffusion WebUI |
+
+---
+
 ## Troubleshooting
 
 ### "Mất API key Gemini/NVIDIA/DeepSeek sau khi cập nhật"
