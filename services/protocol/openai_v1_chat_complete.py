@@ -405,46 +405,49 @@ def _handle_chatgpt_chat(
     """ChatGPT flow — auto-detects token type and routes to correct API."""
     from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
     token = account_service.get_text_access_token()
+    stream = bool(body.get("stream"))
 
     if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
-        # OpenAI API — native tools, all architectures
-        logger.info({"event": "chatgpt_openai_api_routed"})
-        default_model = config.openai_default_model or "gpt-4o"
+        from services.search_service import needs_search
 
-        if model == "auto" or model == "chatgpt/auto":
-            # Pick from enabled chatgpt models, or fall back to default_model
-            ms = config.data.get("model_settings") or {}
-            all_enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
-            # Filter out auto placeholders, strip chatgpt/ prefix for comparison
-            enabled = []
-            for m in (all_enabled or []):
-                m = m.strip()
-                if m in ("auto", "chatgpt/auto"):
-                    continue
-                if m.startswith("chatgpt/"):
-                    m = m[len("chatgpt/"):]
-                if m:
-                    enabled.append(m)
-            if enabled and default_model not in enabled:
-                openai_model = enabled[0]  # First real enabled model
+        if not needs_search(messages):
+            # OpenAI API — native tools, all architectures (no search needed)
+            logger.info({"event": "chatgpt_openai_api_routed"})
+            default_model = config.openai_default_model or "gpt-4o"
+
+            if model == "auto" or model == "chatgpt/auto":
+                # Pick from enabled chatgpt models, or fall back to default_model
+                ms = config.data.get("model_settings") or {}
+                all_enabled = (ms.get("enabled_models") or {}).get("chatgpt") if isinstance(ms, dict) else None
+                # Filter out auto placeholders, strip chatgpt/ prefix for comparison
+                enabled = []
+                for m in (all_enabled or []):
+                    m = m.strip()
+                    if m in ("auto", "chatgpt/auto"):
+                        continue
+                    if m.startswith("chatgpt/"):
+                        m = m[len("chatgpt/"):]
+                    if m:
+                        enabled.append(m)
+                if enabled and default_model not in enabled:
+                    openai_model = enabled[0]  # First real enabled model
+                else:
+                    openai_model = default_model
             else:
-                openai_model = default_model
-        else:
-            openai_model = model
-        if openai_model.startswith("chatgpt/"):
-            openai_model = openai_model[len("chatgpt/"):]
-        stream = bool(body.get("stream"))
+                openai_model = model
+            if openai_model.startswith("chatgpt/"):
+                openai_model = openai_model[len("chatgpt/"):]
 
-        messages = _restore_tool_messages(messages)
-        messages = _convert_images_for_openai(messages)
-        _ensure_openai_provider()
+            messages = _restore_tool_messages(messages)
+            messages = _convert_images_for_openai(messages)
+            _ensure_openai_provider()
 
-        return _handle_custom_openai_chat(
-            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
-            force_token=token,
-        )
+            return _handle_custom_openai_chat(
+                "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
+                force_token=token,
+            )
 
-    # chatgpt.com backend (free account — no openai token)
+    # chatgpt.com backend (free account, search query, ARM64, or addon)
     from services.config import _IS_ADDON
     if _IS_ADDON:
         # Addon: XML tool call parsing + force hint for HA
