@@ -616,7 +616,7 @@ def _handle_openai_oauth_chat(
         try:
             token = codex_oauth.get_token_for_request(attempted)
         except RuntimeError as exc:
-            return completion_response(model=model, content=str(exc), messages=messages)
+            raise RuntimeError(str(exc))  # Raise so combo can fallback
 
         if token in attempted:
             break
