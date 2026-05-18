@@ -12,8 +12,10 @@ from services.storage.base import StorageBackend
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 # Auto-detect HA addon persistent storage
+# /data/options.json is the definitive signal we're in an HA addon
+_IS_ADDON = Path("/data/options.json").exists()
 _ADDON_DATA = Path("/data/chatgpt2api")
-if _ADDON_DATA.exists():
+if _IS_ADDON or _ADDON_DATA.exists():
     DATA_DIR = _ADDON_DATA
 else:
     DATA_DIR = BASE_DIR / "data"
@@ -21,7 +23,7 @@ else:
 CONFIG_FILE = DATA_DIR / "config.json"
 
 # On first run in addon, copy default config if not present
-if _ADDON_DATA.exists() and not CONFIG_FILE.exists():
+if _IS_ADDON and not CONFIG_FILE.exists():
     _default_config = BASE_DIR / "config.json"
     if _default_config.exists():
         import shutil
