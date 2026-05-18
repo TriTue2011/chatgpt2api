@@ -404,17 +404,9 @@ def _handle_chatgpt_chat(
     from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
     token = account_service.get_text_access_token()
 
-    # Check if token is api.openai.com type
-    is_openai_token = token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API
-
-    if is_openai_token:
+    if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
         import platform
         is_arm = platform.machine() in ("aarch64", "arm64", "armv7l")
-
-        if is_arm and tools:
-            # ARM64 + tools → use prompt-based tool calling (chatgpt.com backend)
-            logger.info({"event": "chatgpt_arm64_tool_loop"})
-            return _handle_chatgpt_tool_loop(model, messages, tools, tool_choice, stream, body, token)
 
         if not is_arm:
             # AMD64 → OpenAI API (native tools, fast)
@@ -436,56 +428,11 @@ def _handle_chatgpt_chat(
                 force_token=token,
             )
 
-    # chatgpt.com backend (ARM64 no tools, or no openai token)
+    # chatgpt.com backend (ARM64 or no openai token)
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     return completion_response(model, collect_text(text_backend(), request), messages=messages)
-
-
-def _handle_chatgpt_tool_loop(
-    model: str, messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]], tool_choice: Any,
-    stream: bool, body: dict[str, Any], token: str,
-) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Prompt-based tool calling for ARM64 (no native tool support)."""
-    import re, uuid
-    MAX_LOOPS = 5
-
-    tool_lines = []
-    for t in tools:
-        fn = t.get("function", {})
-        tool_lines.append(f"- {fn.get('name', '')}: {fn.get('description', '')}")
-
-    tool_prompt = "Tools:\n" + "\n".join(tool_lines)
-    tool_prompt += "\n\nTo call a tool, reply ONLY:\n```tool\n{\"name\":\"...\",\"arguments\":{...}}\n```"
-
-    msgs = list(messages)
-    if msgs and msgs[0].get("role") == "system":
-        msgs[0] = {**msgs[0], "content": msgs[0]["content"] + "\n\n" + tool_prompt}
-    else:
-        msgs.insert(0, {"role": "system", "content": tool_prompt})
-
-    tool_pattern = re.compile(r'```tool\s*\n(.*?)\n```', re.DOTALL)
-    for _ in range(MAX_LOOPS):
-        req = ConversationRequest(model=model, messages=msgs)
-        text = collect_text(text_backend(), req)
-        m = tool_pattern.search(text)
-        if not m:
-            return completion_response(model, text, messages=messages)
-        try:
-            tc = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            return completion_response(model, text, messages=messages)
-        call_id = f"call_{uuid.uuid4().hex[:12]}"
-        msgs.append({
-            "role": "assistant", "content": None,
-            "tool_calls": [{"id": call_id, "type": "function",
-                           "function": {"name": tc["name"], "arguments": json.dumps(tc.get("arguments", {}))}}],
-        })
-        msgs.append({"role": "tool", "tool_call_id": call_id,
-                      "content": "[Tool execution handled by Home Assistant]"})
-    return completion_response(model, "Max loops", messages=messages)
 
 
 def _handle_opencode_chat(
@@ -894,12 +841,10 @@ def _handle_custom_openai_chat(
     stream: bool,
     body: dict[str, Any],
     force_token: str = "",
-    force_base_url: str = "",
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Custom OpenAI-compatible provider — generic proxy.
 
     If force_token is provided, it overrides the provider's configured API key.
-    If force_base_url is provided, it overrides the provider's base URL.
     """
     from services.providers.custom_openai import CustomOpenAIProvider, get_custom_providers
 
@@ -917,8 +862,6 @@ def _handle_custom_openai_chat(
 
     if force_token:
         cfg["api_key"] = force_token
-    if force_base_url:
-        cfg["base_url"] = force_base_url.rstrip("/")
 
     provider = CustomOpenAIProvider(cfg)
 
