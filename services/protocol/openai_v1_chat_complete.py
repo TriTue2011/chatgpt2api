@@ -229,7 +229,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
                     continue
 
                 logger.info({"event": "combo_try", "combo": model, "provider": route.provider, "model": route.model})
-                if search_service.is_enabled and route.provider != "chatgpt":
+                if search_service.is_enabled:
                     messages_copy = search_service.process_messages(messages)
                 else:
                     messages_copy = messages
@@ -254,8 +254,8 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     # Single model — route directly
     route = backend_router.route(model, messages)
 
-    # Apply search injection for non-ChatGPT backends
-    if search_service.is_enabled and route.provider != "chatgpt":
+    # Apply search injection for all backends
+    if search_service.is_enabled:
         messages = search_service.process_messages(messages)
 
     return _dispatch(route, messages, tools, tool_choice, body)
