@@ -396,19 +396,13 @@ class AccountService:
         if not access_token:
             raise ValueError("access_token is required")
 
-        # Skip refresh for api.openai.com tokens — they can't call chatgpt.com
-        aud = detect_token_audience(access_token)
-        if aud == _TOKEN_AUDIENCE_OPENAI_API:
-            return self.get_account(access_token)
-
         try:
             from services.openai_backend_api import InvalidAccessTokenError, OpenAIBackendAPI
             result = OpenAIBackendAPI(access_token).get_user_info()
         except InvalidAccessTokenError:
-            # Only set error for chatgpt.com tokens that get 401 (genuinely invalid)
-            if aud == _TOKEN_AUDIENCE_CHATGPT:
-                self.remove_invalid_token(access_token, event)
-            raise
+            # Token can't access chatgpt.com — keep existing data, don't set error
+            logger.info({"event": "fetch_remote_401_skip", "token": anonymize_token(access_token)})
+            return self.get_account(access_token)
         except Exception as exc:
             msg = str(exc).lower()
             if any(k in msg for k in ("openssl", "tls", "invalid library", "curl: (35)")):
