@@ -412,16 +412,9 @@ def _handle_chatgpt_chat(
         is_arm = platform.machine() in ("aarch64", "arm64", "armv7l")
 
         if is_arm and tools:
-            # ARM64 + tools → relay to local OpenAI-compatible endpoint
-            relay = (config.data.get("openai_relay_url") or "").strip()
-            if relay:
-                logger.info({"event": "chatgpt_relay_tools", "relay": relay})
-                return _handle_custom_openai_chat(
-                    "custom:openai", model if model != "auto" else "gpt-4o",
-                    _restore_tool_messages(messages), tools, tool_choice,
-                    bool(body.get("stream")), body,
-                    force_token=token, force_base_url=relay,
-                )
+            # ARM64 + tools → use prompt-based tool calling (chatgpt.com backend)
+            logger.info({"event": "chatgpt_arm64_tool_loop"})
+            return _handle_chatgpt_tool_loop(model, messages, tools, tool_choice, stream, body, token)
 
         if not is_arm:
             # AMD64 → OpenAI API (native tools, fast)
@@ -448,6 +441,51 @@ def _handle_chatgpt_chat(
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
     return completion_response(model, collect_text(text_backend(), request), messages=messages)
+
+
+def _handle_chatgpt_tool_loop(
+    model: str, messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]], tool_choice: Any,
+    stream: bool, body: dict[str, Any], token: str,
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Prompt-based tool calling for ARM64 (no native tool support)."""
+    import re, uuid
+    MAX_LOOPS = 5
+
+    tool_lines = []
+    for t in tools:
+        fn = t.get("function", {})
+        tool_lines.append(f"- {fn.get('name', '')}: {fn.get('description', '')}")
+
+    tool_prompt = "Tools:\n" + "\n".join(tool_lines)
+    tool_prompt += "\n\nTo call a tool, reply ONLY:\n```tool\n{\"name\":\"...\",\"arguments\":{...}}\n```"
+
+    msgs = list(messages)
+    if msgs and msgs[0].get("role") == "system":
+        msgs[0] = {**msgs[0], "content": msgs[0]["content"] + "\n\n" + tool_prompt}
+    else:
+        msgs.insert(0, {"role": "system", "content": tool_prompt})
+
+    tool_pattern = re.compile(r'```tool\s*\n(.*?)\n```', re.DOTALL)
+    for _ in range(MAX_LOOPS):
+        req = ConversationRequest(model=model, messages=msgs)
+        text = collect_text(text_backend(), req)
+        m = tool_pattern.search(text)
+        if not m:
+            return completion_response(model, text, messages=messages)
+        try:
+            tc = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            return completion_response(model, text, messages=messages)
+        call_id = f"call_{uuid.uuid4().hex[:12]}"
+        msgs.append({
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": call_id, "type": "function",
+                           "function": {"name": tc["name"], "arguments": json.dumps(tc.get("arguments", {}))}}],
+        })
+        msgs.append({"role": "tool", "tool_call_id": call_id,
+                      "content": "[Tool execution handled by Home Assistant]"})
+    return completion_response(model, "Max loops", messages=messages)
 
 
 def _handle_opencode_chat(
