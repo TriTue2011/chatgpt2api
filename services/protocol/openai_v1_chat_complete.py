@@ -400,8 +400,40 @@ def _handle_chatgpt_chat(
     stream: bool,
     body: dict[str, Any],
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """ChatGPT flow — uses chatgpt.com backend (like original repo)."""
-    # Use chatgpt.com backend for all chatgpt/ requests
+    """ChatGPT flow — auto-detects token type and routes to correct API."""
+    # Pick token preferring api.openai.com audience (for chatgpt/ models)
+    from services.account_service import detect_token_audience, _TOKEN_AUDIENCE_OPENAI_API, _TOKEN_AUDIENCE_CHATGPT
+    token = account_service.get_text_access_token()
+
+    # OpenAI API routing: works on AMD64, may fail (500) on ARM64/addon
+    use_openai_api = False
+    if token and detect_token_audience(token) == _TOKEN_AUDIENCE_OPENAI_API:
+        # Auto-detect: try OpenAI API if not on ARM64
+        import platform
+        is_arm = platform.machine() in ("aarch64", "arm64", "armv7l")
+        use_openai_api = not is_arm
+
+    if use_openai_api:
+        logger.info({"event": "chatgpt_openai_api_routed"})
+        # Map chatgpt.com model names to valid OpenAI API models
+        default_model = config.openai_default_model or "gpt-4o"
+        openai_model = model if model != "auto" else default_model
+        if openai_model.startswith("chatgpt/"):
+            openai_model = openai_model[len("chatgpt/"):]
+        if openai_model == "auto":
+            openai_model = default_model
+        stream = bool(body.get("stream"))
+
+        messages = _restore_tool_messages(messages)
+        messages = _convert_images_for_openai(messages)
+        _ensure_openai_provider()
+
+        return _handle_custom_openai_chat(
+            "custom:openai", openai_model, messages, tools, tool_choice, stream, body,
+            force_token=token,
+        )
+
+    # chatgpt.com backend (original repo behavior)
     if stream:
         return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
     request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
