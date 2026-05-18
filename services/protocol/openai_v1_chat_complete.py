@@ -263,8 +263,12 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
 def _dispatch(route, messages, tools, tool_choice, body):
     """Dispatch to the correct provider handler."""
-    # RTK compression for all providers (default: enabled)
-    if config.rtk_enabled:
+    # RTK compression: chatgpt uses rtk_enabled, others use rtk_other_enabled
+    if route.provider == "chatgpt":
+        rtk_on = config.rtk_enabled
+    else:
+        rtk_on = config.rtk_other_enabled
+    if rtk_on:
         from services.protocol.conversation import _rtk_compress_messages
         messages = _rtk_compress_messages(messages, 24_000)
 

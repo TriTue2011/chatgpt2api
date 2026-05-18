@@ -240,9 +240,21 @@ export function ConfigCard() {
               onCheckedChange={(checked) => setField("rtk_enabled", Boolean(checked))}
             />
             <div>
-              <p className="font-medium">RTK - Nén tin nhắn</p>
+              <p className="font-medium">RTK - Nén tin nhắn (ChatGPT)</p>
               <p className="text-xs text-stone-500 mt-0.5">
-                Giảm 60-90% payload cho tất cả AI (ChatGPT, OpenCode, Gemini, Codex, NVIDIA). Mặc định bật.
+                Giảm 60-90% payload cho ChatGPT. Mặc định bật.
+              </p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-700 cursor-pointer">
+            <Checkbox
+              checked={Boolean((config as any)?.rtk_other_enabled ?? false)}
+              onCheckedChange={(checked) => setField("rtk_other_enabled", Boolean(checked))}
+            />
+            <div>
+              <p className="font-medium">RTK - Nén tin nhắn (AI khác)</p>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Áp dụng RTK cho OpenCode, Gemini, Codex, NVIDIA. Mặc định tắt.
               </p>
             </div>
           </label>

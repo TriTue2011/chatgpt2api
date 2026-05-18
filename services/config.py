@@ -239,13 +239,23 @@ class ConfigStore:
 
     @property
     def rtk_enabled(self) -> bool:
-        """RTK message compression for all providers."""
+        """RTK message compression for chatgpt. Default: True"""
         val = self.data.get("rtk_enabled", True)
         if isinstance(val, bool):
             return val
         if isinstance(val, str):
             return val.strip().lower() in {"1", "true", "yes", "on"}
         return True
+
+    @property
+    def rtk_other_enabled(self) -> bool:
+        """RTK message compression for other providers. Default: False"""
+        val = self.data.get("rtk_other_enabled", False)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in {"1", "true", "yes", "on"}
+        return False
 
     @property
     def sensitive_words(self) -> list[str]:
