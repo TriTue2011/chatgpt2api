@@ -31,6 +31,23 @@ CODEX_HEADERS = {
 }
 
 
+def _is_openai_api_only(token: str) -> bool:
+    """Check if token only works with api.openai.com (not chatgpt.com)."""
+    try:
+        import base64, json
+        parts = token.split(".")
+        if len(parts) >= 2:
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            cid = str(payload.get("client_id") or "")
+            # Web session client_id — only works with api.openai.com
+            if cid == "app_X8zY6vV2wQ9tR3dE7nK1jL5gH":
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
                               tool_choice: Any = None, instructions: str | None = None) -> dict[str, Any]:
     """Convert OpenAI chat format → Codex Responses API format.
@@ -456,6 +473,8 @@ class CodexOAuthProvider:
                 and (token := item.get("access_token") or "")
                 and token.startswith("eyJ")
                 and token not in excluded
+                # Skip tokens that only work with api.openai.com (web session)
+                and not _is_openai_api_only(token)
             ]
             if not candidates:
                 raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
