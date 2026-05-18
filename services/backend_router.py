@@ -210,8 +210,16 @@ class BackendRouter:
             # Filter to enabled models only (model_settings)
             enabled = self._get_enabled_models(provider)
             if enabled:
-                # Skip "auto" entries — placeholders, not real API models
-                real_models = [m for m in enabled if m not in ("auto", f"{provider}/auto")]
+                # Skip auto placeholders, strip provider prefix for matching
+                real_models = []
+                for m in enabled:
+                    m = m.strip()
+                    if m in ("auto", f"{provider}/auto"):
+                        continue
+                    if m.startswith(f"{provider}/"):
+                        m = m[len(provider) + 1:]
+                    if m:
+                        real_models.append(m)
                 if real_models and (resolved_model == "auto" or resolved_model not in real_models):
                     resolved_model = real_models[0]  # First real enabled model
 
