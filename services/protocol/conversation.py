@@ -192,6 +192,16 @@ def _rtk_compress_tool_result(content: str) -> str:
     return f"{head}\n\n[... {len(content) - _RTK_TOOL_RESULT_MAX} chars compressed ...]\n\n{tail}"
 
 
+def _has_image_content(msg: dict[str, Any]) -> bool:
+    """Check if a message contains images (should never be dropped)."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in ("image", "image_url", "input_image"):
+                return True
+    return False
+
+
 def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX_PAYLOAD_BYTES) -> list[dict[str, Any]]:
     """RTK-inspired smart message compression.
 
@@ -210,9 +220,9 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     deduped = []
     for msg in messages:
         tid = msg.get("tool_call_id") or ""
-        if tid and msg.get("role") in ("tool", "tool_result", "user"):
+        if tid and msg.get("role") in ("tool", "tool_result"):
             if tid in seen_tool_ids:
-                continue  # Skip duplicate tool result
+                continue
             seen_tool_ids.add(tid)
         deduped.append(msg)
     messages = deduped
@@ -258,14 +268,18 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     if len(payload.encode("utf-8")) <= max_bytes:
         return msgs
 
-    # Step 3: Drop oldest non-system messages
+    # Step 3: Drop oldest non-system messages (preserve messages with images)
     system_msgs = [m for m in msgs if m.get("role") == "system"]
     other_msgs = [m for m in msgs if m.get("role") != "system"]
+    # Separate image-containing messages — never drop them
+    img_msgs = [m for m in other_msgs if _has_image_content(m)]
+    other_msgs = [m for m in other_msgs if not _has_image_content(m)]
     while other_msgs:
-        test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
+        test_payload = json.dumps(system_msgs + img_msgs + other_msgs, ensure_ascii=False, default=str)
         if len(test_payload.encode("utf-8")) <= max_bytes:
             break
         other_msgs.pop(0)
+    other_msgs = img_msgs + other_msgs  # Image messages first
 
     # Step 4: Truncate system message (keep first 70% + last 30%)
     test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
