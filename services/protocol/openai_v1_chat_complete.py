@@ -448,18 +448,23 @@ def _handle_chatgpt_chat(
             )
 
     # chatgpt.com backend (free account, search query, ARM64, or addon)
+    # Strip chatgpt/ prefix — chatgpt.com API expects raw model names
+    chatgpt_model = model
+    if chatgpt_model.startswith("chatgpt/"):
+        chatgpt_model = chatgpt_model[len("chatgpt/"):]
+
     from services.config import _IS_ADDON
     if _IS_ADDON:
         # Addon: XML tool call parsing + force hint for HA
         if stream:
-            return _stream_chatgpt_addon(text_backend(), messages, model, tools, tool_choice)
-        return _chatgpt_addon_completion(model, messages, tools, tool_choice)
+            return _stream_chatgpt_addon(text_backend(), messages, chatgpt_model, tools, tool_choice)
+        return _chatgpt_addon_completion(chatgpt_model, messages, tools, tool_choice)
 
     # Docker: original behavior, no XML parsing
     if stream:
-        return stream_text_chat_completion(text_backend(), messages, model, tools, tool_choice)
-    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
-    return completion_response(model, collect_text(text_backend(), request), messages=messages)
+        return stream_text_chat_completion(text_backend(), messages, chatgpt_model, tools, tool_choice)
+    request = ConversationRequest(model=chatgpt_model, messages=messages, tools=tools, tool_choice=tool_choice)
+    return completion_response(chatgpt_model, collect_text(text_backend(), request), messages=messages)
 
 
 # Device keywords that should trigger tool call forcing
