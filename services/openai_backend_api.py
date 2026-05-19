@@ -360,50 +360,34 @@ class OpenAIBackendAPI:
         return conversation_messages
 
     def _conversation_payload(self, messages: list[Dict[str, Any]], model: str, timezone: str, tools: Optional[list[Dict[str, Any]]] = None, tool_choice: Any = None, force_search: bool = False) -> Dict[str, Any]:
-        """把标准 messages 构造成 web 对话请求体。"""
+        """把标准 messages 构造成 web 对话请求体。Minimal payload aligned with chatgpt.com web app capture."""
         conv_messages = self._api_messages_to_conversation_messages(messages)
-        if force_search and conv_messages:
-            last = conv_messages[-1]
-            meta = dict(last.get("metadata") or {})
-            meta["system_hints"] = ["search"]
-            last["metadata"] = meta
         payload: Dict[str, Any] = {
             "action": "next",
             "messages": conv_messages,
             "model": model,
             "parent_message_id": new_uuid(),
             "client_prepare_state": "success",
-            "supports_buffering": True,
-            "conversation_mode": {"kind": "primary_assistant"},
-            "conversation_origin": None,
-            "force_paragen": False,
-            "force_paragen_model_slug": "",
-            "force_rate_limit": False,
-            "force_use_sse": True,
-            "history_and_training_disabled": False,
-            "paragen_cot_summary_display_override": "allow",
-            "paragen_stream_type_override": None,
-            "reset_rate_limits": False,
-            "suggestions": [],
-            "supported_encodings": ["v1"],
-            "system_hints": ["search"] if force_search else [],
+            "timezone_offset_min": -420,
             "timezone": timezone,
-            "timezone_offset_min": -480,
-            "variant_purpose": "comparison_implicit",
-            "websocket_request_id": new_uuid(),
+            "conversation_mode": {"kind": "primary_assistant"},
+            "enable_message_followups": True,
+            "system_hints": [],
+            "supports_buffering": True,
+            "supported_encodings": ["v1"],
             "client_contextual_info": {
                 "is_dark_mode": False,
-                "time_since_loaded": 120,
-                "page_height": 900,
-                "page_width": 1400,
-                "pixel_ratio": 2,
-                "screen_height": 1440,
-                "screen_width": 2560,
+                "time_since_loaded": 363,
+                "page_height": 641,
+                "page_width": 576,
+                "pixel_ratio": 1,
+                "screen_height": 768,
+                "screen_width": 1366,
+                "app_name": "chatgpt.com",
             },
+            "paragen_cot_summary_display_override": "allow",
+            "force_parallel_switch": "auto",
         }
-        if force_search:
-            payload["force_use_search"] = True
-            payload["client_reported_search_source"] = "conversation_composer_web_icon"
         if tools:
             payload["tools"] = tools
         if tool_choice is not None:
