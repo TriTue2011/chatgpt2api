@@ -373,6 +373,7 @@ class OpenAIBackendAPI:
             "force_rate_limit": False,
             "force_use_sse": True,
             "history_and_training_disabled": False,
+            "paragen_cot_summary_display_override": "allow",
             "reset_rate_limits": False,
             "suggestions": [],
             "supported_encodings": [],
