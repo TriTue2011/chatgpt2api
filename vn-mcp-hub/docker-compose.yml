@@ -1,0 +1,20 @@
+services:
+  vn-mcp-hub:
+    build: .
+    container_name: vn-mcp-hub
+    ports:
+      - "8001:8001"
+    volumes:
+      # Persist Chroma DB so embeddings survive rebuilds.
+      - ./chroma_db:/app/chroma_db
+      # Live-edit knowledge base markdown without rebuilding image.
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
