@@ -222,25 +222,13 @@ class CodexOAuthProvider:
         instructions = None
         base_body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
 
-        # Resolve model — auto uses fallback chain: 5.5 → 5.4 → 5.3-codex
+        # Resolve model — auto always uses full fallback chain, ignoring enabled_models.
+        # Filtering enabled_models is for HA /v1/models display only; rotation should
+        # always try every model in CODEX_AUTO_FALLBACK so it can recover from per-model
+        # outages even when the user has unticked some entries in the UI.
         is_auto = not model or model == "auto"
         if is_auto:
-            # Filter fallback chain to only enabled models
-            from services.config import config as _cfg
-            ms = _cfg.data.get("model_settings") or {}
-            enabled_models = (ms.get("enabled_models") or {}).get("openai_oauth") if isinstance(ms, dict) else None
-            if enabled_models:
-                # Strip cx/ prefix and drop meta tokens — Codex API only accepts concrete model slugs
-                enabled_clean = [
-                    (m[3:] if m.startswith("cx/") else m)
-                    for m in enabled_models
-                    if m and m not in ("auto", "cx/auto")
-                ]
-                models_to_try = [m for m in CODEX_AUTO_FALLBACK if m in enabled_clean]
-                if not models_to_try:
-                    models_to_try = enabled_clean if enabled_clean else list(CODEX_AUTO_FALLBACK)
-            else:
-                models_to_try = list(CODEX_AUTO_FALLBACK)
+            models_to_try = list(CODEX_AUTO_FALLBACK)
         else:
             models_to_try = [model]
 
