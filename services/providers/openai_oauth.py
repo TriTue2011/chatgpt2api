@@ -230,9 +230,15 @@ class CodexOAuthProvider:
             ms = _cfg.data.get("model_settings") or {}
             enabled_models = (ms.get("enabled_models") or {}).get("openai_oauth") if isinstance(ms, dict) else None
             if enabled_models:
-                models_to_try = [m for m in CODEX_AUTO_FALLBACK if m in enabled_models]
+                # Strip cx/ prefix and drop meta tokens — Codex API only accepts concrete model slugs
+                enabled_clean = [
+                    (m[3:] if m.startswith("cx/") else m)
+                    for m in enabled_models
+                    if m and m not in ("auto", "cx/auto")
+                ]
+                models_to_try = [m for m in CODEX_AUTO_FALLBACK if m in enabled_clean]
                 if not models_to_try:
-                    models_to_try = [enabled_models[0]]  # Fallback to first enabled
+                    models_to_try = enabled_clean if enabled_clean else list(CODEX_AUTO_FALLBACK)
             else:
                 models_to_try = list(CODEX_AUTO_FALLBACK)
         else:
