@@ -1,28 +1,28 @@
 """VN MCP Hub — entry point.
 
-Mounts 16 custom MCP servers under one FastAPI app on port 8001.
+Mounts 16 custom MCP servers under one FastAPI app on port 8005.
 
 Each MCP exposes its own JSON-RPC endpoint at /<name>/mcp using the
 Streamable HTTP transport. chatgpt2api connects to these endpoints
 exactly like any other public HTTP MCP.
 
-URLs (when running on 172.16.10.200):
-- VN core:        http://172.16.10.200:8001/vn_weather/mcp
-                  http://172.16.10.200:8001/vn_news/mcp
-                  http://172.16.10.200:8001/vn_currency/mcp
-                  http://172.16.10.200:8001/vn_lunar/mcp
-- VN extended:    http://172.16.10.200:8001/vn_search/mcp
-                  http://172.16.10.200:8001/vn_law/mcp
-                  http://172.16.10.200:8001/vn_phat_nguoi/mcp
-                  http://172.16.10.200:8001/vn_stock/mcp
-- General:        http://172.16.10.200:8001/youtube/mcp
-                  http://172.16.10.200:8001/wikipedia/mcp
-                  http://172.16.10.200:8001/arxiv/mcp
-- Knowledge:      http://172.16.10.200:8001/kb_dien_nuoc/mcp
-                  http://172.16.10.200:8001/kb_y_te/mcp
-                  http://172.16.10.200:8001/kb_giao_duc/mcp
-                  http://172.16.10.200:8001/kb_ngoai_ngu/mcp
-- HA helper:      http://172.16.10.200:8001/ha_helper/mcp
+URLs (replace <host> with your server IP and <port> with mapped host port):
+- VN core:        http://<host>:<port>/vn_weather/mcp
+                  http://<host>:<port>/vn_news/mcp
+                  http://<host>:<port>/vn_currency/mcp
+                  http://<host>:<port>/vn_lunar/mcp
+- VN extended:    http://<host>:<port>/vn_search/mcp
+                  http://<host>:<port>/vn_law/mcp
+                  http://<host>:<port>/vn_phat_nguoi/mcp
+                  http://<host>:<port>/vn_stock/mcp
+- General:        http://<host>:<port>/youtube/mcp
+                  http://<host>:<port>/wikipedia/mcp
+                  http://<host>:<port>/arxiv/mcp
+- Knowledge:      http://<host>:<port>/kb_dien_nuoc/mcp
+                  http://<host>:<port>/kb_y_te/mcp
+                  http://<host>:<port>/kb_giao_duc/mcp
+                  http://<host>:<port>/kb_ngoai_ngu/mcp
+- HA helper:      http://<host>:<port>/ha_helper/mcp
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ logger = logging.getLogger("vn-mcp-hub")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting VN MCP Hub on port 8001")
+    logger.info("Starting VN MCP Hub on port 8005")
     yield
     logger.info("Shutting down VN MCP Hub")
 
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
-        port=8001,
+        port=8005,
         log_level="info",
         reload=False,
     )

@@ -56,7 +56,7 @@ cd vn-mcp-hub
 docker compose up -d --build
 ```
 
-Hub chạy ở `http://localhost:8001`. Health check: `curl http://localhost:8001/health`.
+Hub chạy ở `http://localhost:8005`. Health check: `curl http://localhost:8005/health`.
 
 ### 2. Ingest knowledge base (1 lần)
 
@@ -71,7 +71,7 @@ Cập nhật knowledge: thêm/sửa file `.md` trong `data/<collection>/`, chạ
 ### 3. Test endpoint
 
 ```bash
-curl -X POST http://localhost:8001/vn_weather/mcp \
+curl -X POST http://localhost:8005/vn_weather/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
@@ -84,7 +84,7 @@ Trên dashboard chatgpt2api → tab **MCP Servers** → **Thêm MCP server** th�
 | Field | Giá trị |
 |-------|---------|
 | Tên | (tuỳ chọn, vd "Thời tiết VN") |
-| URL | `http://172.16.10.200:8001/vn_weather/mcp` |
+| URL | `http://<server-ip>:<host-port>/vn_weather/mcp` |
 | Transport | HTTP |
 | API key | (để trống — hub không yêu cầu auth) |
 

@@ -20,6 +20,6 @@ COPY data/ ./data/
 # Pre-warm chroma directory so volume mount works
 RUN mkdir -p /app/chroma_db
 
-EXPOSE 8001
+EXPOSE 8005
 
 CMD ["python", "-m", "src.main"]
