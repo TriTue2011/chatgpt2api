@@ -372,6 +372,8 @@ class OpenAIBackendAPI:
             "messages": conv_messages,
             "model": model,
             "parent_message_id": new_uuid(),
+            "client_prepare_state": "success",
+            "supports_buffering": True,
             "conversation_mode": {"kind": "primary_assistant"},
             "conversation_origin": None,
             "force_paragen": False,
@@ -383,7 +385,7 @@ class OpenAIBackendAPI:
             "paragen_stream_type_override": None,
             "reset_rate_limits": False,
             "suggestions": [],
-            "supported_encodings": [],
+            "supported_encodings": ["v1"],
             "system_hints": ["search"] if force_search else [],
             "timezone": timezone,
             "timezone_offset_min": -480,
@@ -886,7 +888,7 @@ class OpenAIBackendAPI:
 
     def _chat_target(self) -> tuple[str, str]:
         if self.access_token:
-            return "/backend-api/conversation", "Asia/Shanghai"
+            return "/backend-api/f/conversation", "Asia/Saigon"
         return "/backend-anon/conversation", "America/Los_Angeles"
 
     def list_models(self) -> Dict[str, Any]:
