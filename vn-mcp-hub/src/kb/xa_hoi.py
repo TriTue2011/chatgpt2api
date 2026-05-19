@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from src.rag.retriever import RAGRetriever, format_results, query
+from src.rag.retriever import RAGRetriever
+from src.rag.hybrid import hybrid_query, format_hybrid_results
 
 mcp = FastMCP("kb_xa_hoi")
 
@@ -33,8 +34,8 @@ def ask_xa_hoi(question: str, top_k: int = 4) -> str:
         Các đoạn tài liệu phù hợp từ kho tri thức xã hội.
     """
     top_k = max(1, min(8, top_k))
-    results = query(COLLECTION, question, top_k=top_k)
-    return format_results(results)
+    results = hybrid_query(COLLECTION, question, top_k=top_k)
+    return format_hybrid_results(results)
 
 
 @mcp.tool()

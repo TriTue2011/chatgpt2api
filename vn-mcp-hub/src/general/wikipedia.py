@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import Any
+
 import httpx
 from fastmcp import FastMCP
 
@@ -26,17 +28,10 @@ WIKI_REST = "https://{lang}.wikipedia.org/api/rest_v1"
 HEADERS = {"User-Agent": "vn-mcp-hub/0.1 (chatgpt2api integration)"}
 
 
-@mcp.tool()
-def search(query: str, lang: str = "vi", limit: int = 10) -> str:
-    """Tìm bài viết Wikipedia.
+def wiki_search(query: str, lang: str = "vi", limit: int = 5) -> list[dict[str, Any]]:
+    """Direct Wikipedia search — reusable by hybrid RAG without MCP protocol.
 
-    Args:
-        query: Từ khóa tìm kiếm.
-        lang: Mã ngôn ngữ Wikipedia (mặc định 'vi'; có 'en', 'ja', 'zh', ...).
-        limit: Số kết quả tối đa (mặc định 10).
-
-    Returns:
-        Danh sách bài viết khớp gồm tiêu đề + đoạn snippet + URL.
+    Returns list of {title, snippet, url} dicts, empty list on failure.
     """
     limit = max(1, min(30, limit))
     params = {
@@ -52,18 +47,41 @@ def search(query: str, lang: str = "vi", limit: int = 10) -> str:
             r.raise_for_status()
         data = r.json()
     except Exception as exc:
-        return f"Lỗi tìm Wikipedia ({lang}): {exc}"
+        logger.warning("Wiki search failed for '%s': %s", query, exc)
+        return []
 
     hits = (data.get("query") or {}).get("search") or []
+    return [
+        {
+            "title": h.get("title", ""),
+            "snippet": (h.get("snippet", "")
+                        .replace('<span class="searchmatch">', "**")
+                        .replace("</span>", "**")),
+            "url": f"https://{lang}.wikipedia.org/wiki/{h.get('title', '').replace(' ', '_')}",
+        }
+        for h in hits
+    ]
+
+
+@mcp.tool()
+def search(query: str, lang: str = "vi", limit: int = 10) -> str:
+    """Tìm bài viết Wikipedia.
+
+    Args:
+        query: Từ khóa tìm kiếm.
+        lang: Mã ngôn ngữ Wikipedia (mặc định 'vi'; có 'en', 'ja', 'zh', ...).
+        limit: Số kết quả tối đa (mặc định 10).
+
+    Returns:
+        Danh sách bài viết khớp gồm tiêu đề + đoạn snippet + URL.
+    """
+    limit = max(1, min(30, limit))
+    hits = wiki_search(query, lang, limit)
     if not hits:
         return f"Không tìm thấy bài viết nào cho '{query}' trên {lang}.wikipedia.org."
-
     lines = [f"**{len(hits)} bài Wikipedia ({lang}) khớp '{query}':**", ""]
     for i, h in enumerate(hits, 1):
-        title = h.get("title", "")
-        snippet = h.get("snippet", "").replace('<span class="searchmatch">', "**").replace("</span>", "**")
-        url = f"https://{lang}.wikipedia.org/wiki/{title.replace(' ', '_')}"
-        lines.append(f"{i}. **{title}**\n   {snippet}\n   {url}")
+        lines.append(f"{i}. **{h['title']}**\n   {h['snippet']}\n   {h['url']}")
     return "\n\n".join(lines)
 
 

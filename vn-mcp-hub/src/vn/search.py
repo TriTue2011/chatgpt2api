@@ -63,6 +63,21 @@ def _format(results: list[dict[str, Any]], limit: int) -> str:
     return "\n\n".join(lines)
 
 
+def ddg_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Direct DuckDuckGo search — reusable by hybrid RAG without MCP protocol.
+
+    Returns list of {title, link, snippet} dicts, empty list on failure.
+    """
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
+            r = client.post(DDG_HTML, data={"q": query, "kl": "vn-vi"})
+            r.raise_for_status()
+        return _parse_results(r.text)[:limit]
+    except Exception as exc:
+        logger.warning("DDG search failed for '%s': %s", query, exc)
+        return []
+
+
 @mcp.tool()
 def search_web(query: str, limit: int = 10) -> str:
     """Tìm web qua DuckDuckGo. Không cần API key, hỗ trợ tiếng Việt.
@@ -75,14 +90,9 @@ def search_web(query: str, limit: int = 10) -> str:
         Danh sách kết quả: tiêu đề, mô tả, link.
     """
     limit = max(1, min(20, limit))
-    try:
-        with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
-            r = client.post(DDG_HTML, data={"q": query, "kl": "vn-vi"})
-            r.raise_for_status()
-        results = _parse_results(r.text)
-    except Exception as exc:
-        logger.warning("DDG search failed for '%s': %s", query, exc)
-        return f"Lỗi tìm kiếm: {exc}"
+    results = ddg_search(query, limit)
+    if not results:
+        return "Không tìm thấy kết quả."
     return _format(results, limit)
 
 
