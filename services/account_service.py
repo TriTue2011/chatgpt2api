@@ -314,6 +314,52 @@ class AccountService:
                             {"added": added, "skipped": skipped, "updated": updated, "type": account_type})
         return {"added": added, "skipped": skipped, "updated": updated, "items": items}
 
+    def add_accounts_with_credentials(self, creds: list[dict], account_type: str = "codex") -> dict:
+        """Add Codex OAuth accounts with full credential payload (access + refresh + expiry).
+
+        Each cred dict accepts: access_token (required), refresh_token, expires_at.
+        Existing accounts are merged: refresh_token / expires_at are updated even
+        when the access_token already exists, so older imports get refreshable.
+        """
+        added = 0
+        skipped = 0
+        updated = 0
+        with self._lock:
+            for cred in creds or []:
+                if not isinstance(cred, dict):
+                    continue
+                access_token = str(cred.get("access_token") or "").strip()
+                if not access_token:
+                    continue
+                refresh_token = str(cred.get("refresh_token") or "").strip() or None
+                expires_at = cred.get("expires_at") or None
+                current = self._accounts.get(access_token)
+                if current is None:
+                    added += 1
+                    base = {"access_token": access_token, "type": account_type, "status": "active"}
+                else:
+                    base = dict(current)
+                    existing_types = set(str(base.get("type") or "").split(","))
+                    new_types = set(str(account_type).split(","))
+                    base["type"] = ",".join(sorted(existing_types | new_types))
+                    skipped += 1
+                if refresh_token:
+                    base["refresh_token"] = refresh_token
+                    updated += 1
+                if expires_at:
+                    base["expires_at"] = expires_at
+                account = self._normalize_account(base)
+                if account is not None:
+                    self._accounts[access_token] = account
+            self._save_accounts()
+            items = [dict(item) for item in self._accounts.values()]
+            log_service.add(
+                LOG_TYPE_ACCOUNT,
+                f"Thêm {added} tài khoản {account_type} có refresh, cập nhật {updated}, bỏ qua {skipped}",
+                {"added": added, "skipped": skipped, "updated": updated, "type": account_type},
+            )
+        return {"added": added, "skipped": skipped, "updated": updated, "items": items}
+
     def delete_accounts(self, tokens: list[str]) -> dict:
         target_set = set(token for token in tokens if token)
         if not target_set:

@@ -211,14 +211,33 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
 
     # Extract ChatGPT tokens from 9router backup
     tokens = extract_chatgpt_tokens(data)
+    # Also extract all OAuth tokens — needed to map access_token -> refresh_token
+    all_oauth = extract_all_oauth_tokens(data)
+    refresh_lookup: dict[str, dict[str, Any]] = {}
+    for t in all_oauth:
+        if t.get("provider") in ("codex", "cursor", "openai"):
+            at = (t.get("access_token") or "").strip()
+            if at:
+                refresh_lookup[at] = {
+                    "refresh_token": t.get("refresh_token"),
+                    "expires_at": t.get("expires_at"),
+                }
 
     imported = 0
     skipped = 0
 
     if tokens:
         try:
-            # Add to pool as codex type — get_token_for_request filters by type=codex
-            result = account_service.add_accounts_with_type(tokens, "codex")
+            # Build credentials list (access + refresh + expiry) for refreshable accounts
+            creds = [
+                {
+                    "access_token": tok,
+                    "refresh_token": refresh_lookup.get(tok, {}).get("refresh_token"),
+                    "expires_at": refresh_lookup.get(tok, {}).get("expires_at"),
+                }
+                for tok in tokens
+            ]
+            result = account_service.add_accounts_with_credentials(creds, "codex")
             for token in tokens:
                 account_service.update_account(token, {
                     "image_quota_unknown": False,
@@ -230,14 +249,14 @@ def import_9router_backup(filepath: str | Path) -> dict[str, Any]:
             logger.info({
                 "event": "9router_backup_imported",
                 "tokens_found": len(tokens),
+                "with_refresh": sum(1 for c in creds if c.get("refresh_token")),
                 "imported": imported,
                 "skipped": skipped,
             })
         except Exception as exc:
             errors.append(f"Failed to add accounts: {exc}")
 
-    # Also extract all OAuth tokens for reference
-    all_oauth = extract_all_oauth_tokens(data)
+    # Provider summary for response
     provider_counts: dict[str, int] = {}
     for t in all_oauth:
         p = t["provider"]

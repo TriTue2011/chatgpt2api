@@ -293,7 +293,25 @@ class CodexOAuthProvider:
                 )
 
                 if resp.status_code == 401:
-                    raise RuntimeError("Codex OAuth token expired")
+                    # Try OAuth refresh once before giving up on this token
+                    refreshed = _try_refresh_token(access_token)
+                    if refreshed:
+                        access_token = refreshed
+                        headers["Authorization"] = f"Bearer {access_token}"
+                        # Re-issue the same request with the new token
+                        try:
+                            resp.close()
+                        except Exception:
+                            pass
+                        resp = requests.post(
+                            CODEX_URL, headers=headers, json=body,
+                            timeout=300, stream=True,
+                            impersonate="chrome110",
+                        )
+                        if resp.status_code == 401:
+                            raise RuntimeError("Codex OAuth token expired (refresh did not help)")
+                    else:
+                        raise RuntimeError("Codex OAuth token expired")
                 if resp.status_code >= 400:
                     error_text = ""
                     try:
@@ -477,6 +495,56 @@ class CodexOAuthProvider:
             token = candidates[account_service._index % len(candidates)]
             account_service._index += 1
             return token
+
+
+def _try_refresh_token(stale_access_token: str) -> str | None:
+    """Refresh a Codex OAuth access_token using its stored refresh_token.
+
+    Returns the new access_token on success, None if no refresh_token is stored
+    or the refresh failed transiently. On unrecoverable refresh errors
+    (refresh_token_reused / invalid_grant) the account is marked disabled
+    so the pool stops handing it out.
+    """
+    if not stale_access_token:
+        return None
+    with account_service._lock:
+        item = account_service._accounts.get(stale_access_token)
+        if not item:
+            return None
+        refresh_token = item.get("refresh_token") or ""
+    if not refresh_token:
+        return None
+
+    from services.codex_token_refresh import refresh_codex_token
+    result = refresh_codex_token(refresh_token)
+    if not result:
+        return None
+    if result.get("error") == "unrecoverable":
+        account_service.update_account(stale_access_token, {"status": "disabled"})
+        logger.warning({"event": "codex_account_disabled_after_refresh_fail",
+                        "code": result.get("code")})
+        return None
+
+    new_access = result.get("access_token") or ""
+    new_refresh = result.get("refresh_token") or refresh_token
+    expires_at = result.get("expires_at") or None
+    if not new_access:
+        return None
+
+    # Persist new credentials. The access_token is the dict key, so when it
+    # rotates we delete the old entry and reinsert under the new key.
+    with account_service._lock:
+        old = account_service._accounts.pop(stale_access_token, None) or {}
+        merged = {**old, "access_token": new_access, "refresh_token": new_refresh,
+                  "status": "active"}
+        if expires_at:
+            merged["expires_at"] = expires_at
+        normalized = account_service._normalize_account(merged)
+        if normalized is not None:
+            account_service._accounts[new_access] = normalized
+        account_service._save_accounts()
+    logger.info({"event": "codex_token_refreshed"})
+    return new_access
 
 
 # Singleton
