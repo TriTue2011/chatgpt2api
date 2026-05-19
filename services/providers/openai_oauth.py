@@ -309,8 +309,17 @@ class CodexOAuthProvider:
                             impersonate="chrome110",
                         )
                         if resp.status_code == 401:
+                            # Refresh succeeded but the new token is still rejected → unrecoverable
+                            account_service.update_account(access_token, {"status": "disabled"})
+                            logger.warning({"event": "codex_account_disabled",
+                                            "reason": "401_after_refresh"})
                             raise RuntimeError("Codex OAuth token expired (refresh did not help)")
                     else:
+                        # Refresh impossible (no refresh_token) or transient — disable so the
+                        # rotation pool stops handing this token out instead of looping.
+                        account_service.update_account(access_token, {"status": "disabled"})
+                        logger.warning({"event": "codex_account_disabled",
+                                        "reason": "401_no_refresh"})
                         raise RuntimeError("Codex OAuth token expired")
                 if resp.status_code >= 400:
                     error_text = ""
@@ -336,6 +345,17 @@ class CodexOAuthProvider:
                         "error": error_text,
                         "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
                     })
+                    # Auto-mark account state for quota/forbidden errors so the pool
+                    # rotates away from this token without manual intervention.
+                    err_lower = error_text.lower()
+                    if resp.status_code == 403 or "forbidden" in err_lower:
+                        account_service.update_account(access_token, {"status": "disabled"})
+                        logger.warning({"event": "codex_account_disabled",
+                                        "reason": "403_forbidden"})
+                    elif resp.status_code == 429 or "quota" in err_lower or "rate" in err_lower:
+                        account_service.update_account(access_token, {"status": "limited"})
+                        logger.warning({"event": "codex_account_limited",
+                                        "reason": "429_quota"})
                     msg = f"Codex error {resp.status_code}: {error_text[:200]}"
                     if try_idx < len(models_to_try) - 1:
                         last_error = msg
