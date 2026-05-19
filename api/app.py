@@ -50,6 +50,8 @@ def create_app() -> FastAPI:
     app.include_router(accounts.create_router())
     app.include_router(image_tasks.create_router())
     app.include_router(register.create_router())
+    from api import mcp as mcp_api
+    app.include_router(mcp_api.create_router())
     app.include_router(system.create_router(app_version))
     if config.images_dir.exists():
         app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")

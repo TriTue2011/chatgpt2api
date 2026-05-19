@@ -148,6 +148,13 @@ def text_chat_parts(body: dict[str, Any]) -> tuple[str, list[dict[str, Any]], li
     else:
         tools = None
     tool_choice = body.get("tool_choice")
+    # Augment with MCP tools so every provider gets the same catalogue.
+    try:
+        from services.mcp.converter import mcp_tools_to_openai
+        merged = mcp_tools_to_openai(tools)
+        tools = merged or None
+    except Exception as exc:
+        logger.warning({"event": "mcp_tool_inject_failed", "error": str(exc)})
     return model, messages, tools, tool_choice
 
 
@@ -264,6 +271,21 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
 
 def _dispatch(route, messages, tools, tool_choice, body):
+    """Dispatch to the correct provider handler."""
+    result = _dispatch_inner(route, messages, tools, tool_choice, body)
+    # Resolve MCP tool calls before returning to client (non-streaming only).
+    if not body.get("stream") and isinstance(result, dict):
+        try:
+            from services.mcp.executor import run_tool_loop
+            def _re_invoke(updated_messages):
+                return _dispatch_inner(route, updated_messages, tools, tool_choice, body)
+            result = run_tool_loop(messages, result, _re_invoke)
+        except Exception as exc:
+            logger.warning({"event": "mcp_loop_skipped", "error": str(exc)})
+    return result
+
+
+def _dispatch_inner(route, messages, tools, tool_choice, body):
     """Dispatch to the correct provider handler."""
     # RTK compression: chatgpt at 24KB limit, others at 80KB
     if route.provider == "chatgpt":
