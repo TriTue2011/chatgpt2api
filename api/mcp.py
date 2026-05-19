@@ -131,7 +131,12 @@ def create_router() -> APIRouter:
             enabled=True,
             transport=preset.transport,
         )
-        saved = mcp_registry.add_or_update(cfg)
+        try:
+            saved = mcp_registry.add_or_update(cfg)
+        except Exception as exc:
+            import traceback
+            tb = traceback.format_exc()
+            raise HTTPException(status_code=500, detail=f"install failed: {exc} | {tb[-500:]}")
         return {"server": _serialize(saved)}
 
     return router
