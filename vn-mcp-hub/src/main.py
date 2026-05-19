@@ -110,6 +110,9 @@ def _mount_mcps(app: FastAPI) -> None:
         ("kb_y_te", "src.kb.y_te"),
         ("kb_giao_duc", "src.kb.giao_duc"),
         ("kb_ngoai_ngu", "src.kb.ngoai_ngu"),
+        ("kb_khoa_hoc", "src.kb.khoa_hoc"),
+        ("kb_tu_nhien", "src.kb.tu_nhien"),
+        ("kb_xa_hoi", "src.kb.xa_hoi"),
         ("ha_helper", "src.ha.helper"),
     ]
     for name, module_path in mounts:

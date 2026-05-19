@@ -25,7 +25,7 @@ CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
 # Collections that should be ingested. Names match `data/<name>/` folders.
-COLLECTIONS = ["dien_nuoc", "y_te", "giao_duc", "ngoai_ngu"]
+COLLECTIONS = ["dien_nuoc", "y_te", "giao_duc", "ngoai_ngu", "khoa_hoc", "tu_nhien", "xa_hoi"]
 
 
 def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
