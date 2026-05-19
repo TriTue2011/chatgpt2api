@@ -9,6 +9,7 @@ web_dist
 # Virtual environments
 .venv
 .idea
+data
 config.json
 edit
 
