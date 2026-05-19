@@ -90,7 +90,7 @@ class MCPRegistry:
             }
             for c in configs
         ]
-        config.save()
+        config._save()
         self._config_version += 1
 
     # ----------------------------------------------------- client lifecycle
