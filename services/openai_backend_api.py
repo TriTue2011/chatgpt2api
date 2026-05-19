@@ -366,7 +366,7 @@ class OpenAIBackendAPI:
             "messages": self._api_messages_to_conversation_messages(messages),
             "model": model,
             "parent_message_id": new_uuid(),
-            "conversation_mode": {"kind": "primary_assistant", "plugin_ids": None},
+            "conversation_mode": {"kind": "primary_assistant"},
             "conversation_origin": None,
             "force_paragen": False,
             "force_paragen_model_slug": "",
@@ -374,6 +374,7 @@ class OpenAIBackendAPI:
             "force_use_sse": True,
             "history_and_training_disabled": False,
             "paragen_cot_summary_display_override": "allow",
+            "paragen_stream_type_override": None,
             "reset_rate_limits": False,
             "suggestions": [],
             "supported_encodings": [],
@@ -436,7 +437,7 @@ class OpenAIBackendAPI:
             "client_prepare_state": "success",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
-            "conversation_mode": {"kind": "primary_assistant", "plugin_ids": None},
+            "conversation_mode": {"kind": "primary_assistant"},
             "system_hints": ["picture_v2"],
             "partial_query": {
                 "id": new_uuid(),
@@ -575,7 +576,7 @@ class OpenAIBackendAPI:
             "client_prepare_state": "sent",
             "timezone_offset_min": -480,
             "timezone": "Asia/Shanghai",
-            "conversation_mode": {"kind": "primary_assistant", "plugin_ids": None},
+            "conversation_mode": {"kind": "primary_assistant"},
             "enable_message_followups": True,
             "system_hints": ["picture_v2"],
             "supports_buffering": True,
@@ -591,6 +592,7 @@ class OpenAIBackendAPI:
                 "app_name": "chatgpt.com",
             },
             "paragen_cot_summary_display_override": "allow",
+            "paragen_stream_type_override": None,
             "force_parallel_switch": "auto",
         }
         path = "/backend-api/f/conversation"
