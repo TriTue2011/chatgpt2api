@@ -574,7 +574,6 @@ class ConversationRequest:
     message_as_error: bool = False
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
-    force_search: bool = False
 
 
 @dataclass
@@ -811,7 +810,6 @@ def conversation_events(
     size: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: Any = None,
-    force_search: bool = False,
 ) -> Iterator[dict[str, Any]]:
     normalized = normalize_messages(messages or ([{"role": "user", "content": prompt}] if prompt else []), tools=tools, tool_choice=tool_choice)
     image_model = str(model or "").strip() in IMAGE_MODELS
@@ -839,7 +837,6 @@ def conversation_events(
         system_hints=["picture_v2"] if image_model else None,
         tools=tools,
         tool_choice=tool_choice,
-        force_search=force_search,
     )
     yield from iter_conversation_payloads(payloads, history_text, history_messages)
 
@@ -866,7 +863,6 @@ def stream_conversation_events(backend: OpenAIBackendAPI, request: ConversationR
                 prompt=request.prompt,
                 tools=request.tools,
                 tool_choice=request.tool_choice,
-                force_search=getattr(request, "force_search", False),
             ):
                 if event:
                     emitted = True

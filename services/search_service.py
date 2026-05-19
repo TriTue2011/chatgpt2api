@@ -36,12 +36,6 @@ SEARCH_INTENT_PATTERNS = [
     r"\b(?:search|tìm kiếm|tìm hiểu|tra cứu)\b",
     r"\b(?:ai là|ở đâu|khi nào|thế nào|làm sao)\b",
     r"\b(?:giá|hỏi\s+giá)\b",
-    # English search intent patterns
-    r"\b(?:current|latest|today'?s?|live)\s+(?:price|rate|value|news|weather|score)",
-    r"\b(?:what is|what are|how much|how many)\s+the\s+(?:current|latest|today)",
-    r"\b(?:search the web|look up|find me|tell me about)\b",
-    r"\b(?:gold price|bitcoin price|stock price|exchange rate)\b",
-    r"\b(?:in\s+\d{4}|this year|this month|this week|recently)\b",
 ]
 
 

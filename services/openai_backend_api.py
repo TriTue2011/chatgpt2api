@@ -359,34 +359,37 @@ class OpenAIBackendAPI:
             })
         return conversation_messages
 
-    def _conversation_payload(self, messages: list[Dict[str, Any]], model: str, timezone: str, tools: Optional[list[Dict[str, Any]]] = None, tool_choice: Any = None, force_search: bool = False) -> Dict[str, Any]:
-        """把标准 messages 构造成 web 对话请求体。Minimal payload aligned with chatgpt.com web app capture."""
-        conv_messages = self._api_messages_to_conversation_messages(messages)
+    def _conversation_payload(self, messages: list[Dict[str, Any]], model: str, timezone: str, tools: Optional[list[Dict[str, Any]]] = None, tool_choice: Any = None) -> Dict[str, Any]:
+        """把标准 messages 构造成 web 对话请求体。"""
         payload: Dict[str, Any] = {
             "action": "next",
-            "messages": conv_messages,
+            "messages": self._api_messages_to_conversation_messages(messages),
             "model": model,
             "parent_message_id": new_uuid(),
-            "client_prepare_state": "success",
-            "timezone_offset_min": -420,
-            "timezone": timezone,
             "conversation_mode": {"kind": "primary_assistant"},
-            "enable_message_followups": True,
+            "conversation_origin": None,
+            "force_paragen": False,
+            "force_paragen_model_slug": "",
+            "force_rate_limit": False,
+            "force_use_sse": True,
+            "history_and_training_disabled": True,
+            "reset_rate_limits": False,
+            "suggestions": [],
+            "supported_encodings": [],
             "system_hints": [],
-            "supports_buffering": True,
-            "supported_encodings": ["v1"],
+            "timezone": timezone,
+            "timezone_offset_min": -480,
+            "variant_purpose": "comparison_implicit",
+            "websocket_request_id": new_uuid(),
             "client_contextual_info": {
                 "is_dark_mode": False,
-                "time_since_loaded": 363,
-                "page_height": 641,
-                "page_width": 576,
-                "pixel_ratio": 1,
-                "screen_height": 768,
-                "screen_width": 1366,
-                "app_name": "chatgpt.com",
+                "time_since_loaded": 120,
+                "page_height": 900,
+                "page_width": 1400,
+                "pixel_ratio": 2,
+                "screen_height": 1440,
+                "screen_width": 2560,
             },
-            "paragen_cot_summary_display_override": "allow",
-            "force_parallel_switch": "auto",
         }
         if tools:
             payload["tools"] = tools
@@ -587,7 +590,6 @@ class OpenAIBackendAPI:
                 "app_name": "chatgpt.com",
             },
             "paragen_cot_summary_display_override": "allow",
-            "paragen_stream_type_override": None,
             "force_parallel_switch": "auto",
         }
         path = "/backend-api/f/conversation"
@@ -797,7 +799,6 @@ class OpenAIBackendAPI:
             system_hints: Optional[list[str]] = None,
             tools: Optional[list[Dict[str, Any]]] = None,
             tool_choice: Any = None,
-            force_search: bool = False,
     ) -> Iterator[str]:
         system_hints = system_hints or []
         if "picture_v2" in system_hints:
@@ -808,7 +809,7 @@ class OpenAIBackendAPI:
         self._bootstrap()
         requirements = self._get_chat_requirements()
         path, timezone = self._chat_target()
-        payload = self._conversation_payload(normalized, model, timezone, tools=tools, tool_choice=tool_choice, force_search=force_search)
+        payload = self._conversation_payload(normalized, model, timezone, tools=tools, tool_choice=tool_choice)
         response = self.session.post(
             self.base_url + path,
             headers=self._conversation_headers(path, requirements),
@@ -872,7 +873,7 @@ class OpenAIBackendAPI:
 
     def _chat_target(self) -> tuple[str, str]:
         if self.access_token:
-            return "/backend-api/f/conversation", "Asia/Saigon"
+            return "/backend-api/conversation", "Asia/Shanghai"
         return "/backend-anon/conversation", "America/Los_Angeles"
 
     def list_models(self) -> Dict[str, Any]:
