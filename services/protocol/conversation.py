@@ -574,6 +574,7 @@ class ConversationRequest:
     message_as_error: bool = False
     tools: list[dict[str, Any]] | None = None
     tool_choice: Any = None
+    force_search: bool = False
 
 
 @dataclass
@@ -837,6 +838,7 @@ def conversation_events(
         system_hints=["picture_v2"] if image_model else None,
         tools=tools,
         tool_choice=tool_choice,
+        force_search=getattr(request, "force_search", False),
     )
     yield from iter_conversation_payloads(payloads, history_text, history_messages)
 

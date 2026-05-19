@@ -89,11 +89,11 @@ def completion_response(
     }
 
 
-def stream_text_chat_completion(backend, messages: list[dict[str, Any]], model: str, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None) -> Iterator[dict[str, Any]]:
+def stream_text_chat_completion(backend, messages: list[dict[str, Any]], model: str, tools: list[dict[str, Any]] | None = None, tool_choice: Any = None, force_search: bool = False) -> Iterator[dict[str, Any]]:
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
-    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice, force_search=force_search)
     for delta_text in stream_text_deltas(backend, request):
         if not sent_role:
             sent_role = True
@@ -453,17 +453,21 @@ def _handle_chatgpt_chat(
     if chatgpt_model.startswith("chatgpt/"):
         chatgpt_model = chatgpt_model[len("chatgpt/"):]
 
+    # Detect search intent — pass to backend so it sets force_use_search
+    from services.search_service import needs_search
+    force_search = needs_search(messages)
+
     from services.config import _IS_ADDON
     if _IS_ADDON:
         # Addon: XML tool call parsing + force hint for HA
         if stream:
-            return _stream_chatgpt_addon(text_backend(), messages, chatgpt_model, tools, tool_choice)
-        return _chatgpt_addon_completion(chatgpt_model, messages, tools, tool_choice)
+            return _stream_chatgpt_addon(text_backend(), messages, chatgpt_model, tools, tool_choice, force_search=force_search)
+        return _chatgpt_addon_completion(chatgpt_model, messages, tools, tool_choice, force_search=force_search)
 
     # Docker: original behavior, no XML parsing
     if stream:
-        return stream_text_chat_completion(text_backend(), messages, chatgpt_model, tools, tool_choice)
-    request = ConversationRequest(model=chatgpt_model, messages=messages, tools=tools, tool_choice=tool_choice)
+        return stream_text_chat_completion(text_backend(), messages, chatgpt_model, tools, tool_choice, force_search=force_search)
+    request = ConversationRequest(model=chatgpt_model, messages=messages, tools=tools, tool_choice=tool_choice, force_search=force_search)
     return completion_response(chatgpt_model, collect_text(text_backend(), request), messages=messages)
 
 
@@ -526,14 +530,14 @@ def _inject_tool_force_hint(messages: list[dict[str, Any]], tools: list[dict[str
     return msgs
 
 
-def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice):
+def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice, force_search: bool = False):
     """Stream from chatgpt.com backend, extracting XML tool calls from response."""
     messages = _inject_tool_force_hint(messages, tools)
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
     sent_role = False
     accumulated = ""
-    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice, force_search=force_search)
     for delta_text in stream_text_deltas(backend, request):
         accumulated += delta_text
         if not sent_role:
@@ -558,11 +562,11 @@ def _stream_chatgpt_addon(backend, messages, model, tools, tool_choice):
     yield completion_chunk(model, {}, "stop", completion_id, created)
 
 
-def _chatgpt_addon_completion(model, messages, tools, tool_choice):
+def _chatgpt_addon_completion(model, messages, tools, tool_choice, force_search: bool = False):
     """Non-streaming chatgpt.com backend, extracting XML tool calls from response."""
     messages = _inject_tool_force_hint(messages, tools)
     backend = text_backend()
-    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice)
+    request = ConversationRequest(model=model, messages=messages, tools=tools, tool_choice=tool_choice, force_search=force_search)
     content = collect_text(backend, request)
 
     if tools:
