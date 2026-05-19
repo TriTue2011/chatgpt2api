@@ -32,6 +32,21 @@ type MCPTool = {
   input_schema: Record<string, unknown>;
 };
 
+type MCPPreset = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  url: string;
+  transport: string;
+  icon: string;
+  homepage: string;
+  requires_api_key: boolean;
+  api_key_help: string;
+  free_tier: boolean;
+  tags: string[];
+};
+
 type ServerForm = {
   id: string;
   name: string;
@@ -53,8 +68,13 @@ const EMPTY_FORM: ServerForm = {
 export default function MCPPage() {
   const [servers, setServers] = useState<MCPServer[]>([]);
   const [tools, setTools] = useState<MCPTool[]>([]);
+  const [presets, setPresets] = useState<MCPPreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  const [presetApiKeyDialog, setPresetApiKeyDialog] = useState<MCPPreset | null>(null);
+  const [presetApiKey, setPresetApiKey] = useState("");
+  const [installingPresetId, setInstallingPresetId] = useState<string | null>(null);
   const [form, setForm] = useState<ServerForm>(EMPTY_FORM);
   const [savingForm, setSavingForm] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -67,12 +87,14 @@ export default function MCPPage() {
   async function refresh() {
     setLoading(true);
     try {
-      const [srvData, toolData] = await Promise.all([
+      const [srvData, toolData, presetData] = await Promise.all([
         request.get("/api/mcp/servers"),
         request.get("/api/mcp/tools").catch(() => ({ data: { tools: [] } })),
+        request.get("/api/mcp/presets").catch(() => ({ data: { presets: [] } })),
       ]);
       setServers(((srvData.data as { servers?: MCPServer[] })?.servers) || []);
       setTools(((toolData.data as { tools?: MCPTool[] })?.tools) || []);
+      setPresets(((presetData.data as { presets?: MCPPreset[] })?.presets) || []);
     } catch (e) {
       console.error("Failed to load MCP servers", e);
     } finally {
@@ -151,6 +173,30 @@ export default function MCPPage() {
     }
   }
 
+  async function installPreset(preset: MCPPreset, apiKey: string = "") {
+    setInstallingPresetId(preset.id);
+    try {
+      await request.post(`/api/mcp/presets/${preset.id}/install`, { api_key: apiKey });
+      setShowPresets(false);
+      setPresetApiKeyDialog(null);
+      setPresetApiKey("");
+      await refresh();
+    } catch (e) {
+      alert(`Lỗi cài: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setInstallingPresetId(null);
+    }
+  }
+
+  function clickPresetCard(preset: MCPPreset) {
+    if (preset.requires_api_key) {
+      setPresetApiKeyDialog(preset);
+      setPresetApiKey("");
+    } else {
+      void installPreset(preset);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -169,6 +215,14 @@ export default function MCPPage() {
               Tích hợp Model Context Protocol — tools tự động cho mọi provider
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowPresets(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+          >
+            <Wrench className="size-4" />
+            Cài đặt nhanh
+          </button>
           <button
             type="button"
             onClick={openCreateForm}
@@ -343,6 +397,111 @@ export default function MCPPage() {
                 className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 {savingForm ? "Đang lưu..." : "Lưu"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPresets && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-[16px] bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Cài đặt nhanh MCP</h2>
+              <button
+                type="button"
+                onClick={() => setShowPresets(false)}
+                className="rounded-lg bg-stone-100 px-3 py-1 text-sm hover:bg-stone-200"
+              >
+                Đóng
+              </button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {presets.map((preset) => {
+                const installed = servers.some((s) => s.url === preset.url);
+                const installing = installingPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => !installed && !installing && clickPresetCard(preset)}
+                    disabled={installed || installing}
+                    className={cn(
+                      "rounded-[12px] border p-4 text-left transition",
+                      installed
+                        ? "border-emerald-300 bg-emerald-50/50 cursor-default"
+                        : "border-stone-200 hover:border-indigo-400 hover:bg-indigo-50/30",
+                    )}
+                  >
+                    <div className="mb-2 flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">{preset.icon}</span>
+                        <h3 className="font-semibold text-slate-900">{preset.name}</h3>
+                      </div>
+                      {installed && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+                          <CheckCircle2 className="size-3" />
+                          Đã cài
+                        </span>
+                      )}
+                    </div>
+                    <p className="mb-2 text-xs text-slate-600">{preset.description}</p>
+                    <div className="flex flex-wrap gap-1">
+                      {preset.requires_api_key ? (
+                        <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                          Cần API key
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600">
+                          Miễn phí
+                        </span>
+                      )}
+                      {preset.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {presetApiKeyDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-[16px] bg-white p-6 shadow-xl">
+            <h2 className="mb-1 text-lg font-semibold text-slate-900">
+              {presetApiKeyDialog.name}
+            </h2>
+            <p className="mb-4 text-xs text-slate-600">{presetApiKeyDialog.api_key_help}</p>
+            <input
+              type="password"
+              value={presetApiKey}
+              onChange={(e) => setPresetApiKey(e.target.value)}
+              placeholder="Nhập API key"
+              className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPresetApiKeyDialog(null)}
+                className="rounded-lg bg-stone-100 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-200"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => presetApiKeyDialog && installPreset(presetApiKeyDialog, presetApiKey)}
+                disabled={!presetApiKey.trim()}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                Cài đặt
               </button>
             </div>
           </div>

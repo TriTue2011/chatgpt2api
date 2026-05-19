@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from api.support import require_admin
 from services.mcp.client import MCPServerConfig
+from services.mcp.presets import get_preset, list_presets
 from services.mcp.registry import mcp_registry
 
 
@@ -101,5 +102,36 @@ def create_router() -> APIRouter:
                 }
             )
         return {"tools": items}
+
+    @router.get("/api/mcp/presets")
+    async def get_presets(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        return {"presets": list_presets()}
+
+    @router.post("/api/mcp/presets/{preset_id}/install")
+    async def install_preset(
+        preset_id: str,
+        body: dict[str, Any] | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        preset = get_preset(preset_id)
+        if not preset:
+            raise HTTPException(status_code=404, detail="preset not found")
+        api_key = ""
+        if isinstance(body, dict):
+            api_key = str(body.get("api_key") or "")
+        if preset.requires_api_key and not api_key:
+            raise HTTPException(status_code=400, detail=f"api_key required: {preset.api_key_help}")
+        cfg = MCPServerConfig(
+            id="",
+            name=preset.name,
+            url=preset.url,
+            api_key=api_key,
+            enabled=True,
+            transport=preset.transport,
+        )
+        saved = mcp_registry.add_or_update(cfg)
+        return {"server": _serialize(saved)}
 
     return router
