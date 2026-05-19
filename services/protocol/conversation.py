@@ -839,7 +839,7 @@ def conversation_events(
         system_hints=["picture_v2"] if image_model else None,
         tools=tools,
         tool_choice=tool_choice,
-        force_search=getattr(request, "force_search", False),
+        force_search=force_search,
     )
     yield from iter_conversation_payloads(payloads, history_text, history_messages)
 
