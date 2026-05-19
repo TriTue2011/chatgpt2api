@@ -372,7 +372,7 @@ class OpenAIBackendAPI:
             "force_paragen_model_slug": "",
             "force_rate_limit": False,
             "force_use_sse": True,
-            "history_and_training_disabled": True,
+            "history_and_training_disabled": False,
             "reset_rate_limits": False,
             "suggestions": [],
             "supported_encodings": [],
