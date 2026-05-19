@@ -1,10 +1,11 @@
 """
-Codex OAuth Provider — uses 9router Codex tokens to call chatgpt.com/backend-api/codex/responses.
+Codex OAuth Provider — uses Codex OAuth tokens to call api.openai.com directly.
 
-This is the EXACT same endpoint 9router uses. No api.openai.com — the tokens
-work with chatgpt.com's Codex Responses API. No 24KB limit, native tool calling.
+9router's Codex tokens are OpenAI OAuth tokens. They work with
+api.openai.com/v1/chat/completions exactly like API keys.
 
-Format: OpenAI Responses API (not chat/completions).
+Note: chatgpt.com/backend-api/codex/responses is ONLY used by the ChatGPT free
+addon flow, NOT by this Codex OAuth provider.
 """
 
 from __future__ import annotations
@@ -20,14 +21,10 @@ from services.config import config
 from services.account_service import account_service
 from utils.log import logger
 
-CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
-CODEX_DEFAULT_MODEL = "gpt-5.5"  # First try; fallback chain: 5.5 → 5.4 → 5.3-codex
-CODEX_AUTO_FALLBACK = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"]
+CODEX_URL = "https://api.openai.com/v1/chat/completions"
+CODEX_DEFAULT_MODEL = "gpt-4o"
 CODEX_HEADERS = {
-    "originator": "codex-cli",
-    "User-Agent": "codex-cli/1.0.18 (Windows; x64)",
     "Content-Type": "application/json",
-    "Accept": "text/event-stream",
 }
 
 
@@ -40,165 +37,12 @@ def _is_openai_api_only(token: str) -> bool:
 
 def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
                               tool_choice: Any = None, instructions: str | None = None) -> dict[str, Any]:
-    """Convert OpenAI chat format → Codex Responses API format.
-
-    Handles the full conversation flow including tool calls:
-    - system → instructions
-    - user → input_item (role="user")
-    - assistant (text) → input_item (role="assistant")
-    - assistant (tool_calls) → function_call items
-    - tool (result) → function_call_output items
-    """
-    body: dict[str, Any] = {"stream": True}
-
-    input_items: list[dict[str, Any]] = []
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-
-        if isinstance(content, list):
-            text_parts = []
-            image_parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    if part.get("type") == "text":
-                        text_parts.append(str(part.get("text", "")))
-                    elif part.get("type") == "image_url":
-                        url = part.get("image_url", {}).get("url", "")
-                        if url.startswith("data:"):
-                            header, b64 = url.split(",", 1)
-                            mime = header.split(";")[0].replace("data:", "")
-                            image_parts.append({"type": "input_image", "image_url": url})
-                        elif url:
-                            image_parts.append({"type": "input_image", "image_url": url})
-                    elif part.get("type") == "input_image":
-                        image_parts.append(part)
-            content = " ".join(text_parts) if text_parts else ""
-            # Build Responses-format content with images
-            if image_parts:
-                items = []
-                if content:
-                    items.append({"type": "input_text", "text": content})
-                for img in image_parts:
-                    img_url = img.get("image_url", "")
-                    if isinstance(img_url, str) and img_url.startswith("data:"):
-                        # Inline base64 image
-                        items.append({"type": "input_image", "image_url": img_url})
-                    elif isinstance(img_url, str):
-                        items.append({"type": "input_image", "image_url": img_url})
-                input_items.append({"role": "user", "content": items})
-                continue
-        else:
-            content = str(content or "")
-
-        if role == "system":
-            instructions = (instructions or "") + "\n" + content
-            continue
-
-        # Tool call result → function_call_output in Responses API
-        if role == "tool":
-            tool_call_id = str(msg.get("tool_call_id") or "")
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": tool_call_id,
-                "output": content,
-            })
-            continue
-
-        # Assistant message with tool_calls → function_call items
-        if role == "assistant":
-            tool_calls = msg.get("tool_calls")
-            if isinstance(tool_calls, list) and tool_calls:
-                # First, add any text content the assistant said before calling tools
-                if content and content.strip():
-                    input_items.append({"role": "assistant", "content": content})
-                # Then add each function_call as an item
-                for tc in tool_calls:
-                    if isinstance(tc, dict):
-                        fn = tc.get("function") or {}
-                        input_items.append({
-                            "type": "function_call",
-                            "call_id": str(tc.get("id") or ""),
-                            "name": str(fn.get("name") or ""),
-                            "arguments": str(fn.get("arguments") or ""),
-                        })
-                continue
-            # Regular assistant text response
-            input_items.append({"role": "assistant", "content": content})
-            continue
-
-        # User message
-        if role == "user":
-            input_items.append({"role": "user", "content": content})
-        else:
-            input_items.append({"role": "user", "content": content})
-
-    body["input"] = input_items
-
-    if instructions and instructions.strip():
-        body["instructions"] = instructions.strip()
-
-    if tools:
-        body["tools"] = [{
-            "type": "function",
-            "name": t.get("function", {}).get("name", ""),
-            "description": t.get("function", {}).get("description", ""),
-            "parameters": t.get("function", {}).get("parameters", {}),
-        } for t in tools if isinstance(t, dict)]
-
-    if tool_choice:
-        body["tool_choice"] = tool_choice
-
-    return body
+    """Deprecated — Codex now uses api.openai.com/v1/chat/completions natively (no Responses-format conversion)."""
+    return {"messages": list(messages or [])}
 
 
 def _responses_to_chat_chunk(event: dict[str, Any], model: str, completion_id: str, created: int) -> dict[str, Any] | None:
-    """Convert Codex Responses SSE event → OpenAI chat completion chunk."""
-    event_type = event.get("type", "")
-
-    if event_type == "response.output_text.delta":
-        delta = event.get("delta", "")
-        return {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
-        }
-
-    if event_type == "response.output_item.done":
-        item = event.get("item", {})
-        if item.get("type") == "function_call":
-            return {
-                "id": completion_id, "object": "chat.completion.chunk",
-                "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {
-                    "tool_calls": [{
-                        "index": 0,
-                        "id": item.get("call_id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": item.get("name", ""),
-                            "arguments": item.get("arguments", ""),
-                        },
-                    }]
-                }, "finish_reason": None}],
-            }
-
-    if event_type == "response.completed":
-        return {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
-
-    if event_type == "error":
-        return {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {
-                "content": f"Codex error: {event.get('message', 'unknown')}"
-            }, "finish_reason": "stop"}],
-        }
-
+    """Deprecated — Codex now uses api.openai.com/v1/chat/completions which already returns chat-completion chunks."""
     return None
 
 
@@ -220,21 +64,52 @@ class CodexOAuthProvider:
         """Call Codex Responses API with OAuth token."""
 
         instructions = None
-        base_body = _chat_to_responses_input(messages, tools, tool_choice, instructions)
+        # Build standard chat/completions body (api.openai.com format)
+        chat_messages: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "tool":
+                chat_messages.append({
+                    "role": "tool",
+                    "tool_call_id": str(msg.get("tool_call_id") or ""),
+                    "content": content if isinstance(content, str) else str(content or ""),
+                })
+                continue
+            if role == "assistant" and isinstance(msg.get("tool_calls"), list) and msg["tool_calls"]:
+                chat_messages.append({
+                    "role": "assistant",
+                    "content": content if isinstance(content, str) else "",
+                    "tool_calls": msg["tool_calls"],
+                })
+                continue
+            chat_messages.append({"role": role, "content": content})
 
-        # Resolve model — auto uses fallback chain: 5.5 → 5.4 → 5.3-codex
+        base_body: dict[str, Any] = {"messages": chat_messages}
+        if tools:
+            base_body["tools"] = tools
+        if tool_choice:
+            base_body["tool_choice"] = tool_choice
+        if temperature is not None:
+            base_body["temperature"] = temperature
+        if max_tokens is not None:
+            base_body["max_tokens"] = max_tokens
+
+        # Resolve model — auto uses default; respect enabled_models filter if set
         is_auto = not model or model == "auto"
         if is_auto:
-            # Filter fallback chain to only enabled models
             from services.config import config as _cfg
             ms = _cfg.data.get("model_settings") or {}
             enabled_models = (ms.get("enabled_models") or {}).get("openai_oauth") if isinstance(ms, dict) else None
             if enabled_models:
-                models_to_try = [m for m in CODEX_AUTO_FALLBACK if m in enabled_models]
-                if not models_to_try:
-                    models_to_try = [enabled_models[0]]  # Fallback to first enabled
+                enabled_clean = [
+                    (m[3:] if m.startswith("cx/") else m)
+                    for m in enabled_models
+                    if m and m not in ("auto", "cx/auto")
+                ]
+                models_to_try = [m for m in enabled_clean if m] or [CODEX_DEFAULT_MODEL]
             else:
-                models_to_try = list(CODEX_AUTO_FALLBACK)
+                models_to_try = [CODEX_DEFAULT_MODEL]
         else:
             models_to_try = [model]
 
@@ -247,38 +122,28 @@ class CodexOAuthProvider:
             body = dict(base_body)  # fresh copy each attempt
             resolved_model = try_model
 
-            # Parse 9router effort/review suffixes from model name
+            # Parse effort/review suffixes (kept for compatibility — ignored by api.openai.com)
             _EFFORT_LEVELS = {"xhigh", "high", "medium", "low", "none"}
             _suffixes = resolved_model.split("-")
             _effort = None
-            _review = False
             _seen: list[str] = []
             for _s in reversed(_suffixes):
                 if _s == "review":
-                    _review = True
+                    pass  # api.openai.com doesn't accept review include
                 elif _s in _EFFORT_LEVELS and _effort is None:
                     _effort = _s
                 else:
                     _seen.insert(0, _s)
-            if _effort or _review:
+            if _effort:
                 resolved_model = "-".join(_seen)
-                if _effort:
-                    body["reasoning"] = {"effort": _effort}
-                if _review:
-                    body["include"] = body.get("include", []) or []
-                    if isinstance(body["include"], list):
-                        body["include"].append("reasoning")
+                # reasoning only valid for o-series; harmless extra field for chat/completions
+                body["reasoning_effort"] = _effort
 
             body["model"] = resolved_model
-            body["store"] = False
-            body["stream"] = True
-            if "instructions" not in body or not body.get("instructions"):
-                body["instructions"] = "You are a helpful assistant."
+            body["stream"] = stream
 
-            for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty",
-                         "n", "seed", "logprobs", "top_logprobs", "user",
-                         "stream_options", "safety_identifier", "metadata",
-                         "parallel_tool_calls"):
+            # Strip Responses-only fields if present from a previous build pass
+            for key in ("store", "instructions", "include", "reasoning"):
                 body.pop(key, None)
 
             headers = dict(CODEX_HEADERS)
@@ -373,10 +238,9 @@ class CodexOAuthProvider:
         raise RuntimeError(f"All Codex models failed: {last_error}")
 
     def _stream_response(self, response, model: str) -> Iterator[dict[str, Any]]:
-        """Convert Codex SSE → OpenAI chat completion chunks (dicts)."""
+        """Pass through OpenAI chat/completions SSE → dict chunks."""
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
-        sent_role = False
 
         try:
             for raw_line in response.iter_lines():
@@ -394,22 +258,19 @@ class CodexOAuthProvider:
                 except json.JSONDecodeError:
                     continue
 
-                chunk = _responses_to_chat_chunk(event, model, completion_id, created)
-                if chunk:
-                    if not sent_role and chunk["choices"][0]["delta"].get("content"):
-                        chunk["choices"][0]["delta"]["role"] = "assistant"
-                        sent_role = True
-                    yield chunk
+                # api.openai.com already returns chat.completion.chunk shape — pass through
+                if isinstance(event, dict) and event.get("choices"):
+                    if "id" not in event:
+                        event["id"] = completion_id
+                    if "created" not in event:
+                        event["created"] = created
+                    if "model" not in event:
+                        event["model"] = model
+                    yield event
 
         except Exception as exc:
             logger.error({"event": "codex_stream_error", "error": str(exc)})
 
-        if not sent_role:
-            yield {
-                "id": completion_id, "object": "chat.completion.chunk",
-                "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-            }
         yield {
             "id": completion_id, "object": "chat.completion.chunk",
             "created": created, "model": model,
@@ -417,43 +278,18 @@ class CodexOAuthProvider:
         }
 
     def _non_stream_response(self, response, model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        """Handle non-streaming Codex response."""
+        """Handle non-streaming chat/completions response (parse standard OpenAI shape)."""
         data = response.json()
-        output_text = ""
-        tool_calls = []
-
-        for item in data.get("output", []):
-            if item.get("type") == "message":
-                for content_item in item.get("content", []):
-                    if content_item.get("type") == "output_text":
-                        output_text += content_item.get("text", "")
-            elif item.get("type") == "function_call":
-                tool_calls.append({
-                    "id": item.get("call_id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": item.get("name", ""),
-                        "arguments": item.get("arguments", ""),
-                    },
-                })
-
-        message = {"role": "assistant", "content": output_text}
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-
-        from services.protocol.openai_v1_chat_complete import count_message_tokens, count_text_tokens
-
+        # api.openai.com already returns OpenAI chat.completion shape — pass through
+        if isinstance(data, dict) and data.get("choices"):
+            return data
+        # Fallback: empty completion
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model,
-            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": count_message_tokens(messages, model),
-                "completion_tokens": count_text_tokens(output_text, model),
-                "total_tokens": count_message_tokens(messages, model) + count_text_tokens(output_text, model),
-            },
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": ""}, "finish_reason": "stop"}],
         }
 
     def get_token_for_request(self, exclude_tokens: set[str] | None = None) -> str:
