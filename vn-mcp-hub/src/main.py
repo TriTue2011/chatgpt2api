@@ -65,7 +65,16 @@ async def lifespan(app: FastAPI):
                 ingest.main()
             except Exception as exc:
                 logger.warning("Auto-ingest failed (non-fatal): %s", exc)
+        # Start background auto-update scheduler
+        _scheduler_stop = None
+        try:
+            from src.rag.scheduler import start_scheduler
+            _scheduler_stop = start_scheduler()
+        except Exception as exc:
+            logger.warning("Scheduler failed to start: %s", exc)
         yield
+        if _scheduler_stop is not None:
+            _scheduler_stop.set()
     logger.info("Shutting down VN MCP Hub")
 
 
@@ -147,6 +156,26 @@ def create_app() -> FastAPI:
             if isinstance(src, str) and isinstance(enabled, bool):
                 return {"ok": True, "mcp": mcp_name, "sources": _set(mcp_name, src, enabled)}
         return {"ok": False, "error": "Invalid body"}
+
+    @app.get("/api/studio/collection/{name}/meta")
+    async def studio_collection_meta(name: str):
+        """Get collection metadata (timestamp, interval, auto_update)."""
+        from src.rag.meta import read_meta, get_age_str
+        meta = read_meta(name)
+        return {"name": name, "meta": meta, "age": get_age_str(name)}
+
+    @app.post("/api/studio/collection/{name}/settings")
+    async def studio_collection_settings(name: str, request: Request):
+        """Update collection settings. Body: {update_interval_hours, auto_update}"""
+        from src.rag.meta import read_meta, write_meta
+        body = await request.json()
+        meta = read_meta(name)
+        if "update_interval_hours" in body:
+            meta["update_interval_hours"] = int(body["update_interval_hours"])
+        if "auto_update" in body:
+            meta["auto_update"] = bool(body["auto_update"])
+        write_meta(name, meta)
+        return {"ok": True, "name": name, "meta": meta}
 
     @app.delete("/api/studio/kb/{name}")
     async def studio_delete_kb(name: str):

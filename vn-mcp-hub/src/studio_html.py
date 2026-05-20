@@ -73,7 +73,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 <div class="card">
   <h2>Danh sách MCP</h2>
   <table>
-    <thead><tr><th>Tên</th><th>Nhãn</th><th>Chunks</th><th>Endpoint</th><th>Sources</th><th></th></tr></thead>
+    <thead><tr><th>Tên</th><th>Nhãn</th><th>Chunks</th><th>Cập nhật</th><th>Sources</th><th></th></tr></thead>
     <tbody id="mcpTable"><tr><td colspan="6">Đang tải...</td></tr></tbody>
   </table>
 </div>
@@ -97,6 +97,16 @@ async function refresh() {
   const srcData = await srcR.json();
   const allSources = srcData.sources || {};
 
+  // Fetch metadata for KB collections
+  const kbNames = (data.mcps || []).filter(m => m.name.startsWith('kb_')).map(m => m.name);
+  const metaMap = {};
+  await Promise.all(kbNames.map(async (name) => {
+    try {
+      const r = await fetch(API + '/collection/' + encodeURIComponent(name) + '/meta');
+      metaMap[name] = await r.json();
+    } catch(e) {}
+  }));
+
   const tbody = document.getElementById('mcpTable');
   if (!data.mcps || !data.mcps.length) {
     tbody.innerHTML = '<tr><td colspan="6">Chưa có MCP động nào.</td></tr>';
@@ -113,7 +123,14 @@ async function refresh() {
     const srcBtn = srcCount > 0
       ? `<button class="expand-btn" onclick="toggleSources('${m.name}')">${srcCount} src</button>`
       : '';
-    // Hidden source panel rendered inline
+    // Metadata column
+    const meta = metaMap[m.name] || {};
+    const age = meta.age || '—';
+    const autoIcon = (meta.meta && meta.meta.auto_update) ? ' 🔄' : '';
+    const ageBtn = m.name.startsWith('kb_')
+      ? `<button class="expand-btn" onclick="showSettings('${m.name}',${meta.meta?meta.meta.update_interval_hours||168:168},${meta.meta?meta.meta.auto_update||false:false})" title="Cài đặt cập nhật">${age}${autoIcon}</button>`
+      : age;
+    // Source panel
     let srcPanel = '';
     if (srcCount > 0) {
       srcPanel = `<div class="src-panel" id="src-${m.name}">` +
@@ -125,11 +142,25 @@ async function refresh() {
       <td>${badge} ${m.name}</td>
       <td>${m.label || m.name}</td>
       <td>${m.chunks ?? '—'}</td>
-      <td><code>/${m.name}/mcp</code></td>
+      <td>${ageBtn}</td>
       <td>${srcBtn}</td>
       <td>${delBtn}</td>
     </tr><tr id="src-row-${m.name}" style="display:none"><td colspan="6">${srcPanel}</td></tr>`;
   }).join('');
+}
+
+function showSettings(name, interval, autoUpdate) {
+  const h = prompt('Chu kỳ cập nhật (giờ):', interval);
+  if (h === null) return;
+  const auto = confirm('Bật tự động cập nhật? (OK=Có, Cancel=Không)');
+  fetch(API + '/collection/' + encodeURIComponent(name) + '/settings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({update_interval_hours: parseInt(h), auto_update: auto})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) toast('Đã lưu cài đặt cho ' + name, true);
+    refresh();
+  });
 }
 
 function toggleSources(name) {
