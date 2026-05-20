@@ -31,20 +31,28 @@ def create_router() -> APIRouter:
         for p in PRESETS:
             info = installed.get(p.id) or {}
             result.append({
-                "id": p.id,
-                "name": p.name,
-                "description": p.description,
-                "url": p.url,
-                "category": p.category,
-                "icon": p.icon,
-                "homepage": p.homepage,
-                "requires_api_key": p.requires_api_key,
-                "api_key_help": p.api_key_help,
-                "tags": p.tags,
+                "id": p.id, "name": p.name, "description": p.description,
+                "url": p.url, "category": p.category, "icon": p.icon,
+                "homepage": p.homepage, "requires_api_key": p.requires_api_key,
+                "api_key_help": p.api_key_help, "tags": p.tags,
                 "installed": p.id in installed,
                 "enabled": bool(info.get("enabled", True)),
                 "has_api_key": bool(info.get("api_key")),
             })
+
+        # Also include hub-discovered MCPs not in PRESETS
+        for mcp_id, info in installed.items():
+            if not any(p.id == mcp_id for p in PRESETS):
+                result.append({
+                    "id": mcp_id, "name": info.get("name", mcp_id),
+                    "description": "", "url": info.get("url", ""),
+                    "category": "hub", "icon": "🔌",
+                    "homepage": "", "requires_api_key": False,
+                    "api_key_help": "", "tags": ["hub"],
+                    "installed": True,
+                    "enabled": bool(info.get("enabled", True)),
+                    "has_api_key": bool(info.get("api_key")),
+                })
 
         result.sort(key=lambda x: (not x["installed"], x["category"], x["name"]))
         return {"presets": result}

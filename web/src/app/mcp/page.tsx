@@ -47,6 +47,7 @@ const CAT_NAMES: Record<string, string> = {
   finance: "Tài chính",
   travel: "Du lịch",
   ha: "Home Assistant",
+  hub: "Đã cài từ Hub",
 };
 
 export default function McpPage() {
