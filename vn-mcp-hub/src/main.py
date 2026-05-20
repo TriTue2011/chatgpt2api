@@ -31,7 +31,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -83,7 +83,48 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    # ── Studio endpoints ────────────────────────────────────────────────
+    from src.studio_html import STUDIO_HTML
+
+    @app.get("/studio")
+    async def studio_page():
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=STUDIO_HTML)
+
+    @app.get("/api/studio/mcps")
+    async def studio_list_mcps():
+        try:
+            from src.studio import list_dynamic_mcps as _ldm
+            dynamic = _ldm()
+        except Exception:
+            dynamic = []
+        all_mcps = []
+        for name, _ in mounts:
+            all_mcps.append({"name": name, "builtin": True})
+        for d in dynamic:
+            all_mcps.append({**d, "builtin": False})
+        return {"mcps": all_mcps}
+
+    @app.post("/api/studio/kb")
+    async def studio_create_kb(request: Request):
+        try:
+            body = await request.json()
+            from src.studio import create_kb as _create
+            return _create(
+                name=str(body.get("name", "")),
+                label=str(body.get("label", "")),
+                markdown_content=str(body.get("content", "")),
+            )
+        except Exception as exc:
+            return {"ok": False, "errors": [str(exc)]}
+
+    @app.delete("/api/studio/kb/{name}")
+    async def studio_delete_kb(name: str):
+        from src.studio import delete_kb as _delete
+        return _delete(name)
+
     _mount_mcps(app)
+    _mount_dynamic_mcps(app)
     return app
 
 
@@ -129,6 +170,21 @@ def _mount_mcps(app: FastAPI) -> None:
             logger.warning("Skipping %s (not built yet): %s", module_path, exc)
         except Exception as exc:
             logger.error("Failed to mount %s: %s", module_path, exc, exc_info=True)
+
+
+def _mount_dynamic_mcps(app: FastAPI) -> None:
+    """Mount studio-created dynamic KB MCPs from data/studio/dynamic.json."""
+    try:
+        from src.studio import load_dynamic_mcps
+        for name, mcp in load_dynamic_mcps():
+            try:
+                sub_app = mcp.streamable_http_app()
+                app.mount(f"/{name}", sub_app)
+                logger.info("Studio: mounted dynamic MCP at /%s/mcp", name)
+            except Exception as exc:
+                logger.warning("Studio: failed to mount dynamic MCP '%s': %s", name, exc)
+    except Exception as exc:
+        logger.warning("Studio: load_dynamic_mcps failed: %s", exc)
 
 
 app = create_app()
