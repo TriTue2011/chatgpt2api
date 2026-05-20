@@ -223,7 +223,6 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         last_error = ""
         for route in routes:
             try:
-                # Check cooldown before trying this provider
                 cooldown = model_cooldown.get_cooldown_info(route.model)
                 if cooldown:
                     logger.warning({"event": "model_cooldown_skip", "model": route.model, **cooldown})
@@ -233,23 +232,20 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
                 logger.info({"event": "combo_try", "combo": model, "provider": route.provider, "model": route.model})
                 if search_service.is_enabled:
                     messages_copy = search_service.process_messages(messages)
+                    # Auto-curate search results to RAG after response (best-effort bg)
+                    _curate_search_results(messages)
                 else:
                     messages_copy = messages
                 tools_with_mcp = _inject_mcp_tools(tools)
                 result = _dispatch(route, messages_copy, tools_with_mcp, tool_choice, body)
-                # Record success on cooldown manager
                 model_cooldown.record_success("combo:" + model, route.model)
                 return result
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
-                # Record failure for per-model cooldown
                 model_cooldown.record_failure(
-                    account_id="combo:" + model,
-                    model=route.model,
-                    status_code=_extract_status(last_error),
-                    error_body=last_error,
-                    provider=route.provider,
+                    account_id="combo:" + model, model=route.model,
+                    status_code=_extract_status(last_error), error_body=last_error, provider=route.provider,
                 )
                 continue
         return completion_response(model=model, content=f"All providers failed. Last error: {last_error[:200]}", messages=messages)
@@ -265,6 +261,23 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     tools = _inject_mcp_tools(tools)
 
     return _dispatch(route, messages, tools, tool_choice, body)
+
+
+def _curate_search_results(messages: list[dict[str, Any]]) -> None:
+    """Extract last user query + search results → curate to RAG in background."""
+    try:
+        query = ""
+        search_text = ""
+        for m in reversed(messages):
+            if m.get("role") == "user" and not query:
+                c = m.get("content", "")
+                query = c if isinstance(c, str) else str(c)[:200]
+            if m.get("role") == "system" and "Search results" in str(m.get("content", "")):
+                search_text = str(m.get("content", ""))[:2000]
+        if query and search_text:
+            search_service.curate_response(query, search_text)
+    except Exception:
+        pass
 
 
 def _dispatch(route, messages, tools, tool_choice, body):

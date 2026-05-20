@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import urllib.request
 from typing import Any
 
 from curl_cffi import requests
@@ -637,6 +638,51 @@ class SearchService:
 
         logger.warning({"event": "search_all_backends_failed", "tried": combo})
         return []
+
+    def search_all(self, query: str) -> list[dict[str, str]]:
+        """Run search on ALL available backends, merge results. For combined mode."""
+        all_results: list[dict[str, str]] = []
+        seen = set()
+        for name, backend in SEARCH_BACKENDS.items():
+            if name in ("chatgpt",):  # skip passthrough
+                continue
+            try:
+                results = backend.search(query, max(2, self.max_results // 2))
+                for r in results:
+                    key = r.get("url") or r.get("title", "")
+                    if key and key not in seen:
+                        seen.add(key)
+                        all_results.append(r)
+            except Exception as exc:
+                logger.debug("search_all: %s skipped: %s", name, exc)
+        logger.info({"event": "search_all_done", "backends": len(SEARCH_BACKENDS), "total": len(all_results)})
+        return all_results[:self.max_results * 2]
+
+    def curate_response(self, query: str, response: str, collection: str = "") -> bool:
+        """Store a Q&A pair to vn-mcp-hub RAG. Best-effort, non-blocking."""
+        if not response or len(response) < 50:
+            return False
+        hub_url = config.data.get("mcp_hub_url", "http://vn-mcp-hub:8005")
+        if not collection:
+            collection = "kb_general"
+        try:
+            import threading
+            def _post():
+                try:
+                    req = urllib.request.Request(
+                        f"{hub_url}/api/rag/curate/{collection}",
+                        data=json.dumps({"title": query[:200], "text": response[:3000],
+                                        "source": "chatgpt2api_curate"}).encode(),
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                except Exception:
+                    pass
+            threading.Thread(target=_post, daemon=True).start()
+            return True
+        except Exception:
+            return False
 
     def process_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Process messages: detect if search needed, execute, inject results.
