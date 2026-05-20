@@ -238,6 +238,9 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
                     messages_copy = messages
                 tools_with_mcp = _inject_mcp_tools(tools)
                 result = _dispatch(route, messages_copy, tools_with_mcp, tool_choice, body)
+                # Execute MCP tools server-side for combo too
+                if isinstance(result, dict):
+                    result = _execute_mcp_tools_in_response(messages_copy, result, route, body)
                 model_cooldown.record_success("combo:" + model, route.model)
                 return result
             except Exception as exc:
