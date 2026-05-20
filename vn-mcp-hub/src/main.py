@@ -28,6 +28,7 @@ URLs (replace <host> with your server IP and <port> with mapped host port):
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -47,11 +48,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting VN MCP Hub on port 8005")
     # Auto-ingest synchronously before yielding — chromadb/sentence-transformers
     # crash with SIGSEGV when called from a daemon thread in Docker.
-    try:
-        from src.rag import ingest
-        ingest.main()
-    except Exception as exc:
-        logger.warning("Auto-ingest failed (non-fatal): %s", exc)
+    if not os.environ.get("SKIP_AUTO_INGEST"):
+        try:
+            from src.rag import ingest
+            ingest.main()
+        except Exception as exc:
+            logger.warning("Auto-ingest failed (non-fatal): %s", exc)
     yield
     logger.info("Shutting down VN MCP Hub")
 
