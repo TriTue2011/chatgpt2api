@@ -193,6 +193,52 @@ def create_app() -> FastAPI:
         ok = upload_collection(collection)
         return {"ok": ok, "collection": collection}
 
+    @app.post("/api/rag/curate/{collection}")
+    async def rag_curate(collection: str, request: Request):
+        """Add curated content to a RAG collection + upload to R2.
+
+        Body: {title, text, source}
+        - Splits text into chunks, ingests into Chroma, uploads to R2.
+        """
+        from src.rag.ingest import chunk_text
+        from src.rag.retriever import RAGRetriever
+        from src.rag.meta import touch
+        from services.rag_cloud import upload_collection
+
+        body = await request.json()
+        title = str(body.get("title") or "")
+        text = str(body.get("text") or "")
+        source = str(body.get("source") or "curated")
+
+        if not text.strip():
+            return {"ok": False, "error": "No text provided"}
+
+        chunks = chunk_text(f"# {title}\n\n{text}" if title else text)
+        if not chunks:
+            return {"ok": False, "error": "No chunks produced"}
+
+        retriever = RAGRetriever.get()
+        if not retriever._ensure_loaded():
+            return {"ok": False, "error": "Chroma not loaded"}
+
+        from datetime import datetime, timezone
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        col = retriever._client.get_or_create_collection(
+            name=collection, embedding_function=retriever._embed_fn
+        )
+        ids = [f"curated::{ts}::{i}" for i in range(len(chunks))]
+        metas = [{"source": source, "chunk": i} for i in range(len(chunks))]
+        batch = 100
+        for i in range(0, len(chunks), batch):
+            col.upsert(ids=ids[i:i+batch], documents=chunks[i:i+batch], metadatas=metas[i:i+batch])
+
+        touch(collection, chunks=len(chunks), source=f"curated/{source}")
+
+        # Upload to R2
+        r2_ok = upload_collection(collection)
+
+        return {"ok": True, "collection": collection, "chunks_added": len(chunks), "r2_uploaded": r2_ok}
+
     @app.get("/api/studio/r2")
     async def studio_get_r2():
         """Get R2 config (masked secret)."""
