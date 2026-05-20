@@ -89,6 +89,12 @@ def _check_all_collections() -> None:
 
             touch(folder.name, chunks=len(chunks), source=f"auto_update/{date_str}")
             logger.info("Scheduler: %s — ingested %d chunks", folder.name, len(chunks))
+            # Upload to R2 (non-blocking, best effort)
+            try:
+                from services.rag_cloud import upload_collection
+                upload_collection(folder.name)
+            except Exception:
+                pass
         except Exception as exc:
             logger.warning("Scheduler: %s auto-update failed: %s", folder.name, exc)
 

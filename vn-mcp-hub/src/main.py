@@ -164,6 +164,51 @@ def create_app() -> FastAPI:
         meta = read_meta(name)
         return {"name": name, "meta": meta, "age": get_age_str(name)}
 
+    @app.get("/api/rag/export/{collection}")
+    async def rag_export(collection: str):
+        """Export a Chroma collection as JSON (for n8n, external apps)."""
+        from src.rag.meta import read_meta
+        from src.rag.retriever import RAGRetriever
+        retriever = RAGRetriever.get()
+        if not retriever._ensure_loaded():
+            return {"error": "Chroma not loaded"}
+        col = retriever._get_collection(collection)
+        if col is None or col.count() == 0:
+            return {"collection": collection, "chunks": [], "count": 0}
+        data = col.get()
+        chunks = []
+        for i, doc in enumerate(data.get("documents") or []):
+            meta = (data.get("metadatas") or [{}])[i]
+            chunks.append({"id": (data.get("ids") or [""])[i], "text": doc,
+                          "source": (meta or {}).get("source", "")})
+        meta = read_meta(collection)
+        return {"collection": collection, "count": len(chunks),
+                "last_updated": meta.get("last_updated"), "chunks": chunks}
+
+    @app.post("/api/rag/upload/{collection}")
+    async def rag_upload_r2(collection: str):
+        """Upload a collection to Cloudflare R2."""
+        from services.rag_cloud import upload_collection
+        ok = upload_collection(collection)
+        return {"ok": ok, "collection": collection}
+
+    @app.get("/api/rag/list")
+    async def rag_list():
+        """List all RAG collections with metadata."""
+        from src.rag.meta import read_meta, get_age_str
+        from pathlib import Path
+        data_dir = Path("/app/data")
+        result = []
+        if data_dir.exists():
+            for folder in sorted(data_dir.iterdir()):
+                if folder.is_dir() and (folder / "meta.json").exists():
+                    meta = read_meta(folder.name)
+                    result.append({"name": folder.name, "chunks": meta.get("chunks_count", 0),
+                                   "last_updated": meta.get("last_updated"),
+                                   "age": get_age_str(folder.name),
+                                   "auto_update": meta.get("auto_update", False)})
+        return {"collections": result}
+
     @app.post("/api/studio/collection/{name}/settings")
     async def studio_collection_settings(name: str, request: Request):
         """Update collection settings. Body: {update_interval_hours, auto_update}"""
