@@ -19,22 +19,21 @@ logger = logging.getLogger(__name__)
 
 # Backend registry: (module, fn_name). Each fn takes (query, limit) -> list[dict].
 SEARCH_BACKENDS = [
-    # No-auth — always available
-    ("src.vn.search", "ddg_search"),
-    ("src.general.wikipedia", "wiki_search"),
-    ("src.search.semantic_scholar", "semantic_scholar_search"),
-    ("src.search.crossref", "crossref_search"),
-    # Auth-optional (added in Phase 2, imported lazily)
-    # ("src.search.brave", "brave_search"),
-    # ("src.search.google_cse", "google_search"),
-    # ("src.search.pubmed", "pubmed_search"),
-    # ("src.search.openalex", "openalex_search"),
-    # ("src.search.mojeek", "mojeek_search"),
-    # ("src.search.internet_archive", "archive_search"),
-    # ("src.search.core_ac", "core_search"),
+    # Web search — general purpose
+    ("src.vn.search", "ddg_search"),                    # DuckDuckGo (global)
+    ("src.general.wikipedia", "wiki_search"),            # Wikipedia
+    ("src.search.brave", "brave_search"),               # Brave (US, independent)
+    ("src.search.mojeek", "mojeek_search"),             # Mojeek (UK, independent)
+    # Academic / scholarly
+    ("src.search.semantic_scholar", "semantic_scholar_search"),  # CS/engineering
+    ("src.search.crossref", "crossref_search"),                   # DOI registry
+    ("src.search.pubmed", "pubmed_search"),                       # Biomedical (NIH)
+    ("src.search.openalex", "openalex_search"),                   # 250M works
+    # Historical / archival
+    ("src.search.internet_archive", "archive_search"),            # Wayback Machine
 ]
 
-MAX_WORKERS = 6
+MAX_WORKERS = 9
 PER_BACKEND_TIMEOUT = 8.0
 
 

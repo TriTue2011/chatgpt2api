@@ -3,8 +3,15 @@
 Each backend exports a single function taking (query, limit) -> list[dict].
 Backends that fail (no API key, network error, rate limit) return [] silently
 so the orchestrator can continue with other sources.
-"""
 
-# Re-export direct search functions for the orchestrator
-from src.search.semantic_scholar import semantic_scholar_search
-from src.search.crossref import crossref_search
+## By region/specialization:
+- DuckDuckGo: global privacy search
+- Wikipedia: encyclopedic knowledge
+- Brave: US independent web index
+- Mojeek: UK independent web index
+- Semantic Scholar: CS/engineering papers
+- CrossRef: DOI scholarly metadata
+- PubMed (NIH): biomedical literature
+- OpenAlex: 250M+ scholarly works, all disciplines
+- Internet Archive: historical web (Wayback Machine)
+"""
