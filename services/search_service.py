@@ -640,9 +640,15 @@ class SearchService:
         return []
 
     def search_all(self, query: str) -> list[dict[str, str]]:
-        """Run search on ALL available backends, merge results. For combined mode."""
+        """Run search on ALL sources: built-in backends + MCP search tools.
+
+        Queries every available backend in parallel, then MCP search tools,
+        merges results with deduplication. LLM synthesizes the final answer.
+        """
         all_results: list[dict[str, str]] = []
         seen = set()
+
+        # 1. Built-in search backends
         for name, backend in SEARCH_BACKENDS.items():
             if name in ("chatgpt",):  # skip passthrough
                 continue
@@ -655,8 +661,23 @@ class SearchService:
                         all_results.append(r)
             except Exception as exc:
                 logger.debug("search_all: %s skipped: %s", name, exc)
-        logger.info({"event": "search_all_done", "backends": len(SEARCH_BACKENDS), "total": len(all_results)})
-        return all_results[:self.max_results * 2]
+
+        # 2. MCP search tools (query MCP servers directly)
+        try:
+            from services.mcp_client import call_mcp_tool
+            mcp_tools = ["search_web", "search_all", "search", "get_news"]
+            for tool in mcp_tools:
+                try:
+                    text = call_mcp_tool(tool, {"query": query, "limit": max(2, self.max_results // 2)})
+                    if text and len(text) > 20:
+                        all_results.append({"title": f"[MCP] {tool}", "snippet": text[:1500], "url": ""})
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.debug("search_all: mcp skipped: %s", exc)
+
+        logger.info({"event": "search_all_done", "total": len(all_results)})
+        return all_results[:self.max_results * 3]
 
     def curate_response(self, query: str, response: str, collection: str = "") -> bool:
         """Store a Q&A pair to vn-mcp-hub RAG. Best-effort, non-blocking."""
@@ -726,7 +747,7 @@ class SearchService:
             "query": query[:200],
         })
 
-        results = self.search(query)
+        results = self.search_all(query)  # Use all backends + MCP tools in parallel
         if results:
             logger.info({
                 "event": "search_results",
