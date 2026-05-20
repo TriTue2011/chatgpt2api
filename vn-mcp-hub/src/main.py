@@ -78,13 +78,7 @@ def create_app() -> FastAPI:
         return JSONResponse({
             "name": "VN MCP Hub",
             "version": "0.1.0",
-            "mcps": [
-                "vn_weather", "vn_news", "vn_currency", "vn_lunar",
-                "vn_search", "vn_law", "vn_phat_nguoi", "vn_stock",
-                "youtube", "wikipedia", "arxiv",
-                "kb_dien_nuoc", "kb_y_te", "kb_giao_duc", "kb_ngoai_ngu",
-                "ha_helper",
-            ],
+            "mcps": [name for name, _ in MOUNTS],
             "endpoint_pattern": "/<name>/mcp",
         })
 
@@ -108,7 +102,7 @@ def create_app() -> FastAPI:
         except Exception:
             dynamic = []
         all_mcps = []
-        for name, _ in mounts:
+        for name, _ in MOUNTS:
             all_mcps.append({"name": name, "builtin": True})
         for d in dynamic:
             all_mcps.append({**d, "builtin": False})
@@ -137,6 +131,29 @@ def create_app() -> FastAPI:
     return app
 
 
+MOUNTS = [
+    ("vn_weather", "src.vn.weather"),
+    ("vn_news", "src.vn.news"),
+    ("vn_currency", "src.vn.currency"),
+    ("vn_lunar", "src.vn.lunar"),
+    ("vn_search", "src.vn.search"),
+    ("vn_law", "src.vn.law"),
+    ("vn_phat_nguoi", "src.vn.phat_nguoi"),
+    ("vn_stock", "src.vn.stock"),
+    ("youtube", "src.general.youtube"),
+    ("wikipedia", "src.general.wikipedia"),
+    ("arxiv", "src.general.arxiv"),
+    ("kb_dien_nuoc", "src.kb.dien_nuoc"),
+    ("kb_y_te", "src.kb.y_te"),
+    ("kb_giao_duc", "src.kb.giao_duc"),
+    ("kb_ngoai_ngu", "src.kb.ngoai_ngu"),
+    ("kb_khoa_hoc", "src.kb.khoa_hoc"),
+    ("kb_tu_nhien", "src.kb.tu_nhien"),
+    ("kb_xa_hoi", "src.kb.xa_hoi"),
+    ("ha_helper", "src.ha.helper"),
+]
+
+
 def _get_http_app(mcp):
     """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x."""
     if hasattr(mcp, "http_app"):
@@ -151,28 +168,7 @@ def _mount_mcps(app: FastAPI) -> None:
     is better than no hub. Modules that haven't been written yet (during
     incremental build) simply skip.
     """
-    mounts = [
-        ("vn_weather", "src.vn.weather"),
-        ("vn_news", "src.vn.news"),
-        ("vn_currency", "src.vn.currency"),
-        ("vn_lunar", "src.vn.lunar"),
-        ("vn_search", "src.vn.search"),
-        ("vn_law", "src.vn.law"),
-        ("vn_phat_nguoi", "src.vn.phat_nguoi"),
-        ("vn_stock", "src.vn.stock"),
-        ("youtube", "src.general.youtube"),
-        ("wikipedia", "src.general.wikipedia"),
-        ("arxiv", "src.general.arxiv"),
-        ("kb_dien_nuoc", "src.kb.dien_nuoc"),
-        ("kb_y_te", "src.kb.y_te"),
-        ("kb_giao_duc", "src.kb.giao_duc"),
-        ("kb_ngoai_ngu", "src.kb.ngoai_ngu"),
-        ("kb_khoa_hoc", "src.kb.khoa_hoc"),
-        ("kb_tu_nhien", "src.kb.tu_nhien"),
-        ("kb_xa_hoi", "src.kb.xa_hoi"),
-        ("ha_helper", "src.ha.helper"),
-    ]
-    for name, module_path in mounts:
+    for name, module_path in MOUNTS:
         try:
             module = __import__(module_path, fromlist=["mcp"])
             mcp_instance = getattr(module, "mcp", None)
