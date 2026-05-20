@@ -56,29 +56,31 @@ def create_router() -> APIRouter:
     ):
         require_admin(authorization)
         preset = find(body.id)
-        if preset is None:
+        # Allow hub-discovered MCPs not in PRESETS when url_override is provided
+        if preset is None and not body.url_override:
             raise HTTPException(status_code=404, detail=f"Unknown preset: {body.id}")
 
         installed = config.data.get("mcp_servers") or {}
         if not isinstance(installed, dict):
             installed = {}
 
-        url = body.url_override or preset.url
-        installed[preset.id] = {
+        url = body.url_override or (preset.url if preset else "")
+        name = preset.name if preset else body.id
+        installed[body.id] = {
             "url": url,
-            "name": preset.name,
+            "name": name,
             "enabled": True,
             "api_key": body.api_key or None,
-            "requires_api_key": preset.requires_api_key,
-            "installed_at": None,  # Will be set below
+            "requires_api_key": preset.requires_api_key if preset else bool(body.api_key),
+            "installed_at": None,
         }
         import time
-        installed[preset.id]["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        installed[body.id]["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
         config.data["mcp_servers"] = installed
         config._save()
-        logger.info({"event": "mcp_installed", "id": preset.id, "url": url})
-        return {"ok": True, "id": preset.id}
+        logger.info({"event": "mcp_installed", "id": body.id, "url": url})
+        return {"ok": True, "id": body.id}
 
     @router.post("/api/mcp/uninstall/{preset_id}")
     async def uninstall_preset(
