@@ -1,66 +1,87 @@
-# chatgpt2api
+# chatgpt2api — OpenAI-compatible API Gateway
 
-OpenAI-compatible API gateway tích hợp **ChatGPT Web, Codex OAuth, OpenCode free, Gemini, DALL-E, SD WebUI**. Dùng làm AI agent backend cho Home Assistant.
+AI Agent backend cho Home Assistant, Open WebUI, n8n và mọi ứng dụng hỗ trợ OpenAI API.
 
-## Mục lục
-
-- [Cài đặt qua Home Assistant Addon](#cai-dat-qua-home-assistant-addon)
-- [Cài đặt qua Docker](#cai-dat-qua-docker)
-- [Cài đặt qua Docker Compose / Portainer](#cai-dat-qua-docker-compose--portainer)
-- [Cài đặt trực tiếp (source)](#cai-dat-truc-tiep-source)
-- [Cấu hình Home Assistant](#cau-hinh-home-assistant)
-- [Thêm tài khoản](#them-tai-khoan)
-- [Model](#model)
-- [Tìm kiếm (Search)](#tim-kiem-search)
-- [API Endpoints](#api-endpoints)
-- [Troubleshooting](#troubleshooting)
+**Tính năng chính:**
+- 10+ AI provider (ChatGPT Web, Codex OAuth, OpenCode, Gemini, DeepSeek, Groq, Mistral...)
+- **MCP Server integration** — mở rộng AI với search, weather, knowledge base
+- Model combo (tự động fallback khi provider lỗi)
+- Search service (tích hợp sẵn + MCP search fallback)
+- Web dashboard quản lý tài khoản, model, backup
+- RTK token optimizer (tiết kiệm 60-90% token)
 
 ---
 
-## Cài đặt qua Home Assistant Addon
+## Yêu cầu hệ thống
 
-[![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FTriTue2011%2Fhas-addons)
-
-**Bước 1:** Vào **Settings → Add-ons → Add-on Store**
-
-**Bước 2:** Nhấn **⋮** (góc phải trên) → **Repositories**
-
-**Bước 3:** Thêm URL: `https://github.com/TriTue2011/has-addons` → **Add**
-
-**Bước 4:** Tìm **chatgpt2api** trong store → **Install**
-
-**Bước 5:** Tab **Configuration** → sửa `auth_key` (mặc định: `sk-chatgpt2api`) → **Save**
-
-**Bước 6:** **Start** → mở Web UI tại `http://HA_IP:3030`
-
-**Bước 7:** Đăng nhập bằng `auth_key` đã đặt
-
-Sau đó vào [Cấu hình Home Assistant](#cau-hinh-home-assistant).
+| Môi trường | Tối thiểu | Khuyến nghị |
+|-----------|----------|------------|
+| RAM | 1GB | 2GB+ |
+| Disk | 2GB | 10GB+ |
+| Docker | 24.0+ | latest |
 
 ---
 
-## Cài đặt qua Docker
+## Cài đặt nhanh
+
+### 1. Docker CLI
 
 ```bash
 docker run -d \
   --name chatgpt2api \
   --restart unless-stopped \
   -p 3030:80 \
-  -v chatgpt2api_data:/app/data \
-  -e CHATGPT2API_AUTH_KEY=your_secret_key_here \
+  -v /opt/chatgpt2api-data:/app/data \
+  -e CHATGPT2API_AUTH_KEY="your-secret-key" \
   ghcr.io/tritue2011/chatgpt2api:latest
 ```
 
-Sau khi chạy:
-- Web UI: `http://IP:3030`
-- API: `http://IP:3030/v1/chat/completions`
-- Đăng nhập Web UI bằng `your_secret_key_here`
+- Dashboard: `http://your-ip:3030`
+- API endpoint: `http://your-ip:3030/v1/chat/completions`
+- Login: `admin` / `your-secret-key`
 
-> **Quan trọng**: Volume `chatgpt2api_data` lưu TOÀN Bộ dữ liệu: accounts, API keys (Gemini, NVIDIA, DeepSeek...), custom providers, model settings, combos, ảnh, backup. **Không được xóa volume này** nếu không muốn mất hết cài đặt.
+### 2. Docker Compose
 
----
+```yaml
+# docker-compose.yml
+services:
+  chatgpt2api:
+    image: ghcr.io/tritue2011/chatgpt2api:latest
+    container_name: chatgpt2api
+    restart: unless-stopped
+    ports:
+      - "3030:80"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CHATGPT2API_AUTH_KEY=your-secret-key
+```
 
-## Cài đặt qua Docker Compose / Portainer
+```bash
+docker compose up -d
+```
+
+### 3. NAS (Synology / QNAP)
+
+**Container Manager (Synology):**
+1. Registry → tìm `ghcr.io/tritue2011/chatgpt2api` → Download
+2. Image → Launch → Advanced Settings:
+   - Port Forwarding: Local 3030 → Container 80
+   - Volume: Add Folder → mount to `/app/data`
+   - Environment: `CHATGPT2API_AUTH_KEY` = `your-secret-key`
+3. Apply → Next → Done
+
+**Container Station (QNAP):**
+1. Create → Search `ghcr.io/tritue2011/chatgpt2api`
+2. Advanced Settings → Network: Host 3030 → Container 80
+3. Shared Folders: add volume → `/app/data`
+4. Environment: `CHATGPT2API_AUTH_KEY` = `your-secret-key`
+
+### 4. Portainer
+
+1. **Stacks** → **Add stack**
+2. Name: `chatgpt2api`
+3. Web editor → paste nội dung:
 
 ```yaml
 services:
@@ -71,311 +92,112 @@ services:
     ports:
       - "3030:80"
     volumes:
-      # [QUAN TRỌNG] Bind mount → thư mục thật trên host, không bao giờ mất khi build lại
-      - ./chatgpt2api-data:/app/data
+      - chatgpt2api_data:/app/data
     environment:
-      # [BẮT BUỘC] Đổi thành key bảo mật của bạn
-      CHATGPT2API_AUTH_KEY: your_secret_key_here
-      STORAGE_BACKEND: json
+      - CHATGPT2API_AUTH_KEY=your-secret-key
 
-# Không cần khai báo volumes ở cuối nếu dùng bind mount
+volumes:
+  chatgpt2api_data:
 ```
 
-**Portainer:** Stacks → Add Stack → Web Editor → paste nội dung trên → Deploy.
-
-### Cập nhật lên phiên bản mới (giữ nguyên dữ liệu)
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-Dữ liệu trong `./chatgpt2api-data/` (thư mục thật trên host) **không bao giờ mất** khi pull image mới.
+4. **Deploy the stack**
 
 ---
 
-## Cài đặt trực tiếp (source)
+## Cấu hình ban đầu
 
-Yêu cầu: Python 3.12+, Node.js 20+, Git
+Sau khi cài đặt, mở `http://your-ip:3030` và đăng nhập.
 
-```bash
-git clone https://github.com/TriTue2011/chatgpt2api
-cd chatgpt2api
+### Bước 1: Thêm tài khoản AI
 
-# Cài Python dependencies
-pip install uv
-uv sync
+**Cách A — Import 9router backup (có sẵn token ChatGPT):**
+1. Vào **Backup** → Upload file backup `.json` hoặc `.json.gz`
+2. Hệ thống tự động import ChatGPT tokens + OAuth refresh credentials
 
-# Build web UI
-cd web && npm install && npm run build && cd ..
+**Cách B — Thêm API key:**
+1. Vào **Providers** → chọn provider (Gemini, DeepSeek, Groq...)
+2. Điền API key → Save
 
-# Chạy
-cp .env.example .env
-# Sửa CHATGPT2API_AUTH_KEY trong .env
-uv run uvicorn main:app --host 0.0.0.0 --port 3030
+### Bước 2: Cấu hình Model Combo
+
+Vào **Combos** → tạo combo `AI Agent`:
 ```
+cx/auto → chatgpt/auto → oc/auto
+```
+Combo tự động thử model đầu, lỗi → fallback model kế tiếp.
 
----
+### Bước 3: Cài MCP Servers (tuỳ chọn)
 
-## Cấu hình Home Assistant
+Mở rộng AI với search, weather, knowledge base:
 
-Sau khi chatgpt2api đã chạy, cấu hình HA để dùng nó làm conversation agent.
+1. **Cài vn-mcp-hub** (xem [vn-mcp-hub/README.md](vn-mcp-hub/README.md))
+2. Vào **MCP Servers** → chọn preset → **Cài**
+3. Tools từ MCP tự động inject vào request
 
-### Dùng OpenAI Conversation (có sẵn trong HA)
+### Bước 4: Kết nối ứng dụng
 
-**Settings → Devices & Services → Add Integration → OpenAI Conversation:**
-
-| Field | Value |
-|-------|-------|
-| Base URL | `http://localhost:3030/v1` |
-| API Key | Key đã đặt ở bước trên |
-| Model | `ha-agent` |
-
-### Dùng với hass_local_openai_llm
-
+**Home Assistant:**
 ```yaml
 # configuration.yaml
-openai_llm:
-  - name: chatgpt2api
-    base_url: http://localhost:3030
-    api_key: your_secret_key_here
-    model: ha-agent
+conversation:
+  - platform: openai_conversation
+    api_key: your-secret-key
+    base_url: http://172.16.10.x:3030/v1
+    model: AI Agent
 ```
 
-### Voice Pipeline
+**Open WebUI:**
+Admin Panel → Settings → Connections → OpenAI API
+- URL: `http://172.16.10.x:3030/v1`
+- Key: `your-secret-key`
 
-**Settings → Voice Assistants →** chọn pipeline → **Conversation Agent** → chọn agent đã config.
-
----
-
-## Thêm tài khoản
-
-### Token ChatGPT Web (chat + tạo ảnh)
-
-1. Mở browser, đăng nhập https://chatgpt.com
-2. Vào https://chatgpt.com/api/auth/session
-3. Copy giá trị `accessToken`
-4. Web UI → **Tài khoản → Nhập tài khoản → Nhập Access Token** → paste
-5. Token JWT (bắt đầu `eyJ`) tự động dùng được cho cả chat (`cx/auto`) và tạo ảnh (`gpt-image-2`)
-
-### Token Codex OAuth từ 9router (chat không giới hạn)
-
-1. Web UI → **Sao lưu** → kéo thả file backup `.json` từ 9router
-2. 10 token tự động thêm vào pool
-3. Dùng model `cx/auto` — không giới hạn 24KB, native tool calling
-
-### Gemini API Key (chat + search)
-
-1. Vào https://aistudio.google.com/apikey → tạo API key (miễn phí 15 RPM)
-2. Web UI → **Cài đặt → Gemini AI Studio**
-3. Dán key (mỗi dòng 1 key nếu có nhiều)
-4. Chọn model: `gemini-2.5-flash` (ổn định) hoặc `gemini-3-flash-preview` (mới nhất)
-5. **Lưu**
-6. Dùng model `gemini_free/auto` cho chat + tự động search Google
-
----
-
-## Model
-
-### Model cho chat
-
-| Model | Provider | Cần token | Tool Call | Giới hạn |
-|-------|----------|-----------|-----------|----------|
-| `ha-agent` | **Combo tự động** | Auto | ✅ Native | Tự fallback |
-| `oc/auto` | OpenCode | **Không** | ✅ Text→Native | Không |
-| `cx/auto` | Codex OAuth | 9router backup | ✅ Native | Không |
-| `gemini_free/auto` | Gemini | API key | ✅ Native | 15 RPM/key |
-| `chatgpt/auto` | ChatGPT Web | Session cookie | ✅ Native | 24KB (free) |
-
-### Model cho tạo ảnh
-
-| Model | Provider | Cần |
-|-------|----------|-----|
-| `gpt-image-2` | DALL-E (chatgpt.com) | Token ChatGPT |
-| `sdwebui/sd-v1.5` | Stable Diffusion local | GPU + SD WebUI |
-| `huggingface/flux-schnell` | FLUX qua HuggingFace | API key (free tier) |
-
-### Combo Models
-
-Combo tự động thử từng model đến khi có kết quả. Cấu hình trong Web UI → **Cài đặt → Providers Card**:
-
-```json
-{
-  "ha-agent": ["gemini_free/auto", "cx/auto", "oc/auto"],
-  "ha-agent-image": ["chatgpt/gpt-image-2", "sdwebui/stable-diffusion"]
-}
-```
-
----
-
-## Tìm kiếm (Search)
-
-Khi dùng model không có search built-in (`cx/auto`, `oc/auto`, `gemini_free/auto`), hệ thống tự động:
-
-1. Phát hiện câu hỏi cần tìm kiếm (regex tiếng Việt)
-2. Gọi Google Search qua Gemini API (dùng key từ Cài đặt Gemini)
-3. Inject kết quả vào prompt
-4. Model trả lời dựa trên dữ liệu thực
-
-**Cấu hình:** Web UI → **Tìm kiếm** → bật + chọn backend → Lưu.
-
-Backend hỗ trợ:
-- **Gemini** (Google Search grounding, miễn phí 15 RPM)
-- **SearXNG** (tự host, không giới hạn)
-- **Serper.dev** (Google Search API, 2.5K req/tháng free)
-- **Brave Search** (2K req/tháng free)
+**n8n:**
+OpenAI Chat Model node → Custom URL: `http://172.16.10.x:3030/v1`
 
 ---
 
 ## API Endpoints
 
-| Method | Path | Auth | Mô tả |
-|--------|------|------|-------|
-| POST | `/v1/chat/completions` | API key | Chat (OpenAI format) |
-| POST | `/v1/images/generations` | API key | Tạo ảnh |
-| POST | `/v1/messages` | API key | Chat (Anthropic format) |
-| GET | `/v1/models` | API key | Danh sách model |
-| GET | `/api/accounts` | Admin | Danh sách tài khoản |
-| POST | `/api/accounts` | Admin | Thêm tài khoản |
-| POST | `/api/v1/import-9router-upload` | Admin | Import backup 9router |
-| POST | `/api/v1/backup` | Admin | Tạo backup toàn bộ |
-| POST | `/api/v1/restore` | Admin | Phục hồi từ backup |
-| GET | `/api/v1/health` | Admin | Trạng thái hệ thống |
+| Endpoint | Mô tả |
+|----------|-------|
+| `POST /v1/chat/completions` | Chat completion (OpenAI format) |
+| `POST /v1/images/generations` | Tạo ảnh (DALL-E, SD) |
+| `GET /v1/models` | Danh sách model |
+| `GET /health` | Health check |
+| `GET /api/mcp/presets` | Danh sách MCP presets |
+| `POST /api/mcp/install` | Cài đặt MCP server |
 
----
+## Model Prefix
 
-## Cấu hình Conversation Agent với Local OpenAI LLM
+| Prefix | Provider | Ghi chú |
+|--------|----------|--------|
+| `cx/` | Codex OAuth | ChatGPT Pro/Plus, tự refresh token |
+| `chatgpt/` | ChatGPT Web | Free account |
+| `oc/` | OpenCode | Free, không cần tài khoản |
+| `gemini_free/` | Gemini AI Studio | Free 15 RPM |
+| `nv/` | NVIDIA NIM | Cần API key |
+| `custom:...` | Custom Provider | OpenAI-compatible API |
 
-Sử dụng [Local OpenAI LLM](https://github.com/skye-harris/hass_local_openai_llm) để kết nối Home Assistant với chatgpt2api.
+## Environment Variables
 
-### Cài đặt Local OpenAI LLM
-
-1. Vào HACS → **⋮** → **Custom repositories**
-2. Thêm URL: `https://github.com/skye-harris/hass_local_openai_llm` → Category: **Integration**
-3. Cài đặt **Local OpenAI LLM** → Restart HA
-4. Vào **Settings → Devices & Services → Add Integration** → tìm **Local OpenAI LLM**
-
-### Cấu hình
-
-| Trường | Giá trị |
-|---|---|
-| **Server URL** | `http://172.16.10.200:3030/v1` |
-| **API Key** | Auth key của bạn (mặc định: `sk-chatgpt2api`) |
-| **Model** | `chatgpt/auto` hoặc combo model (vd: `AI Agent`) |
-| **Maximum tokens** | 2000-4000 |
-
-### Prompt khuyên dùng
-
-**Prompt cơ bản (nhanh, gọn):**
-```
-You are a smart home assistant integrated with Home Assistant.
-Answer all questions truthfully and helpfully.
-Use tools when the request requires current home state or actions.
-Format responses clearly using markdown: use bold headers, emoji icons, and line breaks to make information easy to read.
-Keep answers concise but well-structured; add detail only when the user asks for it.
-Be friendly, warm, and occasionally light-humored.
-When something unusual, risky, or out of the ordinary is detected, give a clear warning in a caring tone.
-Always respond in Vietnamese unless the user writes in another language.
-```
-
-**Prompt chi tiết (có bảng biểu):**
-```
-You are a smart home assistant integrated with Home Assistant.
-Answer all questions truthfully and helpfully.
-Use tools when the request requires current home state or actions.
-Format responses clearly using markdown: use bold headers, emoji icons, and tables where appropriate to make information easy to read.
-Keep answers concise but well-structured; add detail only when the user asks for it.
-Be friendly, warm, and occasionally light-humored — like a knowledgeable assistant who actually cares.
-When something unusual, risky, or out of the ordinary is detected, give a clear and helpful warning in a caring tone.
-Always respond in Vietnamese unless the user writes in another language.
-```
-
-### Model prefixes
-
-| Prefix | Provider | Giới hạn | Tool Calling |
-|---|---|---|---|
-| `chatgpt/` | ChatGPT Web Session | Không (API key) | ✅ |
-| `cx/` | Codex OAuth (9router) | Không | ✅ |
-| `oc/` | OpenCode Free | Không | ✅ |
-| `gemini_free/` | Gemini API | Có (theo key) | ✅ |
-| `nv/` | NVIDIA NIM | Có (theo key) | ✅ |
-
-### Combo Model (Fallback)
-
-Tạo combo model trong Settings → Combo để tự động fallback khi provider lỗi:
-
-```
-AI Agent = chatgpt/auto, cx/auto, oc/auto
-```
-
-Request sẽ thử `chatgpt/auto` trước → lỗi → `cx/auto` → lỗi → `oc/auto`.
-
-### Tạo ảnh
-
-| Prefix | Provider |
-|---|---|
-| `gpt-image-2` | ChatGPT DALL-E |
-| `nv-image/` | NVIDIA FLUX |
-| `gemini-image/` | Gemini Imagen |
-| `sdwebui/` | Stable Diffusion WebUI |
-
----
+| Biến | Mặc định | Mô tả |
+|------|---------|-------|
+| `CHATGPT2API_AUTH_KEY` | (bắt buộc) | Mật khẩu dashboard + API key |
 
 ## Troubleshooting
 
-### "Mất API key Gemini/NVIDIA/DeepSeek sau khi cập nhật"
+| Vấn đề | Giải pháp |
+|--------|----------|
+| Container crash loop | `docker logs chatgpt2api` |
+| Codex 400 "model not supported" | Models → bỏ tick `cx/auto`, tick model cụ thể như `cx/gpt-5.5` |
+| Token expired liên tục | Import lại 9router backup để có refresh_token |
+| MCP tools không thấy | MCP Servers → kiểm tra enabled + URL đúng |
+| Out of disk | `docker system prune -af` |
 
-**Nguyên nhân**: Volume name không cố định, hoặc dùng `docker compose down -v`.
+## Update
 
-**Cách fix**:
-1. Đảm bảo `docker-compose.yml` có volume với `name:` cố định:
-   ```yaml
-   volumes:
-     chatgpt2api_data:
-       name: chatgpt2api_data
-   ```
-2. Khi cập nhật, chỉ dùng: `docker compose pull && docker compose up -d`
-3. **Không dùng** `docker compose down -v` (cờ `-v` xóa volume)
-
-### "Error talking to API" / HTTP 413
-
-Payload vượt 24KB (giới hạn ChatGPT free account). Giải pháp:
-- Đổi model sang `oc/auto`, `cx/auto`, hoặc `gemini_free/auto`
-- Giảm **Max Message History** trong HA integration xuống 5
-- Tắt **Content Injection** (date/time) trong HA integration
-
-### Token hết quota (429)
-
-- **ChatGPT/Codex**: Hệ thống tự động round-robin token khác trong pool
-- **Gemini**: Thêm nhiều API key (mỗi dòng 1 key trong Cài đặt Gemini)
-- **OpenCode**: Không giới hạn, luôn hoạt động
-
-### Không kết nối được từ HA
-
-- Base URL phải có `/v1` ở cuối: `http://IP:3030/v1`
-- Kiểm tra `docker logs chatgpt2api` xem có request đến không
-- Nếu HA và chatgpt2api khác máy, dùng IP thay vì localhost
-
-### Addon không hiện trong HA Add-on Store
-
-- **Ctrl+F5** refresh cứng
-- **Add-on Store → ⋮ → Check for updates**
-- Xóa repository → thêm lại
-- Kiểm tra **Settings → System → Logs → Supervisor**
-
-### Search không có kết quả
-
-- Kiểm tra Gemini API key trong **Cài đặt → Gemini**
-- Key phải có dạng `AIza...`
-- Model preview có thể chưa hỗ trợ search grounding → dùng `gemini-2.5-flash`
-
-## Credits
-
-- [9router](https://github.com/TriTue2011/9router) — OAuth flow, multi-provider architecture
-- [hass_local_openai_llm](https://github.com/skye-harris/hass_local_openai_llm) — HA integration
-- OpenCode.ai — Free LLM API
-- Google Gemini — Search grounding + free tier
-
-## License
-
-MIT
+```bash
+docker pull ghcr.io/tritue2011/chatgpt2api:latest
+docker rm -f chatgpt2api
+# Chạy lại lệnh docker run ở trên (giữ nguyên volume mount)
+```
