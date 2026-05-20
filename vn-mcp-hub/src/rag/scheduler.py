@@ -20,11 +20,22 @@ CHECK_INTERVAL_SEC = 3600   # 1 hour between checks
 
 def _scheduler_loop(stop_event: threading.Event) -> None:
     logger.info("Auto-update scheduler started (check every %ds)", CHECK_INTERVAL_SEC)
+    tick = 0
     while not stop_event.wait(CHECK_INTERVAL_SEC):
+        tick += 1
         try:
             _check_all_collections()
         except Exception as exc:
             logger.warning("Scheduler check failed: %s", exc)
+        # Sync from R2 every hour (other instances may have updated)
+        if tick % 6 == 0:
+            try:
+                from services.rag_cloud import restore_all_from_r2
+                n = restore_all_from_r2()
+                if n > 0:
+                    logger.info("Scheduler: synced %d chunks from R2", n)
+            except Exception as exc:
+                logger.debug("R2 sync skipped: %s", exc)
     logger.info("Auto-update scheduler stopped")
 
 
