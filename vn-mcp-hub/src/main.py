@@ -132,6 +132,22 @@ def create_app() -> FastAPI:
         except Exception as exc:
             return {"ok": False, "errors": [str(exc)]}
 
+    @app.get("/api/studio/sources")
+    async def studio_get_sources():
+        """Return per-MCP source toggle config."""
+        from src.sources_config import get_all as _get_sources
+        return {"sources": _get_sources()}
+
+    @app.post("/api/studio/sources/{mcp_name}")
+    async def studio_toggle_source(mcp_name: str, request: Request):
+        """Toggle one source for a MCP. Body: {source_name: true/false}"""
+        body = await request.json()
+        from src.sources_config import set_source as _set
+        for src, enabled in (body or {}).items():
+            if isinstance(src, str) and isinstance(enabled, bool):
+                return {"ok": True, "mcp": mcp_name, "sources": _set(mcp_name, src, enabled)}
+        return {"ok": False, "error": "Invalid body"}
+
     @app.delete("/api/studio/kb/{name}")
     async def studio_delete_kb(name: str):
         from src.studio import delete_kb as _delete

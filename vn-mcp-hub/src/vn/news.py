@@ -1,15 +1,14 @@
-"""vn_news — tin tức báo Việt Nam qua RSS aggregator.
+"""vn_news — multi-source news aggregator (VN + international).
 
-Aggregates RSS feeds from major Vietnamese news outlets:
-- VnExpress: rss.vnexpress.net
-- Tuổi Trẻ: tuoitre.vn/rss
-- Thanh Niên: thanhnien.vn/rss
-- Dân Trí: dantri.com.vn/rss
+Sources (togglable in Studio UI):
+- VnExpress, Tuoi Tre, Thanh Nien, Dan Tri (VN)
+- BBC News (UK, free RSS)
+- Google News (global, free RSS)
 
-Tools cho phép LLM:
-- list_topics: liệt kê chủ đề có sẵn
-- get_news: lấy tin theo chủ đề (limit 10 mặc định)
-- search_news: tìm tin chứa keyword
+Tools:
+- list_topics: show available topics
+- get_news: fetch news by topic
+- search_news: keyword search across feeds
 """
 
 from __future__ import annotations
@@ -24,51 +23,104 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("vn_news")
 
-# topic -> list of (source_name, rss_url)
-FEEDS: dict[str, list[tuple[str, str]]] = {
-    "moi_nhat": [
-        ("VnExpress", "https://vnexpress.net/rss/tin-moi-nhat.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/tin-moi-nhat.rss"),
-        ("Thanh Niên", "https://thanhnien.vn/rss/home.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/home.rss"),
-    ],
-    "thoi_su": [
-        ("VnExpress", "https://vnexpress.net/rss/thoi-su.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/thoi-su.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/xa-hoi.rss"),
-    ],
-    "kinh_doanh": [
-        ("VnExpress", "https://vnexpress.net/rss/kinh-doanh.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/kinh-doanh.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/kinh-doanh.rss"),
-    ],
-    "the_thao": [
-        ("VnExpress", "https://vnexpress.net/rss/the-thao.rss"),
-        ("Thanh Niên", "https://thanhnien.vn/rss/the-thao.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/the-thao.rss"),
-    ],
-    "giai_tri": [
-        ("VnExpress", "https://vnexpress.net/rss/giai-tri.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/giai-tri.rss"),
-    ],
-    "cong_nghe": [
-        ("VnExpress", "https://vnexpress.net/rss/so-hoa.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/suc-manh-so.rss"),
-    ],
-    "the_gioi": [
-        ("VnExpress", "https://vnexpress.net/rss/the-gioi.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/the-gioi.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/the-gioi.rss"),
-    ],
-    "suc_khoe": [
-        ("VnExpress", "https://vnexpress.net/rss/suc-khoe.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/suc-khoe.rss"),
-    ],
-    "giao_duc": [
-        ("VnExpress", "https://vnexpress.net/rss/giao-duc.rss"),
-        ("Tuổi Trẻ", "https://tuoitre.vn/rss/giao-duc.rss"),
-        ("Dân Trí", "https://dantri.com.vn/rss/giao-duc.rss"),
-    ],
+# (source_name, rss_url) — each topic has feeds from multiple sources
+_VI_SOURCES = [
+    ("VnExpress", "vnexpress"),
+    ("Tuoi Tre", "tuoitre"),
+    ("Thanh Nien", "thanhnien"),
+    ("Dan Tri", "dantri"),
+]
+_INTL_SOURCES = [
+    ("BBC News", "bbc_news"),
+    ("Google News", "google_news"),
+]
+
+_RSS_URLS: dict[str, dict[str, str]] = {
+    "vnexpress": {
+        "moi_nhat": "https://vnexpress.net/rss/tin-moi-nhat.rss",
+        "thoi_su": "https://vnexpress.net/rss/thoi-su.rss",
+        "kinh_doanh": "https://vnexpress.net/rss/kinh-doanh.rss",
+        "the_thao": "https://vnexpress.net/rss/the-thao.rss",
+        "giai_tri": "https://vnexpress.net/rss/giai-tri.rss",
+        "phap_luat": "https://vnexpress.net/rss/phap-luat.rss",
+        "giao_duc": "https://vnexpress.net/rss/giao-duc.rss",
+        "suc_khoe": "https://vnexpress.net/rss/suc-khoe.rss",
+        "khoa_hoc": "https://vnexpress.net/rss/khoa-hoc.rss",
+        "so_hoa": "https://vnexpress.net/rss/so-hoa.rss",
+        "du_lich": "https://vnexpress.net/rss/du-lich.rss",
+    },
+    "tuoitre": {
+        "moi_nhat": "https://tuoitre.vn/rss/tin-moi-nhat.rss",
+        "thoi_su": "https://tuoitre.vn/rss/thoi-su.rss",
+        "kinh_doanh": "https://tuoitre.vn/rss/kinh-doanh.rss",
+    },
+    "thanhnien": {
+        "moi_nhat": "https://thanhnien.vn/rss/home.rss",
+        "the_thao": "https://thanhnien.vn/rss/the-thao.rss",
+    },
+    "dantri": {
+        "moi_nhat": "https://dantri.com.vn/rss/home.rss",
+        "thoi_su": "https://dantri.com.vn/rss/xa-hoi.rss",
+        "kinh_doanh": "https://dantri.com.vn/rss/kinh-doanh.rss",
+        "the_thao": "https://dantri.com.vn/rss/the-thao.rss",
+        "giao_duc": "https://dantri.com.vn/rss/giao-duc.rss",
+        "suc_khoe": "https://dantri.com.vn/rss/suc-khoe.rss",
+    },
+    "bbc_news": {
+        "moi_nhat": "https://feeds.bbci.co.uk/news/rss.xml",
+        "the_gioi": "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "kinh_doanh": "https://feeds.bbci.co.uk/news/business/rss.xml",
+        "khoa_hoc": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+        "cong_nghe": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    },
+    "google_news": {
+        "moi_nhat": "https://news.google.com/rss?hl=vi&gl=VN&ceid=VN:vi",
+        "the_gioi": "https://news.google.com/rss/headlines/section/topic/WORLD?hl=vi&gl=VN&ceid=VN:vi",
+        "kinh_doanh": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=vi&gl=VN&ceid=VN:vi",
+        "cong_nghe": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=vi&gl=VN&ceid=VN:vi",
+        "suc_khoe": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=vi&gl=VN&ceid=VN:vi",
+    },
+}
+
+
+def _is_source_enabled(source_key: str) -> bool:
+    try:
+        from src.sources_config import is_enabled as _chk
+        return _chk("vn_news", source_key)
+    except Exception:
+        return True
+
+
+def _get_feeds(topic: str) -> list[tuple[str, str]]:
+    """Get RSS feed URLs for a topic, filtering by user's Studio toggle config."""
+    feeds: list[tuple[str, str]] = []
+    # VN sources
+    for name, key in _VI_SOURCES:
+        if _is_source_enabled(key) and topic in _RSS_URLS.get(key, {}):
+            feeds.append((name, _RSS_URLS[key][topic]))
+    # International sources
+    for name, key in _INTL_SOURCES:
+        if _is_source_enabled(key) and topic in _RSS_URLS.get(key, {}):
+            feeds.append((name, _RSS_URLS[key][topic]))
+    return feeds
+
+
+# ── Topic list ────────────────────────────────────────────────────────────
+
+TOPICS = {
+    "moi_nhat": "Tin moi nhat",
+    "thoi_su": "Thoi su",
+    "the_gioi": "The gioi",
+    "kinh_doanh": "Kinh doanh",
+    "the_thao": "The thao",
+    "giai_tri": "Giai tri",
+    "phap_luat": "Phap luat",
+    "giao_duc": "Giao duc",
+    "suc_khoe": "Suc khoe",
+    "khoa_hoc": "Khoa hoc",
+    "cong_nghe": "Cong nghe",
+    "so_hoa": "So hoa",
+    "du_lich": "Du lich",
 }
 
 
@@ -106,35 +158,35 @@ def _format_items(items: list[dict[str, Any]], limit: int) -> str:
 
 @mcp.tool()
 def list_topics() -> str:
-    """Liệt kê các chủ đề tin tức có sẵn từ báo Việt Nam.
+    """Liet ke cac chu de tin tuc co san.
 
     Returns:
-        Danh sách topic IDs (vd: moi_nhat, thoi_su, kinh_doanh, the_thao...).
+        Danh sach topic IDs (vd: moi_nhat, thoi_su, kinh_doanh...).
     """
-    topics_with_count = [
-        f"- `{name}` ({len(feeds)} nguồn)" for name, feeds in FEEDS.items()
-    ]
-    return "**Chủ đề tin tức có sẵn:**\n" + "\n".join(topics_with_count)
+    lines = []
+    for tid, label in TOPICS.items():
+        feeds = _get_feeds(tid)
+        lines.append(f"- `{tid}` ({label}, {len(feeds)} nguon)")
+    return "**Chu de tin tuc:**\n" + "\n".join(lines)
 
 
 @mcp.tool()
 def get_news(topic: str = "moi_nhat", limit: int = 10) -> str:
-    """Lấy tin tức mới nhất từ các báo Việt Nam theo chủ đề.
+    """Lay tin tuc moi nhat theo chu de.
 
     Args:
-        topic: Mã chủ đề (vd: moi_nhat, thoi_su, kinh_doanh, the_thao,
-               giai_tri, cong_nghe, the_gioi, suc_khoe, giao_duc).
-               Mặc định: moi_nhat.
-        limit: Số bài tối đa trả về (1-30, mặc định 10).
+        topic: Ma chu de (vd: moi_nhat, thoi_su, kinh_doanh, the_gioi...).
+               Mac dinh: moi_nhat.
+        limit: So bai toi da (1-30, mac dinh 10).
 
     Returns:
-        Danh sách tin tức kèm tiêu đề, tóm tắt, link, nguồn.
+        Danh sach tin tuc: tieu de, tom tat, link, nguon.
     """
     limit = max(1, min(30, limit))
-    feeds = FEEDS.get(topic.lower())
+    feeds = _get_feeds(topic.lower())
     if not feeds:
-        available = ", ".join(FEEDS.keys())
-        return f"Chủ đề '{topic}' không có. Chủ đề khả dụng: {available}"
+        available = ", ".join(TOPICS.keys())
+        return f"Chu de '{topic}' khong co hoac tat ca nguon bi tat. Chu de kha dung: {available}"
 
     all_items: list[dict[str, Any]] = []
     for source, url in feeds:
@@ -144,18 +196,18 @@ def get_news(topic: str = "moi_nhat", limit: int = 10) -> str:
 
 @mcp.tool()
 def search_news(keyword: str, topic: str = "moi_nhat", limit: int = 10) -> str:
-    """Tìm tin tức Việt Nam chứa từ khóa.
+    """Tim tin tuc chua tu khoa.
 
     Args:
-        keyword: Từ khóa cần tìm trong tiêu đề/tóm tắt.
-        topic: Chủ đề để giới hạn (mặc định moi_nhat).
-        limit: Số bài tối đa trả về (mặc định 10).
+        keyword: Tu khoa can tim trong tieu de/tom tat.
+        topic: Chu de gioi han (mac dinh moi_nhat).
+        limit: So bai toi da (mac dinh 10).
 
     Returns:
-        Tin tức khớp keyword, sắp xếp theo thứ tự mới nhất.
+        Tin tuc khop keyword, sap xep theo moi nhat.
     """
     limit = max(1, min(30, limit))
-    feeds = FEEDS.get(topic.lower(), FEEDS["moi_nhat"])
+    feeds = _get_feeds(topic.lower()) or _get_feeds("moi_nhat")
     kw = keyword.lower().strip()
     all_items: list[dict[str, Any]] = []
     for source, url in feeds:

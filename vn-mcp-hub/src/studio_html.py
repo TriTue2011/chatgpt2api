@@ -39,6 +39,16 @@ STUDIO_HTML = r"""<!DOCTYPE html>
            border-radius: 6px; color: #fff; display: none; z-index: 100; }
   .toast-ok { background: var(--ok); color: #000; }
   .toast-err { background: var(--danger); }
+  .src-row { display: flex; align-items: center; justify-content: space-between;
+             padding: .3rem 0; font-size: .85rem; }
+  .src-row label { margin: 0; cursor: pointer; }
+  .src-toggle { width: 16px; height: 16px; cursor: pointer; accent-color: var(--ok); }
+  .expand-btn { background: none; border: 1px solid var(--border); color: var(--muted);
+                padding: .2rem .5rem; border-radius: 4px; cursor: pointer; font-size: .75rem; }
+  .expand-btn:hover { color: var(--text); border-color: var(--text); }
+  .src-panel { display: none; padding: .5rem 0 0 1rem; border-top: 1px solid var(--border);
+               margin-top: .5rem; }
+  .src-panel.open { display: block; }
 </style>
 </head>
 <body>
@@ -63,8 +73,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 <div class="card">
   <h2>Danh sách MCP</h2>
   <table>
-    <thead><tr><th>Tên</th><th>Nhãn</th><th>Chunks</th><th>Endpoint</th><th></th></tr></thead>
-    <tbody id="mcpTable"><tr><td colspan="5">Đang tải...</td></tr></tbody>
+    <thead><tr><th>Tên</th><th>Nhãn</th><th>Chunks</th><th>Endpoint</th><th>Sources</th><th></th></tr></thead>
+    <tbody id="mcpTable"><tr><td colspan="6">Đang tải...</td></tr></tbody>
   </table>
 </div>
 
@@ -79,11 +89,17 @@ async function toast(msg, ok) {
 }
 
 async function refresh() {
-  const r = await fetch(API + '/mcps');
-  const data = await r.json();
+  const [mcpR, srcR] = await Promise.all([
+    fetch(API + '/mcps'),
+    fetch(API + '/sources')
+  ]);
+  const data = await mcpR.json();
+  const srcData = await srcR.json();
+  const allSources = srcData.sources || {};
+
   const tbody = document.getElementById('mcpTable');
   if (!data.mcps || !data.mcps.length) {
-    tbody.innerHTML = '<tr><td colspan="5">Chưa có MCP động nào.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6">Chưa có MCP động nào.</td></tr>';
     return;
   }
   tbody.innerHTML = data.mcps.map(m => {
@@ -92,14 +108,47 @@ async function refresh() {
     const badge = builtin
       ? '<span class="badge badge-ok">built-in</span>'
       : '<span class="badge badge-warn">dynamic</span>';
+    const srcCfg = allSources[m.name] || {};
+    const srcCount = Object.keys(srcCfg).length;
+    const srcBtn = srcCount > 0
+      ? `<button class="expand-btn" onclick="toggleSources('${m.name}')">${srcCount} src</button>`
+      : '';
+    // Hidden source panel rendered inline
+    let srcPanel = '';
+    if (srcCount > 0) {
+      srcPanel = `<div class="src-panel" id="src-${m.name}">` +
+        Object.entries(srcCfg).map(([k,v]) =>
+          `<div class="src-row"><label>${k}</label><input type="checkbox" class="src-toggle" ${v?'checked':''} onchange="toggleSource('${m.name}','${k}',this.checked)"></div>`
+        ).join('') + '</div>';
+    }
     return `<tr>
       <td>${badge} ${m.name}</td>
       <td>${m.label || m.name}</td>
       <td>${m.chunks ?? '—'}</td>
       <td><code>/${m.name}/mcp</code></td>
+      <td>${srcBtn}</td>
       <td>${delBtn}</td>
-    </tr>`;
+    </tr><tr id="src-row-${m.name}" style="display:none"><td colspan="6">${srcPanel}</td></tr>`;
   }).join('');
+}
+
+function toggleSources(name) {
+  const row = document.getElementById('src-row-' + name);
+  const panel = document.getElementById('src-' + name);
+  if (row && panel) {
+    const open = row.style.display !== 'none';
+    row.style.display = open ? 'none' : 'table-row';
+    panel.className = 'src-panel' + (open ? '' : ' open');
+  }
+}
+
+async function toggleSource(mcp, source, enabled) {
+  const r = await fetch(API + '/sources/' + encodeURIComponent(mcp), {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({[source]: enabled})
+  });
+  if (r.ok) toast(source + ' ' + (enabled ? 'ON' : 'OFF'), true);
 }
 
 async function del(name) {
