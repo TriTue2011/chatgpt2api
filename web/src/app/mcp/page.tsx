@@ -5,7 +5,7 @@ import { request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -140,7 +140,7 @@ export default function McpPage() {
                         <CardTitle className="text-base">{p.name}</CardTitle>
                       </div>
                       {p.installed ? (
-                        <Switch
+                        <Checkbox
                           checked={p.enabled}
                           onCheckedChange={() => toggle(p.id)}
                           disabled={actionId === p.id}
