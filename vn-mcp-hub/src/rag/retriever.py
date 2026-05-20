@@ -48,28 +48,41 @@ class _FastEmbedFn:
         self._load()
         return [e.tolist() for e in self._model.embed(input)]
 
-    def embed_documents(self, texts: list[str] | None = None, input: list[str] | None = None) -> list[list[float]]:
-        """ChromaDB v0.5+ batch embedding. Accepts texts= or input=."""
-        docs = texts or input or []
+    def embed_documents(self, *args, **kwargs) -> list[list[float]]:
+        """ChromaDB v0.5+ batch embedding. Handles various call signatures."""
+        docs = args[0] if args else kwargs.get("texts", kwargs.get("input", []))
+        if isinstance(docs, str):
+            docs = [docs]
         self._load()
-        return [e.tolist() for e in self._model.embed(docs)]
+        try:
+            return [e.tolist() for e in self._model.embed(docs)]
+        except Exception:
+            return [e.tolist() for e in self._model.embed(list(docs))]
 
-    def embed_query(self, text: str = "", input: str | list[str] = "") -> list[float]:
-        """ChromaDB v0.5+ single-query embedding. Accepts text= or input= (str or list)."""
-        # Normalize: ChromaDB may pass input as a string or a list of strings
-        if isinstance(input, list):
-            query_text = input[0] if input else ""
-        elif isinstance(input, str) and input:
-            query_text = input
-        elif isinstance(text, str) and text:
-            query_text = text
-        else:
-            return []
+    def embed_query(self, *args, **kwargs) -> list[float]:
+        """ChromaDB v0.5+ single-query embedding. Handles all call signatures."""
+        # ChromaDB may call with: text=, input=, texts=, or positional
+        query_text = ""
+        if args:
+            q = args[0]
+            if isinstance(q, list) and q:
+                query_text = str(q[0])
+            elif isinstance(q, str):
+                query_text = q
         if not query_text:
-            return []
+            query_text = str(kwargs.get("text", "") or kwargs.get("input", "") or "")
+            if isinstance(query_text, list):
+                query_text = str(query_text[0]) if query_text else ""
+        if not query_text:
+            logger.warning("embed_query called with no text: args=%s kwargs=%s", args, kwargs)
+            return [0.0] * 384  # fallback zero vector
         self._load()
         result = list(self._model.embed([query_text]))
-        return result[0].tolist() if result else []
+        vec = result[0].tolist() if result else []
+        if not isinstance(vec, list) or len(vec) < 10:
+            logger.warning("embed_query returned wrong format: %s", type(vec))
+            return [0.0] * 384
+        return vec
 
     def name(self) -> str:
         return self._model_name
