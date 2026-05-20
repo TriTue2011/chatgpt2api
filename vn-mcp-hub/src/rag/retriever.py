@@ -48,6 +48,16 @@ class _FastEmbedFn:
         self._load()
         return [e.tolist() for e in self._model.embed(input)]
 
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """ChromaDB v0.5+ batch embedding."""
+        return self.__call__(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        """ChromaDB v0.5+ single-query embedding."""
+        self._load()
+        result = list(self._model.embed([text]))
+        return result[0].tolist() if result else []
+
     def name(self) -> str:
         return self._model_name
 
