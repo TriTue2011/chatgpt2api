@@ -48,6 +48,9 @@ class _FastEmbedFn:
         self._load()
         return [e.tolist() for e in self._model.embed(input)]
 
+    def name(self) -> str:
+        return self._model_name
+
 
 class RAGRetriever:
     """Singleton-ish retriever shared by all kb_* MCPs.
