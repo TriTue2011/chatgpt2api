@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api import accounts, ai, image_tasks, register, system
+from api import accounts, ai, image_tasks, mcp, register, system
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(ai.create_router())
     app.include_router(accounts.create_router())
     app.include_router(image_tasks.create_router())
+    app.include_router(mcp.create_router())
     app.include_router(register.create_router())
     app.include_router(system.create_router(app_version))
     if config.images_dir.exists():
