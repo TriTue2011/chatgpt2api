@@ -108,14 +108,15 @@ export default function McpPage() {
   const discoverHub = async () => {
     setDiscovering(true);
     try {
-      const data = await request.post("/api/mcp/discover", { hub_url: hubUrl });
+      const resp = await request.post("/api/mcp/discover", { hub_url: hubUrl });
+      const data = resp.data || resp;
       if (data.ok) {
         setDiscovered(data.mcps.map((m: any) => ({ ...m, selected: false })));
       } else {
         alert(data.error || "Cannot connect to hub");
       }
     } catch (e: any) {
-      alert("Error: " + (e.message || "Cannot connect"));
+      alert("Error: " + (e.response?.data?.detail || e.message || "Cannot connect"));
     } finally {
       setDiscovering(false);
     }
