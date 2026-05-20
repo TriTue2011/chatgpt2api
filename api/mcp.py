@@ -117,4 +117,31 @@ def create_router() -> APIRouter:
         logger.info({"event": "mcp_toggled", "id": preset_id, "enabled": entry["enabled"]})
         return {"ok": True, "id": preset_id, "enabled": entry["enabled"]}
 
+    @router.post("/api/mcp/discover")
+    async def discover_hub(request: dict, authorization: str | None = Header(default=None)):
+        """Discover MCPs from a hub URL. Body: {hub_url: 'http://...'}"""
+        require_admin(authorization)
+        import urllib.request, json as _json
+        hub_url = str((request or {}).get("hub_url", "")).strip().rstrip("/")
+        if not hub_url:
+            raise HTTPException(status_code=400, detail="hub_url is required")
+        try:
+            raw = urllib.request.urlopen(urllib.request.Request(f"{hub_url}/"), timeout=10).read().decode()
+            hub_info = _json.loads(raw)
+        except Exception as e:
+            return {"ok": False, "error": f"Cannot connect to hub: {e}"}
+
+        mcp_names = hub_info.get("mcps") or []
+        installed = config.data.get("mcp_servers") or {}
+        if not isinstance(installed, dict):
+            installed = {}
+        mcps = []
+        for name in mcp_names:
+            url = f"{hub_url}/{name}/mcp"
+            info = installed.get(name) or {}
+            mcps.append({"id": name, "name": name, "url": url,
+                         "installed": name in installed,
+                         "enabled": bool(info.get("enabled", True))})
+        return {"ok": True, "hub_name": hub_info.get("name", ""), "mcps": mcps}
+
     return router

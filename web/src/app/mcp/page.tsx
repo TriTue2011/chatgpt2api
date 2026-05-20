@@ -57,6 +57,9 @@ export default function McpPage() {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [showKeyDialog, setShowKeyDialog] = useState<string | null>(null);
   const [gitmcpUrl, setGitmcpUrl] = useState("");
+  const [hubUrl, setHubUrl] = useState("http://172.16.10.38:8005");
+  const [discovered, setDiscovered] = useState<any[]>([]);
+  const [discovering, setDiscovering] = useState(false);
 
   const fetchPresets = useCallback(async () => {
     try {
@@ -102,6 +105,35 @@ export default function McpPage() {
     }
   };
 
+  const discoverHub = async () => {
+    setDiscovering(true);
+    try {
+      const data = await request.post("/api/mcp/discover", { hub_url: hubUrl });
+      if (data.ok) {
+        setDiscovered(data.mcps.map((m: any) => ({ ...m, selected: false })));
+      } else {
+        alert(data.error || "Cannot connect to hub");
+      }
+    } catch (e: any) {
+      alert("Error: " + (e.message || "Cannot connect"));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const toggleDiscovered = (id: string) => {
+    setDiscovered(prev => prev.map(d => d.id === id ? { ...d, selected: !d.selected } : d));
+  };
+
+  const installSelected = async () => {
+    const selected = discovered.filter(d => d.selected && !d.installed);
+    for (const d of selected) {
+      await install(d.id, "", d.url);
+    }
+    await fetchPresets();
+    setDiscovered([]);
+  };
+
   if (isCheckingAuth || loading) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
@@ -122,6 +154,46 @@ export default function McpPage() {
           </p>
         </div>
       </div>
+
+      {/* Discover from Hub */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-lg">Discover from Hub</CardTitle>
+          <CardDescription>Nhập URL vn-mcp-hub để tự động lấy danh sách MCP</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2 mb-3">
+            <Input
+              placeholder="http://172.16.10.38:8005"
+              defaultValue="http://172.16.10.38:8005"
+              onChange={(e) => setHubUrl(e.target.value)}
+            />
+            <Button onClick={discoverHub} disabled={discovering}>
+              {discovering ? "Đang tìm..." : "Discover"}
+            </Button>
+          </div>
+          {discovered.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Button size="sm" onClick={installSelected}>Cài các mục đã chọn</Button>
+                <span className="text-sm text-muted-foreground">{discovered.filter((d: any) => d.selected).length} đã chọn</span>
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                {discovered.map((d: any) => (
+                  <div key={d.id} className="flex items-center gap-2 p-2 border rounded">
+                    <Checkbox checked={d.selected} onCheckedChange={() => toggleDiscovered(d.id)} />
+                    <div>
+                      <div className="text-sm font-medium">{d.name}</div>
+                      <code className="text-xs text-muted-foreground">{d.url}</code>
+                      {d.installed && <Badge variant="outline" className="text-[10px] border-green-500 text-green-500 ml-1">Đã cài</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {cats.map((cat) => (
         <div key={cat}>
