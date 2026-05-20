@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from services.config import config
@@ -118,11 +118,12 @@ def create_router() -> APIRouter:
         return {"ok": True, "id": preset_id, "enabled": entry["enabled"]}
 
     @router.post("/api/mcp/discover")
-    async def discover_hub(request: dict, authorization: str | None = Header(default=None)):
+    async def discover_hub(req: Request, authorization: str | None = Header(default=None)):
         """Discover MCPs from a hub URL. Body: {hub_url: 'http://...'}"""
         require_admin(authorization)
         import urllib.request, json as _json
-        hub_url = str((request or {}).get("hub_url", "")).strip().rstrip("/")
+        body = await req.json()
+        hub_url = str((body or {}).get("hub_url", "")).strip().rstrip("/")
         if not hub_url:
             raise HTTPException(status_code=400, detail="hub_url is required")
         try:
