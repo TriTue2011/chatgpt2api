@@ -59,7 +59,14 @@ class _FastEmbedFn:
         if not query_text:
             return []
         self._load()
-        result = list(self._model.embed([query_text]))
+        # fastembed v0.5+ may require single string, list, or iterable
+        try:
+            result = list(self._model.embed([query_text]))
+        except Exception:
+            try:
+                result = list(self._model.embed(query_text))
+            except Exception:
+                result = list(self._model.embed((query_text,)))
         return result[0].tolist() if result else []
 
     def name(self) -> str:
