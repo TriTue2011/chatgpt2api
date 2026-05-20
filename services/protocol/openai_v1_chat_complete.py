@@ -260,7 +260,12 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     # Inject MCP tools from enabled presets
     tools = _inject_mcp_tools(tools)
 
-    return _dispatch(route, messages, tools, tool_choice, body)
+    result = _dispatch(route, messages, tools, tool_choice, body)
+
+    # Execute MCP tools server-side — HA doesn't know these tools
+    if isinstance(result, dict):
+        result = _execute_mcp_tools_in_response(messages, result, route, body)
+    return result
 
 
 def _curate_search_results(messages: list[dict[str, Any]]) -> None:
@@ -278,6 +283,68 @@ def _curate_search_results(messages: list[dict[str, Any]]) -> None:
             search_service.curate_response(query, search_text)
     except Exception:
         pass
+
+
+def _execute_mcp_tools_in_response(
+    messages: list[dict[str, Any]], result: dict, route, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Check response for MCP tool calls, execute server-side, continue LLM."""
+    choice = (result.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    tool_calls = msg.get("tool_calls") or []
+
+    if not tool_calls:
+        return result
+
+    # Separate MCP tools from HA/native tools
+    mcp_calls = []
+    native_calls = []
+    for tc in tool_calls:
+        fn = tc.get("function", {})
+        name = fn.get("name", "")
+        if name in ("GetLiveContext",):  # HA built-in — pass through
+            native_calls.append(tc)
+        else:
+            mcp_calls.append(tc)
+
+    if not mcp_calls:
+        return result
+
+    args_str = mcp_calls[0].get("function", {}).get("arguments", "{}")
+    try:
+        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+    except Exception:
+        args = {}
+    tool_name = mcp_calls[0].get("function", {}).get("name", "")
+    tool_id = mcp_calls[0].get("id", "mcp_0")
+
+    logger.info({"event": "mcp_tool_exec", "tool": tool_name, "args": str(args)[:200]})
+
+    mcp_result = _execute_mcp_tool(tool_name, args)
+    if mcp_result is None:
+        mcp_result = f"Tool '{tool_name}' execution failed."
+
+    # Build messages for follow-up LLM call
+    new_messages = list(messages)
+    new_messages.append({"role": "assistant", "content": msg.get("content") or "",
+                         "tool_calls": mcp_calls})
+    new_messages.append({"role": "tool", "tool_call_id": tool_id,
+                         "name": tool_name, "content": mcp_result[:3000]})
+
+    # Re-inject MCP tools + dispatch again (non-streaming for simplicity)
+    tools = _inject_mcp_tools(body.get("tools"))
+    try:
+        follow_up = _dispatch(route, new_messages, tools, body.get("tool_choice"), body)
+        if isinstance(follow_up, dict):
+            choice2 = (follow_up.get("choices") or [{}])[0]
+            # Keep native tool calls from original + MCP result in follow-up
+            if native_calls:
+                choice2.setdefault("message", {})["tool_calls"] = native_calls
+            return follow_up
+    except Exception as exc:
+        logger.warning({"event": "mcp_followup_failed", "error": str(exc)})
+
+    return result
 
 
 def _dispatch(route, messages, tools, tool_choice, body):
