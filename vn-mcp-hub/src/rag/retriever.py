@@ -59,9 +59,8 @@ class _FastEmbedFn:
         except Exception:
             return [e.tolist() for e in self._model.embed(list(docs))]
 
-    def embed_query(self, *args, **kwargs) -> list[float]:
-        """ChromaDB v0.5+ single-query embedding. Handles all call signatures."""
-        # ChromaDB may call with: text=, input=, texts=, or positional
+    def embed_query(self, *args, **kwargs) -> list[list[float]]:
+        """ChromaDB v0.5+ single-query embedding. Returns List[List[float]]."""
         query_text = ""
         if args:
             q = args[0]
@@ -74,15 +73,10 @@ class _FastEmbedFn:
             if isinstance(query_text, list):
                 query_text = str(query_text[0]) if query_text else ""
         if not query_text:
-            logger.warning("embed_query called with no text: args=%s kwargs=%s", args, kwargs)
-            return [0.0] * 384  # fallback zero vector
+            return [[0.0] * 384]
         self._load()
         result = list(self._model.embed([query_text]))
-        vec = result[0].tolist() if result else []
-        if not isinstance(vec, list) or len(vec) < 10:
-            logger.warning("embed_query returned wrong format: %s", type(vec))
-            return [0.0] * 384
-        return vec
+        return [result[0].tolist()] if result else [[0.0] * 384]
 
     def name(self) -> str:
         return self._model_name
