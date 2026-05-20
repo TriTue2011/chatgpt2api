@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
                 logger.warning("Auto-ingest failed (non-fatal): %s", exc)
         # Restore RAG data from R2 (if configured) — pulls latest KB collections
         try:
-            from services.rag_cloud import restore_all_from_r2
+            from src.rag.cloud import restore_all_from_r2
             restored = restore_all_from_r2()
             if restored > 0:
                 logger.info("R2: restored %d chunks from cloud", restored)
@@ -197,7 +197,7 @@ def create_app() -> FastAPI:
     @app.post("/api/rag/upload/{collection}")
     async def rag_upload_r2(collection: str):
         """Upload a collection to Cloudflare R2."""
-        from services.rag_cloud import upload_collection
+        from src.rag.cloud import upload_collection
         ok = upload_collection(collection)
         return {"ok": ok, "collection": collection}
 
@@ -211,7 +211,7 @@ def create_app() -> FastAPI:
         from src.rag.ingest import chunk_text
         from src.rag.retriever import RAGRetriever
         from src.rag.meta import touch
-        from services.rag_cloud import upload_collection
+        from src.rag.cloud import upload_collection
 
         body = await request.json()
         title = str(body.get("title") or "")

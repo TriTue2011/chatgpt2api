@@ -30,7 +30,7 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
         # Sync from R2 every hour (other instances may have updated)
         if tick % 6 == 0:
             try:
-                from services.rag_cloud import restore_all_from_r2
+                from src.rag.cloud import restore_all_from_r2
                 n = restore_all_from_r2()
                 if n > 0:
                     logger.info("Scheduler: synced %d chunks from R2", n)
@@ -102,7 +102,7 @@ def _check_all_collections() -> None:
             logger.info("Scheduler: %s — ingested %d chunks", folder.name, len(chunks))
             # Upload to R2 (non-blocking, best effort)
             try:
-                from services.rag_cloud import upload_collection
+                from src.rag.cloud import upload_collection
                 upload_collection(folder.name)
             except Exception:
                 pass
