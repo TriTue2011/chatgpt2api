@@ -61,6 +61,7 @@ export default function McpPage() {
   const [hubUrl, setHubUrl] = useState("http://172.16.10.38:8005");
   const [discovered, setDiscovered] = useState<any[]>([]);
   const [discovering, setDiscovering] = useState(false);
+  const [installing, setInstalling] = useState(false);
 
   const fetchPresets = useCallback(async () => {
     try {
@@ -129,9 +130,17 @@ export default function McpPage() {
 
   const installSelected = async () => {
     const selected = discovered.filter(d => d.selected && !d.installed);
+    if (selected.length === 0) { alert("Chưa chọn MCP nào mới."); return; }
+    setInstalling(true);
+    let ok = 0, fail = 0;
     for (const d of selected) {
-      await install(d.id, "", d.url);
+      try {
+        await install(d.id, "", d.url);
+        ok++;
+      } catch (e) { fail++; }
     }
+    setInstalling(false);
+    alert(`Đã lưu: ${ok} thành công, ${fail} thất bại. Reload trang để thấy danh sách mới.`);
     await fetchPresets();
     setDiscovered([]);
   };
@@ -176,9 +185,13 @@ export default function McpPage() {
           </div>
           {discovered.length > 0 && (
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Button size="sm" onClick={installSelected}>Cài các mục đã chọn</Button>
-                <span className="text-sm text-muted-foreground">{discovered.filter((d: any) => d.selected).length} đã chọn</span>
+              <div className="flex items-center gap-2 mb-3">
+                <Button onClick={installSelected} disabled={installing} className="bg-green-600 hover:bg-green-700">
+                  {installing ? "Đang lưu..." : "💾 Lưu cài đặt"}
+                </Button>
+                <span className="text-sm text-muted-foreground">{discovered.filter((d: any) => d.selected && !d.installed).length} MCP mới được chọn</span>
+                <span className="text-sm text-muted-foreground">|</span>
+                <Button size="sm" variant="outline" onClick={() => setDiscovered([])}>Hủy</Button>
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 {discovered.map((d: any) => (
