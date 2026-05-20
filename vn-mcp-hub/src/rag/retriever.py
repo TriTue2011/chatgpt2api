@@ -51,22 +51,24 @@ class _FastEmbedFn:
     def embed_documents(self, texts: list[str] | None = None, input: list[str] | None = None) -> list[list[float]]:
         """ChromaDB v0.5+ batch embedding. Accepts texts= or input=."""
         docs = texts or input or []
-        return self.__call__(docs)
+        self._load()
+        return [e.tolist() for e in self._model.embed(docs)]
 
-    def embed_query(self, text: str = "", input: str = "") -> list[float]:
-        """ChromaDB v0.5+ single-query embedding. Accepts both text= and input=."""
-        query_text = text or input or ""
+    def embed_query(self, text: str = "", input: str | list[str] = "") -> list[float]:
+        """ChromaDB v0.5+ single-query embedding. Accepts text= or input= (str or list)."""
+        # Normalize: ChromaDB may pass input as a string or a list of strings
+        if isinstance(input, list):
+            query_text = input[0] if input else ""
+        elif isinstance(input, str) and input:
+            query_text = input
+        elif isinstance(text, str) and text:
+            query_text = text
+        else:
+            return []
         if not query_text:
             return []
         self._load()
-        # fastembed v0.5+ may require single string, list, or iterable
-        try:
-            result = list(self._model.embed([query_text]))
-        except Exception:
-            try:
-                result = list(self._model.embed(query_text))
-            except Exception:
-                result = list(self._model.embed((query_text,)))
+        result = list(self._model.embed([query_text]))
         return result[0].tolist() if result else []
 
     def name(self) -> str:
