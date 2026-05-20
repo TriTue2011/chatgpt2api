@@ -73,30 +73,10 @@ def _fallback_search(query: str) -> list[dict[str, Any]]:
     """
     search_results: list[dict[str, Any]] = []
     try:
-        from src.vn.search import ddg_search as _ddg
-        ddg_hits = _ddg(query, limit=5)
-        for h in ddg_hits:
-            search_results.append({
-                "title": h.get("title", ""),
-                "snippet": (h.get("snippet") or "")[:500],
-                "url": h.get("link", ""),
-                "source": "DuckDuckGo",
-            })
+        from src.search.orchestrator import federated_search as _fs
+        search_results = _fs(query, limit_per_source=3)
     except Exception as exc:
-        logger.warning("Hybrid: DDG fallback failed: %s", exc)
-
-    try:
-        from src.general.wikipedia import wiki_search as _wiki
-        wiki_hits = _wiki(query, lang="vi", limit=5)
-        for h in wiki_hits:
-            search_results.append({
-                "title": h.get("title", ""),
-                "snippet": (h.get("snippet") or "")[:500],
-                "url": h.get("url", ""),
-                "source": f"Wikipedia ({'vi'})",
-            })
-    except Exception as exc:
-        logger.warning("Hybrid: Wiki fallback failed: %s", exc)
+        logger.warning("Hybrid: federated search fallback failed: %s", exc)
 
     return search_results
 
@@ -115,10 +95,7 @@ def format_hybrid_results(result: dict[str, Any]) -> str:
 
     web = result.get("web") or []
     if web:
-        lines = [f"## Tìm kiếm web ({len(web)} kết quả)", ""]
-        for i, r in enumerate(web, 1):
-            src = r.get("source", "web")
-            lines.append(f"{i}. **{r.get('title', '')}** — _{src}_\n   {r.get('snippet', '')}\n   {r.get('url', '')}")
-        parts.append("\n\n".join(lines))
+        from src.search.orchestrator import format_federated_results
+        parts.append(format_federated_results(web))
 
     return "\n\n---\n\n".join(parts)
