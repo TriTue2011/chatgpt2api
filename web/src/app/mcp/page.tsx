@@ -5,49 +5,24 @@ import { request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 
 type Preset = {
-  id: string;
-  name: string;
-  description: string;
-  url: string;
-  category: string;
-  icon: string;
-  homepage: string;
-  requires_api_key: boolean;
-  api_key_help: string;
-  tags: string[];
-  installed: boolean;
-  enabled: boolean;
-  has_api_key: boolean;
+  id: string; name: string; description: string; url: string; category: string;
+  icon: string; homepage: string; requires_api_key: boolean; api_key_help: string;
+  tags: string[]; installed: boolean; enabled: boolean; has_api_key: boolean;
 };
 
 const CAT_NAMES: Record<string, string> = {
-  vn: "Việt Nam",
-  general: "Chung",
-  knowledge: "Kho tri thức",
-  developer: "Lập trình",
-  search: "Tìm kiếm",
-  finance: "Tài chính",
-  travel: "Du lịch",
-  ha: "Home Assistant",
-  hub: "Đã cài từ Hub",
+  vn: "Việt Nam", general: "Chung", knowledge: "Kho tri thức",
+  developer: "Lập trình", search: "Tìm kiếm", finance: "Tài chính",
+  travel: "Du lịch", ha: "Home Assistant", hub: "Từ Hub",
 };
 
 export default function McpPage() {
@@ -67,34 +42,24 @@ export default function McpPage() {
     try {
       const data = await request.get("/api/mcp/presets");
       setPresets(data.presets || []);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
 
+  useEffect(() => { fetchPresets(); }, [fetchPresets]);
+
+  // Auto-connect to hub on load if URL is configured
   useEffect(() => {
-    fetchPresets();
-  }, [fetchPresets]);
+    request.get("/api/mcp/presets").then((d: any) => {
+      if (d.presets?.some((p: any) => p.category === "hub")) {
+        discoverHub(true);
+      }
+    }).catch(() => {});
+  }, []);
 
   const install = async (id: string, apiKey = "", urlOverride = "") => {
     setActionId(id);
-    try {
-      await request.post("/api/mcp/install", { id, api_key: apiKey, url_override: urlOverride });
-      await fetchPresets();
-    } finally {
-      setActionId(null);
-    }
-  };
-
-  const uninstall = async (id: string) => {
-    if (!confirm("Gỡ cài đặt MCP này?")) return;
-    setActionId(id);
-    try {
-      await request.post(`/api/mcp/uninstall/${id}`);
-      await fetchPresets();
-    } finally {
-      setActionId(null);
-    }
+    try { await request.post("/api/mcp/install", { id, api_key: apiKey, url_override: urlOverride }); }
+    finally { setActionId(null); }
   };
 
   const toggle = async (id: string) => {
@@ -102,25 +67,27 @@ export default function McpPage() {
     try {
       await request.post(`/api/mcp/toggle/${id}`);
       await fetchPresets();
-    } finally {
-      setActionId(null);
-    }
+    } finally { setActionId(null); }
   };
 
-  const discoverHub = async () => {
-    setDiscovering(true);
+  const discoverHub = async (silent = false) => {
+    if (!silent) setDiscovering(true);
     try {
       const resp = await request.post("/api/mcp/discover", { hub_url: hubUrl });
       const data = resp.data || resp;
       if (data.ok) {
-        setDiscovered(data.mcps.map((m: any) => ({ ...m, selected: false })));
-      } else {
+        const merged = data.mcps.map((m: any) => {
+          const existing = presets.find(p => p.id === m.id);
+          return { ...m, selected: existing ? existing.installed : false, installed: existing ? existing.installed : false, enabled: existing ? existing.enabled : true, category: "hub", icon: "🔌", tags: ["hub"], requires_api_key: false, api_key_help: "", homepage: "", has_api_key: false, description: m.description || "" };
+        });
+        setDiscovered(merged);
+      } else if (!silent) {
         alert(data.error || "Cannot connect to hub");
       }
     } catch (e: any) {
-      alert("Error: " + (e.response?.data?.detail || e.message || "Cannot connect"));
+      if (!silent) alert("Error: " + (e.response?.data?.detail || e.message || "Cannot connect"));
     } finally {
-      setDiscovering(false);
+      if (!silent) setDiscovering(false);
     }
   };
 
@@ -129,174 +96,80 @@ export default function McpPage() {
   };
 
   const installSelected = async () => {
-    const selected = discovered.filter(d => d.selected && !d.installed);
+    const selected = discovered.filter((d: any) => d.selected && !d.installed);
     if (selected.length === 0) { alert("Chưa chọn MCP nào mới."); return; }
     setInstalling(true);
-    let ok = 0, fail = 0;
+    let ok = 0;
     for (const d of selected) {
-      try {
-        await install(d.id, "", d.url);
-        ok++;
-      } catch (e) { fail++; }
+      try { await install(d.id, "", d.url); ok++; } catch (e) {}
     }
     setInstalling(false);
-    alert(`Đã lưu: ${ok} thành công, ${fail} thất bại. Reload trang để thấy danh sách mới.`);
+    alert(`Đã lưu ${ok}/${selected.length} MCP.`);
     await fetchPresets();
     setDiscovered([]);
   };
 
   if (isCheckingAuth || loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">
-        Đang tải danh sách MCP...
-      </div>
-    );
+    return <div className="flex items-center justify-center h-64 text-muted-foreground">Đang tải...</div>;
   }
 
-  const cats = [...new Set(presets.map((p) => p.category))];
+  const allMcps = [...presets, ...discovered.filter((d: any) => !presets.find(p => p.id === d.id))];
+  const cats = [...new Set(allMcps.map((p: any) => p.category))];
 
   return (
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">MCP Servers</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Cài đặt MCP server để mở rộng khả năng AI. Bật/tắt từng server tùy nhu cầu.
-          </p>
+          <p className="text-muted-foreground text-sm mt-1">Kết nối vn-mcp-hub để mở rộng AI.</p>
         </div>
       </div>
 
-      {/* Discover from Hub */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Discover from Hub</CardTitle>
-          <CardDescription>Nhập URL vn-mcp-hub để tự động lấy danh sách MCP</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-2 mb-3">
-            <Input
-              placeholder="http://172.16.10.38:8005"
-              defaultValue="http://172.16.10.38:8005"
-              onChange={(e) => setHubUrl(e.target.value)}
-            />
-            <Button onClick={discoverHub} disabled={discovering}>
-              {discovering ? "Đang tìm..." : "Discover"}
-            </Button>
-          </div>
-          {discovered.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Button onClick={installSelected} disabled={installing} className="bg-green-600 hover:bg-green-700">
-                  {installing ? "Đang lưu..." : "💾 Lưu cài đặt"}
-                </Button>
-                <span className="text-sm text-muted-foreground">{discovered.filter((d: any) => d.selected && !d.installed).length} MCP mới được chọn</span>
-                <span className="text-sm text-muted-foreground">|</span>
-                <Button size="sm" variant="outline" onClick={() => setDiscovered([])}>Hủy</Button>
-              </div>
-              <div className="grid gap-2 md:grid-cols-2">
-                {discovered.map((d: any) => (
-                  <div key={d.id}
-                    className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-primary/50 transition-colors"
-                    style={{borderColor: d.selected ? '#3b82f6' : undefined}}
-                    onClick={() => toggleDiscovered(d.id)}>
-                    <div className="w-6 h-6 flex items-center justify-center rounded border-2 flex-shrink-0"
-                         style={{backgroundColor: d.selected ? '#3b82f6' : 'transparent', borderColor: d.selected ? '#3b82f6' : '#64748b'}}>
-                      {d.selected && <span style={{color:'#fff',fontSize:'14px',lineHeight:1}}>✓</span>}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{d.name}</div>
-                      {d.description && <div className="text-xs text-muted-foreground truncate">{d.description}</div>}
-                      <code className="text-xs text-muted-foreground">{d.url}</code>
-                      {d.installed && <Badge variant="outline" className="text-[10px] border-green-500 text-green-500 ml-1">Đã cài</Badge>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <div className="flex gap-2 items-end">
+        <div className="flex-1">
+          <label className="text-sm font-medium">Hub URL</label>
+          <Input value={hubUrl} onChange={(e) => setHubUrl(e.target.value)} placeholder="http://172.16.10.38:8005" />
+        </div>
+        <Button onClick={() => discoverHub()} disabled={discovering}>{discovering ? "..." : "Kết nối"}</Button>
+        {discovered.filter((d: any) => d.selected && !d.installed).length > 0 && (
+          <Button onClick={installSelected} disabled={installing} className="bg-green-600 hover:bg-green-700">
+            {installing ? "..." : `Lưu (${discovered.filter((d: any) => d.selected && !d.installed).length})`}
+          </Button>
+        )}
+        {discovered.length > 0 && (
+          <Button variant="outline" onClick={() => setDiscovered([])}>Hủy</Button>
+        )}
+      </div>
 
-      {cats.map((cat) => (
+      {cats.map((cat: string) => (
         <div key={cat}>
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">
-            {CAT_NAMES[cat] || cat}
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-2">
+            {CAT_NAMES[cat] || cat} ({allMcps.filter((p: any) => p.category === cat).length})
           </h2>
-          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {presets
-              .filter((p) => p.category === cat)
-              .map((p) => (
-                <Card key={p.id} className={p.enabled && p.installed ? "border-primary/30" : ""}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl">{p.icon}</span>
-                        <CardTitle className="text-base">{p.name}</CardTitle>
-                      </div>
-                      {p.installed ? (
-                        <Checkbox
-                          checked={p.enabled}
-                          onCheckedChange={() => toggle(p.id)}
-                          disabled={actionId === p.id}
-                        />
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            if (p.id === "gitmcp") {
-                              setShowKeyDialog(p.id);
-                            } else if (p.requires_api_key) {
-                              setShowKeyDialog(p.id);
-                            } else {
-                              install(p.id);
-                            }
-                          }}
-                          disabled={actionId === p.id}
-                        >
-                          {actionId === p.id ? "..." : "Cài"}
-                        </Button>
-                      )}
+          <div className="grid gap-2">
+            {allMcps.filter((p: any) => p.category === cat).map((p: any) => {
+              const isSelected = p.installed || discovered.find((d: any) => d.id === p.id && d.selected);
+              return (
+                <div key={p.id}
+                  className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-primary/50 transition-colors"
+                  style={{borderColor: isSelected ? '#3b82f6' : undefined}}
+                  onClick={() => { if (p.installed) toggle(p.id); else toggleDiscovered(p.id); }}>
+                  <div className="w-6 h-6 flex items-center justify-center rounded border-2 flex-shrink-0"
+                       style={{backgroundColor: isSelected ? '#3b82f6' : 'transparent', borderColor: isSelected ? '#3b82f6' : '#64748b'}}>
+                    {isSelected && <span style={{color:'#fff',fontSize:'14px',lineHeight:1}}>✓</span>}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium truncate">{p.icon} {p.name}</span>
+                      {p.installed && <Badge variant="outline" className="text-[10px] border-green-500 text-green-500">Đã cài</Badge>}
+                      {p.installed && !p.enabled && <Badge variant="outline" className="text-[10px] border-orange-500 text-orange-500">Đã tắt</Badge>}
                     </div>
-                    <CardDescription className="text-xs">{p.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    <div className="flex flex-wrap gap-1 items-center">
-                      {p.tags.slice(0, 3).map((t) => (
-                        <Badge key={t} variant="secondary" className="text-[10px]">
-                          {t}
-                        </Badge>
-                      ))}
-                      {p.requires_api_key && (
-                        <Badge variant="outline" className="text-[10px] border-orange-500 text-orange-500">
-                          Cần API key
-                        </Badge>
-                      )}
-                      {p.installed && (
-                        <Badge variant="outline" className="text-[10px] border-green-500 text-green-500">
-                          Đã cài
-                        </Badge>
-                      )}
-                    </div>
-                    {p.installed && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="mt-2 text-xs text-muted-foreground"
-                        onClick={() => uninstall(p.id)}
-                        disabled={actionId === p.id}
-                      >
-                        Gỡ cài
-                      </Button>
-                    )}
-                    {p.id === "gitmcp" && p.installed && (
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        URL: {p.url}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                    {p.description && <div className="text-xs text-muted-foreground truncate">{p.description}</div>}
+                    <code className="text-xs text-muted-foreground">{p.url}</code>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       ))}
@@ -304,52 +177,22 @@ export default function McpPage() {
       {/* API Key Dialog */}
       <Dialog open={!!showKeyDialog} onOpenChange={() => setShowKeyDialog(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {showKeyDialog && presets.find((p) => p.id === showKeyDialog)?.name}
-            </DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>{showKeyDialog && presets.find((p) => p.id === showKeyDialog)?.name}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             {showKeyDialog === "gitmcp" ? (
               <div>
                 <label className="text-sm font-medium">GitMCP URL</label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  Nhập URL GitMCP: gitmcp.io/{"{owner}/{repo}"}
-                </p>
-                <Input
-                  placeholder="gitmcp.io/owner/repo"
-                  value={gitmcpUrl}
-                  onChange={(e) => setGitmcpUrl(e.target.value)}
-                />
+                <Input placeholder="gitmcp.io/owner/repo" value={gitmcpUrl} onChange={(e) => setGitmcpUrl(e.target.value)} />
               </div>
             ) : (
               <div>
                 <label className="text-sm font-medium">API Key</label>
-                <p className="text-xs text-muted-foreground mb-2">
-                  {presets.find((p) => p.id === showKeyDialog)?.api_key_help || "Nhập API key để dùng dịch vụ này"}
-                </p>
-                <Input
-                  type="password"
-                  placeholder="sk-..."
-                  value={apiKeys[showKeyDialog || ""] || ""}
-                  onChange={(e) =>
-                    setApiKeys((prev) => ({ ...prev, [showKeyDialog || ""]: e.target.value }))
-                  }
-                />
+                <Input type="password" placeholder="sk-..." value={apiKeys[showKeyDialog || ""] || ""}
+                  onChange={(e) => setApiKeys((prev) => ({ ...prev, [showKeyDialog || ""]: e.target.value }))} />
               </div>
             )}
           </div>
-          <Button
-            onClick={() => {
-              if (showKeyDialog) {
-                install(showKeyDialog, apiKeys[showKeyDialog] || "", gitmcpUrl);
-                setShowKeyDialog(null);
-                setGitmcpUrl("");
-              }
-            }}
-          >
-            Cài đặt
-          </Button>
+          <Button onClick={() => { if (showKeyDialog) { install(showKeyDialog, apiKeys[showKeyDialog] || "", gitmcpUrl); setShowKeyDialog(null); setGitmcpUrl(""); } }}>Cài đặt</Button>
         </DialogContent>
       </Dialog>
     </div>
