@@ -132,6 +132,9 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": f"Cannot connect to hub: {e}"}
 
         mcp_names = hub_info.get("mcps") or []
+        mcp_details = hub_info.get("mcp_details") or []
+        # Build a lookup for labels/descriptions
+        detail_map = {d["id"]: d for d in mcp_details}
         installed = config.data.get("mcp_servers") or {}
         if not isinstance(installed, dict):
             installed = {}
@@ -139,9 +142,14 @@ def create_router() -> APIRouter:
         for name in mcp_names:
             url = f"{hub_url}/{name}/mcp"
             info = installed.get(name) or {}
-            mcps.append({"id": name, "name": name, "url": url,
-                         "installed": name in installed,
-                         "enabled": bool(info.get("enabled", True))})
+            detail = detail_map.get(name, {})
+            mcps.append({
+                "id": name, "name": detail.get("label", name),
+                "description": detail.get("description", ""),
+                "url": url,
+                "installed": name in installed,
+                "enabled": bool(info.get("enabled", True)),
+            })
         return {"ok": True, "hub_name": hub_info.get("name", ""), "mcps": mcps}
 
     return router
