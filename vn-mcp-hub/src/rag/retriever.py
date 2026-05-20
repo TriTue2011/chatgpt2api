@@ -119,6 +119,9 @@ class RAGRetriever:
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
         dists = (res.get("distances") or [[]])[0]
+        logger.info("RAG query(%s): '%s' -> %d docs, distances=%s",
+                    collection, text[:50], len(docs),
+                    [round(d, 3) if d else None for d in dists[:3]] if dists else [])
         out: list[dict[str, Any]] = []
         for i, doc in enumerate(docs):
             meta = metas[i] if i < len(metas) else {}
