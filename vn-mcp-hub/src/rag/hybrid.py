@@ -69,21 +69,16 @@ def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K, force_r
 
 
 def _should_search_web(retriever: RAGRetriever, collection: str, rag: list[dict[str, Any]]) -> bool:
-    """True if RAG is insufficient and we should try web search."""
-    # Empty collection — definitely search
+    """True if RAG is insufficient and we should try web search.
+
+    Only searches when RAG is completely empty — no more score-based triggers.
+    Auto-search runs in the scheduler, not on every user query.
+    """
     stats = retriever.collection_stats(collection)
     if not stats.get("available") or stats.get("count", 0) == 0:
         return True
-
-    # Too few results
-    if len(rag) < MIN_RAG_CHUNKS:
+    if len(rag) == 0:
         return True
-
-    # All results have low relevance
-    scores = [r.get("score") for r in rag if r.get("score") is not None]
-    if scores and all(s < 0.5 for s in scores):
-        return True
-
     return False
 
 
@@ -125,5 +120,11 @@ def format_hybrid_results(result: dict[str, Any]) -> str:
     if web:
         from src.search.orchestrator import format_federated_results
         parts.append(format_federated_results(web))
+    elif rag:
+        # RAG hit, no web search — prompt user if they want fresh results
+        parts.append("---\n💡 *Dữ liệu từ kho tri thức. Bạn có muốn tôi tìm thêm thông tin mới nhất từ web không?*")
 
-    return "\n\n---\n\n".join(parts)
+    if result.get("stale") and rag:
+        parts.append("🔄 *Dữ liệu có thể đã cũ. Auto-update sẽ chạy theo lịch, hoặc bạn có thể yêu cầu tôi tìm ngay.*")
+
+    return "\n\n".join(parts)

@@ -270,6 +270,60 @@ def create_app() -> FastAPI:
         ok = save_api_key(source_key, key)
         return {"ok": ok, "source": source_key}
 
+    @app.post("/api/studio/validate-mcp")
+    async def studio_validate_mcp(request: Request):
+        """Test an MCP server URL. Body: {url, api_key?}"""
+        from src.mcp_validator import validate_mcp
+        body = await request.json()
+        url = str(body.get("url") or "").strip()
+        api_key = str(body.get("api_key") or "").strip()
+        if not url:
+            return {"ok": False, "errors": ["URL is required"]}
+        return validate_mcp(url, api_key)
+
+    @app.get("/api/studio/external-mcps")
+    async def studio_list_external():
+        """List external MCPs from registry."""
+        import json
+        reg = Path("/app/data/studio/external_mcps.json")
+        if reg.exists():
+            return {"mcps": json.loads(reg.read_text(encoding="utf-8")) or []}
+        return {"mcps": []}
+
+    @app.post("/api/studio/external-mcp")
+    async def studio_add_external(request: Request):
+        """Add an external MCP. Body: {name, url, description, api_key?}"""
+        import json
+        body = await request.json()
+        name = str(body.get("name") or "").strip()
+        url = str(body.get("url") or "").strip()
+        desc = str(body.get("description") or "").strip()
+        api_key = str(body.get("api_key") or "").strip()
+        if not name or not url:
+            return {"ok": False, "errors": ["Name and URL are required"]}
+
+        reg = Path("/app/data/studio/external_mcps.json")
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        entries = json.loads(reg.read_text(encoding="utf-8")) if reg.exists() else []
+        if any(e["name"] == name for e in entries):
+            return {"ok": False, "errors": [f"MCP '{name}' already exists"]}
+        entries.append({"name": name, "url": url, "description": desc, "api_key": api_key,
+                        "added_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()})
+        reg.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "name": name}
+
+    @app.delete("/api/studio/external-mcp/{name}")
+    async def studio_delete_external(name: str):
+        """Remove an external MCP."""
+        import json
+        reg = Path("/app/data/studio/external_mcps.json")
+        if not reg.exists():
+            return {"ok": True}
+        entries = json.loads(reg.read_text(encoding="utf-8")) or []
+        entries = [e for e in entries if e["name"] != name]
+        reg.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True}
+
     @app.get("/api/studio/r2")
     async def studio_get_r2():
         """Get R2 config (masked secret)."""
