@@ -181,10 +181,17 @@ export default function McpPage() {
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 {discovered.map((d: any) => (
-                  <div key={d.id} className="flex items-center gap-2 p-2 border rounded">
-                    <Checkbox checked={d.selected} onCheckedChange={() => toggleDiscovered(d.id)} />
-                    <div>
-                      <div className="text-sm font-medium">{d.name}</div>
+                  <div key={d.id}
+                    className="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:border-primary/50 transition-colors"
+                    style={{borderColor: d.selected ? '#3b82f6' : undefined}}
+                    onClick={() => toggleDiscovered(d.id)}>
+                    <div className="w-6 h-6 flex items-center justify-center rounded border-2 flex-shrink-0"
+                         style={{backgroundColor: d.selected ? '#3b82f6' : 'transparent', borderColor: d.selected ? '#3b82f6' : '#64748b'}}>
+                      {d.selected && <span style={{color:'#fff',fontSize:'14px',lineHeight:1}}>✓</span>}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{d.name}</div>
+                      {d.description && <div className="text-xs text-muted-foreground truncate">{d.description}</div>}
                       <code className="text-xs text-muted-foreground">{d.url}</code>
                       {d.installed && <Badge variant="outline" className="text-[10px] border-green-500 text-green-500 ml-1">Đã cài</Badge>}
                     </div>
