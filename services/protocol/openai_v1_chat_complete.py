@@ -239,7 +239,9 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
                 tools_with_mcp = _inject_mcp_tools(tools)
                 result = _dispatch(route, messages_copy, tools_with_mcp, tool_choice, body)
                 # Execute MCP tools server-side for combo too
-                if isinstance(result, dict):
+                if not isinstance(result, dict):
+                    result = _wrap_mcp_stream(result, messages_copy, route, body)
+                elif isinstance(result, dict):
                     result = _execute_mcp_tools_in_response(messages_copy, result, route, body)
                 model_cooldown.record_success("combo:" + model, route.model)
                 return result
@@ -266,7 +268,10 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     result = _dispatch(route, messages, tools, tool_choice, body)
 
     # Execute MCP tools server-side — HA doesn't know these tools
-    if isinstance(result, dict):
+    if not isinstance(result, dict):
+        # Streaming (Iterator) — wrap to intercept tool calls
+        result = _wrap_mcp_stream(result, messages, route, body)
+    elif isinstance(result, dict):
         result = _execute_mcp_tools_in_response(messages, result, route, body)
     return result
 
@@ -286,6 +291,88 @@ def _curate_search_results(messages: list[dict[str, Any]]) -> None:
             search_service.curate_response(query, search_text)
     except Exception:
         pass
+
+
+def _wrap_mcp_stream(
+    stream_iter, messages: list[dict[str, Any]], route, body: dict[str, Any]
+):
+    """Wrap a streaming response to execute MCP tools before returning to client.
+
+    Collects the full stream, checks for MCP tool calls in the final delta,
+    executes them server-side, then re-streams the follow-up LLM response.
+    """
+    # Collect full response from stream
+    chunks = []
+    full_content = ""
+    final_tool_calls = None
+    model = ""
+
+    try:
+        for chunk in stream_iter:
+            chunks.append(chunk)
+            if isinstance(chunk, dict):
+                model = chunk.get("model", model)
+                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                full_content += delta.get("content") or ""
+                tc = delta.get("tool_calls")
+                if tc:
+                    final_tool_calls = tc  # last delta wins for tool_calls
+    except Exception:
+        # If collection fails, just re-yield what we have
+        for c in chunks:
+            yield c
+        return
+
+    # Check for MCP tools
+    if not final_tool_calls:
+        for c in chunks:
+            yield c
+        return
+
+    mcp_calls = []
+    for tc in final_tool_calls:
+        fn = tc.get("function", {})
+        if fn.get("name", "") not in ("GetLiveContext",):
+            mcp_calls.append(tc)
+
+    if not mcp_calls:
+        for c in chunks:
+            yield c
+        return
+
+    # Execute MCP tool
+    args_str = mcp_calls[0].get("function", {}).get("arguments", "{}")
+    try:
+        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+    except Exception:
+        args = {}
+    tool_name = mcp_calls[0].get("function", {}).get("name", "")
+    tool_id = mcp_calls[0].get("id", "mcp_0")
+
+    logger.info({"event": "mcp_tool_exec_stream", "tool": tool_name, "args": str(args)[:200]})
+    mcp_result = _execute_mcp_tool(tool_name, args)
+    if mcp_result is None:
+        mcp_result = f"Tool '{tool_name}' execution failed."
+
+    # Build follow-up messages and dispatch
+    new_messages = list(messages)
+    new_messages.append({"role": "assistant", "content": full_content, "tool_calls": mcp_calls})
+    new_messages.append({"role": "tool", "tool_call_id": tool_id, "name": tool_name, "content": mcp_result[:3000]})
+
+    tools = _inject_mcp_tools(body.get("tools"))
+    try:
+        follow_up = _dispatch(route, new_messages, tools, body.get("tool_choice"), body)
+        if hasattr(follow_up, "__iter__") and not isinstance(follow_up, (dict, str)):
+            yield from follow_up
+        elif isinstance(follow_up, dict):
+            yield follow_up
+        else:
+            for c in chunks:
+                yield c
+    except Exception as exc:
+        logger.warning({"event": "mcp_stream_followup_failed", "error": str(exc)})
+        for c in chunks:
+            yield c
 
 
 def _execute_mcp_tools_in_response(
