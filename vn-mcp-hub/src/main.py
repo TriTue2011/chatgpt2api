@@ -420,6 +420,8 @@ MCP_LABELS = {
     "ha_helper": ("HA Helper", "Giờ hoàng đạo, gợi ý ngữ pháp lệnh Home Assistant"),
     "federated_search": ("Multi-Search", "Tìm kiếm đồng thời 9 nguồn quốc tế (DDG, Brave, PubMed...)"),
 }
+
+MOUNTS = [
     ("vn_weather", "src.vn.weather"),
     ("vn_news", "src.vn.news"),
     ("vn_currency", "src.vn.currency"),
