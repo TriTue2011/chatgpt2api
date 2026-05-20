@@ -22,28 +22,49 @@ logger = logging.getLogger(__name__)
 MIN_RAG_CHUNKS = 2
 
 
-def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K) -> dict[str, Any]:
+def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K, force_refresh: bool = False) -> dict[str, Any]:
     """Query RAG + optional web search fallback.
 
+    Args:
+        force_refresh: If True, skip RAG entirely and search web only.
+
     Returns:
-        {"rag": [...], "web": [...], "total": int} — caller can format however it likes.
-        web is empty list if RAG had enough good results.
+        {"rag": [...], "web": [...], "total": int, "stale": bool, "stale_msg": str,
+         "last_updated": str|None}
     """
     retriever = RAGRetriever.get()
-    rag_results = retriever.query(collection, text, top_k)
+
+    rag_results: list[dict[str, Any]] = []
+    if not force_refresh:
+        rag_results = retriever.query(collection, text, top_k)
+
+    # Check staleness
+    stale = False
+    stale_msg = ""
+    last_updated = None
+    try:
+        from src.rag.meta import is_stale as _stale
+        stale, stale_msg = _stale(collection)
+        from src.rag.meta import read_meta
+        last_updated = read_meta(collection).get("last_updated")
+    except Exception:
+        pass
 
     # Decide whether to fall back to web search
-    need_web = _should_search_web(retriever, collection, rag_results)
+    need_web = _should_search_web(retriever, collection, rag_results) or force_refresh
 
     web_results: list[dict[str, Any]] = []
     if need_web:
         web_results = _fallback_search(text)
-        logger.info("Hybrid(%s): RAG=%d, web=%d", collection, len(rag_results), len(web_results))
+        logger.info("Hybrid(%s): RAG=%d, web=%d, stale=%s", collection, len(rag_results), len(web_results), stale)
 
     return {
         "rag": rag_results,
         "web": web_results,
         "total": len(rag_results) + len(web_results),
+        "stale": stale,
+        "stale_msg": stale_msg,
+        "last_updated": last_updated,
     }
 
 
@@ -88,10 +109,17 @@ def format_hybrid_results(result: dict[str, Any]) -> str:
 
     parts: list[str] = []
 
+    # Stale warning
+    if result.get("stale"):
+        parts.append(f"⚠️ {result.get('stale_msg', 'Dữ liệu có thể đã cũ.')}")
+
     rag = result.get("rag") or []
     if rag:
         from src.rag.retriever import format_results
-        parts.append(f"## Kho tri thức ({len(rag)} kết quả)\n\n{format_results(rag)}")
+        header = "## Kho tri thức"
+        if result.get("last_updated"):
+            header += f" (cập nhật: {result['last_updated'][:10]})"
+        parts.append(f"{header} ({len(rag)} kết quả)\n\n{format_results(rag)}")
 
     web = result.get("web") or []
     if web:

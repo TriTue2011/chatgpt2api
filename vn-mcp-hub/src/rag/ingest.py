@@ -91,6 +91,12 @@ def ingest_collection(client, embed_fn, name: str) -> int:
             metadatas=metas[i:i + batch],
         )
     logger.info("Ingested %d chunks from %d files into %s", len(docs), len(md_files), name)
+    # Update collection metadata timestamp
+    try:
+        from src.rag.meta import touch
+        touch(name, chunks=len(docs), source=f"seed/{md_files[0].name}" if len(md_files) == 1 else "seed")
+    except Exception:
+        pass
     return len(docs)
 
 
