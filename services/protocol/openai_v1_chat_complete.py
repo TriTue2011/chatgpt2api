@@ -235,7 +235,8 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
                     messages_copy = search_service.process_messages(messages)
                 else:
                     messages_copy = messages
-                result = _dispatch(route, messages_copy, tools, tool_choice, body)
+                tools_with_mcp = _inject_mcp_tools(tools)
+                result = _dispatch(route, messages_copy, tools_with_mcp, tool_choice, body)
                 # Record success on cooldown manager
                 model_cooldown.record_success("combo:" + model, route.model)
                 return result
@@ -259,6 +260,9 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     # Apply search injection for all backends
     if search_service.is_enabled:
         messages = search_service.process_messages(messages)
+
+    # Inject MCP tools from enabled presets
+    tools = _inject_mcp_tools(tools)
 
     return _dispatch(route, messages, tools, tool_choice, body)
 
@@ -1100,3 +1104,32 @@ def _handle_custom_openai_chat(
             content=f"[{provider.name}] Error: {exc}",
             messages=messages,
         )
+
+
+def _inject_mcp_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    """Inject tools from enabled MCP servers into the tools list."""
+    try:
+        from services.mcp_client import get_enabled_mcp_tools
+        mcp_tools = get_enabled_mcp_tools()
+        if not mcp_tools:
+            return tools
+        tools = list(tools or [])
+        existing_names = {t.get("function", {}).get("name", "") for t in tools}
+        for mt in mcp_tools:
+            if mt.get("function", {}).get("name", "") not in existing_names:
+                tools.append(mt)
+        logger.info({"event": "mcp_tools_injected", "mcp_count": len(mcp_tools), "total_tools": len(tools)})
+        return tools
+    except Exception as exc:
+        logger.warning({"event": "mcp_tools_inject_failed", "error": str(exc)})
+        return tools
+
+
+def _execute_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str | None:
+    """Execute an MCP tool call and return the result text."""
+    try:
+        from services.mcp_client import call_mcp_tool
+        return call_mcp_tool(tool_name, arguments)
+    except Exception as exc:
+        logger.warning({"event": "mcp_tool_call_failed", "tool": tool_name, "error": str(exc)})
+        return None
