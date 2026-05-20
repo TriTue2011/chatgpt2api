@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager, AsyncExitStack
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -191,6 +192,34 @@ def create_app() -> FastAPI:
         from services.rag_cloud import upload_collection
         ok = upload_collection(collection)
         return {"ok": ok, "collection": collection}
+
+    @app.get("/api/studio/r2")
+    async def studio_get_r2():
+        """Get R2 config (masked secret)."""
+        import json
+        r2_file = Path("/app/data/studio/r2.json")
+        if r2_file.exists():
+            cfg = json.loads(r2_file.read_text(encoding="utf-8"))
+            if cfg.get("secret_access_key"):
+                cfg["secret_access_key"] = "****" + cfg["secret_access_key"][-4:]
+            return {"configured": True, "config": cfg}
+        return {"configured": False, "config": {}}
+
+    @app.post("/api/studio/r2")
+    async def studio_save_r2(request: Request):
+        """Save R2 credentials. Body: {endpoint, access_key_id, secret_access_key, bucket}"""
+        import json
+        body = await request.json()
+        r2_file = Path("/app/data/studio/r2.json")
+        r2_file.parent.mkdir(parents=True, exist_ok=True)
+        cfg = {
+            "endpoint": str(body.get("endpoint") or "").strip(),
+            "access_key_id": str(body.get("access_key_id") or "").strip(),
+            "secret_access_key": str(body.get("secret_access_key") or "").strip(),
+            "bucket": str(body.get("bucket") or "vn-mcp-hub-rag").strip(),
+        }
+        r2_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True}
 
     @app.get("/api/rag/list")
     async def rag_list():

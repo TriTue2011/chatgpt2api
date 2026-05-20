@@ -19,14 +19,17 @@ DATA_DIR = Path("/app/data")
 
 
 def _get_r2_config() -> dict[str, str] | None:
-    """Read R2 credentials from the parent chatgpt2api config (backup section)."""
+    """Read R2 credentials from vn-mcp-hub's local config (data/studio/r2.json)."""
     try:
-        from services.config import config
-        backup = (config.data.get("backup") or {})
-        endpoint = str(backup.get("endpoint") or "")
-        access_key = str(backup.get("access_key_id") or "")
-        secret_key = str(backup.get("secret_access_key") or "")
-        bucket = str(backup.get("bucket") or "vn-mcp-hub-rag")
+        import json
+        r2_file = Path("/app/data/studio/r2.json")
+        if not r2_file.exists():
+            return None
+        r2 = json.loads(r2_file.read_text(encoding="utf-8"))
+        endpoint = str(r2.get("endpoint") or "")
+        access_key = str(r2.get("access_key_id") or "")
+        secret_key = str(r2.get("secret_access_key") or "")
+        bucket = str(r2.get("bucket") or "vn-mcp-hub-rag")
         if not endpoint or not access_key or not secret_key:
             return None
         return {"endpoint": endpoint.rstrip("/"), "access_key": access_key,

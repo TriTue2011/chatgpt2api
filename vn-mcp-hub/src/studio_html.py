@@ -58,6 +58,26 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 <div id="toast" class="toast"></div>
 
 <div class="card">
+  <h2>Cấu hình Cloudflare R2 (RAG Online)</h2>
+  <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
+    Lưu trữ RAG lên cloud để n8n và ứng dụng khác truy cập qua internet.
+    <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--accent)">Lấy API token tại Cloudflare R2 →</a>
+  </p>
+  <form id="r2Form">
+    <label for="r2endpoint">Endpoint (S3 API)</label>
+    <input id="r2endpoint" placeholder="https://{id}.r2.cloudflarestorage.com">
+    <label for="r2bucket">Tên Bucket</label>
+    <input id="r2bucket" placeholder="vn-mcp-hub-rag">
+    <label for="r2key">Access Key ID</label>
+    <input id="r2key" placeholder="...">
+    <label for="r2secret">Secret Access Key</label>
+    <input id="r2secret" type="password" placeholder="...">
+    <button type="submit" class="btn-go">Lưu cấu hình R2</button>
+    <span id="r2Status" style="margin-left:1rem;font-size:.85rem;color:var(--ok)"></span>
+  </form>
+</div>
+
+<div class="card">
   <h2>Tạo KB mới</h2>
   <form id="createForm">
     <label for="name">Tên collection (slug)</label>
@@ -212,6 +232,27 @@ document.getElementById('createForm').onsubmit = async (e) => {
 };
 
 refresh();
+
+	// R2 config
+	(async function(){
+	  try {
+	    const r = await fetch(API + '/r2');
+	    const d = await r.json();
+	    if (d.configured) {
+	      document.getElementById('r2endpoint').value = d.config.endpoint || '';
+	      document.getElementById('r2bucket').value = d.config.bucket || '';
+	      document.getElementById('r2key').value = d.config.access_key_id || '';
+	      document.getElementById('r2secret').value = d.config.secret_access_key || '';
+	      document.getElementById('r2Status').textContent = 'Da cau hinh';
+	    }
+	  } catch(e) {}
+	})();
+	document.getElementById('r2Form').onsubmit = async (e) => {
+	  e.preventDefault();
+	  const body = JSON.stringify({endpoint:document.getElementById('r2endpoint').value.trim(),bucket:document.getElementById('r2bucket').value.trim(),access_key_id:document.getElementById('r2key').value.trim(),secret_access_key:document.getElementById('r2secret').value.trim()});
+	  const r = await fetch(API+'/r2',{method:'POST',headers:{'Content-Type':'application/json'},body});
+	  if ((await r.json()).ok){document.getElementById('r2Status').textContent='Da luu!';toast('Cau hinh R2 da luu',true)}
+	};
 </script>
 </body>
 </html>"""
