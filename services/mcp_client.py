@@ -64,7 +64,7 @@ class MCPSession:
                 if line.startswith("data: "):
                     return json.loads(line[6:])
         except Exception as exc:
-            logger.warning("MCP call %s failed: %s", self.url, exc)
+            logger.warning({"event": "mcp_call_failed", "url": self.url, "error": str(exc)})
         return None
 
     def ensure_connected(self) -> bool:
@@ -154,9 +154,9 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
         try:
             tools = session.get_tools()
             all_tools.extend(tools)
-            logger.info("MCP: %s -> %d tools", info.get("name", preset_id), len(tools))
+            logger.info({"event": "mcp_tools_loaded", "name": info.get("name", preset_id), "count": len(tools)})
         except Exception as exc:
-            logger.warning("MCP: %s failed: %s", info.get("name", preset_id), exc)
+            logger.warning({"event": "mcp_session_failed", "name": info.get("name", preset_id), "error": str(exc)})
     return all_tools
 
 
