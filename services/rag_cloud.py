@@ -141,6 +141,64 @@ def upload_all() -> dict[str, int]:
     return results
 
 
+def restore_all_from_r2() -> int:
+    """Download ALL collections from R2 and ingest into Chroma. Idempotent.
+
+    Call this at startup after R2 is configured. Pulls the latest snapshot
+    for every collection and upserts into the local Chroma DB.
+
+    Returns total chunks restored.
+    """
+    client, bucket = _s3_client()
+    if not client or not bucket:
+        return 0
+
+    from src.rag.ingest import chunk_text
+    from src.rag.retriever import RAGRetriever
+    from src.rag.meta import touch
+
+    retriever = RAGRetriever.get()
+    if not retriever._ensure_loaded():
+        return 0
+
+    total = 0
+    try:
+        # List all rag/*.json objects in R2
+        resp = client.list_objects_v2(Bucket=bucket, Prefix="rag/")
+        for obj in resp.get("Contents") or []:
+            key = obj["Key"]
+            collection = key.replace("rag/", "").replace(".json", "")
+            if not collection:
+                continue
+
+            snapshot = download_collection(collection)
+            if not snapshot:
+                continue
+
+            chunks = snapshot.get("chunks") or []
+            if not chunks:
+                continue
+
+            col = retriever._client.get_or_create_collection(
+                name=collection, embedding_function=retriever._embed_fn
+            )
+            ids = [c.get("id", f"r2_restore::{i}") for i, c in enumerate(chunks)]
+            docs = [c.get("text", "") for c in chunks]
+            metas = [{"source": c.get("source", "r2"), "chunk": c.get("chunk", i)} for i, c in enumerate(chunks)]
+
+            batch = 100
+            for i in range(0, len(docs), batch):
+                col.upsert(ids=ids[i:i+batch], documents=docs[i:i+batch], metadatas=metas[i:i+batch])
+
+            touch(collection, chunks=len(chunks), source="r2_restore")
+            total += len(chunks)
+            logger.info("R2: restored %s (%d chunks)", collection, len(chunks))
+    except Exception as exc:
+        logger.warning("R2 restore failed: %s", exc)
+
+    return total
+
+
 def get_public_url(collection: str) -> str:
     """Return the public URL for a collection JSON on R2."""
     cfg = _get_r2_config()

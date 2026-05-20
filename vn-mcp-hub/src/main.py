@@ -66,6 +66,14 @@ async def lifespan(app: FastAPI):
                 ingest.main()
             except Exception as exc:
                 logger.warning("Auto-ingest failed (non-fatal): %s", exc)
+        # Restore RAG data from R2 (if configured) — pulls latest KB collections
+        try:
+            from services.rag_cloud import restore_all_from_r2
+            restored = restore_all_from_r2()
+            if restored > 0:
+                logger.info("R2: restored %d chunks from cloud", restored)
+        except Exception as exc:
+            logger.warning("R2 restore failed (non-fatal): %s", exc)
         # Start background auto-update scheduler
         _scheduler_stop = None
         try:
