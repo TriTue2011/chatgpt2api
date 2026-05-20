@@ -26,7 +26,7 @@ CHROMA_DB_PATH = Path("/app/chroma_db")
 
 # Light, multilingual model — good enough for VN + EN technical content.
 # fastembed downloads this to its cache on first use (~120MB).
-EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 # Default top-k chunks returned per query. Tuned to fit ~2000 tokens.
 DEFAULT_TOP_K = 4

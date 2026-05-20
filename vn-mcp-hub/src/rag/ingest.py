@@ -19,7 +19,7 @@ logger = logging.getLogger("rag.ingest")
 
 DATA_DIR = Path("/app/data")
 CHROMA_DB_PATH = Path("/app/chroma_db")
-EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
