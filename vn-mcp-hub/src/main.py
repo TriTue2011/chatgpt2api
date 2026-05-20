@@ -155,10 +155,15 @@ MOUNTS = [
 
 
 def _get_http_app(mcp):
-    """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x."""
+    """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x.
+
+    lifespan="mount" tells FastMCP to register its internal task groups
+    with the parent FastAPI app's lifespan, avoiding 'Task group is not
+    initialized' errors at request time.
+    """
     if hasattr(mcp, "http_app"):
-        return mcp.http_app()  # fastmcp >= 3.0
-    return mcp.streamable_http_app()  # fastmcp 2.x
+        return mcp.http_app(lifespan="mount")  # fastmcp >= 3.0
+    return mcp.streamable_http_app(lifespan="mount")  # fastmcp 2.x
 
 
 def _mount_mcps(app: FastAPI) -> None:
