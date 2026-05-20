@@ -2,22 +2,24 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# System deps for sentence-transformers + scraping
+# Install only what sentence-transformers needs, then purge build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    && pip install --no-cache-dir uv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast pip
-RUN pip install --no-cache-dir uv
-
 COPY pyproject.toml ./
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache . \
+    && apt-get purge -y build-essential binutils gcc g++ cpp make \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && find /usr/local/lib/python*/site-packages -name "*.pyc" -delete \
+    && find /usr/local/lib/python*/site-packages -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 COPY src/ ./src/
 COPY data/ ./data/
 
-# Pre-warm chroma directory so volume mount works
 RUN mkdir -p /app/chroma_db
 
 EXPOSE 8005
