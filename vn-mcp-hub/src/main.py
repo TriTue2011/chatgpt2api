@@ -128,6 +128,13 @@ def create_app() -> FastAPI:
     return app
 
 
+def _get_http_app(mcp):
+    """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x."""
+    if hasattr(mcp, "http_app"):
+        return mcp.http_app()  # fastmcp >= 3.0
+    return mcp.streamable_http_app()  # fastmcp 2.x
+
+
 def _mount_mcps(app: FastAPI) -> None:
     """Import each MCP module and mount its FastMCP HTTP app under /<name>/mcp.
 
@@ -163,7 +170,7 @@ def _mount_mcps(app: FastAPI) -> None:
             if mcp_instance is None:
                 logger.warning("Module %s has no 'mcp' attribute, skipping", module_path)
                 continue
-            sub_app = mcp_instance.streamable_http_app()
+            sub_app = _get_http_app(mcp_instance)
             app.mount(f"/{name}", sub_app)
             logger.info("Mounted %s at /%s/mcp", module_path, name)
         except ImportError as exc:
@@ -178,7 +185,7 @@ def _mount_dynamic_mcps(app: FastAPI) -> None:
         from src.studio import load_dynamic_mcps
         for name, mcp in load_dynamic_mcps():
             try:
-                sub_app = mcp.streamable_http_app()
+                sub_app = _get_http_app(mcp)
                 app.mount(f"/{name}", sub_app)
                 logger.info("Studio: mounted dynamic MCP at /%s/mcp", name)
             except Exception as exc:
