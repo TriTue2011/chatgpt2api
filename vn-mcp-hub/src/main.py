@@ -45,6 +45,17 @@ logger = logging.getLogger("vn-mcp-hub")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting VN MCP Hub on port 8005")
+    # Auto-ingest all data/*.md into Chroma on startup (idempotent — no manual
+    # docker exec needed). Runs in a thread so the hub is ready to serve before
+    # embeddings finish downloading the first time.
+    import threading
+    def _ingest_all():
+        try:
+            from src.rag import ingest
+            ingest.main()
+        except Exception as exc:
+            logger.warning("Auto-ingest failed (non-fatal): %s", exc)
+    threading.Thread(target=_ingest_all, daemon=True).start()
     yield
     logger.info("Shutting down VN MCP Hub")
 
