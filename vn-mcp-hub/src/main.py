@@ -143,9 +143,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/studio/sources")
     async def studio_get_sources():
-        """Return per-MCP source toggle config."""
-        from src.sources_config import get_all as _get_sources
-        return {"sources": _get_sources()}
+        """Return per-MCP source toggle config with help text."""
+        from src.sources_config import get_all_with_help
+        return {"sources": get_all_with_help()}
 
     @app.post("/api/studio/sources/{mcp_name}")
     async def studio_toggle_source(mcp_name: str, request: Request):

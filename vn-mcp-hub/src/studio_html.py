@@ -134,9 +134,12 @@ async function refresh() {
     let srcPanel = '';
     if (srcCount > 0) {
       srcPanel = `<div class="src-panel" id="src-${m.name}">` +
-        Object.entries(srcCfg).map(([k,v]) =>
-          `<div class="src-row"><label>${k}</label><input type="checkbox" class="src-toggle" ${v?'checked':''} onchange="toggleSource('${m.name}','${k}',this.checked)"></div>`
-        ).join('') + '</div>';
+        Object.entries(srcCfg).map(([k,v]) => {
+          const enabled = typeof v === 'object' ? v.enabled : v;
+          const help = typeof v === 'object' ? (v.help || '') : '';
+          const helpHtml = help ? `<span style="color:var(--muted);font-size:.7rem;display:block">${help}</span>` : '';
+          return `<div class="src-row"><div><label>${k}</label>${helpHtml}</div><input type="checkbox" class="src-toggle" ${enabled?'checked':''} onchange="toggleSource('${m.name}','${k}',this.checked)"></div>`;
+        }).join('') + '</div>';
     }
     return `<tr>
       <td>${badge} ${m.name}</td>

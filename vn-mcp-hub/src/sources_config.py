@@ -56,6 +56,20 @@ DEFAULTS: dict[str, dict[str, bool]] = {
     "kb_sach":       {"chroma_rag": True, "web_fallback": True},
 }
 
+# Help text for sources that need user action (API key, setup, etc.)
+SOURCE_HELP: dict[str, dict[str, str]] = {
+    "vn_weather": {
+        "accuweather": "Cần ACCUWEATHER_API_KEY. Đăng ký free 50 calls/ngày tại developer.accuweather.com",
+    },
+    "federated_search": {
+        "brave": "Cần BRAVE_API_KEY. Đăng ký free 2000 queries/tháng tại brave.com/search/api",
+        "mojeek": "Cần MOJEEK_API_KEY. Đăng ký free tier tại mojeek.com/search/api",
+    },
+    "vn_news": {
+        "google_news": "Google News RSS có thể bị chặn ở một số quốc gia. Dùng VPN nếu cần.",
+    },
+}
+
 
 def _read() -> dict[str, dict[str, bool]]:
     if not SOURCES_FILE.exists():
@@ -79,6 +93,18 @@ def get_all() -> dict[str, dict[str, bool]]:
         result[mcp] = dict(sources)
         if mcp in stored:
             result[mcp].update(stored[mcp])
+    return result
+
+
+def get_all_with_help() -> dict:
+    """Return sources + help text for Studio UI."""
+    sources = get_all()
+    result: dict = {}
+    for mcp, srcs in sources.items():
+        items: dict = {}
+        for name, enabled in srcs.items():
+            items[name] = {"enabled": enabled, "help": (SOURCE_HELP.get(mcp, {}).get(name, ""))}
+        result[mcp] = items
     return result
 
 
