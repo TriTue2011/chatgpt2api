@@ -377,6 +377,32 @@ class CustomProviderSearch(SearchBackend):
             return []
 
 
+class MCPSearch(SearchBackend):
+    """Search via enabled MCP search tools (vn_search, federated_search, etc.)."""
+
+    @property
+    def name(self) -> str:
+        return "mcp"
+
+    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
+        """Use MCP search tools as fallback search backend."""
+        try:
+            from services.mcp_client import get_enabled_mcp_tools, call_mcp_tool
+        except ImportError:
+            return []
+
+        search_tools = ["search_web", "search_all", "search", "get_news", "get_current_weather"]
+        results: list[dict[str, str]] = []
+        for tool in search_tools:
+            try:
+                text = call_mcp_tool(tool, {"query": query, "limit": max_results})
+                if text and len(text) > 10:
+                    results.append({"title": tool, "snippet": text[:1500], "url": ""})
+            except Exception:
+                continue
+        return results
+
+
 # Backend registry
 SEARCH_BACKENDS: dict[str, SearchBackend] = {
     "chatgpt": ChatGPTSearch(),
@@ -384,6 +410,7 @@ SEARCH_BACKENDS: dict[str, SearchBackend] = {
     "serper": SerperSearch(),
     "searxng": SearXNGSearcher(),
     "brave": BraveSearch(),
+    "mcp": MCPSearch(),
 }
 
 
