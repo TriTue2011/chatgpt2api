@@ -134,6 +134,12 @@ def _accuweather_current(query: str) -> str | None:
         return None
     api_key = os.environ.get("ACCUWEATHER_API_KEY", "")
     if not api_key:
+        try:
+            from src.sources_config import get_api_key
+            api_key = get_api_key("accuweather")
+        except Exception:
+            pass
+    if not api_key:
         return None
     try:
         with httpx.Client(timeout=10.0) as c:

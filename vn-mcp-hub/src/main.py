@@ -247,6 +247,29 @@ def create_app() -> FastAPI:
 
         return {"ok": True, "collection": collection, "chunks_added": len(chunks), "r2_uploaded": r2_ok}
 
+    @app.get("/api/studio/settings")
+    async def studio_get_settings():
+        """Get RAG lifecycle settings (sync interval, storage mode)."""
+        from src.rag.settings import read as _read_settings
+        return _read_settings()
+
+    @app.post("/api/studio/settings")
+    async def studio_save_settings(request: Request):
+        """Save RAG lifecycle settings."""
+        from src.rag.settings import write as _write_settings
+        body = await request.json()
+        _write_settings(body)
+        return {"ok": True}
+
+    @app.post("/api/studio/key/{source_key}")
+    async def studio_save_key(source_key: str, request: Request):
+        """Save an API key for a source. Body: {api_key: '...'}"""
+        from src.sources_config import save_api_key
+        body = await request.json()
+        key = str(body.get("api_key") or "").strip()
+        ok = save_api_key(source_key, key)
+        return {"ok": ok, "source": source_key}
+
     @app.get("/api/studio/r2")
     async def studio_get_r2():
         """Get R2 config (masked secret)."""

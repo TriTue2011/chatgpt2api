@@ -90,7 +90,10 @@ def _collection_snapshot(collection: str) -> dict[str, Any]:
 
 
 def upload_collection(collection: str) -> bool:
-    """Upload one collection to R2 as JSON."""
+    """Upload one collection to R2 as JSON. Respects storage_mode setting."""
+    from src.rag.settings import should_use_cloud
+    if not should_use_cloud():
+        return False
     client, bucket = _s3_client()
     if not client or not bucket:
         return False

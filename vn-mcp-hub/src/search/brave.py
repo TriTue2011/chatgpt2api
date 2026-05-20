@@ -18,6 +18,12 @@ BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
 def brave_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     api_key = os.environ.get("BRAVE_API_KEY", "")
     if not api_key:
+        try:
+            from src.sources_config import get_api_key
+            api_key = get_api_key("brave")
+        except Exception:
+            pass
+    if not api_key:
         return []
 
     try:

@@ -1,6 +1,6 @@
 """Studio HTML page — served directly by FastAPI at GET /studio.
 
-Plain HTML + CSS + vanilla JS, no build step required.
+Tabs: MCP Servers | Cài đặt | R2 Storage
 """
 
 STUDIO_HTML = r"""<!DOCTYPE html>
@@ -14,9 +14,15 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           --muted: #94a3b8; --accent: #3b82f6; --danger: #ef4444; --ok: #22c55e; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text);
-         padding: 2rem; max-width: 960px; margin: 0 auto; }
+         padding: 2rem; max-width: 1000px; margin: 0 auto; }
   h1 { font-size: 1.5rem; margin-bottom: .5rem; }
-  .sub { color: var(--muted); margin-bottom: 2rem; }
+  .sub { color: var(--muted); margin-bottom: 1.5rem; }
+  .tabs { display: flex; gap: .5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .5rem; }
+  .tab { padding: .5rem 1.2rem; border: 1px solid var(--border); border-radius: 6px 6px 0 0;
+         background: transparent; color: var(--muted); cursor: pointer; font-size: .9rem; border-bottom: none; }
+  .tab.active { background: var(--card); color: var(--text); border-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
           padding: 1.5rem; margin-bottom: 1.5rem; }
   .card h2 { font-size: 1.1rem; margin-bottom: 1rem; }
@@ -27,7 +33,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
   .badge-ok { background: var(--ok); color: #000; }
   .badge-warn { background: #f59e0b; color: #000; }
   label { display: block; margin-bottom: .3rem; font-weight: 500; }
-  input, textarea { width: 100%; padding: .6rem; background: var(--bg);
+  input, textarea, select { width: 100%; padding: .6rem; background: var(--bg);
                     border: 1px solid var(--border); border-radius: 6px;
                     color: var(--text); margin-bottom: 1rem; font-family: monospace; }
   textarea { min-height: 120px; resize: vertical; }
@@ -35,6 +41,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
            font-weight: 500; }
   .btn-go { background: var(--accent); color: #fff; }
   .btn-del { background: var(--danger); color: #fff; }
+  .btn-sm { padding: .2rem .5rem; font-size: .75rem; }
   .toast { position: fixed; top: 1rem; right: 1rem; padding: .8rem 1.2rem;
            border-radius: 6px; color: #fff; display: none; z-index: 100; }
   .toast-ok { background: var(--ok); color: #000; }
@@ -46,60 +53,113 @@ STUDIO_HTML = r"""<!DOCTYPE html>
   .expand-btn { background: none; border: 1px solid var(--border); color: var(--muted);
                 padding: .2rem .5rem; border-radius: 4px; cursor: pointer; font-size: .75rem; }
   .expand-btn:hover { color: var(--text); border-color: var(--text); }
-  .src-panel { display: none; padding: .5rem 0 0 1rem; border-top: 1px solid var(--border);
-               margin-top: .5rem; }
+  .src-panel { display: none; padding: .5rem 0 0 1rem; border-top: 1px solid var(--border); margin-top: .5rem; }
   .src-panel.open { display: block; }
+  .key-input { width: auto; display: inline-block; padding: .3rem; font-size: .75rem; margin: .2rem 0 .5rem 0; }
+  .key-saved { color: var(--ok); font-size: .7rem; margin-left: .5rem; }
+  .help-text { color: var(--muted); font-size: .72rem; display: block; margin-bottom: .2rem; }
+  .status-ok { color: var(--ok); font-size: .85rem; margin-left: 1rem; }
 </style>
 </head>
 <body>
 <h1>VN MCP Hub — Studio</h1>
-<p class="sub">Tạo và quản lý MCP server từ file markdown. Không cần code.</p>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('mcp')">MCP Servers</button>
+  <button class="tab" onclick="switchTab('settings')">Cai dat</button>
+  <button class="tab" onclick="switchTab('r2')">R2 Storage</button>
+</div>
 
 <div id="toast" class="toast"></div>
 
-<div class="card">
-  <h2>Cấu hình Cloudflare R2 (RAG Online)</h2>
-  <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
-    Lưu trữ RAG lên cloud để n8n và ứng dụng khác truy cập qua internet.
-    <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--accent)">Lấy API token tại Cloudflare R2 →</a>
-  </p>
-  <form id="r2Form">
-    <label for="r2endpoint">Endpoint (S3 API)</label>
-    <input id="r2endpoint" placeholder="https://{id}.r2.cloudflarestorage.com">
-    <label for="r2bucket">Tên Bucket</label>
-    <input id="r2bucket" placeholder="vn-mcp-hub-rag">
-    <label for="r2key">Access Key ID</label>
-    <input id="r2key" placeholder="...">
-    <label for="r2secret">Secret Access Key</label>
-    <input id="r2secret" type="password" placeholder="...">
-    <button type="submit" class="btn-go">Lưu cấu hình R2</button>
-    <span id="r2Status" style="margin-left:1rem;font-size:.85rem;color:var(--ok)"></span>
-  </form>
+<!-- TAB: MCP Servers -->
+<div id="tab-mcp" class="tab-content active">
+  <div class="card">
+    <h2>Tao KB moi</h2>
+    <form id="createForm">
+      <label for="name">Ten collection (slug)</label>
+      <input id="name" placeholder="vi_du_1" required pattern="[a-z0-9_]+" maxlength="30">
+      <label for="label">Nhan hien thi</label>
+      <input id="label" placeholder="Kho tri thuc ve...">
+      <label for="content">Noi dung markdown</label>
+      <textarea id="content" placeholder="Dan noi dung markdown vao day..." required></textarea>
+      <button type="submit" class="btn-go">Tao MCP</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2>Danh sach MCP</h2>
+    <table>
+      <thead><tr><th>Ten</th><th>Nhan</th><th>Chunks</th><th>Cap nhat</th><th>Sources</th><th></th></tr></thead>
+      <tbody id="mcpTable"><tr><td colspan="6">Dang tai...</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Tạo KB mới</h2>
-  <form id="createForm">
-    <label for="name">Tên collection (slug)</label>
-    <input id="name" placeholder="vi_du_1" required pattern="[a-z0-9_]+" maxlength="30">
-    <label for="label">Nhãn hiển thị</label>
-    <input id="label" placeholder="Kho tri thức về...">
-    <label for="content">Nội dung markdown</label>
-    <textarea id="content" placeholder="Dán nội dung markdown vào đây..." required></textarea>
-    <button type="submit" class="btn-go">Tạo MCP</button>
-  </form>
+<!-- TAB: Settings -->
+<div id="tab-settings" class="tab-content">
+  <div class="card">
+    <h2>RAG Lifecycle</h2>
+    <form id="settingsForm">
+      <label for="syncInterval">Dong bo R2 (phut)</label>
+      <input id="syncInterval" type="number" min="10" value="360">
+      <p style="color:var(--muted);font-size:.75rem;margin-bottom:1rem">Kiem tra R2 de lay du lieu tu may khac. Mac dinh 360 phut (6 gio).</p>
+      <label for="storageMode">Che do luu tru</label>
+      <select id="storageMode" style="width:100%;padding:.6rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);margin-bottom:1rem">
+        <option value="local">Local only (ChromaDB)</option>
+        <option value="cloud">Cloud only (R2)</option>
+        <option value="both">Ca hai (Local + Cloud)</option>
+      </select>
+      <label for="autoUpdateInterval">Kiem tra auto-update (gio)</label>
+      <input id="autoUpdateInterval" type="number" min="1" max="720" value="1">
+      <p style="color:var(--muted);font-size:.75rem;margin-bottom:1rem">Bao lau kiem tra KB can cap nhat. Mac dinh 1 gio.</p>
+      <button type="submit" class="btn-go">Luu cai dat</button>
+      <span id="settingsStatus" class="status-ok"></span>
+    </form>
+  </div>
+  <div class="card">
+    <h2>Cai dat API Keys</h2>
+    <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">API key duoc luu trong data/studio/api_keys.json</p>
+    <div id="apiKeyList">Dang tai...</div>
+  </div>
 </div>
 
-<div class="card">
-  <h2>Danh sách MCP</h2>
-  <table>
-    <thead><tr><th>Tên</th><th>Nhãn</th><th>Chunks</th><th>Cập nhật</th><th>Sources</th><th></th></tr></thead>
-    <tbody id="mcpTable"><tr><td colspan="6">Đang tải...</td></tr></tbody>
-  </table>
+<!-- TAB: R2 Storage -->
+<div id="tab-r2" class="tab-content">
+  <div class="card">
+    <h2>Cau hinh Cloudflare R2</h2>
+    <p style="color:var(--muted);font-size:.85rem;margin-bottom:1rem">
+      Luu tru RAG len cloud de n8n va ung dung khac truy cap. <a href="https://dash.cloudflare.com/" target="_blank" style="color:var(--accent)">Lay API token →</a>
+    </p>
+    <form id="r2Form">
+      <label for="r2endpoint">Endpoint (S3 API)</label>
+      <input id="r2endpoint" placeholder="https://{id}.r2.cloudflarestorage.com">
+      <label for="r2bucket">Ten Bucket</label>
+      <input id="r2bucket" placeholder="vn-mcp-hub-rag">
+      <label for="r2key">Access Key ID</label>
+      <input id="r2key" placeholder="...">
+      <label for="r2secret">Secret Access Key</label>
+      <input id="r2secret" type="password" placeholder="...">
+      <button type="submit" class="btn-go">Luu cau hinh R2</button>
+      <span id="r2Status" class="status-ok"></span>
+    </form>
+  </div>
+  <div class="card">
+    <h2>RAG Collections tren R2</h2>
+    <table id="r2Table"><tr><td>Dang tai...</td></tr></table>
+  </div>
 </div>
 
 <script>
 const API = '/api/studio';
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('.tab[onclick*="'+name+'"]').classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+  if (name === 'r2') loadR2Data();
+  if (name === 'settings') loadApiKeyList();
+}
 
 async function toast(msg, ok) {
   const t = document.getElementById('toast');
@@ -108,151 +168,165 @@ async function toast(msg, ok) {
   setTimeout(() => t.style.display = 'none', 3000);
 }
 
+// ── MCP Servers tab ────────────────────────────────────────────────────
+
 async function refresh() {
-  const [mcpR, srcR] = await Promise.all([
-    fetch(API + '/mcps'),
-    fetch(API + '/sources')
-  ]);
+  const [mcpR, srcR] = await Promise.all([fetch(API+'/mcps'),fetch(API+'/sources')]);
   const data = await mcpR.json();
   const srcData = await srcR.json();
   const allSources = srcData.sources || {};
-
-  // Fetch metadata for KB collections
-  const kbNames = (data.mcps || []).filter(m => m.name.startsWith('kb_')).map(m => m.name);
+  const kbNames = (data.mcps||[]).filter(m => m.name.startsWith('kb_')).map(m => m.name);
   const metaMap = {};
-  await Promise.all(kbNames.map(async (name) => {
-    try {
-      const r = await fetch(API + '/collection/' + encodeURIComponent(name) + '/meta');
-      metaMap[name] = await r.json();
-    } catch(e) {}
+  await Promise.all(kbNames.map(async n => {
+    try { const r = await fetch(API+'/collection/'+encodeURIComponent(n)+'/meta'); metaMap[n] = await r.json(); } catch(e) {}
   }));
-
   const tbody = document.getElementById('mcpTable');
-  if (!data.mcps || !data.mcps.length) {
-    tbody.innerHTML = '<tr><td colspan="6">Chưa có MCP động nào.</td></tr>';
-    return;
-  }
+  if (!data.mcps || !data.mcps.length) { tbody.innerHTML = '<tr><td colspan="6">Chua co MCP.</td></tr>'; return; }
   tbody.innerHTML = data.mcps.map(m => {
     const builtin = m.builtin;
-    const delBtn = builtin ? '' : `<button class="btn-del" onclick="del('${m.name}')">Xóa</button>`;
-    const badge = builtin
-      ? '<span class="badge badge-ok">built-in</span>'
-      : '<span class="badge badge-warn">dynamic</span>';
+    const delBtn = builtin ? '' : `<button class="btn-del btn-sm" onclick="del('${m.name}')">Xoa</button>`;
+    const badge = builtin ? '<span class="badge badge-ok">built-in</span>' : '<span class="badge badge-warn">dynamic</span>';
     const srcCfg = allSources[m.name] || {};
     const srcCount = Object.keys(srcCfg).length;
-    const srcBtn = srcCount > 0
-      ? `<button class="expand-btn" onclick="toggleSources('${m.name}')">${srcCount} src</button>`
-      : '';
-    // Metadata column
+    const srcBtn = srcCount > 0 ? `<button class="expand-btn" onclick="toggleSources('${m.name}')">${srcCount} src</button>` : '';
     const meta = metaMap[m.name] || {};
-    const age = meta.age || '—';
-    const autoIcon = (meta.meta && meta.meta.auto_update) ? ' 🔄' : '';
-    const ageBtn = m.name.startsWith('kb_')
-      ? `<button class="expand-btn" onclick="showSettings('${m.name}',${meta.meta?meta.meta.update_interval_hours||168:168},${meta.meta?meta.meta.auto_update||false:false})" title="Cài đặt cập nhật">${age}${autoIcon}</button>`
-      : age;
-    // Source panel
+    const age = meta.age || '-';
+    const autoIcon = (meta.meta && meta.meta.auto_update) ? ' R' : '';
+    const ageBtn = m.name.startsWith('kb_') ? `<button class="expand-btn" onclick="showSettings('${m.name}',${meta.meta?meta.meta.update_interval_hours||168:168},${meta.meta?meta.meta.auto_update||false:false})">${age}${autoIcon}</button>` : age;
     let srcPanel = '';
     if (srcCount > 0) {
-      srcPanel = `<div class="src-panel" id="src-${m.name}">` +
+      srcPanel = '<div class="src-panel" id="src-'+m.name+'">' +
         Object.entries(srcCfg).map(([k,v]) => {
           const enabled = typeof v === 'object' ? v.enabled : v;
-          const help = typeof v === 'object' ? (v.help || '') : '';
-          const helpHtml = help ? `<span style="color:var(--muted);font-size:.7rem;display:block">${help}</span>` : '';
-          return `<div class="src-row"><div><label>${k}</label>${helpHtml}</div><input type="checkbox" class="src-toggle" ${enabled?'checked':''} onchange="toggleSource('${m.name}','${k}',this.checked)"></div>`;
+          const help = typeof v === 'object' ? (v.help||'') : '';
+          const needsKey = typeof v === 'object' ? v.needsKey : false;
+          const hasKey = typeof v === 'object' ? v.hasKey : false;
+          const helpHtml = help ? `<span class="help-text">${help}</span>` : '';
+          const keyHtml = needsKey ? `<input class="key-input" type="password" placeholder="${hasKey?'Da co key':'Nhap API key...'}" onchange="saveKey('${k}',this.value)" style="width:200px">${hasKey?'<span class=\"key-saved\">OK</span>':''}` : '';
+          return `<div class="src-row"><div><label>${k}</label>${helpHtml}${keyHtml}</div><input type="checkbox" class="src-toggle" ${enabled?'checked':''} onchange="toggleSource('${m.name}','${k}',this.checked)"></div>`;
         }).join('') + '</div>';
     }
-    return `<tr>
-      <td>${badge} ${m.name}</td>
-      <td>${m.label || m.name}</td>
-      <td>${m.chunks ?? '—'}</td>
-      <td>${ageBtn}</td>
-      <td>${srcBtn}</td>
-      <td>${delBtn}</td>
-    </tr><tr id="src-row-${m.name}" style="display:none"><td colspan="6">${srcPanel}</td></tr>`;
+    return `<tr><td>${badge} ${m.name}</td><td>${m.label||m.name}</td><td>${m.chunks||'-'}</td><td>${ageBtn}</td><td>${srcBtn}</td><td>${delBtn}</td></tr><tr id="src-row-${m.name}" style="display:none"><td colspan="6">${srcPanel}</td></tr>`;
   }).join('');
 }
 
-function showSettings(name, interval, autoUpdate) {
-  const h = prompt('Chu kỳ cập nhật (giờ):', interval);
-  if (h === null) return;
-  const auto = confirm('Bật tự động cập nhật? (OK=Có, Cancel=Không)');
-  fetch(API + '/collection/' + encodeURIComponent(name) + '/settings', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({update_interval_hours: parseInt(h), auto_update: auto})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) toast('Đã lưu cài đặt cho ' + name, true);
-    refresh();
-  });
-}
-
 function toggleSources(name) {
-  const row = document.getElementById('src-row-' + name);
-  const panel = document.getElementById('src-' + name);
-  if (row && panel) {
-    const open = row.style.display !== 'none';
-    row.style.display = open ? 'none' : 'table-row';
-    panel.className = 'src-panel' + (open ? '' : ' open');
-  }
+  const row = document.getElementById('src-row-'+name);
+  const panel = document.getElementById('src-'+name);
+  if (row && panel) { const open = row.style.display !== 'none'; row.style.display = open ? 'none' : 'table-row'; panel.className = 'src-panel' + (open ? '' : ' open'); }
 }
 
 async function toggleSource(mcp, source, enabled) {
-  const r = await fetch(API + '/sources/' + encodeURIComponent(mcp), {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({[source]: enabled})
-  });
-  if (r.ok) toast(source + ' ' + (enabled ? 'ON' : 'OFF'), true);
+  await fetch(API+'/sources/'+encodeURIComponent(mcp),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[source]:enabled})});
+  toast(source+' '+(enabled?'ON':'OFF'),true);
+}
+
+async function saveKey(source, value) {
+  if (!value) return;
+  const r = await fetch(API+'/key/'+encodeURIComponent(source),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:value})});
+  if ((await r.json()).ok) toast('Da luu API key cho '+source, true);
 }
 
 async function del(name) {
-  if (!confirm(`Xóa KB '${name}'? Hành động này không thể hoàn tác.`)) return;
-  const r = await fetch(API + '/kb/' + encodeURIComponent(name), { method: 'DELETE' });
-  const data = await r.json();
-  if (data.ok) { toast('Đã xóa ' + name, true); refresh(); }
-  else { toast(data.error || 'Lỗi', false); }
+  if (!confirm('Xoa KB '+name+'?')) return;
+  const r = await fetch(API+'/kb/'+encodeURIComponent(name),{method:'DELETE'});
+  const d = await r.json();
+  if (d.ok) { toast('Da xoa '+name,true); refresh(); } else toast(d.error||'Loi',false);
+}
+
+function showSettings(name, interval, autoUpdate) {
+  const h = prompt('Chu ky cap nhat (gio):', interval);
+  if (h === null) return;
+  const auto = confirm('Bat tu dong cap nhat?');
+  fetch(API+'/collection/'+encodeURIComponent(name)+'/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({update_interval_hours:parseInt(h),auto_update:auto})}).then(r=>r.json()).then(d=>{if(d.ok)toast('Da luu',true);refresh();});
 }
 
 document.getElementById('createForm').onsubmit = async (e) => {
   e.preventDefault();
-  const body = JSON.stringify({
-    name: document.getElementById('name').value.trim(),
-    label: document.getElementById('label').value.trim(),
-    content: document.getElementById('content').value,
-  });
-  const r = await fetch(API + '/kb', { method: 'POST', headers: {'Content-Type':'application/json'}, body });
-  const data = await r.json();
-  if (data.ok) {
-    toast(`Đã tạo KB '${data.name}' (${data.chunks} chunks). Endpoint: /${data.name}/mcp`, true);
-    document.getElementById('createForm').reset();
-    refresh();
-  } else {
-    toast((data.errors || ['Lỗi']).join('. '), false);
-  }
+  const body = JSON.stringify({name:document.getElementById('name').value.trim(),label:document.getElementById('label').value.trim(),content:document.getElementById('content').value});
+  const r = await fetch(API+'/kb',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  const d = await r.json();
+  if (d.ok) { toast('Da tao '+d.name+' ('+d.chunks+' chunks)',true); document.getElementById('createForm').reset(); refresh(); }
+  else toast((d.errors||['Loi']).join('. '),false);
 };
 
 refresh();
 
-	// R2 config
-	(async function(){
-	  try {
-	    const r = await fetch(API + '/r2');
-	    const d = await r.json();
-	    if (d.configured) {
-	      document.getElementById('r2endpoint').value = d.config.endpoint || '';
-	      document.getElementById('r2bucket').value = d.config.bucket || '';
-	      document.getElementById('r2key').value = d.config.access_key_id || '';
-	      document.getElementById('r2secret').value = d.config.secret_access_key || '';
-	      document.getElementById('r2Status').textContent = 'Da cau hinh';
-	    }
-	  } catch(e) {}
-	})();
-	document.getElementById('r2Form').onsubmit = async (e) => {
-	  e.preventDefault();
-	  const body = JSON.stringify({endpoint:document.getElementById('r2endpoint').value.trim(),bucket:document.getElementById('r2bucket').value.trim(),access_key_id:document.getElementById('r2key').value.trim(),secret_access_key:document.getElementById('r2secret').value.trim()});
-	  const r = await fetch(API+'/r2',{method:'POST',headers:{'Content-Type':'application/json'},body});
-	  if ((await r.json()).ok){document.getElementById('r2Status').textContent='Da luu!';toast('Cau hinh R2 da luu',true)}
-	};
+// ── Settings tab ────────────────────────────────────────────────────────
+
+(async function loadSettings(){
+  try {
+    const r = await fetch(API+'/settings');
+    const d = await r.json();
+    document.getElementById('syncInterval').value = d.sync_interval_minutes || 360;
+    document.getElementById('storageMode').value = d.storage_mode || 'local';
+    document.getElementById('autoUpdateInterval').value = d.auto_update_interval_hours || 1;
+  } catch(e) {}
+})();
+
+document.getElementById('settingsForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const body = JSON.stringify({
+    sync_interval_minutes: parseInt(document.getElementById('syncInterval').value),
+    storage_mode: document.getElementById('storageMode').value,
+    auto_update_interval_hours: parseInt(document.getElementById('autoUpdateInterval').value),
+  });
+  const r = await fetch(API+'/settings',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  if ((await r.json()).ok) { document.getElementById('settingsStatus').textContent = 'Da luu!'; toast('Cai dat da luu',true); }
+};
+
+async function loadApiKeyList() {
+  try {
+    const r = await fetch(API+'/sources');
+    const d = await r.json();
+    const list = document.getElementById('apiKeyList');
+    let html = '';
+    for (const [mcp, srcs] of Object.entries(d.sources||{})) {
+      for (const [name, info] of Object.entries(srcs)) {
+        if (info.needs_key) {
+          html += `<div class="src-row"><div><label>${name} (${mcp})</label><span class="help-text">${info.help||''}</span></div><input class="key-input" type="password" placeholder="${info.has_key?'*** Da co ***':'Nhap key...'}" onchange="saveKey('${name}',this.value)" style="width:250px"><span class="key-saved">${info.has_key?'OK':''}</span></div>`;
+        }
+      }
+    }
+    list.innerHTML = html || '<p style="color:var(--muted)">Khong co source nao can API key.</p>';
+  } catch(e) {}
+}
+
+// ── R2 tab ──────────────────────────────────────────────────────────────
+
+(async function loadR2Config(){
+  try {
+    const r = await fetch(API+'/r2');
+    const d = await r.json();
+    if (d.configured) {
+      document.getElementById('r2endpoint').value = d.config.endpoint||'';
+      document.getElementById('r2bucket').value = d.config.bucket||'';
+      document.getElementById('r2key').value = d.config.access_key_id||'';
+      document.getElementById('r2secret').value = d.config.secret_access_key||'';
+      document.getElementById('r2Status').textContent = 'Da cau hinh';
+    }
+  } catch(e) {}
+})();
+
+document.getElementById('r2Form').onsubmit = async (e) => {
+  e.preventDefault();
+  const body = JSON.stringify({endpoint:document.getElementById('r2endpoint').value.trim(),bucket:document.getElementById('r2bucket').value.trim(),access_key_id:document.getElementById('r2key').value.trim(),secret_access_key:document.getElementById('r2secret').value.trim()});
+  const r = await fetch(API+'/r2',{method:'POST',headers:{'Content-Type':'application/json'},body});
+  if ((await r.json()).ok){document.getElementById('r2Status').textContent='Da luu!';toast('Cau hinh R2 da luu',true)}
+};
+
+async function loadR2Data() {
+  try {
+    const [listR,expR] = await Promise.all([fetch('/api/rag/list'),fetch(API+'/r2')]);
+    const list = await listR.json();
+    const exp = await expR.json();
+    let html = '<tr><th>Collection</th><th>Chunks</th><th>Cap nhat</th><th>Hoat dong</th></tr>';
+    (list.collections||[]).forEach(c => {
+      html += `<tr><td>${c.name}</td><td>${c.chunks}</td><td>${c.age}</td><td><button class="btn-go btn-sm" onclick="fetch('/api/rag/upload/'+encodeURIComponent('${c.name}'),{method:'POST'}).then(r=>r.json()).then(d=>toast(d.ok?'Upload OK':'Upload fail',d.ok))">Upload R2</button></td></tr>`;
+    });
+    document.getElementById('r2Table').innerHTML = html;
+  } catch(e) {}
+}
 </script>
 </body>
 </html>"""

@@ -27,10 +27,17 @@ def _scheduler_loop(stop_event: threading.Event) -> None:
             _check_all_collections()
         except Exception as exc:
             logger.warning("Scheduler check failed: %s", exc)
-        # Sync from R2 every hour (other instances may have updated)
-        if tick % 6 == 0:
+        # Sync from R2 at configured interval (other instances may have updated)
+        try:
+            from src.rag.settings import get_sync_interval_minutes
+            sync_interval = get_sync_interval_minutes()
+            sync_ticks = max(1, (sync_interval * 60) // CHECK_INTERVAL_SEC)
+        except Exception:
+            sync_ticks = 6
+        if tick % sync_ticks == 0:
             try:
                 from src.rag.cloud import restore_all_from_r2
+                n = restore_all_from_r2()
                 n = restore_all_from_r2()
                 if n > 0:
                     logger.info("Scheduler: synced %d chunks from R2", n)

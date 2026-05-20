@@ -70,6 +70,13 @@ SOURCE_HELP: dict[str, dict[str, str]] = {
     },
 }
 
+# Map source key to env var name for API keys
+SOURCE_ENV_MAP = {
+    "accuweather": "ACCUWEATHER_API_KEY",
+    "brave": "BRAVE_API_KEY",
+    "mojeek": "MOJEEK_API_KEY",
+}
+
 
 def _read() -> dict[str, dict[str, bool]]:
     if not SOURCES_FILE.exists():
@@ -99,13 +106,55 @@ def get_all() -> dict[str, dict[str, bool]]:
 def get_all_with_help() -> dict:
     """Return sources + help text for Studio UI."""
     sources = get_all()
+    keys = _read_keys()
     result: dict = {}
     for mcp, srcs in sources.items():
         items: dict = {}
         for name, enabled in srcs.items():
-            items[name] = {"enabled": enabled, "help": (SOURCE_HELP.get(mcp, {}).get(name, ""))}
+            env_var = SOURCE_ENV_MAP.get(name, "")
+            items[name] = {
+                "enabled": enabled,
+                "help": (SOURCE_HELP.get(mcp, {}).get(name, "")),
+                "needs_key": bool(env_var),
+                "has_key": bool(get_api_key(name)),
+            }
         result[mcp] = items
     return result
+
+
+def _read_keys() -> dict[str, str]:
+    kf = Path("/app/data/studio/api_keys.json")
+    if not kf.exists():
+        return {}
+    return json.loads(kf.read_text(encoding="utf-8")) or {}
+
+
+def _write_keys(keys: dict[str, str]) -> None:
+    kf = Path("/app/data/studio/api_keys.json")
+    kf.parent.mkdir(parents=True, exist_ok=True)
+    kf.write_text(json.dumps(keys, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_api_key(source_key: str) -> str:
+    """Get API key for a source. Checks env var first, then local keys file."""
+    import os
+    env_var = SOURCE_ENV_MAP.get(source_key, "")
+    if env_var:
+        val = os.environ.get(env_var, "")
+        if val:
+            return val
+    try:
+        return _read_keys().get(source_key, "")
+    except Exception:
+        return ""
+
+
+def save_api_key(source_key: str, api_key: str) -> bool:
+    """Save an API key for a source."""
+    keys = _read_keys()
+    keys[source_key] = api_key
+    _write_keys(keys)
+    return True
 
 
 def get_mcp(mcp_name: str) -> dict[str, bool]:

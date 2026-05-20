@@ -19,6 +19,12 @@ MOJEEK_URL = "https://api.mojeek.com/search"
 def mojeek_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     api_key = os.environ.get("MOJEEK_API_KEY", "")
     if not api_key:
+        try:
+            from src.sources_config import get_api_key
+            api_key = get_api_key("mojeek")
+        except Exception:
+            pass
+    if not api_key:
         return []
 
     try:
