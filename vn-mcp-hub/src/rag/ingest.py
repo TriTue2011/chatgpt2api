@@ -97,15 +97,16 @@ def ingest_collection(client, embed_fn, name: str) -> int:
 def main() -> int:
     try:
         import chromadb
-        from chromadb.utils import embedding_functions
     except ImportError as exc:
         logger.error("chromadb not installed: %s", exc)
         return 1
 
+    from src.rag.retriever import _FastEmbedFn
+
     CHROMA_DB_PATH.mkdir(parents=True, exist_ok=True)
 
     client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
-    embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
+    embed_fn = _FastEmbedFn(EMBED_MODEL)
 
     total = 0
     for name in COLLECTIONS:
