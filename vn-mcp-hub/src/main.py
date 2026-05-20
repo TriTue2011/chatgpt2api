@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -43,18 +43,29 @@ logging.basicConfig(
 logger = logging.getLogger("vn-mcp-hub")
 
 
+# MCP app instances collected during mount — their lifespans are entered
+# in the parent FastAPI lifespan so FastMCP's session manager initializes.
+_mcp_sub_apps: list = []
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting VN MCP Hub on port 8005")
-    # Auto-ingest synchronously before yielding — chromadb/sentence-transformers
-    # crash with SIGSEGV when called from a daemon thread in Docker.
-    if not os.environ.get("SKIP_AUTO_INGEST"):
-        try:
-            from src.rag import ingest
-            ingest.main()
-        except Exception as exc:
-            logger.warning("Auto-ingest failed (non-fatal): %s", exc)
-    yield
+    async with AsyncExitStack() as stack:
+        for _mcp_app in _mcp_sub_apps:
+            if hasattr(_mcp_app, "lifespan"):
+                try:
+                    await stack.enter_async_context(_mcp_app.lifespan(_mcp_app))
+                except Exception:
+                    pass
+        # Auto-ingest synchronously before yielding
+        if not os.environ.get("SKIP_AUTO_INGEST"):
+            try:
+                from src.rag import ingest
+                ingest.main()
+            except Exception as exc:
+                logger.warning("Auto-ingest failed (non-fatal): %s", exc)
+        yield
     logger.info("Shutting down VN MCP Hub")
 
 
@@ -155,15 +166,10 @@ MOUNTS = [
 
 
 def _get_http_app(mcp):
-    """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x.
-
-    lifespan="mount" tells FastMCP to register its internal task groups
-    with the parent FastAPI app's lifespan, avoiding 'Task group is not
-    initialized' errors at request time.
-    """
+    """Return the MCP's ASGI app, compatible with fastmcp 2.x and 3.x."""
     if hasattr(mcp, "http_app"):
-        return mcp.http_app(lifespan="mount")  # fastmcp >= 3.0
-    return mcp.streamable_http_app(lifespan="mount")  # fastmcp 2.x
+        return mcp.http_app()  # fastmcp >= 3.0
+    return mcp.streamable_http_app()  # fastmcp 2.x
 
 
 def _mount_mcps(app: FastAPI) -> None:
@@ -181,6 +187,7 @@ def _mount_mcps(app: FastAPI) -> None:
                 logger.warning("Module %s has no 'mcp' attribute, skipping", module_path)
                 continue
             sub_app = _get_http_app(mcp_instance)
+            _mcp_sub_apps.append(sub_app)
             app.mount(f"/{name}", sub_app)
             logger.info("Mounted %s at /%s/mcp", module_path, name)
         except ImportError as exc:
@@ -196,6 +203,7 @@ def _mount_dynamic_mcps(app: FastAPI) -> None:
         for name, mcp in load_dynamic_mcps():
             try:
                 sub_app = _get_http_app(mcp)
+                _mcp_sub_apps.append(sub_app)
                 app.mount(f"/{name}", sub_app)
                 logger.info("Studio: mounted dynamic MCP at /%s/mcp", name)
             except Exception as exc:
