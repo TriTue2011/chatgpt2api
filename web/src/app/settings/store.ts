@@ -87,6 +87,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       ...backup,
       enabled: Boolean(backup.enabled),
       account_id: String(backup.account_id || ""),
+      endpoint: String(backup.endpoint || ""),
       access_key_id: String(backup.access_key_id || ""),
       secret_access_key: String(backup.secret_access_key || ""),
       bucket: String(backup.bucket || ""),

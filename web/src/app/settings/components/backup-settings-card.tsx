@@ -209,6 +209,11 @@ export function BackupSettingsCard() {
             <Input value={String(backup.account_id || "")} onChange={(event) => setBackupField("account_id", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
           </div>
           <div className="space-y-2">
+            <label className="text-sm text-stone-700">R2 Endpoint (S3 API)</label>
+            <Input value={String(backup.endpoint || "")} onChange={(event) => setBackupField("endpoint", event.target.value)} placeholder="https://{id}.r2.cloudflarestorage.com" className="h-10 rounded-xl border-stone-200 bg-white" />
+            <p className="text-xs text-stone-500">Lấy từ R2 bucket → Settings → S3 API. Dùng cho cả backup và RAG online.</p>
+          </div>
+          <div className="space-y-2">
             <label className="text-sm text-stone-700">Tên Bucket</label>
             <Input value={String(backup.bucket || "")} onChange={(event) => setBackupField("bucket", event.target.value)} className="h-10 rounded-xl border-stone-200 bg-white" />
           </div>

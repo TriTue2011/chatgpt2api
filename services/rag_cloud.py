@@ -19,14 +19,14 @@ DATA_DIR = Path("/app/data")
 
 
 def _get_r2_config() -> dict[str, str] | None:
-    """Read R2 credentials from the parent chatgpt2api config."""
+    """Read R2 credentials from the parent chatgpt2api config (backup section)."""
     try:
         from services.config import config
-        r2 = (config.data.get("backup") or {}).get("r2") or {}
-        endpoint = str(r2.get("endpoint") or "")
-        access_key = str(r2.get("access_key") or "")
-        secret_key = str(r2.get("secret_key") or "")
-        bucket = str(r2.get("bucket") or "vn-mcp-hub-rag")
+        backup = (config.data.get("backup") or {})
+        endpoint = str(backup.get("endpoint") or "")
+        access_key = str(backup.get("access_key_id") or "")
+        secret_key = str(backup.get("secret_access_key") or "")
+        bucket = str(backup.get("bucket") or "vn-mcp-hub-rag")
         if not endpoint or not access_key or not secret_key:
             return None
         return {"endpoint": endpoint.rstrip("/"), "access_key": access_key,
