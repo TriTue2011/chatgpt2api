@@ -1,8 +1,11 @@
 """RAG retriever — query Chroma vector DB for kb_* MCPs.
 
 Each knowledge base lives in its own Chroma collection (e.g. "dien_nuoc").
-The retriever loads a single sentence-transformer model once and reuses it
-across all collections. First query against a collection opens it lazily.
+The retriever loads a single embedding model once and reuses it across all
+collections. First query against a collection opens it lazily.
+
+Uses fastembed (ONNX runtime, ~200MB) instead of sentence-transformers
+(torch, ~3GB) to keep the Docker image under 5GB.
 
 Designed to fail soft: if Chroma can't initialise (missing model, missing
 data dir), `query()` returns an empty list instead of raising — the kb_*
@@ -22,10 +25,28 @@ logger = logging.getLogger(__name__)
 CHROMA_DB_PATH = Path("/app/chroma_db")
 
 # Light, multilingual model — good enough for VN + EN technical content.
+# fastembed downloads this to its cache on first use (~120MB).
 EMBED_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # Default top-k chunks returned per query. Tuned to fit ~2000 tokens.
 DEFAULT_TOP_K = 4
+
+
+class _FastEmbedFn:
+    """Custom ChromaDB embedding function backed by fastembed (ONNX, no torch)."""
+
+    def __init__(self, model_name: str = EMBED_MODEL) -> None:
+        self._model_name = model_name
+        self._model = None
+
+    def _load(self):
+        if self._model is None:
+            from fastembed import TextEmbedding
+            self._model = TextEmbedding(model_name=self._model_name)
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        self._load()
+        return [e.tolist() for e in self._model.embed(input)]
 
 
 class RAGRetriever:
@@ -56,13 +77,10 @@ class RAGRetriever:
             return True
         try:
             import chromadb
-            from chromadb.utils import embedding_functions
 
             self._client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
-            self._embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=EMBED_MODEL,
-            )
-            logger.info("RAG: chroma + embeddings loaded from %s", CHROMA_DB_PATH)
+            self._embed_fn = _FastEmbedFn(EMBED_MODEL)
+            logger.info("RAG: chroma + fastembed loaded from %s", CHROMA_DB_PATH)
             return True
         except Exception as exc:
             logger.error("RAG: failed to load chroma/embeddings: %s", exc)
