@@ -178,6 +178,7 @@ MOUNTS = [
     ("kb_tu_nhien", "src.kb.tu_nhien"),
     ("kb_xa_hoi", "src.kb.xa_hoi"),
     ("ha_helper", "src.ha.helper"),
+    ("federated_search", "src.search.orchestrator_mcp"),
 ]
 
 
