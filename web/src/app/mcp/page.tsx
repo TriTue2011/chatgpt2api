@@ -79,18 +79,24 @@ export default function McpPage() {
   const installGroup = async (group: McpGroup) => {
     setSaving(group.name);
     const allInstalled = group.installedCount === group.totalCount;
+    let delta = 0;
     for (const m of group.mcps) {
       if (!m.url) continue;
-      if (allInstalled) {
-        // Uninstall all
-        try { await request.post(`/api/mcp/uninstall/${m.id}`); } catch (e) {}
-      } else {
-        // Install all missing
-        try { await request.post("/api/mcp/install", { id: m.id, url_override: m.url }); } catch (e) {}
-      }
+      try {
+        if (allInstalled) {
+          await request.post(`/api/mcp/uninstall/${m.id}`);
+          delta--;
+        } else {
+          await request.post("/api/mcp/install", { id: m.id, url_override: m.url });
+          delta++;
+        }
+      } catch (e) {}
     }
+    // Update just the count, don't reset state
+    setGroups(prev => prev.map(g => g.name === group.name
+      ? { ...g, installedCount: allInstalled ? 0 : g.totalCount }
+      : g));
     setSaving(null);
-    loadStatus();
   };
 
   if (loading) return <div className="p-6 text-muted-foreground">Đang tải...</div>;
