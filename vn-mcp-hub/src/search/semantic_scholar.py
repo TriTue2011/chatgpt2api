@@ -6,7 +6,7 @@ Covers 200M+ papers across all disciplines.
 
 from __future__ import annotations
 
-import logging
+import logging, time
 from typing import Any
 
 import httpx
@@ -16,13 +16,24 @@ logger = logging.getLogger(__name__)
 SS_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 HEADERS = {"Accept": "application/json"}
 
+# Simple in-memory cache to avoid 429 rate limits (1 req/s without API key)
+_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_CACHE_TTL = 60  # seconds
+
 
 def semantic_scholar_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Search Semantic Scholar for academic papers.
 
     Returns list of {title, snippet, url, source, year, citations} dicts.
-    Empty list on failure or no results.
+    Uses simple cache to stay within rate limits.
     """
+    # Check cache
+    cache_key = f"{query}:{limit}"
+    if cache_key in _cache:
+        ts, cached = _cache[cache_key]
+        if time.time() - ts < _CACHE_TTL:
+            return cached
+
     for attempt in range(2):
         try:
             with httpx.Client(timeout=10.0, headers=HEADERS) as client:
@@ -63,4 +74,10 @@ def semantic_scholar_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
             "citations": citations,
         })
     logger.info("Semantic Scholar: %d results for '%s'", len(results), query[:50])
+    # Save to cache
+    _cache[cache_key] = (time.time(), results)
+    # Clean old entries periodically
+    if len(_cache) > 100:
+        now = time.time()
+        _cache.clear()  # simple: clear all when too many
     return results
