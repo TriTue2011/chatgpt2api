@@ -14,8 +14,8 @@ type McpGroup = {
 };
 
 const GROUPS: McpGroup[] = [
-  { name: "Tìm kiếm", icon: "🔍", description: "Search web, Wikipedia, paper, federated",
-    mcps: [{id:"vn_search",name:"Tìm kiếm Web",url:""},{id:"wikipedia",name:"Wikipedia",url:""},{id:"arxiv",name:"arXiv Paper",url:""},{id:"federated_search",name:"Federated Search",url:""}], installedCount:0, totalCount:4 },
+  { name: "Tìm kiếm", icon: "🔍", description: "Search web, Wikipedia, paper, luật, phạt nguội, federated",
+    mcps: [{id:"vn_search",name:"Tìm kiếm Web",url:""},{id:"wikipedia",name:"Wikipedia",url:""},{id:"arxiv",name:"arXiv Paper",url:""},{id:"federated_search",name:"Federated Search",url:""},{id:"vn_law",name:"Tra cứu Luật",url:""},{id:"vn_phat_nguoi",name:"Phạt nguội",url:""}], installedCount:0, totalCount:6 },
   { name: "Thời tiết", icon: "🌤️", description: "Thời tiết 4 nguồn quốc tế",
     mcps: [{id:"vn_weather",name:"Thời tiết VN",url:""}], installedCount:0, totalCount:1 },
   { name: "Tin tức", icon: "📰", description: "Tin VN + BBC + Google News",
@@ -24,8 +24,8 @@ const GROUPS: McpGroup[] = [
     mcps: [{id:"vn_currency",name:"Tỷ giá & Vàng",url:""},{id:"vn_stock",name:"Cổ phiếu VN",url:""}], installedCount:0, totalCount:2 },
   { name: "Knowledge Base", icon: "📚", description: "7 kho tri thức RAG (điện nước, y tế, giáo dục, ngoại ngữ, khoa học, tự nhiên, xã hội)",
     mcps: [{id:"kb_dien_nuoc",name:"Kho Điện Nước",url:""},{id:"kb_y_te",name:"Kho Y Tế",url:""},{id:"kb_giao_duc",name:"Kho Giáo Dục",url:""},{id:"kb_ngoai_ngu",name:"Kho Ngoại Ngữ",url:""},{id:"kb_khoa_hoc",name:"Kho Khoa Học",url:""},{id:"kb_tu_nhien",name:"Kho Tự Nhiên",url:""},{id:"kb_xa_hoi",name:"Kho Xã Hội",url:""}], installedCount:0, totalCount:7 },
-  { name: "VN Khác", icon: "🏛️", description: "Luật, phạt nguội, lịch âm",
-    mcps: [{id:"vn_law",name:"Tra cứu Luật",url:""},{id:"vn_phat_nguoi",name:"Phạt nguội",url:""},{id:"vn_lunar",name:"Lịch Âm",url:""}], installedCount:0, totalCount:3 },
+  { name: "VN Khác", icon: "🏛️", description: "Lịch âm",
+    mcps: [{id:"vn_lunar",name:"Lịch Âm",url:""}], installedCount:0, totalCount:1 },
   { name: "Khác", icon: "📦", description: "YouTube Transcript, HA Helper",
     mcps: [{id:"youtube",name:"YouTube Transcript",url:""},{id:"ha_helper",name:"HA Helper",url:""}], installedCount:0, totalCount:2 },
 ];

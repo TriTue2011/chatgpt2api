@@ -405,7 +405,7 @@ MCP_LABELS = {
     "vn_currency": ("Tỷ giá & Vàng", "Tỷ giá Vietcombank, giá vàng SJC, ngoại tệ", "finance"),
     "vn_lunar": ("Lịch Âm", "Đổi dương sang âm, can chi, ngày hoàng đạo", "vn_other"),
     "vn_search": ("Tìm kiếm Web", "Tìm web qua DuckDuckGo, hỗ trợ tiếng Việt", "search"),
-    "vn_law": ("Tra cứu Luật", "Văn bản pháp luật Việt Nam từ thuvienphapluat.vn", "vn_other"),
+    "vn_law": ("Tra cứu Luật", "Văn bản pháp luật Việt Nam từ thuvienphapluat.vn", "search"),
     "vn_phat_nguoi": ("Phạt nguội", "Tra cứu phạt nguội xe từ csgt.vn", "vn_other"),
     "vn_stock": ("Cổ phiếu VN", "Giá cổ phiếu, VN-Index, HNX từ VNDirect", "finance"),
     "youtube": ("YouTube Transcript", "Lấy transcript video YouTube, hỗ trợ tiếng Việt", "general"),
