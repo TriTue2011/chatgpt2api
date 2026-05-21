@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { request } from "@/lib/request";
+import { getStoredAuthKey } from "@/store/auth";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,11 +35,21 @@ export default function ChatPage() {
     setStreaming(true);
 
     try {
-      // Get auth header from request module (already set by interceptor)
-      const authHeader = request.defaults.headers.common["Authorization"] as string || "";
+      // Get auth key — retry up to 3 times if empty
+      let authKey = "";
+      for (let i = 0; i < 3; i++) {
+        authKey = await getStoredAuthKey();
+        if (authKey) break;
+        await new Promise(r => setTimeout(r, 300));
+      }
+      if (!authKey) {
+        setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập. Vui lòng refresh trang." }]);
+        setStreaming(false);
+        return;
+      }
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": authHeader },
+        headers: { "Content-Type": "application/json", "Authorization": authKey ? `Bearer ${authKey}` : "" },
         body: JSON.stringify({
           model, stream: true,
           messages: [...messages, { role: "user", content: userMsg }].map(m => ({ role: m.role, content: m.content })),
