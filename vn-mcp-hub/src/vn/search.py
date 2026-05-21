@@ -66,13 +66,16 @@ def _format(results: list[dict[str, Any]], limit: int) -> str:
 def ddg_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     """Direct DuckDuckGo search — reusable by hybrid RAG without MCP protocol.
 
-    Returns list of {title, link, snippet} dicts, empty list on failure.
+    Returns list of {title, link, snippet, source} dicts, empty list on failure.
     """
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
             r = client.post(DDG_HTML, data={"q": query, "kl": "vn-vi"})
             r.raise_for_status()
-        return _parse_results(r.text)[:limit]
+        results = _parse_results(r.text)[:limit]
+        for r in results:
+            r["source"] = "DuckDuckGo"
+        return results
     except Exception as exc:
         logger.warning("DDG search failed for '%s': %s", query, exc)
         return []
