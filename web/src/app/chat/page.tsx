@@ -35,15 +35,14 @@ export default function ChatPage() {
     setStreaming(true);
 
     try {
-      // Get auth key — retry up to 3 times if empty
-      let authKey = "";
-      for (let i = 0; i < 3; i++) {
-        authKey = await getStoredAuthKey();
-        if (authKey) break;
-        await new Promise(r => setTimeout(r, 300));
+      // Get auth key — try IndexedDB first, then localStorage fallback
+      let authKey = await getStoredAuthKey();
+      if (!authKey) {
+        // Fallback: try reading from localStorage (some browsers have IndexedDB issues)
+        try { authKey = localStorage.getItem("chatgpt2api_auth_key") || ""; } catch(e) {}
       }
       if (!authKey) {
-        setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập. Vui lòng refresh trang." }]);
+        setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập." }]);
         setStreaming(false);
         return;
       }
