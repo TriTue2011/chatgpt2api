@@ -49,9 +49,14 @@ export async function getStoredAuthKey() {
   }
   try {
     const value = await authStorage.getItem<string>(AUTH_KEY_STORAGE_KEY);
-    if (value) return String(value).trim();
+    if (value) {
+      const key = String(value).trim();
+      // Sync to localStorage so chat page can read it
+      try { localStorage.setItem(AUTH_KEY_STORAGE_KEY, key); } catch (e) {}
+      return key;
+    }
   } catch (e) {}
-  // Fallback: localStorage (some browsers block IndexedDB)
+  // Fallback: localStorage
   try {
     const fallback = localStorage.getItem(AUTH_KEY_STORAGE_KEY);
     if (fallback) return fallback.trim();
