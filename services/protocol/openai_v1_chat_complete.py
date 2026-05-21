@@ -1330,18 +1330,22 @@ def _handle_custom_openai_chat(
 
 
 def _inject_mcp_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
-    """Inject tools from enabled MCP servers into the tools list."""
+    """Inject tools from enabled MCP servers + HA into the tools list."""
     try:
         from services.mcp_client import get_enabled_mcp_tools
+        from services.ha_client import get_ha_tools
         mcp_tools = get_enabled_mcp_tools()
-        if not mcp_tools:
+        ha_tools = get_ha_tools()
+        all_new_tools = mcp_tools + ha_tools
+        if not all_new_tools:
             return tools
         tools = list(tools or [])
         existing_names = {t.get("function", {}).get("name", "") for t in tools}
-        for mt in mcp_tools:
+        for mt in all_new_tools:
             if mt.get("function", {}).get("name", "") not in existing_names:
                 tools.append(mt)
-        logger.info({"event": "mcp_tools_injected", "mcp_count": len(mcp_tools), "total_tools": len(tools)})
+        logger.info({"event": "mcp_tools_injected", "mcp_count": len(mcp_tools),
+                     "ha_count": len(ha_tools), "total_tools": len(tools)})
         return tools
     except Exception as exc:
         logger.warning({"event": "mcp_tools_inject_failed", "error": str(exc)})
@@ -1349,10 +1353,21 @@ def _inject_mcp_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]
 
 
 def _execute_mcp_tool(tool_name: str, arguments: dict[str, Any]) -> str | None:
-    """Execute an MCP tool call and return the result text."""
+    """Execute an MCP or HA tool call and return the result text."""
+    # Try MCP first
     try:
         from services.mcp_client import call_mcp_tool
-        return call_mcp_tool(tool_name, arguments)
+        result = call_mcp_tool(tool_name, arguments)
+        if result is not None:
+            return result
     except Exception as exc:
         logger.warning({"event": "mcp_tool_call_failed", "tool": tool_name, "error": str(exc)})
-        return None
+    # Try HA tools
+    try:
+        from services.ha_client import execute_ha_tool
+        result = execute_ha_tool(tool_name, arguments)
+        if result is not None:
+            return result
+    except Exception as exc:
+        logger.warning({"event": "ha_tool_call_failed", "tool": tool_name, "error": str(exc)})
+    return None

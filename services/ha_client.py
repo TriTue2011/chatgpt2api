@@ -110,3 +110,59 @@ def inject_ha_context(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result.insert(insert_pos, {"role": "system", "content": ctx})
     logger.info({"event": "ha_context_injected", "states_len": len(ctx)})
     return result
+
+
+def get_ha_tools() -> list[dict[str, Any]]:
+    """Return OpenAI-format tools for HA control (get state, call service)."""
+    cfg = _get_ha_config()
+    if not cfg:
+        return []
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "ha_get_state",
+                "description": "Lấy trạng thái 1 thiết bị Home Assistant theo entity_id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string", "description": "Entity ID (vd: light.ban_cong, sensor.nhiet_do)"}
+                    },
+                    "required": ["entity_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ha_call_service",
+                "description": "Gọi Home Assistant service để điều khiển thiết bị (bật/tắt đèn, khóa cửa, v.v.)",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "domain": {"type": "string", "description": "Domain: light, switch, lock, climate, cover..."},
+                        "service": {"type": "string", "description": "Service: turn_on, turn_off, toggle, lock, unlock..."},
+                        "entity_id": {"type": "string", "description": "Entity ID đầy đủ (vd: light.ban_cong)"},
+                    },
+                    "required": ["domain", "service", "entity_id"],
+                },
+            },
+        },
+    ]
+
+
+def execute_ha_tool(tool_name: str, arguments: dict[str, Any]) -> str | None:
+    """Execute an HA tool and return result text."""
+    if tool_name == "ha_get_state":
+        eid = arguments.get("entity_id", "")
+        state = get_state(eid)
+        if state is None:
+            return f"Không tìm thấy thiết bị '{eid}'"
+        return json.dumps(state, ensure_ascii=False, indent=2)
+    elif tool_name == "ha_call_service":
+        domain = arguments.get("domain", "")
+        service = arguments.get("service", "")
+        entity_id = arguments.get("entity_id", "")
+        ok = call_service(domain, service, {"entity_id": entity_id})
+        return f"Đã gọi {domain}.{service} cho {entity_id}" if ok else f"Lỗi gọi {domain}.{service}"
+    return None
