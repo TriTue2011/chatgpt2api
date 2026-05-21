@@ -23,7 +23,6 @@ SEARCH_BACKENDS = [
     ("src.vn.search", "ddg_search"),                    # DuckDuckGo (global)
     ("src.general.wikipedia", "wiki_search"),            # Wikipedia
     ("src.search.brave", "brave_search"),               # Brave (US, independent)
-    ("src.search.mojeek", "mojeek_search"),             # Mojeek (UK, independent)
     # Academic / scholarly
     ("src.search.semantic_scholar", "semantic_scholar_search"),  # CS/engineering
     ("src.search.crossref", "crossref_search"),                   # DOI registry

@@ -23,8 +23,9 @@ def semantic_scholar_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
     Returns list of {title, snippet, url, source, year, citations} dicts.
     Empty list on failure or no results.
     """
-    try:
-        with httpx.Client(timeout=10.0, headers=HEADERS) as client:
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=10.0, headers=HEADERS) as client:
             r = client.get(
                 SS_API,
                 params={
@@ -35,7 +36,11 @@ def semantic_scholar_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
             )
             r.raise_for_status()
         data = r.json()
+        break
     except Exception as exc:
+        if attempt == 0 and "429" in str(exc):
+            import time; time.sleep(2)
+            continue
         logger.warning("Semantic Scholar search failed: %s", exc)
         return []
 

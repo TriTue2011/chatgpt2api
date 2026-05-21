@@ -39,7 +39,6 @@ DEFAULTS: dict[str, dict[str, bool]] = {
         "ddg": True,
         "wikipedia": True,
         "brave": False,         # needs API key
-        "mojeek": False,        # needs API key
         "semantic_scholar": True,
         "crossref": True,
         "pubmed": True,

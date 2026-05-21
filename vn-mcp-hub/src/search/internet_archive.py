@@ -17,8 +17,9 @@ ARCHIVE_URL = "https://archive.org/advancedsearch.php"
 
 
 def archive_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
-    try:
-        with httpx.Client(timeout=12.0) as client:
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=20.0) as client:
             r = client.get(ARCHIVE_URL, params={
                 "q": f"title:({query}) OR description:({query})",
                 "fl[]": "identifier,title,description,year,mediatype",
@@ -27,7 +28,11 @@ def archive_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
             })
             r.raise_for_status()
         data = r.json()
+        break
     except Exception as exc:
+        if attempt == 0:
+            import time; time.sleep(1)
+            continue
         logger.warning("Internet Archive search failed: %s", exc)
         return []
 

@@ -32,6 +32,7 @@ def wiki_search(query: str, lang: str = "vi", limit: int = 5) -> list[dict[str, 
     """Direct Wikipedia search — reusable by hybrid RAG without MCP protocol.
 
     Returns list of {title, snippet, url} dicts, empty list on failure.
+    Retries once on DNS/network errors.
     """
     limit = max(1, min(30, limit))
     params = {
@@ -41,14 +42,19 @@ def wiki_search(query: str, lang: str = "vi", limit: int = 5) -> list[dict[str, 
         "srlimit": limit,
         "format": "json",
     }
-    try:
-        with httpx.Client(timeout=10.0, headers=HEADERS) as client:
-            r = client.get(WIKI_API.format(lang=lang), params=params)
-            r.raise_for_status()
-        data = r.json()
-    except Exception as exc:
-        logger.warning("Wiki search failed for '%s': %s", query, exc)
-        return []
+    for attempt in range(2):
+        try:
+            with httpx.Client(timeout=10.0, headers=HEADERS) as client:
+                r = client.get(WIKI_API.format(lang=lang), params=params)
+                r.raise_for_status()
+            data = r.json()
+            break
+        except Exception as exc:
+            if attempt == 0:
+                import time; time.sleep(1)
+                continue
+            logger.warning("Wiki search failed for '%s': %s", query, exc)
+            return []
 
     hits = (data.get("query") or {}).get("search") or []
     return [
