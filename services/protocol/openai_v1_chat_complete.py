@@ -293,6 +293,40 @@ def _curate_search_results(messages: list[dict[str, Any]]) -> None:
         pass
 
 
+def _auto_search_enrich(query: str) -> str:
+    """Run search alongside MCP tool execution for richer context."""
+    try:
+        results = search_service.search_all(query)
+        if not results:
+            return ""
+        lines = ["\n---\n## Kết quả tìm kiếm bổ sung\n"]
+        for r in results[:5]:
+            title = r.get("title", "")
+            snippet = (r.get("snippet") or "")[:300]
+            url = r.get("url", "")
+            if title:
+                lines.append(f"- **{title}**")
+            if snippet:
+                lines.append(f"  {snippet}")
+            if url:
+                lines.append(f"  {url}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _extract_user_query(messages: list[dict[str, Any]]) -> str:
+    """Get the last user message text for search enrichment."""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            c = m.get("content", "")
+            if isinstance(c, str):
+                return c[:200]
+            if isinstance(c, list):
+                return str(c[0].get("text", ""))[:200] if c else ""
+    return ""
+
+
 def _wrap_mcp_stream(
     stream_iter, messages: list[dict[str, Any]], route, body: dict[str, Any]
 ):
@@ -354,6 +388,12 @@ def _wrap_mcp_stream(
     if mcp_result is None:
         mcp_result = f"Tool '{tool_name}' execution failed."
 
+    # Auto-search enrichment for richer context
+    user_query = _extract_user_query(messages)
+    search_extra = _auto_search_enrich(user_query) if user_query else ""
+    if search_extra:
+        mcp_result += search_extra
+
     # Build follow-up messages and dispatch
     new_messages = list(messages)
     new_messages.append({"role": "assistant", "content": full_content, "tool_calls": mcp_calls})
@@ -413,6 +453,12 @@ def _execute_mcp_tools_in_response(
     mcp_result = _execute_mcp_tool(tool_name, args)
     if mcp_result is None:
         mcp_result = f"Tool '{tool_name}' execution failed."
+
+    # Auto-search enrichment
+    user_query = _extract_user_query(messages)
+    search_extra = _auto_search_enrich(user_query) if user_query else ""
+    if search_extra:
+        mcp_result += search_extra
 
     # Build messages for follow-up LLM call
     new_messages = list(messages)
