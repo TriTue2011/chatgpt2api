@@ -600,11 +600,7 @@ class SearchService:
         return None
 
     def _get_active_backend(self) -> str:
-        """Get actual search backend to use, auto-upgrading chatgpt→gemini if key available."""
-        if self.backend_name == "chatgpt":
-            from services.providers.gemini_free import gemini_provider
-            if gemini_provider.api_key:
-                return "gemini"
+        """Get actual search backend to use."""
         return self.backend_name
 
     def search(self, query: str) -> list[dict[str, str]]:
@@ -640,17 +636,23 @@ class SearchService:
         return []
 
     def search_all(self, query: str) -> list[dict[str, str]]:
-        """Run search on ALL sources: built-in backends + MCP search tools.
+        """Run search on combo backends + MCP search tools.
 
-        Queries every available backend in parallel, then MCP search tools,
-        merges results with deduplication. LLM synthesizes the final answer.
+        Respects user's search_combo config. Falls back to active backend.
         """
         all_results: list[dict[str, str]] = []
         seen = set()
 
-        # 1. Built-in search backends
-        for name, backend in SEARCH_BACKENDS.items():
+        # Only use backends in the user's combo (or active backend)
+        combo = self.search_combo
+        if not combo or combo == ["chatgpt"]:
+            combo = [self._get_active_backend()]
+
+        for name in combo:
             if name in ("chatgpt",):  # skip passthrough
+                continue
+            backend = self._get_backend(name)
+            if not backend:
                 continue
             try:
                 results = backend.search(query, max(2, self.max_results // 2))
