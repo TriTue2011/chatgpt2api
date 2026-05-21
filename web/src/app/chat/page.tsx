@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import { request } from "@/lib/request";
-import { getStoredAuthKey } from "@/store/auth";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,14 +34,15 @@ export default function ChatPage() {
     setStreaming(true);
 
     try {
-      // Get auth key — try IndexedDB first, then localStorage fallback
+      // Get auth key from the same source as request interceptor
+      const { getStoredAuthKey } = await import("@/store/auth");
       let authKey = await getStoredAuthKey();
       if (!authKey) {
-        // Fallback: try reading from localStorage (some browsers have IndexedDB issues)
         try { authKey = localStorage.getItem("chatgpt2api_auth_key") || ""; } catch(e) {}
       }
+      console.log("Chat: authKey available:", !!authKey, "length:", authKey.length);
       if (!authKey) {
-        setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập." }]);
+        setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập. Vui lòng refresh trang và đăng nhập lại." }]);
         setStreaming(false);
         return;
       }
