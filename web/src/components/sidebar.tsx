@@ -21,6 +21,7 @@ import {
   Video,
   Film,
   Plug,
+  MessageSquare,
 } from "lucide-react";
 
 import webConfig from "@/constants/common-env";
@@ -37,6 +38,7 @@ const navItems = [
   { href: "/models",         labelKey: "nav_models"         as TranslationKey, icon: Sparkles },
   { href: "/combos",         labelKey: "nav_combos"         as TranslationKey, icon: Combine },
   { href: "/mcp",            labelKey: "nav_mcp"            as TranslationKey, icon: Plug },
+  { href: "/chat",           labelKey: "nav_chat"           as TranslationKey, icon: MessageSquare },
   { href: "/image",          labelKey: "nav_image"          as TranslationKey, icon: ImageIcon },
   { href: "/image-manager",  labelKey: "nav_imageLibrary"   as TranslationKey, icon: Archive },
   { href: "/video",          labelKey: "nav_video"          as TranslationKey, icon: Video },

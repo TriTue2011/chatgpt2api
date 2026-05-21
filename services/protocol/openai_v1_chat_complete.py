@@ -262,6 +262,13 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     if search_service.is_enabled:
         messages = search_service.process_messages(messages)
 
+    # Inject HA smart home context (Long-Lived Token)
+    try:
+        from services.ha_client import inject_ha_context
+        messages = inject_ha_context(messages)
+    except Exception:
+        pass
+
     # Inject MCP tools from enabled presets
     tools = _inject_mcp_tools(tools)
 
