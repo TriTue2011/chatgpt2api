@@ -302,6 +302,8 @@ def _curate_search_results(messages: list[dict[str, Any]]) -> None:
 
 def _auto_search_enrich(query: str) -> str:
     """Run search alongside MCP tool execution for richer context."""
+    if not search_service.is_enabled:
+        return ""
     try:
         results = search_service.search_all(query)
         if not results:
