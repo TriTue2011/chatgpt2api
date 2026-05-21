@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { request } from "@/lib/request";
+import { getStoredAuthKey } from "@/store/auth";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,9 +35,10 @@ export default function ChatPage() {
     setStreaming(true);
 
     try {
+      const authKey = await getStoredAuthKey();
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("auth_key") || ""}` },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authKey || ""}` },
         body: JSON.stringify({
           model, stream: true,
           messages: [...messages, { role: "user", content: userMsg }].map(m => ({ role: m.role, content: m.content })),
