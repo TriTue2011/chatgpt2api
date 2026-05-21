@@ -7,6 +7,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { SettingsSection } from "@/components/settings-section";
 
 import { BackupSettingsCard } from "./components/backup-settings-card";
+import { HACard } from "./components/ha-card";
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
 import { NvidiaNimCard } from "./components/nvidia-nim-card";
@@ -114,6 +115,14 @@ function SettingsPageContent() {
           icon={<Plug className="size-5" />}
         >
           <Sub2APIConnections />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Home Assistant"
+          description="Kết nối HA để AI biết trạng thái nhà và điều khiển thiết bị"
+          icon={<Archive className="size-5" />}
+        >
+          <HACard />
         </SettingsSection>
 
         <SettingsSection
