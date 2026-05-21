@@ -157,6 +157,7 @@ def create_router() -> APIRouter:
             mcps.append({
                 "id": name, "name": detail.get("label", name),
                 "description": detail.get("description", ""),
+                "category": detail.get("category", "hub"),
                 "url": url,
                 "installed": name in installed,
                 "enabled": bool(info.get("enabled", True)),

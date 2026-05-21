@@ -106,9 +106,10 @@ def create_app() -> FastAPI:
     async def index():
         mcps = []
         for name, _ in MOUNTS:
-            label, desc = MCP_LABELS.get(name, (name, ""))
+            label, desc, *rest = MCP_LABELS.get(name, (name, "", ""))
+            cat = rest[0] if rest else "general"
             mcps.append({"id": name, "label": label, "description": desc,
-                         "url": f"/{name}/mcp"})
+                         "category": cat, "url": f"/{name}/mcp"})
         return JSONResponse({
             "name": "VN MCP Hub",
             "version": "0.1.0",
@@ -399,26 +400,26 @@ def create_app() -> FastAPI:
 
 
 MCP_LABELS = {
-    "vn_weather": ("Thời tiết VN", "Thời tiết 63 tỉnh thành, 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr)"),
-    "vn_news": ("Tin tức VN", "Tin mới nhất từ VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, BBC, Google News"),
-    "vn_currency": ("Tỷ giá & Vàng", "Tỷ giá Vietcombank, giá vàng SJC, ngoại tệ"),
-    "vn_lunar": ("Lịch Âm", "Đổi dương sang âm, can chi, ngày hoàng đạo"),
-    "vn_search": ("Tìm kiếm Web", "Tìm web qua DuckDuckGo, hỗ trợ tiếng Việt"),
-    "vn_law": ("Tra cứu Luật", "Văn bản pháp luật Việt Nam từ thuvienphapluat.vn"),
-    "vn_phat_nguoi": ("Phạt nguội", "Tra cứu phạt nguội xe từ csgt.vn"),
-    "vn_stock": ("Cổ phiếu VN", "Giá cổ phiếu, VN-Index, HNX từ VNDirect"),
-    "youtube": ("YouTube Transcript", "Lấy transcript video YouTube, hỗ trợ tiếng Việt"),
-    "wikipedia": ("Wikipedia", "Bách khoa toàn thư đa ngôn ngữ (mặc định tiếng Việt)"),
-    "arxiv": ("arXiv Paper", "Tìm paper khoa học trên arXiv"),
-    "kb_dien_nuoc": ("Kho Điện Nước", "Kiến thức điện, nước, điều hòa, chiller (MCB, MCCB...)"),
-    "kb_y_te": ("Kho Y Tế", "Y tế cơ bản, sơ cứu, bệnh thường gặp"),
-    "kb_giao_duc": ("Kho Giáo Dục", "Chương trình giáo dục VN, phương pháp học tập"),
-    "kb_ngoai_ngu": ("Kho Ngoại Ngữ", "Từ điển, dịch thuật, ngữ pháp, luyện phát âm"),
-    "kb_khoa_hoc": ("Kho Khoa Học", "Vật lý, hóa học, sinh học, toán cơ bản"),
-    "kb_tu_nhien": ("Kho Tự Nhiên", "Động vật, thực vật, hệ sinh thái, khí hậu, địa lý VN"),
-    "kb_xa_hoi": ("Kho Xã Hội", "Lịch sử VN, văn hóa, kinh tế, chính trị, 54 dân tộc"),
-    "ha_helper": ("HA Helper", "Giờ hoàng đạo, gợi ý ngữ pháp lệnh Home Assistant"),
-    "federated_search": ("Multi-Search", "Tìm kiếm đồng thời 9 nguồn quốc tế (DDG, Brave, PubMed...)"),
+    "vn_weather": ("Thời tiết VN", "Thời tiết 63 tỉnh thành, 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr)", "weather"),
+    "vn_news": ("Tin tức VN", "Tin mới nhất từ VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, BBC, Google News", "news"),
+    "vn_currency": ("Tỷ giá & Vàng", "Tỷ giá Vietcombank, giá vàng SJC, ngoại tệ", "finance"),
+    "vn_lunar": ("Lịch Âm", "Đổi dương sang âm, can chi, ngày hoàng đạo", "vn_other"),
+    "vn_search": ("Tìm kiếm Web", "Tìm web qua DuckDuckGo, hỗ trợ tiếng Việt", "search"),
+    "vn_law": ("Tra cứu Luật", "Văn bản pháp luật Việt Nam từ thuvienphapluat.vn", "vn_other"),
+    "vn_phat_nguoi": ("Phạt nguội", "Tra cứu phạt nguội xe từ csgt.vn", "vn_other"),
+    "vn_stock": ("Cổ phiếu VN", "Giá cổ phiếu, VN-Index, HNX từ VNDirect", "finance"),
+    "youtube": ("YouTube Transcript", "Lấy transcript video YouTube, hỗ trợ tiếng Việt", "general"),
+    "wikipedia": ("Wikipedia", "Bách khoa toàn thư đa ngôn ngữ (mặc định tiếng Việt)", "search"),
+    "arxiv": ("arXiv Paper", "Tìm paper khoa học trên arXiv", "search"),
+    "kb_dien_nuoc": ("Kho Điện Nước", "Kiến thức điện, nước, điều hòa, chiller (MCB, MCCB...)", "knowledge"),
+    "kb_y_te": ("Kho Y Tế", "Y tế cơ bản, sơ cứu, bệnh thường gặp", "knowledge"),
+    "kb_giao_duc": ("Kho Giáo Dục", "Chương trình giáo dục VN, phương pháp học tập", "knowledge"),
+    "kb_ngoai_ngu": ("Kho Ngoại Ngữ", "Từ điển, dịch thuật, ngữ pháp, luyện phát âm", "knowledge"),
+    "kb_khoa_hoc": ("Kho Khoa Học", "Vật lý, hóa học, sinh học, toán cơ bản", "knowledge"),
+    "kb_tu_nhien": ("Kho Tự Nhiên", "Động vật, thực vật, hệ sinh thái, khí hậu, địa lý VN", "knowledge"),
+    "kb_xa_hoi": ("Kho Xã Hội", "Lịch sử VN, văn hóa, kinh tế, chính trị, 54 dân tộc", "knowledge"),
+    "ha_helper": ("HA Helper", "Giờ hoàng đạo, gợi ý ngữ pháp lệnh Home Assistant", "ha"),
+    "federated_search": ("Multi-Search", "Tìm kiếm đồng thời 9 nguồn quốc tế (DDG, Brave, PubMed...)", "search"),
 }
 
 MOUNTS = [
