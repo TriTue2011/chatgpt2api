@@ -1,0 +1,150 @@
+{
+  "version": "1",
+  "release_tag": "piper-voices-v1",
+  "repo": "TriTue2011/chatgpt2api",
+  "description": "Vietnamese Piper TTS voices (ONNX). Download via scripts/download_piper_voices.py — not baked into Docker image.",
+  "piper_version": "1.3.0",
+  "sample_rate": 22050,
+  "default_voice": "ngochuyennew",
+  "packs": {
+    "minimal": ["ngochuyennew"],
+    "full": [
+      "banmai",
+      "chieuthanh",
+      "lacphi",
+      "maiphuong",
+      "manhdung",
+      "minhkhang",
+      "minhquang",
+      "mytam2",
+      "mytam2794",
+      "ngochuyen",
+      "ngochuyennew",
+      "ngocngan3701",
+      "phuongtrang",
+      "taian2",
+      "taian4",
+      "thanhphuong2",
+      "thientam",
+      "tranthanh3870",
+      "vietthao3886"
+    ]
+  },
+  "voices": [
+    {
+      "id": "banmai",
+      "language": "vi",
+      "files": { "onnx": "banmai.onnx", "config": "banmai.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "chieuthanh",
+      "language": "vi-vn-x-south",
+      "files": { "onnx": "chieuthanh.onnx", "config": "chieuthanh.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "lacphi",
+      "language": "vi",
+      "files": { "onnx": "lacphi.onnx", "config": "lacphi.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "maiphuong",
+      "language": "vi",
+      "files": { "onnx": "maiphuong.onnx", "config": "maiphuong.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "manhdung",
+      "language": "vi",
+      "files": { "onnx": "manhdung.onnx", "config": "manhdung.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "minhkhang",
+      "language": "vi",
+      "files": { "onnx": "minhkhang.onnx", "config": "minhkhang.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "minhquang",
+      "language": "vi",
+      "files": { "onnx": "minhquang.onnx", "config": "minhquang.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "mytam2",
+      "language": "vi-vn-x-south",
+      "files": { "onnx": "mytam2.onnx", "config": "mytam2.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "mytam2794",
+      "language": "vi",
+      "files": { "onnx": "mytam2794.onnx", "config": "mytam2794.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "ngochuyen",
+      "language": "vi",
+      "files": { "onnx": "ngochuyen.onnx", "config": "ngochuyen.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "ngochuyennew",
+      "language": "vi",
+      "files": { "onnx": "ngochuyennew.onnx", "config": "ngochuyennew.onnx.json" },
+      "size_bytes": 63516050,
+      "default": true
+    },
+    {
+      "id": "ngocngan3701",
+      "language": "vi",
+      "files": { "onnx": "ngocngan3701.onnx", "config": "ngocngan3701.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "phuongtrang",
+      "language": "vi",
+      "files": { "onnx": "phuongtrang.onnx", "config": "phuongtrang.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "taian2",
+      "language": "vi",
+      "files": { "onnx": "taian2.onnx", "config": "taian2.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "taian4",
+      "language": "vi",
+      "files": { "onnx": "taian4.onnx", "config": "taian4.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "thanhphuong2",
+      "language": "vi",
+      "files": { "onnx": "thanhphuong2.onnx", "config": "thanhphuong2.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "thientam",
+      "language": "vi-vn-x-south",
+      "files": { "onnx": "thientam.onnx", "config": "thientam.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "tranthanh3870",
+      "language": "vi",
+      "files": { "onnx": "tranthanh3870.onnx", "config": "tranthanh3870.onnx.json" },
+      "size_bytes": 63516050
+    },
+    {
+      "id": "vietthao3886",
+      "language": "vi",
+      "files": { "onnx": "vietthao3886.onnx", "config": "vietthao3886.onnx.json" },
+      "size_bytes": 63516050
+    }
+  ]
+}

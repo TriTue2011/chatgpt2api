@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Quản lý Proxy | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .proxy-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--border-color); gap: 12px; }
+        .proxy-item:last-child { border-bottom: none; }
+        .proxy-url { font-family: 'SF Mono','Fira Code','Consolas',monospace; font-size: 13px; word-break: break-all; color: var(--text-primary); }
+        .proxy-meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <div class="flex-between mb-2">
+        <div>
+            <h1 class="page-title" style="margin-bottom:4px">Quản lý Proxy</h1>
+            <p class="text-muted" style="font-size:13px">Thiết lập danh sách proxy cho đăng nhập tài khoản Zalo</p>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header">Thêm Proxy mới</div>
+        <div class="card-body">
+            <form id="addProxyForm" class="form-inline">
+                <input type="text" class="form-input" id="proxyUrl" placeholder="http://username:password@host:port" required>
+                <button type="submit" class="btn btn-accent">Thêm mới</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <span>Danh sách Proxy (<span id="proxyCount">0</span>)</span>
+        </div>
+        <div class="card-body" id="proxyList">
+            <div class="empty-state">
+                <div class="empty-icon">🌐</div>
+                <h3>Không có proxy nào</h3>
+                <p>Hãy thêm proxy mới để bắt đầu.</p>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+function updateCount() {
+    document.getElementById('proxyCount').textContent = document.querySelectorAll('.proxy-item').length;
+}
+
+function addProxyItem(proxy) {
+    var list = document.getElementById('proxyList');
+    var empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    var div = document.createElement('div');
+    div.className = 'proxy-item';
+    div.setAttribute('data-proxy-url', proxy.url);
+
+    var infoDiv = document.createElement('div');
+    infoDiv.style.cssText = 'min-width:0;flex:1';
+
+    var urlDiv = document.createElement('div');
+    urlDiv.className = 'proxy-url';
+    urlDiv.textContent = proxy.url;
+    infoDiv.appendChild(urlDiv);
+
+    var metaDiv = document.createElement('div');
+    metaDiv.className = 'proxy-meta';
+    metaDiv.textContent = 'Số tài khoản: ' + (proxy.accounts ? proxy.accounts.length : 0);
+    infoDiv.appendChild(metaDiv);
+
+    div.appendChild(infoDiv);
+
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger btn-sm del-proxy';
+    delBtn.textContent = 'Xóa';
+    div.appendChild(delBtn);
+
+    list.insertBefore(div, list.firstChild);
+    updateCount();
+
+    div.querySelector('.del-proxy').addEventListener('click', function() {
+        var url = div.getAttribute('data-proxy-url');
+        if (!confirm('Bạn có chắc chắn muốn xóa proxy này?')) return;
+        fetch(INGRESS_PATH + '/api/proxy/' + encodeURIComponent(url), { method: 'DELETE' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    div.style.opacity = '0';
+                    div.style.transform = 'translateX(20px)';
+                    div.style.transition = 'all 200ms ease';
+                    setTimeout(function() { div.remove(); updateCount(); if (!document.querySelectorAll('.proxy-item').length) showEmpty(); }, 200);
+                } else { alert(d.error || 'Lỗi khi xóa proxy'); }
+            });
+    });
+}
+
+function showEmpty() {
+    document.getElementById('proxyList').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">🌐</div><h3>Không có proxy nào</h3><p>Hãy thêm proxy mới để bắt đầu.</p></div>';
+}
+
+document.getElementById('addProxyForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var input = document.getElementById('proxyUrl');
+    var url = input.value.trim();
+    if (!url) return;
+    fetch(INGRESS_PATH + '/api/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxyUrl: url })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) { addProxyItem(d.proxy); input.value = ''; }
+        else { alert(d.error || 'Lỗi khi thêm proxy'); }
+    })
+    .catch(function() { alert('Lỗi kết nối'); });
+});
+
+// Load initial proxies
+fetch(INGRESS_PATH + '/api/proxy')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success && d.data && d.data.length) {
+            document.getElementById('proxyList').innerHTML = '';
+            d.data.forEach(function(p) { addProxyItem(p); });
+        }
+    });
+</script>
+
+</body>
+</html>

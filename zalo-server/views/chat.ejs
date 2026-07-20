@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Zalo Chat</title>
+    <meta name="description" content="Web chat cho Zalo">
+    <meta name="theme-color" content="#0068ff">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Zalo Chat">
+    <link rel="manifest" href="<%= ingressPath %>/pwa-manifest">
+    <script>
+    const base=location.origin + '<%= ingressPath %>';
+    const m={name:'Zalo Chat',short_name:'Zalo Chat',start_url:base+'/chat',id:base+'/chat',display:'standalone',orientation:'portrait-primary',background_color:'#f8f9fb',theme_color:'#0068ff',icons:[{src:base+'/chat/icons/icon-192.png',sizes:'192x192',type:'image/png'},{src:base+'/chat/icons/icon-512.png',sizes:'512x512',type:'image/png'}],screenshots:[{src:base+'/chat/icons/screenshot-wide.png',sizes:'1280x720',type:'image/png',form_factor:'wide'},{src:base+'/chat/icons/screenshot-narrow.png',sizes:'720x1280',type:'image/png',form_factor:'narrow'}]};
+    const b=new Blob([JSON.stringify(m)],{type:'application/manifest+json'});
+    document.querySelector('link[rel="manifest"]').href=URL.createObjectURL(b);
+    </script>
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/chat.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="chat-app">
+        <!-- Cột trái: Danh sách hội thoại -->
+        <aside id="sidebar">
+            <div id="sidebar-header">
+                <div id="account-selector-wrapper">
+                    <select id="account-selector">
+                        <option value="">-- Chọn tài khoản --</option>
+                    </select>
+                </div>
+                <div id="sidebar-actions">
+                    <button id="theme-toggle" title="Đổi theme">🌙</button>
+                    <a href="<%= ingressPath %>/" id="home-link" title="Về trang chính">⚙️</a>
+                </div>
+            </div>
+            <div id="conversation-search">
+                <input type="text" id="search-input" placeholder="Tìm kiếm hội thoại...">
+            </div>
+            <div id="conversation-list"></div>
+            <div id="sidebar-empty" class="empty-state">
+                <div class="empty-icon">💬</div>
+                <p>Chọn tài khoản để xem hội thoại</p>
+            </div>
+        </aside>
+
+        <!-- Cột phải: Khung chat -->
+        <main id="chat-main">
+            <div id="chat-empty" class="empty-state">
+                <div class="empty-icon">👋</div>
+                <h3>Chào <%= username %></h3>
+                <p>Chọn một cuộc hội thoại để bắt đầu nhắn tin</p>
+            </div>
+            <div id="chat-window" style="display:none">
+                <header id="chat-header">
+                    <button id="back-btn" title="Quay lại">←</button>
+                    <div id="chat-avatar"></div>
+                    <div id="chat-info">
+                        <h3 id="chat-name"></h3>
+                        <span id="chat-subtitle"></span>
+                    </div>
+                </header>
+                <div id="message-list"></div>
+                <div id="chat-input-area">
+                    <textarea id="message-input" rows="1" placeholder="Nhập tin nhắn..." autofocus></textarea>
+                    <button id="send-btn" title="Gửi">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="install-banner" style="display:none">
+        <span>📱 Cài app Zalo Chat</span>
+        <button id="install-btn">Cài đặt</button>
+        <button id="install-close">✕</button>
+    </div>
+
+    <script>
+    let deferredPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        document.getElementById('install-banner').style.display = 'flex';
+    });
+
+    document.getElementById('install-btn').addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const result = await deferredPrompt.userChoice;
+        document.getElementById('install-banner').style.display = result.outcome === 'accepted' ? 'none' : 'flex';
+        deferredPrompt = null;
+    });
+
+    document.getElementById('install-close').addEventListener('click', () => {
+        document.getElementById('install-banner').style.display = 'none';
+    });
+
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('<%= ingressPath %>/chat/sw.js', { scope: '<%= ingressPath %>/chat/' });
+    }
+    </script>
+    <script>window.INGRESS_PATH = '<%= ingressPath %>';</script>
+    <script type="module" src="<%= ingressPath %>/chat/js/chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Zalo Chat — Quản lý Zalo</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fb;
+            --bg-tertiary: #eef0f4;
+            --bg-hover: #f0f2f5;
+            --text-primary: #1a1c1e;
+            --text-secondary: #5f6368;
+            --text-muted: #9aa0a6;
+            --border-color: #e4e6eb;
+            --accent: #0068ff;
+            --accent-light: #e8f0fe;
+            --accent-hover: #0052cc;
+            --accent-gradient: linear-gradient(135deg, #0068ff 0%, #4d9fff 100%);
+            --danger: #ea4335;
+            --danger-hover: #d93025;
+            --success: #34a853;
+            --warning: #f9ab00;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
+            --shadow-md: 0 4px 16px rgba(0,0,0,.08);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,.12);
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 22px;
+            --radius-xl: 28px;
+            --transition-fast: 150ms ease;
+            --transition-normal: 250ms cubic-bezier(.4,0,.2,1);
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #1c1c2e;
+            --bg-secondary: #151521;
+            --bg-tertiary: #111118;
+            --bg-hover: #242436;
+            --text-primary: #e8e8f0;
+            --text-secondary: #a0a0b4;
+            --text-muted: #6c6c80;
+            --border-color: #2a2a3e;
+            --accent: #5ea3ff;
+            --accent-light: #1e3050;
+            --accent-hover: #7db8ff;
+            --accent-gradient: linear-gradient(135deg, #5ea3ff 0%, #8abfff 100%);
+            --danger: #f28b82;
+            --danger-hover: #e67c73;
+            --success: #81c995;
+            --warning: #fdd663;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+            --shadow-md: 0 4px 16px rgba(0,0,0,.25);
+            --shadow-lg: 0 12px 40px rgba(0,0,0,.4);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]) {
+                --bg-primary: #1c1c2e;
+                --bg-secondary: #151521;
+                --bg-tertiary: #111118;
+                --bg-hover: #242436;
+                --text-primary: #e8e8f0;
+                --text-secondary: #a0a0b4;
+                --text-muted: #6c6c80;
+                --border-color: #2a2a3e;
+                --accent: #5ea3ff;
+                --accent-light: #1e3050;
+                --accent-hover: #7db8ff;
+                --accent-gradient: linear-gradient(135deg, #5ea3ff 0%, #8abfff 100%);
+                --danger: #f28b82;
+                --danger-hover: #e67c73;
+                --success: #81c995;
+                --warning: #fdd663;
+                --shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+                --shadow-md: 0 4px 16px rgba(0,0,0,.25);
+                --shadow-lg: 0 12px 40px rgba(0,0,0,.4);
+            }
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-family);
+            font-size: 14px;
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.5;
+        }
+
+        /* ── Header ─────────────────────────────────────────────────── */
+
+        .app-header {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 24px;
+            background: rgba(255,255,255,.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+        }
+
+        [data-theme="dark"] .app-header {
+            background: rgba(28,28,46,.82);
+        }
+
+        .app-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--text-primary);
+            font-weight: 800;
+            font-size: 20px;
+            letter-spacing: -0.3px;
+            flex-shrink: 0;
+        }
+
+        .app-logo-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-sm);
+            background: var(--accent-gradient);
+            color: #fff;
+            font-size: 20px;
+            box-shadow: 0 4px 12px rgba(0,104,255,.3);
+        }
+
+        .header-spacer { flex: 1; }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 18px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+            font-family: var(--font-family);
+            cursor: pointer;
+            text-decoration: none;
+            transition: all var(--transition-fast);
+            white-space: nowrap;
+            line-height: 1;
+        }
+
+        .btn-accent {
+            background: var(--accent-gradient);
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(0,104,255,.25);
+        }
+        .btn-accent:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(0,104,255,.35); }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+        .btn-outline:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+        }
+        .btn-danger:hover { background: var(--danger-hover); transform: translateY(-1px); }
+
+        .btn-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 38px;
+            height: 38px;
+            padding: 0;
+            border: none;
+            border-radius: var(--radius-md);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 18px;
+            transition: all var(--transition-fast);
+            flex-shrink: 0;
+        }
+        .btn-icon:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+        .user-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: var(--radius-xl);
+            background: var(--bg-tertiary);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .user-avatar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            color: #fff;
+            font-size: 13px;
+            font-weight: 700;
+        }
+
+        @media (max-width: 768px) {
+            .app-header { padding: 10px 14px; gap: 10px; }
+            .app-logo { font-size: 17px; }
+            .app-logo-icon { width: 34px; height: 34px; font-size: 17px; }
+            .btn { padding: 8px 14px; font-size: 12px; }
+            .user-badge { display: none; }
+            .user-badge-mobile { display: flex !important; }
+        }
+
+        @media (min-width: 769px) {
+            .user-badge-mobile { display: none !important; }
+        }
+
+        .user-badge-mobile {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            border: none;
+        }
+
+        /* ── Main Container ─────────────────────────────────────────── */
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 32px 24px;
+        }
+
+        @media (max-width: 768px) {
+            .container { padding: 20px 14px; }
+        }
+
+        /* ── Hero ───────────────────────────────────────────────────── */
+
+        .hero {
+            text-align: center;
+            padding: 40px 20px 32px;
+        }
+
+        .hero h1 {
+            font-size: 36px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            margin-bottom: 8px;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 16px;
+            color: var(--text-secondary);
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        @media (max-width: 768px) {
+            .hero { padding: 24px 12px 20px; }
+            .hero h1 { font-size: 26px; }
+            .hero p { font-size: 14px; }
+        }
+
+        /* ── Chat Banner ────────────────────────────────────────────── */
+
+        .chat-banner {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px 24px;
+            margin-bottom: 28px;
+            border-radius: var(--radius-md);
+            background: var(--accent-gradient);
+            color: #fff;
+            text-decoration: none;
+            box-shadow: 0 8px 28px rgba(0,104,255,.3);
+            transition: all var(--transition-normal);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .chat-banner::after {
+            content: '';
+            position: absolute;
+            right: -40px;
+            top: -40px;
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: rgba(255,255,255,.08);
+            pointer-events: none;
+        }
+
+        .chat-banner:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 14px 36px rgba(0,104,255,.4);
+        }
+
+        .chat-banner-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 56px;
+            height: 56px;
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,.18);
+            font-size: 28px;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+        }
+
+        .chat-banner-body { position: relative; z-index: 1; flex: 1; }
+        .chat-banner-body h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+        .chat-banner-body p { font-size: 13px; opacity: .85; }
+
+        .chat-banner-arrow {
+            font-size: 20px;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+            transition: transform var(--transition-fast);
+        }
+        .chat-banner:hover .chat-banner-arrow { transform: translateX(4px); }
+
+        @media (max-width: 768px) {
+            .chat-banner { padding: 16px 18px; gap: 12px; }
+            .chat-banner-icon { width: 44px; height: 44px; font-size: 22px; }
+            .chat-banner-body h3 { font-size: 15px; }
+        }
+
+        /* ── Section ─────────────────────────────────────────────────── */
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 14px;
+            padding-left: 4px;
+        }
+
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 14px;
+            margin-bottom: 28px;
+        }
+
+        @media (max-width: 768px) {
+            .card-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+        }
+
+        @media (max-width: 480px) {
+            .card-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── Card ────────────────────────────────────────────────────── */
+
+        .card {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 22px;
+            border-radius: var(--radius-md);
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            text-decoration: none;
+            color: var(--text-primary);
+            transition: all var(--transition-normal);
+            position: relative;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-md);
+            border-color: transparent;
+        }
+
+        .card:active { transform: translateY(-1px); }
+
+        .card-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-sm);
+            font-size: 22px;
+            flex-shrink: 0;
+        }
+
+        .card-icon.blue   { background: #e8f0fe; color: #0068ff; }
+        .card-icon.green  { background: #e6f4ea; color: #34a853; }
+        .card-icon.orange { background: #fef7e0; color: #f9ab00; }
+        .card-icon.purple { background: #f3e8fd; color: #9334e6; }
+        .card-icon.teal   { background: #e0f7f5; color: #009688; }
+
+        [data-theme="dark"] .card-icon.blue   { background: #1a3050; }
+        [data-theme="dark"] .card-icon.green  { background: #1a3525; }
+        [data-theme="dark"] .card-icon.orange { background: #352a15; }
+        [data-theme="dark"] .card-icon.purple { background: #2a1a40; }
+        [data-theme="dark"] .card-icon.teal   { background: #1a3530; }
+
+        .card-body { flex: 1; }
+
+        .card-body h4 {
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            letter-spacing: -0.2px;
+        }
+
+        .card-body p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .card-arrow {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 14px;
+            color: var(--text-muted);
+            opacity: 0;
+            transition: all var(--transition-fast);
+        }
+        .card:hover .card-arrow { opacity: 1; }
+
+        @media (max-width: 768px) {
+            .card { padding: 16px; gap: 10px; }
+            .card-icon { width: 40px; height: 40px; font-size: 18px; border-radius: var(--radius-sm); }
+            .card-body h4 { font-size: 14px; }
+            .card-body p { font-size: 12px; }
+            .card-arrow { opacity: .5; top: 14px; right: 14px; font-size: 12px; }
+        }
+
+        /* ── Welcome (not logged in) ─────────────────────────────────── */
+
+        .welcome-card {
+            text-align: center;
+            padding: 64px 32px;
+            border-radius: var(--radius-md);
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .welcome-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .welcome-card h2 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            letter-spacing: -0.3px;
+        }
+
+        .welcome-card p {
+            font-size: 15px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 768px) {
+            .welcome-card { padding: 40px 20px; }
+            .welcome-card h2 { font-size: 22px; }
+            .welcome-icon { font-size: 48px; }
+        }
+
+        /* ── Footer ──────────────────────────────────────────────────── */
+
+        .app-footer {
+            text-align: center;
+            padding: 24px;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        /* ── Mobile user drawer ──────────────────────────────────────── */
+
+        .user-drawer-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,.4);
+            z-index: 80;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--transition-fast);
+        }
+        .user-drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+        .user-drawer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 90;
+            background: var(--bg-primary);
+            border-radius: var(--radius-md) var(--radius-md) 0 0;
+            padding: 20px;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+            box-shadow: 0 -4px 24px rgba(0,0,0,.15);
+            transform: translateY(100%);
+            transition: transform var(--transition-normal);
+        }
+        .user-drawer.open { transform: translateY(0); }
+
+        .user-drawer-handle {
+            width: 36px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--border-color);
+            margin: 0 auto 16px;
+        }
+
+        .user-drawer-info {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .user-drawer-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .user-drawer-actions .btn {
+            width: 100%;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- Header                                                          -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+
+    <div class="header-spacer"></div>
+
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" title="Đổi theme" aria-label="Đổi theme">🌙</button>
+
+        <% if (authenticated) { %>
+            <span class="user-badge">
+                <span class="user-avatar"><%= username.charAt(0).toUpperCase() %></span>
+                <%= username %>
+            </span>
+            <button class="user-badge-mobile" id="user-badge-mob" aria-label="Tài khoản">
+                <%= username.charAt(0).toUpperCase() %>
+            </button>
+            <button class="btn btn-danger" onclick="handleLogout()">Đăng xuất</button>
+        <% } else { %>
+            <a href="<%= ingressPath %>/admin-login" class="btn btn-accent">Đăng nhập</a>
+        <% } %>
+    </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- Main Content                                                    -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<main class="container">
+
+    <% if (authenticated) { %>
+
+    <!-- Hero -->
+    <div class="hero">
+        <h1>Xin chào, <%= username %></h1>
+        <p>Quản lý tài khoản Zalo, theo dõi tin nhắn và nhắn tin trực tiếp từ web</p>
+    </div>
+
+    <!-- Chat Banner -->
+    <a href="<%= ingressPath %>/chat" class="chat-banner">
+        <div class="chat-banner-icon">💬</div>
+        <div class="chat-banner-body">
+            <h3>Web Chat Zalo</h3>
+            <p>Nhắn tin trực tiếp với bạn bè và nhóm ngay trên trình duyệt</p>
+        </div>
+        <span class="chat-banner-arrow">→</span>
+    </a>
+
+    <!-- Features -->
+    <div class="section-title">Tài khoản &amp; Kết nối</div>
+    <div class="card-grid">
+        <a href="<%= ingressPath %>/zalo-login" class="card">
+            <div class="card-icon blue">📱</div>
+            <div class="card-body">
+                <h4>Đăng nhập Zalo</h4>
+                <p>Quét mã QR để đăng nhập tài khoản Zalo mới, hỗ trợ proxy</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+
+        <a href="<%= ingressPath %>/accounts" class="card">
+            <div class="card-icon green">👥</div>
+            <div class="card-body">
+                <h4>Quản lý tài khoản</h4>
+                <p>Xem và quản lý tất cả tài khoản Zalo đã đăng nhập</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+
+        <a href="<%= ingressPath %>/proxies" class="card">
+            <div class="card-icon orange">🌐</div>
+            <div class="card-body">
+                <h4>Quản lý Proxy</h4>
+                <p>Thiết lập danh sách proxy cho đăng nhập tài khoản</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+
+        <a href="<%= ingressPath %>/account-webhook-manager" class="card">
+            <div class="card-icon purple">🔗</div>
+            <div class="card-body">
+                <h4>Quản lý Webhook</h4>
+                <p>Cấu hình webhook nhận tin nhắn và sự kiện theo tài khoản</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+    </div>
+
+    <!-- Tools -->
+    <div class="section-title">Công cụ</div>
+    <div class="card-grid">
+        <a href="<%= ingressPath %>/messages" class="card">
+            <div class="card-icon teal">📊</div>
+            <div class="card-body">
+                <h4>Theo dõi tin nhắn</h4>
+                <p>Xem real-time tin nhắn đến và lấy Thread ID cho automation</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+
+        <% if (isAdmin) { %>
+        <a href="<%= ingressPath %>/user-management" class="card">
+            <div class="card-icon purple">🛡️</div>
+            <div class="card-body">
+                <h4>Quản lý người dùng</h4>
+                <p>Thêm, xóa, phân quyền người dùng truy cập hệ thống</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+        <% } %>
+
+        <a href="<%= ingressPath %>/change-password" class="card">
+            <div class="card-icon blue">🔐</div>
+            <div class="card-body">
+                <h4>Đổi mật khẩu</h4>
+                <p>Cập nhật mật khẩu đăng nhập cho tài khoản của bạn</p>
+            </div>
+            <span class="card-arrow">→</span>
+        </a>
+    </div>
+
+    <% } else { %>
+
+    <!-- Not logged in -->
+    <div class="hero">
+        <h1>Zalo Chat</h1>
+        <p>Hệ thống quản lý đa tài khoản Zalo — đăng nhập, theo dõi và nhắn tin tất cả trong một nền tảng</p>
+    </div>
+
+    <div class="welcome-card">
+        <div class="welcome-icon">⚡</div>
+        <h2>Bắt đầu ngay</h2>
+        <p>Đăng nhập để quản lý tài khoản Zalo, cấu hình webhook và nhắn tin trực tiếp</p>
+        <a href="<%= ingressPath %>/admin-login" class="btn btn-accent" style="font-size:15px;padding:12px 28px">Đăng nhập vào hệ thống</a>
+    </div>
+
+    <% } %>
+
+</main>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- Footer                                                          -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<footer class="app-footer">
+    Zalo Chat &copy; 2025 — Hệ thống quản lý đa tài khoản Zalo
+</footer>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- Mobile User Drawer                                              -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<% if (authenticated) { %>
+<div class="user-drawer-overlay" id="user-overlay"></div>
+<div class="user-drawer" id="user-drawer">
+    <div class="user-drawer-handle"></div>
+    <div class="user-drawer-info">
+        <span class="user-avatar" style="display:inline-flex;width:28px;height:28px;vertical-align:middle;margin-right:6px"><%= username.charAt(0).toUpperCase() %></span>
+        <%= username %>
+    </div>
+    <div class="user-drawer-actions">
+        <% if (isAdmin) { %>
+        <a href="<%= ingressPath %>/user-management" class="btn btn-outline">🛡️ Quản lý người dùng</a>
+        <% } %>
+        <a href="<%= ingressPath %>/change-password" class="btn btn-outline">🔐 Đổi mật khẩu</a>
+        <button class="btn btn-danger" onclick="handleLogout()">Đăng xuất</button>
+    </div>
+</div>
+<% } %>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- Scripts                                                         -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+// ── Theme ─────────────────────────────────────────────────────────
+
+(function() {
+    var stored = localStorage.getItem('chat-theme');
+    if (stored) {
+        document.documentElement.setAttribute('data-theme', stored);
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+    }
+    updateIcon();
+
+    document.getElementById('theme-toggle').addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        updateIcon();
+    });
+
+    function updateIcon() {
+        var btn = document.getElementById('theme-toggle');
+        btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙';
+    }
+})();
+
+// ── Logout ────────────────────────────────────────────────────────
+
+function handleLogout() {
+    fetch(INGRESS_PATH + '/api/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) { window.location.reload(); }
+        else { alert('Lỗi khi đăng xuất: ' + data.message); }
+    })
+    .catch(function(e) {
+        console.error('Lỗi:', e);
+        alert('Đã xảy ra lỗi khi đăng xuất');
+    });
+}
+
+// ── Mobile user drawer ────────────────────────────────────────────
+
+<% if (authenticated) { %>
+(function() {
+    var btn = document.getElementById('user-badge-mob');
+    var drawer = document.getElementById('user-drawer');
+    var overlay = document.getElementById('user-overlay');
+
+    function open() {
+        drawer.classList.add('open');
+        overlay.classList.add('open');
+    }
+    function close() {
+        drawer.classList.remove('open');
+        overlay.classList.remove('open');
+    }
+
+    btn.addEventListener('click', function() {
+        drawer.classList.contains('open') ? close() : open();
+    });
+    overlay.addEventListener('click', close);
+})();
+<% } %>
+</script>
+
+</body>
+</html>

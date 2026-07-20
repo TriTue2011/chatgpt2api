@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Theo dõi tin nhắn | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .msg-log { max-height: 520px; overflow-y: auto; }
+        .msg-item { padding: 14px 16px; border-bottom: 1px solid var(--border-color); transition: background var(--transition-fast); }
+        .msg-item:hover { background: var(--bg-hover); }
+        .msg-item:last-child { border-bottom: none; }
+        .thread-id-link { font-weight: 700; color: var(--accent); cursor: pointer; user-select: all; }
+        .thread-id-link:hover { text-decoration: underline; }
+        .msg-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .msg-detail { display: none; margin-top: 8px; }
+        .msg-detail.open { display: block; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-dot.on { background: var(--success); }
+        .status-dot.off { background: var(--danger); }
+        @media (max-width: 768px) { .msg-log { max-height: 360px; } }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <span id="conn-status" class="badge badge-warning">Đang kết nối...</span>
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <div class="flex-between mb-2">
+        <div>
+            <h1 class="page-title" style="margin-bottom:4px">Theo dõi tin nhắn</h1>
+            <p class="text-muted" style="font-size:13px">Xem real-time tin nhắn đến và lấy Thread ID cho automation</p>
+        </div>
+        <button id="clearBtn" class="btn btn-outline btn-sm">Xóa tất cả</button>
+    </div>
+
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-header">Tin nhắn gần đây</div>
+            <div class="card-body" style="padding:0">
+                <div id="messages" class="msg-log">
+                    <div class="empty-state"><p>Đang chờ tin nhắn...</p></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Thread ID đã sao chép</div>
+            <div class="card-body">
+                <div class="form-inline">
+                    <input type="text" id="copiedThreadId" class="form-input" readonly placeholder="Chưa có Thread ID nào">
+                    <button id="copyAgain" class="btn btn-accent btn-sm">Sao chép</button>
+                </div>
+                <div class="mt-2" style="font-size:12px;color:var(--text-muted)">
+                    <p>Nhấp vào <strong>Thread ID</strong> trong tin nhắn để sao chép tự động.</p>
+                    <p style="margin-top:4px">Thread ID cho người dùng và nhóm là khác nhau.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+var msgContainer = document.getElementById('messages');
+var copiedInput = document.getElementById('copiedThreadId');
+var connStatus = document.getElementById('conn-status');
+var msgHistory = [];
+var socket = null;
+var reconnectAttempts = 0;
+var maxReconnect = 5;
+
+function setConnected(yes) {
+    connStatus.className = 'badge ' + (yes ? 'badge-success' : 'badge-danger');
+    connStatus.innerHTML = '<span class="status-dot ' + (yes ? 'on' : 'off') + '"></span>' + (yes ? 'Đã kết nối' : 'Mất kết nối');
+}
+
+function connectWS() {
+    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var base = INGRESS_PATH || '';
+    socket = new WebSocket(proto + '//' + window.location.host + base + '/ws');
+    socket.onopen = function() {
+        setConnected(true);
+        reconnectAttempts = 0;
+    };
+    socket.onmessage = function(e) {
+        try {
+            var d = JSON.parse(e.data);
+            addMessage(d);
+        } catch (ex) {}
+    };
+    socket.onclose = function() {
+        setConnected(false);
+        if (reconnectAttempts < maxReconnect) {
+            reconnectAttempts++;
+            connStatus.textContent = 'Kết nối lại (' + reconnectAttempts + '/' + maxReconnect + ')...';
+            setTimeout(connectWS, 5000);
+        }
+    };
+}
+connectWS();
+
+function addMessage(data) {
+    msgHistory.push(data);
+    var div = document.createElement('div');
+    div.className = 'msg-item';
+
+    var html = '';
+    var tid = data.threadId || data.fromThreadId;
+    if (tid) {
+        html += '<div><span class="thread-id-link" data-tid="' + tid + '">Thread ID: ' + tid + '</span></div>';
+    }
+    if (data.message) html += '<div style="margin-top:4px"><strong>Tin nhắn:</strong> ' + data.message + '</div>';
+    if (data.fromUser) {
+        var name = typeof data.fromUser === 'object' ? (data.fromUser.name || '') : data.fromUser;
+        html += '<div><strong>Từ:</strong> ' + name + '</div>';
+    }
+    html += '<div class="msg-meta">Nhận lúc: ' + new Date().toLocaleTimeString() + '</div>';
+    html += '<button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="this.nextElementSibling.classList.toggle(\'open\')">Xem chi tiết</button>';
+    html += '<div class="msg-detail"><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+
+    div.innerHTML = html;
+    msgContainer.insertBefore(div, msgContainer.firstChild);
+
+    var tidEl = div.querySelector('.thread-id-link');
+    if (tidEl) {
+        tidEl.addEventListener('click', function() {
+            var id = this.getAttribute('data-tid');
+            copiedInput.value = id;
+            copiedInput.select();
+            navigator.clipboard.writeText(id).then(function() {
+                var toast = document.createElement('div');
+                toast.className = 'alert alert-success';
+                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:100;max-width:320px';
+                toast.textContent = 'Đã sao chép: ' + id;
+                document.body.appendChild(toast);
+                setTimeout(function() { toast.remove(); }, 2500);
+            }).catch(function() {});
+        });
+    }
+}
+
+document.getElementById('clearBtn').addEventListener('click', function() {
+    msgContainer.innerHTML = '<div class="empty-state"><p>Đang chờ tin nhắn...</p></div>';
+    msgHistory = [];
+});
+
+document.getElementById('copyAgain').addEventListener('click', function() {
+    if (copiedInput.value) {
+        copiedInput.select();
+        navigator.clipboard.writeText(copiedInput.value).catch(function() {});
+    }
+});
+</script>
+
+</body>
+</html>

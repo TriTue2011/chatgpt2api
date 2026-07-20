@@ -1,0 +1,217 @@
+name: Publish Docker Image
+
+# Trigger on push to main (source changes) AND version tags (releases)
+on:
+  push:
+    branches:
+      - main
+    # vn-mcp-hub + captcha-solver are part of this single image, so changes to
+    # them must rebuild here too. Only docs are ignored.
+    paths-ignore:
+      - "**.md"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  # GHCR refs must be lowercase; github.repository_owner is "TriTue2011" (mixed
+  # case) which fails push-by-digest with "repository name must be lowercase".
+  # Hardcode the lowercased owner.
+  REGISTRY_IMAGE: ghcr.io/tritue2011/chatgpt2api
+
+jobs:
+  # Gate: hermetic unit tests (pytest) + web typecheck TRƯỚC khi build image.
+  # Chỉ chạy subset test không cần server sống (test_v1_*.py là integration —
+  # cần localhost:8000; test_account_image_capabilities.py có test stale so với
+  # AccountService hiện tại). Typecheck = tsc --noEmit (nhanh); next build đầy
+  # đủ đã có trong Docker build stage.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # pyproject ghim mirror aliyun (nhanh ở VN, chậm trên GH runner) — ép PyPI.
+      UV_DEFAULT_INDEX: https://pypi.org/simple
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv + Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python deps
+        run: uv sync --frozen
+
+      - name: Run unit tests
+        run: uv run python -m pytest test/test_backend_router.py test/test_auth_service.py test/test_config.py test/test_provider_circuit.py test/test_session_affinity.py -q
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      # Codebase còn ~20 lỗi type sẵn có (next.config ignoreBuildErrors=true)
+      # → typecheck chạy để HIỂN THỊ trong log nhưng CHƯA chặn build. Dọn hết
+      # lỗi type rồi bỏ continue-on-error để thành gate cứng.
+      - name: Web typecheck (informational)
+        working-directory: web
+        continue-on-error: true
+        run: |
+          bun install --frozen-lockfile
+          bunx tsc --noEmit
+
+  # Build each architecture on its NATIVE runner (fast; no QEMU emulation of the
+  # ~9GB browser+ML image). arm64 uses GitHub's free hosted arm64 runner
+  # (public repos). Each leg pushes a digest-only image; `merge` stitches them
+  # into one multi-arch manifest. Google Chrome is amd64-only, so the Dockerfile
+  # installs Debian chromium on arm64 (TARGETARCH branch).
+  build:
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Prepare platform pair
+        run: echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+        env:
+          platform: ${{ matrix.platform }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: app
+          platforms: ${{ matrix.platform }}
+          # gha cache previously served a stale services/ layer; keep off so the
+          # image always contains the committed code (~1m slower).
+          no-cache: true
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Image GPU (amd64-only, tag :gpu): thêm torch CUDA + transformers để VieNeu
+  # tự chạy PyTorch/GPU (vieneu_backend=auto). Tách tag riêng — image thường
+  # giữ nguyên nhẹ. Image ~15GB nên phải dọn đĩa runner trước khi build.
+  build-gpu:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push :gpu
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: app
+          platforms: linux/amd64
+          no-cache: true
+          build-args: |
+            GPU=1
+          push: true
+          tags: ${{ env.REGISTRY_IMAGE }}:gpu
+
+  # Stitch the per-arch digests into a single multi-arch manifest with the real
+  # tags (latest / sha- / version). Only runs if BOTH arch builds succeed, so a
+  # broken arm64 leg never overwrites the working amd64 `latest`.
+  merge:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Create multi-arch manifest and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect published manifest
+        run: docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}

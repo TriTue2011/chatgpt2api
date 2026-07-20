@@ -1,0 +1,47 @@
+# ============================================================================
+# All-in-one stack in ONE container (c2a):
+#   API gateway + Web UI + VN MCP Hub + Captcha Solver
+#   + noVNC browser stack + Zalo server
+#
+#   docker compose up -d --build
+# ============================================================================
+
+services:
+  c2a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: c2a:latest
+    container_name: c2a
+    restart: unless-stopped
+
+    ports:
+      - "3030:80"      # public API + web UI (+ same-origin /api/captcha proxy)
+      - "6080:6080"    # noVNC — manual web logins (captcha-solver)
+      - "3001:3001"    # zalo-server (Zalo cá nhân) — cho HA integration trỏ vào
+      - "10600:10600"  # Wyoming Protocol server nhúng (TTS+STT cho Home Assistant)
+
+    volumes:
+      # Single persistent mount. Holds chatgpt2api data, vn-mcp-hub KB + chroma_db,
+      # and captcha-solver browser profiles — all under one host directory.
+      - /opt/c2a-data:/app/data
+
+    environment:
+      # [REQUIRED] Auth key protecting the API
+      CHATGPT2API_AUTH_KEY: your_secret_key_here
+      # captcha-solver internal auth (used by claude/gemini/flow web logins)
+      CAPTCHA_SOLVER_API_KEY: your_secret_key_here
+      # Storage backend: json (default), sqlite, postgres, git
+      STORAGE_BACKEND: json
+      # [Optional] Public base URL for image links
+      # CHATGPT2API_BASE_URL: https://your-domain.com
+      # [Optional] Đặt mật khẩu cho noVNC :6080 (không đặt = không mật khẩu —
+      # chỉ dùng trong LAN, tuyệt đối không expose 6080 ra internet)
+      # VNC_PASSWORD: your_vnc_password
+
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/version')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

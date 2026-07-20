@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Đăng nhập | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        body { display: flex; align-items: center; justify-content: center; background: var(--bg-secondary); }
+        .login-card {
+            width: 380px;
+            max-width: 90vw;
+            padding: 36px 30px;
+            border-radius: var(--radius-md);
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-lg);
+        }
+        .login-card h1 {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 800;
+            margin-bottom: 6px;
+            letter-spacing: -0.3px;
+        }
+        .login-card .sub {
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 28px;
+        }
+        .login-error {
+            text-align: center;
+            font-size: 13px;
+            min-height: 20px;
+            margin-top: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h1>Zalo Chat</h1>
+        <p class="sub">Đăng nhập để tiếp tục</p>
+
+        <form id="loginForm">
+            <div class="form-group">
+                <label class="form-label" for="username">Tài khoản</label>
+                <input class="form-input" type="text" id="username" name="username" required autocomplete="username" autofocus>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="password">Mật khẩu</label>
+                <input class="form-input" type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn-accent btn-block btn-lg">Đăng nhập</button>
+            <div id="errorMessage" class="login-error text-danger"></div>
+        </form>
+    </div>
+
+    <script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+    (function() {
+        var s = localStorage.getItem('chat-theme');
+        if (s) document.documentElement.setAttribute('data-theme', s);
+        else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    })();
+
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var err = document.getElementById('errorMessage');
+        err.textContent = '';
+        try {
+            var r = await fetch(INGRESS_PATH + '/api/test-login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: document.getElementById('username').value,
+                    password: document.getElementById('password').value
+                }),
+                credentials: 'include'
+            });
+            var d = await r.json();
+            if (d.success) {
+                var p = new URLSearchParams(window.location.search);
+                var redirect = p.get('redirect');
+                // Chỉ cho phép redirect đến path nội bộ (bắt đầu bằng /, không phải //)
+                if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+                    window.location.href = INGRESS_PATH + redirect;
+                } else {
+                    window.location.href = INGRESS_PATH + '/';
+                }
+            } else {
+                err.textContent = d.message || 'Đăng nhập thất bại';
+            }
+        } catch (ex) {
+            err.textContent = 'Lỗi kết nối máy chủ';
+        }
+    });
+    </script>
+</body>
+</html>

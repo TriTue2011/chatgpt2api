@@ -1,0 +1,61 @@
+# Extra Python deps merged into the all-in-one image, on top of chatgpt2api's
+# locked deps (pyproject.toml + uv.lock). Installed with `uv pip install`.
+
+# ── vn-mcp-hub ──
+fastmcp>=2.0.0
+feedparser>=6.0.11
+beautifulsoup4>=4.12.0
+lunarcalendar>=0.0.9
+youtube-transcript-api>=0.6.2
+chromadb>=0.5.0
+fastembed>=0.4.0,<0.6.0
+boto3>=1.35.0
+lxml>=5.3.0
+markitdown[pdf]>=0.0.1
+pytesseract>=0.3.0
+pdf2image>=1.17.0
+vnstock>=4.0.0
+ddddocr>=1.4.0
+requests>=2.31.0
+cloudscraper>=1.2.0
+
+# ── captcha-solver ──
+patchright>=1.49
+playwright-recaptcha>=0.5
+pydantic>=2.9
+pydantic-settings>=2.5
+pyotp>=2.9
+cloakbrowser[patchright]>=0.3
+
+# ── web reader (Scrapling HTTP Fetcher: stealth scrape, no browser engine) ──
+scrapling>=0.4.9
+browserforge>=1.2.1  # realistic fingerprint headers — required by Scrapling's HTTP Fetcher
+
+# Note: JS rendering uses the patchright Chromium already in the image (no
+# crawl4ai — it conflicts with scrapling on lxml and pulls a 2nd browser).
+
+# ── browser-use: LLM-driven web agent (web_agent MCP). LLM points back at
+#    chatgpt2api itself. [core] = native runtime; resolves cleanly in this venv. ──
+browser-use[core]>=0.1.40
+
+# ── Tiểu Vy agent (services/agent): SSH remote_system_status ──
+paramiko>=3.4.0
+
+# ── PDF → Word (bot Telegram + Zalo, services/pdf_to_word.py): pdf2docx giữ
+#    layout (kéo theo PyMuPDF + python-docx); OCR fallback dùng pytesseract sẵn có ──
+pdf2docx>=0.5.8
+
+# ── VieNeu-TTS v3 Turbo (giọng "vieneu:" trong services/voice) ──
+# Gói `vieneu` cài --no-deps trong Dockerfile để né gradio (~300MB, chỉ phục vụ
+# web UI riêng của họ). Dep runtime thật của đường ONNX/CPU liệt kê tường minh:
+sea-g2p>=0.7.20          # phonemizer Việt–Anh (Rust, torch-free)
+onnxruntime>=1.20.0      # chạy backbone + codec (sherpa-onnx cũng dlopen từ đây)
+tokenizers>=0.20         # tokenizer phoneme (torch-free)
+soundfile>=0.12          # audio I/O của SDK
+soxr>=0.5                # resample clip tham chiếu khi clone giọng
+huggingface_hub>=0.25    # tải/tra cache model (HF_HOME=data/hf)
+sentencepiece>=0.2.0     # sinh tokens.txt từ bpe.model (STT Zipformer tiếng Việt)
+
+# ── shared / proxy ──
+httpx>=0.28.1
+uvicorn[standard]>=0.44.0

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Quản lý người dùng | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <h1 class="page-title">Quản lý người dùng</h1>
+    <p class="page-subtitle">Thêm và quản lý tài khoản người dùng hệ thống</p>
+
+    <div id="message" class="alert" style="display:none"></div>
+
+    <div class="grid-2">
+        <div class="card">
+            <div class="card-header">Thêm người dùng mới</div>
+            <div class="card-body">
+                <form id="addUserForm">
+                    <div class="form-group">
+                        <label class="form-label" for="username">Tên đăng nhập</label>
+                        <input class="form-input" type="text" id="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="password">Mật khẩu</label>
+                        <input class="form-input" type="password" id="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="role">Vai trò</label>
+                        <select class="form-select" id="role">
+                            <option value="user">Người dùng thường</option>
+                            <option value="admin">Quản trị viên</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-accent">Thêm người dùng</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>Danh sách người dùng</span>
+                <button id="refreshUsers" class="btn btn-outline btn-sm">Làm mới</button>
+            </div>
+            <div class="card-body" id="userList">
+                <p class="text-muted">Đang tải danh sách...</p>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+function showMsg(text, type) {
+    var m = document.getElementById('message');
+    m.className = 'alert alert-' + type;
+    m.textContent = text;
+    m.style.display = 'flex';
+    setTimeout(function() { m.style.display = 'none'; }, 5000);
+}
+
+async function checkAuth() {
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/check-auth');
+        var d = await r.json();
+        if (!d.authenticated || d.role !== 'admin') window.location.href = INGRESS_PATH + '/admin-login';
+    } catch (e) { window.location.href = INGRESS_PATH + '/admin-login'; }
+}
+
+async function loadUsers() {
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/users');
+        if (!r.ok) throw new Error('Lỗi');
+        var d = await r.json();
+        var el = document.getElementById('userList');
+        if (!d.users || d.users.length === 0) {
+            el.innerHTML = '<div class="empty-state"><p>Không có người dùng nào.</p></div>';
+            return;
+        }
+        var h = '<div class="table-wrap"><table><thead><tr><th>Tên đăng nhập</th><th>Vai trò</th><th style="width:80px">Thao tác</th></tr></thead><tbody>';
+        d.users.forEach(function(u) {
+            h += '<tr><td>' + u.username + '</td><td><span class="badge ' + (u.role === 'admin' ? 'badge-info' : 'badge-muted') + '">' + (u.role === 'admin' ? 'Quản trị viên' : 'Người dùng') + '</span></td><td><button class="btn btn-danger btn-sm del-user-btn" data-username="' + u.username + '">Xóa</button></td></tr>';
+        });
+        h += '</tbody></table></div>';
+        el.innerHTML = h;
+
+        // Gắn sự kiện xóa
+        el.querySelectorAll('.del-user-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                deleteUserAccount(this.getAttribute('data-username'));
+            });
+        });
+    } catch (e) {
+        document.getElementById('userList').innerHTML = '<div class="alert alert-error">Không thể tải danh sách người dùng</div>';
+    }
+}
+
+document.getElementById('addUserForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                role: document.getElementById('role').value
+            }),
+            credentials: 'include'
+        });
+        var d = await r.json();
+        if (r.ok) {
+            showMsg('Đã thêm người dùng thành công!', 'success');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('role').value = 'user';
+            loadUsers();
+        } else {
+            showMsg(d.message || 'Lỗi khi thêm người dùng', 'error');
+        }
+    } catch (ex) { showMsg('Lỗi kết nối máy chủ', 'error'); }
+});
+
+document.getElementById('refreshUsers').addEventListener('click', loadUsers);
+
+async function deleteUserAccount(username) {
+    if (!confirm('Bạn có chắc chắn muốn xóa người dùng "' + username + '"?\nHành động này không thể hoàn tác.')) return;
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/users', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: username }),
+            credentials: 'include'
+        });
+        var d = await r.json();
+        showMsg(d.message || (d.success ? 'Đã xóa' : 'Lỗi'), d.success ? 'success' : 'error');
+        if (d.success) loadUsers();
+    } catch (e) { showMsg('Lỗi kết nối máy chủ', 'error'); }
+}
+
+window.addEventListener('load', function() { checkAuth(); loadUsers(); });
+</script>
+
+</body>
+</html>

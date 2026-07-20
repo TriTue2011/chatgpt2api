@@ -1,0 +1,109 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+web_dist
+# Virtual environments
+.venv
+.idea
+config.json
+remote_config.json
+remote_accounts.json
+**/remote_config.json
+**/remote_accounts.json
+edit
+
+docker-compose-local.yml
+**/docker-compose.local.yml
+
+.claude/settings.local.json
+
+# Environment variables
+.env
+.env.local
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Git cache
+git_cache/
+
+# codegraph local index (per-repo SQLite + FTS5)
+.codegraph/
+
+# Config editor cá nhân (lộ tên/đường dẫn máy) — KHÔNG public
+.antigravity.json
+# Scratch/deploy scripts (có thể chứa credentials)
+scratch/
+scratch_*.sh
+# Dữ liệu runtime cá nhân — KHÔNG public (workspace giáo viên, bài nộp học sinh,
+# PDF import thật, session sqlite, file test cục bộ).
+data/agent/
+data/tts_pdf_test/
+deploy/*
+# …except build-critical files used by the unified Dockerfile (no secrets)
+!deploy/supervisord.conf
+!deploy/extra-requirements.txt
+!deploy/cloudflare-gemini-proxy.js
+build_and_push.sh
+update_server.ps1
+setup_ssh_key.py
+restart_server.py
+deploy_free.py
+deploy_oauth.py
+deploy_web.py
+fix_security.py
+quick_deploy.py
+setup_ssh.py
+trigger_and_watch.py
+watch_auto.py
+watch_logs.py
+check_ha.py
+dbg_ha.py
+
+# Logs & screenshots
+*.log
+*.png
+*.jpg
+*.b64
+logs*.txt
+parse_results.txt
+*.html
+
+# Root test/debug files (không phải dự án)
+/9router-test
+/force_mcp.py
+/patch_js.py
+/patch_url.py
+/test_*.py
+/test_*.json
+/test_out.txt
+/test_strip*
+
+# Tool configs (local only)
+.agentmemoryignore
+
+# Plans & one-off scripts
+plans/
+scripts/test_storage.py
+# Script debug tạm — chứa email/token/mật khẩu tài khoản, KHÔNG push
+scripts/_tmp_*
+check.sh
+patch_gemini.py
+data/logs.jsonl
+# Piper TTS voices (download via scripts/download_piper_voices.py — not in image)
+data/piper/
+# Model giọng nói khác — đều tải bằng scripts/download_*_model.py, không vào git
+data/stt/
+data/stt-en/
+data/kokoro/
+data/hf/
+*.onnx
+!voices/**/*.json
+# zalo-server (Node nhung)
+zalo-server/node_modules/

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Đăng nhập Zalo | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .qr-card { max-width: 500px; margin: 0 auto; }
+        .qr-img { max-width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 12px; }
+        .qr-container { text-align: center; }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container container-sm">
+    <h1 class="page-title">Đăng nhập Zalo</h1>
+    <p class="page-subtitle">Quét mã QR bằng ứng dụng Zalo trên điện thoại</p>
+
+    <div class="card qr-card">
+        <div class="card-body">
+            <div id="login-form">
+                <div class="form-group">
+                    <label class="form-label" for="proxy">Proxy (không bắt buộc)</label>
+                    <input class="form-input" type="text" id="proxy" placeholder="http://user:pass@host:port">
+                    <p class="form-hint">Để trống nếu không sử dụng proxy</p>
+                </div>
+                <button id="login-button" class="btn btn-accent btn-block btn-lg">Tạo mã QR</button>
+            </div>
+            <div id="qr-container" class="qr-container" style="display:none">
+                <div id="qr-code"></div>
+                <p class="text-muted" style="font-size:13px">Quét mã QR bằng ứng dụng Zalo trên điện thoại của bạn để đăng nhập</p>
+            </div>
+            <div id="status-message" class="alert" style="display:none;margin-top:16px"></div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+var socket, countdownInterval;
+
+function setStatus(msg, type) {
+    var el = document.getElementById('status-message');
+    el.className = 'alert alert-' + type;
+    el.innerHTML = msg;
+    el.style.display = 'flex';
+}
+
+function generateQR() {
+    var proxy = document.getElementById('proxy').value;
+    var btn = document.getElementById('login-button');
+    var qrC = document.getElementById('qr-container');
+
+    btn.disabled = true;
+    btn.textContent = 'Đang tạo mã QR...';
+    setStatus('Đang tạo mã QR, vui lòng đợi...', 'info');
+
+    fetch(INGRESS_PATH + '/zalo-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxy: proxy })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success && d.qrCodeImage) {
+            document.getElementById('qr-code').innerHTML = '<img src="' + d.qrCodeImage + '" alt="Mã QR Zalo" class="qr-img">';
+            qrC.style.display = 'block';
+            setStatus('Vui lòng quét mã QR bằng ứng dụng Zalo trên điện thoại của bạn.', 'info');
+            connectWS();
+            btn.disabled = false;
+            btn.textContent = 'Tạo mã QR mới';
+        } else {
+            throw new Error('Không nhận được mã QR hợp lệ');
+        }
+    })
+    .catch(function(e) {
+        setStatus('Đã xảy ra lỗi khi tạo mã QR. Vui lòng thử lại.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Tạo mã QR';
+    });
+}
+
+function connectWS() {
+    if (socket) socket.close();
+    var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var base = INGRESS_PATH || '';
+    var wsUrl = proto + '//' + window.location.host + base + '/ws';
+    try {
+        socket = new WebSocket(wsUrl);
+        socket.onopen = function() {};
+        socket.onmessage = function(e) {
+            if (e.data === 'login_success') {
+                setStatus('Đăng nhập thành công! Đang chuyển hướng về trang chủ trong <b id="countdown">3</b> giây...', 'success');
+                var sec = 3;
+                clearInterval(countdownInterval);
+                countdownInterval = setInterval(function() {
+                    sec--;
+                    var cd = document.getElementById('countdown');
+                    if (cd) cd.textContent = sec;
+                    if (sec <= 0) { clearInterval(countdownInterval); window.location.href = INGRESS_PATH + '/'; }
+                }, 1000);
+            }
+        };
+        socket.onerror = function() {
+            setStatus('Lỗi kết nối WebSocket. <a href="#" onclick="connectWS();return false">Thử kết nối lại</a> hoặc <a href="<%= ingressPath %>/zalo-login">làm mới trang</a>.', 'error');
+        };
+        socket.onclose = function() {
+            if (document.getElementById('status-message').className.indexOf('success') === -1) {
+                setStatus('Kết nối WebSocket đã đóng. <a href="#" onclick="connectWS();return false">Thử kết nối lại</a> hoặc <a href="<%= ingressPath %>/zalo-login">làm mới trang</a>.', 'error');
+            }
+        };
+    } catch (e) {
+        setStatus('Không thể tạo kết nối WebSocket. <a href="<%= ingressPath %>/zalo-login">Làm mới trang</a> để thử lại.', 'error');
+    }
+}
+
+document.getElementById('login-button').addEventListener('click', generateQR);
+</script>
+
+</body>
+</html>

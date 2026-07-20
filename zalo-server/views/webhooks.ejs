@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Quản lý Webhook | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .wh-card { margin-bottom: 16px; }
+        .wh-card .card-body { display: flex; flex-direction: column; gap: 14px; }
+        .wh-row { display: flex; align-items: center; gap: 10px; }
+        .wh-row label { font-size: 13px; font-weight: 600; color: var(--text-secondary); min-width: 120px; flex-shrink: 0; }
+        .wh-row input { flex: 1; }
+        .wh-row .btn { flex-shrink: 0; }
+        @media (max-width: 768px) {
+            .wh-row { flex-direction: column; align-items: stretch; }
+            .wh-row label { min-width: auto; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <h1 class="page-title">Quản lý Webhook</h1>
+    <p class="page-subtitle">Cấu hình webhook cho từng tài khoản Zalo</p>
+
+    <div id="message-container"></div>
+
+    <div id="accounts-container"></div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+function showMsg(msg, type) {
+    var el = document.getElementById('message-container');
+    el.innerHTML = '<div class="alert alert-' + type + '">' + msg + '</div>';
+    setTimeout(function() { el.innerHTML = ''; }, 5000);
+}
+
+// This page is rendered server-side with accounts and webhookConfigs EJS variables.
+// The HTML is built inline below for simplicity.
+
+(function() {
+    var container = document.getElementById('accounts-container');
+
+    // Load accounts from API
+    fetch(INGRESS_PATH + '/accounts', { headers: { 'Accept': 'application/json' } })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var accounts = [];
+            if (d.success && d.accounts) accounts = d.accounts;
+            else if (d.html) {
+                var tmp = document.createElement('div');
+                tmp.innerHTML = d.html;
+                accounts = Array.from(tmp.querySelectorAll('tbody tr')).map(function(row) {
+                    var cells = row.querySelectorAll('td');
+                    return { ownId: cells[0].textContent.trim(), phoneNumber: cells[1].textContent.trim(), proxy: cells[2].textContent.trim() };
+                });
+            }
+
+            if (!accounts.length) {
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><h3>Không có tài khoản nào</h3><p>Vui lòng đăng nhập Zalo trước khi thiết lập webhook.</p><a href="<%= ingressPath %>/zalo-login" class="btn btn-accent mt-2">Đăng nhập Zalo</a></div>';
+                return;
+            }
+
+            // Load webhook configs
+            return fetch(INGRESS_PATH + '/api/account-webhooks').then(function(r) { return r.json(); }).then(function(wd) {
+                var configs = (wd.success && wd.data && wd.data.accounts) ? wd.data.accounts : {};
+
+                accounts.forEach(function(a) {
+                    var cfg = configs[a.ownId] || {};
+                    var card = document.createElement('div');
+                    card.className = 'card wh-card';
+                    card.innerHTML =
+                        '<div class="card-header">' +
+                            '<span>Tài khoản: ' + (a.phoneNumber || a.ownId) + ' <span class="badge badge-muted" style="font-family:monospace">' + a.ownId + '</span></span>' +
+                        '</div>' +
+                        '<div class="card-body">' +
+                            '<div class="wh-row">' +
+                                '<label>Webhook tin nhắn</label>' +
+                                '<input class="form-input msg-url" type="text" value="' + (cfg.messageWebhookUrl || '') + '" placeholder="URL webhook nhận tin nhắn">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="messageWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="messageWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                            '</div>' +
+                            '<div class="wh-row">' +
+                                '<label>Webhook sự kiện nhóm</label>' +
+                                '<input class="form-input group-url" type="text" value="' + (cfg.groupEventWebhookUrl || '') + '" placeholder="URL webhook nhận sự kiện nhóm">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="groupEventWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="groupEventWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                            '</div>' +
+                            '<div class="wh-row">' +
+                                '<label>Webhook reaction</label>' +
+                                '<input class="form-input reaction-url" type="text" value="' + (cfg.reactionWebhookUrl || '') + '" placeholder="URL webhook nhận reaction">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="reactionWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="reactionWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                            '</div>' +
+                            '<div style="text-align:right">' +
+                                '<button class="btn btn-danger btn-sm del-all-btn" data-ownid="' + a.ownId + '">Xóa tất cả webhook</button>' +
+                            '</div>' +
+                        '</div>';
+                    container.appendChild(card);
+                });
+
+                // Event handlers
+                container.querySelectorAll('.save-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var ownId = this.getAttribute('data-ownid');
+                        var type = this.getAttribute('data-type');
+                        var card = this.closest('.wh-card');
+                        var prefix = type === 'messageWebhookUrl' ? 'msg' : (type === 'groupEventWebhookUrl' ? 'group' : 'reaction');
+                        var input = card.querySelector('.' + prefix + '-url');
+                        var url = input.value.trim();
+                        var origText = this.textContent;
+                        this.textContent = 'Đang lưu...';
+                        this.disabled = true;
+
+                        fetch(INGRESS_PATH + '/api/webhook-config/' + ownId, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ webhookType: type, url: url })
+                        })
+                        .then(function(r) { return r.json(); })
+                        .then(function(d) {
+                            showMsg(d.success ? 'Đã lưu webhook thành công!' : ('Lỗi: ' + (d.error || 'Không thể lưu')), d.success ? 'success' : 'error');
+                            btn.textContent = origText;
+                            btn.disabled = false;
+                        })
+                        .catch(function() { showMsg('Lỗi kết nối', 'error'); btn.textContent = origText; btn.disabled = false; });
+                    });
+                });
+
+                container.querySelectorAll('.test-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var ownId = this.getAttribute('data-ownid');
+                        var type = this.getAttribute('data-type');
+                        var card = this.closest('.wh-card');
+                        var prefix = type === 'messageWebhookUrl' ? 'msg' : (type === 'groupEventWebhookUrl' ? 'group' : 'reaction');
+                        var input = card.querySelector('.' + prefix + '-url');
+                        var url = input.value.trim();
+                        if (!url) { showMsg('Vui lòng nhập URL webhook trước khi thử', 'warning'); return; }
+                        var origText = this.textContent;
+                        this.textContent = 'Đang thử...';
+                        this.disabled = true;
+
+                        fetch(INGRESS_PATH + '/api/test-webhook', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ accountId: ownId, webhookType: type, url: url })
+                        })
+                        .then(function(r) { return r.json(); })
+                        .then(function(d) {
+                            showMsg(d.success ? 'Đã gửi dữ liệu thử nghiệm thành công!' : ('Lỗi: ' + (d.error || 'Không thể thử')), d.success ? 'success' : 'error');
+                            btn.textContent = origText;
+                            btn.disabled = false;
+                        })
+                        .catch(function() { showMsg('Lỗi kết nối', 'error'); btn.textContent = origText; btn.disabled = false; });
+                    });
+                });
+
+                container.querySelectorAll('.del-all-btn').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        var ownId = this.getAttribute('data-ownid');
+                        if (!confirm('Bạn có chắc chắn muốn xóa tất cả webhook của tài khoản này?')) return;
+                        var card = this.closest('.wh-card');
+                        this.textContent = 'Đang xóa...';
+                        this.disabled = true;
+
+                        fetch(INGRESS_PATH + '/api/webhook-config/' + ownId, { method: 'DELETE' })
+                            .then(function(r) { return r.json(); })
+                            .then(function(d) {
+                                if (d.success) {
+                                    card.querySelectorAll('input').forEach(function(inp) { inp.value = ''; });
+                                    showMsg('Đã xóa tất cả webhook thành công!', 'success');
+                                } else {
+                                    showMsg('Lỗi: ' + (d.error || 'Không thể xóa'), 'error');
+                                }
+                                btn.textContent = 'Xóa tất cả webhook';
+                                btn.disabled = false;
+                            })
+                            .catch(function() { showMsg('Lỗi kết nối', 'error'); btn.textContent = 'Xóa tất cả webhook'; btn.disabled = false; });
+                    });
+                });
+            });
+        })
+        .catch(function() { container.innerHTML = '<div class="alert alert-error">Lỗi khi tải dữ liệu</div>'; });
+})();
+</script>
+
+</body>
+</html>

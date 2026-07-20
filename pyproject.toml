@@ -1,0 +1,41 @@
+[project]
+name = "chatgpt2api"
+# Đồng bộ tay với file VERSION khi bump release (runtime đọc động từ VERSION).
+version = "1.5.0"
+description = "Self-hosted AI gateway: OpenAI/Anthropic-compatible API over ChatGPT web, Codex OAuth, Gemini, Claude and 20+ providers with account pooling, combo routing and Home Assistant integration."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "curl-cffi>=0.15.0",
+    "fastapi>=0.136.0",
+    # JSON nhanh (ORJSONResponse mặc định của app — gateway stream JSON lớn liên tục)
+    "orjson>=3.10.0",
+    "pillow>=12.2.0",
+    "pybase64>=1.4.3",
+    "python-multipart>=0.0.26",
+    "tiktoken>=0.12.0",
+    "uvicorn>=0.44.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "gitpython>=3.1.0",
+    "gemini-webapi>=2.0.0",
+    "cryptography>=42.0.0",
+    # Giọng nói: STT chạy local (Zipformer) + phát ra loa Google Cast.
+    # Model KHÔNG nằm trong image — tải về volume bằng script (xem voices/).
+    "sherpa-onnx>=1.12.0",
+    "pychromecast>=14.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8",
+]
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
+[tool.uv.sources]
+gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "enable-guest-mode" }
+

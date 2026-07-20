@@ -1,0 +1,25 @@
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+
+LABEL org.opencontainers.image.description="chatgpt2api Lite - OpenAI-compatible proxy for ChatGPT Web API (no Web UI)"
+
+WORKDIR /app
+
+# Install system dependencies (only openssl for curl-cffi)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy application code
+COPY main_lite.py ./main.py
+COPY VERSION ./
+COPY api ./api
+COPY services ./services
+COPY utils ./utils
+
+EXPOSE 80
+
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--access-log"]

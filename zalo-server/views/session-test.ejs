@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Session Test | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+    </div>
+</header>
+
+<main class="container">
+    <h1 class="page-title">Session Test</h1>
+    <p class="page-subtitle">Kiểm tra trạng thái session hiện tại</p>
+    <div class="card">
+        <div class="card-body" id="session-info">
+            <p>Đang kiểm tra...</p>
+        </div>
+    </div>
+    <div class="text-center mt-3">
+        <a href="<%= ingressPath %>/" class="btn btn-outline">← Quay lại trang chủ</a>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+fetch(INGRESS_PATH + '/api/check-auth', { credentials: 'include' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        document.getElementById('session-info').innerHTML = '<pre>' + JSON.stringify(d, null, 2) + '</pre>';
+    })
+    .catch(function() {
+        document.getElementById('session-info').innerHTML = '<div class="alert alert-error">Không thể kết nối đến máy chủ</div>';
+    });
+</script>
+
+</body>
+</html>

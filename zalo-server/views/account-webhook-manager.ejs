@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Quản lý Webhook tài khoản | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .webhook-url { font-family: 'SF Mono','Fira Code','Consolas',monospace; font-size: 12px; word-break: break-all; }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <h1 class="page-title">Quản lý Webhook theo tài khoản</h1>
+    <p class="page-subtitle">Cấu hình webhook riêng cho từng tài khoản Zalo</p>
+
+    <div id="message-container"></div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="accounts-tab">Danh sách tài khoản</button>
+        <button class="tab-btn" data-tab="webhook-config-tab">Cấu hình Webhook</button>
+        <button class="tab-btn" data-tab="webhook-help-tab">Hướng dẫn</button>
+    </div>
+
+    <div id="accounts-tab" class="tab-panel active">
+        <div class="card">
+            <div class="card-header">Danh sách tài khoản Zalo đã đăng nhập</div>
+            <div class="card-body" style="padding:0">
+                <div class="table-wrap" style="border:none;border-radius:0">
+                    <table>
+                        <thead><tr><th>ID Tài khoản</th><th>Số điện thoại</th><th>Proxy</th><th>Webhook</th><th>Thao tác</th></tr></thead>
+                        <tbody id="accounts-list"><tr><td colspan="5" class="text-muted">Đang tải...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="webhook-config-tab" class="tab-panel">
+        <div class="card">
+            <div class="card-header">Cấu hình Webhook cho tài khoản</div>
+            <div class="card-body">
+                <form id="webhook-form">
+                    <div class="form-group">
+                        <label class="form-label" for="ownId">ID Tài khoản Zalo</label>
+                        <select class="form-select" id="ownId" required>
+                            <option value="">-- Chọn tài khoản --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="messageWebhookUrl">URL Webhook tin nhắn</label>
+                        <input class="form-input" type="text" id="messageWebhookUrl" placeholder="https://n8n.yourdomain.com/webhook/zalo-messages/123456">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="groupEventWebhookUrl">URL Webhook sự kiện nhóm</label>
+                        <input class="form-input" type="text" id="groupEventWebhookUrl" placeholder="https://n8n.yourdomain.com/webhook/zalo-group-events/123456">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="reactionWebhookUrl">URL Webhook reaction</label>
+                        <input class="form-input" type="text" id="reactionWebhookUrl" placeholder="https://n8n.yourdomain.com/webhook/zalo-reactions/123456">
+                    </div>
+                    <button type="submit" class="btn btn-accent">Lưu cấu hình</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="webhook-help-tab" class="tab-panel">
+        <div class="card">
+            <div class="card-body">
+                <h3 style="margin-bottom:12px">Cách hoạt động</h3>
+                <p>Khi tin nhắn, sự kiện nhóm hoặc reaction được nhận từ một tài khoản Zalo, hệ thống sẽ:</p>
+                <ol style="margin:12px 0;padding-left:20px">
+                    <li>Kiểm tra tài khoản đó có webhook cụ thể được cấu hình hay không</li>
+                    <li>Nếu có, dữ liệu sẽ được gửi đến webhook đó</li>
+                    <li>Nếu không, dữ liệu sẽ được gửi đến webhook mặc định (cấu hình trong .env)</li>
+                </ol>
+                <h3 style="margin:20px 0 12px">Tạo webhook trên n8n</h3>
+                <ol style="padding-left:20px">
+                    <li>Tạo workflow mới trên n8n</li>
+                    <li>Thêm node "Webhook" làm trigger</li>
+                    <li>Cấu hình webhook để nhận HTTP POST request</li>
+                    <li>Bật tùy chọn "Respond" trong node webhook</li>
+                    <li>Lưu và kích hoạt workflow, sao chép URL webhook</li>
+                </ol>
+                <p style="margin-top:12px">Dữ liệu gửi đến webhook có trường <code>_accountId</code> chứa ID của tài khoản Zalo đã gửi.</p>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    var INGRESS_PATH = '<%= ingressPath %>';
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+
+var accounts = [];
+
+function showMsg(msg, type) {
+    var el = document.getElementById('message-container');
+    el.innerHTML = '<div class="alert alert-' + type + '">' + msg + '</div>';
+    setTimeout(function() { el.innerHTML = ''; }, 5000);
+}
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+        this.classList.add('active');
+        document.getElementById(this.getAttribute('data-tab')).classList.add('active');
+    });
+});
+
+async function loadAccounts() {
+    try {
+        var r = await fetch(INGRESS_PATH + '/accounts', { headers: { 'Accept': 'application/json' } });
+        var d = await r.json();
+        if (d.success && d.accounts) {
+            accounts = d.accounts;
+        } else if (d.html) {
+            var tmp = document.createElement('div');
+            tmp.innerHTML = d.html;
+            accounts = Array.from(tmp.querySelectorAll('tbody tr')).map(function(row) {
+                var cells = row.querySelectorAll('td');
+                return { ownId: cells[0].textContent.trim(), phoneNumber: cells[1].textContent.trim(), proxy: cells[2].textContent.trim() };
+            });
+        }
+        updateAccountsList();
+        updateSelect();
+    } catch (e) { showMsg('Lỗi khi tải danh sách tài khoản', 'error'); }
+}
+
+async function getWebhookConfigs() {
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/account-webhooks');
+        var d = await r.json();
+        return d.success ? d.data : null;
+    } catch (e) { return null; }
+}
+
+async function updateAccountsList() {
+    var tbody = document.getElementById('accounts-list');
+    if (!accounts.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Không có tài khoản nào đăng nhập</td></tr>'; return; }
+    var configs = await getWebhookConfigs();
+    tbody.innerHTML = '';
+    accounts.forEach(function(a) {
+        var hasWH = configs && configs.accounts && configs.accounts[a.ownId];
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td>' + a.ownId + '</td>' +
+            '<td>' + (a.phoneNumber || 'N/A') + '</td>' +
+            '<td>' + (a.proxy || 'Không có') + '</td>' +
+            '<td><span class="badge ' + (hasWH ? 'badge-success' : 'badge-muted') + '">' + (hasWH ? 'Đã cấu hình' : 'Chưa cấu hình') + '</span></td>' +
+            '<td style="display:flex;gap:6px">' +
+                '<button class="btn btn-outline btn-sm config-btn" data-ownid="' + a.ownId + '">Cấu hình</button>' +
+                (hasWH ? '<button class="btn btn-danger btn-sm del-btn" data-ownid="' + a.ownId + '">Xóa</button>' : '') +
+            '</td>';
+        tbody.appendChild(tr);
+    });
+
+    tbody.querySelectorAll('.config-btn').forEach(function(b) {
+        b.addEventListener('click', function() { configWebhook(this.getAttribute('data-ownid')); });
+    });
+    tbody.querySelectorAll('.del-btn').forEach(function(b) {
+        b.addEventListener('click', function() { deleteWebhook(this.getAttribute('data-ownid')); });
+    });
+}
+
+function updateSelect() {
+    var sel = document.getElementById('ownId');
+    sel.innerHTML = '<option value="">-- Chọn tài khoản --</option>';
+    accounts.forEach(function(a) {
+        sel.innerHTML += '<option value="' + a.ownId + '">' + a.ownId + ' (' + (a.phoneNumber || 'N/A') + ')</option>';
+    });
+}
+
+async function configWebhook(ownId) {
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+    document.querySelector('[data-tab="webhook-config-tab"]').classList.add('active');
+    document.getElementById('webhook-config-tab').classList.add('active');
+    document.getElementById('ownId').value = ownId;
+
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/account-webhook/' + ownId);
+        var d = await r.json();
+        var cfg = (d.success && d.data) ? d.data : {};
+        document.getElementById('messageWebhookUrl').value = cfg.messageWebhookUrl || '';
+        document.getElementById('groupEventWebhookUrl').value = cfg.groupEventWebhookUrl || '';
+        document.getElementById('reactionWebhookUrl').value = cfg.reactionWebhookUrl || '';
+    } catch (e) {}
+}
+
+async function deleteWebhook(ownId) {
+    if (!confirm('Bạn có chắc chắn muốn xóa cấu hình webhook cho tài khoản ' + ownId + '?')) return;
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/account-webhook/' + ownId, { method: 'DELETE' });
+        var d = await r.json();
+        showMsg(d.success ? 'Đã xóa cấu hình webhook thành công' : (d.error || 'Lỗi'), d.success ? 'success' : 'error');
+        loadAccounts();
+    } catch (e) { showMsg('Lỗi khi xóa webhook', 'error'); }
+}
+
+document.getElementById('webhook-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    try {
+        var r = await fetch(INGRESS_PATH + '/api/account-webhook', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ownId: document.getElementById('ownId').value,
+                messageWebhookUrl: document.getElementById('messageWebhookUrl').value,
+                groupEventWebhookUrl: document.getElementById('groupEventWebhookUrl').value,
+                reactionWebhookUrl: document.getElementById('reactionWebhookUrl').value
+            })
+        });
+        var d = await r.json();
+        showMsg(d.success ? 'Đã lưu cấu hình webhook thành công' : (d.error || 'Lỗi'), d.success ? 'success' : 'error');
+        if (d.success) loadAccounts();
+    } catch (e) { showMsg('Lỗi khi lưu cấu hình webhook', 'error'); }
+});
+
+document.addEventListener('DOMContentLoaded', loadAccounts);
+</script>
+
+</body>
+</html>

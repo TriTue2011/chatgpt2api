@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>API Documentation | Zalo Chat</title>
+    <meta name="theme-color" content="#0068ff">
+    <link rel="icon" type="image/png" href="<%= ingressPath %>/chat/icons/icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="<%= ingressPath %>/chat/css/app.css">
+    <style>
+        .api-section { margin-bottom: 32px; }
+        .api-section h3 { font-size: 18px; font-weight: 700; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color); }
+        .api-section h3 a { color: var(--text-primary); }
+        .endpoint-tag { font-family: 'SF Mono','Fira Code','Consolas',monospace; font-weight: 700; color: var(--accent); }
+        .toc { column-count: 2; column-gap: 24px; list-style-position: inside; padding: 0; }
+        .toc li { margin-bottom: 6px; font-size: 13px; }
+        @media (max-width: 768px) { .toc { column-count: 1; } }
+    </style>
+</head>
+<body>
+
+<header class="app-header">
+    <a href="<%= ingressPath %>/" class="app-logo">
+        <span class="app-logo-icon"><img src="<%= ingressPath %>/chat/icons/icon-192.png" style="width:100%;height:100%;border-radius:8px;object-fit:cover"></span>
+        Zalo Chat
+    </a>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+        <button class="btn-icon" id="theme-toggle" aria-label="Đổi theme">🌙</button>
+        <a href="<%= ingressPath %>/" class="btn btn-outline btn-sm">← Về trang chủ</a>
+    </div>
+</header>
+
+<main class="container">
+    <h1 class="page-title">Tài liệu API</h1>
+    <p class="page-subtitle">Tham khảo đầy đủ các API endpoints của Zalo Server</p>
+
+    <div class="card mb-3">
+        <div class="card-header">Mục lục</div>
+        <div class="card-body">
+            <div style="margin-bottom:16px"><strong>📋 APIs Quản lý Tài khoản</strong></div>
+            <ol class="toc" style="margin-bottom:20px">
+                <li><a href="#accounts">accounts - Lấy danh sách tài khoản</a></li>
+                <li><a href="#accountDetails">accountDetails - Chi tiết tài khoản</a></li>
+            </ol>
+            <div style="margin-bottom:16px"><strong>🔥 APIs N8N-Friendly (Khuyến nghị)</strong></div>
+            <ol class="toc" style="margin-bottom:20px">
+                <li><a href="#findUserByAccount">findUserByAccount</a></li>
+                <li><a href="#getUserInfoByAccount">getUserInfoByAccount</a></li>
+                <li><a href="#sendMessageByAccount">sendMessageByAccount</a></li>
+                <li><a href="#sendImageByAccount">sendImageByAccount</a></li>
+                <li><a href="#sendFriendRequestByAccount">sendFriendRequestByAccount</a></li>
+                <li><a href="#createGroupByAccount">createGroupByAccount</a></li>
+                <li><a href="#getGroupInfoByAccount">getGroupInfoByAccount</a></li>
+                <li><a href="#addUserToGroupByAccount">addUserToGroupByAccount</a></li>
+                <li><a href="#removeUserFromGroupByAccount">removeUserFromGroupByAccount</a></li>
+            </ol>
+            <div style="margin-bottom:16px"><strong>⚠️ APIs Cũ (Cần ownId)</strong></div>
+            <ol class="toc">
+                <li><a href="#findUser">findUser</a></li>
+                <li><a href="#getUserInfo">getUserInfo</a></li>
+                <li><a href="#sendMessage">sendMessage</a></li>
+                <li><a href="#createGroup">createGroup</a></li>
+                <li><a href="#getGroupInfo">getGroupInfo</a></li>
+                <li><a href="#addUserToGroup">addUserToGroup</a></li>
+                <li><a href="#removeUserFromGroup">removeUserFromGroup</a></li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- Account Management -->
+    <div class="api-section">
+        <h3 id="accounts">1. accounts - Lấy danh sách tài khoản</h3>
+        <p><strong>Endpoint:</strong> <span class="endpoint-tag">GET /api/accounts</span></p>
+        <p style="margin:8px 0">Trả về danh sách tất cả tài khoản Zalo đã đăng nhập.</p>
+        <pre>curl http://localhost:3000/api/accounts</pre>
+        <p style="margin:8px 0"><strong>Response:</strong></p>
+        <pre>{
+  "success": true,
+  "data": [{ "ownId": "123456789", "phoneNumber": "0901234567", "displayName": "...", "isOnline": true }],
+  "total": 1
+}</pre>
+    </div>
+
+    <div class="api-section">
+        <h3 id="accountDetails">2. accountDetails - Chi tiết tài khoản</h3>
+        <p><strong>Endpoint:</strong> <span class="endpoint-tag">GET /api/accounts/:ownId</span></p>
+        <pre>curl http://localhost:3000/api/accounts/123456789</pre>
+    </div>
+
+    <!-- N8N-Friendly -->
+    <div class="api-section">
+        <h3 id="findUserByAccount">3. findUserByAccount</h3>
+        <p><strong>Endpoint:</strong> <span class="endpoint-tag">POST /api/findUserByAccount</span></p>
+        <pre>curl -X POST -H "Content-Type: application/json" -d '{"phone":"0987654321","accountSelection":"0901234567"}' http://localhost:3000/api/findUserByAccount</pre>
+    </div>
+
+    <div class="api-section">
+        <h3 id="sendMessageByAccount">4. sendMessageByAccount</h3>
+        <p><strong>Endpoint:</strong> <span class="endpoint-tag">POST /api/sendMessageByAccount</span></p>
+        <pre>curl -X POST -H "Content-Type: application/json" -d '{"message":"Hello!","threadId":"user_id","type":"user","accountSelection":"0901234567"}' http://localhost:3000/api/sendMessageByAccount</pre>
+    </div>
+
+    <div class="api-section">
+        <h3 id="sendImageByAccount">5. sendImageByAccount</h3>
+        <p><strong>Endpoint:</strong> <span class="endpoint-tag">POST /api/sendImageByAccount</span></p>
+        <pre>curl -X POST -H "Content-Type: application/json" -d '{"imagePath":"https://example.com/img.jpg","threadId":"user_id","type":"user","accountSelection":"0901234567"}' http://localhost:3000/api/sendImageByAccount</pre>
+    </div>
+
+    <!-- Quick reference for remaining N8N-friendly APIs -->
+    <div class="api-section">
+        <h3>Các APIs *ByAccount khác</h3>
+        <p>Tất cả đều dùng <code>POST</code> với <code>accountSelection</code> thay vì <code>ownId</code>:</p>
+        <table style="margin-top:8px">
+            <tr><th>API</th><th>Endpoint</th><th>Params</th></tr>
+            <tr><td>getUserInfoByAccount</td><td>POST /api/getUserInfoByAccount</td><td>userId, accountSelection</td></tr>
+            <tr><td>sendFriendRequestByAccount</td><td>POST /api/sendFriendRequestByAccount</td><td>userId, message, accountSelection</td></tr>
+            <tr><td>createGroupByAccount</td><td>POST /api/createGroupByAccount</td><td>members[], name, accountSelection</td></tr>
+            <tr><td>getGroupInfoByAccount</td><td>POST /api/getGroupInfoByAccount</td><td>groupId, accountSelection</td></tr>
+            <tr><td>addUserToGroupByAccount</td><td>POST /api/addUserToGroupByAccount</td><td>groupId, memberId, accountSelection</td></tr>
+            <tr><td>removeUserFromGroupByAccount</td><td>POST /api/removeUserFromGroupByAccount</td><td>groupId, memberId, accountSelection</td></tr>
+            <tr><td>sendImageToUserByAccount</td><td>POST /api/sendImageToUserByAccount</td><td>imagePath, threadId, accountSelection</td></tr>
+            <tr><td>sendImagesToUserByAccount</td><td>POST /api/sendImagesToUserByAccount</td><td>imagePaths[], threadId, accountSelection</td></tr>
+            <tr><td>sendImageToGroupByAccount</td><td>POST /api/sendImageToGroupByAccount</td><td>imagePath, threadId, accountSelection</td></tr>
+            <tr><td>sendImagesToGroupByAccount</td><td>POST /api/sendImagesToGroupByAccount</td><td>imagePaths[], threadId, accountSelection</td></tr>
+        </table>
+    </div>
+
+    <!-- Legacy APIs -->
+    <div class="api-section">
+        <h3 id="findUser">APIs Cũ (Legacy - cần ownId)</h3>
+        <p style="margin-bottom:12px">Các APIs này vẫn hoạt động nhưng khuyến nghị dùng APIs *ByAccount ở trên.</p>
+        <table>
+            <tr><th>API</th><th>Endpoint</th></tr>
+            <tr><td>findUser</td><td>POST /api/findUser</td></tr>
+            <tr><td>getUserInfo</td><td>POST /api/getUserInfo</td></tr>
+            <tr><td>sendFriendRequest</td><td>POST /api/sendFriendRequest</td></tr>
+            <tr><td>sendMessage</td><td>POST /api/sendmessage</td></tr>
+            <tr><td>createGroup</td><td>POST /api/createGroup</td></tr>
+            <tr><td>getGroupInfo</td><td>POST /api/getGroupInfo</td></tr>
+            <tr><td>addUserToGroup</td><td>POST /api/addUserToGroup</td></tr>
+            <tr><td>removeUserFromGroup</td><td>POST /api/removeUserFromGroup</td></tr>
+            <tr><td>sendImageToUser</td><td>POST /api/sendImageToUser</td></tr>
+            <tr><td>sendImagesToUser</td><td>POST /api/sendImagesToUser</td></tr>
+            <tr><td>sendImageToGroup</td><td>POST /api/sendImageToGroup</td></tr>
+            <tr><td>sendImagesToGroup</td><td>POST /api/sendImagesToGroup</td></tr>
+        </table>
+    </div>
+
+    <footer class="app-footer">&copy; 2024 Zalo Chat API Documentation</footer>
+</main>
+
+<script>
+(function() {
+    var s = localStorage.getItem('chat-theme');
+    if (s) document.documentElement.setAttribute('data-theme', s);
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.setAttribute('data-theme', 'dark');
+    var btn = document.getElementById('theme-toggle');
+    function up() { btn.textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'; }
+    up();
+    btn.addEventListener('click', function() {
+        var cur = document.documentElement.getAttribute('data-theme');
+        var next = cur === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('chat-theme', next);
+        up();
+    });
+})();
+</script>
+
+</body>
+</html>
