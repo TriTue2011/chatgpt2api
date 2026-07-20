@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from pathlib import Path
 from threading import Event, Thread
 
@@ -22,7 +23,9 @@ def extract_bearer_token(authorization: str | None) -> str:
 
 def _legacy_admin_identity(token: str) -> dict[str, object] | None:
     auth_key = str(config.auth_key or "").strip()
-    if auth_key and token == auth_key:
+    # So sánh HẰNG THỜI GIAN (hmac.compare_digest) — '==' rò rỉ độ dài khớp qua
+    # thời gian phản hồi, cho phép dò key từng ký tự (timing attack).
+    if auth_key and hmac.compare_digest(token, auth_key):
         name = str(config.data.get("admin_name") or "").strip() or "Quản trị viên"
         return {"id": "admin", "name": name, "role": "admin"}
     return None

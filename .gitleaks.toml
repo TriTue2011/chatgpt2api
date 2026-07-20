@@ -1,0 +1,27 @@
+# Gitleaks config — chặn commit lộ secret (rule-first, offline, chạy pre-commit + CI).
+# Kế thừa bộ rule mặc định của Gitleaks rồi bổ sung allowlist cho placeholder.
+[extend]
+useDefault = true
+
+# Rule riêng: auth key nội bộ gán thẳng trong code/URL (sự cố đã xảy ra — chặn tái diễn).
+[[rules]]
+id = "chatgpt2api-inline-authkey"
+description = "Auth key gán thẳng trong code/URL"
+regex = '''(?i)(api_key|auth_key|authorization|bearer)\s*[:=]\s*["']?[A-Za-z][A-Za-z0-9@#!$%._-]{6,}["']?'''
+keywords = ["api_key", "auth_key", "bearer"]
+
+[allowlist]
+description = "Placeholder/ví dụ — không phải secret thật"
+regexes = [
+  '''your_(auth_key|secret_key|vnc_password)''',
+  '''ghp_x+''',
+  '''sk-[x]{8,}''',
+  '''mat_khau_cua_ban''',
+  '''example|placeholder|changeme|xxxx|<[a-z-]+>''',
+]
+paths = [
+  '''\.env\.example$''',
+  '''(^|/)test/''',
+  '''package-lock\.json$''',
+  '''\.gitleaks\.toml$''',
+]

@@ -1,0 +1,56 @@
+# Security gate — chạy TRƯỚC build. Chặn secret lộ + SAST + audit dependency.
+# Chuẩn ngành 2025 (OWASP): gitleaks (secret), bandit/semgrep (SAST), pip/npm audit (SCA).
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * 1"   # quét sâu định kỳ (thứ Hai 02:00 UTC)
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # gitleaks quét cả lịch sử
+      - name: Gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Bandit (Python SAST)
+        run: |
+          pip install bandit
+          bandit -r services api utils -ll -x test || true   # báo cáo, chưa chặn
+      - name: Semgrep (OWASP rules)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/owasp-top-ten
+        continue-on-error: true      # informational cho tới khi dọn hết finding
+
+  deps-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: pip-audit (Python SCA)
+        run: |
+          uvx pip-audit -r <(uv export --format requirements-txt 2>/dev/null) || true
+      - name: npm audit (web SCA)
+        working-directory: web
+        run: npm audit --omit=dev || true

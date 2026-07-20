@@ -863,8 +863,11 @@ def _alert_new_thread(ev: dict) -> None:
 # ── Xử lý AI (chung orchestrator với Telegram/Zalo Bot) ───────────────────────
 
 def _download(url: str) -> bytes | None:
+    # attachment_url đến TỪ webhook (không tin cậy) → chặn SSRF: cấm IP nội bộ,
+    # chỉ http/https, có trần dung lượng. Xem services/net_guard.
     try:
-        return urllib.request.urlopen(url, timeout=30).read()
+        from services import net_guard
+        return net_guard.safe_fetch(url, timeout=30)
     except Exception as exc:
         logger.warning("Zalo personal download lỗi: %s", exc)
         return None

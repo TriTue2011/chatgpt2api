@@ -437,8 +437,10 @@ def notify_admin(text: str, category: str = "") -> None:
 
 
 def _download(url: str) -> bytes | None:
+    # URL đến từ webhook/tin nhắn (không tin cậy) → chặn SSRF (net_guard).
     try:
-        return urllib.request.urlopen(url, timeout=30).read()
+        from services import net_guard
+        return net_guard.safe_fetch(url, timeout=30)
     except Exception as exc:
         logger.warning("Zalo download failed: %s", exc)
         return None
