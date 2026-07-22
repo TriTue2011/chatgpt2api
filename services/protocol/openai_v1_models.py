@@ -541,7 +541,7 @@ def _config_hash() -> str:
         "cp": config.data.get("custom_providers") or {},
         "ms": config.data.get("model_settings") or {},
     }, sort_keys=True, default=str)
-    return hashlib.md5(raw.encode()).hexdigest()
+    return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
 
 
 def invalidate_models_cache():

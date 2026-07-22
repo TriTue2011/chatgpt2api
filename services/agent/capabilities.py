@@ -1578,7 +1578,7 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     except Exception:
         return {"text": "Máy chủ chưa cài thư viện SSH (paramiko) nên em chưa vào được ạ."}
     cli = paramiko.SSHClient()
-    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — may LAN ad-hoc, user tu cap creds, khong pin duoc host key
     try:
         cli.connect(host, port=port, username=user, password=password, timeout=15,
                     allow_agent=False, look_for_keys=False)

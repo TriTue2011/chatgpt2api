@@ -414,7 +414,7 @@ def _table_fingerprint(rows: list[list[str]]) -> str:
     """Fingerprint để bỏ bảng trùng (MHTCET)."""
     sample = rows[:8]
     blob = "||".join("|".join(c for c in r) for r in sample)
-    return hashlib.sha1(blob.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    return hashlib.sha1(blob.encode("utf-8", errors="ignore"), usedforsecurity=False).hexdigest()[:16]
 
 
 def _normalize_rows(rows: list[list[str]]) -> list[list[str]]:

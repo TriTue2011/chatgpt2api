@@ -202,7 +202,7 @@ class MemoryService:
         content = (content or "").strip()
         if not content:
             return
-        h = hashlib.sha1((user_id + "\x00" + content).encode("utf-8")).hexdigest()
+        h = hashlib.sha1((user_id + "\x00" + content).encode("utf-8"), usedforsecurity=False).hexdigest()
         now = time.time()
         with self._lock:
             db = self._db()

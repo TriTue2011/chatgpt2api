@@ -23,6 +23,8 @@ export function ChatPersonaBar({ onPrompt }: { onPrompt: (p: string) => void }) 
   const [on, setOn] = useState(false);
   const [opts, setOpts] = useState<Opts | null>(null);
   const [sel, setSel] = useState<Sel>({ region: "", gender: "", age: "", job: "" });
+  const [custom, setCustom] = useState(false);   // ✍️ tự viết nguyên văn
+  const [text, setText] = useState("");
 
   useEffect(() => {
     try {
@@ -32,14 +34,19 @@ export function ChatPersonaBar({ onPrompt }: { onPrompt: (p: string) => void }) 
         if (d && typeof d === "object") {
           setOn(!!d.on);
           setSel((p) => ({ ...p, ...(d.sel || {}) }));
+          setCustom(!!d.custom);
+          setText(String(d.text || ""));
         }
       }
     } catch { /* bỏ qua localStorage hỏng */ }
   }, []);
 
   useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ on, sel })); } catch {}
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({ on, sel, custom, text }));
+    } catch {}
     if (!on) { onPrompt(""); return; }
+    if (custom) { onPrompt(text.trim()); return; }  // tự viết → dùng thẳng
     if (!opts) {
       request.get("/api/personas")
         .then((r) => setOpts(r.data?.options || null))
@@ -50,7 +57,7 @@ export function ChatPersonaBar({ onPrompt }: { onPrompt: (p: string) => void }) 
       .then((r) => onPrompt(String(r.data?.prompt || "")))
       .catch(() => onPrompt(""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, sel]);
+  }, [on, sel, custom, text]);
 
   const set = (k: keyof Sel, v: string) => setSel((p) => ({ ...p, [k]: v }));
 
@@ -62,6 +69,22 @@ export function ChatPersonaBar({ onPrompt }: { onPrompt: (p: string) => void }) 
         🎭 Persona
       </label>
       {on && (
+        <label className="flex cursor-pointer items-center gap-1 select-none"
+               title="Tự viết nguyên văn persona">
+          <input type="checkbox" checked={custom}
+                 onChange={(e) => setCustom(e.target.checked)} />
+          ✍️
+        </label>
+      )}
+      {on && custom && (
+        <textarea
+          className="h-14 w-full rounded-md border border-input bg-background p-1 text-[11px]"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Dán nguyên văn persona (NHÂN VẬT… GIỌNG & NGÔN NGỮ…) — áp ngay cho tab Chat"
+        />
+      )}
+      {on && !custom && (
         <>
           <select className={SEL_CLS} value={sel.region}
                   onChange={(e) => set("region", e.target.value)}>

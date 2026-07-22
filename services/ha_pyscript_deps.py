@@ -116,7 +116,7 @@ def install(names: list[str] | None = None) -> tuple[bool, str]:
     installed = []
     try:
         cli = paramiko.SSHClient()
-        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — SSH noi bo HA .200, creds tu config
         cli.connect(ssh["host"], port=ssh["port"], username=ssh["user"],
                     password=ssh["pw"], timeout=20)
         sftp = cli.open_sftp()

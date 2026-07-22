@@ -59,7 +59,7 @@ class SessionAffinity:
                 break
         if not first_user:
             return None
-        return "h:" + hashlib.sha1((model + "\n" + first_user).encode("utf-8")).hexdigest()
+        return "h:" + hashlib.sha1((model + "\n" + first_user).encode("utf-8"), usedforsecurity=False).hexdigest()
 
     def get(self, pool: str, key: str | None) -> str | None:
         """access_token đang dính với phiên này (còn TTL), hoặc None."""

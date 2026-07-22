@@ -43,6 +43,8 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
   const [desc, setDesc] = useState("");
   const [opts, setOpts] = useState<Options | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [custom, setCustom] = useState(false);   // ✍️ Tự viết nguyên văn
+  const [customText, setCustomText] = useState("");
 
   const keyOf = useCallback(() => {
     const gid = groupId.trim(), uid = userId.trim();
@@ -60,6 +62,10 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
         setOn(true);
         setDesc(row.prompt || "");
         const s = (row.sel || {}) as Record<string, string>;
+        if ((s as Record<string, unknown>).custom) {
+          setCustom(true);
+          setCustomText(row.prompt || "");
+        }
         setSel({ region: s.region || "", gender: s.gender || "",
                  age: s.age || "", job: s.job || "" });
       }
@@ -100,6 +106,13 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
           🎭 Persona
         </label>
         {on && (
+          <label className="flex cursor-pointer items-center gap-1 select-none">
+            <input type="checkbox" checked={custom}
+                   onChange={(e) => setCustom(e.target.checked)} />
+            ✍️ Tự viết
+          </label>
+        )}
+        {on && !custom && (
           <>
             <select className={SEL_XS} value={sel.region}
                     onChange={(e) => set("region", e.target.value)}>
@@ -132,7 +145,27 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
           </>
         )}
       </div>
-      {on && desc && (
+      {on && custom && (
+        <div className="space-y-1">
+          <textarea
+            className="w-full rounded-md border border-input bg-background p-1.5 text-[11px]"
+            rows={4}
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            placeholder="Dán nguyên văn persona (vd: NHÂN VẬT: Mộc Miên, 20t… GIỌNG & NGÔN NGỮ: …)"
+          />
+          <Button size="sm" className="h-6 px-2 text-[11px]" onClick={() => {
+            if (!customText.trim()) { toast.error("Chưa có nội dung"); return; }
+            request.post("/api/personas", { key: keyOf(), prompt: customText.trim() })
+              .then((r) => {
+                if (r.data?.ok) { setDesc(r.data.prompt || ""); toast.success("Đã lưu persona tự viết"); }
+                else toast.error(r.data?.error || "Lưu thất bại");
+              })
+              .catch(() => toast.error("Lưu thất bại"));
+          }}>Lưu bản tự viết</Button>
+        </div>
+      )}
+      {on && !custom && desc && (
         <div className="rounded border bg-muted/40 p-1.5 text-[11px] text-muted-foreground">
           {desc}
         </div>

@@ -189,7 +189,7 @@ def encode_images(images: Iterable[tuple[bytes, str, str]]) -> list[str]:
 
 def save_image_bytes(image_data: bytes, base_url: str | None = None) -> str:
     config.cleanup_old_images()
-    file_hash = hashlib.md5(image_data).hexdigest()
+    file_hash = hashlib.md5(image_data, usedforsecurity=False).hexdigest()
     filename = f"{int(time.time())}_{file_hash}.png"
     relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
     file_path = config.images_dir / relative_dir / filename
@@ -298,7 +298,7 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
             content = msg["content"]
             content_bytes = len(content.encode("utf-8"))
             if file_upload_threshold > 0 and content_bytes > file_upload_threshold:
-                key = hashlib.md5(content.encode()).hexdigest()[:16]
+                key = hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:16]
                 _file_upload_store[key] = content
                 preview = content[:500]
                 msg["content"] = f"{_FILE_UPLOAD_MARKER}{key}]\n{preview}\n...[full content uploaded as file]..."
