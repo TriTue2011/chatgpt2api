@@ -118,6 +118,53 @@ def ui_options() -> dict:
             "tones": d["tone"], "styles": d["style"]}
 
 
+# GIỌNG & NGÔN NGỮ chi tiết theo vùng (đệm/từ/chất giọng) — mẫu chuẩn user.
+REGION_STYLE: dict[str, dict[str, str]] = {
+    "Miền Tây": {"chat": "ngọt xuề xoà, thân như người nhà",
+                 "dem": "nha, nghen, dợ, hen, hôn",
+                 "tu": "dạ, hông, thiệt hông, sao dợ, quá trời"},
+    "Sài Gòn": {"chat": "cởi mở năng động",
+                "dem": "nha, á, luôn, ghê",
+                "tu": "dạ, hông, dữ dội, quá chừng"},
+    "Hà Nội": {"chat": "thanh lịch từ tốn",
+               "dem": "nhỉ, nhé, ạ, cơ mà",
+               "tu": "vâng, thế ạ, đúng rồi ạ"},
+    "Miền Bắc": {"chat": "chuẩn mực ý tứ",
+                 "dem": "nhé, ạ, cơ mà",
+                 "tu": "vâng, thế à, đúng rồi"},
+    "Hải Phòng": {"chat": "thẳng thắn nhịp mạnh",
+                  "dem": "luôn, đấy, cơ",
+                  "tu": "chuẩn, thẳng luôn, đấy nhé"},
+    "Nghệ An": {"chat": "chân chất thân tình",
+                "dem": "mô, tê, răng, rứa",
+                "tu": "chắc, ni, nớ, rứa hầy"},
+    "Huế": {"chat": "nhẹ nhàng từ tốn",
+            "dem": "chi, mô, răng, rứa, hỉ",
+            "tu": "dạ thưa, rứa hỉ, chừ"},
+    "Đà Nẵng": {"chat": "thoải mái dễ chịu",
+                "dem": "chi rứa, hỉ, nghe",
+                "tu": "răng ri, chừ, quá hè"},
+}
+
+
+def _xung(g: str, a: str) -> str:
+    """Xưng hô mặc định theo giới + band tuổi (vd 'Xưng em, gọi anh/chị')."""
+    if g in ("Bé gái", "Bé trai"):
+        return "Xưng con/cháu, gọi cô/chú/bác"
+    young = a in ("Bé (6-12)", "Teen (13-17)", "18-25 tuổi",
+                  "Thanh niên (18-25)", "")
+    if young:
+        return "Xưng em, gọi anh/chị" if g else ""
+    if a in ("26-40 tuổi", "Trưởng thành (26-40)"):
+        return "Xưng em/mình theo vai, gọi anh/chị"
+    if a == "Trung niên (41-60)":
+        return ("Xưng cô, gọi anh/chị/em theo vai" if g == "Nữ"
+                else "Xưng chú, gọi anh/chị/em theo vai")
+    if a == "Lớn tuổi (60+)":
+        return ("Xưng bà, gọi con/cháu" if g == "Nữ" else "Xưng ông, gọi con/cháu")
+    return ""
+
+
 # Phương ngữ nén theo vùng — chỉ vài từ khoá đặc trưng, không tả dài.
 DIALECT: dict[str, str] = {
     "Miền Bắc": "'nhé/ạ/cơ mà', xưng hô chuẩn",
@@ -226,26 +273,42 @@ def _clear(user_id: str) -> bool:
 # ── Prompt builder (nén — mục tiêu ≤100 token) ──────────────────────────────
 
 def _build(sel: dict) -> str:
-    bits = [b for b in (sel.get("gender"), sel.get("age"), sel.get("region"),
-                        sel.get("job")) if b]
-    parts = ["NHẬP VAI: " + (", ".join(bits) if bits else "tuỳ chỉnh") + "."]
-    if sel.get("trait"):
-        parts.append(f"Tính cách {sel['trait'].lower()}.")
+    g = str(sel.get("gender") or "")
+    a = str(sel.get("age") or "")
+    region = str(sel.get("region") or "")
+    job = str(sel.get("job") or "")
+    bits = [b for b in (g, a, region, job) if b]
+    parts = ["NHÂN VẬT: " + (", ".join(bits) if bits else "tuỳ chỉnh") + "."]
+    xh = _xung(g, a)
+    if xh:
+        parts.append(xh + ".")
+    # Nét: trait tự chọn (wizard) hoặc TỰ SINH từ tuổi + nghề (Web 4-chọn)
     vt = [v for v in (sel.get("voice"), sel.get("tone")) if v]
+    net: list[str] = []
+    if sel.get("trait"):
+        net.append(sel["trait"].lower())
+    if not (sel.get("trait") or vt or sel.get("style")):
+        net.extend(h for h in (AGE_HINT.get(a), JOB_HINT.get(job)) if h)
+    if net:
+        parts.append("Nét: " + "; ".join(net) + "; không cụt ngủn, không "
+                     "lạnh lùng, gần gũi ấm áp như người quen.")
     if vt:
         parts.append("Giọng " + ", tông ".join(v.lower() for v in vt) + ".")
     if sel.get("style"):
         parts.append(f"Phong cách {sel['style'].lower()}.")
-    # Web UI chỉ chọn 4 mục → TỰ SINH nét ứng xử phù hợp từ tuổi + nghề
-    # (ngắn gọn xúc tích nhưng đầy đủ — không cần user mô tả thêm).
-    if not (sel.get("trait") or vt or sel.get("style")):
-        auto = [h for h in (AGE_HINT.get(str(sel.get("age") or "")),
-                            JOB_HINT.get(str(sel.get("job") or ""))) if h]
-        if auto:
-            parts.append("Nét: " + "; ".join(auto) + ".")
-    hint = DIALECT.get(str(sel.get("region") or ""))
-    if hint:
-        parts.append(f"Phương ngữ: {hint}.")
+    # GIỌNG & NGÔN NGỮ chi tiết theo vùng (đệm/từ/kiểu cười/câu nói giảm)
+    st = REGION_STYLE.get(region)
+    if st:
+        laugh = ("cười hihi/hehe, không haha" if g in ("Nữ", "Bé gái")
+                 else "cười thoải mái tự nhiên")
+        toi = "em" if (xh.startswith("Xưng em") or xh.startswith("Xưng con")) else "mình"
+        parts.append(
+            f"GIỌNG & NGÔN NGỮ: {st['chat']}, {laugh}. Đệm: {st['dem']}. "
+            f"Từ hay dùng: {st['tu']}. Góp ý thì nói giảm: 'hình như chỗ này "
+            f"hơi nhầm, xem lại giúp {toi} nhé'."
+        )
+    elif DIALECT.get(region):
+        parts.append(f"Phương ngữ: {DIALECT[region]}.")
     parts.append(_SUFFIX)
     return " ".join(parts)
 
