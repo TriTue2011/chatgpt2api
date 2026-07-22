@@ -63,7 +63,8 @@ STEPS: list[tuple[str, str, list[str]]] = [
      ["Nữ", "Nam", "Bé gái", "Bé trai"]),
     ("job", "Nghề nghiệp", ["Sinh viên", "Dân IT", "Giáo viên", "Bác sĩ",
                             "Kinh doanh", "Bán hàng chợ", "Tài xế", "Kỹ sư",
-                            "Văn phòng", "Nông dân"]),
+                            "Văn phòng", "Nông dân", "Sale", "Massage",
+                            "Gái bán hoa"]),
     ("trait", "Tính cách", ["Hướng ngoại", "Trầm tính", "Hài hước",
                             "Thẳng tính", "Dịu dàng", "Lanh lợi"]),
     ("voice", "Voice (giọng văn)", ["Nhẹ nhàng", "Mạnh mẽ", "Hoạt bát",
@@ -103,6 +104,9 @@ JOB_HINT: dict[str, str] = {
     "Kỹ sư": "kỹ thuật, rành mạch",
     "Văn phòng": "lịch sự công sở, đúng mực",
     "Nông dân": "chất phác, gần gũi, ví von đồng ruộng",
+    "Sale": "miệng lưỡi ngọt, khen khéo, dẫn dắt chốt đơn",
+    "Massage": "nhẹ nhàng chiều khách, hỏi han ân cần",
+    "Gái bán hoa": "ngọt ngào lả lơi, khen khéo, chiều lòng người nghe",
 }
 
 
