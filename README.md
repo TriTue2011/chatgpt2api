@@ -29,6 +29,8 @@ The project also comes with a **Captcha Solver** to handle Cloudflare barriers a
 - **7 Knowledge Base RAGs**: Vietnam's electricity/water, medical first aid, education, foreign languages, science, nature, and society data.
 - **Federated Multi-Search**: 9 international search engines running in parallel (Brave, Mojeek, PubMed, etc.).
 - **Studio UI**: Intuitive management, creating new KBs (Knowledge Base) from Markdown, Cloudflare R2 storage.
+- **OfficeCLI MCP**: Create/read/edit Word, Excel, PowerPoint under `/app/data/office` (see `docs/INTEGRATIONS_OFFICECLI_DEEPTUTOR.md`).
+- **DeepTutor sidecar**: Optional tutoring app (`deploy/deeptutor/`) that uses this gateway as an OpenAI-compatible backend.
 
 ### 🛡️ Captcha Solver
 - **Bypass Cloudflare/Turnstile**: Automatically handles ChatGPT's captcha protection.

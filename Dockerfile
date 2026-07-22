@@ -103,6 +103,27 @@ RUN ARCH=$(dpkg --print-architecture) && \
     wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF}.deb" -O /tmp/cf.deb && \
     dpkg -i /tmp/cf.deb && rm /tmp/cf.deb
 
+# OfficeCLI binary (Word/Excel/PPT) — agent tools office_* gọi TRỰC TIẾP
+# in-process qua services/officecli.py (không qua MCP hub).
+# Pin version for reproducible builds; bump when upgrading intentionally.
+# glibc builds for Debian slim (not alpine musl).
+ARG OFFICECLI_VERSION=v1.0.140
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64) OC="officecli-linux-x64" ;; \
+      arm64) OC="officecli-linux-arm64" ;; \
+      *) OC="" ;; \
+    esac && \
+    if [ -n "$OC" ]; then \
+      wget -q "https://github.com/iOfficeAI/OfficeCLI/releases/download/${OFFICECLI_VERSION}/${OC}" \
+        -O /usr/local/bin/officecli && \
+      chmod +x /usr/local/bin/officecli && \
+      /usr/local/bin/officecli --version || echo "officecli: binary installed (version check optional)" ; \
+    else echo "officecli: skip unsupported arch $ARCH" ; fi
+ENV OFFICECLI_BIN=/usr/local/bin/officecli \
+    OFFICECLI_WORKSPACE=/app/data/office \
+    OFFICECLI_SKIP_UPDATE=1
+
 # Chrome/Chromium — Patchright stealth prefers genuine Chrome, but Google
 # Chrome ships amd64 ONLY. On arm64 install Debian's chromium instead (the
 # solver's _detect_chrome_major + launch fall back to it). TARGETARCH is

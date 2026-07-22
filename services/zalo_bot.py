@@ -1504,6 +1504,12 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
         if out.get("video_url") or out.get("video_path"):
             if not sent_photo and not sent_voice:
                 reply = (reply + "\n(Zalo Bot không gửi video — chỉ ảnh + thoại 1-1)").strip()
+        if out.get("doc_path"):
+            # Zalo Bot API không hỗ trợ gửi file — hướng người dùng sang kênh khác
+            from pathlib import Path as _P
+            _fn = _P(str(out["doc_path"])).name
+            reply = (reply + f"\n(File {_fn} đã lưu — Zalo Bot không gửi được file; "
+                     "anh/chị nhận qua Telegram hoặc Zalo Cá nhân giúp em ạ)").strip()
         if sent_photo or sent_voice:
             # Ảnh đã gửi: TTS thêm nếu bật tts_reply (1-1) và chưa gửi voice agent
             if sent_photo and not sent_voice:

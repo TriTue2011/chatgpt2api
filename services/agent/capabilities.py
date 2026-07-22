@@ -15,6 +15,7 @@ conversationally by the model per the persona rules, not by the risk gate.)
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -1601,6 +1602,132 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     return {"text": "\n".join(out)}
 
 
+# ── OfficeCLI (Word/Excel/PowerPoint) — native in-process, KHÔNG qua MCP ────
+# Binary trong image (Dockerfile OFFICECLI_VERSION), runner services/officecli.py
+# sandbox mọi path dưới DATA_DIR/office. Chỉ office_send trả doc_path (gửi file
+# thật) — các tool soạn/sửa trả text để orchestrator không cắt vòng lặp sớm.
+
+
+def _h_office_files(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    st = oc.status()
+    if not st.get("ok"):
+        return {"text": "OfficeCLI chưa sẵn sàng trong container (thiếu binary)."}
+    files = oc.list_files()
+    if not files:
+        return {"text": f"Workspace {st['workspace']} chưa có file Office nào."}
+    lines = [f"• {f['path']} ({f['bytes']:,} bytes)" for f in files[:50]]
+    return {"text": "File Office hiện có:\n" + "\n".join(lines)}
+
+
+def _h_office_create(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    try:
+        res = oc.create(str(args.get("filename") or ""))
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+    return {"text": res.get("text") or "OK"}
+
+
+def _h_office_view(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    try:
+        return {"text": oc.view(str(args.get("path") or ""),
+                                str(args.get("mode") or "outline"))}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_query(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    path = str(args.get("path") or "")
+    selector = str(args.get("selector") or "").strip()
+    try:
+        if selector:
+            return {"text": oc.query(path, selector)}
+        return {"text": oc.get(path, str(args.get("element_path") or "/"),
+                               int(args.get("depth") or 2))}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_add(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    try:
+        return {"text": oc.add(str(args.get("path") or ""),
+                               str(args.get("parent_path") or "/"),
+                               str(args.get("type") or ""),
+                               oc.parse_props(args.get("props")))}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_set(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    props = oc.parse_props(args.get("props"))
+    if not props:
+        return {"text": "Cần props (object thuộc tính cần đổi)."}
+    try:
+        return {"text": oc.set_props(str(args.get("path") or ""),
+                                     str(args.get("element_path") or "/"), props)}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_remove(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    try:
+        return {"text": oc.remove(str(args.get("path") or ""),
+                                  str(args.get("element_path") or ""))}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_batch(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    cmds = args.get("commands")
+    if isinstance(cmds, str):
+        try:
+            cmds = json.loads(cmds)
+        except Exception:
+            return {"text": "commands phải là JSON array."}
+    if not isinstance(cmds, list) or not cmds:
+        return {"text": "commands phải là array không rỗng."}
+    try:
+        return {"text": oc.batch(str(args.get("path") or ""), cmds,
+                                 best_effort=bool(args.get("best_effort")))}
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+
+
+def _h_office_merge(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    data = args.get("data")
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return {"text": "data phải là JSON object."}
+    if not isinstance(data, dict):
+        return {"text": "data phải là object."}
+    try:
+        res = oc.merge(str(args.get("template") or ""),
+                       str(args.get("output") or ""), data)
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+    return {"text": res.get("text") or "OK"}
+
+
+def _h_office_send(args: dict, ctx: dict) -> dict:
+    from services import officecli as oc
+    try:
+        p = oc.resolve_path(str(args.get("path") or ""), must_exist=True)
+    except (ValueError, FileNotFoundError) as exc:
+        return {"text": str(exc)}
+    caption = str(args.get("caption") or "").strip() or f"Đây là file {p.name} ạ 📄"
+    return {"text": caption, "doc_path": str(p)}
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 CAPABILITIES: dict[str, Capability] = {
@@ -2145,6 +2272,106 @@ CAPABILITIES: dict[str, Capability] = {
             "Đọc praise+feedback cho HS; weak → teacher_memory; "
             "kẹt tiếp → teacher_hint; ôn → search_sgk."
         )),
+
+    # ── OfficeCLI: soạn/sửa Word Excel PowerPoint (native, không MCP) ──────
+    "office_files": Capability(
+        name="office_files", risk=READ, handler=_h_office_files,
+        emoji="📁", label="Xem kho file Office",
+        description="Liệt kê file Office (.docx/.xlsx/.pptx) trong workspace."),
+    "office_create": Capability(
+        name="office_create", risk=CHANGE, handler=_h_office_create,
+        emoji="📄", label="Tạo file Office",
+        description=("Tạo file Office trống: .docx (Word), .xlsx (Excel), "
+                     ".pptx (PowerPoint). filename là tên file kèm đuôi."),
+        parameters={"type": "object", "properties": {
+            "filename": {"type": "string", "description": "vd bao_cao.docx"}},
+            "required": ["filename"]},
+        workflow=("Tạo xong → office_add/office_set để soạn nội dung → "
+                  "office_view kiểm tra → office_send gửi file cho người dùng. "
+                  "KHÔNG tự bịa nội dung dài khi người dùng chưa yêu cầu.")),
+    "office_view": Capability(
+        name="office_view", risk=READ, handler=_h_office_view,
+        emoji="👀", label="Đọc file Office",
+        description=("Đọc file Office. mode: outline (cấu trúc), text (chữ), "
+                     "annotated (kèm element path), stats, issues (lỗi)."),
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "mode": {"type": "string",
+                     "enum": ["outline", "text", "annotated", "stats", "issues"]}},
+            "required": ["path"]}),
+    "office_query": Capability(
+        name="office_query", risk=READ, handler=_h_office_query,
+        emoji="🔎", label="Soi phần tử Office",
+        description=("Soi chi tiết phần tử trong file Office: selector "
+                     "(vd //p[contains(text,'Q4')]) HOẶC element_path + depth."),
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "selector": {"type": "string"},
+            "element_path": {"type": "string"},
+            "depth": {"type": "integer"}},
+            "required": ["path"]}),
+    "office_add": Capability(
+        name="office_add", risk=CHANGE, handler=_h_office_add,
+        emoji="➕", label="Thêm phần tử Office",
+        description=("Thêm phần tử vào file Office: paragraph/table/image vào "
+                     "docx; sheet/row vào xlsx; slide/shape vào pptx. "
+                     "props là object thuộc tính (text, title, x, y…)."),
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "parent_path": {"type": "string", "description": "vd / hoặc /slide[1]"},
+            "type": {"type": "string", "description": "paragraph|table|slide|shape|sheet|row…"},
+            "props": {"type": "object"}},
+            "required": ["path", "type"]}),
+    "office_set": Capability(
+        name="office_set", risk=CHANGE, handler=_h_office_set,
+        emoji="✏️", label="Sửa thuộc tính Office",
+        description="Đổi thuộc tính phần tử Office (text, font, size, color…).",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "element_path": {"type": "string"},
+            "props": {"type": "object"}},
+            "required": ["path", "element_path", "props"]}),
+    "office_remove": Capability(
+        name="office_remove", risk=CHANGE, handler=_h_office_remove,
+        emoji="🗑️", label="Xóa phần tử Office",
+        description="Xóa một phần tử khỏi file Office theo element_path.",
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "element_path": {"type": "string"}},
+            "required": ["path", "element_path"]}),
+    "office_batch": Capability(
+        name="office_batch", risk=CHANGE, handler=_h_office_batch,
+        emoji="⚡", label="Sửa Office hàng loạt",
+        description=("Chạy nhiều lệnh add/set/remove trên 1 file Office trong "
+                     "1 lần (nhanh, atomic). commands là array lệnh JSON."),
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "commands": {"type": "array", "items": {"type": "object"}},
+            "best_effort": {"type": "boolean"}},
+            "required": ["path", "commands"]},
+        workflow=("Soạn nội dung dài: GOM các bước vào office_batch thay vì "
+                  "gọi office_add lắt nhắt từng đoạn.")),
+    "office_merge": Capability(
+        name="office_merge", risk=CHANGE, handler=_h_office_merge,
+        emoji="🧩", label="Điền template Office",
+        description=("Điền data vào template Office có placeholder → file mới. "
+                     "data là object {ten_bien: gia_tri}."),
+        parameters={"type": "object", "properties": {
+            "template": {"type": "string"},
+            "output": {"type": "string"},
+            "data": {"type": "object"}},
+            "required": ["template", "output", "data"]}),
+    "office_send": Capability(
+        name="office_send", risk=READ, handler=_h_office_send,
+        emoji="📤", label="Gửi file Office",
+        description=("GỬI file Office trong workspace cho người dùng (file "
+                     "thật, không phải link). Gọi sau khi soạn xong."),
+        parameters={"type": "object", "properties": {
+            "path": {"type": "string"},
+            "caption": {"type": "string"}},
+            "required": ["path"]},
+        workflow=("Kênh Zalo Bot API không nhận file — hệ thống tự fallback "
+                  "hướng dẫn; không cần tự xử lý.")),
 }
 
 
@@ -2175,6 +2402,11 @@ _CAP_GROUP: dict[str, str] = {
     # khả dụng qua _CORE_TOOLS (schema + dispatch + persona).
     "expand_tool_result": "memory",
     "contacts": "contacts", "send_to_contact": "contacts",
+    "office_files": "office", "office_create": "office",
+    "office_view": "office", "office_query": "office",
+    "office_add": "office", "office_set": "office",
+    "office_remove": "office", "office_batch": "office",
+    "office_merge": "office", "office_send": "office",
     "search_sgk": "teacher", "list_teacher_workspaces": "teacher",
     "teacher_memory": "teacher",
     "teacher_lesson": "teacher",

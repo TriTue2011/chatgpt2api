@@ -1278,6 +1278,16 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
                 logger.warning("send audio failed: %s", exc)
                 if audio_url:
                     reply = f"{reply}\n{audio_url}"
+        doc_path = out.get("doc_path")
+        if doc_path:
+            try:
+                from pathlib import Path as _P
+                _p = _P(str(doc_path))
+                send_document(chat_id, _p.read_bytes(), _p.name,
+                              caption=reply[:1000])
+                return
+            except Exception as exc:
+                logger.warning("send doc failed: %s", exc)
         # Text path: preserve choices from orchestrator for inline keyboard
         if out.get("choices") and not any(
             out.get(k) for k in ("image_url", "video_path", "video_url", "audio_path", "audio_url")

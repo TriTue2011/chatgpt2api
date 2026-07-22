@@ -581,7 +581,7 @@ def orchestrate(user_text: str, user_id: str,
         # Append the assistant tool-call message so results can reference it.
         messages.append({"role": "assistant", "content": msg.get("content"),
                          "tool_calls": tool_calls})
-        produced_media: Optional[dict] = None  # {"image_url"|"video_path"|"video_url": ...}
+        produced_media: Optional[dict] = None  # {"image_url"|"video_path"|"video_url"|"doc_path": ...}
         produced_caption = "Đây ạ 🎨"
 
         for tc in tool_calls:
@@ -658,7 +658,7 @@ def orchestrate(user_text: str, user_id: str,
             else:
                 result = _execute(cap, args, user_id)
 
-            for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path"):
+            for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):
                     continue
                 # P0#5: tool/model media — chỉ giữ URL/path được phép egress.

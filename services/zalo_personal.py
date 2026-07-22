@@ -2106,6 +2106,15 @@ def _process_ai(ev: dict) -> None:
                 sent_media = True
             elif not sent_media:
                 reply = (reply + "\n(em có video nhưng gửi file chưa được)").strip()
+        # File Office từ agent (office_send) → gửi FILE THẬT như luồng Word
+        doc_path = out.get("doc_path") or ""
+        if not sent_media and doc_path:
+            if _send_file_robust(
+                thread_id, str(doc_path), reply[:200], thread_type, account=_acc,
+            ):
+                sent_media = True
+            else:
+                reply = (reply + "\n(em có file nhưng gửi chưa được)").strip()
         if sent_media:
             if image_url and not (audio_url or audio_path):
                 _maybe_voice_reply(

@@ -18,6 +18,11 @@
 #   - "127.0.0.1:3001:3001"
 #   - "127.0.0.1:10600:10600"
 # Chỉ làm vậy khi client thật sự chạy trên cùng máy host Docker.
+#
+# Sidecar (không gộp vào service c2a):
+#   OfficeCLI  — binary trong image + MCP preset "officecli" (hub /officecli/mcp)
+#   DeepTutor  — docker compose -f deploy/deeptutor/docker-compose.yml up -d
+#   Chi tiết: docs/INTEGRATIONS_OFFICECLI_DEEPTUTOR.md
 # ============================================================================
 
 services:
