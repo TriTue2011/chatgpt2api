@@ -216,6 +216,17 @@ def create_router() -> APIRouter:
             source_kind = "ha"
         payload["_client_host"] = client_host
         payload["_source_kind"] = source_kind
+        # Persona Home Assistant — cài ở Settings → card Persona (kênh Home
+        # Assistant, key phiên "ha"); chỉ áp cho request nhận diện là HA.
+        try:
+            if source_kind == "ha" and isinstance(payload.get("messages"), list):
+                from services.agent import persona as _P
+                _pb = _P.prompt_for("ha")
+                if _pb:
+                    payload["messages"] = [{"role": "system", "content": _pb},
+                                           *payload["messages"]]
+        except Exception:
+            pass
         model = str(payload.get("model") or "auto")
         request_preview = request_text(payload.get("prompt"), payload.get("messages"))
         has_vision = detect_vision_messages(payload.get("messages"))

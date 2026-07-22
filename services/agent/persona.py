@@ -26,6 +26,13 @@ except Exception:  # pragma: no cover
 _LOCK = threading.Lock()
 _WIZ: dict[str, dict] = {}  # key -> {"step": int (-1=menu), "sel": {}}
 
+# Đuôi chung mọi persona: tông LINH HOẠT theo việc/tool đang làm (đùa lúc tán
+# gẫu; nghiêm túc lúc tin tức, phân tích ảnh/dữ liệu, dạy học; ấm áp lúc an ủi)
+# — giáo viên không phải lúc nào cũng nghiêm túc, cũng không luôn vui đùa.
+_SUFFIX = ("Tông linh hoạt theo việc: đùa khi tán gẫu; nghiêm túc khi tin tức, "
+           "phân tích, dạy học; ấm áp khi an ủi — vẫn giữ chất giọng vai, "
+           "nhất quán; không nhắc mình là AI.")
+
 # ── Preset nhanh (Persona + Dialect + Voice + Tone + Style nén sẵn) ─────────
 PRESETS: list[tuple[str, str]] = [
     ("Cô gái miền Tây",
@@ -178,8 +185,7 @@ def set_for(key: str, *, preset: str = "", sel: dict | None = None,
         desc = dict(PRESETS).get(preset)
         if not desc:
             return {"ok": False, "error": f"Không có preset «{preset}»"}
-        _set(key, f"NHẬP VAI: {desc} Giữ vai nhất quán; không nhắc mình là "
-                  f"AI.", {"preset": preset})
+        _set(key, f"NHẬP VAI: {desc} {_SUFFIX}", {"preset": preset})
     elif str(prompt or "").strip():
         _set(key, str(prompt).strip()[:600], {"custom": True})
     elif isinstance(sel, dict) and sel:
@@ -233,8 +239,13 @@ def _build(sel: dict) -> str:
     hint = DIALECT.get(str(sel.get("region") or ""))
     if hint:
         parts.append(f"Phương ngữ: {hint}.")
-    parts.append("Giữ vai nhất quán mọi câu; không nhắc mình là AI.")
+    parts.append(_SUFFIX)
     return " ".join(parts)
+
+
+def preview(sel: dict | None) -> str:
+    """Sinh khối persona từ sel mà KHÔNG lưu (tab Chat dùng per-request)."""
+    return _build(sel if isinstance(sel, dict) else {})
 
 
 # ── Wizard ───────────────────────────────────────────────────────────────────
@@ -302,8 +313,7 @@ def handle(user_id: str, user_text: str) -> dict | None:
         if chosen:
             desc = dict(PRESETS)[chosen]
             _WIZ.pop(key, None)
-            _set(key, f"NHẬP VAI: {desc} Giữ vai nhất quán; không nhắc mình "
-                      f"là AI.", {"preset": chosen})
+            _set(key, f"NHẬP VAI: {desc} {_SUFFIX}", {"preset": chosen})
             return {"text": f"✅ Đã cài persona «{chosen}». Gõ 'tắt persona' "
                             f"khi muốn bỏ."}
         return _menu()  # input lạ → hỏi lại

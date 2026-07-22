@@ -77,6 +77,8 @@ def create_router() -> APIRouter:
     def _persona_key(platform: str, group_id: str, user_id: str) -> str:
         gid = str(group_id or "").strip()
         uid = str(user_id or "").strip()
+        if platform == "ha":  # Home Assistant — một phiên chung, key cố định
+            return "ha"
         if platform == "tg":
             return f"{gid}:u{uid}" if (gid and uid) else (gid or uid)
         pre = "zalo_" if platform == "zalo" else "zalop_"
@@ -100,8 +102,8 @@ def create_router() -> APIRouter:
         platform = str(body.get("platform") or "").strip()
         key = str(body.get("key") or "").strip()
         if not key:
-            if platform not in _PLATFORMS:
-                return {"ok": False, "error": "Cần platform tg|zalo|zalop"}
+            if platform not in _PLATFORMS and platform != "ha":
+                return {"ok": False, "error": "Cần platform tg|zalo|zalop|ha"}
             key = _persona_key(platform, str(body.get("group_id") or ""),
                                str(body.get("user_id") or ""))
         if not key:
@@ -111,6 +113,15 @@ def create_router() -> APIRouter:
         return await asyncio.to_thread(
             lambda: P.set_for(key, preset=str(body.get("preset") or ""),
                               prompt=str(body.get("prompt") or ""), sel=sel))
+
+    @router.post("/api/personas/preview")
+    async def personas_preview(body: dict,
+                               authorization: str | None = Header(default=None)):
+        """Sinh khối persona từ sel KHÔNG lưu — tab Chat gửi per-request."""
+        require_admin(authorization)
+        from services.agent import persona as P
+        sel = body.get("sel") if isinstance(body.get("sel"), dict) else {}
+        return {"ok": True, "prompt": await asyncio.to_thread(P.preview, sel)}
 
     @router.delete("/api/personas")
     async def personas_del(body: dict,

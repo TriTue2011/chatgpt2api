@@ -52,7 +52,7 @@ export function PersonasCard() {
   useEffect(() => { void load(); }, [load]);
 
   const save = async () => {
-    if (!groupId.trim() && !userId.trim()) {
+    if (platform !== "ha" && !groupId.trim() && !userId.trim()) {
       toast.error("Cần Nhóm ID hoặc User ID"); return;
     }
     if (!region && !gender && !age && !job) {
@@ -109,6 +109,7 @@ export function PersonasCard() {
                 <option value="tg">Telegram</option>
                 <option value="zalo">Zalo Bot</option>
                 <option value="zalop">Zalo Cá nhân</option>
+                <option value="ha">Home Assistant</option>
               </select>
               <Input className="h-8" placeholder="Nhóm ID (trống = 1-1)"
                      value={groupId}

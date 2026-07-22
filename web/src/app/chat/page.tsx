@@ -8,6 +8,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Paperclip, X } from "lucide-react";
+import { ChatPersonaBar } from "./persona-bar";
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -118,6 +119,7 @@ export default function ChatPage() {
   const [model, setModel] = useState("AI Agent");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [personaPrompt, setPersonaPrompt] = useState("");
   const [images, setImages] = useState<string[]>([]); // data URLs ảnh đính kèm
   const [streaming, setStreaming] = useState(false);
   const [elapsed, setElapsed] = useState(0); // ms, live counter while streaming
@@ -383,7 +385,11 @@ export default function ChatPage() {
         headers: { "Content-Type": "application/json", "Authorization": authKey ? `Bearer ${authKey}` : "" },
         body: JSON.stringify({
           model, stream: true,
-          messages: [...messages, outgoing].map(m => ({ role: m.role, content: buildApiContent(m) })),
+          messages: [
+            // Persona tab Chat (nếu bật) — khối nén đi ngầm, không hiện UI
+            ...(personaPrompt ? [{ role: "system", content: personaPrompt }] : []),
+            ...[...messages, outgoing].map(m => ({ role: m.role, content: buildApiContent(m) })),
+          ],
         }),
       });
 
@@ -553,6 +559,7 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
+      <ChatPersonaBar onPrompt={setPersonaPrompt} />
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {images.map((src, i) => (
