@@ -1170,7 +1170,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
         intent = _phi.parse_intent(caption, _allowed_ph) or (
             _phi.GENERATE if _phi.classify(caption) == _phi.GENERATE else _phi.ANALYZE
         )
-        if intent not in _allowed_ph and allow is not None:
+        if intent not in _allowed_ph and _allow is not None:
             if intent == _phi.GENERATE:
                 return
         if intent == _phi.RAG_TEACHER:
@@ -1221,7 +1221,17 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _tg_model(chat_id)
-        out = orchestrate(text, chat_id, allow=_allow, ha_fastpath=_fp, model=_model)
+        # Nhóm: mỗi USER một phiên riêng (lịch sử/persona/approval độc lập).
+        # Chat 1-1 giữ key cũ (chat_id) để không mất lịch sử hiện có.
+        _skey = str(chat_id)
+        try:
+            from services.config import config as _c2
+            if (str(chat_id).startswith("-") and user_id
+                    and getattr(_c2, "group_user_isolation", True)):
+                _skey = f"{chat_id}:u{user_id}"
+        except Exception:
+            pass
+        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model)
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
         try:
             from services import net_guard

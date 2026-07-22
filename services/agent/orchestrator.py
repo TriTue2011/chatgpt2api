@@ -434,6 +434,16 @@ def orchestrate(user_text: str, user_id: str,
     except Exception:
         pass
 
+    # 0) Speech Persona wizard — deterministic, ngoài vòng LLM (0 token model).
+    # Chỉ can thiệp khi user gõ trigger ('persona'…) hoặc wizard đang mở.
+    try:
+        from services.agent import persona as _persona
+        _p_out = _persona.handle(user_id, user_text)
+        if _p_out is not None:
+            return _finalize(user_id, _p_out)
+    except Exception as _p_exc:
+        logger.warning("persona wizard: %s", _p_exc)
+
     # 1) Resolve a pending approval (confirming a proposed change).
     pending = approval_gate.get_pending(user_id)
     if pending is not None:
@@ -542,6 +552,14 @@ def orchestrate(user_text: str, user_id: str,
     # Only feed the recent tail to the model (summary lives in system prompt).
     model_hist = hist[-max_h:]
     sys_prompt = _build_system_prompt(user_id, allow)
+    # Speech Persona của phiên (nếu cài) — khối nén ~100 token, lưu sẵn.
+    try:
+        from services.agent import persona as _persona2
+        _pb = _persona2.prompt_for(user_id)
+        if _pb:
+            sys_prompt += "\n\n" + _pb
+    except Exception:
+        pass
     sys_prompt = super_context.maybe_attach(
         sys_prompt, user_id, user_text, hist_before, allow=allow,
     )

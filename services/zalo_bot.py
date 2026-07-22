@@ -1466,7 +1466,15 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _zalo_model(chat_id)
-        out = orchestrate(text, f"zalo_{chat_id}", allow=_allow, ha_fastpath=_fp, model=_model)
+        # Nhóm: mỗi USER một phiên riêng; 1-1 giữ key cũ (không mất lịch sử).
+        _skey = f"zalo_{chat_id}"
+        try:
+            from services.config import config as _c2
+            if is_group and user_id and getattr(_c2, "group_user_isolation", True):
+                _skey = f"zalo_{chat_id}:u{user_id}"
+        except Exception:
+            pass
+        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model)
         try:
             from services import net_guard
             out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})

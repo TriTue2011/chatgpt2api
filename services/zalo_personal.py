@@ -1034,7 +1034,7 @@ def _bot_account_aliases(account_id: str) -> list[str]:
     if not acc:
         return out
     try:
-        for a in list_accounts():
+        for a in get_accounts():
             if str(a.get("ownId") or "").strip() != acc:
                 continue
             for k in ("displayName", "display_name", "phoneNumber", "phone", "name"):
@@ -2065,8 +2065,17 @@ def _process_ai(ev: dict) -> None:
                     _fp = bool(e.get("ha_fastpath", _fp))
                     break
         _model = _ai_model(_acc, thread_id)
+        # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
+        _skey = f"zalop_{thread_id}"
+        try:
+            _snd = str(ev.get("sender_id") or "")
+            if (int(thread_type) == 1 and _snd
+                    and getattr(config, "group_user_isolation", True)):
+                _skey = f"zalop_{thread_id}:u{_snd}"
+        except Exception:
+            pass
         out = orchestrate(
-            text, f"zalop_{thread_id}",
+            text, _skey,
             allow=_allow, ha_fastpath=_fp, model=_model,
         )
         try:
