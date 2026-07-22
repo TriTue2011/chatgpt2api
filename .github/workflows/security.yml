@@ -55,12 +55,15 @@ jobs:
           python-version: "3.13"
       - name: pip-audit (Python SCA — fail on known vulns)
         run: |
-          # Export deps; fail job if audit finds issues (high/critical in practice).
-          uv export --format requirements-txt --no-dev -o /tmp/reqs.txt 2>/dev/null \
-            || uv export --format requirements-txt -o /tmp/reqs.txt
-          # Soft-fail path if export empty; otherwise hard fail.
+          # Export deps KHÔNG hash. pip-audit không hash được VCS (git+) dep
+          # (vd gemini-webapi từ GitHub) → nội bộ pip lỗi "can't verify hashes
+          # for VCS repos". Bỏ --hash + lọc dòng git → audit các gói PyPI còn
+          # lại (VCS dep build trong Docker, ngoài phạm vi CVE của pip-audit).
+          uv export --format requirements-txt --no-dev --no-hashes -o /tmp/reqs.raw.txt 2>/dev/null \
+            || uv export --format requirements-txt --no-hashes -o /tmp/reqs.raw.txt
+          grep -vE '(git\+|@ git|^-e )' /tmp/reqs.raw.txt > /tmp/reqs.txt || true
           if [ -s /tmp/reqs.txt ]; then
-            uvx pip-audit -r /tmp/reqs.txt --progress-spinner off \
+            uvx pip-audit -r /tmp/reqs.txt --no-deps --progress-spinner off \
               || { echo "::error::pip-audit found vulnerabilities — fix or pin with justification"; exit 1; }
           else
             echo "No requirements export; skip hard fail"
