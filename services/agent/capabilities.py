@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Callable
@@ -999,93 +1000,118 @@ def _h_contacts(args: dict, ctx: dict) -> dict:
     return {"text": "\n".join(lines)}
 
 
-def _h_send_to_contact(args: dict, ctx: dict) -> dict:
-    """Gửi tin tới contact đã lưu — chọn bot gửi (multi-bot)."""
+def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
+    """Gửi 1 tin tới 1 contact đã resolve. Trả (ok, mô tả kết quả)."""
     from services import channel_contacts as cc
-
-    ref = str(args.get("ref") or args.get("name") or args.get("to") or "").strip()
-    message = str(args.get("message") or args.get("text") or "").strip()
-    bot_id = str(args.get("bot_id") or args.get("via_bot") or "").strip()
-    platform = str(args.get("platform") or "").strip().lower()
-    if platform in ("telegram", "tele"):
-        platform = "tg"
-    if not ref or not message:
-        return {"text": "Cần `to`/`name` (alias) và `message`."}
-
-    hits = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
-    if not hits:
-        one = cc.find_by_ref(ref)
-        hits = [one] if one else []
-    if not hits:
-        return {"text": f"Không tìm thấy người nhận `{ref}`. Dùng contacts op=list."}
-    if len(hits) > 1 and not bot_id:
-        opts = "\n".join(
-            f"- bot **{h.get('bot_label') or h.get('bot_id')}** chat=`{h.get('chat_id')}` "
-            f"key=`{h.get('key')}`"
-            for h in hits
-        )
-        return {
-            "text": (
-                f"Có {len(hits)} mục khớp `{ref}`. Chỉ định `bot_id` hoặc `via_bot` "
-                f"(tên/label bot):\n{opts}"
-            )
-        }
-    rec = hits[0]
-    if bot_id:
-        matched = [h for h in hits if h.get("bot_id") == bot_id
-                   or str(h.get("bot_label") or "").lower() == bot_id.lower()]
-        if matched:
-            rec = matched[0]
-        else:
-            # force bot_id override for send even if contact on other bot
-            rec = dict(rec)
-            rec["bot_id"] = bot_id
-
-    plat = rec.get("platform") or platform or "tg"
+    plat = rec.get("platform") or "tg"
     bid = str(rec.get("bot_id") or "")
     chat = str(rec.get("chat_id") or "")
+    title = (rec.get("alias") or rec.get("chat_name")
+             or rec.get("display_name") or chat)
     if not chat:
-        return {"text": "Contact thiếu chat_id."}
-
+        return False, f"«{title}» thiếu chat_id"
     try:
         if plat == "tg":
             from services import telegram_bot as tg
             bot = tg._find_bot_by_id(bid)
             if not bot:
-                return {"text": f"Không có bot Telegram `{bid}` đang bật."}
+                return False, f"bot Telegram `{bid}` không bật"
             prev = tg._cur_bot()
             try:
                 tg._current.bot = bot
                 r = tg.send_message(chat, message)
             finally:
                 tg._current.bot = prev
-            if r.get("ok"):
-                return {"text": f"Đã gửi qua bot **{cc.bot_label('tg', bid)}** → chat `{chat}`."}
-            return {"text": f"Gửi Telegram thất bại: {r}"}
+            return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
+                    else f"«{title}» lỗi: {r}")
         if plat == "zalo":
             from services import zalo_bot as zb
             bot = zb._find_bot_by_id(bid) if hasattr(zb, "_find_bot_by_id") else None
             if bot is None:
-                # try scan
                 for b in zb._bots():
-                    tok = str(b.get("token") or "")
-                    if tok.split(":")[0] == bid:
+                    if str(b.get("token") or "").split(":")[0] == bid:
                         bot = b
                         break
             if not bot:
-                return {"text": f"Không có bot Zalo `{bid}` đang bật."}
+                return False, f"bot Zalo `{bid}` không bật"
             prev = zb._cur_bot()
             try:
                 zb._current.bot = bot
                 r = zb.send_message(chat, message)
             finally:
                 zb._current.bot = prev
-            if r.get("ok"):
-                return {"text": f"Đã gửi qua bot **{cc.bot_label('zalo', bid)}** → `{chat}`."}
-            return {"text": f"Gửi Zalo thất bại: {r}"}
+            return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
+                    else f"«{title}» lỗi: {r}")
+        if plat == "zalop":
+            # Zalo Cá nhân: gửi bằng chính account (bot_id=ownId), nhóm→type 1
+            from services import zalo_personal as zp
+            ttype = 1 if rec.get("kind") == "group" else 0
+            r = zp.send_message(chat, message, ttype, account=bid)
+            return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
+                    else f"«{title}» lỗi: {r.get('error') or r}")
     except Exception as exc:
-        return {"text": f"Lỗi gửi: {str(exc)[:150]}"}
-    return {"text": f"Platform `{plat}` chưa hỗ trợ gửi tay."}
+        return False, f"«{title}» lỗi: {str(exc)[:120]}"
+    return False, f"«{title}» platform `{plat}` chưa hỗ trợ"
+
+
+def _h_send_to_contact(args: dict, ctx: dict) -> dict:
+    """Gửi tin tới contact đã lưu — TÁCH nhiều người theo dấu phẩy, LỌC theo
+    đúng kênh đang dùng (không quét cả 3 kênh), hỗ trợ tg/zalo/zalop."""
+    from services import channel_contacts as cc
+
+    raw_ref = str(args.get("ref") or args.get("name") or args.get("to") or "").strip()
+    message = str(args.get("message") or args.get("text") or "").strip()
+    bot_id = str(args.get("bot_id") or args.get("via_bot") or "").strip()
+    platform = str(args.get("platform") or "").strip().lower()
+    if platform in ("telegram", "tele"):
+        platform = "tg"
+    # KÊNH đang dùng (từ user_id: zalop_/zalo_/tg) — chốt phạm vi danh bạ để
+    # không khớp nhầm thread_id của kênh khác, không gửi lộn sang kênh khác.
+    if not platform:
+        platform = _channel_of(ctx)
+    if not raw_ref or not message:
+        return {"text": "Cần `to`/`name` (alias) và `message`."}
+
+    # Nhiều người nhận: "Docker, Calendar, Weather" / "A; B" / "A và B"
+    refs = [x.strip() for x in re.split(r"[,;]|\bvà\b|\band\b", raw_ref) if x.strip()]
+    if not refs:
+        refs = [raw_ref]
+
+    sent: list[str] = []
+    failed: list[str] = []
+    ambiguous: list[str] = []
+    for ref in refs:
+        hits = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
+        if not hits:
+            one = cc.find_by_ref(ref)
+            hits = [one] if one else []
+        if not hits:
+            failed.append(f"«{ref}» không thấy trong danh bạ"
+                          + (f" kênh {platform}" if platform else ""))
+            continue
+        rec = hits[0]
+        if bot_id:
+            matched = [h for h in hits if h.get("bot_id") == bot_id
+                       or str(h.get("bot_label") or "").lower() == bot_id.lower()]
+            rec = matched[0] if matched else {**rec, "bot_id": bot_id}
+        elif len(hits) > 1:
+            # Nhiều mục cùng tên trên NHIỀU bot của cùng kênh → nêu để chọn
+            opts = ", ".join(f"{h.get('bot_label') or h.get('bot_id')}" for h in hits)
+            ambiguous.append(f"«{ref}» trùng ở nhiều bot ({opts}) — nói rõ bot")
+            continue
+        ok, desc = _send_one_contact(rec, message)
+        (sent if ok else failed).append(desc)
+
+    parts = []
+    if sent:
+        parts.append(f"✅ Đã gửi: {', '.join(sent)}")
+    if ambiguous:
+        parts.append("❓ " + "; ".join(ambiguous))
+    if failed:
+        parts.append("⚠️ " + "; ".join(failed))
+    if not parts:
+        return {"text": f"Không gửi được `{raw_ref}`. Dùng contacts op=list."}
+    return {"text": "\n".join(parts)}
 
 
 _MEDIA_EXT = {
