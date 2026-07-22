@@ -1135,6 +1135,28 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         if not h:
             one = cc.find_by_ref(ref)
             h = [one] if one else []
+        # Fallback DIRECTORY: thread cấu hình ở Lọc thread / Admin (Settings)
+        # nhưng CHƯA tự ghi vào danh bạ — tra theo tên đã đặt (name/meta).
+        if not h and platform:
+            try:
+                low = ref.strip().lower()
+                for d in cc.list_directory(platform):
+                    nm = str(d.get("name") or "").strip().lower()
+                    tid = str(d.get("thread_id") or "")
+                    if not nm and not tid:
+                        continue
+                    if low == nm or (low and low in nm) or low == tid.lower():
+                        if bot_id and str(d.get("bot_id")) != bot_id:
+                            continue
+                        h.append({
+                            "platform": platform, "bot_id": str(d.get("bot_id") or ""),
+                            "chat_id": tid, "kind": d.get("kind") or "user",
+                            "chat_name": d.get("name") or "",
+                            "alias": d.get("name") or tid,
+                            "bot_label": d.get("bot_label") or "",
+                        })
+            except Exception:
+                pass
         return h
 
     sent: list[str] = []
