@@ -2106,12 +2106,28 @@ def _process_ai(ev: dict) -> None:
                 sent_media = True
             elif not sent_media:
                 reply = (reply + "\n(em có video nhưng gửi file chưa được)").strip()
-        # File Office từ agent (office_send) → gửi FILE THẬT như luồng Word
+        # File Office từ agent (office_send) → gửi FILE THẬT như luồng Word:
+        # sendFileByAccount cần URL công khai — copy vào images_dir/docs rồi
+        # gửi /images/docs/… (path gốc /app/data/office KHÔNG được serve → 404
+        # bị zalo-server tải về thành file hỏng).
         doc_path = out.get("doc_path") or ""
         if not sent_media and doc_path:
-            if _send_file_robust(
-                thread_id, str(doc_path), reply[:200], thread_type, account=_acc,
-            ):
+            sent_doc = False
+            try:
+                import uuid as _uuid
+                from pathlib import Path as _P
+                _src = _P(str(doc_path))
+                _out_dir = config.images_dir / "docs"
+                _out_dir.mkdir(parents=True, exist_ok=True)
+                _pub = _out_dir / f"{_uuid.uuid4().hex[:8]}-{_src.name}"
+                _pub.write_bytes(_src.read_bytes())
+                sent_doc = _send_file_robust(
+                    thread_id, f"/images/docs/{_pub.name}", reply[:200],
+                    thread_type, account=_acc,
+                )
+            except Exception as exc:
+                logger.warning("zalop doc_path: %s", exc)
+            if sent_doc:
                 sent_media = True
             else:
                 reply = (reply + "\n(em có file nhưng gửi chưa được)").strip()
