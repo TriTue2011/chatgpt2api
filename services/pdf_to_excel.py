@@ -490,12 +490,14 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, list[list[str]]]]) -> None:
     try:
         from openpyxl import Workbook  # type: ignore
 
-        from openpyxl.styles import Alignment  # type: ignore
+        from openpyxl.styles import Alignment, Font  # type: ignore
 
         wb = Workbook()
         default = wb.active
         first = True
         wrap = Alignment(wrap_text=True, vertical="top")
+        # Font chuẩn VN cho mọi cell (Times New Roman 13) — theo yêu cầu user.
+        font13 = Font(name="Times New Roman", size=13)
         for name, rows in sheets:
             safe = _safe_sheet_name(name)
             if first:
@@ -508,6 +510,7 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, list[list[str]]]]) -> None:
                 for c_i, val in enumerate(row, start=1):
                     coerced = _coerce_value(val)
                     cell = ws.cell(r_i, c_i, coerced)
+                    cell.font = font13
                     if isinstance(coerced, str) and "\n" in coerced:
                         cell.alignment = wrap
             try:

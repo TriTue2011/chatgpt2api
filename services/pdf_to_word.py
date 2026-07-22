@@ -814,6 +814,53 @@ def _ocr_to_docx(pdf_path: str, docx_path: str) -> None:
     word.save(docx_path)
 
 
+def _normalize_docx_font(docx_path: str, name: str = "Times New Roman",
+                         size_pt: float = 13.0) -> None:
+    """Ép font chuẩn VN (Times New Roman 13) cho TOÀN BỘ run trong body + bảng.
+
+    CHỈ đổi tên font + cỡ chữ — đậm/nghiêng/gạch chân/thụt lề/đánh số/căn lề
+    giữ NGUYÊN y hệt PDF (là thuộc tính riêng của run/paragraph, không đụng).
+    Lỗi thì giữ bản gốc, không làm hỏng file."""
+    try:
+        from docx import Document
+        from docx.oxml.ns import qn
+        from docx.shared import Pt
+
+        doc = Document(docx_path)
+
+        def _apply(par) -> None:
+            for run in par.runs:
+                run.font.name = name
+                run.font.size = Pt(size_pt)
+                try:
+                    # python-docx chỉ set w:ascii+w:hAnsi — bổ sung cs/eastAsia
+                    # để chữ Việt/ký tự đặc biệt không rớt về font khác.
+                    rfonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+                    for attr in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
+                        rfonts.set(qn(attr), name)
+                except Exception:
+                    pass
+
+        def _walk(container) -> None:
+            for par in container.paragraphs:
+                _apply(par)
+            for table in container.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        _walk(cell)
+
+        _walk(doc)
+        try:
+            st = doc.styles["Normal"].font
+            st.name = name
+            st.size = Pt(size_pt)
+        except Exception:
+            pass
+        doc.save(docx_path)
+    except Exception as exc:
+        logger.warning("normalize font docx lỗi (giữ bản gốc): %s", exc)
+
+
 def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> dict:
     """Chuyển 1 file PDF sang DOCX. Trả {'ok', 'method': 'layout'|'scan'|'ocr'|'markdown', 'error'}.
     Model OCR lấy duy nhất từ Nhánh Agent 'Phân tích ảnh' (định tuyến việc)."""
@@ -832,6 +879,7 @@ def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> dict:
                     cv.convert(docx_path)
                 finally:
                     cv.close()
+                _normalize_docx_font(docx_path)
                 return {"ok": True, "method": "layout", "error": ""}
             except Exception as layout_exc:
                 # pdf2docx hỏng (PDF lạ) → Markdown PyMuPDF → docx, vẫn tốt hơn OCR.
@@ -839,14 +887,17 @@ def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> dict:
                 md = digital_pdf_markdown(pdf_path)
                 if md.strip():
                     _markdown_to_docx(md, docx_path)
+                    _normalize_docx_font(docx_path)
                     return {"ok": True, "method": "markdown", "error": ""}
                 raise
         _scan_to_docx(pdf_path, docx_path, layer_ok=info.get("text_quality") == "good")
+        _normalize_docx_font(docx_path)
         return {"ok": True, "method": "scan", "error": ""}
     except Exception as exc:
         logger.warning("pdf->docx chính lỗi, fallback tesseract: %s", exc)
         try:
             _ocr_to_docx(pdf_path, docx_path)
+            _normalize_docx_font(docx_path)
             return {"ok": True, "method": "ocr", "error": ""}
         except Exception as exc2:
             return {"ok": False, "method": "", "error": f"{exc} / {exc2}"}
