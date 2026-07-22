@@ -2274,12 +2274,15 @@ CAPABILITIES: dict[str, Capability] = {
         )),
 
     # ── OfficeCLI: soạn/sửa Word Excel PowerPoint (native, không MCP) ──────
+    # risk=READ có chủ đích: mọi tool chỉ đụng sandbox DATA_DIR/office (như
+    # generate_image) — risk=CHANGE làm supervised-mode kẹt phê duyệt giữa
+    # chuỗi create→add→send (resume sau duyệt KHÔNG nối tiếp vòng lặp).
     "office_files": Capability(
         name="office_files", risk=READ, handler=_h_office_files,
         emoji="📁", label="Xem kho file Office",
         description="Liệt kê file Office (.docx/.xlsx/.pptx) trong workspace."),
     "office_create": Capability(
-        name="office_create", risk=CHANGE, handler=_h_office_create,
+        name="office_create", risk=READ, handler=_h_office_create,
         emoji="📄", label="Tạo file Office",
         description=("Tạo file Office trống: .docx (Word), .xlsx (Excel), "
                      ".pptx (PowerPoint). filename là tên file kèm đuôi."),
@@ -2311,7 +2314,7 @@ CAPABILITIES: dict[str, Capability] = {
             "depth": {"type": "integer"}},
             "required": ["path"]}),
     "office_add": Capability(
-        name="office_add", risk=CHANGE, handler=_h_office_add,
+        name="office_add", risk=READ, handler=_h_office_add,
         emoji="➕", label="Thêm phần tử Office",
         description=("Thêm phần tử vào file Office: paragraph/table/image vào "
                      "docx; sheet/row vào xlsx; slide/shape vào pptx. "
@@ -2323,7 +2326,7 @@ CAPABILITIES: dict[str, Capability] = {
             "props": {"type": "object"}},
             "required": ["path", "type"]}),
     "office_set": Capability(
-        name="office_set", risk=CHANGE, handler=_h_office_set,
+        name="office_set", risk=READ, handler=_h_office_set,
         emoji="✏️", label="Sửa thuộc tính Office",
         description="Đổi thuộc tính phần tử Office (text, font, size, color…).",
         parameters={"type": "object", "properties": {
@@ -2332,7 +2335,7 @@ CAPABILITIES: dict[str, Capability] = {
             "props": {"type": "object"}},
             "required": ["path", "element_path", "props"]}),
     "office_remove": Capability(
-        name="office_remove", risk=CHANGE, handler=_h_office_remove,
+        name="office_remove", risk=READ, handler=_h_office_remove,
         emoji="🗑️", label="Xóa phần tử Office",
         description="Xóa một phần tử khỏi file Office theo element_path.",
         parameters={"type": "object", "properties": {
@@ -2340,7 +2343,7 @@ CAPABILITIES: dict[str, Capability] = {
             "element_path": {"type": "string"}},
             "required": ["path", "element_path"]}),
     "office_batch": Capability(
-        name="office_batch", risk=CHANGE, handler=_h_office_batch,
+        name="office_batch", risk=READ, handler=_h_office_batch,
         emoji="⚡", label="Sửa Office hàng loạt",
         description=("Chạy nhiều lệnh add/set/remove trên 1 file Office trong "
                      "1 lần (nhanh, atomic). commands là array lệnh JSON."),
@@ -2352,7 +2355,7 @@ CAPABILITIES: dict[str, Capability] = {
         workflow=("Soạn nội dung dài: GOM các bước vào office_batch thay vì "
                   "gọi office_add lắt nhắt từng đoạn.")),
     "office_merge": Capability(
-        name="office_merge", risk=CHANGE, handler=_h_office_merge,
+        name="office_merge", risk=READ, handler=_h_office_merge,
         emoji="🧩", label="Điền template Office",
         description=("Điền data vào template Office có placeholder → file mới. "
                      "data là object {ten_bien: gia_tri}."),
