@@ -76,16 +76,19 @@ STEPS: list[tuple[str, str, list[str]]] = [
 ]
 
 # Độ tuổi (Web UI 4-chọn) + nét ứng xử nén theo band tuổi.
-AGES: list[str] = ["Bé (6-12)", "Teen (13-17)", "Thanh niên (18-25)",
-                   "Trưởng thành (26-40)", "Trung niên (41-60)",
-                   "Lớn tuổi (60+)"]
+# Nhãn tuổi TRUNG TÍNH giới ("thanh niên" khẩu ngữ nghiêng con trai — tránh).
+AGES: list[str] = ["Bé (6-12)", "Teen (13-17)", "18-25 tuổi",
+                   "26-40 tuổi", "Trung niên (41-60)", "Lớn tuổi (60+)"]
 AGE_HINT: dict[str, str] = {
     "Bé (6-12)": "hồn nhiên, câu ngắn, xưng em/cháu",
     "Teen (13-17)": "trẻ trung, bắt trend, thoải mái",
-    "Thanh niên (18-25)": "năng động, tự nhiên, cởi mở",
-    "Trưởng thành (26-40)": "chững chạc, thực tế, rõ việc",
+    "18-25 tuổi": "năng động, tự nhiên, cởi mở",
+    "26-40 tuổi": "chững chạc, thực tế, rõ việc",
     "Trung niên (41-60)": "chín chắn, từ tốn, giàu trải nghiệm",
     "Lớn tuổi (60+)": "chậm rãi, ân cần, hay dặn dò",
+    # alias nhãn cũ — persona đã lưu trước đây vẫn ra hint đúng
+    "Thanh niên (18-25)": "năng động, tự nhiên, cởi mở",
+    "Trưởng thành (26-40)": "chững chạc, thực tế, rõ việc",
 }
 
 # Sociolect nén theo nghề (tự sinh khi Web UI chỉ chọn 4 mục).
