@@ -11,6 +11,7 @@ import { HACard } from "./components/ha-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
+import { PersonasCard } from "./components/personas-card";
 import { TelegramCloudflareCard, CloudflareInfraCard } from "./components/telegram-cloudflare-card";
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
@@ -167,6 +168,7 @@ function SettingsPageContent() {
           icon={<GraduationCap className="size-5" />}
         >
           <TeacherSettingsCard />
+          <PersonasCard />
         </SettingsSection>
 
         <SettingsSection

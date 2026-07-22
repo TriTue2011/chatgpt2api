@@ -68,6 +68,42 @@ STEPS: list[tuple[str, str, list[str]]] = [
                                       "Nhiều thành ngữ", "Nhiều tiếng đệm"]),
 ]
 
+# Độ tuổi (Web UI 4-chọn) + nét ứng xử nén theo band tuổi.
+AGES: list[str] = ["Bé (6-12)", "Teen (13-17)", "Thanh niên (18-25)",
+                   "Trưởng thành (26-40)", "Trung niên (41-60)",
+                   "Lớn tuổi (60+)"]
+AGE_HINT: dict[str, str] = {
+    "Bé (6-12)": "hồn nhiên, câu ngắn, xưng em/cháu",
+    "Teen (13-17)": "trẻ trung, bắt trend, thoải mái",
+    "Thanh niên (18-25)": "năng động, tự nhiên, cởi mở",
+    "Trưởng thành (26-40)": "chững chạc, thực tế, rõ việc",
+    "Trung niên (41-60)": "chín chắn, từ tốn, giàu trải nghiệm",
+    "Lớn tuổi (60+)": "chậm rãi, ân cần, hay dặn dò",
+}
+
+# Sociolect nén theo nghề (tự sinh khi Web UI chỉ chọn 4 mục).
+JOB_HINT: dict[str, str] = {
+    "Sinh viên": "nói trẻ trung, ví dụ đời sinh viên",
+    "Dân IT": "chêm thuật ngữ công nghệ, tư duy logic",
+    "Giáo viên": "giảng giải mạch lạc, khích lệ",
+    "Bác sĩ": "cẩn trọng, chính xác, trấn an",
+    "Kinh doanh": "nhanh gọn, hướng kết quả",
+    "Bán hàng chợ": "nhiều tiếng đệm, trả treo có duyên",
+    "Tài xế": "bụi bặm, thực tế, chuyện đường sá",
+    "Kỹ sư": "kỹ thuật, rành mạch",
+    "Văn phòng": "lịch sự công sở, đúng mực",
+    "Nông dân": "chất phác, gần gũi, ví von đồng ruộng",
+}
+
+
+def ui_options() -> dict:
+    """Danh sách lựa chọn cho Web UI (4 mục chọn + phụ)."""
+    d = {f: opts for f, _l, opts in STEPS}
+    return {"regions": d["region"], "genders": d["gender"], "ages": AGES,
+            "jobs": d["job"], "traits": d["trait"], "voices": d["voice"],
+            "tones": d["tone"], "styles": d["style"]}
+
+
 # Phương ngữ nén theo vùng — chỉ vài từ khoá đặc trưng, không tả dài.
 DIALECT: dict[str, str] = {
     "Miền Bắc": "'nhé/ạ/cơ mà', xưng hô chuẩn",
@@ -109,10 +145,53 @@ def _save(data: dict) -> None:
 
 
 def prompt_for(user_id: str) -> str:
-    """Khối persona nén cho system prompt — '' nếu phiên chưa cài."""
+    """Khối persona nén cho system prompt — '' nếu phiên chưa cài.
+
+    Phân giải: key ĐÚNG phiên trước (user-trong-nhóm/1-1); chưa có thì
+    fallback key cấp NHÓM (admin cài cho cả nhóm, user chưa cài riêng dùng chung).
+    """
+    key = str(user_id)
     with _LOCK:
-        entry = _load().get(str(user_id))
+        data = _load()
+    entry = data.get(key)
+    if entry is None and ":u" in key:
+        entry = data.get(key.split(":u", 1)[0])
     return str((entry or {}).get("prompt") or "")
+
+
+def list_all() -> list[dict]:
+    """Toàn bộ persona đã cài (cho Web UI quản lý)."""
+    with _LOCK:
+        data = _load()
+    return [{"key": k, "prompt": str((v or {}).get("prompt") or ""),
+             "sel": (v or {}).get("sel") or {}}
+            for k, v in sorted(data.items())]
+
+
+def set_for(key: str, *, preset: str = "", sel: dict | None = None,
+            prompt: str = "") -> dict:
+    """Cài persona cho một phiên từ Web UI: preset | prompt tự nhập | sel."""
+    key = str(key or "").strip()
+    if not key:
+        return {"ok": False, "error": "Thiếu key phiên"}
+    if preset:
+        desc = dict(PRESETS).get(preset)
+        if not desc:
+            return {"ok": False, "error": f"Không có preset «{preset}»"}
+        _set(key, f"NHẬP VAI: {desc} Giữ vai nhất quán; không nhắc mình là "
+                  f"AI.", {"preset": preset})
+    elif str(prompt or "").strip():
+        _set(key, str(prompt).strip()[:600], {"custom": True})
+    elif isinstance(sel, dict) and sel:
+        _set(key, _build(sel), sel)
+    else:
+        return {"ok": False, "error": "Cần preset, prompt hoặc sel"}
+    return {"ok": True, "key": key, "prompt": prompt_for(key)}
+
+
+def clear_key(key: str) -> dict:
+    """Xóa persona một phiên (Web UI)."""
+    return {"ok": _clear(str(key or "").strip())}
 
 
 def _set(user_id: str, prompt: str, sel: dict | None = None) -> None:
@@ -134,8 +213,8 @@ def _clear(user_id: str) -> bool:
 # ── Prompt builder (nén — mục tiêu ≤100 token) ──────────────────────────────
 
 def _build(sel: dict) -> str:
-    bits = [b for b in (sel.get("gender"), sel.get("region"), sel.get("job"))
-            if b]
+    bits = [b for b in (sel.get("gender"), sel.get("age"), sel.get("region"),
+                        sel.get("job")) if b]
     parts = ["NHẬP VAI: " + (", ".join(bits) if bits else "tuỳ chỉnh") + "."]
     if sel.get("trait"):
         parts.append(f"Tính cách {sel['trait'].lower()}.")
@@ -144,6 +223,13 @@ def _build(sel: dict) -> str:
         parts.append("Giọng " + ", tông ".join(v.lower() for v in vt) + ".")
     if sel.get("style"):
         parts.append(f"Phong cách {sel['style'].lower()}.")
+    # Web UI chỉ chọn 4 mục → TỰ SINH nét ứng xử phù hợp từ tuổi + nghề
+    # (ngắn gọn xúc tích nhưng đầy đủ — không cần user mô tả thêm).
+    if not (sel.get("trait") or vt or sel.get("style")):
+        auto = [h for h in (AGE_HINT.get(str(sel.get("age") or "")),
+                            JOB_HINT.get(str(sel.get("job") or ""))) if h]
+        if auto:
+            parts.append("Nét: " + "; ".join(auto) + ".")
     hint = DIALECT.get(str(sel.get("region") or ""))
     if hint:
         parts.append(f"Phương ngữ: {hint}.")

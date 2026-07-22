@@ -72,6 +72,56 @@ def create_router() -> APIRouter:
             str(body.get("account") or "").strip(),
         )
 
+    # ── Speech Persona theo phiên — 4 phạm vi độc lập (giống webhook forward):
+    # admin (= user 1-1), user 1-1, cả NHÓM (fallback), từng USER TRONG NHÓM.
+    def _persona_key(platform: str, group_id: str, user_id: str) -> str:
+        gid = str(group_id or "").strip()
+        uid = str(user_id or "").strip()
+        if platform == "tg":
+            return f"{gid}:u{uid}" if (gid and uid) else (gid or uid)
+        pre = "zalo_" if platform == "zalo" else "zalop_"
+        if gid and uid:
+            return f"{pre}{gid}:u{uid}"
+        return f"{pre}{gid or uid}" if (gid or uid) else ""
+
+    @router.get("/api/personas")
+    async def personas_list(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.agent import persona as P
+        rows = await asyncio.to_thread(P.list_all)
+        return {"ok": True, "rows": rows,
+                "presets": [{"name": n, "desc": d} for n, d in P.PRESETS],
+                "options": P.ui_options()}
+
+    @router.post("/api/personas")
+    async def personas_set(body: dict,
+                           authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        platform = str(body.get("platform") or "").strip()
+        key = str(body.get("key") or "").strip()
+        if not key:
+            if platform not in _PLATFORMS:
+                return {"ok": False, "error": "Cần platform tg|zalo|zalop"}
+            key = _persona_key(platform, str(body.get("group_id") or ""),
+                               str(body.get("user_id") or ""))
+        if not key:
+            return {"ok": False, "error": "Cần group_id hoặc user_id"}
+        from services.agent import persona as P
+        sel = body.get("sel") if isinstance(body.get("sel"), dict) else None
+        return await asyncio.to_thread(
+            lambda: P.set_for(key, preset=str(body.get("preset") or ""),
+                              prompt=str(body.get("prompt") or ""), sel=sel))
+
+    @router.delete("/api/personas")
+    async def personas_del(body: dict,
+                           authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        key = str(body.get("key") or "").strip()
+        if not key:
+            return {"ok": False, "error": "Thiếu key"}
+        from services.agent import persona as P
+        return await asyncio.to_thread(P.clear_key, key)
+
     @router.delete("/api/channels/blacklist")
     async def del_blacklist(body: dict, authorization: str | None = Header(default=None)):
         require_admin(authorization)
