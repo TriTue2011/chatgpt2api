@@ -419,6 +419,11 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                     </div>
                   </div>
 
+                  {/* Persona riêng Admin này — độc lập, tick → 4 chọn → mô tả dưới */}
+                  <PersonaInline platform={platform}
+                    groupId={a.kind === "group" ? a.chat_id : ""}
+                    userId={a.kind === "group" ? "" : a.chat_id} />
+
                   <div>
                     <label className="text-[10px] text-muted-foreground">
                       🤖 Nền tảng / Model AI (riêng Admin #{idx + 1})
@@ -1436,6 +1441,11 @@ export function TelegramCloudflareCard() {
                               </div>
                             </div>
                           </div>
+
+                          {/* Persona riêng Admin (Zalo Cá nhân) — độc lập */}
+                          <PersonaInline platform="zalop"
+                            groupId={a.kind === "group" ? a.chat_id : ""}
+                            userId={a.kind === "group" ? "" : a.chat_id} />
 
                           <div>
                             <label className="text-[10px] text-muted-foreground">
