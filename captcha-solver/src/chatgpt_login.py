@@ -624,6 +624,28 @@ async def _run_onboard(session: ChatGPTOnboardSession, password: str) -> None:
                 except Exception:
                     continue
 
+                # Role names first (VN welcome-back "Tiếp tục với Google")
+                for _gname in (
+                    "Tiếp tục với Google",
+                    "Continue with Google",
+                    "Continue with google",
+                ):
+                    try:
+                        loc = pg.get_by_role("button", name=_gname)
+                        if await loc.count() > 0 and await loc.first.is_visible():
+                            await loc.first.click(timeout=5_000, force=True)
+                            google_clicked = True
+                            _google_oauth_used = True
+                            logger.info(
+                                "chatgpt_login: clicked Google via role %r on %s",
+                                _gname, pg.url,
+                            )
+                            break
+                    except Exception:
+                        continue
+                if google_clicked:
+                    break
+
                 for sel in _GOOGLE_BTN_SELECTORS:
                     try:
                         loc = pg.locator(sel).first
@@ -1610,6 +1632,22 @@ async def _run_onboard_v2(session, password: str) -> None:
             # auth.openai.com; loop because timing varies.
             _g_clicked = False
             for _ in range(20):
+                for _gname in (
+                    "Tiếp tục với Google",
+                    "Continue with Google",
+                    "Continue with google",
+                ):
+                    try:
+                        _el = page.get_by_role("button", name=_gname)
+                        if await _el.count() > 0 and await _el.first.is_visible(timeout=800):
+                            await _el.first.click(force=True)
+                            logger.info("onboard_v2: clicked Google via role %r", _gname)
+                            _g_clicked = True
+                            break
+                    except Exception:
+                        continue
+                if _g_clicked:
+                    break
                 for _gsel in _GOOGLE_BTN_SELECTORS:
                     try:
                         _el = page.locator(_gsel).first

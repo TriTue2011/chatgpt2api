@@ -1533,29 +1533,44 @@ def _do_pdf_intent(
     if not pending:
         return
     import os
+    import time as _time
     from services import pdf_intent as _pi
     path = pending["path"]
     name = pending.get("name") or "document.pdf"
+    t0 = _time.time()
+    kind = "pdf_rag"
+    reply = ""
+    status = "ok"
+    err = ""
     send_typing(thread_id, thread_type)
     temps: list[str] = [path]
     try:
         if intent == _pi.WORD:
+            kind = "pdf_word"
             docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
             temps.append(docx_tmp)
             from services.pdf_to_word import convert_pdf_to_docx
             r = convert_pdf_to_docx(path, docx_tmp)
             if not r.get("ok"):
-                send_message(thread_id, f"⚠️ Không chuyển được sang Word: {str(r.get('error', ''))[:150]}", thread_type)
+                status = "error"
+                err = str(r.get("error") or "")[:150]
+                reply = f"⚠️ Không chuyển được sang Word: {err}"
+                send_message(thread_id, reply, thread_type)
                 return
             how = "giữ layout" if r.get("method") == "layout" else "OCR (PDF scan)"
+            reply = f"📝 Bản Word ({how})"
             _serve_docx(thread_id, thread_type, docx_tmp, how)
         elif intent == _pi.EXCEL:
+            kind = "pdf_excel"
             xlsx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".xlsx"
             temps.append(xlsx_tmp)
             from services.pdf_to_excel import convert_pdf_to_xlsx
             r = convert_pdf_to_xlsx(path, xlsx_tmp)
             if not r.get("ok"):
-                send_message(thread_id, f"⚠️ Không chuyển được sang Excel: {str(r.get('error', ''))[:150]}", thread_type)
+                status = "error"
+                err = str(r.get("error") or "")[:150]
+                reply = f"⚠️ Không chuyển được sang Excel: {err}"
+                send_message(thread_id, reply, thread_type)
                 return
             # serve via images/docs like word
             import shutil
@@ -1566,19 +1581,29 @@ def _do_pdf_intent(
             dest = out_dir / fn
             shutil.copy2(xlsx_tmp, dest)
             rel = f"/images/docs/{fn}"
+            pages = r.get("pages_extracted")
+            reply = (
+                f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet"
+                f"{', ' + str(pages) + ' trang' if pages else ''})"
+            )
             if not _send_file_robust(
-                thread_id, rel,
-                f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet)",
-                thread_type, account=account,
+                thread_id, rel, reply, thread_type, account=account,
             ):
-                send_message(thread_id, "📊 Em đã tạo Excel nhưng gửi file chưa được.", thread_type)
+                reply = "📊 Em đã tạo Excel nhưng gửi file chưa được."
+                send_message(thread_id, reply, thread_type)
         elif intent == _pi.RAG_TEACHER:
+            kind = "pdf_teacher"
             if not grade or not subject:
-                send_message(thread_id, "⚠️ Thiếu lớp/môn cho RAG teacher.", thread_type)
+                reply = "⚠️ Thiếu lớp/môn cho RAG teacher."
+                status = "error"
+                err = "missing grade/subject"
+                send_message(thread_id, reply, thread_type)
                 return
             r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
-            send_message(thread_id, r.get("text") or r.get("error") or "Xong.", thread_type)
+            reply = r.get("text") or r.get("error") or "Xong."
+            send_message(thread_id, reply, thread_type)
         else:
+            kind = "pdf_rag"
             r = _pi.ingest_knowledge(
                 path, name=name, model=_ai_model(account, thread_id),
                 who=user_id or f"zalop_{thread_id}", platform="zalop", chat_id=thread_id,
@@ -1592,9 +1617,14 @@ def _do_pdf_intent(
             if not r.get("ok") and r.get("error"):
                 parts.append(f"⚠️ {r['error']}")
             if not parts:
-                send_message(thread_id, "❌ Không đọc được nội dung PDF (có thể là ảnh chụp).", thread_type)
+                reply = "❌ Không đọc được nội dung PDF (có thể là ảnh chụp)."
+                send_message(thread_id, reply, thread_type)
             else:
-                send_message(thread_id, "\n\n".join(parts), thread_type)
+                reply = "\n\n".join(parts)
+                if not r.get("ok") and r.get("error"):
+                    status = "error"
+                    err = str(r.get("error") or "")[:200]
+                send_message(thread_id, reply, thread_type)
                 try:
                     from services import pdf_images as _pimg
                     for cap, iid in _pimg.find_markers(r.get("summary") or "")[:4]:
@@ -1608,14 +1638,56 @@ def _do_pdf_intent(
                 except Exception as exc:
                     logger.warning("zalop gửi ảnh marker PDF lỗi: %s", exc)
     except Exception as e:
+        status = "error"
+        err = str(e)[:200]
+        reply = f"❌ Lỗi xử lý PDF: {e}"
         logger.warning("Zalo personal pdf intent %s lỗi: %s", intent, e)
-        send_message(thread_id, f"❌ Lỗi xử lý PDF: {e}", thread_type)
+        send_message(thread_id, reply, thread_type)
     finally:
+        _zalop_journal(
+            kind=kind, thread_id=thread_id, account=account, user_id=user_id,
+            user_text=f"PDF:{name} → {intent}", reply=reply,
+            status=status, error=err, t0=t0,
+            meta={"file": name, "intent": intent},
+        )
         for p in temps:
             try:
                 os.unlink(p)
             except Exception:
                 pass
+
+
+def _zalop_journal(
+    *,
+    kind: str,
+    thread_id: str,
+    account: str = "",
+    user_id: str = "",
+    user_text: str = "",
+    reply: str = "",
+    status: str = "ok",
+    error: str = "",
+    t0: float = 0,
+    meta: dict | None = None,
+) -> None:
+    try:
+        import time as _time
+        from services.agent import run_journal as _rj
+        _rj.log_channel_event(
+            channel="zalop",
+            kind=kind,
+            user_text=user_text,
+            reply_text=str(reply or "")[:800],
+            user_id=str(user_id or f"zalop_{account}_{thread_id}"),
+            source_account=str(account or ""),
+            source_peer=str(thread_id),
+            status=status,
+            error=error,
+            duration_ms=int((_time.time() - t0) * 1000) if t0 else 0,
+            meta=meta,
+        )
+    except Exception:
+        pass
 
 
 def _do_photo_request(
@@ -1630,60 +1702,77 @@ def _do_photo_request(
     account: str = "",
 ) -> None:
     """Xử lý ảnh: rag_knowledge | rag_teacher | analyze | generate (img2img)."""
+    import time as _time
     from services import photo_intent as _phi
+    t0 = _time.time()
+    kind = "photo_analyze"
+    reply = ""
+    status = "ok"
+    err = ""
     send_typing(thread_id, thread_type)
-    it = intent or (
-        _phi.GENERATE if _phi.classify(request_text) == _phi.GENERATE else _phi.ANALYZE
-    )
-    allowed = _phi.allowed_intents(allow)
-    if it not in allowed and allow is not None:
+    try:
+        it = intent or (
+            _phi.GENERATE if _phi.classify(request_text) == _phi.GENERATE else _phi.ANALYZE
+        )
+        allowed = _phi.allowed_intents(allow)
+        if it not in allowed and allow is not None:
+            status = "blocked"
+            err = f"intent {it} not allowed"
+            return
+
         if it == _phi.GENERATE:
-            return
-        if it not in allowed:
-            return
-
-    if it == _phi.GENERATE:
-        out = _phi.generate_from_photo(file_data, request_text, channel="zalop")
-        try:
-            from services import net_guard
-            out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
-        except Exception:
-            pass
-        url = out.get("image_url")
-        if url:
-            if _send_photo_robust(
-                thread_id, str(url),
-                (out.get("text") or "Đây ạ 🎨")[:1000], thread_type,
-                account=account or "",
-            ):
+            kind = "photo_generate"
+            out = _phi.generate_from_photo(file_data, request_text, channel="zalop")
+            try:
+                from services import net_guard
+                out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+            except Exception:
+                pass
+            url = out.get("image_url")
+            reply = (out.get("text") or "Đây ạ 🎨")[:1000]
+            if url:
+                if _send_photo_robust(
+                    thread_id, str(url), reply, thread_type,
+                    account=account or "",
+                ):
+                    return
+                reply = out.get("text") or "Em tạo được ảnh nhưng gửi chưa được ạ."
+                send_message(thread_id, reply, thread_type)
                 return
-            send_message(
-                thread_id,
-                out.get("text") or "Em tạo được ảnh nhưng gửi chưa được ạ.",
-                thread_type,
-            )
+            reply = out.get("text") or "Em chưa tạo được ảnh ạ."
+            send_message(thread_id, reply, thread_type)
             return
-        send_message(thread_id, out.get("text") or "Em chưa tạo được ảnh ạ.", thread_type)
-        return
 
-    if it == _phi.RAG_KNOWLEDGE:
-        r = _phi.ingest_knowledge_from_photo(
-            file_data, prompt=request_text, who=user_id or thread_id,
-            platform="zalop", chat_id=str(thread_id), channel="zalop",
+        if it == _phi.RAG_KNOWLEDGE:
+            kind = "photo_rag"
+            r = _phi.ingest_knowledge_from_photo(
+                file_data, prompt=request_text, who=user_id or thread_id,
+                platform="zalop", chat_id=str(thread_id), channel="zalop",
+            )
+            reply = r.get("text") or r.get("error") or "Xong."
+            send_message(thread_id, reply, thread_type)
+            return
+
+        if it == _phi.RAG_TEACHER:
+            kind = "photo_rag"
+            reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
+            send_message(thread_id, reply, thread_type)
+            return
+
+        kind = "photo_analyze"
+        answer = _phi.analyze_photo(file_data, request_text, channel="zalop")
+        reply = answer or ""
+        send_message(thread_id, answer, thread_type)
+    except Exception as exc:
+        status = "error"
+        err = str(exc)[:200]
+        raise
+    finally:
+        _zalop_journal(
+            kind=kind, thread_id=thread_id, account=account, user_id=user_id,
+            user_text=(request_text or "[ảnh]")[:500], reply=reply,
+            status=status, error=err, t0=t0,
         )
-        send_message(thread_id, r.get("text") or r.get("error") or "Xong.", thread_type)
-        return
-
-    if it == _phi.RAG_TEACHER:
-        send_message(
-            thread_id,
-            "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`).",
-            thread_type,
-        )
-        return
-
-    answer = _phi.analyze_photo(file_data, request_text, channel="zalop")
-    send_message(thread_id, answer, thread_type)
 
 
 def _process_ai(ev: dict) -> None:

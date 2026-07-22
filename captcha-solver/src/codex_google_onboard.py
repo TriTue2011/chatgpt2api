@@ -30,17 +30,37 @@ class CodexGoogleOnboardReq(BaseModel):
 
 async def _click_google_btn(page) -> bool:
     """Click "Tiếp tục với Google" / Continue with Google on OpenAI login."""
+    # Playwright role/name (VN + EN) — OpenAI welcome-back page uses this label.
+    for name in (
+        "Tiếp tục với Google",
+        "Continue with Google",
+        "Continue with google",
+        "Google",
+    ):
+        try:
+            loc = page.get_by_role("button", name=name)
+            if await loc.count() > 0:
+                btn = loc.first
+                if await btn.is_visible():
+                    await btn.click(timeout=5000, force=True)
+                    logger.info("codex-g: clicked Google btn via role name=%r", name)
+                    return True
+        except Exception:
+            continue
     selectors = list(_GOOGLE_BTN_SELECTORS) + [
         'button:has-text("Tiếp tục với Google")',
         'a:has-text("Tiếp tục với Google")',
         'button:has-text("Continue with Google")',
+        'div[role="button"]:has-text("Tiếp tục với Google")',
         'div[role="button"]:has-text("Google")',
+        # OpenAI sometimes wraps icon+text
+        'button:has-text("Google")',
     ]
     for sel in selectors:
         try:
             loc = page.locator(sel).first
             if await loc.count() > 0 and await loc.is_visible():
-                await loc.click(timeout=4000, force=True)
+                await loc.click(timeout=5000, force=True)
                 logger.info("codex-g: clicked Google btn via %s", sel)
                 return True
         except Exception:
@@ -49,14 +69,19 @@ async def _click_google_btn(page) -> bool:
     try:
         ok = await page.evaluate(
             """() => {
-              const re = /tiếp tục với google|continue with google|^\\s*google\\s*$/i;
-              const bad = /apple|microsoft|github|email|đăng ký|sign up/i;
-              for (const n of document.querySelectorAll('button,a,[role="button"]')) {
-                const t = (n.innerText || n.textContent || '').trim();
-                if (!t || t.length > 40) continue;
+              const re = /tiếp\\s*tục\\s*với\\s*google|continue\\s*with\\s*google/i;
+              const bad = /apple|microsoft|github|microsoft|đăng ký|sign up/i;
+              const nodes = document.querySelectorAll(
+                'button,a,[role="button"],div[role="button"]'
+              );
+              for (const n of nodes) {
+                const t = (n.innerText || n.textContent || '').trim().replace(/\\s+/g, ' ');
+                if (!t || t.length > 60) continue;
                 if (bad.test(t) && !/google/i.test(t)) continue;
-                if (re.test(t) || (t.includes('Google') && t.includes('Tiếp'))) {
-                  n.click(); return t;
+                if (re.test(t) || (/google/i.test(t) && /tiếp|continue/i.test(t))) {
+                  n.scrollIntoView({block:'center'});
+                  n.click();
+                  return t;
                 }
               }
               return null;
@@ -202,36 +227,49 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
 
             # ── OpenAI ──
             if "auth.openai.com" in url or "chatgpt.com" in url:
-                # Welcome back / choose-an-account — same rule as Google chooser:
-                # target in list → click tile; else → another account
+                # PRIORITY: always click "Tiếp tục với Google" when visible.
+                # Bug trước: trang "Chào mừng trở lại" (/log-in) bị nhầm là
+                # account-chooser → chỉ tìm tile email, KHÔNG bao giờ bấm Google.
+                has_google_btn = (
+                    "Tiếp tục với Google" in content
+                    or "Continue with Google" in content
+                    or "log-in" in url
+                    or "log-in-or-create" in url
+                )
+                if has_google_btn:
+                    try:
+                        n_btn = await page.locator(
+                            'button:has-text("Tiếp tục với Google"), '
+                            'button:has-text("Continue with Google"), '
+                            'button:has-text("Google")'
+                        ).count()
+                    except Exception:
+                        n_btn = 0
+                    if n_btn > 0 or "Tiếp tục với Google" in content or "Continue with Google" in content:
+                        if await _click_google_btn(page):
+                            google_btn_clicked = True
+                            logger.info(
+                                "codex-g: clicked Tiếp tục với Google url=%s",
+                                url[:120],
+                            )
+                            await asyncio.sleep(3.0)
+                            continue
+
+                # Welcome back account tiles / choose-an-account (no Google btn path)
                 if (
                     "choose-an-account" in url
-                    or "Chào mừng trở lại" in content
-                    or "Welcome back" in content
                     or "Chọn một tài khoản" in content
+                    or (
+                        ("Chào mừng trở lại" in content or "Welcome back" in content)
+                        and "Tiếp tục với Google" not in content
+                        and "Continue with Google" not in content
+                    )
                 ):
                     await _pick_account_or_other(
                         page, req.email or "", where="openai-chooser"
                     )
                     await asyncio.sleep(2.0)
                     continue
-
-                # log-in-or-create-account → Tiếp tục với Google (user guidance)
-                if (
-                    "log-in-or-create" in url
-                    or "Đăng nhập hoặc đăng ký" in content
-                    or "Log in or sign up" in content
-                    or "Tiếp tục với Google" in content
-                    or "Continue with Google" in content
-                ):
-                    if not google_btn_clicked or await page.locator(
-                        'button:has-text("Tiếp tục với Google"), button:has-text("Continue with Google")'
-                    ).count() > 0:
-                        if await _click_google_btn(page):
-                            google_btn_clicked = True
-                            logger.info("codex-g: Tiếp tục với Google on log-in-or-create")
-                            await asyncio.sleep(3.0)
-                            continue
 
                 # Codex consent after existing-account tile OR after Google login:
                 # /sign-in-with-chatgpt/codex/consent → email pill + Hủy + Tiếp tục

@@ -31,6 +31,9 @@ _MAX_PER_CYCLE = 2
 # Skip account if we already attempted recovery this recently (extra safety;
 # account_recovery has its own debounce too).
 _PER_ACCOUNT_MIN_GAP_S = 45 * 60
+# Hard ceiling per account so one hung browser (T2 headed) cannot block the
+# rest of the dead pool for the whole cycle / forever.
+_PER_ACCOUNT_TIMEOUT_S = 240.0
 
 _started = False
 _last_try: dict[str, float] = {}
@@ -131,20 +134,8 @@ def _list_dead_accounts() -> list[dict[str, Any]]:
     return out
 
 
-def recover_dead_account(account: dict[str, Any], reason: str = "dead_status") -> bool:
-    """Run T0 then T1–T3 for one dead account. Returns True if revived to active."""
-    if not isinstance(account, dict):
-        return False
-    if not is_enabled():
-        return False
-    if _should_skip(account):
-        logger.info({
-            "event": "dead_recovery_skip_gap",
-            "email": str(account.get("email") or "")[:60],
-        })
-        return False
-    _mark_tried(account)
-
+def _recover_dead_account_body(account: dict[str, Any], reason: str) -> bool:
+    """Inner T0→T1–T3 (no skip/timeout). Caller owns gap + timeout."""
     provider = _is_recoverable_group(account)
     if not provider:
         return False
@@ -168,6 +159,11 @@ def recover_dead_account(account: dict[str, Any], reason: str = "dead_status") -
             _force_active_if_needed(new_tok, email)
             logger.info({"event": "dead_recovery_ok", "tier": "T0", "email": email})
             return True
+        logger.info({
+            "event": "dead_recovery_t0_failed",
+            "email": email,
+            "note": "refresh expired or cooldown — trying browser T1-T3",
+        })
     except Exception as exc:
         logger.warning({
             "event": "dead_recovery_t0_error",
@@ -188,13 +184,65 @@ def recover_dead_account(account: dict[str, Any], reason: str = "dead_status") -
         })
         return False
 
-    # Check if any active account for this email appeared
     if _email_has_active(email):
         logger.info({"event": "dead_recovery_ok", "tier": "T1-T3", "email": email})
         return True
 
     logger.warning({"event": "dead_recovery_failed", "email": email, "reason": reason[:80]})
     return False
+
+
+def recover_dead_account(account: dict[str, Any], reason: str = "dead_status") -> bool:
+    """Run T0 then T1–T3 for one dead account. Returns True if revived to active.
+
+    Hard-timeouts the body so a hung T2 headed browser cannot starve the pool.
+    """
+    if not isinstance(account, dict):
+        return False
+    if not is_enabled():
+        return False
+    if _should_skip(account):
+        logger.info({
+            "event": "dead_recovery_skip_gap",
+            "email": str(account.get("email") or "")[:60],
+        })
+        return False
+    _mark_tried(account)
+
+    email = str(account.get("email") or "")[:80]
+    result: list[bool] = [False]
+    err: list[BaseException] = []
+
+    def _run() -> None:
+        try:
+            result[0] = _recover_dead_account_body(account, reason)
+        except BaseException as exc:  # noqa: BLE001 — surface hang/timeout path
+            err.append(exc)
+
+    th = threading.Thread(
+        target=_run,
+        name=f"dead-body-{(email or 'x')[:18]}",
+        daemon=True,
+    )
+    th.start()
+    th.join(timeout=_PER_ACCOUNT_TIMEOUT_S)
+    if th.is_alive():
+        logger.warning({
+            "event": "dead_recovery_timeout",
+            "email": email,
+            "timeout_s": _PER_ACCOUNT_TIMEOUT_S,
+            "reason": str(reason)[:80],
+        })
+        # Thread is daemon — browser may still finish later; we move on.
+        return _email_has_active(email)
+    if err:
+        logger.warning({
+            "event": "dead_recovery_body_error",
+            "email": email,
+            "error": str(err[0])[:160],
+        })
+        return False
+    return bool(result[0])
 
 
 def _force_active_if_needed(access_token: str, email: str) -> None:
@@ -263,13 +311,22 @@ def _scan_and_recover() -> None:
         logger.info({"event": "dead_recovery_scan", "dead": 0, "tried": 0})
         return
 
+    # Fair rotation: prefer accounts least-recently tried (not always email A-Z).
+    def _last(acc: dict[str, Any]) -> float:
+        with _try_lock:
+            return float(_last_try.get(_account_key(acc), 0.0))
+
+    dead.sort(key=lambda a: (_last(a), 0 if a.get("refresh_token") else 1, str(a.get("email") or "")))
+
     cap = _max_per_cycle()
     tried = 0
     ok = 0
+    skipped = 0
     for acc in dead:
         if tried >= cap:
             break
         if _should_skip(acc):
+            skipped += 1
             continue
         tried += 1
         try:
@@ -287,7 +344,9 @@ def _scan_and_recover() -> None:
         "dead": len(dead),
         "tried": tried,
         "ok": ok,
+        "skipped_gap": skipped,
         "max_per_cycle": cap,
+        "emails": [str(a.get("email") or "")[:40] for a in dead[:8]],
     })
 
 

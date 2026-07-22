@@ -87,13 +87,18 @@ def convert_pdf_to_xlsx(pdf_path: str, out_path: str | None = None) -> dict[str,
             "strategies": tried,
         }
 
-    # Làm sạch + bỏ bảng trùng (MHTCET fingerprint)
+    # Làm sạch + bỏ bảng trùng 100% (MHTCET fingerprint)
     cleaned = _clean_all_sheets(sheets)
     if not cleaned:
         return {"ok": False, "error": "Bảng rỗng sau khi làm sạch", "strategies": tried}
 
+    # Gộp mọi trang vào 1 sheet — báo giá/PDF nhiều trang cùng header:
+    # user mở Excel thường chỉ thấy sheet đầu, tưởng mất trang 2+.
+    merged = _merge_sheets_one_table(cleaned)
+    to_write = merged if merged else cleaned
+
     try:
-        _write_xlsx(dest, cleaned)
+        _write_xlsx(dest, to_write)
     except Exception as exc:
         return {"ok": False, "error": f"ghi xlsx lỗi: {exc}", "strategies": tried}
 
@@ -101,7 +106,8 @@ def convert_pdf_to_xlsx(pdf_path: str, out_path: str | None = None) -> dict[str,
         "ok": True,
         "path": str(dest),
         "method": method or "mixed",
-        "sheets": len(cleaned),
+        "sheets": len(to_write),
+        "pages_extracted": len(cleaned),
         "strategies": tried,
     }
 
@@ -301,21 +307,86 @@ def _clean_all_sheets(
             continue
         fp = _table_fingerprint(rows)
         if fp in seen_fp:
-            # header/table lặp giữa các trang
+            # header/table lặp y hệt giữa các trang
             continue
         seen_fp.add(fp)
         out.append((name, rows))
     return out
 
 
+def _header_signature(row: list[str]) -> str:
+    """Chuẩn hóa header để so khớp lặp giữa các trang (STT/Danh mục/…)."""
+    parts = []
+    for c in row or []:
+        t = re.sub(r"\s+", " ", (c or "").strip().lower())
+        parts.append(t)
+    return "|".join(parts)
+
+
+def _merge_sheets_one_table(
+    sheets: list[tuple[str, list[list[str]]]],
+) -> list[tuple[str, list[list[str]]]]:
+    """Gộp nhiều sheet trang (cùng kiểu bảng) thành 1 sheet liên tục.
+
+    - Giữ header của sheet đầu.
+    - Sheet sau: bỏ dòng header lặp (cùng signature).
+    - Pad cột cho đồng rộng.
+    """
+    if len(sheets) <= 1:
+        return list(sheets)
+
+    # Chỉ gộp nếu ≥2 sheet có ≥2 cột (bảng), không gộp plain text 1 cột
+    tabular = [(n, r) for n, r in sheets if r and max(len(x) for x in r) >= 2]
+    if len(tabular) <= 1:
+        return list(sheets)
+
+    header = list(tabular[0][1][0]) if tabular[0][1] else []
+    hdr_sig = _header_signature(header)
+    width = max(len(r) for _, rows in tabular for r in rows) if tabular else len(header)
+    if header:
+        header = header + [""] * (width - len(header))
+
+    body: list[list[str]] = []
+    for _name, rows in tabular:
+        if not rows:
+            continue
+        start = 0
+        if hdr_sig and _header_signature(rows[0]) == hdr_sig:
+            start = 1
+        for row in rows[start:]:
+            padded = list(row) + [""] * (width - len(row))
+            body.append(padded[:width])
+
+    if not body and not header:
+        return list(sheets)
+
+    out_rows: list[list[str]] = []
+    if header:
+        out_rows.append(header[:width])
+    out_rows.extend(body)
+    # Tên sheet rõ: Bang_day_du (all pages)
+    return [("Bang_day_du", out_rows[:_MAX_ROWS])]
+
+
 def _clean_table(rows: list[list[str]]) -> list[list[str]]:
-    """Drop empty rows/cols; gộp xuống dòng trong ô; trim."""
+    """Drop empty rows/cols; giữ xuống dòng trong ô (mô tả kỹ thuật PDF)."""
     if not rows:
         return []
-    # normalize cell newlines → space
+    # Giữ newline trong ô (Excel wrap text); chỉ gọn space ngang + strip mép.
     cleaned = []
     for row in rows:
-        cleaned.append([re.sub(r"\s+", " ", _cell(c)).strip() for c in row])
+        cells = []
+        for c in row:
+            s = _cell(c)
+            # Chuẩn hóa CRLF; bỏ khoảng trắng thừa hai bên mỗi dòng
+            lines = [ln.strip() for ln in s.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+            # Bỏ dòng trống đầu/cuối nhưng giữ bullet giữa chừng
+            while lines and not lines[0]:
+                lines.pop(0)
+            while lines and not lines[-1]:
+                lines.pop()
+            cells.append("\n".join(lines).strip())
+        cleaned.append(cells)
     # drop fully empty rows
     cleaned = [r for r in cleaned if any(c.strip() for c in r)]
     if not cleaned:
@@ -419,9 +490,12 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, list[list[str]]]]) -> None:
     try:
         from openpyxl import Workbook  # type: ignore
 
+        from openpyxl.styles import Alignment  # type: ignore
+
         wb = Workbook()
         default = wb.active
         first = True
+        wrap = Alignment(wrap_text=True, vertical="top")
         for name, rows in sheets:
             safe = _safe_sheet_name(name)
             if first:
@@ -432,8 +506,14 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, list[list[str]]]]) -> None:
                 ws = wb.create_sheet(safe)
             for r_i, row in enumerate(rows, start=1):
                 for c_i, val in enumerate(row, start=1):
-                    # coerce number-like (PDF2Excel Text2Column spirit)
-                    ws.cell(r_i, c_i, _coerce_value(val))
+                    coerced = _coerce_value(val)
+                    cell = ws.cell(r_i, c_i, coerced)
+                    if isinstance(coerced, str) and "\n" in coerced:
+                        cell.alignment = wrap
+            try:
+                ws.column_dimensions["B"].width = 56
+            except Exception:
+                pass
         if first:
             default["A1"] = "(trống)"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -445,17 +525,36 @@ def _write_xlsx(path: Path, sheets: list[tuple[str, list[list[str]]]]) -> None:
 
 
 def _coerce_value(val: str) -> object:
+    """Giữ số tiền VN (1.234.567 / 938.000) dạng text — không ép float.
+
+    Trước đây ``938.000`` → float 938.0 mất 3 số 0 (dấu chấm = hàng nghìn VN).
+    Chỉ ép int thuần (không dấu chấm/phẩy) hoặc decimal rõ (1 dấu + phần lẻ ≠ 3 số
+    kiểu nghìn VN lặp).
+    """
     s = (val or "").strip()
     if not s:
         return ""
-    # int
+    # Giữ nguyên nếu có xuống dòng (mô tả kỹ thuật)
+    if "\n" in s:
+        return s
+    # Số kiểu Việt Nam: 1.234 hoặc 1.234.567 hoặc 938.000 → giữ text
+    if re.fullmatch(r"-?\d{1,3}(\.\d{3})+", s):
+        return s
+    # Biến thể dùng dấu phẩy hàng nghìn: 1,234,567
+    if re.fullmatch(r"-?\d{1,3}(,\d{3})+", s):
+        return s
+    # int thuần
     if re.fullmatch(r"-?\d{1,15}", s):
         try:
             return int(s)
         except Exception:
             return s
-    # float with . or ,
+    # Decimal thực (một dấu): 12.5 / 12,5 — KHÔNG phải xxx.000 hàng nghìn
     if re.fullmatch(r"-?\d{1,12}[.,]\d{1,8}", s):
+        frac = re.split(r"[.,]", s)[-1]
+        # 3 chữ số sau dấu + phần nguyên ≤3 số → hay là hàng nghìn VN (938.000)
+        if len(frac) == 3 and re.fullmatch(r"-?\d{1,3}", re.split(r"[.,]", s)[0]):
+            return s
         try:
             return float(s.replace(",", "."))
         except Exception:

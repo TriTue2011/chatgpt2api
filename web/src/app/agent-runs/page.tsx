@@ -78,6 +78,15 @@ const KIND_LABELS: Record<string, string> = {
   reason: "🤖 Agent",
   api: "🔌 API",
   burst: "⚡ Burst",
+  photo_analyze: "🖼️ Ảnh → phân tích (kênh)",
+  photo_generate: "🎨 Ảnh → tạo ảnh (kênh)",
+  photo_rag: "📚 Ảnh → RAG",
+  pdf_excel: "📊 PDF → Excel",
+  pdf_word: "📝 PDF → Word",
+  pdf_rag: "📚 PDF → RAG",
+  pdf_teacher: "📚 PDF → Teacher",
+  ha_fastpath: "🏠 HA nhanh",
+  media: "📎 Media",
 };
 
 function timeAgo(ts: number) {

@@ -237,7 +237,23 @@ async def _run_inner(session: ClaudeWebLoginSession, password: str) -> None:
         ctx.on("page", _on_popup)
 
         google_clicked = False
+        for _gname in (
+            "Continue with Google",
+            "Tiếp tục với Google",
+            "Continue with google",
+        ):
+            try:
+                loc = page.get_by_role("button", name=_gname)
+                if await loc.count() > 0 and await loc.first.is_visible():
+                    await loc.first.click(timeout=5_000, force=True)
+                    google_clicked = True
+                    logger.info("claude_login: clicked Google via role %r", _gname)
+                    break
+            except Exception:
+                continue
         for sel in _GOOGLE_BTN_SELECTORS:
+            if google_clicked:
+                break
             try:
                 loc = page.locator(sel).first
                 if await loc.count() > 0:

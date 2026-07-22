@@ -509,15 +509,54 @@ async def run_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
             # ── OpenAI auth screen ──
             if "auth.openai.com" in url or "chatgpt.com" in url:
                 try:
-                    # Welcome-back / choose-an-account (Gmail + Outlook alike)
-                    # Same rule as Google chooser:
-                    #   target email in list → click that tile (refresh)
-                    #   else → "Đăng nhập vào tài khoản khác" / "Use another account"
+                    # PRIORITY: "Tiếp tục với Google" on welcome-back /log-in
+                    # (same bug as codex_google_onboard: don't treat as tile-only chooser).
                     if (
-                        "Chào mừng trở lại" in content
-                        or "Welcome back" in content
-                        or "choose-an-account" in url
+                        "Tiếp tục với Google" in content
+                        or "Continue with Google" in content
+                    ) and not is_ms_account:
+                        gbtn = page.locator(
+                            'button:has-text("Tiếp tục với Google"), '
+                            'button:has-text("Continue with Google"), '
+                            'button[data-provider="google"]'
+                        ).first
+                        clicked_g = False
+                        if await gbtn.count() > 0:
+                            logger.info("OpenAI: priority click Tiếp tục với Google url=%s", url[:100])
+                            try:
+                                await gbtn.click(force=True, timeout=5000)
+                            except Exception:
+                                await gbtn.evaluate("e => e.click()")
+                            clicked_g = True
+                        else:
+                            try:
+                                clicked_g = bool(await page.evaluate(
+                                    """() => {
+                                      const re = /tiếp\\s*tục\\s*với\\s*google|continue\\s*with\\s*google/i;
+                                      for (const n of document.querySelectorAll('button,a,[role="button"]')) {
+                                        const t = (n.innerText||'').trim();
+                                        if (re.test(t)) { n.click(); return true; }
+                                      }
+                                      return false;
+                                    }"""
+                                ))
+                            except Exception:
+                                clicked_g = False
+                        if clicked_g:
+                            await page.wait_for_load_state("domcontentloaded")
+                            await asyncio.sleep(3.0)
+                            continue
+
+                    # Welcome-back / choose-an-account TILES only (no Google btn path)
+                    # Gmail + Outlook: target email in list → click tile; else "another account"
+                    if (
+                        "choose-an-account" in url
                         or "Chọn một tài khoản" in content
+                        or (
+                            ("Chào mừng trở lại" in content or "Welcome back" in content)
+                            and "Tiếp tục với Google" not in content
+                            and "Continue with Google" not in content
+                        )
                     ):
                         target = (req.github_email or "").strip()
                         try:

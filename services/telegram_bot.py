@@ -689,11 +689,18 @@ def _do_pdf_intent(
     if not pending:
         return
     import os
+    import time as _time
     from services import pdf_intent as _pi
     path, name = pending["path"], pending["name"]
+    t0 = _time.time()
+    kind = "pdf_rag"
+    reply = ""
+    status = "ok"
+    err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
     try:
         if intent == _pi.WORD:
+            kind = "pdf_word"
             from services.pdf_to_word import convert_pdf_to_docx
             docx_path = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
             r = convert_pdf_to_docx(path, docx_path)
@@ -703,14 +710,19 @@ def _do_pdf_intent(
                 base = name[:-4] if name.lower().endswith(".pdf") else name
                 how = {"layout": "giữ layout", "scan": "AI OCR scan — giữ bảng + hình"} \
                     .get(r.get("method"), "OCR (PDF scan)")
-                send_document(chat_id, data, f"{base}.docx", caption=f"📝 Bản Word ({how})")
+                reply = f"📝 Bản Word ({how})"
+                send_document(chat_id, data, f"{base}.docx", caption=reply)
                 try:
                     os.unlink(docx_path)
                 except Exception:
                     pass
             else:
-                send_message(chat_id, f"⚠️ Không chuyển được sang Word: {str(r.get('error', ''))[:150]}")
+                status = "error"
+                err = str(r.get("error") or "")[:150]
+                reply = f"⚠️ Không chuyển được sang Word: {err}"
+                send_message(chat_id, reply)
         elif intent == _pi.EXCEL:
+            kind = "pdf_excel"
             from services.pdf_to_excel import convert_pdf_to_xlsx
             xlsx_path = (path[:-4] if path.endswith(".pdf") else path) + ".xlsx"
             r = convert_pdf_to_xlsx(path, xlsx_path)
@@ -718,24 +730,40 @@ def _do_pdf_intent(
                 with open(xlsx_path, "rb") as f:
                     data = f.read()
                 base = name[:-4] if name.lower().endswith(".pdf") else name
+                reply = (
+                    f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet"
+                    f"{', ' + str(r.get('pages_extracted')) + ' trang' if r.get('pages_extracted') else ''})"
+                )
                 send_document(
                     chat_id, data, f"{base}.xlsx",
-                    caption=f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet)",
+                    caption=reply,
                 )
                 try:
                     os.unlink(xlsx_path)
                 except Exception:
                     pass
             else:
-                send_message(chat_id, f"⚠️ Không chuyển được sang Excel: {str(r.get('error', ''))[:150]}")
+                status = "error"
+                err = str(r.get("error") or "")[:150]
+                reply = f"⚠️ Không chuyển được sang Excel: {err}"
+                send_message(chat_id, reply)
         elif intent == _pi.RAG_TEACHER:
+            kind = "pdf_teacher"
             if not grade or not subject:
-                send_message(chat_id, "⚠️ Thiếu lớp/môn cho RAG teacher.")
-                return
-            r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
-            send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
+                reply = "⚠️ Thiếu lớp/môn cho RAG teacher."
+                status = "error"
+                err = "missing grade/subject"
+                send_message(chat_id, reply)
+            else:
+                r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
+                reply = r.get("text") or r.get("error") or "Xong."
+                if r.get("error") and not r.get("ok", True):
+                    status = "error"
+                    err = str(r.get("error") or "")[:200]
+                send_message(chat_id, reply)
         else:
             # rag_knowledge (default / legacy rag)
+            kind = "pdf_rag"
             r = _pi.ingest_knowledge(
                 path, name=name, model=_tg_model(chat_id),
                 who=str(user_id or chat_id), platform="tg", chat_id=str(chat_id),
@@ -748,10 +776,14 @@ def _do_pdf_intent(
                 parts.append(r["text"])
             if not r.get("ok") and r.get("error"):
                 parts.append(f"⚠️ {r['error']}")
+                status = "error"
+                err = str(r.get("error") or "")[:200]
             if not parts:
-                send_message(chat_id, "❌ Không đọc được nội dung PDF (có thể là ảnh chụp).")
+                reply = "❌ Không đọc được nội dung PDF (có thể là ảnh chụp)."
+                send_message(chat_id, reply)
             else:
-                send_message(chat_id, "\n\n".join(parts))
+                reply = "\n\n".join(parts)
+                send_message(chat_id, reply)
                 try:
                     from services import pdf_images as _pimg
                     for cap, iid in _pimg.find_markers(r.get("summary") or "")[:4]:
@@ -762,9 +794,30 @@ def _do_pdf_intent(
                 except Exception as exc:
                     logger.warning("gửi ảnh marker PDF lỗi: %s", exc)
     except Exception as e:
+        status = "error"
+        err = str(e)[:200]
+        reply = f"❌ Lỗi xử lý PDF: {e}"
         logger.warning("pdf intent %s error: %s", intent, e)
-        send_message(chat_id, f"❌ Lỗi xử lý PDF: {e}")
+        send_message(chat_id, reply)
     finally:
+        try:
+            from services.agent import run_journal as _rj
+            _rj.log_channel_event(
+                channel="tg",
+                kind=kind,
+                user_text=f"PDF:{name} → {intent}",
+                reply_text=str(reply or "")[:800],
+                user_id=str(user_id or chat_id),
+                source_account=_bot_id(),
+                source_peer=str(chat_id),
+                model=_tg_model(chat_id) if intent not in ("word", "excel") else "",
+                status=status,
+                error=err,
+                duration_ms=int((_time.time() - t0) * 1000),
+                meta={"file": name, "intent": intent},
+            )
+        except Exception:
+            pass
         try:
             os.unlink(path)
         except Exception:
@@ -791,56 +844,94 @@ def _do_photo_request(
     user_id: str = "",
 ) -> None:
     """Xử lý ảnh: rag_knowledge | rag_teacher | analyze | generate (img2img)."""
+    import time as _time
     from services import photo_intent as _phi
+    t0 = _time.time()
+    kind = "photo_analyze"
+    reply = ""
+    status = "ok"
+    err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-    # Resolve intent: explicit > classify caption
-    it = intent or (
-        _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
-    )
-    allowed = _phi.allowed_intents(allow)
-    if it not in allowed and allow is not None:
-        # generate blocked without image group
-        if it == _phi.GENERATE:
-            return
-        if it not in allowed:
+    try:
+        # Resolve intent: explicit > classify caption
+        it = intent or (
+            _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
+        )
+        allowed = _phi.allowed_intents(allow)
+        if it not in allowed and allow is not None:
+            # generate blocked without image group
+            status = "blocked"
+            err = f"intent {it} not allowed"
             return
 
-    if it == _phi.GENERATE:
-        out = _phi.generate_from_photo(file_data, request, channel="tg")
+        if it == _phi.GENERATE:
+            kind = "photo_generate"
+            out = _phi.generate_from_photo(file_data, request, channel="tg")
+            try:
+                from services import net_guard
+                out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+            except Exception:
+                pass
+            url = out.get("image_url")
+            cap = (out.get("text") or "Đây ạ 🎨")[:1000]
+            reply = cap
+            img = out.get("image_bytes") or (_fetch_image_bytes(url) if url else None)
+            if img and send_photo(chat_id, img, caption=cap).get("ok"):
+                return
+            if url:
+                from services import net_guard as _ng
+                if _ng.is_allowed_egress_url(str(url)) and not str(url).startswith("data:"):
+                    if _api_call("sendPhoto", {"chat_id": chat_id, "photo": url, "caption": cap}).get("ok"):
+                        return
+            reply = out.get("text") or "Em chưa tạo được ảnh ạ."
+            send_message(chat_id, reply)
+            return
+
+        if it == _phi.RAG_KNOWLEDGE:
+            kind = "photo_rag"
+            r = _phi.ingest_knowledge_from_photo(
+                file_data, prompt=request, who=user_id or chat_id,
+                platform="tg", chat_id=str(chat_id), channel="tg",
+            )
+            reply = r.get("text") or r.get("error") or "Xong."
+            if r.get("error") and not r.get("ok", True):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
+            send_message(chat_id, reply)
+            return
+
+        if it == _phi.RAG_TEACHER:
+            kind = "photo_rag"
+            reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
+            send_message(chat_id, reply)
+            return
+
+        # analyze
+        kind = "photo_analyze"
+        answer = _phi.analyze_photo(file_data, request, channel="tg")
+        reply = answer or ""
+        send_message(chat_id, answer)
+    except Exception as exc:
+        status = "error"
+        err = str(exc)[:200]
+        raise
+    finally:
         try:
-            from services import net_guard
-            out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+            from services.agent import run_journal as _rj
+            _rj.log_channel_event(
+                channel="tg",
+                kind=kind,
+                user_text=(request or "[ảnh]")[:500],
+                reply_text=str(reply or "")[:800],
+                user_id=str(user_id or chat_id),
+                source_account=_bot_id(),
+                source_peer=str(chat_id),
+                status=status,
+                error=err,
+                duration_ms=int((_time.time() - t0) * 1000),
+            )
         except Exception:
             pass
-        url = out.get("image_url")
-        cap = (out.get("text") or "Đây ạ 🎨")[:1000]
-        img = out.get("image_bytes") or (_fetch_image_bytes(url) if url else None)
-        if img and send_photo(chat_id, img, caption=cap).get("ok"):
-            return
-        if url:
-            from services import net_guard as _ng
-            if _ng.is_allowed_egress_url(str(url)) and not str(url).startswith("data:"):
-                if _api_call("sendPhoto", {"chat_id": chat_id, "photo": url, "caption": cap}).get("ok"):
-                    return
-        send_message(chat_id, out.get("text") or "Em chưa tạo được ảnh ạ.")
-        return
-
-    if it == _phi.RAG_KNOWLEDGE:
-        r = _phi.ingest_knowledge_from_photo(
-            file_data, prompt=request, who=user_id or chat_id,
-            platform="tg", chat_id=str(chat_id), channel="tg",
-        )
-        send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
-        return
-
-    if it == _phi.RAG_TEACHER:
-        # expects request like already resolved grade/subject path handled by caller
-        send_message(chat_id, "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`).")
-        return
-
-    # analyze
-    answer = _phi.analyze_photo(file_data, request, channel="tg")
-    send_message(chat_id, answer)
 
 
 def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "") -> None:

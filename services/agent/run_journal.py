@@ -250,6 +250,83 @@ def log_run(
     return rid
 
 
+# Labels for channel-side events (photo/PDF/media) shown in Agent runs UI.
+_KIND_LABELS: dict[str, str] = {
+    "chat": "Chat",
+    "agent": "Agent",
+    "vision": "Phân tích ảnh",
+    "image_gen": "Tạo ảnh",
+    "video_gen": "Tạo video",
+    "photo_analyze": "Phân tích ảnh (kênh)",
+    "photo_generate": "Tạo ảnh từ ảnh (kênh)",
+    "photo_rag": "Ảnh → RAG",
+    "pdf_excel": "PDF → Excel",
+    "pdf_word": "PDF → Word",
+    "pdf_rag": "PDF → RAG",
+    "pdf_teacher": "PDF → Teacher RAG",
+    "ha_fastpath": "HA nhanh",
+    "media": "Media",
+}
+
+
+def log_channel_event(
+    *,
+    channel: str,
+    kind: str,
+    user_text: str = "",
+    reply_text: str = "",
+    user_id: str = "",
+    source_account: str = "",
+    source_peer: str = "",
+    model: str = "",
+    status: str = "ok",
+    error: str = "",
+    tools: list[str] | None = None,
+    duration_ms: int = 0,
+    meta: dict[str, Any] | None = None,
+) -> Optional[str]:
+    """Ghi hoạt động kênh (TG / Zalo / Zalop) không đi qua orchestrator.
+
+    Dùng cho ảnh menu, PDF→Word/Excel/RAG, v.v. để Agent runs thấy đủ kênh.
+    """
+    ch = str(channel or "").strip().lower()
+    if ch in {"telegram", "tg_bot"}:
+        ch = "tg"
+    if ch in {"zalo_bot", "zalo-bot"}:
+        ch = "zalo"
+    if ch in {"zalo_personal", "zalopersonal", "zalo-personal"}:
+        ch = "zalop"
+    kind = str(kind or "chat").strip()[:40]
+    peer = str(source_peer or "").strip()
+    uid = str(user_id or "").strip()
+    if not uid:
+        uid = f"{ch}_{peer}" if peer else ch
+    m: dict[str, Any] = {
+        "kind": kind,
+        "kind_label": _KIND_LABELS.get(kind, kind),
+        "channel_side": True,
+    }
+    if meta:
+        m.update(meta)
+    return log_run(
+        user_id=uid,
+        user_text=user_text,
+        reply_text=reply_text,
+        model=model,
+        hint=kind,
+        tools=tools or [kind],
+        steps=1 if status in {"ok", "media", "ha_fastpath", "success"} else 0,
+        duration_ms=duration_ms,
+        status=status,
+        error=error,
+        meta=m,
+        source_kind=ch,
+        source_account=source_account,
+        source_peer=peer,
+        channel=ch,
+    )
+
+
 def list_runs(
     *,
     limit: int = 50,

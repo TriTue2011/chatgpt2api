@@ -865,6 +865,38 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
     send_message(chat_id, _pi.ask_text(name or "PDF", intents, info))
 
 
+def _zalo_journal(
+    *,
+    kind: str,
+    chat_id: str,
+    user_id: str = "",
+    user_text: str = "",
+    reply: str = "",
+    status: str = "ok",
+    error: str = "",
+    t0: float = 0,
+    meta: dict | None = None,
+) -> None:
+    try:
+        import time as _time
+        from services.agent import run_journal as _rj
+        _rj.log_channel_event(
+            channel="zalo",
+            kind=kind,
+            user_text=user_text,
+            reply_text=str(reply or "")[:800],
+            user_id=str(user_id or chat_id),
+            source_account=_bot_id(),
+            source_peer=str(chat_id),
+            status=status,
+            error=error,
+            duration_ms=int((_time.time() - t0) * 1000) if t0 else 0,
+            meta=meta,
+        )
+    except Exception:
+        pass
+
+
 def _do_pdf_intent(
     chat_id: str,
     pending: dict | None,
@@ -878,26 +910,41 @@ def _do_pdf_intent(
     if not pending:
         return
     import os
+    import time as _time
     from services import pdf_intent as _pi
     path = pending["path"]
     name = pending.get("name") or "document.pdf"
+    t0 = _time.time()
+    kind = "pdf_rag"
+    reply = ""
+    status = "ok"
+    err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
     try:
         if intent in {_pi.WORD, _pi.EXCEL, "word", "excel"}:
-            send_message(
-                chat_id,
+            kind = "pdf_excel" if intent in {_pi.EXCEL, "excel"} else "pdf_word"
+            reply = (
                 "📎 Zalo Bot không gửi file Word/Excel. "
-                "Chọn nạp RAG kiến thức / teacher, hoặc dùng Telegram / Zalo Cá nhân.",
+                "Chọn nạp RAG kiến thức / teacher, hoặc dùng Telegram / Zalo Cá nhân."
             )
+            status = "blocked"
+            err = "zalo_bot_no_file"
+            send_message(chat_id, reply)
             return
         if intent == _pi.RAG_TEACHER:
+            kind = "pdf_teacher"
             if not grade or not subject:
-                send_message(chat_id, "⚠️ Thiếu lớp/môn cho RAG teacher.")
+                reply = "⚠️ Thiếu lớp/môn cho RAG teacher."
+                status = "error"
+                err = "missing grade/subject"
+                send_message(chat_id, reply)
                 return
             r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
-            send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
+            reply = r.get("text") or r.get("error") or "Xong."
+            send_message(chat_id, reply)
             return
         # rag_knowledge
+        kind = "pdf_rag"
         r = _pi.ingest_knowledge(
             path, name=name, model=_zalo_model(chat_id),
             who=user_id or chat_id, platform="zalo", chat_id=str(chat_id),
@@ -910,10 +957,14 @@ def _do_pdf_intent(
             parts.append(r["text"])
         if not r.get("ok") and r.get("error"):
             parts.append(f"⚠️ {r['error']}")
+            status = "error"
+            err = str(r.get("error") or "")[:200]
         if not parts:
-            send_message(chat_id, "❌ Không đọc được nội dung PDF (có thể là ảnh chụp).")
+            reply = "❌ Không đọc được nội dung PDF (có thể là ảnh chụp)."
+            send_message(chat_id, reply)
             return
-        send_message(chat_id, "\n\n".join(parts))
+        reply = "\n\n".join(parts)
+        send_message(chat_id, reply)
         try:
             from services import pdf_images as _pimg
             base = _public_base()
@@ -927,9 +978,17 @@ def _do_pdf_intent(
         except Exception as exc:
             logger.warning("zalo gửi ảnh marker PDF lỗi: %s", exc)
     except Exception as e:
+        status = "error"
+        err = str(e)[:200]
+        reply = f"❌ Lỗi xử lý PDF: {e}"
         logger.warning("zalo pdf intent %s error: %s", intent, e)
-        send_message(chat_id, f"❌ Lỗi xử lý PDF: {e}")
+        send_message(chat_id, reply)
     finally:
+        _zalo_journal(
+            kind=kind, chat_id=chat_id, user_id=user_id,
+            user_text=f"PDF:{name} → {intent}", reply=reply,
+            status=status, error=err, t0=t0, meta={"file": name, "intent": intent},
+        )
         try:
             os.unlink(path)
         except Exception:
@@ -946,56 +1005,77 @@ def _do_photo_request(
     user_id: str = "",
 ) -> None:
     """Xử lý ảnh: rag_knowledge | rag_teacher | analyze | generate (img2img)."""
+    import time as _time
     from services import photo_intent as _phi
+    t0 = _time.time()
+    kind = "photo_analyze"
+    reply = ""
+    status = "ok"
+    err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-    it = intent or (
-        _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
-    )
-    allowed = _phi.allowed_intents(allow)
-    if it not in allowed and allow is not None:
-        if it == _phi.GENERATE:
-            return
-        if it not in allowed:
-            return
-
-    if it == _phi.GENERATE:
-        out = _phi.generate_from_photo(file_data, request, channel="zalo")
-        try:
-            from services import net_guard
-            out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
-        except Exception:
-            pass
-        url = out.get("image_url")
-        if url:
-            if send_photo(
-                chat_id, str(url), caption=(out.get("text") or "Đây ạ 🎨")[:1000]
-            ).get("ok"):
-                return
-            # Không dán link — chỉ sendPhoto ra ẢNH thật
-            send_message(
-                chat_id,
-                out.get("text")
-                or "Em tạo được ảnh nhưng sendPhoto chưa được (cần base_url công khai).",
-            )
-            return
-        send_message(chat_id, out.get("text") or "Em chưa tạo được ảnh ạ.")
-        return
-
-    if it == _phi.RAG_KNOWLEDGE:
-        r = _phi.ingest_knowledge_from_photo(
-            file_data, prompt=request, who=user_id or chat_id,
-            platform="zalo", chat_id=str(chat_id), channel="zalo",
+    try:
+        it = intent or (
+            _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
         )
-        send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
-        return
+        allowed = _phi.allowed_intents(allow)
+        if it not in allowed and allow is not None:
+            status = "blocked"
+            err = f"intent {it} not allowed"
+            return
 
-    if it == _phi.RAG_TEACHER:
-        send_message(chat_id, "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`).")
-        return
+        if it == _phi.GENERATE:
+            kind = "photo_generate"
+            out = _phi.generate_from_photo(file_data, request, channel="zalo")
+            try:
+                from services import net_guard
+                out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+            except Exception:
+                pass
+            url = out.get("image_url")
+            reply = (out.get("text") or "Đây ạ 🎨")[:1000]
+            if url:
+                if send_photo(chat_id, str(url), caption=reply).get("ok"):
+                    return
+                reply = out.get("text") or (
+                    "Em tạo được ảnh nhưng sendPhoto chưa được (cần base_url công khai)."
+                )
+                send_message(chat_id, reply)
+                return
+            reply = out.get("text") or "Em chưa tạo được ảnh ạ."
+            send_message(chat_id, reply)
+            return
 
-    # analyze — nhánh vision
-    answer = _phi.analyze_photo(file_data, request, channel="zalo")
-    send_message(chat_id, answer)
+        if it == _phi.RAG_KNOWLEDGE:
+            kind = "photo_rag"
+            r = _phi.ingest_knowledge_from_photo(
+                file_data, prompt=request, who=user_id or chat_id,
+                platform="zalo", chat_id=str(chat_id), channel="zalo",
+            )
+            reply = r.get("text") or r.get("error") or "Xong."
+            send_message(chat_id, reply)
+            return
+
+        if it == _phi.RAG_TEACHER:
+            kind = "photo_rag"
+            reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
+            send_message(chat_id, reply)
+            return
+
+        # analyze — nhánh vision
+        kind = "photo_analyze"
+        answer = _phi.analyze_photo(file_data, request, channel="zalo")
+        reply = answer or ""
+        send_message(chat_id, answer)
+    except Exception as exc:
+        status = "error"
+        err = str(exc)[:200]
+        raise
+    finally:
+        _zalo_journal(
+            kind=kind, chat_id=chat_id, user_id=user_id,
+            user_text=(request or "[ảnh]")[:500], reply=reply,
+            status=status, error=err, t0=t0,
+        )
 
 
 async def handle_webhook(request) -> dict:
