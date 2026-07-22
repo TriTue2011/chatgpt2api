@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { PersonaInline } from "./personas-card";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
@@ -66,6 +67,14 @@ export function HACard() {
           <label className="text-sm">Giờ làm mới cố định (HH:MM, ngăn cách bằng dấu phẩy)</label>
           <Input value={refreshTimes} onChange={e => setRefreshTimes(e.target.value)} placeholder="00:30, 06:00, 18:00" />
           <p className="text-xs text-muted-foreground mt-1">Tùy chọn. Ngoài chu kỳ ở trên, fetch thêm vào các giờ cố định trong ngày. Để trống nếu không cần.</p>
+        </div>
+        <div>
+          <label className="text-sm">🎭 Persona khi xử lý yêu cầu từ Home Assistant</label>
+          <p className="text-xs text-muted-foreground mt-1 mb-1">
+            Mọi request nhận diện đến từ HA sẽ TUÂN THỦ persona này (độc lập
+            với các kênh chat). Lưu/xóa ngay khi tick — không cần bấm Lưu.
+          </p>
+          <PersonaInline platform="ha" />
         </div>
         <Button onClick={save}>{saved ? "Đã lưu!" : "Lưu"}</Button>
       </CardContent>

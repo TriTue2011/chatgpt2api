@@ -1,5 +1,7 @@
 "use client";
 
+import { PersonaInline } from "./personas-card";
+
 import { useEffect, useRef, useState } from "react";
 import { Save, MessageCircle, Cloud } from "lucide-react";
 import { toast } from "sonner";
@@ -1947,10 +1949,18 @@ export function TelegramCloudflareCard() {
                         </>
                       )}
                     </div>
+                    {/* Persona RIÊNG user này trong thread — độc lập như webhook */}
+                    <PersonaInline platform={row.botKey} groupId={row.chatId}
+                      userId={u.userId} />
                   </div>
                 ))}
               </div>
               )}
+              {/* Persona cấp THREAD (nhóm = fallback cho user chưa cài riêng;
+                  thread cá nhân/admin = persona của chính chat 1-1 đó) */}
+              <PersonaInline platform={row.botKey}
+                groupId={row.kind !== "user" ? row.chatId : ""}
+                userId={row.kind === "user" ? row.chatId : ""} />
             </div>
           ))}
           <Button type="button" variant="outline" size="sm" onClick={addFilterRow}>

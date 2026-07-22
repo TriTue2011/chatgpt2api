@@ -25,6 +25,121 @@ type Options = {
 
 const SEL_CLS =
   "h-8 w-full rounded-md border border-input bg-background px-2 text-sm";
+const SEL_XS =
+  "h-6 rounded border border-input bg-background px-1 text-[11px]";
+
+/**
+ * PersonaInline — nhúng vào TỪNG dòng (admin/thread/user-trong-thread/HA),
+ * độc lập y hệt fallback webhook: tick bật → 4 lựa chọn → mô tả chi tiết
+ * hiện ngay phía dưới. Tự lưu (POST) khi đổi, bỏ tick = xóa (DELETE).
+ */
+export function PersonaInline({ platform, groupId = "", userId = "" }: {
+  platform: string; groupId?: string; userId?: string;
+}) {
+  const [on, setOn] = useState(false);
+  const [sel, setSel] = useState<Record<string, string>>({
+    region: "", gender: "", age: "", job: "",
+  });
+  const [desc, setDesc] = useState("");
+  const [opts, setOpts] = useState<Options | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const keyOf = useCallback(() => {
+    const gid = groupId.trim(), uid = userId.trim();
+    if (platform === "ha") return "ha";
+    if (platform === "tg") return gid && uid ? `${gid}:u${uid}` : (gid || uid);
+    const pre = platform === "zalo" ? "zalo_" : "zalop_";
+    return gid && uid ? `${pre}${gid}:u${uid}` : `${pre}${gid || uid}`;
+  }, [platform, groupId, userId]);
+
+  useEffect(() => {
+    request.get("/api/personas").then((r) => {
+      setOpts(r.data?.options || null);
+      const row = (r.data?.rows || []).find((x: Row) => x.key === keyOf());
+      if (row) {
+        setOn(true);
+        setDesc(row.prompt || "");
+        const s = (row.sel || {}) as Record<string, string>;
+        setSel({ region: s.region || "", gender: s.gender || "",
+                 age: s.age || "", job: s.job || "" });
+      }
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyOf]);
+
+  const save = (next: Record<string, string>) => {
+    request.post("/api/personas", { key: keyOf(), sel: next })
+      .then((r) => { if (r.data?.ok) setDesc(r.data.prompt || ""); })
+      .catch(() => toast.error("Lưu persona thất bại"));
+  };
+
+  const toggle = (v: boolean) => {
+    setOn(v);
+    if (!v) {
+      setDesc("");
+      request.delete("/api/personas", { data: { key: keyOf() } }).catch(() => {});
+    } else if (sel.region || sel.gender || sel.age || sel.job) {
+      save(sel);
+    }
+  };
+
+  const set = (k: string, v: string) => {
+    const next = { ...sel, [k]: v };
+    setSel(next);
+    if (on) save(next);
+  };
+
+  if (!loaded) return null;
+  return (
+    <div className="mt-1 space-y-1">
+      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        <label className="flex cursor-pointer items-center gap-1 select-none">
+          <input type="checkbox" checked={on}
+                 onChange={(e) => toggle(e.target.checked)} />
+          🎭 Persona
+        </label>
+        {on && (
+          <>
+            <select className={SEL_XS} value={sel.region}
+                    onChange={(e) => set("region", e.target.value)}>
+              <option value="">Vùng miền…</option>
+              {(opts?.regions || []).map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            <select className={SEL_XS} value={sel.gender}
+                    onChange={(e) => set("gender", e.target.value)}>
+              <option value="">Giới tính…</option>
+              {(opts?.genders || []).map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            <select className={SEL_XS} value={sel.age}
+                    onChange={(e) => set("age", e.target.value)}>
+              <option value="">Độ tuổi…</option>
+              {(opts?.ages || []).map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            <select className={SEL_XS} value={sel.job}
+                    onChange={(e) => set("job", e.target.value)}>
+              <option value="">Nghề nghiệp…</option>
+              {(opts?.jobs || []).map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+      {on && desc && (
+        <div className="rounded border bg-muted/40 p-1.5 text-[11px] text-muted-foreground">
+          {desc}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PersonasCard() {
   const [rows, setRows] = useState<Row[]>([]);
