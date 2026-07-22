@@ -32,6 +32,23 @@ dev = [
     "pytest>=8",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["test"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-q"
+markers = [
+    "pure: pure unit — no external seams",
+    "adapter: uses shared fakes from test._fakes only",
+    "integration: real cheap libs (fitz/tmp), no paid API",
+    "e2e: real HA/bot/provider/device — use --run-e2e",
+]
+# Default CI: prefer pure+adapter when selecting explicitly:
+#   pytest -m "pure or adapter"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
 [[tool.uv.index]]
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true

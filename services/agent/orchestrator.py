@@ -161,6 +161,13 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     except Exception:
         pass
     parts.append(
+        "## Bảo mật secret / placeholder (BẮT BUỘC)\n"
+        "Trong hội thoại và tool/RAG có thể xuất hiện placeholder dạng "
+        "⟦secret:…⟧ / ⟦password:…⟧ / ⟦tc:…⟧. "
+        "Em phải CHÉP NGUYÊN VĂN placeholder khi cần dùng lại — "
+        "TUYỆT ĐỐI KHÔNG đoán, khôi phục, hay viết lại mật khẩu/token thật. "
+        "Không đưa secret thô vào câu trả lời cho người dùng.")
+    parts.append(
         "## Cách dùng công cụ\n"
         "Khi cần làm việc cụ thể, GỌI đúng tool. Với việc THAY ĐỔI chưa được "
         "phép, cứ gọi tool bình thường — hệ thống sẽ tự hỏi xin phép người dùng. "
@@ -203,11 +210,19 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
 
 
 def _finalize(user_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Attach ask-choices metadata; strip control blocks from text."""
+    """Attach ask-choices metadata; strip control blocks; P0#5 filter media URLs."""
     try:
-        return ask_choices.apply_to_result(result, user_id)
+        result = ask_choices.apply_to_result(result, user_id)
     except Exception:
-        return result
+        pass
+    # LLM/tool output = untrusted — chặn SSRF trước khi bot channel fetch/gửi.
+    try:
+        from services import net_guard
+        if isinstance(result, dict):
+            result = net_guard.filter_agent_output(result)
+    except Exception as exc:
+        logger.warning("agent: filter_agent_output failed: %s", exc)
+    return result if isinstance(result, dict) else {"text": str(result or "")}
 
 
 def _get_history(user_id: str) -> list[dict[str, Any]]:
@@ -262,54 +277,147 @@ def _classify_reply(text: str) -> Optional[str]:
 
 def _execute(cap: "caps.Capability", args: dict, user_id: str) -> dict:
     ctx = {"user_id": user_id}
+    risk = str(getattr(cap, "risk", "") or "").lower()
     try:
         raw = cap.handler(args, ctx)
     except Exception as exc:  # report, never crash the turn
         logger.exception("agent: capability %s failed", cap.name)
+        try:
+            if risk == "change":
+                approval_gate.log_event(
+                    "execute_error", user_id, cap.name,
+                    summary=str(exc)[:200],
+                )
+        except Exception:
+            pass
         return {"text": f"Em gặp lỗi khi {cap.name} 😥: {str(exc)[:150]}. Anh/chị muốn em thử lại không?"}
+    # P2#12: audit append-only mọi hành động CHANGE (kể cả auto-approve)
+    try:
+        if risk == "change":
+            summary = approval_gate.summarize_action(
+                cap.name, args if isinstance(args, dict) else {},
+                getattr(cap, "description", "") or "",
+            )
+            approval_gate.log_event(
+                "execute_change", user_id, cap.name, summary=summary,
+            )
+    except Exception as exc:
+        logger.warning("agent: audit log failed: %s", exc)
     # TokenJuice-style: compact large tool text before it hits the model context.
     # expand_tool_result itself is never compressed (would hide the full payload).
     if cap.name == "expand_tool_result":
-        return raw if isinstance(raw, dict) else {"text": str(raw)}
+        out = raw if isinstance(raw, dict) else {"text": str(raw)}
+    else:
+        try:
+            out = tool_compress.maybe_compress_result(
+                raw if isinstance(raw, dict) else {"text": str(raw)},
+                tool_name=cap.name,
+            )
+        except Exception as exc:
+            logger.warning("agent: tool_compress failed: %s", exc)
+            out = raw if isinstance(raw, dict) else {"text": str(raw)}
+    # P1#7: redact secret/PII trong tool result trước khi vào context
     try:
-        return tool_compress.maybe_compress_result(
-            raw if isinstance(raw, dict) else {"text": str(raw)},
-            tool_name=cap.name,
-        )
-    except Exception as exc:
-        logger.warning("agent: tool_compress failed: %s", exc)
-        return raw if isinstance(raw, dict) else {"text": str(raw)}
+        from services.privacy_gate import redact_text
+        if isinstance(out, dict) and isinstance(out.get("text"), str) and out["text"]:
+            out = dict(out)
+            out["text"] = redact_text(out["text"], session_id=f"agent:{user_id}")
+    except Exception:
+        pass
+    return out
 
 
 def orchestrate(user_text: str, user_id: str,
                 allow: set[str] | None = None,
-                ha_fastpath: bool = True) -> dict[str, Any]:
+                ha_fastpath: bool = True,
+                model: str | None = None) -> dict[str, Any]:
     """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
     `ha_fastpath` = cài đặt RIÊNG từng bot/tài khoản (Telegram/Zalo): lệnh nhà
-    thông minh rõ ràng được thực thi cục bộ ngay — không vòng qua provider."""
+    thông minh rõ ràng được thực thi cục bộ ngay — không vòng qua provider.
+
+    `model` = override model (vd. per-admin ai_model); trống → model_hints/default.
+    """
     import time as _time
     t0 = _time.time()
     tools_used: list[str] = []
     steps_done = 0
     run_status = "ok"
     run_error = ""
-    main_model = _main_model("reason")
+    _override = str(model or "").strip()
+    main_model = _override or _main_model("reason")
 
     def _journal(reply: str, *, status: str | None = None, error: str = "") -> None:
         try:
+            uid = str(user_id or "")
+            # Infer channel + source account from user_id prefixes used by bots
+            source_kind = ""
+            source_account = ""
+            source_peer = ""
+            if uid.startswith("zalop_"):
+                source_kind = "zalop"
+                rest = uid[6:]
+                # zalop_{account}_{thread} or similar
+                parts = rest.split("_", 1)
+                source_account = parts[0] if parts else rest
+                source_peer = parts[1] if len(parts) > 1 else ""
+            elif uid.startswith("zalo_"):
+                source_kind = "zalo"
+                source_peer = uid[5:]
+            elif uid.startswith("email_"):
+                source_kind = "email"
+                source_peer = uid[6:]
+            elif uid.startswith("tg_") or uid.isdigit():
+                source_kind = "tg"
+                source_peer = uid[3:] if uid.startswith("tg_") else uid
+            else:
+                source_kind = "tg" if uid else "agent"
+                source_peer = uid
+            # Infer display kind + permission groups (🏠 Ảnh / Video / …) for UI
+            run_kind = "agent"
+            tools_set = set(tools_used or [])
+            if tools_set & {"generate_image", "library_media"} and not (
+                tools_set - {"generate_image", "library_media", "expand_tool_result"}
+            ):
+                run_kind = "image_gen"
+            elif tools_set & {"generate_video"} and not (
+                tools_set - {"generate_video", "expand_tool_result"}
+            ):
+                run_kind = "video_gen"
+            groups: list[str] = []
+            try:
+                from services.agent.capabilities import group_of
+                for t in tools_used or []:
+                    g = group_of(t)
+                    if g and g != "_ungrouped" and g not in groups:
+                        groups.append(g)
+            except Exception:
+                groups = []
             run_journal.log_run(
                 user_id=user_id,
                 user_text=user_text,
                 reply_text=reply,
                 model=main_model,
-                hint="reason",
+                hint=run_kind,
                 tools=tools_used,
                 steps=steps_done,
                 duration_ms=int((_time.time() - t0) * 1000),
                 status=status or run_status,
                 error=error or run_error,
+                meta={
+                    "kind": run_kind,
+                    "kind_label": {
+                        "image_gen": "Tạo ảnh",
+                        "video_gen": "Tạo video",
+                        "agent": "Agent",
+                    }.get(run_kind, "Agent"),
+                    "groups": groups,
+                },
+                source_kind=source_kind,
+                source_account=source_account,
+                source_peer=source_peer,
+                # dest_* filled from request_context by log_run when providers set it
             )
         except Exception as exc:
             logger.debug("agent: run_journal failed: %s", exc)
@@ -400,12 +508,19 @@ def orchestrate(user_text: str, user_id: str,
                         "control" if fp_control else "answer", fp_text)
             reply = fp_text
             try:
-                resp = call_model(_main_model("burst"), [
+                # Dùng model chat (thường "AI text") — giữ °C/%; burst có thể là
+                # model rẻ không :text và verbalize lại.
+                _phrase_model = _main_model("chat") or _main_model("burst")
+                resp = call_model(_phrase_model, [
                     {"role": "system", "content": (
                         "Hệ thống nhà thông minh ĐÃ xử lý xong tin nhắn của người dùng. "
                         "Diễn đạt lại kết quả bên dưới thành MỘT câu trả lời tiếng Việt "
                         "tự nhiên, ấm áp (xưng 'em') — đúng CHÍNH XÁC nội dung kết quả, "
-                        "không bịa thêm thiết bị hay số liệu, không hỏi thêm.")},
+                        "không bịa thêm thiết bị hay số liệu, không hỏi thêm.\n"
+                        "QUAN TRỌNG — GIỮ NGUYÊN ĐƠN VỊ KÝ HIỆU trong kết quả: "
+                        "viết đúng °C (không viết 'độ'/'độ C'), viết % (không 'phần trăm'), "
+                        "giữ km/h, kWh nếu có. Ví dụ đúng: 'khoảng 30°C, độ ẩm 79%'."
+                    )},
                     {"role": "user", "content": (
                         f"Tin nhắn: {user_text}\nKết quả từ hệ thống nhà: {fp_text}")},
                     # no_smart_home: chỉ nhờ diễn đạt LẠI văn bản — tắt tích hợp HA
@@ -476,6 +591,24 @@ def orchestrate(user_text: str, user_id: str,
                 args = json.loads(fn.get("arguments") or "{}")
             except Exception:
                 args = {}
+            # P2: tool runtime resolves vault refs (AI never had plaintext)
+            try:
+                from services.privacy_gate import resolve_secret_ref
+                if isinstance(args, dict):
+                    resolved = {}
+                    for k, v in args.items():
+                        if isinstance(v, str) and ("⟦" in v or k.lower() in {
+                            "password", "passwd", "pwd", "secret", "token",
+                            "api_key", "session_key", "mk", "mat_khau",
+                        }):
+                            resolved[k] = resolve_secret_ref(v, session_id=f"agent:{user_id}")
+                        elif isinstance(v, str) and "⟦" in v:
+                            resolved[k] = resolve_secret_ref(v, session_id=f"agent:{user_id}")
+                        else:
+                            resolved[k] = v
+                    args = resolved
+            except Exception:
+                pass
             if name:
                 tools_used.append(str(name))
             cap = caps.get(name)
@@ -497,12 +630,23 @@ def orchestrate(user_text: str, user_id: str,
                 }
             elif approval_gate.needs_approval(user_id, name, risk=cap.risk):
                 # Propose + wait for approval (ASK chips + ok/luôn luôn/thôi).
+                # Never put resolved secrets into approval UI — re-redact display
+                display_args = dict(args)
+                try:
+                    from services.privacy_gate import redact_text
+                    for k, v in list(display_args.items()):
+                        if isinstance(v, str) and k.lower() in {
+                            "password", "passwd", "pwd", "secret", "token", "api_key",
+                        }:
+                            display_args[k] = "⟦HIDDEN⟧"
+                except Exception:
+                    pass
                 summary = approval_gate.summarize_action(
-                    name, args, cap.description or "",
+                    name, display_args, cap.description or "",
                 )
                 approval_gate.set_pending(user_id, name, args, summary)
                 q = approval_gate.format_proposal(
-                    name, args,
+                    name, display_args,
                     description=cap.description or "",
                     label=cap.label or cap.name,
                 )
@@ -515,11 +659,37 @@ def orchestrate(user_text: str, user_id: str,
                 result = _execute(cap, args, user_id)
 
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path"):
-                if result.get(media_key):
-                    produced_media = {media_key: result[media_key]}
-                    produced_caption = result.get("text") or "Đây ạ 🎨"
-                    break
+                if not result.get(media_key):
+                    continue
+                # P0#5: tool/model media — chỉ giữ URL/path được phép egress.
+                try:
+                    from services import net_guard as _ng
+                    val = result[media_key]
+                    if media_key.endswith("_url"):
+                        if not _ng.is_allowed_egress_url(str(val)):
+                            logger.warning("orchestrator drop unsafe %s=%s",
+                                           media_key, str(val)[:120])
+                            continue
+                    elif media_key.endswith("_path"):
+                        if not _ng.is_allowed_media_path(str(val)):
+                            logger.warning("orchestrator drop unsafe %s=%s",
+                                           media_key, str(val)[:120])
+                            continue
+                except Exception as exc:
+                    logger.warning("orchestrator media guard: %s", exc)
+                    continue
+                produced_media = {media_key: result[media_key]}
+                produced_caption = result.get("text") or "Đây ạ 🎨"
+                break
             content = result.get("text", "")
+            # Redact secret/PII trong tool result trước khi đưa lại context LLM
+            # (OWASP LLM02/LLM07 — tool output có thể chứa token/cookie).
+            try:
+                from services.privacy_gate import redact_text
+                if isinstance(content, str) and content:
+                    content = redact_text(content, session_id=f"agent:{user_id}")
+            except Exception:
+                pass
             # Tier-2 workflow note: procedural guidance costs tokens only when
             # the capability is actually used (first use per turn).
             if cap and cap.workflow and cap.name not in seen_workflows:

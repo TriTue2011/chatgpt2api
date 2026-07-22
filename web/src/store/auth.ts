@@ -40,7 +40,8 @@ function normalizeSession(value: unknown, fallbackKey = ""): StoredAuthSession |
 }
 
 export function getDefaultRouteForRole(role: AuthRole) {
-  return role === "admin" ? "/accounts" : "/image";
+  // User thường → Studio (chat); admin → quản lý tài khoản
+  return role === "admin" ? "/accounts" : "/chat";
 }
 
 export async function getStoredAuthKey() {

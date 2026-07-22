@@ -53,8 +53,10 @@ export function ChannelActivityPanel({ platform, title }: { platform: Platform; 
         for (const a of list) {
           const id = String(a?.ownId || "").trim();
           if (!id) continue;
-          const name = String(a?.displayName || a?.phoneNumber || "").trim();
-          opts.push({ value: id, label: name ? `${name} · ${id}` : id });
+          const name = String(a?.displayName || "").trim();
+          const phone = String(a?.phoneNumber || "").trim();
+          const label = name && phone ? `${name} · ${phone}` : (name || phone || "Tài khoản Zalo");
+          opts.push({ value: id, label });
         }
       } else {
         const res = await request.get("/api/settings");

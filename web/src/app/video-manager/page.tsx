@@ -18,7 +18,7 @@ type VideoItem = {
 };
 
 export default function VideoManagerPage() {
-  const { session } = useAuthGuard(["admin"]);
+  const { session } = useAuthGuard(["admin", "user"]);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
 

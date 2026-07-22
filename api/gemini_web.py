@@ -234,6 +234,16 @@ def _get_cookies_ranked(required_features: list[str] = None) -> list[tuple[str, 
         return 0 if hit[1] else 2   # authenticated first, guest last
     results.sort(key=_auth_rank)
 
+    # Round-robin rotate pool so load spreads across healthy GMA accounts
+    # (GeminiClientPool-style), not always burning #1.
+    if len(results) > 1:
+        try:
+            n = int(_rr_offset[0] or 0) % len(results)
+            _rr_offset[0] = n + 1
+            results = results[n:] + results[:n]
+        except Exception:
+            pass
+
     # Self-heal: no usable 1PSID in the WHOLE pool → the Google session expired;
     # relogin the missing profiles (SSO/full via saved creds, cooldown-bounded).
     # Only when the pool is fully down so a working pool is never disturbed; the
@@ -251,6 +261,54 @@ def _get_cookies_ranked(required_features: list[str] = None) -> list[tuple[str, 
 
 def is_available() -> bool:
     return len(_get_cookies_ranked()) > 0
+
+
+# ── Quota phrase detection (Flash often fakes "limit resets") ───────────────
+
+# Hard signals of real quota exhaustion (Google quota UI style).
+_REAL_QUOTA_PHRASES = (
+    "reached your limit",
+    "you've reached your limit",
+    "you have reached your limit",
+    "đạt đến giới hạn",
+    "usage cap",
+    "hết lượt",
+    "more images",
+    "giới hạn tạo nhạc",
+    "giới hạn của bạn được đặt lại",
+    "giới hạn của tôi",
+    "try again later",
+    "quota exceeded",
+)
+# Soft phrases that Flash often returns as *policy decline* for image/music,
+# NOT a real account-wide text quota — do NOT brick the whole profile for text.
+_FAKE_LIMIT_ONLY = (
+    "limit resets",
+    "your limit will reset",
+    "giới hạn sẽ được đặt lại",
+)
+
+
+def _looks_like_real_gma_quota(text: str, *, has_files: bool = False) -> bool:
+    """True only when response is a real quota block worth demoting the account.
+
+    Flash frequently declines image/music with "limit resets" even when chat text
+    still works — treating that as text_limit bricks the profile incorrectly.
+    """
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if any(p in t for p in _REAL_QUOTA_PHRASES):
+        return True
+    # Soft phrase alone: only treat as quota when we asked for media/files
+    if has_files and any(p in t for p in _FAKE_LIMIT_ONLY):
+        # Still likely image-only — mark image fail later, not whole text_limit
+        return True
+    if not has_files and any(p in t for p in _FAKE_LIMIT_ONLY):
+        # Text-only "limit resets" → almost always fake policy decline
+        _logger().info({"event": "gma_fake_limit_ignored", "sample": t[:120]})
+        return False
+    return False
 
 
 # ── Dedicated asyncio loop (gemini_webapi là async-only) ────────────────────
@@ -278,6 +336,11 @@ def _run(coro, timeout: float = 240):
 
 _clients: dict[str, Any] = {}
 _client_lock = threading.Lock()
+# Round-robin cursor for multi-account GMA pool (GeminiClientPool-style).
+_rr_offset: list[int] = [0]
+# Stagger client.init across accounts (seconds between inits during prewarm).
+_STAGGER_MIN = 2.0
+_STAGGER_MAX = 8.0
 
 # psid[:32] -> (ts, is_available). Records whether a profile's cookies are
 # AUTHENTICATED (account status AVAILABLE) vs guest (UNAUTHENTICATED). Used to
@@ -320,20 +383,38 @@ def prewarm_clients() -> int:
     """Pre-build & cache the GeminiClient for every configured gma account so the
     FIRST real request doesn't pay the ~10s cli.init() cold-start (measured:
     cold 10s vs warm 2.4–3.7s). Idempotent — _get_client returns the cached
-    client if already warm. Called from the web_prewarmer loop."""
+    client if already warm. Called from the web_prewarmer loop.
+
+    Inits are staggered (2–8s) like GeminiClientPool to avoid cookie stampede.
+    """
     try:
+        # Revive stuck limited GMA profiles before ranking
+        try:
+            from services.account_service import account_service as _as
+            _as.revive_stuck_limited(max_age_hours=24.0)
+        except Exception:
+            pass
         creds = _get_cookies_ranked(required_features=["text"])
     except Exception as exc:
         _logger().warning({"event": "gma_prewarm_creds_failed", "error": str(exc)[:120]})
         return 0
     warmed = 0
+    import random as _rnd
+    to_init = []
     for psid, psidts, profile in creds:
+        if psid[:32] not in _clients:
+            to_init.append((psid, psidts, profile))
+        else:
+            warmed += 1
+    for i, (psid, psidts, profile) in enumerate(to_init):
         try:
             _get_client(psid, psidts)
             warmed += 1
         except Exception as exc:
             _logger().warning({"event": "gma_prewarm_failed", "profile": str(profile)[:40],
                                "error": str(exc)[:120]})
+        if i < len(to_init) - 1:
+            time.sleep(_rnd.uniform(_STAGGER_MIN, _STAGGER_MAX))
     if warmed:
         _logger().info({"event": "gma_prewarm_done", "clients": warmed})
     return warmed
@@ -475,11 +556,11 @@ def _prepare_files(messages: list[dict[str, Any]]) -> list[str]:
                 except Exception:
                     continue
             elif url.startswith("http"):
+                # URL do client cung cấp → SSRF guard trước khi tải.
                 try:
-                    rr = requests.get(url, timeout=20, impersonate="chrome110")
-                    if rr.status_code == 200 and rr.content:
-                        mime = (rr.headers.get("content-type") or "image/png").split(";")[0].lower()
-                        data = rr.content
+                    from services import net_guard
+                    data = net_guard.fetch_media(url, timeout=20, max_bytes=25 * 1024 * 1024)
+                    mime = "image/png"
                 except Exception:
                     continue
             if not data:
@@ -847,11 +928,19 @@ def handle_gemini_web_api_chat(
                     _cookies["__Secure-1PSIDTS"] = psidts
                 text = _generate_text(client, prompt, files, model_enum, base_url=base_url, cookies=_cookies)
 
-                # Detect quota limits in text response
-                lower_text = str(text).lower()
-                if any(k in lower_text for k in ("reached your limit", "đạt đến giới hạn", "usage cap", "hết lượt", "limit resets", "more images", "giới hạn tạo nhạc", "giới hạn của bạn được đặt lại", "giới hạn của tôi")):
+                # Detect REAL quota limits (not Flash fake "limit resets" declines)
+                if _looks_like_real_gma_quota(str(text), has_files=bool(files)):
                     raise RuntimeError(f"QUOTA_EXHAUSTED: {text[:100]}")
 
+                try:
+                    from services.request_context import note_provider_account
+                    note_provider_account(
+                        "gma",
+                        account=str(profile or "")[:120],
+                        model=str(model_enum or model or "gma/auto")[:80],
+                    )
+                except Exception:
+                    pass
                 return text
             except Exception as exc:
                 err = str(exc).lower()
@@ -934,15 +1023,25 @@ def handle_gemini_web_api_chat(
                             full_text += chunk
                             yield _openai_chunk(model, cid, created, {"content": chunk})
                             
-                        lower_text = full_text.lower()
-                        if any(k in lower_text for k in ("reached your limit", "đạt đến giới hạn", "usage cap", "hết lượt", "giới hạn tạo nhạc", "giới hạn của bạn được đặt lại", "giới hạn của tôi")):
+                        if _looks_like_real_gma_quota(full_text, has_files=bool(files)):
                             raise RuntimeError("QUOTA_EXHAUSTED")
                             
                         success = True
                         break
                     except Exception as exc:
                         err = str(exc).lower()
-                        if "quota" in err: last_exc = exc; continue
+                        if "quota_exhausted" in err or "quota" in err:
+                            if "quota_exhausted" in err and profile and profile != "static-config":
+                                try:
+                                    account_service.record_profile_quota_failure(
+                                        profile=profile,
+                                        quota_type="file_upload" if files else "text_limit",
+                                        account_type="gemini_web_api",
+                                    )
+                                except Exception:
+                                    pass
+                            last_exc = exc
+                            continue
                         if any(k in err for k in ("auth", "cookie", "1psid", "401", "403", "1100")):
                             _drop_client(psid)
                             last_exc = exc
@@ -1006,10 +1105,18 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
                     all_media.extend(getattr(resp, attr) or [])
                     
             if not all_media:
-                # Detect quota limits
-                text = str(getattr(resp, "text", "") or "").lower()
-                if any(k in text for k in ("reached your limit", "giới hạn", "usage cap", "hết lượt", "limit resets", "more images", "your limit")):
-                    _logger().warning({"event": "gma_quota_hit_detail", "profile": getattr(resp, "profile", "unknown"), "response": text[:250]})
+                text = str(getattr(resp, "text", "") or "")
+                if _looks_like_real_gma_quota(text, has_files=True):
+                    _logger().warning({"event": "gma_quota_hit_detail", "profile": profile, "response": text[:250]})
+                    # Image-only: mark image fail, don't brick whole text profile
+                    try:
+                        account_service.record_profile_quota_failure(
+                            profile=profile,
+                            quota_type="file_upload",
+                            account_type="gemini_web_api",
+                        )
+                    except Exception:
+                        pass
                     raise RuntimeError(f"QUOTA_EXHAUSTED: {text[:250]}")
                 raise RuntimeError(f"No media generated. Text response: {text[:250]}")
                 

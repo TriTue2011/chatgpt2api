@@ -515,6 +515,20 @@ class CodexOAuthProvider:
                         logger.warning({"event": "codex_account_disabled",
                                         "reason": "403_forbidden"})
                     elif resp.status_code == 429 or "quota" in err_lower or "rate" in err_lower:
+                        # 429 usage_limit = plan quota, NOT JWT expiry.
+                        # Live probe 2026-07-21 (degaustgellert3920@outlook.com):
+                        #   BEFORE chat → 429 usage_limit_reached
+                        #   OAuth refresh_token → new access_token OK
+                        #   AFTER chat same account → STILL 429 (same resets_at)
+                        # → Do NOT call _try_refresh_token / T1–T3 here (wastes RT
+                        #   rotation, cannot clear quota). Demote + try next account;
+                        #   combo falls through to gma/chatgpt when pool exhausted.
+                        if is_quota_burnt:
+                            logger.info({
+                                "event": "codex_429_quota_not_refreshable",
+                                "action": "skip_token_refresh_demote_rotate",
+                                "hint": "usage_limit is plan quota; refresh_token does not help",
+                            })
                         # Read the exact reset time Codex tells us — `x-codex-primary-reset-at`
                         # is a unix-epoch second when this account regains its primary
                         # window. Stash it as ISO restore_at so quota_watcher auto-flips
@@ -777,8 +791,20 @@ class CodexOAuthProvider:
                 # smart_pool.weighted: chọn theo success-rate + né vừa dùng;
                 # tắt/1 ứng viên → FIFO đầu tiên y hệt cũ.
                 if len(candidates) > 1 and account_service._weighted_enabled():
-                    return max(candidates, key=lambda c: account_service._selection_weight(c[1]))[0]
-                return candidates[0][0]
+                    token, item = max(candidates, key=lambda c: account_service._selection_weight(c[1]))
+                else:
+                    token, item = candidates[0]
+                try:
+                    from services.request_context import note_provider_account
+                    note_provider_account(
+                        "codex",
+                        account=str(item.get("email") or "")[:120],
+                        model="cx/auto",
+                        account_id=str(token or "")[:20],
+                    )
+                except Exception:
+                    pass
+                return token
             raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
 
 
@@ -828,11 +854,20 @@ def _try_refresh_token(stale_access_token: str) -> str | None:
                 )
             except Exception:
                 pass
-            import threading as _t
-            from services.account_recovery import codex_google_relogin_and_notify
-            _t.Thread(target=codex_google_relogin_and_notify,
-                      args=(dict(acct), f"refresh {result.get('code')}"),
-                      daemon=True).start()
+            # Unified dead-account path (T0 debounce + T1–T3) + legacy grelogin
+            try:
+                from services.codex_error_recovery_scheduler import (
+                    schedule_dead_account_recovery,
+                )
+                schedule_dead_account_recovery(
+                    dict(acct), reason=f"refresh_unrecoverable:{result.get('code')}",
+                )
+            except Exception:
+                import threading as _t
+                from services.account_recovery import codex_google_relogin_and_notify
+                _t.Thread(target=codex_google_relogin_and_notify,
+                          args=(dict(acct), f"refresh {result.get('code')}"),
+                          daemon=True).start()
         except Exception as _exc:
             logger.warning({"event": "codex_grelogin_spawn_failed", "error": str(_exc)[:120]})
         return None

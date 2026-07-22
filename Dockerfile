@@ -8,6 +8,10 @@
 # ============================================================================
 
 # ── Stage 1: build the Next.js web UI ──────────────────────────────────────
+# Pin major tags; for supply-chain hard-pin, replace with digest after
+#   docker buildx imagetools inspect node:22-alpine --format '{{json .Manifest}}'
+# USER non-root: deferred — runtime needs root for Xvfb/x11vnc/noVNC + supervisor.
+# Prefer least-privilege via security_opt:no-new-privileges (compose) until stack split.
 FROM node:22-alpine AS web-build
 WORKDIR /app/web
 RUN npm install -g bun
@@ -33,6 +37,10 @@ COPY zalo-server ./
 
 # ── Stage 2: unified runtime ───────────────────────────────────────────────
 FROM python:3.13-slim AS app
+# NOTE (P1#10): image runs as root for browser/VNC stack. Do NOT switch USER yet
+# without splitting captcha/noVNC into a separate privileged sidecar.
+# Pin digests on next rebuild when free build quota returns:
+#   docker pull python:3.13-slim && docker image inspect --format='{{index .RepoDigests 0}}'
 
 # Node.js runtime (chạy zalo-server nhúng). Copy nguyên bản cài đặt Node từ image
 # node:22 — python:3.13-slim và node:22 cùng nền Debian bookworm nên ABI khớp.

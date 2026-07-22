@@ -3,7 +3,7 @@ import express from 'express';
 import session from 'express-session';
 import sessionFileStore from 'session-file-store';
 import cookieParser from 'cookie-parser';
-import { authMiddleware, isPublicRoute } from './services/authService.js';
+import { authMiddleware, isPublicRoute, getServerApiKey } from './services/authService.js';
 import { loadWebhookConfig } from './services/webhookService.js';
 import routes from './routes/index.js';
 import fs from 'fs';
@@ -45,6 +45,17 @@ try {
 
 // Load environment variables from .env file
 dotenv.config({ path: path.join(__dirname, 'config', '.env') });
+
+// P0#4: cảnh báo nếu không có API key — route gửi tin có thể public (legacy)
+const _zaloApiKey = getServerApiKey();
+if (!_zaloApiKey) {
+  console.warn(
+    '[SECURITY] ZALO_SERVER_API_KEY / CHATGPT2API_AUTH_KEY chưa set — ' +
+    'một số API gửi tin vẫn public (legacy). Đặt key + gửi Authorization: Bearer …'
+  );
+} else {
+  console.log('[SECURITY] zalo-server API key auth ENABLED for sensitive routes');
+}
 
 const app = express();
 

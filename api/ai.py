@@ -6,7 +6,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.support import require_identity, resolve_image_base_url
 from services.content_filter import check_request, request_text
-from services.log_service import LoggedCall
+from services.log_service import (
+    KIND_IMAGE,
+    KIND_VISION,
+    LoggedCall,
+    detect_vision_messages,
+    endpoint_run_kind,
+    resolve_source_kind,
+)
 from services.protocol import (
     anthropic_v1_messages,
     openai_v1_chat_complete,
@@ -15,6 +22,13 @@ from services.protocol import (
     openai_v1_models,
     openai_v1_response,
 )
+
+
+def _client_host(request: Request) -> str:
+    try:
+        return str(getattr(request.client, "host", "") or "")
+    except Exception:
+        return ""
 
 
 class ImageGenerationRequest(BaseModel):
@@ -86,11 +100,27 @@ def create_router() -> APIRouter:
             body: ImageGenerationRequest,
             request: Request,
             authorization: str | None = Header(default=None),
+            user_agent: str | None = Header(default=None, alias="user-agent"),
     ):
         identity = require_identity(authorization)
         payload = body.model_dump(mode="python")
         payload["base_url"] = resolve_image_base_url(request)
-        call = LoggedCall(identity, "/v1/images/generations", body.model, "文生图", request_text=body.prompt)
+        client_host = _client_host(request)
+        source_kind = resolve_source_kind(
+            identity=identity, user_agent=user_agent or "",
+        )
+        call = LoggedCall(
+            identity,
+            "/v1/images/generations",
+            body.model,
+            "Tạo ảnh",
+            request_text=body.prompt,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            run_kind=KIND_IMAGE,
+            extra_meta={"n": body.n, "size": body.size or ""},
+        )
         await filter_or_log(call, body.prompt)
         return await call.run(openai_v1_image_generations.handle, payload)
 
@@ -98,6 +128,7 @@ def create_router() -> APIRouter:
     async def edit_images(
             request: Request,
             authorization: str | None = Header(default=None),
+            user_agent: str | None = Header(default=None, alias="user-agent"),
             image: list[UploadFile] | None = File(default=None),
             image_list: list[UploadFile] | None = File(default=None, alias="image[]"),
             prompt: str = Form(...),
@@ -108,7 +139,22 @@ def create_router() -> APIRouter:
             stream: bool | None = Form(default=None),
     ):
         identity = require_identity(authorization)
-        call = LoggedCall(identity, "/v1/images/edits", model, "图生图", request_text=prompt)
+        client_host = _client_host(request)
+        source_kind = resolve_source_kind(
+            identity=identity, user_agent=user_agent or "",
+        )
+        call = LoggedCall(
+            identity,
+            "/v1/images/edits",
+            model,
+            "Sửa ảnh",
+            request_text=prompt,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            run_kind=KIND_IMAGE,
+            extra_meta={"n": n, "size": size or "", "edit": True},
+        )
         if n < 1 or n > 4:
             raise HTTPException(status_code=400, detail={"error": "n must be between 1 and 4"})
         await filter_or_log(call, prompt)
@@ -131,6 +177,7 @@ def create_router() -> APIRouter:
             "stream": stream,
             "base_url": resolve_image_base_url(request),
         }
+        call.extra_meta["input_images"] = len(images)
         return await call.run(openai_v1_image_edit.handle, payload)
 
     @router.post("/v1/chat/completions")
@@ -146,30 +193,87 @@ def create_router() -> APIRouter:
         # request so the chat handler force-strips the response. User-Agent
         # contains "HomeAssistant" for both REST and websocket integrations.
         ua = (user_agent or "").lower()
-        if "homeassistant" in ua or "hass.io" in ua:
+        # Home Assistant core UA, or local_openai / AsyncOpenAI from HA host
+        is_ha = (
+            "homeassistant" in ua
+            or "hass.io" in ua
+            or "asyncopenai" in ua.replace(" ", "")
+            or "openai/python" in ua
+        )
+        if is_ha:
             payload["_is_ha_request"] = True
         # Inject base_url so gma provider can build persistent local media URLs
         payload["base_url"] = resolve_image_base_url(request)
+        client_host = _client_host(request)
+        # Agent runtime internal loop — don't double-count in Agent runs UI
+        is_internal = bool(payload.get("x_agent_internal"))
+        source_kind = resolve_source_kind(
+            identity=identity,
+            user_agent=user_agent or "",
+            is_internal=is_internal,
+        )
+        if is_ha and source_kind != "agent_internal":
+            source_kind = "ha"
+        payload["_client_host"] = client_host
+        payload["_source_kind"] = source_kind
         model = str(payload.get("model") or "auto")
         request_preview = request_text(payload.get("prompt"), payload.get("messages"))
-        call = LoggedCall(identity, "/v1/chat/completions", model, "Sinh văn bản", request_text=request_preview)
+        has_vision = detect_vision_messages(payload.get("messages"))
+        run_kind = KIND_VISION if has_vision else endpoint_run_kind(
+            "/v1/chat/completions", has_vision=False,
+        )
+        summary = "Phân tích ảnh" if has_vision else "Chat"
+        call = LoggedCall(
+            identity,
+            "/v1/chat/completions",
+            model,
+            summary,
+            request_text=request_preview,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            skip_run_journal=is_internal,
+            run_kind=run_kind,
+            extra_meta={"has_vision": has_vision},
+        )
         await filter_or_log(call, request_preview)
         return await call.run(openai_v1_chat_complete.handle, payload)
 
     @router.post("/v1/responses")
-    async def create_response(body: ResponseCreateRequest, authorization: str | None = Header(default=None)):
+    async def create_response(
+        body: ResponseCreateRequest,
+        request: Request,
+        authorization: str | None = Header(default=None),
+        user_agent: str | None = Header(default=None, alias="user-agent"),
+    ):
         identity = require_identity(authorization)
         payload = body.model_dump(mode="python")
         model = str(payload.get("model") or "auto")
         request_preview = request_text(payload.get("input"), payload.get("instructions"))
-        call = LoggedCall(identity, "/v1/responses", model, "Responses", request_text=request_preview)
+        client_host = _client_host(request)
+        source_kind = resolve_source_kind(
+            identity=identity, user_agent=user_agent or "",
+        )
+        call = LoggedCall(
+            identity,
+            "/v1/responses",
+            model,
+            "Responses",
+            request_text=request_preview,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            run_kind=endpoint_run_kind("/v1/responses"),
+        )
         await filter_or_log(call, request_preview)
         return await call.run(openai_v1_response.handle, payload)
 
     @router.post("/v1/messages")
     async def create_message(
             body: AnthropicMessageRequest,
+            request: Request,
             authorization: str | None = Header(default=None),
+            user_agent: str | None = Header(default=None, alias="user-agent"),
             x_api_key: str | None = Header(default=None, alias="x-api-key"),
             anthropic_version: str | None = Header(default=None, alias="anthropic-version"),
     ):
@@ -177,7 +281,24 @@ def create_router() -> APIRouter:
         payload = body.model_dump(mode="python")
         model = str(payload.get("model") or "auto")
         request_preview = request_text(payload.get("system"), payload.get("messages"), payload.get("tools"))
-        call = LoggedCall(identity, "/v1/messages", model, "Messages", request_text=request_preview)
+        client_host = _client_host(request)
+        source_kind = resolve_source_kind(
+            identity=identity, user_agent=user_agent or "",
+        )
+        has_vision = detect_vision_messages(payload.get("messages"))
+        run_kind = KIND_VISION if has_vision else endpoint_run_kind("/v1/messages")
+        call = LoggedCall(
+            identity,
+            "/v1/messages",
+            model,
+            "Phân tích ảnh" if has_vision else "Messages",
+            request_text=request_preview,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            run_kind=run_kind,
+            extra_meta={"has_vision": has_vision},
+        )
         await filter_or_log(call, request_preview)
         return await call.run(anthropic_v1_messages.handle, payload, sse="anthropic")
 

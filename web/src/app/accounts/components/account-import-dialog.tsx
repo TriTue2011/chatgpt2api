@@ -30,6 +30,12 @@ import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
+import {
+  GmailAppPasswordHint,
+  GmailAppPasswordLabel,
+  TotpSecretGuide,
+  TotpSecretLabel,
+} from "@/components/google-security-hints";
 import { createAccounts, createOAuthAccounts, type Account } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -899,6 +905,29 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                 onChange={(e) => setMultiDraft({ ...multiDraft, password: e.target.value })}
                 disabled={multiRunning}
               />
+              {isAuth && (
+                <div>
+                  <TotpSecretLabel />
+                  <Input
+                    value={multiTotpSecret}
+                    onChange={(e) => setMultiTotpSecret(e.target.value)}
+                    placeholder="xxxx xxxx xxxx xxxx..."
+                    className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30"
+                    autoComplete="off"
+                    disabled={multiRunning}
+                  />
+                  {multiTotpCode && (
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-[11px] text-amber-700">Mã hiện tại:</span>
+                      <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest">
+                        {multiTotpCode}
+                      </span>
+                      <span className="text-[10px] text-amber-500">({multiTotpRemaining}s)</span>
+                    </div>
+                  )}
+                  <TotpSecretGuide />
+                </div>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -1002,24 +1031,33 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                 className="min-h-32 resize-none rounded-xl border-[var(--border)] font-mono text-xs mb-3"
               />
               <div className="grid grid-cols-2 gap-2">
-                <Input 
-                  placeholder="Gmail IMAP (tổng)" 
-                  value={codexDraft.gmailEmail} 
-                  onChange={e => {
-                    setCodexDraft({...codexDraft, gmailEmail: e.target.value});
-                    localStorage.setItem("codex_gmail", e.target.value);
-                  }} 
-                />
-                <Input 
-                  type="password" 
-                  placeholder="Mật khẩu ứng dụng Gmail" 
-                  value={codexDraft.gmailAppPassword} 
-                  onChange={e => {
-                    setCodexDraft({...codexDraft, gmailAppPassword: e.target.value});
-                    localStorage.setItem("codex_gmail_pass", e.target.value);
-                  }} 
-                />
+                <div>
+                  <label className="text-[10px] text-[var(--muted-foreground)]">Gmail IMAP (tổng)</label>
+                  <Input 
+                    placeholder="example@gmail.com" 
+                    value={codexDraft.gmailEmail} 
+                    onChange={e => {
+                      setCodexDraft({...codexDraft, gmailEmail: e.target.value});
+                      localStorage.setItem("codex_gmail", e.target.value);
+                    }}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <GmailAppPasswordLabel className="text-[10px] text-[var(--muted-foreground)]" />
+                  <Input 
+                    type="password" 
+                    placeholder="abcd efgh ijkl mnop" 
+                    value={codexDraft.gmailAppPassword} 
+                    onChange={e => {
+                      setCodexDraft({...codexDraft, gmailAppPassword: e.target.value});
+                      localStorage.setItem("codex_gmail_pass", e.target.value);
+                    }}
+                    className="mt-1"
+                  />
+                </div>
               </div>
+              <GmailAppPasswordHint className="text-[10px] text-[var(--muted-foreground)] leading-relaxed" />
               
               <Button className="w-full bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-110"
                 disabled={!codexDraft.githubEmail.trim() || isSubmitting}

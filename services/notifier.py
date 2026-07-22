@@ -1,21 +1,23 @@
-"""Thông báo admin đa kênh — gửi CẢ Telegram lẫn Zalo, mỗi kênh bật/tắt riêng.
+"""Thông báo admin đa kênh — 3 loại rõ ràng:
 
-Trước đây mọi nơi gọi thẳng `telegram_bot.notify_admin` (chỉ Telegram). Giờ tất
-cả đi qua `notifier.notify_admin` để fan-out sang cả Zalo, có toggle riêng:
-- `telegram_notify_enabled` (mặc định True)
-- `zalo_notify_enabled` (mặc định True)
+1. ``account_log`` (📋) — mọi việc liên quan **provider / tài khoản**
+   (Codex, ChatGPT, Claude, Gemini, free, refresh token, status, quota account…).
+   Bật/tắt: account_log_notify_* + admin ``account_log_enabled`` (và 🔔).
 
-Log tài khoản provider (thêm/xóa, JWT/RT chết, các bước khôi phục T0–T3 của
-ChatGPT free / Codex / Gemini web / Flow…) gọi với `category="account_log"` —
-mỗi kênh có thêm toggle con riêng, fallback về key cũ
-`account_log_notify_enabled` (config.get() đã chuẩn hóa sẵn):
-- `account_log_notify_telegram`
-- `account_log_notify_zalo`
-- `account_log_notify_zalo_personal`
+2. ``system`` (🔔) — lỗi & cảnh báo **không** phải provider, **không** phải chat mới
+   (lỗi model nhánh, vision, PDF, HA automation, blacklist…).
+   Bật/tắt: telegram/zalo_notify_enabled + admin ``notify_enabled``
+   (Zalo Cá Nhân: chỉ per-admin, không còn cờ kênh).
 
-Best-effort, không bao giờ raise (thông báo hỏng không được làm gãy luồng chính).
+3. ``newchat`` (💬) — báo **chat/nhóm/user mới** (kèm tên bot, nhóm, user khi có).
+   Bật/tắt: ``*_newchat_alert_enabled`` + admin ``newchat_alert_enabled``.
+   Không dùng chung 🔔/📋.
+
+Best-effort, không bao giờ raise.
 """
 from __future__ import annotations
+
+import re
 
 from services.config import config
 
@@ -25,49 +27,112 @@ _ACCOUNT_LOG_KEYS = {
     "zalo_personal": "account_log_notify_zalo_personal",
 }
 
+# Heuristic: text provider → account_log (khi caller quên category).
+# Tránh khớp nhầm "chatgpt2api LỖI" (tên app) — cần ngữ cảnh tài khoản.
+_PROVIDER_HINT = re.compile(
+    r"(?i)("
+    r"📋|"
+    r"provider\s*=|"
+    r"\bprovider\b|"
+    r"\bcodex\b|"
+    r"\bclaude\b\s*[—\-]|"  # "Claude — profile"
+    r"gemini[_\s]?(web|free|api)?\b.*?(account|tài|session|profile)|"
+    r"chatgpt[_\s]?(free|web)?\b.*?(account|tài|email|token)|"
+    r"opencode|providers?\.(codex|claude|gemini)|"
+    r"refresh[_\s-]?token|sessionkey|session\s*key|"
+    r"tài\s*khoản\s*(provider|codex|claude|gemini|chatgpt)|"
+    r"account\s*(pool|status|log|recovery)|"
+    r"khôi\s*phục|khoi\s*phuc|re-?login|onboard|"
+    r"status\s*=\s*(active|disabled|error|limited)|"
+    r"email\s*=\s*\S+@|"
+    r"thêm\s+tài\s*khoản|xóa\s+tài\s*khoản|cập\s*nhật\s+tài\s*khoản"
+    r")"
+)
 
-def _enabled(key: str) -> bool:
+_NEWCHAT_HINT = re.compile(
+    r"(?i)("
+    r"🆕|"
+    r"chat/nhóm\s*mới|nhóm\s*mới|chat\s*cá\s*nhân\s*mới|"
+    r"thread\s*mới|báo\s*chat|"
+    r"Chat\s*ID:|Thread\s*ID:|"
+    r"chưa\s*cấp\s*phép|chưa\s*có\s*trong\s*danh\s*bạ|"
+    r"Mã\s*danh\s*bạ"
+    r")"
+)
+
+
+def _enabled(key: str, default: bool = True) -> bool:
     try:
-        return bool(config.get().get(key, True))
+        return bool(config.get().get(key, default))
     except Exception:
-        return True
+        return default
 
 
 def account_log_enabled(channel: str) -> bool:
-    """Toggle log tài khoản provider theo kênh (telegram/zalo/zalo_personal)."""
-    return _enabled(_ACCOUNT_LOG_KEYS.get(channel, "account_log_notify_enabled"))
+    """Toggle log tài khoản provider theo kênh."""
+    return _enabled(_ACCOUNT_LOG_KEYS.get(channel, "account_log_notify_enabled"), True)
+
+
+def classify_notify_category(text: str, category: str = "") -> str:
+    """Chuẩn hóa category: account_log | system | newchat.
+
+    Caller nên truyền đúng; heuristic chỉ vá khi category trống.
+    """
+    c = str(category or "").strip().lower()
+    if c in {"account_log", "account", "provider", "log"}:
+        return "account_log"
+    if c in {"newchat", "new_chat", "new-contact", "contact"}:
+        return "newchat"
+    if c in {"system", "error", "warn", "warning", "alert"}:
+        return "system"
+    t = text or ""
+    # newchat trước (tin 🆕 có thể chứa "bot" nhưng không phải provider)
+    if _NEWCHAT_HINT.search(t):
+        return "newchat"
+    if _PROVIDER_HINT.search(t):
+        return "account_log"
+    return "system"
 
 
 def notify_admin(text: str, *, category: str = "") -> None:
     """Gửi thông báo tới admin qua các kênh đang bật.
 
-    category="account_log" → mỗi kênh xét thêm toggle log tài khoản riêng
-    (ngoài toggle thông báo tổng của kênh đó).
+    category:
+      - account_log → 📋 log provider
+      - system / \"\" → 🔔 lỗi & cảnh báo
+      - newchat → 💬 chat/nhóm mới (thread ID)
     """
-    is_account_log = category == "account_log"
-    # category truyền xuống từng kênh — mỗi BOT trong kênh còn toggle riêng
-    # (notify_admin_enabled / account_log_enabled trên từng bot record).
-    if _enabled("telegram_notify_enabled") and (
-        not is_account_log or account_log_enabled("telegram")
-    ):
+    cat = classify_notify_category(text, category)
+    # Telegram
+    if cat == "account_log":
+        tg_ok = _enabled("telegram_notify_enabled") and account_log_enabled("telegram")
+    elif cat == "newchat":
+        tg_ok = _enabled("telegram_notify_enabled")  # per-admin 💬 filter trong bot
+    else:
+        tg_ok = _enabled("telegram_notify_enabled")
+    if tg_ok:
         try:
             from services.telegram_bot import notify_admin as _tg
-            _tg(text, category=category)
+            _tg(text, category=cat)
         except Exception:
             pass
-    if _enabled("zalo_notify_enabled") and (
-        not is_account_log or account_log_enabled("zalo")
-    ):
+
+    # Zalo Bot
+    if cat == "account_log":
+        zl_ok = _enabled("zalo_notify_enabled") and account_log_enabled("zalo")
+    else:
+        zl_ok = _enabled("zalo_notify_enabled")
+    if zl_ok:
         try:
             from services.zalo_bot import notify_admin as _zl
-            _zl(text, category=category)
+            _zl(text, category=cat)
         except Exception:
             pass
-    # Zalo Cá Nhân: tự kiểm tra zalo_personal_notify_enabled (mặc định TẮT)
-    # + zalo_personal_admin_thread bên trong notify_admin.
-    if not is_account_log or account_log_enabled("zalo_personal"):
-        try:
-            from services.zalo_personal import notify_admin as _zp
-            _zp(text)
-        except Exception:
-            pass
+
+    # Zalo Cá Nhân — 🔔/📋/💬 chỉ theo từng Admin #N (không chặn bằng cờ kênh
+    # account_log_notify_zalo_personal / zalo_personal_notify_enabled).
+    try:
+        from services.zalo_personal import notify_admin as _zp
+        _zp(text, category=cat)
+    except Exception:
+        pass

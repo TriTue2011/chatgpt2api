@@ -34,6 +34,10 @@ class FalAIAdapter(BaseImageAdapter):
         return f"{self.BASE_URL}/{model}"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
+        import base64 as _b64
+
+        from services.image_providers._base import first_image_bytes_mime
+
         prompt = str(body.get("prompt") or "")
         size = str(body.get("size") or "1792x1024")
 
@@ -46,11 +50,21 @@ class FalAIAdapter(BaseImageAdapter):
             "896x1280": "portrait_4_3",
         }
 
-        return {
+        out: dict[str, Any] = {
             "prompt": prompt,
             "image_size": size_map.get(size, "landscape_16_9"),
             "num_images": max(1, min(4, int(body.get("n") or 1))),
         }
+        # Best-effort img2img: many fal endpoints accept image_url / image_url list.
+        # Send data-URL so models like flux/dev/image-to-image can use it; plain
+        # text→image models ignore unknown fields.
+        raw, mime = first_image_bytes_mime(body.get("images") or [])
+        if raw:
+            data_url = f"data:{mime or 'image/png'};base64,{_b64.b64encode(raw).decode()}"
+            out["image_url"] = data_url
+            out["image_urls"] = [data_url]
+            out["strength"] = 0.55
+        return out
 
     def build_headers(
         self,

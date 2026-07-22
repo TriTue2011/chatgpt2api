@@ -95,6 +95,23 @@ def bot_label(platform: str, bot_id: str) -> str:
                     break
         except Exception:
             pass
+    # Zalo Cá Nhân: SĐT / displayName (không hiện bare ownId nếu có phone)
+    if plat in {"zalop", "zalo_personal"}:
+        try:
+            from services.zalo_personal import get_accounts
+            for a in (get_accounts().get("accounts") or []):
+                if str(a.get("ownId") or "").strip() != bid:
+                    continue
+                phone = str(a.get("phoneNumber") or "").strip()
+                name = str(a.get("displayName") or "").strip()
+                # Bỏ "(ownId)" trong displayName zca
+                if name:
+                    name = re.sub(r"\s*\(\d{8,}\)\s*$", "", name).strip()
+                if phone and name and name != phone and phone not in name:
+                    return f"{name} · {phone}"
+                return phone or name or bid
+        except Exception:
+            pass
     # Runtime names
     try:
         if plat == "tg":
@@ -298,33 +315,75 @@ def should_alert_new(
 
 
 def format_alert(rec: dict[str, Any], *, served: bool, text: str = "") -> str:
-    kind = "Nhóm" if rec.get("kind") == "group" else "Chat cá nhân"
-    bl = rec.get("bot_label") or bot_label(rec.get("platform", ""), rec.get("bot_id", ""))
+    """Tin 💬 chat/nhóm/user mới — luôn cố gắng đầy đủ tên bot/SĐT/nhóm/user."""
+    is_group = rec.get("kind") == "group"
+    kind = "Nhóm" if is_group else "Chat cá nhân"
+    plat = str(rec.get("platform") or "").strip()
+    bid = str(rec.get("bot_id") or "").strip()
+    bl = str(rec.get("bot_label") or "").strip() or bot_label(plat, bid)
+    if bl == bid:
+        bl = bot_label(plat, bid) or bid
+    # Zalo CN: bổ sung SĐT nếu label chưa có
+    phone = str(rec.get("bot_phone") or rec.get("phone") or "").strip()
+    if plat in {"zalop", "zalo_personal"} and not phone and bid:
+        try:
+            from services.zalo_personal import get_accounts
+            for a in (get_accounts().get("accounts") or []):
+                if str(a.get("ownId") or "").strip() == bid:
+                    phone = str(a.get("phoneNumber") or "").strip()
+                    if not bl or bl == bid:
+                        dn = str(a.get("displayName") or "").strip()
+                        dn = re.sub(r"\s*\(\d{8,}\)\s*$", "", dn).strip()
+                        bl = phone or dn or bl
+                    break
+        except Exception:
+            pass
     status = (
         "chưa cấp phép (bot im / chặn nếu đã bật Chat IDs)"
         if not served
         else "chưa có trong danh bạ — bot vẫn có thể trả lời nếu chưa khoá Chat IDs"
     )
+    chat_name = str(rec.get("chat_name") or "").strip()
+    user_name = str(rec.get("display_name") or "").strip()
+    user_id = str(rec.get("user_id") or "").strip()
+    chat_id = str(rec.get("chat_id") or "").strip()
+
+    bot_line = f"🆕 {kind} mới → bot **{bl}**"
+    if phone and phone not in bot_line:
+        bot_line += f" · SĐT `{phone}`"
+    if bid and bid != bl and bid != phone:
+        bot_line += f" · id `{bid}`" if plat not in {"zalop", "zalo_personal"} else f" · ownId `{bid}`"
+
     lines = [
-        f"🆕 {kind} mới → bot **{bl}** (`{rec.get('bot_id')}`)",
-        f"• Chat ID: `{rec.get('chat_id')}`",
+        bot_line,
+        f"• Thread / Chat ID: `{chat_id}`" if chat_id else None,
     ]
-    if rec.get("kind") == "group" and rec.get("chat_name"):
-        lines.append(f"• Tên nhóm: **{rec.get('chat_name')}**")
-    if rec.get("user_id"):
-        lines.append(f"• User ID người gửi: `{rec.get('user_id')}`")
-    if rec.get("display_name"):
-        lines.append(f"• Tên người (nền tảng): **{rec.get('display_name')}**")
+    if is_group:
+        lines.append(
+            f"• Tên nhóm: **{chat_name}**" if chat_name else "• Tên nhóm: *(chưa nhận diện)*"
+        )
+        if user_id:
+            lines.append(f"• User ID người gửi: `{user_id}`")
+        lines.append(
+            f"• Tên user: **{user_name}**" if user_name else "• Tên user: *(chưa nhận diện)*"
+        )
+    else:
+        lines.append(
+            f"• Tên user: **{user_name or chat_name}**"
+            if (user_name or chat_name)
+            else "• Tên user: *(chưa nhận diện)*"
+        )
+        if user_id and user_id != chat_id:
+            lines.append(f"• User ID: `{user_id}`")
     lines.append(f"• Trạng thái: {status}")
     snippet = (text or rec.get("last_text") or "")[:120]
     if snippet:
         lines.append(f"• Tin: {snippet}")
-    lines.append(f"• Mã danh bạ: `{rec.get('key')}`")
     lines.append(
-        "→ Trả lời admin: `có` để lưu (chọn tên người / tên nhóm / tự đặt) "
-        "hoặc Settings → Lọc thread. Sau khi lưu sẽ không báo lại."
+        "→ Trả lời: `có` / `lưu` để đưa vào danh bạ, hoặc `không` / `bỏ`. "
+        "Cũng có thể thêm bằng Admin #N / Lọc thread."
     )
-    return "\n".join(lines)
+    return "\n".join(x for x in lines if x)
 
 
 def list_contacts(
@@ -360,6 +419,238 @@ def list_contacts(
         out.append(dict(r))
     out.sort(key=lambda x: -int(x.get("last_seen") or 0))
     return out[: max(1, min(limit, 100))]
+
+
+def list_directory(platform: str, *, limit: int = 300) -> list[dict[str, Any]]:
+    """Danh bạ thread theo kênh — CHỈ mục đã đồng ý hoặc cấu hình Settings.
+
+    Nguồn:
+      - ``approved``: channel_contacts với known=True (admin trả lời `có` / lưu)
+      - ``admin``: Admin #N trong Settings
+      - ``filter``: Lọc thread trong Settings
+
+    Không gộp tin gần đây / auto chưa đồng ý.
+    Mỗi dòng: bot_id, bot_label, thread_id, kind, name, sources[].
+    """
+    plat = str(platform or "").strip()
+    if plat == "zalo_personal":
+        plat = "zalop"
+    if plat not in {"tg", "zalo", "zalop"}:
+        return []
+
+    # key = bot_id|thread_id
+    by: dict[str, dict[str, Any]] = {}
+
+    def _put(
+        bot_id: str,
+        thread_id: str,
+        *,
+        kind: str = "user",
+        name: str = "",
+        source: str = "",
+        bot_lab: str = "",
+    ) -> None:
+        bid = str(bot_id or "").strip()
+        tid = str(thread_id or "").strip()
+        if not bid or not tid:
+            return
+        k = f"{bid}|{tid}"
+        kind_n = "group" if str(kind or "").lower() in {
+            "group", "1", "nhóm", "nhom", "supergroup", "channel",
+        } else "user"
+        name_n = str(name or "").strip()
+        src = str(source or "").strip()
+        prev = by.get(k)
+        if not prev:
+            by[k] = {
+                "bot_id": bid,
+                "bot_label": (bot_lab or bot_label(plat, bid)).strip() or bid,
+                "thread_id": tid,
+                "kind": kind_n,
+                "name": name_n,
+                "sources": [src] if src else [],
+            }
+            return
+        # kind: group thắng user nếu mâu thuẫn
+        if kind_n == "group":
+            prev["kind"] = "group"
+        # Tên: không ghi đè tên nhóm đã có bằng chuỗi rỗng; admin/filter ưu tiên hơn activity
+        if name_n:
+            prev_name = str(prev.get("name") or "").strip()
+            src_rank = {"admin": 3, "filter": 2, "auto": 1, "activity": 0}
+            if not prev_name:
+                prev["name"] = name_n
+            elif src_rank.get(src, 0) >= src_rank.get(
+                (prev.get("sources") or ["activity"])[0], 0
+            ):
+                # Nguồn đáng tin hơn (admin/filter) → cập nhật tên
+                if src in {"admin", "filter"}:
+                    prev["name"] = name_n
+        if src and src not in prev["sources"]:
+            prev["sources"].append(src)
+        # bot_label: luôn ưu tiên tên thật (label), không để bare id
+        bl = (bot_lab or bot_label(plat, bid)).strip()
+        if bl and (not prev.get("bot_label") or prev["bot_label"] == bid):
+            prev["bot_label"] = bl
+
+    # 1) Đã đồng ý lưu (known=True) — không lấy tin gần đây / stranger chưa duyệt
+    for r in list_contacts(plat, limit=200):
+        if not r.get("known"):
+            continue
+        key = str(r.get("key") or "")
+        parts = key.split(":")
+        # platform:bot:chat[:user] — 4+ phần = member
+        if len(parts) >= 4:
+            continue
+        is_g = str(r.get("kind") or "") == "group"
+        # Nhóm: chỉ alias / chat_name — KHÔNG dùng display_name (tên người gửi)
+        if is_g:
+            nm = (
+                str(r.get("alias") or "").strip()
+                or str(r.get("chat_name") or "").strip()
+            )
+        else:
+            nm = (
+                str(r.get("alias") or "").strip()
+                or str(r.get("display_name") or "").strip()
+                or str(r.get("chat_name") or "").strip()
+            )
+        _put(
+            str(r.get("bot_id") or ""),
+            str(r.get("chat_id") or ""),
+            kind=str(r.get("kind") or "user"),
+            name=nm,
+            source="approved",
+            bot_lab=str(r.get("bot_label") or ""),
+        )
+
+    # 2) Setting — Admin #N
+    try:
+        cfg = config.get() or {}
+        if plat in {"tg", "zalo"}:
+            bots_key = "telegram_bots" if plat == "tg" else "zalo_bots"
+            from services.admin_workspace import admin_entries
+            for b in (cfg.get(bots_key) or []):
+                if not isinstance(b, dict):
+                    continue
+                tok = str(b.get("token") or "").strip()
+                bid = tok.split(":", 1)[0].strip() if tok else ""
+                if not bid:
+                    continue
+                bl = str(b.get("label") or "").strip() or bot_label(plat, bid)
+                for e in admin_entries(b):
+                    _put(
+                        bid,
+                        str(e.get("chat_id") or ""),
+                        kind=str(e.get("kind") or "private"),
+                        name=str(e.get("name") or ""),
+                        source="admin",
+                        bot_lab=bl,
+                    )
+        elif plat == "zalop":
+            raw = cfg.get("zalo_personal_account_admins") or {}
+            if isinstance(raw, dict):
+                for own_id, entry in raw.items():
+                    if not isinstance(entry, dict):
+                        continue
+                    bid = str(own_id or "").strip()
+                    bl = bot_label("zalop", bid)
+                    entries = entry.get("admin_entries")
+                    if isinstance(entries, list) and entries:
+                        for e in entries:
+                            if not isinstance(e, dict):
+                                continue
+                            _put(
+                                bid,
+                                str(e.get("chat_id") or ""),
+                                kind=str(e.get("kind") or "private"),
+                                name=str(e.get("name") or ""),
+                                source="admin",
+                                bot_lab=bl,
+                            )
+                    else:
+                        th = str(entry.get("admin_thread") or "").strip()
+                        if th:
+                            knd = (
+                                "group"
+                                if str(entry.get("admin_thread_type") or "0") in {"1", "group"}
+                                else "user"
+                            )
+                            _put(
+                                bid, th, kind=knd,
+                                name=str(entry.get("admin_name") or ""),
+                                source="admin", bot_lab=bl,
+                            )
+    except Exception:
+        pass
+
+    # 3) Setting — Lọc thread (meta name/kind)
+    try:
+        cfg = config.get() or {}
+        tf = cfg.get("thread_filters") or {}
+        meta = cfg.get("thread_filter_meta") or {}
+        if isinstance(tf, dict):
+            for key, _groups in tf.items():
+                ks = str(key or "")
+                # tg:BOT:CHAT | zalo:BOT:CHAT | zalop:OWN:CHAT | tg:CHAT
+                if not (ks == plat or ks.startswith(f"{plat}:")):
+                    continue
+                parts = ks.split(":")
+                if len(parts) >= 3:
+                    bid, tid = parts[1], ":".join(parts[2:])
+                elif len(parts) == 2:
+                    bid, tid = "", parts[1]
+                else:
+                    continue
+                if not bid:
+                    # "mọi bot" — gán bot_id = "*" để vẫn hiện
+                    bid = "*"
+                m = meta.get(ks) if isinstance(meta, dict) else None
+                m = m if isinstance(m, dict) else {}
+                _put(
+                    bid, tid,
+                    kind=str(m.get("kind") or "group"),
+                    name=str(m.get("name") or ""),
+                    source="filter",
+                    bot_lab="Mọi bot" if bid == "*" else bot_label(plat, bid),
+                )
+    except Exception:
+        pass
+
+    rows = list(by.values())
+
+    # Zalo Cá Nhân: thiếu tên trên mục Settings/đã duyệt → resolve để HIỂN THỊ
+    # (không tự thêm mục lạ vào danh bạ — chỉ làm giàu tên dòng đã có).
+    if plat == "zalop":
+        try:
+            from services.zalo_personal import resolve_thread as _zalop_resolve
+            for row in rows:
+                if str(row.get("name") or "").strip():
+                    continue
+                bid = str(row.get("bot_id") or "").strip()
+                tid = str(row.get("thread_id") or "").strip()
+                if not bid or not tid or bid == "*":
+                    continue
+                prefer = "group" if row.get("kind") == "group" else "private"
+                try:
+                    info = _zalop_resolve(bid, tid, prefer)
+                except Exception:
+                    continue
+                n = str((info or {}).get("name") or "").strip()
+                if not n:
+                    continue
+                row["name"] = n
+                if (info or {}).get("kind") == "group":
+                    row["kind"] = "group"
+        except Exception:
+            pass
+
+    rows.sort(key=lambda x: (
+        str(x.get("bot_label") or "").lower(),
+        str(x.get("name") or "").lower(),
+        str(x.get("thread_id") or ""),
+    ))
+    return rows[: max(1, min(int(limit or 300), 500))]
 
 
 def resolve_alias(name: str, *, platform: str = "", bot_id: str = "") -> list[dict[str, Any]]:

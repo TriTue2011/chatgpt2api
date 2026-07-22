@@ -87,6 +87,83 @@ class RunJournalTests(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got["user_text"], "bật đèn")
 
+    def test_source_dest_and_ha_channel(self) -> None:
+        rid = rj.log_run(
+            user_id="ha_172.16.10.200",
+            user_text='{"humans_detected":2}',
+            reply_text='{"humans_detected":2,"humans_detected_summary":"1 phụ nữ, 1 bé trai"}',
+            model="AI vision",
+            hint="vision",
+            status="ok",
+            duration_ms=22000,
+            source_kind="ha",
+            source_account="Ben Bắp",
+            source_peer="172.16.10.200",
+            dest_provider="codex",
+            dest_account="degaustgellert3920@outlook.com",
+            dest_model="gpt-5.5",
+            meta={"kind": "vision", "kind_label": "Phân tích ảnh", "groups": ["image"]},
+        )
+        self.assertTrue(rid)
+        got = rj.get_run(rid)
+        assert got is not None
+        self.assertEqual(got["channel"], "ha")
+        self.assertEqual(got["source_kind"], "ha")
+        self.assertEqual(got["dest_provider"], "codex")
+        self.assertEqual(got["hint"], "vision")
+        self.assertEqual(got["meta"].get("kind"), "vision")
+        self.assertIn("codex", got["to_label"])
+        self.assertIn("ha", got["from_label"])
+        rows = rj.list_runs(channel="ha", limit=5)
+        self.assertTrue(any(r["id"] == rid for r in rows))
+        st = rj.stats(24)
+        self.assertIn("vision", st.get("by_kind") or {})
+
+    def test_image_and_video_kinds(self) -> None:
+        rid_img = rj.log_run(
+            user_id="web_admin",
+            user_text="a cat astronaut",
+            reply_text="1 URL: https://example.com/cat.png",
+            model="gpt-image-2",
+            hint="image_gen",
+            tools=["image_generations"],
+            status="ok",
+            duration_ms=4000,
+            source_kind="web",
+            meta={
+                "kind": "image_gen",
+                "kind_label": "Tạo ảnh",
+                "groups": ["image"],
+                "urls": ["https://example.com/cat.png"],
+                "media_count": 1,
+            },
+        )
+        rid_vid = rj.log_run(
+            user_id="web_admin",
+            user_text="ocean waves",
+            reply_text="https://example.com/v.mp4",
+            model="flow/veo-3.1-fast",
+            hint="video_gen",
+            tools=["video_generations"],
+            status="ok",
+            duration_ms=9000,
+            source_kind="web",
+            meta={
+                "kind": "video_gen",
+                "kind_label": "Tạo video",
+                "groups": ["video"],
+                "urls": ["https://example.com/v.mp4"],
+            },
+        )
+        self.assertTrue(rid_img and rid_vid)
+        rows = rj.list_runs(limit=10)
+        kinds = {r["hint"] for r in rows}
+        self.assertIn("image_gen", kinds)
+        self.assertIn("video_gen", kinds)
+        st = rj.stats(24)
+        self.assertGreaterEqual(st.get("by_kind", {}).get("image_gen", 0), 1)
+        self.assertGreaterEqual(st.get("by_kind", {}).get("video_gen", 0), 1)
+
 
 class EmailAllowTests(unittest.TestCase):
     def test_fail_closed_and_star(self) -> None:

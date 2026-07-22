@@ -69,18 +69,21 @@ class VeoVideoAdapter:
         prompt = str(body.get("prompt") or "")
         instance: dict[str, Any] = {"prompt": prompt}
 
-        # Optional: input image for image→video
+        # Optional: input image for image→video.
+        # Veo predictLongRunning yêu cầu `bytesBase64Encoded` + `mimeType`
+        # (KHÔNG phải `inlineData` kiểu generateContent — model trả 400
+        # "inlineData isn't supported by this model").
         image_b64 = body.get("image")
         if image_b64:
             instance["image"] = {
-                "inlineData": {"mimeType": "image/png", "data": image_b64}
+                "bytesBase64Encoded": image_b64, "mimeType": "image/png"
             }
 
         # Optional: last frame for interpolation
         last_frame = body.get("last_frame")
         if last_frame:
             instance["lastFrame"] = {
-                "inlineData": {"mimeType": "image/png", "data": last_frame}
+                "bytesBase64Encoded": last_frame, "mimeType": "image/png"
             }
 
         request: dict[str, Any] = {"instances": [instance]}
@@ -91,9 +94,13 @@ class VeoVideoAdapter:
         if aspect_ratio:
             params["aspectRatio"] = aspect_ratio
 
+        # durationSeconds phải là SỐ — Veo trả 400 nếu là chuỗi ("8").
         duration = body.get("duration")
-        if duration:
-            params["durationSeconds"] = duration
+        if duration not in (None, ""):
+            try:
+                params["durationSeconds"] = int(duration)
+            except (TypeError, ValueError):
+                pass
 
         resolution = body.get("resolution")
         if resolution:
@@ -136,7 +143,9 @@ class VeoVideoAdapter:
                         error_text = resp.text[:500]
                     except Exception:
                         pass
-                    if resp.status_code in (400, 429) and key_try < max_keys - 1:
+                    # Xoay sang key kế khi lỗi 401/403 (project bị từ chối quyền
+                    # Veo) / 400 / 429 (hết quota) — key khác có thể có quyền.
+                    if resp.status_code in (400, 401, 403, 429) and key_try < max_keys - 1:
                         last_error = error_text
                         continue
                     raise RuntimeError(f"Veo submit error {resp.status_code}: {error_text[:200]}")
@@ -151,7 +160,10 @@ class VeoVideoAdapter:
                 # Step 2: Poll until done
                 base_url = f"{_veo_base()}/{operation_name}"
                 keys = self._get_api_keys(credentials)
-                api_key = keys[key_index % len(keys)] if keys else ""
+                # Poll bằng ĐÚNG key đã submit (key_try), không phải biến
+                # `key_index` không tồn tại — trước đây gây NameError, hỏng mọi
+                # lần tạo video Veo (text→video lẫn image→video).
+                api_key = keys[key_try % len(keys)] if keys else ""
 
                 start_time = time.time()
                 while time.time() - start_time < VEO_MAX_WAIT:

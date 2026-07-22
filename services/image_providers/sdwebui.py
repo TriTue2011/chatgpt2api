@@ -21,23 +21,29 @@ class SDWebUIAdapter(BaseImageAdapter):
     """Stable Diffusion Web UI (AUTOMATIC1111) adapter.
 
     NoAuth — runs locally at http://localhost:7860.
+    Supports txt2img and img2img when body.images / reference is present.
     """
 
     no_auth = True
 
     def __init__(self, base_url: str = "http://localhost:7860"):
         self.base_url = base_url.rstrip("/")
+        self._use_img2img = False
 
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
+        if self._use_img2img:
+            return f"{self.base_url}/sdapi/v1/img2img"
         return f"{self.base_url}/sdapi/v1/txt2img"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
+        from services.image_providers._base import first_image_bytes_mime
+
         prompt = str(body.get("prompt") or "")
         n = max(1, min(4, int(body.get("n") or 1)))
         size = str(body.get("size") or "1792x1024")
         w, h = size_to_width_height(size)
 
-        return {
+        payload: dict[str, Any] = {
             "prompt": prompt,
             "negative_prompt": "",
             "width": w,
@@ -47,6 +53,15 @@ class SDWebUIAdapter(BaseImageAdapter):
             "cfg_scale": 7,
             "sampler_name": "Euler a",
         }
+        # Img2img when chat/edit attached a reference image
+        raw, _mime = first_image_bytes_mime(body.get("images") or [])
+        if raw:
+            self._use_img2img = True
+            payload["init_images"] = [base64.b64encode(raw).decode("ascii")]
+            payload["denoising_strength"] = 0.55
+        else:
+            self._use_img2img = False
+        return payload
 
     def build_headers(
         self,

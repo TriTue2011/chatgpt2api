@@ -52,8 +52,20 @@ def call_model(
     date). ``allow_fastpath=True`` opts back in (control_home needs the HA
     intent fast-path to actually switch devices).
     """
-    payload: dict[str, Any] = {"model": model, "messages": messages,
-                               "stream": False, "max_tokens": max_tokens}
+    # P0 privacy: redact MK/token/PII before any model call
+    safe_messages = messages
+    try:
+        from services.privacy_gate import redact_messages, is_enabled as _priv_on
+        if _priv_on():
+            sid = f"agent:{channel or 'local'}"
+            safe_messages = redact_messages(messages, session_id=sid)
+    except Exception:
+        safe_messages = messages
+
+    payload: dict[str, Any] = {"model": model, "messages": safe_messages,
+                               "stream": False, "max_tokens": max_tokens,
+                               # Skip Agent-runs double-count (orchestrator journals the turn)
+                               "x_agent_internal": True}
     if not allow_fastpath:
         payload["x_skip_fastpath"] = True
     if channel:

@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from threading import Event
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,6 +34,20 @@ def create_app() -> FastAPI:
         thread = start_limited_account_watcher(stop_event)
         backup_service.start()
         config.cleanup_old_images()
+        # P0#3: noVNC / x11vnc — cảnh báo rõ nếu không mật khẩu
+        try:
+            import os
+            vnc = str(os.environ.get("VNC_PASSWORD") or "").strip()
+            if not vnc:
+                logger.error({
+                    "event": "security_vnc_password_missing",
+                    "msg": "VNC_PASSWORD empty — noVNC :6080 có thể không mật khẩu. "
+                           "Đặt VNC_PASSWORD trong docker-compose.",
+                })
+            else:
+                logger.info({"event": "security_vnc_password_set", "len": len(vnc)})
+        except Exception as exc:
+            _log_startup_failure("vnc_password_check", exc)
         # Fetch latest Karpathy guidelines + start quota watcher (fire-and-forget)
         refresh_guidelines()
         watcher_task = asyncio.create_task(quota_watcher.start())
@@ -49,6 +63,12 @@ def create_app() -> FastAPI:
             start_codex_refresh()
         except Exception as exc:
             _log_startup_failure("codex_refresh_scheduler", exc)
+        # Dead Codex/free accounts (error/disabled) — periodic T0→T1–T3 recovery
+        try:
+            from services.codex_error_recovery_scheduler import start as start_dead_recovery
+            start_dead_recovery()
+        except Exception as exc:
+            _log_startup_failure("codex_error_recovery_scheduler", exc)
         # Listen on :1455 for OpenAI Codex CLI OAuth redirects (auto-exchange)
         try:
             from services.codex_callback_listener import start as start_codex_callback
@@ -195,6 +215,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    try:
+        from services.security_headers import SecurityHeadersMiddleware
+        app.add_middleware(SecurityHeadersMiddleware)
+    except Exception as exc:
+        _log_startup_failure("security_headers", exc)
     app.include_router(ai.create_router())
     app.include_router(claude.create_router())  # standalone, OpenAI-compatible /v1/claude/*
     app.include_router(accounts.create_router())
@@ -216,11 +241,73 @@ def create_app() -> FastAPI:
     if config.images_dir.exists():
         app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
 
-    # Veo video generation
+    # Veo video generation — journaled into Agent runs (kind=video_gen)
     @app.post("/v1/video/generations")
-    async def create_video(body: dict, authorization: str | None = Header(default=None)):
+    async def create_video(
+        body: dict,
+        request: Request,
+        authorization: str | None = Header(default=None),
+        user_agent: str | None = Header(default=None, alias="user-agent"),
+    ):
+        identity = require_admin(authorization)
+        # require_admin may return None on some code paths — normalize for journal
+        if not isinstance(identity, dict):
+            identity = {"id": "admin", "name": "admin", "role": "admin"}
+        from services.log_service import KIND_VIDEO, LoggedCall, resolve_source_kind
+
+        client_host = ""
+        try:
+            client_host = str(getattr(request.client, "host", "") or "")
+        except Exception:
+            client_host = ""
+        model = str((body or {}).get("model") or "veo")
+        prompt = str((body or {}).get("prompt") or "")
+        source_kind = resolve_source_kind(
+            identity=identity, user_agent=user_agent or "",
+        )
+        call = LoggedCall(
+            identity,
+            "/v1/video/generations",
+            model,
+            "Tạo video",
+            request_text=prompt,
+            client_host=client_host,
+            user_agent=user_agent or "",
+            source_kind=source_kind,
+            run_kind=KIND_VIDEO,
+            extra_meta={
+                "aspect_ratio": (body or {}).get("aspect_ratio") or "",
+                "duration": (body or {}).get("duration") or "",
+                "has_start_image": bool((body or {}).get("image")),
+                "has_end_image": bool((body or {}).get("last_frame")),
+            },
+        )
+        try:
+            result = await handle_video_generation(body, authorization)
+            call.log("Gọi thành công", result if isinstance(result, dict) else None)
+            return result
+        except HTTPException as exc:
+            call.log("Gọi thất bại", status="failed", error=str(exc.detail))
+            raise
+        except Exception as exc:
+            call.log("Gọi thất bại", status="failed", error=str(exc))
+            raise
+
+    # Nối clip (b64) → 1 video dài + voiceover (ffmpeg local, không phụ đề)
+    @app.post("/v1/video/compose")
+    async def compose_video(body: dict,
+                            authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return await handle_video_generation(body, authorization)
+        from api.veo_video import handle_video_compose
+        return await handle_video_compose(body, authorization)
+
+    # prompt → nhiều cảnh → Veo text→video → nối thành 1 video dài
+    @app.post("/v1/video/story")
+    async def story_video(body: dict,
+                          authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from api.veo_video import handle_video_story
+        return await handle_video_story(body, authorization)
 
     async def serve_web(full_path: str):
         asset = resolve_web_asset(full_path)

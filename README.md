@@ -76,7 +76,7 @@ Run the Lite variant with:
 ```bash
 docker compose -f docker-compose.lite.yml up -d
 ```
-> ⚠️ noVNC on port `6080` (Full image) has no password by default — keep it on a LAN or set the `VNC_PASSWORD` environment variable; never expose it to the open internet.
+> ⚠️ noVNC (`6080`) is published for LAN captcha logins — set **`VNC_PASSWORD`**. Never expose `6080` to the open internet. Bind `127.0.0.1:6080` only if you use SSH tunnel. Keep `10600`/`3001` on LAN if Home Assistant runs on another host (`10600` = Wyoming multi vi/en).
 
 **Step 1: Initialize directory**
 Create a directory to store the configuration and data for the application:
@@ -99,18 +99,21 @@ services:
     container_name: c2a
     restart: unless-stopped
     ports:
-      - "3030:80"     # API + web dashboard
-      - "6080:6080"   # noVNC — manual web logins (captcha-solver)
-      - "10600:10600" # Wyoming Protocol server nhúng (TTS+STT cho Home Assistant)
+      - "3030:80"      # API + web dashboard
+      - "6080:6080"    # noVNC (set VNC_PASSWORD; LAN only, not WAN)
+      - "3001:3001"    # zalo-server (HA/integration on LAN)
+      - "10600:10600"  # Wyoming multi — vi/en TTS+STT (HA often on another host)
     volumes:
       # Single data dir: accounts, config, KB + chroma, browser profiles
       - ./c2a-data:/app/data
     environment:
       - CHATGPT2API_AUTH_KEY=your_secure_password   # CHANGE THIS PASSWORD
       - CAPTCHA_SOLVER_API_KEY=your_secure_password # CHANGE THIS PASSWORD
+      - VNC_PASSWORD=your_vnc_password               # REQUIRED when using :6080
       - STORAGE_BACKEND=json
 ```
 > Note: MCP Hub (8005) and Captcha API (8010) run only inside the container, so they don't need to be published.
+> Homelab: do **not** bind `10600`/`3001` to `127.0.0.1` if Home Assistant is on a different machine.
 
 Save the file by pressing `Ctrl + X`, then press `Y` and `Enter`.
 

@@ -30,11 +30,17 @@ def create_app() -> FastAPI:
                   default_response_class=ORJSONResponse)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        # Đồng bộ full app — production đặt cors_allow_origins trong config.
+        allow_origins=config.cors_allow_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    try:
+        from services.security_headers import SecurityHeadersMiddleware
+        app.add_middleware(SecurityHeadersMiddleware)
+    except Exception:
+        pass
     app.include_router(ai.create_router())
     app.include_router(accounts.create_router())
     app.include_router(image_tasks.create_router())

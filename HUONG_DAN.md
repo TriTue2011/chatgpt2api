@@ -53,9 +53,10 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3030:80"      # ← cổng web UI + API, đổi số đầu nếu 3030 đã bị chiếm
-      - "6080:6080"    # noVNC — xem trực tiếp trình duyệt ảo lúc đăng nhập web thủ công
-      - "3001:3001"    # zalo-server (Zalo Cá Nhân)
+      - "3030:80"      # ← web UI + API (đổi số trái nếu 3030 bị chiếm)
+      - "6080:6080"    # noVNC — LAN; BẮT BUỘC đặt VNC_PASSWORD
+      - "3001:3001"    # zalo-server (HA/integration có thể ở máy khác)
+      - "10600:10600"  # Wyoming multi — TTS+STT vi/en (1 port; HA khác host; đừng bind 127.0.0.1)
 
     volumes:
       - /opt/c2a-data:/app/data   # ← đổi /opt/c2a-data thành thư mục BẤT KỲ trên máy bạn
@@ -63,14 +64,18 @@ services:
     environment:
       CHATGPT2API_AUTH_KEY: your_secret_key_here     # ← ĐỔI thành chuỗi bí mật của bạn
       CAPTCHA_SOLVER_API_KEY: your_secret_key_here    # ← đổi luôn (khác giá trị trên cũng được)
+      VNC_PASSWORD: your_vnc_password                 # ← bắt buộc nếu mở 6080 trên LAN
       STORAGE_BACKEND: json
+      # CAPTCHA_SOLVER_NOVNC_EXTERNAL_URL: "http://IP_HOST:6080/vnc.html?host=IP_HOST&port=6080&autoconnect=1"
 ```
 
 | Chỗ cần sửa | Vì sao |
 |---|---|
 | `CHATGPT2API_AUTH_KEY` | Mật khẩu đăng nhập + API key. Để nguyên `your_secret_key_here` thì ai cũng đăng nhập được |
+| `VNC_PASSWORD` | noVNC không mật khẩu = ai trên LAN cũng điều khiển trình duyệt captcha |
 | `/opt/c2a-data` (vế trái của volume) | Nơi lưu **toàn bộ** dữ liệu — tài khoản, cấu hình, model giọng nói. Thư mục này phải tồn tại và còn chỗ trống (khuyên ≥15 GB) |
 | `3030:80` | Nếu máy đã có dịch vụ khác dùng cổng 3030, đổi số bên trái, vd `8080:80` |
+| `10600` / `3001` | **Không** bind `127.0.0.1` nếu Home Assistant / client nằm máy khác trong LAN (`10600` = Wyoming multi vi/en) |
 
 **Bước 3 — Chạy:**
 
@@ -135,13 +140,15 @@ Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng 
        restart: unless-stopped
        ports:
          - "3030:80"
-         - "6080:6080"
-         - "3001:3001"
+         - "6080:6080"      # noVNC — đặt VNC_PASSWORD; siết 127.0.0.1 nếu chỉ SSH tunnel
+         - "3001:3001"      # zalo — LAN (HA có thể khác host)
+         - "10600:10600"    # Wyoming multi vi/en — HA khác host (không bind 127.0.0.1)
        volumes:
          - /opt/c2a-data:/app/data
        environment:
          CHATGPT2API_AUTH_KEY: your_secret_key_here
          CAPTCHA_SOLVER_API_KEY: your_secret_key_here
+         VNC_PASSWORD: your_vnc_password
          STORAGE_BACKEND: json
    ```
 
@@ -414,16 +421,31 @@ POST /v1/audio/speech   {"input":"...","voice":"vieneu:Ngọc Trân","stream":tr
 
 ### 4.2c. Home Assistant dùng thẳng TTS/STT của gateway (Wyoming)
 
-Gateway CÓ SẴN một **Wyoming server** ở cổng `10600` (bật mặc định) — HA trỏ vào
-đây là có cả **TTS (44 giọng: VieNeu/Kokoro/Piper) lẫn STT (vi + en)**, streaming
-"chữ tới đâu đọc tới đó" trong Assist, **không cần chạy container tiếng nói riêng**
-(vieneu-wyoming / wyoming-stt / wyoming-piper đều bỏ được):
+Gateway CÓ SẴN **một Wyoming multi** (bật mặc định, port `10600`) — pattern giống
+[wyoming-microsoft-stt](https://github.com/hugobloem/wyoming-microsoft-stt) /
+[wyoming-microsoft-tts](https://github.com/hugobloem/wyoming-microsoft-tts):
+**1 cổng, 1 integration**, TTS+STT đa ngôn ngữ, streaming "chữ tới đâu đọc tới đó".
+Không cần container tiếng nói riêng (vieneu-wyoming / wyoming-stt / piper).
 
-1. Publish port trong `docker-compose.yml`: `ports: ["10600:10600"]` (đã thêm sẵn
-   trên server) rồi recreate container.
-2. Trong HA: *Settings → Devices & Services → Add Integration → Wyoming Protocol*
-   → host = IP gateway, port = `10600`. Một entry ra cả tts lẫn stt entity.
-3. Tắt nếu muốn: config `voice.wyoming_server.enabled = false` (đổi cổng: `.port`).
+| Cổng | Vai trò | TTS | STT |
+|------|---------|-----|-----|
+| `10600` | Multi vi+en | VieNeu / Piper / Kokoro | Zipformer (vi) + Parakeet (en) |
+
+- **STT multi** (đủ 2 model + `voice.stt.language: auto`): auto-detect (thử vi rồi en),
+  **bỏ qua** language picker HA — giống microsoft-stt multi.
+- **STT cố định**: đặt `voice.stt.language` = `vi` hoặc `en`.
+- **TTS**: chọn giọng trong pipeline (Kokoro cho Anh, VieNeu/Piper cho Việt).
+
+1. Publish port: `ports: ["10600:10600"]` rồi recreate container.
+2. Firewall LAN: `deploy/firewall-c2a-ports.sh` (mở **10600** cho IP Home Assistant).
+3. Model EN (tuỳ chọn multi): `scripts/download_kokoro_model.py` +
+   `scripts/download_stt_en_model.py`. Chỉ có VI thì STT/TTS vẫn chạy tiếng Việt.
+4. HA → *Add Integration → Wyoming Protocol*: host = IP gateway, port = **`10600`**
+   (chỉ **một** integration).
+5. Assist pipeline: chọn STT/TTS từ entity đó; pipeline Việt chọn giọng VieNeu/Piper,
+   pipeline Anh chọn Kokoro (cùng server).
+6. Tắt/đổi: `voice.wyoming_server.enabled = false`; cổng: `.port` (mặc định 10600);
+   STT multi/cố định: `voice.stt.language` = `auto` | `vi` | `en`.
 
 ### 4.2d. Điều khiển loa Google Cast (âm lượng / bật / tắt)
 

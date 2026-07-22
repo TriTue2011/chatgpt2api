@@ -148,6 +148,11 @@ export default function DashboardPage() {
       const sess = await getValidatedAuthSession();
       if (!active) return;
       if (!sess) { router.replace("/login"); return; }
+      // User thường không vào dashboard — chỉ Studio
+      if (sess.role === "user") {
+        router.replace("/chat");
+        return;
+      }
       setSession(sess);
       setMounted(true);
     };

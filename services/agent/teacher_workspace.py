@@ -298,7 +298,14 @@ def search_sgk(
     lines.append(
         "_Dùng làm gợi ý giảng dạy — kiểm tra lại nếu cần đúng từng trang SGK năm học cụ thể._"
     )
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    # P1#7: RAG/SGK chunk = untrusted corpus — redact secret/PII trước khi vào LLM
+    try:
+        from services.privacy_gate import redact_text
+        text = redact_text(text, session_id="rag:sgk")
+    except Exception:
+        pass
+    return text
 
 
 def list_sgk_index() -> str:
@@ -361,14 +368,30 @@ def _normalize_subject(subject: str) -> str | None:
     return aliases.get(s) or (s if s in SUBJECTS else None)
 
 
+_CHAPTER_HEAD = re.compile(
+    r"^(?:"
+    r"Chương\s+\d+|CHƯƠNG\s+\d+|"
+    r"Bài\s+\d+|BÀI\s+\d+|BÀI\s+\d+|"
+    r"Phần\s+[IVXLC\d]+|PHẦN\s+[IVXLC\d]+|"
+    r"Unit\s+\d+|Lesson\s+\d+|"
+    r"Chủ đề\s+\d+|CHỦ ĐỀ\s+\d+|"
+    r"Mục\s+\d+(\.\d+)*"
+    r")\b",
+    re.I,
+)
+
+
 def _md_from_pdf_text(raw: str, *, title: str) -> str:
-    """Làm sạch text PDF → markdown có ## (tách theo trang / dòng in hoa ngắn)."""
+    """Làm sạch text PDF → markdown có ## theo **chương/bài** (ưu tiên) rồi trang.
+
+    Tách heading: Chương/Bài/Phần/Unit/Lesson/Chủ đề + dòng IN HOA ngắn.
+    """
     t = (raw or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not t:
         return ""
-    # Tách theo phân trang OCR (---) nếu có.
     pages = re.split(r"\n\s*---\s*\n", t)
     parts: list[str] = [f"# {title}", ""]
+    chapter_count = 0
     for pi, page in enumerate(pages):
         page = page.strip()
         if not page:
@@ -382,29 +405,47 @@ def _md_from_pdf_text(raw: str, *, title: str) -> str:
                     parts.append(" ".join(buf))
                     buf = []
                 continue
-            # Dòng ngắn + (toàn hoa hoặc kết thúc :) → coi heading
-            if len(s) < 80 and (
-                s.isupper()
-                or s.endswith(":")
-                or re.match(r"^(Bài|Chương|Phần|Unit|Lesson)\b", s, re.I)
-            ):
+            is_chapter = bool(_CHAPTER_HEAD.match(s)) or (
+                len(s) < 90
+                and (
+                    s.isupper()
+                    or s.endswith(":")
+                    or re.match(r"^(Bài|Chương|Phần|Unit|Lesson|Chủ đề)\b", s, re.I)
+                )
+            )
+            if is_chapter:
                 if buf:
                     parts.append(" ".join(buf))
                     buf = []
-                parts.append(f"## {s.rstrip(':')}")
+                heading = s.rstrip(":")
+                chapter_count += 1
+                # ## Chương/Bài để retrieval chunk theo mục
+                parts.append(f"## {heading}")
                 parts.append("")
             else:
                 buf.append(s)
         if buf:
             parts.append(" ".join(buf))
             parts.append("")
-        if len(pages) > 1 and pi < len(pages) - 1:
-            parts.append(f"## Trang {pi + 2}")
+        # Nếu trang không có heading chương nào, đánh dấu trang để không mất chunk
+        if chapter_count == 0 and len(pages) > 1:
+            parts.append(f"## Trang {pi + 1}")
             parts.append("")
-    # Đảm bảo có ít nhất một ## để search chunk
     body = "\n".join(parts).strip()
     if "## " not in body:
-        body = f"# {title}\n\n## Nội dung nhập từ PDF\n\n{t[:50000]}"
+        # Fallback: cắt mỗi ~1200 ký tự thành một ## Mục
+        body_parts = [f"# {title}", ""]
+        chunk_size = 1200
+        for i in range(0, min(len(t), 80000), chunk_size):
+            body_parts.append(f"## Mục {i // chunk_size + 1}")
+            body_parts.append("")
+            body_parts.append(t[i : i + chunk_size].strip())
+            body_parts.append("")
+        body = "\n".join(body_parts).strip()
+    # Thống kê chương
+    n_h = len(re.findall(r"^##\s+", body, re.M))
+    if n_h:
+        body += f"\n\n<!-- chapters_detected: {n_h} -->\n"
     return body + "\n"
 
 
@@ -440,10 +481,12 @@ def import_sgk_pdf(
     if mode not in {"append", "replace"}:
         mode = "append"
 
-    # Trích text/markdown (PDF số hoặc scan OCR).
+    # Trích text/markdown (PDF số hoặc scan OCR) — SGK: toàn bộ trang (không cắt 40).
     try:
         from services.pdf_intent import extract_markdown
-        raw = extract_markdown(str(path))
+        from services import pdf_to_word as p2w
+        max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
+        raw = extract_markdown(str(path), max_pages=max_pages)
     except Exception as exc:
         return {"ok": False, "error": f"trích PDF lỗi: {exc}"}
     if not (raw or "").strip():
@@ -453,6 +496,21 @@ def import_sgk_pdf(
     head = title.strip() or f"SGK lớp {g} · {SUBJECT_LABEL[sub]} · {src}"
     md = _md_from_pdf_text(raw, title=head)
     stamp = __import__("time").strftime("%Y-%m-%d %H:%M")
+    # page coverage note for admin
+    page_note = ""
+    cut = re.search(
+        r"cắt bớt:\s*PDF\s+(\d+)\s+trang,\s*xử lý\s+(\d+)\s+trang",
+        raw or "",
+    )
+    if cut:
+        page_note = f"PDF {cut.group(1)} trang, xử lý {cut.group(2)} trang"
+    else:
+        try:
+            import fitz
+            with fitz.open(path) as _d:
+                page_note = f"PDF {_d.page_count} trang, xử lý đủ (không cắt)"
+        except Exception:
+            page_note = ""
     banner = f"\n\n<!-- import {stamp} from {src} mode={mode} -->\n\n"
 
     dest = _SGK / f"lop{g}" / f"{sub}.md"
@@ -474,7 +532,8 @@ def import_sgk_pdf(
             old = dest.read_text(encoding="utf-8")
             dest.write_text(old.rstrip() + banner + md, encoding="utf-8")
 
-    return {
+    n_chapters = len(re.findall(r"^##\s+", md, re.M))
+    result = {
         "ok": True,
         "path": str(dest),
         "chars": len(md),
@@ -483,7 +542,229 @@ def import_sgk_pdf(
         "subject": sub,
         "workspace": f"lop{g}-{sub}",
         "source": src,
+        "chapters": n_chapters,
+        "note": page_note,
+        "max_pages": max_pages,
+        "md_preview": md[:400],
     }
+    # Best-effort: đẩy nội dung markdown vào RAG (kb_giao_duc) sau khi import
+    try:
+        rag = push_sgk_to_rag(
+            md,
+            title=head,
+            grade=g,
+            subject=sub,
+            source=src,
+        )
+        result["rag"] = rag
+    except Exception as exc:
+        logger.warning("teacher import: rag push failed: %s", exc)
+        result["rag"] = {"ok": False, "error": str(exc)[:200]}
+    return result
+
+
+def list_imports(
+    *,
+    grade: int | None = None,
+    subject: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Liệt kê file PDF đã import + trạng thái markdown lớp–môn."""
+    _ensure_seeded()
+    g_filter = int(grade) if grade and int(grade) in GRADES else None
+    sub_filter = _normalize_subject(subject) if subject else None
+    limit = max(1, min(int(limit or 50), 200))
+
+    imports_root = _ROOT / "imports"
+    items: list[dict[str, Any]] = []
+    if imports_root.is_dir():
+        for pdf in sorted(imports_root.rglob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                parts = pdf.relative_to(imports_root).parts  # lop3/toan/file.pdf
+            except Exception:
+                continue
+            if len(parts) < 3:
+                continue
+            g_s, sub_s = parts[0], parts[1]
+            if not g_s.startswith("lop"):
+                continue
+            try:
+                g = int(g_s.replace("lop", ""))
+            except ValueError:
+                continue
+            if g_filter is not None and g != g_filter:
+                continue
+            if sub_filter and sub_s != sub_filter:
+                continue
+            st = pdf.stat()
+            items.append({
+                "name": pdf.name,
+                "grade": g,
+                "subject": sub_s,
+                "subject_label": SUBJECT_LABEL.get(sub_s, sub_s),
+                "path": str(pdf),
+                "size_bytes": st.st_size,
+                "mtime": st.st_mtime,
+                "workspace": f"lop{g}-{sub_s}",
+            })
+            if len(items) >= limit:
+                break
+
+    # Markdown SGK status for current filter (or all 1–12 when unfiltered)
+    md_rows: list[dict[str, Any]] = []
+    grades_iter = [g_filter] if g_filter else list(GRADES)
+    subs_iter = [sub_filter] if sub_filter else list(SUBJECTS)
+    for g in grades_iter:
+        for sub in subs_iter:
+            if not sub:
+                continue
+            p = _SGK / f"lop{g}" / f"{sub}.md"
+            if not p.is_file():
+                md_rows.append({
+                    "grade": g,
+                    "subject": sub,
+                    "subject_label": SUBJECT_LABEL.get(sub, sub),
+                    "exists": False,
+                    "chars": 0,
+                    "chapters": 0,
+                    "path": str(p),
+                    "workspace": f"lop{g}-{sub}",
+                })
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except Exception:
+                text = ""
+            md_rows.append({
+                "grade": g,
+                "subject": sub,
+                "subject_label": SUBJECT_LABEL.get(sub, sub),
+                "exists": True,
+                "chars": len(text),
+                "chapters": len(re.findall(r"^##\s+", text, re.M)),
+                "path": str(p),
+                "mtime": p.stat().st_mtime,
+                "workspace": f"lop{g}-{sub}",
+            })
+
+    return {
+        "ok": True,
+        "imports": items,
+        "markdown": md_rows,
+        "imports_dir": str(imports_root),
+        "sgk_dir": str(_SGK),
+    }
+
+
+def push_sgk_to_rag(
+    markdown: str,
+    *,
+    title: str,
+    grade: int,
+    subject: str,
+    source: str = "",
+    collection: str = "kb_giao_duc",
+) -> dict[str, Any]:
+    """Đẩy markdown SGK vào vn-mcp-hub RAG (curate). Best-effort, sync.
+
+    Chia text lớn thành vài request để tránh body quá lớn; mỗi batch ≤ ~25k ký tự.
+    """
+    text = (markdown or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty markdown"}
+
+    from urllib.parse import urlparse
+    import urllib.request
+
+    hub_url = str(config_hub_url() or "").rstrip("/")
+    if not hub_url:
+        return {"ok": False, "error": "mcp hub url missing"}
+
+    mon = SUBJECT_LABEL.get(subject, subject)
+    full_title = title.strip() or f"SGK lớp {grade} · {mon}"
+    if source:
+        full_title = f"{full_title} · {source}"
+
+    # Split by ## chapters when possible; else fixed windows
+    parts: list[str] = []
+    headings = list(re.finditer(r"^##\s+.+$", text, re.M))
+    if len(headings) >= 2:
+        for i, h in enumerate(headings):
+            start = h.start()
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+            chunk = text[start:end].strip()
+            if chunk:
+                parts.append(chunk)
+    else:
+        win = 12000
+        for i in range(0, len(text), win):
+            parts.append(text[i : i + win])
+
+    # Merge tiny parts into batches ≤ ~25k
+    batches: list[str] = []
+    buf = ""
+    for p in parts:
+        if len(buf) + len(p) + 2 > 25000 and buf:
+            batches.append(buf)
+            buf = p
+        else:
+            buf = (buf + "\n\n" + p).strip() if buf else p
+    if buf:
+        batches.append(buf)
+
+    total_chunks = 0
+    errors: list[str] = []
+    for i, batch in enumerate(batches):
+        payload = {
+            "title": f"{full_title} [{i + 1}/{len(batches)}]",
+            "text": batch,
+            "source": f"teacher_sgk/lop{grade}/{subject}/{source or 'import'}",
+        }
+        try:
+            req = urllib.request.Request(
+                f"{hub_url}/api/rag/curate/{collection}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = json.loads(resp.read().decode("utf-8", errors="ignore") or "{}")
+            if body.get("ok"):
+                total_chunks += int(body.get("chunks_added") or 0)
+            else:
+                errors.append(str(body.get("error") or "curate failed")[:120])
+        except Exception as exc:
+            errors.append(str(exc)[:120])
+
+    ok = total_chunks > 0 and not errors
+    # partial success still ok-ish
+    if total_chunks > 0:
+        ok = True
+    return {
+        "ok": ok,
+        "collection": collection,
+        "batches": len(batches),
+        "chunks_added": total_chunks,
+        "errors": errors[:5],
+    }
+
+
+def config_hub_url() -> str:
+    """Resolve vn-mcp-hub base URL (same heuristic as search_service.curate)."""
+    try:
+        from services.config import config
+        hub_url = config.data.get("mcp_hub_url")
+        if hub_url:
+            return str(hub_url).rstrip("/")
+        from urllib.parse import urlparse
+        for _v in (config.data.get("mcp_servers") or {}).values():
+            _u = _v.get("url") if isinstance(_v, dict) else _v
+            if _u and "/mcp" in str(_u):
+                _p = urlparse(str(_u))
+                return f"{_p.scheme}://{_p.netloc}"
+    except Exception:
+        pass
+    return "http://127.0.0.1:8005"
 
 
 def import_sgk_bytes(
@@ -637,3 +918,37 @@ def memory_add(
         return "Cần note và/hoặc weak_topic / strong_topic."
     _save_mem(m)
     return memory_get(wid, sk)
+
+
+def memory_add_weekly_weak(
+    workspace_id: str,
+    student_key: str,
+    topic: str,
+    *,
+    week: str = "",
+) -> None:
+    """Ghi điểm yếu theo tuần (Dashboard PH)."""
+    import time as _time
+    wid = (workspace_id or "").strip()
+    sk = (student_key or "default").strip() or "default"
+    topic = (topic or "").strip()
+    if not wid or not topic:
+        return
+    if not week:
+        week = _time.strftime("%G-W%V")
+    m = _load_mem(wid, sk)
+    m["workspace_id"] = wid
+    m["student_key"] = sk
+    weekly = m.get("weekly_weak")
+    if not isinstance(weekly, dict):
+        weekly = {}
+    bucket = list(weekly.get(week) or [])
+    if topic not in bucket:
+        bucket.append(topic[:200])
+    weekly[week] = bucket[-30:]
+    # Giữ tối đa 16 tuần gần
+    if len(weekly) > 16:
+        for k in sorted(weekly.keys())[:-16]:
+            weekly.pop(k, None)
+    m["weekly_weak"] = weekly
+    _save_mem(m)

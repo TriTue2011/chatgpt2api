@@ -37,182 +37,521 @@ const FUNCTION_GROUPS: [string, string][] = [
   ["teacher", "📚 Giáo viên (tiểu học · THCS · THPT)"],
 ];
 
-// Trình sửa DANH SÁCH bot (đa-token) — mỗi bot: token + Chat IDs + model +
-// bật/tắt + Thread ID admin RIÊNG (+ loại cá nhân/nhóm).
-function BotListEditor({ bots, models, tokenPlaceholder, onChange, names }: {
+type AdminEntry = {
+  chat_id: string;
+  name: string;
+  kind: "private" | "group";
+  /** Model / nền tảng AI riêng từng admin (vd. AI text, chatgpt/…) */
+  ai_model: string;
+  notify_enabled: boolean;
+  account_log_enabled: boolean;
+  newchat_alert_enabled: boolean;
+  ha_fastpath: boolean;
+  fallback_enabled: boolean;
+  emphasis_enabled: boolean;
+  emphasis_numbers: boolean;
+  emphasis_units: boolean;
+  emphasis_key_info: boolean;
+  emphasis_style: string;
+  /** Zalo Bot only: red|orange|yellow|green|none (Tele không có màu) */
+  markdown_color: string;
+  /** Zalo Bot only: normal|big → {big} trong markdown */
+  markdown_size: string;
+};
+
+function emptyAdmin(partial?: Partial<AdminEntry>): AdminEntry {
+  return {
+    chat_id: "", name: "", kind: "private", ai_model: "",
+    notify_enabled: true, account_log_enabled: true,
+    newchat_alert_enabled: true, ha_fastpath: true, fallback_enabled: false,
+    emphasis_enabled: true, emphasis_numbers: true,
+    emphasis_units: true, emphasis_key_info: true, emphasis_style: "bold",
+    markdown_color: "orange", markdown_size: "normal",
+    ...partial,
+  };
+}
+
+type FallbackOpt = { value: string; label: string; channel: string };
+
+function guessKind(chatId: string): "private" | "group" {
+  const s = String(chatId || "").trim();
+  if (s.startsWith("-100") || (s.startsWith("-") && /^\-\d+$/.test(s))) return "group";
+  return "private";
+}
+
+function parseAdminEntries(b: any): AdminEntry[] {
+  const out: AdminEntry[] = [];
+  const seen = new Set<string>();
+  const push = (e: Partial<AdminEntry> & { chat_id?: string }) => {
+    const cid = String(e.chat_id || "").trim();
+    if (cid && seen.has(cid)) return;
+    if (cid) seen.add(cid);
+    const k = String(e.kind || "").toLowerCase();
+    out.push(emptyAdmin({
+      chat_id: cid,
+      name: String(e.name || "").trim(),
+      kind: k === "group" || k === "1" ? "group"
+        : k === "private" || k === "0" ? "private"
+        : (cid ? guessKind(cid) : "private"),
+      ai_model: String(e.ai_model || "").trim(),
+      notify_enabled: e.notify_enabled !== false,
+      account_log_enabled: e.account_log_enabled !== false,
+      newchat_alert_enabled: e.newchat_alert_enabled !== false,
+      // Mặc định bật HA; fallback tắt (bật tay từng admin)
+      ha_fastpath: e.ha_fastpath !== false,
+      fallback_enabled: Boolean(e.fallback_enabled),
+      emphasis_enabled: e.emphasis_enabled !== false,
+      emphasis_numbers: e.emphasis_numbers !== false,
+      emphasis_units: e.emphasis_units !== false,
+      emphasis_key_info: e.emphasis_key_info !== false,
+      emphasis_style: String(e.emphasis_style || "bold") || "bold",
+      markdown_color: String(
+        e.markdown_color || e.emphasis_color || "orange",
+      ).trim().toLowerCase() || "orange",
+      markdown_size: String(
+        e.markdown_size || e.emphasis_size || e.text_size || "normal",
+      ).trim().toLowerCase() || "normal",
+    }));
+  };
+  if (Array.isArray(b?.admin_entries)) {
+    for (const x of b.admin_entries) {
+      if (typeof x === "string") push({ chat_id: x });
+      else if (x && typeof x === "object") push(x);
+    }
+  }
+  const hasRealAdmin = () => out.some((a) => a.chat_id.trim());
+  if (!hasRealAdmin()) {
+    const ths: string[] = Array.isArray(b?.admin_threads)
+      ? b.admin_threads.map((x: any) => String(x || "").trim()).filter(Boolean)
+      : [];
+    const one = String(b?.admin_thread || "").trim();
+    if (one && !ths.includes(one)) ths.push(one);
+    const legacyGroup = String(b?.admin_thread_type || "0") === "1";
+    for (const t of ths) push({ chat_id: t, kind: legacyGroup ? "group" : guessKind(t) });
+  }
+  // Legacy: ID admin chỉ nằm trong chat_ids (ô -100… = Admin #1) → card admin đủ cột
+  // Ô Chat IDs đã bỏ — ID này không còn hiển thị ở allowlist.
+  if (!hasRealAdmin() && Array.isArray(b?.chat_ids)) {
+    out.splice(0, out.length);
+    seen.clear();
+    const botModel = String(b?.ai_model || "").trim();
+    for (const t of b.chat_ids) {
+      const s = String(t || "").trim();
+      if (s) push({ chat_id: s, kind: guessKind(s), ai_model: botModel });
+    }
+  }
+  // Admin chưa có model → kế thừa model bot (1 lần khi load)
+  const botModel = String(b?.ai_model || "").trim();
+  if (botModel) {
+    for (let i = 0; i < out.length; i++) {
+      if (!out[i].ai_model) out[i] = { ...out[i], ai_model: botModel };
+    }
+  }
+  if (!out.length) out.push(emptyAdmin());
+  // Admin có ID thật đứng trước slot trống (Admin #1 = ID legacy)
+  out.sort((a, b2) => {
+    const ae = a.chat_id.trim() ? 0 : 1;
+    const be = b2.chat_id.trim() ? 0 : 1;
+    return ae - be;
+  });
+  return out;
+}
+
+/** Danh sách bot đa-token: tên dễ nhớ, admin 3 cột, fallback theo tên. */
+function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platform, fallbackOptions }: {
   bots: any[];
   models: string[];
   tokenPlaceholder: string;
   onChange: (bots: any[]) => void;
-  names?: Record<string, string>; // bot_id -> tên bot (getMe), hiển thị cạnh token
+  names?: Record<string, string>;
+  platform: "tg" | "zalo";
+  fallbackOptions?: FallbackOpt[];
 }) {
   type Row = {
     id: number;
     token: string;
     label: string;
-    chat_ids: string;
+    /** Model mặc định cho chat AI thường (thread filter) — admin có model riêng */
     ai_model: string;
     enabled: boolean;
-    /** Nhiều admin thread (mỗi dòng 1 ID) — độc lập, cùng nhận alert từ bot này */
-    admin_threads: string;
-    admin_thread_type: string;
-    ha_fastpath: boolean;
-    /** Toggle thông báo RIÊNG bot này — độc lập giữa các tài khoản bot */
-    notify_admin_enabled: boolean;
-    account_log_enabled: boolean;
-    newchat_alert_enabled: boolean;
+    admins: AdminEntry[];
   };
   const [rows, setRows] = useState<Row[]>([]);
   const inited = useRef(false);
   const seq = useRef(1);
+  const [resolving, setResolving] = useState<string>("");
 
   useEffect(() => {
     if (inited.current || !Array.isArray(bots)) return;
     inited.current = true;
     setRows(bots.map((b) => {
-      const ths: string[] = Array.isArray(b?.admin_threads)
-        ? b.admin_threads.map((x: any) => String(x || "").trim()).filter(Boolean)
-        : [];
-      const one = String(b?.admin_thread || "").trim();
-      if (one && !ths.includes(one)) ths.push(one);
+      const token = String(b?.token || "");
+      const bid = token.split(":")[0]?.trim() || "";
+      let label = String(b?.label || "").trim();
+      if (!label && bid && names?.[bid]) label = names[bid];
+      const admins = parseAdminEntries(b);
       return {
         id: seq.current++,
-        token: String(b?.token || ""),
-        label: String(b?.label || ""),
-        chat_ids: Array.isArray(b?.chat_ids) ? b.chat_ids.join(", ") : "",
+        token,
+        label,
         ai_model: String(b?.ai_model || ""),
         enabled: b?.enabled !== false,
-        admin_threads: ths.join("\n"),
-        admin_thread_type: String(b?.admin_thread_type || "0") === "1" ? "1" : "0",
-        ha_fastpath: b?.ha_fastpath !== false,
-        notify_admin_enabled: b?.notify_admin_enabled !== false,
-        account_log_enabled: b?.account_log_enabled !== false,
-        newchat_alert_enabled: b?.newchat_alert_enabled !== false,
+        admins,
       };
     }));
-  }, [bots]);
+  }, [bots, names]);
 
+  /** UI giữ admin trống; config chỉ lưu admin có Chat ID. Chat IDs đã bỏ. */
   const commit = (next: Row[]) => {
     setRows(next);
     onChange(
       next.filter((r) => r.token.trim()).map((r) => {
-        const threads = r.admin_threads.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+        const admins = r.admins.filter((a) => a.chat_id.trim());
+        // Bot-level derived: bật nếu BẤT KỲ admin nào bật (backend vẫn đọc bot flags)
+        const anyNotify = admins.some((a) => a.notify_enabled);
+        const anyLog = admins.some((a) => a.account_log_enabled);
+        const anyNew = admins.some((a) => a.newchat_alert_enabled);
+        const anyHa = admins.some((a) => a.ha_fastpath);
+        const anyFb = admins.some((a) => a.fallback_enabled);
+        const fbThread = admins.find((a) => a.fallback_enabled)?.chat_id || "";
+        // Model bot = admin #1 nếu bot trống (tương thích cũ)
+        const botModel = r.ai_model.trim()
+          || admins.find((a) => a.ai_model.trim())?.ai_model.trim()
+          || "";
         return {
           token: r.token.trim(),
           label: r.label.trim(),
-          chat_ids: r.chat_ids.split(",").map((s) => s.trim()).filter(Boolean),
-          ai_model: r.ai_model.trim(),
+          // Chat IDs thừa — AI thường qua bộ lọc thread; admin qua admin_entries
+          chat_ids: [] as string[],
+          ai_model: botModel,
           enabled: r.enabled,
-          admin_thread: threads[0] || "",
-          admin_threads: threads,
-          admin_thread_type: r.admin_thread_type === "1" ? "1" : "0",
-          ha_fastpath: r.ha_fastpath,
-          notify_admin_enabled: r.notify_admin_enabled,
-          account_log_enabled: r.account_log_enabled,
-          newchat_alert_enabled: r.newchat_alert_enabled,
+          admin_entries: admins,
+          admin_thread: admins[0]?.chat_id || "",
+          admin_threads: admins.map((a) => a.chat_id),
+          ha_fastpath: anyHa || admins.length === 0,
+          notify_admin_enabled: anyNotify || admins.length === 0,
+          account_log_enabled: anyLog || admins.length === 0,
+          newchat_alert_enabled: anyNew || admins.length === 0,
+          fallback_enabled: anyFb,
+          fallback_channel: anyFb ? (platform === "zalo" ? "zalo" : "telegram") : "",
+          fallback_bot_name: anyFb ? (r.label || r.token.split(":")[0] || "") : "",
+          fallback_thread: fbThread,
+          emphasis_enabled: true,
+          emphasis_numbers: true,
+          emphasis_units: true,
+          emphasis_key_info: true,
+          emphasis_style: "bold",
         };
       }),
     );
   };
-  const add = () => commit([...rows, {
-    id: seq.current++, token: "", label: "", chat_ids: "", ai_model: "", enabled: true,
-    admin_threads: "", admin_thread_type: "0", ha_fastpath: true,
-    notify_admin_enabled: true, account_log_enabled: true, newchat_alert_enabled: true,
-  }]);
+  const emptyRow = (): Row => ({
+    id: seq.current++, token: "", label: "", ai_model: "", enabled: true,
+    admins: [emptyAdmin()],
+  });
+  const add = () => commit([...rows, emptyRow()]);
   const remove = (id: number) => commit(rows.filter((r) => r.id !== id));
   const patch = (id: number, p: Partial<Row>) => commit(rows.map((r) => (r.id === id ? { ...r, ...p } : r)));
 
+  const patchAdmin = (rowId: number, idx: number, p: Partial<AdminEntry>) => {
+    const row = rows.find((r) => r.id === rowId);
+    if (!row) return;
+    const admins = row.admins.map((a, i) => (i === idx ? { ...a, ...p } : a));
+    patch(rowId, { admins });
+  };
+  const addAdmin = (rowId: number) => {
+    const row = rows.find((r) => r.id === rowId);
+    if (!row) return;
+    patch(rowId, { admins: [...row.admins, emptyAdmin()] });
+  };
+  const removeAdmin = (rowId: number, idx: number) => {
+    const row = rows.find((r) => r.id === rowId);
+    if (!row) return;
+    const next = row.admins.filter((_, i) => i !== idx);
+    patch(rowId, { admins: next.length ? next : [emptyAdmin()] });
+  };
+
+  const resolveAdmin = async (row: Row, idx: number) => {
+    const a = row.admins[idx];
+    if (!a?.chat_id.trim()) {
+      toast.error("Cần Chat ID / Thread ID");
+      return;
+    }
+    if (platform === "tg" && !row.token.trim()) {
+      toast.error("Cần token bot + Chat ID");
+      return;
+    }
+    if (platform === "zalo" && !row.token.trim()) {
+      toast.error("Cần token Zalo Bot + Chat ID");
+      return;
+    }
+    const key = `${row.id}-${idx}`;
+    setResolving(key);
+    try {
+      const url = platform === "zalo"
+        ? "/api/zalo/resolve-chat"
+        : "/api/telegram/resolve-chat";
+      const res: any = await request.post(url, {
+        token: row.token.trim(),
+        chat_id: a.chat_id.trim(),
+      });
+      const d = res.data || {};
+      patchAdmin(row.id, idx, {
+        name: String(d.name || a.name || "").trim(),
+        kind: d.kind === "group" ? "group" : "private",
+      });
+      if (d.ok) toast.success(d.name ? `Nhận diện: ${d.name}` : "Đã nhận diện loại thread");
+      else toast.message("API chưa thấy chat — đã gán loại theo heuristic; sửa tay nếu sai");
+    } catch {
+      toast.error("Không resolve được chat");
+    } finally {
+      setResolving("");
+    }
+  };
+
+  const fillLabelFromPlatform = (row: Row) => {
+    const bid = row.token.split(":")[0]?.trim();
+    const n = bid ? names?.[bid] : "";
+    if (n) patch(row.id, { label: n });
+    else toast.message("Chưa có tên từ nền tảng — điền tay hoặc lưu token rồi tải lại");
+  };
+
   return (
     <div className="space-y-2 mt-1">
-      {rows.map((row) => (
-        <div key={row.id} className="rounded-md border border-border p-2 space-y-2">
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0">
-              <input type="checkbox" className="size-3.5" checked={row.enabled}
-                onChange={(e) => patch(row.id, { enabled: e.target.checked })} />
-              Bật
-            </label>
-            <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
-              placeholder={tokenPlaceholder} className="flex-1" />
-            <Button type="button" variant="ghost" size="sm" onClick={() => remove(row.id)}>Xóa</Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-[11px] text-muted-foreground shrink-0">Tên dễ nhớ</label>
-            <Input value={row.label} onChange={(e) => patch(row.id, { label: e.target.value })}
-              placeholder="VD: Bot Nhà, Bot Shop (admin đặt — hiện trong cảnh báo)"
-              className="flex-1 h-8 text-xs" />
-          </div>
-          {names?.[row.token.split(":")[0]] ? (
-            <p className="text-[11px] text-muted-foreground -mt-1">
-              🤖 Username nền tảng: <b>{names[row.token.split(":")[0]]}</b>
-              {row.label ? <> · label: <b>{row.label}</b></> : null}
-            </p>
-          ) : null}
-          <Select value={row.ai_model || " "} onValueChange={(v) => patch(row.id, { ai_model: v.trim() })}>
-            <SelectTrigger>
-              <SelectValue placeholder="Model (trống = mặc định cx/auto)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value=" ">-- Mặc định (cx/auto) --</SelectItem>
-              {Array.from(new Set([...models, ...(row.ai_model ? [row.ai_model] : [])])).map((m) => (
-                <SelectItem key={m} value={m}>{m}</SelectItem>
+      {rows.map((row) => {
+        const bid = row.token.split(":")[0]?.trim() || "";
+        const platformName = names?.[bid] || "";
+        return (
+          <div key={row.id} className="rounded-md border border-border p-2 space-y-2">
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0">
+                <input type="checkbox" className="size-3.5" checked={row.enabled}
+                  onChange={(e) => patch(row.id, { enabled: e.target.checked })} />
+                Bật
+              </label>
+              <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
+                placeholder={tokenPlaceholder} className="flex-1" />
+              <Button type="button" variant="ghost" size="sm" onClick={() => remove(row.id)}>Xóa</Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-muted-foreground shrink-0">Tên dễ nhớ</label>
+              <Input value={row.label} onChange={(e) => patch(row.id, { label: e.target.value })}
+                placeholder="Tự lấy từ bot lúc đầu — bạn đổi được"
+                className="flex-1 h-8 text-xs" />
+              <Button type="button" variant="outline" size="sm" className="h-8 text-[10px] shrink-0"
+                onClick={() => fillLabelFromPlatform(row)}>
+                Lấy tên bot
+              </Button>
+            </div>
+            {platformName ? (
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                🤖 Tên bot Telegram: <b>{platformName}</b>
+                {row.label && row.label !== platformName ? <> · đang dùng: <b>{row.label}</b></> : null}
+              </p>
+            ) : null}
+            <div>
+              <label className="text-[10px] text-muted-foreground">
+                Model AI mặc định (chat thường qua bộ lọc thread — không áp admin)
+              </label>
+              <Select value={row.ai_model || " "} onValueChange={(v) => patch(row.id, { ai_model: v.trim() })}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Model mặc định bot" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value=" ">-- Mặc định hệ thống --</SelectItem>
+                  {Array.from(new Set([...models, ...(row.ai_model ? [row.ai_model] : [])])).map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Admin #1, #2… — mỗi card đủ cài đặt; không còn ô Chat IDs */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">
+                Admin #1, #2… — Tên · ID · Loại · Nhận diện · Nền tảng (model) riêng · 🔔 📋 · HA · Fallback
+              </label>
+              {row.admins.map((a, idx) => (
+                <div key={idx} className="rounded-md border border-border p-2.5 space-y-2 bg-muted/10">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold">Admin #{idx + 1}</span>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px]"
+                      onClick={() => removeAdmin(row.id, idx)}>Xóa</Button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">Tên</label>
+                      <Input className="h-8 text-xs" value={a.name}
+                        onChange={(e) => patchAdmin(row.id, idx, { name: e.target.value })}
+                        placeholder="Tên dễ nhớ" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">Chat ID</label>
+                      <Input className="h-8 text-xs font-mono" value={a.chat_id}
+                        onChange={(e) => {
+                          const cid = e.target.value;
+                          patchAdmin(row.id, idx, {
+                            chat_id: cid,
+                            kind: a.name ? a.kind : guessKind(cid),
+                          });
+                        }}
+                        placeholder="-100… / user id" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">Loại</label>
+                      <div className="flex gap-1">
+                        <select className="h-8 flex-1 rounded-md border border-border bg-background px-1 text-[11px]"
+                          value={a.kind}
+                          onChange={(e) => patchAdmin(row.id, idx, { kind: e.target.value as "private" | "group" })}>
+                          <option value="private">Cá nhân</option>
+                          <option value="group">Nhóm</option>
+                        </select>
+                        {(platform === "tg" || platform === "zalo") ? (
+                          <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]"
+                            disabled={resolving === `${row.id}-${idx}`}
+                            onClick={() => resolveAdmin(row, idx)}>
+                            {resolving === `${row.id}-${idx}` ? "…" : "Nhận diện"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">
+                      🤖 Nền tảng / Model AI (riêng Admin #{idx + 1})
+                    </label>
+                    <Select
+                      value={a.ai_model || " "}
+                      onValueChange={(v) => patchAdmin(row.id, idx, { ai_model: v.trim() })}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Model cho admin này" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value=" ">-- Kế thừa model bot --</SelectItem>
+                        {Array.from(new Set([
+                          ...models,
+                          ...(a.ai_model ? [a.ai_model] : []),
+                          ...(row.ai_model ? [row.ai_model] : []),
+                        ])).map((m) => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1 rounded border border-border/50 p-2">
+                    <p className="text-[10px] font-medium text-muted-foreground">Thông báo tới admin này</p>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.notify_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { notify_enabled: e.target.checked })} />
+                      🔔 Lỗi &amp; cảnh báo (không phải provider, không phải chat mới)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.account_log_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { account_log_enabled: e.target.checked })} />
+                      📋 Log tài khoản provider (Codex / ChatGPT / Claude / Gemini…)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.newchat_alert_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { newchat_alert_enabled: e.target.checked })} />
+                      💬 Chat/nhóm mới (thread ID + user ID) — tách hẳn 🔔/📋
+                    </label>
+                  </div>
+
+                  <div className="space-y-1 rounded border border-border/50 p-2">
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.emphasis_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { emphasis_enabled: e.target.checked })} />
+                      ✍️ Nhấn mạnh số liệu &amp; thông tin chính
+                    </label>
+                    <div className="flex flex-wrap gap-3 pl-1">
+                      <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                        <input type="checkbox" className="size-3.5" checked={a.emphasis_numbers}
+                          disabled={!a.emphasis_enabled}
+                          onChange={(e) => patchAdmin(row.id, idx, { emphasis_numbers: e.target.checked })} />
+                        Số
+                      </label>
+                      <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                        <input type="checkbox" className="size-3.5" checked={a.emphasis_units}
+                          disabled={!a.emphasis_enabled}
+                          onChange={(e) => patchAdmin(row.id, idx, { emphasis_units: e.target.checked })} />
+                        Đơn vị (°C, %)
+                      </label>
+                      <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                        <input type="checkbox" className="size-3.5" checked={a.emphasis_key_info}
+                          disabled={!a.emphasis_enabled}
+                          onChange={(e) => patchAdmin(row.id, idx, { emphasis_key_info: e.target.checked })} />
+                        Thông tin chính
+                      </label>
+                    </div>
+                    <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                      value={a.emphasis_style || "bold"}
+                      disabled={!a.emphasis_enabled}
+                      onChange={(e) => patchAdmin(row.id, idx, { emphasis_style: e.target.value })}>
+                      <option value="bold">Đậm (bold)</option>
+                      <option value="code">Monospace</option>
+                      <option value="bold_code">Đậm + monospace</option>
+                    </select>
+                    {/* Zalo Bot Platform: màu + cỡ chữ (Tele API không hỗ trợ) */}
+                    {platform === "zalo" ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1 border-t border-border/40">
+                        <div>
+                          <label className="text-[10px] text-muted-foreground">
+                            🎨 Màu chữ (Zalo Bot)
+                          </label>
+                          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                            value={a.markdown_color || "orange"}
+                            disabled={!a.emphasis_enabled}
+                            onChange={(e) => patchAdmin(row.id, idx, { markdown_color: e.target.value })}>
+                            <option value="orange">Cam</option>
+                            <option value="red">Đỏ</option>
+                            <option value="yellow">Vàng</option>
+                            <option value="green">Xanh lá</option>
+                            <option value="none">Không màu (chỉ đậm)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-muted-foreground">
+                            🔠 Cỡ chữ (Zalo Bot)
+                          </label>
+                          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                            value={a.markdown_size || "normal"}
+                            disabled={!a.emphasis_enabled}
+                            onChange={(e) => patchAdmin(row.id, idx, { markdown_size: e.target.value })}>
+                            <option value="normal">Thường</option>
+                            <option value="big">Lớn {"{big}"}</option>
+                          </select>
+                        </div>
+                        <p className="sm:col-span-2 text-[10px] text-muted-foreground">
+                          Theo API Zalo: màu red/orange/yellow/green; cỡ lớn = tag {"{big}"}.
+                          Áp cho đoạn số liệu được nhấn mạnh.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-4">
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.ha_fastpath}
+                        onChange={(e) => patchAdmin(row.id, idx, { ha_fastpath: e.target.checked })} />
+                      ⚡ Điều khiển nhà cục bộ (HA fastpath)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.fallback_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { fallback_enabled: e.target.checked })} />
+                      Fallback khi gửi không được (dùng admin này)
+                    </label>
+                  </div>
+                </div>
               ))}
-            </SelectContent>
-          </Select>
-          <Input value={row.chat_ids} onChange={(e) => patch(row.id, { chat_ids: e.target.value })}
-            placeholder="Chat IDs (phẩy ngăn cách, trống = cho phép tất cả)" />
-          <div>
-            <label className="text-[10px] text-muted-foreground">
-              Admin threads của bot này (mỗi dòng 1 Chat ID — nhiều admin, độc lập, cùng nhận alert)
-            </label>
-            <textarea
-              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs min-h-14"
-              value={row.admin_threads}
-              onChange={(e) => patch(row.id, { admin_threads: e.target.value })}
-              placeholder={"123456789\n987654321"}
-            />
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              Mỗi admin tự đặt tên bot / tên danh bạ trong thread của mình. Không chéo bot.
-            </p>
+              <Button type="button" variant="outline" size="sm" className="h-8"
+                onClick={() => addAdmin(row.id)}>+ Thêm admin</Button>
+            </div>
           </div>
-          <div>
-            <label className="text-[10px] text-muted-foreground">Loại thread admin</label>
-            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-              value={row.admin_thread_type}
-              onChange={(e) => patch(row.id, { admin_thread_type: e.target.value })}>
-              <option value="0">Cá nhân</option>
-              <option value="1">Nhóm</option>
-            </select>
-          </div>
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5" checked={row.ha_fastpath}
-              onChange={(e) => patch(row.id, { ha_fastpath: e.target.checked })} />
-            ⚡ Điều khiển nhà cục bộ (lệnh rõ ràng chạy ngay, không vòng qua provider —
-            không có provider vẫn điều khiển được, trả lời văn mẫu)
-          </label>
-          <div className="space-y-1 rounded-md border border-border/60 p-2">
-            <p className="text-[10px] text-muted-foreground">
-              Thông báo qua BOT NÀY — bật/tắt độc lập từng bot, áp cho cả Chat IDs lẫn
-              admin threads phía trên. Công tắc tổng của kênh (bên dưới danh sách bot) vẫn phải bật.
-            </p>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="size-3.5" checked={row.notify_admin_enabled}
-                onChange={(e) => patch(row.id, { notify_admin_enabled: e.target.checked })} />
-              🔔 Thông báo admin (lỗi / cảnh báo hệ thống)
-            </label>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="size-3.5" checked={row.account_log_enabled}
-                onChange={(e) => patch(row.id, { account_log_enabled: e.target.checked })} />
-              📋 Log tài khoản provider (cần bật 🔔 ở trên)
-            </label>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-              <input type="checkbox" className="size-3.5" checked={row.newchat_alert_enabled}
-                onChange={(e) => patch(row.id, { newchat_alert_enabled: e.target.checked })} />
-              💬 Báo chat/nhóm mới nhắn bot (gửi vào admin threads của bot này)
-            </label>
-          </div>
-        </div>
-      ))}
+        );
+      })}
       <Button type="button" variant="outline" size="sm" onClick={add}>+ Thêm bot</Button>
     </div>
   );
@@ -225,14 +564,66 @@ export function TelegramCloudflareCard() {
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
   const [models, setModels] = useState<string[]>([]);
-  const [zalopAccounts, setZalopAccounts] = useState<string[]>([]);
+  /** Acc Zalo CN: hiển thị tên + SĐT (không hiện ownId). ownId chỉ dùng key nội bộ. */
+  type ZalopAcc = { ownId: string; displayName?: string; phoneNumber?: string };
+  const [zalopAccounts, setZalopAccounts] = useState<ZalopAcc[]>([]);
+  // Nhận diện admin Zalo CN (state ở parent — không nằm trong BotListEditor)
+  const [resolving, setResolving] = useState<string>("");
   // bot_id -> tên bot (getMe) — hiển thị TÊN thay mã số cho dễ chọn đúng bot.
   const [botNames, setBotNames] = useState<{ telegram: Record<string, string>; zalo: Record<string, string> }>(
     { telegram: {}, zalo: {} });
   // Tab KÊNH + tab con — mỗi kênh (Telegram / Zalo Bot / Zalo Cá Nhân) cài đặt
   // ĐỘC LẬP: cài đặt kênh, lọc thread, nhánh agent riêng từng kênh.
   const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop">("tg");
-  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "filter" | "branches">("settings");
+  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "directory" | "filter" | "branches">("settings");
+  // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
+  type DirRow = {
+    bot_id: string; bot_label: string; thread_id: string;
+    kind: string; name: string; sources?: string[];
+  };
+  const [dirRows, setDirRows] = useState<DirRow[]>([]);
+  const [dirLoading, setDirLoading] = useState(false);
+
+  const zalopAccLabel = (a: ZalopAcc) => {
+    // Không hiện ownId. displayName từ zca đôi khi là "SĐT (ownId)" → bỏ phần (id).
+    let name = String(a.displayName || "").trim()
+      .replace(/\s*\(\d{8,}\)\s*$/g, "")
+      .trim();
+    const phone = String(a.phoneNumber || "").trim();
+    if (name && phone && name !== phone && !name.includes(phone)) {
+      return `${name} · ${phone}`;
+    }
+    if (phone) return phone;
+    if (name) return name;
+    return "Tài khoản Zalo";
+  };
+
+  /** Options fallback theo TÊN (không mã số). */
+  const fallbackOptions: FallbackOpt[] = (() => {
+    const opts: FallbackOpt[] = [];
+    for (const b of (((config as any)?.telegram_bots as any[]) || [])) {
+      const tok = String(b?.token || "");
+      const bid = tok.split(":")[0] || "";
+      const name = String(b?.label || botNames.telegram[bid] || bid || "").trim();
+      if (!name) continue;
+      opts.push({ value: `telegram::${name}`, label: `Telegram · ${name}`, channel: "telegram" });
+    }
+    for (const b of (((config as any)?.zalo_bots as any[]) || [])) {
+      const tok = String(b?.token || "");
+      const bid = tok.split(":")[0] || "";
+      const name = String(b?.label || botNames.zalo[bid] || bid || "").trim();
+      if (!name) continue;
+      opts.push({ value: `zalo::${name}`, label: `Zalo Bot · ${name}`, channel: "zalo" });
+    }
+    for (const a of zalopAccounts) {
+      opts.push({
+        value: `zalo_personal::${a.ownId}`,
+        label: `Zalo CN · ${zalopAccLabel(a)}`,
+        channel: "zalo_personal",
+      });
+    }
+    return opts;
+  })();
 
   useEffect(() => {
     request.get("/v1/models")
@@ -251,11 +642,19 @@ export function TelegramCloudflareCard() {
         });
       })
       .catch(() => {});
-    // Tài khoản Zalo Cá Nhân đang đăng nhập — cho dropdown lọc theo TỪNG tài khoản.
+    // Tài khoản Zalo Cá Nhân — nhãn = tên + SĐT (không ownId).
     request.get("/api/zalo-personal/accounts")
       .then((res: any) => {
         const list = (res.data?.accounts as any[]) || [];
-        setZalopAccounts(list.map((a: any) => String(a?.ownId || "")).filter(Boolean));
+        setZalopAccounts(
+          list
+            .map((a: any) => ({
+              ownId: String(a?.ownId || "").trim(),
+              displayName: String(a?.displayName || "").trim() || undefined,
+              phoneNumber: String(a?.phoneNumber || "").trim() || undefined,
+            }))
+            .filter((a: ZalopAcc) => Boolean(a.ownId)),
+        );
       })
       .catch(() => {});
   }, []);
@@ -267,17 +666,23 @@ export function TelegramCloudflareCard() {
   // forward/forwardUrl: chuyển tiếp webhook (HA/n8n/URL bất kỳ). Thread bật →
   // user chỉ bật/tắt (dùng URL thread); thread không bật → user bật + URL riêng.
   // forwardTagOnly: chỉ chuyển khi tin TAG bot — không tag thì ChatGPT trả lời.
-  type UserRow = { id: number; userId: string; groups: string[]; forward: boolean; forwardUrl: string; forwardTagOnly: boolean };
+  type UserRow = {
+    id: number; userId: string; name?: string; groups: string[];
+    forward: boolean; forwardUrl: string; forwardTagOnly: boolean;
+  };
   // kind: thread là "group" (nhóm) hay "user" (cá nhân) — cá nhân thì KHÔNG cần
   // tầng lọc user + bộ lọc tag (ẩn đi). Lưu ở config thread_filter_meta.
   type FilterRow = {
-    id: number; botKey: string; chatId: string; kind: string; groups: string[];
+    id: number; botKey: string; chatId: string; kind: string; name?: string;
+    groups: string[];
     users: UserRow[]; requireMention: boolean; mentionKeyword: string;
     forward: boolean; forwardUrl: string;
   };
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
   const filterInited = useRef(false);
   const rowSeq = useRef(1);
+  // Nhận diện thread/user trong tab Lọc (zalop: resolve-thread)
+  const [filterResolving, setFilterResolving] = useState<string>("");
 
   useEffect(() => {
     if (filterInited.current) return;
@@ -285,7 +690,7 @@ export function TelegramCloudflareCard() {
     const tuf = (config as any)?.thread_user_filters as Record<string, string[]> | undefined;
     const tmf = (config as any)?.thread_mention_filters as Record<string, { required?: boolean; keyword?: string }> | undefined;
     const tff = (config as any)?.thread_forward_filters as Record<string, { enabled?: boolean; url?: string; tag_mode?: boolean }> | undefined;
-    const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string }> | undefined;
+    const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string; name?: string }> | undefined;
     if (!tf && !tuf && !tmf && !tff) return;
     filterInited.current = true;
 
@@ -296,16 +701,29 @@ export function TelegramCloudflareCard() {
       return { botKey: "tg", chatId: key };
     };
 
-    // 1. Parent rows từ thread_filters (kind đọc từ thread_filter_meta, mặc định nhóm)
+    // 1. Parent rows từ thread_filters (kind/name đọc từ thread_filter_meta)
     const kindOf = (key: string) => (tfMeta?.[key]?.kind === "user" ? "user" : "group");
+    const nameOf = (key: string) => String(tfMeta?.[key]?.name || "").trim();
     const rows: FilterRow[] = Object.entries(tf || {}).map(([key, groups]) => {
       const { botKey, chatId } = splitParent(key);
-      return { id: rowSeq.current++, botKey, chatId, kind: kindOf(key), groups: Array.isArray(groups) ? groups : [], users: [], requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "" };
+      return {
+        id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
+        groups: Array.isArray(groups) ? groups : [], users: [],
+        requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+      };
     });
     const findRow = (botKey: string, chatId: string) => rows.find((r) => r.botKey === botKey && r.chatId === chatId);
     const ensureRow = (botKey: string, chatId: string) => {
       let r = findRow(botKey, chatId);
-      if (!r) { r = { id: rowSeq.current++, botKey, chatId, kind: kindOf(`${botKey}:${chatId}`), groups: [...FUNCTION_GROUPS.map(([k]) => k)], users: [], requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "" }; rows.push(r); }
+      if (!r) {
+        const k = `${botKey}:${chatId}`;
+        r = {
+          id: rowSeq.current++, botKey, chatId, kind: kindOf(k), name: nameOf(k),
+          groups: [...FUNCTION_GROUPS.map(([gk]) => gk)], users: [],
+          requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+        };
+        rows.push(r);
+      }
       return r;
     };
 
@@ -336,7 +754,12 @@ export function TelegramCloudflareCard() {
         userId = key.slice(idx + 1);
         matched = ensureRow(botKey, chatId);
       }
-      matched.users.push({ id: rowSeq.current++, userId, groups: Array.isArray(groups) ? groups : [], forward: false, forwardUrl: "", forwardTagOnly: false });
+      matched.users.push({
+        id: rowSeq.current++, userId,
+        name: nameOf(key),
+        groups: Array.isArray(groups) ? groups : [],
+        forward: false, forwardUrl: "", forwardTagOnly: false,
+      });
     }
 
     // 4. Forward filters: khóa parent (khớp đúng 1 row đã có — commit luôn ghi
@@ -385,19 +808,27 @@ export function TelegramCloudflareCard() {
   }, [config]);
 
   // Danh sách bot cho dropdown lọc: từng bot cụ thể + 'mọi bot' mỗi nền tảng.
+  // Ưu tiên label Settings (Bot Ben Bắp) — không dùng username mã hóa bot.xxx.
   const botFilterOptions: { value: string; label: string }[] = [];
   for (const b of (((config as any)?.telegram_bots as any[]) || [])) {
     const id = String(b?.token || "").split(":")[0];
-    if (id) botFilterOptions.push({ value: `tg:${id}`, label: `Telegram · ${botNames.telegram[id] || id}` });
+    if (!id) continue;
+    const name = String(b?.label || botNames.telegram[id] || id).trim();
+    botFilterOptions.push({ value: `tg:${id}`, label: `Telegram · ${name}` });
   }
   botFilterOptions.push({ value: "tg", label: "Telegram · mọi bot" });
   for (const b of (((config as any)?.zalo_bots as any[]) || [])) {
     const id = String(b?.token || "").split(":")[0];
-    if (id) botFilterOptions.push({ value: `zalo:${id}`, label: `Zalo · ${botNames.zalo[id] || id}` });
+    if (!id) continue;
+    const name = String(b?.label || botNames.zalo[id] || id).trim();
+    botFilterOptions.push({ value: `zalo:${id}`, label: `Zalo · ${name}` });
   }
   botFilterOptions.push({ value: "zalo", label: "Zalo · mọi bot" });
-  for (const id of zalopAccounts) {
-    botFilterOptions.push({ value: `zalop:${id}`, label: `Zalo Cá Nhân · ${id}` });
+  for (const a of zalopAccounts) {
+    botFilterOptions.push({
+      value: `zalop:${a.ownId}`,
+      label: `Zalo Cá Nhân · ${zalopAccLabel(a)}`,
+    });
   }
   botFilterOptions.push({ value: "zalop", label: "Zalo Cá Nhân · mọi tài khoản" });
   // Chỉ hiện bot của KÊNH đang chọn (tab) — mỗi kênh lọc thread độc lập.
@@ -416,13 +847,17 @@ export function TelegramCloudflareCard() {
     const tuf: Record<string, string[]> = {};
     const tmf: Record<string, { required: boolean; keyword: string }> = {};
     const tff: Record<string, { enabled: boolean; url: string; tag_mode: boolean }> = {};
-    const tfMeta: Record<string, { kind: string }> = {};
+    const tfMeta: Record<string, { kind: string; name?: string }> = {};
     for (const r of rows) {
       const id = r.chatId.trim();
       if (!id) continue;
       const parent = `${r.botKey}:${id}`;
       tf[parent] = r.groups;
-      tfMeta[parent] = { kind: r.kind === "user" ? "user" : "group" };
+      const tName = String(r.name || "").trim();
+      tfMeta[parent] = {
+        kind: r.kind === "user" ? "user" : "group",
+        ...(tName ? { name: tName } : {}),
+      };
       // Chuyển tiếp webhook cấp THREAD (áp cả nhóm lẫn cá nhân). Giữ URL khi
       // tạm tắt (enabled=false) để bật lại không phải nhập lại.
       const rUrl = r.forwardUrl.trim();
@@ -434,16 +869,19 @@ export function TelegramCloudflareCard() {
         for (const u of r.users) {
           const uid = u.userId.trim();
           if (!uid) continue;
-          tuf[`${parent}:${uid}`] = u.groups;
+          const ukey = `${parent}:${uid}`;
+          tuf[ukey] = u.groups;
+          const uName = String(u.name || "").trim();
+          if (uName) tfMeta[ukey] = { kind: "user", name: uName };
           const uUrl = u.forwardUrl.trim();
           if (r.forward && rUrl) {
             // Thread đang chuyển tiếp: lưu bản ghi user khi TẮT riêng hoặc
             // bật "chỉ chuyển khi tag" (mặc định = thừa hưởng, không bản ghi).
-            if (!u.forward) tff[`${parent}:${uid}`] = { enabled: false, url: uUrl, tag_mode: u.forwardTagOnly };
-            else if (u.forwardTagOnly) tff[`${parent}:${uid}`] = { enabled: true, url: uUrl, tag_mode: true };
+            if (!u.forward) tff[ukey] = { enabled: false, url: uUrl, tag_mode: u.forwardTagOnly };
+            else if (u.forwardTagOnly) tff[ukey] = { enabled: true, url: uUrl, tag_mode: true };
           } else if (u.forward || uUrl) {
             // Thread không chuyển tiếp: user tự bật + URL riêng.
-            tff[`${parent}:${uid}`] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: u.forwardTagOnly };
+            tff[ukey] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: u.forwardTagOnly };
           }
         }
       }
@@ -455,7 +893,11 @@ export function TelegramCloudflareCard() {
     setField("thread_filter_meta", tfMeta);
   };
   const addFilterRow = () =>
-    commitFilters([...filterRows, { id: rowSeq.current++, botKey: tabFilterOptions[0]?.value || chTab, chatId: "", kind: "group", groups: [], users: [], requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "" }]);
+    commitFilters([...filterRows, {
+      id: rowSeq.current++, botKey: tabFilterOptions[0]?.value || chTab,
+      chatId: "", kind: "group", name: "", groups: [], users: [],
+      requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+    }]);
   const removeFilterRow = (id: number) =>
     commitFilters(filterRows.filter((r) => r.id !== id));
   const setFilterField = (id: number, patch: Partial<FilterRow>) =>
@@ -471,13 +913,167 @@ export function TelegramCloudflareCard() {
   // ── Thao tác USER trong 1 thread nhóm ──
   const addUserRow = (rowId: number) =>
     commitFilters(filterRows.map((r) =>
-      r.id === rowId ? { ...r, users: [...r.users, { id: rowSeq.current++, userId: "", groups: [...r.groups], forward: r.forward, forwardUrl: "", forwardTagOnly: false }] } : r));
+      r.id === rowId
+        ? {
+          ...r,
+          users: [...r.users, {
+            id: rowSeq.current++, userId: "", name: "", groups: [...r.groups],
+            forward: r.forward, forwardUrl: "", forwardTagOnly: false,
+          }],
+        }
+        : r));
   const removeUserRow = (rowId: number, userId: number) =>
     commitFilters(filterRows.map((r) =>
       r.id === rowId ? { ...r, users: r.users.filter((u) => u.id !== userId) } : r));
   const setUserField = (rowId: number, userId: number, patch: Partial<UserRow>) =>
     commitFilters(filterRows.map((r) =>
       r.id === rowId ? { ...r, users: r.users.map((u) => (u.id === userId ? { ...u, ...patch } : u)) } : r));
+
+  /** ownId từ botKey `zalop` / `zalop:<ownId>` (trống = acc đầu). */
+  const zalopAccFromBotKey = (botKey: string) => {
+    if (botKey.startsWith("zalop:")) return botKey.slice("zalop:".length).trim();
+    return zalopAccounts[0]?.ownId || String((config as any)?.zalo_personal_account_id || "").trim();
+  };
+
+  /** Token bot từ botKey `zalo`/`zalo:<id>` hoặc `tg`/`tg:<id>`. */
+  const tokenFromBotKey = (botKey: string, platform: "zalo" | "tg") => {
+    const list = (((config as any)?.[platform === "zalo" ? "zalo_bots" : "telegram_bots"] as any[]) || []);
+    const bid = botKey.includes(":") ? botKey.split(":")[1] : "";
+    const hit = list
+      .map((b: any) => String(b?.token || ""))
+      .find((t: string) => t && (!bid || t.startsWith(bid)));
+    return hit || String(list[0]?.token || "");
+  };
+
+  /** Áp patch lên filterRows hiện tại (tránh stale closure sau await). */
+  const patchFilterRowLive = (id: number, patch: Partial<FilterRow>) => {
+    setFilterRows((prev) => {
+      const next = prev.map((r) => (r.id === id ? { ...r, ...patch } : r));
+      // Ghi config từ snapshot mới (không dùng filterRows ngoài closure)
+      queueMicrotask(() => commitFilters(next));
+      return next;
+    });
+  };
+  const patchFilterUserLive = (rowId: number, userId: number, patch: Partial<UserRow>) => {
+    setFilterRows((prev) => {
+      const next = prev.map((r) =>
+        r.id === rowId
+          ? { ...r, users: r.users.map((u) => (u.id === userId ? { ...u, ...patch } : u)) }
+          : r,
+      );
+      queueMicrotask(() => commitFilters(next));
+      return next;
+    });
+  };
+
+  const resolveFilterThread = async (row: FilterRow) => {
+    const tid = row.chatId.trim();
+    if (!tid) { toast.error("Cần Thread / Chat ID"); return; }
+    const key = `tf-${row.id}`;
+    setFilterResolving(key);
+    try {
+      let kind = row.kind === "user" ? "user" : "group";
+      let name = "";
+      let ok = false;
+      if (row.botKey === "zalop" || row.botKey.startsWith("zalop:")) {
+        const acc = zalopAccFromBotKey(row.botKey);
+        if (!acc) { toast.error("Chưa có tài khoản Zalo CN — đăng nhập QR trước"); return; }
+        const res: any = await request.post("/api/zalo-personal/resolve-thread", {
+          account_id: acc,
+          thread_id: tid,
+          kind: row.kind === "user" ? "private" : "group",
+        });
+        const d = res.data || {};
+        ok = !!d.ok;
+        kind = d.kind === "group" ? "group" : "user";
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("zca-js chưa thấy thread — sửa tay loại/tên nếu sai");
+      } else if (row.botKey === "zalo" || row.botKey.startsWith("zalo:")) {
+        const token = tokenFromBotKey(row.botKey, "zalo");
+        if (!token) { toast.error("Chưa có token Zalo Bot"); return; }
+        const res: any = await request.post("/api/zalo/resolve-chat", { token, chat_id: tid });
+        const d = res.data || {};
+        ok = !!d.ok;
+        kind = d.kind === "group" ? "group" : "user";
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("Không resolve được — gõ tên tay bên dưới hoặc kiểm tra token");
+      } else {
+        const token = tokenFromBotKey(row.botKey, "tg");
+        if (!token) { toast.error("Chưa có token Telegram"); return; }
+        const res: any = await request.post("/api/telegram/resolve-chat", { token, chat_id: tid });
+        const d = res.data || {};
+        ok = !!d.ok;
+        kind = d.kind === "group" ? "group" : "user";
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("Không resolve được — gõ tên tay bên dưới hoặc kiểm tra token");
+      }
+      // Chỉ ghi đè tên khi API trả được tên; giữ tên tay nếu resolve fail
+      patchFilterRowLive(row.id, {
+        kind,
+        ...(name ? { name } : {}),
+      });
+      if (ok) {
+        toast.success(
+          name
+            ? `Nhận diện: ${name} (${kind === "group" ? "nhóm" : "cá nhân"})`
+            : "Đã nhận diện loại — có thể gõ tên tay",
+        );
+      }
+    } catch {
+      toast.error("Không resolve được thread — gõ tên tay nếu cần");
+    } finally {
+      setFilterResolving("");
+    }
+  };
+
+  const resolveFilterUser = async (row: FilterRow, u: UserRow) => {
+    const uid = u.userId.trim();
+    if (!uid) { toast.error("Cần User ID"); return; }
+    const key = `tfu-${row.id}-${u.id}`;
+    setFilterResolving(key);
+    try {
+      let name = "";
+      let ok = false;
+      if (row.botKey === "zalop" || row.botKey.startsWith("zalop:")) {
+        const acc = zalopAccFromBotKey(row.botKey);
+        if (!acc) { toast.error("Chưa có tài khoản Zalo CN"); return; }
+        const res: any = await request.post("/api/zalo-personal/resolve-thread", {
+          account_id: acc,
+          thread_id: uid,
+          kind: "private",
+        });
+        const d = res.data || {};
+        ok = !!d.ok;
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("zca-js chưa thấy user — gõ tên tay");
+      } else if (row.botKey === "zalo" || row.botKey.startsWith("zalo:")) {
+        const token = tokenFromBotKey(row.botKey, "zalo");
+        if (!token) { toast.error("Chưa có token Zalo Bot"); return; }
+        const res: any = await request.post("/api/zalo/resolve-chat", { token, chat_id: uid });
+        const d = res.data || {};
+        ok = !!d.ok;
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("Không resolve được user — gõ tên tay");
+      } else if (row.botKey === "tg" || row.botKey.startsWith("tg:")) {
+        const token = tokenFromBotKey(row.botKey, "tg");
+        if (!token) { toast.error("Chưa có token Telegram"); return; }
+        const res: any = await request.post("/api/telegram/resolve-chat", { token, chat_id: uid });
+        const d = res.data || {};
+        ok = !!d.ok;
+        name = String(d.name || "").trim();
+        if (!ok) toast.message("Không resolve được user — gõ tên tay");
+      } else {
+        toast.message("Chọn bot cụ thể rồi thử Nhận diện, hoặc gõ tên tay");
+        return;
+      }
+      if (name) patchFilterUserLive(row.id, u.id, { name });
+      if (ok) toast.success(name ? `Nhận diện user: ${name}` : "Đã nhận diện — có thể gõ tên tay");
+    } catch {
+      toast.error("Không resolve được user — gõ tên tay nếu cần");
+    } finally {
+      setFilterResolving("");
+    }
+  };
   const toggleUserGroup = (rowId: number, userId: number, g: string, parentGroups: string[]) =>
     commitFilters(filterRows.map((r) => {
       if (r.id !== rowId) return r;
@@ -493,6 +1089,26 @@ export function TelegramCloudflareCard() {
   // Hiển thị list (chat_ids / ha_threads) dạng text mỗi dòng 1 phần tử cho textarea.
   const asText = (v: unknown) => (Array.isArray(v) ? v.join("\n") : String(v ?? ""));
   const cfg = (config as any) || {};
+
+  const loadDirectory = async () => {
+    setDirLoading(true);
+    try {
+      const res: any = await request.get("/api/channels/directory", {
+        params: { platform: chTab, limit: 400 },
+      });
+      setDirRows(Array.isArray(res.data?.rows) ? res.data.rows : []);
+    } catch {
+      setDirRows([]);
+      toast.error("Không tải được danh bạ");
+    } finally {
+      setDirLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (subTab === "directory") void loadDirectory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subTab, chTab]);
 
   // Chuyển tiếp webhook Zalo Cá Nhân: trình sửa đã GỠ khỏi UI (gom về 'Lọc chức
   // năng theo thread', khóa zalop:...). Backend vẫn đọc config legacy
@@ -529,9 +1145,10 @@ export function TelegramCloudflareCard() {
           {(([
             ["settings", "⚙️ Cài đặt kênh"],
             ...(chTab === "zalop" ? [["zaccounts", "🔑 Tài khoản & QR"]] : []),
+            ["directory", "📒 Danh bạ"],
             ["filter", "🎚️ Lọc thread"],
             ["branches", "🧭 Nhánh agent"],
-          ]) as ["settings" | "zaccounts" | "filter" | "branches", string][])
+          ]) as ["settings" | "zaccounts" | "directory" | "filter" | "branches", string][])
             .map(([k, lb]) => (
               <button key={k} type="button" className={tabBtn(subTab === k)}
                 onClick={() => setSubTab(k)}>
@@ -556,72 +1173,17 @@ export function TelegramCloudflareCard() {
                 bots={((config as any)?.telegram_bots as any[]) || []}
                 models={models}
                 names={botNames.telegram}
+                platform="tg"
+                fallbackOptions={fallbackOptions}
                 tokenPlaceholder="123456:ABC-DEF1234ghikl..."
                 onChange={(b) => setField("telegram_bots", b)}
               />
             )}
           </div>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean((config as any)?.telegram_notify_enabled ?? true)}
-              onChange={(e) => setField("telegram_notify_enabled", e.target.checked)}
-            />
-            Gửi thông báo admin (lỗi / cảnh báo hệ thống) qua Telegram
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean(cfg.telegram_newchat_alert_enabled ?? true)}
-              onChange={(e) => setField("telegram_newchat_alert_enabled", e.target.checked)}
-            />
-            🆕 Báo chat/nhóm mới nhắn bot (đủ Chat ID + User ID người gửi)
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean(
-                (config as any)?.account_log_notify_telegram ??
-                (config as any)?.account_log_notify_enabled ?? true
-              )}
-              onChange={(e) => setField("account_log_notify_telegram", e.target.checked)}
-            />
-            📋 Gửi log tài khoản provider (ChatGPT free / Codex / Gemini / Flow…) qua Telegram
-          </label>
-          <p className="text-[10px] text-muted-foreground -mt-1">
-            Bật → log tài khoản MỌI provider (thêm, xóa, JWT/RT chết, các bước khôi phục
-            [T0] refresh → [T1] tái dùng session → [T2] đăng nhập Google → [T3] hàng loạt,
-            kèm email + provider) gửi bot admin Telegram. Tắt → chỉ ghi log trong UI.
+          <p className="text-[10px] text-muted-foreground">
+            🔔 thông báo · 📋 log provider · 💬 chat mới · HA · fallback · model:
+            bật/tắt <b>từng Admin #1, #2…</b> trong thẻ bot ở trên (không còn công tắc kênh).
           </p>
-          <details className="rounded-md border border-border p-2">
-            <summary className="text-xs font-semibold cursor-pointer">
-              ⚙️ Fallback cũ (chỉ khi bot chưa có admin threads)
-            </summary>
-            <p className="text-[10px] text-muted-foreground mt-1 mb-2">
-              Khuyến nghị: khai báo <b>Admin threads</b> ngay trên từng bot (nhiều ID).
-              Ô dưới chỉ dùng tạm khi bot chưa có admin riêng.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-muted-foreground">Thread ID admin fallback</label>
-                <Input value={String(cfg.telegram_admin_thread || "")}
-                  onChange={(e) => setField("telegram_admin_thread", e.target.value)}
-                  placeholder="Chỉ khi bot không có admin_threads" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Loại thread</label>
-                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-                  value={String(cfg.telegram_admin_thread_type || "0")}
-                  onChange={(e) => setField("telegram_admin_thread_type", e.target.value)}>
-                  <option value="0">Cá nhân</option>
-                  <option value="1">Nhóm</option>
-                </select>
-              </div>
-            </div>
-          </details>
           <ChannelActivityPanel platform="tg" title="Telegram — hoạt động gần đây & blacklist (theo từng bot)" />
           </div>
         )}
@@ -643,290 +1205,488 @@ export function TelegramCloudflareCard() {
                 bots={((config as any)?.zalo_bots as any[]) || []}
                 models={models}
                 names={botNames.zalo}
+                platform="zalo"
+                fallbackOptions={fallbackOptions}
                 tokenPlaceholder="1946930502...:HxGk..."
                 onChange={(b) => setField("zalo_bots", b)}
               />
             )}
           </div>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean((config as any)?.zalo_notify_enabled ?? true)}
-              onChange={(e) => setField("zalo_notify_enabled", e.target.checked)}
-            />
-            Gửi thông báo admin (lỗi / cảnh báo hệ thống) qua Zalo
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean(
-                (config as any)?.account_log_notify_zalo ??
-                (config as any)?.account_log_notify_enabled ?? true
-              )}
-              onChange={(e) => setField("account_log_notify_zalo", e.target.checked)}
-            />
-            📋 Gửi log tài khoản provider (ChatGPT free / Codex / Gemini / Flow…) qua Zalo Bot
-          </label>
-          <p className="text-[10px] text-muted-foreground -mt-1">
-            Log đủ email + provider + bước khôi phục [T0]–[T3]. Cần bật thông báo admin
-            Zalo ở trên thì log mới gửi qua kênh này.
-          </p>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="size-3.5"
-              checked={Boolean(cfg.zalo_newchat_alert_enabled ?? true)}
-              onChange={(e) => setField("zalo_newchat_alert_enabled", e.target.checked)}
-            />
-            🆕 Báo chat/nhóm mới nhắn bot (đủ Chat ID + User ID người gửi)
-          </label>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Thread ID admin chung (fallback)</label>
-              <Input value={String(cfg.zalo_admin_thread || "")}
-                onChange={(e) => setField("zalo_admin_thread", e.target.value)}
-                placeholder="Dùng khi bot chưa có Thread admin riêng" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Loại thread admin chung</label>
-              <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-                value={String(cfg.zalo_admin_thread_type || "0")}
-                onChange={(e) => setField("zalo_admin_thread_type", e.target.value)}>
-                <option value="0">Cá nhân</option>
-                <option value="1">Nhóm</option>
-              </select>
-            </div>
-          </div>
           <p className="text-[10px] text-muted-foreground">
-            Mỗi bot gửi alert bằng CHÍNH token của nó tới admin thread của bot đó
-            (độc lập — không còn &quot;gửi hộ qua bot A&quot;). Bot chưa đặt admin riêng
-            → dùng Thread admin chung ở trên nhưng vẫn gửi bằng chính bot nhận tin;
-            gửi không được thì hệ thống fallback notifier đa kênh.
+            🔔 · 📋 · 💬 chat mới · HA · fallback · model: cấu hình <b>từng admin</b> trong thẻ bot
+            (không còn công tắc kênh).
           </p>
           <ChannelActivityPanel platform="zalo" title="Zalo Bot — hoạt động gần đây & blacklist" />
           </div>
         )}
 
-        {/* ── Zalo Cá Nhân — Cài đặt kênh (tài khoản cá nhân qua zca-js) ── */}
+        {/* ── Zalo Cá Nhân — Cài đặt kênh (mỗi acc = 1 thẻ, Admin #1/#2…) ── */}
         {chTab === "zalop" && subTab === "settings" && (
           <div className="space-y-3 mt-1">
-          <p className="text-[10px] text-muted-foreground">
-            Đăng nhập QR, proxy, danh bạ ở tab &quot;🔑 Tài khoản &amp; QR&quot;.
-            Cài đặt kênh (AI, admin) ở đây. Public HTTPS/tunnel <b>không</b> nằm
-            trong tab này — xem mục <b>Cloudflare (hạ tầng chung)</b>.
-          </p>
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
             <input type="checkbox" className="size-3.5"
               checked={Boolean(cfg.zalo_personal_enabled)}
               onChange={(e) => setField("zalo_personal_enabled", e.target.checked)} />
             Bật kênh Zalo Cá Nhân
           </label>
-
-          <div>
-            <label className="text-xs text-muted-foreground">URL bot server (trống = zalo-server nhúng trong image 127.0.0.1:3001)</label>
-            <Input value={String(cfg.zalo_personal_server_url || "")}
-              onChange={(e) => setField("zalo_personal_server_url", e.target.value)}
-              placeholder="Trống = nhúng nội bộ (khuyến nghị)" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Tài khoản quản trị bot server</label>
-              <Input value={String(cfg.zalo_personal_username || "")}
-                onChange={(e) => setField("zalo_personal_username", e.target.value)} placeholder="admin" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Mật khẩu</label>
-              <Input type="password" value={String(cfg.zalo_personal_password || "")}
-                onChange={(e) => setField("zalo_personal_password", e.target.value)} placeholder="admin" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              URL nội bộ bot server → gateway (không phải Cloudflare; trống = 127.0.0.1:80 trong container)
-            </label>
-            <Input value={String(cfg.zalo_personal_webhook_base || "")}
-              onChange={(e) => setField("zalo_personal_webhook_base", e.target.value)}
-              placeholder="Trống = nội bộ container (khuyến nghị)" />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Chỉ khi zalo-server và API không cùng container. Public domain vẫn chỉ
-              cấu hình ở Cloudflare chung.
-            </p>
-          </div>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5"
-              checked={Boolean(cfg.zalo_personal_auto_webhook ?? true)}
-              onChange={(e) => setField("zalo_personal_auto_webhook", e.target.checked)} />
-            Tự động đăng ký webhook mọi tài khoản về gateway
-          </label>
-          <div>
-            <label className="text-xs text-muted-foreground">Tài khoản gửi mặc định (ownId — trống = tài khoản đầu tiên)</label>
-            <Input value={String(cfg.zalo_personal_account_id || "")}
-              onChange={(e) => setField("zalo_personal_account_id", e.target.value)} />
-          </div>
-
-          {/* AI trả lời */}
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
             <input type="checkbox" className="size-3.5"
               checked={Boolean(cfg.zalo_personal_ai_enabled ?? true)}
               onChange={(e) => setField("zalo_personal_ai_enabled", e.target.checked)} />
-            🤖 Bật AI trả lời tin nhắn
+            🤖 Bật AI trả lời (thread thường qua bộ lọc / admin)
           </label>
           <div>
-            <label className="text-xs text-muted-foreground">Model AI (trống = cx/auto)</label>
+            <label className="text-[10px] text-muted-foreground">
+              Model AI mặc định kênh (chat thường — admin có model riêng)
+            </label>
             <Select value={String(cfg.zalo_personal_ai_model || " ")}
               onValueChange={(v) => setField("zalo_personal_ai_model", v.trim())}>
-              <SelectTrigger><SelectValue placeholder="Mặc định cx/auto" /></SelectTrigger>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Mặc định hệ thống" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value=" ">-- Mặc định (cx/auto) --</SelectItem>
+                <SelectItem value=" ">-- Mặc định hệ thống --</SelectItem>
                 {Array.from(new Set([...models, ...(cfg.zalo_personal_ai_model ? [String(cfg.zalo_personal_ai_model)] : [])])).map((m) => (
                   <SelectItem key={m} value={m}>{m}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Thread được phép trả lời (mỗi dòng 1 Thread ID — AN TOÀN: trống = không trả lời ai)</label>
-            <textarea className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs min-h-16"
-              value={asText(cfg.zalo_personal_chat_ids)}
-              onChange={(e) => setField("zalo_personal_chat_ids", e.target.value)} />
-          </div>
 
-          {/* Chuyển tiếp webhook: đã gom về 'Lọc chức năng theo thread' bên dưới
-              (khóa zalop:...). Config legacy zalo_personal_forward_webhooks vẫn
-              chạy ở backend cho cấu hình cũ, chỉ bỏ trình sửa trên UI. */}
-          <p className="text-[10px] text-muted-foreground">
-            🔗 Chuyển tiếp webhook (HA / n8n) giờ cấu hình ở mục <b>Lọc chức năng theo
-            thread</b> bên dưới — chọn tài khoản Zalo Cá Nhân, nhập Thread ID rồi tích
-            &quot;Chuyển tiếp webhook&quot;.
-          </p>
+          {/* Hạ tầng gọn — tương đương token server, không phải cài admin */}
+          <details className="rounded-md border border-border p-2 text-[11px]">
+            <summary className="cursor-pointer font-medium text-muted-foreground">
+              Hạ tầng zca-js / webhook (tuỳ chọn)
+            </summary>
+            <div className="space-y-2 mt-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground">URL bot server (trống = 127.0.0.1:3001 nhúng)</label>
+                <Input value={String(cfg.zalo_personal_server_url || "")}
+                  onChange={(e) => setField("zalo_personal_server_url", e.target.value)}
+                  placeholder="Trống = nhúng nội bộ" className="h-8 text-xs" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">User bot server</label>
+                  <Input value={String(cfg.zalo_personal_username || "")}
+                    onChange={(e) => setField("zalo_personal_username", e.target.value)}
+                    placeholder="admin" className="h-8 text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Mật khẩu</label>
+                  <Input type="password" value={String(cfg.zalo_personal_password || "")}
+                    onChange={(e) => setField("zalo_personal_password", e.target.value)}
+                    placeholder="admin" className="h-8 text-xs" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Webhook base nội bộ (trống = container)</label>
+                <Input value={String(cfg.zalo_personal_webhook_base || "")}
+                  onChange={(e) => setField("zalo_personal_webhook_base", e.target.value)}
+                  placeholder="Trống = 127.0.0.1:80" className="h-8 text-xs" />
+              </div>
+              <label className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
+                <input type="checkbox" className="size-3.5"
+                  checked={Boolean(cfg.zalo_personal_auto_webhook ?? true)}
+                  onChange={(e) => setField("zalo_personal_auto_webhook", e.target.checked)} />
+                Tự đăng ký webhook mọi acc về gateway
+              </label>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Acc gửi mặc định (trống = acc đầu)</label>
+                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-8"
+                  value={String(cfg.zalo_personal_account_id || "")}
+                  onChange={(e) => setField("zalo_personal_account_id", e.target.value)}>
+                  <option value="">-- Acc đầu trong danh sách --</option>
+                  {zalopAccounts.map((a) => (
+                    <option key={a.ownId} value={a.ownId}>{zalopAccLabel(a)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </details>
 
-          {/* Thông báo admin qua Zalo Cá Nhân */}
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5"
-              checked={Boolean(cfg.zalo_personal_notify_enabled)}
-              onChange={(e) => setField("zalo_personal_notify_enabled", e.target.checked)} />
-            🔔 Gửi thông báo hệ thống qua Zalo Cá Nhân
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5"
-              checked={Boolean(cfg.zalo_personal_newchat_alert_enabled ?? true)}
-              onChange={(e) => setField("zalo_personal_newchat_alert_enabled", e.target.checked)} />
-            🆕 Báo thread mới nhắn tới (đủ Thread ID + User ID người gửi + tài khoản nhận)
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
-            <input type="checkbox" className="size-3.5"
-              checked={Boolean(
-                (config as any)?.account_log_notify_zalo_personal ??
-                (config as any)?.account_log_notify_enabled ?? true
-              )}
-              onChange={(e) => setField("account_log_notify_zalo_personal", e.target.checked)} />
-            📋 Gửi log tài khoản provider (ChatGPT free / Codex / Gemini / Flow…) qua Zalo Cá Nhân
-          </label>
-          <p className="text-[10px] text-muted-foreground -mt-1">
-            Log đủ email + provider + bước khôi phục [T0]–[T3]. Cần bật 🔔 thông báo hệ
-            thống + điền Thread ID admin ở trên thì log mới gửi qua kênh này.
-          </p>
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">
-              Thread ID admin theo từng tài khoản Zalo Cá Nhân
+              Danh sách tài khoản
             </label>
-            <p className="text-[10px] text-muted-foreground">
-              Mỗi ownId (tài khoản đăng nhập QR) có Thread admin riêng. Báo chat mới / /id
-              từ acc nào → gửi về admin của acc đó. Trống → dùng admin chung bên dưới.
-            </p>
             {zalopAccounts.length === 0 ? (
               <p className="text-[10px] text-muted-foreground italic">
-                Chưa thấy tài khoản đăng nhập — sang tab &quot;🔑 Tài khoản &amp; QR&quot; của kênh này đăng nhập QR, rồi tải lại Settings.
+                Chưa thấy tài khoản — tab &quot;🔑 Tài khoản &amp; QR&quot; đăng nhập QR, rồi tải lại Settings.
               </p>
             ) : (
-              zalopAccounts.map((ownId) => {
-                const map = ((config as any)?.zalo_personal_account_admins || {}) as Record<
-                  string, { admin_thread?: string; admin_thread_type?: string; ha_fastpath?: boolean }
-                >;
+              zalopAccounts.map((acc) => {
+                const ownId = acc.ownId;
+                const map = ((config as any)?.zalo_personal_account_admins || {}) as Record<string, any>;
                 const entry = map[ownId] || {};
-                const patchAcc = (p: { admin_thread?: string; admin_thread_type?: string; ha_fastpath?: boolean }) => {
+                let admins: AdminEntry[] = parseAdminEntries(entry);
+                if (!admins.length && entry.admin_thread) {
+                  admins = parseAdminEntries({
+                    admin_thread: entry.admin_thread,
+                    admin_thread_type: entry.admin_thread_type,
+                  });
+                }
+                const patchAcc = (p: Record<string, unknown>) => {
                   const next = { ...map, [ownId]: { ...entry, ...p } };
                   setField("zalo_personal_account_admins", next);
                 };
+                const setAdmins = (list: AdminEntry[]) => {
+                  // Đồng bộ cờ 🔔/📋/💬 cấp acc từ Admin #N (giống Telegram/Zalo Bot)
+                  const anyNotify = list.some((a) => a.notify_enabled);
+                  const anyLog = list.some((a) => a.account_log_enabled);
+                  const anyNew = list.some((a) => a.newchat_alert_enabled);
+                  patchAcc({
+                    admin_entries: list,
+                    admin_thread: list[0]?.chat_id || "",
+                    admin_thread_type: list[0]?.kind === "group" ? "1" : "0",
+                    notify_admin_enabled: anyNotify || list.length === 0,
+                    account_log_enabled: anyLog || list.length === 0,
+                    newchat_alert_enabled: anyNew || list.length === 0,
+                  });
+                };
+                const patchZalopAdmin = (idx: number, p: Partial<AdminEntry>) => {
+                  setAdmins(admins.map((x, i) => (i === idx ? { ...x, ...p } : x)));
+                };
+                const resolveZalopAdmin = async (idx: number) => {
+                  const a = admins[idx];
+                  if (!a?.chat_id.trim()) {
+                    toast.error("Cần Thread ID");
+                    return;
+                  }
+                  const key = `zalop-${ownId}-${idx}`;
+                  setResolving(key);
+                  try {
+                    const res: any = await request.post("/api/zalo-personal/resolve-thread", {
+                      account_id: ownId,
+                      thread_id: a.chat_id.trim(),
+                      kind: a.kind,
+                    });
+                    const d = res.data || {};
+                    patchZalopAdmin(idx, {
+                      name: String(d.name || a.name || "").trim(),
+                      kind: d.kind === "group" ? "group" : "private",
+                    });
+                    if (d.ok) toast.success(d.name ? `Nhận diện: ${d.name}` : "Đã nhận diện");
+                    else toast.message("zca-js chưa thấy thread — sửa tay kind/tên nếu sai");
+                  } catch {
+                    toast.error("Không resolve được (zca-js / tài khoản?)");
+                  } finally {
+                    setResolving("");
+                  }
+                };
                 return (
                   <div key={ownId} className="rounded-md border border-border p-2 space-y-2">
-                    <div className="text-[11px] font-mono text-foreground truncate" title={ownId}>
-                      ownId: {ownId}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0">
+                        <input type="checkbox" className="size-3.5"
+                          checked={entry.enabled !== false}
+                          onChange={(e) => patchAcc({ enabled: e.target.checked })} />
+                        Bật
+                      </label>
+                      <span className="text-[12px] font-medium truncate flex-1">
+                        {zalopAccLabel(acc)}
+                      </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Thread ID admin</label>
-                        <Input
-                          value={String(entry.admin_thread || "")}
-                          onChange={(e) => patchAcc({ admin_thread: e.target.value })}
-                          placeholder="Trống = admin chung"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Loại</label>
-                        <select
-                          className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-                          value={String(entry.admin_thread_type || "0") === "1" ? "1" : "0"}
-                          onChange={(e) => patchAcc({ admin_thread_type: e.target.value })}
-                        >
-                          <option value="0">Cá nhân</option>
-                          <option value="1">Nhóm</option>
-                        </select>
-                      </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Admin #1, #2… — Tên · ID · Loại · Nhận diện · Model · 🔔 📋 💬 · ✍️ · màu · HA · Fallback
+                      </label>
+                      {admins.map((a, idx) => (
+                        <div key={idx} className="rounded-md border border-border p-2.5 space-y-2 bg-muted/10">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold">Admin #{idx + 1}</span>
+                            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-[10px]"
+                              onClick={() => setAdmins(admins.filter((_, i) => i !== idx))}>Xóa</Button>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                            <div>
+                              <label className="text-[10px] text-muted-foreground">Tên</label>
+                              <Input className="h-8 text-xs" value={a.name}
+                                onChange={(e) => patchZalopAdmin(idx, { name: e.target.value })}
+                                placeholder="Tên dễ nhớ" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-muted-foreground">Thread ID</label>
+                              <Input className="h-8 text-xs font-mono" value={a.chat_id}
+                                onChange={(e) => {
+                                  const cid = e.target.value;
+                                  patchZalopAdmin(idx, {
+                                    chat_id: cid,
+                                    kind: a.name ? a.kind : guessKind(cid),
+                                  });
+                                }}
+                                placeholder="userId / groupId" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-muted-foreground">Loại</label>
+                              <div className="flex gap-1">
+                                <select className="h-8 flex-1 rounded-md border border-border bg-background px-1 text-[11px]"
+                                  value={a.kind}
+                                  onChange={(e) => patchZalopAdmin(idx, {
+                                    kind: e.target.value as "private" | "group",
+                                  })}>
+                                  <option value="private">Cá nhân</option>
+                                  <option value="group">Nhóm</option>
+                                </select>
+                                <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]"
+                                  disabled={resolving === `zalop-${ownId}-${idx}`}
+                                  onClick={() => resolveZalopAdmin(idx)}>
+                                  {resolving === `zalop-${ownId}-${idx}` ? "…" : "Nhận diện"}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">
+                              🤖 Nền tảng / Model AI (riêng Admin #{idx + 1})
+                            </label>
+                            <Select
+                              value={a.ai_model || " "}
+                              onValueChange={(v) => patchZalopAdmin(idx, { ai_model: v.trim() })}
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue placeholder="Kế thừa model kênh" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value=" ">-- Kế thừa model kênh --</SelectItem>
+                                {Array.from(new Set([
+                                  ...models,
+                                  ...(a.ai_model ? [a.ai_model] : []),
+                                  ...(cfg.zalo_personal_ai_model ? [String(cfg.zalo_personal_ai_model)] : []),
+                                ])).map((m) => (
+                                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1 rounded border border-border/50 p-2">
+                            <p className="text-[10px] font-medium text-muted-foreground">Thông báo tới admin này</p>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.notify_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { notify_enabled: e.target.checked })} />
+                              🔔 Lỗi &amp; cảnh báo
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.account_log_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { account_log_enabled: e.target.checked })} />
+                              📋 Log tài khoản provider
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.newchat_alert_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { newchat_alert_enabled: e.target.checked })} />
+                              💬 Chat/nhóm mới (thread ID)
+                            </label>
+                          </div>
+
+                          <div className="space-y-1 rounded border border-border/50 p-2">
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.emphasis_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { emphasis_enabled: e.target.checked })} />
+                              ✍️ Nhấn mạnh số liệu &amp; thông tin chính
+                            </label>
+                            <div className="flex flex-wrap gap-3 pl-1">
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                                <input type="checkbox" className="size-3.5" checked={a.emphasis_numbers}
+                                  disabled={!a.emphasis_enabled}
+                                  onChange={(e) => patchZalopAdmin(idx, { emphasis_numbers: e.target.checked })} />
+                                Số
+                              </label>
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                                <input type="checkbox" className="size-3.5" checked={a.emphasis_units}
+                                  disabled={!a.emphasis_enabled}
+                                  onChange={(e) => patchZalopAdmin(idx, { emphasis_units: e.target.checked })} />
+                                Đơn vị (°C, %)
+                              </label>
+                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer select-none">
+                                <input type="checkbox" className="size-3.5" checked={a.emphasis_key_info}
+                                  disabled={!a.emphasis_enabled}
+                                  onChange={(e) => patchZalopAdmin(idx, { emphasis_key_info: e.target.checked })} />
+                                Thông tin chính
+                              </label>
+                            </div>
+                            <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                              value={a.emphasis_style || "bold"}
+                              disabled={!a.emphasis_enabled}
+                              onChange={(e) => patchZalopAdmin(idx, { emphasis_style: e.target.value })}>
+                              <option value="bold">Đậm (bold)</option>
+                              <option value="code">Monospace</option>
+                              <option value="bold_code">Đậm + monospace</option>
+                            </select>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1 border-t border-border/40">
+                              <div>
+                                <label className="text-[10px] text-muted-foreground">🎨 Màu chữ (zca-js)</label>
+                                <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                                  value={a.markdown_color || "orange"}
+                                  disabled={!a.emphasis_enabled}
+                                  onChange={(e) => patchZalopAdmin(idx, { markdown_color: e.target.value })}>
+                                  <option value="orange">Cam</option>
+                                  <option value="red">Đỏ</option>
+                                  <option value="yellow">Vàng</option>
+                                  <option value="green">Xanh lá</option>
+                                  <option value="none">Không màu</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-muted-foreground">🔠 Cỡ chữ</label>
+                                <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                                  value={a.markdown_size || "normal"}
+                                  disabled={!a.emphasis_enabled}
+                                  onChange={(e) => patchZalopAdmin(idx, { markdown_size: e.target.value })}>
+                                  <option value="normal">Thường</option>
+                                  <option value="big">Lớn (f_18)</option>
+                                  <option value="small">Nhỏ (f_13)</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:gap-4">
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.ha_fastpath}
+                                onChange={(e) => patchZalopAdmin(idx, { ha_fastpath: e.target.checked })} />
+                              ⚡ Điều khiển nhà cục bộ (HA fastpath)
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.fallback_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { fallback_enabled: e.target.checked })} />
+                              Fallback khi gửi không được (dùng admin này)
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" className="h-8"
+                        onClick={() => setAdmins([...admins, emptyAdmin()])}>+ Thêm admin</Button>
                     </div>
+
                     <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                       <input type="checkbox" className="size-3.5"
                         checked={entry.ha_fastpath !== false}
                         onChange={(e) => patchAcc({ ha_fastpath: e.target.checked })} />
-                      ⚡ Điều khiển nhà cục bộ (lệnh rõ ràng chạy ngay, không vòng qua provider)
+                      ⚡ HA mặc định acc (chat không phải admin)
                     </label>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5"
+                        checked={Boolean(entry.fallback_enabled)}
+                        onChange={(e) => patchAcc({ fallback_enabled: e.target.checked })} />
+                      Fallback khi acc này gửi không được (bot khác)
+                    </label>
+                    {entry.fallback_enabled ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        <select className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                          value={
+                            entry.fallback_channel && entry.fallback_bot_name
+                              ? `${entry.fallback_channel}::${entry.fallback_bot_name}`
+                              : entry.fallback_channel || ""
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!v) {
+                              patchAcc({ fallback_channel: "", fallback_bot_name: "" });
+                              return;
+                            }
+                            const [ch, ...rest] = v.split("::");
+                            patchAcc({ fallback_channel: ch, fallback_bot_name: rest.join("::") });
+                          }}>
+                          <option value="">— Chọn bot theo tên —</option>
+                          {fallbackOptions.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                        <Input className="h-8 text-xs font-mono"
+                          value={String(entry.fallback_thread || "")}
+                          onChange={(e) => patchAcc({ fallback_thread: e.target.value })}
+                          placeholder="Thread fallback" />
+                      </div>
+                    ) : null}
                   </div>
                 );
               })
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Thread ID admin chung (fallback)</label>
-              <Input value={String(cfg.zalo_personal_admin_thread || "")}
-                onChange={(e) => setField("zalo_personal_admin_thread", e.target.value)}
-                placeholder="Dùng khi acc chưa có admin riêng" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Loại thread admin chung</label>
-              <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-                value={String(cfg.zalo_personal_admin_thread_type || "0")}
-                onChange={(e) => setField("zalo_personal_admin_thread_type", e.target.value)}>
-                <option value="0">Cá nhân</option>
-                <option value="1">Nhóm</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">
-              Gửi admin chung bằng tài khoản (ownId acc A sở hữu thread admin)
-            </label>
-            <select
-              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-              value={String((config as any)?.zalo_personal_admin_send_account || "")}
-              onChange={(e) => setField("zalo_personal_admin_send_account", e.target.value)}
-            >
-              <option value="">— Acc mặc định / acc đầu —</option>
-              {zalopAccounts.map((id) => (
-                <option key={id} value={id}>{id}</option>
-              ))}
-            </select>
-          </div>
-          <p className="text-[10px] text-muted-foreground">
-            Admin riêng theo ownId → gửi bằng acc đó. Admin chung → gửi bằng acc chọn ở trên.
-          </p>
+          <ChannelActivityPanel platform="zalop" title="Zalo Cá Nhân — hoạt động gần đây & blacklist (theo acc)" />
           </div>
         )}
 
         {/* ── Zalo Cá Nhân — Tài khoản & QR / Webhook / Proxy / Danh bạ (từ trang /zalo cũ) ── */}
         {chTab === "zalop" && subTab === "zaccounts" && <ZaloPersonalPanel />}
+
+        {/* ── Danh bạ thread — setting + auto bot ── */}
+        {subTab === "directory" && (
+          <div className="space-y-3 mt-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold flex-1">
+                📒 Danh bạ — {chTab === "tg" ? "Telegram" : chTab === "zalo" ? "Zalo Bot" : "Zalo Cá Nhân"}
+              </p>
+              <Button type="button" variant="outline" size="sm" className="h-8 text-xs"
+                disabled={dirLoading} onClick={() => void loadDirectory()}>
+                {dirLoading ? "Đang tải…" : "Làm mới"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Chỉ hiện mục <b>bạn đã đồng ý lưu</b> (trả lời <code>có</code> khi báo
+              chat mới) hoặc đã thêm trong <b>Admin #N</b> / <b>Lọc thread</b>.
+              Tin lạ không tự vào danh bạ. 4 cột: bot · Thread ID · loại · tên.
+            </p>
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40 text-left text-[10px] text-muted-foreground">
+                    <th className="px-2 py-1.5 font-medium">Bot / Acc</th>
+                    <th className="px-2 py-1.5 font-medium">Thread ID</th>
+                    <th className="px-2 py-1.5 font-medium">Loại</th>
+                    <th className="px-2 py-1.5 font-medium">Tên</th>
+                    <th className="px-2 py-1.5 font-medium">Nguồn</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dirRows.length === 0 && !dirLoading && (
+                    <tr>
+                      <td colSpan={5} className="px-2 py-4 text-center text-muted-foreground italic">
+                        Chưa có mục nào — cấu hình Admin / Lọc thread, hoặc chờ bot nhận tin.
+                      </td>
+                    </tr>
+                  )}
+                  {dirRows.map((r) => {
+                    const src = (r.sources || []).map((s) => (
+                      s === "admin" ? "Admin"
+                        : s === "filter" ? "Lọc"
+                          : s === "approved" ? "Đã duyệt"
+                            : s
+                    )).join(" · ");
+                    return (
+                      <tr key={`${r.bot_id}|${r.thread_id}`}
+                        className="border-b border-border/60 hover:bg-muted/20">
+                        <td className="px-2 py-1.5 max-w-[12rem]">
+                          <div className="font-medium truncate" title={r.bot_label || r.bot_id}>
+                            {r.bot_label || r.bot_id || "—"}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-[11px] break-all max-w-[12rem]">
+                          {r.thread_id}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          {r.kind === "group" ? "Nhóm" : "Cá nhân"}
+                        </td>
+                        <td className="px-2 py-1.5 max-w-[12rem]">
+                          <span className="truncate block" title={r.name || ""}>
+                            {r.name || <span className="text-muted-foreground italic">—</span>}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-[10px] text-muted-foreground whitespace-nowrap">
+                          {src || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {dirRows.length} mục · Nguồn: Admin / Lọc (Settings) · Đã duyệt
+              (đồng ý khi báo 💬 chat mới).
+            </p>
+          </div>
+        )}
 
         {/* ── Lọc chức năng theo thread — RIÊNG kênh đang chọn ── */}
         {subTab === "filter" && (
@@ -935,20 +1695,15 @@ export function TelegramCloudflareCard() {
             🎚️ Lọc chức năng theo thread — {chTab === "tg" ? "Telegram" : chTab === "zalo" ? "Zalo Bot" : "Zalo Cá Nhân"}
           </p>
           <p className="text-[10px] text-muted-foreground">
-            Giới hạn chức năng AI cho từng khung chat, THEO TỪNG BOT — vì cùng 1 Chat
-            ID nhưng ở bot khác nhau là khác nhau. Chọn bot rồi nhập Chat ID; chọn
-            &quot;· mọi bot&quot; = áp cho mọi bot cùng nền tảng. Chat KHÔNG có trong
-            danh sách = cho phép tất cả. Tích nhóm nào = chỉ cho phép nhóm đó; không
-            tích nhóm nào = chặn hết chức năng (chỉ chat). Với NHÓM: thêm bộ lọc
-            &quot;bắt buộc tag&quot; và tầng lọc theo User ID (mỗi user tick tập con
-            quyền của nhóm) ngay dưới mỗi thread. Mỗi thread còn có 🔗 chuyển tiếp
-            webhook (HA / n8n / URL bất kỳ): tích ở thread → mọi tin chuyển về URL của
-            thread, từng user chỉ bật/tắt; không tích ở thread → từng user tự bật +
-            cài URL riêng (mỗi người một webhook).
+            Giới hạn chức năng AI cho từng khung chat, THEO TỪNG BOT. Chọn bot → nhập
+            Thread/Chat ID → <b>Nhận diện</b> (tên + loại) hoặc <b>gõ tên tay</b> nếu
+            API không trả. Chat KHÔNG có trong danh sách = cho phép tất cả. NHÓM: lọc
+            tag + User ID (Nhận diện / gõ tên tương tự). 🔗 Webhook HA/n8n theo thread
+            hoặc từng user.
           </p>
           {filterRows.filter((r) => r.botKey === chTab || r.botKey.startsWith(`${chTab}:`)).map((row) => (
             <div key={row.id} className="rounded-md border border-border p-2 space-y-2">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Select
                   value={row.botKey}
                   onValueChange={(value) => setFilterField(row.id, { botKey: value })}
@@ -964,9 +1719,17 @@ export function TelegramCloudflareCard() {
                 </Select>
                 <Input
                   value={row.chatId}
-                  onChange={(e) => setFilterField(row.id, { chatId: e.target.value })}
-                  placeholder="Chat ID (vd: 123456789)"
-                  className="flex-1"
+                  onChange={(e) => setFilterField(row.id, {
+                    chatId: e.target.value,
+                    // Đổi ID → xóa tên cũ (cần nhận diện / gõ lại)
+                    name: e.target.value.trim() === row.chatId.trim() ? row.name : "",
+                  })}
+                  placeholder={
+                    chTab === "zalop" || chTab === "zalo"
+                      ? "Thread ID (userId / groupId)"
+                      : "Chat ID (vd: 123456789)"
+                  }
+                  className="flex-1 min-w-[10rem] font-mono text-xs"
                 />
                 <select
                   className="rounded-md border border-border bg-background px-2 text-xs h-9 shrink-0"
@@ -977,9 +1740,31 @@ export function TelegramCloudflareCard() {
                   <option value="group">Nhóm</option>
                   <option value="user">Cá nhân</option>
                 </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 text-[11px]"
+                  disabled={filterResolving === `tf-${row.id}` || !row.chatId.trim()}
+                  onClick={() => void resolveFilterThread(row)}
+                  title="Nhận diện tên + loại (Bot API / zca-js). Fail → gõ tên tay"
+                >
+                  {filterResolving === `tf-${row.id}` ? "…" : "Nhận diện"}
+                </Button>
                 <Button type="button" variant="ghost" size="sm" onClick={() => removeFilterRow(row.id)}>
                   Xóa
                 </Button>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">
+                  Tên hiển thị (tự điền sau Nhận diện — hoặc gõ tay)
+                </label>
+                <Input
+                  value={row.name || ""}
+                  onChange={(e) => setFilterField(row.id, { name: e.target.value })}
+                  placeholder="Vd: Nhóm gia đình / Nguyễn Văn A"
+                  className="h-8 text-xs"
+                />
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1">
                 {FUNCTION_GROUPS.map(([key, label]) => (
@@ -1070,18 +1855,38 @@ export function TelegramCloudflareCard() {
                 </p>
                 {row.users.map((u) => (
                   <div key={u.id} className="rounded bg-muted/40 p-1.5 space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Input
                         value={u.userId}
-                        onChange={(e) => setUserField(row.id, u.id, { userId: e.target.value })}
+                        onChange={(e) => setUserField(row.id, u.id, {
+                          userId: e.target.value,
+                          name: e.target.value.trim() === u.userId.trim() ? u.name : "",
+                        })}
                         placeholder="User ID (gõ /id trong nhóm để lấy)"
-                        className="h-7 text-xs flex-1"
+                        className="h-7 text-xs font-mono flex-1 min-w-[8rem]"
                       />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] shrink-0"
+                        disabled={filterResolving === `tfu-${row.id}-${u.id}` || !u.userId.trim()}
+                        onClick={() => void resolveFilterUser(row, u)}
+                        title="Nhận diện tên user. Fail → gõ tên tay"
+                      >
+                        {filterResolving === `tfu-${row.id}-${u.id}` ? "…" : "Nhận diện"}
+                      </Button>
                       <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
                         onClick={() => removeUserRow(row.id, u.id)}>
                         Xóa
                       </Button>
                     </div>
+                    <Input
+                      value={u.name || ""}
+                      onChange={(e) => setUserField(row.id, u.id, { name: e.target.value })}
+                      placeholder="Tên user (tự điền / gõ tay)"
+                      className="h-7 text-xs"
+                    />
                     <div className="flex flex-wrap gap-x-3 gap-y-1">
                       {FUNCTION_GROUPS.filter(([key]) => row.groups.includes(key)).map(([key, label]) => (
                         <label key={key}

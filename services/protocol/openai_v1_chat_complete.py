@@ -178,13 +178,23 @@ def image_result_content(result: dict[str, Any]) -> str:
     return str(result.get("message") or "Image generation completed.")
 
 
-def _adapter_image_chat(model: str, prompt: str, n: int) -> str | None:
+def _adapter_image_chat(
+    model: str,
+    prompt: str,
+    n: int,
+    images: list[tuple[bytes, str, str]] | None = None,
+) -> str | None:
     """Bridge chat-image requests to the /v1/images/generations adapter path.
 
     Models with a dedicated image adapter (flow/, gemini-image/, sdwebui/…)
     never worked through the ChatGPT/Codex account pool below — the pool only
     speaks the ChatGPT web / codex image flows. Returns the chat markdown
     content, or None when the model belongs to the pool.
+
+    When ``images`` is non-empty (img2img / edit), they are passed as body.images
+    so adapters that support reference images (gemini-image, custom_openai_image,
+    flow if solver accepts) can use them. Adapters that ignore images still run
+    text→image with the prompt alone.
     """
     try:
         route = backend_router.route(model)
@@ -197,8 +207,22 @@ def _adapter_image_chat(model: str, prompt: str, n: int) -> str | None:
     # Absolute URLs: the agent/telegram consumers download the image over HTTP,
     # so a bare "/images/…" path is unusable for them.
     base = str(config.base_url or "").strip().rstrip("/") or "http://127.0.0.1:80"
-    result = imgen.handle({"model": model, "prompt": prompt, "n": n,
-                           "response_format": "url", "base_url": base})
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "n": n,
+        "response_format": "url",
+        "base_url": base,
+    }
+    # Img2img: pass raw (bytes, filename, mime) for adapter edit paths
+    if images:
+        body["images"] = list(images)
+        # Hint for adapters that distinguish text2img vs edit
+        body["extra_body"] = {
+            **(body.get("extra_body") if isinstance(body.get("extra_body"), dict) else {}),
+            "has_reference_image": True,
+        }
+    result = imgen.handle(body)
     if not isinstance(result, dict):
         return None
     def _abs(u: str) -> str:
@@ -208,12 +232,22 @@ def _adapter_image_chat(model: str, prompt: str, n: int) -> str | None:
              if isinstance(item, dict) and item.get("url")]
     if links:
         return "\n\n".join(links)
+    # b64_json responses
+    b64_links = []
+    for i, item in enumerate(result.get("data") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        b64 = item.get("b64_json")
+        if b64:
+            b64_links.append(f"![image_{i}](data:image/png;base64,{b64})")
+    if b64_links:
+        return "\n\n".join(b64_links)
     return str(result.get("message") or "Image generation completed but no images returned.")
 
 
 def image_chat_response(body: dict[str, Any]) -> dict[str, Any]:
     model, prompt, n, images = chat_image_args(body)
-    content = _adapter_image_chat(model, prompt, n)
+    content = _adapter_image_chat(model, prompt, n, images)
     if content is not None:
         return completion_response(model, content)
     result = collect_image_outputs(stream_image_outputs_with_pool(ConversationRequest(
@@ -228,7 +262,7 @@ def image_chat_response(body: dict[str, Any]) -> dict[str, Any]:
 
 def image_chat_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     model, prompt, n, images = chat_image_args(body)
-    content = _adapter_image_chat(model, prompt, n)
+    content = _adapter_image_chat(model, prompt, n, images)
     if content is not None:
         cid = f"chatcmpl-{uuid.uuid4().hex}"
         ts = int(time.time())
@@ -554,12 +588,35 @@ def _verbalize_result(result):
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Wrapper: lớp ký ức OpenMemory (mặc định TẮT) bọc ngoài flow chat chính.
+    """Wrapper: privacy gate → memory → flow chat chính.
 
-    prepare() recall + inject ký ức liên quan vào messages; capture() lưu lượt
-    chat sau khi có response (tee stream, thread nền). Mọi lỗi memory đều nuốt
-    — flow chatgpt/gemini/claude/HA không đổi khi memory tắt hoặc chết.
+    Privacy (P0): redact MK/token/PII trước khi messages chạm model/log/memory.
+    prepare() recall + inject ký ức; capture() lưu lượt sau response.
     """
+    # Re-bind request_id bag on this worker thread (LoggedCall runs via threadpool)
+    try:
+        from services import request_context as rc
+        rid = str((body or {}).get("_request_id") or "").strip()
+        if rid:
+            rc.begin(rid)
+    except Exception:
+        pass
+    # P0/P1 — privacy gate (never send plaintext secrets to LLM)
+    try:
+        from services.privacy_gate import apply_to_body
+        body = apply_to_body(body if isinstance(body, dict) else {})
+    except Exception:
+        pass
+    # HA AI Task structured / json_object: inject schema prompt + post-enforce JSON
+    # (Codex/GMA often ignore native response_format.json_schema).
+    # Plain questions (no response_format) are NOT forced into JSON here.
+    try:
+        from services.protocol.response_format import inject_response_format_prompt, wants_structured_output
+        body = inject_response_format_prompt(body if isinstance(body, dict) else {})
+        if wants_structured_output(body if isinstance(body, dict) else None):
+            logger.info({"event": "structured_output_active", "has_response_format": True})
+    except Exception as _rf_exc:
+        logger.warning({"event": "response_format_inject_skip", "error": str(_rf_exc)[:200]})
     mem_ctx = None
     try:
         from services.memory_service import memory_service
@@ -579,6 +636,17 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
             result = _verbalize_result(result)
     except Exception:
         pass
+    # Enforce pure JSON for response_format json_schema / json_object
+    # and for HA camera vision prompts that need from_json (blueprint JSON mode).
+    try:
+        from services.protocol.response_format import (
+            enforce_response_format,
+            enforce_vision_json_if_needed,
+        )
+        result = enforce_response_format(result, body if isinstance(body, dict) else None)
+        result = enforce_vision_json_if_needed(result, body if isinstance(body, dict) else None)
+    except Exception as _rf_exc:
+        logger.warning({"event": "response_format_enforce_error", "error": str(_rf_exc)[:150]})
     return result
 
 
@@ -862,14 +930,50 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                 cands = ent_by_name[nf]
                 if area:
                     in_area = [c for c in cands if entity_area.get(c[0]) == area]
-                    if len(in_area) != 1:
-                        continue
-                    eid, dom, orig = in_area[0]
-                    out.append((service, {"name": orig, "area": area, "domain": [dom], "_eids": [eid]}))
-                elif len(cands) == 1:
+                    if len(in_area) == 1:
+                        eid, dom, orig = in_area[0]
+                        out.append((service, {"name": orig, "area": area, "domain": [dom], "_eids": [eid]}))
+                    elif len(in_area) > 1:
+                        # Multi-signal rank when several in same area
+                        try:
+                            from services.ha_intent_rank import pick_entity_among
+                            picked = pick_entity_among(
+                                seg, in_area, service=service, area_hint=area,
+                            )
+                        except Exception:
+                            picked = None
+                        if picked:
+                            eid, dom, orig = picked
+                            out.append((service, {"name": orig, "area": area, "domain": [dom], "_eids": [eid]}))
+                    continue
+                if len(cands) == 1:
                     eid, dom, orig = cands[0]
                     out.append((service, {"name": orig, "domain": [dom], "_eids": [eid]}))
-                # duplicate name + no area → ambiguous → skip
+                elif len(cands) > 1:
+                    # duplicate name + no area → multi-signal rank (assist-canonicalizer style)
+                    try:
+                        from services.ha_intent_rank import rank_candidates
+                        soft_area = _area_in(seg) or ""
+                        labeled = []
+                        for eid, dom, orig in cands:
+                            ar = entity_area.get(eid) or ""
+                            labeled.append((f"{orig} {ar}".strip(), (eid, dom, orig)))
+                        hit = rank_candidates(
+                            " ".join(seg) + (" " + soft_area if soft_area else ""),
+                            labeled,
+                            service=service,
+                        )
+                        picked = hit.payload if hit else None
+                    except Exception:
+                        picked = None
+                    if picked:
+                        eid, dom, orig = picked
+                        ar = entity_area.get(eid)
+                        args = {"name": orig, "domain": [dom], "_eids": [eid]}
+                        if ar:
+                            args["area"] = ar
+                        out.append((service, args))
+                # still ambiguous → skip
             return out
         # Generic device-class + area (whole class in an area); hoặc + từ "tất cả"
         # → toàn bộ class ("tắt hết đèn" → tắt mọi light, không cần area).
@@ -1539,10 +1643,18 @@ def _ha_local_status(messages: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _ha_local_weather(messages: list[dict[str, Any]]) -> str | None:
+def _ha_local_weather(
+    messages: list[dict[str, Any]],
+    *,
+    keep_units: bool = False,
+) -> str | None:
     """Answer weather questions from the AccuWeather (or any exposed weather.*)
     entity in HA — accurate for the user's location, no broken geocode, no model
-    guessing. General → condition+temp+humidity(+rain); specific → AQI/UV/wind."""
+    guessing. General → condition+temp+humidity(+rain); specific → AQI/UV/wind.
+
+    keep_units=True: giữ °C/% (chat / AI text / agent).
+    keep_units=False: văn xuôi TTS ("30 độ", "79 phần trăm") cho HA giọng nói.
+    """
     last_user = -1
     for i, m in enumerate(messages):
         if isinstance(m, dict) and m.get("role") == "user":
@@ -1650,7 +1762,9 @@ def _ha_local_weather(messages: list[dict[str, Any]]) -> str | None:
         if mc:
             return f"{loc}: {mc}."
 
-    # General weather report — CÂU VĂN XUÔI cho giọng nói (không °C/%/ký tự lạ).
+    # General weather report.
+    # keep_units=True (chat / AI text / agent): giữ °C, % — không đổi sang văn xuôi TTS.
+    # keep_units=False (HA Assist giọng nói / default): "30 độ", "79 phần trăm".
     def _r(x):
         try:
             return str(round(float(x)))
@@ -1661,9 +1775,9 @@ def _ha_local_weather(messages: list[dict[str, Any]]) -> str | None:
     hum = a.get("humidity")
     out = f"Thời tiết {loc} hiện {cond}" if cond else f"Thời tiết {loc}"
     if temp is not None:
-        out += f", khoảng {_r(temp)} độ"
+        out += f", khoảng {_r(temp)}°C" if keep_units else f", khoảng {_r(temp)} độ"
     if hum is not None:
-        out += f", độ ẩm {_r(hum)} phần trăm"
+        out += f", độ ẩm {_r(hum)}%" if keep_units else f", độ ẩm {_r(hum)} phần trăm"
     out = out.rstrip(", ") + "."
     uv_s = sens.get(f"sensor.{prefix}_uv_index")
     uv = uv_s.get("state") if uv_s else None
@@ -1869,6 +1983,10 @@ def _wants_verbalize(model: str | None, messages: list[dict[str, Any]]) -> bool:
 
     - tên chứa ':tts'/':voice'/':vanxuoi'  -> CÓ (ép văn xuôi).
     - tên chứa ':raw'/':text'/':chat'  -> KHÔNG (giữ ký tự, vd combo riêng cho pipeline gõ chữ).
+    - **combo** (vd ``AI text`` = [cx/auto:text, gma/auto:text]): nếu MỌI bước
+      có marker giữ ký tự (:text/:raw/…) và KHÔNG có :tts → KHÔNG verbalize.
+      (Trước đây chỉ nhìn tên combo ``AI text`` — thiếu ``:text`` → vẫn verbalize
+      dù sub-model đã gắn :text.)
     - không có dấu hiệu             -> mặc định: LUÔN LÀ CÓ (để đảm bảo HA đọc được dù user có đổi system prompt).
     """
     import re
@@ -1882,10 +2000,46 @@ def _wants_verbalize(model: str | None, messages: list[dict[str, Any]]) -> bool:
     # Model TTS/voice thường khác vẫn verbalize như cũ.
     try:
         from services.config import config as _c
-        if _strip_marker(model) in (_c.data.get("pipeline_models") or {}):
+        data = _c.data if hasattr(_c, "data") else _c.get()
+        if _strip_marker(model) in (data.get("pipeline_models") or {}):
             return False
+        # Combo models: suy ra từ TỪNG BƯỚC (cx/auto:text…), không chỉ tên combo.
+        combo_keep = _combo_wants_keep_literal(model, data.get("combo_models") or {})
+        if combo_keep is not None:
+            return not combo_keep  # keep_literal True → verbalize False
     except Exception:
         pass
+    return True
+
+
+def _combo_wants_keep_literal(model: str | None, combos: dict) -> bool | None:
+    """None = không phải combo / không rõ. True = mọi bước :text/:raw… → giữ ký tự.
+    False = combo có :tts hoặc bước không marker giữ ký tự → verbalize (mặc định TTS)."""
+    import re
+    if not model or not isinstance(combos, dict) or not combos:
+        return None
+    name = str(model).strip().lower()
+    steps = None
+    for k, v in combos.items():
+        if str(k).strip().lower() == name:
+            steps = v
+            break
+    if not isinstance(steps, list) or not steps:
+        return None
+    keep_re = re.compile(r"[:#](raw|text|chat|kytu|symbol)\b", re.I)
+    tts_re = re.compile(r"[:#](tts|voice|vanxuoi)\b", re.I)
+    any_step = False
+    for s in steps:
+        ss = str(s or "")
+        if not ss.strip():
+            continue
+        any_step = True
+        if tts_re.search(ss):
+            return False  # có bước TTS → verbalize
+        if not keep_re.search(ss):
+            return False  # bước không :text → không coi combo "giữ ký tự"
+    if not any_step:
+        return None
     return True
 
 
@@ -1979,7 +2133,7 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
             logger.warning({"event": "ha_canonical_exec_failed", "error": str(exc)})
         else:
             return "Đã thực hiện xong lệnh điều khiển thiết bị.", True
-    for fn in (_ha_local_query, _ha_local_status, _ha_local_lunar, _ha_local_weather):
+    for fn in (_ha_local_query, _ha_local_status, _ha_local_lunar):
         try:
             r = fn(messages)
         except Exception as exc:
@@ -1988,6 +2142,15 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
                             "fn": fn.__name__, "error": str(exc)[:150]})
         if r and isinstance(r, str) and r.strip():
             return r.strip(), False
+    # Bot chat (Tele/Zalo): giữ °C/% — HA Assist giọng nói dùng RT1 + :tts riêng.
+    try:
+        r = _ha_local_weather(messages, keep_units=True)
+    except Exception as exc:
+        r = None
+        logger.warning({"event": "ha_bot_fastpath_error",
+                        "fn": "_ha_local_weather", "error": str(exc)[:150]})
+    if r and isinstance(r, str) and r.strip():
+        return r.strip(), False
     return None, False
 
 
@@ -1995,15 +2158,25 @@ def _collect_fastpath_facts(messages: list[dict[str, Any]]) -> str:
     """Run the READ-ONLY HA fast-paths and return their facts joined, for the
     agent to phrase naturally. Only pulls data (date/lunar, weather, sensor &
     device status) — never the control/confirm fast-paths (those act on the
-    home). Each helper returns None when it doesn't apply, so this stays cheap."""
+    home). Each helper returns None when it doesn't apply, so this stays cheap.
+
+    Weather/sensor facts dùng keep_units=True (giữ °C/%) — agent chat/Tele/Zalo
+    gõ chữ, không phải TTS Assist.
+    """
     facts: list[str] = []
-    for fn in (_ha_local_lunar, _ha_local_weather, _ha_local_status, _ha_local_query):
+    for fn in (_ha_local_lunar, _ha_local_status, _ha_local_query):
         try:
             r = fn(messages)
         except Exception:
             r = None
         if r and isinstance(r, str) and r.strip():
             facts.append(r.strip())
+    try:
+        r = _ha_local_weather(messages, keep_units=True)
+    except Exception:
+        r = None
+    if r and isinstance(r, str) and r.strip():
+        facts.append(r.strip())
     # De-dup while preserving order (lunar + status can overlap on dates).
     seen: set[str] = set()
     uniq = [f for f in facts if not (f in seen or seen.add(f))]
@@ -2029,6 +2202,12 @@ def notify_error_tg(where: str, model: str, error: str, user_text: str = "") -> 
         q = (user_text or "").strip().replace("\n", " ")
         if len(q) > 220:
             q = q[:220] + "…"
+        try:
+            from services.privacy_gate import scrub_for_log
+            q = scrub_for_log(q)
+            error = scrub_for_log(error or "")
+        except Exception:
+            pass
         msg = ("⚠️ chatgpt2api LỖI\n"
                f"• Chỗ: {where}\n"
                f"• Model/combo: {model}\n"
@@ -2407,8 +2586,9 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
 
     # RT1 weather fast-path: read the AccuWeather/HA weather entity directly →
     # accurate for the user's location (no broken geocode), no model guessing.
+    # keep_units khi model :text / combo AI text (voice=False).
     try:
-        _wea = None if _gen_task else _ha_local_weather(messages)
+        _wea = None if _gen_task else _ha_local_weather(messages, keep_units=not voice)
     except Exception as exc:
         _wea = None
         logger.warning({"event": "ha_local_weather_error", "error": str(exc)[:150]})
@@ -2628,15 +2808,33 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                         last_error = "payload exceeds ChatGPT Free 45KB limit"
                         continue
 
-                logger.info({"event": "combo_try", "combo": model, "provider": route.provider, "model": route.model})
-                
+                logger.info({
+                    "event": "combo_try",
+                    "combo": model,
+                    "provider": route.provider,
+                    "model": route.model,
+                    "is_vision": bool(is_vision_request),
+                    "structured": bool(
+                        body.get("_response_format_meta")
+                        or body.get("response_format")
+                        or body.get("_structured_output")
+                    ),
+                })
+
                 result = _dispatch(route, messages_for_route, tools_with_mcp, tool_choice, body)
                 # Execute MCP tools server-side for combo too
                 if not isinstance(result, dict):
                     result = _wrap_mcp_stream(result, messages_for_route, route, body)
                 elif isinstance(result, dict):
                     result = _execute_mcp_tools_in_response(messages_for_route, result, route, body)
-                result = _maybe_strip_markdown(result, messages_for_route, force=ha_context_injected or bool(body.get("_is_ha_request")))
+                # Do NOT strip markdown/italics when client asked for JSON
+                # (response_format) — underscore rules mangle humans_detected keys.
+                _struct = bool(body.get("_response_format_meta") or body.get("response_format") or body.get("_structured_output"))
+                result = _maybe_strip_markdown(
+                    result,
+                    messages_for_route,
+                    force=(ha_context_injected or bool(body.get("_is_ha_request"))) and not _struct,
+                )
                 result = _maybe_verbalize(result, voice)
                 model_cooldown.record_success("combo:" + model, route.model)
                 provider_circuit.record_success(route.provider)
@@ -2730,7 +2928,12 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         import json
         logger.info({"event": "debug_final_result", "result": json.dumps(result, ensure_ascii=False)[:2000]})
 
-    result = _maybe_strip_markdown(result, messages, force=ha_context_injected or bool(body.get("_is_ha_request")))
+    _struct = bool(body.get("_response_format_meta") or body.get("response_format") or body.get("_structured_output"))
+    result = _maybe_strip_markdown(
+        result,
+        messages,
+        force=(ha_context_injected or bool(body.get("_is_ha_request"))) and not _struct,
+    )
     result = _maybe_verbalize(result, voice)
     try:
         import json
@@ -4297,9 +4500,45 @@ def _strip_artifacts_inline(text: str) -> str:
     return out
 
 
+def _looks_like_json_payload(text: str) -> bool:
+    """True when the model returned structured JSON (HA vision / automation).
+
+    HA forces plain-text markdown stripping for Conversation API. That is right
+    for voice answers (`**tắt đèn**`) but wrong for camera analysis that must
+    stay valid JSON — italic-underscore rules and similar can mangle keys like
+    ``humans_detected`` or leave HA structured-data parsers with empty defaults.
+    """
+    s = (text or "").strip()
+    if not s:
+        return False
+    # fenced ```json ... ```
+    if s.startswith("```"):
+        body = s.strip("`").lstrip()
+        if body.lower().startswith("json"):
+            body = body[4:].lstrip()
+        s = body
+    # HA vision / AI Task field names — never run italic-underscore strip
+    # (would turn humans_detected → "humans detected" and break JSON keys)
+    if "humans_detected" in s or "animals_detected" in s:
+        return True
+    if re.search(r'"\w+_\w+"\s*:', s):
+        return True
+    if not (s.startswith("{") or s.startswith("[")):
+        return False
+    # Generic JSON object / array
+    if s.startswith("{") and (":" in s) and ("\"" in s or "'" in s):
+        return True
+    if s.startswith("["):
+        return True
+    return False
+
+
 def _strip_markdown_inline(text: str) -> str:
     if not text:
         return text
+    # Preserve JSON / snake_case structured payloads for HA AI Task
+    if _looks_like_json_payload(text):
+        return _strip_artifacts_inline(text)
     out = _strip_artifacts_inline(text)
     out = _MD_BOLD.sub(r"\1", out)
     out = _MD_BOLD_UNDER.sub(r"\1", out)
@@ -4868,7 +5107,8 @@ def _handle_openai_oauth_chat(
             # On 401/expired → skip this token, try next
             if any(x in err_lower for x in ("expired", "401")):
                 continue
-            # On usage limit → codext-style: park resume prompt, demote, try next account
+            # On usage limit → codext-style: park resume prompt, demote, try next account.
+            # NOT a token-refresh case (probe: refresh JWT still 429 same resets_at).
             if any(x in err_lower for x in ("usage_limit", "quota", "capacity")):
                 usage_limit_hits += 1
                 # Park a recovery prompt for this account (codext-style)
@@ -4887,6 +5127,7 @@ def _handle_openai_oauth_chat(
                     pass
                 # Account is already demoted + marked limited in the provider,
                 # so the next get_token_for_request() will pick the NEXT account.
+                # Do not refresh_token here — quota ≠ expired JWT.
                 continue
             # On 400/429 → try next token
             if any(x in err_lower for x in ("400", "429", "rate")):

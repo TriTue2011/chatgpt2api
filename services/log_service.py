@@ -230,6 +230,106 @@ def _next_item(items):
         return False, None
 
 
+# Endpoints that land in the Agent runs journal (chat + vision + image + video).
+_JOURNAL_ENDPOINTS = frozenset({
+    "/v1/chat/completions",
+    "/v1/responses",
+    "/v1/messages",
+    "/v1/images/generations",
+    "/v1/images/edits",
+    "/api/image-tasks/generations",
+    "/api/image-tasks/edits",
+    "/v1/video/generations",
+})
+
+# Short kind labels stored in run.hint / meta.kind for the Agent runs UI.
+KIND_CHAT = "chat"
+KIND_VISION = "vision"
+KIND_IMAGE = "image_gen"
+KIND_VIDEO = "video_gen"
+KIND_AGENT = "agent"
+
+_KIND_LABELS = {
+    KIND_CHAT: "Chat",
+    KIND_VISION: "Phân tích ảnh",
+    KIND_IMAGE: "Tạo ảnh",
+    KIND_VIDEO: "Tạo video",
+    KIND_AGENT: "Agent",
+}
+
+
+def kind_label(kind: str) -> str:
+    return _KIND_LABELS.get(str(kind or "").strip(), str(kind or "") or "—")
+
+
+def detect_vision_messages(messages: object) -> bool:
+    """True when OpenAI-style messages include image parts (vision request)."""
+    if not isinstance(messages, list):
+        return False
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                ptype = str(part.get("type") or "").lower()
+                if (
+                    ptype in {"image_url", "image", "input_image"}
+                    or "image" in ptype
+                    or part.get("image_url")
+                    or part.get("image")
+                ):
+                    return True
+        elif isinstance(content, dict):
+            ptype = str(content.get("type") or "").lower()
+            if "image" in ptype or content.get("image_url") or content.get("image"):
+                return True
+    return False
+
+
+def endpoint_run_kind(endpoint: str, *, has_vision: bool = False) -> str:
+    """Map gateway endpoint → journal kind (chat / vision / image_gen / video_gen)."""
+    ep = str(endpoint or "")
+    if ep in {"/v1/images/generations", "/v1/images/edits",
+              "/api/image-tasks/generations", "/api/image-tasks/edits"}:
+        return KIND_IMAGE
+    if ep in {"/v1/video/generations"}:
+        return KIND_VIDEO
+    if has_vision:
+        return KIND_VISION
+    if ep in {"/v1/chat/completions", "/v1/responses", "/v1/messages"}:
+        return KIND_CHAT
+    return KIND_CHAT
+
+
+def resolve_source_kind(
+    *,
+    identity: dict[str, object] | None = None,
+    user_agent: str = "",
+    source_kind: str = "",
+    is_internal: bool = False,
+) -> str:
+    """ha | openapi | web | agent_internal — shared by chat / image / video routes."""
+    if source_kind:
+        return str(source_kind)
+    if is_internal:
+        return "agent_internal"
+    ua = (user_agent or "").lower()
+    if (
+        "homeassistant" in ua
+        or "hass.io" in ua
+        or "asyncopenai" in ua.replace(" ", "")
+        or "openai/python" in ua
+    ):
+        return "ha"
+    ident = identity or {}
+    if str(ident.get("id") or "") == "admin":
+        return "web"
+    return "openapi"
+
+
 @dataclass
 class LoggedCall:
     identity: dict[str, object]
@@ -238,9 +338,39 @@ class LoggedCall:
     summary: str
     started: float = field(default_factory=time.time)
     request_text: str = ""
+    # Source context for agent run journal (HA / OpenAPI / web)
+    client_host: str = ""
+    user_agent: str = ""
+    source_kind: str = ""  # ha | openapi | web | agent_internal | ""
+    skip_run_journal: bool = False
+    request_id: str = ""
+    # chat | vision | image_gen | video_gen — empty = auto-detect from endpoint
+    run_kind: str = ""
+    extra_meta: dict[str, Any] = field(default_factory=dict)
 
     async def run(self, handler, *args, sse: str = "openai"):
         from services.protocol.conversation import ImageGenerationError
+
+        # Cross-thread request bag (threadpool handlers can write dest account)
+        try:
+            from services import request_context as rc
+            self.request_id = rc.begin(self.request_id or "")
+            if self.source_kind or self.client_host or self.identity:
+                rc.set_source(
+                    request_id=self.request_id,
+                    kind=self.source_kind or "",
+                    account=str(self.identity.get("name") or self.identity.get("id") or ""),
+                    peer=self.client_host or "",
+                    user_id=str(self.identity.get("id") or ""),
+                    user_agent=(self.user_agent or "")[:160],
+                )
+            # Inject into first dict payload arg so worker thread re-binds
+            for a in args:
+                if isinstance(a, dict):
+                    a["_request_id"] = self.request_id
+                    break
+        except Exception:
+            pass
 
         try:
             result = await run_in_threadpool(handler, *args)
@@ -299,6 +429,7 @@ class LoggedCall:
         urls: list[str] = []
         failed = False
         self._stream_content_len = 0
+        self._stream_text_parts: list[str] = []
         try:
             for item in items:
                 urls.extend(_collect_urls(item))
@@ -308,7 +439,11 @@ class LoggedCall:
                     for c in choices:
                         delta = c.get("delta") or {}
                         content = delta.get("content") or ""
-                        self._stream_content_len += len(content)
+                        if content:
+                            self._stream_content_len += len(content)
+                            # Cap collected reply for journal (~2k)
+                            if sum(len(p) for p in self._stream_text_parts) < 2000:
+                                self._stream_text_parts.append(content)
                 yield item
         except Exception as exc:
             failed = True
@@ -339,6 +474,19 @@ class LoggedCall:
         collected_urls = [*(urls or []), *_collect_urls(result)]
         if collected_urls:
             detail["urls"] = list(dict.fromkeys(collected_urls))
+        if self.client_host:
+            detail["client_host"] = self.client_host
+        if self.source_kind:
+            detail["source_kind"] = self.source_kind
+        try:
+            from services import request_context as rc
+            dest = rc.get_dest(self.request_id)
+            if dest:
+                detail["dest_provider"] = dest.get("provider")
+                detail["dest_account"] = dest.get("account")
+                detail["dest_model"] = dest.get("model")
+        except Exception:
+            pass
         log_service.add(LOG_TYPE_CALL, f"{self.summary}{suffix}", detail)
 
         # Also log to usage tracker for dashboard stats
@@ -375,3 +523,239 @@ class LoggedCall:
             )
         except Exception:
             pass
+
+        # Agent / API run journal (HA + OpenAPI + web) — skip internal agent loops
+        try:
+            self._journal_run(result=result, status=status, error=error, detail=detail)
+        except Exception:
+            pass
+
+    def _journal_run(
+        self,
+        *,
+        result: object = None,
+        status: str = "success",
+        error: str = "",
+        detail: dict | None = None,
+    ) -> None:
+        if self.skip_run_journal:
+            return
+        # Chat + vision + image gen + video gen (+ agent tools via orchestrator)
+        ep = str(self.endpoint or "")
+        if ep not in _JOURNAL_ENDPOINTS:
+            return
+        try:
+            from services.agent import run_journal as rj
+        except Exception:
+            return
+        if not rj.is_enabled() or not rj.log_api_enabled():
+            return
+
+        kind = str(self.source_kind or "").strip()
+        if kind in {"agent_internal", "internal"}:
+            return
+        if not kind:
+            kind = resolve_source_kind(
+                identity=self.identity if isinstance(self.identity, dict) else {},
+                user_agent=self.user_agent or "",
+            )
+
+        run_kind = str(self.run_kind or "").strip() or endpoint_run_kind(ep)
+        reply = _journal_reply_text(result, self)
+        tools = _journal_tools_for_kind(run_kind, ep)
+
+        journal_status = "ok" if status == "success" else ("error" if status == "failed" else status)
+        dest_provider = ""
+        dest_account = ""
+        dest_model = ""
+        dest_trail: list = []
+        try:
+            from services import request_context as rc
+            d = rc.get_dest(self.request_id)
+            dest_provider = str(d.get("provider") or "")
+            dest_account = str(d.get("account") or "")
+            dest_model = str(d.get("model") or "")
+            dest_trail = rc.get_dest_trail(self.request_id)
+        except Exception:
+            pass
+
+        media = _journal_media_summary(result, detail)
+        groups = _groups_for_tools(tools)
+        meta: dict[str, Any] = {
+            "endpoint": ep,
+            "kind": run_kind,
+            "kind_label": kind_label(run_kind),
+            "key_id": self.identity.get("id"),
+            "key_name": self.identity.get("name"),
+            "user_agent": (self.user_agent or "")[:160],
+            "client_host": self.client_host or "",
+            "request_id": self.request_id or "",
+            "groups": groups,
+            "summary": self.summary or "",
+        }
+        if dest_trail:
+            meta["dest_trail"] = dest_trail
+        if media.get("urls"):
+            meta["urls"] = media["urls"]
+        if media.get("media_count"):
+            meta["media_count"] = media["media_count"]
+        if self.extra_meta:
+            try:
+                meta.update({k: v for k, v in self.extra_meta.items() if v is not None})
+            except Exception:
+                pass
+
+        user_id = f"{kind}_{self.identity.get('id') or 'anon'}"
+        if kind == "ha" and self.client_host:
+            user_id = f"ha_{self.client_host}"
+
+        # hint = run kind so UI can filter Chat / Vision / Image / Video
+        rj.log_run(
+            user_id=user_id,
+            user_text=self.request_text or "",
+            reply_text=reply,
+            model=str(self.model or ""),
+            hint=run_kind,
+            tools=tools,
+            steps=0,
+            duration_ms=int((time.time() - self.started) * 1000),
+            status=journal_status,
+            error=error or "",
+            meta=meta,
+            source_kind=kind,
+            source_account=str(self.identity.get("name") or self.identity.get("id") or ""),
+            source_peer=self.client_host or "",
+            dest_provider=dest_provider,
+            dest_account=dest_account,
+            dest_model=dest_model or str(self.model or ""),
+            request_id=self.request_id or "",
+            channel=kind if kind in {"ha", "openapi", "web"} else "",
+        )
+        # drop bag so store stays small
+        try:
+            from services import request_context as rc
+            rc.end(self.request_id)
+        except Exception:
+            pass
+
+
+def _journal_reply_text(result: object, call: "LoggedCall") -> str:
+    """Extract human-readable reply for journal (text chat or media summary)."""
+    reply = ""
+    if isinstance(result, dict):
+        try:
+            choices = result.get("choices") or []
+            if choices:
+                msg = (choices[0] or {}).get("message") or {}
+                content = msg.get("content")
+                if isinstance(content, str):
+                    reply = content
+                elif content is not None:
+                    reply = str(content)[:2000]
+        except Exception:
+            reply = ""
+        if not reply:
+            # image/video OpenAI-style: data[].url or b64
+            data = result.get("data")
+            if isinstance(data, list) and data:
+                urls = [str(i.get("url") or "") for i in data if isinstance(i, dict) and i.get("url")]
+                b64_n = sum(
+                    1 for i in data
+                    if isinstance(i, dict) and (i.get("b64_json") or i.get("b64"))
+                )
+                parts = []
+                if urls:
+                    parts.append(f"{len(urls)} URL: " + "; ".join(urls[:4]))
+                if b64_n:
+                    parts.append(f"{b64_n} ảnh (b64)")
+                if parts:
+                    reply = " · ".join(parts)
+            # some video adapters return video_url / url at top level
+            for key in ("video_url", "url", "output_url"):
+                if result.get(key) and not reply:
+                    reply = str(result.get(key))
+    if not reply:
+        parts = getattr(call, "_stream_text_parts", None) or []
+        reply = "".join(parts)
+    return reply
+
+
+def _journal_tools_for_kind(run_kind: str, endpoint: str) -> list[str]:
+    """Synthetic tool tags so Agent runs shows what kind of work happened."""
+    if run_kind == KIND_IMAGE:
+        if "edit" in endpoint:
+            return ["image_edit"]
+        return ["image_generations"]
+    if run_kind == KIND_VIDEO:
+        return ["video_generations"]
+    if run_kind == KIND_VISION:
+        return ["vision"]
+    if run_kind == KIND_CHAT:
+        return ["chat"]
+    return []
+
+
+def _journal_media_summary(result: object, detail: dict | None) -> dict[str, Any]:
+    urls: list[str] = []
+    if detail and detail.get("urls"):
+        raw = detail.get("urls") or []
+        if isinstance(raw, list):
+            urls.extend(str(u) for u in raw if u)
+    urls.extend(_collect_urls(result))
+    # de-dupe preserve order
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    media_count = len(uniq)
+    if isinstance(result, dict):
+        data = result.get("data")
+        if isinstance(data, list) and len(data) > media_count:
+            media_count = len(data)
+    return {"urls": uniq[:20], "media_count": media_count}
+
+
+def _groups_for_tools(tools: list[str]) -> list[str]:
+    """Map tool names → permission groups (🏠 Ảnh / Video / …) for UI chips."""
+    if not tools:
+        return []
+    # Lightweight map for API synthetic tools (no full capability registry needed)
+    synthetic = {
+        "chat": "chat",
+        "vision": "image",  # vision analysis shares the Ảnh family in HA filters
+        "image_generations": "image",
+        "image_edit": "image",
+        "video_generations": "video",
+        "generate_image": "image",
+        "generate_video": "video",
+        "generate_music": "music",
+        "library_media": "image",
+        "web_search": "web",
+        "read_webpage": "web",
+        "write_code": "code",
+        "home_status": "homeassistant",
+        "control_home": "homeassistant",
+        "remember": "memory",
+        "schedule": "schedule",
+        "use_skill": "skills",
+        "run_workflow": "skills",
+        "contacts": "contacts",
+        "speak_to_speaker": "tts_speaker",
+    }
+    groups: list[str] = []
+    try:
+        from services.agent.capabilities import group_of
+        for t in tools:
+            g = group_of(t)
+            if g == "_ungrouped":
+                g = synthetic.get(t, "")
+            if g and g not in groups:
+                groups.append(g)
+    except Exception:
+        for t in tools:
+            g = synthetic.get(t, "")
+            if g and g not in groups:
+                groups.append(g)
+    return groups

@@ -610,13 +610,47 @@ def stt_model_dir() -> Path | None:
 
 
 def stt_language() -> str:
-    """Ngôn ngữ mặc định của STT local: vi (Zipformer) | en (Parakeet)."""
-    v = str(_sub("stt").get("language") or "vi").strip().lower()
-    return v if v in {"vi", "en"} else "vi"
+    """Ngôn ngữ STT do chatgpt2api cấu hình (Settings → Giọng nói).
+
+    - ``vi``   — Zipformer tiếng Việt (mặc định; offline EN đã tắt)
+    - ``en``   — Parakeet English (chỉ khi ``stt.en_enabled: true``)
+    - ``auto`` — dual VI+EN khi en_enabled và đủ 2 model
+    """
+    v = str(_sub("stt").get("language") or "vi").strip().lower().replace("_", "-")
+    if v in {"auto", "mul", "multi", "und", "*"}:
+        # EN STT off → auto collapses to vi
+        if not stt_en_enabled():
+            return "vi"
+        return "auto"
+    if v.startswith("en"):
+        if not stt_en_enabled():
+            return "vi"
+        return "en"
+    if v.startswith("vi"):
+        return "vi"
+    return "vi"
+
+
+def stt_en_enabled() -> bool:
+    """Bật STT tiếng Anh (Parakeet). Mặc định **tắt** — offline EN chưa chuẩn.
+
+    Config: ``voice.stt.en_enabled: true`` để bật lại khi cần.
+    """
+    raw = _sub("stt").get("en_enabled")
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
 
 
 def stt_en_model_dir() -> Path | None:
-    """Thư mục model Parakeet-TDT tiếng Anh (tải bằng download_stt_en_model.py)."""
+    """Thư mục model Parakeet-TDT tiếng Anh (tải bằng download_stt_en_model.py).
+
+    Trả None khi ``stt.en_enabled`` tắt — mọi caller coi như không có STT EN.
+    """
+    if not stt_en_enabled():
+        return None
     d = str(_sub("stt").get("en_model_dir") or "").strip()
     base = Path(d) if d else STT_EN_DIR
     if not base.is_dir():
@@ -669,11 +703,70 @@ def wyoming_enabled() -> bool:
     return True if v is None else bool(v)
 
 
+def wyoming_mode() -> str:
+    """Chế độ Wyoming — luôn multi một cổng (pattern microsoft-stt/tts).
+
+    Giá trị ``locked`` còn đọc được nhưng **không** mở cổng thứ hai; production
+    chỉ lắng nghe ``wyoming_port()`` (10600). Giữ key để không phá config cũ.
+    """
+    m = str(_wy().get("mode") or "multi").strip().lower()
+    return m if m in {"multi", "locked"} else "multi"
+
+
 def wyoming_port() -> int:
-    try:
-        return int(_wy().get("port") or 10600)
-    except (TypeError, ValueError):
-        return 10600
+    """Cổng Wyoming multi duy nhất (mặc định 10600).
+
+    Ưu tiên ``.port``, rồi ``.vi_port`` (tương thích config cũ).
+    """
+    w = _wy()
+    for key in ("port", "vi_port"):
+        raw = w.get(key)
+        if raw not in (None, ""):
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+    return 10600
+
+
+def _lang_primary(language: str) -> str:
+    """Ngôn ngữ chính = phần trước dấu '-' (vi-vn-x-south / vi-en → vi; en → en)."""
+    return str(language or "").strip().lower().split("-", 1)[0]
+
+
+def wyoming_vi_port() -> int:
+    """Alias ``wyoming_port()`` — không còn cổng VI tách."""
+    return wyoming_port()
+
+
+def wyoming_en_port() -> int:
+    """Deprecated: multi chỉ còn 1 cổng — trả cùng ``wyoming_port()``.
+
+    Config ``.en_port`` bị bỏ qua (không mirror server).
+    """
+    return wyoming_port()
+
+
+def wyoming_en_voice() -> str:
+    """Giọng TTS mặc định cho CỔNG ANH khi client (HA) không gửi voice.
+
+    Ưu tiên config `.en_voice`; else giọng Kokoro đầu tiên đã tải; else giọng
+    Piper tag `en` đầu tiên đã tải; else vẫn trả id Kokoro mặc định (kể cả khi
+    model chưa tải) — **không bao giờ** rơi về giọng Việt (Piper/VieNeu). Engine
+    sẽ báo lỗi rõ «chưa tải Kokoro» thay vì đọc tiếng Việt trên cổng Anh.
+    """
+    explicit = str(_wy().get("en_voice") or "").strip()
+    if explicit:
+        return explicit
+    if kokoro_model_dir() is not None:
+        return f"{KOKORO_PREFIX}{KOKORO_VOICE_NAMES[0]}"
+    for v in voice_catalog():
+        if v.get("downloaded") and _lang_primary(str(v.get("language") or "")) == "en":
+            return str(v.get("id") or "")
+    # Không có giọng EN đã tải → vẫn ép id Kokoro (fail rõ ràng, không TTS Việt)
+    if KOKORO_VOICE_NAMES:
+        return f"{KOKORO_PREFIX}{KOKORO_VOICE_NAMES[0]}"
+    return ""
 
 
 # ── Media (file audio phát ra loa cần URL HTTP) ──────────────────────────────
@@ -746,12 +839,18 @@ def status() -> dict[str, Any]:
         },
         "wyoming_server": {
             "enabled": wyoming_enabled(),
+            "mode": wyoming_mode(),
+            # Một cổng multi (microsoft-stt/tts style). en_port = port (deprecated).
             "port": wyoming_port(),
+            "vi_port": wyoming_port(),
+            "en_port": wyoming_port(),
+            "en_voice": wyoming_en_voice(),
         },
         "stt": {
             "enabled": is_stt_enabled(),
             "backend": stt_backend(),
             "model_ready": stt_model_dir() is not None,
+            "en_enabled": stt_en_enabled(),
             "en_model_ready": stt_en_model_dir() is not None,
             "language": stt_language(),
             "sherpa_installed": has_local_stt(),

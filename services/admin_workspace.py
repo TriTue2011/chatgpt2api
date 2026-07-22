@@ -199,43 +199,197 @@ def list_bots_for_admin(platform: str, admin_chat_id: str) -> list[dict[str, str
     return out
 
 
-def admin_thread_ids(bot: dict | None) -> list[str]:
-    """All admin chat IDs for a bot entry (multi-admin)."""
+def normalize_admin_entry(x: object) -> dict[str, Any] | None:
+    """One admin row: {chat_id, name, kind, notify_enabled}."""
+    if isinstance(x, str):
+        cid = x.strip()
+        if not cid:
+            return None
+        return {
+            "chat_id": cid,
+            "name": "",
+            "kind": guess_chat_kind(cid),
+            "notify_enabled": True,
+        }
+    if not isinstance(x, dict):
+        return None
+    cid = str(x.get("chat_id") or x.get("id") or x.get("thread_id") or "").strip()
+    if not cid:
+        return None
+    kind = str(x.get("kind") or x.get("type") or "").strip().lower()
+    if kind in {"1", "group", "supergroup", "channel", "nhóm", "nhom"}:
+        kind = "group"
+    elif kind in {"0", "private", "user", "cá nhân", "ca nhan", "personal"}:
+        kind = "private"
+    else:
+        kind = guess_chat_kind(cid)
+    return {
+        "chat_id": cid,
+        "name": str(x.get("name") or x.get("title") or "").strip()[:128],
+        "kind": kind,
+        "ai_model": str(x.get("ai_model") or "").strip()[:128],
+        "notify_enabled": bool(x.get("notify_enabled", True)),
+        "account_log_enabled": bool(x.get("account_log_enabled", True)),
+        "newchat_alert_enabled": bool(x.get("newchat_alert_enabled", True)),
+        "ha_fastpath": bool(x.get("ha_fastpath", True)),
+        "fallback_enabled": bool(x.get("fallback_enabled", False)),
+        "emphasis_enabled": bool(x.get("emphasis_enabled", True)),
+        "emphasis_numbers": bool(x.get("emphasis_numbers", True)),
+        "emphasis_units": bool(x.get("emphasis_units", True)),
+        "emphasis_key_info": bool(x.get("emphasis_key_info", True)),
+        "emphasis_style": str(x.get("emphasis_style") or "bold").strip()[:16] or "bold",
+        "markdown_color": str(
+            x.get("markdown_color") or x.get("emphasis_color") or ""
+        ).strip().lower()[:16],
+        "markdown_size": str(
+            x.get("markdown_size") or x.get("emphasis_size") or x.get("text_size") or ""
+        ).strip().lower()[:16],
+    }
+
+
+def guess_chat_kind(chat_id: str) -> str:
+    """Heuristic without API: Telegram -100…/negative = group; else private.
+
+    Zalo thread IDs are opaque strings — default private until user/API sets kind.
+    """
+    s = str(chat_id or "").strip()
+    if not s:
+        return "private"
+    if s.startswith("-100") or (s.startswith("-") and s[1:].isdigit()):
+        return "group"
+    if s.isdigit() or (s.startswith("+") and s[1:].isdigit()):
+        return "private"
+    # Non-numeric (Zalo) — unknown; leave private as neutral default
+    return "private"
+
+
+def admin_entries(bot: dict | None) -> list[dict[str, Any]]:
+    """Structured multi-admin list (preferred over flat id list)."""
     if not isinstance(bot, dict):
         return []
-    ids: list[str] = []
-    # New: admin_threads list
-    raw = bot.get("admin_threads")
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    raw = bot.get("admin_entries")
     if isinstance(raw, list):
         for x in raw:
-            s = str(x).strip()
-            if s and s not in ids:
-                ids.append(s)
-    # Legacy single field
-    one = str(bot.get("admin_thread") or "").strip()
-    if one and one not in ids:
-        ids.append(one)
-    return ids
+            e = normalize_admin_entry(x)
+            if e and e["chat_id"] not in seen:
+                seen.add(e["chat_id"])
+                out.append(e)
+    # Migrate legacy flat lists
+    for src in (bot.get("admin_threads"), [bot.get("admin_thread")]):
+        if not isinstance(src, list):
+            continue
+        for x in src:
+            e = normalize_admin_entry(x)
+            if e and e["chat_id"] not in seen:
+                seen.add(e["chat_id"])
+                out.append(e)
+    return out
+
+
+def admin_thread_ids(bot: dict | None) -> list[str]:
+    """All admin chat IDs for a bot entry (multi-admin)."""
+    return [e["chat_id"] for e in admin_entries(bot)]
+
+
+def admin_ids_for_system_notify(bot: dict | None) -> list[str]:
+    """Admin threads that should receive system alerts (per-row notify_enabled)."""
+    return [e["chat_id"] for e in admin_entries(bot) if e.get("notify_enabled", True)]
+
+
+def admin_ids_for_account_log(bot: dict | None) -> list[str]:
+    """Admin threads that receive provider account logs."""
+    return [
+        e["chat_id"] for e in admin_entries(bot)
+        if e.get("notify_enabled", True) and e.get("account_log_enabled", True)
+    ]
+
+
+def admin_entry_for_chat(bot: dict | None, chat_id: str | int | None) -> dict | None:
+    """Find admin entry matching chat_id (exact string)."""
+    cid = str(chat_id or "").strip()
+    if not cid:
+        return None
+    for e in admin_entries(bot):
+        if str(e.get("chat_id") or "").strip() == cid:
+            return e
+    return None
+
+
+def ha_fastpath_for_chat(bot: dict | None, chat_id: str | int | None) -> bool:
+    """Per-admin HA when chat is admin thread; else bot-level flag."""
+    e = admin_entry_for_chat(bot, chat_id)
+    if e is not None:
+        return bool(e.get("ha_fastpath", True))
+    if isinstance(bot, dict):
+        return bool(bot.get("ha_fastpath", True))
+    return True
+
+
+def ai_model_for_chat(bot: dict | None, chat_id: str | int | None = None) -> str:
+    """Model AI: admin entry (nếu chat là admin) → bot.ai_model → rỗng."""
+    e = admin_entry_for_chat(bot, chat_id) if chat_id is not None else None
+    if e is not None:
+        m = str(e.get("ai_model") or "").strip()
+        if m:
+            return m
+    if isinstance(bot, dict):
+        return str(bot.get("ai_model") or "").strip()
+    return ""
+
+
+def fallback_admin_threads(bot: dict | None) -> list[str]:
+    """Admin chat_ids marked fallback_enabled (order preserved)."""
+    out: list[str] = []
+    for e in admin_entries(bot):
+        if not e.get("fallback_enabled"):
+            continue
+        cid = str(e.get("chat_id") or "").strip()
+        if cid and cid not in out:
+            out.append(cid)
+    return out
 
 
 def global_fallback_admins(platform: str) -> list[str]:
-    """Legacy single global admin only if bot has no per-bot admins."""
-    c = config.get()
-    if platform == "tg":
-        a = str(c.get("telegram_admin_thread") or "").strip()
-        return [a] if a else []
-    if platform == "zalo":
-        a = str(c.get("zalo_admin_thread") or "").strip()
-        return [a] if a else []
+    """Deprecated global fallback — always empty (per-bot fallback replaces it)."""
     return []
 
 
 def resolve_admins_for_bot(platform: str, bot: dict | None) -> list[str]:
-    """Admin threads to notify for this bot — multi, independent."""
-    ids = admin_thread_ids(bot)
-    if ids:
-        return ids
-    return global_fallback_admins(platform)
+    """Admin threads for this bot — multi, independent. No global fallback."""
+    return admin_thread_ids(bot)
+
+
+def find_bot_by_name(platform: str, name: str) -> dict | None:
+    """Match bot by label / getMe name / token prefix (case-insensitive)."""
+    want = str(name or "").strip().lower()
+    if not want:
+        return None
+    bots_key = (
+        "telegram_bots" if platform in {"tg", "telegram"}
+        else "zalo_bots" if platform in {"zalo", "zb"}
+        else ""
+    )
+    if not bots_key:
+        return None
+    try:
+        for b in (config.get().get(bots_key) or []):
+            if not isinstance(b, dict) or not b.get("enabled", True):
+                continue
+            tok = str(b.get("token") or "").strip()
+            bid = tok.split(":", 1)[0].strip() if tok else ""
+            label = str(b.get("label") or "").strip().lower()
+            if label and label == want:
+                return b
+            if bid and bid == want:
+                return b
+            # substring match on label
+            if label and want in label:
+                return b
+    except Exception:
+        pass
+    return None
 
 
 def format_bot_list(platform: str, admin_chat_id: str) -> str:
@@ -298,22 +452,39 @@ def start_save_prompt(platform: str, admin_chat_id: str, contact: dict[str, Any]
     })
     dn = str(contact.get("display_name") or "").strip()
     gn = str(contact.get("chat_name") or "").strip()
+    cid = str(contact.get("chat_id") or "").strip()
+    uid = str(contact.get("user_id") or "").strip()
+    bid = str(contact.get("bot_id") or "").strip()
     is_group = str(contact.get("kind") or "") == "group"
-    lines_info = []
-    if dn:
-        lines_info.append(f"• Tên người (nền tảng): **{dn}**")
-    else:
-        lines_info.append("• Tên người (nền tảng): *(trống)*")
+    phone = str(contact.get("bot_phone") or "").strip()
+    if platform in {"zalop", "zalo_personal"} and bid and not phone:
+        try:
+            from services.zalo_personal import get_accounts
+            for a in (get_accounts().get("accounts") or []):
+                if str(a.get("ownId") or "").strip() == bid:
+                    phone = str(a.get("phoneNumber") or "").strip()
+                    break
+        except Exception:
+            pass
+    lines_info = [
+        f"• Bot: **{bl}**" + (f" · SĐT `{phone}`" if phone else ""),
+        f"• Thread ID: `{cid}`" if cid else None,
+        f"• Loại: {'nhóm' if is_group else 'cá nhân'}",
+    ]
     if is_group:
-        if gn:
-            lines_info.append(f"• Tên nhóm: **{gn}**")
-        else:
-            lines_info.append("• Tên nhóm: *(trống)*")
+        lines_info.append(f"• Tên nhóm: **{gn}**" if gn else "• Tên nhóm: *(chưa nhận diện)*")
+        if uid:
+            lines_info.append(f"• User ID: `{uid}`")
+        lines_info.append(f"• Tên user: **{dn}**" if dn else "• Tên user: *(chưa nhận diện)*")
+    else:
+        lines_info.append(f"• Tên user: **{dn or gn}**" if (dn or gn) else "• Tên user: *(chưa nhận diện)*")
+        if uid and uid != cid:
+            lines_info.append(f"• User ID: `{uid}`")
     return (
-        f"\n\n💾 **Lưu vào danh bạ của bạn?** (bot **{bl}**)\n"
+        f"\n\n💾 **Lưu vào danh bạ của bạn?**\n"
         f"Trả lời: `có` / `lưu` hoặc `không` / `bỏ`\n"
         f"(Chỉ thread admin này — admin khác tự quyết riêng.)\n"
-        + "\n".join(lines_info)
+        + "\n".join(x for x in lines_info if x)
     )
 
 

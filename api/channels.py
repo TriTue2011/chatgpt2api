@@ -1,9 +1,10 @@
-"""Router DÙNG CHUNG cho hoạt động gần đây + blacklist các kênh chat.
+"""Router DÙNG CHUNG cho hoạt động gần đây + blacklist + danh bạ các kênh chat.
 
 Phục vụ trang quản lý Zalo Cá Nhân (/zalo) và card Zalo / Telegram / Cloudflare
-(Settings) — cùng đọc/ghi `services.channel_activity`:
+(Settings) — cùng đọc/ghi `services.channel_activity` / `channel_contacts`:
 - GET  /api/channels/recent?platform=zalop|zalo|tg  : ai vừa nhắn (tài khoản,
   Chat ID, User ID, tên, tin gần nhất).
+- GET  /api/channels/directory?platform=... : danh bạ thread (setting ∪ auto bot).
 - GET  /api/channels/blacklist?platform=...&account=... : danh sách bị loại
   (account = bot_id/ownId; trống = tất cả mục kênh).
 - POST /api/channels/blacklist {platform,id,kind,name,account}: thêm.
@@ -31,6 +32,20 @@ def create_router() -> APIRouter:
         platform = platform if platform in _PLATFORMS else ""
         rows = await asyncio.to_thread(ca.recent, platform, max(1, min(int(limit or 100), 300)))
         return {"ok": True, "rows": rows}
+
+    @router.get("/api/channels/directory")
+    async def directory(platform: str = "", limit: int = 300,
+                        authorization: str | None = Header(default=None)):
+        """Danh bạ thread: bot · Thread ID · loại · tên (admin/lọc + auto bot)."""
+        require_admin(authorization)
+        platform = platform if platform in _PLATFORMS else ""
+        if not platform:
+            return {"ok": False, "error": "Cần platform=tg|zalo|zalop", "rows": []}
+        from services import channel_contacts as cc
+        rows = await asyncio.to_thread(
+            cc.list_directory, platform, limit=max(1, min(int(limit or 300), 500)),
+        )
+        return {"ok": True, "platform": platform, "rows": rows}
 
     @router.get("/api/channels/blacklist")
     async def get_blacklist(platform: str = "", account: str = "",

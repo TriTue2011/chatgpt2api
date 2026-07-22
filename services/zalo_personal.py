@@ -57,10 +57,6 @@ def current_msg_ctx() -> tuple[str, int]:
     return (str(getattr(_msg_ctx, "account", "") or ""),
             int(getattr(_msg_ctx, "thread_type", 0) or 0))
 
-_MD_BOLD_DOUBLE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
-_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
-
-
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
 
 def _cfg() -> dict:
@@ -101,8 +97,36 @@ def _default_account() -> str:
     return str(_cfg().get("zalo_personal_account_id") or "").strip()
 
 
-def _ai_model() -> str:
-    return str(_cfg().get("zalo_personal_ai_model") or "").strip() or "cx/auto"
+def _ai_model(account_id: str = "", thread_id: str = "") -> str:
+    """Model: admin_entries.ai_model → acc.ai_model → kênh → global → AI text."""
+    c = _cfg()
+    acc = str(account_id or "").strip()
+    tid = str(thread_id or "").strip()
+    raw = c.get("zalo_personal_account_admins")
+    if isinstance(raw, dict) and acc:
+        entry = raw.get(acc)
+        if isinstance(entry, dict):
+            # 1) Model riêng Admin #N (nếu tin từ đúng thread admin)
+            if tid:
+                for e in (entry.get("admin_entries") or []):
+                    if not isinstance(e, dict):
+                        continue
+                    if str(e.get("chat_id") or "").strip() == tid:
+                        m = str(e.get("ai_model") or "").strip()
+                        if m:
+                            return m
+            # 2) Model mặc định acc
+            m = str(entry.get("ai_model") or "").strip()
+            if m:
+                return m
+    # 3) Model kênh Zalo Cá Nhân
+    m = str(c.get("zalo_personal_ai_model") or "").strip()
+    if m:
+        return m
+    # 4) Global / fallback
+    return (str(c.get("telegram_ai_model") or "").strip()
+            or str(c.get("zalo_ai_model") or "").strip()
+            or "AI text")
 
 
 def _chat_ids() -> list[str]:
@@ -353,7 +377,7 @@ def get_status() -> dict:
         "ha_enabled": _bool(c, "zalo_personal_ha_enabled", False),
         "ha_url": str(c.get("zalo_personal_ha_url") or "").strip(),
         "forward_webhooks": _forward_destinations(),
-        "notify_enabled": _bool(c, "zalo_personal_notify_enabled", False),
+        # 🔔/📋/💬 theo từng Admin #N — không còn cờ kênh zalo_personal_notify_enabled
         "admin_thread": str(c.get("zalo_personal_admin_thread") or "").strip(),
     }
     if not st["server_url"]:
@@ -368,11 +392,6 @@ def get_status() -> dict:
 
 # ── Gửi tin ───────────────────────────────────────────────────────────────────
 
-def _to_zalo_text(text: str) -> str:
-    out = _MD_BOLD_DOUBLE.sub(r"\1", text or "")
-    return _MD_HEADING.sub("", out)
-
-
 def _account_for_send(account: str = "") -> str:
     acc = (account or _default_account()).strip()
     if acc:
@@ -381,23 +400,293 @@ def _account_for_send(account: str = "") -> str:
     return str(accounts[0].get("ownId")) if accounts else ""
 
 
-def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "") -> dict:
-    """Gửi text (tự cắt khúc 2000). thread_type: 0=user, 1=group."""
+def _profile_display_name(p: dict) -> str:
+    """Tên hiển thị khi nhận diện thread.
+
+    zca-js:
+      - zaloName  = tên Zalo thật (vd ``Nguyễn Việt``)
+      - displayName = biệt danh local trong danh bạ acc (vd ``BotNhatoi``)
+    Ưu tiên tên Zalo thật — biệt danh local dễ gây hiểu nhầm khi Nhận diện.
+    """
+    if not isinstance(p, dict):
+        return ""
+    return str(
+        p.get("zaloName") or p.get("zalo_name")
+        or p.get("displayName") or p.get("display_name")
+        or p.get("username") or p.get("name") or ""
+    ).strip()
+
+
+def _extract_user_name(info: dict, want_id: str, *, skip_ids: set[str] | None = None) -> str:
+    """Lấy tên ĐÚNG user want_id từ response getUserInfo.
+
+    zca-js hay trả changed_profiles gồm cả bạn bè + chính acc đăng nhập.
+    Bug cũ: lấy profile đầu tiên → nhầm tên bot (vd BotNhatoi) thay vì
+    người gửi (vd Nguyễn Việt).
+    """
+    if not isinstance(info, dict):
+        return ""
+    want = str(want_id or "").strip()
+    skip = {str(x).strip() for x in (skip_ids or set()) if str(x).strip()}
+
+    profiles: dict = {}
+    for key in ("changed_profiles", "unchanged_profiles", "profiles"):
+        raw = info.get(key)
+        if isinstance(raw, dict):
+            profiles.update(raw)
+    nested = info.get("data")
+    if isinstance(nested, dict):
+        for key in ("changed_profiles", "unchanged_profiles", "profiles"):
+            raw = nested.get(key)
+            if isinstance(raw, dict):
+                profiles.update(raw)
+
+    def _pid_match(pid: str) -> bool:
+        p = str(pid or "").strip()
+        return bool(want) and (p == want or want in p or p in want)
+
+    # 1) Ưu tiên profile khớp Thread/User ID
+    if want and profiles:
+        for pid, p in profiles.items():
+            if _pid_match(str(pid)):
+                n = _profile_display_name(p if isinstance(p, dict) else {})
+                if n:
+                    return n
+
+    # 2) Chỉ 1 profile và không phải acc của mình
+    others = [
+        (str(pid), p) for pid, p in profiles.items()
+        if str(pid).strip() not in skip
+    ]
+    if len(others) == 1:
+        n = _profile_display_name(others[0][1] if isinstance(others[0][1], dict) else {})
+        if n:
+            return n
+
+    # 3) Flat fields — chỉ khi không có map (tránh nhặt tên acc)
+    if not profiles:
+        return str(
+            info.get("displayName") or info.get("zaloName")
+            or info.get("name") or ""
+        ).strip()
+    return ""
+
+
+def _extract_group_name(info: dict, want_id: str = "") -> str:
+    if not isinstance(info, dict):
+        return ""
+    want = str(want_id or "").strip()
+    gmap = info.get("gridInfoMap")
+    if not isinstance(gmap, dict) and isinstance(info.get("data"), dict):
+        gmap = info["data"].get("gridInfoMap")
+    if isinstance(gmap, dict):
+        if want:
+            for gid, g in gmap.items():
+                if str(gid) == want or want in str(gid):
+                    if isinstance(g, dict):
+                        n = str(g.get("name") or g.get("groupName") or g.get("title") or "").strip()
+                        if n:
+                            return n
+        for _gid, g in gmap.items():
+            if isinstance(g, dict):
+                n = str(g.get("name") or g.get("groupName") or g.get("title") or "").strip()
+                if n:
+                    return n
+    return str(info.get("name") or "").strip()
+
+
+def resolve_thread(
+    account: str = "",
+    thread_id: str = "",
+    prefer_kind: str = "",
+) -> dict:
+    """Nhận diện thread qua zca-js getUserInfo / getGroupInfo.
+
+    Trả {ok, chat_id, name, kind: private|group}.
+    """
+    from services.admin_workspace import guess_chat_kind
+    tid = str(thread_id or "").strip()
+    acc = _account_for_send(account)
+    kind = "group" if prefer_kind in {"group", "1"} else (
+        "private" if prefer_kind in {"private", "0", "user"} else guess_chat_kind(tid)
+    )
+    name = ""
+    ok = False
+    if not tid or not acc:
+        return {"ok": False, "chat_id": tid, "name": name, "kind": kind}
+
+    # Thử theo prefer_kind; nếu fail thử chiều kia (zca-js phân user/group)
+    order = ["group", "user"] if kind == "group" else ["user", "group"]
+    for attempt in order:
+        try:
+            if attempt == "user":
+                r = _request("POST", "/api/getUserInfoByAccount", {
+                    "userId": tid, "accountSelection": acc,
+                }, timeout=15.0)
+                if not r.get("ok"):
+                    continue
+                # _request bọc: {ok, data: {success, data: zcaResponse}}
+                outer = r.get("data") if isinstance(r.get("data"), dict) else {}
+                data = outer.get("data") if isinstance(outer.get("data"), dict) else outer
+                if not isinstance(data, dict):
+                    data = outer if isinstance(outer, dict) else {}
+                n = _extract_user_name(data, tid, skip_ids={acc})
+                profiles = data.get("changed_profiles") if isinstance(data, dict) else None
+                if not isinstance(profiles, dict):
+                    profiles = data.get("unchanged_profiles") if isinstance(data, dict) else None
+                # Có profile khớp ID, hoặc tên đúng ID → user
+                matched = False
+                if isinstance(profiles, dict):
+                    matched = any(
+                        str(pid) == tid or tid in str(pid)
+                        for pid in profiles
+                    )
+                if n or matched:
+                    ok = True
+                    kind = "private"
+                    name = n
+                    break
+            else:
+                r = _request("POST", "/api/getGroupInfoByAccount", {
+                    "groupId": tid, "accountSelection": acc,
+                }, timeout=15.0)
+                if not r.get("ok"):
+                    continue
+                outer = r.get("data") if isinstance(r.get("data"), dict) else {}
+                data = outer.get("data") if isinstance(outer.get("data"), dict) else outer
+                if not isinstance(data, dict):
+                    continue
+                removed = data.get("removedsGroup") or []
+                if tid in (removed if isinstance(removed, list) else []):
+                    continue
+                n = _extract_group_name(data, tid)
+                if n or data.get("gridInfoMap"):
+                    ok = True
+                    kind = "group"
+                    name = n
+                    break
+        except Exception as exc:
+            logger.info("zalop resolve %s %s: %s", attempt, tid[:16], exc)
+    return {"ok": ok, "chat_id": tid, "name": name, "kind": kind}
+
+
+def _admin_thread_ids_for_account(account_id: str = "") -> set[str]:
+    """Tập Thread ID admin của 1 acc (admin_entries + legacy admin_thread)."""
+    c = _cfg()
+    acc = str(account_id or "").strip()
+    out: set[str] = set()
+    raw = c.get("zalo_personal_account_admins")
+    if isinstance(raw, dict) and acc:
+        entry = raw.get(acc)
+        if isinstance(entry, dict):
+            entries = entry.get("admin_entries")
+            if isinstance(entries, list):
+                for e in entries:
+                    if isinstance(e, dict):
+                        cid = str(e.get("chat_id") or "").strip()
+                        if cid:
+                            out.add(cid)
+                    elif isinstance(e, str) and e.strip():
+                        out.add(e.strip())
+            th = str(entry.get("admin_thread") or "").strip()
+            if th:
+                out.add(th)
+    # Legacy global
+    th = str(c.get("zalo_personal_admin_thread") or "").strip()
+    if th:
+        out.add(th)
+    return out
+
+
+def _is_admin_thread(account_id: str, thread_id: str) -> bool:
+    tid = str(thread_id or "").strip()
+    if not tid:
+        return False
+    return tid in _admin_thread_ids_for_account(account_id)
+
+
+def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "",
+                 *, rich: bool = True) -> dict:
+    """Gửi text (tự cắt khúc ~2000). Styles RTF zca-js (giống Zalo Bot: đậm+màu+cỡ).
+
+    thread_type: 0=user, 1=group.
+    rich=True: emphasis + markdown_color/size (per admin_entries acc nếu match).
+    """
     acc = _account_for_send(account)
     if not acc:
         return {"ok": False, "error": "Chưa có tài khoản Zalo nào đăng nhập"}
-    text = _to_zalo_text(text or "...")
-    chunks = [text[i:i + _MAX_LEN] for i in range(0, len(text), _MAX_LEN)] or ["..."]
+    raw = text or "..."
+    # Per-admin color/size từ zalo_personal_account_admins[acc]
+    color = "orange"
+    size = "normal"
+    bot_like: dict = {}
+    try:
+        from services.config import config as _cfg_mod
+        adm_map = (_cfg_mod.get() or {}).get("zalo_personal_account_admins") or {}
+        entry = adm_map.get(acc) if isinstance(adm_map, dict) else None
+        if isinstance(entry, dict):
+            bot_like = entry
+            for e in (entry.get("admin_entries") or []):
+                if isinstance(e, dict) and str(e.get("chat_id") or "").strip() == str(thread_id):
+                    bot_like = {**entry, **e}
+                    break
+    except Exception:
+        pass
+
+    if rich:
+        try:
+            from services.telegram.emphasis import emphasize_text
+            raw = emphasize_text(raw, bot=bot_like if bot_like else None, chat_id=thread_id)
+        except Exception:
+            pass
+        try:
+            from services.zalo_bot_format import resolve_zalo_bot_color, resolve_zalo_bot_size
+            color = resolve_zalo_bot_color(bot_like or None, str(thread_id)) or "orange"
+            size = resolve_zalo_bot_size(bot_like or None, str(thread_id))
+        except Exception:
+            try:
+                from services.zalo_markdown import config_markdown_color
+                color = config_markdown_color()
+            except Exception:
+                color = "orange"
+
+    chunks = [raw[i:i + _MAX_LEN] for i in range(0, len(raw), _MAX_LEN)] or ["..."]
     last: dict = {"ok": False}
+    try:
+        from services.zalo_markdown import config_markdown_enabled, markdown_to_zalo_message
+        md_on = rich and config_markdown_enabled()
+    except Exception:
+        md_on = rich
+        markdown_to_zalo_message = None  # type: ignore
+
     for ch in chunks[:_MAX_CHUNKS]:
+        msg_obj: dict = {"msg": ch, "ttl": 0, "quote": None}
+        if md_on and markdown_to_zalo_message is not None:
+            try:
+                parsed = markdown_to_zalo_message(ch, color=color, size=size)
+                msg_obj["msg"] = parsed.get("msg") or ch
+                styles = parsed.get("styles") or []
+                if styles:
+                    msg_obj["styles"] = styles
+            except Exception as exc:
+                logger.warning("zalo markdown convert fail: %s", exc)
         last = _request("POST", "/api/sendMessageByAccount", {
-            "message": {"msg": ch, "ttl": 0, "quote": None},
+            "message": msg_obj,
             "threadId": str(thread_id),
             "accountSelection": acc,
             "type": int(thread_type),
         })
         if not last.get("ok"):
-            break
+            if msg_obj.get("styles"):
+                plain = {"msg": ch, "ttl": 0, "quote": None}
+                last = _request("POST", "/api/sendMessageByAccount", {
+                    "message": plain,
+                    "threadId": str(thread_id),
+                    "accountSelection": acc,
+                    "type": int(thread_type),
+                })
+            if not last.get("ok"):
+                break
     return last
 
 
@@ -429,6 +718,88 @@ def send_file(thread_id: str, file_url: str, caption: str = "",
         "type": "group" if int(thread_type) == 1 else "user",
         "ttl": 0,
     }, timeout=90.0)
+
+
+def _public_base() -> str:
+    c = _cfg()
+    return (str(c.get("base_url") or "").strip()
+            or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/")
+
+
+def _media_fetch_candidates(url_or_path: str) -> list[str]:
+    """URL zalo-server có thể fetch — ưu tiên http://127.0.0.1/images/… (trong Docker).
+
+    Test thực tế: HTTPS CF đôi khi ``fetch failed``; ``http://127.0.0.1/images/…`` OK.
+    """
+    u = str(url_or_path or "").strip()
+    if not u:
+        return []
+    out: list[str] = []
+    # Absolute filesystem path under images_dir → /images/ relative
+    try:
+        from pathlib import Path
+        p = Path(u)
+        if p.is_file():
+            img_root = Path(config.images_dir).resolve()
+            try:
+                rel = p.resolve().relative_to(img_root)
+                u = "/images/" + str(rel).replace("\\", "/")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    path_part = ""
+    if "/images/" in u:
+        path_part = "/images/" + u.split("/images/", 1)[1].split("?", 1)[0]
+    elif u.startswith("/media/voice/"):
+        # voice.save_media → /media/voice/… may not be on images static; skip prefer images
+        path_part = u.split("?", 1)[0]
+    elif u.startswith("/"):
+        path_part = u.split("?", 1)[0]
+
+    if path_part:
+        out.append("http://127.0.0.1" + path_part)
+        out.append("http://127.0.0.1:3030" + path_part)
+        base = _public_base()
+        if base:
+            out.append(base.rstrip("/") + path_part)
+    if u.startswith("http://") or u.startswith("https://"):
+        if u not in out:
+            out.append(u)
+    # de-dupe
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for x in out:
+        if x and x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
+
+def _send_photo_robust(thread_id: str, image_url: str, caption: str = "",
+                       thread_type: int = 0, account: str = "") -> bool:
+    """Gửi ẢNH thật (sendImage) — thử nhiều URL; không dán link text."""
+    for u in _media_fetch_candidates(image_url):
+        try:
+            from services import net_guard as _ng
+            if u.startswith("http") and not u.startswith("http://127.0.0.1") and not _ng.is_allowed_egress_url(u):
+                continue
+        except Exception:
+            pass
+        r = send_photo(thread_id, u, caption, thread_type, account=account)
+        if r.get("ok"):
+            return True
+    return False
+
+
+def _send_file_robust(thread_id: str, file_url: str, caption: str = "",
+                      thread_type: int = 0, account: str = "") -> bool:
+    """Gửi FILE thật (sendFile) — PDF/DOCX/audio; không dán link text."""
+    for u in _media_fetch_candidates(file_url):
+        r = send_file(thread_id, u, caption, thread_type, account=account)
+        if r.get("ok"):
+            return True
+    return False
 
 
 def send_typing(thread_id: str, thread_type: int = 0, account: str = "") -> None:
@@ -474,39 +845,106 @@ def _admin_for_account(account_id: str = "") -> tuple[str, int, str]:
     return th, ttype, send_acc
 
 
-def notify_admin(text: str) -> None:
-    """Gửi thông báo hệ thống tới thread admin (global + từng acc nếu có). Best-effort."""
+def notify_admin(text: str, category: str = "") -> None:
+    """account_log 📋 / system 🔔 / newchat 💬 — theo toggle từng Admin #N (zca-js).
+
+    Không còn cờ kênh ``zalo_personal_notify_enabled`` — chỉ Admin #N 🔔/📋/💬.
+    """
     c = _cfg()
-    if not enabled() or not _bool(c, "zalo_personal_notify_enabled", False):
+    if not enabled():
         return
+    try:
+        from services.notifier import classify_notify_category
+        cat = classify_notify_category(text, category)
+    except Exception:
+        cat = str(category or "system").strip().lower() or "system"
+    is_account_log = cat == "account_log"
+    is_newchat = cat == "newchat"
     seen: set[str] = set()
-    # Per-account admin threads
     raw = c.get("zalo_personal_account_admins")
-    if isinstance(raw, dict):
-        for own_id, entry in raw.items():
-            if not isinstance(entry, dict):
-                continue
-            th = str(entry.get("admin_thread") or "").strip()
-            if not th or th in seen:
-                continue
-            ttype = 1 if str(entry.get("admin_thread_type") or "0").strip() in {
-                "1", "group",
-            } else 0
-            seen.add(th)
+    if not isinstance(raw, dict) or not raw:
+        # Legacy: 1 admin_thread kênh — luôn gửi nếu còn cấu hình (không gate cờ kênh)
+        th, ttype, send_acc = _admin_for_account("")
+        if th:
             try:
-                send_message(th, text[:_MAX_LEN], ttype, account=str(own_id))
+                send_message(th, text[:_MAX_LEN], ttype, account=send_acc, rich=True)
             except Exception:
                 pass
-    # Global fallback (nếu chưa gửi cùng thread)
-    th = str(c.get("zalo_personal_admin_thread") or "").strip()
-    if th and th not in seen:
-        ttype = 1 if str(c.get("zalo_personal_admin_thread_type") or "0").strip() in {
-            "1", "group",
-        } else 0
-        try:
-            send_message(th, text[:_MAX_LEN], ttype)
-        except Exception:
-            pass
+        return
+    for own_id, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("enabled") is False:
+            continue
+        # 🔔 / 📋 / 💬 độc lập — tắt 📋 không còn dính 🔔 và ngược lại
+        if is_newchat:
+            if entry.get("newchat_alert_enabled") is False:
+                continue
+        elif is_account_log:
+            if entry.get("account_log_enabled") is False:
+                continue
+        else:
+            if entry.get("notify_admin_enabled") is False:
+                continue
+        entries = entry.get("admin_entries")
+        rows: list[dict] = []
+        if isinstance(entries, list) and entries:
+            for x in entries:
+                if isinstance(x, dict) and x.get("chat_id"):
+                    rows.append(x)
+                elif isinstance(x, str) and x.strip():
+                    rows.append({
+                        "chat_id": x.strip(), "kind": "private",
+                        "notify_enabled": True,
+                        "account_log_enabled": True,
+                        "newchat_alert_enabled": True,
+                    })
+        else:
+            th = str(entry.get("admin_thread") or "").strip()
+            if th:
+                rows.append({
+                    "chat_id": th,
+                    "kind": "group" if str(entry.get("admin_thread_type") or "0") in {"1", "group"} else "private",
+                    "notify_enabled": True,
+                    "account_log_enabled": True,
+                    "newchat_alert_enabled": True,
+                })
+        sent = 0
+        for row in rows:
+            if is_newchat:
+                if row.get("newchat_alert_enabled") is False:
+                    continue
+            elif is_account_log:
+                # 📋: chỉ gửi khi Admin #N bật — False tuyệt đối không gửi
+                if row.get("account_log_enabled") is False:
+                    continue
+            else:
+                if row.get("notify_enabled") is False:
+                    continue
+            th = str(row.get("chat_id") or "").strip()
+            if not th or th in seen:
+                continue
+            ttype = 1 if str(row.get("kind") or "") in {"group", "1"} else 0
+            seen.add(th)
+            try:
+                r = send_message(
+                    th, text[:_MAX_LEN], ttype, account=str(own_id), rich=True,
+                )
+                if r.get("ok"):
+                    sent += 1
+            except Exception:
+                pass
+        if sent == 0 and entry.get("fallback_enabled"):
+            try:
+                from services.telegram_bot import _try_bot_fallback
+                _try_bot_fallback({
+                    "fallback_enabled": True,
+                    "fallback_channel": entry.get("fallback_channel"),
+                    "fallback_bot_name": entry.get("fallback_bot_name"),
+                    "fallback_thread": entry.get("fallback_thread"),
+                }, text)
+            except Exception:
+                pass
 
 
 # ── Nhận webhook: parse payload zca-js ────────────────────────────────────────
@@ -560,6 +998,17 @@ def _parse_event(body: dict) -> dict:
             text = str(content.get("msg") or title or desc or "").strip()
             attachment_url = href
 
+    # Mentions native zca-js: [{uid, pos, len, ...}] — tag @tên bot trong nhóm
+    mentions_raw = data.get("mentions") if data.get("mentions") is not None else body.get("mentions")
+    mentions: list = []
+    if isinstance(mentions_raw, str):
+        try:
+            mentions_raw = json.loads(mentions_raw)
+        except Exception:
+            mentions_raw = []
+    if isinstance(mentions_raw, list):
+        mentions = [x for x in mentions_raw if isinstance(x, dict)]
+
     return {
         "account_id": str(body.get("_accountId") or "").strip(),
         "thread_id": thread_id,
@@ -574,7 +1023,71 @@ def _parse_event(body: dict) -> dict:
         "file_name": file_name,
         "ts": str(data.get("ts") or "").strip(),
         "ttl": data.get("ttl"),
+        "mentions": mentions,
     }
+
+
+def _bot_account_aliases(account_id: str) -> list[str]:
+    """Tên/SĐT có thể xuất hiện khi user gõ @bot trong text (không chỉ native mention)."""
+    acc = str(account_id or "").strip()
+    out: list[str] = []
+    if not acc:
+        return out
+    try:
+        for a in list_accounts():
+            if str(a.get("ownId") or "").strip() != acc:
+                continue
+            for k in ("displayName", "display_name", "phoneNumber", "phone", "name"):
+                v = str(a.get(k) or "").strip()
+                if v and v not in out:
+                    out.append(v)
+            break
+    except Exception:
+        pass
+    # ownId luôn so được trong mentions; thêm vào text match hiếm khi
+    if acc not in out:
+        out.append(acc)
+    return out
+
+
+def is_bot_tagged(ev: dict, keyword: str = "") -> bool:
+    """Tin có tag bot không? (nhóm + bắt buộc tag)
+
+    Đủ 1 trong các điều kiện:
+      1. Từ khóa tag (settings) xuất hiện trong text
+      2. Mention native zca-js: mentions[].uid == ownId tài khoản nhận tin
+      3. Text chứa @alias bot (displayName / SĐT) — fallback khi platform
+         không gửi mảng mentions
+
+    Trước đây: required=True + keyword rỗng → LUÔN im lặng (bug).
+    """
+    text = str((ev or {}).get("text") or "")
+    text_l = text.lower()
+    kw = str(keyword or "").strip()
+    if kw and kw.lower() in text_l:
+        return True
+
+    own = str((ev or {}).get("account_id") or "").strip()
+    mts = (ev or {}).get("mentions")
+    if own and isinstance(mts, list):
+        for x in mts:
+            if isinstance(x, dict) and str(x.get("uid") or "").strip() == own:
+                return True
+
+    # Fallback text: @Botmitbap / @Ben Bắp …
+    if "@" in text:
+        for alias in _bot_account_aliases(own):
+            al = alias.strip()
+            if not al:
+                continue
+            # so khớp không dấu cách / không phân biệt hoa thường
+            compact_al = re.sub(r"\s+", "", al).lower()
+            compact_tx = re.sub(r"\s+", "", text).lower()
+            if compact_al and (f"@{compact_al}" in compact_tx or compact_al in compact_tx):
+                # chỉ tin khi có @ gần alias (tránh match số phone trôi nổi)
+                if f"@{compact_al}" in compact_tx or f"@{al.lower()}" in text_l:
+                    return True
+    return False
 
 
 # ── Chuyển tiếp webhook (HA / n8n / bất kỳ URL) ────────────────────────────────
@@ -822,8 +1335,39 @@ def test_ha_forward(url: str = "", filters: list | None = None) -> dict:
 _new_thread_seen: set[str] = set()
 
 
+def _account_phone_name(acc_id: str) -> tuple[str, str, str]:
+    """(label, phone, ownId) cho acc Zalo CN — label ưu tiên SĐT/tên, không bare id."""
+    acc = str(acc_id or "").strip()
+    phone = ""
+    dname = ""
+    try:
+        for a in (get_accounts().get("accounts") or []):
+            if str(a.get("ownId") or "").strip() != acc:
+                continue
+            phone = str(a.get("phoneNumber") or "").strip()
+            dname = str(a.get("displayName") or "").strip()
+            dname = re.sub(r"\s*\(\d{8,}\)\s*$", "", dname).strip()
+            break
+    except Exception:
+        pass
+    try:
+        from services.channel_contacts import bot_label as _bl
+        label = _bl("zalop", acc) if acc else ""
+    except Exception:
+        label = ""
+    if not label or label == acc:
+        label = phone or dname or acc
+    return label, phone, acc
+
+
 def _alert_new_thread(ev: dict) -> None:
-    key = f"{ev.get('account_id')}:{ev.get('thread_id')}"
+    """Báo thread lạ + hỏi admin có lưu danh bạ không (consent)."""
+    acc_id = str(ev.get("account_id") or "").strip()
+    src_thread = str(ev.get("thread_id") or "").strip()
+    # Đã là Admin #N của acc → không báo "thread mới"
+    if src_thread and _is_admin_thread(acc_id, src_thread):
+        return
+    key = f"{acc_id}:{src_thread}"
     if key in _new_thread_seen:
         return
     _new_thread_seen.add(key)
@@ -831,33 +1375,112 @@ def _alert_new_thread(ev: dict) -> None:
         _new_thread_seen.clear()
     c = _cfg()
     if not _bool(c, "zalo_personal_newchat_alert_enabled", True):
-        return  # đã tắt chức năng báo thread mới cho kênh Zalo Cá Nhân
-    kind = "nhóm" if ev.get("thread_type") == 1 else "cá nhân"
-    msg = (
-        f"🆕 Thread Zalo Cá Nhân mới nhắn tới ({kind})\n"
-        f"• Thread ID: {ev.get('thread_id')}\n"
-        + (f"• User ID người gửi: {ev.get('sender_id')}\n" if ev.get("sender_id") else "")
-        + (f"• Người gửi: {ev.get('display_name')}\n" if ev.get("display_name") else "")
-        + (f"• Tài khoản nhận: {ev.get('account_id')}\n" if ev.get("account_id") else "")
-        + f"• Tin: {(ev.get('text') or ev.get('msg_type') or '')[:120]}\n"
-        f"→ Trang Zalo Cá Nhân: thêm Thread ID vào danh sách cho phép, hoặc "
-        f"'Lọc chức năng theo thread' (khóa zalop:{ev.get('account_id')}:{ev.get('thread_id')})."
-    )
-    # Ưu tiên Thread ID admin CỦA TÀI KHOẢN nhận tin; fallback global.
-    # Có admin → gửi bằng chính acc đó. Trống → notifier đa kênh.
-    acc_id = str(ev.get("account_id") or "").strip()
-    thread, ttype, send_acc = _admin_for_account(acc_id)
-    if thread:
+        return
+    is_group = int(ev.get("thread_type") or 0) == 1
+    user_id = str(ev.get("sender_id") or "").strip()
+    user_name = str(ev.get("display_name") or "").strip()
+    group_name = str(ev.get("chat_name") or ev.get("group_name") or "").strip()
+
+    # Bổ sung tên nhóm / user qua zca-js
+    if acc_id and src_thread:
         try:
-            send_message(thread, msg[:_MAX_LEN], ttype, account=send_acc)
+            if is_group and not group_name:
+                info = resolve_thread(acc_id, src_thread, "group")
+                if info.get("ok") and info.get("name"):
+                    group_name = str(info.get("name") or "").strip()
+            if not is_group and not user_name:
+                info = resolve_thread(acc_id, src_thread, "private")
+                if info.get("ok") and info.get("name"):
+                    user_name = str(info.get("name") or "").strip()
+            elif is_group and user_id and not user_name:
+                info = resolve_thread(acc_id, user_id, "private")
+                if info.get("ok") and info.get("name"):
+                    user_name = str(info.get("name") or "").strip()
         except Exception:
             pass
-        return
+
+    acc_label, acc_phone, _ = _account_phone_name(acc_id)
+    text_snip = str(ev.get("text") or ev.get("msg_type") or "")[:120]
+
     try:
-        from services.notifier import notify_admin as _notify
-        _notify(msg)
-    except Exception:
-        pass
+        from services import channel_contacts as _cc
+        from services.admin_workspace import start_save_prompt
+        ok, rec = _cc.should_alert_new(
+            "zalop", acc_id, src_thread,
+            user_id=user_id, is_group=is_group, tagged=False,
+            display_name=user_name, chat_name=group_name, text=text_snip,
+        )
+        if not ok:
+            return
+        # Làm giàu rec trước khi format
+        rec = dict(rec)
+        rec["bot_label"] = acc_label
+        if group_name:
+            rec["chat_name"] = group_name
+        if user_name:
+            rec["display_name"] = user_name
+        if acc_phone and not rec.get("bot_label"):
+            rec["bot_label"] = acc_phone
+        base = _cc.format_alert(rec, served=False, text=text_snip)
+        if acc_phone and acc_phone not in base:
+            base = base.replace(
+                f"bot **{acc_label}**",
+                f"bot **{acc_label}** · SĐT `{acc_phone}`",
+                1,
+            )
+
+        # Gửi từng Admin #N (💬) kèm hỏi lưu danh bạ
+        raw = c.get("zalo_personal_account_admins")
+        sent = 0
+        if isinstance(raw, dict):
+            for own_id, entry in raw.items():
+                if not isinstance(entry, dict) or entry.get("enabled") is False:
+                    continue
+                if entry.get("newchat_alert_enabled") is False:
+                    continue
+                rows: list[dict] = []
+                entries = entry.get("admin_entries")
+                if isinstance(entries, list) and entries:
+                    for x in entries:
+                        if isinstance(x, dict) and x.get("chat_id"):
+                            rows.append(x)
+                else:
+                    th = str(entry.get("admin_thread") or "").strip()
+                    if th:
+                        rows.append({
+                            "chat_id": th,
+                            "kind": "group" if str(entry.get("admin_thread_type") or "0")
+                            in {"1", "group"} else "private",
+                            "newchat_alert_enabled": True,
+                        })
+                for row in rows:
+                    if row.get("newchat_alert_enabled") is False:
+                        continue
+                    aid = str(row.get("chat_id") or "").strip()
+                    if not aid or aid == src_thread:
+                        continue
+                    ttype = 1 if str(row.get("kind") or "") in {"group", "1"} else 0
+                    prompt = start_save_prompt("zalop", aid, rec)
+                    msg = base + prompt
+                    try:
+                        r = send_message(aid, msg[:_MAX_LEN], ttype, account=str(own_id), rich=True)
+                        if r.get("ok"):
+                            sent += 1
+                    except Exception:
+                        pass
+        if sent:
+            _cc.mark_notified(str(rec.get("key") or ""))
+        else:
+            # Không gửi được admin thread → fallback đa kênh (không auto-lưu)
+            try:
+                notify_admin(
+                    base + "\n→ Trả lời admin trên kênh khác hoặc thêm Admin #N / Lọc thread.",
+                    category="newchat",
+                )
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("zalop new-thread alert: %s", exc)
 
 
 # ── Xử lý AI (chung orchestrator với Telegram/Zalo Bot) ───────────────────────
@@ -882,22 +1505,43 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str) -> N
     fn = f"{uuid.uuid4().hex}.docx"
     with open(docx_path, "rb") as f:
         (out_dir / fn).write_bytes(f.read())
-    base = _public_base()
-    link = f"{base}/images/docs/{fn}" if base else f"/images/docs/{fn}"
-    if base and send_file(thread_id, link, f"Bản Word ({how})", thread_type).get("ok"):
+    # Gửi FILE .docx thật (sendFile); không dán link trừ khi mọi URL fail.
+    rel = f"/images/docs/{fn}"
+    if _send_file_robust(thread_id, rel, f"Bản Word ({how})", thread_type):
         return
-    send_message(thread_id, f"📝 Bản Word ({how}) — bấm để tải về:\n{link}", thread_type)
+    base = _public_base()
+    link = f"{base}{rel}" if base else rel
+    send_message(
+        thread_id,
+        f"📝 Em đã chuyển Word nhưng gửi file chưa được. Thử lại giúp em nhé.",
+        thread_type,
+    )
+    logger.warning("zalop Word sendFile fail path=%s", link)
 
 
-def _do_pdf_intent(thread_id: str, thread_type: int, pending: dict | None, intent: str) -> None:
+def _do_pdf_intent(
+    thread_id: str,
+    thread_type: int,
+    pending: dict | None,
+    intent: str,
+    *,
+    grade: int | None = None,
+    subject: str | None = None,
+    account: str = "",
+    user_id: str = "",
+) -> None:
     if not pending:
         return
     import os
+    from services import pdf_intent as _pi
     path = pending["path"]
+    name = pending.get("name") or "document.pdf"
     send_typing(thread_id, thread_type)
-    docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
+    temps: list[str] = [path]
     try:
-        if intent == "word":
+        if intent == _pi.WORD:
+            docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
+            temps.append(docx_tmp)
             from services.pdf_to_word import convert_pdf_to_docx
             r = convert_pdf_to_docx(path, docx_tmp)
             if not r.get("ok"):
@@ -905,105 +1549,209 @@ def _do_pdf_intent(thread_id: str, thread_type: int, pending: dict | None, inten
                 return
             how = "giữ layout" if r.get("method") == "layout" else "OCR (PDF scan)"
             _serve_docx(thread_id, thread_type, docx_tmp, how)
+        elif intent == _pi.EXCEL:
+            xlsx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".xlsx"
+            temps.append(xlsx_tmp)
+            from services.pdf_to_excel import convert_pdf_to_xlsx
+            r = convert_pdf_to_xlsx(path, xlsx_tmp)
+            if not r.get("ok"):
+                send_message(thread_id, f"⚠️ Không chuyển được sang Excel: {str(r.get('error', ''))[:150]}", thread_type)
+                return
+            # serve via images/docs like word
+            import shutil
+            import uuid
+            out_dir = config.images_dir / "docs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fn = f"{uuid.uuid4().hex}.xlsx"
+            dest = out_dir / fn
+            shutil.copy2(xlsx_tmp, dest)
+            rel = f"/images/docs/{fn}"
+            if not _send_file_robust(
+                thread_id, rel,
+                f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet)",
+                thread_type, account=account,
+            ):
+                send_message(thread_id, "📊 Em đã tạo Excel nhưng gửi file chưa được.", thread_type)
+        elif intent == _pi.RAG_TEACHER:
+            if not grade or not subject:
+                send_message(thread_id, "⚠️ Thiếu lớp/môn cho RAG teacher.", thread_type)
+                return
+            r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
+            send_message(thread_id, r.get("text") or r.get("error") or "Xong.", thread_type)
         else:
-            from services.pdf_intent import summarize_pdf
-            s = summarize_pdf(path, _ai_model())
-            if not s:
+            r = _pi.ingest_knowledge(
+                path, name=name, model=_ai_model(account, thread_id),
+                who=user_id or f"zalop_{thread_id}", platform="zalop", chat_id=thread_id,
+            )
+            parts = []
+            if r.get("summary"):
+                from services import pdf_images as _pimg
+                parts.append(_pimg.humanize_markers(r["summary"]))
+            if r.get("text"):
+                parts.append(r["text"])
+            if not r.get("ok") and r.get("error"):
+                parts.append(f"⚠️ {r['error']}")
+            if not parts:
                 send_message(thread_id, "❌ Không đọc được nội dung PDF (có thể là ảnh chụp).", thread_type)
             else:
-                from services import pdf_images as _pimg
-                send_message(thread_id, _pimg.humanize_markers(s), thread_type)
-                # Ảnh THẬT cho marker image:// — zalo-server chạy chung container
-                # nên đưa thẳng đường dẫn file cục bộ làm imagePath.
+                send_message(thread_id, "\n\n".join(parts), thread_type)
                 try:
-                    for cap, iid in _pimg.find_markers(s)[:4]:
+                    from services import pdf_images as _pimg
+                    for cap, iid in _pimg.find_markers(r.get("summary") or "")[:4]:
                         p = _pimg.image_path(iid)
                         if p:
-                            send_photo(thread_id, str(p),
-                                       caption=(cap or "Hình trong tài liệu")[:200],
-                                       thread_type=thread_type)
+                            _send_photo_robust(
+                                thread_id, str(p),
+                                (cap or "Hình trong tài liệu")[:200],
+                                thread_type, account=account,
+                            )
                 except Exception as exc:
                     logger.warning("zalop gửi ảnh marker PDF lỗi: %s", exc)
     except Exception as e:
         logger.warning("Zalo personal pdf intent %s lỗi: %s", intent, e)
         send_message(thread_id, f"❌ Lỗi xử lý PDF: {e}", thread_type)
     finally:
-        for p in (path, docx_tmp):
+        for p in temps:
             try:
                 os.unlink(p)
             except Exception:
                 pass
 
 
-def _do_photo_request(thread_id: str, thread_type: int, file_data: bytes,
-                      request_text: str, allow: set | None = None) -> None:
-    """Ảnh + yêu cầu: 'generate' = tạo/chỉnh ảnh (nhóm lọc 'image');
-    'analyze' = phân tích bằng nhánh vision — GIỐNG kênh Zalo Bot."""
+def _do_photo_request(
+    thread_id: str,
+    thread_type: int,
+    file_data: bytes,
+    request_text: str,
+    allow: set | None = None,
+    *,
+    intent: str | None = None,
+    user_id: str = "",
+    account: str = "",
+) -> None:
+    """Xử lý ảnh: rag_knowledge | rag_teacher | analyze | generate (img2img)."""
     from services import photo_intent as _phi
     send_typing(thread_id, thread_type)
-    if _phi.classify(request_text) == "generate":
-        if allow is not None and "image" not in allow:
+    it = intent or (
+        _phi.GENERATE if _phi.classify(request_text) == _phi.GENERATE else _phi.ANALYZE
+    )
+    allowed = _phi.allowed_intents(allow)
+    if it not in allowed and allow is not None:
+        if it == _phi.GENERATE:
             return
-        out = _phi.generate_from_photo(file_data, request_text)
+        if it not in allowed:
+            return
+
+    if it == _phi.GENERATE:
+        out = _phi.generate_from_photo(file_data, request_text, channel="zalop")
+        try:
+            from services import net_guard
+            out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+        except Exception:
+            pass
         url = out.get("image_url")
         if url:
-            if send_photo(thread_id, url, (out.get("text") or "Đây ạ 🎨")[:1000], thread_type).get("ok"):
+            if _send_photo_robust(
+                thread_id, str(url),
+                (out.get("text") or "Đây ạ 🎨")[:1000], thread_type,
+                account=account or "",
+            ):
                 return
-            send_message(thread_id, f"{out.get('text') or ''}\n{url}".strip(), thread_type)
+            send_message(
+                thread_id,
+                out.get("text") or "Em tạo được ảnh nhưng gửi chưa được ạ.",
+                thread_type,
+            )
             return
         send_message(thread_id, out.get("text") or "Em chưa tạo được ảnh ạ.", thread_type)
         return
-    ans = ""
-    try:
-        import base64
-        from services.agent.branches import branch_model
-        from services.agent.runtime import call_model, content_of
-        durl = "data:image/jpeg;base64," + base64.b64encode(file_data).decode()
-        msgs = [{"role": "user", "content": [
-            {"type": "text", "text": request_text},
-            {"type": "image_url", "image_url": {"url": durl}},
-        ]}]
-        _vm = branch_model("vision", "zalop")
-        resp = call_model(_vm, msgs, timeout=180, max_tokens=900)
-        if resp.get("error"):
-            try:
-                from services.notifier import notify_admin as _notify
-                _notify(f"⚠️ Vision (Zalo Cá Nhân) lỗi — model '{_vm}': {str(resp['error'])[:200]}")
-            except Exception:
-                pass
-        else:
-            ans = content_of(resp).strip()
-    except Exception as exc:
-        logger.warning("Zalo personal vision lỗi: %s", exc)
-    send_message(thread_id, ans or "📷 Đã nhận ảnh nhưng chưa phân tích được ạ.", thread_type)
+
+    if it == _phi.RAG_KNOWLEDGE:
+        r = _phi.ingest_knowledge_from_photo(
+            file_data, prompt=request_text, who=user_id or thread_id,
+            platform="zalop", chat_id=str(thread_id), channel="zalop",
+        )
+        send_message(thread_id, r.get("text") or r.get("error") or "Xong.", thread_type)
+        return
+
+    if it == _phi.RAG_TEACHER:
+        send_message(
+            thread_id,
+            "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`).",
+            thread_type,
+        )
+        return
+
+    answer = _phi.analyze_photo(file_data, request_text, channel="zalop")
+    send_message(thread_id, answer, thread_type)
 
 
 def _process_ai(ev: dict) -> None:
     """Trả lời AI cho 1 tin — CHỈ thread được cấp phép (an toàn tài khoản cá nhân)."""
-    thread_id = ev["thread_id"]
+    thread_id = str(ev.get("thread_id") or "").strip()
     thread_type = ev["thread_type"]
     text = (ev.get("text") or "").strip()
+    acc_id = str(ev.get("account_id") or "").strip()
 
     from services.agent import capabilities as _caps
     # Tầng lọc: nhóm (thread_id) ∩ user (sender_id) — User ID theo từng nhóm.
     _sender = str(ev.get("sender_id") or "")
-    _allow = _caps.allowed_groups_for_member("zalop", ev.get("account_id") or "", thread_id, _sender)
-    allowed_ids = _chat_ids()
-    permitted = (_allow is not None) or (thread_id in allowed_ids)
+    _allow = _caps.allowed_groups_for_member("zalop", acc_id, thread_id, _sender)
+    allowed_ids = list(_chat_ids())
+    # Admin #N của acc = luôn được phép (giống Telegram / Zalo Bot)
+    _is_admin = _is_admin_thread(acc_id, thread_id)
+    if _is_admin and thread_id and thread_id not in allowed_ids:
+        allowed_ids.append(thread_id)
+    permitted = _is_admin or (_allow is not None) or (thread_id in allowed_ids)
     if not permitted:
         _alert_new_thread(ev)
         return  # im lặng — tài khoản cá nhân không tự trả lời người lạ
+
+    # Admin workspace: trả lời `có`/`không` lưu danh bạ, đặt tên…
+    if _is_admin and text:
+        try:
+            from services.admin_workspace import handle_admin_text
+            _ar = handle_admin_text("zalop", thread_id, text)
+            if _ar:
+                send_message(thread_id, _ar, int(thread_type or 0), account=acc_id, rich=True)
+                return
+        except Exception as exc:
+            logger.warning("zalop admin workspace: %s", exc)
 
     _low = text.lower()
     # Substring như Zalo Bot — tag bot kèm /id ("@Tên bot /id") vẫn nhận ra lệnh.
     if _low in {"/id", "id", "chatid"} or "/id" in _low or "chatid" in _low \
             or ("thread id" in _low and len(_low) <= 40):
         kind = "nhóm" if thread_type == 1 else "cá nhân"
-        _id_info = (f"🆔 Thread ID: {thread_id} ({kind})\n"
-                    f"👤 User ID người gửi: {_sender or '(không rõ)'}\n"
-                    f"Tài khoản bot: {ev.get('account_id')}")
-        # Ưu tiên Thread ID admin CỦA TÀI KHOẢN nhận tin; fallback global.
+        is_g = int(thread_type or 0) == 1
         acc_id = str(ev.get("account_id") or "").strip()
+        acc_label, acc_phone, acc_own = _account_phone_name(acc_id)
+        # Tên thread (nhóm / user)
+        thread_name = ""
+        try:
+            info = resolve_thread(acc_id, thread_id, "group" if is_g else "private")
+            if info.get("ok") and info.get("name"):
+                thread_name = str(info.get("name") or "").strip()
+        except Exception:
+            pass
+        sender_name = str(ev.get("display_name") or "").strip()
+        if is_g and _sender and not sender_name:
+            try:
+                info = resolve_thread(acc_id, _sender, "private")
+                if info.get("ok") and info.get("name"):
+                    sender_name = str(info.get("name") or "").strip()
+            except Exception:
+                pass
+        lines = [
+            f"🆔 Thread ID: `{thread_id}` ({kind})",
+            f"📛 Tên {'nhóm' if is_g else 'user'}: **{thread_name}**" if thread_name else None,
+            f"👤 User ID người gửi: `{_sender}`" if _sender else None,
+            f"👤 Tên người gửi: **{sender_name}**" if sender_name else None,
+            f"🤖 Tài khoản Zalo CN: **{acc_label}**" if acc_label else None,
+            f"📞 SĐT: `{acc_phone}`" if acc_phone else None,
+            f"🔑 ownId: `{acc_own}`" if acc_own else None,
+        ]
+        _id_info = "\n".join(x for x in lines if x)
         _admin, _attype, _send_acc = _admin_for_account(acc_id)
         if _admin:
             send_message(
@@ -1011,37 +1759,121 @@ def _process_ai(ev: dict) -> None:
                 f"🆔 Yêu cầu /id từ thread {kind}:\n{_id_info}",
                 _attype,
                 account=_send_acc,
+                rich=True,
             )
         else:
-            send_message(thread_id, _id_info, thread_type)
+            send_message(thread_id, _id_info, thread_type, account=acc_id, rich=True)
         return
 
-    # Bộ lọc TAG (nhóm): bật 'bắt buộc tag' → chỉ trả lời khi tin chứa từ khóa tag.
+    # Bộ lọc TAG (nhóm): native mention / keyword / @alias — chung tag_gate_allows.
     if thread_type == 1 and thread_id:
         _req, _kw = _caps.mention_required_for("zalop", ev.get("account_id") or "", thread_id)
-        if _req:
-            _kw_l = (_kw or "").strip().lower()
-            if not (_kw_l and _kw_l in (text or "").lower()):
-                return
+        _native = is_bot_tagged(ev, "")  # mention / @alias (không cần keyword)
+        if _req and not _caps.tag_gate_allows(
+            required=True,
+            keyword=_kw,
+            text=text or "",
+            native_tagged=_native,
+            platform_group_delivery=False,
+        ):
+            logger.info(
+                "zalop skip (cần tag bot): thread=%s acc=%s text=%.80s mentions=%s kw=%r",
+                thread_id, ev.get("account_id"), text,
+                len(ev.get("mentions") or []), _kw,
+            )
+            return
 
     pkey = f"zalop:{ev.get('account_id')}:{thread_id}"
 
-    # PDF đang chờ ý định (1=RAG / 2=Word)?
+    # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
     if text and _pi.has_pending(pkey):
-        _intent = _pi.parse_intent(text)
-        if _intent:
-            if _intent not in _pi.allowed_intents(_allow):
+        _pend = _pi.get_pending(pkey) or {}
+        _acc = str(ev.get("account_id") or "")
+        _uid = str(ev.get("sender_id") or "")
+        if _pend.get("stage") == "teacher_meta":
+            meta = _pi.parse_teacher_meta(text)
+            if not meta:
+                send_message(thread_id, _pi.ASK_TEACHER, thread_type)
                 return
-            _do_pdf_intent(thread_id, thread_type, _pi.pop_pending(pkey), _intent)
+            _do_pdf_intent(
+                thread_id, thread_type, _pi.pop_pending(pkey), _pi.RAG_TEACHER,
+                grade=meta["grade"], subject=meta["subject"],
+                account=_acc, user_id=_uid,
+            )
+            return
+        _allowed_i = _pi.allowed_intents(_allow)
+        _intent = _pi.parse_intent(text, _allowed_i)
+        if _intent:
+            if _intent == "rag":
+                _intent = _pi.RAG_KNOWLEDGE
+            if _intent not in _allowed_i:
+                return
+            if _intent == _pi.RAG_TEACHER:
+                _pi.update_pending(pkey, stage="teacher_meta", intent=_pi.RAG_TEACHER)
+                send_message(thread_id, _pi.ASK_TEACHER, thread_type)
+                return
+            _do_pdf_intent(
+                thread_id, thread_type, _pi.pop_pending(pkey), _intent,
+                account=_acc, user_id=_uid,
+            )
             return
 
-    # Ảnh đang chờ yêu cầu?
+    # Ảnh chờ: menu 1–4 / hỏi prompt / teacher meta (giống Telegram / Zalo Bot)
     from services import photo_intent as _phi
+    _acc = str(ev.get("account_id") or "")
+    _uid = str(ev.get("sender_id") or "")
     if text and _phi.has_pending(pkey):
-        pdata = _phi.pop_pending(pkey)
-        if pdata:
-            _do_photo_request(thread_id, thread_type, pdata, text, _allow)
+        _pend = _phi.get_pending(pkey) or {}
+        _allowed_ph = _phi.allowed_intents(_allow)
+        stage = str(_pend.get("stage") or "choose")
+        if stage == "teacher_meta":
+            meta = _pi.parse_teacher_meta(text)
+            if not meta:
+                send_message(thread_id, _phi.ASK_TEACHER, thread_type)
+                return
+            full = _phi.pop_pending_full(pkey)
+            if full and full.get("data"):
+                r = _phi.ingest_teacher_from_photo(
+                    full["data"], grade=meta["grade"], subject=meta["subject"],
+                    channel="zalop",
+                )
+                send_message(
+                    thread_id, r.get("text") or r.get("error") or "Xong.", thread_type,
+                )
+            return
+        if stage == "need_prompt":
+            intent = str(_pend.get("intent") or _phi.ANALYZE)
+            full = _phi.pop_pending_full(pkey)
+            if full and full.get("data"):
+                _do_photo_request(
+                    thread_id, thread_type, full["data"], text.strip(), _allow,
+                    intent=intent, user_id=_uid, account=_acc,
+                )
+            return
+        # stage=choose
+        intent = _phi.parse_intent(text, _allowed_ph)
+        if intent:
+            if intent not in _allowed_ph:
+                return
+            if intent == _phi.RAG_TEACHER:
+                _phi.update_pending(pkey, stage="teacher_meta", intent=intent)
+                send_message(thread_id, _phi.ASK_TEACHER, thread_type)
+                return
+            if _phi.needs_prompt(intent, text):
+                _phi.update_pending(pkey, stage="need_prompt", intent=intent)
+                send_message(
+                    thread_id,
+                    _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                    thread_type,
+                )
+                return
+            full = _phi.pop_pending_full(pkey)
+            if full and full.get("data"):
+                _do_photo_request(
+                    thread_id, thread_type, full["data"], text.strip(), _allow,
+                    intent=intent, user_id=_uid, account=_acc,
+                )
             return
 
     # File đính kèm
@@ -1062,18 +1894,41 @@ def _process_ai(ev: dict) -> None:
         send_message(thread_id, f"📎 Hiện em chỉ hỗ trợ chuyển PDF → Word. File: {name or 'không rõ'}", thread_type)
         return
 
-    # Ảnh: có caption → xử lý ngay; không caption → hỏi rồi chờ tin kế tiếp.
+    # Ảnh: không caption → menu; có caption → parse intent / hỏi prompt nếu cần.
     if ev.get("msg_type") == "chat.photo" and ev.get("attachment_url"):
         send_typing(thread_id, thread_type)
         data = _download(ev["attachment_url"])
         if not data:
             send_message(thread_id, "📷 Không tải được ảnh.", thread_type)
             return
-        if not text:
+        caption = (text or "").strip()
+        _allowed_ph = _phi.allowed_intents(_allow)
+        if not caption:
             _phi.set_pending(pkey, data)
-            send_message(thread_id, _phi.ASK, thread_type)
+            send_message(thread_id, _phi.ask_text(_allowed_ph), thread_type)
             return
-        _do_photo_request(thread_id, thread_type, data, text, _allow)
+        intent = _phi.parse_intent(caption, _allowed_ph) or (
+            _phi.GENERATE if _phi.classify(caption) == _phi.GENERATE else _phi.ANALYZE
+        )
+        if intent not in _allowed_ph and _allow is not None:
+            if intent == _phi.GENERATE:
+                return
+        if intent == _phi.RAG_TEACHER:
+            _phi.set_pending(pkey, data, stage="teacher_meta", intent=intent)
+            send_message(thread_id, _phi.ASK_TEACHER, thread_type)
+            return
+        if intent in {_phi.ANALYZE, _phi.GENERATE} and _phi.needs_prompt(intent, caption):
+            _phi.set_pending(pkey, data, stage="need_prompt", intent=intent)
+            send_message(
+                thread_id,
+                _phi.ASK_PROMPT_GENERATE if intent == _phi.GENERATE else _phi.ASK_PROMPT_ANALYZE,
+                thread_type,
+            )
+            return
+        _do_photo_request(
+            thread_id, thread_type, data, caption, _allow,
+            intent=intent, user_id=_uid, account=_acc,
+        )
         return
 
     # Tin GHI ÂM → STT → coi như tin nhắn chữ (đường đi chỉ thêm bước chuyển
@@ -1105,27 +1960,70 @@ def _process_ai(ev: dict) -> None:
     send_typing(thread_id, thread_type)
     try:
         from services.agent import orchestrate
-        # Cài đặt RIÊNG từng tài khoản (ownId): fast-path HA cục bộ.
+        # Cài đặt RIÊNG từng tài khoản (ownId): fast-path HA + model.
         _acc = str(ev.get("account_id") or "").strip()
         # Ngữ cảnh cho reminders (tạo nhắc hẹn trong lượt orchestrate này).
         _msg_ctx.account = _acc
         _msg_ctx.thread_type = int(thread_type or 0)
         _fp_map = config.get().get("zalo_personal_account_admins")
         _fp_entry = _fp_map.get(_acc) if isinstance(_fp_map, dict) else None
-        _fp = bool(_fp_entry.get("ha_fastpath", True)) if isinstance(_fp_entry, dict) else True
-        out = orchestrate(text, f"zalop_{thread_id}", allow=_allow, ha_fastpath=_fp)
+        # HA: admin entry (nếu match) → acc → True
+        _fp = True
+        if isinstance(_fp_entry, dict):
+            _fp = bool(_fp_entry.get("ha_fastpath", True))
+            for e in (_fp_entry.get("admin_entries") or []):
+                if isinstance(e, dict) and str(e.get("chat_id") or "").strip() == thread_id:
+                    _fp = bool(e.get("ha_fastpath", _fp))
+                    break
+        _model = _ai_model(_acc, thread_id)
+        out = orchestrate(
+            text, f"zalop_{thread_id}",
+            allow=_allow, ha_fastpath=_fp, model=_model,
+        )
+        try:
+            from services import net_guard
+            out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})
+        except Exception:
+            pass
         if out.get("silent"):
             return
         reply = (out.get("text") or "").strip() or "..."
         image_url = out.get("image_url")
+        sent_media = False
         if image_url:
-            if send_photo(thread_id, image_url, reply[:1000], thread_type).get("ok"):
-                return
-            reply = f"{reply}\n{image_url}"
-        for k in ("video_url", "audio_url"):
-            u = out.get(k)
-            if u:
-                reply = f"{reply}\n{u}"
+            if _send_photo_robust(
+                thread_id, str(image_url), reply[:1000], thread_type, account=_acc,
+            ):
+                sent_media = True
+            else:
+                reply = (reply + "\n(em tạo ảnh xong nhưng gửi ảnh chưa được)").strip()
+        # Audio agent → file đính kèm (không dán URL)
+        audio_url = out.get("audio_url") or ""
+        audio_path = out.get("audio_path") or ""
+        if not sent_media and (audio_url or audio_path):
+            src = audio_path or audio_url
+            if _send_file_robust(
+                thread_id, str(src), reply[:200], thread_type, account=_acc,
+            ):
+                sent_media = True
+            else:
+                reply = (reply + "\n(em có audio nhưng gửi file chưa được)").strip()
+        if out.get("video_url") or out.get("video_path"):
+            # best-effort file; không dán link
+            vsrc = out.get("video_path") or out.get("video_url")
+            if vsrc and _send_file_robust(
+                thread_id, str(vsrc), reply[:200], thread_type, account=_acc,
+            ):
+                sent_media = True
+            elif not sent_media:
+                reply = (reply + "\n(em có video nhưng gửi file chưa được)").strip()
+        if sent_media:
+            if image_url and not (audio_url or audio_path):
+                _maybe_voice_reply(
+                    thread_id, thread_type, _acc,
+                    str(ev.get("sender_id") or ""), reply,
+                )
+            return
         choices = out.get("choices") or []
         if choices and not any(out.get(k) for k in ("image_url", "video_url", "audio_url")):
             try:
@@ -1145,13 +2043,17 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
                        user_id: str, reply: str) -> None:
     """Gửi KÈM file âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
 
-    Zalo cá nhân gửi file qua URL nên cần voice.public_base_url trỏ đúng địa
-    chỉ gateway. Lỗi TTS không làm hỏng câu trả lời chữ đã gửi.
+    Lưu WAV vào ``/images/voice/`` rồi ``sendFile`` qua URL nội bộ
+    ``http://127.0.0.1/images/voice/…`` (zalo-server trong cùng container).
+    Không dán link; lỗi TTS không làm hỏng câu chữ đã gửi.
     """
     text = (reply or "").strip()
     if not text or not thread_id:
         return
     try:
+        import uuid
+        from pathlib import Path
+
         from services import voice as _voice
         from services.voice import permissions as _vperm
         if not _vperm.wants_voice_reply("zalop", account, thread_id, user_id):
@@ -1159,8 +2061,19 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
         if not _voice.tts_ready():
             return
         wav = _voice.speak(text[:1000])
-        url = _voice.media_url(_voice.save_media(wav))
-        send_file(thread_id, url, "", thread_type, account=account)
+        out_dir = Path(config.images_dir) / "voice"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fn = f"tts_{uuid.uuid4().hex[:10]}.wav"
+        (out_dir / fn).write_bytes(wav)
+        # Ưu tiên URL local — đã test sendFile nhóm/1-1 thành công
+        local = f"http://127.0.0.1/images/voice/{fn}"
+        if not _send_file_robust(thread_id, local, "", thread_type, account=account):
+            # fallback public / media_url cũ
+            try:
+                url = _voice.media_url(_voice.save_media(wav))
+                send_file(thread_id, url, "", thread_type, account=account)
+            except Exception:
+                pass
         _voice.cleanup_media()
     except Exception as exc:
         logger.warning("zalop voice reply loi: %s", str(exc)[:160])
@@ -1199,23 +2112,8 @@ def handle_event(body: dict, event_name: str = "message") -> None:
                 _req_fw, _kw_fw = _fw_caps.mention_required_for(
                     "zalop", str(ev.get("account_id") or ""),
                     str(ev.get("thread_id") or ""))
-                _tagged = bool(_kw_fw) and _kw_fw.lower() in str(ev.get("text") or "").lower()
-                # Mention NATIVE zca-js: data.mentions = [{uid,pos,len,...}] — tag
-                # tên tài khoản bot (uid == ownId nhận tin) là "tag", không cần đặt
-                # từ khóa ở bộ lọc tag.
-                if not _tagged:
-                    try:
-                        _mts = (body.get("data") or {}).get("mentions") if isinstance(body, dict) else None
-                        if isinstance(_mts, str):
-                            _mts = json.loads(_mts)
-                        _own = str(ev.get("account_id") or "")
-                        if _own and isinstance(_mts, list):
-                            _tagged = any(
-                                isinstance(x, dict) and str(x.get("uid") or "") == _own
-                                for x in _mts
-                            )
-                    except Exception:
-                        pass
+                # Chung logic với cổng AI: keyword + mention native + @alias
+                _tagged = is_bot_tagged(ev, _kw_fw)
                 _fw_payload = _zca_js_payload(body, ev)
                 _fw_payload["tagged"] = _tagged
                 _fw_consumed = _fw_caps.forward_event(
@@ -1228,12 +2126,40 @@ def handle_event(body: dict, event_name: str = "message") -> None:
         # 2) AI chỉ xử lý tin nhắn thường, không phải tin tự gửi.
         if event_name != "message" or ev.get("is_self") or not ev.get("thread_id"):
             return
+        # Tên nhóm (zca-js getGroupInfo) — webhook thường không kèm title
+        _is_g = bool(ev.get("thread_type") == 1)
+        _acc = str(ev.get("account_id") or "")
+        _tid = str(ev.get("thread_id") or "")
+        _chat_name = str(ev.get("chat_name") or ev.get("group_name") or "").strip()
+        if _is_g and _acc and _tid and not _chat_name:
+            try:
+                _info = resolve_thread(_acc, _tid, "group")
+                if _info.get("ok") and _info.get("name"):
+                    _chat_name = str(_info.get("name") or "").strip()
+            except Exception:
+                pass
         # Ghi LẦN GẦN NHẤT (tài khoản/Chat ID/User ID) để trang quản lý hiển thị.
-        _ca.record("zalop", account=ev.get("account_id") or "",
-                   chat_id=ev.get("thread_id") or "", user_id=ev.get("sender_id") or "",
+        _ca.record("zalop", account=_acc,
+                   chat_id=_tid, user_id=ev.get("sender_id") or "",
                    user_name=ev.get("display_name") or "",
-                   is_group=ev.get("thread_type") == 1,
+                   chat_name=_chat_name,
+                   is_group=_is_g,
                    text=ev.get("text") or ev.get("msg_type") or "")
+        # Danh bạ bền (channel_contacts) — giống Telegram / Zalo Bot
+        try:
+            from services import channel_contacts as _cc
+            _cc.upsert(
+                "zalop",
+                _acc,
+                _tid,
+                user_id=str(ev.get("sender_id") or ""),
+                display_name=str(ev.get("display_name") or ""),
+                chat_name=_chat_name,
+                is_group=_is_g,
+                text=str(ev.get("text") or ev.get("msg_type") or ""),
+            )
+        except Exception:
+            pass
         if _fw_consumed:
             return  # tin tag đã chuyển webhook — không đưa vào AI
         if not _bool(_cfg(), "zalo_personal_ai_enabled", True):

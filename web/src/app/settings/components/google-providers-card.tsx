@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
+import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 
 type FlowAccount = { profile: string; project_id: string; label?: string };
@@ -287,9 +288,10 @@ export function GoogleProvidersCard() {
             </div>
           </div>
           <div>
-            <label className="text-[11px] text-[var(--muted-foreground)] flex items-center gap-1"><Shield className="size-3"/>TOTP Secret (để trống = xác minh thiết bị)</label>
+            <TotpSecretLabel />
             <Input value={draft.totpSecret} onChange={e=>setDraft({...draft,totpSecret:e.target.value})} placeholder="xxxx xxxx xxxx xxxx..." className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30" autoComplete="off" disabled={running}/>
             {totpCode && <div className="mt-1 flex items-center gap-2"><span className="text-[11px] text-amber-700">Mã TOTP:</span><span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest">{totpCode}</span><span className="text-[10px] text-amber-500">({totpRem}s)</span></div>}
+            <TotpSecretGuide />
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" className="h-7 text-[11px] rounded-lg" onClick={saveAccount} disabled={!draft.email.trim()||!draft.password}>Lưu tài khoản</Button>

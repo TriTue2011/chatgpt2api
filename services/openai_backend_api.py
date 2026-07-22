@@ -450,19 +450,11 @@ class OpenAIBackendAPI:
                             logger.warning({"event": "chatgpt_image_url_decode_failed", "error": str(e)[:120]})
                             continue
                     elif url.startswith(("http://", "https://")):
+                        # URL do client cung cấp → SSRF guard (net_guard).
                         try:
-                            import urllib.request
-                            req = urllib.request.Request(url, headers={
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                              "Chrome/130.0.0.0 Safari/537.36",
-                                "Accept": "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
-                            })
-                            with urllib.request.urlopen(req, timeout=20) as resp:
-                                img_bytes = resp.read()
-                                ct = resp.headers.get("Content-Type", "")
-                                if ct:
-                                    img_mime = ct.split(";", 1)[0].strip() or img_mime
+                            from services import net_guard
+                            img_bytes = net_guard.fetch_media(url, timeout=20, max_bytes=25 * 1024 * 1024)
+                            img_mime = "image/png"
                         except Exception as e:
                             logger.warning({"event": "chatgpt_image_url_download_failed", "url": url[:120], "error": str(e)[:120]})
                             continue

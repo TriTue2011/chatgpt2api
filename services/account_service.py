@@ -3,7 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Condition, Lock
 from typing import Any
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from services.config import config
 from services.log_service import (
@@ -818,6 +818,11 @@ class AccountService:
                 # text_limit: demote by moving to end of dict (FIFO)
                 self._accounts.pop(profile, None)
                 next_item["status"] = "limited"
+                # GMA/web session: always set restore_at so quota_watcher can
+                # auto-revive (avoid stuck limited forever when last_used is null).
+                next_item["restore_at"] = (
+                    datetime.now(timezone.utc) + timedelta(hours=24)
+                ).isoformat()
 
             account = self._normalize_account(next_item)
             if account:
@@ -830,14 +835,17 @@ class AccountService:
             "quota_type": quota_type,
             "account_type": account_type,
             "at": now_str,
+            "restore_at": (self._accounts.get(profile) or {}).get("restore_at"),
         })
 
     def remove_invalid_token(self, access_token: str, event: str) -> bool:
+        # Snapshot before mutate/delete so multi-tier recovery still has email/rt.
+        snapshot = self.get_account(access_token)
         if not config.auto_remove_invalid_accounts:
             self.update_account(access_token, {"status": "error", "quota": 0})
+            self._spawn_dead_recovery(snapshot, access_token, event)
             return False
         # Chụp email/provider TRƯỚC khi xóa để log đủ "tài khoản nào, provider nào"
-        snapshot = self.get_account(access_token)
         removed = bool(self.delete_accounts([access_token])["removed"])
         if removed:
             log_service.add(LOG_TYPE_ACCOUNT, "Tự động xóa tài khoản lỗi",
@@ -846,7 +854,29 @@ class AccountService:
                              "source": event, "token": anonymize_token(access_token)})
         elif access_token:
             self.update_account(access_token, {"status": "error", "quota": 0})
+            self._spawn_dead_recovery(snapshot, access_token, event)
         return removed
+
+    def _spawn_dead_recovery(
+        self,
+        snapshot: dict | None,
+        access_token: str,
+        event: str,
+    ) -> None:
+        """Kick multi-tier recovery for accounts just marked error (async)."""
+        try:
+            from services.codex_error_recovery_scheduler import (
+                schedule_dead_account_recovery,
+            )
+
+            acc = dict(snapshot) if isinstance(snapshot, dict) else {}
+            if access_token and "access_token" not in acc:
+                acc["access_token"] = access_token
+            if not acc:
+                return
+            schedule_dead_account_recovery(acc, reason=f"marked_error:{event}")
+        except Exception:
+            pass
 
     def get_account(self, access_token: str) -> dict | None:
         if not access_token:
@@ -1057,6 +1087,76 @@ class AccountService:
                 if item.get("status") == "limited"
                    and (token := item.get("access_token") or "")
             ]
+
+    def revive_stuck_limited(
+        self,
+        *,
+        max_age_hours: float = 24.0,
+        account_types: set[str] | None = None,
+    ) -> list[str]:
+        """Auto-restore limited accounts that have no restore_at / last_used.
+
+        Used for GMA profiles stuck forever after text_limit without timestamps.
+        Returns list of restored profile/token ids.
+        """
+        now = datetime.now(timezone.utc)
+        types = account_types or {"gemini_web_api", "gemini_web", "gma"}
+        revived: list[str] = []
+        with self._lock:
+            for token, acc in list(self._accounts.items()):
+                if str(acc.get("status") or "") != "limited":
+                    continue
+                grp = account_group(acc)
+                if types and grp not in types and str(acc.get("type") or "") not in types:
+                    continue
+                restore_at = acc.get("restore_at")
+                if restore_at:
+                    try:
+                        t = datetime.fromisoformat(str(restore_at).replace("Z", "+00:00"))
+                        if t.tzinfo is None:
+                            t = t.replace(tzinfo=timezone.utc)
+                        if now < t:
+                            continue  # still cooling down
+                    except Exception:
+                        pass
+                else:
+                    # No restore_at: age out by last_quota_exhausted_at / last_used
+                    anchor = (
+                        acc.get("last_quota_exhausted_at")
+                        or acc.get("last_used_at")
+                        or acc.get("updated_at")
+                        or ""
+                    )
+                    age_ok = False
+                    if anchor:
+                        try:
+                            t = datetime.strptime(
+                                str(anchor)[:19], "%Y-%m-%d %H:%M:%S"
+                            ).replace(tzinfo=timezone.utc)
+                            age_ok = (now - t).total_seconds() / 3600.0 >= max_age_hours
+                        except Exception:
+                            age_ok = True
+                    else:
+                        age_ok = True
+                    if not age_ok:
+                        continue
+                next_item = dict(acc)
+                next_item["status"] = "active"
+                next_item["restore_at"] = None
+                next_item["quota"] = max(int(next_item.get("quota") or 0), 1)
+                norm = self._normalize_account(next_item)
+                if norm:
+                    self._accounts[token] = norm
+                    revived.append(token)
+            if revived:
+                self._save_accounts()
+        if revived:
+            logger.info({
+                "event": "stuck_limited_revived",
+                "n": len(revived),
+                "ids": [r[:40] for r in revived],
+            })
+        return revived
 
     def add_accounts(self, tokens: list[str]) -> dict:
         """Add free-pool tokens. Dedupes by email so refresh never creates a 2nd row."""

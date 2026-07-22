@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
 import { SavedAccountsSelect } from "@/components/saved-accounts-select";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
+import { TotpSecretGuide, TotpSecretLabel } from "@/components/google-security-hints";
 import { ReuseProfilePicker } from "./reuse-profile-picker";
 
 type OnboardState = {
@@ -380,9 +381,7 @@ export function GeminiWebApiCard() {
             </div>
           </div>
           <div>
-            <label className="text-[11px] text-[var(--muted-foreground)] flex items-center gap-1">
-              <Shield className="size-3" /> TOTP Secret
-            </label>
+            <TotpSecretLabel />
             <Input
               value={draft.totpSecret}
               onChange={(e) => setDraft({ ...draft, totpSecret: e.target.value })}
@@ -392,13 +391,14 @@ export function GeminiWebApiCard() {
             />
             {totpCode && (
               <div className="mt-1 flex items-center gap-2">
-                <span className="text-[11px] text-amber-700">Ma hien tai:</span>
+                <span className="text-[11px] text-amber-700">Mã hiện tại:</span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest">
                   {totpCode}
                 </span>
                 <span className="text-[10px] text-amber-500">({totpRemaining}s)</span>
               </div>
             )}
+            <TotpSecretGuide />
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button

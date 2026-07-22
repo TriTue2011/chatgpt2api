@@ -732,16 +732,48 @@ def _sherpa_local(wav16: bytes, lang: str = "vi") -> str:
 
 
 def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:
-    """Audio bất kỳ → text. `lang` = vi|en (rỗng = voice.stt.language, mặc định vi).
+    """Audio → text. ``lang`` = vi | en | auto (rỗng = voice.stt.language).
 
-    Ném VoiceError nếu không nhận dạng được."""
+    auto: thử VI rồi EN (cần cả 2 model local).
+    """
     if not audio:
         raise VoiceError("Không có dữ liệu âm thanh.")
     backend = vcfg.stt_backend()
     if backend == "off":
         raise VoiceError("STT đang tắt.")
-    lang = (lang or vcfg.stt_language()).strip().lower()
+    lang = (lang or vcfg.stt_language()).strip().lower().replace("_", "-")
+    if lang.startswith("en"):
+        lang = "en"
+    elif lang.startswith("vi"):
+        lang = "vi"
+    elif lang in {"auto", "mul", "multi", "und", "*"}:
+        lang = "auto"
+    else:
+        lang = "vi"
     wav16 = to_wav_16k_mono(audio, src_hint)
+    if lang == "auto":
+        # Local auto: vi trước, en sau (cùng logic wyoming _transcribe_auto)
+        for try_lang in ("vi", "en"):
+            try:
+                if try_lang == "vi" and vcfg.stt_model_dir() is None:
+                    continue
+                if try_lang == "en" and vcfg.stt_en_model_dir() is None:
+                    continue
+                text = _normalize_stt(_sherpa_local(wav16, try_lang))
+                if text:
+                    return text
+            except Exception as exc:
+                logger.debug("voice: auto-detect %s fail: %s", try_lang, str(exc)[:80])
+        # fallback wyoming client if configured
+        uri = vcfg.stt_wyoming_url()
+        if uri and backend in {"auto", "wyoming"}:
+            try:
+                text = _normalize_stt(_wyoming_stt(wav16, uri) or "")
+                if text:
+                    return text
+            except Exception as exc:
+                logger.warning("voice: STT wyoming auto fail: %s", str(exc)[:120])
+        raise VoiceError("Không nhận dạng được giọng nói (auto VI→EN).")
     errors: list[str] = []
     for mode in _backend_order(backend):
         try:
@@ -752,7 +784,6 @@ def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:
                 if not uri:
                     continue
                 text = _wyoming_stt(wav16, uri)
-            # Áp dụng normalize cho cả kết quả wyoming (cũng có thể ALLCAPS)
             text = _normalize_stt(text) if text else ""
             if text:
                 return text

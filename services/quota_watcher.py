@@ -158,6 +158,18 @@ class QuotaWatcher:
             self._index[acc_id] = item
             count += 1
 
+        # GMA / web profiles stuck limited without restore_at → revive
+        try:
+            revived = account_service.revive_stuck_limited(max_age_hours=24.0)
+            if revived:
+                logger.info({
+                    "event": "quota_watcher_revive_stuck",
+                    "n": len(revived),
+                })
+                count = sum(1 for a in account_service.list_accounts()
+                            if a.get("status") not in ("disabled", "error"))
+        except Exception:
+            pass
         logger.info({"event": "quota_watcher_rebuilt", "accounts": count, "total_in_pool": len(accounts)})
 
     def _next_check_time(self, account: dict[str, Any], now: float) -> float:
@@ -273,14 +285,21 @@ class QuotaWatcher:
                             should_restore = True
                             reason = "restore_at_reached"
                     else:
-                        # No restore_at recorded (older limited accounts, or
-                        # 429s where the upstream omitted the header). Fall
-                        # back to a conservative 26h cooldown from last_used
-                        # so the pool doesn't get permanently stuck "limited".
+                        # No restore_at: use last_used OR last_quota_exhausted_at.
+                        # GMA profiles often have last_used=null and were stuck forever.
                         last_used = _parse_iso_timestamp(account.get("last_used_at") or "")
-                        if last_used and (time.time() - last_used) >= LIMITED_FALLBACK_TTL:
+                        last_q = _parse_iso_timestamp(
+                            account.get("last_quota_exhausted_at") or ""
+                        )
+                        anchor = last_used or last_q
+                        if anchor and (time.time() - anchor) >= LIMITED_FALLBACK_TTL:
                             should_restore = True
                             reason = "fallback_ttl"
+                        elif not anchor:
+                            # Completely missing timestamps → revive after short grace
+                            # (6h) so false Flash declines don't brick forever.
+                            should_restore = True
+                            reason = "stuck_no_timestamp"
                     if should_restore:
                         account_service.update_account(
                             account_id, {"status": "active", "restore_at": None},

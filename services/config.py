@@ -360,17 +360,115 @@ def _normalize_channel_blacklist(value: object) -> dict[str, list[dict]]:
     return out
 
 
+def _guess_chat_kind(chat_id: str) -> str:
+    s = str(chat_id or "").strip()
+    if s.startswith("-100") or (s.startswith("-") and s[1:].isdigit()):
+        return "group"
+    return "private"
+
+
+def _one_admin_entry(x: object) -> dict | None:
+    if isinstance(x, str):
+        cid = x.strip()
+        return {"chat_id": cid, "name": "", "kind": _guess_chat_kind(cid),
+                "notify_enabled": True} if cid else None
+    if not isinstance(x, dict):
+        return None
+    cid = str(x.get("chat_id") or x.get("id") or x.get("thread_id") or "").strip()
+    if not cid:
+        return None
+    kind = str(x.get("kind") or x.get("type") or "").strip().lower()
+    if kind in {"1", "group", "supergroup", "channel", "nhóm", "nhom"}:
+        kind = "group"
+    elif kind in {"0", "private", "user", "cá nhân", "ca nhan", "personal"}:
+        kind = "private"
+    else:
+        kind = _guess_chat_kind(cid)
+    return {
+        "chat_id": cid,
+        "name": str(x.get("name") or x.get("title") or "").strip()[:128],
+        "kind": kind,
+        # Model / nền tảng AI riêng từng admin (trống = kế thừa bot)
+        "ai_model": str(x.get("ai_model") or "").strip()[:128],
+        "notify_enabled": bool(x.get("notify_enabled", True)),
+        "account_log_enabled": bool(x.get("account_log_enabled", True)),
+        "newchat_alert_enabled": bool(x.get("newchat_alert_enabled", True)),
+        # Per-admin: điều khiển nhà cục bộ + fallback riêng
+        "ha_fastpath": bool(x.get("ha_fastpath", True)),
+        "fallback_enabled": bool(x.get("fallback_enabled", False)),
+        "emphasis_enabled": bool(x.get("emphasis_enabled", True)),
+        "emphasis_numbers": bool(x.get("emphasis_numbers", True)),
+        "emphasis_units": bool(x.get("emphasis_units", True)),
+        "emphasis_key_info": bool(x.get("emphasis_key_info", True)),
+        "emphasis_style": str(x.get("emphasis_style") or "bold").strip()[:16] or "bold",
+        # Zalo Bot Platform only (Tele không có màu/cỡ): red|orange|yellow|green|none
+        "markdown_color": str(
+            x.get("markdown_color") or x.get("emphasis_color") or ""
+        ).strip().lower()[:16],
+        # normal | big  → {big} trong parse_mode markdown
+        "markdown_size": str(
+            x.get("markdown_size") or x.get("emphasis_size") or x.get("text_size") or ""
+        ).strip().lower()[:16],
+    }
+
+
+def _normalize_admin_entries(it: dict) -> list[dict]:
+    """Build admin_entries from new or legacy bot fields.
+
+    Legacy: nếu chưa có admin có chat_id, promote chat_ids → Admin #1…
+    (ô chat_ids cũ từng dùng làm thread admin).
+    """
+    entries: list[dict] = []
+    seen: set[str] = set()
+    raw = it.get("admin_entries")
+    if isinstance(raw, list):
+        for x in raw:
+            e = _one_admin_entry(x)
+            if e and e["chat_id"] not in seen:
+                seen.add(e["chat_id"])
+                entries.append(e)
+    if not entries:
+        threads: list[str] = []
+        raw_th = it.get("admin_threads")
+        if isinstance(raw_th, list):
+            for x in raw_th:
+                s = str(x).strip() if not isinstance(x, dict) else str(
+                    x.get("chat_id") or ""
+                ).strip()
+                if s and s not in threads:
+                    threads.append(s)
+        one = str(it.get("admin_thread") or "").strip()
+        if one and one not in threads:
+            threads.append(one)
+        legacy_kind = str(it.get("admin_thread_type") or "0").strip()
+        # Single legacy type only applies when one thread; multi → heuristic per id.
+        legacy_one = (
+            "group" if legacy_kind in {"1", "group"} else "private"
+        ) if len(threads) == 1 else None
+        for tid in threads:
+            e = _one_admin_entry({
+                "chat_id": tid,
+                "kind": legacy_one,
+                "notify_enabled": True,
+            })
+            if e and e["chat_id"] not in seen:
+                seen.add(e["chat_id"])
+                entries.append(e)
+    # Legacy chat_ids-as-admin: promote khi chưa có admin thật
+    if not entries:
+        cids = it.get("chat_ids")
+        if isinstance(cids, list):
+            for c in cids:
+                e = _one_admin_entry(str(c).strip() if not isinstance(c, dict) else c)
+                if e and e["chat_id"] not in seen:
+                    seen.add(e["chat_id"])
+                    entries.append(e)
+    return entries
+
+
 def _normalize_bots(value: object, legacy_token: object,
                     legacy_chat_ids: object, legacy_model: object) -> list[dict]:
-    """Danh sách bot đa-token:
-    [{token, chat_ids, ai_model, enabled, admin_thread, admin_thread_type}].
-
-    admin_thread / admin_thread_type: Thread ID admin RIÊNG từng bot (báo chat
-    mới, /id…). Trống → fallback global telegram_admin_thread / zalo_admin_thread.
-
-    Nếu `value` (list mới) rỗng mà có `legacy_token` → tạo 1 bot từ các field cũ
-    (telegram_bot_token / zalo_bot_token …) để tương thích ngược, KHÔNG phá vỡ cấu
-    hình 1-bot đang chạy. Bỏ mục thiếu token."""
+    """Danh sách bot đa-token với admin_entries 3 cột + fallback theo bot."""
     bots: list[dict] = []
     if isinstance(value, list):
         for it in value:
@@ -381,20 +479,17 @@ def _normalize_bots(value: object, legacy_token: object,
                 continue
             cids = it.get("chat_ids")
             cids = [str(c).strip() for c in cids if str(c).strip()] if isinstance(cids, list) else []
-            atype = str(it.get("admin_thread_type") or "0").strip()
-            if atype not in {"0", "1"}:
-                atype = "1" if atype.lower() in {"group", "1", "true"} else "0"
-            # Multi-admin: admin_threads list; legacy admin_thread gộp vào.
-            threads: list[str] = []
-            raw_th = it.get("admin_threads")
-            if isinstance(raw_th, list):
-                for x in raw_th:
-                    s = str(x).strip()
-                    if s and s not in threads:
-                        threads.append(s)
-            one = str(it.get("admin_thread") or "").strip()
-            if one and one not in threads:
-                threads.append(one)
+            entries = _normalize_admin_entries(it)
+            threads = [e["chat_id"] for e in entries]
+            fb_ch = str(it.get("fallback_channel") or "").strip().lower()
+            if fb_ch not in {"", "telegram", "zalo", "zalo_personal", "tg", "zb", "zalop"}:
+                fb_ch = ""
+            if fb_ch == "tg":
+                fb_ch = "telegram"
+            if fb_ch == "zb":
+                fb_ch = "zalo"
+            if fb_ch == "zalop":
+                fb_ch = "zalo_personal"
             bots.append({
                 "token": token,
                 "chat_ids": cids,
@@ -402,19 +497,26 @@ def _normalize_bots(value: object, legacy_token: object,
                 "enabled": bool(it.get("enabled", True)),
                 "admin_thread": threads[0] if threads else "",
                 "admin_threads": threads,
-                "admin_thread_type": atype,
-                # Cài đặt RIÊNG từng bot: lệnh nhà thông minh rõ ràng chạy
-                # fast-path cục bộ (không vòng qua provider AI).
+                "admin_entries": entries,
+                # deprecated flat type (kept empty-compat; kind is per entry)
+                "admin_thread_type": "1" if (
+                    entries and entries[0].get("kind") == "group"
+                ) else "0",
                 "ha_fastpath": bool(it.get("ha_fastpath", True)),
-                # Toggle thông báo RIÊNG từng bot (độc lập giữa các tài khoản,
-                # áp cho cả chat_ids lẫn admin_threads của bot này; toggle
-                # global của kênh vẫn là công tắc tổng): cảnh báo hệ thống,
-                # log tài khoản provider, báo chat/nhóm mới.
                 "notify_admin_enabled": bool(it.get("notify_admin_enabled", True)),
                 "account_log_enabled": bool(it.get("account_log_enabled", True)),
                 "newchat_alert_enabled": bool(it.get("newchat_alert_enabled", True)),
-                # Tên dễ nhớ do admin đặt (khác @username Telegram/Zalo).
                 "label": str(it.get("label") or "").strip()[:64],
+                # Fallback → admin thread cùng bot (ID trong admin_entries)
+                "fallback_enabled": bool(it.get("fallback_enabled", False)),
+                "fallback_channel": fb_ch,
+                "fallback_bot_name": str(it.get("fallback_bot_name") or "").strip()[:64],
+                "fallback_thread": str(it.get("fallback_thread") or "").strip(),
+                "emphasis_enabled": bool(it.get("emphasis_enabled", True)),
+                "emphasis_numbers": bool(it.get("emphasis_numbers", True)),
+                "emphasis_units": bool(it.get("emphasis_units", True)),
+                "emphasis_key_info": bool(it.get("emphasis_key_info", True)),
+                "emphasis_style": str(it.get("emphasis_style") or "").strip()[:16],
             })
     if not bots:
         lt = str(legacy_token or "").strip()
@@ -427,19 +529,28 @@ def _normalize_bots(value: object, legacy_token: object,
                 "enabled": True,
                 "admin_thread": "",
                 "admin_threads": [],
+                "admin_entries": [],
                 "admin_thread_type": "0",
                 "ha_fastpath": True,
                 "notify_admin_enabled": True,
                 "account_log_enabled": True,
                 "newchat_alert_enabled": True,
                 "label": "",
+                "fallback_enabled": False,
+                "fallback_channel": "",
+                "fallback_bot_name": "",
+                "fallback_thread": "",
+                "emphasis_enabled": True,
+                "emphasis_numbers": True,
+                "emphasis_units": True,
+                "emphasis_key_info": True,
+                "emphasis_style": "",
             })
     return bots
 
 
 def _normalize_zalo_personal_account_admins(value: object) -> dict[str, dict]:
-    """Map ownId → {admin_thread, admin_thread_type, ha_fastpath} cho Zalo Cá
-    Nhân đa-acc (cài đặt RIÊNG từng tài khoản)."""
+    """Map ownId → admin_entries + ha_fastpath + fallback for Zalo Cá Nhân."""
     out: dict[str, dict] = {}
     if not isinstance(value, dict):
         return out
@@ -447,12 +558,41 @@ def _normalize_zalo_personal_account_admins(value: object) -> dict[str, dict]:
         key = str(k or "").strip()
         if not key or not isinstance(v, dict):
             continue
+        entries: list[dict] = []
+        seen: set[str] = set()
+        raw = v.get("admin_entries")
+        if isinstance(raw, list):
+            for x in raw:
+                e = _one_admin_entry(x)
+                if e and e["chat_id"] not in seen:
+                    seen.add(e["chat_id"])
+                    entries.append(e)
         th = str(v.get("admin_thread") or "").strip()
-        atype = str(v.get("admin_thread_type") or "0").strip()
-        if atype not in {"0", "1"}:
-            atype = "1" if atype.lower() in {"group", "1", "true"} else "0"
-        out[key] = {"admin_thread": th, "admin_thread_type": atype,
-                    "ha_fastpath": bool(v.get("ha_fastpath", True))}
+        if th and th not in seen:
+            kind = "group" if str(v.get("admin_thread_type") or "0") in {"1", "group"} else "private"
+            e = _one_admin_entry({
+                "chat_id": th, "kind": kind,
+                "name": str(v.get("admin_name") or ""),
+                "notify_enabled": bool(v.get("notify_enabled", True)),
+            })
+            if e:
+                entries.append(e)
+        out[key] = {
+            "enabled": bool(v.get("enabled", True)),
+            # Model AI mặc định acc (chat thường); admin có model riêng trong admin_entries
+            "ai_model": str(v.get("ai_model") or "").strip()[:128],
+            "admin_thread": entries[0]["chat_id"] if entries else "",
+            "admin_thread_type": "1" if (entries and entries[0].get("kind") == "group") else "0",
+            "admin_entries": entries,
+            "ha_fastpath": bool(v.get("ha_fastpath", True)),
+            "notify_admin_enabled": bool(v.get("notify_admin_enabled", True)),
+            "account_log_enabled": bool(v.get("account_log_enabled", True)),
+            "newchat_alert_enabled": bool(v.get("newchat_alert_enabled", True)),
+            "fallback_enabled": bool(v.get("fallback_enabled", False)),
+            "fallback_channel": str(v.get("fallback_channel") or "").strip(),
+            "fallback_bot_name": str(v.get("fallback_bot_name") or "").strip()[:64],
+            "fallback_thread": str(v.get("fallback_thread") or "").strip(),
+        }
     return out
 
 

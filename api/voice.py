@@ -22,7 +22,7 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Uploa
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
-from api.support import require_admin
+from api.support import require_admin, require_identity
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -109,7 +109,9 @@ def create_router() -> APIRouter:
         language: str = Form(default=""),
         authorization: str | None = Header(default=None),
     ):
-        require_admin(authorization)
+        # Admin + user key đều được STT (Studio /chat). Trước đây require_admin
+        # khiến user key 403 sau khi micro đã ghi được.
+        require_identity(authorization)
         from services import voice
 
         data = await file.read()

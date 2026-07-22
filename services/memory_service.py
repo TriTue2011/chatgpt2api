@@ -97,9 +97,19 @@ class _MemoryCapture:
         assistant_text = (assistant_text or "").strip()
         if not assistant_text:
             return
+        user_part = self.user_text[:_STORE_USER_MAX]
+        asst_part = assistant_text[:_STORE_ASSISTANT_MAX]
+        # P1: never store raw MK/PII in long-term memory
+        try:
+            from services.privacy_gate import scrub_for_log, redact_memory_enabled
+            if redact_memory_enabled():
+                user_part = scrub_for_log(user_part, session_id=f"mem:{self.user_id}")
+                asst_part = scrub_for_log(asst_part, session_id=f"mem:{self.user_id}")
+        except Exception:
+            pass
         content = (
-            f"USER: {self.user_text[:_STORE_USER_MAX]}\n"
-            f"ASSISTANT: {assistant_text[:_STORE_ASSISTANT_MAX]}"
+            f"USER: {user_part}\n"
+            f"ASSISTANT: {asst_part}"
         )
         self.service.store_async(content, self.user_id, model=self.model)
 

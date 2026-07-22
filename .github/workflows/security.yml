@@ -1,5 +1,5 @@
-# Security gate — chạy TRƯỚC build. Chặn secret lộ + SAST + audit dependency.
-# Chuẩn ngành 2025 (OWASP): gitleaks (secret), bandit/semgrep (SAST), pip/npm audit (SCA).
+# Security gate — chạy TRƯỚC build. Chặn secret lộ + SAST high + audit dependency.
+# Chuẩn ngành 2025 (OWASP): gitleaks (secret), bandit (SAST high), pip/npm audit (SCA).
 name: Security
 
 on:
@@ -16,6 +16,7 @@ jobs:
   secret-scan:
     runs-on: ubuntu-latest
     steps:
+      # P1#10: pin major action tags; bump intentionally (digest-pin when org policy requires)
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0            # gitleaks quét cả lịch sử
@@ -31,15 +32,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Bandit (Python SAST)
+      - name: Bandit HIGH (hard-fail)
         run: |
           pip install bandit
-          bandit -r services api utils -ll -x test || true   # báo cáo, chưa chặn
-      - name: Semgrep (OWASP rules)
+          # -lll = HIGH only (critical operational findings). Medium vẫn xem ở bước dưới.
+          bandit -r services api utils -lll -x test
+      - name: Bandit medium report (soft)
+        run: |
+          bandit -r services api utils -ll -x test || true
+      - name: Semgrep (OWASP rules, soft until baseline clean)
         uses: semgrep/semgrep-action@v1
         with:
           config: p/owasp-top-ten
-        continue-on-error: true      # informational cho tới khi dọn hết finding
+        continue-on-error: true
 
   deps-audit:
     runs-on: ubuntu-latest
@@ -48,9 +53,21 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"
-      - name: pip-audit (Python SCA)
+      - name: pip-audit (Python SCA — fail on known vulns)
         run: |
-          uvx pip-audit -r <(uv export --format requirements-txt 2>/dev/null) || true
-      - name: npm audit (web SCA)
+          # Export deps; fail job if audit finds issues (high/critical in practice).
+          uv export --format requirements-txt --no-dev -o /tmp/reqs.txt 2>/dev/null \
+            || uv export --format requirements-txt -o /tmp/reqs.txt
+          # Soft-fail path if export empty; otherwise hard fail.
+          if [ -s /tmp/reqs.txt ]; then
+            uvx pip-audit -r /tmp/reqs.txt --progress-spinner off \
+              || { echo "::error::pip-audit found vulnerabilities — fix or pin with justification"; exit 1; }
+          else
+            echo "No requirements export; skip hard fail"
+          fi
+      - name: npm audit high/critical (web SCA)
         working-directory: web
-        run: npm audit --omit=dev || true
+        run: |
+          # --audit-level=high: chỉ fail high/critical
+          npm audit --omit=dev --audit-level=high \
+            || { echo "::error::npm audit high/critical findings"; exit 1; }

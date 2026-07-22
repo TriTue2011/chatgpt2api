@@ -416,7 +416,18 @@ def search(query: str, *, limit: int = 8) -> list[dict[str, Any]]:
     except OSError:
         return []
     hits.sort(key=lambda h: (-h["score"], h["slug"]))
-    return hits[: max(1, min(limit, 20))]
+    out = hits[: max(1, min(limit, 20))]
+    # P1#7: redact snippet before LLM context
+    try:
+        from services.privacy_gate import redact_text
+        for h in out:
+            if isinstance(h.get("snippet"), str):
+                h["snippet"] = redact_text(h["snippet"], session_id="rag:wiki")
+            if isinstance(h.get("title"), str):
+                h["title"] = redact_text(h["title"], session_id="rag:wiki")
+    except Exception:
+        pass
+    return out
 
 
 def read(slug: str) -> Optional[str]:
@@ -425,7 +436,13 @@ def read(slug: str) -> Optional[str]:
     path = _NOTES_DIR / f"{slug}.md"
     try:
         if path.is_file():
-            return path.read_text(encoding="utf-8", errors="replace")[: max_note_chars()]
+            text = path.read_text(encoding="utf-8", errors="replace")[: max_note_chars()]
+            try:
+                from services.privacy_gate import redact_text
+                text = redact_text(text, session_id="rag:wiki")
+            except Exception:
+                pass
+            return text
     except OSError:
         return None
     return None

@@ -1,9 +1,23 @@
 # ============================================================================
 # All-in-one stack in ONE container (c2a):
 #   API gateway + Web UI + VN MCP Hub + Captcha Solver
-#   + noVNC browser stack + Zalo server
+#   + noVNC browser stack + Zalo server + Wyoming
 #
-#   docker compose up -d --build
+#   docker compose up -d            # dùng image sẵn (không build)
+#   docker compose up -d --build    # chỉ khi cần build lại
+#
+# Cổng (homelab / multi-host — mặc định publish LAN):
+#   3030   API + Web UI
+#   6080   noVNC (đăng nhập web thủ công) — BẮT BUỘC đặt VNC_PASSWORD
+#   3001   zalo-server (HA / integration có thể ở máy khác)
+#   10600  Wyoming multi — TTS+STT vi/en (1 integration HA, pattern microsoft-stt/tts)
+#          (Home Assistant thường KHÔNG cùng host → không bind 127.0.0.1)
+#
+# Siết chặt hơn (cùng host hoặc SSH tunnel):
+#   - "127.0.0.1:6080:6080"
+#   - "127.0.0.1:3001:3001"
+#   - "127.0.0.1:10600:10600"
+# Chỉ làm vậy khi client thật sự chạy trên cùng máy host Docker.
 # ============================================================================
 
 services:
@@ -16,28 +30,32 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3030:80"      # public API + web UI (+ same-origin /api/captcha proxy)
-      - "6080:6080"    # noVNC — manual web logins (captcha-solver)
-      - "3001:3001"    # zalo-server (Zalo cá nhân) — cho HA integration trỏ vào
-      - "10600:10600"  # Wyoming Protocol server nhúng (TTS+STT cho Home Assistant)
+      - "3030:80"        # API + web UI (+ same-origin /api/captcha proxy)
+      - "6080:6080"      # noVNC — LAN OK nếu có VNC_PASSWORD; đừng mở WAN
+      - "3001:3001"      # zalo-server — cho HA/integration trên LAN
+      - "10600:10600"    # Wyoming multi — TTS+STT vi/en (1 port, VieNeu/Kokoro + Zipformer/Parakeet)
 
     volumes:
-      # Single persistent mount. Holds chatgpt2api data, vn-mcp-hub KB + chroma_db,
-      # and captcha-solver browser profiles — all under one host directory.
+      # Single persistent mount: accounts, config, KB/chroma, captcha profiles, voices
       - /opt/c2a-data:/app/data
 
     environment:
-      # [REQUIRED] Auth key protecting the API
+      # [REQUIRED] Auth key protecting the API + dashboard login
       CHATGPT2API_AUTH_KEY: your_secret_key_here
-      # captcha-solver internal auth (used by claude/gemini/flow web logins)
+      # captcha-solver internal auth (claude/gemini/flow web logins)
       CAPTCHA_SOLVER_API_KEY: your_secret_key_here
-      # Storage backend: json (default), sqlite, postgres, git
+      # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
+      ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:-your_secret_key_here}
       STORAGE_BACKEND: json
       # [Optional] Public base URL for image links
       # CHATGPT2API_BASE_URL: https://your-domain.com
-      # [Optional] Đặt mật khẩu cho noVNC :6080 (không đặt = không mật khẩu —
-      # chỉ dùng trong LAN, tuyệt đối không expose 6080 ra internet)
-      # VNC_PASSWORD: your_vnc_password
+      # [REQUIRED khi dùng noVNC] — không đặt = không mật khẩu (nguy hiểm trên LAN)
+      VNC_PASSWORD: ${VNC_PASSWORD:-changeme-set-vnc-password}
+      # URL noVNC mà UI captcha mở trên máy khác trong LAN (đổi IP host của bạn)
+      # CAPTCHA_SOLVER_NOVNC_EXTERNAL_URL: "http://172.16.10.38:6080/vnc.html?host=172.16.10.38&port=6080&autoconnect=1"
+
+    security_opt:
+      - no-new-privileges:true
 
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/version')"]

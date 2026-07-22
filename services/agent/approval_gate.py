@@ -42,6 +42,13 @@ _DEFAULT_AUTO_APPROVE: tuple[str, ...] = (
     # pure reads never hit this gate; keep empty for fail-closed write path
 )
 
+# Destructive / high-impact tools — ALWAYS need human confirm even when
+# agent_approval.level=full (unless user previously said "luôn luôn" for that tool).
+_ALWAYS_CONFIRM: tuple[str, ...] = (
+    "create_automation",
+    "send_to_contact",
+)
+
 
 def _cfg() -> dict[str, Any]:
     raw = config.get().get("agent_approval")
@@ -87,6 +94,17 @@ def gate_ha_fastpath() -> bool:
     return bool(_cfg().get("gate_ha_fastpath", False))
 
 
+def always_confirm_names() -> set[str]:
+    names = set(_ALWAYS_CONFIRM)
+    raw = _cfg().get("always_confirm")
+    if isinstance(raw, list):
+        for x in raw:
+            s = str(x or "").strip()
+            if s:
+                names.add(s)
+    return names
+
+
 def needs_approval(user_id: str, capability: str, *, risk: str = "change") -> bool:
     """Whether this tool call must pause for human approval."""
     if not is_enabled():
@@ -102,11 +120,15 @@ def needs_approval(user_id: str, capability: str, *, risk: str = "change") -> bo
     if lv == "readonly":
         # block path is separate; still "needs approval" is false — we block
         return False
+    # User previously chose "luôn luôn" for this tool → skip even always-confirm.
+    if state.is_approved(user_id, name):
+        return False
+    # High-impact tools always ask (even level=full).
+    if name in always_confirm_names():
+        return True
     if lv == "full":
         return False
     # supervised
-    if state.is_approved(user_id, name):
-        return False
     return True
 
 
@@ -242,6 +264,9 @@ def log_event(
     *,
     summary: str = "",
 ) -> None:
+    """Append-only audit JSONL (P2#12). Có prev_hash để phát hiện cắt/sửa file."""
+    import hashlib
+
     row = {
         "ts": time.time(),
         "kind": kind,
@@ -252,6 +277,27 @@ def log_event(
     try:
         _AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
         with _lock:
+            prev = "genesis"
+            if _AUDIT_FILE.exists() and _AUDIT_FILE.stat().st_size > 0:
+                try:
+                    # đọc dòng cuối (hash chain)
+                    with _AUDIT_FILE.open("rb") as rf:
+                        rf.seek(0, 2)
+                        size = rf.tell()
+                        step = min(size, 4096)
+                        rf.seek(-step, 2)
+                        tail = rf.read().decode("utf-8", errors="replace")
+                    last = [ln for ln in tail.splitlines() if ln.strip()][-1]
+                    prev_obj = json.loads(last)
+                    prev = str(prev_obj.get("hash") or prev_obj.get("prev") or "genesis")
+                except Exception:
+                    prev = "unknown"
+            row["prev"] = prev
+            body = json.dumps(
+                {k: row[k] for k in ("ts", "kind", "user_id", "capability", "summary", "prev")},
+                ensure_ascii=False, sort_keys=True,
+            )
+            row["hash"] = hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
             with _AUDIT_FILE.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
     except OSError as exc:

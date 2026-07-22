@@ -9,6 +9,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { updateSettingsConfig } from "@/lib/api";
 import { httpRequest } from "@/lib/request";
+import {
+  GmailAppPasswordHint,
+  GmailAppPasswordLabel,
+} from "@/components/google-security-hints";
 import { useSettingsStore } from "../store";
 
 export function CodexOnboardCard() {
@@ -178,7 +182,7 @@ export function CodexOnboardCard() {
               />
             </div>
             <div>
-              <label className="text-[10px] text-blue-800">App Password Gmail</label>
+              <GmailAppPasswordLabel />
               <Input 
                 type="text" 
                 placeholder="abcd efgh ijkl mnop" 
@@ -190,6 +194,7 @@ export function CodexOnboardCard() {
                 }} 
                 className="mt-1 h-8 rounded-lg text-xs"
               />
+              <GmailAppPasswordHint />
             </div>
           </div>
         </div>

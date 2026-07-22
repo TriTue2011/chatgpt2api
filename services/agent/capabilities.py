@@ -202,14 +202,14 @@ def _h_read_webpage(args: dict, ctx: dict) -> dict:
     if not _re.match(r"^https?://", url):
         return {"text": "Cho em xin đường link (http/https) cần đọc ạ."}
     try:
-        import requests as _rq
-        r = _rq.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
+        from services import net_guard
+        # URL do user/model đưa → SSRF guard (chặn LAN/metadata + redirect độc).
+        raw = net_guard.safe_fetch(url, timeout=25, max_bytes=5 * 1024 * 1024)
         import tempfile, os
-        suffix = ".html" if "html" in r.headers.get("content-type", "") else ""
+        suffix = ".html"
         fd, path = tempfile.mkstemp(suffix=suffix)
         with os.fdopen(fd, "wb") as f:
-            f.write(r.content)
+            f.write(raw)
         try:
             from markitdown import MarkItDown
             text = MarkItDown().convert(path).text_content.strip()
@@ -219,6 +219,12 @@ def _h_read_webpage(args: dict, ctx: dict) -> dict:
         return {"text": f"Em không đọc được trang này 😥 ({str(exc)[:120]})."}
     if not text:
         return {"text": "Trang này em không trích được nội dung chữ (có thể toàn ảnh/JS)."}
+    # Redact secret/PII trước khi nhét tool result vào context LLM.
+    try:
+        from services.privacy_gate import redact_text
+        text = redact_text(text[:6000], session_id=f"agent:{(ctx or {}).get('user_id') or 'web'}")
+    except Exception:
+        text = text[:6000]
     return {"text": text[:6000]}
 
 
@@ -369,7 +375,7 @@ def _h_search_sgk(args: dict, ctx: dict) -> dict:
         return {"text": "Chế độ Giáo viên đang tắt trong Settings ạ."}
     if not teach.can_use_teacher(ctx=ctx):
         return {"text": (
-            "Khung chat này chưa được cấp «Giáo viên tiểu học». "
+            "Khung chat này chưa được cấp «Giáo viên». "
             "Admin tick 📚 trong Settings → Lọc thread."
         )}
     q = str(args.get("query") or args.get("question") or args.get("text") or "").strip()
@@ -408,18 +414,23 @@ def _h_list_teacher_workspaces(args: dict, ctx: dict) -> dict:
     if not teach.is_enabled():
         return {"text": "Chế độ Giáo viên đang tắt ạ."}
     if not teach.can_use_teacher(ctx=ctx):
-        return {"text": "Thread chưa được cấp quyền Giáo viên tiểu học ạ."}
+        return {"text": "Thread chưa được cấp quyền Giáo viên ạ."}
     rows = tw.list_workspaces()
     if not rows:
         return {"text": "Chưa có workspace. Seed data/agent/teacher/workspaces.json."}
-    lines = ["**Workspace SGK tiểu học** (Toán · Văn · Anh, lớp 1–5):", ""]
+    lines = [
+        f"**Workspace SGK** (Toán · Văn · Anh, lớp 1–12) — {len(rows)} workspace:",
+        "",
+    ]
     for w in rows:
         lines.append(
             f"- `{w.get('id')}`: {w.get('name')} — lớp {w.get('grade')}, "
             f"môn {', '.join(w.get('subjects') or [])}"
         )
     lines.append("")
-    lines.append("Dùng search_sgk với workspace=id và query=câu hỏi.")
+    lines.append(
+        "Dùng search_sgk / teacher_lesson / teacher_memory với workspace=id."
+    )
     return {"text": "\n".join(lines)}
 
 
@@ -543,14 +554,117 @@ def _h_teacher_grade(args: dict, ctx: dict) -> dict:
         subject=subject, grade=grade,
         use_llm=bool(args.get("use_llm", True)),
     )
-    lines = [
-        f"**Chấm 1 câu:** {r.get('score_0_10')}/10 "
-        f"({'đạt' if r.get('correct') else 'cần sửa'})",
-        str(r.get("feedback") or ""),
-    ]
-    for f in r.get("fixes") or []:
-        lines.append(f"- Sửa: {f}")
-    return {"text": "\n".join(lines)}
+    text = ta.format_grade_for_student(r)
+    ws = str(args.get("workspace") or "").strip()
+    student = str(args.get("student") or ctx.get("user_id") or "default")
+    if ws and int(r.get("score_0_10") or 0) < 5:
+        tw.memory_add(
+            ws, student,
+            weak_topic=(q[:80] if q else "bài yếu"),
+            note=f"score {r.get('score_0_10')}/10 · {r.get('feedback') or ''}"[:200],
+        )
+    return {"text": text}
+
+
+def _h_teacher_hint(args: dict, ctx: dict) -> dict:
+    """Gợi ý bậc thang 1–3 (Socratic scaffold)."""
+    from services.agent import teacher as teach
+    from services.agent import teacher_assess as ta
+
+    if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
+        return {"text": "Cần quyền Giáo viên."}
+    q = str(args.get("question") or args.get("prompt") or "").strip()
+    if not q:
+        return {"text": "Cần question= đề bài đang kẹt."}
+    level = args.get("level") or args.get("hint_level") or 1
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        level = 1
+    grade = args.get("grade") or 5
+    try:
+        grade = int(grade)
+    except (TypeError, ValueError):
+        grade = 5
+    r = ta.progressive_hints(
+        question=q,
+        student_attempt=str(args.get("attempt") or args.get("answer") or ""),
+        answer_hint=str(args.get("answer_hint") or args.get("hint") or ""),
+        level=level,
+        subject=str(args.get("subject") or "toan"),
+        grade=grade,
+    )
+    return {"text": r.get("text") or "Không tạo được gợi ý."}
+
+
+def _h_teacher_check(args: dict, ctx: dict) -> dict:
+    """1 câu kiểm tra hiểu (exit ticket)."""
+    from services.agent import teacher as teach
+    from services.agent import teacher_assess as ta
+
+    if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
+        return {"text": "Cần quyền Giáo viên."}
+    grade = args.get("grade") or 5
+    try:
+        grade = int(grade)
+    except (TypeError, ValueError):
+        grade = 5
+    r = ta.make_check(
+        grade=grade,
+        subject=str(args.get("subject") or "toan"),
+        topic=str(args.get("topic") or args.get("query") or ""),
+        workspace_id=str(args.get("workspace") or ""),
+    )
+    return {"text": r.get("text") or "Không tạo được câu kiểm tra."}
+
+
+def _h_teacher_lesson(args: dict, ctx: dict) -> dict:
+    """Giáo án 6 pha kiểu lớp học + (tuỳ chọn) nạp memory HS."""
+    from services.agent import teacher as teach
+    from services.agent import teacher_workspace as tw
+
+    if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
+        return {"text": "Cần quyền Giáo viên."}
+    grade = args.get("grade") or 5
+    try:
+        grade = int(grade)
+    except (TypeError, ValueError):
+        grade = 5
+    subject = str(args.get("subject") or "toan")
+    topic = str(args.get("topic") or args.get("query") or "ôn tập")
+    objective = str(args.get("objective") or args.get("muc_tieu") or "")
+    ws = str(args.get("workspace") or "").strip()
+    student = str(args.get("student") or ctx.get("user_id") or "default")
+    weak = str(args.get("weak_topic") or "")
+    mem_block = ""
+    if ws:
+        mem_block = tw.memory_get(ws, student)
+        # Lấy weak topics thô nếu chưa truyền
+        if not weak:
+            m = tw._load_mem(ws, student)
+            wlist = m.get("weak_topics") or []
+            if wlist:
+                weak = "; ".join(str(x) for x in wlist[-3:])
+    plan = teach.build_lesson_plan(
+        grade=grade,
+        subject=subject,
+        topic=topic,
+        objective=objective,
+        student_weak=weak,
+        level_note=f"Skill: {teach.skill_for_grade(grade)}",
+    )
+    parts = [plan]
+    if mem_block and "Chưa có ghi nhận" not in mem_block:
+        parts.append("")
+        parts.append("---")
+        parts.append(mem_block)
+    parts.append("")
+    parts.append(
+        f"_Bắt đầu dạy: use_skill `{teach.skill_for_grade(grade)}` · "
+        f"search_sgk · teacher_hint / teacher_check / teacher_grade · "
+        f"teacher_memory khi kết._"
+    )
+    return {"text": "\n".join(parts)}
 
 
 def _h_use_skill(args: dict, ctx: dict) -> dict:
@@ -1897,39 +2011,39 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
-        emoji="📗", label="Tìm SGK tiểu học (Toán/Văn/Anh)",
+        emoji="📗", label="Tìm SGK (Toán/Văn/Anh · lớp 1–12)",
         description=(
-            "Tìm đoạn gợi ý dạy trong KB SGK tiểu học theo lớp và môn "
-            "(toan|van|anh). Dùng khi dạy con/cháu lớp 1–5, cần ví dụ/ý kiến thức. "
-            "Có thể truyền workspace=lop2-toan. query rỗng + không workspace = liệt kê index."
+            "Tìm đoạn gợi ý dạy trong KB SGK theo lớp 1–12 và môn "
+            "(toan|van|anh). Dùng khi dạy / ôn / chấm. "
+            "workspace=lop2-toan…; query rỗng = liệt kê index."
         ),
         parameters={"type": "object", "properties": {
             "query": {"type": "string", "description": "Câu hỏi / từ khoá"},
-            "grade": {"type": "integer", "description": "Lớp 1–5"},
+            "grade": {"type": "integer", "description": "Lớp 1–12"},
             "subject": {"type": "string",
-                        "description": "toan | van | anh (hoặc tiếng việt / english)"},
+                        "description": "toan | van | anh"},
             "workspace": {"type": "string",
                           "description": "id workspace (vd lop3-van)"},
             "top_k": {"type": "integer", "description": "Số đoạn (mặc định 4)"}},
             "required": []},
         workflow=(
-            "Đọc đoạn KB rồi GIẢNG Socratic — không chép nguyên văn dài cho bé. "
-            "Cite lớp–môn khi cần. Không khẳng định đúng từng trang SGK năm học cụ thể."
+            "Đọc KB rồi GIẢNG Socratic — không chép nguyên văn. "
+            "Không khẳng định đúng từng trang SGK năm cụ thể."
         )),
     "list_teacher_workspaces": Capability(
         name="list_teacher_workspaces", risk=READ, handler=_h_list_teacher_workspaces,
         emoji="🏫", label="Danh sách workspace lớp–môn",
         description=(
-            "Liệt kê workspace giáo viên tiểu học (lớp 1–5 × Toán/Văn/Anh). "
-            "Dùng trước khi search_sgk / teacher_memory theo workspace."
+            "Liệt kê 36 workspace (lớp 1–12 × Toán/Văn/Anh). "
+            "Trước search_sgk / teacher_memory / teacher_lesson."
         ),
         parameters={"type": "object", "properties": {}, "required": []}),
     "teacher_memory": Capability(
         name="teacher_memory", risk=CHANGE, handler=_h_teacher_memory,
         emoji="📓", label="Memory học sinh theo workspace",
         description=(
-            "Ghi/đọc điểm yếu–mạnh và ghi chú học sinh theo workspace "
-            "(lop1-toan … lop12-anh). op=get|add; add: note, weak_topic, strong_topic."
+            "Ghi/đọc điểm yếu–mạnh và ghi chú học sinh (lop1-toan … lop12-anh). "
+            "op=get|add; add: note, weak_topic, strong_topic."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "description": "get | add"},
@@ -1940,8 +2054,59 @@ CAPABILITIES: dict[str, Capability] = {
             "strong_topic": {"type": "string", "description": "Chủ đề đã vững"}},
             "required": []},
         workflow=(
-            "Sau buổi học/chấm: add weak/strong. Buổi sau get trước khi search_sgk."
+            "Đầu buổi: get. Cuối buổi / sau chấm: add weak/strong + note."
         )),
+    "teacher_lesson": Capability(
+        name="teacher_lesson", risk=READ, handler=_h_teacher_lesson,
+        emoji="📋", label="Giáo án lớp học (6 pha)",
+        description=(
+            "Lập giáo án kiểu giáo viên trên lớp: mục tiêu → khởi động → "
+            "giảng (I/We do) → luyện (You do + hint) → CFU → kết + memory. "
+            "grade, subject, topic, objective, workspace, student."
+        ),
+        parameters={"type": "object", "properties": {
+            "grade": {"type": "integer"},
+            "subject": {"type": "string"},
+            "topic": {"type": "string"},
+            "objective": {"type": "string", "description": "Mục tiêu I can…"},
+            "workspace": {"type": "string"},
+            "student": {"type": "string"},
+            "weak_topic": {"type": "string"}},
+            "required": []},
+        workflow=(
+            "Gọi đầu buổi học; follow phase; use_skill theo cấp; "
+            "teacher_hint khi kẹt; teacher_check cuối; teacher_memory."
+        )),
+    "teacher_hint": Capability(
+        name="teacher_hint", risk=READ, handler=_h_teacher_hint,
+        emoji="💡", label="Gợi ý bậc thang (1–3)",
+        description=(
+            "Scaffold Socratic khi HS kẹt: level=1 định hướng, 2 gợi bước "
+            "(che đáp án), 3 gần đáp án. question bắt buộc; attempt, answer_hint."
+        ),
+        parameters={"type": "object", "properties": {
+            "question": {"type": "string"},
+            "attempt": {"type": "string", "description": "Bài làm dở của HS"},
+            "level": {"type": "integer", "description": "1|2|3"},
+            "answer_hint": {"type": "string"},
+            "grade": {"type": "integer"},
+            "subject": {"type": "string"}},
+            "required": ["question"]},
+        workflow="Kẹt → level 1; vẫn kẹt → 2; gần bó tay → 3; rồi teacher_grade."),
+    "teacher_check": Capability(
+        name="teacher_check", risk=READ, handler=_h_teacher_check,
+        emoji="🎯", label="Kiểm tra hiểu 1 câu (CFU)",
+        description=(
+            "Exit ticket / check for understanding: 1 câu từ KB SGK. "
+            "grade, subject, topic, workspace. Chấm bằng teacher_grade."
+        ),
+        parameters={"type": "object", "properties": {
+            "grade": {"type": "integer"},
+            "subject": {"type": "string"},
+            "topic": {"type": "string"},
+            "workspace": {"type": "string"}},
+            "required": []},
+        workflow="Sau giảng/luyện; HS trả lời → teacher_grade."),
     "teacher_quiz": Capability(
         name="teacher_quiz", risk=READ, handler=_h_teacher_quiz,
         emoji="📝", label="Ra đề kiểm tra (SGK)",
@@ -1961,8 +2126,8 @@ CAPABILITIES: dict[str, Capability] = {
         name="teacher_grade", risk=CHANGE, handler=_h_teacher_grade,
         emoji="✅", label="Chấm bài / sửa lỗi",
         description=(
-            "Chấm 1 câu (question+answer) hoặc cả đề (quiz_id+answers JSON). "
-            "Trả điểm 0–10, feedback, hướng sửa. Có thể gắn workspace để ghi memory."
+            "Chấm 1 câu (question+answer) hoặc cả đề (quiz_id+answers). "
+            "Trả điểm, khen, misconception, bước tiếp, hướng sửa."
         ),
         parameters={"type": "object", "properties": {
             "quiz_id": {"type": "string"},
@@ -1976,7 +2141,10 @@ CAPABILITIES: dict[str, Capability] = {
             "student": {"type": "string"},
             "use_llm": {"type": "boolean"}},
             "required": []},
-        workflow="Đọc feedback cho HS; weak → teacher_memory; có thể search_sgk ôn lại."),
+        workflow=(
+            "Đọc praise+feedback cho HS; weak → teacher_memory; "
+            "kẹt tiếp → teacher_hint; ôn → search_sgk."
+        )),
 }
 
 
@@ -2009,6 +2177,8 @@ _CAP_GROUP: dict[str, str] = {
     "contacts": "contacts", "send_to_contact": "contacts",
     "search_sgk": "teacher", "list_teacher_workspaces": "teacher",
     "teacher_memory": "teacher",
+    "teacher_lesson": "teacher",
+    "teacher_hint": "teacher", "teacher_check": "teacher",
     "teacher_quiz": "teacher", "teacher_grade": "teacher",
 }
 
@@ -2142,6 +2312,43 @@ def mention_required_for(platform: str, bot_id: str, chat_id: str) -> tuple[bool
             return r
     r = _lookup(f"{platform}:{chat_id}")
     return r if r is not None else (False, "")
+
+
+def tag_gate_allows(
+    *,
+    required: bool,
+    keyword: str = "",
+    text: str = "",
+    native_tagged: bool = False,
+    platform_group_delivery: bool = False,
+) -> bool:
+    """Cổng «bắt buộc tag» — dùng chung TG / Zalo Bot / Zalo CN.
+
+    Khi ``required=False`` → luôn cho qua (caller thường không gọi).
+
+    Khi ``required=True``:
+      1. Từ khóa tag (settings) có trong text → cho qua
+      2. Mention native (Telegram entities / zca-js mentions) → cho qua
+      3. Keyword **rỗng** + ``platform_group_delivery`` (Zalo OA: nền tảng chỉ
+         đẩy tin nhóm khi đã @bot) → cho qua
+      4. Keyword rỗng + không native + không platform delivery → **chặn**
+         (bug cũ: keyword rỗng luôn chặn cả khi đã @mention)
+
+    Không raise.
+    """
+    if not required:
+        return True
+    kw = str(keyword or "").strip().lower()
+    body = str(text or "")
+    if kw and kw in body.lower():
+        return True
+    if native_tagged:
+        return True
+    # required + keyword trống: tin đã được nền tảng/platform filter (Zalo OA
+    # group) hoặc native_tagged đã True ở trên. Không im lặng mù.
+    if not kw and platform_group_delivery:
+        return True
+    return False
 
 
 def forward_rule_for(platform: str, bot_id: str, chat_id: str,

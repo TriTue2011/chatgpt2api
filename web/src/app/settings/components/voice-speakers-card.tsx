@@ -31,6 +31,7 @@ type VoiceStatus = {
   tts?: { enabled?: boolean; backend?: string; voice?: string; model_ready?: boolean;
           piper_bin?: string; local_voices?: string[]; wyoming_url?: string };
   stt?: { enabled?: boolean; backend?: string; model_ready?: boolean;
+          en_model_ready?: boolean; language?: string;
           sherpa_installed?: boolean; wyoming_url?: string };
   public_base_url?: string;
 };
@@ -276,18 +277,28 @@ export function VoiceSpeakersCard() {
           <div className="rounded-md border border-border p-2 text-[11px] space-y-0.5">
             <div className="font-semibold">🎤 Nghe (STT)</div>
             <div>{stt?.enabled ? "✅ sẵn sàng" : "⚠️ chưa sẵn sàng"} · backend {stt?.backend || "?"}</div>
+            <div>
+              Ngôn ngữ: <b>{
+                stt?.language === "auto" ? "auto (VI→EN)"
+                  : stt?.language === "en" ? "English (en)"
+                  : "Tiếng Việt (vi)"
+              }</b>
+            </div>
             <div className="text-muted-foreground">
-              model {stt?.model_ready ? "đã tải" : "chưa tải"} · sherpa-onnx {stt?.sherpa_installed ? "có" : "chưa cài"}
+              VI {stt?.model_ready ? "✓" : "—"} · EN {stt?.en_model_ready ? "✓" : "—"}
+              {" · "}sherpa-onnx {stt?.sherpa_installed ? "có" : "chưa cài"}
             </div>
           </div>
         </div>
         <p className="text-[10px] text-muted-foreground -mt-1">
           Model KHÔNG nằm trong image. Tải về volume:{" "}
           <code>python scripts/download_piper_voices.py --pack minimal</code> (giọng) và{" "}
-          <code>python scripts/download_stt_model.py</code> (nghe).
+          <code>python scripts/download_stt_model.py</code> (+{" "}
+          <code>download_stt_en_model.py</code> nếu dùng English/auto).
         </p>
 
-        {/* Cấu hình engine */}
+        {/* Cấu hình engine — TTS + STT đối xứng */}
+        <div className="text-xs font-semibold text-muted-foreground">🔊 Cấu hình đọc (TTS)</div>
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
             <label className="text-xs text-muted-foreground">Backend đọc (TTS)</label>
@@ -313,17 +324,49 @@ export function VoiceSpeakersCard() {
               ))}
             </select>
           </div>
-          <div>
+          <div className="sm:col-span-2">
             <label className="text-xs text-muted-foreground">Wyoming TTS (tuỳ chọn)</label>
             <Input value={String(ttsCfg.wyoming_url || "")}
               onChange={(e) => patchVoice("tts", { wyoming_url: e.target.value })}
               placeholder="tcp://192.0.2.10:10200" />
           </div>
+        </div>
+
+        <div className="text-xs font-semibold text-muted-foreground pt-1">🎤 Cấu hình nghe (STT)</div>
+        <div className="grid gap-2 sm:grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
           <div>
-            <label className="text-xs text-muted-foreground">Wyoming STT (tuỳ chọn)</label>
+            <label className="text-xs text-muted-foreground">Backend nghe (STT)</label>
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+              value={String(sttCfg.backend || stt?.backend || "auto")}
+              onChange={(e) => patchVoice("stt", { backend: e.target.value })}>
+              <option value="auto">Tự động (local trước, rồi Wyoming)</option>
+              <option value="local">Chỉ local (Zipformer / Parakeet)</option>
+              <option value="wyoming">Chỉ Wyoming (server STT sẵn có)</option>
+              <option value="off">Tắt</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">
+              Ngôn ngữ STT (chatgpt2api — không theo HA Assist)
+            </label>
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+              value={String(sttCfg.language || stt?.language || "vi")}
+              onChange={(e) => patchVoice("stt", { language: e.target.value })}>
+              <option value="vi">Tiếng Việt (vi) — Zipformer</option>
+              <option value="en">English (en) — Parakeet</option>
+              <option value="auto">Auto — thử VI rồi EN (cần cả 2 model)</option>
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs text-muted-foreground">Wyoming STT client (tuỳ chọn)</label>
             <Input value={String(sttCfg.wyoming_url || "")}
               onChange={(e) => patchVoice("stt", { wyoming_url: e.target.value })}
-              placeholder="tcp://192.0.2.10:10401" />
+              placeholder="tcp://… (client; server nhúng đã có port riêng)" />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Ngôn ngữ STT do <b>chatgpt2api</b> quyết định (ô trên). Assist / Wyoming gửi
+              language gì cũng bị bỏ qua. Chọn backend + ngôn ngữ → <b>Lưu cấu hình giọng nói</b>
+              → nói thử (không cần Reload HA).
+            </p>
           </div>
         </div>
         <div>

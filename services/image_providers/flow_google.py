@@ -365,7 +365,7 @@ class FlowImageAdapter(BaseImageAdapter):
         except (TypeError, ValueError):
             count = 1
 
-        return {
+        out: dict[str, Any] = {
             "prompt": prompt,
             "aspect_ratio": aspect,
             "model": flow_model,
@@ -378,6 +378,16 @@ class FlowImageAdapter(BaseImageAdapter):
             "timeout": 280,
             "headless": False,
         }
+        # Img2img best-effort: if chat/edit path attached reference image bytes,
+        # forward base64 so captcha-solver can use it when supported (ignored otherwise).
+        import base64 as _b64
+        from services.image_providers._base import first_image_bytes_mime
+        raw, mime = first_image_bytes_mime(body.get("images") or [])
+        if raw:
+            out["image_b64"] = _b64.b64encode(bytes(raw)).decode("ascii")
+            out["image_mime"] = mime or "image/jpeg"
+            out["has_reference_image"] = True
+        return out
 
     def build_headers(
         self,

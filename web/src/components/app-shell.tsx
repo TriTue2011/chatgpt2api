@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sidebar, navGroups, adminOnlyPaths } from "@/components/sidebar";
+import { Sidebar, navGroups, studioPaths } from "@/components/sidebar";
 import { StatusPill, type StatusKind } from "@/components/status-pill";
 import { Sun, Moon, Sparkles, Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -28,12 +28,13 @@ const pageTitles: Record<string, string> = {
   "/zalo": "Zalo Cá Nhân",
   "/backup": "Sao lưu",
   "/settings": "Cài đặt",
+  "/teacher": "Giáo viên",
   "/logs": "Nhật ký",
   "/agent-runs": "Agent runs",
 };
 
-// 5 mục "hot" cho bottom-nav mobile (lấy từ navGroups để icon/label nhất quán).
-const MOBILE_NAV_HREFS = ["/", "/chat", "/image", "/zalo", "/settings"];
+// Mục "hot" bottom-nav mobile. User thường chỉ studio (app-shell lọc thêm).
+const MOBILE_NAV_HREFS = ["/", "/chat", "/image", "/video", "/settings"];
 
 type HealthShape = {
   accounts?: { total?: number; active?: number; limited?: number; error?: number };
@@ -129,7 +130,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const mobileItems = navGroups
     .flatMap((g) => g.items)
     .filter((i) => MOBILE_NAV_HREFS.includes(i.href))
-    .filter((i) => isAdmin || !adminOnlyPaths.includes(i.href));
+    .filter((i) => isAdmin || studioPaths.includes(i.href));
 
   return (
     <div className="flex min-h-screen bg-[var(--background)] overflow-x-hidden">

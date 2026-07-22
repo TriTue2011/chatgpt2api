@@ -36,6 +36,21 @@ type Status = {
   notify_enabled: boolean; admin_thread: string; error?: string;
 };
 
+/** Nhãn acc = SĐT / tên (không hiện ownId). zca đôi khi gắn "(ownId)" vào displayName. */
+function accountLabel(a?: Pick<Account, "displayName" | "phoneNumber"> | null, fallback = "Tài khoản Zalo") {
+  if (!a) return fallback;
+  let name = String(a.displayName || "").trim()
+    .replace(/\s*\(\d{8,}\)\s*$/g, "")
+    .trim();
+  const phone = String(a.phoneNumber || "").trim();
+  if (name && phone && name !== phone && !name.includes(phone)) {
+    return `${name} · ${phone}`;
+  }
+  if (phone) return phone;
+  if (name) return name;
+  return fallback;
+}
+
 type TabId = "accounts" | "webhooks" | "proxies" | "contacts";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
@@ -192,10 +207,9 @@ function AccountsTab({ status, refresh, showToast }:
             <div key={a.ownId} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2">
               <span className={`size-2 rounded-full ${a.isOnline ? "bg-emerald-400" : "bg-red-400"}`} />
               <div className="flex-1 text-xs">
-                <div className="font-semibold">{a.phoneNumber || a.displayName || a.ownId}</div>
-                <div className="text-[var(--muted-foreground)]">ID: {a.ownId} · Proxy: {a.proxy || "không"}</div>
+                <div className="font-semibold">{accountLabel(a)}</div>
+                <div className="text-[var(--muted-foreground)]">Proxy: {a.proxy || "không"}</div>
               </div>
-              <CopyBtn text={a.ownId} showToast={showToast} title="Copy ownId" />
             </div>
           ))}
         </div>
@@ -320,10 +334,12 @@ function WebhooksTab({ status, showToast }:
           {" "}— tin nhắn đến sẽ vào AI + chuyển tiếp Home Assistant theo cài đặt.
         </p>
         <div className="space-y-2">
-          {rows.map(row => (
+          {rows.map(row => {
+            const acc = (status?.accounts || []).find(a => a.ownId === row.ownId);
+            return (
             <div key={row.ownId} className="rounded-lg border border-[var(--border)] p-3 text-xs">
               <div className="mb-1 flex items-center gap-2">
-                <span className="font-semibold">{row.ownId}</span>
+                <span className="font-semibold">{accountLabel(acc)}</span>
                 <span className="flex-1" />
                 <button onClick={() => setEdit({ ...row })} className={BTN_GHOST}>Sửa</button>
                 <button onClick={() => void del(row.ownId)} className={BTN_DANGER}><Trash2 className="size-3" /></button>
@@ -346,14 +362,17 @@ function WebhooksTab({ status, showToast }:
                 <div>❤️ reaction: <span className="break-all">{row.reactionWebhookUrl || "—"}</span></div>
               </div>
             </div>
-          ))}
+            );
+          })}
           {rows.length === 0 && <p className="text-xs text-[var(--muted-foreground)]">Chưa có tài khoản/webhook nào.</p>}
         </div>
       </div>
 
       {edit && (
         <div className={CARD}>
-          <h3 className="mb-3 text-sm font-bold">Sửa webhook — {edit.ownId}</h3>
+          <h3 className="mb-3 text-sm font-bold">
+            Sửa webhook — {accountLabel((status?.accounts || []).find(a => a.ownId === edit.ownId))}
+          </h3>
           <div className="space-y-2">
             <Field label="Message webhook URL">
               <input className={INPUT} value={edit.messageWebhookUrl || ""}

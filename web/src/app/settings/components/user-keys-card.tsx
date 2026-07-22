@@ -182,7 +182,11 @@ export function UserKeysCard() {
               </div>
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Quản lý khóa người dùng</h2>
-                <p className="text-sm text-[var(--muted-foreground)]">Tạo khóa riêng cho người dùng thường; người dùng thường chỉ vào được trang tạo ảnh, không xem được cài đặt và kho tài khoản.</p>
+                <p className="text-sm text-[var(--muted-foreground)]">
+                  Tạo khóa riêng cho người dùng thường. User thường <b>chỉ vào các tab Studio</b>
+                  {" "}(Chat, Giáo viên, Vẽ ảnh, Thư viện ảnh, Video, Thư viện video) —
+                  không xem được Cài đặt, kho tài khoản và các mục quản trị khác.
+                </p>
               </div>
             </div>
             <Button className="h-9 rounded-xl bg-[var(--primary)] px-4 text-[var(--primary-foreground)] hover:brightness-110" onClick={() => setIsDialogOpen(true)}>

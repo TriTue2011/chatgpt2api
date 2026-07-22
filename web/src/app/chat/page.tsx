@@ -18,48 +18,80 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-const mdComponents = {
-  p: (props: any) => <p className="my-1" {...props} />,
-  ul: (props: any) => <ul className="list-disc ml-5 my-1 space-y-0.5" {...props} />,
-  ol: (props: any) => <ol className="list-decimal ml-5 my-1 space-y-0.5" {...props} />,
-  li: (props: any) => <li className="leading-relaxed" {...props} />,
-  strong: (props: any) => <strong className="font-semibold" {...props} />,
-  em: (props: any) => <em className="italic" {...props} />,
-  code: ({ inline, ...props }: any) =>
-    inline ? (
-      <code className="px-1 py-0.5 rounded bg-background/60 text-[0.9em]" {...props} />
-    ) : (
-      <code className="block p-2 rounded bg-background/60 text-[0.9em] overflow-x-auto" {...props} />
-    ),
-  pre: (props: any) => <pre className="my-2 rounded bg-background/60 overflow-x-auto" {...props} />,
-  h1: (props: any) => <h2 className="text-base font-bold mt-2 mb-1" {...props} />,
-  h2: (props: any) => <h3 className="text-sm font-bold mt-2 mb-1" {...props} />,
-  h3: (props: any) => <h4 className="text-sm font-semibold mt-1 mb-1" {...props} />,
-  blockquote: (props: any) => <blockquote className="border-l-2 pl-3 my-1 opacity-80" {...props} />,
-  table: (props: any) => <table className="border-collapse my-2 text-xs" {...props} />,
-  th: (props: any) => <th className="border px-2 py-1 bg-background/40 font-semibold" {...props} />,
-  td: (props: any) => <td className="border px-2 py-1" {...props} />,
-  a: ({ href, children, ...props }: any) => {
-    const url = String(href || "");
-    // Link nhạc/video → player inline thay vì link thường
-    if (/\.(mp3|m4a|wav|ogg)([?#]|$)/i.test(url)) {
-      return (
-        <span className="block my-2 space-y-1">
-          <audio controls preload="none" src={url} className="w-full max-w-md" />
-          <a className="underline text-primary text-xs" href={url} target="_blank" rel="noreferrer">⬇️ Tải xuống</a>
-        </span>
-      );
-    }
-    if (/\.(mp4|webm|mov)([?#]|$)/i.test(url)) {
-      return (
-        <span className="block my-2">
-          <video controls preload="metadata" src={url} className="w-full max-w-md rounded-lg" />
-        </span>
-      );
-    }
-    return <a className="underline text-primary" target="_blank" rel="noreferrer" href={url} {...props}>{children}</a>;
-  },
+/** Màu nhấn markdown (giống HA Zalo Bot Markdown Color). */
+type MdAccent = "none" | "orange" | "gold" | "red" | "yellow" | "green" | "blue";
+
+const MD_ACCENT_CLS: Record<MdAccent, string> = {
+  none: "",
+  orange: "text-orange-400",
+  gold: "text-amber-400",
+  red: "text-red-400",
+  yellow: "text-yellow-300",
+  green: "text-emerald-400",
+  blue: "text-sky-400",
 };
+
+const MD_ACCENT_BORDER: Record<MdAccent, string> = {
+  none: "border-muted-foreground/40",
+  orange: "border-orange-400/70",
+  gold: "border-amber-400/70",
+  red: "border-red-400/70",
+  yellow: "border-yellow-300/70",
+  green: "border-emerald-400/70",
+  blue: "border-sky-400/70",
+};
+
+function makeMdComponents(accent: MdAccent) {
+  const ac = MD_ACCENT_CLS[accent] || "";
+  const strongCls = accent === "none" ? "font-semibold" : `font-semibold ${ac}`;
+  const headCls = accent === "none" ? "font-bold" : `font-bold ${ac}`;
+  const border = MD_ACCENT_BORDER[accent] || MD_ACCENT_BORDER.none;
+  return {
+    p: (props: any) => <p className="my-1 leading-relaxed" {...props} />,
+    ul: (props: any) => <ul className="list-disc ml-5 my-1 space-y-0.5" {...props} />,
+    ol: (props: any) => <ol className="list-decimal ml-5 my-1 space-y-0.5" {...props} />,
+    li: (props: any) => <li className="leading-relaxed" {...props} />,
+    strong: (props: any) => <strong className={strongCls} {...props} />,
+    em: (props: any) => <em className="italic opacity-90" {...props} />,
+    del: (props: any) => <del className="opacity-70 line-through" {...props} />,
+    code: ({ inline, className, children, ...props }: any) =>
+      inline || !className ? (
+        <code className={`px-1 py-0.5 rounded bg-background/70 text-[0.9em] ${ac}`} {...props}>{children}</code>
+      ) : (
+        <code className="block p-2 rounded bg-background/70 text-[0.9em] overflow-x-auto" {...props}>{children}</code>
+      ),
+    pre: (props: any) => <pre className="my-2 rounded-lg bg-background/70 overflow-x-auto border border-border/40" {...props} />,
+    h1: (props: any) => <h2 className={`text-base mt-2 mb-1 ${headCls}`} {...props} />,
+    h2: (props: any) => <h3 className={`text-sm mt-2 mb-1 ${headCls}`} {...props} />,
+    h3: (props: any) => <h4 className={`text-sm mt-1 mb-1 font-semibold ${ac}`} {...props} />,
+    blockquote: (props: any) => (
+      <blockquote className={`border-l-2 ${border} pl-3 my-1.5 opacity-90 italic`} {...props} />
+    ),
+    hr: () => <hr className="my-2 border-border/50" />,
+    table: (props: any) => <table className="border-collapse my-2 text-xs w-full" {...props} />,
+    th: (props: any) => <th className={`border px-2 py-1 bg-background/40 font-semibold ${ac}`} {...props} />,
+    td: (props: any) => <td className="border px-2 py-1" {...props} />,
+    a: ({ href, children, ...props }: any) => {
+      const url = String(href || "");
+      if (/\.(mp3|m4a|wav|ogg)([?#]|$)/i.test(url)) {
+        return (
+          <span className="block my-2 space-y-1">
+            <audio controls preload="none" src={url} className="w-full max-w-md" />
+            <a className="underline text-primary text-xs" href={url} target="_blank" rel="noreferrer">⬇️ Tải xuống</a>
+          </span>
+        );
+      }
+      if (/\.(mp4|webm|mov)([?#]|$)/i.test(url)) {
+        return (
+          <span className="block my-2">
+            <video controls preload="metadata" src={url} className="w-full max-w-md rounded-lg" />
+          </span>
+        );
+      }
+      return <a className={`underline ${ac || "text-primary"}`} target="_blank" rel="noreferrer" href={url} {...props}>{children}</a>;
+    },
+  };
+}
 
 type Message = {
   role: "user" | "assistant";
@@ -81,7 +113,7 @@ function buildApiContent(m: { content: string; images?: string[] }): any {
 }
 
 export default function ChatPage() {
-  const { isCheckingAuth } = useAuthGuard(["admin"]);
+  const { isCheckingAuth } = useAuthGuard(["admin", "user"]);
   const [models, setModels] = useState<{ id: string }[]>([]);
   const [model, setModel] = useState("AI Agent");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -89,6 +121,18 @@ export default function ChatPage() {
   const [images, setImages] = useState<string[]>([]); // data URLs ảnh đính kèm
   const [streaming, setStreaming] = useState(false);
   const [elapsed, setElapsed] = useState(0); // ms, live counter while streaming
+  // Markdown accent color (giống HA Zalo Bot — orange/gold/…)
+  const [mdAccent, setMdAccent] = useState<MdAccent>("orange");
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("chatgpt2api_chat_md_accent") as MdAccent | null;
+      if (saved && saved in MD_ACCENT_CLS) setMdAccent(saved);
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("chatgpt2api_chat_md_accent", mdAccent); } catch { /* ignore */ }
+  }, [mdAccent]);
+  const mdComponents = makeMdComponents(mdAccent);
   const bottomRef = useRef<HTMLDivElement>(null);
   const startTimeRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -187,43 +231,96 @@ export default function ChatPage() {
   const mediaRecRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
+  // Bridge cho app AI Ben Bap (micro native → inject text vào ô chat)
+  useEffect(() => {
+    const w = window as Window & { __aibenbapSetChatInput?: (t: string) => void };
+    w.__aibenbapSetChatInput = (t: string) => {
+      const text = String(t || "").trim();
+      if (!text) return;
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+    };
+    return () => {
+      try {
+        delete w.__aibenbapSetChatInput;
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
   const toggleMic = async () => {
-    if (recording) { mediaRecRef.current?.stop(); return; }
+    if (recording) {
+      mediaRecRef.current?.stop();
+      return;
+    }
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      alert("Trình duyệt không hỗ trợ micro (cần HTTPS hoặc localhost).");
+      alert(
+        "Trình duyệt/WebView không hỗ trợ micro.\n\nTrong app AI Ben Bap: dùng nút «Mic app» trên thanh công cụ (ghi âm native)."
+      );
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      // Android WebView thường chỉ có audio/webm hoặc audio/mp4
+      let mime = "";
+      for (const c of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]) {
+        if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(c)) {
+          mime = c;
+          break;
+        }
+      }
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
-      mr.ondataavailable = (e) => { if (e.data.size) audioChunksRef.current.push(e.data); };
+      mr.ondataavailable = (e) => {
+        if (e.data.size) audioChunksRef.current.push(e.data);
+      };
       mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
-        const type = mr.mimeType || "audio/webm";
+        const type = mr.mimeType || mime || "audio/webm";
         const blob = new Blob(audioChunksRef.current, { type });
-        if (blob.size < 800) return;   // quá ngắn → bỏ
+        if (blob.size < 800) return;
         setTranscribing(true);
         try {
+          const ext = type.includes("mp4") || type.includes("m4a") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
           const fd = new FormData();
-          fd.append("file", blob, `mic.${type.includes("ogg") ? "ogg" : "webm"}`);
+          fd.append("file", blob, `mic.${ext}`);
           const resp = await fetch("/v1/audio/transcriptions", {
             method: "POST",
-            headers: { "Authorization": `Bearer ${authKeyRef.current}` },
+            headers: { Authorization: `Bearer ${authKeyRef.current}` },
             body: fd,
           });
-          const data = await resp.json();
-          const text = String(data?.text || "").trim();
-          if (text) setInput(prev => (prev ? prev + " " : "") + text);
-        } catch (e) { /* im lặng, giữ nguyên ô nhập */ }
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) {
+            const err = (data as any)?.detail?.error || (data as any)?.detail || resp.statusText;
+            alert(`STT lỗi (${resp.status}): ${typeof err === "string" ? err : JSON.stringify(err)}`);
+          } else {
+            const text = String((data as any)?.text || "").trim();
+            if (text) setInput((prev) => (prev ? prev + " " : "") + text);
+          }
+        } catch {
+          alert("Không gửi được audio lên server STT.");
+        }
         setTranscribing(false);
       };
-      mr.start();
+      mr.start(250);
       mediaRecRef.current = mr;
       setRecording(true);
     } catch (e) {
-      alert("Không truy cập được micro. Kiểm tra quyền trình duyệt.");
+      const name = e instanceof DOMException ? e.name : "";
+      const msg = e instanceof Error ? e.message : String(e || "");
+      alert(
+        `Không truy cập được micro (${name || "error"}).\n${msg}\n\n` +
+          "• Chrome: ổ khóa URL → Micro → Cho phép.\n" +
+          "• App AI Ben Bap: dùng nút «Mic app» trên thanh (native), không phụ thuộc WebView.\n" +
+          "• Cần HTTPS."
+      );
     }
   };
 
@@ -388,6 +485,20 @@ export default function ChatPage() {
             ))}
           </select>
         )}
+        <select
+          value={mdAccent}
+          onChange={e => setMdAccent(e.target.value as MdAccent)}
+          className="px-2 py-1.5 rounded-lg border bg-background text-xs max-w-[9rem]"
+          title="Màu markdown (đậm / tiêu đề) — giống HA Zalo Markdown Color"
+        >
+          <option value="orange">MD · orange</option>
+          <option value="gold">MD · gold</option>
+          <option value="yellow">MD · yellow</option>
+          <option value="red">MD · red</option>
+          <option value="green">MD · green</option>
+          <option value="blue">MD · blue</option>
+          <option value="none">MD · none</option>
+        </select>
         {streaming && (
           <span className="ml-auto text-xs text-muted-foreground tabular-nums animate-pulse">
             ⏱ {(elapsed / 1000).toFixed(1)}s...

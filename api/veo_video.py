@@ -134,3 +134,113 @@ async def handle_video_generation(
         "created": result.get("created", 0) if all_data else 0,
         "data": all_data,
     }
+
+
+def _decode_media(b64: str) -> bytes:
+    """Nhận b64 hoặc data-URL ('data:video/mp4;base64,...') → bytes."""
+    import base64 as _b64
+    s = str(b64 or "")
+    if "," in s and s.strip().lower().startswith("data:"):
+        s = s.split(",", 1)[1]
+    return _b64.b64decode(s)
+
+
+async def handle_video_compose(
+    body: dict[str, Any],
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    """POST /v1/video/compose — nối nhiều clip (b64) → 1 video dài + voiceover.
+
+    Body: {"clips":[b64|dataURL,...], "audio": b64?, "aspect_ratio":"9:16"?}
+    """
+    import base64
+    import os
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from fastapi.concurrency import run_in_threadpool
+    from services.video import VideoError, concat_clips
+
+    clips_b64 = (body or {}).get("clips") or []
+    if not isinstance(clips_b64, list) or not clips_b64:
+        raise HTTPException(status_code=400, detail={"error": "clips (list b64) is required"})
+
+    tmp: list[str] = []
+    audio_path = None
+    try:
+        for c in clips_b64:
+            fd, p = tempfile.mkstemp(suffix=".mp4"); os.close(fd)
+            Path(p).write_bytes(_decode_media(c)); tmp.append(p)
+        clip_paths = list(tmp)
+        audio_b64 = (body or {}).get("audio")
+        if audio_b64:
+            fd, ap = tempfile.mkstemp(suffix=".wav"); os.close(fd)
+            Path(ap).write_bytes(_decode_media(audio_b64)); tmp.append(ap); audio_path = ap
+        try:
+            out = await run_in_threadpool(concat_clips, clip_paths, audio_path, None)
+        except VideoError as exc:
+            raise HTTPException(status_code=500, detail={"error": str(exc)}) from exc
+        data = base64.b64encode(Path(out).read_bytes()).decode()
+        try:
+            os.unlink(out)
+        except Exception:
+            pass
+        return {"created": int(time.time()), "data": [{"b64_json": data}]}
+    finally:
+        for p in tmp:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+
+
+async def handle_video_story(
+    body: dict[str, Any],
+    authorization: str | None = None,
+) -> dict[str, Any]:
+    """POST /v1/video/story — prompt/scenes → Veo text→video từng cảnh → nối.
+
+    Body: {"prompt": "...", "scenes":[...]?, "n_scenes":3, "duration":6,
+           "aspect_ratio":"9:16"}
+    """
+    import base64
+    import os
+    import time
+    from pathlib import Path
+
+    from fastapi.concurrency import run_in_threadpool
+    from services.video import VideoError
+    from services.video.shorts import make_story_video
+
+    providers_cfg = config.data.get("providers") or {}
+    pc = providers_cfg.get("gemini_free") or {}
+    credentials = {"apiKey": str(pc.get("api_key") or ""), "apiKeys": pc.get("api_keys") or []}
+    auth_key = str(authorization or "").replace("Bearer ", "").strip()
+
+    scenes = (body or {}).get("scenes") or None
+    prompt = str((body or {}).get("prompt") or "")
+    if not scenes and not prompt:
+        raise HTTPException(status_code=400, detail={"error": "prompt or scenes is required"})
+    try:
+        n = int((body or {}).get("n_scenes") or 3)
+        dur = int((body or {}).get("duration") or 6)
+    except (TypeError, ValueError):
+        n, dur = 3, 6
+    aspect = str((body or {}).get("aspect_ratio") or "9:16")
+
+    try:
+        out = await run_in_threadpool(
+            lambda: make_story_video(
+                credentials, scenes=scenes, prompt=prompt, n_scenes=n,
+                auth_key=auth_key, aspect_ratio=aspect, duration=dur,
+            )
+        )
+    except VideoError as exc:
+        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
+    data = base64.b64encode(Path(out).read_bytes()).decode()
+    try:
+        os.unlink(out)
+    except Exception:
+        pass
+    return {"created": int(time.time()), "data": [{"b64_json": data}]}

@@ -352,8 +352,21 @@ def create_router(app_version: str) -> APIRouter:
     router = APIRouter()
 
     @router.post("/auth/login")
-    async def login(authorization: str | None = Header(default=None)):
-        identity = require_identity(authorization)
+    async def login(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ):
+        # Brute-force guard: rate-limit + temporary lockout per client IP.
+        from services import login_guard
+        ip = login_guard.client_ip_from_request(request)
+        login_guard.check_allowed(ip)
+        try:
+            identity = require_identity(authorization)
+        except HTTPException as exc:
+            if exc.status_code == 401:
+                login_guard.record_failure(ip)
+            raise
+        login_guard.record_success(ip)
         return {
             "ok": True,
             "version": app_version,
@@ -393,6 +406,13 @@ def create_router(app_version: str) -> APIRouter:
     async def get_settings(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         return {"config": config.get()}
+
+    @router.get("/api/privacy/status")
+    async def privacy_status(authorization: str | None = Header(default=None)):
+        """P0–P2 privacy gate status (MK/PII không đẩy vào AI)."""
+        require_admin(authorization)
+        from services.privacy_gate import privacy_public_status
+        return {"ok": True, "privacy": privacy_public_status()}
 
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):
@@ -483,6 +503,88 @@ def create_router(app_version: str) -> APIRouter:
         except Exception:
             pass
         return out
+
+    @router.post("/api/telegram/resolve-chat")
+    async def telegram_resolve_chat(request: Request, authorization: str | None = Header(default=None)):
+        """getChat — lấy title + type (private/group) cho admin thread UI.
+
+        Body: {token, chat_id}. Heuristic kind nếu API lỗi (bot chưa từng thấy chat).
+        """
+        require_admin(authorization)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = str((body or {}).get("token") or "").strip()
+        chat_id = str((body or {}).get("chat_id") or "").strip()
+        from services.admin_workspace import guess_chat_kind
+        kind = guess_chat_kind(chat_id)
+        name = ""
+        ok = False
+        if token and chat_id:
+            try:
+                from services.telegram import get_client
+                r = get_client(token).get_chat(chat_id)
+                if r.get("ok") and isinstance(r.get("result"), dict):
+                    res = r["result"]
+                    ok = True
+                    ctype = str(res.get("type") or "")
+                    if ctype in {"group", "supergroup", "channel"}:
+                        kind = "group"
+                    elif ctype == "private":
+                        kind = "private"
+                    name = (
+                        str(res.get("title") or "").strip()
+                        or " ".join(
+                            x for x in (
+                                str(res.get("first_name") or "").strip(),
+                                str(res.get("last_name") or "").strip(),
+                            ) if x
+                        ).strip()
+                        or str(res.get("username") or "").strip()
+                    )
+            except Exception:
+                pass
+        return {"ok": ok, "chat_id": chat_id, "name": name, "kind": kind}
+
+    @router.post("/api/zalo/resolve-chat")
+    async def zalo_resolve_chat(request: Request, authorization: str | None = Header(default=None)):
+        """Zalo Bot Platform getChat — tên + private/group cho admin UI.
+
+        Body: {token, chat_id}. Heuristic kind nếu API chưa từng thấy chat.
+        """
+        require_admin(authorization)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        token = str((body or {}).get("token") or "").strip()
+        chat_id = str((body or {}).get("chat_id") or "").strip()
+        from services.zalo_bot import resolve_chat
+        return resolve_chat(token, chat_id)
+
+    @router.post("/api/zalo-personal/resolve-thread")
+    async def zalo_personal_resolve_thread(
+        request: Request, authorization: str | None = Header(default=None),
+    ):
+        """zca-js getUserInfo / getGroupInfo — nhận diện thread Zalo Cá Nhân.
+
+        Body: {account_id|ownId, thread_id|chat_id, kind?}.
+        """
+        require_admin(authorization)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        from services.zalo_personal import resolve_thread
+        return resolve_thread(
+            account=str((body or {}).get("account_id")
+                        or (body or {}).get("ownId")
+                        or (body or {}).get("account") or "").strip(),
+            thread_id=str((body or {}).get("thread_id")
+                          or (body or {}).get("chat_id") or "").strip(),
+            prefer_kind=str((body or {}).get("kind") or "").strip().lower(),
+        )
 
     @router.post("/zalo/webhook")
     async def zalo_webhook(request: Request):
@@ -810,13 +912,15 @@ def create_router(app_version: str) -> APIRouter:
         user_id: str = "",
         channel: str = "",
         status: str = "",
+        source_kind: str = "",
         authorization: str | None = Header(default=None),
     ):
-        """Agent run journal (tools, latency, model) for the Runs UI."""
+        """Agent run journal (tools, latency, model, source/dest account) for the Runs UI."""
         require_admin(authorization)
         from services.agent import run_journal as rj
         rows = rj.list_runs(
             limit=limit, user_id=user_id, channel=channel, status=status,
+            source_kind=source_kind,
         )
         return {"ok": True, "rows": rows, "stats": rj.stats(24)}
 

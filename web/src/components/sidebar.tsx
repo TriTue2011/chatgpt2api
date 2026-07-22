@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
   LogOut, ChevronRight, Sparkles, PanelLeftClose,
-  Video, Film, Plug, MessageSquare, MessageCircle, Activity,
+  Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
 import { getValidatedAuthSession } from "@/lib/auth-session";
@@ -42,6 +42,7 @@ export const navGroups: NavGroup[] = [
     label: "Studio",
     items: [
       { href: "/chat", labelKey: "nav_chat" as TranslationKey, icon: MessageSquare },
+      { href: "/teacher", labelKey: "nav_teacher" as TranslationKey, icon: GraduationCap },
       { href: "/image", labelKey: "nav_image" as TranslationKey, icon: ImageIcon },
       { href: "/image-manager", labelKey: "nav_imageLibrary" as TranslationKey, icon: Archive },
       { href: "/video", labelKey: "nav_video" as TranslationKey, icon: Video },
@@ -66,7 +67,32 @@ export const navGroups: NavGroup[] = [
   },
 ];
 
-export const adminOnlyPaths = ["/accounts","/providers","/models","/combos","/mcp","/image-manager","/video-manager","/search","/backup","/settings","/agent-runs"];
+/** User thường chỉ vào Studio (chat / teacher / ảnh / video + thư viện). */
+export const studioPaths = [
+  "/chat",
+  "/teacher",
+  "/image",
+  "/image-manager",
+  "/video",
+  "/video-manager",
+];
+
+/** Mọi path ngoài studio — admin only (kể cả dashboard /). */
+export const adminOnlyPaths = [
+  "/",
+  "/accounts",
+  "/providers",
+  "/models",
+  "/combos",
+  "/mcp",
+  "/search",
+  "/backup",
+  "/settings",
+  "/agent-runs",
+  "/logs",
+  "/zalo",
+  "/register",
+];
 
 type SidebarProps = {
   collapsed: boolean;
@@ -101,10 +127,13 @@ export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose
   if (pathname === "/login" || session === undefined || !session) return null;
 
   const isAdmin = session.role === "admin";
-  const visibleGroups = navGroups
+  // User thường: chỉ nhóm Studio (đủ tab studioPaths)
+  const visibleGroups = (isAdmin ? navGroups : navGroups.filter((g) => g.id === "studio"))
     .map((g) => ({
       ...g,
-      items: isAdmin ? g.items : g.items.filter((i) => !adminOnlyPaths.includes(i.href)),
+      items: isAdmin
+        ? g.items
+        : g.items.filter((i) => studioPaths.includes(i.href)),
     }))
     .filter((g) => g.items.length > 0);
 

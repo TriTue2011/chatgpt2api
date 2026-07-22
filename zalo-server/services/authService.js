@@ -341,15 +341,53 @@ export const changePassword = (username, oldPassword, newPassword) => {
   }
 };
 
+/** API key cho HA / gateway (env ZALO_SERVER_API_KEY hoặc CHATGPT2API_AUTH_KEY). */
+export const getServerApiKey = () =>
+  String(process.env.ZALO_SERVER_API_KEY || process.env.CHATGPT2API_AUTH_KEY || '').trim();
+
+function timingSafeEqualStr(a, b) {
+  try {
+    const ba = Buffer.from(String(a), 'utf8');
+    const bb = Buffer.from(String(b), 'utf8');
+    if (ba.length !== bb.length) return false;
+    return crypto.timingSafeEqual(ba, bb);
+  } catch {
+    return false;
+  }
+}
+
+function extractApiToken(req) {
+  const auth = String(req.headers.authorization || '');
+  if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
+  const x = req.headers['x-api-key'];
+  if (x) return String(x).trim();
+  if (req.query && req.query.api_key) return String(req.query.api_key).trim();
+  return '';
+}
+
 // Middleware xác thực cho các route
 export const authMiddleware = (req, res, next) => {
   if (req.session && req.session.authenticated) {
     return next();
   }
 
+  // P0#4: Bearer / X-Api-Key khớp env (HA integration không dùng session cookie)
+  const expected = getServerApiKey();
+  const token = extractApiToken(req);
+  if (expected && token && timingSafeEqualStr(token, expected)) {
+    req.apiKeyAuth = true;
+    return next();
+  }
+
   // API request: return 401 JSON instead of HTML redirect
   if (req.path.startsWith('/api/') || req.headers.accept?.includes('application/json')) {
-    return res.status(401).json({ success: false, message: 'Chưa đăng nhập', code: 'UNAUTHORIZED' });
+    return res.status(401).json({
+      success: false,
+      message: expected
+        ? 'Thiếu hoặc sai API key (Authorization: Bearer … / X-Api-Key)'
+        : 'Chưa đăng nhập',
+      code: 'UNAUTHORIZED',
+    });
   }
 
   // Browser request: redirect
@@ -398,7 +436,9 @@ export const publicRoutes = [
   '/chat/css/*', // Chat CSS
   '/chat/js/*', // Chat JS
 
-  // Thêm các API Zalo không cần xác thực
+  // Legacy: các API Zalo từng public. Khi ZALO_SERVER_API_KEY /
+  // CHATGPT2API_AUTH_KEY được set, isPublicRoute sẽ KHÔNG coi chúng public
+  // (bắt buộc Bearer/session) — xem SENSITIVE_API_PREFIXES bên dưới.
   '/api/findUser',
   '/api/getUserInfo',
   '/api/sendFriendRequest',
@@ -414,6 +454,23 @@ export const publicRoutes = [
   '/api/getGroupChatHistoryByAccount'
 ];
 
+/** API gửi tin / điều khiển — không public khi đã cấu hình API key. */
+const SENSITIVE_API_PREFIXES = [
+  '/api/findUser',
+  '/api/getUserInfo',
+  '/api/sendFriendRequest',
+  '/api/sendmessage',
+  '/api/createGroup',
+  '/api/getGroupInfo',
+  '/api/addUserToGroup',
+  '/api/removeUserFromGroup',
+  '/api/sendImageToUser',
+  '/api/sendImagesToUser',
+  '/api/sendImageToGroup',
+  '/api/sendImagesToGroup',
+  '/api/getGroupChatHistoryByAccount',
+];
+
 // Kiểm tra xem route có phải là public hay không
 export const isPublicRoute = (path) => {
   console.log('Checking if route is public:', path);
@@ -424,6 +481,17 @@ export const isPublicRoute = (path) => {
     if (path.startsWith('/api/account-webhook/')) {
       console.log('Is account webhook API with parameters:', true);
       return true;
+    }
+
+    // P0#4: khi có API key, các route gửi tin không còn public
+    const apiKey = getServerApiKey();
+    if (apiKey) {
+      for (const pref of SENSITIVE_API_PREFIXES) {
+        if (path === pref || path.startsWith(pref + '/') || path.startsWith(pref + '?')) {
+          console.log('Sensitive API requires key/session:', path);
+          return false;
+        }
+      }
     }
 
     // Kiểm tra các route cụ thể trong danh sách publicRoutes

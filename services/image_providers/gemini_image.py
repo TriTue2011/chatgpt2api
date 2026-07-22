@@ -79,20 +79,51 @@ class GeminiImageAdapter(BaseImageAdapter):
     }
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
+        import base64 as b64
+
+        from services.image_providers._base import first_image_bytes_mime
+
         prompt = str(body.get("prompt") or "")
         images = body.get("images") or []
         n = max(1, min(4, int(body.get("n") or 1)))
         size = str(body.get("size") or "")
 
-        parts = [{"text": prompt}]
-        for img in images:
-            if isinstance(img, bytes):
-                import base64 as b64
-                parts.append({"inlineData": {"mimeType": "image/png", "data": b64.b64encode(img).decode()}})
-            elif isinstance(img, str) and img.startswith("data:"):
-                header, data = img.split(",", 1)
-                mime = header.split(";")[0].replace("data:", "")
-                parts.append({"inlineData": {"mimeType": mime, "data": data}})
+        parts: list[dict[str, Any]] = [{"text": prompt}]
+        # Img2img / edit: chat path passes list of (bytes, filename, mime)
+        if images:
+            for img in images:
+                if isinstance(img, bytes):
+                    parts.append({
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": b64.b64encode(img).decode(),
+                        },
+                    })
+                elif isinstance(img, str) and img.startswith("data:"):
+                    header, data = img.split(",", 1)
+                    mime = header.split(";")[0].replace("data:", "")
+                    parts.append({"inlineData": {"mimeType": mime, "data": data}})
+                elif isinstance(img, (tuple, list)) and img:
+                    raw, mime = first_image_bytes_mime([img])
+                    if raw:
+                        parts.append({
+                            "inlineData": {
+                                "mimeType": mime or "image/png",
+                                "data": b64.b64encode(raw).decode(),
+                            },
+                        })
+        else:
+            # Single image field from edit endpoint
+            raw, mime = first_image_bytes_mime(
+                [body["image"]] if body.get("image") else None,
+            )
+            if raw:
+                parts.append({
+                    "inlineData": {
+                        "mimeType": mime or "image/png",
+                        "data": b64.b64encode(raw).decode(),
+                    },
+                })
 
         gen_config: dict[str, Any] = {
             "responseModalities": ["TEXT", "IMAGE"],

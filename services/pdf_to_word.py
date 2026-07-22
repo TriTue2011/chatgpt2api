@@ -31,15 +31,19 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # OCR chậm (render + VLM/tesseract từng trang) → giới hạn số trang cho an toàn.
-MAX_OCR_PAGES = 40
+# SGK thường 100–200 trang: mặc định đủ 1 tập; 0 = không giới hạn (caller truyền).
+MAX_OCR_PAGES = 200
 # Số trang tối đa gửi model vision (1 call/trang, chạy song song _VLM_WORKERS luồng).
-MAX_VLM_PAGES = 40
+# PDF dài hơn → vẫn render đủ MAX_OCR_PAGES rồi OCR tesseract (không gọi VLM hết).
+MAX_VLM_PAGES = 60
 _VLM_WORKERS = 3
 _RENDER_DPI = 200
 # AI sửa lỗi OCR ở fallback tesseract → chỉ áp cho PDF ngắn.
 MAX_AI_PAGES = 15
 # analyze_pdf: sample trang khi PDF dài (đủ phân loại, không đọc hết 500 trang).
 _ANALYZE_SAMPLE_CAP = 12
+# Import SGK (teacher): xử lý toàn bộ trang trừ khi PDF cực dài.
+TEACHER_SGK_MAX_PAGES = 0  # 0 = all pages
 
 # Ký tự có dấu đặc trưng tiếng Việt — đo chất lượng lớp text nhúng của file scan
 # (văn bản Việt thật ~15-25% chữ có dấu; máy photo OCR thiếu tiếng Việt ≈ 0%).
@@ -369,16 +373,27 @@ def digital_pdf_markdown(pdf_path: str) -> str:
         doc.close()
 
 
-def _render_scan_pages(pdf_path: str) -> tuple[list[dict], int]:
-    """Render trang → PNG + giữ lớp text nhúng làm dự phòng. Trả (pages, tổng trang)."""
+def _render_scan_pages(
+    pdf_path: str, *, max_pages: int | None = None,
+) -> tuple[list[dict], int]:
+    """Render trang → PNG + giữ lớp text nhúng làm dự phòng. Trả (pages, tổng trang).
+
+    max_pages: None → MAX_OCR_PAGES; 0 → không cắt (toàn bộ PDF); >0 → cắt sau N trang.
+    """
     import fitz
+    if max_pages is None:
+        cap = MAX_OCR_PAGES
+    elif int(max_pages) <= 0:
+        cap = 10**9  # all pages
+    else:
+        cap = int(max_pages)
     doc = fitz.open(pdf_path)
     try:
         total = doc.page_count
         pages: list[dict] = []
         # alpha=False → PNG nhỏ hơn, đủ cho OCR vision.
         for i, page in enumerate(doc):
-            if i >= MAX_OCR_PAGES:
+            if i >= cap:
                 break
             pix = page.get_pixmap(dpi=_RENDER_DPI, alpha=False)
             pages.append({"png": pix.tobytes("png"), "layer": page.get_text()})
@@ -558,8 +573,10 @@ def _page_md_tess(p: dict, layer_ok: bool) -> str:
     return _page_fallback_text(p, layer_ok) or (p.get("layer") or "")
 
 
-def _scan_markdown_pages(pdf_path: str, layer_ok: bool) -> tuple[list[str], list[dict]]:
-    pages, total = _render_scan_pages(pdf_path)
+def _scan_markdown_pages(
+    pdf_path: str, layer_ok: bool, *, max_pages: int | None = None,
+) -> tuple[list[str], list[dict]]:
+    pages, total = _render_scan_pages(pdf_path, max_pages=max_pages)
     if len(pages) <= MAX_VLM_PAGES:
         from services.agent.branches import branch_model
         errs: list[str] = []
@@ -598,9 +615,14 @@ def _scan_markdown_pages(pdf_path: str, layer_ok: bool) -> tuple[list[str], list
     return mds, pages
 
 
-def scan_pdf_markdown(pdf_path: str, layer_ok: bool = False) -> str:
-    """PDF scan → Markdown toàn văn (đường RAG/tóm tắt dùng chung; trang cách '---')."""
-    mds, _pages = _scan_markdown_pages(pdf_path, layer_ok)
+def scan_pdf_markdown(
+    pdf_path: str, layer_ok: bool = False, *, max_pages: int | None = None,
+) -> str:
+    """PDF scan → Markdown toàn văn (đường RAG/tóm tắt dùng chung; trang cách '---').
+
+    max_pages: None = MAX_OCR_PAGES; 0 = tất cả trang; N = tối đa N trang.
+    """
+    mds, _pages = _scan_markdown_pages(pdf_path, layer_ok, max_pages=max_pages)
     return "\n\n---\n\n".join(m.strip() for m in mds if m.strip())
 
 

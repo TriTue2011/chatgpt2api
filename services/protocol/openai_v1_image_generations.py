@@ -155,9 +155,16 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
             "accessToken": str(provider_config.get("api_key") or ""),
         }
 
-    # For sdwebui, use configured base_url
+    # For sdwebui, use configured base_url; pre-set img2img flag because
+    # build_url() runs before build_body() in the loop below.
     if route.provider == "sdwebui":
         adapter.base_url = str(provider_config.get("base_url") or "http://localhost:7860").rstrip("/")
+        try:
+            from services.image_providers._base import first_image_bytes_mime
+            _raw, _ = first_image_bytes_mime(body.get("images") or [])
+            adapter._use_img2img = bool(_raw)
+        except Exception:
+            adapter._use_img2img = False
 
     # Generate n images
     all_data: list[dict[str, Any]] = []

@@ -32,13 +32,26 @@ def _captcha_key() -> str:
     return str(os.getenv("CAPTCHA_SOLVER_API_KEY") or "").strip()
 
 
+def _const_eq(a: str, b: str) -> bool:
+    """Constant-time compare; False if empty or length mismatch (no exception)."""
+    import hmac
+    if not a or not b:
+        return False
+    try:
+        return hmac.compare_digest(a, b)
+    except (TypeError, ValueError):
+        return False
+
+
 def _authorized(authorization: str | None) -> bool:
     """Allow the dashboard auth key OR the captcha key (cards may send either)."""
     token = extract_bearer_token(authorization)
     if not token:
         return False
     auth_key = str(config.auth_key or "").strip()
-    return token == auth_key or (bool(_captcha_key()) and token == _captcha_key())
+    if _const_eq(token, auth_key):
+        return True
+    return _const_eq(token, _captcha_key())
 
 
 def create_router() -> APIRouter:

@@ -130,13 +130,14 @@ _claude_notify_at: dict[str, float] = {}
 
 
 def _claude_notify(key: str, text: str) -> None:
+    """Provider session/recovery → 📋 account_log (không trộn 🔔 lỗi hệ thống)."""
     now = time.time()
     if now - _claude_notify_at.get(key, 0.0) < 1800.0:
         return
     _claude_notify_at[key] = now
     try:
         from services.notifier import notify_admin
-        notify_admin(text)
+        notify_admin(text, category="account_log")
     except Exception:
         pass
 
@@ -399,11 +400,12 @@ def _extract_images(messages: list[dict[str, Any]]) -> list[tuple[bytes, str]]:
                 except Exception:
                     pass
             elif url.startswith("http"):
+                # URL do client cung cấp → SSRF guard trước khi tải.
                 try:
-                    rr = requests.get(url, timeout=20, impersonate="chrome110")
-                    if rr.status_code == 200 and rr.content:
-                        mime = (rr.headers.get("content-type") or "image/png").split(";")[0].lower()
-                        out.append(_downscale_image(rr.content, mime))
+                    from services import net_guard
+                    data = net_guard.fetch_media(url, timeout=20, max_bytes=25 * 1024 * 1024)
+                    if data:
+                        out.append(_downscale_image(data, "image/png"))
                 except Exception:
                     pass
     return out
