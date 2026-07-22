@@ -543,9 +543,29 @@ def _send(channel: str, chat_id: str, text: str,
         logger.warning("agent.reminders: unknown channel %s", channel)
 
 
-def _run_task(user_id: str, prompt: str) -> str:
+def _task_model(channel: str, chat_id: str, meta: dict) -> str:
+    """Model ĐÚNG kênh gốc của nhắc nhở (như lúc user chat) — tránh dùng
+    model mặc định (_main_model) vốn có thể là provider web cookie hết hạn."""
+    try:
+        if channel == "tg":
+            from services.telegram_bot import _tg_model
+            return _tg_model(chat_id) or ""
+        if channel == "zalo":
+            from services.zalo_bot import _zalo_model
+            return _zalo_model(chat_id) or ""
+        if channel == "zalop":
+            from services.zalo_personal import _ai_model
+            return _ai_model(str(meta.get("account") or ""), chat_id) or ""
+    except Exception as exc:
+        logger.warning("reminders: _task_model %s: %s", channel, exc)
+    return ""
+
+
+def _run_task(user_id: str, prompt: str, *, channel: str = "",
+              chat_id: str = "", meta: dict | None = None) -> str:
     """Run a one-shot agent turn for a scheduled task (no nested scheduling loop)."""
     from services.agent.orchestrator import orchestrate
+    model = _task_model(channel, chat_id, meta or {}) if channel else ""
     # auto_approve=True: user ĐÃ đồng ý khi tạo nhắc nhở → tới giờ TỰ chạy,
     # KHÔNG hỏi duyệt lại (nếu không sẽ mâu thuẫn 'em sẽ tự gửi' rồi lại hỏi).
     out = orchestrate(
@@ -553,6 +573,7 @@ def _run_task(user_id: str, prompt: str) -> str:
         user_id,
         ha_fastpath=True,
         auto_approve=True,
+        model=model or None,
     )
     if out.get("silent"):
         return ""
@@ -642,7 +663,8 @@ def _fire(row: dict[str, Any], now_ts: float) -> None:
 
     if mode == "task":
         try:
-            result = _run_task(user_id, text)
+            result = _run_task(user_id, text, channel=channel,
+                               chat_id=chat_id, meta=meta)
         except Exception as exc:
             result = f"(lỗi khi chạy việc: {str(exc)[:120]})"
         body = result or f"Đã xử lý: {text}"
