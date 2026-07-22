@@ -1054,6 +1054,50 @@ def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
     return False, f"«{title}» platform `{plat}` chưa hỗ trợ"
 
 
+def _admin_recipient(platform: str, ctx: dict) -> dict | None:
+    """Contact 'admin' của kênh đang dùng (để gửi 'cho admin'/'cho tôi').
+
+    zalop: Admin #1 của account (zalo_personal_account_admins[acc].admin_thread).
+    tg/zalo: admin_entries[0] của bot đang hoạt động.
+    """
+    try:
+        from services.config import config as _cfg
+        cfg = _cfg.get() if hasattr(_cfg, "get") else {}
+    except Exception:
+        cfg = {}
+    plat = platform or _channel_of(ctx)
+    if plat == "zalop":
+        # account gửi lấy Admin #1 đã cấu hình (bất kỳ acc nào có admin_thread)
+        amap = (cfg or {}).get("zalo_personal_account_admins") or {}
+        if isinstance(amap, dict):
+            for own, entry in amap.items():
+                if not isinstance(entry, dict):
+                    continue
+                th = str(entry.get("admin_thread") or "").strip()
+                if th:
+                    acc = str(own)
+                    ttype = str(entry.get("admin_thread_type") or "0")
+                    return {"platform": "zalop", "bot_id": acc, "chat_id": th,
+                            "kind": "group" if ttype == "1" else "private",
+                            "alias": "Admin"}
+        return None
+    # tg / zalo: lấy admin từ danh sách bot
+    try:
+        mod = __import__("services.telegram_bot" if plat == "tg"
+                         else "services.zalo_bot", fromlist=["_bots"])
+        for b in (mod._bots() if hasattr(mod, "_bots") else []):
+            ents = b.get("admin_entries") or []
+            if ents and str(ents[0].get("chat_id") or "").strip():
+                e = ents[0]
+                bid = str(b.get("token") or "").split(":")[0]
+                return {"platform": plat, "bot_id": bid,
+                        "chat_id": str(e.get("chat_id")),
+                        "kind": e.get("kind") or "private", "alias": "Admin"}
+    except Exception:
+        pass
+    return None
+
+
 def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     """Gửi tin tới contact đã lưu — TÁCH nhiều người theo dấu phẩy, LỌC theo
     đúng kênh đang dùng (không quét cả 3 kênh), hỗ trợ tg/zalo/zalop."""
@@ -1072,19 +1116,47 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     if not raw_ref or not message:
         return {"text": "Cần `to`/`name` (alias) và `message`."}
 
+    # "admin"/"tôi"/"mình" → gửi cho chính admin của kênh đang dùng
+    if re.fullmatch(r"(admin|quản trị|quan tri|tôi|toi|mình|minh|chính chủ|chinh chu)",
+                    raw_ref, re.I):
+        rec = _admin_recipient(platform, ctx)
+        if not rec:
+            return {"text": "Chưa cấu hình admin cho kênh này (Settings → Admin)."}
+        ok, desc = _send_one_contact(rec, message)
+        return {"text": (f"✅ Đã gửi admin: {desc}" if ok else f"⚠️ {desc}")}
+
     # Nhiều người nhận: "Docker, Calendar, Weather" / "A; B" / "A và B"
     refs = [x.strip() for x in re.split(r"[,;]|\bvà\b|\band\b", raw_ref) if x.strip()]
     if not refs:
         refs = [raw_ref]
 
+    def _resolve(ref: str) -> list[dict]:
+        h = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
+        if not h:
+            one = cc.find_by_ref(ref)
+            h = [one] if one else []
+        return h
+
     sent: list[str] = []
     failed: list[str] = []
     ambiguous: list[str] = []
     for ref in refs:
-        hits = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
-        if not hits:
-            one = cc.find_by_ref(ref)
-            hits = [one] if one else []
+        hits = _resolve(ref)
+        # Fallback KHÔNG dấu phẩy: "Docker Calendar Weather" — thử từng từ, chỉ
+        # coi là nhiều người nếu MỌI từ đều khớp 1 contact (tránh tách nhầm tên
+        # có nhiều chữ như "Nhóm Dev Backend").
+        if not hits and " " in ref:
+            toks = [t for t in ref.split() if t.strip()]
+            per = [(t, _resolve(t)) for t in toks]
+            if len(per) >= 2 and all(h for _t, h in per):
+                for t, h in per:
+                    rec = h[0]
+                    if len(h) > 1 and not bot_id:
+                        ambiguous.append(f"«{t}» trùng nhiều bot — nói rõ bot")
+                        continue
+                    ok, desc = _send_one_contact(rec, message)
+                    (sent if ok else failed).append(desc)
+                continue
         if not hits:
             failed.append(f"«{ref}» không thấy trong danh bạ"
                           + (f" kênh {platform}" if platform else ""))

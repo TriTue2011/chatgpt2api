@@ -409,6 +409,7 @@ def list_contacts(
             blob = " ".join([
                 str(r.get("alias") or ""),
                 str(r.get("display_name") or ""),
+                str(r.get("chat_name") or ""),   # tên NHÓM (zalop) — trước bị sót
                 str(r.get("chat_id") or ""),
                 str(r.get("user_id") or ""),
                 str(r.get("bot_label") or ""),
