@@ -330,7 +330,8 @@ def _execute(cap: "caps.Capability", args: dict, user_id: str) -> dict:
 def orchestrate(user_text: str, user_id: str,
                 allow: set[str] | None = None,
                 ha_fastpath: bool = True,
-                model: str | None = None) -> dict[str, Any]:
+                model: str | None = None,
+                auto_approve: bool = False) -> dict[str, Any]:
     """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
@@ -639,14 +640,14 @@ def orchestrate(user_text: str, user_id: str,
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
                 return {"text": "", "silent": True}
-            elif approval_gate.is_blocked(name, risk=cap.risk):
+            elif not auto_approve and approval_gate.is_blocked(name, risk=cap.risk):
                 result = {
                     "text": (
                         f"Chế độ chỉ-đọc: em không được chạy `{name}` "
                         f"(thay đổi hệ thống). Anh/chị bật lại autonomy supervised/full nhé."
                     ),
                 }
-            elif approval_gate.needs_approval(user_id, name, risk=cap.risk):
+            elif not auto_approve and approval_gate.needs_approval(user_id, name, risk=cap.risk):
                 # Propose + wait for approval (ASK chips + ok/luôn luôn/thôi).
                 # Never put resolved secrets into approval UI — re-redact display
                 display_args = dict(args)

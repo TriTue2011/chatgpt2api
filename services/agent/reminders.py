@@ -546,10 +546,13 @@ def _send(channel: str, chat_id: str, text: str,
 def _run_task(user_id: str, prompt: str) -> str:
     """Run a one-shot agent turn for a scheduled task (no nested scheduling loop)."""
     from services.agent.orchestrator import orchestrate
+    # auto_approve=True: user ĐÃ đồng ý khi tạo nhắc nhở → tới giờ TỰ chạy,
+    # KHÔNG hỏi duyệt lại (nếu không sẽ mâu thuẫn 'em sẽ tự gửi' rồi lại hỏi).
     out = orchestrate(
-        f"[Nhắc việc theo lịch — làm và trả lời ngắn gọn]\n{prompt}",
+        f"[Nhắc việc theo lịch — làm ngay và trả lời ngắn gọn, KHÔNG hỏi lại]\n{prompt}",
         user_id,
         ha_fastpath=True,
+        auto_approve=True,
     )
     if out.get("silent"):
         return ""
