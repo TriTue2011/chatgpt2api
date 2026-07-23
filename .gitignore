@@ -91,9 +91,15 @@ parse_results.txt
 # Plans & one-off scripts
 plans/
 scripts/test_storage.py
-# Script debug tạm — chứa email/token/mật khẩu tài khoản, KHÔNG push
-scripts/_tmp_*
+# Data files & credentials (KHÔNG public - bảo mật PII/accounts)
+data/accounts.json
+data/*.json
+!data/piper/*.json
+_tmp_*
+*.tar
+*.tgz
 check.sh
+
 patch_gemini.py
 data/logs.jsonl
 # Piper TTS voices (download via scripts/download_piper_voices.py — not in image)

@@ -348,6 +348,16 @@ def create_router() -> APIRouter:
                     except Exception as exc:
                         k_info["status"] = "error"
                         k_info["error"] = str(exc)
+                elif p_id == "flow":
+                    flow_cfg = p_cfg if isinstance(p_cfg, dict) else {}
+                    flow_accounts = flow_cfg.get("accounts") or []
+                    if flow_accounts and isinstance(flow_accounts[0], dict):
+                        acc0 = flow_accounts[0]
+                        k_info["username"] = acc0.get("profile") or acc0.get("email") or "google-flow"
+                    else:
+                        k_info["username"] = flow_cfg.get("email") or "google-flow"
+                    k_info["plan"] = flow_cfg.get("plan", "Google Flow")
+                    k_info["status"] = "active" if flow_cfg.get("enabled", True) else "disabled"
                 keys_payload.append(k_info)
             builtin_list.append({
                 "id": p_id,
