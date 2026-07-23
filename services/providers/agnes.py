@@ -158,13 +158,12 @@ class AgnesProvider:
     def _post_with_failover(
         self, urls, payload: dict[str, Any], *, stream: bool = False, timeout: float = 120,
     ) -> tuple[str, Any]:
-        """POST with automatic API-key failover on HTTP 429 / 402.
+        """POST with automatic API-key failover & transient retry on HTTP 429 / 402 / 503.
 
         Tries each configured key in FIFO order (skipping keys in cooldown). On 429
         (rate limit) the key gets a short cooldown; on 402 (quota exhausted) a long
-        cooldown — then the next key is tried. `urls` may be a single URL or a list
-        of fallback URLs tried (in order) with the SAME key. Other non-200 statuses
-        surface immediately. Returns (used_key, response); raises if no key succeeds.
+        cooldown; on 503 (service busy) a brief retry pause — then the next key/retry is tried.
+        Returns (used_key, response); raises if no key succeeds.
         """
         if isinstance(urls, str):
             urls = [urls]
@@ -172,7 +171,9 @@ class AgnesProvider:
         if not keys:
             raise RuntimeError("Agnes AI key not configured")
         last_detail = ""
-        for _ in range(len(keys)):
+        max_attempts = max(len(keys) * 2, 4)
+
+        for attempt in range(max_attempts):
             key = self.api_key
             if not key:
                 break
@@ -185,9 +186,12 @@ class AgnesProvider:
                     last_detail = f"request error: {exc}"
                     resp = None
                     continue
-                if resp.status_code == 200 or resp.status_code in (429, 402):
-                    break  # decisive: success or account-level throttle
+                if resp.status_code == 200:
+                    break
+                if resp.status_code in (429, 402, 500, 502, 503, 504):
+                    break  # transient/retryable status
                 last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+
             if resp is None:
                 self.mark_key_rate_limited(key, 60.0)
                 continue
@@ -200,8 +204,27 @@ class AgnesProvider:
                     self.mark_key_rate_limited(key, 60.0, status="limited")
                 last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
                 continue
-            raise RuntimeError(f"Agnes AI error HTTP {resp.status_code}: {resp.text}")
-        raise RuntimeError(f"Agnes AI: tất cả API key đều hết quota/bị giới hạn. {last_detail}")
+            if resp.status_code in (500, 502, 503, 504):
+                # Service busy / transient server error: sleep briefly and retry
+                time.sleep(1.5)
+                last_detail = f"Máy chủ Agnes AI đang bận (HTTP {resp.status_code})"
+                continue
+
+            # Clean up error JSON if present
+            err_msg = resp.text
+            try:
+                err_data = resp.json()
+                if isinstance(err_data, dict) and "error" in err_data:
+                    err_sub = err_data["error"]
+                    if isinstance(err_sub, dict):
+                        err_msg = err_sub.get("message") or err_msg
+                    elif isinstance(err_sub, str):
+                        err_msg = err_sub
+            except Exception:
+                pass
+            raise RuntimeError(f"Agnes AI error (HTTP {resp.status_code}): {err_msg}")
+
+        raise RuntimeError(f"Agnes AI: Máy chủ đang bận (Service Busy) hoặc API Key bị giới hạn. ({last_detail})")
 
     @property
     def api_key(self) -> str:
