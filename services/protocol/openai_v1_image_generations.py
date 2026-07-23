@@ -372,7 +372,7 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
 
     # Core providers have their own built-in implementation below.
     # Non-core image models (custom or image-specific prefixes) use adapters.
-    if route.provider == "agnes" or model.startswith("agnes/"):
+    if route.provider == "agnes" or "agnes" in route.provider.lower() or "agnes" in model.lower():
         from services.providers.agnes import agnes_provider
         src_image = body.get("image") or body.get("images")
         if isinstance(src_image, list):

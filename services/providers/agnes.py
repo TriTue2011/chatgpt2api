@@ -30,21 +30,33 @@ AGNES_MODELS = [
 ]
 
 
+def _iter_custom_providers() -> list[dict[str, Any]]:
+    cps = config.data.get("custom_providers") or {}
+    result: list[dict[str, Any]] = []
+    if isinstance(cps, dict):
+        for pid, cp in cps.items():
+            if isinstance(cp, dict):
+                d = dict(cp)
+                d.setdefault("id", pid)
+                result.append(d)
+    elif isinstance(cps, list):
+        for cp in cps:
+            if isinstance(cp, dict):
+                result.append(cp)
+    return result
+
+
 def _agnes_base_url() -> str:
     cfg = (config.data.get("providers") or {}).get("agnes") or {}
     base = str(cfg.get("base_url") or "").rstrip("/")
     if not base:
-        custom_providers = config.data.get("custom_providers") or []
-        if isinstance(custom_providers, list):
-            for cp in custom_providers:
-                if not isinstance(cp, dict):
-                    continue
-                cp_id = str(cp.get("id") or "").lower()
-                cp_name = str(cp.get("name") or "").lower()
-                if "agnes" in cp_id or "agnes" in cp_name:
-                    base = str(cp.get("base_url") or "").rstrip("/")
-                    if base:
-                        break
+        for cp in _iter_custom_providers():
+            cp_id = str(cp.get("id") or "").lower()
+            cp_name = str(cp.get("name") or "").lower()
+            if "agnes" in cp_id or "agnes" in cp_name:
+                base = str(cp.get("base_url") or "").rstrip("/")
+                if base:
+                    break
     if not base:
         base = AGNES_DEFAULT_BASE_URL
     return base
@@ -84,26 +96,22 @@ class AgnesProvider:
             keys.insert(0, single)
 
         # Fallback/Merge from custom_providers if any custom provider entry contains 'agnes'
-        custom_providers = config.data.get("custom_providers") or []
-        if isinstance(custom_providers, list):
-            for cp in custom_providers:
-                if not isinstance(cp, dict):
+        for cp in _iter_custom_providers():
+            cp_id = str(cp.get("id") or "").lower()
+            cp_name = str(cp.get("name") or "").lower()
+            if "agnes" in cp_id or "agnes" in cp_name:
+                if cp.get("enabled") is False:
                     continue
-                cp_id = str(cp.get("id") or "").lower()
-                cp_name = str(cp.get("name") or "").lower()
-                if "agnes" in cp_id or "agnes" in cp_name:
-                    if cp.get("enabled") is False:
-                        continue
-                    cp_single = str(cp.get("api_key") or "").strip()
-                    cp_multi = cp.get("api_keys") or []
-                    if not isinstance(cp_multi, list):
-                        cp_multi = []
-                    for k in cp_multi:
-                        k_str = str(k).strip()
-                        if k_str and k_str not in keys:
-                            keys.append(k_str)
-                    if cp_single and cp_single not in keys:
-                        keys.insert(0, cp_single)
+                cp_single = str(cp.get("api_key") or "").strip()
+                cp_multi = cp.get("api_keys") or []
+                if not isinstance(cp_multi, list):
+                    cp_multi = []
+                for k in cp_multi:
+                    k_str = str(k).strip()
+                    if k_str and k_str not in keys:
+                        keys.append(k_str)
+                if cp_single and cp_single not in keys:
+                    keys.insert(0, cp_single)
 
         return keys
 
