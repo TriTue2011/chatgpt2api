@@ -969,19 +969,6 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
             seen.add(mid)
             data.append({"id": mid, "object": "model", "created": 0, "owned_by": "claude"})
 
-    # Agnes AI models
-    agnes_models = [
-        "agnes/agnes-2.5-flash",
-        "agnes/agnes-2.0-flash",
-        "agnes/agnes-image-2.1-flash",
-        "agnes/agnes-image-2.0-flash",
-        "agnes/agnes-video-v2.0",
-    ]
-    for mid in agnes_models:
-        if mid not in seen:
-            seen.add(mid)
-            data.append({"id": mid, "object": "model", "created": 0, "owned_by": "agnes"})
-
     # Gemini web-cookie API models
     gma_models = ["gma/auto", "gma/image", "gma/3.1-flash", "gma/3.1-flash-thu-nghiem",
                   "gma/3.1-pro", "gma/3.1-pro-mo-rong",
@@ -991,11 +978,11 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
             seen.add(mid)
             data.append({"id": mid, "object": "model", "created": 0, "owned_by": "gemini_web_api"})
 
-    # Biến thể ':text' cho MỌI model — chọn trong HA cho pipeline GÕ CHỮ để GIỮ
+    # Biến thể ':text' cho MỌI model CHAT — chọn trong HA cho pipeline GÕ CHỮ để GIỮ
     # KÝ TỰ (không văn xuôi TTS). Model thường = mặc định (HA giọng nói → văn
     # xuôi). Gateway tự cắt ':text' khi dispatch nên vẫn route đúng provider.
-    # KHÔNG tạo :text cho combo/pipeline — nếu muốn literal thì set :text trên
-    # từng sub-model bên trong combo, không gắn lên tên combo.
+    # KHÔNG tạo :text cho combo/pipeline và BỎ QUA MỌI model ẢNH/VIDEO (image, video, clip, ...).
+    from utils.helper import VIDEO_GEN_MODELS
     _combo_ids = set((config.data.get("combo_models") or {}).keys()) | \
                  set((config.data.get("pipeline_models") or {}).keys())
     for _m in list(data):
@@ -1004,15 +991,20 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
             # Bỏ qua combo/pipeline
             if _mid in _combo_ids:
                 continue
+
+            # BỎ QUA model ẢNH / VIDEO (không tạo biến thể :text)
+            _mid_lower = str(_mid).lower()
+            _is_img_or_video = (
+                (_mid in IMAGE_MODELS)
+                or (_mid in VIDEO_GEN_MODELS)
+                or _mid_lower.startswith(("flow/", "gemini-image/", "nv-image/", "codex-gpt-image", "gpt-image-", "dall-e-"))
+                or any(k in _mid_lower for k in ("image", "video", "clip", "imagen", "flux", "schnell", "sdwebui", "dall-e"))
+            )
+            if _is_img_or_video:
+                continue
+
             _tv = dict(_m)
             _tv["id"] = f"{_mid}:text"
-            # Tách provider CHAT thành 2 nhóm (gốc + "_text"). BỎ QUA model ẢNH/VIDEO
-            # (flow/image) — không có chế độ chữ nên không tách.
-            _is_img = (_mid in IMAGE_MODELS) or str(_mid).startswith(
-                ("flow/", "gemini-image/", "nv-image/", "codex-gpt-image", "gpt-image-", "dall-e-"))
-            if _is_img:
-                continue
-            
             _tv["owned_by"] = f"{_m.get('owned_by') or 'chatgpt'}_text"
             data.append(_tv)
 
