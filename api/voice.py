@@ -460,4 +460,65 @@ def create_router() -> APIRouter:
             raise HTTPException(503, str(exc)[:300])
         return {"ok": True, "url": url}
 
+    # ── Per-Session STT & TTS Config (Phân lập từng Kênh/Bot/Nhóm/User) ────────
+    @router.get("/api/voice/session-config")
+    async def get_session_voice(key: str = "", authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import session_voice as sv
+        if key:
+            return {"ok": True, "key": key, "config": sv.get_session_voice_config(key)}
+        return {"ok": True, "rows": sv.list_all_session_voices()}
+
+    @router.post("/api/voice/session-config")
+    async def set_session_voice(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import session_voice as sv
+        body = await request.json()
+        key = str(body.get("key") or body.get("session_id") or "").strip()
+        if not key:
+            raise HTTPException(400, "Thiếu 'key' hoặc 'session_id'")
+        res = sv.set_session_voice_config(
+            key,
+            tts_voice=str(body.get("tts_voice") or "").strip(),
+            tts_backend=str(body.get("tts_backend") or "").strip(),
+            stt_language=str(body.get("stt_language") or "").strip(),
+            stt_engine=str(body.get("stt_engine") or "").strip(),
+            stt_backend=str(body.get("stt_backend") or "").strip(),
+        )
+        return res
+
+    @router.delete("/api/voice/session-config")
+    async def clear_session_voice(key: str = "", authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.voice import session_voice as sv
+        if not key:
+            raise HTTPException(400, "Thiếu 'key'")
+        return {"ok": sv.clear_session_voice_config(key)}
+
+    # ── Teacher Per-Subject Voice API ──────────────────────────────────────────
+    @router.post("/api/teacher/subject-voice")
+    async def set_teacher_subject_voice(request: Request, authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.config import config
+        body = await request.json()
+        subject_voices = body.get("subject_voices")
+        subject_stts = body.get("subject_stts")
+
+        cur = config.get().get("teacher") or {}
+        if not isinstance(cur, dict):
+            cur = {}
+
+        new_t = {**cur}
+        if isinstance(subject_voices, dict):
+            new_t["subject_voices"] = subject_voices
+        if isinstance(subject_stts, dict):
+            new_t["subject_stts"] = subject_stts
+
+        try:
+            config.update({"teacher": new_t})
+        except Exception as exc:
+            raise HTTPException(500, f"Lỗi cập nhật config teacher: {exc}")
+        return {"ok": True, "teacher": new_t}
+
     return router
+

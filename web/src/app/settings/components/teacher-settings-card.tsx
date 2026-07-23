@@ -415,6 +415,106 @@ export function TeacherSettingsCard() {
           </p>
         </div>
 
+        {/* 1c. Cấu hình Giọng TTS & STT theo từng Môn học */}
+        <div className="rounded-md border border-border p-3 space-y-3">
+          <div className="text-xs font-semibold">
+            ①c Cấu hình TTS &amp; STT riêng cho từng Môn học (Toán, Tiếng Việt, Tiếng Anh, Khoa học...)
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Giáo viên tự động dùng giọng TTS và bộ nhận dạng STT tối ưu cho từng môn học.
+          </p>
+          {(() => {
+            const subjectVoices = ((teacher.subject_voices as Record<string, string> | undefined) || {});
+            const subjectStts = ((teacher.subject_stts as Record<string, Record<string, string>> | undefined) || {});
+
+            const subjects = [
+              { id: "toan", label: "Môn Toán", hint: "Giọng đọc công thức toán, số đếm" },
+              { id: "tieng_viet", label: "Môn Tiếng Việt", hint: "Giọng chuẩn Bắc/Nam đọc văn thơ" },
+              { id: "tieng_anh", label: "Môn Tiếng Anh", hint: "Giọng Kokoro/Parakeet chuẩn bản ngữ" },
+              { id: "khoa_hoc", label: "Môn Khoa Học / Tự Nhiên", hint: "Giọng truyền cảm diễn giải" },
+              { id: "su_dia", label: "Môn Lịch Sử / Địa Lý", hint: "Giọng trầm ấm đọc tư liệu" },
+            ];
+
+            const setSubjectVoice = (sub: string, v: string) => {
+              patchTeacher({
+                subject_voices: { ...subjectVoices, [sub]: v }
+              });
+            };
+
+            const setSubjectStt = (sub: string, key: "language" | "engine", val: string) => {
+              const cur = subjectStts[sub] || {};
+              patchTeacher({
+                subject_stts: { ...subjectStts, [sub]: { ...cur, [key]: val } }
+              });
+            };
+
+            return (
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {subjects.map((s) => {
+                    const voiceVal = String(subjectVoices[s.id] || "");
+                    const sttLang = String(subjectStts[s.id]?.language || (s.id === "tieng_anh" ? "en" : "vi"));
+                    const sttEng = String(subjectStts[s.id]?.engine || "auto");
+                    const opts = s.id === "tieng_anh" ? optsEn : optsVi;
+
+                    return (
+                      <div key={s.id} className="rounded border border-border/70 p-2 space-y-1 bg-muted/10">
+                        <label className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{s.label}</label>
+                        <p className="text-[9px] text-muted-foreground">{s.hint}</p>
+
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[10px] text-muted-foreground block">Giọng đọc (TTS):</label>
+                          <select
+                            className="w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] h-8"
+                            value={voiceVal}
+                            onChange={(e) => setSubjectVoice(s.id, e.target.value)}
+                          >
+                            <option value="">(mặc định môn/tự động)</option>
+                            {opts.map((v) => (
+                              <option key={v.id} value={v.id}>
+                                {v.id} {v.language_label ? `· ${v.language_label}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1 pt-1">
+                          <div>
+                            <label className="text-[9px] text-muted-foreground block">Ngôn ngữ STT:</label>
+                            <select
+                              className="w-full rounded-md border border-border bg-background px-1 py-1 text-[10px] h-7"
+                              value={sttLang}
+                              onChange={(e) => setSubjectStt(s.id, "language", e.target.value)}
+                            >
+                              <option value="vi">Tiếng Việt (vi)</option>
+                              <option value="en">Tiếng Anh (en)</option>
+                              <option value="auto">Tự động (auto)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[9px] text-muted-foreground block">Engine STT:</label>
+                            <select
+                              className="w-full rounded-md border border-border bg-background px-1 py-1 text-[10px] h-7"
+                              value={sttEng}
+                              onChange={(e) => setSubjectStt(s.id, "engine", e.target.value)}
+                            >
+                              <option value="auto">Auto Engine</option>
+                              <option value="faster-whisper">Faster-Whisper</option>
+                              <option value="zipformer">Zipformer</option>
+                              <option value="wyoming">Wyoming Protocol</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+
         {/* 2. Phát loa */}
         <div className="rounded-md border border-border p-3 space-y-3">
           <div className="text-xs font-semibold flex items-center gap-1.5">

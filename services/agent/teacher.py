@@ -218,6 +218,40 @@ def detect_lang(text: str) -> str:
     return "vi"
 
 
+def subject_voices() -> dict[str, str]:
+    """Cấu hình giọng TTS theo từng môn học (vd: toan -> vieneu:Ngọc Linh, tieng_anh -> kokoro:af_sky)."""
+    sv = _cfg().get("subject_voices")
+    return sv if isinstance(sv, dict) else {}
+
+
+def subject_stts() -> dict[str, dict[str, str]]:
+    """Cấu hình STT (ngôn ngữ & engine) theo từng môn học."""
+    st = _cfg().get("subject_stts")
+    return st if isinstance(st, dict) else {}
+
+
+def voice_for_subject(subject: str = "", text: str = "") -> str:
+    """Trả giọng TTS tối ưu theo môn học (nếu cấu hình riêng) hoặc tự động phát hiện ngôn ngữ."""
+    sub = (subject or "").strip().lower().replace(" ", "_")
+    sv = subject_voices()
+    if sub in sv and str(sv[sub]).strip():
+        return str(sv[sub]).strip()
+    return voice_for_text(text)
+
+
+def stt_for_subject(subject: str = "") -> dict[str, str]:
+    """Trả cấu hình STT (language & engine) theo môn học."""
+    sub = (subject or "").strip().lower().replace(" ", "_")
+    stts = subject_stts()
+    if sub in stts and isinstance(stts[sub], dict):
+        return {
+            "language": str(stts[sub].get("language") or ("en" if sub in ("tieng_anh", "english") else "vi")).strip(),
+            "engine": str(stts[sub].get("engine") or "auto").strip(),
+        }
+    lang = "en" if sub in ("tieng_anh", "english") else "vi"
+    return {"language": lang, "engine": "auto"}
+
+
 def voice_for_text(text: str) -> str:
     """Giọng TTS theo ngôn ngữ đoạn; rỗng = dùng giọng mặc định hệ thống."""
     lang = detect_lang(text)
@@ -276,6 +310,8 @@ def status_public() -> dict[str, Any]:
         "enabled": is_enabled(),
         "voice_vi": voice_vi(),
         "voice_en": voice_en(),
+        "subject_voices": subject_voices(),
+        "subject_stts": subject_stts(),
         "speak_to_speaker": speak_to_speaker_enabled(),
         "default_speaker": default_speaker(),
         "model_speak": model_speak(),

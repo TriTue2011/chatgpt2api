@@ -50,19 +50,43 @@ def status() -> dict[str, Any]:
     return st
 
 
-def speak(text: str, voice_name: str = "") -> bytes:
+def speak(text: str, voice_name: str = "", *, session_id: str = "", subject: str = "") -> bytes:
     """Text → WAV bytes (ném VoiceError nếu chưa sẵn sàng)."""
+    if not voice_name:
+        if subject:
+            from services.agent import teacher
+            voice_name = teacher.voice_for_subject(subject, text)
+        elif session_id:
+            from services.voice import session_voice
+            voice_name = session_voice.get_tts_voice_for_session(session_id)
     return synthesize(text, voice_name)
 
 
-def speak_stream(text: str, voice_name: str = ""):
+def speak_stream(text: str, voice_name: str = "", *, session_id: str = "", subject: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó."""
+    if not voice_name:
+        if subject:
+            from services.agent import teacher
+            voice_name = teacher.voice_for_subject(subject, text)
+        elif session_id:
+            from services.voice import session_voice
+            voice_name = session_voice.get_tts_voice_for_session(session_id)
     return stream_synthesize(text, voice_name)
 
 
-def listen(audio: bytes, src_hint: str = "", lang: str = "") -> str:
+def listen(audio: bytes, src_hint: str = "", lang: str = "", *, session_id: str = "", subject: str = "") -> str:
     """Voice note (ogg/m4a/wav…) → text. `lang` = vi|en (rỗng = theo config)."""
+    if not lang:
+        if subject:
+            from services.agent import teacher
+            stt_cfg = teacher.stt_for_subject(subject)
+            lang = stt_cfg.get("language") or ""
+        elif session_id:
+            from services.voice import session_voice
+            stt_cfg = session_voice.get_stt_config_for_session(session_id)
+            lang = stt_cfg.get("language") or ""
     return transcribe(audio, src_hint, lang)
+
 
 
 # ── Media: loa cần URL HTTP, không nhận bytes ────────────────────────────────
