@@ -348,8 +348,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageCount, setImageCount] = useState("1");
   const [imageSize, setImageSize] = useState("");
-  const [imageModel, setImageModel] = useState("gpt-image-2");
-  const [imageModels, setImageModels] = useState<Array<{ id: string; label: string }>>([]);
+  const [imageModel, setImageModel] = useState("flow/nano-banana-pro");
+  const [imageModels, setImageModels] = useState<Array<{ id: string; label: string }>>([
+    { id: "flow/nano-banana-pro", label: "🍌 Nano Banana Pro" },
+    { id: "flow/nano-banana-2", label: "🍌 Nano Banana 2" },
+    { id: "flow/nano-banana-2-lite", label: "🍌 Nano Banana 2 Lite" },
+  ]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [referenceImageFiles, setReferenceImageFiles] = useState<File[]>([]);
   const [referenceImages, setReferenceImages] = useState<StoredReferenceImage[]>([]);
@@ -487,6 +491,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     // Friendly labels for well-known model IDs
     const MODEL_LABELS: Record<string, string> = {
       "flow/auto":        "🍌 Flow Auto (Nano Banana Pro)",
+      "flow/nano-banana-pro": "🍌 Nano Banana Pro",
+      "flow/nano-banana-2": "🍌 Nano Banana 2",
+      "flow/nano-banana-2-lite": "🍌 Nano Banana 2 Lite",
       "flow/banana-pro":  "🍌 Nano Banana Pro",
       "flow/banana-2":    "🍌 Nano Banana 2",
       "flow/imagen-4":    "🖼️ Imagen 4 (Flow)",

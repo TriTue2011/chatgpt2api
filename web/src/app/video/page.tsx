@@ -27,6 +27,24 @@ const DEFAULT_VIDEO_MODELS: VideoModel[] = [
   { id: "flow/omni-flash", label: "Omni Flash", baseCost: 12 },
 ];
 
+const getVideoCreditCost = (modelId: string, count: number): number => {
+  const mid = String(modelId || "").toLowerCase();
+  const c = Math.max(1, Math.min(4, count));
+  if (mid.includes("veo-3.1-quality")) {
+    return [100, 200, 300, 400][c - 1];
+  }
+  if (mid.includes("veo-3.1-fast")) {
+    return [20, 40, 60, 80][c - 1];
+  }
+  if (mid.includes("veo-3.1-lite")) {
+    return [10, 20, 30, 40][c - 1];
+  }
+  if (mid.includes("omni")) {
+    return [12, 30, 45, 60][c - 1];
+  }
+  return c * 15;
+};
+
 const getModelConfig = (modelId: string) => {
   const mid = String(modelId || "").toLowerCase();
   
@@ -41,7 +59,6 @@ const getModelConfig = (modelId: string) => {
         aspectRatios: [
           { value: "16:9", label: "16:9 (Ngang)" },
           { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-          { value: "1:1", label: "1:1 (Vuông)" },
         ],
         durations: [
           { value: "5", label: "5s (81 frames)" },
@@ -67,7 +84,6 @@ const getModelConfig = (modelId: string) => {
         aspectRatios: [
           { value: "16:9", label: "16:9 (Ngang)" },
           { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-          { value: "1:1", label: "1:1 (Vuông)" },
         ],
         durations: [
           { value: "5", label: "5s (81 frames)" },
@@ -93,10 +109,10 @@ const getModelConfig = (modelId: string) => {
         aspectRatios: [
           { value: "16:9", label: "16:9 (Ngang)" },
           { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-          { value: "1:1", label: "1:1 (Vuông)" },
         ],
         durations: [
-          { value: "5", label: "5s (81 frames)" },
+          { value: "4", label: "4s (61 frames)" },
+          { value: "6", label: "6s (97 frames)" },
           { value: "8", label: "8s (121 frames)" },
           { value: "10", label: "10s (241 frames)" },
         ],
@@ -121,8 +137,7 @@ const getModelConfig = (modelId: string) => {
       aspectRatios: [
         { value: "16:9", label: "16:9 (Ngang)" },
         { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        { value: "1:1", label: "1:1 (Vuông)" },
-      ],
+        ],
       durations: [
         { value: "5", label: "5s (81 frames)" },
         { value: "8", label: "8s (121 frames)" },
@@ -283,7 +298,7 @@ export default function VideoPage() {
   }, []);
 
   const calculateCredits = () => {
-    return modelConfig.baseCost * parseInt(count || "1", 10);
+    return getVideoCreditCost(model, parseInt(count || "1", 10));
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isStart: boolean) => {
@@ -527,14 +542,16 @@ export default function VideoPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Số bản ghi (Count)</label>
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Số bản ghi (Count / Multiplier)</label>
                 <select
                   value={count}
                   onChange={(e) => setCount(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium"
                 >
-                  <option value="1">1 video</option>
-                  <option value="2">2 video</option>
+                  <option value="1">1x (1 video - {getVideoCreditCost(model, 1)} CR)</option>
+                  <option value="2">x2 (2 video - {getVideoCreditCost(model, 2)} CR)</option>
+                  <option value="3">x3 (3 video - {getVideoCreditCost(model, 3)} CR)</option>
+                  <option value="4">x4 (4 video - {getVideoCreditCost(model, 4)} CR)</option>
                 </select>
               </div>
             </div>
