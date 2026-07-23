@@ -39,6 +39,7 @@ services:
       - "6080:6080"      # noVNC — LAN OK nếu có VNC_PASSWORD; đừng mở WAN
       - "3001:3001"      # zalo-server — cho HA/integration trên LAN
       - "10600:10600"    # Wyoming multi — TTS+STT vi/en (1 port, VieNeu/Kokoro + Zipformer/Parakeet)
+      - "10700:10700"    # WhisperLive WebSocket — Real-time Streaming STT (Faster-Whisper CTranslate2)
 
     volumes:
       # Single persistent mount: accounts, config, KB/chroma, captcha profiles, voices
