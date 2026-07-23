@@ -1178,33 +1178,27 @@ def create_router(app_version: str) -> APIRouter:
         enabled = provider.get("enabled", True)
         prefix = str(provider.get("prefix") or provider_id).strip().lower().replace(" ", "_")
 
-        # Validate: test connection with first key against the primary URL.
-        # Additional base_urls are NOT validated here — they're optional pool
-        # members and a slow/dead spare shouldn't block save.
+        # Soft validate: probe endpoint if key provided, but NEVER block saving
         test_key = api_keys[0] if api_keys else api_key
+        warning = None
         if not test_key:
-            raise HTTPException(status_code=400, detail={"error": "At least one API key is required"})
-        try:
-            from curl_cffi import requests as cffi_req
-            resp = cffi_req.get(
-                f"{base_url}/v1/models",
-                headers={"Authorization": f"Bearer {test_key}"},
-                timeout=10,
-            )
-            if resp.status_code >= 400:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": f"Cannot connect to {base_url}: HTTP {resp.status_code}"},
+            warning = "No API key specified"
+        else:
+            try:
+                from curl_cffi import requests as cffi_req
+                _burl = base_url.rstrip("/")
+                _models_path = "/models" if _burl.endswith("/v1") else "/v1/models"
+                resp = cffi_req.get(
+                    f"{_burl}{_models_path}",
+                    headers={"Authorization": f"Bearer {test_key}"},
+                    timeout=5,
                 )
-        except Exception as exc:
-            if not isinstance(exc, HTTPException):
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": f"Cannot connect to {base_url}: {exc}"},
-                )
-            raise
+                if resp.status_code >= 400:
+                    warning = f"Cannot reach {base_url}: HTTP {resp.status_code}"
+            except Exception as exc:
+                warning = f"Cannot reach {base_url}: {exc}"
 
-        # Save to config
+        # Save to config (always persist)
         custom_providers = dict(config.data.get("custom_providers") or {})
         if not isinstance(custom_providers, dict):
             custom_providers = {}
@@ -1226,6 +1220,7 @@ def create_router(app_version: str) -> APIRouter:
             "custom_providers": custom_providers,
             "saved": True,
             "provider_id": provider_id,
+            "warning": warning,
         }
 
     @router.delete("/api/v1/custom-providers/{provider_id}")
