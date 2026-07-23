@@ -85,6 +85,9 @@ _RSS_URLS: dict[str, dict[str, str]] = {
         "moi_nhat": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
         "the_gioi": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
         "thoi_su": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
+        "kinh_doanh": "https://aljazeera.com/xml/rss/all.xml",
+        "cong_nghe": "https://feeds.feedburner.com/TechCrunch/",
+        "khoa_hoc": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
     },
 }
 
