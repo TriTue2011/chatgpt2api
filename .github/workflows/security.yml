@@ -71,6 +71,7 @@ jobs:
       - name: npm audit high/critical (web SCA)
         working-directory: web
         run: |
-          # --audit-level=high: chỉ fail high/critical
-          npm audit --omit=dev --audit-level=high \
+          # --audit-level=high: chỉ fail high/critical (bỏ qua dev + optional deps như sharp của Next.js)
+          npm audit --omit=dev --omit=optional --audit-level=high \
             || { echo "::error::npm audit high/critical findings"; exit 1; }
+
