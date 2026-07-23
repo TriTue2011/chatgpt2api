@@ -135,7 +135,7 @@ Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng 
    ```yaml
    services:
      c2a:
-       image: ghcr.io/<tên-tổ-chức>/chatgpt2api:latest
+       image: ghcr.io/tritue2011/chatgpt2api:latest
        container_name: c2a
        restart: unless-stopped
        ports:
@@ -144,7 +144,7 @@ Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng 
          - "3001:3001"      # zalo — LAN (HA có thể khác host)
          - "10600:10600"    # Wyoming multi vi/en — HA khác host (không bind 127.0.0.1)
        volumes:
-         - /opt/c2a-data:/app/data
+         - /opt/c2a/data:/app/data
        environment:
          CHATGPT2API_AUTH_KEY: your_secret_key_here
          CAPTCHA_SOLVER_API_KEY: your_secret_key_here
@@ -152,9 +152,9 @@ Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng 
          STORAGE_BACKEND: json
    ```
 
-   > Repo private thì Portainer cần đăng nhập registry trước: **Registries** →
-   > **Add registry** → chọn **GitHub Container Registry**, điền username + Personal
-   > Access Token có quyền `read:packages`.
+   > 💡 **Khắc phục lỗi `unauthorized` khi pull image trong Portainer**:
+   > Nếu GHCR báo lỗi `unauthorized`, truy cập GitHub Package `chatgpt2api` -> **Package settings** -> Chuyển **Package visibility** sang `Public`. Hoặc trong Portainer: **Registries** -> **Add registry** -> **GitHub Container Registry**, điền username + Personal Access Token (PAT có quyền `read:packages`).
+
 
 6. Bấm **Deploy the stack** ở cuối trang. Đợi cột trạng thái chuyển xanh.
 
@@ -358,29 +358,32 @@ Ba việc: tải model → bật trong Cài đặt → khai báo loa.
 ### 4.1. Tải model (chỉ làm một lần)
 
 ```bash
-# Giọng đọc Piper — gói tối thiểu ~60 MB, hoặc --pack full cho cả 19 giọng (~1.2 GB)
-python scripts/download_piper_voices.py --pack minimal
+# --- CÁCH A: Chạy script trực tiếp trong container c2a (Khuyên dùng) ---
+docker exec -it c2a python scripts/download_piper_voices.py --pack minimal
+docker exec -it c2a python scripts/download_stt_model.py
+docker exec -it c2a python scripts/download_vieneu_model.py
 
-# Model nghe (nhận dạng giọng nói tiếng Việt) ~97 MB
-python scripts/download_stt_model.py
+# --- CÁCH B: Tải thủ công bằng wget từ GitHub Release về host (/opt/c2a/data/) ---
 
-# (Tuỳ chọn) VieNeu-TTS v3 Turbo — giọng 48 kHz tự nhiên hơn hẳn Piper, đọc
-# được câu trộn Anh–Việt. Chọn giọng dạng "vieneu:Phạm Tuyên" trong WebUI.
-python scripts/download_vieneu_model.py
+# 1. Model nghe tiếng Việt (Zipformer STT -> /opt/c2a/data/stt/)
+mkdir -p /opt/c2a/data/stt && cd /opt/c2a/data/stt
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/bpe.model
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/config.json
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/decoder-epoch-20-avg-10.onnx
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/encoder-epoch-20-avg-10.onnx
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/stt-zipformer-v1/joiner-epoch-20-avg-10.onnx
 
-# (Tuỳ chọn) Nghe tiếng Anh — NVIDIA Parakeet-TDT 0.6B (~600 MB).
-# Bật bằng config voice.stt.language = "en" hoặc form field language=en.
-python scripts/download_stt_en_model.py
-
-# (Tuỳ chọn) Giọng đọc tiếng Anh Kokoro-82M — 11 giọng Anh-Mỹ/Anh-Anh,
-# chọn dạng "kokoro:af_sky" trong WebUI (chỉ đọc tiếng Anh). Script TỰ DÒ CPU:
-# có VNNI (Xeon gen2 2019+, Core gen11+, Ryzen 7000+) → bản int8 (~100 MB,
-# nhanh hơn); CPU cũ chỉ AVX2 → bản fp32 (~320 MB, vì int8 thiếu VNNI chậm
-# hơn 2.5x). Ép tay: --int8 / --fp32.
-python scripts/download_kokoro_model.py
+# 2. Giọng đọc tiếng Việt (Piper TTS -> /opt/c2a/data/piper/)
+mkdir -p /opt/c2a/data/piper && cd /opt/c2a/data/piper
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/ngochuyennew.onnx
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/ngochuyennew.onnx.json
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/banmai.onnx
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/banmai.onnx.json
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx
+wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx.json
 ```
 
-File về `data/piper/`, `data/stt/`, `data/hf/`, `data/stt-en/`, `data/kokoro/`.
+File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/stt-en/`, `data/kokoro/`.
 **Không** nằm trong image nên cập nhật image không mất, và image không nặng thêm.
 
 ### 4.2. Cài đặt trong `▸ Hệ thống → Cài đặt → Giọng nói & Loa`

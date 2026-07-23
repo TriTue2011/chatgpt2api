@@ -109,11 +109,13 @@ Sau khi hoàn tất, bạn có thể truy cập trang quản trị chính tại 
 
 Nếu bạn sử dụng Portainer để quản lý Docker:
 1. Đăng nhập vào Portainer, chọn môi trường (Local/Primary).
-2. Chuyển đến mục **Stacks** ở menu bên trái -> Bấm **Add stack**.
-3. Đặt tên stack là `chatgpt-ai-system`.
-4. Trong phần Web editor, dán đoạn mã `docker-compose.yml` phía trên vào.
-5. Chú ý chỉnh sửa `CHATGPT2API_AUTH_KEY` và `CAPTCHA_SOLVER_API_KEY` thành mật khẩu bảo mật của riêng bạn.
-6. Cuộn xuống dưới cùng và bấm **Deploy the stack**. Chờ khoảng 1-2 phút để hệ thống tải về và khởi chạy.
+2. (Nếu GHCR báo `unauthorized`): Vào **Registries** -> **Add registry** -> **GitHub Container Registry**, điền username + Personal Access Token. Hoặc trên GitHub chuyển Package `chatgpt2api` sang **Public**.
+3. Chuyển đến mục **Stacks** ở menu bên trái -> Bấm **Add stack**.
+4. Đặt tên stack là `chatgpt2api` (hoặc `c2a`).
+5. Trong phần Web editor, dán đoạn mã `docker-compose.yml` phía trên vào.
+6. Chú ý chỉnh sửa `CHATGPT2API_AUTH_KEY` thành mật khẩu bảo mật của riêng bạn và đường dẫn volume `/opt/c2a/data:/app/data`.
+7. Cuộn xuống dưới cùng và bấm **Deploy the stack**. Chờ khoảng 1-2 phút để hệ thống tải về và khởi chạy.
+
 
 ---
 
