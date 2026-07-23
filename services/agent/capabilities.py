@@ -1116,6 +1116,14 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
 
     raw_ref = str(args.get("ref") or args.get("name") or args.get("to") or "").strip()
     message = str(args.get("message") or args.get("text") or "").strip()
+    # Khử tiền tố KHUNG lệnh lỡ lọt vào nội dung (vd 'nội dung chính là ...',
+    # 'với nội dung ...', 'nhắn rằng ...') — giữ nguyên nếu khử ra rỗng.
+    _stripped = re.sub(
+        r"^\s*(?:với\s+)?(?:nội\s*dung(?:\s+chính)?|nhắn(?:\s+rằng)?|nói\s+rằng|rằng)\s*(?:là\b|:)?\s*",
+        "", message, flags=re.I,
+    ).strip()
+    if _stripped:
+        message = _stripped
     bot_id = str(args.get("bot_id") or args.get("via_bot") or "").strip()
     platform = str(args.get("platform") or "").strip().lower()
     if platform in ("telegram", "tele"):
@@ -1141,71 +1149,125 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     if not refs:
         refs = [raw_ref]
 
-    def _resolve(ref: str) -> list[dict]:
-        h = cc.resolve_alias(ref, platform=platform, bot_id=bot_id)
-        if not h:
-            one = cc.find_by_ref(ref)
-            h = [one] if one else []
-        # Fallback DIRECTORY: thread cấu hình ở Lọc thread / Admin (Settings)
-        # nhưng CHƯA tự ghi vào danh bạ — tra theo tên đã đặt (name/meta).
-        if not h and platform:
+    # ── Tra danh bạ ĐA KÊNH + phát hiện mập mờ → HỎI LẠI ─────────────────
+    # Chỉ gửi khi ra ĐÚNG MỘT thread khớp chính xác. Nếu khớp không dấu /
+    # gần giống, tên có ở nhiều kênh, trùng cả nhóm lẫn cá nhân, hoặc nhiều
+    # bot → liệt kê ứng viên và hỏi lại, KHÔNG tự gửi.
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        s = unicodedata.normalize("NFD", str(s or ""))
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return " ".join(s.casefold().split())
+
+    _ap = str(args.get("platform") or "").strip().lower()
+    if _ap in ("telegram", "tele"):
+        _ap = "tg"
+    explicit_platform = _ap  # kênh người dùng nêu rõ (nếu có)
+    search_platforms = [explicit_platform] if explicit_platform else ["tg", "zalo", "zalop"]
+    _CH_LABEL = {"tg": "Telegram", "zalo": "Zalo", "zalop": "Zalo cá nhân"}
+
+    def _cands(ref: str) -> list[dict]:
+        ref_norm = _norm(ref)
+        ref_low = ref.strip().casefold()
+        seen: set = set()
+        out: list[dict] = []
+        for pf in search_platforms:
+            if not pf:
+                continue
+            rows: list[dict] = []
             try:
-                low = ref.strip().lower()
-                for d in cc.list_directory(platform):
-                    nm = str(d.get("name") or "").strip().lower()
-                    tid = str(d.get("thread_id") or "")
-                    if not nm and not tid:
-                        continue
-                    if low == nm or (low and low in nm) or low == tid.lower():
-                        if bot_id and str(d.get("bot_id")) != bot_id:
-                            continue
-                        h.append({
-                            "platform": platform, "bot_id": str(d.get("bot_id") or ""),
-                            "chat_id": tid, "kind": d.get("kind") or "user",
-                            "chat_name": d.get("name") or "",
-                            "alias": d.get("name") or tid,
-                            "bot_label": d.get("bot_label") or "",
-                        })
+                for hh in cc.resolve_alias(ref, platform=pf, bot_id=bot_id):
+                    rows.append({
+                        "platform": pf, "bot_id": str(hh.get("bot_id") or ""),
+                        "bot_label": hh.get("bot_label") or "",
+                        "chat_id": str(hh.get("chat_id") or ""),
+                        "kind": hh.get("kind") or "user",
+                        "name": hh.get("alias") or hh.get("chat_name") or hh.get("display_name") or "",
+                    })
             except Exception:
                 pass
-        return h
+            try:
+                for d in cc.list_directory(pf):
+                    rows.append({
+                        "platform": pf, "bot_id": str(d.get("bot_id") or ""),
+                        "bot_label": d.get("bot_label") or "",
+                        "chat_id": str(d.get("thread_id") or ""),
+                        "kind": d.get("kind") or "user",
+                        "name": d.get("name") or "",
+                    })
+            except Exception:
+                pass
+            for r in rows:
+                if bot_id and r["bot_id"] and r["bot_id"] != bot_id \
+                        and str(r["bot_label"]).lower() != bot_id.lower():
+                    continue
+                nm = r["name"]
+                nm_norm = _norm(nm)
+                if not nm_norm and not r["chat_id"]:
+                    continue
+                if nm.strip().casefold() == ref_low or r["chat_id"] == ref.strip():
+                    r["quality"] = "exact"
+                elif nm_norm and nm_norm == ref_norm:
+                    r["quality"] = "noaccent"
+                elif ref_norm and (ref_norm in nm_norm or nm_norm in ref_norm):
+                    r["quality"] = "partial"
+                else:
+                    continue
+                k = (r["platform"], r["bot_id"], r["chat_id"])
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(r)
+        return out
+
+    def _rec_of(c: dict) -> dict:
+        return {
+            "platform": c["platform"], "bot_id": c["bot_id"],
+            "chat_id": c["chat_id"], "kind": c["kind"],
+            "chat_name": c["name"], "alias": c["name"],
+            "bot_label": c["bot_label"],
+        }
+
+    def _label(c: dict) -> str:
+        kind = "nhóm" if c["kind"] == "group" else "cá nhân"
+        ch = _CH_LABEL.get(c["platform"], c["platform"])
+        bl = f" · bot {c['bot_label']}" if c["bot_label"] else ""
+        return f"{c['name'] or c['chat_id']} ({kind}, {ch}{bl})"
 
     sent: list[str] = []
     failed: list[str] = []
     ambiguous: list[str] = []
     for ref in refs:
-        hits = _resolve(ref)
-        # Fallback KHÔNG dấu phẩy: "Docker Calendar Weather" — thử từng từ, chỉ
-        # coi là nhiều người nếu MỌI từ đều khớp 1 contact (tránh tách nhầm tên
-        # có nhiều chữ như "Nhóm Dev Backend").
-        if not hits and " " in ref:
-            toks = [t for t in ref.split() if t.strip()]
-            per = [(t, _resolve(t)) for t in toks]
-            if len(per) >= 2 and all(h for _t, h in per):
-                for t, h in per:
-                    rec = h[0]
-                    if len(h) > 1 and not bot_id:
-                        ambiguous.append(f"«{t}» trùng nhiều bot — nói rõ bot")
-                        continue
-                    ok, desc = _send_one_contact(rec, message)
-                    (sent if ok else failed).append(desc)
-                continue
-        if not hits:
-            failed.append(f"«{ref}» không thấy trong danh bạ"
-                          + (f" kênh {platform}" if platform else ""))
+        cands = _cands(ref)
+        exact = [c for c in cands if c["quality"] == "exact"]
+        # Chắc chắn: đúng MỘT mục khớp chính xác → gửi.
+        if len(exact) == 1:
+            ok, desc = _send_one_contact(_rec_of(exact[0]), message)
+            (sent if ok else failed).append(desc)
             continue
-        rec = hits[0]
-        if bot_id:
-            matched = [h for h in hits if h.get("bot_id") == bot_id
-                       or str(h.get("bot_label") or "").lower() == bot_id.lower()]
-            rec = matched[0] if matched else {**rec, "bot_id": bot_id}
-        elif len(hits) > 1:
-            # Nhiều mục cùng tên trên NHIỀU bot của cùng kênh → nêu để chọn
-            opts = ", ".join(f"{h.get('bot_label') or h.get('bot_id')}" for h in hits)
-            ambiguous.append(f"«{ref}» trùng ở nhiều bot ({opts}) — nói rõ bot")
+        if not cands:
+            failed.append(
+                f"«{ref}» không thấy trong danh bạ"
+                + (f" kênh {explicit_platform}" if explicit_platform else " (đã tra mọi kênh)")
+            )
             continue
-        ok, desc = _send_one_contact(rec, message)
-        (sent if ok else failed).append(desc)
+        # Mập mờ → nêu lý do + liệt kê để người dùng chọn, KHÔNG tự gửi.
+        show = exact or cands
+        reasons: list[str] = []
+        if not exact:
+            reasons.append("chỉ khớp gần đúng/không dấu")
+        if len({c["platform"] for c in show}) > 1:
+            reasons.append("có ở nhiều kênh")
+        if len({c["kind"] for c in show}) > 1:
+            reasons.append("trùng cả nhóm lẫn cá nhân")
+        if exact and len(show) > 1 \
+                and len({c["platform"] for c in show}) == 1 \
+                and len({c["kind"] for c in show}) == 1:
+            reasons.append("nhiều mục cùng tên (nhiều bot)")
+        why = " / ".join(reasons) or "chưa đủ chắc chắn"
+        opts = "; ".join(_label(c) for c in show[:8])
+        ambiguous.append(f"«{ref}» {why} — nói rõ giúp em: {opts}")
 
     parts = []
     if sent:
@@ -2266,15 +2328,19 @@ CAPABILITIES: dict[str, Capability] = {
         description=(
             "Gửi tin nhắn tới contact đã lưu. to/name=alias; message=nội dung; "
             "via_bot/bot_id=bot gửi (bắt buộc nếu trùng alias nhiều bot). "
-            "Dùng với schedule mode=task: 'sau 15 phút gửi cho Anh A...'."
+            "platform=tg|zalo|zalop. Dùng với schedule mode=task: 'sau 15 phút gửi cho Anh A...'. "
+            "QUAN TRỌNG: message CHỈ chứa nội dung thật cần gửi — BỎ các từ khung như "
+            "'nội dung', 'nội dung chính', 'với nội dung', 'rằng', 'là', 'nhắn'. Ví dụ: "
+            "'nhắn nhóm X với nội dung chính mọi người đi ngủ thôi' → message='mọi người đi ngủ thôi' "
+            "(KHÔNG gồm chữ 'chính')."
         ),
         parameters={"type": "object", "properties": {
             "to": {"type": "string", "description": "Alias / tên / chat_id"},
             "name": {"type": "string"},
-            "message": {"type": "string"},
+            "message": {"type": "string", "description": "Chỉ nội dung thật, bỏ từ khung 'nội dung/chính/rằng/là'"},
             "bot_id": {"type": "string", "description": "ID hoặc label bot gửi"},
             "via_bot": {"type": "string"},
-            "platform": {"type": "string", "description": "tg | zalo"}},
+            "platform": {"type": "string", "description": "tg | zalo | zalop"}},
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,

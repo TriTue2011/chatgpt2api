@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { LoaderCircle, Plus, Save, Trash2, ExternalLink, Zap, ChevronDown, Pencil } from "lucide-react";
@@ -28,6 +28,7 @@ type CustomProvider = {
 // can be multi-line ("\n"-separated) for pool providers like Gemini
 // Custom where one API key fans out to several local proxy ports.
 const PROVIDER_PRESETS: { id: string; name: string; base_url: string; prefix: string; api_style: string; icon: string; color: string }[] = [
+  { id: "agnes", name: "Agnes AI", base_url: "https://apihub.agnes-ai.com/v1", prefix: "agnes", api_style: "openai", icon: "AG", color: "#EC4899" },
   { id: "geminiapi", name: "Gemini Custom (pool)",
     base_url: "http://192.168.1.100:8000\nhttp://192.168.1.100:8001\nhttp://192.168.1.100:8002\nhttp://192.168.1.100:8003",
     prefix: "geminiapi", api_style: "openai", icon: "G×4", color: "#4285F4" },
