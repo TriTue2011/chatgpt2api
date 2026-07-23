@@ -58,7 +58,7 @@ export default function VideoPage() {
         const models = ((resp.data as any)?.models || []) as any[];
         const vModels = models
           .filter((m: any) => 
-            (m.capabilities || []).some((c: string) => c === "video" || c === "video_gen") &&
+            (m.capabilities || []).includes("video_gen") &&
             m.enabled !== false && !String(m.id).includes(":")
           )
           .map((m: any) => ({

@@ -272,17 +272,32 @@ def _is_model_enabled(model_id: str, enabled_by_provider: dict) -> bool:
     if not enabled_by_provider:
         return True
     import re
-    model_id = re.sub(r"[:#](tts|voice|vanxuoi|raw|text|chat|kytu|symbol)\b", "",
+    clean_id = re.sub(r"[:#](tts|voice|vanxuoi|raw|text|chat|kytu|symbol)\b", "",
                       model_id, flags=re.IGNORECASE).strip()
-    from utils.helper import IMAGE_MODELS, VIDEO_GEN_MODELS
-    # Core models + image/video models always enabled
-    if model_id in {"cx/auto", "oc/auto", "chatgpt/auto", "gemini_free/auto", "gpt-image-2", "codex-gpt-image-2"}:
+    from utils.helper import IMAGE_MODELS, VIDEO_GEN_MODELS, classify_model_capability
+
+    # Core models always enabled
+    if clean_id in {"cx/auto", "oc/auto", "chatgpt/auto", "gemini_free/auto", "gpt-image-2", "codex-gpt-image-2"}:
         return True
-    if model_id in IMAGE_MODELS or model_id in VIDEO_GEN_MODELS:
+
+    if clean_id in IMAGE_MODELS or clean_id in VIDEO_GEN_MODELS:
         return True
+
+    # Custom providers check: if custom provider is active in config, models are enabled by default
+    custom_providers = dict(config.data.get("custom_providers") or {})
+    for cp_id, cp_cfg in custom_providers.items():
+        if isinstance(cp_cfg, dict) and cp_cfg.get("enabled", True) is not False:
+            prefix = str(cp_cfg.get("prefix") or cp_id or "").strip().rstrip("/")
+            if prefix and (clean_id.startswith(f"{prefix}/") or clean_id.startswith(f"custom:{cp_id}/") or clean_id.startswith(f"{cp_id}/")):
+                cp_list = enabled_by_provider.get(f"custom:{cp_id}") or enabled_by_provider.get(cp_id) or enabled_by_provider.get(prefix)
+                if cp_list is not None:
+                    return isinstance(cp_list, list) and (clean_id in cp_list or model_id in cp_list)
+                return True
+
     for provider_models in enabled_by_provider.values():
-        if isinstance(provider_models, list) and model_id in provider_models:
+        if isinstance(provider_models, list) and (clean_id in provider_models or model_id in provider_models):
             return True
+
     return False
 
 
