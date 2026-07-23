@@ -114,10 +114,15 @@ def classify_model_capability(model_id: str) -> list[str]:
     mid = str(model_id or "").strip().lower()
     caps: list[str] = []
 
+    # Model ĐA PHƯƠNG THỨC (hiểu ảnh/video) — KHÔNG phải model tạo ảnh/video.
+    # Chặn substring 'image'/'video' xếp nhầm chúng thành gen (và tước mất 'chat').
+    _understanding = any(h in mid for h in
+                         ("-vl", "vl-", "llava", "understand", "vision", "embed", "clip"))
+
     # Check image gen capability (contains 'image', 'imagen', 'flux', 'schnell', 'sdwebui', 'sdxl', 'dall-e' or in IMAGE_MODELS / prefixes)
     is_image = False
     _img_keywords = ("image", "imagen", "flux", "schnell", "sdwebui", "sdxl", "dall-e", "gpt-image")
-    if mid in IMAGE_MODELS or any(kw in mid for kw in _img_keywords):
+    if mid in IMAGE_MODELS or (not _understanding and any(kw in mid for kw in _img_keywords)):
         caps.append("image")
         is_image = True
 
@@ -146,10 +151,11 @@ def classify_model_capability(model_id: str) -> list[str]:
                 is_image = True
                 break
 
-    # Check video capability (contains 'video', 'clip', 'veo' or in VIDEO_GEN_MODELS / prefixes)
+    # Check video capability (contains 'video', 'veo' or in VIDEO_GEN_MODELS / prefixes).
+    # 'clip' bị loại: CLIP là model embedding/hiểu ảnh, không phải tạo video.
     is_video_gen = False
-    _vid_keywords = ("video", "clip", "veo")
-    if mid in VIDEO_GEN_MODELS or any(kw in mid for kw in _vid_keywords):
+    _vid_keywords = ("video", "veo")
+    if mid in VIDEO_GEN_MODELS or (not _understanding and any(kw in mid for kw in _vid_keywords)):
         caps.append("video_gen")
         caps.append("video")
         is_video_gen = True

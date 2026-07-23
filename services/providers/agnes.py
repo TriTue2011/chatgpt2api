@@ -122,7 +122,10 @@ class AgnesProvider:
                 if cp_single and cp_single not in keys:
                     keys.insert(0, cp_single)
 
-        # Ultimate fallback: If keys is still empty, collect keys from any enabled custom provider whose base_url contains 'agnes' or starts with sk-
+        # Ultimate fallback: chỉ gom key từ custom provider THỰC SỰ là Agnes
+        # (base_url chứa 'agnes'). KHÔNG dựa vào tiền tố 'sk-' vì rất nhiều
+        # provider khác (OpenAI, DeepSeek…) cũng dùng key 'sk-' → tránh gửi
+        # nhầm key provider khác lên apihub.agnes-ai.com.
         if not keys:
             for cp in _iter_custom_providers():
                 if cp.get("enabled") is False:
@@ -132,7 +135,7 @@ class AgnesProvider:
                 cp_multi = cp.get("api_keys") or []
                 if not isinstance(cp_multi, list):
                     cp_multi = []
-                if "agnes" in b_url or cp_single.startswith("sk-") or any(str(k).startswith("sk-") for k in cp_multi):
+                if "agnes" in b_url:
                     for k in cp_multi:
                         k_str = str(k).strip()
                         if k_str and k_str not in keys:
