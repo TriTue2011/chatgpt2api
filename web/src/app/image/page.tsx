@@ -510,7 +510,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       const data = await request.get("/api/v1/models-with-capabilities");
       const models = ((data.data as any)?.models || []) as any[];
       const imgModels = models
-        .filter((m: any) => (m.capabilities || []).includes("image") && m.enabled !== false && !String(m.id).includes(":"))
+        .filter((m: any) => (m.capabilities || []).includes("image") && m.enabled !== false && !String(m.id).endsWith(":text"))
         .map((m: any) => ({ id: m.id, label: MODEL_LABELS[m.id] || m.id }));
       // Sort: flow/ models first, then others
       imgModels.sort((a: any, b: any) => {

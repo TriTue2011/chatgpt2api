@@ -53,10 +53,18 @@ def _agnes_base_url() -> str:
         for cp in _iter_custom_providers():
             cp_id = str(cp.get("id") or "").lower()
             cp_name = str(cp.get("name") or "").lower()
-            if "agnes" in cp_id or "agnes" in cp_name:
+            cp_prefix = str(cp.get("prefix") or "").lower()
+            if "agnes" in cp_id or "agnes" in cp_name or "agnes" in cp_prefix:
                 base = str(cp.get("base_url") or "").rstrip("/")
                 if base:
                     break
+    if not base:
+        # Check any custom provider base_url if still missing
+        for cp in _iter_custom_providers():
+            b = str(cp.get("base_url") or "").rstrip("/")
+            if "agnes" in b.lower():
+                base = b
+                break
     if not base:
         base = AGNES_DEFAULT_BASE_URL
     return base
@@ -95,11 +103,12 @@ class AgnesProvider:
         if single and single not in keys:
             keys.insert(0, single)
 
-        # Fallback/Merge from custom_providers if any custom provider entry contains 'agnes'
+        # Fallback/Merge from custom_providers if any custom provider entry matches 'agnes'
         for cp in _iter_custom_providers():
             cp_id = str(cp.get("id") or "").lower()
             cp_name = str(cp.get("name") or "").lower()
-            if "agnes" in cp_id or "agnes" in cp_name:
+            cp_prefix = str(cp.get("prefix") or "").lower()
+            if "agnes" in cp_id or "agnes" in cp_name or "agnes" in cp_prefix:
                 if cp.get("enabled") is False:
                     continue
                 cp_single = str(cp.get("api_key") or "").strip()
@@ -112,6 +121,24 @@ class AgnesProvider:
                         keys.append(k_str)
                 if cp_single and cp_single not in keys:
                     keys.insert(0, cp_single)
+
+        # Ultimate fallback: If keys is still empty, collect keys from any enabled custom provider whose base_url contains 'agnes' or starts with sk-
+        if not keys:
+            for cp in _iter_custom_providers():
+                if cp.get("enabled") is False:
+                    continue
+                b_url = str(cp.get("base_url") or "").lower()
+                cp_single = str(cp.get("api_key") or "").strip()
+                cp_multi = cp.get("api_keys") or []
+                if not isinstance(cp_multi, list):
+                    cp_multi = []
+                if "agnes" in b_url or cp_single.startswith("sk-") or any(str(k).startswith("sk-") for k in cp_multi):
+                    for k in cp_multi:
+                        k_str = str(k).strip()
+                        if k_str and k_str not in keys:
+                            keys.append(k_str)
+                    if cp_single and cp_single not in keys:
+                        keys.insert(0, cp_single)
 
         return keys
 
