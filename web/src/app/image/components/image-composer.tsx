@@ -218,76 +218,74 @@ export function ImageComposer({
                       </select>
                     </div>
                   )}
-                  {model.startsWith("flow/") && (
-                    <>
-                      <div className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 sm:px-3">
-                        <Input
-                          type="number"
-                          inputMode="numeric"
-                          min="1"
-                          max="100"
-                          step="1"
-                          value={imageCount}
-                          onChange={(event) => onImageCountChange(event.target.value)}
-                          className="h-7 w-[40px] border-0 bg-transparent px-0 text-center text-xs font-medium text-[var(--foreground)] shadow-none focus-visible:ring-0 sm:h-8 sm:w-[64px] sm:text-sm"
-                        />
-                      </div>
+                  
+                  <div className="flex h-8 shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 sm:px-3">
+                    <span className="hidden font-medium text-[var(--foreground)] sm:inline sm:text-xs text-[var(--muted-foreground)]">Số lượng</span>
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={imageCount}
+                      onChange={(event) => onImageCountChange(event.target.value)}
+                      className="h-7 w-[36px] border-0 bg-transparent px-0 text-center text-xs font-medium text-[var(--foreground)] shadow-none focus-visible:ring-0 sm:h-8 sm:w-[48px] sm:text-sm"
+                    />
+                  </div>
+                  <div
+                    className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
+                  >
+                    <span className="hidden font-medium text-[var(--foreground)] sm:inline sm:text-sm">Tỷ lệ</span>
+                    <button
+                      ref={sizeMenuBtnRef}
+                      type="button"
+                      className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-[var(--foreground)] min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
+                      onClick={() => {
+                        if (!isSizeMenuOpen && sizeMenuBtnRef.current) {
+                          const rect = sizeMenuBtnRef.current.getBoundingClientRect();
+                          const menuWidth = Math.min(186, window.innerWidth - 32);
+                          setSizeMenuPos({ top: rect.top - 8, left: Math.max(16, Math.min(rect.left, window.innerWidth - menuWidth - 16)) });
+                        }
+                        setIsSizeMenuOpen((open) => !open);
+                      }}
+                    >
+                      <span className="truncate">{imageSizeLabel}</span>
+                      <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
+                    </button>
+                    {isSizeMenuOpen ? (
                       <div
-                        className="relative flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--card)] px-2 py-0.5 text-[11px] sm:h-auto sm:gap-2 sm:px-3 sm:py-1 sm:text-[13px]"
+                        ref={sizeMenuRef}
+                        className="fixed z-[80] max-h-[45dvh] overflow-y-auto rounded-3xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
+                        style={{
+                          top: sizeMenuPos.top,
+                          left: sizeMenuPos.left,
+                          transform: "translateY(-100%)",
+                          width: "min(186px, calc(100vw - 2rem))",
+                        }}
                       >
-                        <span className="hidden font-medium text-[var(--foreground)] sm:inline sm:text-sm">Tỷ lệ</span>
-                        <button
-                          ref={sizeMenuBtnRef}
-                          type="button"
-                          className="flex h-7 w-[78px] items-center justify-between bg-transparent text-left text-xs font-bold text-[var(--foreground)] min-[390px]:w-[96px] sm:h-8 sm:w-[132px]"
-                          onClick={() => {
-                            if (!isSizeMenuOpen && sizeMenuBtnRef.current) {
-                              const rect = sizeMenuBtnRef.current.getBoundingClientRect();
-                              const menuWidth = Math.min(186, window.innerWidth - 32);
-                              setSizeMenuPos({ top: rect.top - 8, left: Math.max(16, Math.min(rect.left, window.innerWidth - menuWidth - 16)) });
-                            }
-                            setIsSizeMenuOpen((open) => !open);
-                          }}
-                        >
-                          <span className="truncate">{imageSizeLabel}</span>
-                          <ChevronDown className={cn("size-4 shrink-0 opacity-60 transition", isSizeMenuOpen && "rotate-180")} />
-                        </button>
-                        {isSizeMenuOpen ? (
-                          <div
-                            ref={sizeMenuRef}
-                            className="fixed z-[80] max-h-[45dvh] overflow-y-auto rounded-3xl border border-[var(--border)] bg-[var(--card)] p-2 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.35)]"
-                            style={{
-                              top: sizeMenuPos.top,
-                              left: sizeMenuPos.left,
-                              transform: "translateY(-100%)",
-                              width: "min(186px, calc(100vw - 2rem))",
-                            }}
-                          >
-                            {imageSizeOptions.map((option) => {
-                              const active = option.value === imageSize;
-                              return (
-                                <button
-                                  key={option.label}
-                                  type="button"
-                                  className={cn(
-                                    "flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left text-sm text-[var(--foreground)] transition hover:bg-[var(--secondary)]",
-                                    active && "bg-[var(--secondary)] font-medium text-[var(--foreground)]",
-                                  )}
-                                  onClick={() => {
-                                    onImageSizeChange(option.value);
-                                    setIsSizeMenuOpen(false);
-                                  }}
-                                >
-                                  <span>{option.label}</span>
-                                  {active ? <Check className="size-4" /> : null}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
+                        {imageSizeOptions.map((option) => {
+                          const active = option.value === imageSize;
+                          return (
+                            <button
+                              key={option.label}
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center justify-between rounded-2xl px-3 py-2 text-left text-sm text-[var(--foreground)] transition hover:bg-[var(--secondary)]",
+                                active && "bg-[var(--secondary)] font-medium text-[var(--foreground)]",
+                              )}
+                              onClick={() => {
+                                onImageSizeChange(option.value);
+                                setIsSizeMenuOpen(false);
+                              }}
+                            >
+                              <span>{option.label}</span>
+                              {active ? <Check className="size-4" /> : null}
+                            </button>
+                          );
+                        })}
                       </div>
-                    </>
-                  )}
+                    ) : null}
+                  </div>
 
                 </div>
 

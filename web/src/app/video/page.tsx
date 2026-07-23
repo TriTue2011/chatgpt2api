@@ -30,106 +30,176 @@ const DEFAULT_VIDEO_MODELS: VideoModel[] = [
 const getModelConfig = (modelId: string) => {
   const mid = String(modelId || "").toLowerCase();
   
-  if (mid.includes("veo-3.1-quality")) {
+  if (mid.startsWith("flow/") || mid.includes("flow/")) {
+    if (mid.includes("veo-3.1-quality")) {
+      return {
+        providerType: "flow",
+        badge: "Flow Veo Quality (Google)",
+        resolutions: [
+          { value: "1080p", label: "1080p (FHD - Chuẩn Veo Quality)" },
+        ],
+        aspectRatios: [
+          { value: "16:9", label: "16:9 (Ngang)" },
+          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+          { value: "1:1", label: "1:1 (Vuông)" },
+        ],
+        durations: [
+          { value: "5", label: "5s (81 frames)" },
+          { value: "8", label: "8s (121 frames)" },
+        ],
+        fps: [
+          { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
+        ],
+        baseCost: 100,
+        supportsEndFrame: true,
+        supportsSeed: false,
+        supportsNegativePrompt: false,
+      };
+    }
+    
+    if (mid.includes("veo-3.1-lite")) {
+      return {
+        providerType: "flow",
+        badge: "Flow Veo Lite (Google)",
+        resolutions: [
+          { value: "720p", label: "720p (HD - Chuẩn Veo Lite)" },
+        ],
+        aspectRatios: [
+          { value: "16:9", label: "16:9 (Ngang)" },
+          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+          { value: "1:1", label: "1:1 (Vuông)" },
+        ],
+        durations: [
+          { value: "5", label: "5s (81 frames)" },
+        ],
+        fps: [
+          { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
+        ],
+        baseCost: 10,
+        supportsEndFrame: false,
+        supportsSeed: false,
+        supportsNegativePrompt: false,
+      };
+    }
+
+    if (mid.includes("omni")) {
+      return {
+        providerType: "flow",
+        badge: "Flow Omni Flash (Google)",
+        resolutions: [
+          { value: "720p", label: "720p (HD - Chuẩn Omni)" },
+          { value: "1080p", label: "1080p (FHD)" },
+        ],
+        aspectRatios: [
+          { value: "16:9", label: "16:9 (Ngang)" },
+          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+          { value: "1:1", label: "1:1 (Vuông)" },
+        ],
+        durations: [
+          { value: "5", label: "5s (81 frames)" },
+          { value: "8", label: "8s (121 frames)" },
+          { value: "10", label: "10s (241 frames)" },
+        ],
+        fps: [
+          { value: "24", label: "24 fps (Tốc độ gốc Omni)" },
+        ],
+        baseCost: 12,
+        supportsEndFrame: true,
+        supportsSeed: false,
+        supportsNegativePrompt: false,
+      };
+    }
+
+    // Default Flow Veo Fast / Standard
     return {
+      providerType: "flow",
+      badge: "Flow Veo Fast (Google)",
       resolutions: [
-        { value: "1080p", label: "1080p (FHD - Chất lượng cao)" },
+        { value: "1080p", label: "1080p (FHD - Chuẩn Veo Fast)" },
         { value: "720p", label: "720p (HD)" },
+      ],
+      aspectRatios: [
+        { value: "16:9", label: "16:9 (Ngang)" },
+        { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+        { value: "1:1", label: "1:1 (Vuông)" },
       ],
       durations: [
         { value: "5", label: "5s (81 frames)" },
         { value: "8", label: "8s (121 frames)" },
       ],
       fps: [
-        { value: "24", label: "24 fps (Điện ảnh)" },
-        { value: "30", label: "30 fps (Mượt mà)" },
-      ],
-      baseCost: 100,
-      supportsEndFrame: true,
-      badge: "Veo Quality",
-    };
-  }
-
-  if (mid.includes("veo-3.1-lite")) {
-    return {
-      resolutions: [
-        { value: "720p", label: "720p (HD - Tốc độ cao)" },
-        { value: "480p", label: "480p (SD)" },
-      ],
-      durations: [
-        { value: "5", label: "5s (81 frames)" },
-      ],
-      fps: [
-        { value: "24", label: "24 fps (Tiết kiệm)" },
-      ],
-      baseCost: 10,
-      supportsEndFrame: false,
-      badge: "Veo Lite",
-    };
-  }
-
-  if (mid.includes("veo-3.1-fast") || mid.includes("veo")) {
-    return {
-      resolutions: [
-        { value: "1080p", label: "1080p (FHD)" },
-        { value: "720p", label: "720p (HD)" },
-      ],
-      durations: [
-        { value: "5", label: "5s (81 frames)" },
-        { value: "8", label: "8s (121 frames)" },
-      ],
-      fps: [
-        { value: "24", label: "24 fps (Điện ảnh)" },
-        { value: "30", label: "30 fps (Mượt mà)" },
+        { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
       ],
       baseCost: 20,
       supportsEndFrame: true,
-      badge: "Veo Standard",
+      supportsSeed: false,
+      supportsNegativePrompt: false,
     };
   }
 
-  if (mid.includes("omni")) {
+  if (mid.includes("agnes")) {
     return {
+      providerType: "agnes",
+      badge: "Agnes AI Async Engine",
       resolutions: [
-        { value: "720p", label: "720p (HD)" },
         { value: "1080p", label: "1080p (FHD)" },
+        { value: "720p", label: "720p (HD)" },
+        { value: "480p", label: "480p (SD)" },
+      ],
+      aspectRatios: [
+        { value: "16:9", label: "16:9 (Ngang)" },
+        { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+        { value: "1:1", label: "1:1 (Vuông)" },
+        { value: "4:3", label: "4:3 (Tiêu chuẩn)" },
+        { value: "3:4", label: "3:4 (Chân dung)" },
       ],
       durations: [
         { value: "5", label: "5s (81 frames)" },
         { value: "8", label: "8s (121 frames)" },
         { value: "10", label: "10s (241 frames)" },
+        { value: "18", label: "18s (441 frames)" },
       ],
       fps: [
         { value: "24", label: "24 fps (Điện ảnh)" },
         { value: "30", label: "30 fps (Mượt mà)" },
+        { value: "60", label: "60 fps (Siêu mượt)" },
       ],
-      baseCost: 12,
+      baseCost: 15,
       supportsEndFrame: true,
-      badge: "Omni Flash",
+      supportsSeed: true,
+      supportsNegativePrompt: true,
     };
   }
 
-  // Agnes AI Video & Custom Provider Video Models
+  // Custom Provider Video Models
   return {
+    providerType: "custom",
+    badge: "Custom Provider Engine",
     resolutions: [
       { value: "1080p", label: "1080p (FHD)" },
       { value: "720p", label: "720p (HD)" },
       { value: "480p", label: "480p (SD)" },
     ],
+    aspectRatios: [
+      { value: "16:9", label: "16:9 (Ngang)" },
+      { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
+      { value: "1:1", label: "1:1 (Vuông)" },
+      { value: "4:3", label: "4:3 (Tiêu chuẩn)" },
+      { value: "3:4", label: "3:4 (Chân dung)" },
+    ],
     durations: [
       { value: "5", label: "5s (81 frames)" },
       { value: "8", label: "8s (121 frames)" },
       { value: "10", label: "10s (241 frames)" },
-      { value: "18", label: "18s (441 frames)" },
     ],
     fps: [
       { value: "24", label: "24 fps (Điện ảnh)" },
       { value: "30", label: "30 fps (Mượt mà)" },
-      { value: "60", label: "60 fps (Siêu mượt)" },
     ],
-    baseCost: mid.includes("agnes") ? 15 : 15,
+    baseCost: 15,
     supportsEndFrame: true,
-    badge: mid.includes("agnes") ? "Agnes Async Video" : "Custom Video",
+    supportsSeed: true,
+    supportsNegativePrompt: true,
   };
 };
 
@@ -329,10 +399,15 @@ export default function VideoPage() {
           <CardContent className="space-y-5 p-6">
             {/* Model Selector */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
-                <Sparkles className="size-4 text-violet-500" />
-                Mô hình (Model Video)
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+                  <Sparkles className="size-4 text-violet-500" />
+                  Mô hình (Model Video)
+                </label>
+                <span className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-2.5 py-0.5 rounded-full border border-violet-500/20">
+                  {modelConfig.badge}
+                </span>
+              </div>
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
@@ -362,12 +437,18 @@ export default function VideoPage() {
 
             {/* Negative Prompt */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--muted-foreground)]">Chi tiết muốn tránh (Negative Prompt)</label>
+              <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                <span>Chi tiết muốn tránh (Negative Prompt)</span>
+                {!modelConfig.supportsNegativePrompt && (
+                  <span className="text-[10px] text-amber-500 font-normal">Engine Flow tự động tối ưu</span>
+                )}
+              </label>
               <Input
                 value={negativePrompt}
                 onChange={(e) => setNegativePrompt(e.target.value)}
-                placeholder="VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..."
-                className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm"
+                disabled={!modelConfig.supportsNegativePrompt}
+                placeholder={modelConfig.supportsNegativePrompt ? "VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..." : "Engine Flow tự động tối ưu chi tiết hình ảnh..."}
+                className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
               />
             </div>
 
@@ -393,11 +474,9 @@ export default function VideoPage() {
                   onChange={(e) => setAspectRatio(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="16:9">16:9 (Ngang)</option>
-                  <option value="9:16">9:16 (Dọc Shorts/Reels)</option>
-                  <option value="1:1">1:1 (Vuông)</option>
-                  <option value="4:3">4:3 (Tiêu chuẩn)</option>
-                  <option value="3:4">3:4 (Chân dung)</option>
+                  {modelConfig.aspectRatios.map((a) => (
+                    <option key={a.value} value={a.value}>{a.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -431,13 +510,19 @@ export default function VideoPage() {
             {/* Advanced Extra Configs */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Seed ngẫu nhiên (Tùy chọn)</label>
+                <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                  <span>Seed ngẫu nhiên (Tùy chọn)</span>
+                  {!modelConfig.supportsSeed && (
+                    <span className="text-[10px] text-amber-500 font-normal">Tự động (Flow)</span>
+                  )}
+                </label>
                 <Input
                   type="number"
                   value={seed}
                   onChange={(e) => setSeed(e.target.value)}
-                  placeholder="Ví dụ: 12345"
-                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm"
+                  disabled={!modelConfig.supportsSeed}
+                  placeholder={modelConfig.supportsSeed ? "Ví dụ: 12345" : "Tự động ngẫu nhiên"}
+                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
                 />
               </div>
 
