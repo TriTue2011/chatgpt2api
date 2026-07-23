@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Video, LoaderCircle, Play, Download, Settings2, Sparkles, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -27,6 +27,112 @@ const DEFAULT_VIDEO_MODELS: VideoModel[] = [
   { id: "flow/omni-flash", label: "Omni Flash", baseCost: 12 },
 ];
 
+const getModelConfig = (modelId: string) => {
+  const mid = String(modelId || "").toLowerCase();
+  
+  if (mid.includes("veo-3.1-quality")) {
+    return {
+      resolutions: [
+        { value: "1080p", label: "1080p (FHD - Chất lượng cao)" },
+        { value: "720p", label: "720p (HD)" },
+      ],
+      durations: [
+        { value: "5", label: "5s (81 frames)" },
+        { value: "8", label: "8s (121 frames)" },
+      ],
+      fps: [
+        { value: "24", label: "24 fps (Điện ảnh)" },
+        { value: "30", label: "30 fps (Mượt mà)" },
+      ],
+      baseCost: 100,
+      supportsEndFrame: true,
+      badge: "Veo Quality",
+    };
+  }
+
+  if (mid.includes("veo-3.1-lite")) {
+    return {
+      resolutions: [
+        { value: "720p", label: "720p (HD - Tốc độ cao)" },
+        { value: "480p", label: "480p (SD)" },
+      ],
+      durations: [
+        { value: "5", label: "5s (81 frames)" },
+      ],
+      fps: [
+        { value: "24", label: "24 fps (Tiết kiệm)" },
+      ],
+      baseCost: 10,
+      supportsEndFrame: false,
+      badge: "Veo Lite",
+    };
+  }
+
+  if (mid.includes("veo-3.1-fast") || mid.includes("veo")) {
+    return {
+      resolutions: [
+        { value: "1080p", label: "1080p (FHD)" },
+        { value: "720p", label: "720p (HD)" },
+      ],
+      durations: [
+        { value: "5", label: "5s (81 frames)" },
+        { value: "8", label: "8s (121 frames)" },
+      ],
+      fps: [
+        { value: "24", label: "24 fps (Điện ảnh)" },
+        { value: "30", label: "30 fps (Mượt mà)" },
+      ],
+      baseCost: 20,
+      supportsEndFrame: true,
+      badge: "Veo Standard",
+    };
+  }
+
+  if (mid.includes("omni")) {
+    return {
+      resolutions: [
+        { value: "720p", label: "720p (HD)" },
+        { value: "1080p", label: "1080p (FHD)" },
+      ],
+      durations: [
+        { value: "5", label: "5s (81 frames)" },
+        { value: "8", label: "8s (121 frames)" },
+        { value: "10", label: "10s (241 frames)" },
+      ],
+      fps: [
+        { value: "24", label: "24 fps (Điện ảnh)" },
+        { value: "30", label: "30 fps (Mượt mà)" },
+      ],
+      baseCost: 12,
+      supportsEndFrame: true,
+      badge: "Omni Flash",
+    };
+  }
+
+  // Agnes AI Video & Custom Provider Video Models
+  return {
+    resolutions: [
+      { value: "1080p", label: "1080p (FHD)" },
+      { value: "720p", label: "720p (HD)" },
+      { value: "480p", label: "480p (SD)" },
+    ],
+    durations: [
+      { value: "5", label: "5s (81 frames)" },
+      { value: "8", label: "8s (121 frames)" },
+      { value: "10", label: "10s (241 frames)" },
+      { value: "18", label: "18s (441 frames)" },
+    ],
+    fps: [
+      { value: "24", label: "24 fps (Điện ảnh)" },
+      { value: "30", label: "30 fps (Mượt mà)" },
+      { value: "60", label: "60 fps (Siêu mượt)" },
+    ],
+    baseCost: mid.includes("agnes") ? 15 : 15,
+    supportsEndFrame: true,
+    badge: mid.includes("agnes") ? "Agnes Async Video" : "Custom Video",
+  };
+};
+
 export default function VideoPage() {
   const { session } = useAuthGuard(["admin", "user"]);
   const router = useRouter();
@@ -50,6 +156,20 @@ export default function VideoPage() {
   const [error, setError] = useState("");
 
   const isAgnesModel = model.toLowerCase().includes("agnes");
+  const modelConfig = useMemo(() => getModelConfig(model), [model]);
+
+  // Sync duration, resolution, fps when model changes if current selection is not available
+  useEffect(() => {
+    if (!modelConfig.durations.some((d) => d.value === duration)) {
+      setDuration(modelConfig.durations[0]?.value || "5");
+    }
+    if (!modelConfig.resolutions.some((r) => r.value === resolution)) {
+      setResolution(modelConfig.resolutions[0]?.value || "1080p");
+    }
+    if (!modelConfig.fps.some((f) => f.value === fps)) {
+      setFps(modelConfig.fps[0]?.value || "24");
+    }
+  }, [model, modelConfig]);
 
   useEffect(() => {
     async function loadModels() {
@@ -61,14 +181,19 @@ export default function VideoPage() {
             (m.capabilities || []).includes("video_gen") &&
             m.enabled !== false && !String(m.id).includes(":")
           )
-          .map((m: any) => ({
-            id: m.id,
-            label: m.id.includes("agnes") ? `✨ ${m.id} (Agnes)` : m.id,
-            baseCost: m.id.includes("agnes") ? 15 : 20,
-          }));
+          .map((m: any) => {
+            const cfg = getModelConfig(m.id);
+            let labelName = m.id;
+            if (m.id.includes("agnes")) labelName = `✨ ${m.id} (Agnes Async Video)`;
+            else if (m.owned_by && String(m.owned_by).includes("custom")) labelName = `🎬 ${m.id} (${String(m.owned_by).replace("custom:", "")})`;
+            return {
+              id: m.id,
+              label: labelName,
+              baseCost: cfg.baseCost,
+            };
+          });
 
         if (vModels.length > 0) {
-          // Keep Agnes at the top if available
           vModels.sort((a: any, b: any) => {
             const aAgnes = a.id.includes("agnes") ? 0 : 1;
             const bAgnes = b.id.includes("agnes") ? 0 : 1;
@@ -88,9 +213,7 @@ export default function VideoPage() {
   }, []);
 
   const calculateCredits = () => {
-    const selectedModel = videoModels.find((m) => m.id === model);
-    const base = selectedModel?.baseCost || 15;
-    return base * parseInt(count || "1", 10);
+    return modelConfig.baseCost * parseInt(count || "1", 10);
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isStart: boolean) => {
@@ -257,9 +380,9 @@ export default function VideoPage() {
                   onChange={(e) => setResolution(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="1080p">1080p (FHD)</option>
-                  <option value="720p">720p (HD)</option>
-                  <option value="480p">480p (SD)</option>
+                  {modelConfig.resolutions.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -285,10 +408,9 @@ export default function VideoPage() {
                   onChange={(e) => setDuration(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="5">5s (81 frames)</option>
-                  <option value="8">8s (121 frames)</option>
-                  <option value="10">10s (241 frames)</option>
-                  <option value="18">18s (441 frames)</option>
+                  {modelConfig.durations.map((d) => (
+                    <option key={d.value} value={d.value}>{d.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -299,9 +421,9 @@ export default function VideoPage() {
                   onChange={(e) => setFps(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="24">24 fps (Điện ảnh)</option>
-                  <option value="30">30 fps (Mượt mà)</option>
-                  <option value="60">60 fps (Siêu mượt)</option>
+                  {modelConfig.fps.map((f) => (
+                    <option key={f.value} value={f.value}>{f.label}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -339,8 +461,12 @@ export default function VideoPage() {
                   <ImageIcon className="size-3.5 text-violet-500" />
                   Đính kèm Ảnh (Image-to-Video & Keyframes)
                 </label>
-                <span className="text-[11px] text-[var(--muted-foreground)]">
-                  {startImage && endImage ? "Chế độ Keyframe Animation" : startImage ? "Chế độ Image-to-Video" : "Chế độ Text-to-Video"}
+                <span className="text-[11px] text-[var(--muted-foreground)] font-medium">
+                  {startImage && endImage && modelConfig.supportsEndFrame
+                    ? "Chế độ Keyframe Animation"
+                    : startImage
+                    ? "Chế độ Image-to-Video"
+                    : "Chế độ Text-to-Video"}
                 </span>
               </div>
 
@@ -373,13 +499,19 @@ export default function VideoPage() {
                       </button>
                     )}
                   </div>
-                  {endImage ? (
-                    <img src={endImage} alt="End frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                  {modelConfig.supportsEndFrame ? (
+                    endImage ? (
+                      <img src={endImage} alt="End frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                    ) : (
+                      <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
+                        <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh kết thúc</span>
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
+                      </label>
+                    )
                   ) : (
-                    <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
-                      <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh kết thúc</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
-                    </label>
+                    <div className="flex h-28 w-full flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/20 text-[var(--muted-foreground)] px-3 text-center">
+                      <span className="text-xs">Model này không hỗ trợ ảnh kết thúc</span>
+                    </div>
                   )}
                 </div>
               </div>
