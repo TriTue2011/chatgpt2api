@@ -196,7 +196,66 @@ data/agent/         trí nhớ, phiên chat, nhắc hẹn, wiki
 Nguyên tắc xuyên suốt: **mã nguồn nằm trong image, model nằm ngoài volume** — nhờ
 vậy image không phình thêm hơn 1 GB.
 
+### 1.7. Sử dụng Cơ Sở Dữ Liệu PostgreSQL & Chuyển Đổi Dữ Liệu (Migration)
+
+Nếu muốn sử dụng **PostgreSQL** để lưu trữ bền vững (thay thế file JSON/SQLite):
+
+**1. Mẫu `docker-compose.yml` tích hợp PostgreSQL:**
+```yaml
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: c2a-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: c2a_user
+      POSTGRES_PASSWORD: c2a_secure_password_123
+      POSTGRES_DB: c2a_db
+    volumes:
+      - /opt/c2a/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U c2a_user -d c2a_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  c2a:
+    image: ghcr.io/tritue2011/chatgpt2api:latest
+    container_name: c2a
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3030:80"
+      - "6080:6080"
+      - "3001:3001"
+      - "10600:10600"
+    volumes:
+      - /opt/c2a/data:/app/data
+    environment:
+      - STORAGE_BACKEND=postgres
+      - DATABASE_URL=postgresql://c2a_user:c2a_secure_password_123@db:5432/c2a_db
+      - CHATGPT2API_AUTH_KEY=your_secret_key_here
+      - CAPTCHA_SOLVER_API_KEY=your_secret_key_here
+      - VNC_PASSWORD=your_vnc_password
+```
+
+**2. Lệnh chuyển đổi toàn bộ dữ liệu từ JSON sang Postgres:**
+```bash
+docker exec -it c2a python scripts/migrate_storage.py \
+  --from json \
+  --to postgres \
+  --to-url "postgresql://c2a_user:c2a_secure_password_123@db:5432/c2a_db"
+```
+
 ---
+
+
 
 ## 2. Bản đồ giao diện — từng tab làm gì
 
