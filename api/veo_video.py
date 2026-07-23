@@ -42,7 +42,35 @@ async def handle_video_generation(
     resolution = body.get("resolution")
     image = body.get("image")
     last_frame = body.get("last_frame")
+    negative_prompt = body.get("negative_prompt")
+    fps = body.get("fps") or body.get("frame_rate")
+    num_frames = body.get("num_frames")
+    seed = body.get("seed")
+    mode = body.get("mode")
+    keyframes = body.get("keyframes")
     model = str(body.get("model") or "veo/veo-3.1-generate-preview")
+
+    if model.startswith("agnes/") or "agnes" in model:
+        from services.providers.agnes import agnes_provider
+        try:
+            return agnes_provider.generate_video(
+                prompt=prompt,
+                model=model,
+                aspect_ratio=aspect_ratio,
+                duration=duration,
+                resolution=resolution,
+                image=image,
+                last_frame=last_frame,
+                negative_prompt=negative_prompt,
+                fps=fps,
+                num_frames=num_frames,
+                seed=seed,
+                mode=mode,
+                keyframes=keyframes,
+            )
+        except Exception as exc:
+            logger.error({"event": "agnes_video_error", "error": str(exc)})
+            raise HTTPException(status_code=502, detail={"error": f"Agnes Video generation failed: {exc}"}) from exc
 
     if model.startswith("flow/"):
         import httpx

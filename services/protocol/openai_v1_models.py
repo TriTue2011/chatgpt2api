@@ -969,6 +969,19 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
             seen.add(mid)
             data.append({"id": mid, "object": "model", "created": 0, "owned_by": "claude"})
 
+    # Agnes AI models
+    agnes_models = [
+        "agnes/agnes-2.5-flash",
+        "agnes/agnes-2.0-flash",
+        "agnes/agnes-image-2.1-flash",
+        "agnes/agnes-image-2.0-flash",
+        "agnes/agnes-video-v2.0",
+    ]
+    for mid in agnes_models:
+        if mid not in seen:
+            seen.add(mid)
+            data.append({"id": mid, "object": "model", "created": 0, "owned_by": "agnes"})
+
     # Gemini web-cookie API models
     gma_models = ["gma/auto", "gma/image", "gma/3.1-flash", "gma/3.1-flash-thu-nghiem",
                   "gma/3.1-pro", "gma/3.1-pro-mo-rong",

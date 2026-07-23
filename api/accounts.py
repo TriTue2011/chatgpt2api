@@ -322,14 +322,33 @@ def create_router() -> APIRouter:
             ordered_keys = [k for k in keys_arr if isinstance(k, str) and k.strip()]
             if single and single not in ordered_keys:
                 ordered_keys.insert(0, single)
-            keys_payload = [
-                {
+            keys_payload = []
+            for idx, k in enumerate(ordered_keys):
+                k_info = {
                     "ordinal": idx + 1,
                     "preview": (k[:12] + "..." + k[-4:]) if len(k) > 16 else k,
                     "is_primary": idx == 0,
+                    "status": "configured",
                 }
-                for idx, k in enumerate(ordered_keys)
-            ]
+                if p_id == "agnes":
+                    try:
+                        from services.providers.agnes import agnes_provider
+                        ainfo = agnes_provider.get_account_info(api_key=k)
+                        if "plan" in ainfo:
+                            k_info["plan"] = ainfo["plan"]
+                        if "quota" in ainfo:
+                            k_info["quota"] = ainfo["quota"]
+                        if "used_quota" in ainfo:
+                            k_info["used_quota"] = ainfo["used_quota"]
+                        if "hard_limit_usd" in ainfo:
+                            k_info["hard_limit_usd"] = ainfo["hard_limit_usd"]
+                        if "username" in ainfo:
+                            k_info["username"] = ainfo["username"]
+                        k_info["status"] = ainfo.get("status") or ("active" if ainfo.get("active") else "error")
+                    except Exception as exc:
+                        k_info["status"] = "error"
+                        k_info["error"] = str(exc)
+                keys_payload.append(k_info)
             builtin_list.append({
                 "id": p_id,
                 "name": p_cfg.get("name") or p_id,

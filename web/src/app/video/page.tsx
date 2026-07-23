@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Video, LoaderCircle, Play } from "lucide-react";
+import { Video, LoaderCircle, Play, Download, Settings2, Sparkles, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 
-import { getValidatedAuthSession } from "@/lib/auth-session";
 import { request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
@@ -13,38 +12,84 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
+interface VideoModel {
+  id: string;
+  label: string;
+  provider?: string;
+  baseCost?: number;
+}
+
+const DEFAULT_VIDEO_MODELS: VideoModel[] = [
+  { id: "agnes/agnes-video-v2.0", label: "✨ Agnes Video v2.0 (Full Async)", baseCost: 15 },
+  { id: "flow/veo-3.1-fast", label: "⚡ Veo 3.1 - Fast", baseCost: 20 },
+  { id: "flow/veo-3.1-lite", label: "Veo 3.1 - Lite", baseCost: 10 },
+  { id: "flow/veo-3.1-quality", label: "Veo 3.1 - Quality", baseCost: 100 },
+  { id: "flow/omni-flash", label: "Omni Flash", baseCost: 12 },
+];
+
 export default function VideoPage() {
   const { session } = useAuthGuard(["admin", "user"]);
   const router = useRouter();
+
   const [prompt, setPrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState("16:9");
-  const [duration, setDuration] = useState("8");
-  const [resolution, setResolution] = useState("720p");
-  const [model, setModel] = useState("flow/veo-3.1-fast");
+  const [duration, setDuration] = useState("5");
+  const [resolution, setResolution] = useState("1080p");
+  const [fps, setFps] = useState("24");
+  const [seed, setSeed] = useState("");
+  const [model, setModel] = useState("agnes/agnes-video-v2.0");
   const [count, setCount] = useState("1");
   const [startImage, setStartImage] = useState<string | null>(null);
   const [endImage, setEndImage] = useState<string | null>(null);
+  
+  const [videoModels, setVideoModels] = useState<VideoModel[]>(DEFAULT_VIDEO_MODELS);
   const [generating, setGenerating] = useState(false);
+  const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
   const [resultB64, setResultB64] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const videoModels = [
-    { id: "flow/veo-3.1-lite", label: "Veo 3.1 - Lite", baseCost: 10 },
-    { id: "flow/veo-3.1-fast", label: "Veo 3.1 - Fast", baseCost: 20 },
-    { id: "flow/veo-3.1-quality", label: "Veo 3.1 - Quality", baseCost: 100 },
-    { id: "flow/omni-flash", label: "Omni Flash", baseCost: 12 },
-  ];
+  const isAgnesModel = model.toLowerCase().includes("agnes");
+
+  useEffect(() => {
+    async function loadModels() {
+      try {
+        const resp = await request.get("/api/v1/models-with-capabilities");
+        const models = ((resp.data as any)?.models || []) as any[];
+        const vModels = models
+          .filter((m: any) => 
+            (m.capabilities || []).some((c: string) => c === "video" || c === "video_gen") &&
+            m.enabled !== false && !String(m.id).includes(":")
+          )
+          .map((m: any) => ({
+            id: m.id,
+            label: m.id.includes("agnes") ? `✨ ${m.id} (Agnes)` : m.id,
+            baseCost: m.id.includes("agnes") ? 15 : 20,
+          }));
+
+        if (vModels.length > 0) {
+          // Keep Agnes at the top if available
+          vModels.sort((a: any, b: any) => {
+            const aAgnes = a.id.includes("agnes") ? 0 : 1;
+            const bAgnes = b.id.includes("agnes") ? 0 : 1;
+            if (aAgnes !== bAgnes) return aAgnes - bAgnes;
+            return a.label.localeCompare(b.label);
+          });
+          setVideoModels(vModels);
+          if (!vModels.find((m: any) => m.id === model)) {
+            setModel(vModels[0].id);
+          }
+        }
+      } catch (err) {
+        /* non-critical fallback */
+      }
+    }
+    loadModels();
+  }, []);
 
   const calculateCredits = () => {
-    const selectedModel = videoModels.find(m => m.id === model);
-    if (!selectedModel) return 0;
-    let base = selectedModel.baseCost;
-    if (model === "flow/omni-flash") {
-      if (duration === "4") base = 7;
-      else if (duration === "6") base = 10;
-      else if (duration === "8") base = 12;
-      else if (duration === "10") base = 15;
-    }
+    const selectedModel = videoModels.find((m) => m.id === model);
+    const base = selectedModel?.baseCost || 15;
     return base * parseInt(count || "1", 10);
   };
 
@@ -67,24 +112,51 @@ export default function VideoPage() {
     setGenerating(true);
     setError("");
     setResultB64(null);
+    setResultVideoUrl(null);
+
     try {
-      const resp = await request.post("/v1/video/generations", {
+      const payload: Record<string, any> = {
         model: model,
         prompt: prompt.trim(),
         n: parseInt(count, 10),
         aspect_ratio: aspectRatio,
         duration: duration,
         resolution: resolution,
-        image: startImage,
-        last_frame: endImage,
-      });
+        fps: parseInt(fps, 10),
+      };
+
+      if (negativePrompt.trim()) {
+        payload.negative_prompt = negativePrompt.trim();
+      }
+      if (seed.trim()) {
+        payload.seed = parseInt(seed.trim(), 10);
+      }
+
+      if (startImage && endImage) {
+        payload.image = startImage;
+        payload.last_frame = endImage;
+        payload.mode = "keyframes";
+      } else if (startImage) {
+        payload.image = startImage;
+        payload.mode = "ti2vid";
+      }
+
+      const resp = await request.post("/v1/video/generations", payload);
       const data = resp.data as any;
-      if (data?.data?.[0]?.b64_json) {
-        setResultB64(data.data[0].b64_json);
+      
+      const firstItem = data?.data?.[0];
+      if (firstItem?.b64_json) {
+        setResultB64(firstItem.b64_json);
         toast.success("Đã tạo video thành công!");
-      } else if (data?.detail?.error) {
-        setError(data.detail.error);
-        toast.error(data.detail.error);
+      } else if (firstItem?.url) {
+        setResultVideoUrl(firstItem.url);
+        toast.success("Đã tạo video thành công!");
+      } else if (data?.detail?.error || data?.error) {
+        const errStr = data?.detail?.error || data?.error;
+        setError(errStr);
+        toast.error(errStr);
+      } else {
+        toast.success("Yêu cầu đã gửi thành công!");
       }
     } catch (e: any) {
       const msg = e?.response?.data?.detail?.error || e?.message || "Lỗi tạo video";
@@ -96,73 +168,101 @@ export default function VideoPage() {
   };
 
   const handleDownload = () => {
-    if (!resultB64) return;
+    const src = resultVideoUrl || (resultB64 ? `data:video/mp4;base64,${resultB64}` : null);
+    if (!src) return;
     const a = document.createElement("a");
-    a.href = `data:video/mp4;base64,${resultB64}`;
-    a.download = `veo-${Date.now()}.mp4`;
+    a.href = src;
+    a.download = `video-${Date.now()}.mp4`;
+    a.target = "_blank";
     a.click();
   };
 
   if (!session) return null;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3 border-b border-black/[0.04] pb-6">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg shadow-violet-500/20">
-          <Video className="size-5 text-white" />
+    <div className="space-y-6 max-w-6xl mx-auto pb-12">
+      {/* Header */}
+      <div className="flex items-center gap-3 border-b border-black/[0.04] dark:border-white/[0.06] pb-6">
+        <div className="flex size-12 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-700 shadow-xl shadow-violet-500/20">
+          <Video className="size-6 text-white" />
         </div>
         <div>
-          <p className="text-[11px] font-bold tracking-widest text-violet-500 uppercase mb-1">Tạo video AI</p>
-          <h1 className="text-[26px] font-bold tracking-tight text-[var(--foreground)]">Tạo video</h1>
-          <p className="text-[14px] text-[var(--muted-foreground)] mt-0.5">Veo 3.1 — Google DeepMind video generation</p>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold tracking-widest text-violet-500 uppercase">Tạo Video AI Multi-modal</span>
+            <span className="inline-flex items-center rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-400 border border-violet-500/20">
+              Agnes AI & Veo 3.1
+            </span>
+          </div>
+          <h1 className="text-[26px] font-bold tracking-tight text-[var(--foreground)]">Studio Tạo Video AI</h1>
+          <p className="text-[14px] text-[var(--muted-foreground)] mt-0.5">
+            Tạo video chất lượng cao từ văn bản (Text-to-Video), hình ảnh (Image-to-Video), hoặc chuyển cảnh (Keyframe Animation)
+          </p>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card className="rounded-2xl card-3d card-tint-indigo">
-          <CardContent className="space-y-4 p-6">
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* Settings Form Column */}
+        <Card className="lg:col-span-7 rounded-2xl card-3d card-tint-indigo border border-[var(--border)] shadow-xl">
+          <CardContent className="space-y-5 p-6">
+            {/* Model Selector */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[var(--foreground)]">Mô tả video</label>
+              <label className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+                <Sparkles className="size-4 text-violet-500" />
+                Mô hình (Model Video)
+              </label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium text-[var(--foreground)] focus:ring-2 focus:ring-violet-500/30 outline-none transition"
+              >
+                {videoModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Prompt Textarea */}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-[var(--foreground)]">Mô tả video (Prompt)</label>
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Mô tả cảnh bạn muốn tạo... A cinematic drone shot of..."
-                className="min-h-[120px] rounded-xl border-[var(--border)] bg-[var(--card)]"
+                placeholder="Ví dụ: Cảnh quay điện ảnh từ góc máy drone, con rồng vàng bay qua thung lũng sương mù lúc hoàng hôn, hiệu ứng ánh sáng rực rỡ..."
+                className="min-h-[110px] rounded-xl border-[var(--border)] bg-[var(--card)] focus:ring-2 focus:ring-violet-500/30 text-sm leading-relaxed"
               />
               <p className="text-xs text-[var(--muted-foreground)]">
-                Mô tả càng chi tiết, video càng đẹp. Bao gồm: chủ thể, hành động, góc quay, ánh sáng, phong cách.
+                💡 Mô tả càng chi tiết về chủ thể, góc máy, hiệu ứng ánh sáng và phong cách điện ảnh sẽ cho kết quả càng đẹp.
               </p>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* Negative Prompt */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--muted-foreground)]">Chi tiết muốn tránh (Negative Prompt)</label>
+              <Input
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                placeholder="VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..."
+                className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm"
+              />
+            </div>
+
+            {/* General Parameters Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Model</label>
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Độ phân giải</label>
                 <select
-                  value={model}
-                  onChange={(e) => {
-                    setModel(e.target.value);
-                    if (e.target.value === "flow/omni-flash") setDuration("8");
-                  }}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm truncate"
-                >
-                  {videoModels.map(m => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Số lượng</label>
-                <select
-                  value={count}
-                  onChange={(e) => setCount(e.target.value)}
+                  value={resolution}
+                  onChange={(e) => setResolution(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="1">1x</option>
-                  <option value="2">2x</option>
-                  <option value="3">3x</option>
-                  <option value="4">4x</option>
+                  <option value="1080p">1080p (FHD)</option>
+                  <option value="720p">720p (HD)</option>
+                  <option value="480p">480p (SD)</option>
                 </select>
               </div>
+
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-[var(--muted-foreground)]">Tỷ lệ khung hình</label>
                 <select
@@ -170,114 +270,200 @@ export default function VideoPage() {
                   onChange={(e) => setAspectRatio(e.target.value)}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
                 >
-                  <option value="16:9">16:9</option>
-                  <option value="9:16">9:16</option>
+                  <option value="16:9">16:9 (Ngang)</option>
+                  <option value="9:16">9:16 (Dọc Shorts/Reels)</option>
+                  <option value="1:1">1:1 (Vuông)</option>
+                  <option value="4:3">4:3 (Tiêu chuẩn)</option>
+                  <option value="3:4">3:4 (Chân dung)</option>
                 </select>
               </div>
-              {model === "flow/omni-flash" && (
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                >
+                  <option value="5">5s (81 frames)</option>
+                  <option value="8">8s (121 frames)</option>
+                  <option value="10">10s (241 frames)</option>
+                  <option value="18">18s (441 frames)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Tốc độ khung hình</label>
+                <select
+                  value={fps}
+                  onChange={(e) => setFps(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                >
+                  <option value="24">24 fps (Điện ảnh)</option>
+                  <option value="30">30 fps (Mượt mà)</option>
+                  <option value="60">60 fps (Siêu mượt)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Advanced Extra Configs */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Seed ngẫu nhiên (Tùy chọn)</label>
+                <Input
+                  type="number"
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value)}
+                  placeholder="Ví dụ: 12345"
+                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-[var(--muted-foreground)]">Số bản ghi (Count)</label>
+                <select
+                  value={count}
+                  onChange={(e) => setCount(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                >
+                  <option value="1">1 video</option>
+                  <option value="2">2 video</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Keyframe & Start Image Upload */}
+            <div className="space-y-2 pt-2 border-t border-[var(--border)]">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
+                  <ImageIcon className="size-3.5 text-violet-500" />
+                  Đính kèm Ảnh (Image-to-Video & Keyframes)
+                </label>
+                <span className="text-[11px] text-[var(--muted-foreground)]">
+                  {startImage && endImage ? "Chế độ Keyframe Animation" : startImage ? "Chế độ Image-to-Video" : "Chế độ Text-to-Video"}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
-                  <select
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                  >
-                    <option value="4">4s</option>
-                    <option value="6">6s</option>
-                    <option value="8">8s</option>
-                    <option value="10">10s</option>
-                  </select>
+                  <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                    <span>Ảnh đầu (Start frame)</span>
+                    {startImage && (
+                      <button type="button" onClick={() => setStartImage(null)} className="text-rose-500 hover:text-rose-600">
+                        Xóa
+                      </button>
+                    )}
+                  </div>
+                  {startImage ? (
+                    <img src={startImage} alt="Start frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                  ) : (
+                    <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
+                      <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh bắt đầu</span>
+                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, true)} />
+                    </label>
+                  )}
                 </div>
-              )}
-            </div>
 
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
-                  Ảnh bắt đầu
-                  {startImage && <button type="button" onClick={() => setStartImage(null)} className="text-rose-500 hover:text-rose-600">Xóa</button>}
-                </label>
-                {startImage ? (
-                  <img src={startImage} alt="Start frame" className="h-24 w-full object-cover rounded-xl border border-[var(--border)]" />
-                ) : (
-                  <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)] hover:bg-[var(--secondary)] transition">
-                    <span className="text-xs text-[var(--muted-foreground)]">Thêm ảnh bắt đầu</span>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, true)} />
-                  </label>
-                )}
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
-                  Ảnh kết thúc
-                  {endImage && <button type="button" onClick={() => setEndImage(null)} className="text-rose-500 hover:text-rose-600">Xóa</button>}
-                </label>
-                {endImage ? (
-                  <img src={endImage} alt="End frame" className="h-24 w-full object-cover rounded-xl border border-[var(--border)]" />
-                ) : (
-                  <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)] hover:bg-[var(--secondary)] transition">
-                    <span className="text-xs text-[var(--muted-foreground)]">Thêm ảnh kết thúc</span>
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
-                  </label>
-                )}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                    <span>Ảnh cuối (End frame)</span>
+                    {endImage && (
+                      <button type="button" onClick={() => setEndImage(null)} className="text-rose-500 hover:text-rose-600">
+                        Xóa
+                      </button>
+                    )}
+                  </div>
+                  {endImage ? (
+                    <img src={endImage} alt="End frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                  ) : (
+                    <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
+                      <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh kết thúc</span>
+                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
+                    </label>
+                  )}
+                </div>
               </div>
             </div>
-            
-            <div className="text-center py-2 text-sm text-[var(--muted-foreground)] bg-[var(--muted)] rounded-xl border border-[var(--border)]">
-              Quá trình tạo sẽ tốn <span className="font-bold text-[var(--foreground)] underline">{calculateCredits()} tín dụng</span>
+
+            {/* Credit info */}
+            <div className="text-center py-2.5 text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/60 rounded-xl border border-[var(--border)]">
+              Chi phí dự kiến: <span className="font-bold text-[var(--foreground)] underline">{calculateCredits()} tín dụng</span>
             </div>
 
+            {/* Generate Button */}
             <Button
-              className="w-full h-12 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-semibold hover:from-violet-600 hover:to-purple-700 shadow-lg shadow-violet-500/25"
+              className="w-full h-12 rounded-xl bg-gradient-to-r from-violet-500 via-purple-600 to-indigo-600 text-white font-semibold hover:from-violet-600 hover:to-indigo-700 shadow-lg shadow-violet-500/25 transition-all"
               onClick={handleGenerate}
               disabled={generating || !prompt.trim()}
             >
               {generating ? (
-                <><LoaderCircle className="size-5 animate-spin" /> Đang tạo video... (có thể mất 1-5 phút)</>
+                <>
+                  <LoaderCircle className="size-5 animate-spin" /> Đang khởi tạo & tạo video... (vui lòng chờ 1-5 phút)
+                </>
               ) : (
-                <><Play className="size-5" /> Tạo video</>
+                <>
+                  <Play className="size-5 fill-current" /> Bắt đầu tạo video
+                </>
               )}
             </Button>
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl card-3d card-tint-indigo">
-          <CardContent className="flex min-h-[350px] flex-col items-center justify-center p-6">
+        {/* Video Result Column */}
+        <Card className="lg:col-span-5 rounded-2xl card-3d card-tint-indigo border border-[var(--border)] shadow-xl flex flex-col justify-between">
+          <CardContent className="flex min-h-[420px] flex-col items-center justify-center p-6 my-auto">
             {generating ? (
-              <div className="flex flex-col items-center gap-4 text-[var(--muted-foreground)]">
-                <LoaderCircle className="size-12 animate-spin text-violet-500" />
-                <p className="text-sm">Đang tạo video bằng Veo 3.1...</p>
-                <p className="text-xs text-[var(--muted-foreground)]">Quá trình này có thể mất 1-5 phút</p>
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="relative flex items-center justify-center">
+                  <div className="size-16 rounded-full bg-violet-500/10 animate-ping absolute" />
+                  <LoaderCircle className="size-12 animate-spin text-violet-500 relative" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[var(--foreground)]">Đang xử lý Video AI trên Server Agnes / Veo...</p>
+                  <p className="text-xs text-[var(--muted-foreground)] max-w-xs">
+                    Quá trình tạo đang diễn ra bất đồng bộ và kiểm tra trạng thái tự động. Vui lòng giữ tab này mở.
+                  </p>
+                </div>
               </div>
-            ) : resultB64 ? (
+            ) : resultVideoUrl || resultB64 ? (
               <div className="flex w-full flex-col items-center gap-4">
-                <video
-                  src={`data:video/mp4;base64,${resultB64}`}
-                  controls
-                  className="w-full max-h-[400px] rounded-xl shadow-lg"
-                />
+                <div className="w-full overflow-hidden rounded-xl border border-[var(--border)] bg-black shadow-2xl">
+                  <video
+                    src={resultVideoUrl || `data:video/mp4;base64,${resultB64}`}
+                    controls
+                    autoPlay
+                    loop
+                    className="w-full max-h-[460px] object-contain mx-auto"
+                  />
+                </div>
                 <Button
-                  className="rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] hover:brightness-110"
+                  className="w-full h-11 rounded-xl bg-violet-600 text-white font-medium hover:bg-violet-700 shadow-md"
                   onClick={handleDownload}
                 >
-                  <Play className="size-4" /> Tải video MP4
+                  <Download className="size-4 mr-2" /> Tải Video MP4
                 </Button>
               </div>
             ) : error ? (
-              <div className="text-center space-y-2">
-                <p className="text-rose-500 font-medium">Lỗi tạo video</p>
-                <p className="text-sm text-[var(--muted-foreground)] max-w-md">{error}</p>
-                <p className="text-xs text-[var(--muted-foreground)]">
-                  Veo 3.1 yêu cầu API key có quyền truy cập.{" "}
-                  <a href="https://aistudio.google.com" className="text-violet-500 underline" target="_blank">
-                    Đăng ký tại Google AI Studio
-                  </a>
+              <div className="text-center space-y-3 p-4">
+                <div className="size-12 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto">
+                  <Video className="size-6" />
+                </div>
+                <p className="text-rose-500 font-semibold text-sm">Lỗi tạo video</p>
+                <p className="text-xs text-[var(--muted-foreground)] max-w-sm bg-[var(--muted)] p-3 rounded-xl border border-[var(--border)]">
+                  {error}
                 </p>
               </div>
             ) : (
-              <div className="text-center space-y-2 text-[var(--muted-foreground)]">
-                <Video className="size-16 mx-auto opacity-30" />
-                <p className="text-sm">Nhập mô tả và nhấn "Tạo video"</p>
-                <p className="text-xs">Video sẽ hiển thị ở đây sau khi tạo xong</p>
+              <div className="text-center space-y-3 text-[var(--muted-foreground)] py-8">
+                <div className="size-16 rounded-2xl bg-violet-500/10 text-violet-500 flex items-center justify-center mx-auto">
+                  <Video className="size-8 opacity-60" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-[var(--foreground)]">Xem trước video kết quả</p>
+                  <p className="text-xs text-[var(--muted-foreground)] max-w-xs mx-auto">
+                    Cấu hình thông số ở bảng bên trái và bấm "Bắt đầu tạo video" để xem kết quả tại đây.
+                  </p>
+                </div>
               </div>
             )}
           </CardContent>

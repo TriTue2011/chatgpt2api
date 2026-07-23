@@ -106,16 +106,17 @@ _VIDEO_GEN_PREFIXES: set[str] = {
 def classify_model_capability(model_id: str) -> list[str]:
     """Classify a model by capabilities: ['chat'], ['chat','vision'], ['image'], etc.
 
-    Image Gen: models that generate images (FLUX, SD, DALL-E)
+    Image Gen: models that generate images (FLUX, SD, DALL-E, or model name containing 'image')
+    Video Gen: models that generate videos (Veo, Omni, or model name containing 'video' or 'clip')
     Vision: models that can analyze/understand images (multimodal)
     Chat: text models (all models are at least chat-capable)
     """
     mid = str(model_id or "").strip().lower()
     caps: list[str] = []
 
-    # Check image gen first
+    # Check image gen (contains 'image' in name or in IMAGE_MODELS / prefixes)
     is_image = False
-    if mid in IMAGE_MODELS:
+    if "image" in mid or mid in IMAGE_MODELS:
         caps.append("image")
         is_image = True
 
@@ -135,34 +136,52 @@ def classify_model_capability(model_id: str) -> list[str]:
         for kw in _IMAGE_GEN_KEYWORDS:
             if kw in mid:
                 caps.append("image")
+                is_image = True
                 break
     if not is_image:
         for cp_prefix in _IMAGE_GEN_CUSTOM_PROVIDERS:
-            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, geminiapi2, etc.
+            if mid.startswith(cp_prefix):
                 caps.append("image")
+                is_image = True
+                break
+
+    # Check video capability (contains 'video' or 'clip' in name or in VIDEO_GEN_MODELS / prefixes)
+    if "video" in mid or "clip" in mid or mid in VIDEO_GEN_MODELS:
+        caps.append("video_gen")
+        caps.append("video")
+    else:
+        for prefix in _VIDEO_GEN_PREFIXES:
+            if mid.startswith(prefix):
+                caps.append("video_gen")
+                caps.append("video")
                 break
 
     # Check vision capability
     for prefix in _VISION_PROVIDER_PREFIXES:
         if mid.startswith(prefix):
-            caps.append("vision")
+            if "vision" not in caps:
+                caps.append("vision")
             break
     else:
         for cp_prefix in _VISION_CUSTOM_PROVIDERS:
-            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, etc.
-                caps.append("vision")
+            if mid.startswith(cp_prefix):
+                if "vision" not in caps:
+                    caps.append("vision")
                 break
         else:
             for kw in _VISION_KEYWORDS:
                 if kw in mid:
-                    caps.append("vision")
+                    if "vision" not in caps:
+                        caps.append("vision")
                     break
 
-    # All models support chat (unless they're pure image gen with no text)
-    if not is_image:
+    # All models support chat except pure image-gen models (which have no text output).
+    # NOTE: name-based heuristics like "flash" must NOT force chat here — image models
+    # such as agnes-image-2.1-flash / gemini-*-flash-image are pure image gen.
+    if "chat" not in caps and not is_image:
         caps.append("chat")
 
-    # Check video analysis capability
+    # Check video analysis capability from providers
     for prefix in _VIDEO_PROVIDER_PREFIXES:
         if mid.startswith(prefix):
             if "video" not in caps:
@@ -170,18 +189,9 @@ def classify_model_capability(model_id: str) -> list[str]:
             break
     else:
         for cp_prefix in _VIDEO_CUSTOM_PROVIDERS:
-            if mid.startswith(cp_prefix):  # matches geminiapi, geminiapi1, etc.
+            if mid.startswith(cp_prefix):
                 if "video" not in caps:
                     caps.append("video")
-                break
-
-    # Check video generation capability (flow/veo-*, flow/omni-*)
-    if mid in VIDEO_GEN_MODELS:
-        caps.append("video_gen")
-    else:
-        for prefix in _VIDEO_GEN_PREFIXES:
-            if mid.startswith(prefix):
-                caps.append("video_gen")
                 break
 
     return caps if caps else ["chat"]

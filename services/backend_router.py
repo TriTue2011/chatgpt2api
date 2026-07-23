@@ -56,6 +56,7 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "gemini-web/": "gemini_web_api",  # alias of gma/
     "nv/": "nvidia_nim",
     "ag/": "antigravity",
+    "agnes/": "agnes",
 }
 
 # NoAuth providers — no credentials needed (port from 9router FREE_PROVIDERS)
@@ -72,6 +73,7 @@ API_KEY_PROVIDERS: set[str] = {
     "perplexity",
     "together",
     "nvidia_nim",
+    "agnes",
 }
 
 # Image providers from 9router image adapter system
@@ -88,6 +90,8 @@ IMAGE_PROVIDER_PREFIXES: dict[str, str] = {
     "nv-image/": "nvidia_nim_image",
     "gemini-image/": "gemini",
     "flow/": "flow",
+    "agnes-image/": "agnes",
+    "agnes-video/": "agnes",
 }
 
 

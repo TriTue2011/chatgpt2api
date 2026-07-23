@@ -3649,6 +3649,8 @@ def _dispatch(route, messages, tools, tool_choice, body):
         return _handle_openai_oauth_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "gemini_free":
         return _handle_gemini_chat(route.model, messages, body.get("stream"), body)
+    elif route.provider == "agnes":
+        return _handle_agnes_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "antigravity":
         return _handle_antigravity_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "nvidia_nim":
@@ -5211,6 +5213,43 @@ def _handle_gemini_chat(
     except Exception as exc:
         logger.error({"event": "gemini_fatal", "error": str(exc)})
         return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)
+
+
+def _handle_agnes_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """Agnes AI chat provider handler."""
+    from services.providers.agnes import agnes_provider, AGNES_DEFAULT_MODEL
+
+    pure_model = model
+    if model.startswith("agnes/"):
+        pure_model = model[6:]
+    if not pure_model or pure_model == "auto":
+        pure_model = AGNES_DEFAULT_MODEL
+
+    logger.info({"event": "agnes_chat", "model": pure_model})
+
+    temperature = body.get("temperature")
+    max_tokens = body.get("max_tokens")
+
+    try:
+        return agnes_provider.chat_completions(
+            messages=messages,
+            model=pure_model,
+            stream=stream,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+    except Exception as exc:
+        logger.error({"event": "agnes_fatal", "error": str(exc)})
+        return completion_response(model=model, content=f"Agnes AI error: {exc}", messages=messages)
 
 
 def _handle_nvidia_chat(

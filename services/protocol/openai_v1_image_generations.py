@@ -372,6 +372,19 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
 
     # Core providers have their own built-in implementation below.
     # Non-core image models (custom or image-specific prefixes) use adapters.
+    if route.provider == "agnes" or model.startswith("agnes/"):
+        from services.providers.agnes import agnes_provider
+        src_image = body.get("image") or body.get("images")
+        if isinstance(src_image, list):
+            src_image = src_image[0] if src_image else None
+        return agnes_provider.generate_image(
+            prompt=prompt,
+            model=model,
+            n=n,
+            size=size,
+            image=src_image,
+        )
+
     core_providers = {"chatgpt", "chatgpt_free", "openai_oauth", "gemini_web", "gemini_web_api"}
     if route.provider not in core_providers and (route.is_image or route.provider.startswith("custom:")):
         logger.info({

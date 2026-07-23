@@ -662,6 +662,35 @@ function AccountsPageContent() {
     }
   };
 
+  // Reorder an API key within a provider pool (Agnes AI, Gemini, etc.)
+  const handleReorderProviderKey = async (providerId: string, keyIndex: number, action: "promote" | "demote") => {
+    try {
+      const cur = (await request.get("/api/settings")).data as any;
+      const providers = { ...((cur?.config?.providers) || {}) };
+      const cfg = { ...((providers[providerId] as any) || {}) };
+      
+      const keysArr = Array.isArray(cfg.api_keys) ? cfg.api_keys.slice() : (cfg.api_key ? [cfg.api_key] : []);
+      if (keyIndex < 0 || keyIndex >= keysArr.length) return;
+      
+      const [targetKey] = keysArr.splice(keyIndex, 1);
+      if (action === "promote") {
+        keysArr.unshift(targetKey);
+      } else {
+        keysArr.push(targetKey);
+      }
+      
+      cfg.api_keys = keysArr;
+      cfg.api_key = keysArr[0] || "";
+      providers[providerId] = cfg;
+      
+      await request.post("/api/settings", { providers });
+      toast.success(action === "promote" ? "Đã đặt key làm #1" : "Đã chuyển key xuống cuối");
+      void fetchProviderTree();
+    } catch (e: any) {
+      toast.error(e?.message || "Thao tác thất bại");
+    }
+  };
+
   // Set the status of a web-session account (active / disabled). The profile is
   // its access_token; if it isn't pooled yet the update 404s harmlessly.
   const handleSetWebStatus = async (token: string, status: AccountStatus) => {
@@ -1819,28 +1848,94 @@ function AccountsPageContent() {
                                       NVIDIA / OpenAI / DeepSeek frequently have
                                       multiple API keys with FIFO rotation. Show
                                       #1 (primary, emerald) through #N. */}
+                                  {/* Multi-key listing with ordinals — Gemini /
+                                      Agnes / NVIDIA / OpenAI / DeepSeek API keys with FIFO rotation. */}
                                   {Array.isArray(inst.keys) && inst.keys.length > 0 && (
-                                    <div className="pt-2 border-t border-[var(--border)] space-y-1">
+                                    <div className="pt-2 border-t border-[var(--border)] space-y-2">
                                       <div className="flex items-center justify-between">
-                                        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">API Keys</span>
+                                        <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">API Keys & Quota Pool</span>
                                         <span className="text-[10px] text-[var(--muted-foreground)]">{inst.keys.length} key{inst.keys.length > 1 ? "s" : ""}</span>
                                       </div>
-                                      {inst.keys.map((k: any, ki: number) => (
-                                        <div key={ki} className="flex items-center gap-2 text-[11px]">
-                                          <span
-                                            className={cn(
-                                              "shrink-0 inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-md font-mono font-bold tabular-nums",
-                                              k.is_primary
-                                                ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300"
-                                                : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                                      {inst.keys.map((k: any, ki: number) => {
+                                        const isLimited = k.status === "limited";
+                                        const isExhausted = k.status === "exhausted";
+                                        const isError = k.status === "error";
+                                        const kStatusColor =
+                                          k.status === "active" ? "bg-emerald-500/10 text-emerald-600"
+                                          : isLimited ? "bg-amber-500/10 text-amber-600"
+                                          : isExhausted ? "bg-rose-500/10 text-rose-500"
+                                          : isError ? "bg-rose-500/10 text-rose-500"
+                                          : "bg-[var(--secondary)] text-[var(--muted-foreground)]";
+
+                                        const totalQ = k.quota ?? 0;
+                                        const usedQ = k.used_quota ?? 0;
+                                        const remQ = Math.max(0, totalQ - usedQ);
+                                        const percent = totalQ > 0 ? Math.min(100, Math.round((remQ / totalQ) * 100)) : 100;
+
+                                        return (
+                                          <div key={ki} className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-2 space-y-1.5">
+                                            <div className="flex items-center gap-2 text-[11px]">
+                                              <span
+                                                className={cn(
+                                                  "shrink-0 inline-flex items-center justify-center min-w-[28px] h-5 px-1.5 rounded-md font-mono font-bold tabular-nums",
+                                                  k.is_primary
+                                                    ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300"
+                                                    : "bg-[var(--secondary)] text-[var(--muted-foreground)]"
+                                                )}
+                                                title={k.is_primary ? "Key ưu tiên #1 — luôn được dùng trước" : `Vị trí #${k.ordinal} trong hàng đợi`}
+                                              >
+                                                #{k.ordinal}
+                                              </span>
+                                              <code className="text-[var(--muted-foreground)] font-mono text-[11px] truncate flex-1">{k.preview}</code>
+                                              {k.plan && (
+                                                <Badge variant="secondary" className="rounded text-[9px] px-1 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+                                                  {k.plan}
+                                                </Badge>
+                                              )}
+                                              <span className={cn("inline-flex items-center gap-0.5 rounded text-[9px] px-1 py-0 font-medium", kStatusColor)}>
+                                                {k.status || "active"}
+                                              </span>
+                                            </div>
+                                            {totalQ > 0 && (
+                                              <div className="space-y-1 pt-1">
+                                                <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+                                                  <span>Quota: {remQ} / {totalQ} còn lại</span>
+                                                  <span className="font-semibold">{percent}%</span>
+                                                </div>
+                                                <div className="h-1.5 w-full rounded-full bg-[var(--secondary)] overflow-hidden">
+                                                  <div
+                                                    className={cn(
+                                                      "h-full transition-all duration-300",
+                                                      percent > 40 ? "bg-emerald-500" : percent > 15 ? "bg-amber-500" : "bg-rose-500"
+                                                    )}
+                                                    style={{ width: `${percent}%` }}
+                                                  />
+                                                </div>
+                                              </div>
                                             )}
-                                            title={k.is_primary ? "Key ưu tiên #1 — luôn được dùng trước" : `Vị trí #${k.ordinal} trong hàng đợi`}
-                                          >
-                                            #{k.ordinal}
-                                          </span>
-                                          <code className="text-[var(--muted-foreground)] font-mono truncate">{k.preview}</code>
-                                        </div>
-                                      ))}
+                                            <div className="flex items-center justify-end gap-1 pt-1">
+                                              <button
+                                                type="button"
+                                                disabled={k.is_primary}
+                                                onClick={() => void handleReorderProviderKey(inst.id, ki, "promote")}
+                                                className="inline-flex items-center gap-1 rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)] hover:text-emerald-600 disabled:opacity-30"
+                                                title="Đặt làm key #1 ưu tiên"
+                                              >
+                                                <ArrowUp className="size-2.5" /> #1
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={ki === inst.keys.length - 1}
+                                                onClick={() => void handleReorderProviderKey(inst.id, ki, "demote")}
+                                                className="inline-flex items-center gap-1 rounded bg-[var(--secondary)] px-1.5 py-0.5 text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-30"
+                                                title="Chuyển key xuống cuối hàng đợi"
+                                              >
+                                                <ArrowDown className="size-2.5" /> Xuống cuối
+                                              </button>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
 

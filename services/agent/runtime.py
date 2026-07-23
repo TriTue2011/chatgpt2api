@@ -111,14 +111,15 @@ def call_video(
     *,
     model: str = "flow/veo-3.1-fast",
     timeout: int = 330,
+    **kwargs,
 ) -> dict[str, Any]:
-    """Generate a video via the local /v1/video/generations (Flow/Veo).
+    """Generate a video via the local /v1/video/generations (Flow/Veo/Agnes).
 
     Returns the raw response dict ({"data":[{"url","b64_json",…}]}) or
     {"error": "..."} — never raises.
     """
     url = _base().replace("/chat/completions", "/video/generations")
-    payload = {"model": model, "prompt": prompt, "n": 1}
+    payload = {"model": model, "prompt": prompt, "n": 1, **kwargs}
     try:
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode(),

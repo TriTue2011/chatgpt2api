@@ -139,10 +139,21 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
     prompt = str(args.get("prompt") or "").strip()
     if not prompt:
         return {"text": "Anh/chị muốn em tạo video gì ạ? 🎬"}
-    # Nhánh video_gen là mặc định; 'quality' chỉ override khi người dùng nêu rõ.
+    # Nhánh video_gen là mặc định; 'quality' hoặc 'model' chỉ override khi người dùng nêu rõ.
+    user_model = str(args.get("model") or "").strip()
     quality = str(args.get("quality") or "").strip().lower()
-    model = _VIDEO_MODELS.get(quality) or branch_model("video_gen", _channel_of(ctx))
-    resp = call_video(prompt, model=model)
+    if user_model:
+        model = user_model
+    else:
+        model = _VIDEO_MODELS.get(quality) or branch_model("video_gen", _channel_of(ctx))
+
+    v_kwargs = {}
+    for key in ("resolution", "aspect_ratio", "duration", "fps", "frame_rate",
+                "num_frames", "negative_prompt", "seed", "image", "last_frame", "mode"):
+        if args.get(key) is not None:
+            v_kwargs[key] = args[key]
+
+    resp = call_video(prompt, model=model, **v_kwargs)
     if resp.get("error"):
         _alert_branch("Tạo video (video_gen)", model, resp["error"])
         return {"text": f"Em tạo video bị lỗi 😥 ({resp['error']}). "
@@ -1879,17 +1890,26 @@ CAPABILITIES: dict[str, Capability] = {
                   "lại sau, KHÔNG tự thử lại ngay.")),
     "generate_video": Capability(
         name="generate_video", risk=READ, handler=_h_generate_video,
-        emoji="🎬", label="Tạo video AI (Flow/Veo)",
-        description=("Tạo video ngắn bằng AI (Google Flow/Veo). Mất 2-5 phút. "
-                     "quality: 'fast' (nhanh, mặc định) | 'quality' (đẹp hơn, chậm) | 'lite'."),
+        emoji="🎬", label="Tạo video AI (Agnes/Flow/Veo)",
+        description=("Tạo video ngắn bằng AI (Agnes AI / Google Flow / Veo). Mất 1-5 phút. "
+                     "Hỗ trợ đầy đủ thông số: model (agnes-video-v2.0, flow/veo-3.1-fast...), "
+                     "resolution (1080p, 720p, 480p), aspect_ratio (16:9, 9:16, 1:1, 4:3, 3:4), "
+                     "duration (5, 8, 10...), fps (24, 30, 60), negative_prompt, seed, image (ảnh bắt đầu), last_frame (ảnh kết thúc)."),
         parameters={"type": "object", "properties": {
             "prompt": {"type": "string", "description": "Mô tả video cần tạo"},
-            "quality": {"type": "string", "enum": ["fast", "quality", "lite"],
-                        "description": "Chất lượng (mặc định fast)"}},
+            "model": {"type": "string", "description": "Model video (vd: agnes-video-v2.0, flow/veo-3.1-fast...)"},
+            "resolution": {"type": "string", "enum": ["1080p", "720p", "480p"], "description": "Độ phân giải video"},
+            "aspect_ratio": {"type": "string", "enum": ["16:9", "9:16", "1:1", "4:3", "3:4"], "description": "Tỷ lệ khung hình"},
+            "duration": {"type": "string", "description": "Thời lượng video (giây, vd: '5', '8', '10')"},
+            "fps": {"type": "integer", "description": "Tốc độ khung hình (fps: 24, 30, 60)"},
+            "negative_prompt": {"type": "string", "description": "Chi tiết muốn tránh/loại bỏ trong video"},
+            "seed": {"type": "integer", "description": "Hạt giống ngẫu nhiên (seed)"},
+            "image": {"type": "string", "description": "URL/Base64 ảnh bắt đầu"},
+            "last_frame": {"type": "string", "description": "URL/Base64 ảnh kết thúc"},
+            "quality": {"type": "string", "enum": ["fast", "quality", "lite"], "description": "Chất lượng (mặc định fast)"}},
             "required": ["prompt"]},
-        workflow=("Tạo video mất vài phút — kết quả đã được gửi kèm tự động, chỉ cần "
-                  "chú thích ngắn. Nếu lỗi credit/quota: báo người dùng chờ ngày mai, "
-                  "KHÔNG tự thử lại.")),
+        workflow=("Tạo video mất 1-5 phút — kết quả đã được gửi kèm tự động, chỉ cần "
+                  "chú thích ngắn. Nếu lỗi credit/quota: báo người dùng chờ hoặc thử lại sau.")),
     "web_search": Capability(
         name="web_search", risk=READ, handler=_h_web_search,
         emoji="📰", label="Tra cứu / đọc tin tức",
