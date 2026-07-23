@@ -1140,40 +1140,44 @@ def create_router(app_version: str) -> APIRouter:
 
     # ── Custom Providers ──
 
+    # ── Custom Providers ──
+
     @router.get("/api/v1/custom-providers")
     async def list_custom_providers(authorization: str | None = Header(default=None)):
-        """Lấy danh sách custom providers."""
+        """Lấy danh sách custom providers (trả về toàn bộ provider từ config.json)."""
         require_admin(authorization)
-        from services.providers.custom_openai import get_custom_providers
-        return {"custom_providers": get_custom_providers()}
+        from services.config import _normalize_multi_api_keys, _normalize_multi_base_urls
+        raw = config.data.get("custom_providers") or {}
+        if not isinstance(raw, dict):
+            raw = {}
+        out = {}
+        for pid, pcfg in raw.items():
+            if isinstance(pcfg, dict):
+                norm = _normalize_multi_base_urls(_normalize_multi_api_keys(pcfg))
+                out[pid] = norm
+        return {"custom_providers": out}
 
     @router.post("/api/v1/custom-providers")
     async def save_custom_provider(body: dict, authorization: str | None = Header(default=None)):
         """Thêm hoặc cập nhật một custom provider."""
         require_admin(authorization)
+        from services.config import _normalize_multi_api_keys, _normalize_multi_base_urls
         provider = body.get("provider") or {}
         if not isinstance(provider, dict):
             raise HTTPException(status_code=400, detail={"error": "provider object is required"})
+
+        # Pre-normalize multiline keys and URLs
+        provider = _normalize_multi_base_urls(_normalize_multi_api_keys(provider))
 
         provider_id = str(provider.get("prefix") or provider.get("name") or "").strip().lower().replace(" ", "_")
         if not provider_id:
             raise HTTPException(status_code=400, detail={"error": "provider prefix or name is required"})
 
         base_url = str(provider.get("base_url") or "").strip().rstrip("/")
-        # Optional `base_urls[]` array — pool extra endpoints sharing the
-        # same API key. CustomOpenAIProvider rotates them in FIFO order.
-        base_urls_raw = provider.get("base_urls") or []
-        if not isinstance(base_urls_raw, list):
-            base_urls_raw = []
-        base_urls = [str(u or "").strip().rstrip("/") for u in base_urls_raw if str(u or "").strip()]
+        base_urls = [str(u or "").strip().rstrip("/") for u in (provider.get("base_urls") or []) if str(u or "").strip()]
         api_key = str(provider.get("api_key") or "").strip()
-        api_keys = provider.get("api_keys") or []
-        if not isinstance(api_keys, list):
-            api_keys = []
-        api_keys = [k.strip() for k in api_keys if k.strip()]
-        # Support api_key + api_keys combination
-        if api_key and api_key not in api_keys:
-            api_keys.insert(0, api_key)
+        api_keys = [str(k or "").strip() for k in (provider.get("api_keys") or []) if str(k or "").strip()]
+
         name = str(provider.get("name") or provider_id).strip()
         enabled = provider.get("enabled", True)
         prefix = str(provider.get("prefix") or provider_id).strip().lower().replace(" ", "_")
@@ -1202,15 +1206,17 @@ def create_router(app_version: str) -> APIRouter:
         custom_providers = dict(config.data.get("custom_providers") or {})
         if not isinstance(custom_providers, dict):
             custom_providers = {}
-        custom_providers[provider_id] = {
+        entry = {
             "name": name,
             "base_url": base_url,
             "base_urls": base_urls,
-            "api_key": api_keys[0] if api_keys else "",
+            "api_key": api_key,
             "api_keys": api_keys,
             "prefix": prefix,
             "enabled": enabled,
         }
+        entry = _normalize_multi_base_urls(_normalize_multi_api_keys(entry))
+        custom_providers[provider_id] = entry
         config.data["custom_providers"] = custom_providers
         config._save()
         from services.protocol.openai_v1_models import invalidate_models_cache

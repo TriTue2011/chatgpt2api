@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 import json
@@ -119,32 +119,85 @@ def _normalize_backup_state(value: object) -> dict[str, object]:
 def _normalize_multi_api_keys(provider: dict) -> dict:
     """Keep api_key + api_keys in sync for Gemini AI Studio / multi-key providers.
 
-    UI stores many keys in api_keys[] (one per line). Some older saves only set
-    api_key. Never drop a non-empty api_keys list just because a later partial
-    update only touched api_key / enabled / model.
+    UI stores many keys in api_keys[] (one per line). Automatically splits any
+    multiline strings into individual clean API keys so a single multiline string
+    never gets stored as a corrupted single key.
     """
     out = dict(provider)
     keys: list[str] = []
-    multi = out.get("api_keys")
-    if multi is None:
-        multi = out.get("apiKeys")
-    if isinstance(multi, list):
-        for item in multi:
-            k = str(item or "").strip()
-            if k and k not in keys:
-                keys.append(k)
-    single = str(out.get("api_key") or "").strip()
-    if single and single not in keys:
-        keys.insert(0, single)
+
+    def _extract_keys(src: object) -> list[str]:
+        res: list[str] = []
+        if isinstance(src, list):
+            for item in src:
+                res.extend(_extract_keys(item))
+        elif isinstance(src, str) and src:
+            for line in src.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                k = line.strip()
+                if k:
+                    res.append(k)
+        return res
+
+    # Extract from api_keys / apiKeys
+    multi_raw = out.get("api_keys") if "api_keys" in out else out.get("apiKeys")
+    for k in _extract_keys(multi_raw):
+        if k not in keys:
+            keys.append(k)
+
+    # Extract from api_key / apiKey
+    single_raw = out.get("api_key") if "api_key" in out else out.get("apiKey")
+    for k in _extract_keys(single_raw):
+        if k not in keys:
+            keys.append(k)
+
     if keys:
         out["api_key"] = keys[0]
         out["api_keys"] = keys
-    elif "api_keys" not in out and "apiKeys" not in out:
-        # leave empty providers alone (no keys field)
-        pass
-    else:
+    elif "api_keys" in out or "apiKeys" in out:
         out["api_key"] = ""
         out["api_keys"] = []
+
+    return out
+
+
+def _normalize_multi_base_urls(provider: dict) -> dict:
+    """Ensure base_url is a single clean URL string and base_urls is a list of clean URLs.
+
+    Splits multiline base_url strings (e.g. pool endpoints) so primary URL is
+    `base_url` and additional URLs are in `base_urls[]`.
+    """
+    out = dict(provider)
+    urls: list[str] = []
+
+    def _extract_urls(src: object) -> list[str]:
+        res: list[str] = []
+        if isinstance(src, list):
+            for item in src:
+                res.extend(_extract_urls(item))
+        elif isinstance(src, str) and src:
+            for line in src.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                u = line.strip().rstrip("/")
+                if u:
+                    res.append(u)
+        return res
+
+    multi_raw = out.get("base_urls")
+    for u in _extract_urls(multi_raw):
+        if u not in urls:
+            urls.append(u)
+
+    single_raw = out.get("base_url")
+    for u in _extract_urls(single_raw):
+        if u not in urls:
+            urls.append(u)
+
+    if urls:
+        out["base_url"] = urls[0]
+        out["base_urls"] = urls[1:]
+    elif "base_urls" in out:
+        out["base_url"] = ""
+        out["base_urls"] = []
+
     return out
 
 
@@ -153,35 +206,19 @@ def _merge_provider_config(old: dict, new: dict) -> dict:
     omits api_keys or sends an empty list while still carrying a single api_key
     that already exists in the previous list (common after image rebuild UI
     reloads with only the primary key filled)."""
-    merged = {**old, **new}
-    old_keys: list[str] = []
-    for src in (old.get("api_keys"), old.get("apiKeys")):
-        if isinstance(src, list):
-            for item in src:
-                k = str(item or "").strip()
-                if k and k not in old_keys:
-                    old_keys.append(k)
-    old_single = str(old.get("api_key") or "").strip()
-    if old_single and old_single not in old_keys:
-        old_keys.insert(0, old_single)
+    old_norm = _normalize_multi_base_urls(_normalize_multi_api_keys(old))
+    new_norm = _normalize_multi_base_urls(_normalize_multi_api_keys(new))
+    merged = {**old_norm, **new_norm}
 
-    new_has_keys_field = "api_keys" in new or "apiKeys" in new
-    new_keys_raw = new.get("api_keys") if "api_keys" in new else new.get("apiKeys")
-    new_keys: list[str] = []
-    if isinstance(new_keys_raw, list):
-        for item in new_keys_raw:
-            k = str(item or "").strip()
-            if k and k not in new_keys:
-                new_keys.append(k)
-    new_single = str(new.get("api_key") or "").strip()
+    old_keys: list[str] = old_norm.get("api_keys") or []
+    new_has_keys_field = "api_keys" in new or "apiKeys" in new or "api_key" in new or "apiKey" in new
+    new_keys: list[str] = new_norm.get("api_keys") or []
+    new_single = str(new_norm.get("api_key") or "").strip()
 
     if new_has_keys_field and new_keys:
-        # Explicit multi-key save from UI — trust it.
         merged["api_keys"] = new_keys
         merged["api_key"] = new_keys[0]
     elif new_has_keys_field and not new_keys and new_single and old_keys:
-        # Patch cleared api_keys but left one api_key that is part of the old
-        # pool — keep the full pool (accidental wipe).
         if new_single in old_keys:
             merged["api_keys"] = old_keys
             merged["api_key"] = new_single
@@ -189,7 +226,6 @@ def _merge_provider_config(old: dict, new: dict) -> dict:
             merged["api_keys"] = [new_single]
             merged["api_key"] = new_single
     elif not new_has_keys_field and old_keys:
-        # Partial update without api_keys — never drop the pool.
         merged["api_keys"] = old_keys
         if new_single and new_single not in old_keys:
             merged["api_keys"] = [new_single] + old_keys
@@ -201,7 +237,7 @@ def _merge_provider_config(old: dict, new: dict) -> dict:
     else:
         merged = _normalize_multi_api_keys(merged)
 
-    return _normalize_multi_api_keys(merged)
+    return _normalize_multi_base_urls(_normalize_multi_api_keys(merged))
 
 
 @dataclass(frozen=True)
