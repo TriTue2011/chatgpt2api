@@ -28,6 +28,7 @@ DEFAULTS: dict[str, dict[str, bool]] = {
         "dantri": True,
         "bbc_news": True,
         "google_news": True,
+        "worldmonitor": True,
     },
     "vn_weather": {
         "open_meteo": True,

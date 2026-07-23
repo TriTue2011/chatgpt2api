@@ -33,6 +33,7 @@ _VI_SOURCES = [
 _INTL_SOURCES = [
     ("BBC News", "bbc_news"),
     ("Google News", "google_news"),
+    ("World Monitor", "worldmonitor"),
 ]
 
 _RSS_URLS: dict[str, dict[str, str]] = {
@@ -80,7 +81,13 @@ _RSS_URLS: dict[str, dict[str, str]] = {
         "cong_nghe": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=vi&gl=VN&ceid=VN:vi",
         "suc_khoe": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=vi&gl=VN&ceid=VN:vi",
     },
+    "worldmonitor": {
+        "moi_nhat": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
+        "the_gioi": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
+        "thoi_su": "https://raw.githubusercontent.com/koala73/worldmonitor/main/rss.xml",
+    },
 }
+
 
 
 def _is_source_enabled(source_key: str) -> bool:
