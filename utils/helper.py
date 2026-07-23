@@ -106,17 +106,18 @@ _VIDEO_GEN_PREFIXES: set[str] = {
 def classify_model_capability(model_id: str) -> list[str]:
     """Classify a model by capabilities: ['chat'], ['chat','vision'], ['image'], etc.
 
-    Image Gen: models that generate images (FLUX, SD, DALL-E, or model name containing 'image')
-    Video Gen: models that generate videos (Veo, Omni, or model name containing 'video' or 'clip')
+    Image Gen: models that generate images (FLUX, SD, DALL-E, or model name containing 'image', 'imagen', 'flux', 'sdwebui', etc.)
+    Video Gen: models that generate videos (Veo, Omni, or model name containing 'video', 'clip', 'veo', etc.)
     Vision: models that can analyze/understand images (multimodal)
-    Chat: text models (all models are at least chat-capable)
+    Chat: text models (all non-pure-image/video models)
     """
     mid = str(model_id or "").strip().lower()
     caps: list[str] = []
 
-    # Check image gen (contains 'image' in name or in IMAGE_MODELS / prefixes)
+    # Check image gen capability (contains 'image', 'imagen', 'flux', 'schnell', 'sdwebui', 'sdxl', 'dall-e' or in IMAGE_MODELS / prefixes)
     is_image = False
-    if "image" in mid or mid in IMAGE_MODELS:
+    _img_keywords = ("image", "imagen", "flux", "schnell", "sdwebui", "sdxl", "dall-e", "gpt-image")
+    if mid in IMAGE_MODELS or any(kw in mid for kw in _img_keywords):
         caps.append("image")
         is_image = True
 
@@ -145,15 +146,19 @@ def classify_model_capability(model_id: str) -> list[str]:
                 is_image = True
                 break
 
-    # Check video capability (contains 'video' or 'clip' in name or in VIDEO_GEN_MODELS / prefixes)
-    if "video" in mid or "clip" in mid or mid in VIDEO_GEN_MODELS:
+    # Check video capability (contains 'video', 'clip', 'veo' or in VIDEO_GEN_MODELS / prefixes)
+    is_video_gen = False
+    _vid_keywords = ("video", "clip", "veo")
+    if mid in VIDEO_GEN_MODELS or any(kw in mid for kw in _vid_keywords):
         caps.append("video_gen")
         caps.append("video")
+        is_video_gen = True
     else:
         for prefix in _VIDEO_GEN_PREFIXES:
             if mid.startswith(prefix):
                 caps.append("video_gen")
                 caps.append("video")
+                is_video_gen = True
                 break
 
     # Check vision capability
@@ -175,10 +180,8 @@ def classify_model_capability(model_id: str) -> list[str]:
                         caps.append("vision")
                     break
 
-    # All models support chat except pure image-gen models (which have no text output).
-    # NOTE: name-based heuristics like "flash" must NOT force chat here — image models
-    # such as agnes-image-2.1-flash / gemini-*-flash-image are pure image gen.
-    if "chat" not in caps and not is_image:
+    # All models support chat EXCEPT pure image-gen and video-gen models
+    if "chat" not in caps and not is_image and not is_video_gen:
         caps.append("chat")
 
     # Check video analysis capability from providers
