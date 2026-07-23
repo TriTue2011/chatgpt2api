@@ -238,8 +238,8 @@ def create_app() -> FastAPI:
         app.include_router(teacher_api.create_router())
     except Exception as exc:
         _log_startup_failure("teacher_api", exc)
-    if config.images_dir.exists():
-        app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
+    config.images_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
 
     # Veo video generation — journaled into Agent runs (kind=video_gen)
     @app.post("/v1/video/generations")
