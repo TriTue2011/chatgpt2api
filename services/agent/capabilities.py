@@ -2027,7 +2027,12 @@ CAPABILITIES: dict[str, Capability] = {
         description="Tra cứu thông tin thực tế / tin tức / giá cả / thời sự trên mạng.",
         parameters={"type": "object", "properties": {
             "query": {"type": "string", "description": "Câu cần tra cứu"}},
-            "required": ["query"]}),
+            "required": ["query"]},
+        workflow=(
+            "Khi tổng hợp TIN TỨC / BẢN TIN: BẮT BUỘC phân chia theo các ĐẦU MỤC rõ ràng "
+            "(vd: 🇻🇳 Thời sự Việt Nam, 🌎 Thế giới, 💼 Kinh tế & Công nghệ, ⚽ Thể thao & Giải trí, 🏥 Sức khỏe & Đời sống). "
+            "Mỗi đầu mục lấy từ 4 đến 5 tiêu đề tin mới nhất kèm tóm tắt 1 câu ngắn gọn."
+        )),
     "read_webpage": Capability(
         name="read_webpage", risk=READ, handler=_h_read_webpage,
         emoji="🔗", label="Đọc kỹ một trang web (theo link)",
