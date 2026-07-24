@@ -884,7 +884,9 @@ def notify_admin(text: str, category: str = "") -> None:
             if entry.get("newchat_alert_enabled") is False:
                 continue
         elif is_account_update:
-            if not entry.get("account_update_log_enabled"):
+            entries_list = entry.get("admin_entries") if isinstance(entry.get("admin_entries"), list) else []
+            any_admin_update = any(isinstance(x, dict) and x.get("account_update_log_enabled") for x in entries_list)
+            if not (entry.get("account_update_log_enabled") or any_admin_update):
                 continue
         elif is_account_log:
             if entry.get("account_log_enabled") is False:

@@ -1350,13 +1350,11 @@ class AccountService:
                 self._accounts.pop(new_token, None)
             self._accounts[new_token] = account
             self._save_accounts()
-            notify_update = bool((config.get() or {}).get("account_update_log_notify_enabled", False))
             log_service.add(LOG_TYPE_ACCOUNT, "Cập nhật tài khoản",
                             {"provider": account_group(account),
                              "email": str(account.get("email") or "")[:80],
                              "token": anonymize_token(new_token), "status": account.get("status"),
-                             "rekeyed": new_token != access_token,
-                             "notify_bots": notify_update})
+                             "rekeyed": new_token != access_token})
             return dict(account)
         return None
 

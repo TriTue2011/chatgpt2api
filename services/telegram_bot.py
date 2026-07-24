@@ -332,7 +332,10 @@ def notify_admin(text: str, category: str = "") -> None:
             else:
                 if not bot.get("notify_admin_enabled", True):
                     continue
-            if is_account_update and not bot.get("account_update_log_enabled", False):
+            if is_account_update and not (
+                bot.get("account_update_log_enabled", False)
+                or any(e.get("account_update_log_enabled") for e in admin_entries(bot))
+            ):
                 continue
             if is_account_log and not bot.get("account_log_enabled", True):
                 continue

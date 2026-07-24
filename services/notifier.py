@@ -82,7 +82,7 @@ def account_log_enabled(channel: str) -> bool:
 
 def account_update_log_enabled(channel: str) -> bool:
     """Toggle log cập nhật tài khoản provider theo kênh."""
-    return _enabled(_ACCOUNT_UPDATE_LOG_KEYS.get(channel, "account_update_log_notify_enabled"), False)
+    return _enabled(_ACCOUNT_UPDATE_LOG_KEYS.get(channel, "account_update_log_notify_enabled"), True)
 
 
 def classify_notify_category(text: str, category: str = "") -> str:

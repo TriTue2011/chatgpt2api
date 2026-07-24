@@ -215,6 +215,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
         // Bot-level derived: bật nếu BẤT KỲ admin nào bật (backend vẫn đọc bot flags)
         const anyNotify = admins.some((a) => a.notify_enabled);
         const anyLog = admins.some((a) => a.account_log_enabled);
+        const anyUpdateLog = admins.some((a) => a.account_update_log_enabled);
         const anyNew = admins.some((a) => a.newchat_alert_enabled);
         const anyHa = admins.some((a) => a.ha_fastpath);
         const anyFb = admins.some((a) => a.fallback_enabled);
@@ -236,6 +237,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
           ha_fastpath: anyHa || admins.length === 0,
           notify_admin_enabled: anyNotify || admins.length === 0,
           account_log_enabled: anyLog || admins.length === 0,
+          account_update_log_enabled: anyUpdateLog,
           newchat_alert_enabled: anyNew || admins.length === 0,
           fallback_enabled: anyFb,
           fallback_channel: anyFb ? (platform === "zalo" ? "zalo" : "telegram") : "",
@@ -1346,6 +1348,7 @@ export function TelegramCloudflareCard() {
                   // Đồng bộ cờ 🔔/📋/💬 cấp acc từ Admin #N (giống Telegram/Zalo Bot)
                   const anyNotify = list.some((a) => a.notify_enabled);
                   const anyLog = list.some((a) => a.account_log_enabled);
+                  const anyUpdateLog = list.some((a) => a.account_update_log_enabled);
                   const anyNew = list.some((a) => a.newchat_alert_enabled);
                   patchAcc({
                     admin_entries: list,
@@ -1353,6 +1356,7 @@ export function TelegramCloudflareCard() {
                     admin_thread_type: list[0]?.kind === "group" ? "1" : "0",
                     notify_admin_enabled: anyNotify || list.length === 0,
                     account_log_enabled: anyLog || list.length === 0,
+                    account_update_log_enabled: anyUpdateLog,
                     newchat_alert_enabled: anyNew || list.length === 0,
                   });
                 };
