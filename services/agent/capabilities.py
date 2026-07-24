@@ -1275,6 +1275,16 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     for ref in refs:
         cands = _cands(ref)
         exact = [c for c in cands if c["quality"] == "exact"]
+        # Nếu người dùng CHƯA nêu rõ kênh gửi (explicit_platform rỗng),
+        # BẮT BUỘC hỏi làm rõ kênh (Zalo cá nhân / Zalo bot / Telegram) chứ KHÔNG tự chọn.
+        if not explicit_platform:
+            show = exact or cands
+            if show:
+                opts = "; ".join(_label(c) for c in show[:8])
+                ambiguous.append(
+                    f"«{ref}» chưa nêu rõ kênh gửi (Zalo cá nhân / Zalo bot / Telegram) — nói rõ giúp em: {opts}"
+                )
+                continue
         # Chắc chắn: đúng MỘT mục khớp chính xác → gửi (hoặc chỉ ghi nhận khi resolve_only).
         if len(exact) == 1:
             if resolve_only:
