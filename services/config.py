@@ -975,7 +975,7 @@ class ConfigStore:
         ):
             raw_ch = self.data.get(aln_key)
             data[aln_key] = legacy_aln if raw_ch is None else _aln_bool(raw_ch)
-        legacy_auln = _aln_bool(self.data.get("account_update_log_notify_enabled", True), True)
+        legacy_auln = _aln_bool(self.data.get("account_update_log_notify_enabled", True))
         data["account_update_log_notify_enabled"] = True
         for auln_key in (
             "account_update_log_notify_telegram",
