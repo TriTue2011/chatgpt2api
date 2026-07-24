@@ -831,6 +831,17 @@ async def do_google_login_steps(
     block_retries = 0
     pwd_deadline = time.time() + 300  # tối đa 5 phút (gồm cả retry BotGuard)
     while time.time() < pwd_deadline:
+        # ĐÃ đăng nhập sẵn (SSO pick trúng acc còn phiên): Google nhảy thẳng
+        # myaccount.google.com / trang dịch vụ nên ô mật khẩu KHÔNG BAO GIỜ hiện.
+        # Không thoát sớm ở đây thì quay vòng đủ 300s rồi báo "failed" OAN dù
+        # session Google vẫn sống → recover Codex trượt vô cớ (bug 2026-07-24).
+        if await _already_logged_in(ctx):
+            session.state = "success"
+            session.message = "Google login OK (đã đăng nhập sẵn)"
+            session.completed_at = time.time()
+            logger.info("auto_login: already signed in for %s — bỏ qua bước mật khẩu",
+                        session.profile)
+            return True
         pwd_input = await _pwd_visible()
         if pwd_input is not None:
             break
