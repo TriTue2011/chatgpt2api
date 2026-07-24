@@ -2215,12 +2215,16 @@ CAPABILITIES: dict[str, Capability] = {
             "GỬI TIN HẸN GIỜ (vd 'sau 2 phút gửi nhóm A: cả nhà đi ngủ'): "
             "mode=task + send_to=người/nhóm nhận + text=NỘI DUNG gửi (+send_platform "
             "nếu nêu rõ kênh). Em tra danh bạ NGAY; nếu thiếu/mập mờ (trùng tên, "
+            "nhiều kênh, chưa lưu) sẽ HỎI LẠI trước khi đặt lịch, TUYỆT ĐỐI không đoán."
         ),
         workflow=(
             "Khi đặt nhắc/báo cáo định kỳ: BẮT BUỘC kiểm tra đủ 4 thông tin: "
             "(1) Khi nào (giờ/ngày) - (2) Bằng kênh gì (Zalo cá nhân/Zalo bot/Telegram) - "
             "(3) Nhóm/Người nhận nào - (4) Nội dung/Số liệu báo cáo gì. "
-            "Nếu THIẾU bất kỳ thông tin nào, HỎI LẠI NGAY người dùng để làm rõ trước khi gọi schedule."
+            "Nếu THIẾU bất kỳ thông tin nào, HỎI LẠI NGAY người dùng để làm rõ trước khi gọi schedule. "
+            "Sau khi đặt: đọc lại id + thời điểm cho người dùng. "
+            "mode=task chỉ khi họ muốn em TỰ LÀM việc (báo cáo nhà, tóm tắt…) "
+            "— còn 'nhắc anh gọi khách' thì mode=notify."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "enum": ["create", "list", "cancel"],
@@ -2246,12 +2250,7 @@ CAPABILITIES: dict[str, Capability] = {
                               "description": "Kênh gửi nếu người dùng nêu rõ; bỏ trống = kênh hiện tại"},
             "id": {"type": "string",
                    "description": "Mã nhắc khi huỷ (hoặc 'all')"}},
-            "required": []},
-        workflow=(
-            "Sau khi đặt: đọc lại id + thời điểm cho người dùng. "
-            "mode=task chỉ khi họ muốn em TỰ LÀM việc (báo cáo nhà, tóm tắt…) "
-            "— còn 'nhắc anh gọi khách' thì mode=notify."
-        )),
+            "required": []}),
     "search_history": Capability(
         name="search_history", risk=READ, handler=_h_search_history,
         emoji="🔍", label="Tìm lại chuyện đã chat",
