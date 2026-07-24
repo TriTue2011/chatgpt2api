@@ -428,6 +428,7 @@ def _one_admin_entry(x: object) -> dict | None:
         "ai_model": str(x.get("ai_model") or "").strip()[:128],
         "notify_enabled": bool(x.get("notify_enabled", True)),
         "account_log_enabled": bool(x.get("account_log_enabled", True)),
+        "account_update_log_enabled": bool(x.get("account_update_log_enabled", False)),
         "newchat_alert_enabled": bool(x.get("newchat_alert_enabled", True)),
         # Per-admin: điều khiển nhà cục bộ + fallback riêng
         "ha_fastpath": bool(x.get("ha_fastpath", True)),
@@ -541,6 +542,7 @@ def _normalize_bots(value: object, legacy_token: object,
                 "ha_fastpath": bool(it.get("ha_fastpath", True)),
                 "notify_admin_enabled": bool(it.get("notify_admin_enabled", True)),
                 "account_log_enabled": bool(it.get("account_log_enabled", True)),
+                "account_update_log_enabled": bool(it.get("account_update_log_enabled", False)),
                 "newchat_alert_enabled": bool(it.get("newchat_alert_enabled", True)),
                 "label": str(it.get("label") or "").strip()[:64],
                 # Fallback → admin thread cùng bot (ID trong admin_entries)
@@ -570,6 +572,7 @@ def _normalize_bots(value: object, legacy_token: object,
                 "ha_fastpath": True,
                 "notify_admin_enabled": True,
                 "account_log_enabled": True,
+                "account_update_log_enabled": False,
                 "newchat_alert_enabled": True,
                 "label": "",
                 "fallback_enabled": False,
@@ -623,6 +626,7 @@ def _normalize_zalo_personal_account_admins(value: object) -> dict[str, dict]:
             "ha_fastpath": bool(v.get("ha_fastpath", True)),
             "notify_admin_enabled": bool(v.get("notify_admin_enabled", True)),
             "account_log_enabled": bool(v.get("account_log_enabled", True)),
+            "account_update_log_enabled": bool(v.get("account_update_log_enabled", False)),
             "newchat_alert_enabled": bool(v.get("newchat_alert_enabled", True)),
             "fallback_enabled": bool(v.get("fallback_enabled", False)),
             "fallback_channel": str(v.get("fallback_channel") or "").strip(),
@@ -964,6 +968,7 @@ class ConfigStore:
 
         legacy_aln = _aln_bool(self.data.get("account_log_notify_enabled", True))
         data["account_log_notify_enabled"] = legacy_aln
+        data["account_update_log_notify_enabled"] = _aln_bool(self.data.get("account_update_log_notify_enabled", False))
         for aln_key in (
             "account_log_notify_telegram",
             "account_log_notify_zalo",
@@ -971,6 +976,12 @@ class ConfigStore:
         ):
             raw_ch = self.data.get(aln_key)
             data[aln_key] = legacy_aln if raw_ch is None else _aln_bool(raw_ch)
+        for auln_key in (
+            "account_update_log_notify_telegram",
+            "account_update_log_notify_zalo",
+            "account_update_log_notify_zalo_personal",
+        ):
+            data[auln_key] = _aln_bool(self.data.get(auln_key, False))
         data["thread_filters"] = _normalize_thread_filters(self.data.get("thread_filters"))
         data["thread_user_filters"] = _normalize_thread_user_filters(self.data.get("thread_user_filters"))
         data["thread_mention_filters"] = _normalize_thread_mention_filters(self.data.get("thread_mention_filters"))

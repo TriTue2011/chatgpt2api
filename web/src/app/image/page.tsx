@@ -426,20 +426,49 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         setImageCount(storedCount ? clampImageCount(storedCount) : "1");
 
         const items = await listImageConversations();
-        const normalizedItems = await recoverConversationHistory(items);
         if (cancelled) {
           return;
         }
 
-        conversationsRef.current = normalizedItems;
-        setConversations(normalizedItems);
+        // Fast path: paint the stored history immediately so the tab becomes
+        // interactive without blocking on task recovery/sync (which may hit the
+        // network for any in-flight generations).
+        conversationsRef.current = items;
+        setConversations(items);
         const storedConversationId =
           typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) : null;
         const nextSelectedConversationId =
-          (storedConversationId && normalizedItems.some((conversation) => conversation.id === storedConversationId)
+          (storedConversationId && items.some((conversation) => conversation.id === storedConversationId)
             ? storedConversationId
-            : null) ?? pickFallbackConversationId(normalizedItems);
+            : null) ?? pickFallbackConversationId(items);
         setSelectedConversationId(nextSelectedConversationId);
+
+        // Background: recover interrupted tasks + reconcile statuses, then merge
+        // back without clobbering any conversation the user touched meanwhile
+        // (keep whichever copy is newer by updatedAt).
+        void (async () => {
+          try {
+            const recovered = await recoverConversationHistory(items);
+            if (cancelled) {
+              return;
+            }
+            const recoveredMap = new Map(recovered.map((conversation) => [conversation.id, conversation]));
+            const merged = conversationsRef.current.map((conversation) => {
+              const next = recoveredMap.get(conversation.id);
+              if (!next) {
+                return conversation;
+              }
+              return new Date(next.updatedAt).getTime() >= new Date(conversation.updatedAt).getTime()
+                ? next
+                : conversation;
+            });
+            const sorted = sortImageConversations(merged);
+            conversationsRef.current = sorted;
+            setConversations(sorted);
+          } catch {
+            /* recovery is best-effort; the painted history stays usable */
+          }
+        })();
       } catch (error) {
         const message = error instanceof Error ? error.message : "Đọc lịch sử hội thoại thất bại";
         toast.error(message);

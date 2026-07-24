@@ -319,6 +319,7 @@ def notify_admin(text: str, category: str = "") -> None:
     except Exception:
         cat = str(category or "system").strip().lower() or "system"
     is_account_log = cat == "account_log"
+    is_account_update = cat == "account_update"
     is_newchat = cat == "newchat"
     try:
         from services.admin_workspace import admin_entries
@@ -331,6 +332,8 @@ def notify_admin(text: str, category: str = "") -> None:
             else:
                 if not bot.get("notify_admin_enabled", True):
                     continue
+            if is_account_update and not bot.get("account_update_log_enabled", False):
+                continue
             if is_account_log and not bot.get("account_log_enabled", True):
                 continue
             _current.bot = bot
@@ -342,6 +345,8 @@ def notify_admin(text: str, category: str = "") -> None:
                     # newchat: không yêu cầu 🔔 (tách hẳn)
                 else:
                     if not e.get("notify_enabled", True):
+                        continue
+                    if is_account_update and not e.get("account_update_log_enabled", False):
                         continue
                     if is_account_log and not e.get("account_log_enabled", True):
                         continue

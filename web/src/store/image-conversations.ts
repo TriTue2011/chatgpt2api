@@ -61,6 +61,15 @@ const imageConversationStorage = localforage.createInstance({
 const IMAGE_CONVERSATIONS_KEY = "items";
 let imageConversationWriteQueue: Promise<void> = Promise.resolve();
 
+// In-memory mirror of the persisted list. Reading the whole blob (all base64
+// image bytes) from IndexedDB and re-normalizing it on every save was O(total
+// history size) per write — during generation that runs every ~2s. We read +
+// normalize from disk exactly once, then keep this cache authoritative for the
+// tab. Writes are serialized through `queueImageConversationWrite`, so no in-tab
+// interleaving can stale it. Trade-off: a second tab's writes are not observed
+// until reload — acceptable for this single-user admin tool.
+let storeCache: ImageConversation[] | null = null;
+
 function normalizeStoredImage(image: StoredImage): StoredImage {
   const normalized = {
     ...image,
@@ -206,11 +215,23 @@ function queueImageConversationWrite<T>(operation: () => Promise<T>): Promise<T>
 }
 
 async function readStoredImageConversations(): Promise<ImageConversation[]> {
+  if (storeCache) {
+    return storeCache;
+  }
   const items =
     (await imageConversationStorage.getItem<Array<ImageConversation & Record<string, unknown>>>(
       IMAGE_CONVERSATIONS_KEY,
     )) || [];
-  return items.map(normalizeConversation);
+  storeCache = items.map(normalizeConversation);
+  return storeCache;
+}
+
+// Persist a fully-normalized list and refresh the in-memory mirror in one step.
+// Callers always build `items` from normalized data (cache entries or the output
+// of `normalizeConversation`), so the cache stays normalized without re-mapping.
+async function writeStoredImageConversations(items: ImageConversation[]): Promise<void> {
+  storeCache = items;
+  await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, items);
 }
 
 export async function listImageConversations(): Promise<ImageConversation[]> {
@@ -225,10 +246,7 @@ export async function saveImageConversations(conversations: ImageConversation[])
       const current = conversationMap.get(conversation.id);
       conversationMap.set(conversation.id, current ? pickLatestConversation(current, conversation) : conversation);
     }
-    await imageConversationStorage.setItem(
-      IMAGE_CONVERSATIONS_KEY,
-      sortImageConversations([...conversationMap.values()]),
-    );
+    await writeStoredImageConversations(sortImageConversations([...conversationMap.values()]));
   });
 }
 
@@ -242,7 +260,7 @@ export async function saveImageConversation(conversation: ImageConversation): Pr
       persistedConversation,
       ...items.filter((item) => item.id !== persistedConversation.id),
     ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
+    await writeStoredImageConversations(nextItems);
   });
 }
 
@@ -256,22 +274,20 @@ export async function renameImageConversation(id: string, title: string): Promis
       updated,
       ...items.filter((item) => item.id !== id),
     ]);
-    await imageConversationStorage.setItem(IMAGE_CONVERSATIONS_KEY, nextItems);
+    await writeStoredImageConversations(nextItems);
   });
 }
 
 export async function deleteImageConversation(id: string): Promise<void> {
   await queueImageConversationWrite(async () => {
     const items = await readStoredImageConversations();
-    await imageConversationStorage.setItem(
-      IMAGE_CONVERSATIONS_KEY,
-      items.filter((item) => item.id !== id),
-    );
+    await writeStoredImageConversations(items.filter((item) => item.id !== id));
   });
 }
 
 export async function clearImageConversations(): Promise<void> {
   await queueImageConversationWrite(async () => {
+    storeCache = [];
     await imageConversationStorage.removeItem(IMAGE_CONVERSATIONS_KEY);
   });
 }

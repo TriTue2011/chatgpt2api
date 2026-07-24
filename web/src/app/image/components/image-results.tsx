@@ -178,6 +178,8 @@ export function ImageResults({
                               <img
                                 src={image.dataUrl}
                                 alt={image.name || `ảnh tham khảo ${index + 1}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="absolute inset-0 h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]"
                               />
                             </button>
@@ -226,6 +228,8 @@ export function ImageResults({
                               <img
                                 src={imageSrc}
                                 alt={`Generated result ${index + 1}`}
+                                loading="lazy"
+                                decoding="async"
                                 className="block h-full w-full object-cover transition duration-200 group-hover:brightness-90 sm:h-auto sm:object-contain"
                                 onLoad={(event) => {
                                   updateImageDimensions(

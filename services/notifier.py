@@ -68,18 +68,34 @@ def _enabled(key: str, default: bool = True) -> bool:
         return default
 
 
+_ACCOUNT_UPDATE_LOG_KEYS = {
+    "telegram": "account_update_log_notify_telegram",
+    "zalo": "account_update_log_notify_zalo",
+    "zalo_personal": "account_update_log_notify_zalo_personal",
+}
+
+
 def account_log_enabled(channel: str) -> bool:
     """Toggle log tài khoản provider theo kênh."""
     return _enabled(_ACCOUNT_LOG_KEYS.get(channel, "account_log_notify_enabled"), True)
 
 
+def account_update_log_enabled(channel: str) -> bool:
+    """Toggle log cập nhật tài khoản provider theo kênh."""
+    return _enabled(_ACCOUNT_UPDATE_LOG_KEYS.get(channel, "account_update_log_notify_enabled"), False)
+
+
 def classify_notify_category(text: str, category: str = "") -> str:
-    """Chuẩn hóa category: account_log | system | newchat.
+    """Chuẩn hóa category: account_log | account_update | system | newchat.
 
     Caller nên truyền đúng; heuristic chỉ vá khi category trống.
     """
     c = str(category or "").strip().lower()
+    if c in {"account_update", "update_account"}:
+        return "account_update"
     if c in {"account_log", "account", "provider", "log"}:
+        if "Cập nhật tài khoản" in (text or ""):
+            return "account_update"
         return "account_log"
     if c in {"newchat", "new_chat", "new-contact", "contact"}:
         return "newchat"
@@ -90,6 +106,8 @@ def classify_notify_category(text: str, category: str = "") -> str:
     if _NEWCHAT_HINT.search(t):
         return "newchat"
     if _PROVIDER_HINT.search(t):
+        if "Cập nhật tài khoản" in t:
+            return "account_update"
         return "account_log"
     return "system"
 
@@ -99,13 +117,16 @@ def notify_admin(text: str, *, category: str = "") -> None:
 
     category:
       - account_log → 📋 log provider
-      - system / \"\" → 🔔 lỗi & cảnh báo
+      - account_update → 🔄 log cập nhật tài khoản
+      - system / "" → 🔔 lỗi & cảnh báo
       - newchat → 💬 chat/nhóm mới (thread ID)
     """
     cat = classify_notify_category(text, category)
     # Telegram
     if cat == "account_log":
         tg_ok = _enabled("telegram_notify_enabled") and account_log_enabled("telegram")
+    elif cat == "account_update":
+        tg_ok = _enabled("telegram_notify_enabled") and account_update_log_enabled("telegram")
     elif cat == "newchat":
         tg_ok = _enabled("telegram_notify_enabled")  # per-admin 💬 filter trong bot
     else:
@@ -120,6 +141,8 @@ def notify_admin(text: str, *, category: str = "") -> None:
     # Zalo Bot
     if cat == "account_log":
         zl_ok = _enabled("zalo_notify_enabled") and account_log_enabled("zalo")
+    elif cat == "account_update":
+        zl_ok = _enabled("zalo_notify_enabled") and account_update_log_enabled("zalo")
     else:
         zl_ok = _enabled("zalo_notify_enabled")
     if zl_ok:
@@ -129,10 +152,14 @@ def notify_admin(text: str, *, category: str = "") -> None:
         except Exception:
             pass
 
-    # Zalo Cá Nhân — 🔔/📋/💬 chỉ theo từng Admin #N (không chặn bằng cờ kênh
-    # account_log_notify_zalo_personal / zalo_personal_notify_enabled).
-    try:
-        from services.zalo_personal import notify_admin as _zp
-        _zp(text, category=cat)
-    except Exception:
-        pass
+    # Zalo Cá Nhân
+    if cat == "account_update":
+        zp_ok = account_update_log_enabled("zalo_personal")
+    else:
+        zp_ok = True
+    if zp_ok:
+        try:
+            from services.zalo_personal import notify_admin as _zp
+            _zp(text, category=cat)
+        except Exception:
+            pass

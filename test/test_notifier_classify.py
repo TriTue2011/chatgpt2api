@@ -7,6 +7,7 @@ from services.notifier import classify_notify_category
 class ClassifyTests(unittest.TestCase):
     def test_explicit_categories(self) -> None:
         self.assertEqual(classify_notify_category("x", "account_log"), "account_log")
+        self.assertEqual(classify_notify_category("x", "account_update"), "account_update")
         self.assertEqual(classify_notify_category("x", "system"), "system")
         self.assertEqual(classify_notify_category("x", "newchat"), "newchat")
         self.assertEqual(classify_notify_category("x", "provider"), "account_log")
@@ -15,6 +16,12 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(
             classify_notify_category(
                 "📋 Codex: Cập nhật tài khoản provider=codex, email=a@b.com",
+            ),
+            "account_update",
+        )
+        self.assertEqual(
+            classify_notify_category(
+                "📋 Codex: Thêm tài khoản provider=codex, email=a@b.com",
             ),
             "account_log",
         )

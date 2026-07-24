@@ -47,6 +47,7 @@ type AdminEntry = {
   ai_model: string;
   notify_enabled: boolean;
   account_log_enabled: boolean;
+  account_update_log_enabled: boolean;
   newchat_alert_enabled: boolean;
   ha_fastpath: boolean;
   fallback_enabled: boolean;
@@ -65,6 +66,7 @@ function emptyAdmin(partial?: Partial<AdminEntry>): AdminEntry {
   return {
     chat_id: "", name: "", kind: "private", ai_model: "",
     notify_enabled: true, account_log_enabled: true,
+    account_update_log_enabled: false,
     newchat_alert_enabled: true, ha_fastpath: true, fallback_enabled: false,
     emphasis_enabled: true, emphasis_numbers: true,
     emphasis_units: true, emphasis_key_info: true, emphasis_style: "bold",
@@ -98,6 +100,7 @@ function parseAdminEntries(b: any): AdminEntry[] {
       ai_model: String(e.ai_model || "").trim(),
       notify_enabled: e.notify_enabled !== false,
       account_log_enabled: e.account_log_enabled !== false,
+      account_update_log_enabled: Boolean(e.account_update_log_enabled),
       newchat_alert_enabled: e.newchat_alert_enabled !== false,
       // Mặc định bật HA; fallback tắt (bật tay từng admin)
       ha_fastpath: e.ha_fastpath !== false,
@@ -458,7 +461,12 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                       <input type="checkbox" className="size-3.5" checked={a.account_log_enabled}
                         onChange={(e) => patchAdmin(row.id, idx, { account_log_enabled: e.target.checked })} />
-                      📋 Log tài khoản provider (Codex / ChatGPT / Claude / Gemini…)
+                      📋 Log tài khoản provider (Thêm/Xóa/Lỗi/Quota…)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={a.account_update_log_enabled}
+                        onChange={(e) => patchAdmin(row.id, idx, { account_update_log_enabled: e.target.checked })} />
+                      🔄 Log Cập nhật tài khoản (bản ghi token/status định kỳ)
                     </label>
                     <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                       <input type="checkbox" className="size-3.5" checked={a.newchat_alert_enabled}
@@ -1481,7 +1489,12 @@ export function TelegramCloudflareCard() {
                             <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                               <input type="checkbox" className="size-3.5" checked={a.account_log_enabled}
                                 onChange={(e) => patchZalopAdmin(idx, { account_log_enabled: e.target.checked })} />
-                              📋 Log tài khoản provider
+                              📋 Log tài khoản provider (Thêm/Xóa/Lỗi/Quota…)
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                              <input type="checkbox" className="size-3.5" checked={a.account_update_log_enabled}
+                                onChange={(e) => patchZalopAdmin(idx, { account_update_log_enabled: e.target.checked })} />
+                              🔄 Log Cập nhật tài khoản (bản ghi token/status định kỳ)
                             </label>
                             <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                               <input type="checkbox" className="size-3.5" checked={a.newchat_alert_enabled}

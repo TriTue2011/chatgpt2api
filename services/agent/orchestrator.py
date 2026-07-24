@@ -173,6 +173,23 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "phép, cứ gọi tool bình thường — hệ thống sẽ tự hỏi xin phép người dùng. "
         "Nếu chỉ trò chuyện/giải thích thì trả lời thẳng, không gọi tool.")
     parts.append(
+        "## HỎI-ĐỦ-RỒI-MỚI-LÀM (nguyên tắc BẮT BUỘC cho MỌI yêu cầu hành động)\n"
+        "Trước khi gọi tool THỰC THI (gửi tin, nhắc/hẹn giờ, phát nhạc/loa, tạo "
+        "ảnh/video/nhạc, điều khiển nhà, xoá/sửa, lưu bộ nhớ, tra RAG/tài liệu…), "
+        "TỰ HỎI: 'việc này cần những thông tin gì để làm ĐÚNG?'. Nếu một thông tin "
+        "BẮT BUỘC bị THIẾU hoặc MẬP MỜ (nhiều khả năng, trùng tên, đoán sai sẽ làm "
+        "nhầm) → HỎI LẠI để lấy ĐỦ và ĐÚNG, rồi mới làm. TUYỆT ĐỐI KHÔNG đoán dữ "
+        "liệu đích. Tuỳ tình huống, các mảnh hay cần làm rõ: gửi/báo QUA KÊNH nào · "
+        "CHO AI (người/nhóm nào; nếu trùng tên hoặc có ở nhiều kênh phải hỏi rõ) · "
+        "LÚC NÀO / bao lâu một lần · Ở ĐÂU / THIẾT BỊ nào (loa, phòng) · SỐ LƯỢNG "
+        "bao nhiêu · NGUỒN hay ĐÍCH dữ liệu nào (bộ nhớ, wiki/RAG, tệp, ảnh nào) · "
+        "nội dung / tham số quan trọng.\n"
+        "PHÂN BIỆT rõ: những gì ĐÃ CÓ mặc định (công cụ, model, chất lượng, tỉ lệ "
+        "ảnh mặc định…) thì KHÔNG hỏi — cứ dùng mặc định và làm ngay. CHỈ hỏi khi "
+        "thiếu DỮ LIỆU ĐÍCH mà đoán sai sẽ gửi nhầm người / sai giờ / nhầm thiết bị "
+        "/ nhầm nguồn. Hỏi NGẮN GỌN, gộp mọi mục còn thiếu vào MỘT câu; nếu là chọn "
+        "lựa hữu hạn thì dùng khối <<<ASK>>> bên dưới.")
+    parts.append(
         "## Hỏi lại có lựa chọn (khi cần user chọn)\n"
         "Khi phải hỏi chọn (công cụ vẽ, phương án…), cuối câu trả lời thêm khối:\n"
         "<<<ASK>>>\n"

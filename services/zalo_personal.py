@@ -859,11 +859,14 @@ def notify_admin(text: str, category: str = "") -> None:
     except Exception:
         cat = str(category or "system").strip().lower() or "system"
     is_account_log = cat == "account_log"
+    is_account_update = cat == "account_update"
     is_newchat = cat == "newchat"
     seen: set[str] = set()
     raw = c.get("zalo_personal_account_admins")
     if not isinstance(raw, dict) or not raw:
         # Legacy: 1 admin_thread kênh — luôn gửi nếu còn cấu hình (không gate cờ kênh)
+        if is_account_update:
+            return
         th, ttype, send_acc = _admin_for_account("")
         if th:
             try:
@@ -876,9 +879,12 @@ def notify_admin(text: str, category: str = "") -> None:
             continue
         if entry.get("enabled") is False:
             continue
-        # 🔔 / 📋 / 💬 độc lập — tắt 📋 không còn dính 🔔 và ngược lại
+        # 🔔 / 📋 / 🔄 / 💬 độc lập
         if is_newchat:
             if entry.get("newchat_alert_enabled") is False:
+                continue
+        elif is_account_update:
+            if not entry.get("account_update_log_enabled"):
                 continue
         elif is_account_log:
             if entry.get("account_log_enabled") is False:
@@ -897,6 +903,7 @@ def notify_admin(text: str, category: str = "") -> None:
                         "chat_id": x.strip(), "kind": "private",
                         "notify_enabled": True,
                         "account_log_enabled": True,
+                        "account_update_log_enabled": False,
                         "newchat_alert_enabled": True,
                     })
         else:
@@ -907,12 +914,16 @@ def notify_admin(text: str, category: str = "") -> None:
                     "kind": "group" if str(entry.get("admin_thread_type") or "0") in {"1", "group"} else "private",
                     "notify_enabled": True,
                     "account_log_enabled": True,
+                    "account_update_log_enabled": False,
                     "newchat_alert_enabled": True,
                 })
         sent = 0
         for row in rows:
             if is_newchat:
                 if row.get("newchat_alert_enabled") is False:
+                    continue
+            elif is_account_update:
+                if not row.get("account_update_log_enabled"):
                     continue
             elif is_account_log:
                 # 📋: chỉ gửi khi Admin #N bật — False tuyệt đối không gửi

@@ -314,6 +314,27 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
     mode = str(args.get("mode") or "notify").strip().lower()
     if mode not in ("notify", "task"):
         mode = "notify"
+    # ── HỎI-ĐỦ-RỒI-MỚI-LÀM: nếu việc là GỬI TIN cho người/nhóm, resolve danh bạ
+    # NGAY lúc tạo (user còn đó) để hỏi lại khi thiếu/mập mờ — KHÔNG đoán lúc bắn.
+    # Khớp rõ → nhúng chat_id đã resolve vào `text` để lúc bắn gửi trúng đích.
+    send_to = str(args.get("send_to") or "").strip()
+    if mode == "task" and send_to:
+        _pre = _h_send_to_contact(
+            {"to": send_to, "message": text,
+             "platform": str(args.get("send_platform") or "").strip(),
+             "_resolve_only": True}, ctx)
+        if _pre.get("need_clarify"):
+            return {"text": _pre.get("text")
+                    or "Cho em xin rõ người/nhóm nhận (kênh nào, tên gì) ạ, "
+                       "em chưa đặt lịch để tránh gửi nhầm."}
+        _rs = _pre.get("resolved") or []
+        if _rs:
+            _ids = ", ".join(str(x.get("chat_id")) for x in _rs)
+            _nm = ", ".join(str(x.get("chat_name") or x.get("alias") or x.get("chat_id"))
+                            for x in _rs)
+            _pf = _rs[0].get("platform") or ""
+            text = (f"Dùng send_to_contact gửi tới chat_id [{_ids}] "
+                    f"trên kênh {_pf} (tên: {_nm}) nội dung: {text}")
     # structured time args
     in_minutes = args.get("in_minutes")
     every_minutes = args.get("every_minutes")
@@ -1132,15 +1153,22 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     # không khớp nhầm thread_id của kênh khác, không gửi lộn sang kênh khác.
     if not platform:
         platform = _channel_of(ctx)
+    # resolve_only: chỉ TRA + phát hiện mập mờ, KHÔNG gửi. Dùng khi đặt việc
+    # hẹn giờ để hỏi lại NGAY lúc tạo (lúc user còn đó) thay vì đoán lúc bắn.
+    resolve_only = bool(args.get("_resolve_only"))
     if not raw_ref or not message:
-        return {"text": "Cần `to`/`name` (alias) và `message`."}
+        _no = "Cần `to`/`name` (alias) và `message`."
+        return {"need_clarify": True, "text": _no} if resolve_only else {"text": _no}
 
     # "admin"/"tôi"/"mình" → gửi cho chính admin của kênh đang dùng
     if re.fullmatch(r"(admin|quản trị|quan tri|tôi|toi|mình|minh|chính chủ|chinh chu)",
                     raw_ref, re.I):
         rec = _admin_recipient(platform, ctx)
         if not rec:
-            return {"text": "Chưa cấu hình admin cho kênh này (Settings → Admin)."}
+            _no = "Chưa cấu hình admin cho kênh này (Settings → Admin)."
+            return {"need_clarify": True, "text": _no} if resolve_only else {"text": _no}
+        if resolve_only:
+            return {"resolved": [rec], "need_clarify": False, "text": ""}
         ok, desc = _send_one_contact(rec, message)
         return {"text": (f"✅ Đã gửi admin: {desc}" if ok else f"⚠️ {desc}")}
 
@@ -1238,11 +1266,15 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     sent: list[str] = []
     failed: list[str] = []
     ambiguous: list[str] = []
+    resolved: list[dict] = []
     for ref in refs:
         cands = _cands(ref)
         exact = [c for c in cands if c["quality"] == "exact"]
-        # Chắc chắn: đúng MỘT mục khớp chính xác → gửi.
+        # Chắc chắn: đúng MỘT mục khớp chính xác → gửi (hoặc chỉ ghi nhận khi resolve_only).
         if len(exact) == 1:
+            if resolve_only:
+                resolved.append(_rec_of(exact[0]))
+                continue
             ok, desc = _send_one_contact(_rec_of(exact[0]), message)
             (sent if ok else failed).append(desc)
             continue
@@ -1268,6 +1300,18 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         why = " / ".join(reasons) or "chưa đủ chắc chắn"
         opts = "; ".join(_label(c) for c in show[:8])
         ambiguous.append(f"«{ref}» {why} — nói rõ giúp em: {opts}")
+
+    # resolve_only: trả kết quả tra cho caller (vd _h_schedule) tự quyết — hỏi
+    # lại khi mập mờ/thiếu, hay đặt lịch khi đã rõ. KHÔNG gửi gì ở đây.
+    if resolve_only:
+        _bits = ambiguous + failed
+        return {
+            "resolved": resolved,
+            "ambiguous": ambiguous,
+            "failed": failed,
+            "need_clarify": bool(_bits),
+            "text": ("❓ " + "; ".join(_bits)) if _bits else "",
+        }
 
     parts = []
     if sent:
@@ -2156,7 +2200,11 @@ CAPABILITIES: dict[str, Capability] = {
             "Đặt nhắc hẹn, việc định kỳ, xem danh sách hoặc huỷ. "
             "op=create|list|cancel. mode=notify (chỉ nhắc chữ) | task (em tự làm rồi báo). "
             "Thời điểm: when (vd 'sau 30 phút', 'mỗi ngày 7h') hoặc in_minutes / "
-            "every_minutes / every_day_at / at. Huỷ: op=cancel + id (hoặc id=all)."
+            "every_minutes / every_day_at / at. Huỷ: op=cancel + id (hoặc id=all). "
+            "GỬI TIN HẸN GIỜ (vd 'sau 2 phút gửi nhóm A: cả nhà đi ngủ'): "
+            "mode=task + send_to=người/nhóm nhận + text=NỘI DUNG gửi (+send_platform "
+            "nếu nêu rõ kênh). Em tra danh bạ NGAY; nếu thiếu/mập mờ (trùng tên, "
+            "nhiều kênh, chưa lưu) sẽ HỎI LẠI trước khi đặt lịch, TUYỆT ĐỐI không đoán."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "enum": ["create", "list", "cancel"],
@@ -2175,6 +2223,11 @@ CAPABILITIES: dict[str, Capability] = {
                              "description": "Lặp mỗi ngày lúc HH:MM (giờ VN)"},
             "at": {"type": "string",
                    "description": "Mốc tuyệt đối HH:MM hoặc ISO"},
+            "send_to": {"type": "string",
+                        "description": "Khi việc là GỬI TIN: tên/alias người hoặc nhóm nhận "
+                                       "(text = nội dung gửi). Em resolve danh bạ ngay lúc tạo."},
+            "send_platform": {"type": "string", "enum": ["tg", "zalo", "zalop"],
+                              "description": "Kênh gửi nếu người dùng nêu rõ; bỏ trống = kênh hiện tại"},
             "id": {"type": "string",
                    "description": "Mã nhắc khi huỷ (hoặc 'all')"}},
             "required": []},
