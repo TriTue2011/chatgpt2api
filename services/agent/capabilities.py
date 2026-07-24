@@ -1186,7 +1186,18 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     _ap = str(args.get("platform") or "").strip().lower()
     if _ap in ("telegram", "tele"):
         _ap = "tg"
-    explicit_platform = _ap  # kênh người dùng nêu rõ (nếu có)
+
+    # Kiểm tra xem người dùng có THẬT SỰ nêu kênh trong câu nói không
+    # (tránh trường hợp LLM tự đoán platform="zalop" / "zalo" khi người dùng chưa hề nêu kênh trong câu).
+    user_raw = str((ctx or {}).get("user_message") or (ctx or {}).get("prompt") or (ctx or {}).get("text") or "").lower()
+    channel_kw = ("cá nhân", "zalo cá nhân", "zalop", "bot", "zalo bot", "oa", "zalo oa", "telegram", "tele", "tg")
+    user_mentioned_channel = any(kw in user_raw for kw in channel_kw) if user_raw else False
+
+    if _ap and user_raw and not user_mentioned_channel:
+        explicit_platform = ""
+    else:
+        explicit_platform = _ap
+
     search_platforms = [explicit_platform] if explicit_platform else ["tg", "zalo", "zalop"]
     _CH_LABEL = {"tg": "Telegram", "zalo": "Zalo", "zalop": "Zalo cá nhân"}
 
@@ -2426,7 +2437,7 @@ CAPABILITIES: dict[str, Capability] = {
             "message": {"type": "string", "description": "Chỉ nội dung thật, bỏ từ khung 'nội dung/chính/rằng/là'"},
             "bot_id": {"type": "string", "description": "ID hoặc label bot gửi"},
             "via_bot": {"type": "string"},
-            "platform": {"type": "string", "description": "tg | zalo | zalop"}},
+            "platform": {"type": "string", "description": "CHỈ TRUYỀN NẾU người dùng NÊU RÕ kênh trong câu ('cá nhân' -> 'zalop', 'bot' -> 'zalo', 'telegram' -> 'tg'). BỎ TRỐNG NẾU người dùng chưa nêu rõ kênh!"}},
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
