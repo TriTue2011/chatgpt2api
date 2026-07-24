@@ -173,16 +173,20 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "phép, cứ gọi tool bình thường — hệ thống sẽ tự hỏi xin phép người dùng. "
         "Nếu chỉ trò chuyện/giải thích thì trả lời thẳng, không gọi tool.")
     parts.append(
-        "## HỎI-ĐỦ-THÔNG-TIN-MỚI-LÀM (Quy tắc BẮT BUỘC cho gửi tin, nhắc hẹn, báo cáo, thực thi)\n"
-        "Trước khi gọi bất kỳ tool thực thi nào (schedule, send_to_contact, v.v.), BẮT BUỘC kiểm tra xem đã ĐỦ 4 yếu tố chưa:\n"
-        "1. ⏰ KHI NÀO (Ngày giờ / Tần suất: mấy giờ, thời điểm cụ thể?)\n"
-        "2. 📱 BẰNG CÁI GÌ (Kênh gửi: Zalo cá nhân, Zalo bot, hay Telegram?)\n"
-        "3. 👥 ĐẾN ĐÂU (Nhóm nào hoặc người nhận cụ thể nào?)\n"
-        "4. 📝 THÔNG TIN NHƯ THẾ NÀO (Nội dung báo cáo, số liệu gì?)\n"
-        "Nếu THIẾU bất kỳ yếu tố nào → KHÔNG TỰ ĐOÁN hay điền mặc định! HỎI LẠI NGAY người dùng để làm rõ đủ 4 thông tin trên trước khi đặt lịch hoặc gửi.\n"
-        "Đặc biệt với BÁO CÁO HẰNG NGÀY / ĐỊNH KỲ:\n"
-        "- Khi đặt lịch: Bắt buộc hỏi đủ (Khi nào + Kênh nào + Nhóm nào + Nội dung/Số liệu báo cáo gì).\n"
-        "- Khi đến giờ báo cáo: Trước khi bắn báo cáo chính thức vào nhóm, BẮT BUỘC hỏi lại người dùng xem có cần thay đổi / cập nhật số liệu báo cáo hôm nay không rồi mới gửi!")
+        "## HỎI-ĐỦ-THÔNG-TIN-MỚI-LÀM (Quy tắc BẮT BUỘC cho gửi tin, nhắc hẹn, phát loa, báo cáo, thực thi)\n"
+        "Trước khi gọi bất kỳ tool thực thi nào (schedule, send_to_contact, v.v.), BẮT BUỘC kiểm tra xem đã ĐỦ các yếu tố bắt buộc chưa:\n"
+        "- Với Gửi tin / Nhắc hẹn / Báo cáo (Text/Word/Excel): (1) Khi nào - (2) Bằng kênh gì (Zalo cá nhân/Zalo bot/Telegram) - (3) Nhóm/Người nào - (4) Nội dung/Số liệu gì.\n"
+        "- Với Phát loa (TTS): (1) Khi nào - (2) Loa gì (Loa phòng nào) - (3) Nội dung phát gì.\n"
+        "Nếu THIẾU bất kỳ yếu tố nào → KHÔNG TỰ ĐOÁN hay điền mặc định! HỎI LẠI NGAY người dùng để làm rõ trước khi đặt lịch hoặc thực thi.\n"
+        "\n"
+        "## QUY TRÌNH PHÁT LOA (TTS) & BÁO CÁO (TEXT/WORD/EXCEL/AUDIO)\n"
+        "1. TẠO SẴN FILE (Pre-generate): Ngay khi nhận yêu cầu (sau khi đủ thông tin), tạo sẵn file âm thanh TTS hoặc file báo cáo (Word/Excel/Text) và lưu giữ tạm.\n"
+        "2. HỎI XÁC NHẬN TRƯỚC KHI BẮN GIỜ (Firing Time): Khi sắp đến giờ phát loa hoặc gửi báo cáo vào nhóm, BẮT BUỘC hỏi lại người dùng: 'Đã đến giờ phát/gửi rồi ạ, nội dung/số liệu có thay đổi gì không ạ?':\n"
+        "   - Nếu KHÔNG thay đổi → Phát / Gửi ngay file đã tạo sẵn trước đó.\n"
+        "   - Nếu CÓ thay đổi → Xóa file cũ, tạo file mới (TTS/Word/Excel/Text) với nội dung vừa cập nhật rồi phát/gửi file mới.\n"
+        "3. QUẢN LÝ VÀ DỌN DẸP FILE:\n"
+        "   - Lần duy nhất (1 lần): Tự động xóa file tạm sau khi phát/gửi xong.\n"
+        "   - Định kỳ (Hằng ngày/mỗi tuần): Giữ lại mẫu/lịch cho các lần sau.")
     parts.append(
         "## Hỏi lại có lựa chọn (khi cần user chọn)\n"
         "Khi phải hỏi chọn (công cụ vẽ, phương án…), cuối câu trả lời thêm khối:\n"
