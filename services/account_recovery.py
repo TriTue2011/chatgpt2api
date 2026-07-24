@@ -578,6 +578,24 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     budget = _RECOVER_BUDGET_S
     tried: list[str] = []
 
+    # KHÔNG có tầng nào chạy được → bỏ qua im lặng, đừng báo "đang khôi phục…"
+    # rồi "KHÔNG khôi phục được (đã thử: none)". Ca điển hình: acc ChatGPT free
+    # tự thu thập (không phải Gmail, không profile/creds, provider batch=None) —
+    # user không tự add thì cũng không có đường đăng nhập lại để mà refresh.
+    can_google = bool(is_google and reuse and (has_profile or has_creds))
+    can_batch = batch is not None
+    if not (can_google or can_batch):
+        logger.info({
+            "event": "recover_skip_no_tier",
+            "provider": provider,
+            "email": email,
+            "is_google": is_google,
+            "has_profile": has_profile,
+            "has_google_creds": has_creds,
+            "reason": reason[:120],
+        })
+        return
+
     kind = "Google" if is_google else "non-Google (bulk/onboard)"
     det = {"provider": provider, "email": email}
     _notify(f"⚠️ {label} — {email}\nLỗi: {reason}\n→ Đang tự khôi phục ({kind})…",
@@ -701,6 +719,12 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
         _last_attempt[key] = time.time()
 
     if not str(account.get("refresh_token") or "").strip():
+        # Acc tự thu thập (free/bulk): KHÔNG có email → không có đường đăng nhập
+        # lại nào để mà refresh. Báo mỗi lần chỉ là nhiễu → chỉ ghi log.
+        if not str(account.get("email") or "").strip():
+            logger.info({"event": "recovery_skip_anonymous", "provider": group,
+                         "email": email, "reason": reason[:120]})
+            return None
         _notify(f"⚠️ {label} — {email}\nLỗi: {reason}\n"
                 f"→ [T0] Không có refresh_token nên không tự khôi phục được.\n"
                 f"❌ Cần đăng nhập lại thủ công qua noVNC (cổng 6080).",
