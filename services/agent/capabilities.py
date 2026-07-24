@@ -1172,11 +1172,6 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         ok, desc = _send_one_contact(rec, message)
         return {"text": (f"✅ Đã gửi admin: {desc}" if ok else f"⚠️ {desc}")}
 
-    # Nhiều người nhận: "Docker, Calendar, Weather" / "A; B" / "A và B"
-    refs = [x.strip() for x in re.split(r"[,;]|\bvà\b|\band\b", raw_ref) if x.strip()]
-    if not refs:
-        refs = [raw_ref]
-
     # ── Tra danh bạ ĐA KÊNH + phát hiện mập mờ → HỎI LẠI ─────────────────
     # Chỉ gửi khi ra ĐÚNG MỘT thread khớp chính xác. Nếu khớp không dấu /
     # gần giống, tên có ở nhiều kênh, trùng cả nhóm lẫn cá nhân, hoặc nhiều
@@ -1248,6 +1243,16 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
                 seen.add(k)
                 out.append(r)
         return out
+
+    # Ưu tiên kiểm tra cả tên gốc trước (phòng trường hợp tên nhóm có chứa dấu phẩy như "Docker, Calendar, Weather")
+    whole_cands = _cands(raw_ref)
+    if whole_cands:
+        refs = [raw_ref]
+    else:
+        # Nhiều người nhận: tách theo "A, B" / "A; B" / "A và B"
+        refs = [x.strip() for x in re.split(r"[,;]|\bvà\b|\band\b", raw_ref) if x.strip()]
+        if not refs:
+            refs = [raw_ref]
 
     def _rec_of(c: dict) -> dict:
         return {
