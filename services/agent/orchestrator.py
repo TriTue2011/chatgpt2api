@@ -292,8 +292,10 @@ def _classify_reply(text: str) -> Optional[str]:
     return None
 
 
-def _execute(cap: "caps.Capability", args: dict, user_id: str) -> dict:
-    ctx = {"user_id": user_id}
+def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str = "") -> dict:
+    # user_text = câu gốc lượt này → handler cần đối chiếu (vd send_to_contact
+    # kiểm tra người dùng có thật sự nêu kênh không, không tin platform LLM đoán).
+    ctx = {"user_id": user_id, "user_message": user_text}
     risk = str(getattr(cap, "risk", "") or "").lower()
     try:
         raw = cap.handler(args, ctx)
@@ -692,7 +694,7 @@ def orchestrate(user_text: str, user_id: str,
                 _journal(str(out_q.get("text") or q), status="awaiting_approval")
                 return out_q
             else:
-                result = _execute(cap, args, user_id)
+                result = _execute(cap, args, user_id, user_text=user_text)
 
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):

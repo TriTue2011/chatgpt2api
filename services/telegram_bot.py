@@ -673,7 +673,8 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> None:
             return
         if not _voice.tts_ready():
             return
-        wav = _voice.speak(text[:1000])
+        _pk = f"{chat_id}:u{user_id}" if user_id else str(chat_id)
+        wav = _voice.speak_reply(text[:1000], _pk)
         send_audio(chat_id, wav, caption="")
     except Exception as exc:
         logger.warning("tg voice reply loi: %s", str(exc)[:160])

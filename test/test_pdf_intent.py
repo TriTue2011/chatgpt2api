@@ -38,8 +38,10 @@ class CostNoteTests(unittest.TestCase):
 
 class ParseIntentTests(unittest.TestCase):
     def test_basic(self) -> None:
-        self.assertEqual(pi.parse_intent("1"), "rag")
-        self.assertEqual(pi.parse_intent("2"), "word")
+        # Số map theo INTENT_ORDER (rag_knowledge, rag_teacher, word, excel).
+        self.assertEqual(pi.parse_intent("1"), "rag_knowledge")
+        self.assertEqual(pi.parse_intent("2"), "rag_teacher")
+        self.assertEqual(pi.parse_intent("3"), "word")
         self.assertIsNone(pi.parse_intent("xin chào"))
 
 

@@ -109,7 +109,10 @@ class ApprovalGateTests(unittest.TestCase):
         with mock.patch.dict(config.data, {"agent_approval": {
             "enabled": True, "level": "full",
         }}):
-            self.assertFalse(gate.needs_approval("u1", "send_to_contact", risk="change"))
+            # Tool "change" thường (không thuộc _ALWAYS_CONFIRM) → full = không hỏi.
+            self.assertFalse(gate.needs_approval("u1", "control_home", risk="change"))
+            # send_to_contact/create_automation LUÔN hỏi kể cả full (an toàn).
+            self.assertTrue(gate.needs_approval("u1", "send_to_contact", risk="change"))
 
     def test_readonly_blocks(self) -> None:
         with mock.patch.dict(config.data, {"agent_approval": {

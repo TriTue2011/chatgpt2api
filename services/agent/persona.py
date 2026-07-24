@@ -220,6 +220,77 @@ def prompt_for(user_id: str) -> str:
     return str((entry or {}).get("prompt") or "")
 
 
+# ── Giọng TTS theo persona (item: voice tone theo persona) ──────────────────
+# Tông tĩnh gợi ý từ bước 'tone' → style VieNeu (caller vẫn ưu tiên tính chất
+# từng câu qua voice.tone.style_for; đây chỉ là bias khi câu trung tính).
+_TONE_STYLE: dict[str, str] = {
+    "Nghiêm túc": "tin_tuc",
+    "Lịch sự": "tin_tuc",
+    "Dịu dàng": "doc_truyen",
+    "Hài hước": "tu_nhien",
+    "Châm biếm": "tu_nhien",
+    "Thân thiện": "tu_nhien",
+}
+# Preset lưu sel={"preset": tên} nên không có gender có cấu trúc — map sẵn.
+_PRESET_GENDER: dict[str, str] = {
+    "Cô gái miền Tây": "Nữ",
+    "Bà bán cá ngoài chợ": "Nữ",
+    "Cô gái Hà Nội gốc": "Nữ",
+    "Nam thanh niên Hải Phòng": "Nam",
+    "Dân IT trẻ": "Nam",
+    "Cô giáo dịu dàng": "Nữ",
+}
+_FEMALE = {"Nữ", "Bé gái"}
+_MALE = {"Nam", "Bé trai"}
+
+
+def _pick_vieneu_voice(gender: str) -> str:
+    """Chọn 1 giọng VieNeu đã cài theo giới → 'vieneu:<Tên>'. '' nếu không rõ /
+    không có giọng khớp (an toàn: caller rơi về giọng mặc định, không đoán bừa)."""
+    g = str(gender or "").strip()
+    if not g:
+        return ""
+    try:
+        from services.voice import config as vcfg
+        voices = vcfg.vieneu_voices()
+    except Exception:
+        return ""
+    if not voices:
+        return ""
+    female = g in _FEMALE
+    male = g in _MALE
+    for v in voices:
+        vg = str(v.get("gender") or "").strip().lower()
+        is_f = vg.startswith("f") or vg.startswith("w") or "nữ" in vg or vg.startswith("nu")
+        is_m = (not is_f) and (vg.startswith("m") or "nam" in vg)
+        if (female and is_f) or (male and is_m):
+            return f"{vcfg.VIENEU_PREFIX}{v.get('name')}"
+    return ""
+
+
+def voice_for(user_id: str) -> dict:
+    """Giọng + tông tĩnh cho TTS theo persona của PHIÊN.
+
+    Trả {'voice': 'vieneu:<Tên>'|'', 'style': ''|'tin_tuc'|'doc_truyen'|'tu_nhien'}.
+    Fallback key cấp nhóm giống prompt_for. Không có persona → {'', ''}.
+    """
+    key = str(user_id)
+    with _LOCK:
+        data = _load()
+    entry = data.get(key)
+    if entry is None and ":u" in key:
+        entry = data.get(key.split(":u", 1)[0])
+    sel = (entry or {}).get("sel") or {}
+    if not isinstance(sel, dict):
+        sel = {}
+    gender = str(sel.get("gender") or "")
+    if not gender and sel.get("preset"):
+        gender = _PRESET_GENDER.get(str(sel.get("preset")), "")
+    tone = str(sel.get("tone") or "")
+    return {"voice": _pick_vieneu_voice(gender),
+            "style": _TONE_STYLE.get(tone, "")}
+
+
 def list_all() -> list[dict]:
     """Toàn bộ persona đã cài (cho Web UI quản lý)."""
     with _LOCK:

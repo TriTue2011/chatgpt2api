@@ -1188,10 +1188,17 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         _ap = "tg"
 
     # Kiểm tra xem người dùng có THẬT SỰ nêu kênh trong câu nói không
-    # (tránh trường hợp LLM tự đoán platform="zalop" / "zalo" khi người dùng chưa hề nêu kênh trong câu).
-    user_raw = str((ctx or {}).get("user_message") or (ctx or {}).get("prompt") or (ctx or {}).get("text") or "").lower()
-    channel_kw = ("cá nhân", "zalo cá nhân", "zalop", "bot", "zalo bot", "oa", "zalo oa", "telegram", "tele", "tg")
-    user_mentioned_channel = any(kw in user_raw for kw in channel_kw) if user_raw else False
+    # (tránh LLM tự đoán platform="zalop"/"zalo" khi người dùng chưa hề nêu kênh).
+    # ctx["user_message"] do orchestrator._execute bơm vào (câu gốc lượt này).
+    user_raw = str((ctx or {}).get("user_message") or "").lower()
+    # Cụm dài/an toàn khớp trực tiếp; token ngắn khớp theo RANH GIỚI TỪ để tránh
+    # dương tính giả ('oa' trong 'hoa/khoản/ngoài', 'bot' trong 'robot', 'tg'…).
+    _CH_PHRASES = ("cá nhân", "zalo cá nhân", "zalo bot", "zalo oa")
+    _CH_WORDS = ("zalop", "zalo", "telegram", "tele", "tg", "bot", "oa")
+    user_mentioned_channel = bool(user_raw) and (
+        any(p in user_raw for p in _CH_PHRASES)
+        or re.search(r"\b(" + "|".join(_CH_WORDS) + r")\b", user_raw) is not None
+    )
 
     if _ap and user_raw and not user_mentioned_channel:
         explicit_platform = ""
@@ -1396,6 +1403,38 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
 
 def _ha_model() -> str:
     return str(config.get().get("telegram_ai_model") or "").strip() or "cx/auto"
+
+
+def _h_send_voice(args: dict, ctx: dict) -> dict:
+    """Tạo FILE âm thanh TTS từ text rồi GỬI VÀO CHAT hiện tại (Zalo cá nhân /
+    Telegram / Zalo bot 1-1) — KHÁC với phát ra loa trong nhà.
+
+    Giọng theo persona của phiên + tông theo tính chất câu (voice.speak_reply).
+    Ghi WAV vào images_dir/voice/ để mọi kênh gửi được (Telegram đọc bytes trực
+    tiếp; Zalo map path → /images/… served URL).
+    """
+    from services import voice as _voice
+    text = str(args.get("text") or args.get("message") or args.get("content") or "").strip()
+    if not text:
+        return {"text": "Anh/chị muốn em đọc nội dung gì thành file âm thanh ạ?"}
+    if not _voice.tts_ready():
+        return {"text": "Hiện TTS đang tắt nên em chưa tạo được file âm thanh ạ 😢"}
+    uid = str((ctx or {}).get("user_id") or "")
+    try:
+        wav = _voice.speak_reply(text[:1200], uid)
+    except Exception as exc:
+        return {"text": f"Em tạo giọng nói bị lỗi: {str(exc)[:140]}"}
+    try:
+        import uuid
+        from pathlib import Path
+        from services.config import config as _cfg
+        out_dir = Path(_cfg.images_dir) / "voice"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"tts_{uuid.uuid4().hex[:10]}.wav"
+        path.write_bytes(wav)
+    except Exception as exc:
+        return {"text": f"Em lưu file âm thanh bị lỗi: {str(exc)[:140]}"}
+    return {"text": "File âm thanh của anh/chị đây ạ 🎧", "audio_path": str(path)}
 
 
 def _speaker_scope(ctx: dict) -> tuple[str, str]:
@@ -2091,6 +2130,21 @@ CAPABILITIES: dict[str, Capability] = {
         parameters={"type": "object", "properties": {
             "task": {"type": "string", "description": "Yêu cầu code chi tiết"}},
             "required": ["task"]}),
+    "send_voice_message": Capability(
+        name="send_voice_message", risk=READ, handler=_h_send_voice,
+        emoji="🎧", label="Gửi file âm thanh (TTS)",
+        description=(
+            "Tạo FILE ÂM THANH (TTS) từ một đoạn text rồi GỬI VÀO CHAT hiện tại "
+            "(Zalo cá nhân / Telegram / Zalo bot 1-1). ĐÂY KHÁC 'phát ra loa': "
+            "dùng khi người dùng muốn 'gửi file âm thanh', 'đọc câu này thành file', "
+            "'gửi voice/thu âm giúp', 'ghi âm câu …'. Giọng tự theo persona phiên, "
+            "tông theo tính chất câu. KHÔNG dùng khi họ muốn phát ra loa trong nhà "
+            "(dùng speak_to_speaker) hay gửi cho NGƯỜI KHÁC (dùng send_to_contact)."
+        ),
+        parameters={"type": "object", "properties": {
+            "text": {"type": "string",
+                      "description": "Nội dung cần đọc thành file âm thanh gửi vào chat"}},
+            "required": ["text"]}),
     "speak_to_speaker": Capability(
         name="speak_to_speaker", risk=CHANGE, handler=_h_speak_to_speaker,
         emoji="🔊", label="Phát tiếng ra loa trong nhà",
@@ -2724,7 +2778,7 @@ _CAP_GROUP: dict[str, str] = {
 # mở được bản đầy đủ của output đã nén ở mọi thread (marker ⟦tc:…⟧ xuất hiện
 # không phụ thuộc quyền nhóm). Schema, chốt chặn dispatch, và persona_list
 # đều tôn trọng set này (không lệch nhau).
-_CORE_TOOLS = frozenset({"expand_tool_result"})
+_CORE_TOOLS = frozenset({"expand_tool_result", "send_voice_message"})
 
 
 def group_of(name: str) -> str:

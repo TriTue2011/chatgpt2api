@@ -231,9 +231,14 @@ def _vieneu_voice_name(voice: str) -> str:
         if voice.startswith(vcfg.VIENEU_PREFIX) else ""
 
 
-def _vieneu_kwargs(voice: str) -> dict:
+# VieNeu v3 Turbo chỉ nhận đúng 3 style; ngoài danh sách → rơi về config.
+VIENEU_STYLES = {"tu_nhien", "tin_tuc", "doc_truyen"}
+
+
+def _vieneu_kwargs(voice: str, style: str = "") -> dict:
+    st = style if style in VIENEU_STYLES else vcfg.vieneu_style()
     kwargs: dict = {
-        "style": vcfg.vieneu_style(),
+        "style": st,
         "apply_watermark": False,
         "max_chars": vcfg.vieneu_max_chars(),
     }
@@ -249,10 +254,10 @@ def _float_to_pcm16(audio) -> bytes:
             * 32767.0).astype("<i2").tobytes()
 
 
-def _vieneu_tts(text: str, voice: str) -> bytes:
+def _vieneu_tts(text: str, voice: str, style: str = "") -> bytes:
     """Giọng "vieneu:<Tên>" → WAV 48 kHz. Tên rỗng = giọng mặc định của model."""
     eng = _get_vieneu()
-    kwargs = _vieneu_kwargs(voice)
+    kwargs = _vieneu_kwargs(voice, style)
     # Khoá tuần tự: 2 câu cùng lúc trên CPU chỉ giành cache/nhân của nhau.
     with _vieneu_lock:
         audio = eng.infer(text, **kwargs)     # np.float32 mono @ 48 kHz
@@ -349,11 +354,12 @@ def _backend_order(backend: str) -> list[str]:
     return ["local", "wyoming"]
 
 
-def synthesize(text: str, voice: str = "") -> bytes:
+def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     """Text → WAV bytes. Ném VoiceError nếu không có đường nào chạy được.
 
     Giọng namespaced ("vieneu:<Tên>") đi thẳng engine tương ứng; lỗi thì rơi
     xuống Piper/Wyoming với giọng mặc định để trợ lý không bao giờ "câm".
+    `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu; engine khác bỏ qua.
     """
     text = (text or "").strip()
     if not text:
@@ -365,7 +371,7 @@ def synthesize(text: str, voice: str = "") -> bytes:
     v = (voice or vcfg.tts_voice()).strip()
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
-            return _vieneu_tts(text, v)
+            return _vieneu_tts(text, v, style)
         except Exception as exc:
             errors.append(f"vieneu: {str(exc)[:120]}")
             logger.warning("voice: TTS vieneu that bai: %s", str(exc)[:160])
@@ -438,13 +444,13 @@ def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
     return merged
 
 
-def _vieneu_stream(text: str, voice: str):
+def _vieneu_stream(text: str, voice: str, style: str = ""):
     """Frame-level: yield (48000, pcm16) từng khối np.float32 do infer_stream trả.
 
     max_chars nhỏ (config, mặc định 128) → prefill ngắn hơn câu đầu → TTFA thấp.
     """
     eng = _get_vieneu()
-    kwargs = _vieneu_kwargs(voice)
+    kwargs = _vieneu_kwargs(voice, style)
     # Giữ khoá suốt stream: session ONNX tuần tự; tránh 2 request giành graph.
     with _vieneu_lock:
         for chunk in eng.infer_stream(text, **kwargs):
@@ -575,11 +581,12 @@ def warmup_tts(voice: str = "") -> dict:
         return {"ok": False, "engine": "", "ms": ms, "detail": str(exc)[:160]}
 
 
-def stream_synthesize(text: str, voice: str = ""):
+def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó.
 
     VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó).
     Không bao giờ ném giữa chừng cho lỗi 1 câu: bỏ qua câu lỗi, đọc tiếp.
+    `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu.
     """
     text = (text or "").strip()
     if not text:
@@ -591,7 +598,7 @@ def stream_synthesize(text: str, voice: str = ""):
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
             yielded = False
-            for item in _vieneu_stream(text, v):
+            for item in _vieneu_stream(text, v, style):
                 yielded = True
                 yield item
             if yielded:
@@ -605,7 +612,7 @@ def stream_synthesize(text: str, voice: str = ""):
     errors: list[str] = []
     for sent in _split_sentences(text):
         try:
-            wav = synthesize(sent, v)
+            wav = synthesize(sent, v, style=style)
             rate, width, _channels, pcm = _wav_parts(wav)
             if width == 2 and pcm:
                 yield (rate, pcm)

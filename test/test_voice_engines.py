@@ -119,7 +119,7 @@ class StreamSynthesizeTests(unittest.TestCase):
         # Piper/Kokoro: mỗi câu gọi synthesize() 1 lần, yield (rate, pcm).
         calls: list[str] = []
 
-        def fake_synth(sent: str, v: str = "") -> bytes:
+        def fake_synth(sent: str, v: str = "", *, style: str = "") -> bytes:
             calls.append(sent)
             return _wav16(50)
 
@@ -133,7 +133,7 @@ class StreamSynthesizeTests(unittest.TestCase):
         self.assertTrue(all(r == 16000 and isinstance(p, bytes) for r, p in out))
 
     def test_vieneu_uses_frame_stream(self) -> None:
-        def fake_stream(text: str, v: str):
+        def fake_stream(text: str, v: str, style: str = ""):
             yield (48000, b"\x00\x00" * 100)
             yield (48000, b"\x01\x00" * 100)
 

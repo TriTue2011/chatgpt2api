@@ -836,7 +836,8 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str, *, is_group: bool
             return
         if not _voice.tts_ready():
             return
-        wav = _voice.speak(text[:1000])
+        _pk = f"zalo_{chat_id}:u{user_id}" if user_id else f"zalo_{chat_id}"
+        wav = _voice.speak_reply(text[:1000], _pk)
         aac_url = _wav_to_aac_public_url(wav)
         if not aac_url:
             logger.warning("zalo voice reply: không tạo được URL .aac (base_url?)")

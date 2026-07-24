@@ -45,6 +45,17 @@ const getVideoCreditCost = (modelId: string, count: number): number => {
   return c * 15;
 };
 
+// Số video tối đa mỗi request THEO ĐÚNG backend hỗ trợ (tránh multiplier ảo):
+// - Agnes: mỗi request tạo 1 video (engine async single-shot) → 1x.
+// - Flow/Veo: solver nhận count → tối đa 4.
+// - Custom/khác: an toàn 1 (chưa rõ khả năng batch).
+const getVideoMaxCount = (modelId: string): number => {
+  const mid = String(modelId || "").toLowerCase();
+  if (mid.includes("agnes")) return 1;
+  if (mid.includes("flow/")) return 4;
+  return 1;
+};
+
 const getModelConfig = (modelId: string) => {
   const mid = String(modelId || "").toLowerCase();
   
@@ -236,14 +247,14 @@ export default function VideoPage() {
   
   const [videoModels, setVideoModels] = useState<VideoModel[]>(DEFAULT_VIDEO_MODELS);
   const [generating, setGenerating] = useState(false);
-  const [resultVideoUrl, setResultVideoUrl] = useState<string | null>(null);
-  const [resultB64, setResultB64] = useState<string | null>(null);
+  const [resultClips, setResultClips] = useState<Array<{ url?: string; b64?: string }>>([]);
   const [error, setError] = useState("");
 
   const isAgnesModel = model.toLowerCase().includes("agnes");
   const modelConfig = useMemo(() => getModelConfig(model), [model]);
+  const maxCount = useMemo(() => getVideoMaxCount(model), [model]);
 
-  // Sync duration, resolution, fps when model changes if current selection is not available
+  // Đồng bộ tham số khi ĐỔI model: lựa chọn không hợp lệ → về mặc định của model.
   useEffect(() => {
     if (!modelConfig.durations.some((d) => d.value === duration)) {
       setDuration(modelConfig.durations[0]?.value || "5");
@@ -254,7 +265,13 @@ export default function VideoPage() {
     if (!modelConfig.fps.some((f) => f.value === fps)) {
       setFps(modelConfig.fps[0]?.value || "24");
     }
-  }, [model, modelConfig]);
+    if (!modelConfig.aspectRatios.some((a) => a.value === aspectRatio)) {
+      setAspectRatio(modelConfig.aspectRatios[0]?.value || "16:9");
+    }
+    if (parseInt(count || "1", 10) > maxCount) {
+      setCount(String(maxCount));
+    }
+  }, [model, modelConfig, maxCount]);
 
   useEffect(() => {
     async function loadModels() {
@@ -319,8 +336,7 @@ export default function VideoPage() {
     }
     setGenerating(true);
     setError("");
-    setResultB64(null);
-    setResultVideoUrl(null);
+    setResultClips([]);
 
     try {
       const payload: Record<string, any> = {
@@ -352,13 +368,13 @@ export default function VideoPage() {
       const resp = await request.post("/v1/video/generations", payload);
       const data = resp.data as any;
       
-      const firstItem = data?.data?.[0];
-      if (firstItem?.b64_json) {
-        setResultB64(firstItem.b64_json);
-        toast.success("Đã tạo video thành công!");
-      } else if (firstItem?.url) {
-        setResultVideoUrl(firstItem.url);
-        toast.success("Đã tạo video thành công!");
+      const items = Array.isArray(data?.data) ? data.data : [];
+      const clips = items
+        .filter((it: any) => it?.url || it?.b64_json)
+        .map((it: any) => ({ url: it.url as string | undefined, b64: it.b64_json as string | undefined }));
+      if (clips.length) {
+        setResultClips(clips);
+        toast.success(clips.length > 1 ? `Đã tạo ${clips.length} video thành công!` : "Đã tạo video thành công!");
       } else if (data?.detail?.error || data?.error) {
         const errStr = data?.detail?.error || data?.error;
         setError(errStr);
@@ -375,8 +391,7 @@ export default function VideoPage() {
     }
   };
 
-  const handleDownload = () => {
-    const src = resultVideoUrl || (resultB64 ? `data:video/mp4;base64,${resultB64}` : null);
+  const handleDownload = (src: string) => {
     if (!src) return;
     const a = document.createElement("a");
     a.href = src;
@@ -546,12 +561,16 @@ export default function VideoPage() {
                 <select
                   value={count}
                   onChange={(e) => setCount(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium"
+                  disabled={maxCount <= 1}
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium disabled:opacity-60"
                 >
-                  <option value="1">1x (1 video - {getVideoCreditCost(model, 1)} CR)</option>
-                  <option value="2">x2 (2 video - {getVideoCreditCost(model, 2)} CR)</option>
-                  <option value="3">x3 (3 video - {getVideoCreditCost(model, 3)} CR)</option>
-                  <option value="4">x4 (4 video - {getVideoCreditCost(model, 4)} CR)</option>
+                  {Array.from({ length: maxCount }, (_, i) => i + 1).map((c) => (
+                    <option key={c} value={String(c)}>
+                      {c === 1
+                        ? `1x (1 video - ${getVideoCreditCost(model, 1)} CR)`
+                        : `x${c} (${c} video - ${getVideoCreditCost(model, c)} CR)`}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -659,23 +678,32 @@ export default function VideoPage() {
                   </p>
                 </div>
               </div>
-            ) : resultVideoUrl || resultB64 ? (
-              <div className="flex w-full flex-col items-center gap-4">
-                <div className="w-full overflow-hidden rounded-xl border border-[var(--border)] bg-black shadow-2xl">
-                  <video
-                    src={resultVideoUrl || `data:video/mp4;base64,${resultB64}`}
-                    controls
-                    autoPlay
-                    loop
-                    className="w-full max-h-[460px] object-contain mx-auto"
-                  />
-                </div>
-                <Button
-                  className="w-full h-11 rounded-xl bg-violet-600 text-white font-medium hover:bg-violet-700 shadow-md"
-                  onClick={handleDownload}
-                >
-                  <Download className="size-4 mr-2" /> Tải Video MP4
-                </Button>
+            ) : resultClips.length > 0 ? (
+              <div className="flex w-full flex-col gap-5">
+                {resultClips.map((clip, i) => {
+                  const src = clip.url || (clip.b64 ? `data:video/mp4;base64,${clip.b64}` : "");
+                  if (!src) return null;
+                  return (
+                    <div key={i} className="flex w-full flex-col items-center gap-3">
+                      <div className="w-full overflow-hidden rounded-xl border border-[var(--border)] bg-black shadow-2xl">
+                        <video
+                          src={src}
+                          controls
+                          autoPlay={i === 0}
+                          loop
+                          className="w-full max-h-[460px] object-contain mx-auto"
+                        />
+                      </div>
+                      <Button
+                        className="w-full h-11 rounded-xl bg-violet-600 text-white font-medium hover:bg-violet-700 shadow-md"
+                        onClick={() => handleDownload(src)}
+                      >
+                        <Download className="size-4 mr-2" /> Tải Video MP4
+                        {resultClips.length > 1 ? ` #${i + 1}` : ""}
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             ) : error ? (
               <div className="text-center space-y-3 p-4">

@@ -30,9 +30,9 @@ from services.voice.engines import (
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "VoiceError", "speak", "speak_stream", "listen", "save_media", "media_url",
-    "play_on", "play_text_on", "cleanup_media", "status", "warmup_tts",
-    "tts_ready", "stt_ready",
+    "VoiceError", "speak", "speak_stream", "speak_reply", "listen",
+    "save_media", "media_url", "play_on", "play_text_on", "cleanup_media",
+    "status", "warmup_tts", "tts_ready", "stt_ready",
 ]
 
 
@@ -50,8 +50,12 @@ def status() -> dict[str, Any]:
     return st
 
 
-def speak(text: str, voice_name: str = "", *, session_id: str = "", subject: str = "") -> bytes:
-    """Text → WAV bytes (ném VoiceError nếu chưa sẵn sàng)."""
+def speak(text: str, voice_name: str = "", *, style: str = "",
+          session_id: str = "", subject: str = "") -> bytes:
+    """Text → WAV bytes (ném VoiceError nếu chưa sẵn sàng).
+
+    `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với giọng VieNeu.
+    """
     if not voice_name:
         if subject:
             from services.agent import teacher
@@ -59,10 +63,11 @@ def speak(text: str, voice_name: str = "", *, session_id: str = "", subject: str
         elif session_id:
             from services.voice import session_voice
             voice_name = session_voice.get_tts_voice_for_session(session_id)
-    return synthesize(text, voice_name)
+    return synthesize(text, voice_name, style=style)
 
 
-def speak_stream(text: str, voice_name: str = "", *, session_id: str = "", subject: str = ""):
+def speak_stream(text: str, voice_name: str = "", *, style: str = "",
+                 session_id: str = "", subject: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó."""
     if not voice_name:
         if subject:
@@ -71,7 +76,36 @@ def speak_stream(text: str, voice_name: str = "", *, session_id: str = "", subje
         elif session_id:
             from services.voice import session_voice
             voice_name = session_voice.get_tts_voice_for_session(session_id)
-    return stream_synthesize(text, voice_name)
+    return stream_synthesize(text, voice_name, style=style)
+
+
+def speak_reply(text: str, persona_key: str = "", *, voice_name: str = "",
+                style: str = "") -> bytes:
+    """TTS cho câu TRẢ LỜI của bot: tự chọn giọng theo persona của phiên +
+    style theo TÍNH CHẤT câu (đùa/nghiêm túc/an ủi) — 0 token model.
+
+    - persona_key: key phiên (giống key persona/orchestrator) để tra giọng+tông.
+    - voice_name/style: ép tay (bỏ qua persona) nếu truyền vào.
+    Lỗi tra persona không làm hỏng TTS — rơi về giọng/style mặc định.
+    """
+    v = voice_name
+    base_style = ""
+    if persona_key and not (voice_name and style):
+        try:
+            from services.agent import persona as _persona
+            pv = _persona.voice_for(persona_key) or {}
+            v = voice_name or str(pv.get("voice") or "")
+            base_style = str(pv.get("style") or "")
+        except Exception:
+            pass
+    st = style
+    if not st:
+        try:
+            from services.voice import tone as _tone
+            st = _tone.style_for(text, base_style)
+        except Exception:
+            st = base_style
+    return speak(text, v, style=st)
 
 
 def listen(audio: bytes, src_hint: str = "", lang: str = "", *, session_id: str = "", subject: str = "") -> str:
