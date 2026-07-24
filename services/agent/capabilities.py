@@ -1032,9 +1032,34 @@ def _h_contacts(args: dict, ctx: dict) -> dict:
     return {"text": "\n".join(lines)}
 
 
-def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
-    """Gửi 1 tin tới 1 contact đã resolve. Trả (ok, mô tả kết quả)."""
-    from services import channel_contacts as cc
+def _fetch_media_bytes(url: str) -> bytes | None:
+    """Tải media về BYTES — Telegram send_photo/send_audio nhận bytes, KHÔNG nhận URL."""
+    u = str(url or "").strip()
+    if not u:
+        return None
+    try:
+        from pathlib import Path
+        p = Path(u)
+        if p.is_file():
+            return p.read_bytes()
+    except Exception:
+        pass
+    try:
+        from services import net_guard
+        return net_guard.fetch_media(u, timeout=120)
+    except Exception:
+        return None
+
+
+def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None,
+                      audio_path: str = "", image_url: str = "") -> tuple[bool, str]:
+    """Gửi 1 tin tới 1 contact đã resolve. Trả (ok, mô tả kết quả).
+
+    Media tuỳ chọn (ưu tiên thoại → ảnh → chữ). Mỗi kênh nhận kiểu khác nhau:
+      - Telegram: send_audio/send_photo nhận BYTES (ảnh URL phải tải về trước).
+      - Zalo cá nhân: gửi FILE theo path (_media_fetch_candidates map → /images/…).
+      - Zalo bot: thoại cần .aac URL và CHỈ gửi được 1-1 (nhóm không hỗ trợ).
+    """
     plat = rec.get("platform") or "tg"
     bid = str(rec.get("bot_id") or "")
     chat = str(rec.get("chat_id") or "")
@@ -1042,6 +1067,8 @@ def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
              or rec.get("display_name") or chat)
     if not chat:
         return False, f"«{title}» thiếu chat_id"
+    is_group = str(rec.get("kind") or "") == "group"
+    cap = (message or "")[:1000]
     try:
         if plat == "tg":
             from services import telegram_bot as tg
@@ -1051,7 +1078,15 @@ def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
             prev = tg._cur_bot()
             try:
                 tg._current.bot = bot
-                r = tg.send_message(chat, message)
+                if audio_wav:
+                    r = tg.send_audio(chat, audio_wav, caption=cap)
+                elif image_url:
+                    img = _fetch_media_bytes(image_url)
+                    if not img:
+                        return False, f"«{title}» tải ảnh không được"
+                    r = tg.send_photo(chat, img, caption=cap)
+                else:
+                    r = tg.send_message(chat, message)
             finally:
                 tg._current.bot = prev
             return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
@@ -1069,7 +1104,17 @@ def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
             prev = zb._cur_bot()
             try:
                 zb._current.bot = bot
-                r = zb.send_message(chat, message)
+                if audio_wav:
+                    if is_group:
+                        return False, (f"«{title}» Zalo bot chỉ gửi thoại 1-1, "
+                                       "nhóm thì API không hỗ trợ")
+                    aac = zb._wav_to_aac_public_url(audio_wav)
+                    r = (zb.send_voice(chat, aac) if aac
+                         else {"ok": False, "error": "không tạo được .aac"})
+                elif image_url:
+                    r = zb.send_photo(chat, image_url, caption=cap)
+                else:
+                    r = zb.send_message(chat, message)
             finally:
                 zb._current.bot = prev
             return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
@@ -1077,7 +1122,13 @@ def _send_one_contact(rec: dict, message: str) -> tuple[bool, str]:
         if plat == "zalop":
             # Zalo Cá nhân: gửi bằng chính account (bot_id=ownId), nhóm→type 1
             from services import zalo_personal as zp
-            ttype = 1 if rec.get("kind") == "group" else 0
+            ttype = 1 if is_group else 0
+            if audio_path:
+                ok = zp._send_file_robust(chat, audio_path, cap[:200], ttype, account=bid)
+                return (ok, f"«{title}»" if ok else f"«{title}» gửi file thoại lỗi")
+            if image_url:
+                ok = zp._send_photo_robust(chat, image_url, cap[:200], ttype, account=bid)
+                return (ok, f"«{title}»" if ok else f"«{title}» gửi ảnh lỗi")
             r = zp.send_message(chat, message, ttype, account=bid)
             return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
                     else f"«{title}» lỗi: {r.get('error') or r}")
@@ -1160,6 +1211,31 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         _no = "Cần `to`/`name` (alias) và `message`."
         return {"need_clarify": True, "text": _no} if resolve_only else {"text": _no}
 
+    # Media kèm theo (thoại TTS / ảnh) — tạo MỘT lần, dùng cho MỌI người nhận.
+    want_voice = bool(args.get("voice") or args.get("as_voice") or args.get("send_voice"))
+    img_url = str(args.get("image_url") or args.get("image") or "").strip()
+    media_kw: dict = {}
+    if not resolve_only:
+        if want_voice:
+            try:
+                from services import voice as _voice
+                if not _voice.tts_ready():
+                    return {"text": "TTS đang tắt nên em chưa tạo được file âm thanh ạ 😢"}
+                import uuid
+                from pathlib import Path
+                from services.config import config as _cfg
+                _wav = _voice.speak_reply(message[:1200],
+                                          str((ctx or {}).get("user_id") or ""))
+                _dir = Path(_cfg.images_dir) / "voice"
+                _dir.mkdir(parents=True, exist_ok=True)
+                _p = _dir / f"tts_{uuid.uuid4().hex[:10]}.wav"
+                _p.write_bytes(_wav)
+                media_kw = {"audio_wav": _wav, "audio_path": str(_p)}
+            except Exception as exc:
+                return {"text": f"Em tạo file âm thanh lỗi: {str(exc)[:140]}"}
+        elif img_url:
+            media_kw = {"image_url": img_url}
+
     # "admin"/"tôi"/"mình" → gửi cho chính admin của kênh đang dùng
     if re.fullmatch(r"(admin|quản trị|quan tri|tôi|toi|mình|minh|chính chủ|chinh chu)",
                     raw_ref, re.I):
@@ -1169,7 +1245,7 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
             return {"need_clarify": True, "text": _no} if resolve_only else {"text": _no}
         if resolve_only:
             return {"resolved": [rec], "need_clarify": False, "text": ""}
-        ok, desc = _send_one_contact(rec, message)
+        ok, desc = _send_one_contact(rec, message, **media_kw)
         return {"text": (f"✅ Đã gửi admin: {desc}" if ok else f"⚠️ {desc}")}
 
     # ── Tra danh bạ ĐA KÊNH + phát hiện mập mờ → HỎI LẠI ─────────────────
@@ -1308,7 +1384,7 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
             if resolve_only:
                 resolved.append(_rec_of(exact[0]))
                 continue
-            ok, desc = _send_one_contact(_rec_of(exact[0]), message)
+            ok, desc = _send_one_contact(_rec_of(exact[0]), message, **media_kw)
             (sent if ok else failed).append(desc)
             continue
         if not cands:
@@ -2475,7 +2551,12 @@ CAPABILITIES: dict[str, Capability] = {
             "QUAN TRỌNG: message CHỈ chứa nội dung thật cần gửi — BỎ các từ khung như "
             "'nội dung', 'nội dung chính', 'với nội dung', 'rằng', 'là', 'nhắn'. Ví dụ: "
             "'nhắn nhóm X với nội dung chính mọi người đi ngủ thôi' → message='mọi người đi ngủ thôi' "
-            "(KHÔNG gồm chữ 'chính')."
+            "(KHÔNG gồm chữ 'chính'). "
+            "GỬI FILE ÂM THANH cho NGƯỜI/NHÓM KHÁC: đặt voice=true, message=lời cần đọc "
+            "(vd 'gửi âm thanh xin chào vào nhóm Docker bằng zalo cá nhân' → "
+            "to='Docker', message='xin chào', platform='zalop', voice=true). "
+            "GỬI ẢNH: image_url=link/đường dẫn ảnh, message=chú thích. "
+            "Chỉ dùng send_voice_message khi gửi âm thanh vào CHÍNH chat đang nói."
         ),
         workflow=(
             "Khi gửi tin nhắn: BẮT BUỘC kiểm tra rõ 3 yếu tố: "
@@ -2491,7 +2572,9 @@ CAPABILITIES: dict[str, Capability] = {
             "message": {"type": "string", "description": "Chỉ nội dung thật, bỏ từ khung 'nội dung/chính/rằng/là'"},
             "bot_id": {"type": "string", "description": "ID hoặc label bot gửi"},
             "via_bot": {"type": "string"},
-            "platform": {"type": "string", "description": "CHỈ TRUYỀN NẾU người dùng NÊU RÕ kênh trong câu ('cá nhân' -> 'zalop', 'bot' -> 'zalo', 'telegram' -> 'tg'). BỎ TRỐNG NẾU người dùng chưa nêu rõ kênh!"}},
+            "platform": {"type": "string", "description": "CHỈ TRUYỀN NẾU người dùng NÊU RÕ kênh trong câu ('cá nhân' -> 'zalop', 'bot' -> 'zalo', 'telegram' -> 'tg'). BỎ TRỐNG NẾU người dùng chưa nêu rõ kênh!"},
+            "voice": {"type": "boolean", "description": "true = đọc `message` thành FILE ÂM THANH (TTS) rồi gửi cho người/nhóm đó thay vì gửi chữ"},
+            "image_url": {"type": "string", "description": "Link/đường dẫn ảnh cần gửi cho người/nhóm đó (message = chú thích)"}},
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
