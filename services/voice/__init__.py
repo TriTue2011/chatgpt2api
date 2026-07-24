@@ -79,18 +79,31 @@ def speak_stream(text: str, voice_name: str = "", *, style: str = "",
     return stream_synthesize(text, voice_name, style=style)
 
 
-def speak_reply(text: str, persona_key: str = "", *, voice_name: str = "",
-                style: str = "") -> bytes:
-    """TTS cho câu TRẢ LỜI của bot: tự chọn giọng theo persona của phiên +
-    style theo TÍNH CHẤT câu (đùa/nghiêm túc/an ủi) — 0 token model.
+def speak_reply(text: str, persona_key: str = "", *, session_id: str = "",
+                voice_name: str = "", style: str = "") -> bytes:
+    """TTS cho câu TRẢ LỜI của bot: chọn giọng theo phiên + style theo TÍNH CHẤT
+    câu (đùa/nghiêm túc/an ủi) — 0 token model.
 
-    - persona_key: key phiên (giống key persona/orchestrator) để tra giọng+tông.
-    - voice_name/style: ép tay (bỏ qua persona) nếu truyền vào.
-    Lỗi tra persona không làm hỏng TTS — rơi về giọng/style mặc định.
+    Ưu tiên giọng:
+      1. voice_name ép tay
+      2. Cấu hình RIÊNG theo phiên (session_voice): user-trong-nhóm → nhóm/1-1
+         → bot → kênh (Settings → Giọng theo phiên)
+      3. Giọng suy từ persona của phiên
+      4. Giọng mặc định hệ thống
+    Lỗi tra cấu hình/persona không làm hỏng TTS — luôn có đường lùi.
     """
     v = voice_name
     base_style = ""
-    if persona_key and not (voice_name and style):
+    # (2) Cấu hình riêng từng kênh / bot / nhóm / user / user-trong-nhóm.
+    # Dùng get_session_voice_config (KHÔNG dùng get_tts_voice_for_session) để
+    # khi phiên chưa cài riêng thì còn rơi xuống giọng theo persona bên dưới.
+    if not v and session_id:
+        try:
+            from services.voice import session_voice as _sv
+            v = str((_sv.get_session_voice_config(session_id) or {}).get("tts_voice") or "").strip()
+        except Exception:
+            pass
+    if persona_key and not (v and style):
         try:
             from services.agent import persona as _persona
             pv = _persona.voice_for(persona_key) or {}

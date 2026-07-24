@@ -54,6 +54,9 @@ def _acct_label(account: dict[str, Any]) -> str:
 
 _GRELOGIN_COOLDOWN_S = 1800.0  # browser login đắt → 1 lần / account / 30 phút
 _RECOVER_BUDGET_S = 300.0      # trần thời gian 1 lượt khôi phục (bail nếu quá)
+# Ngân sách RIÊNG chừa cho T3-batch: tầng Google (T1/T2) hỏng vẫn phải để lại
+# chừng này giây, nếu không T3 không bao giờ được chạy (bug thấy 2026-07-24).
+_T3_RESERVE_S = 120.0
 _CAPTCHA_PROFILES = "/app/data/captcha/profiles"
 
 
@@ -610,38 +613,64 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         "reason": reason[:120],
     })
 
-    # ── Google only: T1 ride → T2 freshen+ride ─────────────────────────────
+    # ── Google: T1 ride ↔ T2 freshen+ride (thứ tự tuỳ acc còn sống hay chết) ──
     if is_google and reuse:
-        # T1: profile cookies còn → ride OAuth Codex
-        if has_profile and time.time() - started < budget:
-            tried.append("T1-reuse")
-            tok = reuse(profile, email)
-            if tok:
-                _notify(f"✅ {label} — {email}\nKhôi phục xong ([T1] tái dùng session Google).",
-                        {**det, "step": "T1-reuse-ok"})
-                logger.info({"event": "recover_ok", "provider": provider, "tier": "reuse", "email": email})
-                return
+        # (b) Chừa ngân sách cho T3-batch: tầng Google chỉ được dùng tới mốc này,
+        # nếu không T1+T2 hỏng sẽ ăn hết 300s và T3 không bao giờ được chạy.
+        g_deadline = budget - (_T3_RESERVE_S if batch else 0.0)
 
-        # T2: login Google only (pass+TOTP đã lưu) rồi ride lại — kể cả chưa có
-        # profile folder (auto-login sẽ tạo user-data-dir).
-        if has_creds and time.time() - started < budget:
+        def _left() -> bool:
+            return time.time() - started < g_deadline
+
+        def _do_reuse(tag: str, step: str, note: str) -> bool:
+            tried.append(tag)
+            if not reuse(profile, email):
+                return False
+            _notify(f"✅ {label} — {email}\nKhôi phục xong ({note}).",
+                    {**det, "step": step})
+            logger.info({"event": "recover_ok", "provider": provider,
+                         "tier": tag, "email": email})
+            return True
+
+        def _do_freshen() -> bool:
             tried.append("T2-freshen")
             _notify(f"🔧 {label} — {email}\n[T2] Đang đăng nhập lại tài khoản Google…",
                     {**det, "step": "T2-freshen"})
             if _freshen_google(profile):
-                tried.append("T1-after-freshen")
-                tok = reuse(profile, email)
-                if tok:
-                    _notify(f"✅ {label} — {email}\nKhôi phục xong ([T2] đăng nhập Google + tái dùng).",
-                            {**det, "step": "T2-freshen-ok"})
-                    logger.info({"event": "recover_ok", "provider": provider, "tier": "freshen", "email": email})
+                return True
+            logger.warning({"event": "recover_freshen_failed",
+                            "provider": provider, "email": email})
+            return False
+
+        # (a) Acc CHẾT HẲN (dead/marked_error/401…) thì T1-reuse chắc chắn trượt
+        # → đăng nhập Google TRƯỚC rồi mới login lại Codex tại workspace đó.
+        # Session còn sống thì vẫn ưu tiên T1 cho nhanh (khỏi mở browser login).
+        _r = (reason or "").lower()
+        session_dead = any(k in _r for k in (
+            "dead", "marked_error", "refresh_accounts", "401",
+            "unauthorized", "invalid_grant", "expired",
+        ))
+        google_first = bool(session_dead and has_creds)
+
+        if google_first:
+            if _left() and _do_freshen() and _left():
+                if _do_reuse("T1-after-freshen", "T2-freshen-ok",
+                             "[T2] đăng nhập Google + login Codex tại workspace"):
                     return
-            else:
-                logger.warning({
-                    "event": "recover_freshen_failed",
-                    "provider": provider,
-                    "email": email,
-                })
+            # Google login trượt → vẫn thử ride session cũ (may ra còn dùng được)
+            if has_profile and _left():
+                if _do_reuse("T1-reuse", "T1-reuse-ok",
+                             "[T1] tái dùng session Google"):
+                    return
+        else:
+            if has_profile and _left():
+                if _do_reuse("T1-reuse", "T1-reuse-ok",
+                             "[T1] tái dùng session Google"):
+                    return
+            if has_creds and _left() and _do_freshen() and _left():
+                if _do_reuse("T1-after-freshen", "T2-freshen-ok",
+                             "[T2] đăng nhập Google + login Codex tại workspace"):
+                    return
 
     # ── T3: bulk login (Google fallback + BẮT BUỘC cho non-Google) ──────────
     # Cùng endpoint/code với UI "Đăng nhập hàng loạt" → /v1/codex-onboard.

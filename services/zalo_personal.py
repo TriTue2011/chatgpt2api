@@ -2196,8 +2196,12 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
             return
         if not _voice.tts_ready():
             return
+        from services.voice import session_voice as _sv
+        _sid = f"zalop:{account}:{thread_id}:{user_id}"
+        if not _sv.is_tts_enabled_for_session(_sid):
+            return  # TTS bị tắt cho kênh/acc/nhóm/user này
         _pk = f"zalop_{thread_id}:u{user_id}" if user_id else f"zalop_{thread_id}"
-        wav = _voice.speak_reply(text[:1000], _pk)
+        wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         out_dir = Path(config.images_dir) / "voice"
         out_dir.mkdir(parents=True, exist_ok=True)
         fn = f"tts_{uuid.uuid4().hex[:10]}.wav"

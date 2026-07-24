@@ -673,8 +673,12 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> None:
             return
         if not _voice.tts_ready():
             return
+        from services.voice import session_voice as _sv
+        _sid = f"tg:{_bot_id()}:{chat_id}:{user_id}"
+        if not _sv.is_tts_enabled_for_session(_sid):
+            return  # TTS bị tắt cho kênh/bot/nhóm/user này
         _pk = f"{chat_id}:u{user_id}" if user_id else str(chat_id)
-        wav = _voice.speak_reply(text[:1000], _pk)
+        wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         send_audio(chat_id, wav, caption="")
     except Exception as exc:
         logger.warning("tg voice reply loi: %s", str(exc)[:160])

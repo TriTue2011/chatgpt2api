@@ -88,6 +88,34 @@ def get_session_voice_config(session_id: str) -> dict[str, Any]:
     return {}
 
 
+def _resolve_field(session_id: str, field: str) -> Any:
+    """Tìm `field` theo chuỗi ưu tiên user-trong-nhóm → nhóm → bot → kênh.
+
+    Khác get_session_voice_config (lấy TRỌN dict của key khớp đầu tiên): ở đây
+    mỗi field tra ĐỘC LẬP, nên cài giọng riêng cho 1 nhóm không vô hiệu hoá cờ
+    bật/tắt đặt ở cấp kênh.
+    """
+    with _LOCK:
+        data = _load_data()
+    for key in _candidate_keys(session_id):
+        entry = data.get(key)
+        if isinstance(entry, dict) and field in entry:
+            return entry[field]
+    return None
+
+
+def is_tts_enabled_for_session(session_id: str) -> bool:
+    """TTS có bật cho phiên/kênh này không (mặc định BẬT nếu chưa cấu hình)."""
+    val = _resolve_field(session_id, "tts_enabled")
+    return True if val is None else bool(val)
+
+
+def is_stt_enabled_for_session(session_id: str) -> bool:
+    """STT có bật cho phiên/kênh này không (mặc định BẬT nếu chưa cấu hình)."""
+    val = _resolve_field(session_id, "stt_enabled")
+    return True if val is None else bool(val)
+
+
 def get_tts_voice_for_session(session_id: str, default: str = "") -> str:
     """Trả voice TTS cho session (nếu có riêng, ngược lại trả default/hệ thống)."""
     cfg_s = get_session_voice_config(session_id)
@@ -115,8 +143,14 @@ def set_session_voice_config(
     stt_language: str = "",
     stt_engine: str = "",
     stt_backend: str = "",
+    tts_enabled: bool | None = None,
+    stt_enabled: bool | None = None,
 ) -> dict[str, Any]:
-    """Cài đặt TTS & STT riêng cho 1 session (User/Nhóm/Bot/Kênh)."""
+    """Cài đặt TTS & STT riêng cho 1 session (User/Nhóm/Bot/Kênh).
+
+    tts_enabled/stt_enabled: None = giữ nguyên, True/False = bật/tắt cho phạm vi
+    này (đặt ở key cấp kênh 'tg'/'zalo'/'zalop' là tắt cả platform đó).
+    """
     sid = str(session_id or "").strip()
     if not sid:
         return {"ok": False, "error": "Thiếu session_id"}
@@ -136,6 +170,10 @@ def set_session_voice_config(
             updated["stt_engine"] = stt_engine.strip()
         if stt_backend:
             updated["stt_backend"] = stt_backend.strip()
+        if tts_enabled is not None:
+            updated["tts_enabled"] = bool(tts_enabled)
+        if stt_enabled is not None:
+            updated["stt_enabled"] = bool(stt_enabled)
 
         data[sid] = updated
         _save_data(data)

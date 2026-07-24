@@ -484,6 +484,12 @@ def create_router() -> APIRouter:
             stt_language=str(body.get("stt_language") or "").strip(),
             stt_engine=str(body.get("stt_engine") or "").strip(),
             stt_backend=str(body.get("stt_backend") or "").strip(),
+            # None = giữ nguyên; đặt ở key cấp kênh ('tg'/'zalo'/'zalop') là
+            # bật/tắt TTS-STT cho CẢ platform đó.
+            tts_enabled=(None if body.get("tts_enabled") is None
+                         else bool(body.get("tts_enabled"))),
+            stt_enabled=(None if body.get("stt_enabled") is None
+                         else bool(body.get("stt_enabled"))),
         )
         return res
 
