@@ -2215,7 +2215,12 @@ CAPABILITIES: dict[str, Capability] = {
             "GỬI TIN HẸN GIỜ (vd 'sau 2 phút gửi nhóm A: cả nhà đi ngủ'): "
             "mode=task + send_to=người/nhóm nhận + text=NỘI DUNG gửi (+send_platform "
             "nếu nêu rõ kênh). Em tra danh bạ NGAY; nếu thiếu/mập mờ (trùng tên, "
-            "nhiều kênh, chưa lưu) sẽ HỎI LẠI trước khi đặt lịch, TUYỆT ĐỐI không đoán."
+        ),
+        workflow=(
+            "Khi đặt nhắc/báo cáo định kỳ: BẮT BUỘC kiểm tra đủ 4 thông tin: "
+            "(1) Khi nào (giờ/ngày) - (2) Bằng kênh gì (Zalo cá nhân/Zalo bot/Telegram) - "
+            "(3) Nhóm/Người nhận nào - (4) Nội dung/Số liệu báo cáo gì. "
+            "Nếu THIẾU bất kỳ thông tin nào, HỎI LẠI NGAY người dùng để làm rõ trước khi gọi schedule."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "enum": ["create", "list", "cancel"],
@@ -2397,6 +2402,14 @@ CAPABILITIES: dict[str, Capability] = {
             "'nội dung', 'nội dung chính', 'với nội dung', 'rằng', 'là', 'nhắn'. Ví dụ: "
             "'nhắn nhóm X với nội dung chính mọi người đi ngủ thôi' → message='mọi người đi ngủ thôi' "
             "(KHÔNG gồm chữ 'chính')."
+        ),
+        workflow=(
+            "Khi gửi tin nhắn: BẮT BUỘC kiểm tra rõ 3 yếu tố: "
+            "(1) Bằng kênh gì (Zalo cá nhân / Zalo bot / Telegram) - "
+            "(2) Đến người/nhóm nào - "
+            "(3) Nội dung tin nhắn gì. "
+            "Nếu người dùng chưa nêu rõ gửi bằng kênh nào và đối tượng nhận có ở nhiều kênh (hoặc chưa chắc chắn), "
+            "BẮT BUỘC HỎI LẠI người dùng để xác nhận kênh trước khi gửi."
         ),
         parameters={"type": "object", "properties": {
             "to": {"type": "string", "description": "Alias / tên / chat_id"},

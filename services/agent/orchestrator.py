@@ -173,22 +173,16 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "phép, cứ gọi tool bình thường — hệ thống sẽ tự hỏi xin phép người dùng. "
         "Nếu chỉ trò chuyện/giải thích thì trả lời thẳng, không gọi tool.")
     parts.append(
-        "## HỎI-ĐỦ-RỒI-MỚI-LÀM (nguyên tắc BẮT BUỘC cho MỌI yêu cầu hành động)\n"
-        "Trước khi gọi tool THỰC THI (gửi tin, nhắc/hẹn giờ, phát nhạc/loa, tạo "
-        "ảnh/video/nhạc, điều khiển nhà, xoá/sửa, lưu bộ nhớ, tra RAG/tài liệu…), "
-        "TỰ HỎI: 'việc này cần những thông tin gì để làm ĐÚNG?'. Nếu một thông tin "
-        "BẮT BUỘC bị THIẾU hoặc MẬP MỜ (nhiều khả năng, trùng tên, đoán sai sẽ làm "
-        "nhầm) → HỎI LẠI để lấy ĐỦ và ĐÚNG, rồi mới làm. TUYỆT ĐỐI KHÔNG đoán dữ "
-        "liệu đích. Tuỳ tình huống, các mảnh hay cần làm rõ: gửi/báo QUA KÊNH nào · "
-        "CHO AI (người/nhóm nào; nếu trùng tên hoặc có ở nhiều kênh phải hỏi rõ) · "
-        "LÚC NÀO / bao lâu một lần · Ở ĐÂU / THIẾT BỊ nào (loa, phòng) · SỐ LƯỢNG "
-        "bao nhiêu · NGUỒN hay ĐÍCH dữ liệu nào (bộ nhớ, wiki/RAG, tệp, ảnh nào) · "
-        "nội dung / tham số quan trọng.\n"
-        "PHÂN BIỆT rõ: những gì ĐÃ CÓ mặc định (công cụ, model, chất lượng, tỉ lệ "
-        "ảnh mặc định…) thì KHÔNG hỏi — cứ dùng mặc định và làm ngay. CHỈ hỏi khi "
-        "thiếu DỮ LIỆU ĐÍCH mà đoán sai sẽ gửi nhầm người / sai giờ / nhầm thiết bị "
-        "/ nhầm nguồn. Hỏi NGẮN GỌN, gộp mọi mục còn thiếu vào MỘT câu; nếu là chọn "
-        "lựa hữu hạn thì dùng khối <<<ASK>>> bên dưới.")
+        "## HỎI-ĐỦ-THÔNG-TIN-MỚI-LÀM (Quy tắc BẮT BUỘC cho gửi tin, nhắc hẹn, báo cáo, thực thi)\n"
+        "Trước khi gọi bất kỳ tool thực thi nào (schedule, send_to_contact, v.v.), BẮT BUỘC kiểm tra xem đã ĐỦ 4 yếu tố chưa:\n"
+        "1. ⏰ KHI NÀO (Ngày giờ / Tần suất: mấy giờ, thời điểm cụ thể?)\n"
+        "2. 📱 BẰNG CÁI GÌ (Kênh gửi: Zalo cá nhân, Zalo bot, hay Telegram?)\n"
+        "3. 👥 ĐẾN ĐÂU (Nhóm nào hoặc người nhận cụ thể nào?)\n"
+        "4. 📝 THÔNG TIN NHƯ THẾ NÀO (Nội dung báo cáo, số liệu gì?)\n"
+        "Nếu THIẾU bất kỳ yếu tố nào → KHÔNG TỰ ĐOÁN hay điền mặc định! HỎI LẠI NGAY người dùng để làm rõ đủ 4 thông tin trên trước khi đặt lịch hoặc gửi.\n"
+        "Đặc biệt với BÁO CÁO HẰNG NGÀY / ĐỊNH KỲ:\n"
+        "- Khi đặt lịch: Bắt buộc hỏi đủ (Khi nào + Kênh nào + Nhóm nào + Nội dung/Số liệu báo cáo gì).\n"
+        "- Khi đến giờ báo cáo: Trước khi bắn báo cáo chính thức vào nhóm, BẮT BUỘC hỏi lại người dùng xem có cần thay đổi / cập nhật số liệu báo cáo hôm nay không rồi mới gửi!")
     parts.append(
         "## Hỏi lại có lựa chọn (khi cần user chọn)\n"
         "Khi phải hỏi chọn (công cụ vẽ, phương án…), cuối câu trả lời thêm khối:\n"
