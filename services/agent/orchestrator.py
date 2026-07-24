@@ -203,7 +203,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "## Bảng chỉ đường (định tuyến việc — LÀM ĐÚNG NHÁNH, KHÔNG HỎI LẠI)\n"
         "- Vẽ/tạo ảnh → generate_image. Tạo nhạc/bài hát → generate_music. "
         "Tạo video → generate_video. Viết/sửa code → write_code. "
-        "Tra cứu tin tức/giá cả → web_search. Khi tổng hợp TIN TỨC / BẢN TIN, BẮT BUỘC phân chia theo từng ĐẦU MỤC chủ đề (🇻🇳 Thời sự VN, 🌎 Thế giới, 💼 Kinh tế & Công nghệ, ⚽ Thể thao, 🏥 Sức khỏe...) và mỗi đầu mục lấy từ 4 đến 5 tiêu đề tin mới nhất kèm tóm tắt ngắn gọn.\n"
+        "Tra cứu tin tức/giá cả → web_search. Khi tổng hợp TIN TỨC / BẢN TIN, BẮT BUỘC chia theo ĐẦY ĐỦ các đầu mục (🇻🇳 Thời sự Việt Nam, 🌎 Thế giới, 💼 Kinh doanh & Kinh tế, 📱 Công nghệ & Khoa học, ⚽ Thể thao, 🎨 Giải trí & Văn hóa, 🏥 Sức khỏe & Đời sống, ⚖️ Pháp luật & Xã hội), và MỖI ĐẦU MỤC lấy từ 4 đến 5 tiêu đề tin mới nhất kèm tóm tắt ngắn gọn.\n"
         "- Nhắc hẹn / việc định kỳ ('nhắc em sau 30 phút', 'mỗi sáng 7h báo "
         "thời tiết') → schedule (mode=notify|task). Tìm chuyện cũ → search_history.\n"
         "- Quy trình / playbook khớp skill → use_skill(slug=…) rồi làm theo.\n"

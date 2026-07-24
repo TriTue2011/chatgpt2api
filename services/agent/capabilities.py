@@ -2029,9 +2029,10 @@ CAPABILITIES: dict[str, Capability] = {
             "query": {"type": "string", "description": "Câu cần tra cứu"}},
             "required": ["query"]},
         workflow=(
-            "Khi tổng hợp TIN TỨC / BẢN TIN: BẮT BUỘC phân chia theo các ĐẦU MỤC rõ ràng "
-            "(vd: 🇻🇳 Thời sự Việt Nam, 🌎 Thế giới, 💼 Kinh tế & Công nghệ, ⚽ Thể thao & Giải trí, 🏥 Sức khỏe & Đời sống). "
-            "Mỗi đầu mục lấy từ 4 đến 5 tiêu đề tin mới nhất kèm tóm tắt 1 câu ngắn gọn."
+            "Khi tổng hợp TIN TỨC / BẢN TIN: BẮT BUỘC chia theo ĐẦY ĐỦ các đầu mục báo chí chính sau: "
+            "1. 🇻🇳 Thời sự Việt Nam | 2. 🌎 Thế giới | 3. 💼 Kinh doanh & Kinh tế | 4. 📱 Công nghệ & Khoa học | "
+            "5. ⚽ Thể thao | 6. 🎨 Giải trí & Văn hóa | 7. 🏥 Sức khỏe & Đời sống | 8. ⚖️ Pháp luật & Xã hội. "
+            "Trong MỖI đầu mục, BẮT BUỘC liệt kê từ 4 đến 5 tiêu đề tin mới nhất kèm tóm tắt 1 câu súc tích."
         )),
     "read_webpage": Capability(
         name="read_webpage", risk=READ, handler=_h_read_webpage,
