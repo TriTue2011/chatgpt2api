@@ -204,6 +204,7 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
         # Loop until OAuth callback — handle OpenAI login screens + Google chooser
         deadline = time.time() + 120
         google_btn_clicked = False
+        mfa_alt_clicked = False
         while time.time() < deadline and not captured:
             url = ""
             content = ""
@@ -223,6 +224,36 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
             except Exception:
                 _dbg = ""
             logger.info("codex-g: screen url=%s body=%s", url[:110], _dbg[:260])
+
+            # ── OpenAI MFA challenge (mặc định đòi PASSKEY — bot không ký được) ──
+            # Bấm "Hãy thử một phương pháp khác" để lộ các cách thay thế
+            # (authenticator/TOTP, mã qua email…) rồi xử lý bằng pyotp/IMAP sẵn có.
+            if "/mfa-challenge/" in url:
+                if not mfa_alt_clicked:
+                    mfa_alt_clicked = True
+                    ok_alt = False
+                    for _sel in (
+                        'a:has-text("Hãy thử một phương pháp khác")',
+                        'button:has-text("Hãy thử một phương pháp khác")',
+                        'a:has-text("Try another method")',
+                        'button:has-text("Try another method")',
+                        '[role="button"]:has-text("phương pháp khác")',
+                        '[role="link"]:has-text("phương pháp khác")',
+                        'a:has-text("phương pháp khác")',
+                    ):
+                        try:
+                            loc = page.locator(_sel).first
+                            if await loc.count() > 0 and await loc.is_visible(timeout=1500):
+                                await loc.click(timeout=4000, force=True)
+                                ok_alt = True
+                                break
+                        except Exception:
+                            continue
+                    logger.info("codex-g: mfa-challenge -> clicked 'phuong phap khac'=%s", ok_alt)
+                    await asyncio.sleep(2.5)
+                    continue
+                await asyncio.sleep(1.5)
+                continue
 
             # ── Google accountchooser / consent ──
             if "accounts.google.com" in url:
