@@ -214,6 +214,16 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
                 await asyncio.sleep(1.0)
                 continue
 
+            # DEBUG: in màn hình THẬT mỗi vòng. Không có dòng này thì lúc kẹt
+            # (màn OpenAI không khớp nhánh nào, vd chọn workspace) log im lặng
+            # tới khi hết 120s, không biết đường nào mà lần.
+            try:
+                _dbg = (await page.locator("body").inner_text(timeout=1500))[:280]
+                _dbg = " | ".join(x.strip() for x in _dbg.splitlines() if x.strip())
+            except Exception:
+                _dbg = ""
+            logger.info("codex-g: screen url=%s body=%s", url[:110], _dbg[:260])
+
             # ── Google accountchooser / consent ──
             if "accounts.google.com" in url:
                 if "accountchooser" in url or "Chọn tài khoản" in content or "Choose an account" in content:
