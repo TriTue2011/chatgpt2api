@@ -609,7 +609,14 @@ Vị trí: `▸ Cài đặt → Kênh chat → [chọn kênh] → 🎚️ Lọc 
 
 🏠 Nhà (HA) · 🖥️ Server · 🎨 Ảnh · 🎬 Video · 🎵 Nhạc · 🌐 Web · 💻 Code · 🧠 Ghi nhớ ·
 📚 RAG/tài liệu · 📝 PDF→Word · 🧾 Tổng hợp · ⏰ Nhắc hẹn · 🧩 Skill/Workflow ·
-📖 Wiki · 📒 Danh bạ · **🔉 Trả lời bằng giọng nói** · **📢 Được ra lệnh phát loa**
+📖 Wiki · 📒 Danh bạ · **🔉 Trả lời bằng giọng nói** · **📢 Được ra lệnh phát loa** ·
+📚 Giáo viên
+
+> **Cập nhật (2026-07-25) — Trả lời bằng giọng nói = CHỈ giọng, không kèm chữ.**
+> Khi tích `🔉 Trả lời bằng giọng nói`, bot **chỉ gửi âm thanh** (trước đây gửi cả
+> chữ lẫn tiếng). Nếu TTS lỗi / chưa tải model, bot **tự gửi lại bằng chữ** để không
+> mất câu trả lời. Áp cho **mọi nơi** bật quyền này (cả nhóm lẫn từng người). Riêng
+> tin có **nút bấm chọn số** thì vẫn gửi chữ (kèm giọng, để còn bấm chọn).
 
 ### 6.3. Hai tầng: nhóm và từng người
 
@@ -620,11 +627,58 @@ Quy tắc chung: quyền của người = giao của quyền nhóm và quyền n
 giọng nói` nhưng một người bật thì **chỉ người đó** nhận âm thanh — trong nhóm đông,
 ai thích nghe thì nghe, không phiền người khác.
 
-### 6.4. Hai tuỳ chọn khác của mỗi thread
+### 6.4. Giọng đọc · Tắt TTS · STT theo từng phạm vi
 
-- **🏷️ Bắt buộc tag mới trả lời** — cho nhóm đông, tránh bot chen mọi câu.
-- **🔗 Chuyển tiếp webhook** — đẩy tin sang HA/n8n. Cấp thread = cả nhóm chung URL;
-  cấp người = mỗi người một URL riêng.
+Ngay dưới mỗi dòng thread (nhóm / cá nhân) và mỗi **User** có một khối cấu hình giọng
+**RIÊNG**, lưu độc lập (khác phần tích nhóm chức năng, lưu ở `voice_sessions.json`):
+
+- **🔊 Giọng đọc** — CHỈ hiện khi đã tích `🔉 Trả lời bằng giọng nói`. Bỏ trống =
+  đọc theo **persona** đang bật; chọn 1 giọng = ép **giọng đọc** đó. Lưu ý: đây là
+  **giọng đọc** (âm sắc), còn **giọng văn / cách xưng hô** vẫn theo persona. Chọn lại
+  mục `(theo persona)` để bỏ ép giọng.
+- **🔇 Tắt giọng nói (TTS)** — chặn hẳn đọc thành tiếng cho phạm vi này (kể cả khi
+  quyền `🔉 Trả lời bằng giọng nói` đang bật ở tầng khác).
+- **🎙️ STT tiếng Anh** — khi user gửi ghi âm: bỏ tích = nghe **tiếng Việt** (mặc
+  định), tích = nghe **tiếng Anh**.
+
+Thứ tự áp dụng: **User-trong-nhóm → Nhóm / chat 1-1 → Bot → Kênh** (cụ thể thắng tổng
+quát). Nên đặt ở dòng đã chọn **đúng tài khoản/bot** — dòng "mọi bot / mọi tài khoản"
+có thể không khớp lúc chạy.
+
+**Giọng cho Admin**: mục Admin (Chat IDs) không có khối giọng riêng. Muốn chỉnh
+giọng/STT/persona cho admin → thêm **Chat ID admin thành một dòng loại "Cá nhân"**
+trong tab Lọc thread (nhớ **tích đủ nhóm chức năng** để không hạn chế quyền), rồi cài
+Persona + giọng ngay tại dòng đó.
+
+### 6.5. Bắt buộc tag + Chuyển tiếp webhook (chi tiết)
+
+**🏷️ Bắt buộc tag mới trả lời** (chỉ nhóm)
+
+- Tắt = trả lời **mọi tin** (kể cả tin có tag).
+- Bật = **chỉ trả lời khi bị tag**. Nhận diện theo **định danh bot**, KHÔNG theo tên:
+  - **Telegram**: @mention theo `@username` của bot / reply vào bot / chạm chọn bot.
+  - **Zalo Cá Nhân**: bấm `@` **chọn bot** trong danh sách nhóm → khớp theo **UID
+    tài khoản bot**, nên **mỗi người lưu tên bot khác nhau vẫn nhận đúng**.
+  - **Zalo Bot (OA)**: nền tảng chỉ đẩy tin khi đã @tag bot → tự tính là tag.
+- **Không bắt buộc điền Từ khóa** nếu người dùng bấm `@` chọn bot chuẩn. Ô **Từ khóa**
+  chỉ cần khi muốn bắt cả trường hợp user **gõ tên bằng chữ thường** (không dùng
+  @mention thật). Gõ `@tênsai` bất kỳ (không đúng bot, không trùng từ khóa) → bot
+  **không** trả lời.
+
+**🔗 Chuyển tiếp webhook** (HA / n8n / URL bất kỳ)
+
+- **Bật webhook ở cấp thread = ChatGPT KHÔNG trả lời** — mọi tin đẩy sang URL, **bật
+  hay tắt tag đều thế** (dùng khi muốn n8n/HA xử lý thay bot).
+- Ẩn/hiện phần webhook cấp **User** theo trạng thái của nhóm:
+
+  | Trạng thái nhóm | Webhook của User |
+  |---|---|
+  | Bật webhook (dù bật/tắt tag) | **Ẩn hết** — thread đã đẩy tất, AI im |
+  | Bật tag, tắt webhook | Hiện "🔗 webhook riêng" (+ ô URL); **ẩn** "chỉ chuyển khi tag" |
+  | Tắt tag, tắt webhook | Hiện "🔗 webhook riêng" + **hiện** "🏷️ chỉ chuyển khi tag" |
+
+- **🏷️ Chỉ chuyển webhook khi TAG bot** (cấp user): tin có tag → **CHỈ** đẩy webhook,
+  AI im; tin thường (không tag) → AI trả lời như bình thường.
 
 ---
 
@@ -637,7 +691,10 @@ ai thích nghe thì nghe, không phiền người khác.
 | Loa không phát | Chưa đặt **URL công khai của gateway**, hoặc container không chạm tới IP loa | Bấm **🔌 Kiểm tra** trên thẻ loa để biết lỗi ở đâu |
 | Không tự dò thấy loa | Docker bridge chặn mDNS/SSDP | Nhập IP loa bằng tay — hành vi bình thường |
 | Gửi ghi âm mà bot im | Chưa tải model STT | Chạy `download_stt_model.py`; xem ô trạng thái 🎤 |
-| Bot không đọc thành tiếng | Chưa tích `🔉 Trả lời bằng giọng nói` cho thread/người | Xem Phần 6 |
+| Bot không đọc thành tiếng | Chưa tích `🔉 Trả lời bằng giọng nói`, hoặc đã bật `🔇 Tắt giọng nói (TTS)` cho phạm vi đó | Xem Phần 6.2/6.4 |
+| Bật giọng nói mà **vẫn ra chữ** | TTS lỗi / chưa tải model → bot tự fallback gửi chữ | Tải model TTS (Phần 4.1); xem ô trạng thái 🔊 |
+| Nhóm bật "bắt buộc tag" mà bot không trả lời | User chỉ **gõ tên bằng chữ**, chưa bấm `@` chọn bot; hoặc **Từ khóa** chưa khớp | Bấm `@` chọn bot, hoặc điền đúng Từ khóa (Phần 6.5) |
+| Bật webhook mà ChatGPT im | Đúng thiết kế: **bật webhook cấp thread = AI không trả lời** | Tắt webhook nếu vẫn muốn AI trả (Phần 6.5) |
 | Bot trả lời sai/lạ | Xem nó gọi công cụ nào | `▸ Hệ thống → Agent runs` |
 | Tài khoản AI báo đỏ | Token hết hạn hoặc bị giới hạn | `▸ AI Core → Tài khoản` → khôi phục |
 
