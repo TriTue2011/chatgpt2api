@@ -479,7 +479,9 @@ def create_router() -> APIRouter:
             raise HTTPException(400, "Thiếu 'key' hoặc 'session_id'")
         res = sv.set_session_voice_config(
             key,
-            tts_voice=str(body.get("tts_voice") or "").strip(),
+            # None (khóa vắng) = giữ nguyên; "" = xóa (về persona); "x" = ép giọng.
+            tts_voice=(None if body.get("tts_voice") is None
+                       else str(body.get("tts_voice")).strip()),
             tts_backend=str(body.get("tts_backend") or "").strip(),
             stt_language=str(body.get("stt_language") or "").strip(),
             stt_engine=str(body.get("stt_engine") or "").strip(),

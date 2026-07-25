@@ -138,7 +138,7 @@ def get_stt_config_for_session(session_id: str) -> dict[str, str]:
 def set_session_voice_config(
     session_id: str,
     *,
-    tts_voice: str = "",
+    tts_voice: str | None = None,
     tts_backend: str = "",
     stt_language: str = "",
     stt_engine: str = "",
@@ -148,6 +148,7 @@ def set_session_voice_config(
 ) -> dict[str, Any]:
     """Cài đặt TTS & STT riêng cho 1 session (User/Nhóm/Bot/Kênh).
 
+    tts_voice: None = giữ nguyên; "" = XÓA (về giọng theo persona); "x" = ép giọng.
     tts_enabled/stt_enabled: None = giữ nguyên, True/False = bật/tắt cho phạm vi
     này (đặt ở key cấp kênh 'tg'/'zalo'/'zalop' là tắt cả platform đó).
     """
@@ -160,8 +161,12 @@ def set_session_voice_config(
         prev = data.get(sid) or {}
 
         updated = {**prev}
-        if tts_voice:
-            updated["tts_voice"] = tts_voice.strip()
+        if tts_voice is not None:
+            tv = tts_voice.strip()
+            if tv:
+                updated["tts_voice"] = tv
+            else:
+                updated.pop("tts_voice", None)  # "" = về giọng theo persona
         if tts_backend:
             updated["tts_backend"] = tts_backend.strip()
         if stt_language:

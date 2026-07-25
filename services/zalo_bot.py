@@ -821,36 +821,41 @@ def _bytes_to_aac_public(audio: bytes, suffix: str = ".bin") -> str | None:
                 pass
 
 
-def _maybe_voice_reply(chat_id: str, user_id: str, reply: str, *, is_group: bool) -> None:
-    """TTS → sendVoice (.aac) nếu thread bật tts_reply.
+def _maybe_voice_reply(chat_id: str, user_id: str, reply: str, *, is_group: bool) -> bool:
+    """TTS → sendVoice (.aac) nếu thread bật tts_reply. Trả True nếu ĐÃ gửi voice.
 
-    sendVoice CHỈ 1-1 — nhóm bỏ qua (API không hỗ trợ).
+    sendVoice CHỈ 1-1 — nhóm bỏ qua (API không hỗ trợ) → luôn False (vẫn gửi chữ).
+    True = đã gửi voice → caller BỎ gửi chữ («Trả lời bằng giọng nói» = chỉ âm
+    thanh). False (chưa bật / TTS chưa sẵn / lỗi) → caller gửi chữ như thường.
     """
     text = (reply or "").strip()
     if not text or not chat_id or is_group:
-        return
+        return False
     try:
         from services import voice as _voice
         from services.voice import permissions as _vperm
         if not _vperm.wants_voice_reply("zalo", _bot_id(), chat_id, user_id):
-            return
+            return False
         if not _voice.tts_ready():
-            return
+            return False
         from services.voice import session_voice as _sv
         _sid = f"zalo:{_bot_id()}:{chat_id}:{user_id}"
         if not _sv.is_tts_enabled_for_session(_sid):
-            return  # TTS bị tắt cho kênh/bot/nhóm/user này
+            return False  # TTS bị tắt cho kênh/bot/nhóm/user này
         _pk = f"zalo_{chat_id}:u{user_id}" if user_id else f"zalo_{chat_id}"
         wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         aac_url = _wav_to_aac_public_url(wav)
         if not aac_url:
             logger.warning("zalo voice reply: không tạo được URL .aac (base_url?)")
-            return
+            return False
         r = send_voice(chat_id, aac_url)
         if not r.get("ok"):
             logger.warning("zalo sendVoice fail: %s", str(r)[:200])
+            return False
+        return True
     except Exception as exc:
         logger.warning("zalo voice reply loi: %s", str(exc)[:160])
+    return False
 
 
 def _handle_pdf(chat_id: str, url: str, name: str = "",
@@ -1180,7 +1185,10 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
             from services import voice as _voice
             raw = _download(voice_url)
             if raw:
-                text = _voice.listen(raw, "aac" if voice_url.lower().endswith(".aac") else "m4a")
+                # session_id → STT chọn ngôn ngữ theo phạm vi (vi mặc định / en)
+                _sid = f"zalo:{_bot_id()}:{chat_id}:{user_id}"
+                text = _voice.listen(raw, "aac" if voice_url.lower().endswith(".aac") else "m4a",
+                                     session_id=_sid)
                 logger.info("zalo voice->text (%d bytes): %.60s", len(raw or b""), text)
         except Exception as exc:
             logger.warning("zalo STT loi: %s", str(exc)[:160])
@@ -1537,15 +1545,20 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
                 _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group)
             return
         choices = out.get("choices") or []
-        if choices and not any(out.get(k) for k in ("image_url", "video_url", "audio_url")):
+        has_choices = bool(choices and not any(out.get(k) for k in ("image_url", "video_url", "audio_url")))
+        if has_choices:
             try:
                 from services.agent import ask_choices as _ask
                 reply = _ask.format_numbered(reply, choices)
             except Exception:
                 pass
-        send_message(chat_id, reply)
-        # Text → TTS sendVoice (.aac) 1-1 nếu bật «Trả lời bằng giọng nói»
-        _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group)
+        # «Trả lời bằng giọng nói» = chỉ âm thanh; có nút chọn số thì vẫn gửi chữ
+        # (kèm voice). Ngược lại: gửi được voice → bỏ chữ; không → gửi chữ.
+        if has_choices:
+            send_message(chat_id, reply)
+            _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group)
+        elif not _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group):
+            send_message(chat_id, reply)
         return
     except Exception as exc:
         logger.warning("Zalo orchestrator error %s: %s", chat_id, exc)
@@ -1568,8 +1581,8 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
         resp = urllib.request.urlopen(req, timeout=300)
         reply = json.loads(resp.read().decode()).get("choices", [{}])[0].get("message", {}).get("content", "")
         reply = (reply or "").strip() or "⏳ Hệ thống bận, thử lại."
-        send_message(chat_id, reply)
-        _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group)
+        if not _maybe_voice_reply(chat_id, user_id, reply, is_group=is_group):
+            send_message(chat_id, reply)
     except Exception as exc:
         logger.warning("Zalo AI error %s: %s", chat_id, exc)
         send_message(chat_id, "⏳ Hệ thống bận, thử lại.")

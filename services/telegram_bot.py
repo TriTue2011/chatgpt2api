@@ -657,31 +657,35 @@ def _handle_callback_query(cq: dict, bot: dict) -> None:
         _current.bot = None
 
 
-def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> None:
-    """Gửi KÈM file âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
+def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> bool:
+    """Gửi âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
 
     Quy tắc user thắng nhóm: nhóm không bật nhưng user bật → chỉ người đó nghe.
-    Lỗi TTS không được làm hỏng câu trả lời chữ đã gửi.
+    Trả True nếu ĐÃ gửi voice → caller BỎ gửi chữ («Trả lời bằng giọng nói» =
+    chỉ âm thanh, không kèm chữ). Trả False (chưa bật / TTS chưa sẵn / lỗi) →
+    caller gửi chữ như thường (không để người dùng mất câu trả lời).
     """
     text = (reply or "").strip()
     if not text or not chat_id:
-        return
+        return False
     try:
         from services import voice as _voice
         from services.voice import permissions as _vperm
         if not _vperm.wants_voice_reply("tg", _bot_id(), chat_id, user_id):
-            return
+            return False
         if not _voice.tts_ready():
-            return
+            return False
         from services.voice import session_voice as _sv
         _sid = f"tg:{_bot_id()}:{chat_id}:{user_id}"
         if not _sv.is_tts_enabled_for_session(_sid):
-            return  # TTS bị tắt cho kênh/bot/nhóm/user này
+            return False  # TTS bị tắt cho kênh/bot/nhóm/user này
         _pk = f"{chat_id}:u{user_id}" if user_id else str(chat_id)
         wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         send_audio(chat_id, wav, caption="")
+        return True
     except Exception as exc:
         logger.warning("tg voice reply loi: %s", str(exc)[:160])
+    return False
 
 
 def _download_file(file_id: str) -> bytes | None:
@@ -959,7 +963,9 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             from services import voice as _voice
             raw = _download_file(voice_file_id)
             if raw:
-                text = _voice.listen(raw, "ogg")
+                # session_id → STT chọn ngôn ngữ theo phạm vi (vi mặc định / en)
+                _sid = f"tg:{_bot_id()}:{chat_id}:{user_id}"
+                text = _voice.listen(raw, "ogg", session_id=_sid)
                 logger.info("tg voice->text (%d bytes): %.60s", len(raw), text)
         except Exception as exc:
             logger.warning("tg STT loi: %s", str(exc)[:160])
@@ -1315,10 +1321,12 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
         if out.get("choices") and not any(
             out.get(k) for k in ("image_url", "video_path", "video_url", "audio_path", "audio_url")
         ):
+            # Có nút chọn số → giữ chữ (không voice-only), voice kèm nếu bật.
             _send_agent_reply(chat_id, out)
-        else:
+            _maybe_voice_reply(chat_id, user_id, reply)
+        elif not _maybe_voice_reply(chat_id, user_id, reply):
+            # tts_reply tắt / TTS lỗi → gửi chữ; bật + gửi được voice → chỉ voice.
             send_message(chat_id, reply)
-        _maybe_voice_reply(chat_id, user_id, reply)
         return
     except Exception as exc:
         logger.warning("orchestrator error for %s: %s", chat_id, exc)

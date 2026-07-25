@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { request } from "@/lib/request";
 import { ChannelActivityPanel } from "@/components/channel-activity";
 import { ZaloPersonalPanel } from "./zalo-personal-panel";
+import { VoiceScopeInline } from "./voice-scope-inline";
 import { useSettingsStore } from "../store";
 
 // Nhóm chức năng cho bộ lọc theo thread — PHẢI khớp capabilities._CAP_GROUP
@@ -424,7 +425,9 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                     </div>
                   </div>
 
-                  {/* Persona riêng Admin này — độc lập, tick → 4 chọn → mô tả dưới */}
+                  {/* Persona riêng Admin này — độc lập, tick → 4 chọn → mô tả dưới.
+                      Giọng nói (TTS/STT/giọng đọc) của Admin cài ở tab "Lọc thread":
+                      thêm Chat ID admin làm dòng CÁ NHÂN → có persona + VoiceScopeInline. */}
                   <PersonaInline platform={platform}
                     groupId={a.kind === "group" ? a.chat_id : ""}
                     userId={a.kind === "group" ? "" : a.chat_id} />
@@ -891,14 +894,14 @@ export function TelegramCloudflareCard() {
           const uName = String(u.name || "").trim();
           if (uName) tfMeta[ukey] = { kind: "user", name: uName };
           const uUrl = u.forwardUrl.trim();
-          if (r.forward && rUrl) {
-            // Thread đang chuyển tiếp: lưu bản ghi user khi TẮT riêng hoặc
-            // bật "chỉ chuyển khi tag" (mặc định = thừa hưởng, không bản ghi).
-            if (!u.forward) tff[ukey] = { enabled: false, url: uUrl, tag_mode: u.forwardTagOnly };
-            else if (u.forwardTagOnly) tff[ukey] = { enabled: true, url: uUrl, tag_mode: true };
-          } else if (u.forward || uUrl) {
-            // Thread không chuyển tiếp: user tự bật + URL riêng.
-            tff[ukey] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: u.forwardTagOnly };
+          // Thread BẬT chuyển tiếp → mọi tin đã đi webhook (ChatGPT im lặng),
+          // không cần bản ghi webhook riêng cho user (UI cũng ẩn). CHỈ khi thread
+          // KHÔNG chuyển tiếp: user tự bật webhook riêng (URL riêng). tag-mode chỉ
+          // áp khi thread KHÔNG bắt buộc tag (thread bắt tag = mọi tin tới bot đã
+          // là tag → "chỉ chuyển khi tag" vô nghĩa).
+          if (!r.forward && (u.forward || uUrl)) {
+            const uTag = u.forwardTagOnly && !r.requireMention;
+            tff[ukey] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: uTag };
           }
         }
       }
@@ -1454,7 +1457,8 @@ export function TelegramCloudflareCard() {
                             </div>
                           </div>
 
-                          {/* Persona riêng Admin (Zalo Cá nhân) — độc lập */}
+                          {/* Persona riêng Admin (Zalo Cá nhân) — độc lập. Giọng nói
+                              của Admin cài ở tab "Lọc thread" (dòng cá nhân). */}
                           <PersonaInline platform="zalop"
                             groupId={a.kind === "group" ? a.chat_id : ""}
                             userId={a.kind === "group" ? "" : a.chat_id} />
@@ -1860,9 +1864,9 @@ export function TelegramCloudflareCard() {
                       className="h-8 text-xs"
                     />
                     <p className="text-[10px] text-muted-foreground">
-                      Mọi tin của thread này chuyển tới URL trên; từng user bên dưới có thể
-                      TẮT riêng (bật/tắt, dùng chung URL thread). Không tích ở đây → từng
-                      user tự bật + cài URL riêng (mỗi người một webhook khác nhau).
+                      Mọi tin của thread này chuyển tới URL trên và <b>ChatGPT KHÔNG trả lời</b>
+                      (bật hay tắt tag đều thế). Không tích ở đây → từng user bên dưới tự bật +
+                      cài URL riêng (mỗi người một webhook khác nhau).
                     </p>
                   </>
                 )}
@@ -1933,8 +1937,12 @@ export function TelegramCloudflareCard() {
                         <span className="text-[10px] text-amber-600">Thread chưa cho phép nhóm nào → user không có gì để tick.</span>
                       )}
                     </div>
-                    {/* Chuyển tiếp webhook cấp USER: thread đang bật → chỉ bật/tắt
-                        (dùng URL thread); thread không bật → bật + URL riêng. */}
+                    {/* Chuyển tiếp webhook cấp USER — CHỈ hiện khi thread KHÔNG bật
+                        chuyển tiếp (thread bật = mọi tin đã đi webhook, ChatGPT im
+                        lặng → user không có gì để chỉnh). "Chỉ chuyển khi TAG" chỉ
+                        hiện khi thread KHÔNG bắt buộc tag (thread bắt tag = mọi tin
+                        tới bot đã là tag). */}
+                    {!row.forward && (
                     <div className="space-y-1">
                       <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                         <input
@@ -1943,9 +1951,9 @@ export function TelegramCloudflareCard() {
                           checked={u.forward}
                           onChange={() => setUserField(row.id, u.id, { forward: !u.forward })}
                         />
-                        🔗 Chuyển tiếp webhook{row.forward && row.forwardUrl.trim() ? " (dùng URL của thread)" : " (URL riêng của user)"}
+                        🔗 Chuyển tiếp webhook (URL riêng của user)
                       </label>
-                      {u.forward && !(row.forward && row.forwardUrl.trim()) && (
+                      {u.forward && (
                         <Input
                           value={u.forwardUrl}
                           onChange={(e) => setUserField(row.id, u.id, { forwardUrl: e.target.value })}
@@ -1953,7 +1961,7 @@ export function TelegramCloudflareCard() {
                           className="h-7 text-xs"
                         />
                       )}
-                      {u.forward && (
+                      {u.forward && !row.requireMention && (
                         <>
                           <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                             <input
@@ -1976,9 +1984,14 @@ export function TelegramCloudflareCard() {
                         </>
                       )}
                     </div>
+                    )}
                     {/* Persona RIÊNG user này trong thread — độc lập như webhook */}
                     <PersonaInline platform={row.botKey} groupId={row.chatId}
                       userId={u.userId} />
+                    {/* Giọng nói RIÊNG user (picker hiện khi user bật tts_reply) */}
+                    <VoiceScopeInline
+                      sessionKey={u.userId.trim() ? `${row.botKey}:${row.chatId}:${u.userId.trim()}` : ""}
+                      showVoicePicker={u.groups.includes("tts_reply")} />
                   </div>
                 ))}
               </div>
@@ -1988,6 +2001,11 @@ export function TelegramCloudflareCard() {
               <PersonaInline platform={row.botKey}
                 groupId={row.kind !== "user" ? row.chatId : ""}
                 userId={row.kind === "user" ? row.chatId : ""} />
+              {/* Giọng nói cấp THREAD (nhóm / cá nhân). Picker giọng hiện khi
+                  thread bật «Trả lời bằng giọng nói». */}
+              <VoiceScopeInline
+                sessionKey={row.chatId.trim() ? `${row.botKey}:${row.chatId.trim()}` : ""}
+                showVoicePicker={row.groups.includes("tts_reply")} />
             </div>
           ))}
           <Button type="button" variant="outline" size="sm" onClick={addFilterRow}>

@@ -3081,8 +3081,10 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
     thread' (HA / n8n / URL bất kỳ) — fire-and-forget, không bao giờ raise.
 
     `tagged` = tin có TAG bot không (caller tự nhận diện theo nền tảng).
-    Trả True = tin đã bị webhook TIÊU THỤ (tag_mode bật + tin tag) → caller nên
-    BỎ QUA AI; False = tiếp tục luồng thường ("không tag thì dùng ChatGPT")."""
+    Trả True = tin đã bị webhook TIÊU THỤ → caller BỎ QUA AI (ChatGPT im lặng).
+    Quy tắc: HỄ đã chuyển tiếp thì AI không trả lời ("bật webhook = ChatGPT không
+    phản hồi"). Ngoại lệ duy nhất: tag_mode + tin KHÔNG tag → không chuyển, trả
+    False để ChatGPT trả lời như thường ("tag thì webhook, không tag thì AI")."""
     try:
         url, tag_mode = forward_rule_for(platform, bot_id, chat_id, user_id)
         if not url:
@@ -3111,9 +3113,9 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
                     pass
 
         _t.Thread(target=_post, daemon=True).start()
-        # tag_mode: tin TAG đã chuyển webhook → caller bỏ qua AI ("tag thì
-        # webhook, không tag thì ChatGPT"). Không tag_mode: tap thụ động.
-        return bool(tag_mode)
+        # ĐÃ chuyển tiếp (thread bật webhook, hoặc user bật webhook, hoặc tag_mode
+        # + tin tag) → AI im lặng. "Bật webhook = ChatGPT không phản hồi."
+        return True
     except Exception:
         return False
 

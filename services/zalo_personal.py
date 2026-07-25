@@ -2043,7 +2043,9 @@ def _process_ai(ev: dict) -> None:
             return
         try:
             from services import voice as _voice
-            text = _voice.listen(data, "m4a")
+            # session_id → STT chọn ngôn ngữ theo phạm vi (vi mặc định / en)
+            _sid = f"zalop:{_acc}:{thread_id}:{_uid}"
+            text = _voice.listen(data, "m4a", session_id=_sid)
             logger.info("zalop voice->text (%d bytes): %.60s", len(data), text)
         except Exception as exc:
             logger.warning("zalop STT loi: %s", str(exc)[:160])
@@ -2161,31 +2163,38 @@ def _process_ai(ev: dict) -> None:
                 )
             return
         choices = out.get("choices") or []
-        if choices and not any(out.get(k) for k in ("image_url", "video_url", "audio_url")):
+        has_choices = bool(choices and not any(out.get(k) for k in ("image_url", "video_url", "audio_url")))
+        if has_choices:
             try:
                 from services.agent import ask_choices as _ask
                 reply = _ask.format_numbered(reply, choices)
             except Exception:
                 pass
-        send_message(thread_id, reply, thread_type)
-        _maybe_voice_reply(thread_id, thread_type, _acc,
-                           str(ev.get("sender_id") or ""), reply)
+        # «Trả lời bằng giọng nói» = chỉ âm thanh; có nút chọn số thì vẫn gửi chữ
+        # (kèm voice). Ngược lại: gửi được voice → bỏ chữ; không → gửi chữ.
+        _sender = str(ev.get("sender_id") or "")
+        if has_choices:
+            send_message(thread_id, reply, thread_type)
+            _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply)
+        elif not _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply):
+            send_message(thread_id, reply, thread_type)
     except Exception as exc:
         logger.warning("Zalo personal orchestrator lỗi %s: %s", thread_id, exc)
         send_message(thread_id, "⏳ Hệ thống bận, thử lại sau ạ.", thread_type)
 
 
 def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
-                       user_id: str, reply: str) -> None:
-    """Gửi KÈM file âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
+                       user_id: str, reply: str) -> bool:
+    """Gửi file âm thanh nếu thread (hoặc riêng user này) bật `tts_reply`.
 
     Lưu WAV vào ``/images/voice/`` rồi ``sendFile`` qua URL nội bộ
     ``http://127.0.0.1/images/voice/…`` (zalo-server trong cùng container).
-    Không dán link; lỗi TTS không làm hỏng câu chữ đã gửi.
+    Trả True nếu ĐÃ gửi voice → caller BỎ gửi chữ («Trả lời bằng giọng nói» =
+    chỉ âm thanh). False (chưa bật / TTS chưa sẵn / lỗi) → caller gửi chữ.
     """
     text = (reply or "").strip()
     if not text or not thread_id:
-        return
+        return False
     try:
         import uuid
         from pathlib import Path
@@ -2193,13 +2202,13 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
         from services import voice as _voice
         from services.voice import permissions as _vperm
         if not _vperm.wants_voice_reply("zalop", account, thread_id, user_id):
-            return
+            return False
         if not _voice.tts_ready():
-            return
+            return False
         from services.voice import session_voice as _sv
         _sid = f"zalop:{account}:{thread_id}:{user_id}"
         if not _sv.is_tts_enabled_for_session(_sid):
-            return  # TTS bị tắt cho kênh/acc/nhóm/user này
+            return False  # TTS bị tắt cho kênh/acc/nhóm/user này
         _pk = f"zalop_{thread_id}:u{user_id}" if user_id else f"zalop_{thread_id}"
         wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         out_dir = Path(config.images_dir) / "voice"
@@ -2208,16 +2217,20 @@ def _maybe_voice_reply(thread_id: str, thread_type: int, account: str,
         (out_dir / fn).write_bytes(wav)
         # Ưu tiên URL local — đã test sendFile nhóm/1-1 thành công
         local = f"http://127.0.0.1/images/voice/{fn}"
-        if not _send_file_robust(thread_id, local, "", thread_type, account=account):
+        sent = _send_file_robust(thread_id, local, "", thread_type, account=account)
+        if not sent:
             # fallback public / media_url cũ
             try:
                 url = _voice.media_url(_voice.save_media(wav))
                 send_file(thread_id, url, "", thread_type, account=account)
+                sent = True
             except Exception:
-                pass
+                sent = False
         _voice.cleanup_media()
+        return bool(sent)
     except Exception as exc:
         logger.warning("zalop voice reply loi: %s", str(exc)[:160])
+    return False
 
 
 def handle_event(body: dict, event_name: str = "message") -> None:
