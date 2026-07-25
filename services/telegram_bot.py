@@ -997,7 +997,13 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     # chat_ids đã bỏ trên UI — AI thường qua bộ lọc thread; admin luôn được phép
     allowed = [str(c) for c in _chat_ids()]
     _is_admin = bool(chat_id and _is_admin_chat(chat_id))
-    if _is_admin and chat_id and chat_id not in allowed:
+    # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
+    # admin KHÔNG thêm trong lọc (thread_filters) và không nằm trong whitelist chat_ids
+    # → im lặng hoàn toàn (chỉ nhận log). Muốn admin chat / ra lệnh: thêm thread admin
+    # vào Lọc thread. (Trước đây admin được auto-permit vô điều kiện — nay chỉ khi có trong lọc.)
+    if _is_admin and _allow is None and chat_id and str(chat_id) not in allowed:
+        return
+    if _is_admin and chat_id and str(chat_id) not in allowed:
         allowed.append(str(chat_id))
     _low = (text or "").strip().lower()
     # So khớp substring (như Zalo Bot) — tag bot kèm /id ("@Bot /id", "/id@Bot")

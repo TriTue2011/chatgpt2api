@@ -1800,14 +1800,15 @@ def _process_ai(ev: dict) -> None:
     _sender = str(ev.get("sender_id") or "")
     _allow = _caps.allowed_groups_for_member("zalop", acc_id, thread_id, _sender)
     allowed_ids = list(_chat_ids())
-    # Admin #N của acc = luôn được phép (giống Telegram / Zalo Bot)
     _is_admin = _is_admin_thread(acc_id, thread_id)
-    if _is_admin and thread_id and thread_id not in allowed_ids:
-        allowed_ids.append(thread_id)
-    permitted = _is_admin or (_allow is not None) or (thread_id in allowed_ids)
+    # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
+    # admin KHÔNG thêm trong lọc (thread_filters) và không trong whitelist → im lặng,
+    # chỉ nhận log. (Trước đây admin auto-permit — nay bỏ.)
+    permitted = (_allow is not None) or (thread_id in allowed_ids)
     if not permitted:
-        _alert_new_thread(ev)
-        return  # im lặng — tài khoản cá nhân không tự trả lời người lạ
+        if not _is_admin:
+            _alert_new_thread(ev)  # admin đã biết — không cảnh báo "thread lạ"
+        return  # im lặng — chưa thêm thread vào Lọc thread
 
     # Admin workspace: trả lời `có`/`không` lưu danh bạ, đặt tên…
     if _is_admin and text:

@@ -12,9 +12,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "@/lib/request";
 import { ChannelActivityPanel } from "@/components/channel-activity";
+import { useSettingsStore } from "../store";
 import {
   RefreshCw, QrCode, Webhook, Globe, Users, Send, Trash2,
-  CheckCircle2, XCircle, Copy, MessageCircle, Home, Plus,
+  CheckCircle2, XCircle, Copy, MessageCircle, Home, Plus, Shield, ChevronRight, ChevronDown,
 } from "lucide-react";
 
 const INPUT =
@@ -51,10 +52,11 @@ function accountLabel(a?: Pick<Account, "displayName" | "phoneNumber"> | null, f
   return fallback;
 }
 
-type TabId = "accounts" | "webhooks" | "proxies" | "contacts";
+type TabId = "accounts" | "admin" | "webhooks" | "proxies" | "contacts";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "accounts", label: "Tài khoản & QR", icon: Users },
+  { id: "admin", label: "Admin", icon: Shield },
   { id: "webhooks", label: "Webhook", icon: Webhook },
   { id: "proxies", label: "Proxy", icon: Globe },
   { id: "contacts", label: "Danh bạ & Blacklist", icon: MessageCircle },
@@ -120,6 +122,7 @@ export function ZaloPersonalPanel() {
       </div>
 
       {tab === "accounts" && <AccountsTab status={status} refresh={refreshStatus} showToast={showToast} />}
+      {tab === "admin" && <AdminTab status={status} showToast={showToast} />}
       {tab === "webhooks" && <WebhooksTab status={status} showToast={showToast} />}
       {tab === "proxies" && <ProxiesTab showToast={showToast} />}
       {tab === "contacts" && <ContactsTab status={status} showToast={showToast} refresh={refreshStatus} />}
@@ -574,6 +577,208 @@ function ContactsTab({ status, showToast, refresh }:
 }
 
 // ── Shared ───────────────────────────────────────────────────────────────────
+
+// ── Tab: Admin (nhận thông báo log/hệ thống) ─────────────────────────────────
+// Admin = NƠI NHẬN THÔNG BÁO. Chức năng AI của thread do Lọc thread quyết định;
+// admin không có trong lọc → bot im lặng, chỉ nhận thông báo. Config ghi vào
+// `zalo_personal_account_admins[ownId].admin_entries` (khớp services/zalo_personal.py).
+type ZpAdminEntry = {
+  chat_id: string;
+  kind: "private" | "group";
+  notify_enabled: boolean;              // 🔔 hệ thống
+  account_log_enabled: boolean;         // 📋 log tài khoản
+  account_update_log_enabled: boolean;  // 🔄 cập nhật tài khoản
+  newchat_alert_enabled: boolean;       // 💬 chat mới
+};
+
+function emptyZpAdmin(): ZpAdminEntry {
+  return {
+    chat_id: "", kind: "private", notify_enabled: true,
+    account_log_enabled: true, account_update_log_enabled: false, newchat_alert_enabled: true,
+  };
+}
+
+const ZP_ADMIN_TOGGLES: readonly [keyof ZpAdminEntry, string][] = [
+  ["notify_enabled", "🔔 Hệ thống"],
+  ["account_log_enabled", "📋 Log tài khoản"],
+  ["account_update_log_enabled", "🔄 Cập nhật TK"],
+  ["newchat_alert_enabled", "💬 Chat mới"],
+];
+
+function AdminTab({ status, showToast }:
+  { status: Status | null; showToast: (m: string, ok?: boolean) => void }) {
+  const config = useSettingsStore((s) => s.config);
+  const setField = useSettingsStore((s) => s.setField);
+  const saveConfig = useSettingsStore((s) => s.saveConfig);
+  const isSaving = useSettingsStore((s) => s.isSavingConfig);
+
+  // Local state giữ cả slot trống khi đang nhập; config chỉ lưu admin có Thread ID.
+  const [rows, setRows] = useState<Record<string, ZpAdminEntry[]>>({});
+  const [openAcc, setOpenAcc] = useState<string>("");
+  // Collapse cấp 2: mỗi admin thu gọn (key ownId-idx; mặc định ẩn, admin mới = mở)
+  const [openAdm, setOpenAdm] = useState<Record<string, boolean>>({});
+  const inited = useRef(false);
+
+  useEffect(() => {
+    if (inited.current || !config) return;
+    inited.current = true;
+    const admins = ((config as any).zalo_personal_account_admins || {}) as Record<string, any>;
+    const next: Record<string, ZpAdminEntry[]> = {};
+    for (const [ownId, v] of Object.entries(admins)) {
+      const raw = (v as any)?.admin_entries;
+      if (Array.isArray(raw)) {
+        next[ownId] = raw.map((e: any) => typeof e === "string"
+          ? { ...emptyZpAdmin(), chat_id: e }
+          : { ...emptyZpAdmin(), ...e, kind: e?.kind === "group" ? "group" : "private" });
+      }
+    }
+    setRows(next);
+  }, [config]);
+
+  // Danh sách account = union tài khoản đang đăng nhập + ownId đã có admin trong config.
+  const cfgAdmins = ((config as any)?.zalo_personal_account_admins || {}) as Record<string, any>;
+  const accountList: { ownId: string; label: string; acc?: Account }[] = (() => {
+    const seen = new Set<string>();
+    const out: { ownId: string; label: string; acc?: Account }[] = [];
+    for (const a of status?.accounts || []) {
+      if (!a.ownId || seen.has(a.ownId)) continue;
+      seen.add(a.ownId);
+      out.push({ ownId: a.ownId, label: accountLabel(a), acc: a });
+    }
+    for (const ownId of Object.keys(cfgAdmins)) {
+      if (ownId && !seen.has(ownId)) { seen.add(ownId); out.push({ ownId, label: `Tài khoản ${ownId} (offline)` }); }
+    }
+    return out;
+  })();
+
+  const commitToConfig = (nextRows: Record<string, ZpAdminEntry[]>) => {
+    const out: Record<string, any> = { ...cfgAdmins };
+    const ids = new Set<string>([...Object.keys(out), ...Object.keys(nextRows)]);
+    for (const ownId of ids) {
+      const clean = (nextRows[ownId] || []).filter((e) => e.chat_id.trim());
+      if (clean.length) {
+        out[ownId] = { ...(out[ownId] || {}), admin_entries: clean };
+      } else if (out[ownId]) {
+        const rest = { ...out[ownId] };
+        delete rest.admin_entries;
+        if (Object.keys(rest).length) out[ownId] = rest; else delete out[ownId];
+      }
+    }
+    setField("zalo_personal_account_admins", out);
+  };
+
+  const entriesFor = (ownId: string): ZpAdminEntry[] => rows[ownId] ?? [];
+  const setAcc = (ownId: string, list: ZpAdminEntry[]) => {
+    const next = { ...rows, [ownId]: list };
+    setRows(next);
+    commitToConfig(next);
+  };
+  const update = (ownId: string, idx: number, patch: Partial<ZpAdminEntry>) => {
+    const list = [...entriesFor(ownId)];
+    list[idx] = { ...list[idx], ...patch };
+    setAcc(ownId, list);
+  };
+  const addAdmin = (ownId: string) => setAcc(ownId, [...entriesFor(ownId), emptyZpAdmin()]);
+  const removeAdmin = (ownId: string, idx: number) => {
+    const list = [...entriesFor(ownId)];
+    list.splice(idx, 1);
+    setAcc(ownId, list);
+  };
+
+  const save = async () => {
+    try { await saveConfig(); showToast("Đã lưu admin Zalo cá nhân ✓"); }
+    catch (e) { showToast(`Lỗi lưu: ${e instanceof Error ? e.message : e}`, false); }
+  };
+
+  if (!accountList.length) {
+    return (
+      <div className={CARD}>
+        <p className="text-xs text-[var(--muted-foreground)]">
+          Chưa có tài khoản Zalo nào. Vào tab &quot;Tài khoản &amp; QR&quot; đăng nhập trước, rồi quay lại đây thêm admin.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-[var(--muted-foreground)]">
+        Admin = nơi <b>nhận thông báo</b> (📋 log tài khoản / 🔔 hệ thống / 🔄 cập nhật / 💬 chat mới).
+        Chức năng AI của thread do <b>Lọc thread</b> quyết định — admin không thêm trong lọc thì bot im lặng, chỉ nhận thông báo.
+        Lấy Thread ID ở tab &quot;Danh bạ &amp; Blacklist&quot;.
+      </p>
+      {accountList.map(({ ownId, label }) => {
+        const open = openAcc === ownId;
+        const list = entriesFor(ownId);
+        const filled = list.filter((e) => e.chat_id.trim()).length;
+        return (
+          <div key={ownId} className={CARD}>
+            <button onClick={() => setOpenAcc(open ? "" : ownId)}
+              className="flex w-full items-center justify-between gap-2 text-left">
+              <span className="flex items-center gap-2 font-semibold text-sm">
+                {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                {label}
+              </span>
+              <span className="text-xs text-[var(--muted-foreground)]">{filled} admin</span>
+            </button>
+            {open && (
+              <div className="mt-3 space-y-3">
+                {list.map((e, i) => {
+                  const akey = `${ownId}-${i}`;
+                  const aOpen = openAdm[akey] ?? !e.chat_id.trim();
+                  return (
+                  <div key={i} className="rounded-lg border border-[var(--border)] p-3 space-y-2">
+                    <div className="flex items-center gap-2 cursor-pointer select-none"
+                      onClick={() => setOpenAdm((s) => ({ ...s, [akey]: !aOpen }))}>
+                      {aOpen ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+                      <span className="flex-1 truncate font-mono text-xs">
+                        {e.chat_id.trim() || <span className="text-[var(--muted-foreground)] not-italic">Admin mới — nhập Thread ID</span>}
+                      </span>
+                      <span className="text-[10px] text-[var(--muted-foreground)]">{e.kind === "group" ? "Nhóm" : "Cá nhân"}</span>
+                      <button onClick={(ev) => { ev.stopPropagation(); removeAdmin(ownId, i); }} className={BTN_DANGER} title="Xóa admin">
+                        <Trash2 className="size-3" />
+                      </button>
+                    </div>
+                    {aOpen && (
+                    <>
+                    <div className="flex items-center gap-2">
+                      <input className={INPUT} placeholder="Thread ID admin"
+                        value={e.chat_id}
+                        onChange={(ev) => update(ownId, i, { chat_id: ev.target.value })} />
+                      <select className={`${INPUT} w-28`} value={e.kind}
+                        onChange={(ev) => update(ownId, i, { kind: ev.target.value === "group" ? "group" : "private" })}>
+                        <option value="private">Cá nhân</option>
+                        <option value="group">Nhóm</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      {ZP_ADMIN_TOGGLES.map(([k, lbl]) => (
+                        <label key={k} className="inline-flex cursor-pointer items-center gap-1.5">
+                          <input type="checkbox" checked={Boolean(e[k])}
+                            onChange={(ev) => update(ownId, i, { [k]: ev.target.checked } as Partial<ZpAdminEntry>)} />
+                          {lbl}
+                        </label>
+                      ))}
+                    </div>
+                    </>
+                    )}
+                  </div>
+                  );
+                })}
+                <button onClick={() => addAdmin(ownId)} className={BTN_GHOST}>
+                  <Plus className="size-3" /> Thêm admin
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button onClick={() => void save()} className={BTN_PRIMARY} disabled={isSaving}>
+        {isSaving ? "Đang lưu..." : "Lưu admin"}
+      </button>
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
