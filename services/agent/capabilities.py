@@ -367,6 +367,104 @@ def _h_remember(args: dict, ctx: dict) -> dict:
     return {"text": f"Dạ em nhớ rồi ạ 🧠: {fact}"}
 
 
+# ── Model specs: bot tự học tham số/form của model tạo ảnh/video ──────────────
+
+def _clean_spec_params(params: list) -> list:
+    out = []
+    for p in params or []:
+        if not isinstance(p, dict):
+            continue
+        key = str(p.get("key") or p.get("name") or "").strip()
+        if not key:
+            continue
+        opts = [str(o).strip() for o in (p.get("options") or []) if str(o).strip()]
+        out.append({
+            "key": key,
+            "label": str(p.get("label") or key).strip(),
+            "options": opts,
+            "default": str(p.get("default") or (opts[0] if opts else "")).strip(),
+            "arg": str(p.get("arg") or key).strip(),
+        })
+    return out
+
+
+def _clean_spec_presets(presets: list) -> list:
+    out = []
+    for p in presets or []:
+        if not isinstance(p, dict):
+            continue
+        label = str(p.get("label") or "").strip()
+        vals = p.get("values") if isinstance(p.get("values"), dict) else {}
+        if not label or not vals:
+            continue
+        out.append({"label": label, "values": {str(k): str(v) for k, v in vals.items()}})
+    return out
+
+
+def _describe_model_spec(model: str, sp: dict | None) -> str:
+    if not sp:
+        return f"(em chưa có spec cho {model})"
+    lines: list[str] = []
+    for p in sp.get("params") or []:
+        opts = " / ".join(p.get("options") or []) or "(tự do)"
+        d = p.get("default")
+        lines.append(f"• {p.get('label') or p.get('key')}: {opts}" + (f"  [mặc định {d}]" if d else ""))
+    for pr in sp.get("presets") or []:
+        vals = ", ".join(f"{k}={v}" for k, v in (pr.get("values") or {}).items())
+        lines.append(f"◦ Preset {pr.get('label')}: {vals}")
+    if sp.get("notes"):
+        lines.append(f"Ghi chú: {sp['notes']}")
+    return "\n".join(lines) or "(spec rỗng)"
+
+
+def _h_model_spec(args: dict, ctx: dict) -> dict:
+    """Bot TỰ HỌC tham số/form model tạo ảnh/video. Dạy → lưu → lần sau tự dùng."""
+    op = str(args.get("op") or "set").strip().lower()
+    model = str(args.get("model") or "").strip()
+    who = str(ctx.get("user_id") or "")
+
+    if op == "list":
+        specs = state.load_model_specs()
+        if not specs:
+            return {"text": "Em chưa học spec model nào ạ. Anh/chị dạy em: nêu model + "
+                            "các tham số (tên + lựa chọn) là em nhớ 🧠."}
+        lines = ["🧬 Spec model em đã học:"]
+        for mid, sp in specs.items():
+            pnames = ", ".join(p.get("label") or p.get("key") for p in (sp.get("params") or []))
+            npre = len(sp.get("presets") or [])
+            lines.append(f"• {mid}: {pnames or '—'}" + (f" · {npre} preset" if npre else ""))
+        return {"text": "\n".join(lines)}
+
+    if not model:
+        return {"text": "Anh/chị cho em xin TÊN model (id) cần dạy/xem ạ."}
+
+    if op == "get":
+        sp = state.get_model_spec(model)
+        if not sp:
+            return {"text": f"Em chưa biết tham số của `{model}`. Anh/chị dạy em nhé "
+                            f"(vd: size 1024x1024 / 512x512, số lượng 1,2,4)."}
+        return {"text": f"🧬 Spec `{model}`:\n{_describe_model_spec(model, sp)}"}
+
+    if op in ("clear", "delete", "forget"):
+        ok = state.delete_model_spec(model)
+        return {"text": f"Đã xóa spec `{model}` ạ." if ok else f"Không thấy spec `{model}`."}
+
+    # op == set — dạy tham số / preset (ghép dần với cái đã có)
+    spec: dict = {}
+    if isinstance(args.get("params"), list):
+        spec["params"] = _clean_spec_params(args["params"])
+    if isinstance(args.get("presets"), list):
+        spec["presets"] = _clean_spec_presets(args["presets"])
+    if args.get("notes"):
+        spec["notes"] = str(args.get("notes"))
+    if not spec:
+        return {"text": "Anh/chị mô tả giúp em tham số của model — tên field + các lựa "
+                        "chọn (vd size: 1024x1024, 512x512), hoặc preset gói sẵn ạ."}
+    state.set_model_spec(model, spec, who=who)
+    return {"text": f"Dạ em học rồi ạ 🧠 — spec `{model}`:\n"
+                    f"{_describe_model_spec(model, state.get_model_spec(model))}"}
+
+
 def _h_schedule(args: dict, ctx: dict) -> dict:
     """Create / list / cancel user reminders and recurring agent tasks."""
     from services.agent import reminders as rem
@@ -2453,6 +2551,31 @@ CAPABILITIES: dict[str, Capability] = {
         parameters={"type": "object", "properties": {
             "fact": {"type": "string", "description": "Điều cần ghi nhớ"}},
             "required": ["fact"]}),
+    "model_spec": Capability(
+        name="model_spec", risk=READ, handler=_h_model_spec,
+        emoji="🧬", label="Học tham số model (ảnh/video)",
+        description=(
+            "BOT TỰ HỌC tham số & lựa chọn của model tạo ảnh/video để lần sau tự đưa "
+            "menu + gọi đúng. Khi người dùng DẠY (vd 'model imagen-4 có size "
+            "1024x1024/512x512, số lượng 1,2,4, tỉ lệ 1:1/9:16') → op=set + model + "
+            "params (mỗi field: key, label, options[], default). Preset gói sẵn → "
+            "presets [{label, values{}}]. Hỏi 'model X có tham số gì' → op=get. "
+            "Liệt kê đã học → op=list. Xóa → op=clear. Chỉ dùng cho model TẠO ẢNH/VIDEO."),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["set", "get", "list", "clear"],
+                   "description": "set=dạy, get=xem, list=liệt kê, clear=xóa"},
+            "model": {"type": "string", "description": "ID model (vd flow/imagen-4)"},
+            "params": {"type": "array", "description": "Tham số từng field",
+                       "items": {"type": "object", "properties": {
+                           "key": {"type": "string"}, "label": {"type": "string"},
+                           "options": {"type": "array", "items": {"type": "string"}},
+                           "default": {"type": "string"},
+                           "arg": {"type": "string", "description": "Tên arg khi gọi (nếu khác key)"}}}},
+            "presets": {"type": "array", "description": "Gói tham số sẵn",
+                        "items": {"type": "object", "properties": {
+                            "label": {"type": "string"}, "values": {"type": "object"}}}},
+            "notes": {"type": "string", "description": "Ghi chú thêm (cách gọi, lấy URL…)"}},
+            "required": ["op"]}),
     "schedule": Capability(
         name="schedule", risk=READ, handler=_h_schedule,
         emoji="⏰", label="Đặt nhắc / việc định kỳ",
@@ -2934,6 +3057,7 @@ _CAP_GROUP: dict[str, str] = {
     "create_automation": "homeassistant",
     "system_status": "server", "remote_system_status": "server",
     "remember": "memory", "search_history": "memory",
+    "model_spec": "image",
     "schedule": "schedule",
     "use_skill": "skills", "run_workflow": "skills",
     "ingest": "wiki", "wiki_search": "wiki", "wiki_read": "wiki",

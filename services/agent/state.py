@@ -152,6 +152,86 @@ def append_memory(fact: str, who: str = "") -> None:
             logger.warning("agent.state: append memory failed: %s", exc)
 
 
+# ── Model specs (bot tự học tham số/form từng model — tự tiến hóa) ────────────
+# data/agent/model_specs.json: { "<model_id>": {
+#     "params":  [ {"key","label","options":[...],"default","arg"} ],  # từng field
+#     "presets": [ {"label","values":{key:value}} ],                    # gói sẵn
+#     "notes": str, "updated": str, "by": str } }
+# Bot HỎI khi chưa biết; người dùng dạy → lưu → lần sau tự đưa lựa chọn + gọi đúng.
+_MODEL_SPECS_FILE = _AGENT_DIR / "model_specs.json"
+
+
+def load_model_specs() -> dict:
+    try:
+        if _MODEL_SPECS_FILE.exists():
+            import json
+            data = json.loads(_MODEL_SPECS_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.warning("agent.state: read model_specs failed: %s", exc)
+    return {}
+
+
+def get_model_spec(model_id: str) -> dict | None:
+    """Spec của model — khớp id chính xác, hoặc theo ĐUÔI (bỏ prefix provider) để
+    'imagen-4' khớp 'flow/imagen-4'."""
+    mid = str(model_id or "").strip()
+    if not mid:
+        return None
+    specs = load_model_specs()
+    if mid in specs and isinstance(specs[mid], dict):
+        return specs[mid]
+    tail = mid.split("/")[-1].lower()
+    for k, v in specs.items():
+        if isinstance(v, dict) and str(k).split("/")[-1].lower() == tail:
+            return v
+    return None
+
+
+def set_model_spec(model_id: str, spec: dict, who: str = "") -> None:
+    """Lưu/ghép spec cho model (dạy dần từng phần — merge với cái đã có)."""
+    mid = str(model_id or "").strip()
+    if not mid or not isinstance(spec, dict):
+        return
+    import json
+    with _lock:
+        specs = load_model_specs()
+        prev = specs.get(mid) if isinstance(specs.get(mid), dict) else {}
+        merged = {**prev, **{k: v for k, v in spec.items() if v is not None}}
+        merged["updated"] = time.strftime("%Y-%m-%d %H:%M")
+        if who:
+            merged["by"] = who
+        specs[mid] = merged
+        try:
+            _ensure_dirs()
+            _MODEL_SPECS_FILE.write_text(
+                json.dumps(specs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("agent.state: write model_specs failed: %s", exc)
+
+
+def delete_model_spec(model_id: str) -> bool:
+    mid = str(model_id or "").strip()
+    if not mid:
+        return False
+    import json
+    with _lock:
+        specs = load_model_specs()
+        if mid not in specs:
+            tail = mid.split("/")[-1].lower()
+            mid = next((k for k in specs if str(k).split("/")[-1].lower() == tail), mid)
+        if mid not in specs:
+            return False
+        specs.pop(mid, None)
+        try:
+            _MODEL_SPECS_FILE.write_text(
+                json.dumps(specs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("agent.state: delete model_spec failed: %s", exc)
+            return False
+    return True
+
+
 # ── Per-user profile ─────────────────────────────────────────────────────────
 
 def load_user_profile(user_id: str) -> str:
