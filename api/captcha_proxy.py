@@ -23,7 +23,8 @@ from services.config import config
 CAPTCHA_URL = os.getenv("CAPTCHA_SOLVER_URL_INTERNAL", "http://127.0.0.1:8010").rstrip("/")
 
 # Onboarding can take a while; status polls are quick.
-_TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=180.0, pool=5.0)
+# Codex batch login: MS OTC + IMAP poll (150s) + consent + OAuth callback → up to ~420s worst case.
+_TIMEOUT = httpx.Timeout(connect=5.0, read=450.0, write=180.0, pool=5.0)
 _DROP_REQ = {"host", "content-length", "connection", "accept-encoding", "authorization"}
 _DROP_RESP = {"content-encoding", "transfer-encoding", "content-length", "connection"}
 

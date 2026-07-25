@@ -60,16 +60,34 @@ def _codex_count_401(access_token: str, reason: str) -> bool:
 
 
 def _is_openai_api_only(token: str) -> bool:
-    """Check if token only works with api.openai.com (not chatgpt.com).
-    
-    Detected by: no user_id set (never successfully refreshed from chatgpt.com).
-    API-only tokens (from api.openai.com) don't have a ChatGPT user_id.
+    """True nếu token CHỈ dùng được với api.openai.com (không phải chatgpt.com).
+
+    Codex chạy trên backend chatgpt.com → token 'API-only' (platform
+    api.openai.com) sẽ 401. Phân biệt bằng claim ĐẶC THÙ ChatGPT trong JWT:
+    token session web ChatGPT mang ``https://api.openai.com/auth.chatgpt_account_id``
+    (hoặc ``chatgpt_plan_type``); token API-only thì KHÔNG. KHÔNG dùng user_id/sub
+    vì mọi JWT đều có → không phân biệt được (xem oauth_service.py:215 cùng pattern).
+
+    Fail-safe: mọi trường hợp nghi ngờ (không decode được / không phải JWT) →
+    False (không loại token, tránh bỏ nhầm token Codex tốt).
     """
     try:
-        from services.account_service import get_account
-        acc = get_account(token) or {}
-        # Tokens without user_id are API-only (never refreshed from chatgpt.com)
-        return not acc.get("user_id") or acc.get("refreshed_from_chatgpt") is False
+        if not token or not token.startswith("eyJ"):
+            return False
+        from services.account_service import _decode_jwt_payload
+        payload = _decode_jwt_payload(token)
+        if not isinstance(payload, dict):
+            return False
+        auth = payload.get("https://api.openai.com/auth")
+        if not isinstance(auth, dict):
+            auth = {}
+        has_chatgpt = bool(
+            str(auth.get("chatgpt_account_id") or "").strip()
+            or str(auth.get("chatgpt_plan_type") or "").strip()
+        )
+        # Có claim ChatGPT → dùng được Codex (không api-only).
+        # Decode được nhưng KHÔNG có claim ChatGPT nào → token API-only → loại.
+        return not has_chatgpt
     except Exception:
         return False
 

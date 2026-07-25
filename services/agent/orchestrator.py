@@ -454,6 +454,17 @@ def orchestrate(user_text: str, user_id: str,
     except Exception:
         pass
 
+    # 0a) Lệnh admin xử lý Codex account_deactivated: "xóa <email>" / "giữ <email>".
+    # Chỉ khớp khi có pending deactivated cho email đó (do refresh nhiều tầng tạo),
+    # nên không đụng vào chat thường.
+    try:
+        from services.codex_deactivated import try_resolve_admin_reply as _codex_deact_reply
+        _cx = _codex_deact_reply(user_text)
+        if _cx:
+            return {"text": _cx}
+    except Exception:
+        pass
+
     # 0) Speech Persona wizard — deterministic, ngoài vòng LLM (0 token model).
     # Chỉ can thiệp khi user gõ trigger ('persona'…) hoặc wizard đang mở.
     try:

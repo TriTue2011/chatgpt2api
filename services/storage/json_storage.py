@@ -168,34 +168,6 @@ class JSONStorageBackend(StorageBackend):
         finally:
             self._auth_lock.release()
 
-    def load_accounts(self) -> list[dict[str, Any]]:
-        """从 JSON 文件加载账号数据"""
-        return self._load_json_list(self.file_path)
-
-    def save_accounts(self, accounts: list[dict[str, Any]]) -> None:
-        """保存账号数据到 JSON 文件"""
-        self._save_json_list(self.file_path, accounts)
-
-    def load_auth_keys(self) -> list[dict[str, Any]]:
-        """从 JSON 文件加载鉴权密钥数据"""
-        if not self.auth_keys_path.exists():
-            return []
-        try:
-            data = json.loads(self.auth_keys_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, Exception):
-            return []
-        if isinstance(data, dict):
-            data = data.get("items")
-        return data if isinstance(data, list) else []
-
-    def save_auth_keys(self, auth_keys: list[dict[str, Any]]) -> None:
-        """保存鉴权密钥数据到 JSON 文件"""
-        self.auth_keys_path.parent.mkdir(parents=True, exist_ok=True)
-        self.auth_keys_path.write_text(
-            json.dumps({"items": auth_keys}, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-
     def health_check(self) -> dict[str, Any]:
         """健康检查"""
         try:

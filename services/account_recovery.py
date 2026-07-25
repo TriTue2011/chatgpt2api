@@ -275,6 +275,14 @@ def _codex_batch(email: str) -> str:
     except Exception as exc:
         logger.warning({"event": "codex_batch_request_failed", "email": email, "error": str(exc)[:160]})
         return ""
+    # Tài khoản đã bị xóa/vô hiệu hóa (OpenAI account_deactivated) — VĨNH VIỄN,
+    # không refresh được. Báo admin + hỏi xóa, rồi short-circuit (đừng báo
+    # "KHÔNG khôi phục được" generic nữa).
+    _deact = f"{data.get('error_code') or ''} {data.get('error') or ''}".lower()
+    if "account_deactivated" in _deact:
+        from services.codex_deactivated import handle_deactivated, CodexAccountDeactivated
+        handle_deactivated(email, reason="refresh nhiều tầng (T3 bulk onboard) → account_deactivated")
+        raise CodexAccountDeactivated(email)
     if data.get("state") != "success" or not data.get("redirect_url"):
         logger.warning({
             "event": "codex_batch_onboard_failed",
@@ -689,7 +697,14 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
                 f"(email|pass + IMAP OTC)…",
                 {**det, "step": "T3-batch"},
             )
-        tok = batch(email)
+        from services.codex_deactivated import CodexAccountDeactivated
+        try:
+            tok = batch(email)
+        except CodexAccountDeactivated:
+            # account_deactivated: đã báo admin + hỏi xóa trong handle_deactivated.
+            # Dừng hẳn, KHÔNG rơi xuống thông báo "KHÔNG tự khôi phục được".
+            logger.info({"event": "recover_stop_deactivated", "provider": provider, "email": email})
+            return
         if tok:
             _notify(f"✅ {label} — {email}\nKhôi phục xong ([T3] đăng nhập hàng loạt / codex-onboard).",
                     {**det, "step": "T3-batch-ok"})

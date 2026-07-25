@@ -262,6 +262,21 @@ def _page_looks_ms_password(content: str, url: str) -> bool:
     )
 
 
+def _page_looks_deactivated(content: str, url: str) -> bool:
+    """OpenAI 'Lỗi xác thực' — tài khoản đã bị xóa/vô hiệu hóa (account_deactivated).
+
+    Đây là lỗi VĨNH VIỄN: OAuth callback sẽ KHÔNG BAO GIỜ tới, nên phải thoát
+    ngay (đóng tab + sang account kế) thay vì treo hết thời gian chờ OAuth.
+    Bắt theo đúng error_code OpenAI render trên trang."""
+    c = content or ""
+    cl = c.lower()
+    return (
+        "account_deactivated" in cl
+        or "đã bị xóa hoặc vô hiệu hóa" in c
+        or "has been deleted or deactivated" in cl
+    )
+
+
 async def _handle_microsoft_otc_flow(page, req: "CodexOnboardReq") -> dict[str, Any] | None:
     """Drive Microsoft password → OTC → IMAP code. None = continue main loop; dict = terminal fail."""
     if not (req.gmail_email and req.gmail_app_password):
@@ -283,12 +298,19 @@ async def _handle_microsoft_otc_flow(page, req: "CodexOnboardReq") -> dict[str, 
             logger.warning("Microsoft email step: %s", exc)
 
     content = ""
+    url = ""
     try:
         content = await page.content()
     except Exception:
         pass
-    url = page.url
-    on_pwd = await page.locator('input[type="password"], input[name="passwd"]').count() > 0
+    try:
+        url = page.url or ""
+    except Exception:
+        url = ""
+    try:
+        on_pwd = await page.locator('input[type="password"], input[name="passwd"]').count() > 0
+    except Exception:
+        on_pwd = False
     if not (on_pwd or _page_looks_ms_password(content, url)):
         return None  # not on MS password screen yet
 
@@ -484,6 +506,22 @@ async def run_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
             except Exception:
                 await asyncio.sleep(1.0)
                 continue
+
+            # ── Tài khoản bị xóa/vô hiệu hóa (OpenAI 'Lỗi xác thực') ──
+            # Lỗi vĩnh viễn → không đợi OAuth callback nữa. Thoát ngay để caller
+            # đóng tab (finally: close_profile) và chuyển sang tài khoản kế.
+            if _page_looks_deactivated(content, url):
+                logger.warning({
+                    "event": "codex_onboard_account_deactivated",
+                    "email": (req.github_email or "")[:80],
+                    "url": (url or "")[:120],
+                })
+                return {
+                    "state": "failed",
+                    "error": "account_deactivated",
+                    "error_code": "account_deactivated",
+                    "email": req.github_email,
+                }
 
             # ── Microsoft password / OTC (highest priority for Outlook) ──
             if (not ms_otc_done) and (
@@ -963,14 +1001,21 @@ async def run_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
         if not captured_callback_url:
             # Last chance: current URL or any page with code=
             try:
-                if "code=" in (page.url or ""):
-                    captured_callback_url.append(page.url)
+                current_url = page.url or ""
+                if "code=" in current_url:
+                    captured_callback_url.append(current_url)
             except Exception:
                 pass
         if not captured_callback_url:
+            # Safe URL access for error message (may have thrown above)
+            stuck_url = ""
+            try:
+                stuck_url = page.url or "(unable to read)"
+            except Exception:
+                stuck_url = "(page unavailable)"
             return {
                 "state": "failed",
-                "error": f"Timeout waiting for OAuth redirect. Stuck at: {page.url}",
+                "error": f"Timeout waiting for OAuth redirect. Stuck at: {stuck_url}",
             }
 
         final_url = captured_callback_url[0]
@@ -981,4 +1026,8 @@ async def run_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
         logger.exception('Codex onboard error')
         return {'state': 'failed', 'error': str(e)}
     finally:
-        await pool.close_profile(profile)
+        # Robust close: ensure next account's browser can launch even if this one crashed.
+        try:
+            await pool.close_profile(profile)
+        except Exception as close_err:
+            logger.warning({'event': 'codex_onboard_close_profile_error', 'profile': profile, 'error': str(close_err)[:160]})

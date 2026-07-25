@@ -95,6 +95,9 @@ scripts/test_storage.py
 data/accounts.json
 data/*.json
 !data/piper/*.json
+# Runtime file locks (JSONStorageBackend._FileLock)
+data/*.lock
+data/.*.lock
 _tmp_*
 *.tar
 *.tgz
