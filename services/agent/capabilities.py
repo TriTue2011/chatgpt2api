@@ -148,6 +148,45 @@ def _ask_image_provider(prompt: str) -> dict:
     return _ask_media_provider(prompt, "image", verb="vẽ", emoji="🎨")
 
 
+def _fold_params_into_prompt(prompt: str, chosen: dict, spec: dict) -> str:
+    """Ghép tham số đã chọn vào prompt (cho pipeline ảnh chỉ nhận text)."""
+    if not chosen:
+        return prompt
+    labels = {p.get("key"): (p.get("label") or p.get("key")) for p in (spec.get("params") or [])}
+    extra = ", ".join(f"{labels.get(k, k)} {v}" for k, v in chosen.items() if v)
+    return f"{prompt} ({extra})" if extra else prompt
+
+
+def _spec_call_kwargs(chosen: dict, spec: dict) -> dict:
+    """chosen {key:value} → {arg:value} theo spec.params[].arg (cho call_video)."""
+    argmap = {p.get("key"): (p.get("arg") or p.get("key")) for p in (spec.get("params") or [])}
+    return {argmap.get(k, k): v for k, v in chosen.items() if v}
+
+
+def _param_choice_menu(prompt: str, model: str, spec: dict, *, verb: str, emoji: str) -> dict | None:
+    """MỘT menu chọn nhanh thông số ĐÃ HỌC: 'Mặc định' + các preset. None = không
+    có gì để chọn → làm thẳng. send mang 'params k=v …' → lượt sau handler nhận
+    args['params'] rồi gọi có tham số. (Per-field tuần tự = bước sau, cần test live.)"""
+    params = spec.get("params") or []
+    presets = spec.get("presets") or []
+    defaults = {p["key"]: p.get("default") for p in params if p.get("key") and p.get("default")}
+    if not presets and not defaults:
+        return None
+    short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
+    lines = [f'{emoji} {verb} "{short}" bằng {model} — chọn thông số ạ:', "<<<ASK>>>"]
+    if defaults:
+        dv = " ".join(f"{k}={v}" for k, v in defaults.items())
+        dlabel = ", ".join(f"{k} {v}" for k, v in defaults.items())
+        lines.append(f"Mặc định ({dlabel}) | {verb} '{prompt}' bằng model {model} params {dv}")
+    for pr in presets:
+        vals = pr.get("values") or {}
+        vs = " ".join(f"{k}={v}" for k, v in vals.items())
+        vlabel = ", ".join(f"{k} {v}" for k, v in vals.items())
+        lines.append(f"{pr.get('label')} ({vlabel}) | {verb} '{prompt}' bằng model {model} params {vs}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
 def _h_generate_image(args: dict, ctx: dict) -> dict:
     prompt = str(args.get("prompt") or "").strip()
     explicit_model = str(args.get("model") or "").strip()
@@ -168,6 +207,16 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
         model = _IMAGE_TOOL_OVERRIDE.get(tool) or branch_model("image_gen", _channel_of(ctx))
     else:
         model = branch_model("image_gen", _channel_of(ctx))
+    # Bot TỰ HỌC: model có spec tham số → hỏi chọn thông số (1 lần) rồi ghép vào
+    # prompt. Chạy tự động (auto_approve) thì bỏ hỏi, dùng luôn.
+    chosen = args.get("params") if isinstance(args.get("params"), dict) else {}
+    spec = state.get_model_spec(model)
+    if spec and (spec.get("params") or spec.get("presets")):
+        if not chosen and not ctx.get("auto_approve"):
+            menu = _param_choice_menu(prompt, model, spec, verb="vẽ", emoji="🎨")
+            if menu:
+                return menu
+        prompt = _fold_params_into_prompt(prompt, chosen, spec)
     resp = call_model(model, [{"role": "user", "content": f"Vẽ: {prompt}"}],
                       timeout=320, max_tokens=600)
     # deliver_now=True ở các nhánh THẤT BẠI: trả thẳng câu thật cho người dùng,
@@ -233,11 +282,25 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
     else:
         model = _VIDEO_MODELS.get(quality) or branch_model("video_gen", _channel_of(ctx))
 
+    # Bot TỰ HỌC: model có spec tham số → hỏi chọn (1 lần) rồi map vào kwargs.
+    chosen = args.get("params") if isinstance(args.get("params"), dict) else {}
+    spec = state.get_model_spec(model)
+    if spec and (spec.get("params") or spec.get("presets")) and not chosen \
+            and not ctx.get("auto_approve"):
+        menu = _param_choice_menu(prompt, model, spec, verb="tạo video", emoji="🎬")
+        if menu:
+            return menu
+
     v_kwargs = {}
     for key in ("resolution", "aspect_ratio", "duration", "fps", "frame_rate",
                 "num_frames", "negative_prompt", "seed", "image", "last_frame", "mode"):
         if args.get(key) is not None:
             v_kwargs[key] = args[key]
+    # Tham số ĐÃ HỌC (chosen) → map theo spec.params[].arg vào kwargs (không đè
+    # tham số người dùng nêu trực tiếp).
+    if chosen and spec:
+        for k, v in _spec_call_kwargs(chosen, spec).items():
+            v_kwargs.setdefault(k, v)
 
     resp = call_video(prompt, model=model, **v_kwargs)
     if resp.get("error"):
@@ -2310,7 +2373,11 @@ CAPABILITIES: dict[str, Capability] = {
                      "description": "Công cụ người dùng nêu; bỏ trống để hệ thống hỏi"},
             "model": {"type": "string",
                       "description": "ID model cụ thể khi người dùng CHỌN TỪ MENU "
-                                     "(vd 'vẽ bằng model gpt-image-2: …') — truyền NGUYÊN id"}},
+                                     "(vd 'vẽ bằng model gpt-image-2: …') — truyền NGUYÊN id"},
+            "params": {"type": "object",
+                       "description": "Thông số đã chọn từ menu (vd {\"size\":\"1024x1024\","
+                                      "\"count\":\"4\"}). Câu dạng '… params size=1024x1024 "
+                                      "count=4' → gom hết vào đây, key=value."}},
             "required": ["prompt"]},
         workflow=("Hệ thống hỏi công cụ trước khi vẽ. Vẽ xong ảnh được gửi kèm — "
                   "chỉ chú thích ngắn. Nếu lỗi/không ra ảnh: hệ thống đã báo thật; "
@@ -2348,7 +2415,9 @@ CAPABILITIES: dict[str, Capability] = {
             "seed": {"type": "integer", "description": "Hạt giống ngẫu nhiên (seed)"},
             "image": {"type": "string", "description": "URL/Base64 ảnh bắt đầu"},
             "last_frame": {"type": "string", "description": "URL/Base64 ảnh kết thúc"},
-            "quality": {"type": "string", "enum": ["fast", "quality", "lite"], "description": "Chất lượng (mặc định fast)"}},
+            "quality": {"type": "string", "enum": ["fast", "quality", "lite"], "description": "Chất lượng (mặc định fast)"},
+            "params": {"type": "object", "description": "Thông số đã chọn từ menu spec đã học "
+                       "(key=value). Câu dạng '… params resolution=1080p duration=8' → gom vào đây."}},
             "required": ["prompt"]},
         workflow=("Tạo video mất 1-5 phút — kết quả đã được gửi kèm tự động, chỉ cần "
                   "chú thích ngắn. Nếu lỗi credit/quota: báo người dùng chờ hoặc thử lại sau.")),
