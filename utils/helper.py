@@ -438,12 +438,26 @@ def parse_image_count(raw_value: object) -> int:
 
 
 def build_chat_image_markdown_content(image_result: dict[str, object]) -> str:
+    """Build markdown image links from image generation result.
+    
+    Supports two response formats:
+    1. b64_json: {"data": [{"b64_json": "..."}]} — base64 inline image
+    2. url: {"data": [{"url": "https://..."}]} — direct URL (most providers)
+    
+    Priority: b64_json first, then url fallback.
+    """
     image_items = image_result.get("data") if isinstance(image_result.get("data"), list) else []
     markdown_images: list[str] = []
     for index, item in enumerate(image_items, start=1):
         if not isinstance(item, dict):
             continue
+        # Priority 1: base64 inline image (b64_json)
         b64_json = str(item.get("b64_json") or "").strip()
         if b64_json:
             markdown_images.append(f"![image_{index}](data:image/png;base64,{b64_json})")
+            continue
+        # Priority 2: direct URL (most providers return this)
+        url = str(item.get("url") or "").strip()
+        if url:
+            markdown_images.append(f"![image_{index}]({url})")
     return "\n\n".join(markdown_images) if markdown_images else "Image generation completed."

@@ -61,9 +61,17 @@ def _codex_count_401(access_token: str, reason: str) -> bool:
 
 def _is_openai_api_only(token: str) -> bool:
     """Check if token only works with api.openai.com (not chatgpt.com).
+    
     Detected by: no user_id set (never successfully refreshed from chatgpt.com).
+    API-only tokens (from api.openai.com) don't have a ChatGPT user_id.
     """
-    return False  # Let the account's refresh status determine eligibility
+    try:
+        from services.account_service import get_account
+        acc = get_account(token) or {}
+        # Tokens without user_id are API-only (never refreshed from chatgpt.com)
+        return not acc.get("user_id") or acc.get("refreshed_from_chatgpt") is False
+    except Exception:
+        return False
 
 
 def _chat_to_responses_input(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,

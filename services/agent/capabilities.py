@@ -106,6 +106,10 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
     url = first_image_url(txt)
     if url:
         return {"text": "Đây ạ 🎨", "image_url": url}
+    # CẢI TIẾN: Feedback rõ ràng khi không extract được URL từ response
+    if not txt or any(kw in (txt or "").lower() for kw in ("completed", "finished", "generated")):
+        return {"text": f"Em thử vẽ bằng {model} nhưng chưa lấy được ảnh. "
+                        f"Anh/chị đợi chút em thử lại nhé 🔄"}
     return {"text": txt or "Em chưa vẽ được ảnh, anh/chị thử mô tả rõ hơn giúp em nhé."}
 
 

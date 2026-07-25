@@ -42,13 +42,24 @@ def _random_subdomain_label() -> str:
 
 
 def _next_domain(domains: list[str]) -> str:
+    """Round-robin domain selection with defensive initialization.
+    
+    Ensures domain_index is always an integer to prevent TypeError
+    if the module-level variable gets corrupted or reset.
+    """
     global domain_index
+    # Defensive: ensure domain_index is always an integer
+    if not isinstance(domain_index, int):
+        domain_index = 0
     domains = [str(item).strip() for item in domains if str(item).strip()]
     if not domains:
         raise RuntimeError("mail.domain 不能为空")
     if len(domains) == 1:
         return domains[0]
     with domain_lock:
+        # Double-check inside lock
+        if not isinstance(domain_index, int):
+            domain_index = 0
         value = domains[domain_index % len(domains)]
         domain_index = (domain_index + 1) % len(domains)
         return value

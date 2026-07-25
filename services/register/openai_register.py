@@ -426,6 +426,85 @@ def extract_oauth_callback_params_from_consent_session(session: requests.Session
     return extract_oauth_callback_params_from_url(str(org_resp.headers.get("Location") or "").strip())
 
 
+def _handle_email_verification_link(session: requests.Session, verification_url: str, device_id: str, index: int, mailbox: dict) -> str | None:
+    """Handle OpenAI's secondary email verification step (click a link in email).
+    
+    After OTP validation, some OpenAI-native accounts show a page with a
+    "Verify" or "Continue" button that links to an email-verified URL.
+    We navigate to that page, find the verification link/button, and click it.
+    
+    Returns the new continue_url, or None on failure.
+    """
+    try:
+        # Navigate to the verification page
+        headers = dict(navigate_headers)
+        headers["referer"] = verification_url
+        resp = session.get(verification_url, headers=headers, allow_redirects=True, verify=False, timeout=30)
+        
+        if resp is None:
+            print(f"[email_verify] Failed to load verification page")
+            return None
+            
+        final_url = str(resp.url)
+        step(index, f"Verification page loaded: {final_url[:120]}")
+        
+        # Look for a "Verify" or "Continue" button/link in the page
+        # OpenAI typically uses a form or anchor with href containing email/verify/confirm
+        content = resp.text
+        
+        # Try to find verification callback URLs in the page
+        import re
+        verify_patterns = [
+            r'href=["\']([^"\']*email[/-]verify[^"\']*)["\']',
+            r'href=["\']([^"\']*verify[/-]email[^"\']*)["\']',
+            r'href=["\']([^"\']*confirm[/-]email[^"\']*)["\']',
+            r'href=["\']([^"\']*email[/-]confirm[^"\']*)["\']',
+            r'data-continue=["\']([^"\']*)["\']',
+        ]
+        
+        verify_url = None
+        for pattern in verify_patterns:
+            match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                verify_url = match.group(1)
+                break
+        
+        if not verify_url:
+            # Fallback: try to find any form with submit action
+            form_patterns = [
+                r'<form[^>]*action=["\']([^"\']*)["\']',
+                r'href=["\'](/sign-in-with-chatgpt/codex/consent[^"\']*)["\']',
+            ]
+            for pattern in form_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    verify_url = match.group(1)
+                    break
+        
+        if verify_url and verify_url != final_url:
+            step(index, f"Found verification link: {verify_url[:120]}")
+            if verify_url.startswith("/"):
+                verify_url = f"{auth_base}{verify_url}"
+            
+            # Click the verification link
+            verify_headers = dict(navigate_headers)
+            verify_headers["referer"] = final_url
+            verify_resp = session.get(verify_url, headers=verify_headers, allow_redirects=True, verify=False, timeout=30)
+            
+            if verify_resp:
+                step(index, "Verification link clicked successfully")
+                return str(verify_resp.url)
+            else:
+                step(index, "Failed to click verification link", "yellow")
+        else:
+            step(index, "No additional verification link found, using current URL", "yellow")
+            return final_url
+            
+    except Exception as e:
+        step(index, f"Email verification link handling failed: {e}", "red")
+        return None
+
+
 def exchange_platform_tokens(session: requests.Session, device_id: str, code_verifier: str, consent_url: str) -> dict | None:
     callback_params = extract_oauth_callback_params_from_consent_session(session, consent_url, device_id)
     if not callback_params:
@@ -691,6 +770,16 @@ class PlatformRegistrar:
             otp_payload = _response_json(resp)
             continue_url = str(otp_payload.get("continue_url") or continue_url).strip()
             step(index, "独立登录验证码校验完成")
+
+        # After OTP (or if continue_url already points to email-verification),
+        # handle OpenAI-native "click the verification link" step.
+        # Some accounts show a page with "Verify" / "Continue" button instead of OTP.
+        if "email-verification" in continue_url or "email/verify" in continue_url:
+            step(index, "Xử lý email verification link click")
+            continue_url = _handle_email_verification_link(self.session, continue_url, self.device_id, index, mailbox)
+            if continue_url is None:
+                raise RuntimeError("email verification link click failed")
+            step(index, "Email verification link click hoàn tất")
 
         if not continue_url:
             continue_url = f"{auth_base}/sign-in-with-chatgpt/codex/consent"

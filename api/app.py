@@ -25,11 +25,48 @@ def _log_startup_failure(step: str, exc: Exception) -> None:
     logger.warning({"event": "startup_step_failed", "step": step, "error": str(exc)[:200]})
 
 
+# Module-level list to track startup failures for health summary
+_startup_failures: list[tuple[str, str]] = []
+
+
+def _record_startup_failure(step: str, error: str) -> None:
+    """Record a startup failure for later health summary."""
+    _startup_failures.append((step, error[:300]))
+    _log_startup_failure(step, Exception(error))
+
+
+def _emit_startup_health_summary() -> None:
+    """Print a health summary after all startup services have attempted to start.
+    
+    This makes it obvious which of the 20+ services failed — instead of
+    hunting through logs for individual warnings.
+    """
+    if not _startup_failures:
+        logger.info({"event": "startup_health_summary", "status": "all_ok",
+                      "msg": "All startup services started successfully."})
+        return
+    failed_count = len(_startup_failures)
+    logger.error({
+        "event": "startup_health_summary",
+        "status": "partial_failure",
+        "failed_count": failed_count,
+        "details": [{"step": s, "error": e} for s, e in _startup_failures],
+        "msg": f"⚠️ {failed_count} startup service(s) failed — check logs for 'startup_step_failed'.",
+    })
+    # Also print a compact human-readable line for container logs
+    lines = [f"STARTUP HEALTH SUMMARY: {failed_count} service(s) failed."]
+    for step, err in _startup_failures:
+        lines.append(f"  FAILED: {step}: {err}")
+    logger.warning({"event": "startup_health_summary_compact", "lines": lines})
+
 def create_app() -> FastAPI:
     app_version = config.app_version
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # Reset startup failures tracker for this restart
+        _startup_failures.clear()
+
         stop_event = Event()
         thread = start_limited_account_watcher(stop_event)
         backup_service.start()
@@ -47,7 +84,7 @@ def create_app() -> FastAPI:
             else:
                 logger.info({"event": "security_vnc_password_set", "len": len(vnc)})
         except Exception as exc:
-            _log_startup_failure("vnc_password_check", exc)
+            _record_startup_failure("vnc_password_check", str(exc))
         # Fetch latest Karpathy guidelines + start quota watcher (fire-and-forget)
         refresh_guidelines()
         watcher_task = asyncio.create_task(quota_watcher.start())
@@ -56,25 +93,25 @@ def create_app() -> FastAPI:
             from services.jwt_refresh_scheduler import start as start_jwt_refresh
             start_jwt_refresh()
         except Exception as exc:
-            _log_startup_failure("jwt_refresh_scheduler", exc)
+            _record_startup_failure("jwt_refresh_scheduler", str(exc))
         # Start Codex OAuth auto-refresh scheduler (8h access_token expiry)
         try:
             from services.codex_refresh_scheduler import start as start_codex_refresh
             start_codex_refresh()
         except Exception as exc:
-            _log_startup_failure("codex_refresh_scheduler", exc)
+            _record_startup_failure("codex_refresh_scheduler", str(exc))
         # Dead Codex/free accounts (error/disabled) — periodic T0→T1–T3 recovery
         try:
             from services.codex_error_recovery_scheduler import start as start_dead_recovery
             start_dead_recovery()
         except Exception as exc:
-            _log_startup_failure("codex_error_recovery_scheduler", exc)
+            _record_startup_failure("codex_error_recovery_scheduler", str(exc))
         # Listen on :1455 for OpenAI Codex CLI OAuth redirects (auto-exchange)
         try:
             from services.codex_callback_listener import start as start_codex_callback
             start_codex_callback()
         except Exception as exc:
-            _log_startup_failure("codex_callback_listener", exc)
+            _record_startup_failure("codex_callback_listener", str(exc))
         # Start models-catalogue auto-refresh (every 6h ± 30 min).
         # Keeps the dynamic gmw/* + cgw/* + codex live lists warm even
         # when nothing hits /v1/models — so the dropdown the user opens
@@ -83,31 +120,31 @@ def create_app() -> FastAPI:
             from services.models_refresh_scheduler import start as start_models_refresh
             start_models_refresh()
         except Exception as exc:
-            _log_startup_failure("models_refresh_scheduler", exc)
+            _record_startup_failure("models_refresh_scheduler", str(exc))
         # Agent reminders / recurring tasks (user-defined via chat tool `schedule`)
         try:
             from services.agent.reminders import start as start_agent_reminders
             start_agent_reminders()
         except Exception as exc:
-            _log_startup_failure("agent_reminders", exc)
+            _record_startup_failure("agent_reminders", str(exc))
         # Agent heartbeat (wiki daily digest, goal nudges, HEARTBEAT.md tasks)
         try:
             from services.agent.heartbeat import start as start_agent_heartbeat
             start_agent_heartbeat()
         except Exception as exc:
-            _log_startup_failure("agent_heartbeat", exc)
+            _record_startup_failure("agent_heartbeat", str(exc))
         # Email channel (IMAP poll → agent → SMTP reply)
         try:
             from services.email_channel import start as start_email_channel
             start_email_channel()
         except Exception as exc:
-            _log_startup_failure("email_channel", exc)
+            _record_startup_failure("email_channel", str(exc))
         # Pre-load HA client to start background scheduler
         try:
             from services.ha_client import format_states_context
             format_states_context()  # Triggers initial device registry fetch
         except Exception as exc:
-            _log_startup_failure("ha_preload", exc)
+            _record_startup_failure("ha_preload", str(exc))
         # Prewarm MCP tools cache in background so the first chat request
         # doesn't pay the cold-start probe (e.g. a dead remote MCP that
         # times out at 5s adds latency to whoever asks first).
@@ -115,57 +152,57 @@ def create_app() -> FastAPI:
             from services.mcp_client import prewarm_tools_cache
             prewarm_tools_cache()
         except Exception as exc:
-            _log_startup_failure("mcp_prewarm", exc)
+            _record_startup_failure("mcp_prewarm", str(exc))
         # Prewarm web browser contexts (ChatGPT, Gemini, Flow)
         try:
             from services.web_prewarmer import start as start_web_prewarm
             start_web_prewarm()
         except Exception as exc:
-            _log_startup_failure("web_prewarmer", exc)
+            _record_startup_failure("web_prewarmer", str(exc))
         # Start Cloudflare Tunnel if token configured
         try:
             from services.cloudflare_tunnel import start_tunnel, start_monitor
             start_tunnel()
             start_monitor()
         except Exception as exc:
-            _log_startup_failure("cloudflare_tunnel", exc)
+            _record_startup_failure("cloudflare_tunnel", str(exc))
         # Register Telegram webhook if token configured
         try:
             from services.telegram_bot import register_webhook
             register_webhook()
         except Exception as exc:
-            _log_startup_failure("telegram_webhook", exc)
+            _record_startup_failure("telegram_webhook", str(exc))
         # Register Zalo webhook (chung cloudflare base với Telegram)
         try:
             from services.zalo_bot import register_webhook as _zalo_reg
             _zalo_reg()
         except Exception as exc:
-            _log_startup_failure("zalo_webhook", exc)
+            _record_startup_failure("zalo_webhook", str(exc))
         # Zalo Cá Nhân (bot server zca-js) — login + tự đăng ký webhook ở nền
         try:
             from services.zalo_personal import startup as _zalo_personal_start
             _zalo_personal_start()
         except Exception as exc:
-            _log_startup_failure("zalo_personal", exc)
+            _record_startup_failure("zalo_personal", str(exc))
         # Start Codex-inspired usage snapshot poller (15s proactive rate-limit polling)
         try:
             from services.usage_snapshot_poller import usage_snapshot_poller
             poller_task = asyncio.create_task(usage_snapshot_poller.start())
         except Exception as exc:
-            _log_startup_failure("usage_snapshot_poller", exc)
+            _record_startup_failure("usage_snapshot_poller", str(exc))
             poller_task = None
         # Initialize project docs watcher (AGENTS.md / CLAUDE.md auto-reload)
         try:
             from services.project_docs_watcher import project_docs_watcher
             project_docs_watcher.force_reload()
         except Exception as exc:
-            _log_startup_failure("project_docs_watcher", exc)
+            _record_startup_failure("project_docs_watcher", str(exc))
         # Wyoming server nhúng — HA trỏ thẳng gateway làm TTS/STT (port 10600)
         try:
             from services.voice import wyoming_server as voice_wyoming
             voice_wyoming.start()
         except Exception as exc:
-            _log_startup_failure("voice_wyoming", exc)
+            _record_startup_failure("voice_wyoming", str(exc))
         # Prewarm TTS (VieNeu/Kokoro) nền — lần đọc đầu không trả cold-start 1–2s.
         try:
             from services.voice import config as _vconf
@@ -177,12 +214,16 @@ def create_app() -> FastAPI:
                     try:
                         _warmup_tts()
                     except Exception as exc:
-                        _log_startup_failure("tts_warmup", exc)
+                        _record_startup_failure("tts_warmup", str(exc))
 
                 _thr.Thread(target=_bg_tts_warm, name="tts-warmup",
                             daemon=True).start()
         except Exception as exc:
-            _log_startup_failure("tts_warmup_start", exc)
+            _record_startup_failure("tts_warmup_start", str(exc))
+
+        # Emit startup health summary before yielding to let requests through
+        _emit_startup_health_summary()
+
         try:
             yield
         finally:

@@ -350,9 +350,15 @@ def generate_from_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -
     url = first_image_url(txt)
     out_bytes: bytes | None = None
     if not url:
+        # Fallback 1: Tìm base64 data URL trong markdown image syntax
         m = re.search(r"!\[[^\]]*\]\((data:image/[^;]+;base64,[^)]+)\)", txt or "")
         if m:
             url = m.group(1)
+    if not url and txt:
+        # MỚI: Fallback 2 — Tìm plain HTTP(S) URL trong text (provider response)
+        plain_url_m = re.search(r"(https?://[^\s\)\"',<>]+\.(png|jpg|jpeg|webp|gif))(?:[\"'<>\s,)]|$)", txt, re.IGNORECASE)
+        if plain_url_m:
+            url = plain_url_m.group(1)
     if url and url.startswith("data:"):
         try:
             from services.protocol.conversation import save_image_bytes
