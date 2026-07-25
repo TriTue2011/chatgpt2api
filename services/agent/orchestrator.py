@@ -292,10 +292,13 @@ def _classify_reply(text: str) -> Optional[str]:
     return None
 
 
-def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str = "") -> dict:
+def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str = "",
+             auto_approve: bool = False) -> dict:
     # user_text = câu gốc lượt này → handler cần đối chiếu (vd send_to_contact
     # kiểm tra người dùng có thật sự nêu kênh không, không tin platform LLM đoán).
-    ctx = {"user_id": user_id, "user_message": user_text}
+    # auto_approve=True (chạy tự động: nhắc theo lịch, autonomy) → handler BỎ hỏi
+    # tương tác (vd menu chọn model vẽ) mà dùng mặc định luôn.
+    ctx = {"user_id": user_id, "user_message": user_text, "auto_approve": auto_approve}
     risk = str(getattr(cap, "risk", "") or "").lower()
     try:
         raw = cap.handler(args, ctx)
@@ -632,6 +635,9 @@ def orchestrate(user_text: str, user_id: str,
                          "tool_calls": tool_calls})
         produced_media: Optional[dict] = None  # {"image_url"|"video_path"|"video_url"|"doc_path": ...}
         produced_caption = "Đây ạ 🎨"
+        # Câu trả lời TERMINAL (deliver_now) từ tool: gửi thẳng, không cho vòng LLM
+        # kể lại — dùng khi tạo ảnh/video THẤT BẠI để không "khoe" là đã gửi.
+        terminal_reply: Optional[str] = None
 
         for tc in tool_calls:
             fn = (tc.get("function") or {})
@@ -663,6 +669,10 @@ def orchestrate(user_text: str, user_id: str,
             cap = caps.get(name)
             if not cap:
                 result = {"text": f"(không có công cụ {name})"}
+            elif name == "remember" and state.memory_contains(str(args.get("fact") or "")):
+                # Model đòi ghi nhớ điều ĐÃ có trong bộ nhớ (hay lôi nhầm ngữ cảnh,
+                # vd thông tin SSH) → KHÔNG đề xuất/không lưu lại, chỉ xác nhận ngắn.
+                result = {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
             elif (allow is not None and name not in caps._CORE_TOOLS
                     and caps.group_of(name) not in allow):
                 # Chốt chặn tầng 2 — model KHÔNG nên gọi (đã lọc schema) nhưng nếu
@@ -705,7 +715,8 @@ def orchestrate(user_text: str, user_id: str,
                 _journal(str(out_q.get("text") or q), status="awaiting_approval")
                 return out_q
             else:
-                result = _execute(cap, args, user_id, user_text=user_text)
+                result = _execute(cap, args, user_id, user_text=user_text,
+                                  auto_approve=auto_approve)
 
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):
@@ -730,6 +741,10 @@ def orchestrate(user_text: str, user_id: str,
                 produced_media = {media_key: result[media_key]}
                 produced_caption = result.get("text") or "Đây ạ 🎨"
                 break
+            # Tool báo THẤT BẠI (không có media) nhưng muốn trả câu thật ngay:
+            # giữ lại để gửi thẳng, chặn vòng LLM bịa "đã gửi ảnh ở trên".
+            if not produced_media and result.get("deliver_now"):
+                terminal_reply = str(result.get("text") or "").strip() or None
             content = result.get("text", "")
             # Redact secret/PII trong tool result trước khi đưa lại context LLM
             # (OWASP LLM02/LLM07 — tool output có thể chứa token/cookie).
@@ -755,6 +770,14 @@ def orchestrate(user_text: str, user_id: str,
             _persist_history(user_id, hist)
             _journal(str(out_m.get("text") or text), status="media")
             return out_m
+        # Tạo ảnh/video/nhạc THẤT BẠI (deliver_now) → gửi thẳng câu thật, KHÔNG để
+        # LLM kể lại là "đã gửi ở trên" khi thực ra chưa tạo được gì.
+        if terminal_reply:
+            out_t = _finalize(user_id, {"text": terminal_reply})
+            hist.append({"role": "assistant", "content": out_t.get("text") or terminal_reply})
+            _persist_history(user_id, hist)
+            _journal(str(out_t.get("text") or terminal_reply), status="tool_final")
+            return out_t
         # else loop: let the model integrate the tool results into a natural reply.
 
     # Ran out of steps.

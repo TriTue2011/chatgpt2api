@@ -87,20 +87,95 @@ _IMAGE_TOOL_OVERRIDE = {
     "gemini": "gma/image", "gma": "gma/image",
 }
 
+# Yêu cầu user 2026-07-26: LUÔN hỏi chọn model TRƯỚC khi vẽ/tạo video (kèm lựa
+# chọn "mặc định"). Các token này = chọn nhánh mặc định → làm luôn, KHÔNG hỏi lại.
+_IMAGE_DEFAULT_TOKENS = {"mặc định", "mac dinh", "macdinh", "mặcđịnh", "default", "auto"}
+
+
+def _enabled_models_for(cap: str, limit: int = 6) -> list[str]:
+    """ID model ĐÃ BẬT (Quản lý model) có capability `cap` ('image'|'video_gen').
+
+    Dùng CHUNG nguồn với tab Tạo ảnh / Tạo video của web: list_models(apply_filter=
+    True) đã lọc enabled_models, rồi classify_model_capability lọc theo năng lực."""
+    try:
+        from services.protocol.openai_v1_models import list_models
+        from utils.helper import classify_model_capability
+        data = (list_models(apply_filter=True) or {}).get("data") or []
+    except Exception as exc:
+        logger.debug("agent: enabled models (%s) lỗi: %s", cap, exc)
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in data:
+        mid = str((m or {}).get("id") or "").strip()
+        if not mid or mid in seen or mid.endswith(":text"):
+            continue
+        try:
+            caps = classify_model_capability(mid) or []
+        except Exception:
+            caps = []
+        if cap in caps:
+            seen.add(mid)
+            out.append(mid)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _short_model_label(mid: str) -> str:
+    """Nhãn cho nút menu: giữ NGUYÊN id nếu vừa (rõ provider), quá dài mới cắt."""
+    if len(mid) <= 36:
+        return mid
+    s = mid.split("/")[-1] if "/" in mid else mid
+    return s if len(s) <= 36 else s[:35] + "…"
+
+
+def _ask_media_provider(prompt: str, cap: str, *, verb: str, emoji: str) -> dict:
+    """Menu chọn model TẠO ẢNH/VIDEO — CHỈ liệt kê model ĐÃ BẬT (giống tab web) +
+    'Mặc định'. 'send' có TÊN model cụ thể → lượt sau handler nhận model ≠ rỗng nên
+    làm luôn (không lặp). deliver_now=True: gửi thẳng menu, không cho LLM tự làm."""
+    models = _enabled_models_for(cap)
+    short = prompt if len(prompt) <= 60 else prompt[:59] + "…"
+    lines = [f'{emoji} Anh/chị muốn {verb} "{short}" bằng model nào ạ?', "<<<ASK>>>",
+             f"Mặc định (nhánh đang cài) | {verb} bằng mặc định: {prompt}"]
+    for mid in models:  # ask_choices tự cắt tối đa 8 lựa chọn
+        lines.append(f"{_short_model_label(mid)} | {verb} bằng model {mid}: {prompt}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
+def _ask_image_provider(prompt: str) -> dict:
+    return _ask_media_provider(prompt, "image", verb="vẽ", emoji="🎨")
+
 
 def _h_generate_image(args: dict, ctx: dict) -> dict:
     prompt = str(args.get("prompt") or "").strip()
-    tool = str(args.get("tool") or "").strip().lower()
+    explicit_model = str(args.get("model") or "").strip()
+    tool = str(args.get("tool") or args.get("provider") or "").strip().lower()
     if not prompt:
         return {"text": "Anh/chị muốn em vẽ gì ạ? 🎨"}
-    # Nhánh image_gen quyết định model (mặc định model đầu, có thể là combo);
-    # chỉ override khi người dùng gọi tên công cụ cụ thể.
-    model = _IMAGE_TOOL_OVERRIDE.get(tool) or branch_model("image_gen", _channel_of(ctx))
+    # LUÔN hỏi chọn model vẽ (đã bật) trước — trừ khi đã chọn model/công cụ, hoặc
+    # đang CHẠY TỰ ĐỘNG (nhắc theo lịch/autonomy) thì dùng mặc định, không hỏi.
+    if not explicit_model and not tool:
+        if not ctx.get("auto_approve"):
+            return _ask_image_provider(prompt)
+        model = branch_model("image_gen", _channel_of(ctx))
+    # model cụ thể (chọn từ menu) → dùng thẳng; token "mặc định/auto" → nhánh
+    # image_gen quyết; tên công cụ (chatgpt/gemini/flow) → override; lạ → nhánh.
+    elif explicit_model and explicit_model.lower() not in _IMAGE_DEFAULT_TOKENS:
+        model = explicit_model
+    elif tool and tool not in _IMAGE_DEFAULT_TOKENS:
+        model = _IMAGE_TOOL_OVERRIDE.get(tool) or branch_model("image_gen", _channel_of(ctx))
+    else:
+        model = branch_model("image_gen", _channel_of(ctx))
     resp = call_model(model, [{"role": "user", "content": f"Vẽ: {prompt}"}],
                       timeout=320, max_tokens=600)
+    # deliver_now=True ở các nhánh THẤT BẠI: trả thẳng câu thật cho người dùng,
+    # KHÔNG để vòng LLM tự "kể" là đã gửi ảnh trong khi thực ra chưa có ảnh nào.
     if resp.get("error"):
         _alert_branch("Vẽ / tạo ảnh (image_gen)", model, resp["error"])
-        return {"text": f"Em vẽ bằng {model} bị lỗi 😥 ({resp['error']}). "
+        return {"deliver_now": True,
+                "text": f"Em vẽ bằng {model} bị lỗi 😥 ({resp['error']}). "
                         f"Anh/chị muốn em thử công cụ khác không (Flow/ChatGPT/Gemini)?"}
     txt = content_of(resp)
     url = first_image_url(txt)
@@ -108,9 +183,11 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
         return {"text": "Đây ạ 🎨", "image_url": url}
     # CẢI TIẾN: Feedback rõ ràng khi không extract được URL từ response
     if not txt or any(kw in (txt or "").lower() for kw in ("completed", "finished", "generated")):
-        return {"text": f"Em thử vẽ bằng {model} nhưng chưa lấy được ảnh. "
-                        f"Anh/chị đợi chút em thử lại nhé 🔄"}
-    return {"text": txt or "Em chưa vẽ được ảnh, anh/chị thử mô tả rõ hơn giúp em nhé."}
+        return {"deliver_now": True,
+                "text": f"Em thử vẽ bằng {model} nhưng chưa lấy được ảnh — model này có thể "
+                        f"không tạo được ảnh. Anh/chị chọn công cụ ảnh khác giúp em nhé 🔄"}
+    return {"deliver_now": True,
+            "text": txt or "Em chưa vẽ được ảnh, anh/chị thử mô tả rõ hơn giúp em nhé."}
 
 
 def _h_generate_music(args: dict, ctx: dict) -> dict:
@@ -143,10 +220,15 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
     prompt = str(args.get("prompt") or "").strip()
     if not prompt:
         return {"text": "Anh/chị muốn em tạo video gì ạ? 🎬"}
-    # Nhánh video_gen là mặc định; 'quality' hoặc 'model' chỉ override khi người dùng nêu rõ.
     user_model = str(args.get("model") or "").strip()
     quality = str(args.get("quality") or "").strip().lower()
-    if user_model:
+    # LUÔN hỏi chọn model video (đã bật) trước khi tạo — trừ khi đã chỉ định
+    # model/chất lượng, hoặc đang CHẠY TỰ ĐỘNG (nhắc theo lịch) thì dùng mặc định.
+    if not user_model and not quality:
+        if not ctx.get("auto_approve"):
+            return _ask_media_provider(prompt, "video_gen", verb="tạo video", emoji="🎬")
+        model = branch_model("video_gen", _channel_of(ctx))
+    elif user_model and user_model.lower() not in _IMAGE_DEFAULT_TOKENS:
         model = user_model
     else:
         model = _VIDEO_MODELS.get(quality) or branch_model("video_gen", _channel_of(ctx))
@@ -278,6 +360,9 @@ def _h_remember(args: dict, ctx: dict) -> dict:
     fact = str(args.get("fact") or "").strip()
     if not fact:
         return {"text": "Anh/chị muốn em ghi nhớ điều gì ạ?"}
+    # Phòng hờ (khi auto-approve bỏ qua kiểm tra ở orchestrator): không lưu trùng.
+    if state.memory_contains(fact):
+        return {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
     state.append_memory(fact, who=str(ctx.get("user_id") or ""))
     return {"text": f"Dạ em nhớ rồi ạ 🧠: {fact}"}
 
@@ -2116,17 +2201,22 @@ CAPABILITIES: dict[str, Capability] = {
     "generate_image": Capability(
         name="generate_image", risk=READ, handler=_h_generate_image,
         emoji="🎨", label="Vẽ ảnh AI",
-        description=("Vẽ/tạo ảnh AI. GỌI NGAY với prompt — hệ thống tự chọn công "
-                     "cụ mặc định, KHÔNG hỏi lại. Chỉ truyền 'tool' khi người dùng "
-                     "TỰ nêu tên công cụ (flow/chatgpt/gemini)."),
+        description=("Vẽ/tạo ảnh AI. GỌI với prompt — hệ thống sẽ HỎI người dùng "
+                     "chọn công cụ vẽ (kèm lựa chọn 'mặc định') rồi mới vẽ. Truyền "
+                     "'tool' khi người dùng ĐÃ tự nêu công cụ (flow/chatgpt/gemini) "
+                     "để vẽ luôn khỏi hỏi. TUYỆT ĐỐI không tự nói 'đã vẽ/đã gửi' — "
+                     "ảnh do hệ thống gửi, em chỉ chú thích khi có ảnh thật."),
         parameters={"type": "object", "properties": {
             "prompt": {"type": "string", "description": "Mô tả ảnh cần vẽ"},
-            "tool": {"type": "string", "enum": ["flow", "chatgpt", "gemini"],
-                     "description": "CHỈ truyền khi người dùng nêu rõ công cụ"}},
+            "tool": {"type": "string", "enum": ["flow", "chatgpt", "gemini", "mặc định"],
+                     "description": "Công cụ người dùng nêu; bỏ trống để hệ thống hỏi"},
+            "model": {"type": "string",
+                      "description": "ID model cụ thể khi người dùng CHỌN TỪ MENU "
+                                     "(vd 'vẽ bằng model gpt-image-2: …') — truyền NGUYÊN id"}},
             "required": ["prompt"]},
-        workflow=("Nếu lỗi: báo người dùng + mời chọn công cụ khác "
-                  "(Flow/ChatGPT/Gemini). KHÔNG tự đổi công cụ khi chưa được "
-                  "đồng ý. Ảnh vẽ xong đã được gửi kèm — chỉ cần chú thích ngắn.")),
+        workflow=("Hệ thống hỏi công cụ trước khi vẽ. Vẽ xong ảnh được gửi kèm — "
+                  "chỉ chú thích ngắn. Nếu lỗi/không ra ảnh: hệ thống đã báo thật; "
+                  "KHÔNG nói 'đã gửi ở trên' khi chưa có ảnh.")),
     "generate_music": Capability(
         name="generate_music", risk=READ, handler=_h_generate_music,
         emoji="🎵", label="Sáng tác / tạo nhạc AI",
@@ -2143,6 +2233,9 @@ CAPABILITIES: dict[str, Capability] = {
         name="generate_video", risk=READ, handler=_h_generate_video,
         emoji="🎬", label="Tạo video AI (Agnes/Flow/Veo)",
         description=("Tạo video ngắn bằng AI (Agnes AI / Google Flow / Veo). Mất 1-5 phút. "
+                     "GỌI với prompt — hệ thống sẽ HỎI người dùng chọn model (đã bật) rồi mới "
+                     "tạo, TRỪ KHI người dùng đã nêu model/chất lượng. Khi user CHỌN TỪ MENU → "
+                     "truyền 'model' NGUYÊN id. TUYỆT ĐỐI không tự nói 'đã tạo/đã gửi' khi chưa có video. "
                      "Hỗ trợ đầy đủ thông số: model (agnes-video-v2.0, flow/veo-3.1-fast...), "
                      "resolution (1080p, 720p, 480p), aspect_ratio (16:9, 9:16, 1:1, 4:3, 3:4), "
                      "duration (5, 8, 10...), fps (24, 30, 60), negative_prompt, seed, image (ảnh bắt đầu), last_frame (ảnh kết thúc)."),
@@ -2354,8 +2447,9 @@ CAPABILITIES: dict[str, Capability] = {
                   "lỗi sau 3 lần, xin người dùng mô tả rõ hơn.")),
     "remember": Capability(
         name="remember", risk=CHANGE, handler=_h_remember,
-        emoji="🧠", label="Ghi nhớ chuyện gia đình",
-        description="Ghi nhớ lâu dài một sự kiện/sở thích/thói quen của gia đình.",
+        emoji="🧠", label="Ghi nhớ",
+        description="Ghi nhớ lâu dài một điều người dùng dặn (sự kiện, sở thích, "
+                    "thói quen, quy tắc làm việc…). Nội dung tùy theo yêu cầu.",
         parameters={"type": "object", "properties": {
             "fact": {"type": "string", "description": "Điều cần ghi nhớ"}},
             "required": ["fact"]}),

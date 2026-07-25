@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import urllib.request
+import uuid
 from typing import Any, Optional
 
 from services.config import config
@@ -22,6 +23,72 @@ logger = logging.getLogger(__name__)
 _LOCAL = "http://127.0.0.1:80/v1/chat/completions"
 # Markdown image the image-gen pipeline emits: ![[Generated Image 0]](http://…)
 _IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+
+# Model KHÔNG hỗ trợ native function-call đôi khi phát tool call dạng text:
+#   ```xml <tool_call name="schedule">{"op":"create",…}</tool_call>```
+# Nếu không bóc ra, orchestrator thấy tool_calls rỗng → RÒ nguyên văn ra người
+# dùng ("tool call name=schedule op=create…"). Bóc về tool_calls chuẩn để thực thi.
+_XML_TC_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']>(.*?)</tool_call>', re.DOTALL)
+_XML_TC_SELF_RE = re.compile(r'<tool_call\s+name=["\'](.+?)["\']\s*/>', re.DOTALL)
+
+
+def extract_text_tool_calls(text: str) -> Optional[list[dict[str, Any]]]:
+    """Bóc tool call viết dạng text/XML trong content → list tool_calls chuẩn."""
+    if not text or "<tool_call" not in text:
+        return None
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for m in _XML_TC_RE.finditer(text):
+        name = m.group(1).strip()
+        raw = (m.group(2) or "").strip()
+        try:
+            args = json.loads(raw) if raw else {}
+        except Exception:
+            try:  # newline chưa escape trong string JSON
+                fixed = re.sub(r'".*?"',
+                               lambda mm: mm.group(0).replace("\n", "\\n").replace("\r", "\\r"),
+                               raw, flags=re.DOTALL)
+                args = json.loads(fixed)
+            except Exception:
+                logger.warning("agent.runtime: bỏ tool_call XML không parse được: %s", raw[:120])
+                continue
+        if not isinstance(args, dict):
+            args = {}
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({"id": f"agent_xml_{uuid.uuid4().hex[:8]}", "type": "function",
+                    "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}})
+    for m in _XML_TC_SELF_RE.finditer(text):
+        name = m.group(1).strip()
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append({"id": f"agent_xml_{uuid.uuid4().hex[:8]}", "type": "function",
+                    "function": {"name": name, "arguments": "{}"}})
+    return out or None
+
+
+def _normalize_text_tool_calls(data: dict[str, Any]) -> None:
+    """Nếu model trả tool call dạng text (không native) → nhét vào message.tool_calls
+    và dọn phần XML khỏi content để KHÔNG rò ra người dùng. Sửa tại chỗ (in-place)."""
+    try:
+        msg = ((data.get("choices") or [{}])[0].get("message")) or {}
+    except Exception:
+        return
+    if not isinstance(msg, dict) or msg.get("tool_calls"):
+        return
+    content = msg.get("content")
+    if not isinstance(content, str) or "<tool_call" not in content:
+        return
+    calls = extract_text_tool_calls(content)
+    if not calls:
+        return
+    cleaned = re.sub(r"```xml\s*.*?```", "", content, flags=re.DOTALL)
+    cleaned = _XML_TC_SELF_RE.sub("", _XML_TC_RE.sub("", cleaned)).strip()
+    msg["tool_calls"] = calls
+    msg["content"] = cleaned
+    data["choices"][0]["message"] = msg
 
 
 def _base() -> str:
@@ -92,7 +159,15 @@ def call_model(
             headers={"Authorization": f"Bearer {config.auth_key}",
                      "Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode())
+            data = json.loads(r.read().decode())
+        # Model phát tool call dạng text/XML (không native) → chuẩn hóa thành
+        # tool_calls để orchestrator THỰC THI, thay vì rò text ra người dùng.
+        if tools:
+            try:
+                _normalize_text_tool_calls(data)
+            except Exception as exc:
+                logger.debug("agent.runtime: normalize tool_calls lỗi: %s", exc)
+        return data
     except urllib.error.HTTPError as e:
         body = ""
         try:

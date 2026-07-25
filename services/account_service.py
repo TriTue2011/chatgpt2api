@@ -294,6 +294,13 @@ class AccountService:
                     if self._email_from_token_or_account(t, acc) == email:
                         existing_token, existing = t, acc
                         break
+            # Không tra được email (JWT thiếu email) → tránh phantom "Thêm 1 free"
+            # mỗi lần đồng bộ/khôi phục: nếu ĐÚNG access_token này đã có sẵn thì coi
+            # là cập nhật, không phải thêm mới.
+            if existing is None:
+                cur = self._accounts.get(access_token)
+                if cur is not None and account_group(cur) == GROUP_FREE:
+                    existing_token, existing = access_token, cur
             base = dict(existing) if existing else {}
             base.update(extra or {})
             base["access_token"] = access_token
@@ -316,15 +323,17 @@ class AccountService:
                 "skipped": 0,
             }
         # log + items OUTSIDE lock (list_accounts also takes _lock)
-        if result["updated"]:
+        if not existing:
+            log_service.add(LOG_TYPE_ACCOUNT, "Thêm ChatGPT free",
+                            {"provider": "free", "email": email})
+        elif replaced:
             log_service.add(
                 LOG_TYPE_ACCOUNT,
                 "Cập nhật ChatGPT free (theo email, không trùng)",
-                {"provider": "free", "email": email, "replaced": replaced},
+                {"provider": "free", "email": email, "replaced": True},
             )
-        else:
-            log_service.add(LOG_TYPE_ACCOUNT, "Thêm ChatGPT free",
-                            {"provider": "free", "email": email})
+        # else: cùng access_token, chỉ làm mới field → KHÔNG log (tránh spam mỗi
+        # lần đồng bộ/khôi phục khi không có thay đổi thực sự).
         result["items"] = self.list_accounts()
         return result
 
@@ -1172,11 +1181,14 @@ class AccountService:
             added += int(r.get("added") or 0)
             updated += int(r.get("updated") or 0)
             skipped += int(r.get("skipped") or 0)
-        log_service.add(
-            LOG_TYPE_ACCOUNT,
-            f"Thêm {added} free, cập nhật {updated}, bỏ qua {skipped}",
-            {"provider": "free", "added": added, "updated": updated, "skipped": skipped},
-        )
+        # Chỉ báo khi CÓ thay đổi thật (thêm/cập nhật). Không thì im — tránh
+        # "Thêm 0 free…" / phantom lúc đồng bộ định kỳ khi chẳng có tài khoản mới.
+        if added or updated:
+            log_service.add(
+                LOG_TYPE_ACCOUNT,
+                f"Thêm {added} free, cập nhật {updated}, bỏ qua {skipped}",
+                {"provider": "free", "added": added, "updated": updated, "skipped": skipped},
+            )
         return {"added": added, "skipped": skipped, "updated": updated, "items": self.list_accounts()}
 
     def add_accounts_with_type(self, tokens: list[str], account_type: str = "codex") -> dict:

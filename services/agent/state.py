@@ -100,6 +100,42 @@ def load_memory(limit_chars: int = 4000) -> str:
     return ""
 
 
+def _norm_fact(s: str) -> str:
+    """Chuẩn hóa 1 dòng fact để so trùng: bỏ prefix '- [ts] (who)', gộp khoảng
+    trắng, bỏ dấu câu, lowercase."""
+    import re as _re
+    s = _re.sub(r"^\s*-\s*\[[^\]]*\]\s*(\([^)]*\)\s*)?", "", s or "")
+    s = _re.sub(r"[^\w\s]", " ", s, flags=_re.UNICODE)
+    return _re.sub(r"\s+", " ", s).strip().lower()
+
+
+def memory_contains(fact: str, threshold: float = 0.82) -> bool:
+    """True nếu `fact` (hoặc gần trùng) ĐÃ có trong MEMORY.md — để chặn 'remember'
+    đề xuất/lưu lại điều đã nhớ (model hay lôi nhầm ngữ cảnh, vd thông tin SSH)."""
+    nf = _norm_fact(fact)
+    if not nf:
+        return False
+    try:
+        if not _MEMORY_FILE.exists():
+            return False
+        lines = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return False
+    nf_tokens = set(nf.split())
+    for ln in lines:
+        nl = _norm_fact(ln)
+        if not nl:
+            continue
+        if nf in nl or nl in nf:
+            return True
+        lt = set(nl.split())
+        if nf_tokens and lt:
+            union = len(nf_tokens | lt)
+            if union and len(nf_tokens & lt) / union >= threshold:
+                return True
+    return False
+
+
 def append_memory(fact: str, who: str = "") -> None:
     """Append a durable fact (a change action — call only after approval)."""
     fact = (fact or "").strip()
