@@ -223,13 +223,30 @@ async def _pick_authenticator_method(page) -> bool:
 
 
 async def _wait_for_google_login(page, timeout: int = 60) -> bool:
-    """Wait until Google login cookies appear (meaning OAuth completed)."""
+    """Wait until Google login cookies appear (meaning OAuth completed).
+
+    Guard against stale cookies: __Secure-1PSID/SID linger in the persistent
+    profile after a server-side logout, so cookie presence alone would return
+    True immediately even while the page is still parked on the Google
+    sign-in / challenge screen. Only accept the cookies once we are NOT on an
+    accounts.google.com sign-in URL (same class of bug fixed in auto_login)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         cookies = await page.context.cookies()
         names = {c["name"] for c in cookies}
         if any(ck in names for ck in _GOOGLE_LOGIN_COOKIES):
-            return True
+            try:
+                u = (page.url or "").lower()
+            except Exception:
+                u = ""
+            on_signin = "accounts.google.com" in u and any(
+                m in u for m in (
+                    "/signin/identifier", "/signin/v2", "/signin/challenge",
+                    "/challenge/pwd", "/challenge/", "accountchooser",
+                )
+            )
+            if not on_signin:
+                return True
         await asyncio.sleep(1.0)
     return False
 

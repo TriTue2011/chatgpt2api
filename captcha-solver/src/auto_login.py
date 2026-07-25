@@ -145,6 +145,35 @@ async def _pick_authenticator_method(page) -> bool:
         except Exception:
             pass
 
+    # Broad JS scan — Google's current picker labels the Authenticator row in
+    # several ways (VI/EN) as a div[role=link]/li, not a button. Match a wide
+    # phrase set and LOG every option seen so the labels are visible even when
+    # nothing matched (drives the next selector tweak instead of guessing).
+    try:
+        res = await page.evaluate(r"""() => {
+            const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+            const rows = Array.from(document.querySelectorAll(
+                'li[data-challengetype],div[data-challengetype],div[role="link"],li'
+            ));
+            const re = /(google )?authenticator|ứng dụng xác thực|trình tạo mã|trình xác thực|mã xác minh.*ứng dụng|ứng dụng.*mã xác minh|xác thực.*(google|ứng dụng)/i;
+            const seen = [];
+            let hit = null;
+            for (const r of rows) {
+                const t = norm(r.innerText);
+                if (!t || t.length > 120) continue;
+                if (!seen.includes(t)) seen.push(t);
+                if (!hit && re.test(t) && r.offsetWidth > 80) hit = r;
+            }
+            if (hit) { (hit.closest('li,div[role="link"]') || hit).click(); return {clicked: norm(hit.innerText).slice(0, 60), options: seen.slice(0, 12)}; }
+            return {clicked: null, options: seen.slice(0, 12)};
+        }""")
+        logger.info("auto_login: method-picker options=%r", (res or {}).get("options"))
+        if (res or {}).get("clicked"):
+            logger.info("auto_login: picked Authenticator via JS scan: %s", res["clicked"])
+            return True
+    except Exception as exc:
+        logger.warning("auto_login: authenticator JS scan failed: %s", str(exc)[:100])
+
     logger.info("auto_login: method-picker visible but no Authenticator selector matched")
     return False
 
@@ -456,10 +485,41 @@ async def start_auto_login(
     return session
 
 
+# URL fragments that mean an interactive Google sign-in / challenge is still
+# in progress. The persistent profile keeps __Secure-1PSID/SID cookies even
+# after Google signs the account out server-side, so cookie presence ALONE is
+# a false "logged in". If a live page is parked on one of these, a real
+# re-login is required regardless of leftover cookies.
+_SIGNIN_URL_MARKERS = (
+    "/signin/identifier", "/signin/v2", "/signin/challenge", "/challenge/pwd",
+    "/challenge/", "/signin/rejected", "/signin/selectchallenge",
+    "accountchooser", "/speedbump", "servicelogin",
+)
+
+
 async def _already_logged_in(ctx) -> bool:
     try:
         cookies = await ctx.cookies()
-        return any(c["name"] in _GOOGLE_LOGIN_COOKIES for c in cookies)
+        if not any(c["name"] in _GOOGLE_LOGIN_COOKIES for c in cookies):
+            return False
+        # Cookie presence ≠ live session. If any open page is sitting on a
+        # Google sign-in / challenge URL, we are actively being asked to
+        # re-authenticate → NOT logged in. Without this guard the leftover
+        # __Secure-1PSID/SID made auto-login declare "đã đăng nhập sẵn" and
+        # close the browser right on the password page (bug 2026-07-25:
+        # Flow/Gemini recovery reported success without ever re-logging in).
+        try:
+            pages = list(ctx.pages)
+        except Exception:
+            pages = []
+        for pg in pages:
+            try:
+                u = (pg.url or "").lower()
+            except Exception:
+                continue
+            if "accounts.google.com" in u and any(m in u for m in _SIGNIN_URL_MARKERS):
+                return False
+        return True
     except Exception:
         return False
 

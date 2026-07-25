@@ -927,30 +927,49 @@ async def _prime_flow_session(page) -> None:
     then redirects to /project/<auto-uuid> and primes the session for
     all subsequent /project/<id> navigations on the same context.
     """
-    async def _auto_handle_google_oauth(pg):
-        if "accounts.google.com" not in pg.url:
-            return
-        logger.info("flow_prime: on Google OAuth (%s), attempting auto select/consent...", pg.url[:80])
+    async def _auto_handle_google_oauth(pg) -> bool:
+        """On the labs.google (AI Test Kitchen) OAuth account-chooser/consent,
+        click the account row FIRST, then any consent button. Returns True if
+        it clicked anything. Only silent when the base Google session is still
+        alive (a dead session lands on challenge/pwd → needs _freshen_google)."""
         try:
-            clicked = await pg.evaluate("""() => {
-                const acc = document.querySelector('[data-identifier], [data-email], ul li[data-item-index], div[role="link"]');
-                if (acc) {
-                    acc.click();
-                    return 'account_tile';
+            if "accounts.google.com" not in (pg.url or ""):
+                return False
+        except Exception:
+            return False
+        logger.info("flow_prime: on Google OAuth (%s) — clicking through", pg.url[:80])
+        acted = False
+        try:
+            picked = await pg.evaluate("""() => {
+                let el = document.querySelector('[data-identifier],[data-email]');
+                if (!el) {
+                    const rows = Array.from(document.querySelectorAll('li[data-item-index],div[role="link"],ul li'));
+                    el = rows.find(r => /@/.test(r.innerText||'') && r.offsetWidth > 100);
                 }
-                const btns = Array.from(document.querySelectorAll('button'));
-                const cont = btns.find(b => /continue|tiếp tục|cho phép|allow|agree|đồng ý/i.test(b.innerText || ''));
-                if (cont) {
-                    cont.click();
-                    return 'consent_button';
-                }
+                if (!el) return false;
+                (el.closest('[role="link"],li') || el).click();
+                return true;
+            }""")
+            if picked:
+                acted = True
+                logger.info("flow_prime: clicked account tile on OAuth chooser")
+                await asyncio.sleep(2.5)
+        except Exception as exc:
+            logger.warning("flow_prime: account-tile click failed: %s", str(exc)[:100])
+        try:
+            consented = await pg.evaluate("""() => {
+                const b = Array.from(document.querySelectorAll('button,div[role="button"]'))
+                    .find(x => /tiếp tục|continue|cho phép|allow|đồng ý|xác nhận|confirm/i.test(x.innerText || ''));
+                if (b) { b.click(); return (b.innerText || '').slice(0, 30); }
                 return null;
             }""")
-            if clicked:
-                logger.info("flow_prime: auto oauth handled via %s", clicked)
-                await asyncio.sleep(3.0)
-        except Exception as exc:
-            logger.warning("flow_prime: auto oauth failed: %s", exc)
+            if consented:
+                acted = True
+                logger.info("flow_prime: clicked consent '%s'", consented)
+                await asyncio.sleep(2.5)
+        except Exception:
+            pass
+        return acted
 
     try:
         await page.goto(
@@ -958,52 +977,64 @@ async def _prime_flow_session(page) -> None:
             wait_until="domcontentloaded",
             timeout=20_000,
         )
-        await asyncio.sleep(1.0)
-        await _auto_handle_google_oauth(page)
     except Exception as exc:
         logger.warning("flow_prime: goto root failed: %s", exc)
         return
 
-    # Did the actual app load? (PRO badge, Dự án mới, edit project buttons)
-    try:
-        await page.wait_for_function(
-            """() => {
-                const els = Array.from(document.querySelectorAll('button,a'));
-                return els.some(e => {
+    async def _app_shell_visible() -> bool:
+        try:
+            return await page.evaluate(
+                """() => Array.from(document.querySelectorAll('button,a')).some(e => {
                     const t = (e.innerText || e.getAttribute('aria-label') || '').trim();
                     return /^pro$|dự án mới|new project|add_2|chỉnh sửa dự án/i.test(t);
-                });
-            }""",
-            timeout=10_000,
-        )
-        logger.info("flow_prime: already primed (app shell visible)")
-        return
-    except Exception:
-        pass  # marketing landing — force entitlement check
+                })"""
+            )
+        except Exception:
+            return False
 
-    # Click "Create with Google Flow" via Playwright locator
-    try:
-        btn = page.locator(
-            'button:has-text("Create with Google Flow"), '
-            'button:has-text("Tạo bằng Google Flow")'
-        ).first
-        if await btn.count() == 0:
-            logger.warning("flow_prime: marketing button not found")
+    # Poll loop: the landing shows a transient "Đang tải" spinner, then either
+    # the app shell, the marketing CTA, or a Google OAuth re-consent (when the
+    # labs.google app session expired). Handle whichever appears, up to 45s.
+    deadline = time.time() + 45
+    marketing_clicked = False
+    while time.time() < deadline:
+        await asyncio.sleep(1.5)
+        if await _app_shell_visible():
+            logger.info("flow_prime: app shell visible (primed)")
             return
-        await btn.scroll_into_view_if_needed(timeout=3_000)
-        await btn.click(timeout=5_000)
-        logger.info("flow_prime: clicked 'Create with Google Flow'")
-    except Exception as exc:
-        logger.warning("flow_prime: click failed: %s", exc)
-        return
-
-    # Wait for redirect to /project/<uuid>
-    try:
-        await page.wait_for_url("**/project/*", timeout=6_000)
-        logger.info("flow_prime: redirected to %s", page.url)
-    except Exception as exc:
-        logger.info("flow_prime: no immediate /project/ redirect after 6s")
-        await _auto_handle_google_oauth(page)
+        try:
+            cur = (page.url or "").lower()
+        except Exception:
+            cur = ""
+        if "accounts.google.com" in cur:
+            await _auto_handle_google_oauth(page)
+            try:
+                await page.wait_for_url(
+                    lambda u: "accounts.google.com" not in (u or ""), timeout=15_000
+                )
+            except Exception:
+                pass
+            continue
+        if not marketing_clicked:
+            try:
+                btn = page.locator(
+                    'button:has-text("Create with Google Flow"), '
+                    'button:has-text("Tạo bằng Google Flow")'
+                ).first
+                if await btn.count() > 0:
+                    await btn.scroll_into_view_if_needed(timeout=3_000)
+                    await btn.click(timeout=5_000)
+                    marketing_clicked = True
+                    logger.info("flow_prime: clicked 'Create with Google Flow'")
+                    try:
+                        await page.wait_for_url("**/project/*", timeout=8_000)
+                        logger.info("flow_prime: redirected to %s", page.url)
+                    except Exception:
+                        pass
+                    continue
+            except Exception as exc:
+                logger.warning("flow_prime: marketing click failed: %s", str(exc)[:100])
+    logger.info("flow_prime: priming ended without app shell (url=%s)", page.url[:80])
 
 
 async def get_or_create_project(
