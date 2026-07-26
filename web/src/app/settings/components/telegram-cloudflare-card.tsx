@@ -1186,11 +1186,11 @@ export function TelegramCloudflareCard() {
             <input type="checkbox" className="size-3.5"
               checked={Boolean(cfg.zalo_personal_ai_enabled ?? true)}
               onChange={(e) => setField("zalo_personal_ai_enabled", e.target.checked)} />
-            🤖 Bật AI trả lời (thread thường qua bộ lọc / admin)
+            🤖 Bật AI trả lời — tắt là bot im hoàn toàn trên kênh này
           </label>
           <div>
             <label className="text-[10px] text-muted-foreground">
-              Model AI mặc định kênh (chat thường — admin có model riêng)
+              Model AI mặc định kênh — dùng khi thread không cài model riêng ở «Lọc thread»
             </label>
             <Select value={String(cfg.zalo_personal_ai_model || " ")}
               onValueChange={(v) => setField("zalo_personal_ai_model", v.trim())}>
