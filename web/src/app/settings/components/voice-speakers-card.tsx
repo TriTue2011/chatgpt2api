@@ -60,6 +60,8 @@ export function VoiceSpeakersCard() {
   const [found, setFound] = useState<Found[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanKind, setScanKind] = useState("all");
+  // media_player từ HA — dropdown chọn entity khi thêm loa kiểu 'ha'
+  const [haPlayers, setHaPlayers] = useState<{ entity_id: string; name: string }[]>([]);
   // Hẹn giờ thông báo ra loa
   const [ann, setAnn] = useState({ speaker: "", text: "", delayMin: 1, volPct: 20 });
 
@@ -76,6 +78,11 @@ export function VoiceSpeakersCard() {
     } catch {
       /* chưa bật voice thì bỏ qua */
     }
+    // Tách riêng: HA chưa cấu hình thì list rỗng, không chặn phần trên
+    try {
+      const mp = await request.get("/api/voice/ha-media-players");
+      setHaPlayers(((mp.data as { rows?: { entity_id: string; name: string }[] })?.rows) || []);
+    } catch { /* noop */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -291,10 +298,12 @@ export function VoiceSpeakersCard() {
           </div>
         </div>
         <p className="text-[10px] text-muted-foreground -mt-1">
-          Model KHÔNG nằm trong image. Tải về volume:{" "}
-          <code>python scripts/download_piper_voices.py --pack minimal</code> (giọng) và{" "}
-          <code>python scripts/download_stt_model.py</code> (+{" "}
-          <code>download_stt_en_model.py</code> nếu dùng English/auto).
+          Model KHÔNG nằm trong image — tải một lần về volume (giữ qua mọi lần update).
+          Chạy trong container: <code>docker exec c2a /app/.venv/bin/python
+          /app/scripts/download_vieneu_model.py</code> (giọng VieNeu) ·{" "}
+          <code>…/download_stt_model.py --hf</code> (nghe tiếng Việt) ·{" "}
+          <code>…/download_stt_en_model.py</code> (nghe tiếng Anh). Chi tiết:
+          HUONG_DAN_GIONG_NOI_VA_KENH.md.
         </p>
 
         {/* Cấu hình engine — TTS + STT đối xứng */}
@@ -356,6 +365,15 @@ export function VoiceSpeakersCard() {
               <option value="en">English (en) — Parakeet</option>
               <option value="auto">Auto — thử VI rồi EN (cần cả 2 model)</option>
             </select>
+            {/* Cổng bật EN nằm ở backend (stt.en_enabled) — không có ô này thì
+                chọn en/auto ở trên vẫn tự rơi về tiếng Việt, dễ tưởng là hỏng. */}
+            <label className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+              <input type="checkbox" className="size-3.5"
+                checked={Boolean(sttCfg.en_enabled)}
+                onChange={() => patchVoice("stt", { en_enabled: !sttCfg.en_enabled })} />
+              🇬🇧 Bật STT tiếng Anh (Parakeet)
+              {stt?.en_model_ready ? "" : " — chưa tải model (mục tải bên dưới)"}
+            </label>
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs text-muted-foreground">Wyoming STT client (tuỳ chọn)</label>
@@ -591,8 +609,28 @@ export function VoiceSpeakersCard() {
               <option value="ha">Qua Home Assistant</option>
             </select>
             {draft.kind === "ha" ? (
-              <Input value={draft.entity_id || ""} onChange={(e) => setDraft({ ...draft, entity_id: e.target.value })}
-                placeholder="media_player.phong_khach" />
+              haPlayers.length > 0 ? (
+                /* Dropdown media_player lấy THẲNG từ HA — khỏi gõ entity_id tay */
+                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                  value={draft.entity_id || ""}
+                  onChange={(e) => {
+                    const eid = e.target.value;
+                    const hit = haPlayers.find((p) => p.entity_id === eid);
+                    setDraft({ ...draft, entity_id: eid,
+                      name: draft.name.trim() ? draft.name : (hit?.name || "") });
+                  }}>
+                  <option value="">— chọn media_player từ HA —</option>
+                  {haPlayers.map((p) => (
+                    <option key={p.entity_id} value={p.entity_id}>
+                      {p.name} · {p.entity_id}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                /* HA chưa kết nối / 0 media_player → mới phải gõ tay */
+                <Input value={draft.entity_id || ""} onChange={(e) => setDraft({ ...draft, entity_id: e.target.value })}
+                  placeholder="media_player.phong_khach (HA chưa kết nối nên phải gõ tay)" />
+              )
             ) : (
               <Input value={draft.host || ""} onChange={(e) => setDraft({ ...draft, host: e.target.value })}
                 placeholder={draft.kind === "cast" ? "IP loa Cast"

@@ -251,6 +251,30 @@ def create_router() -> APIRouter:
         added = await run_in_threadpool(vspk.import_from_ha)
         return {"ok": True, "added": added, "count": len(added)}
 
+    @router.get("/api/voice/ha-media-players")
+    async def ha_media_players(authorization: str | None = Header(default=None)):
+        """Danh sách media_player từ HA — cho DROPDOWN chọn entity khi thêm loa
+        kiểu 'ha' (khỏi gõ tay entity_id). Nguồn y hệt import-ha."""
+        require_admin(authorization)
+
+        def _list() -> list[dict[str, str]]:
+            try:
+                from services.ha_client import get_states
+                out = []
+                for st in (get_states() or []):
+                    eid = str(st.get("entity_id") or "")
+                    if not eid.startswith("media_player."):
+                        continue
+                    name = str((st.get("attributes") or {}).get("friendly_name") or eid)
+                    out.append({"entity_id": eid, "name": name})
+                out.sort(key=lambda x: x["name"].lower())
+                return out
+            except Exception:
+                return []
+
+        rows = await run_in_threadpool(_list)
+        return {"ok": True, "rows": rows, "count": len(rows)}
+
     @router.post("/api/voice/discover")
     async def voice_discover(kind: str = "all",
                              authorization: str | None = Header(default=None)):

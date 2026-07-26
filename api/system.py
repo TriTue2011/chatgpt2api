@@ -987,6 +987,50 @@ def create_router(app_version: str) -> APIRouter:
         aid = str((body or {}).get("account_id") or "")
         return await run_in_threadpool(lambda: ec.send_digest_now(aid))
 
+    @router.get("/api/v1/ha/status")
+    async def ha_status(authorization: str | None = Header(default=None)):
+        """Tình trạng kết nối Home Assistant: đã cấu hình chưa, số entity đang
+        thấy — nút «Test kết nối» của card HA."""
+        require_admin(authorization)
+
+        def _st() -> dict:
+            out: dict = {"ok": False, "configured": False, "entities": 0}
+            try:
+                ha = config.get().get("home_assistant") or {}
+                out["configured"] = bool(str(ha.get("url") or "").strip()
+                                         and str(ha.get("token") or "").strip())
+                if not out["configured"]:
+                    out["error"] = "Chưa điền URL + token Home Assistant"
+                    return out
+                from services.ha_client import get_states
+                states = get_states() or []
+                out["entities"] = len(states)
+                out["ok"] = len(states) > 0
+                if not out["ok"]:
+                    out["error"] = ("Kết nối được nhưng 0 entity — kiểm tra token "
+                                    "còn hạn / URL đúng cổng 8123")
+            except Exception as exc:
+                out["error"] = f"Lỗi kết nối HA: {str(exc)[:160]}"
+            return out
+
+        return await run_in_threadpool(_st)
+
+    @router.post("/api/v1/ha/refresh")
+    async def ha_refresh(authorization: str | None = Header(default=None)):
+        """Ép làm mới danh sách thiết bị NGAY (khỏi chờ chu kỳ refresh)."""
+        require_admin(authorization)
+
+        def _rf() -> dict:
+            try:
+                from services.ha_client import get_states
+                states = get_states(use_cache=False) or []
+                return {"ok": True, "entities": len(states),
+                        "message": f"Đã làm mới: {len(states)} entity"}
+            except Exception as exc:
+                return {"ok": False, "error": f"Làm mới lỗi: {str(exc)[:160]}"}
+
+        return await run_in_threadpool(_rf)
+
     @router.get("/api/v1/calendar/status")
     async def calendar_status(authorization: str | None = Header(default=None)):
         require_admin(authorization)

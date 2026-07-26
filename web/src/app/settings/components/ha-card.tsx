@@ -6,6 +6,7 @@ import { PersonaInline } from "./personas-card";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { useSettingsStore } from "../store";
+import { request } from "@/lib/request";
 
 export function HACard() {
   const config = useSettingsStore((state) => state.config);
@@ -20,6 +21,8 @@ export function HACard() {
   const [limitOn, setLimitOn] = useState(false);
   const [haGroups, setHaGroups] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  const [haBusy, setHaBusy] = useState("");
+  const [haMsg, setHaMsg] = useState("");
 
   // Nhóm mà pipeline chat/HA thực sự tôn trọng (nhánh ảnh/video/nhạc/code +
   // tích hợp HA/server/web tự động).
@@ -133,7 +136,37 @@ export function HACard() {
           </p>
           <PersonaInline platform="ha" />
         </div>
-        <Button onClick={save}>{saved ? "Đã lưu!" : "Lưu"}</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={save}>{saved ? "Đã lưu!" : "Lưu"}</Button>
+          <Button type="button" variant="outline" disabled={haBusy === "test"}
+            onClick={async () => {
+              setHaBusy("test"); setHaMsg("Đang kiểm tra…");
+              try {
+                const r = await request.get("/api/v1/ha/status");
+                const d = r.data as { ok?: boolean; entities?: number; error?: string };
+                setHaMsg(d.ok ? `✅ Kết nối OK — thấy ${d.entities} entity`
+                  : `❌ ${d.error || "Không kết nối được"}`);
+              } catch (e) {
+                setHaMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+              } finally { setHaBusy(""); }
+            }}>
+            {haBusy === "test" ? "…" : "Test kết nối"}
+          </Button>
+          <Button type="button" variant="outline" disabled={haBusy === "refresh"}
+            onClick={async () => {
+              setHaBusy("refresh"); setHaMsg("Đang làm mới thiết bị…");
+              try {
+                const r = await request.post("/api/v1/ha/refresh", {});
+                const d = r.data as { ok?: boolean; message?: string; error?: string };
+                setHaMsg(d.ok ? `✅ ${d.message}` : `❌ ${d.error || "Làm mới lỗi"}`);
+              } catch (e) {
+                setHaMsg(`❌ ${e instanceof Error ? e.message : String(e)}`);
+              } finally { setHaBusy(""); }
+            }}>
+            {haBusy === "refresh" ? "…" : "Làm mới thiết bị ngay"}
+          </Button>
+        </div>
+        {haMsg ? <p className="text-xs text-muted-foreground">{haMsg}</p> : null}
       </CardContent>
     </Card>
   );
