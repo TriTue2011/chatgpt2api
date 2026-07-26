@@ -514,7 +514,7 @@ export function FlowCard() {
         {/* Header + global enable */}
         <div className="flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Sparkles className="size-4 text-emerald-600" />
               <h3 className="text-sm font-semibold text-emerald-600 dark:text-emerald-300">Google Labs Flow</h3>
             </div>
@@ -842,7 +842,7 @@ export function FlowCard() {
               : loginSession.state === "need_code" ? "border-amber-300 bg-amber-50/70"
               : "border-amber-200 bg-[var(--card)]/80"
             }`}>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
                   loginSession.state === "success" ? "bg-emerald-100 text-emerald-700"
                   : loginSession.state === "failed" ? "bg-rose-100 text-rose-700"

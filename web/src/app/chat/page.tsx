@@ -69,7 +69,12 @@ function makeMdComponents(accent: MdAccent) {
       <blockquote className={`border-l-2 ${border} pl-3 my-1.5 opacity-90 italic`} {...props} />
     ),
     hr: () => <hr className="my-2 border-border/50" />,
-    table: (props: any) => <table className="border-collapse my-2 text-xs w-full" {...props} />,
+    table: (props: any) => (
+      // Bảng markdown rộng cuộn TRONG bong bóng chat — không banh ngang mobile
+      <div className="overflow-x-auto my-2">
+        <table className="border-collapse text-xs w-full" {...props} />
+      </div>
+    ),
     th: (props: any) => <th className={`border px-2 py-1 bg-background/40 font-semibold ${ac}`} {...props} />,
     td: (props: any) => <td className="border px-2 py-1" {...props} />,
     a: ({ href, children, ...props }: any) => {

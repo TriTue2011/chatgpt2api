@@ -428,7 +428,7 @@ export default function DashboardPage() {
             <p className="text-[11px] uppercase tracking-wider font-semibold text-[var(--muted-foreground)]">Recent Requests</p>
             <span className="text-[10px] text-[var(--muted-foreground)]">{recentReqs.length}</span>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overflow-x-auto">
             {recentReqs.length === 0 ? (
               <div className="h-32 flex items-center justify-center text-[var(--muted-foreground)] text-sm">No requests yet.</div>
             ) : (

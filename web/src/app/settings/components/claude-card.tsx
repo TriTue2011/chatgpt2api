@@ -332,7 +332,7 @@ export function ClaudeCard() {
       <CardContent className="space-y-4 p-5">
         <div className="flex items-center justify-between">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Bot className="size-4 text-orange-600" />
               <h3 className="text-sm font-semibold text-orange-900">Claude via Google OAuth</h3>
             </div>
@@ -468,7 +468,7 @@ export function ClaudeCard() {
               : session.state === "need_code" ? "border-amber-300 bg-amber-50/70"
               : "border-orange-200 bg-[var(--card)]/80"
             }`}>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
                   session.state === "success" ? "bg-emerald-100 text-emerald-700"
                   : session.state === "failed" ? "bg-rose-100 text-rose-700"

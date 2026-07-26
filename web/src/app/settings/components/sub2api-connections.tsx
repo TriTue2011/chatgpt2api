@@ -396,7 +396,7 @@ export function Sub2APIConnections() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {servers.length > 0 ? <Badge className="rounded-md px-2.5 py-1">{servers.length} 个kết nối</Badge> : null}
               <Button
                 className="h-9 rounded-xl bg-[var(--primary)] px-4 text-[var(--primary-foreground)] hover:brightness-110"
@@ -465,7 +465,7 @@ export function Sub2APIConnections() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         variant="outline"
                         className="h-8 rounded-lg border-[var(--border)] bg-[var(--card)] px-3 text-xs text-[var(--muted-foreground)]"
@@ -750,7 +750,7 @@ export function Sub2APIConnections() {
                 className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] pl-10"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Select
                 value={pageSize}
                 onValueChange={(value) => {
@@ -805,7 +805,7 @@ export function Sub2APIConnections() {
                         onCheckedChange={(checked) => toggleAccount(item.id, Boolean(checked))}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-sm font-medium text-[var(--foreground)]">
                             {item.email || item.name || item.id}
                           </span>
@@ -838,7 +838,7 @@ export function Sub2APIConnections() {
               第 {filteredAccounts.length === 0 ? 0 : (safeAccountPage - 1) * currentPageSize + 1} -{" "}
               {Math.min(safeAccountPage * currentPageSize, filteredAccounts.length)} 条，共 {filteredAccounts.length} 条
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 className="h-9 rounded-xl border-[var(--border)] bg-[var(--card)] px-3"

@@ -27,7 +27,7 @@ function StatusBox({ st }: { st: LoginSt }) {
   const color = st.state==="success"?"border-emerald-300 bg-emerald-50":st.state==="failed"?"border-rose-300 bg-rose-50":st.state==="need_tap"?"border-violet-300 bg-violet-50":st.state==="need_code"?"border-amber-300 bg-amber-50":"border-blue-200 bg-[var(--card)]";
   return (
     <div className={`rounded-lg border p-2 text-xs space-y-1 ${color}`}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {(st.state==="running"||st.state==="starting") && <LoaderCircle className="size-3 animate-spin"/>}
         <span className="font-semibold uppercase tracking-wide">{st.state}</span>
         <span className="text-[var(--muted-foreground)] flex-1">{st.message}</span>
@@ -259,7 +259,7 @@ export function GoogleProvidersCard() {
       <CardContent className="space-y-5 p-5">
 
         {/* HEADER */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xl">🔑</span>
           <div>
             <h3 className="text-sm font-semibold text-blue-900">Provider qua tài khoản Google</h3>

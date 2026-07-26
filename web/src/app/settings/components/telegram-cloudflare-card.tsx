@@ -339,7 +339,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
         const botTitle = row.label.trim() || platformName || (bid ? `Bot ${bid}` : "Bot mới");
         return (
           <div key={row.id} className="rounded-md border border-border p-2 space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0"
                 onClick={(e) => e.stopPropagation()}>
                 <input type="checkbox" className="size-3.5" checked={row.enabled}
@@ -358,12 +358,12 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
             </div>
             {botOpen ? (
             <>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-muted-foreground shrink-0">Token</label>
               <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
                 placeholder={tokenPlaceholder} className="flex-1 h-8 text-xs font-mono" />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-muted-foreground shrink-0">Tên dễ nhớ</label>
               <Input value={row.label} onChange={(e) => patch(row.id, { label: e.target.value })}
                 placeholder="Tự lấy từ bot lúc đầu — bạn đổi được"
@@ -1648,7 +1648,7 @@ export function TelegramCloudflareCard() {
                   value={row.botKey}
                   onValueChange={(value) => setFilterField(row.id, { botKey: value })}
                 >
-                  <SelectTrigger className="w-44 shrink-0">
+                  <SelectTrigger className="w-44 max-w-full shrink-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

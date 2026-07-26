@@ -339,7 +339,7 @@ function ChannelTab({ status, showToast }:
               const isOpen = open[a.ownId] ?? false;
               return (
                 <div key={a.ownId} className="rounded-lg border border-[var(--border)] p-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <label className="flex shrink-0 cursor-pointer select-none items-center gap-1 text-xs"
                       onClick={ev => ev.stopPropagation()}>
                       <input type="checkbox" checked={e.enabled !== false}
@@ -1018,7 +1018,7 @@ function AdminTab({ status, showToast }:
                     </div>
                     {aOpen && (
                     <>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <input className={INPUT} placeholder="Thread ID admin"
                         value={e.chat_id}
                         onChange={(ev) => update(ownId, i, { chat_id: ev.target.value })} />
