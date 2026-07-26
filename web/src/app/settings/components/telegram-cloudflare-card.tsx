@@ -623,6 +623,8 @@ export function TelegramCloudflareCard() {
     forward: boolean; forwardUrl: string;
     /** Model riêng của thread này — trống = dùng model mặc định của bot/kênh */
     aiModel: string;
+    /** Đường tắt điều khiển nhà: "" = theo mặc định, "on" = bật, "off" = tắt */
+    haFastpath: string;
   };
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
   const filterInited = useRef(false);
@@ -642,6 +644,7 @@ export function TelegramCloudflareCard() {
     const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string; name?: string }> | undefined;
     // Model riêng theo thread/user (backend: admin_workspace.thread_model_for)
     const tm = (config as any)?.thread_models as Record<string, string> | undefined;
+    const tfp = (config as any)?.thread_fastpath as Record<string, boolean> | undefined;
     if (!tf && !tuf && !tmf && !tff) return;
     filterInited.current = true;
 
@@ -656,6 +659,7 @@ export function TelegramCloudflareCard() {
     const kindOf = (key: string) => (tfMeta?.[key]?.kind === "user" ? "user" : "group");
     const nameOf = (key: string) => String(tfMeta?.[key]?.name || "").trim();
     const modelOf = (key: string) => String(tm?.[key] || "").trim();
+    const fpOf = (key: string) => (tfp && key in tfp ? (tfp[key] ? "on" : "off") : "");
     const rows: FilterRow[] = Object.entries(tf || {}).map(([key, groups]) => {
       const { botKey, chatId } = splitParent(key);
       return {
@@ -663,6 +667,7 @@ export function TelegramCloudflareCard() {
         groups: Array.isArray(groups) ? groups : [], users: [],
         requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
         aiModel: modelOf(key),
+        haFastpath: fpOf(key),
       };
     });
     const findRow = (botKey: string, chatId: string) => rows.find((r) => r.botKey === botKey && r.chatId === chatId);
@@ -675,6 +680,7 @@ export function TelegramCloudflareCard() {
           groups: [...FUNCTION_GROUPS.map(([gk]) => gk)], users: [],
           requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
           aiModel: modelOf(k),
+          haFastpath: fpOf(k),
         };
         rows.push(r);
       }
@@ -803,6 +809,7 @@ export function TelegramCloudflareCard() {
     const tff: Record<string, { enabled: boolean; url: string; tag_mode: boolean }> = {};
     const tfMeta: Record<string, { kind: string; name?: string }> = {};
     const tmodels: Record<string, string> = {};
+    const tfastpath: Record<string, boolean> = {};
     for (const r of rows) {
       const id = r.chatId.trim();
       if (!id) continue;
@@ -811,6 +818,9 @@ export function TelegramCloudflareCard() {
       // Model riêng của thread (trống = dùng model mặc định của bot/kênh)
       const rModel = String(r.aiModel || "").trim();
       if (rModel) tmodels[parent] = rModel;
+      // Đường tắt HA: chỉ lưu khi CÓ chọn (trống = theo mặc định cũ)
+      if (r.haFastpath === "on") tfastpath[parent] = true;
+      else if (r.haFastpath === "off") tfastpath[parent] = false;
       const tName = String(r.name || "").trim();
       tfMeta[parent] = {
         kind: r.kind === "user" ? "user" : "group",
@@ -850,6 +860,7 @@ export function TelegramCloudflareCard() {
     setField("thread_forward_filters", tff);
     setField("thread_filter_meta", tfMeta);
     setField("thread_models", tmodels);
+    setField("thread_fastpath", tfastpath);
   };
   const addFilterRow = () =>
     commitFilters([...filterRows, {
@@ -857,6 +868,7 @@ export function TelegramCloudflareCard() {
       chatId: "", kind: "group", name: "", groups: [], users: [],
       requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
       aiModel: "",
+      haFastpath: "",
     }]);
   const removeFilterRow = (id: number) =>
     commitFilters(filterRows.filter((r) => r.id !== id));
@@ -1154,10 +1166,11 @@ export function TelegramCloudflareCard() {
         {/* ── Zalo Bot — Cài đặt kênh ── */}
         {chTab === "zalo" && subTab === "settings" && (
           <div className="space-y-3 mt-1">
-          <p className="text-[10px] text-muted-foreground">
-            Webhook HTTPS dùng cấu hình <b>Cloudflare (hạ tầng chung)</b> ở mục
-            Settings riêng — không cài lại ở đây. Hệ thống tự đăng ký{" "}
-            <code>/zalo/webhook</code>.
+          <p className="text-[10px] text-muted-foreground rounded-md border border-amber-500/40 p-2">
+            ⚠️ Kênh này dùng <b>long-polling</b> (gateway tự gọi <code>getUpdates</code> ra ngoài),
+            <b> không dùng webhook</b>: Cloudflare chặn <code>/zalo/webhook</code> (403). Nền tảng
+            cũng chỉ cho <code>getUpdates</code> khi webhook TẮT, nên <b>không chạy song song
+            webhook + long-polling</b> được — webhook ở kênh này không chắc chắn.
           </p>
           <div>
             <label className="text-xs text-muted-foreground">
@@ -1217,57 +1230,24 @@ export function TelegramCloudflareCard() {
             </Select>
           </div>
 
-          {/* Hạ tầng gọn — tương đương token server, không phải cài admin */}
-          <details className="rounded-md border border-border p-2 text-[11px]">
-            <summary className="cursor-pointer font-medium text-muted-foreground">
-              Hạ tầng zca-js / webhook (tuỳ chọn)
-            </summary>
-            <div className="space-y-2 mt-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground">URL bot server (trống = 127.0.0.1:3001 nhúng)</label>
-                <Input value={String(cfg.zalo_personal_server_url || "")}
-                  onChange={(e) => setField("zalo_personal_server_url", e.target.value)}
-                  placeholder="Trống = nhúng nội bộ" className="h-8 text-xs" />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-muted-foreground">User bot server</label>
-                  <Input value={String(cfg.zalo_personal_username || "")}
-                    onChange={(e) => setField("zalo_personal_username", e.target.value)}
-                    placeholder="admin" className="h-8 text-xs" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Mật khẩu</label>
-                  <Input type="password" value={String(cfg.zalo_personal_password || "")}
-                    onChange={(e) => setField("zalo_personal_password", e.target.value)}
-                    placeholder="admin" className="h-8 text-xs" />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-muted-foreground">Webhook base nội bộ (trống = container)</label>
-                <Input value={String(cfg.zalo_personal_webhook_base || "")}
-                  onChange={(e) => setField("zalo_personal_webhook_base", e.target.value)}
-                  placeholder="Trống = 127.0.0.1:80" className="h-8 text-xs" />
-              </div>
-              <label className="flex items-center gap-2 text-[11px] text-muted-foreground cursor-pointer select-none">
-                <input type="checkbox" className="size-3.5"
-                  checked={Boolean(cfg.zalo_personal_auto_webhook ?? true)}
-                  onChange={(e) => setField("zalo_personal_auto_webhook", e.target.checked)} />
-                Tự đăng ký webhook mọi acc về gateway
-              </label>
-              <div>
-                <label className="text-[10px] text-muted-foreground">Acc gửi mặc định (trống = acc đầu)</label>
-                <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-8"
-                  value={String(cfg.zalo_personal_account_id || "")}
-                  onChange={(e) => setField("zalo_personal_account_id", e.target.value)}>
-                  <option value="">-- Acc đầu trong danh sách --</option>
-                  {zalopAccounts.map((a) => (
-                    <option key={a.ownId} value={a.ownId}>{zalopAccLabel(a)}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </details>
+          {/* Hạ tầng zca-js + webhook đã CHUYỂN sang tab «🔑 Tài khoản & QR»
+              (ở đó hiện luôn URL webhook từng tài khoản + nút copy). Ô "URL bot
+              server" đã bỏ: zca-js luôn chạy nhúng trong container. */}
+          <p className="text-[10px] text-muted-foreground rounded-md border border-border p-2">
+            🔧 Hạ tầng zca-js &amp; webhook (base nội bộ, user/mật khẩu bot server, tự đăng ký
+            webhook, URL webhook để copy) đã chuyển sang tab <b>🔑 Tài khoản &amp; QR</b>.
+          </p>
+          <div>
+            <label className="text-[10px] text-muted-foreground">Acc gửi mặc định (trống = acc đầu)</label>
+            <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-8"
+              value={String(cfg.zalo_personal_account_id || "")}
+              onChange={(e) => setField("zalo_personal_account_id", e.target.value)}>
+              <option value="">-- Acc đầu trong danh sách --</option>
+              {zalopAccounts.map((a) => (
+                <option key={a.ownId} value={a.ownId}>{zalopAccLabel(a)}</option>
+              ))}
+            </select>
+          </div>
 
           <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">
@@ -1712,6 +1692,22 @@ export function TelegramCloudflareCard() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              {/* Đường tắt điều khiển nhà theo THREAD (không phải quyền HA —
+                  quyền nằm ở nhóm chức năng «🏠 Nhà (HA)» phía trên). */}
+              <div>
+                <label className="text-[10px] text-muted-foreground">
+                  ⚡ Đường tắt điều khiển nhà — nhanh hơn; tắt = lệnh nhà đi qua AI
+                </label>
+                <select
+                  className="w-full h-8 rounded-md border border-border bg-background px-2 text-[11px]"
+                  value={row.haFastpath || ""}
+                  onChange={(e) => setFilterField(row.id, { haFastpath: e.target.value })}
+                >
+                  <option value="">-- Theo mặc định của bot/tài khoản --</option>
+                  <option value="on">Bật đường tắt (nhanh)</option>
+                  <option value="off">Tắt — đi qua AI</option>
+                </select>
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1">
                 {FUNCTION_GROUPS.map(([key, label]) => (

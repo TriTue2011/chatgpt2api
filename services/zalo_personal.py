@@ -331,6 +331,38 @@ def _receiver_url(event: str) -> str:
     return f"{base}/zalo-personal/webhook?secret={webhook_secret()}&event={event}"
 
 
+def suggested_webhook_urls() -> dict:
+    """URL webhook gợi ý cho UI: NỘI BỘ (zca-js nhúng gọi ngược) + CÔNG KHAI
+    (domain, chỉ khi đã cấu hình).
+
+    Gateway nhận webhook ở CÙNG một endpoint nên gọi bằng IP nội bộ hay domain
+    đều vào chung một chỗ — dùng song song được. Chỉ khác: zca-js nhúng cùng
+    container nên nên dùng URL nội bộ (nhanh, không vòng ra Internet)."""
+    c = _cfg()
+    sec = webhook_secret()
+    events = ("message", "group_event", "reaction")
+
+    def _mk(base: str) -> dict:
+        b = str(base or "").rstrip("/")
+        return {e: f"{b}/zalo-personal/webhook?secret={sec}&event={e}" for e in events}
+
+    internal_base = _webhook_base()
+    public_base = (str(c.get("base_url") or "").strip()
+                   or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/")
+    out: dict = {
+        "auto": _bool(c, "zalo_personal_auto_webhook", True),
+        "internal_base": internal_base,
+        "internal": _mk(internal_base),
+        "secret": sec,
+        "events": list(events),
+    }
+    # Chỉ trả URL domain khi CÓ domain thật (không phải localhost nội bộ)
+    if public_base and "127.0.0.1" not in public_base and "localhost" not in public_base:
+        out["public_base"] = public_base
+        out["public"] = _mk(public_base)
+    return out
+
+
 def ensure_webhooks(force: bool = False) -> dict:
     """Tự đăng ký webhook của MỌI tài khoản đã login về gateway (idempotent).
     Chỉ chạy khi bật kênh + bật auto (mặc định). Trả {ok, updated:[ownId]}."""
@@ -2082,7 +2114,7 @@ def _process_ai(ev: dict) -> None:
         _msg_ctx.thread_type = int(thread_type or 0)
         _fp_map = config.get().get("zalo_personal_account_admins")
         _fp_entry = _fp_map.get(_acc) if isinstance(_fp_map, dict) else None
-        # HA: admin entry (nếu match) → acc → True
+        # HA: «Lọc thread» (nếu cài riêng) → admin entry (nếu match) → acc → True
         _fp = True
         if isinstance(_fp_entry, dict):
             _fp = bool(_fp_entry.get("ha_fastpath", True))
@@ -2090,6 +2122,13 @@ def _process_ai(ev: dict) -> None:
                 if isinstance(e, dict) and str(e.get("chat_id") or "").strip() == thread_id:
                     _fp = bool(e.get("ha_fastpath", _fp))
                     break
+        try:
+            from services.admin_workspace import thread_fastpath_for as _tfp
+            _t = _tfp("zalop", _acc, thread_id)
+            if _t is not None:
+                _fp = _t
+        except Exception:
+            pass
         _model = _ai_model(_acc, thread_id)
         # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
         _skey = f"zalop_{thread_id}"

@@ -61,6 +61,12 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         return await asyncio.to_thread(zp.get_webhooks)
 
+    @router.get("/api/zalo-personal/webhook-urls")
+    async def webhook_urls(authorization: str | None = Header(default=None)):
+        """URL webhook gợi ý (nội bộ + domain nếu có) để UI hiển thị/copy."""
+        require_admin(authorization)
+        return await asyncio.to_thread(zp.suggested_webhook_urls)
+
     @router.post("/api/zalo-personal/webhook-config")
     async def set_webhook(body: dict, authorization: str | None = Header(default=None)):
         require_admin(authorization)

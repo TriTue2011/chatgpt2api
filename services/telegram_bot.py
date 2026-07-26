@@ -1250,8 +1250,13 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     try:
         from services.agent import orchestrate
         try:
-            from services.admin_workspace import ha_fastpath_for_chat as _ha_fp
-            _fp = _ha_fp(_active_bot(), chat_id)
+            from services.admin_workspace import (ha_fastpath_for_chat as _ha_fp,
+                                                  thread_fastpath_for as _tfp)
+            _b = _active_bot()
+            _bid = str((_b or {}).get("token") or "").split(":")[0].strip()
+            # «Lọc thread» cài riêng cho thread này thì THẮNG; không cài → chuỗi cũ.
+            _t = _tfp("tg", _bid, chat_id)
+            _fp = _t if _t is not None else _ha_fp(_b, chat_id)
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _tg_model(chat_id)

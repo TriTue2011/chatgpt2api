@@ -255,6 +255,127 @@ function AccountsTab({ status, refresh, showToast }:
 
 type HookRow = { ownId: string; messageWebhookUrl?: string; groupEventWebhookUrl?: string; reactionWebhookUrl?: string };
 
+type HookUrls = {
+  auto?: boolean; internal_base?: string; secret?: string; events?: string[];
+  internal?: Record<string, string>;
+  public_base?: string; public?: Record<string, string>;
+};
+
+/** Hạ tầng zca-js + webhook tự động (chuyển từ tab "Cài đặt kênh" sang đây).
+ *  Tick tự đăng ký → URL do hệ thống sinh, CHỈ ĐỌC (có nút copy).
+ *  Bỏ tick  → tự nhập URL từng tài khoản bên dưới (server khác / định dạng khác). */
+function WebhookInfraBlock({ showToast }: { showToast: (m: string, ok?: boolean) => void }) {
+  const config = useSettingsStore(s => s.config);
+  const setField = useSettingsStore(s => s.setField);
+  const saveConfig = useSettingsStore(s => s.saveConfig);
+  const isSaving = useSettingsStore(s => s.isSavingConfig);
+  const [urls, setUrls] = useState<HookUrls | null>(null);
+
+  const loadUrls = useCallback(() => {
+    request.get("/api/zalo-personal/webhook-urls")
+      .then(r => setUrls((r.data || {}) as HookUrls))
+      .catch(() => setUrls(null));
+  }, []);
+  useEffect(() => { loadUrls(); }, [loadUrls]);
+
+  const cfg = (config || {}) as Record<string, unknown>;
+  const auto = Boolean(cfg.zalo_personal_auto_webhook ?? true);
+  const evLabel: Record<string, string> = {
+    message: "💬 message", group_event: "👥 group_event", reaction: "❤️ reaction",
+  };
+
+  const urlRow = (label: string, u: string) => (
+    <div key={label} className="flex items-center gap-1.5">
+      <span className="w-28 shrink-0 text-[10px] text-[var(--muted-foreground)]">{label}</span>
+      <code className="flex-1 break-all rounded bg-[var(--background)] px-1.5 py-0.5 text-[11px]">{u}</code>
+      <CopyBtn text={u} showToast={showToast} title="Copy URL webhook" />
+    </div>
+  );
+
+  return (
+    <div className={CARD}>
+      <h2 className="mb-2 text-sm font-bold">Hạ tầng zca-js &amp; webhook</h2>
+      <label className="mb-2 flex cursor-pointer select-none items-center gap-2 text-xs">
+        <input type="checkbox" checked={auto}
+          onChange={e => setField("zalo_personal_auto_webhook", e.target.checked)} />
+        Tự đăng ký webhook mọi tài khoản về gateway
+      </label>
+      {auto ? (
+        <div className="space-y-2">
+          <p className="text-[11px] text-[var(--muted-foreground)]">
+            URL do hệ thống <b>tự sinh</b> (chỉ đọc) — bấm biểu tượng để copy. zca-js nhúng
+            cùng container nên dùng URL <b>nội bộ</b> là nhanh nhất.
+          </p>
+          {urls?.internal ? (
+            <div className="space-y-1">
+              <p className="text-[10px] font-semibold text-[var(--muted-foreground)]">
+                Nội bộ (LAN / trong container) — {urls.internal_base}
+              </p>
+              {Object.entries(urls.internal).map(([ev, u]) => urlRow(evLabel[ev] || ev, u))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-[var(--muted-foreground)]">Chưa lấy được URL — bấm Tải lại URL.</p>
+          )}
+          {urls?.public ? (
+            <div className="space-y-1 border-t border-[var(--border)] pt-2">
+              <p className="text-[10px] font-semibold text-[var(--muted-foreground)]">
+                Qua domain (từ ngoài) — {urls.public_base}
+              </p>
+              {Object.entries(urls.public).map(([ev, u]) => urlRow(evLabel[ev] || ev, u))}
+              <p className="text-[10px] text-[var(--muted-foreground)]">
+                Gateway nhận webhook ở cùng một endpoint nên gọi bằng IP nội bộ hay domain
+                đều vào chung một chỗ — <b>dùng song song được</b>. Nhưng zca-js chỉ gọi
+                <b> một URL đã đăng ký</b> cho mỗi loại sự kiện.
+              </p>
+            </div>
+          ) : (
+            <p className="text-[10px] text-[var(--muted-foreground)]">
+              Chưa cấu hình domain → chỉ có webhook nội bộ. Đặt domain ở mục
+              <b> Cloudflare (hạ tầng chung)</b> thì URL domain sẽ hiện ở đây.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-[11px] text-[var(--muted-foreground)]">
+          Đã tắt tự đăng ký — bạn <b>tự nhập</b> URL cho từng tài khoản ở danh sách bên dưới
+          (bấm <b>Sửa</b>). Có thể trỏ sang IP máy chủ khác hoặc dùng định dạng webhook riêng.
+        </p>
+      )}
+
+      <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
+        <Field label="Webhook base nội bộ (trống = trong container, http://127.0.0.1:80)">
+          <input className={INPUT} value={String(cfg.zalo_personal_webhook_base || "")}
+            onChange={e => setField("zalo_personal_webhook_base", e.target.value)}
+            placeholder="Trống = 127.0.0.1:80" />
+        </Field>
+        <div className="grid gap-2 md:grid-cols-2">
+          <Field label="User bot server">
+            <input className={INPUT} value={String(cfg.zalo_personal_username || "")}
+              onChange={e => setField("zalo_personal_username", e.target.value)} placeholder="admin" />
+          </Field>
+          <Field label="Mật khẩu bot server">
+            <input className={INPUT} type="password" value={String(cfg.zalo_personal_password || "")}
+              onChange={e => setField("zalo_personal_password", e.target.value)} placeholder="admin" />
+          </Field>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button className={BTN_PRIMARY} disabled={isSaving}
+            onClick={async () => {
+              try {
+                await saveConfig();
+                showToast("Đã lưu hạ tầng webhook ✓");
+                loadUrls();
+              } catch (e) { showToast(`Lỗi lưu: ${e instanceof Error ? e.message : e}`, false); }
+            }}>
+            {isSaving ? "Đang lưu…" : "Lưu"}
+          </button>
+          <button className={BTN_GHOST} onClick={() => loadUrls()}>Tải lại URL</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WebhooksTab({ status, showToast }:
   { status: Status | null; showToast: (m: string, ok?: boolean) => void }) {
   const [rows, setRows] = useState<HookRow[]>([]);
@@ -322,6 +443,7 @@ function WebhooksTab({ status, showToast }:
 
   return (
     <div className="space-y-4">
+      <WebhookInfraBlock showToast={showToast} />
       <div className={CARD}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <h2 className="flex-1 text-sm font-bold">Webhook theo tài khoản</h2>

@@ -375,6 +375,45 @@ def thread_model_for(platform: str, bot_id: str | None, chat_id: str | int | Non
     return ""
 
 
+def thread_fastpath_for(platform: str, bot_id: str | None, chat_id: str | int | None,
+                        user_id: str | int | None = None) -> bool | None:
+    """Đường tắt điều khiển nhà (HA fastpath) cài riêng cho thread ở «Lọc thread».
+
+    Trả True/False nếu thread có cài; None = KHÔNG cài → gọi tiếp chuỗi cũ
+    (admin entry → bot/acc → mặc định). Khóa giống thread_filters/thread_models."""
+    try:
+        table = config.get().get("thread_fastpath") or {}
+        if not isinstance(table, dict) or not table:
+            return None
+        plat = str(platform or "").strip()
+        cid = str(chat_id or "").strip()
+        if not plat or not cid:
+            return None
+        bid = str(bot_id or "").strip()
+        uid = str(user_id or "").strip()
+        keys: list[str] = []
+        if uid:
+            if bid:
+                keys.append(f"{plat}:{bid}:{cid}:{uid}")
+            keys.append(f"{plat}:{cid}:{uid}")
+        if bid:
+            keys.append(f"{plat}:{bid}:{cid}")
+        keys.append(f"{plat}:{cid}")
+        for k in keys:
+            if k in table:
+                v = table.get(k)
+                if isinstance(v, bool):
+                    return v
+                s = str(v).strip().lower()
+                if s in ("1", "true", "on", "bat", "bật"):
+                    return True
+                if s in ("0", "false", "off", "tat", "tắt"):
+                    return False
+    except Exception:
+        pass
+    return None
+
+
 def fallback_admin_threads(bot: dict | None) -> list[str]:
     """Admin chat_ids marked fallback_enabled (order preserved)."""
     out: list[str] = []
