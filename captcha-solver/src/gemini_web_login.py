@@ -293,6 +293,12 @@ async def _run_inner(session: GeminiWebLoginSession, password: str) -> None:
         session.message = "Mở gemini.google.com..."
         await page.goto(_GEMINI_HOME, wait_until="domcontentloaded", timeout=30_000)
         await asyncio.sleep(3.0)
+        # Cloudflare "xác minh bảo mật" → chờ/click qua trước khi thao tác.
+        try:
+            from .solvers.turnstile import pass_challenge
+            await pass_challenge(page, timeout=45.0, log_prefix="gemini_login: ")
+        except Exception:
+            pass
 
         # If already authenticated (has account chip + no login button),
         # still send a greeting to ACTIVATE the account (guest→authenticated

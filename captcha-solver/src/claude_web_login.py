@@ -228,6 +228,18 @@ async def _run_inner(session: ClaudeWebLoginSession, password: str) -> None:
         except Exception:
             pass
 
+        # Cloudflare có thể chặn bằng trang "Thực hiện xác minh bảo mật" — lúc đó
+        # nút Google CHƯA tồn tại. Chờ (và thử click) qua trước khi đi tìm nút,
+        # thay vì báo "không tìm thấy nút" rồi bỏ cuộc.
+        try:
+            from .solvers.turnstile import pass_challenge
+            session.message = "Đang qua xác minh Cloudflare..."
+            if not await pass_challenge(page, timeout=45.0, log_prefix="claude_login: "):
+                session.message = ("Cloudflare đang chặn — vào VNC tích 'Xác minh bạn là "
+                                   "con người' giúp em, phiên vẫn đang mở.")
+        except Exception as exc:
+            logger.debug("claude_login: bỏ qua bước Cloudflare: %s", exc)
+
         session.message = "Click 'Continue with Google'..."
         # claude.ai opens Google OAuth in a POPUP window — capture any new page
         # the click spawns so we drive the login there, not the opener tab.
@@ -281,7 +293,19 @@ async def _run_inner(session: ClaudeWebLoginSession, password: str) -> None:
             try: ctx.remove_listener("page", _on_popup)
             except Exception: pass
             session.state = "failed"
-            session.error = "Không tìm thấy nút 'Continue with Google' trên claude.ai"
+            # Phân biệt: bị Cloudflare chặn ≠ trang đổi giao diện mất nút.
+            _blocked = False
+            try:
+                from .solvers.turnstile import is_challenge_showing
+                _blocked = await is_challenge_showing(page)
+            except Exception:
+                pass
+            session.error = (
+                "Cloudflare vẫn chặn (trang xác minh chưa qua) — vào VNC tích ô "
+                "'Xác minh bạn là con người' rồi chạy lại."
+                if _blocked else
+                "Không tìm thấy nút 'Continue with Google' trên claude.ai"
+            )
             session.completed_at = time.time()
             return
 

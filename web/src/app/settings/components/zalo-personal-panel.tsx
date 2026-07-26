@@ -274,6 +274,24 @@ function ChannelTab({ status, showToast }:
   const map = (cfg.zalo_personal_account_admins || {}) as Record<string, ZpAccCfg>;
   const accounts = status?.accounts || [];
 
+  // Danh sách bot/tài khoản ĐANG CÓ để chọn fallback (không bắt gõ tay).
+  // value = "<channel>::<tên bot>" — khớp cách lưu fallback_channel +
+  // fallback_bot_name; Zalo CN dùng ownId làm tên.
+  const fallbackOptions: { value: string; label: string }[] = [];
+  for (const b of ((cfg.telegram_bots as Record<string, unknown>[]) || [])) {
+    const tok = String(b?.token || "");
+    const name = String(b?.label || tok.split(":")[0] || "").trim();
+    if (name) fallbackOptions.push({ value: `telegram::${name}`, label: `Telegram · ${name}` });
+  }
+  for (const b of ((cfg.zalo_bots as Record<string, unknown>[]) || [])) {
+    const tok = String(b?.token || "");
+    const name = String(b?.label || tok.split(":")[0] || "").trim();
+    if (name) fallbackOptions.push({ value: `zalo::${name}`, label: `Zalo Bot · ${name}` });
+  }
+  for (const a of accounts) {
+    fallbackOptions.push({ value: `zalo_personal::${a.ownId}`, label: `Zalo CN · ${accountLabel(a)}` });
+  }
+
   const patchAcc = (ownId: string, p: ZpAccCfg) => {
     const entry = map[ownId] || {};
     setField("zalo_personal_account_admins", { ...map, [ownId]: { ...entry, ...p } });
@@ -344,20 +362,33 @@ function ChannelTab({ status, showToast }:
                       </label>
                       {e.fallback_enabled && (
                         <div className="grid gap-2 md:grid-cols-2">
-                          <Field label="Kênh fallback (telegram / zalo / zalo_personal)">
-                            <input className={INPUT} value={String(e.fallback_channel || "")}
-                              onChange={ev => patchAcc(a.ownId, { fallback_channel: ev.target.value })}
-                              placeholder="telegram" />
+                          <Field label="Gửi qua bot nào (chọn từ bot đang có)">
+                            <select className={INPUT}
+                              value={e.fallback_channel && e.fallback_bot_name
+                                ? `${e.fallback_channel}::${e.fallback_bot_name}` : ""}
+                              onChange={ev => {
+                                const v = ev.target.value;
+                                if (!v) { patchAcc(a.ownId, { fallback_channel: "", fallback_bot_name: "" }); return; }
+                                const [ch, ...rest] = v.split("::");
+                                patchAcc(a.ownId, { fallback_channel: ch, fallback_bot_name: rest.join("::") });
+                              }}>
+                              <option value="">— Chọn bot —</option>
+                              {fallbackOptions.map(o => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
                           </Field>
-                          <Field label="Tên bot fallback">
-                            <input className={INPUT} value={String(e.fallback_bot_name || "")}
-                              onChange={ev => patchAcc(a.ownId, { fallback_bot_name: ev.target.value })} />
-                          </Field>
-                          <Field label="Thread nhận fallback">
+                          <Field label="Thread nhận fallback (chat ID nơi gửi tới)">
                             <input className={INPUT} value={String(e.fallback_thread || "")}
-                              onChange={ev => patchAcc(a.ownId, { fallback_thread: ev.target.value })} />
+                              onChange={ev => patchAcc(a.ownId, { fallback_thread: ev.target.value })}
+                              placeholder="-100… / user id" />
                           </Field>
                         </div>
+                      )}
+                      {e.fallback_enabled && fallbackOptions.length === 0 && (
+                        <p className="text-[10px] text-[var(--muted-foreground)]">
+                          Chưa có bot nào để chọn — thêm bot Telegram/Zalo ở kênh tương ứng trước.
+                        </p>
                       )}
                     </div>
                   )}

@@ -200,6 +200,12 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
     try:
         await page.goto(req.auth_url, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(2.5)
+        # Cloudflare "xác minh bảo mật" → chờ/click qua trước khi vào vòng OAuth.
+        try:
+            from .solvers.turnstile import pass_challenge
+            await pass_challenge(page, timeout=45.0, log_prefix="codex_onboard: ")
+        except Exception:
+            pass
 
         # Loop until OAuth callback — handle OpenAI login screens + Google chooser
         deadline = time.time() + 120

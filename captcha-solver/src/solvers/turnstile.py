@@ -44,6 +44,58 @@ async def _try_click_checkbox(page) -> bool:
         return False
 
 
+async def is_challenge_showing(page) -> bool:
+    """Trang đang bị Cloudflare chặn (Turnstile / "Xác minh bạn là con người")?"""
+    try:
+        if await page.locator("iframe[src*='challenges.cloudflare.com']").count() > 0:
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(await page.evaluate(
+            """() => {
+                if (document.querySelector('#cf-chl-widget, .cf-turnstile, #challenge-form')) return true;
+                const t = (document.body && document.body.innerText || '').toLowerCase();
+                return t.includes('verify you are human')
+                    || t.includes('xác minh bạn là con người')
+                    || t.includes('thực hiện xác minh bảo mật')
+                    || t.includes('checking your browser');
+            }"""
+        ))
+    except Exception:
+        return False
+
+
+async def pass_challenge(page, timeout: float = 45.0, log_prefix: str = "") -> bool:
+    """Chờ (và thử click) qua thử thách Cloudflare trước khi thao tác tiếp.
+
+    Dùng cho MỌI luồng đăng nhập (claude / chatgpt / gemini / codex): sau khi mở
+    trang mà gặp "Thực hiện xác minh bảo mật" thì đừng vội bỏ cuộc — phần lớn tự
+    qua sau vài giây; nếu còn thì thử click ô checkbox một lần.
+
+    Trả True = đường đã thông (không có thử thách, hoặc đã qua).
+    Trả False = hết `timeout` mà vẫn bị chặn → caller nên báo người dùng vào VNC
+    tự tích, ĐỪNG giết phiên."""
+    if not await is_challenge_showing(page):
+        return True
+    logger.info("%sCloudflare challenge — chờ qua (tối đa %.0fs)", log_prefix, timeout)
+    started = time.monotonic()
+    deadline = started + timeout
+    clicked = False
+    while time.monotonic() < deadline:
+        await asyncio.sleep(1.5)
+        if not await is_challenge_showing(page):
+            logger.info("%sCloudflare challenge đã qua", log_prefix)
+            return True
+        # Đợi ~6s cho nó tự qua trước, rồi mới thử click 1 lần.
+        if not clicked and time.monotonic() - started > 6.0:
+            clicked = await _try_click_checkbox(page)
+    still = await is_challenge_showing(page)
+    if still:
+        logger.warning("%sCloudflare challenge CHƯA qua sau %.0fs", log_prefix, timeout)
+    return not still
+
+
 async def _read_token(page) -> str | None:
     return await page.evaluate(
         """() => {

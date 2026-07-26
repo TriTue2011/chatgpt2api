@@ -1636,6 +1636,12 @@ async def _run_onboard_v2(session, password: str) -> None:
             session.message = "Dang nhap ChatGPT (Continue with Google)..."
             await page.goto("https://chatgpt.com/auth/login", wait_until="domcontentloaded", timeout=45_000)
             await asyncio.sleep(4.0)
+            # Cloudflare "xác minh bảo mật" → chờ/click qua trước khi tìm nút.
+            try:
+                from .solvers.turnstile import pass_challenge
+                await pass_challenge(page, timeout=45.0, log_prefix="chatgpt_login: ")
+            except Exception:
+                pass
             # Some variants land on the marketing page → click the login button.
             for _lsel in ('[data-testid="login-button"]', 'button:has-text("Log in")',
                           'button:has-text("Dang nhap")', 'button:has-text("Đăng nhập")'):
