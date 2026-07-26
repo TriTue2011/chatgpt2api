@@ -49,7 +49,9 @@ pdf2docx>=0.5.8
 # Gói `vieneu` cài --no-deps trong Dockerfile để né gradio (~300MB, chỉ phục vụ
 # web UI riêng của họ). Dep runtime thật của đường ONNX/CPU liệt kê tường minh:
 sea-g2p>=0.7.20          # phonemizer Việt–Anh (Rust, torch-free)
-onnxruntime>=1.20.0      # chạy backbone + codec (sherpa-onnx cũng dlopen từ đây)
+# GHIM <1.28: sherpa-onnx 1.13.4 build với ABI onnxruntime 1.27 — bản 1.28 thiếu
+# symbol VERS_1.27.0 → import sherpa_onnx vỡ, STT chết cả vi lẫn en.
+onnxruntime>=1.27.0,<1.28  # chạy backbone + codec (sherpa-onnx cũng dlopen từ đây)
 tokenizers>=0.20         # tokenizer phoneme (torch-free)
 soundfile>=0.12          # audio I/O của SDK
 soxr>=0.5                # resample clip tham chiếu khi clone giọng
