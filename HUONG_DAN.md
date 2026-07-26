@@ -627,6 +627,40 @@ Quy tắc chung: quyền của người = giao của quyền nhóm và quyền n
 giọng nói` nhưng một người bật thì **chỉ người đó** nhận âm thanh — trong nhóm đông,
 ai thích nghe thì nghe, không phiền người khác.
 
+### 6.3b. Ba tầng với nhóm bật Topics (Telegram)
+
+> **Mới (2026-07-26).** Nhóm Telegram bật **Topics** (nhóm dạng diễn đàn) có thêm
+> tầng giữa: **Nhóm → 🧵 Topic → 👤 User**. Nhóm **không** bật Topics thì **giữ
+> nguyên 2 tầng** như cũ, không phải sửa gì.
+
+Vị trí: trong mỗi dòng thread loại **Nhóm** (kênh Telegram) → khối
+`🧵 Lọc theo Topic (nhóm bật Topics)` → **+ Thêm topic**.
+
+**Lấy Topic ID**: gõ `/id` **ngay trong topic đó** — bot trả về thêm dòng
+`🧵 Topic ID`. Topic "General" không có ID → tính như nhóm thường.
+Tên topic phải **gõ tay** (Bot API của Telegram không trả tên topic).
+
+Quy tắc từng tầng — mỗi tầng là **tập con** của tầng trên:
+
+| Tình huống | Quyền hiệu lực |
+|---|---|
+| Topic **chưa** thêm vào danh sách | Hưởng **full quyền của nhóm** |
+| Topic đã thêm | **giao(quyền nhóm, quyền topic)** — tích thứ nhóm không cho thì vô hiệu |
+| Topic **không có** user nào | **Ai nhắn cũng được**, hưởng full quyền topic |
+| Topic có user | **giao(nhóm, topic, user)** |
+| User đặt ở **cấp nhóm** | Áp cho **mọi topic** chưa có bản ghi riêng cho người đó |
+
+Mỗi topic còn có **riêng**: 🤖 Model AI · ⚡ Đường tắt điều khiển nhà ·
+🏷️ Bắt buộc tag bot mới trả lời · 🔗 Webhook chuyển tiếp. Nhờ vậy làm được
+**mỗi topic một loại log** (topic A đẩy webhook này, topic B webhook khác) và
+**mỗi topic một bộ chức năng** trong cùng một nhóm.
+
+Thứ tự tra cứu khi có tin đến (hẹp thắng rộng):
+`user trong topic → user cả nhóm → topic → cả nhóm`.
+
+Bot cũng **trả lời ngay trong topic** đã nhận tin (chữ, ảnh, video, âm thanh,
+tệp) — không còn dồn hết về topic General.
+
 ### 6.4. Giọng đọc · Tắt TTS · STT theo từng phạm vi
 
 Ngay dưới mỗi dòng thread (nhóm / cá nhân) và mỗi **User** có một khối cấu hình giọng
