@@ -3236,16 +3236,93 @@ def all_groups() -> list[str]:
     return sorted(set(_CAP_GROUP.values()) | _FLOW_GROUPS)
 
 
-def allowed_groups_for_bot(platform: str, bot_id: str, chat_id: str) -> set[str] | None:
-    """Lọc theo (bot, chat) khi chạy nhiều bot: thử khóa riêng bot
-    'plat:bot_id:chat' TRƯỚC; không có (None) thì fallback 'plat:chat' (áp cho
-    MỌI bot cùng nền tảng — tương thích ngược). Trả set|None như allowed_groups_for."""
+def topic_suffix(topic_id: str | int | None) -> str:
+    """'#<topic>' — hậu tố khóa lọc theo TOPIC (nhóm Telegram bật Topics); '' nếu
+    không có topic.
+
+    Telegram chỉ gửi ``message_thread_id`` cho topic thật (id > 0); topic
+    "General" không có field này → '' → mọi khóa quay về dạng 2 cấp cũ, tức
+    NHÓM KHÔNG CÓ TOPIC giữ nguyên hành vi (nhóm → user) như trước."""
+    t = str(topic_id or "").strip()
+    if not t or t == "0":
+        return ""
+    return f"#{t}"
+
+
+def _thread_keys(platform: str, bot_id: str | None, chat_id: str | int | None,
+                 topic_id: str | int | None = None) -> list[str]:
+    """Khóa CẤP THREAD theo thứ tự hẹp → rộng: topic trước, rồi cả nhóm.
+
+    [plat:bot:chat#topic, plat:chat#topic, plat:bot:chat, plat:chat]
+    Không có topic → chỉ 2 khóa cuối (y như trước)."""
+    plat = str(platform or "").strip()
+    cid = str(chat_id or "").strip()
+    if not plat or not cid:
+        return []
     bid = str(bot_id or "").strip()
+    keys: list[str] = []
+    suf = topic_suffix(topic_id)
+    if suf:
+        if bid:
+            keys.append(f"{plat}:{bid}:{cid}{suf}")
+        keys.append(f"{plat}:{cid}{suf}")
     if bid:
-        r = allowed_groups_for(f"{platform}:{bid}:{chat_id}")
+        keys.append(f"{plat}:{bid}:{cid}")
+    keys.append(f"{plat}:{cid}")
+    return keys
+
+
+def _user_keys(platform: str, bot_id: str | None, chat_id: str | int | None,
+               topic_id: str | int | None = None,
+               user_id: str | int | None = None) -> list[str]:
+    """Khóa CẤP USER = mỗi khóa thread + ':<user>' — user trong topic trước, rồi
+    user cấp nhóm (đặt ở nhóm thì áp cho mọi topic chưa có bản ghi riêng)."""
+    uid = str(user_id or "").strip()
+    if not uid:
+        return []
+    return [f"{k}:{uid}" for k in _thread_keys(platform, bot_id, chat_id, topic_id)]
+
+
+def thread_key_chain(platform: str, bot_id: str | None, chat_id: str | int | None,
+                     topic_id: str | int | None = None,
+                     user_id: str | int | None = None) -> list[str]:
+    """Toàn bộ khóa lọc cho (bot, chat, topic, user) — HẸP → RỘNG, bản ghi đầu
+    tiên khớp thì thắng. Dùng cho cấu hình "một giá trị" (model, HA fastpath,
+    yêu cầu tag, webhook chuyển tiếp): user riêng > topic > cả nhóm."""
+    return (_user_keys(platform, bot_id, chat_id, topic_id, user_id)
+            + _thread_keys(platform, bot_id, chat_id, topic_id))
+
+
+def _first_group_set(keys: list[str]) -> set[str] | None:
+    """Bản ghi thread_filters đầu tiên khớp trong `keys` (None = không khóa nào có)."""
+    for k in keys:
+        r = allowed_groups_for(k)
         if r is not None:
             return r
-    return allowed_groups_for(f"{platform}:{chat_id}")
+    return None
+
+
+def allowed_groups_for_bot(platform: str, bot_id: str, chat_id: str,
+                           topic_id: str | int | None = None) -> set[str] | None:
+    """Lọc theo (bot, chat[, topic]) khi chạy nhiều bot: thử khóa riêng bot
+    'plat:bot_id:chat' TRƯỚC; không có (None) thì fallback 'plat:chat' (áp cho
+    MỌI bot cùng nền tảng — tương thích ngược).
+
+    Có `topic_id` và topic đó ĐƯỢC cấu hình → giao(quyền nhóm, quyền topic): topic
+    là TẬP CON của nhóm — "topic tích gì thì chỉ dùng được trong phạm vi đó".
+    Topic chưa cấu hình → hưởng nguyên quyền nhóm (giữ hành vi 2 cấp cũ)."""
+    group_allow = _first_group_set(_thread_keys(platform, bot_id, chat_id))
+    if not topic_suffix(topic_id):
+        return group_allow
+    # Chỉ 2 khóa đầu của chuỗi có topic là khóa CỦA topic (bot-riêng, rồi chung bot)
+    topic_keys = [k for k in _thread_keys(platform, bot_id, chat_id, topic_id)
+                  if "#" in k]
+    topic_allow = _first_group_set(topic_keys)
+    if topic_allow is None:
+        return group_allow
+    if group_allow is None:
+        return topic_allow
+    return group_allow & topic_allow
 
 
 def allowed_groups_for(thread_key: str) -> set[str] | None:
@@ -3284,34 +3361,38 @@ def _user_filter_for(user_key: str) -> set[str] | None:
 
 
 def user_filter_for_bot(platform: str, bot_id: str, chat_id: str,
-                        user_id: str) -> set[str] | None:
-    """Lọc user trong nhóm: thử 'plat:bot:chat:user' rồi 'plat:chat:user'.
-    None = user chưa cấu hình (hưởng full quyền nhóm)."""
-    uid = str(user_id or "").strip()
-    if not uid:
-        return None
-    bid = str(bot_id or "").strip()
-    if bid:
-        r = _user_filter_for(f"{platform}:{bid}:{chat_id}:{uid}")
+                        user_id: str,
+                        topic_id: str | int | None = None) -> set[str] | None:
+    """Lọc user trong nhóm/topic — thứ tự khóa hẹp → rộng:
+    'plat:bot:chat#topic:user' → 'plat:chat#topic:user' → 'plat:bot:chat:user'
+    → 'plat:chat:user'. None = user chưa cấu hình ở BẤT KỲ cấp nào → hưởng full
+    quyền của topic/nhóm ("không có user thì trong topic ai nhắn cũng được")."""
+    for k in _user_keys(platform, bot_id, chat_id, topic_id, user_id):
+        r = _user_filter_for(k)
         if r is not None:
             return r
-    return _user_filter_for(f"{platform}:{chat_id}:{uid}")
+    return None
 
 
 def allowed_groups_for_member(platform: str, bot_id: str, chat_id: str,
-                              user_id: str | None) -> set[str] | None:
-    """Tập nhóm chức năng hiệu lực cho MỘT NGƯỜI trong MỘT thread — kết hợp 2 tầng:
-    1. Lọc nhóm (Chat ID)  : allowed_groups_for_bot → group_allow (None = full).
-    2. Lọc user trong nhóm : user_filter_for_bot     → user_allow  (None = chưa đặt).
+                              user_id: str | None,
+                              topic_id: str | int | None = None) -> set[str] | None:
+    """Tập nhóm chức năng hiệu lực cho MỘT NGƯỜI trong MỘT thread — kết hợp 3 tầng
+    (nhóm → topic → user), mỗi tầng là TẬP CON của tầng trên:
+    1. Nhóm (Chat ID)      : allowed_groups_for_bot → đã giao sẵn với quyền TOPIC
+                             khi có `topic_id` (None = full).
+    2. User trong topic/nhóm: user_filter_for_bot   → user_allow (None = chưa đặt).
 
-    Quy tắc (user_allow LUÔN là tập con của quyền nhóm — 'tick trong các mục nhóm
-    cho phép'):
-    - user chưa đặt (None)       → theo group_allow (full quyền nhóm).
+    Quy tắc:
+    - user chưa đặt (None)        → theo group_allow (full quyền topic/nhóm).
     - nhóm không lọc + user đặt   → user_allow (user bị giới hạn dù nhóm mở).
     - cả hai đặt                  → giao (group_allow ∩ user_allow).
-    Trả None nếu KHÔNG tầng nào lọc (cho phép tất cả)."""
-    group_allow = allowed_groups_for_bot(platform, bot_id, chat_id)
-    user_allow = user_filter_for_bot(platform, bot_id, chat_id, str(user_id or ""))
+    Trả None nếu KHÔNG tầng nào lọc (cho phép tất cả).
+
+    Nhóm KHÔNG có topic (topic_id=None) → đúng 2 cấp như trước."""
+    group_allow = allowed_groups_for_bot(platform, bot_id, chat_id, topic_id)
+    user_allow = user_filter_for_bot(platform, bot_id, chat_id,
+                                     str(user_id or ""), topic_id)
     if user_allow is None:
         return group_allow
     if group_allow is None:
@@ -3319,10 +3400,14 @@ def allowed_groups_for_member(platform: str, bot_id: str, chat_id: str,
     return group_allow & user_allow
 
 
-def mention_required_for(platform: str, bot_id: str, chat_id: str) -> tuple[bool, str]:
+def mention_required_for(platform: str, bot_id: str, chat_id: str,
+                         topic_id: str | int | None = None) -> tuple[bool, str]:
     """Thread có YÊU CẦU tag bot mới trả lời không? Đọc config `thread_mention_filters`
-    (dict khóa 'plat:bot:chat' hoặc 'plat:chat' → {required: bool, keyword: str}).
-    Trả (required, keyword). Không cấu hình → (False, '') = trả lời mọi tin."""
+    (dict khóa 'plat:bot:chat[#topic]' hoặc 'plat:chat[#topic]' → {required, keyword}).
+    Trả (required, keyword). Không cấu hình → (False, '') = trả lời mọi tin.
+
+    Có `topic_id`: bản ghi CỦA TOPIC thắng bản ghi cả nhóm → mỗi topic tự quyết
+    "phải tag bot mới nhận phản hồi" hay không."""
     def _lookup(key: str):
         try:
             from services.config import config
@@ -3336,13 +3421,11 @@ def mention_required_for(platform: str, bot_id: str, chat_id: str) -> tuple[bool
         except Exception:
             pass
         return None
-    bid = str(bot_id or "").strip()
-    if bid:
-        r = _lookup(f"{platform}:{bid}:{chat_id}")
+    for k in _thread_keys(platform, bot_id, chat_id, topic_id):
+        r = _lookup(k)
         if r is not None:
             return r
-    r = _lookup(f"{platform}:{chat_id}")
-    return r if r is not None else (False, "")
+    return (False, "")
 
 
 def tag_gate_allows(
@@ -3383,11 +3466,14 @@ def tag_gate_allows(
 
 
 def forward_rule_for(platform: str, bot_id: str, chat_id: str,
-                     user_id: str | None) -> tuple[str, bool]:
-    """(url, tag_mode) chuyển tiếp cho (thread, user) này — url '' = không chuyển.
+                     user_id: str | None,
+                     topic_id: str | int | None = None) -> tuple[str, bool]:
+    """(url, tag_mode) chuyển tiếp cho (thread[, topic], user) này — url '' = không
+    chuyển. Có topic: bản ghi của topic thắng bản ghi cả nhóm → MỖI TOPIC MỘT
+    WEBHOOK RIÊNG ("mỗi topic 1 loại log").
 
-    Config `thread_forward_filters` (dict khóa thread 'plat:bot:chat'|'plat:chat'
-    hoặc user '<thread>:<user>' → {enabled, url, tag_mode}):
+    Config `thread_forward_filters` (dict khóa thread 'plat:bot:chat[#topic]'|
+    'plat:chat[#topic]' hoặc user '<thread>:<user>' → {enabled, url, tag_mode}):
     - Thread bật + có url → mặc định chuyển MỌI người trong thread; bản ghi user
       enabled=False → loại riêng người đó (quyết định AI được quyền chuyển tiếp).
     - Thread không bật → user bật + có url riêng → chuyển tới url của user
@@ -3406,14 +3492,15 @@ def forward_rule_for(platform: str, bot_id: str, chat_id: str,
             pass
         return None
 
-    bid = str(bot_id or "").strip()
-    uid = str(user_id or "").strip()
-    thread = (_lookup(f"{platform}:{bid}:{chat_id}") if bid else None) \
-        or _lookup(f"{platform}:{chat_id}")
-    user = None
-    if uid:
-        user = (_lookup(f"{platform}:{bid}:{chat_id}:{uid}") if bid else None) \
-            or _lookup(f"{platform}:{chat_id}:{uid}")
+    def _first(keys: list[str]) -> dict | None:
+        for k in keys:
+            v = _lookup(k)
+            if v is not None:
+                return v
+        return None
+
+    thread = _first(_thread_keys(platform, bot_id, chat_id, topic_id))
+    user = _first(_user_keys(platform, bot_id, chat_id, topic_id, user_id))
     tag_mode = bool(user.get("tag_mode")) if user is not None \
         else bool((thread or {}).get("tag_mode"))
     if thread and thread.get("enabled") and str(thread.get("url") or "").strip():
@@ -3426,13 +3513,15 @@ def forward_rule_for(platform: str, bot_id: str, chat_id: str,
 
 
 def forward_webhook_for(platform: str, bot_id: str, chat_id: str,
-                        user_id: str | None) -> str:
+                        user_id: str | None,
+                        topic_id: str | int | None = None) -> str:
     """URL webhook chuyển tiếp ('' = không chuyển) — xem forward_rule_for."""
-    return forward_rule_for(platform, bot_id, chat_id, user_id)[0]
+    return forward_rule_for(platform, bot_id, chat_id, user_id, topic_id)[0]
 
 
 def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
-                  payload: dict, tagged: bool = False) -> bool:
+                  payload: dict, tagged: bool = False,
+                  topic_id: str | int | None = None) -> bool:
     """Chuyển tiếp 1 tin nhắn bot tới webhook cấu hình trong 'Lọc chức năng theo
     thread' (HA / n8n / URL bất kỳ) — fire-and-forget, không bao giờ raise.
 
@@ -3442,7 +3531,7 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
     phản hồi"). Ngoại lệ duy nhất: tag_mode + tin KHÔNG tag → không chuyển, trả
     False để ChatGPT trả lời như thường ("tag thì webhook, không tag thì AI")."""
     try:
-        url, tag_mode = forward_rule_for(platform, bot_id, chat_id, user_id)
+        url, tag_mode = forward_rule_for(platform, bot_id, chat_id, user_id, topic_id)
         if not url:
             return False
         if tag_mode and not tagged:

@@ -626,6 +626,16 @@ export function TelegramCloudflareCard() {
     id: number; userId: string; name?: string; groups: string[];
     forward: boolean; forwardUrl: string; forwardTagOnly: boolean;
   };
+  // TOPIC (nhóm Telegram bật Topics) = CẤP GIỮA giữa nhóm và user: tick chức năng
+  // như một thread con (tập con của nhóm), bên trong lại có lớp user riêng.
+  // Khóa config: '<botKey>:<chatId>#<topicId>' và '…#<topicId>:<userId>'.
+  // Nhóm KHÔNG có topic → không thêm topic nào → vẫn đúng 2 cấp như trước.
+  type TopicRow = {
+    id: number; topicId: string; name?: string; groups: string[];
+    users: UserRow[]; requireMention: boolean; mentionKeyword: string;
+    forward: boolean; forwardUrl: string;
+    aiModel: string; haFastpath: string;
+  };
   // kind: thread là "group" (nhóm) hay "user" (cá nhân) — cá nhân thì KHÔNG cần
   // tầng lọc user + bộ lọc tag (ẩn đi). Lưu ở config thread_filter_meta.
   type FilterRow = {
@@ -637,14 +647,17 @@ export function TelegramCloudflareCard() {
     aiModel: string;
     /** Đường tắt điều khiển nhà: "" = theo mặc định, "on" = bật, "off" = tắt */
     haFastpath: string;
+    /** Topic trong nhóm (chỉ Telegram forum) — rỗng = nhóm thường, 2 cấp */
+    topics: TopicRow[];
   };
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
   const filterInited = useRef(false);
   const rowSeq = useRef(1);
   // Nhận diện thread/user trong tab Lọc (zalop: resolve-thread)
   const [filterResolving, setFilterResolving] = useState<string>("");
-  // Collapse nhiều cấp Lọc thread: thread (key row.id) → user (key user.id).
+  // Collapse nhiều cấp Lọc thread: thread (row.id) → topic (topic.id) → user (user.id).
   const [openFilter, setOpenFilter] = useState<Record<number, boolean>>({});
+  const [openFilterTopic, setOpenFilterTopic] = useState<Record<number, boolean>>({});
   const [openFilterUser, setOpenFilterUser] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
@@ -672,16 +685,26 @@ export function TelegramCloudflareCard() {
     const nameOf = (key: string) => String(tfMeta?.[key]?.name || "").trim();
     const modelOf = (key: string) => String(tm?.[key] || "").trim();
     const fpOf = (key: string) => (tfp && key in tfp ? (tfp[key] ? "on" : "off") : "");
-    const rows: FilterRow[] = Object.entries(tf || {}).map(([key, groups]) => {
-      const { botKey, chatId } = splitParent(key);
-      return {
-        id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
-        groups: Array.isArray(groups) ? groups : [], users: [],
-        requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
-        aiModel: modelOf(key),
-        haFastpath: fpOf(key),
-      };
-    });
+    // Khóa TOPIC chứa '#': 'tg:<bot>:<chat>#<topic>' (± ':<user>'). Tách ra để
+    // dựng đúng 3 cấp — khóa không có '#' vẫn nạp y như trước.
+    const splitTopic = (key: string): { base: string; topicId: string } => {
+      const i = key.indexOf("#");
+      if (i < 0) return { base: key, topicId: "" };
+      return { base: key.slice(0, i), topicId: key.slice(i + 1) };
+    };
+    const rows: FilterRow[] = Object.entries(tf || {})
+      .filter(([key]) => !key.includes("#"))
+      .map(([key, groups]) => {
+        const { botKey, chatId } = splitParent(key);
+        return {
+          id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
+          groups: Array.isArray(groups) ? groups : [], users: [],
+          requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+          aiModel: modelOf(key),
+          haFastpath: fpOf(key),
+          topics: [],
+        };
+      });
     const findRow = (botKey: string, chatId: string) => rows.find((r) => r.botKey === botKey && r.chatId === chatId);
     const ensureRow = (botKey: string, chatId: string) => {
       let r = findRow(botKey, chatId);
@@ -693,23 +716,53 @@ export function TelegramCloudflareCard() {
           requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
           aiModel: modelOf(k),
           haFastpath: fpOf(k),
+          topics: [],
         };
         rows.push(r);
       }
       return r;
     };
-
-    // 2. Mention filters → gắn vào parent (tạo nếu chưa có, mặc định mở full nhóm)
-    for (const [key, v] of Object.entries(tmf || {})) {
-      const { botKey, chatId } = splitParent(key);
+    /** Topic của một khóa '…#<topicId>' — tạo cả nhóm cha nếu chưa có. */
+    const ensureTopic = (key: string) => {
+      const { base, topicId } = splitTopic(key);
+      if (!topicId) return null;
+      const { botKey, chatId } = splitParent(base);
       const r = ensureRow(botKey, chatId);
-      r.requireMention = !!v?.required;
-      r.mentionKeyword = String(v?.keyword || "");
+      let t = r.topics.find((x) => x.topicId === topicId);
+      if (!t) {
+        const tk = `${base}#${topicId}`;
+        t = {
+          id: rowSeq.current++, topicId, name: nameOf(tk),
+          groups: Array.isArray(tf?.[tk]) ? (tf as Record<string, string[]>)[tk] : [...r.groups],
+          users: [], requireMention: false, mentionKeyword: "",
+          forward: false, forwardUrl: "",
+          aiModel: modelOf(tk), haFastpath: fpOf(tk),
+        };
+        r.topics.push(t);
+      }
+      return { row: r, topic: t };
+    };
+    // 1b. Topic rows từ thread_filters (khóa có '#', KHÔNG phải khóa user)
+    for (const key of Object.keys(tf || {})) {
+      if (!key.includes("#")) continue;
+      ensureTopic(key);
     }
 
-    // 3. User filters: khóa = '<parentKey>:<userId>'. Ghép vào parent bằng cách
-    //    khớp prefix parent dài nhất; không khớp → suy ra parent = bỏ segment cuối.
-    for (const [key, groups] of Object.entries(tuf || {})) {
+    /** Phân giải MỌI khóa config → (nhóm, topic|null, userId). Khóa không có '#'
+     *  đi đúng nhánh cũ (khớp prefix parent dài nhất) nên nạp y như trước. */
+    const resolveKey = (key: string):
+      { row: FilterRow; topic: TopicRow | null; userId: string } | null => {
+      const hash = key.indexOf("#");
+      if (hash >= 0) {
+        const rest = key.slice(hash + 1);
+        const c = rest.indexOf(":");
+        const topicId = c < 0 ? rest : rest.slice(0, c);
+        const userId = c < 0 ? "" : rest.slice(c + 1);
+        const got = ensureTopic(`${key.slice(0, hash)}#${topicId}`);
+        return got ? { row: got.row, topic: got.topic, userId } : null;
+      }
+      const direct = rows.find((r) => `${r.botKey}:${r.chatId}` === key);
+      if (direct) return { row: direct, topic: null, userId: "" };
       let matched: FilterRow | null = null;
       let userId = "";
       for (const r of rows) {
@@ -721,59 +774,64 @@ export function TelegramCloudflareCard() {
       }
       if (!matched) {
         const idx = key.lastIndexOf(":");
-        if (idx <= 0) continue;
+        if (idx <= 0) return null;
         const { botKey, chatId } = splitParent(key.slice(0, idx));
         userId = key.slice(idx + 1);
         matched = ensureRow(botKey, chatId);
       }
-      matched.users.push({
-        id: rowSeq.current++, userId,
+      return { row: matched, topic: null, userId };
+    };
+
+    // 2. Mention filters → gắn vào nhóm HOẶC topic (tạo nếu chưa có)
+    for (const [key, v] of Object.entries(tmf || {})) {
+      const got = resolveKey(key);
+      if (!got) continue;
+      const target = got.topic ?? got.row;
+      target.requireMention = !!v?.required;
+      target.mentionKeyword = String(v?.keyword || "");
+    }
+
+    // 3. User filters: khóa '<parent>:<user>' (user cấp nhóm) hoặc
+    //    '<parent>#<topic>:<user>' (user TRONG topic).
+    for (const [key, groups] of Object.entries(tuf || {})) {
+      const got = resolveKey(key);
+      if (!got || !got.userId) continue;
+      (got.topic ?? got.row).users.push({
+        id: rowSeq.current++, userId: got.userId,
         name: nameOf(key),
         groups: Array.isArray(groups) ? groups : [],
         forward: false, forwardUrl: "", forwardTagOnly: false,
       });
     }
 
-    // 4. Forward filters: khóa parent (khớp đúng 1 row đã có — commit luôn ghi
-    //    tf cho mọi row) hoặc khóa user '<parentKey>:<userId>' như tuf.
+    // 4. Forward filters: khóa nhóm / topic / user (cấp nhóm hoặc trong topic).
     const explicitFwd = new Set<number>();
     for (const [key, v] of Object.entries(tff || {})) {
-      const parentRow = rows.find((r) => `${r.botKey}:${r.chatId}` === key);
-      if (parentRow) {
-        parentRow.forward = !!v?.enabled;
-        parentRow.forwardUrl = String(v?.url || "");
+      const got = resolveKey(key);
+      if (!got) continue;
+      const holder = got.topic ?? got.row;
+      if (!got.userId) {
+        holder.forward = !!v?.enabled;
+        holder.forwardUrl = String(v?.url || "");
         continue;
       }
-      let matched: FilterRow | null = null;
-      let userId = "";
-      for (const r of rows) {
-        const prefix = `${r.botKey}:${r.chatId}:`;
-        if (key.startsWith(prefix) && key.length > prefix.length) {
-          const rest = key.slice(prefix.length);
-          if (!rest.includes(":") || !matched) { matched = r; userId = rest; }
-        }
-      }
-      if (!matched) {
-        const idx = key.lastIndexOf(":");
-        if (idx <= 0) continue;
-        const { botKey, chatId } = splitParent(key.slice(0, idx));
-        userId = key.slice(idx + 1);
-        matched = ensureRow(botKey, chatId);
-      }
-      let u = matched.users.find((x) => x.userId === userId);
+      let u = holder.users.find((x) => x.userId === got.userId);
       if (!u) {
-        u = { id: rowSeq.current++, userId, groups: [...matched.groups], forward: false, forwardUrl: "", forwardTagOnly: false };
-        matched.users.push(u);
+        u = { id: rowSeq.current++, userId: got.userId, groups: [...holder.groups], forward: false, forwardUrl: "", forwardTagOnly: false };
+        holder.users.push(u);
       }
       u.forward = !!v?.enabled;
       u.forwardUrl = String(v?.url || "");
       u.forwardTagOnly = !!v?.tag_mode;
       explicitFwd.add(u.id);
     }
-    // Thread bật chuyển tiếp → user KHÔNG có bản ghi mặc định BẬT (thừa hưởng URL thread).
+    // Thread/topic bật chuyển tiếp → user KHÔNG có bản ghi mặc định BẬT
+    // (thừa hưởng URL của thread/topic).
     for (const r of rows) {
-      if (!r.forward) continue;
-      for (const u of r.users) if (!explicitFwd.has(u.id)) u.forward = true;
+      for (const holder of [r, ...r.topics]) {
+        if (!holder.forward) continue;
+        for (const u of holder.users) if (!explicitFwd.has(u.id)) u.forward = true;
+      }
     }
 
     setFilterRows(rows);
@@ -846,23 +904,50 @@ export function TelegramCloudflareCard() {
       if (r.kind !== "user") {
         if (r.requireMention || r.mentionKeyword.trim())
           tmf[parent] = { required: r.requireMention, keyword: r.mentionKeyword.trim() };
-        for (const u of r.users) {
-          const uid = u.userId.trim();
-          if (!uid) continue;
-          const ukey = `${parent}:${uid}`;
-          tuf[ukey] = u.groups;
-          const uName = String(u.name || "").trim();
-          if (uName) tfMeta[ukey] = { kind: "user", name: uName };
-          const uUrl = u.forwardUrl.trim();
-          // Thread BẬT chuyển tiếp → mọi tin đã đi webhook (ChatGPT im lặng),
-          // không cần bản ghi webhook riêng cho user (UI cũng ẩn). CHỈ khi thread
-          // KHÔNG chuyển tiếp: user tự bật webhook riêng (URL riêng). tag-mode chỉ
-          // áp khi thread KHÔNG bắt buộc tag (thread bắt tag = mọi tin tới bot đã
-          // là tag → "chỉ chuyển khi tag" vô nghĩa).
-          if (!r.forward && (u.forward || uUrl)) {
-            const uTag = u.forwardTagOnly && !r.requireMention;
-            tff[ukey] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: uTag };
+        // Lớp user CẤP NHÓM (áp cho mọi topic chưa có bản ghi riêng cho user đó)
+        // và lớp user TRONG TỪNG TOPIC — cùng một hàm ghi, chỉ khác tiền tố khóa.
+        const writeUsers = (
+          prefix: string, users: UserRow[],
+          holderForward: boolean, holderMention: boolean,
+        ) => {
+          for (const u of users) {
+            const uid = u.userId.trim();
+            if (!uid) continue;
+            const ukey = `${prefix}:${uid}`;
+            tuf[ukey] = u.groups;
+            const uName = String(u.name || "").trim();
+            if (uName) tfMeta[ukey] = { kind: "user", name: uName };
+            const uUrl = u.forwardUrl.trim();
+            // Thread/topic BẬT chuyển tiếp → mọi tin đã đi webhook (ChatGPT im
+            // lặng), không cần bản ghi riêng cho user (UI cũng ẩn). CHỈ khi
+            // thread/topic KHÔNG chuyển tiếp: user tự bật webhook riêng. tag-mode
+            // chỉ áp khi thread/topic KHÔNG bắt buộc tag (bắt tag = mọi tin tới
+            // bot đã là tag → "chỉ chuyển khi tag" vô nghĩa).
+            if (!holderForward && (u.forward || uUrl)) {
+              const uTag = u.forwardTagOnly && !holderMention;
+              tff[ukey] = { enabled: u.forward && !!uUrl, url: uUrl, tag_mode: uTag };
+            }
           }
+        };
+        writeUsers(parent, r.users, r.forward, r.requireMention);
+        // TOPIC = cấp giữa: khóa '<parent>#<topicId>' (backend giao với quyền nhóm)
+        for (const t of r.topics) {
+          const tid = t.topicId.trim();
+          if (!tid) continue;
+          const tkey = `${parent}#${tid}`;
+          tf[tkey] = t.groups;
+          const tModel = String(t.aiModel || "").trim();
+          if (tModel) tmodels[tkey] = tModel;
+          if (t.haFastpath === "on") tfastpath[tkey] = true;
+          else if (t.haFastpath === "off") tfastpath[tkey] = false;
+          const tpName = String(t.name || "").trim();
+          tfMeta[tkey] = { kind: "topic", ...(tpName ? { name: tpName } : {}) };
+          if (t.requireMention || t.mentionKeyword.trim())
+            tmf[tkey] = { required: t.requireMention, keyword: t.mentionKeyword.trim() };
+          const tUrl = t.forwardUrl.trim();
+          if (t.forward || tUrl)
+            tff[tkey] = { enabled: t.forward && !!tUrl, url: tUrl, tag_mode: false };
+          writeUsers(tkey, t.users, t.forward, t.requireMention);
         }
       }
     }
@@ -881,6 +966,7 @@ export function TelegramCloudflareCard() {
       requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
       aiModel: "",
       haFastpath: "",
+      topics: [],
     }]);
   const removeFilterRow = (id: number) =>
     commitFilters(filterRows.filter((r) => r.id !== id));
@@ -894,24 +980,76 @@ export function TelegramCloudflareCard() {
           : r,
       ),
     );
-  // ── Thao tác USER trong 1 thread nhóm ──
-  const addUserRow = (rowId: number) =>
+  // ── Thao tác TOPIC trong 1 thread nhóm (cấp giữa: nhóm → TOPIC → user) ──
+  /** Áp `fn` lên topic (topicId) của row rồi ghi config. */
+  const mapTopic = (rowId: number, topicId: number, fn: (t: TopicRow) => TopicRow) =>
+    commitFilters(filterRows.map((r) =>
+      r.id === rowId
+        ? { ...r, topics: r.topics.map((t) => (t.id === topicId ? fn(t) : t)) }
+        : r));
+  const addTopicRow = (rowId: number) =>
     commitFilters(filterRows.map((r) =>
       r.id === rowId
         ? {
           ...r,
-          users: [...r.users, {
-            id: rowSeq.current++, userId: "", name: "", groups: [...r.groups],
-            forward: r.forward, forwardUrl: "", forwardTagOnly: false,
+          topics: [...r.topics, {
+            // Mặc định thừa hưởng ĐÚNG quyền của nhóm → thêm topic không tự
+            // nhiên cắt mất chức năng nào; user tự bỏ tick những gì không muốn.
+            id: rowSeq.current++, topicId: "", name: "", groups: [...r.groups],
+            users: [], requireMention: r.requireMention,
+            mentionKeyword: r.mentionKeyword,
+            forward: false, forwardUrl: "", aiModel: "", haFastpath: "",
           }],
         }
         : r));
-  const removeUserRow = (rowId: number, userId: number) =>
+  const removeTopicRow = (rowId: number, topicId: number) =>
     commitFilters(filterRows.map((r) =>
-      r.id === rowId ? { ...r, users: r.users.filter((u) => u.id !== userId) } : r));
-  const setUserField = (rowId: number, userId: number, patch: Partial<UserRow>) =>
-    commitFilters(filterRows.map((r) =>
-      r.id === rowId ? { ...r, users: r.users.map((u) => (u.id === userId ? { ...u, ...patch } : u)) } : r));
+      r.id === rowId ? { ...r, topics: r.topics.filter((t) => t.id !== topicId) } : r));
+  const setTopicField = (rowId: number, topicId: number, patch: Partial<TopicRow>) =>
+    mapTopic(rowId, topicId, (t) => ({ ...t, ...patch }));
+  const toggleTopicGroup = (rowId: number, topicId: number, g: string, parentGroups: string[]) =>
+    mapTopic(rowId, topicId, (t) => {
+      const next = t.groups.includes(g)
+        ? t.groups.filter((x) => x !== g)
+        : [...t.groups, g];
+      // Topic là TẬP CON của nhóm → bỏ mọi mục nhóm không cho phép.
+      const kept = next.filter((x) => parentGroups.includes(x));
+      return {
+        ...t, groups: kept,
+        // User trong topic là tập con của topic → siết theo.
+        users: t.users.map((u) => ({ ...u, groups: u.groups.filter((x) => kept.includes(x)) })),
+      };
+    });
+  // ── Thao tác USER — trong 1 thread nhóm (topicId = null) hoặc trong 1 TOPIC ──
+  /** Sửa danh sách user của nhóm (topicId=null) hoặc của topic, rồi ghi config. */
+  const mapUsers = (rowId: number, topicId: number | null,
+                    fn: (users: UserRow[]) => UserRow[]) =>
+    commitFilters(filterRows.map((r) => {
+      if (r.id !== rowId) return r;
+      if (topicId == null) return { ...r, users: fn(r.users) };
+      return {
+        ...r,
+        topics: r.topics.map((t) => (t.id === topicId ? { ...t, users: fn(t.users) } : t)),
+      };
+    }));
+  /** Nơi chứa user: chính nhóm, hoặc topic — để lấy quyền/forward thừa hưởng. */
+  const holderOf = (rowId: number, topicId: number | null) => {
+    const r = filterRows.find((x) => x.id === rowId);
+    if (!r) return null;
+    return topicId == null ? r : (r.topics.find((t) => t.id === topicId) ?? null);
+  };
+  const addUserRow = (rowId: number, topicId: number | null = null) => {
+    const h = holderOf(rowId, topicId);
+    mapUsers(rowId, topicId, (us) => [...us, {
+      id: rowSeq.current++, userId: "", name: "", groups: [...(h?.groups || [])],
+      forward: !!h?.forward, forwardUrl: "", forwardTagOnly: false,
+    }]);
+  };
+  const removeUserRow = (rowId: number, userId: number, topicId: number | null = null) =>
+    mapUsers(rowId, topicId, (us) => us.filter((u) => u.id !== userId));
+  const setUserField = (rowId: number, userId: number, patch: Partial<UserRow>,
+                        topicId: number | null = null) =>
+    mapUsers(rowId, topicId, (us) => us.map((u) => (u.id === userId ? { ...u, ...patch } : u)));
 
   /** ownId từ botKey `zalop` / `zalop:<ownId>` (trống = acc đầu). */
   const zalopAccFromBotKey = (botKey: string) => {
@@ -938,13 +1076,19 @@ export function TelegramCloudflareCard() {
       return next;
     });
   };
-  const patchFilterUserLive = (rowId: number, userId: number, patch: Partial<UserRow>) => {
+  const patchFilterUserLive = (rowId: number, userId: number, patch: Partial<UserRow>,
+                               topicId: number | null = null) => {
+    const patchList = (us: UserRow[]) =>
+      us.map((u) => (u.id === userId ? { ...u, ...patch } : u));
     setFilterRows((prev) => {
-      const next = prev.map((r) =>
-        r.id === rowId
-          ? { ...r, users: r.users.map((u) => (u.id === userId ? { ...u, ...patch } : u)) }
-          : r,
-      );
+      const next = prev.map((r) => {
+        if (r.id !== rowId) return r;
+        if (topicId == null) return { ...r, users: patchList(r.users) };
+        return {
+          ...r,
+          topics: r.topics.map((t) => (t.id === topicId ? { ...t, users: patchList(t.users) } : t)),
+        };
+      });
       queueMicrotask(() => commitFilters(next));
       return next;
     });
@@ -1010,7 +1154,10 @@ export function TelegramCloudflareCard() {
     }
   };
 
-  const resolveFilterUser = async (row: FilterRow, u: UserRow) => {
+  /** Nhận diện tên user — dùng chung cho user cấp nhóm và user TRONG topic
+   *  (`topicId` chỉ để ghi patch về đúng nơi; API resolve vẫn theo chat/bot). */
+  const resolveFilterUser = async (row: FilterRow, u: UserRow,
+                                   topicId: number | null = null) => {
     const uid = u.userId.trim();
     if (!uid) { toast.error("Cần User ID"); return; }
     const key = `tfu-${row.id}-${u.id}`;
@@ -1050,7 +1197,7 @@ export function TelegramCloudflareCard() {
         toast.message("Chọn bot cụ thể rồi thử Nhận diện, hoặc gõ tên tay");
         return;
       }
-      if (name) patchFilterUserLive(row.id, u.id, { name });
+      if (name) patchFilterUserLive(row.id, u.id, { name }, topicId);
       if (ok) toast.success(name ? `Nhận diện user: ${name}` : "Đã nhận diện — có thể gõ tên tay");
     } catch {
       toast.error("Không resolve được user — gõ tên tay nếu cần");
@@ -1058,17 +1205,168 @@ export function TelegramCloudflareCard() {
       setFilterResolving("");
     }
   };
-  const toggleUserGroup = (rowId: number, userId: number, g: string, parentGroups: string[]) =>
-    commitFilters(filterRows.map((r) => {
-      if (r.id !== rowId) return r;
-      return { ...r, users: r.users.map((u) => {
-        if (u.id !== userId) return u;
-        // Chỉ cho tick nhóm mà THREAD cho phép (tập con) — nhóm ngoài bị bỏ qua.
-        if (u.groups.includes(g)) return { ...u, groups: u.groups.filter((x) => x !== g) };
-        if (!parentGroups.includes(g)) return u;
-        return { ...u, groups: [...u.groups, g] };
-      }) };
+  const toggleUserGroup = (rowId: number, userId: number, g: string,
+                           parentGroups: string[], topicId: number | null = null) =>
+    mapUsers(rowId, topicId, (us) => us.map((u) => {
+      if (u.id !== userId) return u;
+      // Chỉ cho tick nhóm mà THREAD (hoặc TOPIC) cho phép — tập con; ngoài thì bỏ qua.
+      if (u.groups.includes(g)) return { ...u, groups: u.groups.filter((x) => x !== g) };
+      if (!parentGroups.includes(g)) return u;
+      return { ...u, groups: [...u.groups, g] };
     }));
+
+  /** Khối «Lọc theo User ID» — dùng CHUNG cho user cấp NHÓM (topic=null) và user
+   *  TRONG TOPIC. Là hàm trả JSX (không phải component) nên React không remount
+   *  → đang gõ trong Input không bị mất con trỏ sau mỗi lần ghi config.
+   *  Persona/giọng nói dùng khóa cấp nhóm (backend chỉ đọc khóa đó, không có
+   *  khóa theo topic) — không hứa điều backend chưa làm. */
+  const renderUserList = (row: FilterRow, topic: TopicRow | null) => {
+    const holder: FilterRow | TopicRow = topic ?? row;
+    const tid = topic ? topic.id : null;
+    const scope = topic ? "topic" : "nhóm";
+    return (
+      <div className="rounded border border-dashed border-border/70 p-2 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium">👥 Lọc theo User ID trong {scope}</span>
+          <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
+            onClick={() => addUserRow(row.id, tid)}>
+            + Thêm user
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          User KHÔNG có trong danh sách = <b>ai nhắn cũng được</b>, hưởng full quyền của
+          {scope === "topic" ? " topic" : " nhóm"} ở trên. Thêm user để giới hạn riêng —
+          chỉ tick được trong các mục {scope} đã cho phép.
+          {!topic && row.topics.length > 0
+            ? " Đặt ở đây thì áp cho MỌI topic chưa có bản ghi riêng cho user đó."
+            : ""}
+        </p>
+        {holder.users.map((u) => {
+          const uOpen = openFilterUser[u.id] ?? !u.userId.trim();
+          const uTitle = u.name?.trim() || (u.userId.trim() ? "(chưa đặt tên)" : "User mới");
+          return (
+            <div key={u.id} className="rounded bg-muted/40 p-1.5 space-y-1">
+              <div className="flex items-center gap-2 cursor-pointer select-none"
+                onClick={() => setOpenFilterUser((s) => ({ ...s, [u.id]: !uOpen }))}>
+                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{uOpen ? "▾" : "▸"}</span>
+                <span className="text-[11px] truncate flex-1">
+                  {uTitle}
+                  {u.userId.trim() ? <> · <span className="font-mono">{u.userId.trim()}</span></> : null}
+                </span>
+                <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[10px]"
+                  onClick={(e) => { e.stopPropagation(); removeUserRow(row.id, u.id, tid); }}>Xóa</Button>
+              </div>
+              {uOpen ? (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Input
+                      value={u.userId}
+                      onChange={(e) => setUserField(row.id, u.id, {
+                        userId: e.target.value,
+                        name: e.target.value.trim() === u.userId.trim() ? u.name : "",
+                      }, tid)}
+                      placeholder="User ID (gõ /id trong nhóm để lấy)"
+                      className="h-7 text-xs font-mono flex-1 min-w-[8rem]"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[11px] shrink-0"
+                      disabled={filterResolving === `tfu-${row.id}-${u.id}` || !u.userId.trim()}
+                      onClick={() => void resolveFilterUser(row, u, tid)}
+                      title="Nhận diện tên user. Fail → gõ tên tay"
+                    >
+                      {filterResolving === `tfu-${row.id}-${u.id}` ? "…" : "Nhận diện"}
+                    </Button>
+                  </div>
+                  <Input
+                    value={u.name || ""}
+                    onChange={(e) => setUserField(row.id, u.id, { name: e.target.value }, tid)}
+                    placeholder="Tên user (tự điền / gõ tay)"
+                    className="h-7 text-xs"
+                  />
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {FUNCTION_GROUPS.filter(([key]) => holder.groups.includes(key)).map(([key, label]) => (
+                      <label key={key}
+                        className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="size-3.5"
+                          checked={u.groups.includes(key)}
+                          onChange={() => toggleUserGroup(row.id, u.id, key, holder.groups, tid)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                    {holder.groups.length === 0 && (
+                      <span className="text-[10px] text-amber-600">
+                        {scope === "topic" ? "Topic" : "Thread"} chưa cho phép nhóm nào → user không có gì để tick.
+                      </span>
+                    )}
+                  </div>
+                  {/* Chuyển tiếp webhook cấp USER — CHỈ hiện khi thread/topic KHÔNG
+                      bật chuyển tiếp (bật = mọi tin đã đi webhook, ChatGPT im lặng
+                      → user không có gì để chỉnh). "Chỉ chuyển khi TAG" chỉ hiện
+                      khi thread/topic KHÔNG bắt buộc tag. */}
+                  {!holder.forward && (
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="size-3.5"
+                          checked={u.forward}
+                          onChange={() => setUserField(row.id, u.id, { forward: !u.forward }, tid)}
+                        />
+                        🔗 Chuyển tiếp webhook (URL riêng của user)
+                      </label>
+                      {u.forward && (
+                        <Input
+                          value={u.forwardUrl}
+                          onChange={(e) => setUserField(row.id, u.id, { forwardUrl: e.target.value }, tid)}
+                          placeholder="URL webhook riêng cho user này (HA / n8n / URL bất kỳ)"
+                          className="h-7 text-xs"
+                        />
+                      )}
+                      {u.forward && !holder.requireMention && (
+                        <>
+                          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="size-3.5"
+                              checked={u.forwardTagOnly}
+                              onChange={() => setUserField(row.id, u.id, { forwardTagOnly: !u.forwardTagOnly }, tid)}
+                            />
+                            🏷️ Chỉ chuyển webhook khi TAG bot — không tag thì ChatGPT trả lời
+                          </label>
+                          {u.forwardTagOnly && (
+                            <p className="text-[10px] text-muted-foreground">
+                              Tin có tag → CHỈ đi webhook (AI im lặng); tin thường → AI trả lời,
+                              không chuyển. Nhận diện tag: Telegram = @mention bot hoặc từ khóa
+                              tag của thread; Zalo Bot = từ khóa tag (không đặt → mọi tin nhóm
+                              đều là tag vì nền tảng bắt buộc @tag); Zalo Cá Nhân = cần đặt từ
+                              khóa tag ở bộ lọc tag của thread.
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {/* Persona RIÊNG user này trong thread — độc lập như webhook */}
+                  <PersonaInline platform={row.botKey} groupId={row.chatId}
+                    userId={u.userId} />
+                  {/* Giọng nói RIÊNG user (picker hiện khi user bật tts_reply) */}
+                  <VoiceScopeInline
+                    sessionKey={u.userId.trim() ? `${row.botKey}:${row.chatId}:${u.userId.trim()}` : ""}
+                    showVoicePicker={u.groups.includes("tts_reply")} />
+                </>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   // Hiển thị list (chat_ids / ha_threads) dạng text mỗi dòng 1 phần tử cho textarea.
   const asText = (v: unknown) => (Array.isArray(v) ? v.join("\n") : String(v ?? ""));
@@ -1508,65 +1806,94 @@ export function TelegramCloudflareCard() {
                 )}
               </div>
 
-              {/* Tầng lọc USER trong nhóm — chỉ hiện với thread NHÓM (cá nhân không cần) */}
-              {row.kind !== "user" && (
-              <div className="rounded border border-dashed border-border/70 p-2 space-y-2">
+              {/* ── TẦNG TOPIC (nhóm Telegram bật Topics) — cấp GIỮA nhóm và user ──
+                  Nhóm không có topic thì đừng thêm gì ở đây → vẫn đúng 2 cấp. */}
+              {row.kind !== "user" && (row.botKey === "tg" || row.botKey.startsWith("tg:")) && (
+              <div className="rounded border border-dashed border-sky-500/50 p-2 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium">👥 Lọc theo User ID trong nhóm</span>
+                  <span className="text-xs font-medium">🧵 Lọc theo Topic (nhóm bật Topics)</span>
                   <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
-                    onClick={() => addUserRow(row.id)}>
-                    + Thêm user
+                    onClick={() => addTopicRow(row.id)}>
+                    + Thêm topic
                   </Button>
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  User KHÔNG có trong danh sách = hưởng full quyền của nhóm ở trên. Thêm user
-                  để giới hạn riêng — chỉ tick được trong các mục nhóm đã cho phép.
+                  Topic KHÔNG có trong danh sách = hưởng full quyền của nhóm (nhóm thường
+                  không bật Topics thì bỏ trống mục này). Mỗi topic tick <b>tập con</b> quyền
+                  của nhóm, có model / đường tắt nhà / bắt tag / webhook riêng
+                  (mỗi topic một loại log), và bên trong lại có <b>lớp user riêng</b>.
+                  Lấy Topic ID: gõ <span className="font-mono">/id</span> ngay trong topic đó.
                 </p>
-                {row.users.map((u) => {
-                  const uOpen = openFilterUser[u.id] ?? !u.userId.trim();
-                  const uTitle = u.name?.trim() || (u.userId.trim() ? "(chưa đặt tên)" : "User mới");
+                {row.topics.map((t) => {
+                  const tOpen = openFilterTopic[t.id] ?? !t.topicId.trim();
+                  const tTitle = t.name?.trim() || (t.topicId.trim() ? "(chưa đặt tên)" : "Topic mới");
+                  const tuCount = t.users.filter((u) => u.userId.trim()).length;
                   return (
-                  <div key={u.id} className="rounded bg-muted/40 p-1.5 space-y-1">
+                  <div key={t.id} className="rounded bg-muted/30 p-1.5 space-y-1.5">
                     <div className="flex items-center gap-2 cursor-pointer select-none"
-                      onClick={() => setOpenFilterUser((s) => ({ ...s, [u.id]: !uOpen }))}>
-                      <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{uOpen ? "▾" : "▸"}</span>
+                      onClick={() => setOpenFilterTopic((s) => ({ ...s, [t.id]: !tOpen }))}>
+                      <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{tOpen ? "▾" : "▸"}</span>
                       <span className="text-[11px] truncate flex-1">
-                        {uTitle}
-                        {u.userId.trim() ? <> · <span className="font-mono">{u.userId.trim()}</span></> : null}
+                        {tTitle}
+                        {t.topicId.trim() ? <> · <span className="font-mono">#{t.topicId.trim()}</span></> : null}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {tuCount ? `${tuCount} user` : "mọi user"}
                       </span>
                       <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-[10px]"
-                        onClick={(e) => { e.stopPropagation(); removeUserRow(row.id, u.id); }}>Xóa</Button>
+                        onClick={(e) => { e.stopPropagation(); removeTopicRow(row.id, t.id); }}>Xóa</Button>
                     </div>
-                    {uOpen ? (
+                    {tOpen ? (
                     <>
                     <div className="flex items-center gap-2 flex-wrap">
                       <Input
-                        value={u.userId}
-                        onChange={(e) => setUserField(row.id, u.id, {
-                          userId: e.target.value,
-                          name: e.target.value.trim() === u.userId.trim() ? u.name : "",
+                        value={t.topicId}
+                        onChange={(e) => setTopicField(row.id, t.id, {
+                          topicId: e.target.value.replace(/[^0-9]/g, ""),
                         })}
-                        placeholder="User ID (gõ /id trong nhóm để lấy)"
+                        placeholder="Topic ID (số — gõ /id trong topic để lấy)"
                         className="h-7 text-xs font-mono flex-1 min-w-[8rem]"
                       />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] shrink-0"
-                        disabled={filterResolving === `tfu-${row.id}-${u.id}` || !u.userId.trim()}
-                        onClick={() => void resolveFilterUser(row, u)}
-                        title="Nhận diện tên user. Fail → gõ tên tay"
-                      >
-                        {filterResolving === `tfu-${row.id}-${u.id}` ? "…" : "Nhận diện"}
-                      </Button>
+                      <Input
+                        value={t.name || ""}
+                        onChange={(e) => setTopicField(row.id, t.id, { name: e.target.value })}
+                        placeholder="Tên topic (gõ tay — Bot API không trả tên topic)"
+                        className="h-7 text-xs flex-1 min-w-[8rem]"
+                      />
                     </div>
-                    <Input
-                      value={u.name || ""}
-                      onChange={(e) => setUserField(row.id, u.id, { name: e.target.value })}
-                      placeholder="Tên user (tự điền / gõ tay)"
-                      className="h-7 text-xs"
-                    />
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">
+                        🤖 Model AI riêng cho topic này (trống = theo nhóm)
+                      </label>
+                      <Select
+                        value={t.aiModel || " "}
+                        onValueChange={(v) => setTopicField(row.id, t.id, { aiModel: v.trim() })}
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue placeholder="-- Theo model của nhóm --" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value=" ">-- Theo model của nhóm --</SelectItem>
+                          {Array.from(new Set([...models, ...(t.aiModel ? [t.aiModel] : [])])).map((m) => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">
+                        ⚡ Đường tắt điều khiển nhà cho topic này
+                      </label>
+                      <select
+                        className="w-full h-7 rounded-md border border-border bg-background px-2 text-[11px]"
+                        value={t.haFastpath || ""}
+                        onChange={(e) => setTopicField(row.id, t.id, { haFastpath: e.target.value })}
+                      >
+                        <option value="">-- Theo nhóm / mặc định --</option>
+                        <option value="on">Bật đường tắt (nhanh)</option>
+                        <option value="off">Tắt — đi qua AI</option>
+                      </select>
+                    </div>
                     <div className="flex flex-wrap gap-x-3 gap-y-1">
                       {FUNCTION_GROUPS.filter(([key]) => row.groups.includes(key)).map(([key, label]) => (
                         <label key={key}
@@ -1574,71 +1901,69 @@ export function TelegramCloudflareCard() {
                           <input
                             type="checkbox"
                             className="size-3.5"
-                            checked={u.groups.includes(key)}
-                            onChange={() => toggleUserGroup(row.id, u.id, key, row.groups)}
+                            checked={t.groups.includes(key)}
+                            onChange={() => toggleTopicGroup(row.id, t.id, key, row.groups)}
                           />
                           {label}
                         </label>
                       ))}
                       {row.groups.length === 0 && (
-                        <span className="text-[10px] text-amber-600">Thread chưa cho phép nhóm nào → user không có gì để tick.</span>
+                        <span className="text-[10px] text-amber-600">Nhóm chưa cho phép mục nào → topic không có gì để tick.</span>
                       )}
                     </div>
-                    {/* Chuyển tiếp webhook cấp USER — CHỈ hiện khi thread KHÔNG bật
-                        chuyển tiếp (thread bật = mọi tin đã đi webhook, ChatGPT im
-                        lặng → user không có gì để chỉnh). "Chỉ chuyển khi TAG" chỉ
-                        hiện khi thread KHÔNG bắt buộc tag (thread bắt tag = mọi tin
-                        tới bot đã là tag). */}
-                    {!row.forward && (
+                    {t.groups.length === 0 && row.groups.length > 0 && (
+                      <p className="text-[10px] text-amber-600">
+                        ⚠️ Chưa tích mục nào → topic này chỉ chat, chặn mọi chức năng.
+                      </p>
+                    )}
+                    {/* Bắt tag bot RIÊNG topic — "khi tag mới nhận phản hồi" */}
                     <div className="space-y-1">
-                      <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
                         <input
                           type="checkbox"
                           className="size-3.5"
-                          checked={u.forward}
-                          onChange={() => setUserField(row.id, u.id, { forward: !u.forward })}
+                          checked={t.requireMention}
+                          onChange={() => setTopicField(row.id, t.id, { requireMention: !t.requireMention })}
                         />
-                        🔗 Chuyển tiếp webhook (URL riêng của user)
+                        🏷️ Trong topic này: bắt buộc tag bot mới trả lời
                       </label>
-                      {u.forward && (
+                      {t.requireMention && (
                         <Input
-                          value={u.forwardUrl}
-                          onChange={(e) => setUserField(row.id, u.id, { forwardUrl: e.target.value })}
-                          placeholder="URL webhook riêng cho user này (HA / n8n / URL bất kỳ)"
+                          value={t.mentionKeyword}
+                          onChange={(e) => setTopicField(row.id, t.id, { mentionKeyword: e.target.value })}
+                          placeholder="Từ khóa tag (Telegram tự nhận @username — để trống vẫn được)"
                           className="h-7 text-xs"
                         />
                       )}
-                      {u.forward && !row.requireMention && (
+                    </div>
+                    {/* Webhook RIÊNG topic — mỗi topic một loại log */}
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="size-3.5"
+                          checked={t.forward}
+                          onChange={() => setTopicField(row.id, t.id, { forward: !t.forward })}
+                        />
+                        🔗 Chuyển tiếp webhook riêng cho topic này
+                      </label>
+                      {t.forward && (
                         <>
-                          <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              className="size-3.5"
-                              checked={u.forwardTagOnly}
-                              onChange={() => setUserField(row.id, u.id, { forwardTagOnly: !u.forwardTagOnly })}
-                            />
-                            🏷️ Chỉ chuyển webhook khi TAG bot — không tag thì ChatGPT trả lời
-                          </label>
-                          {u.forwardTagOnly && (
-                            <p className="text-[10px] text-muted-foreground">
-                              Tin có tag → CHỈ đi webhook (AI im lặng); tin thường → AI trả lời,
-                              không chuyển. Nhận diện tag: Telegram = @mention bot hoặc từ khóa
-                              tag của thread; Zalo Bot = từ khóa tag (không đặt → mọi tin nhóm
-                              đều là tag vì nền tảng bắt buộc @tag); Zalo Cá Nhân = cần đặt từ
-                              khóa tag ở bộ lọc tag của thread.
-                            </p>
-                          )}
+                          <Input
+                            value={t.forwardUrl}
+                            onChange={(e) => setTopicField(row.id, t.id, { forwardUrl: e.target.value })}
+                            placeholder="https://ha.local/api/webhook/xxx — POST JSON có cả topic_id"
+                            className="h-7 text-xs"
+                          />
+                          <p className="text-[10px] text-muted-foreground">
+                            Mọi tin trong topic này đi tới URL trên và <b>ChatGPT KHÔNG trả lời</b>
+                            — dùng để mỗi topic ghi một loại log riêng.
+                          </p>
                         </>
                       )}
                     </div>
-                    )}
-                    {/* Persona RIÊNG user này trong thread — độc lập như webhook */}
-                    <PersonaInline platform={row.botKey} groupId={row.chatId}
-                      userId={u.userId} />
-                    {/* Giọng nói RIÊNG user (picker hiện khi user bật tts_reply) */}
-                    <VoiceScopeInline
-                      sessionKey={u.userId.trim() ? `${row.botKey}:${row.chatId}:${u.userId.trim()}` : ""}
-                      showVoicePicker={u.groups.includes("tts_reply")} />
+                    {/* Lớp USER trong topic (cấp 3) */}
+                    {renderUserList(row, t)}
                     </>
                     ) : null}
                   </div>
@@ -1646,6 +1971,11 @@ export function TelegramCloudflareCard() {
                 })}
               </div>
               )}
+
+              {/* Tầng lọc USER cấp NHÓM — chỉ hiện với thread NHÓM (cá nhân không
+                  cần). Đặt ở đây thì áp cho MỌI topic chưa có bản ghi riêng cho
+                  user đó (markup dùng chung với lớp user trong topic). */}
+              {row.kind !== "user" && renderUserList(row, null)}
               {/* Persona cấp THREAD (nhóm = fallback cho user chưa cài riêng;
                   thread cá nhân/admin = persona của chính chat 1-1 đó) */}
               <PersonaInline platform={row.botKey}

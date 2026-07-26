@@ -157,7 +157,7 @@ def _tg_model(chat_id: str | None = None, user_id: str | None = None) -> str:
         try:
             from services.admin_workspace import thread_model_for
             bid = str((bot or {}).get("token") or "").split(":")[0].strip()
-            m = thread_model_for("tg", bid, chat_id, user_id)
+            m = thread_model_for("tg", bid, chat_id, user_id, _cur_topic())
         except Exception:
             m = ""
     if not m and chat_id:
@@ -548,24 +548,28 @@ def _send_agent_reply(chat_id: str, out: dict) -> None:
     send_message(chat_id, reply, reply_markup=markup)
 
 def send_photo(chat_id: int | str, photo_bytes: bytes, caption: str = "") -> dict:
-    """Gửi ảnh qua Telegram."""
-    return _cli().send_photo(chat_id, photo_bytes, caption=caption or "")
+    """Gửi ảnh qua Telegram (đúng topic đã nhận — xem send_message)."""
+    return _cli().send_photo(chat_id, photo_bytes, caption=caption or "",
+                             message_thread_id=_cur_topic())
 
 
 def send_video(chat_id: int | str, video_bytes: bytes, caption: str = "") -> dict:
-    """Gửi video qua Telegram."""
-    return _cli().send_video(chat_id, video_bytes, caption=caption or "")
+    """Gửi video qua Telegram (đúng topic đã nhận)."""
+    return _cli().send_video(chat_id, video_bytes, caption=caption or "",
+                             message_thread_id=_cur_topic())
 
 
 def send_audio(chat_id: int | str, audio_bytes: bytes, caption: str = "") -> dict:
-    """Gửi file nhạc/audio qua Telegram (hiện player bấm nghe)."""
-    return _cli().send_audio(chat_id, audio_bytes, caption=caption or "")
+    """Gửi file nhạc/audio qua Telegram (hiện player bấm nghe) — đúng topic."""
+    return _cli().send_audio(chat_id, audio_bytes, caption=caption or "",
+                             message_thread_id=_cur_topic())
 
 
 def send_document(chat_id: int | str, doc_bytes: bytes, filename: str, caption: str = "") -> dict:
-    """Gửi file/document qua Telegram."""
+    """Gửi file/document qua Telegram (đúng topic đã nhận)."""
     return _cli().send_document(
         chat_id, doc_bytes, filename=filename or "file.bin", caption=caption or "",
+        message_thread_id=_cur_topic(),
     )
 
 
@@ -613,7 +617,10 @@ async def handle_webhook(request) -> dict:
     # Nhóm bật Topics (forum): mỗi tin thuộc 1 topic. Giữ lại để (a) trả lời đúng
     # topic, (b) lọc chức năng theo topic. Topic General không có id → "".
     topic_id = str(msg.get("message_thread_id") or "").strip()
-    _current.topic = topic_id
+    # KHÔNG gán _current.topic ở đây: luồng xử lý là thread khác (thread-local
+    # không nhìn thấy) nên topic được TRUYỀN qua args của _process_message. Gán ở
+    # luồng event-loop chỉ để lại giá trị cũ, dễ khiến lần gửi sau (API khác,
+    # chat khác) dính topic lạ → Telegram trả "message thread not found".
     text = (msg.get("text") or "").strip()
     photo = msg.get("photo")
     document = msg.get("document")
@@ -642,7 +649,7 @@ async def handle_webhook(request) -> dict:
     t = threading.Thread(target=_process_message,
                          args=(text, chat_id, photo, document, bot, sender,
                                user_id, is_group, native_mention, chat_name,
-                               voice_file_id),
+                               voice_file_id, topic_id),
                          daemon=True)
     t.start()
     return {"ok": True}
@@ -678,7 +685,8 @@ def _handle_callback_query(cq: dict, bot: dict) -> None:
         if not chosen:
             return
         _process_message(chosen, chat_id, None, None, bot, sender,
-                         user_id, is_group, native_mention=True)
+                         user_id, is_group, native_mention=True,
+                         topic_id=str(msg.get("message_thread_id") or "").strip())
     except Exception as exc:
         logger.warning("Telegram callback_query failed: %s", exc)
     finally:
@@ -979,10 +987,14 @@ def _do_photo_request(
             pass
 
 
-def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "") -> None:
+def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "") -> None:
     """Process a Telegram message in background thread."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
+    # `_current` là thread-local: topic gán ở handle_webhook KHÔNG nhìn thấy được
+    # trong luồng này → phải gắn lại, y như _current.bot ở trên. Thiếu dòng này
+    # thì mọi câu trả lời rơi về topic General dù đã đọc đúng message_thread_id.
+    _current.topic = str(topic_id or "")
 
     # Voice note → STT → coi như tin nhắn CHỮ: đường đi chỉ thêm bước chuyển
     # đổi, phần sau (lọc quyền, agent, trả lời) giữ nguyên như chat thường.
@@ -1021,7 +1033,10 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     # - người lạ → báo admin + chặn (trừ lệnh /id để họ lấy ID gửi admin).
     # - trong NHÓM: quyền = giao(nhóm, user) — tầng lọc User ID theo từng nhóm.
     from services.agent import capabilities as _caps
-    _allow = _caps.allowed_groups_for_member("tg", _bot_id(), chat_id, user_id) if chat_id else None
+    # 3 cấp trong nhóm: Nhóm → Topic → User (topic ⊆ nhóm, user ⊆ topic).
+    # Nhóm KHÔNG bật Topics → _cur_topic() = None → đúng 2 cấp như trước.
+    _allow = _caps.allowed_groups_for_member(
+        "tg", _bot_id(), chat_id, user_id, _cur_topic()) if chat_id else None
     # chat_ids đã bỏ trên UI — AI thường qua bộ lọc thread; admin luôn được phép
     allowed = [str(c) for c in _chat_ids()]
     _is_admin = bool(chat_id and _is_admin_chat(chat_id))
@@ -1051,7 +1066,8 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
 
     # Tag / @mention sớm (cần cho alert nhóm multi-bot + filter phản hồi)
     _req_early, _kw_early = (
-        _caps.mention_required_for("tg", _bot_id(), chat_id) if chat_id else (False, "")
+        _caps.mention_required_for("tg", _bot_id(), chat_id, _cur_topic())
+        if chat_id else (False, "")
     )
     _tagged_early = bool(native_mention) or (
         bool(_kw_early) and str(_kw_early).lower() in (text or "").lower()
@@ -1080,6 +1096,9 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     if _is_id and chat_id:
         _id_info = (f"🆔 Chat ID: {chat_id} ({'nhóm' if is_group else 'cá nhân'})\n"
                     + (f"📛 Tên nhóm: {chat_name}\n" if is_group and chat_name else "")
+                    # Topic ID — cần để cài «Lọc theo Topic» ở Lọc thread. Chỉ có
+                    # khi gõ /id NGAY TRONG topic (topic General không có id).
+                    + (f"🧵 Topic ID: {_cur_topic()}\n" if _cur_topic() else "")
                     + f"👤 User ID người gửi: {user_id or '(không rõ)'}\n"
                     + (f"👤 Tên người: {sender}\n" if sender else "")
                     + f"Bot: Telegram {_bot_id()}")
@@ -1094,23 +1113,26 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     # Thread bật → mọi user (trừ user tắt riêng); thread không bật → user nào
     # bật + có URL riêng thì chuyển tới đó. User bật tag_mode: tin TAG bot →
     # CHỈ chuyển webhook (AI im lặng); không tag → ChatGPT trả lời như thường.
-    _req_fw, _kw_fw = _caps.mention_required_for("tg", _bot_id(), chat_id)
+    _req_fw, _kw_fw = _caps.mention_required_for(
+        "tg", _bot_id(), chat_id, _cur_topic())
     _tagged = bool(native_mention) or (
         bool(_kw_fw) and _kw_fw.lower() in (text or "").lower()
     )
     if _caps.forward_event("tg", _bot_id(), chat_id, user_id, {
         "platform": "telegram", "bot": _bot_id(), "chat_id": chat_id,
-        "user_id": user_id, "sender": sender, "is_group": is_group,
+        "topic_id": _cur_topic(), "user_id": user_id, "sender": sender,
+        "is_group": is_group,
         "text": text or "", "tagged": _tagged,
         "has_photo": bool(photo),
         "document": str((document or {}).get("file_name") or ""),
-    }, tagged=_tagged):
+    }, tagged=_tagged, topic_id=_cur_topic()):
         return
 
     # Bộ lọc TAG: required → native @mention HOẶC keyword (keyword rỗng không
     # chặn native — tag_gate_allows). /id đã return ở trên.
     if is_group and chat_id:
-        _req, _kw = _caps.mention_required_for("tg", _bot_id(), chat_id)
+        _req, _kw = _caps.mention_required_for(
+            "tg", _bot_id(), chat_id, _cur_topic())
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
@@ -1274,7 +1296,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             _b = _active_bot()
             _bid = str((_b or {}).get("token") or "").split(":")[0].strip()
             # «Lọc thread» cài riêng cho thread này thì THẮNG; không cài → chuỗi cũ.
-            _t = _tfp("tg", _bid, chat_id)
+            _t = _tfp("tg", _bid, chat_id, user_id, _cur_topic())
             _fp = _t if _t is not None else _ha_fp(_b, chat_id)
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))

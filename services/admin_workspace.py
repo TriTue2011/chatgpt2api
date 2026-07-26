@@ -339,34 +339,38 @@ def ai_model_for_chat(bot: dict | None, chat_id: str | int | None = None) -> str
     return ""
 
 
-def thread_model_for(platform: str, bot_id: str | None, chat_id: str | int | None,
-                     user_id: str | int | None = None) -> str:
-    """Model riêng cài ở tab «Lọc thread» cho thread/user này ('' nếu không cài).
+def _thread_keys(platform: str, bot_id: str | None, chat_id: str | int | None,
+                 user_id: str | int | None = None,
+                 topic_id: str | int | None = None) -> list[str]:
+    """Chuỗi khóa lọc thread HẸP → RỘNG — dùng CHUNG một nguồn với thread_filters
+    (capabilities.thread_key_chain) để model/HA không bao giờ lệch khóa với quyền:
+        user trong topic → user cả nhóm → topic → cả nhóm
+    Import cục bộ để tránh vòng import lúc khởi động."""
+    try:
+        from services.agent.capabilities import thread_key_chain
+        return thread_key_chain(platform, bot_id, chat_id, topic_id, user_id)
+    except Exception:
+        return []
 
-    Khóa giống hệt thread_filters (xem capabilities.allowed_groups_for_bot), ưu
-    tiên từ hẹp tới rộng:
-        plat:bot:chat:user → plat:chat:user → plat:bot:chat → plat:chat
+
+def thread_model_for(platform: str, bot_id: str | None, chat_id: str | int | None,
+                     user_id: str | int | None = None,
+                     topic_id: str | int | None = None) -> str:
+    """Model riêng cài ở tab «Lọc thread» cho thread/topic/user này ('' nếu không cài).
+
+    Khóa giống hệt thread_filters (xem capabilities.thread_key_chain), ưu tiên từ
+    hẹp tới rộng:
+        plat:bot:chat#topic:user → plat:chat#topic:user → plat:bot:chat:user
+        → plat:chat:user → plat:bot:chat#topic → plat:chat#topic
+        → plat:bot:chat → plat:chat
     Nhờ vậy admin chỉ là MỘT thread bình thường: thêm nó vào Lọc thread rồi cài
-    model là xong, không cần ô model riêng cho admin."""
+    model là xong, không cần ô model riêng cho admin. Không có topic → đúng chuỗi
+    4 khóa cũ."""
     try:
         models = config.get().get("thread_models") or {}
         if not isinstance(models, dict) or not models:
             return ""
-        plat = str(platform or "").strip()
-        cid = str(chat_id or "").strip()
-        if not plat or not cid:
-            return ""
-        bid = str(bot_id or "").strip()
-        uid = str(user_id or "").strip()
-        keys: list[str] = []
-        if uid:
-            if bid:
-                keys.append(f"{plat}:{bid}:{cid}:{uid}")
-            keys.append(f"{plat}:{cid}:{uid}")
-        if bid:
-            keys.append(f"{plat}:{bid}:{cid}")
-        keys.append(f"{plat}:{cid}")
-        for k in keys:
+        for k in _thread_keys(platform, bot_id, chat_id, user_id, topic_id):
             m = str(models.get(k) or "").strip()
             if m:
                 return m
@@ -376,7 +380,8 @@ def thread_model_for(platform: str, bot_id: str | None, chat_id: str | int | Non
 
 
 def thread_fastpath_for(platform: str, bot_id: str | None, chat_id: str | int | None,
-                        user_id: str | int | None = None) -> bool | None:
+                        user_id: str | int | None = None,
+                        topic_id: str | int | None = None) -> bool | None:
     """Đường tắt điều khiển nhà (HA fastpath) cài riêng cho thread ở «Lọc thread».
 
     Trả True/False nếu thread có cài; None = KHÔNG cài → gọi tiếp chuỗi cũ
@@ -385,21 +390,7 @@ def thread_fastpath_for(platform: str, bot_id: str | None, chat_id: str | int | 
         table = config.get().get("thread_fastpath") or {}
         if not isinstance(table, dict) or not table:
             return None
-        plat = str(platform or "").strip()
-        cid = str(chat_id or "").strip()
-        if not plat or not cid:
-            return None
-        bid = str(bot_id or "").strip()
-        uid = str(user_id or "").strip()
-        keys: list[str] = []
-        if uid:
-            if bid:
-                keys.append(f"{plat}:{bid}:{cid}:{uid}")
-            keys.append(f"{plat}:{cid}:{uid}")
-        if bid:
-            keys.append(f"{plat}:{bid}:{cid}")
-        keys.append(f"{plat}:{cid}")
-        for k in keys:
+        for k in _thread_keys(platform, bot_id, chat_id, user_id, topic_id):
             if k in table:
                 v = table.get(k)
                 if isinstance(v, bool):
