@@ -2348,6 +2348,14 @@ def _apply_branch_routing(body: dict[str, Any]) -> dict[str, Any] | Iterator[dic
     branch = _detect_branch(folded, _last_user_has_images(messages))
     if not branch:
         return None
+    # Bộ lọc chức năng (x_allowed_groups — thread bot HOẶC ha_allowed_groups
+    # cho request từ HA): nhánh thuộc nhóm KHÔNG được tick → bỏ định tuyến,
+    # trả lời như chat thường (không tự vẽ/tạo video/nhạc/code hộ).
+    _branch_group = {"image_gen": "image", "vision": "image",
+                     "video_gen": "video", "music_gen": "music",
+                     "code": "code"}.get(branch)
+    if _branch_group and _thread_denies(body, _branch_group):
+        return None
     # Client đã chủ động xin ảnh (model ảnh / modalities image) → giữ nguyên.
     if branch in ("image_gen", "vision") and is_image_chat_request(body):
         return None

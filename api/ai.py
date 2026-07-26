@@ -202,6 +202,19 @@ def create_router() -> APIRouter:
         )
         if is_ha:
             payload["_is_ha_request"] = True
+            # Lọc chức năng cho YÊU CẦU TỪ HA (Settings → Home Assistant):
+            # ha_allowed_groups = list nhóm được tick (homeassistant/image/…) →
+            # pipeline tự tắt tích hợp ngoài danh sách + nhánh ảnh/video/nhạc/
+            # code chỉ chạy khi nhóm được tick. Không cấu hình = như cũ (mở hết).
+            # Không đè khi client đã tự gửi x_allowed_groups.
+            if not isinstance(payload.get("x_allowed_groups"), list):
+                try:
+                    from services.config import config as _cfg
+                    _hag = _cfg.get().get("ha_allowed_groups")
+                    if isinstance(_hag, list):
+                        payload["x_allowed_groups"] = [str(g) for g in _hag]
+                except Exception:
+                    pass
         # Inject base_url so gma provider can build persistent local media URLs
         payload["base_url"] = resolve_image_base_url(request)
         client_host = _client_host(request)

@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useSettingsStore } from "../store";
 import { request } from "@/lib/request";
 
@@ -53,6 +56,8 @@ export function EmailCalendarCard() {
   const [burst, setBurst] = useState("");
   const [reason, setReason] = useState("");
   const [chat, setChat] = useState("");
+  // Model ĐÃ BẬT trong Quản lý model — dropdown thay vì gõ tay.
+  const [models, setModels] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<Record<string, string>>({});
@@ -122,6 +127,15 @@ export function EmailCalendarCard() {
     setChat(String(hints.chat || ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
+
+  useEffect(() => {
+    request.get("/v1/models")
+      .then((res: unknown) => {
+        const d = (res as { data?: { data?: { id?: string }[] } }).data;
+        if (Array.isArray(d?.data)) setModels(d.data.map((m) => String(m.id || "")));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -524,18 +538,30 @@ export function EmailCalendarCard() {
 
         <p className="text-sm font-medium">Model hints (để trống = dùng telegram_ai_model / branch)</p>
         <div className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <label className="text-sm">chat</label>
-            <Input value={chat} onChange={(e) => setChat(e.target.value)} placeholder="cx/auto" />
-          </div>
-          <div>
-            <label className="text-sm">burst (rẻ/nhanh — dùng tóm tắt email/lịch)</label>
-            <Input value={burst} onChange={(e) => setBurst(e.target.value)} placeholder="gma/flash" />
-          </div>
-          <div>
-            <label className="text-sm">reason (agent)</label>
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="claude/sonnet" />
-          </div>
+          {([
+            ["chat", chat, setChat],
+            ["burst (rẻ/nhanh — dùng tóm tắt email/lịch)", burst, setBurst],
+            ["reason (agent)", reason, setReason],
+          ] as [string, string, (v: string) => void][]).map(([label, value, set]) => (
+            <div key={label}>
+              <label className="text-sm">{label}</label>
+              {/* Dropdown model ĐÃ BẬT (Quản lý model) — giá trị cũ không còn
+                  trong danh sách vẫn giữ để không mất cấu hình. */}
+              <Select value={value || " "}
+                onValueChange={(v) => set(v.trim())}>
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue placeholder="-- Mặc định --" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value=" ">-- Mặc định --</SelectItem>
+                  {Array.from(new Set([...models, ...(value ? [value] : [])]))
+                    .filter(Boolean).map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
         </div>
 
         <div className="flex flex-wrap gap-2">

@@ -694,7 +694,7 @@ def _h_search_history(args: dict, ctx: dict) -> dict:
 
 
 def _h_search_sgk(args: dict, ctx: dict) -> dict:
-    """Tìm trong KB SGK tiểu học (lớp–môn Toán/Văn/Anh)."""
+    """Tìm trong KB SGK mọi cấp — lớp 1–12 (lớp–môn Toán/Văn/Anh)."""
     from services.agent import teacher as teach
     from services.agent import teacher_workspace as tw
 
@@ -791,22 +791,42 @@ def _h_teacher_memory(args: dict, ctx: dict) -> dict:
     return {"text": "op=get|add. add cần note và/hoặc weak_topic|strong_topic."}
 
 
+def _ws_grade_subject(ws: str) -> tuple[int | None, str]:
+    """'lop8-toan' → (8, 'toan') — suy LỚP + MÔN từ id workspace.
+
+    Model hay đưa workspace mà quên grade → mọi handler từng rơi về lớp 5
+    (sư phạm tiểu học + band CEFR sai cho HS THCS/THPT). Suy từ workspace
+    trước khi dùng mặc định."""
+    m = re.match(r"lop(\d{1,2})-(toan|van|anh)$", str(ws or "").strip().lower())
+    if not m:
+        return (None, "")
+    g = int(m.group(1))
+    return (g if 1 <= g <= 12 else None, m.group(2))
+
+
+def _teacher_grade_subject(args: dict, ws: str = "") -> tuple[int, str]:
+    """(grade, subject) cho tool giáo viên: args → workspace → mặc định 5/toan."""
+    ws_g, ws_sub = _ws_grade_subject(ws or str(args.get("workspace") or ""))
+    grade = args.get("grade")
+    try:
+        grade = int(grade) if grade not in (None, "") else None
+    except (TypeError, ValueError):
+        grade = None
+    subject = str(args.get("subject") or args.get("mon") or "").strip().lower()
+    return (grade or ws_g or 5, subject or ws_sub or "toan")
+
+
 def _h_teacher_quiz(args: dict, ctx: dict) -> dict:
-    """Sinh đề kiểm tra ngắn từ KB SGK."""
+    """Sinh đề kiểm tra ngắn từ KB SGK (mọi cấp 1–12)."""
     from services.agent import teacher as teach
     from services.agent import teacher_assess as ta
 
     if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
         return {"text": "Cần quyền Giáo viên (Settings → Lọc thread)."}
-    grade = args.get("grade") or 5
-    try:
-        grade = int(grade)
-    except (TypeError, ValueError):
-        grade = 5
-    subject = str(args.get("subject") or "toan").strip()
+    ws = str(args.get("workspace") or "").strip()
+    grade, subject = _teacher_grade_subject(args, ws)
     topic = str(args.get("topic") or args.get("query") or "").strip()
     n = args.get("n") or args.get("count") or 5
-    ws = str(args.get("workspace") or "").strip()
     quiz = ta.make_quiz(
         grade=grade, subject=subject, topic=topic, n=int(n) if n else 5,
         workspace_id=ws,
@@ -869,12 +889,7 @@ def _h_teacher_grade(args: dict, ctx: dict) -> dict:
     ans = str(args.get("answer") or args.get("student_answer") or args.get("text") or "").strip()
     if not q or not ans:
         return {"text": "Cần question + answer (hoặc quiz_id + answers)."}
-    grade = args.get("grade") or 5
-    try:
-        grade = int(grade)
-    except (TypeError, ValueError):
-        grade = 5
-    subject = str(args.get("subject") or "toan").strip()
+    grade, subject = _teacher_grade_subject(args)
     hint = str(args.get("answer_hint") or args.get("hint") or "").strip()
     r = ta.grade_answer(
         question=q, student_answer=ans, answer_hint=hint,
@@ -908,17 +923,13 @@ def _h_teacher_hint(args: dict, ctx: dict) -> dict:
         level = int(level)
     except (TypeError, ValueError):
         level = 1
-    grade = args.get("grade") or 5
-    try:
-        grade = int(grade)
-    except (TypeError, ValueError):
-        grade = 5
+    grade, subject = _teacher_grade_subject(args)
     r = ta.progressive_hints(
         question=q,
         student_attempt=str(args.get("attempt") or args.get("answer") or ""),
         answer_hint=str(args.get("answer_hint") or args.get("hint") or ""),
         level=level,
-        subject=str(args.get("subject") or "toan"),
+        subject=subject,
         grade=grade,
     )
     return {"text": r.get("text") or "Không tạo được gợi ý."}
@@ -931,16 +942,13 @@ def _h_teacher_check(args: dict, ctx: dict) -> dict:
 
     if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
         return {"text": "Cần quyền Giáo viên."}
-    grade = args.get("grade") or 5
-    try:
-        grade = int(grade)
-    except (TypeError, ValueError):
-        grade = 5
+    ws = str(args.get("workspace") or "").strip()
+    grade, subject = _teacher_grade_subject(args, ws)
     r = ta.make_check(
         grade=grade,
-        subject=str(args.get("subject") or "toan"),
+        subject=subject,
         topic=str(args.get("topic") or args.get("query") or ""),
-        workspace_id=str(args.get("workspace") or ""),
+        workspace_id=ws,
     )
     return {"text": r.get("text") or "Không tạo được câu kiểm tra."}
 
@@ -952,12 +960,7 @@ def _h_teacher_lesson(args: dict, ctx: dict) -> dict:
 
     if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
         return {"text": "Cần quyền Giáo viên."}
-    grade = args.get("grade") or 5
-    try:
-        grade = int(grade)
-    except (TypeError, ValueError):
-        grade = 5
-    subject = str(args.get("subject") or "toan")
+    grade, subject = _teacher_grade_subject(args)
     topic = str(args.get("topic") or args.get("query") or "ôn tập")
     objective = str(args.get("objective") or args.get("muc_tieu") or "")
     ws = str(args.get("workspace") or "").strip()

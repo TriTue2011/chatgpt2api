@@ -436,7 +436,7 @@ def ai_draft_lesson(
                 from services.agent import teacher as teach_mod
                 from services.agent import teacher_english as te
                 en_focus = te.detect_focus(topic, g, 0)
-                llm = teach_mod.model_for_english_topic(topic, en_focus)
+                llm = teach_mod.model_for_english_topic(topic, en_focus, g)
             except Exception:
                 llm = _teacher_model("speak")
         resp = call_model(
@@ -592,7 +592,7 @@ def ai_draft_assignment(
                     from services.agent import teacher as teach
                     from services.agent import teacher_english as te
                     focus = te.detect_focus(topic, g, 0)
-                    llm = teach.model_for_english_topic(topic, focus)
+                    llm = teach.model_for_english_topic(topic, focus, g)
                 except Exception:
                     llm = _teacher_model("write")
             resp = call_model(

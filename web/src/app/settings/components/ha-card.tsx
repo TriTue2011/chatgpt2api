@@ -15,14 +15,35 @@ export function HACard() {
   const [token, setToken] = useState("");
   const [refreshInterval, setRefreshInterval] = useState("3600");
   const [refreshTimes, setRefreshTimes] = useState("");
+  // Lọc chức năng cho YÊU CẦU TỪ HA: null = không lọc (mở hết);
+  // list = chỉ các nhóm được tick (như Lọc thread của kênh chat).
+  const [limitOn, setLimitOn] = useState(false);
+  const [haGroups, setHaGroups] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+
+  // Nhóm mà pipeline chat/HA thực sự tôn trọng (nhánh ảnh/video/nhạc/code +
+  // tích hợp HA/server/web tự động).
+  const HA_GROUPS: [string, string][] = [
+    ["homeassistant", "🏠 Nhà (HA)"],
+    ["server", "🖥️ Server"],
+    ["image", "🎨 Ảnh"],
+    ["video", "🎬 Video"],
+    ["music", "🎵 Nhạc"],
+    ["code", "💻 Code"],
+    ["web", "🌐 Web search"],
+  ];
 
   useEffect(() => {
     setUrl(ha.url || "");
     setToken(ha.token || "");
     setRefreshInterval(String(ha.refresh_interval ?? 3600));
     setRefreshTimes(Array.isArray(ha.refresh_times) ? ha.refresh_times.join(", ") : "");
-  }, [ha.url, ha.token, ha.refresh_interval, ha.refresh_times]);
+    const hag = (config as any)?.ha_allowed_groups;
+    setLimitOn(Array.isArray(hag));
+    setHaGroups(Array.isArray(hag) ? hag.map((g: unknown) => String(g)) : []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ha.url, ha.token, ha.refresh_interval, ha.refresh_times,
+      (config as any)?.ha_allowed_groups]);
 
   const save = async () => {
     const intervalNum = Math.max(60, parseInt(refreshInterval) || 3600);
@@ -38,7 +59,9 @@ export function HACard() {
         refresh_interval: intervalNum,
         refresh_times: times,
       },
-    });
+      // null = không lọc (backend chỉ áp khi là list)
+      ha_allowed_groups: limitOn ? haGroups : null,
+    } as any);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -67,6 +90,40 @@ export function HACard() {
           <label className="text-sm">Giờ làm mới cố định (HH:MM, ngăn cách bằng dấu phẩy)</label>
           <Input value={refreshTimes} onChange={e => setRefreshTimes(e.target.value)} placeholder="00:30, 06:00, 18:00" />
           <p className="text-xs text-muted-foreground mt-1">Tùy chọn. Ngoài chu kỳ ở trên, fetch thêm vào các giờ cố định trong ngày. Để trống nếu không cần.</p>
+        </div>
+        <div className="rounded border border-dashed border-border/70 p-2 space-y-1.5">
+          <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
+            <input type="checkbox" className="size-3.5" checked={limitOn}
+              onChange={() => setLimitOn(!limitOn)} />
+            🎚️ Giới hạn chức năng cho yêu cầu TỪ Home Assistant
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Không bật = mở hết (như trước). Bật = yêu cầu đến từ HA chỉ được dùng
+            các nhóm đã tick — vd tick 🎨 Ảnh thì nói với loa/Assist «vẽ con mèo»
+            sẽ tạo ảnh; bỏ tick thì chỉ trả lời chữ, không tự vẽ.
+          </p>
+          {limitOn && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {HA_GROUPS.map(([key, label]) => (
+                <label key={key}
+                  className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none">
+                  <input type="checkbox" className="size-3.5"
+                    checked={haGroups.includes(key)}
+                    onChange={() => setHaGroups((p) =>
+                      p.includes(key) ? p.filter((x) => x !== key) : [...p, key])} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          )}
+          {limitOn && haGroups.length === 0 && (
+            <p className="text-xs text-amber-600">
+              ⚠️ Chưa tick nhóm nào → HA chỉ chat, tắt mọi tích hợp (kể cả điều khiển nhà).
+            </p>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            Nhớ bấm <b>Lưu</b> bên dưới.
+          </p>
         </div>
         <div>
           <label className="text-sm">🎭 Persona khi xử lý yêu cầu từ Home Assistant</label>

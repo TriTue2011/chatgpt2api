@@ -1,4 +1,4 @@
-"""Cấu hình + quyền chế độ Giáo viên tiểu học.
+"""Cấu hình + quyền chế độ Giáo viên MỌI CẤP (tiểu học · THCS · THPT, lớp 1–12).
 
 Config key ``teacher`` (Settings → Giáo viên)::
 
@@ -179,13 +179,17 @@ def model_for_english_skill(skill: str) -> str:
     return model_write()
 
 
-def model_for_english_topic(topic: str = "", focus: str = "") -> str:
-    """Chọn model EN từ topic/focus (dùng khi soạn đề AI)."""
+def model_for_english_topic(topic: str = "", focus: str = "",
+                            grade: int = 5) -> str:
+    """Chọn model EN từ topic/focus (dùng khi soạn đề AI).
+
+    `grade` dùng khi phải tự dò focus từ topic — band kỹ năng THCS/THPT khác
+    tiểu học (trước đây đóng cứng lớp 5)."""
     if focus:
         return model_for_english_skill(focus)
     try:
         from services.agent import teacher_english as te
-        f = te.detect_focus(topic or "", grade=5, i=0)
+        f = te.detect_focus(topic or "", grade=int(grade or 5), i=0)
         return model_for_english_skill(_FOCUS_TO_EN_SKILL.get(f, f))
     except Exception:
         return model_write()
