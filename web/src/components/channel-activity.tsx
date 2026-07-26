@@ -180,9 +180,15 @@ export function ChannelActivityPanel({ platform, title }: { platform: Platform; 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <h4 className="text-sm font-semibold flex-1 min-w-[8rem]">
-          {title || "Hoạt động gần đây & Blacklist"}
-        </h4>
+        {/* title="" → tiêu đề đã nằm ở thanh thu gọn bên ngoài; chỉ chừa spacer
+            để nút "Làm mới" vẫn dạt phải. */}
+        {title === "" ? (
+          <div className="flex-1 min-w-[8rem]" />
+        ) : (
+          <h4 className="text-sm font-semibold flex-1 min-w-[8rem]">
+            {title || "Hoạt động gần đây & Blacklist"}
+          </h4>
+        )}
         {msg && (
           <span className="text-[10px] text-muted-foreground max-w-[40%] truncate">{msg}</span>
         )}

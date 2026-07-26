@@ -481,6 +481,23 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
   );
 }
 
+/** Khối "Hoạt động gần đây & blacklist" — mặc định ẨN, bấm mới hiện.
+ *  Chỉ mount nội dung khi mở: panel tự làm mới mỗi 20s nên để ẩn mà vẫn chạy
+ *  là phí request. */
+function ActivityCollapse({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-border p-2">
+      <button type="button" onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 text-left text-sm font-semibold select-none">
+        <span className="text-muted-foreground shrink-0">{open ? "▾" : "▸"}</span>
+        <span className="flex-1 min-w-0">{title}</span>
+      </button>
+      {open ? <div className="mt-3">{children}</div> : null}
+    </div>
+  );
+}
+
 export function TelegramCloudflareCard() {
   const config = useSettingsStore((state) => state.config);
   const isSavingConfig = useSettingsStore((state) => state.isSavingConfig);
@@ -1115,7 +1132,9 @@ export function TelegramCloudflareCard() {
             Model / chức năng / persona / giọng nói cài ở tab <b>«Lọc thread»</b>.
             Admin muốn chat / ra lệnh: thêm thread admin vào Lọc thread — không có thì bot <b>im lặng</b> (chỉ nhận log).
           </p>
-          <ChannelActivityPanel platform="tg" title="Telegram — hoạt động gần đây & blacklist (theo từng bot)" />
+          <ActivityCollapse title="📊 Hoạt động gần đây & blacklist (theo từng bot)">
+            <ChannelActivityPanel platform="tg" title="" />
+          </ActivityCollapse>
           </div>
         )}
 
@@ -1148,7 +1167,9 @@ export function TelegramCloudflareCard() {
             Model / chức năng / persona / giọng nói cài ở tab <b>«Lọc thread»</b>.
             Admin muốn chat / ra lệnh: thêm thread admin vào Lọc thread — không có thì bot <b>im lặng</b> (chỉ nhận log).
           </p>
-          <ChannelActivityPanel platform="zalo" title="Zalo Bot — hoạt động gần đây & blacklist" />
+          <ActivityCollapse title="📊 Hoạt động gần đây & blacklist">
+            <ChannelActivityPanel platform="zalo" title="" />
+          </ActivityCollapse>
           </div>
         )}
 
@@ -1305,7 +1326,10 @@ export function TelegramCloudflareCard() {
                     setResolving("");
                   }
                 };
-                const accOpen = openZpAcc[ownId] ?? false;
+                // Chưa cấu hình admin nào → MỞ SẴN để thấy ngay chỗ thêm admin;
+                // đã có admin rồi mới thu gọn (đỡ rối khi nhiều tài khoản).
+                const nAdmins = admins.filter((a) => a.chat_id.trim()).length;
+                const accOpen = openZpAcc[ownId] ?? (nAdmins === 0);
                 return (
                   <div key={ownId} className="rounded-md border border-border p-2 space-y-2">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1323,7 +1347,7 @@ export function TelegramCloudflareCard() {
                           {zalopAccLabel(acc)}
                         </span>
                         <span className="text-[10px] text-muted-foreground shrink-0">
-                          {admins.filter((a) => a.chat_id.trim()).length} admin
+                          {nAdmins ? `${nAdmins} admin` : "chưa có admin — bấm để thêm"}
                         </span>
                       </div>
                     </div>
@@ -1472,7 +1496,9 @@ export function TelegramCloudflareCard() {
               })
             )}
           </div>
-          <ChannelActivityPanel platform="zalop" title="Zalo Cá Nhân — hoạt động gần đây & blacklist (theo acc)" />
+          <ActivityCollapse title="📊 Hoạt động gần đây & blacklist (theo tài khoản)">
+            <ChannelActivityPanel platform="zalop" title="" />
+          </ActivityCollapse>
           </div>
         )}
 
