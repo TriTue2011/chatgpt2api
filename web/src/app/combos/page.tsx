@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import {
   Combine, Plus, Trash2, ArrowDown, MessageSquare,
   ImageIcon, Eye, X, ChevronDown, Save, Video, Camera,
-  Pencil, Check, ArrowUp,
+  Pencil, Check, ArrowUp, LoaderCircle,
 } from "lucide-react";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 import { useLangStore } from "@/store/lang";
@@ -215,7 +216,7 @@ function ComboEditView({ editModels, editName, setEditName, allModels, filteredM
   );
 }
 
-export default function CombosPage() {
+function CombosPageContent() {
   const { lang } = useLangStore();
   const t = (key: TranslationKey) => translations[lang][key] || key;
   const [combos, setCombos] = useState<ComboModels>({});
@@ -676,4 +677,18 @@ export default function CombosPage() {
       )}
     </div>
   );
+}
+
+export default function CombosPage() {
+  const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+
+  if (isCheckingAuth || !session || session.role !== "admin") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <LoaderCircle className="size-5 animate-spin text-[var(--muted-foreground)]" />
+      </div>
+    );
+  }
+
+  return <CombosPageContent />;
 }

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, RefreshCw, Save, Sparkles } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, RefreshCw, Save, Sparkles } from "lucide-react";
+import { toast } from "sonner";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -28,7 +30,7 @@ const PROVIDER_LABELS: Record<string, { label: string; color: string; tint: stri
 
 const CORE_MODELS = ["ha-agent", "chatgpt/auto", "cgf/auto", "oc/auto", "gemini_free/auto", "cx/auto", "ag/auto", "flow/auto", "claude/auto", "cgw/auto", "gmw/auto", "gma/auto"];
 
-export default function ModelsPage() {
+function ModelsPageContent() {
   const [available, setAvailable] = useState<Record<string, string[]>>({});
   const [settings, setSettings] = useState<ModelSettings>({ enabled_models: {}, default_models: {} });
   const [loading, setLoading] = useState(true);
@@ -108,6 +110,7 @@ export default function ModelsPage() {
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       console.error("Failed to save", e);
+      toast.error(e instanceof Error ? e.message : "Lưu cấu hình model thất bại");
     } finally {
       setSaving(false);
     }
@@ -427,4 +430,18 @@ export default function ModelsPage() {
       </div>
     </div>
   );
+}
+
+export default function ModelsPage() {
+  const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+
+  if (isCheckingAuth || !session || session.role !== "admin") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <LoaderCircle className="size-5 animate-spin text-[var(--muted-foreground)]" />
+      </div>
+    );
+  }
+
+  return <ModelsPageContent />;
 }

@@ -58,7 +58,7 @@ export function ProxySettingsCard() {
 
   const handleSave = async () => {
     if (formEnabled && !formUrl.trim()) {
-      toast.error("kích hoạt代理时必须填写Địa chỉ proxy");
+      toast.error("Phải nhập địa chỉ proxy khi bật proxy");
       return;
     }
     setIsSaving(true);
@@ -81,7 +81,7 @@ export function ProxySettingsCard() {
   const handleTest = async () => {
     const candidate = formUrl.trim();
     if (!candidate) {
-      toast.error("请先填写Địa chỉ proxy");
+      toast.error("Vui lòng nhập địa chỉ proxy trước");
       return;
     }
     setIsTesting(true);
@@ -90,9 +90,9 @@ export function ProxySettingsCard() {
       const data = await testProxy(candidate);
       setTestResult(data.result);
       if (data.result.ok) {
-        toast.success(`代理có thể用（${data.result.latency_ms} ms，HTTP ${data.result.status}）`);
+        toast.success(`Proxy dùng được (${data.result.latency_ms} ms, HTTP ${data.result.status})`);
       } else {
-        toast.error(`代理不có thể用：${data.result.error ?? "未知错误"}`);
+        toast.error(`Proxy không dùng được: ${data.result.error ?? "Lỗi không xác định"}`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Kiểm tra proxythất bại");
@@ -132,9 +132,9 @@ export function ProxySettingsCard() {
                 onChange={(event) => setFormEnabled(event.target.checked)}
               />
               <div className="space-y-0.5">
-                <div className="text-sm font-medium text-[var(--foreground)]">kích hoạt代理</div>
+                <div className="text-sm font-medium text-[var(--foreground)]">Bật proxy</div>
                 <div className="text-sm text-[var(--muted-foreground)]">
-                  关闭sau chatgpt.com 请求会直连。Lưusau立即生效，无需重启。
+                  Khi tắt, request đến chatgpt.com sẽ kết nối trực tiếp. Lưu xong có hiệu lực ngay, không cần khởi động lại.
                 </div>
               </div>
             </label>
@@ -147,11 +147,11 @@ export function ProxySettingsCard() {
               <Input
                 value={formUrl}
                 onChange={(event) => setFormUrl(event.target.value)}
-                placeholder="http://user:pass@host:port 或 socks5://host:port"
+                placeholder="http://user:pass@host:port hoặc socks5://host:port"
                 className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)] font-mono text-xs"
               />
               <div className="text-xs text-[var(--muted-foreground)]">
-                支持 <code className="font-mono">http / https / socks4 / socks5 / socks5h</code>。
+                Hỗ trợ <code className="font-mono">http / https / socks4 / socks5 / socks5h</code>.
               </div>
             </div>
 
@@ -165,10 +165,10 @@ export function ProxySettingsCard() {
               >
                 {testResult.ok ? (
                   <>
-                    代理có thể用：HTTP {testResult.status}，用时 {testResult.latency_ms} ms
+                    Proxy dùng được: HTTP {testResult.status}, thời gian {testResult.latency_ms} ms
                   </>
                 ) : (
-                  <>代理不có thể用：{testResult.error ?? "未知错误"}（用时 {testResult.latency_ms} ms）</>
+                  <>Proxy không dùng được: {testResult.error ?? "Lỗi không xác định"} (thời gian {testResult.latency_ms} ms)</>
                 )}
               </div>
             ) : null}

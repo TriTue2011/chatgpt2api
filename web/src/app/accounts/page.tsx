@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps } from "react";
+import Link from "next/link";
 import {
   ArrowUp,
   ArrowDown,
@@ -321,6 +322,8 @@ function AccountsPageContent() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  // Xác nhận trước khi xóa tài khoản (danh sách access_token đang chờ xác nhận xóa)
+  const [deletingTokens, setDeletingTokens] = useState<string[]>([]);
 
   const loadAccounts = async (silent = false) => {
     if (!silent) {
@@ -472,6 +475,26 @@ function AccountsPageContent() {
     [accounts],
   );
 
+  // Danh sách "Loại (type)" trong dialog Chỉnh sửa: base set (free/codex/go) hợp với
+  // mọi giá trị account.type thực tế đang có trong dữ liệu (vd pro, prolite) — để
+  // không có tài khoản nào bị "rớt" mất loại thật khi mở rồi lưu lại dialog.
+  const editTypeOptions = useMemo(() => {
+    const base = [
+      { value: "free", label: "free (ChatGPT Session)" },
+      { value: "codex", label: "codex (OAuth / 9router)" },
+      { value: "go", label: "go" },
+    ];
+    const known = new Set(base.map((option) => option.value));
+    const extra = Array.from(
+      new Set(
+        accounts
+          .map((account) => account.type)
+          .filter((type): type is string => Boolean(type) && !known.has(type)),
+      ),
+    );
+    return [...base, ...extra.map((type) => ({ value: type, label: type }))];
+  }, [accounts]);
+
   const groupedAccounts = useMemo(() => {
     const groups = new Map<string, Account[]>();
     for (const acc of filteredAccounts) {
@@ -556,6 +579,7 @@ function AccountsPageContent() {
       const data = await deleteAccounts(tokens);
       setAccounts(data.items);
       setSelectedIds((prev) => prev.filter((id) => data.items.some((item) => item.access_token === id)));
+      setDeletingTokens((prev) => prev.filter((token) => !tokens.includes(token)));
       toast.success(`Đã xóa ${data.removed ?? 0} tài khoản`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Xóa tài khoản thất bại";
@@ -579,7 +603,7 @@ function AccountsPageContent() {
       if (data.errors.length > 0) {
         const firstError = data.errors[0]?.error;
         toast.error(
-          `Làm mới thành công ${data.refreshed}, thất bại ${data.errors.length}${firstError ? `，Lỗi đầu tiên: ${firstError}` : ""}`,
+          `Làm mới thành công ${data.refreshed}, thất bại ${data.errors.length}${firstError ? `, lỗi đầu tiên: ${firstError}` : ""}`,
         );
       } else {
         toast.success(`Làm mới thành công ${data.refreshed} tài khoản`);
@@ -876,13 +900,13 @@ function AccountsPageContent() {
               setPage(1);
             }}
           />
-          <a
+          <Link
             href="/settings"
             className="inline-flex items-center gap-1.5 h-9 rounded-lg border border-black/[0.08] bg-[var(--card)] px-3.5 text-[13px] font-medium text-[var(--muted-foreground)] hover:bg-[var(--muted)] transition"
           >
             <ExternalLink className="size-3.5" />
             Custom API
-          </a>
+          </Link>
           <Button
             variant="outline"
             className="h-9 rounded-lg border-black/[0.08] bg-[var(--card)] px-3.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--muted)]"
@@ -995,9 +1019,11 @@ function AccountsPageContent() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="free">free (ChatGPT Session)</SelectItem>
-                  <SelectItem value="codex">codex (OAuth / 9router)</SelectItem>
-                  <SelectItem value="go">go</SelectItem>
+                  {editTypeOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1018,6 +1044,30 @@ function AccountsPageContent() {
             >
               {isUpdating ? <LoaderCircle className="size-4 animate-spin" /> : null}
               Lưu thay đổi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deletingTokens.length > 0} onOpenChange={(open) => (!open ? setDeletingTokens([]) : null)}>
+        <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+          <DialogHeader className="gap-2">
+            <DialogTitle>{deletingTokens.length === 1 ? "Xóa tài khoản" : "Xóa các tài khoản đã chọn"}</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              Bạn có chắc chắn muốn xóa {deletingTokens.length} tài khoản này? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setDeletingTokens([])} disabled={isDeleting}>
+              Hủy
+            </Button>
+            <Button
+              className="rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => void handleDeleteTokens(deletingTokens)}
+              disabled={isDeleting || deletingTokens.length === 0}
+            >
+              {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Xác nhận xóa
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1306,7 +1356,7 @@ function AccountsPageContent() {
                                       >
                                         {account.status === "disabled" ? <Power className="size-3" /> : <PowerOff className="size-3" />}
                                       </button>
-                                      <button className="rounded p-0.5 hover:bg-rose-50 hover:text-rose-500" onClick={() => void handleDeleteTokens([account.access_token])}><Trash2 className="size-3" /></button>
+                                      <button className="rounded p-0.5 hover:bg-rose-50 hover:text-rose-500" onClick={() => setDeletingTokens([account.access_token])} title="Xóa"><Trash2 className="size-3" /></button>
                                     </div>
                                   </div>
                                   {/* Account expanded detail */}
@@ -1722,7 +1772,7 @@ function AccountsPageContent() {
                                 <div className="flex items-center gap-1 text-[var(--muted-foreground)]" onClick={(e) => e.stopPropagation()}>
                                   <button
                                     className="rounded p-0.5 hover:bg-rose-50 hover:text-rose-500"
-                                    onClick={() => void handleDeleteTokens([inst.access_token])}
+                                    onClick={() => setDeletingTokens([inst.access_token])}
                                     title="Xóa"
                                   >
                                     <Trash2 className="size-3" />

@@ -57,6 +57,10 @@ export function VoiceSpeakersCard() {
   const [draft, setDraft] = useState<Speaker>({ id: "", name: "", kind: "cast", host: "" });
   const [busy, setBusy] = useState(false);
   const [previewing, setPreviewing] = useState("");
+  // Nghe thử: chọn giọng ở dropdown + tự nhập đoạn muốn nghe (có sẵn câu mẫu).
+  const [tryVoice, setTryVoice] = useState("");
+  const SAMPLE_VI = "Xin chào, đây là giọng đọc thử của trợ lý. Bạn nghe rõ và thấy tự nhiên chứ ạ?";
+  const [tryText, setTryText] = useState(SAMPLE_VI);
   const [found, setFound] = useState<Found[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanKind, setScanKind] = useState("all");
@@ -90,13 +94,15 @@ export function VoiceSpeakersCard() {
   // Nghe thử theo DÒNG CHẢY: chữ tổng hợp tới đâu phát tới đó (stream=1) nên nghe
   // gần như tức thì thay vì chờ ~3-4s tổng hợp trọn câu. Thẻ <audio> không gửi
   // được header nên đính token qua query `key=` (giống tab Chat).
-  const preview = async (voiceId: string) => {
+  const preview = async (voiceId: string, text?: string) => {
     setPreviewing(voiceId);
     try {
       const { getStoredAuthKey } = await import("@/store/auth");
       let key = await getStoredAuthKey();
       if (!key) { try { key = localStorage.getItem("chatgpt2api_auth_key") || ""; } catch { /* noop */ } }
+      const say = (text || "").trim();
       const url = `/api/voice/preview?stream=1&voice=${encodeURIComponent(voiceId)}`
+        + (say ? `&text=${encodeURIComponent(say.slice(0, 600))}` : "")
         + `&key=${encodeURIComponent(key || "")}`;
       const audio = new Audio(url);
       audio.onended = () => setPreviewing("");
@@ -404,49 +410,78 @@ export function VoiceSpeakersCard() {
 
         <hr className="border-border" />
 
-        {/* Nghe thử & chọn giọng */}
-        <div className="text-sm font-semibold">🎧 Nghe thử &amp; chọn giọng ({catalog.length})</div>
-        <p className="text-[10px] text-muted-foreground -mt-1">
-          Bấm ▶️ để nghe một câu mẫu, thấy ưng thì bấm <b>Chọn</b> để đặt làm giọng
-          mặc định. Giọng &quot;chưa tải&quot; cần chạy{" "}
-          <code>python scripts/download_piper_voices.py --pack full</code> rồi tải lại trang.
-        </p>
-        <div className="grid gap-1.5 sm:grid-cols-2">
-          {catalog.map((v) => {
-            const active = String(ttsCfg.voice || tts?.voice || "") === v.id;
-            return (
-              <div key={v.id}
-                className={`flex items-center gap-2 rounded-md border p-1.5 ${active ? "border-emerald-500 bg-emerald-500/10" : "border-border"}`}>
-                <button type="button" title="Nghe thử"
+        {/* Nghe thử & chọn giọng — dropdown + đoạn tự nhập */}
+        {(() => {
+          const current = String(ttsCfg.voice || tts?.voice || "");
+          // Giọng đang chọn để nghe thử: ưu tiên lựa chọn tay, rồi giọng đang
+          // dùng, cuối cùng là giọng đầu tiên đã tải về.
+          const pick = tryVoice
+            || (catalog.some((v) => v.id === current && v.downloaded) ? current : "")
+            || (catalog.find((v) => v.downloaded)?.id || "");
+          const picked = catalog.find((v) => v.id === pick);
+          const ready = Boolean(picked?.downloaded);
+          const isActive = pick === current;
+          return (
+            <>
+              <div className="text-sm font-semibold">🎧 Nghe thử &amp; chọn giọng ({catalog.length})</div>
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                Chọn giọng, sửa đoạn muốn nghe rồi bấm ▶️ — giọng đó sẽ đọc đúng
+                đoạn trong ô. Ưng thì bấm <b>Chọn làm giọng mặc định</b>.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                  value={pick} onChange={(e) => setTryVoice(e.target.value)}
+                  title="Giọng cần nghe thử">
+                  {catalog.length === 0 ? <option value="">(chưa có giọng nào)</option> : null}
+                  {catalog.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.id}{v.default ? " ⭐" : ""} · {v.language_label}
+                      {v.downloaded ? "" : " · chưa tải"}
+                      {v.id === current ? " · đang dùng" : ""}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" title="Nghe thử đoạn trong ô"
                   className="shrink-0 text-emerald-500 disabled:opacity-40"
-                  disabled={!v.downloaded || previewing === v.id}
-                  onClick={() => void preview(v.id)}>
-                  <PlayCircle className={`size-5 ${previewing === v.id ? "animate-pulse" : ""}`} />
+                  disabled={!ready || !tryText.trim() || previewing === pick}
+                  onClick={() => void preview(pick, tryText)}>
+                  <PlayCircle className={`size-7 ${previewing === pick ? "animate-pulse" : ""}`} />
                 </button>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium truncate">
-                    {v.id}{v.default ? " ⭐" : ""}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {v.language_label}{v.downloaded ? "" : " · chưa tải"}
-                  </div>
-                </div>
-                {active ? (
-                  <span className="text-[10px] text-emerald-500 font-semibold px-1">✓ đang dùng</span>
+                {isActive ? (
+                  <span className="text-[11px] text-emerald-500 font-semibold shrink-0">✓ đang dùng</span>
                 ) : (
-                  <Button type="button" variant="ghost" size="sm" className="h-6 text-[11px]"
-                    disabled={!v.downloaded}
-                    onClick={() => patchVoice("tts", { voice: v.id })}>
-                    Chọn
+                  <Button type="button" variant="outline" size="sm" className="h-8 text-[11px] shrink-0"
+                    disabled={!ready}
+                    onClick={() => patchVoice("tts", { voice: pick })}>
+                    Chọn làm giọng mặc định
                   </Button>
                 )}
               </div>
-            );
-          })}
-        </div>
-        <p className="text-[10px] text-muted-foreground -mt-1">
-          Sau khi bấm <b>Chọn</b>, nhớ bấm <b>Lưu cấu hình giọng nói</b> ở trên để áp dụng.
-        </p>
+              <textarea
+                className="w-full rounded-md border border-border bg-background p-2 text-xs"
+                rows={2} maxLength={600} value={tryText}
+                onChange={(e) => setTryText(e.target.value)}
+                placeholder="Nhập đoạn muốn nghe thử…" />
+              <div className="flex flex-wrap items-center gap-2 -mt-1">
+                <button type="button"
+                  className="text-[10px] text-muted-foreground underline"
+                  onClick={() => setTryText(SAMPLE_VI)}>Dùng câu mẫu</button>
+                <span className="text-[10px] text-muted-foreground">{tryText.length}/600</span>
+                {!ready && pick ? (
+                  <span className="text-[10px] text-amber-500">
+                    Giọng này chưa tải — chạy{" "}
+                    <code>python scripts/download_piper_voices.py --pack full</code>
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                Sau khi bấm <b>Chọn làm giọng mặc định</b>, nhớ bấm <b>Lưu cấu hình
+                giọng nói</b> ở trên để áp dụng.
+              </p>
+            </>
+          );
+        })()}
 
         <hr className="border-border" />
 

@@ -50,7 +50,7 @@ export function BaseUrlCard() {
                 placeholder="https://example.com"
                 className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)]"
               />
-              <p className="text-sm text-[var(--muted-foreground)]">留空则使用环境变量或默认值，Lưu时会自动去掉首尾空格。</p>
+              <p className="text-sm text-[var(--muted-foreground)]">Để trống để dùng biến môi trường hoặc giá trị mặc định; khi lưu sẽ tự động xóa khoảng trắng đầu/cuối.</p>
             </div>
 
             <div className="flex justify-end">

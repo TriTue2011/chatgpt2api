@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, CheckCircle2, XCircle, Wrench, RefreshCw, ExternalLink } from "lucide-react";
+import { Cpu, CheckCircle2, XCircle, Wrench, RefreshCw, ExternalLink, LoaderCircle } from "lucide-react";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 import { useLangStore } from "@/store/lang";
@@ -28,7 +29,7 @@ const PROVIDER_META: Record<string, { label: string; desc: string; icon: string;
   nvidia_nim: { label: "NVIDIA NIM", desc: "80+ model qua NVIDIA — chat + vision + tạo ảnh FLUX", icon: "🟢", color: "#76B900", tint: "emerald" },
 };
 
-export default function ProvidersPage() {
+function ProvidersPageContent() {
   const { lang } = useLangStore();
   const t = (key: TranslationKey) => translations[lang][key] || key;
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -205,4 +206,18 @@ export default function ProvidersPage() {
       )}
     </div>
   );
+}
+
+export default function ProvidersPage() {
+  const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+
+  if (isCheckingAuth || !session || session.role !== "admin") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <LoaderCircle className="size-5 animate-spin text-[var(--muted-foreground)]" />
+      </div>
+    );
+  }
+
+  return <ProvidersPageContent />;
 }

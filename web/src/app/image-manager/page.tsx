@@ -189,7 +189,7 @@ function ImageManagerContent() {
         ...item,
         tags: (item.tags ?? []).filter((t) => t !== tag),
       })));
-      toast.success(`nhãn"${tag}"đã xóa，影响 ${result.removed_from}  ảnh`);
+      toast.success(`Đã xóa nhãn "${tag}", ảnh hưởng ${result.removed_from} ảnh`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không xóa được nhãn");
     }
@@ -286,7 +286,7 @@ function ImageManagerContent() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-[var(--muted-foreground)]">
             <Tag className="mr-1 inline size-3.5" />
-            Lọc nhãn：
+            Lọc nhãn:
           </span>
           {allTags.map((tag) => {
             const isPressing = pressingTag === tag;
@@ -335,8 +335,8 @@ function ImageManagerContent() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
             <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted-foreground)]">
               <ImageIcon className="size-4" />
-              共 {filteredItems.length} 
-              {selectedTags.length > 0 ? <span className="text-[var(--muted-foreground)]">（lọc từ {items.length} ）</span> : null}
+              Tổng {filteredItems.length} ảnh
+              {selectedTags.length > 0 ? <span className="text-[var(--muted-foreground)]"> (lọc từ {items.length} ảnh)</span> : null}
               <label className="flex items-center gap-2">
                 <Checkbox checked={currentPageSelected} onCheckedChange={(checked) => togglePaths(currentRows.map(imageKey), Boolean(checked))} />
                 Chọn cả trang
@@ -350,7 +350,7 @@ function ImageManagerContent() {
             <div className="flex items-center gap-2">
               <Button variant="ghost" className="h-8 rounded-lg px-3 text-[var(--muted-foreground)]" onClick={() => void loadImages()} disabled={isLoading}>
                 <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
-                刷新
+                Làm mới
               </Button>
               <button type="button" className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:text-[var(--foreground)]" onClick={() => setSelectedPaths([])} disabled={selectedPaths.length === 0 || isDeleting}>
                 Bỏ chọn
@@ -514,7 +514,7 @@ function ImageManagerContent() {
             )})}
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
-            <span>第 {safePage} / {pageCount} 页，共 {filteredItems.length} </span>
+            <span>Trang {safePage} / {pageCount}, tổng {filteredItems.length} ảnh</span>
             <Button variant="outline" size="icon" className="size-9 rounded-lg border-[var(--border)] bg-[var(--card)]" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
               <ChevronLeft className="size-4" />
             </Button>
@@ -574,7 +574,7 @@ function ImageManagerContent() {
             <DialogTitle>{deleteMode === "filtered" ? "Xóa ảnh theo ngày" : "Xóa ảnh đã chọn"}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-[var(--muted-foreground)]">
-            Xác nhận xóa {selectedCount}   ảnh？Xóakhông thể hoàn tác。
+            Xác nhận xóa {selectedCount} ảnh? Thao tác này không thể hoàn tác.
           </p>
           <DialogFooter>
             <Button variant="outline" className="rounded-xl" onClick={() => setDeleteMode(null)} disabled={isDeleting}>
@@ -590,10 +590,10 @@ function ImageManagerContent() {
       <Dialog open={Boolean(tagDeleteTarget)} onOpenChange={(open) => { if (!open) setTagDeleteTarget(null); }}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle>Xóanhãn</DialogTitle>
+            <DialogTitle>Xóa nhãn</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-[var(--muted-foreground)]">
-            确定要Xóanhãn <span className="font-semibold">"{tagDeleteTarget}"</span>? Nhãn sẽ bị xóa khỏi tất cả ảnh.
+            Bạn có chắc muốn xóa nhãn <span className="font-semibold">"{tagDeleteTarget}"</span>? Nhãn sẽ bị xóa khỏi tất cả ảnh.
           </p>
           <DialogFooter>
             <Button variant="outline" className="rounded-xl" onClick={() => setTagDeleteTarget(null)}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Video, LoaderCircle, Play, Download, Settings2, Sparkles, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -11,223 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getVideoCreditCost,
+  getVideoModelSpec,
+  isFlowVideoModel,
+  NO_VIDEO_PROVIDER_HINT,
+} from "@/lib/video-model-specs";
 
 interface VideoModel {
   id: string;
   label: string;
-  provider?: string;
   baseCost?: number;
 }
-
-const DEFAULT_VIDEO_MODELS: VideoModel[] = [
-  { id: "agnes/agnes-video-v2.0", label: "✨ Agnes Video v2.0 (Full Async)", baseCost: 15 },
-  { id: "flow/veo-3.1-fast", label: "⚡ Veo 3.1 - Fast", baseCost: 20 },
-  { id: "flow/veo-3.1-lite", label: "Veo 3.1 - Lite", baseCost: 10 },
-  { id: "flow/veo-3.1-quality", label: "Veo 3.1 - Quality", baseCost: 100 },
-  { id: "flow/omni-flash", label: "Omni Flash", baseCost: 12 },
-];
-
-const getVideoCreditCost = (modelId: string, count: number): number => {
-  const mid = String(modelId || "").toLowerCase();
-  const c = Math.max(1, Math.min(4, count));
-  if (mid.includes("veo-3.1-quality")) {
-    return [100, 200, 300, 400][c - 1];
-  }
-  if (mid.includes("veo-3.1-fast")) {
-    return [20, 40, 60, 80][c - 1];
-  }
-  if (mid.includes("veo-3.1-lite")) {
-    return [10, 20, 30, 40][c - 1];
-  }
-  if (mid.includes("omni")) {
-    return [12, 30, 45, 60][c - 1];
-  }
-  return c * 15;
-};
-
-// Số video tối đa mỗi request THEO ĐÚNG backend hỗ trợ (tránh multiplier ảo):
-// - Agnes: mỗi request tạo 1 video (engine async single-shot) → 1x.
-// - Flow/Veo: solver nhận count → tối đa 4.
-// - Custom/khác: an toàn 1 (chưa rõ khả năng batch).
-const getVideoMaxCount = (modelId: string): number => {
-  const mid = String(modelId || "").toLowerCase();
-  if (mid.includes("agnes")) return 1;
-  if (mid.includes("flow/")) return 4;
-  return 1;
-};
-
-const getModelConfig = (modelId: string) => {
-  const mid = String(modelId || "").toLowerCase();
-  
-  if (mid.startsWith("flow/") || mid.includes("flow/")) {
-    if (mid.includes("veo-3.1-quality")) {
-      return {
-        providerType: "flow",
-        badge: "Flow Veo Quality (Google)",
-        resolutions: [
-          { value: "1080p", label: "1080p (FHD - Chuẩn Veo Quality)" },
-        ],
-        aspectRatios: [
-          { value: "16:9", label: "16:9 (Ngang)" },
-          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        ],
-        durations: [
-          { value: "5", label: "5s (81 frames)" },
-          { value: "8", label: "8s (121 frames)" },
-        ],
-        fps: [
-          { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
-        ],
-        baseCost: 100,
-        supportsEndFrame: true,
-        supportsSeed: false,
-        supportsNegativePrompt: false,
-      };
-    }
-    
-    if (mid.includes("veo-3.1-lite")) {
-      return {
-        providerType: "flow",
-        badge: "Flow Veo Lite (Google)",
-        resolutions: [
-          { value: "720p", label: "720p (HD - Chuẩn Veo Lite)" },
-        ],
-        aspectRatios: [
-          { value: "16:9", label: "16:9 (Ngang)" },
-          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        ],
-        durations: [
-          { value: "5", label: "5s (81 frames)" },
-        ],
-        fps: [
-          { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
-        ],
-        baseCost: 10,
-        supportsEndFrame: false,
-        supportsSeed: false,
-        supportsNegativePrompt: false,
-      };
-    }
-
-    if (mid.includes("omni")) {
-      return {
-        providerType: "flow",
-        badge: "Flow Omni Flash (Google)",
-        resolutions: [
-          { value: "720p", label: "720p (HD - Chuẩn Omni)" },
-          { value: "1080p", label: "1080p (FHD)" },
-        ],
-        aspectRatios: [
-          { value: "16:9", label: "16:9 (Ngang)" },
-          { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        ],
-        durations: [
-          { value: "4", label: "4s (61 frames)" },
-          { value: "6", label: "6s (97 frames)" },
-          { value: "8", label: "8s (121 frames)" },
-          { value: "10", label: "10s (241 frames)" },
-        ],
-        fps: [
-          { value: "24", label: "24 fps (Tốc độ gốc Omni)" },
-        ],
-        baseCost: 12,
-        supportsEndFrame: true,
-        supportsSeed: false,
-        supportsNegativePrompt: false,
-      };
-    }
-
-    // Default Flow Veo Fast / Standard
-    return {
-      providerType: "flow",
-      badge: "Flow Veo Fast (Google)",
-      resolutions: [
-        { value: "1080p", label: "1080p (FHD - Chuẩn Veo Fast)" },
-        { value: "720p", label: "720p (HD)" },
-      ],
-      aspectRatios: [
-        { value: "16:9", label: "16:9 (Ngang)" },
-        { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        ],
-      durations: [
-        { value: "5", label: "5s (81 frames)" },
-        { value: "8", label: "8s (121 frames)" },
-      ],
-      fps: [
-        { value: "24", label: "24 fps (Tốc độ gốc Veo)" },
-      ],
-      baseCost: 20,
-      supportsEndFrame: true,
-      supportsSeed: false,
-      supportsNegativePrompt: false,
-    };
-  }
-
-  if (mid.includes("agnes")) {
-    return {
-      providerType: "agnes",
-      badge: "Agnes AI Async Engine",
-      resolutions: [
-        { value: "1080p", label: "1080p (FHD)" },
-        { value: "720p", label: "720p (HD)" },
-        { value: "480p", label: "480p (SD)" },
-      ],
-      aspectRatios: [
-        { value: "16:9", label: "16:9 (Ngang)" },
-        { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-        { value: "1:1", label: "1:1 (Vuông)" },
-        { value: "4:3", label: "4:3 (Tiêu chuẩn)" },
-        { value: "3:4", label: "3:4 (Chân dung)" },
-      ],
-      durations: [
-        { value: "5", label: "5s (81 frames)" },
-        { value: "8", label: "8s (121 frames)" },
-        { value: "10", label: "10s (241 frames)" },
-        { value: "18", label: "18s (441 frames)" },
-      ],
-      fps: [
-        { value: "24", label: "24 fps (Điện ảnh)" },
-        { value: "30", label: "30 fps (Mượt mà)" },
-        { value: "60", label: "60 fps (Siêu mượt)" },
-      ],
-      baseCost: 15,
-      supportsEndFrame: true,
-      supportsSeed: true,
-      supportsNegativePrompt: true,
-    };
-  }
-
-  // Custom Provider Video Models
-  return {
-    providerType: "custom",
-    badge: "Custom Provider Engine",
-    resolutions: [
-      { value: "1080p", label: "1080p (FHD)" },
-      { value: "720p", label: "720p (HD)" },
-      { value: "480p", label: "480p (SD)" },
-    ],
-    aspectRatios: [
-      { value: "16:9", label: "16:9 (Ngang)" },
-      { value: "9:16", label: "9:16 (Dọc Shorts/Reels)" },
-      { value: "1:1", label: "1:1 (Vuông)" },
-      { value: "4:3", label: "4:3 (Tiêu chuẩn)" },
-      { value: "3:4", label: "3:4 (Chân dung)" },
-    ],
-    durations: [
-      { value: "5", label: "5s (81 frames)" },
-      { value: "8", label: "8s (121 frames)" },
-      { value: "10", label: "10s (241 frames)" },
-    ],
-    fps: [
-      { value: "24", label: "24 fps (Điện ảnh)" },
-      { value: "30", label: "30 fps (Mượt mà)" },
-    ],
-    baseCost: 15,
-    supportsEndFrame: true,
-    supportsSeed: true,
-    supportsNegativePrompt: true,
-  };
-};
 
 export default function VideoPage() {
   const { session } = useAuthGuard(["admin", "user"]);
@@ -240,81 +35,111 @@ export default function VideoPage() {
   const [resolution, setResolution] = useState("1080p");
   const [fps, setFps] = useState("24");
   const [seed, setSeed] = useState("");
-  const [model, setModel] = useState("agnes/agnes-video-v2.0");
+  // Không còn model mặc định cứng — chỉ chọn được model do backend xác nhận
+  // provider tương ứng ĐÃ cấu hình (xem loadModels bên dưới).
+  const [model, setModel] = useState("");
   const [count, setCount] = useState("1");
   const [startImage, setStartImage] = useState<string | null>(null);
   const [endImage, setEndImage] = useState<string | null>(null);
-  
-  const [videoModels, setVideoModels] = useState<VideoModel[]>(DEFAULT_VIDEO_MODELS);
+
+  const [videoModels, setVideoModels] = useState<VideoModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [resultClips, setResultClips] = useState<Array<{ url?: string; b64?: string }>>([]);
   const [error, setError] = useState("");
 
-  const isAgnesModel = model.toLowerCase().includes("agnes");
-  const modelConfig = useMemo(() => getModelConfig(model), [model]);
-  const maxCount = useMemo(() => getVideoMaxCount(model), [model]);
+  const modelConfig = useMemo(() => (model ? getVideoModelSpec(model) : null), [model]);
 
-  // Đồng bộ tham số khi ĐỔI model: lựa chọn không hợp lệ → về mặc định của model.
+  // Đồng bộ tham số khi ĐỔI model: lựa chọn không hợp lệ → về mặc định của
+  // model. Control nào model không hỗ trợ (mảng rỗng, vd resolution/fps của
+  // Flow) thì tự về rỗng — UI ẩn hẳn control đó (xem phần render bên dưới).
   useEffect(() => {
+    if (!modelConfig) return;
     if (!modelConfig.durations.some((d) => d.value === duration)) {
-      setDuration(modelConfig.durations[0]?.value || "5");
+      setDuration(modelConfig.durations[0]?.value || "");
     }
     if (!modelConfig.resolutions.some((r) => r.value === resolution)) {
-      setResolution(modelConfig.resolutions[0]?.value || "1080p");
+      setResolution(modelConfig.resolutions[0]?.value || "");
     }
     if (!modelConfig.fps.some((f) => f.value === fps)) {
-      setFps(modelConfig.fps[0]?.value || "24");
+      setFps(modelConfig.fps[0]?.value || "");
     }
     if (!modelConfig.aspectRatios.some((a) => a.value === aspectRatio)) {
       setAspectRatio(modelConfig.aspectRatios[0]?.value || "16:9");
     }
-    if (parseInt(count || "1", 10) > maxCount) {
-      setCount(String(maxCount));
+    if (!modelConfig.countOptions.includes(parseInt(count || "1", 10))) {
+      setCount(String(modelConfig.countOptions[0] ?? 1));
     }
-  }, [model, modelConfig, maxCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, modelConfig]);
 
   useEffect(() => {
     async function loadModels() {
       try {
-        const resp = await request.get("/api/v1/models-with-capabilities");
-        const models = ((resp.data as any)?.models || []) as any[];
+        // /api/v1/models-with-capabilities là nguồn model THẬT (giống
+        // image/page.tsx, models/page.tsx) — thay vì danh sách hardcode cũ
+        // vốn luôn hiện agnes/flow bất kể provider đã cấu hình hay chưa.
+        // Gọi kèm /api/v1/providers (best-effort) để chặn thêm model flow/*:
+        // openai_v1_models.list_models() thêm VIDEO_GEN_MODELS (flow/veo-*,
+        // flow/omni-flash) vào /v1/models KHÔNG điều kiện — không như các
+        // provider khác (custom_providers Agnes, gemini_free key…), flow/*
+        // không bị _drop_unavailable() lọc theo tài khoản. Vì vậy tự lọc
+        // thêm ở đây theo providers.flow.enabled; nếu không đọc được danh
+        // sách provider (403 non-admin, lỗi mạng…) thì bỏ qua bước lọc thêm
+        // này — giữ nguyên danh sách gốc, không làm tệ hơn hiện trạng.
+        const [capResult, providersResult] = await Promise.allSettled([
+          request.get("/api/v1/models-with-capabilities"),
+          request.get("/api/v1/providers"),
+        ]);
+
+        if (capResult.status !== "fulfilled") {
+          return;
+        }
+
+        let flowEnabled: boolean | null = null;
+        if (providersResult.status === "fulfilled") {
+          const providerList = ((providersResult.value.data as any)?.providers || []) as any[];
+          const flowEntry = providerList.find((p: any) => p?.name === "flow");
+          flowEnabled = Boolean(flowEntry?.enabled);
+        }
+
+        const models = ((capResult.value.data as any)?.models || []) as any[];
         const vModels = models
-          .filter((m: any) => 
-            (m.capabilities || []).includes("video_gen") &&
-            m.enabled !== false && !String(m.id).includes(":")
-          )
+          .filter((m: any) => {
+            if (!(m.capabilities || []).includes("video_gen")) return false;
+            if (m.enabled === false) return false;
+            if (String(m.id).includes(":")) return false;
+            if (flowEnabled === false && isFlowVideoModel(String(m.id))) return false;
+            return true;
+          })
           .map((m: any) => {
-            const cfg = getModelConfig(m.id);
+            const spec = getVideoModelSpec(m.id);
             let labelName = m.id;
-            if (m.id.includes("agnes")) labelName = `✨ ${m.id} (Agnes Async Video)`;
+            if (String(m.id).includes("agnes")) labelName = `✨ ${m.id} (Agnes Async Video)`;
             else if (m.owned_by && String(m.owned_by).includes("custom")) labelName = `🎬 ${m.id} (${String(m.owned_by).replace("custom:", "")})`;
-            return {
-              id: m.id,
-              label: labelName,
-              baseCost: cfg.baseCost,
-            };
+            return { id: String(m.id), label: labelName, baseCost: spec.baseCost };
           });
 
-        if (vModels.length > 0) {
-          vModels.sort((a: any, b: any) => {
-            const aAgnes = a.id.includes("agnes") ? 0 : 1;
-            const bAgnes = b.id.includes("agnes") ? 0 : 1;
-            if (aAgnes !== bAgnes) return aAgnes - bAgnes;
-            return a.label.localeCompare(b.label);
-          });
-          setVideoModels(vModels);
-          if (!vModels.find((m: any) => m.id === model)) {
-            setModel(vModels[0].id);
-          }
-        }
-      } catch (err) {
-        /* non-critical fallback */
+        vModels.sort((a, b) => {
+          const aAgnes = a.id.includes("agnes") ? 0 : 1;
+          const bAgnes = b.id.includes("agnes") ? 0 : 1;
+          if (aAgnes !== bAgnes) return aAgnes - bAgnes;
+          return a.label.localeCompare(b.label);
+        });
+
+        setVideoModels(vModels);
+        setModel((prev) => (vModels.some((m) => m.id === prev) ? prev : vModels[0]?.id || ""));
+      } catch {
+        /* videoModels giữ rỗng → UI hiện hint "chưa cấu hình provider" */
+      } finally {
+        setModelsLoading(false);
       }
     }
-    loadModels();
+    void loadModels();
   }, []);
 
   const calculateCredits = () => {
+    if (!model) return 0;
     return getVideoCreditCost(model, parseInt(count || "1", 10));
   };
 
@@ -334,20 +159,30 @@ export default function VideoPage() {
       toast.error("Vui lòng nhập mô tả video");
       return;
     }
+    if (!model || !modelConfig) {
+      toast.error("Vui lòng chọn model video (chưa có provider nào được cấu hình)");
+      return;
+    }
     setGenerating(true);
     setError("");
     setResultClips([]);
 
     try {
       const payload: Record<string, any> = {
-        model: model,
+        model,
         prompt: prompt.trim(),
         n: parseInt(count, 10),
         aspect_ratio: aspectRatio,
         duration: duration,
-        resolution: resolution,
-        fps: parseInt(fps, 10),
       };
+      // Chỉ gửi resolution/fps khi model thực sự dùng tới (adapter bỏ qua
+      // param thì không gửi giá trị người dùng chưa từng thấy trên UI).
+      if (modelConfig.resolutions.length) {
+        payload.resolution = resolution;
+      }
+      if (modelConfig.fps.length) {
+        payload.fps = parseInt(fps, 10);
+      }
 
       if (negativePrompt.trim()) {
         payload.negative_prompt = negativePrompt.trim();
@@ -367,7 +202,7 @@ export default function VideoPage() {
 
       const resp = await request.post("/v1/video/generations", payload);
       const data = resp.data as any;
-      
+
       const items = Array.isArray(data?.data) ? data.data : [];
       const clips = items
         .filter((it: any) => it?.url || it?.b64_json)
@@ -434,21 +269,33 @@ export default function VideoPage() {
                   <Sparkles className="size-4 text-violet-500" />
                   Mô hình (Model Video)
                 </label>
-                <span className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-2.5 py-0.5 rounded-full border border-violet-500/20">
-                  {modelConfig.badge}
-                </span>
+                {modelConfig && (
+                  <span className="text-[11px] font-semibold text-violet-600 dark:text-violet-400 bg-violet-500/10 px-2.5 py-0.5 rounded-full border border-violet-500/20">
+                    {modelConfig.badge}
+                  </span>
+                )}
               </div>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium text-[var(--foreground)] focus:ring-2 focus:ring-violet-500/30 outline-none transition"
-              >
-                {videoModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
+              {modelsLoading ? (
+                <div className="flex h-11 w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm text-[var(--muted-foreground)]">
+                  <LoaderCircle className="size-4 animate-spin" /> Đang tải danh sách model...
+                </div>
+              ) : videoModels.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-3 text-xs font-medium text-amber-600 dark:text-amber-400">
+                  {NO_VIDEO_PROVIDER_HINT}
+                </div>
+              ) : (
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium text-[var(--foreground)] focus:ring-2 focus:ring-violet-500/30 outline-none transition"
+                >
+                  {videoModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Prompt Textarea */}
@@ -465,189 +312,197 @@ export default function VideoPage() {
               </p>
             </div>
 
-            {/* Negative Prompt */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
-                <span>Chi tiết muốn tránh (Negative Prompt)</span>
-                {!modelConfig.supportsNegativePrompt && (
-                  <span className="text-[10px] text-amber-500 font-normal">Engine Flow tự động tối ưu</span>
-                )}
-              </label>
-              <Input
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                disabled={!modelConfig.supportsNegativePrompt}
-                placeholder={modelConfig.supportsNegativePrompt ? "VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..." : "Engine Flow tự động tối ưu chi tiết hình ảnh..."}
-                className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
-              />
-            </div>
-
-            {/* General Parameters Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Độ phân giải</label>
-                <select
-                  value={resolution}
-                  onChange={(e) => setResolution(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                >
-                  {modelConfig.resolutions.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Tỷ lệ khung hình</label>
-                <select
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                >
-                  {modelConfig.aspectRatios.map((a) => (
-                    <option key={a.value} value={a.value}>{a.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
-                <select
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                >
-                  {modelConfig.durations.map((d) => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Tốc độ khung hình</label>
-                <select
-                  value={fps}
-                  onChange={(e) => setFps(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                >
-                  {modelConfig.fps.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Advanced Extra Configs */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
-                  <span>Seed ngẫu nhiên (Tùy chọn)</span>
-                  {!modelConfig.supportsSeed && (
-                    <span className="text-[10px] text-amber-500 font-normal">Tự động (Flow)</span>
-                  )}
-                </label>
-                <Input
-                  type="number"
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value)}
-                  disabled={!modelConfig.supportsSeed}
-                  placeholder={modelConfig.supportsSeed ? "Ví dụ: 12345" : "Tự động ngẫu nhiên"}
-                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-[var(--muted-foreground)]">Số bản ghi (Count / Multiplier)</label>
-                <select
-                  value={count}
-                  onChange={(e) => setCount(e.target.value)}
-                  disabled={maxCount <= 1}
-                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium disabled:opacity-60"
-                >
-                  {Array.from({ length: maxCount }, (_, i) => i + 1).map((c) => (
-                    <option key={c} value={String(c)}>
-                      {c === 1
-                        ? `1x (1 video - ${getVideoCreditCost(model, 1)} CR)`
-                        : `x${c} (${c} video - ${getVideoCreditCost(model, c)} CR)`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Keyframe & Start Image Upload */}
-            <div className="space-y-2 pt-2 border-t border-[var(--border)]">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
-                  <ImageIcon className="size-3.5 text-violet-500" />
-                  Đính kèm Ảnh (Image-to-Video & Keyframes)
-                </label>
-                <span className="text-[11px] text-[var(--muted-foreground)] font-medium">
-                  {startImage && endImage && modelConfig.supportsEndFrame
-                    ? "Chế độ Keyframe Animation"
-                    : startImage
-                    ? "Chế độ Image-to-Video"
-                    : "Chế độ Text-to-Video"}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+            {modelConfig && (
+              <>
+                {/* Negative Prompt */}
                 <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
-                    <span>Ảnh đầu (Start frame)</span>
-                    {startImage && (
-                      <button type="button" onClick={() => setStartImage(null)} className="text-rose-500 hover:text-rose-600">
-                        Xóa
-                      </button>
+                  <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                    <span>Chi tiết muốn tránh (Negative Prompt)</span>
+                    {!modelConfig.supportsNegativePrompt && (
+                      <span className="text-[10px] text-amber-500 font-normal">Engine Flow tự động tối ưu</span>
                     )}
-                  </div>
-                  {startImage ? (
-                    <img src={startImage} alt="Start frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
-                  ) : (
-                    <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
-                      <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh bắt đầu</span>
-                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, true)} />
-                    </label>
-                  )}
+                  </label>
+                  <Input
+                    value={negativePrompt}
+                    onChange={(e) => setNegativePrompt(e.target.value)}
+                    disabled={!modelConfig.supportsNegativePrompt}
+                    placeholder={modelConfig.supportsNegativePrompt ? "VD: mờ, giật lag, biến dạng, chất lượng thấp, logo, watermark..." : "Engine Flow tự động tối ưu chi tiết hình ảnh..."}
+                    className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
+                  />
                 </div>
 
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
-                    <span>Ảnh cuối (End frame)</span>
-                    {endImage && (
-                      <button type="button" onClick={() => setEndImage(null)} className="text-rose-500 hover:text-rose-600">
-                        Xóa
-                      </button>
-                    )}
+                {/* General Parameters Grid — chỉ hiện control mà model thực sự dùng tới */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+                  {modelConfig.resolutions.length > 0 && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-[var(--muted-foreground)]">Độ phân giải</label>
+                      <select
+                        value={resolution}
+                        onChange={(e) => setResolution(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                      >
+                        {modelConfig.resolutions.map((r) => (
+                          <option key={r.value} value={r.value}>{r.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--muted-foreground)]">Tỷ lệ khung hình</label>
+                    <select
+                      value={aspectRatio}
+                      onChange={(e) => setAspectRatio(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                    >
+                      {modelConfig.aspectRatios.map((a) => (
+                        <option key={a.value} value={a.value}>{a.label}</option>
+                      ))}
+                    </select>
                   </div>
-                  {modelConfig.supportsEndFrame ? (
-                    endImage ? (
-                      <img src={endImage} alt="End frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
-                    ) : (
-                      <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
-                        <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh kết thúc</span>
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
-                      </label>
-                    )
-                  ) : (
-                    <div className="flex h-28 w-full flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/20 text-[var(--muted-foreground)] px-3 text-center">
-                      <span className="text-xs">Model này không hỗ trợ ảnh kết thúc</span>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
+                    <select
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                    >
+                      {modelConfig.durations.map((d) => (
+                        <option key={d.value} value={d.value}>{d.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {modelConfig.fps.length > 0 && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-[var(--muted-foreground)]">Tốc độ khung hình</label>
+                      <select
+                        value={fps}
+                        onChange={(e) => setFps(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                      >
+                        {modelConfig.fps.map((f) => (
+                          <option key={f.value} value={f.value}>{f.label}</option>
+                        ))}
+                      </select>
                     </div>
                   )}
                 </div>
-              </div>
-            </div>
 
-            {/* Credit info */}
-            <div className="text-center py-2.5 text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/60 rounded-xl border border-[var(--border)]">
-              Chi phí dự kiến: <span className="font-bold text-[var(--foreground)] underline">{calculateCredits()} tín dụng</span>
-            </div>
+                {/* Advanced Extra Configs */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--muted-foreground)] flex justify-between">
+                      <span>Seed ngẫu nhiên (Tùy chọn)</span>
+                      {!modelConfig.supportsSeed && (
+                        <span className="text-[10px] text-amber-500 font-normal">Tự động (Flow)</span>
+                      )}
+                    </label>
+                    <Input
+                      type="number"
+                      value={seed}
+                      onChange={(e) => setSeed(e.target.value)}
+                      disabled={!modelConfig.supportsSeed}
+                      placeholder={modelConfig.supportsSeed ? "Ví dụ: 12345" : "Tự động ngẫu nhiên"}
+                      className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] text-sm disabled:opacity-60"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--muted-foreground)]">Số bản ghi (Count / Multiplier)</label>
+                    <select
+                      value={count}
+                      onChange={(e) => setCount(e.target.value)}
+                      disabled={modelConfig.countOptions.length <= 1}
+                      className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-medium disabled:opacity-60"
+                    >
+                      {modelConfig.countOptions.map((c) => (
+                        <option key={c} value={String(c)}>
+                          {c === 1
+                            ? `1x (1 video - ${getVideoCreditCost(model, 1)} CR)`
+                            : `x${c} (${c} video - ${getVideoCreditCost(model, c)} CR)`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Keyframe & Start Image Upload */}
+                <div className="space-y-2 pt-2 border-t border-[var(--border)]">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-[var(--foreground)] flex items-center gap-1.5">
+                      <ImageIcon className="size-3.5 text-violet-500" />
+                      Đính kèm Ảnh (Image-to-Video & Keyframes)
+                    </label>
+                    <span className="text-[11px] text-[var(--muted-foreground)] font-medium">
+                      {startImage && endImage && modelConfig.supportsEndFrame
+                        ? "Chế độ Keyframe Animation"
+                        : startImage
+                        ? "Chế độ Image-to-Video"
+                        : "Chế độ Text-to-Video"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                        <span>Ảnh đầu (Start frame)</span>
+                        {startImage && (
+                          <button type="button" onClick={() => setStartImage(null)} className="text-rose-500 hover:text-rose-600">
+                            Xóa
+                          </button>
+                        )}
+                      </div>
+                      {startImage ? (
+                        <img src={startImage} alt="Start frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                      ) : (
+                        <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
+                          <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh bắt đầu</span>
+                          <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, true)} />
+                        </label>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs font-medium text-[var(--muted-foreground)]">
+                        <span>Ảnh cuối (End frame)</span>
+                        {endImage && (
+                          <button type="button" onClick={() => setEndImage(null)} className="text-rose-500 hover:text-rose-600">
+                            Xóa
+                          </button>
+                        )}
+                      </div>
+                      {modelConfig.supportsEndFrame ? (
+                        endImage ? (
+                          <img src={endImage} alt="End frame" className="h-28 w-full object-cover rounded-xl border border-[var(--border)] shadow-sm" />
+                        ) : (
+                          <label className="flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--border)] bg-[var(--muted)]/50 hover:bg-[var(--secondary)] transition">
+                            <span className="text-xs font-medium text-[var(--muted-foreground)]">+ Tải ảnh kết thúc</span>
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, false)} />
+                          </label>
+                        )
+                      ) : (
+                        <div className="flex h-28 w-full flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--muted)]/20 text-[var(--muted-foreground)] px-3 text-center">
+                          <span className="text-xs">Model này không hỗ trợ ảnh kết thúc</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Credit info */}
+                <div className="text-center py-2.5 text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/60 rounded-xl border border-[var(--border)]">
+                  Chi phí dự kiến: <span className="font-bold text-[var(--foreground)] underline">{calculateCredits()} tín dụng</span>
+                </div>
+              </>
+            )}
 
             {/* Generate Button */}
             <Button
               className="w-full h-12 rounded-xl bg-gradient-to-r from-violet-500 via-purple-600 to-indigo-600 text-white font-semibold hover:from-violet-600 hover:to-indigo-700 shadow-lg shadow-violet-500/25 transition-all"
               onClick={handleGenerate}
-              disabled={generating || !prompt.trim()}
+              disabled={generating || !prompt.trim() || !model}
             >
               {generating ? (
                 <>

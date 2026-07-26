@@ -34,14 +34,14 @@ export function CPAPoolDialog() {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent showCloseButton={false} className="rounded-2xl p-6">
         <DialogHeader className="gap-2">
-          <DialogTitle>{editingPool ? "Chỉnh sửakết nối" : "Thêm kết nối"}</DialogTitle>
+          <DialogTitle>{editingPool ? "Chỉnh sửa kết nối" : "Thêm kết nối"}</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {editingPool ? "sửa CPA kết nốithông tin" : "thêmmộtmới CLIProxyAPI kết nối"}
+            {editingPool ? "Sửa thông tin kết nối CPA" : "Thêm một kết nối CLIProxyAPI mới"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-[var(--foreground)]">Tên（tùy chọn）</label>
+            <label className="text-sm font-medium text-[var(--foreground)]">Tên (tùy chọn)</label>
             <Input
               value={formName}
               onChange={(event) => setFormName(event.target.value)}

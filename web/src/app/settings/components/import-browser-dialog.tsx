@@ -66,7 +66,7 @@ export function ImportBrowserDialog() {
         <DialogHeader className="gap-2">
           <DialogTitle>Chọn tài khoản cần nhập</DialogTitle>
           <DialogDescription className="text-sm leading-6">
-            {browserPool ? `来自 ${browserPool.name || browserPool.base_url}` : "Danh sách tài khoản từ xa"}
+            {browserPool ? `Từ ${browserPool.name || browserPool.base_url}` : "Danh sách tài khoản từ xa"}
           </DialogDescription>
         </DialogHeader>
 
@@ -76,7 +76,7 @@ export function ImportBrowserDialog() {
             <Input
               value={fileQuery}
               onChange={(event) => setFileQuery(event.target.value)}
-              placeholder="搜索 email 或文件名"
+              placeholder="Tìm theo email hoặc tên file"
               className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)] pl-10"
             />
           </div>
@@ -88,7 +88,7 @@ export function ImportBrowserDialog() {
               <SelectContent>
                 {PAGE_SIZE_OPTIONS.map((item) => (
                   <SelectItem key={item} value={item}>
-                    {item} / 页
+                    {item} / trang
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -107,9 +107,9 @@ export function ImportBrowserDialog() {
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
             <div className="flex items-center gap-3">
               <Checkbox checked={allFilteredSelected} onCheckedChange={(checked) => toggleSelectAllFiltered(Boolean(checked))} />
-              <span>Kết quả lọc {filteredFiles.length} 个</span>
+              <span>Kết quả lọc: {filteredFiles.length}</span>
             </div>
-            <span>Đã chọn {selectedNames.length} 个</span>
+            <span>Đã chọn: {selectedNames.length}</span>
           </div>
           <div className="max-h-[420px] overflow-auto">
             {pagedFiles.length === 0 ? (
@@ -135,8 +135,8 @@ export function ImportBrowserDialog() {
 
         <div className="flex items-center justify-between text-sm text-[var(--muted-foreground)]">
           <span>
-            第 {filteredFiles.length === 0 ? 0 : (safeFilePage - 1) * currentPageSize + 1} -{" "}
-            {Math.min(safeFilePage * currentPageSize, filteredFiles.length)} 条，共 {filteredFiles.length} 条
+            {filteredFiles.length === 0 ? 0 : (safeFilePage - 1) * currentPageSize + 1} -{" "}
+            {Math.min(safeFilePage * currentPageSize, filteredFiles.length)} trong tổng số {filteredFiles.length}
           </span>
           <div className="flex items-center gap-2">
             <Button

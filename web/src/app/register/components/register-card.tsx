@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { AlertTriangle, LoaderCircle, Plus, Play, RotateCcw, Save, Square, Trash2, UserPlus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,29 @@ export function RegisterCard() {
   const stats = config.stats || { success: 0, fail: 0, done: 0, running: 0, threads: config.threads };
   const providers = config.mail.providers || [];
   const logs = config.logs || [];
+
+  // Stable synthetic id cho từng dòng provider (mirror BotListEditor trong
+  // telegram-cloudflare-card.tsx). providers/updateProvider/deleteProvider đều
+  // thao tác theo index — dùng index làm React key khiến xóa dòng giữa lúc một
+  // ô khác đang gõ dở sẽ hoán giá trị dưới con trỏ. Gán id tăng dần theo đúng
+  // vị trí thêm/xóa (không đổi khi chỉ sửa nội dung) để key luôn ổn định.
+  const providerIdsRef = useRef<number[]>([]);
+  const providerSeqRef = useRef(1);
+  while (providerIdsRef.current.length < providers.length) {
+    providerIdsRef.current.push(providerSeqRef.current++);
+  }
+  if (providerIdsRef.current.length > providers.length) {
+    providerIdsRef.current.length = providers.length;
+  }
+  const handleAddProvider = () => {
+    providerIdsRef.current.push(providerSeqRef.current++);
+    addProvider();
+  };
+  const handleDeleteProvider = (index: number) => {
+    providerIdsRef.current.splice(index, 1);
+    deleteProvider(index);
+  };
+
   const updateProviderType = (index: number, type: string) => {
     updateProvider(index, {
       type,
@@ -121,7 +145,7 @@ export function RegisterCard() {
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">Cấu hình Email</h3>
                 <p className="mt-1 text-xs text-[var(--muted-foreground)]">Có thể cấu hình nhiều nhà cung cấp, xoay vòng theo thứ tự kích hoạt.</p>
               </div>
-              <Button type="button" variant="outline" className="h-9 rounded-xl border-[var(--border)] bg-[var(--card)] px-3 text-[var(--foreground)]" onClick={addProvider} disabled={config.enabled}>
+              <Button type="button" variant="outline" className="h-9 rounded-xl border-[var(--border)] bg-[var(--card)] px-3 text-[var(--foreground)]" onClick={handleAddProvider} disabled={config.enabled}>
                 <Plus className="size-4" />
                 Thêm
               </Button>
@@ -147,13 +171,13 @@ export function RegisterCard() {
                 const type = String(provider.type || "tempmail_lol");
                 const domains = Array.isArray(provider.domain) ? provider.domain.map(String).join("\n") : "";
                 return (
-                  <div key={index} className="space-y-3 border-t border-[var(--border)] pt-3 first:border-t-0 first:pt-0">
+                  <div key={providerIdsRef.current[index]} className="space-y-3 border-t border-[var(--border)] pt-3 first:border-t-0 first:pt-0">
                     <div className="flex items-center justify-between gap-3">
                       <label className="flex items-center gap-3 text-sm text-[var(--foreground)]">
                         <Checkbox checked={Boolean(provider.enable)} onCheckedChange={(checked) => updateProvider(index, { enable: Boolean(checked) })} disabled={config.enabled} />
                         Kích hoạt
                       </label>
-                      <button type="button" className="rounded-lg p-2 text-[var(--muted-foreground)] transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50" onClick={() => deleteProvider(index)} disabled={config.enabled || providers.length <= 1} title="Xóa provider">
+                      <button type="button" className="rounded-lg p-2 text-[var(--muted-foreground)] transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50" onClick={() => handleDeleteProvider(index)} disabled={config.enabled || providers.length <= 1} title="Xóa provider">
                         <Trash2 className="size-4" />
                       </button>
                     </div>

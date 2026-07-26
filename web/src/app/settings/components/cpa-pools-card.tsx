@@ -32,7 +32,7 @@ export function CPAPoolsCard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {pools.length > 0 ? <Badge className="rounded-md px-2.5 py-1">{pools.length} 个kết nối</Badge> : null}
+            {pools.length > 0 ? <Badge className="rounded-md px-2.5 py-1">{pools.length} kết nối</Badge> : null}
             <Button className="h-9 rounded-xl bg-[var(--primary)] px-4 text-[var(--primary-foreground)] hover:brightness-110" onClick={openAddDialog}>
               <Plus className="size-4" />
               Thêm kết nối
@@ -117,7 +117,7 @@ export function CPAPoolsCard() {
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-[var(--foreground)]">
-                              Trạng thái {importJob.status}，Đã 处理 {importJob.completed}/{importJob.total}
+                              Trạng thái {importJob.status}, đã xử lý {importJob.completed}/{importJob.total}
                             </div>
                             <div className="truncate text-xs text-[var(--muted-foreground)]">
                               Tác vụ {importJob.job_id.slice(0, 8)} · {importJob.created_at}

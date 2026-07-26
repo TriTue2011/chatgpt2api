@@ -165,7 +165,7 @@ export function UserKeysCard() {
   const handleCopy = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast.success("Đã Sao chép到剪贴板");
+      toast.success("Đã sao chép vào clipboard");
     } catch {
       toast.error("Sao chép thất bại, vui lòng sao chép thủ công");
     }
@@ -331,7 +331,7 @@ export function UserKeysCard() {
           <DialogHeader className="gap-2">
             <DialogTitle>Xóa khóa người dùng</DialogTitle>
             <DialogDescription className="text-sm leading-6">
-              Xác nhận xóa khóa người dùng 「{deletingItem?.name}」? Sau khi xóa khóa này sẽ không dùng được nữa.
+              Xác nhận xóa khóa người dùng "{deletingItem?.name}"? Sau khi xóa khóa này sẽ không dùng được nữa.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

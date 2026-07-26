@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +22,13 @@ export function SettingsSection({
   children,
 }: SettingsSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
+  // Chỉ mount children khi đã từng mở — tránh 15 card nặng cùng fetch/polling
+  // ngầm lúc /settings vừa tải (xem ActivityCollapse trong telegram-cloudflare-card.tsx).
+  // Mở rồi thì giữ mounted luôn để đóng lại không mất dữ liệu đang sửa dở.
+  const [hasOpened, setHasOpened] = useState(defaultOpen);
+  useEffect(() => {
+    if (open) setHasOpened(true);
+  }, [open]);
 
   return (
     <div
@@ -91,7 +98,7 @@ export function SettingsSection({
         )}
       >
         <div className="overflow-hidden">
-          <div className="p-5">{children}</div>
+          <div className="p-5">{hasOpened ? children : null}</div>
         </div>
       </div>
     </div>

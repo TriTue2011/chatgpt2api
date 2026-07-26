@@ -562,7 +562,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
           {pendingCpaImport ? (
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 text-sm leading-6 text-[var(--muted-foreground)]">
               Lần đọc gần nhất tìm thấy {pendingCpaImport.parsedFileCount} Token
-              {pendingCpaImport.errorCount > 0 ? `，ngoài ra có ${pendingCpaImport.errorCount} tệp không trích xuất thành công` : ""}。
+              {pendingCpaImport.errorCount > 0 ? `, ngoài ra có ${pendingCpaImport.errorCount} tệp không trích xuất thành công.` : "."}
             </div>
           ) : null}
         </div>
@@ -1387,7 +1387,7 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                 ? `Xác nhận đã nhận diện ${pendingCpaImport.parsedFileCount} Token, bạn có chắc chắn muốn nhập?`
                 : "Chưa đọc được Token nào khả dụng để nhập."}
               {pendingCpaImport?.errorCount
-                ? `，ngoài ra có ${pendingCpaImport.errorCount} tệp không trích xuất thành công.`
+                ? `, ngoài ra có ${pendingCpaImport.errorCount} tệp không trích xuất thành công.`
                 : "."}
             </DialogDescription>
           </DialogHeader>

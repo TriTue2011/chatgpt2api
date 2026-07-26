@@ -49,9 +49,9 @@ export function ConfigCard() {
       const data = await testProxy(candidate);
       setProxyTestResult(data.result);
       if (data.result.ok) {
-        toast.success(`Proxy khả dụng（${data.result.latency_ms} ms，HTTP ${data.result.status}）`);
+        toast.success(`Proxy khả dụng (${data.result.latency_ms} ms, HTTP ${data.result.status})`);
       } else {
-        toast.error(`Proxy không khả dụng：${data.result.error ?? "Lỗi không rõ"}`);
+        toast.error(`Proxy không khả dụng: ${data.result.error ?? "Lỗi không rõ"}`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Kiểm tra proxy thất bại");
@@ -112,8 +112,8 @@ export function ConfigCard() {
                 }`}
               >
                 {proxyTestResult.ok
-                  ? `Proxy khả dụng：HTTP ${proxyTestResult.status}，Thời gian phản hồi ${proxyTestResult.latency_ms} ms`
-                  : `Proxy không khả dụng：${proxyTestResult.error ?? "Lỗi không rõ"}（Thời gian phản hồi ${proxyTestResult.latency_ms} ms）`}
+                  ? `Proxy khả dụng: HTTP ${proxyTestResult.status}, thời gian phản hồi ${proxyTestResult.latency_ms} ms`
+                  : `Proxy không khả dụng: ${proxyTestResult.error ?? "Lỗi không rõ"} (thời gian phản hồi ${proxyTestResult.latency_ms} ms)`}
               </div>
             ) : null}
             <div className="flex justify-end">

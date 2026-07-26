@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, CheckCircle2, Globe, Database, ArrowUp, ArrowDown, Cpu } from "lucide-react";
+import { Search, CheckCircle2, Globe, Database, ArrowUp, ArrowDown, Cpu, LoaderCircle } from "lucide-react";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +18,7 @@ type CustomProvider = {
   prefix: string;
 };
 
-export default function SearchPage() {
+function SearchPageContent() {
   const [config, setConfig] = useState<any>({});
   const [combo, setCombo] = useState<string[]>([]);
   const [geminiKey, setGeminiKey] = useState("");
@@ -275,4 +276,18 @@ export default function SearchPage() {
       </div>
     </div>
   );
+}
+
+export default function SearchPage() {
+  const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+
+  if (isCheckingAuth || !session || session.role !== "admin") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <LoaderCircle className="size-5 animate-spin text-[var(--muted-foreground)]" />
+      </div>
+    );
+  }
+
+  return <SearchPageContent />;
 }

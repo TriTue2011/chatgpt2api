@@ -15,6 +15,7 @@ type EmailAcc = {
   uiId: number;
   id: string; label: string; enabled: boolean;
   imap_host: string; imap_port: string; smtp_host: string; smtp_port: string;
+  security: string; verify_ssl: boolean;
   user: string; password: string;
   allowed_senders: string; poll_seconds: string;
   reply_enabled: boolean; summarize_files: boolean;
@@ -39,6 +40,9 @@ const APP_PW_NOTE = (
       target="_blank" rel="noreferrer">Gmail</a>{" · "}
     <a className="underline" href="https://account.live.com/proofs/AppPassword"
       target="_blank" rel="noreferrer">Outlook</a>
+    {". "}Mail công ty/nội bộ (vd: @congty.vn) thì dùng <b>mật khẩu đăng nhập
+    thường</b> — hỏi IT lấy IMAP/SMTP host, và nếu server dùng chứng chỉ tự ký
+    thì tick «Chấp nhận mọi chứng chỉ».
   </>
 );
 
@@ -95,6 +99,8 @@ export function EmailCalendarCard() {
       enabled: Boolean(a.enabled),
       imap_host: String(a.imap_host || ""), imap_port: String(a.imap_port ?? 993),
       smtp_host: String(a.smtp_host || ""), smtp_port: String(a.smtp_port ?? 465),
+      security: String(a.security || (a.use_ssl === false ? "plain" : "ssl")),
+      verify_ssl: a.verify_ssl === undefined ? true : Boolean(a.verify_ssl),
       user: String(a.user || ""), password: String(a.password || ""),
       allowed_senders: toList(a.allowed_senders).join(", "),
       poll_seconds: String(a.poll_seconds ?? 60),
@@ -163,13 +169,18 @@ export function EmailCalendarCard() {
     const C = nextCals ?? cals;
     await saveConfig({
       ...config,
+      // `proxy` là bắt buộc trong SettingsConfig nhưng config nạp về có thể
+      // null/chưa có khóa này → giữ giá trị cũ, thiếu thì để rỗng.
+      proxy: config?.proxy ?? "",
       email_accounts: A.map((a) => ({
         id: a.id || undefined, label: a.label.trim(), enabled: a.enabled,
         imap_host: a.imap_host.trim(),
         imap_port: Math.max(1, parseInt(a.imap_port) || 993),
         smtp_host: a.smtp_host.trim(),
         smtp_port: Math.max(1, parseInt(a.smtp_port) || 465),
-        user: a.user.trim(), password: a.password, use_ssl: true,
+        user: a.user.trim(), password: a.password,
+        security: a.security || "ssl", use_ssl: a.security !== "plain",
+        verify_ssl: a.verify_ssl,
         poll_seconds: Math.max(20, parseInt(a.poll_seconds) || 60),
         allowed_senders: splitList(a.allowed_senders), mark_seen: true,
         reply_enabled: a.reply_enabled, summarize_files: a.summarize_files,
@@ -284,7 +295,8 @@ export function EmailCalendarCard() {
               const row: EmailAcc = {
                 uiId: seq.current++, id: "", label: "", enabled: true,
                 imap_host: "imap.gmail.com", imap_port: "993",
-                smtp_host: "", smtp_port: "465", user: "", password: "",
+                smtp_host: "", smtp_port: "465", security: "ssl", verify_ssl: true,
+                user: "", password: "",
                 allowed_senders: "*", poll_seconds: "60",
                 reply_enabled: false, summarize_files: true,
                 notify_on_new: true, notify_times: "", notify_targets: [],
@@ -356,16 +368,33 @@ export function EmailCalendarCard() {
                         onChange={(e) => patchAcc(a.uiId, { smtp_port: e.target.value })} />
                     </div>
                     <div>
+                      <label className="text-[10px] text-muted-foreground">Loại bảo mật</label>
+                      <select value={a.security}
+                        className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs"
+                        onChange={(e) => patchAcc(a.uiId, { security: e.target.value })}>
+                        <option value="ssl">SSL/TLS (IMAP 993 · SMTP 465)</option>
+                        <option value="starttls">STARTTLS (IMAP 143 · SMTP 587)</option>
+                        <option value="plain">Không mã hóa (không khuyến nghị)</option>
+                      </select>
+                    </div>
+                    <label className="flex items-end gap-1.5 pb-1 text-xs cursor-pointer select-none">
+                      <input type="checkbox" className="size-3.5" checked={!a.verify_ssl}
+                        onChange={() => patchAcc(a.uiId, { verify_ssl: !a.verify_ssl })} />
+                      Chấp nhận mọi chứng chỉ (server nội bộ tự ký)
+                    </label>
+                    <div>
                       <label className="text-[10px] text-muted-foreground">Địa chỉ email</label>
                       <Input value={a.user} className="h-8 text-xs"
                         onChange={(e) => patchAcc(a.uiId, { user: e.target.value })}
-                        placeholder="ban@gmail.com" />
+                        placeholder="ban@gmail.com hoặc ten@congty.vn" />
                     </div>
                     <div>
-                      <label className="text-[10px] text-muted-foreground">App Password</label>
+                      <label className="text-[10px] text-muted-foreground">
+                        Mật khẩu (Gmail/Outlook: App Password)
+                      </label>
                       <Input type="password" value={a.password} className="h-8 text-xs"
                         onChange={(e) => patchAcc(a.uiId, { password: e.target.value })}
-                        placeholder="16 ký tự — KHÔNG phải mật khẩu đăng nhập" />
+                        placeholder="Gmail: 16 ký tự · mail công ty: mật khẩu thường" />
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground">{APP_PW_NOTE}</p>

@@ -26,7 +26,7 @@ export function ProxySettingsCard() {
   const handleTest = async () => {
     const candidate = proxy.trim();
     if (!candidate) {
-      toast.error("请先填写Địa chỉ proxy");
+      toast.error("Vui lòng nhập địa chỉ proxy trước");
       return;
     }
     setIsTesting(true);
@@ -35,9 +35,9 @@ export function ProxySettingsCard() {
       const data = await testProxy(candidate);
       setTestResult(data.result);
       if (data.result.ok) {
-        toast.success(`代理可用（${data.result.latency_ms} ms，HTTP ${data.result.status}）`);
+        toast.success(`Proxy dùng được (${data.result.latency_ms} ms, HTTP ${data.result.status})`);
       } else {
-        toast.error(`代理不可用：${data.result.error ?? "未知错误"}`);
+        toast.error(`Proxy không dùng được: ${data.result.error ?? "Lỗi không xác định"}`);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Kiểm tra proxythất bại");
@@ -82,7 +82,7 @@ export function ProxySettingsCard() {
                 className="h-11 rounded-xl border-[var(--border)] bg-[var(--card)]"
               />
               <p className="text-sm text-[var(--muted-foreground)]">
-                Để trống nếu không dùng proxy. Nhập địa chỉ đầy đủ, VD: `http://127.0.0.1:7890`、`http://tên:mật khẩu@127.0.0.1:7890` 或 `socks5://127.0.0.1:7890`。
+                Để trống nếu không dùng proxy. Nhập địa chỉ đầy đủ, VD: `http://127.0.0.1:7890`, `http://tên:mật khẩu@127.0.0.1:7890` hoặc `socks5://127.0.0.1:7890`.
               </p>
             </div>
 
@@ -95,8 +95,8 @@ export function ProxySettingsCard() {
                 }`}
               >
                 {testResult.ok
-                  ? `代理可用：HTTP ${testResult.status}，用时 ${testResult.latency_ms} ms`
-                  : `代理不可用：${testResult.error ?? "未知错误"}（用时 ${testResult.latency_ms} ms）`}
+                  ? `Proxy dùng được: HTTP ${testResult.status}, thời gian ${testResult.latency_ms} ms`
+                  : `Proxy không dùng được: ${testResult.error ?? "Lỗi không xác định"} (thời gian ${testResult.latency_ms} ms)`}
               </div>
             ) : null}
 

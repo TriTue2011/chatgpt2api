@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Users, Cpu, Combine, ImageIcon,
@@ -625,7 +626,7 @@ export default function DashboardPage() {
         ].map((link) => {
           const Icon = link.icon;
           return (
-            <a
+            <Link
               key={link.href}
               href={link.href}
               className="bento-cell bento-sm group flex items-center gap-3 animate-in"
@@ -646,7 +647,7 @@ export default function DashboardPage() {
                 <p className="text-[10px] text-[var(--muted-foreground)] truncate">{link.desc}</p>
               </div>
               <ArrowRight className="size-3.5 text-[var(--muted-foreground)] shrink-0 transition-all group-hover:translate-x-1 group-hover:text-[var(--neon-cyan)]" />
-            </a>
+            </Link>
           );
         })}
       </div>

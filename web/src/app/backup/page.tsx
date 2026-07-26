@@ -1,9 +1,12 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive, ArrowLeftRight } from "lucide-react";
+import { Archive, Download, Upload, Trash2, RefreshCw, HardDrive, ArrowLeftRight, LoaderCircle } from "lucide-react";
+import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type BackupItem = {
   filename: string;
@@ -12,7 +15,7 @@ type BackupItem = {
   created_at: string;
 };
 
-export default function BackupPage() {
+function BackupPageContent() {
   const [backups, setBackups] = useState<BackupItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -21,6 +24,8 @@ export default function BackupPage() {
   const [importing, setImporting] = useState(false);
   const [uploadDrag, setUploadDrag] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [deletingBackup, setDeletingBackup] = useState<BackupItem | null>(null);
+  const [deletingInFlight, setDeletingInFlight] = useState(false);
 
   useEffect(() => {
     fetchBackups();
@@ -53,12 +58,16 @@ export default function BackupPage() {
   }
 
   async function deleteBackup(filename: string) {
+    setDeletingInFlight(true);
     try {
       await request.delete(`/api/v1/backups/${encodeURIComponent(filename)}`);
       setBackups((prev) => prev.filter((b) => b.filename !== filename));
       setMessage("Đã xóa sao lưu");
+      setDeletingBackup(null);
     } catch (e: any) {
       setMessage(`Lỗi: ${e?.message || "Không thể xóa"}`);
+    } finally {
+      setDeletingInFlight(false);
     }
   }
 
@@ -245,7 +254,7 @@ export default function BackupPage() {
               </div>
               <button
                 type="button"
-                onClick={() => deleteBackup(backup.filename)}
+                onClick={() => setDeletingBackup(backup)}
                 className="rounded-[10px] p-2 text-[var(--muted-foreground)] transition hover:bg-rose-50 hover:text-rose-500"
                 title="Xóa"
               >
@@ -255,6 +264,44 @@ export default function BackupPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={Boolean(deletingBackup)} onOpenChange={(open) => (!open ? setDeletingBackup(null) : null)}>
+        <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+          <DialogHeader className="gap-2">
+            <DialogTitle>Xóa bản sao lưu</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              Bạn có chắc chắn muốn xóa bản sao lưu "{deletingBackup?.filename}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setDeletingBackup(null)} disabled={deletingInFlight}>
+              Hủy
+            </Button>
+            <Button
+              className="rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => deletingBackup && void deleteBackup(deletingBackup.filename)}
+              disabled={deletingInFlight || !deletingBackup}
+            >
+              {deletingInFlight ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Xác nhận xóa
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+export default function BackupPage() {
+  const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+
+  if (isCheckingAuth || !session || session.role !== "admin") {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <LoaderCircle className="size-5 animate-spin text-[var(--muted-foreground)]" />
+      </div>
+    );
+  }
+
+  return <BackupPageContent />;
 }

@@ -9,6 +9,7 @@ import { request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type VideoItem = {
   path: string;
@@ -21,6 +22,8 @@ export default function VideoManagerPage() {
   const { session } = useAuthGuard(["admin", "user"]);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingVideo, setDeletingVideo] = useState<VideoItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadVideos = async () => {
     try {
@@ -45,12 +48,16 @@ export default function VideoManagerPage() {
   }, []);
 
   const handleDelete = async (path: string) => {
+    setIsDeleting(true);
     try {
       await request.post("/api/images/delete", { paths: [path] });
       toast.success("Đã xóa video");
+      setDeletingVideo(null);
       loadVideos();
     } catch (e: any) {
       toast.error(e?.response?.data?.detail?.error || "Không xóa được video");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -127,7 +134,7 @@ export default function VideoManagerPage() {
                     variant="outline"
                     size="sm"
                     className="rounded-lg text-xs text-rose-600 hover:bg-rose-50"
-                    onClick={() => handleDelete(video.path)}
+                    onClick={() => setDeletingVideo(video)}
                   >
                     <Trash2 className="size-3" />
                   </Button>
@@ -137,6 +144,30 @@ export default function VideoManagerPage() {
           ))}
         </div>
       )}
+
+      <Dialog open={Boolean(deletingVideo)} onOpenChange={(open) => (!open ? setDeletingVideo(null) : null)}>
+        <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+          <DialogHeader className="gap-2">
+            <DialogTitle>Xóa video</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              Bạn có chắc chắn muốn xóa video "{deletingVideo?.name}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setDeletingVideo(null)} disabled={isDeleting}>
+              Hủy
+            </Button>
+            <Button
+              className="rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => deletingVideo && void handleDelete(deletingVideo.path)}
+              disabled={isDeleting || !deletingVideo}
+            >
+              {isDeleting ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Xác nhận xóa
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

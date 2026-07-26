@@ -33,6 +33,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -129,6 +130,8 @@ export default function TeacherPage() {
   const [lessonTts, setLessonTts] = useState("");
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deletingLesson, setDeletingLesson] = useState<Lesson | null>(null);
+  const [deletingLessonBusy, setDeletingLessonBusy] = useState(false);
 
   // assignments
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -484,14 +487,17 @@ export default function TeacherPage() {
   };
 
   const deleteLesson = async (id: string) => {
-    if (!confirm("Xóa bài giảng này?")) return;
+    setDeletingLessonBusy(true);
     try {
       await request.delete(`/api/teacher/lessons/${id}`);
       toast.success("Đã xóa bài giảng");
       if (activeLesson?.id === id) setActiveLesson(null);
+      setDeletingLesson(null);
       void loadLessons();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Xóa lỗi");
+    } finally {
+      setDeletingLessonBusy(false);
     }
   };
 
@@ -988,14 +994,12 @@ export default function TeacherPage() {
                       type="button"
                       className="flex-1 text-left min-w-0"
                       onClick={async () => {
+                        // Chỉ set activeLesson (khối "Đang xem / HS đọc" bên dưới) —
+                        // KHÔNG ghi đè lessonTitle/Body/Tts vì đó là state của form soạn
+                        // bài đang dở; ghi đè sẽ làm mất bản nháp chưa lưu của giáo viên.
                         const r = await request.get(`/api/teacher/lessons/${l.id}`);
                         const full = (r.data as { lesson?: Lesson })?.lesson;
                         setActiveLesson(full || null);
-                        if (full) {
-                          setLessonTitle(full.title);
-                          setLessonBody(full.body_text);
-                          setLessonTts(full.tts_script);
-                        }
                       }}
                     >
                       <div className="font-medium truncate">{l.title}</div>
@@ -1009,7 +1013,7 @@ export default function TeacherPage() {
                       variant="ghost"
                       className="h-8 w-8 p-0 text-destructive shrink-0"
                       title="Xóa bài giảng"
-                      onClick={() => void deleteLesson(l.id)}
+                      onClick={() => setDeletingLesson(l)}
                     >
                       <Trash2 className="size-3.5" />
                     </Button>
@@ -1894,6 +1898,30 @@ export default function TeacherPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={Boolean(deletingLesson)} onOpenChange={(open) => (!open ? setDeletingLesson(null) : null)}>
+        <DialogContent showCloseButton={false} className="rounded-2xl p-6">
+          <DialogHeader className="gap-2">
+            <DialogTitle>Xóa bài giảng</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              Bạn có chắc chắn muốn xóa bài giảng "{deletingLesson?.title}"? Hành động này không thể hoàn tác.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-xl" onClick={() => setDeletingLesson(null)} disabled={deletingLessonBusy}>
+              Hủy
+            </Button>
+            <Button
+              className="rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+              onClick={() => deletingLesson && void deleteLesson(deletingLesson.id)}
+              disabled={deletingLessonBusy || !deletingLesson}
+            >
+              {deletingLessonBusy ? <LoaderCircle className="size-4 animate-spin" /> : null}
+              Xác nhận xóa
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
