@@ -264,12 +264,18 @@ class StateBackup:
                 for key_data in auth_keys:
                     if isinstance(key_data, dict):
                         try:
-                            key_name = str(key_data.get("name") or "restored_key")
-                            permissions = key_data.get("permissions") or ["chat", "image"]
-                            auth_service.create_key(key_name, permissions)
+                            # FIX: create_key la keyword-only (role bat buoc -
+                            # services/auth_service.py) - ban cu goi positional
+                            # theo "permissions" (khai niem khong con ton tai,
+                            # list_keys() chi tra id/name/role/enabled...) nen
+                            # LUON TypeError, bi except bare nuot mat -> restore
+                            # auth_keys tu backup la no-op am tham.
+                            key_name = str(key_data.get("name") or "").strip()
+                            role = "admin" if str(key_data.get("role") or "").strip().lower() == "admin" else "user"
+                            auth_service.create_key(role=role, name=key_name)
                             restored += 1
-                        except Exception:
-                            pass
+                        except Exception as key_exc:
+                            logger.warning({"event": "auth_key_restore_failed", "error": str(key_exc)[:160]})
                 if restored > 0:
                     report.sections_restored.append("auth_keys")
                     report.items_restored["auth_keys"] = restored
@@ -282,8 +288,11 @@ class StateBackup:
             if isinstance(combos, dict) and combos:
                 existing = config.data.get("combo_models") or {}
                 merged = {**existing, **combos}
-                config.data["combo_models"] = merged
-                config._save()
+                # FIX race: di qua update() thay vi mutate config.data + goi
+                # thang _save() - tranh race read-modify-write voi request
+                # POST /api/settings khac dang chay song song (update() giu
+                # config._lock xuyen suot merge -> save, xem services/config.py).
+                config.update({"combo_models": merged})
                 report.sections_restored.append("combo_models")
                 report.items_restored["combo_models"] = len(combos)
         except Exception as exc:

@@ -18,6 +18,7 @@ Config (tuỳ chọn, top-level ``security``)::
 """
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import logging
 import socket
@@ -44,6 +45,55 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         return None
+
+
+# ── DNS-rebinding TOCTOU (P0 SSRF) ───────────────────────────────────────────
+# check_url() ở trên resolve DNS (getaddrinfo) một lần để validate IP, nhưng
+# urlopen bên dưới tự resolve LẠI, độc lập, khi connect() thật sự chạy — nếu
+# attacker set TTL thấp, bản ghi A có thể đổi giữa 2 lần resolve, trỏ sang
+# 169.254.169.254/127.0.0.1/10.x SAU KHI đã "qua" check_url. Cách vá: không
+# so khớp lại IP đã check ở bước 1 (dễ vỡ với dịch vụ multi-IP hợp lệ — IP có
+# thể khác mà vẫn public, không phải lỗi) mà RE-VALIDATE chính IP vừa connect
+# thật, ngay sau khi TCP/TLS xong và TRƯỚC KHI đọc bất kỳ byte response nào.
+# Không đổi Host header/SNI (self.host giữ nguyên hostname gốc) nên tương
+# thích mọi virtual-host/cert hiện có — đổi ít nhất so với phương án "pin
+# thẳng vào IP + tự set SNI/Host".
+def _assert_peer_ip_safe(sock: socket.socket) -> None:
+    """An toàn trước: không lấy được peer IP (hiếm, socket lỗi) cũng chặn
+    luôn thay vì bỏ qua — mất khả năng verify coi như đáng ngờ."""
+    try:
+        peer_ip = sock.getpeername()[0].split("%", 1)[0]
+        ip_obj = ipaddress.ip_address(peer_ip)
+    except (OSError, ValueError, IndexError, AttributeError) as exc:
+        raise BlockedURL(f"Không xác định được peer IP sau khi kết nối: {exc}") from exc
+    if not ip_obj.is_global:
+        raise BlockedURL(f"DNS-rebinding phát hiện: peer thực tế {peer_ip} là private/nội bộ")
+
+
+class _PeerCheckedHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection verify lại peer IP ngay sau khi TCP connect xong."""
+
+    def connect(self) -> None:  # type: ignore[override]
+        super().connect()
+        _assert_peer_ip_safe(self.sock)
+
+
+class _PeerCheckedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection verify lại peer IP ngay sau khi TLS handshake xong."""
+
+    def connect(self) -> None:  # type: ignore[override]
+        super().connect()
+        _assert_peer_ip_safe(self.sock)
+
+
+class _PeerCheckedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_PeerCheckedHTTPConnection, req)
+
+
+class _PeerCheckedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):  # type: ignore[no-untyped-def]
+        return self.do_open(_PeerCheckedHTTPSConnection, req, context=self._context)
 
 
 def host_is_private(host: str) -> bool:
@@ -149,7 +199,12 @@ def safe_fetch(url: str, *, allow_hosts: set[str] | None = None,
     Không dùng urllib follow-redirect mặc định (tránh SSRF qua Location → private).
     """
     current = check_url(url, allow_hosts=allow_hosts)
-    opener = urllib.request.build_opener(_NoRedirect())
+    # _PeerCheckedHTTP(S)Handler chặn DNS-rebinding TOCTOU giữa check_url()
+    # (resolve #1) và connect() thật của urlopen (resolve #2) — xem docstring
+    # _assert_peer_ip_safe().
+    opener = urllib.request.build_opener(
+        _NoRedirect(), _PeerCheckedHTTPHandler(), _PeerCheckedHTTPSHandler()
+    )
     last_err: Exception | None = None
     for hop in range(max_redirects + 1):
         try:

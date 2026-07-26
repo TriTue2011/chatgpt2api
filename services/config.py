@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 import time
 
@@ -89,6 +90,14 @@ def _normalize_backup_include(value: object) -> dict[str, bool]:
 
 def _normalize_backup_settings(value: object) -> dict[str, object]:
     source = value if isinstance(value, dict) else {}
+    passphrase = str(source.get("passphrase") or "").strip()
+    # FIX security: backup ghi nguyen config.json (moi provider key, bot token,
+    # HA/MCP credential) o dang doc duoc; encrypt truoc day mac dinh False du
+    # da co passphrase, de lo secret khi archive upload len R2. An toan truoc:
+    # da cau hinh passphrase thi mac dinh BAT ma hoa - chi tat khi admin CHU
+    # DONG set encrypt=false. Khong doi hanh vi giai ma (van tu-detect qua
+    # duoi .enc), chi doi GIA TRI MAC DINH khi field bi thieu/None.
+    encrypt_default = bool(passphrase)
     return {
         "enabled": _normalize_bool(source.get("enabled"), False),
         "provider": "cloudflare_r2",
@@ -99,8 +108,8 @@ def _normalize_backup_settings(value: object) -> dict[str, object]:
         "prefix": str(source.get("prefix") or "backups").strip().strip("/") or "backups",
         "interval_minutes": _normalize_positive_int(source.get("interval_minutes"), 360, 1),
         "rotation_keep": _normalize_positive_int(source.get("rotation_keep"), 10, 0),
-        "encrypt": _normalize_bool(source.get("encrypt"), False),
-        "passphrase": str(source.get("passphrase") or "").strip(),
+        "encrypt": _normalize_bool(source.get("encrypt"), encrypt_default),
+        "passphrase": passphrase,
         "include": _normalize_backup_include(source.get("include")),
     }
 
@@ -639,9 +648,16 @@ def _normalize_zalo_personal_account_admins(value: object) -> dict[str, dict]:
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = path
+        # FIX race: update()/_save()/load path phai cung 1 lock - truoc day
+        # update() lam read-modify-write tren self.data khong khoa gi ca, 2
+        # request POST /api/settings chay song song (2 tab admin, hoac 1 luong
+        # tu dong ghi de luc admin dang sua tay) co the mat field cua nhau.
+        # RLock (khong phai Lock) vi _save() duoc goi lai tu trong update()
+        # (da giu san lock) - Lock thuong se tu deadlock o day.
+        self._lock = threading.RLock()
+        self._storage_backend: StorageBackend | None = None
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.data = self._load()
-        self._storage_backend: StorageBackend | None = None
         if _is_invalid_auth_key(self.auth_key):
             raise ValueError(
                 "❌ auth-key 未设置！\n"
@@ -652,18 +668,75 @@ class ConfigStore:
                 '   "auth-key": "your_real_auth_key"'
             )
 
-    def _load(self) -> dict[str, object]:
-        # Load from data dir first (persists across restarts), fallback to root
+    def _load_local_file(self) -> dict[str, object]:
+        """Doc truc tiep config.json cuc bo (data/config.json, fallback root
+        config.json) - doc lap STORAGE_BACKEND. Dung lam (1) nguon tu-migrate
+        khi backend khac (postgres/git...) chua co du lieu, va (2) luoi an
+        toan never-empty cua _load() khi backend loi."""
         if CONFIG_DATA_FILE.exists():
             return _read_json_object(CONFIG_DATA_FILE, name="data/config.json")
         return _read_json_object(self.path, name="config.json")
 
+    @staticmethod
+    def _write_json_atomic(target: Path, data: dict[str, object]) -> None:
+        """Ghi JSON atomic (temp file + os.replace) - khong bao gio de file o
+        trang thai ghi do/rong neu tien trinh bi ngat giua chung."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_path, target)
+
+    def _load(self) -> dict[str, object]:
+        with self._lock:
+            local_data = self._load_local_file()
+            try:
+                backend = self.get_storage_backend()
+                backend_data = backend.load_config()
+            except Exception as exc:
+                print(
+                    f"[config] Backend storage doc config loi: {exc} - "
+                    f"dung tam file cuc bo (data/config.json).",
+                    file=sys.stderr,
+                )
+                return local_data
+            if isinstance(backend_data, dict) and backend_data:
+                return backend_data
+            if local_data:
+                try:
+                    backend.save_config(local_data)
+                    print(
+                        f"[config] Backend storage chua co config - da tu dong import "
+                        f"{len(local_data)} khoa tu file cuc bo (giu nguyen file lam ban sao luu).",
+                        file=sys.stderr,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[config] Tu dong import config vao backend that bai: {exc} - "
+                        f"van dung file cuc bo cho phien nay.",
+                        file=sys.stderr,
+                    )
+                return local_data
+            return backend_data if isinstance(backend_data, dict) else {}
+
     def _save(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_DATA_FILE.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        # Also sync to root if different (backward compat)
-        if self.path != CONFIG_DATA_FILE:
-            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self._lock:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            snapshot = dict(self.data)
+            backend_name = os.getenv("STORAGE_BACKEND", "json").lower().strip()
+            if backend_name == "json":
+                self.get_storage_backend().save_config(snapshot)
+            else:
+                self._write_json_atomic(CONFIG_DATA_FILE, snapshot)
+                try:
+                    self.get_storage_backend().save_config(snapshot)
+                except Exception as exc:
+                    print(
+                        f"[config] Ghi config vao storage backend '{backend_name}' that bai: {exc}. "
+                        f"Da ghi file cuc bo (data/config.json) lam phao cuu sinh.",
+                        file=sys.stderr,
+                    )
+            if self.path != CONFIG_DATA_FILE:
+                self._write_json_atomic(self.path, snapshot)
 
     @property
     def auth_key(self) -> str:
@@ -1000,85 +1073,88 @@ class ConfigStore:
         return str(self.data.get("proxy") or "").strip()
 
     def update(self, data: dict[str, object]) -> dict[str, object]:
-        next_data = dict(self.data)
-        incoming = dict(data or {})
+        with self._lock:
+            next_data = dict(self.data)
+            incoming = dict(data or {})
 
-        # Deep-merge providers / custom_providers so a partial save (or a UI
-        # that only posts api_key) cannot wipe sibling providers or multi-key
-        # lists like Gemini AI Studio api_keys[]. Shallow dict.update() used to
-        # replace the entire "providers" object and reset keys after rebuilds /
-        # settings saves.
-        for map_key in ("providers", "custom_providers"):
-            if map_key not in incoming:
-                continue
-            new_map = incoming.get(map_key)
-            if not isinstance(new_map, dict):
-                continue
-            old_map = next_data.get(map_key)
-            if not isinstance(old_map, dict):
-                old_map = {}
-            merged_map: dict[str, object] = dict(old_map)
-            for pid, pcfg in new_map.items():
-                if isinstance(pcfg, dict) and isinstance(merged_map.get(pid), dict):
-                    merged_map[pid] = _merge_provider_config(
-                        merged_map[pid],  # type: ignore[arg-type]
-                        pcfg,
-                    )
-                else:
-                    merged_map[pid] = (
-                        _normalize_multi_api_keys(dict(pcfg))
-                        if isinstance(pcfg, dict)
-                        else pcfg
-                    )
-            incoming[map_key] = merged_map
+            # Deep-merge providers / custom_providers so a partial save (or a UI
+            # that only posts api_key) cannot wipe sibling providers or multi-key
+            # lists like Gemini AI Studio api_keys[]. Shallow dict.update() used to
+            # replace the entire "providers" object and reset keys after rebuilds /
+            # settings saves.
+            for map_key in ("providers", "custom_providers"):
+                if map_key not in incoming:
+                    continue
+                new_map = incoming.get(map_key)
+                if not isinstance(new_map, dict):
+                    continue
+                old_map = next_data.get(map_key)
+                if not isinstance(old_map, dict):
+                    old_map = {}
+                merged_map: dict[str, object] = dict(old_map)
+                for pid, pcfg in new_map.items():
+                    if isinstance(pcfg, dict) and isinstance(merged_map.get(pid), dict):
+                        merged_map[pid] = _merge_provider_config(
+                            merged_map[pid],  # type: ignore[arg-type]
+                            pcfg,
+                        )
+                    else:
+                        merged_map[pid] = (
+                            _normalize_multi_api_keys(dict(pcfg))
+                            if isinstance(pcfg, dict)
+                            else pcfg
+                        )
+                incoming[map_key] = merged_map
 
-        next_data.update(incoming)
-        if "backup" in next_data:
-            next_data["backup"] = _normalize_backup_settings(next_data.get("backup"))
-        if "thread_filters" in next_data:
-            next_data["thread_filters"] = _normalize_thread_filters(next_data.get("thread_filters"))
-        if "thread_user_filters" in next_data:
-            next_data["thread_user_filters"] = _normalize_thread_user_filters(next_data.get("thread_user_filters"))
-        if "thread_mention_filters" in next_data:
-            next_data["thread_mention_filters"] = _normalize_thread_mention_filters(next_data.get("thread_mention_filters"))
-        if "thread_forward_filters" in next_data:
-            next_data["thread_forward_filters"] = _normalize_thread_forward_filters(next_data.get("thread_forward_filters"))
-        if "channel_blacklist" in next_data:
-            next_data["channel_blacklist"] = _normalize_channel_blacklist(next_data.get("channel_blacklist"))
-        if "telegram_bots" in next_data:
-            next_data["telegram_bots"] = _normalize_bots(next_data.get("telegram_bots"), None, None, None)
-        if "zalo_bots" in next_data:
-            next_data["zalo_bots"] = _normalize_bots(next_data.get("zalo_bots"), None, None, None)
-        if "zalo_personal_account_admins" in next_data:
-            next_data["zalo_personal_account_admins"] = _normalize_zalo_personal_account_admins(
-                next_data.get("zalo_personal_account_admins")
-            )
-        # Keep multi-key lists consistent for known API-key providers
-        providers = next_data.get("providers")
-        if isinstance(providers, dict):
-            for pid, pcfg in list(providers.items()):
-                if isinstance(pcfg, dict) and (
-                    "api_key" in pcfg or "api_keys" in pcfg or "apiKeys" in pcfg
-                ):
-                    providers[pid] = _normalize_multi_api_keys(pcfg)
-            next_data["providers"] = providers
-        custom_providers = next_data.get("custom_providers")
-        if isinstance(custom_providers, dict):
-            for pid, pcfg in list(custom_providers.items()):
-                if isinstance(pcfg, dict) and (
-                    "api_key" in pcfg or "api_keys" in pcfg or "apiKeys" in pcfg
-                ):
-                    custom_providers[pid] = _normalize_multi_api_keys(pcfg)
-            next_data["custom_providers"] = custom_providers
-        next_data.pop("backup_state", None)
-        self.data = next_data
-        self._save()
+            next_data.update(incoming)
+            if "backup" in next_data:
+                next_data["backup"] = _normalize_backup_settings(next_data.get("backup"))
+            if "thread_filters" in next_data:
+                next_data["thread_filters"] = _normalize_thread_filters(next_data.get("thread_filters"))
+            if "thread_user_filters" in next_data:
+                next_data["thread_user_filters"] = _normalize_thread_user_filters(next_data.get("thread_user_filters"))
+            if "thread_mention_filters" in next_data:
+                next_data["thread_mention_filters"] = _normalize_thread_mention_filters(next_data.get("thread_mention_filters"))
+            if "thread_forward_filters" in next_data:
+                next_data["thread_forward_filters"] = _normalize_thread_forward_filters(next_data.get("thread_forward_filters"))
+            if "channel_blacklist" in next_data:
+                next_data["channel_blacklist"] = _normalize_channel_blacklist(next_data.get("channel_blacklist"))
+            if "telegram_bots" in next_data:
+                next_data["telegram_bots"] = _normalize_bots(next_data.get("telegram_bots"), None, None, None)
+            if "zalo_bots" in next_data:
+                next_data["zalo_bots"] = _normalize_bots(next_data.get("zalo_bots"), None, None, None)
+            if "zalo_personal_account_admins" in next_data:
+                next_data["zalo_personal_account_admins"] = _normalize_zalo_personal_account_admins(
+                    next_data.get("zalo_personal_account_admins")
+                )
+            # Keep multi-key lists consistent for known API-key providers
+            providers = next_data.get("providers")
+            if isinstance(providers, dict):
+                for pid, pcfg in list(providers.items()):
+                    if isinstance(pcfg, dict) and (
+                        "api_key" in pcfg or "api_keys" in pcfg or "apiKeys" in pcfg
+                    ):
+                        providers[pid] = _normalize_multi_api_keys(pcfg)
+                next_data["providers"] = providers
+            custom_providers = next_data.get("custom_providers")
+            if isinstance(custom_providers, dict):
+                for pid, pcfg in list(custom_providers.items()):
+                    if isinstance(pcfg, dict) and (
+                        "api_key" in pcfg or "api_keys" in pcfg or "apiKeys" in pcfg
+                    ):
+                        custom_providers[pid] = _normalize_multi_api_keys(pcfg)
+                next_data["custom_providers"] = custom_providers
+            next_data.pop("backup_state", None)
+            self.data = next_data
+            self._save()
+
         # Invalidate model cache when settings change (combo_models, providers, etc.)
         try:
             from services.protocol.openai_v1_models import invalidate_models_cache
             invalidate_models_cache()
         except Exception:
             pass
+
         return self.get()
 
     def get_backup_settings(self) -> dict[str, object]:

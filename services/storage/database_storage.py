@@ -30,6 +30,18 @@ class AuthKeyModel(Base):
     data = Column(Text, nullable=False)
 
 
+class ConfigDocumentModel(Base):
+    """Toàn bộ config.json ở dạng 1 document JSON — CHỦ Ý dùng cột Text/JSON
+    thay vì tách cột kiểu (typed columns) cho từng field, để field lạ/mới
+    thêm sau này KHÔNG BAO GIỜ bị rơi khi lưu vào DB (root cause sự cố production:
+    đổi STORAGE_BACKEND=postgres làm mất 42 khoá config vì config.json từng
+    nằm ngoài storage abstraction). Chỉ 1 hàng cố định (id=1)."""
+    __tablename__ = "config_document"
+
+    id = Column(Integer, primary_key=True, autoincrement=False)
+    data = Column(Text, nullable=False)
+
+
 class DatabaseStorageBackend(StorageBackend):
     """数据库存储后端（支持 SQLite、PostgreSQL、MySQL 等）"""
 
@@ -70,6 +82,41 @@ class DatabaseStorageBackend(StorageBackend):
     def save_auth_keys(self, auth_keys: list[dict[str, Any]]) -> None:
         """保存鉴权密钥数据到数据库"""
         self._save_rows(AuthKeyModel, auth_keys, "id", "key_id")
+
+    _CONFIG_DOC_ID = 1
+
+    def load_config(self) -> dict[str, Any]:
+        """加载全局配置文档（单行 JSON document，xem ConfigDocumentModel）。"""
+        session = self.Session()
+        try:
+            row = session.query(ConfigDocumentModel).filter_by(id=self._CONFIG_DOC_ID).first()
+            if row is None:
+                return {}
+            try:
+                data = json.loads(row.data)
+            except json.JSONDecodeError:
+                return {}
+            return data if isinstance(data, dict) else {}
+        finally:
+            session.close()
+
+    def save_config(self, data: dict[str, Any]) -> None:
+        """保存全局配置文档 — upsert 1 hàng duy nhất, ghi đè nguyên document
+        (không tách cột) nên không key nào có thể bị rơi khi lưu."""
+        session = self.Session()
+        try:
+            payload = json.dumps(data, ensure_ascii=False)
+            row = session.query(ConfigDocumentModel).filter_by(id=self._CONFIG_DOC_ID).first()
+            if row is None:
+                session.add(ConfigDocumentModel(id=self._CONFIG_DOC_ID, data=payload))
+            else:
+                row.data = payload
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
 
     def _load_rows(self, model: type[AccountModel] | type[AuthKeyModel]) -> list[dict[str, Any]]:
         session = self.Session()
@@ -124,12 +171,14 @@ class DatabaseStorageBackend(StorageBackend):
                 session.execute(text("SELECT 1"))
                 count = session.query(AccountModel).count()
                 auth_key_count = session.query(AuthKeyModel).count()
+                has_config = session.query(ConfigDocumentModel).filter_by(id=self._CONFIG_DOC_ID).first() is not None
                 return {
                     "status": "healthy",
                     "backend": "database",
                     "database_url": self._mask_password(self.database_url),
                     "account_count": count,
                     "auth_key_count": auth_key_count,
+                    "has_config_document": has_config,
                 }
             finally:
                 session.close()

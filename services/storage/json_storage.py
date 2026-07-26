@@ -89,15 +89,21 @@ class _FileLock:
 class JSONStorageBackend(StorageBackend):
     """本地 JSON 文件存储后端 với file locking cho concurrent access safety."""
 
-    def __init__(self, file_path: Path, auth_keys_path: Path | None = None):
+    def __init__(self, file_path: Path, auth_keys_path: Path | None = None, config_path: Path | None = None):
         self.file_path = file_path
         self.auth_keys_path = auth_keys_path or file_path.with_name("auth_keys.json")
+        # config.json cùng thư mục data — mặc định TRÙNG với CONFIG_DATA_FILE
+        # (services/config.py) để ConfigStore đi qua storage abstraction mà
+        # không đổi đường dẫn file thật (byte-compatible với hành vi cũ).
+        self.config_path = config_path or file_path.with_name("config.json")
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self.auth_keys_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Create per-file locks for thread-safe concurrent access
         self._file_lock = _FileLock(file_path.with_name(f".{file_path.name}.lock"))
         self._auth_lock = _FileLock(auth_keys_path.with_name(f".{auth_keys_path.name}.lock") if auth_keys_path else file_path.with_name(".auth_keys.json.lock"))
+        self._config_lock = _FileLock(self.config_path.with_name(f".{self.config_path.name}.lock"))
 
     @staticmethod
     def _load_json_list(file_path: Path) -> list[dict[str, Any]]:
@@ -168,6 +174,36 @@ class JSONStorageBackend(StorageBackend):
         finally:
             self._auth_lock.release()
 
+    def load_config(self) -> dict[str, Any]:
+        """加载 config.json — byte-compatible với ConfigStore._load() cũ (đọc
+        thẳng file, không có thì trả {} rỗng, lỗi parse cũng trả {} rỗng)."""
+        self._config_lock.acquire()
+        try:
+            if not self.config_path.exists():
+                return {}
+            try:
+                data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, Exception):
+                return {}
+            return data if isinstance(data, dict) else {}
+        finally:
+            self._config_lock.release()
+
+    def save_config(self, data: dict[str, Any]) -> None:
+        """保存 config.json — atomic write (temp file + os.replace), giữ đúng
+        yêu cầu an toàn: không bao giờ để file ở trạng thái ghi dở/rỗng."""
+        self._config_lock.acquire()
+        try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.config_path.with_suffix('.tmp')
+            tmp_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(tmp_path, self.config_path)
+        finally:
+            self._config_lock.release()
+
     def health_check(self) -> dict[str, Any]:
         """健康检查"""
         try:
@@ -181,6 +217,8 @@ class JSONStorageBackend(StorageBackend):
                 "file_path": str(self.file_path),
                 "auth_keys_file_exists": self.auth_keys_path.exists(),
                 "auth_keys_file_path": str(self.auth_keys_path),
+                "config_file_exists": self.config_path.exists(),
+                "config_file_path": str(self.config_path),
             }
         except Exception as e:
             return {
@@ -198,4 +236,6 @@ class JSONStorageBackend(StorageBackend):
             "file_exists": self.file_path.exists(),
             "auth_keys_file_path": str(self.auth_keys_path),
             "auth_keys_file_exists": self.auth_keys_path.exists(),
+            "config_file_path": str(self.config_path),
+            "config_file_exists": self.config_path.exists(),
         }

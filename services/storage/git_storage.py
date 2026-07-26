@@ -22,6 +22,7 @@ class GitStorageBackend(StorageBackend):
         branch: str = "main",
         file_path: str = "accounts.json",
         auth_keys_file_path: str = "auth_keys.json",
+        config_file_path: str = "config.json",
         local_cache_dir: Path | None = None,
     ):
         self.repo_url = repo_url
@@ -29,6 +30,7 @@ class GitStorageBackend(StorageBackend):
         self.branch = branch
         self.file_path = file_path
         self.auth_keys_file_path = auth_keys_file_path
+        self.config_file_path = config_file_path
         
         # 本地缓存目录
         if local_cache_dir is None:
@@ -117,6 +119,23 @@ class GitStorageBackend(StorageBackend):
             print(f"[git-storage] save failed: {e}")
             raise e
 
+    def load_config(self) -> dict[str, Any]:
+        """从 Git 仓库加载全局配置文档（config.json — xem services/storage/base.py）"""
+        try:
+            data = self._load_json_value(self.config_file_path)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            print(f"[git-storage] load config failed: {e}")
+            raise
+
+    def save_config(self, data: dict[str, Any]) -> None:
+        """保存全局配置文档到 Git 仓库"""
+        try:
+            self._save_json_file(self.config_file_path, data, "Update config data")
+        except Exception as e:
+            print(f"[git-storage] save config failed: {e}")
+            raise e
+
     def _load_json_file(self, file_path: str) -> list[dict[str, Any]]:
         data = self._load_json_value(file_path)
         return data if isinstance(data, list) else []
@@ -170,6 +189,7 @@ class GitStorageBackend(StorageBackend):
             "branch": self.branch,
             "file_path": self.file_path,
             "auth_keys_file_path": self.auth_keys_file_path,
+            "config_file_path": self.config_file_path,
         }
 
     @staticmethod

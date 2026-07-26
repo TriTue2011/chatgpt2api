@@ -167,23 +167,33 @@ def _freshen_google(profile: str) -> bool:
 # ── Steps riêng theo provider ────────────────────────────────────────────────
 
 def _codex_pick_working(email: str) -> str:
-    """Quét pool tìm token codex CÒN SỐNG của email; dọn token chết cùng email."""
+    """Quet pool tim token codex CON SONG cua email; don token chet cung email.
+
+    FIX: khong duoc giu account_service._lock xuyen suot vong goi mang
+    (list_models, timeout=30) - lock nay gate gan nhu moi thao tac account o
+    request-path, mot luot quet nhieu account chet co the khoa ca traffic
+    song hang chuc giay moi lan. Snapshot token duoi lock -> probe network
+    KHONG lock -> ghi ket qua qua update_account() (tu lock ngan moi lan).
+    Theo dung pattern services/providers/antigravity.py::_try_refresh_antigravity_token.
+    """
     from services.account_service import account_service, account_group
     from services.openai_backend_api import OpenAIBackendAPI
     good = ""
     with account_service._lock:
-        for k, a in list(account_service._accounts.items()):
-            if not isinstance(a, dict) or account_group(a) != "codex":
-                continue
-            if str(a.get("email") or "").lower() != email.lower() or not str(k).startswith("eyJ"):
-                continue
-            try:
-                OpenAIBackendAPI(access_token=k).list_models()
-                good = k
-                a["status"] = "active"
-            except Exception:
-                a["status"] = "disabled"
-        account_service._save_accounts()
+        candidates = [
+            k for k, a in account_service._accounts.items()
+            if isinstance(a, dict) and account_group(a) == "codex"
+            and str(a.get("email") or "").lower() == email.lower()
+            and str(k).startswith("eyJ")
+        ]
+
+    for token in candidates:
+        try:
+            OpenAIBackendAPI(access_token=token).list_models()
+            good = token
+            account_service.update_account(token, {"status": "active"})
+        except Exception:
+            account_service.update_account(token, {"status": "disabled"})
     return good
 
 
@@ -786,17 +796,19 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
             new_token = str(updated.get("access_token") or "")
             old_token = str(account.get("access_token") or "")
             if new_token and new_token != old_token:
-                # update_account forces the old key, so re-key manually.
-                with account_service._lock:
-                    account_service._accounts.pop(old_token, None)
-                    normalized = account_service._normalize_account(updated)
-                    if normalized:
-                        account_service._accounts[new_token] = normalized
-                    account_service._save_accounts()
-                _notify(f"✅ {label} — {email}\nKhôi phục xong ([T0] refresh token mới). Dùng lại bình thường.",
-                        {**det, "step": "T0-refresh-ok"})
-                logger.info({"event": "recovery_ok", "email": email})
-                return new_token
+                # update_account() DA ho tro re-key qua updates["access_token"]
+                # (services/account_service.py) va merge voi hang LIVE trong
+                # _accounts (khong phai snapshot "account" cu chup truoc luc
+                # goi mang refresh) - dung thang thay vi tu pop/normalize/
+                # reinsert thu cong, tranh mat field doi song song trong luc
+                # cho refresh network (notes sua tay, mark_image_result bump,
+                # quota_watcher doi status...).
+                result = account_service.update_account(old_token, updated)
+                if result is not None:
+                    _notify(f"✅ {label} — {email}\nKhôi phục xong ([T0] refresh token mới). Dùng lại bình thường.",
+                            {**det, "step": "T0-refresh-ok"})
+                    logger.info({"event": "recovery_ok", "email": email})
+                    return new_token
     except Exception as exc:
         logger.warning({"event": "recovery_error", "email": email, "error": str(exc)[:150]})
 

@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from services.config import config
 from services.proxy_service import proxy_settings
 
-DEFAULT_REVIEW_PROMPT = "判断用户请求是否允许。只回答 ALLOW 或 REJECT。"
+DEFAULT_REVIEW_PROMPT = "Đánh giá yêu cầu của người dùng có được phép không. CHỈ trả lời ALLOW hoặc REJECT."
 
 
 def _text(value: object) -> str:
@@ -23,13 +23,27 @@ def request_text(*values: object) -> str:
     return "\n".join(part for value in values if (part := _text(value).strip()))
 
 
+# Ky tu zero-width (u200b/u200c/u200d/ufeff/u2060) - cach ne bo loc pho bien
+# bang cach chen ky tu vo hinh xen giua tu nhay cam. Strip truoc khi so khop.
+_ZERO_WIDTH_TRANS = str.maketrans("", "", "\u200b\u200c\u200d\ufeff\u2060")
+
+
+def _fold(value: str) -> str:
+    return value.translate(_ZERO_WIDTH_TRANS).casefold()
+
+
 def check_request(text: str) -> None:
     text = str(text or "")
     if not text:
         return
+    # FIX bypass: truoc day so khop case-sensitive ("if word in text") - vi
+    # ai_review (LLM) mac dinh tat (services/config.py), list nay la cong chan
+    # NOI DUNG DUY NHAT theo mac dinh, chi can viet hoa/thuong khac la lot qua.
+    # casefold() ca 2 ve (khong chi .lower() - xu ly dung ca ky tu da ngon ngu).
+    folded_text = _fold(text)
     for word in config.sensitive_words:
-        if word in text:
-            raise HTTPException(status_code=400, detail={"error": "检测到敏感词，拒绝本次任务"})
+        if _fold(word) in folded_text:
+            raise HTTPException(status_code=400, detail={"error": "Phát hiện từ nhạy cảm — đã từ chối yêu cầu này"})
     review = config.ai_review
     if not review.get("enabled"):
         return
@@ -39,7 +53,7 @@ def check_request(text: str) -> None:
     if not base_url or not api_key or not model:
         raise HTTPException(status_code=400, detail={"error": "ai review config is incomplete"})
     prompt = str(review.get("prompt") or DEFAULT_REVIEW_PROMPT).strip()
-    content = f"{prompt}\n\n用户请求:\n{text}\n\n只回答 ALLOW 或 REJECT。"
+    content = f"{prompt}\n\nYêu cầu người dùng:\n{text}\n\nCHỈ trả lời ALLOW hoặc REJECT."
     try:
         response = requests.post(
             f"{base_url}/v1/chat/completions",
@@ -53,4 +67,4 @@ def check_request(text: str) -> None:
         raise HTTPException(status_code=502, detail={"error": f"ai review failed: {exc}"}) from exc
     if result.startswith(("allow", "pass", "true", "yes", "通过", "允许", "安全")):
         return
-    raise HTTPException(status_code=400, detail={"error": "AI 审核未通过，拒绝本次任务"})
+    raise HTTPException(status_code=400, detail={"error": "AI kiểm duyệt không đạt — đã từ chối yêu cầu này"})

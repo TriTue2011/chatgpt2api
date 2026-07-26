@@ -17,6 +17,7 @@ from curl_cffi import requests
 
 from services.config import BASE_DIR, CONFIG_FILE, DATA_DIR, config, load_backup_state, save_backup_state
 from services.image_tags_service import TAGS_FILE
+from utils.log import logger
 
 
 def _utc_now() -> datetime:
@@ -506,6 +507,23 @@ class BackupService:
         client.validate()
         payload_raw = self._build_backup_archive(settings, trigger=trigger)
         encrypted = bool(settings.get("encrypt"))
+        include = settings.get("include") if isinstance(settings.get("include"), dict) else {}
+        if not encrypted and include.get("config"):
+            # FIX security: archive khong ma hoa nhung include.config=True se
+            # ghim nguyen config.json (moi provider api key, bot token
+            # Telegram/Zalo, credential HA/MCP...) o dang doc duoc roi upload
+            # thang len Cloudflare R2 - _normalize_backup_settings() da doi
+            # default encrypt=True khi co passphrase, nhung admin van co the
+            # tat tay; canh bao ro de khong ai vo tinh de lo secret qua R2.
+            logger.warning({
+                "event": "backup_upload_plaintext_secrets",
+                "trigger": trigger,
+                "message": (
+                    "Backup KHONG ma hoa va include.config=True - file .tar.gz "
+                    "sap upload len R2 chua config.json o dang DOC DUOC. "
+                    "Bat backup.encrypt + dat passphrase de tranh lo secret."
+                ),
+            })
         if encrypted:
             passphrase = _clean(settings.get("passphrase"))
             if not passphrase:

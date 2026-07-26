@@ -117,8 +117,10 @@ def _store_profiles(groups: set[str]) -> list[str]:
     tự xuất hiện — khỏi khai báo tay trong providers.*.profiles."""
     try:
         from services.account_service import account_service, account_group
-        accs = account_service._accounts
-        items = list(accs.values()) if isinstance(accs, dict) else list(accs)
+        # FIX race: _accounts la dict song, doc truc tiep khong lock co the
+        # RuntimeError "dictionary changed size during iteration" neu co mutate
+        # dong thoi (rotation profile crash). list_accounts() da tu lock+copy.
+        items = account_service.list_accounts()
     except Exception:
         return []
     out: list[str] = []

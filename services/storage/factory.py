@@ -52,6 +52,7 @@ def create_storage_backend(data_dir: Path) -> StorageBackend:
         branch = os.getenv("GIT_BRANCH", "main").strip()
         file_path = os.getenv("GIT_FILE_PATH", "accounts.json").strip()
         auth_keys_file_path = os.getenv("GIT_AUTH_KEYS_FILE_PATH", "auth_keys.json").strip()
+        config_file_path = os.getenv("GIT_CONFIG_FILE_PATH", "config.json").strip()
         
         if not repo_url:
             raise ValueError(
@@ -68,6 +69,7 @@ def create_storage_backend(data_dir: Path) -> StorageBackend:
             branch=branch,
             file_path=file_path,
             auth_keys_file_path=auth_keys_file_path,
+            config_file_path=config_file_path,
             local_cache_dir=cache_dir,
         )
     
