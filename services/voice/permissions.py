@@ -35,45 +35,50 @@ def _cfg(key: str) -> dict[str, Any]:
         return {}
 
 
-def _groups_for(platform: str, bot_id: str, chat_id: str) -> set[str] | None:
+def _groups_for(platform: str, bot_id: str, chat_id: str,
+                topic_id: str | int | None = None) -> set[str] | None:
     from services.agent import capabilities as caps
-    return caps.allowed_groups_for_bot(platform, bot_id, chat_id)
+    return caps.allowed_groups_for_bot(platform, bot_id, chat_id, topic_id)
 
 
-def _user_groups_for(platform: str, bot_id: str, chat_id: str,
-                     user_id: str) -> set[str] | None:
+def _user_groups_for(platform: str, bot_id: str, chat_id: str, user_id: str,
+                     topic_id: str | int | None = None) -> set[str] | None:
     from services.agent import capabilities as caps
-    return caps.user_filter_for_bot(platform, bot_id, chat_id, str(user_id or ""))
+    return caps.user_filter_for_bot(platform, bot_id, chat_id,
+                                    str(user_id or ""), topic_id)
 
 
 def wants_voice_reply(platform: str, bot_id: str, chat_id: str,
-                      user_id: str = "") -> bool:
-    """Tin trả lời cho (thread, user) này có nên gửi kèm âm thanh không?
+                      user_id: str = "",
+                      topic_id: str | int | None = None) -> bool:
+    """Tin trả lời cho (thread[, topic], user) này có nên gửi kèm âm thanh không?
 
     - Thread chưa có bản ghi lọc nào → False (không tự ý gửi voice).
-    - Thread bật tts_reply → True cho mọi người trong thread.
-    - Thread KHÔNG bật nhưng user bật riêng → chỉ user đó True.
+    - Thread/topic bật tts_reply → True cho mọi người trong phạm vi đó
+      (topic là tập con của nhóm — capabilities đã giao sẵn quyền).
+    - Không bật nhưng user bật riêng → chỉ user đó True.
     """
-    group_allow = _groups_for(platform, bot_id, chat_id)
+    group_allow = _groups_for(platform, bot_id, chat_id, topic_id)
     if group_allow is not None and TTS_REPLY in group_allow:
         return True
     if user_id:
-        user_allow = _user_groups_for(platform, bot_id, chat_id, user_id)
+        user_allow = _user_groups_for(platform, bot_id, chat_id, user_id, topic_id)
         if user_allow is not None and TTS_REPLY in user_allow:
             return True
     return False
 
 
 def can_use_speakers(platform: str, bot_id: str, chat_id: str,
-                     user_id: str = "", *, is_admin_thread: bool = False) -> bool:
+                     user_id: str = "", *, is_admin_thread: bool = False,
+                     topic_id: str | int | None = None) -> bool:
     """Thread/user này được phép ra lệnh phát loa không? Admin thread = có."""
     if is_admin_thread:
         return True
-    group_allow = _groups_for(platform, bot_id, chat_id)
+    group_allow = _groups_for(platform, bot_id, chat_id, topic_id)
     if group_allow is not None and TTS_SPEAKER in group_allow:
         return True
     if user_id:
-        user_allow = _user_groups_for(platform, bot_id, chat_id, user_id)
+        user_allow = _user_groups_for(platform, bot_id, chat_id, user_id, topic_id)
         if user_allow is not None and TTS_SPEAKER in user_allow:
             return True
     return False

@@ -1220,8 +1220,8 @@ export function TelegramCloudflareCard() {
   /** Khối «Lọc theo User ID» — dùng CHUNG cho user cấp NHÓM (topic=null) và user
    *  TRONG TOPIC. Là hàm trả JSX (không phải component) nên React không remount
    *  → đang gõ trong Input không bị mất con trỏ sau mỗi lần ghi config.
-   *  Persona/giọng nói dùng khóa cấp nhóm (backend chỉ đọc khóa đó, không có
-   *  khóa theo topic) — không hứa điều backend chưa làm. */
+   *  Persona/giọng nói trong topic dùng khóa '#topic' — backend fallback
+   *  user-topic → user-nhóm → topic → nhóm (persona.prompt_for/session_voice). */
   const renderUserList = (row: FilterRow, topic: TopicRow | null) => {
     const holder: FilterRow | TopicRow = topic ?? row;
     const tid = topic ? topic.id : null;
@@ -1354,12 +1354,18 @@ export function TelegramCloudflareCard() {
                       )}
                     </div>
                   )}
-                  {/* Persona RIÊNG user này trong thread — độc lập như webhook */}
-                  <PersonaInline platform={row.botKey} groupId={row.chatId}
+                  {/* Persona RIÊNG user này trong thread/topic — độc lập như
+                      webhook. Trong topic: khóa nhóm mang '#topic' để backend
+                      fallback user-topic → user-nhóm → topic → nhóm. */}
+                  <PersonaInline platform={row.botKey}
+                    groupId={topic && topic.topicId.trim()
+                      ? `${row.chatId}#${topic.topicId.trim()}` : row.chatId}
                     userId={u.userId} />
                   {/* Giọng nói RIÊNG user (picker hiện khi user bật tts_reply) */}
                   <VoiceScopeInline
-                    sessionKey={u.userId.trim() ? `${row.botKey}:${row.chatId}:${u.userId.trim()}` : ""}
+                    sessionKey={u.userId.trim()
+                      ? `${row.botKey}:${row.chatId}${topic && topic.topicId.trim() ? `#${topic.topicId.trim()}` : ""}:${u.userId.trim()}`
+                      : ""}
                     showVoicePicker={u.groups.includes("tts_reply")} />
                 </>
               ) : null}
@@ -1966,6 +1972,17 @@ export function TelegramCloudflareCard() {
                     </div>
                     {/* Lớp USER trong topic (cấp 3) */}
                     {renderUserList(row, t)}
+                    {/* Persona RIÊNG topic (user trong topic chưa cài → dùng
+                        persona topic; topic chưa cài → persona cả nhóm) */}
+                    {t.topicId.trim() ? (
+                      <PersonaInline platform={row.botKey}
+                        groupId={`${row.chatId}#${t.topicId.trim()}`} />
+                    ) : null}
+                    {/* Giọng đọc / tắt TTS / STT tiếng Anh RIÊNG topic */}
+                    <VoiceScopeInline
+                      sessionKey={t.topicId.trim() && row.chatId.trim()
+                        ? `${row.botKey}:${row.chatId.trim()}#${t.topicId.trim()}` : ""}
+                      showVoicePicker={t.groups.includes("tts_reply")} />
                     </>
                     ) : null}
                   </div>

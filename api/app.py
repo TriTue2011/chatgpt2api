@@ -139,6 +139,18 @@ def create_app() -> FastAPI:
             start_email_channel()
         except Exception as exc:
             _record_startup_failure("email_channel", str(exc))
+        # Lịch ICS — theo dõi sự kiện mới → tóm tắt gửi kênh
+        try:
+            from services.calendar_connector import start as start_calendar
+            start_calendar()
+        except Exception as exc:
+            _record_startup_failure("calendar", str(exc))
+        # Digest — mốc giờ định kỳ (email + lịch) gửi bản tổng hợp
+        try:
+            from services.digest import start as start_digest
+            start_digest()
+        except Exception as exc:
+            _record_startup_failure("digest", str(exc))
         # Pre-load HA client to start background scheduler
         try:
             from services.ha_client import format_states_context

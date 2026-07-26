@@ -208,16 +208,29 @@ def _save(data: dict) -> None:
 def prompt_for(user_id: str) -> str:
     """Khối persona nén cho system prompt — '' nếu phiên chưa cài.
 
-    Phân giải: key ĐÚNG phiên trước (user-trong-nhóm/1-1); chưa có thì
-    fallback key cấp NHÓM (admin cài cho cả nhóm, user chưa cài riêng dùng chung).
-    """
+    Phân giải: key ĐÚNG phiên trước (user-trong-nhóm/1-1); chưa có thì fallback
+    key cấp NHÓM (admin cài cho cả nhóm, user chưa cài riêng dùng chung).
+
+    Nhóm Telegram bật Topics: key mang '#topic' ('chat#7:u55') → thử hẹp → rộng:
+    user-trong-topic → user-cả-nhóm → topic → nhóm. Key không '#' đi 2 bước cũ."""
     key = str(user_id)
     with _LOCK:
         data = _load()
-    entry = data.get(key)
-    if entry is None and ":u" in key:
-        entry = data.get(key.split(":u", 1)[0])
-    return str((entry or {}).get("prompt") or "")
+    keys = [key]
+    base, _, uid = key.partition(":u")
+    if "#" in base:
+        group = base.split("#", 1)[0]
+        if uid:
+            keys.append(f"{group}:u{uid}")   # user cài ở cấp nhóm
+        keys.append(base)                    # persona của topic
+        keys.append(group)                   # persona cả nhóm
+    elif uid:
+        keys.append(base)
+    for k in keys:
+        entry = data.get(k)
+        if entry is not None:
+            return str((entry or {}).get("prompt") or "")
+    return ""
 
 
 # ── Giọng TTS theo persona (item: voice tone theo persona) ──────────────────

@@ -167,21 +167,44 @@ class RunJournalTests(unittest.TestCase):
 
 class EmailAllowTests(unittest.TestCase):
     def test_fail_closed_and_star(self) -> None:
-        with mock.patch.dict(config.data, {"email_channel": {
-            "enabled": True, "user": "a@b.com", "allowed_senders": [],
+        # _allowed nay nhận (acc, sender) — mỗi hộp mail một danh sách riêng.
+        self.assertFalse(ec._allowed({"allowed_senders": []}, "x@y.com"))
+        self.assertTrue(ec._allowed({"allowed_senders": ["*"]}, "x@y.com"))
+        acc = {"allowed_senders": ["friend@gmail.com", "@family.com"]}
+        self.assertTrue(ec._allowed(acc, "friend@gmail.com"))
+        self.assertTrue(ec._allowed(acc, "a@family.com"))
+        self.assertFalse(ec._allowed(acc, "stranger@evil.com"))
+
+    def test_legacy_single_account_fallback(self) -> None:
+        # email_accounts rỗng → email_channel cũ thành hộp #1 (không mất cấu hình)
+        with mock.patch.dict(config.data, {"email_accounts": [], "email_channel": {
+            "enabled": True, "user": "a@b.com", "imap_host": "imap.b.com",
+            "allowed_senders": ["*"],
         }}):
-            self.assertFalse(ec._allowed("x@y.com"))
-        with mock.patch.dict(config.data, {"email_channel": {
-            "enabled": True, "user": "a@b.com", "allowed_senders": ["*"],
-        }}):
-            self.assertTrue(ec._allowed("x@y.com"))
-        with mock.patch.dict(config.data, {"email_channel": {
-            "enabled": True, "user": "a@b.com",
-            "allowed_senders": ["friend@gmail.com", "@family.com"],
-        }}):
-            self.assertTrue(ec._allowed("friend@gmail.com"))
-            self.assertTrue(ec._allowed("a@family.com"))
-            self.assertFalse(ec._allowed("stranger@evil.com"))
+            accs = ec.accounts()
+            self.assertEqual(len(accs), 1)
+            self.assertEqual(accs[0]["user"], "a@b.com")
+            self.assertTrue(accs[0]["enabled"])
+            # hành vi cũ: AI trả lời thẳng vào email
+            self.assertTrue(accs[0]["reply_enabled"])
+
+    def test_multi_accounts(self) -> None:
+        with mock.patch.dict(config.data, {"email_accounts": [
+            {"enabled": True, "user": "a@b.com", "imap_host": "imap.b.com"},
+            {"enabled": False, "user": "c@d.com", "imap_host": "imap.d.com",
+             "notify_times": "07:00, 18:30",
+             "notify_targets": "tg:123:-100, zalo:9:88"},
+        ]}):
+            accs = ec.accounts()
+            self.assertEqual(len(accs), 2)
+            self.assertTrue(ec.is_enabled())
+            # chuỗi phẩy → list
+            self.assertEqual(accs[1]["notify_times"], ["07:00", "18:30"])
+            self.assertEqual(accs[1]["notify_targets"], ["tg:123:-100", "zalo:9:88"])
+            # smtp đoán từ imap khi bỏ trống
+            self.assertEqual(accs[0]["smtp_host"], "smtp.b.com")
+            # id ổn định theo user (đổi thứ tự không mất state)
+            self.assertEqual(accs[0]["id"], ec.accounts()[0]["id"])
 
     def test_user_id_stable(self) -> None:
         a = ec._user_id_for("Me@Example.com")

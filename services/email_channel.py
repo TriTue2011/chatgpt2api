@@ -1,22 +1,29 @@
-"""Email channel — IMAP poll inbound + SMTP reply (self-hosted, no broker).
+"""Email channel — NHIỀU hộp mail: IMAP poll vào + SMTP trả lời + tóm tắt gửi kênh.
 
-Config (``email_channel``)::
+Config ``email_accounts`` (list — mỗi phần tử một hộp mail)::
 
-    enabled: bool (default False)
-    imap_host: str
-    imap_port: int (default 993)
-    smtp_host: str
-    smtp_port: int (default 465)
-    user: str
-    password: str
-    use_ssl: bool (default True)
-    poll_seconds: int (default 60, min 20)
-    allowed_senders: list[str]  — empty = deny-all; ["*"] = allow any
-    subject_prefix: str (default "[Tiểu Vy]")
-    max_body_chars: int (default 6000)
-    mark_seen: bool (default True)
+    id: str                  — khóa ổn định (tự sinh nếu thiếu)
+    label: str               — tên hiển thị ("Gmail chính")
+    enabled: bool
+    imap_host / imap_port    (mặc định 993)
+    smtp_host / smtp_port    (mặc định 465; trống thì đoán từ imap_host)
+    user: str                — địa chỉ email
+    password: str            — GMAIL/OUTLOOK BẮT BUỘC "App Password" (mật khẩu
+                               ứng dụng 16 ký tự), KHÔNG dùng mật khẩu đăng nhập:
+                               https://myaccount.google.com/apppasswords
+    use_ssl: bool (True)
+    allowed_senders: list[str]  — rỗng = chặn hết; ["*"] = nhận mọi người
+    mark_seen: bool (True)
+    max_body_chars: int (6000)
+    poll_seconds: int (60, min 20)
+    reply_enabled: bool      — AI trả lời thẳng vào email (hành vi cũ)
+    summarize_files: bool    — tóm tắt CẢ nội dung tệp đính kèm
+    notify_on_new: bool      — có mail mới là tóm tắt gửi kênh ngay
+    notify_times: list[str]  — ["07:00", "18:00"] gom lại gửi định kỳ
+    notify_targets: list[str]— kênh nhận, khóa 'plat:bot:chat' như «Lọc thread»
 
-Inbound → agent orchestrate(user_id=email_<hash>) → SMTP reply.
+Tương thích ngược: ``email_accounts`` rỗng thì đọc ``email_channel`` (cấu hình
+một-hộp cũ) thành hộp mail #1 — không ghi đè, không cần migrate.
 """
 
 from __future__ import annotations
@@ -26,15 +33,17 @@ import email.policy
 import hashlib
 import imaplib
 import logging
+import os
 import re
 import smtplib
 import ssl
+import tempfile
 import threading
 import time
 from email.header import decode_header, make_header
 from email.message import EmailMessage
-from email.utils import parseaddr, formataddr
-from typing import Any, Optional
+from email.utils import parseaddr
+from typing import Any
 
 from services.config import config
 
@@ -42,55 +51,204 @@ logger = logging.getLogger(__name__)
 
 _started = False
 _stop = threading.Event()
-_status: dict[str, Any] = {
-    "running": False,
-    "last_poll_at": 0.0,
-    "last_error": "",
-    "processed": 0,
-    "skipped": 0,
-}
 _lock = threading.RLock()
+# Trạng thái theo TỪNG hộp: {source_key: {...}}
+_status_by_acc: dict[str, dict[str, Any]] = {}
+_last_poll_at: dict[str, float] = {}
+
+#: Gmail/Outlook bật 2FA thì mật khẩu thường bị từ chối — dịch lỗi thô của IMAP
+#: thành hướng dẫn làm được ngay (đây là lỗi hay gặp nhất khi cài email).
+_APP_PW_HINT = (
+    "Cần App Password (mật khẩu ứng dụng), KHÔNG dùng mật khẩu đăng nhập. "
+    "Gmail: bật 2FA rồi lấy 16 ký tự tại https://myaccount.google.com/apppasswords "
+    "· Outlook: https://account.live.com/proofs/AppPassword"
+)
 
 
-def _cfg() -> dict[str, Any]:
+def _friendly_error(exc: Exception | str) -> str:
+    """Lỗi IMAP/SMTP → câu tiếng Việt hành động được."""
+    raw = str(exc)
+    low = raw.lower()
+    if "application-specific password" in low or "app password" in low:
+        return f"❌ {_APP_PW_HINT}"
+    if ("invalid credentials" in low or "authenticationfailed" in low
+            or ("auth" in low and "fail" in low)):
+        return f"❌ Sai tài khoản hoặc mật khẩu. {_APP_PW_HINT}"
+    if "name or service not known" in low or "getaddrinfo" in low:
+        return "❌ Sai IMAP/SMTP host (không phân giải được tên miền)."
+    if "timed out" in low or "timeout" in low:
+        return "❌ Hết thời gian kết nối — kiểm tra host/port hoặc firewall."
+    if "certificate" in low:
+        return "❌ Lỗi chứng chỉ SSL — thử tắt SSL hoặc kiểm tra lại port."
+    return f"❌ {raw[:200]}"
+
+
+# ── Danh sách hộp mail ───────────────────────────────────────────────────────
+def _legacy() -> dict[str, Any]:
     raw = config.get().get("email_channel")
     return raw if isinstance(raw, dict) else {}
 
 
+def _norm_account(raw: Any, idx: int) -> dict[str, Any] | None:
+    """Chuẩn hóa một hộp mail; None nếu không phải dict."""
+    if not isinstance(raw, dict):
+        return None
+    user = str(raw.get("user") or "").strip()
+    acc_id = str(raw.get("id") or "").strip()
+    if not acc_id:
+        # id ổn định theo user để state 'seen' không mất khi đổi thứ tự danh sách
+        acc_id = hashlib.sha256(user.lower().encode()).hexdigest()[:8] if user else f"a{idx + 1}"
+
+    def _int(key: str, default: int, lo: int = 1) -> int:
+        try:
+            return max(lo, int(raw.get(key) or default))
+        except (TypeError, ValueError):
+            return default
+
+    imap_host = str(raw.get("imap_host") or "").strip()
+    smtp_host = str(raw.get("smtp_host") or "").strip()
+    if not smtp_host and imap_host:
+        smtp_host = imap_host.replace("imap.", "smtp.")
+    senders = raw.get("allowed_senders")
+    if isinstance(senders, str):
+        senders = [s.strip() for s in senders.split(",") if s.strip()]
+    times = raw.get("notify_times")
+    if isinstance(times, str):
+        times = [s.strip() for s in times.split(",") if s.strip()]
+    targets = raw.get("notify_targets")
+    if isinstance(targets, str):
+        targets = [s.strip() for s in targets.split(",") if s.strip()]
+    return {
+        "id": acc_id,
+        "label": str(raw.get("label") or user or f"Hộp mail {idx + 1}").strip(),
+        "enabled": bool(raw.get("enabled")),
+        "imap_host": imap_host,
+        "imap_port": _int("imap_port", 993),
+        "smtp_host": smtp_host,
+        "smtp_port": _int("smtp_port", 465),
+        "user": user,
+        "password": str(raw.get("password") or ""),
+        "use_ssl": bool(raw.get("use_ssl", True)),
+        "allowed_senders": [str(s) for s in (senders or []) if str(s).strip()],
+        "mark_seen": bool(raw.get("mark_seen", True)),
+        "max_body_chars": _int("max_body_chars", 6000, lo=500),
+        "poll_seconds": _int("poll_seconds", 60, lo=20),
+        "subject_prefix": str(raw.get("subject_prefix") or "[Tiểu Vy]"),
+        "reply_enabled": bool(raw.get("reply_enabled", False)),
+        "summarize_files": bool(raw.get("summarize_files", True)),
+        "notify_on_new": bool(raw.get("notify_on_new", True)),
+        "notify_times": [str(t) for t in (times or []) if str(t).strip()],
+        "notify_targets": [str(t) for t in (targets or []) if str(t).strip()],
+    }
+
+
+def accounts() -> list[dict[str, Any]]:
+    """Mọi hộp mail đã cấu hình (đã chuẩn hóa). ``email_accounts`` rỗng thì lấy
+    ``email_channel`` cũ làm hộp #1 để cấu hình đang chạy không mất."""
+    raw = config.get().get("email_accounts")
+    out: list[dict[str, Any]] = []
+    if isinstance(raw, list) and raw:
+        for i, item in enumerate(raw):
+            acc = _norm_account(item, i)
+            if acc and acc.get("user"):
+                out.append(acc)
+        if out:
+            return out
+    legacy = _legacy()
+    if str(legacy.get("user") or "").strip():
+        acc = _norm_account({**legacy,
+                             "label": legacy.get("label") or "Hộp mail chính",
+                             # hành vi cũ của email_channel là AI trả lời thư
+                             "reply_enabled": legacy.get("reply_enabled", True)}, 0)
+        if acc:
+            out.append(acc)
+    return out
+
+
+def source_key(acc: dict[str, Any]) -> str:
+    """Khóa nguồn dùng cho digest state."""
+    return f"email:{str(acc.get('id') or '').strip() or 'a1'}"
+
+
+def account_by_id(account_id: str) -> dict[str, Any] | None:
+    aid = str(account_id or "").strip()
+    accs = accounts()
+    if not aid:
+        return accs[0] if accs else None
+    for a in accs:
+        if a.get("id") == aid or a.get("user") == aid:
+            return a
+    return None
+
+
 def is_enabled() -> bool:
-    c = _cfg()
-    return bool(c.get("enabled")) and bool(str(c.get("user") or "").strip())
+    """Có ít nhất một hộp mail đang bật."""
+    return any(a.get("enabled") for a in accounts())
 
 
 def status() -> dict[str, Any]:
+    """Trạng thái tổng + theo từng hộp (UI hiện từng dòng)."""
+    accs = accounts()
+    rows: list[dict[str, Any]] = []
+    total_processed = 0
+    first_error = ""
     with _lock:
-        s = dict(_status)
-    s["enabled"] = is_enabled()
-    c = _cfg()
-    s["user"] = str(c.get("user") or "")
-    s["imap_host"] = str(c.get("imap_host") or "")
-    return s
+        for a in accs:
+            st = dict(_status_by_acc.get(source_key(a)) or {})
+            processed = int(st.get("processed") or 0)
+            total_processed += processed
+            err = str(st.get("last_error") or "")
+            if err and not first_error:
+                first_error = err
+            rows.append({
+                "id": a.get("id"),
+                "label": a.get("label"),
+                "user": a.get("user"),
+                "enabled": bool(a.get("enabled")),
+                "imap_host": a.get("imap_host"),
+                "processed": processed,
+                "skipped": int(st.get("skipped") or 0),
+                "last_poll_at": float(st.get("last_poll_at") or 0),
+                "last_error": err,
+                "notify_targets": a.get("notify_targets") or [],
+                "notify_times": a.get("notify_times") or [],
+                "notify_on_new": bool(a.get("notify_on_new")),
+            })
+    return {
+        "running": _started,
+        "enabled": is_enabled(),
+        "accounts": rows,
+        "count": len(rows),
+        "processed": total_processed,
+        "last_error": first_error,
+        # giữ 2 khóa cũ để UI/log cũ không vỡ
+        "user": rows[0]["user"] if rows else "",
+        "imap_host": rows[0]["imap_host"] if rows else "",
+    }
 
 
-def _poll_seconds() -> float:
-    try:
-        return max(20.0, float(_cfg().get("poll_seconds") or 60))
-    except (TypeError, ValueError):
-        return 60.0
+def _mark_status(acc: dict[str, Any], **patch: Any) -> None:
+    key = source_key(acc)
+    with _lock:
+        st = _status_by_acc.setdefault(key, {})
+        for k, v in patch.items():
+            if k in {"processed", "skipped"}:
+                st[k] = int(st.get(k) or 0) + int(v)
+            else:
+                st[k] = v
 
 
-def _allowed(sender: str) -> bool:
-    raw = _cfg().get("allowed_senders")
+# ── Lọc người gửi ────────────────────────────────────────────────────────────
+def _allowed(acc: dict[str, Any], sender: str) -> bool:
+    raw = acc.get("allowed_senders")
     if not isinstance(raw, list) or not raw:
-        return False  # fail-closed
+        return False  # fail-closed: trống = chặn hết
     sender_l = (sender or "").strip().lower()
     for item in raw:
         a = str(item or "").strip().lower()
         if not a:
             continue
-        if a == "*":
-            return True
-        if a == sender_l:
+        if a == "*" or a == sender_l:
             return True
         if a.startswith("@") and sender_l.endswith(a):
             return True
@@ -114,12 +272,7 @@ def _decode_hdr(val: Any) -> str:
         return str(val)
 
 
-def _extract_body(msg: email.message.Message) -> str:
-    max_c = 6000
-    try:
-        max_c = max(500, int(_cfg().get("max_body_chars") or 6000))
-    except (TypeError, ValueError):
-        pass
+def _extract_body(msg: email.message.Message, max_c: int = 6000) -> str:
     text_parts: list[str] = []
     html_parts: list[str] = []
     if msg.is_multipart():
@@ -159,6 +312,79 @@ def _extract_body(msg: email.message.Message) -> str:
     return body[:max_c]
 
 
+# ── Tệp đính kèm ─────────────────────────────────────────────────────────────
+_PLAIN_EXT = {".txt", ".md", ".csv", ".log", ".json", ".yml", ".yaml", ".ini"}
+_DOC_EXT = {".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt", ".html", ".htm", ".epub"}
+_ATTACH_MAX = 8 * 1024 * 1024   # bỏ qua tệp > 8MB (tránh treo vòng poll)
+_ATTACH_CHARS = 4000            # text lấy ra mỗi tệp
+
+
+def _attachment_text(filename: str, payload: bytes) -> str:
+    """Nội dung CHỮ của một tệp đính kèm ('' nếu không đọc được).
+
+    PDF dùng chung đường trích của luồng PDF (OCR nếu là bản scan); tệp Office /
+    HTML qua markitdown; tệp text đọc trực tiếp. Không raise."""
+    name = str(filename or "file")
+    ext = os.path.splitext(name)[1].lower()
+    if not payload or len(payload) > _ATTACH_MAX:
+        return ""
+    try:
+        if ext in _PLAIN_EXT:
+            return payload.decode("utf-8", errors="replace")[:_ATTACH_CHARS]
+        if ext == ".pdf":
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(payload)
+                path = f.name
+            try:
+                from services.pdf_intent import extract_markdown
+                return (extract_markdown(path, max_pages=10) or "")[:_ATTACH_CHARS]
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        if ext in _DOC_EXT:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(payload)
+                path = f.name
+            try:
+                from markitdown import MarkItDown
+                return (MarkItDown().convert(path).text_content or "")[:_ATTACH_CHARS]
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+    except Exception as exc:
+        logger.warning("email: đọc tệp %s lỗi: %s", name, str(exc)[:140])
+    return ""
+
+
+def _attachments(msg: email.message.Message, *, read_text: bool) -> list[dict[str, Any]]:
+    """[{name, size, text}] — text rỗng nếu không đọc được / tắt tóm tắt tệp."""
+    out: list[dict[str, Any]] = []
+    if not msg.is_multipart():
+        return out
+    for part in msg.walk():
+        disp = str(part.get("Content-Disposition") or "").lower()
+        fname = _decode_hdr(part.get_filename() or "")
+        if "attachment" not in disp and not fname:
+            continue
+        try:
+            payload = part.get_payload(decode=True) or b""
+        except Exception:
+            payload = b""
+        item: dict[str, Any] = {"name": fname or "(không tên)",
+                                "size": len(payload), "text": ""}
+        if read_text and payload:
+            item["text"] = _attachment_text(fname, payload)
+        out.append(item)
+        if len(out) >= 5:      # 5 tệp/mail là đủ cho bản tóm tắt
+            break
+    return out
+
+
+# ── SMTP ─────────────────────────────────────────────────────────────────────
 def send_email(
     to_addr: str,
     subject: str,
@@ -166,23 +392,18 @@ def send_email(
     *,
     in_reply_to: str = "",
     references: str = "",
+    account_id: str = "",
 ) -> dict[str, Any]:
-    c = _cfg()
-    user = str(c.get("user") or "").strip()
-    password = str(c.get("password") or "")
-    host = str(c.get("smtp_host") or "").strip()
-    if not host:
-        # guess from imap
-        imap_h = str(c.get("imap_host") or "")
-        host = imap_h.replace("imap.", "smtp.") if imap_h else ""
-    try:
-        port = int(c.get("smtp_port") or 465)
-    except (TypeError, ValueError):
-        port = 465
-    use_ssl = bool(c.get("use_ssl", True))
+    """Gửi mail bằng hộp `account_id` (trống = hộp đầu tiên)."""
+    acc = account_by_id(account_id)
+    if not acc:
+        return {"ok": False, "error": "Chưa cấu hình hộp mail nào"}
+    user = acc["user"]
+    host = acc["smtp_host"]
+    port = int(acc["smtp_port"])
     if not user or not host or not to_addr:
         return {"ok": False, "error": "Thiếu smtp_host/user/to"}
-    prefix = str(c.get("subject_prefix") or "[Tiểu Vy]").strip()
+    prefix = str(acc.get("subject_prefix") or "").strip()
     subj = subject or "Re:"
     if prefix and prefix not in subj:
         subj = f"{prefix} {subj}"
@@ -196,11 +417,12 @@ def send_email(
         msg["References"] = references or in_reply_to
     msg.set_content(body or "(trống)")
 
+    use_ssl = bool(acc.get("use_ssl", True))
     try:
         if use_ssl and port == 465:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=30) as smtp:
-                smtp.login(user, password)
+            with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(),
+                                  timeout=30) as smtp:
+                smtp.login(user, acc["password"])
                 smtp.send_message(msg)
         else:
             with smtplib.SMTP(host, port, timeout=30) as smtp:
@@ -208,20 +430,42 @@ def send_email(
                 if use_ssl or port == 587:
                     smtp.starttls(context=ssl.create_default_context())
                     smtp.ehlo()
-                smtp.login(user, password)
+                smtp.login(user, acc["password"])
                 smtp.send_message(msg)
         return {"ok": True}
     except Exception as exc:
-        logger.warning("email_channel: smtp failed: %s", exc)
-        return {"ok": False, "error": str(exc)[:200]}
+        logger.warning("email_channel: smtp %s lỗi: %s", user, exc)
+        return {"ok": False, "error": _friendly_error(exc)}
 
 
-def _process_message(raw: bytes) -> str:
-    """Returns status: processed | skipped | error."""
+# ── Xử lý 1 mail ─────────────────────────────────────────────────────────────
+def _summary_text(acc: dict[str, Any], sender: str, subject: str,
+                  body: str, atts: list[dict[str, Any]]) -> str:
+    """Bản tóm tắt gửi vào kênh chat — gộp CẢ nội dung thư và nội dung tệp."""
+    from services import digest
+    parts = [f"Người gửi: {sender}",
+             f"Tiêu đề: {subject or '(không tiêu đề)'}", "",
+             body or "(thư không có nội dung chữ)"]
+    for a in atts:
+        if a.get("text"):
+            parts.append(f"\n--- Tệp: {a['name']} ---\n{a['text']}")
+    summary = digest.summarize("\n".join(parts), what="email")
+    head = f"📬 {acc.get('label') or acc.get('user')}"
+    lines = [f"{head}\n👤 {sender}\n✉️ {subject or '(không tiêu đề)'}", "", summary]
+    files = [a for a in atts if a.get("name")]
+    if files:
+        names = ", ".join(
+            f"{a['name']}{'' if a.get('text') else ' (không đọc được)'}" for a in files)
+        lines.append(f"\n📎 Tệp: {names}")
+    return "\n".join(lines).strip()
+
+
+def _process_message(acc: dict[str, Any], raw: bytes) -> str:
+    """Trả 'processed' | 'skipped' | 'error'."""
     try:
         msg = email.message_from_bytes(raw, policy=email.policy.default)
     except Exception as exc:
-        logger.warning("email_channel: parse failed: %s", exc)
+        logger.warning("email_channel: parse lỗi: %s", exc)
         return "error"
 
     from_hdr = _decode_hdr(msg.get("From"))
@@ -229,73 +473,85 @@ def _process_message(raw: bytes) -> str:
     from_addr = (from_addr or "").strip().lower()
     if not from_addr:
         return "skipped"
-    if not _allowed(from_addr):
-        logger.info("email_channel: deny sender %s", from_addr)
+    if not _allowed(acc, from_addr):
+        logger.info("email_channel: chặn người gửi %s", from_addr)
         return "skipped"
 
     subject = _decode_hdr(msg.get("Subject"))
-    body = _extract_body(msg)
-    if not body and not subject:
+    body = _extract_body(msg, int(acc.get("max_body_chars") or 6000))
+    atts = _attachments(msg, read_text=bool(acc.get("summarize_files", True)))
+    if not body and not subject and not atts:
         return "skipped"
 
     msg_id = str(msg.get("Message-ID") or "").strip()
-    user_text = f"Tiêu đề: {subject}\n\n{body}".strip()
-    user_id = _user_id_for(from_addr)
+    src = source_key(acc)
+    uid = msg_id or hashlib.sha256(raw[:4096]).hexdigest()[:24]
 
-    try:
-        from services.agent.orchestrator import orchestrate
-        out = orchestrate(user_text, user_id, ha_fastpath=True)
-        reply = str(out.get("text") or "").strip()
-        if out.get("silent") or not reply:
-            reply = "Dạ em đã nhận email nhưng không có nội dung trả lời ạ."
-    except Exception as exc:
-        logger.warning("email_channel: orchestrate failed: %s", exc)
-        reply = f"Xin lỗi, hệ thống tạm lỗi: {str(exc)[:100]}"
+    # Chống gửi trùng: một mail không bao giờ thông báo 2 lần, kể cả khi
+    # mark_seen tắt hoặc IMAP trả lại mail cũ.
+    from services import digest
+    if digest.seen(src, uid):
+        return "skipped"
+    digest.mark_seen(src, uid)
 
-    re_subj = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-    sent = send_email(
-        from_addr, re_subj, reply,
-        in_reply_to=msg_id, references=msg_id,
-    )
-    if not sent.get("ok"):
-        logger.warning("email_channel: reply failed: %s", sent.get("error"))
-        return "error"
-    return "processed"
+    sent_any = False
+    if acc.get("notify_targets"):
+        try:
+            text = _summary_text(acc, from_hdr or from_addr, subject, body, atts)
+            res = digest.notify(src, acc, text)
+            sent_any = bool(res.get("sent_now") or res.get("queued"))
+        except Exception as exc:
+            logger.warning("email_channel: thông báo lỗi: %s", str(exc)[:160])
+
+    # Trả lời thẳng vào email bằng AI — CHỈ khi hộp này bật (mặc định TẮT để hộp
+    # chỉ-tóm-tắt không tự đi trả lời người ta).
+    if acc.get("reply_enabled"):
+        att_note = ""
+        for a in atts:
+            if a.get("text"):
+                att_note += f"\n\n--- Tệp {a['name']} ---\n{a['text'][:2000]}"
+        user_text = f"Tiêu đề: {subject}\n\n{body}{att_note}".strip()
+        try:
+            from services.agent.orchestrator import orchestrate
+            out = orchestrate(user_text, _user_id_for(from_addr), ha_fastpath=True)
+            reply = str(out.get("text") or "").strip()
+            if out.get("silent") or not reply:
+                reply = "Dạ em đã nhận email nhưng không có nội dung trả lời ạ."
+        except Exception as exc:
+            logger.warning("email_channel: orchestrate lỗi: %s", exc)
+            reply = f"Xin lỗi, hệ thống tạm lỗi: {str(exc)[:100]}"
+        re_subj = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+        sent = send_email(from_addr, re_subj, reply, in_reply_to=msg_id,
+                          references=msg_id, account_id=str(acc.get("id") or ""))
+        if not sent.get("ok"):
+            logger.warning("email_channel: trả lời lỗi: %s", sent.get("error"))
+            return "error"
+        return "processed"
+    return "processed" if sent_any else "skipped"
 
 
-def poll_once() -> dict[str, Any]:
-    """Fetch UNSEEN mail and process. Safe for tests / manual trigger."""
-    if not is_enabled():
-        return {"ok": False, "error": "email_channel disabled"}
-    c = _cfg()
-    user = str(c.get("user") or "").strip()
-    password = str(c.get("password") or "")
-    host = str(c.get("imap_host") or "").strip()
-    try:
-        port = int(c.get("imap_port") or 993)
-    except (TypeError, ValueError):
-        port = 993
-    use_ssl = bool(c.get("use_ssl", True))
-    mark_seen = bool(c.get("mark_seen", True))
-    if not host or not user:
-        return {"ok": False, "error": "Thiếu imap_host/user"}
+# ── IMAP ─────────────────────────────────────────────────────────────────────
+def _imap_connect(acc: dict[str, Any], timeout: int) -> imaplib.IMAP4:
+    host, port = acc["imap_host"], int(acc["imap_port"])
+    if bool(acc.get("use_ssl", True)):
+        return imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    return imaplib.IMAP4(host, port, timeout=timeout)
 
+
+def poll_account(acc: dict[str, Any]) -> dict[str, Any]:
+    """Đọc mail CHƯA ĐỌC của một hộp rồi xử lý."""
+    if not acc.get("imap_host") or not acc.get("user"):
+        return {"ok": False, "error": "Thiếu imap_host/user", "id": acc.get("id")}
+    mark_seen = bool(acc.get("mark_seen", True))
     processed = skipped = errors = 0
     try:
-        if use_ssl:
-            M = imaplib.IMAP4_SSL(host, port, timeout=40)
-        else:
-            M = imaplib.IMAP4(host, port, timeout=40)
+        M = _imap_connect(acc, 40)
         try:
-            M.login(user, password)
+            M.login(acc["user"], acc["password"])
             M.select("INBOX")
             typ, data = M.search(None, "UNSEEN")
-            if typ != "OK" or not data or not data[0]:
-                ids: list[bytes] = []
-            else:
-                ids = data[0].split()
-            # limit burst
-            for num in ids[:10]:
+            ids = data[0].split() if (typ == "OK" and data and data[0]) else []
+            for num in ids[:10]:      # giới hạn burst mỗi vòng poll
                 typ, msg_data = M.fetch(num, "(RFC822)")
                 if typ != "OK" or not msg_data or not msg_data[0]:
                     errors += 1
@@ -304,118 +560,147 @@ def poll_once() -> dict[str, Any]:
                 if not isinstance(raw, (bytes, bytearray)):
                     errors += 1
                     continue
-                result = _process_message(bytes(raw))
+                result = _process_message(acc, bytes(raw))
                 if result == "processed":
                     processed += 1
-                    if mark_seen:
-                        M.store(num, "+FLAGS", "\\Seen")
                 elif result == "skipped":
                     skipped += 1
-                    if mark_seen:
-                        M.store(num, "+FLAGS", "\\Seen")
                 else:
                     errors += 1
+                if result in {"processed", "skipped"} and mark_seen:
+                    M.store(num, "+FLAGS", "\\Seen")
         finally:
             try:
                 M.logout()
             except Exception:
                 pass
     except Exception as exc:
-        with _lock:
-            _status["last_error"] = str(exc)[:200]
-            _status["last_poll_at"] = time.time()
-        logger.warning("email_channel: poll failed: %s", exc)
-        return {"ok": False, "error": str(exc)[:200], "processed": processed}
+        msg_err = _friendly_error(exc)
+        _mark_status(acc, last_error=msg_err, last_poll_at=time.time())
+        logger.warning("email_channel: poll %s lỗi: %s", acc.get("user"), exc)
+        return {"ok": False, "error": msg_err, "id": acc.get("id"),
+                "processed": processed}
 
-    with _lock:
-        _status["last_poll_at"] = time.time()
-        _status["last_error"] = ""
-        _status["processed"] = int(_status.get("processed") or 0) + processed
-        _status["skipped"] = int(_status.get("skipped") or 0) + skipped
+    _mark_status(acc, last_error="", last_poll_at=time.time(),
+                 processed=processed, skipped=skipped)
+    return {"ok": True, "id": acc.get("id"), "label": acc.get("label"),
+            "processed": processed, "skipped": skipped, "errors": errors}
 
+
+def poll_once(account_id: str = "") -> dict[str, Any]:
+    """Poll một hộp (account_id) hoặc MỌI hộp đang bật. An toàn để gọi tay/test."""
+    if account_id:
+        acc = account_by_id(account_id)
+        if not acc:
+            return {"ok": False, "error": f"Không thấy hộp mail {account_id}"}
+        accs = [acc]
+    else:
+        accs = [a for a in accounts() if a.get("enabled")]
+    if not accs:
+        return {"ok": False, "error": "Chưa bật hộp mail nào"}
+    results = [poll_account(a) for a in accs]
     return {
-        "ok": True,
-        "processed": processed,
-        "skipped": skipped,
-        "errors": errors,
+        "ok": any(r.get("ok") for r in results),
+        "processed": sum(int(r.get("processed") or 0) for r in results),
+        "skipped": sum(int(r.get("skipped") or 0) for r in results),
+        "results": results,
     }
 
 
-def test_connection() -> dict[str, Any]:
-    """Login IMAP only — does not send mail."""
-    c = _cfg()
-    user = str(c.get("user") or "").strip()
-    password = str(c.get("password") or "")
-    host = str(c.get("imap_host") or "").strip()
+def test_connection(account_id: str = "") -> dict[str, Any]:
+    """Đăng nhập IMAP (không gửi mail) — báo lỗi bằng câu hành động được."""
+    acc = account_by_id(account_id)
+    if not acc:
+        return {"ok": False, "error": "Chưa cấu hình hộp mail nào"}
+    if not acc.get("imap_host") or not acc.get("user"):
+        return {"ok": False, "error": "❌ Thiếu IMAP host hoặc địa chỉ email"}
+    if not acc.get("password"):
+        return {"ok": False, "error": f"❌ Chưa nhập App Password. {_APP_PW_HINT}"}
     try:
-        port = int(c.get("imap_port") or 993)
-    except (TypeError, ValueError):
-        port = 993
-    use_ssl = bool(c.get("use_ssl", True))
-    if not host or not user:
-        return {"ok": False, "error": "Thiếu imap_host/user"}
-    try:
-        if use_ssl:
-            M = imaplib.IMAP4_SSL(host, port, timeout=20)
-        else:
-            M = imaplib.IMAP4(host, port, timeout=20)
+        M = _imap_connect(acc, 20)
         try:
-            M.login(user, password)
+            M.login(acc["user"], acc["password"])
             typ, _ = M.select("INBOX")
-            return {"ok": typ == "OK", "inbox": typ == "OK"}
+            ok = typ == "OK"
+            return {"ok": ok, "inbox": ok, "id": acc.get("id"),
+                    "label": acc.get("label"),
+                    "message": "✅ IMAP OK — đăng nhập và mở INBOX được"
+                    if ok else "❌ Đăng nhập được nhưng không mở được INBOX"}
         finally:
             try:
                 M.logout()
             except Exception:
                 pass
     except Exception as exc:
-        return {"ok": False, "error": str(exc)[:200]}
+        return {"ok": False, "error": _friendly_error(exc), "id": acc.get("id")}
 
 
+def send_digest_now(account_id: str = "") -> dict[str, Any]:
+    """Gửi NGAY bản tổng hợp đang chờ của hộp mail (nút «Gửi thử» trong UI)."""
+    acc = account_by_id(account_id)
+    if not acc:
+        return {"ok": False, "error": "Chưa cấu hình hộp mail nào"}
+    from services import digest
+    src = source_key(acc)
+    if not acc.get("notify_targets"):
+        return {"ok": False, "error": "Hộp này chưa chọn kênh nhận"}
+    waiting = digest.pending_count(src)
+    if not waiting:
+        # Không có gì chờ → gửi 1 dòng kiểm tra để user biết kênh nhận đã đúng.
+        n = digest.send_targets(
+            acc["notify_targets"],
+            f"📬 {acc.get('label') or acc.get('user')} — kiểm tra kênh nhận: OK "
+            f"(chưa có mail mới nào đang chờ tổng hợp).")
+        return {"ok": n > 0, "sent": n, "pending": 0,
+                "message": f"Đã gửi tin kiểm tra tới {n} kênh"}
+    n = digest.flush(src, acc, title=f"📬 Tổng hợp email · {acc.get('label')}")
+    return {"ok": n > 0, "sent": n, "pending": waiting,
+            "message": f"Đã gửi tổng hợp {waiting} mục tới {n} kênh"}
+
+
+# ── Vòng lặp ─────────────────────────────────────────────────────────────────
 def _loop() -> None:
     _stop.wait(8)
     while not _stop.is_set():
         try:
-            if is_enabled():
-                poll_once()
+            for acc in accounts():
+                if not acc.get("enabled"):
+                    continue
+                key = source_key(acc)
+                every = float(acc.get("poll_seconds") or 60)
+                if time.time() - _last_poll_at.get(key, 0.0) < every:
+                    continue
+                _last_poll_at[key] = time.time()
+                poll_account(acc)
         except Exception as exc:
-            logger.warning("email_channel: loop error: %s", exc)
-        _stop.wait(_poll_seconds())
+            logger.warning("email_channel: loop lỗi: %s", exc)
+        # Nhịp chung 15s; mỗi hộp tự tôn trọng poll_seconds riêng ở trên.
+        _stop.wait(15)
 
 
 def start() -> None:
     global _started
     if _started:
         return
-    # LUÔN chạy thread supervisor kể cả khi đang tắt: _loop tự kiểm tra
-    # is_enabled() mỗi vòng nên bật email trong Settings là chạy ngay ở tick
-    # kế tiếp — KHÔNG cần restart container. Thread ngủ khi disabled, rẻ.
+    # LUÔN chạy supervisor kể cả khi chưa bật hộp nào: _loop tự đọc cấu hình mỗi
+    # vòng nên thêm/bật hộp mail trong Settings là chạy ngay ở tick kế tiếp —
+    # KHÔNG cần restart container.
     if not is_enabled():
-        logger.info("email_channel: disabled (supervisor chờ tới khi bật)")
+        logger.info("email_channel: chưa bật hộp nào (supervisor chờ)")
     _started = True
     _stop.clear()
-    with _lock:
-        _status["running"] = True
-    t = threading.Thread(target=_loop, name="email-channel", daemon=True)
-    t.start()
-    logger.info("email_channel: started poll=%ss", _poll_seconds())
+    threading.Thread(target=_loop, name="email-channel", daemon=True).start()
+    logger.info("email_channel: started (%d hộp)", len(accounts()))
 
 
 def stop() -> None:
     global _started
     _stop.set()
     _started = False
-    with _lock:
-        _status["running"] = False
 
 
 def _reset_for_tests() -> None:
     stop()
     with _lock:
-        _status.update({
-            "running": False,
-            "last_poll_at": 0.0,
-            "last_error": "",
-            "processed": 0,
-            "skipped": 0,
-        })
+        _status_by_acc.clear()
+        _last_poll_at.clear()

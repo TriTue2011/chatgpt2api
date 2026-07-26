@@ -707,15 +707,20 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> bool:
     try:
         from services import voice as _voice
         from services.voice import permissions as _vperm
-        if not _vperm.wants_voice_reply("tg", _bot_id(), chat_id, user_id):
+        if not _vperm.wants_voice_reply("tg", _bot_id(), chat_id, user_id,
+                                        _cur_topic()):
             return False
         if not _voice.tts_ready():
             return False
         from services.voice import session_voice as _sv
-        _sid = f"tg:{_bot_id()}:{chat_id}:{user_id}"
+        # Nhóm bật Topics: khóa mang '#topic' → giọng/tắt TTS cài riêng cho topic
+        # thắng cài đặt cả nhóm (session_voice._candidate_keys tự fallback).
+        _tp = _cur_topic()
+        _cid = f"{chat_id}#{_tp}" if _tp else str(chat_id)
+        _sid = f"tg:{_bot_id()}:{_cid}:{user_id}"
         if not _sv.is_tts_enabled_for_session(_sid):
-            return False  # TTS bị tắt cho kênh/bot/nhóm/user này
-        _pk = f"{chat_id}:u{user_id}" if user_id else str(chat_id)
+            return False  # TTS bị tắt cho kênh/bot/nhóm/topic/user này
+        _pk = f"{_cid}:u{user_id}" if user_id else _cid
         wav = _voice.speak_reply(text[:1000], _pk, session_id=_sid)
         send_audio(chat_id, wav, caption="")
         return True
@@ -1003,8 +1008,10 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             from services import voice as _voice
             raw = _download_file(voice_file_id)
             if raw:
-                # session_id → STT chọn ngôn ngữ theo phạm vi (vi mặc định / en)
-                _sid = f"tg:{_bot_id()}:{chat_id}:{user_id}"
+                # session_id → STT chọn ngôn ngữ theo phạm vi (vi mặc định / en);
+                # topic có '#' → cài đặt STT riêng topic thắng cả nhóm.
+                _cid_stt = f"{chat_id}#{_cur_topic()}" if _cur_topic() else str(chat_id)
+                _sid = f"tg:{_bot_id()}:{_cid_stt}:{user_id}"
                 text = _voice.listen(raw, "ogg", session_id=_sid)
                 logger.info("tg voice->text (%d bytes): %.60s", len(raw), text)
         except Exception as exc:
@@ -1300,15 +1307,19 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             _fp = _t if _t is not None else _ha_fp(_b, chat_id)
         except Exception:
             _fp = bool(_active_bot().get("ha_fastpath", True))
-        _model = _tg_model(chat_id)
+        _model = _tg_model(chat_id, user_id)
         # Nhóm: mỗi USER một phiên riêng (lịch sử/persona/approval độc lập).
         # Chat 1-1 giữ key cũ (chat_id) để không mất lịch sử hiện có.
-        _skey = str(chat_id)
+        # Nhóm bật Topics: mỗi TOPIC một phiên riêng ('chat#topic') — lịch sử
+        # không trộn giữa các topic, và persona cài riêng topic có hiệu lực
+        # (persona.prompt_for fallback: user-topic → user-nhóm → topic → nhóm).
+        _skey_base = f"{chat_id}#{_cur_topic()}" if _cur_topic() else str(chat_id)
+        _skey = _skey_base
         try:
             from services.config import config as _c2
             if (str(chat_id).startswith("-") and user_id
                     and getattr(_c2, "group_user_isolation", True)):
-                _skey = f"{chat_id}:u{user_id}"
+                _skey = f"{_skey_base}:u{user_id}"
         except Exception:
             pass
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model)

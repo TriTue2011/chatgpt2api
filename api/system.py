@@ -961,16 +961,55 @@ def create_router(app_version: str) -> APIRouter:
         return {"ok": True, **ec.status()}
 
     @router.post("/api/v1/email/test")
-    async def email_test(authorization: str | None = Header(default=None)):
+    async def email_test(body: dict | None = None,
+                         authorization: str | None = Header(default=None)):
+        """Đăng nhập IMAP thử. body {account_id} — trống = hộp đầu tiên."""
         require_admin(authorization)
         from services import email_channel as ec
-        return await run_in_threadpool(ec.test_connection)
+        aid = str((body or {}).get("account_id") or "")
+        return await run_in_threadpool(lambda: ec.test_connection(aid))
 
     @router.post("/api/v1/email/poll")
-    async def email_poll(authorization: str | None = Header(default=None)):
+    async def email_poll(body: dict | None = None,
+                         authorization: str | None = Header(default=None)):
+        """Đọc mail mới ngay. body {account_id} — trống = mọi hộp đang bật."""
         require_admin(authorization)
         from services import email_channel as ec
-        return await run_in_threadpool(ec.poll_once)
+        aid = str((body or {}).get("account_id") or "")
+        return await run_in_threadpool(lambda: ec.poll_once(aid))
+
+    @router.post("/api/v1/email/digest")
+    async def email_digest(body: dict | None = None,
+                           authorization: str | None = Header(default=None)):
+        """Gửi NGAY bản tổng hợp đang chờ của hộp mail tới các kênh đã chọn."""
+        require_admin(authorization)
+        from services import email_channel as ec
+        aid = str((body or {}).get("account_id") or "")
+        return await run_in_threadpool(lambda: ec.send_digest_now(aid))
+
+    @router.get("/api/v1/calendar/status")
+    async def calendar_status(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services import calendar_connector as cc
+        return {"ok": True, **cc.status()}
+
+    @router.post("/api/v1/calendar/test")
+    async def calendar_test(body: dict | None = None,
+                            authorization: str | None = Header(default=None)):
+        """KIỂM TRA LỊCH: tải thật link ICS, báo số sự kiện + 3 mục gần nhất."""
+        require_admin(authorization)
+        from services import calendar_connector as cc
+        cid = str((body or {}).get("calendar_id") or "")
+        return await run_in_threadpool(lambda: cc.test_calendar(cid))
+
+    @router.post("/api/v1/calendar/digest")
+    async def calendar_digest(body: dict | None = None,
+                              authorization: str | None = Header(default=None)):
+        """Gửi NGAY bản lịch sắp tới tới các kênh đã chọn của lịch đó."""
+        require_admin(authorization)
+        from services import calendar_connector as cc
+        cid = str((body or {}).get("calendar_id") or "")
+        return await run_in_threadpool(lambda: cc.send_digest_now(cid))
 
     @router.get("/api/v1/providers")
     async def list_providers(authorization: str | None = Header(default=None)):

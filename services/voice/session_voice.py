@@ -48,7 +48,11 @@ def _save_data(data: dict[str, dict[str, Any]]) -> None:
 
 
 def _candidate_keys(session_id: str) -> list[str]:
-    """Tạo danh sách key từ cụ thể nhất đến tổng quát để fallback."""
+    """Tạo danh sách key từ cụ thể nhất đến tổng quát để fallback.
+
+    chat_id có thể mang '#topic' (nhóm Telegram bật Topics) — khi đó chen thêm
+    các bậc bỏ-topic: user-trong-topic → user-cả-nhóm → topic → nhóm → bot → kênh.
+    """
     sid = str(session_id or "").strip()
     if not sid:
         return []
@@ -56,12 +60,21 @@ def _candidate_keys(session_id: str) -> list[str]:
     keys: list[str] = [sid]
     parts = sid.split(":")
 
-    # Nếu key dạng full: platform:bot_id:chat_id:user_id
+    def _chat_variants(chat: str) -> list[str]:
+        # 'chat#7' → ['chat#7', 'chat']; 'chat' → ['chat']
+        return [chat, chat.split("#", 1)[0]] if "#" in chat else [chat]
+
+    # Nếu key dạng full: platform:bot_id:chat_id[:user_id]
     if len(parts) == 4:
-        keys.append(f"{parts[0]}:{parts[1]}:{parts[2]}")  # platform:bot_id:chat_id
+        for c in _chat_variants(parts[2]):
+            keys.append(f"{parts[0]}:{parts[1]}:{c}:{parts[3]}")  # user (topic→nhóm)
+        for c in _chat_variants(parts[2]):
+            keys.append(f"{parts[0]}:{parts[1]}:{c}")             # thread (topic→nhóm)
         keys.append(f"{parts[0]}:{parts[1]}")             # platform:bot_id
         keys.append(parts[0])                              # platform
     elif len(parts) == 3:
+        for c in _chat_variants(parts[2]):
+            keys.append(f"{parts[0]}:{parts[1]}:{c}")
         keys.append(f"{parts[0]}:{parts[1]}")             # platform:bot_id
         keys.append(parts[0])                              # platform
     elif len(parts) == 2:
