@@ -528,6 +528,49 @@ def _h_model_spec(args: dict, ctx: dict) -> dict:
                     f"{_describe_model_spec(model, state.get_model_spec(model))}"}
 
 
+def _h_teach_skill(args: dict, ctx: dict) -> dict:
+    """BOT TỰ HỌC MỌI VIỆC: người dùng dạy cách làm 1 việc → lưu thành skill
+    (playbook). Skill tự hiện ở danh mục → lần sau gặp việc khớp thì làm theo."""
+    from services.agent import skills as sk
+    op = str(args.get("op") or "set").strip().lower()
+
+    if op == "list":
+        items = sk.list_skills()
+        if not items:
+            return {"text": "Em chưa học kỹ năng nào ạ. Anh/chị dạy em cách làm một "
+                            "việc (các bước) là em nhớ thành skill 🧩."}
+        lines = ["🧩 Kỹ năng em đã học:"]
+        for s in items:
+            lines.append(f"• `{s.slug}` — {s.description or s.name}"
+                         + ("" if s.enabled else " (đang tắt)"))
+        return {"text": "\n".join(lines)}
+
+    slug = str(args.get("slug") or "").strip()
+    if op == "get":
+        body = sk.load_body(slug) if slug else None
+        return {"text": f"🧩 `{slug}`:\n{body}" if body else f"Không thấy kỹ năng `{slug}`."}
+    if op in ("delete", "clear", "forget"):
+        if not slug:
+            return {"text": "Cho em xin mã kỹ năng (slug) cần xóa ạ (op=list để xem)."}
+        return {"text": f"Đã xóa kỹ năng `{slug}` ạ." if sk.delete_skill(slug)
+                        else f"Không thấy kỹ năng `{slug}`."}
+
+    # set / append — dạy quy trình
+    name = str(args.get("name") or "").strip()
+    description = str(args.get("description") or "").strip()
+    body = str(args.get("body") or args.get("steps") or "").strip()
+    if not body:
+        return {"text": "Anh/chị mô tả giúp em CÁC BƯỚC làm việc này (gọi gì, lấy gì, "
+                        "gửi đâu…) — em lưu thành kỹ năng để lần sau tự làm ạ."}
+    try:
+        new_slug = sk.write_skill(name, description, body, slug=slug, append=(op == "append"))
+    except Exception as exc:
+        return {"text": f"Em lưu kỹ năng chưa được 😥 ({exc})."}
+    label = name or description or new_slug
+    return {"text": f"Dạ em học rồi ạ 🧩 — kỹ năng `{new_slug}` ({label}). "
+                    f"Lần sau gặp việc này em tự làm theo."}
+
+
 def _h_schedule(args: dict, ctx: dict) -> dict:
     """Create / list / cancel user reminders and recurring agent tasks."""
     from services.agent import reminders as rem
@@ -2645,6 +2688,28 @@ CAPABILITIES: dict[str, Capability] = {
                             "label": {"type": "string"}, "values": {"type": "object"}}}},
             "notes": {"type": "string", "description": "Ghi chú thêm (cách gọi, lấy URL…)"}},
             "required": ["op"]}),
+    "teach_skill": Capability(
+        name="teach_skill", risk=READ, handler=_h_teach_skill,
+        emoji="🧩", label="Học cách làm một việc (kỹ năng)",
+        description=(
+            "BOT TỰ HỌC MỌI VIỆC. Khi người dùng DẠY cách làm một việc / nêu quy trình / "
+            "sửa cách em làm ('lần sau việc X phải làm thế này…', 'quy trình báo cáo Y là…', "
+            "'gọi API Z rồi lấy field W') → op=set + name + description (1 câu nêu KHI NÀO "
+            "dùng, ≤150 ký tự) + body (các bước chi tiết, dạng markdown). Bổ sung thêm cho "
+            "kỹ năng đã có → op=append + slug. Xem → op=get + slug. Liệt kê → op=list. "
+            "Xóa → op=delete + slug. Kỹ năng lưu vĩnh viễn, lần sau tự hiện để em làm theo. "
+            "KHÔNG dùng cho sự việc đơn lẻ (dùng remember) hay tham số model (dùng model_spec)."),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["set", "append", "get", "list", "delete"],
+                   "description": "set=dạy mới, append=bổ sung, get=xem, list=liệt kê, delete=xóa"},
+            "name": {"type": "string", "description": "Tên kỹ năng (vd 'Báo cáo tồn kho tuần')"},
+            "description": {"type": "string",
+                            "description": "1 câu nêu KHI NÀO dùng — để lần sau tự nhận ra (≤150 ký tự)"},
+            "body": {"type": "string",
+                     "description": "CÁC BƯỚC làm chi tiết (markdown): gọi gì, lấy dữ liệu nào, "
+                                    "định dạng ra sao, gửi kênh nào, lưu ý/lỗi thường gặp"},
+            "slug": {"type": "string", "description": "Mã kỹ năng (khi append/get/delete)"}},
+            "required": ["op"]}),
     "schedule": Capability(
         name="schedule", risk=READ, handler=_h_schedule,
         emoji="⏰", label="Đặt nhắc / việc định kỳ",
@@ -3128,7 +3193,7 @@ _CAP_GROUP: dict[str, str] = {
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",
-    "use_skill": "skills", "run_workflow": "skills",
+    "use_skill": "skills", "run_workflow": "skills", "teach_skill": "skills",
     "ingest": "wiki", "wiki_search": "wiki", "wiki_read": "wiki",
     "wiki_digest": "wiki",
     "goals": "memory",

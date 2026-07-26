@@ -33,6 +33,8 @@ import logging
 import re
 import shutil
 import threading
+import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -261,6 +263,65 @@ def router_block() -> str:
     for s in skills:
         lines.append(s.router_line())
     return "\n".join(lines)
+
+
+def _slugify(name: str) -> str:
+    """Tên tiếng Việt → slug ascii hợp lệ (bỏ dấu, ký tự lạ → '-')."""
+    s = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    s = re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()
+    return (s or "skill")[:64]
+
+
+def write_skill(name: str, description: str, body: str, *, slug: str = "",
+                group: str = "", enabled: bool = True, append: bool = False) -> str:
+    """Tạo/sửa skill do NGƯỜI DÙNG DẠY. Ghi data/agent/skills/<slug>/SKILL.md,
+    trả về slug. append=True → nối thêm vào thân skill đã có. Raise nếu ghi lỗi."""
+    _ensure_seeded()
+    slug = slug.strip()
+    if not valid_slug(slug):
+        slug = _slugify(name or description or "")
+    if not valid_slug(slug):
+        slug = "skill-" + _slugify(str(int(time.time())))
+    folder = _SKILLS_DIR / slug
+    smd = folder / "SKILL.md"
+    with _lock:
+        folder.mkdir(parents=True, exist_ok=True)
+        existing_meta: dict[str, str] = {}
+        existing_body = ""
+        if smd.is_file():
+            try:
+                existing_meta, existing_body = split_frontmatter(
+                    smd.read_text(encoding="utf-8", errors="replace"))
+                existing_body = (existing_body or "").strip()
+            except OSError:
+                pass
+        fm_name = (name or existing_meta.get("name") or slug).strip()
+        fm_desc = (description or existing_meta.get("description") or "").strip()[:SKILL_DESC_MAX]
+        fm_group = (group or existing_meta.get("group") or "Học từ người dùng").strip() or "Học từ người dùng"
+        new_body = (body or "").strip()
+        final_body = f"{existing_body}\n\n{new_body}".strip() if (append and existing_body) else new_body
+        content = (
+            f"---\nname: {fm_name}\ndescription: {fm_desc}\n"
+            f"group: {fm_group}\nenabled: {'true' if enabled else 'false'}\n---\n{final_body}\n"
+        )
+        smd.write_text(content, encoding="utf-8")
+    logger.info("agent.skills: user taught skill %s (append=%s)", slug, append)
+    return slug
+
+
+def delete_skill(slug: str) -> bool:
+    """Xóa hẳn skill do người dùng dạy (cả .disabled)."""
+    if not valid_slug(slug):
+        return False
+    with _lock:
+        for base in (_SKILLS_DIR / slug, _SKILLS_DIR / ".disabled" / slug):
+            try:
+                if (base / "SKILL.md").is_file():
+                    shutil.rmtree(base)
+                    return True
+            except OSError as exc:
+                logger.warning("agent.skills: delete %s failed: %s", slug, exc)
+    return False
 
 
 def _reset_for_tests(skills_dir: Path | None = None) -> None:
