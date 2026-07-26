@@ -247,7 +247,7 @@ export function RegisterCard() {
                 {config.enabled ? "Đang chạy" : "Đã dừng"}
               </Badge>
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 ["Thành công / Tỉ lệ", `${stats.success} / ${stats.success_rate || 0}%`],
                 ["Thất bại", stats.fail],
@@ -264,7 +264,7 @@ export function RegisterCard() {
                 </div>
               ))}
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <Button className="h-10 rounded-xl bg-[var(--primary)] px-3 text-[var(--primary-foreground)] hover:brightness-110" onClick={() => void toggle()} disabled={isSaving}>
                 {isSaving ? <LoaderCircle className="size-4 animate-spin" /> : config.enabled ? <Square className="size-4" /> : <Play className="size-4" />}
                 {config.enabled ? "Dừng" : "Bắt đầu"}

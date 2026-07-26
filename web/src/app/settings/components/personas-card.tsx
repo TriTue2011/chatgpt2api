@@ -251,7 +251,7 @@ export function PersonasCard() {
 
         {enabled && (
           <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <select className={SEL_CLS} value={platform}
                       onChange={(e) => setPlatform(e.target.value)}>
                 <option value="tg">Telegram</option>
@@ -266,7 +266,7 @@ export function PersonasCard() {
                      value={userId}
                      onChange={(e) => setUserId(e.target.value)} />
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <select className={SEL_CLS} value={region}
                       onChange={(e) => setRegion(e.target.value)}>
                 <option value="">Vùng miền…</option>

@@ -1398,7 +1398,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
               <h3 className="text-[15px] font-bold text-[var(--foreground)]">Chọn ảnh từ thư viện</h3>
               <button onClick={() => setLibraryOpen(false)} className="rounded-lg p-1.5 text-[var(--muted-foreground)] hover:bg-[var(--secondary)]"><X className="size-5" /></button>
             </div>
-            <div className="overflow-y-auto p-4 grid grid-cols-4 gap-3">
+            <div className="overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {libraryImages.length === 0 ? (
                 <p className="col-span-4 text-center py-8 text-sm text-[var(--muted-foreground)]">Chưa có ảnh nào trong thư viện</p>
               ) : libraryImages.map((img, i) => (
