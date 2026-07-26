@@ -731,7 +731,116 @@ def _h_search_sgk(args: dict, ctx: dict) -> dict:
         )}
     text = tw.search_sgk(q, grade=grade_i, subject=subject or None,
                          workspace_id=ws, top_k=top_k)
+    # Bổ sung best-effort đoạn "kiến thức mở rộng" (kb_nangcao) — TÁCH RÕ khỏi
+    # đoạn SGK ở trên để model không lẫn nội dung ngoài chương trình vào như
+    # thể đó là SGK. Lỗi/không có gì → im lặng, không ảnh hưởng câu trả lời SGK.
+    try:
+        from services.agent import sgk_fetch as sf
+        extra = sf.nangcao_hits(q, grade=grade_i, subject=subject or None, top_k=2)
+        if extra:
+            text = text + extra
+    except Exception:
+        pass
     return {"text": text}
+
+
+def _h_sgk_fetch(args: dict, ctx: dict) -> dict:
+    """Tự tìm & nạp SGK / sách nâng cao vào RAG. op=find|ingest|status."""
+    from services.agent import teacher as teach
+    from services.agent import sgk_fetch as sf
+
+    if not teach.is_enabled():
+        return {"text": "Chế độ Giáo viên đang tắt trong Settings ạ."}
+    if not teach.can_use_teacher(ctx=ctx):
+        return {"text": (
+            "Khung chat này chưa được cấp «Giáo viên». "
+            "Admin tick 📚 trong Settings → Lọc thread."
+        )}
+
+    op = str(args.get("op") or "find").strip().lower()
+    grade = args.get("grade")
+    try:
+        grade_i = int(grade) if grade not in (None, "") else None
+    except (TypeError, ValueError):
+        grade_i = None
+    subject = str(args.get("subject") or args.get("mon") or "").strip()
+    kind = str(args.get("kind") or "sgk").strip().lower()
+    year = str(args.get("year") or "").strip()
+
+    if op in {"status", "list"}:
+        st = sf.status(grade=grade_i, subject=subject or None)
+        if not st["items"]:
+            return {"text": "Chưa nạp SGK/nâng cao nào qua tính năng tự tìm (op=find trước)."}
+        lines = [f"**Đã nạp {st['total']} nguồn** (tự tìm/tự nạp):", ""]
+        for r in st["items"][:20]:
+            tag = "SGK" if r.get("kind") == "sgk" else "Nâng cao"
+            ok_mark = "✅" if r.get("ok") else "❌"
+            mon = sf.SUBJECT_LABEL.get(r.get("subject"), r.get("subject"))
+            lines.append(
+                f"{ok_mark} Lớp {r.get('grade')} · {mon} · [{tag}] "
+                f"{r.get('source_name')} ({r.get('fetched_at')})"
+            )
+        return {"text": "\n".join(lines)}
+
+    if grade_i is None or not subject:
+        return {"text": "Cần grade (1–12) và subject (vd toan, ly, hoa, su…) ạ."}
+
+    if op in {"ingest", "add", "download"}:
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return {"text": "Cần url (lấy từ kết quả op=find, hoặc URL người dùng tự cung cấp)."}
+        dry_run = bool(args.get("dry_run") or False)
+        curriculum = str(args.get("curriculum") or "").strip()
+        r = sf.fetch_and_ingest(
+            grade_i, subject, url, year=year, kind=kind,
+            curriculum=curriculum, dry_run=dry_run,
+        )
+        if not r.get("ok"):
+            return {"text": f"Không nạp được: {r.get('error') or 'lỗi không rõ'} 😥"}
+        if r.get("skipped"):
+            return {"text": r.get("reason") or "URL đã nạp trước đó."}
+        if r.get("dry_run"):
+            return {"text": (
+                f"Thử tải OK ({r.get('bytes')} byte, trích được {r.get('preview_chars')} ký tự). "
+                "Gọi lại dry_run=false để nạp thật vào RAG."
+            )}
+        collection = (r.get("provenance") or {}).get("collection", "")
+        tag = {
+            "kb_giao_duc": "SGK (kb_giao_duc)", "kb_nangcao": "Nâng cao (kb_nangcao)",
+        }.get(collection, collection)
+        mon = sf.SUBJECT_LABEL.get(subject, subject)
+        return {"text": (
+            f"Đã nạp xong lớp {grade_i} · {mon} vào {tag}. "
+            f"Nguồn: {r.get('source') or url[:80]}."
+        )}
+
+    # mặc định: find — CHỈ TÌM, không tự tải
+    cands = sf.find_sources(grade_i, subject, year=year, kind=kind)
+    mon = sf.SUBJECT_LABEL.get(sf.normalize_subject(subject) or subject, subject)
+    if not cands:
+        return {"text": (
+            f"Không tìm thấy PDF nào đủ tin cậy cho lớp {grade_i} · {mon} "
+            f"({'sách nâng cao' if kind == 'nangcao' else 'SGK'}). "
+            "Có thể sách này chưa được đăng công khai trên mạng — "
+            "đừng đoán bừa, hỏi người dùng cung cấp URL trực tiếp nếu có."
+        )}
+    lines = [
+        f"**Tìm thấy {len(cands)} nguồn khả dĩ** (lớp {grade_i} · {mon}"
+        f"{' · ' + year if year else ''}"
+        f"{' · nâng cao' if kind == 'nangcao' else ''}):",
+        "",
+    ]
+    for i, c in enumerate(cands, 1):
+        lines.append(
+            f"{i}. [{c['confidence']:.0%}] {c['title'][:90]} — {c['source']}\n   {c['url']}"
+        )
+    lines.append("")
+    lines.append(
+        "⚠️ Đây là PDF đăng công khai trên mạng — KHÔNG đảm bảo đúng bản/năm "
+        "phát hành cụ thể. Chọn 1 url rồi gọi lại op=ingest với url=... để nạp; "
+        "nếu không chắc bản nào đúng, hỏi người dùng xác nhận trước."
+    )
+    return {"text": "\n".join(lines)}
 
 
 def _h_list_teacher_workspaces(args: dict, ctx: dict) -> dict:
@@ -3033,6 +3142,39 @@ CAPABILITIES: dict[str, Capability] = {
             "Đọc praise+feedback cho HS; weak → teacher_memory; "
             "kẹt tiếp → teacher_hint; ôn → search_sgk."
         )),
+    "sgk_fetch": Capability(
+        name="sgk_fetch", risk=CHANGE, handler=_h_sgk_fetch,
+        emoji="🔎", label="Tự tìm & nạp SGK/nâng cao vào RAG",
+        description=(
+            "Tự tìm PDF SGK/sách nâng cao ĐĂNG CÔNG KHAI trên mạng theo lớp+môn "
+            "(+năm) rồi nạp vào RAG. op=find (chỉ tìm, trả danh sách url để chọn, "
+            "KHÔNG tự tải) | ingest (tải+nạp 1 url đã chọn hoặc do người dùng đưa) | "
+            "status (đã nạp gì theo lớp/môn). kind=sgk (mặc định → kb_giao_duc) | "
+            "nangcao (sách bài tập nâng cao/bồi dưỡng HSG → kb_nangcao, TÁCH RIÊNG "
+            "khỏi SGK để không dạy vượt chương trình như SGK chính thức). "
+            "subject: toan|van|anh|ly|hoa|sinh|su|dia|gdcd|tin."
+        ),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["find", "ingest", "status"],
+                   "description": "find=tìm nguồn; ingest=tải+nạp; status=đã nạp gì"},
+            "grade": {"type": "integer", "description": "Lớp 1–12"},
+            "subject": {"type": "string",
+                        "description": "toan|van|anh|ly|hoa|sinh|su|dia|gdcd|tin"},
+            "year": {"type": "string", "description": "Năm học/xuất bản (tuỳ chọn, vd 2024)"},
+            "kind": {"type": "string", "enum": ["sgk", "nangcao"],
+                     "description": "sgk=SGK chính; nangcao=sách nâng cao/mở rộng (RAG riêng)"},
+            "url": {"type": "string", "description": "URL PDF đã chọn từ find (bắt buộc khi op=ingest)"},
+            "curriculum": {"type": "string",
+                           "description": "Bộ sách (kết nối tri thức|chân trời sáng tạo|cánh diều), tuỳ chọn"},
+            "dry_run": {"type": "boolean",
+                        "description": "true = chỉ thử tải+trích, KHÔNG ghi SGK/RAG"}},
+            "required": []},
+        workflow=(
+            "op=find trước để lấy danh sách url cho người dùng CHỌN — KHÔNG tự "
+            "ingest url do model tự bịa/đoán. Sau khi có url được xác nhận → "
+            "op=ingest. Sách nâng cao (kind=nangcao) nạp RAG riêng (kb_nangcao) — "
+            "khi trả lời HS phải nói rõ đây là kiến thức mở rộng, không phải SGK."
+        )),
 
     # ── OfficeCLI: soạn/sửa Word Excel PowerPoint (native, không MCP) ──────
     # risk=READ có chủ đích: mọi tool chỉ đụng sandbox DATA_DIR/office (như
@@ -3177,6 +3319,7 @@ _CAP_GROUP: dict[str, str] = {
     "teacher_lesson": "teacher",
     "teacher_hint": "teacher", "teacher_check": "teacher",
     "teacher_quiz": "teacher", "teacher_grade": "teacher",
+    "sgk_fetch": "teacher",
 }
 
 # Tool "hạ tầng" luôn khả dụng BẤT KỂ bộ lọc thread — expand_tool_result phải
