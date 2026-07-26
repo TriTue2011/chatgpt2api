@@ -687,13 +687,16 @@ export function TelegramCloudflareCard() {
     const fpOf = (key: string) => (tfp && key in tfp ? (tfp[key] ? "on" : "off") : "");
     // Khóa TOPIC chứa '#': 'tg:<bot>:<chat>#<topic>' (± ':<user>'). Tách ra để
     // dựng đúng 3 cấp — khóa không có '#' vẫn nạp y như trước.
+    // CHỈ khóa Telegram mới có topic — thread ID của Zalo là chuỗi tự do, không
+    // được coi '#' trong đó là dấu tách topic.
+    const hasTopic = (key: string) => key.startsWith("tg:") && key.includes("#");
     const splitTopic = (key: string): { base: string; topicId: string } => {
+      if (!hasTopic(key)) return { base: key, topicId: "" };
       const i = key.indexOf("#");
-      if (i < 0) return { base: key, topicId: "" };
       return { base: key.slice(0, i), topicId: key.slice(i + 1) };
     };
     const rows: FilterRow[] = Object.entries(tf || {})
-      .filter(([key]) => !key.includes("#"))
+      .filter(([key]) => !hasTopic(key))
       .map(([key, groups]) => {
         const { botKey, chatId } = splitParent(key);
         return {
@@ -744,15 +747,14 @@ export function TelegramCloudflareCard() {
     };
     // 1b. Topic rows từ thread_filters (khóa có '#', KHÔNG phải khóa user)
     for (const key of Object.keys(tf || {})) {
-      if (!key.includes("#")) continue;
-      ensureTopic(key);
+      if (hasTopic(key)) ensureTopic(key);
     }
 
     /** Phân giải MỌI khóa config → (nhóm, topic|null, userId). Khóa không có '#'
      *  đi đúng nhánh cũ (khớp prefix parent dài nhất) nên nạp y như trước. */
     const resolveKey = (key: string):
       { row: FilterRow; topic: TopicRow | null; userId: string } | null => {
-      const hash = key.indexOf("#");
+      const hash = hasTopic(key) ? key.indexOf("#") : -1;
       if (hash >= 0) {
         const rest = key.slice(hash + 1);
         const c = rest.indexOf(":");
