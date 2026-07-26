@@ -348,7 +348,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
               </label>
               <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
                 onClick={() => setOpenBot((s) => ({ ...s, [row.id]: !botOpen }))}>
-                <span className="text-[11px] text-muted-foreground w-3 shrink-0">{botOpen ? "▾" : "▸"}</span>
+                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{botOpen ? "▾" : "▸"}</span>
                 <span className="text-xs font-medium truncate flex-1">{botTitle}</span>
                 <span className="text-[10px] text-muted-foreground shrink-0">
                   {bid ? `${bid} · ` : ""}{nAdm} admin
@@ -402,7 +402,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                 <div key={idx} className="rounded-md border border-border bg-muted/10">
                   <div className="flex items-center gap-2 p-2 cursor-pointer select-none"
                     onClick={() => setOpenAdmin((s) => ({ ...s, [akey]: !open }))}>
-                    <span className="text-[11px] text-muted-foreground w-3 shrink-0">{open ? "▾" : "▸"}</span>
+                    <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{open ? "▾" : "▸"}</span>
                     <span className="text-xs font-semibold shrink-0">Admin #{idx + 1}</span>
                     <span className="text-[11px] text-muted-foreground truncate flex-1">
                       {title}
@@ -1337,8 +1337,11 @@ export function TelegramCloudflareCard() {
                         Bật
                       </label>
                       <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
-                        onClick={() => setOpenZpAcc((s) => ({ ...s, [ownId]: !accOpen }))}>
-                        <span className="text-[11px] text-muted-foreground w-3 shrink-0">{accOpen ? "▾" : "▸"}</span>
+                        onClick={() => setOpenZpAcc((s) => ({ ...s, [ownId]: !accOpen }))}
+                        title={accOpen ? "Thu gọn" : "Mở xem thêm cài đặt"}>
+                        <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">
+                          {accOpen ? "▾" : "▸"}
+                        </span>
                         <span className="text-[12px] font-medium truncate flex-1">
                           {zalopAccLabel(acc)}
                         </span>
@@ -1363,7 +1366,7 @@ export function TelegramCloudflareCard() {
                         <div key={idx} className="rounded-md border border-border bg-muted/10">
                           <div className="flex items-center gap-2 p-2 cursor-pointer select-none"
                             onClick={() => setOpenZpAdmin((s) => ({ ...s, [akey]: !aOpen }))}>
-                            <span className="text-[11px] text-muted-foreground w-3 shrink-0">{aOpen ? "▾" : "▸"}</span>
+                            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{aOpen ? "▾" : "▸"}</span>
                             <span className="text-xs font-semibold shrink-0">Admin #{idx + 1}</span>
                             <span className="text-[11px] text-muted-foreground truncate flex-1">
                               {aTitle}
@@ -1606,7 +1609,7 @@ export function TelegramCloudflareCard() {
               {/* Thanh tóm tắt — mặc định ẩn, hiện tên + ID + loại; kích để mở cài đặt */}
               <div className="flex items-center gap-2 cursor-pointer select-none"
                 onClick={() => setOpenFilter((s) => ({ ...s, [row.id]: !fOpen }))}>
-                <span className="text-[11px] text-muted-foreground w-3 shrink-0">{fOpen ? "▾" : "▸"}</span>
+                <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{fOpen ? "▾" : "▸"}</span>
                 <span className="text-[11px] font-medium truncate flex-1">
                   {fTitle}
                   {row.chatId.trim() ? <> · <span className="font-mono">{row.chatId.trim()}</span></> : null}
@@ -1811,7 +1814,7 @@ export function TelegramCloudflareCard() {
                   <div key={u.id} className="rounded bg-muted/40 p-1.5 space-y-1">
                     <div className="flex items-center gap-2 cursor-pointer select-none"
                       onClick={() => setOpenFilterUser((s) => ({ ...s, [u.id]: !uOpen }))}>
-                      <span className="text-[11px] text-muted-foreground w-3 shrink-0">{uOpen ? "▾" : "▸"}</span>
+                      <span className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground">{uOpen ? "▾" : "▸"}</span>
                       <span className="text-[11px] truncate flex-1">
                         {uTitle}
                         {u.userId.trim() ? <> · <span className="font-mono">{u.userId.trim()}</span></> : null}
