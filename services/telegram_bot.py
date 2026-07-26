@@ -134,11 +134,20 @@ def _bot_username() -> str:
     return name
 
 
-def _tg_model(chat_id: str | None = None) -> str:
-    """Model: admin.ai_model (nếu chat admin) → bot.ai_model → telegram_ai_model → AI text."""
+def _tg_model(chat_id: str | None = None, user_id: str | None = None) -> str:
+    """Model: «Lọc thread» (thread/user) → admin.ai_model → bot.ai_model →
+    telegram_ai_model → AI text. Model cài ở Lọc thread thắng, nhờ vậy admin chỉ
+    là một thread bình thường (thêm vào Lọc thread rồi cài model là xong)."""
     bot = _active_bot()
     m = ""
     if chat_id:
+        try:
+            from services.admin_workspace import thread_model_for
+            bid = str((bot or {}).get("token") or "").split(":")[0].strip()
+            m = thread_model_for("tg", bid, chat_id, user_id)
+        except Exception:
+            m = ""
+    if not m and chat_id:
         try:
             from services.admin_workspace import ai_model_for_chat
             m = ai_model_for_chat(bot, chat_id)

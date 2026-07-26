@@ -361,7 +361,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
             ) : null}
             <div>
               <label className="text-[10px] text-muted-foreground">
-                Model AI mặc định (chat thường qua bộ lọc thread — không áp admin)
+                Model AI mặc định của bot — chỉ dùng khi thread KHÔNG cài model riêng ở «Lọc thread»
               </label>
               <Select value={row.ai_model || " "} onValueChange={(v) => patch(row.id, { ai_model: v.trim() })}>
                 <SelectTrigger className="h-8 text-xs">
@@ -621,6 +621,8 @@ export function TelegramCloudflareCard() {
     groups: string[];
     users: UserRow[]; requireMention: boolean; mentionKeyword: string;
     forward: boolean; forwardUrl: string;
+    /** Model riêng của thread này — trống = dùng model mặc định của bot/kênh */
+    aiModel: string;
   };
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
   const filterInited = useRef(false);
@@ -638,6 +640,8 @@ export function TelegramCloudflareCard() {
     const tmf = (config as any)?.thread_mention_filters as Record<string, { required?: boolean; keyword?: string }> | undefined;
     const tff = (config as any)?.thread_forward_filters as Record<string, { enabled?: boolean; url?: string; tag_mode?: boolean }> | undefined;
     const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string; name?: string }> | undefined;
+    // Model riêng theo thread/user (backend: admin_workspace.thread_model_for)
+    const tm = (config as any)?.thread_models as Record<string, string> | undefined;
     if (!tf && !tuf && !tmf && !tff) return;
     filterInited.current = true;
 
@@ -651,12 +655,14 @@ export function TelegramCloudflareCard() {
     // 1. Parent rows từ thread_filters (kind/name đọc từ thread_filter_meta)
     const kindOf = (key: string) => (tfMeta?.[key]?.kind === "user" ? "user" : "group");
     const nameOf = (key: string) => String(tfMeta?.[key]?.name || "").trim();
+    const modelOf = (key: string) => String(tm?.[key] || "").trim();
     const rows: FilterRow[] = Object.entries(tf || {}).map(([key, groups]) => {
       const { botKey, chatId } = splitParent(key);
       return {
         id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
         groups: Array.isArray(groups) ? groups : [], users: [],
         requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+        aiModel: modelOf(key),
       };
     });
     const findRow = (botKey: string, chatId: string) => rows.find((r) => r.botKey === botKey && r.chatId === chatId);
@@ -668,6 +674,7 @@ export function TelegramCloudflareCard() {
           id: rowSeq.current++, botKey, chatId, kind: kindOf(k), name: nameOf(k),
           groups: [...FUNCTION_GROUPS.map(([gk]) => gk)], users: [],
           requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+          aiModel: modelOf(k),
         };
         rows.push(r);
       }
@@ -795,11 +802,15 @@ export function TelegramCloudflareCard() {
     const tmf: Record<string, { required: boolean; keyword: string }> = {};
     const tff: Record<string, { enabled: boolean; url: string; tag_mode: boolean }> = {};
     const tfMeta: Record<string, { kind: string; name?: string }> = {};
+    const tmodels: Record<string, string> = {};
     for (const r of rows) {
       const id = r.chatId.trim();
       if (!id) continue;
       const parent = `${r.botKey}:${id}`;
       tf[parent] = r.groups;
+      // Model riêng của thread (trống = dùng model mặc định của bot/kênh)
+      const rModel = String(r.aiModel || "").trim();
+      if (rModel) tmodels[parent] = rModel;
       const tName = String(r.name || "").trim();
       tfMeta[parent] = {
         kind: r.kind === "user" ? "user" : "group",
@@ -838,12 +849,14 @@ export function TelegramCloudflareCard() {
     setField("thread_mention_filters", tmf);
     setField("thread_forward_filters", tff);
     setField("thread_filter_meta", tfMeta);
+    setField("thread_models", tmodels);
   };
   const addFilterRow = () =>
     commitFilters([...filterRows, {
       id: rowSeq.current++, botKey: tabFilterOptions[0]?.value || chTab,
       chatId: "", kind: "group", name: "", groups: [], users: [],
       requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+      aiModel: "",
     }]);
   const removeFilterRow = (id: number) =>
     commitFilters(filterRows.filter((r) => r.id !== id));
@@ -1677,6 +1690,28 @@ export function TelegramCloudflareCard() {
                   placeholder="Vd: Nhóm gia đình / Nguyễn Văn A"
                   className="h-8 text-xs"
                 />
+              </div>
+              {/* Model riêng của thread — thắng model mặc định của bot/kênh.
+                  Nhờ ô này, admin chỉ là một thread bình thường: thêm thread admin
+                  vào đây rồi chọn model, không cần ô model riêng cho admin. */}
+              <div>
+                <label className="text-[10px] text-muted-foreground">
+                  🤖 Model AI riêng cho thread này (trống = dùng model mặc định của bot/kênh)
+                </label>
+                <Select
+                  value={row.aiModel || " "}
+                  onValueChange={(v) => setFilterField(row.id, { aiModel: v.trim() })}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="-- Dùng model mặc định --" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=" ">-- Dùng model mặc định --</SelectItem>
+                    {Array.from(new Set([...models, ...(row.aiModel ? [row.aiModel] : [])])).map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1">
                 {FUNCTION_GROUPS.map(([key, label]) => (

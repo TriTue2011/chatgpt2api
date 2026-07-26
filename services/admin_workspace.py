@@ -339,6 +339,42 @@ def ai_model_for_chat(bot: dict | None, chat_id: str | int | None = None) -> str
     return ""
 
 
+def thread_model_for(platform: str, bot_id: str | None, chat_id: str | int | None,
+                     user_id: str | int | None = None) -> str:
+    """Model riêng cài ở tab «Lọc thread» cho thread/user này ('' nếu không cài).
+
+    Khóa giống hệt thread_filters (xem capabilities.allowed_groups_for_bot), ưu
+    tiên từ hẹp tới rộng:
+        plat:bot:chat:user → plat:chat:user → plat:bot:chat → plat:chat
+    Nhờ vậy admin chỉ là MỘT thread bình thường: thêm nó vào Lọc thread rồi cài
+    model là xong, không cần ô model riêng cho admin."""
+    try:
+        models = config.get().get("thread_models") or {}
+        if not isinstance(models, dict) or not models:
+            return ""
+        plat = str(platform or "").strip()
+        cid = str(chat_id or "").strip()
+        if not plat or not cid:
+            return ""
+        bid = str(bot_id or "").strip()
+        uid = str(user_id or "").strip()
+        keys: list[str] = []
+        if uid:
+            if bid:
+                keys.append(f"{plat}:{bid}:{cid}:{uid}")
+            keys.append(f"{plat}:{cid}:{uid}")
+        if bid:
+            keys.append(f"{plat}:{bid}:{cid}")
+        keys.append(f"{plat}:{cid}")
+        for k in keys:
+            m = str(models.get(k) or "").strip()
+            if m:
+                return m
+    except Exception:
+        pass
+    return ""
+
+
 def fallback_admin_threads(bot: dict | None) -> list[str]:
     """Admin chat_ids marked fallback_enabled (order preserved)."""
     out: list[str] = []

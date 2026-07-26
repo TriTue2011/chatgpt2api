@@ -98,10 +98,20 @@ def _default_account() -> str:
 
 
 def _ai_model(account_id: str = "", thread_id: str = "") -> str:
-    """Model: admin_entries.ai_model → acc.ai_model → kênh → global → AI text."""
+    """Model: «Lọc thread» → admin_entries.ai_model → acc.ai_model → kênh →
+    global → AI text. Model cài ở Lọc thread thắng (admin = một thread bình thường)."""
     c = _cfg()
     acc = str(account_id or "").strip()
     tid = str(thread_id or "").strip()
+    # 0) Model riêng cài ở tab «Lọc thread» cho chính thread này
+    if tid:
+        try:
+            from services.admin_workspace import thread_model_for
+            m = thread_model_for("zalop", acc, tid)
+            if m:
+                return m
+        except Exception:
+            pass
     raw = c.get("zalo_personal_account_admins")
     if isinstance(raw, dict) and acc:
         entry = raw.get(acc)
