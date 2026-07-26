@@ -52,14 +52,15 @@ function accountLabel(a?: Pick<Account, "displayName" | "phoneNumber"> | null, f
   return fallback;
 }
 
-type TabId = "accounts" | "admin" | "webhooks" | "proxies" | "contacts";
+type TabId = "accounts" | "channel" | "admin" | "webhooks" | "proxies" | "contacts";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "accounts", label: "Tài khoản & QR", icon: Users },
+  { id: "channel", label: "Cài đặt kênh", icon: Home },
   { id: "admin", label: "Admin", icon: Shield },
   { id: "webhooks", label: "Webhook", icon: Webhook },
   { id: "proxies", label: "Proxy", icon: Globe },
-  { id: "contacts", label: "Danh bạ & Blacklist", icon: MessageCircle },
+  { id: "contacts", label: "Event & Blacklist", icon: MessageCircle },
 ];
 
 export function ZaloPersonalPanel() {
@@ -122,6 +123,7 @@ export function ZaloPersonalPanel() {
       </div>
 
       {tab === "accounts" && <AccountsTab status={status} refresh={refreshStatus} showToast={showToast} />}
+      {tab === "channel" && <ChannelTab status={status} showToast={showToast} />}
       {tab === "admin" && <AdminTab status={status} showToast={showToast} />}
       {tab === "webhooks" && <WebhooksTab status={status} showToast={showToast} />}
       {tab === "proxies" && <ProxiesTab showToast={showToast} />}
@@ -247,6 +249,128 @@ function AccountsTab({ status, refresh, showToast }:
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Tab: Cài đặt kênh (chuyển từ Settings → Kênh chat → Zalo Cá Nhân) ────────
+// KHÔNG lặp lại thứ đã có ở «Lọc thread»: model AI và đường tắt HA cài theo
+// TỪNG THREAD ở đó, nên ở đây chỉ còn cái thuộc về KÊNH / TÀI KHOẢN.
+
+type ZpAccCfg = {
+  enabled?: boolean; fallback_enabled?: boolean;
+  fallback_channel?: string; fallback_bot_name?: string; fallback_thread?: string;
+};
+
+function ChannelTab({ status, showToast }:
+  { status: Status | null; showToast: (m: string, ok?: boolean) => void }) {
+  const config = useSettingsStore(s => s.config);
+  const setField = useSettingsStore(s => s.setField);
+  const saveConfig = useSettingsStore(s => s.saveConfig);
+  const isSaving = useSettingsStore(s => s.isSavingConfig);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  const cfg = (config || {}) as Record<string, unknown>;
+  const map = (cfg.zalo_personal_account_admins || {}) as Record<string, ZpAccCfg>;
+  const accounts = status?.accounts || [];
+
+  const patchAcc = (ownId: string, p: ZpAccCfg) => {
+    const entry = map[ownId] || {};
+    setField("zalo_personal_account_admins", { ...map, [ownId]: { ...entry, ...p } });
+  };
+
+  const save = async () => {
+    try { await saveConfig(); showToast("Đã lưu cài đặt kênh ✓"); }
+    catch (e) { showToast(`Lỗi lưu: ${e instanceof Error ? e.message : e}`, false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className={CARD}>
+        <h2 className="mb-3 text-sm font-bold">Bật/tắt kênh</h2>
+        <label className="mb-2 flex cursor-pointer select-none items-center gap-2 text-xs">
+          <input type="checkbox" checked={Boolean(cfg.zalo_personal_enabled)}
+            onChange={e => setField("zalo_personal_enabled", e.target.checked)} />
+          Bật kênh Zalo Cá Nhân
+        </label>
+        <Field label="Tài khoản gửi mặc định (trống = tài khoản đầu danh sách)">
+          <select className={INPUT} value={String(cfg.zalo_personal_account_id || "")}
+            onChange={e => setField("zalo_personal_account_id", e.target.value)}>
+            <option value="">-- Tài khoản đầu trong danh sách --</option>
+            {accounts.map(a => (
+              <option key={a.ownId} value={a.ownId}>{accountLabel(a)}</option>
+            ))}
+          </select>
+        </Field>
+        <p className="mt-2 text-[11px] text-[var(--muted-foreground)]">
+          🤖 Model AI, ⚡ đường tắt điều khiển nhà và bật/tắt AI theo thread cài ở tab
+          «Lọc thread». Hoạt động &amp; blacklist xem ở tab «Event &amp; Blacklist».
+        </p>
+      </div>
+
+      <div className={CARD}>
+        <h2 className="mb-2 text-sm font-bold">Từng tài khoản</h2>
+        {accounts.length === 0 ? (
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Chưa có tài khoản — đăng nhập QR ở tab &quot;Tài khoản &amp; QR&quot; trước.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {accounts.map(a => {
+              const e = map[a.ownId] || {};
+              const isOpen = open[a.ownId] ?? false;
+              return (
+                <div key={a.ownId} className="rounded-lg border border-[var(--border)] p-2">
+                  <div className="flex items-center gap-2">
+                    <label className="flex shrink-0 cursor-pointer select-none items-center gap-1 text-xs"
+                      onClick={ev => ev.stopPropagation()}>
+                      <input type="checkbox" checked={e.enabled !== false}
+                        onChange={ev => patchAcc(a.ownId, { enabled: ev.target.checked })} />
+                      Bật
+                    </label>
+                    <div className="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2"
+                      onClick={() => setOpen(s => ({ ...s, [a.ownId]: !isOpen }))}
+                      title={isOpen ? "Thu gọn" : "Mở xem thêm cài đặt"}>
+                      {isOpen ? <ChevronDown className="size-4 shrink-0" /> : <ChevronRight className="size-4 shrink-0" />}
+                      <span className="flex-1 truncate text-xs font-medium">{accountLabel(a)}</span>
+                    </div>
+                  </div>
+                  {isOpen && (
+                    <div className="mt-2 space-y-2 border-t border-[var(--border)] pt-2">
+                      <label className="flex cursor-pointer select-none items-center gap-2 text-xs">
+                        <input type="checkbox" checked={Boolean(e.fallback_enabled)}
+                          onChange={ev => patchAcc(a.ownId, { fallback_enabled: ev.target.checked })} />
+                        Fallback khi tài khoản này gửi không được (dùng bot khác)
+                      </label>
+                      {e.fallback_enabled && (
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <Field label="Kênh fallback (telegram / zalo / zalo_personal)">
+                            <input className={INPUT} value={String(e.fallback_channel || "")}
+                              onChange={ev => patchAcc(a.ownId, { fallback_channel: ev.target.value })}
+                              placeholder="telegram" />
+                          </Field>
+                          <Field label="Tên bot fallback">
+                            <input className={INPUT} value={String(e.fallback_bot_name || "")}
+                              onChange={ev => patchAcc(a.ownId, { fallback_bot_name: ev.target.value })} />
+                          </Field>
+                          <Field label="Thread nhận fallback">
+                            <input className={INPUT} value={String(e.fallback_thread || "")}
+                              onChange={ev => patchAcc(a.ownId, { fallback_thread: ev.target.value })} />
+                          </Field>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <button onClick={() => void save()} className={`${BTN_PRIMARY} mt-3`} disabled={isSaving}>
+          {isSaving ? "Đang lưu…" : "Lưu cài đặt kênh"}
+        </button>
+      </div>
+
     </div>
   );
 }
