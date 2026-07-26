@@ -619,7 +619,15 @@ def _due_rows(now_ts: float) -> list[dict[str, Any]]:
     with _lock:
         rows = _db().execute(
             "SELECT * FROM reminders WHERE enabled=1 AND next_run_at IS NOT NULL "
-            "AND next_run_at <= ? ORDER BY next_run_at LIMIT 20",
+            "AND next_run_at <= ? "
+            # FIX6 (audit 2026-07): last_run_at cũng là marker "đã thử gửi"
+            # (ghi TRƯỚC _send trong _fire) — nếu nó >= next_run_at của chính
+            # dòng này tức là lần bắn gần nhất đã attempt cho ĐÚNG cữ hẹn này
+            # rồi (đang chờ _advance hoàn tất hoặc crash giữa chừng), KHÔNG
+            # chọn lại để tránh gửi trùng; qua chu kỳ sau _advance() đã đẩy
+            # next_run_at vượt qua last_run_at nên lại due bình thường.
+            "AND (last_run_at IS NULL OR last_run_at < next_run_at) "
+            "ORDER BY next_run_at LIMIT 20",
             (now_ts,),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -661,6 +669,21 @@ def _fire(row: dict[str, Any], now_ts: float) -> None:
     except Exception:
         meta = {}
 
+    # FIX6 (audit 2026-07): đánh dấu "đã thử gửi" TRƯỚC khi gọi _send — nếu
+    # tiến trình crash NGAY SAU khi gửi xong nhưng TRƯỚC khi _advance() cập
+    # nhật lịch, tick sau (~20s) sẽ KHÔNG chọn lại dòng này nữa (xem guard
+    # last_run_at < next_run_at trong _due_rows) nên không gửi trùng. Tái
+    # dùng cột last_run_at có sẵn — không cần ALTER TABLE thêm cột mới.
+    rid = row.get("id")
+    with _lock:
+        try:
+            _db().execute(
+                "UPDATE reminders SET last_run_at=? WHERE id=?", (now_ts, rid),
+            )
+            _db().commit()
+        except Exception as exc:
+            logger.warning("agent.reminders: mark attempted %s failed: %s", rid, exc)
+
     if mode == "task":
         try:
             result = _run_task(user_id, text, channel=channel,
@@ -672,7 +695,18 @@ def _fire(row: dict[str, Any], now_ts: float) -> None:
     else:
         _send(channel, chat_id, f"⏰ Nhắc anh/chị: {text}", meta)
 
-    _advance(row, now_ts)
+    # FIX6 (audit 2026-07): cô lập _advance khỏi lỗi gửi — trước đây lỗi
+    # UPDATE của _advance() lẫn vào cùng khối với _send(), khiến tick_once()
+    # log nhầm "fire failed" dù tin đã gửi xong, và (trước khi có marker ở
+    # trên) tick sau còn gửi lặp lại. Giờ lỗi advance chỉ log riêng, không
+    # ném ngược lên tick_once().
+    try:
+        _advance(row, now_ts)
+    except Exception as exc:
+        logger.warning(
+            "agent.reminders: advance %s failed (đã gửi rồi, marker last_run_at "
+            "chặn gửi lặp): %s", row.get("id"), exc,
+        )
     logger.info(
         "agent.reminders: fired id=%s mode=%s channel=%s",
         row.get("id"), mode, channel,

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -35,11 +37,17 @@ _SOUL_FILE = _AGENT_DIR / "soul.md"
 _MEMORY_FILE = _AGENT_DIR / "MEMORY.md"
 _ENVIRONMENT_FILE = _AGENT_DIR / "ENVIRONMENT.md"
 _APPROVALS_FILE = _AGENT_DIR / "approvals.json"
+# FIX4 (audit 2026-07): FTS5 index cho toàn bộ MEMORY.md (không chỉ đuôi
+# file như load_memory) — reuse pattern session.py (turns_fts): content=
+# external table, content_rowid=id, tokenize='unicode61'.
+_MEMORY_DB_PATH = _AGENT_DIR / "memory_fts.sqlite"
 
 # Package-shipped default persona used to seed soul.md on first run.
 _DEFAULT_SOUL = Path(__file__).with_name("soul.md")
 
 _lock = threading.RLock()
+_mem_conn: sqlite3.Connection | None = None
+_MEM_WORD_RE = re.compile(r"[\wÀ-ỹ]{2,}", re.UNICODE)
 
 # user_id -> {"capability": str, "args": dict, "summary": str, "ts": float}
 # A change action the model proposed; resolved when the user confirms/denies.
@@ -111,7 +119,14 @@ def _norm_fact(s: str) -> str:
 
 def memory_contains(fact: str, threshold: float = 0.82) -> bool:
     """True nếu `fact` (hoặc gần trùng) ĐÃ có trong MEMORY.md — để chặn 'remember'
-    đề xuất/lưu lại điều đã nhớ (model hay lôi nhầm ngữ cảnh, vd thông tin SSH)."""
+    đề xuất/lưu lại điều đã nhớ (model hay lôi nhầm ngữ cảnh, vd thông tin SSH).
+
+    FIX3 (audit 2026-07): BỎ so khớp substring thô (nf in nl / nl in nf) — nó
+    coi fact MỚI là trùng chỉ vì chuỗi của nó xuất hiện làm chuỗi con của một
+    dòng CŨ, kể cả khi dòng cũ mang nghĩa NGƯỢC LẠI (vd fact mới "thích cà phê"
+    lại khớp dòng cũ phủ định "không thích cà phê đá" vì "thích cà phê" là
+    substring của nó) → fact mới bị coi là đã nhớ rồi và KHÔNG được ghi lại.
+    Chỉ còn dựa vào ngưỡng Jaccard theo token (threshold mặc định 0.82)."""
     nf = _norm_fact(fact)
     if not nf:
         return False
@@ -122,17 +137,18 @@ def memory_contains(fact: str, threshold: float = 0.82) -> bool:
     except Exception:
         return False
     nf_tokens = set(nf.split())
+    if not nf_tokens:
+        return False
     for ln in lines:
         nl = _norm_fact(ln)
         if not nl:
             continue
-        if nf in nl or nl in nf:
-            return True
         lt = set(nl.split())
-        if nf_tokens and lt:
-            union = len(nf_tokens | lt)
-            if union and len(nf_tokens & lt) / union >= threshold:
-                return True
+        if not lt:
+            continue
+        union = len(nf_tokens | lt)
+        if union and len(nf_tokens & lt) / union >= threshold:
+            return True
     return False
 
 
@@ -143,13 +159,159 @@ def append_memory(fact: str, who: str = "") -> None:
         return
     _ensure_dirs()
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    line = f"- [{stamp}]{f' ({who})' if who else ''} {fact}\n"
+    line = f"- [{stamp}]{f' ({who})' if who else ''} {fact}"
     with _lock:
         try:
             with _MEMORY_FILE.open("a", encoding="utf-8") as f:
-                f.write(line)
+                f.write(line + chr(10))
         except Exception as exc:
             logger.warning("agent.state: append memory failed: %s", exc)
+            return
+        # FIX4 (audit 2026-07): đồng bộ FTS ngay khi thêm — chỉ thêm 1 dòng
+        # (rẻ hơn nhiều so với rebuild toàn bộ mỗi lần append_memory).
+        try:
+            db = _mem_db()
+            cur = db.execute(
+                "INSERT INTO memory_lines (line) VALUES (?)", (line,),
+            )
+            rid = cur.lastrowid
+            db.execute(
+                "INSERT INTO memory_fts (rowid, line) VALUES (?,?)", (rid, line),
+            )
+            mtime = _MEMORY_FILE.stat().st_mtime
+            db.execute(
+                "INSERT INTO memory_meta (key, value) VALUES ('mtime', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(mtime),),
+            )
+            db.commit()
+        except Exception as exc:
+            logger.warning("agent.state: memory FTS sync failed: %s", exc)
+
+
+def _mem_db() -> sqlite3.Connection:
+    """Kết nối SQLite cho FTS index của MEMORY.md — cùng pattern session.py
+    (turns_fts): bảng gốc + virtual table fts5 content-linked."""
+    global _mem_conn
+    if _mem_conn is None:
+        _ensure_dirs()
+        conn = sqlite3.connect(str(_MEMORY_DB_PATH), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_lines ("
+            " id INTEGER PRIMARY KEY,"
+            " line TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+            "line, content='memory_lines', content_rowid='id', "
+            "tokenize='unicode61')"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_meta ("
+            " key TEXT PRIMARY KEY, value TEXT)"
+        )
+        conn.commit()
+        _mem_conn = conn
+    return _mem_conn
+
+
+def _rebuild_memory_index() -> None:
+    """Xây lại toàn bộ FTS index từ MEMORY.md — dùng khi file mới hơn index
+    (ai đó sửa tay MEMORY.md ngoài append_memory, hoặc lần đầu chưa có index)."""
+    if not _MEMORY_FILE.exists():
+        return
+    try:
+        text = _MEMORY_FILE.read_text(encoding="utf-8")
+        mtime = _MEMORY_FILE.stat().st_mtime
+    except Exception as exc:
+        logger.warning("agent.state: read memory for index failed: %s", exc)
+        return
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    with _lock:
+        db = _mem_db()
+        try:
+            db.execute("DELETE FROM memory_fts")
+            db.execute("DELETE FROM memory_lines")
+            for ln in lines:
+                cur = db.execute(
+                    "INSERT INTO memory_lines (line) VALUES (?)", (ln,),
+                )
+                rid = cur.lastrowid
+                db.execute(
+                    "INSERT INTO memory_fts (rowid, line) VALUES (?,?)",
+                    (rid, ln),
+                )
+            db.execute(
+                "INSERT INTO memory_meta (key, value) VALUES ('mtime', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(mtime),),
+            )
+            db.commit()
+        except Exception as exc:
+            logger.warning("agent.state: rebuild memory index failed: %s", exc)
+
+
+def _sync_memory_index() -> None:
+    """Rebuild-on-mismatch (cùng cách session.py xử lý lệch dữ liệu): nếu
+    MEMORY.md mới hơn (hoặc khác) mtime đã lưu trong index, xây lại toàn bộ."""
+    if not _MEMORY_FILE.exists():
+        return
+    try:
+        mtime = _MEMORY_FILE.stat().st_mtime
+    except Exception:
+        return
+    try:
+        with _lock:
+            row = _mem_db().execute(
+                "SELECT value FROM memory_meta WHERE key='mtime'"
+            ).fetchone()
+    except Exception as exc:
+        logger.warning("agent.state: read memory index meta failed: %s", exc)
+        row = None
+    try:
+        indexed = float(row[0]) if row and row[0] else -1.0
+    except (TypeError, ValueError):
+        indexed = -1.0
+    if indexed < 0 or abs(mtime - indexed) > 0.001:
+        _rebuild_memory_index()
+
+
+def search_memory(query: str, *, limit: int = 6) -> list[str]:
+    """FIX4 (audit 2026-07): full-text search TOÀN BỘ MEMORY.md (không chỉ
+    đuôi file ~4-6k ký tự như load_memory) — để một fact CŨ (quá khoảng
+    40-80 dòng) vẫn được tìm thấy khi liên quan tới câu hỏi hiện tại. Dùng
+    ADDITIVE cùng load_memory() (khối "gần đây" luôn có sẵn) — không thay
+    thế hành vi hiện có, chỉ bổ sung khả năng tìm fact liên quan ở xa."""
+    q = (query or "").strip()
+    if not q or not _MEMORY_FILE.exists():
+        return []
+    _sync_memory_index()
+    words: list[str] = []
+    seen: set[str] = set()
+    for w in _MEM_WORD_RE.findall(q.lower()):
+        if w in seen:
+            continue
+        seen.add(w)
+        words.append(w)
+        if len(words) >= 12:
+            break
+    if not words:
+        return []
+    fts_query = " OR ".join(f'"{w}"' for w in words)
+    limit = max(1, min(int(limit or 6), 20))
+    try:
+        with _lock:
+            rows = _mem_db().execute(
+                "SELECT ml.line FROM memory_fts "
+                "JOIN memory_lines ml ON ml.id = memory_fts.rowid "
+                "WHERE memory_fts MATCH ? ORDER BY ml.id DESC LIMIT ?",
+                (fts_query, limit),
+            ).fetchall()
+    except Exception as exc:
+        logger.warning("agent.state: search_memory failed: %s", exc)
+        return []
+    return [r[0] for r in rows]
 
 
 # ── Model specs (bot tự học tham số/form từng model — tự tiến hóa) ────────────

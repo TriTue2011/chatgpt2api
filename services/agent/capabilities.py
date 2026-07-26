@@ -2073,23 +2073,6 @@ def _h_home_status(args: dict, ctx: dict) -> dict:
     return {"text": "Trạng thái nhà (Home Assistant):\n" + "\n".join(lines) + more}
 
 
-def _extract_json(text: str) -> dict | None:
-    """Bóc 1 object JSON từ output model (ưu tiên khối ```json, else {...})."""
-    import json as _json, re as _re
-    m = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text or "", _re.S)
-    raw = m.group(1) if m else None
-    if not raw:
-        i, j = (text or "").find("{"), (text or "").rfind("}")
-        raw = text[i:j + 1] if 0 <= i < j else None
-    if not raw:
-        return None
-    try:
-        d = _json.loads(raw)
-        return d if isinstance(d, dict) else None
-    except Exception:
-        return None
-
-
 def _ha_relevant_entities(request: str, limit: int = 40) -> str:
     """Danh sách entity_id + tên khớp từ khóa trong yêu cầu — để model dùng
     ĐÚNG entity thật khi viết automation."""
@@ -2114,11 +2097,12 @@ def _ha_relevant_entities(request: str, limit: int = 40) -> str:
 
 
 def _h_create_automation(args: dict, ctx: dict) -> dict:
-    """Tạo automation Home Assistant từ mô tả: model viết config → nạp qua HA
-    config API → reload → verify; HA báo lỗi thì TỰ SỬA và thử lại (tối đa 3)."""
-    import json as _json
+    """Tạo automation Home Assistant từ mô tả: model viết YAML → ỦY QUYỀN cho
+    ha_client.create_automation_and_verify (vá nháy thời gian + reviewer soi
+    trước khi ghi + entity PHẢI tồn tại thật + verify qua error_log HA, tự sửa
+    khi lỗi tới 2 lần) — KHÔNG tự POST JSON thẳng vào HA nữa, vì đường cũ chỉ
+    soát entity bằng dò chuỗi con (thiếu hẳn 3 tầng kiểm duyệt kể trên)."""
     import time as _t
-    import urllib.request
     request = str(args.get("request") or "").strip()
     if not request:
         return {"text": "Anh/chị muốn tạo automation làm gì ạ?"}
@@ -2126,48 +2110,27 @@ def _h_create_automation(args: dict, ctx: dict) -> dict:
     cfg = ha_client._get_ha_config()
     if not cfg or not cfg.get("url") or not cfg.get("token"):
         return {"text": "Home Assistant chưa cấu hình URL/token nên em chưa tạo được ạ."}
-    url, token = cfg["url"].rstrip("/"), cfg["token"]
     ents = _ha_relevant_entities(request)
-    base_prompt = (
-        "Bạn viết CẤU HÌNH AUTOMATION Home Assistant. CHỈ xuất một JSON object "
-        "hợp lệ (không giải thích), gồm: alias (tên tiếng Việt), trigger (list), "
-        "condition (list, có thể rỗng), action (list), mode ('single'). Dùng "
+    aid = str(int(_t.time() * 1000))
+    prompt = (
+        "Bạn viết YAML AUTOMATION Home Assistant hoàn chỉnh (một entry của "
+        "automations.yaml). CHỈ xuất YAML (không giải thích, không bọc ```), "
+        f"bắt đầu bằng '- id: \"{aid}\"', gồm: id, alias (tên tiếng Việt), "
+        "trigger, condition (list, có thể rỗng), action, mode: single. Dùng "
         "ĐÚNG entity_id trong danh sách dưới (nếu có). Không bịa entity.\n"
         + (f"\nEntity khả dụng:\n{ents}\n" if ents else "")
+        + f"\nYêu cầu: {request}"
     )
-    last_err = ""
-    aid = str(int(_t.time() * 1000))
-    for attempt in range(3):
-        p = base_prompt + (f"\nLần trước HA báo lỗi: {last_err}\nSửa lại cho đúng.\n" if last_err else "")
-        p += f"\nYêu cầu: {request}"
-        resp = call_model(branch_model("code", _channel_of(ctx)), [{"role": "user", "content": p}],
-                          timeout=120, max_tokens=1200)
-        conf = _extract_json(content_of(resp))
-        if not conf or not conf.get("action"):
-            last_err = "không tạo được JSON automation hợp lệ (thiếu action)"
-            continue
-        conf.setdefault("mode", "single")
-        try:
-            body = _json.dumps(conf).encode()
-            req = urllib.request.Request(
-                f"{url}/api/config/automation/config/{aid}", data=body, method="POST",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-            urllib.request.urlopen(req, timeout=15)
-        except Exception as exc:
-            detail = ""
-            try:
-                detail = exc.read().decode()[:200]  # HTTPError body
-            except Exception:
-                detail = str(exc)[:200]
-            last_err = f"HA từ chối config: {detail}"
-            continue
-        # Nạp thành công → reload cho HA áp dụng
-        ha_client.call_service("automation", "reload")
-        alias = conf.get("alias") or "automation"
-        return {"text": f"Đã tạo automation «{alias}» và nạp vào Home Assistant rồi ạ ✅\n"
-                        f"(trigger: {len(conf.get('trigger') or [])}, action: {len(conf.get('action') or [])})"}
-    return {"text": f"Em thử tạo automation 3 lần nhưng vẫn lỗi 😥: {last_err}\n"
-                    f"Anh/chị mô tả rõ hơn (thiết bị, thời điểm, điều kiện) giúp em nhé."}
+    resp = call_model(branch_model("code", _channel_of(ctx)), [{"role": "user", "content": prompt}],
+                      timeout=120, max_tokens=1200)
+    yaml_text = str(content_of(resp) or "").strip()
+    if yaml_text.startswith("```"):
+        yaml_text = re.sub(r"^```[a-zA-Z]*\n?", "", yaml_text)
+        yaml_text = re.sub(r"\n?```$", "", yaml_text).strip()
+    if not yaml_text:
+        return {"text": "Em không tạo được cấu hình automation, anh/chị mô tả rõ hơn giúp em nhé."}
+    _status, _text = ha_client.create_automation_and_verify(yaml_text)
+    return {"text": _text}
 
 
 def _h_system_status(args: dict, ctx: dict) -> dict:

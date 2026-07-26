@@ -153,6 +153,21 @@ def build_bundle(
         from services.agent import state
         mem = state.load_memory(limit_chars=6000)
         lines = _match_memory_lines(mem, words, limit=memory_lines())
+        # FIX4 (audit 2026-07): fact CŨ (ngoài cửa sổ đuôi của load_memory,
+        # qua khoảng 40-80 dòng) vẫn có thể liên quan — bổ sung kết quả từ
+        # FTS full-file (state.search_memory), gộp dedup với kết quả theo
+        # cửa sổ ở trên, KHÔNG thay thế hành vi hiện có.
+        if words:
+            try:
+                extra = state.search_memory(
+                    " ".join(words[:6]), limit=memory_lines(),
+                )
+                for ln in extra:
+                    s = ln.strip()
+                    if s and s not in lines:
+                        lines.append(s)
+            except Exception as exc:
+                logger.debug("super_context: memory fts: %s", exc)
         if lines:
             sections.append("### Trí nhớ liên quan\n" + "\n".join(lines)[:700])
     except Exception as exc:

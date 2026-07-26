@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Optional
 
 from services.config import config
@@ -44,6 +45,29 @@ _MAX_STEPS = 4
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
+
+# FIX5 (audit 2026-07): khoá RIÊNG từng user_id, bọc toàn bộ một lượt
+# orchestrate() (load lịch sử → gọi LLM/tool → ghi lịch sử) — chống mất-cập-
+# nhật khi 2 luồng xử lý CÙNG user song song (vd: reminder mode=task bắn tới
+# giờ đúng lúc user đang chat qua Telegram/Zalo, mỗi webhook một luồng riêng).
+# _history_locks_guard chỉ bảo vệ việc TẠO lock (get-or-create), không giữ
+# xuyên suốt lượt chat. KHÔNG có module nào khác giữ lock của nó trong lúc
+# gọi orchestrate() (xem reminders._fire/_advance — _lock của reminders.py
+# chỉ bọc CRUD bảng reminders, luôn nhả trước khi gọi orchestrate) nên không
+# có chiều ngược để tạo deadlock giữa 2 lock khác nhau.
+_history_locks: dict[str, threading.Lock] = {}
+_history_locks_guard = threading.Lock()
+
+
+def _user_history_lock(user_id: str) -> threading.Lock:
+    key = str(user_id or "")
+    with _history_locks_guard:
+        lock = _history_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _history_locks[key] = lock
+        return lock
+
 
 _APPROVE_ALWAYS = ("luôn luôn", "luôn khỏi hỏi", "khỏi hỏi", "lúc nào cũng", "từ giờ khỏi hỏi", "always")
 _APPROVE_ONCE = ("ok", "oke", "được", "duoc", "đồng ý", "dong y", "làm đi", "lam di", "ừ", "uh", "yes", "có", "co", "đi")
@@ -361,7 +385,23 @@ def orchestrate(user_text: str, user_id: str,
     thông minh rõ ràng được thực thi cục bộ ngay — không vòng qua provider.
 
     `model` = override model (vd. per-admin ai_model); trống → model_hints/default.
+
+    FIX5: cả lượt (load lịch sử → LLM/tool → ghi lịch sử) chạy dưới 1 khoá
+    riêng theo user_id — 2 luồng cùng user (vd chat thường + reminder task bắn
+    trùng giờ) không còn ghi đè lịch sử của nhau.
     """
+    with _user_history_lock(user_id):
+        return _orchestrate_locked(
+            user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
+            model=model, auto_approve=auto_approve,
+        )
+
+
+def _orchestrate_locked(user_text: str, user_id: str,
+                        allow: set[str] | None = None,
+                        ha_fastpath: bool = True,
+                        model: str | None = None,
+                        auto_approve: bool = False) -> dict[str, Any]:
     import time as _time
     t0 = _time.time()
     tools_used: list[str] = []
@@ -638,6 +678,10 @@ def orchestrate(user_text: str, user_id: str,
         # Câu trả lời TERMINAL (deliver_now) từ tool: gửi thẳng, không cho vòng LLM
         # kể lại — dùng khi tạo ảnh/video THẤT BẠI để không "khoe" là đã gửi.
         terminal_reply: Optional[str] = None
+        # FIX2 (audit 2026-07): câu hỏi xin duyệt khi MỘT call giữa lượt cần
+        # duyệt — không return ngay ở chỗ phát sinh (xem dưới) để khỏi bỏ lỡ
+        # media/kết quả của các call THÀNH CÔNG trước đó trong cùng lượt.
+        pending_approval_q: Optional[str] = None
 
         for tc in tool_calls:
             fn = (tc.get("function") or {})
@@ -680,14 +724,27 @@ def orchestrate(user_text: str, user_id: str,
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
                 return {"text": "", "silent": True}
-            elif not auto_approve and approval_gate.is_blocked(name, risk=cap.risk):
+            elif approval_gate.is_blocked(name, risk=cap.risk):
+                # FIX1 (security, audit 2026-07): readonly là CHẶN CỨNG — trước
+                # đây điều kiện "not auto_approve and ..." khiến việc chạy TỰ
+                # ĐỘNG theo lịch (reminders auto_approve=True) vẫn lách qua được
+                # cả khi server cố tình đặt agent_approval.level=readonly. Bỏ
+                # "not auto_approve" — is_blocked luôn có hiệu lực bất kể nguồn gọi.
                 result = {
                     "text": (
                         f"Chế độ chỉ-đọc: em không được chạy `{name}` "
                         f"(thay đổi hệ thống). Anh/chị bật lại autonomy supervised/full nhé."
                     ),
                 }
-            elif not auto_approve and approval_gate.needs_approval(user_id, name, risk=cap.risk):
+            elif approval_gate.needs_approval(user_id, name, risk=cap.risk) and (
+                not auto_approve or name in approval_gate.always_confirm_names()
+            ):
+                # FIX1 (security, audit 2026-07): auto_approve (chạy tự động theo
+                # lịch — reminders mode=task) CHỈ được phép bỏ qua màn hỏi duyệt
+                # THÔNG THƯỜNG. Các tool luôn-phải-hỏi (approval_gate._ALWAYS_CONFIRM,
+                # vd send_to_contact/create_automation) vẫn phải dừng chờ người
+                # thật xác nhận — kể cả khi việc này chạy tự động, kẻo một tác vụ
+                # định kỳ tự ý gửi tin/tạo automation mà không ai duyệt.
                 # Propose + wait for approval (ASK chips + ok/luôn luôn/thôi).
                 # Never put resolved secrets into approval UI — re-redact display
                 display_args = dict(args)
@@ -704,16 +761,17 @@ def orchestrate(user_text: str, user_id: str,
                     name, display_args, cap.description or "",
                 )
                 approval_gate.set_pending(user_id, name, args, summary)
-                q = approval_gate.format_proposal(
+                pending_approval_q = approval_gate.format_proposal(
                     name, display_args,
                     description=cap.description or "",
                     label=cap.label or cap.name,
                 )
-                out_q = _finalize(user_id, {"text": q})
-                hist.append({"role": "assistant", "content": out_q.get("text") or q})
-                _persist_history(user_id, hist)
-                _journal(str(out_q.get("text") or q), status="awaiting_approval")
-                return out_q
+                # FIX2 (audit 2026-07): không return ở đây — nếu có call TRƯỚC đó
+                # trong cùng lượt đã chạy xong (vd generate_image tốn phí thật),
+                # kết quả/media của nó sẽ được gộp cùng câu hỏi xin duyệt này và
+                # trả về SAU vòng for (xem khối `if pending_approval_q` bên dưới),
+                # thay vì mất trắng vì return sớm ở đây như trước.
+                break
             else:
                 result = _execute(cap, args, user_id, user_text=user_text,
                                   auto_approve=auto_approve)
@@ -762,6 +820,20 @@ def orchestrate(user_text: str, user_id: str,
             messages.append({"role": "tool", "tool_call_id": tc.get("id"),
                              "content": content})
 
+        # FIX2 (audit 2026-07): một call giữa lượt cần xin duyệt (break ở trên)
+        # → gộp media/câu trả lời của các call THÀNH CÔNG trước đó (đã tốn phí
+        # thật, vd generate_image) với câu hỏi xin duyệt, trả về LUÔN — không
+        # để mất kết quả đã tạo ra chỉ vì phải dừng hỏi duyệt call sau.
+        if pending_approval_q:
+            base_text = produced_caption if produced_media else (terminal_reply or "")
+            combo_text = (
+                f"{base_text}\n\n{pending_approval_q}" if base_text else pending_approval_q
+            )
+            out_q = _finalize(user_id, {"text": combo_text, **(produced_media or {})})
+            hist.append({"role": "assistant", "content": out_q.get("text") or combo_text})
+            _persist_history(user_id, hist)
+            _journal(str(out_q.get("text") or combo_text), status="awaiting_approval")
+            return out_q
         # If a capability produced media, deliver it now (the media is the answer).
         if produced_media:
             text = produced_caption
