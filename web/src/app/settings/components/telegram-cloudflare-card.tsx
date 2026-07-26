@@ -188,6 +188,8 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
   const [resolving, setResolving] = useState<string>("");
   // Collapse nhiều cấp: mỗi admin thu gọn (mặc định ẩn; admin chưa có ID = mở sẵn)
   const [openAdmin, setOpenAdmin] = useState<Record<string, boolean>>({});
+  // Thu gọn TỪNG BOT (mặc định ẩn; bot chưa có token = mở sẵn để nhập)
+  const [openBot, setOpenBot] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (inited.current || !Array.isArray(bots)) return;
@@ -331,17 +333,35 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
       {rows.map((row) => {
         const bid = row.token.split(":")[0]?.trim() || "";
         const platformName = names?.[bid] || "";
+        // Thu gọn TỪNG BOT (mặc định ẩn; bot mới chưa có token thì mở sẵn).
+        const nAdm = row.admins.filter((a) => a.chat_id.trim()).length;
+        const botOpen = openBot[row.id] ?? !row.token.trim();
+        const botTitle = row.label.trim() || platformName || (bid ? `Bot ${bid}` : "Bot mới");
         return (
           <div key={row.id} className="rounded-md border border-border p-2 space-y-2">
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0">
+              <label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0"
+                onClick={(e) => e.stopPropagation()}>
                 <input type="checkbox" className="size-3.5" checked={row.enabled}
                   onChange={(e) => patch(row.id, { enabled: e.target.checked })} />
                 Bật
               </label>
-              <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
-                placeholder={tokenPlaceholder} className="flex-1" />
+              <div className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer select-none"
+                onClick={() => setOpenBot((s) => ({ ...s, [row.id]: !botOpen }))}>
+                <span className="text-[11px] text-muted-foreground w-3 shrink-0">{botOpen ? "▾" : "▸"}</span>
+                <span className="text-xs font-medium truncate flex-1">{botTitle}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">
+                  {bid ? `${bid} · ` : ""}{nAdm} admin
+                </span>
+              </div>
               <Button type="button" variant="ghost" size="sm" onClick={() => remove(row.id)}>Xóa</Button>
+            </div>
+            {botOpen ? (
+            <>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-muted-foreground shrink-0">Token</label>
+              <Input value={row.token} onChange={(e) => patch(row.id, { token: e.target.value })}
+                placeholder={tokenPlaceholder} className="flex-1 h-8 text-xs font-mono" />
             </div>
             <div className="flex items-center gap-2">
               <label className="text-[11px] text-muted-foreground shrink-0">Tên dễ nhớ</label>
@@ -463,6 +483,8 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
               <Button type="button" variant="outline" size="sm" className="h-8"
                 onClick={() => addAdmin(row.id)}>+ Thêm admin</Button>
             </div>
+            </>
+            ) : null}
           </div>
         );
       })}
@@ -1204,21 +1226,12 @@ export function TelegramCloudflareCard() {
               onChange={(e) => setField("zalo_personal_ai_enabled", e.target.checked)} />
             🤖 Bật AI trả lời — tắt là bot im hoàn toàn trên kênh này
           </label>
-          <div>
-            <label className="text-[10px] text-muted-foreground">
-              Model AI mặc định kênh — dùng khi thread không cài model riêng ở «Lọc thread»
-            </label>
-            <Select value={String(cfg.zalo_personal_ai_model || " ")}
-              onValueChange={(v) => setField("zalo_personal_ai_model", v.trim())}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Mặc định hệ thống" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value=" ">-- Mặc định hệ thống --</SelectItem>
-                {Array.from(new Set([...models, ...(cfg.zalo_personal_ai_model ? [String(cfg.zalo_personal_ai_model)] : [])])).map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Ô "Model AI mặc định kênh" đã BỎ (nhất quán 3 kênh) — model cài theo
+              TỪNG THREAD ở tab «Lọc thread». */}
+          <p className="text-[10px] text-muted-foreground">
+            🤖 Model AI: cài theo <b>từng thread</b> ở tab «Lọc thread». Thread không
+            cài riêng thì dùng mặc định hệ thống.
+          </p>
 
           {/* Hạ tầng zca-js + webhook đã CHUYỂN sang tab «🔑 Tài khoản & QR»
               (ở đó hiện luôn URL webhook từng tài khoản + nút copy). Ô "URL bot
