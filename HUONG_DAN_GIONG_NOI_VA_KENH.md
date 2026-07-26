@@ -175,6 +175,16 @@ kiểu gửi: **cứ có mới là gửi** và/hoặc **mốc giờ định kỳ
 Email tóm tắt **cả tệp đính kèm** (PDF/Word/Excel). Nút **Test IMAP** /
 **Kiểm tra lịch** báo lỗi bằng tiếng Việt kèm cách sửa.
 
+Lịch còn có **⏰ Mốc nhắc trước sự kiện** (`7d, 1d, 2h, 30m` — d=ngày, h=giờ,
+m=phút): mỗi sự kiện được nhắc một lần ở TỪNG mốc vào các kênh đã chọn; sự kiện
+phát hiện muộn chỉ nhắc mốc sát nhất (không dội nhiều tin một lúc).
+
+**Yêu cầu TỪ Home Assistant dùng tool** (vẽ ảnh qua Assist/loa…): card
+`Cài đặt → Home Assistant` → khối **«Giới hạn chức năng cho yêu cầu TỪ HA»**.
+Không bật = mở hết như cũ; bật + tick 🎨 Ảnh → nói "vẽ con mèo" với Assist là
+tạo ảnh; bỏ tick → chỉ trả lời chữ. Cùng card có nút **Test kết nối** và
+**Làm mới thiết bị ngay**.
+
 ---
 
 ## 6. Sự cố thường gặp
