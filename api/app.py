@@ -257,8 +257,15 @@ def create_app() -> FastAPI:
                 _log_startup_failure("stop_tunnel", exc)
 
     from fastapi.responses import ORJSONResponse
+    # /docs + /openapi.json TẮT mặc định: gateway đứng sau domain public
+    # (Cloudflare) — mở là lộ toàn bộ bề mặt API không cần đăng nhập.
+    # Cần dùng Swagger nội bộ → config `enable_api_docs: true` rồi restart.
+    _docs_on = bool(config.get().get("enable_api_docs"))
     app = FastAPI(title="chatgpt2api", version=app_version, lifespan=lifespan,
-                  default_response_class=ORJSONResponse)
+                  default_response_class=ORJSONResponse,
+                  docs_url="/docs" if _docs_on else None,
+                  redoc_url="/redoc" if _docs_on else None,
+                  openapi_url="/openapi.json" if _docs_on else None)
     app.add_middleware(
         CORSMiddleware,
         # Mặc định ["*"] (self-host); production sau tunnel đặt config

@@ -1129,11 +1129,14 @@ def create_router(app_version: str) -> APIRouter:
         """Handle Codex OAuth callback (matches 9router path)."""
         if not code or not state:
             raise HTTPException(status_code=400, detail={"error": "Missing code or state"})
+        # Route công khai (OAuth redirect không mang bearer) → MỌI chuỗi nội suy
+        # vào HTML phải escape, kẻo code/state dội vào thông báo lỗi thành XSS.
+        import html as _html
         try:
             result = exchange_codex_code(code, state)
             return HTMLResponse(content=f"""
             <html><body style="font-family:sans-serif;padding:40px;text-align:center">
-            <h2>{result['message']}</h2>
+            <h2>{_html.escape(str(result.get('message') or 'OK'))}</h2>
             <p>Bạn có thể đóng tab này.</p>
             <script>setTimeout(function(){{window.close()}},3000)</script>
             </body></html>
@@ -1141,7 +1144,7 @@ def create_router(app_version: str) -> APIRouter:
         except Exception as exc:
             return HTMLResponse(content=f"""
             <html><body style="font-family:sans-serif;padding:40px;text-align:center">
-            <h2 style="color:red">Lỗi: {str(exc)}</h2>
+            <h2 style="color:red">Lỗi: {_html.escape(str(exc)[:300])}</h2>
             <p>Copy URL này và dùng API exchange thủ công.</p>
             </body></html>
             """, status_code=400)
@@ -1151,11 +1154,12 @@ def create_router(app_version: str) -> APIRouter:
         """Handle Codex OAuth callback — exchange code for token."""
         if not code or not state:
             raise HTTPException(status_code=400, detail={"error": "Missing code or state"})
+        import html as _html
         try:
             result = exchange_codex_code(code, state)
             return HTMLResponse(content=f"""
             <html><body style="font-family:sans-serif;padding:40px;text-align:center">
-            <h2>{result['message']}</h2>
+            <h2>{_html.escape(str(result.get('message') or 'OK'))}</h2>
             <p>Bạn có thể đóng tab này.</p>
             <script>setTimeout(function(){{window.close()}},3000)</script>
             </body></html>
