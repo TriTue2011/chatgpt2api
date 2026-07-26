@@ -15,6 +15,10 @@ Config ``calendars`` (list — mỗi phần tử một lịch)::
     notify_on_new: bool      — có sự kiện MỚI là gửi ngay
     notify_times: list[str]  — ["07:00"] gom lại gửi định kỳ
     notify_targets: list[str]— kênh nhận, khóa 'plat:bot:chat' như «Lọc thread»
+    remind_before: list[str] — NHIỀU MỐC nhắc trước sự kiện: ["7d","1d","2h","30m"]
+                               (d=ngày, h=giờ, m=phút; số trần = ngày). Mỗi sự
+                               kiện nhắc một lần ở từng mốc; cửa sổ nhìn trước
+                               tự nới theo mốc lớn nhất.
 
 Tương thích ngược: ``calendars`` rỗng thì đọc ``calendar_connector`` (cấu hình
 một-lịch cũ) thành lịch #1 — không ghi đè, không cần migrate.
@@ -50,6 +54,23 @@ except Exception:  # pragma: no cover
 
 
 # ── Danh sách lịch ───────────────────────────────────────────────────────────
+def parse_lead(v: Any) -> int:
+    """Mốc nhắc trước → GIÂY: '7d'=7 ngày, '2h'=2 giờ, '30m'=30 phút, '7'=7 ngày.
+    Không hợp lệ → 0 (mốc bị bỏ qua)."""
+    s = str(v or "").strip().lower()
+    if not s:
+        return 0
+    unit = 86400  # số trần = ngày
+    if s[-1] in ("d", "h", "m"):
+        unit = {"d": 86400, "h": 3600, "m": 60}[s[-1]]
+        s = s[:-1]
+    try:
+        n = float(s)
+    except ValueError:
+        return 0
+    return int(n * unit) if n > 0 else 0
+
+
 def _legacy() -> dict[str, Any]:
     raw = config.get().get("calendar_connector")
     return raw if isinstance(raw, dict) else {}
@@ -76,17 +97,28 @@ def _norm_cal(raw: Any, idx: int) -> dict[str, Any] | None:
     targets = raw.get("notify_targets")
     if isinstance(targets, str):
         targets = [s.strip() for s in targets.split(",") if s.strip()]
+    remind = raw.get("remind_before")
+    if isinstance(remind, str):
+        remind = [s.strip() for s in remind.split(",") if s.strip()]
+    remind = [str(x).strip() for x in (remind or []) if parse_lead(x) > 0]
+    days = _int("days_ahead", 7)
+    if remind:
+        # Cửa sổ nhìn trước phải PHỦ mốc nhắc xa nhất, không thì sự kiện chưa
+        # vào cache đã tới giờ nhắc.
+        max_days = max(parse_lead(x) for x in remind) / 86400.0
+        days = max(days, int(max_days) + 1)
     return {
         "id": cal_id,
         "label": str(raw.get("label") or f"Lịch {idx + 1}").strip(),
         "enabled": bool(raw.get("enabled")),
         "ics_url": url,
-        "days_ahead": _int("days_ahead", 7),
+        "days_ahead": days,
         "max_events": min(30, _int("max_events", 8)),
         "cache_seconds": _int("cache_seconds", 900, lo=60),
         "notify_on_new": bool(raw.get("notify_on_new", True)),
         "notify_times": [str(t) for t in (times or []) if str(t).strip()],
         "notify_targets": [str(t) for t in (targets or []) if str(t).strip()],
+        "remind_before": remind,
     }
 
 
@@ -364,6 +396,51 @@ def check_new(cal: dict[str, Any]) -> int:
     return new_n
 
 
+def check_reminders(cal: dict[str, Any]) -> int:
+    """NHIỀU MỐC nhắc trước sự kiện (remind_before) — trả số tin đã gửi.
+
+    Mỗi (sự kiện, mốc) chỉ nhắc MỘT lần (state 'rem:<uid>:<mốc>'). Sự kiện phát
+    hiện muộn khi nhiều mốc đã trôi qua → chỉ nhắc MỐC GẦN NHẤT, các mốc trễ hơn
+    đánh dấu đã qua (không dội 3-4 tin một lúc). Sự kiện đã bắt đầu → thôi."""
+    from services import digest
+    leads = sorted(
+        {(parse_lead(x), str(x).strip()) for x in (cal.get("remind_before") or [])
+         if parse_lead(x) > 0})
+    if not leads or not cal.get("notify_targets"):
+        return 0
+    src = source_key(cal)
+    now = datetime.now(_TZ)
+    sent = 0
+    for ev in fetch_events(cal):        # dùng cache — không đập feed mỗi tick
+        if ev["start"] <= now:
+            continue
+        # Mốc đang "tới giờ": start - lead <= now < start
+        active = [(secs, lbl) for secs, lbl in leads
+                  if ev["start"] - timedelta(seconds=secs) <= now]
+        if not active:
+            continue
+        fresh = [(s, l) for s, l in active
+                 if not digest.seen(src, f"rem:{_ev_uid(ev)}:{l}")]
+        if not fresh:
+            continue
+        for _s, lbl in fresh:           # mọi mốc active đều coi như đã xử lý
+            digest.mark_seen(src, f"rem:{_ev_uid(ev)}:{lbl}")
+        secs, lbl = fresh[0]            # nhỏ nhất = sát sự kiện nhất
+        left = ev["start"] - now
+        mins = int(left.total_seconds() // 60)
+        left_txt = (f"{mins // 1440} ngày {mins % 1440 // 60} giờ" if mins >= 1440
+                    else f"{mins // 60} giờ {mins % 60} phút" if mins >= 60
+                    else f"{max(1, mins)} phút")
+        when = ev["start"].astimezone(_TZ).strftime("%a %d/%m %H:%M")
+        loc = f"\n📍 {ev['location']}" if ev.get("location") else ""
+        if digest.send_targets(
+                cal["notify_targets"],
+                f"⏰ {cal.get('label')} — còn {left_txt} (mốc {lbl})\n"
+                f"🗓️ {when}: {ev['summary']}{loc}"):
+            sent += 1
+    return sent
+
+
 def send_digest_now(calendar_id: str = "") -> dict[str, Any]:
     """Gửi NGAY bản lịch sắp tới tới các kênh đã chọn (nút «Gửi thử»)."""
     cal = calendar_by_id(calendar_id)
@@ -395,12 +472,14 @@ def _loop() -> None:
                 if not cal.get("enabled"):
                     continue
                 key = source_key(cal)
-                if time.time() - _last_check.get(key, 0.0) < _CHECK_EVERY:
-                    continue
-                _last_check[key] = time.time()
-                # Sự kiện mới gửi ngay (notify_on_new) hoặc xếp chờ tới giờ
-                # (notify_times) — digest.notify quyết định.
-                check_new(cal)
+                if time.time() - _last_check.get(key, 0.0) >= _CHECK_EVERY:
+                    _last_check[key] = time.time()
+                    # Sự kiện mới gửi ngay (notify_on_new) hoặc xếp chờ tới giờ
+                    # (notify_times) — digest.notify quyết định.
+                    check_new(cal)
+                # Mốc nhắc trước sự kiện: kiểm tra MỖI tick (60s) từ cache —
+                # rẻ, và mốc phút ('30m') không bị lệch 5 phút như check_new.
+                check_reminders(cal)
         except Exception as exc:
             logger.warning("calendar: loop lỗi: %s", exc)
         _stop.wait(60)
@@ -437,6 +516,7 @@ def status() -> dict[str, Any]:
             "notify_targets": c.get("notify_targets") or [],
             "notify_times": c.get("notify_times") or [],
             "notify_on_new": bool(c.get("notify_on_new")),
+            "remind_before": c.get("remind_before") or [],
         })
     return {"running": _started, "enabled": is_enabled(),
             "calendars": rows, "count": len(rows)}

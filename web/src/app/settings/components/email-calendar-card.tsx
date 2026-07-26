@@ -23,6 +23,8 @@ type CalRow = {
   uiId: number;
   id: string; label: string; enabled: boolean;
   ics_url: string; days_ahead: string;
+  /** Nhiều mốc nhắc trước sự kiện: "7d, 1d, 2h, 30m" (d=ngày, h=giờ, m=phút) */
+  remind_before: string;
   notify_on_new: boolean; notify_times: string; notify_targets: string[];
 };
 
@@ -110,6 +112,7 @@ export function EmailCalendarCard() {
       id: String(c.id || ""), label: String(c.label || ""),
       enabled: Boolean(c.enabled),
       ics_url: String(c.ics_url || ""), days_ahead: String(c.days_ahead ?? 7),
+      remind_before: toList(c.remind_before).join(", "),
       notify_on_new: c.notify_on_new === undefined ? true : Boolean(c.notify_on_new),
       notify_times: toList(c.notify_times).join(", "),
       notify_targets: toList(c.notify_targets),
@@ -164,6 +167,7 @@ export function EmailCalendarCard() {
         id: c.id || undefined, label: c.label.trim(), enabled: c.enabled,
         ics_url: c.ics_url.trim(),
         days_ahead: Math.max(1, parseInt(c.days_ahead) || 7),
+        remind_before: splitList(c.remind_before),
         max_events: 8, cache_seconds: 900,
         notify_on_new: c.notify_on_new,
         notify_times: splitList(c.notify_times),
@@ -417,7 +421,7 @@ export function EmailCalendarCard() {
             onClick={() => {
               const row: CalRow = {
                 uiId: seq.current++, id: "", label: "", enabled: true,
-                ics_url: "", days_ahead: "7",
+                ics_url: "", days_ahead: "7", remind_before: "",
                 notify_on_new: true, notify_times: "", notify_targets: [],
               };
               setCals((p) => [...p, row]);
@@ -470,10 +474,24 @@ export function EmailCalendarCard() {
                       onChange={(e) => patchCal(c.uiId, { ics_url: e.target.value })}
                       placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
                   </div>
-                  <div>
-                    <label className="text-[10px] text-muted-foreground">Nhìn trước (ngày)</label>
-                    <Input value={c.days_ahead} className="h-8 text-xs w-24"
-                      onChange={(e) => patchCal(c.uiId, { days_ahead: e.target.value })} />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">Nhìn trước (ngày)</label>
+                      <Input value={c.days_ahead} className="h-8 text-xs w-24"
+                        onChange={(e) => patchCal(c.uiId, { days_ahead: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-muted-foreground">
+                        ⏰ Mốc nhắc trước sự kiện (phẩy — d=ngày, h=giờ, m=phút)
+                      </label>
+                      <Input value={c.remind_before} className="h-8 text-xs"
+                        onChange={(e) => patchCal(c.uiId, { remind_before: e.target.value })}
+                        placeholder="7d, 1d, 2h, 30m" />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Mỗi sự kiện nhắc 1 lần ở TỪNG mốc, gửi vào các kênh bên dưới.
+                        Trống = không nhắc. Cửa sổ nhìn trước tự nới theo mốc xa nhất.
+                      </p>
+                    </div>
                   </div>
                   {notifyBlock(c.notify_targets, c.notify_on_new, c.notify_times,
                     (p) => patchCal(c.uiId, p))}
