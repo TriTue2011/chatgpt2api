@@ -141,6 +141,12 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 # ── Python deps ─────────────────────────────────────────────────────────────
 RUN pip install --no-cache-dir uv
 
+# pyproject ghim mirror aliyun (default=true — nhanh ở VN, hay TIMEOUT trên GH
+# runner: đã fail vnstock rồi posthog). CI truyền build-arg ép PyPI chính hãng;
+# build tay ở VN không truyền gì → vẫn aliyun như cũ.
+ARG UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
+
 # chatgpt2api locked deps (reproducible) → /app/.venv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project

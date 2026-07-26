@@ -108,6 +108,10 @@ jobs:
           # gha cache previously served a stale services/ layer; keep off so the
           # image always contains the committed code (~1m slower).
           no-cache: true
+          # GH runner ở Mỹ: mirror aliyun (default trong pyproject) hay timeout
+          # (vnstock, posthog) — ép PyPI chính hãng như job test.
+          build-args: |
+            UV_DEFAULT_INDEX=https://pypi.org/simple
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
@@ -164,6 +168,7 @@ jobs:
           no-cache: true
           build-args: |
             GPU=1
+            UV_DEFAULT_INDEX=https://pypi.org/simple
           push: true
           tags: ${{ env.REGISTRY_IMAGE }}:gpu
 
