@@ -54,6 +54,19 @@ def _cur_bot() -> dict | None:
     return getattr(_current, "bot", None)
 
 
+def _cur_topic() -> int | None:
+    """Topic (forum) của tin đang xử lý — để TRẢ LỜI ĐÚNG TOPIC.
+
+    Nhóm bật Topics: mỗi tin có `message_thread_id`. Không truyền lại khi gửi thì
+    câu trả lời rơi vào topic General thay vì chỗ người ta hỏi. Topic General
+    không có id → None (gửi như nhóm thường)."""
+    t = getattr(_current, "topic", None)
+    try:
+        return int(t) if t else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _bots() -> list[dict]:
     return config.telegram_bots()
 
@@ -493,6 +506,8 @@ def send_message(chat_id: int | str, text: str,
     """
     results = _cli().send_message_safe(
         chat_id, text or "",
+        # Trả lời NGAY TRONG topic đã nhận (None = nhóm thường / General)
+        message_thread_id=_cur_topic(),
         parse_mode="auto",
         convert_llm_md=True,
         split=True,
@@ -595,6 +610,10 @@ async def handle_webhook(request) -> dict:
         return {"ok": True}
     chat = msg.get("chat", {}) or {}
     chat_id = str(chat.get("id", ""))
+    # Nhóm bật Topics (forum): mỗi tin thuộc 1 topic. Giữ lại để (a) trả lời đúng
+    # topic, (b) lọc chức năng theo topic. Topic General không có id → "".
+    topic_id = str(msg.get("message_thread_id") or "").strip()
+    _current.topic = topic_id
     text = (msg.get("text") or "").strip()
     photo = msg.get("photo")
     document = msg.get("document")
