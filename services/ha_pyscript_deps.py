@@ -98,10 +98,19 @@ def consent_message(names: list[str]) -> str:
             "Nhắn 'đồng ý cài pyscript' để tôi cài, rồi thử lại yêu cầu.")
 
 
-def install(names: list[str] | None = None) -> tuple[bool, str]:
-    """Cài các pyscript còn thiếu (hoặc `names`) lên HA qua SSH + reload."""
+def install(names: list[str] | None = None, force: bool | None = None) -> tuple[bool, str]:
+    """Cài/CẬP NHẬT pyscript lên HA qua SSH + reload.
+
+    `force=None` (mặc định) → suy ra: gọi KHÔNG kèm `names` nghĩa là user chủ
+    động ra lệnh cài ("đồng ý cài pyscript") ⇒ GHI ĐÈ toàn bộ asset. Cần thiết
+    khi asset trong repo được vá (vd bỏ shell-injection ở create_automation_by_ai):
+    HA vẫn thấy service tồn tại nên `missing()` rỗng, bản CŨ CÓ LỖI sẽ nằm lại
+    mãi. Gọi kèm `names` (đường tự động qua `ensure`) thì chỉ cài cái còn thiếu.
+    """
     targets = names or list(DEPS.keys())
-    todo = missing(targets)
+    if force is None:
+        force = names is None
+    todo = targets if force else missing(targets)
     if not todo:
         return True, "✅ HA đã có đủ công cụ pyscript, không cần cài thêm."
     ssh = _ssh_conf()
@@ -152,7 +161,8 @@ def install(names: list[str] | None = None) -> tuple[bool, str]:
     if still:
         return False, (f"⚠️ Đã ghi file {', '.join(installed)} nhưng HA chưa thấy "
                        f"service {', '.join(still)} sau reload — thử lại sau vài giây.")
-    return True, f"✅ Đã tự cài + kích hoạt pyscript trên HA: {', '.join(installed)}."
+    verb = "cập nhật" if force else "cài"
+    return True, f"✅ Đã {verb} + kích hoạt pyscript trên HA: {', '.join(installed)}."
 
 
 def ensure(names: list[str], consent: bool = False) -> tuple[bool, str]:
@@ -162,6 +172,6 @@ def ensure(names: list[str], consent: bool = False) -> tuple[bool, str]:
     if not todo:
         return True, ""
     if consent:
-        ok, msg = install(todo)
+        ok, msg = install(todo, force=False)
         return ok, msg
     return False, consent_message(todo)

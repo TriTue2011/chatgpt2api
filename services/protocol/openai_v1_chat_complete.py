@@ -453,8 +453,14 @@ def _run_pipeline_combo(
     arch_body["stream"] = False
     arch_messages = [{"role": "system", "content": _PIPELINE_ARCHITECT_PROMPT}] + list(messages)
     for am in architects:
+        route = None
         try:
             route = backend_router.route(_strip_marker(am))
+            # Gate như combo_models: architect vừa fail thì bị demote, không
+            # retry đúng vị trí cũ trên MỌI request (đỡ tốn latency mỗi lần).
+            if not model_cooldown.is_available("pipeline:" + combo_name, route.model):
+                logger.info({"event": "pipeline_architect_skip_cooling", "combo": combo_name, "model": route.model})
+                continue
             cooldown = model_cooldown.get_cooldown_info(route.model)
             if cooldown:
                 logger.warning({"event": "pipeline_architect_cooldown", "combo": combo_name, "model": am, **cooldown})
@@ -470,6 +476,13 @@ def _run_pipeline_combo(
                 break
         except Exception as exc:
             logger.warning({"event": "pipeline_architect_fail", "combo": combo_name, "model": am, "error": str(exc)[:200]})
+            # Khóa theo route.model (đã resolve) — cùng khóa với record_success,
+            # không thì success/failure lệch khóa và gate không bao giờ khớp.
+            model_cooldown.record_failure(
+                account_id="pipeline:" + combo_name,
+                model=(route.model if route else am),
+                status_code=_extract_status(str(exc)), error_body=str(exc), provider="",
+            )
             continue
 
     # ---- Tầng 2: editor (con) — stream theo client, fallback chain ----
@@ -487,8 +500,13 @@ def _run_pipeline_combo(
 
     last_error = ""
     for em in editors:
+        route = None
         try:
             route = backend_router.route(_strip_marker(em))
+            if not model_cooldown.is_available("pipeline:" + combo_name, route.model):
+                last_error = f"{route.model} đang cooldown (pipeline-level)"
+                logger.info({"event": "pipeline_editor_skip_cooling", "combo": combo_name, "model": route.model})
+                continue
             cooldown = model_cooldown.get_cooldown_info(route.model)
             if cooldown:
                 last_error = cooldown["message"]
@@ -513,7 +531,8 @@ def _run_pipeline_combo(
             last_error = str(exc)
             logger.warning({"event": "pipeline_editor_fail", "combo": combo_name, "model": em, "error": last_error[:200]})
             model_cooldown.record_failure(
-                account_id="pipeline:" + combo_name, model=em,
+                account_id="pipeline:" + combo_name,
+                model=(route.model if route else em),
                 status_code=_extract_status(last_error), error_body=last_error, provider="",
             )
             continue
@@ -2739,6 +2758,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         # Mirror the non-combo path: inject HA registry as a system message for
         # HA-related queries so the LLM can answer in ONE round-trip instead of
         # doing GetLiveContext / ha_get_state -> wait -> final answer (saves ~7s).
+        from services.providers.chatgpt_free import NoFallbackError
         for _route_idx, route in enumerate(routes):
             messages_for_route = list(messages_copy)
             ha_context_injected = False
@@ -2770,7 +2790,10 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 # exhausted provider drops to the back automatically and the next
                 # healthy one is tried first ("hết quota thì đá xuống cuối").
                 # 413 is NOT cooled, so a one-off big payload never demotes it.
-                if not model_cooldown.is_available("combo:" + model, route.model):
+                # KHÔNG chặn route CUỐI (giống circuit-breaker bên dưới) — một
+                # lần 404/401 bị phân loại 12h/30m cooldown mà chặn nốt đường
+                # cuối là combo chết cứng cả nửa ngày dù account đã hồi.
+                if _route_idx < len(routes) - 1 and not model_cooldown.is_available("combo:" + model, route.model):
                     logger.info({"event": "combo_skip_cooling", "combo": model, "provider": route.provider, "model": route.model})
                     last_error = f"{route.model} đang cooldown (combo-level)"
                     continue
@@ -2783,7 +2806,8 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     last_error = f"{route.provider} circuit open (fail liên tiếp)"
                     continue
 
-                cooldown = model_cooldown.get_cooldown_info(route.model)
+                cooldown = (model_cooldown.get_cooldown_info(route.model)
+                            if _route_idx < len(routes) - 1 else None)
                 if cooldown:
                     logger.warning({"event": "model_cooldown_skip", "model": route.model, **cooldown})
                     last_error = cooldown["message"]
@@ -2847,6 +2871,12 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 model_cooldown.record_success("combo:" + model, route.model)
                 provider_circuit.record_success(route.provider)
                 return result
+            except NoFallbackError as exc:
+                # disable_model_fallback: lỗi CỨNG — không thử member kế tiếp
+                # (không thì combo tự lách flag, âm thầm trả lời bằng model khác).
+                last_error = str(exc)
+                logger.warning({"event": "combo_no_fallback_stop", "combo": model, "provider": route.provider, "error": last_error[:200]})
+                break
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
@@ -3221,12 +3251,16 @@ def _wrap_mcp_stream(
             yield c
         return
 
-    # Filter to server-side tools only
+    # Filter to server-side tools only. Thread bị lọc thiếu nhóm 'homeassistant'
+    # (_thread_denies) → KHÔNG cho HA tool vào tập được thực thi, kể cả khi tên
+    # tool bị model bịa/prompt injection lôi ra từ XML free-text — nếu không,
+    # gate ở bước khai báo tool (no_smart_home) bị vòng qua ngay tại lúc chạy.
     from services.mcp_client import get_enabled_mcp_tools
     from services.ha_client import get_ha_tools
+    ha_tools_allowed = [] if _thread_denies(body, "homeassistant") else get_ha_tools()
     known_server_tools = {
         t.get("function", {}).get("name", "")
-        for t in get_enabled_mcp_tools() + get_ha_tools()
+        for t in get_enabled_mcp_tools() + ha_tools_allowed
     }
 
     mcp_calls = [tc for tc in final_tool_calls
@@ -3373,6 +3407,10 @@ def _execute_mcp_tools_in_response(
 
     current_result = result
     current_messages = list(messages)
+    # Thread bị lọc thiếu nhóm 'homeassistant' → không cho tool HA nào được
+    # thực thi ở vòng lặp agentic này (kể cả tool_call bịa/prompt injection
+    # trích từ XML free-text bên dưới), khớp với gate lúc khai báo tool.
+    deny_ha = _thread_denies(body, "homeassistant")
 
     for iteration in range(max_iterations):
         choice = (current_result.get("choices") or [{}])[0]
@@ -3405,7 +3443,7 @@ def _execute_mcp_tools_in_response(
         # Identify server-side vs native (HA pipeline) tools
         known_server_tools = {
             t.get("function", {}).get("name", "")
-            for t in get_enabled_mcp_tools() + get_ha_tools()
+            for t in get_enabled_mcp_tools() + ([] if deny_ha else get_ha_tools())
         }
 
         mcp_calls = []

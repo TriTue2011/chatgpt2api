@@ -202,19 +202,27 @@ def create_router() -> APIRouter:
         )
         if is_ha:
             payload["_is_ha_request"] = True
-            # Lọc chức năng cho YÊU CẦU TỪ HA (Settings → Home Assistant):
-            # ha_allowed_groups = list nhóm được tick (homeassistant/image/…) →
-            # pipeline tự tắt tích hợp ngoài danh sách + nhánh ảnh/video/nhạc/
-            # code chỉ chạy khi nhóm được tick. Không cấu hình = như cũ (mở hết).
-            # Không đè khi client đã tự gửi x_allowed_groups.
-            if not isinstance(payload.get("x_allowed_groups"), list):
-                try:
-                    from services.config import config as _cfg
-                    _hag = _cfg.get().get("ha_allowed_groups")
-                    if isinstance(_hag, list):
-                        payload["x_allowed_groups"] = [str(g) for g in _hag]
-                except Exception:
-                    pass
+        # Mô hình tin cậy: ha_allowed_groups (Settings → Home Assistant) là
+        # TRẦN quyền tối đa cho MỌI request qua endpoint này — áp dụng bất kể
+        # User-Agent (chuỗi tự khai, giả mạo được) và bất kể client có tự gửi
+        # x_allowed_groups hay không. KHÔNG bao giờ tin x_allowed_groups do
+        # client gửi làm nguồn sự thật (kẻo bearer token hợp lệ tự gửi list
+        # rộng để vượt cấu hình admin) — chỉ dùng nó để THU HẸP thêm (giao
+        # với trần server), không bao giờ MỞ RỘNG vượt trần. Admin chưa cấu
+        # hình ha_allowed_groups = không có trần (giữ hành vi cũ).
+        try:
+            from services.config import config as _cfg
+            _hag = _cfg.get().get("ha_allowed_groups")
+            _server_allowed = {str(g) for g in _hag} if isinstance(_hag, list) else None
+        except Exception:
+            _server_allowed = None
+        _client_ag = payload.get("x_allowed_groups")
+        _client_allowed = {str(g) for g in _client_ag} if isinstance(_client_ag, list) else None
+        if _server_allowed is not None:
+            _final_allowed = (_server_allowed & _client_allowed) if _client_allowed is not None else _server_allowed
+            payload["x_allowed_groups"] = sorted(_final_allowed)
+        elif _client_allowed is not None:
+            payload["x_allowed_groups"] = sorted(_client_allowed)
         # Inject base_url so gma provider can build persistent local media URLs
         payload["base_url"] = resolve_image_base_url(request)
         client_host = _client_host(request)

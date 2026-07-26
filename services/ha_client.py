@@ -20,9 +20,13 @@ _state_cache_ts: float = 0.0
 _context_cache: str = ""
 _context_cache_ts: float = 0.0
 _state_cache_lock = threading.Lock()
-_DEFAULT_TTL = 60  # 60s — short enough that registry state stays fresh
-                   # for "trạng thái đèn X?" answers, long enough that 985
-                   # entities don't cost more than ~1 HA call per minute.
+_DEFAULT_TTL = 90  # fallback khi chưa cấu hình refresh_interval — trung dung:
+                   # đủ nhanh để thiết bị đổi tên/mới thêm hiện ra sớm, vẫn rẻ
+                   # cho ~1030 entity (thay vì 3600s cũ — cache "cứng" cả giờ).
+# HA sập → KHÔNG thử lại ngay mỗi lượt chat: mỗi lần thử tốn trọn 10s timeout
+# (giống _SERVICES_FAIL_TTL của get_service_catalog()).
+_state_fail_ts: float = 0.0
+_STATE_FAIL_TTL = 60
 _scheduler_started = False
 
 # Entity_ids HA exposes to Assist (voice). Refreshed lazily / by the scheduler.
@@ -44,11 +48,11 @@ def _get_ha_settings() -> dict:
 
 
 def _get_cache_ttl() -> int:
-    """Get refresh interval from HA settings, default 3600s."""
+    """Get refresh interval from HA settings, default _DEFAULT_TTL (90s)."""
     try:
-        return int(_get_ha_settings().get("refresh_interval", 3600))
+        return int(_get_ha_settings().get("refresh_interval", _DEFAULT_TTL))
     except Exception:
-        return 3600
+        return _DEFAULT_TTL
 
 
 # Full service catalog from GET /api/services:
@@ -294,11 +298,15 @@ def _get_ha_config() -> dict[str, str] | None:
 
 def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
     """Fetch all entity states from HA. Cache respects configurable TTL."""
-    global _state_cache, _state_cache_ts
+    global _state_cache, _state_cache_ts, _state_fail_ts
     ttl = _get_cache_ttl()
     now = time.time()
     if use_cache and _state_cache and (now - _state_cache_ts) < ttl:
         return _state_cache
+    if use_cache and (now - _state_fail_ts) < _STATE_FAIL_TTL:
+        # HA vừa lỗi xong — đừng thử lại ngay mỗi lượt chat, tốn nguyên 10s
+        # timeout mỗi lần (giống get_service_catalog()).
+        return _state_cache or []
     cfg = _get_ha_config()
     if not cfg:
         return []
@@ -311,8 +319,10 @@ def get_states(use_cache: bool = True) -> list[dict[str, Any]]:
         with _state_cache_lock:
             _state_cache = data
             _state_cache_ts = now
+            _state_fail_ts = 0.0  # HA sống lại → bỏ cờ chặn thử-lại
         return data
     except Exception as exc:
+        _state_fail_ts = now
         logger.warning({"event": "ha_states_failed", "error": str(exc)})
         return _state_cache or []  # return stale cache on error
 
@@ -1978,6 +1988,25 @@ def execute_ha_tool(tool_name: str, arguments: dict[str, Any]) -> str | None:
             should_include_entity = False
 
         if should_include_entity and entity_id:
+            # Model có thể bịa entity_id gần đúng — bẫy thật đã gặp: model viết
+            # light.ban_cong trong khi đèn ban công thật là light.bep_center; HA
+            # trả 200 dù entity không tồn tại → điều khiển NHẦM/im lặng thiết bị.
+            # Soi qua registry TRƯỚC khi gọi, cùng chính sách với automation path
+            # (_entity_candidates): đúng 1 ứng viên khớp → tự thay; mơ hồ/không có
+            # ứng viên → KHÔNG gọi HA, hỏi lại thay vì đoán bừa.
+            states = get_states()
+            have = {str(s.get("entity_id") or "") for s in states} if states else set()
+            if states and entity_id not in have:
+                cands = _entity_candidates(entity_id, states)
+                if len(cands) == 1:
+                    logger.info({"event": "ha_call_service_entity_swapped",
+                                "from": entity_id, "to": cands[0][0]})
+                    entity_id = cands[0][0]
+                else:
+                    hint = ("Ứng viên gần nhất: "
+                            + ", ".join(f"{e} ('{n}')" for e, n in cands)) if cands else "Không tìm thấy thiết bị nào gần giống."
+                    return (f"⚠️ entity '{entity_id}' KHÔNG tồn tại trong HA — CHƯA gọi "
+                            f"{domain}.{service}. {hint} Hãy hỏi lại người dùng đúng thiết bị.")
             payload["entity_id"] = entity_id
         
         ok = call_service(domain, service, payload)
