@@ -309,12 +309,12 @@ def _kokoro_tts(text: str, voice: str) -> bytes:
         if voice.startswith(vcfg.KOKORO_PREFIX) else ""
     with _kokoro_lock:
         audio = tts.generate(text, sid=vcfg.kokoro_sid(name), speed=1.0)
-    samples = list(audio.samples or [])
+    samples = audio.samples or []
     if not samples:
         raise VoiceError("Kokoro không tạo được âm thanh.")
-    import array
-    pcm = array.array("h", (
-        int(max(-1.0, min(1.0, s)) * 32767) for s in samples)).tobytes()
+    # numpy nhanh hơn vòng lặp Python từng sample ~15x (giống _float_to_pcm16
+    # dùng cho VieNeu phía trên).
+    pcm = _float_to_pcm16(samples)
     return _pcm_to_wav(pcm, int(audio.sample_rate), 2, 1)
 
 
@@ -616,6 +616,11 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
             rate, width, _channels, pcm = _wav_parts(wav)
             if width == 2 and pcm:
                 yield (rate, pcm)
+            else:
+                # WAV không đúng định dạng mong đợi (không phải 16-bit hoặc
+                # rỗng) — tính là câu lỗi để guard bên dưới đếm đúng, tránh
+                # generator "thành công" mà không phát ra âm thanh nào.
+                errors.append(f"wav khong hop le (width={width}, len={len(pcm)})")
         except Exception as exc:
             errors.append(str(exc)[:100])
             logger.warning("voice: stream cau that bai: %s", str(exc)[:160])
@@ -650,6 +655,11 @@ def _get_recognizer(lang: str = "vi"):
     if lang == "en":
         model_dir = vcfg.stt_en_model_dir()
         if model_dir is None:
+            # Phân biệt "tính năng đang tắt" (model có sẵn trên đĩa) với
+            # "chưa tải model" — kẻo admin tưởng nhầm phải tải lại.
+            if not vcfg.stt_en_enabled() and vcfg.stt_en_model_present():
+                raise VoiceError(
+                    "STT tiếng Anh đang TẮT (bật voice.stt.en_enabled trong cài đặt Giọng nói).")
             raise VoiceError(
                 "Chưa tải model STT tiếng Anh (chạy scripts/download_stt_en_model.py).")
         model_type = "nemo_transducer"
@@ -732,10 +742,15 @@ def _sherpa_local(wav16: bytes, lang: str = "vi") -> str:
     # numpy nhanh hơn list comprehension ~15x — thấy rõ khi audio dài.
     # sherpa-onnx nhận thẳng mảng float32, đừng .tolist() kẻo mất cái lợi đó.
     floats = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-    stream = rec.create_stream()
-    stream.accept_waveform(rate, floats)
-    rec.decode_stream(stream)
-    return _normalize_stt(str(stream.result.text or ""))
+    # OfflineRecognizer dùng CHUNG giữa các request không thread-safe ở tầng
+    # native — decode đồng thời (2 voice note cùng lúc, VD Telegram+Zalo) có
+    # thể crash cả tiến trình gateway. Khoá tuần tự quanh create_stream/decode.
+    with _stt_lock:
+        stream = rec.create_stream()
+        stream.accept_waveform(rate, floats)
+        rec.decode_stream(stream)
+        text = str(stream.result.text or "")
+    return _normalize_stt(text)
 
 
 def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:

@@ -108,7 +108,7 @@ class AuthService:
             raise ValueError("Vui lòng nhập khóa mới")
         admin_key = self._clean(config.auth_key)
         if admin_key and hmac.compare_digest(candidate, admin_key):
-            raise ValueError("这个密钥和Khóa quản trị冲突了，请换一个新的密钥")
+            raise ValueError("Khóa này trùng với Khóa quản trị — hãy dùng khóa khác")
         key_hash = _hash_key(candidate)
         if self._has_key_hash_locked(key_hash, exclude_id=exclude_id):
             raise ValueError("Khóa này đã tồn tại, vui lòng dùng khóa khác")

@@ -65,21 +65,36 @@ _APP_PW_HINT = (
 )
 
 
-def _friendly_error(exc: Exception | str) -> str:
-    """Lỗi IMAP/SMTP → câu tiếng Việt hành động được."""
+# Các nhà cung cấp lớn bắt buộc App Password; mail công ty/nội bộ thì KHÔNG —
+# dùng mật khẩu đăng nhập thường. Hint phải theo host kẻo chỉ dẫn sai đường.
+_APP_PW_HOSTS = ("gmail", "google", "outlook", "office365", "hotmail", "live.com", "yahoo")
+
+
+def _needs_app_pw(host: str) -> bool:
+    h = (host or "").lower()
+    return any(k in h for k in _APP_PW_HOSTS)
+
+
+def _friendly_error(exc: Exception | str, host: str = "") -> str:
+    """Lỗi IMAP/SMTP → câu tiếng Việt hành động được (hint theo loại mail)."""
     raw = str(exc)
     low = raw.lower()
     if "application-specific password" in low or "app password" in low:
         return f"❌ {_APP_PW_HINT}"
     if ("invalid credentials" in low or "authenticationfailed" in low
             or ("auth" in low and "fail" in low)):
-        return f"❌ Sai tài khoản hoặc mật khẩu. {_APP_PW_HINT}"
+        if _needs_app_pw(host):
+            return f"❌ Sai tài khoản hoặc mật khẩu. {_APP_PW_HINT}"
+        return ("❌ Sai tài khoản hoặc mật khẩu. Mail công ty/nội bộ dùng mật khẩu "
+                "đăng nhập thường (không cần App Password) — kiểm tra lại bằng webmail.")
     if "name or service not known" in low or "getaddrinfo" in low:
         return "❌ Sai IMAP/SMTP host (không phân giải được tên miền)."
     if "timed out" in low or "timeout" in low:
         return "❌ Hết thời gian kết nối — kiểm tra host/port hoặc firewall."
-    if "certificate" in low:
-        return "❌ Lỗi chứng chỉ SSL — thử tắt SSL hoặc kiểm tra lại port."
+    if "certificate" in low or "ssl" in low:
+        return ("❌ Lỗi SSL/chứng chỉ — server nội bộ hay dùng chứng chỉ tự ký: "
+                "bật «Chấp nhận mọi chứng chỉ» trong cài đặt hộp mail, "
+                "hoặc kiểm tra lại host/port/loại bảo mật.")
     return f"❌ {raw[:200]}"
 
 
@@ -129,6 +144,12 @@ def _norm_account(raw: Any, idx: int) -> dict[str, Any] | None:
         "user": user,
         "password": str(raw.get("password") or ""),
         "use_ssl": bool(raw.get("use_ssl", True)),
+        # ssl (993/465) | starttls (143/587) | plain — mail công ty đủ kiểu.
+        "security": (str(raw.get("security") or "").lower()
+                     if str(raw.get("security") or "").lower() in ("ssl", "starttls", "plain")
+                     else ("ssl" if raw.get("use_ssl", True) else "plain")),
+        # Server nội bộ hay dùng chứng chỉ tự ký → cho phép tắt verify.
+        "verify_ssl": bool(raw.get("verify_ssl", True)),
         "allowed_senders": [str(s) for s in (senders or []) if str(s).strip()],
         "mark_seen": bool(raw.get("mark_seen", True)),
         "max_body_chars": _int("max_body_chars", 6000, lo=500),
@@ -417,25 +438,25 @@ def send_email(
         msg["References"] = references or in_reply_to
     msg.set_content(body or "(trống)")
 
-    use_ssl = bool(acc.get("use_ssl", True))
+    sec = _sec_mode(acc)
     try:
-        if use_ssl and port == 465:
-            with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(),
+        if sec == "ssl" and port != 587:
+            with smtplib.SMTP_SSL(host, port, context=_ssl_ctx(acc),
                                   timeout=30) as smtp:
                 smtp.login(user, acc["password"])
                 smtp.send_message(msg)
         else:
             with smtplib.SMTP(host, port, timeout=30) as smtp:
                 smtp.ehlo()
-                if use_ssl or port == 587:
-                    smtp.starttls(context=ssl.create_default_context())
+                if sec != "plain" or port == 587:
+                    smtp.starttls(context=_ssl_ctx(acc))
                     smtp.ehlo()
                 smtp.login(user, acc["password"])
                 smtp.send_message(msg)
         return {"ok": True}
     except Exception as exc:
         logger.warning("email_channel: smtp %s lỗi: %s", user, exc)
-        return {"ok": False, "error": _friendly_error(exc)}
+        return {"ok": False, "error": _friendly_error(exc, host)}
 
 
 # ── Xử lý 1 mail ─────────────────────────────────────────────────────────────
@@ -531,11 +552,30 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
 
 
 # ── IMAP ─────────────────────────────────────────────────────────────────────
+def _sec_mode(acc: dict[str, Any]) -> str:
+    sec = str(acc.get("security") or "").lower()
+    if sec in ("ssl", "starttls", "plain"):
+        return sec
+    return "ssl" if acc.get("use_ssl", True) else "plain"
+
+
+def _ssl_ctx(acc: dict[str, Any]) -> ssl.SSLContext:
+    if bool(acc.get("verify_ssl", True)):
+        return ssl.create_default_context()
+    # User chủ động chọn «Chấp nhận mọi chứng chỉ» cho server nội bộ tự ký
+    # (giống tùy chọn cùng tên trên app mail điện thoại).
+    return ssl._create_unverified_context()  # nosec B323
+
+
 def _imap_connect(acc: dict[str, Any], timeout: int) -> imaplib.IMAP4:
     host, port = acc["imap_host"], int(acc["imap_port"])
-    if bool(acc.get("use_ssl", True)):
-        return imaplib.IMAP4_SSL(host, port, timeout=timeout)
-    return imaplib.IMAP4(host, port, timeout=timeout)
+    sec = _sec_mode(acc)
+    if sec == "ssl":
+        return imaplib.IMAP4_SSL(host, port, timeout=timeout, ssl_context=_ssl_ctx(acc))
+    M = imaplib.IMAP4(host, port, timeout=timeout)
+    if sec == "starttls":
+        M.starttls(_ssl_ctx(acc))
+    return M
 
 
 def poll_account(acc: dict[str, Any]) -> dict[str, Any]:
@@ -575,7 +615,7 @@ def poll_account(acc: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
     except Exception as exc:
-        msg_err = _friendly_error(exc)
+        msg_err = _friendly_error(exc, str(acc.get("imap_host") or ""))
         _mark_status(acc, last_error=msg_err, last_poll_at=time.time())
         logger.warning("email_channel: poll %s lỗi: %s", acc.get("user"), exc)
         return {"ok": False, "error": msg_err, "id": acc.get("id"),
@@ -615,7 +655,10 @@ def test_connection(account_id: str = "") -> dict[str, Any]:
     if not acc.get("imap_host") or not acc.get("user"):
         return {"ok": False, "error": "❌ Thiếu IMAP host hoặc địa chỉ email"}
     if not acc.get("password"):
-        return {"ok": False, "error": f"❌ Chưa nhập App Password. {_APP_PW_HINT}"}
+        if _needs_app_pw(str(acc.get("imap_host") or "")):
+            return {"ok": False, "error": f"❌ Chưa nhập App Password. {_APP_PW_HINT}"}
+        return {"ok": False, "error": "❌ Chưa nhập mật khẩu — mail công ty/nội bộ "
+                                      "dùng mật khẩu đăng nhập thường."}
     try:
         M = _imap_connect(acc, 20)
         try:
@@ -632,7 +675,8 @@ def test_connection(account_id: str = "") -> dict[str, Any]:
             except Exception:
                 pass
     except Exception as exc:
-        return {"ok": False, "error": _friendly_error(exc), "id": acc.get("id")}
+        return {"ok": False, "error": _friendly_error(exc, str(acc.get("imap_host") or "")),
+                "id": acc.get("id")}
 
 
 def send_digest_now(account_id: str = "") -> dict[str, Any]:

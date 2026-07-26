@@ -644,13 +644,9 @@ def stt_en_enabled() -> bool:
     return bool(raw)
 
 
-def stt_en_model_dir() -> Path | None:
-    """Thư mục model Parakeet-TDT tiếng Anh (tải bằng download_stt_en_model.py).
-
-    Trả None khi ``stt.en_enabled`` tắt — mọi caller coi như không có STT EN.
-    """
-    if not stt_en_enabled():
-        return None
+def _stt_en_dir_raw() -> Path | None:
+    """Thư mục model Parakeet, BỎ QUA cờ en_enabled — dùng để phân biệt lỗi
+    "chưa tải model" với "tính năng đang tắt" (xem stt_en_model_present())."""
     d = str(_sub("stt").get("en_model_dir") or "").strip()
     base = Path(d) if d else STT_EN_DIR
     if not base.is_dir():
@@ -660,11 +656,33 @@ def stt_en_model_dir() -> Path | None:
     return base
 
 
+def stt_en_model_dir() -> Path | None:
+    """Thư mục model Parakeet-TDT tiếng Anh (tải bằng download_stt_en_model.py).
+
+    Trả None khi ``stt.en_enabled`` tắt — mọi caller coi như không có STT EN.
+    """
+    if not stt_en_enabled():
+        return None
+    return _stt_en_dir_raw()
+
+
+def stt_en_model_present() -> bool:
+    """True nếu file model Parakeet đã tải, BẤT KỂ cờ en_enabled bật/tắt
+    (giúp caller báo đúng "đang tắt" thay vì "chưa tải")."""
+    return _stt_en_dir_raw() is not None
+
+
 def stt_threads() -> int:
+    """Intra-op threads STT (≥1). Mặc định = auto_tts_threads() (cgroup-aware,
+    cùng idiom với tts_threads()) — không chiếm hết CPU LXC nhỏ khiến
+    LLM/gateway đói CPU. Ép tay qua voice.stt.num_threads."""
+    raw = _sub("stt").get("num_threads")
+    if raw is None or str(raw).strip() == "":
+        return max(1, auto_tts_threads())
     try:
-        return max(1, int(_sub("stt").get("num_threads") or 4))
+        return max(1, int(raw))
     except (TypeError, ValueError):
-        return 4
+        return max(1, auto_tts_threads())
 
 
 def has_local_stt() -> bool:

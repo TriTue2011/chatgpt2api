@@ -687,49 +687,61 @@ class CodexOAuthProvider:
         has_tool_call = False
 
         try:
-            for raw_line in response.iter_lines():
-                if not raw_line:
-                    continue
-                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-                line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    event = json.loads(payload)
-                except Exception:
-                    continue
+            try:
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(payload)
+                    except Exception:
+                        continue
 
-                _log_event(event)
+                    _log_event(event)
 
-                chunk = _responses_to_chat_chunk(event, model, completion_id, created)
-                if chunk:
-                    delta = chunk["choices"][0]["delta"]
-                    if not sent_role and (delta.get("content") is not None or delta.get("tool_calls") is not None):
-                        delta["role"] = "assistant"
-                        sent_role = True
-                    if delta.get("tool_calls"):
-                        has_tool_call = True
-                    if chunk["choices"][0].get("finish_reason") == "stop" and has_tool_call:
-                        chunk["choices"][0]["finish_reason"] = "tool_calls"
-                    yield chunk
+                    chunk = _responses_to_chat_chunk(event, model, completion_id, created)
+                    if chunk:
+                        delta = chunk["choices"][0]["delta"]
+                        if not sent_role and (delta.get("content") is not None or delta.get("tool_calls") is not None):
+                            delta["role"] = "assistant"
+                            sent_role = True
+                        if delta.get("tool_calls"):
+                            has_tool_call = True
+                        if chunk["choices"][0].get("finish_reason") == "stop" and has_tool_call:
+                            chunk["choices"][0]["finish_reason"] = "tool_calls"
+                        yield chunk
 
-        except Exception as exc:
-            logger.error({"event": "codex_stream_error", "error": str(exc)})
+            except Exception as exc:
+                # Upstream rớt giữa chừng: báo lỗi rõ ràng thay vì rơi xuống
+                # finish_reason="stop" giả (kết nối rớt không phải hoàn tất sạch).
+                logger.error({"event": "codex_stream_error", "error": str(exc)})
+                yield {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                    "error": {"message": f"Codex stream error: {exc}", "type": "stream_error"},
+                }
+                return
 
-        if not sent_role:
+            if not sent_role:
+                yield {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+                }
             yield {
                 "id": completion_id, "object": "chat.completion.chunk",
                 "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             }
-        yield {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
+        finally:
+            response.close()
 
     def _non_stream_response(self, response, model: str, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Handle non-streaming Codex response."""
@@ -904,18 +916,15 @@ def _try_refresh_token(stale_access_token: str) -> str | None:
     if not new_access:
         return None
 
-    # Persist new credentials. The access_token is the dict key, so when it
-    # rotates we delete the old entry and reinsert under the new key.
-    with account_service._lock:
-        old = account_service._accounts.pop(stale_access_token, None) or {}
-        merged = {**old, "access_token": new_access, "refresh_token": new_refresh,
-                  "status": "active"}
-        if expires_at:
-            merged["expires_at"] = expires_at
-        normalized = account_service._normalize_account(merged)
-        if normalized is not None:
-            account_service._accounts[new_access] = normalized
-        account_service._save_accounts()
+    # Persist new credentials via update_account(): it does the pop/merge/
+    # rekey atomically under the lock and no-ops safely if another thread
+    # already rekeyed this account first (fixes a race where the 2nd
+    # thread's manual pop() returned None, wiping email/plan/fp/device_id).
+    updates: dict[str, Any] = {"access_token": new_access, "refresh_token": new_refresh,
+                                "status": "active"}
+    if expires_at:
+        updates["expires_at"] = expires_at
+    account_service.update_account(stale_access_token, updates)
     logger.info({"event": "codex_token_refreshed"})
     return new_access
 

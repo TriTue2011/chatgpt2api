@@ -111,6 +111,14 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
                         error_text = resp.text[:500]
                     except Exception:
                         pass
+                    # Health-based rotation: let the adapter demote a dead
+                    # account (e.g. Flow logged-out profile) to the back of
+                    # its pool so the next request skips it.
+                    if hasattr(adapter, "on_key_failed"):
+                        try:
+                            adapter.on_key_failed(credentials, resp.status_code, error_text)
+                        except Exception:
+                            pass
                     if resp.status_code in (400, 429) and key_try < max_keys - 1:
                         last_error = error_text
                         continue
@@ -124,7 +132,16 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
                         parsed = {"image_bytes": resp.content}
 
                 normalized = adapter.normalize(parsed, body)
-                all_data.extend(normalized.get("data") or [])
+                data_items = normalized.get("data") or []
+                all_data.extend(data_items)
+
+                # Health-based rotation: promote the account that just worked
+                # to the front of its pool (mirrors ChatGPT's promote_account).
+                if data_items and hasattr(adapter, "on_key_success"):
+                    try:
+                        adapter.on_key_success(credentials)
+                    except Exception:
+                        pass
                 break
 
             except Exception as exc:

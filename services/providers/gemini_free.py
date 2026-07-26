@@ -104,7 +104,7 @@ class GeminiProvider:
         if max_tokens:
             body["generationConfig"]["maxOutputTokens"] = max_tokens
 
-        url = f"{GEMINI_BASE_URL}/models/{model}:streamGenerateContent?alt=sse"
+        url = f"{_gemini_base_url()}/models/{model}:streamGenerateContent?alt=sse"
 
         logger.info({"event": "gemini_request", "model": model, "has_tools": bool(gemini_tools)})
 
@@ -240,64 +240,72 @@ def _parse_gemini_stream(response, model: str) -> Iterator[dict[str, Any]]:
     pending_tool_calls: list[dict] = []
 
     try:
-        for raw_line in response.iter_lines():
-            if not raw_line:
-                continue
-            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-            if not line.startswith("data: "):
-                continue
-            payload = line[6:]
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
+        try:
+            for raw_line in response.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
 
-            candidates = event.get("candidates") or []
-            for c in candidates:
-                content = c.get("content") or {}
-                parts = content.get("parts") or []
-                for part in parts:
-                    # Text response
-                    text = part.get("text", "")
-                    if text:
-                        accumulated_text += text
-                        if not sent_role:
-                            sent_role = True
+                candidates = event.get("candidates") or []
+                for c in candidates:
+                    content = c.get("content") or {}
+                    parts = content.get("parts") or []
+                    for part in parts:
+                        # Text response
+                        text = part.get("text", "")
+                        if text:
+                            accumulated_text += text
+                            if not sent_role:
+                                sent_role = True
+                                yield {"id": completion_id, "object": "chat.completion.chunk",
+                                       "created": created, "model": model,
+                                       "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
                             yield {"id": completion_id, "object": "chat.completion.chunk",
                                    "created": created, "model": model,
-                                   "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
-                        yield {"id": completion_id, "object": "chat.completion.chunk",
-                               "created": created, "model": model,
-                               "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
+                                   "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}]}
 
-                    # Function call response (native!)
-                    func_call = part.get("functionCall")
-                    if func_call:
-                        pending_tool_calls.append({
-                            "id": f"call_{uuid.uuid4().hex[:12]}",
-                            "type": "function",
-                            "function": {
-                                "name": func_call.get("name", ""),
-                                "arguments": json.dumps(func_call.get("args", {}), ensure_ascii=False),
-                            },
-                        })
+                        # Function call response (native!)
+                        func_call = part.get("functionCall")
+                        if func_call:
+                            pending_tool_calls.append({
+                                "id": f"call_{uuid.uuid4().hex[:12]}",
+                                "type": "function",
+                                "function": {
+                                    "name": func_call.get("name", ""),
+                                    "arguments": json.dumps(func_call.get("args", {}), ensure_ascii=False),
+                                },
+                            })
 
-        # Yield tool calls if any
-        if pending_tool_calls:
+            # Yield tool calls if any
+            if pending_tool_calls:
+                yield {"id": completion_id, "object": "chat.completion.chunk",
+                       "created": created, "model": model,
+                       "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
+
+        except Exception as exc:
+            logger.error({"event": "gemini_stream_error", "error": str(exc)})
             yield {"id": completion_id, "object": "chat.completion.chunk",
                    "created": created, "model": model,
-                   "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                   "error": {"message": "Gemini stream error: %s" % exc, "type": "stream_error"}}
+            return
 
-    except Exception as exc:
-        logger.error({"event": "gemini_stream_error", "error": str(exc)})
-
-    if not sent_role and not pending_tool_calls:
+        if not sent_role and not pending_tool_calls:
+            yield {"id": completion_id, "object": "chat.completion.chunk",
+                   "created": created, "model": model,
+                   "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]}
         yield {"id": completion_id, "object": "chat.completion.chunk",
                "created": created, "model": model,
-               "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]}
-    yield {"id": completion_id, "object": "chat.completion.chunk",
-           "created": created, "model": model,
-           "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+               "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    finally:
+        response.close()
 
 
 gemini_provider = GeminiProvider()

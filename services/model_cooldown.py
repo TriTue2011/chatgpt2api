@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -57,18 +58,22 @@ class ModelCooldownManager:
     def __init__(self):
         # {account_token: {model: ModelState}}
         self._states: dict[str, dict[str, ModelState]] = {}
+        # Nhiều request thread cùng ghi backoff_level/next_retry_at — khóa như
+        # ProviderCircuit/SessionAffinity, kẻo mất nấc backoff khi race.
+        self._lock = threading.Lock()
 
     # ── Public API ──────────────────────────────────────────────
 
     def record_success(self, account_id: str, model: str):
         """Clear cooldown for a model on success (fast recovery)."""
-        states = self._states.get(account_id, {})
-        state = states.get(model)
-        if state:
-            state.status = "active"
-            state.backoff_level = max(0, state.backoff_level - 2)
-            state.next_retry_at = 0
-            state.reason = ""
+        with self._lock:
+            states = self._states.get(account_id, {})
+            state = states.get(model)
+            if state:
+                state.status = "active"
+                state.backoff_level = max(0, state.backoff_level - 2)
+                state.next_retry_at = 0
+                state.reason = ""
 
     def record_failure(
         self,
@@ -89,11 +94,12 @@ class ModelCooldownManager:
         """
         acc_key = account_id or "unknown"
         mdl_key = (model or "default").strip()
-        states = self._states.setdefault(acc_key, {})
-        state = states.get(mdl_key)
-        if state is None:
-            state = ModelState(model=mdl_key)
-            states[mdl_key] = state
+        with self._lock:
+            states = self._states.setdefault(acc_key, {})
+            state = states.get(mdl_key)
+            if state is None:
+                state = ModelState(model=mdl_key)
+                states[mdl_key] = state
 
         # Try provider-reported retry-after first
         provider_retry = _parse_provider_retry_after(status_code, error_body, provider)
@@ -244,15 +250,35 @@ class ModelCooldownManager:
 
     def cleanup_stale(self, max_age: float = 3600):
         """Remove cooldown states that are no longer relevant."""
-        now = time.time()
-        for acc_id in list(self._states):
-            states = self._states[acc_id]
-            for mdl_key in list(states):
-                state = states[mdl_key]
-                if state.status == "active" or (not state.is_cooling and state.next_retry_at > 0):
-                    del states[mdl_key]
-            if not states:
-                del self._states[acc_id]
+        with self._lock:
+            for acc_id in list(self._states):
+                states = self._states[acc_id]
+                for mdl_key in list(states):
+                    state = states[mdl_key]
+                    if state.status == "active" or (not state.is_cooling and state.next_retry_at > 0):
+                        del states[mdl_key]
+                if not states:
+                    del self._states[acc_id]
+
+    def get_summary(self) -> dict[str, Any]:
+        """Get cooldown summary for status display."""
+        with self._lock:
+            total_accounts = len(self._states)
+            cooling_accounts = 0
+            by_reason: dict[str, int] = {}
+            for acc_states in self._states.values():
+                has_cooling = False
+                for state in acc_states.values():
+                    if state.is_cooling:
+                        has_cooling = True
+                        by_reason[state.reason] = by_reason.get(state.reason, 0) + 1
+                if has_cooling:
+                    cooling_accounts += 1
+            return {
+                "total_tracked_accounts": total_accounts,
+                "accounts_in_cooldown": cooling_accounts,
+                "cooldown_by_reason": by_reason,
+            }
 
     # ── Internal ────────────────────────────────────────────────
 
@@ -338,26 +364,6 @@ def _is_quota_exceeded(error_text: str) -> bool:
         "resource has been exhausted", "usage_limit_reached",
     ]
     return any(ind in text for ind in indicators)
-
-
-    def get_summary(self) -> dict[str, Any]:
-        """Get cooldown summary for status display."""
-        total_accounts = len(self._states)
-        cooling_accounts = 0
-        by_reason: dict[str, int] = {}
-        for acc_states in self._states.values():
-            has_cooling = False
-            for state in acc_states.values():
-                if state.is_cooling:
-                    has_cooling = True
-                    by_reason[state.reason] = by_reason.get(state.reason, 0) + 1
-            if has_cooling:
-                cooling_accounts += 1
-        return {
-            "total_tracked_accounts": total_accounts,
-            "accounts_in_cooldown": cooling_accounts,
-            "cooldown_by_reason": by_reason,
-        }
 
 
 # Singleton

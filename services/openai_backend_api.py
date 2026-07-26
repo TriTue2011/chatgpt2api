@@ -1125,18 +1125,21 @@ class OpenAIBackendAPI:
             logger.error({"event": "codex_image_400", "body": response.text})
         response.raise_for_status()
         import json
-        for line in response.iter_lines():
-            line_str = line.decode("utf-8") if isinstance(line, bytes) else str(line)
-            line_str = line_str.strip()
-            if not line_str or not line_str.startswith("data: "):
-                continue
-            p = line_str[6:]
-            if p == "[DONE]":
-                break
-            try:
-                yield json.loads(p)
-            except Exception:
-                pass
+        try:
+            for line in response.iter_lines():
+                line_str = line.decode("utf-8") if isinstance(line, bytes) else str(line)
+                line_str = line_str.strip()
+                if not line_str or not line_str.startswith("data: "):
+                    continue
+                p = line_str[6:]
+                if p == "[DONE]":
+                    break
+                try:
+                    yield json.loads(p)
+                except Exception:
+                    pass
+        finally:
+            response.close()
 
     def stream_conversation(
             self,

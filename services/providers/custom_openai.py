@@ -376,53 +376,63 @@ class CustomOpenAIProvider:
         sent_role = False
 
         try:
-            for raw_line in response.iter_lines():
-                if not raw_line:
-                    continue
-                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-                line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
+            try:
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
 
-                # Pass through OpenAI-format chunks as-is (they're already correct)
-                choices = chunk.get("choices") or []
-                for choice in choices:
-                    delta = choice.get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        if not sent_role:
-                            sent_role = True
-                            yield {
-                                "id": completion_id, "object": "chat.completion.chunk",
-                                "created": created, "model": model,
-                                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
-                            }
-                    # Yield the chunk as-is with our IDs
-                    yield {
-                        "id": completion_id, "object": "chat.completion.chunk",
-                        "created": created, "model": model,
-                        "choices": [{
-                            "index": 0,
-                            "delta": delta,
-                            "finish_reason": choice.get("finish_reason"),
-                        }],
-                    }
+                    # Pass through OpenAI-format chunks as-is (they're already correct)
+                    choices = chunk.get("choices") or []
+                    for choice in choices:
+                        delta = choice.get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            if not sent_role:
+                                sent_role = True
+                                yield {
+                                    "id": completion_id, "object": "chat.completion.chunk",
+                                    "created": created, "model": model,
+                                    "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                                }
+                        # Yield the chunk as-is with our IDs
+                        yield {
+                            "id": completion_id, "object": "chat.completion.chunk",
+                            "created": created, "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": delta,
+                                "finish_reason": choice.get("finish_reason"),
+                            }],
+                        }
 
-        except Exception as exc:
-            logger.error({"event": "custom_provider_stream_error", "provider": self.name, "error": str(exc)})
+            except Exception as exc:
+                logger.error({"event": "custom_provider_stream_error", "provider": self.name, "error": str(exc)})
+                yield {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                    "error": {"message": f"[{self.name}] stream error: {exc}", "type": "stream_error"},
+                }
+                return
 
-        yield {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
+            yield {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            }
+        finally:
+            response.close()
 
     def _non_stream_response(self, response, model: str) -> dict[str, Any]:
         """Handle non-streaming response (passthrough)."""

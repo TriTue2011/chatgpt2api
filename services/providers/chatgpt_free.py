@@ -63,6 +63,12 @@ def _normalize_free_model(model: str) -> str:
 
 
 
+class NoFallbackError(RuntimeError):
+    """Lỗi CỨNG theo cấu hình disable_model_fallback — combo KHÔNG được thử
+    member kế tiếp (tránh âm thầm tụt xuống model kém chính xác hơn); phải nổi
+    lên để báo lỗi cho user/Telegram."""
+
+
 def handle_free_chat(
     model: str,
     messages: list[dict[str, Any]],
@@ -93,7 +99,7 @@ def handle_free_chat(
             # Telegram — instead of quietly answering with a less-accurate model.
             if config.get().get("disable_model_fallback", False):
                 logger.info({"event": "free_vision_no_fallback", "reason": "no_free_account_fallback_disabled"})
-                raise RuntimeError(
+                raise NoFallbackError(
                     "Phân tích ảnh thất bại: không còn free ChatGPT account đang hoạt động "
                     "(fallback Gemini đã tắt theo cấu hình disable_model_fallback)."
                 )

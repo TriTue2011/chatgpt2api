@@ -8,30 +8,30 @@ from services import pdf_images
 
 class CostNoteTests(unittest.TestCase):
     def test_no_info_no_note(self) -> None:
-        msg = pi.ask_text("a.pdf", {"rag", "word"})
+        msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE, pi.WORD})
         self.assertNotIn("⚠️", msg)
 
     def test_digital_pdf_no_note(self) -> None:
-        msg = pi.ask_text("a.pdf", {"rag", "word"},
+        msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE, pi.WORD},
                           {"pages": 30, "scanned": False, "ocr": False})
         self.assertNotIn("⚠️", msg)
 
     def test_small_scan_no_note(self) -> None:
-        msg = pi.ask_text("a.pdf", {"rag", "word"},
+        msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE, pi.WORD},
                           {"pages": 2, "scanned": True, "ocr": True})
         self.assertNotIn("⚠️", msg)
 
     def test_big_scan_warns_pages_and_calls(self) -> None:
-        msg = pi.ask_text("a.pdf", {"rag", "word"},
+        msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE, pi.WORD},
                           {"pages": 38, "scanned": True, "ocr": True})
         self.assertIn("⚠️", msg)
         self.assertIn("38 trang", msg)
-        self.assertIn("lượt gọi", msg)
+        self.assertIn("38 lượt", msg)   # số lượt gọi vision = số trang OCR
         # Vẫn giữ nguyên câu hỏi 1/2 phía trên.
         self.assertIn("1️⃣", msg)
 
     def test_over_cap_mentions_first_pages_only(self) -> None:
-        msg = pi.ask_text("a.pdf", {"rag"},
+        msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE},
                           {"pages": 120, "scanned": True, "ocr": True})
         self.assertIn("trang đầu", msg)
 

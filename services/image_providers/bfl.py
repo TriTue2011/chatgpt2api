@@ -104,11 +104,15 @@ class BFLAdapter(BaseImageAdapter):
                     return {"data": [{"b64_json": url_to_base64(sample_url)}]}
 
             elif status in ("Error", "Failed"):
-                logger.error({"event": "bfl_failed", "status": status})
-                return None
+                detail = poll_data.get("error") or poll_data.get("details") or status
+                logger.error({"event": "bfl_failed", "status": status, "detail": str(detail)[:200]})
+                # Ném lỗi thật thay vì None — None khiến dispatcher rơi xuống
+                # nhánh parse JSON thô → "data: []" → client nhận 200 kèm
+                # "no images returned" mà không rõ nguyên nhân (chỉ có trong log).
+                raise RuntimeError(f"BFL generation failed ({status}): {str(detail)[:200]}")
 
         logger.error({"event": "bfl_timeout", "elapsed": elapsed})
-        return None
+        raise RuntimeError(f"BFL timed out after {POLL_TIMEOUT_S}s")
 
     def normalize(self, parsed: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         data = parsed.get("data") or []

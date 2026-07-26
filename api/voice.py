@@ -160,11 +160,17 @@ def create_router() -> APIRouter:
         "Does it sound clear and natural to you?"
     )
 
+    # Đọc thử tối đa ~600 ký tự: đủ nghe một đoạn, không để ai biến endpoint
+    # nghe-thử thành đường tổng hợp TTS dài miễn phí.
+    _PREVIEW_MAX_CHARS = 600
+
     @router.get("/api/voice/preview")
     async def voice_preview(voice: str = "", stream: int = 0, key: str = "",
+                            text: str = "",
                             authorization: str | None = Header(default=None)):
-        """Đọc một câu mẫu bằng giọng chỉ định → WAV, để nghe thử ngay trên web.
+        """Đọc thử một đoạn bằng giọng chỉ định → WAV, nghe ngay trên web.
 
+        `text` trống → dùng câu mẫu sẵn (tiếng Việt, hoặc tiếng Anh cho Kokoro).
         stream=1 → phát theo dòng chảy (chữ tổng hợp tới đâu gửi tới đó) nên nghe
         được gần như tức thì thay vì chờ ~3-4s tổng hợp trọn câu. Thẻ <audio> không
         gửi được header nên nhận token qua query `key=` (như /api/voice/stream).
@@ -174,6 +180,7 @@ def create_router() -> APIRouter:
         from services.voice import config as vcfg
 
         vname = str(voice or "").strip()
+        custom = str(text or "").strip()[:_PREVIEW_MAX_CHARS]
         sample = _PREVIEW_TEXT
         if vname.startswith(vcfg.VIENEU_PREFIX):
             if not vcfg.vieneu_model_ready():
@@ -187,6 +194,9 @@ def create_router() -> APIRouter:
         elif vname and vcfg.voice_model_path(vname) is None:
             raise HTTPException(
                 404, f"Giọng '{vname}' chưa tải về (chạy download_piper_voices.py --pack full).")
+        # Đoạn người dùng tự nhập luôn thắng câu mẫu (kể cả giọng Kokoro).
+        if custom:
+            sample = custom
         if stream:
             return StreamingResponse(
                 _wav_stream_bytes(sample, vname), media_type="audio/wav",

@@ -25,23 +25,53 @@ logger = logging.getLogger(__name__)
 
 
 async def _try_click_checkbox(page) -> bool:
-    """If the Turnstile widget shows a visible checkbox, click it.
+    """Tích ô "Xác minh bạn là con người" của Turnstile.
 
-    The widget renders inside an iframe hosted on challenges.cloudflare.com.
-    We use Playwright's frame_locator to reach the checkbox and click via
-    its accessibility label — works for both English and Vietnamese pages.
+    Widget nằm trong iframe challenges.cloudflare.com. BẪY: thẻ
+    `input[type=checkbox]` thật bị Cloudflare ẩn (opacity:0, kích thước ~0) —
+    thứ người dùng thấy là lớp style phủ trên. Vì vậy KHÔNG chờ
+    `state="visible"` (luôn timeout → bỏ qua click âm thầm), mà thử lần lượt:
+      1. click cưỡng bức (force) vào chính input — bỏ qua kiểm tra hiển thị;
+      2. click nhãn/khung trong iframe (managed challenge đôi khi chỉ có label);
+      3. click theo TỌA ĐỘ vào ô vuông bên trái iframe (cách cuối, luôn được
+         khi DOM bên trong bị che hoàn toàn).
     """
+    frame_sel = "iframe[src*='challenges.cloudflare.com']"
+
+    # 1) input thật, click cưỡng bức (không đòi visible)
     try:
-        iframe = page.frame_locator("iframe[src*='challenges.cloudflare.com']")
-        # The checkbox has role=checkbox; label varies by locale.
-        checkbox = iframe.locator("input[type='checkbox']")
-        await checkbox.wait_for(state="visible", timeout=3000)
-        await checkbox.click(timeout=3000)
-        logger.info("turnstile checkbox auto-clicked")
+        cb = page.frame_locator(frame_sel).locator("input[type='checkbox']").first
+        await cb.wait_for(state="attached", timeout=3000)
+        await cb.click(timeout=3000, force=True)
+        logger.info("turnstile: đã click input[checkbox] (force)")
         return True
     except Exception as exc:
-        logger.debug("checkbox auto-click skipped: %s", exc)
-        return False
+        logger.debug("turnstile: click input thất bại: %s", exc)
+
+    # 2) nhãn / khung bên trong iframe
+    for sel in ("label", "#challenge-stage", "div.cb-lb", "body"):
+        try:
+            el = page.frame_locator(frame_sel).locator(sel).first
+            await el.wait_for(state="attached", timeout=1500)
+            await el.click(timeout=2500, force=True)
+            logger.info("turnstile: đã click %r trong iframe", sel)
+            return True
+        except Exception:
+            continue
+
+    # 3) tọa độ: ô vuông nằm sát lề trái, giữa theo chiều dọc của iframe
+    try:
+        box = await page.locator(frame_sel).first.bounding_box()
+        if box and box["width"] > 20 and box["height"] > 10:
+            await page.mouse.click(box["x"] + 28, box["y"] + box["height"] / 2)
+            logger.info("turnstile: đã click theo tọa độ iframe (%.0f,%.0f)",
+                        box["x"] + 28, box["y"] + box["height"] / 2)
+            return True
+    except Exception as exc:
+        logger.debug("turnstile: click tọa độ thất bại: %s", exc)
+
+    logger.warning("turnstile: KHÔNG click được ô xác minh (cả 3 cách)")
+    return False
 
 
 async def is_challenge_showing(page) -> bool:
@@ -81,15 +111,21 @@ async def pass_challenge(page, timeout: float = 45.0, log_prefix: str = "") -> b
     logger.info("%sCloudflare challenge — chờ qua (tối đa %.0fs)", log_prefix, timeout)
     started = time.monotonic()
     deadline = started + timeout
-    clicked = False
+    clicks = 0
+    last_click = 0.0
     while time.monotonic() < deadline:
         await asyncio.sleep(1.5)
         if not await is_challenge_showing(page):
             logger.info("%sCloudflare challenge đã qua", log_prefix)
             return True
-        # Đợi ~6s cho nó tự qua trước, rồi mới thử click 1 lần.
-        if not clicked and time.monotonic() - started > 6.0:
-            clicked = await _try_click_checkbox(page)
+        # Đợi ~5s cho nó tự qua (cookie ấm thì tự thoát), rồi thử click.
+        # THỬ LẠI mỗi 8s tối đa 3 lần: widget hay render lại (reset/expire) nên
+        # 1 lần click là hụt — trước đây chỉ click 1 lần rồi ngồi chờ hết giờ.
+        now = time.monotonic()
+        if now - started > 5.0 and clicks < 3 and now - last_click > 8.0:
+            last_click = now
+            clicks += 1
+            await _try_click_checkbox(page)
     still = await is_challenge_showing(page)
     if still:
         logger.warning("%sCloudflare challenge CHƯA qua sau %.0fs", log_prefix, timeout)

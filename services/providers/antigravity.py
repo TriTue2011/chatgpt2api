@@ -93,16 +93,15 @@ def _try_refresh_antigravity_token(stale_access_token: str) -> str | None:
     if not new_access:
         return None
 
-    with account_service._lock:
-        old = account_service._accounts.pop(stale_access_token, None) or {}
-        merged = {**old, "access_token": new_access, "refresh_token": new_refresh,
-                  "status": "active"}
-        if expires_at:
-            merged["expires_at"] = expires_at
-        normalized = account_service._normalize_account(merged)
-        if normalized is not None:
-            account_service._accounts[new_access] = normalized
-        account_service._save_accounts()
+    # Persist new credentials via update_account(): pop/merge/rekey is
+    # atomic under the lock and no-ops safely if another thread already
+    # rekeyed this account first (fixes a race where the 2nd thread's
+    # manual pop() returned None, wiping email/plan/fp/device_id).
+    updates: dict[str, Any] = {"access_token": new_access, "refresh_token": new_refresh,
+                                "status": "active"}
+    if expires_at:
+        updates["expires_at"] = expires_at
+    account_service.update_account(stale_access_token, updates)
     logger.info({"event": "antigravity_token_refreshed"})
     return new_access
 
@@ -331,96 +330,104 @@ def _parse_antigravity_stream(response, model: str) -> Iterator[dict[str, Any]]:
     function_index = 0
 
     try:
-        for raw_line in response.iter_lines():
-            if not raw_line:
-                continue
-            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-            line = line.strip()
-            if not line.startswith("data: "):
-                continue
-            payload = line[6:]
-            if payload.strip() == "[DONE]":
-                break
-            try:
-                event = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
+        try:
+            for raw_line in response.iter_lines():
+                if not raw_line:
+                    continue
+                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]
+                if payload.strip() == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
 
-            resp_obj = event.get("response") or event
-            candidates = resp_obj.get("candidates") or []
+                resp_obj = event.get("response") or event
+                candidates = resp_obj.get("candidates") or []
 
-            for c in candidates:
-                content = c.get("content") or {}
-                parts = content.get("parts") or []
-                finish_reason = c.get("finishReason")
+                for c in candidates:
+                    content = c.get("content") or {}
+                    parts = content.get("parts") or []
+                    finish_reason = c.get("finishReason")
 
-                for part in parts:
-                    has_thought_sig = part.get("thoughtSignature") or part.get("thought_signature")
-                    is_thought = part.get("thought") is True
+                    for part in parts:
+                        has_thought_sig = part.get("thoughtSignature") or part.get("thought_signature")
+                        is_thought = part.get("thought") is True
 
-                    text = part.get("text", "")
-                    if text:
-                        if not sent_role:
-                            sent_role = True
+                        text = part.get("text", "")
+                        if text:
+                            if not sent_role:
+                                sent_role = True
+                                yield {"id": completion_id, "object": "chat.completion.chunk",
+                                       "created": created, "model": model,
+                                       "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
+
+                            delta_payload = {}
+                            if has_thought_sig or is_thought:
+                                delta_payload["reasoning_content"] = text
+                            else:
+                                delta_payload["content"] = text
+
                             yield {"id": completion_id, "object": "chat.completion.chunk",
                                    "created": created, "model": model,
-                                   "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]}
+                                   "choices": [{"index": 0, "delta": delta_payload, "finish_reason": None}]}
 
-                        delta_payload = {}
-                        if has_thought_sig or is_thought:
-                            delta_payload["reasoning_content"] = text
-                        else:
-                            delta_payload["content"] = text
+                        # Handle function call response
+                        func_call = part.get("functionCall")
+                        if func_call:
+                            pending_tool_calls.append({
+                                "index": function_index,
+                                "id": f"call_{uuid.uuid4().hex[:12]}",
+                                "type": "function",
+                                "function": {
+                                    "name": func_call.get("name", ""),
+                                    "arguments": json.dumps(func_call.get("args", {}), ensure_ascii=False),
+                                },
+                            })
+                            function_index += 1
+
+                    if finish_reason:
+                        mapped_reason = finish_reason.lower()
+                        if mapped_reason == "stop" and pending_tool_calls:
+                            mapped_reason = "tool_calls"
+
+                        if pending_tool_calls:
+                            yield {"id": completion_id, "object": "chat.completion.chunk",
+                                   "created": created, "model": model,
+                                   "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
+                            pending_tool_calls = []
 
                         yield {"id": completion_id, "object": "chat.completion.chunk",
                                "created": created, "model": model,
-                               "choices": [{"index": 0, "delta": delta_payload, "finish_reason": None}]}
+                               "choices": [{"index": 0, "delta": {}, "finish_reason": mapped_reason}]}
 
-                    # Handle function call response
-                    func_call = part.get("functionCall")
-                    if func_call:
-                        pending_tool_calls.append({
-                            "index": function_index,
-                            "id": f"call_{uuid.uuid4().hex[:12]}",
-                            "type": "function",
-                            "function": {
-                                "name": func_call.get("name", ""),
-                                "arguments": json.dumps(func_call.get("args", {}), ensure_ascii=False),
-                            },
-                        })
-                        function_index += 1
+            if pending_tool_calls:
+                yield {"id": completion_id, "object": "chat.completion.chunk",
+                       "created": created, "model": model,
+                       "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
 
-                if finish_reason:
-                    mapped_reason = finish_reason.lower()
-                    if mapped_reason == "stop" and pending_tool_calls:
-                        mapped_reason = "tool_calls"
-
-                    if pending_tool_calls:
-                        yield {"id": completion_id, "object": "chat.completion.chunk",
-                               "created": created, "model": model,
-                               "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
-                        pending_tool_calls = []
-
-                    yield {"id": completion_id, "object": "chat.completion.chunk",
-                           "created": created, "model": model,
-                           "choices": [{"index": 0, "delta": {}, "finish_reason": mapped_reason}]}
-
-        if pending_tool_calls:
+        except Exception as exc:
+            logger.error({"event": "antigravity_stream_error", "error": str(exc)})
             yield {"id": completion_id, "object": "chat.completion.chunk",
                    "created": created, "model": model,
-                   "choices": [{"index": 0, "delta": {"tool_calls": pending_tool_calls}, "finish_reason": None}]}
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                   "error": {"message": "Antigravity stream error: %s" % exc, "type": "stream_error"}}
+            return
 
-    except Exception as exc:
-        logger.error({"event": "antigravity_stream_error", "error": str(exc)})
+        if not sent_role and not pending_tool_calls:
+            yield {"id": completion_id, "object": "chat.completion.chunk",
+                   "created": created, "model": model,
+                   "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]}
 
-    if not sent_role and not pending_tool_calls:
         yield {"id": completion_id, "object": "chat.completion.chunk",
                "created": created, "model": model,
-               "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]}
-
-    yield {"id": completion_id, "object": "chat.completion.chunk",
-           "created": created, "model": model,
-           "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+               "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    finally:
+        response.close()
 
 
 # Singleton

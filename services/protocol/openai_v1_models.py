@@ -572,6 +572,10 @@ _POOL_PREFIX_GROUP = {
 _KEY_PREFIX_PROVIDER = {
     "gemini_free": "gemini_free", "gemini-image": "gemini_free",
     "nv": "nvidia_nim", "nv-image": "nvidia_nim", "openrouter": "openrouter",
+    # flow/* (veo-3.1-*, omni-flash) cần providers.flow.accounts — trước đây
+    # thiếu entry này nên model video Flow VẪN hiện dù chưa thêm tài khoản nào,
+    # user chọn xong mới báo lỗi ("chưa thêm provider mà lại hiện các model").
+    "flow": "flow",
 }
 
 

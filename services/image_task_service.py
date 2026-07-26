@@ -277,7 +277,7 @@ class ImageTaskService:
         urls: list[str] | None = None,
     ) -> None:
         endpoint = "/v1/images/edits" if mode == "edit" else "/v1/images/generations"
-        summary_prefix = "图生图" if mode == "edit" else "文生图"
+        summary_prefix = "Ảnh từ ảnh" if mode == "edit" else "Ảnh từ chữ"
         detail = {
             "key_id": identity.get("id"),
             "key_name": identity.get("name"),
@@ -360,7 +360,7 @@ class ImageTaskService:
         for task in self._tasks.values():
             if task.get("status") in UNFINISHED_STATUSES:
                 task["status"] = TASK_STATUS_ERROR
-                task["error"] = "服务已重启，未完成的图片任务已中断"
+                task["error"] = "Dịch vụ đã khởi động lại — tác vụ ảnh chưa xong bị gián đoạn"
                 task["updated_at"] = _now_iso()
                 changed = True
         return changed

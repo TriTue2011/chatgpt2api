@@ -396,9 +396,9 @@ def create_router(app_version: str) -> APIRouter:
         identity = require_identity(authorization)
         new_name = (body.name or "").strip()
         if not new_name:
-            raise HTTPException(status_code=400, detail={"error": "名字不能为空"})
+            raise HTTPException(status_code=400, detail={"error": "Tên không được để trống"})
         if len(new_name) > 40:
-            raise HTTPException(status_code=400, detail={"error": "名字最长40个字符"})
+            raise HTTPException(status_code=400, detail={"error": "Tên dài tối đa 40 ký tự"})
         if identity.get("id") == "admin":
             config.update({"admin_name": new_name})
         else:
@@ -410,7 +410,7 @@ def create_router(app_version: str) -> APIRouter:
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
             if updated is None:
-                raise HTTPException(status_code=404, detail={"error": "找不到这个密钥"})
+                raise HTTPException(status_code=404, detail={"error": "Không tìm thấy khóa này"})
         return {"ok": True, "name": new_name}
 
     @router.get("/version")

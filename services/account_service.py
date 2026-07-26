@@ -135,7 +135,7 @@ def detect_token_audience(access_token: str) -> str:
 _STATUS_MIGRATION = {
     "正常": "active",
     "限流": "limited",
-    "异常": "error",
+    "异常": "error",   # KHÓA ĐẦU VÀO (nhãn dữ liệu cũ) — không phải chuỗi hiển thị, đừng dịch
     "禁用": "disabled",
 }
 _STATUS_REVERSE = {v: k for k, v in _STATUS_MIGRATION.items()}
@@ -1328,7 +1328,7 @@ class AccountService:
                 else:
                     self._index = 0
                 self._save_accounts()
-                log_service.add(LOG_TYPE_ACCOUNT, f"删除 {removed}  tài khoản", {"removed": removed})
+                log_service.add(LOG_TYPE_ACCOUNT, f"Đã xóa {removed} tài khoản", {"removed": removed})
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 

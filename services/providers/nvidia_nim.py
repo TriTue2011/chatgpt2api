@@ -173,70 +173,80 @@ class NvidiaNimProvider:
         accumulated = ""
 
         try:
-            for raw_line in response.iter_lines():
-                if not raw_line:
-                    continue
-                line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
-                line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:]
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
+            try:
+                for raw_line in response.iter_lines():
+                    if not raw_line:
+                        continue
+                    line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, bytes) else str(raw_line)
+                    line = line.strip()
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
 
-                choices = chunk.get("choices") or []
-                for choice in choices:
-                    delta = choice.get("delta") or {}
-                    finish_reason = choice.get("finish_reason")
+                    choices = chunk.get("choices") or []
+                    for choice in choices:
+                        delta = choice.get("delta") or {}
+                        finish_reason = choice.get("finish_reason")
 
-                    # Handle reasoning_content (for deepseek, qwen models)
-                    reasoning = delta.get("reasoning_content")
-                    if reasoning:
-                        accumulated += reasoning
+                        # Handle reasoning_content (for deepseek, qwen models)
+                        reasoning = delta.get("reasoning_content")
+                        if reasoning:
+                            accumulated += reasoning
 
-                    content = delta.get("content")
-                    if content:
-                        accumulated += content
-                        if not sent_role:
-                            sent_role = True
+                        content = delta.get("content")
+                        if content:
+                            accumulated += content
+                            if not sent_role:
+                                sent_role = True
+                                yield {
+                                    "id": completion_id, "object": "chat.completion.chunk",
+                                    "created": created, "model": model,
+                                    "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                                }
                             yield {
                                 "id": completion_id, "object": "chat.completion.chunk",
                                 "created": created, "model": model,
-                                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                                "choices": [{"index": 0, "delta": {"content": content, "reasoning_content": reasoning or None}, "finish_reason": finish_reason}],
                             }
-                        yield {
-                            "id": completion_id, "object": "chat.completion.chunk",
-                            "created": created, "model": model,
-                            "choices": [{"index": 0, "delta": {"content": content, "reasoning_content": reasoning or None}, "finish_reason": finish_reason}],
-                        }
 
-                    # Tool calls
-                    tool_calls_delta = delta.get("tool_calls")
-                    if tool_calls_delta:
-                        yield {
-                            "id": completion_id, "object": "chat.completion.chunk",
-                            "created": created, "model": model,
-                            "choices": [{"index": 0, "delta": {"tool_calls": tool_calls_delta}, "finish_reason": None}],
-                        }
+                        # Tool calls
+                        tool_calls_delta = delta.get("tool_calls")
+                        if tool_calls_delta:
+                            yield {
+                                "id": completion_id, "object": "chat.completion.chunk",
+                                "created": created, "model": model,
+                                "choices": [{"index": 0, "delta": {"tool_calls": tool_calls_delta}, "finish_reason": None}],
+                            }
 
-        except Exception as exc:
-            logger.error({"event": "nvidia_nim_stream_error", "error": str(exc)})
+            except Exception as exc:
+                logger.error({"event": "nvidia_nim_stream_error", "error": str(exc)})
+                yield {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                    "error": {"message": f"NVIDIA NIM stream error: {exc}", "type": "stream_error"},
+                }
+                return
 
-        if not sent_role:
+            if not sent_role:
+                yield {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+                }
             yield {
                 "id": completion_id, "object": "chat.completion.chunk",
                 "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             }
-        yield {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
+        finally:
+            response.close()
 
     def _non_stream_response(self, response, model: str) -> dict[str, Any]:
         """Handle non-streaming NVIDIA response."""

@@ -501,6 +501,14 @@ class FlowImageAdapter(BaseImageAdapter):
         account = (credentials or {}).get("_flow_account")
         if not account:
             return
+        low = str(text or "").lower()
+        # Cùng tín hiệu quota/rate mà parse_response() dùng — nhưng dispatcher
+        # (openai_v1_image_generations) chặn resp.status_code>=400 TRƯỚC khi
+        # gọi parse_response, nên nhánh _mark_quota_exhausted() trong đó
+        # không bao giờ chạy tới. Đặt cooldown ở đây để tài khoản hết hạn
+        # ngạch không bị hot-retry mỗi request (đốt ~60s hydration timeout).
+        if status == 429 or "quota" in low or "rate" in low or "usage_limit" in low:
+            _mark_quota_exhausted(account)
         # "account nào lỗi bị đẩy xuống cuối" — demote on any account-health
         # failure (logout, browser crash, hydration timeout, 5xx) so a
         # consistently-failing account sinks to the back and the working one
@@ -513,7 +521,6 @@ class FlowImageAdapter(BaseImageAdapter):
         # Logout / hydration-timeout → tự khôi phục phiên ở nền + báo Telegram
         # (đăng nhập lại Google). Bỏ qua quota (credit/limit) — không phải mất
         # phiên. Debounce 30ph/profile trong hàm recovery.
-        low = str(text or "").lower()
         looks_logged_out = any(k in low for k in (
             "hydrat", "logged out", "logout", "manual-login", "session",
             "sign in", "signin", "đăng nhập", "401", "403"))
