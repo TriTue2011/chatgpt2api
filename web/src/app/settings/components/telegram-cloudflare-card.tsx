@@ -375,7 +375,7 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
             </div>
             {platformName ? (
               <p className="text-[11px] text-muted-foreground -mt-1">
-                🤖 Tên bot Telegram: <b>{platformName}</b>
+                🤖 Tên bot {platform === "zalo" ? "Zalo" : "Telegram"}: <b>{platformName}</b>
                 {row.label && row.label !== platformName ? <> · đang dùng: <b>{row.label}</b></> : null}
               </p>
             ) : null}
@@ -1445,11 +1445,16 @@ export function TelegramCloudflareCard() {
                         onClick={() => setAdmins([...admins, emptyAdmin()])}>+ Thêm admin</Button>
                     </div>
 
+                    {/* Cài đặt KHÁC của tài khoản — tách khỏi khối Admin ở trên
+                        cho giống bố cục Telegram / Zalo Bot. */}
+                    <p className="text-[10px] font-medium text-muted-foreground border-t border-border pt-2">
+                      Cài đặt khác của tài khoản
+                    </p>
                     <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                       <input type="checkbox" className="size-3.5"
                         checked={entry.ha_fastpath !== false}
                         onChange={(e) => patchAcc({ ha_fastpath: e.target.checked })} />
-                      ⚡ HA mặc định acc (chat không phải admin)
+                      ⚡ Đường tắt điều khiển nhà — mặc định cho thread chưa cài riêng ở «Lọc thread»
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
                       <input type="checkbox" className="size-3.5"
