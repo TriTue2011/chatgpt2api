@@ -587,6 +587,54 @@ def _parse_dlna_desc(location: str, timeout: float = 3.0) -> Optional[dict[str, 
             "control_url": ctrl, "port": urlparse(location).port or 0}
 
 
+def _auto_prefixes() -> set[str]:
+    """Đoán dải LAN khi sổ loa còn trống.
+
+    KHÔNG lấy IP của chính container: gateway chạy trong bridge Docker nên IP
+    riêng là 172.19.0.x — quét dải đó là quét NHẦM mạng, không thấy loa nào (đây
+    đúng là lý do nút «Dò loa» im lặng trả về rỗng khi chưa lưu loa nào).
+    Thay vào đó lấy từ các địa chỉ LAN đã biết trong cấu hình: Home Assistant,
+    URL gateway, thiết bị đã khai…
+    """
+    import os as _os
+
+    from services.config import config
+
+    cfg = config.get() or {}
+    cands: list[str] = []
+
+    def _add(v: Any) -> None:
+        s = str(v or "").strip()
+        if s:
+            cands.append(s)
+
+    ha = cfg.get("home_assistant")
+    if isinstance(ha, dict):
+        _add(ha.get("url"))
+        _add(ha.get("ssh_host"))
+    _add(cfg.get("base_url"))
+    _add(cfg.get("zalo_personal_ha_url"))
+    _add(_os.getenv("CHATGPT2API_BASE_URL"))
+    for d in (cfg.get("devices") or []):
+        if isinstance(d, dict):
+            _add(d.get("host"))
+
+    out: set[str] = set()
+    for c in cands:
+        pref = _prefix_of(c)          # đã tự xử lý cả dạng http://host:port
+        if not pref or pref.startswith(("127.", "0.")):
+            continue
+        # bỏ dải riêng của Docker (172.17-172.31.x) — không phải LAN thật
+        try:
+            a, b, _c = pref.split(".")
+            if a == "172" and 17 <= int(b) <= 31:
+                continue
+        except ValueError:
+            continue
+        out.add(pref)
+    return out
+
+
 def discover_lan(subnets: Optional[list[str]] = None,
                  hint_hosts: Optional[list[str]] = None,
                  kind: Optional[str] = None,
@@ -632,10 +680,16 @@ def discover_lan(subnets: Optional[list[str]] = None,
                 pref = _prefix_of(h)
                 if pref:
                     prefixes.add(pref)
-        if not prefixes and kind != "all":
+        if not prefixes:
+            # Sổ loa trống + không truyền dải → suy từ địa chỉ LAN đã biết trong
+            # cấu hình. Trước đây bỏ qua bước này nên targets rỗng và hàm trả về
+            # rỗng KHÔNG BÁO GÌ (user tưởng mạng hỏng).
+            prefixes = _auto_prefixes()
+        if not prefixes:
             raise RuntimeError(
-                "Chưa biết dải mạng để quét. Thêm 1 loa bằng IP trước, hoặc điền "
-                "'URL công khai gateway' trong cấu hình để em biết dải LAN.")
+                "Chưa biết dải mạng để quét. Nhập dải (vd 172.16.10) vào ô «Dải "
+                "mạng», hoặc thêm 1 loa bằng IP, hoặc điền URL Home Assistant / "
+                "URL gateway trong cấu hình để em tự suy ra.")
         found_hosts = {h["host"] for h in hits}
         targets = [(f"{pref}.{i}", port, k)
                    for pref in sorted(prefixes) for i in range(1, 255)

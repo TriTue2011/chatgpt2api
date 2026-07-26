@@ -286,16 +286,19 @@ def create_router() -> APIRouter:
         return {"ok": True, "rows": rows, "count": len(rows)}
 
     @router.post("/api/voice/discover")
-    async def voice_discover(kind: str = "all",
+    async def voice_discover(kind: str = "all", subnet: str = "",
                              authorization: str | None = Header(default=None)):
         """Dò loa trong LAN theo LOẠI. `kind` = cast | dlna | r1 | all.
 
+        `subnet` (tuỳ chọn, vd "172.16.10") ép quét đúng dải đó — cần khi gateway
+        chạy trong Docker bridge nên không tự biết dải LAN thật.
         cast/r1: quét TCP cổng cố định (Cast 8009 / R1 8082). dlna: SSDP M-SEARCH
         (cổng động) — trả kèm control_url để phát thẳng; rỗng nếu mạng chặn multicast."""
         require_admin(authorization)
         from services.voice import speakers as vspk
         from services.voice import config as vcfg
 
+        subnets = [s.strip() for s in str(subnet or "").split(",") if s.strip()] or None
         hints: list[str] = []
         try:
             u = vcfg.public_base_url()
@@ -305,7 +308,7 @@ def create_router() -> APIRouter:
             pass
         try:
             hits = await run_in_threadpool(
-                vspk.discover_lan, None, hints, str(kind or "all"))
+                vspk.discover_lan, subnets, hints, str(kind or "all"))
         except Exception as exc:
             raise HTTPException(503, str(exc)[:300])
         return {"ok": True, "found": hits, "count": len(hits)}

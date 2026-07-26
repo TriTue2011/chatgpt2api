@@ -3035,11 +3035,28 @@ def _strip_artifacts_in_stream(it: Iterator[dict[str, Any]]) -> Iterator[dict[st
         yield chunk
 
 
+def _fix_finish_reason(result):
+    """Chuẩn OpenAI: message có `tool_calls` thì finish_reason PHẢI là
+    "tool_calls". Nhiều provider (và các nhánh hậu xử lý dựng lại phản hồi) trả
+    "stop" — client nghiêm ngặt (SDK OpenAI, LangChain, n8n…) sẽ tưởng model đã
+    trả lời xong và BỎ QUA lời gọi hàm. Chuẩn hóa một lần ở lối ra chung, thay
+    vì vá từng provider."""
+    if not isinstance(result, dict):
+        return result
+    for ch in (result.get("choices") or []):
+        if not isinstance(ch, dict):
+            continue
+        msg = ch.get("message")
+        if isinstance(msg, dict) and msg.get("tool_calls") and ch.get("finish_reason") == "stop":
+            ch["finish_reason"] = "tool_calls"
+    return result
+
+
 def _maybe_verbalize(result, voice=False):
     if not voice:
-        return result
+        return _fix_finish_reason(result)
     if isinstance(result, dict):
-        return _verbalize_in_response(result)
+        return _fix_finish_reason(_verbalize_in_response(result))
     return _verbalize_in_stream(result)
 
 
@@ -4729,7 +4746,11 @@ def _chatgpt_addon_completion(model, messages, tools, tool_choice):
                         "content": "",
                         "tool_calls": tool_calls,
                     },
-                    "finish_reason": "stop",
+                    # Chuẩn OpenAI: có tool_calls thì finish_reason PHẢI là
+                    # "tool_calls". Trả "stop" khiến client nghiêm ngặt (SDK
+                    # OpenAI, LangChain, n8n…) tưởng model đã trả lời xong và
+                    # BỎ QUA lời gọi hàm.
+                    "finish_reason": "tool_calls",
                 }],
                 "usage": {
                     "prompt_tokens": count_message_tokens(messages, model),
@@ -4885,7 +4906,9 @@ def _opencode_completion_response(
             "object": "chat.completion",
             "created": int(time.time()),
             "model": model,
-            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            "choices": [{"index": 0, "message": message,
+                         # Chuẩn OpenAI: có tool_calls → finish_reason="tool_calls".
+                         "finish_reason": "tool_calls" if tool_calls else "stop"}],
             "usage": {
                 "prompt_tokens": count_message_tokens(messages, model),
                 "completion_tokens": count_text_tokens(content, model),

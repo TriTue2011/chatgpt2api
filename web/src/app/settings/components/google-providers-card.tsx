@@ -66,6 +66,7 @@ export function GoogleProvidersCard() {
   const [savedKey, setSavedKey] = useState(0);
   const [totpCode, setTotpCode] = useState("");
   const [totpRem, setTotpRem] = useState(30);
+  const [totpErr, setTotpErr] = useState("");
   const [reuseAllRunning, setReuseAllRunning] = useState(false);
   const [reuseAllStep, setReuseAllStep] = useState("");
   const [savingFlow, setSavingFlow] = useState(false);
@@ -75,8 +76,18 @@ export function GoogleProvidersCard() {
   useEffect(() => { void load(); return () => { if(pollRef.current) clearInterval(pollRef.current); if(totpRef.current) clearInterval(totpRef.current); }; }, []);
 
   useEffect(() => {
-    if (!draft.totpSecret.trim()) { setTotpCode(""); return; }
-    const refresh = async () => { try { setTotpCode(await generateTotpCode(draft.totpSecret)); setTotpRem(totpSecondsRemaining()); } catch { setTotpCode(""); } };
+    if (!draft.totpSecret.trim()) { setTotpCode(""); setTotpErr(""); return; }
+    // Trước đây catch nuốt lỗi → ô mã im lặng trống, không ai biết vì sao.
+    const refresh = async () => {
+      try {
+        setTotpCode(await generateTotpCode(draft.totpSecret));
+        setTotpRem(totpSecondsRemaining());
+        setTotpErr("");
+      } catch (e) {
+        setTotpCode("");
+        setTotpErr(e instanceof Error ? e.message : "Không sinh được mã TOTP");
+      }
+    };
     void refresh();
     totpRef.current = window.setInterval(refresh, 5000);
     return () => { if(totpRef.current) clearInterval(totpRef.current); };
@@ -291,6 +302,7 @@ export function GoogleProvidersCard() {
             <TotpSecretLabel />
             <Input value={draft.totpSecret} onChange={e=>setDraft({...draft,totpSecret:e.target.value})} placeholder="xxxx xxxx xxxx xxxx..." className="mt-1 h-8 rounded-lg border-amber-200 text-xs font-mono bg-amber-50/30" autoComplete="off" disabled={running}/>
             {totpCode && <div className="mt-1 flex items-center gap-2"><span className="text-[11px] text-amber-700">Mã TOTP:</span><span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-mono text-sm font-bold tracking-widest">{totpCode}</span><span className="text-[10px] text-amber-500">({totpRem}s)</span></div>}
+            {totpErr && <p className="mt-1 text-[10px] text-red-500">⚠️ {totpErr}</p>}
             <TotpSecretGuide />
           </div>
           <div className="flex flex-wrap gap-2">

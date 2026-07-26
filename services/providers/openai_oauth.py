@@ -662,7 +662,10 @@ class CodexOAuthProvider:
                         "object": "chat.completion",
                         "created": int(time.time()),
                         "model": resolved_model,
-                        "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+                        # Chuẩn OpenAI: có tool_calls → "tool_calls" (luồng stream
+                        # đã làm đúng ở dưới, riêng non-stream trước đây trả "stop").
+                        "choices": [{"index": 0, "message": message,
+                                     "finish_reason": "tool_calls" if tool_calls else "stop"}],
                         "usage": {
                             "prompt_tokens": count_message_tokens(messages, resolved_model),
                             "completion_tokens": count_text_tokens(text, resolved_model),

@@ -64,6 +64,10 @@ export function VoiceSpeakersCard() {
   const [found, setFound] = useState<Found[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanKind, setScanKind] = useState("all");
+  // Dải mạng cần quét (vd "172.16.10"). Trống = tự suy từ URL Home Assistant /
+  // gateway trong cấu hình — cần vì gateway chạy trong Docker bridge nên IP
+  // riêng của nó (172.19.0.x) KHÔNG phải dải LAN thật.
+  const [scanSubnet, setScanSubnet] = useState("");
   // media_player từ HA — dropdown chọn entity khi thêm loa kiểu 'ha'
   const [haPlayers, setHaPlayers] = useState<{ entity_id: string; name: string }[]>([]);
   // Hẹn giờ thông báo ra loa
@@ -196,7 +200,9 @@ export function VoiceSpeakersCard() {
   const discover = async () => {
     setScanning(true);
     try {
-      const r = await request.post(`/api/voice/discover?kind=${encodeURIComponent(scanKind)}`, {});
+      const r = await request.post(
+        `/api/voice/discover?kind=${encodeURIComponent(scanKind)}`
+        + (scanSubnet.trim() ? `&subnet=${encodeURIComponent(scanSubnet.trim())}` : ""), {});
       const d = r.data as { found?: Found[] };
       const list = d?.found || [];
       setFound(list);
@@ -495,6 +501,9 @@ export function VoiceSpeakersCard() {
             <option value="dlna">DLNA / UPnP</option>
             <option value="r1">Loa R1</option>
           </select>
+          <Input value={scanSubnet} onChange={(e) => setScanSubnet(e.target.value)}
+            className="h-9 w-32 text-xs" placeholder="Dải: 172.16.10"
+            title="Dải mạng cần quét (trống = tự suy từ URL Home Assistant/gateway)" />
           <Button type="button" variant="outline" size="sm" onClick={() => void discover()} disabled={scanning || busy}>
             <Radar className={`size-3.5 mr-1 ${scanning ? "animate-spin" : ""}`} /> {scanning ? "Đang dò..." : "Dò loa"}
           </Button>
