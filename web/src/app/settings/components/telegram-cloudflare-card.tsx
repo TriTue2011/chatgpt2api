@@ -223,10 +223,10 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
         const anyHa = admins.some((a) => a.ha_fastpath);
         const anyFb = admins.some((a) => a.fallback_enabled);
         const fbThread = admins.find((a) => a.fallback_enabled)?.chat_id || "";
-        // Model bot = admin #1 nếu bot trống (tương thích cũ)
-        const botModel = r.ai_model.trim()
-          || admins.find((a) => a.ai_model.trim())?.ai_model.trim()
-          || "";
+        // Model cấp bot đã BỎ khỏi UI — model cài theo thread ở «Lọc thread».
+        // Ghi rỗng để chuỗi chọn model rõ ràng: thread → (admin cũ) → hệ thống,
+        // không còn giá trị đọng vô hình mà người dùng không sửa được.
+        const botModel = "";
         return {
           token: r.token.trim(),
           label: r.label.trim(),
@@ -359,22 +359,12 @@ function BotListEditor({ bots, models, tokenPlaceholder, onChange, names, platfo
                 {row.label && row.label !== platformName ? <> · đang dùng: <b>{row.label}</b></> : null}
               </p>
             ) : null}
-            <div>
-              <label className="text-[10px] text-muted-foreground">
-                Model AI mặc định của bot — chỉ dùng khi thread KHÔNG cài model riêng ở «Lọc thread»
-              </label>
-              <Select value={row.ai_model || " "} onValueChange={(v) => patch(row.id, { ai_model: v.trim() })}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Model mặc định bot" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value=" ">-- Mặc định hệ thống --</SelectItem>
-                  {Array.from(new Set([...models, ...(row.ai_model ? [row.ai_model] : [])])).map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Ô "Model AI mặc định của bot" đã BỎ — model cài theo TỪNG THREAD ở
+                tab «Lọc thread». Thread không cài → dùng mặc định hệ thống. */}
+            <p className="text-[10px] text-muted-foreground">
+              🤖 Model AI: cài theo <b>từng thread</b> ở tab «Lọc thread». Thread không
+              cài riêng thì dùng mặc định hệ thống.
+            </p>
 
             {/* Admin #N — CHỈ nơi NHẬN thông báo (notify-only). Model / persona /
                 giọng nói / chức năng của thread admin cài ở tab «Lọc thread».
