@@ -128,14 +128,23 @@ def get_bot_names() -> dict[str, str]:
 _bot_username_cache: dict[str, str] = {}  # token -> @username (lower), cho @mention
 
 
-def _bot_username() -> str:
+def _bot_username(no_block: bool = False) -> str:
     """Username bot (không '@', lowercase) — getMe 1 lần, cache theo token.
-    Dùng để nhận diện @mention native trong nhóm."""
+    Dùng để nhận diện @mention native trong nhóm.
+
+    no_block=True: CHỈ đọc cache, KHÔNG gọi getMe — dùng trên event loop
+    (handle_webhook) để không chặn webhook bằng 1 cuộc gọi mạng đồng bộ khi
+    cache miss (vd ngay sau restart). Cache miss → trả "" (mention qua
+    @username tạm thời không nhận ra tới khi cache ấm; reply/text_mention vẫn
+    hoạt động vì không cần username). register_webhook() đã làm ấm cache lúc
+    khởi động nên cửa sổ cache-miss trên đường webhook gần như không xảy ra."""
     token = _bot_token()
     if not token:
         return ""
     if token in _bot_username_cache:
         return _bot_username_cache[token]
+    if no_block:
+        return ""
     name = ""
     try:
         r = _api_call("getMe")
@@ -480,6 +489,10 @@ def register_webhook() -> bool:
             if not token:
                 continue
             _current.bot = bot
+            # Làm ấm cache username TRƯỚC khi có traffic webhook — tránh
+            # handle_webhook phải gọi getMe (blocking) ngay trên event loop
+            # lúc cache miss (mỗi lần restart process).
+            _bot_username()
             r = _api_call("setWebhook", {
                 "url": url,
                 "allowed_updates": [
@@ -641,7 +654,7 @@ async def handle_webhook(request) -> dict:
     _current.bot = bot
     try:
         native_mention = detect_bot_mention(
-            msg, bot_username=_bot_username(), bot_id=_bot_id(),
+            msg, bot_username=_bot_username(no_block=True), bot_id=_bot_id(),
         )
     except Exception:
         native_mention = False
@@ -993,7 +1006,33 @@ def _do_photo_request(
 
 
 def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "") -> None:
-    """Process a Telegram message in background thread."""
+    """Process a Telegram message in background thread.
+
+    Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
+    dedup update_id đã tiêu thụ ở handle_webhook TRƯỚC khi thread nền này
+    chạy, nên một lỗi ở blacklist / lọc quyền / admin-workspace / state-machine
+    PDF-ảnh (mọi thứ TRƯỚC orchestrate()) mà không bắt thì tin MẤT VĨNH VIỄN —
+    không trả lời, không cảnh báo admin, không ai retry. orchestrate() đã có
+    try/except + fallback riêng bên trong _process_message_inner — lưới này
+    KHÔNG thay thế, chỉ bọc thêm bên ngoài."""
+    try:
+        _process_message_inner(
+            text, chat_id, photo, document, bot, sender, user_id, is_group,
+            native_mention, chat_name, voice_file_id, topic_id,
+        )
+    except Exception as exc:
+        logger.warning("tg _process_message lỗi (chat=%s user=%s): %s", chat_id, user_id, exc)
+        try:
+            _notify_all_admins(
+                f"⚠️ Lỗi xử lý tin Telegram (chat {chat_id}): {str(exc)[:300]}",
+                bot=bot,
+            )
+        except Exception:
+            pass
+
+
+def _process_message_inner(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "") -> None:
+    """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
     # `_current` là thread-local: topic gán ở handle_webhook KHÔNG nhìn thấy được

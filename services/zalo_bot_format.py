@@ -198,7 +198,11 @@ def build_send_message_payload(
         body = raw
         parse_mode = None
 
-    chunks = [body[i : i + max_len] for i in range(0, len(body), max_len)] or ["..."]
+    # Cắt theo ranh giới đoạn/dòng/khoảng trắng (giống Telegram split_message) —
+    # cắt cứng theo offset ký tự cũ có thể chẻ đôi 1 span **đậm**/{color} khiến
+    # marker mồ côi lộ ra ở đầu/cuối chunk (vd còn "**" hoặc "{orange}" trơ trọi).
+    from services.telegram.format import split_message
+    chunks = split_message(body, limit=max_len, prefer=max_len) or ["..."]
     out: list[dict[str, Any]] = []
     for ch in chunks[:6]:
         p: dict[str, Any] = {"chat_id": str(chat_id), "text": ch}

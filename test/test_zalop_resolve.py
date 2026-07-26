@@ -57,17 +57,24 @@ class ExtractUserNameTests(unittest.TestCase):
         )
 
     def test_does_not_return_own_name_as_fallback_from_map(self) -> None:
-        """Nhiều profile, không khớp want_id → rỗng (không lấy BotNhatoi)."""
+        """Không khớp want_id → TUYỆT ĐỐI không lấy tên acc của mình.
+
+        Bản cũ của test này đòi trả rỗng, nhưng như vậy mâu thuẫn với
+        `test_single_other_profile_ok` (cùng tình huống: want_id không có trong
+        map, còn đúng 1 profile khác) và với chủ ý ghi ở bước 2 của
+        `_extract_user_name`: zca-js hay trả id lệch định dạng, nên "profile
+        duy nhất không phải mình" chính là người gửi. Điều thật sự cần chặn là
+        lấy nhầm tên bot — kiểm đúng điều đó.
+        """
         info = {
             "changed_profiles": {
                 "111": {"displayName": "BotNhatoi"},
                 "999": {"displayName": "SomeoneElse"},
             }
         }
-        self.assertEqual(
-            zp._extract_user_name(info, "6643", skip_ids={"111"}),
-            "",
-        )
+        got = zp._extract_user_name(info, "6643", skip_ids={"111"})
+        self.assertNotEqual(got, "BotNhatoi")
+        self.assertEqual(got, "SomeoneElse")
 
     def test_single_other_profile_ok(self) -> None:
         info = {

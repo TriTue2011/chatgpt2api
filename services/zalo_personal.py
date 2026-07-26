@@ -220,37 +220,56 @@ def _login(client: httpx.Client) -> bool:
 
 
 def _request(method: str, path: str, body: dict | None = None,
-             timeout: float | None = None, headers: dict | None = None) -> dict:
-    """Gọi bot server; response chuẩn hóa {ok, data|error}. 401 → login lại 1 lần."""
+             timeout: float | None = None, headers: dict | None = None,
+             max_retries: int = 2) -> dict:
+    """Gọi bot server; response chuẩn hóa {ok, data|error}. 401 → login lại 1 lần.
+
+    429/flood (bot server dồn qua zca-js) → retry có giới hạn, giống
+    services.telegram.client.TelegramClient.call — trước đây gọi 1 lần rồi bỏ
+    cuộc ngay, không thử lại.
+    """
     client = _get_client()
     if client is None:
         return {"ok": False, "error": "Chưa cấu hình zalo_personal_server_url"}
-    try:
-        if time.time() - _logged_in_at > _SESSION_TTL:
-            _login(client)
-        kw: dict[str, Any] = {}
-        if body is not None:
-            kw["json"] = body
-        if timeout is not None:
-            kw["timeout"] = timeout
-        if headers:
-            kw["headers"] = headers
-        r = client.request(method, path, **kw)
-        if r.status_code == 401:
-            if not _login(client):
-                return {"ok": False, "error": "Đăng nhập bot server thất bại"}
-            r = client.request(method, path, **kw)
-        if r.status_code >= 400:
-            return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+    kw: dict[str, Any] = {}
+    if body is not None:
+        kw["json"] = body
+    if timeout is not None:
+        kw["timeout"] = timeout
+    if headers:
+        kw["headers"] = headers
+    for attempt in range(max_retries + 1):
         try:
-            data = r.json()
-        except Exception:
-            data = r.text
-        if isinstance(data, dict) and (data.get("success") is False or data.get("ok") is False):
-            return {"ok": False, "error": str(data.get("error") or data.get("message") or "Bot server báo lỗi")}
-        return {"ok": True, "data": data}
-    except Exception as exc:
-        return {"ok": False, "error": f"Lỗi kết nối bot server: {exc}"}
+            if time.time() - _logged_in_at > _SESSION_TTL:
+                _login(client)
+            r = client.request(method, path, **kw)
+            if r.status_code == 401:
+                if not _login(client):
+                    return {"ok": False, "error": "Đăng nhập bot server thất bại"}
+                r = client.request(method, path, **kw)
+            if r.status_code == 429 and attempt < max_retries:
+                retry_after = 1.0
+                try:
+                    retry_after = min(float(r.headers.get("Retry-After") or 1.0), 30.0)
+                except (TypeError, ValueError):
+                    pass
+                time.sleep(retry_after)
+                continue
+            if r.status_code >= 400:
+                return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+            try:
+                data = r.json()
+            except Exception:
+                data = r.text
+            if isinstance(data, dict) and (data.get("success") is False or data.get("ok") is False):
+                return {"ok": False, "error": str(data.get("error") or data.get("message") or "Bot server báo lỗi")}
+            return {"ok": True, "data": data}
+        except Exception as exc:
+            if attempt < max_retries:
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            return {"ok": False, "error": f"Lỗi kết nối bot server: {exc}"}
+    return {"ok": False, "error": "Lỗi kết nối bot server"}
 
 
 # ── API bot server: tài khoản / QR / webhook / proxy ─────────────────────────
@@ -692,7 +711,11 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
             except Exception:
                 color = "orange"
 
-    chunks = [raw[i:i + _MAX_LEN] for i in range(0, len(raw), _MAX_LEN)] or ["..."]
+    # Cắt theo ranh giới đoạn/dòng/khoảng trắng (giống Telegram split_message) —
+    # cắt cứng theo offset ký tự cũ có thể chẻ đôi 1 span **đậm**/styles khiến
+    # marker mồ côi lộ ra ở đầu/cuối chunk.
+    from services.telegram.format import split_message
+    chunks = split_message(raw, limit=_MAX_LEN, prefer=_MAX_LEN) or ["..."]
     last: dict = {"ok": False}
     try:
         from services.zalo_markdown import config_markdown_enabled, markdown_to_zalo_message
@@ -887,6 +910,48 @@ def _admin_for_account(account_id: str = "") -> tuple[str, int, str]:
     return th, ttype, send_acc
 
 
+def _try_fallback(entry: dict, own_id: str, text: str) -> None:
+    """Fallback CHÍNH kênh Zalo Cá Nhân — KHÔNG mượn
+    services.telegram_bot._try_bot_fallback: dict truyền vào trước đây KHÔNG có
+    key "token" Telegram nên TelegramClient.call trả thẳng {"ok": False,
+    "description": "empty token"} MÀ KHÔNG HỀ gọi mạng — cảnh báo lặng lẽ biến
+    mất. `entry` (1 account trong zalo_personal_account_admins) đã có sẵn
+    admin_entries/fallback_thread cùng cấu trúc "bot" của Telegram/Zalo Bot
+    (xem _normalize_zalo_personal_account_admins) nên dùng chung
+    admin_workspace.admin_entries rồi gửi qua send_message() của CHÍNH module
+    này bằng tài khoản sở hữu (own_id)."""
+    try:
+        from services.admin_workspace import admin_entries
+        rows = [e for e in admin_entries(entry) if e.get("fallback_enabled")]
+    except Exception:
+        rows = []
+    threads: list[tuple[str, int]] = [
+        (str(e["chat_id"]), 1 if e.get("kind") == "group" else 0) for e in rows
+    ]
+    legacy = str(entry.get("fallback_thread") or "").strip()
+    if legacy and legacy not in {t for t, _ in threads}:
+        threads.append((legacy, 0))
+    if not threads and entry.get("fallback_enabled"):
+        try:
+            from services.admin_workspace import admin_entries as _admin_entries2
+            for e in _admin_entries2(entry):
+                if e.get("notify_enabled", True) and e.get("chat_id"):
+                    threads.append((str(e["chat_id"]), 1 if e.get("kind") == "group" else 0))
+                    break
+        except Exception:
+            pass
+    if not threads:
+        return
+    for thread, ttype in threads:
+        try:
+            send_message(
+                thread, text[:_MAX_LEN] + "\n(Fallback admin thread)",
+                ttype, account=own_id, rich=False,
+            )
+        except Exception as exc:
+            logger.warning("zalo personal fallback failed (%s): %s", thread, exc)
+
+
 def notify_admin(text: str, category: str = "") -> None:
     """account_log 📋 / system 🔔 / newchat 💬 — theo toggle từng Admin #N (zca-js).
 
@@ -991,13 +1056,7 @@ def notify_admin(text: str, category: str = "") -> None:
                 pass
         if sent == 0 and entry.get("fallback_enabled"):
             try:
-                from services.telegram_bot import _try_bot_fallback
-                _try_bot_fallback({
-                    "fallback_enabled": True,
-                    "fallback_channel": entry.get("fallback_channel"),
-                    "fallback_bot_name": entry.get("fallback_bot_name"),
-                    "fallback_thread": entry.get("fallback_thread"),
-                }, text)
+                _try_fallback(entry, str(own_id), text)
             except Exception:
                 pass
 

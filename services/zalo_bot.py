@@ -26,6 +26,7 @@ import logging
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -363,22 +364,71 @@ def _alert_new_chat(chat_id: str, sender: str, text: str, served: bool,
         logger.warning("zalo new-contact alert failed: %s", exc)
 
 
-def _api_call(method: str, data: dict | None = None, timeout: int = 20) -> dict:
+def _zalo_retry_after(payload: dict | None, default: float = 1.0) -> float:
+    """Số giây chờ trước khi thử lại khi Zalo báo giới hạn tần suất (429/flood).
+    Giống services.telegram.client._retry_after_seconds — Zalo Bot không có
+    field retry_after chuẩn hoá công khai nên đọc best-effort, mặc định 1s."""
+    if not isinstance(payload, dict):
+        return default
+    try:
+        params = payload.get("parameters") or {}
+        ra = float(payload.get("retry_after") or params.get("retry_after") or 0)
+        if ra > 0:
+            return min(ra, 60.0)
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
+def _api_call(method: str, data: dict | None = None, timeout: int = 20,
+              max_retries: int = 2) -> dict:
+    """POST /bot<token>/<method>. Retry có giới hạn khi 429/flood (giống
+    services.telegram.client.TelegramClient.call) — trước đây gọi 1 lần rồi
+    bỏ cuộc ngay, dễ mất tin lúc bot gửi dồn dập."""
     token = _bot_token()
     if not token:
         return {"ok": False}
     url = f"{ZALO_API}/bot{token}/{method}"
-    try:
-        if data is not None:
-            req = urllib.request.Request(url, data=json.dumps(data).encode(),
-                                         headers={"Content-Type": "application/json"})
-        else:
-            req = urllib.request.Request(url, method="POST")
-        resp = urllib.request.urlopen(req, timeout=timeout)
-        return json.loads(resp.read().decode("utf-8", "replace"))
-    except Exception as exc:
-        logger.warning("Zalo API %s: %s", method, exc)
-        return {"ok": False}
+    last: dict = {"ok": False}
+    for attempt in range(max_retries + 1):
+        try:
+            if data is not None:
+                req = urllib.request.Request(url, data=json.dumps(data).encode(),
+                                             headers={"Content-Type": "application/json"})
+            else:
+                req = urllib.request.Request(url, method="POST")
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            last = json.loads(resp.read().decode("utf-8", "replace"))
+            if last.get("ok"):
+                return last
+            desc = str(last.get("description") or "")
+            if attempt < max_retries and (
+                last.get("error_code") == 429
+                or "retry after" in desc.lower()
+                or "too many requests" in desc.lower()
+            ):
+                time.sleep(_zalo_retry_after(last))
+                continue
+            return last
+        except urllib.error.HTTPError as exc:
+            try:
+                raw = exc.read().decode("utf-8", "replace")
+                last = json.loads(raw) if raw else {"ok": False, "description": str(exc)}
+            except Exception:
+                last = {"ok": False, "description": str(exc)}
+            if attempt < max_retries and exc.code == 429:
+                time.sleep(_zalo_retry_after(last))
+                continue
+            logger.warning("Zalo API %s: HTTP %s %s", method, exc.code, last.get("description"))
+            return last
+        except Exception as exc:
+            last = {"ok": False, "description": str(exc)}
+            logger.warning("Zalo API %s: %s", method, exc)
+            if attempt < max_retries:
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            return last
+    return last
 
 
 # ── Long-polling (giống openclaw zaloclawbot) ────────────────────────────────
@@ -474,6 +524,7 @@ def _handle_update(upd: dict, bot: dict, seen: set[str]) -> None:
     seen.add(mid)
     if len(seen) > 2000:
         seen.clear()
+        seen.add(mid)  # re-add — clear() vừa xoá luôn mid mới thêm ở trên
     chat = msg.get("chat") or {}
     chat_id = str(chat.get("id", "")).strip()
     text = (msg.get("text") or "").strip()
@@ -632,6 +683,47 @@ def send_voice(chat_id: str, voice_url: str) -> dict:
     })
 
 
+def _try_fallback(bot: dict, text: str) -> None:
+    """Fallback CHÍNH kênh Zalo Bot — KHÔNG mượn services.telegram_bot._try_bot_fallback
+    (kênh khác token/API hoàn toàn: bot["token"] là token Zalo, Telegram từ chối
+    thẳng → TelegramClient.call trả {"ok": False} không hề có network call thật,
+    nên cảnh báo lặng lẽ biến mất). Gửi qua send_message() của CHÍNH module này."""
+    threads: list[str] = []
+    try:
+        from services.admin_workspace import fallback_admin_threads
+        threads = list(fallback_admin_threads(bot))
+    except Exception:
+        threads = []
+    # Legacy bot-level fallback_thread
+    legacy = str(bot.get("fallback_thread") or "").strip()
+    if legacy and legacy not in threads:
+        threads.append(legacy)
+    if not threads and bot.get("fallback_enabled"):
+        try:
+            from services.admin_workspace import admin_entries
+            for e in admin_entries(bot):
+                if e.get("notify_enabled", True) and e.get("chat_id"):
+                    threads.append(str(e["chat_id"]).strip())
+                    break
+        except Exception:
+            pass
+    if not threads:
+        return
+    prev = _cur_bot()
+    try:
+        _current.bot = bot
+        for thread in threads:
+            try:
+                send_message(
+                    thread, text[:_MAX_LEN] + "\n(Fallback admin thread)",
+                    rich=False, bot=bot,
+                )
+            except Exception as exc:
+                logger.warning("zalo bot fallback failed (%s): %s", thread, exc)
+    finally:
+        _current.bot = prev
+
+
 def notify_admin(text: str, category: str = "") -> None:
     """account_log 📋 / system 🔔 / newchat 💬 — per-admin toggles."""
     try:
@@ -695,8 +787,7 @@ def notify_admin(text: str, category: str = "") -> None:
                 or any(e.get("fallback_enabled") for e in admin_entries(bot))
             ):
                 try:
-                    from services.telegram_bot import _try_bot_fallback
-                    _try_bot_fallback(bot, text)
+                    _try_fallback(bot, text)
                 except Exception:
                     pass
     finally:
@@ -1123,6 +1214,19 @@ async def handle_webhook(request) -> dict:
             return {"ok": False}
     result = (body or {}).get("result") or {}
     msg = result.get("message") or {}
+    # De-dupe: webhook có thể GỬI LẠI cùng 1 tin (retry) — dùng CHUNG bộ nhớ
+    # per-token `_seen_ids` với đường poll (_handle_update) để không xử lý 2 lần
+    # dù bot đang chạy webhook hay long-polling (hoặc đổi qua lại giữa 2 chế độ).
+    mid = str(msg.get("message_id") or "")
+    if mid:
+        token = str((bot or {}).get("token") or "").strip()
+        seen = _seen_ids.setdefault(token, set())
+        if mid in seen:
+            return {"ok": True}
+        seen.add(mid)
+        if len(seen) > 2000:
+            seen.clear()
+            seen.add(mid)  # re-add — clear() vừa xoá luôn mid mới thêm ở trên
     chat = msg.get("chat") or {}
     chat_id = str(chat.get("id", "")).strip()
     text = (msg.get("text") or "").strip()
@@ -1184,6 +1288,34 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
                      sender: str = "", file_url: str = "", file_name: str = "",
                      file_id: str = "", user_id: str = "", is_group: bool = False,
                      chat_name: str = "", voice_url: str = "") -> None:
+    """Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
+    dedup message_id đã tiêu thụ ở handle_webhook/_handle_update TRƯỚC khi
+    thread nền này chạy, nên một lỗi ở blacklist / lọc quyền / admin-workspace /
+    state-machine PDF-ảnh (mọi thứ TRƯỚC orchestrate()) mà không bắt thì tin
+    MẤT VĨNH VIỄN — không trả lời, không cảnh báo admin, không ai retry.
+    orchestrate() đã có try/except + fallback riêng bên trong
+    _process_message_inner — lưới này KHÔNG thay thế, chỉ bọc thêm bên ngoài."""
+    try:
+        _process_message_inner(
+            text, chat_id, photo_url, bot, sender, file_url, file_name,
+            file_id, user_id, is_group, chat_name, voice_url,
+        )
+    except Exception as exc:
+        logger.warning("zalo _process_message lỗi (chat=%s user=%s): %s", chat_id, user_id, exc)
+        try:
+            _notify_all_admins(
+                f"⚠️ Lỗi xử lý tin Zalo Bot (chat {chat_id}): {str(exc)[:300]}",
+                bot=bot,
+            )
+        except Exception:
+            pass
+
+
+def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: dict | None = None,
+                           sender: str = "", file_url: str = "", file_name: str = "",
+                           file_id: str = "", user_id: str = "", is_group: bool = False,
+                           chat_name: str = "", voice_url: str = "") -> None:
+    """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
 

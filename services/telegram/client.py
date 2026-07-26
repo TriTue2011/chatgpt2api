@@ -519,7 +519,15 @@ class TelegramClient:
             chunks = tg_fmt.split_message(body) if split else [tg_fmt.clip(body)]
             if not chunks:
                 chunks = ["…"]
-            html_ok = True
+            # Bản plain TƯƠNG ỨNG — tính SẴN 1 lần để fallback CHO TỪNG CHUNK
+            # (không phải gửi lại NGUYÊN message) khi Telegram từ chối 1 chunk.
+            # Trước đây: 1 chunk HTML bị từ chối → cả message (kể cả các chunk
+            # HTML đã gửi THÀNH CÔNG) bị gửi lại toàn bộ dạng plain → người
+            # dùng thấy vừa HTML một phần vừa 1 bản plain trùng lặp toàn văn.
+            plain_all = strip_for_plain(raw) if convert_llm_md else raw
+            plain_chunks_fb = (
+                tg_fmt.split_message(plain_all) if split else [tg_fmt.clip(plain_all)]
+            )
             html_results: list[dict[str, Any]] = []
             for i, chunk in enumerate(chunks):
                 markup = reply_markup if i == 0 else None
@@ -532,21 +540,34 @@ class TelegramClient:
                     message_thread_id=message_thread_id,
                     **extra,
                 )
+                if not r.get("ok"):
+                    logger.info(
+                        "Telegram HTML chunk %d failed → plain fallback CHỈ chunk "
+                        "này (chunk trước đã gửi OK, KHÔNG gửi lại — tránh trùng "
+                        "bản sao): %s",
+                        i, str(r.get("description") or "")[:120],
+                    )
+                    plain_chunk = (
+                        plain_chunks_fb[i] if i < len(plain_chunks_fb)
+                        else strip_for_plain(chunk)
+                    )
+                    r = self.send_message(
+                        chat_id, plain_chunk,
+                        parse_mode=None,
+                        reply_markup=markup,
+                        link_preview_options=preview,
+                        reply_parameters=reply_parameters if i == 0 else None,
+                        message_thread_id=message_thread_id,
+                        **extra,
+                    )
+                    r["_c2a_format"] = "plain"
+                else:
+                    r["_c2a_format"] = "html"
+                r["_c2a_format_reason"] = choice.reason
                 html_results.append(r)
                 if not r.get("ok"):
-                    html_ok = False
-                    logger.info(
-                        "Telegram HTML failed → plain: %s",
-                        str(r.get("description") or "")[:120],
-                    )
                     break
-            if html_ok and html_results:
-                for r in html_results:
-                    r["_c2a_format"] = "html"
-                    r["_c2a_format_reason"] = choice.reason
-                return html_results
-            results.extend(html_results)
-            used = "plain"
+            return html_results
 
         # 3) Plain (always last resort)
         plain = strip_for_plain(raw) if convert_llm_md else raw
