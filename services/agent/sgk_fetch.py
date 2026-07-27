@@ -100,15 +100,20 @@ _CURRICULA: tuple[str, ...] = (
     "kết nối tri thức", "chân trời sáng tạo", "cánh diều",
 )
 
-# Site THẬT SỰ đăng SGK. hanhtrangso.nxbgd.vn là kho CHÍNH THỨC (miễn phí) của
-# NXB Giáo dục Việt Nam nên xếp đầu; sachmem.vn là nền tảng học liệu số đi kèm
-# SGK; phần còn lại là site tài liệu phổ biến hay đăng lại bản PDF.
+# Site THẬT SỰ đăng SGK. taphuan.nxbgd.vn là kho CHÍNH THỨC hiện hành của NXB
+# Giáo dục Việt Nam — miễn phí, KHÔNG cần đăng nhập — nên xếp đầu.
+# hanhtrangso.nxbgd.vn là kho chính thức CŨ, NXBGDVN đã thông báo ngừng vận
+# hành và dồn về taphuan; giữ lại ở dưới vì link cũ còn nằm trong chỉ mục tìm
+# kiếm, nhưng KHÔNG được để nó ăn lượt hỏi đầu tiên.
+# sachmem.vn là nền tảng học liệu số đi kèm SGK; còn lại là site tài liệu phổ
+# biến hay đăng lại bản PDF.
 #
 # Vì sao cần whitelist: trước đây find_sources bắn câu hỏi tiếng Việt vào
 # CrossRef/OpenAlex/PubMed/Wikipedia/Internet Archive — kho DOI học thuật và
 # bách khoa, KHÔNG bao giờ chứa SGK Việt Nam. Kết quả là 0 ứng viên thật, kèm
 # 429 hàng loạt vì bắn quá dày.
 _SGK_SITES: tuple[str, ...] = (
+    "taphuan.nxbgd.vn",
     "hanhtrangso.nxbgd.vn",
     "sachmem.vn",
     "taimienphi.vn",
