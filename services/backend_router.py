@@ -39,6 +39,7 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "openai_api/": "openai_api",
     "oc/": "opencode",
     "ocg/": "opencode_go",
+    "sc/": "supercode",       # supercode-cli backend — CHỈ text/code, KHÔNG ảnh
     "gemini_free/": "gemini_free",
     "gemini/": "gemini_free",
     "pw/": "perplexity_web",
