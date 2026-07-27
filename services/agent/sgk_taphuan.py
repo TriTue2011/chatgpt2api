@@ -225,6 +225,36 @@ def page_images(reader_url: str) -> list[str]:
     return [found[k] for k in sorted(found)]
 
 
+# Chất lượng JPEG khi nhúng. 72 đủ nét cho model đọc chữ mà giảm ~20 lần dung
+# lượng so với nhúng thẳng PNG. Đằng nào bước sau cũng là OCR, không phải in.
+_JPEG_QUALITY = 72
+# Cạnh dài tối đa mỗi trang. Ảnh gốc ~2000px; Gemini hạ về 3072px là cùng nên
+# giữ 2000 không mất gì, mà chặn được trang scan khổ lớn bất thường.
+_MAX_EDGE = 2000
+
+
+def _to_jpeg(png: bytes) -> bytes:
+    """PNG → JPEG. Trả lại nguyên bản nếu vì lý do gì đó không đổi được."""
+    try:
+        import io
+
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(png))
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > _MAX_EDGE:
+            scale = _MAX_EDGE / float(max(w, h))
+            im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=_JPEG_QUALITY, optimize=True)
+        return buf.getvalue()
+    except Exception as exc:
+        logger.warning("sgk_taphuan._to_jpeg: đổi ảnh lỗi, dùng bản gốc: %s", exc)
+        return png
+
+
 def build_pdf(image_urls: Iterable[str], out_path: str | Path,
               *, max_pages: int = 0) -> dict[str, Any]:
     """Tải ảnh từng trang rồi ghép thành 1 PDF.
@@ -260,10 +290,16 @@ def build_pdf(image_urls: Iterable[str], out_path: str | Path,
             return {"ok": False,
                     "error": f"sách vượt trần {_MAX_BOOK_BYTES // 1024 // 1024}MB"}
         try:
-            img = fitz.open(stream=blob, filetype="png")
+            # PHẢI đổi sang JPEG trước khi nhúng. Nhúng thẳng PNG thì PyMuPDF
+            # giải nén rồi nén lại bằng Flate: đo thật 2026-07-28, 108 MB ảnh
+            # PNG phình thành PDF 647 MB (gấp 6). Hệ quả không chỉ là tốn đĩa —
+            # mỗi khối 20 trang thành ~97 MB, base64 lên ~130 MB, vượt xa trần
+            # 50 MB mỗi PDF của Gemini nên treo luôn ở bước gửi.
+            jpg = _to_jpeg(blob)
+            img = fitz.open(stream=jpg, filetype="jpeg")
             rect = img[0].rect
             page = doc.new_page(width=rect.width, height=rect.height)
-            page.insert_image(rect, stream=blob)
+            page.insert_image(rect, stream=jpg)
             img.close()
         except Exception as exc:
             failed += 1
@@ -291,6 +327,9 @@ _DOC_PROMPT = (
 # 60k token markdown, vượt trần output), nên cắt khối. 20 trang ≈ 12k token —
 # an toàn, mà vẫn ít hơn 20 lần so với gửi từng trang một.
 _PAGES_PER_CALL = 20
+# Trần dung lượng mỗi khối gửi đi. Gemini chặn 50 MB/PDF, base64 phình 4/3
+# (30 MB → ~40 MB trên dây), nên 30 MB là ngưỡng an toàn.
+_MAX_CHUNK_BYTES = 30 * 1024 * 1024
 
 
 def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL,
@@ -317,29 +356,49 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     out: list[str] = []
     step = max(1, int(pages_per_call))
     try:
-        for start in range(0, total, step):
+        start = 0
+        while start < total:
             end = min(start + step, total) - 1
-            chunk = fitz.open()
-            chunk.insert_pdf(src, from_page=start, to_page=end)
-            blob = chunk.tobytes()
-            chunk.close()
+            # Thu nhỏ khối cho tới khi lọt trần. Gemini chặn 50 MB mỗi PDF, mà
+            # base64 còn phình 4/3, nên lấy 30 MB làm ngưỡng an toàn. Không có
+            # bước này thì một quyển ảnh nặng bất thường sẽ treo ở lúc gửi
+            # thay vì báo lỗi (đã dính đúng như vậy 2026-07-28).
+            while True:
+                chunk = fitz.open()
+                chunk.insert_pdf(src, from_page=start, to_page=end)
+                blob = chunk.tobytes()
+                chunk.close()
+                if len(blob) <= _MAX_CHUNK_BYTES or end <= start:
+                    break
+                end = start + max(0, (end - start) // 2)
+            if len(blob) > _MAX_CHUNK_BYTES:
+                logger.warning("sgk_taphuan.book_markdown: trang %s nặng %s MB, bỏ qua",
+                               start + 1, len(blob) // 1024 // 1024)
+                start = end + 1
+                continue
             uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
-            resp = call_model(mid, [
-                {"role": "user", "content": [
-                    {"type": "text", "text": _DOC_PROMPT},
-                    {"type": "file_data", "file_data": {"file_uri": uri}},
-                ]},
-            ], timeout=600, max_tokens=32000, no_smart_home=True)
-            if resp.get("error"):
-                logger.warning("sgk_taphuan.book_markdown: khối %s-%s lỗi: %s",
-                               start + 1, end + 1, str(resp["error"])[:150])
-                continue
-            md = content_of(resp).strip()
-            if p2w.looks_like_ocr_failure(md):
-                logger.warning("sgk_taphuan.book_markdown: khối %s-%s trả lỗi model",
-                               start + 1, end + 1)
-                continue
-            out.append(md)
+            try:
+                resp = call_model(mid, [
+                    {"role": "user", "content": [
+                        {"type": "text", "text": _DOC_PROMPT},
+                        {"type": "file_data", "file_data": {"file_uri": uri}},
+                    ]},
+                ], timeout=600, max_tokens=32000, no_smart_home=True)
+                if resp.get("error"):
+                    logger.warning("sgk_taphuan.book_markdown: khối %s-%s lỗi: %s",
+                                   start + 1, end + 1, str(resp["error"])[:150])
+                else:
+                    md = content_of(resp).strip()
+                    if p2w.looks_like_ocr_failure(md):
+                        logger.warning(
+                            "sgk_taphuan.book_markdown: khối %s-%s trả lỗi model",
+                            start + 1, end + 1)
+                    else:
+                        out.append(md)
+            finally:
+                # Luôn tiến, kể cả khi khối lỗi — nếu không thì vòng while lặp
+                # vô hạn trên đúng khối hỏng đó.
+                start = end + 1
     finally:
         src.close()
     return "\n\n---\n\n".join(out)
