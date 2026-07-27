@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { request } from "@/lib/request";
+import { httpRequest, request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
 type TabId = "lesson" | "homework" | "placement" | "parent" | "import";
@@ -205,7 +205,7 @@ function AutofillPanel() {
 
   const load = useCallback(async () => {
     try {
-      setSt(await request<AutofillState>("/api/teacher/autofill"));
+      setSt(await httpRequest<AutofillState>("/api/teacher/autofill"));
     } catch {
       /* im lặng — panel phụ, không phá trang */
     }
@@ -225,10 +225,13 @@ function AutofillPanel() {
   const call = async (path: string, body?: unknown) => {
     setBusy(true);
     try {
-      const r = await request<{ ok?: boolean; message?: string }>(path, {
+      // PHẢI dùng httpRequest, KHÔNG dùng `request`: `request` là axios
+      // instance thô — nó không hiểu khoá `body` (axios dùng `data`) nên POST
+      // đi với thân RỖNG → /settings khai `payload: dict` bắt buộc → 422; và
+      // nó trả AxiosResponse chứ không trả JSON. httpRequest map body→data và
+      // trả thẳng response.data.
+      const r = await httpRequest<{ ok?: boolean; message?: string }>(path, {
         method: "POST",
-        // request() tự serialize — truyền OBJECT, đừng JSON.stringify
-        // (stringify ở đây làm body bị mã hoá hai lần → backend 422).
         body: body ?? {},
       });
       if (r?.message) toast[r.ok === false ? "warning" : "success"](r.message);
