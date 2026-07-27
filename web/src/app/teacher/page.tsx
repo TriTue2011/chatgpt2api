@@ -227,7 +227,9 @@ function AutofillPanel() {
     try {
       const r = await request<{ ok?: boolean; message?: string }>(path, {
         method: "POST",
-        body: JSON.stringify(body ?? {}),
+        // request() tự serialize — truyền OBJECT, đừng JSON.stringify
+        // (stringify ở đây làm body bị mã hoá hai lần → backend 422).
+        body: body ?? {},
       });
       if (r?.message) toast[r.ok === false ? "warning" : "success"](r.message);
       await load();

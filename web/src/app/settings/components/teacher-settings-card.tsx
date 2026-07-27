@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { GraduationCap, Save, Volume2 } from "lucide-react";
+import { ChevronDown, ChevronUp, GraduationCap, Save, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,69 @@ function parseSpeakerFilters(raw: unknown): SpkRow[] {
       : [];
     return { id: _seq++, key, speakerIds: ids.length ? ids : ["*"] };
   });
+}
+
+/** Mục con thu gọn được. Mở: y hệt trước, thêm nút ▲ góc phải. Thu: còn một
+ *  dòng tiêu đề, bấm là mở lại. Nhớ trạng thái theo máy (localStorage). */
+function Sec({
+  id,
+  title,
+  className,
+  children,
+}: {
+  id: string;
+  title: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const key = `teacher-set.sec.${id}`;
+  const [open, setOpen] = useState(true);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    // Đọc sau khi mount để server/client render không lệch (hydration).
+    try {
+      setOpen(localStorage.getItem(key) !== "0");
+    } catch {
+      /* localStorage bị chặn → mặc định mở */
+    }
+    setReady(true);
+  }, [key]);
+  const toggle = () =>
+    setOpen((v) => {
+      try {
+        localStorage.setItem(key, v ? "0" : "1");
+      } catch {
+        /* bỏ qua */
+      }
+      return !v;
+    });
+  if (ready && !open) {
+    return (
+      <button
+        type="button"
+        onClick={toggle}
+        title="Mở lại"
+        className="w-full flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40"
+      >
+        <span className="truncate text-left">{title}</span>
+        <ChevronDown className="size-3.5 shrink-0" />
+      </button>
+    );
+  }
+  return (
+    <div className={`relative ${className || ""}`}>
+      <button
+        type="button"
+        onClick={toggle}
+        title={`Thu gọn: ${title}`}
+        aria-label={`Thu gọn ${title}`}
+        className="absolute right-1.5 top-1.5 z-10 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <ChevronUp className="size-3.5" />
+      </button>
+      {children}
+    </div>
+  );
 }
 
 export function TeacherSettingsCard() {
@@ -275,7 +338,7 @@ export function TeacherSettingsCard() {
         </p>
 
         {/* 1. Bật / giọng */}
-        <div className="rounded-md border border-border p-3 space-y-3">
+        <Sec id="bat" title="① Bật chức năng & giọng đọc" className="rounded-md border border-border p-3 space-y-3">
           <div className="text-xs font-semibold">① Bật chức năng &amp; giọng đọc</div>
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
             <input
@@ -304,10 +367,10 @@ export function TeacherSettingsCard() {
             Khi phát loa / TTS, đoạn có dấu Việt → giọng VI; đoạn Latin dài → giọng EN.
             Cần tải model VieNeu / Kokoro / Piper tương ứng (tab Giọng nói &amp; Loa).
           </p>
-        </div>
+        </Sec>
 
         {/* 1b. Model LLM — Tiếng Anh 5 kỹ năng + fallback */}
-        <div className="rounded-md border border-border p-3 space-y-3">
+        <Sec id="model-en" title="①b Model AI · Tiếng Anh" className="rounded-md border border-border p-3 space-y-3">
           <div className="text-xs font-semibold">
             ①b Model AI · Tiếng Anh (Ngữ pháp · Nghe · Nói · Đọc · Viết)
           </div>
@@ -413,10 +476,10 @@ export function TeacherSettingsCard() {
             (grammar/listening/speaking/reading/writing). Giọng TTS EN vẫn ở mục ①
             (voice_en). Danh sách model: <code>/v1/models</code>.
           </p>
-        </div>
+        </Sec>
 
         {/* 1c. Cấu hình Giọng TTS & STT theo từng Môn học */}
-        <div className="rounded-md border border-border p-3 space-y-3">
+        <Sec id="tts-mon" title="①c TTS & STT riêng từng môn" className="rounded-md border border-border p-3 space-y-3">
           <div className="text-xs font-semibold">
             ①c Cấu hình TTS &amp; STT riêng cho từng Môn học (Toán, Tiếng Việt, Tiếng Anh, Khoa học...)
           </div>
@@ -512,11 +575,11 @@ export function TeacherSettingsCard() {
               </div>
             );
           })()}
-        </div>
+        </Sec>
 
 
         {/* 2. Phát loa */}
-        <div className="rounded-md border border-border p-3 space-y-3">
+        <Sec id="loa" title="② Giáo viên phát ra loa" className="rounded-md border border-border p-3 space-y-3">
           <div className="text-xs font-semibold flex items-center gap-1.5">
             <Volume2 className="size-3.5" /> ② Giáo viên phát ra loa
           </div>
@@ -550,10 +613,10 @@ export function TeacherSettingsCard() {
               ))}
             </select>
           </div>
-        </div>
+        </Sec>
 
         {/* 3. Ai được dùng */}
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+        <Sec id="ai-dung" title="③ Ai được dùng Giáo viên?" className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
           <div className="text-xs font-semibold">③ Ai được dùng Giáo viên? (Zalo / Telegram)</div>
           <ol className="text-[11px] text-muted-foreground list-decimal pl-4 space-y-1">
             <li>
@@ -574,10 +637,10 @@ export function TeacherSettingsCard() {
             Thread <b>không</b> có dòng lọc → mặc định vẫn dùng được (giống tool khác).
             Chỉ khi đã lọc mà <b>không</b> tick Giáo viên thì skill/workflow bị chặn.
           </p>
-        </div>
+        </Sec>
 
         {/* 4. Loa theo thread / user */}
-        <div className="rounded-md border border-border p-3 space-y-2">
+        <Sec id="loa-thread" title="④ Loa nào cho thread / user nào" className="rounded-md border border-border p-3 space-y-2">
           <div className="text-xs font-semibold">④ Loa nào cho thread / user nào</div>
           <p className="text-[10px] text-muted-foreground">
             Chọn <b>thread (Chat ID)</b> + tuỳ chọn <b>User ID</b> (trong nhóm: chỉ
@@ -1022,10 +1085,10 @@ export function TeacherSettingsCard() {
               </span>
             )}
           </div>
-        </div>
+        </Sec>
 
         {/* 5. Import PDF SGK — lớp 1–5 */}
-        <div className="rounded-md border border-border p-3 space-y-2">
+        <Sec id="import" title="⑤ Import PDF SGK (lớp 1–12)" className="rounded-md border border-border p-3 space-y-2">
           <div className="text-xs font-semibold">
             ⑤ Import PDF SGK (lớp 1–12 · Toán/Văn/Anh · THCS/THPT)
           </div>
@@ -1120,10 +1183,10 @@ export function TeacherSettingsCard() {
               Đang trích PDF (scan có thể mất vài phút OCR)…
             </p>
           )}
-        </div>
+        </Sec>
 
         {/* 6. Workspace + KB */}
-        <div className="rounded-md border border-border p-3 space-y-2">
+        <Sec id="workspace" title="⑥ Workspace lớp 1–12" className="rounded-md border border-border p-3 space-y-2">
           <div className="text-xs font-semibold">⑥ Workspace lớp 1–12 (Toán · Văn · Anh)</div>
           <p className="text-[10px] text-muted-foreground">
             36 workspace: <code>lop1-toan</code> … <code>lop12-anh</code>. Tools:{" "}
@@ -1144,7 +1207,7 @@ export function TeacherSettingsCard() {
               ))
             )}
           </div>
-        </div>
+        </Sec>
 
         <Button
           className="w-full"
