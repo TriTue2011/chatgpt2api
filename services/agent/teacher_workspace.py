@@ -457,8 +457,13 @@ def import_sgk_pdf(
     mode: str = "append",
     title: str = "",
     source_name: str = "",
+    text: str = "",
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
+
+    text: nội dung Markdown ĐÃ trích sẵn. Truyền vào thì bỏ qua bước trích ở
+    đây — dành cho caller có đường trích rẻ hơn (sgk_taphuan gửi cả khối trang
+    cho model thay vì OCR từng trang). Để trống = tự trích như cũ.
 
     mode:
       - append  — nối vào file lớp–môn (giữ seed + import cũ)
@@ -482,13 +487,19 @@ def import_sgk_pdf(
         mode = "append"
 
     # Trích text/markdown (PDF số hoặc scan OCR) — SGK: toàn bộ trang (không cắt 40).
-    try:
-        from services.pdf_intent import extract_markdown
-        from services import pdf_to_word as p2w
-        max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
-        raw = extract_markdown(str(path), max_pages=max_pages)
-    except Exception as exc:
-        return {"ok": False, "error": f"trích PDF lỗi: {exc}"}
+    if (text or "").strip():
+        # Caller đã trích sẵn (vd sgk_taphuan gửi cả KHỐI TRANG cho model —
+        # rẻ hơn ~20 lần so với OCR từng trang ở đây). Vẫn đi tiếp đúng đường
+        # ghi .md + nạp RAG + lưu bản PDF gốc bên dưới.
+        raw = text
+    else:
+        try:
+            from services.pdf_intent import extract_markdown
+            from services import pdf_to_word as p2w
+            max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
+            raw = extract_markdown(str(path), max_pages=max_pages)
+        except Exception as exc:
+            return {"ok": False, "error": f"trích PDF lỗi: {exc}"}
     if not (raw or "").strip():
         return {"ok": False, "error": "PDF không trích được chữ (scan cần OCR/gateway vision)"}
 

@@ -281,6 +281,70 @@ def build_pdf(image_urls: Iterable[str], out_path: str | Path,
             "failed_pages": failed, "bytes": total}
 
 
+_DOC_PROMPT = (
+    "Chép TOÀN BỘ nội dung các trang sách giáo khoa này thành Markdown tiếng "
+    "Việt. Giữ nguyên thứ tự trang, tiêu đề bài, số bài, bảng biểu. Với hình "
+    "minh hoạ, mô tả ngắn trong ngoặc. KHÔNG tóm tắt, KHÔNG bình luận, KHÔNG "
+    "bịa thêm nội dung không có trên trang."
+)
+# Số trang mỗi lượt gọi. Cả quyển một lượt thì đầu ra bị cắt cụt (134 trang ≈
+# 60k token markdown, vượt trần output), nên cắt khối. 20 trang ≈ 12k token —
+# an toàn, mà vẫn ít hơn 20 lần so với gửi từng trang một.
+_PAGES_PER_CALL = 20
+
+
+def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL,
+                  model: str = "") -> str:
+    """PDF cả quyển → Markdown, gửi theo KHỐI TRANG thay vì từng trang.
+
+    Rẻ hơn đường ``_scan_markdown_pages`` (1 ảnh = 1 lượt gọi) khoảng 20 lần.
+    Dùng được vì provider Gemini nhận ``file_data`` với data URL mime bất kỳ —
+    xem gemini_free._data_url_part.
+
+    Khối nào lỗi thì bỏ qua và ghi nhận, KHÔNG để thông báo lỗi lọt vào kết
+    quả (xem p2w.looks_like_ocr_failure).
+    """
+    import base64
+    import fitz
+
+    from services import pdf_to_word as p2w
+    from services.agent.branches import branch_model
+    from services.agent.runtime import call_model, content_of
+
+    mid = model or branch_model("vision")
+    src = fitz.open(str(pdf_path))
+    total = src.page_count
+    out: list[str] = []
+    step = max(1, int(pages_per_call))
+    try:
+        for start in range(0, total, step):
+            end = min(start + step, total) - 1
+            chunk = fitz.open()
+            chunk.insert_pdf(src, from_page=start, to_page=end)
+            blob = chunk.tobytes()
+            chunk.close()
+            uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
+            resp = call_model(mid, [
+                {"role": "user", "content": [
+                    {"type": "text", "text": _DOC_PROMPT},
+                    {"type": "file_data", "file_data": {"file_uri": uri}},
+                ]},
+            ], timeout=600, max_tokens=32000, no_smart_home=True)
+            if resp.get("error"):
+                logger.warning("sgk_taphuan.book_markdown: khối %s-%s lỗi: %s",
+                               start + 1, end + 1, str(resp["error"])[:150])
+                continue
+            md = content_of(resp).strip()
+            if p2w.looks_like_ocr_failure(md):
+                logger.warning("sgk_taphuan.book_markdown: khối %s-%s trả lỗi model",
+                               start + 1, end + 1)
+                continue
+            out.append(md)
+    finally:
+        src.close()
+    return "\n\n---\n\n".join(out)
+
+
 def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
                 source_name: str, mode: str = "append") -> dict[str, Any]:
     """Đẩy PDF vào đúng pipeline sẵn có — giống nhánh của sgk_fetch.
@@ -288,16 +352,23 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
     3 môn gốc (toán/văn/anh) đi ``import_sgk_pdf`` để ghi cả file .md lẫn RAG;
     môn mới chỉ nạp RAG, KHÔNG đụng .md của SGK gốc.
     """
+    from services import pdf_to_word as p2w
+
+    # Trích bằng đường KHỐI TRANG (~20 lần rẻ hơn OCR từng trang). Hỏng thì
+    # để None và rơi về đường cũ, chứ không nạp nửa vời.
+    raw = book_markdown(pdf_path)
+    if p2w.looks_like_ocr_failure(raw):
+        raw = ""
+
     if subject in tw.SUBJECTS:
         return tw.import_sgk_pdf(
             pdf_path, grade=grade, subject=subject, mode=mode,
-            title=title, source_name=source_name,
+            title=title, source_name=source_name, text=raw,
         )
-    from services import pdf_to_word as p2w
-    from services.pdf_intent import extract_markdown
-
-    max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
-    raw = extract_markdown(pdf_path, max_pages=max_pages)
+    if not raw:
+        from services.pdf_intent import extract_markdown
+        max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
+        raw = extract_markdown(pdf_path, max_pages=max_pages)
     # Chặn nạp rác: gateway hay trả "Gemini error …" như content trang.
     # Helper dùng chung với cache OCR (services.pdf_to_word.looks_like_ocr_failure).
     if p2w.looks_like_ocr_failure(raw):
