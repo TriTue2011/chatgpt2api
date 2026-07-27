@@ -73,12 +73,18 @@ class MCPSession:
 
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout if timeout is not None else _INIT_TIMEOUT)
-            sid = resp.getheader("mcp-session-id")
-            if sid:
-                self.session_id = sid
-            # Read response - FastMCP can return plain JSON or SSE
-            raw = resp.read().decode('utf-8', errors='ignore')
+            # `with` là bắt buộc: không đóng tường minh thì socket chỉ được thu
+            # khi GC chạy. Dưới tải cao (autofill SGK bắn hàng nghìn lượt) fd
+            # dồn lại tới mức cả tiến trình chết vì [Errno 24] Too many open
+            # files — hỏng luôn mọi thứ khác chứ không riêng khâu gọi MCP.
+            with urllib.request.urlopen(
+                req, timeout=timeout if timeout is not None else _INIT_TIMEOUT
+            ) as resp:
+                sid = resp.getheader("mcp-session-id")
+                if sid:
+                    self.session_id = sid
+                # Read response - FastMCP can return plain JSON or SSE
+                raw = resp.read().decode('utf-8', errors='ignore')
             # Try SSE format first
             for line in raw.split("\n"):
                 line = line.strip()
@@ -100,7 +106,10 @@ class MCPSession:
             sid = e.getheader("mcp-session-id")
             if sid:
                 self.session_id = sid
-            raw = e.read().decode()
+            try:
+                raw = e.read().decode()
+            finally:
+                e.close()  # HTTPError cũng giữ một socket — đóng luôn
             # Try SSE format
             for line in raw.split("\n"):
                 line = line.strip()

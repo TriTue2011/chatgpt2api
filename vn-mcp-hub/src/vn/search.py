@@ -12,6 +12,8 @@ Tools:
 from __future__ import annotations
 
 import logging
+import random
+import time
 from typing import Any
 
 import httpx
@@ -23,6 +25,14 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("vn_search")
 
 DDG_HTML = "https://html.duckduckgo.com/html/"
+# Endpoint "lite" nhẹ hơn và thường còn trả lời khi bản html đã bắt đầu chặn.
+DDG_LITE = "https://lite.duckduckgo.com/lite/"
+_ENDPOINTS = (DDG_HTML, DDG_LITE)
+# DDG cắt thẳng TLS (SSL: UNEXPECTED_EOF_WHILE_READING) khi thấy bắn dồn từ
+# một IP — không phải lỗi mạng, mà là chống scrape. Thử lại có giãn cách +
+# nhiễu ngẫu nhiên, xoay sang endpoint còn lại.
+_ATTEMPTS = 3
+_BACKOFF_BASE = 1.5
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -30,6 +40,25 @@ HEADERS = {
     ),
     "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
 }
+
+
+def _parse_lite(html: str) -> list[dict[str, Any]]:
+    """Bản lite trả bảng ``a.result-link`` chứ không có ``div.result``."""
+    soup = BeautifulSoup(html, "html.parser")
+    results: list[dict[str, Any]] = []
+    for a in soup.select("a.result-link"):
+        title = a.get_text(strip=True)
+        link = a.get("href") or ""
+        if not title or not link:
+            continue
+        snippet_td = a.find_parent("tr")
+        snippet = ""
+        if snippet_td is not None:
+            nxt = snippet_td.find_next_sibling("tr")
+            if nxt is not None:
+                snippet = nxt.get_text(" ", strip=True)
+        results.append({"title": title, "link": link, "url": link, "snippet": snippet})
+    return results
 
 
 def _parse_results(html: str) -> list[dict[str, Any]]:
@@ -68,17 +97,34 @@ def ddg_search(query: str, limit: int = 5) -> list[dict[str, Any]]:
 
     Returns list of {title, link, snippet, source} dicts, empty list on failure.
     """
-    try:
-        with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
-            r = client.post(DDG_HTML, data={"q": query, "kl": "vn-vi"})
-            r.raise_for_status()
-        results = _parse_results(r.text)[:limit]
+    last_exc: Exception | None = None
+    for attempt in range(_ATTEMPTS):
+        endpoint = _ENDPOINTS[attempt % len(_ENDPOINTS)]
+        if attempt:
+            # Giãn cách tăng dần + nhiễu: nhiều tiến trình cùng thử lại đúng
+            # một nhịp thì DDG lại chặn tiếp.
+            time.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)) + random.uniform(0, 0.7))
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
+                resp = client.post(endpoint, data={"q": query, "kl": "vn-vi"})
+                resp.raise_for_status()
+                body = resp.text
+        except Exception as exc:
+            last_exc = exc
+            continue
+        results = (
+            _parse_lite(body) if endpoint == DDG_LITE else _parse_results(body)
+        )[:limit]
         for r in results:
             r["source"] = "DuckDuckGo"
-        return results
-    except Exception as exc:
-        logger.warning("DDG search failed for '%s': %s", query, exc)
-        return []
+        if results:
+            return results
+        # 200 nhưng rỗng = trang chặn/captcha → coi như hỏng, thử endpoint khác
+        last_exc = last_exc or RuntimeError("kết quả rỗng")
+    logger.warning(
+        "DDG search failed for '%s' sau %d lần thử: %s", query, _ATTEMPTS, last_exc,
+    )
+    return []
 
 
 @mcp.tool()

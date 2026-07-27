@@ -32,7 +32,6 @@ An toàn — nói thật, không đoán bừa:
 """
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import logging
 import os
@@ -101,6 +100,28 @@ _CURRICULA: tuple[str, ...] = (
     "kết nối tri thức", "chân trời sáng tạo", "cánh diều",
 )
 
+# Site THẬT SỰ đăng SGK. hanhtrangso.nxbgd.vn là kho CHÍNH THỨC (miễn phí) của
+# NXB Giáo dục Việt Nam nên xếp đầu; sachmem.vn là nền tảng học liệu số đi kèm
+# SGK; phần còn lại là site tài liệu phổ biến hay đăng lại bản PDF.
+#
+# Vì sao cần whitelist: trước đây find_sources bắn câu hỏi tiếng Việt vào
+# CrossRef/OpenAlex/PubMed/Wikipedia/Internet Archive — kho DOI học thuật và
+# bách khoa, KHÔNG bao giờ chứa SGK Việt Nam. Kết quả là 0 ứng viên thật, kèm
+# 429 hàng loạt vì bắn quá dày.
+_SGK_SITES: tuple[str, ...] = (
+    "hanhtrangso.nxbgd.vn",
+    "sachmem.vn",
+    "taimienphi.vn",
+    "vndoc.com",
+    "download.vn",
+)
+
+# Nghỉ giữa hai truy vấn của CÙNG một tổ hợp. DDG cắt TLS (SSL EOF) khi bị bắn
+# dồn từ một IP nên nhịp thưa là điều kiện sống còn, không phải tối ưu vặt.
+_QUERY_GAP = 1.2
+# Có đủ số ứng viên này thì dừng hỏi tiếp — tổ hợp dễ chỉ tốn 1 truy vấn.
+_ENOUGH_CANDIDATES = 3
+
 # collection RAG theo loại tài liệu — sách nâng cao TÁCH RIÊNG khỏi SGK để bot
 # không dạy vượt chương trình như thể đó là nội dung SGK chính thức.
 KIND_COLLECTION: dict[str, str] = {"sgk": "kb_giao_duc", "nangcao": "kb_nangcao"}
@@ -154,6 +175,67 @@ def _detect_year(text: str) -> str:
     return m.group(1) if m else ""
 
 
+_MCP_LINE_RE = re.compile(r"^\s*\d+\.\s+\*\*(?P<title>.+?)\*\*\s*$")
+
+
+def _parse_mcp_search_text(text: str) -> list[dict[str, str]]:
+    """Bóc {title, url, snippet} từ khối markdown mà tool ``search_web`` trả về.
+
+    vn_search trả VĂN BẢN đã format (``1. **Tiêu đề**`` / snippet / link) chứ
+    không phải JSON, nên phải bóc tay. Dòng nào không khớp thì bỏ, không đoán.
+    """
+    out: list[dict[str, str]] = []
+    cur: dict[str, str] = {}
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        m = _MCP_LINE_RE.match(raw_line)
+        if m:
+            if cur.get("url"):
+                out.append(cur)
+            cur = {"title": m.group("title").strip(), "url": "", "snippet": ""}
+            continue
+        if not cur:
+            continue
+        if line.startswith("http://") or line.startswith("https://"):
+            cur["url"] = line
+        elif line:
+            cur["snippet"] = (cur.get("snippet", "") + " " + line).strip()
+    if cur.get("url"):
+        out.append(cur)
+    return out
+
+
+def _web_search(query: str, limit: int = 8) -> list[dict[str, str]]:
+    """Tìm web cho ĐÚNG mục đích lấy PDF sách — chỉ gọi vn_search (DuckDuckGo).
+
+    KHÔNG dùng ``search_service.search_all``: hàm đó fan-out song song sang
+    CrossRef/OpenAlex/PubMed/Wikipedia/Internet Archive — toàn kho học thuật,
+    không hề chứa SGK Việt Nam, mà vẫn tính vào hạn mức và làm cạn tài nguyên.
+    """
+    from services import mcp_client
+
+    try:
+        text = mcp_client.call_mcp_tool(
+            "search_web", {"query": query, "limit": limit}, server_id="vn_search",
+        )
+    except Exception as exc:
+        logger.warning("sgk_fetch._web_search: gọi vn_search lỗi: %s", exc)
+        text = None
+    if text:
+        parsed = _parse_mcp_search_text(text)
+        if parsed:
+            return parsed
+
+    # vn_search chưa cài/đang chết → hạ xuống combo backend (TUẦN TỰ, có
+    # fallback sẵn), vẫn không đụng tới fan-out học thuật.
+    try:
+        from services.search_service import search_service
+        return [dict(r) for r in (search_service.search(query) or [])]
+    except Exception as exc:
+        logger.warning("sgk_fetch._web_search: backend dự phòng lỗi: %s", exc)
+        return []
+
+
 def _score_candidate(
     url: str, title: str, grade: int, subject_word: str,
     curriculum_hint: str, year_hint: str,
@@ -172,6 +254,12 @@ def _score_candidate(
         domain = urlparse(url).hostname or ""
     except Exception:
         domain = ""
+    # Cộng điểm cho site thật sự đăng SGK — tiêu đề trên các site này thường
+    # gọn ("Toán 8 - Kết nối tri thức") nên chấm theo từ khoá dễ bị thiệt so
+    # với một blog nhồi đủ chữ lớp/môn/pdf vào tiêu đề.
+    dom_folded = domain.lower()
+    if any(dom_folded == s or dom_folded.endswith("." + s) for s in _SGK_SITES):
+        confidence = round(min(1.0, confidence + 0.25), 2)
     return {
         "title": title[:200],
         "url": url,
@@ -205,6 +293,10 @@ def find_sources(
     word = _SUBJECT_QUERY.get(sub, SUBJECT_LABEL.get(sub, sub))
     year_s = str(year or "").strip()
 
+    # Thứ tự truy vấn = thứ tự khả năng trúng, chạy TUẦN TỰ và dừng sớm khi đã
+    # đủ ứng viên. Tổ hợp dễ chỉ tốn 1 lượt tìm; tổ hợp khó mới đi hết danh
+    # sách. Trước đây bắn cả 4 câu SONG SONG cho mọi tổ hợp, nhân với 120 tổ
+    # hợp là vài nghìn request — đủ để tự ăn 429 và cạn file descriptor.
     queries: list[tuple[str, str]] = []
     if kind == "nangcao":
         for phrase in ("sách bài tập nâng cao", "bồi dưỡng học sinh giỏi"):
@@ -213,51 +305,46 @@ def find_sources(
                 q = f"{q} {year_s}"
             queries.append((q, ""))
     else:
-        for cur in _CURRICULA:
-            q = f"sách giáo khoa {word} lớp {g} {cur} pdf"
-            if year_s:
-                q = f"{q} {year_s}"
-            queries.append((q, cur))
-        q = f"sách giáo khoa {word} lớp {g} pdf"
+        base = f"sách giáo khoa {word} lớp {g}"
+        # 1) Kho chính thức + các site có sách trước — hỏi thẳng bằng site:
+        for site in _SGK_SITES:
+            queries.append((f"site:{site} {base}", ""))
+        # 2) Rồi mới tới câu mở, có/không kèm bộ sách
+        q = f"{base} pdf"
         if year_s:
             q = f"{q} {year_s}"
         queries.append((q, ""))
-
-    from services.search_service import search_service
-
-    def _run(qc: tuple[str, str]) -> tuple[str, list[dict]]:
-        q, cur_hint = qc
-        try:
-            return cur_hint, (search_service.search_all(q) or [])
-        except Exception as exc:
-            logger.warning("sgk_fetch.find_sources: search lỗi (%s…): %s", q[:50], exc)
-            return cur_hint, []
+        for cur in _CURRICULA:
+            q = f"{base} {cur} pdf"
+            if year_s:
+                q = f"{q} {year_s}"
+            queries.append((q, cur))
 
     seen: set[str] = set()
     candidates: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(queries))) as ex:
-        futs = [ex.submit(_run, qc) for qc in queries]
+    for i, (q, cur_hint) in enumerate(queries):
+        if i:
+            time.sleep(_QUERY_GAP)
         try:
-            for fut in concurrent.futures.as_completed(futs, timeout=45):
-                try:
-                    cur_hint, results = fut.result()
-                except Exception:
+            results = _web_search(q)
+        except Exception as exc:
+            logger.warning("sgk_fetch.find_sources: search lỗi (%s…): %s", q[:50], exc)
+            continue
+        for r in results:
+            title = str(r.get("title") or "").strip()
+            url = str(r.get("url") or "").strip()
+            snippet = str(r.get("snippet") or "")
+            urls = ([url] if url else []) + _PDF_URL_RE.findall(snippet)
+            for u in urls:
+                u = u.rstrip(").,;]>\"'")
+                if not u or u in seen or not _looks_like_pdf(u, title):
                     continue
-                for r in results:
-                    title = str(r.get("title") or "").strip()
-                    url = str(r.get("url") or "").strip()
-                    snippet = str(r.get("snippet") or "")
-                    urls = ([url] if url else []) + _PDF_URL_RE.findall(snippet)
-                    for u in urls:
-                        u = u.rstrip(").,;]>\"'")
-                        if not u or u in seen or not _looks_like_pdf(u, title):
-                            continue
-                        seen.add(u)
-                        candidates.append(
-                            _score_candidate(u, title or u, g, word, cur_hint, year_s)
-                        )
-        except concurrent.futures.TimeoutError:
-            logger.warning("sgk_fetch.find_sources: hết giờ tìm kiếm, dùng kết quả đã có")
+                seen.add(u)
+                candidates.append(
+                    _score_candidate(u, title or u, g, word, cur_hint, year_s)
+                )
+        if len(candidates) >= _ENOUGH_CANDIDATES:
+            break
 
     candidates.sort(key=lambda c: c["confidence"], reverse=True)
     return candidates[:8]
