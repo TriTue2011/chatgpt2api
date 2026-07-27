@@ -44,8 +44,15 @@ services:
     volumes:
       # Single persistent mount: accounts, config, KB/chroma, captcha profiles, voices
       - /opt/c2a-data:/app/data
+      # Giờ Việt Nam bên trong container. Chỉ đặt TZ= là chưa chắc đủ nếu image
+      # thiếu tzdata, nên mount thẳng file múi giờ của host (host đã đặt
+      # Asia/Ho_Chi_Minh). Ảnh hưởng trực tiếp mọi thứ hẹn giờ: nhắc nhở,
+      # thông báo, announce, mốc thời gian trong log.
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
 
     environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
       # [REQUIRED] Auth key protecting the API + dashboard login
       CHATGPT2API_AUTH_KEY: your_secret_key_here
       # captcha-solver internal auth (claude/gemini/flow web logins)
