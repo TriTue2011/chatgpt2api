@@ -100,6 +100,12 @@ def create_app() -> FastAPI:
             start_codex_refresh()
         except Exception as exc:
             _record_startup_failure("codex_refresh_scheduler", str(exc))
+        # Định kỳ tự tìm & nạp SGK (mặc định TẮT — bật ở Cài đặt Giáo viên)
+        try:
+            from services.sgk_autofill_scheduler import start as start_sgk_autofill
+            start_sgk_autofill()
+        except Exception as exc:
+            _record_startup_failure("sgk_autofill_scheduler", str(exc))
         # Dead Codex/free accounts (error/disabled) — periodic T0→T1–T3 recovery
         try:
             from services.codex_error_recovery_scheduler import start as start_dead_recovery

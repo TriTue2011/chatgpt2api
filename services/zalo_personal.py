@@ -2105,6 +2105,12 @@ def _process_ai(ev: dict) -> None:
         if not data:
             send_message(thread_id, "📷 Không tải được ảnh.", thread_type)
             return
+        # Zalo cá nhân chuyển ảnh GỐC (iPhone → HEIC, CDN đôi khi trả .jxl):
+        # chuẩn hoá ngay, ảnh không đọc được thì báo liền.
+        data, _img_err = _phi.prepare_incoming(data)
+        if not data:
+            send_message(thread_id, _img_err, thread_type)
+            return
         caption = (text or "").strip()
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:

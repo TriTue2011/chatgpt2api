@@ -682,9 +682,14 @@ class OpenAIBackendAPI:
             candidate_path = Path(os.path.expanduser(image))
             if candidate_path.exists() and candidate_path.is_file():
                 file_name = candidate_path.name
+        # HEIC/JXL/AVIF hoặc file tải hỏng → Image.open ném UnidentifiedImageError
+        # ("cannot identify image file <_io.BytesIO ...>"). Chuẩn hoá trước để ảnh
+        # iPhone vẫn chạy, và khi thật sự không đọc nổi thì lỗi có tên định dạng
+        # (tầng combo nhận ra là lỗi ẢNH → đổi provider cũng vô ích, dừng luôn).
+        from services.image_utils import normalize as _normalize_image
+        data, mime_type = _normalize_image(data)
         image = Image.open(BytesIO(data))
         width, height = image.size
-        mime_type = Image.MIME.get(image.format, "image/png")
         # Speed: cap the longest side before upload. Camera/phone frames are often
         # 1920–4000px; OpenAI vision processes images in 512px tiles, so shrinking
         # means far fewer tiles → much faster analysis, plus a smaller/faster upload.
@@ -706,8 +711,12 @@ class OpenAIBackendAPI:
                          "to": list(new_size), "bytes": [len(data), len(new_data)]})
             data, (width, height) = new_data, new_size
             mime_type = "image/jpeg"
-            if "." in file_name:
-                file_name = file_name.rsplit(".", 1)[0] + ".jpg"
+        # Đuôi file phải khớp mime thật (normalize có thể đã đổi HEIC→JPEG),
+        # kẻo backend từ chối vì file_name .png mà Content-Type image/jpeg.
+        _ext = {"image/jpeg": "jpg", "image/png": "png",
+                "image/gif": "gif", "image/webp": "webp"}.get(mime_type, "")
+        if _ext and "." in file_name and not file_name.lower().endswith("." + _ext):
+            file_name = file_name.rsplit(".", 1)[0] + "." + _ext
         path = "/backend-api/files"
         response = s.post(
             self.base_url + path,

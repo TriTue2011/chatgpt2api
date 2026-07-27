@@ -2880,14 +2880,32 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
             except Exception as exc:
                 last_error = str(exc)
                 logger.warning({"event": "combo_fail", "combo": model, "provider": route.provider, "error": last_error[:200]})
+                # Ảnh không đọc được (HEIC/JXL/tải hỏng) → provider nào cũng chết
+                # y hệt. Dừng ngay: không đốt cả combo, không ghi cooldown oan cho
+                # account đang khoẻ, và trả lời đúng nguyên nhân cho người dùng.
+                from services.image_utils import is_unsupported_image_error
+                if is_unsupported_image_error(last_error):
+                    logger.warning({"event": "combo_stop_bad_image", "combo": model, "provider": route.provider})
+                    break
                 model_cooldown.record_failure(
                     account_id="combo:" + model, model=route.model,
                     status_code=_extract_status(last_error), error_body=last_error, provider=route.provider,
                 )
                 provider_circuit.record_failure(route.provider, _extract_status(last_error), last_error)
                 continue
-        err_msg = f"All providers failed. Last error: {last_error[:200]}"
-        notify_error_tg(f"Combo '{model}' cạn provider", model, last_error, original_user_text)
+        from services.image_utils import is_unsupported_image_error
+        if is_unsupported_image_error(last_error):
+            # Không phải combo hết provider — tấm ảnh không mở được. Nói thẳng,
+            # và KHÔNG báo động "cạn provider" (không có account nào có lỗi cả).
+            err_msg = (
+                "📷 Em chưa mở được ảnh này (định dạng không đọc được — "
+                "thường là HEIC của iPhone, JPEG XL, hoặc file tải bị hỏng). "
+                "Anh/chị gửi lại dạng JPG hoặc PNG giúp em nhé."
+            )
+            logger.warning({"event": "combo_bad_image", "combo": model, "error": last_error[:200]})
+        else:
+            err_msg = f"All providers failed. Last error: {last_error[:200]}"
+            notify_error_tg(f"Combo '{model}' cạn provider", model, last_error, original_user_text)
         if body.get("stream"):
             def _err_stream():
                 cid = f"chatcmpl-{uuid.uuid4().hex}"

@@ -514,27 +514,20 @@ def _downscale(data: bytes, mime: str) -> tuple[bytes, str]:
         max_dim = int(_config().data.get("gemini_vision_max_dim", 896) or 0)
     except Exception:
         max_dim = 896
-    if not max_dim:
-        return data, mime
+    # max_dim = 0 → tắt thu nhỏ nhưng VẪN chuẩn hoá định dạng. UnsupportedImage
+    # (HEIC/JXL/file tải hỏng) để NỔI LÊN cho combo nhận ra "lỗi tại tấm ảnh",
+    # thay vì đẩy bytes rác lên gemini rồi nhận lỗi upstream mơ hồ.
+    from services.image_utils import UnsupportedImage, normalize
     try:
-        from io import BytesIO
-        from PIL import Image
-        img = Image.open(BytesIO(data))
-        w, h = img.size
-        if max(w, h) <= max_dim:
-            return data, mime
-        scale = max_dim / float(max(w, h))
-        size = (max(1, round(w * scale)), max(1, round(h * scale)))
-        resized = img.convert("RGB") if img.mode not in ("RGB", "L") else img
-        resized = resized.resize(size, Image.LANCZOS)
-        buf = BytesIO()
-        resized.save(buf, format="JPEG", quality=85)
-        out = buf.getvalue()
-        _logger().info({"event": "gma_image_downscaled", "from": [w, h],
-                        "to": list(size), "bytes": [len(data), len(out)]})
-        return out, "image/jpeg"
+        out, out_mime = normalize(data, max_dim=max_dim, jpeg_quality=85)
+    except UnsupportedImage:
+        raise
     except Exception:
         return data, mime
+    if out is not data:
+        _logger().info({"event": "gma_image_downscaled",
+                        "bytes": [len(data), len(out)], "mime": out_mime})
+    return out, out_mime
 
 
 def _prepare_files(messages: list[dict[str, Any]]) -> list[str]:

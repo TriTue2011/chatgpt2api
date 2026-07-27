@@ -28,6 +28,8 @@ import {
   Sparkles,
   Route,
   UserCircle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -112,6 +114,229 @@ const SUBJECTS = [
   { id: "van", label: "Văn / TV" },
   { id: "anh", label: "Anh" },
 ];
+
+/** Khối thu gọn được. Mở: y hệt trước, thêm nút ▲ góc phải. Thu: còn 1 dòng
+ *  tiêu đề. Trạng thái nhớ theo máy (localStorage) nên vào lại vẫn giữ nguyên. */
+function Fold({
+  id,
+  title,
+  className,
+  children,
+}: {
+  id: string;
+  title: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const key = `teacher.fold.${id}`;
+  const [open, setOpen] = useState(true);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    // Đọc sau khi mount để không lệch server/client render (hydration).
+    try {
+      setOpen(localStorage.getItem(key) !== "0");
+    } catch {
+      /* localStorage bị chặn → mặc định mở */
+    }
+    setReady(true);
+  }, [key]);
+  const toggle = () => {
+    setOpen((v) => {
+      try {
+        localStorage.setItem(key, v ? "0" : "1");
+      } catch {
+        /* bỏ qua */
+      }
+      return !v;
+    });
+  };
+  if (ready && !open) {
+    return (
+      <Card className={className}>
+        <button
+          type="button"
+          onClick={toggle}
+          title="Mở lại"
+          className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+        >
+          <span className="truncate">{title}</span>
+          <ChevronDown className="size-3.5 shrink-0" />
+        </button>
+      </Card>
+    );
+  }
+  return (
+    <Card className={`relative ${className || ""}`}>
+      <button
+        type="button"
+        onClick={toggle}
+        title={`Thu gọn: ${title}`}
+        aria-label={`Thu gọn ${title}`}
+        className="absolute right-1.5 top-1.5 z-10 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <ChevronUp className="size-3.5" />
+      </button>
+      {children}
+    </Card>
+  );
+}
+
+type AutofillState = {
+  enabled?: boolean;
+  interval_days?: number;
+  running_now?: boolean;
+  combos?: number;
+  last?: {
+    index?: number;
+    total?: number;
+    current?: string;
+    running?: boolean;
+    started_at?: string;
+    finished_at?: string;
+    counts?: { ok?: number; no_source?: number; failed?: number; skipped?: number };
+  };
+};
+
+/** Tự tìm & nạp SGK: nút chạy ngay + công tắc định kỳ + thanh tiến độ.
+ *  Khi đang chạy thì hỏi tiến độ mỗi 5s, chạy xong thì thôi hỏi. */
+function AutofillPanel() {
+  const [st, setSt] = useState<AutofillState | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSt(await request<AutofillState>("/api/teacher/autofill"));
+    } catch {
+      /* im lặng — panel phụ, không phá trang */
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const running = !!st?.running_now;
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  const call = async (path: string, body?: unknown) => {
+    setBusy(true);
+    try {
+      const r = await request<{ ok?: boolean; message?: string }>(path, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      });
+      if (r?.message) toast[r.ok === false ? "warning" : "success"](r.message);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Lỗi");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const last = st?.last;
+  const c = last?.counts || {};
+  const total = last?.total || st?.combos || 0;
+  const pct = total ? Math.round(((last?.index || 0) / total) * 100) : 0;
+
+  return (
+    <div className="rounded border border-amber-500/25 bg-amber-500/5 p-2.5 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[10px] font-semibold flex items-center gap-1">
+          <Sparkles className="size-3 text-amber-600" />
+          Tự tìm &amp; nạp SGK — toàn bộ {st?.combos ?? 120} tổ hợp lớp × môn
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            className="h-7 text-[11px]"
+            disabled={busy || running}
+            onClick={() => void call("/api/teacher/autofill/start")}
+          >
+            {running ? (
+              <LoaderCircle className="size-3 animate-spin" />
+            ) : (
+              <Sparkles className="size-3" />
+            )}
+            {running ? "Đang chạy…" : "Chạy ngay"}
+          </Button>
+          {running && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-[11px]"
+              disabled={busy}
+              onClick={() => void call("/api/teacher/autofill/stop")}
+            >
+              Dừng
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground">
+        Tìm PDF công khai theo lớp–môn rồi nạp vào RAG. Lớp/môn không có sách sẽ
+        được bỏ qua, không tính là lỗi. Tổ hợp đã nạp trước đó cũng bỏ qua nên
+        chạy lại là đi tiếp, không tải lại từ đầu.
+      </p>
+
+      {/* Định kỳ */}
+      <div className="flex items-center gap-2 flex-wrap text-[10px]">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            className="size-3"
+            checked={!!st?.enabled}
+            disabled={busy}
+            onChange={(e) =>
+              void call("/api/teacher/autofill/settings", { enabled: e.target.checked })
+            }
+          />
+          Tự chạy định kỳ
+        </label>
+        <span className="text-muted-foreground">mỗi</span>
+        <select
+          className="h-6 rounded border border-border bg-background px-1 text-[10px]"
+          value={String(st?.interval_days ?? 7)}
+          disabled={busy}
+          onChange={(e) =>
+            void call("/api/teacher/autofill/settings", {
+              interval_days: Number(e.target.value),
+            })
+          }
+        >
+          {[1, 3, 7, 14, 30, 90].map((d) => (
+            <option key={d} value={d}>
+              {d} ngày
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Tiến độ */}
+      {last?.started_at && (
+        <div className="space-y-1">
+          <div className="h-1.5 w-full rounded bg-muted overflow-hidden">
+            <div
+              className="h-full bg-amber-500 transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {last.index || 0}/{total} · ✅ {c.ok || 0} nạp được · ⬜ {c.no_source || 0} không
+            có sách · ❌ {c.failed || 0} hỏng · ↩︎ {c.skipped || 0} bỏ qua
+            {last.current ? ` · đang: ${last.current}` : ""}
+            {!last.running && last.finished_at ? ` · xong ${last.finished_at}` : ""}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function TeacherPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin", "user"]);
@@ -737,7 +962,7 @@ export default function TeacherPage() {
       </div>
 
       {/* Bộ lọc lớp–môn–HS */}
-      <Card>
+      <Fold id="filters" title="Bộ lọc: lớp – môn – học sinh">
         <CardContent className="pt-4 grid gap-2 sm:grid-cols-4">
           <div>
             <label className="text-[10px] text-muted-foreground">Lớp</label>
@@ -809,7 +1034,7 @@ export default function TeacherPage() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Fold>
 
       {/* Lộ trình hiện tại của HS (gắn buổi học / bài tập) */}
       {focusInfo?.ok && (
@@ -881,7 +1106,7 @@ export default function TeacherPage() {
       {/* ── LESSON ── */}
       {tab === "lesson" && (
         <div className="grid gap-4 lg:grid-cols-5">
-          <Card className="lg:col-span-3">
+          <Fold id="lesson-edit" title="Soạn bài giảng" className="lg:col-span-3">
             <CardContent className="pt-4 space-y-3">
               <div className="text-xs font-semibold">Soạn bài giảng (văn chữ + lời nói)</div>
               <div className="rounded border border-amber-500/25 bg-amber-500/5 p-2 space-y-2">
@@ -972,8 +1197,8 @@ export default function TeacherPage() {
                 </Button>
               </div>
             </CardContent>
-          </Card>
-          <Card className="lg:col-span-2">
+          </Fold>
+          <Fold id="lesson-saved" title="Bài đã lưu" className="lg:col-span-2">
             <CardContent className="pt-4 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold">Bài đã lưu</span>
@@ -1040,7 +1265,7 @@ export default function TeacherPage() {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Fold>
         </div>
       )}
 
@@ -1054,7 +1279,7 @@ export default function TeacherPage() {
           }
         >
           {!hwFullscreen && (
-          <Card className="lg:col-span-2">
+          <Fold id="hw-new" title="Giao bài tập mới" className="lg:col-span-2">
             <CardContent className="pt-4 space-y-2">
               <div className="text-xs font-semibold">Giao bài tập mới</div>
               <p className="text-[10px] text-muted-foreground">
@@ -1173,10 +1398,10 @@ export default function TeacherPage() {
                 </div>
               </div>
             </CardContent>
-          </Card>
+          </Fold>
           )}
 
-          <Card className={hwFullscreen ? "max-w-4xl mx-auto w-full" : "lg:col-span-3"}>
+          <Fold id="hw-do" title="Làm bài · chấm bài" className={hwFullscreen ? "max-w-4xl mx-auto w-full" : "lg:col-span-3"}>
             <CardContent className="pt-4 space-y-3">
               {!doAsg && (
                 <p className="text-xs text-muted-foreground italic">
@@ -1313,14 +1538,14 @@ export default function TeacherPage() {
                 </>
               )}
             </CardContent>
-          </Card>
+          </Fold>
         </div>
       )}
 
       {/* ── PLACEMENT + ROADMAP ── */}
       {tab === "placement" && (
         <div className="grid gap-4 lg:grid-cols-5">
-          <Card className="lg:col-span-2">
+          <Fold id="place-student" title="Học sinh (hồ sơ độc lập)" className="lg:col-span-2">
             <CardContent className="pt-4 space-y-3">
               <div className="text-xs font-semibold flex items-center gap-1">
                 <UserCircle className="size-3.5" /> Học sinh (hồ sơ độc lập)
@@ -1400,9 +1625,9 @@ export default function TeacherPage() {
                 <div>· <b>Anh</b>: 5 skill CEFR (grammar/listen/speak/read/write) → skill yếu trước.</div>
               </div>
             </CardContent>
-          </Card>
+          </Fold>
 
-          <Card className="lg:col-span-3">
+          <Fold id="place-test" title="Đề đầu vào · Lộ trình" className="lg:col-span-3">
             <CardContent className="pt-4 space-y-3">
               {placeQs.length > 0 && (
                 <>
@@ -1527,13 +1752,13 @@ export default function TeacherPage() {
                 </p>
               )}
             </CardContent>
-          </Card>
+          </Fold>
         </div>
       )}
 
       {/* ── PARENT DASHBOARD ── */}
       {tab === "parent" && (
-        <Card>
+        <Fold id="parent" title="Dashboard phụ huynh">
           <CardContent className="pt-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
@@ -1629,13 +1854,14 @@ export default function TeacherPage() {
               ))}
             </div>
           </CardContent>
-        </Card>
+        </Fold>
       )}
 
       {/* ── IMPORT SGK ── */}
       {tab === "import" && (
-        <Card>
+        <Fold id="import" title="Import PDF SGK">
           <CardContent className="pt-4 space-y-3">
+            <AutofillPanel />
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <FileUp className="size-3.5 text-amber-600" />
               Import PDF SGK theo chương / bài
@@ -1896,7 +2122,7 @@ export default function TeacherPage() {
               </p>
             </div>
           </CardContent>
-        </Card>
+        </Fold>
       )}
 
       <Dialog open={Boolean(deletingLesson)} onOpenChange={(open) => (!open ? setDeletingLesson(null) : null)}>

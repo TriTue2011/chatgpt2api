@@ -106,6 +106,59 @@ def create_router() -> APIRouter:
         st["kb"] = tw.status_public()
         return st
 
+    @router.get("/api/teacher/autofill")
+    async def teacher_autofill_status(authorization: str | None = Header(default=None)):
+        """Tiến độ tự tìm/nạp SGK + cài đặt định kỳ."""
+        require_admin(authorization)
+        from services import sgk_autofill_scheduler as sched
+        from services.agent import sgk_autofill as af
+        st = sched.status()
+        st["combos"] = len(af.combos())
+        return st
+
+    @router.post("/api/teacher/autofill/start")
+    async def teacher_autofill_start(
+        payload: dict | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """Chạy NGAY (nền). ``skip_done=false`` để nạp đè thứ đã có."""
+        require_admin(authorization)
+        from services.agent import sgk_autofill as af
+        body = payload or {}
+        return af.start(
+            kind=str(body.get("kind") or "sgk"),
+            skip_done=bool(body.get("skip_done", True)),
+            grades=body.get("grades") or None,
+            subjects=body.get("subjects") or None,
+        )
+
+    @router.post("/api/teacher/autofill/stop")
+    async def teacher_autofill_stop(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        from services.agent import sgk_autofill as af
+        return af.stop()
+
+    @router.post("/api/teacher/autofill/settings")
+    async def teacher_autofill_settings(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Bật/tắt + chu kỳ (ngày) cho lần quét định kỳ."""
+        require_admin(authorization)
+        from services.config import config
+        if "enabled" in payload:
+            config.data["sgk_autofill_enabled"] = bool(payload.get("enabled"))
+        if "interval_days" in payload:
+            try:
+                d = int(payload.get("interval_days") or 7)
+            except (TypeError, ValueError):
+                d = 7
+            config.data["sgk_autofill_interval_days"] = max(1, min(365, d))
+        config._save()
+        from services import sgk_autofill_scheduler as sched
+        return {"ok": True, "enabled": sched.is_enabled(),
+                "interval_days": sched.interval_seconds() / 86400.0}
+
     @router.get("/api/teacher/search")
     async def teacher_search(
         q: str = Query(default=""),

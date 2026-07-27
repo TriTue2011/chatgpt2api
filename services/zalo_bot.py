@@ -1594,6 +1594,11 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         if not data:
             send_message(chat_id, "📷 Không tải được ảnh.")
             return
+        # Chuẩn hoá ngay (HEIC/JXL→JPEG); ảnh hỏng thì báo liền, khỏi chờ vision.
+        data, _img_err = _phi.prepare_incoming(data)
+        if not data:
+            send_message(chat_id, _img_err)
+            return
         caption = (text or "").strip()
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:

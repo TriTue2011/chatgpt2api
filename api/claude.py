@@ -357,28 +357,23 @@ def _downscale_image(data: bytes, mime: str) -> tuple[bytes, str]:
         max_dim = int(_config().data.get("claude_vision_max_dim", 896) or 0)
     except Exception:
         max_dim = 896
-    if not max_dim:
-        return data, mime
+    # max_dim = 0 → tắt thu nhỏ, nhưng VẪN chuẩn hoá định dạng (normalize bỏ qua
+    # resize khi max_dim=0) để tắt knob này không làm ảnh iPhone chết trở lại.
+    # Chuẩn hoá + thu nhỏ trong một bước. UnsupportedImage (HEIC/JXL/file hỏng)
+    # được để NỔI LÊN: gửi bytes không phải ảnh cho claude.ai chỉ biến lỗi rõ ràng
+    # thành lỗi upstream mơ hồ, và combo mất khả năng nhận ra "lỗi tại tấm ảnh".
+    from services.image_utils import UnsupportedImage, normalize
     try:
-        from io import BytesIO
-        from PIL import Image
-        img = Image.open(BytesIO(data))
-        w, h = img.size
-        if max(w, h) <= max_dim:
-            return data, mime
-        scale = max_dim / float(max(w, h))
-        new_size = (max(1, round(w * scale)), max(1, round(h * scale)))
-        resized = img.convert("RGB") if img.mode not in ("RGB", "L") else img
-        resized = resized.resize(new_size, Image.LANCZOS)
-        buf = BytesIO()
-        resized.save(buf, format="JPEG", quality=85)
-        out = buf.getvalue()
-        _logger().info({"event": "claude_image_downscaled", "from": [w, h],
-                        "to": list(new_size), "bytes": [len(data), len(out)]})
-        return out, "image/jpeg"
+        out, out_mime = normalize(data, max_dim=max_dim, jpeg_quality=85)
+    except UnsupportedImage:
+        raise
     except Exception as exc:
         _logger().debug({"event": "claude_image_downscale_skipped", "error": str(exc)[:120]})
         return data, mime
+    if out is not data:
+        _logger().info({"event": "claude_image_downscaled",
+                        "bytes": [len(data), len(out)], "mime": out_mime})
+    return out, out_mime
 
 
 def _extract_images(messages: list[dict[str, Any]]) -> list[tuple[bytes, str]]:

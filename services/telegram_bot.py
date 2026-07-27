@@ -1281,6 +1281,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         if not file_data:
             send_message(chat_id, "📷 Không thể tải ảnh.")
             return
+        # Chuẩn hoá ngay (HEIC→JPEG) và báo liền nếu ảnh không đọc được, thay vì
+        # để người dùng chọn menu → chờ vision → mới nhận lỗi.
+        file_data, _img_err = _phi.prepare_incoming(file_data)
+        if not file_data:
+            send_message(chat_id, _img_err)
+            return
         caption = (text or "").strip()
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:

@@ -11,6 +11,9 @@ dependencies = [
     # JSON nhanh (ORJSONResponse mặc định của app — gateway stream JSON lớn liên tục)
     "orjson>=3.10.0",
     "pillow>=12.2.0",
+    # Ảnh iPhone (HEIC/HEIF) + AVIF: Pillow trần không mở được → vision chết với
+    # "cannot identify image file". services/image_utils.py tự nạp plugin này.
+    "pillow-heif>=1.1.0",
     "pybase64>=1.4.3",
     "python-multipart>=0.0.26",
     "tiktoken>=0.12.0",

@@ -281,13 +281,51 @@ def needs_prompt(intent: str, text: str = "") -> bool:
     return False
 
 
+def prepare_incoming(image_bytes: bytes | None) -> tuple[bytes | None, str]:
+    """Ảnh vừa tải từ bot → (bytes chuẩn hoá, "") hoặc (None, câu báo lỗi).
+
+    Gọi NGAY sau khi tải ảnh về: ảnh iPhone (HEIC) được chuyển sang JPEG một lần
+    tại đây, còn ảnh hỏng thì báo liền cho người dùng thay vì để họ chọn menu,
+    chờ vision, rồi mới nhận lỗi.
+    """
+    from services.image_utils import UnsupportedImage, normalize
+    try:
+        data, _mime = normalize(image_bytes)
+        return data, ""
+    except UnsupportedImage as exc:
+        logger.warning("prepare_incoming: %s", exc)
+        return None, bad_image_reply(exc)
+    except Exception as exc:  # Pillow lỗi lạ → cứ để bytes gốc đi tiếp
+        logger.warning("prepare_incoming: lỗi không ngờ %s", str(exc)[:150])
+        return image_bytes, ""
+
+
+def bad_image_reply(exc: Exception) -> str:
+    """Câu trả lời khi ảnh không đọc được — nói rõ định dạng, khỏi gọi model."""
+    from services.image_utils import UnsupportedImage
+    label = getattr(exc, "label", "") if isinstance(exc, UnsupportedImage) else ""
+    return (
+        f"📷 Ảnh này em chưa mở được: {label or 'không nhận dạng được định dạng'}.\n"
+        "Anh/chị chụp lại hoặc gửi dạng JPG / PNG giúp em nhé "
+        "(iPhone: Cài đặt → Camera → Định dạng → 'Tương thích nhất')."
+    )
+
+
 def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -> str:
     """Vision analysis with explicit prompt."""
     from services.agent.branches import branch_model
     from services.agent.runtime import call_model, content_of
+    from services.image_utils import UnsupportedImage, normalize
 
     q = (prompt or "").strip() or "Mô tả chi tiết ảnh này bằng tiếng Việt."
-    data_url = "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+    # Chuẩn hoá TRƯỚC khi gọi model: ảnh HEIC/JXL/tải hỏng mà lọt xuống provider
+    # thì provider nào cũng chết y hệt → combo đốt sạch đường rồi báo "cạn provider".
+    try:
+        image_bytes, mime = normalize(image_bytes)
+    except UnsupportedImage as exc:
+        logger.warning("analyze_photo: %s", exc)
+        return bad_image_reply(exc)
+    data_url = f"data:{mime};base64," + base64.b64encode(image_bytes).decode()
     msgs = [{"role": "user", "content": [
         {"type": "text", "text": q},
         {"type": "image_url", "image_url": {"url": data_url}},
@@ -326,11 +364,17 @@ def generate_from_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -
     """
     from services.agent.branches import branch_model
     from services.agent.runtime import call_model, content_of, first_image_url
+    from services.image_utils import UnsupportedImage, normalize
 
     p = (prompt or "").strip()
     if not p:
         return {"text": "Anh/chị mô tả muốn chỉnh/tạo ảnh thế nào ạ? 🎨"}
-    data_url = "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+    try:
+        image_bytes, mime = normalize(image_bytes)
+    except UnsupportedImage as exc:
+        logger.warning("generate_from_photo: %s", exc)
+        return {"text": bad_image_reply(exc)}
+    data_url = f"data:{mime};base64," + base64.b64encode(image_bytes).decode()
     model = branch_model("image_gen", channel)
     resp = call_model(
         model,
