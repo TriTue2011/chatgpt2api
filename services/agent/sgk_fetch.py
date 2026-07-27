@@ -100,24 +100,31 @@ _CURRICULA: tuple[str, ...] = (
     "kết nối tri thức", "chân trời sáng tạo", "cánh diều",
 )
 
-# Site THẬT SỰ đăng SGK. taphuan.nxbgd.vn là kho CHÍNH THỨC hiện hành của NXB
-# Giáo dục Việt Nam — miễn phí, KHÔNG cần đăng nhập — nên xếp đầu.
-# hanhtrangso.nxbgd.vn là kho chính thức CŨ, NXBGDVN đã thông báo ngừng vận
-# hành và dồn về taphuan; giữ lại ở dưới vì link cũ còn nằm trong chỉ mục tìm
-# kiếm, nhưng KHÔNG được để nó ăn lượt hỏi đầu tiên.
-# sachmem.vn là nền tảng học liệu số đi kèm SGK; còn lại là site tài liệu phổ
-# biến hay đăng lại bản PDF.
+# Site THẬT SỰ đăng SGK **và máy tải được**. Thứ tự = kết quả đo thật từ máy
+# chủ (2026-07-27), không phải theo trang nào "chính thức" hơn:
+#
+#   hanhtrangso.nxbgd.vn  200  ← kho NXBGDVN, còn sống, tải được
+#   vndoc / taimienphi / download.vn  200
+#   taphuan.nxbgd.vn      403  ← LOẠI: xem chú thích bên dưới
+#   sachmem.vn            000  ← LOẠI: không kết nối được
+#
+# taphuan.nxbgd.vn nay là kho chính thức của NXBGDVN (hanhtrangso đã được
+# thông báo sẽ ngừng) và với NGƯỜI DÙNG thì miễn phí, không cần đăng nhập —
+# nhưng nó nấp sau Cloudflare, trả 403 kèm trang captcha cho mọi client không
+# phải trình duyệt. Đưa nó vào đây chỉ tạo ra ứng viên chắc chắn 403 lúc tải,
+# lại chiếm suất trong hạn mức 3 ứng viên/tổ hợp nên đẩy tổ hợp thành
+# "failed" thay vì để nó thử nguồn khác. Muốn lấy sách từ taphuan thì phải
+# đi bằng trình duyệt thật (stack captcha-solver/chromium sẵn có trong image)
+# — việc đó tách riêng, KHÔNG nhét vào đường tìm kiếm này.
 #
 # Vì sao cần whitelist: trước đây find_sources bắn câu hỏi tiếng Việt vào
 # CrossRef/OpenAlex/PubMed/Wikipedia/Internet Archive — kho DOI học thuật và
 # bách khoa, KHÔNG bao giờ chứa SGK Việt Nam. Kết quả là 0 ứng viên thật, kèm
 # 429 hàng loạt vì bắn quá dày.
 _SGK_SITES: tuple[str, ...] = (
-    "taphuan.nxbgd.vn",
     "hanhtrangso.nxbgd.vn",
-    "sachmem.vn",
-    "taimienphi.vn",
     "vndoc.com",
+    "taimienphi.vn",
     "download.vn",
 )
 
