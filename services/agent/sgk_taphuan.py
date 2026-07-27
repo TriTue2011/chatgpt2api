@@ -142,15 +142,18 @@ def _volume_of_slug(slug: str) -> str:
     return ""
 
 
-def list_books(grade: int, *, all_sets: bool = True) -> list[dict[str, Any]]:
-    """Danh mục SGK của MỘT lớp: bộ chính (``?grade=N``) + các bộ sách khác.
+def list_books(grade: int, *, all_sets: bool = False) -> list[dict[str, Any]]:
+    """Danh mục SGK của MỘT lớp. Mặc định CHỈ bộ chính (``?grade=N``).
 
     Trả list ``{slug, url, subjects, volume, book_set, grade}``. Sách không
     nhận ra môn (Âm nhạc, Mĩ thuật, Hoạt động trải nghiệm…) vẫn được trả về
     với ``subjects=()`` để người gọi tự quyết, KHÔNG im lặng vứt đi.
 
-    ``all_sets=False`` chỉ lấy bộ chính — nhanh hơn 5 lượt tải khi chỉ cần
-    liệt kê nhanh.
+    ``all_sets=True`` lấy thêm các bộ sách khác (``cac-bo-sach-khac``). MẶC
+    ĐỊNH TẮT vì đó là bộ sách KHÁC cho CÙNG môn: nạp chung vào một file
+    ``lop{N}/{mon}.md`` thì trong cùng một môn có hai chương trình khác nhau,
+    bài khác nhau — bot sẽ trả lời mâu thuẫn mà không biết bộ nào đang dùng.
+    Muốn bật thì phải tách kho theo bộ sách trước.
     """
     g = int(grade)
     if g not in tw.GRADES:
@@ -354,6 +357,7 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     src = fitz.open(str(pdf_path))
     total = src.page_count
     out: list[str] = []
+    missing: list[tuple[int, int]] = []
     step = max(1, int(pages_per_call))
     try:
         start = 0
@@ -387,12 +391,14 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
                 if resp.get("error"):
                     logger.warning("sgk_taphuan.book_markdown: khối %s-%s lỗi: %s",
                                    start + 1, end + 1, str(resp["error"])[:150])
+                    missing.append((start + 1, end + 1))
                 else:
                     md = content_of(resp).strip()
                     if p2w.looks_like_ocr_failure(md):
                         logger.warning(
                             "sgk_taphuan.book_markdown: khối %s-%s trả lỗi model",
                             start + 1, end + 1)
+                        missing.append((start + 1, end + 1))
                     else:
                         out.append(md)
             finally:
@@ -401,7 +407,25 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
                 start = end + 1
     finally:
         src.close()
-    return "\n\n---\n\n".join(out)
+
+    body = "\n\n---\n\n".join(out)
+    if missing:
+        # KHÔNG im lặng nuốt phần thiếu. Sách vào kho mà hụt 20 trang, bot dạy
+        # sai mà không ai biết là kiểu hỏng tệ nhất — nên ghi thẳng vào nội
+        # dung để người đọc file .md thấy, và nêu rõ ở log.
+        note = "\n\n".join(
+            f"> ⚠️ THIẾU trang {a}–{b}: model không trả được nội dung." for a, b in missing
+        )
+        body = f"{body}\n\n---\n\n{note}\n" if body else note
+        lost = sum(b - a + 1 for a, b in missing)
+        logger.warning(
+            {"event": "sgk_taphuan_thieu_trang", "pdf": str(pdf_path),
+             "so_trang_thieu": lost, "tong_trang": total, "khoi": missing})
+        # Hụt quá nửa quyển thì coi như hỏng, để caller khỏi nạp bản què.
+        if lost > total * 0.5:
+            raise RuntimeError(
+                f"thiếu {lost}/{total} trang — quá nửa quyển, không nạp")
+    return body
 
 
 def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
