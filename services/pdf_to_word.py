@@ -45,6 +45,32 @@ _ANALYZE_SAMPLE_CAP = 12
 # Import SGK (teacher): xử lý toàn bộ trang trừ khi PDF cực dài.
 TEACHER_SGK_MAX_PAGES = 0  # 0 = all pages
 
+# Gateway đôi khi trả lỗi model NHƯ THỂ content 200 (vd "Gemini error … Could
+# not resolve host"). Đo thật 2026-07-27: 5 trang Toán 4 bị cache thành 929
+# ký tự rác; lần sau OCR "thành công" ngay từ cache mà không gọi model.
+# Chặn ở 3 tầng: VLM page, cache save/load, và ingest SGK.
+_OCR_FAIL_MARKS: tuple[str, ...] = (
+    "gemini error", "could not resolve", "connection failed", "libcurl-errors",
+    "getaddrinfo", "rate limit", "quota exceeded", "api key", "unauthorized",
+    "timeout", "http 500", "http 502", "http 503",
+)
+
+
+def looks_like_ocr_failure(text: str) -> bool:
+    """True nếu 'nội dung trang' thật ra là thông báo lỗi của model/gateway.
+
+    Xét theo TỈ LỆ: sách thật có thể tình cờ chứa chữ "timeout", nhưng không
+    thể để dấu hiệu lỗi chiếm phần lớn văn bản.
+    """
+    t = (text or "").lower()
+    if not t.strip():
+        return True
+    hits = sum(t.count(m) for m in _OCR_FAIL_MARKS)
+    if not hits:
+        return False
+    # Mỗi thông báo lỗi dài cỡ 150–200 ký tự; >30% → coi hỏng.
+    return (hits * 150) > (len(t) * 0.3)
+
 # Ký tự có dấu đặc trưng tiếng Việt — đo chất lượng lớp text nhúng của file scan
 # (văn bản Việt thật ~15-25% chữ có dấu; máy photo OCR thiếu tiếng Việt ≈ 0%).
 _VIET_MARKS = set("ăâđêôơưàảãáạằẳẵắặầẩẫấậèẻẽéẹềểễếệìỉĩíịòỏõóọồổỗốộờởỡớợùủũúụừửữứựỳỷỹýỵ")
@@ -440,6 +466,11 @@ def _vlm_page_md(png: bytes) -> str:
     if resp.get("error"):
         raise RuntimeError(f"{model}: {str(resp['error'])[:150]}")
     out = content_of(resp).strip()
+    # Gateway hay nuốt exception thành content 200 ("Gemini error: …") — không
+    # được coi là chữ trang, nếu không sẽ bị cache + nạp RAG như SGK thật.
+    if looks_like_ocr_failure(out):
+        raise RuntimeError(f"{model}: OCR trả lỗi model, không phải nội dung trang: "
+                           f"{out[:150]}")
     if out.startswith("```"):
         out = out.strip("`\n")
         if out[:8].lower() == "markdown":
@@ -535,12 +566,22 @@ def _cache_load(key: str) -> dict[str, str]:
         if not p.exists():
             return {}
         data = json.loads(p.read_text(encoding="utf-8"))
-        return {str(k): str(v) for k, v in (data.get("pages") or {}).items() if str(v).strip()}
+        out: dict[str, str] = {}
+        for k, v in (data.get("pages") or {}).items():
+            s = str(v).strip()
+            # Bỏ qua trang cache đã nhiễm thông báo lỗi model (đo thật 2026-07-27).
+            if not s or s.startswith("[Trang") or looks_like_ocr_failure(s):
+                continue
+            out[str(k)] = s
+        return out
     except Exception:
         return {}
 
 
 def _cache_save_page(key: str, idx: int, md: str) -> None:
+    # Không cache placeholder / thông báo lỗi — lần sau còn thử OCR lại.
+    if not (md or "").strip() or md.startswith("[Trang") or looks_like_ocr_failure(md):
+        return
     try:
         with _cache_lock:
             p = _cache_dir() / f"{key}.json"
@@ -595,8 +636,8 @@ def _scan_markdown_pages(
             if hit:
                 return hit
             md = _page_md_vlm(p, i, errs, layer_ok=layer_ok, errs_lock=errs_lock)
-            # Không cache placeholder lỗi — lần chạy sau còn thử OCR lại trang đó.
-            if ckey and md and not md.startswith("[Trang"):
+            # _cache_save_page tự chặn placeholder/lỗi model.
+            if ckey and md:
                 _cache_save_page(ckey, i, md)
             return md
 

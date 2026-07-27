@@ -112,6 +112,34 @@ class OpenAIBackendAPI:
         if self.access_token:
             self.session.headers["Authorization"] = f"Bearer {self.access_token}"
 
+    def close(self) -> None:
+        """Đóng curl_cffi Session — mỗi instance giữ ~1 socket + 1 eventfd.
+
+        OpenAIBackendAPI được tạo per-request; nếu không close, GC chậm sẽ
+        tích fd tới soft limit 1024 → curl báo "Could not resolve host" /
+        "getaddrinfo() thread failed to start" dù DNS máy vẫn tốt.
+        """
+        sess = getattr(self, "session", None)
+        if sess is None:
+            return
+        try:
+            sess.close()
+        except Exception:
+            pass
+        self.session = None  # type: ignore[assignment]
+
+    def __enter__(self) -> "OpenAIBackendAPI":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def _build_fp(self) -> Dict[str, str]:
         account = account_service.get_account(self.access_token) if self.access_token else {}
         account = account if isinstance(account, dict) else {}
