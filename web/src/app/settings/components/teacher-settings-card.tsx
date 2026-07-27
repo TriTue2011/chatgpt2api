@@ -46,30 +46,33 @@ function parseSpeakerFilters(raw: unknown): SpkRow[] {
   });
 }
 
-/** Mục con thu gọn được. Mở: y hệt trước, thêm nút ▲ góc phải. Thu: còn một
- *  dòng tiêu đề, bấm là mở lại. Nhớ trạng thái theo máy (localStorage). */
+/** Mục con thu gọn được. Mặc định THU (chỉ còn dòng tiêu đề) — thẻ Giáo viên có
+ *  8 mục, mở hết thì trang dài vô tận. Bấm bất kỳ đâu trên dòng tiêu đề để
+ *  mở/thu; nhớ trạng thái theo máy (localStorage), mở lần sau vẫn như cũ.
+ *  Lưu ý: tiêu đề do Sec vẽ — thân mục KHÔNG lặp lại tiêu đề nữa. */
 function Sec({
   id,
   title,
-  className,
+  tone,
+  bodyClass = "space-y-3",
   children,
 }: {
   id: string;
-  title: string;
-  className?: string;
+  title: React.ReactNode;
+  tone?: "amber";
+  bodyClass?: string;
   children: React.ReactNode;
 }) {
   const key = `teacher-set.sec.${id}`;
-  const [open, setOpen] = useState(true);
-  const [ready, setReady] = useState(false);
+  // false = thu. Prerender (static export) và client render đầu tiên giống nhau
+  // → không lệch hydration; localStorage đọc sau khi mount.
+  const [open, setOpen] = useState(false);
   useEffect(() => {
-    // Đọc sau khi mount để server/client render không lệch (hydration).
     try {
-      setOpen(localStorage.getItem(key) !== "0");
+      setOpen(localStorage.getItem(key) === "1");
     } catch {
-      /* localStorage bị chặn → mặc định mở */
+      /* localStorage bị chặn → giữ mặc định thu */
     }
-    setReady(true);
   }, [key]);
   const toggle = () =>
     setOpen((v) => {
@@ -80,31 +83,27 @@ function Sec({
       }
       return !v;
     });
-  if (ready && !open) {
-    return (
-      <button
-        type="button"
-        onClick={toggle}
-        title="Mở lại"
-        className="w-full flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40"
-      >
-        <span className="truncate text-left">{title}</span>
-        <ChevronDown className="size-3.5 shrink-0" />
-      </button>
-    );
-  }
   return (
-    <div className={`relative ${className || ""}`}>
+    <div
+      className={`rounded-md border ${
+        tone === "amber" ? "border-amber-500/30 bg-amber-500/5" : "border-border"
+      }`}
+    >
       <button
         type="button"
         onClick={toggle}
-        title={`Thu gọn: ${title}`}
-        aria-label={`Thu gọn ${title}`}
-        className="absolute right-1.5 top-1.5 z-10 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        aria-expanded={open}
+        title={open ? "Thu gọn" : "Mở"}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold hover:bg-muted/40"
       >
-        <ChevronUp className="size-3.5" />
+        <span className="flex min-w-0 items-center gap-1.5">{title}</span>
+        {open ? (
+          <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
       </button>
-      {children}
+      {open ? <div className={`px-3 pb-3 ${bodyClass}`}>{children}</div> : null}
     </div>
   );
 }
@@ -338,8 +337,7 @@ export function TeacherSettingsCard() {
         </p>
 
         {/* 1. Bật / giọng */}
-        <Sec id="bat" title="① Bật chức năng & giọng đọc" className="rounded-md border border-border p-3 space-y-3">
-          <div className="text-xs font-semibold">① Bật chức năng &amp; giọng đọc</div>
+        <Sec id="bat" title="① Bật chức năng & giọng đọc">
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
             <input
               type="checkbox"
@@ -370,10 +368,10 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 1b. Model LLM — Tiếng Anh 5 kỹ năng + fallback */}
-        <Sec id="model-en" title="①b Model AI · Tiếng Anh" className="rounded-md border border-border p-3 space-y-3">
-          <div className="text-xs font-semibold">
-            ①b Model AI · Tiếng Anh (Ngữ pháp · Nghe · Nói · Đọc · Viết)
-          </div>
+        <Sec
+          id="model-en"
+          title="①b Model AI · Tiếng Anh (Ngữ pháp · Nghe · Nói · Đọc · Viết)"
+        >
           <p className="text-[10px] text-muted-foreground">
             Mỗi kỹ năng EN có thể gắn <b>model riêng</b> (soạn đề / chấm).
             Để trống skill = dùng fallback bên dưới. Fallback trống ={" "}
@@ -479,10 +477,10 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 1c. Cấu hình Giọng TTS & STT theo từng Môn học */}
-        <Sec id="tts-mon" title="①c TTS & STT riêng từng môn" className="rounded-md border border-border p-3 space-y-3">
-          <div className="text-xs font-semibold">
-            ①c Cấu hình TTS &amp; STT riêng cho từng Môn học (Toán, Tiếng Việt, Tiếng Anh, Khoa học...)
-          </div>
+        <Sec
+          id="tts-mon"
+          title="①c TTS & STT riêng từng môn (Toán · Tiếng Việt · Tiếng Anh · Khoa học…)"
+        >
           <p className="text-[10px] text-muted-foreground">
             Giáo viên tự động dùng giọng TTS và bộ nhận dạng STT tối ưu cho từng môn học.
           </p>
@@ -579,10 +577,14 @@ export function TeacherSettingsCard() {
 
 
         {/* 2. Phát loa */}
-        <Sec id="loa" title="② Giáo viên phát ra loa" className="rounded-md border border-border p-3 space-y-3">
-          <div className="text-xs font-semibold flex items-center gap-1.5">
-            <Volume2 className="size-3.5" /> ② Giáo viên phát ra loa
-          </div>
+        <Sec
+          id="loa"
+          title={
+            <>
+              <Volume2 className="size-3.5 shrink-0" /> ② Giáo viên phát ra loa
+            </>
+          }
+        >
           <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
             <input
               type="checkbox"
@@ -616,8 +618,12 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 3. Ai được dùng */}
-        <Sec id="ai-dung" title="③ Ai được dùng Giáo viên?" className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
-          <div className="text-xs font-semibold">③ Ai được dùng Giáo viên? (Zalo / Telegram)</div>
+        <Sec
+          id="ai-dung"
+          title="③ Ai được dùng Giáo viên? (Zalo / Telegram)"
+          tone="amber"
+          bodyClass="space-y-2"
+        >
           <ol className="text-[11px] text-muted-foreground list-decimal pl-4 space-y-1">
             <li>
               Vào <b>Settings → Kênh chat</b> → tab kênh (Telegram / Zalo / Zalo CN) →{" "}
@@ -640,8 +646,7 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 4. Loa theo thread / user */}
-        <Sec id="loa-thread" title="④ Loa nào cho thread / user nào" className="rounded-md border border-border p-3 space-y-2">
-          <div className="text-xs font-semibold">④ Loa nào cho thread / user nào</div>
+        <Sec id="loa-thread" title="④ Loa nào cho thread / user nào" bodyClass="space-y-2">
           <p className="text-[10px] text-muted-foreground">
             Chọn <b>thread (Chat ID)</b> + tuỳ chọn <b>User ID</b> (trong nhóm: chỉ
             user đó được loa đó). Khoá: <code>tg:BOT:CHAT</code> /{" "}
@@ -1088,10 +1093,11 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 5. Import PDF SGK — lớp 1–5 */}
-        <Sec id="import" title="⑤ Import PDF SGK (lớp 1–12)" className="rounded-md border border-border p-3 space-y-2">
-          <div className="text-xs font-semibold">
-            ⑤ Import PDF SGK (lớp 1–12 · Toán/Văn/Anh · THCS/THPT)
-          </div>
+        <Sec
+          id="import"
+          title="⑤ Import PDF SGK (lớp 1–12 · Toán/Văn/Anh · THCS/THPT)"
+          bodyClass="space-y-2"
+        >
           <p className="text-[10px] text-muted-foreground">
             Upload PDF → trích chữ →{" "}
             <code>data/agent/teacher/sgk/lopN/&#123;mon&#125;.md</code>. Tiểu học 1–5 ·
@@ -1186,8 +1192,11 @@ export function TeacherSettingsCard() {
         </Sec>
 
         {/* 6. Workspace + KB */}
-        <Sec id="workspace" title="⑥ Workspace lớp 1–12" className="rounded-md border border-border p-3 space-y-2">
-          <div className="text-xs font-semibold">⑥ Workspace lớp 1–12 (Toán · Văn · Anh)</div>
+        <Sec
+          id="workspace"
+          title="⑥ Workspace lớp 1–12 (Toán · Văn · Anh)"
+          bodyClass="space-y-2"
+        >
           <p className="text-[10px] text-muted-foreground">
             36 workspace: <code>lop1-toan</code> … <code>lop12-anh</code>. Tools:{" "}
             <code>search_sgk</code>, <code>teacher_quiz</code>, <code>teacher_grade</code>,{" "}
