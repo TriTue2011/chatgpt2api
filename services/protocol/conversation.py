@@ -1058,7 +1058,16 @@ def conversation_events(
         last_user_text = ""
         for msg in reversed(normalized):
             if str(msg.get("role") or "") == "user":
-                last_user_text = str(msg.get("content") or "").strip().lower()
+                # Chỉ lấy PHẦN CHỮ — tin nhắn kèm ảnh có content dạng danh sách,
+                # str() lên nó là kéo cả base64 ảnh vào rồi lower/so khớp (tốn giây).
+                _c = msg.get("content")
+                if isinstance(_c, list):
+                    last_user_text = " ".join(
+                        str(p.get("text") or "") for p in _c
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ).strip().lower()
+                else:
+                    last_user_text = str(_c or "").strip().lower()
                 break
         if any(keyword in last_user_text for keyword in ("trạng thái nhà", "tình trạng nhà", "nhà đang", "state house", "home status")):
             normalized.insert(0, {

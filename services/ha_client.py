@@ -1122,6 +1122,29 @@ def is_ha_query(messages: list[dict[str, Any]]) -> bool:
     return _is_ha_query(messages)
 
 
+def _user_text_of(message: dict[str, Any]) -> str:
+    """Lấy PHẦN CHỮ của một message, bỏ qua ảnh.
+
+    Tin nhắn có ảnh dùng content dạng danh sách
+    [{"type":"text",...},{"type":"image_url","image_url":{"url":"data:...base64,..."}}].
+    Trước đây chỗ này làm `str(content)` — biến CẢ chuỗi base64 của ảnh thành
+    text rồi chạy toàn bộ regex nhận diện lên đó. Đo thật trên server:
+    ảnh 200KB mất 387ms, 500KB mất 973ms, 1MB mất 1.959ms — mà hàm chạy ≥2 lần
+    mỗi request (is_ha_query + inject_ha_context) nên ảnh camera HA cỡ 1MB đốt
+    ~4 giây CPU vô ích. Ý định người dùng chỉ nằm ở CHỮ.
+    """
+    c = message.get("content")
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return " ".join(
+            str(p.get("text") or "")
+            for p in c
+            if isinstance(p, dict) and p.get("type") == "text"
+        )
+    return ""
+
+
 def _is_ha_query(messages: list[dict[str, Any]]) -> bool:
     """Heuristic: is the last user message asking about smart home devices?
 
@@ -1133,7 +1156,7 @@ def _is_ha_query(messages: list[dict[str, Any]]) -> bool:
     for m in reversed(messages):
         if m.get("role") != "user":
             continue
-        raw = str(m.get("content") or "").lower()
+        raw = _user_text_of(m).lower()
         folded = _fold_diacritics(raw)
         for pat in _HA_INTENT_PATTERNS:
             if pat.search(raw) or pat.search(folded):

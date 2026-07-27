@@ -698,7 +698,17 @@ def needs_search(messages: list[dict[str, Any]]) -> bool:
     last_text = ""
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            last_text = str(msg.get("content") or "").strip().lower()
+            # Chỉ lấy PHẦN CHỮ: tin nhắn kèm ảnh có content dạng danh sách, làm
+            # str() lên nó là kéo cả chuỗi base64 (ảnh camera HA ~1MB) vào rồi
+            # strip/lower/so khớp — đốt hàng giây CPU cho thứ không phải ý định.
+            _c = msg.get("content")
+            if isinstance(_c, list):
+                last_text = " ".join(
+                    str(p.get("text") or "") for p in _c
+                    if isinstance(p, dict) and p.get("type") == "text"
+                ).strip().lower()
+            else:
+                last_text = str(_c or "").strip().lower()
             break
 
     if not last_text:
