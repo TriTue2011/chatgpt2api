@@ -46,11 +46,34 @@ from services.agent import teacher_workspace as tw
 logger = logging.getLogger(__name__)
 
 BASE = "https://taphuan.nxbgd.vn"
-CATALOG_URL = BASE + "/tap-huan?grade={grade}"
+CATALOG_URL = BASE + "/tap-huan?grade={grade}&subjects={subjects}"
+
+# Mã môn theo lớp — do người vận hành chốt, KHÔNG tự suy. Kho có cả Âm nhạc,
+# Mĩ thuật, Hoạt động trải nghiệm, Giáo dục thể chất…; lọc sẵn ở tầng URL để
+# không tải rồi mới bỏ. Đo thật với danh sách này:
+#   lớp 4  → Toán, Tiếng Việt, Tiếng Anh, Lịch sử và Địa lí
+#   lớp 10 → Toán, Ngữ văn, Lịch sử, Địa lí, Vật lí (+ chuyên đề học tập)
+_GRADE_SUBJECT_IDS: dict[int, str] = {
+    1: "1,3,2",
+    2: "1,3,2",
+    3: "1,3,2",
+    4: "1,3,22,2",
+    5: "1,3,22,2",
+    6: "21,3,22,5,2",
+    7: "21,3,22,5,2",
+    8: "21,3,22,5,6,7,2",
+    9: "21,3,22,5,6,7,2",
+    10: "21,3,8,9,5,6,7,2",
+    11: "21,3,8,9,5,6,7,2",
+    12: "21,3,8,9,5,6,7,2",
+}
 # Các bộ sách còn lại nằm ở trang riêng. Đo 2026-07-27 với lớp 4: id_book 2 và
 # 3 mỗi bộ 12 quyển, id_book 1/4/5 rỗng — nhưng KHÔNG hardcode 2,3 vì bộ có
 # thể thêm/bớt theo năm; cứ quét dải rồi bỏ trang rỗng.
-BOOK_SET_URL = BASE + "/tap-huan/cac-bo-sach-khac?grade={grade}&id_book={id_book}"
+BOOK_SET_URL = (
+    BASE + "/tap-huan/cac-bo-sach-khac?grade={grade}&id_book={id_book}"
+           "&subjects={subjects}"
+)
 BOOK_SET_IDS: tuple[int, ...] = (1, 2, 3, 4, 5)
 ALLOW_HOSTS = {"taphuan.nxbgd.vn", "cdn3.olm.vn", "cdn.olm.vn", "cdn2.olm.vn"}
 
@@ -97,8 +120,14 @@ def _get(url: str, *, timeout: float = 30) -> str:
 
 
 def subjects_of_slug(slug: str) -> tuple[str, ...]:
-    """Môn (có thể NHIỀU, vd Lịch sử và Địa lí) suy từ slug. Rỗng = không nhận."""
+    """Môn (có thể NHIỀU, vd Lịch sử và Địa lí) suy từ slug. Rỗng = không nhận.
+
+    Xử lý được cả sách chuyên đề THPT (``chuyen-de-hoc-tap-toan-10``) — bóc
+    tiền tố rồi khớp theo môn gốc, nếu không sẽ rơi hết vào "không nhận".
+    """
     s = (slug or "").lower()
+    if s.startswith("chuyen-de-hoc-tap-"):
+        s = s[len("chuyen-de-hoc-tap-"):]
     for prefix, subs in _SLUG_SUBJECT:
         if s.startswith(prefix):
             return subs
@@ -127,10 +156,16 @@ def list_books(grade: int, *, all_sets: bool = True) -> list[dict[str, Any]]:
     if g not in tw.GRADES:
         return []
 
-    pages: list[tuple[str, str]] = [("", CATALOG_URL.format(grade=g))]
+    subs = _GRADE_SUBJECT_IDS.get(g, "")
+    pages: list[tuple[str, str]] = [
+        ("", CATALOG_URL.format(grade=g, subjects=subs)),
+    ]
     if all_sets:
+        # Bộ sách khác lọc CÙNG danh sách môn — không để bộ phụ kéo về những
+        # môn mà bộ chính đã cố tình loại.
         pages += [
-            (str(i), BOOK_SET_URL.format(grade=g, id_book=i)) for i in BOOK_SET_IDS
+            (str(i), BOOK_SET_URL.format(grade=g, id_book=i, subjects=subs))
+            for i in BOOK_SET_IDS
         ]
 
     out: list[dict[str, Any]] = []
@@ -263,8 +298,12 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
 
     max_pages = int(getattr(p2w, "TEACHER_SGK_MAX_PAGES", 0) or 0)
     raw = extract_markdown(pdf_path, max_pages=max_pages)
-    if not (raw or "").strip():
-        return {"ok": False, "error": "OCR không ra chữ (ảnh mờ hoặc thiếu vision)"}
+    # Chặn nạp rác: gateway hay trả "Gemini error …" như content trang.
+    # Helper dùng chung với cache OCR (services.pdf_to_word.looks_like_ocr_failure).
+    if p2w.looks_like_ocr_failure(raw):
+        return {"ok": False,
+                "error": "OCR hỏng — kết quả là thông báo lỗi của model, "
+                         "KHÔNG nạp để tránh nhồi rác vào kho SGK"}
     md = tw._md_from_pdf_text(raw, title=title)
     rag = tw.push_sgk_to_rag(
         md, title=title, grade=grade, subject=subject, source=source_name,
@@ -310,11 +349,34 @@ def import_book(grade: int, subject: str, *, max_pages: int = 0,
                 "books": plan}
 
     done: list[dict[str, Any]] = []
+    probed = False
     for item in plan:
         imgs = page_images(item["reader"])
         if not imgs:
             done.append({**item, "ok": False, "error": "không lấy được ảnh trang"})
             continue
+
+        # Thử OCR ĐÚNG 1 TRANG trước khi tải cả quyển. Một quyển là ~134 lượt
+        # gọi vision và ~110 MB tải về — hỏng ngay từ trang đầu thì dừng luôn,
+        # đỡ đốt cả hai. Chỉ thử một lần cho cả lần chạy.
+        if not probed:
+            probed = True
+            with tempfile.TemporaryDirectory() as ptd:
+                probe_pdf = str(Path(ptd) / "probe.pdf")
+                pb = build_pdf(imgs, probe_pdf, max_pages=1)
+                if not pb.get("ok"):
+                    return {"ok": False, "grade": g, "subject": sub,
+                            "status": "failed",
+                            "error": f"không dựng nổi trang thử: {pb.get('error')}"}
+                from services import pdf_to_word as p2w
+                from services.pdf_intent import extract_markdown
+                probe_txt = extract_markdown(probe_pdf, max_pages=1)
+            if p2w.looks_like_ocr_failure(probe_txt):
+                return {"ok": False, "grade": g, "subject": sub,
+                        "status": "failed",
+                        "error": "OCR vision đang hỏng (trang thử không ra chữ) "
+                                 "— dừng trước khi tải cả quyển",
+                        "probe_sample": (probe_txt or "")[:200]}
         label = f"SGK lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)} · {item['volume']}".strip(" ·")
         with tempfile.TemporaryDirectory() as td:
             pdf_path = str(Path(td) / f"{item['slug']}.pdf")

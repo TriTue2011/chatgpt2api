@@ -34,6 +34,21 @@ services:
     container_name: c2a
     restart: unless-stopped
 
+    # Trần file descriptor. Mặc định của Docker là 1024 — ĐO THẬT ngày
+    # 2026-07-27: tiến trình uvicorn giữ 1021 fd (510 socket + 497 eventfd,
+    # dấu vân tay của handle libcurl/curl_cffi chưa đóng) tức dính sát trần.
+    # Hậu quả không chỉ là "Too many open files": hết fd thì curl không mở nổi
+    # socket phân giải tên, báo thành "Could not resolve host" / "getaddrinfo()
+    # thread failed to start" → OCR vision, Gemini và mọi tìm kiếm cùng chết
+    # trong khi DNS của máy vẫn tốt. Hard limit sẵn có là 524288 nên nâng soft
+    # limit không tốn gì.
+    # LƯU Ý: đây là thuốc giảm đau, KHÔNG phải thuốc chữa — chỗ rò handle vẫn
+    # còn, chỉ là lâu hơn mới chạm trần.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
     ports:
       - "3030:80"        # API + web UI (+ same-origin /api/captcha proxy)
       - "6080:6080"      # noVNC — LAN OK nếu có VNC_PASSWORD; đừng mở WAN
