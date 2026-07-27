@@ -190,11 +190,17 @@ class MultiOnboardReq(BaseModel):
     password: str
     # Same as AutoLoginReq.prefer_method but applied across all services.
     prefer_method: str = "auth"
-    # Subset of {"gemini_web", "flow", "chatgpt"}. Order matters — we
-    # trigger them sequentially after the shared Google login succeeds.
-    # chatgpt rides the shared Google session (reuse_session=True) so it
-    # never re-nukes the profile or asks for a second 2FA.
+    # Subset of {"gemini_web", "flow", "chatgpt", "claude", "codex"}. Order
+    # matters — we trigger them sequentially after the shared Google login
+    # succeeds. chatgpt/claude/codex ride the shared Google session so they
+    # never re-nuke the profile or ask for a second 2FA.
     services: list[str] = Field(default_factory=lambda: ["gemini_web", "flow", "chatgpt"])
+    # Chỉ cần khi services có "codex": URL OAuth (kèm state+PKCE) lấy từ
+    # GET /api/oauth/codex/start của chatgpt2api. Không có thì bước codex báo lỗi
+    # rõ ràng thay vì im lặng bỏ qua.
+    codex_auth_url: str = ""
+    # False = hiện cửa sổ trình duyệt trên VNC để người dùng theo dõi.
+    headless: bool = True
 
 
 class TwoFactorCodeReq(BaseModel):
@@ -735,6 +741,39 @@ async def _run_multi(req: MultiOnboardReq) -> None:
                             break
                     else:
                         state["results"][svc] = {"state": "failed", "error": "timeout"}
+                    continue
+
+                elif svc == "codex":
+                    # Codex CƯỠI phiên Google dùng chung vừa đăng nhập ở trên:
+                    # mở auth_url (OAuth có state+PKCE do chatgpt2api sinh) →
+                    # bấm "Tiếp tục với Google" → trang đồng ý → nhận
+                    # localhost:1455/auth/callback?code=… Listener 1455 của
+                    # gateway tự đổi mã lấy token và nạp vào pool.
+                    # PHẢI đứng SAU bước Google: hồ sơ chưa có phiên Google thì
+                    # OAuth dừng ở trang nhập email ("no callback; stuck at
+                    # accounts.google.com/…/signin/identifier").
+                    from .codex_google_onboard import (
+                        CodexGoogleOnboardReq,
+                        run_codex_google_onboard,
+                    )
+                    auth_url = str(getattr(req, "codex_auth_url", "") or "").strip()
+                    if not auth_url:
+                        state["results"][svc] = {
+                            "state": "failed",
+                            "error": "thiếu codex_auth_url (lấy từ GET /api/oauth/codex/start)",
+                        }
+                        continue
+                    res = await run_codex_google_onboard(CodexGoogleOnboardReq(
+                        profile=req.profile,
+                        auth_url=auth_url,
+                        email=req.email,
+                        headless=bool(getattr(req, "headless", True)),
+                    ))
+                    state["results"][svc] = {
+                        "state": res.get("state") or "failed",
+                        "redirect_url": res.get("redirect_url"),
+                        "error": res.get("error"),
+                    }
                     continue
 
                 else:
