@@ -159,6 +159,37 @@ def create_router() -> APIRouter:
         return {"ok": True, "enabled": sched.is_enabled(),
                 "interval_days": sched.interval_seconds() / 86400.0}
 
+    @router.get("/api/teacher/taphuan/books")
+    async def teacher_taphuan_books(
+        grade: int = Query(...),
+        authorization: str | None = Header(default=None),
+    ):
+        """Danh mục SGK 1 lớp trên kho chính thức taphuan.nxbgd.vn."""
+        require_admin(authorization)
+        from services.agent import sgk_taphuan as tp
+        books = tp.list_books(int(grade))
+        return {"grade": int(grade), "count": len(books), "books": books}
+
+    @router.post("/api/teacher/taphuan/import")
+    async def teacher_taphuan_import(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Nạp SGK 1 lớp–môn thẳng từ taphuan (ảnh từng trang → PDF → RAG).
+
+        ``dry_run=true`` chỉ liệt kê sẽ nạp gì. ``max_pages`` giới hạn số trang
+        mỗi quyển — nên dùng khi chạy thử, vì mỗi trang là một lượt OCR vision.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_taphuan as tp
+        return tp.import_book(
+            int(payload.get("grade") or 0),
+            str(payload.get("subject") or ""),
+            max_pages=int(payload.get("max_pages") or 0),
+            mode=str(payload.get("mode") or "append"),
+            dry_run=bool(payload.get("dry_run")),
+        )
+
     @router.get("/api/teacher/search")
     async def teacher_search(
         q: str = Query(default=""),
