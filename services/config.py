@@ -1180,3 +1180,30 @@ def save_backup_state(state: dict[str, object]) -> dict[str, object]:
 
 config = ConfigStore(CONFIG_FILE)
 
+
+
+def hub_base_url() -> str:
+    """Base URL của vn-mcp-hub NỘI BỘ (dùng cho ``/api/rag/curate/...``).
+
+    Ưu tiên key ``mcp_hub_url``; không có thì suy ra từ danh sách MCP server.
+    Chỉ nhận host NỘI BỘ và bỏ qua server đã tắt — bản cũ lấy server đầu tiên
+    có ``/mcp`` bất kể là gì, mà đứng đầu danh sách lại là một MCP công khai
+    (Exa), nên mọi lượt curate/nạp SGK bắn ra Internet rồi ăn 404 im lặng.
+    """
+    try:
+        hub = config.data.get("mcp_hub_url")
+        if hub:
+            return str(hub).rstrip("/")
+        from urllib.parse import urlparse
+        for item in (config.data.get("mcp_servers") or {}).values():
+            if isinstance(item, dict) and not item.get("enabled", True):
+                continue
+            url = item.get("url") if isinstance(item, dict) else item
+            if not url or "/mcp" not in str(url):
+                continue
+            parsed = urlparse(str(url))
+            if (parsed.hostname or "").lower() in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
+                return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        pass
+    return "http://127.0.0.1:8005"

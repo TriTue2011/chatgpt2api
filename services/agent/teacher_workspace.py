@@ -764,21 +764,20 @@ def push_sgk_to_rag(
 
 
 def config_hub_url() -> str:
-    """Resolve vn-mcp-hub base URL (same heuristic as search_service.curate)."""
+    """Resolve vn-mcp-hub base URL (same heuristic as search_service.curate).
+
+    Hub là dịch vụ NỘI BỘ (``/api/rag/curate/...``). Bản cũ lấy MCP server ĐẦU
+    TIÊN có ``/mcp`` trong URL, không xét enabled và không phân biệt nội bộ hay
+    bên ngoài — mà đứng đầu danh sách lại là một MCP công khai (Exa). Hậu quả:
+    mọi lượt đẩy SGK vào RAG bắn sang ``https://mcp.exa.ai/api/rag/curate/...``
+    và ăn 404 im lặng, nên sách nạp xong vẫn không tra được. Chỉ nhận host nội
+    bộ, và bỏ qua server đã tắt.
+    """
     try:
-        from services.config import config
-        hub_url = config.data.get("mcp_hub_url")
-        if hub_url:
-            return str(hub_url).rstrip("/")
-        from urllib.parse import urlparse
-        for _v in (config.data.get("mcp_servers") or {}).values():
-            _u = _v.get("url") if isinstance(_v, dict) else _v
-            if _u and "/mcp" in str(_u):
-                _p = urlparse(str(_u))
-                return f"{_p.scheme}://{_p.netloc}"
+        from services.config import hub_base_url
+        return hub_base_url()
     except Exception:
-        pass
-    return "http://127.0.0.1:8005"
+        return "http://127.0.0.1:8005"
 
 
 def import_sgk_bytes(

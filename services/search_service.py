@@ -1203,20 +1203,11 @@ class SearchService:
         """Store a Q&A pair to vn-mcp-hub RAG. Best-effort, non-blocking."""
         if not response or len(response) < 50:
             return False
-        hub_url = config.data.get("mcp_hub_url")
-        if not hub_url:
-            # mcp_hub_url is usually unset -> derive the hub origin from any
-            # configured MCP server URL (…/<server>/mcp) so curate POSTs reach
-            # the real host instead of the unresolvable "vn-mcp-hub" default.
-            from urllib.parse import urlparse
-            for _v in (config.data.get("mcp_servers") or {}).values():
-                _u = _v.get("url") if isinstance(_v, dict) else _v
-                if _u and "/mcp" in str(_u):
-                    _p = urlparse(str(_u))
-                    hub_url = f"{_p.scheme}://{_p.netloc}"
-                    break
-            hub_url = hub_url or "http://127.0.0.1:8005"
-        hub_url = hub_url.rstrip("/")
+        # Hub là dịch vụ NỘI BỘ. Xem services.config.hub_base_url — chốt chỉ
+        # nhận host nội bộ, vì bản cũ suy ra từ MCP server đầu tiên và bắn
+        # curate sang MCP công khai (Exa) rồi ăn 404 im lặng.
+        from services.config import hub_base_url
+        hub_url = hub_base_url()
         if not collection:
             collection = "kb_general"
         try:
