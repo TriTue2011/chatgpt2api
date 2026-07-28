@@ -269,21 +269,28 @@ def create_router() -> APIRouter:
     ):
         """Chạy NỀN việc nạp toàn bộ SGK. Trả ngay, theo dõi ở GET /bulk.
 
-        Body: {grades?: [1,2], all_sets?: true, keep_pdf?: false,
-               max_pages?: 0, skip_done?: true, dry_run?: false}
+        Body: {grades?: [1,2], all_sets?: true, kinds?: ["sgk","sgv","vbt"],
+               keep_pdf?: false, max_pages?: 0, skip_done?: true,
+               dry_run?: false}
 
         `keep_pdf` mặc định FALSE ở đây (khác mặc định của hàm): nạp cả hai bộ
         sách là hàng chục GB PDF chỉ để audit, mà tra cứu đi qua .md + RAG.
         `skip_done` mặc định TRUE nên chạy lại là đi tiếp, không nạp lại quyển đã
         xong.
+        `kinds` mặc định chỉ `sgk`. Thêm `sgv` (sách giáo viên — gợi ý soạn giảng)
+        và `vbt` (vở bài tập — mẫu ra đề) sẽ nhân số tài liệu lên khoảng ba lần,
+        mỗi loại vào một collection riêng.
         """
         require_admin(authorization)
         from services.agent import sgk_bulk as sb
         b = payload or {}
         gs = b.get("grades")
+        kinds = b.get("kinds")
         return sb.start(
             grades=[int(x) for x in gs] if isinstance(gs, list) and gs else None,
             all_sets=bool(b.get("all_sets", True)),
+            kinds=([str(x) for x in kinds] if isinstance(kinds, list) and kinds
+                   else sb.DEFAULT_KINDS),
             keep_pdf=bool(b.get("keep_pdf", False)),
             max_pages=int(b.get("max_pages") or 0),
             skip_done=bool(b.get("skip_done", True)),
