@@ -15,15 +15,14 @@ Bổ sung "bước tìm nguồn" còn thiếu của pipeline SGK đã có sẵn
 
 Tách 2 kho RAG rõ ràng:
   - SGK chính thức  → collection ``kb_giao_duc`` (dùng nguyên
-    ``import_sgk_pdf`` cho 3 môn gốc toán/văn/anh — ghi cả file
-    ``lop{N}/{mon}.md`` để tra cứu offline lẫn RAG).
+    ``import_sgk_pdf`` — ghi cả file ``lop{N}/{mon}.md`` để tra cứu offline
+    lẫn RAG).
   - Sách nâng cao / mở rộng kiến thức → collection ``kb_nangcao`` — KHÔNG bao
     giờ ghi đè vào file ``.md`` của SGK gốc, để tra cứu offline
     (``search_sgk``) không bị lẫn nội dung ngoài chương trình.
-  - Môn MỚI (lý/hoá/sinh/sử/địa/gdcd/tin — ngoài 3 môn gốc mà
-    ``teacher_workspace`` đang quản lý workspace) cũng nạp thẳng RAG theo
-    cách tương tự sách nâng cao (không đụng vào cấu trúc workspace 36 mục cũ
-    của teacher_workspace, tránh phá vỡ hành vi/test hiện có).
+  - Môn nào có trong ``teacher_workspace.SUBJECTS`` thì đi đúng pipeline gốc
+    (ghi cả ``lop{N}/{mon}.md`` lẫn RAG); môn không nhận ra thì nạp thẳng RAG
+    như sách nâng cao, KHÔNG đụng file .md của SGK.
 
 An toàn — nói thật, không đoán bừa:
   - Đây là PDF ĐĂNG CÔNG KHAI tìm được trên mạng — KHÔNG đảm bảo đúng bản/năm
@@ -50,28 +49,25 @@ from services.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-# ── Danh mục môn học (mở rộng ngoài toan/van/anh của teacher_workspace) ─────
-# LƯU Ý: KHÔNG ghi đè teacher_workspace.SUBJECTS/SUBJECT_LABEL — file đó có
-# test cố định 36 workspace (12 lớp × 3 môn gốc: test_workspaces_thirty_six).
-# Danh sách mở rộng sống RIÊNG ở đây; 3 môn gốc vẫn dùng đúng pipeline gốc.
-# 2026-07-28: teacher_workspace đã mang đủ 10 môn, nên ở đây CHỈ soi chiếu lại
-# chứ không còn danh sách thứ hai. Trước có hai bảng song song và đó chính là lý
-# do thêm môn ở một chỗ mà chỗ kia vẫn không nhận.
+# ── Danh mục môn ────────────────────────────────────────────────────────────
+# CHỈ soi chiếu lại teacher_workspace, KHÔNG giữ danh sách thứ hai. Trước đây có
+# hai bảng song song và đó chính là lý do thêm môn ở một chỗ mà chỗ kia vẫn
+# không nhận.
 SUBJECT_LABEL: dict[str, str] = dict(tw.SUBJECT_LABEL)
 SUBJECTS: tuple[str, ...] = tuple(tw.SUBJECTS)
 
-# Từ khoá tiếng Việt dùng để dựng câu tìm kiếm (khác SUBJECT_LABEL vì label có
-# dấu "/" — vd "Ngữ văn / TV" — không hợp để nhét thẳng vào câu query).
+# Từ khoá tiếng Việt dùng để dựng câu tìm kiếm — chữ thường không dấu hoa, đọc
+# tự nhiên trong câu query (SUBJECT_LABEL là nhãn hiển thị, viết hoa đầu).
 _SUBJECT_QUERY: dict[str, str] = {
     "toan": "toán", "tviet": "tiếng việt", "van": "ngữ văn", "anh": "tiếng anh",
     "sudia": "lịch sử và địa lí",
-    "ly": "vật lí", "hoa": "hoá học", "sinh": "sinh học", "khtn": "khoa học tự nhiên",
-    "su": "lịch sử", "dia": "địa lí", "gdcd": "giáo dục công dân",
-    "ktpl": "giáo dục kinh tế và pháp luật", "tin": "tin học",
+    "su": "lịch sử", "dia": "địa lí",
+    "ly": "vật lí", "hoa": "hoá học", "sinh": "sinh học",
 }
 
-# Alias nhận diện môn mới (7 môn ngoài toan/van/anh — 3 môn gốc đã có alias
-# riêng trong teacher_workspace._normalize_subject, tái dùng chứ không lặp).
+# Lưới đỡ cho bí danh chỉ dùng ở tầng này (tên tiếng Anh, biến thể dấu). Bảng
+# chính là teacher_workspace.SUBJECT_ALIASES. Mọi giá trị ở đây PHẢI là mã có
+# trong SUBJECTS — normalize_subject bên dưới lọc lại lần nữa cho chắc.
 _EXTRA_ALIASES: dict[str, str] = {
     "ly": "ly", "lý": "ly", "vat_ly": "ly", "vat ly": "ly", "vật lý": "ly",
     "physics": "ly",
@@ -83,10 +79,6 @@ _EXTRA_ALIASES: dict[str, str] = {
     "history": "su",
     "dia": "dia", "địa": "dia", "dia_ly": "dia", "dia ly": "dia",
     "địa lý": "dia", "dia li": "dia", "địa lí": "dia", "geography": "dia",
-    "gdcd": "gdcd", "giao_duc_cong_dan": "gdcd", "giao duc cong dan": "gdcd",
-    "giáo dục công dân": "gdcd", "cong dan": "gdcd", "công dân": "gdcd",
-    "tin": "tin", "tin_hoc": "tin", "tin hoc": "tin", "tin học": "tin",
-    "informatics": "tin", "computer science": "tin", "cs": "tin",
 }
 
 # 3 bộ SGK hiện hành (chương trình GDPT 2018) — dùng để dựng query + đoán bộ
@@ -155,7 +147,11 @@ def normalize_subject(subject: str) -> str | None:
     got = tw._normalize_subject(s)
     if got:
         return got
-    return _EXTRA_ALIASES.get(s) or (s if s in SUBJECTS else None)
+    # Lọc lại theo SUBJECTS: bảng lưới đỡ từng còn bí danh trỏ vào mã đã bỏ
+    # khỏi danh mục (gdcd, tin) và hàm này trả về mã không tồn tại — chỗ gọi
+    # tưởng nhận diện thành công rồi ghi ra file lop{N}/gdcd.md không ai đọc.
+    cand = _EXTRA_ALIASES.get(s) or s
+    return cand if cand in SUBJECTS else None
 
 
 def _fold(text: str) -> str:

@@ -48,24 +48,24 @@ logger = logging.getLogger(__name__)
 BASE = "https://taphuan.nxbgd.vn"
 CATALOG_URL = BASE + "/tap-huan?grade={grade}&subjects={subjects}"
 
-# Mã môn theo lớp — do người vận hành chốt, KHÔNG tự suy. Kho có cả Âm nhạc,
-# Mĩ thuật, Hoạt động trải nghiệm, Giáo dục thể chất…; lọc sẵn ở tầng URL để
-# không tải rồi mới bỏ. Đo thật với danh sách này:
-#   lớp 4  → Toán, Tiếng Việt, Tiếng Anh, Lịch sử và Địa lí
-#   lớp 10 → Toán, Ngữ văn, Lịch sử, Địa lí, Vật lí (+ chuyên đề học tập)
-_GRADE_SUBJECT_IDS: dict[int, str] = {
-    1: "1,3,2",
-    2: "1,3,2",
-    3: "1,3,2",
-    4: "1,3,22,2",
-    5: "1,3,22,2",
-    6: "21,3,22,5,2",
-    7: "21,3,22,5,2",
-    8: "21,3,22,5,6,7,2",
-    9: "21,3,22,5,6,7,2",
-    10: "21,3,8,9,5,6,7,2",
-    11: "21,3,8,9,5,6,7,2",
-    12: "21,3,8,9,5,6,7,2",
+# Mã môn của kho, đo thật 2026-07-28 bằng cách hỏi riêng từng mã ở lớp 10:
+#   1=Tiếng Việt  2=Tiếng Anh  3=Toán  5=Vật lí  6=Hoá học  7=Sinh học
+#   8=Lịch sử  9=Địa lí  21=Ngữ văn  22=Lịch sử và Địa lí
+# Lọc sẵn ở tầng URL để không tải rồi mới bỏ (kho còn Âm nhạc, Mĩ thuật, Hoạt
+# động trải nghiệm, Giáo dục thể chất…).
+_SUBJECT_IDS_BY_GRADE: dict[int, tuple[int, ...]] = {
+    1:  (1, 3, 2),
+    2:  (1, 3, 2),
+    3:  (1, 3, 2),
+    4:  (1, 3, 22, 2),
+    5:  (1, 3, 22, 2),
+    6:  (21, 3, 22, 2),
+    7:  (21, 3, 22, 2),
+    8:  (21, 3, 22, 2),
+    9:  (21, 3, 22, 2),
+    10: (21, 3, 8, 9, 5, 6, 7, 2),
+    11: (21, 3, 8, 9, 5, 6, 7, 2),
+    12: (21, 3, 8, 9, 5, 6, 7, 2),
 }
 # Các bộ sách còn lại nằm ở trang riêng. Đo 2026-07-27 với lớp 4: id_book 2 và
 # 3 mỗi bộ 12 quyển, id_book 1/4/5 rỗng — nhưng KHÔNG hardcode 2,3 vì bộ có
@@ -96,12 +96,14 @@ _SLUG_SUBJECT: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Giữ NGUYÊN tên sách, không gộp và không đổi:
     #   lớp 4–9 là MỘT quyển "Lịch sử và Địa lí" → mã `sudia` (trước tách thành
     #   ("su","dia") tức tự đổi một quyển thành hai môn);
-    #   "Khoa học tự nhiên" cũng là một quyển → `khtn`, không phải ly+hoa+sinh;
     #   "Tiếng Việt" (1–5) khác "Ngữ văn" (6–12) → hai mã khác nhau.
+    #
+    # Chỉ khai môn CÓ trong teacher_workspace.SUBJECTS. Khoa học tự nhiên, GDCD,
+    # KT&PL, Tin học đã bỏ khỏi danh mục (không cần) — cố ý KHÔNG khai ở đây:
+    # trỏ vào mã môn không tồn tại thì `_normalize_subject` trả None và import
+    # chết với lỗi khó hiểu. Không khai thì `list_books` trả `subjects=()`, tức
+    # "không nhận ra môn" — người gọi thấy rõ và tự quyết.
     ("lich-su-va-dia-li", ("sudia",)),
-    ("giao-duc-kinh-te-va-phap-luat", ("ktpl",)),
-    ("giao-duc-cong-dan", ("gdcd",)),
-    ("khoa-hoc-tu-nhien", ("khtn",)),
     ("tieng-viet", ("tviet",)),
     ("ngu-van", ("van",)),
     ("tieng-anh", ("anh",)),
@@ -113,7 +115,6 @@ _SLUG_SUBJECT: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("lich-su", ("su",)),
     ("dia-li", ("dia",)),
     ("dia-ly", ("dia",)),
-    ("tin-hoc", ("tin",)),
 )
 
 
@@ -164,16 +165,23 @@ def list_books(grade: int, *, all_sets: bool = False) -> list[dict[str, Any]]:
     if g not in tw.GRADES:
         return []
 
-    subs = _GRADE_SUBJECT_IDS.get(g, "")
+    # Hỏi RIÊNG TỪNG mã môn, không gộp tất cả vào một URL.
+    #
+    # Trang danh mục CẮT BỚT kết quả khi lọc nhiều mã một lượt: đo 2026-07-28,
+    # lớp 10 hỏi gộp `subjects=21,3,8,9,5,6,7,2` chỉ trả 12 quyển, hỏi riêng
+    # từng mã ra 17 — mất hẳn Tiếng Anh, Hoá học, Sinh học. Bản cũ hỏi gộp nên
+    # âm thầm bỏ sót sách, và ai đọc kết quả sẽ kết luận sai là kho không có.
+    sids = _SUBJECT_IDS_BY_GRADE.get(g, ())
     pages: list[tuple[str, str]] = [
-        ("", CATALOG_URL.format(grade=g, subjects=subs)),
+        ("", CATALOG_URL.format(grade=g, subjects=sid)) for sid in sids
     ]
     if all_sets:
         # Bộ sách khác lọc CÙNG danh sách môn — không để bộ phụ kéo về những
-        # môn mà bộ chính đã cố tình loại.
+        # môn mà bộ chính đã cố tình loại. Cũng hỏi từng mã một, cùng lý do.
         pages += [
-            (str(i), BOOK_SET_URL.format(grade=g, id_book=i, subjects=subs))
+            (str(i), BOOK_SET_URL.format(grade=g, id_book=i, subjects=sid))
             for i in BOOK_SET_IDS
+            for sid in sids
         ]
 
     out: list[dict[str, Any]] = []

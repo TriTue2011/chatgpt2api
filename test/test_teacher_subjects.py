@@ -98,17 +98,27 @@ class TestDanhMucMon:
             assert subs == ("toan", "tviet", "anh"), f"lớp {g}: {subs}"
 
     def test_tieng_anh_o_ca_12_lop(self, tw):
-        # Danh mục taphuan thiếu Tiếng Anh ở lớp 10 và 12 (lớp 11 lại có, cùng
-        # bộ mã môn) — đó là thiếu sót dữ liệu bên NXBGD, người vận hành đã xác
-        # nhận lớp 12 có Tiếng Anh. Chốt lại để không ai "sửa theo số đo".
+        # Hỏi GỘP nhiều mã môn một lượt thì trang danh mục cắt bớt kết quả và
+        # lớp 10/12 trông như không có Tiếng Anh (lớp 10: 12 quyển thay vì 17).
+        # Hỏi riêng `subjects=2` thì có tieng-anh-10-global-sucess. Chốt lại để
+        # không ai "sửa theo số đo" của truy vấn gộp.
         for g in tw.GRADES:
             assert "anh" in tw.subjects_for(g), f"lớp {g} thiếu Tiếng Anh"
 
-    def test_vat_li_chi_o_thpt(self, tw):
+    def test_ly_hoa_sinh_chi_o_thpt(self, tw):
+        """Lớp 6–9 gộp vào Khoa học tự nhiên nên KHÔNG có Lí/Hoá/Sinh riêng."""
         for g in range(1, 10):
-            assert "ly" not in tw.subjects_for(g), f"lớp {g} không có Vật lí riêng"
+            for sub in ("ly", "hoa", "sinh"):
+                assert sub not in tw.subjects_for(g), f"lớp {g} không có {sub} riêng"
         for g in (10, 11, 12):
-            assert "ly" in tw.subjects_for(g)
+            for sub in ("ly", "hoa", "sinh"):
+                assert sub in tw.subjects_for(g), f"lớp {g} thiếu {sub}"
+
+    def test_lop_thpt_du_8_mon(self, tw):
+        for g in (10, 11, 12):
+            assert set(tw.subjects_for(g)) == {
+                "toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh",
+            }, f"lớp {g}: {tw.subjects_for(g)}"
 
     def test_workspace_mot_cho_moi_lop_mon(self, tw):
         d = tw._default_workspaces()
@@ -132,11 +142,8 @@ class TestBiDanhMon:
         ("văn", "van"), ("ngữ văn", "van"), ("ngu_van", "van"),
         ("lịch sử và địa lí", "sudia"), ("su_dia", "sudia"),
         ("lịch sử", "su"), ("địa lí", "dia"), ("vật lí", "ly"),
-        ("khoa học tự nhiên", "khtn"),
-        # GDCD (6–9) và Giáo dục kinh tế & pháp luật (10–12) là hai sách khác
-        # tên: `ktpl` từng bị bảng bí danh trỏ ngược về `gdcd`.
-        ("kt&pl", "ktpl"), ("ktpl", "ktpl"), ("giáo dục công dân", "gdcd"),
-        ("hoá học", "hoa"), ("tin học", "tin"), ("Toán", "toan"),
+        ("hoá học", "hoa"), ("hóa", "hoa"), ("sinh học", "sinh"),
+        ("Toán", "toan"), ("history", "su"), ("physics", "ly"),
     ])
     def test_nhan_dung(self, tw, nhap, mong):
         assert tw._normalize_subject(nhap) == mong
@@ -145,6 +152,28 @@ class TestBiDanhMon:
         # Lớp 3 trong kho có Tiếng Hàn nhưng hệ thống chưa có mã ngoại ngữ 2.
         assert tw._normalize_subject("tieng han") is None
         assert tw._normalize_subject("") is None
+        # Các môn đã bỏ khỏi danh mục phải trả None, KHÔNG trả mã không tồn tại
+        # rồi để chỗ gọi ghi ra file lop{N}/gdcd.md không ai đọc.
+        for boi in ("gdcd", "tin", "khtn", "ktpl", "giáo dục công dân", "tin học"):
+            assert tw._normalize_subject(boi) is None, boi
+
+    def test_sgk_fetch_khong_tra_ma_ngoai_danh_muc(self, tw):
+        """`sgk_fetch.normalize_subject` có bảng lưới đỡ riêng — phải lọc lại."""
+        import importlib.util
+        import sys as _sys
+        spec = importlib.util.spec_from_file_location(
+            "_sf_probe", _ROOT / "services" / "agent" / "sgk_fetch.py",
+        )
+        # Chỉ cần bảng bí danh; nạp module thật sẽ kéo net_guard/search nên đọc
+        # trực tiếp giá trị đã lọc qua chính SUBJECTS của teacher_workspace.
+        assert spec is not None
+        src = (_ROOT / "services" / "agent" / "sgk_fetch.py").read_text(encoding="utf-8")
+        assert "cand if cand in SUBJECTS else None" in src, (
+            "normalize_subject không lọc theo SUBJECTS"
+        )
+        for boi in ("gdcd", "tin"):
+            assert f'"{boi}": "{boi}"' not in src, f"còn bí danh {boi} đã bỏ"
+        _sys.modules.pop("_sf_probe", None)
 
     def test_khong_co_khoa_trung_trong_bang_bi_danh(self):
         """Dict literal: khoá sau ghi đè khoá trước, IM LẶNG.

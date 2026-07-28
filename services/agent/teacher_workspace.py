@@ -1,9 +1,13 @@
-"""Workspace + KB SGK (Toán · Văn · Anh) — lớp 1–12 (tiểu học · THCS · THPT).
+"""Workspace + KB SGK — lớp 1–12 (tiểu học · THCS · THPT).
+
+Môn khai theo TỪNG LỚP (xem GRADE_SUBJECTS), không phải một danh sách phẳng
+dùng chung: lớp 1–5 học Tiếng Việt, lớp 6–12 học Ngữ văn; Hoá/Sinh/Vật lí chỉ
+có ở lớp 10–12.
 
 Layout (volume, seed 1 lần từ package)::
 
     data/agent/teacher/
-      sgk/lop{1..12}/{toan,van,anh}.md
+      sgk/lop{1..12}/{mã môn của lớp đó}.md
       workspaces.json
       memory/{workspace}/{student}.json
       imports/...
@@ -25,16 +29,16 @@ from services.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-# Danh mục môn. Mở rộng 2026-07-28 từ 3 môn (toan/van/anh) lên 10.
+# Danh mục môn — mở rộng 2026-07-28 từ 3 mã (toan/van/anh) lên 10.
 #
-# Vì sao mở: kho chính thức taphuan.nxbgd.vn (đo thật, 89 quyển / 12 lớp) trả
-# về 6 môn — van, toan, anh, su, dia, ly. Trước đây `sgk_taphuan._ingest_pdf`
-# thấy môn ngoài 3 môn gốc thì CHỈ nạp RAG, không ghi file .md, nên sách Lịch
-# sử / Địa lí / Vật lí nạp vào rồi mà mọi bảng đếm theo .md đều báo "chưa có".
-# hoa/sinh/gdcd/tin thêm sẵn vì sgk_fetch đã hỗ trợ và kho có thể bổ sung.
+# Vì sao mở: `sgk_taphuan._ingest_pdf` chỉ ghi file .md khi môn nằm trong
+# SUBJECTS; môn ngoài danh sách chỉ nạp RAG. Nên sách Lịch sử / Địa lí / Vật lí /
+# Hoá / Sinh nạp vào rồi mà mọi bảng đếm theo .md vẫn báo "chưa có sách".
 #
-# Thêm môn ⇒ số workspace mặc định = 12 × len(SUBJECTS). `_ensure_seeded` MERGE
-# key mới vào file cũ (không ghi đè) nên máy đang chạy chỉ được thêm, không mất.
+# Số workspace mặc định = tổng môn của TỪNG LỚP (xem GRADE_SUBJECTS), không phải
+# 12 × len(SUBJECTS). `_ensure_seeded` MERGE key mới vào file cũ nên máy đang
+# chạy chỉ được thêm, không mất gì.
+#
 # Mỗi mã môn = ĐÚNG MỘT tên sách, không gộp hai môn vào một mã và không đổi tên.
 # Trước đây `van` mang nhãn "Ngữ văn / TV" cho cả 12 lớp — sai bản chất: lớp 1–5
 # học **Tiếng Việt**, lớp 6–12 học **Ngữ văn**, hai sách khác nhau. Chính file
@@ -47,13 +51,12 @@ SUBJECTS = (
     "tviet",  # Tiếng Việt — lớp 1–5
     "van",    # Ngữ văn — lớp 6–12
     "anh",    # Tiếng Anh — cả 12 lớp
-    "sudia",  # Lịch sử và Địa lí — lớp 4–9 (một quyển)
+    "sudia",  # Lịch sử và Địa lí — lớp 4–9 (MỘT quyển)
     "su",     # Lịch sử — lớp 10–12 (quyển riêng)
     "dia",    # Địa lí — lớp 10–12 (quyển riêng)
     "ly",     # Vật lí — lớp 10–12
-    # Dưới đây kho taphuan không trả về quyển nào nên không lớp nào khai sẵn;
-    # giữ mã để nạp bằng URL PDF trực tiếp thì chọn được môn.
-    "hoa", "sinh", "khtn", "gdcd", "ktpl", "tin",
+    "hoa",    # Hoá học — lớp 10–12
+    "sinh",   # Sinh học — lớp 10–12
 )
 SUBJECT_LABEL = {
     "toan": "Toán",
@@ -66,35 +69,28 @@ SUBJECT_LABEL = {
     "ly": "Vật lí",
     "hoa": "Hoá học",
     "sinh": "Sinh học",
-    "khtn": "Khoa học tự nhiên",
-    "gdcd": "Giáo dục công dân",
-    "ktpl": "Giáo dục kinh tế và pháp luật",
-    "tin": "Tin học",
 }
 
 # Môn của TỪNG LỚP — khai rõ từng lớp một, KHÔNG gộp dải, để sửa lớp nào chỉ
 # đụng đúng dòng lớp đó.
 #
-# Đo thật 2026-07-28 từ chính 12 link danh mục lọc môn của kho chính thức
-# taphuan.nxbgd.vn — 89 quyển, tên sách lấy nguyên từ slug:
-#   tieng-viet-N → Tiếng Việt (1–5)        ngu-van-N → Ngữ văn (6–12)
-#   lich-su-va-dia-li-N → Lịch sử và Địa lí (4–9)
-#   lich-su-N / dia-li-N → hai quyển riêng (10–12)
-#   vat-li-N → Vật lí (10–12, kèm quyển chuyên đề học tập)
+# Đo thật 2026-07-28 trên kho chính thức taphuan.nxbgd.vn, hỏi RIÊNG TỪNG mã môn
+# (`?grade=N&subjects=<1 mã>`) rồi hợp lại. Mã môn của kho:
+#   1=Tiếng Việt  2=Tiếng Anh  3=Toán  5=Vật lí  6=Hoá học  7=Sinh học
+#   8=Lịch sử  9=Địa lí  21=Ngữ văn  22=Lịch sử và Địa lí
 #
-# Hai chỗ cố ý lệch với số đo, nói rõ để sau không ai tưởng là lỗi:
-#  1. `anh` giữ cho CẢ 12 lớp. Danh mục lớp 10 và 12 không trả về quyển Tiếng
-#     Anh nào trong khi lớp 11 (CÙNG bộ mã môn trong URL) lại có — nên đó là
-#     thiếu sót dữ liệu bên NXBGD, không phải lớp 10/12 bỏ Tiếng Anh. Người vận
-#     hành đã xác nhận lớp 12 có Tiếng Anh.
-#  2. Lớp 3 danh mục còn có Tiếng Hàn (2 quyển). Chưa đưa vào vì cả hệ thống
-#     chưa có mã môn cho ngoại ngữ thứ hai.
+# PHẢI hỏi từng mã: trang danh mục CẮT BỚT kết quả khi lọc nhiều mã một lượt.
+# Lớp 10 hỏi gộp `subjects=21,3,8,9,5,6,7,2` chỉ trả 12 quyển, hỏi riêng từng mã
+# ra 17 quyển — thiếu hẳn Tiếng Anh, Hoá học, Sinh học. Ai đọc số từ truy vấn
+# gộp sẽ kết luận sai là kho "không có" những môn đó.
 #
-# Hoá / Sinh / KHTN / GDCD / KT&PL / Tin KHÔNG có ở bất kỳ lớp nào trong danh
-# mục này, nên không lớp nào khai. Vẫn giữ trong SUBJECTS để nạp bằng URL PDF
-# trực tiếp thì chọn được môn.
+# Số quyển đo được: lớp 1–2: 5 · lớp 3: 8 · lớp 4–6: 7 · lớp 7–9: 6 ·
+# lớp 10–12: 17 (gồm cả các quyển "chuyên đề học tập").
+#
+# Lớp 3 còn 2 quyển Tiếng Hàn — chưa đưa vào vì hệ thống chưa có mã môn cho
+# ngoại ngữ thứ hai. Lớp 6–9 không có Hoá/Sinh riêng (chương trình gộp vào Khoa
+# học tự nhiên, mà kho không liệt kê quyển nào cho môn đó).
 GRADE_SUBJECTS: dict[int, tuple[str, ...]] = {
-    #     Toán   Tiếng Việt / Ngữ văn   Tiếng Anh   (các môn còn lại của lớp)
     1:  ("toan", "tviet", "anh"),
     2:  ("toan", "tviet", "anh"),
     3:  ("toan", "tviet", "anh"),
@@ -104,9 +100,9 @@ GRADE_SUBJECTS: dict[int, tuple[str, ...]] = {
     7:  ("toan", "van", "anh", "sudia"),
     8:  ("toan", "van", "anh", "sudia"),
     9:  ("toan", "van", "anh", "sudia"),
-    10: ("toan", "van", "anh", "su", "dia", "ly"),
-    11: ("toan", "van", "anh", "su", "dia", "ly"),
-    12: ("toan", "van", "anh", "su", "dia", "ly"),
+    10: ("toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh"),
+    11: ("toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh"),
+    12: ("toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh"),
 }
 
 
@@ -117,6 +113,8 @@ def subjects_for(grade: int) -> tuple[str, ...]:
     except (TypeError, ValueError):
         return SUBJECTS
     return GRADE_SUBJECTS.get(g, SUBJECTS)
+
+
 # Tiểu học 1–5 · THCS 6–9 · THPT 10–12
 GRADES = tuple(range(1, 13))
 
@@ -523,23 +521,12 @@ SUBJECT_ALIASES: dict[str, str] = {
     "history": "su",
     "dia": "dia", "địa": "dia", "dia_ly": "dia", "dia ly": "dia",
     "địa lý": "dia", "dia li": "dia", "địa lí": "dia", "geography": "dia",
-    "khtn": "khtn", "khoa_hoc_tu_nhien": "khtn",
-    "khoa hoc tu nhien": "khtn", "khoa học tự nhiên": "khtn",
-    "ktpl": "ktpl", "kt&pl": "ktpl",
-    "giao_duc_kinh_te_va_phap_luat": "ktpl",
-    "giáo dục kinh tế và pháp luật": "ktpl", "kinh tế và pháp luật": "ktpl",
     "ly": "ly", "lý": "ly", "lí": "ly", "vat_ly": "ly", "vat ly": "ly",
     "vật lý": "ly", "vat li": "ly", "vật lí": "ly", "physics": "ly",
     "hoa": "hoa", "hóa": "hoa", "hoá": "hoa", "hoa_hoc": "hoa",
     "hoa hoc": "hoa", "hóa học": "hoa", "hoá học": "hoa", "chemistry": "hoa",
     "sinh": "sinh", "sinh_hoc": "sinh", "sinh hoc": "sinh",
     "sinh học": "sinh", "biology": "sinh",
-    "gdcd": "gdcd", "giao_duc_cong_dan": "gdcd", "giao duc cong dan": "gdcd",
-    "giáo dục công dân": "gdcd", "cong dan": "gdcd", "công dân": "gdcd",
-    # (ktpl / kt&pl đã khai ở trên trỏ về mã `ktpl` riêng — GDCD lớp 6–9 và
-    # Giáo dục kinh tế & pháp luật lớp 10–12 là hai sách khác tên, không gộp.)
-    "tin": "tin", "tin_hoc": "tin", "tin hoc": "tin", "tin học": "tin",
-    "informatics": "tin", "computer science": "tin", "cs": "tin",
 }
 
 

@@ -7,7 +7,7 @@ verify: true
 ## Bước 1: Nhận diện + memory
 Từ yêu cầu ({{input}}), ghi:
 - Cấp / lớp (1–12) nếu đoán được
-- Môn (mã môn: toan, tviet, van, anh, sudia, su, dia, ly, hoa, sinh, khtn, gdcd, ktpl, tin)
+- Môn (mã: toan, tviet, van, anh, sudia, su, dia, ly, hoa, sinh)
 - Ý kiến thức (1 ý)
 - Workspace gợi ý (lopN-mon)
 - Mục tiêu "I can…" 1 câu
