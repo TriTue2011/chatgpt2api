@@ -251,9 +251,13 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services.agent import teacher_workspace as tw
 
+        # Threadpool: cả hai hàm đều ĐỌC FILE .md của SGK (không lọc lớp–môn thì
+        # quét cả 36 file, mỗi file có thể vài MB). Chạy thẳng trong `async def`
+        # là chặn event loop → bot câm, web treo. Cùng loại với /imports bên dưới.
         if not (q or "").strip():
-            return {"ok": True, "text": tw.list_sgk_index()}
-        text = tw.search_sgk(
+            return {"ok": True, "text": await run_in_threadpool(tw.list_sgk_index)}
+        text = await run_in_threadpool(
+            tw.search_sgk,
             q, grade=grade, subject=subject or None, workspace_id=workspace or "",
         )
         return {"ok": True, "text": text}
@@ -274,10 +278,21 @@ def create_router() -> APIRouter:
         limit: int = Query(default=40),
         authorization: str | None = Header(default=None),
     ):
-        """Danh sách PDF đã import + markdown SGK theo lớp/môn."""
+        """Danh sách PDF đã import + markdown SGK theo lớp/môn.
+
+        Không truyền grade/subject ⇒ trả markdown của CẢ 12 lớp × 3 môn.
+
+        PHẢI chạy threadpool: `list_imports` đọc TOÀN VĂN từng file .md để đếm
+        ký tự/số mục, và quét `rglob("*.pdf")` cả cây imports. Gọi không lọc là
+        đọc 36 file SGK (mỗi file có thể vài MB) — chạy thẳng trong `async def`
+        thì suốt lúc đó event loop bị chặn: bot câm, web treo, mọi kênh chết.
+        Bản cũ luôn được gọi kèm filter nên chỉ đọc 1 file, đủ nhanh để không
+        ai thấy — nhưng đó là may, không phải đúng.
+        """
         require_admin(authorization)
         from services.agent import teacher_workspace as tw
-        return tw.list_imports(
+        return await run_in_threadpool(
+            tw.list_imports,
             grade=grade or None,
             subject=subject or None,
             limit=limit,

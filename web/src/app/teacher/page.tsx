@@ -30,6 +30,9 @@ import {
   UserCircle,
   ChevronDown,
   ChevronUp,
+  Link2,
+  Download,
+  BookMarked,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -114,6 +117,23 @@ const SUBJECTS = [
   { id: "van", label: "Văn / TV" },
   { id: "anh", label: "Anh" },
 ];
+
+const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
+
+/** Hai khối tạm ẩn theo yêu cầu — CODE GIỮ NGUYÊN, đổi thành `true` là hiện lại.
+ *
+ *  Cố ý dùng cờ chứ không xoá: cả hai khối đều còn dùng được, chỉ là đang không
+ *  hợp lý ở vị trí hiện tại. Xoá đi rồi dựng lại từ git là tốn công vô ích.
+ *
+ *  - SHOW_GLOBAL_FILTERS: bộ lọc lớp–môn–học sinh ở đầu trang. Ẩn nó thì tab
+ *    Import phải tự có ô chọn lớp/môn (đã thêm) — nếu không sẽ không chọn được
+ *    nạp vào lớp nào.
+ *  - SHOW_AUTOFILL: panel "Tự tìm & nạp SGK toàn bộ 120 tổ hợp".
+ */
+// Khai kiểu `boolean` (không để TS suy ra literal `false`) để không bị cảnh báo
+// "điều kiện luôn sai" và để đổi thành true là chạy ngay, không phải sửa gì thêm.
+const SHOW_GLOBAL_FILTERS: boolean = false;
+const SHOW_AUTOFILL: boolean = false;
 
 /** Khối thu gọn được. Mở: y hệt trước, thêm nút ▲ góc phải. Thu: còn 1 dòng
  *  tiêu đề. Trạng thái nhớ theo máy (localStorage) nên vào lại vẫn giữ nguyên. */
@@ -414,6 +434,15 @@ export default function TeacherPage() {
   const [impList, setImpList] = useState<ImpPdfRow[]>([]);
   const [impMd, setImpMd] = useState<ImpMdRow | null>(null);
   const [impListLoading, setImpListLoading] = useState(false);
+  // Nạp bằng URL (taphuan chi-tiet / doc-sach, hoặc link .pdf trực tiếp)
+  const [impUrl, setImpUrl] = useState("");
+  const [impUrlBusy, setImpUrlBusy] = useState(false);
+  // Danh sách SGK TOÀN BỘ 12 lớp × 3 môn — tách khỏi impList/impMd vì hai cái
+  // đó chỉ là một tổ hợp lớp–môn đang chọn.
+  const [sgkAll, setSgkAll] = useState<{ imports: ImpPdfRow[]; markdown: ImpMdRow[] } | null>(null);
+  const [sgkLoading, setSgkLoading] = useState(false);
+  // Mặc định THU HẾT — bấm lớp nào mới mở lớp đó.
+  const [sgkOpen, setSgkOpen] = useState<number[]>([]);
 
   // placement + roadmap
   const [students, setStudents] = useState<any[]>([]);
@@ -539,11 +568,30 @@ export default function TeacherPage() {
     }
   }, [session, grade, subject]);
 
+  /** Toàn bộ SGK: KHÔNG truyền grade/subject nên backend trả markdown của cả
+   *  12 lớp × 3 môn (list_imports lặp GRADES × SUBJECTS khi không có filter).
+   *  Bản cũ luôn gọi kèm filter nên danh sách chỉ có đúng một tổ hợp — đó là
+   *  lý do "danh sách SGK chưa đầy đủ". */
+  const loadSgkAll = useCallback(async () => {
+    if (!session) return;
+    setSgkLoading(true);
+    try {
+      const r = await request.get("/api/teacher/imports", { params: { limit: 200 } });
+      const d = r.data as { imports?: ImpPdfRow[]; markdown?: ImpMdRow[] };
+      setSgkAll({ imports: d?.imports || [], markdown: d?.markdown || [] });
+    } catch {
+      setSgkAll(null);
+    } finally {
+      setSgkLoading(false);
+    }
+  }, [session]);
+
   useEffect(() => {
     if (tab === "import" && session) {
       void loadImports();
+      void loadSgkAll();
     }
-  }, [tab, session, loadImports]);
+  }, [tab, session, loadImports, loadSgkAll]);
 
   useEffect(() => {
     if (!session || subject !== "anh") {
@@ -966,7 +1014,8 @@ export default function TeacherPage() {
         </div>
       </div>
 
-      {/* Bộ lọc lớp–môn–HS */}
+      {/* Bộ lọc lớp–môn–HS — tạm ẩn (SHOW_GLOBAL_FILTERS), code giữ nguyên */}
+      {SHOW_GLOBAL_FILTERS && (
       <Fold id="filters" title="Bộ lọc: lớp – môn – học sinh">
         <CardContent className="pt-4 grid gap-2 sm:grid-cols-4">
           <div>
@@ -1040,6 +1089,7 @@ export default function TeacherPage() {
           )}
         </CardContent>
       </Fold>
+      )}
 
       {/* Lộ trình hiện tại của HS (gắn buổi học / bài tập) */}
       {focusInfo?.ok && (
@@ -1866,28 +1916,132 @@ export default function TeacherPage() {
       {tab === "import" && (
         <Fold id="import" title="Import PDF SGK">
           <CardContent className="pt-4 space-y-3">
-            <AutofillPanel />
+            {SHOW_AUTOFILL && <AutofillPanel />}
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <FileUp className="size-3.5 text-amber-600" />
-              Import PDF SGK theo chương / bài
+              Import SGK theo chương / bài
             </div>
             <p className="text-[10px] text-muted-foreground">
-              PDF được tách heading <code>## Chương/Bài/Unit…</code> để search từng mục.
-              Lớp <b>{grade}</b> · <b>{subject}</b> → workspace <code>{workspace}</code>
+              Nội dung được tách heading <code>## Chương/Bài/Unit…</code> để search từng mục.
+              Đích: lớp <b>{grade}</b> · <b>{subject}</b> → workspace <code>{workspace}</code>
             </p>
-            <div className="grid gap-2 sm:grid-cols-2">
+
+            {/* Chọn đích ngay tại đây — bộ lọc chung ở đầu trang đang tạm ẩn,
+                không có ô này thì không chọn được nạp vào lớp–môn nào. */}
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div>
+                <label className="text-[10px] text-muted-foreground">Lớp</label>
+                <select
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  value={grade}
+                  disabled={impBusy || impUrlBusy}
+                  onChange={(e) => setGrade(Number(e.target.value))}
+                >
+                  {GRADES.map((g) => (
+                    <option key={g} value={g}>Lớp {g}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Môn</label>
+                <select
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  value={subject}
+                  disabled={impBusy || impUrlBusy}
+                  onChange={(e) => setSubject(e.target.value)}
+                >
+                  {SUBJECTS.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="text-[10px] text-muted-foreground">Chế độ</label>
                 <select
                   className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
                   value={impMode}
                   onChange={(e) => setImpMode(e.target.value as "append" | "replace")}
-                  disabled={impBusy}
+                  disabled={impBusy || impUrlBusy}
                 >
                   <option value="append">Nối thêm (giữ seed)</option>
                   <option value="replace">Ghi đè file lớp–môn</option>
                 </select>
               </div>
+            </div>
+
+            {/* ── Nạp từ URL ────────────────────────────────────────────── */}
+            <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-3 space-y-2">
+              <div className="text-[11px] font-semibold flex items-center gap-1.5">
+                <Link2 className="size-3.5 text-sky-600" />
+                Nạp bằng đường dẫn
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  className="h-9 text-xs flex-1"
+                  placeholder="https://taphuan.nxbgd.vn/tap-huan/chi-tiet-sach/… hoặc link .pdf"
+                  value={impUrl}
+                  disabled={impUrlBusy || impBusy}
+                  onChange={(e) => setImpUrl(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  className="h-9 px-4 text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white"
+                  disabled={impUrlBusy || impBusy || !impUrl.trim()}
+                  onClick={async () => {
+                    const url = impUrl.trim();
+                    // Kiểm y như backend (`url.startswith(("http://","https://"))`)
+                    // để lỗi hiện ngay tại đây thay vì đi một vòng rồi mới báo.
+                    const low = url.toLowerCase();
+                    if (!low.startsWith("http://") && !low.startsWith("https://")) {
+                      toast.error("URL phải bắt đầu bằng http:// hoặc https://");
+                      return;
+                    }
+                    setImpUrlBusy(true);
+                    toast.message("Đang nạp từ URL — sách nhiều trang có thể mất hàng chục phút…");
+                    try {
+                      const r = await request.post(
+                        "/api/teacher/import-url",
+                        { url, grade, subject, mode: impMode },
+                        { timeout: 0 },
+                      );
+                      const d = r.data as {
+                        ok?: boolean; error?: string; chars?: number;
+                        chapters?: number; workspace?: string;
+                        rag?: { ok?: boolean; chunks_added?: number; error?: string };
+                      };
+                      if (d?.ok === false) throw new Error(d.error || "nạp URL thất bại");
+                      const ragMsg = d.rag?.ok
+                        ? ` · RAG +${d.rag.chunks_added ?? 0} chunks`
+                        : d.rag ? ` · RAG lỗi: ${d.rag.error || "thất bại"}` : "";
+                      toast.success(
+                        `Nạp URL OK · ${d.chars ?? "?"} ký tự · ${d.chapters ?? "?"} mục → ${d.workspace ?? workspace}${ragMsg}`,
+                      );
+                      setImpUrl("");
+                      void loadImports();
+                      void loadSgkAll();
+                    } catch (err: unknown) {
+                      const msg = err instanceof Error ? err.message : String(err || "lỗi");
+                      // Mất kết nối KHÔNG có nghĩa là nạp thất bại: server vẫn
+                      // chạy tiếp và ghi ra đĩa. Nói rõ để không nạp lại lần 2.
+                      toast.error(
+                        `Nạp URL lỗi: ${msg}. Nếu là timeout/mất mạng thì server có thể VẪN đang nạp — bấm «Làm mới» sau ít phút để kiểm tra trước khi thử lại.`,
+                      );
+                    } finally {
+                      setImpUrlBusy(false);
+                    }
+                  }}
+                >
+                  {impUrlBusy ? (
+                    <><LoaderCircle className="size-3.5 mr-1.5 animate-spin" />Đang nạp…</>
+                  ) : (
+                    <><Download className="size-3.5 mr-1.5" />Nạp từ URL</>
+                  )}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Nhận 3 dạng: link <b>chi tiết sách</b> taphuan (tự tìm link đọc), link <b>đọc sách</b> taphuan, hoặc link <b>.pdf</b> trực tiếp.
+                Sách taphuan phải tải ảnh từng trang nên rất lâu; nếu mở trang qua domain thì kết nối có thể bị cắt trước khi xong — lúc đó cứ để server chạy rồi bấm «Làm mới».
+              </p>
             </div>
 
             {/* Ẩn input native — dùng nút tự thiết kế cho dễ thấy */}
@@ -2124,6 +2278,159 @@ export default function TeacherPage() {
               <p className="text-[9px] text-muted-foreground">
                 Sau convert: thông báo admin + đẩy RAG collection{" "}
                 <code>kb_giao_duc</code> (chunks theo chương).
+              </p>
+            </div>
+
+            {/* ── Toàn bộ SGK trên server: gom theo lớp → môn, thu hết mặc định ── */}
+            <div className="rounded-md border border-border/60 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <BookMarked className="size-3.5 text-amber-600" />
+                  Toàn bộ SGK trên server
+                  {sgkAll ? (
+                    <span className="font-normal text-muted-foreground">
+                      · {sgkAll.markdown.filter((m) => m.exists).length}/{sgkAll.markdown.length} tổ hợp có sách
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px]"
+                    disabled={sgkLoading}
+                    onClick={() =>
+                      setSgkOpen((o) => (o.length ? [] : GRADES.slice()))
+                    }
+                  >
+                    {sgkOpen.length ? "Thu hết" : "Mở hết"}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[10px]"
+                    disabled={sgkLoading}
+                    onClick={() => void loadSgkAll()}
+                  >
+                    {sgkLoading ? (
+                      <LoaderCircle className="size-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="size-3" />
+                    )}
+                    <span className="ml-1">Làm mới</span>
+                  </Button>
+                </div>
+              </div>
+
+              {!sgkAll ? (
+                <p className="text-[10px] text-muted-foreground">
+                  {sgkLoading ? "Đang tải…" : "Chưa tải được danh sách."}
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {GRADES.map((g) => {
+                    const rows = sgkAll.markdown.filter((m) => m.grade === g);
+                    const have = rows.filter((m) => m.exists);
+                    const pdfs = sgkAll.imports.filter((p) => p.grade === g);
+                    const chars = have.reduce((a, m) => a + (m.chars || 0), 0);
+                    const open = sgkOpen.includes(g);
+                    return (
+                      <div key={g} className="rounded border border-border/40">
+                        <button
+                          type="button"
+                          className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/60 transition"
+                          onClick={() =>
+                            setSgkOpen((o) =>
+                              o.includes(g) ? o.filter((x) => x !== g) : [...o, g],
+                            )
+                          }
+                        >
+                          {open ? (
+                            <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                          )}
+                          <span className="text-[11px] font-medium">Lớp {g}</span>
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded-full ${
+                              have.length === rows.length && rows.length > 0
+                                ? "bg-emerald-500/15 text-emerald-600"
+                                : have.length > 0
+                                  ? "bg-amber-500/15 text-amber-600"
+                                  : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {have.length}/{rows.length} môn
+                          </span>
+                          <span className="text-[9px] text-muted-foreground ml-auto">
+                            {chars > 0 ? `${chars.toLocaleString("vi-VN")} ký tự` : "chưa có sách"}
+                            {pdfs.length ? ` · ${pdfs.length} PDF` : ""}
+                          </span>
+                        </button>
+
+                        {open && (
+                          <div className="border-t border-border/40 px-2 py-1.5 space-y-1.5">
+                            {rows.map((m) => (
+                              <div
+                                key={`${m.grade}-${m.subject}`}
+                                className="flex items-center gap-2 text-[10px]"
+                              >
+                                <span className={m.exists ? "text-emerald-600" : "text-muted-foreground"}>
+                                  {m.exists ? "✓" : "○"}
+                                </span>
+                                <span className="font-medium w-20 shrink-0">
+                                  {m.subject_label || m.subject}
+                                </span>
+                                <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                                  {m.exists
+                                    ? `${(m.chars || 0).toLocaleString("vi-VN")} ký tự · ${m.chapters || 0} mục${
+                                        m.mtime
+                                          ? ` · ${new Date(m.mtime * 1000).toLocaleDateString("vi-VN")}`
+                                          : ""
+                                      }`
+                                    : "chưa có file .md"}
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 text-[9px] px-1.5 shrink-0"
+                                  disabled={impBusy || impUrlBusy}
+                                  onClick={() => {
+                                    setGrade(m.grade);
+                                    setSubject(m.subject);
+                                    toast.message(`Đích nạp → lớp ${m.grade} · ${m.subject_label || m.subject}`);
+                                  }}
+                                >
+                                  Chọn làm đích
+                                </Button>
+                              </div>
+                            ))}
+                            {pdfs.length > 0 && (
+                              <ul className="pt-1 space-y-1 border-t border-border/30">
+                                {pdfs.map((p) => (
+                                  <li
+                                    key={`${p.name}-${p.mtime}`}
+                                    className="flex items-start gap-1.5 text-[9px] text-muted-foreground"
+                                  >
+                                    <FileText className="size-2.5 mt-0.5 shrink-0 text-amber-600" />
+                                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                                    <span className="shrink-0">{p.workspace || ""}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-[9px] text-muted-foreground">
+                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Hiện chỉ theo dõi 3 môn (Toán · Văn/TV · Anh) — môn khác nạp vào vẫn được nhưng chưa có ô đếm riêng.
               </p>
             </div>
           </CardContent>
