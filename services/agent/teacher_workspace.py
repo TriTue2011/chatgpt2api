@@ -626,12 +626,24 @@ def import_sgk_pdf(
     source_name: str = "",
     text: str = "",
     keep_pdf: bool = True,
+    drop_pdf_on_rag_ok: bool = False,
+    collection: str = "kb_giao_duc",
+    write_md: bool = True,
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
 
     keep_pdf=False: KHÔNG lưu bản PDF gốc vào ``imports/``. Dùng cho nạp hàng
-    loạt — 89 quyển SGK dựng từ ảnh trang là hàng chục GB, mà bản PDF chỉ để
-    audit chứ không phục vụ tra cứu (tra cứu đi qua .md và RAG).
+    loạt — SGK dựng từ ảnh trang là hàng chục GB, mà bản PDF chỉ để audit chứ
+    không phục vụ tra cứu (tra cứu đi qua .md và RAG).
+
+    drop_pdf_on_rag_ok=True: VẪN lưu PDF trước, nhưng xoá NGAY khi RAG báo ok.
+    Dùng cho nạp tay (upload/URL): nếu RAG hỏng thì còn bản PDF để nạp lại, mà
+    RAG xong rồi thì không giữ nữa. Khác keep_pdf=False ở chỗ đó — bỏ hẳn từ đầu
+    thì RAG lỗi là mất luôn thứ vừa tải về.
+
+    write_md/collection: bộ sách KHÁC ghi vào collection riêng và KHÔNG ghi .md.
+    Ghi chung một `lop{N}/{mon}.md` thì trong cùng lớp–môn có hai chương trình,
+    hai cách chia bài — `search_sgk` trả lời trộn mà không biết bộ nào.
 
     text: nội dung Markdown ĐÃ trích sẵn. Truyền vào thì bỏ qua bước trích ở
     đây — dành cho caller có đường trích rẻ hơn (sgk_taphuan gửi cả khối trang
@@ -701,24 +713,29 @@ def import_sgk_pdf(
     banner = f"\n\n<!-- import {stamp} from {src} mode={mode} -->\n\n"
 
     dest = _SGK / f"lop{g}" / f"{sub}.md"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    if write_md:
+        dest.parent.mkdir(parents=True, exist_ok=True)
 
     # Lưu bản PDF gốc (audit) — bỏ qua khi keep_pdf=False.
+    saved_pdf: Path | None = None
     if keep_pdf:
         imp_dir = _ROOT / "imports" / f"lop{g}" / sub
         imp_dir.mkdir(parents=True, exist_ok=True)
         try:
             safe = re.sub(r"[^\w.\-]+", "_", src)[:80]
-            shutil.copy2(path, imp_dir / f"{stamp.replace(':', '').replace(' ', '_')}_{safe}")
+            saved_pdf = imp_dir / f"{stamp.replace(':', '').replace(' ', '_')}_{safe}"
+            shutil.copy2(path, saved_pdf)
         except Exception as exc:
+            saved_pdf = None
             logger.warning("teacher import: copy pdf failed: %s", exc)
 
-    with _lock:
-        if mode == "replace" or not dest.exists():
-            dest.write_text(md, encoding="utf-8")
-        else:
-            old = dest.read_text(encoding="utf-8")
-            dest.write_text(old.rstrip() + banner + md, encoding="utf-8")
+    if write_md:
+        with _lock:
+            if mode == "replace" or not dest.exists():
+                dest.write_text(md, encoding="utf-8")
+            else:
+                old = dest.read_text(encoding="utf-8")
+                dest.write_text(old.rstrip() + banner + md, encoding="utf-8")
 
     n_chapters = len(re.findall(r"^##\s+", md, re.M))
     result = {
@@ -735,7 +752,9 @@ def import_sgk_pdf(
         "max_pages": max_pages,
         "md_preview": md[:400],
     }
-    # Best-effort: đẩy nội dung markdown vào RAG (kb_giao_duc) sau khi import
+    result["md_written"] = bool(write_md)
+    result["collection"] = collection
+    # Best-effort: đẩy nội dung markdown vào RAG sau khi import
     try:
         rag = push_sgk_to_rag(
             md,
@@ -743,11 +762,22 @@ def import_sgk_pdf(
             grade=g,
             subject=sub,
             source=src,
+            collection=collection,
         )
         result["rag"] = rag
     except Exception as exc:
         logger.warning("teacher import: rag push failed: %s", exc)
         result["rag"] = {"ok": False, "error": str(exc)[:200]}
+
+    # Xoá bản PDF vừa lưu KHI VÀ CHỈ KHI RAG đã vào được. RAG hỏng thì giữ lại
+    # để nạp lại, khỏi phải tải/OCR lần nữa.
+    if drop_pdf_on_rag_ok and saved_pdf and (result.get("rag") or {}).get("ok"):
+        try:
+            saved_pdf.unlink()
+            result["pdf_dropped"] = str(saved_pdf)
+            logger.info("teacher import: xoá PDF sau khi RAG ok: %s", saved_pdf.name)
+        except OSError as exc:
+            logger.warning("teacher import: xoá PDF lỗi: %s", exc)
     return result
 
 
@@ -964,6 +994,8 @@ def import_sgk_bytes(
     subject: str,
     mode: str = "append",
     title: str = "",
+    keep_pdf: bool = True,
+    drop_pdf_on_rag_ok: bool = False,
 ) -> dict[str, Any]:
     """Import từ bytes upload (ghi temp rồi gọi import_sgk_pdf)."""
     import tempfile
@@ -979,6 +1011,7 @@ def import_sgk_bytes(
         return import_sgk_pdf(
             tmp, grade=grade, subject=subject, mode=mode,
             title=title, source_name=filename or "upload.pdf",
+            keep_pdf=keep_pdf, drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
         )
     finally:
         try:

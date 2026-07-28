@@ -413,6 +413,7 @@ def fetch_and_ingest(
     dry_run: bool = False,
     force: bool = False,
     keep_pdf: bool = True,
+    drop_pdf_on_rag_ok: bool = False,
 ) -> dict[str, Any]:
     """Tải 1 URL (từ ``find_sources`` hoặc do người dùng tự cung cấp) rồi nạp
     vào SGK/RAG. KHÔNG BAO GIỜ tự đoán/bịa URL khác — ``url`` phải do caller
@@ -499,6 +500,7 @@ def fetch_and_ingest(
             result = tw.import_sgk_pdf(
                 tmp_path, grade=g, subject=sub, mode="append",
                 title=head, source_name=fname, keep_pdf=keep_pdf,
+                drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
             )
             rag_info = result.get("rag") or {}
         else:
@@ -515,7 +517,9 @@ def fetch_and_ingest(
             md = tw._md_from_pdf_text(raw, title=head)
             # PDF chỉ để audit; RAG đã tách khỏi nó từ lúc trích. Sách dựng từ
             # ảnh trang rất nặng nên keep_pdf=False là bỏ hẳn bước lưu.
-            if keep_pdf:
+            # Nhánh này tự đẩy RAG bên dưới nên chỉ lưu PDF khi được yêu cầu
+            # giữ HẲN; drop_pdf_on_rag_ok thì khỏi lưu rồi xoá cho tốn I/O.
+            if keep_pdf and not drop_pdf_on_rag_ok:
                 _archive_pdf(tmp_path, g, sub, kind, fname)
             rag_info = tw.push_sgk_to_rag(
                 md, title=head, grade=g, subject=sub, source=fname,

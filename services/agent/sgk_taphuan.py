@@ -457,9 +457,22 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     return body
 
 
+def COLLECTION_FOR_SET(book_set: str) -> str:
+    """Collection RAG theo BỘ SÁCH. Bộ chính → kb_giao_duc, bộ khác → kb_giao_duc_bo{N}.
+
+    Tách hẳn collection chứ không chỉ ghi tên bộ vào tiêu đề chunk: cùng một
+    lớp–môn mà hai bộ là hai chương trình khác nhau, để chung kho thì truy vấn
+    "bài 5 Toán 4" kéo về cả hai và bot trả lời trộn. Tách rồi thì mỗi kho một
+    chương trình, muốn tra bộ nào thì hỏi kho đó.
+    """
+    bs = str(book_set or "").strip()
+    return f"kb_giao_duc_bo{bs}" if bs else "kb_giao_duc"
+
+
 def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
                 source_name: str, mode: str = "append",
-                keep_pdf: bool = True) -> dict[str, Any]:
+                keep_pdf: bool = True, drop_pdf_on_rag_ok: bool = False,
+                book_set: str = "") -> dict[str, Any]:
     """Đẩy PDF vào đúng pipeline sẵn có — giống nhánh của sgk_fetch.
 
     3 môn gốc (toán/văn/anh) đi ``import_sgk_pdf`` để ghi cả file .md lẫn RAG;
@@ -477,7 +490,11 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
         return tw.import_sgk_pdf(
             pdf_path, grade=grade, subject=subject, mode=mode,
             title=title, source_name=source_name, text=raw,
-            keep_pdf=keep_pdf,
+            keep_pdf=keep_pdf, drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
+            collection=COLLECTION_FOR_SET(book_set),
+            # Bộ khác KHÔNG ghi vào .md của SGK gốc — search_sgk đọc .md và
+            # không phân biệt được bộ, ghi chung là trả lời trộn hai chương trình.
+            write_md=not str(book_set or "").strip(),
         )
     if not raw:
         from services.pdf_intent import extract_markdown
@@ -501,7 +518,9 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
 
 def import_reader(reader_url: str, *, grade: int, subject: str,
                   max_pages: int = 0, mode: str = "append",
-                  label: str = "", keep_pdf: bool = True) -> dict[str, Any]:
+                  label: str = "", keep_pdf: bool = True,
+                  drop_pdf_on_rag_ok: bool = False,
+                  book_set: str = "") -> dict[str, Any]:
     """Nạp ĐÚNG MỘT trang đọc sách đã biết link — dùng cho ô 'dán URL' trên web.
 
     Khác :func:`import_book` ở chỗ không tra danh mục: người dùng đã chỉ đúng
@@ -528,7 +547,9 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
         if not built.get("ok"):
             return {"ok": False, "error": f"ghép PDF lỗi: {built.get('error')}"}
         res = _ingest_pdf(pdf_path, grade=g, subject=sub, title=label,
-                          source_name=reader_url, mode=mode, keep_pdf=keep_pdf)
+                          source_name=reader_url, mode=mode, keep_pdf=keep_pdf,
+                          drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
+                          book_set=book_set)
     return {**res, "pages": built.get("pages"), "source": reader_url}
 
 

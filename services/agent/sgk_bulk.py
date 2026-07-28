@@ -22,9 +22,11 @@ VỀ VIỆC NẠP CẢ HAI BỘ SÁCH (`all_sets=True`, gồm `cac-bo-sach-khac?
 `sgk_taphuan.list_books` mặc định TẮT đường này, lý do ghi ngay trong hàm đó —
 bộ khác là chương trình khác cho CÙNG môn, nạp chung vào một kho thì bot có thể
 trả lời trộn hai bộ mà không biết đang dùng bộ nào. Người vận hành đã chọn nạp cả
-hai. Cách giảm thiểu ở đây: mỗi chunk RAG mang TIÊU ĐỀ có tên quyển + mã bộ sách
-(xem `_label_of`), nên câu trả lời luôn dẫn được nguồn về đúng quyển. Đó là giảm
-thiểu, KHÔNG phải xoá bỏ vấn đề — muốn hết hẳn thì phải tách collection theo bộ.
+hai, nên ĐÃ TÁCH COLLECTION theo bộ: bộ chính → `kb_giao_duc`, bộ khác →
+`kb_giao_duc_bo{N}` (xem `sgk_taphuan.COLLECTION_FOR_SET`). Mỗi kho một chương
+trình, muốn tra bộ nào thì hỏi kho đó. Bộ khác cũng KHÔNG ghi vào `.md` của SGK
+gốc vì `search_sgk` đọc `.md` và không phân biệt được bộ. Ngoài ra mỗi chunk vẫn
+mang tiêu đề có tên quyển + mã bộ (`_label_of`) để câu trả lời dẫn được nguồn.
 """
 from __future__ import annotations
 
@@ -200,12 +202,15 @@ def run(
                         readers[0], grade=g, subject=sub, mode="append",
                         max_pages=max_pages, label=_label_of(item, sub),
                         keep_pdf=keep_pdf,
+                        book_set=str(item.get("book_set") or ""),
                     )
                     if res.get("ok"):
                         row["status"] = "ok"
                         row["pages"] = int(res.get("pages") or 0)
                         rag = res.get("rag") or {}
                         row["chunks"] = int(rag.get("chunks_added") or 0)
+                        row["collection"] = tp.COLLECTION_FOR_SET(
+                            str(item.get("book_set") or ""))
                         state["pages_total"] += row["pages"]
                         state["chunks_total"] += row["chunks"]
                     else:

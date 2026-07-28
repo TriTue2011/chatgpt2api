@@ -181,6 +181,10 @@ def create_router() -> APIRouter:
         grade = int(payload.get("grade") or 0)
         subject = str(payload.get("subject") or "").strip()
         mode = str(payload.get("mode") or "append")
+        # Nạp tay: xoá bản PDF NGAY KHI RAG vào được. RAG hỏng thì giữ lại để nạp
+        # lại, khỏi tải + OCR lần nữa. Truyền keep_pdf=false nếu muốn không lưu
+        # một giây nào.
+        drop_pdf = bool(payload.get("drop_pdf_on_rag_ok", True))
         if not url.startswith(("http://", "https://")):
             return {"ok": False, "error": "URL phải bắt đầu bằng http:// hoặc https://"}
         if not grade or not subject:
@@ -200,8 +204,10 @@ def create_router() -> APIRouter:
                 if not readers:
                     return {"ok": False,
                             "error": "không tìm thấy link đọc sách (sgk-) trong trang này"}
-                return tp.import_reader(readers[0], grade=grade, subject=subject, mode=mode)
-            return sf.fetch_and_ingest(grade, subject, url, kind="sgk")
+                return tp.import_reader(readers[0], grade=grade, subject=subject,
+                                        mode=mode, drop_pdf_on_rag_ok=drop_pdf)
+            return sf.fetch_and_ingest(grade, subject, url, kind="sgk",
+                                       drop_pdf_on_rag_ok=drop_pdf)
 
         return await run_in_threadpool(_run)
 
@@ -423,6 +429,7 @@ def create_router() -> APIRouter:
         def _run() -> dict:
             return tw.import_sgk_bytes(
                 data, name, grade=grade, subject=subject, mode=mode, title=title,
+                drop_pdf_on_rag_ok=True,
             )
 
         result = await run_in_threadpool(_run)
