@@ -862,6 +862,7 @@ MCP_LABELS = {
     "web_agent": ("Web Agent", "AI tự điều khiển trình duyệt làm tác vụ web nhiều bước (browser-use)", "general"),
     "ssh_exec": ("SSH Server", "Chạy lệnh SSH trên nhiều server đã khai báo (Linux/NAS/NVR): xem trạng thái, đọc log, restart dịch vụ", "general"),
     "fs_remote": ("File Server (an toàn)", "Đọc/ghi file trên server từ xa qua SFTP, giới hạn theo thư mục — ghi bị cấm mặc định, cấp quyền từng thư mục qua chat", "general"),
+    "device_fs": ("Thiết bị của tôi", "Đọc/sửa file trên máy tính, điện thoại Android, VPS đã cài c2a-agent — agent tự quay ra nên máy sau NAT/4G vẫn dùng được", "general"),
 }
 
 MOUNTS = [
@@ -889,6 +890,7 @@ MOUNTS = [
     ("web_agent", "src.general.web_agent"),
     ("ssh_exec", "src.general.ssh_exec"),
     ("fs_remote", "src.general.fs_remote"),
+    ("device_fs", "src.general.device_fs"),
 ]
 
 

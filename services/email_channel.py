@@ -56,6 +56,15 @@ _lock = threading.RLock()
 _status_by_acc: dict[str, dict[str, Any]] = {}
 _last_poll_at: dict[str, float] = {}
 
+# Hộp đang có lượt poll CHẠY DỞ — chốt để không bao giờ chồng hai lượt trên
+# cùng một hộp (chồng lượt = xử lý trùng thư, gửi thông báo đúp).
+_inflight: set[str] = set()
+_inflight_lock = threading.Lock()
+# Số hộp poll song song. Mỗi thư tốn 1 lượt AI tóm tắt, file đính kèm còn thêm
+# AI vision từng trang — trước đây các hộp chạy NỐI TIẾP nên một hộp nhiều thư
+# là chặn hết phần còn lại (đo 2026-07-28: cả 2 hộp đứng 9 phút không nhích).
+_POLL_WORKERS = 4
+
 #: Gmail/Outlook bật 2FA thì mật khẩu thường bị từ chối — dịch lỗi thô của IMAP
 #: thành hướng dẫn làm được ngay (đây là lỗi hay gặp nhất khi cài email).
 _APP_PW_HINT = (
@@ -703,23 +712,54 @@ def send_digest_now(account_id: str = "") -> dict[str, Any]:
 
 
 # ── Vòng lặp ─────────────────────────────────────────────────────────────────
+def _poll_worker(acc: dict[str, Any], key: str) -> None:
+    """Poll MỘT hộp trên luồng riêng; luôn nhả chốt inflight khi xong."""
+    try:
+        poll_account(acc)
+    except Exception as exc:
+        logger.warning("email_channel: poll %s lỗi: %s", acc.get("user"), exc)
+    finally:
+        with _inflight_lock:
+            _inflight.discard(key)
+
+
 def _loop() -> None:
+    """Supervisor: mỗi 15s xét hộp nào tới hạn rồi GIAO cho luồng riêng.
+
+    Đọc cấu hình mỗi vòng nên thêm/bật hộp trong Settings là chạy ngay ở tick
+    kế tiếp, không cần restart. Bản thân supervisor KHÔNG bao giờ tự đi poll —
+    trước đây nó poll trực tiếp nên một hộp chậm là treo cả kênh mail.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     _stop.wait(8)
-    while not _stop.is_set():
-        try:
-            for acc in accounts():
-                if not acc.get("enabled"):
-                    continue
-                key = source_key(acc)
-                every = float(acc.get("poll_seconds") or 60)
-                if time.time() - _last_poll_at.get(key, 0.0) < every:
-                    continue
-                _last_poll_at[key] = time.time()
-                poll_account(acc)
-        except Exception as exc:
-            logger.warning("email_channel: loop lỗi: %s", exc)
-        # Nhịp chung 15s; mỗi hộp tự tôn trọng poll_seconds riêng ở trên.
-        _stop.wait(15)
+    pool = ThreadPoolExecutor(max_workers=_POLL_WORKERS,
+                              thread_name_prefix="email-poll")
+    try:
+        while not _stop.is_set():
+            try:
+                for acc in accounts():
+                    if not acc.get("enabled"):
+                        continue
+                    key = source_key(acc)
+                    every = float(acc.get("poll_seconds") or 60)
+                    if time.time() - _last_poll_at.get(key, 0.0) < every:
+                        continue
+                    with _inflight_lock:
+                        if key in _inflight:
+                            # Lượt trước của CHÍNH hộp này còn chạy (nhiều thư
+                            # + AI) → bỏ nhịp, đừng xếp thêm.
+                            continue
+                        _inflight.add(key)
+                    _last_poll_at[key] = time.time()
+                    pool.submit(_poll_worker, acc, key)
+            except Exception as exc:
+                logger.warning("email_channel: loop lỗi: %s", exc)
+            # Nhịp chung 15s; mỗi hộp tự tôn trọng poll_seconds riêng ở trên.
+            _stop.wait(15)
+    finally:
+        # wait=False: hộp đang xử lý dở không được giữ luôn tiến trình lúc tắt.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def start() -> None:

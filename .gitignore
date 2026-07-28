@@ -50,6 +50,12 @@ deploy/*
 !deploy/supervisord.conf
 !deploy/extra-requirements.txt
 !deploy/cloudflare-gemini-proxy.js
+# Agent người dùng TẢI VỀ rồi cài lên máy/điện thoại/VPS của họ — phải nằm
+# trong repo mới lấy được. Không chứa bí mật: token truyền qua tham số dòng
+# lệnh hoặc biến môi trường C2A_TOKEN, không hardcode trong file.
+!deploy/device_agent/
+!deploy/device_agent/c2a_agent.py
+!deploy/device_agent/README.md
 build_and_push.sh
 update_server.ps1
 setup_ssh_key.py
