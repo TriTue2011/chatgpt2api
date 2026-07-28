@@ -457,14 +457,62 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     return body
 
 
-def COLLECTION_FOR_SET(book_set: str) -> str:
-    """Collection RAG theo BỘ SÁCH. Bộ chính → kb_giao_duc, bộ khác → kb_giao_duc_bo{N}.
+# Mỗi trang chi tiết taphuan có 4 loại tài liệu, phân biệt bằng TIỀN TỐ slug của
+# link đọc: sgk- (sách học sinh) · sgv- (sách giáo viên) · vbt- (vở bài tập) ·
+# tai-lieu-tap-huan- (tài liệu bồi dưỡng GV). Nội dung khác nhau hoàn toàn.
+_DOC_KIND: tuple[tuple[str, str], ...] = (
+    ("sgk-", "sgk"),
+    ("sgv-", "sgv"),
+    ("vbt-", "vbt"),
+    ("tai-lieu-tap-huan", "tap_huan"),
+)
 
-    Tách hẳn collection chứ không chỉ ghi tên bộ vào tiêu đề chunk: cùng một
-    lớp–môn mà hai bộ là hai chương trình khác nhau, để chung kho thì truy vấn
-    "bài 5 Toán 4" kéo về cả hai và bot trả lời trộn. Tách rồi thì mỗi kho một
-    chương trình, muốn tra bộ nào thì hỏi kho đó.
+DOC_KIND_LABEL = {
+    "sgk": "SGK",
+    "sgv": "SGV (sách giáo viên)",
+    "vbt": "VBT (vở bài tập)",
+    "tap_huan": "Tài liệu tập huấn",
+    "other": "Tài liệu",
+}
+
+
+def doc_kind(reader_url: str) -> str:
+    """Loại tài liệu suy từ tiền tố slug trong link đọc. 'other' = không rõ.
+
+    Vì sao cần: `reader_urls()` cố ý CHỈ lấy `sgk-` để không nhồi sách giáo viên
+    và vở bài tập vào kho SGK. Nhưng người dùng dán THẲNG link `/doc-sach/` thì
+    đường `import-url` nhận nguyên link đó, bỏ qua bộ lọc — và một quyển SGV sẽ
+    vào kho SGK mang nhãn "SGK", rồi bot trích sách giáo viên như thể là sách của
+    học sinh. Nhận diện ở đây để cho vào ĐÚNG kho với ĐÚNG nhãn.
     """
+    slug = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1].lower()
+    for pre, kind in _DOC_KIND:
+        if slug.startswith(pre):
+            return kind
+    return "other"
+
+
+def COLLECTION_FOR_SET(book_set: str = "", kind: str = "sgk") -> str:
+    """Collection RAG theo BỘ SÁCH và LOẠI tài liệu.
+
+    Tách hẳn collection chứ không chỉ ghi vào tiêu đề chunk: cùng một lớp–môn mà
+    hai bộ là hai chương trình khác nhau, để chung kho thì truy vấn "bài 5 Toán
+    4" kéo về cả hai và bot trả lời trộn. Sách giáo viên / vở bài tập càng phải
+    tách — chúng không phải nội dung học sinh học.
+
+        sgk  + bộ chính → kb_giao_duc
+        sgk  + bộ N     → kb_giao_duc_bo{N}
+        sgv            → kb_giao_duc_sgv
+        vbt            → kb_giao_duc_vbt
+        tap_huan/other → kb_giao_duc_tailieu
+    """
+    k = str(kind or "sgk").strip() or "sgk"
+    if k == "sgv":
+        return "kb_giao_duc_sgv"
+    if k == "vbt":
+        return "kb_giao_duc_vbt"
+    if k in ("tap_huan", "other"):
+        return "kb_giao_duc_tailieu"
     bs = str(book_set or "").strip()
     return f"kb_giao_duc_bo{bs}" if bs else "kb_giao_duc"
 
@@ -472,7 +520,7 @@ def COLLECTION_FOR_SET(book_set: str) -> str:
 def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
                 source_name: str, mode: str = "append",
                 keep_pdf: bool = True, drop_pdf_on_rag_ok: bool = False,
-                book_set: str = "") -> dict[str, Any]:
+                book_set: str = "", kind: str = "sgk") -> dict[str, Any]:
     """Đẩy PDF vào đúng pipeline sẵn có — giống nhánh của sgk_fetch.
 
     3 môn gốc (toán/văn/anh) đi ``import_sgk_pdf`` để ghi cả file .md lẫn RAG;
@@ -491,10 +539,11 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
             pdf_path, grade=grade, subject=subject, mode=mode,
             title=title, source_name=source_name, text=raw,
             keep_pdf=keep_pdf, drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
-            collection=COLLECTION_FOR_SET(book_set),
-            # Bộ khác KHÔNG ghi vào .md của SGK gốc — search_sgk đọc .md và
-            # không phân biệt được bộ, ghi chung là trả lời trộn hai chương trình.
-            write_md=not str(book_set or "").strip(),
+            collection=COLLECTION_FOR_SET(book_set, kind),
+            # CHỈ sách học sinh của bộ chính được ghi vào .md của SGK gốc.
+            # `search_sgk` đọc .md và không phân biệt bộ hay loại tài liệu, nên
+            # ghi SGV/VBT/bộ khác vào đó là trả lời trộn ở đường offline.
+            write_md=(kind == "sgk" and not str(book_set or "").strip()),
         )
     if not raw:
         from services.pdf_intent import extract_markdown
@@ -520,7 +569,7 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
                   max_pages: int = 0, mode: str = "append",
                   label: str = "", keep_pdf: bool = True,
                   drop_pdf_on_rag_ok: bool = False,
-                  book_set: str = "") -> dict[str, Any]:
+                  book_set: str = "", kind: str = "") -> dict[str, Any]:
     """Nạp ĐÚNG MỘT trang đọc sách đã biết link — dùng cho ô 'dán URL' trên web.
 
     Khác :func:`import_book` ở chỗ không tra danh mục: người dùng đã chỉ đúng
@@ -540,7 +589,10 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
     # `label` đi vào tiêu đề mọi chunk RAG. Nạp cả hai bộ sách thì PHẢI truyền
     # tên quyển + bộ vào đây, không thì trong cùng lớp–môn có hai chương trình mà
     # chunk không phân biệt được, bot trả lời trộn hai bộ mà không biết.
-    label = label.strip() or f"SGK lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}"
+    # Loại tài liệu suy từ chính link nếu người gọi không nói rõ.
+    k = (kind or "").strip() or doc_kind(reader_url)
+    label = label.strip() or (
+        f"{DOC_KIND_LABEL.get(k, 'Tài liệu')} lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}")
     with tempfile.TemporaryDirectory() as td:
         pdf_path = str(Path(td) / "sach.pdf")
         built = build_pdf(imgs, pdf_path, max_pages=max_pages)
@@ -549,8 +601,9 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
         res = _ingest_pdf(pdf_path, grade=g, subject=sub, title=label,
                           source_name=reader_url, mode=mode, keep_pdf=keep_pdf,
                           drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
-                          book_set=book_set)
-    return {**res, "pages": built.get("pages"), "source": reader_url}
+                          book_set=book_set, kind=k)
+    return {**res, "pages": built.get("pages"), "source": reader_url,
+            "doc_kind": k, "doc_kind_label": DOC_KIND_LABEL.get(k, "Tài liệu")}
 
 
 def import_book(grade: int, subject: str, *, max_pages: int = 0,

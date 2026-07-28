@@ -210,7 +210,7 @@ def run(
                         rag = res.get("rag") or {}
                         row["chunks"] = int(rag.get("chunks_added") or 0)
                         row["collection"] = tp.COLLECTION_FOR_SET(
-                            str(item.get("book_set") or ""))
+                            str(item.get("book_set") or ""), "sgk")
                         state["pages_total"] += row["pages"]
                         state["chunks_total"] += row["chunks"]
                     else:
