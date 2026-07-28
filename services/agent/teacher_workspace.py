@@ -25,8 +25,70 @@ from services.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-SUBJECTS = ("toan", "van", "anh")
-SUBJECT_LABEL = {"toan": "Toán", "van": "Ngữ văn / TV", "anh": "Tiếng Anh"}
+# Danh mục môn. Mở rộng 2026-07-28 từ 3 môn (toan/van/anh) lên 10.
+#
+# Vì sao mở: kho chính thức taphuan.nxbgd.vn (đo thật, 89 quyển / 12 lớp) trả
+# về 6 môn — van, toan, anh, su, dia, ly. Trước đây `sgk_taphuan._ingest_pdf`
+# thấy môn ngoài 3 môn gốc thì CHỈ nạp RAG, không ghi file .md, nên sách Lịch
+# sử / Địa lí / Vật lí nạp vào rồi mà mọi bảng đếm theo .md đều báo "chưa có".
+# hoa/sinh/gdcd/tin thêm sẵn vì sgk_fetch đã hỗ trợ và kho có thể bổ sung.
+#
+# Thêm môn ⇒ số workspace mặc định = 12 × len(SUBJECTS). `_ensure_seeded` MERGE
+# key mới vào file cũ (không ghi đè) nên máy đang chạy chỉ được thêm, không mất.
+SUBJECTS = ("toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh", "gdcd", "tin")
+SUBJECT_LABEL = {
+    "toan": "Toán",
+    "van": "Ngữ văn / TV",
+    "anh": "Tiếng Anh",
+    "su": "Lịch sử",
+    "dia": "Địa lí",
+    "ly": "Vật lí",
+    "hoa": "Hoá học",
+    "sinh": "Sinh học",
+    "gdcd": "GDCD / KT&PL",
+    "tin": "Tin học",
+}
+
+# Môn của TỪNG LỚP — khai rõ từng lớp một, KHÔNG gộp dải, để sửa lớp nào chỉ
+# đụng đúng dòng lớp đó.
+#
+# Đo thật 2026-07-28 từ chính 12 link danh mục lọc môn của kho chính thức
+# taphuan.nxbgd.vn (89 quyển). Cột "quyển" là số sách đếm được cho lớp đó.
+#
+# Hai chỗ cố ý lệch với số đo, nói rõ để sau không ai tưởng là lỗi:
+#  1. `anh` giữ cho CẢ 12 lớp, dù danh mục lớp 10 và 12 không trả về quyển Tiếng
+#     Anh nào (lớp 11 lại có). Đó gần như chắc chắn là thiếu sót danh mục bên
+#     NXBGD, không phải lớp 10/12 bỏ Tiếng Anh — bỏ đi thì giáo viên có PDF
+#     Tiếng Anh 10 trong tay cũng không chọn được môn để nạp.
+#  2. Lớp 3 danh mục còn có Tiếng Hàn (2 quyển). Chưa đưa vào vì cả hệ thống
+#     chưa có mã môn cho ngoại ngữ thứ hai.
+#
+# Hoá / Sinh / Tin / GDCD KHÔNG có ở bất kỳ lớp nào trong danh mục này, nên
+# không lớp nào khai. Vẫn giữ trong SUBJECTS để nạp bằng URL PDF trực tiếp thì
+# chọn được môn.
+GRADE_SUBJECTS: dict[int, tuple[str, ...]] = {
+    1:  ("toan", "van", "anh"),                        # 5 quyển
+    2:  ("toan", "van", "anh"),                        # 5 quyển
+    3:  ("toan", "van", "anh"),                        # 8 quyển (2 quyển Tiếng Hàn chưa nhận)
+    4:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
+    5:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
+    6:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
+    7:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
+    8:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
+    9:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
+    10: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
+    11: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
+    12: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
+}
+
+
+def subjects_for(grade: int) -> tuple[str, ...]:
+    """Môn của MỘT lớp. Lớp lạ → toàn bộ SUBJECTS (thà rộng hơn là chặn oan)."""
+    try:
+        g = int(grade)
+    except (TypeError, ValueError):
+        return SUBJECTS
+    return GRADE_SUBJECTS.get(g, SUBJECTS)
 # Tiểu học 1–5 · THCS 6–9 · THPT 10–12
 GRADES = tuple(range(1, 13))
 
@@ -119,10 +181,15 @@ def _ensure_seeded() -> None:
 
 
 def _default_workspaces() -> dict[str, dict[str, Any]]:
-    """36 workspace: mỗi (lớp 1–12 × môn)."""
+    """Một workspace cho mỗi (lớp × môn CỦA LỚP ĐÓ) — xem GRADE_SUBJECTS.
+
+    Dùng GRADE_SUBJECTS chứ không phải SUBJECTS: nhân đủ 12 × 10 sẽ sinh 120
+    workspace, trong đó cỡ một nửa là tổ hợp không tồn tại (Vật lí lớp 1, Địa lí
+    lớp 2…) — rác trong danh sách chọn và trong mọi bảng đếm.
+    """
     out: dict[str, dict[str, Any]] = {}
     for g in GRADES:
-        for sub in SUBJECTS:
+        for sub in subjects_for(g):
             wid = f"lop{g}-{sub}"
             out[wid] = {
                 "id": wid,
@@ -357,15 +424,35 @@ def status_public() -> dict[str, Any]:
 # ── Import PDF SGK → markdown lớp–môn ───────────────────────────────────────
 
 
+# Bảng bí danh sống Ở ĐÂY (tầng dưới) để sgk_fetch dùng lại thay vì tự giữ bản
+# thứ hai — trước có hai bảng, thêm môn ở một chỗ thì chỗ kia vẫn không nhận.
+SUBJECT_ALIASES: dict[str, str] = {
+    "toan": "toan", "toán": "toan", "math": "toan",
+    "van": "van", "văn": "van", "tieng_viet": "van", "tiếng việt": "van",
+    "tv": "van", "ngu_van": "van", "ngữ văn": "van", "tieng viet": "van",
+    "anh": "anh", "english": "anh", "tieng_anh": "anh", "tiếng anh": "anh",
+    "en": "anh", "tieng anh": "anh",
+    "su": "su", "sử": "su", "lich_su": "su", "lich su": "su", "lịch sử": "su",
+    "history": "su",
+    "dia": "dia", "địa": "dia", "dia_ly": "dia", "dia ly": "dia",
+    "địa lý": "dia", "dia li": "dia", "địa lí": "dia", "geography": "dia",
+    "ly": "ly", "lý": "ly", "lí": "ly", "vat_ly": "ly", "vat ly": "ly",
+    "vật lý": "ly", "vat li": "ly", "vật lí": "ly", "physics": "ly",
+    "hoa": "hoa", "hóa": "hoa", "hoá": "hoa", "hoa_hoc": "hoa",
+    "hoa hoc": "hoa", "hóa học": "hoa", "hoá học": "hoa", "chemistry": "hoa",
+    "sinh": "sinh", "sinh_hoc": "sinh", "sinh hoc": "sinh",
+    "sinh học": "sinh", "biology": "sinh",
+    "gdcd": "gdcd", "giao_duc_cong_dan": "gdcd", "giao duc cong dan": "gdcd",
+    "giáo dục công dân": "gdcd", "cong dan": "gdcd", "công dân": "gdcd",
+    "ktpl": "gdcd", "kt&pl": "gdcd",
+    "tin": "tin", "tin_hoc": "tin", "tin hoc": "tin", "tin học": "tin",
+    "informatics": "tin", "computer science": "tin", "cs": "tin",
+}
+
+
 def _normalize_subject(subject: str) -> str | None:
     s = (subject or "").strip().lower()
-    aliases = {
-        "toan": "toan", "toán": "toan", "math": "toan",
-        "van": "van", "văn": "van", "tieng_viet": "van", "tiếng việt": "van",
-        "tv": "van", "ngu_van": "van",
-        "anh": "anh", "english": "anh", "tieng_anh": "anh", "tiếng anh": "anh", "en": "anh",
-    }
-    return aliases.get(s) or (s if s in SUBJECTS else None)
+    return SUBJECT_ALIASES.get(s) or (s if s in SUBJECTS else None)
 
 
 _CHAPTER_HEAD = re.compile(
@@ -477,7 +564,8 @@ def import_sgk_pdf(
     if g not in GRADES:
         return {"ok": False, "error": f"grade phải 1–12, nhận {grade}"}
     if not sub:
-        return {"ok": False, "error": f"subject phải toan|van|anh, nhận {subject}"}
+        return {"ok": False,
+                "error": f"subject phải là một trong {'|'.join(SUBJECTS)}, nhận {subject}"}
     path = Path(pdf_path)
     if not path.is_file():
         return {"ok": False, "error": f"không thấy file PDF: {path}"}
@@ -627,8 +715,10 @@ def list_imports(
     # Markdown SGK status for current filter (or all 1–12 when unfiltered)
     md_rows: list[dict[str, Any]] = []
     grades_iter = [g_filter] if g_filter else list(GRADES)
-    subs_iter = [sub_filter] if sub_filter else list(SUBJECTS)
     for g in grades_iter:
+        # Môn theo TỪNG LỚP, không phải toàn bộ SUBJECTS: nhân đủ sẽ sinh những
+        # dòng vô nghĩa (Vật lí lớp 1…) và làm bảng đếm "x/N môn" sai bản chất.
+        subs_iter = [sub_filter] if sub_filter else list(subjects_for(g))
         for sub in subs_iter:
             if not sub:
                 continue
@@ -902,8 +992,10 @@ def memory_add(
     wid = (workspace_id or "").strip()
     if not wid:
         return "Cần workspace_id (vd lop3-van)."
+    # Dựng mẫu từ SUBJECTS, không viết cứng 3 môn: viết cứng thì thêm môn xong
+    # workspace lop10-ly bị coi là không hợp lệ dù nó có trong danh sách mặc định.
     if not get_workspace(wid) and not re.match(
-        r"^lop([1-9]|1[0-2])-(toan|van|anh)$", wid
+        r"^lop([1-9]|1[0-2])-(%s)$" % "|".join(SUBJECTS), wid
     ):
         if not re.match(r"^lop([1-9]|1[0-2])-", wid):
             return f"Workspace `{wid}` không hợp lệ. Dùng list_teacher_workspaces."

@@ -271,6 +271,23 @@ def create_router() -> APIRouter:
         tw._ensure_seeded()
         return {"ok": True, "kb": tw.status_public(), "workspaces": len(tw.list_workspaces())}
 
+    @router.get("/api/teacher/subjects")
+    async def teacher_subjects(authorization: str | None = Header(default=None)):
+        """Danh mục môn: toàn bộ mã môn + môn của TỪNG LỚP.
+
+        Có endpoint này để web UI không phải khai lại danh sách môn trong TS —
+        khai hai nơi thì thêm môn ở backend mà dropdown vẫn thiếu.
+        """
+        require_admin(authorization)
+        from services.agent import teacher_workspace as tw
+        return {
+            "ok": True,
+            "subjects": [
+                {"id": s, "label": tw.SUBJECT_LABEL.get(s, s)} for s in tw.SUBJECTS
+            ],
+            "by_grade": {str(g): list(tw.subjects_for(g)) for g in tw.GRADES},
+        }
+
     @router.get("/api/teacher/imports")
     async def teacher_list_imports(
         grade: int = Query(default=0),

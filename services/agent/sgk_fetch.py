@@ -54,17 +54,11 @@ logger = logging.getLogger(__name__)
 # LƯU Ý: KHÔNG ghi đè teacher_workspace.SUBJECTS/SUBJECT_LABEL — file đó có
 # test cố định 36 workspace (12 lớp × 3 môn gốc: test_workspaces_thirty_six).
 # Danh sách mở rộng sống RIÊNG ở đây; 3 môn gốc vẫn dùng đúng pipeline gốc.
-SUBJECT_LABEL: dict[str, str] = {
-    **tw.SUBJECT_LABEL,
-    "ly": "Vật lý",
-    "hoa": "Hóa học",
-    "sinh": "Sinh học",
-    "su": "Lịch sử",
-    "dia": "Địa lý",
-    "gdcd": "GDCD",
-    "tin": "Tin học",
-}
-SUBJECTS: tuple[str, ...] = tuple(SUBJECT_LABEL.keys())
+# 2026-07-28: teacher_workspace đã mang đủ 10 môn, nên ở đây CHỈ soi chiếu lại
+# chứ không còn danh sách thứ hai. Trước có hai bảng song song và đó chính là lý
+# do thêm môn ở một chỗ mà chỗ kia vẫn không nhận.
+SUBJECT_LABEL: dict[str, str] = dict(tw.SUBJECT_LABEL)
+SUBJECTS: tuple[str, ...] = tuple(tw.SUBJECTS)
 
 # Từ khoá tiếng Việt dùng để dựng câu tìm kiếm (khác SUBJECT_LABEL vì label có
 # dấu "/" — vd "Ngữ văn / TV" — không hợp để nhét thẳng vào câu query).
@@ -148,8 +142,12 @@ _YEAR_RE = re.compile(r"\b(20[0-2]\d)\b")
 
 
 def normalize_subject(subject: str) -> str | None:
-    """Chuẩn hoá tên môn — 3 môn gốc (qua alias có sẵn của teacher_workspace)
-    + 7 môn mới (lý/hoá/sinh/sử/địa/gdcd/tin). Trả ``None`` nếu không nhận diện."""
+    """Chuẩn hoá tên môn. ``None`` = không nhận diện.
+
+    Bảng bí danh đã dồn về `teacher_workspace.SUBJECT_ALIASES` (đủ 10 môn), nên
+    ở đây chỉ gọi lại. `_EXTRA_ALIASES` bên dưới giữ làm lưới đỡ cho bí danh nào
+    còn sót riêng ở tầng này.
+    """
     s = str(subject or "").strip().lower()
     if not s:
         return None

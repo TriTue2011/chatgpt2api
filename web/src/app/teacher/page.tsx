@@ -112,7 +112,10 @@ type FocusInfo = {
   error?: string;
 };
 
-const SUBJECTS = [
+/** Chỉ là LƯỚI ĐỠ khi chưa gọi được /api/teacher/subjects. Danh mục thật do
+ *  backend giữ (teacher_workspace.SUBJECTS + GRADE_SUBJECTS) — khai hai nơi thì
+ *  thêm môn ở backend mà dropdown vẫn thiếu, đúng lỗi vừa gặp. */
+const SUBJECTS_FALLBACK = [
   { id: "toan", label: "Toán" },
   { id: "van", label: "Văn / TV" },
   { id: "anh", label: "Anh" },
@@ -434,6 +437,10 @@ export default function TeacherPage() {
   const [impList, setImpList] = useState<ImpPdfRow[]>([]);
   const [impMd, setImpMd] = useState<ImpMdRow | null>(null);
   const [impListLoading, setImpListLoading] = useState(false);
+  // Danh mục môn lấy từ backend: {id,label} toàn bộ + môn của TỪNG LỚP.
+  const [subjAll, setSubjAll] = useState<{ id: string; label: string }[]>(SUBJECTS_FALLBACK);
+  const [subjByGrade, setSubjByGrade] = useState<Record<string, string[]>>({});
+
   // Nạp bằng URL (taphuan chi-tiet / doc-sach, hoặc link .pdf trực tiếp)
   const [impUrl, setImpUrl] = useState("");
   const [impUrlBusy, setImpUrlBusy] = useState(false);
@@ -569,7 +576,8 @@ export default function TeacherPage() {
   }, [session, grade, subject]);
 
   /** Toàn bộ SGK: KHÔNG truyền grade/subject nên backend trả markdown của cả
-   *  12 lớp × 3 môn (list_imports lặp GRADES × SUBJECTS khi không có filter).
+   *  12 lớp × môn CỦA TỪNG LỚP (list_imports lặp GRADES × GRADE_SUBJECTS khi
+   *  không có filter).
    *  Bản cũ luôn gọi kèm filter nên danh sách chỉ có đúng một tổ hợp — đó là
    *  lý do "danh sách SGK chưa đầy đủ". */
   const loadSgkAll = useCallback(async () => {
@@ -592,6 +600,45 @@ export default function TeacherPage() {
       void loadSgkAll();
     }
   }, [tab, session, loadImports, loadSgkAll]);
+
+  // Danh mục môn — nạp một lần khi vào trang.
+  useEffect(() => {
+    if (!session) return;
+    void (async () => {
+      try {
+        const r = await request.get("/api/teacher/subjects");
+        const d = r.data as {
+          subjects?: { id: string; label: string }[];
+          by_grade?: Record<string, string[]>;
+        };
+        if (d?.subjects?.length) setSubjAll(d.subjects);
+        if (d?.by_grade) setSubjByGrade(d.by_grade);
+      } catch {
+        /* giữ lưới đỡ — trang vẫn dùng được với 3 môn gốc */
+      }
+    })();
+  }, [session]);
+
+  /** Môn của lớp đang chọn. Chưa có bảng by_grade thì trả toàn bộ (thà rộng
+   *  hơn là chặn oan lúc backend chưa kịp trả). */
+  const subjectsOfGrade = useMemo(() => {
+    const ids = subjByGrade[String(grade)];
+    if (!ids?.length) return subjAll;
+    const order = new Map(subjAll.map((s, i) => [s.id, i]));
+    return ids
+      .map((id) => subjAll.find((s) => s.id === id) || { id, label: id })
+      .sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99));
+  }, [subjByGrade, subjAll, grade]);
+
+  // Đổi lớp mà môn đang chọn không có ở lớp đó ⇒ nhảy về môn đầu tiên hợp lệ.
+  // Không làm thì màn hình hiện "Vật lí" cho lớp 1 rồi nạp vào một workspace
+  // không tồn tại.
+  useEffect(() => {
+    if (!subjectsOfGrade.length) return;
+    if (!subjectsOfGrade.some((s) => s.id === subject)) {
+      setSubject(subjectsOfGrade[0].id);
+    }
+  }, [subjectsOfGrade, subject]);
 
   useEffect(() => {
     if (!session || subject !== "anh") {
@@ -1039,7 +1086,7 @@ export default function TeacherPage() {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
             >
-              {SUBJECTS.map((s) => (
+              {subjectsOfGrade.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
                 </option>
@@ -1950,7 +1997,7 @@ export default function TeacherPage() {
                   disabled={impBusy || impUrlBusy}
                   onChange={(e) => setSubject(e.target.value)}
                 >
-                  {SUBJECTS.map((s) => (
+                  {subjectsOfGrade.map((s) => (
                     <option key={s.id} value={s.id}>{s.label}</option>
                   ))}
                 </select>
@@ -2430,7 +2477,7 @@ export default function TeacherPage() {
                 </div>
               )}
               <p className="text-[9px] text-muted-foreground">
-                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Hiện chỉ theo dõi 3 môn (Toán · Văn/TV · Anh) — môn khác nạp vào vẫn được nhưng chưa có ô đếm riêng.
+                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Số môn khác nhau theo lớp: lớp 1–3 có 3 môn, lớp 4–9 có 5 môn (thêm Lịch sử, Địa lí), lớp 10–12 có 6 môn (thêm Vật lí) — theo đúng danh mục kho taphuan.
               </p>
             </div>
           </CardContent>

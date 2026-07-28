@@ -115,13 +115,24 @@ class TeacherWorkspaceTests(unittest.TestCase):
         self.assertIn("Lớp 2", text)
         self.assertTrue("mượn" in text.lower() or "Trừ" in text)
 
-    def test_workspaces_thirty_six(self) -> None:
+    def test_workspaces_one_per_grade_subject(self) -> None:
         from services.agent import teacher_workspace as tw
 
         tw._seeded = False
         # Force merge new grades even if old 15-ws file exists
         defaults = tw._default_workspaces()
-        self.assertEqual(len(defaults), 36)
+        # Trước đây chốt cứng 36 (12 lớp × 3 môn). Danh mục môn giờ khai theo
+        # TỪNG LỚP (GRADE_SUBJECTS), nên khẳng định đúng bất biến: mỗi lớp có
+        # đúng số workspace bằng số môn CỦA LỚP ĐÓ. Số 36 chỉ là ảnh chụp của
+        # thời 3 môn, thêm môn là sai ngay dù code vẫn đúng.
+        expect = sum(len(tw.subjects_for(g)) for g in tw.GRADES)
+        self.assertEqual(len(defaults), expect)
+        for g in tw.GRADES:
+            for sub in tw.subjects_for(g):
+                self.assertIn(f"lop{g}-{sub}", defaults, msg=f"lớp {g} môn {sub}")
+        # Môn KHÔNG thuộc lớp thì không được sinh workspace (vd Vật lí lớp 1).
+        self.assertNotIn("lop1-ly", defaults)
+        self.assertNotIn("lop2-dia", defaults)
         rows = tw.list_workspaces()
         # After seed/merge should have at least default keys available via re-seed
         tw._seeded = False
