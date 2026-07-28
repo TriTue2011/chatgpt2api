@@ -458,7 +458,8 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
 
 
 def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
-                source_name: str, mode: str = "append") -> dict[str, Any]:
+                source_name: str, mode: str = "append",
+                keep_pdf: bool = True) -> dict[str, Any]:
     """Đẩy PDF vào đúng pipeline sẵn có — giống nhánh của sgk_fetch.
 
     3 môn gốc (toán/văn/anh) đi ``import_sgk_pdf`` để ghi cả file .md lẫn RAG;
@@ -476,6 +477,7 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
         return tw.import_sgk_pdf(
             pdf_path, grade=grade, subject=subject, mode=mode,
             title=title, source_name=source_name, text=raw,
+            keep_pdf=keep_pdf,
         )
     if not raw:
         from services.pdf_intent import extract_markdown
@@ -498,7 +500,8 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
 
 
 def import_reader(reader_url: str, *, grade: int, subject: str,
-                  max_pages: int = 0, mode: str = "append") -> dict[str, Any]:
+                  max_pages: int = 0, mode: str = "append",
+                  label: str = "", keep_pdf: bool = True) -> dict[str, Any]:
     """Nạp ĐÚNG MỘT trang đọc sách đã biết link — dùng cho ô 'dán URL' trên web.
 
     Khác :func:`import_book` ở chỗ không tra danh mục: người dùng đã chỉ đúng
@@ -515,14 +518,17 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
     if not imgs:
         return {"ok": False, "error": "không lấy được ảnh trang từ link này"}
 
-    label = f"SGK lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}"
+    # `label` đi vào tiêu đề mọi chunk RAG. Nạp cả hai bộ sách thì PHẢI truyền
+    # tên quyển + bộ vào đây, không thì trong cùng lớp–môn có hai chương trình mà
+    # chunk không phân biệt được, bot trả lời trộn hai bộ mà không biết.
+    label = label.strip() or f"SGK lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}"
     with tempfile.TemporaryDirectory() as td:
         pdf_path = str(Path(td) / "sach.pdf")
         built = build_pdf(imgs, pdf_path, max_pages=max_pages)
         if not built.get("ok"):
             return {"ok": False, "error": f"ghép PDF lỗi: {built.get('error')}"}
         res = _ingest_pdf(pdf_path, grade=g, subject=sub, title=label,
-                          source_name=reader_url, mode=mode)
+                          source_name=reader_url, mode=mode, keep_pdf=keep_pdf)
     return {**res, "pages": built.get("pages"), "source": reader_url}
 
 

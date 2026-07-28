@@ -412,6 +412,7 @@ def fetch_and_ingest(
     curriculum: str = "",
     dry_run: bool = False,
     force: bool = False,
+    keep_pdf: bool = True,
 ) -> dict[str, Any]:
     """Tải 1 URL (từ ``find_sources`` hoặc do người dùng tự cung cấp) rồi nạp
     vào SGK/RAG. KHÔNG BAO GIỜ tự đoán/bịa URL khác — ``url`` phải do caller
@@ -497,7 +498,7 @@ def fetch_and_ingest(
             # 3 môn gốc → tái dùng NGUYÊN pipeline sẵn có (ghi .md + RAG).
             result = tw.import_sgk_pdf(
                 tmp_path, grade=g, subject=sub, mode="append",
-                title=head, source_name=fname,
+                title=head, source_name=fname, keep_pdf=keep_pdf,
             )
             rag_info = result.get("rag") or {}
         else:
@@ -512,7 +513,10 @@ def fetch_and_ingest(
             if not (raw or "").strip():
                 return {"ok": False, "error": "PDF không trích được chữ (scan cần OCR)"}
             md = tw._md_from_pdf_text(raw, title=head)
-            _archive_pdf(tmp_path, g, sub, kind, fname)
+            # PDF chỉ để audit; RAG đã tách khỏi nó từ lúc trích. Sách dựng từ
+            # ảnh trang rất nặng nên keep_pdf=False là bỏ hẳn bước lưu.
+            if keep_pdf:
+                _archive_pdf(tmp_path, g, sub, kind, fname)
             rag_info = tw.push_sgk_to_rag(
                 md, title=head, grade=g, subject=sub, source=fname,
                 collection=collection,

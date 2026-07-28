@@ -205,6 +205,92 @@ def create_router() -> APIRouter:
 
         return await run_in_threadpool(_run)
 
+    @router.get("/api/teacher/storage")
+    async def teacher_storage(authorization: str | None = Header(default=None)):
+        """PDF/markdown đang chiếm bao nhiêu — để quyết có xoá PDF hay không."""
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        # Threadpool: quét cây imports/ có thể hàng nghìn file.
+        return await run_in_threadpool(sb.storage_report)
+
+    @router.delete("/api/teacher/pdfs")
+    async def teacher_purge_pdfs(
+        grade: int = Query(default=0),
+        authorization: str | None = Header(default=None),
+    ):
+        """Xoá bản PDF đã lưu. KHÔNG đụng markdown SGK và RAG.
+
+        An toàn vì PDF chỉ là bản lưu để audit: markdown theo chương/bài và
+        chunks trong Chroma đã tách khỏi nó từ lúc nạp. `grade=0` = mọi lớp.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        return await run_in_threadpool(sb.purge_pdfs, grade=grade or None)
+
+    @router.get("/api/teacher/bulk")
+    async def teacher_bulk_status(authorization: str | None = Header(default=None)):
+        """Tiến độ nạp SGK hàng loạt."""
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        st = sb.read_state()
+        return {"ok": True, "running": sb.is_running(), "state": st,
+                "summary": sb.summary(st)}
+
+    @router.get("/api/teacher/bulk/plan")
+    async def teacher_bulk_plan(
+        grades: str = Query(default=""),
+        all_sets: bool = Query(default=True),
+        authorization: str | None = Header(default=None),
+    ):
+        """Xem SẼ nạp những quyển nào (chưa nạp gì) — kiểm trước khi chạy thật.
+
+        Mỗi lớp là một lượt cào danh mục taphuan nên gọi cả 12 lớp mất vài chục
+        giây; vì vậy chạy trong threadpool và nên truyền `grades` khi thử.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        gs = [int(x) for x in grades.replace(" ", "").split(",") if x.isdigit()] or None
+        items = await run_in_threadpool(sb.plan, gs, all_sets=all_sets)
+        usable = [x for x in items if not x.get("skip")]
+        return {"ok": True, "total": len(usable),
+                "unrecognised": [x.get("slug") for x in items if x.get("skip")],
+                "books": usable}
+
+    @router.post("/api/teacher/bulk/start")
+    async def teacher_bulk_start(
+        payload: dict | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """Chạy NỀN việc nạp toàn bộ SGK. Trả ngay, theo dõi ở GET /bulk.
+
+        Body: {grades?: [1,2], all_sets?: true, keep_pdf?: false,
+               max_pages?: 0, skip_done?: true, dry_run?: false}
+
+        `keep_pdf` mặc định FALSE ở đây (khác mặc định của hàm): nạp cả hai bộ
+        sách là hàng chục GB PDF chỉ để audit, mà tra cứu đi qua .md + RAG.
+        `skip_done` mặc định TRUE nên chạy lại là đi tiếp, không nạp lại quyển đã
+        xong.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        b = payload or {}
+        gs = b.get("grades")
+        return sb.start(
+            grades=[int(x) for x in gs] if isinstance(gs, list) and gs else None,
+            all_sets=bool(b.get("all_sets", True)),
+            keep_pdf=bool(b.get("keep_pdf", False)),
+            max_pages=int(b.get("max_pages") or 0),
+            skip_done=bool(b.get("skip_done", True)),
+            dry_run=bool(b.get("dry_run", False)),
+        )
+
+    @router.post("/api/teacher/bulk/stop")
+    async def teacher_bulk_stop(authorization: str | None = Header(default=None)):
+        """Dừng SAU KHI xong quyển đang chạy (không cắt giữa quyển làm mất công)."""
+        require_admin(authorization)
+        from services.agent import sgk_bulk as sb
+        return sb.stop()
+
     @router.get("/api/teacher/taphuan/books")
     async def teacher_taphuan_books(
         grade: int = Query(...),

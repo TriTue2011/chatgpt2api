@@ -625,8 +625,13 @@ def import_sgk_pdf(
     title: str = "",
     source_name: str = "",
     text: str = "",
+    keep_pdf: bool = True,
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
+
+    keep_pdf=False: KHÔNG lưu bản PDF gốc vào ``imports/``. Dùng cho nạp hàng
+    loạt — 89 quyển SGK dựng từ ảnh trang là hàng chục GB, mà bản PDF chỉ để
+    audit chứ không phục vụ tra cứu (tra cứu đi qua .md và RAG).
 
     text: nội dung Markdown ĐÃ trích sẵn. Truyền vào thì bỏ qua bước trích ở
     đây — dành cho caller có đường trích rẻ hơn (sgk_taphuan gửi cả khối trang
@@ -698,14 +703,15 @@ def import_sgk_pdf(
     dest = _SGK / f"lop{g}" / f"{sub}.md"
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # Lưu bản PDF gốc (audit).
-    imp_dir = _ROOT / "imports" / f"lop{g}" / sub
-    imp_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        safe = re.sub(r"[^\w.\-]+", "_", src)[:80]
-        shutil.copy2(path, imp_dir / f"{stamp.replace(':', '').replace(' ', '_')}_{safe}")
-    except Exception as exc:
-        logger.warning("teacher import: copy pdf failed: %s", exc)
+    # Lưu bản PDF gốc (audit) — bỏ qua khi keep_pdf=False.
+    if keep_pdf:
+        imp_dir = _ROOT / "imports" / f"lop{g}" / sub
+        imp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            safe = re.sub(r"[^\w.\-]+", "_", src)[:80]
+            shutil.copy2(path, imp_dir / f"{stamp.replace(':', '').replace(' ', '_')}_{safe}")
+        except Exception as exc:
+            logger.warning("teacher import: copy pdf failed: %s", exc)
 
     with _lock:
         if mode == "replace" or not dest.exists():
