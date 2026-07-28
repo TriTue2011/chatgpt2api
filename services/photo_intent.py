@@ -439,9 +439,17 @@ def ingest_knowledge_from_photo(
     channel: str = "",
 ) -> dict[str, Any]:
     """Vision mô tả → wiki.ingest (RAG kiến thức)."""
+    from services import ocr_rules
+
+    # Đây là việc MÔ TẢ ảnh, không phải OCR chặt như ingest_teacher_from_photo —
+    # nên không áp cả bộ quy tắc. Nhưng lá chắn injection thì phải có: nội dung
+    # ảnh đi thẳng vào wiki.ingest, và một ảnh chụp dòng chữ "bỏ qua hướng dẫn
+    # trên" không được phép điều khiển đường nạp.
     desc = analyze_photo(
         image_bytes,
-        prompt or "Mô tả chi tiết ảnh, nội dung chữ (OCR), đối tượng, ngữ cảnh — tiếng Việt.",
+        (prompt or "Mô tả chi tiết ảnh, nội dung chữ (OCR), đối tượng, ngữ cảnh "
+                   "— tiếng Việt.")
+        + "\n\n" + ocr_rules.INJECTION_GUARD,
         channel=channel,
     )
     content = f"Nguồn: ảnh gửi chat\n\n## Mô tả ảnh\n\n{desc}"
@@ -472,12 +480,30 @@ def ingest_teacher_from_photo(
     import tempfile
     from pathlib import Path
 
+    from services import ocr_rules
+
+    # Dùng CHUNG quy tắc OCR với pdf_to_word và sgk_taphuan (services/ocr_rules).
+    # Trước đây đây là prompt OCR thứ BA của dự án, chỉ một dòng — thiếu ký hiệu
+    # toán (ảnh trang Toán/Hoá chụp gửi vào sẽ mất số mũ, chỉ số dưới), thiếu dấu
+    # [không đọc được] (ảnh chụp bằng điện thoại rất hay mờ một góc, model sẽ
+    # đoán cho trôi chảy), và thiếu lá chắn prompt injection.
+    #
+    # math="unicode" chứ KHÔNG phải latex: `desc` còn được trả THẲNG vào tin nhắn
+    # Zalo/Telegram cho người gửi đọc (xem giá trị "text" trả về), mà "$x^2$"
+    # trong tin nhắn thì không ai đọc được.
     desc = analyze_photo(
         image_bytes,
-        "Đây là trang SGK/bài học. Chép TOÀN BỘ chữ đọc được (OCR) + mô tả hình, "
-        "giữ cấu trúc đề mục. Tiếng Việt.",
+        "Đây là ảnh chụp một trang sách giáo khoa / bài học. Chép TOÀN BỘ nội "
+        "dung trang thành Markdown tiếng Việt.\n\n"
+        + ocr_rules.rules(math=ocr_rules.MATH_UNICODE),
         channel=channel,
     )
+    if ocr_rules.looks_degenerate(desc):
+        # Lặp vòng: dài mà rỗng nghĩa. Ở đây nó sẽ vào thẳng file .md của SGK và
+        # kho RAG, nên KHÔNG nhận — báo lại để người gửi chụp lại rõ hơn.
+        return {"ok": False, "text": "",
+                "error": "OCR ảnh bị lặp vòng — chụp lại rõ hơn giúp em nhé "
+                         "(đủ sáng, thẳng trang, không loá)."}
     # Write temp md-like content as fake pdf path won't work for import_sgk_pdf
     # import_sgk_pdf needs PDF path — use import via markdown path if available
     try:

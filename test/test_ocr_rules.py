@@ -151,6 +151,25 @@ class TestHaiDuongDungChung:
         assert "_DEGEN_FILLER = set(" not in src, (
             "sgk_taphuan không được khai lại bộ phát hiện lặp vòng")
 
+    def test_photo_intent_soi_chieu_ocr_rules(self):
+        """Đường thứ BA: giáo viên chụp trang sách gửi Zalo/Telegram → RAG.
+        Prompt cũ chỉ một dòng, nên ảnh trang Toán/Hoá mất số mũ và chỉ số dưới."""
+        src = (_ROOT / "services" / "photo_intent.py").read_text(encoding="utf-8")
+        assert "ocr_rules.rules(" in src
+        assert "MATH_UNICODE" in src, (
+            "kết quả OCR này được gửi THẲNG vào tin nhắn cho người dùng đọc, "
+            "'$x^2$' trong tin nhắn thì không ai đọc được")
+        assert "ocr_rules.looks_degenerate(" in src, (
+            "ảnh OCR lặp vòng sẽ vào thẳng file .md của SGK và kho RAG")
+
+    def test_photo_mo_ta_van_co_la_chan_injection(self):
+        """`ingest_knowledge_from_photo` là việc MÔ TẢ ảnh nên không áp cả bộ quy
+        tắc, nhưng nội dung đi thẳng vào wiki.ingest — phải có lá chắn."""
+        src = (_ROOT / "services" / "photo_intent.py").read_text(encoding="utf-8")
+        i = src.index("def ingest_knowledge_from_photo")
+        j = src.index("def ingest_teacher_from_photo")
+        assert "ocr_rules.INJECTION_GUARD" in src[i:j]
+
     def test_pdf_to_word_chan_lap_vong(self):
         """Ở pdf_to_word, đầu ra lặp vòng còn được CACHE 7 ngày rồi nạp RAG."""
         src = (_ROOT / "services" / "pdf_to_word.py").read_text(encoding="utf-8")
