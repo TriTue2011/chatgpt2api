@@ -708,6 +708,14 @@ def _ensure_scheduler_running() -> None:
     t = threading.Thread(target=_scheduler_loop, daemon=True, name="ha-scheduler")
     t.start()
     logger.info({"event": "ha_scheduler_started"})
+    # Gương state thời gian thực (WebSocket subscribe_events) — vá thẳng vào
+    # _state_cache nên mọi đường đọc thấy dữ liệu tươi; gương chết thì
+    # get_states() tự rơi về REST như cũ.
+    try:
+        from services import ha_live
+        ha_live.start()
+    except Exception as exc:
+        logger.warning({"event": "ha_live_start_failed", "error": str(exc)[:120]})
 
 
 def _scheduler_loop() -> None:

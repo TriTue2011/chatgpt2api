@@ -46,6 +46,15 @@ def _session_affinity_stats() -> dict:
         return {}
 
 
+def _ha_live_stats() -> dict:
+    """Trạng thái gương HA WebSocket — cho card health trên UI."""
+    try:
+        from services import ha_live
+        return ha_live.stats()
+    except Exception:
+        return {"connected": False}
+
+
 def _check_gemini_status() -> dict:
     """Check Gemini API and ALL custom provider instances (all ports)."""
     import requests as req
@@ -910,6 +919,7 @@ def create_router(app_version: str) -> APIRouter:
                 "available": opencode_provider.is_available,
             },
             "gemini": _check_gemini_status(),
+            "ha_live": _ha_live_stats(),
         }
 
     # Cache health kiểu stale-while-revalidate: trả bản cũ NGAY, làm mới ngầm
