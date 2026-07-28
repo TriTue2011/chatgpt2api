@@ -655,7 +655,29 @@ type Coverage = {
   batches_failed?: number;
 };
 
+/** Hình dạng kết quả analyze_source — khai rõ để không phải nắn `unknown`. */
+type AnalyzeResult = Coverage & {
+  ok?: boolean; markdown?: string; warning?: string; error?: string;
+  pending?: boolean; job_id?: string; batches?: number; raw_fallback?: boolean;
+};
+
+type KbRow = { name: string; chunks: number; indexed?: boolean };
+
 const vnNum = (n: number) => n.toLocaleString("vi-VN");
+
+/** Tên collection Chroma: chỉ chữ thường, số, gạch dưới (studio.create_kb ép vậy).
+ *
+ * Bỏ dấu TRƯỚC khi lọc, nếu không "Phòng cháy" ra "phng_chy" vì mọi nguyên âm
+ * có dấu đều bị xoá — người Việt gõ tên kho bằng tiếng Việt là chuyện thường.
+ */
+const kbSlug = (s: string) =>
+  s.normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase().trim()
+    .replace(/[^a-z0-9_\s]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 30);
 
 function IngestTab({ showToast }: TabProps) {
   const [url, setUrl] = useState("");
@@ -667,21 +689,28 @@ function IngestTab({ showToast }: TabProps) {
   const [raw, setRaw] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
   const [cov, setCov] = useState<Coverage | null>(null);
-  const [kbs, setKbs] = useState<{ name: string; chunks: number }[]>([]);
+  const [kbs, setKbs] = useState<KbRow[]>([]);
   const [targetKb, setTargetKb] = useState("");
+  const [newKb, setNewKb] = useState(false);
+  const [kbName, setKbName] = useState("");
+  const [kbLabel, setKbLabel] = useState("");
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
   const loadKbs = useCallback(async () => {
     try {
       const r = await request.get(`${RAG}/list`);
-      const list = r.data?.collections || [];
+      const list: KbRow[] = r.data?.collections || [];
       setKbs(list);
       setTargetKb((cur) => cur || (list[0]?.name ?? ""));
     } catch { /* ignore */ }
   }, []);
 
-  const apply = useCallback(async (d: Record<string, unknown>) => {
+  // Nạp danh sách KB ngay khi mở tab, không chờ phân tích xong: người dùng cần
+  // biết TRƯỚC là có kho nào để nạp hay phải tạo mới.
+  useEffect(() => { loadKbs(); }, [loadKbs]);
+
+  const apply = useCallback(async (d: AnalyzeResult) => {
     const md = String(d.markdown || "");
     setItems(splitItems(md));
     setRaw(md);
@@ -750,9 +779,16 @@ function IngestTab({ showToast }: TabProps) {
     setOpenId(it.id);
   };
 
+  const textToSave = () => (view === "raw" ? raw : selText);
+
+  const clearAfterSave = () => {
+    setItems([]); setCov(null); setUrl(""); setFile(null);
+    setNewKb(false); setKbName(""); setKbLabel("");
+  };
+
   const saveToKb = async () => {
     if (!targetKb) { showToast("Chọn KB", false); return; }
-    const text = view === "raw" ? raw : selText;
+    const text = textToSave();
     if (!text.trim()) { showToast("Chưa chọn mục nào để nạp", false); return; }
     showToast("Đang nạp vào ChromaDB/R2...");
     try {
@@ -760,8 +796,31 @@ function IngestTab({ showToast }: TabProps) {
         { title: "Tài liệu AI tổng hợp", text, source: "studio_ingest" });
       if (r.data?.ok) {
         showToast(`Đã nạp ${r.data.chunks_added} chunks vào ${targetKb}`);
-        setItems([]); setCov(null); setUrl(""); setFile(null);
+        clearAfterSave(); await loadKbs();
       } else showToast("Lỗi nạp: " + r.data?.error, false);
+    } catch (e) { showToast(String((e as Error).message), false); }
+  };
+
+  /** Tạo kho MỚI từ chính nội dung đang chọn — không kho nào phù hợp thì khỏi
+   *  phải sang tab khác tạo rỗng rồi quay lại nạp. */
+  const createKbAndSave = async () => {
+    const name = kbSlug(kbName);
+    if (!name) { showToast("Đặt tên kho (chữ thường, số, gạch dưới)", false); return; }
+    if (kbs.some((k) => k.name === name)) {
+      showToast(`Đã có kho '${name}' — chọn nó ở danh sách trên`, false); return;
+    }
+    const text = textToSave();
+    if (!text.trim()) { showToast("Chưa chọn mục nào để nạp", false); return; }
+    showToast(`Đang tạo kho '${name}' và nạp...`);
+    try {
+      const r = await request.post(`${STUDIO}/kb`,
+        { name, label: kbLabel.trim() || kbName.trim() || name, content: text });
+      if (r.data?.ok) {
+        showToast(`Đã tạo '${name}' với ${r.data.chunks} chunks. Bật MCP của kho ở tab MCP Servers rồi restart.`);
+        clearAfterSave(); await loadKbs();
+      } else {
+        showToast("Lỗi tạo kho: " + ((r.data?.errors || []).join(". ") || r.data?.error || "?"), false);
+      }
     } catch (e) { showToast(String((e as Error).message), false); }
   };
 
@@ -849,15 +908,54 @@ function IngestTab({ showToast }: TabProps) {
             </div>
           )}
 
-          <Field label="Chọn KB để nạp vào">
-            <select className={INPUT} value={targetKb} onChange={(e) => setTargetKb(e.target.value)}>
-              {kbs.length === 0 && <option value="">(Chưa có KB)</option>}
-              {kbs.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.chunks} chunks)</option>)}
-            </select>
-          </Field>
-          <button className="btn btn-primary" disabled={view === "list" && sel.length === 0} onClick={saveToKb}>
-            {view === "raw" ? "Nạp toàn văn vào KB này" : `Nạp ${sel.length} mục vào KB này`}
-          </button>
+          <div className="border-t border-[var(--border)] pt-3 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">Nạp vào đâu</span>
+              <span className="text-xs text-[var(--muted-foreground)]">{kbs.length} kho hiện có</span>
+              <button className="ml-auto text-xs px-2 py-1 rounded-md border border-[var(--border)]"
+                onClick={() => setNewKb((v) => !v)}>
+                {newKb ? "← Chọn kho có sẵn" : "＋ Tạo kho mới"}
+              </button>
+            </div>
+
+            {newKb ? (
+              <>
+                <Field label="Tên kho (chữ thường, số, gạch dưới — dùng làm tên collection)">
+                  <input className={INPUT} placeholder="vd: pccc_bxd" value={kbName}
+                    onChange={(e) => setKbName(e.target.value)} />
+                </Field>
+                {kbName && kbSlug(kbName) !== kbName.trim() && (
+                  <p className="text-xs text-amber-600">Sẽ lưu thành: <code>{kbSlug(kbName)}</code></p>
+                )}
+                <Field label="Tên hiển thị (để AI biết kho này về gì)">
+                  <input className={INPUT} placeholder="vd: Giải pháp PCCC — Bộ Xây dựng"
+                    value={kbLabel} onChange={(e) => setKbLabel(e.target.value)} />
+                </Field>
+                <button className="btn btn-primary" disabled={view === "list" && sel.length === 0}
+                  onClick={createKbAndSave}>
+                  {view === "raw" ? "Tạo kho & nạp toàn văn" : `Tạo kho & nạp ${sel.length} mục`}
+                </button>
+                <p className="text-xs text-[var(--muted-foreground)]">Kho mới thành một MCP riêng. Sau khi tạo, bật nó ở tab «MCP Servers» rồi restart container để bot dùng được.</p>
+              </>
+            ) : (
+              <>
+                <Field label="Chọn kho">
+                  <select className={INPUT} value={targetKb} onChange={(e) => setTargetKb(e.target.value)}>
+                    {kbs.length === 0 && <option value="">(Chưa có kho — bấm «Tạo kho mới»)</option>}
+                    {kbs.map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} ({vnNum(c.chunks)} chunks{c.indexed ? "" : " · chưa index"})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <button className="btn btn-primary"
+                  disabled={!targetKb || (view === "list" && sel.length === 0)} onClick={saveToKb}>
+                  {view === "raw" ? "Nạp toàn văn vào kho này" : `Nạp ${sel.length} mục vào kho này`}
+                </button>
+              </>
+            )}
+          </div>
         </div></div>
       )}
     </div>

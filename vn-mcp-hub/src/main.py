@@ -874,19 +874,71 @@ def create_app() -> FastAPI:
 
     @app.get("/api/rag/list")
     async def rag_list():
-        """List all RAG collections with metadata."""
-        from src.rag.meta import read_meta, get_age_str
+        """Liệt kê MỌI kho RAG dùng được, không chỉ kho đã có meta.json.
+
+        Bản cũ chỉ nhận thư mục có `meta.json`. Nhưng meta.json chỉ sinh ra khi
+        `touch()` chạy — tức sau lần nạp/refresh đầu tiên. 7 kho gốc trong repo
+        (dien_nuoc, y_te, giao_duc, ngoai_ngu, khoa_hoc, tu_nhien, xa_hoi) chỉ
+        có sẵn file .md, KHÔNG có meta.json, nên biến mất khỏi danh sách —
+        người dùng mở ô "chọn KB để nạp vào" thì thiếu kho, tưởng là chưa có.
+
+        Giờ hợp ba nguồn: thư mục có .md, sổ KB động của Studio, và collection
+        thật trong Chroma (nguồn sự thật về cái gì hỏi được).
+        """
         from pathlib import Path
+
+        from src.rag.meta import get_age_str, read_meta
         data_dir = Path("/app/data")
-        result = []
+        names: set[str] = set()
+
+        # 1) Thư mục kho: có meta.json HOẶC có file .md để nạp.
         if data_dir.exists():
             for folder in sorted(data_dir.iterdir()):
-                if folder.is_dir() and (folder / "meta.json").exists():
-                    meta = read_meta(folder.name)
-                    result.append({"name": folder.name, "chunks": meta.get("chunks_count", 0),
-                                   "last_updated": meta.get("last_updated"),
-                                   "age": get_age_str(folder.name),
-                                   "auto_update": meta.get("auto_update", False)})
+                if not folder.is_dir() or folder.name.startswith("."):
+                    continue
+                # `studio` là thư mục CHỨA các kho động, bản thân nó không phải kho.
+                if folder.name == "studio":
+                    continue
+                if (folder / "meta.json").exists() or any(folder.glob("*.md")):
+                    names.add(folder.name)
+
+        # 2) Sổ KB động của Studio — kho mới tạo có thể chưa kịp có .md ở data/.
+        try:
+            from src.studio import list_dynamic_mcps
+            for e in list_dynamic_mcps():
+                if e.get("name"):
+                    names.add(str(e["name"]))
+        except Exception as exc:
+            logging.getLogger("vn-mcp-hub").debug("rag_list: studio registry: %s", exc)
+
+        # 3) Collection thật trong Chroma + số chunk thật (meta có thể lệch).
+        live: dict[str, int] = {}
+        try:
+            from src.rag.retriever import RAGRetriever
+            r = RAGRetriever.get()
+            if r._ensure_loaded():
+                for col in r._client.list_collections():
+                    cname = getattr(col, "name", None) or str(col)
+                    names.add(cname)
+                    try:
+                        live[cname] = r._client.get_collection(cname).count()
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logging.getLogger("vn-mcp-hub").debug("rag_list: chroma: %s", exc)
+
+        result = []
+        for name in sorted(names):
+            meta = read_meta(name)
+            result.append({
+                "name": name,
+                # Số chunk thật ưu tiên hơn meta: meta chỉ đúng tới lần touch cuối.
+                "chunks": live.get(name, meta.get("chunks_count", 0)),
+                "indexed": name in live,
+                "last_updated": meta.get("last_updated"),
+                "age": get_age_str(name),
+                "auto_update": meta.get("auto_update", False),
+            })
         return {"collections": result}
 
     @app.post("/api/studio/collection/{name}/settings")
