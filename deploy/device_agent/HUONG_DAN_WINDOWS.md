@@ -6,6 +6,11 @@ nhà hay 4G đều được.
 
 Toàn bộ việc dưới đây bạn tự làm được, không cần ai hỗ trợ.
 
+> **Cách nhanh hơn:** mở web UI → **MCP → tab "Thiết bị của tôi"**. Điền tên +
+> thư mục, chọn *Qua Internet* hay *Trong mạng LAN*, chọn *Windows* — nó sinh
+> sẵn từng lệnh kèm nút Copy, và hiện trạng thái online/offline của thiết bị.
+> Tài liệu này dành cho lúc bạn muốn hiểu rõ từng bước hoặc không mở được UI.
+
 ---
 
 ## Bước 0 — Cần gì

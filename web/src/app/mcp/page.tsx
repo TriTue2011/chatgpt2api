@@ -39,7 +39,7 @@ const GROUPS: McpGroup[] = [
     mcps: [{id:"web_agent",name:"Web Agent",url:""},{id:"youtube",name:"YouTube Transcript",url:""},{id:"ha_helper",name:"HA Helper",url:""}], installedCount:0, totalCount:3 },
 ];
 
-type TabId = "servers" | "kb" | "settings" | "r2" | "external" | "ingest";
+type TabId = "servers" | "kb" | "settings" | "r2" | "external" | "ingest" | "devices";
 const TABS: { id: TabId; label: string }[] = [
   { id: "servers", label: "MCP Servers" },
   { id: "kb", label: "Knowledge Base" },
@@ -47,6 +47,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "r2", label: "R2 Storage" },
   { id: "external", label: "External MCP" },
   { id: "ingest", label: "Nạp RAG" },
+  { id: "devices", label: "Thiết bị của tôi" },
 ];
 
 export default function McpPage() {
@@ -90,6 +91,7 @@ export default function McpPage() {
       {tab === "r2" && <R2Tab showToast={showToast} />}
       {tab === "external" && <ExternalTab showToast={showToast} />}
       {tab === "ingest" && <IngestTab showToast={showToast} />}
+      {tab === "devices" && <DevicesTab showToast={showToast} />}
 
       {toast && (
         <div className={`fixed top-5 right-5 z-50 rounded-lg px-4 py-2.5 text-sm font-semibold shadow-lg ${
@@ -675,6 +677,438 @@ function IngestTab({ showToast }: TabProps) {
           <button className="btn btn-primary" onClick={saveToKb}>Nạp vào KB này</button>
         </div></div>
       )}
+    </div>
+  );
+}
+
+// ── Tab: Thiết bị của tôi (device agent — đọc/sửa file máy tính/điện thoại) ─
+type DeviceRow = {
+  name: string; label?: string; connected?: boolean; platform?: string;
+  hostname?: string; agent_version?: string; paths?: string[];
+  can_write?: boolean; ops?: number; connected_at?: number;
+};
+type OsId = "win" | "mac" | "linux" | "termux";
+const OS_LIST: { id: OsId; label: string; shell: string }[] = [
+  { id: "win", label: "🪟 Windows", shell: "PowerShell" },
+  { id: "mac", label: "🍎 macOS", shell: "Terminal" },
+  { id: "linux", label: "🐧 Linux / VPS", shell: "Terminal (SSH)" },
+  { id: "termux", label: "🤖 Android", shell: "Termux" },
+];
+const RAW_AGENT =
+  "https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/c2a_agent.py";
+
+type Step = { title: string; cmd?: string; note?: string };
+
+/** Các bước cài ĐẦY ĐỦ cho MỘT máy mới — gồm cả việc cài Python. */
+function installSteps(
+  os: OsId, wsUrl: string, token: string, paths: string[], canWrite: boolean,
+): Step[] {
+  if (!token || !wsUrl) return [];
+  const w = canWrite ? " --allow-write" : "";
+  const q = (x: string) => `"${x}"`;
+  const pArgs = paths.map((x) => `--path ${q(x)}`).join(" ");
+  const run = (py: string) =>
+    `${py} c2a_agent.py --url ${wsUrl} --token ${q(token)} ${pArgs}${w}`;
+
+  if (os === "win") {
+    return [
+      { title: "1. Cài Python (bỏ qua nếu `python --version` đã chạy được)",
+        cmd: "winget install Python.Python.3.12",
+        note: "Cài xong PHẢI đóng rồi mở lại PowerShell để `python` vào PATH." },
+      { title: "2. Tải agent về (vào thư mục người dùng)",
+        cmd: `cd $HOME; irm ${RAW_AGENT} -OutFile c2a_agent.py` },
+      { title: "3. Chạy agent",
+        cmd: run("python"),
+        note: "Để cửa sổ PowerShell này MỞ. Đóng là agent dừng. Ctrl-C để dừng." },
+      { title: "4. (Không bắt buộc) Tự chạy khi mở máy",
+        cmd: [
+          "# Tạo file c2a.bat rồi mở thư mục Startup",
+          '$bat = Join-Path $env:USERPROFILE "c2a.bat"',
+          '@("@echo off", "cd /d %USERPROFILE%", ' + JSON.stringify(run("python")) + ') | Set-Content -Encoding OEM $bat',
+          "explorer shell:startup",
+        ].join("\n"),
+        note: "Explorer mở thư mục Startup — kéo file c2a.bat (ở thư mục người dùng) vào đó. Muốn không hiện cửa sổ đen thì sửa 'python' thành 'pythonw' trong file bat." },
+    ];
+  }
+  if (os === "mac") {
+    return [
+      { title: "1. Kiểm tra Python (macOS có sẵn python3)",
+        cmd: "python3 --version",
+        note: "Báo lỗi thì cài: brew install python" },
+      { title: "2. Tải agent về",
+        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py` },
+      { title: "3. Chạy agent",
+        cmd: run("python3"),
+        note: "Để cửa sổ Terminal này MỞ. Ctrl-C để dừng." },
+      { title: "4. (Không bắt buộc) Chạy nền, không cần giữ Terminal",
+        cmd: `cd ~ && nohup ${run("python3")} > ~/c2a.log 2>&1 &`,
+        note: "Xem log: tail -f ~/c2a.log · Dừng: pkill -f c2a_agent.py" },
+    ];
+  }
+  if (os === "linux") {
+    return [
+      { title: "1. Cài Python nếu thiếu",
+        cmd: "sudo apt update && sudo apt install -y python3 curl",
+        note: "Máy RHEL/CentOS: sudo dnf install -y python3 curl" },
+      { title: "2. Tải agent về",
+        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py` },
+      { title: "3. Chạy thử (xem có kết nối được không)",
+        cmd: run("python3"),
+        note: "Thấy “đã kết nối” là xong. Ctrl-C rồi làm bước 4 để chạy vĩnh viễn." },
+      { title: "4. Chạy vĩnh viễn bằng systemd (khuyến nghị cho VPS)",
+        cmd: [
+          "sudo tee /etc/systemd/system/c2a-agent.service >/dev/null <<'EOF'",
+          "[Unit]",
+          "Description=c2a device agent",
+          "After=network-online.target",
+          "",
+          "[Service]",
+          `ExecStart=/usr/bin/python3 ${"$"}HOME/c2a_agent.py --url ${wsUrl} ${pArgs}${w}`,
+          `Environment=C2A_TOKEN=${token}`,
+          "Restart=always",
+          "RestartSec=10",
+          "",
+          "[Install]",
+          "WantedBy=multi-user.target",
+          "EOF",
+          "sudo systemctl daemon-reload && sudo systemctl enable --now c2a-agent",
+        ].join("\n"),
+        note: "Token đặt qua biến môi trường C2A_TOKEN để không lộ trong `ps aux`. Xem log: journalctl -u c2a-agent -f" },
+    ];
+  }
+  return [
+    { title: "1. Cài Python trong Termux",
+      cmd: "pkg update -y && pkg install -y python",
+      note: "Cài Termux từ F-Droid (bản Play Store đã cũ, hay lỗi)." },
+    { title: "2. Giữ máy không ngủ (BẮT BUỘC, nếu không sẽ đứt kết nối)",
+      cmd: "termux-wake-lock" },
+    { title: "3. Cho Termux xem được bộ nhớ máy",
+      cmd: "termux-setup-storage",
+      note: "Android sẽ hỏi quyền — bấm Cho phép. Sau đó ~/storage/shared là bộ nhớ trong." },
+    { title: "4. Tải agent về",
+      cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py` },
+    { title: "5. Chạy nền + ghi log",
+      cmd: `cd ~ && nohup ${run("python3")} > ~/c2a.log 2>&1 &`,
+      note: "Xem log: tail -f ~/c2a.log · Dừng: pkill -f c2a_agent.py" },
+  ];
+}
+
+function DevicesTab({ showToast }: TabProps) {
+  const [rows, setRows] = useState<DeviceRow[]>([]);
+  const [wsUrl, setWsUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  // Token chỉ tồn tại trong bộ nhớ trang, ngay sau khi tạo/xoay — không bao
+  // giờ lưu lại, cũng không đọc ngược từ server (config không phải nơi tra
+  // cứu bí mật).
+  const [fresh, setFresh] = useState<{ name: string; token: string; paths: string[]; canWrite: boolean } | null>(null);
+  const [os, setOs] = useState<OsId>("win");
+  const [mode, setMode] = useState<"domain" | "lan">("domain");
+  const [lanUrl, setLanUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // form
+  const [name, setName] = useState("");
+  const [label, setLabel] = useState("");
+  const [pathsText, setPathsText] = useState("");
+  const [canWrite, setCanWrite] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await request.get("/api/devices");
+      setRows(r.data?.devices || []);
+      setWsUrl(r.data?.ws_url || "");
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, []);
+
+  // URL cho chế độ LAN: suy từ chính địa chỉ đang mở trang admin. Khi cài
+  // trong LAN thì hầu như luôn mở UI bằng IP nội bộ, nên đây là giá trị đúng
+  // — vẫn cho sửa tay vì máy chủ có thể có nhiều card mạng.
+  useEffect(() => {
+    if (lanUrl) return;
+    try {
+      const o = window.location.origin;
+      setLanUrl(o.replace(/^https:/, "wss:").replace(/^http:/, "ws:") + "/api/devices/agent");
+    } catch { /* SSR */ }
+  }, [lanUrl]);
+
+  // Poll 5s: cần thấy thiết bị bật/tắt gần như tức thì (giống trang tunnel),
+  // mà payload rất nhỏ nên rẻ.
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const parsedPaths = pathsText.split("\n").map((s) => s.trim()).filter(Boolean);
+
+  const create = async () => {
+    if (!name.trim()) { showToast("Chưa đặt tên thiết bị", false); return; }
+    if (parsedPaths.length === 0) { showToast("Phải khai ít nhất một thư mục", false); return; }
+    setBusy(true);
+    try {
+      const r = await request.post("/api/devices", {
+        name: name.trim(), label: label.trim(), paths: parsedPaths, can_write: canWrite,
+      });
+      if (r.data?.ok) {
+        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [], canWrite: !!r.data.can_write });
+        setName(""); setLabel(""); setPathsText(""); setCanWrite(false);
+        showToast(`Đã thêm ${r.data.name} — copy lệnh cài bên dưới`);
+        load();
+      } else showToast(r.data?.error || "Lỗi", false);
+    } catch (e) { showToast(String((e as Error).message), false); }
+    setBusy(false);
+  };
+
+  const rotate = async (d: DeviceRow) => {
+    if (!window.confirm(
+      `Lấy lệnh cài mới cho "${d.label || d.name}"?\n\n` +
+      "Token cũ sẽ NGỪNG hoạt động ngay (agent đang chạy sẽ bị ngắt) — " +
+      "phải chạy lại agent bằng lệnh mới.")) return;
+    try {
+      const r = await request.post(`/api/devices/${encodeURIComponent(d.name)}/rotate`);
+      if (r.data?.ok) {
+        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [], canWrite: !!r.data.can_write });
+        showToast("Token mới đã sinh — copy lệnh cài bên dưới");
+        load();
+      } else showToast(r.data?.error || "Lỗi", false);
+    } catch (e) { showToast(String((e as Error).message), false); }
+  };
+
+  const del = async (d: DeviceRow) => {
+    if (!window.confirm(`Xoá thiết bị "${d.label || d.name}"? Token mất hiệu lực ngay.`)) return;
+    try {
+      const r = await request.delete(`/api/devices/${encodeURIComponent(d.name)}`);
+      if (r.data?.ok) {
+        if (fresh?.name === d.name) setFresh(null);
+        showToast(`Đã xoá ${d.name}`); load();
+      } else showToast(r.data?.error || "Lỗi", false);
+    } catch (e) { showToast(String((e as Error).message), false); }
+  };
+
+  const activeUrl = mode === "domain" ? wsUrl : lanUrl;
+  const steps = fresh ? installSteps(os, activeUrl, fresh.token, fresh.paths, fresh.canWrite) : [];
+  const copy = async (text: string, what = "lệnh") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`Đã copy ${what}`);
+    } catch { showToast("Không copy được — bôi đen rồi Ctrl+C", false); }
+  };
+
+  const online = rows.filter((r) => r.connected).length;
+
+  return (
+    <div className="space-y-4">
+      {/* Trạng thái tổng quan */}
+      <div className="card"><div className="card-body flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="font-semibold">Thiết bị của tôi</h3>
+          <p className="text-sm text-[var(--muted-foreground)] mt-0.5">
+            Cho bot đọc/sửa file trên máy tính, điện thoại Android, VPS — qua Internet,
+            không cần mở cổng. Agent tự quay ra nên máy sau NAT/4G vẫn dùng được.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`inline-block h-2.5 w-2.5 rounded-full ${online > 0 ? "bg-emerald-500" : "bg-[var(--muted-foreground)]"}`} />
+          <span className="font-semibold">{online}/{rows.length} online</span>
+          <button className="btn" onClick={load} title="Làm mới"><RefreshCw size={15} /></button>
+        </div>
+      </div></div>
+
+      {!wsUrl && (
+        <div className="card"><div className="card-body">
+          <p className="text-sm text-amber-500">
+            ⚠️ Chưa cấu hình <b>base_url</b> (hoặc telegram_webhook_url) trong Cài đặt —
+            không dựng được lệnh cài vì không biết domain công khai của dự án.
+          </p>
+        </div></div>
+      )}
+
+      {/* Lệnh cài — hiện ngay sau khi tạo/xoay token */}
+      {fresh && (
+        <div className="card border-emerald-500/40"><div className="card-body space-y-4">
+          <h3 className="font-semibold">
+            <CheckCircle2 size={16} className="inline mr-1.5 text-emerald-500" />
+            Hướng dẫn cài cho <code>{fresh.name}</code>
+          </h3>
+
+          {/* Chọn 1: cách kết nối */}
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              Bước A — Kết nối kiểu nào?
+            </span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button onClick={() => setMode("domain")}
+                className={`rounded-lg border p-3 text-left transition-colors ${
+                  mode === "domain" ? "border-[var(--primary)] bg-[var(--primary)]/10" : "border-[var(--border)] hover:border-[var(--primary)]/50"
+                }`}>
+                <div className="font-semibold text-sm">🌐 Qua Internet (domain)</div>
+                <div className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+                  Máy ở đâu cũng dùng được — 4G, wifi nhà, quán cà phê. Đi qua domain công khai.
+                </div>
+              </button>
+              <button onClick={() => setMode("lan")}
+                className={`rounded-lg border p-3 text-left transition-colors ${
+                  mode === "lan" ? "border-[var(--primary)] bg-[var(--primary)]/10" : "border-[var(--border)] hover:border-[var(--primary)]/50"
+                }`}>
+                <div className="font-semibold text-sm">🏠 Trong mạng LAN</div>
+                <div className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+                  Chỉ khi thiết bị CÙNG mạng với máy chủ. Nhanh hơn, không qua Internet.
+                </div>
+              </button>
+            </div>
+            {mode === "domain" ? (
+              wsUrl
+                ? <p className="mt-2 text-xs text-[var(--muted-foreground)]">Địa chỉ: <code>{wsUrl}</code></p>
+                : <p className="mt-2 text-xs text-amber-500">⚠️ Chưa cấu hình base_url — chọn LAN, hoặc điền base_url trong Cài đặt.</p>
+            ) : (
+              <div className="mt-2">
+                <input className={`${INPUT} font-mono text-xs`} value={lanUrl}
+                  onChange={(e) => setLanUrl(e.target.value)} />
+                <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                  Tự lấy từ địa chỉ bạn đang mở trang này. Máy chủ có nhiều card mạng thì sửa lại IP cho đúng.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Chọn 2: loại thiết bị */}
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              Bước B — Thiết bị loại gì?
+            </span>
+            <div className="grid gap-2 grid-cols-2 sm:grid-cols-4">
+              {OS_LIST.map((o) => (
+                <button key={o.id} onClick={() => setOs(o.id)}
+                  className={`rounded-lg border p-2.5 text-left transition-colors ${
+                    os === o.id ? "border-[var(--primary)] bg-[var(--primary)]/10" : "border-[var(--border)] hover:border-[var(--primary)]/50"
+                  }`}>
+                  <div className="text-sm font-semibold">{o.label}</div>
+                  <div className="text-xs text-[var(--muted-foreground)]">{o.shell}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Các bước cụ thể */}
+          {steps.length === 0 ? (
+            <p className="text-sm text-amber-500">
+              Chưa dựng được lệnh — thiếu địa chỉ kết nối ở Bước A.
+            </p>
+          ) : (
+            <div>
+              <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+                Bước C — Làm lần lượt trên {OS_LIST.find((o) => o.id === os)?.label} (mở {OS_LIST.find((o) => o.id === os)?.shell})
+              </span>
+              <div className="space-y-2.5">
+                {steps.map((s, i) => (
+                  <div key={i} className="rounded-lg border border-[var(--border)] p-3">
+                    <div className="text-sm font-semibold">{s.title}</div>
+                    {s.cmd && (
+                      <div className="mt-2 flex items-start gap-2">
+                        <pre className="flex-1 overflow-x-auto rounded bg-[var(--background)] p-2.5 font-mono text-[11px] leading-relaxed">{s.cmd}</pre>
+                        <button className="btn shrink-0" onClick={() => copy(s.cmd!)}>Copy</button>
+                      </div>
+                    )}
+                    {s.note && (
+                      <p className="mt-1.5 text-xs text-[var(--muted-foreground)]">💡 {s.note}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 flex-wrap border-t border-[var(--border)] pt-3">
+            <button className="btn" onClick={() => setFresh(null)}>Ẩn hướng dẫn</button>
+            <span className="text-xs text-amber-500">
+              Token chỉ hiện lúc này. Ẩn đi rồi cần lại thì bấm “Lệnh cài mới” ở danh sách (sẽ xoay token khác).
+            </span>
+          </div>
+        </div></div>
+      )}
+
+      {/* Danh sách thiết bị */}
+      <div className="card"><div className="card-body">
+        <h3 className="font-semibold mb-3">Danh sách</h3>
+        {loading && <p className="text-sm text-[var(--muted-foreground)]">Đang tải...</p>}
+        {!loading && rows.length === 0 && (
+          <p className="text-sm text-[var(--muted-foreground)]">
+            Chưa có thiết bị nào. Thêm ở khung dưới.
+          </p>
+        )}
+        <div className="space-y-2">
+          {rows.map((d) => (
+            <div key={d.name} className="rounded-lg border border-[var(--border)] p-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${
+                      d.connected ? "bg-emerald-500 animate-pulse" : "bg-[var(--muted-foreground)]"
+                    }`} />
+                    <span className="font-semibold">{d.label || d.name}</span>
+                    <code className="text-xs text-[var(--muted-foreground)]">{d.name}</code>
+                    {d.can_write
+                      ? <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-500">ghi được</span>
+                      : <span className="rounded bg-[var(--muted)]/40 px-1.5 py-0.5 text-[11px] font-semibold text-[var(--muted-foreground)]">chỉ đọc</span>}
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    {d.connected
+                      ? <>🟢 đang kết nối · {d.platform || "?"} · {d.hostname || "?"} · agent v{d.agent_version || "?"} · {d.ops ?? 0} lệnh</>
+                      : <>⚪ chưa kết nối — chạy agent trên máy đó (tự nối lại sau 5–120 giây)</>}
+                  </p>
+                  <p className="mt-0.5 text-xs text-[var(--muted-foreground)] break-all">
+                    thư mục: {(d.paths || []).join("  ·  ") || "(chưa khai — không mở gì)"}
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button className="btn" onClick={() => rotate(d)}>Lệnh cài mới</button>
+                  <button className="btn text-red-500" onClick={() => del(d)} title="Xoá"><Trash2 size={15} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div></div>
+
+      {/* Thêm thiết bị */}
+      <div className="card"><div className="card-body space-y-3">
+        <h3 className="font-semibold">Thêm thiết bị</h3>
+        <div className="flex gap-3 flex-wrap">
+          <Field label="Tên (a-z 0-9 _ -)">
+            <input className={INPUT} placeholder="laptop-win" value={name}
+              onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
+          </Field>
+          <Field label="Nhãn hiển thị">
+            <input className={INPUT} placeholder="Laptop Windows" value={label}
+              onChange={(e) => setLabel(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Thư mục được phép — mỗi dòng một đường dẫn TUYỆT ĐỐI">
+          <textarea className={`${INPUT} min-h-20 font-mono text-xs`} value={pathsText}
+            onChange={(e) => setPathsText(e.target.value)}
+            placeholder={"C:\\Users\\Viet\\Downloads\n/home/me/project"} />
+        </Field>
+        <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={canWrite}
+            onChange={(e) => setCanWrite(e.target.checked)} />
+          <span>
+            Cho phép <b>ghi/sửa file</b>
+            <span className="block text-xs text-[var(--muted-foreground)]">
+              Nên để TẮT lần đầu. Bật rồi vẫn phải thêm cờ <code>--allow-write</code> khi chạy
+              agent — cả hai phía đều phải bật, để không mở quyền ghi do sơ suất một chỗ.
+            </span>
+          </span>
+        </label>
+        <div className="flex items-center gap-3 flex-wrap">
+          <button className="btn btn-primary" disabled={busy} onClick={create}>
+            {busy ? "Đang thêm..." : "Thêm & lấy lệnh cài"}
+          </button>
+          <span className="text-xs text-[var(--muted-foreground)]">
+            Khai càng hẹp càng an toàn — đừng khai <code>C:\</code> hay <code>/</code>. Mở rộng sau lúc nào cũng được.
+          </span>
+        </div>
+      </div></div>
     </div>
   );
 }

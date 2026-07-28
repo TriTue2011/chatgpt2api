@@ -59,10 +59,61 @@ def create_router() -> APIRouter:
             if session is not None:
                 await da.unregister(session)
 
+    def _agent_ws_url() -> str:
+        """URL agent phải trỏ vào — suy từ base_url công khai của dự án.
+
+        UI KHÔNG được tự lấy window.location.origin: trang admin hay được mở
+        bằng IP LAN (172.16.10.38:3030), còn agent trên điện thoại/VPS phải đi
+        qua domain công khai. Dựng lệnh cài từ origin sẽ ra lệnh chạy được ở
+        LAN nhưng chết ngoài Internet.
+        """
+        c = config.get()
+        base = (str(c.get("base_url") or "").strip()
+                or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/")
+        if not base:
+            return ""
+        ws = base.replace("https://", "wss://").replace("http://", "ws://")
+        return f"{ws}/api/devices/agent"
+
     @router.get("/api/devices")
     async def devices_list(authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return {"devices": da.list_devices()}
+        return {"devices": da.list_devices(), "ws_url": _agent_ws_url()}
+
+    @router.post("/api/devices/{name}/rotate")
+    async def devices_rotate(name: str,
+                             authorization: str | None = Header(default=None)):
+        """Sinh token MỚI cho thiết bị đã có, trả về một lần.
+
+        Token cũ chỉ hiện đúng lúc khai báo, nên khi cần lại lệnh cài (đổi máy,
+        mất token) thì cách an toàn là XOAY token chứ không phải đọc lại cái cũ
+        — cấu hình không nên là nơi tra cứu bí mật. Phiên đang chạy bằng token
+        cũ bị ngắt ngay để không còn hai bên cùng dùng.
+        """
+        require_admin(authorization)
+        import secrets
+
+        devs = dict(config.data.get("device_agents") or {})
+        cfg = devs.get(name)
+        if not isinstance(cfg, dict):
+            raise HTTPException(404, f"không có thiết bị '{name}'")
+        cfg = dict(cfg)
+        cfg["token"] = secrets.token_urlsafe(32)
+        devs[name] = cfg
+        config.data["device_agents"] = devs
+        config._save()
+        session = da.get(name)
+        if session is not None:
+            session.fail_all("token đã được xoay — chạy lại agent với token mới")
+            try:
+                await session.ws.close(code=4403)
+            except Exception:
+                pass
+        logger.info({"event": "device_token_rotated", "device": name})
+        return {"ok": True, "name": name, "token": cfg["token"],
+                "paths": cfg.get("paths") or [],
+                "can_write": bool(cfg.get("can_write")),
+                "ws_url": _agent_ws_url()}
 
     @router.post("/api/devices")
     async def devices_register(payload: dict,
@@ -108,6 +159,7 @@ def create_router() -> APIRouter:
                      "paths": len(paths), "can_write": devs[name]["can_write"]})
         return {"ok": True, "name": name, "token": token,
                 "paths": paths, "can_write": devs[name]["can_write"],
+                "ws_url": _agent_ws_url(),
                 "note": "Giữ token này — nó không hiện lại ở đâu khác."}
 
     @router.delete("/api/devices/{name}")
