@@ -918,12 +918,14 @@ def create_app() -> FastAPI:
             r = RAGRetriever.get()
             if r._ensure_loaded():
                 for col in r._client.list_collections():
+                    # chromadb ≥0.6 trả về tên (str); bản cũ trả về object.
                     cname = getattr(col, "name", None) or str(col)
                     names.add(cname)
-                    try:
-                        live[cname] = r._client.get_collection(cname).count()
-                    except Exception:
-                        pass
+                    # Dùng đúng đường của retriever (kèm embedding function) thay
+                    # vì get_collection() trần — tránh lệch hành vi giữa hai lối.
+                    stats = r.collection_stats(cname)
+                    if stats.get("available") and stats.get("count", -1) >= 0:
+                        live[cname] = stats["count"]
         except Exception as exc:
             logging.getLogger("vn-mcp-hub").debug("rag_list: chroma: %s", exc)
 
