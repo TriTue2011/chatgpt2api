@@ -84,11 +84,24 @@ _MAX_BOOK_BYTES = 400 * 1024 * 1024
 _IMG_GAP = 0.15
 
 _DETAIL_RE = re.compile(r"/tap-huan/chi-tiet-sach/([a-z0-9-]+\.[0-9]+)")
-_READER_RE = re.compile(r"/tap-huan/doc-sach/(sgk-[a-z0-9-]+\.[0-9]+)")
+# Bắt MỌI link đọc rồi mới lọc theo loại bằng `doc_kind()`. Trước đây regex tự
+# ép tiền tố `sgk-`, nên "shs-" (sách học sinh) và slug trần không lọt qua —
+# tức mất luôn sách chính của một số môn thay vì chỉ mất SGV/VBT.
+_READER_RE = re.compile(r"/tap-huan/doc-sach/([a-z0-9-]+\.[0-9]+)")
 _PAGE_IMG_RE = re.compile(
     r"https?://cdn\d*\.olm\.vn/upload/taphuan/[^\s\"'<>]*?-page-(\d+)-\d+\.png",
     re.I,
 )
+# Đọc ảnh trang qua THẺ img thay vì bắt URL: số trang nằm ở `data-page`, dùng
+# được cho cả hai kiểu tên ảnh của kho. Xem :func:`parse_page_images`.
+_IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
+_CDN_IMG_RE = re.compile(r"https?://cdn\d*\.olm\.vn/upload/taphuan/", re.I)
+
+
+def _tag_attr(tag: str, name: str) -> str:
+    """Giá trị một thuộc tính trong thẻ HTML. Nhận cả nháy đơn và nháy kép."""
+    m = re.search(rf"""\b{re.escape(name)}\s*=\s*("[^"]*"|'[^']*')""", tag, re.I)
+    return m.group(1)[1:-1] if m else ""
 
 # slug → mã môn của sgk_fetch. Thứ tự QUAN TRỌNG: "lich-su-va-dia-li" phải
 # đứng trước "lich-su" và "dia-li", nếu không sách gộp bị nhận nhầm.
@@ -210,21 +223,91 @@ def list_books(grade: int, *, all_sets: bool = False) -> list[dict[str, Any]]:
     return out
 
 
-def reader_urls(detail_url: str) -> list[str]:
-    """Link trang đọc của SGK trong 1 trang chi tiết (chỉ lấy tiền tố ``sgk-``).
+def reader_urls(detail_url: str, kinds: Iterable[str] = ("sgk",)) -> list[str]:
+    """Link trang đọc trong 1 trang chi tiết, lọc theo LOẠI tài liệu.
 
-    Trang chi tiết còn có sách giáo viên (sgv-), vở bài tập (vbt-) và tài liệu
-    tập huấn — nạp nhầm mấy thứ đó vào kho SGK là sai nội dung, nên lọc chặt.
+    Mặc định chỉ SGK — nạp sách giáo viên hay vở bài tập vào kho SGK là sai nội
+    dung. Muốn lấy thêm thì nói rõ, vd ``kinds=("sgk", "sgv", "vbt")``; mỗi loại
+    đi về collection riêng qua :func:`COLLECTION_FOR_SET`.
+
+    ``kinds=()`` nghĩa là KHÔNG lọc — trả về tất cả.
     """
     try:
         html = _get(detail_url)
     except Exception as exc:
         logger.warning("sgk_taphuan.reader_urls lỗi (%s): %s", detail_url[:80], exc)
         return []
+    want = {str(k).strip().lower() for k in kinds if str(k).strip()}
     out: list[str] = []
     for ident in dict.fromkeys(_READER_RE.findall(html)):
-        out.append(f"{BASE}/tap-huan/doc-sach/{ident}")
+        url = f"{BASE}/tap-huan/doc-sach/{ident}"
+        if want and doc_kind(url) not in want:
+            continue
+        out.append(url)
     return out
+
+
+def parse_page_images(html: str) -> list[str]:
+    """Ảnh từng trang, đọc từ THẺ ``<img>`` — thuần chuỗi, tách ra để test được.
+
+    Vì sao không dùng regex bắt URL nữa (đo thật 2026-07-28): kho có HAI kiểu
+    tên ảnh, và regex cũ ``-page-N-<id>.png`` chỉ khớp kiểu thứ nhất::
+
+        kiểu A  .../4714093295-page-1-<id>.png          ← số trang trong URL
+        kiểu B  .../<uuid>-<yyyymmddhhmm...>-<ms>.jpg   ← KHÔNG có số trang
+
+    Kiểu B khiến hàm này trả về rỗng, tức "sách không có trang nào" — im lặng.
+    Đo trên bản quét dở: 41 mục bị báo 0 trang, trong đó
+    ``shs-tieng-viet-2-tap-mot`` thật ra có 156 trang và
+    ``sgv-tieng-viet-2-tap-mot`` có 212 trang.
+
+    Số trang thật nằm ở thuộc tính ``data-page`` của chính thẻ ``<img>``, dùng
+    được cho CẢ HAI kiểu::
+
+        <img src="/training/images/default/blank_book_page.png"
+             data-src="https://cdn3.olm.vn/upload/taphuan/....jpg"
+             data-page="1" alt="page-1" class="js-lazy-page">
+
+    Phải lấy ``data-src`` chứ không phải ``src``: trang nạp chậm nên ``src`` là
+    ảnh trắng dùng chung — lấy ``src`` thì được đủ số trang nhưng trang nào
+    cũng trắng, OCR ra rỗng mà không có lỗi nào.
+
+    Bìa (``alt="cover-first"``/``cover-last"``) không có ``data-page`` nên bị bỏ,
+    cố ý: prompt OCR đánh số trang theo số THẬT, chèn bìa vào sẽ lệch hết.
+    """
+    by_url: dict[int, str] = {}
+    by_attr: dict[int, str] = {}
+    unnumbered: list[str] = []
+    for m in _IMG_TAG_RE.finditer(html or ""):
+        tag = m.group(0)
+        url = _tag_attr(tag, "data-src") or _tag_attr(tag, "src")
+        if not url or not _CDN_IMG_RE.match(url):
+            continue
+        mm = re.search(r"-page-(\d+)-\d+\.", url)
+        dp = _tag_attr(tag, "data-page").strip()
+        if mm:
+            by_url.setdefault(int(mm.group(1)), url)
+        elif dp.isdigit() and int(dp) > 0:
+            by_attr.setdefault(int(dp), url)
+        else:
+            unnumbered.append(url)
+    # KHÔNG trộn hai hệ đánh số. Đo thật trên sgk-toan-1-tap-hai (2026-07-28):
+    # `data-page` lệch 1 so với số trang trong URL — 108/110 ảnh lệch
+    # (data-page="104" ứng với "-page-105-"). Trộn lại thì trang nào cũng bị gán
+    # sai số, mà prompt OCR lại đánh số trang theo đúng con số này, nên cả quyển
+    # vào kho với số trang lệch — sai âm thầm và khó lần ra hơn là mất trang.
+    # URL thắng: nó có ở kiểu A, liền mạch, và là hệ mà bản trước vẫn dùng.
+    if by_url:
+        return [by_url[k] for k in sorted(by_url)]
+    if by_attr:
+        return [by_attr[k] for k in sorted(by_attr)]
+    # Không thẻ nào có số: đành theo thứ tự xuất hiện. Kèm cảnh báo vì thứ tự
+    # tài liệu chỉ ĐÚNG TÌNH CỜ — đừng để nó thành đường mặc định không ai biết.
+    if unnumbered:
+        logger.warning(
+            "sgk_taphuan.parse_page_images: %s ảnh KHÔNG có data-page, phải xếp "
+            "theo thứ tự xuất hiện — kiểm lại nếu nội dung lộn trang", len(unnumbered))
+    return unnumbered
 
 
 def page_images(reader_url: str) -> list[str]:
@@ -234,11 +317,11 @@ def page_images(reader_url: str) -> list[str]:
     except Exception as exc:
         logger.warning("sgk_taphuan.page_images lỗi (%s): %s", reader_url[:80], exc)
         return []
-    found: dict[int, str] = {}
-    for m in _PAGE_IMG_RE.finditer(html):
-        num = int(m.group(1))
-        found.setdefault(num, m.group(0))
-    return [found[k] for k in sorted(found)]
+    urls = parse_page_images(html)
+    if not urls:
+        logger.warning("sgk_taphuan.page_images: không thấy ảnh trang nào ở %s",
+                       reader_url[:100])
+    return urls
 
 
 # Chất lượng JPEG khi nhúng. 72 đủ nét cho model đọc chữ mà giảm ~20 lần dung
@@ -333,12 +416,86 @@ def build_pdf(image_urls: Iterable[str], out_path: str | Path,
             "failed_pages": failed, "bytes": total}
 
 
+# Mốc trang. Có mốc thì đếm được model TRẢ THẬT bao nhiêu trang, không có thì
+# khối 20 trang trả về 8 trang vẫn được nhận như đủ — kiểu hỏng tệ nhất vì im
+# lặng. Đây là điểm khác biệt chính so với bản trước.
+_PAGE_MARK_RE = re.compile(r"<<<\s*TRANG\s+(\d+)\s*>>>")
+
+# Prompt theo kỷ luật của các bộ OCR tài liệu được đánh giá cao nhất trên GitHub
+# (olmOCR — Apache-2.0, và MinerU/marker/docling): nêu rõ thứ tự đọc, công thức
+# ra LaTeX, bảng ra Markdown, hình KHÔNG được bịa, chỗ không đọc được thì ghi
+# dấu chứ không đoán. Ba quy tắc cuối là chỗ trước đây sai nhiều nhất:
+#   · không mốc trang ⇒ mất trang mà không đo được
+#   · công thức chép phẳng ⇒ "x²" thành "x2", đề toán sai nghĩa
+#   · gặp trang khó thì model đoán tiếp cho trôi chảy ⇒ bịa nội dung SGK
 _DOC_PROMPT = (
-    "Chép TOÀN BỘ nội dung các trang sách giáo khoa này thành Markdown tiếng "
-    "Việt. Giữ nguyên thứ tự trang, tiêu đề bài, số bài, bảng biểu. Với hình "
-    "minh hoạ, mô tả ngắn trong ngoặc. KHÔNG tóm tắt, KHÔNG bình luận, KHÔNG "
-    "bịa thêm nội dung không có trên trang."
+    "Bạn là bộ OCR tài liệu. Chép TOÀN BỘ nội dung các trang sách này thành "
+    "Markdown tiếng Việt.\n\n"
+    "BẮT BUỘC:\n"
+    "1. Trước mỗi trang, ghi đúng một dòng mốc: <<<TRANG n>>> với n là số trang "
+    "thật ghi ở đầu prompt. Phải có mốc cho MỌI trang, kể cả trang trắng hay "
+    "trang chỉ có hình.\n"
+    "2. Đọc theo thứ tự đọc của người: cột trái xong mới sang cột phải; khung/"
+    "hộp thoại đọc theo vị trí trên trang.\n"
+    "3. Công thức, phân số, số mũ, chỉ số dưới, ký hiệu toán: viết LaTeX — $...$ "
+    "trong dòng, $$...$$ tách dòng. KHÔNG chép phẳng (x² không được thành x2).\n"
+    "4. Bảng: dựng bảng Markdown. Ô gộp thì lặp lại giá trị cho từng ô.\n"
+    "5. Hình minh hoạ: ghi ![](hình: mô tả ngắn những gì THẤY trên hình). Chỉ mô "
+    "tả điều nhìn thấy, không suy diễn, không đặt tên nhân vật nếu trang không "
+    "ghi tên.\n"
+    "6. Giữ nguyên số bài, tên bài, số thứ tự câu hỏi, số bài tập đúng như trên "
+    "trang.\n\n"
+    "TUYỆT ĐỐI KHÔNG:\n"
+    "· Không tóm tắt, không diễn giải, không thêm lời dẫn hay nhận xét.\n"
+    "· Không bịa nội dung. Chữ nào mờ/bị che/không đọc được thì ghi [không đọc "
+    "được] tại đúng chỗ đó — thà thiếu một chữ còn hơn đoán sai một câu.\n"
+    "· Không bỏ trang. Trang trắng thì ghi mốc rồi để trống.\n"
+    "· Không lặp lại một đoạn nhiều lần.\n"
+    "· Không thêm lời mở đầu kiểu \"Dưới đây là nội dung\" — bắt đầu ngay bằng "
+    "mốc <<<TRANG n>>>."
 )
+
+
+def _pages_seen(md: str) -> set[int]:
+    """Số trang mà model THẬT SỰ trả về, đọc từ mốc <<<TRANG n>>>."""
+    return {int(m.group(1)) for m in _PAGE_MARK_RE.finditer(md or "")}
+
+
+# Ngưỡng nhận một dòng là "lặp bệnh lý". VLM đọc ảnh đôi khi rơi vào vòng lặp
+# và nhả cùng một dòng hàng trăm lần — đầu ra dài, trông như có nội dung, nên
+# mọi phép kiểm theo độ dài đều lọt.
+_DEGEN_MIN_LEN = 12
+_DEGEN_REPEAT = 8
+# Dòng chỉ gồm mấy ký tự này là KẺ SẴN, không phải nội dung: chỗ trống điền
+# đáp án, đường kẻ ngang, viền bảng Markdown. Vở bài tập có hàng chục dòng như
+# nhau là chuyện thường — tính chúng vào phép đo lặp thì chính những quyển vở
+# bài tập cần nạp lại bị loại vì "lặp vòng".
+_DEGEN_FILLER = set(".…_-—–=|*+ \t·•’'\"")
+
+
+def _is_filler(line: str) -> bool:
+    return bool(line) and set(line) <= _DEGEN_FILLER
+
+
+def _looks_degenerate(md: str) -> bool:
+    """True khi đầu ra bị lặp vòng — nhận nó vào kho là nhồi rác vào RAG.
+
+    Bỏ qua dòng kẻ sẵn (xem ``_DEGEN_FILLER``) rồi mới đo, theo hai hướng:
+      · lặp LIỀN KỀ từ 8 dòng giống nhau — dấu hiệu model rơi vào vòng lặp;
+      · một dòng chiếm QUÁ NỬA đầu ra — lặp xen kẽ, dài mà rỗng nghĩa.
+    """
+    lines = [ln.strip() for ln in (md or "").splitlines()
+             if len(ln.strip()) >= _DEGEN_MIN_LEN and not _is_filler(ln.strip())]
+    if len(lines) < _DEGEN_REPEAT:
+        return False
+    run = 1
+    for a, b in zip(lines, lines[1:]):
+        run = run + 1 if a == b else 1
+        if run >= _DEGEN_REPEAT:
+            return True
+    from collections import Counter
+    _top, n = Counter(lines).most_common(1)[0]
+    return n >= _DEGEN_REPEAT and n >= len(lines) * 0.5
 # Số trang mỗi lượt gọi. Cả quyển một lượt thì đầu ra bị cắt cụt (134 trang ≈
 # 60k token markdown, vượt trần output), nên cắt khối. 20 trang ≈ 12k token —
 # an toàn, mà vẫn ít hơn 20 lần so với gửi từng trang một.
@@ -350,6 +507,24 @@ _MAX_CHUNK_BYTES = 30 * 1024 * 1024
 # mà không kéo dài vô tận.
 _CHUNK_RETRIES = 4
 _RETRY_BASE = 4.0
+# Chẻ đôi khối khi model trả THIẾU trang. Sâu 4 tầng: 20→10→5→3→1 trang, tức
+# xấu nhất vẫn về được từng trang một.
+_SPLIT_DEPTH = 4
+# Trần số lượt gọi model cho MỘT quyển. Chẻ đôi làm số lượt tăng, không có trần
+# thì một quyển hỏng nặng có thể ngốn hết hạn mức của cả buổi nạp.
+_MAX_CALLS_PER_BOOK = 120
+
+
+def _chunk_prompt(a1: int, b1: int) -> str:
+    """Prompt cho một khối, có nêu SỐ TRANG THẬT để đối chiếu lại được."""
+    n = b1 - a1 + 1
+    if n == 1:
+        which = f"Tệp PDF kèm theo có đúng 1 trang: trang số {a1} của quyển sách."
+    else:
+        which = (f"Tệp PDF kèm theo có {n} trang: các trang số {a1} đến {b1} của "
+                 f"quyển sách (trang đầu của tệp là trang {a1}).")
+    return (f"{_DOC_PROMPT}\n\n{which}\n"
+            f"Đầu ra phải có đủ {n} mốc <<<TRANG n>>>, với n chạy từ {a1} đến {b1}.")
 
 
 def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL,
@@ -375,6 +550,89 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     total = src.page_count
     out: list[str] = []
     missing: list[tuple[int, int]] = []
+    calls = [0]          # đếm lượt gọi model cho cả quyển
+    unverified: list[tuple[int, int]] = []   # khối model phớt lờ mốc trang
+
+    def _ask(blob: bytes, a1: int, b1: int) -> tuple[str, str]:
+        """Gửi một khối, trả (markdown, lý do hỏng). Đã gồm thử lại giãn cách."""
+        uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
+        last = ""
+        for attempt in range(_CHUNK_RETRIES):
+            if calls[0] >= _MAX_CALLS_PER_BOOK:
+                return "", f"vượt trần {_MAX_CALLS_PER_BOOK} lượt gọi cho một quyển"
+            if attempt:
+                time.sleep(_RETRY_BASE * (2 ** (attempt - 1)))
+            calls[0] += 1
+            resp = call_model(mid, [
+                {"role": "user", "content": [
+                    {"type": "text", "text": _chunk_prompt(a1, b1)},
+                    {"type": "file_data", "file_data": {"file_uri": uri}},
+                ]},
+            ], timeout=600, max_tokens=32000, no_smart_home=True)
+            if resp.get("error"):
+                last = str(resp["error"])[:150]
+                continue
+            cand = content_of(resp).strip()
+            if p2w.looks_like_ocr_failure(cand):
+                last = "model trả lỗi thay vì nội dung"
+                continue
+            if _looks_degenerate(cand):
+                # Lặp vòng: đầu ra dài nên mọi phép kiểm theo độ dài đều lọt,
+                # mà nội dung là rác. Thử lại thay vì nhồi vào RAG.
+                last = "đầu ra lặp vòng"
+                continue
+            return cand, ""
+        return "", last
+
+    def _range(a: int, b: int, depth: int, blob: bytes | None = None) -> None:
+        """OCR trang a..b (0-index) và ghi kết quả vào ``out``/``missing``.
+
+        Điểm khác bản trước: ĐỐI CHIẾU mốc trang. Khối 20 trang mà model chỉ
+        trả 8 trang thì trước đây được nhận như đủ — mất 12 trang không ai
+        biết. Giờ thiếu thì chẻ đôi khối rồi hỏi lại từng nửa.
+        """
+        if blob is None:
+            chunk = fitz.open()
+            chunk.insert_pdf(src, from_page=a, to_page=b)
+            blob = chunk.tobytes()
+            chunk.close()
+        a1, b1 = a + 1, b + 1
+        md, why = _ask(blob, a1, b1)
+        if not md:
+            logger.warning("sgk_taphuan.book_markdown: khối %s-%s hỏng: %s",
+                           a1, b1, why)
+            missing.append((a1, b1))
+            return
+        seen = _pages_seen(md)
+        want = set(range(a1, b1 + 1))
+        lost = sorted(want - seen)
+        if not lost:
+            out.append(md)
+            return
+        if not seen:
+            # Model phớt lờ hẳn yêu cầu mốc trang. Chẻ đôi cũng vô ích vì lần
+            # nào nó cũng phớt lờ — nhận nội dung nhưng ghi rõ là KHÔNG kiểm
+            # chứng được, thà biết mình không biết.
+            logger.warning("sgk_taphuan.book_markdown: khối %s-%s không có mốc "
+                           "trang nào — nhận nội dung nhưng không kiểm chứng được",
+                           a1, b1)
+            unverified.append((a1, b1))
+            out.append(md)
+            return
+        if b > a and depth < _SPLIT_DEPTH:
+            # Mốc trang CÓ hoạt động (thấy một phần) nên phần thiếu là thiếu
+            # thật. Chẻ đôi: khối nhỏ hơn thì model đọc hết.
+            mid_pt = a + (b - a) // 2
+            logger.info("sgk_taphuan.book_markdown: khối %s-%s thiếu trang %s → chẻ đôi",
+                        a1, b1, lost)
+            _range(a, mid_pt, depth + 1)
+            _range(mid_pt + 1, b, depth + 1)
+            return
+        # Hết đường chẻ: nhận phần đọc được, ghi nhận phần mất.
+        out.append(md)
+        for p in lost:
+            missing.append((p, p))
+
     step = max(1, int(pages_per_call))
     try:
         start = 0
@@ -395,41 +653,11 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
             if len(blob) > _MAX_CHUNK_BYTES:
                 logger.warning("sgk_taphuan.book_markdown: trang %s nặng %s MB, bỏ qua",
                                start + 1, len(blob) // 1024 // 1024)
+                missing.append((start + 1, end + 1))
                 start = end + 1
                 continue
-            uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
             try:
-                # Thử lại có giãn cách. Chạy liên tiếp nhiều quyển thì model
-                # bị giới hạn nhịp và trả lỗi từng đợt — đo thật: 12 quyển
-                # chạy sát nhau làm hụt tới quá nửa số trang. Bỏ cuộc ngay ở
-                # lần đầu là vứt cả khối 20 trang chỉ vì một lần nghẽn.
-                md = ""
-                last = ""
-                for attempt in range(_CHUNK_RETRIES):
-                    if attempt:
-                        time.sleep(_RETRY_BASE * (2 ** (attempt - 1)))
-                    resp = call_model(mid, [
-                        {"role": "user", "content": [
-                            {"type": "text", "text": _DOC_PROMPT},
-                            {"type": "file_data", "file_data": {"file_uri": uri}},
-                        ]},
-                    ], timeout=600, max_tokens=32000, no_smart_home=True)
-                    if resp.get("error"):
-                        last = str(resp["error"])[:150]
-                        continue
-                    cand = content_of(resp).strip()
-                    if p2w.looks_like_ocr_failure(cand):
-                        last = "model trả lỗi thay vì nội dung"
-                        continue
-                    md = cand
-                    break
-                if md:
-                    out.append(md)
-                else:
-                    logger.warning("sgk_taphuan.book_markdown: khối %s-%s hỏng sau "
-                                   "%s lần thử: %s", start + 1, end + 1,
-                                   _CHUNK_RETRIES, last)
-                    missing.append((start + 1, end + 1))
+                _range(start, end, 0, blob)
             finally:
                 # Luôn tiến, kể cả khi khối lỗi — nếu không thì vòng while lặp
                 # vô hạn trên đúng khối hỏng đó.
@@ -438,6 +666,16 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
         src.close()
 
     body = "\n\n---\n\n".join(out)
+    if unverified:
+        # Không phải "mất trang", mà là "không biết có mất hay không". Ghi vào
+        # nội dung để người đọc file .md biết phần này chưa được đối chiếu.
+        n = sum(b - a + 1 for a, b in unverified)
+        body += ("\n\n---\n\n> ℹ️ KHÔNG KIỂM CHỨNG ĐƯỢC số trang ở "
+                 + ", ".join(f"{a}–{b}" for a, b in unverified)
+                 + f" ({n} trang): model không đặt mốc trang nào, nên không đối "
+                   "chiếu được đủ/thiếu.\n")
+        logger.warning({"event": "sgk_taphuan_khong_kiem_chung",
+                        "pdf": str(pdf_path), "so_trang": n, "khoi": unverified})
     if missing:
         # KHÔNG im lặng nuốt phần thiếu. Sách vào kho mà hụt 20 trang, bot dạy
         # sai mà không ai biết là kiểu hỏng tệ nhất — nên ghi thẳng vào nội
@@ -467,6 +705,25 @@ _DOC_KIND: tuple[tuple[str, str], ...] = (
     ("tai-lieu-tap-huan", "tap_huan"),
 )
 
+# Tiền tố ĐO THẬT trên kho 2026-07-28, xếp từ cụ thể tới chung. Bốn khe hở của
+# bảng ``_DOC_KIND`` phía trên, phát hiện khi quét cả 12 lớp:
+#   · "shs-"      = Sách Học Sinh, tức CHÍNH LÀ SGK. Trước rơi vào "other" nên
+#                   sách học sinh lớp 2 bị đẩy sang kho tài liệu.
+#   · "sgvtieng…" NXB gõ thiếu gạch nối ("sgvtieng-viet-1-tap-hai", 210 trang) —
+#                 dùng tiền tố "sgv" không gạch để hứng cả hai cách viết.
+#   · "tap-viet-" Tập viết: vở luyện viết, gần vở bài tập nhất.
+#   · "tai-lieu"  phải xét TRƯỚC "sgk" vì có slug
+#                 "tai-lieu-tap-huan-day-hoc-theo-sgk-moi-mon-…".
+_DOC_KIND_PREFIX: tuple[tuple[str, str], ...] = (
+    ("tai-lieu", "tap_huan"),
+    ("tap-huan", "tap_huan"),
+    ("sgv", "sgv"),
+    ("shs", "sgk"),
+    ("sgk", "sgk"),
+    ("vbt", "vbt"),
+    ("tap-viet", "vbt"),
+)
+
 DOC_KIND_LABEL = {
     "sgk": "SGK",
     "sgv": "SGV (sách giáo viên)",
@@ -486,10 +743,28 @@ def doc_kind(reader_url: str) -> str:
     học sinh. Nhận diện ở đây để cho vào ĐÚNG kho với ĐÚNG nhãn.
     """
     slug = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1].lower()
-    for pre, kind in _DOC_KIND:
+    for pre, kind in _DOC_KIND_PREFIX:
         if slug.startswith(pre):
             return kind
+    # Không tiền tố nào khớp: slug TRẦN bắt đầu bằng tên môn thì là sách học
+    # sinh ("tieng-anh-2-global-success", 78 trang — đúng cỡ một quyển SGK, và
+    # trang chi tiết của nó không có quyển "sgk-" nào khác). Trả "other" ở đây
+    # thì SGK bị đẩy sang kho tài liệu và bot không tra được sách chính.
+    for pre, _codes in _SLUG_SUBJECT:
+        if slug.startswith(pre):
+            return "sgk"
     return "other"
+
+
+def is_sample(reader_url: str) -> bool:
+    """True khi chỉ là BÀI MẪU, không phải cả quyển.
+
+    Kho có nhiều vở bài tập dạng "vbt-toan-1-tap-1-bai-mau" chỉ 8–14 trang.
+    Vẫn đáng nạp (thấy được kiểu ra bài tập) nhưng PHẢI gắn nhãn: để bot tưởng
+    nó có cả quyển vở bài tập thì nó sẽ khẳng định chắc nịch về những bài tập
+    không hề nằm trong đó.
+    """
+    return "bai-mau" in str(reader_url or "").lower()
 
 
 def COLLECTION_FOR_SET(book_set: str = "", kind: str = "sgk") -> str:
