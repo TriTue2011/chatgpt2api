@@ -422,6 +422,18 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         return {"config": config.get()}
 
+    @router.get("/api/agent/branches/health")
+    async def agent_branches_health(authorization: str | None = Header(default=None)):
+        """Nhánh Agent nào đang trỏ vào chỗ rỗng.
+
+        Bắt đúng hai kiểu lỗi thầm lặng đã gặp thật: model id không tồn tại
+        (nhánh vision từng đặt là nhãn 'AI vision'), và backend không có nguồn
+        xác thực. Không gọi model nên nhanh và không tốn tiền.
+        """
+        require_admin(authorization)
+        from services.agent import branch_health
+        return branch_health.check()
+
     @router.get("/api/privacy/status")
     async def privacy_status(authorization: str | None = Header(default=None)):
         """P0–P2 privacy gate status (MK/PII không đẩy vào AI)."""
