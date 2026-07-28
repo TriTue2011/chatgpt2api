@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -56,8 +57,12 @@ def _load():
     }
     tw = types.ModuleType("services.agent.teacher_workspace")
     tw.SUBJECTS = {}
+    # DATA_DIR trỏ thư mục tạm: bản đồ trang → ảnh ghi ra đĩa, không được ghi vào
+    # data/ thật của dự án khi chạy test.
+    cfg = types.ModuleType("services.config")
+    cfg.DATA_DIR = Path(tempfile.mkdtemp(prefix="sgk_test_"))
     for name, mod in (("services", pkg), ("services.agent", ag),
-                      ("services.net_guard", ng),
+                      ("services.net_guard", ng), ("services.config", cfg),
                       ("services.agent.sgk_fetch", sf),
                       ("services.agent.teacher_workspace", tw)):
         sys.modules.setdefault(name, mod)
@@ -79,10 +84,18 @@ def m():
 
 
 @pytest.fixture()
-def mfresh():
+def mfresh(tmp_path):
     """Bản module RIÊNG cho test có vá hàm — vá vào fixture module-scope sẽ rò
-    sang mọi test chạy sau và làm chúng xanh/đỏ giả."""
-    return _load()
+    sang mọi test chạy sau và làm chúng xanh/đỏ giả.
+
+    `_PAGES_DIR` phải trỏ thư mục riêng của TỪNG test: `_load` dùng
+    `sys.modules.setdefault` nên ống rỗng services.config (và DATA_DIR trong nó)
+    chỉ được tạo MỘT lần, tức mọi bản module chia nhau một thư mục — file bản đồ
+    trang của test trước rò sang test sau. Đã dính đúng như vậy.
+    """
+    mod = _load()
+    mod._PAGES_DIR = tmp_path / "pages"
+    return mod
 
 
 CDN = "https://cdn3.olm.vn/upload/taphuan"
@@ -310,6 +323,74 @@ class TestSlideAnh:
         assert mfresh._slide_export("ngan", "txt", 10) == b""
         assert mfresh._slide_export("../../etc/passwd", "txt", 10) == b""
         assert mfresh._slide_export("", "txt", 10) == b""
+
+
+class TestBanDoTrang:
+    """TRANG → ẢNH: điều kiện để giảng bài hiện được ảnh đi cùng chữ.
+
+    `import_reader` lấy danh sách ảnh, ghép PDF trong TemporaryDirectory, OCR ra
+    chữ rồi XOÁ sạch. Không ghi lại thì chữ vào kho mà ảnh mất hẳn, và lấy lại
+    phải bò lại cả 70.698 trang của kho.
+    """
+
+    IMGS = [f"{CDN}/2026/0413/471-page-{n}-99.png" for n in (1, 2, 3)]
+    U = "https://taphuan.nxbgd.vn/tap-huan/doc-sach/sgk-toan-4-tap-mot.4714093295"
+
+    def test_ghi_va_doc_lai(self, mfresh):
+        p = mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan",
+                                      kind="sgk", label="SGK lớp 4 · Toán")
+        assert p, "phải ghi được"
+        rec = mfresh.get_page_manifest("sgk-toan-4-tap-mot.4714093295")
+        assert rec["grade"] == 4 and rec["subject"] == "toan"
+        assert len(rec["pages"]) == 3
+
+    def test_so_trang_khop_moc_ocr(self, mfresh):
+        """Bất biến quan trọng nhất: số trang ở đây phải ĐẾM GIỐNG mốc
+        <<<TRANG n>>> mà OCR sinh ra — cùng bắt đầu từ 1, cùng tính cả bìa.
+        Lệch một là ảnh hiện ra không phải trang đang giảng."""
+        mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan")
+        rec = mfresh.get_page_manifest(self.U)
+        assert [r["n"] for r in rec["pages"]] == [1, 2, 3]
+        assert rec["pages"][0]["url"].endswith("-page-1-99.png")
+
+    def test_tra_anh_mot_trang(self, mfresh):
+        mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan")
+        assert mfresh.page_image_url(self.U, 2).endswith("-page-2-99.png")
+        assert mfresh.page_image_url(self.U, 99) == ""
+
+    def test_chua_nap_thi_rong_khong_no(self, mfresh):
+        assert mfresh.get_page_manifest("chua-co-quyen-nay.1") == {}
+        assert mfresh.page_image_url("chua-co-quyen-nay.1", 1) == ""
+
+    def test_danh_sach_khong_kem_186_url(self, mfresh):
+        """`list_page_manifests` để hiện danh sách quyển — kèm cả URL từng trang
+        thì một lượt gọi trả về hàng chục nghìn dòng."""
+        mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan")
+        rows = mfresh.list_page_manifests()
+        assert len(rows) == 1
+        assert rows[0]["pages"] == 3, "chỉ SỐ trang, không phải danh sách trang"
+        assert "url" not in rows[0]
+
+    def test_slug_an_toan_khong_thoat_thu_muc(self, mfresh):
+        """Slug thành tên file — phải chặn ../ để không ghi ra ngoài thư mục."""
+        assert "/" not in mfresh.reader_slug("../../etc/passwd")
+        assert ".." not in mfresh.reader_slug("https://x/doc-sach/../../evil")
+
+    def test_ghi_de_khi_nap_lai(self, mfresh):
+        mfresh.save_page_manifest(self.U, self.IMGS[:1], grade=4, subject="toan")
+        mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan")
+        assert len(mfresh.get_page_manifest(self.U)["pages"]) == 3
+
+    def test_khong_co_anh_thi_khong_ghi_file_rong(self, mfresh):
+        assert mfresh.save_page_manifest(self.U, [], grade=4, subject="toan") == ""
+        assert mfresh.get_page_manifest(self.U) == {}
+
+    def test_luu_ca_loai_va_bo_de_khoi_lan(self, mfresh):
+        """Cùng lớp–môn có thể có SGK bộ chính, SGK bộ 3, SGV… ảnh khác nhau."""
+        mfresh.save_page_manifest(self.U, self.IMGS, grade=4, subject="toan",
+                                  kind="sgv", book_set="3")
+        rec = mfresh.get_page_manifest(self.U)
+        assert rec["kind"] == "sgv" and rec["book_set"] == "3"
 
 
 class TestDoiChieuSoTrang:

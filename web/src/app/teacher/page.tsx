@@ -266,8 +266,9 @@ type StorageResp = {
 const BULK_KINDS: { id: string; label: string; hint: string }[] = [
   {
     id: "slide", label: "Slide (gần như miễn phí)",
-    hint: "chữ thật, KHÔNG cần OCR — phân bổ tuần/tiết + phương pháp dạy. "
-      + "192/198 quyển có, cả kho ~1,2 MB, 0 lượt gọi model",
+    hint: "chữ thật, hầu hết KHÔNG cần OCR — phân bổ tuần/tiết + phương pháp dạy. "
+      + "192/198 quyển có; 101 bộ khác nhau, ~2,1 MB chữ; chỉ ~1% là slide ảnh "
+      + "phải OCR",
   },
   { id: "sgk", label: "SGK", hint: "sách học sinh — nội dung phải học" },
   { id: "sgv", label: "SGV + KHBD", hint: "sách giáo viên, kế hoạch bài dạy — cách dạy" },

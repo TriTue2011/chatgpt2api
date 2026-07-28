@@ -222,6 +222,41 @@ def create_router() -> APIRouter:
 
         return await run_in_threadpool(_run)
 
+    @router.get("/api/teacher/pages")
+    async def teacher_pages_list(authorization: str | None = Header(default=None)):
+        """Các quyển ĐÃ có bản đồ trang → ảnh (để giảng bài hiện ảnh đi cùng chữ).
+
+        Chỉ trả metadata + số trang, KHÔNG kèm 186 URL mỗi quyển.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_taphuan as tp
+        rows = await run_in_threadpool(tp.list_page_manifests)
+        return {"ok": True, "total": len(rows), "books": rows}
+
+    @router.get("/api/teacher/pages/{slug}")
+    async def teacher_pages_one(
+        slug: str,
+        page: int = Query(default=0),
+        authorization: str | None = Header(default=None),
+    ):
+        """Bản đồ trang của một quyển, hoặc ảnh của ĐÚNG một trang.
+
+        `page` đếm theo thứ tự ảnh trong tệp — đúng con số trong mốc
+        `<<<TRANG n>>>` của chữ đã nạp, nên giao diện giảng bài đọc chunk RAG ra
+        số trang rồi hỏi thẳng ảnh tương ứng.
+        """
+        require_admin(authorization)
+        from services.agent import sgk_taphuan as tp
+        if page > 0:
+            url = await run_in_threadpool(tp.page_image_url, slug, page)
+            if not url:
+                return {"ok": False, "error": f"không có ảnh trang {page} của {slug}"}
+            return {"ok": True, "slug": slug, "page": page, "url": url}
+        rec = await run_in_threadpool(tp.get_page_manifest, slug)
+        if not rec:
+            return {"ok": False, "error": f"chưa có bản đồ trang cho {slug}"}
+        return {"ok": True, **rec}
+
     @router.get("/api/teacher/storage")
     async def teacher_storage(authorization: str | None = Header(default=None)):
         """PDF/markdown đang chiếm bao nhiêu — để quyết có xoá PDF hay không."""

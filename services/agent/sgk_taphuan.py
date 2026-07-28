@@ -32,6 +32,7 @@ kèm trang captcha. Gặp 403 thì báo thẳng, KHÔNG lặng lẽ bịa nguồ
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import tempfile
@@ -43,6 +44,7 @@ from services import net_guard
 from services import ocr_rules
 from services.agent import sgk_fetch as sf
 from services.agent import teacher_workspace as tw
+from services.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -928,6 +930,103 @@ def import_slides(detail_url: str, *, grade: int, subject: str,
             "errors": errors[:5]}
 
 
+# ── Bản đồ TRANG → ẢNH: để giảng bài hiện được ảnh đi cùng chữ ──────────────
+#
+# Vì sao phải lưu: `import_reader` lấy danh sách ảnh trang, ghép PDF trong
+# TemporaryDirectory, OCR ra chữ rồi XOÁ sạch cả PDF lẫn danh sách ảnh. Chữ vào
+# kho còn ảnh thì mất hẳn — nên không thể "giảng đến đâu hiện ảnh trang đó".
+# Lấy lại thì phải bò lại cả 70.698 trang của kho.
+#
+# Không lưu ẢNH, chỉ lưu URL: ảnh nằm trên CDN công khai của kho, mỗi trang một
+# dòng ~120 byte → cả quyển 186 trang ≈ 22 KB, cả kho ≈ 15 MB. So với việc giữ
+# PDF (hàng chục GB) thì đây gần như miễn phí.
+#
+# Ghép được với chữ vì OCR đã đánh mốc <<<TRANG n>>> theo ĐÚNG thứ tự ảnh trong
+# tệp (xem `_DOC_PROMPT` quy tắc mốc trang), và `_md_from_pdf_text` không xoá
+# mốc — nên chunk RAG nào cũng biết mình thuộc trang nào.
+_PAGES_DIR = Path(DATA_DIR) / "agent" / "teacher" / "pages"
+
+
+def reader_slug(reader_url: str) -> str:
+    """Slug ổn định của một trang đọc, dùng làm tên file bản đồ trang."""
+    tail = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"[^A-Za-z0-9._-]", "_", tail)[:120]
+
+
+def save_page_manifest(reader_url: str, images: list[str], *, grade: int,
+                       subject: str, kind: str = "sgk", book_set: str = "",
+                       label: str = "") -> str:
+    """Ghi bản đồ trang → URL ảnh. Trả đường dẫn file, rỗng = ghi lỗi.
+
+    Gọi TRƯỚC khi OCR: OCR có thể hỏng hoặc bị dừng giữa đường, mà bản đồ ảnh
+    thì đã lấy được rồi. Ghi trước nghĩa là lần chạy lại chỉ tốn OCR, không tốn
+    lượt bò lại kho.
+    """
+    slug = reader_slug(reader_url)
+    if not slug or not images:
+        return ""
+    rec = {
+        "slug": slug, "reader_url": reader_url, "grade": int(grade),
+        "subject": subject, "kind": kind or "sgk",
+        "book_set": str(book_set or ""), "label": label,
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        # Số trang khớp ĐÚNG mốc <<<TRANG n>>> mà OCR sinh ra: cả hai đều đếm
+        # theo thứ tự ảnh trong tệp, bắt đầu từ 1 và tính cả bìa.
+        "pages": [{"n": i, "url": u} for i, u in enumerate(images, start=1)],
+    }
+    try:
+        _PAGES_DIR.mkdir(parents=True, exist_ok=True)
+        out = _PAGES_DIR / f"{slug}.json"
+        tmp = out.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(out)          # thay nguyên tử, không để lại file nửa vời
+        return str(out)
+    except Exception as exc:
+        logger.warning("sgk_taphuan.save_page_manifest lỗi (%s): %s", slug, exc)
+        return ""
+
+
+def get_page_manifest(slug: str) -> dict[str, Any]:
+    """Bản đồ trang của một quyển. Rỗng = chưa nạp quyển đó."""
+    p = _PAGES_DIR / f"{reader_slug(slug)}.json"
+    try:
+        if p.is_file():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("sgk_taphuan.get_page_manifest lỗi (%s): %s", slug, exc)
+    return {}
+
+
+def page_image_url(slug: str, page: int) -> str:
+    """URL ảnh của MỘT trang. Rỗng = không có.
+
+    ``page`` đếm theo thứ tự ảnh trong tệp — đúng con số trong mốc
+    ``<<<TRANG n>>>`` của chữ đã nạp, nên tra thẳng từ chunk RAG được.
+    """
+    rec = get_page_manifest(slug)
+    for row in rec.get("pages") or ():
+        if int(row.get("n") or 0) == int(page):
+            return str(row.get("url") or "")
+    return ""
+
+
+def list_page_manifests() -> list[dict[str, Any]]:
+    """Danh sách quyển ĐÃ có bản đồ trang — chỉ metadata, không kèm 186 URL."""
+    out: list[dict[str, Any]] = []
+    if not _PAGES_DIR.is_dir():
+        return out
+    for p in sorted(_PAGES_DIR.glob("*.json")):
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        out.append({k: rec.get(k) for k in
+                    ("slug", "reader_url", "grade", "subject", "kind",
+                     "book_set", "label", "saved_at")}
+                   | {"pages": len(rec.get("pages") or ())})
+    return out
+
+
 def is_sample(reader_url: str) -> bool:
     """True khi chỉ là BÀI MẪU, không phải cả quyển.
 
@@ -1014,7 +1113,10 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
     md = tw._md_from_pdf_text(raw, title=title)
     rag = tw.push_sgk_to_rag(
         md, title=title, grade=grade, subject=subject, source=source_name,
-        collection=sf.KIND_COLLECTION["sgk"],
+        # PHẢI theo loại + bộ sách, không cứng "sgk": nhánh này chạy khi môn không
+        # nằm trong tw.SUBJECTS, và cứng như trước thì một quyển SGV của môn đó
+        # vào thẳng kb_giao_duc mang nhãn SGK — đúng cái sai vừa vá ở chỗ khác.
+        collection=COLLECTION_FOR_SET(book_set, kind),
     )
     return {"ok": bool(rag.get("ok")), "grade": grade, "subject": subject,
             "chars": len(md), "rag": rag,
@@ -1049,6 +1151,15 @@ def import_reader(reader_url: str, *, grade: int, subject: str,
     k = (kind or "").strip() or doc_kind(reader_url)
     label = label.strip() or (
         f"{DOC_KIND_LABEL.get(k, 'Tài liệu')} lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}")
+
+    # Lưu bản đồ trang → ảnh NGAY, trước khi OCR. PDF nằm trong
+    # TemporaryDirectory và danh sách `imgs` chỉ tồn tại trong hàm này — không ghi
+    # lại thì sau khi nạp xong, chữ vào kho mà ảnh mất hẳn, tức không bao giờ
+    # "giảng đến đâu hiện ảnh trang đó" được nữa mà không bò lại cả kho.
+    # Đặt trước OCR vì OCR có thể hỏng hoặc bị dừng giữa đường.
+    save_page_manifest(reader_url, imgs, grade=g, subject=sub, kind=k,
+                       book_set=book_set, label=label)
+
     with tempfile.TemporaryDirectory() as td:
         pdf_path = str(Path(td) / "sach.pdf")
         built = build_pdf(imgs, pdf_path, max_pages=max_pages)
