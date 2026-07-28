@@ -763,6 +763,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     and caps.group_of(name) not in allow):
                 # Chốt chặn tầng 2 — model KHÔNG nên gọi (đã lọc schema) nhưng nếu
                 # cố gọi thì BỎ QUA im lặng theo bộ lọc chức năng của threadID.
+                #
+                # PHẢI ghi log: im lặng là hành vi có chủ đích, nhưng không log
+                # thì nó không phân biệt được với treo/chết. Một tool thiếu
+                # trong _CAP_GROUP sẽ rơi vào "_ungrouped" rồi bị chặn ở đây,
+                # và triệu chứng nhìn từ ngoài y hệt bot hỏng: hỏi mà không
+                # thấy trả lời, cũng chẳng có dòng log nào.
+                logger.warning({"event": "agent_tool_blocked_silent", "tool": name,
+                                "group": caps.group_of(name), "allow": sorted(allow)})
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
                 return {"text": "", "silent": True}

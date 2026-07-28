@@ -3314,6 +3314,16 @@ _CAP_GROUP: dict[str, str] = {
     "office_add": "office", "office_set": "office",
     "office_remove": "office", "office_batch": "office",
     "office_merge": "office", "office_send": "office",
+    # Tool Home Assistant do GATEWAY tiêm (services/ha_client.get_ha_tools),
+    # không phải capability của agent. Thiếu chúng ở đây thì group_of() trả
+    # "_ungrouped", và chốt chặn ở orchestrator coi là KHÔNG được phép rồi bỏ
+    # qua IM LẶNG — người dùng hỏi "phòng ngủ có ai không" mà bot không trả
+    # lời, cũng không báo lỗi, dù thread đã bật đúng nhóm 'homeassistant'.
+    "GetLiveContext": "homeassistant", "ha_get_state": "homeassistant",
+    "ha_search_entities": "homeassistant", "ha_call_service": "homeassistant",
+    "ha_upsert_config": "homeassistant", "ha_upsert_helper": "homeassistant",
+    "ha_read_config_file": "homeassistant", "ha_write_config_file": "homeassistant",
+    "ha_home_map": "homeassistant", "ha_pyscript_setup": "homeassistant",
     "search_sgk": "teacher", "list_teacher_workspaces": "teacher",
     "teacher_memory": "teacher",
     "teacher_lesson": "teacher",
