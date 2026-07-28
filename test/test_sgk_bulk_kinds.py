@@ -48,6 +48,13 @@ def _load(tmp: Path):
     ng.safe_fetch = lambda *a, **k: b""
     sys.modules["services.net_guard"] = ng
     tp = types.ModuleType("services.agent.sgk_taphuan")
+    tp.DOC_KIND_LABEL = {
+        "sgk": "SGK",
+        "sgv": "SGV/KHBD (sách giáo viên · kế hoạch bài dạy)",
+        "vbt": "VBT/SBT (vở & sách bài tập)",
+        "tap_huan": "Tài liệu tập huấn",
+        "other": "Tài liệu",
+    }
     tp.doc_kind = lambda u: "sgk"
     tp.is_sample = lambda u: "bai-mau" in str(u)
     tp.reader_urls = lambda u, k=(): []
@@ -172,3 +179,10 @@ class TestTachKho:
                for k in ("sgk", "sgv", "vbt", "tap_huan")}
         assert len(set(got.values())) == 4, got
         assert got["sgk"] == "kb_giao_duc"
+
+    def test_nhan_lay_tu_sgk_taphuan_khong_giu_bang_rieng(self):
+        """Hai bảng nhãn song song là lý do thêm loại ở một chỗ mà chỗ kia vẫn
+        gắn nhãn cũ — đúng lỗi đã xảy ra với danh mục môn trước đây."""
+        src = _SRC.read_text(encoding="utf-8")
+        assert "_KIND_SHORT = dict(tp.DOC_KIND_LABEL)" in src, (
+            "sgk_bulk phải soi chiếu tp.DOC_KIND_LABEL, không tự khai bảng nhãn")

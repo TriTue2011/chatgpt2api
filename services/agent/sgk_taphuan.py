@@ -714,20 +714,29 @@ _DOC_KIND: tuple[tuple[str, str], ...] = (
 #   · "tap-viet-" Tập viết: vở luyện viết, gần vở bài tập nhất.
 #   · "tai-lieu"  phải xét TRƯỚC "sgk" vì có slug
 #                 "tai-lieu-tap-huan-day-hoc-theo-sgk-moi-mon-…".
+#   · "sbt-"      = Sách Bài Tập (40 quyển trên kho) — cùng mục đích với vở bài
+#                   tập nên về CÙNG kho `vbt`, không mở thêm một chiều phân loại
+#   · "khbd-"     = Kế hoạch bài dạy — tài liệu cho giáo viên, trả lời đúng câu
+#                   "dạy bài này thế nào", nên về cùng kho với sách giáo viên
 _DOC_KIND_PREFIX: tuple[tuple[str, str], ...] = (
     ("tai-lieu", "tap_huan"),
     ("tap-huan", "tap_huan"),
     ("sgv", "sgv"),
+    ("khbd", "sgv"),
     ("shs", "sgk"),
     ("sgk", "sgk"),
     ("vbt", "vbt"),
+    ("sbt", "vbt"),
     ("tap-viet", "vbt"),
 )
 
 DOC_KIND_LABEL = {
     "sgk": "SGK",
-    "sgv": "SGV (sách giáo viên)",
-    "vbt": "VBT (vở bài tập)",
+    # Nhãn nói cả hai vì kho gộp cả hai tiền tố: sgv- và khbd- (kế hoạch bài
+    # dạy), sbt- (sách bài tập) và vbt- (vở bài tập). Ghi mỗi "SGV" thì một quyển
+    # kế hoạch bài dạy vào kho lại tự nhận là sách giáo viên.
+    "sgv": "SGV/KHBD (sách giáo viên · kế hoạch bài dạy)",
+    "vbt": "VBT/SBT (vở & sách bài tập)",
     "tap_huan": "Tài liệu tập huấn",
     "other": "Tài liệu",
 }

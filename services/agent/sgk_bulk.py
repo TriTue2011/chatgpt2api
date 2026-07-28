@@ -110,12 +110,9 @@ def _label_of(book: dict[str, Any], subject: str, kind: str = "sgk", *,
 
 
 # Nhãn ngắn theo loại, dùng ở đầu mọi chunk RAG.
-_KIND_SHORT = {
-    "sgk": "SGK",
-    "sgv": "SGV (sách giáo viên)",
-    "vbt": "VBT (vở bài tập)",
-    "tap_huan": "Tài liệu tập huấn",
-}
+# Soi chiếu lại sgk_taphuan chứ KHÔNG giữ bảng thứ hai: hai bảng song song là lý
+# do thêm loại ở một chỗ mà chỗ kia vẫn gắn nhãn cũ.
+_KIND_SHORT = dict(tp.DOC_KIND_LABEL)
 
 # Loại nạp mặc định. Chỉ SGK — thêm SGV/VBT là nhân số quyển lên khoảng ba lần,
 # phải do người vận hành chọn chứ không bật sẵn.

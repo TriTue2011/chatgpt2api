@@ -265,8 +265,8 @@ type StorageResp = {
 
 const BULK_KINDS: { id: string; label: string; hint: string }[] = [
   { id: "sgk", label: "SGK", hint: "sách học sinh — nội dung phải học" },
-  { id: "sgv", label: "SGV", hint: "sách giáo viên — gợi ý cách dạy" },
-  { id: "vbt", label: "VBT", hint: "vở bài tập — mẫu ra đề" },
+  { id: "sgv", label: "SGV + KHBD", hint: "sách giáo viên, kế hoạch bài dạy — cách dạy" },
+  { id: "vbt", label: "VBT + SBT", hint: "vở & sách bài tập — mẫu ra đề" },
   { id: "tap_huan", label: "Tài liệu tập huấn", hint: "bồi dưỡng giáo viên" },
 ];
 

@@ -168,6 +168,9 @@ class TestPhanLoaiSach:
         ("sgvtieng-viet-1-tap-hai.490", "sgv"),           # NXB gõ thiếu gạch nối
         ("tap-viet-1-tap-mot.472", "vbt"),                # vở luyện viết
         ("tieng-anh-2-global-success.491", "sgk"),        # slug TRẦN = sách HS
+        # Hai tiền tố nữa, đo được khi quét tới lớp 10–11:
+        ("sbt-toan-11-tap-hai-bai-mau.452", "vbt"),       # Sách Bài Tập (40 quyển)
+        ("khbd-toan-11.453", "sgv"),                      # Kế hoạch bài dạy
     ])
     def test_tien_to(self, m, slug, kind):
         assert m.doc_kind(f"https://x/tap-huan/doc-sach/{slug}") == kind
@@ -194,6 +197,12 @@ class TestPhanLoaiSach:
         assert m.COLLECTION_FOR_SET("", "vbt") == "kb_giao_duc_vbt"
         assert m.COLLECTION_FOR_SET("", "tap_huan") == "kb_giao_duc_tailieu"
         assert m.COLLECTION_FOR_SET("", "other") == "kb_giao_duc_tailieu"
+
+    def test_nhan_noi_ca_hai_tien_to_da_gop(self, m):
+        """Kho gộp sgv-+khbd- và vbt-+sbt- vào cùng kho. Nhãn ghi mỗi "SGV" thì
+        một quyển kế hoạch bài dạy vào kho lại tự nhận là sách giáo viên."""
+        assert "KHBD" in m.DOC_KIND_LABEL["sgv"]
+        assert "SBT" in m.DOC_KIND_LABEL["vbt"]
 
     def test_bon_kho_tach_biet(self, m):
         got = {m.COLLECTION_FOR_SET("", k) for k in ("sgk", "sgv", "vbt", "tap_huan")}
