@@ -1269,7 +1269,13 @@ def _ha_local_entity_state(messages: list[dict[str, Any]]) -> str | None:
     try:
         from services.ha_client import get_states, get_exposed_entity_ids
         exposed = get_exposed_entity_ids() or set()
-        states = {str(s.get("entity_id")): s for s in (get_states() or [])}
+        # use_cache=False BẮT BUỘC: cache states sống theo refresh_interval
+        # (đang cấu hình 3600s) — người dùng hỏi ĐÍCH DANH một cảm biến là để
+        # biết giá trị NGAY BÂY GIỜ, trả số cũ cả tiếng là sai sự thật
+        # (đo 2026-07-28: person_count=1 mà bot nói "Nhà: 0"). HA ở LAN,
+        # một lượt REST ~vài chục ms.
+        states = {str(s.get("entity_id")): s
+                  for s in (get_states(use_cache=False) or [])}
     except Exception as exc:
         logger.warning({"event": "ha_entity_fastpath_error", "error": str(exc)[:120]})
         return None
