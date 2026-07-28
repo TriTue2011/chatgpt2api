@@ -2103,7 +2103,11 @@ def _exec_local_tool_calls(local_tcs: list[dict[str, Any]]) -> None:
     song; raise nếu có lệnh lỗi để caller quyết định fallback."""
     import concurrent.futures
     import json
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(local_tcs)) as pool:
+    # KHÔNG dùng `with` — as_completed hết giờ sẽ ném exception, __exit__ gọi
+    # shutdown(wait=True) và treo vĩnh viễn theo thread đang kẹt. Đây là đường
+    # fast-path mà Zalo/Telegram gọi thẳng, treo ở đây là bot câm luôn.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(local_tcs))
+    try:
         futures = []
         for tc in local_tcs:
             args_str = tc.get("function", {}).get("arguments", "{}")
@@ -2120,8 +2124,13 @@ def _exec_local_tool_calls(local_tcs: list[dict[str, Any]]) -> None:
                     futures.append(pool.submit(call_service, dom, svc, {"entity_id": eid}))
             else:
                 futures.append(pool.submit(_execute_mcp_tool, tool_name, args))
+        # Lệnh điều khiển lỗi PHẢI raise để caller còn fallback — giữ nguyên
+        # hành vi cũ. Quá giờ cũng raise, nhưng giờ là TimeoutError sạch thay
+        # vì đứng im mãi mãi.
         for f in concurrent.futures.as_completed(futures, timeout=10):
             f.result()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
@@ -3428,6 +3437,12 @@ def _cap_mcp_result(text: str, limit: int = 8000) -> str:
     return text[:limit] + "\n…(đã rút gọn — trả lời từ phần dữ liệu trên)"
 
 
+# Trần thời gian cho TOÀN BỘ một lượt chạy tool song song. Hết ngân sách thì
+# lấy phần đã xong và đi tiếp — tuyệt đối không chờ vô hạn, vì kênh chat gọi
+# orchestrate() thẳng trong tiến trình và KHÔNG có timeout nào ở trên nữa.
+_MCP_TOOLS_BUDGET = 30
+
+
 def _execute_mcp_tools_in_response(
     messages: list[dict[str, Any]], result: dict, route, body: dict[str, Any],
     max_iterations: int = 4,
@@ -3519,54 +3534,98 @@ def _execute_mcp_tools_in_response(
             for tc in mcp_calls
         ) and not native_calls
 
-        if len(mcp_calls) > 1:
-            # Parallel execution for multiple tool calls
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(mcp_calls)) as pool:
-                future_map = {}
-                for tc in mcp_calls:
-                    args_str = tc.get("function", {}).get("arguments", "{}")
-                    try:
-                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                    except Exception:
-                        args = {}
-                    tool_name = tc.get("function", {}).get("name", "")
-                    logger.info({"event": "mcp_tool_exec_parallel", "tool": tool_name})
-                    future_map[pool.submit(_execute_mcp_tool, tool_name, args)] = tc
+        # Parse tham số MỘT lần, rồi gộp các lệnh TRÙNG (cùng tên + cùng tham
+        # số). Model hay quạt ra hàng loạt lệnh y hệt — thực đo: "tin tức hôm
+        # nay" sinh 8× get_news giống hệt nhau. Chạy lại y nguyên vừa vô ích
+        # vừa dồn nhiều thread vào cùng một MCP server.
+        parsed: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+        for tc in mcp_calls:
+            args_str = tc.get("function", {}).get("arguments", "{}")
+            try:
+                args = json.loads(args_str) if isinstance(args_str, str) else args_str
+            except Exception:
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            parsed.append((tc, tc.get("function", {}).get("name", ""), args))
 
-                # Collect results and append to messages
-                for future in concurrent.futures.as_completed(future_map, timeout=30):
-                    tc = future_map[future]
-                    tool_name = tc.get("function", {}).get("name", "")
-                    tool_id = tc.get("id", f"mcp_{iteration}")
-                    try:
-                        mcp_result = future.result()
-                    except Exception as exc:
-                        mcp_result = f"Tool error: {exc}"
-                    if mcp_result is None:
-                        mcp_result = f"Tool '{tool_name}' returned no result."
-                    current_messages.append({
-                        "role": "tool", "tool_call_id": tool_id,
-                        "name": tool_name, "content": _cap_mcp_result(mcp_result),
-                    })
-        else:
-            # Single tool call — sequential is fine
-            for tc in mcp_calls:
-                args_str = tc.get("function", {}).get("arguments", "{}")
+        def _sig(_tc: dict[str, Any], _name: str, _args: dict[str, Any]) -> str:
+            # Lệnh ĐIỀU KHIỂN không bao giờ được gộp: hai lệnh giống hệt nhau
+            # có thể là cố ý ("tăng âm lượng 2 lần"), gộp lại là chạy thiếu.
+            # Chỉ gộp tool ĐỌC — đọc hai lần luôn ra cùng một kết quả.
+            if _name.startswith("Hass") or _name == "ha_call_service":
+                return "act#" + str(_tc.get("id") or id(_tc))
+            try:
+                return _name + "|" + json.dumps(_args, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                return _name + "|" + repr(sorted(_args.items()))
+
+        jobs: dict[str, tuple[str, dict[str, Any]]] = {}
+        for _tc, _name, _args in parsed:
+            jobs.setdefault(_sig(_tc, _name, _args), (_name, _args))
+        if len(jobs) < len(parsed):
+            logger.info({"event": "mcp_tool_calls_deduped",
+                         "before": len(parsed), "after": len(jobs)})
+
+        results: dict[str, str | None] = {}
+        if len(jobs) > 1:
+            import concurrent.futures
+            # KHÔNG dùng `with ThreadPoolExecutor(...)` ở đây. Nếu as_completed
+            # hết giờ, exception thoát khỏi khối `with` và __exit__ gọi
+            # shutdown(wait=True) — chặn VĨNH VIỄN theo đúng thread đang kẹt.
+            # Request không bao giờ trả về, không exception nào nổi lên, nên
+            # kênh Zalo/Telegram im lặng tuyệt đối và thread rò ra vĩnh viễn.
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs))
+            try:
+                fmap = {}
+                for sig, (tool_name, args) in jobs.items():
+                    logger.info({"event": "mcp_tool_exec_parallel", "tool": tool_name})
+                    fmap[pool.submit(_execute_mcp_tool, tool_name, args)] = sig
                 try:
-                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                except Exception:
-                    args = {}
-                tool_name = tc.get("function", {}).get("name", "")
-                tool_id = tc.get("id", f"mcp_{iteration}")
+                    for future in concurrent.futures.as_completed(fmap, timeout=_MCP_TOOLS_BUDGET):
+                        try:
+                            results[fmap[future]] = future.result()
+                        except Exception as exc:
+                            results[fmap[future]] = f"Tool error: {exc}"
+                except concurrent.futures.TimeoutError:
+                    # Hết ngân sách: thu những cái ĐÃ xong, bỏ những cái treo.
+                    # Tool thiếu sẽ thành "returned no result" bên dưới, và
+                    # _looks_like_tool_error bắt được → tự kéo web search dự
+                    # phòng. Trả lời thiếu nguồn còn hơn im lặng.
+                    for future, sig in fmap.items():
+                        if future.done() and sig not in results:
+                            try:
+                                results[sig] = future.result()
+                            except Exception as exc:
+                                results[sig] = f"Tool error: {exc}"
+                    logger.warning({"event": "mcp_tools_timeout",
+                                    "budget_s": _MCP_TOOLS_BUDGET,
+                                    "stuck": [jobs[s][0] for f, s in fmap.items() if not f.done()]})
+            finally:
+                # wait=False: thread kẹt bị bỏ lại chạy nền thay vì giữ luôn
+                # request. cancel_futures dọn phần còn chưa kịp chạy.
+                pool.shutdown(wait=False, cancel_futures=True)
+        else:
+            # Một lệnh duy nhất — chạy thẳng, không cần thread nào.
+            for sig, (tool_name, args) in jobs.items():
                 logger.info({"event": "mcp_tool_exec", "tool": tool_name, "iteration": iteration})
-                mcp_result = _execute_mcp_tool(tool_name, args)
-                if mcp_result is None:
-                    mcp_result = f"Tool '{tool_name}' returned no result."
-                current_messages.append({
-                    "role": "tool", "tool_call_id": tool_id,
-                    "name": tool_name, "content": _cap_mcp_result(mcp_result),
-                })
+                try:
+                    results[sig] = _execute_mcp_tool(tool_name, args)
+                except Exception as exc:
+                    results[sig] = f"Tool error: {exc}"
+
+        # MỖI tool_call_id phải có ĐÚNG một message trả về, theo ĐÚNG thứ tự
+        # model đã gọi. Thiếu một cái là lượt sau provider từ chối cả payload
+        # (bản cũ gom theo thứ tự hoàn thành nên vừa lệch thứ tự, vừa mất hẳn
+        # phần chưa kịp xong khi timeout).
+        for tc, tool_name, args in parsed:
+            mcp_result = results.get(_sig(tc, tool_name, args))
+            if mcp_result is None:
+                mcp_result = f"Tool '{tool_name}' returned no result."
+            current_messages.append({
+                "role": "tool", "tool_call_id": tc.get("id", f"mcp_{iteration}"),
+                "name": tool_name, "content": _cap_mcp_result(mcp_result),
+            })
 
         # Fallback: a dedicated MCP tool failed (lỗi / không có data) → kéo dữ
         # liệu từ search service (cài đặt tab tìm kiếm) + Exa SONG SONG rồi đưa

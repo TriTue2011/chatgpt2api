@@ -52,7 +52,14 @@ class MCPSession:
         self.session_id: str | None = None
         self.server_name: str = ""
         self.tools: list[dict[str, Any]] = []
-        self._lock = threading.Lock()
+        # RLock chứ không phải Lock: khoá này bảo vệ MỌI hoạt động mạng của một
+        # session, mà call_tool() lại gọi ensure_connected() bên trong — Lock
+        # thường sẽ tự khoá chính mình. Serialize là BẮT BUỘC: FastMCP không
+        # phục vụ được nhiều tools/call đồng thời trên cùng một mcp-session-id
+        # (đo thực tế: 8 request song song cùng 1 session → 1 cái về, 7 cái treo
+        # vĩnh viễn). Khoá theo TỪNG session nên các MCP server khác nhau vẫn
+        # chạy song song bình thường.
+        self._lock = threading.RLock()
         self._last_init = 0.0
         # Circuit breaker state
         self._last_failure = 0.0
@@ -215,25 +222,32 @@ class MCPSession:
         return openai_tools
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> str | None:
-        """Call an MCP tool and return the text result."""
-        if not self.ensure_connected():
-            return None
-        result = self._call("tools/call", {"name": name, "arguments": arguments}, timeout=_TOOL_CALL_TIMEOUT)
-        if not (result and result.get("result")):
-            # Session co the da CHET (vd MCP server vua restart nhung gateway con
-            # trong 5-min TTL nen tuong con song) -> vo hieu, ket noi lai, thu LAI
-            # 1 lan. Khong co buoc nay thi moi lan redeploy MCP la chat roi xuong
-            # model (codex) cham + dai dong.
-            self.session_id = None
-            self._last_init = 0.0
-            self._last_failure = 0.0
-            if self.ensure_connected():
-                result = self._call("tools/call", {"name": name, "arguments": arguments}, timeout=_TOOL_CALL_TIMEOUT)
-        if not (result and result.get("result")):
-            return None
-        content = result.get("result", {}).get("content", [])
-        texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-        return "\n".join(texts) if texts else json.dumps(content, ensure_ascii=False)
+        """Call an MCP tool and return the text result.
+
+        Toàn bộ thân hàm nằm trong self._lock: session_id là trạng thái CHUNG,
+        mà nhánh thử-lại bên dưới xoá nó giữa chừng. Không khoá thì thread A
+        xoá session_id đúng lúc thread B đang gửi dở → B mất session, server
+        treo request của B, và cả hai cùng chết.
+        """
+        with self._lock:
+            if not self.ensure_connected():
+                return None
+            result = self._call("tools/call", {"name": name, "arguments": arguments}, timeout=_TOOL_CALL_TIMEOUT)
+            if not (result and result.get("result")):
+                # Session co the da CHET (vd MCP server vua restart nhung gateway con
+                # trong 5-min TTL nen tuong con song) -> vo hieu, ket noi lai, thu LAI
+                # 1 lan. Khong co buoc nay thi moi lan redeploy MCP la chat roi xuong
+                # model (codex) cham + dai dong.
+                self.session_id = None
+                self._last_init = 0.0
+                self._last_failure = 0.0
+                if self.ensure_connected():
+                    result = self._call("tools/call", {"name": name, "arguments": arguments}, timeout=_TOOL_CALL_TIMEOUT)
+            if not (result and result.get("result")):
+                return None
+            content = result.get("result", {}).get("content", [])
+            texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+            return "\n".join(texts) if texts else json.dumps(content, ensure_ascii=False)
 
 
 # ── Global session pool ─────────────────────────────────────────────────────

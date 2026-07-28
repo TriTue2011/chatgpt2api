@@ -58,6 +58,14 @@ _history: dict[str, list[dict[str, Any]]] = {}
 _history_locks: dict[str, threading.Lock] = {}
 _history_locks_guard = threading.Lock()
 
+# Trần thời gian một lượt. Rộng tay để lượt agent nhiều bước vẫn chạy xong
+# (MCP 30s + tối đa 4 vòng model), nhưng vẫn bắn TRƯỚC timeout 300s của kênh
+# nên người dùng nhận lời xin lỗi thay vì im lặng.
+_TURN_BUDGET_S = 240.0
+# Chờ lượt trước của CÙNG người. Hết chừng này thì báo bận chứ không xếp hàng
+# vô hạn — hàng đợi vô hạn là thứ biến một lượt treo thành chết cả hội thoại.
+_LOCK_WAIT_S = 45.0
+
 
 def _user_history_lock(user_id: str) -> threading.Lock:
     key = str(user_id or "")
@@ -389,12 +397,46 @@ def orchestrate(user_text: str, user_id: str,
     FIX5: cả lượt (load lịch sử → LLM/tool → ghi lịch sử) chạy dưới 1 khoá
     riêng theo user_id — 2 luồng cùng user (vd chat thường + reminder task bắn
     trùng giờ) không còn ghi đè lịch sử của nhau.
+
+    Lượt chạy có TRẦN THỜI GIAN. Kênh chat (Zalo/Telegram/email) gọi thẳng hàm
+    này trong tiến trình và không có timeout nào ở trên: một lượt treo là bot
+    câm vĩnh viễn — không trả lời, không báo lỗi, và mọi tin sau của cùng người
+    còn kẹt luôn vì khoá lịch sử không bao giờ được nhả.
     """
-    with _user_history_lock(user_id):
-        return _orchestrate_locked(
-            user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
-            model=model, auto_approve=auto_approve,
-        )
+    lock = _user_history_lock(user_id)
+    if not lock.acquire(timeout=_LOCK_WAIT_S):
+        logger.warning({"event": "orchestrate_lock_timeout",
+                        "user_id": str(user_id)[:40], "waited_s": _LOCK_WAIT_S})
+        return {"text": "Em còn đang xử lý tin trước của anh/chị, "
+                        "chờ em chút rồi nhắn lại giúp em ạ 🙏"}
+
+    def _run() -> dict[str, Any]:
+        try:
+            return _orchestrate_locked(
+                user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
+                model=model, auto_approve=auto_approve,
+            )
+        finally:
+            # Khoá do CHÍNH thread chạy thân hàm nhả. Nếu hết giờ mà bên ngoài
+            # tự nhả thì thread này vẫn đang ghi lịch sử → hỏng đúng thứ FIX5
+            # sinh ra để bảo vệ.
+            lock.release()
+
+    import concurrent.futures
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_run)
+        try:
+            return future.result(timeout=_TURN_BUDGET_S)
+        except concurrent.futures.TimeoutError:
+            logger.warning({"event": "orchestrate_turn_timeout",
+                            "user_id": str(user_id)[:40], "budget_s": _TURN_BUDGET_S})
+            # Bỏ lượt này lại chạy nền (nó sẽ tự nhả khoá) và trả lời NGAY,
+            # để người dùng biết có chuyện thay vì ngồi nhìn màn hình trống.
+            return {"text": "Em xử lý lâu quá nên tạm dừng ở đây ạ 😥 "
+                            "Anh/chị thử hỏi lại, hoặc hỏi ngắn gọn hơn giúp em."}
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _orchestrate_locked(user_text: str, user_id: str,
