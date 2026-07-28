@@ -242,6 +242,267 @@ type AutofillState = {
   };
 };
 
+type BulkDoc = {
+  status?: string; grade?: number; slug?: string; kind?: string;
+  error?: string; pages?: number; chunks?: number; collection?: string;
+  sample?: boolean;
+};
+type BulkResp = {
+  running?: boolean;
+  summary?: string;
+  state?: {
+    running?: boolean; stopped?: boolean; dry_run?: boolean;
+    index?: number; total?: number; current?: string; current_grade?: number;
+    kinds?: string[]; pages_total?: number; chunks_total?: number;
+    started_at?: string; finished_at?: string;
+    counts?: { ok?: number; failed?: number; skipped?: number };
+    books?: Record<string, BulkDoc>;
+  };
+};
+type StorageResp = {
+  pdf_files?: number; pdf_bytes?: number; md_files?: number; md_bytes?: number;
+};
+
+const BULK_KINDS: { id: string; label: string; hint: string }[] = [
+  { id: "sgk", label: "SGK", hint: "sách học sinh — nội dung phải học" },
+  { id: "sgv", label: "SGV", hint: "sách giáo viên — gợi ý cách dạy" },
+  { id: "vbt", label: "VBT", hint: "vở bài tập — mẫu ra đề" },
+  { id: "tap_huan", label: "Tài liệu tập huấn", hint: "bồi dưỡng giáo viên" },
+];
+
+const fmtMB = (b?: number) => `${((b || 0) / 1024 / 1024).toFixed(1)} MB`;
+
+/** Nạp CẢ KHO taphuan vào RAG: chọn lớp + loại tài liệu, chạy nền, nối lại được.
+ *
+ *  Là component RIÊNG, không nhét vào TeacherPage: TeacherPage có guard
+ *  `if (isCheckingAuth) return` ở giữa thân hàm, thêm hook vào đó là tái lập
+ *  đúng lỗi React #310 (trang trắng) vừa phải đi vá.
+ *
+ *  Tiến độ đếm theo QUYỂN (trang chi tiết), còn mỗi quyển có thể ra 1–4 tài
+ *  liệu tuỳ loại đã chọn — nên phần trăm là ước lượng, ghi rõ để không ai tưởng
+ *  nó chính xác tới từng tài liệu. */
+function BulkSgkPanel() {
+  const [st, setSt] = useState<BulkResp | null>(null);
+  const [store, setStore] = useState<StorageResp | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [kinds, setKinds] = useState<string[]>(["sgk"]);
+  const [allSets, setAllSets] = useState(false);
+  const [keepPdf, setKeepPdf] = useState(false);
+  const [gradeFrom, setGradeFrom] = useState(1);
+  const [gradeTo, setGradeTo] = useState(12);
+
+  const load = useCallback(async () => {
+    try {
+      setSt(await httpRequest<BulkResp>("/api/teacher/bulk"));
+    } catch { /* panel phụ — im lặng, không phá trang */ }
+  }, []);
+
+  const loadStore = useCallback(async () => {
+    try {
+      setStore(await httpRequest<StorageResp>("/api/teacher/storage"));
+    } catch { /* im lặng */ }
+  }, []);
+
+  useEffect(() => { void load(); void loadStore(); }, [load, loadStore]);
+
+  const running = !!st?.running;
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => void load(), 5000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  const toggleKind = (id: string) =>
+    setKinds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  const grades = useMemo(() => {
+    const a = Math.min(gradeFrom, gradeTo);
+    const b = Math.max(gradeFrom, gradeTo);
+    return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  }, [gradeFrom, gradeTo]);
+
+  const start = async () => {
+    if (!kinds.length) { toast.error("Chọn ít nhất một loại tài liệu"); return; }
+    const n = grades.length;
+    if (!window.confirm(
+      `Nạp lớp ${grades[0]}–${grades[n - 1]} (${n} lớp), loại: `
+      + `${kinds.join(", ")}${allSets ? ", CẢ các bộ sách khác" : ""}.\n\n`
+      + `Đây là việc DÀI — mỗi 20 trang là một lượt gọi model vision, cả kho `
+      + `khoảng 8.000–10.000 trang. Chạy nền, nối lại được, dừng lúc nào cũng `
+      + `được và không mất công đã làm.\n\nBắt đầu?`)) return;
+    setBusy(true);
+    try {
+      await httpRequest("/api/teacher/bulk/start", {
+        method: "POST",
+        body: { grades, kinds, all_sets: allSets, keep_pdf: keepPdf, skip_done: true },
+      });
+      toast.success("Đã bắt đầu — theo dõi tiến độ ngay bên dưới");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không chạy được");
+    } finally { setBusy(false); }
+  };
+
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await httpRequest("/api/teacher/bulk/stop", { method: "POST", body: {} });
+      toast.success("Sẽ dừng sau khi xong tài liệu đang chạy");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Lỗi");
+    } finally { setBusy(false); }
+  };
+
+  const purge = async () => {
+    if (!window.confirm(
+      "Xoá toàn bộ PDF đã lưu?\n\nAN TOÀN: PDF chỉ để đối chiếu lại. Kiến thức "
+      + "đã nằm ở file .md và trong RAG — xoá PDF KHÔNG mất gì đã nạp.")) return;
+    setBusy(true);
+    try {
+      const r = await httpRequest<{ deleted?: number; freed_bytes?: number }>(
+        "/api/teacher/pdfs", { method: "DELETE" });
+      toast.success(`Đã xoá ${r?.deleted ?? 0} PDF, giải phóng ${fmtMB(r?.freed_bytes)}`);
+      await loadStore();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Lỗi");
+    } finally { setBusy(false); }
+  };
+
+  const s = st?.state;
+  const c = s?.counts || {};
+  const total = s?.total || 0;
+  const pct = total ? Math.min(100, Math.round(((s?.index || 0) / total) * 100)) : 0;
+  const failed = Object.values(s?.books || {}).filter((r) => r.status === "failed");
+
+  return (
+    <div className="rounded border border-sky-500/25 bg-sky-500/5 p-2.5 space-y-2.5">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[10px] font-semibold flex items-center gap-1">
+          <BookMarked className="size-3 text-sky-600" />
+          Nạp cả kho taphuan.nxbgd.vn vào RAG
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Button size="sm" className="h-7 text-[11px]" disabled={busy || running}
+            onClick={() => void start()}>
+            {busy ? <LoaderCircle className="size-3 animate-spin" /> : <PlayCircle className="size-3" />}
+            <span className="ml-1">Chạy</span>
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-[11px]"
+            disabled={busy || !running} onClick={() => void stop()}>
+            Dừng
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]"
+            disabled={busy} onClick={() => { void load(); void loadStore(); }}>
+            <RefreshCw className="size-3" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Chọn lớp */}
+      <div className="flex items-end gap-2 flex-wrap">
+        <div>
+          <label className="text-[10px] text-muted-foreground">Từ lớp</label>
+          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={gradeFrom} disabled={running}
+            onChange={(e) => setGradeFrom(Number(e.target.value))}>
+            {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] text-muted-foreground">Đến lớp</label>
+          <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+            value={gradeTo} disabled={running}
+            onChange={(e) => setGradeTo(Number(e.target.value))}>
+            {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <p className="text-[10px] text-muted-foreground pb-1.5">
+          {grades.length} lớp · môn lấy theo danh mục của dự án cho từng lớp
+        </p>
+      </div>
+
+      {/* Chọn loại tài liệu — mỗi loại vào một kho RAG riêng */}
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold">Loại tài liệu (mỗi loại một kho riêng)</div>
+        <div className="grid gap-1 sm:grid-cols-2">
+          {BULK_KINDS.map((k) => (
+            <label key={k.id} className="flex items-start gap-1.5 text-[10px] cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={kinds.includes(k.id)}
+                disabled={running} onChange={() => toggleKind(k.id)} />
+              <span><b>{k.label}</b> <span className="text-muted-foreground">— {k.hint}</span></span>
+            </label>
+          ))}
+        </div>
+        <label className="flex items-start gap-1.5 text-[10px] cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={allSets} disabled={running}
+            onChange={(e) => setAllSets(e.target.checked)} />
+          <span>Nạp cả <b>các bộ sách khác</b>
+            <span className="text-muted-foreground"> — bộ khác là chương trình khác cho cùng môn, vào kho <code>kb_giao_duc_bo&#123;N&#125;</code> riêng</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-1.5 text-[10px] cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={keepPdf} disabled={running}
+            onChange={(e) => setKeepPdf(e.target.checked)} />
+          <span>Giữ lại PDF
+            <span className="text-muted-foreground"> — cả kho là hàng chục GB, chỉ để đối chiếu. Bỏ tick thì xoá ngay sau khi có RAG.</span>
+          </span>
+        </label>
+      </div>
+
+      {/* Tiến độ */}
+      {s && (
+        <div className="space-y-1">
+          <div className="h-1.5 rounded bg-border overflow-hidden">
+            <div className="h-full bg-sky-500 transition-all" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {running ? "Đang chạy" : s.finished_at ? "Đã dừng/xong" : "Chưa chạy"}
+            {" · "}~{s.index || 0}/{total} quyển ({pct}%)
+            {" · "}✅ {c.ok || 0} · ↩︎ {c.skipped || 0} bỏ qua · ❌ {c.failed || 0}
+            {" · "}📄 {s.pages_total || 0} trang · 🧩 {s.chunks_total || 0} chunks
+          </div>
+          {s.current && (
+            <div className="text-[10px] truncate">Đang: <b>{s.current}</b></div>
+          )}
+          {!!s.kinds?.length && (
+            <div className="text-[10px] text-muted-foreground">
+              Lượt chạy này nạp: {s.kinds.join(", ")}
+            </div>
+          )}
+          {failed.length > 0 && (
+            <details className="text-[10px]">
+              <summary className="cursor-pointer text-red-500">
+                {failed.length} tài liệu lỗi — xem
+              </summary>
+              <ul className="mt-1 space-y-0.5 max-h-40 overflow-auto">
+                {failed.slice(-25).map((r, i) => (
+                  <li key={i} className="text-muted-foreground">
+                    lớp {r.grade} · {r.kind || "?"} · {r.slug}: {r.error}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* Dung lượng */}
+      <div className="flex items-center justify-between gap-2 flex-wrap border-t border-border pt-1.5">
+        <div className="text-[10px] text-muted-foreground">
+          PDF: <b>{store?.pdf_files ?? 0}</b> file · {fmtMB(store?.pdf_bytes)}
+          {" · "}Markdown SGK: <b>{store?.md_files ?? 0}</b> file · {fmtMB(store?.md_bytes)}
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-[11px]"
+          disabled={busy || !store?.pdf_files} onClick={() => void purge()}>
+          <Trash2 className="size-3" />
+          <span className="ml-1">Dọn PDF</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Tự tìm & nạp SGK: nút chạy ngay + công tắc định kỳ + thanh tiến độ.
  *  Khi đang chạy thì hỏi tiến độ mỗi 5s, chạy xong thì thôi hỏi. */
 function AutofillPanel() {
@@ -2256,6 +2517,7 @@ export default function TeacherPage() {
         <Fold id="import" title="Import PDF SGK">
           <CardContent className="pt-4 space-y-3">
             {SHOW_AUTOFILL && <AutofillPanel />}
+            <BulkSgkPanel />
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <FileUp className="size-3.5 text-amber-600" />
               Import SGK theo chương / bài
