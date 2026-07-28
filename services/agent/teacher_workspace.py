@@ -487,6 +487,9 @@ def import_sgk_pdf(
         mode = "append"
 
     # Trích text/markdown (PDF số hoặc scan OCR) — SGK: toàn bộ trang (không cắt 40).
+    # Gán trước: nhánh có sẵn text bỏ qua phần trích, mà max_pages còn được
+    # dùng ở kết quả trả về bên dưới — không gán ở đây là UnboundLocalError.
+    max_pages = 0
     if (text or "").strip():
         # Caller đã trích sẵn (vd sgk_taphuan gửi cả KHỐI TRANG cho model —
         # rẻ hơn ~20 lần so với OCR từng trang ở đây). Vẫn đi tiếp đúng đường

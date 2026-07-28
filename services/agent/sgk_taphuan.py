@@ -333,6 +333,10 @@ _PAGES_PER_CALL = 20
 # Trần dung lượng mỗi khối gửi đi. Gemini chặn 50 MB/PDF, base64 phình 4/3
 # (30 MB → ~40 MB trên dây), nên 30 MB là ngưỡng an toàn.
 _MAX_CHUNK_BYTES = 30 * 1024 * 1024
+# Thử lại mỗi khối khi model lỗi. Nghỉ 4s → 8s → 16s, đủ để qua đợt nghẽn nhịp
+# mà không kéo dài vô tận.
+_CHUNK_RETRIES = 4
+_RETRY_BASE = 4.0
 
 
 def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL,
@@ -382,25 +386,37 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
                 continue
             uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
             try:
-                resp = call_model(mid, [
-                    {"role": "user", "content": [
-                        {"type": "text", "text": _DOC_PROMPT},
-                        {"type": "file_data", "file_data": {"file_uri": uri}},
-                    ]},
-                ], timeout=600, max_tokens=32000, no_smart_home=True)
-                if resp.get("error"):
-                    logger.warning("sgk_taphuan.book_markdown: khối %s-%s lỗi: %s",
-                                   start + 1, end + 1, str(resp["error"])[:150])
-                    missing.append((start + 1, end + 1))
+                # Thử lại có giãn cách. Chạy liên tiếp nhiều quyển thì model
+                # bị giới hạn nhịp và trả lỗi từng đợt — đo thật: 12 quyển
+                # chạy sát nhau làm hụt tới quá nửa số trang. Bỏ cuộc ngay ở
+                # lần đầu là vứt cả khối 20 trang chỉ vì một lần nghẽn.
+                md = ""
+                last = ""
+                for attempt in range(_CHUNK_RETRIES):
+                    if attempt:
+                        time.sleep(_RETRY_BASE * (2 ** (attempt - 1)))
+                    resp = call_model(mid, [
+                        {"role": "user", "content": [
+                            {"type": "text", "text": _DOC_PROMPT},
+                            {"type": "file_data", "file_data": {"file_uri": uri}},
+                        ]},
+                    ], timeout=600, max_tokens=32000, no_smart_home=True)
+                    if resp.get("error"):
+                        last = str(resp["error"])[:150]
+                        continue
+                    cand = content_of(resp).strip()
+                    if p2w.looks_like_ocr_failure(cand):
+                        last = "model trả lỗi thay vì nội dung"
+                        continue
+                    md = cand
+                    break
+                if md:
+                    out.append(md)
                 else:
-                    md = content_of(resp).strip()
-                    if p2w.looks_like_ocr_failure(md):
-                        logger.warning(
-                            "sgk_taphuan.book_markdown: khối %s-%s trả lỗi model",
-                            start + 1, end + 1)
-                        missing.append((start + 1, end + 1))
-                    else:
-                        out.append(md)
+                    logger.warning("sgk_taphuan.book_markdown: khối %s-%s hỏng sau "
+                                   "%s lần thử: %s", start + 1, end + 1,
+                                   _CHUNK_RETRIES, last)
+                    missing.append((start + 1, end + 1))
             finally:
                 # Luôn tiến, kể cả khi khối lỗi — nếu không thì vòng while lặp
                 # vô hạn trên đúng khối hỏng đó.

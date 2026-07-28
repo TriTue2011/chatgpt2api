@@ -253,6 +253,50 @@ docker exec -it c2a python scripts/migrate_storage.py \
   --to-url "postgresql://c2a_user:c2a_secure_password_123@db:5432/c2a_db"
 ```
 
+### 1.8. Cho AI hỏi thẳng database (Postgres MCP Pro — tuỳ chọn)
+
+Chỉ làm khi bạn đã chuyển sang PostgreSQL ở mục 1.7. Sau bước này, bot trả lời
+được những câu như *"bảng nào đang nặng nhất"*, *"câu truy vấn này chậm ở đâu"*,
+*"thiếu index chỗ nào"* — nó tự chạy `EXPLAIN` và đọc thống kê thật.
+
+Thêm khối này vào file compose (hoặc Stack trong Portainer), ngang hàng với `c2a`:
+
+```yaml
+  postgres-mcp:
+    image: crystaldba/postgres-mcp:latest
+    container_name: postgres-mcp
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - DATABASE_URI=postgresql://c2a_user:${DB_PASSWORD}@host.docker.internal:5432/c2a_db
+    command: ["--access-mode=restricted", "--transport=sse"]
+    security_opt:
+      - no-new-privileges:true
+```
+
+Rồi vào **Cài đặt → MCP** thêm một server với URL:
+
+```
+http://postgres-mcp:8000/sse
+```
+
+Ba điều nên biết trước khi đổi cấu hình này:
+
+- **`--access-mode=restricted` là chỉ đọc.** Model gọi nhầm cũng không sửa hay xoá
+  được dữ liệu. Trên máy chạy thật thì **đừng** đổi sang `unrestricted`.
+- **`--transport=sse` là bắt buộc.** MCP client của gateway nói chuyện qua HTTP;
+  MCP kiểu `stdio` cắm vào sẽ không nhận (đây cũng là lý do nhiều MCP server khác
+  không dùng thẳng được).
+- **Không cần mở cổng ra ngoài.** c2a gọi nội bộ theo tên service `postgres-mcp`.
+  Thêm `ports:` là lộ đường vào database ra LAN — đừng làm.
+
+Kiểm tra chạy được chưa:
+
+```bash
+docker logs postgres-mcp | tail -5
+```
+
 ---
 
 
