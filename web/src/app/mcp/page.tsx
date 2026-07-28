@@ -35,6 +35,8 @@ const GROUPS: McpGroup[] = [
     mcps: [{id:"kb_dien_nuoc",name:"Kho Điện Nước",url:""},{id:"kb_y_te",name:"Kho Y Tế",url:""},{id:"kb_giao_duc",name:"Kho Giáo Dục",url:""},{id:"kb_ngoai_ngu",name:"Kho Ngoại Ngữ",url:""},{id:"kb_khoa_hoc",name:"Kho Khoa Học",url:""},{id:"kb_tu_nhien",name:"Kho Tự Nhiên",url:""},{id:"kb_xa_hoi",name:"Kho Xã Hội",url:""}], installedCount:0, totalCount:7 },
   { name: "VN Khác", icon: "🏛️", description: "Lịch âm",
     mcps: [{id:"vn_lunar",name:"Lịch Âm",url:""}], installedCount:0, totalCount:1 },
+  { name: "Máy & Server", icon: "💻", description: "Thiết bị đã cài c2a-agent (cấu hình máy, CPU/RAM, tiến trình, chạy lệnh, tắt máy) · SFTP · SSH",
+    mcps: [{id:"device_fs",name:"Thiết bị của tôi",url:""},{id:"fs_remote",name:"File Server (SFTP)",url:""},{id:"ssh_exec",name:"SSH Server",url:""}], installedCount:0, totalCount:3 },
   { name: "Khác", icon: "📦", description: "Web Agent, YouTube Transcript, HA Helper",
     mcps: [{id:"web_agent",name:"Web Agent",url:""},{id:"youtube",name:"YouTube Transcript",url:""},{id:"ha_helper",name:"HA Helper",url:""}], installedCount:0, totalCount:3 },
 ];

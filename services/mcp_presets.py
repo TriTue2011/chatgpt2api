@@ -123,6 +123,20 @@ PRESETS: list[MCPPreset] = [
         homepage="https://github.com/TriTue2011/chatgpt2api",
         tags=["file", "sftp", "server", "safe"],
     ),
+    MCPPreset(
+        id="device_fs", name="Thiết bị của tôi", icon="💻", category="general",
+        description=(
+            "Máy tính / điện thoại Android / VPS đã cài c2a-agent: xem cấu hình máy, "
+            "CPU–RAM–ổ đĩa đang dùng, tiến trình, service, màn hình đang khoá hay "
+            "sáng; đọc/sửa file; chạy lệnh PowerShell–cmd–sh; tắt app; khoá hoặc "
+            "tắt máy. Agent TỰ QUAY RA nên máy sau NAT/wifi/4G vẫn dùng được — "
+            "không mở cổng, không cần IP tĩnh. Mỗi nhóm quyền (ghi file / chạy "
+            "lệnh / tắt máy) phải bật ở CẢ dự án lẫn cờ khi chạy agent."
+        ),
+        url="http://127.0.0.1:8005/device_fs/mcp",
+        homepage="https://github.com/TriTue2011/chatgpt2api",
+        tags=["device", "shell", "powershell", "system", "remote", "safe"],
+    ),
 
     # ── Knowledge Base (local vn-mcp-hub RAG) ───────────────────────────────
     MCPPreset(
