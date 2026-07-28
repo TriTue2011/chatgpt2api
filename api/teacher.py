@@ -186,12 +186,21 @@ def create_router() -> APIRouter:
         from services.agent import sgk_fetch as sf
         from services.agent import sgk_taphuan as tp
 
-        if "taphuan.nxbgd.vn" in url:
-            readers = [url] if "/doc-sach/" in url else tp.reader_urls(url)
-            if not readers:
-                return {"ok": False, "error": "không tìm thấy link đọc sách (sgk-) trong trang này"}
-            return tp.import_reader(readers[0], grade=grade, subject=subject, mode=mode)
-        return sf.fetch_and_ingest(grade, subject, url, kind="sgk")
+        # PHẢI chạy trong threadpool. Nạp một cuốn SGK là tải hàng trăm ảnh
+        # trang rồi dựng PDF — hàng chục phút. Gọi thẳng trong `async def` là
+        # chặn event loop, và chặn event loop thì CẢ gateway đứng hình: bot
+        # câm, web UI treo, mọi kênh chết theo cho tới khi nạp xong.
+        # (/api/teacher/import-sgk bên dưới vốn đã làm đúng như vậy.)
+        def _run() -> dict:
+            if "taphuan.nxbgd.vn" in url:
+                readers = [url] if "/doc-sach/" in url else tp.reader_urls(url)
+                if not readers:
+                    return {"ok": False,
+                            "error": "không tìm thấy link đọc sách (sgk-) trong trang này"}
+                return tp.import_reader(readers[0], grade=grade, subject=subject, mode=mode)
+            return sf.fetch_and_ingest(grade, subject, url, kind="sgk")
+
+        return await run_in_threadpool(_run)
 
     @router.get("/api/teacher/taphuan/books")
     async def teacher_taphuan_books(
@@ -201,7 +210,9 @@ def create_router() -> APIRouter:
         """Danh mục SGK 1 lớp trên kho chính thức taphuan.nxbgd.vn."""
         require_admin(authorization)
         from services.agent import sgk_taphuan as tp
-        books = tp.list_books(int(grade))
+        # Threadpool: list_books cào web taphuan (nhiều giây tới cả phút), chặn
+        # event loop là treo cả gateway.
+        books = await run_in_threadpool(tp.list_books, int(grade))
         return {"grade": int(grade), "count": len(books), "books": books}
 
     @router.post("/api/teacher/taphuan/import")
@@ -216,13 +227,18 @@ def create_router() -> APIRouter:
         """
         require_admin(authorization)
         from services.agent import sgk_taphuan as tp
-        return tp.import_book(
-            int(payload.get("grade") or 0),
-            str(payload.get("subject") or ""),
-            max_pages=int(payload.get("max_pages") or 0),
-            mode=str(payload.get("mode") or "append"),
-            dry_run=bool(payload.get("dry_run")),
-        )
+        # Threadpool: nạp cả quyển là tải ảnh từng trang + OCR, rất lâu. Chạy
+        # thẳng trong `async def` sẽ chặn event loop và treo cả gateway.
+        def _run() -> dict:
+            return tp.import_book(
+                int(payload.get("grade") or 0),
+                str(payload.get("subject") or ""),
+                max_pages=int(payload.get("max_pages") or 0),
+                mode=str(payload.get("mode") or "append"),
+                dry_run=bool(payload.get("dry_run")),
+            )
+
+        return await run_in_threadpool(_run)
 
     @router.get("/api/teacher/search")
     async def teacher_search(
