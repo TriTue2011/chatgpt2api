@@ -611,47 +611,157 @@ function ExternalTab({ showToast }: TabProps) {
 }
 
 // ── Tab: Nạp RAG (file/URL → AI analyze → curate into KB) ───────────────────
+
+/** Một mục kiến thức tách từ markdown — đơn vị người dùng tick chọn để nạp. */
+type KItem = { id: number; title: string; body: string; on: boolean };
+
+let _kid = 0;
+const nextKid = () => ++_kid;
+
+/** Tách markdown thành các mục theo heading `#`/`##`.
+ *
+ * Chỉ tách ở cấp 1–2; `###` trở xuống để nguyên trong thân mục, nếu không một
+ * phụ lục sẽ vỡ thành vài chục mảnh vụn không ai chọn nổi.
+ */
+function splitItems(md: string): KItem[] {
+  const text = (md || "").replace(/\r\n?/g, "\n");
+  if (!text.trim()) return [];
+  const re = /^(#{1,2})[ \t]+(.+?)[ \t]*$/gm;
+  const heads: { at: number; end: number; title: string }[] = [];
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    heads.push({ at: m.index, end: m.index + m[0].length, title: m[2].trim() });
+  }
+  const out: KItem[] = [];
+  const pre = (heads.length ? text.slice(0, heads[0].at) : text).trim();
+  if (pre) out.push({ id: nextKid(), title: "Mở đầu", body: pre, on: true });
+  heads.forEach((h, i) => {
+    const body = text.slice(h.end, i + 1 < heads.length ? heads[i + 1].at : undefined).trim();
+    // Heading rỗng ruột (chỉ là tiêu đề cha) vẫn giữ — nó là ngữ cảnh cho mục sau.
+    out.push({ id: nextKid(), title: h.title, body, on: true });
+  });
+  return out;
+}
+
+function joinItems(items: KItem[], onlySelected = true): string {
+  return items
+    .filter((i) => (onlySelected ? i.on : true))
+    .map((i) => `## ${i.title}\n\n${i.body}`.trim())
+    .join("\n\n");
+}
+
+type Coverage = {
+  pages?: number; chars_extracted?: number; chars_processed?: number;
+  batches_total?: number; used_ocr?: boolean; truncated?: boolean;
+  batches_failed?: number;
+};
+
+const vnNum = (n: number) => n.toLocaleString("vi-VN");
+
 function IngestTab({ showToast }: TabProps) {
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
-  const [markdown, setMarkdown] = useState("");
-  const [showResult, setShowResult] = useState(false);
+  const [prog, setProg] = useState("");
+  const [items, setItems] = useState<KItem[]>([]);
+  const [view, setView] = useState<"list" | "raw">("list");
+  const [raw, setRaw] = useState("");
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [cov, setCov] = useState<Coverage | null>(null);
   const [kbs, setKbs] = useState<{ name: string; chunks: number }[]>([]);
   const [targetKb, setTargetKb] = useState("");
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
 
   const loadKbs = useCallback(async () => {
     try {
       const r = await request.get(`${RAG}/list`);
       const list = r.data?.collections || [];
       setKbs(list);
-      if (list[0]) setTargetKb(list[0].name);
+      setTargetKb((cur) => cur || (list[0]?.name ?? ""));
     } catch { /* ignore */ }
   }, []);
 
+  const apply = useCallback(async (d: Record<string, unknown>) => {
+    const md = String(d.markdown || "");
+    setItems(splitItems(md));
+    setRaw(md);
+    setView("list");
+    setCov({
+      pages: Number(d.pages || 0), chars_extracted: Number(d.chars_extracted || 0),
+      chars_processed: Number(d.chars_processed || 0), batches_total: Number(d.batches_total || 0),
+      used_ocr: Boolean(d.used_ocr), truncated: Boolean(d.truncated),
+      batches_failed: Number(d.batches_failed || 0),
+    });
+    await loadKbs();
+    const w = d.warning ? String(d.warning) : "";
+    showToast(w || "Phân tích hoàn tất", !w);
+  }, [loadKbs, showToast]);
+
+  /** Hỏi thăm job tới khi xong. Tài liệu dài chạy vài phút — vượt xa trần
+   *  180s của proxy, nên không thể chờ trong một request. */
+  const pollJob = useCallback(async (id: string) => {
+    const deadline = Date.now() + 40 * 60 * 1000;
+    while (alive.current && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2500));
+      if (!alive.current) return;
+      const r = await request.get(`${STUDIO}/analyze_job/${encodeURIComponent(id)}`);
+      const d = r.data || {};
+      if (!d.ok) throw new Error(String(d.error || "job không còn"));
+      const tot = Number(d.batches_total || 0);
+      const done = Number(d.batches_done || 0);
+      setProg(tot > 1 ? `${d.stage || "đang xử lý"} — phần ${done}/${tot}` : String(d.stage || "đang xử lý"));
+      if (d.status === "error") throw new Error(String(d.result?.error || "phân tích lỗi"));
+      if (d.status === "done") {
+        if (!d.result?.ok) throw new Error(String(d.result?.error || "phân tích lỗi"));
+        await apply(d.result);
+        return;
+      }
+    }
+    throw new Error("job chạy quá lâu — xem log hub");
+  }, [apply]);
+
   const analyze = async () => {
     if (!url.trim() && !file) { showToast("Điền URL hoặc chọn file", false); return; }
-    setBusy(true); setShowResult(false);
+    setBusy(true); setItems([]); setCov(null); setProg("đang trích văn bản");
     try {
       const fd = new FormData();
       if (url.trim()) fd.append("url", url.trim());
       if (file) fd.append("file", file);
       const r = await request.post(`${STUDIO}/analyze_source`, fd);
-      if (r.data?.ok) {
-        setMarkdown(r.data.markdown || ""); setShowResult(true); await loadKbs();
-        showToast(r.data.raw_fallback ? (r.data.warning || "AI fallback văn bản gốc") : "Phân tích hoàn tất");
-      } else showToast("Lỗi: " + (r.data?.error || "Không phân tích được"), false);
+      const d = r.data || {};
+      if (!d.ok) { showToast("Lỗi: " + (d.error || "Không phân tích được"), false); }
+      else if (d.pending && d.job_id) { await pollJob(String(d.job_id)); }
+      else { await apply(d); }
     } catch (e) { showToast(String((e as Error).message), false); }
-    setBusy(false);
+    if (alive.current) { setBusy(false); setProg(""); }
+  };
+
+  const sel = items.filter((i) => i.on);
+  const selText = joinItems(items);
+  const patch = (id: number, kw: Partial<KItem>) =>
+    setItems((xs) => xs.map((i) => (i.id === id ? { ...i, ...kw } : i)));
+
+  const toRaw = () => { setRaw(joinItems(items, false)); setView("raw"); };
+  const toList = () => { setItems(splitItems(raw)); setView("list"); };
+
+  const addItem = () => {
+    const it: KItem = { id: nextKid(), title: "Mục mới", body: "", on: true };
+    setItems((xs) => [...xs, it]);
+    setOpenId(it.id);
   };
 
   const saveToKb = async () => {
     if (!targetKb) { showToast("Chọn KB", false); return; }
+    const text = view === "raw" ? raw : selText;
+    if (!text.trim()) { showToast("Chưa chọn mục nào để nạp", false); return; }
     showToast("Đang nạp vào ChromaDB/R2...");
     try {
-      const r = await request.post(`${RAG}/curate/${encodeURIComponent(targetKb)}`, { title: "Tài liệu AI tổng hợp", text: markdown, source: "studio_ingest" });
-      if (r.data?.ok) { showToast(`Đã nạp ${r.data.chunks_added} chunks vào ${targetKb}`); setShowResult(false); setUrl(""); setFile(null); }
-      else showToast("Lỗi nạp: " + r.data?.error, false);
+      const r = await request.post(`${RAG}/curate/${encodeURIComponent(targetKb)}`,
+        { title: "Tài liệu AI tổng hợp", text, source: "studio_ingest" });
+      if (r.data?.ok) {
+        showToast(`Đã nạp ${r.data.chunks_added} chunks vào ${targetKb}`);
+        setItems([]); setCov(null); setUrl(""); setFile(null);
+      } else showToast("Lỗi nạp: " + r.data?.error, false);
     } catch (e) { showToast(String((e as Error).message), false); }
   };
 
@@ -659,22 +769,95 @@ function IngestTab({ showToast }: TabProps) {
     <div className="space-y-4">
       <div className="card"><div className="card-body space-y-3 max-w-xl">
         <h3 className="font-semibold">Nạp dữ liệu bằng AI</h3>
-        <p className="text-sm text-[var(--muted-foreground)]">Tải file (PDF/Word/PPT/Excel/HTML/CSV/EPUB/TXT/MD) hoặc điền URL để AI đọc, phân tích rồi tổng hợp vào kho RAG.</p>
+        <p className="text-sm text-[var(--muted-foreground)]">Tải file (PDF/Word/PPT/Excel/HTML/CSV/EPUB/TXT/MD) hoặc điền URL để AI đọc, phân tích rồi tổng hợp vào kho RAG. Tài liệu dài được chia nhiều lượt — đọc hết, không cắt.</p>
         <Field label="Từ URL"><input className={INPUT} placeholder="https://..." value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
         <Field label="Từ File"><input type="file" accept=".txt,.md,.pdf,.docx,.pptx,.xlsx,.html,.htm,.csv,.epub" className={INPUT} onChange={(e) => setFile(e.target.files?.[0] || null)} /></Field>
-        <button className="btn btn-primary" disabled={busy} onClick={analyze}>{busy ? "🤖 AI đang đọc (1-2 phút)..." : "AI Đọc & Phân Tích"}</button>
+        <button className="btn btn-primary" disabled={busy} onClick={analyze}>{busy ? "🤖 " + (prog || "đang xử lý") + "..." : "AI Đọc & Phân Tích"}</button>
+        {busy && <p className="text-xs text-[var(--muted-foreground)]">Tài liệu vài chục trang mất vài phút. Cứ để tab này mở.</p>}
       </div></div>
-      {showResult && (
+
+      {cov && (
+        <div className="card"><div className="card-body">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            {!!cov.pages && <span>📄 {cov.pages} trang</span>}
+            <span>✍️ trích {vnNum(cov.chars_extracted || 0)} ký tự</span>
+            <span className={cov.truncated ? "text-amber-600 font-medium" : "text-emerald-600"}>
+              {cov.truncated
+                ? `⚠️ chỉ xử lý ${vnNum(cov.chars_processed || 0)} ký tự`
+                : "✅ xử lý đủ, không cắt"}
+            </span>
+            {(cov.batches_total || 0) > 1 && <span>🔁 {cov.batches_total} lượt AI</span>}
+            {cov.used_ocr && <span>🔍 qua OCR</span>}
+            {!!cov.batches_failed && <span className="text-amber-600">{cov.batches_failed} phần giữ văn bản gốc</span>}
+          </div>
+        </div></div>
+      )}
+
+      {items.length > 0 && (
         <div className="card"><div className="card-body space-y-3">
-          <h3 className="font-semibold">Kết quả AI tổng hợp</h3>
-          <textarea className={`${INPUT} min-h-60 font-mono`} value={markdown} onChange={(e) => setMarkdown(e.target.value)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-semibold">Kiến thức trích được</h3>
+            <span className="text-sm text-[var(--muted-foreground)]">
+              {items.length} mục · chọn {sel.length} · {vnNum(selText.length)} ký tự sẽ nạp
+            </span>
+            <div className="ml-auto flex flex-wrap gap-1.5">
+              <button className="text-xs px-2 py-1 rounded-md border border-[var(--border)]"
+                onClick={() => setItems((xs) => xs.map((i) => ({ ...i, on: true })))}>Chọn tất cả</button>
+              <button className="text-xs px-2 py-1 rounded-md border border-[var(--border)]"
+                onClick={() => setItems((xs) => xs.map((i) => ({ ...i, on: false })))}>Bỏ chọn</button>
+              <button className="text-xs px-2 py-1 rounded-md border border-[var(--border)]" onClick={addItem}>＋ Thêm mục</button>
+              <button className="text-xs px-2 py-1 rounded-md border border-[var(--border)]"
+                onClick={view === "list" ? toRaw : toList}>
+                {view === "list" ? "Xem toàn văn" : "Về danh sách"}
+              </button>
+            </div>
+          </div>
+
+          {view === "raw" ? (
+            <>
+              <textarea className={`${INPUT} min-h-80 font-mono text-xs`} value={raw} onChange={(e) => setRaw(e.target.value)} />
+              <p className="text-xs text-[var(--muted-foreground)]">Toàn văn gồm cả mục đang bỏ chọn. Bấm «Về danh sách» sẽ tách lại theo heading và chọn lại tất cả.</p>
+            </>
+          ) : (
+            <div className="max-h-[32rem] overflow-y-auto space-y-1.5 pr-1">
+              {items.map((it) => (
+                <div key={it.id} className="rounded-lg border border-[var(--border)]">
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    <input type="checkbox" className="size-4 shrink-0" checked={it.on}
+                      onChange={(e) => patch(it.id, { on: e.target.checked })} />
+                    <button className="text-sm text-left flex-1 truncate hover:underline"
+                      title={it.title}
+                      onClick={() => setOpenId(openId === it.id ? null : it.id)}>
+                      {it.title || "(chưa có tiêu đề)"}
+                    </button>
+                    <span className="text-xs text-[var(--muted-foreground)] shrink-0">{vnNum(it.body.length)}</span>
+                    <button className="text-xs px-1.5 py-1 rounded-md bg-red-500/10 text-red-500 shrink-0"
+                      onClick={() => setItems((xs) => xs.filter((x) => x.id !== it.id))}
+                      aria-label="Xoá mục"><Trash2 className="size-3.5" /></button>
+                  </div>
+                  {openId === it.id && (
+                    <div className="border-t border-[var(--border)] p-3 space-y-2">
+                      <input className={INPUT} value={it.title} placeholder="Tiêu đề mục"
+                        onChange={(e) => patch(it.id, { title: e.target.value })} />
+                      <textarea className={`${INPUT} min-h-40 font-mono text-xs`} value={it.body}
+                        placeholder="Nội dung Markdown của mục này"
+                        onChange={(e) => patch(it.id, { body: e.target.value })} />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           <Field label="Chọn KB để nạp vào">
             <select className={INPUT} value={targetKb} onChange={(e) => setTargetKb(e.target.value)}>
               {kbs.length === 0 && <option value="">(Chưa có KB)</option>}
               {kbs.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.chunks} chunks)</option>)}
             </select>
           </Field>
-          <button className="btn btn-primary" onClick={saveToKb}>Nạp vào KB này</button>
+          <button className="btn btn-primary" disabled={view === "list" && sel.length === 0} onClick={saveToKb}>
+            {view === "raw" ? "Nạp toàn văn vào KB này" : `Nạp ${sel.length} mục vào KB này`}
+          </button>
         </div></div>
       )}
     </div>

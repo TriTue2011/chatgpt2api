@@ -28,6 +28,53 @@ CHUNK_OVERLAP = 100
 COLLECTIONS = ["dien_nuoc", "y_te", "giao_duc", "ngoai_ngu", "khoa_hoc", "tu_nhien", "xa_hoi"]
 
 
+# Tài liệu dài phải chia thành nhiều lượt gọi AI. Một lượt trả về tối đa vài
+# nghìn ký tự, nên nhồi 100k ký tự vào một lượt thì kết quả bị cô đọng mất chi
+# tiết — đúng thứ không được mất với văn bản pháp luật, tiêu chuẩn, giáo trình.
+AI_BATCH = 12000
+AI_OVERLAP = 300
+
+
+def split_for_ai(text: str, size: int = AI_BATCH, overlap: int = AI_OVERLAP) -> list[str]:
+    """Cắt văn bản thành đoạn ~size ký tự để gọi AI từng lượt.
+
+    Ưu tiên cắt đúng ranh giới đoạn: khi cắt được ở ranh giới thì KHÔNG chồng
+    lấn — không mất chữ nào và cũng không nhân bản chunk trong RAG. Chỉ khi cả
+    vùng tìm kiếm không có lấy một dấu xuống dòng (vd bảng bị trích thành khối
+    chữ liền) mới lùi lại `overlap` ký tự, để câu bị cắt ngang còn xuất hiện
+    trọn ở đoạn sau.
+
+    Khác `chunk_text` (chunk cho vector store, ~800 ký tự): hàm này chia đầu
+    vào cho MODEL, nên đơn vị lớn hơn hàng chục lần.
+    """
+    text = text or ""
+    n = len(text)
+    if n <= size:
+        return [text] if text.strip() else []
+    # Chồng lấn gần bằng bước đi thì mỗi vòng chỉ tiến 1 ký tự — 50k ký tự sẽ
+    # thành 50k đoạn và treo hub. Kẹp lại để dù ai tinh chỉnh tham số thế nào
+    # thì mỗi vòng vẫn tiến được ít nhất 3/4 bước.
+    overlap = max(0, min(overlap, size // 4))
+    out: list[str] = []
+    i = 0
+    while i < n:
+        end = min(i + size, n)
+        if end >= n:
+            out.append(text[i:])
+            break
+        floor = i + int(size * 0.6)
+        cut = text.rfind("\n\n", floor, end)
+        if cut == -1:
+            cut = text.rfind("\n", floor, end)
+        if cut > i:
+            out.append(text[i:cut])
+            i = cut
+            continue
+        out.append(text[i:end])
+        i = max(end - overlap, i + 1)
+    return [s for s in out if s.strip()]
+
+
 def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """Split text into overlapping chunks, preferring to break at paragraph boundaries."""
     if not text:

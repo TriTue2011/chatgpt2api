@@ -325,8 +325,72 @@ def create_app() -> FastAPI:
         return "\n\n".join(texts)
 
 
+    # ── Sổ job phân tích nguồn ────────────────────────────────────────────────
+    # Vì sao cần job thay vì chờ trong một request: gateway proxy tới hub chỉ
+    # chờ 180s (api/mcp_admin.py) và Cloudflare còn cắt sớm hơn (~100s). Một
+    # quyết định 60 trang cần ~9 lượt gọi AI, tổng vài phút — chờ đồng bộ là
+    # chắc chắn 504/524 rồi mất trắng công đã làm. Job cho phép trả job_id
+    # ngay, UI hỏi thăm tiến độ, và kết quả không bị mất vì đường truyền.
+    import threading as _threading
+    import time as _time
+    import uuid as _uuid
+
+    _ANALYZE_JOBS: dict[str, dict] = {}
+    _ANALYZE_LOCK = _threading.Lock()
+    _JOBS_KEEP = 20
+    # Giữ tham chiếu task đang chạy — asyncio chỉ giữ weakref, task bị GC giữa
+    # đường thì job đứng mãi ở "running" mà không ai biết vì sao.
+    _ANALYZE_TASKS: set = set()
+    # Chờ trong request bao lâu trước khi chuyển sang chế độ hỏi thăm. Phải nằm
+    # dưới cả hai trần: proxy gateway 180s và Cloudflare ~100s.
+    _ANALYZE_WAIT_S = 45.0
+
+    def _job_new() -> str:
+        job_id = _uuid.uuid4().hex[:16]
+        with _ANALYZE_LOCK:
+            _ANALYZE_JOBS[job_id] = {
+                "status": "running", "started": _time.time(),
+                "batches_done": 0, "batches_total": 0, "stage": "đang trích văn bản",
+            }
+            # Giữ số job có hạn — job xong vẫn giữ markdown trong RAM.
+            if len(_ANALYZE_JOBS) > _JOBS_KEEP:
+                old = sorted(_ANALYZE_JOBS, key=lambda k: _ANALYZE_JOBS[k].get("started", 0))
+                for k in old[:-_JOBS_KEEP]:
+                    _ANALYZE_JOBS.pop(k, None)
+        return job_id
+
+    def _job_set(job_id: str, **kw) -> None:
+        with _ANALYZE_LOCK:
+            job = _ANALYZE_JOBS.get(job_id)
+            if job is not None:
+                job.update(kw)
+
+    def _job_get(job_id: str) -> dict | None:
+        with _ANALYZE_LOCK:
+            job = _ANALYZE_JOBS.get(job_id)
+            return dict(job) if job else None
+
+    def _pdf_page_count(path: str) -> int:
+        """Số trang PDF (best-effort) — để báo độ phủ thật, 0 nếu không đọc được."""
+        try:
+            from pypdf import PdfReader
+            return len(PdfReader(path).pages)
+        except Exception:
+            pass
+        try:
+            from pdfminer.pdfpage import PDFPage
+            with open(path, "rb") as fh:
+                return sum(1 for _ in PDFPage.get_pages(fh))
+        except Exception:
+            return 0
+
+    # Trần số lượt: 60 × 12000 ≈ 720k ký tự (~400 trang). Vượt thì báo THẲNG
+    # trong kết quả kèm số ký tự đã/chưa xử lý — không bao giờ cắt im lặng nữa.
+    _AI_MAX_BATCHES = 60
+
     def _studio_analyze_source_sync(url_str: str, has_file: bool,
-                                    content: bytes, filename_raw: str):
+                                    content: bytes, filename_raw: str,
+                                    job_id: str = ""):
         """Thân CHẶN của analyze_source — chạy trong threadpool.
 
         Hub phục vụ TOÀN BỘ MCP tool trên một event loop; hàm này tải URL,
@@ -334,7 +398,14 @@ def create_app() -> FastAPI:
         thẳng trong `async def` nên suốt thời gian đó hub đứng hình: bot mất
         sạch tool, y hệt vụ import-url làm treo gateway. Route async bên dưới
         chỉ đọc form (việc bắt buộc phải await) rồi đẩy hết sang đây.
+
+        job_id: có thì ghi tiến độ từng lượt vào sổ job để UI hỏi thăm được.
         """
+        def _tick(**kw):
+            if job_id:
+                _job_set(job_id, **kw)
+
+        n_pages = 0
         try:
             url_str = str(url_str or "")
             filename = (filename_raw or "").lower()
@@ -386,6 +457,12 @@ def create_app() -> FastAPI:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                         tmp.write(content)
                         tmp_path = tmp.name
+
+                    # Đếm trang TRƯỚC khi xoá file tạm — số này để đối chiếu
+                    # "PDF n trang" với lượng chữ trích được, nếu lệch nhiều
+                    # thì biết ngay là tài liệu nhiều hình/bảng ảnh.
+                    if filename.endswith(".pdf"):
+                        n_pages = _pdf_page_count(tmp_path)
 
                     _used_ocr = False
                     try:
@@ -442,48 +519,78 @@ def create_app() -> FastAPI:
 
             import logging as _logging
             logger = _logging.getLogger("vn-mcp-hub")
-            logger.info("Analyzing source: %s, extracted length: %d, ocr: %s", title_hint, len(raw_text), _used_ocr)
+            logger.info("Analyzing source: %s, extracted length: %d, pages: %d, ocr: %s",
+                        title_hint, len(raw_text), n_pages, _used_ocr)
 
-            # ── Strategy: if OCR with large text → batch process to preserve details ──
-            if _used_ocr and len(raw_text) > 15000:
-                # Split raw text into ~4000 char chunks (roughly 3-5 pages each)
-                chunk_size = 4000
-                chunks = [raw_text[i:i+chunk_size] for i in range(0, len(raw_text), chunk_size)]
-                logger.info("Batch processing %d chunks for large OCR document", len(chunks))
+            # ── Tổng hợp: dài thì chia lượt, KHÔNG cắt ────────────────────────
+            #
+            # Bản cũ có hai nhánh và nhánh chạy nhiều lượt bị khoá sau điều kiện
+            # `_used_ocr` — tức CHỈ PDF scan mới được xử lý đủ. PDF có lớp chữ
+            # (markitdown đọc được → _used_ocr=False) rơi xuống nhánh dưới và bị
+            # cắt còn `raw_text[:30000]`. Một quyết định 60 trang trích ra ~100k
+            # ký tự thì mất ~70% tài liệu — im lặng, không cảnh báo, và mất đúng
+            # phần cuối là các Phụ lục chứa toàn bộ giải pháp kỹ thuật.
+            #
+            # Giờ: dài là chia lượt, bất kể nguồn chữ đến từ đâu.
+            from src.rag.ingest import split_for_ai
+            segments = split_for_ai(raw_text)
+            over_cap = len(segments) > _AI_MAX_BATCHES
+            if over_cap:
+                segments = segments[:_AI_MAX_BATCHES]
+            chars_processed = sum(len(s) for s in segments)
+            coverage = {
+                "pages": n_pages,
+                "chars_extracted": len(raw_text),
+                "chars_processed": chars_processed,
+                "batches_total": len(segments),
+                "used_ocr": _used_ocr,
+                "truncated": over_cap,
+            }
+            _tick(batches_total=len(segments), stage="đang tổng hợp", coverage=coverage)
 
-                summaries = []
-                for idx, chunk in enumerate(chunks):
-                    batch_query = (
-                        f"Trích xuất TẤT CẢ các thông tin quan trọng từ đoạn văn bản pháp luật dưới đây (phần {idx+1}/{len(chunks)}). "
-                        f"GIỮ NGUYÊN: số điều, số khoản, số mẫu, tên phụ lục, số tiền, ngày tháng, tên cơ quan. "
-                        f"Định dạng Markdown. Không thêm lời chào."
-                    )
-                    summary = _synthesize_with_ai(batch_query, chunk)
-                    if summary and len(summary) >= 30:
-                        summaries.append(summary)
-                    else:
-                        # AI failed for this chunk, keep raw text
-                        summaries.append(chunk[:2000])
-                    logger.info("Batch %d/%d: %d chars summary", idx+1, len(chunks), len(summaries[-1]) if summaries else 0)
+            if len(segments) <= 1:
+                query = (f"Phân tích và trình bày lại TOÀN BỘ nội dung nguồn "
+                         f"({title_hint}) thành Markdown có cấu trúc.")
+                synthesized = _synthesize_with_ai(query, raw_text, mode="document")
+                _tick(batches_done=1)
+                if synthesized and len(synthesized) >= 50:
+                    return {"ok": True, "markdown": synthesized, "source_type": source_type,
+                            "raw_fallback": False, **coverage}
+                logger.warning("AI synthesis failed for '%s', giữ văn bản gốc", title_hint)
+                # Giữ TRỌN văn bản gốc, không cắt 10k như trước: AI lỗi là lý do
+                # để không cô đọng, chứ không phải lý do để mất tài liệu.
+                return {"ok": True, "markdown": f"# {title_hint}\n\n{raw_text}",
+                        "source_type": source_type, "raw_fallback": True,
+                        "warning": "AI tổng hợp thất bại — trả về văn bản gốc chưa qua xử lý.",
+                        **coverage}
 
-                # Combine: AI overview first, then batch summaries
-                overview_query = f"Tạo mục lục ngắn gọn cho văn bản pháp luật: {title_hint}. Chỉ liệt kê các chương, điều chính."
-                overview = _synthesize_with_ai(overview_query, raw_text[:5000])
-                combined = (overview if overview else f"# {title_hint}") + "\n\n---\n\n" + "\n\n---\n\n".join(summaries)
-                logger.info("Batch processing complete: %d summaries, total %d chars", len(summaries), len(combined))
-                return {"ok": True, "markdown": combined, "source_type": source_type, "raw_fallback": False, "batches": len(summaries)}
+            logger.info("Chia %d lượt AI cho tài liệu %d ký tự", len(segments), len(raw_text))
+            parts: list[str] = []
+            failed = 0
+            for idx, seg in enumerate(segments):
+                label = f"{title_hint} — phần {idx + 1}/{len(segments)}"
+                out = _synthesize_with_ai(label, seg, mode="document")
+                if out and len(out) >= 30:
+                    parts.append(out)
+                else:
+                    # Lượt này AI trượt → giữ NGUYÊN đoạn gốc. Bản cũ giữ
+                    # `chunk[:2000]` tức tự bỏ thêm phần còn lại của đoạn.
+                    failed += 1
+                    parts.append(f"<!-- AI trượt phần {idx + 1}, giữ văn bản gốc -->\n\n{seg}")
+                _tick(batches_done=idx + 1)
+                logger.info("Lượt %d/%d: %d ký tự", idx + 1, len(segments), len(parts[-1]))
 
-            # ── Normal flow (non-OCR or short OCR) ──
-            ai_input = raw_text[:30000]
-            query = f"Phân tích, chắt lọc kiến thức và trình bày lại nội dung từ nguồn ({title_hint}) thành bài viết Markdown chi tiết. GIỮ NGUYÊN các số liệu, điều khoản, tên riêng."
-            synthesized = _synthesize_with_ai(query, ai_input)
-            if synthesized and len(synthesized) >= 50:
-                return {"ok": True, "markdown": synthesized, "source_type": source_type, "raw_fallback": False}
-
-            # Fallback: AI synthesis failed
-            logger.warning("AI synthesis failed for '%s', returning raw text as fallback", title_hint)
-            fallback_md = f"# {title_hint}\n\n{raw_text[:10000]}"
-            return {"ok": True, "markdown": fallback_md, "source_type": source_type, "raw_fallback": True, "warning": "AI tong hop that bai, tra ve van ban goc chua qua xu ly."}
+            combined = f"# {title_hint}\n\n" + "\n\n".join(parts)
+            warn = ""
+            if over_cap:
+                warn = (f"Tài liệu quá dài: chỉ xử lý {chars_processed}/{len(raw_text)} ký tự "
+                        f"({_AI_MAX_BATCHES} lượt). Hãy tách file rồi nạp tiếp phần sau.")
+            elif failed:
+                warn = f"{failed}/{len(segments)} phần AI trượt — giữ văn bản gốc cho các phần đó."
+            logger.info("Xong %d lượt, tổng %d ký tự markdown", len(parts), len(combined))
+            return {"ok": True, "markdown": combined, "source_type": source_type,
+                    "raw_fallback": False, "batches": len(parts), "batches_failed": failed,
+                    **({"warning": warn} if warn else {}), **coverage}
         except Exception as exc:
             import logging as _logging
             _logging.getLogger("vn-mcp-hub").exception("analyze_source failed")
@@ -513,9 +620,57 @@ def create_app() -> FastAPI:
             content = await file.read()
             filename_raw = file.filename or ""
 
-        return await run_in_threadpool(
-            _studio_analyze_source_sync, url_str, has_file, content, filename_raw,
-        )
+        # Chạy nền + chờ có giới hạn. Tài liệu ngắn xong trong ngưỡng chờ thì
+        # trả kết quả luôn (UI cũ vẫn dùng được y như trước). Tài liệu dài thì
+        # trả job_id để UI hỏi thăm — thay vì chết ở proxy 180s / Cloudflare
+        # ~100s rồi mất trắng mấy phút AI đã chạy.
+        import asyncio
+
+        job_id = _job_new()
+
+        async def _run():
+            try:
+                res = await run_in_threadpool(
+                    _studio_analyze_source_sync, url_str, has_file, content,
+                    filename_raw, job_id,
+                )
+            except Exception as exc:  # threadpool có thể chết vì lý do ngoài hàm
+                res = {"ok": False, "error": str(exc)}
+            _job_set(job_id, status="done" if res.get("ok") else "error", result=res,
+                     stage="hoàn tất" if res.get("ok") else "lỗi")
+
+        task = asyncio.create_task(_run())
+        # Giữ tham chiếu: task bị GC giữa đường là job treo ở "running" mãi.
+        _ANALYZE_TASKS.add(task)
+        task.add_done_callback(_ANALYZE_TASKS.discard)
+
+        done, _ = await asyncio.wait({task}, timeout=_ANALYZE_WAIT_S)
+        job = _job_get(job_id) or {}
+        if done and isinstance(job.get("result"), dict):
+            return {**job["result"], "job_id": job_id}
+        return {"ok": True, "pending": True, "job_id": job_id,
+                "stage": job.get("stage") or "đang xử lý",
+                "batches_total": job.get("batches_total") or 0,
+                "batches_done": job.get("batches_done") or 0}
+
+    @app.get("/api/studio/analyze_job/{job_id}")
+    async def studio_analyze_job(job_id: str):
+        """Tiến độ / kết quả của một job phân tích nguồn."""
+        job = _job_get(job_id)
+        if job is None:
+            return {"ok": False, "error": "job không tồn tại hoặc đã hết hạn"}
+        status = job.get("status") or "running"
+        out = {
+            "ok": True, "status": status, "stage": job.get("stage") or "",
+            "batches_done": job.get("batches_done") or 0,
+            "batches_total": job.get("batches_total") or 0,
+            "elapsed": round(_time.time() - float(job.get("started") or 0), 1),
+        }
+        if isinstance(job.get("coverage"), dict):
+            out.update(job["coverage"])
+        if status in {"done", "error"} and isinstance(job.get("result"), dict):
+            out["result"] = job["result"]
+        return out
 
     @app.post("/api/studio/convert")
     async def studio_convert_file(request: Request):

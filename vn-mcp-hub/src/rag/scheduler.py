@@ -87,17 +87,7 @@ def _get_refresh_queries(collection: str, meta: dict) -> list[str]:
     return [f"{collection} cập nhật mới nhất {year}"]
 
 
-def _synthesize_with_ai(query: str, raw_text: str) -> str:
-    """Gọi chatgpt2api (cổng 3030) để AI tổng hợp kiến thức từ kết quả search."""
-    from src.rag.settings import read as read_settings
-    settings = read_settings()
-    api_key = settings.get("api_key", "")
-    ai_model = settings.get("ai_model", "cx/auto")
-    base_url = settings.get("api_base_url", "http://chatgpt2api:3030/v1").rstrip("/")
-
-    url = f"{base_url}/chat/completions"
-
-    prompt = f"""Bạn là một chuyên gia tổng hợp tri thức (Knowledge Base).
+_WEB_PROMPT = """Bạn là một chuyên gia tổng hợp tri thức (Knowledge Base).
 Dựa vào các kết quả tìm kiếm web thô dưới đây, hãy tổng hợp thành một bài viết Markdown chi tiết, mạch lạc, có cấu trúc rõ ràng (dùng Heading 2, 3, bullet points).
 Bài viết cần tập trung vào chủ đề: "{query}".
 
@@ -108,18 +98,70 @@ CHỈ TRẢ VỀ nội dung bài viết, không thêm lời chào hỏi.
 {raw_text}
 """
 
+# Prompt riêng cho TÀI LIỆU (PDF/Word văn bản pháp luật, tiêu chuẩn, giáo trình).
+# Không dùng chung prompt web được: prompt web nói "kết quả tìm kiếm web thô" và
+# "LOẠI BỎ thông tin rác" — với một quyết định của Bộ thì mô hình coi cột "Ghi
+# chú", giới hạn áp dụng, số phụ lục là rác và xoá đúng những thứ quyết định
+# hiệu lực pháp lý. Ở đây yêu cầu ngược lại: giữ nguyên, không cô đọng.
+_DOC_PROMPT = """Bạn là chuyên gia số hoá tài liệu vào Knowledge Base.
+Dưới đây là văn bản trích từ một tài liệu gốc: "{query}".
+
+Nhiệm vụ: chuyển thành Markdown có cấu trúc, GIỮ TRỌN nội dung. Đây KHÔNG phải
+việc tóm tắt.
+
+BẮT BUỘC:
+- Giữ nguyên MỌI số hiệu: điều, khoản, mục, phụ lục, bảng, hình, tiêu chuẩn
+  (TCVN/QCVN/ISO/NFPA), số quyết định, ngày tháng, đơn vị đo, ngưỡng số.
+- Giữ nguyên điều kiện áp dụng và giới hạn áp dụng — kể cả khi nó nằm ở cột
+  "Ghi chú" và bị trộn lẫn vào giữa câu do trích từ bảng. Tách nó ra đúng chỗ,
+  đừng bỏ.
+- Mỗi mục/điều của tài liệu thành một heading `## <số hiệu> <tên mục>`.
+- Bảng thì dựng lại thành bảng Markdown; nếu không dựng được thì dùng bullet
+  ghi rõ từng cặp giá trị.
+- Không thêm nhận xét, không thêm lời chào, không viết "tài liệu đề cập tới...".
+
+Nếu đoạn này bị cắt giữa câu ở đầu hoặc cuối, cứ xử lý phần đọc được, đừng bịa
+phần thiếu.
+
+=== VĂN BẢN GỐC ===
+{raw_text}
+"""
+
+
+def _synthesize_with_ai(query: str, raw_text: str, *, mode: str = "web") -> str:
+    """Gọi chatgpt2api (cổng 3030) để AI tổng hợp kiến thức từ kết quả search.
+
+    mode="web"      — nguồn là kết quả tìm kiếm, cho phép loại bỏ nhiễu.
+    mode="document" — nguồn là tài liệu gốc, GIỮ TRỌN, không cô đọng.
+    """
+    from src.rag.settings import read as read_settings
+    settings = read_settings()
+    api_key = settings.get("api_key", "")
+    ai_model = settings.get("ai_model", "cx/auto")
+    base_url = settings.get("api_base_url", "http://chatgpt2api:3030/v1").rstrip("/")
+
+    url = f"{base_url}/chat/completions"
+
+    template = _DOC_PROMPT if mode == "document" else _WEB_PROMPT
+    prompt = template.format(query=query, raw_text=raw_text)
+
     payload = {
         "model": ai_model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
     }
 
+    # Đầu vào lớn thì mô hình cần lâu hơn. Cứng 120s là đủ cho một truy vấn
+    # search, nhưng một đoạn tài liệu 12k ký tự dễ vượt — mà timeout ở đây
+    # nghĩa là cả đoạn đó rơi về văn bản gốc chưa qua xử lý.
+    timeout_s = 120 if len(raw_text) < 6000 else 300
+
     try:
         req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         })
-        resp = urllib.request.urlopen(req, timeout=120)
+        resp = urllib.request.urlopen(req, timeout=timeout_s)
         data = json.loads(resp.read().decode())
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if content:
