@@ -81,11 +81,9 @@ class GeminiProvider:
         temperature=None, max_tokens=None, tools=None, tool_choice=None, **kwargs,
     ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Send chat request to Gemini API with native tool calling support."""
-        if not self.api_key:
+        keys = self._get_keys()
+        if not keys:
             raise RuntimeError("Gemini API key not configured")
-
-        # Clear attempted keys for this request
-        self._attempted_keys: set = set()
 
         contents, system_instruction, gemini_tools = _convert_request(messages, tools)
 
@@ -108,58 +106,74 @@ class GeminiProvider:
 
         logger.info({"event": "gemini_request", "model": model, "has_tools": bool(gemini_tools)})
 
-        resp = None
-        try:
-            resp = requests.post(
-                url, headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
-                json=body, timeout=300, stream=True,
-            )
-            if resp.status_code == 429:
-                # Đóng handle trước khi retry — stream=True không đóng = rò socket+eventfd.
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-                resp = None
-                self._rate_limited[self.api_key] = time.time() + 60
-                next_key = self.api_key  # _api_key rotates via property
-                if next_key and next_key not in getattr(self, '_attempted_keys', set()):
-                    if not hasattr(self, '_attempted_keys'):
-                        self._attempted_keys: set = set()
-                    self._attempted_keys.add(self.api_key)
-                    if len(self._attempted_keys) < len(self._get_keys()):
-                        return self.chat_completions(messages=messages, model=model, tools=tools, **kwargs)
-                raise RuntimeError("All Gemini API keys rate limited. Try again later.")
-            if resp.status_code != 200:
-                status = resp.status_code
-                try:
-                    body_preview = (resp.text or "")[:200]
-                except Exception:
-                    body_preview = ""
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-                resp = None
-                raise RuntimeError(f"Gemini error {status}: {body_preview}")
-            # Ownership chuyển sang parser (đóng trong finally của _parse_gemini_stream).
-            stream = _parse_gemini_stream(resp, model)
+        # ── Xoay key bằng VÒNG LẶP, mỗi key thử đúng MỘT lần ─────────────────
+        # Bản cũ retry 429 bằng cách gọi ĐỆ QUY chính chat_completions(), mà
+        # đầu hàm lại xoá _attempted_keys → bộ đếm reset về 0 sau mỗi vòng,
+        # điều kiện dừng không bao giờ đạt. Tệ hơn, self.api_key là property
+        # TỰ XOAY mỗi lần đọc, bị đọc 4 lần trong một nhánh retry: key bị đánh
+        # dấu limited không phải key vừa lỗi, key ghi sổ không phải key vừa
+        # kiểm tra. Hậu quả đo được: một request nã Google 981 lượt trong ~150s
+        # (caller timeout dài dằng dặc) rồi chết bằng "maximum recursion depth
+        # exceeded". Ở đây chốt key vào biến cục bộ cho từng lượt — request,
+        # đánh dấu limited, ghi sổ đều trên đúng MỘT key.
+        now = time.time()
+        start = self._key_index
+        self._key_index = (self._key_index + 1) % len(keys)
+        candidates = [keys[(start + i) % len(keys)] for i in range(len(keys))]
+        usable = [k for k in candidates if self._rate_limited.get(k, 0.0) <= now]
+        if not usable:
+            raise RuntimeError("All Gemini API keys rate limited. Try again later.")
+
+        for key in usable:
             resp = None
-            return stream
-        except requests.RequestsError as exc:
-            if resp is not None:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            raise RuntimeError(f"Gemini connection failed: {exc}") from exc
-        except Exception:
-            if resp is not None:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            raise
+            try:
+                resp = requests.post(
+                    url, headers={"Content-Type": "application/json", "x-goog-api-key": key},
+                    json=body, timeout=300, stream=True,
+                )
+                if resp.status_code == 429:
+                    # Đóng handle trước khi sang key khác — stream=True không
+                    # đóng = rò socket+eventfd.
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                    resp = None
+                    self._rate_limited[key] = time.time() + 60
+                    logger.info({"event": "gemini_key_rate_limited",
+                                 "key_suffix": key[-6:], "remaining": len(usable) - usable.index(key) - 1})
+                    continue
+                if resp.status_code != 200:
+                    status = resp.status_code
+                    try:
+                        body_preview = (resp.text or "")[:200]
+                    except Exception:
+                        body_preview = ""
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                    resp = None
+                    raise RuntimeError(f"Gemini error {status}: {body_preview}")
+                # Ownership chuyển sang parser (đóng trong finally của _parse_gemini_stream).
+                stream = _parse_gemini_stream(resp, model)
+                resp = None
+                return stream
+            except requests.RequestsError as exc:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                raise RuntimeError(f"Gemini connection failed: {exc}") from exc
+            except Exception:
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                raise
+        raise RuntimeError("All Gemini API keys rate limited. Try again later.")
 
 
 def _convert_request(messages, tools):
