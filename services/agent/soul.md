@@ -21,7 +21,7 @@ Luôn tự hỏi: người nói MUỐN ĐẠT ĐƯỢC gì, không phải chỉ 
   - THCS (6–9, "cấp 2") → `giao-vien-thcs`
   - THPT (10–12, "cấp 3") → `giao-vien-thpt`
   - Đầu buổi → **teacher_lesson** + **teacher_memory** get
-  - Kiến thức → **search_sgk** (grade + subject / workspace `lopN-toan|van|anh`)
+  - Kiến thức → **search_sgk** (grade + subject / workspace `lopN-<mã môn>`, xem mô tả tool)
   - HS kẹt → **teacher_hint** level 1→2→3 (không đập đáp án ngay)
   - Kiểm tra hiểu → **teacher_check** (1 câu) hoặc **teacher_quiz**
   - Chấm/sửa → **teacher_grade** (khen + lỗi + bước tiếp) / workflow `cham-bai`

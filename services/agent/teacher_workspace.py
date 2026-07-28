@@ -35,17 +35,40 @@ logger = logging.getLogger(__name__)
 #
 # Thêm môn ⇒ số workspace mặc định = 12 × len(SUBJECTS). `_ensure_seeded` MERGE
 # key mới vào file cũ (không ghi đè) nên máy đang chạy chỉ được thêm, không mất.
-SUBJECTS = ("toan", "van", "anh", "su", "dia", "ly", "hoa", "sinh", "gdcd", "tin")
+# Mỗi mã môn = ĐÚNG MỘT tên sách, không gộp hai môn vào một mã và không đổi tên.
+# Trước đây `van` mang nhãn "Ngữ văn / TV" cho cả 12 lớp — sai bản chất: lớp 1–5
+# học **Tiếng Việt**, lớp 6–12 học **Ngữ văn**, hai sách khác nhau. Chính file
+# seed cũng đã là hai môn (`lop1/van.md` mở đầu "# Tiếng Việt lớp 1",
+# `lop6/van.md` là "# Ngữ văn lớp 6") — chỉ bị nhét chung một mã.
+# Tương tự `su`+`dia`: lớp 4–9 là MỘT quyển "Lịch sử và Địa lí", tách thành hai
+# môn là đổi tên sách; lớp 10–12 mới thật sự là hai quyển riêng.
+SUBJECTS = (
+    "toan",   # Toán — cả 12 lớp
+    "tviet",  # Tiếng Việt — lớp 1–5
+    "van",    # Ngữ văn — lớp 6–12
+    "anh",    # Tiếng Anh — cả 12 lớp
+    "sudia",  # Lịch sử và Địa lí — lớp 4–9 (một quyển)
+    "su",     # Lịch sử — lớp 10–12 (quyển riêng)
+    "dia",    # Địa lí — lớp 10–12 (quyển riêng)
+    "ly",     # Vật lí — lớp 10–12
+    # Dưới đây kho taphuan không trả về quyển nào nên không lớp nào khai sẵn;
+    # giữ mã để nạp bằng URL PDF trực tiếp thì chọn được môn.
+    "hoa", "sinh", "khtn", "gdcd", "ktpl", "tin",
+)
 SUBJECT_LABEL = {
     "toan": "Toán",
-    "van": "Ngữ văn / TV",
+    "tviet": "Tiếng Việt",
+    "van": "Ngữ văn",
     "anh": "Tiếng Anh",
+    "sudia": "Lịch sử và Địa lí",
     "su": "Lịch sử",
     "dia": "Địa lí",
     "ly": "Vật lí",
     "hoa": "Hoá học",
     "sinh": "Sinh học",
-    "gdcd": "GDCD / KT&PL",
+    "khtn": "Khoa học tự nhiên",
+    "gdcd": "Giáo dục công dân",
+    "ktpl": "Giáo dục kinh tế và pháp luật",
     "tin": "Tin học",
 }
 
@@ -53,32 +76,37 @@ SUBJECT_LABEL = {
 # đụng đúng dòng lớp đó.
 #
 # Đo thật 2026-07-28 từ chính 12 link danh mục lọc môn của kho chính thức
-# taphuan.nxbgd.vn (89 quyển). Cột "quyển" là số sách đếm được cho lớp đó.
+# taphuan.nxbgd.vn — 89 quyển, tên sách lấy nguyên từ slug:
+#   tieng-viet-N → Tiếng Việt (1–5)        ngu-van-N → Ngữ văn (6–12)
+#   lich-su-va-dia-li-N → Lịch sử và Địa lí (4–9)
+#   lich-su-N / dia-li-N → hai quyển riêng (10–12)
+#   vat-li-N → Vật lí (10–12, kèm quyển chuyên đề học tập)
 #
 # Hai chỗ cố ý lệch với số đo, nói rõ để sau không ai tưởng là lỗi:
-#  1. `anh` giữ cho CẢ 12 lớp, dù danh mục lớp 10 và 12 không trả về quyển Tiếng
-#     Anh nào (lớp 11 lại có). Đó gần như chắc chắn là thiếu sót danh mục bên
-#     NXBGD, không phải lớp 10/12 bỏ Tiếng Anh — bỏ đi thì giáo viên có PDF
-#     Tiếng Anh 10 trong tay cũng không chọn được môn để nạp.
+#  1. `anh` giữ cho CẢ 12 lớp. Danh mục lớp 10 và 12 không trả về quyển Tiếng
+#     Anh nào trong khi lớp 11 (CÙNG bộ mã môn trong URL) lại có — nên đó là
+#     thiếu sót dữ liệu bên NXBGD, không phải lớp 10/12 bỏ Tiếng Anh. Người vận
+#     hành đã xác nhận lớp 12 có Tiếng Anh.
 #  2. Lớp 3 danh mục còn có Tiếng Hàn (2 quyển). Chưa đưa vào vì cả hệ thống
 #     chưa có mã môn cho ngoại ngữ thứ hai.
 #
-# Hoá / Sinh / Tin / GDCD KHÔNG có ở bất kỳ lớp nào trong danh mục này, nên
-# không lớp nào khai. Vẫn giữ trong SUBJECTS để nạp bằng URL PDF trực tiếp thì
-# chọn được môn.
+# Hoá / Sinh / KHTN / GDCD / KT&PL / Tin KHÔNG có ở bất kỳ lớp nào trong danh
+# mục này, nên không lớp nào khai. Vẫn giữ trong SUBJECTS để nạp bằng URL PDF
+# trực tiếp thì chọn được môn.
 GRADE_SUBJECTS: dict[int, tuple[str, ...]] = {
-    1:  ("toan", "van", "anh"),                        # 5 quyển
-    2:  ("toan", "van", "anh"),                        # 5 quyển
-    3:  ("toan", "van", "anh"),                        # 8 quyển (2 quyển Tiếng Hàn chưa nhận)
-    4:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
-    5:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
-    6:  ("toan", "van", "anh", "su", "dia"),           # 7 quyển
-    7:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
-    8:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
-    9:  ("toan", "van", "anh", "su", "dia"),           # 6 quyển
-    10: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
-    11: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
-    12: ("toan", "van", "anh", "su", "dia", "ly"),     # 12 quyển (kèm chuyên đề)
+    #     Toán   Tiếng Việt / Ngữ văn   Tiếng Anh   (các môn còn lại của lớp)
+    1:  ("toan", "tviet", "anh"),
+    2:  ("toan", "tviet", "anh"),
+    3:  ("toan", "tviet", "anh"),
+    4:  ("toan", "tviet", "anh", "sudia"),
+    5:  ("toan", "tviet", "anh", "sudia"),
+    6:  ("toan", "van", "anh", "sudia"),
+    7:  ("toan", "van", "anh", "sudia"),
+    8:  ("toan", "van", "anh", "sudia"),
+    9:  ("toan", "van", "anh", "sudia"),
+    10: ("toan", "van", "anh", "su", "dia", "ly"),
+    11: ("toan", "van", "anh", "su", "dia", "ly"),
+    12: ("toan", "van", "anh", "su", "dia", "ly"),
 }
 
 
@@ -128,6 +156,51 @@ class Chunk:
         return f"Lớp {self.grade} · {SUBJECT_LABEL.get(self.subject, self.subject)} · {self.title}"
 
 
+def _migrate_van_to_tviet() -> None:
+    """Lớp 1–5: đổi mã môn `van` → `tviet` cho dữ liệu ĐÃ CÓ trên máy chủ.
+
+    2026-07-28 tách "Ngữ văn / TV" thành hai môn đúng tên. Máy đang chạy có sẵn
+    ``sgk/lop{1..5}/van.md`` và workspace ``lop{1..5}-van`` — không đổi tên thì
+    chúng mồ côi: bảng đếm báo "chưa có sách" trong khi file vẫn nằm đó, và mọi
+    ghi chú học sinh gắn vào workspace cũ biến mất khỏi danh sách.
+
+    Chỉ đổi tên khi đích CHƯA tồn tại — chạy lại nhiều lần vô hại, và không bao
+    giờ ghi đè dữ liệu mới hơn.
+    """
+    for g in range(1, 6):
+        old = _SGK / f"lop{g}" / "van.md"
+        new = _SGK / f"lop{g}" / "tviet.md"
+        if old.is_file() and not new.exists():
+            try:
+                old.rename(new)
+                logger.info("teacher.sgk: lop%s van.md → tviet.md", g)
+            except Exception as exc:
+                logger.warning("teacher.sgk: đổi tên lop%s van.md lỗi: %s", g, exc)
+    # Workspace: giữ nguyên mọi khoá khác, chỉ chuyển lop{1..5}-van.
+    try:
+        if not _WS_PATH.exists():
+            return
+        cur = json.loads(_WS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(cur, dict):
+            return
+        moved = 0
+        for g in range(1, 6):
+            ok, nk = f"lop{g}-van", f"lop{g}-tviet"
+            if ok in cur and nk not in cur:
+                row = dict(cur.pop(ok))
+                row["id"] = nk
+                row["subjects"] = ["tviet"]
+                row["name"] = f"Lớp {g} ({level_label(g)}) · {SUBJECT_LABEL['tviet']}"
+                cur[nk] = row
+                moved += 1
+        if moved:
+            _WS_PATH.write_text(json.dumps(cur, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+            logger.info("teacher.workspaces: chuyển %d khoá van → tviet", moved)
+    except Exception as exc:
+        logger.warning("teacher.workspaces: di trú van→tviet lỗi: %s", exc)
+
+
 def _ensure_seeded() -> None:
     global _seeded
     if _seeded:
@@ -137,10 +210,13 @@ def _ensure_seeded() -> None:
             return
         try:
             _SGK.mkdir(parents=True, exist_ok=True)
+            # Di trú TRƯỚC khi seed: seed thấy tviet.md chưa có sẽ ghi bản mẫu
+            # lên, đè mất nội dung người dùng đã nạp vào van.md.
+            _migrate_van_to_tviet()
             src_sgk = _DEFAULTS / "sgk"
             if src_sgk.is_dir():
                 for g in GRADES:
-                    for sub in SUBJECTS:
+                    for sub in subjects_for(g):
                         rel = Path(f"lop{g}") / f"{sub}.md"
                         dest = _SGK / rel
                         src = src_sgk / rel
@@ -394,7 +470,7 @@ def status_public() -> dict[str, Any]:
     _ensure_seeded()
     files = 0
     for g in GRADES:
-        for sub in SUBJECTS:
+        for sub in subjects_for(g):
             if (_SGK / f"lop{g}" / f"{sub}.md").is_file():
                 files += 1
     imports_dir = _ROOT / "imports"
@@ -411,7 +487,9 @@ def status_public() -> dict[str, Any]:
         pass
     return {
         "sgk_files": files,
-        "sgk_expected": len(GRADES) * len(SUBJECTS),
+        # Kỳ vọng = tổng môn của từng lớp, không phải 12 × toàn bộ SUBJECTS:
+        # nhân đủ thì con số này luôn báo thiếu dù đã nạp xong hết.
+        "sgk_expected": sum(len(subjects_for(g)) for g in GRADES),
         "workspaces": len(list_workspaces()),
         "subjects": list(SUBJECTS),
         "grades": list(GRADES),
@@ -428,14 +506,28 @@ def status_public() -> dict[str, Any]:
 # thứ hai — trước có hai bảng, thêm môn ở một chỗ thì chỗ kia vẫn không nhận.
 SUBJECT_ALIASES: dict[str, str] = {
     "toan": "toan", "toán": "toan", "math": "toan",
-    "van": "van", "văn": "van", "tieng_viet": "van", "tiếng việt": "van",
-    "tv": "van", "ngu_van": "van", "ngữ văn": "van", "tieng viet": "van",
+    # Tiếng Việt (1–5) và Ngữ văn (6–12) là HAI mã khác nhau. "van" trơ trọi →
+    # Ngữ văn; muốn Tiếng Việt phải nói rõ. "tv" trước trỏ về `van`, giờ trỏ
+    # `tviet` vì đó mới là thứ người ta viết tắt.
+    "van": "van", "văn": "van", "ngu_van": "van", "ngữ văn": "van",
+    "ngu van": "van",
+    "tviet": "tviet", "tieng_viet": "tviet", "tiếng việt": "tviet",
+    "tieng viet": "tviet", "tv": "tviet",
     "anh": "anh", "english": "anh", "tieng_anh": "anh", "tiếng anh": "anh",
     "en": "anh", "tieng anh": "anh",
+    # Sách gộp lớp 4–9 có mã riêng; đừng để nó rơi về `su` hay `dia`.
+    "sudia": "sudia", "su_dia": "sudia",
+    "lich_su_va_dia_li": "sudia", "lich su va dia li": "sudia",
+    "lịch sử và địa lí": "sudia", "lịch sử và địa lý": "sudia",
     "su": "su", "sử": "su", "lich_su": "su", "lich su": "su", "lịch sử": "su",
     "history": "su",
     "dia": "dia", "địa": "dia", "dia_ly": "dia", "dia ly": "dia",
     "địa lý": "dia", "dia li": "dia", "địa lí": "dia", "geography": "dia",
+    "khtn": "khtn", "khoa_hoc_tu_nhien": "khtn",
+    "khoa hoc tu nhien": "khtn", "khoa học tự nhiên": "khtn",
+    "ktpl": "ktpl", "kt&pl": "ktpl",
+    "giao_duc_kinh_te_va_phap_luat": "ktpl",
+    "giáo dục kinh tế và pháp luật": "ktpl", "kinh tế và pháp luật": "ktpl",
     "ly": "ly", "lý": "ly", "lí": "ly", "vat_ly": "ly", "vat ly": "ly",
     "vật lý": "ly", "vat li": "ly", "vật lí": "ly", "physics": "ly",
     "hoa": "hoa", "hóa": "hoa", "hoá": "hoa", "hoa_hoc": "hoa",
@@ -444,7 +536,8 @@ SUBJECT_ALIASES: dict[str, str] = {
     "sinh học": "sinh", "biology": "sinh",
     "gdcd": "gdcd", "giao_duc_cong_dan": "gdcd", "giao duc cong dan": "gdcd",
     "giáo dục công dân": "gdcd", "cong dan": "gdcd", "công dân": "gdcd",
-    "ktpl": "gdcd", "kt&pl": "gdcd",
+    # (ktpl / kt&pl đã khai ở trên trỏ về mã `ktpl` riêng — GDCD lớp 6–9 và
+    # Giáo dục kinh tế & pháp luật lớp 10–12 là hai sách khác tên, không gộp.)
     "tin": "tin", "tin_hoc": "tin", "tin hoc": "tin", "tin học": "tin",
     "informatics": "tin", "computer science": "tin", "cs": "tin",
 }

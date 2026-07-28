@@ -117,8 +117,9 @@ type FocusInfo = {
  *  thêm môn ở backend mà dropdown vẫn thiếu, đúng lỗi vừa gặp. */
 const SUBJECTS_FALLBACK = [
   { id: "toan", label: "Toán" },
-  { id: "van", label: "Văn / TV" },
-  { id: "anh", label: "Anh" },
+  { id: "tviet", label: "Tiếng Việt" },
+  { id: "van", label: "Ngữ văn" },
+  { id: "anh", label: "Tiếng Anh" },
 ];
 
 const GRADES = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -2477,7 +2478,7 @@ export default function TeacherPage() {
                 </div>
               )}
               <p className="text-[9px] text-muted-foreground">
-                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Số môn khác nhau theo lớp: lớp 1–3 có 3 môn, lớp 4–9 có 5 môn (thêm Lịch sử, Địa lí), lớp 10–12 có 6 môn (thêm Vật lí) — theo đúng danh mục kho taphuan.
+                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Môn khác nhau theo lớp, giữ đúng tên sách: lớp 1–5 <b>Tiếng Việt</b>, lớp 6–12 <b>Ngữ văn</b>; lớp 4–9 có <b>Lịch sử và Địa lí</b> (một quyển), lớp 10–12 tách <b>Lịch sử</b> · <b>Địa lí</b> · <b>Vật lí</b>.
               </p>
             </div>
           </CardContent>

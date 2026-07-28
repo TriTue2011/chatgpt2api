@@ -906,7 +906,15 @@ def _ws_grade_subject(ws: str) -> tuple[int | None, str]:
     Model hay đưa workspace mà quên grade → mọi handler từng rơi về lớp 5
     (sư phạm tiểu học + band CEFR sai cho HS THCS/THPT). Suy từ workspace
     trước khi dùng mặc định."""
-    m = re.match(r"lop(\d{1,2})-(toan|van|anh)$", str(ws or "").strip().lower())
+    # Mã môn lấy từ danh mục, KHÔNG viết cứng: viết cứng toan|van|anh thì
+    # 'lop1-tviet', 'lop4-sudia', 'lop10-ly' đều không khớp → hàm trả (None, "")
+    # và handler rơi về mặc định lớp 5 / Toán, tức trả lời sai lớp sai môn mà
+    # không báo lỗi gì.
+    from services.agent import teacher_workspace as _tw
+    m = re.match(
+        r"lop(\d{1,2})-(%s)$" % "|".join(_tw.SUBJECTS),
+        str(ws or "").strip().lower(),
+    )
     if not m:
         return (None, "")
     g = int(m.group(1))
@@ -3008,10 +3016,12 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
-        emoji="📗", label="Tìm SGK (Toán/Văn/Anh · lớp 1–12)",
+        emoji="📗", label="Tìm SGK (lớp 1–12 · mọi môn)",
         description=(
-            "Tìm đoạn gợi ý dạy trong KB SGK theo lớp 1–12 và môn "
-            "(toan|van|anh). Dùng khi dạy / ôn / chấm. "
+            "Tìm đoạn gợi ý dạy trong KB SGK theo lớp 1–12 và môn. "
+            "Mã môn: toan | tviet (Tiếng Việt, lớp 1–5) | van (Ngữ văn, lớp 6–12) "
+            "| anh | sudia (Lịch sử và Địa lí, lớp 4–9) | su | dia | ly | hoa | "
+            "sinh | khtn | gdcd | ktpl | tin. Dùng khi dạy / ôn / chấm. "
             "workspace=lop2-toan…; query rỗng = liệt kê index."
         ),
         parameters={"type": "object", "properties": {
@@ -3108,12 +3118,16 @@ CAPABILITIES: dict[str, Capability] = {
         name="teacher_quiz", risk=READ, handler=_h_teacher_quiz,
         emoji="📝", label="Ra đề kiểm tra (SGK)",
         description=(
-            "Sinh đề kiểm tra ngắn từ KB SGK lớp 1–12 (toan|van|anh). "
-            "grade, subject, topic, n (số câu), workspace. Trả quiz_id để chấm."
+            "Sinh đề kiểm tra ngắn từ KB SGK lớp 1–12. Mã môn: toan | tviet | "
+            "van | anh | sudia | su | dia | ly | hoa | sinh | khtn | gdcd | ktpl "
+            "| tin. grade, subject, topic, n (số câu), workspace. "
+            "Trả quiz_id để chấm."
         ),
         parameters={"type": "object", "properties": {
             "grade": {"type": "integer", "description": "1–12"},
-            "subject": {"type": "string", "description": "toan|van|anh"},
+            "subject": {"type": "string",
+                        "description": "toan|tviet|van|anh|sudia|su|dia|ly|"
+                                       "hoa|sinh|khtn|gdcd|ktpl|tin"},
             "topic": {"type": "string"},
             "n": {"type": "integer", "description": "Số câu 1–10"},
             "workspace": {"type": "string"}},
@@ -3152,14 +3166,15 @@ CAPABILITIES: dict[str, Capability] = {
             "status (đã nạp gì theo lớp/môn). kind=sgk (mặc định → kb_giao_duc) | "
             "nangcao (sách bài tập nâng cao/bồi dưỡng HSG → kb_nangcao, TÁCH RIÊNG "
             "khỏi SGK để không dạy vượt chương trình như SGK chính thức). "
-            "subject: toan|van|anh|ly|hoa|sinh|su|dia|gdcd|tin."
+            "subject: toan|tviet|van|anh|sudia|su|dia|ly|hoa|sinh|khtn|gdcd|ktpl|tin."
         ),
         parameters={"type": "object", "properties": {
             "op": {"type": "string", "enum": ["find", "ingest", "status"],
                    "description": "find=tìm nguồn; ingest=tải+nạp; status=đã nạp gì"},
             "grade": {"type": "integer", "description": "Lớp 1–12"},
             "subject": {"type": "string",
-                        "description": "toan|van|anh|ly|hoa|sinh|su|dia|gdcd|tin"},
+                        "description": "toan|tviet|van|anh|sudia|su|dia|ly|"
+                                       "hoa|sinh|khtn|gdcd|ktpl|tin"},
             "year": {"type": "string", "description": "Năm học/xuất bản (tuỳ chọn, vd 2024)"},
             "kind": {"type": "string", "enum": ["sgk", "nangcao"],
                      "description": "sgk=SGK chính; nangcao=sách nâng cao/mở rộng (RAG riêng)"},

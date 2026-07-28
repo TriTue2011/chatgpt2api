@@ -10,7 +10,7 @@ Dựa trên yêu cầu ({{input}}), xác định ngắn gọn:
 - Môn (Toán / Tiếng Việt / Anh / khác)
 - Ý kiến thức (1 ý duy nhất)
 - Bé đang kẹt chỗ nào (nếu có)
-- Workspace gợi ý (lopN-toan|van|anh)
+- Workspace gợi ý (lopN-toan, lopN-tviet, lopN-anh — tiểu học lớp 4–5 thêm lopN-sudia)
 
 Chỉ liệt kê gạch đầu dòng, không giảng bài ở bước này.
 

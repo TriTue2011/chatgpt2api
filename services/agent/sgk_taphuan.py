@@ -93,11 +93,16 @@ _PAGE_IMG_RE = re.compile(
 # slug → mã môn của sgk_fetch. Thứ tự QUAN TRỌNG: "lich-su-va-dia-li" phải
 # đứng trước "lich-su" và "dia-li", nếu không sách gộp bị nhận nhầm.
 _SLUG_SUBJECT: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("lich-su-va-dia-li", ("su", "dia")),
-    ("giao-duc-kinh-te-va-phap-luat", ("gdcd",)),
+    # Giữ NGUYÊN tên sách, không gộp và không đổi:
+    #   lớp 4–9 là MỘT quyển "Lịch sử và Địa lí" → mã `sudia` (trước tách thành
+    #   ("su","dia") tức tự đổi một quyển thành hai môn);
+    #   "Khoa học tự nhiên" cũng là một quyển → `khtn`, không phải ly+hoa+sinh;
+    #   "Tiếng Việt" (1–5) khác "Ngữ văn" (6–12) → hai mã khác nhau.
+    ("lich-su-va-dia-li", ("sudia",)),
+    ("giao-duc-kinh-te-va-phap-luat", ("ktpl",)),
     ("giao-duc-cong-dan", ("gdcd",)),
-    ("khoa-hoc-tu-nhien", ("ly", "hoa", "sinh")),
-    ("tieng-viet", ("van",)),
+    ("khoa-hoc-tu-nhien", ("khtn",)),
+    ("tieng-viet", ("tviet",)),
     ("ngu-van", ("van",)),
     ("tieng-anh", ("anh",)),
     ("toan", ("toan",)),

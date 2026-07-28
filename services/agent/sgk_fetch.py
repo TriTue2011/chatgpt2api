@@ -63,10 +63,11 @@ SUBJECTS: tuple[str, ...] = tuple(tw.SUBJECTS)
 # Từ khoá tiếng Việt dùng để dựng câu tìm kiếm (khác SUBJECT_LABEL vì label có
 # dấu "/" — vd "Ngữ văn / TV" — không hợp để nhét thẳng vào câu query).
 _SUBJECT_QUERY: dict[str, str] = {
-    "toan": "toán", "van": "ngữ văn", "anh": "tiếng anh",
-    "ly": "vật lý", "hoa": "hóa học", "sinh": "sinh học",
-    "su": "lịch sử", "dia": "địa lý", "gdcd": "giáo dục công dân",
-    "tin": "tin học",
+    "toan": "toán", "tviet": "tiếng việt", "van": "ngữ văn", "anh": "tiếng anh",
+    "sudia": "lịch sử và địa lí",
+    "ly": "vật lí", "hoa": "hoá học", "sinh": "sinh học", "khtn": "khoa học tự nhiên",
+    "su": "lịch sử", "dia": "địa lí", "gdcd": "giáo dục công dân",
+    "ktpl": "giáo dục kinh tế và pháp luật", "tin": "tin học",
 }
 
 # Alias nhận diện môn mới (7 môn ngoài toan/van/anh — 3 môn gốc đã có alias
