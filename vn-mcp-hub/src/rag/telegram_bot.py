@@ -25,14 +25,14 @@ MAX_HISTORY = 20
 
 
 def _get_settings() -> dict:
-    from src.rag.settings import read
+    from src.rag.settings import DEFAULT_API_BASE_URL, read
     s = read()
     return {
         "bot_token": str(s.get("telegram_bot_token", "")).strip(),
         "chat_ids": s.get("telegram_chat_ids", []) or [],
         "ai_model": str(s.get("telegram_ai_model", "")).strip() or str(s.get("ai_model", "cx/auto")),
         "api_key": str(s.get("api_key", "")).strip(),
-        "base_url": str(s.get("api_base_url", "http://chatgpt2api:3030/v1")).rstrip("/"),
+        "base_url": str(s.get("api_base_url", DEFAULT_API_BASE_URL)).rstrip("/"),
         "system_prompt": str(s.get("telegram_system_prompt", "")).strip() or (
             "Bạn là trợ lý AI thông minh qua Telegram. "
             "Trả lời ngắn gọn, chính xác bằng tiếng Việt. "

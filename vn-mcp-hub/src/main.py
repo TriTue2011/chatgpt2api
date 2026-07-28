@@ -241,8 +241,9 @@ def create_app() -> FastAPI:
         import urllib.request
         import json
         
+        from src.rag.settings import DEFAULT_API_BASE_URL
         settings = read_settings()
-        base_url = settings.get("api_base_url", "http://chatgpt2api:3030/v1").rstrip("/")
+        base_url = settings.get("api_base_url", DEFAULT_API_BASE_URL).rstrip("/")
         api_key = settings.get("api_key", "")
         
         url = f"{base_url}/models"
@@ -561,7 +562,10 @@ def create_app() -> FastAPI:
                 # để không cô đọng, chứ không phải lý do để mất tài liệu.
                 return {"ok": True, "markdown": f"# {title_hint}\n\n{raw_text}",
                         "source_type": source_type, "raw_fallback": True,
-                        "warning": "AI tổng hợp thất bại — trả về văn bản gốc chưa qua xử lý.",
+                        "warning": ("AI tổng hợp thất bại. Kiểm tra Cài đặt RAG → "
+                                    "AI tổng hợp RAG: API Base URL phải là "
+                                    "http://127.0.0.1:80/v1 và API Key là khoá admin. "
+                                    "Nội dung dưới đây là văn bản gốc chưa qua AI."),
                         **coverage}
 
             logger.info("Chia %d lượt AI cho tài liệu %d ký tự", len(segments), len(raw_text))
@@ -582,7 +586,16 @@ def create_app() -> FastAPI:
 
             combined = f"# {title_hint}\n\n" + "\n\n".join(parts)
             warn = ""
-            if over_cap:
+            if failed == len(segments):
+                # MỌI lượt trượt thì gần như chắc chắn không phải tại tài liệu:
+                # sai API Base URL hoặc thiếu API Key ở Cài đặt RAG. Không nói
+                # thẳng thì người dùng vẫn thấy "nạp xong, có chunks" và tưởng
+                # bình thường, trong khi cả kho là văn bản thô chưa qua AI.
+                warn = ("KHÔNG lượt nào gọi được AI (0/%d). Kiểm tra Cài đặt RAG → "
+                        "AI tổng hợp RAG: API Base URL phải là http://127.0.0.1:80/v1 "
+                        "và API Key là khoá admin. Nội dung dưới đây là văn bản gốc "
+                        "chưa qua AI." % len(segments))
+            elif over_cap:
                 warn = (f"Tài liệu quá dài: chỉ xử lý {chars_processed}/{len(raw_text)} ký tự "
                         f"({_AI_MAX_BATCHES} lượt). Hãy tách file rồi nạp tiếp phần sau.")
             elif failed:

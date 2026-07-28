@@ -134,11 +134,11 @@ def _synthesize_with_ai(query: str, raw_text: str, *, mode: str = "web") -> str:
     mode="web"      — nguồn là kết quả tìm kiếm, cho phép loại bỏ nhiễu.
     mode="document" — nguồn là tài liệu gốc, GIỮ TRỌN, không cô đọng.
     """
-    from src.rag.settings import read as read_settings
+    from src.rag.settings import DEFAULT_API_BASE_URL, read as read_settings
     settings = read_settings()
     api_key = settings.get("api_key", "")
     ai_model = settings.get("ai_model", "cx/auto")
-    base_url = settings.get("api_base_url", "http://chatgpt2api:3030/v1").rstrip("/")
+    base_url = settings.get("api_base_url", DEFAULT_API_BASE_URL).rstrip("/")
 
     url = f"{base_url}/chat/completions"
 

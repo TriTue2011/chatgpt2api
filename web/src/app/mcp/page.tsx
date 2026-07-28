@@ -449,8 +449,16 @@ function SettingsTab({ showToast }: TabProps) {
         <Field label="Khung giờ kết thúc"><input type="number" min={0} max={23} className={INPUT} value={num("refresh_window_end_hour", 0)} onChange={(e) => set("refresh_window_end_hour", e.target.value)} /></Field>
       </div>
       <h3 className="font-semibold pt-2">AI tổng hợp RAG</h3>
-      <Field label="API Base URL"><input className={INPUT} placeholder="http://127.0.0.1:80/v1" value={String(s.api_base_url || "")} onChange={(e) => set("api_base_url", e.target.value)} /></Field>
+      <Field label="API Base URL">
+        <input className={INPUT} placeholder="http://127.0.0.1:80/v1" value={String(s.api_base_url || "")} onChange={(e) => set("api_base_url", e.target.value)} />
+      </Field>
+      <p className="text-xs text-[var(--muted-foreground)] -mt-1">
+        Để <code>http://127.0.0.1:80/v1</code>. Hub chạy cùng container với gateway, và gateway nghe cổng <b>80</b> bên trong — 3030 chỉ là cổng publish ra host nên gọi từ trong container sẽ không tới.
+      </p>
       <Field label="API Key"><input type="password" className={INPUT} value={String(s.api_key || "")} onChange={(e) => set("api_key", e.target.value)} /></Field>
+      <p className="text-xs text-[var(--muted-foreground)] -mt-1">
+        Chính khoá admin bạn dùng đăng nhập trang này. Để trống ⇒ gateway trả 401 và mọi lượt tổng hợp trượt, nhưng nạp RAG vẫn ra chunks (văn bản gốc chưa qua AI) nên rất dễ tưởng là bình thường.
+      </p>
       <Field label="AI Model">
         <div className="flex gap-2">
           <select className={INPUT} value={String(s.ai_model || "cx/auto")} onChange={(e) => set("ai_model", e.target.value)}>
