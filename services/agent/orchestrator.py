@@ -158,7 +158,18 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
             "trong danh sách đó: KHÔNG giải thích, KHÔNG xin lỗi, KHÔNG bịa/"
             "đoán dữ liệu — chỉ trả lời DUY NHẤT chuỗi [BLOCKED] (đúng nguyên "
             "văn), hệ thống sẽ tự bỏ qua tin nhắn đó. Trò chuyện thông thường "
-            "vẫn trả lời bình thường.")
+            "vẫn trả lời bình thường.\n"
+            # Model hay phán nhầm câu hỏi entity CỤ THỂ ("kiểm tra cảm biến
+            # sensor.xyz") là việc kỹ thuật ngoài danh sách rồi [BLOCKED] oan,
+            # trong khi "phòng khách có ai không" thì trả lời bình thường —
+            # cùng một quyền. Nói rõ hai điều: mọi biến thể của một chức năng
+            # đã cấp đều thuộc chức năng đó, và khi KHÔNG CHẮC thì thử tool
+            # trước, [BLOCKED] chỉ dành cho việc CHẮC CHẮN nằm ngoài.\n
+            "Lưu ý: mọi biến thể của một chức năng đã cấp đều được phép — vd "
+            "đã có «Xem trạng thái nhà» thì hỏi một cảm biến/entity cụ thể "
+            "(sensor.xyz, light.abc…) cũng thuộc quyền đó, cứ gọi tool mà trả "
+            "lời. Chỉ dùng [BLOCKED] khi CHẮC CHẮN yêu cầu nằm ngoài danh "
+            "sách; còn phân vân thì thử tool tương ứng trước.")
         if disabled:
             limit_txt += ("\nNhóm chức năng đã TẮT cho khung chat này: "
                           + ", ".join(disabled) + ".")
@@ -713,6 +724,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
             if allow is not None and "[BLOCKED]" in reply:
                 # Thread lọc hỏi chức năng bị tắt → BỎ QUA, không phản hồi gì
                 # (yêu cầu 2026-07-15). Bot thấy silent=True sẽ không gửi tin.
+                # PHẢI log kèm câu hỏi: đường này câm tuyệt đối, và model có
+                # lúc phán nhầm ([BLOCKED] oan cho chức năng đang bật) — không
+                # log thì không phân biệt được với treo/chết.
+                logger.warning({"event": "agent_reply_blocked", "user_id": str(user_id)[:40],
+                                "question": str(user_text)[:120]})
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
                 _journal("", status="blocked")

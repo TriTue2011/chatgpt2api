@@ -1230,6 +1230,70 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
     return f"Đã chỉnh {orig}: " + ", ".join(done) + "."
 
 
+# Domain HA hợp lệ cho fast-path entity tường minh — chỉ nhóm ĐỌC được.
+_HA_ENTITY_DOMAINS = (
+    "sensor", "binary_sensor", "light", "switch", "fan", "climate", "camera",
+    "media_player", "cover", "lock", "vacuum", "humidifier", "person",
+    "device_tracker", "input_boolean", "number", "input_number", "select",
+    "input_select", "weather", "alarm_control_panel", "water_heater", "valve",
+)
+_HA_CONTROL_VERBS = ("bat ", "tat ", "mo ", "dong ", "chinh ", "dat ", "set ",
+                     "turn ", "giam ", "tang ", "khoa ", "mo khoa ")
+
+
+def _ha_local_entity_state(messages: list[dict[str, Any]]) -> str | None:
+    """Câu nhắc entity_id TƯỜNG MINH ('kiểm tra sensor.phong_khach_person_count')
+    → đọc trạng thái THẲNG từ HA, trả lời tất định.
+
+    Lý do tồn tại: đây là truy vấn ĐỌC xác định được bằng máy, nhưng nếu thả
+    cho model thì nó có lúc phán nhầm quyền và trả [BLOCKED] oan — đo thực tế
+    2026-07-28: "phòng khách có ai không" trả lời bình thường, còn "kiểm tra
+    cảm biến sensor.phong_khach_person_count" bị nuốt im lặng, dù cùng nhóm
+    homeassistant và cảm biến đang báo 1 người. Chỉ trả entity nằm trong danh
+    sách exposed — đúng mô hình tin cậy của các đường HA khác.
+    """
+    import re as _re
+    raw = str(_extract_last_user_text(messages) or "")
+    try:
+        from services.ha_client import _fold_diacritics
+        folded = _fold_diacritics(raw).replace("đ", "d") + " "
+    except Exception:
+        folded = raw.lower() + " "
+    # Lệnh ĐIỀU KHIỂN nhắc entity id → nhả cho đường intent/model, không đọc chay.
+    if any(v in folded for v in _HA_CONTROL_VERBS):
+        return None
+    ids = _re.findall(r"\b(%s)\.([a-z0-9_]+)\b" % "|".join(_HA_ENTITY_DOMAINS),
+                      raw.lower())
+    if not ids:
+        return None
+    try:
+        from services.ha_client import get_states, get_exposed_entity_ids
+        exposed = get_exposed_entity_ids() or set()
+        states = {str(s.get("entity_id")): s for s in (get_states() or [])}
+    except Exception as exc:
+        logger.warning({"event": "ha_entity_fastpath_error", "error": str(exc)[:120]})
+        return None
+    lines: list[str] = []
+    for dom, obj in ids[:5]:
+        eid = f"{dom}.{obj}"
+        if eid not in exposed:
+            lines.append(f"• `{eid}`: chưa được chia sẻ cho bot (Settings → HA exposed)")
+            continue
+        st = states.get(eid)
+        if not st:
+            lines.append(f"• `{eid}`: không thấy trong Home Assistant")
+            continue
+        attrs = st.get("attributes") or {}
+        name = str(attrs.get("friendly_name") or eid)
+        unit = str(attrs.get("unit_of_measurement") or "").strip()
+        val = str(st.get("state"))
+        lines.append(f"• {name} (`{eid}`): **{val}{(' ' + unit) if unit else ''}**")
+    if not lines:
+        return None
+    logger.info({"event": "ha_entity_fastpath_hit", "n": len(lines)})
+    return "Dạ trạng thái hiện tại:\n" + "\n".join(lines)
+
+
 def _ha_local_query(messages: list[dict[str, Any]]) -> str | None:
     """Answer a sensor-VALUE question (độ sáng/nhiệt độ/độ ẩm…) by reading the
     REAL sensor from the live registry and templating the reply — no model, so it
@@ -2161,7 +2225,10 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
             logger.warning({"event": "ha_canonical_exec_failed", "error": str(exc)})
         else:
             return "Đã thực hiện xong lệnh điều khiển thiết bị.", True
-    for fn in (_ha_local_query, _ha_local_status, _ha_local_lunar):
+    # _ha_local_entity_state đứng ĐẦU: câu nhắc entity_id tường minh là truy
+    # vấn tất định — trả từ dữ liệu HA thật, không để model phán quyền rồi
+    # [BLOCKED] oan (đo 2026-07-28).
+    for fn in (_ha_local_entity_state, _ha_local_query, _ha_local_status, _ha_local_lunar):
         try:
             r = fn(messages)
         except Exception as exc:
