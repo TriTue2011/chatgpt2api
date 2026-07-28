@@ -296,7 +296,11 @@ def _container_map(use_cache: bool = True) -> dict[str, list[str]]:
     servers = _read_registry()
     result: dict[str, list[str]] = {}
     if servers:
-        with ThreadPoolExecutor(max_workers=min(16, len(servers))) as pool:
+        # KHÔNG dùng `with`: bắt được TimeoutError vẫn chưa đủ, vì thoát khối
+        # `with` là __exit__ gọi shutdown(wait=True) và vẫn chặn theo đúng
+        # server SSH đang treo. Phải shutdown(wait=False) mới thực sự bỏ đi.
+        pool = ThreadPoolExecutor(max_workers=min(16, len(servers)))
+        try:
             futs = {pool.submit(_list_containers, e): e for e in servers}
             try:
                 for f in as_completed(futs, timeout=30):
@@ -306,7 +310,10 @@ def _container_map(use_cache: bool = True) -> dict[str, list[str]]:
                     except Exception:
                         result[str(e.get("name", ""))] = []
             except Exception:
-                pass
+                for f, e in futs.items():
+                    result.setdefault(str(e.get("name", "")), [])
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
     _container_cache["ts"] = now
     _container_cache["map"] = result
     return result

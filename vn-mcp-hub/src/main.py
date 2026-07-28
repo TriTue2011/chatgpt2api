@@ -245,10 +245,17 @@ def create_app() -> FastAPI:
         api_key = settings.get("api_key", "")
         
         url = f"{base_url}/models"
-        try:
+
+        # Threadpool: urlopen là lời gọi CHẶN. Hub phục vụ TOÀN BỘ MCP tool
+        # trên cùng một event loop, nên chặn ở đây là bot mất sạch tool trong
+        # lúc chờ, chỉ vì một API base URL không phản hồi.
+        def _fetch() -> bytes:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
-            resp = urllib.request.urlopen(req, timeout=5)
-            data = json.loads(resp.read().decode())
+            return urllib.request.urlopen(req, timeout=5).read()
+
+        try:
+            from fastapi.concurrency import run_in_threadpool
+            data = json.loads((await run_in_threadpool(_fetch)).decode())
             models = [m["id"] for m in data.get("data", []) if "id" in m]
             return {"ok": True, "models": models}
         except Exception as e:

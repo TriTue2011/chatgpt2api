@@ -79,18 +79,37 @@ def federated_search(query: str, limit_per_source: int = 3) -> list[dict[str, An
         pass
 
     results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    # KHÔNG dùng `with ThreadPoolExecutor(...)`: as_completed hết giờ sẽ ném
+    # TimeoutError, exception thoát khối `with` và __exit__ gọi
+    # shutdown(wait=True) — chặn VĨNH VIỄN theo đúng backend đang kẹt. Một
+    # nguồn tìm kiếm chết là treo luôn cả federated_search, kéo theo mọi thứ
+    # gọi nó (bot trả lời, nạp SGK). Lấy phần đã xong rồi đi tiếp.
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
         futures = {
             executor.submit(_call_one_backend, path, fn, query, limit_per_source): (path, fn)
             for path, fn in SEARCH_BACKENDS
         }
-        for future in as_completed(futures, timeout=PER_BACKEND_TIMEOUT * 2):
-            path, fn = futures[future]
-            try:
-                hits = future.result(timeout=PER_BACKEND_TIMEOUT)
-                results.extend(hits)
-            except Exception as exc:
-                logger.debug("Backend %s.%s timed out: %s", path, fn, exc)
+        try:
+            for future in as_completed(futures, timeout=PER_BACKEND_TIMEOUT * 2):
+                path, fn = futures[future]
+                try:
+                    hits = future.result(timeout=PER_BACKEND_TIMEOUT)
+                    results.extend(hits)
+                except Exception as exc:
+                    logger.debug("Backend %s.%s timed out: %s", path, fn, exc)
+        except TimeoutError:
+            stuck = [f"{p}.{f}" for fut, (p, f) in futures.items() if not fut.done()]
+            logger.warning("federated_search hết giờ, bỏ qua backend kẹt: %s", stuck)
+            for fut, (path, fn) in futures.items():
+                if not fut.done():
+                    continue
+                try:
+                    results.extend(fut.result())
+                except Exception:
+                    pass
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     # Deduplicate by URL
     seen: set[str] = set()

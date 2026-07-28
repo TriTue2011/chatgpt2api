@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from services.config import config
@@ -229,9 +230,15 @@ def create_router() -> APIRouter:
         hub_url = str((body or {}).get("hub_url", "")).strip().rstrip("/")
         if not hub_url:
             raise HTTPException(status_code=400, detail="hub_url is required")
+        # Threadpool: urlopen là lời gọi CHẶN. Gateway chạy uvicorn --workers 1
+        # nên chặn event loop ở đây là đóng băng cả bot lẫn web UI tới 10 giây,
+        # chỉ vì một hub không phản hồi.
+        def _fetch() -> str:
+            return urllib.request.urlopen(
+                urllib.request.Request(f"{hub_url}/"), timeout=10).read().decode()
+
         try:
-            raw = urllib.request.urlopen(urllib.request.Request(f"{hub_url}/"), timeout=10).read().decode()
-            hub_info = _json.loads(raw)
+            hub_info = _json.loads(await run_in_threadpool(_fetch))
         except Exception as e:
             return {"ok": False, "error": f"Cannot connect to hub: {e}"}
 
