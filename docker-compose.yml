@@ -91,3 +91,34 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # ── Postgres MCP Pro (tuỳ chọn) ────────────────────────────────────────────
+  # Cho agent hỏi thẳng Postgres: EXPLAIN, gợi ý index, health check (cache
+  # hit, index trùng, vacuum, replication lag).
+  #
+  # CHỈ ĐỌC: --access-mode=restricted khoá mọi thao tác ghi, nên model có gọi
+  # nhầm cũng không sửa/xoá được dữ liệu. Đừng đổi sang unrestricted trên máy
+  # chạy thật.
+  #
+  # Dùng SSE vì MCP client của gateway gọi qua HTTP (Accept: text/event-stream),
+  # không nói chuyện được với MCP kiểu stdio.
+  #
+  # Chỉ chạy khi STORAGE_BACKEND=postgres. Bật rồi thì thêm MCP server trong
+  # Cài đặt với URL:  http://postgres-mcp:8000/sse
+  # (không cần publish cổng ra host — c2a gọi nội bộ theo tên service)
+  postgres-mcp:
+    image: crystaldba/postgres-mcp:latest
+    container_name: postgres-mcp
+    restart: unless-stopped
+    profiles: ["postgres"]
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      DATABASE_URI: ${DATABASE_URL:-postgresql://c2a_user:${DB_PASSWORD:-changeme}@host.docker.internal:5432/c2a_db}
+
+    command: ["--access-mode=restricted", "--transport=sse"]
+
+    security_opt:
+      - no-new-privileges:true
