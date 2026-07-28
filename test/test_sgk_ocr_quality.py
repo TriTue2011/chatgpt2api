@@ -234,6 +234,21 @@ class TestDoiChieuSoTrang:
         thieu = sorted(set(range(1, 21)) - m._pages_seen(md))
         assert thieu == list(range(9, 21)), "phải chỉ ra đúng 12 trang bị mất"
 
+    def test_moc_kem_so_in_van_doc_duoc(self, m):
+        """Prompt cho phép ghi thêm số in: <<<TRANG 80>>> (số in: 79). Phần thêm
+        KHÔNG được làm hỏng phép đếm độ phủ."""
+        md = "<<<TRANG 80>>> (số in: 79)\nnội dung\n<<<TRANG 81>>> (số in: 80)"
+        assert m._pages_seen(md) == {80, 81}
+
+    def test_prompt_chan_dung_so_in_lam_moc(self, m):
+        """Đo thật: ảnh "-page-80-" của Hoá 11 IN số 79 (tệp tính cả bìa nên lệch
+        1). Không nói rõ thì model ghi mốc theo số in, và phép đối chiếu độ phủ
+        báo THIẾU GIẢ trên mọi quyển — tệ hơn không kiểm gì."""
+        p = m._chunk_prompt(80, 99)
+        low = p.lower()
+        assert "không dùng số trang in" in low or "không theo số in" in low, p[:400]
+        assert "số in" in low, "phải cho chỗ ghi lại số in để còn dẫn nguồn được"
+
     def test_prompt_neu_so_trang_that(self, m):
         p = m._chunk_prompt(41, 60)
         assert "41" in p and "60" in p

@@ -291,12 +291,23 @@ def parse_page_images(html: str) -> list[str]:
             by_attr.setdefault(int(dp), url)
         else:
             unnumbered.append(url)
-    # KHÔNG trộn hai hệ đánh số. Đo thật trên sgk-toan-1-tap-hai (2026-07-28):
-    # `data-page` lệch 1 so với số trang trong URL — 108/110 ảnh lệch
-    # (data-page="104" ứng với "-page-105-"). Trộn lại thì trang nào cũng bị gán
-    # sai số, mà prompt OCR lại đánh số trang theo đúng con số này, nên cả quyển
-    # vào kho với số trang lệch — sai âm thầm và khó lần ra hơn là mất trang.
-    # URL thắng: nó có ở kiểu A, liền mạch, và là hệ mà bản trước vẫn dùng.
+    # KHÔNG trộn hai hệ đánh số — chúng đo hai thứ KHÁC NHAU (đo thật, đối chiếu
+    # với số in trên chính trang ảnh, 2026-07-28):
+    #
+    #   số trong URL  = THỨ TỰ ẢNH trong quyển, bìa là ảnh 1 → luôn có, liền mạch
+    #   data-page     = SỐ TRANG IN trên trang giấy         → lệch 1 vì có bìa,
+    #                                                         và bìa/trang trắng
+    #                                                         thì không có
+    #
+    # Kiểm chứng: ảnh "-page-80-" của Hoá học 11 in số 79; ảnh "-page-94-" của
+    # Tiếng Việt 1 in số 93.
+    #
+    # Chọn hệ URL vì nó LUÔN có và liền mạch — thiếu số thì không đối chiếu được
+    # độ phủ. Trộn hai hệ thì `setdefault` cho trang này chiếm chỗ trang kia và
+    # mất trang thật (đã mất đúng 1 trang khi thử trộn).
+    #
+    # Hệ quả phải xử lý ở prompt: model NHÌN THẤY số in nên phải nói rõ đánh số
+    # theo số tôi nêu, không theo số in — xem `_DOC_PROMPT` quy tắc 1.
     if by_url:
         return [by_url[k] for k in sorted(by_url)]
     if by_attr:
@@ -432,9 +443,11 @@ _DOC_PROMPT = (
     "Bạn là bộ OCR tài liệu. Chép TOÀN BỘ nội dung các trang sách này thành "
     "Markdown tiếng Việt.\n\n"
     "BẮT BUỘC:\n"
-    "1. Trước mỗi trang, ghi đúng một dòng mốc: <<<TRANG n>>> với n là số trang "
-    "thật ghi ở đầu prompt. Phải có mốc cho MỌI trang, kể cả trang trắng hay "
-    "trang chỉ có hình.\n"
+    "1. Trước mỗi trang, ghi đúng một dòng mốc: <<<TRANG n>>> với n là số tôi "
+    "nêu ở cuối prompt — ĐẾM THEO THỨ TỰ TRANG TRONG TỆP, KHÔNG dùng số trang in "
+    "trên giấy (hai số này lệch nhau vì tệp tính cả bìa). Nếu trên trang có in số "
+    "trang thì ghi thêm ngay sau mốc, dạng: <<<TRANG 80>>> (số in: 79). Phải có "
+    "mốc cho MỌI trang, kể cả trang trắng, bìa, hay trang chỉ có hình.\n"
     "2. Đọc theo thứ tự đọc của người: cột trái xong mới sang cột phải; khung/"
     "hộp thoại đọc theo vị trí trên trang.\n"
     "3. Công thức, phân số, số mũ, chỉ số dưới, ký hiệu toán: viết LaTeX — $...$ "
@@ -524,7 +537,9 @@ def _chunk_prompt(a1: int, b1: int) -> str:
         which = (f"Tệp PDF kèm theo có {n} trang: các trang số {a1} đến {b1} của "
                  f"quyển sách (trang đầu của tệp là trang {a1}).")
     return (f"{_DOC_PROMPT}\n\n{which}\n"
-            f"Đầu ra phải có đủ {n} mốc <<<TRANG n>>>, với n chạy từ {a1} đến {b1}.")
+            f"Đầu ra phải có đủ {n} mốc <<<TRANG n>>>, với n chạy từ {a1} đến {b1} "
+            f"theo đúng thứ tự trang trong tệp. Số in trên giấy có thể khác — "
+            f"vẫn dùng {a1}..{b1} cho mốc.")
 
 
 def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL,
