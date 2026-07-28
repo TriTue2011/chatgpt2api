@@ -43,7 +43,28 @@ import { Input } from "@/components/ui/input";
 import { httpRequest, request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
-type TabId = "lesson" | "homework" | "placement" | "parent" | "import";
+type TabId = "roster" | "lesson" | "homework" | "placement" | "parent" | "import";
+
+/** Tab chỉ có nghĩa khi ĐÃ chọn một hồ sơ học sinh (lớp quyết định SGK/đề/lộ trình).
+ *  Khai ở cấp module: mảng `tabs` dựng lại mỗi lần render nên không dùng được làm
+ *  dependency, và nó lại khai SAU các effect — đưa vào deps là TDZ, trang trắng. */
+const NEED_STUDENT: readonly TabId[] = ["lesson", "homework", "placement", "parent"];
+
+/** Hồ sơ học sinh — lớp SUY TỪ NĂM SINH nên không phải sửa tay mỗi năm. */
+type StudentRow = {
+  student_key: string;
+  display_name?: string;
+  birth_year?: number | null;
+  grade?: number;               // lớp cuối cùng (khai tay > suy năm sinh)
+  grade_computed?: number;      // suy từ năm sinh
+  grade_override?: number | null;
+  grade_source?: string;
+  age?: number | null;
+  school_year?: string;
+  notes?: string;
+  placements?: { subject: string; level?: string; score_pct?: number }[];
+  roadmaps?: { subject: string; focus?: string; steps_done?: number; steps_total?: number }[];
+};
 
 type Lesson = {
   id: string;
@@ -369,7 +390,7 @@ function AutofillPanel() {
 
 export default function TeacherPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin", "user"]);
-  const [tab, setTab] = useState<TabId>("lesson");
+  const [tab, setTab] = useState<TabId>("roster");
 
   // shared filters
   const [grade, setGrade] = useState(2);
@@ -454,6 +475,16 @@ export default function TeacherPage() {
 
   // placement + roadmap
   const [students, setStudents] = useState<any[]>([]);
+  // Hồ sơ học sinh đang xem. "" = chưa chọn ⇒ 4 tab bên trong bị khoá, vì không
+  // biết lớp thì SGK/đề/lộ trình đều không có căn cứ.
+  const [pickedKey, setPickedKey] = useState("");
+  const [schoolYear, setSchoolYear] = useState("");
+  // Form thêm học sinh: CHỈ tên + năm sinh (lớp tự suy). Ô lớp khai tay để
+  // riêng, chỉ dùng khi công thức không đúng.
+  const [newName, setNewName] = useState("");
+  const [newBirth, setNewBirth] = useState("");
+  const [newOverride, setNewOverride] = useState("");
+  const [rosterBusy, setRosterBusy] = useState(false);
   const [placeQs, setPlaceQs] = useState<any[]>([]);
   const [placeId, setPlaceId] = useState("");
   const [placeAnswers, setPlaceAnswers] = useState<Record<string, string>>({});
@@ -546,8 +577,12 @@ export default function TeacherPage() {
   }, [session, loadFocus]);
 
   useEffect(() => {
-    if (tab === "placement" && session) {
+    // Tab "Học sinh" cũng cần danh sách; trước chỉ nạp ở tab placement nên vào
+    // thẳng tab khác là danh sách rỗng.
+    if ((tab === "roster" || tab === "placement") && session) {
       void loadStudents();
+    }
+    if (tab === "placement" && session) {
       void loadRoadmap();
     }
   }, [tab, session, loadStudents, loadRoadmap]);
@@ -1042,12 +1077,109 @@ export default function TeacherPage() {
     }
   };
 
+  const picked: StudentRow | undefined = (students as StudentRow[])
+    .find((x) => x.student_key === pickedKey);
+
+  // Lớp + student_key của mọi tab bên trong đi theo HỒ SƠ, không phải ô chọn tay.
+  // Đây là điểm chính của cấu trúc mới: chọn học sinh một lần, SGK và đề tự đúng
+  // lớp; sang tháng 8 hồ sơ tự lên lớp nên không phải sửa gì.
+  useEffect(() => {
+    if (!picked) return;
+    if (picked.student_key && picked.student_key !== student) setStudent(picked.student_key);
+    const g = Number(picked.grade || 0);
+    if (g >= 1 && g <= 12 && g !== grade) setGrade(g);
+  }, [picked, student, grade]);
+
+  // Bỏ chọn học sinh khi đang ở tab bên trong: tab đó bị khoá nhưng NỘI DUNG
+  // vẫn render, tức tiếp tục soạn bài cho một hồ sơ không còn được chọn.
+  useEffect(() => {
+    if (NEED_STUDENT.includes(tab) && !picked) setTab("roster");
+  }, [tab, picked]);
+
+  useEffect(() => {
+    if (!session) return;
+    void (async () => {
+      try {
+        const r = await request.get("/api/teacher/school-year");
+        if (r.data?.school_year) setSchoolYear(String(r.data.school_year));
+      } catch { /* không critical */ }
+    })();
+  }, [session]);
+
+  /** Chuẩn hoá tên thành student_key: bỏ dấu, chỉ a-z 0-9 _ -. */
+  const keyFromName = (nm: string) =>
+    nm.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d")
+      .toLowerCase().trim().replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "").slice(0, 40);
+
+  const addStudent = async () => {
+    const nm = newName.trim();
+    if (!nm) { toast.error("Cần tên học sinh"); return; }
+    const key = keyFromName(nm);
+    if (!key) { toast.error("Tên không tạo được mã hồ sơ — thêm chữ hoặc số"); return; }
+    if ((students as StudentRow[]).some((x) => x.student_key === key)) {
+      toast.error(`Đã có hồ sơ «${key}» — đổi tên hoặc thêm họ`); return;
+    }
+    const by = newBirth.trim() ? Number(newBirth.trim()) : null;
+    if (by !== null && (!Number.isFinite(by) || by < 1900 || by > 2200)) {
+      toast.error("Năm sinh phải là số 4 chữ số, vd 2019"); return;
+    }
+    const ov = newOverride.trim() ? Number(newOverride.trim()) : 0;
+    setRosterBusy(true);
+    try {
+      const r = await request.post("/api/teacher/students", {
+        student_key: key, display_name: nm, birth_year: by, grade: ov,
+      });
+      const pf = r.data?.profile;
+      if (pf?.grade) {
+        toast.success(`Đã thêm ${nm} — lớp ${pf.grade} (${pf.grade_source})`);
+      } else {
+        toast.warning(`Đã thêm ${nm} nhưng CHƯA rõ lớp — điền năm sinh hoặc khai lớp tay`);
+      }
+      setNewName(""); setNewBirth(""); setNewOverride("");
+      await loadStudents();
+      setPickedKey(key);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Thêm học sinh lỗi");
+    } finally { setRosterBusy(false); }
+  };
+
+  const patchStudent = async (key: string, fields: Record<string, unknown>) => {
+    try {
+      const r = await request.patch(`/api/teacher/students/${encodeURIComponent(key)}`, fields);
+      const pf = r.data?.profile;
+      toast.success(pf?.grade ? `Đã lưu — lớp ${pf.grade} (${pf.grade_source})` : "Đã lưu");
+      await loadStudents();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Sửa hồ sơ lỗi");
+    }
+  };
+
+  const removeStudent = async (row: StudentRow) => {
+    const nm = row.display_name || row.student_key;
+    if (!window.confirm(`Xoá hồ sơ «${nm}»?\n\nMất cả kết quả đầu vào, lộ trình và `
+      + `ghi chú của em này. Kho SGK KHÔNG bị ảnh hưởng.`)) return;
+    try {
+      await request.delete(`/api/teacher/students/${encodeURIComponent(row.student_key)}`);
+      toast.success(`Đã xoá hồ sơ ${nm}`);
+      if (pickedKey === row.student_key) setPickedKey("");
+      await loadStudents();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Xoá lỗi");
+    }
+  };
+
+  // Ba nhóm tab, cố ý xếp theo thứ tự dùng thật:
+  //  · Học sinh  — chọn hồ sơ TRƯỚC, vì lớp của hồ sơ quyết định mọi thứ sau đó
+  //  · 4 tab bên trong — chỉ mở khi đã chọn học sinh, và đi theo lớp của em đó
+  //  · Kho SGK   — dùng CHUNG cho mọi học sinh, không thuộc em nào
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
+    { id: "roster", label: "Học sinh", icon: <UserCircle className="size-3.5" /> },
     { id: "lesson", label: "Bài giảng", icon: <BookOpen className="size-3.5" /> },
     { id: "homework", label: "Bài tập", icon: <ClipboardList className="size-3.5" /> },
     { id: "placement", label: "Đầu vào · Lộ trình", icon: <Route className="size-3.5" /> },
     { id: "parent", label: "Dashboard PH", icon: <Users className="size-3.5" /> },
-    { id: "import", label: "Import SGK", icon: <FileUp className="size-3.5" /> },
+    { id: "import", label: "Kho SGK (chung)", icon: <FileUp className="size-3.5" /> },
   ];
 
   return (
@@ -1187,26 +1319,182 @@ export default function TeacherPage() {
         </p>
       )}
 
+      {/* Đang xem hồ sơ nào — hiện ở MỌI tab để không bao giờ soạn bài cho sai em */}
+      {picked && (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/8 px-3 py-2 text-[11px] flex flex-wrap items-center gap-2">
+          <UserCircle className="size-3.5 text-emerald-600 shrink-0" />
+          <span>
+            Đang xem <b>{picked.display_name || picked.student_key}</b>
+            {picked.grade ? <> · <b>lớp {picked.grade}</b></> : <> · <span className="text-amber-600">chưa rõ lớp</span></>}
+            {picked.birth_year ? <span className="text-muted-foreground"> (sinh {picked.birth_year}, lớp theo {picked.grade_source})</span> : null}
+            {picked.school_year ? <span className="text-muted-foreground"> · năm học {picked.school_year}</span> : null}
+          </span>
+          <div className="ml-auto flex gap-1.5">
+            <Button size="sm" variant="ghost" className="h-6 text-[10px]"
+              onClick={() => setTab("roster")}>Đổi học sinh</Button>
+            <Button size="sm" variant="ghost" className="h-6 text-[10px]"
+              onClick={() => setPickedKey("")}>Bỏ chọn</Button>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex flex-wrap gap-1 border-b border-border pb-1">
-        {tabs.map((t) => (
+        {tabs.map((t) => {
+          // Khoá 4 tab bên trong khi chưa chọn hồ sơ: không biết lớp thì SGK,
+          // đề và lộ trình đều không có căn cứ — mở ra chỉ để sinh nội dung sai.
+          const locked = NEED_STUDENT.includes(t.id) && !picked;
+          return (
           <button
             key={t.id}
             type="button"
+            disabled={locked}
+            title={locked ? "Chọn học sinh ở tab «Học sinh» trước" : undefined}
             onClick={() => setTab(t.id)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs transition ${
-              tab === t.id
+              locked
+                ? "text-muted-foreground/40 cursor-not-allowed"
+                : tab === t.id
                 ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium"
                 : "text-muted-foreground hover:bg-secondary"
             }`}
           >
             {t.icon}
             {t.label}
+            {locked && <span className="text-[9px]">🔒</span>}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {/* ── LESSON ── */}
+      {tab === "roster" && (
+        <Fold id="roster" title="Học sinh — thêm hồ sơ, lớp tự suy từ năm sinh">
+          <CardContent className="pt-4 space-y-4">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2.5">
+              <div className="text-xs font-semibold">Thêm học sinh</div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Tên học sinh</label>
+                  <Input className="h-9 text-xs" placeholder="Nguyễn Văn An"
+                    value={newName} disabled={rosterBusy}
+                    onChange={(e) => setNewName(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Năm sinh</label>
+                  <Input className="h-9 text-xs" placeholder="2019" inputMode="numeric"
+                    value={newBirth} disabled={rosterBusy}
+                    onChange={(e) => setNewBirth(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Lớp (chỉ khi cần khai tay)</label>
+                  <Input className="h-9 text-xs" placeholder="để trống = tự suy" inputMode="numeric"
+                    value={newOverride} disabled={rosterBusy}
+                    onChange={(e) => setNewOverride(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))} />
+                </div>
+              </div>
+              {newBirth.length === 4 && !newOverride && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                  Năm học {schoolYear || "hiện tại"} → sẽ vào <b>lớp{" "}
+                  {(() => {
+                    const sy = Number((schoolYear || "").split("–")[0]) || new Date().getFullYear();
+                    const g = sy - Number(newBirth) - 5;
+                    return g >= 1 && g <= 12 ? g : "?";
+                  })()}</b>
+                  {(() => {
+                    const sy = Number((schoolYear || "").split("–")[0]) || new Date().getFullYear();
+                    const g = sy - Number(newBirth) - 5;
+                    return g >= 1 && g <= 12 ? "" : " — ngoài lớp 1–12, hãy khai lớp tay";
+                  })()}
+                </p>
+              )}
+              <Button size="sm" className="h-8 text-xs" disabled={rosterBusy}
+                onClick={() => void addStudent()}>
+                {rosterBusy ? <LoaderCircle className="size-3.5 mr-1.5 animate-spin" /> : null}
+                Thêm học sinh
+              </Button>
+              <p className="text-[10px] text-muted-foreground">
+                Chỉ cần <b>tên + năm sinh</b>. Lớp tính theo công thức
+                <code> lớp = năm học − năm sinh − 5</code> (VN vào lớp 1 lúc 6 tuổi), nên
+                sang tháng 8 mọi hồ sơ <b>tự lên lớp</b>, không phải sửa tay.
+                Ô lớp khai tay chỉ dùng khi học lại, học vượt hay vào lớp 1 muộn.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="text-xs font-semibold flex items-center gap-2 flex-wrap">
+                Hồ sơ đã có ({students.length})
+                {schoolYear && <span className="font-normal text-muted-foreground">· năm học {schoolYear}</span>}
+              </div>
+              {students.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Chưa có hồ sơ nào. Thêm ở khung trên — mỗi học sinh độc lập, nhưng
+                  cùng dùng chung <b>Kho SGK</b>.
+                </p>
+              ) : (students as StudentRow[]).map((r) => {
+                const on = r.student_key === pickedKey;
+                return (
+                  <div key={r.student_key}
+                    className={`rounded-lg border px-3 py-2 ${on
+                      ? "border-amber-500 bg-amber-500/10"
+                      : "border-border/60 hover:bg-secondary/50"}`}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button type="button" className="text-sm font-medium text-left hover:underline"
+                        onClick={() => setPickedKey(on ? "" : r.student_key)}>
+                        {r.display_name || r.student_key}
+                      </button>
+                      {r.grade ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 font-medium">
+                          Lớp {r.grade}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-medium">
+                          chưa rõ lớp
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground">
+                        {r.birth_year ? `sinh ${r.birth_year}` : "chưa có năm sinh"}
+                        {r.age ? ` · ${r.age} tuổi` : ""}
+                        {r.grade_source ? ` · lớp theo ${r.grade_source}` : ""}
+                      </span>
+                      {on && <span className="text-[10px] font-semibold text-amber-600">◀ đang xem</span>}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <Input className="h-7 w-16 text-[11px]" placeholder="năm sinh"
+                          defaultValue={r.birth_year ? String(r.birth_year) : ""}
+                          onBlur={(e) => {
+                            const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+                            if (v !== String(r.birth_year || "")) {
+                              void patchStudent(r.student_key, { birth_year: v ? Number(v) : null });
+                            }
+                          }} />
+                        <Input className="h-7 w-14 text-[11px]" placeholder="lớp"
+                          defaultValue={r.grade_override ? String(r.grade_override) : ""}
+                          onBlur={(e) => {
+                            const v = e.target.value.replace(/[^0-9]/g, "").slice(0, 2);
+                            if (v !== String(r.grade_override || "")) {
+                              void patchStudent(r.student_key, { grade: v ? Number(v) : null });
+                            }
+                          }} />
+                        <Button size="sm" variant="ghost" className="h-7 px-1.5 text-red-500"
+                          onClick={() => void removeStudent(r)} title="Xoá hồ sơ">
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                    {on && (
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        Bốn tab Bài giảng · Bài tập · Đầu vào · Dashboard PH giờ chạy theo
+                        lớp {r.grade || "?"} của em này. Ô «lớp» bên phải để trống = tự suy từ năm sinh.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Fold>
+      )}
+
       {tab === "lesson" && (
         <div className="grid gap-4 lg:grid-cols-5">
           <Fold id="lesson-edit" title="Soạn bài giảng" className="lg:col-span-3">

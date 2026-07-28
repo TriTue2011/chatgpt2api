@@ -88,7 +88,10 @@ class RoadmapAdvanceIn(BaseModel):
 class StudentProfileIn(BaseModel):
     student_key: str
     display_name: str = ""
+    # Lớp KHAI TAY — chỉ dùng khi công thức năm sinh không đúng (học lại, học
+    # vượt, vào lớp 1 muộn). Để 0 = tự suy từ birth_year.
     grade: int = 0
+    birth_year: int | None = None
     notes: str = ""
 
 
@@ -736,8 +739,67 @@ def create_router() -> APIRouter:
             display_name=body.display_name,
             grade=body.grade,
             notes=body.notes,
+            birth_year=body.birth_year,
         )
-        return {"ok": True, "profile": p}
+        # Trả kèm lớp đã suy để UI khỏi phải tính lại — và để người dùng thấy
+        # NGAY là năm sinh vừa nhập ra lớp mấy, thay vì lưu xong mới biết sai.
+        return {"ok": True, "profile": {**p, **tp.resolve_grade(p)}}
+
+    @router.patch("/api/teacher/students/{student_key}")
+    async def students_update(
+        student_key: str,
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Sửa hồ sơ học sinh. `grade: null` = BỎ khai tay, quay về suy năm sinh.
+
+        Cần PATCH riêng vì POST coi `grade=0` là "không truyền" nên không có
+        cách nào xoá lớp khai tay.
+        """
+        require_admin(authorization)
+        from fastapi import HTTPException
+
+        from services.agent import teacher_path as tp
+        allowed = {"display_name", "birth_year", "grade", "notes"}
+        fields = {k: v for k, v in (payload or {}).items() if k in allowed}
+        if not fields:
+            raise HTTPException(400, f"không có trường nào để sửa (cho phép: "
+                                     f"{', '.join(sorted(allowed))})")
+        p = tp.update_profile(student_key, **fields)
+        if p is None:
+            raise HTTPException(404, f"không có học sinh '{student_key}'")
+        return {"ok": True, "profile": {**p, **tp.resolve_grade(p)}}
+
+    @router.delete("/api/teacher/students/{student_key}")
+    async def students_delete(
+        student_key: str,
+        wipe_memory: bool = Query(default=True),
+        authorization: str | None = Header(default=None),
+    ):
+        """Xoá hồ sơ + placement + lộ trình của MỘT học sinh.
+
+        `wipe_memory=true` (mặc định) xoá luôn ghi chú/adaptive của học sinh đó
+        trong các workspace — nếu không thì tạo lại trùng tên sẽ thừa hưởng dữ
+        liệu của người cũ.
+        """
+        require_admin(authorization)
+        from services.agent import teacher_path as tp
+        return {"ok": True, **tp.delete_student(student_key, wipe_memory=wipe_memory)}
+
+    @router.get("/api/teacher/school-year")
+    async def teacher_school_year(authorization: str | None = Header(default=None)):
+        """Năm học đang xét + cách suy lớp từ năm sinh (để UI giải thích cho user)."""
+        require_admin(authorization)
+        from services.agent import teacher_path as tp
+        sy = tp.school_year_start()
+        return {
+            "ok": True,
+            "school_year_start": sy,
+            "school_year": f"{sy}–{sy + 1}",
+            "cutoff_month": tp.SCHOOL_YEAR_CUTOFF_MONTH,
+            "formula": "lớp = năm_học_bắt_đầu − năm_sinh − 5",
+            "example": {"birth_year": sy - 6, "grade": 1},
+        }
 
     @router.get("/api/teacher/students/{student_key}")
     async def student_detail(

@@ -72,6 +72,71 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# ── Lớp suy từ năm sinh ─────────────────────────────────────────────────────
+# Việt Nam: trẻ sinh năm Y vào lớp 1 tháng 9 năm Y+6. Nên trong năm học bắt đầu
+# tháng 9 năm S:  lớp = S − Y − 5.
+#   sinh 2019 → vào lớp 1 tháng 9/2025 → S=2025: 2025−2019−5 = 1 ✓
+#
+# Nhờ vậy KHÔNG phải sửa lớp mỗi năm: cứ sang tháng 8 là mọi hồ sơ tự lên lớp.
+
+# Mốc chuyển năm học. Tháng 8 chứ không phải tháng 9: tháng 8 đã tựu trường và
+# giáo viên soạn bài cho lớp MỚI, hiển thị lớp cũ lúc đó là vô dụng.
+SCHOOL_YEAR_CUTOFF_MONTH = 8
+
+
+def school_year_start(today: Any = None) -> int:
+    """Năm bắt đầu của năm học đang xét (2026 = năm học 2026–2027)."""
+    import datetime
+    d = today or datetime.date.today()
+    return d.year if d.month >= SCHOOL_YEAR_CUTOFF_MONTH else d.year - 1
+
+
+def grade_from_birth_year(birth_year: Any, today: Any = None) -> int:
+    """Lớp suy từ năm sinh. 0 = không suy được / ngoài phạm vi lớp 1–12.
+
+    Trả 0 chứ KHÔNG kẹp về 1 hay 12: trẻ 4 tuổi chưa vào lớp 1 và người 30 tuổi
+    không học lớp 12 — kẹp lại là bịa ra một lớp rồi mọi thứ phía sau (SGK, đề,
+    lộ trình) đều sai mà không ai biết.
+    """
+    try:
+        y = int(birth_year)
+    except (TypeError, ValueError):
+        return 0
+    if not (1900 < y < 2200):
+        return 0
+    g = school_year_start(today) - y - 5
+    return g if 1 <= g <= 12 else 0
+
+
+def resolve_grade(profile: dict[str, Any], today: Any = None) -> dict[str, Any]:
+    """Lớp CUỐI CÙNG của một hồ sơ + nói rõ nó đến từ đâu.
+
+    Thứ tự: `grade` khai tay (ghi đè) > suy từ `birth_year` > 0 (chưa biết).
+    Phải có đường ghi đè: học lại một năm, học vượt, vào lớp 1 muộn, hay học hệ
+    khác đều làm công thức năm sinh sai — mà lớp sai thì sai luôn SGK và đề.
+    """
+    sy = school_year_start(today)
+    by = profile.get("birth_year")
+    computed = grade_from_birth_year(by, today)
+    override = profile.get("grade")
+    try:
+        override = int(override or 0)
+    except (TypeError, ValueError):
+        override = 0
+    if not (1 <= override <= 12):
+        override = 0
+    return {
+        "grade": override or computed,
+        "grade_computed": computed,
+        "grade_override": override or None,
+        "grade_source": "khai tay" if override else ("năm sinh" if computed else "chưa biết"),
+        "birth_year": int(by) if str(by or "").strip().lstrip("-").isdigit() else None,
+        "school_year": f"{sy}–{sy + 1}",
+        "school_year_start": sy,
+        "age": (sy - int(by)) if str(by or "").strip().isdigit() else None,
+    }
+
+
 # ── Student profile (độc lập) ───────────────────────────────────────────────
 
 
@@ -81,15 +146,28 @@ def get_or_create_profile(
     display_name: str = "",
     grade: int = 0,
     notes: str = "",
+    birth_year: Any = None,
 ) -> dict[str, Any]:
     sk = _safe(student_key or "default")
     path = _student_dir(sk) / "profile.json"
     cur = _read_json(path)
+
+    def _by(v: Any) -> int:
+        try:
+            y = int(v)
+        except (TypeError, ValueError):
+            return 0
+        return y if 1900 < y < 2200 else 0
+
     if cur:
         if display_name:
             cur["display_name"] = display_name.strip()[:80]
+        # grade=0 KHÔNG xoá override đã có: 0 nghĩa là "không truyền", còn muốn
+        # bỏ ghi đè thì gọi update_profile(grade=None) tường minh.
         if grade and 1 <= int(grade) <= 12:
             cur["grade"] = int(grade)
+        if _by(birth_year):
+            cur["birth_year"] = _by(birth_year)
         if notes:
             cur["notes"] = notes.strip()[:500]
         cur["updated"] = _now()
@@ -98,6 +176,7 @@ def get_or_create_profile(
     profile = {
         "student_key": sk,
         "display_name": (display_name or sk).strip()[:80],
+        "birth_year": _by(birth_year) or None,
         "grade": int(grade) if grade and 1 <= int(grade) <= 12 else 0,
         "notes": (notes or "").strip()[:500],
         "created": _now(),
@@ -106,6 +185,42 @@ def get_or_create_profile(
     }
     _write_json(path, profile)
     return profile
+
+
+def update_profile(student_key: str, **fields: Any) -> dict[str, Any] | None:
+    """Sửa hồ sơ. `grade=None` là BỎ ghi đè (quay về suy từ năm sinh).
+
+    Khác `get_or_create_profile` ở chỗ phân biệt được "không truyền" và "xoá":
+    hàm kia coi grade=0 là không truyền, nên không có cách nào bỏ ghi đè.
+    """
+    sk = _safe(student_key or "default")
+    path = _student_dir(sk) / "profile.json"
+    cur = _read_json(path)
+    if not cur:
+        return None
+    if "display_name" in fields and str(fields["display_name"] or "").strip():
+        cur["display_name"] = str(fields["display_name"]).strip()[:80]
+    if "notes" in fields:
+        cur["notes"] = str(fields["notes"] or "").strip()[:500]
+    if "birth_year" in fields:
+        try:
+            y = int(fields["birth_year"])
+            cur["birth_year"] = y if 1900 < y < 2200 else None
+        except (TypeError, ValueError):
+            cur["birth_year"] = None
+    if "grade" in fields:
+        g = fields["grade"]
+        if g is None or str(g).strip() in ("", "0"):
+            cur["grade"] = 0          # bỏ ghi đè
+        else:
+            try:
+                gi = int(g)
+                cur["grade"] = gi if 1 <= gi <= 12 else 0
+            except (TypeError, ValueError):
+                cur["grade"] = 0
+    cur["updated"] = _now()
+    _write_json(path, cur)
+    return cur
 
 
 def list_students() -> list[dict[str, Any]]:
@@ -142,6 +257,9 @@ def list_students() -> list[dict[str, Any]]:
             **{k: p.get(k) for k in (
                 "student_key", "display_name", "grade", "notes", "updated", "created",
             )},
+            # Lớp suy tại thời điểm GỌI, không lưu sẵn: lưu thì sang tháng 8 mọi
+            # hồ sơ đều lỗi thời và phải có việc đi sửa hàng loạt.
+            **resolve_grade(p),
             "placements": placements,
             "roadmaps": roadmaps,
         })
