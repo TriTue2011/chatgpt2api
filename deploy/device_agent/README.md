@@ -6,9 +6,31 @@ quay ra kết nối tới gateway, sau đó bot đọc/sửa file trên máy đ�
 Vì agent **gọi ra** chứ không chờ ai gọi vào: máy sau NAT, wifi nhà, 4G điện
 thoại đều dùng được. Không mở cổng, không cần IP tĩnh, không cần SSH.
 
+> **Dùng Windows?** Có hướng dẫn từng bước riêng, chi tiết hơn:
+> [HUONG_DAN_WINDOWS.md](HUONG_DAN_WINDOWS.md)
+
 ## 1. Khai báo thiết bị ở dự án
 
-Thêm vào config (`device_agents`) — mỗi thiết bị một token riêng:
+Cách nhanh nhất — gọi API, token tự sinh (thay `<KHOA_ADMIN>` bằng auth_key):
+
+```bash
+curl -X POST https://gpt.vhtatn.io.vn/api/devices \
+  -H "Authorization: Bearer <KHOA_ADMIN>" -H "Content-Type: application/json" \
+  -d '{"name":"laptop","label":"Laptop","paths":["/home/me/project"],"can_write":false}'
+```
+
+Trả về `token` — **copy ngay, không hiện lại lần nào nữa**.
+
+Xem danh sách / xoá:
+
+```bash
+curl https://gpt.vhtatn.io.vn/api/devices -H "Authorization: Bearer <KHOA_ADMIN>"
+curl -X DELETE https://gpt.vhtatn.io.vn/api/devices/laptop -H "Authorization: Bearer <KHOA_ADMIN>"
+```
+
+Đổi thư mục hoặc bật quyền ghi: xoá rồi thêm lại (token mới).
+
+Hoặc sửa tay trong config (`device_agents`) — mỗi thiết bị một token riêng:
 
 ```json
 "device_agents": {

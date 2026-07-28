@@ -6,12 +6,11 @@ thiết bị sau NAT vẫn tới được. MCP `device_fs` trên hub gọi các 
 """
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 
 from api.support import require_admin
 from services import device_agents as da
+from services.config import config
 from utils.log import logger
 
 _READ_OPS = {"ls", "read", "stat", "find"}
@@ -64,6 +63,75 @@ def create_router() -> APIRouter:
     async def devices_list(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         return {"devices": da.list_devices()}
+
+    @router.post("/api/devices")
+    async def devices_register(payload: dict,
+                               authorization: str | None = Header(default=None)):
+        """Khai báo MỘT thiết bị mới, tự sinh token và trả về.
+
+        Có endpoint này để người dùng tự thêm thiết bị bằng một lệnh curl —
+        không phải sửa tay cả khối `device_agents` trong config (dễ ghi đè mất
+        thiết bị khác) và không cần chờ ai làm hộ.
+
+        Body: {name, label?, paths[], can_write?}
+        """
+        require_admin(authorization)
+        import re
+        import secrets
+
+        name = str((payload or {}).get("name") or "").strip()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,30}", name):
+            raise HTTPException(400, "name chỉ gồm a-z 0-9 _ - (2–31 ký tự), "
+                                     "vd 'laptop-win'")
+        paths = [str(p).strip() for p in ((payload or {}).get("paths") or [])
+                 if str(p).strip()]
+        if not paths:
+            # Fail-closed: thiết bị không có thư mục nào thì vô nghĩa, và để
+            # rỗng dễ bị hiểu nhầm là "mở tất cả".
+            raise HTTPException(400, "phải khai ít nhất một thư mục trong 'paths'")
+
+        devs = dict(config.data.get("device_agents") or {})
+        if name in devs:
+            raise HTTPException(409, f"thiết bị '{name}' đã tồn tại — "
+                                     f"xoá trước (DELETE /api/devices/{name}) rồi thêm lại")
+        token = secrets.token_urlsafe(32)
+        devs[name] = {
+            "label": str((payload or {}).get("label") or name),
+            "token": token,
+            "paths": paths,
+            "can_write": bool((payload or {}).get("can_write", False)),
+            "enabled": True,
+        }
+        config.data["device_agents"] = devs
+        config._save()
+        logger.info({"event": "device_registered", "device": name,
+                     "paths": len(paths), "can_write": devs[name]["can_write"]})
+        return {"ok": True, "name": name, "token": token,
+                "paths": paths, "can_write": devs[name]["can_write"],
+                "note": "Giữ token này — nó không hiện lại ở đâu khác."}
+
+    @router.delete("/api/devices/{name}")
+    async def devices_remove(name: str,
+                             authorization: str | None = Header(default=None)):
+        """Xoá thiết bị (token hết hiệu lực ngay, ngắt cả phiên đang kết nối)."""
+        require_admin(authorization)
+        devs = dict(config.data.get("device_agents") or {})
+        if name not in devs:
+            raise HTTPException(404, f"không có thiết bị '{name}'")
+        devs.pop(name, None)
+        config.data["device_agents"] = devs
+        config._save()
+        # Phiên đang mở phải bị ngắt — nếu không, token đã xoá vẫn dùng được
+        # tới khi thiết bị tự rớt mạng.
+        session = da.get(name)
+        if session is not None:
+            session.fail_all("thiết bị đã bị xoá khỏi cấu hình")
+            try:
+                await session.ws.close(code=4403)
+            except Exception:
+                pass
+        logger.info({"event": "device_removed", "device": name})
+        return {"ok": True, "name": name}
 
     @router.post("/api/devices/{name}/op")
     async def devices_op(name: str, payload: dict,
