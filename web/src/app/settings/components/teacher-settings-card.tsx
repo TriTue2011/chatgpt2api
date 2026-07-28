@@ -126,6 +126,7 @@ export function TeacherSettingsCard() {
   const [impSubject, setImpSubject] = useState("toan");
   const [impMode, setImpMode] = useState<"append" | "replace">("append");
   const [impBusy, setImpBusy] = useState(false);
+  const [impUrl, setImpUrl] = useState("");
 
   const teacher = useMemo(
     () => ((config as any)?.teacher as Record<string, unknown>) || {},
@@ -1099,7 +1100,7 @@ export function TeacherSettingsCard() {
           bodyClass="space-y-2"
         >
           <p className="text-[10px] text-muted-foreground">
-            Upload PDF → trích chữ →{" "}
+            Upload PDF <b>hoặc dán link</b> → trích chữ →{" "}
             <code>data/agent/teacher/sgk/lopN/&#123;mon&#125;.md</code>. Tiểu học 1–5 ·
             THCS 6–9 · THPT 10–12.
           </p>
@@ -1189,6 +1190,67 @@ export function TeacherSettingsCard() {
               Đang trích PDF (scan có thể mất vài phút OCR)…
             </p>
           )}
+
+          {/* Dán link — nhận link đọc sách taphuan hoặc link PDF trực tiếp */}
+          <div className="rounded border border-border/70 p-2 space-y-1.5">
+            <div className="text-[11px] font-semibold">Hoặc dán link sách</div>
+            <p className="text-[10px] text-muted-foreground">
+              Nhận link đọc sách <code>taphuan.nxbgd.vn/tap-huan/doc-sach/sgk-…</code>,
+              link trang chi tiết <code>…/chi-tiet-sach/…</code>, hoặc link PDF trực
+              tiếp. Lớp và môn lấy theo hai ô chọn phía trên.
+            </p>
+            <div className="flex gap-1.5">
+              <Input
+                className="h-8 text-xs"
+                placeholder="https://taphuan.nxbgd.vn/tap-huan/doc-sach/sgk-toan-4-tap-mot.4714093295"
+                value={impUrl}
+                disabled={impBusy}
+                onChange={(e) => setImpUrl(e.target.value)}
+              />
+              <Button
+                size="sm"
+                className="h-8 text-[11px] shrink-0"
+                disabled={impBusy || !impUrl.trim()}
+                onClick={async () => {
+                  setImpBusy(true);
+                  try {
+                    const r = await request.post("/api/teacher/import-url", {
+                      url: impUrl.trim(),
+                      grade: impGrade,
+                      subject: impSubject,
+                      mode: impMode,
+                    });
+                    const d = r.data as {
+                      ok?: boolean; chars?: number; pages?: number; error?: string;
+                    };
+                    if (d.ok) {
+                      toast.success(
+                        `Đã nạp ${d.pages ?? "?"} trang · ${d.chars ?? "?"} ký tự`,
+                      );
+                      setImpUrl("");
+                      void loadMeta();
+                    } else {
+                      toast.error(d.error || "Nạp từ link thất bại");
+                    }
+                  } catch (err: unknown) {
+                    const msg =
+                      (err as { response?: { data?: { detail?: string } } })?.response
+                        ?.data?.detail ||
+                      (err instanceof Error ? err.message : String(err));
+                    toast.error(`Nạp từ link lỗi: ${msg}`);
+                  } finally {
+                    setImpBusy(false);
+                  }
+                }}
+              >
+                Nạp
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Sách trên taphuan là ảnh từng trang nên phải OCR — một quyển ~134
+              trang mất khoảng 8–12 phút. Đừng đóng tab giữa chừng.
+            </p>
+          </div>
         </Sec>
 
         {/* 6. Workspace + KB */}

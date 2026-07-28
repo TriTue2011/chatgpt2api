@@ -468,6 +468,35 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
             "note": "Chỉ nạp RAG (không ghi .md SGK gốc)."}
 
 
+def import_reader(reader_url: str, *, grade: int, subject: str,
+                  max_pages: int = 0, mode: str = "append") -> dict[str, Any]:
+    """Nạp ĐÚNG MỘT trang đọc sách đã biết link — dùng cho ô 'dán URL' trên web.
+
+    Khác :func:`import_book` ở chỗ không tra danh mục: người dùng đã chỉ đúng
+    quyển nào, lớp nào, môn nào, nên không đoán lại.
+    """
+    sub = sf.normalize_subject(subject)
+    g = int(grade)
+    if g not in tw.GRADES:
+        return {"ok": False, "error": f"grade phải 1–12, nhận {grade}"}
+    if not sub:
+        return {"ok": False, "error": f"không nhận ra môn: {subject}"}
+
+    imgs = page_images(reader_url)
+    if not imgs:
+        return {"ok": False, "error": "không lấy được ảnh trang từ link này"}
+
+    label = f"SGK lớp {g} · {sf.SUBJECT_LABEL.get(sub, sub)}"
+    with tempfile.TemporaryDirectory() as td:
+        pdf_path = str(Path(td) / "sach.pdf")
+        built = build_pdf(imgs, pdf_path, max_pages=max_pages)
+        if not built.get("ok"):
+            return {"ok": False, "error": f"ghép PDF lỗi: {built.get('error')}"}
+        res = _ingest_pdf(pdf_path, grade=g, subject=sub, title=label,
+                          source_name=reader_url, mode=mode)
+    return {**res, "pages": built.get("pages"), "source": reader_url}
+
+
 def import_book(grade: int, subject: str, *, max_pages: int = 0,
                 mode: str = "append", dry_run: bool = False) -> dict[str, Any]:
     """Nạp SGK 1 lớp–môn từ taphuan: danh mục → trang đọc → ảnh → PDF → RAG.
@@ -552,5 +581,5 @@ def import_book(grade: int, subject: str, *, max_pages: int = 0,
             "books": done, "ok_count": ok_count, "total": len(done)}
 
 
-__all__ = ["list_books", "reader_urls", "page_images", "build_pdf",
+__all__ = ["list_books", "reader_urls", "page_images", "build_pdf", "import_reader",
            "import_book", "subjects_of_slug"]

@@ -159,6 +159,40 @@ def create_router() -> APIRouter:
         return {"ok": True, "enabled": sched.is_enabled(),
                 "interval_days": sched.interval_seconds() / 86400.0}
 
+    @router.post("/api/teacher/import-url")
+    async def teacher_import_url(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Nạp SGK từ MỘT đường dẫn dán vào — nhận 3 dạng:
+
+        1. Link đọc sách taphuan  (.../doc-sach/sgk-...)      → ảnh → PDF → RAG
+        2. Link chi tiết taphuan  (.../chi-tiet-sach/...)     → tự tìm link đọc
+        3. Link PDF trực tiếp     (http...pdf)                → tải thẳng
+
+        Dạng 1 và 2 đi đường khối trang (rẻ ~20 lần); dạng 3 dùng lại
+        sgk_fetch.fetch_and_ingest có sẵn (đã chặn SSRF qua net_guard).
+        """
+        require_admin(authorization)
+        url = str(payload.get("url") or "").strip()
+        grade = int(payload.get("grade") or 0)
+        subject = str(payload.get("subject") or "").strip()
+        mode = str(payload.get("mode") or "append")
+        if not url.startswith(("http://", "https://")):
+            return {"ok": False, "error": "URL phải bắt đầu bằng http:// hoặc https://"}
+        if not grade or not subject:
+            return {"ok": False, "error": "thiếu lớp hoặc môn"}
+
+        from services.agent import sgk_fetch as sf
+        from services.agent import sgk_taphuan as tp
+
+        if "taphuan.nxbgd.vn" in url:
+            readers = [url] if "/doc-sach/" in url else tp.reader_urls(url)
+            if not readers:
+                return {"ok": False, "error": "không tìm thấy link đọc sách (sgk-) trong trang này"}
+            return tp.import_reader(readers[0], grade=grade, subject=subject, mode=mode)
+        return sf.fetch_and_ingest(grade, subject, url, kind="sgk")
+
     @router.get("/api/teacher/taphuan/books")
     async def teacher_taphuan_books(
         grade: int = Query(...),
