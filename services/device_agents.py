@@ -71,6 +71,26 @@ class AgentSession:
     def can_write(self) -> bool:
         return bool(self.cfg.get("can_write", False))
 
+    @property
+    def can_exec(self) -> bool:
+        """Chạy lệnh shell tuỳ ý + tắt tiến trình. Mặc định TẮT.
+
+        Tách khỏi `can_write` vì mức độ khác hẳn: ghi file còn bị allowlist
+        thư mục chặn, còn một lệnh shell đọc/ghi được mọi thứ tài khoản đó với
+        tới. Bật cái này là bỏ luôn ý nghĩa của allowlist.
+        """
+        return bool(self.cfg.get("can_exec", False))
+
+    @property
+    def can_power(self) -> bool:
+        """Khoá/ngủ/đăng xuất/tắt/khởi động lại. Mặc định TẮT.
+
+        Tách riêng khỏi `can_exec` vì hậu quả khác loại: nhầm một lệnh tra cứu
+        thì tốn công đọc lại, nhầm `shutdown` thì mất phiên làm việc của người
+        đang dùng máy — và agent cũng mất kết nối luôn.
+        """
+        return bool(self.cfg.get("can_power", False))
+
     def public(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -82,6 +102,8 @@ class AgentSession:
             "agent_version": self.info.get("version", ""),
             "paths": self.allowed_paths,
             "can_write": self.can_write,
+            "can_exec": self.can_exec,
+            "can_power": self.can_power,
             "ops": self.ops,
         }
 
@@ -165,6 +187,8 @@ def list_devices() -> list[dict[str, Any]]:
                 "connected": False,
                 "paths": [str(x) for x in (cfg.get("paths") or [])],
                 "can_write": bool(cfg.get("can_write", False)),
+                "can_exec": bool(cfg.get("can_exec", False)),
+                "can_power": bool(cfg.get("can_power", False)),
             })
     return out
 

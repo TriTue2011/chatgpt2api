@@ -102,7 +102,12 @@ Giải thích các tham số:
 | `name` | Tên máy trong dự án. Chỉ `a-z 0-9 _ -`, 2–31 ký tự. Đây là tên bạn gọi khi chat với bot. |
 | `label` | Tên dễ đọc, hiện khi bot liệt kê thiết bị. |
 | `paths` | Danh sách thư mục **duy nhất** được phép. Nhiều thư mục thì `@("C:\a", "C:\b")`. |
-| `can_write` | `$false` = bot chỉ đọc. `$true` mới cho sửa file. |
+| `can_write` | `$false` = bot chỉ đọc file. `$true` mới cho thêm/xoá/sửa file. |
+| `can_exec` | `$false`. `$true` cho bot **chạy lệnh** PowerShell/cmd + tắt ứng dụng. |
+| `can_power` | `$false`. `$true` cho bot **khoá màn hình / tắt máy / khởi động lại**. |
+
+Ba khoá `can_*` đều mặc định `$false`. Xem thêm ở Bước 4 — mỗi khoá còn phải kèm
+một cờ khi chạy agent.
 
 ### Các lệnh quản lý khác
 
@@ -162,14 +167,31 @@ làm gì trên máy mình.
 
 Dừng agent: `Ctrl-C`.
 
-### Muốn cho bot SỬA file
+### Bốn nhóm quyền — mỗi nhóm bật ở CẢ HAI phía
 
-Cần bật ở **cả hai** phía (cố ý làm vậy — hỏng một phía vẫn còn phía kia):
+| Muốn bot làm gì | Khoá ở Bước 2 | Cờ ở Bước 4 |
+|---|---|---|
+| Đọc file · xem thông tin máy, CPU/RAM/ổ đĩa, tiến trình, service, màn hình | *(có sẵn)* | *(có sẵn)* |
+| Thêm · xoá · sửa file | `can_write = $true` | `--allow-write` |
+| Chạy lệnh PowerShell/cmd · cài phần mềm · tắt ứng dụng | `can_exec = $true` | `--allow-exec` |
+| Khoá màn hình · tắt máy · khởi động lại | `can_power = $true` | `--allow-power` |
 
-1. Khai lại thiết bị ở Bước 2 với `can_write = $true`
-2. Thêm `--allow-write` vào lệnh chạy agent
+Thiếu **một** phía là vẫn bị chặn — cố ý như vậy để sơ suất ở một chỗ không mở
+quyền. Đổi quyền sau này thì dùng `PATCH` (giữ nguyên token, không phải chạy lại
+agent):
 
-Thiếu bất kỳ phía nào thì vẫn là chỉ đọc.
+```powershell
+irm -Method Patch https://gpt.vhtatn.io.vn/api/devices/laptop-win `
+  -Headers @{ Authorization = "Bearer $KEY" } `
+  -ContentType "application/json" -Body '{"can_exec":true}'
+```
+
+Hoặc nhanh hơn: vào **MCP → Thiết bị của tôi**, tích ô ngay trên dòng thiết bị.
+
+> **`--allow-exec` cần biết trước khi bật:** lúc đó danh sách thư mục ở `--path`
+> **không còn tác dụng** với lệnh shell. Một lệnh PowerShell đọc/ghi/xoá được mọi
+> thứ mà tài khoản Windows của bạn với tới. Muốn hẹp lại thì thêm
+> `--exec-allow winget --exec-allow sc` — chỉ cho lệnh bắt đầu bằng tiền tố đó.
 
 ---
 
@@ -180,6 +202,19 @@ Nhắn bot (Zalo/Telegram):
 - *"liệt kê thiết bị của tôi"* → thấy `laptop-win` 🟢 online
 - *"xem thư mục Downloads trên Laptop Windows có gì"*
 - *"đọc file C:\Users\Viet\Downloads\ghichu.txt"*
+- *"laptop Windows còn bao nhiêu RAM, ổ C còn trống bao nhiêu"*
+- *"Chrome trên laptop đang ăn bao nhiêu bộ nhớ"*
+- *"laptop có đang khoá màn hình không"*
+
+Có `--allow-exec` thì thêm được:
+
+- *"chạy `ipconfig /all` trên laptop"*
+- *"cài git trên laptop bằng winget"*
+- *"tắt Zoom trên laptop"*
+
+Có `--allow-power`:
+
+- *"khoá màn hình laptop"* · *"khởi động lại laptop"*
 
 Nếu bot nói không có công cụ đó: vào **Cài đặt → MCP**, bật **"Thiết bị của
 tôi"** (`device_fs`), rồi restart container một lần (hub nạp MCP lúc khởi
@@ -244,8 +279,11 @@ Nhấn `Win+R`, gõ `shell:startup`, copy file `.bat` vào thư mục vừa mở
 
 ## Những giới hạn cần biết trước
 
-- **Không có lệnh shell.** Agent chỉ đọc/ghi file. Bot không chạy được chương
-  trình gì trên máy bạn.
+- **Lệnh shell chỉ chạy khi bạn bật `--allow-exec`.** Không bật thì bot không
+  chạy được chương trình gì trên máy bạn — nhưng vẫn xem được thông tin máy,
+  CPU/RAM, tiến trình, service (agent chỉ dùng các lệnh cố định, chỉ đọc).
+- Mỗi lệnh bot gửi xuống đều **in ra cửa sổ PowerShell** kèm nội dung lệnh — bạn
+  luôn thấy được cái gì vừa chạy trên máy mình.
 - **Trần dung lượng**: đọc 200KB, ghi 500KB, liệt kê 500 mục, tìm 200 kết quả
   mỗi lần.
 - **Xoá**: chỉ xoá được file lẻ và thư mục **rỗng**. Không xoá cây thư mục.

@@ -974,7 +974,7 @@ function IngestTab({ showToast }: TabProps) {
 type DeviceRow = {
   name: string; label?: string; connected?: boolean; platform?: string;
   hostname?: string; agent_version?: string; paths?: string[];
-  can_write?: boolean; ops?: number; connected_at?: number;
+  can_write?: boolean; can_exec?: boolean; can_power?: boolean; ops?: number; connected_at?: number;
 };
 type OsId = "win" | "mac" | "linux" | "termux";
 const OS_LIST: { id: OsId; label: string; shell: string }[] = [
@@ -990,10 +990,15 @@ type Step = { title: string; cmd?: string; note?: string };
 
 /** Các bước cài ĐẦY ĐỦ cho MỘT máy mới — gồm cả việc cài Python. */
 function installSteps(
-  os: OsId, wsUrl: string, token: string, paths: string[], canWrite: boolean,
+  os: OsId, wsUrl: string, token: string, paths: string[],
+  perm: { write: boolean; exec: boolean; power: boolean },
 ): Step[] {
   if (!token || !wsUrl) return [];
-  const w = canWrite ? " --allow-write" : "";
+  // Cờ phải khớp ô tích: bật quyền ở dự án mà thiếu cờ khi chạy agent là vẫn bị
+  // chặn tại máy — cố ý hai phía, nên lệnh sinh ra phải mang sẵn đúng cờ.
+  const w = (perm.write ? " --allow-write" : "")
+    + (perm.exec ? " --allow-exec" : "")
+    + (perm.power ? " --allow-power" : "");
   const q = (x: string) => `"${x}"`;
   const pArgs = paths.map((x) => `--path ${q(x)}`).join(" ");
   const run = (py: string) =>
@@ -1089,7 +1094,10 @@ function DevicesTab({ showToast }: TabProps) {
   // Token chỉ tồn tại trong bộ nhớ trang, ngay sau khi tạo/xoay — không bao
   // giờ lưu lại, cũng không đọc ngược từ server (config không phải nơi tra
   // cứu bí mật).
-  const [fresh, setFresh] = useState<{ name: string; token: string; paths: string[]; canWrite: boolean } | null>(null);
+  const [fresh, setFresh] = useState<{
+    name: string; token: string; paths: string[];
+    perm: { write: boolean; exec: boolean; power: boolean };
+  } | null>(null);
   const [os, setOs] = useState<OsId>("win");
   const [mode, setMode] = useState<"domain" | "lan">("domain");
   const [lanUrl, setLanUrl] = useState("");
@@ -1100,6 +1108,8 @@ function DevicesTab({ showToast }: TabProps) {
   const [label, setLabel] = useState("");
   const [pathsText, setPathsText] = useState("");
   const [canWrite, setCanWrite] = useState(false);
+  const [canExec, setCanExec] = useState(false);
+  const [canPower, setCanPower] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -1137,10 +1147,12 @@ function DevicesTab({ showToast }: TabProps) {
     setBusy(true);
     try {
       const r = await request.post("/api/devices", {
-        name: name.trim(), label: label.trim(), paths: parsedPaths, can_write: canWrite,
+        name: name.trim(), label: label.trim(), paths: parsedPaths,
+        can_write: canWrite, can_exec: canExec, can_power: canPower,
       });
       if (r.data?.ok) {
-        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [], canWrite: !!r.data.can_write });
+        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [],
+          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec, power: !!r.data.can_power } });
         setName(""); setLabel(""); setPathsText(""); setCanWrite(false);
         showToast(`Đã thêm ${r.data.name} — copy lệnh cài bên dưới`);
         load();
@@ -1157,10 +1169,35 @@ function DevicesTab({ showToast }: TabProps) {
     try {
       const r = await request.post(`/api/devices/${encodeURIComponent(d.name)}/rotate`);
       if (r.data?.ok) {
-        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [], canWrite: !!r.data.can_write });
+        setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [],
+          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec, power: !!r.data.can_power } });
         showToast("Token mới đã sinh — copy lệnh cài bên dưới");
         load();
       } else showToast(r.data?.error || "Lỗi", false);
+    } catch (e) { showToast(String((e as Error).message), false); }
+  };
+
+  /** Bật/tắt một quyền của thiết bị ĐÃ CÓ, giữ nguyên token.
+   *  Không đi đường xoá-rồi-thêm-lại: xoá là mất token, phải chạy lại agent
+   *  trên máy đó — quá đắt chỉ để tích một ô. */
+  const togglePerm = async (d: DeviceRow, key: "can_write" | "can_exec" | "can_power") => {
+    const next = !d[key];
+    const nhan = { can_write: "ghi file", can_exec: "chạy lệnh", can_power: "tắt/khoá máy" }[key];
+    const co = { can_write: "--allow-write", can_exec: "--allow-exec", can_power: "--allow-power" }[key];
+    if (next && key !== "can_write"
+        && !window.confirm(`Bật quyền «${nhan}» cho ${d.label || d.name}?\n\n`
+          + (key === "can_exec"
+            ? "Lệnh shell đọc/ghi/xoá được MỌI thứ tài khoản chạy agent với tới, kể cả ngoài thư mục đã khai."
+            : "Cho phép tắt máy / khởi động lại — người đang dùng máy sẽ mất phiên làm việc.")
+          + `\n\nAgent trên máy đó cũng phải chạy kèm ${co}, nếu không vẫn bị chặn.`)) return;
+    try {
+      const r = await request.patch(`/api/devices/${encodeURIComponent(d.name)}`, { [key]: next });
+      if (r.data?.ok) {
+        showToast(next
+          ? `Đã bật «${nhan}» — nhớ chạy lại agent kèm ${co}`
+          : `Đã tắt «${nhan}»`);
+        await load();
+      } else showToast("Lỗi: " + (r.data?.error || "?"), false);
     } catch (e) { showToast(String((e as Error).message), false); }
   };
 
@@ -1176,7 +1213,7 @@ function DevicesTab({ showToast }: TabProps) {
   };
 
   const activeUrl = mode === "domain" ? wsUrl : lanUrl;
-  const steps = fresh ? installSteps(os, activeUrl, fresh.token, fresh.paths, fresh.canWrite) : [];
+  const steps = fresh ? installSteps(os, activeUrl, fresh.token, fresh.paths, fresh.perm) : [];
   const copy = async (text: string, what = "lệnh") => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1337,9 +1374,20 @@ function DevicesTab({ showToast }: TabProps) {
                     }`} />
                     <span className="font-semibold">{d.label || d.name}</span>
                     <code className="text-xs text-[var(--muted-foreground)]">{d.name}</code>
-                    {d.can_write
-                      ? <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-500">ghi được</span>
-                      : <span className="rounded bg-[var(--muted)]/40 px-1.5 py-0.5 text-[11px] font-semibold text-[var(--muted-foreground)]">chỉ đọc</span>}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    <span className="text-[var(--muted-foreground)]">quyền:</span>
+                    {([
+                      ["can_write", "thêm/xoá/sửa file"],
+                      ["can_exec", "chạy lệnh"],
+                      ["can_power", "tắt/khoá máy"],
+                    ] as const).map(([k, nhan]) => (
+                      <label key={k} className="inline-flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" className="size-3.5" checked={!!d[k]}
+                          onChange={() => togglePerm(d, k)} />
+                        <span className={d[k] ? "font-medium text-amber-600" : "text-[var(--muted-foreground)]"}>{nhan}</span>
+                      </label>
+                    ))}
                   </div>
                   <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                     {d.connected
@@ -1378,17 +1426,46 @@ function DevicesTab({ showToast }: TabProps) {
             onChange={(e) => setPathsText(e.target.value)}
             placeholder={"C:\\Users\\Viet\\Downloads\n/home/me/project"} />
         </Field>
-        <label className="flex items-start gap-2.5 text-sm cursor-pointer">
-          <input type="checkbox" className="mt-0.5" checked={canWrite}
-            onChange={(e) => setCanWrite(e.target.checked)} />
-          <span>
-            Cho phép <b>ghi/sửa file</b>
-            <span className="block text-xs text-[var(--muted-foreground)]">
-              Nên để TẮT lần đầu. Bật rồi vẫn phải thêm cờ <code>--allow-write</code> khi chạy
-              agent — cả hai phía đều phải bật, để không mở quyền ghi do sơ suất một chỗ.
+        <div className="space-y-2.5">
+          <div className="text-sm font-medium">Quyền cấp cho thiết bị</div>
+          <p className="text-xs text-[var(--muted-foreground)] -mt-1">
+            Đọc file + tra cứu máy (thông tin, CPU/RAM/ổ đĩa, tiến trình, service, màn hình) <b>luôn có sẵn</b>, không cần tích gì.
+            Mỗi ô dưới đây còn phải kèm cờ tương ứng khi chạy agent — <b>hai phía đều phải bật</b>, để sơ suất một chỗ không mở quyền.
+          </p>
+
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={canWrite}
+              onChange={(e) => setCanWrite(e.target.checked)} />
+            <span>
+              Cho phép <b>thêm · xoá · sửa file</b>
+              <span className="block text-xs text-[var(--muted-foreground)]">
+                Chỉ trong các thư mục khai ở trên. Ghi đè luôn tạo bản sao <code>.c2a.bak</code>. Cờ: <code>--allow-write</code>
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={canExec}
+              onChange={(e) => setCanExec(e.target.checked)} />
+            <span>
+              Cho phép <b>chạy lệnh</b> — PowerShell · cmd · sh, và tắt ứng dụng
+              <span className="block text-xs text-amber-600">
+                Bật cái này là <b>allowlist thư mục hết ý nghĩa</b>: một lệnh shell đọc/ghi/xoá được mọi thứ tài khoản chạy agent với tới, kể cả ngoài thư mục đã khai. Đủ để cài phần mềm, xem cấu hình, quản lý service. Cờ: <code>--allow-exec</code>
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={canPower}
+              onChange={(e) => setCanPower(e.target.checked)} />
+            <span>
+              Cho phép <b>khoá màn hình · ngủ · đăng xuất · tắt máy · khởi động lại</b>
+              <span className="block text-xs text-amber-600">
+                Ảnh hưởng trực tiếp người đang dùng máy: tắt/khởi động lại là mất phiên làm việc và agent mất kết nối. Cờ: <code>--allow-power</code>
+              </span>
+            </span>
+          </label>
+        </div>
         <div className="flex items-center gap-3 flex-wrap">
           <button className="btn btn-primary" disabled={busy} onClick={create}>
             {busy ? "Đang thêm..." : "Thêm & lấy lệnh cài"}

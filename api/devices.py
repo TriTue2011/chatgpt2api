@@ -15,6 +15,16 @@ from utils.log import logger
 
 _READ_OPS = {"ls", "read", "stat", "find"}
 _WRITE_OPS = {"write", "mkdir", "delete", "append"}
+# Tra cứu hệ thống: agent chỉ chạy các lệnh CỐ ĐỊNH do chính nó chọn (tasklist,
+# ps, systemctl list-units…), mô hình không chèn được chữ nào vào đó và tất cả
+# đều chỉ đọc. Vì vậy không đòi quyền riêng — nếu đòi thì muốn xem RAM cũng phải
+# mở luôn quyền chạy lệnh tuỳ ý, tức đánh đổi ngược.
+_INFO_OPS = {"sysinfo", "resources", "processes", "services", "screen"}
+# Chạy lệnh tuỳ ý + tắt tiến trình.
+_EXEC_OPS = {"exec", "kill"}
+# Khoá / ngủ / đăng xuất / tắt / khởi động lại.
+_POWER_OPS = {"power"}
+_ALL_OPS = _READ_OPS | _WRITE_OPS | _INFO_OPS | _EXEC_OPS | _POWER_OPS
 
 
 def create_router() -> APIRouter:
@@ -113,6 +123,8 @@ def create_router() -> APIRouter:
         return {"ok": True, "name": name, "token": cfg["token"],
                 "paths": cfg.get("paths") or [],
                 "can_write": bool(cfg.get("can_write")),
+                "can_exec": bool(cfg.get("can_exec")),
+                "can_power": bool(cfg.get("can_power")),
                 "ws_url": _agent_ws_url()}
 
     @router.post("/api/devices")
@@ -151,16 +163,71 @@ def create_router() -> APIRouter:
             "token": token,
             "paths": paths,
             "can_write": bool((payload or {}).get("can_write", False)),
+            "can_exec": bool((payload or {}).get("can_exec", False)),
+            "can_power": bool((payload or {}).get("can_power", False)),
             "enabled": True,
         }
         config.data["device_agents"] = devs
         config._save()
         logger.info({"event": "device_registered", "device": name,
-                     "paths": len(paths), "can_write": devs[name]["can_write"]})
+                     "paths": len(paths), "can_write": devs[name]["can_write"],
+                     "can_exec": devs[name]["can_exec"],
+                     "can_power": devs[name]["can_power"]})
         return {"ok": True, "name": name, "token": token,
                 "paths": paths, "can_write": devs[name]["can_write"],
+                "can_exec": devs[name]["can_exec"],
+                "can_power": devs[name]["can_power"],
                 "ws_url": _agent_ws_url(),
                 "note": "Giữ token này — nó không hiện lại ở đâu khác."}
+
+    @router.patch("/api/devices/{name}")
+    async def devices_update(name: str, payload: dict,
+                             authorization: str | None = Header(default=None)):
+        """Sửa quyền / nhãn / thư mục của thiết bị ĐÃ CÓ, giữ nguyên token.
+
+        Không dùng đường xoá-rồi-thêm-lại cho việc này: xoá là mất token, phải
+        chạy lại agent trên máy đó — quá đắt chỉ để tích thêm một ô quyền.
+
+        Body: {label?, paths?, can_write?, can_exec?, can_power?}
+        """
+        require_admin(authorization)
+        devs = dict(config.data.get("device_agents") or {})
+        cfg = devs.get(name)
+        if not isinstance(cfg, dict):
+            raise HTTPException(404, f"không có thiết bị '{name}'")
+        cfg = dict(cfg)
+        body = payload or {}
+
+        if "label" in body:
+            cfg["label"] = str(body.get("label") or name)
+        if "paths" in body:
+            paths = [str(p).strip() for p in (body.get("paths") or []) if str(p).strip()]
+            if not paths:
+                raise HTTPException(400, "phải khai ít nhất một thư mục trong 'paths'")
+            cfg["paths"] = paths
+        for key in ("can_write", "can_exec", "can_power"):
+            if key in body:
+                cfg[key] = bool(body.get(key))
+
+        devs[name] = cfg
+        config.data["device_agents"] = devs
+        config._save()
+        # Phiên đang mở đọc quyền từ cfg cũ — trỏ lại để đổi có hiệu lực ngay,
+        # không phải chờ thiết bị nối lại.
+        session = da.get(name)
+        if session is not None:
+            session.cfg = cfg
+        logger.info({"event": "device_updated", "device": name,
+                     "can_write": bool(cfg.get("can_write")),
+                     "can_exec": bool(cfg.get("can_exec")),
+                     "can_power": bool(cfg.get("can_power"))})
+        return {"ok": True, "name": name, "paths": cfg.get("paths") or [],
+                "can_write": bool(cfg.get("can_write")),
+                "can_exec": bool(cfg.get("can_exec")),
+                "can_power": bool(cfg.get("can_power")),
+                "note": ("Đổi quyền ở dự án là chưa đủ — agent trên máy đó cũng "
+                         "phải chạy kèm cờ tương ứng (--allow-exec / "
+                         "--allow-power). Thiếu một trong hai phía là vẫn bị chặn.")}
 
     @router.delete("/api/devices/{name}")
     async def devices_remove(name: str,
@@ -194,7 +261,7 @@ def create_router() -> APIRouter:
         args = (payload or {}).get("args") or {}
         if not isinstance(args, dict):
             args = {}
-        if op not in (_READ_OPS | _WRITE_OPS):
+        if op not in _ALL_OPS:
             raise HTTPException(400, f"thao tác không hỗ trợ: {op}")
 
         session = da.get(name)
@@ -203,6 +270,16 @@ def create_router() -> APIRouter:
         if op in _WRITE_OPS and not session.can_write:
             return {"ok": False,
                     "error": f"thiết bị '{name}' chỉ được cấp quyền ĐỌC (can_write=false)"}
+        if op in _EXEC_OPS and not session.can_exec:
+            return {"ok": False,
+                    "error": (f"thiết bị '{name}' KHÔNG được cấp quyền chạy lệnh "
+                              f"(can_exec=false). Bật ở MCP → Thiết bị của tôi, "
+                              f"rồi chạy lại agent kèm --allow-exec.")}
+        if op in _POWER_OPS and not session.can_power:
+            return {"ok": False,
+                    "error": (f"thiết bị '{name}' KHÔNG được cấp quyền tắt/khoá máy "
+                              f"(can_power=false). Bật ở MCP → Thiết bị của tôi, "
+                              f"rồi chạy lại agent kèm --allow-power.")}
 
         # Kiểm allowlist NGAY Ở GATEWAY, trước khi gửi xuống thiết bị. Agent
         # cũng tự kiểm lại — hai lớp cố ý trùng nhau.
