@@ -264,6 +264,11 @@ type StorageResp = {
 };
 
 const BULK_KINDS: { id: string; label: string; hint: string }[] = [
+  {
+    id: "slide", label: "Slide (gần như miễn phí)",
+    hint: "chữ thật, KHÔNG cần OCR — phân bổ tuần/tiết + phương pháp dạy. "
+      + "192/198 quyển có, cả kho ~1,2 MB, 0 lượt gọi model",
+  },
   { id: "sgk", label: "SGK", hint: "sách học sinh — nội dung phải học" },
   { id: "sgv", label: "SGV + KHBD", hint: "sách giáo viên, kế hoạch bài dạy — cách dạy" },
   { id: "vbt", label: "VBT + SBT", hint: "vở & sách bài tập — mẫu ra đề" },
@@ -285,7 +290,9 @@ function BulkSgkPanel() {
   const [st, setSt] = useState<BulkResp | null>(null);
   const [store, setStore] = useState<StorageResp | null>(null);
   const [busy, setBusy] = useState(false);
-  const [kinds, setKinds] = useState<string[]>(["sgk"]);
+  // Bật sẵn slide: nó không tốn lượt gọi model nào mà lại là nguồn phân bổ
+  // tuần–tiết duy nhất lấy được không qua OCR. Bỏ tick được nếu không muốn.
+  const [kinds, setKinds] = useState<string[]>(["slide", "sgk"]);
   const [allSets, setAllSets] = useState(false);
   const [keepPdf, setKeepPdf] = useState(false);
   const [gradeFrom, setGradeFrom] = useState(1);

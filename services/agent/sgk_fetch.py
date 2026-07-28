@@ -137,6 +137,10 @@ KIND_COLLECTION: dict[str, str] = {
     "sgv": "kb_giao_duc_sgv",
     "vbt": "kb_giao_duc_vbt",
     "tap_huan": "kb_giao_duc_tailieu",
+    # Slide giới thiệu / tập huấn (Google Slides, CHỮ THẬT không cần OCR). Kho
+    # riêng vì cả kho slide chỉ vài trăm KB: để lẫn vào kb_giao_duc_tailieu
+    # (10.412 trang) thì mấy dòng phân bổ tuần–tiết bị loãng đúng lúc cần nhất.
+    "slide": "kb_giao_duc_slide",
     "other": "kb_giao_duc_tailieu",
 }
 
@@ -147,6 +151,7 @@ KIND_HEAD: dict[str, str] = {
     "sgv": "SGV/KHBD (sách giáo viên · kế hoạch bài dạy)",
     "vbt": "VBT/SBT (vở & sách bài tập)",
     "tap_huan": "Tài liệu tập huấn",
+    "slide": "Slide giới thiệu · tập huấn",
     "other": "Tài liệu",
 }
 

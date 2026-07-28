@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from services import net_guard
+from services import ocr_rules
 from services.agent import sgk_fetch as sf
 from services.agent import teacher_workspace as tw
 
@@ -430,7 +431,6 @@ def build_pdf(image_urls: Iterable[str], out_path: str | Path,
 # Mốc trang. Có mốc thì đếm được model TRẢ THẬT bao nhiêu trang, không có thì
 # khối 20 trang trả về 8 trang vẫn được nhận như đủ — kiểu hỏng tệ nhất vì im
 # lặng. Đây là điểm khác biệt chính so với bản trước.
-_PAGE_MARK_RE = re.compile(r"<<<\s*TRANG\s+(\d+)\s*>>>")
 
 # Prompt theo kỷ luật của các bộ OCR tài liệu được đánh giá cao nhất trên GitHub
 # (olmOCR — Apache-2.0, và MinerU/marker/docling): nêu rõ thứ tự đọc, công thức
@@ -442,73 +442,26 @@ _PAGE_MARK_RE = re.compile(r"<<<\s*TRANG\s+(\d+)\s*>>>")
 _DOC_PROMPT = (
     "Bạn là bộ OCR tài liệu. Chép TOÀN BỘ nội dung các trang sách này thành "
     "Markdown tiếng Việt.\n\n"
-    "BẮT BUỘC:\n"
-    "1. Trước mỗi trang, ghi đúng một dòng mốc: <<<TRANG n>>> với n là số tôi "
-    "nêu ở cuối prompt — ĐẾM THEO THỨ TỰ TRANG TRONG TỆP, KHÔNG dùng số trang in "
-    "trên giấy (hai số này lệch nhau vì tệp tính cả bìa). Nếu trên trang có in số "
+    "MỐC TRANG (quan trọng nhất):\n"
+    "Trước mỗi trang, ghi đúng một dòng mốc: <<<TRANG n>>> với n là số tôi nêu ở "
+    "cuối prompt — ĐẾM THEO THỨ TỰ TRANG TRONG TỆP, KHÔNG dùng số trang in trên "
+    "giấy (hai số này lệch nhau vì tệp tính cả bìa). Nếu trên trang có in số "
     "trang thì ghi thêm ngay sau mốc, dạng: <<<TRANG 80>>> (số in: 79). Phải có "
-    "mốc cho MỌI trang, kể cả trang trắng, bìa, hay trang chỉ có hình.\n"
-    "2. Đọc theo thứ tự đọc của người: cột trái xong mới sang cột phải; khung/"
-    "hộp thoại đọc theo vị trí trên trang.\n"
-    "3. Công thức, phân số, số mũ, chỉ số dưới, ký hiệu toán: viết LaTeX — $...$ "
-    "trong dòng, $$...$$ tách dòng. KHÔNG chép phẳng (x² không được thành x2).\n"
-    "4. Bảng: dựng bảng Markdown. Ô gộp thì lặp lại giá trị cho từng ô.\n"
-    "5. Hình minh hoạ: ghi ![](hình: mô tả ngắn những gì THẤY trên hình). Chỉ mô "
-    "tả điều nhìn thấy, không suy diễn, không đặt tên nhân vật nếu trang không "
-    "ghi tên.\n"
-    "6. Giữ nguyên số bài, tên bài, số thứ tự câu hỏi, số bài tập đúng như trên "
-    "trang.\n\n"
-    "TUYỆT ĐỐI KHÔNG:\n"
-    "· Không tóm tắt, không diễn giải, không thêm lời dẫn hay nhận xét.\n"
-    "· Không bịa nội dung. Chữ nào mờ/bị che/không đọc được thì ghi [không đọc "
-    "được] tại đúng chỗ đó — thà thiếu một chữ còn hơn đoán sai một câu.\n"
-    "· Không bỏ trang. Trang trắng thì ghi mốc rồi để trống.\n"
-    "· Không lặp lại một đoạn nhiều lần.\n"
-    "· Không thêm lời mở đầu kiểu \"Dưới đây là nội dung\" — bắt đầu ngay bằng "
-    "mốc <<<TRANG n>>>."
+    "mốc cho MỌI trang, kể cả trang trắng, bìa, hay trang chỉ có hình. Không bỏ "
+    "trang — trang trắng thì ghi mốc rồi để trống.\n"
+    "Bắt đầu đầu ra ngay bằng mốc <<<TRANG n>>>, không có lời mở đầu.\n\n"
+    # Phần còn lại DÙNG CHUNG với services/pdf_to_word (xem services/ocr_rules).
+    # math="latex" vì đường này chỉ vào RAG, không đổ vào file Word — LaTeX giữ
+    # được cấu trúc công thức để trích dẫn lại.
+    + ocr_rules.rules(math=ocr_rules.MATH_LATEX)
 )
 
-
-def _pages_seen(md: str) -> set[int]:
-    """Số trang mà model THẬT SỰ trả về, đọc từ mốc <<<TRANG n>>>."""
-    return {int(m.group(1)) for m in _PAGE_MARK_RE.finditer(md or "")}
-
-
-# Ngưỡng nhận một dòng là "lặp bệnh lý". VLM đọc ảnh đôi khi rơi vào vòng lặp
-# và nhả cùng một dòng hàng trăm lần — đầu ra dài, trông như có nội dung, nên
-# mọi phép kiểm theo độ dài đều lọt.
-_DEGEN_MIN_LEN = 12
-_DEGEN_REPEAT = 8
-# Dòng chỉ gồm mấy ký tự này là KẺ SẴN, không phải nội dung: chỗ trống điền
-# đáp án, đường kẻ ngang, viền bảng Markdown. Vở bài tập có hàng chục dòng như
-# nhau là chuyện thường — tính chúng vào phép đo lặp thì chính những quyển vở
-# bài tập cần nạp lại bị loại vì "lặp vòng".
-_DEGEN_FILLER = set(".…_-—–=|*+ \t·•’'\"")
+# Soi chiếu lại ocr_rules, KHÔNG giữ bản thứ hai.
+_PAGE_MARK_RE = ocr_rules.PAGE_MARK_RE
+_pages_seen = ocr_rules.pages_seen
+_looks_degenerate = ocr_rules.looks_degenerate
 
 
-def _is_filler(line: str) -> bool:
-    return bool(line) and set(line) <= _DEGEN_FILLER
-
-
-def _looks_degenerate(md: str) -> bool:
-    """True khi đầu ra bị lặp vòng — nhận nó vào kho là nhồi rác vào RAG.
-
-    Bỏ qua dòng kẻ sẵn (xem ``_DEGEN_FILLER``) rồi mới đo, theo hai hướng:
-      · lặp LIỀN KỀ từ 8 dòng giống nhau — dấu hiệu model rơi vào vòng lặp;
-      · một dòng chiếm QUÁ NỬA đầu ra — lặp xen kẽ, dài mà rỗng nghĩa.
-    """
-    lines = [ln.strip() for ln in (md or "").splitlines()
-             if len(ln.strip()) >= _DEGEN_MIN_LEN and not _is_filler(ln.strip())]
-    if len(lines) < _DEGEN_REPEAT:
-        return False
-    run = 1
-    for a, b in zip(lines, lines[1:]):
-        run = run + 1 if a == b else 1
-        if run >= _DEGEN_REPEAT:
-            return True
-    from collections import Counter
-    _top, n = Counter(lines).most_common(1)[0]
-    return n >= _DEGEN_REPEAT and n >= len(lines) * 0.5
 # Số trang mỗi lượt gọi. Cả quyển một lượt thì đầu ra bị cắt cụt (134 trang ≈
 # 60k token markdown, vượt trần output), nên cắt khối. 20 trang ≈ 12k token —
 # an toàn, mà vẫn ít hơn 20 lần so với gửi từng trang một.
@@ -753,6 +706,7 @@ DOC_KIND_LABEL = {
     "sgv": "SGV/KHBD (sách giáo viên · kế hoạch bài dạy)",
     "vbt": "VBT/SBT (vở & sách bài tập)",
     "tap_huan": "Tài liệu tập huấn",
+    "slide": "Slide giới thiệu · tập huấn (chữ thật, không OCR)",
     "other": "Tài liệu",
 }
 
@@ -778,6 +732,200 @@ def doc_kind(reader_url: str) -> str:
         if slug.startswith(pre):
             return "sgk"
     return "other"
+
+
+# ── Slide giới thiệu / tập huấn: nguồn CHỮ THẬT, không phải ảnh ─────────────
+#
+# Trang chi tiết còn hai mục "Slide" mà `reader_urls()` không thấy vì chúng KHÔNG
+# phải link /doc-sach/ — chúng trỏ ra Google Slides hoặc SharePoint.
+#
+# Đo thật 2026-07-29: Google Slides tải được KHÔNG cần đăng nhập qua
+# `/export/txt`, chỉ ~3 KB mỗi bộ, mà nội dung là phân bổ tuần–tiết và phương
+# pháp dạy — đúng thứ muốn có từ SGV thì phải OCR hàng trăm trang. SharePoint trả
+# trang đăng nhập (magic 0d0a3c21 = HTML) nên bỏ.
+#
+# Ví dụ nội dung thật (Tiếng Việt 1 tập một):
+#   "Tuần 0: HS làm quen · Tuần 1–6: 1–2 âm chữ · Bài 1: A a"
+#   "Học vần: chủ yếu 3 vần/bài, không 'tăng tải'"
+#   "Phần cứng: 10 tiết, 2 tiết linh hoạt"
+_GSLIDE_RE = re.compile(
+    r"https://docs\.google\.com/presentation/d/([A-Za-z0-9_-]{20,})")
+_SHAREPOINT_RE = re.compile(r"https://[a-z0-9-]+\.sharepoint\.com/", re.I)
+# Chỉ host này, chỉ đường dẫn export do CHÍNH module dựng từ ID đã lọc bằng
+# `_GSLIDE_RE` — không nhận URL tuỳ ý từ ngoài, nên không mở đường SSRF.
+_GSLIDE_HOSTS = {"docs.google.com"}
+_SLIDE_MAX_BYTES = 2 * 1024 * 1024
+
+
+def slide_ids(detail_url: str) -> list[str]:
+    """ID các bộ slide Google trên một trang chi tiết, theo thứ tự xuất hiện."""
+    try:
+        html = _get(detail_url)
+    except Exception as exc:
+        logger.warning("sgk_taphuan.slide_ids lỗi (%s): %s", detail_url[:80], exc)
+        return []
+    ids = list(dict.fromkeys(_GSLIDE_RE.findall(html)))
+    n_sp = len(_SHAREPOINT_RE.findall(html))
+    if n_sp:
+        # Ghi nhận chứ không im lặng: đây là nội dung CÓ mà lấy không được, để
+        # sau này ai đọc log còn biết là bỏ có chủ ý, không phải quên.
+        logger.info("sgk_taphuan.slide_ids: bỏ %s link SharePoint (đòi đăng nhập) ở %s",
+                    n_sp, detail_url[-60:])
+    return ids
+
+
+def _slide_export(gid: str, fmt: str, max_bytes: int) -> bytes:
+    """Tải một bản xuất của bộ slide. URL do CHÍNH hàm này dựng từ ``gid`` đã
+    lọc bằng regex, host bị kẹp về docs.google.com — không nhận URL từ ngoài."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,}", str(gid or "")):
+        return b""
+    url = f"https://docs.google.com/presentation/d/{gid}/export/{fmt}"
+    try:
+        return net_guard.safe_fetch(url, allow_hosts=_GSLIDE_HOSTS, timeout=90,
+                                    max_bytes=max_bytes)
+    except Exception as exc:
+        logger.warning("sgk_taphuan._slide_export lỗi (%s/%s): %s",
+                       gid[:16], fmt, exc)
+        return b""
+
+
+def slide_text(gid: str) -> str:
+    """Chữ trong các hộp text của bộ slide. Rỗng = không lấy được.
+
+    Dùng ``/export/txt`` (vài KB) chứ KHÔNG phải ``/export/pptx``: bản pptx của
+    cùng bộ slide nặng 32 MB vì nhúng ảnh, mà ở đây chỉ cần chữ.
+    """
+    return _slide_export(gid, "txt", _SLIDE_MAX_BYTES).decode(
+        "utf-8", errors="ignore").strip()
+
+
+def _pdf_pages(blob: bytes) -> int:
+    """Số trang của một PDF trong bộ nhớ. 0 = không đọc được."""
+    if not blob[:5] == b"%PDF-":
+        return 0
+    try:
+        import fitz
+        with fitz.open(stream=blob, filetype="pdf") as doc:
+            return int(doc.page_count)
+    except Exception as exc:
+        logger.warning("sgk_taphuan._pdf_pages lỗi: %s", exc)
+        return 0
+
+
+# Ngưỡng nhận ra SLIDE ẢNH. Đo thật 2026-07-29 trên ba bộ đại diện:
+#   Toán 1 tập một      15 slide ·   656 ký tự →  43 ký tự/slide  ← slide ẢNH
+#   Tiếng Việt 1 tập một 21 slide ·  2.511 ký tự → 119 ký tự/slide
+#   Tiếng Việt 2 tập một 82 slide · 18.994 ký tự → 231 ký tự/slide
+# Dưới ngưỡng nghĩa là nội dung nằm trong ẢNH chèn vào slide, không phải hộp
+# text — bản /export/txt chỉ ra tiêu đề, phần dạy nằm hết trong ảnh. Lấy 100 để
+# Tiếng Việt 1 (119) vẫn đi đường chữ.
+_SLIDE_CHARS_PER_SLIDE_MIN = 100
+_SLIDE_PDF_MAX_BYTES = 60 * 1024 * 1024
+
+
+def slide_content(gid: str, *, model: str = "") -> dict[str, Any]:
+    """Nội dung một bộ slide, TỰ CHỌN đường chữ hay đường OCR ảnh.
+
+    Vì sao phải có cả hai: nhiều bộ slide của kho là ẢNH chụp trang sách chèn
+    vào, hộp text chỉ có tiêu đề. Chỉ lấy ``/export/txt`` thì được 656 ký tự cho
+    cả 15 slide rồi tưởng là đã nạp xong — mất toàn bộ phần dạy mà không có lỗi
+    nào để lần ra.
+
+    Đường ảnh dùng ``/export/pdf`` (Google xuất được, không cần đăng nhập) rồi
+    đi ĐÚNG :func:`book_markdown` — tức được cả mốc trang, đối chiếu độ phủ,
+    LaTeX và chặn lặp vòng, không phải viết lại đường OCR thứ ba.
+
+    Trả ``{ok, mode, text, slides, chars, error}`` với ``mode`` ∈ {text, ocr}.
+    """
+    txt = slide_text(gid)
+    pdf = _slide_export(gid, "pdf", _SLIDE_PDF_MAX_BYTES)
+    slides = _pdf_pages(pdf)
+    chars = len(txt)
+    per = chars / slides if slides else (chars if chars else 0)
+
+    # Chữ đủ dày → dùng luôn, KHÔNG gọi model. Chữ từ hộp text là chính xác
+    # tuyệt đối, không có chỗ cho model bịa.
+    if slides and per >= _SLIDE_CHARS_PER_SLIDE_MIN:
+        return {"ok": bool(txt), "mode": "text", "text": txt,
+                "slides": slides, "chars": chars, "error": ""}
+    if not pdf:
+        # Không xuất được PDF thì đành lấy chữ mỏng, nhưng nói rõ là mỏng.
+        return {"ok": bool(txt), "mode": "text",
+                "text": txt, "slides": slides, "chars": chars,
+                "error": "" if txt else "không lấy được cả chữ lẫn PDF"}
+
+    import tempfile
+    tmp = Path(tempfile.mkstemp(suffix=".pdf")[1])
+    try:
+        tmp.write_bytes(pdf)
+        md = book_markdown(tmp, model=model)
+    except Exception as exc:
+        logger.warning("sgk_taphuan.slide_content OCR lỗi (%s): %s", gid[:16], exc)
+        # OCR chết thì vẫn còn chữ mỏng — hơn là mất trắng.
+        return {"ok": bool(txt), "mode": "text", "text": txt, "slides": slides,
+                "chars": chars, "error": f"OCR slide lỗi: {str(exc)[:150]}"}
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    # Giữ CẢ hai: chữ hộp text chính xác tuyệt đối, phần OCR bù nội dung trong
+    # ảnh. Ghi rõ nguồn từng phần để đọc lại còn biết phần nào đáng tin hơn.
+    parts = []
+    if txt:
+        parts.append("### Chữ trong hộp text của slide (chính xác)\n\n" + txt)
+    if md:
+        parts.append("### Nội dung ẢNH trong slide (OCR)\n\n" + md)
+    return {"ok": bool(md or txt), "mode": "ocr", "text": "\n\n".join(parts),
+            "slides": slides, "chars": chars, "error": ""}
+
+
+def import_slides(detail_url: str, *, grade: int, subject: str,
+                  label: str = "", book_set: str = "") -> dict[str, Any]:
+    """Nạp slide của một quyển vào RAG. KHÔNG OCR, KHÔNG dựng PDF.
+
+    Vào kho riêng ``kb_giao_duc_slide``: cả kho slide chỉ vài trăm KB, để lẫn
+    vào ``kb_giao_duc_tailieu`` (10.412 trang tài liệu tập huấn) thì mấy dòng
+    phân bổ tuần–tiết bị loãng đúng lúc cần nhất.
+    """
+    sub = sf.normalize_subject(subject) or subject
+    ids = slide_ids(detail_url)
+    if not ids:
+        return {"ok": False, "error": "không có slide Google trên trang này",
+                "slides": 0}
+    mon = tw.SUBJECT_LABEL.get(sub, sub)
+    head = label or (f"Slide lớp {grade} · {mon}"
+                     + (f" · bộ {book_set}" if book_set else " · bộ chính"))
+    got = 0
+    chunks = 0
+    n_ocr = 0
+    errors: list[str] = []
+    for gid in ids:
+        c = slide_content(gid)
+        body = str(c.get("text") or "").strip()
+        if c.get("error"):
+            errors.append(f"{gid[:12]}: {c['error']}")
+        if len(body) < 200:
+            errors.append(f"{gid[:12]}: chỉ {len(body)} ký tự sau cả hai đường, bỏ")
+            continue
+        got += 1
+        if c.get("mode") == "ocr":
+            n_ocr += 1
+        # Nhãn nói rõ nội dung đến từ đâu: đọc lại kho mà không biết phần nào là
+        # OCR thì không đánh giá được độ tin cậy của câu trả lời.
+        via = "OCR ảnh slide" if c.get("mode") == "ocr" else "chữ hộp text"
+        title = f"{head} · {c.get('slides') or '?'} slide · {via}"
+        res = tw.push_sgk_to_rag(
+            f"## {title}\n\n{body}\n",
+            title=title, grade=int(grade), subject=sub,
+            source=f"slide/{gid[:16]}",
+            collection=COLLECTION_FOR_SET(book_set, "slide"),
+        )
+        chunks += int(res.get("chunks_added") or 0)
+        if not res.get("ok"):
+            errors.append(str(res.get("error") or "")[:120])
+    return {"ok": got > 0 and chunks > 0, "slides": got, "found": len(ids),
+            "ocr_decks": n_ocr, "chunks_added": chunks,
+            "collection": COLLECTION_FOR_SET(book_set, "slide"),
+            "errors": errors[:5]}
 
 
 def is_sample(reader_url: str) -> bool:

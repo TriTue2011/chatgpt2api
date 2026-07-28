@@ -120,7 +120,13 @@ DEFAULT_KINDS: tuple[str, ...] = ("sgk",)
 
 # Thứ tự nạp trong MỘT quyển. SGK trước: dừng giữa đường thì thứ quan trọng nhất
 # (sách học sinh) đã vào kho, chứ không phải mới có sách giáo viên.
-KIND_ORDER: tuple[str, ...] = ("sgk", "sgv", "vbt", "tap_huan")
+# "slide" đứng ĐẦU vì nó gần như miễn phí: chữ thật từ Google Slides, 0 lượt gọi
+# vision, cả kho vài trăm KB. Chạy trước thì dù có dừng ngay sau đó vẫn đã có
+# phân bổ tuần–tiết của mọi quyển.
+KIND_ORDER: tuple[str, ...] = ("slide", "sgk", "sgv", "vbt", "tap_huan")
+
+# Loại KHÔNG đi qua trang /doc-sach/ nên không nằm trong `reader_urls()`.
+NON_READER_KINDS: frozenset[str] = frozenset({"slide"})
 
 
 def normalize_kinds(kinds: Iterable[str]) -> tuple[str, ...]:
@@ -237,13 +243,54 @@ def run(
         # từng cái, mỗi cái một dòng state riêng → nối lại được ở mức TÀI LIỆU,
         # không phải mức quyển: mất mạng lúc đang nạp VBT thì SGK đã xong không
         # phải OCR lại.
+        # Slide đi đường RIÊNG: không phải link /doc-sach/ nên reader_urls()
+        # không thấy. Chữ thật từ Google Slides — 0 lượt gọi vision, ~6,5 KB mỗi
+        # bộ, và 192/198 quyển có. Làm TRƯỚC vì gần như miễn phí: dừng ngay sau
+        # đó thì vẫn đã có phân bổ tuần–tiết của mọi quyển.
+        if "slide" in want_kinds:
+            sk = _doc_key(item, "slide", str(item.get("url") or ""))
+            if not (skip_done and done_map.get(sk, {}).get("status") == "ok"):
+                srow = {"grade": g, "subject": sub, "slug": slug, "book_set": bset,
+                        "kind": "slide", "status": "", "pages": 0, "chunks": 0,
+                        "error": "", "ts": _now()}
+                state["current"] = (f"lớp {g} · {tw.SUBJECT_LABEL.get(sub, sub)} · "
+                                    f"slide · {slug}")
+                if dry_run:
+                    srow["status"] = "ok"
+                    srow["error"] = "(dry_run — chưa nạp)"
+                else:
+                    try:
+                        r = tp.import_slides(str(item.get("url") or ""), grade=g,
+                                             subject=sub, book_set=bset)
+                        if r.get("ok"):
+                            srow["status"] = "ok"
+                            srow["chunks"] = int(r.get("chunks_added") or 0)
+                            srow["slides"] = int(r.get("slides") or 0)
+                            srow["collection"] = r.get("collection") or ""
+                            state["chunks_total"] += srow["chunks"]
+                        else:
+                            srow["status"] = "failed"
+                            srow["error"] = str(r.get("error") or "")[:300]
+                    except Exception as exc:
+                        srow["status"] = "failed"
+                        srow["error"] = f"{type(exc).__name__}: {str(exc)[:250]}"
+                state["counts"][srow["status"]] = \
+                    state["counts"].get(srow["status"], 0) + 1
+                state["books"][sk] = srow
+                done_map[sk] = srow
+                _write_state(state)
+
+        reader_kinds = tuple(k for k in want_kinds if k not in NON_READER_KINDS)
         docs: list[tuple[str, str]] = []   # (reader_url, kind)
         fetch_err = ""
+        if not reader_kinds:
+            # Chỉ xin slide — xong ở trên, không cần tải trang chi tiết lần nữa.
+            continue
         if dry_run:
-            docs = [("", kd) for kd in want_kinds]
+            docs = [("", kd) for kd in reader_kinds]
         else:
             try:
-                for u in tp.reader_urls(str(item.get("url") or ""), want_kinds):
+                for u in tp.reader_urls(str(item.get("url") or ""), reader_kinds):
                     docs.append((u, tp.doc_kind(u)))
             except Exception as exc:
                 fetch_err = f"{type(exc).__name__}: {str(exc)[:200]}"
@@ -252,7 +299,7 @@ def run(
             row = {"grade": g, "subject": sub, "slug": slug, "book_set": bset,
                    "kind": "", "status": "failed", "pages": 0, "chunks": 0,
                    "error": fetch_err or ("không thấy link đọc sách loại "
-                                          + "/".join(want_kinds)
+                                          + "/".join(reader_kinds)
                                           + " trong trang chi tiết"),
                    "ts": _now()}
             state["counts"]["failed"] += 1

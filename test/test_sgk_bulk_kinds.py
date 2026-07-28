@@ -55,7 +55,8 @@ def _load(tmp: Path):
     sf.KIND_COLLECTION = {
         "sgk": "kb_giao_duc", "nangcao": "kb_nangcao",
         "sgv": "kb_giao_duc_sgv", "vbt": "kb_giao_duc_vbt",
-        "tap_huan": "kb_giao_duc_tailieu", "other": "kb_giao_duc_tailieu",
+        "tap_huan": "kb_giao_duc_tailieu", "slide": "kb_giao_duc_slide",
+        "other": "kb_giao_duc_tailieu",
     }
     sys.modules["services.agent.sgk_fetch"] = sf
     tp = types.ModuleType("services.agent.sgk_taphuan")
@@ -99,10 +100,22 @@ class TestChonLoai:
         assert sb.normalize_kinds(()) == ("sgk",)
         assert sb.normalize_kinds(None) == ("sgk",)
 
-    def test_sgk_luon_dung_dau(self, sb):
+    def test_sgk_dung_truoc_sgv_va_vbt(self, sb):
         """Dừng giữa đường thì sách học sinh phải đã vào kho, không phải SGV."""
         assert sb.normalize_kinds(["vbt", "sgv", "sgk"])[0] == "sgk"
         assert sb.normalize_kinds(["tap_huan", "sgk"]) == ("sgk", "tap_huan")
+
+    def test_slide_dung_truoc_ca_sgk(self, sb):
+        """Slide gần như miễn phí (chữ thật, 0 lượt gọi vision) nên chạy đầu:
+        dừng ngay sau đó thì vẫn đã có phân bổ tuần–tiết của mọi quyển."""
+        assert sb.normalize_kinds(["sgk", "slide"]) == ("slide", "sgk")
+        assert sb.KIND_ORDER[0] == "slide"
+
+    def test_slide_khong_di_qua_doc_sach(self, sb):
+        """Slide nằm trên Google Slides, không phải link /doc-sach/ — để nó lọt
+        vào reader_urls() thì lượt chạy báo 'không thấy link đọc sách'."""
+        assert "slide" in sb.NON_READER_KINDS
+        assert "sgk" not in sb.NON_READER_KINDS
 
     def test_bo_loai_la(self, sb):
         assert sb.normalize_kinds(["sgk", "abc", ""]) == ("sgk",)

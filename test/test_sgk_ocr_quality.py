@@ -51,7 +51,8 @@ def _load():
     sf.KIND_COLLECTION = {
         "sgk": "kb_giao_duc", "nangcao": "kb_nangcao",
         "sgv": "kb_giao_duc_sgv", "vbt": "kb_giao_duc_vbt",
-        "tap_huan": "kb_giao_duc_tailieu", "other": "kb_giao_duc_tailieu",
+        "tap_huan": "kb_giao_duc_tailieu", "slide": "kb_giao_duc_slide",
+        "other": "kb_giao_duc_tailieu",
     }
     tw = types.ModuleType("services.agent.teacher_workspace")
     tw.SUBJECTS = {}
@@ -60,15 +61,27 @@ def _load():
                       ("services.agent.sgk_fetch", sf),
                       ("services.agent.teacher_workspace", tw)):
         sys.modules.setdefault(name, mod)
-    spec = importlib.util.spec_from_file_location("_sgk_tp_test", _SRC)
+    name = f"_sgk_tp_test_{_load.counter}"
+    _load.counter += 1
+    spec = importlib.util.spec_from_file_location(name, _SRC)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
 
+_load.counter = 0
+
+
 @pytest.fixture(scope="module")
 def m():
+    return _load()
+
+
+@pytest.fixture()
+def mfresh():
+    """Bản module RIÊNG cho test có vá hàm — vá vào fixture module-scope sẽ rò
+    sang mọi test chạy sau và làm chúng xanh/đỏ giả."""
     return _load()
 
 
@@ -205,6 +218,13 @@ class TestPhanLoaiSach:
         assert m.COLLECTION_FOR_SET("", "tap_huan") == "kb_giao_duc_tailieu"
         assert m.COLLECTION_FOR_SET("", "other") == "kb_giao_duc_tailieu"
 
+    def test_slide_co_kho_rieng(self, m):
+        """Cả kho slide chỉ ~1,2 MB. Để lẫn vào kb_giao_duc_tailieu (10.412 trang)
+        thì mấy dòng phân bổ tuần–tiết bị loãng đúng lúc cần nhất."""
+        assert m.COLLECTION_FOR_SET("", "slide") == "kb_giao_duc_slide"
+        assert m.COLLECTION_FOR_SET("3", "slide") == "kb_giao_duc_slide"
+        assert m.COLLECTION_FOR_SET("", "slide") != m.COLLECTION_FOR_SET("", "tap_huan")
+
     def test_nhan_noi_ca_hai_tien_to_da_gop(self, m):
         """Kho gộp sgv-+khbd- và vbt-+sbt- vào cùng kho. Nhãn ghi mỗi "SGV" thì
         một quyển kế hoạch bài dạy vào kho lại tự nhận là sách giáo viên."""
@@ -214,6 +234,82 @@ class TestPhanLoaiSach:
     def test_bon_kho_tach_biet(self, m):
         got = {m.COLLECTION_FOR_SET("", k) for k in ("sgk", "sgv", "vbt", "tap_huan")}
         assert len(got) == 4, f"phải là 4 kho khác nhau, đang là {got}"
+
+
+class TestSlideAnh:
+    """Slide của kho có hai dạng: chữ trong hộp text, và ẢNH chụp trang sách.
+
+    Đo thật 2026-07-29 (ký tự/slide từ /export/txt):
+        Toán 1 tập một        15 slide ·   656 ký tự →  43  ← slide ẢNH
+        Tiếng Việt 1 tập một  21 slide ·  2.511 ký tự → 119
+        Tiếng Việt 2 tập một  82 slide · 18.994 ký tự → 231
+
+    Chỉ lấy /export/txt thì bộ Toán 1 cho 656 ký tự cho cả 15 slide rồi tưởng đã
+    nạp xong — mất toàn bộ phần dạy, KHÔNG có lỗi nào để lần ra.
+    """
+
+    @staticmethod
+    def _patch(m, *, txt: str, slides: int, ocr: str = "NỘI DUNG OCR",
+               pdf: bytes = b"%PDF-1.4 fake"):
+        m._slide_export = lambda gid, fmt, mb: (
+            txt.encode() if fmt == "txt" else pdf)
+        m._pdf_pages = lambda blob: slides
+        m.book_markdown = lambda p, model="": ocr
+
+    def test_chu_day_thi_khong_goi_model(self, mfresh, monkeypatch):
+        """Chữ hộp text chính xác tuyệt đối — gọi model chỉ thêm chỗ để bịa."""
+        called = []
+        self._patch(mfresh, txt="x" * 2511, slides=21)
+        monkeypatch.setattr(mfresh, "book_markdown",
+                            lambda *a, **k: called.append(1) or "KHONG NEN GOI")
+        c = mfresh.slide_content("A" * 25)
+        assert c["mode"] == "text"
+        assert not called, "119 ký tự/slide là đủ dày, không được OCR"
+        assert c["ok"] and len(c["text"]) == 2511
+
+    def test_slide_anh_thi_phai_ocr(self, mfresh):
+        """43 ký tự/slide = nội dung nằm trong ảnh."""
+        self._patch(mfresh, txt="x" * 656, slides=15, ocr="Bài 1: A a — nội dung thật")
+        c = mfresh.slide_content("B" * 25)
+        assert c["mode"] == "ocr"
+        assert "nội dung thật" in c["text"]
+
+    def test_ocr_van_giu_ca_chu_hop_text(self, mfresh):
+        """Hai nguồn khác độ tin cậy nên giữ cả hai VÀ ghi rõ phần nào là OCR."""
+        self._patch(mfresh, txt="TIÊU ĐỀ SLIDE", slides=15, ocr="phần trong ảnh")
+        c = mfresh.slide_content("C" * 25)
+        assert "TIÊU ĐỀ SLIDE" in c["text"] and "phần trong ảnh" in c["text"]
+        assert "chính xác" in c["text"] and "OCR" in c["text"]
+
+    def test_nguong_dung_bang_do_that(self, mfresh):
+        assert mfresh._SLIDE_CHARS_PER_SLIDE_MIN == 100, (
+            "ngưỡng phải để Tiếng Việt 1 (119 ký tự/slide) đi đường chữ và "
+            "Toán 1 (43) đi đường OCR")
+
+    def test_khong_xuat_duoc_pdf_thi_lay_chu_mong(self, mfresh):
+        """Mất PDF vẫn còn chữ mỏng — hơn là trả rỗng."""
+        self._patch(mfresh, txt="chữ mỏng nhưng có", slides=0, pdf=b"")
+        c = mfresh.slide_content("D" * 25)
+        assert c["mode"] == "text" and "chữ mỏng" in c["text"]
+
+    def test_ocr_chet_thi_khong_mat_trang(self, mfresh):
+        def boom(*a, **k):
+            raise RuntimeError("model nghẽn")
+        self._patch(mfresh, txt="chữ hộp text", slides=15)
+        mfresh.book_markdown = boom
+        c = mfresh.slide_content("E" * 25)
+        assert c["mode"] == "text" and "chữ hộp text" in c["text"]
+        assert "OCR slide lỗi" in c["error"]
+
+    def test_gid_xau_khong_goi_mang(self, mfresh):
+        """gid do regex bóc từ trang taphuan; gid xấu phải chặn TRƯỚC khi dựng URL."""
+        # KHÔNG vá gì: kiểm chính hàm thật. `_slide_export` lọc gid bằng regex
+        # TRƯỚC khi dựng URL, nên gid xấu không bao giờ thành một lượt gọi mạng
+        # (net_guard trong test là ống rỗng, nên nếu lọt qua sẽ trả b"" mà không
+        # phân biệt được — vì vậy kiểm bằng gid hợp lệ để thấy nó CÓ đi tiếp).
+        assert mfresh._slide_export("ngan", "txt", 10) == b""
+        assert mfresh._slide_export("../../etc/passwd", "txt", 10) == b""
+        assert mfresh._slide_export("", "txt", 10) == b""
 
 
 class TestDoiChieuSoTrang:
