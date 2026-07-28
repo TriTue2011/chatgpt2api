@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -865,10 +868,16 @@ def create_router(app_version: str) -> APIRouter:
 
     # ── Health / Providers ──
 
-    @router.get("/api/v1/health")
-    async def system_health(authorization: str | None = Header(default=None)):
-        """Trạng thái hệ thống: backends, providers, accounts."""
-        require_admin(authorization)
+    def _build_health() -> dict:
+        """Thân CHẶN của /api/v1/health — chỉ được chạy trong threadpool.
+
+        `opencode_provider.is_available` + `_check_gemini_status()` bắn tổng
+        cộng ~16 lời gọi HTTP tuần tự ra ngoài (6 key Gemini + 9 key Agnes +
+        1 opencode), mỗi cái timeout 10s. Bản cũ chạy thẳng trong `async def`
+        → đóng băng event loop 3–30s MỖI lần UI mở tab (tab nào cũng gọi
+        health khi mount), kéo cả file tĩnh lẫn bot chết theo — đây chính là
+        lý do "chuyển tab load 15–30 giây".
+        """
         from services.account_service import account_service, account_group
         accounts = account_service.list_accounts()
         backoff_stats = rate_limit_backoff.get_stats()
@@ -902,6 +911,41 @@ def create_router(app_version: str) -> APIRouter:
             },
             "gemini": _check_gemini_status(),
         }
+
+    # Cache health kiểu stale-while-revalidate: trả bản cũ NGAY, làm mới ngầm
+    # (một luồng duy nhất). UI poll ~60s nên dữ liệu trễ ≤TTL là chấp nhận
+    # được — đổi lấy chuyển tab tức thì thay vì mỗi tab chờ một vòng probe.
+    _health_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+    _health_refreshing = threading.Lock()
+    _HEALTH_TTL = 30.0
+
+    def _refresh_health_bg() -> None:
+        try:
+            data = _build_health()
+            _health_cache["data"] = data
+            _health_cache["ts"] = time.time()
+        except Exception as exc:
+            from utils.log import logger
+            logger.warning({"event": "health_refresh_failed", "error": str(exc)[:120]})
+        finally:
+            _health_refreshing.release()
+
+    @router.get("/api/v1/health")
+    async def system_health(authorization: str | None = Header(default=None)):
+        """Trạng thái hệ thống: backends, providers, accounts."""
+        require_admin(authorization)
+        cached = _health_cache["data"]
+        if cached is not None:
+            if time.time() - _health_cache["ts"] >= _HEALTH_TTL and _health_refreshing.acquire(blocking=False):
+                threading.Thread(target=_refresh_health_bg, daemon=True,
+                                 name="health-refresh").start()
+            return cached
+        # Lần đầu sau khởi động: chưa có gì để trả — chờ, nhưng trong
+        # threadpool để event loop vẫn phục vụ request khác.
+        data = await run_in_threadpool(_build_health)
+        _health_cache["data"] = data
+        _health_cache["ts"] = time.time()
+        return data
 
     @router.get("/api/v1/usage/stats")
     async def usage_stats(period: str = "30d", authorization: str | None = Header(default=None)):
