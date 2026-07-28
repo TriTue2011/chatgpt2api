@@ -272,6 +272,14 @@ def summarize(text: str, *, what: str = "email", max_chars: int = 900) -> str:
                         f"\n\n{raw[:12000]}"},
                 ],
                 max_tokens=420, timeout=90,
+                # Tóm tắt là việc ĐỌC NỘI DUNG CÓ SẴN — không được đi tra web.
+                # Bản cũ để trống nên gateway bật web search tự động và lấy
+                # NGUYÊN prompt tóm tắt làm câu truy vấn: log đầy
+                # "Federated search: 0 results for 'Tóm tắt email sau (nêu ai
+                # gửi/việc gì...'" kèm 414 Request-URI Too Long từ PubMed/
+                # CrossRef/Archive. Vô ích, và cộng hàng chục giây cho MỖI thư
+                # trong khi vòng poll mail chạy tuần tự.
+                allowed_groups={"summary"},
             )
             msg = (((out.get("choices") or [{}])[0]).get("message") or {})
             s = str(msg.get("content") or "").strip()
