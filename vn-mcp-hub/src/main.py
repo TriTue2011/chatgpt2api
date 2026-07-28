@@ -33,6 +33,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -324,24 +325,27 @@ def create_app() -> FastAPI:
         return "\n\n".join(texts)
 
 
-    @app.post("/api/studio/analyze_source")
-    async def studio_analyze_source(request: Request):
-        """Read a file or URL, extract text, and use AI to synthesize it into Markdown for RAG."""
-        try:
-            try:
-                form = await request.form()
-            except ImportError:
-                return {"ok": False, "error": "Thiếu thư viện python-multipart. Vui lòng rebuild Docker: docker compose up -d --build"}
-            except Exception as e:
-                return {"ok": False, "error": f"Lỗi parse form data: {str(e)}"}
+    def _studio_analyze_source_sync(url_str: str, has_file: bool,
+                                    content: bytes, filename_raw: str):
+        """Thân CHẶN của analyze_source — chạy trong threadpool.
 
-            file = form.get("file")
-            url = form.get("url")
-            url_str = str(url) if url else ""
+        Hub phục vụ TOÀN BỘ MCP tool trên một event loop; hàm này tải URL,
+        chạy markitdown/OCR rồi gọi AI tổng hợp — nhiều phút. Bản cũ chạy
+        thẳng trong `async def` nên suốt thời gian đó hub đứng hình: bot mất
+        sạch tool, y hệt vụ import-url làm treo gateway. Route async bên dưới
+        chỉ đọc form (việc bắt buộc phải await) rồi đẩy hết sang đây.
+        """
+        try:
+            url_str = str(url_str or "")
+            filename = (filename_raw or "").lower()
 
             raw_text = ""
             source_type = "unknown"
             ext = ""
+            # Khởi tạo TRƯỚC mọi nhánh: bản cũ chỉ gán trong nhánh markitdown,
+            # nên nguồn URL / file text thường chết NameError ở khúc tổng hợp
+            # (lỗi có sẵn từ trước, lộ ra khi đọc lại toàn hàm để tách luồng).
+            _used_ocr = False
 
             if url_str and url_str.strip():
                 source_type = "url"
@@ -358,13 +362,12 @@ def create_app() -> FastAPI:
                 if not raw_text.strip():
                     return {"ok": False, "error": "URL cung cấp không chứa nội dung văn bản (có thể là trang web trống, chống bot, hoặc chỉ chứa hình ảnh)."}
 
-            elif file and hasattr(file, "read"):
+            elif has_file:
                 source_type = "file"
-                content = await file.read()
+                # content đã được await file.read() ở tầng async trước khi vào đây
                 if not content:
                     return {"ok": False, "error": "File bạn tải lên rỗng (0 bytes)."}
 
-                filename = (file.filename or "").lower()
                 ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
 
                 import logging
@@ -435,7 +438,7 @@ def create_app() -> FastAPI:
                 return {"ok": False, "error": "Lỗi không xác định: Không thể trích xuất văn bản từ nguồn."}
 
             from src.rag.scheduler import _synthesize_with_ai
-            title_hint = file.filename if (file and hasattr(file, "filename")) else (url_str or "unknown")
+            title_hint = filename_raw if has_file else (url_str or "unknown")
 
             import logging as _logging
             logger = _logging.getLogger("vn-mcp-hub")
@@ -485,6 +488,34 @@ def create_app() -> FastAPI:
             import logging as _logging
             _logging.getLogger("vn-mcp-hub").exception("analyze_source failed")
             return {"ok": False, "error": str(exc)}
+
+    @app.post("/api/studio/analyze_source")
+    async def studio_analyze_source(request: Request):
+        """Read a file or URL, extract text, and use AI to synthesize it into Markdown for RAG.
+
+        Tầng async CHỈ đọc form/file (việc bắt buộc phải await) — mọi việc
+        nặng nằm ở _studio_analyze_source_sync chạy trong threadpool.
+        """
+        try:
+            form = await request.form()
+        except ImportError:
+            return {"ok": False, "error": "Thiếu thư viện python-multipart. Vui lòng rebuild Docker: docker compose up -d --build"}
+        except Exception as e:
+            return {"ok": False, "error": f"Lỗi parse form data: {str(e)}"}
+
+        file = form.get("file")
+        url = form.get("url")
+        url_str = str(url) if url else ""
+        has_file = bool(file is not None and hasattr(file, "read"))
+        content = b""
+        filename_raw = ""
+        if has_file:
+            content = await file.read()
+            filename_raw = file.filename or ""
+
+        return await run_in_threadpool(
+            _studio_analyze_source_sync, url_str, has_file, content, filename_raw,
+        )
 
     @app.post("/api/studio/convert")
     async def studio_convert_file(request: Request):

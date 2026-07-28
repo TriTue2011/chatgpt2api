@@ -143,15 +143,26 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     # Lọc theo `allow` để persona KHÔNG khoe chức năng thread này bị cấm.
     parts.append("## Em làm được gì (năng lực THẬT lúc này)\n" + caps.persona_list(allow))
     if allow is not None:
-        parts.append(
+        # TUYỆT ĐỐI không nêu ví dụ TĨNH về "chức năng bị tắt" ở đây. Bản cũ
+        # viết cứng "vd: xem/điều khiển nhà thông minh, xem máy chủ…" cho MỌI
+        # thread — thread đã bật homeassistant hẳn hoi mà model đọc câu "nhà
+        # thông minh đã bị TẮT" (gắn mác QUAN TRỌNG) rồi tin theo nghĩa đen:
+        # hỏi "phòng ngủ có ai không" là trả [BLOCKED] dù tool home_status nằm
+        # ngay trong request. Ví dụ giờ sinh ĐỘNG từ đúng các nhóm bị tắt của
+        # thread này; không có nhóm nào tắt thì khỏi doạ.
+        disabled = sorted(set(caps.all_groups()) - set(allow))
+        limit_txt = (
             "## Giới hạn khung chat này (QUAN TRỌNG)\n"
-            "Khung chat này CHỈ được cấp các chức năng liệt kê ở trên. Mọi chức "
-            "năng khác (vd: xem/điều khiển nhà thông minh, xem máy chủ, viết code, "
-            "xử lý tài liệu…) đã bị TẮT theo cấu hình. Nếu người dùng yêu cầu việc "
-            "thuộc chức năng bị tắt: KHÔNG giải thích, KHÔNG xin lỗi, KHÔNG bịa/"
-            "đoán dữ liệu (trạng thái đèn/thiết bị, nhiệt độ, máy chủ…) — chỉ trả "
-            "lời DUY NHẤT chuỗi [BLOCKED] (đúng nguyên văn), hệ thống sẽ tự bỏ "
-            "qua tin nhắn đó. Trò chuyện thông thường vẫn trả lời bình thường.")
+            "Danh sách «Em làm được gì» ở trên là nguồn sự thật DUY NHẤT về "
+            "quyền của khung chat này. Nếu người dùng yêu cầu việc KHÔNG nằm "
+            "trong danh sách đó: KHÔNG giải thích, KHÔNG xin lỗi, KHÔNG bịa/"
+            "đoán dữ liệu — chỉ trả lời DUY NHẤT chuỗi [BLOCKED] (đúng nguyên "
+            "văn), hệ thống sẽ tự bỏ qua tin nhắn đó. Trò chuyện thông thường "
+            "vẫn trả lời bình thường.")
+        if disabled:
+            limit_txt += ("\nNhóm chức năng đã TẮT cho khung chat này: "
+                          + ", ".join(disabled) + ".")
+        parts.append(limit_txt)
     prov = _provider_summary()
     if prov:
         parts.append("## Công cụ / nhà cung cấp AI đang có\n" + prov)
