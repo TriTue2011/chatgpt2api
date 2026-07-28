@@ -198,15 +198,26 @@ def create_router() -> APIRouter:
         # chặn event loop, và chặn event loop thì CẢ gateway đứng hình: bot
         # câm, web UI treo, mọi kênh chết theo cho tới khi nạp xong.
         # (/api/teacher/import-sgk bên dưới vốn đã làm đúng như vậy.)
+        # Loại tài liệu cho PDF NGOÀI taphuan. Trước đây cứng "sgk", nên dán link
+        # một PDF bất kỳ — chương trình GDPT, đề thi, tài liệu tham khảo — cũng
+        # vào kho SGK mang nhãn SGK, rồi bot trích nó như thể là sách học sinh.
+        # Link taphuan thì KHÔNG lấy giá trị này: `doc_kind()` đọc được loại thật
+        # từ slug, chính xác hơn người dùng chọn tay.
+        kind_in = str(payload.get("kind") or "sgk").strip().lower()
+        if kind_in not in ("sgk", "sgv", "vbt", "tap_huan", "other"):
+            return {"ok": False,
+                    "error": f"loại tài liệu không hợp lệ: {kind_in!r} "
+                             "(sgk / sgv / vbt / tap_huan / other)"}
+
         def _run() -> dict:
             if "taphuan.nxbgd.vn" in url:
                 readers = [url] if "/doc-sach/" in url else tp.reader_urls(url)
                 if not readers:
                     return {"ok": False,
-                            "error": "không tìm thấy link đọc sách (sgk-) trong trang này"}
+                            "error": "không tìm thấy link đọc sách trong trang này"}
                 return tp.import_reader(readers[0], grade=grade, subject=subject,
                                         mode=mode, drop_pdf_on_rag_ok=drop_pdf)
-            return sf.fetch_and_ingest(grade, subject, url, kind="sgk",
+            return sf.fetch_and_ingest(grade, subject, url, kind=kind_in,
                                        drop_pdf_on_rag_ok=drop_pdf)
 
         return await run_in_threadpool(_run)

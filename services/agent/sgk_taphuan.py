@@ -772,8 +772,17 @@ def is_sample(reader_url: str) -> bool:
     Vẫn đáng nạp (thấy được kiểu ra bài tập) nhưng PHẢI gắn nhãn: để bot tưởng
     nó có cả quyển vở bài tập thì nó sẽ khẳng định chắc nịch về những bài tập
     không hề nằm trong đó.
+
+    Đo cả kho 2026-07-28: 135/145 vở & sách bài tập là bài mẫu, 10 quyển còn lại
+    cũng chỉ 4–19 trang. Tức mảng bài tập gần như CHỈ có mẫu — biết điều đó mới
+    đặt đúng kỳ vọng thay vì tưởng đã có cả kho bài tập.
+
+    NXB viết cả hai cách: "bai-mau" và "ban-mau"
+    (sbt-ngu-van-8-tap-hai-ban-mau). Bắt thiếu một cách là quyển đó vào kho mà
+    không có nhãn cảnh báo.
     """
-    return "bai-mau" in str(reader_url or "").lower()
+    s = str(reader_url or "").lower()
+    return "bai-mau" in s or "ban-mau" in s
 
 
 def COLLECTION_FOR_SET(book_set: str = "", kind: str = "sgk") -> str:
@@ -791,12 +800,12 @@ def COLLECTION_FOR_SET(book_set: str = "", kind: str = "sgk") -> str:
         tap_huan/other → kb_giao_duc_tailieu
     """
     k = str(kind or "sgk").strip() or "sgk"
-    if k == "sgv":
-        return "kb_giao_duc_sgv"
-    if k == "vbt":
-        return "kb_giao_duc_vbt"
-    if k in ("tap_huan", "other"):
-        return "kb_giao_duc_tailieu"
+    # Loại KHÔNG phải sgk: soi chiếu lại bảng duy nhất ở sgk_fetch.KIND_COLLECTION
+    # (chiều phụ thuộc là module này → sgk_fetch, nên bảng nằm ở đó). Giữ bảng
+    # thứ hai ở đây là mở đường cho việc thêm loại một chỗ mà chỗ kia vẫn cho vào
+    # kho cũ — và cái sai đó im lặng.
+    if k != "sgk":
+        return sf.KIND_COLLECTION.get(k, "kb_giao_duc_tailieu")
     bs = str(book_set or "").strip()
     return f"kb_giao_duc_bo{bs}" if bs else "kb_giao_duc"
 

@@ -47,6 +47,17 @@ def _load(tmp: Path):
     ng = types.ModuleType("services.net_guard")
     ng.safe_fetch = lambda *a, **k: b""
     sys.modules["services.net_guard"] = ng
+    # TestTachKho nạp sgk_taphuan thật; nó soi chiếu sgk_fetch.KIND_COLLECTION.
+    sf = types.ModuleType("services.agent.sgk_fetch")
+    sf.SUBJECTS = {}
+    sf.SUBJECT_LABEL = {}
+    sf.normalize_subject = lambda s: s
+    sf.KIND_COLLECTION = {
+        "sgk": "kb_giao_duc", "nangcao": "kb_nangcao",
+        "sgv": "kb_giao_duc_sgv", "vbt": "kb_giao_duc_vbt",
+        "tap_huan": "kb_giao_duc_tailieu", "other": "kb_giao_duc_tailieu",
+    }
+    sys.modules["services.agent.sgk_fetch"] = sf
     tp = types.ModuleType("services.agent.sgk_taphuan")
     tp.DOC_KIND_LABEL = {
         "sgk": "SGK",

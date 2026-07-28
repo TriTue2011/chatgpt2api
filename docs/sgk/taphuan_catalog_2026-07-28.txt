@@ -1,0 +1,44 @@
+Đo lúc: 2026-07-28T16:37:57+00:00
+Trang chi tiết: 198   ·   Tài liệu: 709
+
+=== THEO LOẠI TÀI LIỆU
+loại                        quyển   trang  bài mẫu  0 trang  lượt gọi
+SGK (sách học sinh)           202   24005        0        1      1201
+SGV + KHBD (cách dạy)         192   34930        2        2      1747
+VBT + SBT (bài tập)           145    1351      135        0        68
+Tài liệu tập huấn             170   10412        0        0       521
+TỔNG                          709   70698                        3535
+
+=== THEO BỘ SÁCH
+  bộ 3          310 tài liệu ·  29374 trang
+  bộ chính      399 tài liệu ·  41324 trang
+
+=== SGK BỘ CHÍNH THEO LỚP (thứ tự nên nạp)
+  lớp  1:  5 quyển ·   670 trang · ~ 34 lượt gọi  |  Tiếng Anh 78tr, Toán 228tr, Tiếng Việt 364tr
+  lớp  2:  5 quyển ·   654 trang · ~ 33 lượt gọi  |  Tiếng Anh 78tr, Toán 284tr, Tiếng Việt 292tr
+  lớp  3:  8 quyển ·   851 trang · ~ 43 lượt gọi  |  ? 135tr, Tiếng Anh 160tr, Toán 256tr, Tiếng Việt 300tr
+  lớp  4:  7 quyển ·   841 trang · ~ 43 lượt gọi  |  Tiếng Anh 162tr, Lịch sử và Địa lí 127tr, Toán 256tr, Tiếng Việt 296tr
+  lớp  5:  7 quyển ·   897 trang · ~ 45 lượt gọi  |  Tiếng Anh 162tr, Lịch sử và Địa lí 123tr, Toán 280tr, Tiếng Việt 332tr
+  lớp  6:  9 quyển ·   995 trang · ~ 50 lượt gọi  |  Tiếng Anh 292tr, Lịch sử và Địa lí 203tr, Toán 240tr, Ngữ văn 260tr
+  lớp  7:  6 quyển ·   849 trang · ~ 43 lượt gọi  |  Tiếng Anh 142tr, Lịch sử và Địa lí 187tr, Toán 240tr, Ngữ văn 280tr
+  lớp  8:  7 quyển ·  1005 trang · ~ 51 lượt gọi  |  Tiếng Anh 282tr, Lịch sử và Địa lí 179tr, Toán 268tr, Ngữ văn 276tr
+  lớp  9:  7 quyển ·  1086 trang · ~ 55 lượt gọi  |  Tiếng Anh 283tr, Lịch sử và Địa lí 243tr, Toán 256tr, Ngữ văn 304tr
+  lớp 10: 17 quyển ·  1825 trang · ~ 92 lượt gọi  |  Tiếng Anh 134tr, Địa lí 156tr, Hoá học 200tr, Vật lí 224tr, Sinh học 240tr, Lịch sử 183tr, Toán 274tr, Ngữ văn 414tr
+  lớp 11: 17 quyển ·  1901 trang · ~ 96 lượt gọi  |  Tiếng Anh 135tr, Địa lí 232tr, Hoá học 217tr, Vật lí 180tr, Sinh học 253tr, Lịch sử 156tr, Toán 334tr, Ngữ văn 394tr
+  lớp 12: 17 quyển ·  1927 trang · ~ 97 lượt gọi  |  Tiếng Anh 159tr, Địa lí 238tr, Hoá học 200tr, Vật lí 196tr, Sinh học 280tr, Lịch sử 172tr, Toán 276tr, Ngữ văn 406tr
+  → SGK bộ chính: 13501 trang · ~676 lượt gọi
+
+=== KHÔNG NHẬN RA MÔN (2 tài liệu) — sẽ KHÔNG nạp
+  sgk-tieng-han-3-tap-hai.4962772344     1
+  shs-tieng-han-3-tap-mot.4538914234     1
+
+=== 0 TRANG (3) — không lấy được ảnh
+  lớp  5 sgv      sgv-toan-5.4537437974
+  lớp  9 sgv      sgv-lich-su-va-dia-li-9.4528950508
+  lớp 11 sgk      shs-vat-li-11.4537351593
+
+=== ƯỚC LƯỢNG THỜI GIAN (45–90s mỗi lượt gọi 20 trang)
+  SGK bộ chính            13501 trang ·  676 lượt ·   8.4– 16.9 giờ
+  SGK mọi bộ              24005 trang · 1201 lượt ·  15.0– 30.0 giờ
+  SGK+SGV+VBT mọi bộ      60286 trang · 3015 lượt ·  37.7– 75.4 giờ
+  tất cả                  70698 trang · 3535 lượt ·  44.2– 88.4 giờ

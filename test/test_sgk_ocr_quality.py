@@ -46,6 +46,13 @@ def _load():
     sf = types.ModuleType("services.agent.sgk_fetch")
     sf.SUBJECTS = {}
     sf.normalize_subject = lambda s: s
+    # Bảng thật ở sgk_fetch — COLLECTION_FOR_SET soi chiếu lại nó thay vì giữ
+    # bản thứ hai, nên ống rỗng phải có để phép ánh xạ còn được soát.
+    sf.KIND_COLLECTION = {
+        "sgk": "kb_giao_duc", "nangcao": "kb_nangcao",
+        "sgv": "kb_giao_duc_sgv", "vbt": "kb_giao_duc_vbt",
+        "tap_huan": "kb_giao_duc_tailieu", "other": "kb_giao_duc_tailieu",
+    }
     tw = types.ModuleType("services.agent.teacher_workspace")
     tw.SUBJECTS = {}
     for name, mod in (("services", pkg), ("services.agent", ag),

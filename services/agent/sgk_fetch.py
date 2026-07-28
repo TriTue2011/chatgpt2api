@@ -123,7 +123,32 @@ _ENOUGH_CANDIDATES = 3
 
 # collection RAG theo loại tài liệu — sách nâng cao TÁCH RIÊNG khỏi SGK để bot
 # không dạy vượt chương trình như thể đó là nội dung SGK chính thức.
-KIND_COLLECTION: dict[str, str] = {"sgk": "kb_giao_duc", "nangcao": "kb_nangcao"}
+# Loại tài liệu → collection RAG. NGUỒN DUY NHẤT của phép ánh xạ này;
+# `sgk_taphuan.COLLECTION_FOR_SET` soi chiếu lại rồi chỉ thêm phần bộ sách.
+# (Chiều phụ thuộc là sgk_taphuan → sgk_fetch, nên bảng phải nằm ở đây.)
+#
+# Vì sao phải có sgv/vbt/tap_huan ở đây: cuối hàm có
+# `kind = kind if kind in KIND_COLLECTION else "sgk"`, tức loại lạ bị ÂM THẦM
+# đổi thành "sgk" và vào kb_giao_duc mang nhãn "SGK lớp N". Dán link một quyển
+# sách giáo viên là bot trích lời hướng dẫn dạy như thể sách của học sinh.
+KIND_COLLECTION: dict[str, str] = {
+    "sgk": "kb_giao_duc",
+    "nangcao": "kb_nangcao",
+    "sgv": "kb_giao_duc_sgv",
+    "vbt": "kb_giao_duc_vbt",
+    "tap_huan": "kb_giao_duc_tailieu",
+    "other": "kb_giao_duc_tailieu",
+}
+
+# Nhãn đứng đầu mọi chunk, theo loại. "SGK" cho mọi thứ là chỗ sai gốc.
+KIND_HEAD: dict[str, str] = {
+    "sgk": "SGK",
+    "nangcao": "Nâng cao",
+    "sgv": "SGV/KHBD (sách giáo viên · kế hoạch bài dạy)",
+    "vbt": "VBT/SBT (vở & sách bài tập)",
+    "tap_huan": "Tài liệu tập huấn",
+    "other": "Tài liệu",
+}
 
 _ROOT = Path(DATA_DIR) / "agent" / "teacher"
 _INDEX_PATH = _ROOT / "sgk_fetch_index.json"
@@ -475,10 +500,7 @@ def fetch_and_ingest(
         os.close(fd)
 
         mon_label = SUBJECT_LABEL.get(sub, sub)
-        head = (
-            f"SGK lớp {g} · {mon_label}" if kind == "sgk"
-            else f"Nâng cao lớp {g} · {mon_label}"
-        )
+        head = f"{KIND_HEAD.get(kind, 'Tài liệu')} lớp {g} · {mon_label}"
         if curriculum:
             head = f"{head} · {curriculum}"
 
