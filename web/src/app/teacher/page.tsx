@@ -1007,7 +1007,39 @@ export default function TeacherPage() {
     }
   };
 
+  const picked: StudentRow | undefined = (students as StudentRow[])
+    .find((x) => x.student_key === pickedKey);
+
+  // Lớp + student_key của mọi tab bên trong đi theo HỒ SƠ, không phải ô chọn tay.
+  // Đây là điểm chính của cấu trúc mới: chọn học sinh một lần, SGK và đề tự đúng
+  // lớp; sang tháng 8 hồ sơ tự lên lớp nên không phải sửa gì.
+  useEffect(() => {
+    if (!picked) return;
+    if (picked.student_key && picked.student_key !== student) setStudent(picked.student_key);
+    const g = Number(picked.grade || 0);
+    if (g >= 1 && g <= 12 && g !== grade) setGrade(g);
+  }, [picked, student, grade]);
+
+  // Bỏ chọn học sinh khi đang ở tab bên trong: tab đó bị khoá nhưng NỘI DUNG
+  // vẫn render, tức tiếp tục soạn bài cho một hồ sơ không còn được chọn.
+  useEffect(() => {
+    if (NEED_STUDENT.includes(tab) && !picked) setTab("roster");
+  }, [tab, picked]);
+
+  useEffect(() => {
+    if (!session) return;
+    void (async () => {
+      try {
+        const r = await request.get("/api/teacher/school-year");
+        if (r.data?.school_year) setSchoolYear(String(r.data.school_year));
+      } catch { /* không critical */ }
+    })();
+  }, [session]);
+
   // All hooks must be above this guard (Rules of Hooks).
+  // KHÔNG thêm hook nào xuống dưới: lần render đầu isCheckingAuth=true nên hàm
+  // thoát ở đây, hook dưới guard không chạy; auth xong render tiếp thì chúng
+  // mới chạy ⇒ số hook tăng giữa hai lần render ⇒ React #310, trang trắng.
   if (isCheckingAuth || !session) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center">
@@ -1076,35 +1108,6 @@ export default function TeacherPage() {
       toast.error(e instanceof Error ? e.message : "Cập nhật lộ trình lỗi");
     }
   };
-
-  const picked: StudentRow | undefined = (students as StudentRow[])
-    .find((x) => x.student_key === pickedKey);
-
-  // Lớp + student_key của mọi tab bên trong đi theo HỒ SƠ, không phải ô chọn tay.
-  // Đây là điểm chính của cấu trúc mới: chọn học sinh một lần, SGK và đề tự đúng
-  // lớp; sang tháng 8 hồ sơ tự lên lớp nên không phải sửa gì.
-  useEffect(() => {
-    if (!picked) return;
-    if (picked.student_key && picked.student_key !== student) setStudent(picked.student_key);
-    const g = Number(picked.grade || 0);
-    if (g >= 1 && g <= 12 && g !== grade) setGrade(g);
-  }, [picked, student, grade]);
-
-  // Bỏ chọn học sinh khi đang ở tab bên trong: tab đó bị khoá nhưng NỘI DUNG
-  // vẫn render, tức tiếp tục soạn bài cho một hồ sơ không còn được chọn.
-  useEffect(() => {
-    if (NEED_STUDENT.includes(tab) && !picked) setTab("roster");
-  }, [tab, picked]);
-
-  useEffect(() => {
-    if (!session) return;
-    void (async () => {
-      try {
-        const r = await request.get("/api/teacher/school-year");
-        if (r.data?.school_year) setSchoolYear(String(r.data.school_year));
-      } catch { /* không critical */ }
-    })();
-  }, [session]);
 
   /** Chuẩn hoá tên thành student_key: bỏ dấu, chỉ a-z 0-9 _ -. */
   const keyFromName = (nm: string) =>

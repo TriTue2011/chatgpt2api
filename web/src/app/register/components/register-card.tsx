@@ -31,6 +31,18 @@ export function RegisterCard() {
   const toggle = useSettingsStore((state) => state.toggleRegister);
   const reset = useSettingsStore((state) => state.resetRegister);
 
+  // Stable synthetic id cho từng dòng provider (mirror BotListEditor trong
+  // telegram-cloudflare-card.tsx). providers/updateProvider/deleteProvider đều
+  // thao tác theo index — dùng index làm React key khiến xóa dòng giữa lúc một
+  // ô khác đang gõ dở sẽ hoán giá trị dưới con trỏ. Gán id tăng dần theo đúng
+  // vị trí thêm/xóa (không đổi khi chỉ sửa nội dung) để key luôn ổn định.
+  //
+  // PHẢI khai trên hai guard dưới: isLoading ban đầu là true nên hàm thoát sớm
+  // và hai useRef này không chạy; config về thì chúng mới chạy ⇒ số hook tăng
+  // giữa hai lần render ⇒ React #310, trang Register trắng.
+  const providerIdsRef = useRef<number[]>([]);
+  const providerSeqRef = useRef(1);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--primary)]/80 p-10">
@@ -45,13 +57,6 @@ export function RegisterCard() {
   const providers = config.mail.providers || [];
   const logs = config.logs || [];
 
-  // Stable synthetic id cho từng dòng provider (mirror BotListEditor trong
-  // telegram-cloudflare-card.tsx). providers/updateProvider/deleteProvider đều
-  // thao tác theo index — dùng index làm React key khiến xóa dòng giữa lúc một
-  // ô khác đang gõ dở sẽ hoán giá trị dưới con trỏ. Gán id tăng dần theo đúng
-  // vị trí thêm/xóa (không đổi khi chỉ sửa nội dung) để key luôn ổn định.
-  const providerIdsRef = useRef<number[]>([]);
-  const providerSeqRef = useRef(1);
   while (providerIdsRef.current.length < providers.length) {
     providerIdsRef.current.push(providerSeqRef.current++);
   }
