@@ -635,6 +635,30 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
         src.close()
 
     body = "\n\n---\n\n".join(out)
+
+    # ── CHẶN LỜI TỪ CHỐI CỦA MODEL ──────────────────────────────────────────
+    # Đo thật 2026-07-29 trên sgk-tieng-viet-1-tap-mot, 8 trang: model trả về
+    # đúng một lời từ chối — "Không có tệp PDF hoặc hình ảnh trang sách nào được
+    # đính kèm... Vui lòng tải lên PDF" — tức PDF KHÔNG tới được model.
+    #
+    # Cả hai lớp chặn sẵn có đều CHO ĐI QUA (đã đo):
+    #   · `pdf_to_word.looks_like_ocr_failure` chỉ nhận diện thông báo lỗi kiểu
+    #     "Gemini error …"; đây là lời từ chối lịch sự, không phải lỗi.
+    #   · `ocr_rules.looks_degenerate` chỉ bắt output thoái hoá (lặp/rỗng nghĩa).
+    # Trước đây nhánh `unverified` chỉ GHI CẢNH BÁO rồi vẫn trả về body, nên lời
+    # từ chối được nạp vào kho như thể là nội dung trang sách — và bộ nạp hàng
+    # loạt sẽ nhân nó lên cả quyển, cả lớp. Cảnh báo mà vẫn nhận thì bằng không
+    # có cảnh báo.
+    #
+    # Bất biến dùng để chặn (mạnh hơn danh sách từ khoá, không phải bảo trì):
+    # prompt ĐÃ YÊU CẦU mốc `<<<TRANG n>>>`, nên bản trích đúng PHẢI có ít nhất
+    # một mốc. Không mốc nào trên cả quyển = không nhận được trang nào.
+    if body.strip() and not ocr_rules.pages_seen(body):
+        logger.warning({"event": "sgk_taphuan_tu_choi_ocr", "pdf": str(pdf_path),
+                        "so_trang": total, "ky_tu": len(body),
+                        "dau_ra": body.strip()[:200]})
+        return ""
+
     if unverified:
         # Không phải "mất trang", mà là "không biết có mất hay không". Ghi vào
         # nội dung để người đọc file .md biết phần này chưa được đối chiếu.
