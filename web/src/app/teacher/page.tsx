@@ -43,12 +43,16 @@ import { Input } from "@/components/ui/input";
 import { httpRequest, request } from "@/lib/request";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 
-type TabId = "roster" | "lesson" | "homework" | "placement" | "parent" | "import";
+// Module scope, file riêng — component lồng trong TeacherPage bị tạo lại mỗi
+// render (họ lỗi React #310 đã vá ở trang này).
+import { LectureTab, SgkViewerTab } from "./lecture-tab";
+
+type TabId = "roster" | "lecture" | "lesson" | "homework" | "placement" | "parent" | "sgkview" | "import";
 
 /** Tab chỉ có nghĩa khi ĐÃ chọn một hồ sơ học sinh (lớp quyết định SGK/đề/lộ trình).
  *  Khai ở cấp module: mảng `tabs` dựng lại mỗi lần render nên không dùng được làm
  *  dependency, và nó lại khai SAU các effect — đưa vào deps là TDZ, trang trắng. */
-const NEED_STUDENT: readonly TabId[] = ["lesson", "homework", "placement", "parent"];
+const NEED_STUDENT: readonly TabId[] = ["lecture", "lesson", "homework", "placement", "parent", "sgkview"];
 
 /** Hồ sơ học sinh — lớp SUY TỪ NĂM SINH nên không phải sửa tay mỗi năm. */
 type StudentRow = {
@@ -681,6 +685,9 @@ export default function TeacherPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [asgTitle, setAsgTitle] = useState("");
   const [asgTopic, setAsgTopic] = useState("");
+  // Mục lục lớp–môn cho tab Bài tập: cùng nguồn với tab Bài giảng, để bài tập
+  // cũng chọn theo BÀI của sách chứ không chỉ gõ chủ đề tự do.
+  const [asgToc, setAsgToc] = useState<{ bai?: string; ten: string; trang?: number | null; tap?: string }[]>([]);
   const [asgN, setAsgN] = useState(5);
   const [asgDiff, setAsgDiff] = useState("auto");
   const [doAsg, setDoAsg] = useState<Assignment | null>(null);
@@ -851,10 +858,23 @@ export default function TeacherPage() {
     if ((tab === "roster" || tab === "placement") && session) {
       void loadStudents();
     }
+    // Hàng tab tầng 1 hiện TÊN học sinh ngay khi vào trang — không nạp ở đây
+    // thì hàng đó rỗng cho tới khi mở tab Học sinh, trông như chưa có em nào.
+    if (session && !students.length) void loadStudents();
+    // Mục lục cho tab Bài tập: theo LỚP của học sinh đang chọn + môn đang chọn.
+    if (tab === "homework" && session && picked?.grade) {
+      void (async () => {
+        try {
+          const r = await httpRequest<{ rows?: any[] }>(
+            `/api/teacher/lecture/toc?grade=${picked.grade}&subject=${subject}`);
+          setAsgToc(r.rows || []);
+        } catch { setAsgToc([]); }
+      })();
+    }
     if (tab === "placement" && session) {
       void loadRoadmap();
     }
-  }, [tab, session, loadStudents, loadRoadmap]);
+  }, [tab, session, students.length, picked, subject, loadStudents, loadRoadmap]);
 
   const loadImports = useCallback(async () => {
     if (!session) return;
@@ -1445,14 +1465,23 @@ export default function TeacherPage() {
   //  · Học sinh  — chọn hồ sơ TRƯỚC, vì lớp của hồ sơ quyết định mọi thứ sau đó
   //  · 4 tab bên trong — chỉ mở khi đã chọn học sinh, và đi theo lớp của em đó
   //  · Kho SGK   — dùng CHUNG cho mọi học sinh, không thuộc em nào
-  const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: "roster", label: "Học sinh", icon: <UserCircle className="size-3.5" /> },
-    { id: "lesson", label: "Bài giảng", icon: <BookOpen className="size-3.5" /> },
-    { id: "homework", label: "Bài tập", icon: <ClipboardList className="size-3.5" /> },
-    { id: "placement", label: "Đầu vào · Lộ trình", icon: <Route className="size-3.5" /> },
-    { id: "parent", label: "Dashboard PH", icon: <Users className="size-3.5" /> },
-    { id: "import", label: "Kho SGK (chung)", icon: <FileUp className="size-3.5" /> },
-  ];
+  // Hai tầng tab theo cách dùng thật:
+  //  · TỔNG (chưa chọn học sinh): quản lý hồ sơ + 4 kho chung (SGK/SGV/SBT/tài liệu)
+  //  · HỌC SINH (đã chọn): tab con đi theo LỚP của em đó — bài giảng hai khung,
+  //    bài tập, đầu vào·lộ trình, phụ huynh, xem SGK. Mỗi em độc lập.
+  const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = picked
+    ? [
+        { id: "lecture", label: "Bài giảng", icon: <BookOpen className="size-3.5" /> },
+        { id: "lesson", label: "Soạn bài (cũ)", icon: <Sparkles className="size-3.5" /> },
+        { id: "homework", label: "Bài tập", icon: <ClipboardList className="size-3.5" /> },
+        { id: "placement", label: "Đầu vào · Lộ trình", icon: <Route className="size-3.5" /> },
+        { id: "parent", label: "Phụ huynh", icon: <Users className="size-3.5" /> },
+        { id: "sgkview", label: "SGK", icon: <BookOpen className="size-3.5" /> },
+      ]
+    : [
+        { id: "roster", label: "Học sinh", icon: <UserCircle className="size-3.5" /> },
+        { id: "import", label: "Kho chung (SGK·SGV·SBT·Tài liệu)", icon: <FileUp className="size-3.5" /> },
+      ];
 
   return (
     <div className="space-y-4 max-w-5xl">
@@ -1610,6 +1639,29 @@ export default function TeacherPage() {
         </div>
       )}
 
+      {/* Tầng 1: Tổng + từng học sinh. Kích tên em nào là mọi tab con đi theo lớp em đó. */}
+      <div className="flex flex-wrap gap-1">
+        <button type="button"
+          onClick={() => { setPickedKey(""); setTab("roster"); }}
+          className={`px-3 py-1.5 rounded-md text-xs transition ${!picked
+            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-medium"
+            : "text-muted-foreground hover:bg-secondary"}`}>
+          Tổng
+        </button>
+        {students.map((r: any) => {
+          const on = picked && pickedKey === r.student_key;
+          return (
+            <button key={r.student_key} type="button"
+              onClick={() => { setPickedKey(r.student_key); setTab("lecture"); }}
+              className={`px-3 py-1.5 rounded-md text-xs transition ${on
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium"
+                : "text-muted-foreground hover:bg-secondary"}`}>
+              {r.display_name || r.student_key}{r.grade ? ` · L${r.grade}` : ""}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Tabs */}
       <div className="flex flex-wrap gap-1 border-b border-border pb-1">
         {tabs.map((t) => {
@@ -1638,6 +1690,13 @@ export default function TeacherPage() {
           );
         })}
       </div>
+
+      {tab === "lecture" && picked && (
+        <LectureTab student={picked as any} />
+      )}
+      {tab === "sgkview" && picked && (
+        <SgkViewerTab student={picked as any} />
+      )}
 
       {/* ── LESSON ── */}
       {tab === "roster" && (
@@ -1954,6 +2013,17 @@ export default function TeacherPage() {
                 value={asgTitle}
                 onChange={(e) => setAsgTitle(e.target.value)}
               />
+              {asgToc.length > 0 && (
+                <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  value="" onChange={(e) => { if (e.target.value) setAsgTopic(e.target.value); }}>
+                  <option value="">— chọn bài theo mục lục SGK ({asgToc.length} bài) —</option>
+                  {asgToc.map((r, i) => (
+                    <option key={i} value={`${r.bai ? r.bai + " " : ""}${r.ten}`}>
+                      {r.bai ? `${r.bai} · ` : ""}{r.ten}{r.trang ? ` (tr.${r.trang})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
               <Input
                 className="h-8 text-xs"
                 placeholder="Chủ đề (vd trừ có mượn · chính tả · animals)"

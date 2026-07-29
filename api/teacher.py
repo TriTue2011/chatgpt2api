@@ -261,6 +261,82 @@ def create_router() -> APIRouter:
             all_sets=bool(b.get("all_sets", True)),
         )
 
+    # ── Bài giảng hai khung: lời cô (SGV) + trang SGK lật theo ─────────────
+    # Tách module riêng (teacher_lecture) vì khác hẳn `ai_draft_lesson`: bài
+    # giảng ở đây là DANH SÁCH ĐOẠN gắn số trang, để UI đổi ảnh trang theo đoạn.
+
+    @router.get("/api/teacher/lecture/books")
+    async def lecture_books(
+        grade: int = Query(...),
+        subject: str = Query(...),
+        authorization: str | None = Header(default=None),
+    ):
+        """SGK bộ chính của lớp–môn + số trang (dựng manifest nếu chưa có).
+
+        Threadpool bắt buộc: lần đầu phải bò trang taphuan lấy URL ảnh —
+        vài giây mạng, chạy thẳng trong async là chặn event loop.
+        """
+        require_admin(authorization)
+        from services.agent import teacher_lecture as tl
+        books = await run_in_threadpool(tl.books_for, grade, subject)
+        return {"ok": True, "books": books}
+
+    @router.get("/api/teacher/lecture/toc")
+    async def lecture_toc(
+        grade: int = Query(...),
+        subject: str = Query(...),
+        authorization: str | None = Header(default=None),
+    ):
+        """Mục lục có cấu trúc của lớp–môn — bài giảng VÀ bài tập cùng chọn từ
+        đây. Rỗng nghĩa là quyển đó chưa được nạp mục lục, UI rơi về ô gõ tay."""
+        require_admin(authorization)
+        from services.agent import teacher_lecture as tl
+        rows = await run_in_threadpool(tl.toc, grade, subject)
+        return {"ok": True, "rows": rows}
+
+    @router.post("/api/teacher/lecture/generate")
+    async def lecture_generate(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        from services.agent import teacher_lecture as tl
+        r = await run_in_threadpool(
+            lambda: tl.generate(
+                str(payload.get("student_key") or ""),
+                str(payload.get("subject") or ""),
+                bai=str(payload.get("bai") or ""),
+                topic=str(payload.get("topic") or ""),
+                notes=str(payload.get("notes") or ""),
+            ))
+        return r
+
+    @router.get("/api/teacher/lecture/last")
+    async def lecture_last(
+        student_key: str = Query(...),
+        subject: str = Query(default=""),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        from services.agent import teacher_lecture as tl
+        return await run_in_threadpool(tl.last, student_key, subject)
+
+    @router.post("/api/teacher/lecture/ask")
+    async def lecture_ask(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Học sinh nói chỗ chưa hiểu sau bài giảng → giải thích bám đúng bài."""
+        require_admin(authorization)
+        from services.agent import teacher_lecture as tl
+        r = await run_in_threadpool(
+            lambda: tl.ask(
+                str(payload.get("student_key") or ""),
+                str(payload.get("question") or ""),
+                subject=str(payload.get("subject") or ""),
+            ))
+        return r
+
     @router.get("/api/teacher/pages")
     async def teacher_pages_list(authorization: str | None = Header(default=None)):
         """Các quyển ĐÃ có bản đồ trang → ảnh (để giảng bài hiện ảnh đi cùng chữ).
