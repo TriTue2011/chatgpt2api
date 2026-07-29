@@ -5745,17 +5745,26 @@ def _inject_server_admin_context(messages: list[dict[str, Any]], user_text: str)
     don't ask the user' instruction to the last user message. Keeps the model
     from treating a server name (nvr/ha) as a device it must ask about."""
     try:
-        from services.mcp_client import is_server_admin_query, server_admin_system_hint
-        if not is_server_admin_query(user_text, messages):
-            return messages
-        hint = server_admin_system_hint()
+        from services.mcp_client import (device_system_hint, is_device_query,
+                                         is_server_admin_query, server_admin_system_hint)
+        hints: list[str] = []
+        if is_server_admin_query(user_text, messages):
+            hints.append(server_admin_system_hint())
+        # Thiết bị của người dùng: cùng vấn đề, nhưng nặng hơn — model có sẵn
+        # phản xạ "hướng dẫn người dùng tự làm" với máy tính cá nhân, nên dù đã
+        # có tool device_* trong tay nó vẫn trả lời "bạn mở File Explorer rồi…".
+        # Câu nhắc này nói thẳng: tên đó ĐIỀU KHIỂN ĐƯỢC, phải gọi tool.
+        if is_device_query(user_text, messages):
+            hints.append(device_system_hint())
+        hint = "\n\n".join(h for h in hints if h)
         if not hint:
             return messages
         out = list(messages)
         for i in range(len(out) - 1, -1, -1):
             if out[i].get("role") == "user":
                 out[i] = {**out[i], "content": str(out[i].get("content", "")) + "\n\n" + hint}
-                logger.info({"event": "server_admin_context_injected"})
+                logger.info({"event": "server_admin_context_injected",
+                             "parts": len([h for h in hints if h])})
                 return out
         return out
     except Exception as exc:
@@ -5782,8 +5791,21 @@ def _inject_mcp_tools(
     dù câu hỏi trông giống smart-home hay server-admin."""
     logger.info({"event": "mcp_inject_start", "input_tools": len(tools or [])})
     try:
-        from services.mcp_client import is_server_admin_query
+        from services.mcp_client import is_device_query, is_server_admin_query
         _is_admin = (not no_server_admin) and is_server_admin_query(user_text, messages)
+        # Thiết bị của người dùng (c2a-agent) đi CÙNG ĐƯỜNG với server-admin.
+        #
+        # Vì sao cần cờ riêng (đo thật 2026-07-29): động từ điều khiển thiết bị
+        # — "mở", "đọc", "tạo", "sửa", "xoá", "khoá", "tắt" — đều nằm trong
+        # `_CONTROL_VERBS`, nên "đọc file D:\\baocao.txt trên máy tính",
+        # "khoá máy tính", "tắt máy tính" bị `_is_smarthome_query` nhận là lệnh
+        # NHÀ THÔNG MINH; nhánh đó đặt `mcp_tools = []` → mất SẠCH tool, model
+        # đành trả lời "bạn tự mở giúp". 3/8 câu thử bị như vậy.
+        #
+        # Khoá theo cùng cờ `no_server_admin`: device_fs nằm cùng nhóm quyền với
+        # ssh_exec/fs_remote trên UI, nên luồng đã bị lọc nhóm "server" thì
+        # KHÔNG được đi cửa sau qua thiết bị.
+        _is_device = (not no_server_admin) and is_device_query(user_text, messages)
 
         # Realtime data already fetched server-side and injected as context →
         # ship NO tool so the model just formats it (one round-trip, no re-call).
@@ -5800,11 +5822,13 @@ def _inject_mcp_tools(
         # live context → ship NO tools. Drops HA's ~40 control-tool schemas
         # (the dominant payload bloat that 413s the free backend and makes the
         # model reply "what do you want me to do?"). Control queries keep tools.
-        if (skip_ha_search or is_free_model) and _is_status_only_query(user_text) and not _is_admin:
+        if (skip_ha_search or is_free_model) and _is_status_only_query(user_text) \
+                and not _is_admin and not _is_device:
             logger.info({"event": "mcp_inject_skipped", "reason": "status_only_query_free_or_ha"})
             return None
 
-        if is_free_model and not _is_smarthome_query(user_text) and not _is_admin:
+        if is_free_model and not _is_smarthome_query(user_text) and not _is_admin \
+                and not _is_device:
             logger.info({"event": "mcp_inject_skipped", "reason": "free_model_no_agentic_loop"})
             return tools if tools else None
 
@@ -5821,10 +5845,15 @@ def _inject_mcp_tools(
         # Skip the MCP discovery + injection when the prompt already carries the
         # HA registry — those tools won't be useful here and the LLM may waste
         # a round-trip calling one.
-        if _is_admin:
-            # Server-admin query (nvr/ha ssh/file op) → inject only ssh_/fs_ tools.
+        if _is_admin or _is_device:
+            # Server-admin (ssh/file trên máy chủ) hoặc thiết bị của người dùng
+            # (device_* qua c2a-agent) → để `get_relevant_mcp_tools` chọn đúng
+            # họ tool. Nhánh này PHẢI đứng trước nhánh smart-home: động từ
+            # "mở/đọc/sửa/xoá/khoá/tắt" của lệnh thiết bị trùng `_CONTROL_VERBS`.
             mcp_tools = get_relevant_mcp_tools(user_text, messages)
-            logger.info({"event": "mcp_inject_got_tools", "reason": "server_admin", "count": len(mcp_tools)})
+            logger.info({"event": "mcp_inject_got_tools",
+                         "reason": "device" if _is_device else "server_admin",
+                         "count": len(mcp_tools)})
         elif skip_ha_search:
             mcp_tools = []
             logger.info({"event": "mcp_inject_skipped", "reason": "ha_context_injected"})
@@ -5856,8 +5885,11 @@ def _inject_mcp_tools(
         if no_server_admin and mcp_tools:
             # Thread bị lọc thiếu nhóm 'server' — get_relevant_mcp_tools vẫn có
             # thể trả ssh_/fs_ khi câu trông giống server-admin → lột ra ở đây.
+            # device_* cũng phải lột: nó đọc/ghi file trên máy thật, cùng nhóm
+            # quyền với ssh_/fs_ trên UI, nên không được thành cửa sau.
             mcp_tools = [t for t in mcp_tools
-                         if not (t.get("function", {}) or {}).get("name", "").startswith(("ssh_", "fs_"))]
+                         if not (t.get("function", {}) or {}).get("name", "").startswith(
+                             ("ssh_", "fs_", "device_"))]
 
         tools = list(tools or [])
         existing_names = {t.get("function", {}).get("name", "") for t in tools}

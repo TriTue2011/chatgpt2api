@@ -575,6 +575,137 @@ def _msg_text(m: dict) -> str:
     return ""
 
 
+# ── Device intent (device_fs) ────────────────────────────────────────────────
+# MCP `device_fs` điều khiển MÁY của người dùng (Windows/Android/VPS đã cài
+# c2a-agent). Nó cùng loại với ssh_exec/fs_remote: không map được bằng từ khoá
+# chủ đề như thời tiết/vàng, mà nhận ra qua (a) TÊN THIẾT BỊ đã khai, hoặc
+# (b) từ ngữ nói về máy của mình.
+#
+# Vì sao phải có khối này (đo thật 2026-07-29, 8 câu điều khiển thiết bị):
+#   · `get_relevant_mcp_tools` trả 0/8 câu có tool device_* — tên tool là
+#     `device_*`, không khớp `sub` nào trong `_MCP_INTENT_MAP`, nên rơi hết về
+#     bộ catch-all (search_web/web_search_exa);
+#   · nhánh server-admin chỉ trả tool bắt đầu `ssh_`/`fs_` → lọc luôn device_*,
+#     nên câu "ổ D còn bao nhiêu dung lượng" (khớp keyword "dung luong") lại
+#     càng chắc chắn mất tool thiết bị.
+# Hệ quả: bot trả lời "tôi không truy cập được máy của bạn" dù agent đang nối.
+
+_device_names_cache: set[str] = set()
+_device_names_ts = 0.0
+_DEVICE_NAMES_TTL = 30.0
+
+# Từ dài → so bằng chuỗi con. Từ NGẮN (pc, may) dễ khớp bừa trong tiếng Việt
+# nên để ở `_DEVICE_TOKENS` và so theo TOKEN nguyên.
+_DEVICE_KEYWORDS = (
+    "may tinh", "may cua toi", "may minh", "thiet bi cua toi", "tren may",
+    "chup man hinh", "man hinh may", "screenshot",
+    "tien trinh", "tat may", "khoa may", "ngu may", "khoi dong lai may",
+    "dang xuat", "shutdown", "o dia c", "o dia d", "o dia e",
+    "dien thoai cua toi", "may android",
+)
+_DEVICE_TOKENS = ("laptop", "pc", "desktop", "c2a-agent")
+
+
+def _device_names() -> set[str]:
+    """Tên thiết bị đã khai trong config (cache ~30s).
+
+    Đọc từ `config.data["device_agents"]` — cùng nguồn mà `/api/devices` dùng,
+    nên khai thêm thiết bị là hỏi được ngay, không cần sửa từ khoá.
+    """
+    global _device_names_cache, _device_names_ts
+    now = time.time()
+    if _device_names_ts > 0 and (now - _device_names_ts) < _DEVICE_NAMES_TTL:
+        return _device_names_cache
+    names: set[str] = set()
+    try:
+        from services.config import config
+        for n in (config.data.get("device_agents") or {}):
+            s = str(n or "").strip().lower()
+            if s:
+                names.add(s)
+    except Exception:
+        pass
+    _device_names_cache = names
+    _device_names_ts = now
+    return names
+
+
+def _text_is_device(text: str) -> bool:
+    """Một chuỗi có nói tới thiết bị của người dùng không.
+
+    Tên thiết bị so theo TOKEN và đòi ≥3 ký tự — tên ngắn (vd "pi") không được
+    phép khớp bừa vào từ tiếng Việt. Tên có dấu gạch (case-win) cũng tách ra
+    thành token nên vẫn bắt được.
+    """
+    if not text:
+        return False
+    try:
+        from services.ha_client import _fold_diacritics
+        folded = _fold_diacritics(text)
+    except Exception:
+        folded = text.lower()
+    folded = folded.replace("đ", "d")
+    toks = set(re.sub(r"[^\w-]", " ", folded).split())
+    for name in _device_names():
+        nf = name.replace("đ", "d")
+        if len(nf) >= 3 and nf in toks:
+            return True
+    if any(t in toks for t in _DEVICE_TOKENS):
+        return True
+    return any(k in folded for k in _DEVICE_KEYWORDS)
+
+
+def is_device_query(text: str, messages: list | None = None) -> bool:
+    """True khi câu nhắm vào MÁY của người dùng qua c2a-agent.
+
+    Giữ chế độ ở lượt sau giống `is_server_admin_query`: đã gọi tool `device_*`
+    trong hội thoại thì câu tiếp ("có file nào nữa không") vẫn còn tool, chứ
+    không rơi về catch-all rồi bot bảo không truy cập được.
+    """
+    if _text_is_device(text):
+        return True
+    if not messages:
+        return False
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        for tc in (m.get("tool_calls") or []):
+            if ((tc.get("function") or {}).get("name") or "").startswith("device_"):
+                return True
+        if m.get("role") == "tool" and str(m.get("name") or "").startswith("device_"):
+            return True
+    for m in messages[-8:]:
+        if isinstance(m, dict) and m.get("role") == "user" and _text_is_device(_msg_text(m)):
+            return True
+    return False
+
+
+def device_system_hint() -> str:
+    """Nói cho model biết các thiết bị này ĐIỀU KHIỂN ĐƯỢC, đừng hỏi lại.
+
+    Không có câu này thì model thấy "máy tính của tôi" và trả lời theo bản năng
+    — "bạn hãy tự mở File Explorer…" — dù đang có tool trong tay. Rỗng nếu chưa
+    khai thiết bị nào (không có gì đáng nói).
+    """
+    names = sorted(_device_names())
+    if not names:
+        return ""
+    return (
+        "[THIẾT BỊ ĐÃ KHAI — điều khiển được qua c2a-agent]\n"
+        "Các tên sau là MÁY của người dùng, bạn ĐƯỢC PHÉP đọc/ghi file và xem "
+        "thông tin máy qua tool `device_*`: " + ", ".join(names) + "\n"
+        "Khi người dùng nói \"máy tính\", \"laptop\", \"máy của tôi\" mà không nêu tên: "
+        "gọi `device_list()` để biết máy nào đang kết nối rồi dùng tên đó.\n"
+        "BẮT BUỘC dùng tool để LẤY DỮ LIỆU THẬT (`device_ls`, `device_read`, "
+        "`device_sysinfo`, `device_resources`, `device_processes`, `device_screen`…) "
+        "rồi trả lời. TUYỆT ĐỐI KHÔNG bảo người dùng tự mở File Explorer, tự chụp "
+        "màn hình, hay nói rằng bạn không truy cập được máy của họ.\n"
+        "Quyền ghi/chạy lệnh/tắt máy do người dùng cấp riêng từng máy và được "
+        "kiểm ở phía server: nếu tool trả về thông báo thiếu quyền thì nói lại "
+        "đúng thông báo đó, đừng thử đường khác."
+    )
+
+
 def is_server_admin_query(text: str, messages: list | None = None) -> bool:
     """True when the query targets a declared SSH server or is a sysadmin op.
 
@@ -614,6 +745,27 @@ def get_relevant_mcp_tools(query: str, _relevant_messages: list | None = None) -
     all_tools = get_enabled_mcp_tools()
     if not all_tools:
         return all_tools
+
+    # Thiết bị của người dùng (c2a-agent) → chỉ tool device_*, không web search.
+    # PHẢI xét TRƯỚC server-admin: "ổ đĩa", "dung luong", "cpu load", "ram con"
+    # đều là `_SERVER_ADMIN_KEYWORDS`, nên "ổ D trên máy tính còn bao nhiêu" mà
+    # xét sau thì rơi vào nhánh ssh_/fs_ và mất sạch tool thiết bị.
+    _dev = is_device_query(query, _relevant_messages)
+    if _dev:
+        sel = [t for t in all_tools
+               if (t.get("function", {}) or {}).get("name", "").startswith("device_")]
+        # Câu vừa nêu tên thiết bị vừa nêu tên server (vd "copy từ nvr sang máy
+        # tính") → đưa cả hai họ tool, để model tự chọn thay vì thiếu một bên.
+        if is_server_admin_query(query, _relevant_messages):
+            sel += [t for t in all_tools
+                    if (t.get("function", {}) or {}).get("name", "").startswith(("ssh_", "fs_"))]
+        if sel:
+            logger.info({"event": "mcp_device_tools", "count": len(sel)})
+            return sel
+        # Không có tool device_* nào = MCP "Thiết bị của tôi" chưa bật. Nói rõ ở
+        # log, vì biểu hiện bên ngoài y như model không chịu gọi tool.
+        logger.warning({"event": "mcp_device_intent_no_tools",
+                        "hint": "bật MCP device_fs ở tab MCP → Thiết bị của tôi"})
 
     # Server-admin query → ship only the ssh_/fs_ tools (no web search).
     if is_server_admin_query(query, _relevant_messages):
