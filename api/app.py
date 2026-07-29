@@ -106,6 +106,16 @@ def create_app() -> FastAPI:
             start_sgk_autofill()
         except Exception as exc:
             _record_startup_failure("sgk_autofill_scheduler", str(exc))
+        # Kho slide giáo dục (phân bổ tuần–tiết + phương pháp dạy) — nạp NỀN lần
+        # đầu để deploy xong là tra được luôn. KHÔNG đóng gói nội dung vào image:
+        # container tự tải từ nguồn công khai, ~2,1 MB chữ, KHÔNG cần OCR và
+        # không tốn lượt gọi model. Chỉ chạy khi chưa có state — đã nạp (hoặc đã
+        # cố ý dừng) thì không tự chạy lại.
+        try:
+            from services.agent.teacher_seed import autostart_if_empty
+            autostart_if_empty()
+        except Exception as exc:
+            _record_startup_failure("teacher_slide_seed", str(exc))
         # Dead Codex/free accounts (error/disabled) — periodic T0→T1–T3 recovery
         try:
             from services.codex_error_recovery_scheduler import start as start_dead_recovery

@@ -222,6 +222,45 @@ def create_router() -> APIRouter:
 
         return await run_in_threadpool(_run)
 
+    @router.get("/api/teacher/slide-seed")
+    async def teacher_slide_seed_status(
+        authorization: str | None = Header(default=None),
+    ):
+        """Tiến độ nạp kho slide (phân bổ tuần–tiết + phương pháp dạy)."""
+        require_admin(authorization)
+        from services.agent import teacher_seed as ts
+        st = await run_in_threadpool(ts.read_state)
+        rows = st.get("slides") or {}
+        return {"ok": True, "running": ts.is_running(),
+                "collection": ts.COLLECTION,
+                "decks": len(rows),
+                "decks_ok": sum(1 for v in rows.values() if v.get("status") == "ok"),
+                "decks_thin": sum(1 for v in rows.values() if v.get("status") == "thin"),
+                "decks_failed": sum(1 for v in rows.values() if v.get("status") == "failed"),
+                "chars": st.get("chars"), "chunks": st.get("chunks"),
+                "updated_at": st.get("updated_at"), "last_run": st.get("last_run")}
+
+    @router.post("/api/teacher/slide-seed/start")
+    async def teacher_slide_seed_start(
+        payload: dict | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """Nạp (hoặc nạp tiếp) kho slide. Body: {limit?, force?, grades?, all_sets?}
+
+        KHÔNG cần model: bản /export/txt của Google Slides là chữ sẵn. Chỉ ~1% bộ
+        là slide ảnh — những bộ đó ghi "thin" và để đường nạp hàng loạt OCR.
+        """
+        require_admin(authorization)
+        from services.agent import teacher_seed as ts
+        b = payload or {}
+        gs = b.get("grades")
+        return ts.start(
+            limit=int(b.get("limit") or 0),
+            force=bool(b.get("force", False)),
+            grades=[int(x) for x in gs] if isinstance(gs, list) and gs else None,
+            all_sets=bool(b.get("all_sets", True)),
+        )
+
     @router.get("/api/teacher/pages")
     async def teacher_pages_list(authorization: str | None = Header(default=None)):
         """Các quyển ĐÃ có bản đồ trang → ảnh (để giảng bài hiện ảnh đi cùng chữ).

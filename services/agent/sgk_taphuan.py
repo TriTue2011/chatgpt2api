@@ -32,7 +32,6 @@ kèm trang captcha. Gặp 403 thì báo thẳng, KHÔNG lặng lẽ bịa nguồ
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 import tempfile
@@ -45,7 +44,6 @@ from services import ocr_rules
 from services.agent import sgk_fetch as sf
 from services.agent import teacher_images as ti
 from services.agent import teacher_workspace as tw
-from services.config import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -756,7 +754,12 @@ _GSLIDE_RE = re.compile(
 _SHAREPOINT_RE = re.compile(r"https://[a-z0-9-]+\.sharepoint\.com/", re.I)
 # Chỉ host này, chỉ đường dẫn export do CHÍNH module dựng từ ID đã lọc bằng
 # `_GSLIDE_RE` — không nhận URL tuỳ ý từ ngoài, nên không mở đường SSRF.
-_GSLIDE_HOSTS = {"docs.google.com"}
+# PHẢI có googleusercontent.com: `/export/*` trả 302 sang
+# doc-XX-YY-slides.googleusercontent.com (tên máy đổi theo lượt), mà
+# `net_guard.safe_fetch` kiểm lại allowlist ở TỪNG bước chuyển hướng. Thiếu nó
+# thì mọi lượt tải slide bị chặn — đo thật, đã dính. check_url khớp cả hậu tố nên
+# khai tên miền gốc là đủ.
+_GSLIDE_HOSTS = {"docs.google.com", "googleusercontent.com"}
 _SLIDE_MAX_BYTES = 2 * 1024 * 1024
 
 
