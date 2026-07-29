@@ -865,11 +865,16 @@ export default function TeacherPage() {
     // thì hàng đó rỗng cho tới khi mở tab Học sinh, trông như chưa có em nào.
     if (session && !students.length) void loadStudents();
     // Mục lục cho tab Bài tập: theo LỚP của học sinh đang chọn + môn đang chọn.
-    if (tab === "homework" && session && picked?.grade) {
+    // KHÔNG dùng `picked` ở đây: nó khai báo SAU effect này, mà mảng dependency
+    // được tính ngay lúc render → TDZ "Cannot access before initialization",
+    // sập prerender /teacher (lỗi build 675b6dc). Suy lớp từ students+pickedKey
+    // — hai state khai báo trước.
+    const pkGrade = (students as any[]).find((r) => r.student_key === pickedKey)?.grade;
+    if (tab === "homework" && session && pkGrade) {
       void (async () => {
         try {
           const r = await httpRequest<{ rows?: any[] }>(
-            `/api/teacher/lecture/toc?grade=${picked.grade}&subject=${subject}`);
+            `/api/teacher/lecture/toc?grade=${pkGrade}&subject=${subject}`);
           setAsgToc(r.rows || []);
         } catch { setAsgToc([]); }
       })();
@@ -877,7 +882,7 @@ export default function TeacherPage() {
     if (tab === "placement" && session) {
       void loadRoadmap();
     }
-  }, [tab, session, students.length, picked, subject, loadStudents, loadRoadmap]);
+  }, [tab, session, students, pickedKey, subject, loadStudents, loadRoadmap]);
 
   const loadImports = useCallback(async () => {
     if (!session) return;

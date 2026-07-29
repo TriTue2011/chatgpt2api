@@ -113,6 +113,19 @@ class TestRoutes:
             "chặn event loop, cả gateway đứng hình")
 
 
+class TestKhongTDZ:
+    """Lỗi build 675b6dc: effect nạp mục lục dùng `picked` trong dependency —
+    `picked` khai báo SAU effect, mảng deps tính ngay lúc render → TDZ
+    "Cannot access before initialization", sập prerender /teacher."""
+
+    def test_effect_muc_luc_khong_dung_picked(self):
+        i = _PAGE.index("Mục lục cho tab Bài tập")
+        blob = _PAGE[i:i + 900]
+        assert "pkGrade" in blob
+        assert "picked?.grade" not in blob
+        assert "picked.grade" not in blob
+
+
 class TestTabHaiTang:
     def test_tab_moi_can_hoc_sinh(self):
         assert '"lecture", "lesson", "homework", "placement", "parent", "sgkview"' in _PAGE
