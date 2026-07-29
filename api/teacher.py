@@ -558,11 +558,27 @@ def create_router() -> APIRouter:
         subject: str = Form(...),
         mode: str = Form(default="append"),
         title: str = Form(default=""),
+        kind: str = Form(default="sgk"),
         authorization: str | None = Header(default=None),
     ):
-        """Upload PDF SGK → markdown theo chương/bài (##) + đẩy RAG."""
+        """Upload PDF → markdown theo chương/bài (##) + đẩy RAG vào ĐÚNG kho.
+
+        ``kind`` bắt buộc phải mở ra ở đây: file tải lên KHÔNG có slug nên không
+        suy được loại như đường URL (`doc_kind()`). Trước đây endpoint này không
+        có tham số đó, nên mọi file — kể cả sách giáo viên, vở bài tập — đều rơi
+        vào ``kb_giao_duc`` là kho NỘI DUNG HỌC SINH, rồi `ask_sgk` đọc gợi ý
+        soạn giảng ra như thể bài học sinh phải học.
+        """
         require_admin(authorization)
+        from services.agent import sgk_fetch as sf
         from services.agent import teacher_workspace as tw
+
+        kind_in = str(kind or "sgk").strip().lower()
+        if kind_in not in sf.KIND_COLLECTION:
+            from fastapi import HTTPException
+            raise HTTPException(400, (
+                f"loại tài liệu không hợp lệ: {kind_in!r} — nhận "
+                f"{', '.join(sorted(sf.KIND_COLLECTION))}"))
 
         data = await file.read()
         name = file.filename or "sgk.pdf"
@@ -570,7 +586,7 @@ def create_router() -> APIRouter:
         def _run() -> dict:
             return tw.import_sgk_bytes(
                 data, name, grade=grade, subject=subject, mode=mode, title=title,
-                drop_pdf_on_rag_ok=True,
+                drop_pdf_on_rag_ok=True, kind=kind_in,
             )
 
         result = await run_in_threadpool(_run)
@@ -588,7 +604,11 @@ def create_router() -> APIRouter:
             if rag:
                 if rag.get("ok"):
                     rag_line = (
-                        f"\n· RAG `kb_giao_duc`: +{rag.get('chunks_added', 0)} chunks"
+                        # KHÔNG ghi cứng tên kho: nạp SGV mà báo "kb_giao_duc"
+                        # thì người vận hành tưởng đã tách kho trong khi chưa.
+                        f"\n· RAG `{sf.KIND_COLLECTION[kind_in]}`"
+                        f" ({sf.KIND_HEAD.get(kind_in, kind_in)}):"
+                        f" +{rag.get('chunks_added', 0)} chunks"
                         f" ({rag.get('batches', 0)} batch)"
                     )
                 else:

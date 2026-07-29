@@ -1021,8 +1021,20 @@ def import_sgk_bytes(
     keep_pdf: bool = True,
     drop_pdf_on_rag_ok: bool = False,
     store_images: bool = True,
+    kind: str = "sgk",
 ) -> dict[str, Any]:
     """Import từ bytes upload (ghi temp rồi gọi import_sgk_pdf).
+
+    ``kind`` quyết định VÀO KHO NÀO. Trước đây tham số này KHÔNG tồn tại nên mọi
+    file tải lên đều rơi vào ``kb_giao_duc`` — kho NỘI DUNG HỌC SINH. Tải lên một
+    quyển sách giáo viên thì gợi ý soạn giảng nằm lẫn trong kho học sinh, và
+    ``ask_sgk`` đọc nó ra như thể là bài học sinh phải học. Đúng lỗi đã phải vá ở
+    đường crawl (SGV vào kb_giao_duc mang nhãn SGK), nhưng đường TẢI LÊN chưa
+    được vá theo — trong khi đường URL thì đã có ``kind`` từ trước.
+
+    Đường URL suy được loại từ slug (``doc_kind()``); file tải lên KHÔNG có slug
+    nên buộc người nạp phải khai. Mặc định ``sgk`` để không đổi hành vi của lời
+    gọi cũ.
 
     ``store_images`` MẶC ĐỊNH BẬT ở đây, khác ``import_sgk_pdf``: đây là đường
     giáo viên TẢI LÊN, không có ảnh trên CDN nào để quay lại lấy. File tạm bị xoá
@@ -1039,11 +1051,21 @@ def import_sgk_bytes(
     try:
         os.write(fd, data)
         os.close(fd)
+        # Import cục bộ: `sgk_fetch` là bảng DUY NHẤT ánh xạ loại → kho. Giữ bảng
+        # thứ hai ở đây là mở đường thêm loại một chỗ mà chỗ kia vẫn vào kho cũ,
+        # và cái sai đó im lặng.
+        from services.agent import sgk_fetch as _sf
+        k = str(kind or "sgk").strip().lower() or "sgk"
+        collection = _sf.KIND_COLLECTION.get(k, "kb_giao_duc")
         return import_sgk_pdf(
             tmp, grade=grade, subject=subject, mode=mode,
             title=title, source_name=filename or "upload.pdf",
             keep_pdf=keep_pdf, drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
-            store_images=store_images,
+            store_images=store_images, collection=collection,
+            # CHỈ sách học sinh được ghi vào .md của SGK gốc: `search_sgk` đọc
+            # các file đó và KHÔNG phân biệt loại, nên ghi SGV/VBT vào đấy là
+            # trả lời trộn ở đường tra offline.
+            write_md=(k == "sgk"),
         )
     finally:
         try:
