@@ -778,6 +778,31 @@ def import_sgk_pdf(
     }
     result["md_written"] = bool(write_md)
     result["collection"] = collection
+    # mode=replace phải ghi đè CẢ RAG, không chỉ file .md. Không có bước này thì
+    # thay sách (năm học mới đổi SGK) xong chunk sách cũ vẫn nằm trong Chroma và
+    # bot trộn hai bản — đúng lỗi im lặng tệ nhất. Xoá theo phạm vi lớp–môn của
+    # collection đích, TRƯỚC khi nạp bản mới.
+    if mode == "replace":
+        try:
+            import urllib.request as _ur
+            hub = str(config_hub_url() or "").rstrip("/")
+            if hub:
+                req = _ur.Request(
+                    f"{hub}/api/rag/forget/{collection}",
+                    data=json.dumps({"source_prefix": f"teacher_sgk/lop{g}/{sub}/"}).encode(),
+                    headers={"Content-Type": "application/json"}, method="POST")
+                with _ur.urlopen(req, timeout=120) as resp:
+                    fr = json.loads(resp.read().decode() or "{}")
+                result["rag_forgot"] = int(fr.get("deleted") or 0)
+                logger.info("teacher import replace: đã xoá %s chunk cũ (%s, lop%s %s)",
+                            fr.get("deleted"), collection, g, sub)
+        except Exception as exc:
+            # Xoá hỏng thì KHÔNG nạp đè — nạp tiếp là tạo ra đúng bản trộn đang tránh.
+            logger.warning("teacher import replace: xoá chunk cũ lỗi: %s", exc)
+            result["rag"] = {"ok": False,
+                             "error": f"ghi đè RAG lỗi (chưa nạp bản mới): {str(exc)[:160]}"}
+            return result
+
     # Best-effort: đẩy nội dung markdown vào RAG sau khi import
     try:
         rag = push_sgk_to_rag(

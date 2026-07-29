@@ -709,6 +709,9 @@ export default function TeacherPage() {
 
   // import
   const [impMode, setImpMode] = useState<"append" | "replace">("append");
+  // Loại tài liệu quyết định VÀO KHO NÀO — thiếu nó thì SGV/vở bài tập tải lên
+  // đều rơi vào kho nội dung học sinh (lỗi đã vá ở backend, đây là mặt tiền).
+  const [impKind, setImpKind] = useState<"sgk" | "sgv" | "vbt" | "tap_huan">("sgk");
   const [impBusy, setImpBusy] = useState(false);
   const [impFileName, setImpFileName] = useState("");
   const [impFileSize, setImpFileSize] = useState(0);
@@ -2637,6 +2640,17 @@ export default function TeacherPage() {
               <div>
                 <label className="text-[10px] text-muted-foreground">Chế độ</label>
                 <select
+                  className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                  value={impKind}
+                  onChange={(e) => setImpKind(e.target.value as any)}
+                  title="Loại quyết định vào kho nào: SGK→kb_giao_duc · SGV→_sgv · Bài tập→_vbt · Tài liệu→_tailieu"
+                >
+                  <option value="sgk">SGK (học sinh)</option>
+                  <option value="sgv">SGV (giáo viên)</option>
+                  <option value="vbt">Vở/Sách bài tập</option>
+                  <option value="tap_huan">Tài liệu tập huấn</option>
+                </select>
+                <select
                   className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
                   value={impMode}
                   onChange={(e) => setImpMode(e.target.value as "append" | "replace")}
@@ -2680,7 +2694,7 @@ export default function TeacherPage() {
                     try {
                       const r = await request.post(
                         "/api/teacher/import-url",
-                        { url, grade, subject, mode: impMode },
+                        { url, grade, subject, mode: impMode, kind: impKind },
                         { timeout: 0 },
                       );
                       const d = r.data as {
@@ -2756,6 +2770,7 @@ export default function TeacherPage() {
                   fd.append("grade", String(grade));
                   fd.append("subject", subject);
                   fd.append("mode", impMode);
+                  fd.append("kind", impKind);
                   fd.append("title", f.name.replace(/\.pdf$/i, ""));
                   const r = await request.post("/api/teacher/import-sgk", fd, {
                     headers: { "Content-Type": "multipart/form-data" },

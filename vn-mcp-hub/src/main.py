@@ -736,6 +736,49 @@ def create_app() -> FastAPI:
             return {"ok": False, "error": "Không trích xuất được văn bản từ file này."}
         return {"ok": True, "filename": file.filename, "markdown": text}
 
+    @app.post("/api/rag/forget/{collection}")
+    async def rag_forget(collection: str, request: Request):
+        """Xoá chunk theo TIỀN TỐ source — để "ghi đè" là ghi đè THẬT ở RAG.
+
+        Vì sao cần: đường nạp mode=replace chỉ ghi đè file .md; chunk cũ trong
+        Chroma nằm lại vĩnh viễn, nên thay sách (năm học mới đổi SGK) xong bot
+        trộn sách cũ với sách mới. Chroma không lọc được prefix trong `where`,
+        nên quét metadata theo lô rồi xoá theo id.
+
+        Body: {source_prefix}. Prefix PHẢI ≥ 8 kí tự — chặn lời gọi cụt tay
+        ("t", "") quét bay cả kho.
+        """
+        from src.rag.retriever import RAGRetriever
+
+        body = await request.json()
+        prefix = str(body.get("source_prefix") or "")
+        if len(prefix) < 8:
+            return {"ok": False, "error": f"source_prefix quá ngắn: {prefix!r}"}
+        r = RAGRetriever.get()
+        if not r._ensure_loaded():
+            return {"ok": False, "error": "Chroma not loaded"}
+        try:
+            col = r._client.get_collection(name=collection)
+        except Exception:
+            return {"ok": True, "deleted": 0, "note": "collection chưa tồn tại"}
+        deleted, offset = 0, 0
+        while True:
+            got = col.get(limit=500, offset=offset, include=["metadatas"])
+            ids = got.get("ids") or []
+            if not ids:
+                break
+            hit = [i for i, m in zip(ids, got.get("metadatas") or [])
+                   if str((m or {}).get("source") or "").startswith(prefix)]
+            if hit:
+                col.delete(ids=hit)
+                deleted += len(hit)
+                # KHÔNG tăng offset sau khi xoá: các dòng sau dồn lên chỗ vừa
+                # trống, tăng offset là nhảy cóc qua chunk chưa xét.
+                continue
+            offset += len(ids)
+        return {"ok": True, "collection": collection, "deleted": deleted,
+                "source_prefix": prefix}
+
     @app.post("/api/rag/curate/{collection}")
     async def rag_curate(collection: str, request: Request):
         """Add curated content to a RAG collection + upload to R2.
