@@ -602,15 +602,28 @@ _DEVICE_KEYWORDS = (
     "tien trinh", "tat may", "khoa may", "ngu may", "khoi dong lai may",
     "dang xuat", "shutdown", "o dia c", "o dia d", "o dia e",
     "dien thoai cua toi", "may android",
+    # "kiểm tra tài nguyên <tên máy>" là câu người dùng hỏi thật và bản cũ trả
+    # False → rơi sang nhánh Home Assistant, bot đi tìm cảm biến tên "case KT"
+    # rồi kết luận "không thấy thiết bị nào", còn đòi IP + SSH + mật khẩu trong
+    # khi agent đang nối sẵn. Ba cụm dưới đây là cách gọi tài nguyên máy, không
+    # phải cách gọi thiết bị nhà thông minh, nên không lấn sân HA.
+    "tai nguyen", "danh sach thiet bi", "thiet bi nao",
 )
-_DEVICE_TOKENS = ("laptop", "pc", "desktop", "c2a-agent")
+_DEVICE_TOKENS = ("laptop", "pc", "desktop", "c2a-agent", "cpu", "ram")
 
 
 def _device_names() -> set[str]:
-    """Tên thiết bị đã khai trong config (cache ~30s).
+    """Tên thiết bị đã khai trong config (cache ~30s) — GỒM CẢ NHÃN.
 
     Đọc từ `config.data["device_agents"]` — cùng nguồn mà `/api/devices` dùng,
     nên khai thêm thiết bị là hỏi được ngay, không cần sửa từ khoá.
+
+    PHẢI lấy cả `label`, không chỉ khoá: người dùng gọi máy bằng cái tên họ thấy
+    trên giao diện. Đo thật (log chat 2026-07-29 10:09): thiết bị khoá là
+    `case-win`, nhãn là "Case KT"; câu "kiểm tra tài nguyên case KT" cho ra
+    False vì bản cũ chỉ so với khoá — bot bèn đi tìm cảm biến Home Assistant
+    tên "case KT", không thấy, rồi xin IP và mật khẩu SSH trong khi agent đang
+    nối sẵn. Không ai đọc log để biết mình phải gọi bằng khoá `case-win`.
     """
     global _device_names_cache, _device_names_ts
     now = time.time()
@@ -619,10 +632,11 @@ def _device_names() -> set[str]:
     names: set[str] = set()
     try:
         from services.config import config
-        for n in (config.data.get("device_agents") or {}):
-            s = str(n or "").strip().lower()
-            if s:
-                names.add(s)
+        for key, info in (config.data.get("device_agents") or {}).items():
+            for raw in (key, (info or {}).get("label") if isinstance(info, dict) else ""):
+                s = str(raw or "").strip().lower()
+                if s:
+                    names.add(s)
     except Exception:
         pass
     _device_names_cache = names
@@ -647,8 +661,28 @@ def _text_is_device(text: str) -> bool:
     folded = folded.replace("đ", "d")
     toks = set(re.sub(r"[^\w-]", " ", folded).split())
     for name in _device_names():
-        nf = name.replace("đ", "d")
-        if len(nf) >= 3 and nf in toks:
+        try:
+            from services.ha_client import _fold_diacritics as _fd
+            nf = _fd(name)
+        except Exception:
+            nf = name.lower()
+        nf = nf.replace("đ", "d").strip()
+        if len(nf) < 3:
+            continue          # tên quá ngắn (vd "pi") dễ khớp bừa vào từ tiếng Việt
+        # Nhãn NHIỀU TỪ ("case kt") không bao giờ là một token, phải so chuỗi con.
+        # Bản cũ chỉ so token nên nhãn có dấu cách không bắt được câu nào —
+        # chính là ca "kiểm tra tài nguyên case KT" trả về False.
+        if " " in nf:
+            if nf in folded:
+                return True
+            continue
+        if nf in toks:
+            return True
+        # Tên một từ có dấu gạch (case-win) — chú thích cũ bảo là "tách ra thành
+        # token nên vẫn bắt được", nhưng chỉ VĂN BẢN được tách, còn tên thì không.
+        # Cho khớp khi mọi phần ≥3 ký tự của tên đều xuất hiện trong câu.
+        phan = [p for p in re.split(r"[-_]+", nf) if len(p) >= 3]
+        if phan and all(p in toks for p in phan):
             return True
     if any(t in toks for t in _DEVICE_TOKENS):
         return True

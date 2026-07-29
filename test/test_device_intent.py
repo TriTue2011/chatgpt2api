@@ -103,6 +103,38 @@ class TestNhanRaCauThietBi(_Base):
         mc._device_names_cache = {"pi"}
         self.assertFalse(mc.is_device_query("pi là số 3.14"))
 
+    def test_goi_bang_NHAN_nhu_tren_giao_dien(self):
+        """Người dùng gọi máy bằng cái tên họ THẤY, không phải khoá cấu hình.
+
+        Ca thật (log chat 2026-07-29 10:09): khoá `case-win`, nhãn "Case KT".
+        Câu "kiểm tra tài nguyên case KT" trước đây trả False → bot đi tìm cảm
+        biến Home Assistant tên "case KT", không thấy, rồi xin IP + user SSH +
+        mật khẩu trong khi agent đang nối sẵn.
+        """
+        mc._device_names_cache = {"case-win", "case kt"}
+        for c in ("kiểm tra tài nguyên case KT",
+                  "case KT còn bao nhiêu RAM",
+                  "Case KT ổ đĩa còn trống không",
+                  "CPU của case kt đang bao nhiêu phần trăm"):
+            self.assertTrue(mc.is_device_query(c), f"không nhận ra: {c}")
+
+    def test_nhan_nhieu_tu_khong_bi_cat_thanh_token(self):
+        """Nhãn nhiều từ phải so CHUỖI CON — nó không bao giờ là một token."""
+        mc._device_names_cache = {"may ban hang so 1"}
+        self.assertTrue(mc.is_device_query("xem ổ đĩa may ban hang so 1"))
+        # nhưng một phần rời của nhãn thì KHÔNG được kích hoạt
+        self.assertFalse(mc.is_device_query("hang so 1 là hàng đầu tiên"))
+
+    def test_ten_co_dau_gach_khop_khi_du_cac_phan(self):
+        """`case-win` viết rời thành "case win" vẫn phải nhận ra."""
+        mc._device_names_cache = {"case-win"}
+        self.assertTrue(mc.is_device_query("dung lượng ổ đĩa của case win"))
+
+    def test_danh_sach_thiet_bi(self):
+        """Câu thứ hai người dùng hỏi ngay sau đó."""
+        mc._device_names_cache = {"case-win"}
+        self.assertTrue(mc.is_device_query("kiểm tra danh sách thiết bị của tôi"))
+
     def test_giu_che_do_o_luot_sau(self):
         """Đã gọi device_* rồi thì câu tiếp vẫn còn tool, không rơi về catch-all."""
         msgs = [{"role": "user", "content": "liệt kê file ổ D"},
