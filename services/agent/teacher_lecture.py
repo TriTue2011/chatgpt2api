@@ -129,6 +129,58 @@ def toc(grade: int, subject: str) -> list[dict[str, Any]]:
         return []
 
 
+_TOC_LINE_RE = re.compile(
+    r"^[\s·•\-–]*"
+    r"(?:\*\*)?(Bài|Unit|Chủ đề|Chương|Tuần)\s*(\d{1,3})(?:\*\*)?"
+    r"[.．:：]?\s*"
+    r"(?:[-–—]\s*)?"
+    r"(?P<ten>[^\n]{2,200}?)"
+    r"\s*(?:[-–—.…]{1,}|\s)\s*(?P<trang>\d{1,3})\s*$",
+    re.M | re.IGNORECASE,
+)
+
+
+def toc_tu_markdown(md: str, *, tap: str = "") -> list[dict[str, Any]]:
+    """Rút mục lục từ markdown một quyển sách (đường nạp file/URL gọi).
+
+    Vì sao cần: dropdown "chọn bài" của tab Bài giảng đọc file mục lục có cấu
+    trúc. Trước đây chỉ có đường gieo tay, nên sách nạp qua giao diện thì tra
+    cứu được mà KHÔNG chọn được bài — người dùng thấy sách "đã nạp" nhưng ô chọn
+    bài trống, không hiểu vì sao.
+
+    Khuôn nhận dạng lấy từ 82 quyển đã đọc: dòng mục lục của bộ Kết nối luôn là
+    "<Bài|Unit|Chủ đề|Chương|Tuần> <số>. <tên> — <trang>", phần nối giữa tên và
+    trang có thể là gạch dài, dấu chấm rải, hay chỉ khoảng trắng.
+
+    Lọc thêm hai thứ để không nhặt rác:
+      · trang phải tăng dần theo thứ tự bài — mục lục thật luôn vậy; dòng trong
+        thân sách ("xem Bài 12 trang 3") thì không;
+      · mỗi số bài giữ bản ĐẦU TIÊN, vì mục lục nằm ở đầu quyển còn các lần
+        nhắc lại về sau là trích dẫn.
+    """
+    ra: list[dict[str, Any]] = []
+    da_co: set[str] = set()
+    trang_cuoi = 0
+    for m in _TOC_LINE_RE.finditer(md or ""):
+        loai, so = m.group(1), m.group(2)
+        ten = re.sub(r"\s+", " ", m.group("ten")).strip(" .·•*-–—")
+        try:
+            trang = int(m.group("trang"))
+        except (TypeError, ValueError):
+            continue
+        if not ten or len(ten) < 2 or trang <= 0 or trang > 999:
+            continue
+        bai = so if loai.lower() in ("bài", "chủ đề", "chương", "tuần") else f"Unit {so}"
+        if bai in da_co:
+            continue
+        if trang < trang_cuoi:
+            continue          # số trang thụt lùi ⇒ không còn ở vùng mục lục
+        da_co.add(bai)
+        trang_cuoi = trang
+        ra.append({"bai": bai, "ten": ten, "trang": trang, "tap": tap})
+    return ra
+
+
 def save_toc(grade: int, subject: str, rows: list[dict[str, Any]]) -> int:
     """Ghi mục lục (đường nạp gọi khi chép xong một quyển). Ghi đè cả file —
     mục lục là ảnh chụp của quyển sách, không phải log để cộng dồn."""

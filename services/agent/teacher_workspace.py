@@ -818,6 +818,30 @@ def import_sgk_pdf(
         logger.warning("teacher import: rag push failed: %s", exc)
         result["rag"] = {"ok": False, "error": str(exc)[:200]}
 
+    # Tự gieo MỤC LỤC từ markdown vừa nạp.
+    #
+    # Vì sao ở đây: dropdown "chọn bài" của tab Bài giảng đọc file mục lục có cấu
+    # trúc, mà trước đây chỉ có đường gieo tay — nên sách nạp qua giao diện thì
+    # tra cứu được nhưng ô chọn bài TRỐNG, người dùng không hiểu vì sao sách "đã
+    # nạp" mà không chọn được bài nào.
+    #
+    # KHÔNG ghi đè mục lục đã có: bản gieo tay được soát từng dòng theo ảnh sách,
+    # còn bản rút tự động phụ thuộc chất lượng OCR — thà giữ bản tốt hơn. Muốn
+    # thay thì xoá file mục lục cũ rồi nạp lại.
+    try:
+        from services.agent import teacher_lecture as tl
+        if not tl.toc(g, sub):
+            rows = tl.toc_tu_markdown(md)
+            if rows:
+                n = tl.save_toc(g, sub, rows)
+                result["toc_added"] = n
+                logger.info("teacher import: gieo mục lục tự động %s bài (lop%s %s)",
+                            n, g, sub)
+        else:
+            result["toc_kept"] = True
+    except Exception as exc:
+        logger.warning("teacher import: gieo mục lục lỗi: %s", exc)
+
     # Xoá bản PDF vừa lưu KHI VÀ CHỈ KHI RAG đã vào được. RAG hỏng thì giữ lại
     # để nạp lại, khỏi phải tải/OCR lần nữa.
     if drop_pdf_on_rag_ok and saved_pdf and (result.get("rag") or {}).get("ok"):
