@@ -1074,6 +1074,11 @@ MCP_LABELS = {
     "kb_dien_nuoc": ("Kho Điện Nước", "Kiến thức điện, nước, điều hòa, chiller (MCB, MCCB...)", "knowledge"),
     "kb_y_te": ("Kho Y Tế", "Y tế cơ bản, sơ cứu, bệnh thường gặp", "knowledge"),
     "kb_giao_duc": ("Kho Giáo Dục", "Chương trình giáo dục VN, phương pháp học tập", "knowledge"),
+    "kb_giao_vien": ("Kho Giáo Viên (5 kho)",
+                     "Tra 5 kho dạy học tách riêng: SGK (nội dung học sinh) · SGV/kế hoạch "
+                     "bài dạy (cách dạy) · vở & sách bài tập (mẫu ra đề) · tài liệu tập huấn · "
+                     "phân bổ tuần–tiết. Hỏi 'bài 3 dạy gì' vào SGK, 'dạy bài 3 thế nào' vào SGV",
+                     "knowledge"),
     "kb_ngoai_ngu": ("Kho Ngoại Ngữ", "Từ điển, dịch thuật, ngữ pháp, luyện phát âm", "knowledge"),
     "kb_khoa_hoc": ("Kho Khoa Học", "Vật lý, hóa học, sinh học, toán cơ bản", "knowledge"),
     "kb_tu_nhien": ("Kho Tự Nhiên", "Động vật, thực vật, hệ sinh thái, khí hậu, địa lý VN", "knowledge"),
@@ -1102,6 +1107,7 @@ MOUNTS = [
     ("kb_dien_nuoc", "src.kb.dien_nuoc"),
     ("kb_y_te", "src.kb.y_te"),
     ("kb_giao_duc", "src.kb.giao_duc"),
+    ("kb_giao_vien", "src.kb.giao_vien"),
     ("kb_ngoai_ngu", "src.kb.ngoai_ngu"),
     ("kb_khoa_hoc", "src.kb.khoa_hoc"),
     ("kb_tu_nhien", "src.kb.tu_nhien"),

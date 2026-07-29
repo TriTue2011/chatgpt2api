@@ -158,6 +158,15 @@ PRESETS: list[MCPPreset] = [
         tags=["knowledge", "education", "free"],
     ),
     MCPPreset(
+        id="kb_giao_vien", name="Kho Giáo Viên (5 kho)", icon="👩\u200d🏫",
+        category="knowledge",
+        description=("Tra 5 kho dạy học tách riêng: SGK (nội dung học sinh) · SGV/kế "
+                     "hoạch bài dạy (cách dạy) · vở & sách bài tập (mẫu ra đề) · tài "
+                     "liệu tập huấn · phân bổ tuần–tiết."),
+        url="http://127.0.0.1:8005/kb_giao_vien/mcp",
+        tags=["knowledge", "education", "teacher", "free"],
+    ),
+    MCPPreset(
         id="kb_ngoai_ngu", name="Kho Ngoại Ngữ", icon="🗣️", category="knowledge",
         description="Từ điển, dịch thuật, ngữ pháp, luyện phát âm.",
         url="http://127.0.0.1:8005/kb_ngoai_ngu/mcp",
