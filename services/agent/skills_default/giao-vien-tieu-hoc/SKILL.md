@@ -37,9 +37,15 @@ Mỗi kho trả lời một câu khác nhau — lấy sai kho là trả lời sa
 | Bài này tuần/tiết mấy | `ask_phan_bo` | kho DUY NHẤT có tuần–tiết |
 | Đánh giá, phương pháp | `ask_tai_lieu` | hoàn thiện phần nhận xét |
 
-**Neo theo bài:** tra bằng `lop=<n> mon=<mã> bai=<số>` để gom đúng một bài ở cả
-bốn kho. Bài ôn tập của lớp 1 **không có lời truyện trong SGK** — chỉ có tranh và
-câu hỏi; lời truyện nằm ở SGV, nên phải `ask_sgv`, không được tự bịa truyện.
+**BẮT BUỘC truyền `lop` và `mon` cho mọi lần gọi bốn kho trên.** Kho gộp cả 12
+lớp, tìm theo ngữ nghĩa KHÔNG phân biệt lớp — đo thật: bỏ trống hai tham số này
+thì chỉ 4/12 lần ra đúng lớp–môn, truyền thì 12/12. Ví dụ:
+`ask_sgk(question="bài 19 Thanh âm của núi có gì", lop=4, mon="tviet")`.
+Mã môn: `toan tviet van anh sudia su dia ly hoa sinh` (lớp 1–5 dùng `tviet`,
+lớp 6–12 dùng `van`; `sudia` cho lớp 4–9, còn `su`/`dia` riêng ở lớp 10–12).
+Nhắc tên bài trong `question` để xếp hạng đúng bài; `lop`/`mon` là để LỌC.
+Bài ôn tập của lớp 1 **không có lời truyện trong SGK** — chỉ có tranh và câu hỏi;
+lời truyện nằm ở SGV, nên phải `ask_sgv`, không được tự bịa truyện.
 
 **Dàn ý trước, nội dung sau:** nêu dàn ý bài giảng (mục tiêu · các hoạt động ·
 bài tập · cách kiểm) cho chủ nhà xem rồi mới sinh chi tiết. Đừng đổ cả bài ra

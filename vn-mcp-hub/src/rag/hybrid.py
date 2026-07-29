@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 MIN_RAG_CHUNKS = 2
 
 
-def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K, force_refresh: bool = False) -> dict[str, Any]:
+def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K, force_refresh: bool = False,
+                 where: dict[str, Any] | None = None) -> dict[str, Any]:
     """Query RAG + optional web search fallback.
 
     Args:
@@ -36,7 +37,7 @@ def hybrid_query(collection: str, text: str, top_k: int = DEFAULT_TOP_K, force_r
 
     rag_results: list[dict[str, Any]] = []
     if not force_refresh:
-        rag_results = retriever.query(collection, text, top_k)
+        rag_results = retriever.query(collection, text, top_k, where=where)
 
     # Check staleness + structured status (used by the formatter to render
     # the right "should refresh" hint).

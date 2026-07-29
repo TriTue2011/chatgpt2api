@@ -988,6 +988,18 @@ def push_sgk_to_rag(
             "title": f"{full_title} [{i + 1}/{len(batches)}]",
             "text": batch,
             "source": f"teacher_sgk/lop{grade}/{subject}/{source or 'import'}",
+            # Gửi lớp–môn TƯỜNG MINH, không để hub phải suy từ đường dẫn source.
+            # Mọi đường nạp SGK (upload file, dán URL, kho tập huấn, seed) đều đi
+            # qua hàm này, nên đặt ở đây là cả bốn đường có metadata giống nhau.
+            # Cần thiết vì kho gộp 12 lớp: tra thuần ngữ nghĩa chỉ ra đúng lớp–môn
+            # 4/12 lần (đo 2026-07-29), phải LỌC theo grade/subject mới đúng 12/12
+            # — chunk không có hai khoá này sẽ bị bộ lọc bỏ qua, im lặng như thể
+            # sách chưa từng được nạp.
+            "metadata": {
+                "grade": int(grade or 0),
+                "subject": subject,
+                "kind": "vbt" if collection.endswith("_vbt") else "sgk",
+            },
         }
         try:
             req = urllib.request.Request(

@@ -251,13 +251,20 @@ def generate(student_key: str, subject: str, *, bai: str = "",
         return {"ok": False, "error": "cần tên bài hoặc chủ đề"}
 
     # Hai kho, hai câu hỏi khác nhau — đúng vai từng kho.
+    #
+    # LUÔN kèm lop=g, mon=sub: các kho gộp cả 12 lớp, và tìm theo ngữ nghĩa KHÔNG
+    # phân biệt được lớp vì sách các lớp dùng chung từ vựng môn học. Đo thật trên
+    # kb_giao_duc (585 chunk) ngày 2026-07-29: hỏi có ghi rõ tên lớp trong câu chỉ
+    # đúng lớp–môn 4/12 lần, lọc theo metadata thì 12/12. Thiếu hai tham số này là
+    # bài giảng lớp 1 trích sách lớp 7 mà không ai thấy sai ở đâu.
+    loc = {"lop": g, "mon": sub}
     kb_sgk = _kb("ask_sgk", {"question": f"lớp {g} {mon} {hoi}: nội dung bài, "
-                                         f"số trang", "top_k": 4})
+                                         f"số trang", "top_k": 4, **loc})
     kb_sgv = _kb("ask_sgv", {"question": f"lớp {g} {mon} dạy {hoi} thế nào: mục "
                                          f"tiêu, hoạt động, lỗi thường gặp",
-                             "top_k": 4})
+                             "top_k": 4, **loc})
     kb_tuan = _kb("ask_phan_bo", {"question": f"lớp {g} {mon} {hoi} tuần mấy, "
-                                              f"mấy tiết", "top_k": 2})
+                                              f"mấy tiết", "top_k": 2, **loc})
 
     sys_p = (
         "Bạn là giáo viên Việt Nam soạn BÀI GIẢNG TRỰC QUAN cho một học sinh "

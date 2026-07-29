@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from contextlib import asynccontextmanager, AsyncExitStack
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -813,7 +815,32 @@ def create_app() -> FastAPI:
             name=collection, embedding_function=retriever._embed_fn
         )
         ids = [f"curated::{ts}::{i}" for i in range(len(chunks))]
-        metas = [{"source": source, "chunk": i} for i in range(len(chunks))]
+        # grade/subject suy từ source `teacher_sgk/lop{n}/{mon}/...` để chunk mới
+        # LỌC ĐƯỢC theo lớp–môn ngay khi nạp. Nếu chỉ có {source, chunk} như bản
+        # cũ thì mọi lượt tra có lọc sẽ BỎ QUA sách vừa nạp — im lặng, không lỗi,
+        # nhìn như "chưa nạp". Kho SGK gộp 12 lớp mà tra thuần ngữ nghĩa chỉ đúng
+        # lớp–môn 4/12 lần (đo 2026-07-29), nên đường lọc là đường chính, không
+        # phải tuỳ chọn.
+        extra: dict[str, Any] = {}
+        mt = re.match(r"^teacher_sgk/lop(\d{1,2})/([a-z_]+)/", source)
+        if mt:
+            g = int(mt.group(1))
+            if 1 <= g <= 12:
+                extra["grade"] = g
+            extra["subject"] = mt.group(2)
+            extra["kind"] = "vbt" if collection.endswith("_vbt") else "sgk"
+        # Client gửi kèm metadata tường minh thì ưu tiên — đường nạp biết rõ
+        # lớp–môn hơn là đoán từ chuỗi source. Chỉ nhận kiểu vô hướng: Chroma
+        # không lưu được dict/list lồng nhau và sẽ ném lỗi giữa lúc nạp.
+        raw_meta = body.get("metadata")
+        if isinstance(raw_meta, dict):
+            for k, v in raw_meta.items():
+                if k in ("source", "chunk") or not isinstance(k, str):
+                    continue  # không cho ghi đè hai khoá xương sống
+                if isinstance(v, bool) or isinstance(v, (int, float, str)):
+                    if v != "" and v is not None:
+                        extra[k] = v
+        metas = [{"source": source, "chunk": i, **extra} for i in range(len(chunks))]
         batch = 100
         for i in range(0, len(chunks), batch):
             col.upsert(ids=ids[i:i+batch], documents=chunks[i:i+batch], metadatas=metas[i:i+batch])

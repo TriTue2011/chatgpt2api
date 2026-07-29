@@ -135,13 +135,25 @@ class RAGRetriever:
             logger.error("RAG: get_or_create_collection(%s) failed: %s", name, exc)
             return None
 
-    def query(self, collection: str, text: str, top_k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
-        """Return top-k matching chunks as a list of {text, source, score}."""
+    def query(self, collection: str, text: str, top_k: int = DEFAULT_TOP_K,
+              where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Return top-k matching chunks as a list of {text, source, score}.
+
+        ``where`` lọc theo metadata TRƯỚC khi xếp hạng. Cần cho kho gộp nhiều
+        lớp: kho SGK chứa cả 12 lớp, mà embedding không mang thông tin "lớp
+        mấy" — nội dung các lớp dùng chung từ vựng môn học. Đo thật trên
+        ``kb_giao_duc`` (585 chunk, 12 lớp): hỏi kèm tên lớp trong câu chỉ ra
+        đúng lớp–môn 4/12 lần; nhồi thêm "lop=9 mon=toan" vào câu còn tệ hơn
+        (0/8) vì chuỗi kĩ thuật làm loãng vector. Lọc metadata: 12/12.
+        """
         col = self._get_collection(collection)
         if col is None:
             return []
         try:
-            res = col.query(query_texts=[text], n_results=top_k)
+            kw: dict[str, Any] = {"query_texts": [text], "n_results": top_k}
+            if where:
+                kw["where"] = where
+            res = col.query(**kw)
         except Exception as exc:
             logger.warning("RAG: query(%s) failed: %s", collection, exc)
             return []
@@ -175,9 +187,10 @@ class RAGRetriever:
         return {"available": True, "count": count}
 
 
-def query(collection: str, text: str, top_k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
+def query(collection: str, text: str, top_k: int = DEFAULT_TOP_K,
+          where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Module-level shortcut so kb_* MCPs can `from src.rag.retriever import query`."""
-    return RAGRetriever.get().query(collection, text, top_k)
+    return RAGRetriever.get().query(collection, text, top_k, where=where)
 
 
 def format_results(results: list[dict[str, Any]]) -> str:

@@ -107,6 +107,7 @@ def kb_ask(
     question: str,
     top_k: int = 4,
     format_fn: Callable | None = None,
+    where: dict | None = None,
 ) -> str:
     """Query KB offline, tự động bổ sung live search nếu cần.
 
@@ -115,6 +116,7 @@ def kb_ask(
         question: Câu hỏi tiếng Việt
         top_k: Số chunks KB trả về
         format_fn: Hàm format kết quả (mặc định dùng format_hybrid_results)
+        where: Lọc metadata trước khi xếp hạng (vd lọc đúng lớp–môn của kho SGK)
 
     Returns:
         Chuỗi kết quả KB, có thể kèm live data nếu phát hiện cần
@@ -126,7 +128,7 @@ def kb_ask(
 
     # Bước 1: Query KB offline (luôn chạy)
     try:
-        results = hybrid_query(collection, question, top_k=top_k)
+        results = hybrid_query(collection, question, top_k=top_k, where=where)
         kb_text = format_fn(results) if format_fn else format_hybrid_results(results)
     except Exception as exc:
         logger.warning("KB query %s failed: %s", collection, exc)
