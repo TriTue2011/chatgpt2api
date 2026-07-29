@@ -35,7 +35,9 @@ type Lecture = {
 type Speaker = { id: string; name: string; kind?: string };
 type TocRow = { bai?: string; ten: string; trang?: number | null; tap?: string };
 
-const SUBJECTS: { id: string; label: string }[] = [
+// FALLBACK khi /api/teacher/subjects lỗi — nguồn thật là backend (by_grade),
+// khai hai nơi thì thêm môn ở backend mà dropdown vẫn thiếu.
+const SUBJECTS_FALLBACK: { id: string; label: string }[] = [
   { id: "toan", label: "Toán" },
   { id: "tviet", label: "Tiếng Việt" },
   { id: "van", label: "Ngữ văn" },
@@ -47,6 +49,30 @@ const SUBJECTS: { id: string; label: string }[] = [
   { id: "hoa", label: "Hoá học" },
   { id: "sinh", label: "Sinh học" },
 ];
+
+// Môn theo ĐÚNG LỚP của học sinh: lớp 1 không được thấy Vật lí/Hoá/Sử…
+// Đo thật 2026-07-29: dropdown cứng 10 môn hiện cả môn lớp 10 cho em lớp 4.
+function useSubjectsFor(grade?: number) {
+  const [subs, setSubs] = useState<{ id: string; label: string }[]>(SUBJECTS_FALLBACK);
+  useEffect(() => {
+    if (!grade) return;
+    (async () => {
+      try {
+        const r = await httpRequest<{
+          subjects?: { id: string; label: string }[];
+          by_grade?: Record<string, string[]>;
+        }>("/api/teacher/subjects");
+        const all = r.subjects || [];
+        const ids = (r.by_grade || {})[String(grade)] || [];
+        if (ids.length && all.length) {
+          const lab = new Map(all.map((x) => [x.id, x.label]));
+          setSubs(ids.map((id) => ({ id, label: lab.get(id) || id })));
+        }
+      } catch { /* giữ fallback */ }
+    })();
+  }, [grade]);
+  return subs;
+}
 
 function imgUrl(slug: string, imgIndex: number) {
   return `/api/teacher/page-img/${encodeURIComponent(slug)}/${imgIndex}`;
@@ -125,7 +151,15 @@ export function PageViewer({ book, printedPage, onPrinted }: {
 /* ── Tab BÀI GIẢNG ──────────────────────────────────────────────────────── */
 
 export function LectureTab({ student }: { student: Student }) {
+  const subjects = useSubjectsFor(student.grade);
   const [subject, setSubject] = useState("toan");
+  // Lớp không có môn đang chọn (vd đổi từ em lớp 10 sang em lớp 1 đang chọn
+  // Hoá) → nhảy về môn đầu của lớp, không giữ môn sai.
+  useEffect(() => {
+    if (subjects.length && !subjects.some((x) => x.id === subject)) {
+      setSubject(subjects[0].id);
+    }
+  }, [subjects, subject]);
   const [bai, setBai] = useState("");
   const [toc, setToc] = useState<TocRow[]>([]);
   const [notes, setNotes] = useState("");
@@ -253,7 +287,7 @@ export function LectureTab({ student }: { student: Student }) {
             <label className="text-[10px] text-muted-foreground">Môn (lớp {student.grade || "?"})</label>
             <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
               value={subject} onChange={(e) => setSubject(e.target.value)}>
-              {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              {subjects.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </div>
           <div className="sm:col-span-2">
@@ -380,7 +414,13 @@ export function LectureTab({ student }: { student: Student }) {
 /* ── Tab SGK: xem sách theo lớp của học sinh ───────────────────────────── */
 
 export function SgkViewerTab({ student }: { student: Student }) {
+  const subjects = useSubjectsFor(student.grade);
   const [subject, setSubject] = useState("toan");
+  useEffect(() => {
+    if (subjects.length && !subjects.some((x) => x.id === subject)) {
+      setSubject(subjects[0].id);
+    }
+  }, [subjects, subject]);
   const [books, setBooks] = useState<Book[]>([]);
   const [slug, setSlug] = useState("");
   const [page, setPage] = useState(1);
@@ -414,7 +454,7 @@ export function SgkViewerTab({ student }: { student: Student }) {
           <label className="text-[10px] text-muted-foreground">Môn (lớp {student.grade})</label>
           <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
             value={subject} onChange={(e) => setSubject(e.target.value)}>
-            {SUBJECTS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            {subjects.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
           </select>
         </div>
         <div className="sm:col-span-2">
