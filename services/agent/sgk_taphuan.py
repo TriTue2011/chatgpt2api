@@ -466,7 +466,9 @@ _looks_degenerate = ocr_rules.looks_degenerate
 # Số trang mỗi lượt gọi. Cả quyển một lượt thì đầu ra bị cắt cụt (134 trang ≈
 # 60k token markdown, vượt trần output), nên cắt khối. 20 trang ≈ 12k token —
 # an toàn, mà vẫn ít hơn 20 lần so với gửi từng trang một.
-_PAGES_PER_CALL = 20
+_PAGES_PER_CALL = 4  # 4 trang/lưới 2×2 trong MỘT ảnh — adapter vision chỉ
+# nhận 1 ảnh/lượt (đo 2026-07-29: 2 ảnh → output rỗng), và 4-up là mật độ
+# đã kiểm bằng mắt còn đọc rõ. 20 trang một lưới thì chữ nhỏ tới mức bịa.
 # Trần dung lượng mỗi khối gửi đi. Gemini chặn 50 MB/PDF, base64 phình 4/3
 # (30 MB → ~40 MB trên dây), nên 30 MB là ngưỡng an toàn.
 _MAX_CHUNK_BYTES = 30 * 1024 * 1024
@@ -485,14 +487,17 @@ _MAX_CALLS_PER_BOOK = 120
 def _chunk_prompt(a1: int, b1: int) -> str:
     """Prompt cho một khối, có nêu SỐ TRANG THẬT để đối chiếu lại được."""
     n = b1 - a1 + 1
+    # Nói "ảnh" chứ không "tệp PDF": các trang giờ gửi thành ẢNH image_url
+    # (part file_data bị provider nuốt — đo 2026-07-29). Prompt nói sai định
+    # dạng là model lại có cớ trả "không thấy tệp PDF".
     if n == 1:
-        which = f"Tệp PDF kèm theo có đúng 1 trang: trang số {a1} của quyển sách."
+        which = f"Kèm theo là 1 ảnh: trang số {a1} của quyển sách."
     else:
-        which = (f"Tệp PDF kèm theo có {n} trang: các trang số {a1} đến {b1} của "
-                 f"quyển sách (trang đầu của tệp là trang {a1}).")
+        which = (f"Kèm theo là {n} ảnh, theo đúng thứ tự: các trang số {a1} đến "
+                 f"{b1} của quyển sách (ảnh đầu tiên là trang {a1}).")
     return (f"{_DOC_PROMPT}\n\n{which}\n"
             f"Đầu ra phải có đủ {n} mốc <<<TRANG n>>>, với n chạy từ {a1} đến {b1} "
-            f"theo đúng thứ tự trang trong tệp. Số in trên giấy có thể khác — "
+            f"theo đúng thứ tự ảnh. Số in trên giấy có thể khác — "
             f"vẫn dùng {a1}..{b1} cho mốc.")
 
 
@@ -522,9 +527,53 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     calls = [0]          # đếm lượt gọi model cho cả quyển
     unverified: list[tuple[int, int]] = []   # khối model phớt lờ mốc trang
 
+    def _pages_as_images(blob: bytes) -> list[dict]:
+        """Khối PDF → đúng MỘT ảnh lưới 2 cột (data URI JPEG).
+
+        Hai phép đo 2026-07-29 quyết định hình dạng này:
+          · part `file_data` (PDF) bị provider NUỐT — model trả "Không có tệp
+            PDF nào được đính kèm";
+          · nhánh "AI vision" chỉ nhận MỘT `image_url` mỗi lượt: 1 ảnh → chép
+            được mục lục thật, 2 ảnh → output RỖNG, không lỗi nào báo ra.
+        Nên mọi trang của khối phải ghép thành một ảnh duy nhất. Lưới 2 cột với
+        4 trang/khối là điểm đã kiểm bằng mắt (đọc rõ cả trang Hoá 11 dày chữ);
+        DPI 110 giữ ảnh ghép ~2200×3100px — đủ nét mà không phình base64.
+        """
+        import io
+
+        import fitz
+        from PIL import Image
+
+        pages: list[Image.Image] = []
+        doc = fitz.open(stream=blob, filetype="pdf")
+        try:
+            for pg in doc:
+                px = pg.get_pixmap(dpi=110)
+                pages.append(Image.open(io.BytesIO(px.tobytes("png"))).convert("RGB"))
+        finally:
+            doc.close()
+        if not pages:
+            return []
+        cols = 1 if len(pages) == 1 else 2
+        rows = (len(pages) + cols - 1) // cols
+        w = max(p.width for p in pages)
+        h = max(p.height for p in pages)
+        sheet = Image.new("RGB", (w * cols, h * rows), "white")
+        for i, p in enumerate(pages):
+            sheet.paste(p, ((i % cols) * w, (i // cols) * h))
+        buf = io.BytesIO()
+        sheet.save(buf, "JPEG", quality=_JPEG_QUALITY)
+        return [{"type": "image_url", "image_url": {
+            "url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}}]
+
     def _ask(blob: bytes, a1: int, b1: int) -> tuple[str, str]:
         """Gửi một khối, trả (markdown, lý do hỏng). Đã gồm thử lại giãn cách."""
-        uri = "data:application/pdf;base64," + base64.b64encode(blob).decode()
+        try:
+            img_parts = _pages_as_images(blob)
+        except Exception as exc:  # noqa: BLE001
+            return "", f"render trang thành ảnh lỗi: {str(exc)[:120]}"
+        if not img_parts:
+            return "", "khối PDF không có trang nào"
         last = ""
         for attempt in range(_CHUNK_RETRIES):
             if calls[0] >= _MAX_CALLS_PER_BOOK:
@@ -533,15 +582,21 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
                 time.sleep(_RETRY_BASE * (2 ** (attempt - 1)))
             calls[0] += 1
             resp = call_model(mid, [
-                {"role": "user", "content": [
-                    {"type": "text", "text": _chunk_prompt(a1, b1)},
-                    {"type": "file_data", "file_data": {"file_uri": uri}},
-                ]},
+                {"role": "user", "content":
+                    [{"type": "text", "text": _chunk_prompt(a1, b1)}] + img_parts},
             ], timeout=600, max_tokens=32000, no_smart_home=True)
             if resp.get("error"):
                 last = str(resp["error"])[:150]
                 continue
             cand = content_of(resp).strip()
+            # Model hay ghi mốc trần "TRANG 5" thay vì "<<<TRANG 5>>>" (đo
+            # 2026-07-29: nội dung ĐÚNG mà mốc thiếu ngoặc, suýt bị chốt chặn
+            # từ-chối vứt cả khối). Chuẩn hoá dòng-nguyên-mốc về dạng chuẩn
+            # TRƯỚC mọi phép kiểm; neo đầu-cuối dòng nên "TRANG 5" giữa câu
+            # không bị đụng.
+            cand = re.sub(r"(?m)^\s*(?:<<<\s*)?TRANG\s+(\d+)\s*(?:>>>)?\s*(\(.*?\))?\s*$",
+                          lambda m: f"<<<TRANG {m.group(1)}>>>" + (f" {m.group(2)}" if m.group(2) else ""),
+                          cand)
             if p2w.looks_like_ocr_failure(cand):
                 last = "model trả lỗi thay vì nội dung"
                 continue
