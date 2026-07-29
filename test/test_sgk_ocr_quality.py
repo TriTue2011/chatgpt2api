@@ -94,7 +94,10 @@ def mfresh(tmp_path):
     trang của test trước rò sang test sau. Đã dính đúng như vậy.
     """
     mod = _load()
-    mod._PAGES_DIR = tmp_path / "pages"
+    # Bản đồ trang + kho ảnh nằm ở services/agent/teacher_images, nên phải vá
+    # THƯ MỤC Ở ĐÓ, không phải ở sgk_taphuan (chỗ này chỉ uỷ thác).
+    mod.ti.MAP_DIR = tmp_path / "pages"
+    mod.ti.ROOT = tmp_path / "page_img"
     return mod
 
 

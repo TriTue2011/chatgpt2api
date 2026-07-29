@@ -43,6 +43,7 @@ from typing import Any, Iterable
 from services import net_guard
 from services import ocr_rules
 from services.agent import sgk_fetch as sf
+from services.agent import teacher_images as ti
 from services.agent import teacher_workspace as tw
 from services.config import DATA_DIR
 
@@ -944,87 +945,35 @@ def import_slides(detail_url: str, *, grade: int, subject: str,
 # Ghép được với chữ vì OCR đã đánh mốc <<<TRANG n>>> theo ĐÚNG thứ tự ảnh trong
 # tệp (xem `_DOC_PROMPT` quy tắc mốc trang), và `_md_from_pdf_text` không xoá
 # mốc — nên chunk RAG nào cũng biết mình thuộc trang nào.
-_PAGES_DIR = Path(DATA_DIR) / "agent" / "teacher" / "pages"
-
-
+# Phần thực thi nằm ở services/agent/teacher_images — CẢ HAI đường nạp đều cần
+# bản đồ trang, mà chúng không import được nhau (sgk_taphuan → teacher_workspace,
+# nên teacher_workspace không thể import sgk_taphuan). Ở đây chỉ là lối vào cho
+# quen tay, KHÔNG giữ bản thứ hai của logic.
 def reader_slug(reader_url: str) -> str:
-    """Slug ổn định của một trang đọc, dùng làm tên file bản đồ trang."""
-    tail = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1]
-    return re.sub(r"[^A-Za-z0-9._-]", "_", tail)[:120]
+    return ti.slug_of(reader_url)
 
 
 def save_page_manifest(reader_url: str, images: list[str], *, grade: int,
                        subject: str, kind: str = "sgk", book_set: str = "",
-                       label: str = "") -> str:
-    """Ghi bản đồ trang → URL ảnh. Trả đường dẫn file, rỗng = ghi lỗi.
-
-    Gọi TRƯỚC khi OCR: OCR có thể hỏng hoặc bị dừng giữa đường, mà bản đồ ảnh
-    thì đã lấy được rồi. Ghi trước nghĩa là lần chạy lại chỉ tốn OCR, không tốn
-    lượt bò lại kho.
-    """
-    slug = reader_slug(reader_url)
-    if not slug or not images:
-        return ""
-    rec = {
-        "slug": slug, "reader_url": reader_url, "grade": int(grade),
-        "subject": subject, "kind": kind or "sgk",
-        "book_set": str(book_set or ""), "label": label,
-        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        # Số trang khớp ĐÚNG mốc <<<TRANG n>>> mà OCR sinh ra: cả hai đều đếm
-        # theo thứ tự ảnh trong tệp, bắt đầu từ 1 và tính cả bìa.
-        "pages": [{"n": i, "url": u} for i, u in enumerate(images, start=1)],
-    }
-    try:
-        _PAGES_DIR.mkdir(parents=True, exist_ok=True)
-        out = _PAGES_DIR / f"{slug}.json"
-        tmp = out.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(out)          # thay nguyên tử, không để lại file nửa vời
-        return str(out)
-    except Exception as exc:
-        logger.warning("sgk_taphuan.save_page_manifest lỗi (%s): %s", slug, exc)
-        return ""
+                       label: str = "", files: list[str] | None = None) -> str:
+    """Bản đồ trang cho sách của kho: ảnh nằm trên CDN nên lưu URL, ~120 byte mỗi
+    trang (cả quyển 186 trang ≈ 22 KB). `files` để kèm bản địa nếu có."""
+    return ti.save_manifest(reader_url, grade=grade, subject=subject, kind=kind,
+                            book_set=book_set, label=label, urls=list(images or []),
+                            files=files)
 
 
 def get_page_manifest(slug: str) -> dict[str, Any]:
-    """Bản đồ trang của một quyển. Rỗng = chưa nạp quyển đó."""
-    p = _PAGES_DIR / f"{reader_slug(slug)}.json"
-    try:
-        if p.is_file():
-            return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("sgk_taphuan.get_page_manifest lỗi (%s): %s", slug, exc)
-    return {}
+    return ti.get_manifest(slug)
 
 
 def page_image_url(slug: str, page: int) -> str:
-    """URL ảnh của MỘT trang. Rỗng = không có.
-
-    ``page`` đếm theo thứ tự ảnh trong tệp — đúng con số trong mốc
-    ``<<<TRANG n>>>`` của chữ đã nạp, nên tra thẳng từ chunk RAG được.
-    """
-    rec = get_page_manifest(slug)
-    for row in rec.get("pages") or ():
-        if int(row.get("n") or 0) == int(page):
-            return str(row.get("url") or "")
-    return ""
+    """URL CDN của một trang. Rỗng = không có (hoặc chỉ có bản địa)."""
+    return str(ti.page_source(slug, page).get("url") or "")
 
 
 def list_page_manifests() -> list[dict[str, Any]]:
-    """Danh sách quyển ĐÃ có bản đồ trang — chỉ metadata, không kèm 186 URL."""
-    out: list[dict[str, Any]] = []
-    if not _PAGES_DIR.is_dir():
-        return out
-    for p in sorted(_PAGES_DIR.glob("*.json")):
-        try:
-            rec = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        out.append({k: rec.get(k) for k in
-                    ("slug", "reader_url", "grade", "subject", "kind",
-                     "book_set", "label", "saved_at")}
-                   | {"pages": len(rec.get("pages") or ())})
-    return out
+    return ti.list_manifests()
 
 
 def is_sample(reader_url: str) -> bool:

@@ -629,6 +629,7 @@ def import_sgk_pdf(
     drop_pdf_on_rag_ok: bool = False,
     collection: str = "kb_giao_duc",
     write_md: bool = True,
+    store_images: bool = False,
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
 
@@ -644,6 +645,13 @@ def import_sgk_pdf(
     write_md/collection: bộ sách KHÁC ghi vào collection riêng và KHÔNG ghi .md.
     Ghi chung một `lop{N}/{mon}.md` thì trong cùng lớp–môn có hai chương trình,
     hai cách chia bài — `search_sgk` trả lời trộn mà không biết bộ nào.
+
+    store_images=True: render TỪNG TRANG thành ảnh và lưu vào kho ảnh giáo viên,
+    kèm bản đồ trang → ảnh. Dùng cho PDF do giáo viên TẢI LÊN: đường đó không có
+    ảnh trên CDN như kho taphuan, nên không lưu thì sau khi OCR xong là mất hẳn
+    phần trực quan — chữ vào kho, mà lúc giảng không có gì để hiện. MẶC ĐỊNH TẮT
+    vì đường taphuan đã có URL ảnh sẵn (miễn phí), lưu thêm bản địa cả kho là
+    ~2,2 GB không cần thiết.
 
     text: nội dung Markdown ĐÃ trích sẵn. Truyền vào thì bỏ qua bước trích ở
     đây — dành cho caller có đường trích rẻ hơn (sgk_taphuan gửi cả khối trang
@@ -670,6 +678,22 @@ def import_sgk_pdf(
     mode = (mode or "append").strip().lower()
     if mode not in {"append", "replace"}:
         mode = "append"
+
+    # Lưu ảnh TRƯỚC khi trích/nạp: trích có thể hỏng, mà ảnh thì đã có sẵn trong
+    # PDF rồi. Đặt sau bước nạp thì một lần OCR lỗi là mất luôn phần trực quan,
+    # và nếu drop_pdf_on_rag_ok đã xoá PDF thì không render lại được nữa.
+    img_files: list[str] = []
+    if store_images:
+        from services.agent import teacher_images as ti
+        slug = ti.slug_of(source_name or path.stem) or f"lop{g}_{sub}"
+        img_files = ti.store_pdf_pages(path, slug)
+        if img_files:
+            ti.save_manifest(
+                source_name or str(path), grade=g, subject=sub,
+                kind="sgk", label=title, files=img_files)
+        else:
+            logger.warning("import_sgk_pdf: store_images bật mà không lưu được "
+                           "ảnh trang nào (%s)", path.name)
 
     # Trích text/markdown (PDF số hoặc scan OCR) — SGK: toàn bộ trang (không cắt 40).
     # Gán trước: nhánh có sẵn text bỏ qua phần trích, mà max_pages còn được
@@ -996,8 +1020,15 @@ def import_sgk_bytes(
     title: str = "",
     keep_pdf: bool = True,
     drop_pdf_on_rag_ok: bool = False,
+    store_images: bool = True,
 ) -> dict[str, Any]:
-    """Import từ bytes upload (ghi temp rồi gọi import_sgk_pdf)."""
+    """Import từ bytes upload (ghi temp rồi gọi import_sgk_pdf).
+
+    ``store_images`` MẶC ĐỊNH BẬT ở đây, khác ``import_sgk_pdf``: đây là đường
+    giáo viên TẢI LÊN, không có ảnh trên CDN nào để quay lại lấy. File tạm bị xoá
+    ngay ở `finally` bên dưới, nên không render lúc này là mất hẳn phần trực quan
+    của quyển đó.
+    """
     import tempfile
     import os
 
@@ -1012,6 +1043,7 @@ def import_sgk_bytes(
             tmp, grade=grade, subject=subject, mode=mode,
             title=title, source_name=filename or "upload.pdf",
             keep_pdf=keep_pdf, drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
+            store_images=store_images,
         )
     finally:
         try:

@@ -257,6 +257,55 @@ def create_router() -> APIRouter:
             return {"ok": False, "error": f"chưa có bản đồ trang cho {slug}"}
         return {"ok": True, **rec}
 
+    @router.get("/api/teacher/page-img/{slug}/{page}")
+    async def teacher_page_image(
+        slug: str,
+        page: int,
+        authorization: str | None = Header(default=None),
+    ):
+        """Trả THẲNG ảnh trang đã lưu (AVIF q30, ~32 KB) để giảng bài hiện lên.
+
+        Có ảnh bản địa thì trả file; chỉ có URL CDN thì chuyển hướng sang đó —
+        giao diện không phải biết ảnh nằm ở đâu.
+        """
+        require_admin(authorization)
+        from fastapi.responses import FileResponse, RedirectResponse
+        from services.agent import teacher_images as ti
+
+        src = await run_in_threadpool(ti.page_source, slug, page)
+        rel = str(src.get("file") or "")
+        if rel:
+            p = await run_in_threadpool(ti.path_of, rel)
+            if p:
+                # AVIF/WebP đổi rất ít sau khi nạp; cache lâu để giảng bài không
+                # tải lại từng lần lật trang.
+                return FileResponse(
+                    str(p),
+                    media_type=("image/avif" if p.suffix == ".avif" else "image/webp"),
+                    headers={"Cache-Control": "public, max-age=604800"})
+        url = str(src.get("url") or "")
+        if url:
+            return RedirectResponse(url, status_code=307)
+        return {"ok": False, "error": f"không có ảnh trang {page} của {slug}"}
+
+    @router.get("/api/teacher/img-storage")
+    async def teacher_img_storage(authorization: str | None = Header(default=None)):
+        """Kho ẢNH giáo viên đang chiếm bao nhiêu (khác /storage — đó là PDF/md)."""
+        require_admin(authorization)
+        from services.agent import teacher_images as ti
+        return await run_in_threadpool(ti.store_report)
+
+    @router.delete("/api/teacher/page-img")
+    async def teacher_purge_images(
+        slug: str = Query(default=""),
+        authorization: str | None = Header(default=None),
+    ):
+        """Xoá ảnh trang. KHÁC xoá PDF: ảnh là NỘI DUNG để giảng bài, xoá là mất
+        phần trực quan chứ không chỉ mất bản lưu để đối chiếu."""
+        require_admin(authorization)
+        from services.agent import teacher_images as ti
+        return await run_in_threadpool(ti.purge, slug)
+
     @router.get("/api/teacher/storage")
     async def teacher_storage(authorization: str | None = Header(default=None)):
         """PDF/markdown đang chiếm bao nhiêu — để quyết có xoá PDF hay không."""
