@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 import threading
 import time
@@ -97,6 +98,12 @@ def _cfg() -> dict[str, Any]:
 _cookie_cache: dict[str, tuple[float, dict[str, str]]] = {}
 _COOKIE_TTL = 300  # captcha-solver fetch cache
 
+# Profile placeholder do ô "profile" mặc định của thẻ Cài đặt sinh ra
+# (gemini-web-default, claude-web-default…) — KHÔNG phải account đã onboard.
+# Cùng một biểu thức với api/accounts._is_placeholder_profile và bộ chọn
+# reuse-profile của web, để ba nơi không lệch nhau.
+_PLACEHOLDER_RE = re.compile(r"(^|[-_])default$", re.IGNORECASE)
+
 
 def _solver_cfg() -> dict[str, str]:
     """captcha-solver url/key: own config → gemini_web → flow (same solver)."""
@@ -167,7 +174,30 @@ def _profiles() -> list[str]:
         p = str(gw.get("profile") or "").strip()
         if p and p not in profiles:
             profiles.append(p)
-            
+
+    # Bỏ các profile PLACEHOLDER (…-default) khi đã có profile thật.
+    #
+    # Vì sao: kho tài khoản có một entry `gemini-web-default` với status=active —
+    # sinh ra từ ô "profile" mặc định của thẻ Cài đặt, KHÔNG phải account Google đã
+    # onboard. Nó đứng cùng 9 profile thật trong vòng xoay, nên mỗi lượt lấy cookie
+    # hệ thống lại gọi captcha-solver cho nó; solver MỞ MỘT PHIÊN TRÌNH DUYỆT rồi
+    # trả 404 "__Secure-1PSID missing". Đo trên máy chủ (log 22:59): 9 profile thật
+    # 200 OK, riêng cái này 404 kèm một lần `opened context profile=…-default`.
+    # Hai hậu quả thật: (1) tốn CPU/RAM mở browser vô ích mỗi vòng, và phiên đó có
+    # thể GIÀNH LOCK trình duyệt đúng lúc người dùng đang đăng nhập tay — đúng cảm
+    # giác "đăng nhập nhiều tầng, đăng nhập xong lại bắt đăng nhập"; (2) nếu nó
+    # được chọn để trả lời thì Gemini đáp "Permission denied or unauthenticated".
+    #
+    # Dùng lại đúng quy tắc của api/accounts._is_placeholder_profile để UI và
+    # đường chạy không lệch nhau. Chỉ lọc KHI CÒN profile thật — nếu người dùng
+    # chưa onboard cái nào thì vẫn để nguyên để onboard được.
+    thuc = [p for p in profiles if not _PLACEHOLDER_RE.search(p)]
+    if thuc and len(thuc) != len(profiles):
+        bo = [p for p in profiles if p not in thuc]
+        _logger().info({"event": "gma_bo_profile_placeholder", "bo": bo,
+                        "con_lai": len(thuc)})
+        profiles = thuc
+
     return profiles or ["gemini-web-default"]
 
 

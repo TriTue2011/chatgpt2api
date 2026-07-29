@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+
 import httpx
 from services.config import config
 from utils.log import logger
@@ -55,8 +57,24 @@ async def _warm_pass():
         if p_cfg.get("prewarm") is False:
             logger.info(f"web_prewarmer: skipping {p_name} (prewarm=false in config)")
             continue
+        # Provider KHÔNG khai trong config thì không hâm.
+        #
+        # Bản cũ rơi về `def_profile` ("gemini-web-default") mỗi vòng. Mà config
+        # thật dùng key `gemini_web_api`, không có `gemini_web` — nên vòng hâm nóng
+        # luôn nhắm vào một profile chưa onboard, còn 9 profile thật của người dùng
+        # thì không được hâm cái nào. Warmup ở captcha-solver hiện đã tắt để tiết
+        # kiệm CPU nên hại chỉ là log rác, nhưng bật lại là mỗi vòng mở một
+        # trình duyệt rỗng — đúng thứ giành lock với người đang đăng nhập tay.
+        if not p_cfg:
+            logger.info(f"web_prewarmer: skipping {p_name} (không có trong config)")
+            continue
         profile_str = str(p_cfg.get("profile") or def_profile)
         profiles = _expand_profiles(profile_str) or [def_profile]
+        # Bỏ placeholder …-default khi đã có profile thật (cùng quy tắc với
+        # api/accounts._is_placeholder_profile và api/gemini_web._PLACEHOLDER_RE).
+        thuc = [p for p in profiles if not re.search(r"(^|[-_])default$", p, re.I)]
+        if thuc:
+            profiles = thuc
         for profile in profiles:
             plan.append((p_name, profile))
 
