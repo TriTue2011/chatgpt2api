@@ -3078,11 +3078,6 @@ export default function TeacherPage() {
               *
               * Chỉ hiện kho của loại đang mở. Trước đây liệt kê cả năm loại ở mọi
               * tab, nên bốn tab nhìn giống nhau và vẫn là "kho chung". */}
-            {/* Hai bảng dưới đây TRẢ LỜI CÙNG MỘT CÂU HỎI "đã có gì" theo hai
-              * cách: kho RAG (đếm đoạn theo metadata) và tệp .md (đếm tổ hợp
-              * lớp–môn). Xếp DỌC thì phải cuộn qua bảng này mới thấy bảng kia
-              * rồi tự so trong đầu — xếp CẠNH nhau trên màn hình rộng. */}
-            <div className="grid gap-3 lg:grid-cols-2 items-start">
             <div className="rounded-md border border-border/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[11px] font-semibold flex items-center gap-1.5">
@@ -3120,18 +3115,58 @@ export default function TeacherPage() {
                       </button>
                       {khoOpen === k.kind && k.rows.length > 0 && (
                         <div className="border-t border-border/40 px-2 py-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
-                          {k.rows.map((r, i) => (
-                            <div key={i} className="flex items-center gap-1.5 text-[10px]">
-                              <span className="font-medium w-12 shrink-0">Lớp {r.grade || "?"}</span>
-                              <span className="w-24 shrink-0 truncate">
-                                {khoLoai.subject_label[r.subject] || r.subject || "(không rõ môn)"}
-                              </span>
-                              <span className={r.volume ? "text-emerald-600" : "text-muted-foreground"}>
-                                {r.volume || "chưa rõ tập"}
-                              </span>
-                              <span className="text-muted-foreground ml-auto">{r.chunks} đoạn</span>
-                            </div>
-                          ))}
+                          {/* GỘP theo lớp–môn để thấy MÔN ĐÓ CÓ MẤY TẬP.
+                            *
+                            * Bản trước in mỗi (lớp, môn, tập) một dòng, tập rỗng
+                            * thì ghi "chưa rõ tập" — đọc xong vẫn không biết môn
+                            * đó có 1 tập hay 2 tập, mà đó mới là câu người dùng
+                            * cần trả lời trước khi quyết nạp thêm hay ghi đè. */}
+                          {(() => {
+                            const gom = new Map<string, { grade: number; subject: string; taps: string[]; chunks: number; khongNhan: number }>();
+                            for (const r of k.rows) {
+                              const key = `${r.grade}|${r.subject}`;
+                              const cur = gom.get(key)
+                                || { grade: r.grade, subject: r.subject, taps: [], chunks: 0, khongNhan: 0 };
+                              cur.chunks += r.chunks || 0;
+                              if (r.volume) {
+                                if (!cur.taps.includes(r.volume)) cur.taps.push(r.volume);
+                              } else {
+                                cur.khongNhan += r.chunks || 0;
+                              }
+                              gom.set(key, cur);
+                            }
+                            const ds = [...gom.values()].sort(
+                              (a, b) => (a.grade - b.grade) || a.subject.localeCompare(b.subject));
+                            return ds.map((g, i) => (
+                              <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                                <span className="font-medium w-12 shrink-0">Lớp {g.grade || "?"}</span>
+                                <span className="w-24 shrink-0 truncate">
+                                  {khoLoai.subject_label[g.subject] || g.subject || "(không rõ môn)"}
+                                </span>
+                                {g.taps.length > 0 ? (
+                                  <span className="text-emerald-600 font-medium">
+                                    {g.taps.length} tập
+                                    <span className="font-normal text-muted-foreground">
+                                      {" "}({g.taps.sort().join(", ")})
+                                    </span>
+                                  </span>
+                                ) : (
+                                  /* Không phải "chưa rõ tập" mà là CHƯA GẮN NHÃN
+                                   * tập — nói đúng bản chất để biết phải nạp lại,
+                                   * chứ không phải sách thiếu tập. */
+                                  <span className="text-amber-600" title="Nạp lại và chọn đúng tập để hỏi theo tập được">
+                                    chưa gắn nhãn tập
+                                  </span>
+                                )}
+                                {g.khongNhan > 0 && g.taps.length > 0 ? (
+                                  <span className="text-amber-600">
+                                    +{g.khongNhan} đoạn chưa gắn tập
+                                  </span>
+                                ) : null}
+                                <span className="text-muted-foreground ml-auto">{g.chunks} đoạn</span>
+                              </div>
+                            ));
+                          })()}
                         </div>
                       )}
                       {khoOpen === k.kind && k.rows.length === 0 && (
@@ -3162,171 +3197,6 @@ export default function TeacherPage() {
               )}
             </div>
 
-            {/* ── Toàn bộ SGK trên server: gom theo lớp → môn, thu hết mặc định.
-              * CHỈ ở tab SGK: bảng này đếm theo file .md, mà .md chỉ ghi cho sách
-              * học sinh — để nó ở tab SGV/VBT là hiện số của loại KHÁC. */}
-            {impKind === "sgk" && (
-            <div className="rounded-md border border-border/60 p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-[11px] font-semibold flex items-center gap-1.5">
-                  <BookMarked className="size-3.5 text-amber-600" />
-                  Toàn bộ SGK trên server (sách học sinh)
-                  {sgkAll ? (
-                    <span className="font-normal text-muted-foreground">
-                      · {sgkAll.markdown.filter((m) => m.exists).length}/{sgkAll.markdown.length} tổ hợp có sách
-                    </span>
-                  ) : null}
-                </div>
-                {/* Bảng này đếm theo file .md, mà .md CHỈ ghi cho sách học sinh
-                  * — sách giáo viên / vở bài tập / tài liệu tập huấn nạp vào
-                  * không bao giờ hiện ở đây. Không nói ra thì đọc "Toàn bộ" là
-                  * tưởng đã thấy hết mọi loại sách. */}
-                <p className="basis-full text-[9px] text-muted-foreground">
-                  Chỉ sách học sinh — bảng này đếm theo file <code>.md</code>. Sách giáo viên ·
-                  vở bài tập · tài liệu tập huấn nằm ở TAB RIÊNG của từng loại.
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[10px]"
-                    disabled={sgkLoading}
-                    onClick={() =>
-                      setSgkOpen((o) => (o.length ? [] : GRADES.slice()))
-                    }
-                  >
-                    {sgkOpen.length ? "Thu hết" : "Mở hết"}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[10px]"
-                    disabled={sgkLoading}
-                    onClick={() => void loadSgkAll()}
-                  >
-                    {sgkLoading ? (
-                      <LoaderCircle className="size-3 animate-spin" />
-                    ) : (
-                      <RefreshCw className="size-3" />
-                    )}
-                    <span className="ml-1">Làm mới</span>
-                  </Button>
-                </div>
-              </div>
-
-              {!sgkAll ? (
-                <p className="text-[10px] text-muted-foreground">
-                  {sgkLoading ? "Đang tải…" : "Chưa tải được danh sách."}
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  {GRADES.map((g) => {
-                    const rows = sgkAll.markdown.filter((m) => m.grade === g);
-                    const have = rows.filter((m) => m.exists);
-                    const pdfs = sgkAll.imports.filter((p) => p.grade === g);
-                    const chars = have.reduce((a, m) => a + (m.chars || 0), 0);
-                    const open = sgkOpen.includes(g);
-                    return (
-                      <div key={g} className="rounded border border-border/40">
-                        <button
-                          type="button"
-                          className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/60 transition"
-                          onClick={() =>
-                            setSgkOpen((o) =>
-                              o.includes(g) ? o.filter((x) => x !== g) : [...o, g],
-                            )
-                          }
-                        >
-                          {open ? (
-                            <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="text-[11px] font-medium">Lớp {g}</span>
-                          <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded-full ${
-                              have.length === rows.length && rows.length > 0
-                                ? "bg-emerald-500/15 text-emerald-600"
-                                : have.length > 0
-                                  ? "bg-amber-500/15 text-amber-600"
-                                  : "bg-muted text-muted-foreground"
-                            }`}
-                          >
-                            {have.length}/{rows.length} môn
-                          </span>
-                          <span className="text-[9px] text-muted-foreground ml-auto">
-                            {chars > 0 ? `${chars.toLocaleString("vi-VN")} ký tự` : "chưa có sách"}
-                            {pdfs.length ? ` · ${pdfs.length} PDF` : ""}
-                          </span>
-                        </button>
-
-                        {open && (
-                          <div className="border-t border-border/40 px-2 py-1.5 space-y-1.5">
-                            {rows.map((m) => (
-                              <div
-                                key={`${m.grade}-${m.subject}`}
-                                className="flex items-center gap-2 text-[10px]"
-                              >
-                                <span className={m.exists ? "text-emerald-600" : "text-muted-foreground"}>
-                                  {m.exists ? "✓" : "○"}
-                                </span>
-                                <span className="font-medium w-20 shrink-0">
-                                  {m.subject_label || m.subject}
-                                </span>
-                                <span className="text-muted-foreground min-w-0 flex-1 truncate">
-                                  {m.exists
-                                    ? `${(m.chars || 0).toLocaleString("vi-VN")} ký tự · ${m.chapters || 0} mục${
-                                        m.mtime
-                                          ? ` · ${new Date(m.mtime * 1000).toLocaleDateString("vi-VN")}`
-                                          : ""
-                                      }`
-                                    : "chưa có file .md"}
-                                </span>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 text-[9px] px-1.5 shrink-0"
-                                  disabled={impBusy || impUrlBusy}
-                                  onClick={() => {
-                                    setGrade(m.grade);
-                                    setSubject(m.subject);
-                                    toast.message(`Đích nạp → lớp ${m.grade} · ${m.subject_label || m.subject}`);
-                                  }}
-                                >
-                                  Chọn làm đích
-                                </Button>
-                              </div>
-                            ))}
-                            {pdfs.length > 0 && (
-                              <ul className="pt-1 space-y-1 border-t border-border/30">
-                                {pdfs.map((p) => (
-                                  <li
-                                    key={`${p.name}-${p.mtime}`}
-                                    className="flex items-start gap-1.5 text-[9px] text-muted-foreground"
-                                  >
-                                    <FileText className="size-2.5 mt-0.5 shrink-0 text-amber-600" />
-                                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                                    <span className="shrink-0">{p.workspace || ""}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <p className="text-[9px] text-muted-foreground">
-                Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Môn khác nhau theo lớp, giữ đúng tên sách: lớp 1–5 <b>Tiếng Việt</b>, lớp 6–12 <b>Ngữ văn</b>; lớp 4–9 có <b>Lịch sử và Địa lí</b> (một quyển), lớp 10–12 tách <b>Lịch sử</b> · <b>Địa lí</b> · <b>Vật lí</b>.
-              </p>
-            </div>
-            )}
-            </div>
           </CardContent>
         </Fold>
       )}
