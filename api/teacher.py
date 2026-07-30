@@ -342,6 +342,67 @@ def create_router() -> APIRouter:
             ))
         return r
 
+    @router.post("/api/teacher/bai-tap")
+    async def bai_tap_tao(
+        payload: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Ra bài tập BA MỨC từ bài mẫu: sát bài mẫu → trung bình → khó.
+
+        Trả cả `bo_de` (có đáp án, cho giáo viên) và `de_hoc_sinh` (KHÔNG đáp án).
+        Tách sẵn ở đây để phía web không phải tự lọc — lọc sai một lần là đưa
+        đáp án cho học sinh.
+        """
+        require_admin(authorization)
+        from services.agent import teacher_bai_tap as bt
+
+        def _run() -> dict:
+            r = bt.tao(
+                grade=int(payload.get("grade") or 0),
+                subject=str(payload.get("subject") or ""),
+                bai=str(payload.get("bai") or ""),
+                topic=str(payload.get("topic") or ""),
+                so_moi_muc=int(payload.get("so_moi_muc") or 2),
+                muc=tuple(payload.get("muc") or bt.MUC),
+                student_key=str(payload.get("student_key") or ""),
+            )
+            if not r.get("ok"):
+                return r
+            return {**r,
+                    "de_hoc_sinh": bt.format_cho_hoc_sinh(r["bo_de"]),
+                    "de_giao_vien": bt.format_cho_giao_vien(r["bo_de"])}
+
+        return await run_in_threadpool(_run)
+
+    @router.get("/api/teacher/bai-tap")
+    async def bai_tap_liet_ke(
+        grade: int = Query(default=0),
+        subject: str = Query(default=""),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        from services.agent import teacher_bai_tap as bt
+        return await run_in_threadpool(
+            lambda: {"ok": True, "rows": bt.liet_ke(grade=grade, subject=subject)})
+
+    @router.get("/api/teacher/bai-tap/{bo_id}")
+    async def bai_tap_doc(
+        bo_id: str,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        from services.agent import teacher_bai_tap as bt
+
+        def _run() -> dict:
+            bo = bt.doc(bo_id)
+            if not bo:
+                return {"ok": False, "error": f"không có bộ đề '{bo_id}'"}
+            return {"ok": True, "bo_de": bo,
+                    "de_hoc_sinh": bt.format_cho_hoc_sinh(bo),
+                    "de_giao_vien": bt.format_cho_giao_vien(bo)}
+
+        return await run_in_threadpool(_run)
+
     @router.get("/api/teacher/pages")
     async def teacher_pages_list(authorization: str | None = Header(default=None)):
         """Các quyển ĐÃ có bản đồ trang → ảnh (để giảng bài hiện ảnh đi cùng chữ).

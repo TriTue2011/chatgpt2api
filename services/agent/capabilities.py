@@ -951,6 +951,37 @@ def _h_teacher_quiz(args: dict, ctx: dict) -> dict:
     return {"text": ta.format_quiz_for_student(quiz)}
 
 
+def _h_teacher_bai_tap(args: dict, ctx: dict) -> dict:
+    """Ra bài tập BA MỨC dựa trên bài mẫu thật trong kho vở/sách bài tập.
+
+    Khác `teacher_quiz`: cái đó sinh câu bằng `random` theo khoảng lập trình cứng
+    nên đúng phép tính mà sai KIỂU ra đề của sách, và chỉ làm được toán/anh/văn.
+    Ở đây gốc là bài mẫu trong `kb_giao_duc_vbt`, nên mức "sát" soi đúng dạng hỏi
+    của sách và mọi môn đều ra được.
+    """
+    from services.agent import teacher as teach
+    from services.agent import teacher_bai_tap as bt
+
+    if not teach.is_enabled() or not teach.can_use_teacher(ctx=ctx):
+        return {"text": "Cần quyền Giáo viên (Settings → Lọc thread)."}
+    ws = str(args.get("workspace") or "").strip()
+    grade, subject = _teacher_grade_subject(args, ws)
+    bai = str(args.get("bai") or args.get("topic") or args.get("query") or "").strip()
+    n = args.get("so_moi_muc") or args.get("n") or 2
+    xin = args.get("muc") or args.get("levels")
+    if isinstance(xin, str):
+        xin = [x.strip() for x in xin.replace("|", ",").split(",") if x.strip()]
+    r = bt.tao(grade=grade, subject=subject, bai=bai,
+               so_moi_muc=int(n) if n else 2,
+               muc=tuple(xin) if xin else bt.MUC,
+               student_key=str(args.get("student_key") or "").strip())
+    if not r.get("ok"):
+        return {"text": f"Chưa ra được đề: {r.get('error')}"}
+    # Bản GIÁO VIÊN (có đáp án + báo căn cứ): tool này là tool của giáo viên, và
+    # cảnh báo "kho chưa có bài mẫu" phải đến được người quyết định giao đề.
+    return {"text": bt.format_cho_giao_vien(r["bo_de"])}
+
+
 def _h_teacher_grade(args: dict, ctx: dict) -> dict:
     """Chấm 1 câu hoặc cả quiz; trả feedback + hướng sửa."""
     from services.agent import teacher as teach
@@ -3244,6 +3275,27 @@ CAPABILITIES: dict[str, Capability] = {
             "workspace": {"type": "string"}},
             "required": []},
         workflow="Gửi đề cho HS; khi nộp gọi teacher_grade với quiz_id + answers."),
+    "teacher_bai_tap": Capability(
+        name="teacher_bai_tap", risk=READ, handler=_h_teacher_bai_tap,
+        emoji="🪜", label="Bài tập 3 mức từ bài mẫu",
+        description=(
+            "Ra bài tập BA MỨC dựa BÀI MẪU thật trong kho vở/sách bài tập: sát "
+            "bài mẫu → trung bình → khó. Dùng khi cần luyện theo đúng dạng của "
+            "sách và nâng dần độ khó. grade, subject, bai, so_moi_muc."
+        ),
+        parameters={"type": "object", "properties": {
+            "grade": {"type": "integer", "description": "1–12"},
+            "subject": {"type": "string",
+                        "description": "toan|tviet|van|anh|sudia|su|dia|ly|hoa|sinh"},
+            "bai": {"type": "string", "description": "Tên bài / chủ đề"},
+            "so_moi_muc": {"type": "integer", "description": "Số câu MỖI mức 1–6"},
+            "muc": {"type": "string",
+                    "description": "Chọn mức: sat,trung_binh,kho (mặc định cả ba)"},
+            "student_key": {"type": "string"},
+            "workspace": {"type": "string"}},
+            "required": []},
+        workflow="Đề có đáp án + báo rõ có dựa bài mẫu hay không; giao xong gọi "
+                 "teacher_grade để chấm."),
     "teacher_grade": Capability(
         name="teacher_grade", risk=CHANGE, handler=_h_teacher_grade,
         emoji="✅", label="Chấm bài / sửa lỗi",
@@ -3454,6 +3506,7 @@ _CAP_GROUP: dict[str, str] = {
     "teacher_lesson": "teacher",
     "teacher_hint": "teacher", "teacher_check": "teacher",
     "teacher_quiz": "teacher", "teacher_grade": "teacher",
+    "teacher_bai_tap": "teacher",
     "sgk_fetch": "teacher",
 }
 

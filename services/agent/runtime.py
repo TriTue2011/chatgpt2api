@@ -108,6 +108,7 @@ def call_model(
     allowed_groups: Optional[set[str]] = None,
     modalities: Optional[list[str]] = None,
     channel: str = "",
+    response_format: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Call a concrete provider model, return the raw OpenAI response dict.
 
@@ -153,6 +154,15 @@ def call_model(
         payload["modalities"] = modalities
     if tools:
         payload["tools"] = tools
+    if response_format:
+        # Xin JSON tường minh. Hai việc: gateway ép JSON thuần ở lối ra
+        # (`enforce_response_format`), VÀ tắt bước đổi sang văn xuôi cho TTS —
+        # verbalize xoá { } " : nên JSON đi qua nó là chuỗi không parse được.
+        # Đo thật 2026-07-30: không có cờ này, model của phần Giáo viên (combo
+        # "AI text") bị định tuyến nhánh sang một model không mang marker `:text`,
+        # và JSON về tới nơi thành `mucsat,de...` — caller báo "model không trả
+        # đúng dạng" trong khi nội dung model trả vốn đúng.
+        payload["response_format"] = response_format
     try:
         req = urllib.request.Request(
             _base(), data=json.dumps(payload).encode(),

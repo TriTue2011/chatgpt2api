@@ -636,6 +636,34 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
             logger.info({"event": "structured_output_active", "has_response_format": True})
     except Exception as _rf_exc:
         logger.warning({"event": "response_format_inject_skip", "error": str(_rf_exc)[:200]})
+    # Chốt quyết định VĂN XUÔI *TRƯỚC* _handle_main, và chốt theo tên model của
+    # CLIENT.
+    #
+    # Vì sao không tính sau: `_handle_main` có thể ĐỔI `body["model"]` khi định
+    # tuyến theo nhánh Agent (`body["model"] = target`, xem branch_reroute). Tên
+    # nhánh thường KHÔNG mang marker giữ ký tự, nên tính lại ở dưới sẽ ra "có văn
+    # xuôi" cho một request mà client đã xin giữ ký tự.
+    #
+    # Đo thật 2026-07-30: model của phần Giáo viên là combo "AI text" (mọi bước
+    # đều `:text` ⇒ giữ ký tự). Xin model trả JSON thì nhận lại:
+    #
+    #     {"muc":"sat","de":"... 45 236 + 32 451"}   →   mucsat,de... 45 236 32 451
+    #
+    # Mất sạch { } " : và cả dấu +. `_parse_json_obj` trả None, và mọi đường của
+    # phần Giáo viên (bài giảng, bài tập ba mức) báo "model không trả đúng dạng"
+    # — trong khi model đã trả đúng nội dung. Định tuyến nhánh là việc NỘI BỘ,
+    # không được đổi định dạng đầu ra mà client đã yêu cầu.
+    _muon_van_xuoi = False
+    try:
+        _muon_van_xuoi = _wants_verbalize(body.get("model"), body.get("messages") or [])
+        # Request xin JSON thì TUYỆT ĐỐI không văn xuôi: verbalize xoá { } " :
+        # nên JSON nào đi qua nó cũng thành chuỗi không parse được. Chốt này đứng
+        # độc lập với tên model — client xin JSON là đủ.
+        from services.protocol.response_format import wants_structured_output as _wso
+        if _wso(body if isinstance(body, dict) else None):
+            _muon_van_xuoi = False
+    except Exception:
+        pass
     mem_ctx = None
     try:
         from services.memory_service import memory_service
@@ -651,7 +679,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     # TTS văn xuôi: chỉ với câu trả lời MODEL (search/RAG/codex) cho request HA
     # giọng nói. Local fast-path đã verbalize qua _vz; traffic chat/API không đụng.
     try:
-        if body.get("_via_model") and _wants_verbalize(body.get("model"), body.get("messages") or []):
+        if body.get("_via_model") and _muon_van_xuoi:
             result = _verbalize_result(result)
     except Exception:
         pass
@@ -2518,6 +2546,14 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # VĂN XUÔI ("°C"→"độ C", "20/06"→"ngày 20 tháng 6"...). Request thường (chat/
     # API) giữ nguyên ký tự cho dễ đọc bằng mắt.
     voice = _wants_verbalize(model, messages)
+    # Request xin JSON thì không bao giờ văn xuôi — verbalize xoá { } " : nên JSON
+    # đi qua nó là chuỗi không parse được. Xem chú thích ở `_muon_van_xuoi`.
+    try:
+        from services.protocol.response_format import wants_structured_output as _wso
+        if _wso(body if isinstance(body, dict) else None):
+            voice = False
+    except Exception:
+        pass
     model = _strip_marker(model)  # 'cx/auto:text' -> 'cx/auto' để dispatch đúng
     def _vz(t):
         return verbalize(t) if (voice and t) else t
