@@ -1900,7 +1900,6 @@ export default function TeacherPage() {
         <div className="grid gap-4 lg:grid-cols-5">
           <Fold id="lesson-edit" title="Soạn bài giảng" className="lg:col-span-3">
             <CardContent className="pt-4 space-y-3">
-              <div className="text-xs font-semibold">Soạn bài giảng (văn chữ + lời nói)</div>
               <div className="rounded border border-amber-500/25 bg-amber-500/5 p-2 space-y-2">
                 <div className="text-[10px] font-semibold flex items-center gap-1">
                   <Sparkles className="size-3 text-amber-600" /> AI soạn bài
@@ -1992,8 +1991,7 @@ export default function TeacherPage() {
           </Fold>
           <Fold id="lesson-saved" title="Bài đã lưu" className="lg:col-span-2">
             <CardContent className="pt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold">Bài đã lưu</span>
+              <div className="flex items-center justify-end">
                 <Button size="sm" variant="ghost" className="h-7" onClick={() => void loadLessons()}>
                   <RefreshCw className="size-3" />
                 </Button>
@@ -2073,7 +2071,6 @@ export default function TeacherPage() {
           {!hwFullscreen && (
           <Fold id="hw-new" title="Giao bài tập mới" className="lg:col-span-2">
             <CardContent className="pt-4 space-y-2">
-              <div className="text-xs font-semibold">Giao bài tập mới</div>
               <p className="text-[10px] text-muted-foreground">
                 Generator bài thật · hoặc <b>AI soạn đề</b> (LLM) · adaptive sau 3 đúng/sai
               </p>
@@ -2571,7 +2568,6 @@ export default function TeacherPage() {
           <CardContent className="pt-4 space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-semibold">Dashboard phụ huynh</div>
                 <p className="text-[10px] text-muted-foreground">
                   Hồ sơ HS · lộ trình · điểm yếu tuần · adaptive · workspace {workspace}
                 </p>
@@ -2671,28 +2667,16 @@ export default function TeacherPage() {
         <Fold id={`kho-${impKind}`}
           title={`Nạp ${KHO_TABS.find((k) => k.id === tab)?.label || ""}`}>
           <CardContent className="pt-4 space-y-3">
-            {/* Nói rõ đang ở kho nào và nạp vào đâu. Bốn tab dùng CHUNG khung nạp,
-              * nên nếu không ghi ra thì trông giống hệt nhau và lại thành "kho
-              * chung" như cũ. */}
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5
-                            text-[10px] flex items-center gap-1.5 flex-wrap">
-              <BookMarked className="size-3.5 text-amber-600 shrink-0" />
-              <span>Tab này chỉ nạp <span className="font-semibold">
-                {KHO_TABS.find((k) => k.id === tab)?.label}</span> → kho</span>
-              <code>{khoLoai?.loai.find((l) => l.kind === impKind)?.collection || impKind}</code>
-              <span className="text-muted-foreground">
-                · loại sách do TAB quyết định, không có ô chọn để chọn sai
-              </span>
-            </div>
             {impKind === "sgk" && SHOW_AUTOFILL && <AutofillPanel />}
             {impKind === "sgk" && <BulkSgkPanel />}
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <FileUp className="size-3.5 text-amber-600" />
-              Nạp theo chương / bài
-            </div>
+            {/* MỘT dòng đích duy nhất. Bản trước có một khối cảnh báo nhắc lại
+              * tên tab (đã nằm ở tiêu đề Fold) rồi một dòng mô tả nữa nói cùng
+              * chuyện — đọc ba lần một thông tin. Giữ lại đúng thứ không suy ra
+              * được từ tiêu đề: nạp vào collection nào, và lớp–môn đang chọn. */}
             <p className="text-[10px] text-muted-foreground">
-              Nội dung được tách heading <code>## Chương/Bài/Unit…</code> để search từng mục.
-              Đích: lớp <b>{grade}</b> · <b>{subject}</b> → workspace <code>{workspace}</code>
+              Đích: lớp <b>{grade}</b> · <b>{subject}</b> → kho{" "}
+              <code>{khoLoai?.loai.find((l) => l.kind === impKind)?.collection || impKind}</code>
+              {" · "}tách theo heading <code>## Chương/Bài/Unit…</code>
             </p>
 
             {/* Chọn đích ngay tại đây — bộ lọc chung ở đầu trang đang tạm ẩn,
