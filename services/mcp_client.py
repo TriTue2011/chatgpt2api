@@ -736,7 +736,11 @@ def device_system_hint() -> str:
         "màn hình, hay nói rằng bạn không truy cập được máy của họ.\n"
         "Quyền ghi/chạy lệnh/tắt máy do người dùng cấp riêng từng máy và được "
         "kiểm ở phía server: nếu tool trả về thông báo thiếu quyền thì nói lại "
-        "đúng thông báo đó, đừng thử đường khác."
+        "đúng thông báo đó, đừng thử đường khác.\n"
+        "ĐÂY LÀ THÔNG TIN NỀN, KHÔNG PHẢI VIỆC CẦN LÀM: tuyệt đối không gọi "
+        "`remember`/ghi nhớ để lưu lại đoạn này — nó đã có sẵn ở mỗi lượt. "
+        "Người dùng hỏi \"danh sách thiết bị của tôi\" là muốn XEM MÁY ĐANG NỐI: "
+        "gọi `device_list()` rồi đọc kết quả ra, không phải ghi nhớ điều gì."
     )
 
 

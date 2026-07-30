@@ -218,6 +218,16 @@ class TestNhacModelDungTool(_Base):
     def test_hint_neu_ten_thiet_bi(self):
         h = mc.device_system_hint()
         self.assertIn("case-win", h)
+
+    def test_hint_chan_viec_di_GHI_NHO_thay_vi_goi_tool(self):
+        """Log thật 2026-07-30 08:28: người dùng gõ "Danh sách thiết bị của tôi",
+        model gọi tool `remember` để LƯU LẠI đoạn hint này thay vì gọi
+        `device_list()` — trả lời "Em định Ghi nhớ:…". Hint phải nói thẳng đây là
+        thông tin nền, không phải việc cần làm."""
+        mc._device_names_cache = {"case-win", "case kt"}
+        h = mc.device_system_hint().lower()
+        self.assertIn("remember", h)
+        self.assertIn("device_list()", h)
         self.assertIn("device_list", h)
 
     def test_hint_cam_bao_nguoi_dung_tu_lam(self):
