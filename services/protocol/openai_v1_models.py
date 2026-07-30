@@ -104,17 +104,22 @@ FALLBACK_MODELS = {
         "gmw/imagen-4",
     ],
     # Model ảnh NVIDIA — dò THẬT bằng key của máy chủ ngày 30/07 (POST
-    # ai.api.nvidia.com/v1/genai/<model>):
-    #   flux.1-dev        → 200, trả artifacts base64
-    #   flux.2-klein-4b   → sống (422 chỉ vì steps > 4, xem nvidia_nim_image.py)
-    #   flux.1-schnell    → sống; tên cũ "flux_1-schnell" (gạch dưới) là SAI → 404
-    #   stabilityai/*     → 404 cả ba, NVIDIA đã ngừng phục vụ; để lại chỉ tổ cho
-    #                       người dùng chọn rồi nhận lỗi
+    # ai.api.nvidia.com/v1/genai/<model>), mỗi model chạy 3 lượt:
+    #   flux.2-klein-4b   → 3/3 vẽ được, ~1,5s, ảnh ~200 KB  (steps trần 4)
+    #   flux.1-dev        → 3/3 vẽ được, ~4,5s, ảnh ~70 KB   (steps 28)
+    #   flux.1-schnell    → 3/3 HỎNG: nhận request rồi ngắt kết nối đúng 60,3s
+    #                       (curl 56). Endpoint có tồn tại (gửi steps=8 trả 422
+    #                       "≤ 4" ngay lập tức) nhưng SINH ẢNH không bao giờ
+    #                       xong → bỏ, kẻo người dùng chọn rồi ngồi chờ 1 phút
+    #                       để nhận lỗi.
+    #   kontext-dev       → sống nhưng là model SỬA ảnh (422 "body.image
+    #                       required"), không phải sinh ảnh từ chữ.
+    #   stabilityai/* (sdxl-turbo, sd-3.5-large), briaai, consistory,
+    #   generative-3d, flux.1-kontext-pro → 404, NVIDIA đã ngừng phục vụ.
     "nvidia_nim": [
         "nv/auto",
         "nv-image/black-forest-labs/flux.2-klein-4b",
         "nv-image/black-forest-labs/flux.1-dev",
-        "nv-image/black-forest-labs/flux.1-schnell",
     ],
     "chatgpt2api": [],
     "antigravity": [
@@ -337,13 +342,11 @@ def _fetch_nvidia_models() -> set[str]:
 
             # NVIDIA image gen models are on a separate API (ai.api.nvidia.com/v1/genai/)
             # There's no list endpoint, so we hardcode known models with nv-image/ prefix.
-            # Danh sách này đã DÒ THẬT ngày 30/07 — xem chú thích ở STATIC_MODELS.
-            # Ba model stabilityai/* trả 404 nên đã bỏ; "flux_1-schnell" là tên sai
-            # (đúng: flux.1-schnell).
+            # Danh sách này đã DÒ THẬT ngày 30/07 (3 lượt/model) — xem chú thích đầy
+            # đủ ở STATIC_MODELS. Chỉ giữ đúng hai model VẼ ĐƯỢC.
             nv_image_models = [
                 "nv-image/black-forest-labs/flux.2-klein-4b",
                 "nv-image/black-forest-labs/flux.1-dev",
-                "nv-image/black-forest-labs/flux.1-schnell",
             ]
             cfg = config.data.get("providers") or {}
             nv_cfg = cfg.get("nvidia_nim") or {}
