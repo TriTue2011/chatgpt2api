@@ -35,10 +35,10 @@ _MAX_PER_CYCLE = 2
 _PER_ACCOUNT_MIN_GAP_S = 45 * 60
 # Trần cứng mỗi account để một browser treo không chặn phần còn lại của pool.
 # PHẢI lớn hơn ngân sách cả thang trong account_recovery (_RECOVER_BUDGET_S =
-# 900s), nếu không lượt khôi phục bị chặt giữa đường: bản cũ để 240s trong khi
-# riêng một lượt đăng nhập Google đã có thể tới 390s, nên tầng đăng nhập lại +
+# 1200s), nếu không lượt khôi phục bị chặt giữa đường: bản cũ để 240s trong khi
+# riêng một lượt đăng nhập Google đã có thể tới 700s, nên tầng đăng nhập lại +
 # tầng 2 sau đó không bao giờ chạy hết.
-_PER_ACCOUNT_TIMEOUT_S = 960.0
+_PER_ACCOUNT_TIMEOUT_S = 1320.0
 
 _started = False
 _last_try: dict[str, float] = {}

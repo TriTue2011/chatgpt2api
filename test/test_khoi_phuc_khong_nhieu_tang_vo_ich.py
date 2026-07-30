@@ -69,8 +69,14 @@ class TestOnboardNhanRaNgoCut(unittest.TestCase):
         self.assertIn("rejected_tries = 0", self.code)
 
 
-class TestBuocEmailKhongChetOan(unittest.TestCase):
-    """auto_login: bước email không được kết luận thất bại — nó chỉ là bước đầu."""
+class TestKienTriNhuChiDangNhap(unittest.TestCase):
+    """auto_login: MỘT vòng kiên trì — Thử lại → bấm lại vào mail → dò ô mật khẩu.
+
+    Đúng thao tác người dùng lặp khi bấm "Chỉ đăng nhập". Hai thứ bị cấm ở đây:
+    cắt bớt số lần thử, và thêm bước không có trong luồng đó (ví dụ tự bấm "Sử
+    dụng một tài khoản khác" — bấm là rời màn chọn tài khoản, hết đường bấm lại
+    vào mail).
+    """
 
     def setUp(self):
         self.code = _code(GOC / "captcha-solver" / "src" / "auto_login.py")
@@ -78,48 +84,63 @@ class TestBuocEmailKhongChetOan(unittest.TestCase):
     def test_khong_con_6_lan_chop_nhoang(self):
         self.assertNotIn("for _retry in range(6)", self.code)
 
-    def test_dung_deadline(self):
-        self.assertIn("_email_deadline = time.time() + 90", self.code)
-        self.assertIn("while time.time() < _email_deadline", self.code)
+    def test_mot_vong_duy_nhat_du_dai(self):
+        """Không còn hai vòng ngân sách riêng; vòng duy nhất phải đủ ~100 lượt."""
+        import re
+        self.assertNotIn("_email_deadline", self.code)
+        m = re.search(r"_VAO_O_MAT_KHAU_S = ([\d.]+)", self.code)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(float(m.group(1)), 420.0)
+        self.assertIn("pwd_deadline = time.time() + _VAO_O_MAT_KHAU_S", self.code)
 
-    def test_dang_nhap_san_la_THANH_CONG_ngay_o_buoc_email(self):
-        """Trang ở myaccount.google.com = đã đăng nhập = đích của "Chỉ đăng nhập".
-        Nhánh này phải nằm TRONG vòng email, trước cả phần dò BotGuard."""
-        i = self.code.index("_email_deadline = time.time() + 90")
+    def test_thu_lai_XONG_thi_bam_lai_vao_mail(self):
+        """Bấm 'Thử lại' rồi phải bấm lại vào mail như lần đầu — nếu không thì
+        vẫn đứng ở màn chặn và chẳng bao giờ tới ô mật khẩu."""
+        i = self.code.index("await _click_try_again()")
+        khuc = self.code[i:i + 700]
+        self.assertIn("_bam_lai_vao_mail()", khuc)
+
+    def test_bam_lai_vao_mail_MOI_VONG_khong_gian_nhip(self):
+        """Không có `% 2`/`% 3` nào chặn bớt nhịp bấm vào mail."""
+        i = self.code.index("if await _bam_lai_vao_mail():")
+        khuc = self.code[max(0, i - 400):i]
+        self.assertNotIn("%", khuc.split("await asyncio.sleep")[-1])
+
+    def test_bam_lai_vao_mail_uu_tien_tile_roi_moi_den_o_email(self):
+        i = self.code.index("async def _bam_lai_vao_mail")
+        khuc = self.code[i:i + 2600]
+        self.assertIn("data-identifier", khuc)
+        self.assertLess(khuc.index("data-identifier"), khuc.index('input[type="email"]'))
+
+    def test_khong_tu_them_buoc_dung_tai_khoan_khac(self):
+        """Bước này KHÔNG có trong luồng "Chỉ đăng nhập" — đã bỏ hẳn."""
+        self.assertNotIn("_ve_lai_form_dang_nhap", self.code)
+        self.assertNotIn("use another account", self.code)
+
+    def test_dang_nhap_san_la_THANH_CONG(self):
+        """Trang ở myaccount.google.com = đã đăng nhập = đích của "Chỉ đăng nhập",
+        phải xong NGAY, không dò ô mật khẩu cho hết giờ rồi báo BotGuard oan."""
+        i = self.code.index("pwd_deadline = time.time() + _VAO_O_MAT_KHAU_S")
         khuc = self.code[i:i + 1200]
         self.assertIn("_already_logged_in(ctx)", khuc)
         j = khuc.index("_already_logged_in(ctx)")
         self.assertIn('session.state = "success"', khuc[j:j + 400])
 
-    def test_het_gio_buoc_email_KHONG_raise(self):
-        """Bản cũ raise "email field not found" → chết trước vòng mật khẩu."""
+    def test_khong_con_raise_o_buoc_email(self):
         self.assertNotIn("email field not found", self.code)
-        i = self.code.index("if not email_success:")
-        khuc = self.code[i:i + 900]
-        self.assertNotIn("raise", khuc)
-        self.assertIn("chuyển sang vòng mật khẩu kiên trì", khuc)
-
-    def test_khong_thay_o_nao_thi_LAI_trang_ve_form(self):
-        """Đứng chờ ở màn chọn tài khoản thì ô email không tự hiện ra."""
-        self.assertIn("async def _ve_lai_form_dang_nhap", self.code)
-        khuc = self.code[self.code.index("async def _ve_lai_form_dang_nhap"):][:2400]
-        self.assertIn("use another account", khuc)
-        self.assertIn("_GOOGLE_SIGNIN_URL", khuc)
-
-    def test_vong_mat_khau_kien_tri_ca_khi_khong_doc_duoc_chu_chan(self):
-        """Chỉ thử lại khi ĐỌC ĐƯỢC chữ chặn của BotGuard là chưa đủ: mọi màn hình
-        khác đều đứng im hết 300s. Phải nhập lại email / lái về form theo nhịp."""
-        i = self.code.index("pwd_deadline = time.time() + 300")
-        khuc = self.code[i:i + 3000]
-        self.assertIn("stuck_rounds", khuc)
-        self.assertIn("_reenter_email()", khuc)
-        self.assertIn("_ve_lai_form_dang_nhap()", khuc)
 
     def test_captcha_thi_khong_pha_trang_cua_nguoi_dung(self):
-        """Người đang gõ captcha trên noVNC — không được nhập lại email đè lên."""
-        i = self.code.index("stuck_rounds += 1")
-        khuc = self.code[max(0, i - 300):i]
-        self.assertIn("if not captcha_flagged:", khuc)
+        """Người đang gõ captcha trên noVNC — không bấm/điền gì đè lên."""
+        i = self.code.index('captcha_flagged = True')
+        khuc = self.code[i:i + 400]
+        self.assertIn("if captcha_flagged:", khuc)
+        self.assertIn("continue", khuc)
+
+    def test_that_bai_noi_ro_da_thu_bao_nhieu_lan(self):
+        i = self.code.index("Không lọt được ô mật khẩu")
+        khuc = self.code[i:i + 400]
+        self.assertIn("block_retries", khuc)
+        self.assertIn("tile_clicks", khuc)
 
 
 class TestPhanLoaiTheoDanhSachHangLoat(unittest.TestCase):

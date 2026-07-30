@@ -54,13 +54,13 @@ def _acct_label(account: dict[str, Any]) -> str:
 
 _GRELOGIN_COOLDOWN_S = 1800.0  # browser login đắt → 1 lần / account / 30 phút
 # Trần thời gian 1 lượt khôi phục. Phải CHỨA ĐỦ cả thang, nếu không tầng cuối bị
-# cắt giữa đường (đo thật 30/07: trần 300s < riêng một lượt đăng nhập Google đã
-# 390s, nên tầng 2-sau-đăng-nhập không bao giờ chạy):
-#   T2 mở đăng nhập Codex trong workspace   ≤ 180s
-#   T3 đăng nhập lại tài khoản Google       ≤ 420s  (xem _freshen_google)
-#   T2 lặp lại sau khi đăng nhập xong       ≤ 180s
+# cắt giữa đường (đo thật 30/07: trần 300s < riêng một lượt đăng nhập Google, nên
+# tầng 2-sau-đăng-nhập không bao giờ chạy):
+#   T2 mở đăng nhập Codex trong workspace    ≤ 180s
+#   T3 đăng nhập lại tài khoản Google        ≤ 700s  (xem _freshen_google)
+#   T2 lặp lại sau khi đăng nhập xong        ≤ 180s
 #   T3 hàng loạt (acc trong codex_auto_list) ≤ 420s
-_RECOVER_BUDGET_S = 900.0
+_RECOVER_BUDGET_S = 1200.0
 _CAPTCHA_PROFILES = "/app/data/captcha/profiles"
 
 
@@ -211,12 +211,12 @@ def _freshen_google(profile: str) -> bool:
         _LAST_LOGIN_STATE[profile] = st
         if st in ("failed", "blocked", "error"):
             return False
-        # Poll tối đa ~420s — KHỚP ngân sách thật của auto_login: vòng email 90s
-        # (hết hạn thì rơi xuống, không phải thất bại) + vòng mật khẩu 300s (lặp
-        # 'Thử lại' / nhập lại email / lái về form tới khi hiện ô mật khẩu) + lề
-        # cho bước 2FA TOTP. Chờ ngắn hơn là bỏ cuộc oan khi nó vẫn đang thử.
+        # Poll tối đa ~700s — KHỚP ngân sách thật của auto_login: 420s cho giai
+        # đoạn vào ô mật khẩu (lặp 'Thử lại' + bấm lại vào mail, ~100 lượt) + 240s
+        # cho bước 2FA + lề. Chờ ngắn hơn là bỏ cuộc oan khi nó VẪN ĐANG thử —
+        # đúng kiểu "cắt bớt số lần thử" mà bản trước mắc.
         # 'running' = đang thử lại → cứ chờ tiếp.
-        for _ in range(84):
+        for _ in range(140):
             time.sleep(5)
             try:
                 s = requests.get(f"{base}/v1/session/{profile}/auto-login-status",
