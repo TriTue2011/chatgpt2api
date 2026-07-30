@@ -53,10 +53,14 @@ def _acct_label(account: dict[str, Any]) -> str:
 
 
 _GRELOGIN_COOLDOWN_S = 1800.0  # browser login đắt → 1 lần / account / 30 phút
-_RECOVER_BUDGET_S = 300.0      # trần thời gian 1 lượt khôi phục (bail nếu quá)
-# Ngân sách RIÊNG chừa cho T3-batch: tầng Google (T1/T2) hỏng vẫn phải để lại
-# chừng này giây, nếu không T3 không bao giờ được chạy (bug thấy 2026-07-24).
-_T3_RESERVE_S = 120.0
+# Trần thời gian 1 lượt khôi phục. Phải CHỨA ĐỦ cả thang, nếu không tầng cuối bị
+# cắt giữa đường (đo thật 30/07: trần 300s < riêng một lượt đăng nhập Google đã
+# 390s, nên tầng 2-sau-đăng-nhập không bao giờ chạy):
+#   T2 mở đăng nhập Codex trong workspace   ≤ 180s
+#   T3 đăng nhập lại tài khoản Google       ≤ 420s  (xem _freshen_google)
+#   T2 lặp lại sau khi đăng nhập xong       ≤ 180s
+#   T3 hàng loạt (acc trong codex_auto_list) ≤ 420s
+_RECOVER_BUDGET_S = 900.0
 _CAPTCHA_PROFILES = "/app/data/captcha/profiles"
 
 
@@ -74,14 +78,62 @@ def _solver_cfg() -> tuple[str, str]:
 
 
 def _profile_for(email: str) -> str:
-    localpart = email.split("@")[0] if "@" in email else email
-    return f"google-{localpart}"
+    """Tên profile browser của tài khoản này trong captcha-solver.
+
+    Trên đĩa đang tồn tại VÀI quy ước đặt tên khác nhau, do các đường tạo profile
+    khác nhau:
+      · web UI            → hạ chữ + đổi ký tự lạ thành '-'  (google-ben-bap)
+      · api/accounts.py, jwt_refresh_scheduler → đổi ký tự lạ, GIỮ hoa/thường
+      · hàm này (bản cũ)  → nguyên localpart, kể cả dấu chấm (google-Ben.Bap)
+    Đoán một kiểu rồi trả về luôn thì với email có dấu chấm/chữ hoa sẽ trỏ vào
+    thư mục KHÔNG tồn tại → `has_profile` False → tầng 2 bị bỏ oan, và tầng 3 lại
+    đăng nhập vào một profile mới toanh thay vì profile đang có session.
+    Vì vậy: sinh các ứng viên rồi ưu tiên cái CÓ THẬT trên đĩa.
+    """
+    local = (email or "").split("@", 1)[0] or "default"
+    an_toan = "".join(c if c.isalnum() or c == "-" else "-" for c in local)
+    ung_vien = [f"google-{local}", f"google-{an_toan}", f"google-{an_toan.lower()}"]
+    try:
+        import os
+        co_that = {n.lower(): n for n in os.listdir(_CAPTCHA_PROFILES)}
+    except OSError:
+        co_that = {}
+    for ten in ung_vien:
+        thuc = co_that.get(ten.lower())
+        if thuc:
+            return thuc
+    # Chưa có profile nào → dùng cùng quy ước với api/accounts.py và
+    # jwt_refresh_scheduler để cả hệ thống nói về cùng một thư mục.
+    return ung_vien[1]
 
 
-def _is_google_email(email: str) -> bool:
-    """Gmail/Googlemail only — Outlook/Microsoft go bulk (T3), not Google ride."""
-    e = (email or "").strip().lower()
-    return e.endswith("@gmail.com") or e.endswith("@googlemail.com")
+def _dong_hang_loat(email: str) -> list[str] | None:
+    """Dòng của email trong `codex_auto_list` (nguồn của nút "Đăng nhập hàng
+    loạt"), None nếu không có dòng nào.
+
+    ĐÂY là dấu hiệu phân loại tài khoản, theo đúng cách hệ thống được dùng
+    (người vận hành chốt 30/07): **có dòng trong danh sách → tài khoản đăng nhập
+    hàng loạt; KHÔNG có dòng → tài khoản Google.**
+
+    Bản cũ phân loại bằng đuôi email (`@gmail.com` = Google) nên sai cả hai chiều:
+      · acc hàng loạt dùng Gmail bị đẩy sang nhánh Google;
+      · acc Google (Workspace, đuôi công ty) bị đẩy sang nhánh hàng loạt rồi chết
+        ngay vì không có dòng nào trong `codex_auto_list` để mà đăng nhập.
+    """
+    from services.config import config
+    cfg = config.data if isinstance(config.data, dict) else {}
+    raw = str(cfg.get("codex_auto_list") or "")
+    muc_tieu = (email or "").strip().lower()
+    if not muc_tieu:
+        return None
+    for ln in raw.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        parts = ln.split("|") if "|" in ln else ln.split(":")
+        if parts and parts[0].strip().lower() == muc_tieu:
+            return [p.strip() for p in parts]
+    return None
 
 
 def _has_profile(profile: str) -> bool:
@@ -159,10 +211,12 @@ def _freshen_google(profile: str) -> bool:
         _LAST_LOGIN_STATE[profile] = st
         if st in ("failed", "blocked", "error"):
             return False
-        # Poll tối đa ~310s — KHỚP ngân sách BotGuard-retry (auto_login lặp bấm
-        # 'Thử lại' + nhập lại mail tới 5 phút). Chờ ngắn hơn sẽ bỏ cuộc oan khi
-        # retry vẫn đang chạy. 'running' = đang retry → cứ chờ tiếp.
-        for _ in range(62):
+        # Poll tối đa ~420s — KHỚP ngân sách thật của auto_login: vòng email 90s
+        # (hết hạn thì rơi xuống, không phải thất bại) + vòng mật khẩu 300s (lặp
+        # 'Thử lại' / nhập lại email / lái về form tới khi hiện ô mật khẩu) + lề
+        # cho bước 2FA TOTP. Chờ ngắn hơn là bỏ cuộc oan khi nó vẫn đang thử.
+        # 'running' = đang thử lại → cứ chờ tiếp.
+        for _ in range(84):
             time.sleep(5)
             try:
                 s = requests.get(f"{base}/v1/session/{profile}/auto-login-status",
@@ -265,16 +319,7 @@ def _codex_batch(email: str) -> str:
     from services.config import config
     from services.oauth_service import get_codex_auth_url
     cfg = config.data if isinstance(config.data, dict) else {}
-    raw = str(cfg.get("codex_auto_list") or "")
-    line = None
-    for ln in raw.splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
-        parts = ln.split("|") if "|" in ln else ln.split(":")
-        if parts and parts[0].strip().lower() == email.lower():
-            line = parts
-            break
+    line = _dong_hang_loat(email)
     if not line or len(line) < 2:
         return ""
     g_email, g_pass = line[0].strip(), line[1].strip()
@@ -582,19 +627,25 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
 
 
 def recover_provider_account(account: dict[str, Any], provider: str, reason: str) -> None:
-    """Thang khôi phục SAU KHI refresh_token (T0) đã fail (chạy thread nền).
+    """Các tầng khôi phục SAU KHI tầng 1 (refresh_token) đã trượt — thread nền.
 
-    Phân nhánh theo loại email:
+    Phân loại tài khoản bằng **danh sách đăng nhập hàng loạt** (`codex_auto_list`),
+    không bằng đuôi email — xem `_dong_hang_loat`.
 
-    **Google (gmail/googlemail)** — multi-tier browser:
-      T1  Tái dùng session Google profile (`codex-google-onboard`) nếu đã có profile
-      T2  'Đăng nhập tài khoản Google' (`auto-login-saved` pass+TOTP) rồi lại T1
-      T3  Đăng nhập hàng loạt (`codex-onboard` = cùng code UI bulk) nếu có dòng
-          trong `codex_auto_list` + IMAP
+    **KHÔNG có dòng trong danh sách → tài khoản Google**
+      T2  Mở đăng nhập Codex trong workspace của tài khoản đó: `codex-google-onboard`
+          ride session Google của profile rồi authorize Codex (cần đã có profile).
+      T3  Đăng nhập lại tài khoản Google — đúng nút "Chỉ đăng nhập" ở thẻ
+          "Provider qua tài khoản Google" (`auto-login-saved`, mật khẩu + TOTP nằm
+          trong solver) — xong thì làm lại T2 để lấy token.
 
-    **Không phải Google** (Outlook/Microsoft/…):
-      BỎ T1/T2 (không ride Google) → **chỉ T3** giống nút "Đăng nhập hàng loạt"
-      (`/v1/codex-onboard`: email+pass, MS OTC, IMAP shared, consent, callback).
+    **CÓ dòng trong danh sách → tài khoản đăng nhập hàng loạt**
+      T3  Giống hệt nút "Đăng nhập hàng loạt" nhưng chỉ với dòng của tài khoản
+          đang lỗi (`codex-onboard`: email|pass, mã dùng một lần qua IMAP,
+          consent, callback). Luồng này tự dựng profile mới nên không có session
+          nào để ride — vì vậy tài khoản hàng loạt không có T2.
+          Nếu tài khoản đó tình cờ cũng có creds Google đã lưu thì sau khi T3
+          trượt vẫn thử tiếp thang Google: có đường nào thì đi.
 
     Mỗi bước báo Telegram; debounce 30ph/account."""
     prov = _PROVIDERS.get(provider) or {}
@@ -614,35 +665,37 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
 
     reuse = prov.get("reuse")
     batch = prov.get("batch")
-    is_google = _is_google_email(email)
+    hang_loat = _dong_hang_loat(email) is not None
     has_profile = _has_profile(profile)
-    has_creds = _has_google_creds(profile, email) if is_google else False
-    # Ngân sách thời gian tổng — ca vô vọng (account bị ban) sẽ bail sớm thay vì
-    # treo nhiều phút qua từng tầng browser. Ca hợp lệ (session còn sống) T1 xong
-    # trong ~40s nên không đụng trần.
+    has_creds = _has_google_creds(profile, email)
+    # Ngân sách thời gian tổng — ca vô vọng (account bị ban) sẽ bail thay vì treo
+    # mãi qua từng tầng browser. Ca hợp lệ (session Google còn sống) xong T2 trong
+    # ~40s nên không đụng trần.
     started = time.time()
-    budget = _RECOVER_BUDGET_S
     tried: list[str] = []
+
+    def _con_gio() -> bool:
+        return time.time() - started < _RECOVER_BUDGET_S
 
     # KHÔNG có tầng nào chạy được → bỏ qua im lặng, đừng báo "đang khôi phục…"
     # rồi "KHÔNG khôi phục được (đã thử: none)". Ca điển hình: acc ChatGPT free
-    # tự thu thập (không phải Gmail, không profile/creds, provider batch=None) —
-    # user không tự add thì cũng không có đường đăng nhập lại để mà refresh.
-    can_google = bool(is_google and reuse and (has_profile or has_creds))
-    can_batch = batch is not None
+    # tự thu thập — không có dòng hàng loạt, cũng không có profile/creds Google,
+    # tức không tồn tại đường đăng nhập lại nào để mà thử.
+    can_google = bool(reuse and (has_profile or has_creds))
+    can_batch = bool(batch and hang_loat)
     if not (can_google or can_batch):
         logger.info({
             "event": "recover_skip_no_tier",
             "provider": provider,
             "email": email,
-            "is_google": is_google,
+            "hang_loat": hang_loat,
             "has_profile": has_profile,
             "has_google_creds": has_creds,
             "reason": reason[:120],
         })
         return
 
-    kind = "Google" if is_google else "non-Google (bulk/onboard)"
+    kind = "đăng nhập hàng loạt" if hang_loat else "tài khoản Google"
     det = {"provider": provider, "email": email}
     _notify(f"⚠️ {label} — {email}\nLỗi: {reason}\n→ Đang tự khôi phục ({kind})…",
             {**det, "step": "start", "reason": reason})
@@ -650,116 +703,47 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         "event": "recover_start",
         "provider": provider,
         "email": email,
-        "is_google": is_google,
+        "hang_loat": hang_loat,
         "has_profile": has_profile,
         "has_google_creds": has_creds,
         "reason": reason[:120],
     })
 
-    # ── Google: T1 ride ↔ T2 freshen+ride (thứ tự tuỳ acc còn sống hay chết) ──
-    if is_google and reuse:
-        # (b) Chừa ngân sách cho T3-batch: tầng Google chỉ được dùng tới mốc này,
-        # nếu không T1+T2 hỏng sẽ ăn hết 300s và T3 không bao giờ được chạy.
-        g_deadline = budget - (_T3_RESERVE_S if batch else 0.0)
-
-        def _left() -> bool:
-            return time.time() - started < g_deadline
-
-        def _do_reuse(tag: str, step: str, note: str) -> bool:
-            tried.append(tag)
-            if not reuse(profile, email):
-                return False
-            _notify(f"✅ {label} — {email}\nKhôi phục xong ({note}).",
-                    {**det, "step": step})
-            logger.info({"event": "recover_ok", "provider": provider,
-                         "tier": tag, "email": email})
-            return True
-
-        def _do_freshen() -> bool:
-            tried.append("T2-freshen")
-            _notify(f"🔧 {label} — {email}\n[T2] Đang đăng nhập lại tài khoản Google…",
-                    {**det, "step": "T2-freshen"})
-            if _freshen_google(profile):
-                return True
-            logger.warning({"event": "recover_freshen_failed",
-                            "provider": provider, "email": email})
+    def _do_reuse(tag: str, step: str, note: str) -> bool:
+        tried.append(tag)
+        if not reuse(profile, email):
             return False
+        _notify(f"✅ {label} — {email}\nKhôi phục xong ({note}).",
+                {**det, "step": step})
+        logger.info({"event": "recover_ok", "provider": provider,
+                     "tier": tag, "email": email})
+        return True
 
-        # (a) Acc CHẾT HẲN (dead/marked_error/401…) thì T1-reuse chắc chắn trượt
-        # → đăng nhập Google TRƯỚC rồi mới login lại Codex tại workspace đó.
-        # Session còn sống thì vẫn ưu tiên T1 cho nhanh (khỏi mở browser login).
-        _r = (reason or "").lower()
-        session_dead = any(k in _r for k in (
-            "dead", "marked_error", "refresh_accounts", "401",
-            "unauthorized", "invalid_grant", "expired",
-        ))
-        google_first = bool(session_dead and has_creds)
+    def _do_freshen() -> bool:
+        tried.append("T3-đăng-nhập-Google")
+        _notify(f"🔧 {label} — {email}\n[T3] Đang đăng nhập lại tài khoản Google "
+                f"(giống nút 'Chỉ đăng nhập')…",
+                {**det, "step": "T3-google-login"})
+        if _freshen_google(profile):
+            return True
+        logger.warning({"event": "recover_freshen_failed",
+                        "provider": provider, "email": email})
+        return False
 
-        # Quy trình ĐÚNG (người vận hành chốt 30/07): đăng nhập tài khoản Google
-        # XONG rồi mới đăng nhập Codex lấy token. Google login THẤT BẠI thì các
-        # tầng sau đều vô ích — đo thật cùng ngày:
-        #   · T1-reuse cầm session ĐÃ CHẾT sang OpenAI → Google trả màn
-        #     signin/rejected ("trình duyệt không an toàn"), lặp hết 120s;
-        #   · T3-bulk với tài khoản Gmail cũng đi "Tiếp tục với Google" → đúng
-        #     bức tường đó lần nữa.
-        # Ba tầng × vài phút, tầng nào cũng chắc chắn trượt, còn thông báo thì
-        # thành một tràng ⚠️🔧❌ làm người vận hành tưởng hỏng ba thứ khác nhau.
-        google_login_failed = False
-        if google_first:
-            if _left() and _do_freshen():
-                if _left() and _do_reuse("T1-after-freshen", "T2-freshen-ok",
-                                         "[T2] đăng nhập Google + login Codex tại workspace"):
-                    return
-            else:
-                google_login_failed = True
-        else:
-            if has_profile and _left():
-                if _do_reuse("T1-reuse", "T1-reuse-ok",
-                             "[T1] tái dùng session Google"):
-                    return
-            if has_creds and _left():
-                if _do_freshen():
-                    if _left() and _do_reuse("T1-after-freshen", "T2-freshen-ok",
-                                             "[T2] đăng nhập Google + login Codex tại workspace"):
-                        return
-                else:
-                    google_login_failed = True
+    google_login_failed = False
 
-    # ── T3: bulk login (Google fallback + BẮT BUỘC cho non-Google) ──────────
-    # Cùng endpoint/code với UI "Đăng nhập hàng loạt" → /v1/codex-onboard.
-    #
-    # KHÔNG chạy T3 cho tài khoản Gmail khi đăng nhập Google vừa thất bại: bulk
-    # với Gmail cũng bấm "Tiếp tục với Google" nên chỉ húc lại đúng bức tường
-    # BotGuard, tốn thêm vài phút và một cặp thông báo 🔧❌ nữa.
-    if is_google and google_login_failed:
+    # ── Tài khoản ĐĂNG NHẬP HÀNG LOẠT: T3 = chạy lại đúng luồng hàng loạt ─────
+    # Cùng endpoint/code với nút "Đăng nhập hàng loạt" (/v1/codex-onboard), chỉ
+    # với dòng của tài khoản đang lỗi. Không có T2 vì luồng này tự dựng profile
+    # mới (force_recreate) nên chẳng có session nào để tái dùng.
+    if can_batch and _con_gio():
+        tried.append("T3-hàng-loạt")
         _notify(
-            f"❌ {label} — {email}\n"
-            f"Google TỪ CHỐI trình duyệt tự động (BotGuard — 'trình duyệt không "
-            f"an toàn') ngay bước đăng nhập Google, nên KHÔNG thử tiếp "
-            f"T1/T3 (đều phải qua Google, chắc chắn trượt).\n"
-            f"→ Đăng nhập tay MỘT lần qua noVNC cổng 6080 (profile "
-            f"{profile}), xong hệ thống tự dùng lại session đó.",
-            {**det, "step": "failed", "reason": "google_login_failed"},
+            f"🔧 {label} — {email}\n"
+            f"[T3] Đăng nhập lại giống nút 'Đăng nhập hàng loạt', chỉ với tài "
+            f"khoản này (email|pass + mã dùng một lần qua IMAP)…",
+            {**det, "step": "T3-batch"},
         )
-        logger.warning({"event": "recover_failed", "provider": provider,
-                        "email": email, "is_google": True,
-                        "tried": tried, "reason": "google_login_failed"})
-        return
-    if batch and time.time() - started < budget:
-        tried.append("T3-batch")
-        if is_google:
-            _notify(
-                f"🔧 {label} — {email}\n"
-                f"Google tiers lỗi → [T3] thử đăng nhập hàng loạt (codex_auto_list + IMAP)…",
-                {**det, "step": "T3-batch"},
-            )
-        else:
-            _notify(
-                f"🔧 {label} — {email}\n"
-                f"Acc không phải Gmail → [T3] đăng nhập giống hàng loạt "
-                f"(email|pass + IMAP OTC)…",
-                {**det, "step": "T3-batch"},
-            )
         from services.codex_deactivated import CodexAccountDeactivated
         try:
             tok = batch(email)
@@ -769,10 +753,38 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
             logger.info({"event": "recover_stop_deactivated", "provider": provider, "email": email})
             return
         if tok:
-            _notify(f"✅ {label} — {email}\nKhôi phục xong ([T3] đăng nhập hàng loạt / codex-onboard).",
+            _notify(f"✅ {label} — {email}\nKhôi phục xong ([T3] đăng nhập hàng loạt).",
                     {**det, "step": "T3-batch-ok"})
-            logger.info({"event": "recover_ok", "provider": provider, "tier": "batch", "email": email})
+            logger.info({"event": "recover_ok", "provider": provider,
+                         "tier": "T3-hàng-loạt", "email": email})
             return
+
+    # ── Tài khoản GOOGLE: T2 (đăng nhập Codex trong workspace) → T3 (đăng nhập
+    #    lại Google) → T2 lần nữa ───────────────────────────────────────────────
+    if can_google:
+        # T2 ĐI TRƯỚC: rẻ, không phải mở màn đăng nhập Google, và session Google
+        # của profile thường VẪN SỐNG dù token Codex đã chết (OpenAI thu hồi
+        # token chứ không đăng xuất Google).
+        #
+        # Bản cũ: hễ `reason` có chữ "dead"/"401"/"expired" là bỏ qua T2, đăng
+        # nhập Google trước. Nhưng scheduler LUÔN gửi reason "dead:…", nên trên
+        # đường quét định kỳ T2 thực tế CHƯA BAO GIỜ được chạy — đo thật 30/07
+        # (smarthomebanbap2011@gmail.com): chỉ chạy đúng "T2-freshen", nó báo
+        # thất bại oan (trang đang ở myaccount.google.com, tức đang đăng nhập),
+        # rồi cả thang bị chặn theo và tài khoản nằm chết.
+        if has_profile and _con_gio():
+            if _do_reuse("T2-workspace", "T2-ok",
+                         "[T2] mở đăng nhập Codex trong workspace (tái dùng "
+                         "session Google của profile)"):
+                return
+        if has_creds and _con_gio():
+            if _do_freshen():
+                if _con_gio() and _do_reuse(
+                        "T2-sau-T3", "T3-ok",
+                        "[T3] đăng nhập lại Google + [T2] đăng nhập Codex tại workspace"):
+                    return
+            else:
+                google_login_failed = True
 
     tried_s = " → ".join(tried) if tried else "none"
     # Nguyên nhân CỤ THỂ thắng gợi ý chung.
@@ -781,17 +793,26 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # đọc đi sai hướng khi thực tế là Google bắt captcha: mật khẩu, TOTP, IMAP đều
     # đúng cả, không có gì để "kiểm tra". Đo thật 30/07 với benbap2011@gmail.com —
     # log auto_login ghi rõ captcha, còn thông báo lại bảo đi soi cấu hình.
-    trang_thai = trang_thai_dang_nhap_cuoi(profile) if is_google else ""
+    trang_thai = trang_thai_dang_nhap_cuoi(profile) if can_google else ""
     if trang_thai == "need_captcha":
         hint = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
                 "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP/IMAP không liên quan.")
     elif trang_thai in ("need_code", "need_tap"):
         hint = ("Google đòi mã 2FA phải người bấm (profile này chưa có TOTP) — "
                 "xử lý trên noVNC cổng 6080, hoặc thêm TOTP cho profile.")
-    elif not is_google:
-        hint = "Thêm dòng email|pass vào Settings Codex (codex_auto_list) + IMAP Gmail dùng chung"
+    elif google_login_failed:
+        hint = (f"Đăng nhập lại Google không vào được ô mật khẩu (Google chặn hoặc "
+                f"đổi giao diện) — đăng nhập tay MỘT lần qua noVNC cổng 6080 "
+                f"(profile {profile}), xong hệ thống tự dùng lại session đó.")
+    elif hang_loat:
+        hint = ("Soi lại dòng email|pass của tài khoản này trong Settings Codex "
+                "(codex_auto_list) + IMAP Gmail dùng chung.")
+    elif not (has_profile or has_creds):
+        hint = ("Chưa có đường nào để đăng nhập lại: lưu tài khoản Google "
+                "(email + mật khẩu + TOTP) ở thẻ 'Provider qua tài khoản Google', "
+                "hoặc thêm dòng vào danh sách đăng nhập hàng loạt.")
     else:
-        hint = "Kiểm tra profile Google / pass+TOTP / codex_auto_list + IMAP"
+        hint = "Kiểm tra profile Google + mật khẩu/TOTP đã lưu trong solver."
     _notify(
         f"❌ {label} — {email}\n"
         f"KHÔNG tự khôi phục được (đã thử: {tried_s}).\n"
@@ -803,7 +824,7 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         "event": "recover_failed",
         "provider": provider,
         "email": email,
-        "is_google": is_google,
+        "hang_loat": hang_loat,
         "tried": tried,
     })
 

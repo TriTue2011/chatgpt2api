@@ -716,6 +716,10 @@ async def do_google_login_steps(
     # ── Handle Account Chooser ──
     # Google often shows the "Choose an account" screen instead of an email input
     # if the profile already has history.
+    # Khởi tạo TRƯỚC try: page.evaluate lỗi (trang đang điều hướng) thì các nhánh
+    # bên dưới vẫn đọc clicked_tile → NameError, cả lượt đăng nhập chết vì một
+    # lỗi tạm thời.
+    clicked_tile = False
     try:
         clicked_tile = await page.evaluate(
             """(em) => {
@@ -759,16 +763,54 @@ async def do_google_login_steps(
     # đúng hiện tượng nhưng SAI nguyên nhân.
     #
     # Bấm tile xong trang cần thời gian điều hướng, nên chờ lâu hơn khi đã bấm.
-    pwd_already = False
-    _cho = 8000 if clicked_tile else 2500
-    for _sel in ('input[type="password"]', 'input[name="Passwd"]',
-                 'input[autocomplete="current-password"]', 'input[name="password"]'):
+    _PWD_SELECTORS = ('input[type="password"]', 'input[name="Passwd"]',
+                      'input[autocomplete="current-password"]', 'input[name="password"]')
+
+    async def _pwd_visible(timeout: int = 1000):
+        for _sel in _PWD_SELECTORS:
+            try:
+                _loc = page.locator(_sel).first
+                if await _loc.is_visible(timeout=timeout):
+                    return _loc
+            except Exception:
+                continue
+        return None
+
+    async def _ve_lai_form_dang_nhap() -> None:
+        """Lái trang về form đăng nhập khi KHÔNG thấy ô email lẫn ô mật khẩu.
+
+        Đứng chờ ở màn chọn tài khoản / trang chủ tài khoản thì ô email không bao
+        giờ tự hiện ra — người dùng thật lúc này bấm "Sử dụng một tài khoản khác"
+        hoặc mở lại trang đăng nhập. Không có bước này thì cả hai vòng (email và
+        mật khẩu) chỉ ngồi dò selector cho hết ngân sách rồi báo thất bại.
+        """
         try:
-            if await page.locator(_sel).first.is_visible(timeout=_cho):
-                pwd_already = True
-                break
+            picked = await page.evaluate(
+                """() => {
+                  const re = /sử dụng một tài khoản khác|dùng một tài khoản khác|use another account|thêm tài khoản khác|add another account|đăng nhập vào tài khoản khác/i;
+                  for (const n of document.querySelectorAll('button,a,[role="button"],[role="link"],div,li,span')) {
+                    if (!n.offsetParent) continue;
+                    const t = (n.innerText || n.textContent || '').trim().replace(/\\s+/g, ' ');
+                    if (t && t.length < 80 && re.test(t)) { n.click(); return t; }
+                  }
+                  return null;
+                }"""
+            )
         except Exception:
-            continue
+            picked = None
+        if picked:
+            logger.info("auto_login: bấm %r để lấy lại form đăng nhập (%s)",
+                        str(picked)[:40], session.profile)
+            await asyncio.sleep(2.0)
+            return
+        try:
+            await page.goto(_GOOGLE_SIGNIN_URL, wait_until="domcontentloaded",
+                            timeout=20_000)
+            await asyncio.sleep(1.5)
+        except Exception:
+            pass
+
+    pwd_already = await _pwd_visible(8000 if clicked_tile else 2500) is not None
     if clicked_tile and not pwd_already:
         # Rơi xuống nhánh điền email bên dưới — đó là đường ĐÚNG khi tile không
         # đưa sang màn hình mật khẩu, thay vì điền mật khẩu vào ô email.
@@ -782,17 +824,27 @@ async def do_google_login_steps(
         try:
             email_success = False
             # DEADLINE thay vì đếm lần: bản cũ `for _retry in range(6)` chạy hết
-            # trong ~12 GIÂY (is_visible trả về ngay, không chờ) rồi bỏ cuộc —
-            # trong khi chính chú thích ở bước MẬT KHẨU bên dưới đã đo được
-            # "BotGuard chập chờn, thử đủ nhiều sẽ lọt" và cho bước đó tận 5
-            # phút. Đo thật 30/07 (smarthomebanbap2011): BotGuard chặn ngay bước
-            # email, bấm Thử lại đúng 1 lần rồi chết với "email field not found",
-            # và KHÔNG ghi gì ra docker logs — bên ngoài chỉ thấy im lặng 11 giây
-            # rồi state=failed, không có gì để lần.
-            _email_deadline = time.time() + 180
+            # trong ~12 GIÂY (is_visible trả về ngay, không chờ) rồi bỏ cuộc.
+            # 90s là đủ cho vòng này vì hết hạn KHÔNG còn là thất bại nữa — nó
+            # rơi xuống vòng mật khẩu (300s, kiên trì hơn, có nhánh captcha và
+            # nhánh "đã đăng nhập sẵn"). Để 180s ở đây chỉ làm tổng thời gian một
+            # lượt đăng nhập vượt ngân sách của tầng gọi nó.
+            _email_deadline = time.time() + 90
             _retry = 0
             while time.time() < _email_deadline:
                 _retry += 1
+                # 0. ĐÃ đăng nhập sẵn → xong. Đây CHÍNH LÀ đích của "Chỉ đăng
+                #    nhập", không phải lỗi. Thiếu nhánh này thì trang đứng ở
+                #    myaccount.google.com (tức đang đăng nhập) vẫn bị dò ô email
+                #    tới hết 180s rồi báo "BotGuard chặn gắt" — đo thật 30/07
+                #    (smarthomebanbap2011@gmail.com).
+                if await _already_logged_in(ctx):
+                    session.state = "success"
+                    session.message = "Google login OK (đã đăng nhập sẵn)"
+                    session.completed_at = time.time()
+                    logger.info("auto_login: đã đăng nhập sẵn ở bước email (%s) — xong",
+                                session.profile)
+                    return True
                 # 1. Check for BotGuard block and click "Thử lại"
                 try:
                     body = (await page.locator("body").inner_text(timeout=1000)).strip().lower()
@@ -848,12 +900,37 @@ async def do_google_login_steps(
                         }""")
                     email_success = True
                     break
+
+                # 4. Không có ô email. Hai khả năng, cả hai đều KHÔNG phải lỗi:
+                #    · tile SSO đã nhảy thẳng tới ô mật khẩu → sang bước sau;
+                #    · đang đứng ở màn chọn tài khoản / trang tài khoản → lái về
+                #      form đăng nhập rồi thử lại (3 nhịp một lần cho khỏi loạn).
+                if await _pwd_visible(1200) is not None:
+                    logger.info("auto_login: thấy ô mật khẩu ở bước email (%s) — sang bước mật khẩu",
+                                session.profile)
+                    email_success = True  # coi như xong bước email, khỏi log lệch
+                    break
+                if _retry % 3 == 0:
+                    await _ve_lai_form_dang_nhap()
                 await asyncio.sleep(1.0)
-            
+
             if not email_success:
-                raise RuntimeError(
-                    f"email field not found sau {_retry} lần / 180s "
-                    "(BotGuard chặn gắt hoặc đổi UI)")
+                # KHÔNG fail ở đây. Vòng MẬT KHẨU bên dưới mới là vòng kiên trì:
+                # bấm 'Thử lại' + nhập lại email LẶP tới khi hiện ô mật khẩu
+                # (300s), có sẵn nhánh "đã đăng nhập sẵn" và nhánh captcha.
+                # Bản cũ raise ngay tại đây nên tầng 3 chết trước khi tới được
+                # vòng đó: đo thật 30/07 (smarthomebanbap2011@gmail.com) trang
+                # đang ở myaccount.google.com — tức ĐANG đăng nhập — vẫn báo
+                # "BotGuard chặn gắt", rồi cả thang khôi phục Codex bị chặn theo
+                # vì tầng Google bị coi là hỏng.
+                _u = ""
+                try:
+                    _u = (page.url or "")[:120]
+                except Exception:
+                    pass
+                logger.info("auto_login: bước email chưa vào được sau %d lần / 90s "
+                            "(%s) url=%s — chuyển sang vòng mật khẩu kiên trì",
+                            _retry, session.profile, _u)
         except Exception as exc:
             # Ghi cả MÀN HÌNH đang thấy: "không tìm thấy ô email" mà không nói
             # đang đứng ở trang nào thì người sửa sau phải đoán lại từ đầu.
@@ -887,20 +964,8 @@ async def do_google_login_steps(
     # nhập") thì BẤM 'Thử lại' + NHẬP LẠI email, LẶP LIÊN TỤC đến khi hiện ô
     # MẬT KHẨU (BotGuard chập chờn, thử đủ nhiều sẽ lọt). Captcha vẫn chờ tay.
     session.message = "Điền mật khẩu..."
-    _PWD_SELECTORS = ('input[type="password"]', 'input[name="Passwd"]',
-                      'input[autocomplete="current-password"]', 'input[name="password"]')
     _CAPTCHA_SELECTORS = ('img#captchaimg', 'img[src*="Captcha"]', 'input[name="ca"]',
                           'input[aria-label*="văn bản" i]', 'input[aria-label*="hear" i]')
-
-    async def _pwd_visible():
-        for _sel in _PWD_SELECTORS:
-            try:
-                _loc = page.locator(_sel).first
-                if await _loc.is_visible(timeout=1000):
-                    return _loc
-            except Exception:
-                continue
-        return None
 
     async def _reenter_email() -> None:
         try:
@@ -944,6 +1009,7 @@ async def do_google_login_steps(
     pwd_input = None
     captcha_flagged = False
     block_retries = 0
+    stuck_rounds = 0
     pwd_deadline = time.time() + 300  # tối đa 5 phút (gồm cả retry BotGuard)
     while time.time() < pwd_deadline:
         # ĐÃ đăng nhập sẵn (SSO pick trúng acc còn phiên): Google nhảy thẳng
@@ -990,10 +1056,31 @@ async def do_google_login_steps(
                         break
                 except Exception:
                     continue
+
+        # Không ô mật khẩu, không BotGuard, không captcha → đang đứng ở màn KHÁC
+        # (chọn tài khoản, trang chủ tài khoản, trang dịch vụ). Chờ thêm không làm
+        # ô mật khẩu hiện ra: phải tự nhập lại email, rồi vài nhịp thì lái hẳn về
+        # form đăng nhập — lặp tới khi lọt, đúng như người dùng bấm "Chỉ đăng
+        # nhập". Bản cũ chỉ thử lại khi ĐỌC ĐƯỢC chữ chặn của BotGuard, nên mọi
+        # màn hình khác đều đứng im hết 300s rồi báo thất bại.
+        if not captcha_flagged:
+            stuck_rounds += 1
+            if stuck_rounds % 2 == 0:
+                session.message = f"Chưa thấy ô mật khẩu — nhập lại email (lần {stuck_rounds // 2})..."
+                await _reenter_email()
+                await asyncio.sleep(2.0)
+            if stuck_rounds % 6 == 0:
+                logger.info("auto_login: %d nhịp chưa tới ô mật khẩu (%s) — lái về form đăng nhập",
+                            stuck_rounds, session.profile)
+                await _ve_lai_form_dang_nhap()
         await asyncio.sleep(2.0)
     if pwd_input is None:
         session.state = "failed"
-        session.error = f"Không lọt được ô mật khẩu (BotGuard chặn sau {block_retries} lần thử / captcha chưa giải)"
+        session.error = (
+            f"Không lọt được ô mật khẩu sau 300s "
+            f"(BotGuard {block_retries} lần, nhập lại email {stuck_rounds // 2} lần"
+            f"{', captcha chưa giải' if captcha_flagged else ''})"
+        )
         session.completed_at = time.time()
         return False
     try:

@@ -36,24 +36,30 @@ class TestKhongSuyTuTile(unittest.TestCase):
         # thích đó và báo "chưa vá" trong khi đã vá.
         self.code = "\n".join(l for l in self.src.splitlines()
                               if not l.lstrip().startswith("#"))
-        i = self.code.index("pwd_already")
+        i = self.code.index("pwd_already =")
         self.khuc = self.code[max(0, i - 600):i + 1200]
 
     def test_khong_con_gan_pwd_already_bang_clicked_tile(self):
         """Dòng gây lỗi phải biến mất khỏi MÃ (chú thích nhắc lại thì không tính)."""
         self.assertNotIn("pwd_already = clicked_tile", self.code)
 
-    def test_luon_khoi_dau_bang_False(self):
-        self.assertIn("pwd_already = False", self.khuc)
+    def test_luon_do_o_mat_khau_that(self):
+        """Giá trị phải đến từ một lần DÒ THẬT trên trang, không suy từ tile."""
+        self.assertIn("pwd_already = await _pwd_visible(", self.khuc)
 
     def test_vong_do_o_mat_khau_khong_bi_bao_dieu_kien(self):
         """Bản cũ bọc vòng dò trong `if not pwd_already:` nên bấm tile là bỏ dò."""
         self.assertNotIn("if not pwd_already:", self.khuc)
-        self.assertIn('input[type="password"]', self.khuc)
+        self.assertIn('input[type="password"]', self.code)
+        # Danh sách selector dùng CHUNG cho mọi chỗ dò ô mật khẩu (bước email,
+        # vòng mật khẩu) — trước đây chép tay 3 nơi nên dễ lệch nhau.
+        self.assertIn("_PWD_SELECTORS", self.code)
+        self.assertIn("async def _pwd_visible", self.code)
 
     def test_cho_lau_hon_khi_da_bam_tile(self):
         """Bấm tile xong trang cần thời gian điều hướng — chờ 2,5s là quá ngắn."""
-        m = re.search(r"_cho\s*=\s*(\d+)\s*if\s*clicked_tile\s*else\s*(\d+)", self.khuc)
+        m = re.search(r"_pwd_visible\((\d+)\s*if\s*clicked_tile\s*else\s*(\d+)\)",
+                      self.khuc)
         self.assertIsNotNone(m, "không thấy thời gian chờ theo clicked_tile")
         dai, ngan = int(m.group(1)), int(m.group(2))
         self.assertGreater(dai, ngan)

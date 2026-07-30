@@ -4,9 +4,11 @@ Accounts with status ``error`` / ``disabled`` are skipped by the request pool
 and never hit the 401 path that spawns T0–T3 recovery. This scheduler:
 
 1. Scans the pool for dead codex/free accounts.
-2. Tries **T0** (OAuth refresh_token) via ``recover_and_notify``.
-3. On T0 failure, runs **T1–T3** via ``recover_provider_account``
-   (Google ride → Google re-login → bulk onboard).
+2. Tries **tầng 1** (OAuth refresh_token) via ``recover_and_notify``.
+3. Nếu tầng 1 trượt, chạy **tầng 2 → tầng 3** via ``recover_provider_account``
+   (mở đăng nhập Codex trong workspace → đăng nhập lại tài khoản: "Chỉ đăng
+   nhập" Google, hoặc đăng nhập hàng loạt 1 dòng nếu account nằm trong
+   ``codex_auto_list``).
 
 Also exposes ``schedule_dead_account_recovery`` for immediate spawn when an
 account is marked error/disabled mid-request.
@@ -31,9 +33,12 @@ _MAX_PER_CYCLE = 2
 # Skip account if we already attempted recovery this recently (extra safety;
 # account_recovery has its own debounce too).
 _PER_ACCOUNT_MIN_GAP_S = 45 * 60
-# Hard ceiling per account so one hung browser (T2 headed) cannot block the
-# rest of the dead pool for the whole cycle / forever.
-_PER_ACCOUNT_TIMEOUT_S = 240.0
+# Trần cứng mỗi account để một browser treo không chặn phần còn lại của pool.
+# PHẢI lớn hơn ngân sách cả thang trong account_recovery (_RECOVER_BUDGET_S =
+# 900s), nếu không lượt khôi phục bị chặt giữa đường: bản cũ để 240s trong khi
+# riêng một lượt đăng nhập Google đã có thể tới 390s, nên tầng đăng nhập lại +
+# tầng 2 sau đó không bao giờ chạy hết.
+_PER_ACCOUNT_TIMEOUT_S = 960.0
 
 _started = False
 _last_try: dict[str, float] = {}
