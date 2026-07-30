@@ -695,28 +695,56 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         ))
         google_first = bool(session_dead and has_creds)
 
+        # Quy trình ĐÚNG (người vận hành chốt 30/07): đăng nhập tài khoản Google
+        # XONG rồi mới đăng nhập Codex lấy token. Google login THẤT BẠI thì các
+        # tầng sau đều vô ích — đo thật cùng ngày:
+        #   · T1-reuse cầm session ĐÃ CHẾT sang OpenAI → Google trả màn
+        #     signin/rejected ("trình duyệt không an toàn"), lặp hết 120s;
+        #   · T3-bulk với tài khoản Gmail cũng đi "Tiếp tục với Google" → đúng
+        #     bức tường đó lần nữa.
+        # Ba tầng × vài phút, tầng nào cũng chắc chắn trượt, còn thông báo thì
+        # thành một tràng ⚠️🔧❌ làm người vận hành tưởng hỏng ba thứ khác nhau.
+        google_login_failed = False
         if google_first:
-            if _left() and _do_freshen() and _left():
-                if _do_reuse("T1-after-freshen", "T2-freshen-ok",
-                             "[T2] đăng nhập Google + login Codex tại workspace"):
+            if _left() and _do_freshen():
+                if _left() and _do_reuse("T1-after-freshen", "T2-freshen-ok",
+                                         "[T2] đăng nhập Google + login Codex tại workspace"):
                     return
-            # Google login trượt → vẫn thử ride session cũ (may ra còn dùng được)
-            if has_profile and _left():
-                if _do_reuse("T1-reuse", "T1-reuse-ok",
-                             "[T1] tái dùng session Google"):
-                    return
+            else:
+                google_login_failed = True
         else:
             if has_profile and _left():
                 if _do_reuse("T1-reuse", "T1-reuse-ok",
                              "[T1] tái dùng session Google"):
                     return
-            if has_creds and _left() and _do_freshen() and _left():
-                if _do_reuse("T1-after-freshen", "T2-freshen-ok",
-                             "[T2] đăng nhập Google + login Codex tại workspace"):
-                    return
+            if has_creds and _left():
+                if _do_freshen():
+                    if _left() and _do_reuse("T1-after-freshen", "T2-freshen-ok",
+                                             "[T2] đăng nhập Google + login Codex tại workspace"):
+                        return
+                else:
+                    google_login_failed = True
 
     # ── T3: bulk login (Google fallback + BẮT BUỘC cho non-Google) ──────────
     # Cùng endpoint/code với UI "Đăng nhập hàng loạt" → /v1/codex-onboard.
+    #
+    # KHÔNG chạy T3 cho tài khoản Gmail khi đăng nhập Google vừa thất bại: bulk
+    # với Gmail cũng bấm "Tiếp tục với Google" nên chỉ húc lại đúng bức tường
+    # BotGuard, tốn thêm vài phút và một cặp thông báo 🔧❌ nữa.
+    if is_google and google_login_failed:
+        _notify(
+            f"❌ {label} — {email}\n"
+            f"Google TỪ CHỐI trình duyệt tự động (BotGuard — 'trình duyệt không "
+            f"an toàn') ngay bước đăng nhập Google, nên KHÔNG thử tiếp "
+            f"T1/T3 (đều phải qua Google, chắc chắn trượt).\n"
+            f"→ Đăng nhập tay MỘT lần qua noVNC cổng 6080 (profile "
+            f"{profile}), xong hệ thống tự dùng lại session đó.",
+            {**det, "step": "failed", "reason": "google_login_failed"},
+        )
+        logger.warning({"event": "recover_failed", "provider": provider,
+                        "email": email, "is_google": True,
+                        "tried": tried, "reason": "google_login_failed"})
+        return
     if batch and time.time() - started < budget:
         tried.append("T3-batch")
         if is_google:

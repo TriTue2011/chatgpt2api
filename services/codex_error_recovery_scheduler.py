@@ -185,7 +185,14 @@ def _recover_dead_account_body(account: dict[str, Any], reason: str) -> bool:
         return False
 
     if _email_has_active(email):
-        logger.info({"event": "dead_recovery_ok", "tier": "T1-T3", "email": email})
+        # NÓI RÕ "ok" nghĩa là gì: chỉ là "email này CÓ MỘT token đang active
+        # trong pool" — có thể là token khác cùng email, KHÔNG có nghĩa lượt
+        # khôi phục vừa rồi thành công. Đo thật 30/07: `recover_failed`
+        # (T2→T1→T3 đều trượt) mà ngay sau đó vẫn `dead_recovery_ok`, người
+        # vận hành đọc log tưởng đã khôi phục xong trong khi account vẫn chết.
+        logger.info({"event": "dead_recovery_ok", "tier": "T1-T3", "email": email,
+                     "note": "email còn token active KHÁC trong pool — "
+                             "không chắc lượt khôi phục này thành công"})
         return True
 
     logger.warning({"event": "dead_recovery_failed", "email": email, "reason": reason[:80]})

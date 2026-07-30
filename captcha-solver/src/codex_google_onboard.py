@@ -211,6 +211,7 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
         deadline = time.time() + 120
         google_btn_clicked = False
         mfa_alt_clicked = False
+        rejected_tries = 0
         while time.time() < deadline and not captured:
             url = ""
             content = ""
@@ -263,6 +264,33 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
 
             # ── Google accountchooser / consent ──
             if "accounts.google.com" in url:
+                # Màn TỪ CHỐI "Trình duyệt hoặc ứng dụng này có thể không an
+                # toàn" (/signin/rejected). Đo thật 30/07: vòng lặp cũ không có
+                # nhánh này nên rơi xuống consent-click vô nghĩa, đọc lại màn
+                # hình 8s/lần cho tới hết 120s — người vận hành thấy "treo",
+                # trong khi trên trang CÓ SẴN nút "Thử lại" (BotGuard chập chờn,
+                # bấm lại có thể lọt). Bấm tối đa 4 lần; vẫn bị từ chối thì đây
+                # là ngõ cụt của trình duyệt tự động — dừng NGAY với lý do rõ,
+                # đừng đốt nốt ngân sách.
+                if "/signin/rejected" in url or "không an toàn" in content \
+                        or "may not be secure" in content:
+                    rejected_tries += 1
+                    if rejected_tries > 4:
+                        return {"state": "failed",
+                                "error": "Google từ chối trình duyệt tự động "
+                                         "(signin/rejected — 'trình duyệt không "
+                                         "an toàn'), đã bấm Thử lại 4 lần"}
+                    logger.info("codex-g: signin/rejected — bấm 'Thử lại' lần %d",
+                                rejected_tries)
+                    try:
+                        await page.locator(
+                            'button:has-text("Thử lại"), a:has-text("Thử lại"), '
+                            'button:has-text("Try again"), a:has-text("Try again")'
+                        ).first.click(timeout=4000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(3.0)
+                    continue
                 if "accountchooser" in url or "Chọn tài khoản" in content or "Choose an account" in content:
                     await _google_chooser_pick(page, req.email or "")
                 else:

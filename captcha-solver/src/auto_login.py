@@ -781,12 +781,29 @@ async def do_google_login_steps(
         session.message = "Điền email..."
         try:
             email_success = False
-            for _retry in range(6):
+            # DEADLINE thay vì đếm lần: bản cũ `for _retry in range(6)` chạy hết
+            # trong ~12 GIÂY (is_visible trả về ngay, không chờ) rồi bỏ cuộc —
+            # trong khi chính chú thích ở bước MẬT KHẨU bên dưới đã đo được
+            # "BotGuard chập chờn, thử đủ nhiều sẽ lọt" và cho bước đó tận 5
+            # phút. Đo thật 30/07 (smarthomebanbap2011): BotGuard chặn ngay bước
+            # email, bấm Thử lại đúng 1 lần rồi chết với "email field not found",
+            # và KHÔNG ghi gì ra docker logs — bên ngoài chỉ thấy im lặng 11 giây
+            # rồi state=failed, không có gì để lần.
+            _email_deadline = time.time() + 180
+            _retry = 0
+            while time.time() < _email_deadline:
+                _retry += 1
                 # 1. Check for BotGuard block and click "Thử lại"
                 try:
                     body = (await page.locator("body").inner_text(timeout=1000)).strip().lower()
                     if any(b in body for b in _BLOCK_TEXTS):
-                        session.message = f"Google chặn (BotGuard) — bấm Thử lại lần {_retry + 1}..."
+                        session.message = f"Google chặn (BotGuard) — bấm Thử lại lần {_retry}..."
+                        # PHẢI ra logger: session.message chỉ ai poll status mới
+                        # thấy; thất bại câm lặng là thứ vừa làm mất 20 phút chẩn
+                        # đoán. Log mỗi 5 lần cho khỏi spam.
+                        if _retry == 1 or _retry % 5 == 0:
+                            logger.info("auto_login: BotGuard chặn ở bước email — "
+                                        "bấm Thử lại lần %d (%s)", _retry, session.profile)
                         await _click_try_again()
                         await asyncio.sleep(2.5)
                 except Exception:
@@ -834,8 +851,21 @@ async def do_google_login_steps(
                 await asyncio.sleep(1.0)
             
             if not email_success:
-                raise RuntimeError("email field not found (BotGuard chặn gắt hoặc đổi UI)")
+                raise RuntimeError(
+                    f"email field not found sau {_retry} lần / 180s "
+                    "(BotGuard chặn gắt hoặc đổi UI)")
         except Exception as exc:
+            # Ghi cả MÀN HÌNH đang thấy: "không tìm thấy ô email" mà không nói
+            # đang đứng ở trang nào thì người sửa sau phải đoán lại từ đầu.
+            _url = _body = ""
+            try:
+                _url = (page.url or "")[:120]
+                _body = (await page.locator("body").inner_text(timeout=1500))[:200]
+                _body = " | ".join(x.strip() for x in _body.splitlines() if x.strip())
+            except Exception:
+                pass
+            logger.warning("auto_login: bước email THẤT BẠI (%s): %s — url=%s body=%s",
+                           session.profile, exc, _url, _body[:180])
             session.state = "failed"
             session.error = f"Không tìm thấy ô email: {exc}"
             session.completed_at = time.time()
