@@ -776,13 +776,74 @@ def op_power(g: Guard, args: dict) -> dict:
                     if action in ("shutdown", "restart") else ""}
 
 
+def op_uninstall(g: Guard, args: dict) -> dict:
+    """TỰ GỠ agent khỏi máy này: xoá lịch tự chạy, xoá thư mục, xoá token.
+
+    Vì sao op này KHÔNG cần --allow-exec: nó chỉ được gọi từ đường xoá thiết bị
+    ở dự án, và mọi thứ nó xoá đều là của CHÍNH agent (task `c2a-agent`, thư
+    mục `%LOCALAPPDATA%\\c2a-agent`, biến môi trường `C2A_TOKEN`, unit
+    `c2a-agent.service`). Bắt phải có --allow-exec thì thiết bị chỉ-đọc sẽ gỡ
+    không được — đúng lúc người dùng muốn dứt điểm nhất.
+
+    Không tự kết thúc tiến trình ở đây: gateway còn phải nhận kết quả. Agent
+    chết khi gateway đóng phiên (token đã bị xoá) — và vì lịch tự chạy đã bị
+    xoá nên nó không quay lại.
+    """
+    ket = []
+    loi = []
+
+    def chay(argv, ten):
+        try:
+            rc, out, err = _run(argv, timeout=25.0)
+            ket.append(f"{ten}: {'ok' if rc == 0 else 'rc=' + str(rc)}")
+            if rc != 0 and err:
+                loi.append(f"{ten}: {err.strip()[:120]}")
+        except Exception as exc:
+            loi.append(f"{ten}: {type(exc).__name__} {str(exc)[:100]}")
+
+    here = Path(__file__).resolve()
+    if IS_WIN:
+        chay(["schtasks", "/Delete", "/TN", "c2a-agent", "/F"], "xoá task c2a-agent")
+        chay(["powershell", "-NoProfile", "-Command",
+              "[Environment]::SetEnvironmentVariable('C2A_TOKEN',$null,'User')"],
+             "xoá biến C2A_TOKEN")
+        # Thư mục cài đặt: chỉ xoá khi agent ĐANG chạy từ trong đó — người dùng
+        # có thể để c2a_agent.py ở chỗ khác và ta không được xoá bừa.
+        d = here.parent
+        if d.name == "c2a-agent":
+            chay(["powershell", "-NoProfile", "-Command",
+                  # Xoá SAU khi tiến trình thoát: file .py đang mở không xoá được
+                  # trên Windows. Dùng một tiến trình rời, chờ 6s rồi dọn.
+                  "Start-Process -WindowStyle Hidden powershell -ArgumentList "
+                  "'-NoProfile','-Command','Start-Sleep 6; Remove-Item -Recurse "
+                  f"-Force \"{d}\"'"],
+                 "hẹn xoá thư mục cài đặt")
+    else:
+        chay(["bash", "-lc",
+              "systemctl --user disable --now c2a-agent 2>/dev/null; "
+              "sudo systemctl disable --now c2a-agent 2>/dev/null; "
+              "sudo rm -f /etc/systemd/system/c2a-agent.service 2>/dev/null; "
+              "sudo systemctl daemon-reload 2>/dev/null; true"],
+             "xoá service c2a-agent")
+        chay(["bash", "-lc",
+              "sed -i '/c2a_agent.py/d' ~/.bashrc ~/.profile 2>/dev/null; "
+              "crontab -l 2>/dev/null | grep -v c2a_agent | crontab - 2>/dev/null; true"],
+             "xoá dòng tự chạy trong bashrc/cron")
+
+    return {"ok": not loi, "steps": ket, "errors": loi,
+            "note": "agent sẽ dừng khi dự án đóng phiên; lịch tự chạy đã xoá nên "
+                    "nó không quay lại"}
+
+
 OPS = {"ls": op_ls, "read": op_read, "stat": op_stat, "find": op_find,
        "write": op_write, "append": op_append, "mkdir": op_mkdir, "delete": op_delete,
        # tra cứu — chỉ đọc, lệnh cố định
        "sysinfo": op_sysinfo, "resources": op_resources, "processes": op_processes,
        "services": op_services, "screen": op_screen,
        # can thiệp — cần cờ riêng
-       "exec": op_exec, "kill": op_kill, "power": op_power}
+       "exec": op_exec, "kill": op_kill, "power": op_power,
+       # tự gỡ — chỉ dự án gọi, khi xoá thiết bị
+       "uninstall": op_uninstall}
 
 
 def handle(g: Guard, op: str, args: dict) -> dict:

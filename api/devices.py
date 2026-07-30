@@ -6,7 +6,10 @@ thiết bị sau NAT vẫn tới được. MCP `device_fs` trên hub gọi các 
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from typing import Any
+
+from fastapi import (APIRouter, Header, HTTPException, Query, WebSocket,
+                     WebSocketDisconnect)
 
 from api.support import require_admin
 from services import device_agents as da
@@ -24,6 +27,12 @@ _INFO_OPS = {"sysinfo", "resources", "processes", "services", "screen"}
 _EXEC_OPS = {"exec", "kill"}
 # Khoá / ngủ / đăng xuất / tắt / khởi động lại.
 _POWER_OPS = {"power"}
+# Agent tự gỡ mình khỏi máy. KHÔNG nằm trong _ALL_OPS: đây không phải thao tác
+# người dùng gọi được qua /op hay qua bot, mà chỉ đường xoá thiết bị dùng — cho
+# vào _ALL_OPS là mở cho mô hình một cách "xoá agent của người ta" bằng lời.
+# Cũng KHÔNG đòi can_exec: thiết bị chỉ-đọc phải gỡ được, đúng lúc muốn dứt
+# điểm nhất; và mọi thứ nó xoá đều là của chính agent.
+_SELF_OPS = {"uninstall"}
 _ALL_OPS = _READ_OPS | _WRITE_OPS | _INFO_OPS | _EXEC_OPS | _POWER_OPS
 
 
@@ -231,12 +240,48 @@ def create_router() -> APIRouter:
 
     @router.delete("/api/devices/{name}")
     async def devices_remove(name: str,
+                             uninstall: bool = Query(default=True),
                              authorization: str | None = Header(default=None)):
-        """Xoá thiết bị (token hết hiệu lực ngay, ngắt cả phiên đang kết nối)."""
+        """Xoá thiết bị: GỠ TRÊN MÁY TRƯỚC, rồi mới xoá ở dự án.
+
+        Thứ tự này là bắt buộc, không phải cho gọn. Xoá ở dự án trước thì token
+        chết ngay, phiên bị đóng — lúc đó không còn đường nào ra lệnh gỡ nữa, mà
+        trên máy người dùng vẫn còn lịch tự chạy: agent cứ bật lại mỗi lần mở
+        máy, gõ cửa gateway bằng token đã chết, mãi mãi. Người dùng "đã xoá
+        thiết bị" nhưng phải tự đi tìm Task Scheduler mà tắt.
+
+        `uninstall=false` để chỉ xoá ở dự án (máy kia đã hỏng, đã bán, đã cài
+        lại Windows — không có gì để gỡ).
+        """
         require_admin(authorization)
         devs = dict(config.data.get("device_agents") or {})
         if name not in devs:
             raise HTTPException(404, f"không có thiết bị '{name}'")
+
+        # Bước 1 — nhờ chính agent tự gỡ, KHI NÓ CÒN ONLINE.
+        go_may: dict[str, Any] = {"da_thu": False}
+        session = da.get(name)
+        if uninstall and session is not None:
+            go_may["da_thu"] = True
+            try:
+                res = await session.call("uninstall", {})
+                go_may.update({"ok": bool((res or {}).get("ok")),
+                               "steps": (res or {}).get("steps") or [],
+                               "errors": (res or {}).get("errors") or []})
+                logger.info({"event": "device_uninstalled", "device": name,
+                             "ok": go_may.get("ok")})
+            except Exception as exc:
+                # Gỡ hỏng thì VẪN xoá ở dự án — token phải chết cho bằng được,
+                # đó là lớp bảo vệ thật. Nhưng nói rõ máy kia còn sót gì.
+                go_may.update({"ok": False, "errors": [str(exc)[:160]]})
+                logger.warning({"event": "device_uninstall_failed", "device": name,
+                                "error": str(exc)[:160]})
+        elif uninstall:
+            go_may["ghi_chu"] = (
+                "thiết bị đang offline nên không gỡ được từ xa — nếu máy đó còn "
+                "dùng, chạy trên máy:  & \"$env:TEMP\\c2a-install.ps1\" -Uninstall")
+
+        # Bước 2 — xoá ở dự án.
         devs.pop(name, None)
         config.data["device_agents"] = devs
         config._save()
@@ -250,7 +295,9 @@ def create_router() -> APIRouter:
             except Exception:
                 pass
         logger.info({"event": "device_removed", "device": name})
-        return {"ok": True, "name": name}
+        # Trả kèm kết quả gỡ để UI nói được sự thật: "đã gỡ sạch" khác hẳn "đã
+        # xoá ở dự án nhưng máy kia còn lịch tự chạy, tự đi tắt hộ".
+        return {"ok": True, "name": name, "go_tren_may": go_may}
 
     @router.post("/api/devices/{name}/op")
     async def devices_op(name: str, payload: dict,

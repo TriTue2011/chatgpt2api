@@ -1219,12 +1219,29 @@ function DevicesTab({ showToast }: TabProps) {
   };
 
   const del = async (d: DeviceRow) => {
-    if (!window.confirm(`Xoá thiết bị "${d.label || d.name}"? Token mất hiệu lực ngay.`)) return;
+    // Nói rõ hai việc sẽ xảy ra và theo thứ tự nào. Máy offline thì không gỡ
+    // được từ xa — phải nói trước, không để người dùng tưởng đã sạch.
+    const loi = d.connected
+      ? `Xoá thiết bị "${d.label || d.name}"?\n\n`
+        + "1. Gỡ agent NGAY TRÊN MÁY đó (xoá lịch tự chạy, thư mục cài, token)\n"
+        + "2. Rồi mới xoá khỏi dự án — token mất hiệu lực"
+      : `Xoá thiết bị "${d.label || d.name}"?\n\n`
+        + "Máy này đang OFFLINE nên KHÔNG gỡ được từ xa: agent trên đó vẫn còn "
+        + "lịch tự chạy và sẽ bật lại mỗi lần mở máy (gõ cửa bằng token đã chết). "
+        + "Muốn sạch thì chạy trên máy đó:\n"
+        + '   & "$env:TEMP\\c2a-install.ps1" -Uninstall';
+    if (!window.confirm(loi)) return;
     try {
       const r = await request.delete(`/api/devices/${encodeURIComponent(d.name)}`);
       if (r.data?.ok) {
         if (fresh?.name === d.name) setFresh(null);
-        showToast(`Đã xoá ${d.name}`); load();
+        const g = r.data?.go_tren_may as
+          { da_thu?: boolean; ok?: boolean; errors?: string[]; ghi_chu?: string } | undefined;
+        let msg = `Đã xoá ${d.name}`;
+        if (g?.da_thu && g?.ok) msg += " — đã gỡ sạch trên máy";
+        else if (g?.da_thu) msg += ` — gỡ trên máy KHÔNG trọn: ${(g.errors || []).join("; ").slice(0, 120)}`;
+        else if (g?.ghi_chu) msg += " — máy offline, chưa gỡ được (xem hướng dẫn)";
+        showToast(msg, !(g?.da_thu && !g?.ok)); load();
       } else showToast(r.data?.error || "Lỗi", false);
     } catch (e) { showToast(String((e as Error).message), false); }
   };
