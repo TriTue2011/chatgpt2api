@@ -106,6 +106,31 @@ services:
   # Chỉ chạy khi STORAGE_BACKEND=postgres. Bật rồi thì thêm MCP server trong
   # Cài đặt với URL:  http://postgres-mcp:8000/sse
   # (không cần publish cổng ra host — c2a gọi nội bộ theo tên service)
+  #
+  # ⚠️ MẠNG — chỗ này đã làm hỏng một lần, đọc kỹ:
+  # Khai chung file này thì c2a và postgres-mcp cùng một compose project nên
+  # Docker tự cho chung mạng, gọi theo tên service là tới. KHÔNG cần khai
+  # networks.
+  #
+  # NHƯNG nếu bạn tách postgres-mcp sang stack khác (vd để chung với stack
+  # 'db' trong Portainer) thì hai container ở HAI MẠNG KHÁC NHAU — đo thật
+  # 2026-07-28: c2a ở c2a_default (172.19.0.2), postgres-mcp ở c2a-db_default
+  # (172.20.0.2), gọi http://postgres-mcp:8000/sse trả về 000. Lúc đó phải
+  # cho nó vào cả mạng của c2a:
+  #
+  #   postgres-mcp:
+  #     ...
+  #     networks:
+  #       - default
+  #       - c2a_net
+  #
+  #   networks:            # ngoài cùng, ngang hàng với services
+  #     c2a_net:
+  #       external: true
+  #       name: c2a_default
+  #
+  # Khai kiểu này mới bền — dựng lại stack vẫn giữ. Đừng dùng
+  # `docker network connect` bằng tay: mất sạch sau lần deploy kế tiếp.
   postgres-mcp:
     image: crystaldba/postgres-mcp:latest
     container_name: postgres-mcp
@@ -122,3 +147,49 @@ services:
 
     security_opt:
       - no-new-privileges:true
+
+  # ── SearXNG: đường tìm kiếm thứ N, không cần bật gì ──────────────────────
+  #
+  # Vì sao đưa vào stack thay vì để người dùng tự dựng: gateway đã có sẵn lớp
+  # `SearXNGSearcher` từ trước nhưng mặc định trỏ `localhost:8080` — không có gì
+  # ở đó, nên đường tìm kiếm này chưa bao giờ chạy. Có service ở đây thì
+  # gateway tự phát hiện qua /healthz và tự dùng, không ai phải bấm bật.
+  #
+  # KHÔNG publish cổng: chỉ container trong cùng compose network gọi được. Mở ra
+  # ngoài là biến nó thành instance công khai — lúc đó phải bật limiter, mà bật
+  # limiter thì chính gateway bị chặn (4 request/IP/giờ cho format=json).
+  #
+  # KHÔNG cần Valkey/Redis: chỉ limiter mới cần, và ta tắt limiter.
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+
+    environment:
+      # BẮT BUỘC: mount settings.yml của mình thì entrypoint không tự sinh khoá,
+      # và webapp gọi sys.exit(1) nếu secret_key vẫn là "ultrasecretkey".
+      SEARXNG_SECRET: "${SEARXNG_SECRET:?dat SEARXNG_SECRET trong .env - sinh bang: openssl rand -hex 32}"
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_LIMITER: "false"
+
+    volumes:
+      # settings.yml BẮT BUỘC vì `search.formats` không có biến môi trường —
+      # thiếu file này thì mọi ?format=json trả 403.
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-data:/var/cache/searxng
+
+    healthcheck:
+      # /healthz được limiter miễn trừ nên luôn trả lời được.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  searxng-data:

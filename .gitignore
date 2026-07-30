@@ -54,6 +54,11 @@ deploy/*
 # trong repo mới lấy được. Không chứa bí mật: token truyền qua tham số dòng
 # lệnh hoặc biến môi trường C2A_TOKEN, không hardcode trong file.
 !deploy/device_agent/
+# settings.yml của SearXNG: KHÔNG chứa bí mật — secret_key truyền qua biến
+# môi trường SEARXNG_SECRET. File này phải theo repo vì `search.formats` không
+# có biến môi trường tương ứng, thiếu nó là mọi ?format=json trả 403.
+!deploy/searxng/
+!deploy/searxng/settings.yml
 !deploy/device_agent/c2a_agent.py
 !deploy/device_agent/README.md
 build_and_push.sh

@@ -1,0 +1,52 @@
+# SearXNG cho gateway c2a — CHỈ phục vụ API JSON nội bộ, không mở ra Internet.
+#
+# Vì sao phải có file này chứ không cấu hình bằng biến môi trường: khoá
+# `search.formats` KHÔNG có biến môi trường tương ứng
+# (searx/settings_defaults.py: 'formats': SettingsValue(list, OUTPUT_FORMATS) —
+# không khai environ_name). Mà mặc định của SearXNG là `formats: [html]` và
+# webapp trả 403 Forbidden cho mọi format khác. Không mount file này thì mọi
+# lời gọi `?format=json` đều 403 — im lặng, không có body JSON để đọc lỗi.
+use_default_settings: true
+
+server:
+  # secret_key: KHÔNG đặt ở đây. Truyền qua biến SEARXNG_SECRET trong compose —
+  # để file cấu hình này không mang bí mật và commit được vào repo.
+  #
+  # limiter: chống bot cho instance CÔNG KHAI. Ta không public cổng, và bật nó
+  # là tự bắn chân: searx/botdetection/ip_limit.py đặt API_MAX = 4 request mỗi
+  # IP mỗi GIỜ cho request không phải html, còn http_user_agent.py chặn thẳng
+  # UA chứa "python-requests". Gateway sẽ chết ngay ở request thứ năm.
+  limiter: false
+  public_instance: false
+
+search:
+  # [html, json]: giữ cả html để còn mở bằng trình duyệt mà soi khi cần. Danh
+  # sách này GHI ĐÈ chứ không merge (searx/settings_loader.py update_dict), nên
+  # phải liệt kê đủ — chỉ ghi [json] là mất luôn giao diện.
+  formats: [html, json]
+  # Không để "auto": auto đoán theo header Accept-Language của phía gọi, mà
+  # gateway thì không gửi header đó. Gateway vẫn nên truyền language tường minh
+  # từng lần; đây chỉ là lưới đỡ.
+  default_lang: "vi-VN"
+  safe_search: 0
+  autocomplete: ""
+
+outgoing:
+  # Trần thời gian một engine được phép chậm. Mặc định 3.0s, nhưng một số engine
+  # trong settings gốc tự khai timeout tới 20s (360search, ahmia) — khi engine
+  # đó có mặt trong lượt tìm thì cả request chờ theo nó. Bot chat không chịu
+  # được 20 giây.
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+  pool_connections: 30
+  pool_maxsize: 15
+
+engines:
+  # Bật lại Bing: bản gốc để `disabled: true`. Nó là engine general duy nhất
+  # ngoài DuckDuckGo/Startpage có dữ liệu vùng vi-VN trong engine_traits.json.
+  - name: bing
+    disabled: false
+  # Google trong bản gốc là `inactive: true` — engine bị LOẠI KHỎI danh sách
+  # nạp, không phải chỉ tắt. Không bật lại ở đây: nó hay ăn captcha, mà một lần
+  # captcha là SearXNG treo engine đó 3600s (cf_SearxEngineCaptcha tới 15 NGÀY).
+  # Thà thiếu Google còn hơn kết quả rỗng không rõ lý do.

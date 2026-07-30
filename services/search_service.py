@@ -29,6 +29,7 @@ def _gemini_search_base() -> str:
     return "https://generativelanguage.googleapis.com/v1beta"
 
 import json
+import os
 import re
 import time
 import urllib.request
@@ -113,24 +114,137 @@ class SerperSearch(SearchBackend):
             return []
 
 
+# Engine mặc định cho tiếng Việt — chọn theo engine_traits.json của SearXNG:
+# duckduckgo và startpage có đủ `vi` + `vi-VN`; bing chỉ có region `vi-VN` nhưng
+# vẫn hơn hẳn brave/qwant/mojeek (KHÔNG có `vi` nào, sẽ trả kết quả tiếng Anh
+# trộn vào). Google bị bản gốc đánh `inactive: true` — engine không được nạp, nên
+# truyền `engines=google` là bị bỏ qua IM LẶNG, tưởng đang tra Google mà không.
+#
+# Truyền `engines=` tường minh còn để chặn độ trễ: nếu để SearXNG tự chọn cả
+# nhóm general thì thời gian chờ bằng engine chậm nhất được chọn, mà settings gốc
+# có engine tự khai timeout tới 20s.
+#
+# Đo thật 2026-07-30 trên chính container này, 5 truy vấn tiếng Việt: startpage
+# ăn CAPTCHA NGAY từ lượt đầu, duckduckgo ăn CAPTCHA từ lượt thứ tư — chỉ bing
+# gánh cả năm lượt. SearXNG treo engine ăn captcha 3600s (cf_ tới 15 ngày), nên
+# nếu chỉ khai ba engine "đúng tiếng Việt" thì có ngày cả ba treo cùng lúc và
+# kết quả rỗng sạch. Thêm mojeek + brave làm dự phòng: chúng KHÔNG có `vi` trong
+# engine_traits nên trả kết quả trộn tiếng Anh — thà vậy còn hơn rỗng, và chúng
+# chỉ có tiếng nói khi mấy engine trên chết.
+_SEARXNG_ENGINES = "bing,duckduckgo,startpage,mojeek,brave"
+_SEARXNG_LANG = "vi-VN"
+
+
+def searxng_base_url() -> str:
+    """URL SearXNG — tự tìm, KHÔNG bắt người dùng khai.
+
+    Thứ tự: cấu hình tay → biến môi trường → tên service trong compose. Bản cũ
+    mặc định `http://localhost:8080`, mà trong Docker thì localhost là chính
+    container gateway: đường tìm kiếm này chưa bao giờ chạy được và cũng không
+    ai biết vì sao.
+    """
+    cfg = (config.data.get("providers") or {}).get("searxng") or {}
+    return str(
+        cfg.get("base_url")
+        or os.environ.get("SEARXNG_URL")
+        or "http://searxng:8080"
+    ).strip().rstrip("/")
+
+
+# UA "giống trình duyệt" + Accept có text/html: chi phí bằng 0 mà tránh được cả
+# họ lỗi khi instance có bật limiter — botdetection chặn thẳng UA chứa
+# "python-requests" và chặn request không nhận text/html.
+_SEARXNG_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+    "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.6",
+    "Accept-Encoding": "gzip, deflate",
+}
+
+
+_searxng_health: tuple[float, bool] = (0.0, False)
+_SEARXNG_HEALTH_TTL = 120.0
+
+
+def searxng_ready() -> bool:
+    """SearXNG có sống và có bật format=json không (cache 2 phút).
+
+    Kiểm `/search?format=json` chứ không chỉ `/healthz`: mặc định của SearXNG là
+    `formats: [html]` và webapp trả **403 không kèm body** cho json. Instance
+    "khoẻ" mà chưa mở json thì với ta là vô dụng — phải phân biệt được hai ca đó
+    để nói đúng nguyên nhân thay vì báo "không có kết quả".
+    """
+    global _searxng_health
+    now = time.time()
+    if now - _searxng_health[0] < _SEARXNG_HEALTH_TTL:
+        return _searxng_health[1]
+    ok = False
+    base = searxng_base_url()
+    try:
+        r = requests.get(f"{base}/search",
+                         params={"q": "ping", "format": "json",
+                                 "engines": "duckduckgo", "timeout_limit": 3},
+                         headers=_SEARXNG_HEADERS, timeout=8)
+        if r.status_code == 403:
+            logger.warning({"event": "searxng_json_bi_chan",
+                            "hint": "settings.yml thiếu search.formats: [html, json]"})
+        elif r.status_code == 429:
+            logger.warning({"event": "searxng_bi_rate_limit",
+                            "hint": "tắt server.limiter hoặc whitelist IP nội bộ "
+                                    "trong limiter.toml (pass_ip)"})
+        else:
+            ok = r.status_code == 200 and isinstance(r.json(), dict)
+    except Exception as exc:
+        logger.info({"event": "searxng_chua_san_sang", "url": base,
+                     "error": str(exc)[:100]})
+    _searxng_health = (now, ok)
+    return ok
+
+
 class SearXNGSearcher(SearchBackend):
-    """SearXNG self-hosted search (no API key, no limits)."""
+    """SearXNG tự host — không API key, không hạn mức."""
 
     def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
-        provider_config = (config.data.get("providers") or {}).get("searxng") or {}
-        base_url = str(provider_config.get("base_url") or "http://localhost:8080").strip().rstrip("/")
-
+        base_url = searxng_base_url()
         try:
             resp = requests.get(
                 f"{base_url}/search",
-                params={"q": query, "format": "json", "categories": "general"},
-                timeout=15,
+                params={"q": query, "format": "json", "categories": "general",
+                        # language BẮT BUỘC truyền tường minh: mặc định của
+                        # SearXNG là "auto" — nó đoán theo header Accept-Language
+                        # của phía gọi, tức phụ thuộc thứ ta tình cờ gửi.
+                        "language": _SEARXNG_LANG,
+                        "engines": _SEARXNG_ENGINES,
+                        "safesearch": 0,
+                        # Trần thời gian, tính cả engine chậm nhất.
+                        "timeout_limit": 5},
+                headers=_SEARXNG_HEADERS,
+                timeout=12,
             )
             if resp.status_code != 200:
-                logger.warning({"event": "searxng_error", "status": resp.status_code})
+                # Nói ra nguyên nhân THẬT: 403 = chưa bật json, 429 = limiter.
+                # Bản cũ log trơ status rồi trả rỗng, nhìn y như "không có kết
+                # quả" nên không ai sửa được cấu hình.
+                hint = ""
+                if resp.status_code == 403:
+                    hint = "settings.yml thiếu search.formats: [html, json]"
+                elif resp.status_code == 429:
+                    hint = "limiter đang chặn (API_MAX = 4 request/IP/giờ)"
+                logger.warning({"event": "searxng_error", "status": resp.status_code,
+                                "url": base_url, "hint": hint})
                 return []
 
             data = resp.json()
+            # unresponsive_engines là DẤU HIỆU DUY NHẤT trong JSON cho biết engine
+            # nào vừa bị chặn/captcha. Không log thì kết quả rỗng trông giống
+            # "không có gì trên Internet", trong khi thực ra engine đang bị treo
+            # (SearXNG treo engine ăn captcha từ 3600s tới 15 ngày).
+            chet = data.get("unresponsive_engines") or []
+            if chet:
+                logger.warning({"event": "searxng_engine_khong_tra_loi",
+                                "engines": [list(x)[:2] for x in chet][:5]})
+
             results: list[dict[str, str]] = []
             for item in (data.get("results") or [])[:max_results]:
                 results.append({
@@ -138,10 +252,13 @@ class SearXNGSearcher(SearchBackend):
                     "snippet": str(item.get("content") or item.get("snippet") or ""),
                     "url": str(item.get("url") or ""),
                 })
+            if not results:
+                logger.warning({"event": "searxng_rong", "query_len": len(query),
+                                "engine_chet": len(chet)})
             return results
 
         except Exception as exc:
-            logger.warning({"event": "searxng_exception", "error": str(exc)})
+            logger.warning({"event": "searxng_exception", "error": str(exc)[:160]})
             return []
 
 
@@ -898,7 +1015,15 @@ class SearchService:
 
     @property
     def search_combo(self) -> list[str]:
-        """Ordered list of search backends to try (combo/fallback)."""
+        """Thứ tự backend sẽ thử (combo/fallback).
+
+        SearXNG được TỰ THÊM vào cuối chuỗi khi nó đang chạy — không cần ai bấm
+        bật. Nó là đường duy nhất không cần API key và không hạn mức, nên để làm
+        lưới đỡ cuối là đúng vai: các đường có khoá đi trước, hết mới tới nó.
+        Thêm ở CUỐI, không chen lên trước, để không đổi thứ tự người dùng đã
+        chọn; và chỉ thêm khi `searxng_ready()` báo sống + đã mở format=json,
+        nếu không thì mỗi lượt tìm lại tốn một request chết.
+        """
         cfg = self._get_config()
         combo = cfg.get("search_combo")
         if isinstance(combo, list) and combo:
@@ -907,10 +1032,25 @@ class SearchService:
             from services.providers.custom_openai import get_custom_providers
             for cp_id in get_custom_providers():
                 valid.add(f"custom:{cp_id}")
-            return [str(b).strip() for b in combo if str(b).strip() in valid]
-        # Default: single backend from config
-        backend = self._get_active_backend()
-        return [backend] if backend in SEARCH_BACKENDS else ["chatgpt"]
+            ds = [str(b).strip() for b in combo if str(b).strip() in valid]
+        else:
+            # Default: single backend from config
+            backend = self._get_active_backend()
+            ds = [backend] if backend in SEARCH_BACKENDS else ["chatgpt"]
+        return self._them_searxng(ds)
+
+    @staticmethod
+    def _them_searxng(ds: list[str]) -> list[str]:
+        """Nối searxng vào cuối chuỗi nếu chưa có và instance đang sống."""
+        if "searxng" in ds:
+            return ds
+        # Cho phép tắt hẳn bằng cấu hình — người vận hành phải có đường nói
+        # "đừng dùng", nhưng mặc định là DÙNG.
+        if (config.data.get("providers") or {}).get("searxng", {}).get("enabled") is False:
+            return ds
+        if not searxng_ready():
+            return ds
+        return ds + ["searxng"]
 
     def _get_backend(self, name: str):
         """Get a search backend by name, including custom providers."""
@@ -1085,8 +1225,14 @@ class SearchService:
 
         # --- Luong 2: Combo backends (Gemini Grounding, custom provider...) ---
         combo = self.search_combo
-        if not combo or combo == ["chatgpt"]:
-            combo = [self._get_active_backend()]
+        # Chỉ rơi về backend đơn khi combo THẬT SỰ trống hoặc đúng bằng
+        # ["chatgpt"]. Trước đây so `combo == ["chatgpt"]` là đủ, nhưng giờ
+        # `search_combo` tự nối "searxng" vào cuối nên chuỗi mặc định thành
+        # ["chatgpt", "searxng"] — so bằng sẽ không khớp và ta mất luôn nhánh
+        # này; còn nếu so lỏng thì lại bỏ mất searxng vừa thêm. Giữ cả hai: lấy
+        # backend đang cấu hình, rồi nối lại searxng.
+        if not combo or [c for c in combo if c != "searxng"] == ["chatgpt"]:
+            combo = self._them_searxng([self._get_active_backend()])
 
         def _call_backend(name: str) -> tuple[str, list]:
             try:
