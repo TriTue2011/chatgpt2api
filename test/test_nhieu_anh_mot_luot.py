@@ -38,8 +38,13 @@ class TestSoLuongAnh(unittest.TestCase):
         self.assertEqual(caps._so_luong_anh({"so_luong": -5}), 1)
 
     def test_gia_tri_la_thi_ve_1_chu_khong_no(self):
-        """Model đôi khi truyền chữ. Trả 1 tấm còn dùng được; báo lỗi là mất lượt."""
-        for v in ("ba", None, "", {}, [1]):
+        """Model đôi khi truyền rác. Trả 1 tấm còn dùng được; báo lỗi là mất lượt.
+
+        "ba" KHÔNG còn nằm ở đây: nó là chữ số viết bằng lời và nay được hiểu
+        thành 3 (xem TestDocSoAnhTuCauNoi). Chỉ những giá trị thật sự không đọc
+        được mới về 1.
+        """
+        for v in (None, "", {}, [1], "abc", "nhiều"):
             with self.subTest(v):
                 self.assertEqual(caps._so_luong_anh({"so_luong": v}), 1)
 
@@ -194,6 +199,50 @@ class TestAnhCuaChinhNguoiDo(unittest.TestCase):
                                   {"user_id": "zalop_9"})
         self.assertEqual(r.get("image_urls"), ["http://x/1.png", "http://x/2.png"])
         self.assertIn("anh/chị tạo", r.get("text", ""))
+
+class TestDocSoAnhTuCauNoi(unittest.TestCase):
+    """Model KHÔNG truyền `so_luong` — phải đọc số từ chính câu người dùng.
+
+    Đo thật 30/07: gọi handler với so_luong=3 ra đúng 3 ảnh, nhưng người dùng
+    nhắn "gửi 3 ảnh mới nhất" thì chỉ nhận 1 ảnh — model bỏ qua tham số dù mô tả
+    tool đã ghi rõ phải truyền. Không ép được model, nên đọc từ câu nói: đó là
+    nguồn gần nhất với ý người dùng.
+    """
+
+    def _n(self, cau: str) -> int:
+        return caps._so_luong_anh({}, {"user_message": cau})
+
+    def test_so_bang_chu_so(self):
+        self.assertEqual(self._n("gửi 3 ảnh mới nhất trong thư viện ảnh"), 3)
+        self.assertEqual(self._n("gửi cho tôi 3 ảnh mới nhất tôi tạo"), 3)
+        self.assertEqual(self._n("cho xem 10 hình mới nhất"), 10)
+
+    def test_so_viet_bang_lo(self):
+        """Người Việt nói "ba ảnh" nhiều hơn "3 ảnh"."""
+        self.assertEqual(self._n("gửi ba tấm ảnh gần nhất"), 3)
+        self.assertEqual(self._n("gửi hai ảnh"), 2)
+        self.assertEqual(self._n("gửi vài ảnh"), 3)
+
+    def test_khong_neu_so_thi_mot_anh(self):
+        self.assertEqual(self._n("gửi ảnh mới nhất"), 1)
+
+    def test_khong_lan_so_cua_viec_khac(self):
+        """Bắt buộc có danh từ chỉ ảnh, kẻo "3 bài toán" cũng thành 3 ảnh."""
+        self.assertEqual(self._n("giải 3 bài toán giúp tôi"), 1)
+        self.assertEqual(self._n("nhắc tôi sau 3 phút"), 1)
+        self.assertEqual(self._n("đọc 5 trang đầu"), 1)
+
+    def test_tham_so_cua_model_thang_cau_noi(self):
+        """Model có truyền thì tin model — nó thấy cả hội thoại."""
+        self.assertEqual(caps._so_luong_anh({"so_luong": 5},
+                                           {"user_message": "gửi 2 ảnh"}), 5)
+
+    def test_model_truyen_chu_van_hieu(self):
+        self.assertEqual(caps._so_luong_anh({"so_luong": "ba"}, {}), 3)
+
+    def test_van_kep_tran_50(self):
+        self.assertEqual(self._n("gửi 99 ảnh"), 50)
+
 
 if __name__ == "__main__":
     unittest.main()

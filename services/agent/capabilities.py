@@ -1861,8 +1861,26 @@ _MEDIA_LABEL = {"image": "🖼️ Ảnh", "video": "🎬 Video", "music": "🎵 
 _MAX_ANH_MOT_LUOT = 50
 
 
-def _so_luong_anh(args: dict) -> int:
+#: Chữ số viết bằng lời — người Việt hay nói "ba ảnh" hơn "3 ảnh".
+_SO_CHU = {"một": 1, "hai": 2, "ba": 3, "bốn": 4, "tư": 4, "năm": 5, "sáu": 6,
+           "bảy": 7, "tám": 8, "chín": 9, "mười": 10, "vài": 3, "mấy": 3}
+
+#: "3 ảnh", "ba tấm", "5 hình", "10 bức" — số ĐỨNG TRƯỚC danh từ chỉ ảnh. Bắt
+#: buộc có danh từ đó, nếu không thì "gửi cho tôi 3 bài toán" cũng thành 3 ảnh.
+_RE_SO_ANH = re.compile(
+    r"(\d{1,2}|một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|vài|mấy)\s*"
+    r"(?:cái\s+|tấm\s+|bức\s+)?(ảnh|anh|hình|hinh|tấm|tam|bức|buc|photo|image)",
+    re.IGNORECASE)
+
+
+def _so_luong_anh(args: dict, ctx: dict | None = None) -> int:
     """Số ảnh người dùng xin, kẹp trong [1, 50]. Giá trị lạ → 1.
+
+    Đọc THÊM từ câu gốc khi model không truyền tham số — đo thật 30/07: gọi
+    handler với `so_luong=3` ra đúng 3 ảnh, nhưng người dùng nhắn "gửi 3 ảnh mới
+    nhất" thì chỉ nhận 1 ảnh, vì model bỏ qua tham số dù mô tả tool đã ghi rõ.
+    Không thể ép model, nên đọc từ chính câu nói: đó là nguồn sự thật gần nhất
+    với ý người dùng.
 
     Kẹp thay vì báo lỗi: model đôi khi truyền "ba" hoặc 999. Trả 1 tấm còn dùng
     được, còn báo lỗi thì mất luôn lượt trả lời.
@@ -1874,7 +1892,17 @@ def _so_luong_anh(args: dict) -> int:
         try:
             return max(1, min(_MAX_ANH_MOT_LUOT, int(v)))
         except (TypeError, ValueError):
+            # Model truyền chữ ("ba") — thử tra bảng trước khi bỏ.
+            n = _SO_CHU.get(str(v).strip().lower())
+            if n:
+                return max(1, min(_MAX_ANH_MOT_LUOT, n))
             continue
+    m = _RE_SO_ANH.search(str((ctx or {}).get("user_message") or ""))
+    if m:
+        raw = m.group(1).lower()
+        n = _SO_CHU.get(raw) or (int(raw) if raw.isdigit() else 0)
+        if n:
+            return max(1, min(_MAX_ANH_MOT_LUOT, n))
     return 1
 
 
@@ -1931,7 +1959,7 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
         # `1785379627_2a6363b6…` cùng nội dung. Không lọc thì "gửi 3 ảnh" có thể
         # ra 3 tấm mà thật chỉ có 1 tấm khác nhau — người dùng thấy lặp và tưởng
         # bot gửi sai.
-        so = _so_luong_anh(args)
+        so = _so_luong_anh(args, ctx)
         # "Ảnh TÔI tạo" = ảnh của CHÍNH người đang hỏi, không phải N tệp mới nhất
         # trong kho. Kho `data/images` là rổ CHUNG: có ảnh của người dùng khác,
         # ảnh snapshot camera do Home Assistant đẩy lên, và ảnh test. Lấy theo
