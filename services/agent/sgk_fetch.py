@@ -115,6 +115,21 @@ _SGK_SITES: tuple[str, ...] = (
     "download.vn",
 )
 
+# Cách người Việt GỌI từng loại sách khi đăng lên mạng — không suy ra được từ mã
+# `kind`. Thứ tự trong mỗi tuple = thứ tự khả năng trúng.
+#
+# "sách giáo viên" và "sách giáo khoa" chỉ khác nhau một chữ nhưng là hai quyển
+# khác hẳn, nên phải hỏi bằng đúng cụm, kèm cả tên gọi hành chính ("kế hoạch bài
+# dạy" = KHBD, cách gọi mới của giáo án theo CT 2018) vì nhiều nơi đăng dưới tên
+# đó chứ không đăng là "sách giáo viên".
+_KIND_PHRASES: dict[str, tuple[str, ...]] = {
+    "nangcao": ("sách bài tập nâng cao", "bồi dưỡng học sinh giỏi"),
+    "sgv": ("sách giáo viên", "sách giáo viên SGV", "kế hoạch bài dạy KHBD"),
+    "vbt": ("vở bài tập", "sách bài tập", "vở thực hành"),
+    "tap_huan": ("tài liệu tập huấn", "tài liệu bồi dưỡng giáo viên"),
+    "slide": ("bài giảng powerpoint", "phân phối chương trình"),
+}
+
 # Nghỉ giữa hai truy vấn của CÙNG một tổ hợp. DDG cắt TLS (SSL EOF) khi bị bắn
 # dồn từ một IP nên nhịp thưa là điều kiện sống còn, không phải tối ưu vặt.
 _QUERY_GAP = 1.2
@@ -275,7 +290,7 @@ def _web_search(query: str, limit: int = 8) -> list[dict[str, str]]:
 
 def _score_candidate(
     url: str, title: str, grade: int, subject_word: str,
-    curriculum_hint: str, year_hint: str,
+    curriculum_hint: str, year_hint: str, kind: str = "sgk",
 ) -> dict[str, Any]:
     folded_title = _fold(title)
     cur_guess = _detect_curriculum(title) or curriculum_hint
@@ -297,6 +312,25 @@ def _score_candidate(
     dom_folded = domain.lower()
     if any(dom_folded == s or dom_folded.endswith("." + s) for s in _SGK_SITES):
         confidence = round(min(1.0, confidence + 0.25), 2)
+    # LOẠI SÁCH phải vào điểm, không chỉ vào câu tìm.
+    #
+    # Bảng `terms` trên đây chỉ chấm lớp–môn–bộ sách–năm, nên một quyển SGK và
+    # một quyển SGV cùng lớp cùng môn được ĐIỂM BẰNG NHAU. Tìm SGV mà xếp hạng
+    # không phân biệt thì kết quả đầu bảng rất dễ là sách học sinh — nạp vào kho
+    # SGV, mang nhãn "sgv", và không có gì báo là sai.
+    khac_sgk = {k: v for k, v in _KIND_PHRASES.items() if k not in ("nangcao", "slide")}
+    if kind in _KIND_PHRASES:
+        if any(_fold(p) in folded_title for p in _KIND_PHRASES[kind]):
+            confidence = round(min(1.0, confidence + 0.3), 2)
+        else:
+            # Không thấy tên loại sách trong tiêu đề thì rất có thể không phải
+            # quyển đang tìm. Hạ mạnh chứ không loại hẳn: có nơi đặt tiêu đề
+            # thiếu chữ, còn tên tệp lại đúng.
+            confidence = round(confidence * 0.4, 2)
+    elif any(_fold(p) in folded_title
+             for phrases in khac_sgk.values() for p in phrases):
+        # Đang tìm SGK mà tiêu đề nói "sách giáo viên"/"vở bài tập" → sai quyển.
+        confidence = round(confidence * 0.4, 2)
     return {
         "title": title[:200],
         "url": url,
@@ -335,12 +369,20 @@ def find_sources(
     # sách. Trước đây bắn cả 4 câu SONG SONG cho mọi tổ hợp, nhân với 120 tổ
     # hợp là vài nghìn request — đủ để tự ăn 429 và cạn file descriptor.
     queries: list[tuple[str, str]] = []
-    if kind == "nangcao":
-        for phrase in ("sách bài tập nâng cao", "bồi dưỡng học sinh giỏi"):
+    if kind in _KIND_PHRASES:
+        # Mỗi loại sách có CÁCH GỌI RIÊNG trên mạng, không phải biến thể của
+        # "sách giáo khoa". Bản cũ chỉ tách riêng "nangcao"; sgv/vbt/tap_huan
+        # rơi vào nhánh dưới và đi tìm ĐÚNG CHỮ "sách giáo khoa" — trả về sách
+        # HỌC SINH rồi nạp vào kho SGV/VBT. Sai âm thầm: kho có số, nhãn đúng
+        # loại, mà nội dung là sách của học sinh; bot đem lời giảng của học sinh
+        # ra làm hướng dẫn cho giáo viên.
+        for phrase in _KIND_PHRASES[kind]:
             q = f"{phrase} {word} lớp {g} pdf"
             if year_s:
                 q = f"{q} {year_s}"
             queries.append((q, ""))
+        for site in _SGK_SITES:
+            queries.append((f"site:{site} {_KIND_PHRASES[kind][0]} {word} lớp {g}", ""))
     else:
         base = f"sách giáo khoa {word} lớp {g}"
         # 1) Kho chính thức + các site có sách trước — hỏi thẳng bằng site:
@@ -378,7 +420,7 @@ def find_sources(
                     continue
                 seen.add(u)
                 candidates.append(
-                    _score_candidate(u, title or u, g, word, cur_hint, year_s)
+                    _score_candidate(u, title or u, g, word, cur_hint, year_s, kind)
                 )
         if len(candidates) >= _ENOUGH_CANDIDATES:
             break

@@ -48,7 +48,25 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 // render (họ lỗi React #310 đã vá ở trang này).
 import { LectureTab, SgkViewerTab } from "./lecture-tab";
 
-type TabId = "roster" | "lecture" | "lesson" | "homework" | "placement" | "parent" | "sgkview" | "import";
+type TabId = "roster" | "lecture" | "lesson" | "homework" | "placement" | "parent" | "sgkview"
+  | "kho_sgk" | "kho_sgv" | "kho_vbt" | "kho_tailieu";
+
+/** Mỗi LOẠI SÁCH một tab riêng, không gộp.
+ *
+ * Trước đây bốn loại nằm chung một tab "Kho chung (SGK·SGV·SBT·Tài liệu)" với một
+ * ô chọn "Chế độ" quyết định nạp vào kho nào. Hai hệ quả: nhìn vào không biết
+ * loại nào đã có gì, và nạp sai loại chỉ vì quên đổi ô chọn — mà nạp sai thì kho
+ * vẫn báo thành công, nhãn vẫn ghi đúng loại đã chọn, không có gì để lần ra.
+ *
+ * Tab quyết định loại → ô chọn đó biến mất, không còn chỗ để quên. */
+const KHO_TABS: { id: TabId; kind: "sgk" | "sgv" | "vbt" | "tap_huan"; label: string }[] = [
+  { id: "kho_sgk", kind: "sgk", label: "Sách học sinh (SGK)" },
+  { id: "kho_sgv", kind: "sgv", label: "Sách giáo viên · KHBD" },
+  { id: "kho_vbt", kind: "vbt", label: "Vở & sách bài tập" },
+  { id: "kho_tailieu", kind: "tap_huan", label: "Tài liệu tập huấn" },
+];
+const KHO_TAB_IDS: readonly TabId[] = KHO_TABS.map((t) => t.id);
+const kindOfTab = (t: TabId) => KHO_TABS.find((k) => k.id === t)?.kind;
 
 /** Tab chỉ có nghĩa khi ĐÃ chọn một hồ sơ học sinh (lớp quyết định SGK/đề/lộ trình).
  *  Khai ở cấp module: mảng `tabs` dựng lại mỗi lần render nên không dùng được làm
@@ -952,8 +970,14 @@ export default function TeacherPage() {
     }
   }, [session]);
 
+  // Tab quyết định loại sách đang nạp — không có ô chọn nào để quên đổi.
   useEffect(() => {
-    if (tab === "import" && session) {
+    const k = kindOfTab(tab);
+    if (k) setImpKind(k);
+  }, [tab]);
+
+  useEffect(() => {
+    if (KHO_TAB_IDS.includes(tab) && session) {
       void loadImports();
       void loadSgkAll();
       // Nạp LUÔN bảng chia theo loại sách, không đợi bấm "Xem".
@@ -1521,7 +1545,12 @@ export default function TeacherPage() {
       ]
     : [
         { id: "roster", label: "Học sinh", icon: <UserCircle className="size-3.5" /> },
-        { id: "import", label: "Kho chung (SGK·SGV·SBT·Tài liệu)", icon: <FileUp className="size-3.5" /> },
+        // Mỗi loại sách một tab — xem chú thích ở KHO_TABS.
+        ...KHO_TABS.map((k) => ({
+          id: k.id,
+          label: k.label,
+          icon: <FileUp className="size-3.5" />,
+        })),
       ];
 
   return (
@@ -2638,14 +2667,28 @@ export default function TeacherPage() {
       )}
 
       {/* ── IMPORT SGK ── */}
-      {tab === "import" && (
-        <Fold id="import" title="Import PDF SGK">
+      {KHO_TAB_IDS.includes(tab) && (
+        <Fold id={`kho-${impKind}`}
+          title={`Nạp ${KHO_TABS.find((k) => k.id === tab)?.label || ""}`}>
           <CardContent className="pt-4 space-y-3">
-            {SHOW_AUTOFILL && <AutofillPanel />}
-            <BulkSgkPanel />
+            {/* Nói rõ đang ở kho nào và nạp vào đâu. Bốn tab dùng CHUNG khung nạp,
+              * nên nếu không ghi ra thì trông giống hệt nhau và lại thành "kho
+              * chung" như cũ. */}
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5
+                            text-[10px] flex items-center gap-1.5 flex-wrap">
+              <BookMarked className="size-3.5 text-amber-600 shrink-0" />
+              <span>Tab này chỉ nạp <span className="font-semibold">
+                {KHO_TABS.find((k) => k.id === tab)?.label}</span> → kho</span>
+              <code>{khoLoai?.loai.find((l) => l.kind === impKind)?.collection || impKind}</code>
+              <span className="text-muted-foreground">
+                · loại sách do TAB quyết định, không có ô chọn để chọn sai
+              </span>
+            </div>
+            {impKind === "sgk" && SHOW_AUTOFILL && <AutofillPanel />}
+            {impKind === "sgk" && <BulkSgkPanel />}
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <FileUp className="size-3.5 text-amber-600" />
-              Import SGK theo chương / bài
+              Nạp theo chương / bài
             </div>
             <p className="text-[10px] text-muted-foreground">
               Nội dung được tách heading <code>## Chương/Bài/Unit…</code> để search từng mục.
@@ -2683,17 +2726,9 @@ export default function TeacherPage() {
               </div>
               <div>
                 <label className="text-[10px] text-muted-foreground">Chế độ</label>
-                <select
-                  className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  value={impKind}
-                  onChange={(e) => setImpKind(e.target.value as any)}
-                  title="Loại quyết định vào kho nào: SGK→kb_giao_duc · SGV→_sgv · Bài tập→_vbt · Tài liệu→_tailieu"
-                >
-                  <option value="sgk">SGK (học sinh)</option>
-                  <option value="sgv">SGV (giáo viên)</option>
-                  <option value="vbt">Vở/Sách bài tập</option>
-                  <option value="tap_huan">Tài liệu tập huấn</option>
-                </select>
+                {/* Ô chọn LOẠI SÁCH đã bỏ: tab quyết định loại. Giữ lại nó nghĩa
+                  * là vẫn có thể đang ở tab SGV mà nạp vào kho SGK, và không có
+                  * gì báo sai. */}
                 <select
                   className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
                   value={impMode}
@@ -3053,17 +3088,15 @@ export default function TeacherPage() {
               </p>
             </div>
 
-            {/* ── Kho theo LOẠI tài liệu: SGK / SGV / bài tập / tập huấn / slide.
+            {/* ── Kho CỦA RIÊNG tab này (lớp–môn–TẬP, đọc thẳng metadata).
               *
-              * Bảng "Toàn bộ SGK" bên dưới đếm theo file .md — mà .md chỉ ghi
-              * cho sách HỌC SINH, nên bốn loại còn lại nạp rồi vẫn không hiện
-              * ở đâu, trông như bị gộp làm một. Khối này đọc thẳng metadata
-              * từng kho (lớp–môn–TẬP) nên mỗi loại đứng riêng. */}
+              * Chỉ hiện kho của loại đang mở. Trước đây liệt kê cả năm loại ở mọi
+              * tab, nên bốn tab nhìn giống nhau và vẫn là "kho chung". */}
             <div className="rounded-md border border-border/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[11px] font-semibold flex items-center gap-1.5">
                   <BookMarked className="size-3.5 text-sky-600" />
-                  Kho theo loại tài liệu
+                  Đã có trong kho này
                 </div>
                 <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]"
                   disabled={khoLoading} onClick={() => void loadKhoLoai()}>
@@ -3073,7 +3106,10 @@ export default function TeacherPage() {
               </div>
               {khoLoai && (
                 <div className="space-y-1.5">
-                  {khoLoai.loai.map((k) => (
+                  {khoLoai.loai.filter((k) => k.kind === impKind
+                    // Kho slide đi kèm SGK: nó là phân bổ tuần–tiết của sách học
+                    // sinh, không phải một loại sách người dùng tự nạp.
+                    || (impKind === "sgk" && k.kind === "slide")).map((k) => (
                     <div key={k.kind} className="rounded border border-border/40">
                       <button type="button"
                         className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/60 transition"
@@ -3135,7 +3171,10 @@ export default function TeacherPage() {
               )}
             </div>
 
-            {/* ── Toàn bộ SGK trên server: gom theo lớp → môn, thu hết mặc định ── */}
+            {/* ── Toàn bộ SGK trên server: gom theo lớp → môn, thu hết mặc định.
+              * CHỈ ở tab SGK: bảng này đếm theo file .md, mà .md chỉ ghi cho sách
+              * học sinh — để nó ở tab SGV/VBT là hiện số của loại KHÁC. */}
+            {impKind === "sgk" && (
             <div className="rounded-md border border-border/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[11px] font-semibold flex items-center gap-1.5">
@@ -3152,8 +3191,8 @@ export default function TeacherPage() {
                   * không bao giờ hiện ở đây. Không nói ra thì đọc "Toàn bộ" là
                   * tưởng đã thấy hết mọi loại sách. */}
                 <p className="basis-full text-[9px] text-muted-foreground">
-                  Chỉ sách học sinh. Sách giáo viên · vở bài tập · tài liệu tập huấn xem ở
-                  khối <span className="font-medium">Kho theo loại tài liệu</span> phía trên.
+                  Chỉ sách học sinh — bảng này đếm theo file <code>.md</code>. Sách giáo viên ·
+                  vở bài tập · tài liệu tập huấn nằm ở TAB RIÊNG của từng loại.
                 </p>
                 <div className="flex items-center gap-1.5">
                   <Button
@@ -3295,6 +3334,7 @@ export default function TeacherPage() {
                 Đếm theo file <code>sgk/lop&lt;N&gt;/&lt;môn&gt;.md</code> trên server. Môn khác nhau theo lớp, giữ đúng tên sách: lớp 1–5 <b>Tiếng Việt</b>, lớp 6–12 <b>Ngữ văn</b>; lớp 4–9 có <b>Lịch sử và Địa lí</b> (một quyển), lớp 10–12 tách <b>Lịch sử</b> · <b>Địa lí</b> · <b>Vật lí</b>.
               </p>
             </div>
+            )}
           </CardContent>
         </Fold>
       )}
