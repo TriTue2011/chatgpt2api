@@ -872,13 +872,21 @@ def create_app() -> FastAPI:
         # lớp–môn 4/12 lần (đo 2026-07-29), nên đường lọc là đường chính, không
         # phải tuỳ chọn.
         extra: dict[str, Any] = {}
-        mt = re.match(r"^teacher_sgk/lop(\d{1,2})/([a-z_]+)/", source)
+        # Hai tiền tố, không phải một: `teacher_sgk/` là đường nạp của dự án,
+        # `tay/` là đường nạp tay. Bản cũ chỉ khớp `teacher_sgk` nên 18 đoạn SGK
+        # Tiếng Việt lớp 1–2 nạp tay không có nhãn — đếm thì thấy tăng, hỏi theo
+        # lớp thì không ra. Sai âm thầm, chỉ lộ khi soi metadata.
+        extra_kind = ("vbt" if collection.endswith("_vbt")
+                      else "slide" if collection.endswith("_slide")
+                      else "sgv" if collection.endswith("_sgv")
+                      else "sgk")
+        mt = re.match(r"^(?:teacher_sgk|tay)/lop(\d{1,2})/([a-z_]+)/", source)
         if mt:
             g = int(mt.group(1))
             if 1 <= g <= 12:
                 extra["grade"] = g
             extra["subject"] = mt.group(2)
-            extra["kind"] = "vbt" if collection.endswith("_vbt") else "sgk"
+            extra["kind"] = extra_kind
         # Client gửi kèm metadata tường minh thì ưu tiên — đường nạp biết rõ
         # lớp–môn hơn là đoán từ chuỗi source. Chỉ nhận kiểu vô hướng: Chroma
         # không lưu được dict/list lồng nhau và sẽ ném lỗi giữa lúc nạp.
