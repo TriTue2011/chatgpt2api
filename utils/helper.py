@@ -65,6 +65,11 @@ _VISION_PROVIDER_PREFIXES: set[str] = {
     "cx/",            # Codex supports image input natively
     "gemini_free/",   # Gemini API supports image input
     "ag/",            # Antigravity supports multimodal vision
+    # OpenCode Zen — ĐO THẬT 30/07: cả 6 model free (deepseek-v4, laguna, ling,
+    # mimo, nemotron-ultra, north-mini-code) đều đọc được ảnh màu. Heuristic tên
+    # không có từ khoá vision nên trước đó xếp nhầm 'chat', UI ẩn "Phân tích ảnh"
+    # và combo không định tuyến ảnh tới chúng dù chúng làm được.
+    "oc/",
 }
 # Custom providers that support image generation
 _IMAGE_GEN_CUSTOM_PROVIDERS = {
@@ -85,6 +90,13 @@ _VISION_KEYWORDS = {
     "cosmos-predict1", "nv-dinov2", "nv-grounding-dino",
     "retail-object-detection", "codegemma",
     "yi-large", "sarvam",
+    # ĐO THẬT 30/07 — đọc được ảnh màu qua gateway:
+    # · "agnes-2" khớp agnes/agnes-2.0-flash, 2.5-flash, 2.5-pro-alpha (3 model
+    #   chat của agnes) mà KHÔNG khớp agnes/agnes-image-* (đó là model tạo ảnh,
+    #   không xếp vào phân tích ảnh).
+    # · "kimi-k" khớp moonshotai/kimi-k3-free (đường tokenrouter/ và tr/) —
+    #   Moonshot Kimi K2/K3 đa phương thức.
+    "agnes-2", "kimi-k",
 }
 # Providers where ALL models support video analysis
 _VIDEO_PROVIDER_PREFIXES: set[str] = {
