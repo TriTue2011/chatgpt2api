@@ -222,53 +222,6 @@ class CustomOpenAIProvider:
         except Exception:
             return False
 
-    # Lỗi TRUYỀN TẢI hay gặp khi gọi API công cộng qua CDN: kết nối bị đóng giữa
-    # chừng, reset, bắt tay TLS hỏng. Không phải lỗi của request nên thử lại là
-    # đúng — đo thật 30/07 với tokenrouter (api.tokenrouter.com): gọi 3 lần thì
-    # 1 lần chết `curl (56) Connection closed abruptly`, 2 lần còn lại HTTP 200
-    # cùng một body. Không có retry nên một lỗi mạng thoáng qua thành 502 đập
-    # thẳng vào mặt người dùng.
-    _THU_LAI_TOI_DA = 3
-    _CHO_GIUA_CAC_LAN_S = (0.8, 2.0)
-
-    def _post_thu_lai(self, headers: dict[str, str], body: dict[str, Any], stream: bool):
-        """POST có thử lại khi lỗi TRUYỀN TẢI. Lỗi HTTP (4xx/5xx) không đụng tới —
-        đó là câu trả lời thật của máy chủ, người gọi phải thấy.
-
-        CHỈ áp dụng cho provider MỘT base_url. Provider nhiều endpoint (pool
-        Gemini Custom) đã có đường xử lý riêng và TỐT HƠN: lỗi kết nối thì hạ
-        endpoint đó xuống rồi nhảy sang endpoint kế NGAY. Thử lại ở đây trước sẽ
-        chèn ~2,8s vô ích vào đúng cái nhanh nhất của pool.
-        """
-        so_lan = self._THU_LAI_TOI_DA if len(self._base_urls) <= 1 else 1
-        loi_cuoi: Exception | None = None
-        for lan in range(so_lan):
-            try:
-                return requests.post(
-                    f"{self.base_url}{self._chat_path}",
-                    headers=headers,
-                    json=body,
-                    timeout=300,
-                    stream=stream,
-                )
-            except requests.RequestsError as exc:
-                loi_cuoi = exc
-                # Timeout thì ĐỪNG thử lại: đã chờ đủ 300s, thử nữa là bắt người
-                # dùng chờ thêm 10 phút cho một kết cục y hệt.
-                if type(exc).__name__ == "Timeout" or lan == so_lan - 1:
-                    break
-                cho = self._CHO_GIUA_CAC_LAN_S[min(lan, len(self._CHO_GIUA_CAC_LAN_S) - 1)]
-                logger.warning({
-                    "event": "custom_provider_retry_transport",
-                    "provider": self.name,
-                    "base_url": self.base_url,
-                    "lan": lan + 1,
-                    "cho_s": cho,
-                    "error": str(exc)[:160],
-                })
-                time.sleep(cho)
-        raise loi_cuoi  # type: ignore[misc]
-
     def chat_completions(
         self,
         messages: list[dict[str, Any]],
@@ -305,13 +258,6 @@ class CustomOpenAIProvider:
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
 
-        # `stream_options` (client xin {"include_usage": true} để có usage ở chunk
-        # cuối) CHỈ hợp lệ khi stream=true — kèm nó vào request không-stream là bị
-        # 400 "stream_options can only be used with stream=true". Gửi mù sẽ làm
-        # hỏng những lời gọi không-stream hiện đang chạy tốt.
-        if stream and kwargs.get("stream_options") is not None:
-            body["stream_options"] = kwargs["stream_options"]
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -334,7 +280,13 @@ class CustomOpenAIProvider:
             self.base_url = self._next_healthy_base_url()
 
         try:
-            resp = self._post_thu_lai(headers, body, stream)
+            resp = requests.post(
+                f"{self.base_url}{self._chat_path}",
+                headers=headers,
+                json=body,
+                timeout=300,
+                stream=stream,
+            )
 
             if resp.status_code == 429:
                 # Rate limited — mark key and retry with next

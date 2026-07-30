@@ -3904,6 +3904,8 @@ def _dispatch(route, messages, tools, tool_choice, body):
         return _handle_antigravity_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "nvidia_nim":
         return _handle_nvidia_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
+    elif route.provider == "tokenrouter":
+        return _handle_tokenrouter_chat(route.model, messages, tools, tool_choice, body.get("stream"), body)
     elif route.provider == "gemini_web":
         from services.providers.web_proxy import handle_gemini_web_chat
         return handle_gemini_web_chat(route.model, messages, body.get("stream"), body)
@@ -5553,6 +5555,43 @@ def _handle_nvidia_chat(
         raise
 
 
+def _handle_tokenrouter_chat(
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    stream: bool,
+    body: dict[str, Any],
+) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    """TokenRouter — đường RIÊNG (tiền tố `tr/`), tách khỏi Custom Providers.
+
+    Lý do tách nằm ở services/providers/tokenrouter.py: nó cần thử-lại khi lỗi
+    truyền tải và cần stream_options, mà thêm hai thứ đó vào đường dùng chung là
+    chạm vào mọi provider khác đang chạy tốt.
+    """
+    from services.providers.tokenrouter import tokenrouter_provider
+
+    pure_model = model[3:] if model.startswith("tr/") else model
+
+    logger.info({"event": "tokenrouter_chat", "model": pure_model, "stream": stream})
+
+    try:
+        return tokenrouter_provider.chat_completions(
+            messages=messages, model=pure_model, stream=stream,
+            temperature=body.get("temperature"), max_tokens=body.get("max_tokens"),
+            tools=tools, tool_choice=tool_choice,
+            top_p=body.get("top_p"),
+            frequency_penalty=body.get("frequency_penalty"),
+            presence_penalty=body.get("presence_penalty"),
+            stream_options=body.get("stream_options"),
+        )
+    except Exception as exc:
+        logger.error({"event": "tokenrouter_fatal", "model": pure_model, "error": str(exc)[:300]})
+        # PHẢI raise — xem chú thích ở custom provider: trả chuỗi lỗi như content
+        # là vòng combo coi thành công rồi dừng, các model sau không được thử.
+        raise
+
+
 def _handle_custom_openai_chat(
     provider_key: str,
     model: str,
@@ -5599,10 +5638,6 @@ def _handle_custom_openai_chat(
             top_p=body.get("top_p"),
             frequency_penalty=body.get("frequency_penalty"),
             presence_penalty=body.get("presence_penalty"),
-            # Client xin usage ở chunk cuối của stream
-            # (stream_options={"include_usage": true}) — không chuyển tiếp thì
-            # stream trả về không có phần usage nào.
-            stream_options=body.get("stream_options"),
         )
         if stream:
             return result

@@ -58,6 +58,10 @@ PROVIDER_PREFIXES: dict[str, str] = {
     "nv/": "nvidia_nim",
     "ag/": "antigravity",
     "agnes/": "agnes",
+    # TokenRouter đường RIÊNG (services/providers/tokenrouter.py). Tiền tố
+    # `tokenrouter/` của mục trong custom_providers KHÔNG đổi — vẫn đi đường
+    # Custom Providers dùng chung như trước. Hai đường sống song song.
+    "tr/": "tokenrouter",
 }
 
 # NoAuth providers — no credentials needed (port from 9router FREE_PROVIDERS)
@@ -75,6 +79,7 @@ API_KEY_PROVIDERS: set[str] = {
     "together",
     "nvidia_nim",
     "agnes",
+    "tokenrouter",
 }
 
 # Image providers from 9router image adapter system
