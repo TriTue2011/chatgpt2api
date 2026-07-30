@@ -1855,6 +1855,29 @@ _MEDIA_EXT = {
 _MEDIA_LABEL = {"image": "🖼️ Ảnh", "video": "🎬 Video", "music": "🎵 Nhạc"}
 
 
+#: Trần số ảnh một lượt. 50 là giới hạn THẬT đọc được từ phiên Zalo cá nhân
+#: (settings.features.sharefile.max_file — đo 30/07 trên tài khoản đang dùng).
+#: Kênh nào thấp hơn thì tầng gửi tự chia lô theo giới hạn của kênh đó.
+_MAX_ANH_MOT_LUOT = 50
+
+
+def _so_luong_anh(args: dict) -> int:
+    """Số ảnh người dùng xin, kẹp trong [1, 50]. Giá trị lạ → 1.
+
+    Kẹp thay vì báo lỗi: model đôi khi truyền "ba" hoặc 999. Trả 1 tấm còn dùng
+    được, còn báo lỗi thì mất luôn lượt trả lời.
+    """
+    for k in ("so_luong", "count", "n", "so"):
+        v = args.get(k)
+        if v in (None, ""):
+            continue
+        try:
+            return max(1, min(_MAX_ANH_MOT_LUOT, int(v)))
+        except (TypeError, ValueError):
+            continue
+    return 1
+
+
 def _h_library_media(args: dict, ctx: dict) -> dict:
     """Đọc THƯ VIỆN media của hệ thống (ảnh/video/nhạc đã tạo, lưu ở
     config.images_dir) và gửi lại cái mới nhất theo loại. Nhờ vậy bot 'thấy'
@@ -1884,7 +1907,36 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     url = f"http://127.0.0.1:80/images/{rel}"
     caption = f"{_MEDIA_LABEL.get(kind, 'Media')} mới nhất trong thư viện (tạo lúc {when}) ạ."
     if kind == "image":
-        return {"text": caption, "image_url": url}
+        # Nhiều ảnh: lấy N tấm mới nhất, LỌC TRÙNG theo nội dung.
+        #
+        # Thư viện có tệp trùng nội dung khác tên (mỗi lần lưu là một tên mới theo
+        # dấu thời gian, mà `save_image_bytes` đặt tên gồm md5 nên trùng nội dung
+        # là trùng phần hash). Đo thật 30/07: hai tệp `1785379635_2a6363b6…` và
+        # `1785379627_2a6363b6…` cùng nội dung. Không lọc thì "gửi 3 ảnh" có thể
+        # ra 3 tấm mà thật chỉ có 1 tấm khác nhau — người dùng thấy lặp và tưởng
+        # bot gửi sai.
+        so = _so_luong_anh(args)
+        if so <= 1:
+            return {"text": caption, "image_url": url}
+        chon: list[str] = []
+        da_thay: set[str] = set()
+        for p in files:
+            try:
+                van = p.stat().st_size, p.name.split("_", 1)[-1]
+            except Exception:
+                continue
+            if van in da_thay:
+                continue
+            da_thay.add(van)
+            chon.append(f"http://127.0.0.1:80/images/{p.relative_to(d).as_posix()}")
+            if len(chon) >= so:
+                break
+        if len(chon) <= 1:
+            return {"text": caption, "image_url": url}
+        thieu = ("" if len(chon) >= so
+                 else f" (thư viện chỉ có {len(chon)} ảnh KHÁC NHAU, không đủ {so})")
+        return {"text": f"{len(chon)} ảnh mới nhất trong thư viện ạ{thieu}.",
+                "image_urls": chon}
     if kind == "video":
         return {"text": caption, "video_url": url}
     return {"text": caption, "audio_url": url}
@@ -2585,7 +2637,11 @@ CAPABILITIES: dict[str, Capability] = {
         description=("Lấy media (ảnh/video/nhạc) ĐÃ TẠO bằng AI (Flow/ChatGPT/Gemini) lưu trong thư viện hệ thống và gửi lại cái mới nhất. BẮT BUỘC dùng tool này khi người dùng yêu cầu 'gửi ảnh/video/nhạc mới nhất', 'ảnh vừa tạo', 'xem lại ảnh', hoặc 'gửi lại ảnh'. TUYỆT ĐỐI KHÔNG trả lời là không có quyền/tool, hãy gọi tool này ngay! kind: 'image' (ảnh), 'video' (video tự tạo), 'music' (nhạc)."),
         parameters={"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["image", "video", "music"],
-                     "description": "Loại media cần lấy (mặc định image)"}}},
+                     "description": "Loại media cần lấy (mặc định image)"},
+            "so_luong": {"type": "integer",
+                         "description": ("Số ẢNH muốn lấy, 1–50 (mặc định 1). Người "
+                                         "dùng nói 'gửi 3 ảnh gần nhất' thì truyền 3. "
+                                         "Chỉ áp dụng kind=image.")}}},
         workflow=("Media mới nhất đã được gửi kèm tự động — chỉ cần chú thích "
                   "ngắn. Nếu người dùng muốn loại khác (video/nhạc) thì gọi lại "
                   "với kind tương ứng.")),

@@ -1905,9 +1905,27 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             return  # thread lọc yêu cầu chức năng bị tắt → bỏ qua, không nhắn gì
         reply = (out.get("text") or "").strip() or "..."
         image_url = out.get("image_url")
+        image_urls = out.get("image_urls")
         sent_photo = False
         sent_voice = False
-        if image_url:
+        if isinstance(image_urls, list) and len(image_urls) > 1:
+            # Zalo Bot API KHÔNG có album: chỉ `sendPhoto` một ảnh mỗi lời gọi,
+            # không có sendMediaGroup. Nên N ảnh = N TIN RIÊNG — đây là giới hạn
+            # nền tảng, không phải chỗ tối ưu được. Caption chỉ gắn tấm đầu, kẻo
+            # cùng một câu lặp lại N lần.
+            da = 0
+            for i, u in enumerate(image_urls):
+                if send_photo(chat_id, str(u),
+                              caption=reply[:1000] if i == 0 else "").get("ok"):
+                    da += 1
+            if da:
+                sent_photo = True
+                if da < len(image_urls):
+                    send_message(chat_id, f"(gửi được {da}/{len(image_urls)} ảnh)",
+                                 rich=False)
+            else:
+                reply = (reply + "\n(em tạo ảnh xong nhưng sendPhoto lỗi — kiểm tra base_url)").strip()
+        elif image_url:
             if send_photo(chat_id, str(image_url), caption=reply[:1000]).get("ok"):
                 sent_photo = True
             else:

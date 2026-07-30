@@ -67,6 +67,16 @@ _TURN_BUDGET_S = 240.0
 _LOCK_WAIT_S = 45.0
 
 
+def _nhieu_anh(urls: list[str]) -> dict:
+    """`{"image_urls": [...]}` khi có TỪ HAI ảnh, ngược lại `{}`.
+
+    Chỉ thêm khoá khi thật sự nhiều ảnh: một ảnh đã nằm ở `image_url`, gửi kèm
+    thêm danh sách một phần tử là mời mọi kênh đi đường chia lô cho đúng một
+    tấm — thêm việc, thêm chỗ sai, không được gì.
+    """
+    return {"image_urls": list(urls)} if len(urls) > 1 else {}
+
+
 def _user_history_lock(user_id: str) -> threading.Lock:
     key = str(user_id or "")
     with _history_locks_guard:
@@ -743,6 +753,10 @@ def _orchestrate_locked(user_text: str, user_id: str,
         messages.append({"role": "assistant", "content": msg.get("content"),
                          "tool_calls": tool_calls})
         produced_media: Optional[dict] = None  # {"image_url"|"video_path"|"video_url"|"doc_path": ...}
+        # Nhiều ẢNH của CHÍNH lượt này, theo thứ tự sinh ra. Tách khỏi
+        # `produced_media` (dict một khoá, bị ghi đè mỗi tool) vì ảnh là món duy
+        # nhất người dùng xin nhiều tấm một lúc.
+        produced_images: list[str] = []
         produced_caption = "Đây ạ 🎨"
         # Câu trả lời TERMINAL (deliver_now) từ tool: gửi thẳng, không cho vòng LLM
         # kể lại — dùng khi tạo ảnh/video THẤT BẠI để không "khoe" là đã gửi.
@@ -853,6 +867,32 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 result = _execute(cap, args, user_id, user_text=user_text,
                                   auto_approve=auto_approve)
 
+            # NHIỀU ảnh trong MỘT lượt.
+            #
+            # `produced_media` là dict một khoá và bị GHI ĐÈ mỗi lần gọi tool, nên
+            # model vẽ 3 ảnh thì chỉ 1 tấm tới — không phải lỗi câu lệnh, mà là
+            # tầng giao tin chỉ mang được một món. Nay ảnh được GOM LẠI theo thứ tự
+            # sinh ra trong lượt này.
+            #
+            # Gom theo LƯỢT chứ không đọc "N ảnh mới nhất trong thư viện": thư viện
+            # có ảnh của lượt khác và ảnh trùng nội dung khác tên, nên lấy theo
+            # thời gian là gửi lẫn. Ảnh sinh trong lượt thì không có gì để lẫn.
+            them = result.get("image_urls")
+            if isinstance(them, list) and them:
+                for u in them:
+                    try:
+                        from services import net_guard as _ng
+                        if not _ng.is_allowed_egress_url(str(u)):
+                            logger.warning("orchestrator drop unsafe image_urls=%s",
+                                           str(u)[:120])
+                            continue
+                    except Exception:
+                        continue
+                    if str(u) not in produced_images:
+                        produced_images.append(str(u))
+                if produced_images:
+                    produced_caption = result.get("text") or produced_caption
+
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):
                     continue
@@ -873,7 +913,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 except Exception as exc:
                     logger.warning("orchestrator media guard: %s", exc)
                     continue
-                produced_media = {media_key: result[media_key]}
+                if media_key == "image_url":
+                    # Vẽ 3 ảnh = 3 lần gọi tool. Bản cũ ghi đè `produced_media`
+                    # mỗi lần nên chỉ tấm CUỐI sống sót, còn hai tấm kia đã tốn
+                    # phí sinh ra rồi bị bỏ im lặng. Gom lại theo thứ tự vẽ.
+                    if str(val) not in produced_images:
+                        produced_images.append(str(val))
+                    # Giữ tấm ĐẦU ở `produced_media` để kênh nào chưa hiểu
+                    # `image_urls` vẫn gửi được một ảnh, không thành gửi rỗng.
+                    if not produced_media:
+                        produced_media = {media_key: produced_images[0]}
+                else:
+                    produced_media = {media_key: result[media_key]}
                 produced_caption = result.get("text") or "Đây ạ 🎨"
                 break
             # Tool báo THẤT BẠI (không có media) nhưng muốn trả câu thật ngay:
@@ -906,7 +957,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
             combo_text = (
                 f"{base_text}\n\n{pending_approval_q}" if base_text else pending_approval_q
             )
-            out_q = _finalize(user_id, {"text": combo_text, **(produced_media or {})})
+            out_q = _finalize(user_id, {"text": combo_text, **(produced_media or {}),
+                                        **_nhieu_anh(produced_images)})
             hist.append({"role": "assistant", "content": out_q.get("text") or combo_text})
             _persist_history(user_id, hist)
             _journal(str(out_q.get("text") or combo_text), status="awaiting_approval")
@@ -914,7 +966,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # If a capability produced media, deliver it now (the media is the answer).
         if produced_media:
             text = produced_caption
-            out_m = _finalize(user_id, {"text": text, **produced_media})
+            out_m = _finalize(user_id, {"text": text, **produced_media,
+                                        **_nhieu_anh(produced_images)})
             hist.append({"role": "assistant", "content": out_m.get("text") or text})
             _persist_history(user_id, hist)
             _journal(str(out_m.get("text") or text), status="media")

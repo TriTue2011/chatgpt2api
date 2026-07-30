@@ -44,7 +44,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Run unit tests
-        run: uv run python -m pytest test/test_backend_router.py test/test_auth_service.py test/test_config.py test/test_provider_circuit.py test/test_session_affinity.py test/test_mcp_tool_exec.py test/test_zalo_bot_webhook.py test/test_zalo_bot_send.py test/test_tim_nguon_theo_loai.py test/test_khoi_phuc_captcha.py -q
+        run: uv run python -m pytest test/test_backend_router.py test/test_auth_service.py test/test_config.py test/test_provider_circuit.py test/test_session_affinity.py test/test_mcp_tool_exec.py test/test_zalo_bot_webhook.py test/test_zalo_bot_send.py test/test_tim_nguon_theo_loai.py test/test_khoi_phuc_captcha.py test/test_nhieu_anh_mot_luot.py -q
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

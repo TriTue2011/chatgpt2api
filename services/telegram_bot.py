@@ -560,6 +560,33 @@ def _send_agent_reply(chat_id: str, out: dict) -> None:
             markup = None
     send_message(chat_id, reply, reply_markup=markup)
 
+def _gui_album(chat_id: int | str, urls: list[str], caption: str = "") -> bool:
+    """Gửi nhiều ảnh thành MỘT album qua sendMediaGroup (tối đa 10 ảnh/lô).
+
+    Chỉ dùng URL đã qua net_guard: sendMediaGroup nhờ Telegram tự tải ảnh, nên
+    URL nội bộ (127.0.0.1) Telegram không thấy được — những ảnh đó phải đi đường
+    gửi từng tấm bằng bytes. Trả False để người gọi rơi về đường đó, chứ không
+    im lặng gửi thiếu.
+    """
+    if len(urls) < 2:
+        return False
+    from services import net_guard as _ng
+    media = []
+    for i, u in enumerate(urls[:10]):
+        s = str(u)
+        if s.startswith("data:") or not _ng.is_allowed_egress_url(s):
+            return False
+        m: dict = {"type": "photo", "media": s}
+        if i == 0 and caption:
+            m["caption"] = caption
+        media.append(m)
+    r = _api_call("sendMediaGroup", {"chat_id": chat_id, "media": media})
+    if not r.get("ok"):
+        logger.warning("sendMediaGroup thất bại (%d ảnh): %s",
+                       len(media), str(r)[:200])
+    return bool(r.get("ok"))
+
+
 def send_photo(chat_id: int | str, photo_bytes: bytes, caption: str = "") -> dict:
     """Gửi ảnh qua Telegram (đúng topic đã nhận — xem send_message)."""
     return _cli().send_photo(chat_id, photo_bytes, caption=caption or "",
@@ -1378,6 +1405,30 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             return  # thread lọc yêu cầu chức năng bị tắt → bỏ qua, không nhắn gì
         reply = (out.get("text") or "").strip() or "..."
         image_url = out.get("image_url")
+        image_urls = out.get("image_urls")
+        if isinstance(image_urls, list) and len(image_urls) > 1:
+            # Telegram gộp tối đa 10 ảnh mỗi album (giới hạn sendMediaGroup của
+            # Bot API), khác Zalo Cá Nhân 50 — nên chia lô 10, không dùng chung
+            # con số của kênh khác.
+            gui = 0
+            for i in range(0, len(image_urls), 10):
+                lo = [u for u in image_urls[i:i + 10]]
+                if _gui_album(chat_id, lo, caption=reply[:1000] if i == 0 else ""):
+                    gui += len(lo)
+            if gui:
+                if gui < len(image_urls):
+                    send_message(chat_id, f"(gửi được {gui}/{len(image_urls)} ảnh)")
+                return
+            # Album thất bại → rơi về gửi từng tấm, thà chậm hơn là mất cả loạt.
+            da = 0
+            for u in image_urls:
+                img = _fetch_image_bytes(u)
+                if img and send_photo(chat_id, img, caption="").get("ok"):
+                    da += 1
+            if da:
+                send_message(chat_id, reply[:1000] if da == len(image_urls)
+                             else f"{reply[:900]}\n(gửi được {da}/{len(image_urls)} ảnh)")
+                return
         if image_url:
             # _fetch_image_bytes né 403 hairpin (URL /images/ của chính mình
             # → tải qua localhost) để LUÔN gửi được ảnh thật thay vì link.

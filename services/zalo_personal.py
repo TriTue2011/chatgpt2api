@@ -857,6 +857,55 @@ def _send_photo_robust(thread_id: str, image_url: str, caption: str = "",
     return False
 
 
+def _gui_nhieu_anh(thread_id: str, urls: list[str], caption: str = "",
+                   thread_type: int = 0, account: str = "") -> bool:
+    """Gửi NHIỀU ảnh trong MỘT tin (album) qua sendImages*ByAccount.
+
+    Đi endpoint mảng chứ không gọi sendImage nhiều lần: bot server chia lô theo
+    `max_file` THẬT của phiên (đo 30/07: 50 ảnh/tin) và nghỉ giữa các lô, nên
+    3–50 ảnh vẫn gọn một tin. Gọi từng tấm thì thành N tin rời và dễ ăn lỗi
+    "vượt quá số request cho phép, code 221" — ngưỡng mà chính người bảo trì
+    zca-js nói họ không biết.
+
+    Mỗi URL vẫn qua `_media_fetch_candidates` như đường một ảnh, vì URL nội bộ
+    (127.0.0.1) cần đổi sang dạng bot server tải được.
+    """
+    acc = _account_for_send(account)
+    if not acc or not urls:
+        return False
+    ds: list[str] = []
+    for u in urls:
+        for c in _media_fetch_candidates(u):
+            try:
+                from services import net_guard as _ng
+                if (c.startswith("http") and not c.startswith("http://127.0.0.1")
+                        and not _ng.is_allowed_egress_url(c)):
+                    continue
+            except Exception:
+                pass
+            ds.append(c)
+            break   # mỗi ảnh lấy ứng viên ĐẦU dùng được, không nhân bản ảnh
+    if len(ds) < 2:
+        return False
+    path = ("/api/sendImagesToGroupByAccount" if int(thread_type or 0) == 1
+            else "/api/sendImagesToUserByAccount")
+    r = _request("POST", path, {
+        "imagePaths": ds,
+        "threadId": str(thread_id),
+        "accountSelection": acc,
+        **({"caption": caption} if caption else {}),
+    }, timeout=180.0)
+    d = r.get("data") or {}
+    ok = bool(r.get("ok")) and bool(d.get("success"))
+    if ok:
+        logger.info({"event": "zalop_gui_nhieu_anh", "so_anh": d.get("soAnh"),
+                     "so_lo": d.get("soLo"), "max_file": d.get("maxFilePerMessage")})
+    else:
+        logger.warning({"event": "zalop_gui_nhieu_anh_loi", "so_anh": len(ds),
+                        "loi": str(d.get("error") or r.get("error") or "")[:200]})
+    return ok
+
+
 def _send_file_robust(thread_id: str, file_url: str, caption: str = "",
                       thread_type: int = 0, account: str = "") -> bool:
     """Gửi FILE thật (sendFile) — PDF/DOCX/audio; không dán link text."""
@@ -2217,8 +2266,24 @@ def _process_ai(ev: dict) -> None:
             return
         reply = (out.get("text") or "").strip() or "..."
         image_url = out.get("image_url")
+        image_urls = out.get("image_urls")
         sent_media = False
-        if image_url:
+        if isinstance(image_urls, list) and len(image_urls) > 1:
+            # Nhiều ảnh → MỘT tin (album). Đây là lợi thế riêng của Zalo Cá Nhân:
+            # giới hạn thật đọc từ phiên là 50 ảnh/tin (đo 30/07), nên 3–50 ảnh
+            # vẫn gọn một tin. Zalo Bot không có album, phải gửi lần lượt.
+            if _gui_nhieu_anh(thread_id, [str(u) for u in image_urls],
+                              reply[:1000], thread_type, account=_acc):
+                sent_media = True
+            else:
+                # Rơi về gửi từng tấm: thà chậm và tới đủ, hơn là mất cả loạt.
+                da = sum(1 for u in image_urls
+                         if _send_photo_robust(thread_id, str(u), "", thread_type,
+                                               account=_acc))
+                sent_media = da > 0
+                if da < len(image_urls):
+                    reply = (reply + f"\n(gửi được {da}/{len(image_urls)} ảnh)").strip()
+        elif image_url:
             if _send_photo_robust(
                 thread_id, str(image_url), reply[:1000], thread_type, account=_acc,
             ):
