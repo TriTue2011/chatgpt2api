@@ -583,23 +583,79 @@ class MCPSearch(SearchBackend):
     def name(self) -> str:
         return "mcp"
 
+    # Chỉ tool TÌM KIẾM. Bản cũ gọi cả `get_news` và `get_current_weather` cho
+    # MỌI câu hỏi — hai tool đó không tìm được gì, nhưng mỗi lần gọi vẫn chờ hết
+    # timeout. Đo thật 30/07: một lượt tìm mất 89 giây, có lượt 601 giây.
+    _TOOLS = ("search_web", "search_all", "search")
+
+    # Câu "không có kết quả" của tool — phải coi là RỖNG.
+    _RONG = ("không tìm thấy", "khong tim thay", "no result", "không có kết quả")
+
+    _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
     def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
-        """Use MCP search tools as fallback search backend."""
+        """Dùng MCP search tool làm backend dự phòng.
+
+        Bản cũ trả về ``{"title": <TÊN TOOL>, "snippet": text, "url": ""}`` —
+        ba chỗ sai cùng lúc, và cả ba đều im lặng:
+
+        1. `title` là TÊN TOOL ("search_web"), không phải tiêu đề trang. Ai đọc
+           `title` cũng nhận rác.
+        2. `url` LUÔN rỗng. `sgk_fetch` lọc ứng viên bằng `_looks_like_pdf(url)`
+           nên không bao giờ có ứng viên nào — cả đường tìm sách chết đứng mà
+           log vẫn ghi "search_success results=5".
+        3. `len(text) > 10` khiến chuỗi "Không tìm thấy kết quả." (23 ký tự)
+           được tính là MỘT kết quả thành công.
+
+        Nay tách text thành từng kết quả có URL thật, và dừng ở tool đầu tiên có
+        kết quả dùng được thay vì gọi hết mọi tool.
+        """
         try:
-            from services.mcp_client import get_enabled_mcp_tools, call_mcp_tool
+            from services.mcp_client import call_mcp_tool
         except ImportError:
             return []
 
-        search_tools = ["search_web", "search_all", "search", "get_news", "get_current_weather"]
-        results: list[dict[str, str]] = []
-        for tool in search_tools:
+        for tool in self._TOOLS:
             try:
-                text = call_mcp_tool(tool, {"query": query, "limit": max_results})
-                if text and len(text) > 10:
-                    results.append({"title": tool, "snippet": text[:1500], "url": ""})
+                text = str(call_mcp_tool(tool, {"query": query, "limit": max_results}) or "")
             except Exception:
                 continue
-        return results
+            if not text.strip():
+                continue
+            low = text.lower()
+            if any(m in low for m in self._RONG) and not self._URL_RE.search(text):
+                continue        # tool trả lời "không có gì" → đi tool tiếp
+            ket = self._tach(text, max_results)
+            if ket:
+                return ket
+        return []
+
+    def _tach(self, text: str, max_results: int) -> list[dict[str, str]]:
+        """Tách text của MCP thành [{title, url, snippet}].
+
+        Khuôn text của các tool này là: dòng tiêu đề, dòng URL, rồi mô tả. Lấy
+        MỐC là dòng chứa URL — dòng ngay TRƯỚC nó là tiêu đề. Không có URL thì
+        bỏ hẳn: một kết quả tìm kiếm không có link thì không dùng được vào việc
+        gì, giữ lại chỉ để đếm cho đẹp.
+        """
+        lines = [l.strip() for l in text.splitlines()]
+        out: list[dict[str, str]] = []
+        for i, line in enumerate(lines):
+            m = self._URL_RE.search(line)
+            if not m:
+                continue
+            url = m.group(0).rstrip(").,;]>\"'")
+            title = ""
+            for j in range(i - 1, max(-1, i - 4), -1):
+                cand = lines[j].lstrip("-*0123456789. )")
+                if cand and not self._URL_RE.search(cand):
+                    title = cand[:200]
+                    break
+            snippet = " ".join(x for x in lines[i + 1:i + 3] if x and not self._URL_RE.search(x))
+            out.append({"title": title or url, "url": url, "snippet": snippet[:500]})
+            if len(out) >= max(1, max_results):
+                break
+        return out
 
 
 # Backend registry
