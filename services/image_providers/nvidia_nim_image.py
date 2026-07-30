@@ -40,6 +40,30 @@ _NVIDIA_SIZE_MAP: dict[str, tuple[int, int]] = {
 }
 _NVIDIA_DEFAULT_SIZE = "1344x768"  # 16:9
 
+# Trần `steps` theo TỪNG model. Dòng flux nhanh (schnell/klein) chưng cất còn vài
+# bước nên NVIDIA CHẶN CỨNG ở 4 — gửi nhiều hơn là 422, không phải ảnh xấu:
+#   {"type":"less_than_equal","loc":["body","steps"],"msg":"Input should be less
+#    than or equal to 4","input":8,"ctx":{"le":4}}
+# (dò thật bằng key của máy chủ ngày 30/07). Mặc định cũ 28 bước làm mọi lời gọi
+# tới hai model này hỏng ngay, kể cả khi người dùng không đụng gì tới `steps`.
+_TRAN_STEPS: dict[str, int] = {
+    "black-forest-labs/flux.2-klein-4b": 4,
+    "black-forest-labs/flux.1-schnell": 4,
+}
+_STEPS_MAC_DINH = 28
+
+
+def _so_buoc(model: str, yeu_cau: Any) -> int:
+    """Số bước hợp lệ cho model này (kẹp vào trần nếu model có trần)."""
+    tran = _TRAN_STEPS.get(str(model or "").strip().lower())
+    try:
+        buoc = int(yeu_cau) if yeu_cau is not None else (tran or _STEPS_MAC_DINH)
+    except (TypeError, ValueError):
+        buoc = tran or _STEPS_MAC_DINH
+    if tran:
+        return max(1, min(buoc, tran))
+    return max(5, buoc)
+
 
 def _nvidia_size(size: str | None) -> tuple[int, int]:
     """Map OpenAI size → NVIDIA-compatible resolution."""
@@ -95,7 +119,7 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             "width": w,
             "height": h,
             "seed": int(body.get("seed", 0)),
-            "steps": max(5, int(body.get("steps", 28))),
+            "steps": _so_buoc(model, body.get("steps")),
         }
 
     def build_headers(

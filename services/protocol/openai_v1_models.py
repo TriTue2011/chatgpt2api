@@ -103,13 +103,18 @@ FALLBACK_MODELS = {
         "gmw/nano-banana-pro",
         "gmw/imagen-4",
     ],
+    # Model ảnh NVIDIA — dò THẬT bằng key của máy chủ ngày 30/07 (POST
+    # ai.api.nvidia.com/v1/genai/<model>):
+    #   flux.1-dev        → 200, trả artifacts base64
+    #   flux.2-klein-4b   → sống (422 chỉ vì steps > 4, xem nvidia_nim_image.py)
+    #   flux.1-schnell    → sống; tên cũ "flux_1-schnell" (gạch dưới) là SAI → 404
+    #   stabilityai/*     → 404 cả ba, NVIDIA đã ngừng phục vụ; để lại chỉ tổ cho
+    #                       người dùng chọn rồi nhận lỗi
     "nvidia_nim": [
         "nv/auto",
         "nv-image/black-forest-labs/flux.2-klein-4b",
         "nv-image/black-forest-labs/flux.1-dev",
-        "nv-image/black-forest-labs/flux_1-schnell",
-        "nv-image/stabilityai/stable-diffusion-3-medium",
-        "nv-image/stabilityai/stable-diffusion-xl",
+        "nv-image/black-forest-labs/flux.1-schnell",
     ],
     "chatgpt2api": [],
     "antigravity": [
@@ -331,14 +336,14 @@ def _fetch_nvidia_models() -> set[str]:
                     models.add(f"nv/{slug}")
 
             # NVIDIA image gen models are on a separate API (ai.api.nvidia.com/v1/genai/)
-            # There's no list endpoint, so we hardcode known models with nv-image/ prefix
+            # There's no list endpoint, so we hardcode known models with nv-image/ prefix.
+            # Danh sách này đã DÒ THẬT ngày 30/07 — xem chú thích ở STATIC_MODELS.
+            # Ba model stabilityai/* trả 404 nên đã bỏ; "flux_1-schnell" là tên sai
+            # (đúng: flux.1-schnell).
             nv_image_models = [
                 "nv-image/black-forest-labs/flux.2-klein-4b",
                 "nv-image/black-forest-labs/flux.1-dev",
-                "nv-image/black-forest-labs/flux_1-schnell",
-                "nv-image/stabilityai/stable-diffusion-3-medium",
-                "nv-image/stabilityai/stable-diffusion-xl",
-                "nv-image/stabilityai/stable-video-diffusion",
+                "nv-image/black-forest-labs/flux.1-schnell",
             ]
             cfg = config.data.get("providers") or {}
             nv_cfg = cfg.get("nvidia_nim") or {}
