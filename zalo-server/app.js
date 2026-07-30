@@ -226,18 +226,56 @@ if (fs.existsSync(cookiesDir)) {
                         const cookiePath = path.join(cookiesDir, file);
                         if (fs.existsSync(cookiePath)) {
                             const cookie = JSON.parse(fs.readFileSync(cookiePath, "utf-8"));
-                            try {
-                                await loginZaloAccount(null, cookie);
-                                // Kiểm tra thực sự account đã vào zaloAccounts chưa
-                                if (zaloAccounts.some(a => a.ownId === ownId)) {
-                                    console.log(`[Restore] ${ownId} — OK`);
-                                } else {
-                                    console.log(`[Restore] ${ownId} — cookie hết hạn, đã xóa`);
-                                    try { fs.unlinkSync(cookiePath); } catch (e) { /* ignore */ }
+                            // Thử lại nhiều lần TRƯỚC KHI kết luận, và CHỈ xoá
+                            // cookie khi chắc chắn nó không còn hợp lệ.
+                            //
+                            // Vì sao phải sửa: bản cũ xoá file cookie ngay khi
+                            // đăng nhập lại thất bại vì BẤT KỲ lý do gì — kể cả
+                            // mạng chưa sẵn sàng. Mà container khởi động thì
+                            // mạng Docker dựng SAU tiến trình, nên cứ deploy là
+                            // dễ mất phiên Zalo cá nhân, phải quét QR lại. Đo
+                            // thật trên máy chủ 2026-07-30 07:54: container khởi
+                            // động đúng lúc luật NAT vừa dựng lại, log ghi "Tìm
+                            // thấy 0 file cookie" — cookie đã bị chính đoạn này
+                            // xoá ở lần khởi động trước, dù tài khoản vẫn còn
+                            // hiệu lực (thư mục messages/ vẫn nguyên từ 25/7).
+                            //
+                            // Mất mạng là chuyện TẠM THỜI; xoá cookie là mất
+                            // VĨNH VIỄN. Không được đổi cái tạm thời thành cái
+                            // vĩnh viễn.
+                            const LOI_MANG = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|network|timeout|fetch failed/i;
+                            let thanhCong = false;
+                            let loiCuoi = null;
+                            let loiMang = false;
+                            for (let lan = 1; lan <= 3; lan++) {
+                                try {
+                                    await loginZaloAccount(null, cookie);
+                                    if (zaloAccounts.some(a => a.ownId === ownId)) {
+                                        thanhCong = true;
+                                        break;
+                                    }
+                                    loiCuoi = new Error("đăng nhập không báo lỗi nhưng tài khoản không vào danh sách");
+                                } catch (loginError) {
+                                    loiCuoi = loginError;
+                                    if (LOI_MANG.test(String(loginError && loginError.message))) {
+                                        loiMang = true;
+                                    }
                                 }
-                            } catch (loginError) {
-                                console.error(`Lỗi khi đăng nhập lại tài khoản ${ownId}:`, loginError.message);
-                                try { fs.unlinkSync(cookiePath); console.log(`Đã xóa cookie lỗi: ${cookiePath}`); } catch (e) { /* ignore */ }
+                                if (lan < 3) {
+                                    console.log(`[Restore] ${ownId} — thử lại lần ${lan + 1} sau ${lan * 5}s (${loiCuoi && loiCuoi.message})`);
+                                    await new Promise(r => setTimeout(r, lan * 5000));
+                                }
+                            }
+                            if (thanhCong) {
+                                console.log(`[Restore] ${ownId} — OK`);
+                            } else if (loiMang) {
+                                // GIỮ cookie: lỗi mạng thì lần khởi động sau còn
+                                // cơ hội, xoá đi là bắt người dùng quét QR lại
+                                // chỉ vì mạng chậm mấy giây.
+                                console.error(`[Restore] ${ownId} — LỖI MẠNG, GIỮ cookie để thử lại lần sau: ${loiCuoi && loiCuoi.message}`);
+                            } else {
+                                console.log(`[Restore] ${ownId} — cookie không còn hợp lệ, đã xóa: ${loiCuoi && loiCuoi.message}`);
+                                try { fs.unlinkSync(cookiePath); } catch (e) { /* ignore */ }
                             }
                         } else {
                             console.log(`Không tìm thấy file cookie: ${cookiePath}`);
