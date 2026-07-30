@@ -987,6 +987,8 @@ const OS_LIST: { id: OsId; label: string; shell: string }[] = [
 ];
 const RAW_AGENT =
   "https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/c2a_agent.py";
+const RAW_INSTALLER =
+  "https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/install-windows.ps1";
 
 type Step = { title: string; cmd?: string; note?: string };
 
@@ -1007,23 +1009,36 @@ function installSteps(
     `${py} c2a_agent.py --url ${wsUrl} --token ${q(token)} ${pArgs}${w}`;
 
   if (os === "win") {
+    // Windows đi đường installer TRỌN GÓI: một lệnh tải + đăng ký Scheduled
+    // Task chạy pythonw (KHÔNG cửa sổ) + tự bật khi đăng nhập + tự hồi khi
+    // chết. Bản cũ bắt giữ một cửa sổ PowerShell mở suốt — người dùng tắt nhầm
+    // là thiết bị offline không ai báo; còn bước autostart 5 thao tác tay
+    // trong Task Scheduler thì hầu hết bỏ qua.
+    const flags = (perm.write ? " -AllowWrite" : "")
+      + (perm.exec ? " -AllowExec" : "")
+      + (perm.power ? " -AllowPower" : "");
+    const pList = paths.map((x) => `"${x}"`).join(",");
     return [
       { title: "1. Cài Python (bỏ qua nếu `python --version` đã chạy được)",
         cmd: "winget install Python.Python.3.12",
         note: "Cài xong PHẢI đóng rồi mở lại PowerShell để `python` vào PATH." },
-      { title: "2. Tải agent về (vào thư mục người dùng)",
-        cmd: `cd $HOME; irm ${RAW_AGENT} -OutFile c2a_agent.py` },
-      { title: "3. Chạy agent",
-        cmd: run("python"),
-        note: "Để cửa sổ PowerShell này MỞ. Đóng là agent dừng. Ctrl-C để dừng." },
-      { title: "4. (Không bắt buộc) Tự chạy khi mở máy",
+      { title: "2. Cài agent — MỘT lệnh, chạy ẨN, tự bật khi mở máy",
         cmd: [
-          "# Tạo file c2a.bat rồi mở thư mục Startup",
-          '$bat = Join-Path $env:USERPROFILE "c2a.bat"',
-          '@("@echo off", "cd /d %USERPROFILE%", ' + JSON.stringify(run("python")) + ') | Set-Content -Encoding OEM $bat',
-          "explorer shell:startup",
+          `irm ${RAW_INSTALLER} -OutFile "$env:TEMP\\c2a-install.ps1"`,
+          `& "$env:TEMP\\c2a-install.ps1" -Url ${wsUrl} -Token "${token}" -Paths ${pList}${flags}`,
         ].join("\n"),
-        note: "Explorer mở thư mục Startup — kéo file c2a.bat (ở thư mục người dùng) vào đó. Muốn không hiện cửa sổ đen thì sửa 'python' thành 'pythonw' trong file bat." },
+        note: "Không có cửa sổ nào phải giữ — agent chạy nền qua Task Scheduler, "
+          + "tắt nhầm không được vì không có gì để tắt. Xem log: "
+          + "Get-Content \"$env:LOCALAPPDATA\\c2a-agent\\c2a-agent.log\" -Tail 20 -Wait" },
+      { title: "3. (Nếu trước đây chạy agent trong cửa sổ PowerShell) tắt bản cũ đi",
+        cmd: "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          + "Where-Object { $_.CommandLine -match 'c2a_agent' } | "
+          + "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+        note: "Bản cũ (python.exe có cửa sổ) và bản mới (pythonw.exe ẩn) sẽ giành "
+          + "nhau kết nối — cùng token thì phiên nối sau đá phiên trước, lặp mãi. "
+          + "Chỉ giữ một bản." },
+      { title: "4. Gỡ cài đặt (khi cần)",
+        cmd: `& "$env:TEMP\\c2a-install.ps1" -Uninstall` },
     ];
   }
   if (os === "mac") {

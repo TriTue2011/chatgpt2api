@@ -128,70 +128,76 @@ Muốn **đổi thư mục hoặc bật quyền ghi**: xoá rồi thêm lại (s
 
 ---
 
-## Bước 3 — Tải agent về laptop
+## Bước 3 — Cài agent: MỘT lệnh, chạy ẨN, tự bật khi mở máy
+
+> Cách cũ (tải file rồi `python c2a_agent.py ...` trong PowerShell) bắt bạn giữ
+> cửa sổ mở suốt — **tắt nhầm cửa sổ là bot mất kết nối**. Installer dưới đây
+> đăng ký agent vào Task Scheduler chạy bằng `pythonw` (không có cửa sổ nào),
+> tự bật lại khi mở máy, tự hồi mỗi phút nếu chết.
+
+Dán vào PowerShell (thay token + thư mục của bạn):
 
 ```powershell
-cd $HOME
-irm https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/c2a_agent.py -OutFile c2a_agent.py
+irm https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/install-windows.ps1 -OutFile "$env:TEMP\c2a-install.ps1"
+& "$env:TEMP\c2a-install.ps1" `
+  -Url wss://gpt.vhtatn.io.vn/api/devices/agent `
+  -Token "<TOKEN_TU_BUOC_2>" `
+  -Paths "C:\Users\Viet\Downloads"
 ```
 
-File nằm ở `C:\Users\<tên>\c2a_agent.py`, khoảng 15KB.
+Muốn mở quyền thì thêm cờ — nhớ khoá tương ứng ở Bước 2 cũng phải bật:
 
----
-
-## Bước 4 — Chạy agent
-
-```powershell
-cd $HOME
-python c2a_agent.py `
-  --url wss://gpt.vhtatn.io.vn/api/devices/agent `
-  --token "<TOKEN_TU_BUOC_2>" `
-  --path "C:\Users\Viet\Downloads" `
-  --label "Laptop Windows"
-```
-
-Dấu **`` ` ``** cuối dòng là ký tự nối dòng của PowerShell (như `\` trên
-Linux). Muốn viết một dòng thì bỏ hết dấu đó đi.
-
-Chạy đúng sẽ thấy:
-
-```
-[c2a-agent] v1.0.0 — gateway wss://gpt.vhtatn.io.vn/api/devices/agent
-[c2a-agent] đã kết nối — thiết bị 'laptop-win'
-[c2a-agent] cho phép: C:\Users\Viet\Downloads | ghi: KHÔNG
-```
-
-**Cứ để cửa sổ PowerShell đó mở.** Đóng là agent dừng, bot mất kết nối tới
-laptop. Mỗi lệnh bot gửi xuống sẽ in một dòng ở đây — bạn luôn thấy bot đang
-làm gì trên máy mình.
-
-Dừng agent: `Ctrl-C`.
-
-### Bốn nhóm quyền — mỗi nhóm bật ở CẢ HAI phía
-
-| Muốn bot làm gì | Khoá ở Bước 2 | Cờ ở Bước 4 |
+| Muốn bot làm gì | Khoá ở Bước 2 | Cờ của installer |
 |---|---|---|
-| Đọc file · xem thông tin máy, CPU/RAM/ổ đĩa, tiến trình, service, màn hình | *(có sẵn)* | *(có sẵn)* |
-| Thêm · xoá · sửa file | `can_write = $true` | `--allow-write` |
-| Chạy lệnh PowerShell/cmd · cài phần mềm · tắt ứng dụng | `can_exec = $true` | `--allow-exec` |
-| Khoá màn hình · tắt máy · khởi động lại | `can_power = $true` | `--allow-power` |
+| Đọc file · CPU/RAM/ổ đĩa · tiến trình | *(có sẵn)* | *(có sẵn)* |
+| Thêm · xoá · sửa file | `can_write = $true` | `-AllowWrite` |
+| Chạy lệnh · tắt ứng dụng | `can_exec = $true` | `-AllowExec` |
+| Khoá màn hình · tắt máy | `can_power = $true` | `-AllowPower` |
 
-Thiếu **một** phía là vẫn bị chặn — cố ý như vậy để sơ suất ở một chỗ không mở
-quyền. Đổi quyền sau này thì dùng `PATCH` (giữ nguyên token, không phải chạy lại
-agent):
+Nhiều thư mục: `-Paths "D:\","E:\"`.
+
+Installer in ra `agent ĐANG CHẠY ẨN (PID ...)` là xong. Những gì nó đã làm:
+
+- agent nằm ở `%LOCALAPPDATA%\c2a-agent\c2a_agent.py`;
+- token cất trong **biến môi trường User** `C2A_TOKEN` — không lộ trong cột
+  Command line của Task Manager;
+- task `c2a-agent` trong Task Scheduler: chạy lúc đăng nhập, ẩn, tự hồi;
+- log tại `%LOCALAPPDATA%\c2a-agent\c2a-agent.log`.
+
+Lệnh hay dùng sau khi cài:
+
+```powershell
+# Xem agent đang làm gì (log sống)
+Get-Content "$env:LOCALAPPDATA\c2a-agent\c2a-agent.log" -Tail 20 -Wait
+
+# Dừng / chạy lại ngay
+Stop-ScheduledTask  -TaskName c2a-agent
+Start-ScheduledTask -TaskName c2a-agent
+
+# Gỡ sạch (task + file + biến môi trường)
+& "$env:TEMP\c2a-install.ps1" -Uninstall
+```
+
+> **Đang chạy bản cũ trong cửa sổ PowerShell?** Tắt nó đi sau khi cài, vì hai
+> bản cùng token sẽ giành nhau kết nối (phiên nối sau đá phiên trước, lặp mãi):
+>
+> ```powershell
+> Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+>   Where-Object { $_.CommandLine -match 'c2a_agent' } |
+>   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+> ```
+
+### Đổi quyền sau này
+
+`PATCH` ở phía dự án (giữ nguyên token) **và** chạy lại installer với bộ cờ mới
+— hai phía phải khớp, thiếu một là vẫn bị chặn:
 
 ```powershell
 irm -Method Patch https://gpt.vhtatn.io.vn/api/devices/laptop-win `
   -Headers @{ Authorization = "Bearer $KEY" } `
   -ContentType "application/json" -Body '{"can_exec":true}'
+& "$env:TEMP\c2a-install.ps1" -Url wss://gpt.vhtatn.io.vn/api/devices/agent -Token "<TOKEN>" -Paths "C:\Users\Viet\Downloads" -AllowExec
 ```
-
-Hoặc nhanh hơn: vào **MCP → Thiết bị của tôi**, tích ô ngay trên dòng thiết bị.
-
-> **`--allow-exec` cần biết trước khi bật:** lúc đó danh sách thư mục ở `--path`
-> **không còn tác dụng** với lệnh shell. Một lệnh PowerShell đọc/ghi/xoá được mọi
-> thứ mà tài khoản Windows của bạn với tới. Muốn hẹp lại thì thêm
-> `--exec-allow winget --exec-allow sc` — chỉ cho lệnh bắt đầu bằng tiền tố đó.
 
 ---
 
@@ -222,44 +228,10 @@ tôi"** (`device_fs`), rồi restart container một lần (hub nạp MCP lúc k
 
 ---
 
-## Bước 6 — Tự chạy khi mở máy (không bắt buộc)
+## Bước 6 — Tự chạy khi mở máy
 
-Để không phải mở PowerShell dán lệnh mỗi lần.
-
-**Cách 1 — Task Scheduler** (khuyến nghị):
-
-1. Mở *Task Scheduler* → **Create Task**
-2. Tab *General*: đặt tên `c2a-agent`, tick **Run whether user is logged on or not**
-3. Tab *Triggers* → New → **At log on**
-4. Tab *Actions* → New:
-   - Program/script: `pythonw`
-   - Add arguments:
-     ```
-     C:\Users\Viet\c2a_agent.py --url wss://gpt.vhtatn.io.vn/api/devices/agent --token <TOKEN> --path "C:\Users\Viet\Downloads"
-     ```
-5. Tab *Settings*: tick **If the task fails, restart every 1 minute**
-
-Dùng `pythonw` (không phải `python`) để không hiện cửa sổ đen. Đổi lại thì
-không xem được log — muốn xem thì thêm `> C:\Users\Viet\c2a.log 2>&1`.
-
-**Cách 2 — file .bat trong Startup** (đơn giản hơn):
-
-Tạo `c2a.bat`:
-
-```bat
-@echo off
-cd /d %USERPROFILE%
-python c2a_agent.py --url wss://gpt.vhtatn.io.vn/api/devices/agent --token <TOKEN> --path "%USERPROFILE%\Downloads"
-```
-
-Nhấn `Win+R`, gõ `shell:startup`, copy file `.bat` vào thư mục vừa mở.
-
-> **Lưu ý bảo mật:** cả hai cách trên đều để token dạng chữ thường trong file
-> hoặc trong tham số (người khác dùng chung máy có thể thấy qua Task Manager).
-> Muốn kín hơn thì đặt biến môi trường `C2A_TOKEN` rồi bỏ `--token` đi — agent
-> tự đọc biến đó.
-
----
+Không cần làm gì — installer ở Bước 3 đã đăng ký sẵn Task Scheduler (chạy lúc
+đăng nhập, ẩn, tự hồi mỗi phút nếu chết).
 
 ## Sự cố thường gặp
 

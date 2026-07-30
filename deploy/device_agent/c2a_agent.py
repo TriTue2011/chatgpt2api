@@ -869,7 +869,28 @@ def main() -> int:
                     help="cho phép khoá màn hình, ngủ, đăng xuất, TẮT MÁY, "
                          "khởi động lại")
     ap.add_argument("--label", default="", help="tên gợi nhớ hiển thị ở dự án")
+    ap.add_argument("--log-file", default="",
+                    help="ghi log vào file thay vì màn hình — BẮT BUỘC khi chạy "
+                         "ẩn bằng pythonw/Task Scheduler")
     a = ap.parse_args()
+
+    # Chạy ẨN (pythonw / Task Scheduler / .vbs): tiến trình KHÔNG có console,
+    # sys.stdout/err là None và ngay lệnh print đầu tiên sẽ ném AttributeError
+    # — agent chết trước cả khi kết nối, không dấu vết. Nên: có --log-file thì
+    # trút hết ra đó; không có mà cũng không có console thì nuốt vào devnull
+    # để agent SỐNG là trên hết.
+    if a.log_file:
+        try:
+            _lf = open(a.log_file, "a", encoding="utf-8", buffering=1)
+            sys.stdout = sys.stderr = _lf
+        except OSError as exc:
+            if sys.stderr is not None:
+                print("[c2a-agent] không mở được log %r: %s" % (a.log_file, exc),
+                      file=sys.stderr)
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
     if not a.token:
         print("thiếu --token (hoặc biến C2A_TOKEN)", file=sys.stderr)
