@@ -1554,7 +1554,9 @@ export default function TeacherPage() {
       ];
 
   return (
-    <div className="space-y-4 max-w-5xl">
+    <div className={`space-y-4 ${KHO_TAB_IDS.includes(tab) ? "max-w-7xl" : "max-w-5xl"}`}>
+      {/* Tab kho sách cần rộng: bảng lớp–môn–tập xếp 2 cột không đủ chỗ trong
+        * 1024px. Các tab khác giữ bề rộng cũ cho dễ đọc văn bản dài. */}
       <div className="flex items-center gap-2">
         <GraduationCap className="size-5 text-amber-600" />
         <div>
@@ -3076,6 +3078,11 @@ export default function TeacherPage() {
               *
               * Chỉ hiện kho của loại đang mở. Trước đây liệt kê cả năm loại ở mọi
               * tab, nên bốn tab nhìn giống nhau và vẫn là "kho chung". */}
+            {/* Hai bảng dưới đây TRẢ LỜI CÙNG MỘT CÂU HỎI "đã có gì" theo hai
+              * cách: kho RAG (đếm đoạn theo metadata) và tệp .md (đếm tổ hợp
+              * lớp–môn). Xếp DỌC thì phải cuộn qua bảng này mới thấy bảng kia
+              * rồi tự so trong đầu — xếp CẠNH nhau trên màn hình rộng. */}
+            <div className="grid gap-3 lg:grid-cols-2 items-start">
             <div className="rounded-md border border-border/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[11px] font-semibold flex items-center gap-1.5">
@@ -3319,6 +3326,7 @@ export default function TeacherPage() {
               </p>
             </div>
             )}
+            </div>
           </CardContent>
         </Fold>
       )}

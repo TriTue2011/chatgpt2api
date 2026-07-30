@@ -256,7 +256,12 @@ def run(
                 state["current"] = (f"lớp {g} · {tw.SUBJECT_LABEL.get(sub, sub)} · "
                                     f"slide · {slug}")
                 if dry_run:
-                    srow["status"] = "ok"
+                    # "dry_run", KHÔNG phải "ok": `skip_done` bỏ qua mọi mục có
+                    # status == "ok", nên đánh "ok" cho một lần chạy khô là KHOÁ
+                    # VĨNH VIỄN lần chạy thật. Đo thật 30/07: chạy khô lớp 4 rồi
+                    # chạy thật với skip_done=True → bỏ qua sạch 12 tài liệu,
+                    # 0 trang, 0 đoạn, mà state vẫn ghi "ok" nên nhìn như xong.
+                    srow["status"] = "dry_run"
                     srow["error"] = "(dry_run — chưa nạp)"
                 else:
                     try:
@@ -325,7 +330,8 @@ def run(
             state["current"] = (f"lớp {g} · {tw.SUBJECT_LABEL.get(sub, sub)} · "
                                 f"{_KIND_SHORT.get(kind, kind)} · {slug}")
             if dry_run:
-                row["status"] = "ok"
+                # Xem chú thích ở nhánh slide: "ok" sẽ khoá lần chạy thật.
+                row["status"] = "dry_run"
                 row["error"] = "(dry_run — chưa nạp)"
             else:
                 try:
