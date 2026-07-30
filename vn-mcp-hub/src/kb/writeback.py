@@ -25,6 +25,37 @@ _done: dict[str, float] = {}
 _done_lock = threading.Lock()
 _sema = threading.BoundedSemaphore(1)   # tối đa 1 synthesis cùng lúc
 
+# Kho SÁCH: TUYỆT ĐỐI không write-back.
+#
+# Các kho này chỉ được chứa nội dung CHÉP TỪ SÁCH THẬT (taphuan.nxbgd.vn, file
+# giáo viên tải lên, ảnh trang sách). Giá trị duy nhất của chúng là "sách viết
+# đúng như vậy" — nhồi văn bản do AI tổng hợp từ web vào đây là phá đúng cái giá
+# trị đó, và ở tầng truy xuất thì không phân biệt được: cùng collection, cùng
+# hình thức đoạn văn.
+#
+# Đo thật 2026-07-30:
+#   kb_giao_duc      14 đoạn `user_qa/2026-07-23` — nội dung là HƯỚNG DẪN LẬP
+#                    BÁO CÁO THI CÔNG ("đổ bê tông sàn tầng 12 – Zone 2"), nằm
+#                    trong kho sách giáo khoa phổ thông.
+#   kb_giao_duc_sgv  21 đoạn `user_qa/2026-07-30` — bài soạn "Bài 1 Toán lớp 4"
+#                    do AI viết, sinh ra từ chính mấy câu hỏi thử `ask_sgv`.
+#                    Tức chỉ CẦN HỎI là kho sách giáo viên tự dày thêm bằng văn
+#                    bản không phải của sách giáo viên.
+#
+# Hiện chúng chưa lọt vào câu trả lời có lọc vì thiếu `grade`/`subject` (bộ lọc
+# `_loc` đòi cả hai). Nhưng đó là may, không phải thiết kế: `ask_tai_lieu` không
+# có tham số lọc nào, và bất kỳ lời gọi nào để lop=0/mon="" đều quét cả kho.
+_KHO_SACH = frozenset({
+    "kb_giao_duc", "kb_giao_duc_sgv", "kb_giao_duc_vbt",
+    "kb_giao_duc_tailieu", "kb_giao_duc_slide",
+})
+
+
+def _la_kho_sach(collection: str) -> bool:
+    """Kho sách (kể cả `kb_giao_duc_bo{N}` của bộ sách khác)."""
+    c = str(collection or "").strip()
+    return c in _KHO_SACH or c.startswith("kb_giao_duc_bo")
+
 
 def _key(collection: str, question: str) -> str:
     h = hashlib.md5(question.strip().lower().encode("utf-8")).hexdigest()[:12]
@@ -35,6 +66,11 @@ def maybe_writeback(collection: str, question: str, hybrid_result: dict) -> None
     """Quyết định (nhanh, không chặn) có nên nạp kiến thức mới cho câu hỏi này."""
     try:
         if not collection or not question or len(question.strip()) < 8:
+            return
+        if _la_kho_sach(collection):
+            # Kho sách chỉ chứa nội dung chép từ sách thật — xem `_KHO_SACH`.
+            logger.info({"event": "writeback_bo_qua_kho_sach",
+                         "collection": collection, "q": question[:60]})
             return
         rag = hybrid_result.get("rag") or []
         web = hybrid_result.get("web") or []

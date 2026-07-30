@@ -293,5 +293,186 @@ class TestDoiChieuDanMau(unittest.TestCase):
         self.assertEqual(t.count("không đối chiếu được"), 1)
 
 
+
+
+class TestCuuJsonBiCat(unittest.TestCase):
+    """JSON cụt vì hết max_tokens — vẫn phải dùng được các câu đã hoàn chỉnh.
+
+    Đo thật 2026-07-30: model trả 2014 ký tự JSON ĐÚNG CHUẨN nhưng cụt ở câu thứ
+    ba ("...tuần thứ ba may đượ"). `_parse_json_obj` lấy từ `{` đầu đến `}` cuối
+    nên thiếu dấu đóng của object ngoài là trượt sạch → module báo "model không
+    trả đúng dạng — thử lại", trong khi hai câu đầu đã dùng được. Bỏ cả lượt là
+    tốn thêm một lượt gọi model để nhận lại đúng thứ vừa có.
+    """
+
+    DAY_DU = ('{"items":[{"muc":"sat","de":"d1","dap_an":"1"},'
+              '{"muc":"kho","de":"d2","dap_an":"2"}]}')
+    BI_CAT = ('```json\n{"items":[\n{"muc":"sat","de":"d1","dap_an":"1"},\n'
+              '{"muc":"trung_binh","de":"d2","dap_an":"2"},\n'
+              '{"muc":"kho","de":"Một xí nghiệp may đượ')
+
+    def test_json_day_du_van_doc_binh_thuong(self):
+        ra = bt._doc_items(self.DAY_DU)
+        self.assertEqual([r["de"] for r in ra], ["d1", "d2"])
+
+    def test_json_bi_cat_van_cuu_duoc_cau_hoan_chinh(self):
+        ra = bt._doc_items(self.BI_CAT)
+        self.assertEqual([r["de"] for r in ra], ["d1", "d2"])
+
+    def test_khong_dung_object_cut(self):
+        """Câu cụt KHÔNG được nhận — đề thiếu chữ là đề sai."""
+        for r in bt._doc_items(self.BI_CAT):
+            self.assertNotIn("xí nghiệp", r["de"])
+
+    def test_ngoac_trong_de_bai_khong_lam_lech(self):
+        """Đề bài có thể chứa dấu ngoặc — quét ngoặc phải bỏ qua ngoặc trong chuỗi."""
+        raw = '{"items":[{"muc":"sat","de":"Tính (3 + 4) × 2 = ?","dap_an":"14"}'
+        ra = bt._doc_items(raw)
+        self.assertEqual(len(ra), 1)
+        self.assertIn("(3 + 4)", ra[0]["de"])
+
+    def test_object_khong_co_de_thi_bo(self):
+        """Object bao ngoài / object rác không được tính thành câu."""
+        self.assertEqual(bt._doc_items('{"meta":{"a":1}}'), [])
+
+    def test_rong(self):
+        self.assertEqual(bt._doc_items(""), [])
+        self.assertEqual(bt._doc_items("không phải json"), [])
+
+
+class TestBoTrangBia(unittest.TestCase):
+    """Mục lục trúng truy vấn rất cao mà không có bài nào để soi.
+
+    Đo thật 2026-07-30: hỏi bài mẫu Toán 4 «phép cộng», kết quả số 1 là trang MỤC
+    LỤC — nó chứa đúng cụm "Ôn tập các phép tính trong phạm vi 100 000". Model
+    nhận một danh sách tên bài rồi phải tự nghĩ ra câu mẫu.
+    """
+
+    BIA = ("## Kết quả 1 — nguồn: `teacher_sgk/lop4/toan/vbt`\n\n"
+           "## MỤC LỤC\n\nBài 1. Ôn tập các số đến 100 000 ... 5\n")
+    BAI = ("## Kết quả 2 — nguồn: `teacher_sgk/lop4/toan/vbt`\n\n"
+           "1. Đặt tính rồi tính: 34 567 + 23 421\n")
+
+    def test_bo_doan_muc_luc(self):
+        ra = bt._bo_trang_bia(self.BIA + self.BAI)
+        self.assertNotIn("MỤC LỤC", ra)
+        self.assertIn("Đặt tính rồi tính", ra)
+
+    def test_bo_loi_noi_dau(self):
+        loi = ("## Kết quả 1 — nguồn: `x`\n\n## LỜI NÓI ĐẦU\n\nCác em thân mến\n")
+        ra = bt._bo_trang_bia(loi + self.BAI)
+        self.assertNotIn("LỜI NÓI ĐẦU", ra)
+
+    def test_chi_co_bia_thi_TRA_RONG(self):
+        """Chỉ còn bìa/mục lục ⇒ trả rỗng ⇒ `co_mau=False`.
+
+        Bản đầu tôi viết ngược lại ("thà đưa mục lục còn hơn nói kho rỗng"), và
+        đo thật cho thấy nó sai: đưa mục lục + dòng kẻ trống vào prompt thì model
+        trả về `{}` — hỏng cả lượt. Nói thẳng "kho chưa có bài mẫu dùng được" thì
+        prompt chuyển sang ra đề theo chuẩn chương trình và đề vẫn dùng được, lại
+        còn báo đúng mức căn cứ cho giáo viên.
+        """
+        self.assertEqual(bt._bo_trang_bia(self.BIA), "")
+
+    def test_dong_ke_trong_bi_bo(self):
+        """Vở bài tập là phiếu điền: phần lớn diện tích là dòng kẻ, OCR ra dấu
+        chấm. Đo thật: một "bài mẫu" chỉ gồm "## Bài giải" + ba dòng dấu chấm."""
+        ke = ("## Kết quả 3 — nguồn: `teacher_sgk/lop4/toan/vbt`\n\n## Bài giải\n"
+              + "." * 300 + "\n")
+        self.assertEqual(bt._bo_trang_bia(ke), "")
+        # Nhưng bài tập NGẮN thật thì phải giữ.
+        self.assertIn("Tính nhẩm", bt._bo_trang_bia(
+            "## Kết quả 1 — nguồn: `x/vbt`\n\n2. Tính nhẩm: 200 + 300 = ?\n"))
+
+    def test_khong_co_bia_thi_giu_nguyen(self):
+        self.assertEqual(bt._bo_trang_bia(self.BAI).strip(), self.BAI.strip())
+
+    def test_rong(self):
+        self.assertEqual(bt._bo_trang_bia(""), "")
+
+
+
+
+class TestLuiVeChuan(unittest.TestCase):
+    """Kho CÓ bài mẫu nhưng khớp kém → lùi về chuẩn chương trình, và BÁO ĐÚNG.
+
+    Đo thật 2026-07-30: hỏi «phép cộng» Toán 4; sau khi lọc bìa/mục lục/dòng kẻ
+    trống, đoạn duy nhất còn lại là một mẩu cụt về SO SÁNH SỐ ("Số bé nhất là").
+    Model trả `{}`. Trả lỗi cho giáo viên là bỏ cả lượt vì kho thiếu dữ liệu; thử
+    lại theo chuẩn chương trình thì họ có bộ đề dùng được.
+
+    Nhưng khi đó `grounded.bai_mau` PHẢI là False: đề này không dựa bài mẫu. Báo
+    True chỉ vì kho có gì đó là đúng cái nhầm lẫn cả module dựng lên để tránh.
+    """
+
+    NG = {"grade": 4, "subject": "toan", "mon": "Toán", "bai": "phép cộng",
+          "mau": "## Kho tri thức\n\n## Kết quả 1 — nguồn: `x`\n\nSố bé nhất là",
+          "phan_hoa": "", "noi_dung": "", "co_mau": True}
+
+    def _chay(self, lan1, lan2):
+        """lan1/lan2 = nội dung model trả ở lượt 1 và lượt 2."""
+        goi = {"n": 0}
+
+        def _cm(*a, **k):
+            goi["n"] += 1
+            return {"choices": [{"message": {"content":
+                    lan1 if goi["n"] == 1 else lan2}}]}
+
+        with mock.patch.object(bt, "bai_mau", return_value=dict(self.NG)), \
+             mock.patch("services.agent.runtime.call_model", side_effect=_cm), \
+             mock.patch.object(bt, "_luu"):
+            r = bt.tao(grade=4, subject="toan", bai="phép cộng", so_moi_muc=1)
+        return r, goi["n"]
+
+    CAU = ('{"items":[{"muc":"sat","de":"d1","dap_an":"1"},'
+           '{"muc":"trung_binh","de":"d2","dap_an":"2"},'
+           '{"muc":"kho","de":"d3","dap_an":"3"}]}')
+
+    def test_lan_dau_ra_duoc_thi_KHONG_goi_lai(self):
+        r, n = self._chay(self.CAU, "{}")
+        self.assertTrue(r["ok"])
+        self.assertEqual(n, 1)
+        self.assertFalse(r["bo_de"]["lui_ve_chuan"])
+        self.assertTrue(r["bo_de"]["grounded"]["bai_mau"])
+
+    def test_model_tra_rong_thi_thu_lai_mot_lan(self):
+        r, n = self._chay("{}", self.CAU)
+        self.assertTrue(r["ok"])
+        self.assertEqual(n, 2)
+        self.assertEqual(len(r["bo_de"]["items"]), 3)
+
+    def test_lui_ve_chuan_thi_bao_KHONG_dua_bai_mau(self):
+        r, _ = self._chay("{}", self.CAU)
+        self.assertTrue(r["bo_de"]["lui_ve_chuan"])
+        self.assertFalse(r["bo_de"]["grounded"]["bai_mau"])
+
+    def test_giao_vien_thay_ly_do_lui(self):
+        r, _ = self._chay("{}", self.CAU)
+        t = bt.format_cho_giao_vien(r["bo_de"])
+        self.assertIn("khớp kém", t)
+
+    def test_khong_co_mau_thi_bao_ly_do_khac(self):
+        ng = {**self.NG, "co_mau": False, "mau": ""}
+        with mock.patch.object(bt, "bai_mau", return_value=ng), \
+             mock.patch("services.agent.runtime.call_model",
+                        return_value={"choices": [{"message": {"content": self.CAU}}]}), \
+             mock.patch.object(bt, "_luu"):
+            r = bt.tao(grade=4, subject="toan", bai="x", so_moi_muc=1)
+        t = bt.format_cho_giao_vien(r["bo_de"])
+        self.assertIn("chưa có bài mẫu", t)
+        self.assertNotIn("khớp kém", t)
+
+    def test_ca_hai_luot_deu_rong_thi_bao_loi(self):
+        r, n = self._chay("{}", "{}")
+        self.assertFalse(r["ok"])
+        self.assertEqual(n, 2)
+
+    def test_lui_ve_chuan_thi_khong_doi_chieu_dan_mau(self):
+        """Đề không dựa bài mẫu thì mọi trích dẫn đều là model tự nêu."""
+        r, _ = self._chay("{}", self.CAU)
+        for it in r["bo_de"]["items"]:
+            self.assertFalse(it.get("dan_mau_kiem_chung"))
+
+
 if __name__ == "__main__":
     unittest.main()

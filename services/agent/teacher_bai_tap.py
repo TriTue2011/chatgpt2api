@@ -130,6 +130,67 @@ def _chi_phan_kho(tra_loi: str) -> str:
     return t if _MOC_NGUON in t else ""
 
 
+# Trang đầu quyển: bìa, lời nói đầu, mục lục. Có chữ, nạp vào kho bình thường,
+# nhưng KHÔNG có bài tập nào để soi — mà lại rất dễ trúng truy vấn vì mục lục
+# liệt kê đúng tên mọi bài ("Bài 2. Ôn tập các phép tính…").
+_TRANG_BIA = ("mục lục", "muc luc", "lời nói đầu", "loi noi dau",
+              "nhà xuất bản giáo dục việt nam")
+
+# Dòng mục lục: tên bài … dấu chấm rải … số trang. Đây là dấu hiệu CHẮC nhất, vì
+# mục lục dài hơn một đoạn chunk — đoạn tiếp theo ("Bài 6. Luyện tập chung .... 20")
+# KHÔNG còn chữ "MỤC LỤC" nào để nhận ra. Đo thật 2026-07-30: lọc theo từ khoá
+# bỏ được đoạn đầu, đoạn nối vẫn lọt và vẫn là danh sách tên bài.
+_RE_DONG_MUC_LUC = re.compile(r"\.{4,}\s*\d{1,3}\s*$", re.M)
+
+
+def _bo_trang_bia(mau: str) -> str:
+    """Bỏ những đoạn chỉ là bìa/mục lục/lời nói đầu.
+
+    Vì sao: đo thật 2026-07-30, hỏi bài mẫu Toán 4 «phép cộng» thì kết quả số 1
+    là trang MỤC LỤC — nó chứa đúng cụm "Ôn tập các phép tính trong phạm vi
+    100 000" nên điểm rất cao, trong khi bên trong chỉ có tên bài và số trang.
+    Model nhận về một danh sách tên bài rồi phải tự nghĩ ra câu mẫu, và dòng "dựa
+    bài mẫu" thành lời khai không đối chiếu được.
+
+    Cắt theo ĐOẠN (`## Kết quả n`) chứ không theo dòng: bỏ lẻ vài dòng thì phần
+    còn lại của đúng đoạn đó mất ngữ cảnh nguồn.
+    """
+    t = (mau or "").strip()
+    if not t:
+        return ""
+    khuc = re.split(r"(?m)^(?=##\s*Kết quả\s*\d)", t)
+
+    def _bo_di(k: str) -> bool:
+        if any(w in k.lower() for w in _TRANG_BIA):
+            return True
+        # Từ 3 dòng "tên bài …… số trang" trở lên ⇒ đoạn này là mục lục, kể cả
+        # khi nó không còn chữ "MỤC LỤC" (mục lục dài hơn một đoạn chunk).
+        if len(_RE_DONG_MUC_LUC.findall(k)) >= 3:
+            return True
+        # Đoạn gần như KHÔNG CÓ CHỮ: vở bài tập là phiếu điền, phần lớn diện tích
+        # là dòng kẻ trống, nên OCR ra hàng loạt dấu chấm/gạch. Đo thật
+        # 2026-07-30: một "bài mẫu" lấy về chỉ gồm "## Bài giải" rồi ba dòng toàn
+        # dấu chấm; nhồi vào prompt thì model trả về `{}` — không có gì để soi.
+        than = k.split("\n", 2)[-1] if k.lstrip().startswith("## Kết quả") else k
+        chu = sum(c.isalnum() for c in than)
+        # Ngưỡng đặt theo số đo, không đặt theo cảm giác: dòng kẻ trống cho tỉ lệ
+        # chữ ~3% ("## Bài giải" + 300 dấu chấm), còn một câu bài tập một dòng
+        # ("1. Đặt tính rồi tính: 34 567 + 23 421") cho ~75%. Đừng nâng `chu` lên
+        # cao — bài tập thật có thể rất ngắn ("Tính nhẩm: 200 + 300").
+        return chu < 15 or chu / max(1, len(than.strip())) < 0.25
+
+    giu = [k for k in khuc if k.strip() and (
+        not k.lower().lstrip().startswith("## kết quả") or not _bo_di(k))]
+    # Bỏ hết phần đoạn ⇒ chỉ còn dòng tiêu đề kho, KHÔNG còn `nguồn:` nào. Trả ""
+    # để `co_mau=False`: nói thẳng "kho chưa có bài mẫu dùng được" là đúng, còn
+    # đưa mấy dòng dấu chấm rồi báo "có bài mẫu" là báo sai.
+    if not any(_MOC_NGUON in k for k in giu):
+        return ""
+    # Bỏ hết thì trả lại bản gốc: thà đưa mục lục còn hơn nói "kho không có gì"
+    # khi kho có — nhưng khi đó `co_mau` vẫn đúng vì nội dung có thật.
+    return "\n".join(giu).strip()
+
+
 def bai_mau(grade: int, subject: str, *, bai: str = "", topic: str = "",
             top_k: int = 4) -> dict[str, Any]:
     """Bài mẫu + gợi ý phân hoá cho một lớp–môn–bài.
@@ -152,7 +213,9 @@ def bai_mau(grade: int, subject: str, *, bai: str = "", topic: str = "",
     cau_hoi = f"lớp {g} {mon} {hoi} bài tập dạng gì, mẫu câu hỏi".strip()
     # `_chi_phan_kho` ở MỌI lời gọi: cả ba tool đều đi qua `kb_ask`, nên cả ba
     # đều có thể trả về kết quả tìm web khi kho miss.
-    mau = _chi_phan_kho(_kb("ask_bai_tap", {"question": cau_hoi, "top_k": k, **loc}))
+    # top_k cao hơn số xin: sau khi bỏ trang bìa/mục lục vẫn còn đoạn có bài thật.
+    mau = _bo_trang_bia(_chi_phan_kho(
+        _kb("ask_bai_tap", {"question": cau_hoi, "top_k": min(8, k + 3), **loc})))
     # SGV cho MỨC KHÓ: cách làm khó phải theo gợi ý phân hoá của sách, không tự
     # nghĩ. Cũng là nguồn "lỗi thường gặp" để đề chạm đúng chỗ học sinh hay sai.
     phan_hoa = _chi_phan_kho(_kb("ask_sgv", {
@@ -189,7 +252,8 @@ def _prompt(ng: dict[str, Any], so_cau: dict[str, int]) -> tuple[str, str]:
         f"{g} và đã học tới bài này. Nâng khó bằng số bước, KHÔNG bằng kiến thức "
         "lớp trên.\n"
         "3. Mỗi câu PHẢI có `dap_an` đúng và `loi_giai` các bước — đề không có "
-        "đáp án thì giáo viên không dùng được.\n"
+        "đáp án thì giáo viên không dùng được. `loi_giai` GỌN, tối đa 3 câu: viết "
+        "dài làm JSON bị cắt giữa dòng và mất luôn các câu sau.\n"
         "4. Tiếng Việt tự nhiên, đúng cách gọi của sách. Không chép nguyên văn "
         "bài mẫu làm đề — đổi số liệu và tên.\n"
         "5. Không dùng dữ kiện ngoài đề; số liệu phải chia hết/ra kết quả đẹp "
@@ -212,6 +276,72 @@ def _prompt(ng: dict[str, Any], so_cau: dict[str, int]) -> tuple[str, str]:
         f"{(ng['phan_hoa'] or '(kho chưa có)')[:1600]}"
     )
     return sys_p, user_p
+
+
+def _doc_items(raw: str) -> list[dict[str, Any]]:
+    """Rút danh sách câu, CỨU ĐƯỢC cả khi JSON bị cắt giữa dòng.
+
+    Vì sao cần: `_parse_json_obj` lấy từ `{` đầu đến `}` cuối rồi `json.loads`.
+    Câu trả lời bị cắt vì hết `max_tokens` thì KHÔNG có dấu đóng của object ngoài
+    → parse trượt → module báo "model không trả đúng dạng — thử lại", trong khi
+    hai, ba câu đầu đã hoàn chỉnh và dùng được.
+
+    Đo thật 2026-07-30: model trả 2014 ký tự JSON đúng chuẩn nhưng cụt ở câu thứ
+    ba ("...tuần thứ ba may đượ"). Bỏ cả lượt vì một câu cụt là tốn thêm một lượt
+    gọi model để nhận lại đúng thứ vừa có.
+
+    Cách làm: thử parse nghiêm trước (đường thường); trượt thì quét từng object
+    `{...}` cân bằng ngoặc ở tầng items và giữ những cái parse được.
+    """
+    from services.agent.teacher_classroom import _parse_json_obj
+
+    t = (raw or "").strip()
+    data = _parse_json_obj(t)
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return [x for x in data["items"] if isinstance(x, dict)]
+
+    ra: list[dict[str, Any]] = []
+    i, n = 0, len(t)
+    while i < n:
+        if t[i] != "{":
+            i += 1
+            continue
+        # Quét ngoặc cân bằng, BỎ QUA ngoặc nằm trong chuỗi (đề bài có thể chứa
+        # dấu ngoặc) và ký tự escape.
+        sau, trong_chuoi, cap = i, False, 0
+        while sau < n:
+            c = t[sau]
+            if trong_chuoi:
+                if c == "\\":
+                    sau += 2
+                    continue
+                if c == '"':
+                    trong_chuoi = False
+            elif c == '"':
+                trong_chuoi = True
+            elif c == "{":
+                cap += 1
+            elif c == "}":
+                cap -= 1
+                if cap == 0:
+                    break
+            sau += 1
+        if cap != 0 or sau >= n:
+            # Ngoặc không cân: đây là object BAO NGOÀI đã bị cắt (`{"items":[…`),
+            # hoặc chính object cuối bị cắt. Bỏ qua ĐÚNG dấu `{` này rồi đi tiếp —
+            # KHÔNG dừng cả vòng, vì dấu `{` đầu tiên của chuỗi luôn là object bao
+            # ngoài, dừng ở đó là không cứu được câu nào.
+            i += 1
+            continue
+        try:
+            obj = json.loads(t[i:sau + 1])
+        except Exception:
+            obj = None
+        # Chỉ nhận object CỦA MỘT CÂU (phải có đề), không nhận object bao ngoài.
+        if isinstance(obj, dict) and (obj.get("de") or obj.get("question")):
+            ra.append(obj)
+        i = sau + 1
+    return ra
 
 
 def _chuan_de_so(s: str) -> str:
@@ -335,24 +465,49 @@ def tao(
     sys_p, user_p = _prompt(ng, so_cau)
 
     from services.agent.runtime import call_model, content_of
-    from services.agent.teacher_classroom import _parse_json_obj, _teacher_model
+    from services.agent.teacher_classroom import _teacher_model
 
-    resp = call_model(
-        _teacher_model("write"),
-        [{"role": "system", "content": sys_p}, {"role": "user", "content": user_p}],
-        timeout=180, max_tokens=2600, no_smart_home=True,
-        # BẮT BUỘC: nói rõ đây là request JSON. Không có nó thì bước đổi sang văn
-        # xuôi (cho TTS) xoá { } " : và cả dấu +, JSON về tới đây không parse được
-        # — model trả đúng nội dung mà module báo "không trả đúng dạng".
-        response_format={"type": "json_object"},
-    )
-    if resp.get("error"):
-        return {"ok": False, "error": f"model lỗi: {str(resp.get('error'))[:160]}"}
-    data = _parse_json_obj(content_of(resp)) or {}
-    items = _lam_sach(data.get("items"), so_cau)
+    def _goi(sp: str, up: str) -> list[dict[str, Any]]:
+        resp = call_model(
+            _teacher_model("write"),
+            [{"role": "system", "content": sp}, {"role": "user", "content": up}],
+            # max_tokens theo SỐ CÂU đã xin, không đóng cứng. Đo thật: 3 câu (một
+            # mỗi mức) với lời giải từng bước đã ngốn ~2.000 ký tự, chạm ngưỡng
+            # 2.600 và bị cắt giữa câu thứ ba. Xin 6 câu/mức thì cứng 2.600 là
+            # chắc chắn cụt.
+            timeout=240, max_tokens=min(8000, 1200 + 900 * sum(so_cau.values())),
+            no_smart_home=True,
+            # BẮT BUỘC: nói rõ đây là request JSON. Không có nó thì bước đổi sang
+            # văn xuôi (cho TTS) xoá { } " : và cả dấu +, JSON về tới đây không
+            # parse được — model trả đúng nội dung mà module báo "không đúng dạng".
+            response_format={"type": "json_object"},
+        )
+        if resp.get("error"):
+            raise RuntimeError(str(resp.get("error"))[:160])
+        return _lam_sach(_doc_items(content_of(resp)), so_cau)
+
+    try:
+        items = _goi(sys_p, user_p)
+    except RuntimeError as exc:
+        return {"ok": False, "error": f"model lỗi: {exc}"}
+
+    # Có bài mẫu mà model trả rỗng: bài mẫu lấy về KHỚP KÉM với bài đang hỏi nên
+    # không soi được. Đo thật 2026-07-30: hỏi «phép cộng» Toán 4, đoạn duy nhất
+    # còn lại sau khi lọc là một mẩu cụt về SO SÁNH SỐ ("Số bé nhất là") — model
+    # trả `{}`. Thử lại MỘT lần theo chuẩn chương trình thay vì trả lỗi: giáo viên
+    # cần bộ đề dùng được, và mức căn cứ đã được báo trung thực ở `grounded`.
+    lui_ve_chuan = False
+    if not items and ng["co_mau"]:
+        lui_ve_chuan = True
+        sp2, up2 = _prompt({**ng, "co_mau": False, "mau": ""}, so_cau)
+        try:
+            items = _goi(sp2, up2)
+        except RuntimeError as exc:
+            return {"ok": False, "error": f"model lỗi: {exc}"}
+
     if not items:
         return {"ok": False, "error": "model không trả đúng dạng bài tập — thử lại"}
-    _doi_chieu_dan_mau(items, ng["mau"])
+    _doi_chieu_dan_mau(items, "" if lui_ve_chuan else ng["mau"])
 
     thieu = {m: so_cau[m] - sum(1 for r in items if r["muc"] == m)
              for m in xin}
@@ -364,8 +519,14 @@ def tao(
         "items": items,
         # Đây là thứ giáo viên cần thấy TRƯỚC khi dùng đề: có dựa bài mẫu của
         # sách hay không, và mức nào bị thiếu câu.
-        "grounded": {"bai_mau": ng["co_mau"], "sgk": bool(ng["noi_dung"]),
+        #
+        # `bai_mau` phải là False khi đã LÙI VỀ CHUẨN: kho có bài mẫu nhưng nó
+        # khớp kém nên đề này KHÔNG dựa vào nó. Báo True chỉ vì kho có gì đó là
+        # đúng cái nhầm lẫn mà cả module này dựng lên để tránh.
+        "grounded": {"bai_mau": ng["co_mau"] and not lui_ve_chuan,
+                     "sgk": bool(ng["noi_dung"]),
                      "sgv": bool(ng["phan_hoa"])},
+        "lui_ve_chuan": lui_ve_chuan,
         "thieu_cau": {k: v for k, v in thieu.items() if v > 0},
         "created": time.strftime("%Y-%m-%d %H:%M"),
         "model_used": _teacher_model("write"),
@@ -461,8 +622,13 @@ def format_cho_giao_vien(bo: dict[str, Any]) -> str:
             + (f" · {bo.get('bai')}" if bo.get("bai") else "") + "**",
             f"_Mã bộ đề: `{bo.get('id')}` · {bo.get('created')}_", ""]
     if not gr.get("bai_mau"):
-        dong += ["> ⚠️ Kho **chưa có bài mẫu** cho bài này — đề soạn theo chuẩn "
-                 "chương trình, mức «sát bài mẫu» không có mẫu để soi. Hãy đọc "
+        ly_do = ("Kho **có** bài mẫu nhưng phần lấy về **khớp kém** với bài này "
+                 "(vở bài tập chỉ có vài trang mẫu), nên đề đã soạn theo chuẩn "
+                 "chương trình"
+                 if bo.get("lui_ve_chuan") else
+                 "Kho **chưa có bài mẫu** cho bài này — đề soạn theo chuẩn "
+                 "chương trình")
+        dong += [f"> ⚠️ {ly_do}; mức «sát bài mẫu» không có mẫu để soi. Hãy đọc "
                  "lại trước khi giao.", ""]
     if bo.get("thieu_cau"):
         thieu = ", ".join(f"{MUC_LABEL[k]} thiếu {v}"
