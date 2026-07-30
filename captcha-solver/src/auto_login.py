@@ -739,16 +739,41 @@ async def do_google_login_steps(
     # After an account-chooser SSO pick, Google lands directly on the password
     # challenge (no email field). Detect that and skip straight to password so
     # we don't fail on the missing email input.
-    pwd_already = clicked_tile
-    if not pwd_already:
-        for _sel in ('input[type="password"]', 'input[name="Passwd"]',
-                     'input[autocomplete="current-password"]', 'input[name="password"]'):
-            try:
-                if await page.locator(_sel).first.is_visible(timeout=2500):
-                    pwd_already = True
-                    break
-            except Exception:
-                continue
+    # LUÔN dò ô mật khẩu THẬT, không suy từ việc đã bấm tile.
+    #
+    # Bản cũ: `pwd_already = clicked_tile` — bấm được tile tài khoản là TIN LUÔN
+    # rằng ô mật khẩu đã hiện, rồi bỏ hẳn bước điền email. Nhưng bấm tile KHÔNG
+    # đảm bảo sang được màn hình mật khẩu: Google có thể quay về màn hình chọn
+    # email, hoặc trang còn đang tải.
+    #
+    # Đo thật 30/07 (benbap2011@gmail.com):
+    #     clicked account tile for benbap2011@gmail.com on chooser screen
+    #     password field assumed/present — skipping email step (SSO pick)
+    #     after email, url=…/v3/signin/identifier?…        ← VẪN Ở BƯỚC EMAIL
+    #     captcha detected for google-benbap2011
+    #
+    # Tức nó điền mật khẩu khi trang còn ở bước email; Google thấy hành vi lạ nên
+    # bung captcha. Người dùng gõ tay không bao giờ sai bước này nên KHÔNG bị
+    # captcha — bằng chứng cho thấy captcha là HẬU QUẢ của lỗi tự động, không
+    # phải Google chặn tài khoản. Chẩn đoán "Google bắt captcha" của bản trước là
+    # đúng hiện tượng nhưng SAI nguyên nhân.
+    #
+    # Bấm tile xong trang cần thời gian điều hướng, nên chờ lâu hơn khi đã bấm.
+    pwd_already = False
+    _cho = 8000 if clicked_tile else 2500
+    for _sel in ('input[type="password"]', 'input[name="Passwd"]',
+                 'input[autocomplete="current-password"]', 'input[name="password"]'):
+        try:
+            if await page.locator(_sel).first.is_visible(timeout=_cho):
+                pwd_already = True
+                break
+        except Exception:
+            continue
+    if clicked_tile and not pwd_already:
+        # Rơi xuống nhánh điền email bên dưới — đó là đường ĐÚNG khi tile không
+        # đưa sang màn hình mật khẩu, thay vì điền mật khẩu vào ô email.
+        logger.info("auto_login: đã bấm tile nhưng KHÔNG thấy ô mật khẩu — "
+                    "quay lại bước điền email (%s)", session.profile)
 
     if pwd_already:
         logger.info("auto_login: password field assumed/present — skipping email step (SSO pick)")
