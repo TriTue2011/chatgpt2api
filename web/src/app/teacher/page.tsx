@@ -956,8 +956,16 @@ export default function TeacherPage() {
     if (tab === "import" && session) {
       void loadImports();
       void loadSgkAll();
+      // Nạp LUÔN bảng chia theo loại sách, không đợi bấm "Xem".
+      //
+      // Bản trước để nó rỗng cho tới khi bấm: người dùng mở tab, thấy đúng một
+      // bảng "Toàn bộ SGK" đếm theo file .md — mà .md chỉ có cho sách học sinh —
+      // nên kết luận là bốn loại sách vẫn bị gộp làm một, dù phần chia đã có
+      // sẵn ngay bên trên. Một khối chỉ hiện sau khi bấm thì không khác gì chưa
+      // làm. Đây là lời gọi chỉ-đọc, năm kho, nên nạp thẳng.
+      void loadKhoLoai();
     }
-  }, [tab, session, loadImports, loadSgkAll]);
+  }, [tab, session, loadImports, loadSgkAll, loadKhoLoai]);
 
   // Danh mục môn — nạp một lần khi vào trang.
   useEffect(() => {
@@ -3104,6 +3112,23 @@ export default function TeacherPage() {
                           Kho này chưa có tài liệu nào. Nạp bằng khung bên trên và chọn đúng loại.
                         </p>
                       )}
+                      {/* Đoạn thiếu lớp/môn là đoạn KHÔNG TÌM RA ĐƯỢC khi hỏi
+                        * theo lớp: truy vấn lọc theo metadata grade+subject nên
+                        * cái gì không có nhãn thì nằm ngoài mọi câu hỏi của học
+                        * sinh. Nó vẫn cộng vào tổng nên nhìn tổng thấy "đã có
+                        * sách" mà hỏi lại không ra — phải nói rõ ở đây. */}
+                      {khoOpen === k.kind && (() => {
+                        const mo = k.rows.filter((r) => !r.grade || !r.subject);
+                        if (mo.length === 0) return null;
+                        const dem = mo.reduce((s, r) => s + (r.chunks || 0), 0);
+                        return (
+                          <p className="border-t border-border/40 px-2 py-1.5 text-[10px] text-amber-600">
+                            ⚠️ {dem.toLocaleString("vi-VN")} đoạn chưa gắn nhãn lớp–môn — hỏi theo
+                            lớp sẽ KHÔNG tìm ra, vì truy vấn lọc theo lớp và môn. Nạp lại đúng
+                            lớp–môn để dùng được.
+                          </p>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -3122,6 +3147,14 @@ export default function TeacherPage() {
                     </span>
                   ) : null}
                 </div>
+                {/* Bảng này đếm theo file .md, mà .md CHỈ ghi cho sách học sinh
+                  * — sách giáo viên / vở bài tập / tài liệu tập huấn nạp vào
+                  * không bao giờ hiện ở đây. Không nói ra thì đọc "Toàn bộ" là
+                  * tưởng đã thấy hết mọi loại sách. */}
+                <p className="basis-full text-[9px] text-muted-foreground">
+                  Chỉ sách học sinh. Sách giáo viên · vở bài tập · tài liệu tập huấn xem ở
+                  khối <span className="font-medium">Kho theo loại tài liệu</span> phía trên.
+                </p>
                 <div className="flex items-center gap-1.5">
                   <Button
                     type="button"
