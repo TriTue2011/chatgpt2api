@@ -107,7 +107,17 @@ $flags = @()
 if ($AllowWrite) { $flags += "--allow-write" }
 if ($AllowExec)  { $flags += "--allow-exec" }
 if ($AllowPower) { $flags += "--allow-power" }
-$pathArgs = ($Paths | ForEach-Object { '--path "' + $_ + '"' }) -join " "
+# NHAN DOI backslash cuoi truoc dau nhay dong. Quy tac dong lenh Windows
+# (MSVCRT): `\"` la ESCAPE dau nhay, nen '--path "D:\"' bi doc thanh mot
+# chuoi rac 'D:" --path E:"' dinh chum tat ca path phia sau. Do that 30/07
+# (case-win, -Paths "D:\","E:\"): agent tu choi moi lenh voi loi
+#   ngoai pham vi cho phep cua thiet bi nay (D:\" --path E:")
+# '"D:\\"' thi doc dung thanh 'D:\'. Chi path ket thuc bang backslash (goc o
+# dia) dinh loi nay — 'D:\Data' khong sao, nen truoc gio khong ai thay.
+$pathArgs = ($Paths | ForEach-Object {
+  $p = $_ -replace '(\\+)$', '$1$1'
+  '--path "' + $p + '"'
+}) -join " "
 $labelArg = ""
 if ($Label) { $labelArg = '--label "' + $Label + '"' }
 # Log ra file - chay an thi day la cho duy nhat xem agent dang lam gi.

@@ -52,7 +52,42 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+
+
+def _sua_path_dinh_chum(raw_paths: list[str]) -> list[str]:
+    """Tự cứu khi ``--path`` bị DÍNH CHÙM bởi lỗi quoting của installer cũ.
+
+    Installer bản cũ sinh dòng lệnh ``--path "D:\\" --path "E:\\"`` — nhưng theo
+    quy tắc dòng lệnh Windows (MSVCRT), ``\\"`` là escape dấu nháy, nên argv nhận
+    được MỘT giá trị rác: ``D:" --path E:"``. Guard vì thế không khớp đường dẫn
+    nào và mọi lệnh bị từ chối với thông báo khó hiểu:
+
+        ngoài phạm vi cho phép của thiết bị này (D:\\" --path E:")
+
+    Đo thật 30/07 trên case-win (khai ``-Paths "D:\\","E:\\"``). Installer đã vá
+    (nhân đôi backslash cuối), nhưng máy ĐÃ CÀI bản hỏng thì Task Scheduler vẫn
+    giữ nguyên dòng lệnh cũ — tách lại ở đây thì các máy đó tự lành khi agent
+    được tải bản mới, không cần cài lại.
+
+    Đồng thời chuẩn hoá ``D:`` → ``D:\\``: trên Windows, ``Path("D:")`` là đường
+    dẫn TƯƠNG ĐỐI theo thư mục hiện hành của ổ D, resolve ra sai chỗ.
+    """
+    ra: list[str] = []
+    for raw in raw_paths:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        # Giá trị chứa ' --path ' = một chùm path bị dính do lỗi quoting.
+        manh = s.split("--path") if "--path" in s else [s]
+        for m in manh:
+            m = m.strip().strip('"').strip()
+            if not m:
+                continue
+            if len(m) == 2 and m[1] == ":" and m[0].isalpha():
+                m += "\\"          # 'D:' → 'D:\' — gốc ổ đĩa thật
+            ra.append(m)
+    return ra
 
 MAX_READ = 200_000       # trần đọc 1 file (khớp fs_remote)
 MAX_WRITE = 500_000      # trần ghi 1 lần
@@ -1037,6 +1072,11 @@ def main() -> int:
     if not a.token:
         print("thiếu --token (hoặc biến C2A_TOKEN)", file=sys.stderr)
         return 2
+    _path_goc = list(a.path)
+    a.path = _sua_path_dinh_chum(a.path)
+    if a.path != _path_goc:
+        print("[c2a-agent] --path bị dính chùm do quoting, đã tách lại: %s → %s"
+              % (_path_goc, a.path), flush=True)
     if not a.path:
         # Fail-closed: không khai thư mục nào thì KHÔNG mở gì cả. Cấu hình
         # thiếu sót không bao giờ được biến thành "mở toàn máy".
