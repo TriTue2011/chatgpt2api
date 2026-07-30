@@ -616,6 +616,38 @@ def _md_from_pdf_text(raw: str, *, title: str) -> str:
     return body + "\n"
 
 
+# Dấu nối giữa chữ "tập" và giá trị phải nhận CẢ `_`, `-`, `.` và khoảng trắng:
+# tên tệp thật trên máy chủ là "SGK_Toán_4_KNTT_tập_1.pdf" và slug là
+# "sgk-tieng-viet-5-tap-hai" — bản đầu chỉ nhận khoảng trắng nên trượt cả hai,
+# đo được 3/6 sai.
+_VOL_RE = re.compile(
+    r"(?:t[aậ]p|volume|vol)[\s._-]*(m[oộ]t|hai|1|2|i{1,2})(?![\w])",
+    re.IGNORECASE)
+
+
+def detect_volume(*nguon: str) -> str:
+    """Đoán TẬP của quyển sách từ tiêu đề / tên tệp: "tập một" | "tập hai" | "".
+
+    Vì sao cần: kho gộp cả hai tập của một môn vào cùng lớp–môn, nên "ghi đè"
+    không có tập là xoá luôn tập kia — nạp tập hai làm mất tập một vừa nạp hôm
+    trước, im lặng, không gì báo. Giao diện cũng chỉ hiện "lớp 4 · toan" nên
+    người dùng không biết trên máy đang có tập nào.
+
+    Nhận cả "tập 1", "tập một", "tap-1", "SGK_Toán_4_KNTT_tập_1.pdf" — đúng các
+    khuôn tên tệp có thật trên máy chủ.
+    """
+    for s in nguon:
+        m = _VOL_RE.search(str(s or ""))
+        if not m:
+            continue
+        raw = (m.group(1) or m.group(2) or "").lower()
+        if raw in ("mot", "một", "1", "i"):
+            return "tập một"
+        if raw in ("hai", "2", "ii"):
+            return "tập hai"
+    return ""
+
+
 def import_sgk_pdf(
     pdf_path: str | Path,
     *,
@@ -630,6 +662,7 @@ def import_sgk_pdf(
     collection: str = "kb_giao_duc",
     write_md: bool = True,
     store_images: bool = False,
+    volume: str = "",
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
 
@@ -716,6 +749,10 @@ def import_sgk_pdf(
         return {"ok": False, "error": "PDF không trích được chữ (scan cần OCR/gateway vision)"}
 
     src = source_name or path.name
+    # Tập: người dùng khai thì tin, không thì đoán từ tiêu đề/tên tệp/nội dung.
+    # Cần cho hai việc: ghi đè ĐÚNG tập (xem mode=replace bên dưới) và hiển thị
+    # "lớp 4 · Toán · tập một" thay vì chỉ "lớp 4 · toan".
+    vol = (volume or "").strip() or detect_volume(title, src, (raw or "")[:4000])
     head = title.strip() or f"SGK lớp {g} · {SUBJECT_LABEL[sub]} · {src}"
     md = _md_from_pdf_text(raw, title=head)
     stamp = __import__("time").strftime("%Y-%m-%d %H:%M")
@@ -778,6 +815,7 @@ def import_sgk_pdf(
     }
     result["md_written"] = bool(write_md)
     result["collection"] = collection
+    result["volume"] = vol
     # mode=replace phải ghi đè CẢ RAG, không chỉ file .md. Không có bước này thì
     # thay sách (năm học mới đổi SGK) xong chunk sách cũ vẫn nằm trong Chroma và
     # bot trộn hai bản — đúng lỗi im lặng tệ nhất. Xoá theo phạm vi lớp–môn của
@@ -787,9 +825,24 @@ def import_sgk_pdf(
             import urllib.request as _ur
             hub = str(config_hub_url() or "").rstrip("/")
             if hub:
+                # Phạm vi xoá phải TÍNH ĐẾN TẬP.
+                #
+                # Bản cũ luôn xoá cả `teacher_sgk/lop{g}/{sub}/`, tức nạp đè tập
+                # hai là xoá luôn tập một vừa nạp hôm trước — mất một nửa quyển
+                # mà không có gì báo. Giao diện lại không hỏi tập nào, nên người
+                # dùng không có cách nào biết mình đang ghi đè cái gì.
+                # Có `volume` thì chỉ xoá đúng tập đó; không rõ tập thì giữ hành
+                # vi cũ (xoá cả môn) vì đó là ý "thay sách cho môn này".
+                pham_vi = {"grade": g, "subject": sub}
+                if vol:
+                    pham_vi["volume"] = vol
+                    body = {"source_prefix": f"teacher_sgk/lop{g}/{sub}/",
+                            "where": pham_vi}
+                else:
+                    body = {"source_prefix": f"teacher_sgk/lop{g}/{sub}/"}
                 req = _ur.Request(
                     f"{hub}/api/rag/forget/{collection}",
-                    data=json.dumps({"source_prefix": f"teacher_sgk/lop{g}/{sub}/"}).encode(),
+                    data=json.dumps(body).encode(),
                     headers={"Content-Type": "application/json"}, method="POST")
                 with _ur.urlopen(req, timeout=120) as resp:
                     fr = json.loads(resp.read().decode() or "{}")
@@ -812,6 +865,7 @@ def import_sgk_pdf(
             subject=sub,
             source=src,
             collection=collection,
+            volume=vol,
         )
         result["rag"] = rag
     except Exception as exc:
@@ -888,11 +942,16 @@ def list_imports(
             if sub_filter and sub_s != sub_filter:
                 continue
             st = pdf.stat()
+            # TẬP đoán từ tên tệp; giao diện chỉ hiện "lớp 4 · toan" thì người
+            # dùng không biết trên máy đang có tập nào, nên nạp thêm hay ghi đè
+            # đều là đoán. Tên tệp có thật trên máy chủ đủ để đoán:
+            # "SGK_Toán_4_KNTT_tập_1.pdf" → "tập một".
             items.append({
                 "name": pdf.name,
                 "grade": g,
                 "subject": sub_s,
                 "subject_label": SUBJECT_LABEL.get(sub_s, sub_s),
+                "volume": detect_volume(pdf.name),
                 "path": str(pdf),
                 "size_bytes": st.st_size,
                 "mtime": st.st_mtime,
@@ -957,6 +1016,7 @@ def push_sgk_to_rag(
     subject: str,
     source: str = "",
     collection: str = "kb_giao_duc",
+    volume: str = "",
 ) -> dict[str, Any]:
     """Đẩy markdown SGK vào vn-mcp-hub RAG (curate). Best-effort, sync.
 
@@ -1023,6 +1083,9 @@ def push_sgk_to_rag(
                 "grade": int(grade or 0),
                 "subject": subject,
                 "kind": "vbt" if collection.endswith("_vbt") else "sgk",
+                # Tập của quyển sách — thiếu khoá này thì "ghi đè" chỉ biết
+                # phạm vi cả môn, tức nạp tập hai xoá luôn tập một.
+                **({"volume": volume} if volume else {}),
             },
         }
         try:
@@ -1083,6 +1146,7 @@ def import_sgk_bytes(
     drop_pdf_on_rag_ok: bool = False,
     store_images: bool = True,
     kind: str = "sgk",
+    volume: str = "",
 ) -> dict[str, Any]:
     """Import từ bytes upload (ghi temp rồi gọi import_sgk_pdf).
 
@@ -1127,6 +1191,7 @@ def import_sgk_bytes(
             # các file đó và KHÔNG phân biệt loại, nên ghi SGV/VBT vào đấy là
             # trả lời trộn ở đường tra offline.
             write_md=(k == "sgk"),
+            volume=volume,
         )
     finally:
         try:

@@ -444,6 +444,7 @@ def fetch_and_ingest(
     force: bool = False,
     keep_pdf: bool = True,
     drop_pdf_on_rag_ok: bool = False,
+    volume: str = "",
 ) -> dict[str, Any]:
     """Tải 1 URL (từ ``find_sources`` hoặc do người dùng tự cung cấp) rồi nạp
     vào SGK/RAG. KHÔNG BAO GIỜ tự đoán/bịa URL khác — ``url`` phải do caller
@@ -528,6 +529,7 @@ def fetch_and_ingest(
                 tmp_path, grade=g, subject=sub, mode="append",
                 title=head, source_name=fname, keep_pdf=keep_pdf,
                 drop_pdf_on_rag_ok=drop_pdf_on_rag_ok,
+                volume=volume,
             )
             rag_info = result.get("rag") or {}
         else:

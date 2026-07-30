@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { httpRequest } from "@/lib/request";
+import { getStoredAuthKey } from "@/store/auth";
 
 type Student = { student_key: string; display_name?: string; grade?: number };
 type Book = { slug: string; title: string; volume?: string; pages: number; offset: number };
@@ -74,8 +75,31 @@ function useSubjectsFor(grade?: number) {
   return subs;
 }
 
-function imgUrl(slug: string, imgIndex: number) {
-  return `/api/teacher/page-img/${encodeURIComponent(slug)}/${imgIndex}`;
+/* Khoá API cho thẻ <img>.
+ *
+ * Ảnh trang SGK là thứ DUY NHẤT ở tab Giáo viên tải bằng `<img src>`, mà trình
+ * duyệt không cho đính header Authorization vào thẻ img — nên bản cũ ăn 401 và
+ * khung SGK bên phải trống trơn (log: GET /api/teacher/page-img/... 401). Đọc
+ * khoá một lần rồi nối vào URL dạng `?k=`; backend nhận cả hai đường.
+ */
+function useImgKey() {
+  const [k, setK] = useState("");
+  useEffect(() => {
+    let huy = false;
+    (async () => {
+      try {
+        const v = await getStoredAuthKey();
+        if (!huy) setK(String(v || ""));
+      } catch { /* chưa có khoá thì để rỗng, ảnh sẽ báo lỗi rõ */ }
+    })();
+    return () => { huy = true; };
+  }, []);
+  return k;
+}
+
+function imgUrl(slug: string, imgIndex: number, key = "") {
+  const q = key ? `?k=${encodeURIComponent(key)}` : "";
+  return `/api/teacher/page-img/${encodeURIComponent(slug)}/${imgIndex}${q}`;
 }
 
 /* ── Khung xem trang sách (dùng chung cho tab Bài giảng và tab SGK) ────── */
@@ -87,6 +111,7 @@ export function PageViewer({ book, printedPage, onPrinted }: {
 }) {
   const [zoom, setZoom] = useState(1);
   const [err, setErr] = useState(false);
+  const imgKey = useImgKey();
   useEffect(() => { setErr(false); }, [book?.slug, printedPage]);
 
   if (!book) {
@@ -137,7 +162,7 @@ export function PageViewer({ book, printedPage, onPrinted }: {
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={imgUrl(book.slug, idx)}
+            src={imgUrl(book.slug, idx, imgKey)}
             alt={`Trang ${p}`}
             onError={() => setErr(true)}
             style={{ width: `${zoom * 100}%`, maxWidth: "none" }}
@@ -162,6 +187,11 @@ export function LectureTab({ student }: { student: Student }) {
   }, [subjects, subject]);
   const [bai, setBai] = useState("");
   const [toc, setToc] = useState<TocRow[]>([]);
+  // Giá trị của từng option — tính một lần để `value` của ô chọn so khớp được
+  // với `bai`; nếu tính lại trong JSX thì mỗi render sinh chuỗi mới, so khớp
+  // vẫn đúng nhưng tốn vô ích và dễ lệch khi đổi khuôn nhãn.
+  const tocValues = useMemo(
+    () => toc.map((r) => `${r.bai ? r.bai + " " : ""}${r.ten}`), [toc]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [lecture, setLecture] = useState<Lecture | null>(null);
@@ -294,18 +324,29 @@ export function LectureTab({ student }: { student: Student }) {
             <label className="text-[10px] text-muted-foreground">
               Bài cần giảng {toc.length ? `(mục lục: ${toc.length} bài)` : "(gõ tay — chưa nạp mục lục môn này)"}
             </label>
+            {/* Ô chọn phải GIỮ bài đã chọn.
+              *
+              * Bản cũ khoá `value=""` nên chọn xong ô lập tức nhảy về dòng
+              * "— chọn bài —", còn tên bài chạy xuống ô gõ tay bên dưới: người
+              * dùng tưởng chưa chọn được gì. Giờ `value` theo `bai`, khớp option
+              * nào thì hiện đúng option đó; gõ tay không khớp thì ô chọn về rỗng
+              * và ô gõ tay bên dưới là nơi hiển thị. */}
             {toc.length > 0 && (
               <select className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs mb-1"
-                value="" onChange={(e) => { if (e.target.value) setBai(e.target.value); }}>
+                value={tocValues.includes(bai) ? bai : ""}
+                onChange={(e) => setBai(e.target.value)}>
                 <option value="">— chọn bài theo mục lục SGK —</option>
                 {toc.map((r, i) => (
-                  <option key={i} value={`${r.bai ? r.bai + " " : ""}${r.ten}`}>
+                  <option key={i} value={tocValues[i]}>
                     {r.bai ? `${r.bai} · ` : ""}{r.ten}{r.trang ? ` (tr.${r.trang}${r.tap ? " " + r.tap : ""})` : ""}
                   </option>
                 ))}
               </select>
             )}
-            <Input className="h-9 text-xs" placeholder="vd: Bài 8 D d Đ đ · phép cộng qua 10 · Mùa nước nổi"
+            <Input className="h-9 text-xs"
+              placeholder={toc.length
+                ? "hoặc gõ tay nếu không có trong mục lục"
+                : "vd: Bài 8 D d Đ đ · phép cộng qua 10 · Mùa nước nổi"}
               value={bai} onChange={(e) => setBai(e.target.value)} />
           </div>
           <div>

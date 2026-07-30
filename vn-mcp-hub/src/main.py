@@ -747,8 +747,14 @@ def create_app() -> FastAPI:
         trộn sách cũ với sách mới. Chroma không lọc được prefix trong `where`,
         nên quét metadata theo lô rồi xoá theo id.
 
-        Body: {source_prefix}. Prefix PHẢI ≥ 8 kí tự — chặn lời gọi cụt tay
-        ("t", "") quét bay cả kho.
+        Body: {source_prefix, where?}. Prefix PHẢI ≥ 8 kí tự — chặn lời gọi cụt
+        tay ("t", "") quét bay cả kho.
+
+        `where` (tuỳ chọn) THU HẸP thêm theo metadata, và mọi khoá trong đó phải
+        khớp. Cần cho việc ghi đè MỘT TẬP: kho gộp cả hai tập của một môn dưới
+        cùng tiền tố `teacher_sgk/lop4/toan/`, nên xoá theo prefix là xoá luôn
+        tập kia — nạp lại tập hai làm mất tập một, im lặng, không gì báo. Có
+        `where={"volume": "tập hai"}` thì chỉ đúng tập đó bay.
         """
         from src.rag.retriever import RAGRetriever
 
@@ -756,6 +762,12 @@ def create_app() -> FastAPI:
         prefix = str(body.get("source_prefix") or "")
         if len(prefix) < 8:
             return {"ok": False, "error": f"source_prefix quá ngắn: {prefix!r}"}
+        loc = body.get("where")
+        loc = loc if isinstance(loc, dict) else {}
+        # Chỉ nhận giá trị vô hướng: so khớp dict/list vừa vô nghĩa vừa dễ thành
+        # "khớp mọi thứ" rồi xoá sạch kho.
+        loc = {k: v for k, v in loc.items()
+               if isinstance(k, str) and isinstance(v, (str, int, float, bool))}
         r = RAGRetriever.get()
         if not r._ensure_loaded():
             return {"ok": False, "error": "Chroma not loaded"}
@@ -770,7 +782,8 @@ def create_app() -> FastAPI:
             if not ids:
                 break
             hit = [i for i, m in zip(ids, got.get("metadatas") or [])
-                   if str((m or {}).get("source") or "").startswith(prefix)]
+                   if str((m or {}).get("source") or "").startswith(prefix)
+                   and all((m or {}).get(k) == v for k, v in loc.items())]
             if hit:
                 col.delete(ids=hit)
                 deleted += len(hit)
@@ -779,7 +792,44 @@ def create_app() -> FastAPI:
                 continue
             offset += len(ids)
         return {"ok": True, "collection": collection, "deleted": deleted,
-                "source_prefix": prefix}
+                "source_prefix": prefix, "where": loc or None}
+
+    @app.get("/api/rag/thong-ke/{collection}")
+    async def rag_thong_ke(collection: str):
+        """Đếm chunk theo LỚP – MÔN – TẬP của một kho.
+
+        Vì sao cần: bảng "Toàn bộ SGK trên server" đếm theo file .md, mà .md chỉ
+        được ghi cho sách HỌC SINH — nên sách giáo viên, vở bài tập, tài liệu tập
+        huấn nạp vào rồi vẫn không hiện ở đâu cả, người dùng tưởng bốn loại bị
+        gộp làm một. Đếm thẳng trên metadata của từng kho thì mỗi loại hiện riêng,
+        và thấy rõ lớp–môn nào đang có tập nào.
+        """
+        from src.rag.retriever import RAGRetriever
+
+        r = RAGRetriever.get()
+        if not r._ensure_loaded():
+            return {"ok": False, "error": "Chroma not loaded"}
+        try:
+            col = r._client.get_collection(name=collection)
+        except Exception:
+            return {"ok": True, "collection": collection, "tong": 0, "rows": []}
+        dem: dict[tuple, int] = {}
+        tong, offset = 0, 0
+        while True:
+            got = col.get(limit=1000, offset=offset, include=["metadatas"])
+            ids = got.get("ids") or []
+            if not ids:
+                break
+            for m in got.get("metadatas") or []:
+                m = m or {}
+                key = (m.get("grade") or 0, str(m.get("subject") or ""),
+                       str(m.get("volume") or ""))
+                dem[key] = dem.get(key, 0) + 1
+                tong += 1
+            offset += len(ids)
+        rows = [{"grade": g, "subject": s, "volume": v, "chunks": n}
+                for (g, s, v), n in sorted(dem.items(), key=lambda x: (x[0][0], x[0][1]))]
+        return {"ok": True, "collection": collection, "tong": tong, "rows": rows}
 
     @app.post("/api/rag/curate/{collection}")
     async def rag_curate(collection: str, request: Request):

@@ -47,7 +47,11 @@ class TestReplaceGoiForget:
 
     def test_xoa_hong_thi_dung(self):
         i = _TW.index('if mode == "replace":')
-        body = _TW[i:i + 1800]
+        # Cửa sổ phải phủ hết khối replace: bản đầu lấy 1800 ký tự và đã vỡ ngay
+        # khi khối được thêm chú thích (return result trượt ra ngoài cửa sổ dù
+        # hành vi không đổi). Cắt tới điểm nạp RAG — ranh giới thật của khối.
+        j = _TW.index("Best-effort", i)
+        body = _TW[i:j]
         assert "return result" in body, "xoá hỏng mà nạp tiếp là tạo bản trộn"
 
     def test_pham_vi_theo_lop_mon(self):

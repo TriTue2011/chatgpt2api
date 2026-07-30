@@ -203,6 +203,10 @@ def create_router() -> APIRouter:
         # vào kho SGK mang nhãn SGK, rồi bot trích nó như thể là sách học sinh.
         # Link taphuan thì KHÔNG lấy giá trị này: `doc_kind()` đọc được loại thật
         # từ slug, chính xác hơn người dùng chọn tay.
+        # TẬP của quyển sách. Bỏ trống thì đường nạp tự đoán từ tiêu đề/tên tệp;
+        # khai rõ thì "ghi đè" chỉ xoá đúng tập đó thay vì cả môn (nạp tập hai
+        # làm mất tập một là lỗi im lặng đã gặp).
+        volume_in = str(payload.get("volume") or "").strip()
         kind_in = str(payload.get("kind") or "sgk").strip().lower()
         if kind_in not in ("sgk", "sgv", "vbt", "tap_huan", "other"):
             return {"ok": False,
@@ -218,7 +222,8 @@ def create_router() -> APIRouter:
                 return tp.import_reader(readers[0], grade=grade, subject=subject,
                                         mode=mode, drop_pdf_on_rag_ok=drop_pdf)
             return sf.fetch_and_ingest(grade, subject, url, kind=kind_in,
-                                       drop_pdf_on_rag_ok=drop_pdf)
+                                       drop_pdf_on_rag_ok=drop_pdf,
+                                       volume=volume_in)
 
         return await run_in_threadpool(_run)
 
@@ -376,14 +381,22 @@ def create_router() -> APIRouter:
     async def teacher_page_image(
         slug: str,
         page: int,
+        k: str = Query(default=""),
         authorization: str | None = Header(default=None),
     ):
         """Trả THẲNG ảnh trang đã lưu (AVIF q30, ~32 KB) để giảng bài hiện lên.
 
         Có ảnh bản địa thì trả file; chỉ có URL CDN thì chuyển hướng sang đó —
         giao diện không phải biết ảnh nằm ở đâu.
+
+        Nhận khoá qua QUERY `?k=` ngoài header, vì đây là endpoint duy nhất trong
+        tab Giáo viên được gọi bằng thẻ `<img src>`: trình duyệt KHÔNG cho đính
+        header vào thẻ img, nên bản cũ luôn ăn 401 và khung SGK bên phải trống
+        trơn — người dùng chỉ thấy "SGK theo từng học sinh bị lỗi" chứ không thấy
+        lý do (log trình duyệt: GET /api/teacher/page-img/... 401 Unauthorized).
+        Vẫn qua đúng `require_admin`, chỉ khác chỗ lấy khoá.
         """
-        require_admin(authorization)
+        require_admin(authorization or (f"Bearer {k}" if k else None))
         from fastapi.responses import FileResponse, RedirectResponse
         from services.agent import teacher_images as ti
 
@@ -420,6 +433,58 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         from services.agent import teacher_images as ti
         return await run_in_threadpool(ti.purge, slug)
+
+    @router.get("/api/teacher/kho-theo-loai")
+    async def teacher_kho_theo_loai(authorization: str | None = Header(default=None)):
+        """Bốn kho tài liệu dạy học, ĐẾM RIÊNG từng loại theo lớp–môn–tập.
+
+        Bảng "Toàn bộ SGK trên server" cũ đếm theo file .md, mà .md chỉ ghi cho
+        sách HỌC SINH — nên sách giáo viên, vở bài tập và tài liệu tập huấn nạp
+        vào rồi vẫn không hiện ở đâu, trông như bốn loại bị gộp làm một. Endpoint
+        này đọc thẳng metadata từng kho nên mỗi loại đứng riêng, kèm tập.
+        """
+        require_admin(authorization)
+        import json as _json
+        import urllib.request as _ur
+
+        from services.agent import sgk_fetch as sf
+        from services.agent import teacher_workspace as tw
+
+        hub = str(tw.config_hub_url() or "").rstrip("/")
+        # Thứ tự hiển thị = thứ tự dùng khi soạn bài: sách học sinh trước, rồi
+        # sách của cô, rồi bài tập, rồi tài liệu nền.
+        loai = [
+            ("sgk", "Sách học sinh (SGK)"),
+            ("sgv", "Sách giáo viên · KHBD"),
+            ("vbt", "Vở & sách bài tập"),
+            ("tap_huan", "Tài liệu tập huấn"),
+            ("slide", "Phân bổ tuần–tiết (slide)"),
+        ]
+
+        def _mot(col: str) -> dict:
+            if not hub:
+                return {"ok": False, "error": "chưa cấu hình hub", "tong": 0, "rows": []}
+            try:
+                with _ur.urlopen(f"{hub}/api/rag/thong-ke/{col}", timeout=60) as resp:
+                    return _json.loads(resp.read().decode() or "{}")
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)[:160], "tong": 0, "rows": []}
+
+        def _run() -> dict:
+            out = []
+            for kind, nhan in loai:
+                col = sf.KIND_COLLECTION.get(kind, "kb_giao_duc")
+                st = _mot(col)
+                out.append({
+                    "kind": kind, "label": nhan, "collection": col,
+                    "tong": int(st.get("tong") or 0),
+                    "rows": st.get("rows") or [],
+                    "error": st.get("error") or "",
+                })
+            return {"ok": True, "loai": out,
+                    "subject_label": tw.SUBJECT_LABEL}
+
+        return await run_in_threadpool(_run)
 
     @router.get("/api/teacher/storage")
     async def teacher_storage(authorization: str | None = Header(default=None)):
@@ -635,6 +700,7 @@ def create_router() -> APIRouter:
         mode: str = Form(default="append"),
         title: str = Form(default=""),
         kind: str = Form(default="sgk"),
+        volume: str = Form(default=""),
         authorization: str | None = Header(default=None),
     ):
         """Upload PDF → markdown theo chương/bài (##) + đẩy RAG vào ĐÚNG kho.
@@ -663,6 +729,7 @@ def create_router() -> APIRouter:
             return tw.import_sgk_bytes(
                 data, name, grade=grade, subject=subject, mode=mode, title=title,
                 drop_pdf_on_rag_ok=True, kind=kind_in,
+                volume=str(volume or "").strip(),
             )
 
         result = await run_in_threadpool(_run)

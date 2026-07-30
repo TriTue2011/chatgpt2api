@@ -33,6 +33,7 @@ import {
   Link2,
   Download,
   BookMarked,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -688,6 +689,8 @@ export default function TeacherPage() {
   // Mục lục lớp–môn cho tab Bài tập: cùng nguồn với tab Bài giảng, để bài tập
   // cũng chọn theo BÀI của sách chứ không chỉ gõ chủ đề tự do.
   const [asgToc, setAsgToc] = useState<{ bai?: string; ten: string; trang?: number | null; tap?: string }[]>([]);
+  const asgTocValues = useMemo(
+    () => asgToc.map((r) => `${r.bai ? r.bai + " " : ""}${r.ten}`), [asgToc]);
   const [asgN, setAsgN] = useState(5);
   const [asgDiff, setAsgDiff] = useState("auto");
   const [doAsg, setDoAsg] = useState<Assignment | null>(null);
@@ -712,6 +715,7 @@ export default function TeacherPage() {
   // Loại tài liệu quyết định VÀO KHO NÀO — thiếu nó thì SGV/vở bài tập tải lên
   // đều rơi vào kho nội dung học sinh (lỗi đã vá ở backend, đây là mặt tiền).
   const [impKind, setImpKind] = useState<"sgk" | "sgv" | "vbt" | "tap_huan">("sgk");
+  const [impVol, setImpVol] = useState("");   // tập: "" = tự đoán từ tên sách
   const [impBusy, setImpBusy] = useState(false);
   const [impFileName, setImpFileName] = useState("");
   const [impFileSize, setImpFileSize] = useState(0);
@@ -721,6 +725,7 @@ export default function TeacherPage() {
     grade: number;
     subject: string;
     subject_label?: string;
+    volume?: string;          // "tập một" | "tập hai" | "" (không rõ)
     size_bytes?: number;
     mtime?: number;
     workspace?: string;
@@ -748,6 +753,26 @@ export default function TeacherPage() {
   // Danh sách SGK TOÀN BỘ 12 lớp × 3 môn — tách khỏi impList/impMd vì hai cái
   // đó chỉ là một tổ hợp lớp–môn đang chọn.
   const [sgkAll, setSgkAll] = useState<{ imports: ImpPdfRow[]; markdown: ImpMdRow[] } | null>(null);
+  type KhoRow = { grade: number; subject: string; volume: string; chunks: number };
+  type KhoLoai = {
+    loai: { kind: string; label: string; collection: string; tong: number; rows: KhoRow[]; error: string }[];
+    subject_label: Record<string, string>;
+  };
+  const [khoLoai, setKhoLoai] = useState<KhoLoai | null>(null);
+  const [khoLoading, setKhoLoading] = useState(false);
+  const [khoOpen, setKhoOpen] = useState("");
+  const loadKhoLoai = useCallback(async () => {
+    if (!session) return;
+    setKhoLoading(true);
+    try {
+      const r = await request.get("/api/teacher/kho-theo-loai");
+      setKhoLoai(r.data as KhoLoai);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không tải được thống kê kho");
+    } finally {
+      setKhoLoading(false);
+    }
+  }, [session]);
   const [sgkLoading, setSgkLoading] = useState(false);
   // Mặc định THU HẾT — bấm lớp nào mới mở lớp đó.
   const [sgkOpen, setSgkOpen] = useState<number[]>([]);
@@ -2021,12 +2046,16 @@ export default function TeacherPage() {
                 value={asgTitle}
                 onChange={(e) => setAsgTitle(e.target.value)}
               />
+              {/* Ô chọn GIỮ bài đã chọn — xem chú thích cùng lỗi ở lecture-tab:
+                * bản cũ khoá value="" nên chọn xong ô nhảy về dòng gợi ý, còn tên
+                * bài rơi xuống ô "Chủ đề" bên dưới, trông như chưa chọn được gì. */}
               {asgToc.length > 0 && (
                 <select className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                  value="" onChange={(e) => { if (e.target.value) setAsgTopic(e.target.value); }}>
+                  value={asgTocValues.includes(asgTopic) ? asgTopic : ""}
+                  onChange={(e) => setAsgTopic(e.target.value)}>
                   <option value="">— chọn bài theo mục lục SGK ({asgToc.length} bài) —</option>
                   {asgToc.map((r, i) => (
-                    <option key={i} value={`${r.bai ? r.bai + " " : ""}${r.ten}`}>
+                    <option key={i} value={asgTocValues[i]}>
                       {r.bai ? `${r.bai} · ` : ""}{r.ten}{r.trang ? ` (tr.${r.trang})` : ""}
                     </option>
                   ))}
@@ -2034,7 +2063,9 @@ export default function TeacherPage() {
               )}
               <Input
                 className="h-8 text-xs"
-                placeholder="Chủ đề (vd trừ có mượn · chính tả · animals)"
+                placeholder={asgToc.length
+                  ? "hoặc gõ tay nếu không có trong mục lục"
+                  : "Chủ đề (vd trừ có mượn · chính tả · animals)"}
                 value={asgTopic}
                 onChange={(e) => setAsgTopic(e.target.value)}
               />
@@ -2662,10 +2693,37 @@ export default function TeacherPage() {
                   disabled={impBusy || impUrlBusy}
                 >
                   <option value="append">Nối thêm (giữ seed)</option>
-                  <option value="replace">Ghi đè file lớp–môn</option>
+                  <option value="replace">
+                    {impVol ? `Ghi đè ${impVol}` : "Ghi đè CẢ MÔN (cả 2 tập)"}
+                  </option>
+                </select>
+              </div>
+              <div>
+                {/* Chọn TẬP.
+                  * Kho gộp cả hai tập dưới cùng lớp–môn, nên "ghi đè" mà không
+                  * biết tập là xoá luôn tập kia — nạp tập hai làm mất tập một,
+                  * im lặng. Bỏ trống thì đường nạp tự đoán từ tên tệp/tiêu đề. */}
+                <label className="text-[10px] text-muted-foreground">Tập</label>
+                <select
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-xs"
+                  value={impVol}
+                  disabled={impBusy || impUrlBusy}
+                  onChange={(e) => setImpVol(e.target.value)}
+                  title="Ghi đè chỉ xoá đúng tập này. Để trống = tự đoán từ tên sách; nếu không đoán được thì ghi đè sẽ áp cho cả môn."
+                >
+                  <option value="">— tự đoán từ tên sách —</option>
+                  <option value="tập một">tập một</option>
+                  <option value="tập hai">tập hai</option>
+                  <option value="cả năm">cả năm (một quyển)</option>
                 </select>
               </div>
             </div>
+            {impMode === "replace" && !impVol && (
+              <p className="text-[10px] text-amber-600">
+                Ghi đè chưa chọn tập: nếu tên sách không nói rõ tập thì hệ thống
+                sẽ xoá <b>cả hai tập</b> của lớp–môn này trước khi nạp.
+              </p>
+            )}
 
             {/* ── Nạp từ URL ────────────────────────────────────────────── */}
             <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-3 space-y-2">
@@ -2699,7 +2757,7 @@ export default function TeacherPage() {
                     try {
                       const r = await request.post(
                         "/api/teacher/import-url",
-                        { url, grade, subject, mode: impMode, kind: impKind },
+                        { url, grade, subject, mode: impMode, kind: impKind, volume: impVol },
                         { timeout: 0 },
                       );
                       const d = r.data as {
@@ -2776,6 +2834,7 @@ export default function TeacherPage() {
                   fd.append("subject", subject);
                   fd.append("mode", impMode);
                   fd.append("kind", impKind);
+                  fd.append("volume", impVol);
                   fd.append("title", f.name.replace(/\.pdf$/i, ""));
                   const r = await request.post("/api/teacher/import-sgk", fd, {
                     headers: { "Content-Type": "multipart/form-data" },
@@ -2961,8 +3020,14 @@ export default function TeacherPage() {
                       <div className="min-w-0 flex-1">
                         <div className="font-medium truncate">{row.name}</div>
                         <div className="text-muted-foreground">
+                          {/* TẬP hiện ngay đầu dòng: danh sách cũ chỉ ghi
+                            * "lop4-toan" nên không biết máy đang có tập nào,
+                            * nạp thêm hay ghi đè đều là đoán. */}
+                          {row.volume
+                            ? <span className="text-emerald-600 font-medium">{row.volume}</span>
+                            : <span className="text-amber-600">chưa rõ tập</span>}
                           {(row.size_bytes || 0) > 0
-                            ? `${((row.size_bytes || 0) / (1024 * 1024)).toFixed(1)} MB`
+                            ? ` · ${((row.size_bytes || 0) / (1024 * 1024)).toFixed(1)} MB`
                             : ""}
                           {row.mtime
                             ? ` · ${new Date(row.mtime * 1000).toLocaleString("vi-VN")}`
@@ -2980,12 +3045,77 @@ export default function TeacherPage() {
               </p>
             </div>
 
+            {/* ── Kho theo LOẠI tài liệu: SGK / SGV / bài tập / tập huấn / slide.
+              *
+              * Bảng "Toàn bộ SGK" bên dưới đếm theo file .md — mà .md chỉ ghi
+              * cho sách HỌC SINH, nên bốn loại còn lại nạp rồi vẫn không hiện
+              * ở đâu, trông như bị gộp làm một. Khối này đọc thẳng metadata
+              * từng kho (lớp–môn–TẬP) nên mỗi loại đứng riêng. */}
+            <div className="rounded-md border border-border/60 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <BookMarked className="size-3.5 text-sky-600" />
+                  Kho theo loại tài liệu
+                </div>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[10px]"
+                  disabled={khoLoading} onClick={() => void loadKhoLoai()}>
+                  {khoLoading ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                  <span className="ml-1">{khoLoai ? "Làm mới" : "Xem"}</span>
+                </Button>
+              </div>
+              {khoLoai && (
+                <div className="space-y-1.5">
+                  {khoLoai.loai.map((k) => (
+                    <div key={k.kind} className="rounded border border-border/40">
+                      <button type="button"
+                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-secondary/60 transition"
+                        onClick={() => setKhoOpen((o) => (o === k.kind ? "" : k.kind))}>
+                        {khoOpen === k.kind
+                          ? <ChevronUp className="size-3 shrink-0 text-muted-foreground" />
+                          : <ChevronDown className="size-3 shrink-0 text-muted-foreground" />}
+                        <span className="text-[11px] font-medium">{k.label}</span>
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${
+                          k.tong > 0 ? "bg-emerald-500/15 text-emerald-600" : "bg-muted text-muted-foreground"}`}>
+                          {k.tong > 0 ? `${k.tong.toLocaleString("vi-VN")} đoạn` : "trống"}
+                        </span>
+                        {k.error ? (
+                          <span className="text-[9px] text-red-500 truncate">{k.error}</span>
+                        ) : null}
+                        <code className="text-[9px] text-muted-foreground ml-auto">{k.collection}</code>
+                      </button>
+                      {khoOpen === k.kind && k.rows.length > 0 && (
+                        <div className="border-t border-border/40 px-2 py-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                          {k.rows.map((r, i) => (
+                            <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                              <span className="font-medium w-12 shrink-0">Lớp {r.grade || "?"}</span>
+                              <span className="w-24 shrink-0 truncate">
+                                {khoLoai.subject_label[r.subject] || r.subject || "(không rõ môn)"}
+                              </span>
+                              <span className={r.volume ? "text-emerald-600" : "text-muted-foreground"}>
+                                {r.volume || "chưa rõ tập"}
+                              </span>
+                              <span className="text-muted-foreground ml-auto">{r.chunks} đoạn</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {khoOpen === k.kind && k.rows.length === 0 && (
+                        <p className="border-t border-border/40 px-2 py-1.5 text-[10px] text-muted-foreground">
+                          Kho này chưa có tài liệu nào. Nạp bằng khung bên trên và chọn đúng loại.
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* ── Toàn bộ SGK trên server: gom theo lớp → môn, thu hết mặc định ── */}
             <div className="rounded-md border border-border/60 p-3 space-y-2">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-[11px] font-semibold flex items-center gap-1.5">
                   <BookMarked className="size-3.5 text-amber-600" />
-                  Toàn bộ SGK trên server
+                  Toàn bộ SGK trên server (sách học sinh)
                   {sgkAll ? (
                     <span className="font-normal text-muted-foreground">
                       · {sgkAll.markdown.filter((m) => m.exists).length}/{sgkAll.markdown.length} tổ hợp có sách
