@@ -560,31 +560,94 @@ def _send_agent_reply(chat_id: str, out: dict) -> None:
             markup = None
     send_message(chat_id, reply, reply_markup=markup)
 
+def _telegram_tai_duoc(url: str) -> bool:
+    """MÁY CHỦ TELEGRAM có tải được URL này không?
+
+    Khác hẳn `net_guard.is_allowed_egress_url` — cái đó trả lời "CHÚNG TA có được
+    phép gọi ra địa chỉ này không". Hai câu hỏi khác nhau, và bản cũ dùng lẫn:
+    `is_allowed_egress_url("http://127.0.0.1:80/images/a.png")` là True (đúng, ta
+    tự tải được), nên album vẫn được gửi đi rồi Telegram trả:
+
+        400 Bad Request: failed to send message #3 with the error message
+        "WEBPAGE_MEDIA_EMPTY"
+
+    Tức mỗi lần gửi ảnh thư viện là một lượt gọi API chắc chắn thất bại, cộng một
+    dòng log trông như lỗi Telegram. Ảnh thư viện luôn ở `http://127.0.0.1:80/…`
+    nên đó là MỌI lần, không phải ca lạ.
+    """
+    from urllib.parse import urlparse
+    try:
+        h = (urlparse(str(url)).hostname or "").lower()
+    except Exception:
+        return False
+    if not h or h in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return False
+    try:
+        import ipaddress
+        return not ipaddress.ip_address(h).is_private
+    except ValueError:
+        return True          # tên miền — coi như công khai
+    except Exception:
+        return False
+
+
 def _gui_album(chat_id: int | str, urls: list[str], caption: str = "") -> bool:
     """Gửi nhiều ảnh thành MỘT album qua sendMediaGroup (tối đa 10 ảnh/lô).
 
-    Chỉ dùng URL đã qua net_guard: sendMediaGroup nhờ Telegram tự tải ảnh, nên
-    URL nội bộ (127.0.0.1) Telegram không thấy được — những ảnh đó phải đi đường
-    gửi từng tấm bằng bytes. Trả False để người gọi rơi về đường đó, chứ không
-    im lặng gửi thiếu.
+    Hai đường, chọn theo việc Telegram có tải được URL hay không:
+
+    · URL công khai → gửi thẳng URL, Telegram tự tải (rẻ nhất).
+    · URL nội bộ (`http://127.0.0.1:80/images/…` — mọi ảnh thư viện của máy này)
+      → TẢI BYTES rồi đính kèm multipart `attach://`. Vẫn là MỘT album.
+
+    Bản cũ chỉ có đường một và trả False cho URL nội bộ, nên người gọi rơi về gửi
+    TỪNG TẤM: 3 ảnh thành 3 tin nhắn rời. Người dùng xin "gửi 3 ảnh một lúc" mà
+    nhận 3 tin — đúng việc album sinh ra để tránh, và trên Zalo thì đã gộp được.
     """
     if len(urls) < 2:
         return False
-    from services import net_guard as _ng
+    sach = [str(u) for u in urls[:10] if not str(u).startswith("data:")]
+    if len(sach) < 2:
+        return False
+
+    if all(_telegram_tai_duoc(u) for u in sach):
+        media = [{"type": "photo", "media": u} for u in sach]
+        if caption:
+            media[0]["caption"] = caption
+        r = _api_call("sendMediaGroup", {"chat_id": chat_id, "media": media})
+        if not r.get("ok"):
+            logger.warning("sendMediaGroup (URL) thất bại (%d ảnh): %s",
+                           len(media), str(r)[:200])
+        return bool(r.get("ok"))
+
+    # Đường bytes: tải về rồi đính kèm. `_fetch_image_bytes` đã né được hairpin
+    # 403 của chính máy mình nên URL /images/ nội bộ tải được.
+    files: dict[str, tuple[str, bytes, str]] = {}
     media = []
-    for i, u in enumerate(urls[:10]):
-        s = str(u)
-        if s.startswith("data:") or not _ng.is_allowed_egress_url(s):
-            return False
-        m: dict = {"type": "photo", "media": s}
-        if i == 0 and caption:
+    for i, u in enumerate(sach):
+        img = _fetch_image_bytes(u)
+        if not img:
+            logger.warning("_gui_album: không tải được %s", u[:120])
+            continue
+        ten = f"anh{i}"
+        files[ten] = (f"{ten}.png", img, "image/png")
+        m: dict = {"type": "photo", "media": f"attach://{ten}"}
+        if not media and caption:
             m["caption"] = caption
         media.append(m)
-    r = _api_call("sendMediaGroup", {"chat_id": chat_id, "media": media})
+    if len(media) < 2:
+        return False        # dưới 2 tấm thì không phải album — để caller gửi lẻ
+    r = _cli().call_multipart(
+        "sendMediaGroup",
+        {"chat_id": chat_id, "media": json.dumps(media, ensure_ascii=False)},
+        files, timeout=120,
+    )
     if not r.get("ok"):
-        logger.warning("sendMediaGroup thất bại (%d ảnh): %s",
+        logger.warning("sendMediaGroup (bytes) thất bại (%d ảnh): %s",
                        len(media), str(r)[:200])
-    return bool(r.get("ok"))
+        return False
+    # Gửi được ÍT hơn số xin → trả False để caller báo thiếu, chứ không im lặng.
+    return len(media) >= len(sach)
 
 
 def send_photo(chat_id: int | str, photo_bytes: bytes, caption: str = "") -> dict:

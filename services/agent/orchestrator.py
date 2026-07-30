@@ -911,6 +911,27 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 if produced_images:
                     produced_caption = result.get("text") or produced_caption
                     _ghi_so_anh(user_id, produced_images)
+                    # PHẢI bật `produced_media`, không chỉ gom vào danh sách.
+                    #
+                    # Cổng giao media ở dưới là `if produced_media:` — mà biến đó
+                    # CHỈ được đặt trong vòng lặp khoá `image_url` (SỐ ÍT). Tool
+                    # trả riêng `image_urls` (số nhiều) — đúng cái `library_media`
+                    # làm khi xin 3 ảnh — thì `produced_media` vẫn None, cổng
+                    # không mở, và lượt chạy rơi xuống nhánh "để model tự viết câu
+                    # trả lời từ kết quả tool". Model thấy tool đã trả 3 URL nên
+                    # viết "Dạ 3 ảnh mới nhất đây anh nha 😊" — câu đó về tới người
+                    # dùng KHÔNG kèm ảnh nào.
+                    #
+                    # Đo thật 2026-07-30 (Zalo cá nhân, "Gửi 3 ảnh mới nhất trong
+                    # thư viện"): model gọi đúng `library_media{so_luong:3}`,
+                    # handler trả đúng 3 URL, mà `orchestrate` ra `['text']` —
+                    # không có image_url lẫn image_urls. Người dùng hỏi "Ảnh đâu"
+                    # hai lần, bot khẳng định đã gửi cả hai lần.
+                    #
+                    # Giữ tấm ĐẦU ở đây cũng để kênh nào chưa đọc `image_urls`
+                    # (Zalo Bot cũ) vẫn gửi được một tấm chứ không gửi rỗng.
+                    if not produced_media:
+                        produced_media = {"image_url": produced_images[0]}
 
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):
@@ -984,7 +1005,13 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out_q.get("text") or combo_text), status="awaiting_approval")
             return out_q
         # If a capability produced media, deliver it now (the media is the answer).
-        if produced_media:
+        #
+        # Điều kiện phải xét CẢ `produced_images`: có ảnh mà cổng đóng thì lượt
+        # chạy rơi xuống nhánh để model tự kể lại, và ảnh đã tạo ra bị bỏ im lặng
+        # (xem chú thích ở chỗ gom `image_urls`). Đây là chốt phòng hai lớp —
+        # nhánh trên đã đặt `produced_media`, nhưng bất kỳ đường nào sau này chỉ
+        # đổ vào `produced_images` cũng không được rơi vào đúng cái bẫy đó nữa.
+        if produced_media or produced_images:
             text = produced_caption
             out_m = _finalize(user_id, {"text": text, **produced_media,
                                         **_nhieu_anh(produced_images)})
