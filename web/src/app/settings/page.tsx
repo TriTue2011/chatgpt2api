@@ -16,6 +16,7 @@ import { TelegramCloudflareCard, CloudflareInfraCard } from "./components/telegr
 import { ConfigCard } from "./components/config-card";
 import { GeminiCard } from "./components/gemini-card";
 import { NvidiaNimCard } from "./components/nvidia-nim-card";
+import { TokenRouterCard } from "./components/tokenrouter-card";
 import { CustomProvidersCard } from "./components/custom-providers-card";
 import { FlowCard } from "./components/flow-card";
 import { ChatGPTOnboardCard } from "./components/chatgpt-onboard-card";
@@ -88,6 +89,14 @@ function SettingsPageContent() {
           icon={<span className="text-lg">🟢</span>}
         >
           <NvidiaNimCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="TokenRouter"
+          description="Đường riêng tr/ — có thử lại khi lỗi mạng, xin usage cuối stream — api.tokenrouter.com"
+          icon={<span className="text-lg">🧭</span>}
+        >
+          <TokenRouterCard />
         </SettingsSection>
 
         <SettingsSection
