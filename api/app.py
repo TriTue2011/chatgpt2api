@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api import accounts, ai, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, register, system, voice, zalo_personal
+from api import accounts, ai, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -305,6 +305,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_admin.create_router())  # proxy to internal vn-mcp-hub (127.0.0.1:8005)
     app.include_router(captcha_proxy.create_router())  # proxy to internal captcha-solver (127.0.0.1:8010)
     app.include_router(register.create_router())
+    app.include_router(zalo_bot.create_router())  # kênh Zalo Bot (bot token, webhook ⟷ long-poll)
     app.include_router(zalo_personal.create_router())  # kênh Zalo Cá Nhân (bot server zca-js)
     app.include_router(channels.create_router())  # hoạt động gần đây + blacklist đa kênh
     app.include_router(devices.create_router())  # device agent (WS quay ra) + REST cho MCP device_fs

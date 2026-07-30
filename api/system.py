@@ -474,9 +474,12 @@ def create_router(app_version: str) -> APIRouter:
                 register_webhook()
             except Exception:
                 pass
-        # Zalo dùng chung telegram_webhook_url (cloudflare) → đổi token Zalo hoặc
-        # đổi URL cloudflare đều phải đăng ký lại webhook Zalo.
-        if any(k in _changed for k in ("zalo_bot_token", "zalo_bots", "zalo_webhook_secret", "telegram_webhook_url")):
+        # Zalo Bot: đổi token / công tắc webhook / URL công khai đều phải ÁP LẠI
+        # chế độ, vì webhook đã đăng ký trên Zalo còn trỏ URL–secret cũ (Zalo giữ
+        # cấu hình phía nó, không tự cập nhật khi ta đổi config).
+        if any(k in _changed for k in ("zalo_bot_token", "zalo_bots", "zalo_webhook_secret",
+                                       "zalo_webhook_enabled", "zalo_webhook_url",
+                                       "telegram_webhook_url", "base_url")):
             try:
                 from services.zalo_bot import register_webhook as _z_reg
                 _z_reg()

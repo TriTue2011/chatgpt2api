@@ -21,6 +21,7 @@ Dùng CHUNG orchestrator + Cloudflare webhook như Telegram.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import re
@@ -108,8 +109,23 @@ def _chat_ids() -> list:
 
 
 def _webhook_secret_for(token: str) -> str:
-    """Secret ổn định sinh từ token (cho X-Bot-Api-Secret-Token, verify webhook)."""
-    return ("z" + hashlib.sha256(token.encode()).hexdigest()[:40]) if token else ""
+    """Secret cho header X-Bot-Api-Secret-Token, sinh ỔN ĐỊNH từ token.
+
+    Docs setWebhook bắt `secret_token` dài 8–256 ký tự; chuỗi này 41 ký tự.
+    Secret do CHÍNH gateway đẩy lên setWebhook nên không ai phải gõ tay → sinh
+    theo token là đủ, và quan trọng hơn: MỖI BOT MỘT SECRET KHÁC NHAU, nên khi
+    nhiều bot dùng chung một URL webhook thì chỉ cần so header là biết request
+    của bot nào (không phải đoán). `zalo_webhook_secret` nếu vận hành có đặt thì
+    chỉ làm muối — vẫn giữ tính per-token đó.
+    """
+    if not token:
+        return ""
+    try:
+        salt = str(config.get().get("zalo_webhook_secret") or "").strip()
+    except Exception:
+        salt = ""
+    material = f"{salt}|{token}" if salt else token
+    return "z" + hashlib.sha256(material.encode()).hexdigest()[:40]
 
 
 def _bot_id() -> str:
@@ -431,23 +447,172 @@ def _api_call(method: str, data: dict | None = None, timeout: int = 20,
     return last
 
 
-# ── Long-polling (giống openclaw zaloclawbot) ────────────────────────────────
-# Cloudflare chặn /zalo/webhook (403) → KHÔNG dùng webhook. Thay vào đó gateway
-# tự POST getUpdates liên tục (outbound, không cần public endpoint). Zalo, như
-# Telegram, chỉ cho getUpdates khi webhook TẮT → deleteWebhook trước khi poll.
+# ── Hai chế độ nhận tin: WEBHOOK ⟷ LONG-POLLING (loại trừ nhau) ──────────────
+# Docs bot.zapps.me/docs/apis/getUpdates nói thẳng: "Phương thức getUpdates sẽ
+# không hoạt động nếu bạn đã thiết lập Webhook trước đó", và phải deleteWebhook
+# trước khi poll. Vậy hai chế độ LOẠI TRỪ NHAU — bật song song thì một trong hai
+# đường im lặng, mà im lặng kiểu này rất khó truy (không có lỗi, chỉ mất tin).
+# Nên `apply_mode()` là ĐIỂM DUY NHẤT quyết định chế độ, và `start_polling()` tự
+# từ chối chạy khi webhook đang bật, để mọi caller khác cũng không phá bất biến.
+#
+# Trước đây module này chỉ chạy long-poll (Cloudflare từng chặn /zalo/webhook →
+# 403). Webhook giờ nhận ở đường riêng /api/zalo-bot/webhook (api/zalo_bot.py).
+WEBHOOK_PATH = "/api/zalo-bot/webhook"
+
 _poll_threads: dict[str, threading.Thread] = {}
+_poll_stop: dict[str, threading.Event] = {}  # cờ dừng theo token (thread không kill được)
 _poll_lock = threading.Lock()
 _seen_ids: dict[str, set[str]] = {}  # dedup message_id theo TỪNG token
 
 
+def webhook_enabled() -> bool:
+    """Công tắc chế độ. Mặc định TẮT → giữ nguyên hành vi long-poll đang chạy
+    thật ngoài máy chủ, không tự đổi chế độ sau khi nâng cấp."""
+    try:
+        return bool(config.get().get("zalo_webhook_enabled", False))
+    except Exception:
+        return False
+
+
+def webhook_url() -> str:
+    """URL Zalo sẽ POST tin vào. Ưu tiên `zalo_webhook_url` (vận hành đặt tay),
+    nếu trống thì ghép base công khai + WEBHOOK_PATH. Docs setWebhook đòi HTTPS
+    ("URL nhận thông báo dạng HTTPS") nên URL http:// sẽ bị chặn ở set_webhook."""
+    try:
+        explicit = str(config.get().get("zalo_webhook_url") or "").strip()
+    except Exception:
+        explicit = ""
+    if explicit:
+        return explicit.rstrip("/")
+    base = _public_base()
+    return f"{base}{WEBHOOK_PATH}" if base else ""
+
+
+def _with_bot(bot: dict, fn, *args, **kwargs):
+    """Chạy fn trong ngữ cảnh bot rồi khôi phục ngữ cảnh cũ. `_api_call` lấy
+    token từ thread-local `_current.bot`, nên mọi lệnh nhắm vào MỘT bot cụ thể
+    (setWebhook/deleteWebhook/getWebhookInfo) buộc phải đi qua đây, kẻo nó bắn
+    vào bot[0] — sai bot mà vẫn trả ok:true, không cách nào phát hiện."""
+    prev = getattr(_current, "bot", None)
+    _current.bot = bot
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _current.bot = prev
+
+
+def set_webhook(bot: dict) -> dict:
+    """setWebhook cho MỘT bot. Docs chỉ ghi 2 tham số: `url` + `secret_token`
+    (KHÔNG có drop_pending_updates/max_connections/allowed_updates như Telegram
+    hay SDK zalo-bot-js) → gửi đúng 2 tham số đó, không thêm."""
+    token = str(bot.get("token", "")).strip()
+    if not token:
+        return {"ok": False, "description": "bot chưa có token"}
+    url = webhook_url()
+    if not url:
+        return {"ok": False, "description": "chưa có webhook url (đặt zalo_webhook_url hoặc base_url)"}
+    if not url.lower().startswith("https://"):
+        return {"ok": False, "description": f"webhook url phải là HTTPS, đang là {url.split(':')[0]}"}
+    return _with_bot(bot, _api_call, "setWebhook",
+                     {"url": url, "secret_token": _webhook_secret_for(token)})
+
+
+def delete_webhook(bot: dict) -> dict:
+    if not str(bot.get("token", "")).strip():
+        return {"ok": False, "description": "bot chưa có token"}
+    return _with_bot(bot, _api_call, "deleteWebhook")
+
+
+def get_webhook_info(bot: dict) -> dict:
+    if not str(bot.get("token", "")).strip():
+        return {"ok": False, "description": "bot chưa có token"}
+    return _with_bot(bot, _api_call, "getWebhookInfo")
+
+
+def _enabled_bots() -> list[dict]:
+    return [dict(b) for b in _bots()
+            if b.get("enabled", True) and str(b.get("token", "")).strip()]
+
+
+def verify_webhook_secret(secret_header: str) -> dict | None:
+    """Tìm bot khớp header X-Bot-Api-Secret-Token, so sánh HẰNG THỜI GIAN.
+
+    `hmac.compare_digest` thay vì `==`: `==` thoát ngay ở byte lệch đầu tiên nên
+    thời gian trả lời tiết lộ tiền tố đúng, đủ để dò secret từng byte. Và KHÔNG
+    có nhánh "chỉ 1 bot thì cho qua" như bản trước — nhánh đó biến secret thành
+    đồ trang trí: bất kỳ ai POST được vào endpoint đều nhận là bot thật.
+    """
+    hdr = str(secret_header or "")
+    if not hdr:
+        return None
+    for bot in _enabled_bots():
+        expected = _webhook_secret_for(str(bot.get("token", "")).strip())
+        if expected and hmac.compare_digest(hdr, expected):
+            return bot
+    return None
+
+
+def apply_mode(*, delete_inline: bool = True) -> dict:
+    """Đưa kênh về ĐÚNG một chế độ theo công tắc `zalo_webhook_enabled`.
+
+    Bật  → dừng poll TRƯỚC, rồi setWebhook (nếu setWebhook trước, Zalo có thể
+           đã bắn tin vào webhook trong lúc poll còn sống → hai đường tranh update).
+    Tắt  → deleteWebhook rồi bật poll.
+
+    `delete_inline=False` (dùng ở đường khởi động) bỏ deleteWebhook đồng bộ và
+    để chính `_poll_loop` gọi trong luồng của nó: `_api_call` là urllib chặn
+    (timeout 20s × 3 lần thử), mà `register_webhook()` chạy ngay trong startup
+    handler của FastAPI — Zalo chậm một nhịp là cả gateway treo boot theo. Bỏ
+    được vì mỗi bot bật đều có luồng poll tự deleteWebhook trước vòng đầu, nên
+    bất biến vẫn giữ; chỉ mất phần BÁO CÁO kết quả delete cho người bấm nút.
+    """
+    want_webhook = webhook_enabled()
+    bots = _enabled_bots()
+    out: dict[str, Any] = {
+        "mode": "webhook" if want_webhook else "long-polling",
+        "bots": [],
+    }
+    if want_webhook:
+        out["draining"] = stop_polling()
+        for bot in bots:
+            r = set_webhook(bot)
+            out["bots"].append({
+                "bot_id": _bot_public_id(bot),
+                "ok": bool(r.get("ok")),
+                "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
+            })
+        out["polling"] = False
+        out["webhook_url"] = webhook_url()
+    else:
+        if delete_inline:
+            for bot in bots:
+                r = delete_webhook(bot)
+                out["bots"].append({
+                    "bot_id": _bot_public_id(bot),
+                    "ok": bool(r.get("ok")),
+                    "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
+                })
+        out["polling"] = start_polling()
+    # Không bot nào cấu hình thì coi như đúng trạng thái (rỗng), không báo lỗi.
+    out["ok"] = all(b["ok"] for b in out["bots"]) if out["bots"] else True
+    return out
+
+
 def register_webhook() -> bool:
-    """Giữ TÊN cũ (app.py/system.py gọi) nhưng KHỞI ĐỘNG LONG-POLLING cho MỌI bot
-    Zalo đang bật (đa-token). Idempotent — mỗi token 1 thread poll."""
-    return start_polling()
+    """Giữ TÊN cũ vì app.py (startup) và system.py (lưu settings) đang gọi —
+    nay nó áp dụng CÔNG TẮC thay vì mặc định long-poll. Không delete đồng bộ:
+    xem lý do ở `apply_mode(delete_inline=...)`."""
+    r = apply_mode(delete_inline=False)
+    return bool(r.get("ok"))
 
 
 def start_polling() -> bool:
     """Bật polling cho tất cả bot enabled; bỏ qua bot đã có thread sống."""
+    if webhook_enabled():
+        # Bất biến: webhook bật thì getUpdates vô hiệu (docs) — chạy poll chỉ tạo
+        # log lỗi rác và giữ deleteWebhook ngầm phá luôn webhook vừa đăng ký.
+        logger.info("Zalo: webhook đang BẬT → không khởi động long-polling")
+        return False
     started = False
     with _poll_lock:
         for bot in _bots():
@@ -460,6 +625,7 @@ def start_polling() -> bool:
             if th and th.is_alive():
                 started = True
                 continue
+            _poll_stop[token] = threading.Event()  # Event MỚI: lần chạy trước có thể đã set
             th = threading.Thread(target=_poll_loop, args=(dict(bot),), daemon=True,
                                   name=f"zalo-poll-{token[:6]}")
             _poll_threads[token] = th
@@ -469,14 +635,66 @@ def start_polling() -> bool:
     return started
 
 
+def stop_polling(join_timeout: float = 2.0) -> int:
+    """Ra hiệu cho mọi luồng poll dừng; trả về số luồng CÒN đang thoát dở.
+
+    Không chờ hết 35s socket timeout vì hàm này chạy trong request quản trị.
+    Request getUpdates đang bay vẫn được xử lý trọn (không mất tin) rồi luồng mới
+    thoát; và `_seen_ids` dùng chung với đường webhook nên tin lỡ về cả 2 đường
+    trong khoảnh khắc chuyển chế độ cũng không bị xử lý hai lần.
+    """
+    with _poll_lock:
+        tokens = list(_poll_threads)
+        for tok in tokens:
+            _poll_stop.setdefault(tok, threading.Event()).set()
+        # Đọc qua .get() một lần: luồng poll tự pop khỏi _poll_threads khi thoát,
+        # nên `_poll_threads[t]` sau khi đã kiểm tra vẫn có thể KeyError.
+        threads = [th for th in (_poll_threads.get(t) for t in tokens) if th is not None]
+    if threads:
+        share = max(join_timeout / len(threads), 0.05)
+        for th in threads:
+            th.join(timeout=share)
+    with _poll_lock:
+        return sum(1 for th in _poll_threads.values() if th.is_alive())
+
+
+def _next_offset(updates: list, offset: int) -> int:
+    """offset kế tiếp = max(update_id) + 1 (khuôn Telegram; SDK zalo-bot-js dùng
+    đúng vậy: `getUpdates{timeout, offset}`).
+
+    CẢNH BÁO có kiểm chứng: trang docs getUpdates của Zalo CHỈ liệt kê tham số
+    `timeout`, KHÔNG hề nói tới `offset`/`update_id`. Nên offset ở đây là
+    best-effort — gửi kèm để server báo đã nhận nếu nó hiểu, còn tính đúng-đắn
+    thật vẫn nằm ở dedupe `message_id` (`_seen_ids`). Vì lẽ đó update thiếu
+    `update_id` KHÔNG được phép làm hỏng vòng poll: bỏ qua, giữ offset cũ.
+    """
+    for upd in updates:
+        if not isinstance(upd, dict):
+            continue
+        raw = upd.get("update_id")
+        if raw is None and isinstance(upd.get("result"), dict):
+            raw = upd["result"].get("update_id")
+        try:
+            offset = max(offset, int(raw) + 1)
+        except (TypeError, ValueError):
+            continue
+    return offset
+
+
 def _poll_loop(bot: dict) -> None:
     _current.bot = bot  # thread-local: mọi _api_call trong luồng này dùng token bot
     token = str(bot.get("token", "")).strip()
-    _api_call("deleteWebhook")  # tắt webhook để getUpdates hoạt động
+    stop = _poll_stop.setdefault(token, threading.Event())
+    _api_call("deleteWebhook")  # tắt webhook để getUpdates hoạt động (docs)
     seen = _seen_ids.setdefault(token, set())
     fails = 0
+    offset = 0
     while True:
-        # Bot bị tắt / xóa khỏi config → tự dừng luồng.
+        # Bot bị tắt / xóa khỏi config, hoặc vừa bật webhook → tự dừng luồng.
+        if stop.is_set() or webhook_enabled():
+            _poll_threads.pop(token, None)
+            logger.info("Zalo poll stop for bot %s (đổi chế độ)", token[:6])
+            return
         if not any(str(b.get("token", "")).strip() == token and b.get("enabled", True)
                    for b in _bots()):
             _poll_threads.pop(token, None)
@@ -484,7 +702,10 @@ def _poll_loop(bot: dict) -> None:
             return
         try:
             # Socket timeout PHẢI dài hơn poll timeout kẻo mất tin đến ở giây cuối.
-            r = _api_call("getUpdates", {"timeout": 25}, timeout=35)
+            params: dict[str, Any] = {"timeout": 25}
+            if offset:
+                params["offset"] = offset
+            r = _api_call("getUpdates", params, timeout=35)
         except Exception:
             r = {"ok": False}
         if not r.get("ok"):
@@ -499,6 +720,9 @@ def _poll_loop(bot: dict) -> None:
         fails = 0
         res = r.get("result")
         updates = res if isinstance(res, list) else ([res] if isinstance(res, dict) else [])
+        # Tiến offset TRƯỚC khi xử lý: một update lỗi giữa lô không được kéo cả lô
+        # về lặp lại vô hạn.
+        offset = _next_offset(updates, offset)
         for upd in updates:
             try:
                 _handle_update(upd, bot, seen)
@@ -1196,24 +1420,44 @@ def _do_photo_request(
 
 
 async def handle_webhook(request) -> dict:
-    """Nhận webhook Zalo (POST). Verify secret header, tách message, xử lý AI ở
-    background rồi trả ngay {ok:true}."""
+    """Đường webhook CŨ (POST /zalo/webhook, api/system.py) — giữ để không phá
+    cấu hình đã đăng ký ngoài thực địa. Đường chuẩn nay là /api/zalo-bot/webhook
+    (api/zalo_bot.py) vì nó trả 403 thật khi secret sai, còn hàm này chỉ trả
+    {ok:false} kèm HTTP 200 (khuôn cũ, không đổi kẻo phá caller).
+    """
     try:
         hdr = request.headers.get("X-Bot-Api-Secret-Token", "")
         body = await request.json()
     except Exception:
         return {"ok": False}
-    # Xác định bot theo secret (đa-token); chỉ 1 bot thì fallback lenient.
-    bots = [b for b in _bots() if b.get("enabled", True)]
-    bot = next((b for b in bots if _webhook_secret_for(str(b.get("token", "")).strip()) == hdr), None)
+    bot = verify_webhook_secret(hdr)
     if bot is None:
-        if len(bots) == 1:
-            bot = bots[0]
-        else:
-            logger.warning("Zalo webhook bad/ambiguous secret")
-            return {"ok": False}
-    result = (body or {}).get("result") or {}
-    msg = result.get("message") or {}
+        logger.warning("Zalo webhook: secret sai")
+        return {"ok": False}
+    process_update(body, bot)
+    return {"ok": True}
+
+
+def process_update(body: dict, bot: dict) -> bool:
+    """Tách message khỏi payload webhook rồi đẩy sang orchestrator ở luồng nền;
+    trả True nếu có tin được nhận.
+
+    Nhận CẢ HAI khuôn payload: webhook bọc trong `result` ({ok, result:{
+    event_name, message}} — docs /docs/webhook/) và khuôn phẳng `{message:…}`.
+    Đường long-poll đi qua `_handle_update` (nó còn getChat lấy tên nhóm và log
+    thô payload lạ) — hai hàm tách field riêng NHƯNG hợp lưu ở `_process_message`
+    và dùng CHUNG `_seen_ids`, nên tin không bị xử lý hai lần lúc đổi chế độ.
+
+    Payload thiếu `message`/`chat.id` (ping, event lạ, body rỗng) chỉ trả False —
+    KHÔNG ném lỗi, vì ném ở đây là trả non-2xx và Zalo sẽ retry mãi một payload
+    vốn không xử lý được.
+    """
+    if not isinstance(body, dict) or not isinstance(bot, dict):
+        return False
+    result = body.get("result") if isinstance(body.get("result"), dict) else {}
+    msg = result.get("message") or body.get("message") or {}
+    if not isinstance(msg, dict) or not msg:
+        return False
     # De-dupe: webhook có thể GỬI LẠI cùng 1 tin (retry) — dùng CHUNG bộ nhớ
     # per-token `_seen_ids` với đường poll (_handle_update) để không xử lý 2 lần
     # dù bot đang chạy webhook hay long-polling (hoặc đổi qua lại giữa 2 chế độ).
@@ -1222,12 +1466,12 @@ async def handle_webhook(request) -> dict:
         token = str((bot or {}).get("token") or "").strip()
         seen = _seen_ids.setdefault(token, set())
         if mid in seen:
-            return {"ok": True}
+            return False
         seen.add(mid)
         if len(seen) > 2000:
             seen.clear()
             seen.add(mid)  # re-add — clear() vừa xoá luôn mid mới thêm ở trên
-    chat = msg.get("chat") or {}
+    chat = msg.get("chat") if isinstance(msg.get("chat"), dict) else {}
     chat_id = str(chat.get("id", "")).strip()
     text = (msg.get("text") or "").strip()
     photo_url = msg.get("photo") or msg.get("photo_url") or msg.get("url") or ""
@@ -1241,12 +1485,12 @@ async def handle_webhook(request) -> dict:
     f_url, f_name, f_id = _extract_file_fields(msg)
     voice_url = _extract_voice_url(msg)
     if not chat_id:
-        return {"ok": True}
+        return False
     threading.Thread(target=_process_message,
                      args=(text, chat_id, photo_url, bot, sender, f_url, f_name, f_id,
                            user_id, is_group, chat_name, voice_url),
                      daemon=True).start()
-    return {"ok": True}
+    return True
 
 
 def _extract_meta(msg: dict) -> tuple[str, bool]:
@@ -1745,12 +1989,54 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
 
 
 def get_status() -> dict:
+    """Trạng thái CỤC BỘ — không gọi mạng, vì UI Settings poll hàm này liên tục;
+    nhét getWebhookInfo vào đây là mỗi nhịp poll thành một request ra Zalo."""
     bots = _bots()
     alive = sum(1 for th in _poll_threads.values() if th.is_alive())
+    wh = webhook_enabled()
     return {
         "configured": bool(bots),
-        "mode": "long-polling",
+        "mode": "webhook" if wh else "long-polling",
+        "webhook_enabled": wh,
+        "webhook_url": webhook_url() if wh else "",
         "polling": alive > 0,
         "bots_count": len(bots),
         "bots_polling": alive,
     }
+
+
+def get_webhook_status() -> dict:
+    """Trạng thái ĐẦY ĐỦ cho trang quản trị: cục bộ + getWebhookInfo từng bot.
+
+    Có gọi mạng (1 request/bot) nên chỉ dùng cho endpoint admin bấm-mới-chạy,
+    không dùng cho vòng poll của UI. `info` để nguyên khối Zalo trả về để so
+    được URL Zalo ĐANG giữ với URL ta nghĩ mình đã đăng ký — lệch nhau là dấu
+    hiệu ai đó setWebhook tay hoặc base_url đã đổi mà chưa áp lại.
+    """
+    out = get_status()
+    out["expected_webhook_url"] = webhook_url()
+    bots: list[dict] = []
+    for bot in _enabled_bots():
+        r = get_webhook_info(bot)
+        th = _poll_threads.get(str(bot.get("token", "")).strip())
+        bots.append({
+            "bot_id": _bot_public_id(bot),
+            "label": str(bot.get("label") or "").strip(),
+            "ok": bool(r.get("ok")),
+            "info": r.get("result") if r.get("ok") else None,
+            "error": "" if r.get("ok") else str(r.get("description") or "")[:200],
+            "polling": bool(th is not None and th.is_alive()),
+        })
+    out["bots"] = bots
+    return out
+
+
+def set_webhook_enabled(enabled: bool) -> dict:
+    """Bật/tắt webhook: LƯU công tắc trước rồi áp dụng.
+
+    Thứ tự này bắt buộc — `start_polling()`/`_poll_loop` đọc `webhook_enabled()`
+    từ config để tự dừng, nên nếu áp trước khi lưu thì luồng poll cũ vẫn thấy
+    công tắc tắt và sống lại ngay sau khi vừa bị dừng.
+    """
+    config.update({"zalo_webhook_enabled": bool(enabled)})
+    return apply_mode()
