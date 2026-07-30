@@ -9,7 +9,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const { guiNhieuAnh, docGioiHan, soatDanhSachAnh } =
+const { guiNhieuAnh, docGioiHan, soatDanhSachAnh, taiVeVaGuiNhieuAnh } =
   await import('../utils/sendImages.js');
 
 const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'anh-'));
@@ -89,6 +89,38 @@ api = apiGia(20);
 const t0 = Date.now();
 await guiNhieuAnh(api, anh, 'T1', 0, { nghiMs: 400 });
 kiem(Date.now() - t0 < 300, 'gửi một lô thì không nghỉ vô ích');
+
+// 9. dọn tệp tạm trên MỌI đường — kể cả khi bị chặn định dạng
+// Đây là lý do hàm tải-về nhận saveImage/removeImage từ ngoài: đo được đúng
+// việc tệp tạm có bị bỏ lại hay không, mà không phải nạp cả zalo.js.
+{
+  const daXoa = [];
+  const tep = {
+    saveImage: async (u) => await taoAnh('tai-' + path.basename(u)),
+    removeImage: (p) => daXoa.push(p),
+  };
+
+  api = apiGia(5);
+  await taiVeVaGuiNhieuAnh(tep, api, ['a.jpg', 'b.jpg'], 'T1', 0, { nghiMs: 1 });
+  kiem(daXoa.length === 2, 'gửi xong thì xoá hết tệp tạm');
+
+  daXoa.length = 0;
+  api = apiGia(5);
+  let nem3 = false;
+  try {
+    await taiVeVaGuiNhieuAnh(tep, api, ['a.jpg', 'x.gif'], 'T1', 0, { nghiMs: 1 });
+  } catch { nem3 = true; }
+  kiem(nem3 && daXoa.length === 2 && api.goi.length === 0,
+       'bị chặn giữa đường vẫn xoá hết tệp đã tải (không rò đĩa)');
+
+  daXoa.length = 0;
+  const tepHong = { ...tep, saveImage: async (u) => (u === 'b.jpg' ? null : await taoAnh('t2.jpg')) };
+  let nem4 = false;
+  try {
+    await taiVeVaGuiNhieuAnh(tepHong, apiGia(5), ['a.jpg', 'b.jpg'], 'T1', 0, { nghiMs: 1 });
+  } catch { nem4 = true; }
+  kiem(nem4 && daXoa.length === 1, 'tải ảnh thất bại → xoá ảnh đã tải rồi mới báo lỗi');
+}
 
 await fs.rm(tmp, { recursive: true, force: true });
 console.log(sai ? `\nCÓ ${sai} LỖI` : '\nkhông lỗi');

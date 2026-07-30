@@ -7,8 +7,20 @@ import nodefetch from "node-fetch";
 import fs from 'fs';
 import path from 'path';
 import { saveImage, removeImage, saveFileFromUrl, removeFile } from '../../utils/helpers.js';
+import { taiVeVaGuiNhieuAnh as guiTheoLo } from '../../utils/sendImages.js';
 
 export const zaloAccounts = [];
+
+/** Bốn endpoint gửi nhiều ảnh (user/group × có-chọn-tài-khoản/không) dùng chung
+ *  một đường: tải về → chia lô → dọn tệp tạm trong finally. */
+const taiVeVaGuiNhieuAnh = (api, imageUrls, threadId, threadType, tuyChon) =>
+    guiTheoLo({ saveImage, removeImage }, api, imageUrls, threadId, threadType, tuyChon);
+
+/** Tuỳ chọn gửi ảnh lấy từ body — dùng chung cho cả bốn endpoint. */
+function tuyChonGuiAnh(req) {
+    const { caption = "", nghiMs } = req.body || {};
+    return { caption, ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}) };
+}
 
 // Chức năng tự động kiểm tra trạng thái đăng nhập (10 phút/lần)
 async function checkLoginStatus() {
@@ -523,43 +535,19 @@ export async function sendImagesToUserByAccount(req, res) {
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const imagePaths = [];
-
-        for (const imageUrl of imageUrls) {
-            const imagePath = await saveImage(imageUrl);
-            if (!imagePath) {
-                // Clean up any saved images
-                for (const path of imagePaths) {
-                    removeImage(path);
-                }
-                return res.status(500).json({ success: false, error: 'Không thể lưu một hoặc nhiều hình ảnh' });
-            }
-            imagePaths.push(imagePath);
-        }
 
         // Chia lô theo giới hạn THẬT của Zalo thay vì bắn cả mảng một lần.
         //
-        // Bản cũ đưa nguyên `imagePaths` vào một lời gọi: quá `max_file` (giá trị
-        // do server Zalo cấp lúc đăng nhập, không có trong code) là zca-js ném
-        // "Exceed maximum file of N" và MẤT CẢ LÔ — không tấm nào tới, mà lỗi chỉ
-        // hiện lúc chạy. Gửi dồn cũng dễ ăn "Vượt quá số request cho phép, code
-        // 221" (issue #114/#223/#325 của zca-js; người bảo trì nói chính họ không
-        // rõ ngưỡng, chỉ khuyên tạm dừng 1h–24h).
-        const { guiNhieuAnh } = await import('../../utils/sendImages.js');
-        const { caption = "", nghiMs } = req.body || {};
-        const ketQua = await guiNhieuAnh(
-            account.api, imagePaths, threadId, ThreadType.User,
-            { caption, ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}) },
+        // Bản cũ đưa nguyên mảng vào một lời gọi: quá `max_file` (giá trị do server
+        // Zalo cấp lúc đăng nhập, không có trong code) là zca-js ném "Exceed maximum
+        // file of N" và MẤT CẢ LÔ — không tấm nào tới, mà lỗi chỉ hiện lúc chạy.
+        const ketQua = await taiVeVaGuiNhieuAnh(
+            account.api, imageUrls, threadId, ThreadType.User, tuyChonGuiAnh(req),
         );
-        const result = ketQua.ketQua;
-
-        for (const imagePath of imagePaths) {
-            removeImage(imagePath);
-        }
 
         res.json({
             success: true,
-            data: result,
+            data: ketQua.ketQua,
             // Nói ra số lô và giới hạn đang áp dụng: người gọi cần biết vì sao 30
             // ảnh lại thành 5 tin nhắn, thay vì tưởng hệ thống gửi lặp.
             soAnh: ketQua.soAnh,
@@ -630,43 +618,29 @@ export async function sendImagesToGroupByAccount(req, res) {
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const imagePaths = [];
 
-        for (const imageUrl of imageUrls) {
-            const imagePath = await saveImage(imageUrl);
-            if (!imagePath) {
-                // Clean up any saved images
-                for (const path of imagePaths) {
-                    removeImage(path);
-                }
-                return res.status(500).json({ success: false, error: 'Không thể lưu một hoặc nhiều hình ảnh' });
-            }
-            imagePaths.push(imagePath);
-        }
-
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: imagePaths
-            },
-            threadId,
-            ThreadType.Group
+        const ketQua = await taiVeVaGuiNhieuAnh(
+            account.api, imageUrls, threadId, ThreadType.Group, tuyChonGuiAnh(req),
         );
-
-        for (const imagePath of imagePaths) {
-            removeImage(imagePath);
-        }
 
         res.json({
             success: true,
-            data: result,
+            data: ketQua.ketQua,
+            soAnh: ketQua.soAnh,
+            soLo: ketQua.soLo,
+            maxFilePerMessage: ketQua.maxFile,
+            canhBao: ketQua.canhBao,
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
+        });
     }
 }
 
@@ -2174,16 +2148,19 @@ export async function sendImageToUser(req, res) {
             return res.status(400).json({ error: 'Không tìm thấy tài khoản Zalo với OwnId này' });
         }
 
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: [imagePath]
-            },
-            threadId,
-            ThreadType.User
-        ).catch(console.error);
-
-        removeImage(imagePath);
+        // Không bọc `.catch(console.error)` như bản cũ: nuốt lỗi ở đây thì người
+        // gọi nhận success:true kèm data:undefined, tưởng ảnh đã tới trong khi lỗi
+        // chỉ nằm trong log container.
+        let result;
+        try {
+            result = await account.api.sendMessage(
+                { msg: "", attachments: [imagePath] },
+                threadId,
+                ThreadType.User
+            );
+        } finally {
+            removeImage(imagePath);
+        }
         res.json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -2199,39 +2176,33 @@ export async function sendImagesToUser(req, res) {
         }
 
 
-        const imagePaths = [];
-        for (const imageUrl of imageUrls) {
-            const imagePath = await saveImage(imageUrl);
-            if (!imagePath) {
-                // Clean up any saved images
-                for (const path of imagePaths) {
-                    removeImage(path);
-                }
-                return res.status(500).json({ success: false, error: 'Failed to save one or more images' });
-            }
-            imagePaths.push(imagePath);
-        }
-
         const account = zaloAccounts.find(acc => acc.ownId === ownId);
         if (!account) {
             return res.status(400).json({ error: 'Không tìm thấy tài khoản Zalo với OwnId này' });
         }
 
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: imagePaths
-            },
-            threadId,
-            ThreadType.User
-        ).catch(console.error);
+        // Bản cũ có `.catch(console.error)` bọc lời gửi: gửi thất bại thì lỗi chỉ
+        // nằm trong log container, còn người gọi vẫn nhận `success: true` với
+        // `data: undefined` — tưởng ảnh đã tới. Bỏ đi để lỗi rơi xuống catch và
+        // trả về đúng 500.
+        const ketQua = await taiVeVaGuiNhieuAnh(
+            account.api, imageUrls, threadId, ThreadType.User, tuyChonGuiAnh(req),
+        );
 
-        for (const imagePath of imagePaths) {
-            removeImage(imagePath);
-        }
-        res.json({ success: true, data: result });
+        res.json({
+            success: true,
+            data: ketQua.ketQua,
+            soAnh: ketQua.soAnh,
+            soLo: ketQua.soLo,
+            maxFilePerMessage: ketQua.maxFile,
+            canhBao: ketQua.canhBao,
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
+        });
     }
 }
 
@@ -2252,16 +2223,16 @@ export async function sendImageToGroup(req, res) {
             return res.status(400).json({ error: 'Không tìm thấy tài khoản Zalo với OwnId này' });
         }
 
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: [imagePath]
-            },
-            threadId,
-            ThreadType.Group
-        ).catch(console.error);
-
-        removeImage(imagePath);
+        let result;
+        try {
+            result = await account.api.sendMessage(
+                { msg: "", attachments: [imagePath] },
+                threadId,
+                ThreadType.Group
+            );
+        } finally {
+            removeImage(imagePath);
+        }
         res.json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -2277,39 +2248,29 @@ export async function sendImagesToGroup(req, res) {
         }
 
 
-        const imagePaths = [];
-        for (const imageUrl of imageUrls) {
-            const imagePath = await saveImage(imageUrl);
-            if (!imagePath) {
-                // Clean up any saved images
-                for (const path of imagePaths) {
-                    removeImage(path);
-                }
-                return res.status(500).json({ success: false, error: 'Failed to save one or more images' });
-            }
-            imagePaths.push(imagePath);
-        }
-
         const account = zaloAccounts.find(acc => acc.ownId === ownId);
         if (!account) {
             return res.status(400).json({ error: 'Không tìm thấy tài khoản Zalo với OwnId này' });
         }
 
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: imagePaths
-            },
-            threadId,
-            ThreadType.Group
-        ).catch(console.error);
+        const ketQua = await taiVeVaGuiNhieuAnh(
+            account.api, imageUrls, threadId, ThreadType.Group, tuyChonGuiAnh(req),
+        );
 
-        for (const imagePath of imagePaths) {
-            removeImage(imagePath);
-        }
-        res.json({ success: true, data: result });
+        res.json({
+            success: true,
+            data: ketQua.ketQua,
+            soAnh: ketQua.soAnh,
+            soLo: ketQua.soLo,
+            maxFilePerMessage: ketQua.maxFile,
+            canhBao: ketQua.canhBao,
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
+        });
     }
 }
 

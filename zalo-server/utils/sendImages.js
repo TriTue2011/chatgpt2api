@@ -93,6 +93,30 @@ export async function soatDanhSachAnh(duongDan, gioiHan) {
 }
 
 /**
+ * Tải ảnh về từ URL/base64, gửi theo lô, dọn tệp tạm DÙ THÀNH CÔNG HAY LỖI.
+ *
+ * `tep` là {saveImage, removeImage} truyền từ ngoài vào — không import trực tiếp,
+ * để hàm này test được mà không phải nạp cả zca-js và listener của zalo.js.
+ *
+ * Dọn trong finally chứ không phải sau lời gọi: guiNhieuAnh chủ động NÉM khi ảnh
+ * sai định dạng hoặc quá dung lượng, nên đường lỗi bây giờ nhiều hơn đường thành
+ * công. Dọn sau lời gọi là rò tệp tạm ở mọi lần người dùng gửi sai định dạng.
+ */
+export async function taiVeVaGuiNhieuAnh(tep, api, imageUrls, threadId, threadType, tuyChon = {}) {
+    const duongDan = [];
+    try {
+        for (const url of imageUrls) {
+            const p = await tep.saveImage(url);
+            if (!p) throw new Error('Không thể lưu một hoặc nhiều hình ảnh');
+            duongDan.push(p);
+        }
+        return await guiNhieuAnh(api, duongDan, threadId, threadType, tuyChon);
+    } finally {
+        for (const p of duongDan) tep.removeImage(p);
+    }
+}
+
+/**
  * Gửi nhiều ảnh, chia lô theo giới hạn của Zalo.
  *
  * @param {object}   api        api của zca-js (đã đăng nhập)
