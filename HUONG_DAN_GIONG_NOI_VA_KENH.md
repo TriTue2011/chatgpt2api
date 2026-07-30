@@ -3,6 +3,10 @@
 > Tài liệu thực dụng cho người mới: tải model giọng, bật STT tiếng Anh, và cài
 > từng kênh chat từ đầu đến cuối. Phần phân quyền chuyên sâu xem thêm
 > [HUONG_DAN.md](HUONG_DAN.md) mục 6.
+>
+> **Gửi ẢNH qua Zalo và gọi Zalo từ Home Assistant**: xem
+> [docs/ZALO_ANH_VA_HOME_ASSISTANT.md](docs/ZALO_ANH_VA_HOME_ASSISTANT.md) —
+> giới hạn số ảnh mỗi tin, vì sao Zalo Bot không có album, và mẫu YAML cho HA.
 
 ---
 
