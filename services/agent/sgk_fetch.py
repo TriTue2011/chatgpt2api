@@ -264,6 +264,22 @@ def _web_search(query: str, limit: int = 8) -> list[dict[str, str]]:
     CrossRef/OpenAlex/PubMed/Wikipedia/Internet Archive — toàn kho học thuật,
     không hề chứa SGK Việt Nam, mà vẫn tính vào hạn mức và làm cạn tài nguyên.
     """
+    # SearXNG TRƯỚC, vn_search sau.
+    #
+    # Đo thật 30/07: vn_search (DuckDuckGo) mất 87–601 giây một lượt và trả
+    # "Không tìm thấy kết quả." — DDG chặn nhịp từ IP máy chủ. Cùng lúc SearXNG
+    # tự dựng trả 5/5 câu trong 0,3–1,1 giây. Để DDG đứng trước là mỗi lượt tìm
+    # phải chờ hết ngân sách của nó rồi mới tới đường chạy được, và 120 tổ hợp
+    # lớp–môn thì không bao giờ xong.
+    try:
+        from services.search_service import SEARCH_BACKENDS, searxng_ready
+        if searxng_ready():
+            r = SEARCH_BACKENDS["searxng"].search(query, max_results=limit)
+            if r:
+                return [dict(x) for x in r]
+    except Exception as exc:
+        logger.warning("sgk_fetch._web_search: searxng lỗi: %s", exc)
+
     from services import mcp_client
 
     try:

@@ -591,6 +591,14 @@ class MCPSearch(SearchBackend):
     # Câu "không có kết quả" của tool — phải coi là RỖNG.
     _RONG = ("không tìm thấy", "khong tim thay", "no result", "không có kết quả")
 
+    # Dấu hiệu tool trả về LỖI, không phải kết quả. Đo thật 30/07: gọi
+    # `call_mcp_tool("search_web", {...,"limit":...})` không chỉ server nên bị
+    # định tuyến sang một server MCP khác có chữ ký khác, pydantic ném
+    # "Unexpected keyword argument" — và text lỗi đó có kèm URL
+    # errors.pydantic.dev, nên bộ tách coi LỖI là một kết quả tìm kiếm hợp lệ.
+    _LOI = ("unexpected keyword", "validation error", "errors.pydantic.dev",
+            "traceback", "internal server error", "-32600", "-32602")
+
     _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 
     def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
@@ -623,6 +631,12 @@ class MCPSearch(SearchBackend):
             if not text.strip():
                 continue
             low = text.lower()
+            if any(m in low for m in self._LOI):
+                # Text LỖI có thể kèm URL (errors.pydantic.dev) nên bộ tách sẽ
+                # coi là kết quả nếu không chặn ở đây. Chặn TRƯỚC khi tách.
+                # logger của module này chỉ nhận MỘT tham số — không dùng %-format.
+                logger.warning(f"MCPSearch: tool {tool} trả về lỗi: {text[:160]}")
+                continue
             if any(m in low for m in self._RONG) and not self._URL_RE.search(text):
                 continue        # tool trả lời "không có gì" → đi tool tiếp
             ket = self._tach(text, max_results)

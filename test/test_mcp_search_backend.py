@@ -113,5 +113,36 @@ class TestGioiHanSoKetQua(unittest.TestCase):
         self.assertEqual(len(r), 3)
 
 
+
+class TestKhongNhanLoiLamKetQua(unittest.TestCase):
+    """Text LỖI có kèm URL vẫn bị coi là kết quả nếu không chặn.
+
+    Đo thật 30/07 sau khi vá vòng một: gọi search trả về ĐÚNG MỘT "kết quả" mà
+    tiêu đề là "Unexpected keyword argument [type=unexpected_keyword" và url là
+    https://errors.pydantic.dev/... — tức lời gọi tool bị pydantic từ chối (định
+    tuyến sang server MCP có chữ ký khác), rồi chính text lỗi lọt qua bộ tách vì
+    nó CÓ url. Sai mà báo thành công.
+    """
+
+    LOI_PYDANTIC = ("1 validation error for search\n"
+                    "Unexpected keyword argument [type=unexpected_keyword]\n"
+                    "For further information visit https://errors.pydantic.dev/2.12/v/unexpected_keyword\n")
+
+    def test_loi_pydantic_khong_thanh_ket_qua(self):
+        r, _ = _goi({"search_web": self.LOI_PYDANTIC,
+                     "search_all": "", "search": ""})
+        self.assertEqual(r, [], f"text lỗi bị nhận làm kết quả: {r}")
+
+    def test_loi_o_tool_dau_thi_di_tool_sau(self):
+        r, da_goi = _goi({"search_web": self.LOI_PYDANTIC, "search_all": TEXT_THAT})
+        self.assertTrue(r)
+        self.assertIn("Sách giáo viên Toán 4", r[0]["title"])
+        self.assertEqual(da_goi, ["search_web", "search_all"])
+
+    def test_chan_ca_loi_jsonrpc(self):
+        r, _ = _goi({"search_web": '{"error":{"code":-32602,"message":"bad params"}}',
+                     "search_all": "", "search": ""})
+        self.assertEqual(r, [])
+
 if __name__ == "__main__":
     unittest.main()
