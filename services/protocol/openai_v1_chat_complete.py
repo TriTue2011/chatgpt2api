@@ -5599,6 +5599,10 @@ def _handle_custom_openai_chat(
             top_p=body.get("top_p"),
             frequency_penalty=body.get("frequency_penalty"),
             presence_penalty=body.get("presence_penalty"),
+            # Client xin usage ở chunk cuối của stream
+            # (stream_options={"include_usage": true}) — không chuyển tiếp thì
+            # stream trả về không có phần usage nào.
+            stream_options=body.get("stream_options"),
         )
         if stream:
             return result

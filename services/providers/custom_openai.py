@@ -222,6 +222,46 @@ class CustomOpenAIProvider:
         except Exception:
             return False
 
+    # Lỗi TRUYỀN TẢI hay gặp khi gọi API công cộng qua CDN: kết nối bị đóng giữa
+    # chừng, reset, bắt tay TLS hỏng. Không phải lỗi của request nên thử lại là
+    # đúng — đo thật 30/07 với tokenrouter (api.tokenrouter.com): gọi 3 lần thì
+    # 1 lần chết `curl (56) Connection closed abruptly`, 2 lần còn lại HTTP 200
+    # cùng một body. Không có retry nên một lỗi mạng thoáng qua thành 502 đập
+    # thẳng vào mặt người dùng.
+    _THU_LAI_TOI_DA = 3
+    _CHO_GIUA_CAC_LAN_S = (0.8, 2.0)
+
+    def _post_thu_lai(self, headers: dict[str, str], body: dict[str, Any], stream: bool):
+        """POST có thử lại khi lỗi TRUYỀN TẢI. Lỗi HTTP (4xx/5xx) không đụng tới —
+        đó là câu trả lời thật của máy chủ, người gọi phải thấy."""
+        loi_cuoi: Exception | None = None
+        for lan in range(self._THU_LAI_TOI_DA):
+            try:
+                return requests.post(
+                    f"{self.base_url}{self._chat_path}",
+                    headers=headers,
+                    json=body,
+                    timeout=300,
+                    stream=stream,
+                )
+            except requests.RequestsError as exc:
+                loi_cuoi = exc
+                # Timeout thì ĐỪNG thử lại: đã chờ đủ 300s, thử nữa là bắt người
+                # dùng chờ thêm 10 phút cho một kết cục y hệt.
+                if type(exc).__name__ == "Timeout" or lan == self._THU_LAI_TOI_DA - 1:
+                    break
+                cho = self._CHO_GIUA_CAC_LAN_S[min(lan, len(self._CHO_GIUA_CAC_LAN_S) - 1)]
+                logger.warning({
+                    "event": "custom_provider_retry_transport",
+                    "provider": self.name,
+                    "base_url": self.base_url,
+                    "lan": lan + 1,
+                    "cho_s": cho,
+                    "error": str(exc)[:160],
+                })
+                time.sleep(cho)
+        raise loi_cuoi  # type: ignore[misc]
+
     def chat_completions(
         self,
         messages: list[dict[str, Any]],
@@ -253,8 +293,11 @@ class CustomOpenAIProvider:
         if tool_choice:
             body["tool_choice"] = tool_choice
 
-        # Pass through common extra params
-        for key in ("top_p", "frequency_penalty", "presence_penalty", "seed", "response_format"):
+        # Pass through common extra params. `stream_options` để client xin
+        # {"include_usage": true} — TokenRouter/OpenRouter dùng nó để trả token
+        # usage ở chunk cuối; thiếu thì stream không có usage.
+        for key in ("top_p", "frequency_penalty", "presence_penalty", "seed",
+                    "response_format", "stream_options"):
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
 
@@ -280,13 +323,7 @@ class CustomOpenAIProvider:
             self.base_url = self._next_healthy_base_url()
 
         try:
-            resp = requests.post(
-                f"{self.base_url}{self._chat_path}",
-                headers=headers,
-                json=body,
-                timeout=300,
-                stream=stream,
-            )
+            resp = self._post_thu_lai(headers, body, stream)
 
             if resp.status_code == 429:
                 # Rate limited — mark key and retry with next
