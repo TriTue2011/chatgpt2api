@@ -129,6 +129,21 @@ def _has_google_creds(profile: str, email: str = "") -> bool:
         return False
 
 
+# Trạng thái auto-login CUỐI của từng profile, để tầng trên báo ĐÚNG nguyên nhân
+# thay vì một câu "không khôi phục được" chung chung. Chỉ ghi/đọc chuỗi ngắn, một
+# khoá mỗi profile — không phải cache, không cần hết hạn.
+_LAST_LOGIN_STATE: dict[str, str] = {}
+
+# Những trạng thái nghĩa là PHẢI CÓ NGƯỜI, máy chờ thêm cũng vô ích:
+# - need_captcha : Google bắt captcha; auto_login chỉ gắn cờ rồi đợi người gõ
+#                  trên noVNC. Thiếu nó trong danh sách này thì vòng poll chờ hết
+#                  ~310 s mới bỏ — mỗi lần thử đốt 5 phút và mở một phiên trình
+#                  duyệt ngồi im ở màn hình captcha (đo thật 30/07: 10:03:01 phát
+#                  hiện captcha → 10:08:02 đóng, state=failed).
+# - need_code / need_tap : 2FA không có TOTP → cần người bấm.
+_CAN_NGUOI = ("need_captcha", "need_code", "need_tap")
+
+
 def _freshen_google(profile: str) -> bool:
     """Tầng 2 — 'Đăng nhập tài khoản Google': làm tươi session Google bằng
     credentials đã lưu trong solver (accounts_db, có totp → tự chạy). Trả True
@@ -141,6 +156,7 @@ def _freshen_google(profile: str) -> bool:
         r = requests.post(f"{base}/v1/session/auto-login-saved", headers=H,
                           json={"profile": profile}, timeout=30)
         st = (r.json() or {}).get("state", "")
+        _LAST_LOGIN_STATE[profile] = st
         if st in ("failed", "blocked", "error"):
             return False
         # Poll tối đa ~310s — KHỚP ngân sách BotGuard-retry (auto_login lặp bấm
@@ -154,14 +170,23 @@ def _freshen_google(profile: str) -> bool:
             except Exception:
                 continue
             state = str(s.get("state") or "")
+            if state:
+                _LAST_LOGIN_STATE[profile] = state
             if state in ("success", "done", "logged_in"):
                 return True
-            if state in ("failed", "blocked", "error", "need_code", "need_tap"):
-                # need_code/need_tap = cần người (không có totp) → coi như fail auto
+            if state in ("failed", "blocked", "error") or state in _CAN_NGUOI:
+                # Cần người → bỏ NGAY, đừng chờ hết ngân sách. Chờ thêm không
+                # làm captcha tự biến mất, chỉ giữ trình duyệt mở vô ích.
                 return False
+        _LAST_LOGIN_STATE.setdefault(profile, "timeout")
         return False
     except Exception:
         return False
+
+
+def trang_thai_dang_nhap_cuoi(profile: str) -> str:
+    """Trạng thái auto-login cuối của profile ("" nếu chưa từng thử)."""
+    return _LAST_LOGIN_STATE.get(profile, "")
 
 
 # ── Steps riêng theo provider ────────────────────────────────────────────────
@@ -722,11 +747,23 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
             return
 
     tried_s = " → ".join(tried) if tried else "none"
-    hint = (
-        "Thêm dòng email|pass vào Settings Codex (codex_auto_list) + IMAP Gmail dùng chung"
-        if not is_google
-        else "Kiểm tra profile Google / pass+TOTP / codex_auto_list + IMAP"
-    )
+    # Nguyên nhân CỤ THỂ thắng gợi ý chung.
+    #
+    # Câu "Kiểm tra profile Google / pass+TOTP / codex_auto_list + IMAP" đưa người
+    # đọc đi sai hướng khi thực tế là Google bắt captcha: mật khẩu, TOTP, IMAP đều
+    # đúng cả, không có gì để "kiểm tra". Đo thật 30/07 với benbap2011@gmail.com —
+    # log auto_login ghi rõ captcha, còn thông báo lại bảo đi soi cấu hình.
+    trang_thai = trang_thai_dang_nhap_cuoi(profile) if is_google else ""
+    if trang_thai == "need_captcha":
+        hint = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
+                "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP/IMAP không liên quan.")
+    elif trang_thai in ("need_code", "need_tap"):
+        hint = ("Google đòi mã 2FA phải người bấm (profile này chưa có TOTP) — "
+                "xử lý trên noVNC cổng 6080, hoặc thêm TOTP cho profile.")
+    elif not is_google:
+        hint = "Thêm dòng email|pass vào Settings Codex (codex_auto_list) + IMAP Gmail dùng chung"
+    else:
+        hint = "Kiểm tra profile Google / pass+TOTP / codex_auto_list + IMAP"
     _notify(
         f"❌ {label} — {email}\n"
         f"KHÔNG tự khôi phục được (đã thử: {tried_s}).\n"

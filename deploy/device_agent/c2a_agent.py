@@ -938,8 +938,24 @@ def session(url: str, token: str, g: Guard, label: str) -> None:
         }})
         ready = ws.recv_json()
         if ready.get("type") != "ready":
-            raise RuntimeError("gateway không chấp nhận: %s"
-                               % str(ready.get("error") or ready)[:120])
+            loi = str(ready.get("error") or ready)[:120]
+            if "token" in loi.lower():
+                # Nói NGUỒN của token, không nói token.
+                #
+                # Ca đã gặp thật (30/07, sau khi khởi động lại máy): token bị xoay
+                # trên server, người dùng chạy tay agent với --token mới nên nối
+                # được, nhưng TÁC VỤ TỰ CHẠY vẫn giữ token cũ. Thông báo cũ chỉ
+                # có "token không hợp lệ" nên không phân biệt được với chưa cài
+                # token — mà hai ca đó chữa khác nhau hoàn toàn.
+                nguon = ("biến môi trường C2A_TOKEN"
+                         if token == os.environ.get("C2A_TOKEN", "") and token
+                         else "tham số --token trong dòng lệnh")
+                loi += ("\n[c2a-agent] token đang dùng lấy từ: %s (dài %d, %s…%s)"
+                        % (nguon, len(token), token[:4], token[-4:]))
+                loi += ("\n[c2a-agent] token bị XOAY trên server thì phải cài lại "
+                        "agent kèm token mới — đổi biến môi trường không đủ nếu "
+                        "tác vụ tự chạy đang giữ token cũ trong dòng lệnh.")
+            raise RuntimeError("gateway không chấp nhận: %s" % loi)
         print("[c2a-agent] đã kết nối — thiết bị '%s'" % ready.get("device"), flush=True)
         print("[c2a-agent] thư mục: %s" % ", ".join(str(r) for r in g.roots), flush=True)
         lim = (" (chỉ: %s)" % ", ".join(g.exec_allow)) if g.exec_allow else ""

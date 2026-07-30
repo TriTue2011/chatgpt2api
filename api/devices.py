@@ -52,10 +52,27 @@ def create_router() -> APIRouter:
             if not isinstance(hello, dict) or hello.get("type") != "hello":
                 await ws.close(code=4400)
                 return
-            match = da.resolve_token(str(hello.get("token") or ""))
+            tok_offered = str(hello.get("token") or "")
+            match = da.resolve_token(tok_offered)
             if match is None:
-                # Không nói rõ vì sao — token sai thì đừng giúp bên kia dò.
-                logger.warning({"event": "device_agent_auth_failed"})
+                # Không nói rõ vì sao TRONG PHẢN HỒI — token sai thì đừng giúp bên
+                # kia dò. Nhưng LOG phải đủ để phân biệt ba ca khác hẳn nhau mà
+                # bản cũ gộp thành một dòng trống rỗng: token CŨ (đã xoay), token
+                # RỖNG/quá ngắn, và thiết bị bị tắt. Không có gì để so thì chỉ
+                # còn cách đoán.
+                #
+                # Ghi DẤU VÂN (sha256 rút gọn), không ghi token: đủ để đối chiếu
+                # với dấu vân đang lưu, không đủ để dùng lại.
+                import hashlib
+                logger.warning({
+                    "event": "device_agent_auth_failed",
+                    "do_dai": len(tok_offered),
+                    "dau_van": (hashlib.sha256(tok_offered.encode()).hexdigest()[:12]
+                                if tok_offered else ""),
+                    "ly_do": ("rỗng" if not tok_offered
+                              else "quá ngắn" if len(tok_offered) < 16
+                              else "không khớp thiết bị nào"),
+                })
                 await ws.send_json({"type": "error", "error": "token không hợp lệ"})
                 await ws.close(code=4401)
                 return
