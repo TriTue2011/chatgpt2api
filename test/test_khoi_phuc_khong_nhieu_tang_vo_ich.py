@@ -232,6 +232,67 @@ class TestThuTuTang(unittest.TestCase):
         self.assertGreaterEqual(float(m2.group(1)), float(m.group(1)))
 
 
+class TestXongViecThiDongTab(unittest.TestCase):
+    """Onboard xong (thành công hay thất bại) phải đóng browser ngay.
+
+    Đo thật 30/07: tầng 2 xong lúc 21:00:33 nhưng tab vẫn mở, phải chờ
+    browser_pool tự dọn khi rỗi (~5 phút) — nhiều tài khoản thì đó là vài trình
+    duyệt ngồi không trên Xvfb. Các luồng khác (auto_login, chatgpt, gemini,
+    claude, onboard hàng loạt) đều đã đóng; chỉ codex_google_onboard bỏ sót.
+    """
+
+    def test_codex_google_onboard_dong_browser(self):
+        code = _code(GOC / "captcha-solver" / "src" / "codex_google_onboard.py")
+        self.assertIn("finally:", code)
+        i = code.index("finally:")
+        self.assertIn("pool.close_profile(req.profile)", code[i:i + 600])
+
+    def test_moi_luong_onboard_deu_co_dong(self):
+        goc = GOC / "captcha-solver" / "src"
+        for ten in ("auto_login", "chatgpt_login", "gemini_web_login",
+                    "claude_web_login", "codex_google_onboard",
+                    "github_codex_onboard"):
+            with self.subTest(luong=ten):
+                self.assertIn("close_profile", _code(goc / f"{ten}.py"))
+
+
+class TestKhongBaoLoiOanKhiDaLayDuocToken(unittest.TestCase):
+    """Đua đổi code với listener :1455 — thua cuộc đua KHÔNG phải là thất bại.
+
+    Trình duyệt chạy cùng container nên khi nó đi tới localhost:1455/auth/callback
+    thì listener đổi code trước; state dùng-một-lần nên lần đổi thứ hai của ta
+    ném ValueError. Đo thật 30/07: token mới ĐÃ vào pool, account về active, mà
+    lượt khôi phục vẫn bị ghi `dead_recovery_t13_error` và báo ❌.
+    """
+
+    def setUp(self):
+        self.code = _code(GOC / "services" / "account_recovery.py")
+
+    def test_loi_doi_code_khong_thoat_ra_ngoai(self):
+        i = self.code.index("def _codex_exchange_from_redirect")
+        khuc = self.code[i:i + 1600]
+        self.assertIn("try:", khuc)
+        self.assertIn("except Exception", khuc)
+        # exchange phải nằm TRONG try
+        self.assertLess(khuc.index("try:"), khuc.index("exchange_codex_code(code, st)"))
+
+    def test_phan_xu_bang_token_trong_pool(self):
+        """Sau khi đổi code, kết luận dựa trên CÓ TOKEN DÙNG ĐƯỢC hay không."""
+        self.assertIn("def _cho_token_song", self.code)
+        for ham in ("_codex_reuse", "_codex_batch"):
+            i = self.code.index(f"def {ham}")
+            khuc = self.code[i:self.code.index("def ", i + 10) if "def " in self.code[i + 10:] else len(self.code)]
+            self.assertIn("_cho_token_song(email)", khuc, f"{ham} phải chờ token")
+
+    def test_cho_lai_vai_nhip_vi_doi_code_xong_sau(self):
+        """onboard trả về NGAY khi bắt được request callback — hỏi pool đúng một
+        lần là dễ hụt."""
+        i = self.code.index("def _cho_token_song")
+        khuc = self.code[i:i + 900]
+        self.assertIn("time.sleep", khuc)
+        self.assertIn("for lan in range(so_lan)", khuc)
+
+
 class TestLogOkNoiThat(unittest.TestCase):
     def test_dead_recovery_ok_noi_ro_nho_dau(self):
         code = _code(GOC / "services" / "codex_error_recovery_scheduler.py")

@@ -427,3 +427,16 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
     except Exception as e:
         logger.exception("codex google onboard error")
         return {"state": "failed", "error": str(e)[:200]}
+    finally:
+        # ĐÓNG TAB NGAY khi xong (thành công hay thất bại): xong việc rồi thì cái
+        # tab chỉ còn đốt RAM/CPU trên Xvfb. Trước đây phải chờ browser_pool tự
+        # dọn khi rỗi (~5 phút) — đo thật 30/07: onboard xong 21:00:33 mà tới
+        # 21:05 mới thấy "auto-evicting idle profile". Cookie/session vẫn được
+        # giữ vì close_profile ghi user-data-dir xuống đĩa, không xoá profile.
+        try:
+            await pool.close_profile(req.profile)
+            logger.info("codex-g: đã đóng browser profile=%s", req.profile)
+        except Exception as close_err:
+            logger.warning({"event": "codex_google_onboard_close_error",
+                            "profile": req.profile,
+                            "error": str(close_err)[:160]})

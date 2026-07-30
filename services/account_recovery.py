@@ -277,12 +277,50 @@ def _codex_pick_working(email: str) -> str:
 
 
 def _codex_exchange_from_redirect(redirect_url: str, state: str) -> None:
+    """Đổi code → token. Lỗi "state đã dùng" ở đây được NUỐT CÓ CHỦ Ý.
+
+    Trình duyệt chạy trong CÙNG container, nên khi nó đi tới
+    http://localhost:1455/auth/callback?code=… thì listener :1455
+    (services/codex_callback_listener) bắt được và đổi code TRƯỚC. State là
+    dùng-một-lần, nên lần đổi thứ hai này chắc chắn ném ValueError.
+
+    Đo thật 30/07 (smarthomebanbap2011@gmail.com): tầng 2 lấy code lúc 21:00:33,
+    token mới vào pool và account về active — nhưng lần đổi thứ hai ném lỗi, lỗi
+    đó xuyên qua _codex_reuse ra tới scheduler và được ghi thành
+    `dead_recovery_t13_error`; người vận hành nhận ❌ trong khi tài khoản ĐÃ sống.
+
+    Ai thắng cuộc đua không quan trọng. Người phán xử là _codex_pick_working():
+    có token dùng được hay không.
+    """
     from urllib.parse import urlparse, parse_qs
     from services.oauth_service import exchange_codex_code
     q = parse_qs(urlparse(redirect_url or "").query)
     code = (q.get("code") or [""])[0]
     st = (q.get("state") or [state])[0]
-    exchange_codex_code(code, st)
+    try:
+        exchange_codex_code(code, st)
+    except Exception as exc:
+        logger.info({
+            "event": "codex_exchange_skipped",
+            "error": str(exc)[:160],
+            "hint": "thường là listener :1455 đã đổi code trước — kiểm token trong pool",
+        })
+
+
+def _cho_token_song(email: str, so_lan: int = 4, nghi: float = 4.0) -> str:
+    """Chờ token mới hiện trong pool rồi trả về token còn sống ('' nếu không có).
+
+    `codex-google-onboard` trả về NGAY khi bắt được request callback, tức có thể
+    sớm hơn lúc việc đổi code xong vài giây. Hỏi pool đúng một lần là dễ hụt.
+    """
+    tok = ""
+    for lan in range(so_lan):
+        tok = _codex_pick_working(email)
+        if tok:
+            return tok
+        if lan < so_lan - 1:
+            time.sleep(nghi)
+    return tok
 
 
 def _codex_reuse(profile: str, email: str) -> str:
@@ -302,7 +340,7 @@ def _codex_reuse(profile: str, email: str) -> str:
     if data.get("state") != "success":
         return ""
     _codex_exchange_from_redirect(data.get("redirect_url") or "", auth["state"])
-    return _codex_pick_working(email)
+    return _cho_token_song(email)
 
 
 def _codex_batch(email: str) -> str:
@@ -371,7 +409,7 @@ def _codex_batch(email: str) -> str:
         })
         return ""
     _codex_exchange_from_redirect(data.get("redirect_url"), auth["state"])
-    return _codex_pick_working(email)
+    return _cho_token_song(email)
 
 
 def _cgf_onboard_once(profile: str, *, reuse_session: bool, timeout_polls: int = 36) -> str:
