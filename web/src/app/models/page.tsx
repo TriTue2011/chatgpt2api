@@ -26,6 +26,8 @@ const PROVIDER_LABELS: Record<string, { label: string; color: string; tint: stri
   claude: { label: "Claude Web", color: "#D97757", tint: "amber" },
   gemini_web_api: { label: "Gemini Web API", color: "#9333EA", tint: "violet" },
   gemini_web: { label: "Gemini Web (Scrape)", color: "#9333EA", tint: "violet" },
+  nvidia_nim: { label: "NVIDIA NIM", color: "#76B900", tint: "emerald" },
+  tokenrouter: { label: "TokenRouter", color: "#06B6D4", tint: "cyan" },
 };
 
 const CORE_MODELS = ["ha-agent", "chatgpt/auto", "cgf/auto", "oc/auto", "gemini_free/auto", "cx/auto", "ag/auto", "flow/auto", "claude/auto", "cgw/auto", "gmw/auto", "gma/auto"];

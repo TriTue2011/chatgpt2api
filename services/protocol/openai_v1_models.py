@@ -121,6 +121,12 @@ FALLBACK_MODELS = {
         "nv-image/black-forest-labs/flux.2-klein-4b",
         "nv-image/black-forest-labs/flux.1-dev",
     ],
+    # TokenRouter (đường riêng tr/). Fallback tĩnh để trang Quản lý model vẫn có
+    # model chọn khi /v1/models của TokenRouter tạm lỗi. list_models động sẽ ghi
+    # đè bằng catalog thật của tài khoản.
+    "tokenrouter": [
+        "tr/moonshotai/kimi-k3-free",
+    ],
     "chatgpt2api": [],
     "antigravity": [
         "ag/auto",
@@ -307,6 +313,30 @@ def _fetch_openrouter_models() -> set[str]:
         logger.warning({"event": "list_models_openrouter_error", "error": str(exc)})
 
     return set()
+
+
+def _fetch_tokenrouter_models() -> set[str]:
+    """Model TokenRouter (đường riêng tr/) cho trang Quản lý model.
+
+    Không có thì provider tokenrouter không hiện trong Quản lý model, và các mục
+    (combo, mặc định…) không có gì để chọn — đúng lỗi người vận hành báo 30/07.
+    Chỉ liệt kê khi provider BẬT + có key; gắn tiền tố tr/ đúng như router.
+    """
+    try:
+        from services.providers.tokenrouter import tokenrouter_provider
+        if not tokenrouter_provider.enabled:
+            return set()
+        out = set()
+        for m in tokenrouter_provider.list_models():
+            mid = str(m.get("id") or "").strip()
+            if mid:
+                out.add(mid if mid.startswith("tr/") else f"tr/{mid}")
+        if out:
+            logger.info({"event": "list_models_tokenrouter", "count": len(out)})
+        return out
+    except Exception as exc:
+        logger.warning({"event": "list_models_tokenrouter_failed", "error": str(exc)[:160]})
+        return set()
 
 
 def _fetch_nvidia_models() -> set[str]:
@@ -803,6 +833,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
         "openrouter": _fetch_openrouter_models,
         "nvidia_nim": _fetch_nvidia_models,
         "gemini_web": _fetch_gemini_web_models,
+        "tokenrouter": _fetch_tokenrouter_models,
     }
 
     # Add custom providers dynamically
@@ -854,7 +885,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
                 })
 
     # Apply fallbacks for providers that returned nothing
-    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "chatgpt2api", "antigravity", "gemini_web"]:
+    for provider_name in ["opencode", "gemini_free", "openai_oauth", "nvidia_nim", "tokenrouter", "chatgpt2api", "antigravity", "gemini_web"]:
         if provider_name not in all_models:
             for model_id in sorted(_apply_fallback(provider_name)):
                 if model_id not in seen:
