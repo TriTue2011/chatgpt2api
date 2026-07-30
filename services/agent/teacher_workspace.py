@@ -663,8 +663,13 @@ def import_sgk_pdf(
     write_md: bool = True,
     store_images: bool = False,
     volume: str = "",
+    kind: str = "",
 ) -> dict[str, Any]:
     """Import 1 file PDF SGK → data/agent/teacher/sgk/lop{N}/{mon}.md.
+
+    kind: loại tài liệu ghi vào metadata RAG (sgk/sgv/vbt/tap_huan/slide). Để
+    trống thì suy từ ``collection`` — đủ đúng cho các đường đã tách kho, nhưng
+    caller BIẾT loại thì hãy truyền, vì `tap_huan` và `other` chung một kho.
 
     keep_pdf=False: KHÔNG lưu bản PDF gốc vào ``imports/``. Dùng cho nạp hàng
     loạt — SGK dựng từ ảnh trang là hàng chục GB, mà bản PDF chỉ để audit chứ
@@ -866,6 +871,7 @@ def import_sgk_pdf(
             source=src,
             collection=collection,
             volume=vol,
+            kind=kind,
         )
         result["rag"] = rag
     except Exception as exc:
@@ -1008,6 +1014,41 @@ def list_imports(
     }
 
 
+def _kind_tu_kho(collection: str) -> str:
+    """Suy LOẠI tài liệu từ tên kho, theo bảng thật của `sgk_fetch.KIND_COLLECTION`.
+
+    Vì sao không giữ phép thử cứng `"vbt" if collection.endswith("_vbt") else "sgk"`:
+    nó chỉ biết HAI loại trong năm. Đo thật 2026-07-30, nạp một quyển mỗi loại
+    rồi đọc lại metadata đã ghi:
+
+        kb_giao_duc_vbt      → kind=vbt       ✓
+        kb_giao_duc_sgv      → kind=sgk       ✗ đáng ra sgv
+        kb_giao_duc_tailieu  → kind=sgk       ✗ đáng ra tap_huan
+
+    Tức mọi đoạn sách giáo viên và tài liệu tập huấn trong kho đều tự khai là
+    SGK. Không lỗi nào báo ra, số đếm vẫn đẹp, và vì mỗi loại đã ở một kho riêng
+    nên tra cứu vẫn ra đúng — chỉ metadata là sai. Nhưng đó chính là khoá dùng để
+    lọc theo loại; hễ có chỗ nào lọc `kind="sgv"` là nó thấy kho rỗng.
+
+    `tap_huan` và `other` dùng CHUNG một kho, nên phép suy ngược không thể phân
+    biệt — trả `tap_huan` (loại thật, có trong danh mục), không trả `other`.
+    Muốn chính xác thì truyền thẳng `kind`, đó là lý do tham số đó tồn tại.
+    """
+    col = str(collection or "").strip()
+    try:
+        from services.agent import sgk_fetch as _sf
+        bang = _sf.KIND_COLLECTION
+    except Exception:
+        bang = {}
+    for k in ("sgk", "sgv", "vbt", "tap_huan", "slide"):
+        if bang.get(k) == col:
+            return k
+    # Bộ sách khác: `kb_giao_duc_bo{N}` là SGK của bộ N (COLLECTION_FOR_SET).
+    if re.fullmatch(r"kb_giao_duc_bo\d+", col):
+        return "sgk"
+    return "sgk"
+
+
 def push_sgk_to_rag(
     markdown: str,
     *,
@@ -1017,14 +1058,19 @@ def push_sgk_to_rag(
     source: str = "",
     collection: str = "kb_giao_duc",
     volume: str = "",
+    kind: str = "",
 ) -> dict[str, Any]:
     """Đẩy markdown SGK vào vn-mcp-hub RAG (curate). Best-effort, sync.
 
     Chia text lớn thành vài request để tránh body quá lớn; mỗi batch ≤ ~25k ký tự.
+
+    ``kind``: loại tài liệu (sgk/sgv/vbt/tap_huan/slide) ghi vào metadata. Để
+    trống thì SUY TỪ TÊN KHO — xem :func:`_kind_tu_kho`.
     """
     text = (markdown or "").strip()
     if not text:
         return {"ok": False, "error": "empty markdown"}
+    kind_meta = (kind or "").strip().lower() or _kind_tu_kho(collection)
 
     from urllib.parse import urlparse
     import urllib.request
@@ -1082,7 +1128,7 @@ def push_sgk_to_rag(
             "metadata": {
                 "grade": int(grade or 0),
                 "subject": subject,
-                "kind": "vbt" if collection.endswith("_vbt") else "sgk",
+                "kind": kind_meta,
                 # Tập của quyển sách — thiếu khoá này thì "ghi đè" chỉ biết
                 # phạm vi cả môn, tức nạp tập hai xoá luôn tập một.
                 **({"volume": volume} if volume else {}),
@@ -1192,6 +1238,7 @@ def import_sgk_bytes(
             # trả lời trộn ở đường tra offline.
             write_md=(k == "sgk"),
             volume=volume,
+            kind=k,
         )
     finally:
         try:

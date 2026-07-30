@@ -141,7 +141,12 @@ class TeacherWorkspaceTests(unittest.TestCase):
             tw._ensure_seeded()
         rows = tw.list_workspaces()
         ids = {r["id"] for r in rows}
-        self.assertIn("lop1-van", ids)
+        # Lớp 1 học TIẾNG VIỆT (`tviet`), không phải Ngữ văn (`van` — lớp 6–12).
+        # Assert cũ là "lop1-van", có từ trước khi tách hai mã môn; nó đòi một
+        # workspace không tồn tại và KHÔNG NÊN tồn tại. Xem GRADE_SUBJECTS.
+        self.assertIn("lop1-tviet", ids)
+        self.assertNotIn("lop1-van", ids)
+        self.assertIn("lop6-van", ids)
         self.assertIn("lop2-toan", ids)
         self.assertIn("lop9-toan", ids)
         self.assertIn("lop12-anh", ids)

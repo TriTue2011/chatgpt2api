@@ -37,6 +37,14 @@ RAG = "rag"  # maps to rag_knowledge
 
 ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL}
 
+# Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL`, không giữ bảng thứ
+# hai (thêm loại một chỗ mà chỗ kia vẫn nhãn cũ là lỗi im lặng).
+try:  # pragma: no cover
+    from services.agent.sgk_taphuan import DOC_KIND_LABEL as _KIND_LABEL
+except Exception:  # noqa: BLE001
+    _KIND_LABEL = {"sgk": "SGK", "sgv": "SGV", "vbt": "VBT/SBT",
+                   "tap_huan": "Tài liệu tập huấn"}
+
 
 def _gc() -> None:
     now = time.time()
@@ -167,8 +175,54 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     return None
 
 
+def _bang_mon() -> list[tuple[str, str]]:
+    """Bảng nhận môn, lấy TỪ `teacher_workspace.SUBJECT_ALIASES` — bảng duy nhất.
+
+    Vì sao không giữ regex riêng ở đây: bản cũ có bảng ba môn của chính nó, và nó
+    ánh xạ "tiếng việt" → ``van``. Nhưng ``van`` là Ngữ văn (lớp 6–12); Tiếng
+    Việt (lớp 1–5) là mã ``tviet`` — hai mã KHÁC NHAU trong `SUBJECTS`. Nên gửi
+    ảnh trang Tiếng Việt lớp 2 và gõ "lớp 2 tiếng việt" thì tài liệu vào Ngữ văn
+    lớp 2, một tổ hợp không tồn tại; tra cứu sau đó không bao giờ thấy.
+
+    Bảng cũ cũng chỉ biết toán/văn/anh, tức bảy môn còn lại (Lịch sử và Địa lí,
+    Lí, Hoá, Sinh…) KHÔNG nạp được qua kênh chat dù đường tải lên thì nạp được.
+
+    Xếp cụm DÀI TRƯỚC: "lịch sử và địa lí" phải thắng "lịch sử" và "địa lí".
+    """
+    try:
+        from services.agent.teacher_workspace import SUBJECT_ALIASES as _AL
+        cap = list(_AL.items())
+    except Exception:  # noqa: BLE001
+        cap = [("toan", "toan"), ("toán", "toan"), ("tiếng việt", "tviet"),
+               ("tviet", "tviet"), ("văn", "van"), ("van", "van"),
+               ("tiếng anh", "anh"), ("anh", "anh")]
+    return sorted(cap, key=lambda kv: -len(kv[0]))
+
+
+# Loại tài liệu người gửi có thể khai kèm. Không khai → sgk (giữ hành vi cũ).
+_KIND_WORDS: tuple[tuple[str, str], ...] = (
+    ("tai lieu tap huan", "tap_huan"), ("tài liệu tập huấn", "tap_huan"),
+    ("tap huan", "tap_huan"), ("tập huấn", "tap_huan"),
+    ("tai lieu", "tap_huan"), ("tài liệu", "tap_huan"),
+    ("sach giao vien", "sgv"), ("sách giáo viên", "sgv"),
+    ("giao an", "sgv"), ("giáo án", "sgv"), ("khbd", "sgv"),
+    ("ke hoach bai day", "sgv"), ("kế hoạch bài dạy", "sgv"),
+    ("sgv", "sgv"),
+    ("vo bai tap", "vbt"), ("vở bài tập", "vbt"),
+    ("sach bai tap", "vbt"), ("sách bài tập", "vbt"),
+    ("bai tap", "vbt"), ("bài tập", "vbt"),
+    ("vbt", "vbt"), ("sbt", "vbt"),
+    ("sach giao khoa", "sgk"), ("sách giáo khoa", "sgk"), ("sgk", "sgk"),
+)
+
+
 def parse_teacher_meta(text: str) -> dict[str, Any] | None:
-    """Parse 'lớp 5 toán' / '5 van' / 'lớp 9 · anh' → {grade, subject}."""
+    """Parse 'lớp 5 toán' / 'lớp 4 sgv toán' / 'lớp 2 tiếng việt tập hai'.
+
+    Trả {grade, subject} và thêm `kind` / `volume` CHỈ KHI người gửi khai rõ.
+    Không khai thì không có khoá đó — caller mặc định ``sgk`` và tập trống. Suy
+    bừa một cái tập là tệ hơn để trống: bộ lọc theo tập sẽ trả sai tập, im lặng.
+    """
     t = (text or "").strip().lower()
     if not t:
         return None
@@ -183,26 +237,53 @@ def parse_teacher_meta(text: str) -> dict[str, Any] | None:
     if grade is None or grade < 1 or grade > 12:
         return None
 
+    kind = ""
+    for tu, ma in _KIND_WORDS:
+        if tu in t:
+            kind = ma
+            # Cắt cụm loại khỏi câu TRƯỚC khi tìm môn: "vở bài tập" chứa "tập",
+            # và nhất là "sách giáo viên"/"giáo án" không được ăn vào tên môn.
+            t_mon = t.replace(tu, " ")
+            break
+    else:
+        t_mon = t
+
     subject = None
-    # order matters: longer phrases first
-    subject_map = [
-        (r"ng[uữ]\s*v[aă]n|ti[eế]ng\s*vi[eệ]t|\bvan\b|\btv\b|văn", "van"),
-        (r"ti[eế]ng\s*anh|\banh\b|\benglish\b|\ben\b", "anh"),
-        (r"to[aá]n|\bmath\b|\btoan\b", "toan"),
-    ]
-    for pat, code in subject_map:
-        if re.search(pat, t, re.I):
-            subject = code
+    for tu, ma in _bang_mon():
+        # Biên từ cho alias ngắn ("tv", "en", "lí"): không có thì "en" khớp vào
+        # giữa "kiến", và mọi câu tiếng Việt đều thành môn Tiếng Anh.
+        if re.search(rf"(?<!\w){re.escape(tu)}(?!\w)", t_mon):
+            subject = ma
             break
     if not subject:
         return None
-    return {"grade": grade, "subject": subject}
+
+    ra: dict[str, Any] = {"grade": grade, "subject": subject}
+    if kind:
+        ra["kind"] = kind
+    vol = ""
+    # Tìm tập trên câu ĐÃ CẮT cụm loại: "vở bài tập 2" là loại vbt, con số 2 là
+    # số thứ tự bài tập chứ không phải tập hai. Không cắt thì mọi "bài tập 2"
+    # thành "tập hai" và tài liệu bị gắn nhãn tập sai.
+    mv = re.search(r"t[aậ]p\s*(m[oộ]t|hai|1|2)(?!\w)", t_mon)
+    if mv:
+        vol = {"mot": "tập một", "một": "tập một", "1": "tập một",
+               "hai": "tập hai", "2": "tập hai"}.get(mv.group(1), "")
+    if vol:
+        ra["volume"] = vol
+    return ra
 
 
 ASK_TEACHER = (
     "📚 Nạp RAG **Teacher / SGK**\n"
-    "Cho em biết **lớp** (1–12) và **môn** (toán / văn / anh).\n"
-    "Ví dụ: `5 toán` · `lớp 9 văn` · `12 anh`\n"
+    "Cho em biết **lớp** (1–12) và **môn**.\n"
+    "Môn: toán · tiếng việt · ngữ văn · tiếng anh · lịch sử và địa lí · "
+    "lịch sử · địa lí · lí · hoá · sinh\n"
+    "Ví dụ: `5 toán` · `lớp 2 tiếng việt` · `lớp 10 hoá`\n"
+    "Thêm được **loại** và **tập** nếu muốn — không nói thì mặc định là sách "
+    "giáo khoa:\n"
+    "`lớp 4 sgv toán` (sách giáo viên) · `lớp 4 vở bài tập toán` · "
+    "`lớp 2 tiếng việt tập hai`\n"
     "→ Trả lời trong 10 phút (hoặc gửi lại PDF)."
 )
 
@@ -409,10 +490,24 @@ def ingest_teacher(
     grade: int,
     subject: str,
     name: str = "",
+    kind: str = "sgk",
+    caption: str = "",
 ) -> dict[str, Any]:
-    """RAG teacher: nạp SGK theo lớp + môn."""
+    """RAG teacher: nạp PDF gửi qua bot vào ĐÚNG kho theo loại.
+
+    ``kind``: sgk (mặc định) | sgv | vbt | tap_huan. Trước đây tham số này không
+    tồn tại nên MỌI PDF gửi qua Zalo/Telegram đều vào ``kb_giao_duc`` — kho nội
+    dung học sinh — kể cả một quyển sách giáo viên. Đó đúng là lỗi đã vá ở đường
+    crawl (`sgk_taphuan`) và đường tải lên (`import_sgk_bytes`), nhưng đường KÊNH
+    CHAT chưa được vá theo.
+
+    ``caption``: lời kèm file, dùng để suy TẬP. Không suy được thì để trống chứ
+    không đoán — nhãn tập sai làm bộ lọc theo tập trả sai tập, im lặng.
+    """
     try:
+        from services.agent import sgk_fetch as _sf
         from services.agent import teacher_workspace as tw
+        k = str(kind or "sgk").strip().lower() or "sgk"
         r = tw.import_sgk_pdf(
             pdf_path,
             grade=int(grade),
@@ -420,16 +515,30 @@ def ingest_teacher(
             mode="append",
             title="",
             source_name=name or Path_name(pdf_path),
+            collection=_sf.KIND_COLLECTION.get(k, "kb_giao_duc"),
+            # CHỈ sách học sinh ghi vào .md của SGK gốc — `search_sgk` đọc các
+            # file đó và không phân biệt loại.
+            write_md=(k == "sgk"),
+            volume=tw.detect_volume(caption or name or ""),
+            kind=k,
         )
         if r.get("ok"):
             from services.agent.teacher_workspace import SUBJECT_LABEL
             sub = r.get("subject") or subject
             g = r.get("grade") or grade
+            rag = r.get("rag") or {}
+            so_doan = int(rag.get("chunks_added") or 0)
             msg = (
-                f"Đã nạp SGK teacher 🎓\n"
+                f"Đã nạp {_KIND_LABEL.get(k, 'tài liệu')} 🎓\n"
                 f"• Lớp **{g}** · **{SUBJECT_LABEL.get(sub, sub)}**\n"
                 f"• {r.get('chars', 0)} ký tự · mode={r.get('mode')}\n"
-                f"• File: `{r.get('path')}`"
+                f"• File: `{r.get('path')}`\n"
+                # Không có dòng này thì "đã nạp" chỉ nói về .md, còn bot tra bằng
+                # kho vector — nạp xong mà bot không thấy là không ai biết.
+                + (f"• RAG: **{so_doan} đoạn** vào `{rag.get('collection')}`"
+                   if so_doan > 0 else
+                   f"• ⚠️ RAG chưa nhận ({str(rag.get('errors') or rag.get('error') or 'không rõ')[:100]})"
+                   " — bot có thể chưa tra ra tài liệu này")
             )
             return {"ok": True, "text": msg, **r}
         return {"ok": False, "error": r.get("error") or "import failed", "text": ""}

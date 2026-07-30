@@ -1246,8 +1246,13 @@ def _do_pdf_intent(
     grade: int | None = None,
     subject: str | None = None,
     user_id: str = "",
+    loai_sach: str = "sgk",
+    chu_thich: str = "",
 ) -> None:
-    """PDF: rag_knowledge / rag_teacher. word/excel → báo không hỗ trợ file."""
+    """PDF: rag_knowledge / rag_teacher. word/excel → báo không hỗ trợ file.
+
+    `loai_sach` tên KHÁC biến `kind` bên trong (kind là loại việc cho telemetry).
+    """
     if not pending:
         return
     import os
@@ -1280,7 +1285,8 @@ def _do_pdf_intent(
                 err = "missing grade/subject"
                 send_message(chat_id, reply)
                 return
-            r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
+            r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject),
+                                   name=name, kind=loai_sach, caption=chu_thich)
             reply = r.get("text") or r.get("error") or "Xong."
             send_message(chat_id, reply)
             return
@@ -1728,6 +1734,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             _do_pdf_intent(
                 chat_id, _pi.pop_pending(_pkey), _pi.RAG_TEACHER,
                 grade=meta["grade"], subject=meta["subject"], user_id=user_id,
+                loai_sach=meta.get("kind") or "sgk", chu_thich=text,
             )
             return
         # parse theo intents bot có thể làm (RAG); word/excel vẫn parse được bằng keyword
@@ -1765,7 +1772,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if full and full.get("data"):
                 r = _phi.ingest_teacher_from_photo(
                     full["data"], grade=meta["grade"], subject=meta["subject"],
-                    channel="zalo",
+                    channel="zalo", kind=meta.get("kind") or "sgk", caption=text,
                 )
                 send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
             return

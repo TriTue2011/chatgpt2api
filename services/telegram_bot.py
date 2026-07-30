@@ -782,8 +782,15 @@ def _do_pdf_intent(
     grade: int | None = None,
     subject: str | None = None,
     user_id: str = "",
+    loai_sach: str = "sgk",
+    chu_thich: str = "",
 ) -> None:
-    """PDF chờ: rag_knowledge | rag_teacher | word | excel."""
+    """PDF chờ: rag_knowledge | rag_teacher | word | excel.
+
+    `loai_sach` (sgk/sgv/vbt/tap_huan) tên KHÁC biến `kind` bên trong hàm — biến
+    đó là loại việc cho telemetry ("pdf_word"/"pdf_rag"), trùng tên là ghi đè
+    tham số ngay dòng đầu.
+    """
     if not pending:
         return
     import os
@@ -853,7 +860,8 @@ def _do_pdf_intent(
                 err = "missing grade/subject"
                 send_message(chat_id, reply)
             else:
-                r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject), name=name)
+                r = _pi.ingest_teacher(path, grade=int(grade), subject=str(subject),
+                                       name=name, kind=loai_sach, caption=chu_thich)
                 reply = r.get("text") or r.get("error") or "Xong."
                 if r.get("error") and not r.get("ok", True):
                     status = "error"
@@ -1229,6 +1237,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             _do_pdf_intent(
                 chat_id, _pi.pop_pending(_pkey), _pi.RAG_TEACHER,
                 grade=meta["grade"], subject=meta["subject"], user_id=user_id,
+                loai_sach=meta.get("kind") or "sgk", chu_thich=text,
             )
             return
         _allowed_i = _pi.allowed_intents(_allow)
@@ -1262,7 +1271,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             if full and full.get("data"):
                 r = _phi.ingest_teacher_from_photo(
                     full["data"], grade=meta["grade"], subject=meta["subject"],
-                    channel="tg",
+                    channel="tg", kind=meta.get("kind") or "sgk", caption=text,
                 )
                 send_message(chat_id, r.get("text") or r.get("error") or "Xong.")
             return

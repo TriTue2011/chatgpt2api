@@ -123,19 +123,41 @@ class TestDuongNapGanMetadata:
         for khoa in ('"grade": int(grade or 0)', '"subject": subject', '"kind"'):
             assert khoa in than, f"thiếu {khoa} trong metadata gửi lên hub"
 
-    def test_hub_nhan_metadata_va_suy_tu_source(self):
+    def _than_curate(self) -> str:
+        """Thân hàm `rag_curate`, cắt tới HÀM KẾ TIẾP chứ không phải N byte.
+
+        Bản cũ dùng ``src[i:i + 3000]``. Hàm đó dài ra (thêm suy `kind`, thêm
+        tiền tố `tay/`) nên chốt cần soi trôi ra NGOÀI cửa sổ 3000 byte, và test
+        đỏ dù mã vẫn đúng — đúng loại test tự hỏng theo thời gian, làm người sửa
+        đi tìm lỗi ở chỗ không có lỗi.
+        """
         src = (HUB / "src" / "main.py").read_text("utf-8")
         i = src.index('@app.post("/api/rag/curate/{collection}")')
-        than = src[i:i + 3000]
-        assert 'r"^teacher_sgk/lop(\\d{1,2})/([a-z_]+)/"' in than, \
-            "hub không suy grade/subject từ source"
+        j = src.find("\n    @app.", i + 10)
+        return src[i:j if j > i else len(src)]
+
+    def test_hub_nhan_metadata_va_suy_tu_source(self):
+        than = self._than_curate()
+        # Hai tiền tố: `teacher_sgk/` (đường nạp của dự án) và `tay/` (nạp tay).
+        # Chỉ khớp `teacher_sgk` thì 18 đoạn SGK Tiếng Việt lớp 1–2 nạp tay không
+        # có nhãn lớp–môn — đếm thì thấy tăng, hỏi theo lớp thì không ra.
+        assert r'r"^(?:teacher_sgk|tay)/lop(\d{1,2})/([a-z_]+)/"' in than, \
+            "hub không suy grade/subject từ source cho CẢ HAI tiền tố"
         assert 'body.get("metadata")' in than, "hub không nhận metadata tường minh"
         assert '**extra' in than, "metadata không được trộn vào metadatas"
 
     def test_hub_khong_cho_ghi_de_source(self):
         """metadata do client gửi KHÔNG được ghi đè source/chunk — hai khoá này là
         xương sống để xoá theo nguồn (``/api/rag/forget``) và đánh số đoạn."""
-        src = (HUB / "src" / "main.py").read_text("utf-8")
-        i = src.index('@app.post("/api/rag/curate/{collection}")')
-        than = src[i:i + 3000]
-        assert 'if k in ("source", "chunk")' in than
+        assert 'if k in ("source", "chunk")' in self._than_curate()
+
+    def test_hub_suy_kind_du_ca_nam_kho(self):
+        """Suy `kind` từ tên kho phải biết CẢ NĂM loại.
+
+        Đây là đường dự phòng khi client không gửi `metadata.kind`. Thiếu
+        `_tailieu` thì mọi đoạn tài liệu tập huấn tự khai `kind="sgk"` — đúng lỗi
+        đo được ở phía client ngày 2026-07-30, chỉ khác chỗ xảy ra.
+        """
+        than = self._than_curate()
+        for hau_to in ("_vbt", "_slide", "_sgv", "_tailieu"):
+            assert f'endswith("{hau_to}")' in than, f"hub không nhận kho {hau_to}"

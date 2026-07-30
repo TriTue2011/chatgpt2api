@@ -876,9 +876,15 @@ def create_app() -> FastAPI:
         # `tay/` là đường nạp tay. Bản cũ chỉ khớp `teacher_sgk` nên 18 đoạn SGK
         # Tiếng Việt lớp 1–2 nạp tay không có nhãn — đếm thì thấy tăng, hỏi theo
         # lớp thì không ra. Sai âm thầm, chỉ lộ khi soi metadata.
+        # `_tailieu` PHẢI có trong danh sách. Thiếu nó thì mọi đoạn tài liệu tập
+        # huấn nằm đúng kho `kb_giao_duc_tailieu` nhưng tự khai `kind="sgk"` —
+        # đúng cái đo được ở phía client ngày 2026-07-30 (nạp một quyển mỗi loại
+        # rồi đọc lại metadata: sgv và tap_huan đều ra "sgk"). Không lỗi nào báo,
+        # số đếm vẫn đẹp; chỉ lộ khi có chỗ lọc theo `kind` và thấy kho rỗng.
         extra_kind = ("vbt" if collection.endswith("_vbt")
                       else "slide" if collection.endswith("_slide")
                       else "sgv" if collection.endswith("_sgv")
+                      else "tap_huan" if collection.endswith("_tailieu")
                       else "sgk")
         mt = re.match(r"^(?:teacher_sgk|tay)/lop(\d{1,2})/([a-z_]+)/", source)
         if mt:

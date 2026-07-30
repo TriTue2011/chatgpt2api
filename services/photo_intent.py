@@ -45,10 +45,22 @@ ASK_PROMPT_GENERATE = (
     "Ví dụ: `vẽ lại anime` · `đổi nền bãi biển` · `làm nét, tông ấm`\n"
     "→ Trả lời trong 10 phút."
 )
+# Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL` chứ không giữ bảng
+# thứ hai: hai bảng song song là lý do thêm loại một chỗ mà chỗ kia vẫn nhãn cũ.
+try:  # pragma: no cover — import vòng thì rơi về bảng tối thiểu
+    from services.agent.sgk_taphuan import DOC_KIND_LABEL as _KIND_LABEL
+except Exception:  # noqa: BLE001
+    _KIND_LABEL = {"sgk": "SGK", "sgv": "SGV", "vbt": "VBT/SBT",
+                   "tap_huan": "Tài liệu tập huấn"}
+
 ASK_TEACHER = (
     "📚 Nạp ảnh vào **RAG teacher / SGK**\n"
-    "Cho em **lớp** (1–12) và **môn** (toán / văn / anh).\n"
-    "Ví dụ: `5 toán` · `lớp 9 văn`\n"
+    "Cho em **lớp** (1–12) và **môn**.\n"
+    "Môn: toán · tiếng việt · ngữ văn · tiếng anh · lịch sử và địa lí · "
+    "lịch sử · địa lí · lí · hoá · sinh\n"
+    "Ví dụ: `5 toán` · `lớp 2 tiếng việt` · `lớp 10 hoá`\n"
+    "Thêm được **loại** và **tập** — không nói thì mặc định sách giáo khoa:\n"
+    "`lớp 4 sgv toán` · `lớp 4 vở bài tập toán` · `lớp 2 tiếng việt tập hai`\n"
     "→ Trả lời trong 10 phút."
 )
 
@@ -475,8 +487,20 @@ def ingest_teacher_from_photo(
     subject: str,
     name: str = "photo.jpg",
     channel: str = "",
+    kind: str = "sgk",
+    caption: str = "",
 ) -> dict[str, Any]:
-    """Vision → markdown → teacher SGK import (từ ảnh chụp trang SGK)."""
+    """Vision → markdown → nạp vào ĐÚNG kho theo loại + đẩy vào RAG.
+
+    ``kind``: sgk (mặc định) | sgv | vbt | tap_huan. Ảnh chụp một trang sách
+    giáo viên gửi vào mà không khai loại thì lời hướng dẫn dạy nằm trong kho nội
+    dung học sinh, rồi ``ask_sgk`` đọc nó ra như thể học sinh phải học — đúng lỗi
+    đã phải vá ở đường crawl và đường tải lên.
+
+    ``caption``: lời kèm ảnh, dùng để suy TẬP ("tập hai"). Không suy được thì để
+    trống, KHÔNG đoán: gắn "tập một" cho trang thuộc tập hai là lọc theo tập sẽ
+    trả sai tập mà không có gì báo.
+    """
     import tempfile
     from pathlib import Path
 
@@ -504,37 +528,61 @@ def ingest_teacher_from_photo(
         return {"ok": False, "text": "",
                 "error": "OCR ảnh bị lặp vòng — chụp lại rõ hơn giúp em nhé "
                          "(đủ sáng, thẳng trang, không loá)."}
-    # Write temp md-like content as fake pdf path won't work for import_sgk_pdf
-    # import_sgk_pdf needs PDF path — use import via markdown path if available
     try:
         from services.agent import teacher_workspace as tw
-        # Prefer import_sgk_bytes if we make a simple text file — check import_sgk_pdf only accepts pdf
-        # Create a minimal PDF wrapper is heavy — write md directly into SGK via internal API
         g = int(grade)
         sub = tw._normalize_subject(subject)
         if g not in tw.GRADES or not sub:
             return {"ok": False, "error": "lớp/môn không hợp lệ", "text": ""}
+        k = str(kind or "sgk").strip().lower() or "sgk"
         tw._ensure_seeded()
         stamp = time.strftime("%Y-%m-%d %H:%M")
-        head = f"SGK lớp {g} · {tw.SUBJECT_LABEL[sub]} · ảnh {name}"
+        nhan_loai = _KIND_LABEL.get(k, "Tài liệu")
+        head = f"{nhan_loai} lớp {g} · {tw.SUBJECT_LABEL[sub]} · ảnh {name}"
         md = f"# {head}\n\n<!-- import photo {stamp} -->\n\n{desc}\n"
-        dest = tw._SGK / f"lop{g}" / f"{sub}.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with tw._lock:
-            if dest.exists():
-                old = dest.read_text(encoding="utf-8")
-                dest.write_text(old.rstrip() + "\n\n" + md, encoding="utf-8")
-            else:
-                dest.write_text(md, encoding="utf-8")
-        return {
-            "ok": True,
-            "text": (
-                f"Đã nạp ảnh vào SGK teacher 🎓\n"
-                f"• Lớp **{g}** · **{tw.SUBJECT_LABEL[sub]}**\n"
-                f"• `{dest}`\n"
-                f"• {len(desc)} ký tự mô tả/OCR"
-            ),
-        }
+
+        # Ghi .md CHỈ cho sách học sinh: `search_sgk` đọc các file đó và không
+        # phân biệt loại, nên nhét ảnh trang SGV vào đấy là trả lời trộn.
+        dest = None
+        if k == "sgk":
+            dest = tw._SGK / f"lop{g}" / f"{sub}.md"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with tw._lock:
+                if dest.exists():
+                    old = dest.read_text(encoding="utf-8")
+                    dest.write_text(old.rstrip() + "\n\n" + md, encoding="utf-8")
+                else:
+                    dest.write_text(md, encoding="utf-8")
+
+        # ĐẨY VÀO RAG — đây là phần trước đây KHÔNG hề có.
+        #
+        # Bản cũ chỉ ghi .md rồi báo "Đã nạp ảnh vào SGK teacher 🎓". Nhưng .md chỉ
+        # được `search_sgk` (khớp từ khoá, đường offline) đọc; còn `ask_sgk` của
+        # MCP hub — thứ mà bài giảng, bài tập ba mức và mọi câu hỏi qua bot dùng —
+        # đọc kho vector. Nên ảnh trang sách gửi qua Zalo/Telegram vào rồi mà bot
+        # KHÔNG BAO GIỜ tìm ra, trong khi tin nhắn đã báo thành công. Người gửi
+        # không có cách nào biết.
+        from services.agent import sgk_fetch as _sf
+        rag = tw.push_sgk_to_rag(
+            md, title=head, grade=g, subject=sub,
+            source=f"photo/{name}",
+            collection=_sf.KIND_COLLECTION.get(k, "kb_giao_duc"),
+            volume=tw.detect_volume(caption or head),
+            kind=k,
+        )
+        so_doan = int((rag or {}).get("chunks_added") or 0)
+        dong = [f"Đã nạp ảnh vào kho {nhan_loai} 🎓",
+                f"• Lớp **{g}** · **{tw.SUBJECT_LABEL[sub]}**"]
+        if dest is not None:
+            dong.append(f"• `{dest}`")
+        dong.append(f"• {len(desc)} ký tự mô tả/OCR")
+        # Nói rõ RAG có nhận hay không: đây là điều kiện để bot tra ra được, mà
+        # trước đây tin nhắn không hề nhắc tới.
+        dong.append(f"• RAG: **{so_doan} đoạn** vào `{(rag or {}).get('collection')}`"
+                    if so_doan > 0 else
+                    f"• ⚠️ RAG chưa nhận ({str((rag or {}).get('errors') or (rag or {}).get('error') or 'không rõ')[:100]}) "
+                    f"— bot có thể chưa tra ra ảnh này")
+        return {"ok": True, "text": "\n".join(dong), "rag": rag}
     except Exception as exc:
         logger.warning("ingest_teacher_from_photo: %s", exc)
         return {"ok": False, "error": str(exc), "text": ""}

@@ -1130,6 +1130,11 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
             # `search_sgk` đọc .md và không phân biệt bộ hay loại tài liệu, nên
             # ghi SGV/VBT/bộ khác vào đó là trả lời trộn ở đường offline.
             write_md=(kind == "sgk" and not str(book_set or "").strip()),
+            # PHẢI truyền: đúng kho là chưa đủ, metadata `kind` của từng đoạn cũng
+            # phải đúng loại. Trước đây không truyền nên nó bị suy từ tên kho bằng
+            # một phép thử chỉ biết vbt/sgk — mọi đoạn SGV và tài liệu tập huấn
+            # nằm đúng kho nhưng tự khai `kind="sgk"` (đo thật 2026-07-30).
+            kind=kind,
         )
     if not raw:
         from services.pdf_intent import extract_markdown
@@ -1148,6 +1153,7 @@ def _ingest_pdf(pdf_path: str, *, grade: int, subject: str, title: str,
         # nằm trong tw.SUBJECTS, và cứng như trước thì một quyển SGV của môn đó
         # vào thẳng kb_giao_duc mang nhãn SGK — đúng cái sai vừa vá ở chỗ khác.
         collection=COLLECTION_FOR_SET(book_set, kind),
+        kind=kind,
     )
     return {"ok": bool(rag.get("ok")), "grade": grade, "subject": subject,
             "chars": len(md), "rag": rag,
