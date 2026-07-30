@@ -537,14 +537,21 @@ export async function sendImagesToUserByAccount(req, res) {
             imagePaths.push(imagePath);
         }
 
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: imagePaths
-            },
-            threadId,
-            ThreadType.User
+        // Chia lô theo giới hạn THẬT của Zalo thay vì bắn cả mảng một lần.
+        //
+        // Bản cũ đưa nguyên `imagePaths` vào một lời gọi: quá `max_file` (giá trị
+        // do server Zalo cấp lúc đăng nhập, không có trong code) là zca-js ném
+        // "Exceed maximum file of N" và MẤT CẢ LÔ — không tấm nào tới, mà lỗi chỉ
+        // hiện lúc chạy. Gửi dồn cũng dễ ăn "Vượt quá số request cho phép, code
+        // 221" (issue #114/#223/#325 của zca-js; người bảo trì nói chính họ không
+        // rõ ngưỡng, chỉ khuyên tạm dừng 1h–24h).
+        const { guiNhieuAnh } = await import('../../utils/sendImages.js');
+        const { caption = "", nghiMs } = req.body || {};
+        const ketQua = await guiNhieuAnh(
+            account.api, imagePaths, threadId, ThreadType.User,
+            { caption, ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}) },
         );
+        const result = ketQua.ketQua;
 
         for (const imagePath of imagePaths) {
             removeImage(imagePath);
@@ -553,13 +560,23 @@ export async function sendImagesToUserByAccount(req, res) {
         res.json({
             success: true,
             data: result,
+            // Nói ra số lô và giới hạn đang áp dụng: người gọi cần biết vì sao 30
+            // ảnh lại thành 5 tin nhắn, thay vì tưởng hệ thống gửi lặp.
+            soAnh: ketQua.soAnh,
+            soLo: ketQua.soLo,
+            maxFilePerMessage: ketQua.maxFile,
+            canhBao: ketQua.canhBao,
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
+        });
     }
 }
 
