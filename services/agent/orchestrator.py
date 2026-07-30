@@ -67,6 +67,24 @@ _TURN_BUDGET_S = 240.0
 _LOCK_WAIT_S = 45.0
 
 
+def _ghi_so_anh(user_id: str, urls: list[str]) -> None:
+    """Ghi sổ "ảnh của CHÍNH người này" — để lượt sau hỏi "3 ảnh gần nhất tôi tạo"
+    không lấy ảnh của người khác.
+
+    Ghi ở đây vì đây là tầng DUY NHẤT biết cả user_id lẫn ảnh vừa sinh ra;
+    `save_image_bytes` được gọi từ nhiều nơi không biết người dùng (protocol
+    OpenAI, snapshot camera của Home Assistant, test).
+
+    Lỗi ghi sổ KHÔNG được làm hỏng lượt trả lời: ảnh đã tạo xong rồi, mất sổ chỉ
+    mất khả năng lọc theo người ở lượt sau.
+    """
+    try:
+        from services.agent import anh_cua_toi
+        anh_cua_toi.ghi(str(user_id or ""), list(urls))
+    except Exception as exc:
+        logger.warning("ghi sổ ảnh theo người lỗi: %s", exc)
+
+
 def _nhieu_anh(urls: list[str]) -> dict:
     """`{"image_urls": [...]}` khi có TỪ HAI ảnh, ngược lại `{}`.
 
@@ -892,6 +910,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         produced_images.append(str(u))
                 if produced_images:
                     produced_caption = result.get("text") or produced_caption
+                    _ghi_so_anh(user_id, produced_images)
 
             for media_key in ("image_url", "video_path", "video_url", "audio_url", "audio_path", "doc_path"):
                 if not result.get(media_key):
@@ -919,6 +938,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     # phí sinh ra rồi bị bỏ im lặng. Gom lại theo thứ tự vẽ.
                     if str(val) not in produced_images:
                         produced_images.append(str(val))
+                        _ghi_so_anh(user_id, [str(val)])
                     # Giữ tấm ĐẦU ở `produced_media` để kênh nào chưa hiểu
                     # `image_urls` vẫn gửi được một ảnh, không thành gửi rỗng.
                     if not produced_media:

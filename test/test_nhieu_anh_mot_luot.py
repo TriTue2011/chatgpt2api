@@ -133,5 +133,67 @@ class TestGioiHanTungKenh(unittest.TestCase):
         self.assertIn("send_photo", khuc)
 
 
+
+class TestAnhCuaChinhNguoiDo(unittest.TestCase):
+    """"3 ảnh gần nhất TÔI tạo" phải là ảnh của CHÍNH người hỏi.
+
+    `save_image_bytes` đặt tên `<epoch>_<md5>.png` và KHÔNG ghi ai tạo, nên
+    `data/images` là rổ CHUNG: có ảnh của người dùng khác, ảnh snapshot camera do
+    Home Assistant đẩy lên, và ảnh test. Lấy "N tệp mới nhất" là gửi ảnh người
+    khác cho người này — sai cả đúng đắn lẫn riêng tư, mà nhìn từ ngoài y như
+    đang chạy đúng.
+    """
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from services.agent import anh_cua_toi
+        self.tmp = Path(tempfile.mkdtemp())
+        self.p = mock.patch.object(anh_cua_toi, "_duong",
+                                   lambda: self.tmp / "so.json")
+        self.p.start()
+        self.mod = anh_cua_toi
+
+    def tearDown(self):
+        import shutil
+        self.p.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_moi_nguoi_chi_thay_anh_cua_minh(self):
+        self.mod.ghi("zalop_A", ["a1", "a2"])
+        self.mod.ghi("zalop_B", ["b1"])
+        self.assertEqual(self.mod.gan_nhat("zalop_A", 5), ["a1", "a2"])
+        self.assertEqual(self.mod.gan_nhat("zalop_B", 5), ["b1"])
+
+    def test_anh_moi_len_dau_va_giu_thu_tu(self):
+        self.mod.ghi("u", ["cu1", "cu2"])
+        self.mod.ghi("u", ["moi"])
+        self.assertEqual(self.mod.gan_nhat("u", 3), ["moi", "cu1", "cu2"])
+
+    def test_ghi_lai_anh_cu_khong_nhan_ban(self):
+        self.mod.ghi("u", ["x", "y"])
+        self.mod.ghi("u", ["y"])
+        self.assertEqual(self.mod.gan_nhat("u", 5), ["y", "x"])
+
+    def test_nguoi_chua_tao_anh_thi_rong_chu_khong_muon_cua_nguoi_khac(self):
+        self.mod.ghi("khac", ["z"])
+        self.assertEqual(self.mod.gan_nhat("chua_co", 3), [])
+
+    def test_khong_co_user_id_thi_khong_ghi(self):
+        self.mod.ghi("", ["x"])
+        self.assertEqual(self.mod.gan_nhat("", 3), [])
+
+    def test_chan_so_muc_moi_nguoi(self):
+        self.mod.ghi("u", [f"a{i}" for i in range(500)])
+        self.assertLessEqual(len(self.mod.gan_nhat("u", 999)), self.mod._MOI_NGUOI)
+
+    def test_handler_uu_tien_anh_cua_nguoi_hoi(self):
+        self.mod.ghi("zalop_9", ["http://x/1.png", "http://x/2.png"])
+        r = caps._h_library_media({"kind": "image", "so_luong": 2},
+                                  {"user_id": "zalop_9"})
+        self.assertEqual(r.get("image_urls"), ["http://x/1.png", "http://x/2.png"])
+        self.assertIn("anh/chị tạo", r.get("text", ""))
+
 if __name__ == "__main__":
     unittest.main()

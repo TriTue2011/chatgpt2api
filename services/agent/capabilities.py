@@ -1878,6 +1878,22 @@ def _so_luong_anh(args: dict) -> int:
     return 1
 
 
+def _anh_cua_nguoi_nay(ctx: dict, so: int) -> list[str]:
+    """`so` ảnh gần nhất do CHÍNH người đang hỏi tạo. Rỗng nếu chưa có sổ.
+
+    Rỗng thì người gọi rơi về kho chung — nhưng phải NÓI RÕ đó là ảnh chung, chứ
+    không được gọi ảnh của người khác là "ảnh anh/chị tạo".
+    """
+    uid = str((ctx or {}).get("user_id") or "").strip()
+    if not uid:
+        return []
+    try:
+        from services.agent import anh_cua_toi
+        return anh_cua_toi.gan_nhat(uid, so)
+    except Exception:
+        return []
+
+
 def _h_library_media(args: dict, ctx: dict) -> dict:
     """Đọc THƯ VIỆN media của hệ thống (ảnh/video/nhạc đã tạo, lưu ở
     config.images_dir) và gửi lại cái mới nhất theo loại. Nhờ vậy bot 'thấy'
@@ -1916,6 +1932,19 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
         # ra 3 tấm mà thật chỉ có 1 tấm khác nhau — người dùng thấy lặp và tưởng
         # bot gửi sai.
         so = _so_luong_anh(args)
+        # "Ảnh TÔI tạo" = ảnh của CHÍNH người đang hỏi, không phải N tệp mới nhất
+        # trong kho. Kho `data/images` là rổ CHUNG: có ảnh của người dùng khác,
+        # ảnh snapshot camera do Home Assistant đẩy lên, và ảnh test. Lấy theo
+        # thời gian là gửi ảnh người khác cho người này — sai cả về đúng đắn lẫn
+        # riêng tư, mà nhìn từ ngoài y như đang chạy đúng.
+        cua_toi = _anh_cua_nguoi_nay(ctx, so)
+        if cua_toi:
+            if len(cua_toi) == 1:
+                return {"text": "Ảnh gần nhất anh/chị tạo ạ.", "image_url": cua_toi[0]}
+            thieu_t = ("" if len(cua_toi) >= so
+                       else f" (anh/chị mới tạo {len(cua_toi)} ảnh, chưa đủ {so})")
+            return {"text": f"{len(cua_toi)} ảnh gần nhất anh/chị tạo ạ{thieu_t}.",
+                    "image_urls": cua_toi}
         if so <= 1:
             return {"text": caption, "image_url": url}
         chon: list[str] = []
