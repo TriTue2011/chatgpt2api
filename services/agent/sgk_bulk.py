@@ -31,6 +31,7 @@ mang tiêu đề có tên quyển + mã bộ (`_label_of`) để câu trả lờ
 from __future__ import annotations
 
 import json
+import re
 import logging
 import threading
 import time
@@ -80,6 +81,7 @@ def _write_state(state: dict[str, Any]) -> None:
 
 
 def _label_of(book: dict[str, Any], subject: str, kind: str = "sgk", *,
+              reader_url: str = "",
               sample: bool = False) -> str:
     """Tiêu đề đi vào MỌI chunk RAG của quyển này.
 
@@ -98,11 +100,22 @@ def _label_of(book: dict[str, Any], subject: str, kind: str = "sgk", *,
     mon = tw.SUBJECT_LABEL.get(subject, subject)
     slug = str(book.get("slug") or "")
     vol = str(book.get("volume") or "")
+    # Quyển không theo tập → BỎ nhãn tập. `import_sgk_pdf` suy `volume` từ chính
+    # nhãn này, nên để "tập một" ở đây là ghi metadata SAI cho một quyển cả năm,
+    # rồi bot lọc theo tập sẽ không tìm ra hoặc tìm ra sai tập.
+    khong_theo_tap = bool(reader_url) and not _theo_tap(reader_url)
+    if khong_theo_tap:
+        vol = ""
     bset = str(book.get("book_set") or "")
     parts = [f"{_KIND_SHORT.get(kind, 'Tài liệu')} lớp {g}", mon]
     if vol:
         parts.append(vol)
-    parts.append(f"[{slug}]")
+    # Slug trong nhãn phải là slug CỦA TÀI LIỆU, không phải của sách học sinh cha.
+    #
+    # Đo thật: bỏ `vol` rồi mà detect_volume vẫn ra "tập một", vì nhãn còn chứa
+    # `[toan-4-tap-mot-939781966]` — chữ "tap-mot" trong slug cha bị đọc thành
+    # tập. Nghĩa là chỉ xoá nhãn tập là chưa đủ, phải xoá cả đường rò.
+    parts.append(f"[{_slug_tai_lieu(reader_url) if khong_theo_tap else slug}]")
     parts.append(f"bộ {bset}" if bset else "bộ chính")
     if sample:
         parts.append("CHỈ BÀI MẪU, không phải cả quyển")
@@ -173,6 +186,33 @@ def _key(item: dict[str, Any]) -> str:
     return f"{item.get('grade')}|{item.get('subject')}|{item.get('slug')}|{item.get('book_set') or ''}"
 
 
+_RE_ID_CUOI = re.compile(r"\.\d{6,}$")
+
+
+def _slug_tai_lieu(reader_url: str) -> str:
+    """Slug tài liệu, BỎ phần ID số ở cuối. `sgv-toan-4.4915432412` → `sgv-toan-4`."""
+    tail = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1]
+    return _RE_ID_CUOI.sub("", tail)
+
+
+def _theo_tap(reader_url: str) -> bool:
+    """Tài liệu này có RIÊNG cho từng tập không?
+
+    Đo thật 30/07 trên taphuan, lớp 4 Toán:
+
+        toan-4-tap-mot → sgv-toan-4.4915432412   290 trang
+        toan-4-tap-hai → sgv-toan-4.4915435263   290 trang
+
+    Cùng slug `sgv-toan-4`, cùng 290 trang, chỉ khác ID: SGV Toán 4 là MỘT quyển
+    cho cả năm, nhưng kho liệt kê nó dưới cả hai tập. Slug của nó KHÔNG có tập.
+
+    Nếu tin theo quyển sách học sinh cha thì nạp 580 trang cho 290 trang nội
+    dung, gắn hai nhãn tập khác nhau cho CÙNG một quyển — kho có số đẹp, UI hiện
+    "2 tập", mà thật ra là một quyển nhân đôi. Không lỗi nào báo ra.
+    """
+    return bool(tp._volume_of_slug(_slug_tai_lieu(reader_url)))
+
+
 def _doc_key(item: dict[str, Any], kind: str, reader_url: str) -> str:
     """Khoá cho MỘT TÀI LIỆU trong quyển, không phải cho cả quyển.
 
@@ -181,6 +221,12 @@ def _doc_key(item: dict[str, Any], kind: str, reader_url: str) -> str:
     và bị bỏ qua vĩnh viễn.
     """
     tail = str(reader_url or "").rstrip("/").rsplit("/", 1)[-1]
+    if reader_url and not _theo_tap(reader_url):
+        # Quyển dùng chung cho cả năm: khoá KHÔNG được chứa tập của sách cha,
+        # cũng không chứa ID (mỗi lần liệt kê là một ID khác). Nếu chứa, tập một
+        # và tập hai thành hai khoá khác nhau → nạp hai lần cùng một quyển.
+        return (f"{item.get('grade')}|{item.get('subject')}|"
+                f"{item.get('book_set') or ''}|{kind}|{_slug_tai_lieu(reader_url)}")
     return f"{_key(item)}|{kind}|{tail}"
 
 
@@ -338,7 +384,8 @@ def run(
                     res = tp.import_reader(
                         reader_url, grade=g, subject=sub, mode="append",
                         max_pages=max_pages,
-                        label=_label_of(item, sub, kind, sample=sample),
+                        label=_label_of(item, sub, kind, sample=sample,
+                                        reader_url=reader_url),
                         keep_pdf=keep_pdf, book_set=bset, kind=kind,
                     )
                     if res.get("ok"):
