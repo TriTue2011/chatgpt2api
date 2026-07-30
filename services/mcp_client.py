@@ -608,6 +608,15 @@ _DEVICE_KEYWORDS = (
     # khi agent đang nối sẵn. Ba cụm dưới đây là cách gọi tài nguyên máy, không
     # phải cách gọi thiết bị nhà thông minh, nên không lấn sân HA.
     "tai nguyen", "danh sach thiet bi", "thiet bi nao",
+    # "Mở khóa màn hình" (log chat 30/07, thread zalop) trả False → không tool
+    # thiết bị nào được nạp, model kết luận chức năng bị tắt và trả "[BLOCKED]",
+    # còn orchestrator thấy [BLOCKED] thì IM LẶNG TUYỆT ĐỐI. Người dùng gửi tin
+    # và không nhận được gì — không phải câu từ chối, mà là không có phản hồi.
+    #
+    # KHÔNG thêm "mo khoa" trơn: "mở khoá cửa" là lệnh Home Assistant thật
+    # (domain lock). Chỉ nhận cụm có nói rõ MÀN HÌNH / MÁY.
+    "mo khoa man hinh", "mo khoa may", "khoa man hinh", "unlock man hinh",
+    "mo khoa windows",
 )
 _DEVICE_TOKENS = ("laptop", "pc", "desktop", "c2a-agent", "cpu", "ram")
 

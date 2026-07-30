@@ -776,6 +776,71 @@ def op_power(g: Guard, args: dict) -> dict:
                     if action in ("shutdown", "restart") else ""}
 
 
+def _win_session_id() -> str:
+    """ID phiên đăng nhập hiện tại (để tscon biết nối phiên nào)."""
+    rc, out, _ = _run(["query", "session"], timeout=10.0)
+    if rc != 0:
+        return ""
+    for line in (out or "").splitlines():
+        # Dòng của phiên ĐANG chạy có dấu '>' đầu dòng.
+        if line.strip().startswith(">"):
+            parts = line.replace(">", " ").split()
+            for p in parts:
+                if p.isdigit():
+                    return p
+    return ""
+
+
+def op_unlock(g: Guard, args: dict) -> dict:
+    """Mở khoá màn hình đang bị khoá. Cần --allow-power.
+
+    ĐỌC KỸ TRƯỚC KHI TIN: Windows CỐ Ý không cho phần mềm gõ mật khẩu vào màn
+    hình khoá. Màn hình khoá do LogonUI vẽ trên một DESKTOP RIÊNG (secure
+    desktop); tiến trình chạy trong phiên người dùng — kể cả agent này — không
+    SendInput sang đó được. Đây là thiết kế an ninh, không phải thiếu tính năng.
+    Cách duy nhất được Microsoft hỗ trợ để nhập mật khẩu là viết Credential
+    Provider (DLL COM đăng ký với Winlogon), không phải việc một script làm được.
+
+    Nên mật khẩu KHÔNG phải thứ mở được khoá ở đây. Thứ mở được là QUYỀN SYSTEM:
+    `tscon <id> /dest:console` nối lại phiên vào console và bỏ trạng thái khoá.
+    Agent chạy quyền người dùng thường sẽ THẤT BẠI với "Access is denied" —
+    trả lỗi đó ra thay vì im lặng, để biết là thiếu quyền chứ không phải sai lệnh.
+
+    Linux (systemd-logind) thì `loginctl unlock-session` chạy được bằng quyền
+    người dùng thường. macOS không có đường nào — báo thẳng.
+    """
+    g.need_power()
+    if IS_MAC:
+        return {"ok": False, "error": "macOS không cho mở khoá bằng lệnh — "
+                                      "loginwindow chỉ nhận mật khẩu gõ tay tại máy"}
+    if not IS_WIN:
+        rc, out, err = _run(["loginctl", "unlock-session"], timeout=15.0)
+        return {"ok": rc == 0, "rc": rc, "stdout": out, "stderr": err}
+
+    sid = _win_session_id()
+    if not sid:
+        return {"ok": False, "error": "không đọc được ID phiên (query session thất bại)"}
+    argv = ["tscon", sid, "/dest:console"]
+    # /password chỉ dùng khi người dùng chủ động đưa. tscon nhận tham số này
+    # nhưng bản Windows mới thường bỏ qua nó và vẫn đòi quyền SYSTEM — nên
+    # KHÔNG hứa hẹn gì dựa trên việc có mật khẩu.
+    pw = str(args.get("password") or "")
+    if pw:
+        argv.append("/password:" + pw)
+    rc, out, err = _run(argv, timeout=20.0)
+    if rc == 0:
+        return {"ok": True, "rc": rc, "session": sid, "stdout": out}
+    thieu_quyen = "access is denied" in (err or "").lower() or rc == 5
+    return {
+        "ok": False, "rc": rc, "session": sid, "stdout": out, "stderr": err,
+        "error": ("agent đang chạy quyền người dùng thường nên Windows từ chối. "
+                  "Mở khoá cần một tác vụ chạy quyền SYSTEM — cài lại agent kèm "
+                  "tác vụ SYSTEM mới dùng được lệnh này."
+                  if thieu_quyen else "tscon thất bại: " + (err or "")[:200]),
+        "mat_khau_khong_giup": True,
+    }
+
+
 def op_uninstall(g: Guard, args: dict) -> dict:
     """TỰ GỠ agent khỏi máy này: xoá lịch tự chạy, xoá thư mục, xoá token.
 
@@ -841,7 +906,7 @@ OPS = {"ls": op_ls, "read": op_read, "stat": op_stat, "find": op_find,
        "sysinfo": op_sysinfo, "resources": op_resources, "processes": op_processes,
        "services": op_services, "screen": op_screen,
        # can thiệp — cần cờ riêng
-       "exec": op_exec, "kill": op_kill, "power": op_power,
+       "exec": op_exec, "kill": op_kill, "power": op_power, "unlock": op_unlock,
        # tự gỡ — chỉ dự án gọi, khi xoá thiết bị
        "uninstall": op_uninstall}
 

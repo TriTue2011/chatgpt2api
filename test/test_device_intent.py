@@ -244,3 +244,28 @@ class TestNhacModelDungTool(_Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestMoKhoaManHinh(unittest.TestCase):
+    """Định tuyến câu "mở khoá màn hình" — log chat 30/07 (thread zalop).
+
+    Câu đó trả False nên KHÔNG tool thiết bị nào được nạp; model kết luận chức
+    năng bị tắt và trả "[BLOCKED]", orchestrator thấy [BLOCKED] thì im lặng
+    tuyệt đối. Người dùng gửi tin và không nhận được gì — tệ hơn một câu từ chối,
+    vì không phân biệt được với bot chết.
+    """
+
+    def test_mo_khoa_man_hinh_la_lenh_thiet_bi(self):
+        for t in ("Mở khóa màn hình", "mở khoá màn hình", "mo khoa man hinh",
+                  "mở khoá máy", "khoá màn hình lại", "unlock màn hình",
+                  "mở khoá windows giúp em"):
+            with self.subTest(t):
+                self.assertTrue(mc.is_device_query(t, None), t)
+
+    def test_khong_lan_san_mo_khoa_cua_cua_nha_thong_minh(self):
+        """"mở khoá cửa" là lệnh Home Assistant thật (domain lock) — nhận nhầm
+        sang thiết bị là mất đường điều khiển cửa."""
+        for t in ("mở khoá cửa", "mở khóa cửa chính", "khoá cửa lại giúp em",
+                  "mở cửa gara"):
+            with self.subTest(t):
+                self.assertFalse(mc.is_device_query(t, None), t)

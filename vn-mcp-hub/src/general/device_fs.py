@@ -392,6 +392,30 @@ def device_kill(device: str, pid: str = "", name: str = "",
 
 
 @mcp.tool()
+def device_unlock(device: str, password: str = "") -> str:
+    """Mở khoá màn hình đang bị khoá của MÁY người dùng.
+
+    CẦN quyền "tắt/khoá máy". Trên Windows thường KHÔNG chạy được: màn hình khoá
+    do LogonUI vẽ trên desktop riêng, phần mềm chạy quyền người dùng thường
+    không chạm vào được — đó là thiết kế an ninh của Windows.
+
+    ĐỪNG hỏi mật khẩu trước rồi mới gọi: mật khẩu KHÔNG phải thứ mở được khoá ở
+    đây, quyền SYSTEM mới là. Gọi thẳng, rồi báo đúng những gì máy trả về. Nếu
+    thất bại vì thiếu quyền thì nói rõ là cần cài lại agent kèm tác vụ SYSTEM,
+    chứ không phải xin mật khẩu.
+    """
+    r = _op(device, "unlock", {"password": password} if password else {})
+    if r.get("ok"):
+        return f"✅ Đã mở khoá màn hình `{device}`"
+    detail = str(r.get("error") or r.get("stderr") or "").strip()
+    msg = f"❌ Chưa mở khoá được `{device}`: {detail[:300]}"
+    if r.get("mat_khau_khong_giup"):
+        msg += ("\n_Mật khẩu không giúp được ở bước này — Windows chặn phần mềm "
+                "gõ mật khẩu vào màn hình khoá._")
+    return msg
+
+
+@mcp.tool()
 def device_power(device: str, action: str) -> str:
     """Khoá màn hình / ngủ / đăng xuất / TẮT MÁY / khởi động lại.
 

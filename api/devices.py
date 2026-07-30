@@ -25,8 +25,11 @@ _WRITE_OPS = {"write", "mkdir", "delete", "append"}
 _INFO_OPS = {"sysinfo", "resources", "processes", "services", "screen"}
 # Chạy lệnh tuỳ ý + tắt tiến trình.
 _EXEC_OPS = {"exec", "kill"}
-# Khoá / ngủ / đăng xuất / tắt / khởi động lại.
-_POWER_OPS = {"power"}
+# Khoá / ngủ / đăng xuất / tắt / khởi động lại + mở khoá màn hình.
+# `unlock` xếp cùng nhóm `power` vì cùng một loại quyền: đổi trạng thái phiên
+# đăng nhập của người đang dùng máy. Ai mở được quyền khoá máy thì cũng là người
+# quyết định được việc mở khoá.
+_POWER_OPS = {"power", "unlock"}
 # Agent tự gỡ mình khỏi máy. KHÔNG nằm trong _ALL_OPS: đây không phải thao tác
 # người dùng gọi được qua /op hay qua bot, mà chỉ đường xoá thiết bị dùng — cho
 # vào _ALL_OPS là mở cho mô hình một cách "xoá agent của người ta" bằng lời.
