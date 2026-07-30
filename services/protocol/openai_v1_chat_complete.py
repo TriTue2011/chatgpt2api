@@ -5104,11 +5104,9 @@ def _opencode_completion_response(
 
     except Exception as exc:
         logger.error({"event": "opencode_completion_error", "error": str(exc)})
-        return completion_response(
-            model=model,
-            content=f"OpenCode error: {exc}",
-            messages=messages,
-        )
+        # PHẢI raise — xem chú thích ở custom provider: trả chuỗi lỗi như content
+        # là vòng combo coi thành công rồi dừng, các model sau không được thử.
+        raise
 
 
 # ── Helper for entity_id → domain conversion ──
@@ -5467,7 +5465,13 @@ def _handle_gemini_chat(
             }
     except Exception as exc:
         logger.error({"event": "gemini_fatal", "error": str(exc)})
-        return completion_response(model=model, content=f"Gemini error: {exc}", messages=messages)
+        # PHẢI raise — cùng lớp lỗi với custom provider ở dưới: trả "câu trả
+        # lời" chứa chuỗi lỗi thì vòng combo coi là THÀNH CÔNG và dừng. Đo thật
+        # 30/07: cx hết quota → combo rơi đúng sang tokenrouter, tokenrouter
+        # treo → rơi sang gemini_free, gemini hết key → trả "Gemini error: All
+        # Gemini API keys rate limited" NHƯ CONTENT — agnes/gma đứng ngay sau
+        # không bao giờ được thử, người dùng nhận nguyên chuỗi lỗi đó.
+        raise
 
 
 def _handle_agnes_chat(
@@ -5504,7 +5508,9 @@ def _handle_agnes_chat(
         )
     except Exception as exc:
         logger.error({"event": "agnes_fatal", "error": str(exc)})
-        return completion_response(model=model, content=f"Agnes AI error: {exc}", messages=messages)
+        # PHẢI raise — xem chú thích ở custom provider: trả chuỗi lỗi như content
+        # là vòng combo coi thành công rồi dừng, các model sau không được thử.
+        raise
 
 
 def _handle_nvidia_chat(
@@ -5542,11 +5548,9 @@ def _handle_nvidia_chat(
             return result
     except Exception as exc:
         logger.error({"event": "nvidia_nim_fatal", "error": str(exc)})
-        return completion_response(
-            model=model,
-            content=f"NVIDIA NIM error: {exc}",
-            messages=messages,
-        )
+        # PHẢI raise — xem chú thích ở custom provider: trả chuỗi lỗi như content
+        # là vòng combo coi thành công rồi dừng, các model sau không được thử.
+        raise
 
 
 def _handle_custom_openai_chat(
@@ -5602,11 +5606,20 @@ def _handle_custom_openai_chat(
             return result
     except Exception as exc:
         logger.error({"event": "custom_openai_fatal", "provider": provider.name, "error": str(exc)})
-        return completion_response(
-            model=model,
-            content=f"[{provider.name}] Error: {exc}",
-            messages=messages,
-        )
+        # PHẢI raise, không được trả "câu trả lời" chứa chuỗi lỗi.
+        #
+        # Bản cũ trả `completion_response(content="[tokenrouter] Error: …")` —
+        # một dict HỢP LỆ. Hậu quả kép, đo thật 30/07 với combo "AI text" khi
+        # tokenrouter đứt mạng (curl 56):
+        #   · vòng combo coi đó là THÀNH CÔNG → `record_success` cho provider
+        #     đang hỏng (đầu độc circuit-breaker) và DỪNG — gemini/agnes/gma
+        #     đứng ngay sau không bao giờ được thử;
+        #   · người dùng nhận nguyên văn "[tokenrouter] Error: Connection
+        #     failed…" như thể đó là câu trả lời của bot.
+        # Combo bắt lỗi theo exception (`except Exception → last_error →
+        # continue`), còn đường single-model record_failure rồi re-raise —
+        # cả hai đều CẦN exception thật để chạy đúng.
+        raise
 
 
 def _handle_antigravity_chat(
