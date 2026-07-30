@@ -233,9 +233,16 @@ class CustomOpenAIProvider:
 
     def _post_thu_lai(self, headers: dict[str, str], body: dict[str, Any], stream: bool):
         """POST có thử lại khi lỗi TRUYỀN TẢI. Lỗi HTTP (4xx/5xx) không đụng tới —
-        đó là câu trả lời thật của máy chủ, người gọi phải thấy."""
+        đó là câu trả lời thật của máy chủ, người gọi phải thấy.
+
+        CHỈ áp dụng cho provider MỘT base_url. Provider nhiều endpoint (pool
+        Gemini Custom) đã có đường xử lý riêng và TỐT HƠN: lỗi kết nối thì hạ
+        endpoint đó xuống rồi nhảy sang endpoint kế NGAY. Thử lại ở đây trước sẽ
+        chèn ~2,8s vô ích vào đúng cái nhanh nhất của pool.
+        """
+        so_lan = self._THU_LAI_TOI_DA if len(self._base_urls) <= 1 else 1
         loi_cuoi: Exception | None = None
-        for lan in range(self._THU_LAI_TOI_DA):
+        for lan in range(so_lan):
             try:
                 return requests.post(
                     f"{self.base_url}{self._chat_path}",
@@ -248,7 +255,7 @@ class CustomOpenAIProvider:
                 loi_cuoi = exc
                 # Timeout thì ĐỪNG thử lại: đã chờ đủ 300s, thử nữa là bắt người
                 # dùng chờ thêm 10 phút cho một kết cục y hệt.
-                if type(exc).__name__ == "Timeout" or lan == self._THU_LAI_TOI_DA - 1:
+                if type(exc).__name__ == "Timeout" or lan == so_lan - 1:
                     break
                 cho = self._CHO_GIUA_CAC_LAN_S[min(lan, len(self._CHO_GIUA_CAC_LAN_S) - 1)]
                 logger.warning({
@@ -293,13 +300,17 @@ class CustomOpenAIProvider:
         if tool_choice:
             body["tool_choice"] = tool_choice
 
-        # Pass through common extra params. `stream_options` để client xin
-        # {"include_usage": true} — TokenRouter/OpenRouter dùng nó để trả token
-        # usage ở chunk cuối; thiếu thì stream không có usage.
-        for key in ("top_p", "frequency_penalty", "presence_penalty", "seed",
-                    "response_format", "stream_options"):
+        # Pass through common extra params
+        for key in ("top_p", "frequency_penalty", "presence_penalty", "seed", "response_format"):
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
+
+        # `stream_options` (client xin {"include_usage": true} để có usage ở chunk
+        # cuối) CHỈ hợp lệ khi stream=true — kèm nó vào request không-stream là bị
+        # 400 "stream_options can only be used with stream=true". Gửi mù sẽ làm
+        # hỏng những lời gọi không-stream hiện đang chạy tốt.
+        if stream and kwargs.get("stream_options") is not None:
+            body["stream_options"] = kwargs["stream_options"]
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
