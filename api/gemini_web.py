@@ -31,6 +31,56 @@ from typing import Any, Iterator
 from curl_cffi import requests
 
 
+def _ghim_cache_cookie_ben() -> None:
+    """Giữ tài khoản Google/Gemini SỐNG qua restart container.
+
+    gemini_webapi bật auto_refresh: mỗi ~600s nó xoay `__Secure-1PSIDTS` (cookie
+    Google hết hạn nhanh) và GHI cookie mới vào một file cache. Nhưng mặc định
+    file đó nằm ở `tempfile.gettempdir()/gemini_webapi` = /tmp — thư mục NẰM
+    TRONG container, bị xoá sạch mỗi lần dựng lại container (Re-pull image).
+
+    Hậu quả đo thật 31/07: trong lúc container chạy thì cookie luôn tươi (chat
+    được), nhưng vừa restart là mất cache → client init lại bằng cookie CŨ lưu
+    trong config → "UNAUTHENTICATED, cookies expired" → phải đăng nhập lại tay
+    trên noVNC. Đây đúng là nỗi đau "login lại nhiều lần" của chủ máy.
+
+    Trỏ `GEMINI_COOKIE_PATH` về vùng đĩa BỀN (mount /app/data → /opt/c2a/data)
+    thì cookie đã làm mới sống qua restart, và lần init sau đọc lại bản tươi
+    (get_access_token glob .cached_cookies_*.json trong thư mục này). Đặt bằng
+    biến môi trường vì `_get_cookie_cache_dir()` đọc os.getenv mỗi lần gọi —
+    chỉ cần set TRƯỚC lần init/rotate đầu tiên, mà module này import trước mọi
+    lời gọi gemini. Không đè nếu vận hành đã tự đặt sẵn.
+    """
+    if os.getenv("GEMINI_COOKIE_PATH"):
+        return
+    try:
+        from services.config import DATA_DIR
+        goc = os.path.join(str(DATA_DIR), "gemini_cookies")
+    except Exception:
+        goc = os.path.join(tempfile.gettempdir(), "gemini_webapi")
+    try:
+        os.makedirs(goc, exist_ok=True)
+        os.environ["GEMINI_COOKIE_PATH"] = goc
+        # Mang cache TƯƠI hiện có (nếu container này đã chạy và xoay cookie) sang
+        # chỗ bền, để bản vá có hiệu lực NGAY mà không chờ hết một chu kỳ 600s.
+        cu = os.path.join(tempfile.gettempdir(), "gemini_webapi")
+        if os.path.isdir(cu) and os.path.abspath(cu) != os.path.abspath(goc):
+            import shutil
+            for ten in os.listdir(cu):
+                if not ten.startswith(".cached_cookies_"):
+                    continue
+                dich = os.path.join(goc, ten)
+                # Chỉ chép khi bản /tmp mới hơn (là bản vừa được xoay).
+                if (not os.path.exists(dich)
+                        or os.path.getmtime(os.path.join(cu, ten)) > os.path.getmtime(dich)):
+                    shutil.copy2(os.path.join(cu, ten), dich)
+    except Exception:
+        pass
+
+
+_ghim_cache_cookie_ben()
+
+
 # ── Hotfix: Google chuyển media nhạc từ candidate[12][86] sang [12][0]['87'] ─
 # gemini_webapi 2026-07 vẫn đọc [12][86] → media=[] dù nhạc đã tạo (Lyria).
 # Wrap _parse_candidate: nếu lib không thấy media thì tự bóc ở vị trí mới,
