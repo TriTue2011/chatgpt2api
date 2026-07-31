@@ -2135,9 +2135,25 @@ def _ha_local_weather(
             return str(round(float(x)))
         except (TypeError, ValueError):
             return str(x)
-    cond = _WEATHER_VI.get(str(we.get("state") or ""), we.get("state") or "")
+    _tt = str(we.get("state") or "").strip().lower()
     temp = a.get("temperature")
     hum = a.get("humidity")
+    # Cảm biến HA CHẾT (unavailable/unknown) và không có cả nhiệt độ/độ ẩm →
+    # ĐỪNG ghép thành câu "thời tiết X hiện unavailable" (đo thật 31/07: người
+    # dùng nhận đúng câu đó, vô dụng). Lấy Open-Meteo cho vị trí nhà; không được
+    # nữa thì trả None để lượt chat rơi sang tra mạng.
+    if _tt in ("unavailable", "unknown", "none", "") and temp is None and hum is None:
+        try:
+            from services.weather_extras import thoi_tiet_hien_tai
+            _du_phong = thoi_tiet_hien_tai(keep_units=keep_units)
+        except Exception:
+            _du_phong = ""
+        if _du_phong:
+            logger.info({"event": "weather_fallback_open_meteo"})
+            return _du_phong
+        logger.info({"event": "weather_ha_unavailable_no_fallback"})
+        return None
+    cond = _WEATHER_VI.get(str(we.get("state") or ""), we.get("state") or "")
     out = f"Thời tiết {loc} hiện {cond}" if cond else f"Thời tiết {loc}"
     if temp is not None:
         out += f", khoảng {_r(temp)}°C" if keep_units else f", khoảng {_r(temp)} độ"

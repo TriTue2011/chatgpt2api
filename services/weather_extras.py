@@ -32,6 +32,64 @@ def _home_latlon() -> tuple[float, float] | None:
     return None
 
 
+_MA_THOI_TIET = {
+    0: "trời quang", 1: "ít mây", 2: "có mây", 3: "nhiều mây",
+    45: "sương mù", 48: "sương mù đóng băng",
+    51: "mưa phùn nhẹ", 53: "mưa phùn", 55: "mưa phùn nặng hạt",
+    61: "mưa nhẹ", 63: "mưa", 65: "mưa to",
+    71: "tuyết nhẹ", 73: "tuyết", 75: "tuyết dày",
+    80: "mưa rào nhẹ", 81: "mưa rào", 82: "mưa rào rất to",
+    95: "dông", 96: "dông kèm mưa đá", 99: "dông mạnh kèm mưa đá",
+}
+_cache_hien_tai: tuple[float, str] | None = None
+_TTL_HIEN_TAI = 600.0     # 10 phút — thời tiết hiện tại không cần tươi hơn
+
+
+def thoi_tiet_hien_tai(keep_units: bool = True) -> str:
+    """Thời tiết HIỆN TẠI từ Open-Meteo cho vị trí nhà — DỰ PHÒNG khi cảm biến
+    Home Assistant trả 'unavailable'.
+
+    Vì sao cần: đo thật 31/07, entity thời tiết của HA chết thì bot trả nguyên
+    câu "thời tiết Hoàng Mai hiện đang không có dữ liệu (unavailable)" — người
+    dùng chẳng nhận được gì dù Open-Meteo (đã dùng cho cảnh báo dông) trả lời
+    được ngay và không cần khoá API.
+
+    Trả "" nếu cũng không lấy được (bên gọi tự rơi tiếp sang tra mạng).
+    """
+    global _cache_hien_tai
+    now = time.time()
+    if _cache_hien_tai and now - _cache_hien_tai[0] < _TTL_HIEN_TAI:
+        return _cache_hien_tai[1]
+    out = ""
+    try:
+        ll = _home_latlon()
+        if ll:
+            url = ("https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
+                   "&current=temperature_2m,relative_humidity_2m,weather_code"
+                   "&timezone=auto" % ll)
+            with urllib.request.urlopen(url, timeout=8) as r:
+                cur = (json.loads(r.read().decode()) or {}).get("current") or {}
+            nhiet = cur.get("temperature_2m")
+            am = cur.get("relative_humidity_2m")
+            ma = cur.get("weather_code")
+            mo_ta = _MA_THOI_TIET.get(int(ma), "") if ma is not None else ""
+            phan = []
+            if mo_ta:
+                phan.append(mo_ta)
+            if nhiet is not None:
+                phan.append(f"khoảng {round(float(nhiet))}°C" if keep_units
+                            else f"khoảng {round(float(nhiet))} độ")
+            if am is not None:
+                phan.append(f"độ ẩm {round(float(am))}%" if keep_units
+                            else f"độ ẩm {round(float(am))} phần trăm")
+            if phan:
+                out = "Thời tiết hiện tại: " + ", ".join(phan) + "."
+    except Exception as exc:
+        logger.warning({"event": "thoi_tiet_hien_tai_failed", "error": str(exc)[:120]})
+    _cache_hien_tai = (now, out)
+    return out
+
+
 def storm_warning() -> str:
     """Câu cảnh báo tiếng Việt nếu 12h tới có dông (weather_code>=95), mưa rất
     to (>=10mm/h) hoặc gió giật >=60km/h; '' nếu trời yên. Best-effort."""
