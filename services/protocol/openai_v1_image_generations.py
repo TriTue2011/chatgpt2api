@@ -287,7 +287,14 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
                                      })
                 except Exception:
                     pass
-                raise RuntimeError(f"Image generation failed: {exc}") from exc
+                # Lỗi ném ở trên đã có sẵn tiền tố này (dòng `status=... detail=...`),
+                # bọc thêm lần nữa ra "Image generation failed: Image generation
+                # failed: gemini status=429 …" — người đọc log tưởng hai lỗi khác nhau.
+                loi = str(exc)
+                raise RuntimeError(
+                    loi if loi.startswith("Image generation failed:")
+                    else f"Image generation failed: {loi}"
+                ) from exc
 
     if stream and stream_outputs:
         # Yield stream chunks

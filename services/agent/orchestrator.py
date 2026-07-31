@@ -243,6 +243,16 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     except Exception:
         pass
     parts.append(
+        "## Ngôn ngữ trả lời (BẮT BUỘC)\n"
+        "Câu trả lời chỉ dùng chữ Việt/Latin. TUYỆT ĐỐI không để lẫn chữ Hán, "
+        "Kana hay Hangul vào câu tiếng Việt, kể cả MỘT từ. Lỗi này đã xảy ra "
+        "thật: 'chất bán導体' (phải là 'chất bán dẫn'), 'bộ biến đổi để转换为' "
+        "(phải là 'để chuyển thành'), 'thắp sáng灯泡' (phải là 'thắp sáng bóng "
+        "đèn'), 'đọc từ多個 nguồn' (phải là 'từ nhiều nguồn'). Nếu từ nào chỉ "
+        "nghĩ ra được bằng tiếng Trung/Nhật thì phải diễn đạt lại bằng tiếng "
+        "Việt. Chỉ được dùng chữ Hán/Kana/Hangul khi người dùng hỏi trực tiếp "
+        "về thứ tiếng đó hoặc yêu cầu dịch.")
+    parts.append(
         "## Bảo mật secret / placeholder (BẮT BUỘC)\n"
         "Trong hội thoại và tool/RAG có thể xuất hiện placeholder dạng "
         "⟦secret:…⟧ / ⟦password:…⟧ / ⟦tc:…⟧. "

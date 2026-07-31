@@ -128,8 +128,13 @@ def classify_model_capability(model_id: str) -> list[str]:
 
     # Model ĐA PHƯƠNG THỨC (hiểu ảnh/video) — KHÔNG phải model tạo ảnh/video.
     # Chặn substring 'image'/'video' xếp nhầm chúng thành gen (và tước mất 'chat').
+    # "detector"/"detection": model PHÁT HIỆN, không phải model tạo. Đo thật
+    # 31/07: nv/nvidia/ai-synthetic-video-detector (dò video do AI dựng) bị xếp
+    # nhãn "Tạo video" chỉ vì tên có chữ "video" ⇒ nếu bật lên nó sẽ lọt vào
+    # danh sách chọn của combo tạo video và mọi lượt tạo video đều thất bại.
     _understanding = any(h in mid for h in
-                         ("-vl", "vl-", "llava", "understand", "vision", "embed", "clip"))
+                         ("-vl", "vl-", "llava", "understand", "vision", "embed", "clip",
+                          "detector", "detection"))
 
     # Check image gen capability (contains 'image', 'imagen', 'flux', 'schnell', 'sdwebui', 'sdxl', 'dall-e' or in IMAGE_MODELS / prefixes)
     is_image = False
