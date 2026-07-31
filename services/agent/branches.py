@@ -24,6 +24,19 @@ BRANCHES: dict[str, tuple[str, str]] = {
     "video_gen":  ("Tạo video",            "flow/veo-3.1-fast"),
     "code":       ("Viết / sửa code",      "claude/sonnet-5"),
     "code_reviewer": ("Kiểm duyệt code",   ""),  # trống = tắt tầng review
+    # Hai nhánh dưới đây ĐÃ ĐƯỢC CODE GỌI TỪ TRƯỚC nhưng chưa khai ở bảng này,
+    # nên `branch_model()` luôn trả rỗng và bên gọi phải ghim cứng một model
+    # đơn: `deep_tutor.py` rơi về "cx/auto", `_h_web_search` gọi thẳng
+    # "cx/auto". Một model đơn thì KHÔNG có dự phòng — Codex hết lượt là cả
+    # phần dạy học và phần tra cứu chết, trong khi mọi kênh khác đều đi qua
+    # combo 17 model. Khai ở đây để (1) hiện ra trong Cài đặt, (2) vào được bộ
+    # quét sức khoẻ nhánh, (3) chủ máy trỏ sang combo là có fallback.
+    #
+    # Mặc định để TRỐNG (không ghi "AI text"): tên combo là do chủ máy tự đặt,
+    # ghim vào code thì bản triển khai khác không có combo đó sẽ gọi vào hư không.
+    # Trống thì bên gọi giữ nguyên đường rơi cũ — không làm tệ hơn hiện trạng.
+    "default":    ("Mặc định chung (chữ)", ""),
+    "teacher":    ("Dạy học / gia sư",     ""),
 }
 
 

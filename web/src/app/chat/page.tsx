@@ -118,6 +118,9 @@ function buildApiContent(m: { content: string; images?: string[] }): any {
   return m.content;
 }
 
+/** Khoá lưu model đã chọn ở tab Chat (cùng tiền tố với các khoá sẵn có). */
+const MODEL_DA_CHON_KEY = "chatgpt2api_chat_model";
+
 export default function ChatPage() {
   const { isCheckingAuth } = useAuthGuard(["admin", "user"]);
   const [models, setModels] = useState<{ id: string }[]>([]);
@@ -338,12 +341,24 @@ export default function ChatPage() {
     setImages(prev => [...prev, ...urls.filter(Boolean)]);
   };
 
+  // Nhớ model đã chọn lần trước — đặt lại sau khi danh sách model về, và chỉ
+  // đặt khi model đó CÒN trong danh sách (model bị tắt/xoá thì giữ mặc định,
+  // không để ô chọn trỏ vào thứ không gọi được).
   useEffect(() => {
     request.get("/v1/models").then((d: any) => {
       const list = d.data?.data || d.data || [];
-      setModels(list.map((m: any) => ({ id: m.id })));
+      const ids = list.map((m: any) => ({ id: String(m.id) }));
+      setModels(ids);
+      try {
+        const luu = localStorage.getItem(MODEL_DA_CHON_KEY);
+        if (luu && ids.some((m: { id: string }) => m.id === luu)) setModel(luu);
+      } catch { /* ignore */ }
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem(MODEL_DA_CHON_KEY, model); } catch { /* ignore */ }
+  }, [model]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 

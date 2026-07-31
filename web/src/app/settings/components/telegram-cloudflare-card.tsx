@@ -2032,6 +2032,11 @@ export function TelegramCloudflareCard() {
             ["music_gen", "🎵 Tạo nhạc"],
             ["video_gen", "🎬 Tạo video"],
             ["code", "💻 Viết / sửa code"],
+            // Hai nhánh này code ĐÃ gọi từ trước (deep_tutor, tra cứu web) nhưng
+            // chưa có ở đây nên không đặt được — bị ghim cứng vào một model đơn,
+            // hết lượt là chết dù combo còn 16 model khác.
+            ["teacher", "🎓 Dạy học / gia sư"],
+            ["default", "💬 Mặc định chung (chữ)"],
           ] as [string, string][]).map(([key, label]) => {
             const byCh = ((config as any)?.agent_branches_by_channel || {}) as Record<string, Record<string, string>>;
             const current = String(byCh?.[chTab]?.[key] || "").trim();
@@ -2076,6 +2081,8 @@ export function TelegramCloudflareCard() {
             ["music_gen", "🎵 Tạo nhạc", "gma/auto"],
             ["video_gen", "🎬 Tạo video", "flow/veo-3.1-fast"],
             ["code", "💻 Viết / sửa code", "claude/sonnet-5"],
+            ["teacher", "🎓 Dạy học / gia sư", ""],
+            ["default", "💬 Mặc định chung (chữ)", ""],
           ] as [string, string, string][]).map(([key, label, def]) => {
             const current = String((config as any)?.agent_branches?.[key] || "").trim();
             const extra = key === "video_gen"

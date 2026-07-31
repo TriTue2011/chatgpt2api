@@ -445,8 +445,11 @@ def _h_web_search(args: dict, ctx: dict) -> dict:
     query = str(args.get("query") or "").strip()
     if not query:
         return {"text": "Anh/chị muốn em tra cứu gì ạ?"}
-    # cx/auto runs through the pipeline's search injection for factual queries.
-    resp = call_model("cx/auto", [{"role": "user", "content": query}], timeout=120)
+    # Đi qua nhánh "default" để có DỰ PHÒNG: trước đây dòng này ghim cứng
+    # "cx/auto", nên Codex hết lượt là phần tra cứu chết hẳn dù còn 16 model
+    # khác trong combo. Nhánh chưa đặt thì vẫn rơi về cx/auto như cũ.
+    model = branch_model("default", _channel_of(ctx)) or "cx/auto"
+    resp = call_model(model, [{"role": "user", "content": query}], timeout=120)
     if resp.get("error"):
         return {"text": f"Em tra cứu bị lỗi 😥 ({resp['error']})."}
     return {"text": content_of(resp) or "Em chưa tìm được thông tin."}
