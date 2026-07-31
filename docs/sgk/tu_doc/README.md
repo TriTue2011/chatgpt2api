@@ -44,10 +44,20 @@ Khảo sát VBT (`vbt_khao_sat.json`): 70 tài liệu · 626 trang, lớp 1–3 
   Nạp 31/07: 30 đoạn, trong đó VBT Tiếng Việt 2 tập một ghi đè 7 đoạn cũ.
 - Lớp 3: 6/6 ✓ (VBT Toán ×2, VBT Tiếng Việt ×2, Tập viết ×2 — 52 trang).
   Nạp 31/07: 47 đoạn.
-- Lớp 5–12: chưa bắt đầu (còn 43 tài liệu · 461 trang)
+- Lớp 5: 5/5 ✓ (VBT Toán ×2, VBT Tiếng Việt ×2, VBT Lịch sử và Địa lí — 46 trang).
+  Nạp 31/07: 48 đoạn.
+- Lớp 6–12: chưa bắt đầu (còn 38 tài liệu · 415 trang)
 
-Kho `kb_giao_duc_vbt` sau lượt nạp 31/07: 234 đoạn — lớp 1: 45, lớp 2: 48,
-lớp 3: 47, lớp 4: 94.
+Kho `kb_giao_duc_vbt` sau lượt nạp 31/07: 282 đoạn — lớp 1: 45, lớp 2: 48,
+lớp 3: 47, lớp 4: 94, lớp 5: 48.
+
+### Chép trang thì PHẢI MỞ ẢNH — đừng suy từ trang trước
+
+Đã mắc ba lần trong cùng một phiên: viết nội dung một trang theo phỏng đoán
+("trang tiếp của Tiết 3 — cùng dạng bài…") mà chưa mở ảnh trang đó. Cả ba lần
+đọc lại đều thấy trang có bài KHÁC hẳn — vd trang 7 VBT Toán 3 tập hai là câu đố
+con kiến đọc biển số và bài lập số tròn trăm từ thẻ số, không phải "cùng dạng".
+Sách bài tập đổi dạng bài liên tục; một trang chưa đọc là một trang không biết.
 
 ### Kí hiệu Tập viết KHÁC NHAU giữa các lớp — đừng suy từ lớp này sang lớp kia
 
