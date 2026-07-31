@@ -86,7 +86,12 @@ class TestThuVienLocTrung(unittest.TestCase):
         from unittest import mock
         with mock.patch.object(type(caps.config), "images_dir",
                                property(lambda _s: self.tmp)):
-            return caps._h_library_media({"kind": "image", "so_luong": so}, {})
+            # KHO CHUNG là đường của ADMIN (phân quyền 31/07): user thường bị ép
+            # về sổ riêng và không bao giờ thấy kho. Bộ test này kiểm logic LỌC
+            # TRÙNG của kho chung nên phải đi với quyền admin + scope=all.
+            return caps._h_library_media({"kind": "image", "so_luong": so,
+                                          "scope": "all"},
+                                         {"user_id": "kiem-thu", "is_admin": True})
 
     def test_xin_3_thi_ra_3_anh_KHAC_NHAU(self):
         r = self._goi(3)
@@ -105,6 +110,20 @@ class TestThuVienLocTrung(unittest.TestCase):
         r = self._goi(1)
         self.assertIn("image_url", r)
         self.assertNotIn("image_urls", r)
+
+    def test_user_thuong_khong_bao_gio_thay_kho_chung(self):
+        """Phân quyền 31/07: user thường xin kiểu gì (kể cả cố truyền scope=all)
+        cũng KHÔNG được rơi về kho chung — sổ riêng rỗng thì nói thật, không
+        gửi ảnh của người khác."""
+        from unittest import mock
+        with mock.patch.object(type(caps.config), "images_dir",
+                               property(lambda _s: self.tmp)):
+            r = caps._h_library_media(
+                {"kind": "image", "so_luong": 3, "scope": "all"},
+                {"user_id": "nguoi-la", "is_admin": False})
+        self.assertNotIn("image_url", r)
+        self.assertNotIn("image_urls", r)
+        self.assertIn("chưa tạo", r.get("text", ""))
 
 
 class TestGioiHanTungKenh(unittest.TestCase):
