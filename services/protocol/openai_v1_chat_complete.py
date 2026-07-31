@@ -321,7 +321,19 @@ _PIPELINE_ARCHITECT_PROMPT = (
     # ponytail + caveman (nội bộ): ưu tiên tối thiểu + nén bản plan.
     "Ưu tiên giải pháp TỐI THIỂU: tái dùng thứ đã có > thư viện chuẩn > viết "
     "mới; KHÔNG abstraction/cấu hình thừa (YAGNI). Kế hoạch NÉN: gạch đầu dòng, "
-    "mỗi bước 1 câu, không văn xuôi mở đầu."
+    "mỗi bước 1 câu, không văn xuôi mở đầu.\n"
+    # Hai khai báo dưới đây được ĐỌC BẰNG MÁY (services/code_pipeline.py) để
+    # quyết định có chia việc cho nhiều người viết song song và có cần tra cứu
+    # không. Không khai thì hệ thống chạy đường một người viết như cũ — an toàn.
+    "\nHAI KHAI BÁO BẮT BUỘC ở CUỐI kế hoạch:\n"
+    "1) Nếu công việc tách được thành các phần KHÔNG phụ thuộc nhau (mỗi phần là "
+    "một hàm/lớp riêng, viết xong ghép lại là chạy), hãy chia và đánh dấu bằng "
+    "đúng khuôn:\n"
+    "### PHẦN 1: <tên ngắn>\n<việc của phần 1>\n### PHẦN 2: <tên ngắn>\n…\n"
+    "rồi thêm dòng 'ĐỘC LẬP: có'. Nếu các phần dính vào nhau (sửa cùng một hàm, "
+    "phần sau cần kết quả phần trước) thì ĐỪNG chia — ghi 'ĐỘC LẬP: không'.\n"
+    "2) Dòng 'CẦN TRA CỨU: <thứ cần tra>' nếu bạn KHÔNG CHẮC về một thư viện, "
+    "API hay phiên bản; chắc rồi thì ghi 'CẦN TRA CỨU: không'."
 )
 
 _PIPELINE_EDITOR_PROMPT = (
@@ -394,6 +406,116 @@ def _pipeline_extract_content(result: Any) -> str:
         return ""
 
 
+def _pipeline_chay_thu_bat() -> bool:
+    """Có chạy thử code trước khi bố soi không. Tắt được vì đây là THỰC THI
+    code do model sinh — phải có công tắc, đừng để chỉ sửa được bằng cách vá
+    code. Mặc định BẬT (chủ máy chốt 31/07/2026: dùng cách B, chạy trong
+    container)."""
+    try:
+        from services.config import config as _c
+        v = (_c.data or {}).get("pipeline_chay_thu")
+        return True if v is None else bool(v)
+    except Exception:
+        return True
+
+
+def _chay_thu_code(combo_name: str, code: str, rnd: int) -> str:
+    """Chạy thử code. Trả GÓP Ý cần sửa, hoặc "" khi không có gì phải sửa.
+
+    "" có hai nghĩa và cả hai đều nên đi tiếp: code chạy được, HOẶC code không
+    tự đủ nên bỏ qua (vd đoạn sửa một hàm trong services/ — chạy riêng lẻ chỉ
+    ra ImportError giả, bắt con sửa theo là làm hỏng code đang đúng).
+    """
+    if not _pipeline_chay_thu_bat():
+        return ""
+    try:
+        from services import code_runner
+        kq = code_runner.chay(code_runner.boc_code_python(code))
+    except Exception as exc:      # bộ chạy lỗi thì bỏ qua, đừng chặn cả lượt
+        logger.warning({"event": "pipeline_chay_thu_err", "combo": combo_name,
+                        "error": str(exc)[:150]})
+        return ""
+    if not kq.get("da_chay"):
+        logger.info({"event": "pipeline_chay_thu_bo_qua", "combo": combo_name,
+                     "ly_do": kq.get("ly_do_bo_qua")})
+        return ""
+    if kq.get("ok"):
+        logger.info({"event": "pipeline_chay_thu_dat", "combo": combo_name, "round": rnd})
+        return ""
+    chan_doan = str(kq.get("chan_doan") or kq.get("stderr") or "").strip()
+    logger.info({"event": "pipeline_chay_thu_loi", "combo": combo_name,
+                 "round": rnd, "chan_doan": chan_doan[:200]})
+    return ("Code KHÔNG chạy được. Đây là lỗi THẬT khi chạy, không phải nhận "
+            "xét chủ quan — sửa đúng chỗ này:\n" + chan_doan)
+
+
+def _pipeline_sua_theo_gop_y(combo_name: str, editor_route: Any,
+                            editor_messages: list[dict[str, Any]],
+                            ns_body: dict[str, Any], gop_y: str, code: str) -> str:
+    """Đưa góp ý (từ bố soi HOẶC từ lỗi chạy thật) về cho con sửa. Trả code mới
+    hoặc "" nếu không sửa được."""
+    try:
+        msgs = list(editor_messages) + [{"role": "system",
+            "content": _PIPELINE_REVISE_PROMPT.format(feedback=gop_y[:2000], code=code[:12000])}]
+        return _pipeline_extract_content(
+            _dispatch(editor_route, msgs, None, None, ns_body)).strip()
+    except Exception as exc:
+        logger.warning({"event": "pipeline_revise_err", "combo": combo_name, "error": str(exc)[:150]})
+        return ""
+
+
+def _viet_song_song(combo_name: str, editor_route: Any,
+                    editor_messages: list[dict[str, Any]],
+                    cac_phan: list[dict[str, str]],
+                    ns_body: dict[str, Any]) -> str:
+    """Giao mỗi PHẦN cho một con, chạy SONG SONG, rồi ghép code lại.
+
+    Trả "" khi có phần nào không ra code — bên gọi phải rơi về đường một con
+    viết cả, vì ghép thiếu một phần là code chắc chắn sai.
+    """
+    import concurrent.futures
+    from services import code_pipeline as cp
+    from services import code_runner
+
+    tong = len(cac_phan)
+
+    def _mot_phan(phan: dict[str, str]) -> tuple[str, str]:
+        msgs = list(editor_messages) + [
+            {"role": "system", "content": cp.loi_nhac_phan(phan, tong)}]
+        try:
+            noi = _pipeline_extract_content(
+                _dispatch(editor_route, msgs, None, None, ns_body))
+            return phan["so"], noi.strip()
+        except Exception as exc:
+            logger.warning({"event": "pipeline_phan_fail", "combo": combo_name,
+                            "phan": phan["so"], "error": str(exc)[:150]})
+            return phan["so"], ""
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(tong, 5)) as ex:
+        ket = list(ex.map(_mot_phan, cac_phan))
+
+    theo_so = {so: noi for so, noi in ket}
+    khoi: list[str] = []
+    for phan in cac_phan:
+        noi = theo_so.get(phan["so"]) or ""
+        if not noi:
+            logger.warning({"event": "pipeline_chia_thieu_phan", "combo": combo_name,
+                            "phan": phan["so"]})
+            return ""
+        c = code_runner.boc_code_python(noi)
+        if not c:
+            logger.warning({"event": "pipeline_chia_phan_khong_co_code",
+                            "combo": combo_name, "phan": phan["so"]})
+            return ""
+        khoi.append(c)
+    gop = cp.gop_code(khoi)
+    logger.info({"event": "pipeline_chia_gop_xong", "combo": combo_name,
+                 "so_phan": tong, "ky_tu": len(gop)})
+    # Trả về dạng khối code để phần sau (chạy thử, bố soi) xử lý như code của
+    # một con viết — không phải hai đường code khác nhau.
+    return f"```python\n{gop}```"
+
+
 def _run_pipeline_review(
     combo_name: str,
     editor_route: Any,
@@ -403,13 +525,31 @@ def _run_pipeline_review(
     plan: str,
     request: str,
     max_rounds: int = 2,
+    code_ban_dau: str = "",
 ) -> str:
-    """Con viết (non-stream) → bố soi → chưa đạt thì chỉnh (≤max_rounds). Trả
-    code cuối. Best-effort: reviewer/editor lỗi thì trả code đang có."""
+    """Con viết (non-stream) → CHẠY THỬ → bố soi → chưa đạt thì chỉnh
+    (≤max_rounds). Trả code cuối. Best-effort: reviewer/editor lỗi thì trả code
+    đang có.
+
+    `code_ban_dau` = code ĐÃ viết sẵn (vd nhiều con chia phần rồi ghép) — có thì
+    bỏ lượt gọi con đầu tiên, đi thẳng vào chạy thử và soi.
+    """
     ns_body = {**body, "stream": False}
-    code = _pipeline_extract_content(
+    code = (code_ban_dau or "").strip() or _pipeline_extract_content(
         _dispatch(editor_route, editor_messages, None, None, ns_body)).strip()
     for rnd in range(max_rounds):
+        # CHẠY THỬ TRƯỚC khi gọi bố. Chạy là khách quan và gần như miễn phí,
+        # còn mỗi lượt bố soi là một lần gọi model (claude/auto đo thật 184s).
+        # Đọc code không bắt được NameError/TypeError/assert sai — chạy thì
+        # thấy ngay. Vòng này chính là "execution-grounded refinement" mà
+        # SAFEdit đo được +8,6 điểm so với một agent.
+        kq_chay = _chay_thu_code(combo_name, code, rnd)
+        if kq_chay:
+            new_code = _pipeline_sua_theo_gop_y(
+                combo_name, editor_route, editor_messages, ns_body, kq_chay, code)
+            if new_code:
+                code = new_code
+                continue     # code vừa đổi → chạy lại trước khi tốn lượt của bố
         try:
             rv_route = backend_router.route(reviewer)
             rv_msgs = [{"role": "user", "content": _PIPELINE_REVIEWER_PROMPT.format(
@@ -424,16 +564,11 @@ def _run_pipeline_review(
             logger.info({"event": "pipeline_review_ok", "combo": combo_name, "round": rnd})
             break
         logger.info({"event": "pipeline_review_revise", "combo": combo_name, "round": rnd, "notes": verdict[:200]})
-        try:
-            revise_msgs = list(editor_messages) + [{"role": "system",
-                "content": _PIPELINE_REVISE_PROMPT.format(feedback=verdict[:2000], code=code[:12000])}]
-            new_code = _pipeline_extract_content(
-                _dispatch(editor_route, revise_msgs, None, None, ns_body)).strip()
-            if new_code:
-                code = new_code
-        except Exception as exc:
-            logger.warning({"event": "pipeline_revise_err", "combo": combo_name, "error": str(exc)[:150]})
+        new_code = _pipeline_sua_theo_gop_y(
+            combo_name, editor_route, editor_messages, ns_body, verdict, code)
+        if not new_code:
             break
+        code = new_code
     return code
 
 
@@ -493,10 +628,36 @@ def _run_pipeline_combo(
         # Tất cả architect chết → degrade về gọi thẳng editor, không hard-fail
         logger.warning({"event": "pipeline_no_plan", "combo": combo_name, "architects": architects})
 
+    # Vai con TRA CỨU: chỉ chạy khi CHÍNH BỐ khai "CẦN TRA CỨU: …" trong kế
+    # hoạch. Ghi chú vừa chèn cho con viết, vừa lưu vào wiki để lượt sau dùng.
+    if plan:
+        try:
+            from services import code_pipeline as _cp
+            _ghi_chu = _cp.tra_cuu_ke_hoach(plan, _last_user_text(messages))
+            if _ghi_chu:
+                editor_messages.append({"role": "system", "content":
+                    "=== GHI CHÚ TRA CỨU (do người tra cứu tìm, dùng nếu đúng) ===\n"
+                    + _ghi_chu[:3000]})
+        except Exception as exc:
+            logger.warning({"event": "pipeline_tracuu_err", "combo": combo_name,
+                            "error": str(exc)[:150]})
+
     # Tầng 3 (tuỳ chọn): reviewer (bố soi con). Bật khi agent_branches.code_reviewer
     # có model. Khi bật → con viết NON-STREAM để soi được, bố review, chưa đạt thì
     # chỉnh (≤2 vòng), rồi trả code cuối. Không có tool-call trong nhánh này.
     reviewer = _pipeline_reviewer_model() if not tools else ""
+
+    # Chia việc cho nhiều con: chỉ khi bố tự đánh dấu phần VÀ tự khai độc lập.
+    # Cần review bật, vì code ghép lại BẮT BUỘC phải qua bộ chạy thử — ghép sai
+    # (trùng tên hàm, thiếu import) chỉ lộ ra khi chạy.
+    cac_phan: list[dict[str, str]] = []
+    if plan and reviewer and not body.get("stream"):
+        try:
+            from services import code_pipeline as _cp
+            cac_phan = _cp.tach_phan(plan)
+        except Exception as exc:
+            logger.warning({"event": "pipeline_chia_err", "combo": combo_name,
+                            "error": str(exc)[:150]})
 
     last_error = ""
     for em in editors:
@@ -514,8 +675,19 @@ def _run_pipeline_combo(
                 continue
             logger.info({"event": "pipeline_editor_try", "combo": combo_name, "provider": route.provider, "model": route.model, "has_plan": bool(plan), "architect": plan_model, "reviewer": reviewer or "off"})
             if reviewer:
+                # Chia việc: nhiều con viết song song rồi ghép. Ghép xong ĐI QUA
+                # ĐÚNG một đường với code do một con viết (chạy thử → bố soi),
+                # nên ghép sai vẫn bị bắt. Ghép thất bại → rơi về một con viết cả.
+                code_san = ""
+                if cac_phan:
+                    code_san = _viet_song_song(combo_name, route, editor_messages,
+                                               cac_phan, {**body, "stream": False})
+                    if not code_san:
+                        logger.info({"event": "pipeline_chia_that_bai_ve_mot_con",
+                                     "combo": combo_name})
                 code = _run_pipeline_review(combo_name, route, editor_messages, body,
-                                            reviewer, plan, _last_user_text(messages))
+                                            reviewer, plan, _last_user_text(messages),
+                                            code_ban_dau=code_san)
                 model_cooldown.record_success("pipeline:" + combo_name, route.model)
                 if body.get("stream"):
                     def _final_stream(_c=code):
