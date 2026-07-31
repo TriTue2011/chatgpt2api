@@ -406,6 +406,18 @@ class FlowImageAdapter(BaseImageAdapter):
                          "label": account.get("label"),
                          "profile": account["profile"]})
         else:
+            # `_next_account()` trả None trong HAI trường hợp khác nhau hẳn:
+            # chưa khai tài khoản nào, HOẶC có tài khoản nhưng đang trong thời
+            # gian nghỉ (cooldown 1 giờ sau một lượt thất bại). Đo thật 31/07:
+            # tài khoản duy nhất đang cooldown mà lỗi vẫn nói "chưa khai tài
+            # khoản" ⇒ người đọc đi thêm tài khoản đã tồn tại. Phân biệt rõ.
+            so_tk = len(_accounts())
+            if so_tk:
+                raise RuntimeError(
+                    f"cả {so_tk} tài khoản Google Flow đang trong thời gian nghỉ "
+                    f"(cooldown {_cooldown_seconds()}s sau lượt thất bại trước). "
+                    "Chờ hết cooldown hoặc thêm tài khoản dự phòng."
+                )
             raise RuntimeError(
                 "no Google Flow accounts configured. "
                 "Add at least one under providers.flow.accounts."

@@ -27,6 +27,30 @@ class VideoGenerationRequest(BaseModel):
     last_frame: str | None = None
 
 
+def _loi_solver(exc: Exception, nhan: str) -> str:
+    """Nguyên nhân THẬT của lỗi từ captcha-solver, không phải dòng trạng thái.
+
+    `resp.raise_for_status()` chỉ ném "Server error '502 Bad Gateway' for url …",
+    còn lý do thật nằm trong body: {"detail": "429: Account Busy"} hoặc
+    {"detail": "Flow generate failed after 1 attempts…"}. Đo thật 31/07: gọi
+    tạo video trả về đúng chữ "502 Bad Gateway" nên không thể biết là tài khoản
+    đang bận, hết lượt, hay trình duyệt không dựng được trang.
+    """
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            chi_tiet = resp.json().get("detail")
+        except Exception:
+            chi_tiet = (getattr(resp, "text", "") or "")[:300]
+        if chi_tiet:
+            return f"{nhan} generation failed: {chi_tiet}"
+    # httpx.ReadTimeout stringify ra chuỗi RỖNG — đo thật 31/07: flow/veo-3.1-lite
+    # hết hạn chờ và thông báo về tay người dùng chỉ là "Flow Video generation
+    # failed: " không có chữ nào phía sau. Rơi về tên lớp lỗi cho có nội dung.
+    ly_do = str(exc).strip() or type(exc).__name__
+    return f"{nhan} generation failed: {ly_do}"
+
+
 async def handle_video_generation(
     body: dict[str, Any],
     authorization: str | None = None,
@@ -83,7 +107,13 @@ async def handle_video_generation(
         if not acc:
             raise HTTPException(status_code=429, detail={"error": "All Flow accounts are exhausted/in cooldown."})
             
-        async with httpx.AsyncClient(timeout=300) as client:
+        # Hạn chờ của ta phải LỚN HƠN ngân sách của solver, không thì ta luôn
+        # bỏ cuộc trước và không bao giờ đọc được kết quả. Đo thật 31/07:
+        # cả hai đều 300s ⇒ flow/veo-3.1-lite chết ở đúng 300,0s với thông báo
+        # rỗng, còn solver vẫn đang giữ hồ sơ trình duyệt nên 3 model sau nhận
+        # "Account Busy". `FlowVideoReq.timeout` mặc định 300, trần 600.
+        _NGAN_SACH_SOLVER_S = 300
+        async with httpx.AsyncClient(timeout=_NGAN_SACH_SOLVER_S + 60) as client:
             try:
                 resp = await client.post(
                     f"{solver_url}/v1/google/flow/generate-video",
@@ -93,7 +123,11 @@ async def handle_video_generation(
                         "prompt": prompt,
                         "model": model,
                         "aspect_ratio": aspect_ratio,
-                        "duration": duration,
+                        # captcha-solver khai `FlowVideoReq.duration: str | None`.
+                        # `duration` ở đây đọc thẳng từ body thô nên vẫn có thể là
+                        # số nguyên; gửi số là solver trả 422 rồi bị bọc thành 502.
+                        # Đo thật 31/07: gửi duration=4 → "Input should be a valid string".
+                        "duration": None if duration is None else str(duration),
                         "count": n,
                         "image": image,
                         "last_frame": last_frame,
@@ -122,10 +156,14 @@ async def handle_video_generation(
                     
                 return data
             except Exception as exc:
-                import logging
-                logger = logging.getLogger(__name__)
+                # KHÔNG gán `logger` ở đây. Gán cục bộ giữa hàm biến `logger`
+                # thành biến địa phương của CẢ hàm, nên hai khối báo lỗi phía
+                # trước/sau (agnes ở trên, veo ở dưới) ném UnboundLocalError
+                # ngay trong lúc đang xử lý lỗi ⇒ người dùng nhận HTTP 500
+                # "Internal Server Error" trắng thay vì nguyên nhân thật.
+                # Đo thật 31/07: agnes/agnes-video-v2.0 trả 500 vì đúng lỗi này.
                 logger.error({"event": "flow_video_error", "error": str(exc)})
-                raise HTTPException(status_code=502, detail={"error": f"Flow Video generation failed: {exc}"}) from exc
+                raise HTTPException(status_code=502, detail={"error": _loi_solver(exc, "Flow Video")}) from exc
 
     # Get credentials from gemini_free config
     providers_cfg = config.data.get("providers") or {}

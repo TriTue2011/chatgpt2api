@@ -10,6 +10,7 @@ Supports:
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any, Iterator
 
@@ -80,6 +81,20 @@ def _strip_agnes_model(model: str) -> str:
     if m.startswith("agnes/"):
         m = m[len("agnes/"):]
     return m
+
+
+def _giay_video(duration: str | int | None, mac_dinh: int = 5) -> int:
+    """Số giây video, luôn trả SỐ NGUYÊN cho API Agnes.
+
+    Người gọi có thể truyền 5, "5", "5s", hay None (endpoint /v1/video/generations
+    khai `duration: str | None`). Agnes lại yêu cầu int, gửi chuỗi là HTTP 400.
+    """
+    if duration is None or duration == "":
+        return mac_dinh
+    if isinstance(duration, int):
+        return duration if duration > 0 else mac_dinh
+    so = re.search(r"\d+", str(duration))
+    return int(so.group()) if so else mac_dinh
 
 
 class AgnesProvider:
@@ -418,7 +433,12 @@ class AgnesProvider:
             "prompt": prompt,
             "resolution": resolution or "1080p",
             "aspect_ratio": aspect_ratio or "16:9",
-            "duration": str(duration) if duration else "5",
+            # Agnes nhận `duration` là SỐ NGUYÊN. Gửi chuỗi thì API trả HTTP 400
+            # "json: cannot unmarshal string into Go struct field
+            # taskSubmitReqAlias.duration of type int" — nghĩa là mọi lượt tạo
+            # video qua agnes đều thất bại. Đo thật 31/07 sau khi vá chỗ báo lỗi
+            # bị crash (trước đó lỗi này bị che thành HTTP 500 trắng).
+            "duration": _giay_video(duration),
         }
         if num_frames is not None:
             body["num_frames"] = num_frames

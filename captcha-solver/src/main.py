@@ -473,14 +473,19 @@ async def api_flow_generate_video(req: FlowVideoReq):
             headless=req.headless,
             timeout=req.timeout,
         )
-        return result
+    except HTTPException:
+        # GIỮ NGUYÊN mã trạng thái do lớp dưới đặt. Trước đây `except Exception`
+        # bắt luôn HTTPException nên "429 Account Busy" (hồ sơ trình duyệt đang
+        # bị lượt khác giữ) và "429 hết lượt" đều biến thành 502. Bên gọi không
+        # phân biệt được "chờ chút rồi thử lại" với "hỏng thật".
+        raise
     except Exception as exc:
         logger.exception("flow generate video failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if not req.return_binary:
         return result
-        
+
     try:
         import httpx
         url = result["data"][0]["url"]
