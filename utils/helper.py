@@ -97,6 +97,13 @@ _VISION_KEYWORDS = {
     # · "kimi-k" khớp moonshotai/kimi-k3-free (đường tokenrouter/ và tr/) —
     #   Moonshot Kimi K2/K3 đa phương thức.
     "agnes-2", "kimi-k",
+    # ĐO THẬT 31/07 — hai model NVIDIA này ĐỌC ĐƯỢC ảnh nhưng tên không có từ
+    # khoá nào ở trên nên bị xếp 'chat', UI ẩn nút "Phân tích ảnh" và combo
+    # không định tuyến ảnh tới chúng dù chúng làm được:
+    # · mistral-nemotron        : gọi đúng màu 2/2, chép trang sách thật đạt 87%
+    # · nemotron-3-super-120b   : gọi đúng màu 2/2, chép trang sách thật đạt 85%
+    # Cùng loại sót với oc/ và agnes đã vá 30/07.
+    "mistral-nemotron", "nemotron-3-super",
 }
 # Providers where ALL models support video analysis
 _VIDEO_PROVIDER_PREFIXES: set[str] = {

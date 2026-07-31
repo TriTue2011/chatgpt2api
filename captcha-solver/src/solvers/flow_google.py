@@ -1341,21 +1341,141 @@ async def flow_generate_video(
             });
         }""")
 
-        # ── Switch sang tab Video ─────────────────────────────────────────
-        await page.evaluate("""() => {
-            const tabs = Array.from(document.querySelectorAll('button, [role=tab]'));
-            const vt = tabs.find(b => /^video$/i.test((b.innerText || b.textContent || '').trim()));
-            if (vt) vt.click();
-        }""")
-        await asyncio.sleep(1.5)
-        # Fallback bằng locator
-        try:
-            loc = page.locator("button", has_text="Video").first
-            if await loc.count():
-                await loc.click(timeout=3000)
-                await asyncio.sleep(1)
-        except Exception:
-            pass
+        # ── Chuyển sang tab Video — BẮT BUỘC, có KIỂM CHỨNG ───────────────
+        #
+        # Bản cũ so khớp `/^video$/i` với innerText của nút. KHÔNG BAO GIỜ khớp:
+        # Flow dùng Material Symbols nên innerText của nút tab là "videocam\nVideo"
+        # (tên ligature của icon dính liền nhãn) — đúng khuôn mà chính file này đã
+        # xử lý cho nút gửi: /arrow_forward[\s\n]+(Tạo|Generate)/.
+        #
+        # Hậu quả đo thật 31/07 (chủ máy xem trên noVNC): giao diện ĐỨNG NGUYÊN ở
+        # tab "Hình ảnh" với model ảnh Nano Banana 2, credit còn 1050 (KHÔNG hết
+        # hạn mức). Nghĩa là mọi lượt "tạo video" thực chất đi tạo ẢNH, rồi:
+        #   · veo-3.1-lite/fast/omni-flash → chờ video trong DOM đến hết hạn (~360s)
+        #   · veo-3.1-quality             → "Không click được nút Tạo: disabled"
+        # Bản cũ chỉ bấm rồi TIN, không kiểm lại, nên sai này im lặng hoàn toàn.
+        async def _dang_o_tab_video() -> bool:
+            """Đọc CHIP model cạnh nút gửi — nơi duy nhất phản ánh chế độ hiện tại.
+
+            KHÔNG dùng document.body.innerText: mọi ảnh cũ trong thư viện đều dán
+            nhãn model đã tạo nó ("🍌 Nano Banana 2"), nên điều kiện "body không
+            chứa Nano Banana" KHÔNG BAO GIỜ đúng được — bộ kiểm chứng luôn báo
+            thất bại dù đã chuyển tab. Đã sập bẫy này ngày 31/07.
+
+            DOM thật (đo 31/07): button[aria-haspopup=menu] có innerText
+            "🍌 Nano Banana 2|crop_16_9|x1" ở chế độ ảnh; ở chế độ video chip đổi
+            sang tên Veo/Omni.
+            """
+            return bool(await page.evaluate("""() => {
+              const chip = Array.from(document.querySelectorAll('button[aria-haspopup=menu]'))
+                .find(b => /nano\\s*banana|veo|omni|imagen/i.test(b.innerText || ''));
+              if (!chip) return false;
+              return /veo|omni/i.test(chip.innerText || '');
+            }"""))
+
+        async def _bam_chuot_that(mo_ta: str, tim_js: str) -> bool:
+            """Bấm bằng CHUỘT THẬT vào phần tử do `tim_js` trả về toạ độ.
+
+            KHÔNG dùng element.click() trong JS: giao diện Flow là React và menu
+            chỉ mở khi nhận pointer event thật. Đo thật 31/07: gọi JS .click() lên
+            chip model xong `aria-expanded` VẪN là false, bảng cài đặt không mở.
+            Cách này trùng với `_set_dropdown` phía dưới trong cùng file (đã chạy
+            được cho phần tạo ảnh) — dùng page.mouse.click theo bounding box.
+            """
+            box = await page.evaluate(tim_js)
+            if not box:
+                return False
+            try:
+                await page.mouse.click(box["x"] + box["w"] / 2, box["y"] + box["h"] / 2)
+                logger.info("flow_video: đã bấm chuột thật vào %s", mo_ta)
+                return True
+            except Exception as exc:
+                logger.warning("flow_video: bấm %s lỗi: %s", mo_ta, exc)
+                return False
+
+        # Chip cài đặt cạnh nút gửi — nơi MỞ RA bảng chứa cặp tab Hình ảnh/Video.
+        # Đo thật: khi bảng chưa mở, trong DOM KHÔNG có nút "Video" nào cả.
+        _JS_CHIP = """() => {
+          const ds = Array.from(document.querySelectorAll('button[aria-haspopup=menu], button, div[role=button]'));
+          const chip = ds.find(b => {
+            const s = (b.innerText || b.textContent || '').trim();
+            if (!s || s.length > 60) return false;
+            return /nano\\s*banana|veo\\s*3|omni\\s*flash|imagen/i.test(s);
+          });
+          if (!chip) return null;
+          const r = chip.getBoundingClientRect();
+          if (!r.width || !r.height) return null;
+          return {x: r.x, y: r.y, w: r.width, h: r.height};
+        }"""
+
+        # Tab "Video": chữ đứng RIÊNG, cho phép tên icon đứng trước ("videocam").
+        _JS_TAB = """() => {
+          const ds = Array.from(document.querySelectorAll('button, [role=tab], div[role=button]'));
+          const vt = ds.find(b => {
+            const s = (b.innerText || b.textContent || '').trim();
+            if (s.length > 24) return false;
+            return /(^|[\\s\\n])video$/i.test(s);
+          });
+          if (!vt) return null;
+          const r = vt.getBoundingClientRect();
+          if (!r.width || !r.height) return null;
+          return {x: r.x, y: r.y, w: r.width, h: r.height};
+        }"""
+
+        async def _mo_bang_cai_dat() -> bool:
+            return await _bam_chuot_that("chip model (mở bảng cài đặt)", _JS_CHIP)
+
+        async def _bam_tab_video() -> bool:
+            return await _bam_chuot_that("tab Video", _JS_TAB)
+
+        for _lan in range(3):
+            if await _dang_o_tab_video():
+                break
+            # Cặp tab nằm TRONG bảng cài đặt → phải mở bảng trước mỗi lần thử.
+            if await _mo_bang_cai_dat():
+                logger.info("flow_video: đã mở bảng cài đặt (lần %d)", _lan + 1)
+                await asyncio.sleep(1.2)
+            if not await _bam_tab_video():
+                try:   # dự phòng: locator khớp chuỗi con
+                    loc = page.locator("button, [role=tab]").filter(
+                        has_text=_re.compile(r"(^|\s)Video$", _re.I)).first
+                    if await loc.count():
+                        await loc.click(timeout=3000)
+                except Exception:
+                    pass
+            await asyncio.sleep(2.0)
+        if not await _dang_o_tab_video():
+            # DỪNG ở đây thay vì đi tiếp rồi tạo ẢNH và báo "hết hạn chờ video".
+            # Liệt kê RỘNG (kèm div[role=button], nới độ dài) để lần sau đọc log là
+            # biết bảng cài đặt có mở ra hay không, không phải đoán.
+            _thay = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('button,[role=tab],div[role=button]'))
+                     .map(b => (b.innerText||'').trim().replace(/\\n/g,'|'))
+                     .filter(s => s && s.length < 60).slice(0, 40)""")
+            # Dump DOM THẬT quanh khung nhập: chip mở bảng cài đặt KHÔNG phải
+            # <button> (đo 31/07: không xuất hiện trong danh sách nút), nên phải
+            # xem cấu trúc thật mới biết bấm vào đâu, đừng đoán tiếp.
+            _quanh = await page.evaluate("""() => {
+              const bs = Array.from(document.querySelectorAll('button'));
+              const send = bs.find(b => /arrow_forward/i.test(b.innerText||''));
+              if (!send) return 'KHÔNG thấy nút gửi';
+              let box = send;
+              for (let i = 0; i < 4 && box.parentElement; i++) box = box.parentElement;
+              const ds = Array.from(box.querySelectorAll('*')).slice(0, 60).map(e => {
+                const t = (e.innerText || '').trim().replace(/\\n/g, '|').slice(0, 40);
+                if (!t) return null;
+                const at = ['role', 'aria-haspopup', 'aria-expanded', 'aria-label', 'data-testid']
+                  .map(a => e.hasAttribute(a) ? a + '=' + e.getAttribute(a) : null)
+                  .filter(Boolean).join(' ');
+                return e.tagName.toLowerCase() + (at ? '[' + at + ']' : '') + ' :: ' + t;
+              }).filter(Boolean);
+              return [...new Set(ds)].slice(0, 30);
+            }""")
+            raise RuntimeError(
+                "Không chuyển được sang tab Video của Flow — giao diện vẫn ở chế độ "
+                f"tạo ẢNH nên không thể tạo video. Các nút thấy được: {_thay} "
+                f"|| DOM quanh khung nhập: {_quanh}")
+        logger.info("flow_video: đã chuyển sang tab Video (đã kiểm chứng)")
         # ── Tắt chế độ "Tác nhân" (Agent) nếu đang bật ────────────────────
         try:
             # Nếu bật Tác nhân, Google sẽ khóa/ẩn menu chọn Model
