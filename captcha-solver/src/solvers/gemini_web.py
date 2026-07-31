@@ -638,6 +638,16 @@ async def generate_music(
     Trả: {"video": {"b64": "data:video/mp4;base64,…", "url": <cdn>, "title": …},
           "elapsed_ms": int}. Ném RuntimeError nếu web từ chối / quá giờ.
     """
+    # PHẢI bắt đầu bằng "Tạo nhạc" — đây là điểm mấu chốt (chủ máy chỉ 31/07).
+    # Đo thật: prompt bắt đầu "Tạo một bản nhạc…" → Gemini SINH nhạc (ra thẻ mp4);
+    # prompt bắt đầu "một bản nhạc…" / "nhạc lofi…" → Gemini hiểu là PHÁT nhạc,
+    # gạ kết nối YouTube Music. Chỉ cần neo động từ "tạo" ở đầu là hết. KHÔNG liên
+    # quan model Lyria hay tiện ích gì — Flash/Lite thường tự sinh được.
+    p = (prompt or "").strip()
+    if not p.lower().startswith(("tạo", "tao", "sáng tác", "sang tac", "viết nhạc")):
+        p = "Tạo một bản nhạc: " + p
+    prompt = p
+
     started = time.time()
     async with pool.page(profile=profile, headless=headless) as page:
         if not page.url.endswith("gemini.google.com/app"):
@@ -668,23 +678,23 @@ async def generate_music(
                 return t.slice(0, 80).replace(/\\n/g, ' ').trim();
             }"""
         )
+        # Tải mp4 bằng REQUEST CONTEXT của trình duyệt (page.context.request):
+        # nó chia sẻ cookie phiên VÀ không vướng CORS như fetch() trong trang.
+        # Đo thật 31/07: fetch() trong trang trả blob RỖNG vì file nằm ở
+        # contribution.usercontent.google.com (chéo miền với gemini.google.com).
         b64 = ""
         try:
-            b64 = await page.evaluate(
-                """async (src) => {
-                    const r = await fetch(src);
-                    const blob = await r.blob();
-                    return await new Promise((res, rej) => {
-                        const fr = new FileReader();
-                        fr.onloadend = () => res(fr.result);
-                        fr.onerror = rej;
-                        fr.readAsDataURL(blob);
-                    });
-                }""",
-                src,
-            )
+            import base64 as _b64
+            resp = await page.context.request.get(src, timeout=90_000)
+            if resp.ok:
+                body = await resp.body()
+                if body:
+                    b64 = "data:video/mp4;base64," + _b64.b64encode(body).decode()
+                    logger.info("gemini_web music: tải mp4 %d bytes", len(body))
+            else:
+                logger.warning("gemini_web music: tải mp4 HTTP %s", resp.status)
         except Exception as exc:
-            logger.warning("gemini_web music: tải mp4 trong trang lỗi: %s", exc)
+            logger.warning("gemini_web music: tải mp4 (request ctx) lỗi: %s", exc)
 
         return {
             "video": {"b64": b64, "url": src, "title": title or "Bản nhạc"},
