@@ -30,10 +30,14 @@ Pending choices are kept in-memory per user_id (10 min TTL).
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 _ASK_RE = re.compile(
     r"<<<ASK>>>\s*(.*?)\s*<<<END>>>",
@@ -50,6 +54,35 @@ _lock = threading.RLock()
 _pending: dict[str, dict[str, Any]] = {}
 _TTL = 600.0
 _LABEL_MAX = 40
+
+# Pending choices ĐƯỢC LƯU RA SQLITE (không chỉ RAM). Vì sao: trước đây `_pending`
+# chỉ nằm trong bộ nhớ tiến trình, nên MỖI LẦN app khởi động lại (deploy, crash,
+# health-restart, Portainer update) là mất sạch — người dùng vừa được hỏi
+# "chọn 1/2/3", trả "1" sau khi app restart thì bot "chưa rõ ý" (không còn nhớ
+# đang hỏi gì). Đo thật 31/07: nhắc-lịch hỏi kênh → "1" → "chưa rõ ý" đúng vào
+# lúc app vừa restart. Lưu ra đĩa (cùng chỗ sessions/reminders) thì câu hỏi số
+# sống qua restart. RAM vẫn là cache nhanh; SQLite là nguồn bền.
+_conn = None
+
+
+def _db():
+    global _conn
+    if _conn is not None:
+        return _conn
+    try:
+        import sqlite3
+        from services.config import DATA_DIR
+        p = Path(DATA_DIR) / "agent" / "ask_pending.sqlite"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        c = sqlite3.connect(str(p), check_same_thread=False)
+        c.execute("CREATE TABLE IF NOT EXISTS ask_pending ("
+                  " user_id TEXT PRIMARY KEY, choices TEXT NOT NULL, ts REAL)")
+        c.commit()
+        _conn = c
+    except Exception as exc:
+        logger.warning("ask_choices: mở SQLite lỗi (chỉ dùng RAM): %s", exc)
+        _conn = None
+    return _conn
 
 
 def extract(text: str) -> tuple[str, list[dict[str, str]]]:
@@ -123,24 +156,64 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
 def set_pending(user_id: str, choices: list[dict[str, str]]) -> None:
     if not user_id or not choices:
         return
+    now = time.time()
     with _lock:
-        _pending[str(user_id)] = {"choices": list(choices), "ts": time.time()}
+        _pending[str(user_id)] = {"choices": list(choices), "ts": now}
+    # Ghi ra đĩa để sống qua restart (best-effort — hỏng thì RAM vẫn chạy).
+    try:
+        import json
+        c = _db()
+        if c is not None:
+            c.execute("INSERT OR REPLACE INTO ask_pending(user_id, choices, ts) "
+                      "VALUES (?,?,?)",
+                      (str(user_id), json.dumps(list(choices), ensure_ascii=False), now))
+            c.commit()
+    except Exception as exc:
+        logger.warning("ask_choices: lưu pending lỗi: %s", exc)
 
 
 def get_pending(user_id: str) -> Optional[list[dict[str, str]]]:
+    uid = str(user_id)
     with _lock:
-        p = _pending.get(str(user_id))
-        if not p:
-            return None
+        p = _pending.get(uid)
+    if p:
         if time.time() - float(p.get("ts") or 0) > _TTL:
-            _pending.pop(str(user_id), None)
+            clear_pending(uid)
             return None
         return list(p.get("choices") or [])
+    # RAM miss (vd app vừa restart) → đọc lại từ SQLite.
+    try:
+        import json
+        c = _db()
+        if c is None:
+            return None
+        row = c.execute("SELECT choices, ts FROM ask_pending WHERE user_id=?",
+                        (uid,)).fetchone()
+        if not row:
+            return None
+        if time.time() - float(row[1] or 0) > _TTL:
+            clear_pending(uid)
+            return None
+        choices = json.loads(row[0] or "[]")
+        with _lock:                       # nạp lại vào cache RAM
+            _pending[uid] = {"choices": choices, "ts": row[1]}
+        return list(choices)
+    except Exception as exc:
+        logger.warning("ask_choices: đọc pending lỗi: %s", exc)
+        return None
 
 
 def clear_pending(user_id: str) -> None:
+    uid = str(user_id)
     with _lock:
-        _pending.pop(str(user_id), None)
+        _pending.pop(uid, None)
+    try:
+        c = _db()
+        if c is not None:
+            c.execute("DELETE FROM ask_pending WHERE user_id=?", (uid,))
+            c.commit()
+    except Exception:
+        pass
 
 
 def resolve_reply(user_id: str, user_text: str) -> Optional[str]:
