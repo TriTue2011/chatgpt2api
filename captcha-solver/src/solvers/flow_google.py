@@ -1171,6 +1171,201 @@ async def get_or_create_project(
             "elapsed_ms": int((time.time() - started) * 1000),
         }
 
+def _ghi_anh_tam(nguon: str, ten: str) -> str | None:
+    """Ghi ảnh (data URL / base64 thuần / http URL) ra tệp tạm để nạp lên Flow.
+
+    Trả về đường dẫn, hoặc None nếu không lấy được ảnh.
+    """
+    import base64
+    import tempfile
+    from pathlib import Path
+
+    raw = b""
+    s = (nguon or "").strip()
+    if not s:
+        return None
+    if s.startswith(("http://", "https://")):
+        try:
+            import httpx
+            with httpx.Client(timeout=60, follow_redirects=True) as client:
+                r = client.get(s)
+                r.raise_for_status()
+                raw = r.content
+        except Exception as exc:
+            logger.warning("flow_video: tải ảnh %s lỗi: %s", ten, str(exc)[:120])
+            return None
+    else:
+        try:
+            raw = base64.b64decode(s.split(",", 1)[1] if s.startswith("data:") else s)
+        except Exception as exc:
+            logger.warning("flow_video: giải mã ảnh %s lỗi: %s", ten, str(exc)[:120])
+            return None
+    if not raw:
+        return None
+    duoi = ".png"
+    if raw[:3] == b"\xff\xd8\xff":
+        duoi = ".jpg"
+    elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        duoi = ".webp"
+    p = Path(tempfile.gettempdir()) / f"flow_{ten}{duoi}"
+    p.write_bytes(raw)
+    return str(p)
+
+
+async def _gan_khung_hinh(page, anh_dau: str | None, anh_cuoi: str | None,
+                          mo_bang_cai_dat) -> None:
+    """Gán ảnh ĐẦU và/hoặc ẢNH CUỐI cho video qua tab "Khung hình" của Flow.
+
+    Chuỗi bấm dưới đây ĐO THẬT trên giao diện Flow 31/07/2026 (không suy đoán):
+
+      chip cài đặt  →  tab "Khung hình"  (button[role=tab], có aria-selected)
+      →  ô "Bắt đầu" / "Kết thúc"  (div 50×50, cursor:pointer)  → mở hộp chọn media
+      →  mục "Tệp tải lên" ở cột trái
+      →  nút "Tải nội dung nghe nhìn lên"  → mở hộp chọn tệp của trình duyệt
+      →  tệp xuất hiện trong danh sách và được chọn sẵn (có xem trước)
+      →  nút "Thêm vào câu lệnh"  → ảnh vào ô
+
+    Lưu ý: mặc định Flow đang ở tab "Thành phần" (ảnh tham chiếu), KHÔNG phải
+    "Khung hình" — bỏ bước bấm tab thì ảnh vào sai chỗ. Lỗi ở bất kỳ bước nào
+    cũng chỉ ghi log rồi bỏ qua: video không có ảnh đầu vẫn hơn là không có video.
+    """
+    async def _bam(js, mo_ta, tham=None, cho=2.0) -> bool:
+        box = await (page.evaluate(js, tham) if tham is not None else page.evaluate(js))
+        if not box:
+            logger.warning("flow_khung: KHÔNG thấy %s", mo_ta)
+            return False
+        await page.mouse.click(box["x"] + box["w"] / 2, box["y"] + box["h"] / 2)
+        logger.info("flow_khung: đã bấm %s", mo_ta)
+        await asyncio.sleep(cho)
+        return True
+
+    # Mẫu chữ phải NEO hai đầu. Nếu để lỏng thì "khung hình" khớp luôn tooltip
+    # của nút hoán đổi ("Hoán đổi khung hình đầu tiên và cuối cùng") và ta bấm
+    # nhầm nút đó — đo thật: nút này nằm ngay cạnh hai ô ảnh.
+    _JS_THEO_CHU = """(mau) => {
+      const ds = Array.from(document.querySelectorAll('button, [role=tab], div[role=button]'));
+      const re = new RegExp(mau, 'i');
+      const t = ds.find(b => {
+        const s = (b.innerText || '').trim().replace(/\\n/g, ' ');
+        return s.length < 50 && re.test(s);
+      });
+      if (!t) return null;
+      const r = t.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      return {x: r.x, y: r.y, w: r.width, h: r.height};
+    }"""
+
+    async def _tab_khung_dang_chon() -> str | None:
+        return await page.evaluate("""() => {
+          const t = Array.from(document.querySelectorAll('button[role=tab]'))
+            .find(b => /^(crop_free\\s*)?khung h\\u00ecnh$/i.test(
+              (b.innerText || '').trim().replace(/\\n/g, ' ')));
+          return t ? t.getAttribute('aria-selected') : null;
+        }""")
+    # Ô ảnh: div nhỏ 30–90px, cursor:pointer, chữ đúng bằng nhãn.
+    _JS_O = """(nhan) => {
+      const t = Array.from(document.querySelectorAll('div')).find(e => {
+        if ((e.innerText || '').trim() !== nhan) return false;
+        const r = e.getBoundingClientRect();
+        return r.width > 30 && r.width < 90 && r.height > 30 && r.height < 90
+               && getComputedStyle(e).cursor === 'pointer';
+      });
+      if (!t) return null;
+      const r = t.getBoundingClientRect();
+      return {x: r.x, y: r.y, w: r.width, h: r.height};
+    }"""
+
+    # Tab "Khung hình" chỉ tồn tại khi bảng cài đặt đang MỞ. Các bước trước có
+    # thể đã đóng nó (bấm ra ngoài, chọn xong dropdown), nên mở lại nếu không thấy.
+    if await _tab_khung_dang_chon() is None:
+        await mo_bang_cai_dat()
+        await asyncio.sleep(1.2)
+    # CHỈ bấm khi tab CHƯA được chọn. Bấm vào tab đang chọn làm Flow đóng bảng —
+    # đo thật 31/07: lượt trước đã ở "Khung hình", ta bấm thêm một lần và bảng
+    # đóng, lần đọc aria-selected sau đó ra None nên cả phần ảnh bị bỏ.
+    if await _tab_khung_dang_chon() != "true":
+        await _bam(_JS_THEO_CHU, "tab 'Khung hình'", r"^(crop_free\s*)?khung hình$")
+    da_chon = await _tab_khung_dang_chon()
+    if da_chon != "true":
+        logger.warning("flow_khung: tab Khung hình aria-selected=%r (mong 'true') — "
+                       "ảnh có thể vào tab 'Thành phần' sai chỗ, bỏ qua", da_chon)
+        return
+    logger.info("flow_khung: tab 'Khung hình' đang được chọn (đã kiểm chứng)")
+
+    for nhan, nguon, ten in (("Bắt đầu", anh_dau, "dau"), ("Kết thúc", anh_cuoi, "cuoi")):
+        if not nguon:
+            continue
+        duong_dan = _ghi_anh_tam(nguon, ten)
+        if not duong_dan:
+            continue
+        if not await _bam(_JS_O, f"ô '{nhan}'", nhan, cho=2.5):
+            continue
+        await _bam(_JS_THEO_CHU, "mục 'Tệp tải lên'", r"tệp tải lên")
+        nut = await page.evaluate(_JS_THEO_CHU, r"tải nội dung nghe nhìn lên")
+        if not nut:
+            logger.warning("flow_khung: KHÔNG thấy nút tải lên cho ô '%s'", nhan)
+            continue
+        try:
+            async with page.expect_file_chooser(timeout=15_000) as fc:
+                await page.mouse.click(nut["x"] + nut["w"] / 2, nut["y"] + nut["h"] / 2)
+            chooser = await fc.value
+            await chooser.set_files(duong_dan)
+            logger.info("flow_khung: đã nạp tệp cho ô '%s': %s", nhan, duong_dan)
+        except Exception as exc:
+            logger.warning("flow_khung: nạp tệp cho ô '%s' lỗi: %s", nhan, str(exc)[:140])
+            continue
+        # Chờ ĐÚNG dấu hiệu: TÊN TỆP xuất hiện trong danh sách "Tệp tải lên".
+        #
+        # Không chờ nút "Thêm vào câu lệnh": nút đó có sẵn trong hộp thoại từ
+        # trước (đo thật 31/07), nên bấm theo nó là bấm khi tệp còn đang lên —
+        # ô ảnh vẫn trống. Tên tệp trên danh sách mới là bằng chứng đã lên xong.
+        ten_tep = duong_dan.rsplit("/", 1)[-1]
+        _JS_HANG_TEP = """(ten) => {
+          const ds = Array.from(document.querySelectorAll('div, li, button'));
+          const t = ds.find(e => {
+            const s = (e.innerText || '').trim();
+            if (!s.includes(ten)) return false;
+            const r = e.getBoundingClientRect();
+            return r.width > 100 && r.height > 20 && r.height < 120;
+          });
+          if (!t) return null;
+          const r = t.getBoundingClientRect();
+          return {x: r.x, y: r.y, w: r.width, h: r.height};
+        }"""
+        hang = None
+        for _ in range(24):
+            await asyncio.sleep(2.0)
+            hang = await page.evaluate(_JS_HANG_TEP, ten_tep)
+            if hang:
+                break
+        if not hang:
+            logger.warning("flow_khung: tệp %r KHÔNG lên danh sách sau 48s — bỏ ô '%s'",
+                           ten_tep, nhan)
+            continue
+        logger.info("flow_khung: tệp %r đã lên danh sách, bấm chọn", ten_tep)
+        await page.mouse.click(hang["x"] + hang["w"] / 2, hang["y"] + hang["h"] / 2)
+        await asyncio.sleep(1.5)
+
+        them = await page.evaluate(_JS_THEO_CHU, r"thêm vào câu lệnh")
+        if not them:
+            logger.warning("flow_khung: KHÔNG thấy nút 'Thêm vào câu lệnh' cho ô '%s'", nhan)
+            continue
+        await page.mouse.click(them["x"] + them["w"] / 2, them["y"] + them["h"] / 2)
+        await asyncio.sleep(2.5)
+        co_anh = await page.evaluate("""(nhan) => {
+          const t = Array.from(document.querySelectorAll('div')).find(e => {
+            const r = e.getBoundingClientRect();
+            return r.width > 30 && r.width < 90 && r.height > 30 && r.height < 90
+                   && getComputedStyle(e).cursor === 'pointer'
+                   && (e.innerText || '').trim() === nhan;
+          });
+          // Ô còn nguyên chữ nhãn ⇒ CHƯA có ảnh; có ảnh thì Flow thay bằng thumbnail.
+          return !t;
+        }""", nhan)
+        logger.info("flow_khung: ô '%s' %s", nhan,
+                    "ĐÃ có ảnh (nhãn biến mất)" if co_anh else "VẪN trống (nhãn còn)")
+
+
 async def flow_generate_video(
     project_id: str,
     prompt: str,
@@ -1367,10 +1562,22 @@ async def flow_generate_video(
             sang tên Veo/Omni.
             """
             return bool(await page.evaluate("""() => {
-              const chip = Array.from(document.querySelectorAll('button[aria-haspopup=menu]'))
-                .find(b => /nano\\s*banana|veo|omni|imagen/i.test(b.innerText || ''));
+              const bs = Array.from(document.querySelectorAll('button'));
+              const send = bs.find(b => /arrow_forward/i.test(b.innerText || ''));
+              if (!send) return false;
+              let khung = send;
+              for (let i = 0; i < 5 && khung.parentElement; i++) khung = khung.parentElement;
+              // CHỈ trong khung nhập: thư viện cũng có nhãn model của tác phẩm cũ.
+              const chip = Array.from(khung.querySelectorAll('button[aria-haspopup=menu]'))[0];
               if (!chip) return false;
-              return /veo|omni/i.test(chip.innerText || '');
+              const s = (chip.innerText || '').trim();
+              // DOM thật 31/07 — chip đổi hẳn nội dung theo chế độ:
+              //   chế độ ẢNH  : "🍌 Nano Banana 2|crop_16_9|x1"
+              //   chế độ VIDEO: "Video · 8s|crop_16_9|x1"
+              // Trước đó tôi tìm "veo|omni" trong chip nên KHÔNG BAO GIỜ khớp dù
+              // đã chuyển tab thành công — lần thứ ba sập bẫy "kiểm bằng dấu hiệu
+              // đoán chứ không phải dấu hiệu đọc được từ DOM".
+              return /(^|[\\s|])video(\\s*[·.]|\\b)/i.test(s) && !/nano\\s*banana|imagen/i.test(s);
             }"""))
 
         async def _bam_chuot_that(mo_ta: str, tim_js: str) -> bool:
@@ -1393,22 +1600,46 @@ async def flow_generate_video(
                 logger.warning("flow_video: bấm %s lỗi: %s", mo_ta, exc)
                 return False
 
+        # Mọi tìm kiếm dưới đây PHẢI giới hạn trong KHUNG NHẬP, không quét cả trang.
+        #
+        # Vì sao: thư viện hiển thị mỗi tác phẩm kèm TÊN MODEL đã tạo nó. Sau khi có
+        # một video Veo trong thư viện, quét cả trang tìm "veo|nano banana" sẽ bám
+        # vào nhãn của tác phẩm cũ thay vì chip cài đặt. Đo thật 31/07: chạy lẻ một
+        # lượt thì THÀNH CÔNG (113s, video 2,7 MB), nhưng chạy loạt 5 model thì cả 4
+        # model flow trượt trong 12–16s — đúng vì thư viện đã có video Veo từ lượt
+        # trước, và trước đó chưa có nên lượt lẻ mới chạy được.
+        _JS_KHUNG = """
+          const bs = Array.from(document.querySelectorAll('button'));
+          const send = bs.find(b => /arrow_forward/i.test(b.innerText || ''));
+          if (!send) return null;
+          let khung = send;
+          for (let i = 0; i < 5 && khung.parentElement; i++) khung = khung.parentElement;
+        """
+
         # Chip cài đặt cạnh nút gửi — nơi MỞ RA bảng chứa cặp tab Hình ảnh/Video.
         # Đo thật: khi bảng chưa mở, trong DOM KHÔNG có nút "Video" nào cả.
         _JS_CHIP = """() => {
-          const ds = Array.from(document.querySelectorAll('button[aria-haspopup=menu], button, div[role=button]'));
+          %s
+          const ds = Array.from(khung.querySelectorAll('button[aria-haspopup=menu], button, div[role=button]'));
           const chip = ds.find(b => {
             const s = (b.innerText || b.textContent || '').trim();
             if (!s || s.length > 60) return false;
-            return /nano\\s*banana|veo\\s*3|omni\\s*flash|imagen/i.test(s);
+            // Ở chế độ tạo ẢNH chip ghi tên model ("🍌 Nano Banana 2|crop_16_9|x1"),
+            // nhưng ở chế độ tạo VIDEO nó ghi "Video · 4s|crop_16_9|x1" — KHÔNG có
+            // tên model nào. Đo thật 31/07: thiếu nhánh 'video ·' thì lượt sau (khi
+            // Flow còn nhớ chế độ video) không mở được bảng cài đặt, nên model/thời
+            // lượng/số lượng đều giữ nguyên của lượt trước.
+            return /nano\\s*banana|veo|omni|imagen|video\\s*[\\u00b7.]/i.test(s);
           });
           if (!chip) return null;
           const r = chip.getBoundingClientRect();
           if (!r.width || !r.height) return null;
           return {x: r.x, y: r.y, w: r.width, h: r.height};
-        }"""
+        }""" % _JS_KHUNG
 
         # Tab "Video": chữ đứng RIÊNG, cho phép tên icon đứng trước ("videocam").
+        # Bảng bật lên KHÔNG nằm trong khung nhập (portal ra body) nên phần này
+        # vẫn quét cả trang — nhưng chặn theo độ dài chữ nên không bắt nhãn thư viện.
         _JS_TAB = """() => {
           const ds = Array.from(document.querySelectorAll('button, [role=tab], div[role=button]'));
           const vt = ds.find(b => {
@@ -1476,6 +1707,17 @@ async def flow_generate_video(
                 f"tạo ẢNH nên không thể tạo video. Các nút thấy được: {_thay} "
                 f"|| DOM quanh khung nhập: {_quanh}")
         logger.info("flow_video: đã chuyển sang tab Video (đã kiểm chứng)")
+        # Ghi lại các nút CÓ THẬT trong bảng ở chế độ video. Chủ máy hỏi "tab video
+        # có chọn thời lượng không" — cứ ghi ra rồi đọc log, đừng đoán. Nếu không có
+        # nút 4s/8s/10s thì lời gọi _set_dropdown(duration) bên dưới là vô nghĩa.
+        try:
+            _nut_bang = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('button,[role=tab],[role=menuitem],div[role=button]'))
+                     .map(b => (b.innerText||'').trim().replace(/\\n/g,'|'))
+                     .filter(s => s && s.length < 30).slice(0, 40)""")
+            logger.info("flow_video: nút trong bảng chế độ video = %s", _nut_bang)
+        except Exception:
+            pass
         # ── Tắt chế độ "Tác nhân" (Agent) nếu đang bật ────────────────────
         try:
             # Nếu bật Tác nhân, Google sẽ khóa/ẩn menu chọn Model
@@ -1562,8 +1804,26 @@ async def flow_generate_video(
             await asyncio.sleep(0.5)
 
         # ── Set model/aspect/duration/count dropdowns ─────────────────────
-        
+
+        async def _bao_dam_bang_mo(vi_sao: str) -> None:
+            """Mở lại bảng cài đặt nếu nó đã đóng.
+
+            Chọn model làm Flow vẽ lại bảng và ĐÓNG nó — đo thật 31/07: lượt đặt
+            model xong thì hàng thời lượng biến mất, `_set_dropdown(duration)`
+            không tìm thấy gì rồi im lặng bỏ qua, và phần kiểm chứng đọc ra rỗng.
+            Nên trước mỗi hàng phải chắc bảng còn mở.
+            """
+            co_hang = await page.evaluate("""() =>
+              Array.from(document.querySelectorAll('[aria-selected]'))
+                .some(b => /^(x\\d|\\dx|\\d+s)$/i.test((b.innerText || '').trim()))
+            """)
+            if not co_hang:
+                logger.info("flow_video: bảng cài đặt đã đóng — mở lại (%s)", vi_sao)
+                await _mo_bang_cai_dat()
+                await asyncio.sleep(1.2)
+
         # 1. Aspect Ratio
+        await _bao_dam_bang_mo("trước khi đặt tỷ lệ")
         if aspect_ratio == "16:9":
             await _set_dropdown(page, "16:9", "aspect")
         elif aspect_ratio == "9:16":
@@ -1571,8 +1831,22 @@ async def flow_generate_video(
         elif aspect_ratio == "1:1":
             await _set_dropdown(page, "1:1", "aspect")
 
-        # 2. Count (luôn = 1)
-        await _set_dropdown(page, "1x", "count")
+        # 2. Số bản ghi — hàng "x1/x2/x3/x4" trên bảng cài đặt.
+        #
+        # Trước đây dòng này là `_set_dropdown(page, "1x", "count")` với chú thích
+        # "luôn = 1": tham số `count` của hàm bị BỎ HẲN. Người dùng chọn x4 ở tab
+        # Tạo Video, được báo giá 4 video, rồi nhận về 1 video. Nhãn đúng theo
+        # giao diện Flow: video 1 bản là "1x", nhiều bản là "x2"/"x3"/"x4" (giống
+        # generate_image ở trên). Tín dụng nhân lên theo số bản — xem bảng giá ở
+        # khối "Thời lượng" phía dưới.
+        # Nhãn trong bảng VIDEO là "x1/x2/x3/x4" — KHÔNG phải "1x" như bên tạo ảnh.
+        # Đo thật 31/07: gửi "1x" thì _set_dropdown không tìm thấy mục nào, rơi về
+        # bấm trigger, và hàng số lượng giữ nguyên 'x2' của lượt trước ⇒ người dùng
+        # xin 1 video nhưng bị trừ tín dụng của 2. Phần kiểm chứng bên dưới bắt
+        # được đúng ca này ("LỆCH so_luong — yêu cầu '1x' nhưng giao diện đang 'x2'").
+        count = max(1, min(4, int(count or 1)))
+        await _bao_dam_bang_mo("trước khi đặt số bản ghi")
+        await _set_dropdown(page, f"x{count}", "count")
         
         # 3. Model
         _MODEL_LABEL = {
@@ -1584,14 +1858,138 @@ async def flow_generate_video(
             "abra_t2v_10s":        "Omni Flash",
         }
         model_lbl = _MODEL_LABEL.get(model_key.replace("_portrait", ""), "Veo 3.1 - Lite")
+
+        # Ghi lại DANH SÁCH MODEL THẬT kèm số tín dụng, TRƯỚC khi chọn. Bảng
+        # _MODEL_LABEL ở trên là nhãn ta ĐOÁN; nếu Flow đổi tên hoặc đổi giá thì
+        # _set_dropdown lặng lẽ không tìm thấy và Flow dùng model đang chọn sẵn —
+        # tạo ra video bằng model KHÁC model người dùng yêu cầu mà không ai biết.
+        # Mở menu model rồi dump ra để đối chiếu (chủ máy yêu cầu 31/07).
+        try:
+            if await _bam_chuot_that("chip model (mở bảng)", _JS_CHIP):
+                await asyncio.sleep(1.2)
+            # Trong bảng, danh sách model còn nằm sau MỘT lớp nữa: nút xổ có chữ
+            # "<tên model> arrow_drop_down". Bấm nốt lớp đó mới thấy các lựa chọn
+            # kèm số tín dụng. Đo thật: bỏ bước này thì chỉ đọc được đúng nhãn của
+            # nút đang đóng ("Veo 3.1 - Lite | arrow_drop_down").
+            _JS_XO_MODEL = """() => {
+              const ds = Array.from(document.querySelectorAll('button, div[role=button], [aria-haspopup]'));
+              const t = ds.find(b => {
+                const s = (b.innerText || '').trim();
+                return s.length < 60 && /arrow_drop_down/i.test(s)
+                       && /veo|omni|nano|banana|imagen/i.test(s);
+              });
+              if (!t) return null;
+              const r = t.getBoundingClientRect();
+              if (!r.width || !r.height) return null;
+              return {x: r.x, y: r.y, w: r.width, h: r.height};
+            }"""
+            if await _bam_chuot_that("nút xổ danh sách model", _JS_XO_MODEL):
+                await asyncio.sleep(1.5)
+            _ds_model = await page.evaluate("""() => {
+              const ds = Array.from(document.querySelectorAll(
+                '[role=menuitem], [role=option], [role=menuitemradio], li, button, div[role=button]'));
+              return [...new Set(ds.map(e => (e.innerText || '').trim().replace(/\\n/g, ' · '))
+                .filter(s => s && s.length < 110 &&
+                  /veo|omni|nano|banana|imagen|tín dụng|credit/i.test(s)))].slice(0, 30);
+            }""")
+            logger.info("flow_video: DANH SÁCH MODEL + TÍN DỤNG = %s", _ds_model)
+            logger.info("flow_video: ta sẽ chọn nhãn = %r (từ model_key=%r)", model_lbl, model_key)
+        except Exception as _exc:
+            logger.warning("flow_video: không đọc được danh sách model: %s", _exc)
+
         await _set_dropdown(page, model_lbl, "model")
-        
-        if duration:
-            # duration is usually "10s", "4s", etc.
+
+        # Số tín dụng KHÔNG nằm trong menu model — Flow chỉ ghi MỘT dòng cho lựa
+        # chọn HIỆN TẠI ("Quá trình tạo sẽ tốn N tín dụng"). Đọc dòng đó sau khi đã
+        # chọn model để biết đúng giá của model này, và để phát hiện sớm nếu Flow
+        # đổi giá hoặc nếu ta chọn nhầm model.
+        try:
+            _tin_dung = await page.evaluate("""() => {
+              const ds = Array.from(document.querySelectorAll('*'));
+              for (const e of ds) {
+                const s = (e.innerText || '').trim();
+                if (s && s.length < 80 && /tín dụng|credit/i.test(s)) return s.replace(/\\n/g, ' ');
+              }
+              return null;
+            }""")
+            logger.info("flow_video: TÍN DỤNG cho %r = %r", model_lbl, _tin_dung)
+        except Exception:
+            pass
+
+        # ── Thời lượng: CHỈ Omni Flash có hàng chọn 4s/6s/8s/10s ──────────────
+        #
+        # Bảng giá THẬT, đọc từ giao diện Flow (chủ máy chụp noVNC 31/07/2026),
+        # cột "Quá trình tạo sẽ tốn N tín dụng", mỗi video (x1):
+        #
+        #   Omni Flash          4s → 7 tín dụng   6s → 10   8s → 12   10s → 15
+        #   Veo 3.1 - Lite      10 tín dụng   (KHÔNG có hàng chọn thời lượng)
+        #   Veo 3.1 - Fast      20 tín dụng   (KHÔNG có hàng chọn thời lượng)
+        #   Veo 3.1 - Quality   100 tín dụng  (KHÔNG có hàng chọn thời lượng)
+        #
+        # Chọn x2/x3/x4 thì số tín dụng NHÂN LÊN theo số video.
+        #
+        # Vì vậy gọi _set_dropdown(duration) cho model Veo là VÔ NGHĨA: hàng đó
+        # không tồn tại, hàm sẽ không tìm thấy rồi im lặng bỏ qua. Tệ hơn, bộ tìm
+        # trigger của nó nhận cả '4s','8s','5s','10s' làm từ khoá nên có thể bấm
+        # nhầm phần tử khác trên trang. Chỉ đặt thời lượng khi model có hàng đó.
+        _CO_CHON_THOI_LUONG = model_key.startswith("abra_")   # Omni Flash
+        dur_da_dat: str | None = None    # thời lượng THẬT SỰ đã đặt, để trả về
+        if duration and _CO_CHON_THOI_LUONG:
             dur_str = str(duration)
             if not dur_str.endswith("s"):
                 dur_str += "s"
+            await _bao_dam_bang_mo("trước khi đặt thời lượng")
             await _set_dropdown(page, dur_str, "duration")
+            dur_da_dat = dur_str
+        elif duration:
+            logger.info(
+                "flow_video: BỎ QUA duration=%r — model %r không có hàng chọn thời "
+                "lượng (chỉ Omni Flash có). Muốn đổi độ dài thì dùng flow/omni-flash.",
+                duration, model_lbl)
+
+        # ── KIỂM CHỨNG các lựa chọn vừa đặt ───────────────────────────────
+        #
+        # Bảng cài đặt của Flow đánh dấu lựa chọn bằng `aria-selected` (đo thật
+        # 31/07: hàng 4s/6s/8s/10s và hàng x1..x4 đều có). Nhờ đó biết ta có chọn
+        # ĐÚNG hay không, thay vì bấm rồi tin — `_set_dropdown` không tìm thấy
+        # mục nào thì im lặng bỏ qua, và Flow chạy bằng lựa chọn còn sót lại của
+        # lượt trước.
+        try:
+            await _bao_dam_bang_mo("trước khi kiểm chứng")
+            _dang_chon = await page.evaluate("""() => {
+              const ra = {};
+              for (const b of Array.from(document.querySelectorAll('[aria-selected=true]'))) {
+                const s = (b.innerText || '').trim().replace(/\\n/g, '|');
+                if (!s || s.length > 40) continue;
+                if (/^\\d+s$/i.test(s)) ra.thoi_luong = s;
+                else if (/^x\\d$/i.test(s)) ra.so_luong = s;
+                else if (/^crop_\\d+_\\d+\\|/.test(s) || /^\\d+:\\d+$/.test(s)) ra.ty_le = s;
+                else if (/khung hình|thành phần/i.test(s)) ra.che_do_anh = s;
+                else if (/hình ảnh|video/i.test(s)) ra.tab = s;
+              }
+              const chip = Array.from(document.querySelectorAll('button[aria-haspopup=menu]'))
+                .map(b => (b.innerText || '').trim().replace(/\\n/g, '|'))
+                .find(s => s && s.length < 60);
+              if (chip) ra.chip = chip;
+              return ra;
+            }""")
+            logger.info("flow_video: ĐANG CHỌN = %s", _dang_chon)
+            _mong = {"thoi_luong": dur_da_dat, "so_luong": f"x{count}"}
+            for _k, _v in _mong.items():
+                if not _v:
+                    continue
+                _that = str(_dang_chon.get(_k) or "")
+                # 'x1' trên giao diện hiện là '1x' ở hàng số lượng — so lỏng theo số.
+                if _that.replace("x", "") != _v.replace("x", "").replace("s", "").rstrip("s") \
+                        and _that.rstrip("s") != _v.rstrip("s"):
+                    logger.warning("flow_video: LỆCH %s — yêu cầu %r nhưng giao diện đang %r",
+                                   _k, _v, _that or "(không đọc được)")
+        except Exception as _exc:
+            logger.warning("flow_video: không kiểm chứng được lựa chọn: %s", _exc)
+
+        # ── Ảnh đầu / ảnh cuối (tab "Khung hình") ─────────────────────────
+        if image_b64 or last_frame_b64:
+            await _gan_khung_hinh(page, image_b64, last_frame_b64, _mo_bang_cai_dat)
 
         # ── Humanize ──────────────────────────────────────────────────────
         await _humanize(page, moves=8)
@@ -1669,11 +2067,17 @@ async def flow_generate_video(
                 continue
 
             # ── Chờ video render trên DOM (không phụ thuộc cấu trúc API) ──
+            #
+            # Chọn x2/x3/x4 thì Flow sinh ngần ấy video và trừ ngần ấy tín dụng.
+            # Trước đây khối này dùng `.find()` rồi `break` ngay ở video ĐẦU
+            # TIÊN, nên chọn 4 video là trả tiền 4 nhưng chỉ nhận về 1. Nay gom
+            # cho đủ `count`; hết giờ mà chưa đủ thì lấy những cái đã có và GHI
+            # LOG rõ thiếu mấy cái — không im lặng cắt bớt.
             wait_start = time.time()
             nav_detected = False
-            video_url = None
+            video_urls: list[str] = []
             remaining_credits = None
-            
+
             while time.time() - wait_start < 300:
                 # Phát hiện UI navigate sang gallery
                 if not nav_detected:
@@ -1683,16 +2087,16 @@ async def flow_generate_video(
                     if nav:
                         nav_detected = True
                         logger.info("flow_video: UI navigated (submit OK) - waiting for video DOM")
-                
+
                 if nav_detected:
                     # Kiểm tra xem có video nào MỚI load xong chưa
-                    vid_src = await page.evaluate("""(old_vids) => {
+                    moi = await page.evaluate("""(old_vids) => {
                         const progress = document.querySelector('div[role="progressbar"]');
-                        if (progress) return null; // Vẫn đang gen
-                        
-                        let vids = Array.from(document.querySelectorAll('video')).map(v => v.src);
-                        let new_vid = vids.find(src => !old_vids.includes(src));
-                        if (new_vid) return new_vid;
+                        if (progress) return [];   // Vẫn đang gen
+
+                        const vids = Array.from(document.querySelectorAll('video')).map(v => v.src);
+                        const news = vids.filter(src => src && !old_vids.includes(src));
+                        if (news.length) return news;
 
                         // Chưa có thẻ video, thử click vào thumbnail đầu tiên
                         // Trong Google Labs, gallery có các ảnh img hoặc div
@@ -1701,18 +2105,27 @@ async def flow_generate_video(
                             firstThumb.click();
                             console.log("Clicked thumbnail to open video modal");
                         }
-                        
-                        return null;
+
+                        return [];
                     }""", old_vids)
-                    
-                    if vid_src:
-                        video_url = vid_src
-                        logger.info("flow_video: Found NEW video in DOM: %s", video_url[:100])
+
+                    for src in (moi or []):
+                        if src not in video_urls:
+                            video_urls.append(src)
+                    if video_urls:
+                        logger.info("flow_video: có %d/%d video mới trên DOM",
+                                    len(video_urls), count)
+                    if len(video_urls) >= count:
                         break
-                        
+
                 await asyncio.sleep(4)
 
-            if video_url:
+            if video_urls:
+                if len(video_urls) < count:
+                    logger.warning(
+                        "flow_video: CHỈ lấy được %d/%d video sau %ds — đã trừ tín dụng cho "
+                        "%d video. Kiểm tra lại hàng 'Số bản ghi' trên giao diện Flow.",
+                        len(video_urls), count, int(time.time() - wait_start), count)
                 break
 
             # Miss response - reload + retry
@@ -1730,27 +2143,33 @@ async def flow_generate_video(
             await _type_prompt()
             await asyncio.sleep(0.5)
 
-        if not video_url:
+        if not video_urls:
             raise RuntimeError(f"Timeout {int(time.time()-started)}s waiting for video DOM.")
-            
-        logger.info("flow_video: got video_url %s", video_url[:100])
+
+        video_urls = video_urls[:count]
+        logger.info("flow_video: got %d video_url, cái đầu %s",
+                    len(video_urls), video_urls[0][:100])
 
         # ── Download bytes trong browser (có session cookies) ─────────────
-        b64_data = ""
-        try:
-            b64_data = await page.evaluate("""async (src) => {
-                const r = await fetch(src);
-                const blob = await r.blob();
-                return new Promise((res, rej) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => res(reader.result);
-                    reader.onerror = rej;
-                    reader.readAsDataURL(blob);
-                });
-            }""", video_url)
-            logger.info("flow_video: b64 len=%d", len(b64_data))
-        except Exception as exc:
-            logger.warning("flow_video: download failed: %s", exc)
+        _TAI_MOT = """async (src) => {
+            const r = await fetch(src);
+            const blob = await r.blob();
+            return new Promise((res, rej) => {
+                const reader = new FileReader();
+                reader.onloadend = () => res(reader.result);
+                reader.onerror = rej;
+                reader.readAsDataURL(blob);
+            });
+        }"""
+        b64_list: list[str] = []
+        for _i, _src in enumerate(video_urls):
+            try:
+                _b64 = await page.evaluate(_TAI_MOT, _src)
+                logger.info("flow_video: b64[%d] len=%d", _i, len(_b64 or ""))
+            except Exception as exc:
+                logger.warning("flow_video: download video %d failed: %s", _i, exc)
+                _b64 = ""
+            b64_list.append(_b64 or "")
 
         # ── Lấy số dư tín dụng ────────────────────────────────────────────
         remaining_credits = _cap.get("remaining_credits")
@@ -1778,15 +2197,18 @@ async def flow_generate_video(
         return {
             "created": int(time.time()),
             "data": [{
-                "url": video_url,
-                "b64_json": b64_data,
+                "url": _u,
+                "b64_json": b64_list[_i],
                 "metadata": {
                     "source":           "flow_ui_intercept",
                     "elapsed_s":        int(time.time() - started),
                     "model":            model_key,
+                    "duration":         dur_da_dat,
+                    "count_requested":  count,
+                    "count_returned":   len(video_urls),
                     "remainingCredits": remaining_credits,
                     "operation_name":   _cap.get("op_name"),
                 }
-            }]
+            } for _i, _u in enumerate(video_urls)]
         }
 

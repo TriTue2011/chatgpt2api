@@ -2307,12 +2307,20 @@ def _process_ai(ev: dict) -> None:
             else:
                 reply = (reply + "\n(em có audio nhưng gửi file chưa được)").strip()
         if out.get("video_url") or out.get("video_path"):
-            # best-effort file; không dán link
-            vsrc = out.get("video_path") or out.get("video_url")
-            if vsrc and _send_file_robust(
-                thread_id, str(vsrc), reply[:200], thread_type, account=_acc,
-            ):
+            # best-effort file; không dán link. Tạo nhiều video (Flow x2/x3/x4)
+            # thì gửi HẾT — người dùng đã trả tín dụng cho từng cái.
+            vsrcs = [str(v) for v in (out.get("video_paths") or out.get("video_urls") or [])
+                     if v] or [str(out.get("video_path") or out.get("video_url") or "")]
+            vsrcs = [v for v in vsrcs if v]
+            da_gui = 0
+            for i, vsrc in enumerate(vsrcs):
+                cap = reply[:200] if i == 0 else ""
+                if _send_file_robust(thread_id, vsrc, cap, thread_type, account=_acc):
+                    da_gui += 1
+            if da_gui:
                 sent_media = True
+                if da_gui < len(vsrcs):
+                    reply = (reply + f"\n(gửi được {da_gui}/{len(vsrcs)} video)").strip()
             elif not sent_media:
                 reply = (reply + "\n(em có video nhưng gửi file chưa được)").strip()
         # File Office từ agent (office_send) → gửi FILE THẬT như luồng Word:

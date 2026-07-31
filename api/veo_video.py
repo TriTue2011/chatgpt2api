@@ -27,6 +27,66 @@ class VideoGenerationRequest(BaseModel):
     last_frame: str | None = None
 
 
+def _luu_thu_vien(ket_qua: dict[str, Any]) -> dict[str, Any]:
+    """Ghi video vừa tạo vào THƯ VIỆN (config.images_dir) và gắn thêm
+    `library_url` vào từng item.
+
+    Trước đây video tạo xong chỉ tồn tại trong câu trả lời HTTP: tab Tạo Video
+    giữ nó trong bộ nhớ trình duyệt, tải lại trang là mất; còn nhánh bot ghi vào
+    data/agent/media/ — thư mục KHÔNG nằm trong vùng /api/images quét, nên
+    "Quản lý Video" luôn trống. Đặt ở đây (điểm ra chung của mọi nhánh) thay vì
+    ở từng nơi gọi để web, bot và API cùng có một thư viện.
+
+    Không ném lỗi ra ngoài: lưu hỏng thì người dùng vẫn phải nhận được video.
+    """
+    import base64
+    import hashlib
+    import time
+    from pathlib import Path
+
+    items = (ket_qua or {}).get("data") or []
+    if not isinstance(items, list):
+        return ket_qua
+    thu_muc_ngay = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
+    goc = config.images_dir / thu_muc_ngay
+    for item in items:
+        if not isinstance(item, dict) or item.get("library_url"):
+            continue
+        raw = b""
+        b64 = str(item.get("b64_json") or "")
+        if b64:
+            try:
+                raw = base64.b64decode(b64.split(",", 1)[1] if b64.startswith("data:") else b64)
+            except Exception as exc:
+                logger.warning({"event": "video_library_decode_failed", "error": str(exc)[:120]})
+        if not raw:
+            # Nhánh chỉ trả URL (Agnes, Veo trực tiếp) — tải về để thư viện có
+            # bản thật, không phải một liên kết sẽ hết hạn.
+            url = str(item.get("url") or "")
+            if not url.startswith(("http://", "https://")):
+                continue
+            try:
+                import httpx
+                with httpx.Client(timeout=120, follow_redirects=True) as client:
+                    r = client.get(url)
+                    r.raise_for_status()
+                    raw = r.content
+            except Exception as exc:
+                logger.warning({"event": "video_library_download_failed",
+                                "error": str(exc)[:120]})
+                continue
+        try:
+            goc.mkdir(parents=True, exist_ok=True)
+            ten = f"{int(time.time())}_{hashlib.md5(raw, usedforsecurity=False).hexdigest()[:12]}.mp4"
+            (goc / ten).write_bytes(raw)
+            item["library_url"] = f"{config.base_url}/images/{thu_muc_ngay.as_posix()}/{ten}"
+            logger.info({"event": "video_saved_to_library", "path": f"{thu_muc_ngay.as_posix()}/{ten}",
+                         "bytes": len(raw)})
+        except Exception as exc:
+            logger.warning({"event": "video_library_save_failed", "error": str(exc)[:120]})
+    return ket_qua
+
+
 def _loi_solver(exc: Exception, nhan: str) -> str:
     """Nguyên nhân THẬT của lỗi từ captcha-solver, không phải dòng trạng thái.
 
@@ -60,7 +120,14 @@ async def handle_video_generation(
     if not prompt:
         raise HTTPException(status_code=400, detail={"error": "prompt is required"})
 
-    n = max(1, min(1, int(body.get("n") or 1)))  # Veo only supports 1 per request
+    # Số video yêu cầu. TRẦN ĐẶT THEO TỪNG NHÁNH, không kẹp chung ở đây:
+    # Flow có hàng x1/x2/x3/x4 trên giao diện (tín dụng nhân lên theo số video),
+    # còn Veo trực tiếp và Agnes chỉ ra 1 video mỗi lượt gọi. Trước đây dòng này
+    # là `max(1, min(1, …))` — `min(1, x)` luôn ≤ 1 nên MỌI nhánh đều bị ép về 1.
+    # Hậu quả: tab Tạo Video cho chọn x4 và báo "400 tín dụng", nhưng xuống tới
+    # Flow thì count=1 ⇒ người dùng nhận 1 video sau khi đã đọc giá của 4 video.
+    n_yeu_cau = max(1, int(body.get("n") or 1))
+    n = n_yeu_cau
     aspect_ratio = str(body.get("aspect_ratio") or "16:9")
     duration = body.get("duration")
     resolution = body.get("resolution")
@@ -77,7 +144,7 @@ async def handle_video_generation(
     if model.startswith("agnes/") or "agnes" in model:
         from services.providers.agnes import agnes_provider
         try:
-            return agnes_provider.generate_video(
+            return _luu_thu_vien(agnes_provider.generate_video(
                 prompt=prompt,
                 model=model,
                 aspect_ratio=aspect_ratio,
@@ -91,7 +158,7 @@ async def handle_video_generation(
                 seed=seed,
                 mode=mode,
                 keyframes=keyframes,
-            )
+            ))
         except Exception as exc:
             logger.error({"event": "agnes_video_error", "error": str(exc)})
             raise HTTPException(status_code=502, detail={"error": f"Agnes Video generation failed: {exc}"}) from exc
@@ -128,7 +195,8 @@ async def handle_video_generation(
                         # số nguyên; gửi số là solver trả 422 rồi bị bọc thành 502.
                         # Đo thật 31/07: gửi duration=4 → "Input should be a valid string".
                         "duration": None if duration is None else str(duration),
-                        "count": n,
+                        # Flow: hàng "Số bản ghi" trên giao diện chỉ có x1..x4.
+                        "count": max(1, min(4, n_yeu_cau)),
                         "image": image,
                         "last_frame": last_frame,
                         "headless": False
@@ -153,8 +221,8 @@ async def handle_video_generation(
                                 break
                 except Exception:
                     pass
-                    
-                return data
+
+                return _luu_thu_vien(data)
             except Exception as exc:
                 # KHÔNG gán `logger` ở đây. Gán cục bộ giữa hàm biến `logger`
                 # thành biến địa phương của CẢ hàm, nên hai khối báo lỗi phía
@@ -174,6 +242,10 @@ async def handle_video_generation(
         "apiKeys": provider_config.get("api_keys") or [],
     }
 
+    # Veo trực tiếp: mỗi lượt gọi API ra đúng 1 video, và ta KHÔNG lặp để nhân
+    # lên vì mỗi lượt tiêu một phần hạn mức khoá gemini_free. Tab Tạo Video cũng
+    # chỉ cho chọn 1 cho nhánh này (video-model-specs.ts: veo-direct.countOptions).
+    n = 1
     all_data = []
     for idx in range(n):
         try:
@@ -196,10 +268,10 @@ async def handle_video_generation(
                 detail={"error": f"Video generation failed: {exc}"},
             ) from exc
 
-    return {
+    return _luu_thu_vien({
         "created": result.get("created", 0) if all_data else 0,
         "data": all_data,
-    }
+    })
 
 
 def _decode_media(b64: str) -> bytes:

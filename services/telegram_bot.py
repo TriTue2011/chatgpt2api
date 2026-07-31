@@ -1518,19 +1518,33 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         video_path = out.get("video_path")
         video_url = out.get("video_url")
         if video_path or video_url:
-            try:
-                if video_path:
-                    with open(video_path, "rb") as f:
-                        vid = f.read()
-                else:
-                    from services import net_guard
-                    vid = net_guard.fetch_media(str(video_url), timeout=120)
-                send_video(chat_id, vid, caption=reply[:1000])
+            # Flow x2/x3/x4 trả về nhiều video và đã trừ tín dụng cho từng cái —
+            # gửi hết, không chỉ cái đầu.
+            paths = [str(p) for p in (out.get("video_paths") or []) if p] \
+                or ([str(video_path)] if video_path else [])
+            urls = [str(u) for u in (out.get("video_urls") or []) if u] \
+                or ([str(video_url)] if video_url else [])
+            nguon: list[tuple[str, str]] = [("path", p) for p in paths] or \
+                                           [("url", u) for u in urls]
+            da_gui = 0
+            for i, (kieu, src) in enumerate(nguon):
+                try:
+                    if kieu == "path":
+                        with open(src, "rb") as f:
+                            vid = f.read()
+                    else:
+                        from services import net_guard
+                        vid = net_guard.fetch_media(src, timeout=120)
+                    send_video(chat_id, vid, caption=reply[:1000] if i == 0 else "")
+                    da_gui += 1
+                except Exception as exc:
+                    logger.warning("send video failed: %s", exc)
+            if da_gui:
+                if da_gui < len(nguon):
+                    send_message(chat_id, f"(gửi được {da_gui}/{len(nguon)} video)")
                 return
-            except Exception as exc:
-                logger.warning("send video failed: %s", exc)
-                if video_url:
-                    reply = f"{reply}\n{video_url}"
+            if video_url:
+                reply = f"{reply}\n{video_url}"
         audio_path = out.get("audio_path")
         audio_url = out.get("audio_url")
         if audio_path or audio_url:

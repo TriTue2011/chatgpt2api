@@ -406,6 +406,19 @@ async def api_flow_generate(req: FlowImageReq):
     except Exception as exc:
         logger.exception("flow generate failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # ĐÓNG trình duyệt sau khi xong (kể cả khi lỗi) để nhả RAM/CPU.
+        # Chủ máy yêu cầu 31/07: "sau khi lấy video thành công phải đóng trình
+        # duyệt chứ, kể cả tạo ảnh, tạo video, đăng nhập lại gg".
+        # Đo thật cùng ngày: 11 tiến trình chrome còn sống, một cái 60% CPU, load
+        # 3,16 trên 4 lõi ⇒ health check (hạn 10s) bị quá hạn 6 lần liền và
+        # container bị đánh dấu unhealthy. Các đường ĐĂNG NHẬP đã đóng sẵn
+        # (auto_login, chatgpt_login, claude_web_login, codex onboard); riêng hai
+        # đường tạo ảnh/tạo video Flow thì chưa — đây là chỗ rò tài nguyên.
+        try:
+            await pool.close_profile(req.profile)
+        except Exception:
+            logger.debug("close_profile sau khi tạo ảnh Flow bỏ qua", exc_info=True)
 
     if not req.return_binary:
         return result
@@ -482,6 +495,14 @@ async def api_flow_generate_video(req: FlowVideoReq):
     except Exception as exc:
         logger.exception("flow generate video failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # Xem ghi chú ở /v1/google/flow/generate-image: đóng trình duyệt để nhả
+        # RAM/CPU, nếu không thì mỗi lượt tạo video để lại một Chromium sống và
+        # health check của container bị quá hạn.
+        try:
+            await pool.close_profile(req.profile)
+        except Exception:
+            logger.debug("close_profile sau khi tạo video Flow bỏ qua", exc_info=True)
 
     if not req.return_binary:
         return result
@@ -1124,6 +1145,10 @@ async def api_claude_web_relogin_via_google(profile: str) -> dict[str, Any]:
     acct = resolve_account(profile)
     if not acct:
         raise HTTPException(404, f"No saved credentials for profile '{profile}'")
+    # Nhả trình duyệt cũ TRƯỚC khi đăng nhập lại — giống hai nhánh gemini-web và
+    # chatgpt. Thiếu bước này thì hồ sơ hỏng vẫn còn một Chromium sống, vừa ăn
+    # RAM vừa có thể giữ khoá hồ sơ làm lượt đăng nhập mới phải chờ.
+    await pool.close_profile(profile)
     session = await start_claude_web_login(
         profile=profile,
         email=acct["email"],
@@ -1166,6 +1191,15 @@ async def api_gemini_web_generate_image(req: GeminiWebImageReq) -> dict[str, Any
     except Exception as exc:
         logger.exception("gemini_web generate_image failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # Tạo ảnh là việc nặng và thưa (như Flow) — nhả trình duyệt ngay thay vì
+        # chờ 5 phút hết hạn nhàn rỗi của warm-pool. Nhánh /chat và
+        # /analyze-image thì KHÔNG đóng: đó là đường hội thoại, đóng mỗi lượt là
+        # mỗi lượt phải dựng lại Chromium.
+        try:
+            await pool.close_profile(req.profile)
+        except Exception:
+            logger.debug("close_profile sau khi tạo ảnh gemini-web bỏ qua", exc_info=True)
 
 
 @app.post("/v1/gemini-web/analyze-image", dependencies=[Depends(require_api_key)])
@@ -1606,12 +1640,20 @@ async def api_chatgpt_web_chat(req: ChatGPTWebChatReq) -> dict[str, Any]:
 
 @app.post("/v1/chatgpt-web/generate-image", dependencies=[Depends(require_api_key)])
 async def api_chatgpt_web_generate_image(req: ChatGPTWebChatReq) -> dict[str, Any]:
-    return await chatgpt_web_generate_image(
-        profile=req.profile,
-        prompt=req.prompt,
-        timeout=req.timeout,
-        headless=req.headless,
-    )
+    try:
+        return await chatgpt_web_generate_image(
+            profile=req.profile,
+            prompt=req.prompt,
+            timeout=req.timeout,
+            headless=req.headless,
+        )
+    finally:
+        # Xem ghi chú ở /v1/gemini-web/generate-image: tạo ảnh xong thì nhả
+        # trình duyệt ngay, đường hội thoại thì giữ ấm.
+        try:
+            await pool.close_profile(req.profile)
+        except Exception:
+            logger.debug("close_profile sau khi tạo ảnh chatgpt-web bỏ qua", exc_info=True)
 
 
 @app.post("/v1/chatgpt-web/analyze-image", dependencies=[Depends(require_api_key)])

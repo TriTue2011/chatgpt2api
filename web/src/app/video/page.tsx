@@ -12,10 +12,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  getVideoCreditCost,
+  getVideoCostLabel,
+  getVideoCreditPerClip,
   getVideoModelSpec,
   isFlowVideoModel,
   NO_VIDEO_PROVIDER_HINT,
+  usesFlowCredits,
 } from "@/lib/video-model-specs";
 
 interface VideoModel {
@@ -113,11 +115,22 @@ export default function VideoPage() {
             return true;
           })
           .map((m: any) => {
-            const spec = getVideoModelSpec(m.id);
-            let labelName = m.id;
-            if (String(m.id).includes("agnes")) labelName = `✨ ${m.id} (Agnes Async Video)`;
-            else if (m.owned_by && String(m.owned_by).includes("custom")) labelName = `🎬 ${m.id} (${String(m.owned_by).replace("custom:", "")})`;
-            return { id: String(m.id), label: labelName, baseCost: spec.baseCost };
+            const id = String(m.id);
+            const spec = getVideoModelSpec(id);
+            let labelName = id;
+            if (id.includes("agnes")) labelName = `✨ ${id} (Agnes Async Video)`;
+            else if (m.owned_by && String(m.owned_by).includes("custom")) labelName = `🎬 ${id} (${String(m.owned_by).replace("custom:", "")})`;
+            // Giá ngay trên tên model để thấy trước khi chọn. Omni Flash đổi giá
+            // theo thời lượng nên ghi khoảng, không ghi một con số cứng.
+            if (usesFlowCredits(id)) {
+              labelName +=
+                spec.durations.length > 1
+                  ? ` — ${getVideoCreditPerClip(id, spec.durations[0].value)}–${getVideoCreditPerClip(id, spec.durations[spec.durations.length - 1].value)} tín dụng/video`
+                  : ` — ${getVideoCreditPerClip(id)} tín dụng/video`;
+            } else {
+              labelName += " — theo hạn mức tài khoản";
+            }
+            return { id, label: labelName, baseCost: spec.baseCost };
           });
 
         vModels.sort((a, b) => {
@@ -138,10 +151,7 @@ export default function VideoPage() {
     void loadModels();
   }, []);
 
-  const calculateCredits = () => {
-    if (!model) return 0;
-    return getVideoCreditCost(model, parseInt(count || "1", 10));
-  };
+  const costLabel = model ? getVideoCostLabel(model, parseInt(count || "1", 10), duration) : "";
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isStart: boolean) => {
     const file = e.target.files?.[0];
@@ -173,8 +183,13 @@ export default function VideoPage() {
         prompt: prompt.trim(),
         n: parseInt(count, 10),
         aspect_ratio: aspectRatio,
-        duration: duration,
       };
+      // Chỉ gửi duration khi model có hàng chọn thời lượng thật (Omni Flash,
+      // Agnes…). Ba model Veo không có hàng đó — gửi xuống chỉ tổ để solver
+      // đi tìm một nút không tồn tại.
+      if (modelConfig.durations.length) {
+        payload.duration = duration;
+      }
       // Chỉ gửi resolution/fps khi model thực sự dùng tới (adapter bỏ qua
       // param thì không gửi giá trị người dùng chưa từng thấy trên UI).
       if (modelConfig.resolutions.length) {
@@ -361,18 +376,23 @@ export default function VideoPage() {
                     </select>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
-                    <select
-                      value={duration}
-                      onChange={(e) => setDuration(e.target.value)}
-                      className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
-                    >
-                      {modelConfig.durations.map((d) => (
-                        <option key={d.value} value={d.value}>{d.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Thời lượng — ẩn hẳn với model không có hàng này trên Flow
+                      (ba model Veo). Hiện ra mà không có tác dụng thì người
+                      dùng tưởng đã đổi được độ dài video. */}
+                  {modelConfig.durations.length > 0 && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-[var(--muted-foreground)]">Thời lượng</label>
+                      <select
+                        value={duration}
+                        onChange={(e) => setDuration(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                      >
+                        {modelConfig.durations.map((d) => (
+                          <option key={d.value} value={d.value}>{d.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {modelConfig.fps.length > 0 && (
                     <div className="space-y-1.5">
@@ -419,9 +439,8 @@ export default function VideoPage() {
                     >
                       {modelConfig.countOptions.map((c) => (
                         <option key={c} value={String(c)}>
-                          {c === 1
-                            ? `1x (1 video - ${getVideoCreditCost(model, 1)} CR)`
-                            : `x${c} (${c} video - ${getVideoCreditCost(model, c)} CR)`}
+                          {c === 1 ? "1x (1 video" : `x${c} (${c} video`}
+                          {usesFlowCredits(model) ? ` — ${getVideoCostLabel(model, c, duration)})` : ")"}
                         </option>
                       ))}
                     </select>
@@ -491,9 +510,15 @@ export default function VideoPage() {
                   </div>
                 </div>
 
-                {/* Credit info */}
+                {/* Chi phí — chỉ hiện con số tín dụng với model Flow (có bảng
+                    giá thật). Model khác ghi rõ tiêu vào hạn mức nào. */}
                 <div className="text-center py-2.5 text-xs text-[var(--muted-foreground)] bg-[var(--muted)]/60 rounded-xl border border-[var(--border)]">
-                  Chi phí dự kiến: <span className="font-bold text-[var(--foreground)] underline">{calculateCredits()} tín dụng</span>
+                  Chi phí dự kiến: <span className="font-bold text-[var(--foreground)] underline">{costLabel}</span>
+                  {usesFlowCredits(model) && (
+                    <span className="ml-1 opacity-80">
+                      ({getVideoCreditPerClip(model, duration)} tín dụng / video × {count})
+                    </span>
+                  )}
                 </div>
               </>
             )}

@@ -271,6 +271,11 @@ _MEDIA_URL_KEYS = (
     "thumbnail_url", "file_url", "media_url",
 )
 _MEDIA_PATH_KEYS = ("video_path", "audio_path", "image_path", "file_path")
+# Khoá DẠNG DANH SÁCH (nhiều ảnh / nhiều video trong một lượt). Phải lọc từng
+# phần tử, nếu không thì chỉ cần đổi 'video_path' thành 'video_paths' là qua mặt
+# được toàn bộ hai vòng lọc phía trên.
+_MEDIA_URL_LIST_KEYS = ("image_urls", "video_urls", "audio_urls")
+_MEDIA_PATH_LIST_KEYS = ("video_paths", "audio_paths", "image_paths", "file_paths")
 
 
 def is_allowed_egress_url(url: str | None) -> bool:
@@ -327,6 +332,24 @@ def is_allowed_media_path(path: str | None) -> bool:
         return False
 
 
+def _loc_danh_sach(cleaned: dict, key: str, cho_phep, blocked: list[str]) -> None:
+    """Lọc từng phần tử của một khoá media dạng danh sách. Bỏ hết phần tử xấu;
+    danh sách rỗng thì bỏ luôn khoá (kênh bot sẽ rơi về khoá số ít)."""
+    gia_tri = cleaned.get(key)
+    if not isinstance(gia_tri, (list, tuple)) or not gia_tri:
+        return
+    giu = [v for v in gia_tri if v and cho_phep(str(v))]
+    if len(giu) == len(gia_tri):
+        return
+    logger.warning("filter_agent_output blocked %d/%d phần tử của %s",
+                   len(gia_tri) - len(giu), len(gia_tri), key)
+    blocked.append(key)
+    if giu:
+        cleaned[key] = giu
+    else:
+        cleaned.pop(key, None)
+
+
 def filter_agent_output(out: dict | None, *, scrub_text_urls: bool = False) -> dict:
     """Lọc output agent/model trước khi kênh bot fetch/gửi.
 
@@ -360,6 +383,11 @@ def filter_agent_output(out: dict | None, *, scrub_text_urls: bool = False) -> d
         logger.warning("filter_agent_output blocked %s=%s", key, path[:160])
         cleaned.pop(key, None)
         blocked.append(key)
+
+    for key, cho_phep in ((k, is_allowed_egress_url) for k in _MEDIA_URL_LIST_KEYS):
+        _loc_danh_sach(cleaned, key, cho_phep, blocked)
+    for key, cho_phep in ((k, is_allowed_media_path) for k in _MEDIA_PATH_LIST_KEYS):
+        _loc_danh_sach(cleaned, key, cho_phep, blocked)
 
     if scrub_text_urls and isinstance(cleaned.get("text"), str):
         cleaned["text"] = scrub_private_urls_in_text(cleaned["text"])

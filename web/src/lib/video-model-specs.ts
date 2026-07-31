@@ -21,7 +21,9 @@
  *    seed/negative_prompt/keyframes.
  *  - captcha-solver/src/solvers/flow_google.py (flow_generate_video) — xác
  *    nhận phía captcha-solver cũng chỉ set dropdown model/aspect/duration/
- *    count trên UI Flow, không có ô resolution/fps nào được thao tác.
+ *    count trên UI Flow, không có ô resolution/fps nào được thao tác. Riêng
+ *    hàng "Thời lượng" CHỈ tồn tại với Omni Flash: solver gác bằng
+ *    `model_key.startswith("abra_")` và ghi log bỏ qua với ba model Veo.
  *  - services/image_providers/veo_video.py (VeoVideoAdapter._build_body) —
  *    nhánh Google Veo trực tiếp forward aspect_ratio/duration/resolution,
  *    KHÔNG có fps/seed/negative_prompt. Model "veo/…" hiện KHÔNG được route
@@ -74,15 +76,17 @@ const ASPECT_9_16: VideoOption = { value: "9:16", label: "9:16 (Dọc Shorts/Ree
 const FLOW_ASPECT_RATIOS: VideoOption[] = [ASPECT_16_9, ASPECT_9_16];
 
 const SPECS: Record<VideoBucket, VideoModelSpec> = {
+  // ── Ba model Veo: KHÔNG có hàng chọn thời lượng ────────────────────────
+  // durations rỗng ⇒ tab Tạo Video ẩn hẳn ô "Thời lượng" cho các model này.
+  // Trước đây khai 5s/8s (Quality, Fast) và 5s (Lite) — đều là giá trị TỰ ĐẶT,
+  // không có trong giao diện Flow. Người dùng đổi 5s↔8s và tưởng video dài ra,
+  // thực tế backend gửi xuống rồi solver không tìm thấy hàng đó nên bỏ qua.
   "flow-quality": {
     providerType: "flow",
     badge: "Flow Veo Quality (Google)",
     resolutions: [],
     aspectRatios: FLOW_ASPECT_RATIOS,
-    durations: [
-      { value: "5", label: "5s" },
-      { value: "8", label: "8s" },
-    ],
+    durations: [],
     fps: [],
     countOptions: [1, 2, 3, 4],
     baseCost: 100,
@@ -95,28 +99,29 @@ const SPECS: Record<VideoBucket, VideoModelSpec> = {
     badge: "Flow Veo Lite (Google)",
     resolutions: [],
     aspectRatios: FLOW_ASPECT_RATIOS,
-    durations: [{ value: "5", label: "5s" }],
+    durations: [],
     fps: [],
     countOptions: [1, 2, 3, 4],
     baseCost: 10,
-    supportsEndFrame: false,
+    supportsEndFrame: true,
     supportsSeed: false,
     supportsNegativePrompt: false,
   },
+  // Model DUY NHẤT có hàng chọn thời lượng, và tín dụng đổi theo thời lượng.
   "flow-omni": {
     providerType: "flow",
     badge: "Flow Omni Flash (Google)",
     resolutions: [],
     aspectRatios: FLOW_ASPECT_RATIOS,
     durations: [
-      { value: "4", label: "4s" },
-      { value: "6", label: "6s" },
-      { value: "8", label: "8s" },
-      { value: "10", label: "10s" },
+      { value: "4", label: "4s — 7 tín dụng" },
+      { value: "6", label: "6s — 10 tín dụng" },
+      { value: "8", label: "8s — 12 tín dụng" },
+      { value: "10", label: "10s — 15 tín dụng" },
     ],
     fps: [],
     countOptions: [1, 2, 3, 4],
-    baseCost: 12,
+    baseCost: 7,
     supportsEndFrame: true,
     supportsSeed: false,
     supportsNegativePrompt: false,
@@ -126,10 +131,7 @@ const SPECS: Record<VideoBucket, VideoModelSpec> = {
     badge: "Flow Veo Fast (Google)",
     resolutions: [],
     aspectRatios: FLOW_ASPECT_RATIOS,
-    durations: [
-      { value: "5", label: "5s" },
-      { value: "8", label: "8s" },
-    ],
+    durations: [],
     fps: [],
     countOptions: [1, 2, 3, 4],
     baseCost: 20,
@@ -229,18 +231,67 @@ export function getVideoModelSpec(modelId: string): VideoModelSpec {
   return SPECS[classifyVideoModel(modelId)];
 }
 
-const FLOW_CREDIT_TABLE: Partial<Record<VideoBucket, number[]>> = {
-  "flow-quality": [100, 200, 300, 400],
-  "flow-fast": [20, 40, 60, 80],
-  "flow-lite": [10, 20, 30, 40],
-  "flow-omni": [12, 30, 45, 60],
+/**
+ * Tín dụng Flow cho MỘT video, đọc từ dòng "Quá trình tạo sẽ tốn N tín dụng"
+ * trên chính giao diện Flow (chủ máy chụp qua noVNC 31/07/2026). Chọn x2/x3/x4
+ * thì nhân lên theo số video.
+ *
+ *   Omni Flash          4s → 7    6s → 10    8s → 12    10s → 15
+ *   Veo 3.1 - Lite      10   (không có hàng chọn thời lượng)
+ *   Veo 3.1 - Fast      20   (không có hàng chọn thời lượng)
+ *   Veo 3.1 - Quality   100  (không có hàng chọn thời lượng)
+ *
+ * Bảng cũ [12, 30, 45, 60] cho Omni Flash là số TỰ ĐẶT: 12 là giá của 8s, còn
+ * 30/45/60 không phải bội của bất kỳ mức nào. Nay tính = giá-mỗi-video × số bản.
+ */
+const OMNI_CREDIT_BY_DURATION: Record<string, number> = {
+  "4": 7,
+  "6": 10,
+  "8": 12,
+  "10": 15,
 };
 
-export function getVideoCreditCost(modelId: string, count: number): number {
+const FLOW_CREDIT_PER_VIDEO: Partial<Record<VideoBucket, number>> = {
+  "flow-quality": 100,
+  "flow-fast": 20,
+  "flow-lite": 10,
+};
+
+/** Giá mỗi video của model (Omni Flash phụ thuộc thời lượng). */
+export function getVideoCreditPerClip(modelId: string, duration?: string): number {
   const bucket = classifyVideoModel(modelId);
+  if (bucket === "flow-omni") {
+    return OMNI_CREDIT_BY_DURATION[String(duration ?? "4")] ?? 7;
+  }
+  return FLOW_CREDIT_PER_VIDEO[bucket] ?? 15;
+}
+
+export function getVideoCreditCost(modelId: string, count: number, duration?: string): number {
   const c = Math.max(1, Math.min(4, count || 1));
-  const table = FLOW_CREDIT_TABLE[bucket];
-  return table ? table[c - 1] : c * 15;
+  return getVideoCreditPerClip(modelId, duration) * c;
+}
+
+/** Model có tính bằng "tín dụng" Flow không. Agnes/Veo-direct/custom KHÔNG —
+ * chúng tiêu hạn mức của tài khoản hoặc khoá API riêng, nên hiện một con số
+ * "tín dụng" cho chúng là bịa. */
+export function usesFlowCredits(modelId: string): boolean {
+  return classifyVideoModel(modelId).startsWith("flow-");
+}
+
+/** Câu mô tả chi phí để hiện trên giao diện — không bịa số cho provider
+ * không có bảng giá tín dụng. */
+export function getVideoCostLabel(modelId: string, count: number, duration?: string): string {
+  if (usesFlowCredits(modelId)) {
+    return `${getVideoCreditCost(modelId, count, duration)} tín dụng`;
+  }
+  switch (classifyVideoModel(modelId)) {
+    case "agnes":
+      return "tính vào hạn mức tài khoản Agnes (không dùng tín dụng Flow)";
+    case "veo-direct":
+      return "tính vào hạn mức khoá Gemini API";
+    default:
+      return "tính vào hạn mức của provider";
+  }
 }
 
 export const NO_VIDEO_PROVIDER_HINT =

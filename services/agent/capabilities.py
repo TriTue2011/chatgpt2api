@@ -264,6 +264,75 @@ _VIDEO_MODELS = {"nhanh": "flow/veo-3.1-fast", "fast": "flow/veo-3.1-fast",
                  "dep": "flow/veo-3.1-quality", "quality": "flow/veo-3.1-quality",
                  "lite": "flow/veo-3.1-lite"}
 
+# ── Bảng giá Flow (đọc từ chính giao diện Flow, chủ máy chụp 31/07/2026) ──────
+# Dòng "Quá trình tạo sẽ tốn N tín dụng", tính cho MỘT video. Chọn x2/x3/x4 thì
+# nhân lên theo số video. Bản TypeScript tương ứng: web/src/lib/video-model-specs.ts
+# (hai bảng phải khớp nhau — web và bot cùng báo một giá).
+_OMNI_TIN_DUNG = {"4": 7, "6": 10, "8": 12, "10": 15}
+_FLOW_TIN_DUNG = {"flow/veo-3.1-lite": 10, "flow/veo-3.1-fast": 20,
+                  "flow/veo-3.1-quality": 100}
+# Model DUY NHẤT có hàng chọn thời lượng trên giao diện Flow.
+_FLOW_THOI_LUONG = {"flow/omni-flash": ["4", "6", "8", "10"]}
+_FLOW_SO_LUONG = [1, 2, 3, 4]
+
+
+def _tin_dung_moi_video(model: str, duration: str | None = None) -> int | None:
+    """Tín dụng cho MỘT video, hoặc None nếu model không tính bằng tín dụng Flow
+    (Agnes, Veo trực tiếp… tiêu hạn mức tài khoản riêng — đừng bịa ra con số)."""
+    m = (model or "").strip().lower()
+    if m in _FLOW_THOI_LUONG:
+        return _OMNI_TIN_DUNG.get(str(duration or "4"), 7)
+    return _FLOW_TIN_DUNG.get(m)
+
+
+def _mo_ta_chi_phi(model: str, count: int = 1, duration: str | None = None) -> str:
+    """Câu THÔNG BÁO chi phí (không phải câu hỏi) để ghép vào menu và lời đáp."""
+    moi = _tin_dung_moi_video(model, duration)
+    if moi is None:
+        return "tính vào hạn mức tài khoản"
+    tong = moi * max(1, min(4, count))
+    return f"{tong} tín dụng" if count <= 1 else f"{tong} tín dụng ({moi}×{count})"
+
+
+def _ask_video_thoi_luong(prompt: str, model: str) -> dict:
+    """Menu chọn thời lượng — CHỈ cho model thật sự có hàng đó trên Flow."""
+    short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
+    lines = [f'🎬 Video "{short}" bằng {model} — anh/chị chọn thời lượng ạ:', "<<<ASK>>>"]
+    for giay in _FLOW_THOI_LUONG[model.strip().lower()]:
+        lines.append(f"{giay} giây — {_mo_ta_chi_phi(model, 1, giay)}/video | "
+                     f"tạo video bằng model {model} params duration={giay}: {prompt}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
+def _ask_video_so_luong(prompt: str, model: str, duration: str | None) -> dict:
+    """Menu chọn số video. Mỗi dòng THÔNG BÁO tổng tín dụng phải trả."""
+    short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
+    dur_txt = f" {duration}s" if duration else ""
+    lines = [f'🎬 Video "{short}" bằng {model}{dur_txt} — anh/chị muốn mấy video ạ?',
+             "<<<ASK>>>"]
+    dur_kv = f" duration={duration}" if duration else ""
+    for so in _FLOW_SO_LUONG:
+        lines.append(f"{so} video — {_mo_ta_chi_phi(model, so, duration)} | "
+                     f"tạo video bằng model {model} params count={so}{dur_kv}: {prompt}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
+def _doc_thong_so_video(args: dict) -> tuple[str | None, int | None]:
+    """Đọc thời lượng + số lượng từ args, chấp nhận CẢ hai đường mà tầng LLM có
+    thể dùng: tham số cấp trên (duration/count/n) và gói 'params' của menu
+    ('… params duration=6 count=2'). Đây là biên hệ thống — dữ liệu do LLM sinh
+    ra nên phải chịu được cả hai dạng."""
+    goi = args.get("params") if isinstance(args.get("params"), dict) else {}
+    thoi_luong = args.get("duration") or goi.get("duration")
+    so_luong = args.get("count") or args.get("n") or goi.get("count") or goi.get("n")
+    try:
+        so = max(1, min(4, int(so_luong))) if so_luong is not None else None
+    except (TypeError, ValueError):
+        so = None
+    return (str(thoi_luong) if thoi_luong not in (None, "") else None), so
+
 
 def _h_generate_video(args: dict, ctx: dict) -> dict:
     prompt = str(args.get("prompt") or "").strip()
@@ -282,6 +351,17 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
     else:
         model = _VIDEO_MODELS.get(quality) or branch_model("video_gen", _channel_of(ctx))
 
+    # ── Hỏi nốt thông số người dùng chưa nêu, kèm THÔNG BÁO tín dụng ──────
+    # Chỉ hỏi thứ model thật sự có: ba model Veo không có hàng chọn thời lượng
+    # nên không hỏi thời lượng cho chúng. Chạy tự động thì bỏ qua, dùng mặc định.
+    thoi_luong, so_luong = _doc_thong_so_video(args)
+    m_low = model.strip().lower()
+    if not ctx.get("auto_approve"):
+        if thoi_luong is None and m_low in _FLOW_THOI_LUONG:
+            return _ask_video_thoi_luong(prompt, model)
+        if so_luong is None and m_low.startswith("flow/"):
+            return _ask_video_so_luong(prompt, model, thoi_luong)
+
     # Bot TỰ HỌC: model có spec tham số → hỏi chọn (1 lần) rồi map vào kwargs.
     chosen = args.get("params") if isinstance(args.get("params"), dict) else {}
     spec = state.get_model_spec(model)
@@ -292,6 +372,10 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
             return menu
 
     v_kwargs = {}
+    if thoi_luong is not None:
+        v_kwargs["duration"] = thoi_luong
+    if so_luong is not None:
+        v_kwargs["n"] = so_luong          # call_video → body["n"] → count của Flow
     for key in ("resolution", "aspect_ratio", "duration", "fps", "frame_rate",
                 "num_frames", "negative_prompt", "seed", "image", "last_frame", "mode"):
         if args.get(key) is not None:
@@ -307,25 +391,53 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
         _alert_branch("Tạo video (video_gen)", model, resp["error"])
         return {"text": f"Em tạo video bị lỗi 😥 ({resp['error']}). "
                         f"Anh/chị muốn em thử lại không?"}
-    item = (resp.get("data") or [{}])[0]
-    b64 = str(item.get("b64_json") or "")
-    if b64:
-        import base64 as _b64
-        import time as _t
-        from pathlib import Path
-        from services.config import DATA_DIR
-        vid_dir = Path(DATA_DIR) / "agent" / "media"
+    danh_sach = [d for d in (resp.get("data") or []) if isinstance(d, dict)]
+    if not danh_sach:
+        return {"text": "Em tạo xong nhưng không lấy được video 😥, anh/chị thử lại giúp em nhé."}
+
+    # THÔNG BÁO tín dụng (không hỏi): giá đã trả + số dư Flow báo về.
+    meta = danh_sach[0].get("metadata") or {}
+    phan_gia = ""
+    gia_moi = _tin_dung_moi_video(model, thoi_luong)
+    if gia_moi is not None:
+        phan_gia = f" — hết {gia_moi * len(danh_sach)} tín dụng"
+        con_lai = meta.get("remainingCredits")
+        if con_lai is not None:
+            phan_gia += f", còn {con_lai}"
+    loi = ("Video của anh/chị đây ạ 🎬" if len(danh_sach) == 1
+           else f"{len(danh_sach)} video của anh/chị đây ạ 🎬") + phan_gia
+
+    import base64 as _b64
+    import time as _t
+    from pathlib import Path
+    from services.config import DATA_DIR
+    vid_dir = Path(DATA_DIR) / "agent" / "media"
+    duong_dan: list[str] = []
+    for i, item in enumerate(danh_sach):
+        b64 = str(item.get("b64_json") or "")
+        if not b64:
+            continue
         try:
             vid_dir.mkdir(parents=True, exist_ok=True)
             raw = b64.split(",", 1)[1] if b64.startswith("data:") else b64
-            path = vid_dir / f"video_{int(_t.time())}.mp4"
+            path = vid_dir / f"video_{int(_t.time())}_{i}.mp4"
             path.write_bytes(_b64.b64decode(raw))
-            return {"text": "Video của anh/chị đây ạ 🎬", "video_path": str(path)}
+            duong_dan.append(str(path))
         except Exception as exc:
             logger.warning("agent: save video failed: %s", exc)
-    url = str(item.get("url") or "")
-    if url:
-        return {"text": "Video của anh/chị đây ạ 🎬", "video_url": url}
+    if len(duong_dan) > 1:
+        return {"text": loi, "video_path": duong_dan[0], "video_paths": duong_dan}
+    if duong_dan:
+        return {"text": loi, "video_path": duong_dan[0]}
+
+    # Không có bytes → dùng URL. library_url là bản đã lưu trong thư viện của ta
+    # (api/veo_video.py::_luu_thu_vien), ưu tiên vì nó không hết hạn như link Flow.
+    urls = [str(d.get("library_url") or d.get("url") or "") for d in danh_sach]
+    urls = [u for u in urls if u]
+    if len(urls) > 1:
+        return {"text": loi, "video_url": urls[0], "video_urls": urls}
+    if urls:
+        return {"text": loi, "video_url": urls[0]}
     return {"text": "Em tạo xong nhưng không lấy được video 😥, anh/chị thử lại giúp em nhé."}
 
 
@@ -2664,9 +2776,11 @@ CAPABILITIES: dict[str, Capability] = {
         name="generate_video", risk=READ, handler=_h_generate_video,
         emoji="🎬", label="Tạo video AI (Agnes/Flow/Veo)",
         description=("Tạo video ngắn bằng AI (Agnes AI / Google Flow / Veo). Mất 1-5 phút. "
-                     "GỌI với prompt — hệ thống sẽ HỎI người dùng chọn model (đã bật) rồi mới "
-                     "tạo, TRỪ KHI người dùng đã nêu model/chất lượng. Khi user CHỌN TỪ MENU → "
-                     "truyền 'model' NGUYÊN id. TUYỆT ĐỐI không tự nói 'đã tạo/đã gửi' khi chưa có video. "
+                     "GỌI với prompt — hệ thống sẽ HỎI người dùng lần lượt: model (đã bật) → "
+                     "thời lượng (chỉ model nào có) → số video, rồi mới tạo. TRỪ KHI người dùng "
+                     "đã nêu sẵn. Khi user CHỌN TỪ MENU → truyền 'model' NGUYÊN id, và nếu câu có "
+                     "'params duration=… count=…' thì gom vào 'params'. "
+                     "TUYỆT ĐỐI không tự nói 'đã tạo/đã gửi' khi chưa có video. "
                      "Hỗ trợ đầy đủ thông số: model (agnes-video-v2.0, flow/veo-3.1-fast...), "
                      "resolution (1080p, 720p, 480p), aspect_ratio (16:9, 9:16, 1:1, 4:3, 3:4), "
                      "duration (5, 8, 10...), fps (24, 30, 60), negative_prompt, seed, image (ảnh bắt đầu), last_frame (ảnh kết thúc)."),
@@ -2682,8 +2796,11 @@ CAPABILITIES: dict[str, Capability] = {
             "image": {"type": "string", "description": "URL/Base64 ảnh bắt đầu"},
             "last_frame": {"type": "string", "description": "URL/Base64 ảnh kết thúc"},
             "quality": {"type": "string", "enum": ["fast", "quality", "lite"], "description": "Chất lượng (mặc định fast)"},
+            "count": {"type": "integer", "description": "Số video cần tạo (1-4). Flow trừ tín "
+                      "dụng nhân theo số này."},
             "params": {"type": "object", "description": "Thông số đã chọn từ menu spec đã học "
-                       "(key=value). Câu dạng '… params resolution=1080p duration=8' → gom vào đây."}},
+                       "(key=value). Câu dạng '… params duration=6 count=2' hoặc "
+                       "'… params resolution=1080p duration=8' → gom hết vào đây."}},
             "required": ["prompt"]},
         workflow=("Tạo video mất 1-5 phút — kết quả đã được gửi kèm tự động, chỉ cần "
                   "chú thích ngắn. Nếu lỗi credit/quota: báo người dùng chờ hoặc thử lại sau.")),
