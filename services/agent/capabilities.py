@@ -2898,15 +2898,23 @@ CAPABILITIES: dict[str, Capability] = {
     "web_search": Capability(
         name="web_search", risk=READ, handler=_h_web_search,
         emoji="📰", label="Tra cứu / đọc tin tức",
-        description="Tra cứu thông tin thực tế / tin tức / giá cả / thời sự trên mạng.",
+        description=("Tra cứu thông tin thực tế / tin tức / giá cả / thời sự trên mạng. "
+                     "'tin tức hôm nay', 'tin tức hôm qua', 'tin mới nhất', 'giá xăng "
+                     "hôm nay', 'thời sự' → GỌI NGAY tool này, TUYỆT ĐỐI KHÔNG hỏi lại "
+                     "người dùng muốn dạng gì (câu đã đủ rõ). query = chính câu hỏi."),
         parameters={"type": "object", "properties": {
             "query": {"type": "string", "description": "Câu cần tra cứu"}},
             "required": ["query"]},
         workflow=(
-            "Khi tổng hợp TIN TỨC / BẢN TIN: BẮT BUỘC chia theo ĐẦY ĐỦ các đầu mục báo chí chính sau: "
-            "1. 🇻🇳 Thời sự Việt Nam | 2. 🌎 Thế giới | 3. 💼 Kinh doanh & Kinh tế | 4. 📱 Công nghệ & Khoa học | "
-            "5. ⚽ Thể thao | 6. 🎨 Giải trí & Văn hóa | 7. 🏥 Sức khỏe & Đời sống | 8. ⚖️ Pháp luật & Xã hội. "
-            "Trong MỖI đầu mục, BẮT BUỘC liệt kê đúng 3 tiêu đề tin mới nhất kèm tóm tắt 1 câu súc tích."
+            # TIN TỨC = tổng hợp GỌN, KHÔNG chia 8 đầu mục. Đo thật 31/07: ép chia
+            # đủ 8 mục × 3 tin làm bot search quá nhiều lần → vượt trần 240s một
+            # lượt → "xử lý hơi lâu" (người dùng không nhận được tin). Chủ máy cũng
+            # muốn tin TỔNG HỢP, không phải 11 khía cạnh.
+            "Khi hỏi TIN TỨC / BẢN TIN hôm nay/hôm qua: 'tin tức hôm nay' đã RÕ, "
+            "TUYỆT ĐỐI KHÔNG hỏi lại người dùng muốn dạng nào — gọi web_search NGAY "
+            "MỘT LẦN với query gọn (vd 'tin tức nổi bật Việt Nam hôm nay'), rồi tóm "
+            "tắt 5–8 tin nổi bật nhất thành gạch đầu dòng NGẮN (mỗi tin 1 câu). "
+            "KHÔNG chia nhiều đầu mục, KHÔNG gọi search nhiều lần cho từng lĩnh vực."
         )),
     "read_webpage": Capability(
         name="read_webpage", risk=READ, handler=_h_read_webpage,

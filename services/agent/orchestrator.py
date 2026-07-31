@@ -108,6 +108,26 @@ def _tat_lay_media(text: str) -> dict | None:
     return None
 
 
+# Câu hỏi TIN TỨC / thời sự — đủ rõ để GỌI THẲNG web_search, không để model
+# phân vân rồi hỏi lại. Đo thật 31/07: model (kể cả gpt-oss) cứ hỏi "muốn bản
+# tin dạng nào ạ?" cho "tin tức hôm nay" dù đã sửa mô tả + workflow; nudge prompt
+# không thắng được. Đường tắt xác định như _tat_lay_media là cách chắc ăn.
+_TAT_TIN_TUC = re.compile(
+    r"\b(tin tức|tin tuc|bản tin|ban tin|thời sự|thoi su|tin nóng|tin nong|"
+    r"tin mới|tin moi)\b", re.I)
+
+
+def _la_yeu_cau_tin_tuc(text: str) -> bool:
+    """Câu xin TIN TỨC tổng hợp (không phải hỏi một sự việc cụ thể).
+
+    Chỉ bắt câu NGẮN, dạng 'tin tức hôm nay/hôm qua/mới nhất' — câu dài (hỏi chi
+    tiết một vụ việc) để model tự lo, không ép fast-path."""
+    t = (text or "").strip()
+    if len(t) > 40:            # câu dài = hỏi cụ thể, không phải xin bản tin chung
+        return False
+    return bool(_TAT_TIN_TUC.search(t))
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -750,6 +770,24 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _persist_history(user_id, hist)
             _journal(str(out_t.get("text") or ""))
             return out_t
+
+    # 1.45) Đường tắt TIN TỨC: "tin tức hôm nay" → gọi thẳng web_search, KHÔNG để
+    # model hỏi lại "muốn bản tin dạng nào". Chỉ khi nhóm 'web' được phép.
+    if _la_yeu_cau_tin_tuc(user_text) and (allow is None or "web" in allow):
+        try:
+            _cap_ws = caps.get("web_search")
+            _kq_ws = (_cap_ws.handler({"query": user_text}, {"user_id": user_id})
+                      if _cap_ws else None)
+        except Exception as exc:
+            logger.warning({"event": "agent_tat_tintuc_loi", "error": str(exc)[:150]})
+            _kq_ws = None
+        if _kq_ws and str(_kq_ws.get("text") or "").strip():
+            logger.info({"event": "agent_tat_tintuc"})
+            out_n = _finalize(user_id, _kq_ws)
+            hist.append({"role": "assistant", "content": out_n.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_n.get("text") or ""))
+            return out_n
 
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua
