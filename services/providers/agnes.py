@@ -83,6 +83,89 @@ def _strip_agnes_model(model: str) -> str:
     return m
 
 
+# ── Hạn mức thuê bao Agnes (tài liệu chính thức, chủ máy đưa 31/07/2026) ─────
+# Áp dụng ĐỒNG THỜI với giới hạn RPM. Dòng ảnh và video giống nhau ở mọi gói:
+#
+#   Gói      agnes-2.5-flash (chat)              image-2.1-flash   video-v2.0
+#   Starter  1.500 lượt/5giờ ·  15.000 lượt/tuần  4.000 ảnh/ngày   500 GIÂY/ngày
+#   Plus     7.500 lượt/5giờ ·  75.000 lượt/tuần  4.000 ảnh/ngày   500 giây/ngày
+#   Pro     30.000 lượt/5giờ · 300.000 lượt/tuần  4.000 ảnh/ngày   500 giây/ngày
+#
+# Đáng nhớ nhất: video tính bằng GIÂY (500/ngày) — một video 10s ăn 2% quỹ ngày,
+# nên khi Agnes trả lỗi hạn mức video thì đó là hết QUỸ GIÂY, đổi gói to hơn
+# cũng không tăng (mọi gói đều 500 giây).
+
+# Bậc cỡ và tỉ lệ Agnes công bố cho agnes-image-2.1-flash (tài liệu chính thức,
+# chủ máy đưa 31/07/2026).
+_AGNES_BAC_CO = ("1K", "2K", "3K", "4K")
+_AGNES_TI_LE = ("1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9")
+# Cỡ CHÍNH XÁC cho agnes-image-2.0-flash (đời cũ, không có khoá `ratio`).
+_AGNES_CO_2_0 = {"1:1": "1024x1024", "4:3": "1024x768", "3:4": "768x1024",
+                 "16:9": "1024x768", "9:16": "768x1024", "3:2": "1024x768",
+                 "2:3": "768x1024", "21:9": "1024x768"}
+
+
+def _agnes_co_chinh_xac(size: str, ti_le: str) -> str:
+    """Cỡ dạng "RỘNGxCAO" cho agnes-image-2.0-flash.
+
+    Người dùng đưa sẵn "1024x768" thì dùng nguyên; đưa bậc "1K"/"2K" (dạng của
+    đời 2.1) thì suy từ tỉ lệ, vì đời 2.0 không hiểu bậc.
+    """
+    s = (size or "").strip().lower()
+    if "x" in s:
+        return s
+    return _AGNES_CO_2_0.get((ti_le or "").strip(), "1024x1024")
+
+
+def _agnes_khung(resolution: Any, ti_le: Any) -> tuple[int, int]:
+    """Đổi (độ phân giải, tỉ lệ) → (width, height) cho agnes-video-v2.0.
+
+    Tài liệu chỉ có `width`/`height`, mặc định 1152×768. Tab Tạo Video lại cho
+    người dùng chọn "1080p/720p/480p" và tỉ lệ, nên phải quy đổi ở đây — không
+    thì hai lựa chọn đó bị bỏ (khoá `resolution`/`aspect_ratio` cũ không có trong
+    tài liệu).
+    """
+    canh = {"1080p": 1080, "720p": 720, "480p": 480}.get(
+        str(resolution or "").strip().lower(), 768)
+    tl = str(ti_le or "16:9").strip()
+    try:
+        a, b = tl.split(":")
+        ra, rb = float(a), float(b)
+    except Exception:
+        ra, rb = 16.0, 9.0
+    if ra >= rb:                       # ngang: cạnh ngắn = chiều cao
+        h = canh
+        w = int(round(h * ra / rb))
+    else:                              # dọc: cạnh ngắn = chiều rộng
+        w = canh
+        h = int(round(w * rb / ra))
+    # Bội số 8 — chuẩn chung của mô hình sinh video.
+    return max(64, w - w % 8), max(64, h - h % 8)
+
+
+def _agnes_so_khung(num_frames: Any) -> int | None:
+    """Số khung hợp lệ cho agnes-video-v2.0.
+
+    Tài liệu: `num_frames` phải ≤ 441 VÀ theo quy tắc 8n+1 (9, 17, 25, …). Trước
+    đây code chuyển tiếp nguyên số người dùng đưa, nên một con số "tròn" như 120
+    hay 240 là sai quy tắc — Agnes từ chối hoặc tự chuẩn hoá, và người dùng không
+    biết vì sao độ dài không đúng ý.
+    """
+    if num_frames is None:
+        return None
+    try:
+        n = int(num_frames)
+    except (TypeError, ValueError):
+        return None
+    n = max(9, min(441, n))
+    # Về mốc 8n+1 gần nhất, KHÔNG vượt trần.
+    k = round((n - 1) / 8)
+    ra = int(8 * k + 1)
+    while ra > 441:
+        ra -= 8
+    return max(9, ra)
+
+
 def _giay_video(duration: str | int | None, mac_dinh: int = 5) -> int:
     """Số giây video, luôn trả SỐ NGUYÊN cho API Agnes.
 
@@ -390,19 +473,45 @@ class AgnesProvider:
 
     def generate_image(
         self, prompt: str, model: str = "agnes-image-2.1-flash",
-        size: str = "1K", aspect_ratio: str = "16:9", image: str | None = None, n: int = 1,
+        size: str = "1K", aspect_ratio: str = "16:9", image: Any = None, n: int = 1,
+        return_base64: bool | None = None,
     ) -> dict[str, Any]:
-        """Generate or edit image using Agnes AI (Default: 1K resolution, 16:9 aspect ratio)."""
+        """Tạo hoặc SỬA ảnh bằng Agnes AI.
+
+        Tên khoá theo TÀI LIỆU CHÍNH THỨC của Agnes (chủ máy đưa 31/07/2026).
+        Trước đây hàm này gửi `quality` và `aspect_ratio` — hai khoá KHÔNG có
+        trong tài liệu; tài liệu ghi là `size` và `ratio`. Nên kích thước và tỉ lệ
+        người dùng chọn chưa bao giờ tới được Agnes: ảnh vẫn ra nhưng luôn ở cỡ
+        mặc định, y như hôm nay tìm ra ở phần video.
+
+        Hai đời model nhận `size` KHÁC NHAU:
+          • agnes-image-2.0-flash — cỡ CHÍNH XÁC ("1024x768", "1024x1024",
+            "768x1024"). Không có khoá `ratio`.
+          • agnes-image-2.1-flash — BẬC cỡ ("1K"/"2K"/"3K"/"4K") kèm `ratio`
+            ("1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9").
+        """
         model = _strip_agnes_model(model)
-        body: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "n": n,
-            "quality": size or "1K",
-            "aspect_ratio": aspect_ratio or "16:9",
-        }
+        body: dict[str, Any] = {"model": model, "prompt": prompt, "n": n}
+
+        la_2_1 = "2.1" in model or "2-1" in model
+        s = str(size or "").strip()
+        if la_2_1:
+            # Bậc cỡ; nhận cả cỡ chính xác cũ (tài liệu nói vẫn chấp nhận nhưng
+            # có thể bị chuẩn hoá) — cứ chuyển tiếp nguyên văn.
+            body["size"] = s.upper() if s.upper() in _AGNES_BAC_CO else (s or "1K")
+            body["ratio"] = aspect_ratio if aspect_ratio in _AGNES_TI_LE else "1:1"
+        else:
+            body["size"] = _agnes_co_chinh_xac(s, aspect_ratio)
+
+        # `image` là MẢNG chuỗi (URL công khai hoặc data URI base64) — code cũ gán
+        # thẳng một chuỗi nên phần sửa-ảnh-theo-ảnh-gốc gửi sai kiểu.
         if image:
-            body["image"] = image
+            ds = image if isinstance(image, (list, tuple)) else [image]
+            hop_le = [str(x) for x in ds if str(x or "").strip()]
+            if hop_le:
+                body["image"] = hop_le
+        if return_base64 is not None:
+            body["return_base64"] = bool(return_base64)
 
         url = f"{_agnes_base_url()}/images/generations"
         _, resp = self._post_with_failover(url, body)
@@ -431,24 +540,41 @@ class AgnesProvider:
         body: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
-            "resolution": resolution or "1080p",
-            "aspect_ratio": aspect_ratio or "16:9",
             # Agnes nhận `duration` là SỐ NGUYÊN. Gửi chuỗi thì API trả HTTP 400
             # "json: cannot unmarshal string into Go struct field
             # taskSubmitReqAlias.duration of type int" — nghĩa là mọi lượt tạo
             # video qua agnes đều thất bại. Đo thật 31/07 sau khi vá chỗ báo lỗi
             # bị crash (trước đó lỗi này bị che thành HTTP 500 trắng).
+            # (`duration` KHÔNG có trong tài liệu nhưng lỗi trên chứng minh nó là
+            # trường thật — giữ lại.)
             "duration": _giay_video(duration),
         }
-        if num_frames is not None:
-            body["num_frames"] = num_frames
+        # KHUNG HÌNH: tài liệu ghi `width`/`height` (mặc định 1152×768), KHÔNG có
+        # `resolution` hay `aspect_ratio`. Hai khoá cũ đó không nằm trong tài liệu
+        # nên độ phân giải và tỉ lệ người dùng chọn ở tab Tạo Video chưa bao giờ
+        # tới được Agnes. Quy đổi sang width/height thật.
+        w, h = _agnes_khung(resolution, aspect_ratio)
+        body["width"], body["height"] = w, h
+        # `num_frames` phải ≤441 và theo 8n+1 — xem _agnes_so_khung.
+        khung = _agnes_so_khung(num_frames)
+        if khung is not None:
+            body["num_frames"] = khung
         effective_fps = frame_rate or fps
         if effective_fps is not None:
-            body["frame_rate"] = effective_fps
+            try:                      # tài liệu: 1–60
+                body["frame_rate"] = max(1, min(60, int(effective_fps)))
+            except (TypeError, ValueError):
+                pass
         if negative_prompt:
             body["negative_prompt"] = negative_prompt
         if seed is not None:
             body["seed"] = seed
+        buoc = kwargs.get("num_inference_steps")
+        if buoc is not None:
+            try:
+                body["num_inference_steps"] = int(buoc)
+            except (TypeError, ValueError):
+                pass
 
         # Keyframe animation vs Image-to-video mode handling
         if keyframes or (image and last_frame):

@@ -381,14 +381,30 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
     # Non-core image models (custom or image-specific prefixes) use adapters.
     if route.provider == "agnes" or "agnes" in route.provider.lower() or "agnes" in model.lower():
         from services.providers.agnes import agnes_provider
+        # Agnes nhận `image` là MẢNG (tài liệu 31/07) — đừng cắt còn một tấm;
+        # sửa-ảnh-nhiều-tấm (ghép, tham chiếu) cần đủ danh sách.
         src_image = body.get("image") or body.get("images")
-        if isinstance(src_image, list):
-            src_image = src_image[0] if src_image else None
+        if src_image is not None and not isinstance(src_image, list):
+            src_image = [src_image]
+        # `size` kiểu OpenAI ("1792x1024") → suy TỈ LỆ cho đời 2.1 (khoá `ratio`).
+        # Không suy thì mọi ảnh dọc người dùng chọn vẫn ra khung 16:9 mặc định.
+        ratio = body.get("ratio") or body.get("aspect_ratio") or ""
+        if not ratio:
+            try:
+                w_s, h_s = str(size).lower().split("x")
+                w_i, h_i = int(w_s), int(h_s)
+                muc = (("1:1", 1.0), ("4:3", 4 / 3), ("3:2", 3 / 2), ("16:9", 16 / 9),
+                       ("21:9", 21 / 9), ("3:4", 3 / 4), ("2:3", 2 / 3), ("9:16", 9 / 16))
+                ti = w_i / h_i if h_i else 1.0
+                ratio = min(muc, key=lambda m: abs(m[1] - ti))[0]
+            except Exception:
+                ratio = "16:9"
         return agnes_provider.generate_image(
             prompt=prompt,
             model=model,
             n=n,
             size=size,
+            aspect_ratio=ratio,
             image=src_image,
         )
 
