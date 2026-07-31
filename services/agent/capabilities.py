@@ -216,6 +216,8 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
             if menu:
                 return menu
         prompt = _fold_params_into_prompt(prompt, chosen, spec)
+    # Câu ngắn ("vẽ con mèo") → prompt chi tiết, như bên video.
+    prompt = _mo_rong_prompt_media(prompt, "image", ctx)
     resp = call_model(model, [{"role": "user", "content": f"Vẽ: {prompt}"}],
                       timeout=320, max_tokens=600)
     # deliver_now=True ở các nhánh THẤT BẠI: trả thẳng câu thật cho người dùng,
@@ -298,6 +300,63 @@ def _h_generate_music(args: dict, ctx: dict) -> dict:
 _VIDEO_MODELS = {"nhanh": "flow/veo-3.1-fast", "fast": "flow/veo-3.1-fast",
                  "dep": "flow/veo-3.1-quality", "quality": "flow/veo-3.1-quality",
                  "lite": "flow/veo-3.1-lite"}
+
+#: Câu ngắn hơn ngần này thì đáng mở rộng thành prompt chi tiết.
+_NGAN_CAN_MO_RONG = 70
+
+
+def _mo_rong_prompt_media(prompt: str, loai: str, ctx: dict | None = None) -> str:
+    """Biến câu NGẮN của người dùng thành prompt CHI TIẾT cho máy tạo ảnh/video.
+
+    Chủ máy yêu cầu 31/07: "có thể dùng 1 model tạo promt chi tiết từ 1 câu yêu
+    cầu của tôi rồi mới đưa vào tạo video". Người dùng gõ "tạo video con mèo" —
+    máy tạo video cần mô tả có chủ thể, bối cảnh, ánh sáng, góc máy, phong cách
+    thì ảnh/video mới đẹp. Trước đây câu trần đó đi thẳng vào máy tạo.
+
+    Chỉ mở rộng câu NGẮN (< 70 ký tự): câu người dùng đã tả kỹ thì giữ NGUYÊN —
+    viết lại là làm sai ý họ. Lỗi/không mở rộng được → trả prompt gốc.
+    """
+    p = (prompt or "").strip()
+    if len(p) >= _NGAN_CAN_MO_RONG:
+        return p
+    la_video = loai == "video"
+    yeu_cau = (
+        "Bạn là chuyên gia viết prompt cho máy tạo "
+        + ("VIDEO" if la_video else "ẢNH") + ". Hãy mở rộng yêu cầu ngắn của "
+        "người dùng thành MỘT prompt chi tiết, sinh động bằng tiếng Việt.\n"
+        "- Thêm: chủ thể rõ ràng, bối cảnh, ánh sáng, màu sắc, góc máy, phong cách.\n"
+        + ("- Thêm chuyển động của chủ thể và máy quay (video).\n" if la_video else "")
+        + "- GIỮ ĐÚNG ý gốc, KHÔNG đổi chủ thể, KHÔNG bịa chi tiết trái ý.\n"
+        "- Trả về DUY NHẤT prompt, 1 đoạn, tối đa 80 từ. Không giải thích, không "
+        "gạch đầu dòng, không ngoặc kép.\n\n"
+        "Yêu cầu gốc: " + p)
+    try:
+        model = branch_model("default", _channel_of(ctx or {})) or "cx/auto"
+        resp = call_model(model, [{"role": "user", "content": yeu_cau}],
+                          timeout=60, max_tokens=220)
+        if resp.get("error"):
+            return p
+        ra = (content_of(resp) or "").strip().strip('"').strip()
+        # Model đôi khi trả kèm lời dẫn — lấy đoạn dài nhất, bỏ dòng mở đầu ngắn.
+        dong = [d.strip() for d in ra.splitlines() if d.strip()]
+        if dong:
+            ra = max(dong, key=len).strip().strip('"')
+        # Combo cạn provider trả CHUỖI LỖI trong content (không phải resp['error'])
+        # — đo thật 31/07: "All providers failed. Last error: no usable chatgpt
+        # free account" suýt thành prompt vẽ. Nhận diện rồi giữ prompt gốc.
+        _thap = ra.lower()
+        if any(k in _thap for k in ("all providers failed", "no usable",
+                                    "last error", "quota", "rate limit",
+                                    "unauthenticated", "error:")):
+            logger.warning("mở rộng prompt %s: model trả chuỗi lỗi, giữ prompt gốc", loai)
+            return p
+        if 15 < len(ra) <= 600:
+            logger.info({"event": "media_prompt_mo_rong", "loai": loai,
+                         "goc": p[:60], "moi": ra[:80]})
+            return ra
+    except Exception as exc:
+        logger.warning("mở rộng prompt %s lỗi: %s", loai, str(exc)[:120])
+    return p
 
 # ── Bảng giá Flow (đọc từ chính giao diện Flow, chủ máy chụp 31/07/2026) ──────
 # Dòng "Quá trình tạo sẽ tốn N tín dụng", tính cho MỘT video. Chọn x2/x3/x4 thì
@@ -421,6 +480,10 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
         for k, v in _spec_call_kwargs(chosen, spec).items():
             v_kwargs.setdefault(k, v)
 
+    # Câu ngắn ("tạo video con mèo") → mở rộng thành prompt chi tiết trước khi
+    # đưa vào máy tạo. Chạy SAU khi đã chốt model/thông số nên không làm chậm
+    # phần hỏi đáp. Xem _mo_rong_prompt_media.
+    prompt = _mo_rong_prompt_media(prompt, "video", ctx)
     resp = call_video(prompt, model=model, **v_kwargs)
     if resp.get("error"):
         _alert_branch("Tạo video (video_gen)", model, resp["error"])
@@ -2867,9 +2930,12 @@ CAPABILITIES: dict[str, Capability] = {
         name="generate_video", risk=READ, handler=_h_generate_video,
         emoji="🎬", label="Tạo video AI (Agnes/Flow/Veo)",
         description=("Tạo video ngắn bằng AI (Agnes AI / Google Flow / Veo). Mất 1-5 phút. "
-                     "GỌI với prompt — hệ thống sẽ HỎI người dùng lần lượt: model (đã bật) → "
-                     "thời lượng (chỉ model nào có) → số video, rồi mới tạo. TRỪ KHI người dùng "
-                     "đã nêu sẵn. Khi user CHỌN TỪ MENU → truyền 'model' NGUYÊN id, và nếu câu có "
+                     "GỌI NGAY tool này khi người dùng nói 'tạo video…' — TUYỆT ĐỐI KHÔNG tự "
+                     "hỏi họ về nội dung/phong cách/thời lượng. Hệ thống sẽ tự HỎI lần lượt: "
+                     "model (kèm danh sách chọn) → thời lượng → số video, và tự mở rộng câu "
+                     "ngắn thành prompt chi tiết. Người dùng chỉ nói 'tạo video' chưa nêu nội "
+                     "dung thì gọi tool với prompt rỗng — hệ thống sẽ hỏi nội dung. "
+                     "Khi user CHỌN TỪ MENU → truyền 'model' NGUYÊN id, và nếu câu có "
                      "'params duration=… count=…' thì gom vào 'params'. "
                      "TUYỆT ĐỐI không tự nói 'đã tạo/đã gửi' khi chưa có video. "
                      "Hỗ trợ đầy đủ thông số: model (agnes-video-v2.0, flow/veo-3.1-fast...), "
