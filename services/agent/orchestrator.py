@@ -117,15 +117,27 @@ _TAT_TIN_TUC = re.compile(
     r"tin mới|tin moi)\b", re.I)
 
 
-def _la_yeu_cau_tin_tuc(text: str) -> bool:
-    """Câu xin TIN TỨC tổng hợp (không phải hỏi một sự việc cụ thể).
+# Mốc thời gian trong câu tin tức. MCP vn_news lấy qua RSS nên CHỈ có tin MỚI
+# NHẤT — không lọc được theo ngày. Vì vậy:
+#   • "tin tức hôm nay / mới nhất / (không nêu ngày)" → MCP get_news (tổng hợp
+#     VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, BBC, Google News — nhiều báo).
+#   • "hôm qua", "ngày 15/3", "tuần trước"… → web_search (MCP không làm được).
+_TIN_NGAY_KHAC = re.compile(
+    r"(hôm qua|hom qua|hôm kia|hom kia|tuần trước|tuan truoc|tháng trước|"
+    r"thang truoc|năm ngoái|nam ngoai|ngày\s*\d{1,2}|\d{1,2}[/-]\d{1,2})", re.I)
 
-    Chỉ bắt câu NGẮN, dạng 'tin tức hôm nay/hôm qua/mới nhất' — câu dài (hỏi chi
-    tiết một vụ việc) để model tự lo, không ép fast-path."""
+
+def _la_yeu_cau_tin_tuc(text: str) -> str | None:
+    """Câu xin TIN TỨC tổng hợp → 'moi' (tin mới, dùng MCP) | 'ngay' (ngày khác,
+    dùng web_search) | None (không phải xin bản tin).
+
+    Chỉ bắt câu NGẮN — câu dài (hỏi chi tiết một vụ việc) để model tự lo."""
     t = (text or "").strip()
     if len(t) > 40:            # câu dài = hỏi cụ thể, không phải xin bản tin chung
-        return False
-    return bool(_TAT_TIN_TUC.search(t))
+        return None
+    if not _TAT_TIN_TUC.search(t):
+        return None
+    return "ngay" if _TIN_NGAY_KHAC.search(t) else "moi"
 
 
 # In-process cache; durable source of truth is session SQLite when enabled.
@@ -771,18 +783,31 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out_t.get("text") or ""))
             return out_t
 
-    # 1.45) Đường tắt TIN TỨC: "tin tức hôm nay" → gọi thẳng web_search, KHÔNG để
-    # model hỏi lại "muốn bản tin dạng nào". Chỉ khi nhóm 'web' được phép.
-    if _la_yeu_cau_tin_tuc(user_text) and (allow is None or "web" in allow):
-        try:
-            _cap_ws = caps.get("web_search")
-            _kq_ws = (_cap_ws.handler({"query": user_text}, {"user_id": user_id})
-                      if _cap_ws else None)
-        except Exception as exc:
-            logger.warning({"event": "agent_tat_tintuc_loi", "error": str(exc)[:150]})
-            _kq_ws = None
+    # 1.45) Đường tắt TIN TỨC — không để model hỏi lại "muốn bản tin dạng nào".
+    # Tin MỚI dùng MCP vn_news (tổng hợp NHIỀU BÁO); tin ngày khác dùng
+    # web_search vì MCP đọc RSS nên không lọc được theo ngày.
+    _loai_tin = _la_yeu_cau_tin_tuc(user_text)
+    if _loai_tin and (allow is None or "web" in allow):
+        _kq_ws = None
+        if _loai_tin == "moi":
+            try:
+                from services.mcp_client import call_mcp_tool
+                _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
+                if _tin and str(_tin).strip():
+                    _kq_ws = {"text": str(_tin).strip()}
+                    logger.info({"event": "agent_tat_tintuc_mcp"})
+            except Exception as exc:
+                logger.warning({"event": "agent_tat_tintuc_mcp_loi", "error": str(exc)[:150]})
+        if _kq_ws is None:          # ngày cụ thể, hoặc MCP hỏng → tra mạng
+            try:
+                _cap_ws = caps.get("web_search")
+                _kq_ws = (_cap_ws.handler({"query": user_text}, {"user_id": user_id})
+                          if _cap_ws else None)
+            except Exception as exc:
+                logger.warning({"event": "agent_tat_tintuc_loi", "error": str(exc)[:150]})
+                _kq_ws = None
         if _kq_ws and str(_kq_ws.get("text") or "").strip():
-            logger.info({"event": "agent_tat_tintuc"})
+            logger.info({"event": "agent_tat_tintuc", "loai": _loai_tin})
             out_n = _finalize(user_id, _kq_ws)
             hist.append({"role": "assistant", "content": out_n.get("text") or ""})
             _persist_history(user_id, hist)

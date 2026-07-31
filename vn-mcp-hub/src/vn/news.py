@@ -152,8 +152,37 @@ def _fetch_feed(source: str, url: str) -> list[dict[str, Any]]:
     return items
 
 
+def _tron_theo_nguon(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Trộn ĐỀU tin giữa các báo (vòng tròn), thay vì cắt N tin đầu.
+
+    Vì sao: `all_items` được nối theo THỨ TỰ FEED (VnExpress 47 tin, rồi Tuổi Trẻ
+    50, Thanh Niên 60, Dân Trí 100, BBC, Google News). Cắt thẳng items[:10] thì
+    10 tin đều của VnExpress — mang tiếng "tổng hợp nhiều báo" mà người dùng chỉ
+    thấy một tờ. Đo thật 31/07: get_news(limit=12) trả 12/12 tin VnExpress dù cả
+    6 nguồn đều fetch thành công.
+
+    Vòng tròn theo nguồn: mỗi lượt lấy 1 tin của mỗi báo, nên limit=10 với 6 báo
+    ra ~2 tin/báo — đúng nghĩa tổng hợp.
+    """
+    theo_nguon: dict[str, list[dict[str, Any]]] = {}
+    for it in items:
+        theo_nguon.setdefault(str(it.get("source") or "?"), []).append(it)
+    ra: list[dict[str, Any]] = []
+    while len(ra) < limit:
+        them = False
+        for ds in theo_nguon.values():
+            if ds:
+                ra.append(ds.pop(0))
+                them = True
+                if len(ra) >= limit:
+                    break
+        if not them:            # hết tin ở mọi nguồn
+            break
+    return ra
+
+
 def _format_items(items: list[dict[str, Any]], limit: int) -> str:
-    items = items[:limit]
+    items = _tron_theo_nguon(items, limit)
     if not items:
         return "Không có tin tức nào."
     lines = []
