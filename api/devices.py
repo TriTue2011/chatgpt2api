@@ -30,13 +30,19 @@ _EXEC_OPS = {"exec", "kill"}
 # đăng nhập của người đang dùng máy. Ai mở được quyền khoá máy thì cũng là người
 # quyết định được việc mở khoá.
 _POWER_OPS = {"power", "unlock"}
+# Chụp webcam + ảnh màn hình. Nhóm RIÊNG, không gộp vào _INFO_OPS dù cũng "chỉ
+# đọc": đây là nhóm duy nhất nhìn thấy NGƯỜI (mặt ai đang ngồi trước máy) và
+# NỘI DUNG ĐANG LÀM (mật khẩu hiện trên màn, tin nhắn riêng). Đọc file còn bị
+# allowlist thư mục chặn; ảnh màn hình thì không allowlist nào che được. Nên
+# phải là quyền bật tường minh, ngang cấp can_power.
+_CAPTURE_OPS = {"webcam", "screenshot"}
 # Agent tự gỡ mình khỏi máy. KHÔNG nằm trong _ALL_OPS: đây không phải thao tác
 # người dùng gọi được qua /op hay qua bot, mà chỉ đường xoá thiết bị dùng — cho
 # vào _ALL_OPS là mở cho mô hình một cách "xoá agent của người ta" bằng lời.
 # Cũng KHÔNG đòi can_exec: thiết bị chỉ-đọc phải gỡ được, đúng lúc muốn dứt
 # điểm nhất; và mọi thứ nó xoá đều là của chính agent.
 _SELF_OPS = {"uninstall"}
-_ALL_OPS = _READ_OPS | _WRITE_OPS | _INFO_OPS | _EXEC_OPS | _POWER_OPS
+_ALL_OPS = _READ_OPS | _WRITE_OPS | _INFO_OPS | _EXEC_OPS | _POWER_OPS | _CAPTURE_OPS
 
 
 def create_router() -> APIRouter:
@@ -347,6 +353,11 @@ def create_router() -> APIRouter:
                     "error": (f"thiết bị '{name}' KHÔNG được cấp quyền tắt/khoá máy "
                               f"(can_power=false). Bật ở MCP → Thiết bị của tôi, "
                               f"rồi chạy lại agent kèm --allow-power.")}
+        if op in _CAPTURE_OPS and not session.can_capture:
+            return {"ok": False,
+                    "error": (f"thiết bị '{name}' KHÔNG được cấp quyền chụp webcam/"
+                              f"màn hình (can_capture=false). Bật ở MCP → Thiết bị "
+                              f"của tôi, rồi chạy lại agent kèm --allow-capture.")}
 
         # Kiểm allowlist NGAY Ở GATEWAY, trước khi gửi xuống thiết bị. Agent
         # cũng tự kiểm lại — hai lớp cố ý trùng nhau.

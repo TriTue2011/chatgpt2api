@@ -16,6 +16,7 @@ Bốn nhóm quyền, mỗi nhóm một cờ, MẶC ĐỊNH TẮT HẾT (trừ đ
     --allow-write   ghi / xoá file trong allowlist
     --allow-exec    chạy lệnh tuỳ ý (PowerShell / cmd / sh) + tắt tiến trình
     --allow-power   khoá màn hình, ngủ, đăng xuất, tắt máy, khởi động lại
+    --allow-capture chụp webcam + ảnh màn hình (cần opencv-python / mss)
 
 An toàn:
   * Chỉ dùng stdlib — không cài thêm gì, chạy được cả trên Termux.
@@ -202,11 +203,13 @@ class WS:
 class Guard:
     def __init__(self, paths: list[str], allow_write: bool,
                  allow_exec: bool = False, allow_power: bool = False,
-                 exec_allow: list[str] | None = None) -> None:
+                 exec_allow: list[str] | None = None,
+                 allow_capture: bool = False) -> None:
         self.roots = [Path(p).expanduser().resolve() for p in paths]
         self.allow_write = allow_write
         self.allow_exec = allow_exec
         self.allow_power = allow_power
+        self.allow_capture = allow_capture
         # Tiền tố lệnh được phép. Rỗng = không giới hạn (miễn là có allow_exec).
         self.exec_allow = [s.strip().lower() for s in (exec_allow or []) if s.strip()]
 
@@ -253,6 +256,19 @@ class Guard:
         if not self.allow_power:
             raise PermissionError(
                 "thiết bị này KHÔNG cho khoá/tắt/khởi động lại (thiếu --allow-power)")
+
+    def need_capture(self) -> None:
+        """Chụp webcam / màn hình. Mặc định TẮT, cờ RIÊNG.
+
+        Vì sao tách khỏi mọi cờ khác: đây là nhóm duy nhất nhìn thấy NGƯỜI và
+        NỘI DUNG ĐANG LÀM — ảnh mặt người trước máy, mật khẩu đang hiện trên màn
+        hình, tin nhắn riêng. Đọc file còn bị allowlist thư mục chặn; ảnh màn
+        hình thì không có allowlist nào che được. Nên phải bật tường minh, và
+        người bật phải biết mình đang bật cái gì.
+        """
+        if not self.allow_capture:
+            raise PermissionError(
+                "thiết bị này KHÔNG cho chụp webcam/màn hình (thiếu --allow-capture)")
 
 
 # ── Thao tác ────────────────────────────────────────────────────────────────
@@ -562,6 +578,7 @@ def op_sysinfo(g: Guard, args: dict) -> dict:
         "allow_write": g.allow_write,
         "allow_exec": g.allow_exec,
         "allow_power": g.allow_power,
+        "allow_capture": g.allow_capture,
     }
     return info
 
@@ -711,6 +728,130 @@ def op_screen(g: Guard, args: dict) -> dict:
     except Exception as exc:
         res["note"] = (res["note"] + " | lỗi: " + str(exc)[:80]).strip(" |")
     return res
+
+
+_TRAN_ANH_BYTE = 6 * 1024 * 1024      # 6 MB/ảnh — quá cỡ này WebSocket nghẽn
+
+
+def _anh_ra_b64(raw: bytes, mime: str) -> dict:
+    """bytes ảnh → data URL base64 để trả qua WebSocket (khung JSON, không nhị phân)."""
+    if not raw:
+        return {"ok": False, "error": "không lấy được dữ liệu ảnh"}
+    if len(raw) > _TRAN_ANH_BYTE:
+        return {"ok": False,
+                "error": "ảnh %d MB vượt trần %d MB" % (len(raw) // 1048576,
+                                                        _TRAN_ANH_BYTE // 1048576)}
+    return {"ok": True, "mime": mime, "bytes": len(raw),
+            "image": "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode())}
+
+
+def op_webcam(g: Guard, args: dict) -> dict:
+    """Chụp ảnh webcam. Cần --allow-capture.
+
+    Dùng OpenCV (cv2) — cùng thư viện WinGuard dùng, chạy cả Windows/macOS/Linux.
+    Bỏ vài khung đầu: webcam trả frame đen/chưa cân sáng ở những khung đầu tiên,
+    chụp ngay là ra ảnh tối thui (WinGuard cũng chụp nhiều shot vì lý do này).
+    """
+    g.need_capture()
+    try:
+        import cv2
+    except ImportError:
+        return {"ok": False,
+                "error": "thiếu thư viện opencv-python trên thiết bị — cài: "
+                         "pip install opencv-python"}
+    idx = int(args.get("device_index") or 0)
+    bo_khung = max(0, min(30, int(args.get("warmup_frames") or 8)))
+    cap = None
+    try:
+        # CAP_DSHOW trên Windows: mở nhanh hơn nhiều và ít lỗi hơn backend mặc định.
+        cap = (cv2.VideoCapture(idx, cv2.CAP_DSHOW) if IS_WIN
+               else cv2.VideoCapture(idx))
+        if not cap.isOpened():
+            return {"ok": False,
+                    "error": "không mở được webcam index=%d (thử index khác, hoặc "
+                             "camera đang bị ứng dụng khác giữ)" % idx}
+        frame = None
+        for _ in range(bo_khung + 1):
+            ok, f = cap.read()
+            if ok:
+                frame = f
+        if frame is None:
+            return {"ok": False, "error": "webcam mở được nhưng không đọc được khung ảnh"}
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            return {"ok": False, "error": "không nén được ảnh JPEG"}
+        ra = _anh_ra_b64(buf.tobytes(), "image/jpeg")
+        if ra.get("ok"):
+            h, w = frame.shape[:2]
+            ra.update({"width": int(w), "height": int(h), "device_index": idx})
+        return ra
+    finally:
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
+
+
+def op_screenshot(g: Guard, args: dict) -> dict:
+    """Chụp ẢNH màn hình. Cần --allow-capture.
+
+    KHÁC `screen` (chỉ trả trạng thái khoá/idle, không có ảnh) — cái này trả ảnh
+    thật. Thử mss trước (nhanh, đa nền tảng, chụp được nhiều màn hình), không có
+    thì rơi về Pillow ImageGrab (Windows/macOS).
+
+    Giới hạn nói thật: khi máy ĐANG KHOÁ, Windows vẽ màn hình khoá trên desktop
+    riêng (secure desktop) — tiến trình trong phiên người dùng chụp ra ảnh nền
+    hoặc ảnh đen, KHÔNG chụp được màn khoá. Đây là thiết kế an ninh của Windows.
+    """
+    g.need_capture()
+    man_hinh = int(args.get("monitor") or 0)      # 0 = tất cả, 1..n = từng màn
+    try:
+        import mss                                # noqa: F401
+        import mss.tools
+        with mss.mss() as sct:
+            ds = sct.monitors                     # [0]=gộp tất cả, [1..]=từng màn
+            if man_hinh < 0 or man_hinh >= len(ds):
+                return {"ok": False,
+                        "error": "monitor=%d không có; máy này có %d màn (0=gộp hết)"
+                                 % (man_hinh, len(ds) - 1)}
+            anh = sct.grab(ds[man_hinh])
+            raw = mss.tools.to_png(anh.rgb, anh.size)
+            ra = _anh_ra_b64(raw, "image/png")
+            if ra.get("ok"):
+                ra.update({"width": anh.width, "height": anh.height,
+                           "monitor": man_hinh, "so_man_hinh": len(ds) - 1,
+                           "engine": "mss"})
+            return ra
+    except ImportError:
+        loi_mss = ""                 # chưa cài mss → thử Pillow
+    except Exception as exc:
+        # mss có nhưng lỗi (Wayland, headless…) → thử Pillow trước khi bỏ.
+        loi_mss = str(exc)[:120]
+    try:
+        from io import BytesIO
+
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        bio = BytesIO()
+        img.save(bio, format="PNG", optimize=True)
+        ra = _anh_ra_b64(bio.getvalue(), "image/png")
+        if ra.get("ok"):
+            ra.update({"width": img.width, "height": img.height,
+                       "engine": "pillow", "monitor": 0})
+        return ra
+    except ImportError:
+        return {"ok": False,
+                "error": ("thiếu thư viện chụp màn hình trên thiết bị — cài: "
+                          "pip install mss (hoặc pillow)"
+                          + (" | mss lỗi: " + loi_mss if loi_mss else ""))}
+    except Exception as exc:
+        # Nói RÕ cả hai đường đều hỏng vì sao — người đọc log cần biết mss lỗi gì
+        # rồi Pillow lỗi gì, chứ không chỉ thấy lỗi của cái sau.
+        return {"ok": False,
+                "error": ("chụp màn hình lỗi: %s (Linux/Wayland thường cần X11 "
+                          "hoặc quyền màn hình)" % str(exc)[:120]
+                          + (" | mss lỗi: " + loi_mss if loi_mss else ""))}
 
 
 def op_exec(g: Guard, args: dict) -> dict:
@@ -940,6 +1081,8 @@ OPS = {"ls": op_ls, "read": op_read, "stat": op_stat, "find": op_find,
        # tra cứu — chỉ đọc, lệnh cố định
        "sysinfo": op_sysinfo, "resources": op_resources, "processes": op_processes,
        "services": op_services, "screen": op_screen,
+       # chụp ảnh — cờ RIÊNG --allow-capture (thấy người + nội dung màn hình)
+       "webcam": op_webcam, "screenshot": op_screenshot,
        # can thiệp — cần cờ riêng
        "exec": op_exec, "kill": op_kill, "power": op_power, "unlock": op_unlock,
        # tự gỡ — chỉ dự án gọi, khi xoá thiết bị
@@ -997,7 +1140,8 @@ def session(url: str, token: str, g: Guard, label: str) -> None:
         print("[c2a-agent] quyền — ghi: %s | chạy lệnh: %s%s | tắt/khoá máy: %s"
               % ("CÓ" if g.allow_write else "không",
                  "CÓ" if g.allow_exec else "không", lim if g.allow_exec else "",
-                 "CÓ" if g.allow_power else "không"), flush=True)
+                 "CÓ" if g.allow_power else "không",
+                 "CÓ" if g.allow_capture else "không"), flush=True)
         last_ping = time.time()
         while True:
             if time.time() - last_ping > PING_EVERY:
@@ -1045,6 +1189,10 @@ def main() -> int:
     ap.add_argument("--allow-power", action="store_true",
                     help="cho phép khoá màn hình, ngủ, đăng xuất, TẮT MÁY, "
                          "khởi động lại")
+    ap.add_argument("--allow-capture", action="store_true",
+                    help="cho phép CHỤP WEBCAM và ẢNH MÀN HÌNH — nhìn thấy mặt "
+                         "người trước máy và mọi thứ đang hiện trên màn (kể cả "
+                         "mật khẩu, tin nhắn riêng). Cân nhắc kỹ trước khi bật")
     ap.add_argument("--label", default="", help="tên gợi nhớ hiển thị ở dự án")
     ap.add_argument("--log-file", default="",
                     help="ghi log vào file thay vì màn hình — BẮT BUỘC khi chạy "
@@ -1089,7 +1237,8 @@ def main() -> int:
         print("[c2a-agent] --exec-allow không có tác dụng khi thiếu --allow-exec",
               file=sys.stderr)
 
-    g = Guard(a.path, a.allow_write, a.allow_exec, a.allow_power, a.exec_allow)
+    g = Guard(a.path, a.allow_write, a.allow_exec, a.allow_power, a.exec_allow,
+              a.allow_capture)
     print("[c2a-agent] v%s — gateway %s" % (VERSION, a.url), flush=True)
     backoff = BACKOFF_START
     while True:

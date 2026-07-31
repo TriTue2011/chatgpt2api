@@ -35,6 +35,10 @@ python --version
 
 Agent chỉ dùng thư viện có sẵn của Python — **không phải `pip install` gì cả**.
 
+Ngoại lệ duy nhất: nếu muốn dùng **chụp webcam / chụp ảnh màn hình** thì cần thêm
+hai thư viện. Chạy script cài kèm `-AllowCapture` là nó **tự cài giúp**, không phải
+gõ tay.
+
 ---
 
 ## Bước 1 — Biết đường dẫn thư mục muốn chia sẻ
@@ -221,6 +225,15 @@ Có `--allow-exec` thì thêm được:
 Có `--allow-power`:
 
 - *"khoá màn hình laptop"* · *"khởi động lại laptop"*
+
+Có `--allow-capture`:
+
+- *"chụp webcam laptop xem ai đang ngồi đấy"*
+- *"chụp màn hình laptop xem đang làm gì"*
+
+Hai câu này **chỉ admin** dùng được. Người khác trong danh bạ nhờ bot chụp máy của
+bạn thì bot từ chối — nhìn được mặt người và màn hình là chuyện riêng, không phải
+tiện ích chung.
 
 Nếu bot nói không có công cụ đó: vào **Cài đặt → MCP**, bật **"Thiết bị của
 tôi"** (`device_fs`), rồi restart container một lần (hub nạp MCP lúc khởi

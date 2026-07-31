@@ -39,6 +39,9 @@ param(
   [switch]$AllowWrite,
   [switch]$AllowExec,
   [switch]$AllowPower,
+  # Chup webcam + anh man hinh. Rieng le vi day la nhom quyen duy nhat nhin
+  # thay NGUOI ngoi truoc may va NOI DUNG dang lam - khong gop vao -AllowPower.
+  [switch]$AllowCapture,
   [string]$Label = "",
   # Nguon tai agent - doi duoc de test nhanh khac / mirror noi bo.
   [string]$AgentSource = "https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/c2a_agent.py",
@@ -86,6 +89,27 @@ if (-not $pyw) {
 }
 Say "pythonw: $pyw"
 
+# --- Thu vien chup (chi khi -AllowCapture) -----------------------------------
+# Agent van chay binh thuong khi thieu 2 thu vien nay - chi rieng lenh chup tra
+# ve loi "thieu thu vien". Cai o day de nguoi dung khong phai doc loi roi tu mo
+# PowerShell cai tay. Cai vao DUNG interpreter chay agent (cung thu muc pythonw).
+if ($AllowCapture) {
+  $pyExe = Join-Path (Split-Path $pyw) "python.exe"
+  if (Test-Path $pyExe) {
+    Say "cai thu vien chup: opencv-python (webcam) + mss (man hinh)..."
+    & $pyExe -m pip install --quiet --disable-pip-version-check opencv-python mss 2>&1 |
+      ForEach-Object { Write-Host "  $_" }
+    if ($LASTEXITCODE -ne 0) {
+      Say "CANH BAO: cai thu vien chup that bai - agent van chay, nhung lenh chup se bao thieu thu vien."
+      Say "         cai tay:  `"$pyExe`" -m pip install opencv-python mss"
+    } else {
+      Say "da cai thu vien chup"
+    }
+  } else {
+    Say "CANH BAO: khong thay python.exe canh pythonw.exe - bo qua buoc cai thu vien chup"
+  }
+}
+
 # --- Tai agent ----------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 if (Test-Path $AgentSource) {
@@ -107,6 +131,7 @@ $flags = @()
 if ($AllowWrite) { $flags += "--allow-write" }
 if ($AllowExec)  { $flags += "--allow-exec" }
 if ($AllowPower) { $flags += "--allow-power" }
+if ($AllowCapture) { $flags += "--allow-capture" }
 # NHAN DOI backslash cuoi truoc dau nhay dong. Quy tac dong lenh Windows
 # (MSVCRT): `\"` la ESCAPE dau nhay, nen '--path "D:\"' bi doc thanh mot
 # chuoi rac 'D:" --path E:"' dinh chum tat ca path phia sau. Do that 30/07

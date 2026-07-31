@@ -85,8 +85,15 @@ python3 c2a_agent.py \
 | `--allow-write` | `can_write` | Thêm · xoá · sửa file **trong `--path`** |
 | `--allow-exec` | `can_exec` | Chạy lệnh PowerShell / cmd / sh; tắt ứng dụng; cài phần mềm bằng CLI |
 | `--allow-power` | `can_power` | Khoá màn hình · ngủ · đăng xuất · **tắt máy** · khởi động lại |
+| `--allow-capture` | `can_capture` | Chụp **webcam** · chụp **ảnh màn hình** (cần `pip install opencv-python mss`) |
 
 Thiếu **một** phía là bị chặn — cố ý như vậy để sơ suất ở một chỗ không mở quyền.
+
+> **`--allow-capture` là nhóm riêng, không gộp vào cờ nào khác.** Đây là nhóm duy
+> nhất nhìn thấy **người** đang ngồi trước máy và **việc họ đang làm** (tin nhắn
+> riêng, tài khoản đang mở). Allowlist thư mục không che được ảnh màn hình. Ở phía
+> bot, lệnh chụp chỉ **admin** gọi được — người trong danh bạ nhờ cách nào cũng bị
+> từ chối.
 
 > **`--allow-exec` nói thẳng:** bật cờ này là **allowlist thư mục hết ý nghĩa**.
 > Một lệnh shell đọc/ghi/xoá được mọi thứ mà tài khoản đang chạy agent với tới,

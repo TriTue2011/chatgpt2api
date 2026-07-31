@@ -30,6 +30,15 @@ _lock = asyncio.Lock()
 _OP_TIMEOUT = 60.0          # trần mỗi lệnh gửi xuống thiết bị
 _MAX_PENDING = 32           # trần lệnh chờ song song mỗi thiết bị
 
+# Loop của app (uvicorn) — nơi WebSocket thiết bị THẬT SỰ sống.
+# Vì sao phải giữ: `AgentSession.call()` tạo future bằng
+# `asyncio.get_running_loop()`, còn `deliver()` đánh thức future đó từ vòng đọc
+# WebSocket. Hai việc phải ở CÙNG một loop. Code đồng bộ (tool của bot chạy
+# trong thread pool) mà tự `asyncio.run()` sẽ tạo loop mới → future nằm loop A,
+# `set_result` gọi từ loop B, lệnh treo tới hết timeout 60s rồi báo "thiết bị
+# không trả lời" trong khi thiết bị đã trả lời xong.
+_app_loop: asyncio.AbstractEventLoop | None = None
+
 
 def _registry() -> dict[str, dict[str, Any]]:
     """`device_agents` trong config: {name: {token, paths[], can_write, label}}."""
@@ -91,6 +100,17 @@ class AgentSession:
         """
         return bool(self.cfg.get("can_power", False))
 
+    @property
+    def can_capture(self) -> bool:
+        """Chụp webcam / ảnh màn hình. Mặc định TẮT, quyền RIÊNG.
+
+        Tách khỏi mọi cờ khác vì đây là nhóm duy nhất nhìn thấy NGƯỜI (mặt ai
+        đang ngồi trước máy) và NỘI DUNG ĐANG LÀM (mật khẩu hiện trên màn, tin
+        nhắn riêng). Đọc file còn bị allowlist thư mục chặn; ảnh màn hình thì
+        không có allowlist nào che được.
+        """
+        return bool(self.cfg.get("can_capture", False))
+
     def public(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -104,6 +124,7 @@ class AgentSession:
             "can_write": self.can_write,
             "can_exec": self.can_exec,
             "can_power": self.can_power,
+            "can_capture": self.can_capture,
             "ops": self.ops,
         }
 
@@ -144,6 +165,8 @@ class AgentSession:
 
 
 async def register(session: AgentSession) -> None:
+    global _app_loop
+    _app_loop = asyncio.get_running_loop()
     async with _lock:
         old = _sessions.get(session.name)
         _sessions[session.name] = session
@@ -171,6 +194,25 @@ def get(name: str) -> Optional[AgentSession]:
     return _sessions.get(str(name or "").strip())
 
 
+def call_sync(name: str, op: str, args: dict[str, Any],
+              timeout: float = _OP_TIMEOUT + 10.0) -> dict[str, Any]:
+    """Gửi lệnh xuống thiết bị từ code ĐỒNG BỘ (tool của bot chạy trong thread).
+
+    Bắc cầu qua `run_coroutine_threadsafe` vào đúng loop của app — xem ghi chú ở
+    `_app_loop` để biết vì sao không được tự mở loop mới.
+    """
+    s = get(name)
+    if s is None:
+        return {"ok": False, "error": f"thiết bị '{name}' đang không kết nối"}
+    lp = _app_loop
+    if lp is None or lp.is_closed():
+        return {"ok": False, "error": "gateway chưa có vòng lặp phục vụ thiết bị"}
+    try:
+        return asyncio.run_coroutine_threadsafe(s.call(op, args), lp).result(timeout)
+    except Exception as exc:
+        return {"ok": False, "error": f"gọi xuống thiết bị lỗi: {str(exc)[:120]}"}
+
+
 def list_devices() -> list[dict[str, Any]]:
     """Mọi thiết bị đã KHAI BÁO — kèm cái đang offline, để biết mà chờ."""
     out: list[dict[str, Any]] = []
@@ -189,6 +231,7 @@ def list_devices() -> list[dict[str, Any]]:
                 "can_write": bool(cfg.get("can_write", False)),
                 "can_exec": bool(cfg.get("can_exec", False)),
                 "can_power": bool(cfg.get("can_power", False)),
+                "can_capture": bool(cfg.get("can_capture", False)),
             })
     return out
 

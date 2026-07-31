@@ -2721,6 +2721,103 @@ _REMOTE_CMDS = [
 ]
 
 
+def _h_device_capture(args: dict, ctx: dict) -> dict:
+    """Chụp WEBCAM hoặc ẢNH MÀN HÌNH của một thiết bị đã cài agent.
+
+    Đi qua device agent sẵn có (WebSocket chiều đảo) nên máy sau NAT/wifi vẫn
+    chụp được. Ảnh trả về base64 → lưu vào THƯ VIỆN ẢNH rồi gửi kèm vào chat,
+    dùng lại đúng đường ảnh của bot (có phân quyền theo người).
+
+    Quyền `can_capture` phải bật tường minh cho thiết bị VÀ agent phải chạy kèm
+    `--allow-capture` — hai lớp, giống mọi nhóm quyền khác của device agent.
+    """
+    from services import device_agents as _da
+
+    # CHỈ ADMIN. Webcam thấy MẶT người đang ngồi, ảnh màn hình thấy việc họ đang
+    # làm (tin nhắn riêng, tài khoản đang mở) — người trong danh bạ không được
+    # nhìn vào máy người khác, dù có nhờ bot cách nào. Cùng nguyên tắc với thư
+    # viện ảnh: user chỉ chạm tới thứ của chính họ.
+    if not bool((ctx or {}).get("is_admin")):
+        return {"deliver_now": True,
+                "text": "Chụp webcam/màn hình máy tính chỉ chủ máy dùng được ạ, "
+                        "em không làm giúp người khác được."}
+
+    loai = str(args.get("kind") or "screenshot").strip().lower()
+    if loai in ("cam", "camera", "webcam", "ảnh webcam", "mặt"):
+        loai = "webcam"
+    elif loai in ("screen", "màn hình", "man hinh", "screenshot", "chụp màn hình"):
+        loai = "screenshot"
+    else:
+        loai = "screenshot"
+
+    ten = str(args.get("device") or "").strip()
+    ds = _da.list_devices()
+    dang_noi = [d for d in ds if d.get("connected")]
+    if not ten:
+        if len(dang_noi) == 1:
+            ten = str(dang_noi[0].get("name") or "")
+        elif not dang_noi:
+            return {"deliver_now": True,
+                    "text": "Hiện không có thiết bị nào đang kết nối để em chụp ạ. "
+                            "Anh/chị kiểm tra agent trên máy đó còn chạy không nhé."}
+        else:
+            _dsach = ", ".join(str(d.get("label") or d.get("name")) for d in dang_noi)
+            return {"deliver_now": True,
+                    "text": f"Anh/chị muốn chụp trên máy nào ạ? Đang kết nối: {_dsach}."}
+
+    s = _da.get(ten)
+    if s is None:
+        return {"deliver_now": True,
+                "text": f"Thiết bị '{ten}' đang không kết nối nên em chưa chụp được ạ."}
+    if not s.can_capture:
+        return {"deliver_now": True,
+                "text": (f"Thiết bị '{ten}' chưa được cấp quyền chụp webcam/màn hình. "
+                         "Cần bật can_capture cho thiết bị và chạy agent kèm "
+                         "--allow-capture rồi em làm được ngay ạ.")}
+
+    _args = {}
+    if loai == "webcam" and args.get("device_index") is not None:
+        _args["device_index"] = args["device_index"]
+    if loai == "screenshot" and args.get("monitor") is not None:
+        _args["monitor"] = args["monitor"]
+    kq = _da.call_sync(ten, loai, _args)
+    if not isinstance(kq, dict) or not kq.get("ok"):
+        loi = str((kq or {}).get("error") or "không rõ lý do")
+        return {"deliver_now": True,
+                "text": f"Em chụp chưa được ạ: {loi[:200]}"}
+
+    b64 = str(kq.get("image") or "")
+    if not b64:
+        return {"deliver_now": True, "text": "Thiết bị trả về rỗng, em chưa có ảnh ạ."}
+
+    # Lưu vào THƯ VIỆN ẢNH — cùng chỗ ảnh AI, để "gửi lại ảnh" tìm được.
+    import base64 as _b64
+    import time as _t
+    from services.config import config as _cfg
+    nhan = "webcam" if loai == "webcam" else "screen"
+    try:
+        raw = b64.split(",", 1)[1] if b64.startswith("data:") else b64
+        data = _b64.b64decode(raw)
+        duoi = ".jpg" if "jpeg" in str(kq.get("mime") or "") else ".png"
+        thu_muc = _cfg.images_dir / _t.strftime("%Y") / _t.strftime("%m") / _t.strftime("%d")
+        thu_muc.mkdir(parents=True, exist_ok=True)
+        tep = f"{nhan}_{ten}_{int(_t.time())}{duoi}"
+        (thu_muc / tep).write_bytes(data)
+        rel = f"{_t.strftime('%Y/%m/%d')}/{tep}"
+        logger.info({"event": "device_capture_saved", "device": ten, "kind": loai,
+                     "path": rel, "bytes": len(data)})
+        # Cùng dạng URL với thư viện ảnh (xem `_h_library_media`) — kênh gửi tin
+        # tự đổi sang đường công khai; hardcode domain ở đây sẽ lệch khi đổi tên miền.
+        cd = f"http://127.0.0.1:80/images/{rel}"
+        mo_ta = ("📸 Ảnh webcam" if loai == "webcam" else "🖥️ Ảnh màn hình")
+        kt = f" ({kq.get('width')}×{kq.get('height')})" if kq.get("width") else ""
+        return {"text": f"{mo_ta} máy '{ten}'{kt} ạ.", "image_url": cd}
+    except Exception as exc:
+        logger.warning("device capture save failed: %s", exc)
+        return {"deliver_now": True,
+                "text": f"Em chụp được nhưng lưu ảnh lỗi 😥 ({str(exc)[:100]})."}
+
+
 def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     """SSH into a machine the user gives credentials for and read a fixed,
     read-only diagnostic bundle (no arbitrary commands)."""
@@ -3144,6 +3241,21 @@ CAPABILITIES: dict[str, Capability] = {
             "password": {"type": "string", "description": "Mật khẩu SSH"},
             "port": {"type": "integer", "description": "Cổng SSH (mặc định 22)"}},
             "required": ["host", "user", "password"]}),
+    "device_capture": Capability(
+        name="device_capture", risk=CHANGE, handler=_h_device_capture,
+        emoji="📸", label="Chụp webcam / ảnh màn hình của máy đã cài agent",
+        description=("Chụp ảnh WEBCAM hoặc ẢNH MÀN HÌNH của một máy tính đã cài "
+                     "agent điều khiển thiết bị, rồi gửi ảnh về đây. Dùng khi người "
+                     "dùng nói 'chụp webcam máy X', 'xem màn hình máy X đang làm gì', "
+                     "'ai đang ngồi trước máy'. kind=webcam hoặc screenshot."),
+        parameters={"type": "object", "properties": {
+            "kind": {"type": "string", "enum": ["webcam", "screenshot"],
+                     "description": "webcam = chụp qua camera; screenshot = chụp màn hình"},
+            "device": {"type": "string",
+                       "description": "Tên máy (bỏ trống nếu chỉ có 1 máy đang kết nối)"},
+            "device_index": {"type": "integer", "description": "Camera thứ mấy (mặc định 0)"},
+            "monitor": {"type": "integer", "description": "Màn hình thứ mấy (0 = tất cả)"}},
+            "required": ["kind"]}),
     "control_home": Capability(
         name="control_home", risk=CHANGE, handler=_h_control_home,
         emoji="🎛️", label="Điều khiển nhà (bật/tắt đèn, quạt, điều hoà…)",
@@ -3763,6 +3875,9 @@ _CAP_GROUP: dict[str, str] = {
     "announce_on_speaker": "tts_speaker",
     "create_automation": "homeassistant",
     "system_status": "server", "remote_system_status": "server",
+    # Chụp webcam/màn hình máy khác — nhóm RIÊNG, không gộp vào "server", để
+    # thread nào được xem máy chủ vẫn KHÔNG tự động được nhìn vào máy người khác.
+    "device_capture": "device",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",
