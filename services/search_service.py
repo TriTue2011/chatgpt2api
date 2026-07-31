@@ -322,7 +322,14 @@ class GeminiGrounding(SearchBackend):
     def _get_model(self) -> str:
         cfg = (config.data.get("providers") or {}).get("gemini_free") or {}
         # Use search-specific model if set, otherwise use chat model
-        return str(cfg.get("search_model") or cfg.get("model") or "gemini-2.5-flash")
+        ten = str(cfg.get("search_model") or cfg.get("model") or "gemini-2.5-flash")
+        # CẮT tiền tố provider ("gemini_free/gemini-3.1-flash-lite"). Cấu hình
+        # lưu tên ĐỊNH TUYẾN NỘI BỘ, còn URL của Google chỉ nhận tên model trơn:
+        # để nguyên là đường dẫn thành `/models/gemini_free/gemini-3.1-…` — dấu
+        # `/` thừa làm nó không khớp route nào nên Google trả 404 với body RỖNG.
+        # Đo thật 01/08: tra cứu Gemini grounding chết hoàn toàn, mọi lượt trả []
+        # rồi lặng lẽ tụt sang engine khác nên không ai thấy suốt thời gian dài.
+        return ten.rsplit("/", 1)[-1].strip() or "gemini-2.5-flash"
 
     def _get_keys(self) -> list[str]:
         provider_config = (config.data.get("providers") or {}).get("gemini_free") or {}
