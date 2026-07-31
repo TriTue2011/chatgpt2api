@@ -24,9 +24,29 @@ def _token() -> str:
     return str(config.get().get("cloudflare_tunnel_token", "")).strip()
 
 
+def _co_tien_trinh_he_thong() -> bool:
+    """Có cloudflared nào ĐANG chạy trên máy không (kể cả của tiến trình app cũ).
+
+    Vì sao cần: `_tunnel_process` chỉ là tay cầm TRONG tiến trình. App khởi động
+    lại (deploy, health-restart, Portainer update) là mất tay cầm, nên
+    `start_tunnel()` tưởng chưa có và đẻ THÊM một cloudflared, còn cái cũ mồ côi
+    vẫn chạy. Đo thật 31/07: sau vài lượt restart có 2 cloudflared cùng token
+    cùng sống — mỗi lần restart lại rò thêm một tiến trình.
+    """
+    try:
+        import subprocess as _sp
+        r = _sp.run(["pgrep", "-x", "cloudflared"], capture_output=True, text=True, timeout=5)
+        return bool((r.stdout or "").strip())
+    except Exception:
+        return False
+
+
 def is_running() -> bool:
     with _lock:
-        return _tunnel_process is not None and _tunnel_process.poll() is None
+        if _tunnel_process is not None and _tunnel_process.poll() is None:
+            return True
+    # Tay cầm mất (app vừa restart) nhưng tiến trình cũ có thể vẫn sống.
+    return _co_tien_trinh_he_thong()
 
 
 def start_tunnel() -> bool:
