@@ -2261,6 +2261,9 @@ def _process_ai(ev: dict) -> None:
         out = orchestrate(
             text, _skey,
             allow=_allow, ha_fastpath=_fp, model=_model,
+            # Quyền admin quyết định phạm vi thư viện media: admin xem cả kho,
+            # người thường chỉ media chính họ tạo (đặc tả 31/07).
+            is_admin=_is_admin,
         )
         try:
             from services import net_guard

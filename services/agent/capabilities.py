@@ -2052,26 +2052,43 @@ def _so_luong_anh(args: dict, ctx: dict | None = None) -> int:
     return 1
 
 
-def _anh_cua_nguoi_nay(ctx: dict, so: int) -> list[str]:
-    """`so` ảnh gần nhất do CHÍNH người đang hỏi tạo. Rỗng nếu chưa có sổ.
+def _media_cua_nguoi_nay(ctx: dict, so: int, exts: tuple[str, ...]) -> list[str]:
+    """`so` media gần nhất do CHÍNH người đang hỏi tạo, LỌC theo đuôi tệp.
 
-    Rỗng thì người gọi rơi về kho chung — nhưng phải NÓI RÕ đó là ảnh chung, chứ
-    không được gọi ảnh của người khác là "ảnh anh/chị tạo".
+    Sổ `anh_cua_toi` giờ ghi cả video/nhạc (orchestrator ghi mọi media sinh ra),
+    nên phải lọc theo đuôi — không thì "3 ảnh của tôi" lẫn cả video.
     """
     uid = str((ctx or {}).get("user_id") or "").strip()
     if not uid:
         return []
     try:
         from services.agent import anh_cua_toi
-        return anh_cua_toi.gan_nhat(uid, so)
+        tat_ca = anh_cua_toi.gan_nhat(uid, 200)
     except Exception:
         return []
+    ra = [u for u in tat_ca
+          if any(str(u).lower().split("?")[0].endswith(e) for e in exts)]
+    return ra[:so]
+
+
+def _anh_cua_nguoi_nay(ctx: dict, so: int) -> list[str]:
+    """`so` ảnh gần nhất do CHÍNH người đang hỏi tạo. Rỗng nếu chưa có sổ."""
+    return _media_cua_nguoi_nay(ctx, so, _MEDIA_EXT["image"])
 
 
 def _h_library_media(args: dict, ctx: dict) -> dict:
-    """Đọc THƯ VIỆN media của hệ thống (ảnh/video/nhạc đã tạo, lưu ở
-    config.images_dir) và gửi lại cái mới nhất theo loại. Nhờ vậy bot 'thấy'
-    được những gì đã tạo, không mù chữ với kho media."""
+    """Lấy media ĐÃ TẠO (ảnh/video/nhạc) và gửi lại — có PHÂN QUYỀN.
+
+    Đặc tả của chủ máy (31/07/2026):
+      • ADMIN: "trong thư viện" = kho CHUNG (media mới nhất của bất kỳ ai);
+        "anh tạo / của tôi" = sổ riêng của chính admin.
+      • USER THƯỜNG: yêu cầu kiểu gì cũng CHỈ nhận media do chính họ tạo —
+        tuyệt đối không rơi về kho chung (kho có media của người khác, ảnh
+        camera, ảnh test; lộ là hỏng cả riêng tư lẫn đúng đắn).
+
+    `scope`: "mine" | "all" — đường tắt ở orchestrator suy từ câu nói; model
+    gọi tay thì được phép truyền. Không phải admin thì ép "mine" bất kể ai nói gì.
+    """
     from services.config import config as _cfg
     kind = str(args.get("kind") or "image").strip().lower()
     if kind in ("photo", "ảnh", "anh", "hình"):
@@ -2081,6 +2098,40 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     elif kind in ("phim", "clip"):
         kind = "video"
     exts = _MEDIA_EXT.get(kind, _MEDIA_EXT["image"])
+    # Nhãn TRƠN cho giữa câu ("chưa tạo ảnh nào") — _MEDIA_LABEL có emoji + viết
+    # hoa ("🖼️ Ảnh"), nhét thẳng vào câu thành "chưa tạo 🖼️ Ảnh nào".
+    nhan = {"image": "ảnh", "video": "video", "music": "bản nhạc"}.get(kind, "media")
+    so = _so_luong_anh(args, ctx) if kind == "image" else 1
+
+    la_admin = bool((ctx or {}).get("is_admin"))
+    scope = str(args.get("scope") or "").strip().lower()
+    if not la_admin:
+        scope = "mine"
+    elif scope not in ("mine", "all"):
+        scope = "all"      # admin không nói rõ → kho chung ("thư viện" là của admin)
+
+    # ── SỔ RIÊNG (mine) — không đụng tới kho chung ────────────────────────
+    if scope == "mine":
+        cua_toi = _media_cua_nguoi_nay(ctx, so, exts)
+        if not cua_toi:
+            return {"text": (f"Anh/chị chưa tạo {nhan} nào qua em, nên em không có "
+                             f"gì để gửi lại ạ. Muốn tạo mới thì anh/chị cứ nói nhé!")}
+        if kind == "image":
+            if len(cua_toi) == 1:
+                return {"text": "Ảnh gần nhất anh/chị tạo ạ.", "image_url": cua_toi[0]}
+            thieu_t = ("" if len(cua_toi) >= so
+                       else f" (anh/chị mới tạo {len(cua_toi)} ảnh, chưa đủ {so})")
+            return {"text": f"{len(cua_toi)} ảnh gần nhất anh/chị tạo ạ{thieu_t}.",
+                    "image_urls": cua_toi}
+        # video/nhạc: sổ có thể chứa URL hoặc ĐƯỜNG DẪN cục bộ (nhánh bot lưu
+        # file) — chọn đúng khoá để kênh gửi được cả hai.
+        nguon = cua_toi[0]
+        khoa = ("video_path" if kind == "video" else "audio_path") \
+            if str(nguon).startswith("/") else \
+            ("video_url" if kind == "video" else "audio_url")
+        return {"text": f"{nhan.capitalize()} gần nhất anh/chị tạo ạ.", khoa: nguon}
+
+    # ── KHO CHUNG (all — chỉ admin tới được đây) ──────────────────────────
     d = _cfg.images_dir
     try:
         files = [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() in exts
@@ -2088,7 +2139,7 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     except Exception:
         files = []
     if not files:
-        return {"text": f"Thư viện chưa có {_MEDIA_LABEL.get(kind, 'media')} nào ạ."}
+        return {"text": f"Thư viện chưa có {nhan} nào ạ."}
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     newest = files[0]
     import datetime as _dt
@@ -2097,30 +2148,11 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     url = f"http://127.0.0.1:80/images/{rel}"
     caption = f"{_MEDIA_LABEL.get(kind, 'Media')} mới nhất trong thư viện (tạo lúc {when}) ạ."
     if kind == "image":
-        # Nhiều ảnh: lấy N tấm mới nhất, LỌC TRÙNG theo nội dung.
-        #
-        # Thư viện có tệp trùng nội dung khác tên (mỗi lần lưu là một tên mới theo
-        # dấu thời gian, mà `save_image_bytes` đặt tên gồm md5 nên trùng nội dung
-        # là trùng phần hash). Đo thật 30/07: hai tệp `1785379635_2a6363b6…` và
-        # `1785379627_2a6363b6…` cùng nội dung. Không lọc thì "gửi 3 ảnh" có thể
-        # ra 3 tấm mà thật chỉ có 1 tấm khác nhau — người dùng thấy lặp và tưởng
-        # bot gửi sai.
-        so = _so_luong_anh(args, ctx)
-        # "Ảnh TÔI tạo" = ảnh của CHÍNH người đang hỏi, không phải N tệp mới nhất
-        # trong kho. Kho `data/images` là rổ CHUNG: có ảnh của người dùng khác,
-        # ảnh snapshot camera do Home Assistant đẩy lên, và ảnh test. Lấy theo
-        # thời gian là gửi ảnh người khác cho người này — sai cả về đúng đắn lẫn
-        # riêng tư, mà nhìn từ ngoài y như đang chạy đúng.
-        cua_toi = _anh_cua_nguoi_nay(ctx, so)
-        if cua_toi:
-            if len(cua_toi) == 1:
-                return {"text": "Ảnh gần nhất anh/chị tạo ạ.", "image_url": cua_toi[0]}
-            thieu_t = ("" if len(cua_toi) >= so
-                       else f" (anh/chị mới tạo {len(cua_toi)} ảnh, chưa đủ {so})")
-            return {"text": f"{len(cua_toi)} ảnh gần nhất anh/chị tạo ạ{thieu_t}.",
-                    "image_urls": cua_toi}
         if so <= 1:
             return {"text": caption, "image_url": url}
+        # Nhiều ảnh: lấy N tấm mới nhất, LỌC TRÙNG theo nội dung — thư viện có
+        # tệp trùng nội dung khác tên (tên = <epoch>_<md5>, trùng nội dung là
+        # trùng phần hash; đo thật 30/07).
         chon: list[str] = []
         da_thay: set[str] = set()
         for p in files:
@@ -2849,7 +2881,13 @@ CAPABILITIES: dict[str, Capability] = {
             "so_luong": {"type": "integer",
                          "description": ("Số ẢNH muốn lấy, 1–50 (mặc định 1). Người "
                                          "dùng nói 'gửi 3 ảnh gần nhất' thì truyền 3. "
-                                         "Chỉ áp dụng kind=image.")}}},
+                                         "Chỉ áp dụng kind=image.")},
+            "scope": {"type": "string", "enum": ["mine", "all"],
+                      "description": ("'mine' = media do CHÍNH người đang chat tạo "
+                                      "('ảnh tôi tạo', 'của anh'); 'all' = cả thư "
+                                      "viện chung ('trong thư viện'). Người thường "
+                                      "luôn bị ép 'mine' — hệ thống tự lo, cứ truyền "
+                                      "đúng theo lời người dùng.")}}},
         workflow=("Media mới nhất đã được gửi kèm tự động — chỉ cần chú thích "
                   "ngắn. Nếu người dùng muốn loại khác (video/nhạc) thì gọi lại "
                   "với kind tương ứng.")),

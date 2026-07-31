@@ -1902,7 +1902,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 _skey = f"zalo_{chat_id}:u{user_id}"
         except Exception:
             pass
-        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model)
+        _la_admin = str(chat_id or "").strip() in set(_admin_ids_for_bot())
+        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
+                          is_admin=_la_admin)
         try:
             from services import net_guard
             out = net_guard.filter_agent_output(out if isinstance(out, dict) else {})

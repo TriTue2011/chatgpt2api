@@ -1466,7 +1466,8 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                 _skey = f"{_skey_base}:u{user_id}"
         except Exception:
             pass
-        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model)
+        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
+                          is_admin=_is_admin_chat(chat_id))
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
         try:
             from services import net_guard

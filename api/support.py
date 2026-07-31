@@ -51,7 +51,24 @@ def require_admin(authorization: str | None) -> dict[str, object]:
 
 
 def resolve_image_base_url(request: Request) -> str:
-    return config.base_url or f"{request.url.scheme}://{request.headers.get('host', request.url.netloc)}"
+    """Gốc URL cho ảnh/media trong thư viện — theo ORIGIN người dùng đang mở.
+
+    Trước đây trả `config.base_url` trước (thường là http://<IP LAN>): mở trang
+    qua domain HTTPS (Cloudflare tunnel) thì mọi ảnh trỏ http://IP → trình duyệt
+    chặn Mixed Content, và IP LAN cũng không tới được từ ngoài — thư viện trắng
+    trơn với hàng loạt ERR_CONNECTION_TIMED_OUT (chủ máy dán console 31/07).
+
+    Đứng sau tunnel/proxy thì scheme thật nằm ở `x-forwarded-proto` và host thật
+    ở `x-forwarded-host` (không có thì `host`). Lấy theo request nên mở bằng IP
+    LAN vẫn ra http://IP như cũ — không hỏng đường nội bộ.
+    """
+    host = (request.headers.get("x-forwarded-host")
+            or request.headers.get("host") or "").strip()
+    if host:
+        proto = (request.headers.get("x-forwarded-proto")
+                 or request.url.scheme or "http").split(",")[0].strip()
+        return f"{proto}://{host}"
+    return config.base_url or f"{request.url.scheme}://{request.url.netloc}"
 
 
 def raise_image_quota_error(exc: Exception) -> None:

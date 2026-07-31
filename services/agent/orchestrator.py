@@ -81,10 +81,19 @@ _TAT_LOAI = ((("video", "clip", "phim"), "video"),
              (("ảnh", "anh", "hình", "hinh", "photo"), "image"))
 _TAT_SO = re.compile(r"\b(\d{1,2})\s*(?:tấm|tam|cái|cai|bức|buc|)\s*"
                      r"(?:ảnh|anh|hình|hinh|video|clip)?", re.I)
+# PHẠM VI: "của TÔI tạo" ≠ "trong THƯ VIỆN" (cả kho). Chủ máy chốt 31/07:
+# admin xin "thư viện" là kho chung; còn "anh tạo / của tôi" là sổ riêng.
+# User thường thì kiểu gì cũng chỉ được sổ riêng (ép ở handler, không phải ở đây).
+_TAT_CUA_TOI = ("tôi tạo", "toi tao", "anh tạo", "anh tao", "chị tạo", "chi tao",
+                "mình tạo", "minh tao", "của tôi", "cua toi", "của anh", "cua anh",
+                "của chị", "cua chi", "của mình", "cua minh", "do tôi", "do anh")
+_TAT_CA_KHO = ("thư viện", "thu vien", "trong kho", "tất cả", "tat ca",
+               "mọi người", "moi nguoi", "bất kỳ", "bat ky")
 
 
 def _tat_lay_media(text: str) -> dict | None:
-    """Nhận câu xin media ĐÃ TẠO trong thư viện → {"kind", "so_luong"}, hoặc None.
+    """Nhận câu xin media ĐÃ TẠO trong thư viện → {"kind", "so_luong", "scope"},
+    hoặc None.
 
     Đòi ĐỦ ba dấu hiệu để khỏi bắt oan: động từ xin + dấu hiệu kho nhà + từ chỉ
     loại media. Nhờ vậy "vẽ cho anh con mèo" hay "tìm ảnh Hà Nội trên mạng"
@@ -106,6 +115,10 @@ def _tat_lay_media(text: str) -> dict | None:
                     ra["so_luong"] = max(1, min(50, int(m.group(1))))
                 except ValueError:
                     pass
+            if any(k in t for k in _TAT_CUA_TOI):
+                ra["scope"] = "mine"
+            elif any(k in t for k in _TAT_CA_KHO):
+                ra["scope"] = "all"
             return ra
     return None
 
@@ -453,12 +466,13 @@ def _classify_reply(text: str) -> Optional[str]:
 
 
 def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str = "",
-             auto_approve: bool = False) -> dict:
+             auto_approve: bool = False, is_admin: bool = False) -> dict:
     # user_text = câu gốc lượt này → handler cần đối chiếu (vd send_to_contact
     # kiểm tra người dùng có thật sự nêu kênh không, không tin platform LLM đoán).
     # auto_approve=True (chạy tự động: nhắc theo lịch, autonomy) → handler BỎ hỏi
     # tương tác (vd menu chọn model vẽ) mà dùng mặc định luôn.
-    ctx = {"user_id": user_id, "user_message": user_text, "auto_approve": auto_approve}
+    ctx = {"user_id": user_id, "user_message": user_text,
+           "auto_approve": auto_approve, "is_admin": is_admin}
     risk = str(getattr(cap, "risk", "") or "").lower()
     try:
         raw = cap.handler(args, ctx)
@@ -513,7 +527,8 @@ def orchestrate(user_text: str, user_id: str,
                 allow: set[str] | None = None,
                 ha_fastpath: bool = True,
                 model: str | None = None,
-                auto_approve: bool = False) -> dict[str, Any]:
+                auto_approve: bool = False,
+                is_admin: bool = False) -> dict[str, Any]:
     """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
@@ -542,7 +557,7 @@ def orchestrate(user_text: str, user_id: str,
         try:
             return _orchestrate_locked(
                 user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
-                model=model, auto_approve=auto_approve,
+                model=model, auto_approve=auto_approve, is_admin=is_admin,
             )
         finally:
             # Khoá do CHÍNH thread chạy thân hàm nhả. Nếu hết giờ mà bên ngoài
@@ -571,7 +586,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         allow: set[str] | None = None,
                         ha_fastpath: bool = True,
                         model: str | None = None,
-                        auto_approve: bool = False) -> dict[str, Any]:
+                        auto_approve: bool = False,
+                        is_admin: bool = False) -> dict[str, Any]:
     import time as _time
     t0 = _time.time()
     tools_used: list[str] = []
@@ -700,7 +716,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 approval_gate.resolve(user_id, "once", capability=(cap.name if cap else ""))
             if cap:
                 tools_used.append(cap.name)
-                out = _execute(cap, pending.get("args") or {}, user_id)
+                out = _execute(cap, pending.get("args") or {}, user_id, is_admin=is_admin)
                 if verdict == "always":
                     out["text"] = "Dạ, từ giờ việc này em tự làm khỏi hỏi ạ. " + out.get("text", "")
                 fin = _finalize(user_id, out)
@@ -732,7 +748,10 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if _tat and (allow is None or caps.group_of("library_media") in allow):
         try:
             _cap_lib = caps.get("library_media")
-            _kq = _cap_lib.handler(dict(_tat), {"user_id": user_id}) if _cap_lib else None
+            _kq = (_cap_lib.handler(dict(_tat),
+                                    {"user_id": user_id, "user_message": user_text,
+                                     "is_admin": is_admin})
+                   if _cap_lib else None)
         except Exception as exc:
             logger.warning({"event": "agent_tat_media_loi", "error": str(exc)[:150]})
             _kq = None
@@ -1014,7 +1033,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # thay vì mất trắng vì return sớm ở đây như trước.
                 break
             else:
-                result = _execute(cap, args, user_id, user_text=user_text,
+                result = _execute(cap, args, user_id, user_text=user_text, is_admin=is_admin,
                                   auto_approve=auto_approve)
 
             # NHIỀU ảnh trong MỘT lượt.
@@ -1098,8 +1117,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         produced_media = {media_key: produced_images[0]}
                 else:
                     produced_media = {media_key: result[media_key]}
+                    # Ghi sổ CẢ video/nhạc theo người (cùng sổ với ảnh; người đọc
+                    # lọc theo đuôi tệp). Không ghi thì "gửi video ANH tạo" không
+                    # bao giờ trả lời được — sổ chỉ có ảnh.
+                    if media_key.startswith(("video_", "audio_")):
+                        _ghi_so_anh(user_id, [str(result[media_key])])
                 produced_caption = result.get("text") or "Đây ạ 🎨"
                 break
+            # Nhiều video một lượt (Flow x2/x3/x4) — ghi sổ từng cái.
+            for _k in ("video_paths", "video_urls"):
+                _ds = result.get(_k)
+                if isinstance(_ds, list) and _ds:
+                    _ghi_so_anh(user_id, [str(x) for x in _ds if x])
             # Tool báo THẤT BẠI (không có media) nhưng muốn trả câu thật ngay:
             # giữ lại để gửi thẳng, chặn vòng LLM bịa "đã gửi ảnh ở trên".
             if not produced_media and result.get("deliver_now"):
