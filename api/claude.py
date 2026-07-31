@@ -232,8 +232,18 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
         """1 lượt relogin-via-google + poll sessionKey ~20s. Trả key hoặc ''."""
         try:
             _logger().info({"event": "claude_solver_trigger_relogin", "profile": profile})
-            requests.post(f"{base}/v1/claude-web/{profile}/relogin-via-google",
-                          headers=headers, timeout=30, impersonate="chrome110")
+            rp = requests.post(f"{base}/v1/claude-web/{profile}/relogin-via-google",
+                               headers=headers, timeout=30, impersonate="chrome110")
+            # Bản cũ BỎ LUÔN phản hồi này. Khi claude.ai từ chối, solver có trả
+            # lý do trong body mà không ai đọc ⇒ log chỉ có "trigger_relogin" rồi
+            # im, không biết vì sao. Đo thật 31/07: google-smarthomebenbap0610
+            # thất bại cả 2 lượt trong khi _freshen_google BÁO THÀNH CÔNG (phiên
+            # Google còn tốt) — tức nguyên nhân nằm phía claude.ai, và chính là
+            # thứ bị ném đi ở đây.
+            if rp.status_code >= 400:
+                _logger().warning({"event": "claude_solver_relogin_tu_choi",
+                                   "profile": profile, "status": rp.status_code,
+                                   "body": str(getattr(rp, "text", ""))[:300]})
         except Exception as exc:
             _logger().warning({"event": "claude_solver_relogin_failed", "profile": profile, "error": str(exc)[:120]})
             return ""
@@ -255,10 +265,14 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
                 pass
         return ""
 
+    da_thu = ""        # profile THỰC SỰ được thử lượt này (chỉ một — xem break dưới)
+    so_nghi = 0        # số profile bị bỏ qua vì đang trong thời gian nghỉ
     for profile in profiles:
         if now - _relogin_cooldown.get(profile, 0) < _RELOGIN_COOLDOWN:
+            so_nghi += 1
             continue
         _relogin_cooldown[profile] = now
+        da_thu = profile
         key = _claude_relogin_once(base, headers, profile, excluded)
         if key:
             return key
@@ -278,13 +292,30 @@ def _fetch_session_key_from_solver(cfg: dict[str, Any], excluded_keys: set[str] 
         # Chỉ xử lý 1 profile mỗi lần gọi để giới hạn độ trễ; request sau (profile
         # này đang cooldown) sẽ rơi xuống PASS 1 lấy session khi solver xong.
         break
-    # Không lấy được session key từ bất kỳ profile nào (kể cả sau relogin) →
-    # Claude tạm không dùng được. Báo Telegram (debounce 30ph).
-    if profiles:
-        _claude_notify("fail:all",
-            "❌ Claude — tất cả tài khoản\nKhông lấy được session (đăng nhập lại "
-            "Google cũng không xong). Có thể hết phiên/bị chặn — cần xử lý tay "
-            "(noVNC cổng 6080).")
+    # Báo thất bại. Bản cũ ghi "❌ Claude — TẤT CẢ TÀI KHOẢN" là SAI: vòng trên
+    # có `break`, mỗi lượt gọi chỉ thử ĐÚNG MỘT profile. Người vận hành nhận 3
+    # dòng ✅ rồi một dòng ❌ "tất cả tài khoản" nên không biết là hỏng hết hay
+    # hỏng một (log 31/07: benbap115, benbap2011, mitbap0610 đều ✅, chỉ
+    # smarthomebenbap0610 thất bại). Nay nêu ĐÚNG tên tài khoản đã thử.
+    # Khoá gộp cũng tách theo profile — bản cũ dùng chung khoá "fail:all" nên
+    # tài khoản thứ hai hỏng trong 30 phút sau đó bị im lặng hoàn toàn.
+    if da_thu:
+        con_lai = len(profiles) - so_nghi - 1
+        them = ""
+        if so_nghi:
+            them += f"\n{so_nghi} tài khoản khác đang trong thời gian nghỉ, chưa thử."
+        if con_lai > 0:
+            them += f"\n{con_lai} tài khoản khác sẽ được thử ở lượt sau."
+        _claude_notify(f"fail:{da_thu}",
+            f"❌ Claude — {da_thu}\nKhông lấy được session (đăng nhập lại Google "
+            f"cũng không xong). Có thể hết phiên/bị chặn — cần xử lý tay "
+            f"(noVNC cổng 6080).{them}")
+    elif profiles:
+        # Không thử được ai vì TẤT CẢ đang nghỉ — đây không phải lỗi tài khoản.
+        _claude_notify("fail:dang_nghi",
+            f"⏳ Claude — cả {len(profiles)} tài khoản đang trong thời gian nghỉ "
+            f"({_RELOGIN_COOLDOWN:.0f}s sau mỗi lần thử). Chưa thử lại được, "
+            "không phải tài khoản hỏng.")
     return ""
 
 
