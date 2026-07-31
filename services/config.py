@@ -322,6 +322,37 @@ def _normalize_thread_filters(value: object) -> dict[str, list[str]]:
     return out
 
 
+def _dong_dau_nhom_da_biet(data: dict) -> None:
+    """Đóng dấu vào `thread_filter_meta[key]["known"]` danh sách nhóm chức năng
+    ĐANG TỒN TẠI, mỗi lần bộ lọc thread được lưu.
+
+    Vì sao cần: bản ghi lọc chỉ là ảnh chụp các ô đã tick lúc lưu. Không có mốc
+    "lúc đó biết những nhóm nào" thì nhóm thêm vào code SAU đó không phân biệt
+    được với nhóm người dùng CỐ Ý tắt — và `allowed_groups_for()` buộc phải chọn
+    một trong hai cách sai: chặn oan nhóm mới (bot im lặng), hay bật lại nhóm
+    người dùng vừa tắt. Có dấu này thì cả hai đều đúng.
+
+    Đặt ở đây, tầng lưu của config, để MỌI đường lưu đều đóng dấu — web UI, API,
+    hay sửa tay đều như nhau; làm ở web UI thì phải build lại image mới có.
+    """
+    try:
+        from services.agent.capabilities import all_groups
+        nhom = sorted(all_groups())
+    except Exception:
+        return          # không biết danh sách nhóm thì đừng đóng dấu sai
+    if not nhom:
+        return
+    tf = data.get("thread_filters")
+    if not isinstance(tf, dict):
+        return
+    meta = data.get("thread_filter_meta")
+    meta = dict(meta) if isinstance(meta, dict) else {}
+    for key in tf:
+        m = meta.get(key)
+        meta[key] = {**m, "known": nhom} if isinstance(m, dict) else {"known": nhom}
+    data["thread_filter_meta"] = meta
+
+
 def _normalize_thread_user_filters(value: object) -> dict[str, list[str]]:
     """Chuẩn hóa `thread_user_filters`: dict user_key(str) -> list[str] tên nhóm.
     user_key = 'plat:bot:chat:user' hoặc 'plat:chat:user'. Cùng dạng dữ liệu như
@@ -1111,6 +1142,7 @@ class ConfigStore:
                 next_data["backup"] = _normalize_backup_settings(next_data.get("backup"))
             if "thread_filters" in next_data:
                 next_data["thread_filters"] = _normalize_thread_filters(next_data.get("thread_filters"))
+                _dong_dau_nhom_da_biet(next_data)
             if "thread_user_filters" in next_data:
                 next_data["thread_user_filters"] = _normalize_thread_user_filters(next_data.get("thread_user_filters"))
             if "thread_mention_filters" in next_data:

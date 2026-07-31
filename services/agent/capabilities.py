@@ -4031,14 +4031,42 @@ def allowed_groups_for(thread_key: str) -> set[str] | None:
     Đọc config key `thread_filters` (dict: thread_key -> list[str] tên nhóm):
     - thread_key KHÔNG có trong config → None (không lọc, cho phép tất cả).
     - có, giá trị là list             → set(list) (list rỗng = chặn hết tool, chỉ chat).
-    Không bao giờ raise — cấu hình hỏng coi như không lọc (an toàn cho luồng bot)."""
+    Không bao giờ raise — cấu hình hỏng coi như không lọc (an toàn cho luồng bot).
+
+    NHÓM MỚI được cộng thêm tự động. Bản ghi lọc là ảnh chụp các ô đã tick VÀO
+    LÚC LƯU, nên mỗi nhóm chức năng thêm vào code sau đó sẽ vắng mặt trong mọi
+    bản ghi cũ và bị chặn — dù người dùng chưa từng tắt nó, vì lúc họ tick nó
+    còn chưa tồn tại. Biểu hiện tệ nhất có thể: bot IM LẶNG HOÀN TOÀN, không
+    phân biệt được với hỏng.
+
+    Đo thật 01/08 trên máy chủ: 4 thread có lọc, cả 4 thiếu `device`, `office`,
+    `tts_reply` → 9 tool Office và mọi thứ thuộc hai nhóm kia chết trên đúng
+    những kênh người dùng thật đang dùng. Một lượt "Tắt laptop của tôi" trên
+    Zalo cá nhân bị chặn và trả về câu RỖNG.
+
+    `thread_filter_meta[key]["known"]` là danh sách nhóm ĐÃ TỒN TẠI lúc lưu.
+    Vắng khỏi `known` = chưa từng được hỏi ý → cho phép. Có trong `known` mà
+    không có trong danh sách tick = người dùng CỐ Ý tắt → giữ nguyên tắt.
+    Bản ghi cũ chưa có `known` thì coi như không biết gì, và nhóm nào không nằm
+    trong bản tick cũng không nằm trong `known` → được cộng thêm.
+    """
     try:
         from services.config import config
-        filters = config.get().get("thread_filters") or {}
-        if isinstance(filters, dict) and thread_key in filters:
-            groups = filters.get(thread_key)
-            if isinstance(groups, list):
-                return {str(g) for g in groups}
+        cfg = config.get()
+        filters = cfg.get("thread_filters") or {}
+        if not (isinstance(filters, dict) and thread_key in filters):
+            return None
+        groups = filters.get(thread_key)
+        if not isinstance(groups, list):
+            return None
+        da_tick = {str(g) for g in groups}
+        meta = cfg.get("thread_filter_meta") or {}
+        m = meta.get(thread_key) if isinstance(meta, dict) else None
+        biet_truoc = set()
+        if isinstance(m, dict) and isinstance(m.get("known"), list):
+            biet_truoc = {str(g) for g in m["known"]}
+        moi = {g for g in all_groups() if g not in biet_truoc and g not in da_tick}
+        return da_tick | moi
     except Exception:
         pass
     return None
