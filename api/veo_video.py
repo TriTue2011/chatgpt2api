@@ -164,6 +164,19 @@ async def handle_video_generation(
             raise HTTPException(status_code=502, detail={"error": f"Agnes Video generation failed: {exc}"}) from exc
 
     if model.startswith("flow/"):
+        # Ảnh CUỐI mà không có ảnh ĐẦU: Flow nhận nút "Tạo" nhưng KHÔNG BAO GIỜ
+        # sinh xong. Đo thật 31/07 trên flow/veo-3.1-lite: solver gắn ảnh vào ô
+        # "Kết thúc" thành công (log kiểm chứng nhãn ô biến mất), bấm Tạo trả
+        # ok=True, rồi 300 giây sau giao diện vẫn không chuyển sang thư viện ⇒
+        # người gọi chờ 6 phút mới nhận lỗi, và một hồ sơ trình duyệt bị giữ suốt
+        # thời gian đó. Chặn ngay ở đây: nói rõ phải thêm ảnh đầu, không mở
+        # trình duyệt, không tốn tín dụng. Tab Tạo Video vốn chỉ gửi last_frame
+        # kèm image nên chỉ ảnh hưởng bên gọi qua API/bot.
+        if last_frame and not image:
+            raise HTTPException(status_code=400, detail={"error":
+                "Flow cần ẢNH ĐẦU khi đã có ảnh cuối: chế độ 'Khung hình' là nối "
+                "từ ảnh đầu sang ảnh cuối. Gửi kèm 'image', hoặc bỏ 'last_frame' "
+                "để tạo video chỉ từ mô tả."})
         import httpx
         from services.image_providers.flow_google import _pool_config, _next_account
         flow_cfg = _pool_config()
