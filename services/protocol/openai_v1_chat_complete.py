@@ -384,6 +384,63 @@ def _pipeline_reviewer_model() -> str:
         return ""
 
 
+def _khoa_nghi(route: Any) -> str:
+    """Khoá cho bảng nghỉ (cooldown) của một mục trong combo — PHẢI có provider.
+
+    Chỉ dùng `route.model` là sai: `claude/auto` phân giải ra model `'auto'` và
+    `gma/auto` cũng ra `'auto'` (đo thật 31/07 trên máy chủ), nên hai provider
+    hoàn toàn khác nhau dùng chung một khoá. Hậu quả có trong log: Claude hết
+    tài khoản ⇒ ghi nghỉ cho khoá 'auto' ⇒ tới lượt con thì `gma/auto` bị bỏ qua
+    với lý do "đang cooldown" dù Gemini Web vẫn sống. Combo âm thầm mất một
+    model khoẻ — đúng loại sai lệch cần diệt.
+    """
+    try:
+        return f"{route.provider}/{route.model}"
+    except Exception:
+        return str(getattr(route, "model", route))
+
+
+def _chon_nguoi_kiem(combo_name: str, reviewer: str, model_con: str,
+                     architects: list[str], editors: list[str]) -> str:
+    """Chọn người KIỂM sao cho KHÁC người viết.
+
+    Vì sao: cấu hình thật của máy chủ có `code_reviewer = cx/auto`, mà cx/auto
+    cũng là bố #2 và con #2. Đo thật 31/07: claude/auto hết tài khoản ⇒ cx/auto
+    làm CẢ BA vai (lập kế hoạch, viết code, kiểm duyệt) và duyệt đạt ngay vòng 0.
+    Một model soi code của chính nó thì gần như luôn duyệt — tầng kiểm duyệt trở
+    thành hình thức, đúng loại "sai lệch" cần loại bỏ.
+
+    Không có ai khác khả dụng thì vẫn trả người kiểm cũ (còn hơn không kiểm),
+    nhưng ghi log để thấy được.
+    """
+    def _tuyen(ten: str) -> Any:
+        try:
+            return backend_router.route(_strip_marker(ten))
+        except Exception:
+            return None
+
+    if not reviewer or not model_con:
+        return reviewer
+    r_kiem = _tuyen(reviewer)
+    if r_kiem is None or r_kiem.model != model_con:
+        return reviewer
+    # Ưu tiên bố (model mạnh) rồi tới các con còn lại; bỏ ai trùng người viết.
+    for ung in list(architects) + list(editors):
+        ten = _strip_marker(ung)
+        r = _tuyen(ten)
+        if r is None or r.model == model_con:
+            continue
+        if not model_cooldown.is_available("pipeline:" + combo_name, _khoa_nghi(r)):
+            continue
+        logger.info({"event": "pipeline_doi_nguoi_kiem", "combo": combo_name,
+                     "cu": reviewer, "moi": ten, "ly_do": "trùng người viết"})
+        return ten
+    logger.warning({"event": "pipeline_nguoi_kiem_trung_nguoi_viet",
+                    "combo": combo_name, "model": model_con,
+                    "ghi_chu": "không còn model nào khác — kiểm duyệt sẽ thiên vị"})
+    return reviewer
+
+
 def _last_user_text(messages: list[dict[str, Any]]) -> str:
     for m in reversed(messages or []):
         if m.get("role") == "user":
@@ -420,17 +477,33 @@ def _pipeline_chay_thu_bat() -> bool:
 
 
 def _chay_thu_code(combo_name: str, code: str, rnd: int) -> str:
-    """Chạy thử code. Trả GÓP Ý cần sửa, hoặc "" khi không có gì phải sửa.
+    """Kiểm code trước khi bố soi. Trả GÓP Ý cần sửa, "" khi không có gì phải sửa.
 
-    "" có hai nghĩa và cả hai đều nên đi tiếp: code chạy được, HOẶC code không
-    tự đủ nên bỏ qua (vd đoạn sửa một hàm trong services/ — chạy riêng lẻ chỉ
-    ra ImportError giả, bắt con sửa theo là làm hỏng code đang đúng).
+    Hai lớp, theo thứ tự rẻ trước:
+
+    1) SOI TĨNH (`code_runner.kiem_tinh`) — chạy cho MỌI code. Đây là lớp phủ
+       rộng nhất: cú pháp sai, tên gõ sai, chữ ngoài ASCII lọt vào tên biến.
+    2) CHẠY THẬT — chỉ với code tự đủ.
+
+    Vì sao cần lớp 1: `co_the_chay()` từ chối gần hết code thật (hễ có
+    `from services`, `import httpx`, `import numpy`… là bỏ qua), nên trước đây
+    đa số code chỉ được ĐỌC rồi phán, không có phép kiểm khách quan nào.
+
+    "" có hai nghĩa và cả hai đều nên đi tiếp: code sạch, HOẶC code không tự đủ
+    nên bỏ phần chạy (vd đoạn sửa một hàm trong services/ — chạy riêng lẻ chỉ ra
+    ImportError giả, bắt con sửa theo là làm hỏng code đang đúng).
     """
     if not _pipeline_chay_thu_bat():
         return ""
     try:
         from services import code_runner
-        kq = code_runner.chay(code_runner.boc_code_python(code))
+        _code_py = code_runner.boc_code_python(code)
+        tinh = code_runner.kiem_tinh(_code_py)
+        if tinh:
+            logger.info({"event": "pipeline_soi_tinh_loi", "combo": combo_name,
+                         "round": rnd, "gop_y": tinh[:200]})
+            return tinh
+        kq = code_runner.chay(_code_py)
     except Exception as exc:      # bộ chạy lỗi thì bỏ qua, đừng chặn cả lượt
         logger.warning({"event": "pipeline_chay_thu_err", "combo": combo_name,
                         "error": str(exc)[:150]})
@@ -593,7 +666,7 @@ def _run_pipeline_combo(
             route = backend_router.route(_strip_marker(am))
             # Gate như combo_models: architect vừa fail thì bị demote, không
             # retry đúng vị trí cũ trên MỌI request (đỡ tốn latency mỗi lần).
-            if not model_cooldown.is_available("pipeline:" + combo_name, route.model):
+            if not model_cooldown.is_available("pipeline:" + combo_name, _khoa_nghi(route)):
                 logger.info({"event": "pipeline_architect_skip_cooling", "combo": combo_name, "model": route.model})
                 continue
             cooldown = model_cooldown.get_cooldown_info(route.model)
@@ -606,7 +679,7 @@ def _run_pipeline_combo(
             if content:
                 plan = content[:_PIPELINE_PLAN_MAX_CHARS]
                 plan_model = am
-                model_cooldown.record_success("pipeline:" + combo_name, route.model)
+                model_cooldown.record_success("pipeline:" + combo_name, _khoa_nghi(route))
                 logger.info({"event": "pipeline_architect_ok", "combo": combo_name, "model": am, "plan_chars": len(plan)})
                 break
         except Exception as exc:
@@ -615,7 +688,7 @@ def _run_pipeline_combo(
             # không thì success/failure lệch khóa và gate không bao giờ khớp.
             model_cooldown.record_failure(
                 account_id="pipeline:" + combo_name,
-                model=(route.model if route else am),
+                model=(_khoa_nghi(route) if route else am),
                 status_code=_extract_status(str(exc)), error_body=str(exc), provider="",
             )
             continue
@@ -664,7 +737,7 @@ def _run_pipeline_combo(
         route = None
         try:
             route = backend_router.route(_strip_marker(em))
-            if not model_cooldown.is_available("pipeline:" + combo_name, route.model):
+            if not model_cooldown.is_available("pipeline:" + combo_name, _khoa_nghi(route)):
                 last_error = f"{route.model} đang cooldown (pipeline-level)"
                 logger.info({"event": "pipeline_editor_skip_cooling", "combo": combo_name, "model": route.model})
                 continue
@@ -673,8 +746,11 @@ def _run_pipeline_combo(
                 last_error = cooldown["message"]
                 logger.warning({"event": "pipeline_editor_cooldown", "combo": combo_name, "model": em, **cooldown})
                 continue
-            logger.info({"event": "pipeline_editor_try", "combo": combo_name, "provider": route.provider, "model": route.model, "has_plan": bool(plan), "architect": plan_model, "reviewer": reviewer or "off"})
-            if reviewer:
+            # Người kiểm phải KHÁC người viết — xem _chon_nguoi_kiem.
+            nguoi_kiem = _chon_nguoi_kiem(combo_name, reviewer, route.model,
+                                          architects, editors)
+            logger.info({"event": "pipeline_editor_try", "combo": combo_name, "provider": route.provider, "model": route.model, "has_plan": bool(plan), "architect": plan_model, "reviewer": nguoi_kiem or "off"})
+            if nguoi_kiem:
                 # Chia việc: nhiều con viết song song rồi ghép. Ghép xong ĐI QUA
                 # ĐÚNG một đường với code do một con viết (chạy thử → bố soi),
                 # nên ghép sai vẫn bị bắt. Ghép thất bại → rơi về một con viết cả.
@@ -686,9 +762,9 @@ def _run_pipeline_combo(
                         logger.info({"event": "pipeline_chia_that_bai_ve_mot_con",
                                      "combo": combo_name})
                 code = _run_pipeline_review(combo_name, route, editor_messages, body,
-                                            reviewer, plan, _last_user_text(messages),
+                                            nguoi_kiem, plan, _last_user_text(messages),
                                             code_ban_dau=code_san)
-                model_cooldown.record_success("pipeline:" + combo_name, route.model)
+                model_cooldown.record_success("pipeline:" + combo_name, _khoa_nghi(route))
                 if body.get("stream"):
                     def _final_stream(_c=code):
                         cid = f"chatcmpl-{uuid.uuid4().hex}"; ts = int(time.time())
@@ -697,14 +773,14 @@ def _run_pipeline_combo(
                     return _final_stream()
                 return completion_response(model=combo_name, content=code, messages=messages)
             result = _dispatch(route, editor_messages, tools, tool_choice, body)
-            model_cooldown.record_success("pipeline:" + combo_name, route.model)
+            model_cooldown.record_success("pipeline:" + combo_name, _khoa_nghi(route))
             return result
         except Exception as exc:
             last_error = str(exc)
             logger.warning({"event": "pipeline_editor_fail", "combo": combo_name, "model": em, "error": last_error[:200]})
             model_cooldown.record_failure(
                 account_id="pipeline:" + combo_name,
-                model=(route.model if route else em),
+                model=(_khoa_nghi(route) if route else em),
                 status_code=_extract_status(last_error), error_body=last_error, provider="",
             )
             continue
@@ -3083,7 +3159,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 # KHÔNG chặn route CUỐI (giống circuit-breaker bên dưới) — một
                 # lần 404/401 bị phân loại 12h/30m cooldown mà chặn nốt đường
                 # cuối là combo chết cứng cả nửa ngày dù account đã hồi.
-                if _route_idx < len(routes) - 1 and not model_cooldown.is_available("combo:" + model, route.model):
+                if _route_idx < len(routes) - 1 and not model_cooldown.is_available("combo:" + model, _khoa_nghi(route)):
                     logger.info({"event": "combo_skip_cooling", "combo": model, "provider": route.provider, "model": route.model})
                     last_error = f"{route.model} đang cooldown (combo-level)"
                     continue
@@ -3158,7 +3234,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     force=(ha_context_injected or bool(body.get("_is_ha_request"))) and not _struct,
                 )
                 result = _maybe_verbalize(result, voice)
-                model_cooldown.record_success("combo:" + model, route.model)
+                model_cooldown.record_success("combo:" + model, _khoa_nghi(route))
                 provider_circuit.record_success(route.provider)
                 return result
             except NoFallbackError as exc:
@@ -3178,7 +3254,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     logger.warning({"event": "combo_stop_bad_image", "combo": model, "provider": route.provider})
                     break
                 model_cooldown.record_failure(
-                    account_id="combo:" + model, model=route.model,
+                    account_id="combo:" + model, model=_khoa_nghi(route),
                     status_code=_extract_status(last_error), error_body=last_error, provider=route.provider,
                 )
                 provider_circuit.record_failure(route.provider, _extract_status(last_error), last_error)

@@ -163,6 +163,123 @@ def chan_doan_loi(stderr: str, code: str) -> str:
     return "\n".join(ra)
 
 
+def _ten_da_dinh_nghia(cay) -> set[str]:
+    """Mọi tên có thể coi là đã có trong file — CỐ Ý lấy rộng.
+
+    Gom hết bất kể phạm vi (module, trong hàm, trong lớp): mục đích là để phần
+    dò tên chưa định nghĩa gần như không báo oan. Bắt được lỗi gõ sai tên là đủ,
+    còn báo oan một lần là bắt người viết sửa code đang đúng — tệ hơn nhiều.
+    """
+    import ast
+    ten: set[str] = set()
+    for n in ast.walk(cay):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+            ten.add(n.id)
+        elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            ten.add(n.name)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            for a in n.names:
+                ten.add((a.asname or a.name).split(".")[0])
+        elif isinstance(n, ast.arg):
+            ten.add(n.arg)
+        elif isinstance(n, ast.ExceptHandler) and n.name:
+            ten.add(n.name)
+        elif isinstance(n, (ast.Global, ast.Nonlocal)):
+            ten.update(n.names)
+        elif isinstance(n, ast.alias):
+            ten.add((n.asname or n.name).split(".")[0])
+    return ten
+
+
+def _ten_chua_dinh_nghia(cay) -> list[str]:
+    import ast
+    import builtins
+    co = _ten_da_dinh_nghia(cay) | set(dir(builtins)) | {"__name__", "__file__", "__doc__"}
+    thieu: list[str] = []
+    for n in ast.walk(cay):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id not in co:
+            dong = getattr(n, "lineno", 0)
+            thieu.append(f"{n.id} (dòng {dong})")
+    # Bỏ trùng, giữ thứ tự.
+    da: set[str] = set()
+    ra = []
+    for t in thieu:
+        k = t.split(" ")[0]
+        if k in da:
+            continue
+        da.add(k)
+        ra.append(t)
+    return ra[:8]
+
+
+def _chu_khong_phai_ascii(code: str) -> list[str]:
+    """Ký tự ngoài ASCII nằm ở VỊ TRÍ CÚ PHÁP (không phải chuỗi/chú thích).
+
+    Đây là lỗi ĐÃ GẶP THẬT ở dự án này: dưới system prompt tiếng Việt dài, vài
+    model rò chữ Trung/Nhật vào câu trả lời. Rò vào tên biến hay toán tử thì
+    Python vẫn phân tích được (Python cho phép định danh unicode) nhưng code
+    thành vô nghĩa và người đọc không hiểu vì sao. Chuỗi và chú thích thì hợp lệ
+    — tiếng Việt trong chú thích là đúng chuẩn của dự án.
+    """
+    import io
+    import tokenize
+    ra: list[str] = []
+    # FSTRING_MIDDLE (phần chữ bên trong f-string) chỉ có từ Python 3.12. Đọc
+    # thẳng `tokenize.FSTRING_MIDDLE` trên bản cũ ném AttributeError, bị khối
+    # except phía dưới ăn mất và cả phép kiểm này im lặng vô hiệu — đúng lỗi vừa
+    # gặp khi tự thử trên Python 3.9.
+    _CHU_TRONG_FSTRING = getattr(tokenize, "FSTRING_MIDDLE", -1)
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            if tok.type in (tokenize.STRING, tokenize.COMMENT, _CHU_TRONG_FSTRING):
+                continue
+            xau = [c for c in tok.string if ord(c) > 127]
+            if xau:
+                ra.append(f"dòng {tok.start[0]}: {tok.string.strip()[:40]!r}")
+    except Exception:
+        return []       # code lỗi cú pháp thì phần kiểm cú pháp đã báo rồi
+    return ra[:5]
+
+
+def kiem_tinh(code: str) -> str:
+    """Soi code KHÔNG cần chạy. Trả góp ý cần sửa, "" nếu không thấy vấn đề.
+
+    Vì sao cần: `co_the_chay()` từ chối phần lớn code thật (hễ có
+    `from services`, `import httpx`, `import numpy`… là bỏ qua) nên tầng chạy
+    thử chỉ phủ được các đoạn tự đủ. Ba phép kiểm dưới đây chạy cho MỌI code và
+    bắt đúng loại lỗi mà đọc-rồi-phán hay bỏ sót.
+    """
+    import ast
+    c = (code or "").strip()
+    if not c:
+        return ""
+    try:
+        cay = ast.parse(c)
+    except SyntaxError as exc:
+        dong = exc.lineno or 0
+        cac = c.splitlines()
+        mo_ta = f"Lỗi CÚ PHÁP: {exc.msg}"
+        if 1 <= dong <= len(cac):
+            mo_ta += f"\nTại dòng {dong}: {cac[dong - 1].strip()}"
+        return mo_ta
+    except Exception:
+        return ""
+
+    van_de: list[str] = []
+    la = _chu_khong_phai_ascii(c)
+    if la:
+        van_de.append("Có ký tự KHÔNG phải ASCII lọt vào phần cú pháp (tên biến/toán "
+                      "tử). Cú pháp code phải viết bằng ký hiệu ASCII; tiếng Việt chỉ "
+                      "được ở chuỗi và chú thích. Chỗ sai: " + "; ".join(la))
+    thieu = _ten_chua_dinh_nghia(cay)
+    if thieu:
+        van_de.append("Dùng tên CHƯA được định nghĩa hay import: " + ", ".join(thieu))
+    if not van_de:
+        return ""
+    return ("Soi code (không chạy) thấy các lỗi sau — đây là lỗi xác định, không "
+            "phải nhận xét chủ quan:\n- " + "\n- ".join(van_de))
+
+
 def chay(code: str, han_giay: float = HAN_GIAY) -> dict[str, object]:
     """Chạy thử code. Trả dict:
 

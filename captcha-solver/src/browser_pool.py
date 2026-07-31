@@ -210,6 +210,27 @@ class BrowserPool:
         self._locks: dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
         self._evict_task: asyncio.Task | None = None
+        # Hồ sơ đang có một luồng ĐĂNG NHẬP chạy dở.
+        #
+        # Vì sao cần: các luồng đăng nhập lấy context bằng `get()` rồi thao tác
+        # BÊN NGOÀI khoá hồ sơ (khác `page()` — cái đó giữ khoá suốt lượt). Nên
+        # `close_profile()` của một việc khác vẫn đóng được trình duyệt ngay giữa
+        # lúc đang đăng nhập, và lần `page.goto` đang chạy chết với
+        # `net::ERR_ABORTED`. Đo thật 31/07: tạo video Flow trên hồ sơ
+        # google-benbap115 đóng trình duyệt đúng lúc phục hồi phiên Claude đang
+        # mở claude.ai ⇒ báo "đăng nhập lại Google cũng không xong" tuy tài khoản
+        # không hỏng.
+        self._dang_dang_nhap: set[str] = set()
+
+    def dau_dang_nhap(self, profile: str) -> None:
+        """Đánh dấu hồ sơ đang đăng nhập — việc khác đừng đóng trình duyệt."""
+        self._dang_dang_nhap.add(profile)
+
+    def xong_dang_nhap(self, profile: str) -> None:
+        self._dang_dang_nhap.discard(profile)
+
+    def dang_dang_nhap(self, profile: str) -> bool:
+        return profile in self._dang_dang_nhap
 
     async def start(self) -> None:
         browser = settings.browser.lower()
@@ -522,7 +543,17 @@ class BrowserPool:
             self._contexts[profile] = _PoolEntry(ctx=ctx, page=page, headless=headless, last_used=time.time())
             return ctx
 
-    async def close_profile(self, profile: str) -> bool:
+    async def close_profile(self, profile: str, *, bo_qua_khi_dang_nhap: bool = False) -> bool:
+        """Đóng trình duyệt của hồ sơ.
+
+        `bo_qua_khi_dang_nhap=True`: KHÔNG đóng nếu hồ sơ đang có luồng đăng nhập
+        chạy dở. Dùng cho các việc chỉ muốn nhả RAM (tạo ảnh/video Flow) — nhả
+        muộn 5 phút theo hạn nhàn rỗi thì chỉ tốn RAM, còn đóng sai lúc thì làm
+        chết cả lượt đăng nhập của việc khác.
+        """
+        if bo_qua_khi_dang_nhap and self.dang_dang_nhap(profile):
+            logger.info("close_profile BỎ QUA profile=%s — đang có luồng đăng nhập", profile)
+            return False
         lock = await self._lock_for(profile)
         async with lock:
             entry = self._contexts.pop(profile, None)

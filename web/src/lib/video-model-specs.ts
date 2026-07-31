@@ -103,6 +103,12 @@ const SPECS: Record<VideoBucket, VideoModelSpec> = {
     fps: [],
     countOptions: [1, 2, 3, 4],
     baseCost: 10,
+    // ẢNH ĐẦU: đo thật 31/07 — nạp ảnh xanh, khung đầu video ra (18,141,58) xanh.
+    // ẢNH CUỐI: solver gắn được vào ô "Kết thúc" (log kiểm chứng nhãn ô biến
+    // mất), nhưng CHƯA chứng minh được Veo Lite có dùng nó: một lượt cho khung
+    // cuối không ra màu ảnh đã nạp, một lượt bị 429 Account Busy. Giữ bật vì
+    // điều khiển này có tới Flow thật; nếu sau này đo được là Veo bỏ qua thì
+    // đổi về false.
     supportsEndFrame: true,
     supportsSeed: false,
     supportsNegativePrompt: false,

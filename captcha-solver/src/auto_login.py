@@ -1197,7 +1197,14 @@ async def do_google_login_steps(
 async def _run(session: LoginSession, password: str) -> None:
     # Onboard FAIL or SUCCESS -> dong browser ngay de khoi dot CPU tren Xvfb, luu cache.
     # CancelledError (login moi chiem profile) propagate -> KHONG close (ne race).
-    await _run_inner(session, password)
+    # Đánh dấu hồ sơ đang đăng nhập: việc khác (tạo ảnh/video Flow) gọi
+    # close_profile sẽ BỎ QUA, không đóng trình duyệt giữa lúc đang mở
+    # trang đăng nhập (nếu đóng thì page.goto chết với net::ERR_ABORTED).
+    pool.dau_dang_nhap(session.profile)
+    try:
+        await _run_inner(session, password)
+    finally:
+        pool.xong_dang_nhap(session.profile)
     if session.state in ("failed", "success"):
         try:
             await pool.close_profile(session.profile)

@@ -184,7 +184,14 @@ async def _run(session: ClaudeWebLoginSession, password: str) -> None:
     # headful trên noVNC. Trước đây success để mở → user phải nhấn X tay. Reuse
     # sau tự mở lại headless. CancelledError (login mới chiếm profile) propagate
     # → KHÔNG close (né race).
-    await _run_inner(session, password)
+    # Đánh dấu hồ sơ đang đăng nhập: việc khác (tạo ảnh/video Flow) gọi
+    # close_profile sẽ BỎ QUA, không đóng trình duyệt giữa lúc đang mở
+    # trang đăng nhập (nếu đóng thì page.goto chết với net::ERR_ABORTED).
+    pool.dau_dang_nhap(session.profile)
+    try:
+        await _run_inner(session, password)
+    finally:
+        pool.xong_dang_nhap(session.profile)
     if session.state in ("success", "failed"):
         try:
             await pool.close_profile(session.profile)

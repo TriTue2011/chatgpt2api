@@ -416,7 +416,7 @@ async def api_flow_generate(req: FlowImageReq):
         # (auto_login, chatgpt_login, claude_web_login, codex onboard); riêng hai
         # đường tạo ảnh/tạo video Flow thì chưa — đây là chỗ rò tài nguyên.
         try:
-            await pool.close_profile(req.profile)
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi tạo ảnh Flow bỏ qua", exc_info=True)
 
@@ -500,7 +500,7 @@ async def api_flow_generate_video(req: FlowVideoReq):
         # RAM/CPU, nếu không thì mỗi lượt tạo video để lại một Chromium sống và
         # health check của container bị quá hạn.
         try:
-            await pool.close_profile(req.profile)
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi tạo video Flow bỏ qua", exc_info=True)
 
@@ -1197,7 +1197,7 @@ async def api_gemini_web_generate_image(req: GeminiWebImageReq) -> dict[str, Any
         # /analyze-image thì KHÔNG đóng: đó là đường hội thoại, đóng mỗi lượt là
         # mỗi lượt phải dựng lại Chromium.
         try:
-            await pool.close_profile(req.profile)
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi tạo ảnh gemini-web bỏ qua", exc_info=True)
 
@@ -1651,7 +1651,7 @@ async def api_chatgpt_web_generate_image(req: ChatGPTWebChatReq) -> dict[str, An
         # Xem ghi chú ở /v1/gemini-web/generate-image: tạo ảnh xong thì nhả
         # trình duyệt ngay, đường hội thoại thì giữ ấm.
         try:
-            await pool.close_profile(req.profile)
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi tạo ảnh chatgpt-web bỏ qua", exc_info=True)
 

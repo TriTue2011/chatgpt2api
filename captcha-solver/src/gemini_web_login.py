@@ -214,7 +214,14 @@ async def _gemini_send_hello(page) -> bool:
 async def _run(session: GeminiWebLoginSession, password: str) -> None:
     # Onboard FAIL -> dong browser ngay de khoi dot CPU tren Xvfb.
     # CancelledError (login moi chiem profile) propagate -> KHONG close (ne race).
-    await _run_inner(session, password)
+    # Đánh dấu hồ sơ đang đăng nhập: việc khác (tạo ảnh/video Flow) gọi
+    # close_profile sẽ BỎ QUA, không đóng trình duyệt giữa lúc đang mở
+    # trang đăng nhập (nếu đóng thì page.goto chết với net::ERR_ABORTED).
+    pool.dau_dang_nhap(session.profile)
+    try:
+        await _run_inner(session, password)
+    finally:
+        pool.xong_dang_nhap(session.profile)
     # Đóng browser khi XONG (success HOẶC failed): cookies persist trên disk +
     # session lưu memory, không cần giữ cửa sổ headful trên noVNC (trước success
     # để mở → phải nhấn X tay). Reuse sau tự mở lại headless.
