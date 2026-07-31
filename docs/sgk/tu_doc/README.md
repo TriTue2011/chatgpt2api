@@ -34,12 +34,50 @@ ssh root@172.16.10.38 "docker exec -i c2a sh -c '/app/.venv/bin/python /tmp/nap_
 liệu: xoá mọi đoạn cũ mà `source` chứa slug (kể cả bản nạp bằng đường khác) rồi
 nạp bản mới — chạy lại bao nhiêu lần cũng ra đúng một bản.
 
-## Tiến độ (cập nhật 30/07/2026)
+## Tiến độ (cập nhật 31/07/2026)
 
 Khảo sát VBT (`vbt_khao_sat.json`): 70 tài liệu · 626 trang, lớp 1–3 và 5–12
 (lớp 4 đã nạp trọn trước đó qua đường server, đã soát).
 
 - Lớp 1: 6/6 ✓ (VBT Toán ×2, VBT Tiếng Việt ×2, Tập viết ×2 — 57 trang)
-- Lớp 2: 2/6 (VBT Toán ×2 ✓; còn VBT Tiếng Việt ×2, Tập viết ×2 — đã tải trang)
-- Lớp 3, 5–12: chưa bắt đầu
+- Lớp 2: 6/6 ✓ (VBT Toán ×2, VBT Tiếng Việt ×2, Tập viết ×2 — 56 trang).
+  Nạp 31/07: 30 đoạn, trong đó VBT Tiếng Việt 2 tập một ghi đè 7 đoạn cũ.
+- Lớp 3: 6/6 ✓ (VBT Toán ×2, VBT Tiếng Việt ×2, Tập viết ×2 — 52 trang).
+  Nạp 31/07: 47 đoạn.
+- Lớp 5–12: chưa bắt đầu (còn 43 tài liệu · 461 trang)
+
+Kho `kb_giao_duc_vbt` sau lượt nạp 31/07: 234 đoạn — lớp 1: 45, lớp 2: 48,
+lớp 3: 47, lớp 4: 94.
+
+### Kí hiệu Tập viết KHÁC NHAU giữa các lớp — đừng suy từ lớp này sang lớp kia
+
+- Tập viết **2**: ● Tập viết ở lớp · ★ Tập viết chữ nghiêng (tự chọn) ·
+  ■ Luyện viết thêm (tự chọn)
+- Tập viết **3**: ● Tập viết ở lớp · ■ Tập viết chữ **đứng** (tự chọn) ·
+  ★ Tập viết chữ **nghiêng** (tự chọn)
+
+Cùng dấu ■ mà nghĩa khác nhau. Phải đọc trang "Kí hiệu dùng trong vở" của CHÍNH
+quyển đang chép.
+
+### Đường nạp: đừng dùng `echo` để đưa JSON vào container
+
+Đo thật 31/07: `echo "$json" | ssh …` làm zsh biến `\n` trong chuỗi JSON thành
+dòng mới THẬT ⇒ `json.decoder.JSONDecodeError: Invalid control character`. Ghi
+payload ra file rồi `… < file.json`.
+
+Ngoài ra `docker cp` trên máy chủ đang lỗi (`openat etc/localtime: path escapes
+from parent`, Docker 29.5.1) — dùng `docker exec -i c2a sh -c 'cat > …'`.
 - SGV + tài liệu tập huấn các lớp: chưa khảo sát chi tiết (SGV Toán 4 = 290 trang)
+
+### BẪY SLUG — đọc trước khi nạp lớp 2
+
+Tập viết **lớp 2** tập một có `doc_slug` là **`tap-viet-1-tap-mot.4727277435`** —
+chữ "1" trong slug là SAI của taphuan, chỉ ID số phân biệt được nó với Tập viết
+lớp 1 tập một (`tap-viet-1-tap-mot.4727066112`). Vì vậy:
+
+- Tên file trong kho này đặt là `tap-viet-2-tap-mot.md` (không theo slug) để
+  không đè lên `tap-viet-1-tap-mot.md` của lớp 1.
+- Khi nạp phải truyền `source` = `reader_url` đầy đủ (có ID). So khớp bằng phần
+  chữ của slug sẽ xoá mất tài liệu lớp 1.
+- Đếm tiến độ bằng cách so tên file với slug rút gọn sẽ báo SAI (từng đếm lớp 2
+  là 3/6 trong khi thực tế là 2/6).
