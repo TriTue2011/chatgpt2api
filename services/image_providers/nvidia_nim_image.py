@@ -27,18 +27,30 @@ from services.config import config
 from utils.log import logger
 
 
-# NVIDIA-supported resolutions per aspect ratio
-# klein model max ~1M pixels; standard model max ~2M pixels
+# Kích thước NVIDIA CHO PHÉP, theo tài liệu chính thức của flux.2-klein-4b (chủ
+# máy đưa 31/07/2026). Bảng cũ có 4 cặp KHÔNG có trong tài liệu — 1152x768,
+# 768x1152, 1280x1024, 1024x1280 — tức người dùng chọn "3:2" hay "5:4" thì gửi đi
+# một cặp số model không công bố hỗ trợ.
 _NVIDIA_SIZE_MAP: dict[str, tuple[int, int]] = {
     "1024x1024": (1024, 1024),    # 1:1
-    "1152x768":  (1152, 768),     # 3:2
-    "768x1152":  (768, 1152),     # 2:3
-    "1280x1024": (1280, 1024),    # 5:4
-    "1024x1280": (1024, 1280),    # 4:5
-    "1344x768":  (1344, 768),     # 16:9
-    "768x1344":  (768, 1344),     # 9:16
+    "1216x832":  (1216, 832),     # ~3:2 ngang
+    "832x1216":  (832, 1216),     # ~2:3 dọc
+    "1152x896":  (1152, 896),     # ~4:3 ngang
+    "896x1152":  (896, 1152),     # ~3:4 dọc
+    "1344x768":  (1344, 768),     # 16:9 ngang
+    "768x1344":  (768, 1344),     # 9:16 dọc
 }
 _NVIDIA_DEFAULT_SIZE = "1344x768"  # 16:9
+# Nhãn tiếng Việt cho menu chọn thông số (bot hỏi lại qua Tele/Zalo, và tab Ảnh).
+NVIDIA_SIZE_LABELS: dict[str, str] = {
+    "1024x1024": "1:1 vuông (1024×1024)",
+    "1344x768":  "16:9 ngang (1344×768)",
+    "768x1344":  "9:16 dọc (768×1344)",
+    "1216x832":  "3:2 ngang (1216×832)",
+    "832x1216":  "2:3 dọc (832×1216)",
+    "1152x896":  "4:3 ngang (1152×896)",
+    "896x1152":  "3:4 dọc (896×1152)",
+}
 
 # Trần `steps` theo TỪNG model. Dòng flux nhanh (schnell/klein) chưng cất còn vài
 # bước nên NVIDIA CHẶN CỨNG ở 4 — gửi nhiều hơn là 422, không phải ảnh xấu:
@@ -114,13 +126,24 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
         size = str(body.get("size") or "")
         w, h = _nvidia_size(size if size else None)
 
-        return {
+        ra: dict[str, Any] = {
             "prompt": prompt,
             "width": w,
             "height": h,
             "seed": int(body.get("seed", 0)),
             "steps": _so_buoc(model, body.get("steps")),
         }
+        # SỬA ẢNH THEO ẢNH GỐC (image-to-image). NVIDIA nhận khoá `image` là một
+        # DANH SÁCH data URL (tài liệu chính thức: "image": ["data:image/png;base64,…"]).
+        # Trước đây khoá này bị bỏ hẳn nên gửi ảnh kèm cũng chỉ ra ảnh vẽ từ chữ,
+        # y như không đính kèm gì.
+        anh = body.get("image")
+        if anh:
+            ds = anh if isinstance(anh, (list, tuple)) else [anh]
+            hop_le = [str(x) for x in ds if str(x or "").startswith("data:image/")]
+            if hop_le:
+                ra["image"] = hop_le
+        return ra
 
     def build_headers(
         self,

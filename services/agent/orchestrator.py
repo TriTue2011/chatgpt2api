@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 from typing import Any, Optional
 
@@ -42,6 +43,73 @@ from services.agent.runtime import call_model, content_of
 logger = logging.getLogger(__name__)
 
 _MAX_STEPS = 4
+
+# Câu chỉ HỨA sẽ làm, chưa làm gì. Dùng để bắt ca model trả lời "Dạ để em lấy…"
+# rồi dừng, không gọi tool nào — người dùng không nhận được gì và cũng không có
+# lỗi nào để lần ra. Chỉ xét khi lượt đó CHƯA gọi tool nào.
+#
+# Mẫu neo vào chủ ngữ "em" + động từ ý định, nên câu tường thuật đã xong ("em đã
+# gửi rồi", "em lấy được 3 ảnh") KHÔNG khớp. Câu hỏi lại ("để em hỏi rõ: anh
+# muốn ảnh nào?") cũng không khớp vì không có động từ hành động ngay sau.
+_CHI_LA_LOI_HUA = re.compile(
+    r"(?:^|[\s,.:;!?])(?:"
+    r"để\s+em\s+(?!hỏi|xem\s+lại\s+câu)"          # "để em lấy/kiểm tra/tạo…"
+    r"|em\s+(?:sẽ|đang)\s+(?!không|chưa\s+rõ)"      # "em sẽ gửi", "em đang lấy"
+    r"|(?:chờ|đợi)\s+em\s"                          # "chờ em xíu"
+    r"|em\s+làm\s+ngay"
+    r")", re.I)
+
+# ── Đường tắt "lấy media đã tạo trong thư viện" ──────────────────────────────
+#
+# Vì sao KHÔNG để model tự gọi tool: đo thật 31/07 trên Zalo cá nhân, "Gửi anh
+# video mới nhất trong thư viện video" và "Gửi anh 3 ảnh mới nhất trong thư viện
+# ảnh" đều chỉ nhận lại lời hứa. Tool `library_media` CÓ trong danh sách 43 tool
+# và nhóm 'image' được phép — model chính của luồng này (combo "AI text", model
+# đầu là oc/deepseek-v4-flash-free) đơn giản là không gọi tool. Nhắc thêm một
+# lượt cũng chỉ ra lời hứa thứ hai.
+#
+# Câu này hoàn toàn xác định (lấy gì, mấy cái, ở đâu) nên không cần model quyết.
+# Cùng bộ từ vựng với services/search_service (_DAU_HIEU_KHO_NHA / _TU_CHI_MEDIA)
+# để hai nơi hiểu câu giống nhau.
+_TAT_XIN_MEDIA = re.compile(
+    r"(gửi|gưi|lấy|lay|cho|xem|đưa|dua|show)\b", re.I)
+_TAT_KHO = ("thư viện", "thu vien", "trong kho", "vừa tạo", "đã tạo", "vừa vẽ",
+            "đã vẽ", "gửi lại", "xem lại", "vừa rồi", "gần nhất", "mới nhất",
+            "moi nhat", "gan nhat")
+_TAT_LOAI = ((("video", "clip", "phim"), "video"),
+             (("nhạc", "nhac", "bài hát", "bai hat", "audio"), "music"),
+             (("ảnh", "anh", "hình", "hinh", "photo"), "image"))
+_TAT_SO = re.compile(r"\b(\d{1,2})\s*(?:tấm|tam|cái|cai|bức|buc|)\s*"
+                     r"(?:ảnh|anh|hình|hinh|video|clip)?", re.I)
+
+
+def _tat_lay_media(text: str) -> dict | None:
+    """Nhận câu xin media ĐÃ TẠO trong thư viện → {"kind", "so_luong"}, hoặc None.
+
+    Đòi ĐỦ ba dấu hiệu để khỏi bắt oan: động từ xin + dấu hiệu kho nhà + từ chỉ
+    loại media. Nhờ vậy "vẽ cho anh con mèo" hay "tìm ảnh Hà Nội trên mạng"
+    không lọt vào đây.
+    """
+    t = (text or "").strip().lower()
+    if not t or len(t) > 200:
+        return None
+    if not _TAT_XIN_MEDIA.search(t):
+        return None
+    if not any(k in t for k in _TAT_KHO):
+        return None
+    for tu, kind in _TAT_LOAI:
+        if any(x in t for x in tu):
+            ra: dict[str, Any] = {"kind": kind}
+            m = _TAT_SO.search(t)
+            if m and kind == "image":
+                try:
+                    ra["so_luong"] = max(1, min(50, int(m.group(1))))
+                except ValueError:
+                    pass
+            return ra
+    return None
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -657,6 +725,28 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if len(hist) > max_h * 2:
         del hist[: len(hist) - max_h * 2]
 
+    # 1.4) Đường tắt LẤY MEDIA ĐÃ TẠO: xem chú thích ở `_tat_lay_media`. Chạy
+    # TRƯỚC vòng agent vì việc này xác định hoàn toàn và model nhỏ không gọi
+    # được tool. Vẫn tôn trọng phân quyền nhóm như mọi tool khác.
+    _tat = _tat_lay_media(user_text)
+    if _tat and (allow is None or caps.group_of("library_media") in allow):
+        try:
+            _cap_lib = caps.get("library_media")
+            _kq = _cap_lib.handler(dict(_tat), {"user_id": user_id}) if _cap_lib else None
+        except Exception as exc:
+            logger.warning({"event": "agent_tat_media_loi", "error": str(exc)[:150]})
+            _kq = None
+        if _kq:
+            logger.info({"event": "agent_tat_media", "kind": _tat.get("kind"),
+                         "so_luong": _tat.get("so_luong") or 1,
+                         "co_media": any(_kq.get(k) for k in
+                                         ("image_url", "image_urls", "video_url", "audio_url"))})
+            out_t = _finalize(user_id, _kq)
+            hist.append({"role": "assistant", "content": out_t.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_t.get("text") or ""))
+            return out_t
+
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua
     # provider — thiết bị phản ứng tức thì và chạy được cả khi không có provider
@@ -743,6 +833,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
     # 2) Agentic loop.
     seen_workflows: set[str] = set()  # tier-2: inject each workflow note once/turn
+    da_dung_tool = False      # lượt này đã gọi tool nào chưa
+    da_thuc_hua = False       # đã nhắc "hứa mà chưa làm" một lần chưa
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
         resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
@@ -759,6 +851,35 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
         if not tool_calls:
             reply = content_of(resp).strip() or "Dạ em chưa rõ ý, anh/chị nói lại giúp em nhé 😊"
+            # HỨA MÀ CHƯA LÀM: model trả lời "Dạ để em lấy…", "chờ em xíu" rồi
+            # DỪNG, không gọi tool nào. Người dùng không nhận được gì và cũng
+            # không có lỗi nào để lần ra.
+            #
+            # Đo thật 31/07 trên Zalo cá nhân: "Gửi anh video mới nhất trong thư
+            # viện video" → bot đáp "Dạ để em lấy video mới nhất trong thư viện
+            # gửi anh nghen 😊" rồi hết lượt. Tool `library_media` CÓ trong danh
+            # sách (43 tool, nhóm 'image' được phép) — model chỉ đơn giản không
+            # gọi. Model chính của luồng này là combo model nhỏ/miễn phí nên hay
+            # trả lời chữ thay vì gọi tool.
+            #
+            # Nhắc lại ĐÚNG MỘT LẦN rồi cho quay vòng: không lặp vô hạn, và nếu
+            # lần hai vẫn chỉ trả chữ thì gửi nguyên câu đó cho người dùng.
+            if (not da_dung_tool and not da_thuc_hua and _CHI_LA_LOI_HUA.search(reply)):
+                da_thuc_hua = True
+                logger.warning({"event": "agent_hua_ma_chua_lam",
+                                "user_id": str(user_id)[:40],
+                                "question": str(user_text)[:120],
+                                "reply": reply[:160]})
+                messages.append({"role": "assistant", "content": reply})
+                messages.append({"role": "system", "content":
+                    "Câu vừa rồi CHỈ LÀ LỜI HỨA — anh/chị chưa nhận được gì cả. "
+                    "Không có tin nào được gửi, không có tệp nào được lấy. Hãy "
+                    "GỌI ĐÚNG TOOL để LÀM THẬT việc vừa hứa NGAY BÂY GIỜ (ví dụ "
+                    "xin ảnh/video/nhạc đã tạo trong thư viện thì gọi "
+                    "library_media với kind tương ứng). Nếu thật sự không có "
+                    "tool nào làm được, hãy nói thẳng là không làm được và vì "
+                    "sao — TUYỆT ĐỐI không hứa lần nữa."})
+                continue
             if allow is not None and "[BLOCKED]" in reply:
                 # Thread lọc hỏi chức năng bị tắt → BỎ QUA, không phản hồi gì
                 # (yêu cầu 2026-07-15). Bot thấy silent=True sẽ không gửi tin.
@@ -777,6 +898,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out.get("text") or reply))
             return out
 
+        da_dung_tool = True
         # Append the assistant tool-call message so results can reference it.
         messages.append({"role": "assistant", "content": msg.get("content"),
                          "tool_calls": tool_calls})
