@@ -57,6 +57,14 @@ SEARCH_INTENT_PATTERNS = [
     r"\b(?:mới nhất|cập nhật|hiện nay|2024|2025|2026)\b",
 ]
 
+# Dấu hiệu người dùng nói về KHO MEDIA CỦA CHÍNH HỆ THỐNG (ảnh/video/nhạc bot đã
+# tạo, lưu ở config.images_dir), không phải nhờ tra Internet. Dùng ở needs_search.
+_DAU_HIEU_KHO_NHA = (
+    "thư viện", "trong kho", "trong máy", "vừa tạo", "đã tạo", "vừa vẽ",
+    "đã vẽ", "vừa làm", "gửi lại", "xem lại", "lúc trước", "vừa rồi",
+)
+_TU_CHI_MEDIA = ("ảnh", "hình", "video", "clip", "nhạc", "bài hát")
+
 
 class SearchBackend:
     """Base class for search backends."""
@@ -586,7 +594,16 @@ class MCPSearch(SearchBackend):
     # Chỉ tool TÌM KIẾM. Bản cũ gọi cả `get_news` và `get_current_weather` cho
     # MỌI câu hỏi — hai tool đó không tìm được gì, nhưng mỗi lần gọi vẫn chờ hết
     # timeout. Đo thật 30/07: một lượt tìm mất 89 giây, có lượt 601 giây.
-    _TOOLS = ("search_web", "search_all", "search")
+    # Tên tham số giới hạn số kết quả KHÁC NHAU theo từng tool — gửi sai tên thì
+    # pydantic ném "Unexpected keyword argument" và cả lượt tìm kiếm chết.
+    # Đo thật 31/07 trên log máy chủ: `search_all` nhận `limit_per_source`, code
+    # gửi `limit` ⇒ mọi lượt gọi search_all đều lỗi, DDG cũng lỗi SSL cùng lúc
+    # nên không còn nguồn nào ⇒ /v1/chat/completions trả 502 cho người dùng.
+    _TOOLS = (
+        ("search_web", "limit"),         # vn_search.search_web(query, limit)
+        ("search_all", "limit_per_source"),  # federated_search.search_all(query, limit_per_source)
+        ("search", "limit"),             # wikipedia.search(query, lang, limit)
+    )
 
     # Câu "không có kết quả" của tool — phải coi là RỖNG.
     _RONG = ("không tìm thấy", "khong tim thay", "no result", "không có kết quả")
@@ -623,9 +640,9 @@ class MCPSearch(SearchBackend):
         except ImportError:
             return []
 
-        for tool in self._TOOLS:
+        for tool, ten_gioi_han in self._TOOLS:
             try:
-                text = str(call_mcp_tool(tool, {"query": query, "limit": max_results}) or "")
+                text = str(call_mcp_tool(tool, {"query": query, ten_gioi_han: max_results}) or "")
             except Exception:
                 continue
             if not text.strip():
@@ -923,6 +940,18 @@ def needs_search(messages: list[dict[str, Any]]) -> bool:
         "you are a home assistant expert",
     )
     if len(last_text) > 300 and any(m in last_text for m in _SKIP_MARKERS):
+        return False
+
+    # LỆNH lấy media trong THƯ VIỆN của chính hệ thống — KHÔNG phải câu hỏi cần
+    # tra web. Đo thật 31/07 trên log máy chủ: "Gửi 3 ảnh mới nhất trong thư
+    # viện ảnh" khớp mẫu `mới nhất` ⇒ đem cả câu lệnh đi tìm trên Internet (12
+    # kết quả, có cả CrossRef báo khoa học), rồi bot trả lời "em không truy cập
+    # được thư viện ảnh cá nhân của anh" thay vì gọi tool `library_media`.
+    # "mới nhất" ở đây là ảnh mới nhất TRONG MÁY, không phải tin tức mới nhất.
+    # Chỉ chặn khi có ĐỒNG THỜI dấu hiệu "kho của mình" và một từ chỉ media —
+    # để "tìm ảnh Hà Nội mới nhất" vẫn được tra web như cũ.
+    if (any(k in last_text for k in _DAU_HIEU_KHO_NHA)
+            and any(k in last_text for k in _TU_CHI_MEDIA)):
         return False
 
     # Check against search intent patterns

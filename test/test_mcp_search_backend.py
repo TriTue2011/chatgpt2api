@@ -114,6 +114,51 @@ class TestGioiHanSoKetQua(unittest.TestCase):
 
 
 
+class TestGuiDungTenThamSoGioiHan(unittest.TestCase):
+    """Mỗi tool có tên tham số giới hạn KHÁC NHAU — gửi sai là chết cả lượt tìm.
+
+    Đo thật 31/07 trên log máy chủ: `search_all` của federated_search khai
+    ``search_all(query, limit_per_source=3)`` nhưng code gửi ``limit=3``, nên
+    pydantic trả "Unexpected keyword argument" cho MỌI lượt. Cùng lúc DDG lỗi
+    SSL ⇒ không còn nguồn nào ⇒ /v1/chat/completions trả 502 cho người dùng.
+    Bản cũ chỉ NHẬN RA text lỗi rồi bỏ qua, không sửa lời gọi.
+    """
+
+    def _thu_thap_args(self, text_theo_tool: dict) -> dict:
+        args_theo_tool: dict = {}
+
+        def fake(tool, args, **kw):
+            args_theo_tool[tool] = dict(args)
+            if tool not in text_theo_tool:
+                raise RuntimeError("tool không có")
+            return text_theo_tool[tool]
+
+        import services.mcp_client as mc
+        with mock.patch.object(mc, "call_mcp_tool", fake, create=True):
+            _backend().search("sách giáo viên toán 4 pdf", max_results=3)
+        return args_theo_tool
+
+    def test_search_all_nhan_limit_per_source_khong_nhan_limit(self):
+        args = self._thu_thap_args({"search_web": "Không tìm thấy kết quả.",
+                                    "search_all": TEXT_THAT})
+        self.assertIn("search_all", args, "phải có gọi search_all")
+        self.assertEqual(args["search_all"].get("limit_per_source"), 3)
+        self.assertNotIn("limit", args["search_all"],
+                         "search_all KHÔNG khai `limit` — gửi vào là pydantic từ chối")
+
+    def test_search_web_van_nhan_limit(self):
+        args = self._thu_thap_args({"search_web": TEXT_THAT})
+        self.assertEqual(args["search_web"].get("limit"), 3)
+        self.assertNotIn("limit_per_source", args["search_web"])
+
+    def test_moi_tool_deu_co_query(self):
+        args = self._thu_thap_args({"search_web": "Không tìm thấy kết quả.",
+                                    "search_all": "Không tìm thấy kết quả.",
+                                    "search": TEXT_THAT})
+        for ten, a in args.items():
+            self.assertEqual(a.get("query"), "sách giáo viên toán 4 pdf", ten)
+
+
 class TestKhongNhanLoiLamKetQua(unittest.TestCase):
     """Text LỖI có kèm URL vẫn bị coi là kết quả nếu không chặn.
 
