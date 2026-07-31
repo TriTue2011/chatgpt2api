@@ -129,6 +129,33 @@ except Exception:
     pass
 
 
+_TU_VE = ("vẽ", "tạo ảnh", "tao anh", "bức ảnh", "poster", "hình nền", "ảnh bìa", "ve ")
+_DANH_TU_NHAC = ("nhạc", "nhac", "bài hát", "bai hat", "giai điệu", "giai dieu",
+                 "ballad", "balad", "edm", "lofi", "music", "song", "melody")
+_DONG_TU_TAO = ("tạo", "tao", "sáng tác", "sang tac", "làm", "lam", "viết", "viet",
+                "sản xuất", "san xuat", "compose", "generate", "make", "cho tôi", "cho toi")
+# Câu PHÁT nhạc / HỎI lời — KHÔNG phải tạo, dù có chữ "bài hát/nhạc".
+_TU_PHAT_HOI = ("mở ", "mo ", "nghe ", "phát ", "phat ", "lời ", "loi ", "là gì",
+                "la gi", "ca sĩ", "ca si", "của ai", "cua ai", "hợp âm", "hop am",
+                "tìm ", "tim ")
+
+
+def _la_yeu_cau_nhac(prompt: str) -> bool:
+    """Câu có phải YÊU CẦU TẠO NHẠC không.
+
+    Loại 'vẽ ảnh bìa album nhạc' (là vẽ), 'mở bài hát' (phát), 'lời bài hát là gì'
+    (hỏi lời). Cần: có danh từ nhạc + động từ tạo, và không dính ngữ cảnh phát/hỏi/vẽ.
+    Dùng chung ở cả định tuyến model lẫn chỗ tiêm instruction ép sinh."""
+    p = (prompt or "").lower()
+    if any(d in p for d in _TU_VE):
+        return False
+    if not any(n in p for n in _DANH_TU_NHAC):
+        return False
+    if any(k in p for k in _TU_PHAT_HOI):
+        return False
+    return any(v in p for v in _DONG_TU_TAO)
+
+
 def _config():
     from services.config import config
     return config
@@ -536,14 +563,16 @@ def _resolve_model(model: str, prompt: str = ""):
     if not m or m == "auto":
         p = prompt.lower()
         is_drawing = any(k in p for k in ("vẽ", "tạo ảnh", "bức ảnh", "poster", "hình nền", "ảnh bìa"))
-        is_music = any(k in p for k in ("nhạc", "bài hát", "music", "song", "audio", "hát", "giai điệu", "ballad", "pop", "rap"))
-        
-        if is_music:
-            if is_drawing and not any(k in p for k in ("tạo nhạc", "sáng tác", "làm nhạc", "viết nhạc")):
-                pass
-            else:
-                m = "3.1-pro"
-        # Vẽ ảnh cũng route Pro: flash hay decline giả "limit resets" (như nhạc)
+
+        # Nhạc → FLASH, KHÔNG phải Pro. Đo thật 31/07: route Pro (gemini-3-pro)
+        # trả "gemini-3-pro is not available … UNAUTHENTICATED"; Flash
+        # (gemini-3-flash) thì xác thực được nên thoái thác THẬT THÀ thay vì báo
+        # lỗi khó hiểu. (Nhạc THẬT vẫn cần đường trình duyệt — Lyria không gọi
+        # được qua HTTP; xem ghi chú ở chỗ ghép prompt.) Dùng `_la_yeu_cau_nhac`
+        # thay cho bộ từ khoá thô — không nhầm "mở bài hát"/"lời bài hát là gì".
+        if _la_yeu_cau_nhac(prompt):
+            m = "3.5-flash"
+        # Vẽ ảnh vẫn route Pro (ảnh sinh được qua HTTP — năng lực gốc của model).
         if (not m or m == "auto") and is_drawing:
             m = "3.1-pro"
 
@@ -961,6 +990,13 @@ def handle_gemini_web_api_chat(
     # Lấy tools từ request body
     tools = body.get("tools") if body else None
     prompt = _flatten_messages_with_tools(messages, tools)
+    # KHÔNG tiêm instruction "ép sinh nhạc" nữa. Đo thật 31/07: câu ép (mượn từ
+    # repo Gemini-FastAPI vốn dùng cho ẢNH) KHÔNG gọi được Lyria qua HTTP — nó chỉ
+    # khiến model BỊA một link .mp3 giả trong chữ (log không hề có gma_media_saved,
+    # chunk.media rỗng). Ảnh sinh được qua HTTP vì đó là năng lực GỐC của model;
+    # nhạc (Lyria) là công cụ RIÊNG chỉ giao diện web kích hoạt được. Ép chỉ tổ
+    # khiến bot nói dối "đã tạo nhạc" kèm link chết — tệ hơn thoái thác thật thà.
+    # Nhạc thật cần đường điều khiển trình duyệt (như video Flow) — chưa làm.
     files = _prepare_files(messages)
     model_enum = _resolve_model(model, prompt)
     if files:
