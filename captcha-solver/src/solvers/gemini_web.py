@@ -572,6 +572,126 @@ async def generate_image(
         }
 
 
+# Câu Gemini từ chối vì THIẾU tiện ích YouTube Music (điều kiện tài khoản, không
+# phải lỗi tạm). Bắt sớm để khỏi chờ hết giờ rồi mới báo timeout mơ hồ. Các biến
+# thể đo thật 31/07: "cần kết nối với YouTube Music", "bạn cần đồng ý với các
+# điều khoản và điều kiện của YouTube Music". Bắt bằng: có "youtube music" VÀ
+# một từ khoá kích hoạt (kết nối/đồng ý/điều khoản/bật/connect/enable/terms/agree).
+_YTMUSIC_KICH_HOAT = ("kết nối", "ket noi", "đồng ý", "dong y", "điều khoản",
+                      "dieu khoan", "bật", "kích hoạt", "connect", "enable",
+                      "terms", "agree", "sign in", "đăng nhập")
+
+
+def _la_can_ytmusic(text: str) -> bool:
+    low = (text or "").lower()
+    return "youtube music" in low and any(k in low for k in _YTMUSIC_KICH_HOAT)
+
+
+async def _wait_for_music(page, timeout: int = 220) -> str:
+    """Chờ THẺ NHẠC (Lyria), trả URL mp4. Ném RuntimeError nếu Gemini báo cần bật
+    tiện ích YouTube Music (bắt sớm, không chờ hết giờ).
+
+    Đo thật trên gemini.google.com 31/07/2026: gõ "tạo bản nhạc …" rồi gửi
+    (không cần bật tool), ~100s sau hiện <video> ~420×420 src
+    `contribution.usercontent.google.com/download?c=…` = mp4 (audio + bìa động).
+    NHƯNG tài khoản CHƯA kết nối YouTube Music thì trả lời "Trước tiên, bạn cần
+    kết nối với YouTube Music để bật tiện ích này." — cần chủ máy bật tay.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        await asyncio.sleep(4.0)
+        got = await page.evaluate(
+            """() => {
+                for (const v of document.querySelectorAll('video')) {
+                    const s = v.src || '';
+                    if (s && /usercontent\\.google\\.com\\/download|contribution\\.usercontent/.test(s)) {
+                        return {src: s};
+                    }
+                }
+                const mc = document.querySelectorAll('message-content');
+                const txt = mc.length ? (mc[mc.length-1].innerText || '') : '';
+                return {src: '', text: txt.slice(0, 300)};
+            }"""
+        )
+        if got.get("src"):
+            return got["src"]
+        if _la_can_ytmusic(got.get("text") or ""):
+            raise RuntimeError(
+                "Tài khoản Gemini này CHƯA kết nối YouTube Music nên chưa tạo được "
+                "nhạc. Chủ máy cần vào gemini.google.com bằng tài khoản đó, bật/"
+                "kết nối tiện ích YouTube Music một lần, rồi thử lại.")
+    return ""
+
+
+async def generate_music(
+    profile: str,
+    prompt: str,
+    timeout: int = 240,
+    headless: bool = False,
+) -> dict[str, Any]:
+    """Tạo NHẠC qua gemini.google.com (Lyria) — trả về mp4 (audio + bìa động).
+
+    Vì sao phải đi trình duyệt: công cụ nhạc Lyria CHỈ giao diện web kích hoạt
+    được; qua HTTP API model chỉ trả chữ hoặc bịa link (đo thật 31/07). Web tự
+    nhận ý "tạo nhạc" từ câu, không cần bật tool như ảnh.
+
+    Trả: {"video": {"b64": "data:video/mp4;base64,…", "url": <cdn>, "title": …},
+          "elapsed_ms": int}. Ném RuntimeError nếu web từ chối / quá giờ.
+    """
+    started = time.time()
+    async with pool.page(profile=profile, headless=headless) as page:
+        if not page.url.endswith("gemini.google.com/app"):
+            await page.goto(_GEMINI_HOME, wait_until="domcontentloaded", timeout=30_000)
+        await _wait_for_ready(page, timeout=30)
+
+        await _inject_prompt(page, prompt)
+        await asyncio.sleep(0.4)
+        if not await _click_send(page):
+            raise RuntimeError("Không bấm được nút Gửi của Gemini")
+
+        src = await _wait_for_music(page, timeout=timeout)
+        if not src:
+            text = await page.evaluate(
+                """() => {
+                    const n = document.querySelectorAll('message-content');
+                    return n.length ? (n[n.length-1].innerText || '').slice(0, 300) : '';
+                }"""
+            )
+            raise RuntimeError(f"Không có nhạc sinh trong {timeout}s. Gemini có thể "
+                               f"từ chối: {text!r}")
+
+        # Tải mp4 NGAY TRONG TRANG (có cookie phiên) → data URL base64.
+        title = await page.evaluate(
+            """() => {
+                const n = document.querySelectorAll('message-content');
+                const t = n.length ? (n[n.length-1].innerText || '') : '';
+                return t.slice(0, 80).replace(/\\n/g, ' ').trim();
+            }"""
+        )
+        b64 = ""
+        try:
+            b64 = await page.evaluate(
+                """async (src) => {
+                    const r = await fetch(src);
+                    const blob = await r.blob();
+                    return await new Promise((res, rej) => {
+                        const fr = new FileReader();
+                        fr.onloadend = () => res(fr.result);
+                        fr.onerror = rej;
+                        fr.readAsDataURL(blob);
+                    });
+                }""",
+                src,
+            )
+        except Exception as exc:
+            logger.warning("gemini_web music: tải mp4 trong trang lỗi: %s", exc)
+
+        return {
+            "video": {"b64": b64, "url": src, "title": title or "Bản nhạc"},
+            "elapsed_ms": int((time.time() - started) * 1000),
+        }
+
+
 async def analyze_image(
     profile: str,
     image: str,

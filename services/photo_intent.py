@@ -330,6 +330,13 @@ def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -> str:
     from services.image_utils import UnsupportedImage, normalize
 
     q = (prompt or "").strip() or "Mô tả chi tiết ảnh này bằng tiếng Việt."
+    # NEO NGÔN NGỮ: model vision hay rò tiếng Trung/Nhật khi prompt không chốt
+    # ngôn ngữ (đo thật 31/07: "mô tả ảnh và tóm tắt" → trả lời TOÀN tiếng Trung).
+    # Ép trả lời đúng ngôn ngữ người dùng — mặc định tiếng Việt trừ khi chính câu
+    # hỏi dùng ngôn ngữ khác.
+    q = ("[Trả lời HOÀN TOÀN bằng tiếng Việt, trừ khi câu hỏi bên dưới dùng ngôn "
+         "ngữ khác thì theo ngôn ngữ đó. TUYỆT ĐỐI KHÔNG chèn chữ Trung/Nhật/Hàn "
+         "nếu người dùng không dùng.]\n\n" + q)
     # Chuẩn hoá TRƯỚC khi gọi model: ảnh HEIC/JXL/tải hỏng mà lọt xuống provider
     # thì provider nào cũng chết y hệt → combo đốt sạch đường rồi báo "cạn provider".
     try:

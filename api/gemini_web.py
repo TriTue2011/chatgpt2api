@@ -194,6 +194,48 @@ def _solver_cfg() -> dict[str, str]:
     return {"url": "", "api_key": ""}
 
 
+def generate_music_via_browser(prompt: str, timeout: int = 240) -> dict[str, Any]:
+    """Tạo NHẠC qua captcha-solver (điều khiển trình duyệt gemini.google.com).
+
+    Lyria không gọi được qua HTTP API nên phải đi trình duyệt. Thử lần lượt các
+    hồ sơ gemini_web đã đăng nhập; hồ sơ nào ra nhạc thì trả về ngay.
+
+    Trả {"video_b64","url","title"} hoặc {"error": "..."}.
+    """
+    sc = _solver_cfg()
+    url = sc.get("url")
+    if not url:
+        return {"error": "chưa cấu hình captcha-solver cho gemini_web"}
+    profiles = _profiles()
+    if not profiles:
+        return {"error": "chưa có hồ sơ gemini_web nào đã đăng nhập"}
+    last = ""
+    for profile in profiles[:3]:   # thử tối đa 3 hồ sơ, đủ để vượt hồ sơ hỏng
+        try:
+            r = requests.post(
+                f"{url}/v1/gemini-web/generate-music",
+                json={"profile": profile, "prompt": prompt, "timeout": timeout},
+                headers={"Authorization": f"Bearer {sc.get('api_key', '')}"},
+                timeout=timeout + 45,
+            )
+            if r.status_code == 200:
+                d = r.json()
+                vid = d.get("video") or {}
+                if vid.get("b64") or vid.get("url"):
+                    _logger().info({"event": "gma_music_ok", "profile": profile,
+                                    "elapsed_ms": d.get("elapsed_ms")})
+                    return {"video_b64": vid.get("b64", ""), "url": vid.get("url", ""),
+                            "title": vid.get("title", "Bản nhạc")}
+                last = "solver trả rỗng"
+            else:
+                last = f"HTTP {r.status_code}: {str(r.text)[:150]}"
+                _logger().warning({"event": "gma_music_fail", "profile": profile, "err": last})
+        except Exception as exc:
+            last = str(exc)[:150]
+            _logger().warning({"event": "gma_music_err", "profile": profile, "err": last})
+    return {"error": last or "tạo nhạc thất bại"}
+
+
 def _store_profiles(groups: set[str]) -> list[str]:
     """Tên profile solver lấy TỪ KHO TÀI KHOẢN (account_service), cho các account
     thuộc `groups`. Tên profile được lưu ở field email/profile/name (vd account

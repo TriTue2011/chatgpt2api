@@ -38,8 +38,7 @@ def _channel_of(ctx: dict | None) -> str:
         return "zalo"
     return "tg" if uid else ""
 from services.agent.runtime import (call_model, call_video, content_of,
-                                    first_audio_url, first_image_url,
-                                    first_video_url)
+                                    first_image_url)
 
 logger = logging.getLogger(__name__)
 
@@ -240,24 +239,60 @@ def _h_generate_image(args: dict, ctx: dict) -> dict:
 
 
 def _h_generate_music(args: dict, ctx: dict) -> dict:
+    """Tạo nhạc THẬT qua trình duyệt Gemini (Lyria) — trả mp4 (audio + bìa động).
+
+    Lyria KHÔNG gọi được qua HTTP API (model chỉ trả chữ / bịa link — đo thật
+    31/07), nên đi đường điều khiển trình duyệt như video Flow. Nhạc lưu dưới
+    dạng mp4 vào THƯ VIỆN VIDEO, tên có tiền tố 'nhac_' để 'gửi lại nhạc' tìm
+    được và phân biệt với video thường."""
     prompt = str(args.get("prompt") or "").strip()
     if not prompt:
         return {"text": "Anh/chị muốn em sáng tác bản nhạc thế nào ạ? 🎵"}
-    model = branch_model("music_gen", _channel_of(ctx))
-    resp = call_model(model, [{"role": "user", "content":
-                               f"Sáng tác và tạo bản nhạc: {prompt}"}],
-                      timeout=320, max_tokens=800)
-    if resp.get("error"):
-        _alert_branch("Tạo nhạc (music_gen)", model, resp["error"])
-        return {"text": f"Em tạo nhạc bị lỗi 😥 ({resp['error']}). Anh/chị thử lại sau giúp em nhé."}
-    txt = content_of(resp)
-    audio = first_audio_url(txt)
-    if audio:
-        return {"text": "Bản nhạc của anh/chị đây ạ 🎵", "audio_url": audio}
-    vid = first_video_url(txt)
-    if vid:
-        return {"text": "Bản nhạc của anh/chị đây ạ 🎵", "video_url": vid}
-    return {"text": txt or "Em chưa tạo được nhạc, anh/chị thử lại giúp em nhé."}
+
+    from api.gemini_web import generate_music_via_browser
+    kq = generate_music_via_browser(prompt)
+    if kq.get("error"):
+        loi = str(kq["error"])
+        _alert_branch("Tạo nhạc (music_gen)", "gemini-web/Lyria", loi)
+        # Thiếu tiện ích YouTube Music là điều kiện tài khoản, không phải bận —
+        # nói rõ để chủ máy biết đường bật, đừng bảo "thử lại sau".
+        if "youtube music" in loi.lower():
+            return {"deliver_now": True,
+                    "text": "Em chưa tạo được nhạc vì tài khoản Gemini chưa kết nối "
+                            "YouTube Music 🎵. Nhờ chủ máy bật tiện ích YouTube Music "
+                            "trên tài khoản Gemini một lần rồi em làm được ngay ạ."}
+        return {"deliver_now": True,
+                "text": f"Em tạo nhạc chưa được 😥 ({loi[:120]}). Anh/chị thử "
+                        "lại sau chút giúp em nhé — Gemini đang bận."}
+
+    # Lưu mp4 vào thư viện video (config.images_dir), tiền tố 'nhac_'.
+    import base64 as _b64
+    import time as _t
+    from pathlib import Path
+    from services.config import config as _cfg
+    b64 = str(kq.get("video_b64") or "")
+    tieu_de = str(kq.get("title") or "Bản nhạc")
+    thu_muc = _cfg.images_dir / _t.strftime("%Y") / _t.strftime("%m") / _t.strftime("%d")
+    if b64:
+        try:
+            raw = b64.split(",", 1)[1] if b64.startswith("data:") else b64
+            data = _b64.b64decode(raw)
+            thu_muc.mkdir(parents=True, exist_ok=True)
+            ten = f"nhac_{int(_t.time())}.mp4"
+            (thu_muc / ten).write_bytes(data)
+            rel = f"{_t.strftime('%Y/%m/%d')}/{ten}"
+            path = str(thu_muc / ten)
+            logger.info({"event": "music_saved", "path": rel, "bytes": len(data)})
+            return {"text": f"🎵 {tieu_de} — bản nhạc của anh/chị đây ạ!",
+                    "video_path": path,
+                    "library_url": f"{_cfg.base_url}/images/{rel}"}
+        except Exception as exc:
+            logger.warning("music save failed: %s", exc)
+    # Không có bytes → dùng URL CDN (có thể hết hạn nhưng còn hơn không).
+    url = str(kq.get("url") or "")
+    if url:
+        return {"text": f"🎵 {tieu_de} đây ạ!", "video_url": url}
+    return {"text": "Em tạo xong nhưng không lấy được file nhạc 😥, thử lại giúp em nhé."}
 
 
 _VIDEO_MODELS = {"nhanh": "flow/veo-3.1-fast", "fast": "flow/veo-3.1-fast",
@@ -2052,11 +2087,15 @@ def _so_luong_anh(args: dict, ctx: dict | None = None) -> int:
     return 1
 
 
-def _media_cua_nguoi_nay(ctx: dict, so: int, exts: tuple[str, ...]) -> list[str]:
+def _media_cua_nguoi_nay(ctx: dict, so: int, exts: tuple[str, ...],
+                         theo_ten: bool = False) -> list[str]:
     """`so` media gần nhất do CHÍNH người đang hỏi tạo, LỌC theo đuôi tệp.
 
     Sổ `anh_cua_toi` giờ ghi cả video/nhạc (orchestrator ghi mọi media sinh ra),
-    nên phải lọc theo đuôi — không thì "3 ảnh của tôi" lẫn cả video.
+    nên phải lọc — không thì "3 ảnh của tôi" lẫn cả video.
+
+    `theo_ten=True`: khớp theo TÊN TỆP chứa `exts` (dùng cho nhạc: tên có 'nhac_'
+    nhưng đuôi lại là .mp4 nên lọc theo đuôi sẽ trượt).
     """
     uid = str((ctx or {}).get("user_id") or "").strip()
     if not uid:
@@ -2066,8 +2105,12 @@ def _media_cua_nguoi_nay(ctx: dict, so: int, exts: tuple[str, ...]) -> list[str]
         tat_ca = anh_cua_toi.gan_nhat(uid, 200)
     except Exception:
         return []
-    ra = [u for u in tat_ca
-          if any(str(u).lower().split("?")[0].endswith(e) for e in exts)]
+    if theo_ten:
+        ra = [u for u in tat_ca
+              if any(k in str(u).lower().rsplit("/", 1)[-1] for k in exts)]
+    else:
+        ra = [u for u in tat_ca
+              if any(str(u).lower().split("?")[0].endswith(e) for e in exts)]
     return ra[:so]
 
 
@@ -2098,6 +2141,16 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     elif kind in ("phim", "clip"):
         kind = "video"
     exts = _MEDIA_EXT.get(kind, _MEDIA_EXT["image"])
+    # NHẠC lưu dưới dạng .mp4 (audio + bìa động của Lyria) trong THƯ VIỆN VIDEO,
+    # tên tiền tố 'nhac_'. Nên kind="music" phải nhận file .mp4 nhac_* — chứ không
+    # phải .mp3 (chẳng có). VIDEO thường thì loại các file nhac_ ra để không lẫn.
+    def _khop_loai(p) -> bool:
+        ten = p.name.lower()
+        if kind == "music":
+            return ten.startswith("nhac_") or p.suffix.lower() in _MEDIA_EXT["music"]
+        if kind == "video":
+            return p.suffix.lower() in exts and not ten.startswith("nhac_")
+        return p.suffix.lower() in exts
     # Nhãn TRƠN cho giữa câu ("chưa tạo ảnh nào") — _MEDIA_LABEL có emoji + viết
     # hoa ("🖼️ Ảnh"), nhét thẳng vào câu thành "chưa tạo 🖼️ Ảnh nào".
     nhan = {"image": "ảnh", "video": "video", "music": "bản nhạc"}.get(kind, "media")
@@ -2112,7 +2165,9 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
 
     # ── SỔ RIÊNG (mine) — không đụng tới kho chung ────────────────────────
     if scope == "mine":
-        cua_toi = _media_cua_nguoi_nay(ctx, so, exts)
+        # Nhạc: khớp theo tiền tố tên 'nhac_' (mp4), không theo đuôi audio.
+        loc = (["nhac_"] if kind == "music" else list(exts))
+        cua_toi = _media_cua_nguoi_nay(ctx, so, tuple(loc), theo_ten=(kind == "music"))
         if not cua_toi:
             return {"text": (f"Anh/chị chưa tạo {nhan} nào qua em, nên em không có "
                              f"gì để gửi lại ạ. Muốn tạo mới thì anh/chị cứ nói nhé!")}
@@ -2134,7 +2189,7 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     # ── KHO CHUNG (all — chỉ admin tới được đây) ──────────────────────────
     d = _cfg.images_dir
     try:
-        files = [p for p in d.rglob("*") if p.is_file() and p.suffix.lower() in exts
+        files = [p for p in d.rglob("*") if p.is_file() and _khop_loai(p)
                  and "_thumb" not in p.name]  # bỏ file thumbnail
     except Exception:
         files = []
@@ -2172,7 +2227,8 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
                  else f" (thư viện chỉ có {len(chon)} ảnh KHÁC NHAU, không đủ {so})")
         return {"text": f"{len(chon)} ảnh mới nhất trong thư viện ạ{thieu}.",
                 "image_urls": chon}
-    if kind == "video":
+    # Nhạc cũng là mp4 (Lyria) → gửi như video, KHÔNG phải audio_url.
+    if kind in ("video", "music"):
         return {"text": caption, "video_url": url}
     return {"text": caption, "audio_url": url}
 

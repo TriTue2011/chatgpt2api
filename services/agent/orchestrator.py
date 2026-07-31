@@ -44,21 +44,6 @@ logger = logging.getLogger(__name__)
 
 _MAX_STEPS = 4
 
-# Câu chỉ HỨA sẽ làm, chưa làm gì. Dùng để bắt ca model trả lời "Dạ để em lấy…"
-# rồi dừng, không gọi tool nào — người dùng không nhận được gì và cũng không có
-# lỗi nào để lần ra. Chỉ xét khi lượt đó CHƯA gọi tool nào.
-#
-# Mẫu neo vào chủ ngữ "em" + động từ ý định, nên câu tường thuật đã xong ("em đã
-# gửi rồi", "em lấy được 3 ảnh") KHÔNG khớp. Câu hỏi lại ("để em hỏi rõ: anh
-# muốn ảnh nào?") cũng không khớp vì không có động từ hành động ngay sau.
-_CHI_LA_LOI_HUA = re.compile(
-    r"(?:^|[\s,.:;!?])(?:"
-    r"để\s+em\s+(?!hỏi|xem\s+lại\s+câu)"          # "để em lấy/kiểm tra/tạo…"
-    r"|em\s+(?:sẽ|đang)\s+(?!không|chưa\s+rõ)"      # "em sẽ gửi", "em đang lấy"
-    r"|(?:chờ|đợi)\s+em\s"                          # "chờ em xíu"
-    r"|em\s+làm\s+ngay"
-    r")", re.I)
-
 # ── Đường tắt "lấy media đã tạo trong thư viện" ──────────────────────────────
 #
 # Vì sao KHÔNG để model tự gọi tool: đo thật 31/07 trên Zalo cá nhân, "Gửi anh
@@ -852,8 +837,6 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
     # 2) Agentic loop.
     seen_workflows: set[str] = set()  # tier-2: inject each workflow note once/turn
-    da_dung_tool = False      # lượt này đã gọi tool nào chưa
-    da_thuc_hua = False       # đã nhắc "hứa mà chưa làm" một lần chưa
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
         resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
@@ -870,35 +853,13 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
         if not tool_calls:
             reply = content_of(resp).strip() or "Dạ em chưa rõ ý, anh/chị nói lại giúp em nhé 😊"
-            # HỨA MÀ CHƯA LÀM: model trả lời "Dạ để em lấy…", "chờ em xíu" rồi
-            # DỪNG, không gọi tool nào. Người dùng không nhận được gì và cũng
-            # không có lỗi nào để lần ra.
-            #
-            # Đo thật 31/07 trên Zalo cá nhân: "Gửi anh video mới nhất trong thư
-            # viện video" → bot đáp "Dạ để em lấy video mới nhất trong thư viện
-            # gửi anh nghen 😊" rồi hết lượt. Tool `library_media` CÓ trong danh
-            # sách (43 tool, nhóm 'image' được phép) — model chỉ đơn giản không
-            # gọi. Model chính của luồng này là combo model nhỏ/miễn phí nên hay
-            # trả lời chữ thay vì gọi tool.
-            #
-            # Nhắc lại ĐÚNG MỘT LẦN rồi cho quay vòng: không lặp vô hạn, và nếu
-            # lần hai vẫn chỉ trả chữ thì gửi nguyên câu đó cho người dùng.
-            if (not da_dung_tool and not da_thuc_hua and _CHI_LA_LOI_HUA.search(reply)):
-                da_thuc_hua = True
-                logger.warning({"event": "agent_hua_ma_chua_lam",
-                                "user_id": str(user_id)[:40],
-                                "question": str(user_text)[:120],
-                                "reply": reply[:160]})
-                messages.append({"role": "assistant", "content": reply})
-                messages.append({"role": "system", "content":
-                    "Câu vừa rồi CHỈ LÀ LỜI HỨA — anh/chị chưa nhận được gì cả. "
-                    "Không có tin nào được gửi, không có tệp nào được lấy. Hãy "
-                    "GỌI ĐÚNG TOOL để LÀM THẬT việc vừa hứa NGAY BÂY GIỜ (ví dụ "
-                    "xin ảnh/video/nhạc đã tạo trong thư viện thì gọi "
-                    "library_media với kind tương ứng). Nếu thật sự không có "
-                    "tool nào làm được, hãy nói thẳng là không làm được và vì "
-                    "sao — TUYỆT ĐỐI không hứa lần nữa."})
-                continue
+            # (Đã GỠ bộ "hứa mà chưa làm". Nó bắt nhầm câu dẫn tự nhiên: đo thật
+            # 31/07 — "tin tức hôm nay" model mở đầu "Dạ ĐỂ EM tổng hợp tin tức…"
+            # rồi trả nội dung thật, nhưng guard tưởng hứa suông → nhắc lại →
+            # model hoảng gọi nhầm library_media → "em lấy 3 ảnh". Ca media-fetch
+            # thật sự — "gửi ảnh/video/nhạc trong thư viện" — đã được đường tắt
+            # xác định `_tat_lay_media` xử lý TRƯỚC vòng model, nên guard này chỉ
+            # còn tác dụng phụ. Bỏ.)
             if allow is not None and "[BLOCKED]" in reply:
                 # Thread lọc hỏi chức năng bị tắt → BỎ QUA, không phản hồi gì
                 # (yêu cầu 2026-07-15). Bot thấy silent=True sẽ không gửi tin.
@@ -917,7 +878,6 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out.get("text") or reply))
             return out
 
-        da_dung_tool = True
         # Append the assistant tool-call message so results can reference it.
         messages.append({"role": "assistant", "content": msg.get("content"),
                          "tool_calls": tool_calls})

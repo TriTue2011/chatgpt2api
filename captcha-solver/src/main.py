@@ -59,6 +59,7 @@ from .solvers.gemini_web import (
     analyze_image as gemini_web_analyze_image,
     chat as gemini_web_chat,
     generate_image as gemini_web_generate_image,
+    generate_music as gemini_web_generate_music,
     list_models as gemini_web_list_models,
     get_plan as gemini_web_get_plan,
 )
@@ -241,6 +242,14 @@ class GeminiWebImageReq(BaseModel):
     prompt: str
     count: int = Field(default=1, ge=1, le=4)
     timeout: int = Field(default=120, ge=30, le=300)
+    headless: bool = False
+
+
+class GeminiWebMusicReq(BaseModel):
+    profile: str = "gemini-web-default"
+    prompt: str
+    # Nhạc Lyria mất ~100s, có lúc lâu hơn — trần rộng hơn ảnh.
+    timeout: int = Field(default=240, ge=60, le=420)
     headless: bool = False
 
 
@@ -1200,6 +1209,29 @@ async def api_gemini_web_generate_image(req: GeminiWebImageReq) -> dict[str, Any
             await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi tạo ảnh gemini-web bỏ qua", exc_info=True)
+
+
+@app.post("/v1/gemini-web/generate-music", dependencies=[Depends(require_api_key)])
+async def api_gemini_web_generate_music(req: GeminiWebMusicReq) -> dict[str, Any]:
+    """Tạo NHẠC qua gemini.google.com (Lyria) — gõ prompt, chờ thẻ nhạc, lấy mp4.
+    Lyria không gọi được qua HTTP API nên phải đi trình duyệt (xem solver)."""
+    try:
+        return await gemini_web_generate_music(
+            profile=req.profile, prompt=req.prompt,
+            timeout=req.timeout, headless=req.headless,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("gemini_web generate_music failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        # Việc nặng, thưa — nhả trình duyệt ngay (như tạo ảnh/video Flow), tôn
+        # trọng dấu đang-đăng-nhập để không đóng nhầm giữa lượt login.
+        try:
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
+        except Exception:
+            logger.debug("close_profile sau khi tạo nhạc gemini-web bỏ qua", exc_info=True)
 
 
 @app.post("/v1/gemini-web/analyze-image", dependencies=[Depends(require_api_key)])
