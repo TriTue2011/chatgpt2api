@@ -1138,6 +1138,7 @@ def session(url: str, token: str, g: Guard, label: str) -> None:
         print("[c2a-agent] thư mục: %s" % ", ".join(str(r) for r in g.roots), flush=True)
         lim = (" (chỉ: %s)" % ", ".join(g.exec_allow)) if g.exec_allow else ""
         print("[c2a-agent] quyền — ghi: %s | chạy lệnh: %s%s | tắt/khoá máy: %s"
+              " | chụp webcam/màn hình: %s"
               % ("CÓ" if g.allow_write else "không",
                  "CÓ" if g.allow_exec else "không", lim if g.allow_exec else "",
                  "CÓ" if g.allow_power else "không",

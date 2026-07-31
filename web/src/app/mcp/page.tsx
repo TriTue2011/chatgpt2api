@@ -976,7 +976,8 @@ function IngestTab({ showToast }: TabProps) {
 type DeviceRow = {
   name: string; label?: string; connected?: boolean; platform?: string;
   hostname?: string; agent_version?: string; paths?: string[];
-  can_write?: boolean; can_exec?: boolean; can_power?: boolean; ops?: number; connected_at?: number;
+  can_write?: boolean; can_exec?: boolean; can_power?: boolean; can_capture?: boolean;
+  ops?: number; connected_at?: number;
 };
 type OsId = "win" | "mac" | "linux" | "termux";
 const OS_LIST: { id: OsId; label: string; shell: string }[] = [
@@ -995,14 +996,20 @@ type Step = { title: string; cmd?: string; note?: string };
 /** Các bước cài ĐẦY ĐỦ cho MỘT máy mới — gồm cả việc cài Python. */
 function installSteps(
   os: OsId, wsUrl: string, token: string, paths: string[],
-  perm: { write: boolean; exec: boolean; power: boolean },
+  perm: { write: boolean; exec: boolean; power: boolean; capture: boolean },
 ): Step[] {
   if (!token || !wsUrl) return [];
   // Cờ phải khớp ô tích: bật quyền ở dự án mà thiếu cờ khi chạy agent là vẫn bị
   // chặn tại máy — cố ý hai phía, nên lệnh sinh ra phải mang sẵn đúng cờ.
   const w = (perm.write ? " --allow-write" : "")
     + (perm.exec ? " --allow-exec" : "")
-    + (perm.power ? " --allow-power" : "");
+    + (perm.power ? " --allow-power" : "")
+    + (perm.capture ? " --allow-capture" : "");
+  // Chụp webcam/màn hình cần thêm hai thư viện. Gắn vào ngay bước tải agent để
+  // khỏi thêm một bước phải đánh số lại — agent thiếu chúng vẫn chạy bình thường,
+  // chỉ riêng lệnh chụp trả về "thiếu thư viện", thứ dễ tưởng là lỗi kết nối.
+  // Windows không cần: installer đã tự cài khi có -AllowCapture.
+  const capPip = perm.capture ? " && python3 -m pip install --user opencv-python mss" : "";
   const q = (x: string) => `"${x}"`;
   const pArgs = paths.map((x) => `--path ${q(x)}`).join(" ");
   const run = (py: string) =>
@@ -1016,7 +1023,8 @@ function installSteps(
     // trong Task Scheduler thì hầu hết bỏ qua.
     const flags = (perm.write ? " -AllowWrite" : "")
       + (perm.exec ? " -AllowExec" : "")
-      + (perm.power ? " -AllowPower" : "");
+      + (perm.power ? " -AllowPower" : "")
+      + (perm.capture ? " -AllowCapture" : "");
     const pList = paths.map((x) => `"${x}"`).join(",");
     return [
       { title: "1. Cài Python (bỏ qua nếu `python --version` đã chạy được)",
@@ -1047,7 +1055,7 @@ function installSteps(
         cmd: "python3 --version",
         note: "Báo lỗi thì cài: brew install python" },
       { title: "2. Tải agent về",
-        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py` },
+        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py${capPip}` },
       { title: "3. Chạy agent",
         cmd: run("python3"),
         note: "Để cửa sổ Terminal này MỞ. Ctrl-C để dừng." },
@@ -1062,7 +1070,7 @@ function installSteps(
         cmd: "sudo apt update && sudo apt install -y python3 curl",
         note: "Máy RHEL/CentOS: sudo dnf install -y python3 curl" },
       { title: "2. Tải agent về",
-        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py` },
+        cmd: `cd ~ && curl -fsSL ${RAW_AGENT} -o c2a_agent.py${capPip}` },
       { title: "3. Chạy thử (xem có kết nối được không)",
         cmd: run("python3"),
         note: "Thấy “đã kết nối” là xong. Ctrl-C rồi làm bước 4 để chạy vĩnh viễn." },
@@ -1127,6 +1135,7 @@ function DevicesTab({ showToast }: TabProps) {
   const [canWrite, setCanWrite] = useState(false);
   const [canExec, setCanExec] = useState(false);
   const [canPower, setCanPower] = useState(false);
+  const [canCapture, setCanCapture] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -1166,11 +1175,16 @@ function DevicesTab({ showToast }: TabProps) {
       const r = await request.post("/api/devices", {
         name: name.trim(), label: label.trim(), paths: parsedPaths,
         can_write: canWrite, can_exec: canExec, can_power: canPower,
+        can_capture: canCapture,
       });
       if (r.data?.ok) {
         setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [],
-          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec, power: !!r.data.can_power } });
+          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec,
+                  power: !!r.data.can_power, capture: !!r.data.can_capture } });
+        // Reset CẢ quyền chụp: để sót ô này bật là thiết bị SAU vô tình được
+        // cấp quyền nhìn webcam/màn hình mà người tạo không để ý.
         setName(""); setLabel(""); setPathsText(""); setCanWrite(false);
+        setCanCapture(false);
         showToast(`Đã thêm ${r.data.name} — copy lệnh cài bên dưới`);
         load();
       } else showToast(r.data?.error || "Lỗi", false);
@@ -1187,7 +1201,8 @@ function DevicesTab({ showToast }: TabProps) {
       const r = await request.post(`/api/devices/${encodeURIComponent(d.name)}/rotate`);
       if (r.data?.ok) {
         setFresh({ name: r.data.name, token: r.data.token, paths: r.data.paths || [],
-          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec, power: !!r.data.can_power } });
+          perm: { write: !!r.data.can_write, exec: !!r.data.can_exec,
+                  power: !!r.data.can_power, capture: !!r.data.can_capture } });
         showToast("Token mới đã sinh — copy lệnh cài bên dưới");
         load();
       } else showToast(r.data?.error || "Lỗi", false);
@@ -1197,15 +1212,22 @@ function DevicesTab({ showToast }: TabProps) {
   /** Bật/tắt một quyền của thiết bị ĐÃ CÓ, giữ nguyên token.
    *  Không đi đường xoá-rồi-thêm-lại: xoá là mất token, phải chạy lại agent
    *  trên máy đó — quá đắt chỉ để tích một ô. */
-  const togglePerm = async (d: DeviceRow, key: "can_write" | "can_exec" | "can_power") => {
+  const togglePerm = async (
+    d: DeviceRow, key: "can_write" | "can_exec" | "can_power" | "can_capture",
+  ) => {
     const next = !d[key];
-    const nhan = { can_write: "ghi file", can_exec: "chạy lệnh", can_power: "tắt/khoá máy" }[key];
-    const co = { can_write: "--allow-write", can_exec: "--allow-exec", can_power: "--allow-power" }[key];
+    const nhan = { can_write: "ghi file", can_exec: "chạy lệnh",
+      can_power: "tắt/khoá máy", can_capture: "chụp webcam/màn hình" }[key];
+    const co = { can_write: "--allow-write", can_exec: "--allow-exec",
+      can_power: "--allow-power", can_capture: "--allow-capture" }[key];
+    const canhBao = {
+      can_exec: "Lệnh shell đọc/ghi/xoá được MỌI thứ tài khoản chạy agent với tới, kể cả ngoài thư mục đã khai.",
+      can_power: "Cho phép tắt máy / khởi động lại — người đang dùng máy sẽ mất phiên làm việc.",
+      can_capture: "Webcam thấy MẶT người đang ngồi trước máy, ảnh màn hình thấy VIỆC họ đang làm "
+        + "(tin nhắn riêng, tài khoản đang mở). Thư mục đã khai không che được ảnh màn hình.",
+    }[key as "can_exec" | "can_power" | "can_capture"];
     if (next && key !== "can_write"
-        && !window.confirm(`Bật quyền «${nhan}» cho ${d.label || d.name}?\n\n`
-          + (key === "can_exec"
-            ? "Lệnh shell đọc/ghi/xoá được MỌI thứ tài khoản chạy agent với tới, kể cả ngoài thư mục đã khai."
-            : "Cho phép tắt máy / khởi động lại — người đang dùng máy sẽ mất phiên làm việc.")
+        && !window.confirm(`Bật quyền «${nhan}» cho ${d.label || d.name}?\n\n${canhBao}`
           + `\n\nAgent trên máy đó cũng phải chạy kèm ${co}, nếu không vẫn bị chặn.`)) return;
     try {
       const r = await request.patch(`/api/devices/${encodeURIComponent(d.name)}`, { [key]: next });
@@ -1415,6 +1437,7 @@ function DevicesTab({ showToast }: TabProps) {
                       ["can_write", "thêm/xoá/sửa file"],
                       ["can_exec", "chạy lệnh"],
                       ["can_power", "tắt/khoá máy"],
+                      ["can_capture", "chụp webcam/màn hình"],
                     ] as const).map(([k, nhan]) => (
                       <label key={k} className="inline-flex items-center gap-1.5 cursor-pointer">
                         <input type="checkbox" className="size-3.5" checked={!!d[k]}
@@ -1496,6 +1519,17 @@ function DevicesTab({ showToast }: TabProps) {
               Cho phép <b>khoá màn hình · ngủ · đăng xuất · tắt máy · khởi động lại</b>
               <span className="block text-xs text-amber-600">
                 Ảnh hưởng trực tiếp người đang dùng máy: tắt/khởi động lại là mất phiên làm việc và agent mất kết nối. Cờ: <code>--allow-power</code>
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+            <input type="checkbox" className="mt-0.5" checked={canCapture}
+              onChange={(e) => setCanCapture(e.target.checked)} />
+            <span>
+              Cho phép <b>chụp webcam · chụp ảnh màn hình</b>
+              <span className="block text-xs text-amber-600">
+                Nhóm duy nhất nhìn thấy <b>người</b> đang ngồi trước máy và <b>việc họ đang làm</b> (tin nhắn riêng, tài khoản đang mở) — thư mục đã khai không che được ảnh màn hình. Ở phía bot chỉ <b>admin</b> gọi được, và mỗi lần chụp đều phải bạn duyệt. Cờ: <code>--allow-capture</code>
               </span>
             </span>
           </label>

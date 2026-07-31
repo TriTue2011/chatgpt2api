@@ -160,6 +160,7 @@ def create_router() -> APIRouter:
                 "can_write": bool(cfg.get("can_write")),
                 "can_exec": bool(cfg.get("can_exec")),
                 "can_power": bool(cfg.get("can_power")),
+                "can_capture": bool(cfg.get("can_capture")),
                 "ws_url": _agent_ws_url()}
 
     @router.post("/api/devices")
@@ -171,7 +172,7 @@ def create_router() -> APIRouter:
         không phải sửa tay cả khối `device_agents` trong config (dễ ghi đè mất
         thiết bị khác) và không cần chờ ai làm hộ.
 
-        Body: {name, label?, paths[], can_write?}
+        Body: {name, label?, paths[], can_write?, can_exec?, can_power?, can_capture?}
         """
         require_admin(authorization)
         import re
@@ -200,6 +201,7 @@ def create_router() -> APIRouter:
             "can_write": bool((payload or {}).get("can_write", False)),
             "can_exec": bool((payload or {}).get("can_exec", False)),
             "can_power": bool((payload or {}).get("can_power", False)),
+            "can_capture": bool((payload or {}).get("can_capture", False)),
             "enabled": True,
         }
         config.data["device_agents"] = devs
@@ -207,11 +209,13 @@ def create_router() -> APIRouter:
         logger.info({"event": "device_registered", "device": name,
                      "paths": len(paths), "can_write": devs[name]["can_write"],
                      "can_exec": devs[name]["can_exec"],
-                     "can_power": devs[name]["can_power"]})
+                     "can_power": devs[name]["can_power"],
+                     "can_capture": devs[name]["can_capture"]})
         return {"ok": True, "name": name, "token": token,
                 "paths": paths, "can_write": devs[name]["can_write"],
                 "can_exec": devs[name]["can_exec"],
                 "can_power": devs[name]["can_power"],
+                "can_capture": devs[name]["can_capture"],
                 "ws_url": _agent_ws_url(),
                 "note": "Giữ token này — nó không hiện lại ở đâu khác."}
 
@@ -223,7 +227,7 @@ def create_router() -> APIRouter:
         Không dùng đường xoá-rồi-thêm-lại cho việc này: xoá là mất token, phải
         chạy lại agent trên máy đó — quá đắt chỉ để tích thêm một ô quyền.
 
-        Body: {label?, paths?, can_write?, can_exec?, can_power?}
+        Body: {label?, paths?, can_write?, can_exec?, can_power?, can_capture?}
         """
         require_admin(authorization)
         devs = dict(config.data.get("device_agents") or {})
@@ -240,7 +244,7 @@ def create_router() -> APIRouter:
             if not paths:
                 raise HTTPException(400, "phải khai ít nhất một thư mục trong 'paths'")
             cfg["paths"] = paths
-        for key in ("can_write", "can_exec", "can_power"):
+        for key in ("can_write", "can_exec", "can_power", "can_capture"):
             if key in body:
                 cfg[key] = bool(body.get(key))
 
@@ -255,14 +259,16 @@ def create_router() -> APIRouter:
         logger.info({"event": "device_updated", "device": name,
                      "can_write": bool(cfg.get("can_write")),
                      "can_exec": bool(cfg.get("can_exec")),
-                     "can_power": bool(cfg.get("can_power"))})
+                     "can_power": bool(cfg.get("can_power")),
+                     "can_capture": bool(cfg.get("can_capture"))})
         return {"ok": True, "name": name, "paths": cfg.get("paths") or [],
                 "can_write": bool(cfg.get("can_write")),
                 "can_exec": bool(cfg.get("can_exec")),
                 "can_power": bool(cfg.get("can_power")),
+                "can_capture": bool(cfg.get("can_capture")),
                 "note": ("Đổi quyền ở dự án là chưa đủ — agent trên máy đó cũng "
-                         "phải chạy kèm cờ tương ứng (--allow-exec / "
-                         "--allow-power). Thiếu một trong hai phía là vẫn bị chặn.")}
+                         "phải chạy kèm cờ tương ứng (--allow-exec / --allow-power "
+                         "/ --allow-capture). Thiếu một trong hai phía là vẫn bị chặn.")}
 
     @router.delete("/api/devices/{name}")
     async def devices_remove(name: str,
