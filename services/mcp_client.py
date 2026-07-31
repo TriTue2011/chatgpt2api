@@ -66,7 +66,16 @@ class MCPSession:
         self._failure_count = 0
 
     def _call(self, method: str, params: dict | None = None, timeout: float | None = None) -> dict | None:
-        body = {"jsonrpc": "2.0", "id": "1", "method": method}
+        # NOTIFICATION thì KHÔNG được có `id` — JSON-RPC phân biệt request và
+        # notification bằng đúng chỗ đó. Gắn `id` vào `notifications/initialized`
+        # là server phải đem nó đi so với cả 28 kiểu ClientRequest rồi trượt hết,
+        # đẻ ra một khối 28 lỗi validate MỖI LẦN nối MCP (đo 01/08: 54 khối trong
+        # 45 phút log). Bắt tay vẫn xong nên không ai thấy, nhưng log thật bị vùi
+        # dưới đống cảnh báo vô nghĩa — đúng thứ làm lỗi thật khó tìm.
+        la_thong_bao = method.startswith("notifications/")
+        body: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        if not la_thong_bao:
+            body["id"] = "1"
         if params:
             body["params"] = params
         headers = {

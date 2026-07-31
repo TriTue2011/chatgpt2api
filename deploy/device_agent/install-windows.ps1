@@ -18,7 +18,7 @@
     2. cat token vao BIEN MOI TRUONG USER (C2A_TOKEN) - khong nam trong dong
        lenh cua task, nen khong lo qua cot Command line cua Task Manager;
     3. tao Scheduled Task chay pythonw.exe - KHONG cua so, khong co gi de tat
-       nham; chay luc dang nhap; tu khoi dong lai moi phut neu agent chet;
+       nham; chay luc dang nhap, VA tu do lai moi 5 phut neu agent da chet;
     4. chay task ngay va kiem tra tien trinh con song.
 
   Chay lai script = cap nhat (tai agent moi, ghi de task cu). -Uninstall de go
@@ -26,7 +26,7 @@
 
 .EXAMPLE
   irm https://raw.githubusercontent.com/TriTue2011/chatgpt2api/main/deploy/device_agent/install-windows.ps1 -OutFile "$env:TEMP\c2a-install.ps1"
-  & "$env:TEMP\c2a-install.ps1" -Url wss://gpt.vhtatn.io.vn/api/devices/agent -Token "tok_..." -Paths "D:\","E:\" -AllowWrite -AllowExec -AllowPower
+  & "$env:TEMP\c2a-install.ps1" -Url wss://gpt.vhtatn.io.vn/api/devices/agent -Token "tok_..." -Paths "D:\","E:\" -AllowWrite -AllowExec -AllowPower -AllowCapture
 
 .EXAMPLE
   & "$env:TEMP\c2a-install.ps1" -Uninstall
@@ -138,7 +138,7 @@ if ($AllowCapture) { $flags += "--allow-capture" }
 # (case-win, -Paths "D:\","E:\"): agent tu choi moi lenh voi loi
 #   ngoai pham vi cho phep cua thiet bi nay (D:\" --path E:")
 # '"D:\\"' thi doc dung thanh 'D:\'. Chi path ket thuc bang backslash (goc o
-# dia) dinh loi nay — 'D:\Data' khong sao, nen truoc gio khong ai thay.
+# dia) dinh loi nay - 'D:\Data' khong sao, nen truoc gio khong ai thay.
 $pathArgs = ($Paths | ForEach-Object {
   $p = $_ -replace '(\\+)$', '$1$1'
   '--path "' + $p + '"'
@@ -149,21 +149,41 @@ if ($Label) { $labelArg = '--label "' + $Label + '"' }
 $argLine = '"' + $AgentPy + '" --url ' + $Url + ' ' + $pathArgs + ' ' + $labelArg + ' ' + ($flags -join ' ') + ' --log-file "' + $LogFile + '"'
 
 $action  = New-ScheduledTaskAction -Execute $pyw -Argument $argLine -WorkingDirectory $Dir
+
+# HAI trigger, khong phai mot:
+#   1. AtLogOn  - bat khi dang nhap.
+#   2. Lap moi 5 phut, vo han - LUOI AN TOAN.
+# Vi sao can cai thu hai: '-RestartCount' cua Task Scheduler CHI chay khi task
+# "that bai". Agent thoat voi ma 0 (bi tat tien trinh, may ngu roi day, Windows
+# don session) thi Task Scheduler coi la "hoan thanh tot" va KHONG bat lai -
+# phai cho tan lan dang nhap sau. Do that 01/08: agent dut luc 00:41, gateway
+# van vao duoc tu Internet (WebSocket tra 101) nhung 27 phut khong co MOT lan
+# nao goi lai, tuc tien trinh chet han. '-MultipleInstances IgnoreNew' lo phan
+# con lai: agent dang song thi lan lap bi bo qua, khong sinh ban thu hai.
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$lap = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+  -RepetitionInterval (New-TimeSpan -Minutes 5) `
+  -RepetitionDuration (New-TimeSpan -Days 3650)
+
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
   -MultipleInstances IgnoreNew -Hidden
+# Ngu/hibernate xong day may thi lan lap bi bo qua neu khong bat cai nay.
+$settings.StartWhenAvailable = $true
+# Rut phich sac giua dem khong duoc lam agent dung han.
+$settings.DisallowStartIfOnBatteries = $false
+$settings.StopIfGoingOnBatteries = $false
 # Chay duoi chinh user hien tai, chi khi da dang nhap (Interactive) - agent
 # can HKCU + bien moi truong User; "run whether logged on or not" doi cat mat
 # khau Windows, khong dang cho mot agent muc user.
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
 
 try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($trigger, $lap) `
   -Settings $settings -Principal $principal | Out-Null
-Say "da tao task '$TaskName' (an, tu chay khi dang nhap, tu hoi khi chet)"
+Say "da tao task '$TaskName' (an, chay khi dang nhap, va tu do moi 5 phut neu agent chet)"
 
 # --- Chay ngay + xac minh -------------------------------------------------------
 Start-ScheduledTask -TaskName $TaskName
