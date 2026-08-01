@@ -380,9 +380,13 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
         if not ds:
             thieu.append(ten)
             continue
+        # CHỈ tô đậm TÊN MỤC, không tô từng tiêu đề. Người dùng chỉ xin "đầu
+        # mục in đậm", và quan trọng hơn: tô cả 24 tiêu đề thành 32 vùng định
+        # dạng trong một tin, mức đó bị Zalo từ chối (đo thật 01/08) rồi rơi về
+        # bản thô còn nguyên dấu sao. 8 vùng thì nhẹ và đúng ý.
         dong = [f"**{nhan}**" if in_dam else nhan]
         for it in ds:
-            d = f"- **{it['title']}**" if in_dam else f"- {it['title']}"
+            d = f"- {it['title']}"
             # Bỏ tóm tắt phải làm ở ĐÂY, bằng code. Trước đây việc này được nhờ
             # model bày lại: đo thật 01/08, gửi bản tin 4819 ký tự cho model thì
             # nó KHÔNG kịp xong trong 20 giây, lần nào cũng hết giờ rồi rơi về

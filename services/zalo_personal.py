@@ -743,7 +743,13 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         })
         if not last.get("ok"):
             if msg_obj.get("styles"):
-                plain = {"msg": ch, "ttl": 0, "quote": None}
+                # Bản dự phòng phải dùng CHUỖI ĐÃ BÓC MARKDOWN, không phải `ch`
+                # thô. Dùng `ch` thì gửi-có-định-dạng thất bại là người dùng nhận
+                # nguyên `**Tiêu đề**` — họ thấy đúng hai dấu sao và tưởng bot
+                # trình bày xấu. Đo thật 01/08: bản tin 32 vùng đậm bị Zalo từ
+                # chối, hai lệnh gửi cách nhau 1 giây, và người dùng nhắn lại
+                # "Trình bày xấu quá, bỏ ** đi".
+                plain = {"msg": msg_obj.get("msg") or ch, "ttl": 0, "quote": None}
                 last = _request("POST", "/api/sendMessageByAccount", {
                     "message": plain,
                     "threadId": str(thread_id),
