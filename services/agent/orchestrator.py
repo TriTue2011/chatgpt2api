@@ -189,7 +189,12 @@ _TU_KHOA_SO_THICH = (
     "trình bày", "định dạng", "bố cục", "chia mục", "chia thành các mục",
     "gạch đầu dòng", "mỗi mục", "ngắn gọn", "súc tích", "dài dòng",
     "không cần link", "không link", "bỏ link", "không dán link",
-    "không ảnh", "không emoji", "đừng dùng emoji", "có tóm tắt", "kèm tóm tắt",
+    "không ảnh", "không emoji", "đừng dùng emoji",
+    # Tóm tắt: phải bắt CẢ hai chiều. Bản đầu chỉ có "có tóm tắt"/"kèm tóm tắt"
+    # nên đúng câu người dùng dùng thật — "Bỏ tóm tắt đi" — không được nhận, và
+    # cả cơ chế đứng ngoài lượt đó. Bộ test bắt được, không phải suy đoán.
+    "có tóm tắt", "kèm tóm tắt", "bỏ tóm tắt", "không tóm tắt", "bớt tóm tắt",
+    "chỉ tiêu đề", "chỉ ghi tiêu đề", "tiêu đề thôi", "chỉ cần tiêu đề",
 )
 
 
@@ -224,6 +229,20 @@ def _so_thich_trinh_bay(limit: int = 6) -> list[str]:
     return ra[-limit:]
 
 
+def _neo_noi_dung(s: str, toi_da: int = 40) -> list[str]:
+    """Các mẩu NEO dùng để kiểm "bản trình bày lại có mất tin không".
+
+    Ưu tiên tiêu đề in đậm `**…**` — đó là hạt nhân thông tin của bản tin. Không
+    có thì lấy từng dòng có nghĩa. Chỉ giữ `toi_da` ký tự đầu mỗi neo: model
+    được phép cắt bớt đuôi tiêu đề dài, nhưng không được làm biến mất cả tin.
+    """
+    import re as _re
+    neo = [x.strip() for x in _re.findall(r"\*\*(.{8,}?)\*\*", s, _re.S)]
+    if not neo:
+        neo = [d.strip().lstrip("-•*0123456789. \t") for d in s.splitlines()]
+    return [n[:toi_da] for n in neo if len(n.strip()) >= 8]
+
+
 def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
     """Diễn đạt lại kết quả ĐƯỜNG TẮT theo sở thích trình bày đã ghi nhớ.
 
@@ -237,9 +256,12 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
 
     Không có sở thích nào thì trả nguyên văn — không tốn thêm một lượt gọi model.
 
-    Chốt an toàn: model diễn đạt lại có thể LÀM MẤT nội dung (bịa hoặc lược).
-    Bản mới ngắn hơn một nửa bản gốc thì coi như hỏng và dùng lại bản gốc — thà
-    trình bày chưa đúng ý hơn là mất tin.
+    Chốt an toàn đo MẤT TIN, KHÔNG đo độ dài. Bản đầu tôi chặn theo độ dài
+    ("ngắn hơn một nửa thì bỏ") và nó chặn OAN đúng thứ người dùng xin: đo thật
+    01/08, bản tin có tóm tắt 4762 ký tự, bỏ tóm tắt còn 1718 — dưới ngưỡng
+    2381, nên yêu cầu "bỏ tóm tắt đi" sẽ bị chính chốt này vô hiệu hoá trong im
+    lặng. Rút gọn là việc HỢP LỆ; mất tin mới là lỗi. Nên chốt đếm xem các TIÊU
+    ĐỀ của bản gốc còn lại bao nhiêu trong bản mới.
     """
     goc = (text or "").strip()
     if not goc:
@@ -264,7 +286,15 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
         if resp.get("error"):
             return goc
         moi = content_of(resp).strip()
-        if len(moi) < len(goc) // 2:
+        neo = _neo_noi_dung(goc)
+        if neo:
+            con = sum(1 for n in neo if n in moi)
+            if con < (len(neo) * 7) // 10:
+                logger.info({"event": "ap_so_thich_bo_qua", "ly_do": "mat noi dung",
+                             "neo": len(neo), "con_lai": con})
+                return goc
+        elif len(moi) < len(goc) // 2:
+            # Không rút được neo nào (văn bản một khối) → đành đo độ dài.
             logger.info({"event": "ap_so_thich_bo_qua", "ly_do": "ngan bat thuong",
                          "goc": len(goc), "moi": len(moi)})
             return goc
@@ -402,6 +432,26 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     mem = state.load_memory()
     if mem.strip():
         parts.append("## Trí nhớ (chuyện đã ghi nhớ)\n" + mem.strip())
+    # Người dùng xin đổi CÁCH TRÌNH BÀY nội dung vừa gửi → LÀM LẠI NGAY.
+    #
+    # Đo thật 01/08: sau khi nhận bản tin, người dùng nói "Bỏ tóm tắt đi". Bot
+    # ghi nhớ rồi trả về một BẢN MẪU RỖNG ("Thể thao / - Tin 1 / - Tin 2 / - Tin
+    # 3 / … và các mục còn lại"). Người dùng không nhận được tin nào, mà lại
+    # tưởng bot đã hiểu và làm xong. Lượt trước đó cũng đúng kiểu này ("Trình bày
+    # xấu, không có tóm tắt" → bot trả mẫu "Tin 1: tóm tắt 1 câu ngắn").
+    parts.append(
+        "## Khi người dùng xin đổi cách trình bày\n"
+        "Nếu họ vừa nhận một nội dung (bản tin, danh sách, kết quả) rồi xin đổi "
+        "cách bày — 'bỏ tóm tắt đi', 'ngắn hơn', 'chia mục', 'không cần link' — "
+        "thì LÀM LẠI NGAY nội dung THẬT theo cách mới, trong cùng câu trả lời "
+        "này.\n"
+        "TUYỆT ĐỐI KHÔNG trả về bản mẫu có chỗ trống ('Tin 1', 'Tin 2', "
+        "'tóm tắt 1 câu ngắn', '… và các mục còn lại'), và không hứa 'từ giờ em "
+        "sẽ…' rồi để trống. Mẫu rỗng làm người dùng tưởng đã xong trong khi họ "
+        "chưa nhận được gì.\n"
+        "Không còn nội dung trong tay thì lấy lại bằng công cụ rồi bày theo cách "
+        "mới, chứ không mô tả suông."
+    )
     # Compacted earlier turns (durable across restarts)
     try:
         summary = sess.load_summary(user_id)

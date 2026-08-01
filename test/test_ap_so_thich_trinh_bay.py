@@ -87,18 +87,18 @@ class TestApSoThich(unittest.TestCase):
             self.assertEqual(
                 orch._ap_so_thich(self.GOC, "tin tức", lambda k: "m"), self.GOC)
 
-    def test_ban_moi_ngan_bat_thuong_thi_giu_ban_goc(self):
-        """Chốt chống MẤT TIN: model diễn đạt lại có thể lược bớt. Ngắn hơn một
-        nửa thì coi như hỏng — thà trình bày chưa đúng ý hơn là mất tin."""
+    def test_mat_sach_noi_dung_thi_giu_ban_goc(self):
+        """Model trả về một chữ "ok" = mất sạch. Phải giữ bản gốc."""
         with _voi_tri_nho("- Trình bày ngắn gọn giúp anh."), \
              patch.object(orch, "call_model",
                           return_value={"choices": [{"message": {"content": "ok"}}]}):
             self.assertEqual(
                 orch._ap_so_thich(self.GOC, "tin tức", lambda k: "m"), self.GOC)
 
-    def test_ban_moi_du_dai_thi_dung_ban_moi(self):
-        moi = ("**Thể thao**\n- Tin một: tóm tắt một.\n"
-               "**Kinh tế**\n- Tin hai: tóm tắt hai.")
+    def test_giu_du_noi_dung_thi_dung_ban_moi(self):
+        """Bày lại mà giữ nguyên hai tin → dùng bản mới."""
+        moi = ("**Thể thao**\n- Tin một — tóm tắt một.\n"
+               "**Kinh tế**\n- Tin hai — tóm tắt hai.")
         with _voi_tri_nho("- Chia các mục giúp anh, không cần link."), \
              patch.object(orch, "call_model",
                           return_value={"choices": [{"message": {"content": moi}}]}):
@@ -112,6 +112,56 @@ class TestBoDau(unittest.TestCase):
 
     def test_chu_d_gach_ngang(self):
         self.assertEqual(orch._bo_dau("đừng dài dòng"), "dung dai dong")
+
+
+class TestChotMatTin(unittest.TestCase):
+    """Chốt an toàn phải đo MẤT TIN, không đo độ dài.
+
+    Bản đầu tôi chặn theo độ dài ("ngắn hơn một nửa thì bỏ") và nó chặn OAN đúng
+    thứ người dùng xin: đo thật 01/08, bản tin có tóm tắt 4762 ký tự, bỏ tóm tắt
+    còn 1718 — dưới ngưỡng 2381 nên yêu cầu "bỏ tóm tắt đi" bị vô hiệu hoá trong
+    im lặng. Rút gọn là việc HỢP LỆ; mất tin mới là lỗi.
+    """
+
+    GOC = ("**⚽ Thể thao**\n"
+           "- **Đình Bắc nói về trận Singapore** — Tiền đạo thừa nhận chơi tệ.\n"
+           "- **Lịch thi đấu bảng B ASEAN Cup** — Thái Lan gặp Malaysia lúc 20h.\n"
+           "\n**💼 Kinh tế**\n"
+           "- **Giá vàng thế giới giảm mạnh** — Mất 61,5 USD một ounce.\n"
+           "- **SCG tăng doanh thu ở Việt Nam** — Đạt 37.120 tỷ đồng nửa đầu năm.")
+
+    def _chay(self, moi: str) -> str:
+        with _voi_tri_nho("- Bỏ tóm tắt đi, chỉ ghi tiêu đề."), \
+             patch.object(orch, "call_model",
+                          return_value={"choices": [{"message": {"content": moi}}]}):
+            return orch._ap_so_thich(self.GOC, "tin tức hôm nay", lambda k: "m")
+
+    def test_bo_tom_tat_thi_CHO_QUA(self):
+        """Việc người dùng vừa xin — ngắn đi nhiều nhưng giữ đủ tiêu đề."""
+        moi = ("**⚽ Thể thao**\n- **Đình Bắc nói về trận Singapore**\n"
+               "- **Lịch thi đấu bảng B ASEAN Cup**\n"
+               "\n**💼 Kinh tế**\n- **Giá vàng thế giới giảm mạnh**\n"
+               "- **SCG tăng doanh thu ở Việt Nam**")
+        self.assertEqual(self._chay(moi), moi)
+
+    def test_mat_bot_tin_thi_CHAN(self):
+        moi = "**⚽ Thể thao**\n- **Đình Bắc nói về trận Singapore**"
+        self.assertEqual(self._chay(moi), self.GOC)
+
+    def test_ban_mau_rong_thi_CHAN(self):
+        """Đúng thứ bot đã trả lời lúc 08:33 — mẫu có chỗ trống, không tin nào."""
+        moi = "Thể thao\n- Tin 1\n- Tin 2\n- Tin 3\n\nKinh tế\n- Tin 1\n- Tin 2"
+        self.assertEqual(self._chay(moi), self.GOC)
+
+    def test_neo_lay_tu_tieu_de_in_dam(self):
+        neo = orch._neo_noi_dung(self.GOC)
+        self.assertIn("Đình Bắc nói về trận Singapore", neo)
+        self.assertTrue(all(len(n) <= 40 for n in neo))
+
+    def test_van_ban_mot_khoi_thi_neo_theo_dong(self):
+        """Không có `**…**` thì lấy từng dòng, để vẫn có gì mà đối chiếu."""
+        neo = orch._neo_noi_dung("Dòng thứ nhất khá dài.\nDòng thứ hai cũng vậy.")
+        self.assertEqual(len(neo), 2)
 
 
 if __name__ == "__main__":
