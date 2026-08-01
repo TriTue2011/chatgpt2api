@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -333,18 +334,88 @@ def _lay_mot_muc(topic: str, so_tin: int,
     return _tron_theo_nguon(items, so_tin)
 
 
+def _bo_dau(s: str) -> str:
+    """Bỏ dấu tiếng Việt + hạ thường, để so khớp từ khoá không kể dấu."""
+    s = unicodedata.normalize("NFD", s or "")
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return s.replace("đ", "d").replace("Đ", "d").lower().strip()
+
+
+# Từ chỉ "tin CHUNG": bỏ hết mà còn lại rỗng = người dùng KHÔNG nêu chủ đề nào,
+# đó là lúc trả digest 8 mục. Còn lại chữ gì = chủ đề cụ thể (bão, giá vàng…).
+_TU_CHUNG = {
+    "tin", "tuc", "ban", "thoi", "su", "hom", "nay", "qua", "moi", "nhat",
+    "cap", "nhat", "cho", "toi", "xem", "doc", "diem", "tong", "hop", "co",
+    "gi", "trong", "ngay", "hnay", "vn", "nong", "hot", "a", "cai", "nhung",
+    "cac", "va", "la", "gium", "giup", "voi", "the", "nao", "ra", "sao",
+    "update", "news", "khong", "ko", "k", "muon", "biet",
+}
+
+
+def _chu_de_cu_the(chu_de: str) -> str:
+    """Trả về từ khoá chủ đề nếu người dùng hỏi tin CỤ THỂ, "" nếu tin CHUNG.
+
+    'tin tức bão mới nhất' → 'bão';  'tin tức hôm nay' → ''. Giữ NGUYÊN dấu của
+    chủ đề để khớp chính xác tiêu đề (bỏ dấu chỉ dùng để nhận diện từ chung)."""
+    goc = [w for w in re.split(r"\s+", (chu_de or "").strip()) if w]
+    con_lai = [w for w in goc if _bo_dau(w) and _bo_dau(w) not in _TU_CHUNG]
+    return " ".join(con_lai).strip()
+
+
+# Chủ đề nóng có thể nằm rải nhiều mục (bão→thời sự, giá vàng→kinh doanh, chiến
+# sự→thế giới), nên tìm QUÉT nhiều mục rồi lọc theo từ khoá cho đủ độ phủ.
+_MUC_QUET_CHU_DE = ["moi_nhat", "thoi_su", "the_gioi", "kinh_doanh", "the_thao",
+                    "giai_tri", "giao_duc", "suc_khoe", "cong_nghe", "phap_luat"]
+
+
+def _tim_theo_chu_de(kw: str, limit: int = 12) -> str:
+    """Quét nhiều mục song song, lọc tin chứa từ khoá `kw` (không kể dấu)."""
+    # Khớp CÓ DẤU: 'bão' phải là 'bão', KHÔNG được trùng 'báo/bảo/bao' — bỏ dấu
+    # ở đây làm lẫn hết (đo thật: tìm 'bão' ra 'Báo châu Á', 'bảo kê'). Người Việt
+    # gõ tin tức có dấu, nên khớp đúng dấu vừa chính xác vừa đủ. Cần ĐỦ mọi từ
+    # khoá ('giá vàng' cần cả 'giá' và 'vàng'), không đòi liền nhau.
+    toks = [t.lower() for t in re.split(r"\s+", kw.strip()) if t]
+    if not toks:
+        return "Chưa rõ chủ đề cần tìm."
+    gom: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(_MUC_QUET_CHU_DE)) as pool:
+        tuong_lai = [pool.submit(_lay_mot_muc, t, 20) for t in _MUC_QUET_CHU_DE]
+        for f in as_completed(tuong_lai):
+            try:
+                gom.extend(f.result())
+            except Exception as exc:
+                logger.warning("tim chu de, mot muc loi: %s", exc)
+    thay: list[dict[str, Any]] = []
+    da_co: set[str] = set()
+    for it in gom:
+        tde = str(it.get("title") or "")
+        hay = (tde + " " + str(it.get("summary") or "")).lower()
+        if all(t in hay for t in toks):
+            khoa = _bo_dau(tde)
+            if khoa not in da_co:
+                da_co.add(khoa)
+                thay.append(it)
+    if not thay:
+        return (f"Chưa tìm thấy tin nào về '{kw}' lúc này. "
+                f"Anh/chị thử lại sau hoặc hỏi tin tức chung nhé.")
+    return _format_items(thay, limit)
+
+
 @mcp.tool()
 def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
                       in_dam: bool = True, dung_emoji: bool = True,
-                      chi_tieng_viet: bool = False) -> str:
-    """Ban tin CHIA MUC: the thao, kinh te, xa hoi, CNTT, giao duc, y te,
-    giai tri, the gioi. Moi muc lay `per_section` tin.
+                      chi_tieng_viet: bool = False, chu_de: str = "") -> str:
+    """Ban tin. MAC DINH chia 8 MUC (the thao, kinh te, xa hoi, CNTT, giao duc,
+    y te, giai tri, the gioi) — dung khi nguoi dung hoi tin CHUNG ('tin tuc hom
+    nay', 'ban tin', 'co gi moi').
 
-    Dung cho cau hoi kieu "tin tuc hom nay" khi nguoi dung muon ban tin day du
-    chia theo linh vuc, thay vi mot danh sach phang.
+    QUAN TRONG — neu nguoi dung hoi tin ve MOT CHU DE cu the (vd 'tin tuc bao',
+    'tin gia vang', 'ket qua tran X', 'tinh hinh Y'): BAT BUOC truyen `chu_de` =
+    chu de do (vd chu_de='bao'). Khi co chu_de, tool BO digest 8 muc va CHI tra
+    tin lien quan chu de. De trong `chu_de` khi hoi tin chung.
 
     Args:
-        per_section: So tin moi muc (1-5, mac dinh 3).
+        per_section: So tin moi muc (1-5, mac dinh 3). Chi ap dung digest chung.
         kem_tom_tat: True (mac dinh) = moi tin kem mot cau tom tat.
                      False = CHI tieu de, dung khi nguoi dung xin bo tom tat.
         in_dam: True (mac dinh) = boc ten muc va tieu de trong **dam**.
@@ -352,11 +423,17 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
         dung_emoji: True (mac dinh) = ten muc co emoji dan dau.
         chi_tieng_viet: True = chi lay tin co tieu de tieng Viet (bo tin tieng
                         Anh cua BBC/World Monitor). Mac dinh False.
+        chu_de: Chu de cu the nguoi dung hoi (bao, gia vang…). Co gia tri thi
+                tra tin theo chu de, bo qua digest 8 muc.
 
     Returns:
-        Ban tin nhieu muc, moi tin mot dong gach dau dong kem tom tat ngan.
+        Ban tin nhieu muc (tin chung) HOAC danh sach tin theo chu de.
         Khong co link, khong co HTML.
     """
+    # Người dùng hỏi MỘT chủ đề → tìm theo chủ đề, KHÔNG đổ digest 8 mục lạc đề.
+    kw = _chu_de_cu_the(chu_de)
+    if kw:
+        return _tim_theo_chu_de(kw)
     so_tin = max(1, min(5, int(per_section or 3)))
     # Lấy 8 mục SONG SONG: tuần tự mất ~9,8s (đo thật 01/08) — quá lâu cho một
     # lượt chat. Song song thì tổng ≈ mục chậm nhất.
