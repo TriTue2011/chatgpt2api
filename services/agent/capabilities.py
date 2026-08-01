@@ -388,6 +388,65 @@ def _mo_ta_chi_phi(model: str, count: int = 1, duration: str | None = None) -> s
     return f"{tong} tín dụng" if count <= 1 else f"{tong} tín dụng ({moi}×{count})"
 
 
+def _nhan_gia_video(model: str) -> str:
+    """Nhãn giá NGẮN cho một model trong menu chọn model (khác _mo_ta_chi_phi:
+    kia tính theo số video/thời lượng đã chọn; đây là giá THAM KHẢO mỗi video để
+    người dùng so sánh trước khi chọn)."""
+    m = (model or "").strip().lower()
+    if m in _FLOW_THOI_LUONG:  # omni-flash: giá đổi theo thời lượng
+        gia = [_OMNI_TIN_DUNG[g] for g in _FLOW_THOI_LUONG[m] if g in _OMNI_TIN_DUNG]
+        if gia:
+            return f"{min(gia)}–{max(gia)} tín dụng/video tùy thời lượng"
+    moi = _tin_dung_moi_video(model)
+    if moi is None:
+        return "dùng hạn mức tài khoản (không tốn tín dụng Flow)"
+    return f"{moi} tín dụng/video"
+
+
+def _video_model_choices() -> list[str]:
+    """Danh sách model video CỤ THỂ để đưa vào menu: bung tên combo (vd 'AI Video')
+    thành các model thành viên, gộp cả model bật riêng lẻ, khử trùng, giữ thứ tự.
+
+    Lý do: _enabled_models_for('video_gen') trả về tên COMBO 'AI Video' như một
+    'model' — người dùng chọn nó thì không biết thực chất chạy model nào, cũng
+    không thấy phí. Bung ra để họ chọn thẳng agnes / omni-flash / veo-lite/fast/
+    quality kèm giá từng cái (yêu cầu chủ máy 31/07: 'chưa đưa ra đầy đủ model
+    video… sau khi chọn không đưa thông tin về phí')."""
+    raw = _enabled_models_for("video_gen", limit=20)
+    combos = config.data.get("combo_models") or {}
+    # tra combo không phân biệt hoa/thường
+    combo_lc = {str(k).strip().lower(): v for k, v in combos.items()}
+    out: list[str] = []
+    seen: set[str] = set()
+    for mid in raw:
+        members = combo_lc.get(str(mid).strip().lower())
+        ids = members if isinstance(members, list) else [mid]
+        for x in ids:
+            # bỏ marker định dạng nội bộ (:text/:tts/#raw) nếu combo có gắn
+            xid = str(x or "").split("#")[0].split(":")[0].strip()
+            key = xid.lower()
+            if xid and key not in seen:
+                seen.add(key)
+                out.append(xid)
+    return out
+
+
+def _ask_video_provider(prompt: str) -> dict:
+    """Menu chọn model TẠO VIDEO: liệt kê ĐẦY ĐỦ model thật (bung từ combo) kèm
+    GIÁ mỗi model để người dùng so sánh. 'send' mang tên model cụ thể → lượt sau
+    handler nhận model ≠ rỗng nên chạy tiếp (hỏi số lượng/thời lượng có tổng phí)."""
+    models = _video_model_choices()
+    short = prompt if len(prompt) <= 60 else prompt[:59] + "…"
+    lines = [f'🎬 Anh/chị muốn tạo video "{short}" bằng model nào ạ? (giá tham khảo mỗi video)',
+             "<<<ASK>>>",
+             f"Mặc định (nhánh AI Video) | tạo video bằng mặc định: {prompt}"]
+    for mid in models:  # ask_choices tự cắt tối đa 8 lựa chọn
+        lines.append(f"{_short_model_label(mid)} — {_nhan_gia_video(mid)} | "
+                     f"tạo video bằng model {mid}: {prompt}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
 def _ask_video_thoi_luong(prompt: str, model: str) -> dict:
     """Menu chọn thời lượng — CHỈ cho model thật sự có hàng đó trên Flow."""
     short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
@@ -438,7 +497,7 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
     # model/chất lượng, hoặc đang CHẠY TỰ ĐỘNG (nhắc theo lịch) thì dùng mặc định.
     if not user_model and not quality:
         if not ctx.get("auto_approve"):
-            return _ask_media_provider(prompt, "video_gen", verb="tạo video", emoji="🎬")
+            return _ask_video_provider(prompt)
         model = branch_model("video_gen", _channel_of(ctx))
     elif user_model and user_model.lower() not in _IMAGE_DEFAULT_TOKENS:
         model = user_model
