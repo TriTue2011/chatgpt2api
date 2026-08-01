@@ -164,5 +164,30 @@ class TestChotMatTin(unittest.TestCase):
         self.assertEqual(len(neo), 2)
 
 
+class TestTranDoDai(unittest.TestCase):
+    """Văn bản dài thì KHÔNG nhờ model bày lại.
+
+    Đo thật 01/08: bản tin 4819 ký tự không kịp xong trong hạn 20 giây, hết giờ
+    100% số lần rồi rơi về bản gốc — tốn 20 giây chờ để nhận đúng thứ cũ. Nội
+    dung dài phải định dạng bằng code ở nơi sinh ra nó.
+    """
+
+    def test_qua_dai_thi_khong_goi_model(self):
+        goi = []
+        with _voi_tri_nho("- Trình bày ngắn gọn giúp anh."), \
+             patch.object(orch, "call_model", side_effect=lambda *a, **k: goi.append(1)):
+            goc = "x" * (orch._TRAN_BAY_LAI + 1)
+            self.assertEqual(orch._ap_so_thich(goc, "hỏi gì", lambda k: "m"), goc)
+        self.assertEqual(goi, [], "văn bản quá dài mà vẫn gọi model = chờ vô ích")
+
+    def test_du_ngan_thi_van_bay_lai(self):
+        moi = "Bản đã bày lại, giữ nguyên nội dung gốc bên trong."
+        with _voi_tri_nho("- Trình bày ngắn gọn giúp anh."), \
+             patch.object(orch, "call_model",
+                          return_value={"choices": [{"message": {"content": moi}}]}):
+            ra = orch._ap_so_thich("nội dung gốc", "hỏi gì", lambda k: "m")
+        self.assertEqual(ra, moi)
+
+
 if __name__ == "__main__":
     unittest.main()

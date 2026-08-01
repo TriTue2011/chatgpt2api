@@ -229,6 +229,11 @@ def _so_thich_trinh_bay(limit: int = 6) -> list[str]:
     return ra[-limit:]
 
 
+# Trần độ dài cho việc nhờ model bày lại. Dài hơn thì model không kịp trong hạn
+# chờ 20 giây (đo thật 01/08 với bản tin 4819 ký tự: hết giờ 100% số lần).
+_TRAN_BAY_LAI = 1500
+
+
 def _neo_noi_dung(s: str, toi_da: int = 40) -> list[str]:
     """Các mẩu NEO dùng để kiểm "bản trình bày lại có mất tin không".
 
@@ -268,6 +273,14 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
         return goc
     st = _so_thich_trinh_bay()
     if not st:
+        return goc
+    # Văn bản DÀI thì đừng nhờ model: đo thật 01/08, bản tin 4819 ký tự không
+    # kịp xong trong 20 giây, lần nào cũng hết giờ rồi rơi về bản gốc — tốn 20
+    # giây chờ để nhận đúng thứ cũ. Nội dung dài phải định dạng bằng code ở nơi
+    # sinh ra nó (như `get_news_sections` làm), không chữa ở khâu cuối.
+    if len(goc) > _TRAN_BAY_LAI:
+        logger.info({"event": "ap_so_thich_bo_qua", "ly_do": "van ban qua dai",
+                     "dai": len(goc), "tran": _TRAN_BAY_LAI})
         return goc
     try:
         model = main_model_fn("chat") or main_model_fn("burst")
@@ -946,7 +959,16 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # Ghi nhớ một điều mình không làm được thì tệ hơn là không nhớ.
             try:
                 from services.mcp_client import call_mcp_tool
-                _tin = call_mcp_tool("get_news_sections", {"per_section": 3})
+                # Bỏ tóm tắt: quyết định BẰNG CODE từ lời dặn, không nhờ model.
+                # Đo thật 01/08: nhờ model bày lại bản tin 4819 ký tự thì nó KHÔNG
+                # kịp xong trong 20 giây — lần nào cũng hết giờ rồi rơi về bản gốc,
+                # nên người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
+                _kem_tt = not any(
+                    k in _bo_dau(" ".join(_so_thich_trinh_bay()))
+                    for k in ("bo tom tat", "khong tom tat", "bot tom tat",
+                              "chi tieu de", "tieu de thoi", "chi can tieu de"))
+                _tin = call_mcp_tool("get_news_sections",
+                                     {"per_section": 3, "kem_tom_tat": _kem_tt})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():
@@ -964,11 +986,9 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _kq_ws = None
         if _kq_ws and str(_kq_ws.get("text") or "").strip():
             logger.info({"event": "agent_tat_tintuc", "loai": _loai_tin})
-            # Áp sở thích trình bày đã ghi nhớ — đường tắt không được phép bỏ
-            # qua thứ người dùng đã dặn (xem `_ap_so_thich`).
-            _kq_ws = {**_kq_ws,
-                      "text": _ap_so_thich(str(_kq_ws.get("text") or ""),
-                                           user_text, _main_model)}
+            # KHÔNG nhờ model bày lại bản tin nữa: định dạng (chia mục, gạch
+            # đầu dòng, bỏ tóm tắt, không link) đã làm trọn bằng code ở trên, mà
+            # bản tin lại quá dài để model kịp xử lý trong hạn chờ.
             out_n = _finalize(user_id, _kq_ws)
             hist.append({"role": "assistant", "content": out_n.get("text") or ""})
             _persist_history(user_id, hist)

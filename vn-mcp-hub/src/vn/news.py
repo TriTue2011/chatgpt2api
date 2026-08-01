@@ -305,7 +305,7 @@ def _lay_mot_muc(topic: str, so_tin: int) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-def get_news_sections(per_section: int = 3) -> str:
+def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True) -> str:
     """Ban tin CHIA MUC: the thao, kinh te, xa hoi, CNTT, giao duc, y te,
     giai tri, the gioi. Moi muc lay `per_section` tin.
 
@@ -314,6 +314,8 @@ def get_news_sections(per_section: int = 3) -> str:
 
     Args:
         per_section: So tin moi muc (1-5, mac dinh 3).
+        kem_tom_tat: True (mac dinh) = moi tin kem mot cau tom tat.
+                     False = CHI tieu de, dung khi nguoi dung xin bo tom tat.
 
     Returns:
         Ban tin nhieu muc, moi tin mot dong gach dau dong kem tom tat ngan.
@@ -343,11 +345,16 @@ def get_news_sections(per_section: int = 3) -> str:
             continue
         dong = [f"**{nhan}**"]
         for it in ds:
-            tt = _lam_sach_tom_tat(str(it.get("summary") or ""),
-                                   tran=_TRAN_TOM_TAT_MUC)
             d = f"- **{it['title']}**"
-            if tt:
-                d += f" — {tt}"
+            # Bỏ tóm tắt phải làm ở ĐÂY, bằng code. Trước đây việc này được nhờ
+            # model bày lại: đo thật 01/08, gửi bản tin 4819 ký tự cho model thì
+            # nó KHÔNG kịp xong trong 20 giây, lần nào cũng hết giờ rồi rơi về
+            # bản gốc — người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
+            if kem_tom_tat:
+                tt = _lam_sach_tom_tat(str(it.get("summary") or ""),
+                                       tran=_TRAN_TOM_TAT_MUC)
+                if tt:
+                    d += f" — {tt}"
             dong.append(d)
         khoi.append("\n".join(dong))
 

@@ -149,6 +149,35 @@ class TestBanTinChiaMuc(unittest.TestCase):
     def test_khong_lay_duoc_gi_thi_noi_that(self):
         self.assertEqual(self._gia_lap({}), "Không lấy được tin tức nào lúc này.")
 
+    def test_bo_tom_tat_bang_code(self):
+        """`kem_tom_tat=False` phải bỏ tóm tắt NGAY trong code.
+
+        Trước đây việc này nhờ model bày lại: đo thật 01/08, bản tin 4819 ký tự
+        không kịp xong trong 20 giây nên lần nào cũng hết giờ rồi rơi về bản gốc
+        — người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
+        """
+        from unittest.mock import patch
+        ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm tắt A.",
+                             "source": "X", "link": ""}]}
+        goi = self._goi_duoc()
+        with patch.object(news, "_lay_mot_muc",
+                          side_effect=lambda tid, n: ket.get(tid, [])):
+            co = goi(3, True)
+            khong = goi(3, False)
+        self.assertIn("Tóm tắt A.", co)
+        self.assertNotIn("Tóm tắt A.", khong)
+        self.assertIn("Tin A", khong, "bỏ tóm tắt không được bỏ luôn tiêu đề")
+
+    def test_mac_dinh_van_co_tom_tat(self):
+        """Không truyền gì thì giữ hành vi cũ — không đổi ngầm."""
+        from unittest.mock import patch
+        ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm tắt A.",
+                             "source": "X", "link": ""}]}
+        with patch.object(news, "_lay_mot_muc",
+                          side_effect=lambda tid, n: ket.get(tid, [])):
+            self.assertIn("Tóm tắt A.", self._goi_duoc()(3))
+
+
 
 if __name__ == "__main__":
     unittest.main()
