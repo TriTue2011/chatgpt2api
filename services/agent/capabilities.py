@@ -330,32 +330,36 @@ def _mo_rong_prompt_media(prompt: str, loai: str, ctx: dict | None = None) -> st
         "- Trả về DUY NHẤT prompt, 1 đoạn, tối đa 80 từ. Không giải thích, không "
         "gạch đầu dòng, không ngoặc kép.\n\n"
         "Yêu cầu gốc: " + p)
-    try:
-        model = branch_model("default", _channel_of(ctx or {})) or "cx/auto"
-        resp = call_model(model, [{"role": "user", "content": yeu_cau}],
-                          timeout=60, max_tokens=220)
-        if resp.get("error"):
-            return p
-        ra = (content_of(resp) or "").strip().strip('"').strip()
-        # Model đôi khi trả kèm lời dẫn — lấy đoạn dài nhất, bỏ dòng mở đầu ngắn.
-        dong = [d.strip() for d in ra.splitlines() if d.strip()]
-        if dong:
-            ra = max(dong, key=len).strip().strip('"')
-        # Combo cạn provider trả CHUỖI LỖI trong content (không phải resp['error'])
-        # — đo thật 31/07: "All providers failed. Last error: no usable chatgpt
-        # free account" suýt thành prompt vẽ. Nhận diện rồi giữ prompt gốc.
-        _thap = ra.lower()
-        if any(k in _thap for k in ("all providers failed", "no usable",
-                                    "last error", "quota", "rate limit",
-                                    "unauthenticated", "error:")):
-            logger.warning("mở rộng prompt %s: model trả chuỗi lỗi, giữ prompt gốc", loai)
-            return p
-        if 15 < len(ra) <= 600:
-            logger.info({"event": "media_prompt_mo_rong", "loai": loai,
-                         "goc": p[:60], "moi": ra[:80]})
-            return ra
-    except Exception as exc:
-        logger.warning("mở rộng prompt %s lỗi: %s", loai, str(exc)[:120])
+    model = branch_model("default", _channel_of(ctx or {})) or "cx/auto"
+    # Thử tối đa 2 lần: hop đầu chuỗi "AI text" là tài khoản codex (cx/), lúc nó
+    # tạm hỏng + fallback chớp lỗi thì combo trả nguyên chuỗi "All providers
+    # failed…" dưới dạng CONTENT. Lỗi kiểu này thường tự hết ngay lần gọi kế nên
+    # thử lại 1 lần trước khi bỏ cuộc (đo thật 31/07: hỏng 2/2 rồi lại chạy 5/5).
+    for lan in range(2):
+        try:
+            resp = call_model(model, [{"role": "user", "content": yeu_cau}],
+                              timeout=60, max_tokens=220)
+            if resp.get("error"):
+                continue
+            ra = (content_of(resp) or "").strip().strip('"').strip()
+            # Model đôi khi trả kèm lời dẫn — lấy đoạn dài nhất, bỏ dòng mở đầu ngắn.
+            dong = [d.strip() for d in ra.splitlines() if d.strip()]
+            if dong:
+                ra = max(dong, key=len).strip().strip('"')
+            # Combo cạn provider trả CHUỖI LỖI trong content (không phải
+            # resp['error']) — nhận diện rồi thử lại, hết lượt mới giữ prompt gốc.
+            _thap = ra.lower()
+            if any(k in _thap for k in ("all providers failed", "no usable",
+                                        "last error", "quota", "rate limit",
+                                        "unauthenticated", "error:")):
+                logger.warning("mở rộng prompt %s: model trả chuỗi lỗi (lần %d)", loai, lan + 1)
+                continue
+            if 15 < len(ra) <= 600:
+                logger.info({"event": "media_prompt_mo_rong", "loai": loai,
+                             "goc": p[:60], "moi": ra[:80], "lan": lan + 1})
+                return ra
+        except Exception as exc:
+            logger.warning("mở rộng prompt %s lỗi (lần %d): %s", loai, lan + 1, str(exc)[:120])
     return p
 
 # ── Bảng giá Flow (đọc từ chính giao diện Flow, chủ máy chụp 31/07/2026) ──────
