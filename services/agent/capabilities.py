@@ -636,10 +636,13 @@ def _h_remember(args: dict, ctx: dict) -> dict:
     fact = str(args.get("fact") or "").strip()
     if not fact:
         return {"text": "Anh/chị muốn em ghi nhớ điều gì ạ?"}
-    # Phòng hờ (khi auto-approve bỏ qua kiểm tra ở orchestrator): không lưu trùng.
-    if state.memory_contains(fact):
+    # Trùng y nguyên thì bỏ; GẦN trùng thì đó là bản CẬP NHẬT, phải thay dòng cũ
+    # chứ không được bỏ im lặng (xem `state.nho_hoac_cap_nhat`).
+    kq = state.nho_hoac_cap_nhat(fact, who=str(ctx.get("user_id") or ""))
+    if kq == "trung":
         return {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
-    state.append_memory(fact, who=str(ctx.get("user_id") or ""))
+    if kq == "cap_nhat":
+        return {"text": f"Dạ em sửa lại điều đã nhớ rồi ạ 🧠: {fact}"}
     return {"text": f"Dạ em nhớ rồi ạ 🧠: {fact}"}
 
 

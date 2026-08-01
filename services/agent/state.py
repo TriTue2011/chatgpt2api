@@ -152,6 +152,90 @@ def memory_contains(fact: str, threshold: float = 0.82) -> bool:
     return False
 
 
+def _do_giong(fact: str) -> tuple[float, str]:
+    """(độ giống cao nhất, dòng khớp nhất) giữa `fact` và MEMORY.md."""
+    nf = _norm_fact(fact)
+    if not nf:
+        return 0.0, ""
+    try:
+        if not _MEMORY_FILE.exists():
+            return 0.0, ""
+        lines = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return 0.0, ""
+    nf_tokens = set(nf.split())
+    if not nf_tokens:
+        return 0.0, ""
+    cao, dong = 0.0, ""
+    for ln in lines:
+        lt = set(_norm_fact(ln).split())
+        if not lt:
+            continue
+        union = len(nf_tokens | lt)
+        if not union:
+            continue
+        r = len(nf_tokens & lt) / union
+        if r > cao:
+            cao, dong = r, ln
+    return cao, dong
+
+
+def nho_hoac_cap_nhat(fact: str, who: str = "", *,
+                      nguong_trung: float = 0.97,
+                      nguong_cap_nhat: float = 0.82) -> str:
+    """Ghi nhớ `fact`; nếu nó là BẢN CẬP NHẬT của một dòng cũ thì THAY dòng đó.
+
+    Trả về 'trung' (y nguyên, không lưu) | 'cap_nhat' (đã thay dòng cũ) |
+    'them' (điều mới, đã thêm).
+
+    Vì sao phải có: bộ chặn trùng dùng độ giống token, và một lời dặn ĐƯỢC SỬA
+    luôn gần trùng với chính lời dặn nó thay thế — càng nhắc lại trung thực thì
+    càng chắc bị coi là trùng rồi bỏ đi trong im lặng. Hệ quả: người dùng KHÔNG
+    THỂ đổi điều bot đã nhớ.
+
+    Đo thật 01/08: người dùng nói "Bỏ tóm tắt đi"; câu bot định lưu giống dòng cũ
+    (dòng có "có tóm tắt ngắn") tới 0,955 — vượt ngưỡng 0,82 nên không lưu gì,
+    trong khi bot vẫn đáp "Dạ được anh". Lượt sau bản tin vẫn có tóm tắt.
+    """
+    fact = (fact or "").strip()
+    if not fact:
+        return "trung"
+    cao, dong_cu = _do_giong(fact)
+    if cao >= nguong_trung:
+        return "trung"
+    if cao >= nguong_cap_nhat and dong_cu:
+        _xoa_dong_tri_nho(dong_cu)
+        append_memory(fact, who=who)
+        return "cap_nhat"
+    append_memory(fact, who=who)
+    return "them"
+
+
+def _xoa_dong_tri_nho(dong: str) -> None:
+    """Bỏ một dòng khỏi MEMORY.md và khỏi FTS index (giữ hai bên khớp nhau)."""
+    with _lock:
+        try:
+            cu = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
+            moi = [x for x in cu if x.strip() != dong.strip()]
+            if len(moi) != len(cu):
+                _MEMORY_FILE.write_text("\n".join(moi) + ("\n" if moi else ""),
+                                        encoding="utf-8")
+        except Exception as exc:
+            logger.warning("agent.state: xoá dòng trí nhớ lỗi: %s", exc)
+            return
+        try:
+            db = _mem_db()
+            rows = db.execute(
+                "SELECT id FROM memory_lines WHERE line = ?", (dong,),
+            ).fetchall()
+            for (rid,) in rows:
+                db.execute("DELETE FROM memory_fts WHERE rowid = ?", (rid,))
+                db.execute("DELETE FROM memory_lines WHERE id = ?", (rid,))
+            db.commit()
+        except Exception as exc:
+            logger.warning("agent.state: xoá dòng khỏi FTS lỗi: %s", exc)
+
+
 def append_memory(fact: str, who: str = "") -> None:
     """Append a durable fact (a change action — call only after approval)."""
     fact = (fact or "").strip()

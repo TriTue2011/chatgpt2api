@@ -282,7 +282,10 @@ def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
                 "Người dùng đã dặn:\n" + "\n".join(f"- {x}" for x in st)
             )},
             {"role": "user", "content": f"Câu hỏi: {user_text}\n\nNội dung:\n{goc}"},
-        ], timeout=45, no_smart_home=True)
+        # Trần 20s, KHÔNG 45: lượt tin tức trước đó chỉ 4,1 giây, sau khi thêm
+        # bước bày lại thành 37 giây (đo thật 01/08) — người dùng ngồi chờ. Bày
+        # lại là việc "có thì tốt"; quá 20 giây thì thà gửi bản gốc ngay.
+        ], timeout=20, no_smart_home=True)
         if resp.get("error"):
             return goc
         moi = content_of(resp).strip()
@@ -1153,7 +1156,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
             cap = caps.get(name)
             if not cap:
                 result = {"text": f"(không có công cụ {name})"}
-            elif name == "remember" and state.memory_contains(str(args.get("fact") or "")):
+            elif name == "remember" and state.memory_contains(
+                    str(args.get("fact") or ""), threshold=0.97):
                 # Model đòi ghi nhớ điều ĐÃ có trong bộ nhớ (hay lôi nhầm ngữ cảnh,
                 # vd thông tin SSH) → KHÔNG đề xuất/không lưu lại, chỉ xác nhận ngắn.
                 result = {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
