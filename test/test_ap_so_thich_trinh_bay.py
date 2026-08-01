@@ -189,5 +189,52 @@ class TestTranDoDai(unittest.TestCase):
         self.assertEqual(ra, moi)
 
 
+class TestDichTieuDeTiengAnh(unittest.TestCase):
+    """Người dùng dặn 01/08: "có nguồn tiếng anh nhưng chuyển sang tiếng việt".
+
+    Bản tin lấy từ nhiều báo; BBC News và World Monitor trả tiêu đề tiếng Anh —
+    đo thật: 4 trong 24 tin. Chỉ dịch ĐÚNG mấy tiêu đề đó, không đưa cả bản tin
+    cho model: bài học từ lần trước, gửi cả 4819 ký tự thì model hết giờ 100% số
+    lần và tốn 20 giây vô ích.
+    """
+
+    ANH = ("**⚽ Thể thao**\n"
+           "- **Đội tuyển Việt Nam hòa Singapore**\n"
+           "- **Snapchat joins fight against AI slop**\n")
+
+    def test_toan_tieng_viet_thi_KHONG_goi_model(self):
+        goi = []
+        with patch.object(orch, "call_model", side_effect=lambda *a, **k: goi.append(1)):
+            viet = "**⚽ Thể thao**\n- **Đội tuyển Việt Nam hòa Singapore**\n"
+            self.assertEqual(orch._dich_tieu_de_tieng_anh(viet, lambda k: "m"), viet)
+        self.assertEqual(goi, [], "không có tiêu đề tiếng Anh mà vẫn gọi model")
+
+    def test_thay_dung_tieu_de_tieng_anh(self):
+        with patch.object(orch, "call_model", return_value={"choices": [{"message": {
+                "content": "1. Snapchat tham gia cuộc chiến chống rác AI"}}]}):
+            ra = orch._dich_tieu_de_tieng_anh(self.ANH, lambda k: "m")
+        self.assertIn("Snapchat tham gia cuộc chiến chống rác AI", ra)
+        self.assertNotIn("joins fight against", ra)
+        self.assertIn("Đội tuyển Việt Nam hòa Singapore", ra, "không được đụng dòng tiếng Việt")
+
+    def test_lech_so_dong_thi_giu_ban_goc(self):
+        """Model trả sai số dòng → không biết dòng nào ứng dòng nào, giữ bản gốc
+        thay vì ghép lệch tiêu đề sang tin khác."""
+        with patch.object(orch, "call_model", return_value={"choices": [{"message": {
+                "content": "1. Một\n2. Hai\n3. Ba"}}]}):
+            self.assertEqual(orch._dich_tieu_de_tieng_anh(self.ANH, lambda k: "m"), self.ANH)
+
+    def test_model_loi_thi_giu_ban_goc(self):
+        with patch.object(orch, "call_model", return_value={"error": "hỏng"}):
+            self.assertEqual(orch._dich_tieu_de_tieng_anh(self.ANH, lambda k: "m"), self.ANH)
+
+    def test_ban_dich_van_khong_dau_thi_bo_qua(self):
+        """Model "dịch" mà vẫn ra tiếng Anh → không thay, kẻo đổi vô nghĩa."""
+        with patch.object(orch, "call_model", return_value={"choices": [{"message": {
+                "content": "1. Snapchat joins the fight"}}]}):
+            ra = orch._dich_tieu_de_tieng_anh(self.ANH, lambda k: "m")
+        self.assertIn("Snapchat joins fight against AI slop", ra)
+
+
 if __name__ == "__main__":
     unittest.main()

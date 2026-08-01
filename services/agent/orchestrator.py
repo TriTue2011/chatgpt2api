@@ -25,6 +25,8 @@ import threading
 from typing import Any, Optional
 
 from services.config import config
+import re as _re_mod
+
 from services.agent import state
 from services.agent import session as sess
 from services.agent import compaction as compact
@@ -232,6 +234,55 @@ def _so_thich_trinh_bay(limit: int = 6) -> list[str]:
 # Trần độ dài cho việc nhờ model bày lại. Dài hơn thì model không kịp trong hạn
 # chờ 20 giây (đo thật 01/08 với bản tin 4819 ký tự: hết giờ 100% số lần).
 _TRAN_BAY_LAI = 1500
+
+
+_DAU_TIENG_VIET = _re_mod.compile(
+    "[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]",
+    _re_mod.I)
+_DONG_TIN = _re_mod.compile(r"^- \*\*(.+?)\*\*", _re_mod.M)
+
+
+def _dich_tieu_de_tieng_anh(text: str, main_model_fn) -> str:
+    """Dịch các tiêu đề tin KHÔNG phải tiếng Việt sang tiếng Việt.
+
+    Người dùng dặn 01/08: "có nguồn tiếng anh nhưng chuyển sang tiếng việt". Bản
+    tin lấy từ nhiều báo, trong đó BBC News và World Monitor trả tiêu đề tiếng
+    Anh — đo thật: 4 trong 24 tin.
+
+    Chỉ dịch ĐÚNG mấy tiêu đề đó, không đưa cả bản tin cho model. Đó là bài học
+    từ lần trước: gửi cả bản tin 4819 ký tự thì model hết giờ 100% số lần và tốn
+    20 giây vô ích. Vài tiêu đề ngắn thì nhanh, và trượt cũng chỉ mất phần dịch.
+    """
+    goc = text or ""
+    can_dich = [t for t in _DONG_TIN.findall(goc) if not _DAU_TIENG_VIET.search(t)]
+    if not can_dich:
+        return goc                      # bản tin đã toàn tiếng Việt — không tốn gì
+    try:
+        danh_sach = "\n".join(f"{i+1}. {t}" for i, t in enumerate(can_dich))
+        resp = call_model(main_model_fn("chat") or main_model_fn("burst"), [
+            {"role": "system", "content": (
+                "Dịch từng tiêu đề tin sang tiếng Việt tự nhiên, có đủ dấu. "
+                "Giữ NGUYÊN số thứ tự và số dòng, mỗi dòng một tiêu đề, không "
+                "thêm lời nào khác. Giữ nguyên tên riêng và số liệu.")},
+            {"role": "user", "content": danh_sach},
+        ], timeout=15, no_smart_home=True)
+        if resp.get("error"):
+            return goc
+        dong = [d.strip() for d in content_of(resp).strip().splitlines() if d.strip()]
+        if len(dong) != len(can_dich):
+            logger.info({"event": "dich_tieu_de_bo_qua", "ly_do": "lech so dong",
+                         "can": len(can_dich), "nhan": len(dong)})
+            return goc
+        ra = goc
+        for cu, moi in zip(can_dich, dong):
+            moi = _re_mod.sub(r"^\d+[.)]\s*", "", moi).strip()
+            if moi and _DAU_TIENG_VIET.search(moi):
+                ra = ra.replace(f"**{cu}**", f"**{moi}**")
+        logger.info({"event": "dich_tieu_de", "so_tin": len(can_dich)})
+        return ra
+    except Exception as exc:
+        logger.warning({"event": "dich_tieu_de_loi", "error": str(exc)[:150]})
+        return goc
 
 
 def _neo_noi_dung(s: str, toi_da: int = 40) -> list[str]:
@@ -466,7 +517,13 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "sẽ…' rồi để trống. Mẫu rỗng làm người dùng tưởng đã xong trong khi họ "
         "chưa nhận được gì.\n"
         "Không còn nội dung trong tay thì lấy lại bằng công cụ rồi bày theo cách "
-        "mới, chứ không mô tả suông."
+        "mới, chứ không mô tả suông.\n"
+        "BẮT BUỘC ghi nhớ: lời dặn về cách trả lời là dặn cho LÂU DÀI, nên trong "
+        "CHÍNH lượt đó phải gọi công cụ `remember` để lưu lại. Không được nói "
+        "'từ giờ em sẽ…' / 'từ lần sau…' mà không gọi `remember` — nói mà không "
+        "lưu thì lượt sau quên sạch, còn người dùng thì tin là đã xong.\n"
+        "Người dùng dặn thêm/sửa một điều đã dặn trước thì cứ gọi `remember` với "
+        "lời dặn ĐẦY ĐỦ sau khi sửa; hệ thống tự thay bản cũ, không sinh trùng."
     )
     # Compacted earlier turns (durable across restarts)
     try:
@@ -972,7 +1029,13 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():
-                    _kq_ws = {"text": str(_tin).strip()}
+                    _txt = str(_tin).strip()
+                    # Lời dặn "toàn tiếng Việt" → dịch mấy tiêu đề tiếng Anh.
+                    if any(k in _bo_dau(" ".join(_so_thich_trinh_bay()))
+                           for k in ("tieng viet", "toan tieng viet",
+                                     "chuyen sang tieng viet")):
+                        _txt = _dich_tieu_de_tieng_anh(_txt, _main_model)
+                    _kq_ws = {"text": _txt}
                     logger.info({"event": "agent_tat_tintuc_mcp"})
             except Exception as exc:
                 logger.warning({"event": "agent_tat_tintuc_mcp_loi", "error": str(exc)[:150]})
