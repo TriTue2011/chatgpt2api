@@ -236,5 +236,48 @@ class TestDichTieuDeTiengAnh(unittest.TestCase):
         self.assertIn("Snapchat joins fight against AI slop", ra)
 
 
+class TestDangBayTinTheoThuTuMoiCu(unittest.TestCase):
+    """Lời dặn NGƯỢC NHAU về cùng một mặt: dòng MỚI NHẤT phải thắng.
+
+    Đo thật 01/08: 10:13 người dùng dặn "không in đậm, không emoji rườm rà";
+    10:16 đổi ý "bổ sung icon các đầu mục, đầu mục tô màu và in đậm". Bản đầu dò
+    bằng `any()` trên toàn bộ lời dặn gộp lại nên cụm phủ định của dòng CŨ luôn
+    thắng — người dùng đổi ý mà bản tin không đổi.
+    """
+
+    CU = ("Khi hỏi Tin tức hôm nay: không in đậm, không emoji rườm rà, "
+          "không tóm tắt, không link.")
+    MOI = ("Khi hỏi Tin tức hôm nay: mỗi đầu mục có icon, tên mục tô màu và "
+           "in đậm; không tóm tắt, không link.")
+
+    def _dang(self, ds: list[str]) -> dict:
+        with patch.object(orch, "_so_thich_trinh_bay", return_value=ds):
+            return orch._dang_bay_tin()
+
+    def test_dong_moi_thang_dong_cu(self):
+        self.assertEqual(self._dang([self.CU, self.MOI]),
+                         {"tom_tat": False, "in_dam": True, "emoji": True})
+
+    def test_dao_thu_tu_thi_dao_ket_qua(self):
+        """Chứng minh thứ tự THẬT SỰ được dùng, không phải trùng hợp."""
+        self.assertEqual(self._dang([self.MOI, self.CU]),
+                         {"tom_tat": False, "in_dam": False, "emoji": False})
+
+    def test_mat_khong_ai_noi_toi_thi_giu_mac_dinh(self):
+        self.assertEqual(self._dang(["Anh tên là Việt, ở Hà Nội."]),
+                         {"tom_tat": True, "in_dam": True, "emoji": True})
+
+    def test_khong_co_loi_dan_nao(self):
+        self.assertEqual(self._dang([]),
+                         {"tom_tat": True, "in_dam": True, "emoji": True})
+
+    def test_moi_mat_xet_doc_lap(self):
+        """Dòng mới chỉ nói về emoji thì KHÔNG được đổi luôn mặt in đậm."""
+        ds = [self.CU, "Khi hỏi tin tức thì thêm icon cho các đầu mục nhé."]
+        ra = self._dang(ds)
+        self.assertTrue(ra["emoji"], "emoji phải theo dòng mới")
+        self.assertFalse(ra["in_dam"], "in đậm chưa ai đổi thì vẫn theo dòng cũ")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -285,6 +285,49 @@ def _dich_tieu_de_tieng_anh(text: str, main_model_fn) -> str:
         return goc
 
 
+# Dáng bản tin, tách theo TỪNG MẶT. Mỗi mặt có cụm nói CÓ và cụm nói KHÔNG.
+_MAT_DANG_TIN = {
+    "tom_tat": (("co tom tat", "kem tom tat", "them tom tat"),
+                ("bo tom tat", "khong tom tat", "bot tom tat",
+                 "chi tieu de", "tieu de thoi", "chi can tieu de")),
+    "in_dam": (("in dam", "to dam", "boi dam", "tô đậm"),
+               ("khong in dam", "bo in dam", "khong to dam", "khong dam")),
+    "emoji": (("co icon", "them icon", "bo sung icon", "co emoji", "them emoji",
+               "moi dau muc co icon"),
+              ("khong emoji", "bo emoji", "khong dung emoji", "emoji ruom ra",
+               "khong icon", "bo icon")),
+}
+
+
+def _dang_bay_tin() -> dict[str, bool]:
+    """Dáng bản tin suy từ lời dặn, ưu tiên dòng MỚI NHẤT.
+
+    Vì sao phải xét theo thứ tự mới→cũ: trí nhớ có thể chứa hai lời dặn NGƯỢC
+    NHAU về cùng một mặt (10:13 "không in đậm, không emoji" rồi 10:16 "bổ sung
+    icon, in đậm"). Bản đầu tôi dò bằng `any()` trên toàn bộ lời dặn gộp lại, nên
+    cụm phủ định của dòng CŨ luôn thắng — người dùng đổi ý mà bản tin không đổi.
+
+    Dòng nào KHÔNG nói gì về một mặt thì bỏ qua mặt đó, xét tiếp dòng cũ hơn.
+    Không dòng nào nói tới thì giữ mặc định (giống dáng gốc).
+    """
+    ra = {"tom_tat": True, "in_dam": True, "emoji": True}
+    con_thieu = set(ra)
+    # `_so_thich_trinh_bay()` trả theo thứ tự trong file (cũ → mới) nên đảo lại.
+    for dong in reversed(_so_thich_trinh_bay()):
+        if not con_thieu:
+            break
+        d = _bo_dau(dong)
+        for mat in list(con_thieu):
+            co, khong = _MAT_DANG_TIN[mat]
+            if any(k in d for k in khong):
+                ra[mat] = False
+                con_thieu.discard(mat)
+            elif any(k in d for k in co):
+                ra[mat] = True
+                con_thieu.discard(mat)
+    return ra
+
+
 def _neo_noi_dung(s: str, toi_da: int = 40) -> list[str]:
     """Các mẩu NEO dùng để kiểm "bản trình bày lại có mất tin không".
 
@@ -1020,22 +1063,13 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # Đo thật 01/08: nhờ model bày lại bản tin 4819 ký tự thì nó KHÔNG
                 # kịp xong trong 20 giây — lần nào cũng hết giờ rồi rơi về bản gốc,
                 # nên người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
-                _dan = _bo_dau(" ".join(_so_thich_trinh_bay()))
-                _co = lambda *ks: any(k in _dan for k in ks)   # noqa: E731
-                _kem_tt = not _co("bo tom tat", "khong tom tat", "bot tom tat",
-                                  "chi tieu de", "tieu de thoi", "chi can tieu de")
-                # In đậm / emoji cũng là thứ người dùng xin bỏ được. Mỗi lần chỉ
-                # thêm một công tắc thì lần sau lại thiếu — nên gom trọn bộ dáng
-                # của bản tin vào đây, quyết định bằng lời dặn.
-                _in_dam = not _co("khong in dam", "khong to dam", "bo in dam",
-                                  "khong dam")
-                _emoji = not _co("khong emoji", "bo emoji", "khong dung emoji",
-                                 "emoji ruom ra", "khong icon")
+                _dang = _dang_bay_tin()
                 _tin = call_mcp_tool("get_news_sections",
-                                     {"per_section": 3, "kem_tom_tat": _kem_tt,
-                                      "in_dam": _in_dam, "dung_emoji": _emoji})
-                logger.info({"event": "tintuc_dang_bay", "tom_tat": _kem_tt,
-                             "in_dam": _in_dam, "emoji": _emoji})
+                                     {"per_section": 3,
+                                      "kem_tom_tat": _dang["tom_tat"],
+                                      "in_dam": _dang["in_dam"],
+                                      "dung_emoji": _dang["emoji"]})
+                logger.info({"event": "tintuc_dang_bay", **_dang})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():
