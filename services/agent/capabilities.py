@@ -3242,15 +3242,18 @@ CAPABILITIES: dict[str, Capability] = {
             "query": {"type": "string", "description": "Câu cần tra cứu"}},
             "required": ["query"]},
         workflow=(
-            # TIN TỨC = tổng hợp GỌN, KHÔNG chia 8 đầu mục. Đo thật 31/07: ép chia
-            # đủ 8 mục × 3 tin làm bot search quá nhiều lần → vượt trần 240s một
-            # lượt → "xử lý hơi lâu" (người dùng không nhận được tin). Chủ máy cũng
-            # muốn tin TỔNG HỢP, không phải 11 khía cạnh.
-            "Khi hỏi TIN TỨC / BẢN TIN hôm nay/hôm qua: 'tin tức hôm nay' đã RÕ, "
-            "TUYỆT ĐỐI KHÔNG hỏi lại người dùng muốn dạng nào — gọi web_search NGAY "
-            "MỘT LẦN với query gọn (vd 'tin tức nổi bật Việt Nam hôm nay'), rồi tóm "
-            "tắt 5–8 tin nổi bật nhất thành gạch đầu dòng NGẮN (mỗi tin 1 câu). "
-            "KHÔNG chia nhiều đầu mục, KHÔNG gọi search nhiều lần cho từng lĩnh vực."
+            # Hỏi tin tức: KHÔNG hỏi lại dạng nào, gọi web_search NGAY một lần.
+            # GIỮ ĐÚNG chủ đề người dùng nêu — đo thật 01/08: hỏi 'tin tức bão' mà
+            # bot trả bản tin tổng hợp 8 mục lạc đề, vì query bị đổi thành chung
+            # chung. query PHẢI mang chủ đề gốc, đừng thay bằng 'tin nổi bật'.
+            "Khi hỏi TIN TỨC / BẢN TIN: TUYỆT ĐỐI KHÔNG hỏi lại người dùng muốn "
+            "dạng nào — gọi web_search NGAY MỘT LẦN.\n"
+            "• Có CHỦ ĐỀ cụ thể (bão, giá vàng, một trận đấu, một sự kiện/người/"
+            "nơi…): query = ĐÚNG chủ đề đó ('tin tức bão mới nhất'), trả 5–8 tin "
+            "LIÊN QUAN chủ đề, gạch đầu dòng ngắn, KHÔNG chia 8 mục, KHÔNG chèn "
+            "tin lạc đề.\n"
+            "• Hỏi tin CHUNG ('tin tức hôm nay', 'bản tin'): query gọn ('tin tức "
+            "nổi bật Việt Nam hôm nay'), tóm tắt theo 8 đầu mục ở Bảng chỉ đường."
         )),
     "read_webpage": Capability(
         name="read_webpage", risk=READ, handler=_h_read_webpage,
