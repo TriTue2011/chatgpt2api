@@ -60,9 +60,47 @@ class TestHaiMayTrungTen(unittest.TestCase):
         self.assertEqual(caps._tim_thiet_bi("laptop của vợ", self.DS),
                          "laptop của vợ")
 
+    def test_noi_tat_may_cua_vo_van_dung(self):
+        # 'máy của vợ' — từ 'vợ' phân biệt, không nhầm sang của tôi.
+        self.assertEqual(caps._tim_thiet_bi("máy của vợ", self.DS),
+                         "laptop của vợ")
+
     def test_laptop_tron_thi_map_mo_tra_rong(self):
         # Không đủ để phân biệt → '' → handler hỏi lại, KHÔNG đoán bừa.
         self.assertEqual(caps._tim_thiet_bi("laptop", self.DS), "")
+
+
+class TestHaiMayMayTinh(unittest.TestCase):
+    """Ca người dùng hỏi tiếp: 'máy tính của tôi' và 'máy tính của vợ'."""
+
+    DS = [_may("máy tính của tôi"), _may("máy tính của vợ")]
+
+    def test_may_tinh_cua_toi(self):
+        self.assertEqual(caps._tim_thiet_bi("máy tính của tôi", self.DS),
+                         "máy tính của tôi")
+
+    def test_may_tinh_cua_vo(self):
+        self.assertEqual(caps._tim_thiet_bi("máy tính của vợ", self.DS),
+                         "máy tính của vợ")
+
+    def test_noi_tat_may_cua_toi(self):
+        self.assertEqual(caps._tim_thiet_bi("máy của tôi", self.DS),
+                         "máy tính của tôi")
+
+    def test_may_tinh_tron_map_mo(self):
+        self.assertEqual(caps._tim_thiet_bi("máy tính", self.DS), "")
+
+
+class TestKhongTaoThe(unittest.TestCase):
+    """Khớp y hệt phải THẮNG khớp một phần: 'laptop' không nhầm sang 'laptop pro'."""
+
+    DS = [_may("laptop"), _may("laptop pro")]
+
+    def test_ten_dung_khong_bi_may_dai_hon_hut(self):
+        self.assertEqual(caps._tim_thiet_bi("laptop", self.DS), "laptop")
+
+    def test_ten_dai_ra_dung_may_dai(self):
+        self.assertEqual(caps._tim_thiet_bi("laptop pro", self.DS), "laptop pro")
 
 
 class TestUuTienMayDangNoi(unittest.TestCase):

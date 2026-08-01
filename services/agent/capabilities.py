@@ -2748,62 +2748,67 @@ def _ten_chat(s: str) -> str:
     return " ".join(_bo_dau_ascii(s).split())
 
 
-def _chuan_ten_may(s: str) -> str:
-    """Chuẩn hoá LỎNG: bỏ luôn từ sở hữu ('laptop của tôi' → 'laptop')."""
-    t = " " + _ten_chat(s) + " "
-    for tu in _TU_SO_HUU:
-        t = t.replace(" " + _bo_dau_ascii(tu) + " ", " ")
-    return " ".join(t.split())
+_TU_CHUNG = {"laptop", "may", "tinh", "pc", "computer", "cai", "thiet", "bi",
+             "cua", "chiec", "con"}
+
+
+def _tu_khoa(s: str) -> set[str]:
+    return set(_ten_chat(s).split())
+
+
+def _khop_trong_nhom(ten: str, nhom: list[dict]):
+    """Khớp trong MỘT nhóm máy. Trả: tên máy (khớp duy nhất) | '' (mập mờ, dừng
+    hỏi lại) | None (không máy nào dính, để tầng trên nới rộng)."""
+    q = _ten_chat(ten)
+    qtok = _tu_khoa(ten)
+
+    def keys(d):
+        return [k for k in (str(d.get("name") or ""), str(d.get("label") or "")) if k]
+
+    # (1) khớp y hệt cả cụm (chỉ khác dấu) — 'laptop' trúng máy tên đúng 'laptop'.
+    ex = [d for d in nhom if any(_ten_chat(k) == q for k in keys(d))]
+    if len(ex) == 1:
+        return str(ex[0].get("name") or "")
+    if len(ex) > 1:
+        return ""
+
+    # (2) chấm điểm theo TỪ CHUNG. Từ phân biệt (tôi/vợ) phá thế hoà giữa các máy
+    #     cùng tiền tố: 'máy của vợ' → 'máy tính của vợ', không nhầm sang của tôi.
+    diem = []
+    for d in nhom:
+        dtok: set[str] = set()
+        for k in keys(d):
+            dtok |= _tu_khoa(k)
+        diem.append((len(qtok & dtok), d))
+    cao = max((s for s, _ in diem), default=0)
+    if cao >= 1:
+        dan = [d for s, d in diem if s == cao]
+        if len(dan) == 1:
+            return str(dan[0].get("name") or "")
+        return ""            # hoà điểm (vd 'laptop' với 2 máy 'laptop của…') → hỏi
+    return None              # không dính từ nào
 
 
 def _tim_thiet_bi(ten: str, ds: list[dict]):
-    """Khớp `ten` với danh sách thiết bị. CHẶT trước, chỉ NỚI khi cần.
+    """Khớp tên người dùng nói với thiết bị đã khai báo.
 
-    Model hay lấy nguyên cụm người dùng nói ('laptop của tôi') làm tên, trong khi
-    máy đăng ký tên trơn ('laptop') — khớp cứng thì trượt (đo thật 01/08). Nhưng
-    nới quá tay cũng sai: hai máy 'laptop của tôi' và 'laptop của vợ' mà bỏ 'của
-    tôi' thì cả hai về 'laptop', thành mập mờ dù người dùng đã nói rõ.
+    Model hay lấy nguyên cụm ('laptop của tôi') làm tên trong khi máy đăng ký tên
+    trơn ('laptop') — khớp cứng thì trượt và báo 'chưa kết nối' dù máy đang nối
+    (đo thật 01/08). Nhưng nới quá tay cũng sai: hai máy 'laptop của tôi' và
+    'laptop của vợ' mà bỏ 'của tôi' thì thành mập mờ dù đã nói rõ.
 
-    Thứ tự: (1) khớp CHẶT y hệt cả cụm → (2) chứa nhau CHẶT → (3) khớp LỎNG (bỏ
-    sở hữu) → (4) tên chung chung + chỉ một máy đang nối. Mỗi bước ưu tiên máy
-    ĐANG NỐI, và chỉ nhận khi ra ĐÚNG MỘT máy; nhiều máy khớp → trả '' để hỏi lại.
+    Cách làm: chấm điểm theo TỪ CHUNG, ưu tiên máy ĐANG NỐI. Chỉ nhận khi ra
+    ĐÚNG MỘT máy điểm cao nhất; hoà điểm → '' để bot HỎI LẠI, không đoán bừa.
     """
     noi = [d for d in ds if d.get("connected")]
-    nt_chat = _ten_chat(ten)
-    nt_long = _chuan_ten_may(ten)
-
-    def _keys(d):
-        return [k for k in (str(d.get("name") or ""), str(d.get("label") or "")) if k]
-
-    def _duy_nhat(chon):
-        for nhom in (noi, ds):
-            trung = [d for d in nhom if chon(d)]
-            if len(trung) == 1:
-                return str(trung[0].get("name") or "")
-            if len(trung) > 1:
-                return None            # mập mờ → dừng, không nới thêm
-        return None
-
-    # (1) khớp CHẶT y hệt
-    r = _duy_nhat(lambda d: any(_ten_chat(k) == nt_chat for k in _keys(d)))
-    if r:
-        return r
-    # (2) chứa nhau CHẶT (giữ nguyên chữ) — 'laptop của tôi' vẫn khác 'của vợ'
-    r = _duy_nhat(lambda d: any(_ten_chat(k) and
-                                (_ten_chat(k) in nt_chat or nt_chat in _ten_chat(k))
-                                for k in _keys(d)))
-    if r:
-        return r
-    # (3) khớp LỎNG: bỏ từ sở hữu ('laptop của tôi' → 'laptop')
-    r = _duy_nhat(lambda d: any(_chuan_ten_may(k) and
-                                (_chuan_ten_may(k) == nt_long
-                                 or _chuan_ten_may(k) in nt_long
-                                 or nt_long in _chuan_ten_may(k))
-                                for k in _keys(d)))
-    if r:
-        return r
-    # (4) tên chung chung + đúng một máy đang nối
-    if nt_long in ("laptop", "may tinh", "may", "pc", "computer", "") and len(noi) == 1:
+    for nhom in ([n for n in noi], ds):
+        if not nhom:
+            continue
+        r = _khop_trong_nhom(ten, nhom)
+        if r is not None:
+            return r          # tên máy, hoặc '' (mập mờ — không nới thêm)
+    # Không dính từ nào (vd 'máy tính' mà máy tên 'laptop') + đúng một máy nối.
+    if _tu_khoa(ten) <= _TU_CHUNG and len(noi) == 1:
         return str(noi[0].get("name") or "")
     return ""
 
