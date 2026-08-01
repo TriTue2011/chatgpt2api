@@ -53,6 +53,16 @@ def _acct_label(account: dict[str, Any]) -> str:
 
 
 _GRELOGIN_COOLDOWN_S = 1800.0  # browser login đắt → 1 lần / account / 30 phút
+
+# Đăng nhập Google phải chạy LẦN LƯỢT trên toàn hệ thống. Nhiều tài khoản chết
+# gần nhau sẽ spawn nhiều thread recover cùng lúc; nếu để chúng cùng bấm
+# auto-login-saved thì Google thấy một chùm login tự động từ một IP máy chủ →
+# bung captcha hàng loạt. Bấm tay "Chỉ đăng nhập" không dính captcha chỉ vì nó
+# tự nhiên là từng-lần-một. Khoá này ép máy làm y hệt: mỗi thời điểm CHỈ một
+# phiên Google, cách nhau tối thiểu _GLOGIN_GAP_S.
+_glogin_serial = threading.Lock()
+_glogin_last_done = 0.0            # mốc kết thúc phiên Google gần nhất (giữ dưới _glogin_serial)
+_GLOGIN_GAP_S = 25.0              # cách nhau tối thiểu giữa 2 phiên đăng nhập Google
 # Trần thời gian 1 lượt khôi phục. Phải CHỨA ĐỦ cả thang, nếu không tầng cuối bị
 # cắt giữa đường (đo thật 30/07: trần 300s < riêng một lượt đăng nhập Google, nên
 # tầng 2-sau-đăng-nhập không bao giờ chạy):
@@ -204,7 +214,16 @@ def _freshen_google(profile: str) -> bool:
     url, api_key = _solver_cfg()
     base = url.rstrip("/")
     H = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # Chờ tới lượt: chỉ MỘT phiên đăng nhập Google trên toàn hệ thống tại một
+    # thời điểm. 6 tài khoản chết cùng lúc → 6 thread xếp hàng ở đây, không bắn
+    # login đồng thời (thứ làm Google bung captcha). Lock giữ suốt cả lượt poll
+    # nên tài khoản sau chỉ bắt đầu khi tài khoản trước đã xong.
+    global _glogin_last_done
+    _glogin_serial.acquire()
     try:
+        cho = _GLOGIN_GAP_S - (time.time() - _glogin_last_done)
+        if cho > 0:
+            time.sleep(cho)  # giãn cách như bấm tay lần lượt
         r = requests.post(f"{base}/v1/session/auto-login-saved", headers=H,
                           json={"profile": profile}, timeout=30)
         st = (r.json() or {}).get("state", "")
@@ -236,6 +255,11 @@ def _freshen_google(profile: str) -> bool:
         return False
     except Exception:
         return False
+    finally:
+        # Đóng mốc SAU khi phiên này xong để tài khoản kế tiếp tính giãn cách từ
+        # đây, rồi mới nhả lượt cho nó.
+        _glogin_last_done = time.time()
+        _glogin_serial.release()
 
 
 def trang_thai_dang_nhap_cuoi(profile: str) -> str:
