@@ -385,6 +385,11 @@ def notify_admin(text: str, category: str = "") -> None:
             if is_account_log and not bot.get("account_log_enabled", True):
                 continue
             _current.bot = bot
+            # Admin dạng CHUỖI ('-100…:975') không mang cờ per-entry được — khi
+            # entry không nêu account_update_log_enabled thì KẾ THỪA cờ bot-level
+            # (bật lên khi người dùng tick 🔄). Không kế thừa thì tick xong vẫn
+            # bị bỏ qua vì mặc định False.
+            _bot_au = bool(bot.get("account_update_log_enabled", False))
             targets: list[str] = []
             for e in admin_entries(bot):
                 if is_newchat:
@@ -394,7 +399,7 @@ def notify_admin(text: str, category: str = "") -> None:
                 else:
                     if not e.get("notify_enabled", True):
                         continue
-                    if is_account_update and not e.get("account_update_log_enabled", False):
+                    if is_account_update and not e.get("account_update_log_enabled", _bot_au):
                         continue
                     if is_account_log and not e.get("account_log_enabled", True):
                         continue

@@ -230,6 +230,10 @@ def normalize_admin_entry(x: object) -> dict[str, Any] | None:
         "ai_model": str(x.get("ai_model") or "").strip()[:128],
         "notify_enabled": bool(x.get("notify_enabled", True)),
         "account_log_enabled": bool(x.get("account_log_enabled", True)),
+        # 🔄 Log Cập nhật tài khoản (token/status định kỳ). TRƯỚC ĐÂY BỊ RỚT ở
+        # đây → notify_admin đọc admin đã chuẩn hoá luôn thấy False → bỏ qua mọi
+        # admin dù người dùng đã tick trên web. Giữ lại, default False khớp web UI.
+        "account_update_log_enabled": bool(x.get("account_update_log_enabled", False)),
         "newchat_alert_enabled": bool(x.get("newchat_alert_enabled", True)),
         "ha_fastpath": bool(x.get("ha_fastpath", True)),
         "fallback_enabled": bool(x.get("fallback_enabled", False)),
