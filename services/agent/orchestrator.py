@@ -183,6 +183,99 @@ def _ghi_so_anh(user_id: str, urls: list[str]) -> None:
         logger.warning("ghi sổ ảnh theo người lỗi: %s", exc)
 
 
+# Dấu hiệu một dòng trí nhớ đang nói về CÁCH TRÌNH BÀY câu trả lời, chứ không
+# phải một dữ kiện về người dùng.
+_TU_KHOA_SO_THICH = (
+    "trình bày", "định dạng", "bố cục", "chia mục", "chia thành các mục",
+    "gạch đầu dòng", "mỗi mục", "ngắn gọn", "súc tích", "dài dòng",
+    "không cần link", "không link", "bỏ link", "không dán link",
+    "không ảnh", "không emoji", "đừng dùng emoji", "có tóm tắt", "kèm tóm tắt",
+)
+
+
+def _bo_dau(s: str) -> str:
+    """Hạ chữ + bỏ dấu tiếng Việt, để so khớp không phụ thuộc dấu.
+
+    Người dùng gõ không dấu là chuyện thường ("chia cac muc", "tra loi ngan
+    gon"), nên bộ dò chỉ khớp chữ CÓ dấu sẽ bỏ sót đúng những lời dặn gõ nhanh.
+    """
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", str(s or "").lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).replace("đ", "d")
+
+
+_TU_KHOA_SO_THICH_KHONG_DAU = tuple(_bo_dau(k) for k in _TU_KHOA_SO_THICH)
+
+
+def _so_thich_trinh_bay(limit: int = 6) -> list[str]:
+    """Các dòng trí nhớ nói về CÁCH TRÌNH BÀY, lấy mấy dòng gần nhất."""
+    try:
+        mem = state.load_memory()
+    except Exception:
+        return []
+    ra: list[str] = []
+    for dong in (mem or "").splitlines():
+        d = dong.strip().lstrip("-•* \t")
+        if len(d) < 8:
+            continue
+        low = _bo_dau(d)
+        if any(k in low for k in _TU_KHOA_SO_THICH_KHONG_DAU):
+            ra.append(d)
+    return ra[-limit:]
+
+
+def _ap_so_thich(text: str, user_text: str, main_model_fn) -> str:
+    """Diễn đạt lại kết quả ĐƯỜNG TẮT theo sở thích trình bày đã ghi nhớ.
+
+    Vì sao cần, và vì sao ở đây: sở thích ghi nhớ được tiêm vào system prompt,
+    nên mọi lượt DO MODEL trả lời đều tôn trọng nó. Nhưng các đường tắt
+    (tin tức, lấy media, nhà thông minh) trả về TRƯỚC KHI model được gọi, nên
+    chúng bỏ qua sạch mọi thứ người dùng đã dặn. Hệ quả không chỉ ở tin tức: bất
+    kỳ yêu cầu "đổi cách phản hồi" nào cũng bị đường tắt vô hiệu hoá, và bot vẫn
+    "ghi nhớ" rồi hứa — đo thật 01/08, lượt 08:11 lưu đúng yêu cầu chia mục xong
+    lượt sau vẫn trả danh sách phẳng.
+
+    Không có sở thích nào thì trả nguyên văn — không tốn thêm một lượt gọi model.
+
+    Chốt an toàn: model diễn đạt lại có thể LÀM MẤT nội dung (bịa hoặc lược).
+    Bản mới ngắn hơn một nửa bản gốc thì coi như hỏng và dùng lại bản gốc — thà
+    trình bày chưa đúng ý hơn là mất tin.
+    """
+    goc = (text or "").strip()
+    if not goc:
+        return goc
+    st = _so_thich_trinh_bay()
+    if not st:
+        return goc
+    try:
+        model = main_model_fn("chat") or main_model_fn("burst")
+        resp = call_model(model, [
+            {"role": "system", "content": (
+                "Người dùng đã dặn TRƯỚC cách họ muốn xem câu trả lời. Hãy trình "
+                "bày lại nội dung dưới đây cho đúng ý họ.\n"
+                "TUYỆT ĐỐI KHÔNG thêm, bớt, hay sửa thông tin: không bịa tin mới, "
+                "không bỏ tin đang có, không đổi số liệu hay tên riêng. Chỉ đổi "
+                "CÁCH BÀY: thứ tự, nhóm mục, độ dài câu, gạch đầu dòng.\n"
+                "Trả về ĐÚNG nội dung đã trình bày lại, không nói gì thêm.\n\n"
+                "Người dùng đã dặn:\n" + "\n".join(f"- {x}" for x in st)
+            )},
+            {"role": "user", "content": f"Câu hỏi: {user_text}\n\nNội dung:\n{goc}"},
+        ], timeout=45, no_smart_home=True)
+        if resp.get("error"):
+            return goc
+        moi = content_of(resp).strip()
+        if len(moi) < len(goc) // 2:
+            logger.info({"event": "ap_so_thich_bo_qua", "ly_do": "ngan bat thuong",
+                         "goc": len(goc), "moi": len(moi)})
+            return goc
+        logger.info({"event": "ap_so_thich", "so_dan": len(st),
+                     "goc": len(goc), "moi": len(moi)})
+        return moi
+    except Exception as exc:
+        logger.warning({"event": "ap_so_thich_loi", "error": str(exc)[:150]})
+        return goc
+
+
 def _nhieu_anh(urls: list[str]) -> dict:
     """`{"image_urls": [...]}` khi có TỪ HAI ảnh, ngược lại `{}`.
 
@@ -818,6 +911,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _kq_ws = None
         if _kq_ws and str(_kq_ws.get("text") or "").strip():
             logger.info({"event": "agent_tat_tintuc", "loai": _loai_tin})
+            # Áp sở thích trình bày đã ghi nhớ — đường tắt không được phép bỏ
+            # qua thứ người dùng đã dặn (xem `_ap_so_thich`).
+            _kq_ws = {**_kq_ws,
+                      "text": _ap_so_thich(str(_kq_ws.get("text") or ""),
+                                           user_text, _main_model)}
             out_n = _finalize(user_id, _kq_ws)
             hist.append({"role": "assistant", "content": out_n.get("text") or ""})
             _persist_history(user_id, hist)
@@ -874,6 +972,13 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         "viết đúng °C (không viết 'độ'/'độ C'), viết % (không 'phần trăm'), "
                         "giữ km/h, kWh nếu có. Ví dụ đúng: 'khoảng 30°C, độ ẩm 79%'."
                     )},
+                    # Sở thích trình bày người dùng đã dặn — đường tắt trước đây
+                    # bỏ qua sạch, nên "trả lời ngắn gọn thôi" chẳng bao giờ có
+                    # tác dụng với câu trả lời nhà thông minh.
+                    *([{"role": "system", "content":
+                        "Người dùng đã dặn cách trình bày:\n"
+                        + "\n".join(f"- {x}" for x in _so_thich_trinh_bay())}]
+                      if _so_thich_trinh_bay() else []),
                     {"role": "user", "content": (
                         f"Tin nhắn: {user_text}\nKết quả từ hệ thống nhà: {fp_text}")},
                     # no_smart_home: chỉ nhờ diễn đạt LẠI văn bản — tắt tích hợp HA
