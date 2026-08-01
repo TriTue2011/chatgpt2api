@@ -3930,6 +3930,21 @@ def group_of(name: str) -> str:
 # liệt kê đủ, và luồng PDF (telegram_bot/zalo_bot) kiểm tra quyền theo tên nhóm.
 _FLOW_GROUPS = {"rag", "word", "summary", "tts_reply", "teacher"}
 
+# Nhóm ĐỔI CÁCH TRẢ LỜI, không phải thêm khả năng — KHÔNG BAO GIỜ được tự bật.
+#
+# `allowed_groups_for()` tự cộng nhóm mới vào các bộ lọc cũ, vì nhóm sinh sau
+# không thể coi là "người dùng đã tắt". Đúng với nhóm THÊM việc bot làm được:
+# bật oan thì tệ nhất là bot có thêm một tool không ai gọi.
+#
+# `tts_reply` khác hẳn: nó không thêm gì, nó ĐỔI dạng mọi câu trả lời từ chữ
+# sang file âm thanh, và khi gửi được giọng nói thì phần CHỮ bị bỏ hẳn.
+#
+# Đo thật 01/08, đúng hậu quả của việc tự bật: hỏi "Tin tức hôm nay" trên Zalo
+# cá nhân, lượt xử lý xong sau 1,7 giây nhưng tổng hợp giọng nói mất tới 2 phút
+# 1 giây mới gửi — trong 2 phút đó người dùng thấy bot im lặng hoàn toàn — và
+# thứ nhận được là file .wav, mất sạch danh sách tin kèm đường dẫn bài báo.
+_NHOM_KHONG_TU_BAT = {"tts_reply"}
+
 
 def all_groups() -> list[str]:
     """Danh sách nhóm chức năng đã biết (cho UI + kiểm tra cấu hình lọc)."""
@@ -4049,6 +4064,10 @@ def allowed_groups_for(thread_key: str) -> set[str] | None:
     không có trong danh sách tick = người dùng CỐ Ý tắt → giữ nguyên tắt.
     Bản ghi cũ chưa có `known` thì coi như không biết gì, và nhóm nào không nằm
     trong bản tick cũng không nằm trong `known` → được cộng thêm.
+
+    NGOẠI LỆ: nhóm trong `_NHOM_KHONG_TU_BAT` không bao giờ được cộng thêm — xem
+    ghi chú ở đó. Cộng thêm chỉ an toàn với nhóm THÊM khả năng, không an toàn với
+    nhóm ĐỔI cách bot trả lời.
     """
     try:
         from services.config import config
@@ -4065,7 +4084,9 @@ def allowed_groups_for(thread_key: str) -> set[str] | None:
         biet_truoc = set()
         if isinstance(m, dict) and isinstance(m.get("known"), list):
             biet_truoc = {str(g) for g in m["known"]}
-        moi = {g for g in all_groups() if g not in biet_truoc and g not in da_tick}
+        moi = {g for g in all_groups()
+               if g not in biet_truoc and g not in da_tick
+               and g not in _NHOM_KHONG_TU_BAT}
         return da_tick | moi
     except Exception:
         pass
