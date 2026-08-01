@@ -2991,6 +2991,93 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
                 "text": f"Em chụp được nhưng lưu ảnh lỗi 😥 ({str(exc)[:100]})."}
 
 
+_POWER_TU = {
+    "shutdown": ("shutdown", "tat may", "tat laptop", "tat pc", "tat", "poweroff",
+                 "tắt máy", "tắt laptop", "tắt nguồn", "shut down"),
+    "restart": ("restart", "reboot", "khoi dong lai", "khởi động lại", "reset"),
+    "lock": ("lock", "khoa", "khóa", "khoa man hinh", "khóa màn hình", "lock screen"),
+    "sleep": ("sleep", "ngu", "ngủ", "sleep may", "suspend"),
+    "logoff": ("logoff", "logout", "dang xuat", "đăng xuất", "log out"),
+}
+
+
+def _doc_power_action(args: dict) -> str:
+    """Đọc hành động nguồn từ args ('action') hoặc suy từ câu ('command'/'text')."""
+    a = str(args.get("action") or "").strip().lower()
+    for act, tu in _POWER_TU.items():
+        if a == act or a in tu:
+            return act
+    cau = _ten_chat(str(args.get("command") or args.get("text") or ""))
+    for act, tu in _POWER_TU.items():
+        if any(_ten_chat(t) in cau for t in tu):
+            return act
+    return ""
+
+
+def _h_device_power(args: dict, ctx: dict) -> dict:
+    """Tắt / khởi động lại / khoá / ngủ / đăng xuất một MÁY TÍNH đã cài agent.
+
+    Đi qua device agent (op 'power'), cần quyền can_power cho thiết bị VÀ agent
+    chạy kèm --allow-power. CHỈ ADMIN — tắt máy người khác là phá phiên làm việc
+    của họ."""
+    from services import device_agents as _da
+
+    if not bool((ctx or {}).get("is_admin")):
+        return {"deliver_now": True,
+                "text": "Tắt/khởi động lại máy tính chỉ chủ máy dùng được ạ."}
+
+    action = _doc_power_action(args)
+    if not action:
+        return {"deliver_now": True,
+                "text": "Anh/chị muốn tắt, khởi động lại, khoá, ngủ hay đăng xuất máy ạ?"}
+
+    ten = str(args.get("device") or "").strip()
+    ds = _da.list_devices()
+    dang_noi = [d for d in ds if d.get("connected")]
+    if not ten:
+        if len(dang_noi) == 1:
+            ten = str(dang_noi[0].get("name") or "")
+        elif not dang_noi:
+            return {"deliver_now": True,
+                    "text": "Hiện không có máy nào đang kết nối để em điều khiển ạ. "
+                            "Anh/chị kiểm tra agent trên máy đó còn chạy không nhé."}
+        else:
+            _dsach = ", ".join(str(d.get("label") or d.get("name")) for d in dang_noi)
+            return {"deliver_now": True,
+                    "text": f"Anh/chị muốn thao tác trên máy nào ạ? Đang kết nối: {_dsach}."}
+
+    # Khớp tên KHÔNG cứng: 'laptop của tôi' vẫn ra máy 'laptop'.
+    s = _da.get(ten)
+    if s is None:
+        ten_that = _tim_thiet_bi(ten, ds)
+        if ten_that:
+            ten = ten_that
+            s = _da.get(ten)
+    if s is None:
+        if not dang_noi:
+            return {"deliver_now": True,
+                    "text": f"Máy '{ten}' đang không kết nối nên em chưa làm được ạ. "
+                            "Anh/chị kiểm tra agent trên máy đó còn chạy không nhé."}
+        _dsach = ", ".join(str(d.get("label") or d.get("name")) for d in dang_noi)
+        return {"deliver_now": True,
+                "text": f"Em không rõ máy '{ten}' là máy nào ạ. Đang kết nối: {_dsach}."}
+    if not s.can_power:
+        return {"deliver_now": True,
+                "text": (f"Thiết bị '{ten}' chưa được cấp quyền nguồn (tắt/khởi động lại). "
+                         "Cần bật can_power cho thiết bị và chạy agent kèm "
+                         "--allow-power rồi em làm được ngay ạ.")}
+
+    kq = _da.call_sync(ten, "power", {"action": action})
+    if not isinstance(kq, dict) or not kq.get("ok"):
+        loi = str((kq or {}).get("error") or "không rõ lý do")
+        return {"deliver_now": True, "text": f"Em làm chưa được ạ: {loi[:200]}"}
+
+    _nhan = {"shutdown": "tắt", "restart": "khởi động lại", "lock": "khoá màn hình",
+             "sleep": "cho ngủ", "logoff": "đăng xuất"}[action]
+    ghi = " (máy sẽ mất kết nối là bình thường ạ)" if action in ("shutdown", "restart") else ""
+    return {"deliver_now": True, "text": f"Em đã {_nhan} máy '{ten}' rồi ạ{ghi}."}
+
+
 def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     """SSH into a machine the user gives credentials for and read a fixed,
     read-only diagnostic bundle (no arbitrary commands)."""
@@ -3432,6 +3519,24 @@ CAPABILITIES: dict[str, Capability] = {
             "device_index": {"type": "integer", "description": "Camera thứ mấy (mặc định 0)"},
             "monitor": {"type": "integer", "description": "Màn hình thứ mấy (0 = tất cả)"}},
             "required": ["kind"]}),
+    "device_power": Capability(
+        name="device_power", risk=CHANGE, handler=_h_device_power,
+        emoji="🔌", label="Tắt / khởi động lại / khoá máy tính đã cài agent",
+        description=("Tắt nguồn, khởi động lại, khoá màn hình, cho ngủ, hoặc đăng "
+                     "xuất một MÁY TÍNH đã cài agent. Dùng khi người dùng nói 'tắt "
+                     "laptop của tôi', 'khởi động lại máy X', 'khoá màn hình máy Y'. "
+                     "KHÁC control_home (đèn/quạt/điều hoà) — cái này là MÁY TÍNH."),
+        parameters={"type": "object", "properties": {
+            "action": {"type": "string",
+                       "enum": ["shutdown", "restart", "lock", "sleep", "logoff"],
+                       "description": "shutdown=tắt, restart=khởi động lại, lock=khoá "
+                                      "màn hình, sleep=ngủ, logoff=đăng xuất"},
+            "device": {"type": "string",
+                       "description": "Tên máy (bỏ trống nếu chỉ có 1 máy đang kết nối)"}},
+            "required": ["action"]},
+        workflow=("Đây là thao tác NGUỒN máy tính (khác điều khiển nhà). Kết quả trả "
+                  "về là xác nhận — thuật lại ngắn gọn. Máy tắt/khởi động lại thì mất "
+                  "kết nối là bình thường, đừng báo lỗi.")),
     "control_home": Capability(
         name="control_home", risk=CHANGE, handler=_h_control_home,
         emoji="🎛️", label="Điều khiển nhà (bật/tắt đèn, quạt, điều hoà…)",
@@ -4081,6 +4186,7 @@ _CAP_GROUP: dict[str, str] = {
     # Chụp webcam/màn hình máy khác — nhóm RIÊNG, không gộp vào "server", để
     # thread nào được xem máy chủ vẫn KHÔNG tự động được nhìn vào máy người khác.
     "device_capture": "device",
+    "device_power": "device",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",
