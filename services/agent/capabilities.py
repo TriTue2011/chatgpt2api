@@ -865,6 +865,13 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
         every_minutes=every_minutes,
         every_day_at=str(every_day_at) if every_day_at else None,
         at=str(at) if at else None,
+        unit=(str(args.get("unit")).strip() if args.get("unit") else None),
+        every_n=args.get("every_n"),
+        weekdays=(args.get("weekdays") if isinstance(args.get("weekdays"), list) else None),
+        day_of_month=args.get("day_of_month"),
+        month=args.get("month"),
+        skip=(args.get("skip") if isinstance(args.get("skip"), list) else None),
+        on_date=(str(args.get("on_date")).strip() if args.get("on_date") else None),
     )
     if not sched:
         return {
@@ -3347,7 +3354,13 @@ CAPABILITIES: dict[str, Capability] = {
             "Đặt nhắc hẹn, việc định kỳ, xem danh sách hoặc huỷ. "
             "op=create|list|cancel. mode=notify (chỉ nhắc chữ) | task (em tự làm rồi báo). "
             "Thời điểm: when (vd 'sau 30 phút', 'mỗi ngày 7h') hoặc in_minutes / "
-            "every_minutes / every_day_at / at. Huỷ: op=cancel + id (hoặc id=all). "
+            "every_minutes / every_day_at / at. "
+            "LỊCH LẶP LINH HOẠT (ưu tiên khi lặp phức tạp): unit=second|minute|hour|"
+            "day|week|month|year + every_n + at=HH:MM. Thứ trong tuần: weekdays "
+            "(0=T2…6=CN, vd 'T2 đến T6'→[0,1,2,3,4]). Trừ ngày nghỉ: skip=['le','tet','bu']. "
+            "Hẹn 1 ngày cụ thể: on_date='dd/mm[/yyyy]' + at. "
+            "Vd 'nhắc check-out 17h30 T2–T6 trừ lễ tết': unit=week, at='17:30', "
+            "weekdays=[0,1,2,3,4], skip=['le','tet','bu']. Huỷ: op=cancel + id (hoặc id=all). "
             "GỬI TIN HẸN GIỜ (vd 'sau 2 phút gửi nhóm A: cả nhà đi ngủ'): "
             "mode=task + send_to=người/nhóm nhận + text=NỘI DUNG gửi (+send_platform "
             "nếu nêu rõ kênh). Em tra danh bạ NGAY; nếu thiếu/mập mờ (trùng tên, "
@@ -3378,7 +3391,25 @@ CAPABILITIES: dict[str, Capability] = {
             "every_day_at": {"type": "string",
                              "description": "Lặp mỗi ngày lúc HH:MM (giờ VN)"},
             "at": {"type": "string",
-                   "description": "Mốc tuyệt đối HH:MM hoặc ISO"},
+                   "description": "Mốc tuyệt đối HH:MM hoặc ISO; cũng là GIỜ cho unit/on_date"},
+            "unit": {"type": "string",
+                     "enum": ["second", "minute", "hour", "day", "week", "month", "year"],
+                     "description": "Đơn vị lặp linh hoạt. Dùng cùng every_n. "
+                                    "Vd hằng tuần=week, hằng tháng=month, hằng năm=year."},
+            "every_n": {"type": "integer",
+                        "description": "Chu kỳ: mỗi N đơn vị (mặc định 1). Vd mỗi 2 tuần → unit=week, every_n=2"},
+            "weekdays": {"type": "array", "items": {"type": "integer"},
+                         "description": "Thứ trong tuần được bắn: 0=T2…6=CN. "
+                                        "Vd T2–T6 → [0,1,2,3,4]. Kèm at=HH:MM."},
+            "day_of_month": {"type": "integer",
+                             "description": "Ngày trong tháng (1–31) cho unit=month/year; 31 tự kẹp cuối tháng"},
+            "month": {"type": "integer",
+                      "description": "Tháng (1–12) cho unit=year"},
+            "skip": {"type": "array", "items": {"type": "string", "enum": ["le", "tet", "bu"]},
+                     "description": "Bỏ ngày nghỉ: le=lễ dương+Giỗ Tổ, tet=Tết âm, bu=nghỉ bù. "
+                                    "Vd 'trừ lễ Tết' → ['le','tet','bu']"},
+            "on_date": {"type": "string",
+                        "description": "Hẹn MỘT ngày cụ thể: 'dd/mm', 'dd/mm/yyyy' hoặc ISO. Giờ lấy từ at."},
             "send_to": {"type": "string",
                         "description": "Khi việc là GỬI TIN: tên/alias người hoặc nhóm nhận "
                                        "(text = nội dung gửi). Em resolve danh bạ ngay lúc tạo."},

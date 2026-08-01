@@ -32,9 +32,126 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from services import lich_lap
 from services.config import DATA_DIR, config
 
 logger = logging.getLogger(__name__)
+
+# Bản đồ thứ tiếng Việt → số của Python (0 = Thứ Hai … 6 = Chủ Nhật).
+_THU_VN = {
+    "t2": 0, "thứ 2": 0, "thu 2": 0, "thứ hai": 0, "thu hai": 0, "monday": 0, "mon": 0,
+    "t3": 1, "thứ 3": 1, "thu 3": 1, "thứ ba": 1, "thu ba": 1, "tuesday": 1, "tue": 1,
+    "t4": 2, "thứ 4": 2, "thu 4": 2, "thứ tư": 2, "thu tu": 2, "wednesday": 2, "wed": 2,
+    "t5": 3, "thứ 5": 3, "thu 5": 3, "thứ năm": 3, "thu nam": 3, "thursday": 3, "thu": 3,
+    "t6": 4, "thứ 6": 4, "thu 6": 4, "thứ sáu": 4, "thu sau": 4, "friday": 4, "fri": 4,
+    "t7": 5, "thứ 7": 5, "thu 7": 5, "thứ bảy": 5, "thu bay": 5, "saturday": 5, "sat": 5,
+    "cn": 6, "chủ nhật": 6, "chu nhat": 6, "sunday": 6, "sun": 6,
+}
+_SKIP_VN = {
+    "lễ": "le", "le": "le", "ngày lễ": "le", "nghỉ lễ": "le", "holiday": "le",
+    "tết": "tet", "tet": "tet", "tết âm": "tet", "lunar": "tet",
+    "bù": "bu", "bu": "bu", "nghỉ bù": "bu",
+}
+
+
+def _chuan_weekdays(weekdays: list | None) -> list[int] | None:
+    """Chuẩn hoá danh sách thứ: nhận số (0–6) hoặc chữ ('T2','thứ hai','mon')."""
+    if not weekdays:
+        return None
+    ra: list[int] = []
+    for w in weekdays:
+        if isinstance(w, bool):
+            continue
+        if isinstance(w, (int, float)):
+            v = int(w)
+            if 0 <= v <= 6:
+                ra.append(v)
+        else:
+            key = str(w).strip().lower()
+            if key in _THU_VN:
+                ra.append(_THU_VN[key])
+    # loại trùng, giữ thứ tự
+    seen: set[int] = set()
+    out = [x for x in ra if not (x in seen or seen.add(x))]
+    return out or None
+
+
+def _chuan_skip(skip: list | None) -> list[str] | None:
+    if not skip:
+        return None
+    ra: list[str] = []
+    for s in skip:
+        key = str(s).strip().lower()
+        val = _SKIP_VN.get(key, key if key in ("le", "tet", "bu") else "")
+        if val and val not in ra:
+            ra.append(val)
+    return ra or None
+
+
+def _build_rrule(unit: str | None, every_n: int | None, at_hm: str | None,
+                 weekdays: list | None, day_of_month: int | None,
+                 month: int | None, skip: list | None,
+                 now: datetime) -> dict[str, Any] | None:
+    """Dựng spec cho lich_lap từ tham số công cụ. None nếu không phải lịch lặp.
+
+    Kích hoạt khi có `unit`, hoặc khi có `weekdays` (người dùng chỉ nói thứ mà
+    không nói đơn vị → hiểu là lặp theo tuần)."""
+    wds = _chuan_weekdays(weekdays)
+    u = (unit or "").strip().lower() if unit else ""
+    if not u and wds:
+        u = "week"
+    if u not in lich_lap.UNITS:
+        return None
+    spec: dict[str, Any] = {"unit": u, "n": max(1, int(every_n or 1)),
+                            "anchor": now.date().isoformat()}
+    if u not in ("second", "minute", "hour"):
+        hm = _parse_hm(at_hm or "") if at_hm else None
+        spec["hour"], spec["minute"] = (hm or (int(now.hour), int(now.minute)))
+    if wds:
+        spec["weekdays"] = wds
+    if day_of_month and 1 <= int(day_of_month) <= 31:
+        spec["day"] = int(day_of_month)
+    if month and 1 <= int(month) <= 12:
+        spec["month"] = int(month)
+    sk = _chuan_skip(skip)
+    if sk:
+        spec["skip"] = sk
+    return spec
+
+
+def _parse_on_date(on_date: str, at_hm: str | None,
+                   now: datetime) -> dict[str, Any] | None:
+    """'20/8', '20/08/2026', '2026-08-20' + giờ tuỳ chọn → nhắc MỘT lần."""
+    s = str(on_date or "").strip()
+    d = mo = yy = None
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
+    if m:
+        yy, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.match(r"^(\d{1,2})[/\-.](\d{1,2})(?:[/\-.](\d{2,4}))?$", s)
+        if m:
+            d, mo = int(m.group(1)), int(m.group(2))
+            yy = int(m.group(3)) if m.group(3) else now.year
+            if yy < 100:
+                yy += 2000
+    if not (d and mo and yy):
+        return None
+    hm = _parse_hm(at_hm or "") if at_hm else None
+    h, mi = hm or (8, 0)
+    try:
+        dt = datetime(yy, mo, d, h, mi, tzinfo=_TZ)
+    except ValueError:
+        return None
+    if dt <= now:
+        # Đã qua: nếu người dùng KHÔNG ghi năm rõ (chỉ '20/8') thì hiểu là năm
+        # sau; nếu ghi năm rõ mà vẫn quá khứ thì từ chối (không đoán bừa).
+        if re.search(r"\d{4}", s):
+            return None
+        try:
+            dt = dt.replace(year=dt.year + 1)
+        except ValueError:
+            return None
+    return {"kind": "once", "due_at": dt.timestamp(), "next_run_at": dt.timestamp()}
 
 _DB_PATH = Path(DATA_DIR) / "agent" / "reminders.sqlite"
 try:
@@ -115,8 +232,14 @@ def _db() -> sqlite3.Connection:
             " created_at REAL,"
             " last_run_at REAL,"
             " runs INTEGER NOT NULL DEFAULT 0,"
-            " meta TEXT DEFAULT '{}')"
+            " meta TEXT DEFAULT '{}',"
+            # rrule: JSON của lịch lặp linh hoạt (kind='recur'). Xem services.lich_lap.
+            " rrule TEXT)"
         )
+        # Migration cho DB cũ (tạo trước khi có cột rrule): thêm nếu thiếu.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(reminders)").fetchall()}
+        if "rrule" not in cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN rrule TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rem_due "
             "ON reminders(enabled, next_run_at)"
@@ -147,12 +270,39 @@ def parse_when(
     every_day_at: str | None = None,
     at: str | None = None,
     now: datetime | None = None,
+    unit: str | None = None,
+    every_n: int | None = None,
+    weekdays: list | None = None,
+    day_of_month: int | None = None,
+    month: int | None = None,
+    skip: list | None = None,
+    on_date: str | None = None,
 ) -> dict[str, Any] | None:
     """Resolve schedule from structured args and/or free-text ``when``.
 
     Returns dict with keys: kind, next_run_at, and optional interval_min/hour/minute/due_at.
+    kind='recur' còn kèm 'rrule' (dict spec cho services.lich_lap).
     """
     now = now or _now_vn()
+
+    # ── LỊCH LẶP LINH HOẠT (giây→năm, thứ trong tuần, trừ lễ/tết/bù) ──────────
+    # Ưu tiên cao nhất khi model truyền `unit`: đây là đường có kiểm soát, thay
+    # cho việc đoán từ chữ. Cũng nhận `weekdays`/`skip` mà không cần `unit` (khi
+    # người dùng chỉ nói "T2–T6 lúc 17:30 trừ lễ").
+    _spec = _build_rrule(unit, every_n, every_day_at or at, weekdays,
+                         day_of_month, month, skip, now)
+    if _spec is not None:
+        nxt = lich_lap.next_run(_spec, now, _TZ)
+        if nxt:
+            return {"kind": "recur", "rrule": _spec,
+                    "hour": _spec.get("hour"), "minute": _spec.get("minute"),
+                    "next_run_at": nxt.timestamp()}
+
+    # Hẹn MỘT ngày cụ thể (dd/mm[/yyyy] [giờ]) → once.
+    if on_date:
+        _once = _parse_on_date(on_date, every_day_at or at, now)
+        if _once:
+            return _once
 
     if in_minutes is not None:
         try:
@@ -358,6 +508,46 @@ def _parse_absolute(text: str, now: datetime) -> dict[str, Any] | None:
     }
 
 
+def _load_rrule(row: dict[str, Any]) -> dict[str, Any] | None:
+    raw = row.get("rrule")
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw) if isinstance(raw, str) else raw
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+_UNIT_VN = {"second": "giây", "minute": "phút", "hour": "giờ", "day": "ngày",
+            "week": "tuần", "month": "tháng", "year": "năm"}
+_THU_NHAN = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+_SKIP_NHAN = {"le": "lễ", "tet": "Tết", "bu": "nghỉ bù"}
+
+
+def _fmt_rrule(spec: dict[str, Any]) -> str:
+    unit = str(spec.get("unit") or "day")
+    n = int(spec.get("n") or 1)
+    don_vi = _UNIT_VN.get(unit, unit)
+    if unit in ("second", "minute", "hour"):
+        return f"mỗi {n} {don_vi}" if n > 1 else f"mỗi {don_vi}"
+    gio = f"{int(spec.get('hour') or 0):02d}:{int(spec.get('minute') or 0):02d}"
+    dau = f"mỗi {n} {don_vi}" if n > 1 else f"mỗi {don_vi}"
+    wds = spec.get("weekdays")
+    if wds:
+        cac_thu = " ".join(_THU_NHAN[w] for w in wds if 0 <= w <= 6)
+        dau = f"{cac_thu} hằng tuần" if unit == "week" else cac_thu
+    elif unit == "month":
+        dau = f"ngày {int(spec.get('day') or 1)} hằng tháng"
+    elif unit == "year":
+        dau = f"{int(spec.get('day') or 1)}/{int(spec.get('month') or 1)} hằng năm"
+    kem = ""
+    sk = spec.get("skip")
+    if sk:
+        kem = " (trừ " + ", ".join(_SKIP_NHAN.get(x, x) for x in sk) + ")"
+    return f"{dau} lúc {gio}{kem}"
+
+
 def _fmt_when(row: dict[str, Any]) -> str:
     kind = row.get("kind") or "once"
     try:
@@ -366,6 +556,11 @@ def _fmt_when(row: dict[str, Any]) -> str:
         when_s = dt.strftime("%H:%M %d/%m/%Y")
     except Exception:
         when_s = "?"
+    if kind == "recur":
+        spec = _load_rrule(row)
+        if spec:
+            return f"{_fmt_rrule(spec)} (kế: {when_s})"
+        return f"lặp (kế: {when_s})"
     if kind == "interval":
         return f"mỗi {row.get('interval_min')} phút (kế: {when_s})"
     if kind == "daily":
@@ -440,18 +635,20 @@ def create(
         "last_run_at": None,
         "runs": 0,
         "meta": meta_json,
+        "rrule": json.dumps(schedule["rrule"], ensure_ascii=False)
+        if schedule.get("rrule") else None,
     }
     with _lock:
         _db().execute(
             "INSERT INTO reminders "
             "(id,user_id,channel,chat_id,mode,text,kind,due_at,interval_min,"
-            "hour,minute,next_run_at,enabled,created_at,last_run_at,runs,meta) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "hour,minute,next_run_at,enabled,created_at,last_run_at,runs,meta,rrule) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 row["id"], row["user_id"], row["channel"], row["chat_id"],
                 row["mode"], row["text"], row["kind"], row["due_at"],
                 row["interval_min"], row["hour"], row["minute"],
-                row["next_run_at"], 1, now, None, 0, meta_json,
+                row["next_run_at"], 1, now, None, 0, meta_json, row["rrule"],
             ),
         )
         _db().commit()
@@ -607,6 +804,21 @@ def _advance(row: dict[str, Any], now_ts: float) -> None:
                 "UPDATE reminders SET next_run_at=?, last_run_at=?, runs=runs+1 WHERE id=?",
                 (nxt_dt.timestamp(), now_ts, rid),
             )
+        elif kind == "recur":
+            spec = _load_rrule(row)
+            now_dt = datetime.fromtimestamp(now_ts, _TZ)
+            nxt = lich_lap.next_run(spec, now_dt, _TZ) if spec else None
+            if nxt:
+                _db().execute(
+                    "UPDATE reminders SET next_run_at=?, last_run_at=?, runs=runs+1 WHERE id=?",
+                    (nxt.timestamp(), now_ts, rid),
+                )
+            else:
+                # rrule hỏng hoặc không còn mốc kế → tắt, không treo mãi.
+                _db().execute(
+                    "UPDATE reminders SET enabled=0, last_run_at=?, runs=runs+1 WHERE id=?",
+                    (now_ts, rid),
+                )
         else:
             _db().execute(
                 "UPDATE reminders SET enabled=0, last_run_at=?, runs=runs+1 WHERE id=?",
