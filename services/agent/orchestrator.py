@@ -790,9 +790,19 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if _loai_tin and (allow is None or "web" in allow):
         _kq_ws = None
         if _loai_tin == "moi":
+            # CHIA MỤC (thể thao, kinh tế, xã hội, CNTT, giáo dục, y tế, giải
+            # trí, thế giới), 3 tin mỗi mục — đúng yêu cầu người dùng 01/08.
+            #
+            # Vì sao phải sửa ở ĐÂY: đường tắt này trả NGUYÊN VĂN kết quả MCP,
+            # model không chạm vào định dạng. Nên khi người dùng yêu cầu đổi cách
+            # trình bày, bot "ghi nhớ" được nhưng KHÔNG thực hiện được — lượt
+            # 08:11 bot lưu đúng yêu cầu rồi lượt sau vẫn trả danh sách phẳng.
+            # Ghi nhớ một điều mình không làm được thì tệ hơn là không nhớ.
             try:
                 from services.mcp_client import call_mcp_tool
-                _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
+                _tin = call_mcp_tool("get_news_sections", {"per_section": 3})
+                if not (_tin and str(_tin).strip()):
+                    _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():
                     _kq_ws = {"text": str(_tin).strip()}
                     logger.info({"event": "agent_tat_tintuc_mcp"})

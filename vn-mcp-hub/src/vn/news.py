@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import feedparser
@@ -172,7 +173,11 @@ def _fetch_feed(source: str, url: str) -> list[dict[str, Any]]:
     for entry in feed.entries:
         items.append({
             "source": source,
-            "title": entry.get("title", "").strip(),
+            # TIÊU ĐỀ cũng phải làm sạch, không riêng tóm tắt: Thanh Niên trả
+            # tiêu đề còn nguyên thực thể HTML (`dự đo&aacute;n`, `L&agrave;o`)
+            # nên người dùng đọc được đúng chuỗi rác đó giữa câu tiếng Việt.
+            # Đo thật 01/08, feed the-thao.rss.
+            "title": _lam_sach_tom_tat(entry.get("title", ""), tran=200),
             "link": entry.get("link", "").strip(),
             "summary": _lam_sach_tom_tat(
                 entry.get("summary") or entry.get("description") or ""),
@@ -268,6 +273,92 @@ def get_news(topic: str = "moi_nhat", limit: int = 10) -> str:
     for source, url in feeds:
         all_items.extend(_fetch_feed(source, url))
     return _format_items(all_items, limit)
+
+
+# Bản tin CHIA MỤC — thứ tự và nhãn đúng như người dùng yêu cầu 01/08:
+# "chia thành các mục: thể thao, kinh tế, xã hội, công nghệ thông tin, giáo dục,
+#  y tế, giải trí, thế giới. mỗi mục trình bày - Tin 1 - Tin 2 - Tin 3".
+# Nhãn ở đây CÓ DẤU (khác TOPICS vốn viết ASCII) vì đây là chữ người dùng đọc.
+MUC_BAN_TIN: list[tuple[str, str]] = [
+    ("the_thao", "⚽ Thể thao"),
+    ("kinh_doanh", "💼 Kinh tế"),
+    ("thoi_su", "🏙️ Xã hội"),
+    ("cong_nghe", "💻 Công nghệ thông tin"),
+    ("giao_duc", "🎓 Giáo dục"),
+    ("suc_khoe", "🩺 Y tế"),
+    ("giai_tri", "🎬 Giải trí"),
+    ("the_gioi", "🌍 Thế giới"),
+]
+
+_TRAN_TOM_TAT_MUC = 140     # 8 mục × 3 tin: tóm tắt dài thành bức tường chữ
+
+
+def _lay_mot_muc(topic: str, so_tin: int) -> list[dict[str, Any]]:
+    """Tin của MỘT mục, đã trộn vòng tròn theo báo."""
+    feeds = _get_feeds(topic)
+    if not feeds:
+        return []
+    items: list[dict[str, Any]] = []
+    for source, url in feeds:
+        items.extend(_fetch_feed(source, url))
+    return _tron_theo_nguon(items, so_tin)
+
+
+@mcp.tool()
+def get_news_sections(per_section: int = 3) -> str:
+    """Ban tin CHIA MUC: the thao, kinh te, xa hoi, CNTT, giao duc, y te,
+    giai tri, the gioi. Moi muc lay `per_section` tin.
+
+    Dung cho cau hoi kieu "tin tuc hom nay" khi nguoi dung muon ban tin day du
+    chia theo linh vuc, thay vi mot danh sach phang.
+
+    Args:
+        per_section: So tin moi muc (1-5, mac dinh 3).
+
+    Returns:
+        Ban tin nhieu muc, moi tin mot dong gach dau dong kem tom tat ngan.
+        Khong co link, khong co HTML.
+    """
+    so_tin = max(1, min(5, int(per_section or 3)))
+    # Lấy 8 mục SONG SONG: tuần tự mất ~9,8s (đo thật 01/08) — quá lâu cho một
+    # lượt chat. Song song thì tổng ≈ mục chậm nhất.
+    ket: dict[str, list[dict[str, Any]]] = {}
+    with ThreadPoolExecutor(max_workers=len(MUC_BAN_TIN)) as pool:
+        tuong_lai = {pool.submit(_lay_mot_muc, tid, so_tin): tid
+                     for tid, _ in MUC_BAN_TIN}
+        for f in as_completed(tuong_lai):
+            tid = tuong_lai[f]
+            try:
+                ket[tid] = f.result()
+            except Exception as exc:
+                logger.warning("muc tin %s loi: %s", tid, exc)
+                ket[tid] = []
+
+    khoi: list[str] = []
+    thieu: list[str] = []
+    for tid, nhan in MUC_BAN_TIN:
+        ds = ket.get(tid) or []
+        if not ds:
+            thieu.append(nhan)
+            continue
+        dong = [f"**{nhan}**"]
+        for it in ds:
+            tt = _lam_sach_tom_tat(str(it.get("summary") or ""),
+                                   tran=_TRAN_TOM_TAT_MUC)
+            d = f"- **{it['title']}**"
+            if tt:
+                d += f" — {tt}"
+            dong.append(d)
+        khoi.append("\n".join(dong))
+
+    if not khoi:
+        return "Không lấy được tin tức nào lúc này."
+    ra = "\n\n".join(khoi)
+    # Nói THẲNG mục nào trống, thay vì lặng lẽ bỏ bớt: thiếu mục mà không nói
+    # thì người dùng tưởng hôm nay không có tin, chứ không biết là nguồn hỏng.
+    if thieu:
+        ra += "\n\n(Chưa lấy được tin cho mục: " + ", ".join(thieu) + ")"
+    return ra
 
 
 @mcp.tool()

@@ -95,5 +95,60 @@ class TestDinhDangBanTin(unittest.TestCase):
         self.assertEqual(news._format_items([], 5), "Không có tin tức nào.")
 
 
+@unittest.skipIf(news is None, "vn-mcp-hub chưa cài phụ thuộc trong môi trường này")
+class TestBanTinChiaMuc(unittest.TestCase):
+    """Người dùng yêu cầu 01/08: chia 8 mục, mỗi mục 3 tin gạch đầu dòng.
+
+    Trước đó bot "ghi nhớ" đúng yêu cầu này nhưng KHÔNG làm được, vì đường tắt
+    tin tức trả nguyên văn kết quả MCP — model không chạm vào định dạng.
+    """
+
+    MUC_YEU_CAU = ["Thể thao", "Kinh tế", "Xã hội", "Công nghệ thông tin",
+                   "Giáo dục", "Y tế", "Giải trí", "Thế giới"]
+
+    def test_du_8_muc_dung_thu_tu(self):
+        nhan = [n for _, n in news.MUC_BAN_TIN]
+        self.assertEqual(len(nhan), 8)
+        for mong, that in zip(self.MUC_YEU_CAU, nhan):
+            self.assertIn(mong, that, f"mục '{mong}' sai chỗ hoặc thiếu")
+
+    def test_moi_muc_tro_toi_chu_de_co_that(self):
+        """Sai một mã chủ đề là mục đó im lặng rỗng mãi mãi."""
+        for tid, nhan in news.MUC_BAN_TIN:
+            self.assertIn(tid, news.TOPICS, f"mục '{nhan}' trỏ tới chủ đề lạ: {tid}")
+
+    @staticmethod
+    def _goi_duoc():
+        """`@mcp.tool()` tuỳ phiên bản fastmcp: có bản bọc thành FunctionTool
+        (hàm thật nằm ở `.fn`), có bản trả về nguyên hàm. Lấy đúng cái gọi được
+        thay vì đoán một kiểu rồi vỡ khi nâng phiên bản."""
+        t = news.get_news_sections
+        return getattr(t, "fn", t)
+
+    def _gia_lap(self, ket: dict) -> str:
+        from unittest.mock import patch
+        with patch.object(news, "_lay_mot_muc",
+                          side_effect=lambda tid, n: ket.get(tid, [])):
+            return self._goi_duoc()(3)
+
+    def test_dinh_dang_gach_dau_dong(self):
+        ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
+                             "source": "X", "link": "https://x/1"}]}
+        ra = self._gia_lap(ket)
+        self.assertIn("- **Tin A** — Tóm A.", ra)
+        self.assertNotIn("http", ra)          # không dán link
+
+    def test_noi_ro_muc_nao_trong(self):
+        """Mục rỗng phải được NÊU TÊN. Lặng lẽ bỏ bớt thì người dùng tưởng hôm
+        nay không có tin, chứ không biết là nguồn hỏng."""
+        ra = self._gia_lap({"the_thao": [{"title": "T", "summary": "",
+                                          "source": "X", "link": ""}]})
+        self.assertIn("Chưa lấy được tin cho mục:", ra)
+        self.assertIn("Kinh tế", ra)
+
+    def test_khong_lay_duoc_gi_thi_noi_that(self):
+        self.assertEqual(self._gia_lap({}), "Không lấy được tin tức nào lúc này.")
+
+
 if __name__ == "__main__":
     unittest.main()
