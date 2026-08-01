@@ -13,7 +13,9 @@ Tools:
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 from typing import Any
 
 import feedparser
@@ -134,6 +136,32 @@ TOPICS = {
 }
 
 
+_THE_HTML = re.compile(r"<[^>]+>")
+_KHOANG_TRANG = re.compile(r"\s+")
+
+
+def _lam_sach_tom_tat(raw: str, tran: int = 280) -> str:
+    """Bóc HTML khỏi phần mô tả RSS để còn lại CHỮ đọc được.
+
+    Vì sao cần: RSS báo Việt nhồi ảnh đại diện vào ô mô tả dưới dạng
+    ``<a href="…"><img src="…"></a>`` rồi mới tới câu tóm tắt. Trước đây ô này
+    được nhét NGUYÊN XI vào bản tin, nên người dùng nhận về một đống thẻ HTML
+    thay cho tóm tắt — và vì bị cắt ở 300 ký tự, riêng cái thẻ ảnh đã ăn hết chỗ
+    nên câu tóm tắt thật KHÔNG BAO GIỜ xuất hiện.
+
+    Đo thật 01/08 (VnExpress, tin-moi-nhat.rss): cả 3 tin đầu đều mở đầu bằng
+    ``<a href="https://vnexpress.net/…"><img src="https://i1-vnexpress…"``.
+    Người dùng phản hồi đúng hiện tượng đó: "trình bày xấu, không có tóm tắt".
+    """
+    s = html.unescape(_THE_HTML.sub(" ", raw or ""))
+    s = _KHOANG_TRANG.sub(" ", s).strip()
+    if len(s) <= tran:
+        return s
+    # Cắt ở khoảng trắng gần nhất để không đứt giữa từ.
+    cat = s[:tran].rsplit(" ", 1)[0]
+    return (cat or s[:tran]).rstrip(" ,;:-") + "…"
+
+
 def _fetch_feed(source: str, url: str) -> list[dict[str, Any]]:
     try:
         feed = feedparser.parse(url)
@@ -146,7 +174,8 @@ def _fetch_feed(source: str, url: str) -> list[dict[str, Any]]:
             "source": source,
             "title": entry.get("title", "").strip(),
             "link": entry.get("link", "").strip(),
-            "summary": (entry.get("summary") or entry.get("description") or "").strip()[:300],
+            "summary": _lam_sach_tom_tat(
+                entry.get("summary") or entry.get("description") or ""),
             "published": entry.get("published", "") or entry.get("updated", ""),
         })
     return items
@@ -185,13 +214,21 @@ def _format_items(items: list[dict[str, Any]], limit: int) -> str:
     items = _tron_theo_nguon(items, limit)
     if not items:
         return "Không có tin tức nào."
+    # KHÔNG dán link vào bản tin đọc trên chat: một URL trần dài hơn cả câu tóm
+    # tắt, và kênh chat không rút gọn nó. `link` vẫn còn trong dữ liệu cho
+    # search_news và các nơi cần mở bài. Người dùng nói thẳng 01/08:
+    # "trình bày xấu, không có tóm tắt, tôi không cần link".
     lines = []
     for i, it in enumerate(items, 1):
-        lines.append(
-            f"{i}. **{it['title']}** — _{it['source']}_\n"
-            f"   {it['summary']}\n"
-            f"   {it['link']}"
-        )
+        tt = str(it.get("summary") or "").strip()
+        # Tên báo để CHỮ TRƠN, không bọc `_..._`. Bộ chuyển markdown→Zalo chỉ
+        # hiểu `**đậm**`; `_nghiêng_` đi qua nguyên xi nên người dùng thấy đúng
+        # hai dấu gạch dưới quanh tên báo (đo thật 01/08:
+        # markdown_to_zalo_message giữ lại '_VnExpress_').
+        khoi = f"{i}. **{it['title']}** · {it['source']}"
+        if tt:
+            khoi += f"\n   {tt}"
+        lines.append(khoi)
     return "\n\n".join(lines)
 
 
