@@ -672,6 +672,10 @@ def _normalize_zalo_personal_account_admins(value: object) -> dict[str, dict]:
             "fallback_channel": str(v.get("fallback_channel") or "").strip(),
             "fallback_bot_name": str(v.get("fallback_bot_name") or "").strip()[:64],
             "fallback_thread": str(v.get("fallback_thread") or "").strip(),
+            # Màu tô đậm RIÊNG cho tài khoản này (red|orange|yellow|green|off).
+            # Phải liệt kê Ở ĐÂY: normalizer dựng lại dict, key nào không nêu sẽ
+            # bị XOÁ lúc lưu — đó là lý do ô màu 'lưu xong biến mất' (đo 01/08).
+            "markdown_color": str(v.get("markdown_color") or "").strip().lower()[:16],
         }
     return out
 

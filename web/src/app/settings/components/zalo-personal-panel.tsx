@@ -260,7 +260,19 @@ function AccountsTab({ status, refresh, showToast }:
 type ZpAccCfg = {
   enabled?: boolean; fallback_enabled?: boolean;
   fallback_channel?: string; fallback_bot_name?: string; fallback_thread?: string;
+  /** Màu tô đậm khi trả lời (Zalo hỗ trợ): red|orange|yellow|green|off. Mỗi tài
+   *  khoản độc lập — trống = cam mặc định. Backend đọc ở resolve_zalo_bot_color. */
+  markdown_color?: string;
 };
+
+// Zalo chỉ hỗ trợ 4 màu tô đậm + tắt màu (xem ZALO_BOT_MD_COLORS phía backend).
+const ZP_COLORS: { value: string; label: string; sw: string }[] = [
+  { value: "orange", label: "Cam", sw: "#f97316" },
+  { value: "red", label: "Đỏ", sw: "#ef4444" },
+  { value: "yellow", label: "Vàng", sw: "#eab308" },
+  { value: "green", label: "Xanh lá", sw: "#22c55e" },
+  { value: "off", label: "Không màu", sw: "transparent" },
+];
 
 function ChannelTab({ status, showToast }:
   { status: Status | null; showToast: (m: string, ok?: boolean) => void }) {
@@ -355,6 +367,31 @@ function ChannelTab({ status, showToast }:
                   </div>
                   {isOpen && (
                     <div className="mt-2 space-y-2 border-t border-[var(--border)] pt-2">
+                      <div>
+                        <div className="mb-1 text-[11px] font-medium">🎨 Màu tô đậm khi trả lời</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ZP_COLORS.map(c => {
+                            const cur = (e.markdown_color || "orange").toLowerCase();
+                            const on = cur === c.value
+                              || (c.value === "off" && ["off", "none", "default", ""].includes(cur));
+                            return (
+                              <button key={c.value} type="button"
+                                onClick={() => patchAcc(a.ownId, { markdown_color: c.value })}
+                                className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] ${
+                                  on ? "border-[var(--primary)] ring-1 ring-[var(--primary)]"
+                                     : "border-[var(--border)]"}`}
+                                title={c.label}>
+                                <span className="inline-block size-3 rounded-full border border-[var(--border)]"
+                                  style={{ background: c.sw }} />
+                                {c.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
+                          Mỗi tài khoản một màu riêng. Zalo chỉ tô được 4 màu này; “Không màu” = chữ thường.
+                        </p>
+                      </div>
                       <label className="flex cursor-pointer select-none items-center gap-2 text-xs">
                         <input type="checkbox" checked={Boolean(e.fallback_enabled)}
                           onChange={ev => patchAcc(a.ownId, { fallback_enabled: ev.target.checked })} />
