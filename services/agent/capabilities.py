@@ -2731,6 +2731,83 @@ _REMOTE_CMDS = [
 ]
 
 
+_TU_SO_HUU = ("của tôi", "của anh", "của mình", "của em", "của bạn", "của chị",
+              "cua toi", "cua anh", "cua minh", "cua em", "cua ban", "cua chi",
+              "của tao", "cua tao", "nhà tôi", "nha toi", "my", "cái")
+
+
+def _bo_dau_ascii(s: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(s or "").lower())
+    return "".join(c for c in t if not unicodedata.combining(c)).replace("đ", "d")
+
+
+def _ten_chat(s: str) -> str:
+    """Chuẩn hoá GIỮ NGUYÊN CHỮ (chỉ hạ chữ + bỏ dấu). Dùng phân biệt các máy
+    có tên gần giống ('laptop của tôi' vs 'laptop của vợ')."""
+    return " ".join(_bo_dau_ascii(s).split())
+
+
+def _chuan_ten_may(s: str) -> str:
+    """Chuẩn hoá LỎNG: bỏ luôn từ sở hữu ('laptop của tôi' → 'laptop')."""
+    t = " " + _ten_chat(s) + " "
+    for tu in _TU_SO_HUU:
+        t = t.replace(" " + _bo_dau_ascii(tu) + " ", " ")
+    return " ".join(t.split())
+
+
+def _tim_thiet_bi(ten: str, ds: list[dict]):
+    """Khớp `ten` với danh sách thiết bị. CHẶT trước, chỉ NỚI khi cần.
+
+    Model hay lấy nguyên cụm người dùng nói ('laptop của tôi') làm tên, trong khi
+    máy đăng ký tên trơn ('laptop') — khớp cứng thì trượt (đo thật 01/08). Nhưng
+    nới quá tay cũng sai: hai máy 'laptop của tôi' và 'laptop của vợ' mà bỏ 'của
+    tôi' thì cả hai về 'laptop', thành mập mờ dù người dùng đã nói rõ.
+
+    Thứ tự: (1) khớp CHẶT y hệt cả cụm → (2) chứa nhau CHẶT → (3) khớp LỎNG (bỏ
+    sở hữu) → (4) tên chung chung + chỉ một máy đang nối. Mỗi bước ưu tiên máy
+    ĐANG NỐI, và chỉ nhận khi ra ĐÚNG MỘT máy; nhiều máy khớp → trả '' để hỏi lại.
+    """
+    noi = [d for d in ds if d.get("connected")]
+    nt_chat = _ten_chat(ten)
+    nt_long = _chuan_ten_may(ten)
+
+    def _keys(d):
+        return [k for k in (str(d.get("name") or ""), str(d.get("label") or "")) if k]
+
+    def _duy_nhat(chon):
+        for nhom in (noi, ds):
+            trung = [d for d in nhom if chon(d)]
+            if len(trung) == 1:
+                return str(trung[0].get("name") or "")
+            if len(trung) > 1:
+                return None            # mập mờ → dừng, không nới thêm
+        return None
+
+    # (1) khớp CHẶT y hệt
+    r = _duy_nhat(lambda d: any(_ten_chat(k) == nt_chat for k in _keys(d)))
+    if r:
+        return r
+    # (2) chứa nhau CHẶT (giữ nguyên chữ) — 'laptop của tôi' vẫn khác 'của vợ'
+    r = _duy_nhat(lambda d: any(_ten_chat(k) and
+                                (_ten_chat(k) in nt_chat or nt_chat in _ten_chat(k))
+                                for k in _keys(d)))
+    if r:
+        return r
+    # (3) khớp LỎNG: bỏ từ sở hữu ('laptop của tôi' → 'laptop')
+    r = _duy_nhat(lambda d: any(_chuan_ten_may(k) and
+                                (_chuan_ten_may(k) == nt_long
+                                 or _chuan_ten_may(k) in nt_long
+                                 or nt_long in _chuan_ten_may(k))
+                                for k in _keys(d)))
+    if r:
+        return r
+    # (4) tên chung chung + đúng một máy đang nối
+    if nt_long in ("laptop", "may tinh", "may", "pc", "computer", "") and len(noi) == 1:
+        return str(noi[0].get("name") or "")
+    return ""
+
+
 def _h_device_capture(args: dict, ctx: dict) -> dict:
     """Chụp WEBCAM hoặc ẢNH MÀN HÌNH của một thiết bị đã cài agent.
 
@@ -2775,10 +2852,21 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
             return {"deliver_now": True,
                     "text": f"Anh/chị muốn chụp trên máy nào ạ? Đang kết nối: {_dsach}."}
 
+    # Khớp tên KHÔNG cứng: 'laptop của tôi' vẫn ra máy 'laptop'.
     s = _da.get(ten)
     if s is None:
+        ten_that = _tim_thiet_bi(ten, ds)
+        if ten_that:
+            ten = ten_that
+            s = _da.get(ten)
+    if s is None:
+        if not dang_noi:
+            return {"deliver_now": True,
+                    "text": f"Máy '{ten}' đang không kết nối nên em chưa chụp được ạ. "
+                            "Anh/chị kiểm tra agent trên máy đó còn chạy không nhé."}
+        _dsach = ", ".join(str(d.get("label") or d.get("name")) for d in dang_noi)
         return {"deliver_now": True,
-                "text": f"Thiết bị '{ten}' đang không kết nối nên em chưa chụp được ạ."}
+                "text": f"Em không rõ máy '{ten}' là máy nào ạ. Đang kết nối: {_dsach}."}
     if not s.can_capture:
         return {"deliver_now": True,
                 "text": (f"Thiết bị '{ten}' chưa được cấp quyền chụp webcam/màn hình. "
