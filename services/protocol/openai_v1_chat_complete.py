@@ -2036,6 +2036,12 @@ def _ha_local_weather(
     fd = _fold_diacritics(str(_extract_last_user_text(messages) or "")).replace("đ", "d")
     if not any(k in fd for k in _WEATHER_KW):
         return None
+    # Ý TẠO ẢNH/VIDEO thì KHÔNG phải hỏi thời tiết, dù câu có chữ 'mưa/ngoài
+    # trời' (câu tả cảnh). 'vẽ cảnh trời mưa' từng bị bắt làm hỏi thời tiết.
+    if any(k in fd for k in ("ve ", "ve cho", "ve mot", "ve buc", "ve canh",
+                             "tao anh", "tao hinh", "tao buc", "tao video",
+                             "tao clip", "lam anh", "lam video", "generate")):
+        return None
 
     states = get_states(use_cache=True) or []
     exposed = get_exposed_entity_ids(use_cache=True) or set()
@@ -2070,6 +2076,13 @@ def _ha_local_weather(
             loc_words.update(lf.split())
         leftover = set(t for t in fd.split()
                        if t.isalpha() and len(t) >= 2 and t not in _WEATHER_STOP and t not in loc_words)
+        # Một TÊN ĐỊA DANH chỉ vài từ ('da nang', 'hai phong'). Câu còn sót NHIỀU
+        # từ nội dung là câu TẢ CẢNH có chữ thời tiết ('ngoài trời đang mưa'),
+        # KHÔNG phải hỏi thời tiết → nhả cho model. Đo thật 01/08: 'một chú mèo
+        # mướp nằm cạnh cửa sổ, ngoài trời đang mưa' bị coi là hỏi thời tiết cho
+        # địa danh 'mèo mướp…' rồi báo 'chưa lấy được thời tiết'.
+        if len(leftover) > 4:
+            return None
         if leftover:
             # Names another VN place → fetch its weather via the geocoding MCP
             # (Open-Meteo), so ANY province/city is covered without pre-adding it
