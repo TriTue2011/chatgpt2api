@@ -1020,12 +1020,22 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # Đo thật 01/08: nhờ model bày lại bản tin 4819 ký tự thì nó KHÔNG
                 # kịp xong trong 20 giây — lần nào cũng hết giờ rồi rơi về bản gốc,
                 # nên người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
-                _kem_tt = not any(
-                    k in _bo_dau(" ".join(_so_thich_trinh_bay()))
-                    for k in ("bo tom tat", "khong tom tat", "bot tom tat",
-                              "chi tieu de", "tieu de thoi", "chi can tieu de"))
+                _dan = _bo_dau(" ".join(_so_thich_trinh_bay()))
+                _co = lambda *ks: any(k in _dan for k in ks)   # noqa: E731
+                _kem_tt = not _co("bo tom tat", "khong tom tat", "bot tom tat",
+                                  "chi tieu de", "tieu de thoi", "chi can tieu de")
+                # In đậm / emoji cũng là thứ người dùng xin bỏ được. Mỗi lần chỉ
+                # thêm một công tắc thì lần sau lại thiếu — nên gom trọn bộ dáng
+                # của bản tin vào đây, quyết định bằng lời dặn.
+                _in_dam = not _co("khong in dam", "khong to dam", "bo in dam",
+                                  "khong dam")
+                _emoji = not _co("khong emoji", "bo emoji", "khong dung emoji",
+                                 "emoji ruom ra", "khong icon")
                 _tin = call_mcp_tool("get_news_sections",
-                                     {"per_section": 3, "kem_tom_tat": _kem_tt})
+                                     {"per_section": 3, "kem_tom_tat": _kem_tt,
+                                      "in_dam": _in_dam, "dung_emoji": _emoji})
+                logger.info({"event": "tintuc_dang_bay", "tom_tat": _kem_tt,
+                             "in_dam": _in_dam, "emoji": _emoji})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():

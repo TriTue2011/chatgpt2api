@@ -107,15 +107,15 @@ class TestBanTinChiaMuc(unittest.TestCase):
                    "Giáo dục", "Y tế", "Giải trí", "Thế giới"]
 
     def test_du_8_muc_dung_thu_tu(self):
-        nhan = [n for _, n in news.MUC_BAN_TIN]
+        nhan = [t for _, _, t in news.MUC_BAN_TIN]
         self.assertEqual(len(nhan), 8)
         for mong, that in zip(self.MUC_YEU_CAU, nhan):
             self.assertIn(mong, that, f"mục '{mong}' sai chỗ hoặc thiếu")
 
     def test_moi_muc_tro_toi_chu_de_co_that(self):
         """Sai một mã chủ đề là mục đó im lặng rỗng mãi mãi."""
-        for tid, nhan in news.MUC_BAN_TIN:
-            self.assertIn(tid, news.TOPICS, f"mục '{nhan}' trỏ tới chủ đề lạ: {tid}")
+        for tid, _emo, ten in news.MUC_BAN_TIN:
+            self.assertIn(tid, news.TOPICS, f"mục '{ten}' trỏ tới chủ đề lạ: {tid}")
 
     @staticmethod
     def _goi_duoc():
@@ -167,6 +167,32 @@ class TestBanTinChiaMuc(unittest.TestCase):
         self.assertIn("Tóm tắt A.", co)
         self.assertNotIn("Tóm tắt A.", khong)
         self.assertIn("Tin A", khong, "bỏ tóm tắt không được bỏ luôn tiêu đề")
+
+    def test_bo_in_dam_va_emoji(self):
+        """Người dùng nói "trình bày xấu quá" và lời dặn lưu lại là "không in
+        đậm/không emoji rườm rà". Trước đó bản tin vẫn đậm và vẫn emoji — lời dặn
+        lưu được mà không ai thực hiện."""
+        from unittest.mock import patch
+        ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
+                             "source": "X", "link": ""}]}
+        with patch.object(news, "_lay_mot_muc",
+                          side_effect=lambda tid, n: ket.get(tid, [])):
+            gon = self._goi_duoc()(3, False, False, False)
+        self.assertNotIn("**", gon)
+        self.assertNotIn("⚽", gon)
+        self.assertIn("Thể thao", gon)
+        self.assertIn("- Tin A", gon)
+
+    def test_mac_dinh_van_dam_va_emoji(self):
+        """Không truyền gì thì giữ dáng cũ — không đổi ngầm."""
+        from unittest.mock import patch
+        ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
+                             "source": "X", "link": ""}]}
+        with patch.object(news, "_lay_mot_muc",
+                          side_effect=lambda tid, n: ket.get(tid, [])):
+            ra = self._goi_duoc()(3)
+        self.assertIn("**", ra)
+        self.assertIn("⚽", ra)
 
     def test_mac_dinh_van_co_tom_tat(self):
         """Không truyền gì thì giữ hành vi cũ — không đổi ngầm."""

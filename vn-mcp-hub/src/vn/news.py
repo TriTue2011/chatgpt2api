@@ -279,15 +279,18 @@ def get_news(topic: str = "moi_nhat", limit: int = 10) -> str:
 # "chia thành các mục: thể thao, kinh tế, xã hội, công nghệ thông tin, giáo dục,
 #  y tế, giải trí, thế giới. mỗi mục trình bày - Tin 1 - Tin 2 - Tin 3".
 # Nhãn ở đây CÓ DẤU (khác TOPICS vốn viết ASCII) vì đây là chữ người dùng đọc.
-MUC_BAN_TIN: list[tuple[str, str]] = [
-    ("the_thao", "⚽ Thể thao"),
-    ("kinh_doanh", "💼 Kinh tế"),
-    ("thoi_su", "🏙️ Xã hội"),
-    ("cong_nghe", "💻 Công nghệ thông tin"),
-    ("giao_duc", "🎓 Giáo dục"),
-    ("suc_khoe", "🩺 Y tế"),
-    ("giai_tri", "🎬 Giải trí"),
-    ("the_gioi", "🌍 Thế giới"),
+# (ma_chu_de, emoji, ten_thuan_chu). Emoji tách riêng để BỎ ĐƯỢC khi người dùng
+# xin bản gọn — người dùng nói thẳng 01/08: "trình bày xấu quá" và lời dặn lưu
+# lại là "không in đậm/không emoji rườm rà".
+MUC_BAN_TIN: list[tuple[str, str, str]] = [
+    ("the_thao", "⚽", "Thể thao"),
+    ("kinh_doanh", "💼", "Kinh tế"),
+    ("thoi_su", "🏙️", "Xã hội"),
+    ("cong_nghe", "💻", "Công nghệ thông tin"),
+    ("giao_duc", "🎓", "Giáo dục"),
+    ("suc_khoe", "🩺", "Y tế"),
+    ("giai_tri", "🎬", "Giải trí"),
+    ("the_gioi", "🌍", "Thế giới"),
 ]
 
 _TRAN_TOM_TAT_MUC = 140     # 8 mục × 3 tin: tóm tắt dài thành bức tường chữ
@@ -305,7 +308,8 @@ def _lay_mot_muc(topic: str, so_tin: int) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
-def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True) -> str:
+def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
+                      in_dam: bool = True, dung_emoji: bool = True) -> str:
     """Ban tin CHIA MUC: the thao, kinh te, xa hoi, CNTT, giao duc, y te,
     giai tri, the gioi. Moi muc lay `per_section` tin.
 
@@ -316,6 +320,9 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True) -> str:
         per_section: So tin moi muc (1-5, mac dinh 3).
         kem_tom_tat: True (mac dinh) = moi tin kem mot cau tom tat.
                      False = CHI tieu de, dung khi nguoi dung xin bo tom tat.
+        in_dam: True (mac dinh) = boc ten muc va tieu de trong **dam**.
+                False = chu tron, khi nguoi dung xin ban gon.
+        dung_emoji: True (mac dinh) = ten muc co emoji dan dau.
 
     Returns:
         Ban tin nhieu muc, moi tin mot dong gach dau dong kem tom tat ngan.
@@ -327,7 +334,7 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True) -> str:
     ket: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=len(MUC_BAN_TIN)) as pool:
         tuong_lai = {pool.submit(_lay_mot_muc, tid, so_tin): tid
-                     for tid, _ in MUC_BAN_TIN}
+                     for tid, _, _ in MUC_BAN_TIN}
         for f in as_completed(tuong_lai):
             tid = tuong_lai[f]
             try:
@@ -338,14 +345,15 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True) -> str:
 
     khoi: list[str] = []
     thieu: list[str] = []
-    for tid, nhan in MUC_BAN_TIN:
+    for tid, emo, ten in MUC_BAN_TIN:
+        nhan = f"{emo} {ten}" if dung_emoji else ten
         ds = ket.get(tid) or []
         if not ds:
-            thieu.append(nhan)
+            thieu.append(ten)
             continue
-        dong = [f"**{nhan}**"]
+        dong = [f"**{nhan}**" if in_dam else nhan]
         for it in ds:
-            d = f"- **{it['title']}**"
+            d = f"- **{it['title']}**" if in_dam else f"- {it['title']}"
             # Bỏ tóm tắt phải làm ở ĐÂY, bằng code. Trước đây việc này được nhờ
             # model bày lại: đo thật 01/08, gửi bản tin 4819 ký tự cho model thì
             # nó KHÔNG kịp xong trong 20 giây, lần nào cũng hết giờ rồi rơi về
