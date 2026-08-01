@@ -57,7 +57,16 @@
       "WebSearch",
       "Read(*)",
       "Glob(*)",
-      "Grep(*)"
+      "Grep(*)",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \" *)",
+      "Bash(ssh root@172.16.10.38 'docker ps --format \"{{.Names}} {{.Status}}\"')",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"grep -rl mention /app/zalo-server/node_modules/zca-js/dist 2>/dev/null | head -3; echo ---; grep -rihn \\\\\"mention\\\\\" /app/zalo-server/node_modules/zca-js/dist 2>/dev/null | grep -iE \\\\\"pos|uid|len|interface Mention|type Mention|-1|all\\\\\" | head -15\"')",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"grep -n \\\\\"mention\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs | head; echo ===TYPE===; sed -n \\\\\"48,80p\\\\\" \\\\$\\(grep -rl \\\\\"export type Mention\\\\\" /app/zalo-server/node_modules/zca-js/dist 2>/dev/null | head -1\\)\"')",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"sed -n \\\\\"120,200p\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs\"')",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"grep -n \\\\\"function sendMessage\\\\|content ==\\\\|typeof content\\\\|handleMessage\\(content\\\\|handleMessage\\(msg\\\\|= content\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs | head -12\"')",
+      "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"sed -n \\\\\"421,445p\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs\"')",
+      "Bash(ssh root@172.16.10.38 \"docker exec -i c2a tee /app/services/zalo_personal.py > /dev/null\")",
+      "Bash(ssh root@172.16.10.38 'docker exec -w /app -e PYTHONPATH=/app c2a /app/.venv/bin/python -c \" *)"
     ]
   }
 }

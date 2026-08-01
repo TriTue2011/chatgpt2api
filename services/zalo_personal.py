@@ -666,12 +666,19 @@ def _is_admin_thread(account_id: str, thread_id: str) -> bool:
     return tid in _admin_thread_ids_for_account(account_id)
 
 
+_NHAN_ALL = "@All"      # Zalo hiển thị tag cả nhóm là '@All' (ảnh người dùng 01/08)
+
+
 def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "",
-                 *, rich: bool = True) -> dict:
+                 *, rich: bool = True, mention_all: bool = False) -> dict:
     """Gửi text (tự cắt khúc ~2000). Styles RTF zca-js (giống Zalo Bot: đậm+màu+cỡ).
 
     thread_type: 0=user, 1=group.
     rich=True: emphasis + markdown_color/size (per admin_entries acc nếu match).
+    mention_all=True: tag CẢ NHÓM. Chèn '@All ' đầu tin rồi gắn mention
+        {pos:0, uid:'-1', len:4} — uid '-1' là mã Zalo hiểu là 'nhắc mọi người'
+        (đã xác minh trong zca-js: type = uid=='-1' ? 1 : 0). Chỉ áp cho NHÓM
+        (thread_type=1) và chỉ khúc ĐẦU; chat 1-1 thì bỏ qua, gửi chữ thường.
     """
     acc = _account_for_send(account)
     if not acc:
@@ -724,6 +731,9 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         md_on = rich
         markdown_to_zalo_message = None  # type: ignore
 
+    # Tag cả nhóm CHỈ ở khúc đầu, và chỉ khi là NHÓM. Chat 1-1 thì Zalo bỏ
+    # mention nên không chèn (khỏi lòi chữ '@All' vô nghĩa vào tin riêng).
+    con_tag = bool(mention_all) and int(thread_type or 0) == 1
     for ch in chunks[:_MAX_CHUNKS]:
         msg_obj: dict = {"msg": ch, "ttl": 0, "quote": None}
         if md_on and markdown_to_zalo_message is not None:
@@ -735,6 +745,16 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                     msg_obj["styles"] = styles
             except Exception as exc:
                 logger.warning("zalo markdown convert fail: %s", exc)
+        if con_tag:
+            # Chèn '@All ' đầu tin. Vùng đậm lưu vị trí theo JS/UTF-16 (khoá
+            # 'start'); '@All ' là 5 ký tự ASCII = 5 đơn vị JS nên DỜI mọi style
+            # đi 5, không thì chữ đậm tô lệch. mention len=4 ('@All'), pos=0.
+            _tien = _NHAN_ALL + " "
+            msg_obj["msg"] = _tien + str(msg_obj.get("msg") or "")
+            for s in (msg_obj.get("styles") or []):
+                s["start"] = int(s.get("start") or 0) + len(_tien)
+            msg_obj["mentions"] = [{"pos": 0, "uid": "-1", "len": len(_NHAN_ALL)}]
+            con_tag = False
         last = _request("POST", "/api/sendMessageByAccount", {
             "message": msg_obj,
             "threadId": str(thread_id),
@@ -750,6 +770,8 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                 # chối, hai lệnh gửi cách nhau 1 giây, và người dùng nhắn lại
                 # "Trình bày xấu quá, bỏ ** đi".
                 plain = {"msg": msg_obj.get("msg") or ch, "ttl": 0, "quote": None}
+                if msg_obj.get("mentions"):
+                    plain["mentions"] = msg_obj["mentions"]   # '@All' đã ở trong msg
                 last = _request("POST", "/api/sendMessageByAccount", {
                     "message": plain,
                     "threadId": str(thread_id),

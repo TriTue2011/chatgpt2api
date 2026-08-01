@@ -1719,7 +1719,8 @@ def _fetch_media_bytes(url: str) -> bytes | None:
 
 
 def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None,
-                      audio_path: str = "", image_url: str = "") -> tuple[bool, str]:
+                      audio_path: str = "", image_url: str = "",
+                      mention_all: bool = False) -> tuple[bool, str]:
     """Gửi 1 tin tới 1 contact đã resolve. Trả (ok, mô tả kết quả).
 
     Media tuỳ chọn (ưu tiên thoại → ảnh → chữ). Mỗi kênh nhận kiểu khác nhau:
@@ -1796,7 +1797,9 @@ def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None
             if image_url:
                 ok = zp._send_photo_robust(chat, image_url, cap[:200], ttype, account=bid)
                 return (ok, f"«{title}»" if ok else f"«{title}» gửi ảnh lỗi")
-            r = zp.send_message(chat, message, ttype, account=bid)
+            # Tag @all chỉ có nghĩa với NHÓM Zalo cá nhân.
+            r = zp.send_message(chat, message, ttype, account=bid,
+                                mention_all=bool(mention_all) and is_group)
             return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
                     else f"«{title}» lỗi: {r.get('error') or r}")
     except Exception as exc:
@@ -1902,6 +1905,10 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
                 return {"text": f"Em tạo file âm thanh lỗi: {str(exc)[:140]}"}
         elif img_url:
             media_kw = {"image_url": img_url}
+        # Tag @all: chỉ Zalo cá nhân + nhóm mới thực sự tag (kênh/loại khác bỏ qua
+        # ở _send_one_contact). Truyền cùng media_kw để tới cả hai chỗ gửi.
+        if bool(args.get("mention_all") or args.get("tag_all")):
+            media_kw["mention_all"] = True
 
     # "admin"/"tôi"/"mình" → gửi cho chính admin của kênh đang dùng
     if re.fullmatch(r"(admin|quản trị|quan tri|tôi|toi|mình|minh|chính chủ|chinh chu)",
@@ -3665,6 +3672,8 @@ CAPABILITIES: dict[str, Capability] = {
             "(vd 'gửi âm thanh xin chào vào nhóm Docker bằng zalo cá nhân' → "
             "to='Docker', message='xin chào', platform='zalop', voice=true). "
             "GỬI ẢNH: image_url=link/đường dẫn ảnh, message=chú thích. "
+            "TAG CẢ NHÓM: 'tag cả nhóm', 'nhắc mọi người', 'gọi cả nhà' → mention_all=true "
+            "(chỉ tác dụng với NHÓM Zalo cá nhân). "
             "Chỉ dùng send_voice_message khi gửi âm thanh vào CHÍNH chat đang nói."
         ),
         workflow=(
@@ -3683,7 +3692,8 @@ CAPABILITIES: dict[str, Capability] = {
             "via_bot": {"type": "string"},
             "platform": {"type": "string", "description": "CHỈ TRUYỀN NẾU người dùng NÊU RÕ kênh trong câu ('cá nhân' -> 'zalop', 'bot' -> 'zalo', 'telegram' -> 'tg'). BỎ TRỐNG NẾU người dùng chưa nêu rõ kênh!"},
             "voice": {"type": "boolean", "description": "true = đọc `message` thành FILE ÂM THANH (TTS) rồi gửi cho người/nhóm đó thay vì gửi chữ"},
-            "image_url": {"type": "string", "description": "Link/đường dẫn ảnh cần gửi cho người/nhóm đó (message = chú thích)"}},
+            "image_url": {"type": "string", "description": "Link/đường dẫn ảnh cần gửi cho người/nhóm đó (message = chú thích)"},
+            "mention_all": {"type": "boolean", "description": "true = TAG CẢ NHÓM (@All). Chỉ có tác dụng khi gửi vào NHÓM Zalo cá nhân. Dùng khi người dùng nói 'tag cả nhóm', 'nhắc mọi người', 'gọi cả nhà', 'thông báo cả nhóm'."}},
             "required": ["message"]}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
