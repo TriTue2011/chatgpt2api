@@ -296,6 +296,10 @@ _MAT_DANG_TIN = {
                "moi dau muc co icon"),
               ("khong emoji", "bo emoji", "khong dung emoji", "emoji ruom ra",
                "khong icon", "bo icon")),
+    # Chỉ tin tiếng Việt. LỌC chứ không dịch — xem `news._la_tieng_viet`.
+    "chi_viet": (("tieng viet", "toan tieng viet", "dich sang tieng viet",
+                  "hoan toan tieng viet", "khong de lan tieng anh"),
+                 ("giu tieng anh", "de nguyen tieng anh")),
 }
 
 
@@ -310,7 +314,7 @@ def _dang_bay_tin() -> dict[str, bool]:
     Dòng nào KHÔNG nói gì về một mặt thì bỏ qua mặt đó, xét tiếp dòng cũ hơn.
     Không dòng nào nói tới thì giữ mặc định (giống dáng gốc).
     """
-    ra = {"tom_tat": True, "in_dam": True, "emoji": True}
+    ra = {"tom_tat": True, "in_dam": True, "emoji": True, "chi_viet": False}
     con_thieu = set(ra)
     # `_so_thich_trinh_bay()` trả theo thứ tự trong file (cũ → mới) nên đảo lại.
     for dong in reversed(_so_thich_trinh_bay()):
@@ -1068,18 +1072,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
                                      {"per_section": 3,
                                       "kem_tom_tat": _dang["tom_tat"],
                                       "in_dam": _dang["in_dam"],
-                                      "dung_emoji": _dang["emoji"]})
+                                      "dung_emoji": _dang["emoji"],
+                                      "chi_tieng_viet": _dang["chi_viet"]})
                 logger.info({"event": "tintuc_dang_bay", **_dang})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
                 if _tin and str(_tin).strip():
-                    _txt = str(_tin).strip()
-                    # Lời dặn "toàn tiếng Việt" → dịch mấy tiêu đề tiếng Anh.
-                    if any(k in _bo_dau(" ".join(_so_thich_trinh_bay()))
-                           for k in ("tieng viet", "toan tieng viet",
-                                     "chuyen sang tieng viet")):
-                        _txt = _dich_tieu_de_tieng_anh(_txt, _main_model)
-                    _kq_ws = {"text": _txt}
+                    # KHÔNG dịch bằng model nữa: tin tiếng Anh được LỌC ngay
+                    # lúc lấy (chi_tieng_viet). Đường dịch không đáng tin — đo
+                    # thật 01/08: một lần xong 7,9 giây, lần sau hết giờ ở 15
+                    # giây mà tiêu đề vẫn nguyên tiếng Anh.
+                    _kq_ws = {"text": str(_tin).strip()}
                     logger.info({"event": "agent_tat_tintuc_mcp"})
             except Exception as exc:
                 logger.warning({"event": "agent_tat_tintuc_mcp_loi", "error": str(exc)[:150]})

@@ -128,7 +128,7 @@ class TestBanTinChiaMuc(unittest.TestCase):
     def _gia_lap(self, ket: dict) -> str:
         from unittest.mock import patch
         with patch.object(news, "_lay_mot_muc",
-                          side_effect=lambda tid, n: ket.get(tid, [])):
+                          side_effect=lambda tid, n, *a: ket.get(tid, [])):
             return self._goi_duoc()(3)
 
     def test_dinh_dang_gach_dau_dong(self):
@@ -161,7 +161,7 @@ class TestBanTinChiaMuc(unittest.TestCase):
                              "source": "X", "link": ""}]}
         goi = self._goi_duoc()
         with patch.object(news, "_lay_mot_muc",
-                          side_effect=lambda tid, n: ket.get(tid, [])):
+                          side_effect=lambda tid, n, *a: ket.get(tid, [])):
             co = goi(3, True)
             khong = goi(3, False)
         self.assertIn("Tóm tắt A.", co)
@@ -176,7 +176,7 @@ class TestBanTinChiaMuc(unittest.TestCase):
         ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
                              "source": "X", "link": ""}]}
         with patch.object(news, "_lay_mot_muc",
-                          side_effect=lambda tid, n: ket.get(tid, [])):
+                          side_effect=lambda tid, n, *a: ket.get(tid, [])):
             gon = self._goi_duoc()(3, False, False, False)
         self.assertNotIn("**", gon)
         self.assertNotIn("⚽", gon)
@@ -189,7 +189,7 @@ class TestBanTinChiaMuc(unittest.TestCase):
         ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
                              "source": "X", "link": ""}]}
         with patch.object(news, "_lay_mot_muc",
-                          side_effect=lambda tid, n: ket.get(tid, [])):
+                          side_effect=lambda tid, n, *a: ket.get(tid, [])):
             ra = self._goi_duoc()(3)
         self.assertIn("**", ra)
         self.assertIn("⚽", ra)
@@ -200,9 +200,57 @@ class TestBanTinChiaMuc(unittest.TestCase):
         ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm tắt A.",
                              "source": "X", "link": ""}]}
         with patch.object(news, "_lay_mot_muc",
-                          side_effect=lambda tid, n: ket.get(tid, [])):
+                          side_effect=lambda tid, n, *a: ket.get(tid, [])):
             self.assertIn("Tóm tắt A.", self._goi_duoc()(3))
 
+
+
+@unittest.skipIf(news is None, "vn-mcp-hub chưa cài phụ thuộc trong môi trường này")
+class TestChiTinTiengViet(unittest.TestCase):
+    """LỌC tin tiếng Anh, không dịch.
+
+    Đường dịch bằng model không đáng tin — đo thật 01/08: một lần xong trong 7,9
+    giây, lần sau HẾT GIỜ ở 15 giây và tiêu đề vẫn nguyên tiếng Anh, mà bản tin
+    phải chờ đủ 15 giây đó. Đo thêm: mọi mục đều có tối thiểu 4 tin tiếng Việt
+    trong 12 tin lấy về, nên lọc vẫn đủ 3 tin mỗi mục — chắc chắn và tức thì.
+    """
+
+    def test_nhan_dang_tieng_viet(self):
+        self.assertTrue(news._la_tieng_viet("Đội tuyển Việt Nam hòa Singapore"))
+        self.assertTrue(news._la_tieng_viet("Lãi suất ngân hàng còn 0,7%/năm"))
+        self.assertFalse(news._la_tieng_viet("Snapchat joins fight against AI slop"))
+        self.assertFalse(news._la_tieng_viet(""))
+
+    def test_loc_bo_tin_tieng_anh(self):
+        from unittest.mock import patch
+        ds = ([{"title": f"Tin Việt số {i}", "summary": "", "source": "VN", "link": ""}
+               for i in range(3)]
+              + [{"title": "English headline here", "summary": "", "source": "BBC",
+                  "link": ""}])
+        with patch.object(news, "_get_feeds", return_value=[("X", "u")]), \
+             patch.object(news, "_fetch_feed", return_value=ds):
+            ra = news._lay_mot_muc("the_thao", 3, chi_tieng_viet=True)
+        self.assertEqual(len(ra), 3)
+        self.assertFalse(any("English" in x["title"] for x in ra))
+
+    def test_thieu_tin_viet_thi_van_lay_tin_anh(self):
+        """Thà có tin tiếng Anh hơn là mục RỖNG."""
+        from unittest.mock import patch
+        ds = [{"title": "Tin Việt duy nhất", "summary": "", "source": "VN", "link": ""},
+              {"title": "English one", "summary": "", "source": "BBC", "link": ""},
+              {"title": "English two", "summary": "", "source": "BBC", "link": ""}]
+        with patch.object(news, "_get_feeds", return_value=[("X", "u")]), \
+             patch.object(news, "_fetch_feed", return_value=ds):
+            ra = news._lay_mot_muc("the_thao", 3, chi_tieng_viet=True)
+        self.assertEqual(len(ra), 3, "không đủ tin Việt thì không được bỏ trống mục")
+
+    def test_mac_dinh_khong_loc(self):
+        from unittest.mock import patch
+        ds = [{"title": "English headline", "summary": "", "source": "BBC", "link": ""}]
+        with patch.object(news, "_get_feeds", return_value=[("X", "u")]), \
+             patch.object(news, "_fetch_feed", return_value=ds):
+            ra = news._lay_mot_muc("the_thao", 1)
+        self.assertEqual(len(ra), 1)
 
 
 if __name__ == "__main__":

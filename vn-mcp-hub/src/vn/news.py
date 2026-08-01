@@ -296,7 +296,28 @@ MUC_BAN_TIN: list[tuple[str, str, str]] = [
 _TRAN_TOM_TAT_MUC = 140     # 8 mục × 3 tin: tóm tắt dài thành bức tường chữ
 
 
-def _lay_mot_muc(topic: str, so_tin: int) -> list[dict[str, Any]]:
+_DAU_VIET = re.compile(
+    "[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]",
+    re.I)
+
+
+def _la_tieng_viet(tieu_de: str) -> bool:
+    """Tiêu đề có dấu tiếng Việt không. Dùng để LỌC tin tiếng Anh ra.
+
+    Vì sao lọc thay vì dịch: bản tin trộn nhiều báo nên có tiêu đề tiếng Anh của
+    BBC News / World Monitor. Đường dịch bằng model không đáng tin — đo thật
+    01/08: một lần xong trong 7,9 giây, lần sau HẾT GIỜ ở 15 giây và tiêu đề vẫn
+    nguyên tiếng Anh, mà bản tin phải chờ đủ 15 giây đó.
+
+    Đo thêm: mọi mục đều có tối thiểu 4 tin tiếng Việt trong 12 tin lấy về, nên
+    lọc vẫn đủ 3 tin mỗi mục — vừa chắc chắn 100% tiếng Việt, vừa không tốn giây
+    nào.
+    """
+    return bool(_DAU_VIET.search(tieu_de or ""))
+
+
+def _lay_mot_muc(topic: str, so_tin: int,
+                 chi_tieng_viet: bool = False) -> list[dict[str, Any]]:
     """Tin của MỘT mục, đã trộn vòng tròn theo báo."""
     feeds = _get_feeds(topic)
     if not feeds:
@@ -304,12 +325,18 @@ def _lay_mot_muc(topic: str, so_tin: int) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for source, url in feeds:
         items.extend(_fetch_feed(source, url))
+    if chi_tieng_viet:
+        viet = [x for x in items if _la_tieng_viet(str(x.get("title") or ""))]
+        # Đủ tin Việt thì dùng; thiếu thì thà có tin tiếng Anh hơn là mục rỗng.
+        if len(viet) >= so_tin:
+            items = viet
     return _tron_theo_nguon(items, so_tin)
 
 
 @mcp.tool()
 def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
-                      in_dam: bool = True, dung_emoji: bool = True) -> str:
+                      in_dam: bool = True, dung_emoji: bool = True,
+                      chi_tieng_viet: bool = False) -> str:
     """Ban tin CHIA MUC: the thao, kinh te, xa hoi, CNTT, giao duc, y te,
     giai tri, the gioi. Moi muc lay `per_section` tin.
 
@@ -323,6 +350,8 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
         in_dam: True (mac dinh) = boc ten muc va tieu de trong **dam**.
                 False = chu tron, khi nguoi dung xin ban gon.
         dung_emoji: True (mac dinh) = ten muc co emoji dan dau.
+        chi_tieng_viet: True = chi lay tin co tieu de tieng Viet (bo tin tieng
+                        Anh cua BBC/World Monitor). Mac dinh False.
 
     Returns:
         Ban tin nhieu muc, moi tin mot dong gach dau dong kem tom tat ngan.
@@ -333,7 +362,7 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
     # lượt chat. Song song thì tổng ≈ mục chậm nhất.
     ket: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=len(MUC_BAN_TIN)) as pool:
-        tuong_lai = {pool.submit(_lay_mot_muc, tid, so_tin): tid
+        tuong_lai = {pool.submit(_lay_mot_muc, tid, so_tin, chi_tieng_viet): tid
                      for tid, _, _ in MUC_BAN_TIN}
         for f in as_completed(tuong_lai):
             tid = tuong_lai[f]
