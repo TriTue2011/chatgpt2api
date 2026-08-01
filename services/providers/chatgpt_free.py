@@ -156,6 +156,8 @@ def handle_free_chat(
 
     excluded_tokens: set[str] = set()
     last_quota_error: Exception | None = None
+    so_token_thu = 0  # đã thật sự lấy được token free nào chưa (phân biệt "0 tài
+                      # khoản free" với "free có nhưng cạn") để nhãn lỗi nói đúng
     payload_413_count = 0
     # Sticky session: hội thoại đang dở ưu tiên quay lại ĐÚNG account lần trước
     # (attempt đầu tiên); account đó hỏng/excluded → rơi về chọn pool như cũ.
@@ -178,6 +180,7 @@ def handle_free_chat(
             )
         if not token:
             break
+        so_token_thu += 1
         try:
             result = _try_free_with_token(
                 token, model, messages, tools, tool_choice, body, stream
@@ -328,7 +331,12 @@ def handle_free_chat(
 
     if last_quota_error is not None:
         raise last_quota_error
-    raise RuntimeError("no usable chatgpt free account")
+    if so_token_thu == 0:
+        # KHÔNG có tài khoản ChatGPT free nào trong pool — đây là nhánh DỰ PHÒNG
+        # cuối của combo (mọi provider non-chatgpt fallback về 'chatgpt'). Nói rõ
+        # để không bị hiểu nhầm là tài khoản codex bị dán nhãn 'free'.
+        raise RuntimeError("chưa cấu hình tài khoản ChatGPT free nào (nhánh dự phòng)")
+    raise RuntimeError("tài khoản ChatGPT free đã cạn/không dùng được")
 
 
 def _try_free_with_token(
