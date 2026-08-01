@@ -819,6 +819,39 @@ def _public_base() -> str:
             or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/")
 
 
+def _cong_khai_media(src: str) -> str:
+    """Đưa một file media về URL /images/… mà zalo-server FETCH ĐƯỢC.
+
+    URL http(s) → giữ nguyên (đã công khai). File dưới images_dir → giữ nguyên
+    (_media_fetch_candidates tự đổi). File local NGOÀI images_dir (vd video lưu ở
+    /app/data/agent/media) → COPY vào images_dir/media rồi trả /images/media/…;
+    nếu không thì zalo-server dựng URL trỏ path gốc, nhận 404 và gửi trang lỗi
+    ~14KB thay cho video."""
+    s = str(src or "").strip()
+    if not s or s.startswith("http://") or s.startswith("https://"):
+        return s
+    try:
+        from pathlib import Path
+        p = Path(s)
+        if not p.is_file():
+            return s
+        img_root = Path(config.images_dir).resolve()
+        try:
+            p.resolve().relative_to(img_root)
+            return s  # đã nằm dưới images_dir → khỏi copy
+        except Exception:
+            pass
+        import uuid as _uuid
+        out_dir = config.images_dir / "media"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pub = out_dir / f"{_uuid.uuid4().hex[:8]}-{p.name}"
+        pub.write_bytes(p.read_bytes())
+        return f"/images/media/{pub.name}"
+    except Exception as exc:
+        logger.warning("zalop cong_khai_media: %s", exc)
+        return s
+
+
 def _media_fetch_candidates(url_or_path: str) -> list[str]:
     """URL zalo-server có thể fetch — ưu tiên http://127.0.0.1/images/… (trong Docker).
 
@@ -2346,7 +2379,12 @@ def _process_ai(ev: dict) -> None:
             da_gui = 0
             for i, vsrc in enumerate(vsrcs):
                 cap = reply[:200] if i == 0 else ""
-                if _send_file_robust(thread_id, vsrc, cap, thread_type, account=_acc):
+                # video_path lưu ở /app/data/agent/media (NGOÀI images_dir) → không
+                # được serve → zalo-server fetch phải 404 rồi gửi trang lỗi ~14KB
+                # thay cho video. Copy vào images_dir/media để có URL /images/media/…
+                # công khai (đúng cách doc_path đã xử). URL http thì để nguyên.
+                gui = _cong_khai_media(vsrc)
+                if _send_file_robust(thread_id, gui, cap, thread_type, account=_acc):
                     da_gui += 1
             if da_gui:
                 sent_media = True
