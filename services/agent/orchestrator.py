@@ -1078,12 +1078,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # kịp xong trong 20 giây — lần nào cũng hết giờ rồi rơi về bản gốc,
                 # nên người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
                 _dang = _dang_bay_tin()
+                # Truyền NGUYÊN câu người dùng vào chu_de: get_news_sections tự
+                # cắt từ chung ('tin tức/hôm nay') — còn lại rỗng thì digest 8
+                # mục như cũ, còn lại 'bão'/'giá vàng'… thì tìm ĐÚNG chủ đề. Đo
+                # thật 01/08: 'tin tức bão' trước đây rớt chủ đề, trả digest lạc.
                 _tin = call_mcp_tool("get_news_sections",
                                      {"per_section": 3,
                                       "kem_tom_tat": _dang["tom_tat"],
                                       "in_dam": _dang["in_dam"],
                                       "dung_emoji": _dang["emoji"],
-                                      "chi_tieng_viet": _dang["chi_viet"]})
+                                      "chi_tieng_viet": _dang["chi_viet"],
+                                      "chu_de": user_text})
                 logger.info({"event": "tintuc_dang_bay", **_dang})
                 if not (_tin and str(_tin).strip()):
                     _tin = call_mcp_tool("get_news", {"topic": "moi_nhat", "limit": 10})
