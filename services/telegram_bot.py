@@ -67,6 +67,20 @@ def _cur_topic() -> int | None:
         return None
 
 
+def _split_chat_topic(chat_id: int | str) -> tuple[str, int | None]:
+    """Tách đích dạng ``'<chat_id>:<topic_id>'`` → (chat_id, message_thread_id).
+
+    Nhóm forum Telegram: mỗi topic có ``message_thread_id`` riêng. Cho phép ghi
+    đích admin/nhóm là ``'-1003837425521:5'`` để bot gửi THẲNG vào topic 5 thay
+    vì General. Không có ':<số>' → topic None (General / nhóm thường). Chỉ tách
+    khi cả hai vế là SỐ (chat có thể âm '-100…'), tránh nhầm URL/username."""
+    s = str(chat_id).strip()
+    head, sep, tail = s.rpartition(":")
+    if sep and tail.isdigit() and head.lstrip("-").isdigit():
+        return head, int(tail)
+    return s, None
+
+
 def _bots() -> list[dict]:
     return config.telegram_bots()
 
@@ -396,25 +410,23 @@ def notify_admin(text: str, category: str = "") -> None:
                         body = emphasize_text(body, bot=bot, chat_id=cid)
                     except Exception:
                         pass
+                    # Đích admin có thể ghi '<chat>:<topic>' để log vào ĐÚNG topic
+                    # của nhóm forum, thay vì rơi vào General.
+                    _achat, _atopic = _split_chat_topic(cid)
+                    _base = {"chat_id": str(_achat),
+                             "link_preview_options": {"is_disabled": True}}
+                    if _atopic is not None:
+                        _base["message_thread_id"] = _atopic
                     # Tele: đậm/code (HTML); không có màu
                     try:
                         from services.telegram.format import llm_to_html
                         html_body = llm_to_html(body)
                         r = _api_call("sendMessage", {
-                            "chat_id": str(cid), "text": html_body[:4000],
-                            "parse_mode": "HTML",
-                            "link_preview_options": {"is_disabled": True},
-                        })
+                            **_base, "text": html_body[:4000], "parse_mode": "HTML"})
                         if not r.get("ok"):
-                            r = _api_call("sendMessage", {
-                                "chat_id": str(cid), "text": body[:4000],
-                                "link_preview_options": {"is_disabled": True},
-                            })
+                            r = _api_call("sendMessage", {**_base, "text": body[:4000]})
                     except Exception:
-                        r = _api_call("sendMessage", {
-                            "chat_id": str(cid), "text": body[:4000],
-                            "link_preview_options": {"is_disabled": True},
-                        })
+                        r = _api_call("sendMessage", {**_base, "text": body[:4000]})
                     if r.get("ok"):
                         sent += 1
                 except Exception:
@@ -517,10 +529,13 @@ def send_message(chat_id: int | str, text: str,
     Emphasis (bold numbers / key info) respects per-admin-thread toggle on the
     active bot config. See ``services.telegram.emphasis.resolve_emphasis_settings``.
     """
+    _chat, _topic_dest = _split_chat_topic(chat_id)
     results = _cli().send_message_safe(
-        chat_id, text or "",
-        # Trả lời NGAY TRONG topic đã nhận (None = nhóm thường / General)
-        message_thread_id=_cur_topic(),
+        _chat, text or "",
+        # Ưu tiên topic của TIN ĐANG XỬ LÝ (trả lời đúng chỗ hỏi); gửi chủ động
+        # (không có tin đến) thì lấy topic mã hoá trong đích '<chat>:<topic>'.
+        # None = nhóm thường / General.
+        message_thread_id=_cur_topic() if _cur_topic() is not None else _topic_dest,
         parse_mode="auto",
         convert_llm_md=True,
         split=True,
