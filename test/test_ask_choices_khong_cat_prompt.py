@@ -95,5 +95,68 @@ class ChonBangSoVanDungTests(unittest.TestCase):
         self.assertIn("flow/veo-3.1-lite", ra_kenh)   # nhãn thì có
 
 
+class PromptNhieuDongKhongPhaMenuTests(unittest.TestCase):
+    """Prompt NHIỀU DÒNG không được biến thành các lựa chọn.
+
+    Đo thật 02/08: chủ máy dán prompt ảnh nhiều dòng, menu hiện ra
+        1. Mặc định (nhánh đang cài)
+        2. thirties playing with water in the pave…
+        3. afternoon. The woman, laughing, wears a…
+        4. shirt tucked into knee-length denim sho…
+    Không còn một tên model nào — khối <<<ASK>>> được bóc THEO TỪNG DÒNG nên mỗi
+    dòng prompt thành một lựa chọn, đẩy danh sách model ra ngoài (menu giữ tối đa
+    8 mục). Sửa tại NGUỒN: gộp prompt về một dòng trước khi nhồi vào menu.
+    """
+
+    NHIEU_DONG = ("Candid documentary lifestyle photograph of an Asian couple\n"
+                  "in their early thirties playing with water in the paved\n"
+                  "courtyard of their home, hot late afternoon.")
+
+    def _mot_dong(self):
+        import ast
+        import re as _re
+        src = (Path(__file__).resolve().parents[1]
+               / "services" / "agent" / "capabilities.py").read_text("utf-8")
+        for n in ast.parse(src).body:
+            if isinstance(n, ast.FunctionDef) and n.name == "_mot_dong":
+                ns = {"re": _re}
+                exec(ast.get_source_segment(src, n), ns)
+                return ns["_mot_dong"]
+        self.fail("khong tim thay _mot_dong")
+
+    def test_gop_ve_mot_dong_khong_mat_chu(self):
+        f = self._mot_dong()
+        ra = f(self.NHIEU_DONG)
+        self.assertNotIn("\n", ra)
+        self.assertTrue(ra.startswith("Candid documentary"))
+        self.assertTrue(ra.endswith("hot late afternoon."))
+
+    def test_menu_giu_dung_so_lua_chon(self):
+        """Ghép prompt ĐÃ gộp dòng vào menu → mỗi model đúng MỘT lựa chọn."""
+        f = self._mot_dong()
+        p1 = f(self.NHIEU_DONG)
+        block = ["🎨 Chọn model ạ?", "<<<ASK>>>",
+                 f"Mặc định | tạo ảnh bằng mặc định: {p1}"]
+        for mid in ("flow/banana-2", "flow/imagen-4", "flow/banana-pro"):
+            block.append(f"{mid} | tạo ảnh bằng model {mid}: {p1}")
+        block.append("<<<END>>>")
+        _, choices = ac.extract("\n".join(block))
+        self.assertEqual(len(choices), 4)     # 1 mặc định + 3 model
+        nhan = [c["label"] for c in choices]
+        self.assertIn("flow/banana-2", nhan)
+        self.assertIn("flow/imagen-4", nhan)
+        # Không có mảnh vụn prompt nào lọt vào làm nhãn.
+        self.assertFalse([n for n in nhan if "playing with water" in n])
+
+    def test_KHONG_gop_dong_thi_menu_VO(self):
+        """Phép đo đối chứng: giữ nguyên nhiều dòng thì menu vỡ đúng như ca thật."""
+        block = ["🎨 Chọn model ạ?", "<<<ASK>>>",
+                 f"flow/banana-2 | tạo ảnh bằng model flow/banana-2: {self.NHIEU_DONG}",
+                 "<<<END>>>"]
+        _, choices = ac.extract("\n".join(block))
+        self.assertGreater(len(choices), 1,
+                           "phải vỡ thành nhiều lựa chọn — đó là lỗi cần chặn")
+
+
 if __name__ == "__main__":
     unittest.main()

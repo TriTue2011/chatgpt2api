@@ -129,11 +129,31 @@ def _short_model_label(mid: str) -> str:
     return s if len(s) <= 36 else s[:35] + "…"
 
 
+def _mot_dong(s: str) -> str:
+    """Gộp về MỘT dòng — bắt buộc cho mọi chuỗi nhồi vào khối <<<ASK>>>.
+
+    Khối menu được bóc THEO TỪNG DÒNG (`ask_choices._parse_lines`), nên một prompt
+    nhiều dòng làm mỗi dòng của nó thành MỘT LỰA CHỌN riêng, đẩy danh sách model ra
+    ngoài (menu chỉ giữ tối đa 8 mục).
+
+    Đo thật 02/08: chủ máy dán prompt ảnh nhiều dòng, menu hiện ra:
+        1. Mặc định (nhánh đang cài)
+        2. thirties playing with water in the pave…
+        3. afternoon. The woman, laughing, wears a…
+        4. shirt tucked into knee-length denim sho…
+    Không còn một tên model nào — toàn bộ là mảnh vụn của prompt.
+
+    Khoảng trắng không có nghĩa với máy tạo ảnh/video nên gộp dòng KHÔNG mất gì.
+    """
+    return re.sub(r"\s+", " ", (s or "").replace("\r", " ").replace("\n", " ")).strip()
+
+
 def _ask_media_provider(prompt: str, cap: str, *, verb: str, emoji: str) -> dict:
     """Menu chọn model TẠO ẢNH/VIDEO — CHỈ liệt kê model ĐÃ BẬT (giống tab web) +
     'Mặc định'. 'send' có TÊN model cụ thể → lượt sau handler nhận model ≠ rỗng nên
     làm luôn (không lặp). deliver_now=True: gửi thẳng menu, không cho LLM tự làm."""
     models = _enabled_models_for(cap)
+    prompt = _mot_dong(prompt)          # BẮT BUỘC: xem _mot_dong
     short = prompt if len(prompt) <= 60 else prompt[:59] + "…"
     lines = [f'{emoji} Anh/chị muốn {verb} "{short}" bằng model nào ạ?', "<<<ASK>>>",
              f"Mặc định (nhánh đang cài) | {verb} bằng mặc định: {prompt}"]
@@ -172,6 +192,7 @@ def _param_choice_menu(prompt: str, model: str, spec: dict, *, verb: str, emoji:
     if not presets and not defaults:
         return None
     short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
+    prompt = _mot_dong(prompt)          # BẮT BUỘC: xem _mot_dong
     lines = [f'{emoji} {verb} "{short}" bằng {model} — chọn thông số ạ:', "<<<ASK>>>"]
     if defaults:
         dv = " ".join(f"{k}={v}" for k, v in defaults.items())
@@ -528,6 +549,7 @@ def _ask_video_provider(prompt: str) -> dict:
     GIÁ mỗi model để người dùng so sánh. 'send' mang tên model cụ thể → lượt sau
     handler nhận model ≠ rỗng nên chạy tiếp (hỏi số lượng/thời lượng có tổng phí)."""
     models = _video_model_choices()
+    prompt = _mot_dong(prompt)          # BẮT BUỘC: xem _mot_dong
     short = prompt if len(prompt) <= 60 else prompt[:59] + "…"
     lines = [f'🎬 Anh/chị muốn tạo video "{short}" bằng model nào ạ? (giá tham khảo mỗi video)',
              "<<<ASK>>>",
@@ -541,6 +563,7 @@ def _ask_video_provider(prompt: str) -> dict:
 
 def _ask_video_thoi_luong(prompt: str, model: str) -> dict:
     """Menu chọn thời lượng — CHỈ cho model thật sự có hàng đó trên Flow."""
+    prompt = _mot_dong(prompt)          # BẮT BUỘC: xem _mot_dong
     short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
     lines = [f'🎬 Video "{short}" bằng {model} — anh/chị chọn thời lượng ạ:', "<<<ASK>>>"]
     for giay in _FLOW_THOI_LUONG[model.strip().lower()]:
@@ -552,6 +575,7 @@ def _ask_video_thoi_luong(prompt: str, model: str) -> dict:
 
 def _ask_video_so_luong(prompt: str, model: str, duration: str | None) -> dict:
     """Menu chọn số video. Mỗi dòng THÔNG BÁO tổng tín dụng phải trả."""
+    prompt = _mot_dong(prompt)          # BẮT BUỘC: xem _mot_dong
     short = prompt if len(prompt) <= 50 else prompt[:49] + "…"
     dur_txt = f" {duration}s" if duration else ""
     lines = [f'🎬 Video "{short}" bằng {model}{dur_txt} — anh/chị muốn mấy video ạ?',
