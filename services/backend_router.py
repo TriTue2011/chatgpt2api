@@ -320,11 +320,81 @@ class BackendRouter:
             fallback_providers=["chatgpt"],
         )
 
+    @staticmethod
+    def _provider_da_mat(model_str: str, provider: str) -> bool:
+        """Thành viên combo trỏ tới provider KHÔNG còn tồn tại?
+
+        Dấu hiệu chắc chắn: chuỗi có tiền tố dạng `x/…` nhưng `resolve_model` lại
+        rơi về provider mặc định "chatgpt". Nghĩa là `x/` từng là tiền tố của một
+        provider (built-in hoặc Custom Provider) mà giờ không phân giải được nữa —
+        thường vì mục Custom Provider đã bị xoá. Để nguyên thì mỗi lượt chat vẫn
+        gửi một tên model vô nghĩa sang ChatGPT rồi mới rơi xuống thành viên sau.
+
+        KHÔNG áp cho chuỗi không có '/' (vd 'gpt-image-2') — đó là model ChatGPT
+        thật, đi đúng đường mặc định.
+        """
+        if provider != "chatgpt":
+            return False
+        tho = str(model_str or "").strip()
+        pfx, sep, _ = tho.partition("/")
+        if not sep or not pfx:
+            return False
+        # 'chatgpt/…' phân giải ra provider chatgpt_free nên không tới đây; còn
+        # tiền tố nào rơi về đây thật thì đúng là đã mất provider.
+        return True
+
+    @staticmethod
+    def _het_credential(model_id: str) -> bool:
+        """Provider của model này còn tài khoản / API key không?
+
+        Dùng LẠI đúng luật của tab Quản lý model (`_drop_unavailable`) thay vì
+        viết định nghĩa thứ hai cho "provider còn sống" — hai định nghĩa lệch nhau
+        là kiểu sai lệch âm thầm khó thấy nhất.
+        """
+        try:
+            from services.protocol.openai_v1_models import _drop_unavailable
+            return not _drop_unavailable([{"id": model_id}])
+        except Exception:
+            return False        # fail-open: không đọc được thì cứ giữ
+
+    def _loc_thanh_vien_song(self, models: list[str], combo_name: str = "") -> list[str]:
+        """Bỏ thành viên combo đã mất provider hoặc hết credential.
+
+        Lọc sạch hết thì trả NGUYÊN danh sách gốc — combo không còn đường nào để
+        thử còn tệ hơn thử một đường đã chết.
+        """
+        song: list[str] = []
+        bo: list[str] = []
+        for model_str in models:
+            clean = _COMBO_MARKER_RE.sub("", str(model_str)).strip()
+            if not clean:
+                continue
+            provider, resolved = self.resolve_model(clean)
+            if self._provider_da_mat(clean, provider) or self._het_credential(clean):
+                bo.append(clean)
+                continue
+            song.append(str(model_str))
+        if not song:
+            return list(models)
+        if bo:
+            from utils.log import logger
+            logger.info({"event": "combo_bo_thanh_vien_chet", "combo": combo_name,
+                         "bo": bo[:8], "con_lai": len(song)})
+        return song
+
     def route_combo(self, combo_name: str) -> list[BackendRoute]:
-        """Resolve a combo model into its fallback chain (case-insensitive)."""
+        """Resolve a combo model into its fallback chain (case-insensitive).
+
+        Thành viên nào mất provider (Custom Provider đã xoá) hoặc provider hết
+        tài khoản/API key thì BỎ khỏi chuỗi — thêm provider mới vào là nó tự có
+        mặt, xoá provider là nó tự rút, không phải sửa lại combo bằng tay.
+        Lọc sạch hết thì GIỮ NGUYÊN danh sách gốc: thà thử và hỏng còn hơn không
+        còn đường nào để thử.
+        """
         models = self._get_combo_models(combo_name)
         if not models:
             return []
+        models = self._loc_thanh_vien_song(models, combo_name)
 
         routes: list[BackendRoute] = []
         for model_str in models:
