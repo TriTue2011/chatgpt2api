@@ -207,6 +207,13 @@ async def handle_video_generation(
             "chưa bấm tạo",                  # model_mismatch / model_unverified
             "account busy",                  # hồ sơ trình duyệt đang bị lượt khác giữ
             "signin/rejected",               # Google chặn trình duyệt tự động
+            # Trang chưa dựng xong giao diện — xảy ra lúc TẢI TRANG, tức chắc chắn
+            # trước mọi cú bấm "Tạo". Đo thật 02/08: Backup trượt (chưa bấm Tạo) →
+            # đổi sang Spare 1 → Spare 1 trả "Flow UI never hydrated: timeout
+            # 45000ms", chuỗi đó KHÔNG khớp danh sách này nên vòng lặp dừng sớm và
+            # bỏ luôn 2 tài khoản còn lại, dù chẳng tài khoản nào tiêu tín dụng.
+            "never hydrated",
+            "profile is logged out",          # cùng nhóm: chết ở bước tải trang
         )
 
         def _co_the_thu_tai_khoan_khac(loi: str) -> bool:

@@ -1754,12 +1754,21 @@ async def flow_generate_video(
           nutGui: Array.from(document.querySelectorAll('button'))
                    .some(b => /arrow_forward/i.test(b.innerText || '')),
         })""")
-        if not (_khung.get("oNhap") and _khung.get("nutGui")):
+        # CHỈ đòi Ô NHẬP, KHÔNG đòi nút gửi.
+        #
+        # Nút gửi của Flow chỉ hiện SAU khi ô nhập có chữ — đòi nó trước khi gõ là
+        # đòi thứ chưa thể tồn tại. Đo thật 02/08 (google-mitbap0610): bản đầu của
+        # chốt này bắt cả hai, gặp `ô nhập hiện=True, nút gửi=False` rồi bỏ tài
+        # khoản đó oan trong khi khung soạn ĐÃ có, chỉ chưa gõ gì.
+        if not _khung.get("oNhap"):
             raise RuntimeError(
                 "Không vào được màn soạn video của Flow: dự án này không có khung "
                 f"soạn (ô nhập hiện={_khung.get('oNhap')}, "
                 f"nút gửi={_khung.get('nutGui')}). Chưa bấm Tạo, chưa tiêu tín dụng "
                 "— cần thử tài khoản Flow khác hoặc mở lại dự án trên noVNC.")
+        if not _khung.get("nutGui"):
+            logger.info("flow_video: chưa thấy nút gửi — bình thường, nó hiện sau "
+                        "khi ô nhập có chữ; đi tiếp để gõ câu lệnh")
         # Ghi lại các nút CÓ THẬT trong bảng ở chế độ video. Chủ máy hỏi "tab video
         # có chọn thời lượng không" — cứ ghi ra rồi đọc log, đừng đoán. Nếu không có
         # nút 4s/8s/10s thì lời gọi _set_dropdown(duration) bên dưới là vô nghĩa.

@@ -130,6 +130,25 @@ class TestVaoDuocManSoanVideo(unittest.TestCase):
         self.assertIn("Xem", khuc)
         self.assertIn("return false", khuc)
 
+    def test_chi_doi_o_nhap_KHONG_doi_nut_gui(self):
+        """Nút gửi của Flow chỉ hiện SAU khi ô nhập có chữ.
+
+        Đo thật 02/08 (google-mitbap0610): bản đầu của chốt này bắt cả hai, gặp
+        'ô nhập hiện=True, nút gửi=False' rồi bỏ tài khoản đó oan — trong khi
+        khung soạn ĐÃ có, chỉ là chưa gõ gì nên nút gửi chưa được render.
+        """
+        i = self.code.index("đã chuyển sang tab Video (đã kiểm chứng)")
+        khuc = self.code[i:i + 1800]
+        self.assertIn('if not _khung.get("oNhap"):', khuc)
+        self.assertNotIn('_khung.get("oNhap") and _khung.get("nutGui")', khuc)
+
+    def test_loi_luc_tai_trang_van_duoc_doi_tai_khoan(self):
+        """'never hydrated' xảy ra lúc TẢI TRANG → chắc chắn chưa bấm Tạo."""
+        api = _code(GOC / "api" / "veo_video.py")
+        dau_hieu = _khuc(api, "_LOI_TRUOC_KHI_BAM_TAO = (", ")")
+        self.assertIn("never hydrated", dau_hieu)
+        self.assertIn("profile is logged out", dau_hieu)
+
     def test_chan_som_khi_khong_co_khung_soan(self):
         """Có đúng chế độ mà thiếu khung soạn thì phải dừng NGAY.
 
