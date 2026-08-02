@@ -142,6 +142,72 @@ def _la_yeu_cau_tin_tuc(text: str) -> str | None:
     return "ngay" if _TIN_NGAY_KHAC.search(t) else "moi"
 
 
+# ── Đường tắt TẠO ẢNH / TẠO VIDEO ────────────────────────────────────────────
+#
+# Menu chọn model chỉ là GHÉP CHUỖI từ danh sách model đã cache — gần như tức
+# thì. Nhưng để tới được nó, mỗi câu phải đi qua một lượt gọi model định tuyến.
+# Đo thật 01–02/08 trên máy chủ: bước hiện menu mất 6–14 giây (ảnh 9,2 · 12,0 ·
+# 11,8 · 13,5s; video 6 · 7 · 13 · 14s), trong khi một câu "xin chào" KHÔNG dùng
+# tool nào cũng mất 11,2s — tức toàn bộ thời gian là độ trễ của model, không phải
+# của việc dựng menu. Đường tắt này nhận ý bằng TỪ KHOÁ rồi gọi thẳng capability,
+# nên menu ra ngay.
+_TAT_TAO_MEDIA = re.compile(
+    r"^\s*(?:ơi\s+|em\s+|bot\s+|bạn\s+|ban\s+)?"
+    r"(?:hãy\s+|hay\s+|giúp\s+\S+\s+|giup\s+\S+\s+|cho\s+\S+\s+)?"
+    r"(?P<verb>tạo|tao|vẽ|ve|sinh|generate|draw|make)\s+"
+    r"(?:cho\s+\S+\s+)?"
+    r"(?:(?:một|mot|1|vài|vai|\d+)\s+)?"
+    r"(?P<loai>video|clip|ảnh|anh|hình\s*ảnh|hinh\s*anh|hình|hinh|image|picture|photo)"
+    r"(?![a-zà-ỹ])"
+    r"(?P<con_lai>.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+# Câu KHÔNG phải "tạo mới" dù có chữ tạo/ảnh/video:
+#   · "… bằng model flow/…" / "params duration=6" — chính là nội dung nút bấm của
+#     MENU. Để nó đi đường tắt là hiện lại menu → lặp vô tận.
+#   · nói về media ĐÃ CÓ ("ảnh vừa tạo", "video vừa rồi", "gửi lại", "tải")
+#     — đường tắt thư viện (mục 1.4) lo, đừng giành.
+_KHONG_PHAI_TAO_MOI = re.compile(
+    r"(bằng\s+model|bang\s+model|params\s|vừa\s+(tạo|rồi|xong)|vua\s+(tao|roi|xong)|"
+    r"gửi\s+lại|gui\s+lai|tải\s+(về|lại)|tai\s+(ve|lai)|model\s+gì|model\s+gi|"
+    r"xoá|xóa|xoa\b|thùng\s+rác|thung\s+rac)", re.I)
+
+
+# "vẽ <bất kỳ>" — KHÔNG cần chữ "ảnh". "vẽ một cô gái mặc áo dài" là xin ảnh, rõ
+# như "tạo ảnh cô gái". Chỉ nhận `vẽ` có dấu và `draw`: bỏ dấu thành "ve" thì đụng
+# từ khác ("ve", "vệ sinh" gõ thiếu dấu), mà dạng không dấu vẫn vào được qua
+# _TAT_TAO_MEDIA nếu có chữ loại ("ve anh con meo").
+_TAT_VE_ANH = re.compile(
+    r"^\s*(?:ơi\s+|em\s+|bot\s+|bạn\s+)?"
+    r"(?:hãy\s+|giúp\s+\S+\s+|cho\s+\S+\s+)?"
+    r"(?:vẽ|draw)\s+(?P<con_lai>\S.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+# Chữ mở đầu phần mô tả cần bỏ ("tạo video VỀ mưa rơi" → "mưa rơi").
+_BO_DAU_MO_TA = re.compile(
+    r"^\s*(?::|-|–|về|ve\b|là|la\b|với|voi\b|nội\s*dung|noi\s*dung)\s*", re.I)
+
+
+def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
+    """('video'|'image', prompt) nếu câu là yêu cầu TẠO MỚI ảnh/video, None nếu không.
+
+    `prompt` là phần còn lại sau động từ + loại, đã bỏ dấu hai chấm/"về"/"là" mở
+    đầu. Rỗng cũng hợp lệ ("tạo video") — capability tự hỏi lại muốn tạo gì.
+    """
+    t = (text or "").strip()
+    if not t or _KHONG_PHAI_TAO_MOI.search(t):
+        return None
+    m = _TAT_TAO_MEDIA.match(t)
+    if m:
+        loai = m.group("loai").lower()
+        kind = "video" if loai in {"video", "clip"} else "image"
+        return kind, _BO_DAU_MO_TA.sub("", m.group("con_lai").strip()).strip()
+    m = _TAT_VE_ANH.match(t)
+    if m:
+        return "image", _BO_DAU_MO_TA.sub("", m.group("con_lai").strip()).strip()
+    return None
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -1119,6 +1185,41 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _persist_history(user_id, hist)
             _journal(str(out_n.get("text") or ""))
             return out_n
+
+    # 1.47) Đường tắt TẠO ẢNH / TẠO VIDEO — hiện menu chọn model NGAY.
+    #
+    # Gọi thẳng capability, bỏ lượt model định tuyến. Capability tự lo phần khó
+    # (bung combo thành model thật, gắn giá tín dụng, hỏi tiếp thời lượng/số
+    # lượng) nên đường tắt KHÔNG nhân bản logic nào — nó chỉ thay việc "nhờ model
+    # đoán nên gọi tool gì" bằng một biểu thức chính quy.
+    #
+    # Vẫn đi qua bộ lọc chức năng theo thread (`allow`) như mọi capability khác:
+    # đường tắt rút ngắn đường đi, không mở thêm quyền.
+    _yc_media = _la_yeu_cau_tao_media(user_text)
+    if _yc_media:
+        _kind, _prompt_media = _yc_media
+        _cap_name = "generate_video" if _kind == "video" else "generate_image"
+        _nhom = "video" if _kind == "video" else "image"
+        if allow is None or _nhom in allow:
+            try:
+                _cap_m = caps.get(_cap_name)
+                _kq_m = (_cap_m.handler({"prompt": _prompt_media},
+                                        {"user_id": user_id,
+                                         "user_message": user_text,
+                                         "is_admin": is_admin})
+                         if _cap_m else None)
+            except Exception as exc:
+                logger.warning({"event": "agent_tat_tao_media_loi",
+                                "kind": _kind, "error": str(exc)[:150]})
+                _kq_m = None
+            if _kq_m and str(_kq_m.get("text") or "").strip():
+                logger.info({"event": "agent_tat_tao_media", "kind": _kind,
+                             "prompt_len": len(_prompt_media)})
+                out_m = _finalize(user_id, _kq_m)
+                hist.append({"role": "assistant", "content": out_m.get("text") or ""})
+                _persist_history(user_id, hist)
+                _journal(str(out_m.get("text") or ""), status="tao_media_fastpath")
+                return out_m
 
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua
