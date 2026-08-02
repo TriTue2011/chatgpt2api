@@ -114,11 +114,23 @@ def _run(jid: str) -> None:
                 logger.info("announce: không đọc được âm lượng cũ (%s)", str(exc)[:80])
             try:
                 vspk.set_volume(rec, float(vol))
-            except Exception as exc:   # loa không chỉnh được vol thì vẫn đọc
+            except Exception as exc:
                 muc_cu = None
+                if vspk.ho_tro_am_luong(rec):
+                    # Loa CHỈNH ĐƯỢC âm lượng mà đặt không xong → dừng, đừng đọc
+                    # tiếp rồi báo thành công. Người dùng chọn 0% lúc nửa đêm mà
+                    # loa phát ở mức cũ là hỏng đúng cái họ vừa chọn, và câu
+                    # "[đang đọc …]" khiến họ tin là đã chạy đúng.
+                    raise RuntimeError(
+                        f"Không đặt được âm lượng cho {rec.get('name')}: "
+                        f"{str(exc)[:120]}") from exc
+                # Loa DLNA/HA vốn không chỉnh được âm lượng → vẫn đọc như cũ.
                 logger.info("announce: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
         da_tao: list = []
-        url = voice.play_text_on(job["text"], rec, str(job.get("voice") or ""),
+        # Phát bằng bản ghi KHÔNG mang âm lượng mặc định: lượt này đã có mức
+        # riêng, để nguyên `rec["volume"]` thì `_play_cast` vặn đè lên nó.
+        rec_phat = vspk.bo_am_luong_mac_dinh(rec) if vol is not None else rec
+        url = voice.play_text_on(job["text"], rec_phat, str(job.get("voice") or ""),
                                  files_out=da_tao)
         # Thông báo phát ngay: đọc xong là xoá file, khỏi để kho media phình.
         _tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""), da_tao)

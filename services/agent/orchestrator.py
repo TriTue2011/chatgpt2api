@@ -400,6 +400,73 @@ def _doc_nut_menu_loa(text: str) -> dict | None:
     return args
 
 
+# Câu NGƯỜI gõ xin đọc thông báo ra loa: "phát thông báo ra loa với nội dung …",
+# "thông báo ra loa phòng khách: cả nhà ăn cơm". Đường tắt 1.49 dùng nó để dựng
+# MENU CHỌN LOA ngay — xem chú thích ở đó.
+#
+# Khuôn: <động từ> [gì đó] ra|qua|bằng|trên loa [tên loa] <dấu mở nội dung> <nội dung>
+# Dấu mở nội dung phải RÕ (":", "nội dung", "rằng") vì đó là chỗ tách tên loa khỏi
+# lời cần đọc. Không có nó thì không đoán bừa — để đường model như cũ.
+_TAT_PHAT_LOA = re.compile(
+    r"^\s*(?:ơi\s+|em\s+|bot\s+|bạn\s+|ban\s+)?"
+    r"(?:hãy\s+|hay\s+|giúp\s+\S+\s+|giup\s+\S+\s+|cho\s+\S+\s+)?"
+    r"(?:phát|phat|đọc|doc|thông\s*báo|thong\s*bao|nhắc|nhac|báo|bao)\s+"
+    r"(?P<giua>[^:«»]{0,60}?)"
+    r"(?:ra|qua|bằng|bang|trên|tren)\s+loa\b"
+    r"(?P<loa>[^:«»\n]{0,40}?)"
+    r"(?:\s*:\s*"
+    r"|\s+(?:với\s+|voi\s+)?(?:nội\s*dung|noi\s*dung)\s+(?:là\s+|la\s+)?"
+    r"|\s+(?:rằng|rang)\s+)"
+    r"(?P<noi_dung>\S.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+# Câu có chữ "loa" nhưng KHÔNG phải xin đọc thông báo:
+#   · mở nhạc → `play_music_on_speaker` lo, đừng giành
+#   · quản lý sổ loa (thêm/xoá/kiểm tra/danh sách)
+#   · đã nêu âm lượng → còn đủ thông tin để phát THẬT, phải qua cổng duyệt ở
+#     đường thường (xem điều kiện `con_thieu_thong_tin` tại mục 1.49)
+_KHONG_PHAI_PHAT_LOA = re.compile(
+    r"(nhạc|nhac|bài\s+hát|bai\s+hat|lofi|karaoke|"
+    r"âm\s*lượng|am\s*luong|volume|"
+    r"danh\s+sách\s+loa|danh\s+sach\s+loa|thêm\s+loa|them\s+loa|"
+    r"xoá\s+loa|xóa\s+loa|xoa\s+loa|sửa\s+loa|sua\s+loa|"
+    r"kiểm\s+tra\s+loa|kiem\s+tra\s+loa|tắt\s+loa|tat\s+loa)", re.I)
+
+# Có nhắc thời điểm → nhường đường model: bộ hiểu thời gian ("8h sáng mai", "mỗi
+# ngày 6h") nằm ở `reminders.parse_when` và tầng model đã biết truyền `when` /
+# `delay_minutes`. Dựng lại phép đọc thời gian bằng regex ở đây là nhân đôi một
+# thứ khó và dễ lệch. Chỉ soi phần TRƯỚC nội dung — chữ chỉ giờ nằm trong lời cần
+# đọc ("nhớ 7h sáng mai dậy") không phải thời điểm phát.
+_LOA_CO_THOI_DIEM = re.compile(
+    r"(sau\s+\d|mỗi\s+|moi\s+|hằng\s+ngày|hang\s+ngay|hàng\s+ngày|"
+    r"\bmai\b|thứ\s*[2-7]|chủ\s+nhật|chu\s+nhat|lúc\s+\d|luc\s+\d|"
+    r"\d{1,2}\s*(?:h|giờ|gio)\b)", re.I)
+
+
+def _la_yeu_cau_phat_loa(text: str) -> dict | None:
+    """args cho `announce_on_speaker` nếu câu là yêu cầu ĐỌC THÔNG BÁO RA LOA.
+
+    None = không phải, hoặc là việc nên để đường model lo (có thời điểm, có âm
+    lượng, là nút bấm menu, là lệnh mở nhạc / quản lý sổ loa).
+    """
+    t = (text or "").strip()
+    if not t or "«" in t or _KHONG_PHAI_PHAT_LOA.search(t):
+        return None
+    m = _TAT_PHAT_LOA.match(t)
+    if not m:
+        return None
+    if _LOA_CO_THOI_DIEM.search(t[: m.start("noi_dung")]):
+        return None
+    noi_dung = m.group("noi_dung").strip()
+    if not noi_dung:
+        return None
+    args: dict[str, Any] = {"text": noi_dung}
+    loa = (m.group("loa") or "").strip(" \t,.-–")
+    if loa:
+        args["speaker"] = loa
+    return args
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -1488,6 +1555,43 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _persist_history(user_id, hist)
             _journal(str(out_l.get("text") or ""), status="loa_fastpath")
             return out_l
+
+    # 1.49) Câu NGƯỜI gõ xin đọc thông báo ra loa → dựng MENU CHỌN LOA ngay.
+    #
+    # Đo thật 02/08 23:15 — "phát thông báo ra loa với nội dung chuẩn bị đi ngủ
+    # thôi các con" nhận lại "Dạ anh muốn phát ra loa nào ạ — loa phòng khách hay
+    # tất cả loa?". Đó là lời MODEL tự nghĩ ra, không phải danh sách do tool liệt
+    # kê: nhà có loa nào là nó ĐOÁN, và phải thêm một lượt model nữa mới ra được
+    # danh sách bấm được — chủ máy nhắc hai lần "danh sách lựa chọn đâu".
+    #
+    # Cùng khuôn với đường tắt tạo ảnh/video (mục 1.47): nhận ý bằng regex rồi gọi
+    # thẳng capability, nên menu ra tức thì và `_ask_chon_loa` liệt kê loa THẬT mà
+    # khung chat này được cấp.
+    #
+    # CHỈ đi tắt khi lời gọi CÒN THIẾU thông tin (`con_thieu_thong_tin`) — lúc đó
+    # handler chỉ trả về MENU, không có tác dụng phụ nào. Câu đã đủ loa + âm lượng
+    # thì để đường thường chạy, vì đó là chỗ cổng duyệt hỏi trước khi phát thật.
+    _yc_loa = _la_yeu_cau_phat_loa(user_text)
+    if (_yc_loa and (allow is None or "tts_speaker" in allow)
+            and caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)):
+        if approval_gate.is_blocked("announce_on_speaker", risk="change"):
+            return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
+        try:
+            _cap_yc = caps.get("announce_on_speaker")
+            _kq_yc = (_execute(_cap_yc, dict(_yc_loa), user_id,
+                               user_text=user_text, is_admin=is_admin)
+                      if _cap_yc else None)
+        except Exception as exc:
+            logger.warning({"event": "agent_tat_loa_hoi_loi", "error": str(exc)[:150]})
+            _kq_yc = None
+        if _kq_yc and str(_kq_yc.get("text") or "").strip():
+            logger.info({"event": "agent_tat_loa_hoi",
+                         "loa": _yc_loa.get("speaker") or ""})
+            out_y = _finalize(user_id, _kq_yc)
+            hist.append({"role": "assistant", "content": out_y.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_y.get("text") or ""), status="loa_hoi_fastpath")
+            return out_y
 
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua

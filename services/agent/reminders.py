@@ -959,15 +959,18 @@ def _phat_ra_loa(meta: dict[str, Any], text: str) -> tuple[bool, str]:
                 muc_cu = None
                 logger.info("reminders: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
 
+        # Lịch có mức riêng thì phát bằng bản ghi KHÔNG mang âm lượng mặc định
+        # của sổ loa — để nguyên thì `_play_cast` vặn đè lên mức của lịch.
+        rec_phat = vspk.bo_am_luong_mac_dinh(rec) if vol not in (None, "") else rec
         duong = str(meta.get("audio_path") or "").strip()
         p = Path(duong) if duong else None
         if p is not None and p.is_file():
             url = voice.media_url(p)
-            voice.play_on(rec, url)
+            voice.play_on(rec_phat, url)
         else:
             # File đã mất → đọc lại tại chỗ, giữ đúng giọng đã chọn lúc đặt lịch.
             logger.warning("reminders: mất file âm thanh của lịch (%s) — TTS lại", duong)
-            url = voice.play_text_on(text, rec, str(meta.get("voice") or ""))
+            url = voice.play_text_on(text, rec_phat, str(meta.get("voice") or ""))
         if muc_cu is not None:
             vann._tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""))
         return True, str(rec.get("name") or sid)

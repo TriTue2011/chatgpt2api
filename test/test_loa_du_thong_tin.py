@@ -740,5 +740,240 @@ class DuongTatKhongMoThemQuyenTests(unittest.TestCase):
                       self.code[i:i + 400])
 
 
+class DuongTatHoiLoaTests(unittest.TestCase):
+    """Câu xin phát ra loa phải ra MENU CHỌN LOA ngay, không nhờ model tự hỏi.
+
+    Đo thật 02/08 23:15 trên Zalo (nguyên văn):
+
+        23:15:29 người dùng : phát thông báo ra loa với nội dung chuẩn bị đi ngủ thôi các con
+        23:15:36 bot        : Dạ anh muốn phát ra loa nào ạ — loa phòng khách hay tất cả loa?
+        23:15:49 người dùng : Danh sách lựa chọn đâu
+        23:16:05 người dùng : Thiếu lựa chọn
+
+    Câu hỏi ở 23:15:36 là lời MODEL tự nghĩ ra: nhà có loa nào là nó đoán, và mỗi
+    lượt hỏi tốn một vòng gọi model. Đường tắt nhận ý bằng regex rồi gọi thẳng
+    capability nên `_ask_chon_loa` liệt kê loa THẬT, ra ngay từ lượt đầu.
+    """
+
+    def setUp(self):
+        self.f = _nap(GOC / "services" / "agent" / "orchestrator.py",
+                      ("_TAT_PHAT_LOA", "_KHONG_PHAI_PHAT_LOA", "_LOA_CO_THOI_DIEM",
+                       "_la_yeu_cau_phat_loa"))["_la_yeu_cau_phat_loa"]
+
+    def test_cau_that_cua_chu_may(self):
+        got = self.f("phát thông báo ra loa với nội dung chuẩn bị đi ngủ thôi các con")
+        self.assertEqual(got, {"text": "chuẩn bị đi ngủ thôi các con"})
+
+    def test_neu_ten_loa_thi_mang_theo(self):
+        got = self.f("thông báo ra loa phòng khách: cả nhà ăn cơm")
+        self.assertEqual(got, {"text": "cả nhà ăn cơm", "speaker": "phòng khách"})
+
+    def test_cac_cach_noi_khac(self):
+        for cau in ("đọc ra loa nội dung là cả nhà ăn cơm",
+                    "phát ra loa: cả nhà ăn cơm",
+                    "nhắc cả nhà bằng loa rằng cả nhà ăn cơm",
+                    "hãy thông báo ra loa noi dung cả nhà ăn cơm"):
+            got = self.f(cau)
+            self.assertIsNotNone(got, cau)
+            self.assertEqual(got["text"], "cả nhà ăn cơm", cau)
+
+    def test_co_thoi_diem_thi_nhuong_duong_model(self):
+        """Bộ hiểu thời gian nằm ở tầng model + `reminders.parse_when`."""
+        for cau in ("phát thông báo ra loa sau 5 phút: cả nhà ăn cơm",
+                    "phát thông báo ra loa lúc 8h sáng mai: cả nhà ăn cơm",
+                    "phát thông báo ra loa mỗi ngày: cả nhà ăn cơm"):
+            self.assertIsNone(self.f(cau), cau)
+
+    def test_gio_trong_LOI_CAN_DOC_khong_tinh_la_thoi_diem(self):
+        got = self.f("phát thông báo ra loa: nhớ 7h sáng mai dậy sớm")
+        self.assertEqual(got, {"text": "nhớ 7h sáng mai dậy sớm"})
+
+    def test_khong_gianh_viec_cua_tool_khac(self):
+        for cau in ("mở nhạc ra loa bếp: lofi chill",
+                    "phát bài hát ra loa bếp: lofi",
+                    "phát thông báo ra loa âm lượng 50%: cả nhà ăn cơm",
+                    "cho xem danh sách loa",
+                    "thêm loa mới",
+                    "xin chào em"):
+            self.assertIsNone(self.f(cau), cau)
+
+    def test_noi_dung_nut_bam_KHONG_lot_vao_day(self):
+        """Nút bấm đã có đường riêng (mục 1.48) — vào đây là hiện lại menu vô tận."""
+        for cau in ("đọc ra loa «loa phòng khách» âm lượng 60%: cả nhà ăn cơm",
+                    "chọn loa «loa bếp» để đọc: cả nhà ăn cơm",
+                    "đọc ra loa nhiều «loa bếp=50; loa gác=?»: cả nhà ăn cơm"):
+            self.assertIsNone(self.f(cau), cau)
+
+    def test_thieu_noi_dung_thi_khong_doan_bua(self):
+        for cau in ("phát thông báo ra loa", "phát thông báo ra loa phòng khách"):
+            self.assertIsNone(self.f(cau), cau)
+
+    def test_chi_di_tat_khi_CON_PHAI_HOI(self):
+        """Đủ thông tin thì phải qua cổng duyệt ở đường thường, không đi tắt."""
+        from services.agent import capabilities as caps
+        args = self.f("phát thông báo ra loa với nội dung chuẩn bị đi ngủ thôi các con")
+        self.assertTrue(caps.con_thieu_thong_tin("announce_on_speaker", args or {}))
+
+
+class DuongTatHoiLoaKhongMoThemQuyenTests(unittest.TestCase):
+    """Đường tắt rút ngắn đường đi, KHÔNG mở thêm quyền."""
+
+    def setUp(self):
+        self.code = "\n".join(
+            l for l in (GOC / "services" / "agent" / "orchestrator.py")
+            .read_text("utf-8").splitlines() if not l.lstrip().startswith("#"))
+        self.khuc = self.code[self.code.index("_yc_loa = _la_yeu_cau_phat_loa(user_text)"):][:900]
+
+    def test_van_qua_bo_loc_chuc_nang_theo_thread(self):
+        self.assertIn('allow is None or "tts_speaker" in allow', self.khuc)
+
+    def test_che_do_chi_doc_van_chan_cung(self):
+        self.assertIn('approval_gate.is_blocked("announce_on_speaker"', self.khuc)
+
+    def test_chi_chay_khi_con_thieu_thong_tin(self):
+        self.assertIn('caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)',
+                      self.khuc)
+
+    def test_van_ghi_audit_bang_cach_di_qua_execute(self):
+        self.assertIn("_execute(_cap_yc,", self.khuc)
+
+    def test_dat_truoc_fast_path_HA(self):
+        self.assertLess(self.code.index("_yc_loa = _la_yeu_cau_phat_loa(user_text)"),
+                        self.code.index("if ha_fastpath and (allow is None"))
+
+
+class AmLuongMacDinhKhongDuocDeTests(unittest.TestCase):
+    """Mức mặc định của sổ loa không được đè lên mức chọn cho thông báo.
+
+    Đo thật 02/08 23:16 — chủ máy chọn 0% cho "chuẩn bị đi ngủ thôi các con", bot
+    báo "[đang đọc … ra loa phòng khách]" mà loa vẫn kêu. `announce._run` đặt
+    đúng 0, nhưng `speakers._play_cast` đọc `rec["volume"]` (âm lượng mặc định
+    khai trong Sổ loa) rồi vặn trở lại ngay trước khi phát.
+    """
+
+    def setUp(self):
+        from services.voice import announce as ann
+        from services.voice import speakers as vspk
+        self.ann, self.vspk = ann, vspk
+        self.rec = dict(LOA_CAST, volume=0.55)     # loa có mức mặc định trong sổ
+        goc = ann._resolve_one
+        ann._resolve_one = lambda q: self.rec
+        self.addCleanup(lambda: setattr(ann, "_resolve_one", goc))
+        self.ann._do_dai_audio = lambda url: 0.0
+
+    def _cam(self):
+        """Trả về list ghi lại `rec` mà mỗi lần phát nhận được."""
+        import services.voice as v
+        from services.voice import speakers as vspk
+        da_phat: list[dict] = []
+        goc = {"play": v.play_text_on, "get": vspk.get_volume, "set": vspk.set_volume}
+
+        def _play(text, rec, voice_name="", *, files_out=None):
+            da_phat.append(dict(rec))
+            return "https://x/media/voice/abc.wav"
+
+        v.play_text_on = _play
+        vspk.get_volume = lambda rec: 0.25
+        vspk.set_volume = lambda rec, level: None
+
+        def _tra_lai():
+            v.play_text_on = goc["play"]
+            vspk.get_volume, vspk.set_volume = goc["get"], goc["set"]
+        self.addCleanup(_tra_lai)
+        return da_phat
+
+    def test_co_chon_am_luong_thi_bo_muc_mac_dinh(self):
+        da_phat = self._cam()
+        self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0, volume=0.0)
+        self.assertEqual(len(da_phat), 1)
+        self.assertNotIn("volume", da_phat[0])
+        self.assertEqual(da_phat[0]["name"], "loa phòng khách")
+
+    def test_khong_ai_neu_am_luong_thi_muc_mac_dinh_van_co_tac_dung(self):
+        da_phat = self._cam()
+        self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0)
+        self.assertEqual(da_phat[0].get("volume"), 0.55)
+
+    def test_ham_bo_muc_mac_dinh_khong_dung_ban_goc(self):
+        rec = {"id": "x", "name": "loa", "kind": "cast", "volume": 0.7}
+        moi = self.vspk.bo_am_luong_mac_dinh(rec)
+        self.assertNotIn("volume", moi)
+        self.assertEqual(rec["volume"], 0.7)
+        self.assertEqual(moi["name"], "loa")
+
+
+class DatAmLuongHONGThiKhongBaoThanhCongTests(unittest.TestCase):
+    """Loa chỉnh được âm lượng mà đặt không xong → NÉM RA, đừng đọc rồi báo xong.
+
+    Cùng loại lỗi với `PhatNgayPhaiDongBoTests`: câu "[đang đọc …]" phải là lời
+    thật. Đọc ở mức cũ lúc nửa đêm trong khi người dùng vừa chọn mức nhỏ là hỏng
+    đúng cái họ chọn.
+    """
+
+    def setUp(self):
+        from services.voice import announce as ann
+        self.ann = ann
+        self.ann._do_dai_audio = lambda url: 0.0
+
+    def _cam(self, rec):
+        import services.voice as v
+        from services.voice import speakers as vspk
+        goc = {"resolve": self.ann._resolve_one, "play": v.play_text_on,
+               "get": vspk.get_volume, "set": vspk.set_volume}
+        da_phat: list = []
+        self.ann._resolve_one = lambda q: rec
+        v.play_text_on = lambda *a, **k: (da_phat.append(1),
+                                          "https://x/media/voice/a.wav")[1]
+        vspk.get_volume = lambda rec: 0.25
+
+        def _set(rec, level):
+            raise RuntimeError("Không kết nối được loa Cast 192.168.1.9:8009.")
+        vspk.set_volume = _set
+
+        def _tra_lai():
+            self.ann._resolve_one = goc["resolve"]
+            v.play_text_on = goc["play"]
+            vspk.get_volume, vspk.set_volume = goc["get"], goc["set"]
+        self.addCleanup(_tra_lai)
+        return da_phat
+
+    def test_loa_cast_dat_khong_duoc_thi_nem_ra(self):
+        da_phat = self._cam(dict(LOA_CAST))
+        with self.assertRaises(RuntimeError) as e:
+            self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0, volume=0.0)
+        self.assertIn("âm lượng", str(e.exception))
+        self.assertEqual(da_phat, [])          # KHÔNG đọc ở mức cũ
+
+    def test_loa_khong_chinh_duoc_am_luong_thi_van_doc(self):
+        """DLNA/HA vốn không có nút âm lượng — đừng vì thế mà bỏ luôn thông báo."""
+        da_phat = self._cam(dict(LOA_DLNA))
+        self.ann.schedule("loa gác", NOI_DUNG, delay_seconds=0, volume=0.5)
+        self.assertEqual(len(da_phat), 1)
+
+
+class KhongGoiY0PhanTramTests(unittest.TestCase):
+    """0% là thông báo không ai nghe thấy — đừng để nó thành ô đầu tiên.
+
+    `goi_y` ở menu này LUÔN là mức tầng model tự điền: người dùng có nêu mức thì
+    `_h_announce_on_speaker` đã bỏ qua bước hỏi. Đo thật 02/08 23:16 — câu người
+    dùng không nhắc gì tới âm lượng, model điền 0, menu hiện "0% (theo yêu cầu)" ở
+    đầu, chủ máy bấm ô 1 và loa đọc ở mức 0.
+    """
+
+    def setUp(self):
+        self.f = _ns_menu()["_ask_am_luong_loa"]
+
+    def test_goi_y_0_bi_bo(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0, goi_y=0)["text"])
+        nhan = [c["label"] for c in choices]
+        self.assertEqual(nhan, ["30%", "50%", "70%", "100%", "Giữ nguyên âm lượng loa"])
+
+    def test_muc_khac_van_giu_nguyen_cach_cu(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0, goi_y=20)["text"])
+        self.assertEqual(choices[0]["label"], "20% (theo yêu cầu)")
+
+
 if __name__ == "__main__":
     unittest.main()

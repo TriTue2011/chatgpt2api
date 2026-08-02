@@ -330,6 +330,22 @@ def media_control(rec: dict[str, Any], action: str) -> None:
             pass
 
 
+def bo_am_luong_mac_dinh(rec: dict[str, Any]) -> dict[str, Any]:
+    """Bản sao của `rec` KHÔNG mang âm lượng mặc định của sổ loa.
+
+    `_play_cast` đặt `rec["volume"]` (mức mặc định khai trong Sổ loa) NGAY TRƯỚC
+    khi phát. Lượt phát nào đã tự đặt âm lượng riêng — thông báo ra loa, lịch đọc
+    ra loa — phải đi bằng bản này, không thì mức mặc định đè lên mức vừa chọn.
+
+    Đo thật 02/08 23:16: chủ máy chọn 0% cho một thông báo, `set_volume` đã đặt
+    đúng 0, rồi `_play_cast` vặn trở lại mức mặc định của loa nên loa vẫn kêu —
+    nhìn từ ngoài y như bot bỏ qua lựa chọn âm lượng.
+
+    Mức mặc định vẫn giữ nguyên tác dụng cho lượt phát KHÔNG ai nêu âm lượng.
+    """
+    return {k: v for k, v in (rec or {}).items() if k != "volume"}
+
+
 def ho_tro_am_luong(rec: dict[str, Any]) -> bool:
     """Loa này chỉnh được âm lượng không? (xem `set_volume` — chỉ Cast và R1)
 

@@ -3092,7 +3092,12 @@ def _ask_am_luong_loa(text: str, rec: dict, delay_seconds: float,
     try:
         if goi_y not in (None, ""):
             g = int(round(float(goi_y)))
-            if 0 <= g <= 100:
+            # Từ 1% trở lên. 0% là thông báo KHÔNG AI NGHE THẤY, mà `goi_y` ở đây
+            # luôn là mức tầng model tự điền (người dùng có nêu mức thì đã không
+            # tới bước hỏi này) — đo thật 02/08 23:16: model điền 0 cho câu không
+            # nhắc gì tới âm lượng, menu để "0% (theo yêu cầu)" ở đầu, chủ máy bấm
+            # ô đầu tiên và loa đọc ở mức 0.
+            if 1 <= g <= 100:
                 muc.append(g)
                 lines.append(_dong(f"{g}% (theo yêu cầu)", g))
     except (TypeError, ValueError):
