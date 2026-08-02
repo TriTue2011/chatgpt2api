@@ -2565,7 +2565,7 @@ def _speaker_scope(ctx: dict) -> tuple[str, str]:
     return ("tg", uid)
 
 
-def con_thieu_thong_tin(name: str, args: dict) -> bool:
+def con_thieu_thong_tin(name: str, args: dict, user_text: str = "") -> bool:
     """Lời gọi này còn phải HỎI THÊM người dùng trước khi làm được?
 
     Cổng duyệt hỏi "Em định …, duyệt không ạ?". Hỏi câu đó khi việc còn thiếu
@@ -2588,8 +2588,18 @@ def con_thieu_thong_tin(name: str, args: dict) -> bool:
     """
     if str(name or "") == "announce_on_speaker":
         a = args if isinstance(args, dict) else {}
-        # Chưa có bằng chứng NGƯỜI chọn âm lượng → còn phải hỏi.
-        return not (a.get("am_luong_da_chon") or a.get("giu_am_luong"))
+        if a.get("tuy_chon"):
+            return True                       # còn phải hỏi loa nào + âm lượng
+        ke = str(a.get("ke_hoach") or "").strip()
+        if ke:
+            return "?" in ke                  # còn loa chưa chọn mức
+        if a.get("am_luong_da_chon") or a.get("giu_am_luong"):
+            return False
+        # Người dùng nêu âm lượng ngay trong câu ("tất cả các loa âm lượng 50%")
+        # thì mức đó là của họ — không cần hỏi lại.
+        if a.get("volume") not in (None, "") and _nguoi_co_neu_am_luong(user_text):
+            return False
+        return True
     return False
 
 
@@ -2744,6 +2754,25 @@ def _h_play_music_on_speaker(args: dict, ctx: dict) -> dict:
 
 
 _LOA_MUC_AM = (30, 50, 70, 100)
+# Tên quy ước cho lựa chọn "tất cả loa" trong nút bấm. Đặt tên riêng thay vì dựa
+# vào chữ người dùng gõ, để `_doc_nut_menu_loa` nhận chắc chắn.
+_TEN_TAT_CA = "tất cả"
+# «Giữ nguyên âm lượng» phải là KHOÁ RIÊNG, không phải một con số. Dùng -1 rồi mã
+# hoá ra chuỗi sẽ bị `_giai_ma_ke_hoach` kẹp về 0 — tức TẮT TIẾNG, ngược hẳn ý.
+_GIU_NGUYEN = "giu"
+_MA_GIU = "giu"
+_LOA_TAT_CA = {"tất cả", "tat ca", "all", "mọi loa", "moi loa", "tất cả loa"}
+
+
+def _nguoi_co_neu_am_luong(text: str) -> bool:
+    """Câu NGƯỜI gõ có thật sự nêu âm lượng không?
+
+    Mức do tầng model tự điền không được áp thẳng (đo thật 02/08: câu không nêu
+    âm lượng nào mà model vẫn điền `volume`, làm bước hỏi bị bỏ qua sạch). Nhưng
+    khi người dùng gõ rõ "âm lượng 40%" thì mức đó LÀ của họ — hỏi lại là vô ích.
+    """
+    return bool(re.search(r"(âm\s*lượng|volume|\bvol\b|\bmức\b)\s*\d{1,3}"
+                          r"|\d{1,3}\s*%", str(text or ""), re.I))
 
 
 def _ask_chon_loa(text: str, rows: list[dict], delay_seconds: float) -> dict:
@@ -2772,7 +2801,134 @@ def _ask_chon_loa(text: str, rows: list[dict], delay_seconds: float) -> dict:
     lines = [f'🔊 Đọc “{short}” ra loa nào ạ?' + (dl or " (đọc ngay)"), "<<<ASK>>>"]
     for r in rows:
         ten = str(r.get("name") or "")
-        lines.append(f"{vspk.describe(r)} | chọn loa «{ten}» để đọc{dl}: {text}")
+        lines.append(f"{ten} ({vspk.dai_am_luong(r)}) | "
+                     f"chọn loa «{ten}» để đọc{dl}: {text}")
+    # Hai lựa chọn cuối, theo yêu cầu 02/08 — cùng khuôn menu chọn model ảnh/video
+    # (danh sách cụ thể trước, lựa chọn mở ở cuối).
+    lines.append(f"Tuỳ chọn (tự nêu loa + âm lượng) | tuỳ chọn loa để đọc{dl}: {text}")
+    if len(rows) > 1:
+        lines.append(f"Tất cả loa | chọn loa «{_TEN_TAT_CA}» để đọc{dl}: {text}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
+def _ask_tuy_chon_loa(text: str, rows: list[dict], delay_seconds: float) -> dict:
+    """Người dùng bấm «Tuỳ chọn» → hỏi lại LOA NÀO và ÂM LƯỢNG bao nhiêu.
+
+    Trả câu hỏi thường (không phải menu) vì đây là chỗ để họ tự gõ: nhiều loa một
+    lúc, hoặc mức âm lượng không có trong menu. Liệt kê kèm dải để họ biết gõ được
+    những gì.
+    """
+    from services.voice import speakers as vspk
+
+    text = _mot_dong(text)
+    dl = ""
+    if delay_seconds and delay_seconds > 0:
+        dl = f" sau {delay_seconds / 60:g} phút"
+    ds = "\n".join(f"· {r.get('name')} ({vspk.dai_am_luong(r)})" for r in rows)
+    return {"text": (f"Anh/chị muốn đọc{dl} ra những loa nào, âm lượng bao nhiêu ạ?\n"
+                     f"{ds}\n"
+                     f"Nói kiểu: «loa phòng khách và loa bếp, âm lượng 40%». "
+                     f"Nội dung em vẫn giữ: “{text}”"),
+            "deliver_now": True}
+
+
+def _ma_hoa_ke_hoach(ke: list[tuple[str, object]]) -> str:
+    """[(tên loa, mức|None)] → "loa A=50; loa B=?" — chuỗi nằm TRONG nút bấm.
+
+    Vì sao nhồi kế hoạch vào nút thay vì giữ trạng thái tạm trên máy chủ: nút bấm
+    là thứ NGƯỜI đọc rồi bấm, nên kế hoạch hiện ra trước mắt họ; và không có
+    trạng thái nào để mất khi khởi động lại hay khi hai người cùng chat.
+    """
+    phan = []
+    for ten, vol in ke:
+        if vol in (None, ""):
+            v = "?"                      # chưa chọn
+        elif vol == _GIU_NGUYEN:
+            v = _MA_GIU                  # giữ nguyên mức của loa
+        else:
+            v = str(vol)
+        phan.append(f"{ten}={v}")
+    return "; ".join(phan)
+
+
+def _giai_ma_ke_hoach(tho: str) -> list[dict]:
+    """Ngược của `_ma_hoa_ke_hoach`. Mức chưa chọn để None."""
+    ra: list[dict] = []
+    for mau in str(tho or "").split(";"):
+        mau = mau.strip()
+        if not mau:
+            continue
+        ten, _, v = mau.rpartition("=")     # rpartition: tên loa có thể chứa '='
+        ten = (ten or mau).strip()
+        v = v.strip()
+        if not ten:
+            continue
+        vol = None
+        if v == _MA_GIU:
+            vol = _GIU_NGUYEN
+        elif v and v != "?":
+            try:
+                vol = max(0, min(100, int(round(float(v)))))
+            except ValueError:
+                vol = None
+        ra.append({"ten": ten, "vol": vol})
+    return ra
+
+
+def _con_thieu_am_luong(ke: list[dict]) -> list[dict]:
+    return [m for m in (ke or []) if m.get("vol") is None]
+
+
+def _ask_am_luong_tung_loa(text: str, ke: list[dict], rows: list[dict],
+                           delay_seconds: float) -> dict:
+    """Hỏi âm lượng LẦN LƯỢT từng loa đã chọn.
+
+    Yêu cầu 02/08: "nếu user chọn tất cả hay tuỳ chọn thì sẽ hỏi lần lượt âm lượng
+    các loa được chọn". Mỗi lần chỉ hỏi MỘT loa, kèm dải riêng của loa đó — loa
+    Cast là 0–100%, loa R1 quy ra chỉ số 0–15, nên hỏi chung một mức là sai.
+
+    Loa không chỉnh được âm lượng (DLNA/HA) được đánh «giữ nguyên» và BỎ QUA, khỏi
+    hỏi một câu mà loa không làm được gì.
+    """
+    from services.voice import speakers as vspk
+
+    text = _mot_dong(text)
+    dl = ""
+    if delay_seconds and delay_seconds > 0:
+        dl = f" sau {delay_seconds / 60:g} phút"
+    theo_ten = {str(r.get("name") or ""): r for r in rows}
+
+    # Loa không chỉnh được âm lượng thì tự điền, không hỏi.
+    for m in ke:
+        if m.get("vol") is None:
+            r = theo_ten.get(m["ten"])
+            if r is not None and not vspk.ho_tro_am_luong(r):
+                m["vol"] = _GIU_NGUYEN     # giữ nguyên mức của loa
+    # Đếm theo số loa CẦN HỎI, không theo cả kế hoạch: loa không chỉnh được âm
+    # lượng đã tự điền nên đưa vào mẫu số sẽ ra "Loa 2/4" ngay ở câu ĐẦU TIÊN.
+    can_hoi = [m for m in ke
+               if theo_ten.get(m["ten"]) is None
+               or vspk.ho_tro_am_luong(theo_ten[m["ten"]])]
+    thieu = [m for m in can_hoi if m.get("vol") is None]
+    if not thieu:
+        return {}
+    dang_hoi = thieu[0]
+    rec = theo_ten.get(dang_hoi["ten"]) or {"name": dang_hoi["ten"]}
+    xong = len(can_hoi) - len(thieu) + 1
+    short = text if len(text) <= 40 else text[:39] + "…"
+    lines = [f'🔊 Loa {xong}/{len(can_hoi)} — {dang_hoi["ten"]}: âm lượng bao nhiêu ạ?',
+             f"({vspk.dai_am_luong(rec)} · phát xong em trả âm lượng về mức cũ)",
+             f'Nội dung: “{short}”{dl or " · đọc ngay"}',
+             "<<<ASK>>>"]
+
+    def _dong(nhan: str, v: object) -> str:
+        moi = [(m["ten"], v if m is dang_hoi else m["vol"]) for m in ke]
+        return f"{nhan} | đọc ra loa nhiều «{_ma_hoa_ke_hoach(moi)}»{dl}: {text}"
+
+    for v in _LOA_MUC_AM:
+        lines.append(_dong(f"{v}%", v))
+    lines.append(_dong("Giữ nguyên âm lượng loa", _GIU_NGUYEN))
     lines.append("<<<END>>>")
     return {"text": "\n".join(lines), "deliver_now": True}
 
@@ -2829,6 +2985,60 @@ def _ask_am_luong_loa(text: str, rec: dict, delay_seconds: float,
     return {"text": "\n".join(lines), "deliver_now": True}
 
 
+def _fold_loa(x: str) -> str:
+    """Bỏ dấu + gộp khoảng trắng để so tên loa / chữ «tất cả» không lệ thuộc dấu."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(x or "").lower())
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", t.replace("đ", "d")).strip()
+
+
+def _phat_nhieu_loa(text: str, ke: list[dict], theo_ten: dict, delay: float,
+                    args: dict, ctx: dict) -> dict:
+    """Đọc ra NHIỀU loa, mỗi loa theo mức âm lượng riêng đã chọn.
+
+    `vol = _GIU_NGUYEN` nghĩa là giữ nguyên mức của loa đó (loa DLNA/HA không
+    chỉnh được, hoặc người dùng chọn «giữ nguyên»).
+
+    % → mức thật do `speakers.set_volume` lo: loa Cast nhận 0..1, loa R1 quy ra
+    CHỈ SỐ 0..max_vol (50% → 8 với thang 15). Ở đây chỉ chuyển % sang tỉ lệ, không
+    tự quy đổi thang — một chỗ quy đổi là đủ.
+    """
+    from services import voice
+    from services.voice import announce as vann
+
+    _khi = str(args.get("when") or args.get("thoi_diem") or "").strip()
+    xong, loi = [], []
+    for m in ke:
+        rec = theo_ten.get(m["ten"])
+        if rec is None:
+            loi.append(f"{m['ten']} (không còn loa này)")
+            continue
+        v = m.get("vol")
+        volume = (None if v in (None, "", _GIU_NGUYEN)
+                  else max(0.0, min(100.0, float(v))) / 100.0)
+        giong = voice.giong_cho_loa(rec, session_id=_session_id_loa(ctx))
+        try:
+            if _khi:
+                vann.dat_lich(str((ctx or {}).get("user_id") or ""),
+                              str(rec.get("id")), text, _khi,
+                              volume=volume, voice_name=giong)
+            else:
+                vann.schedule(str(rec.get("id")), text, delay_seconds=delay,
+                              volume=volume, voice=giong)
+            muc = "giữ nguyên" if v in (None, "", _GIU_NGUYEN) else f"{int(v)}%"
+            xong.append(f"{m['ten']} ({muc})")
+        except Exception as exc:
+            loi.append(f"{m['ten']} ({str(exc)[:80]})")
+    if xong and not loi:
+        viec = ("đã đặt lịch đọc" if _khi else
+                "đã hẹn đọc" if delay > 0 else "đang đọc")
+        return {"text": f"[{viec} “{text}” ra {', '.join(xong)}]"}
+    if xong:
+        return {"text": f"[phát được: {', '.join(xong)}; lỗi: {'; '.join(loi)}]"}
+    return {"text": f"Em phát không được ạ 😥: {'; '.join(loi)}"}
+
+
 def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     """Đọc thông báo ra loa NGAY hoặc HẸN GIỜ (sau N phút), kèm âm lượng %.
 
@@ -2858,11 +3068,69 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     allowed = vperm.visible_speakers(plat, "", chat_id)
     if not allowed:
         return {"text": "Chưa có loa nào được cấp cho khung chat này ạ."}
+
+    # ── Nhiều loa: kế hoạch mang trong nút bấm, hỏi âm lượng LẦN LƯỢT ────────
+    ke_tho = str(args.get("ke_hoach") or "").strip()
+    if ke_tho:
+        ke = _giai_ma_ke_hoach(ke_tho)
+        ten_cho_phep = {str(r.get("name") or ""): r for r in allowed}
+        ke = [m for m in ke if m["ten"] in ten_cho_phep]   # loa bị thu quyền thì rụng
+        if not ke:
+            return _ask_chon_loa(text, allowed, delay)
+        hoi = _ask_am_luong_tung_loa(text, ke, allowed, delay)
+        if hoi:
+            return hoi
+        return _phat_nhieu_loa(text, ke, ten_cho_phep, delay, args, ctx)
+
+    # ── Người bấm «Tuỳ chọn» → tự nêu loa + âm lượng ─────────────────────────
+    if str(args.get("tuy_chon") or "").strip() or args.get("tuy_chon") is True:
+        return _ask_tuy_chon_loa(text, allowed, delay)
+
+    # Người dùng nêu âm lượng NGAY trong câu ("tất cả các loa âm lượng 50%") thì
+    # mức đó là của họ — điền sẵn cho mọi loa, khỏi hỏi lại từng cái.
+    _vol_san = None
+    if _nguoi_co_neu_am_luong(str((ctx or {}).get("user_message") or "")):
+        try:
+            _v = args.get("volume")
+            if _v not in (None, ""):
+                _vol_san = max(0, min(100, int(round(float(_v)))))
+        except (TypeError, ValueError):
+            _vol_san = None
+
     if not target:
         chosen = allowed[0] if len(allowed) == 1 else None
         if chosen is None:
             return _ask_chon_loa(text, allowed, delay)     # LIỆT KÊ loa, bấm được
+    elif _fold_loa(target) in {_fold_loa(x) for x in _LOA_TAT_CA}:
+        # «Tất cả» → dựng kế hoạch rồi hỏi âm lượng từng loa một.
+        ke = [{"ten": str(r.get("name") or ""), "vol": _vol_san} for r in allowed]
+        hoi = _ask_am_luong_tung_loa(text, ke, allowed, delay)
+        if hoi:
+            return hoi
+        return _phat_nhieu_loa(text, ke, {str(r.get("name") or ""): r for r in allowed},
+                               delay, args, ctx)
     else:
+        # Người gõ nhiều loa một lúc ("loa phòng khách và loa bếp") → tách ra.
+        phan = [x.strip() for x in re.split(r"\s*(?:,|\bvà\b|\+|&)\s*", target) if x.strip()]
+        if len(phan) > 1:
+            ke, thieu_ten = [], []
+            for x in phan:
+                h = [r for r in vspk.resolve(x)
+                     if any(r.get("id") == a.get("id") for a in allowed)]
+                if len(h) == 1:
+                    ke.append({"ten": str(h[0].get("name") or ""), "vol": _vol_san})
+                else:
+                    thieu_ten.append(x)
+            if thieu_ten:
+                ra = _ask_chon_loa(text, allowed, delay)
+                ra["text"] = (f"Em chưa rõ loa: {', '.join(thieu_ten)}.\n" + ra["text"])
+                return ra
+            hoi = _ask_am_luong_tung_loa(text, ke, allowed, delay)
+            if hoi:
+                return hoi
+            return _phat_nhieu_loa(text, ke,
+                                   {str(r.get("name") or ""): r for r in allowed},
+                                   delay, args, ctx)
         hits = [r for r in vspk.resolve(target)
                 if any(r.get("id") == a.get("id") for a in allowed)]
         if not hits:
@@ -2876,9 +3144,12 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     vol = args.get("volume")
     # Âm lượng phải do NGƯỜI chọn. `am_luong_da_chon` chỉ được đặt bởi bộ đọc nút
     # bấm menu (`orchestrator._doc_nut_menu_loa`), nên mức do tầng model tự điền
-    # không bao giờ được áp thẳng — nó chỉ thành gợi ý đầu menu. Loa không chỉnh
-    # được âm lượng (DLNA/HA) thì bỏ qua bước hỏi, khỏi dắt vào đường cùng.
-    if not args.get("am_luong_da_chon") and not args.get("giu_am_luong"):
+    # không bao giờ được áp thẳng — nó chỉ thành gợi ý đầu menu. Nhưng nếu CHÍNH
+    # câu người dùng gõ có nêu âm lượng ("âm lượng 40%") thì mức đó là của họ, hỏi
+    # lại là vô ích. Loa không chỉnh được âm lượng (DLNA/HA) thì bỏ bước hỏi.
+    _nguoi_neu = _nguoi_co_neu_am_luong(str((ctx or {}).get("user_message") or ""))
+    if not args.get("am_luong_da_chon") and not args.get("giu_am_luong") \
+            and not (vol not in (None, "") and _nguoi_neu):
         if vspk.ho_tro_am_luong(chosen):
             return _ask_am_luong_loa(text, chosen, delay, goi_y=vol)
         vol = None

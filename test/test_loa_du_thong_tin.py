@@ -64,16 +64,21 @@ LOA_CAST = {"id": "spk1", "name": "loa phòng khách", "kind": "cast",
 LOA_R1 = {"id": "r1a", "name": "loa R1", "kind": "r1", "host": "192.168.1.20",
           "max_vol": 15}
 LOA_DLNA = {"id": "d1", "name": "loa gác", "kind": "dlna", "host": "192.168.1.30"}
+LOA_BEP = {"id": "s2", "name": "loa bếp", "kind": "cast", "host": "192.168.1.10"}
 
 
 def _ns_menu() -> dict:
     return _nap(GOC / "services" / "agent" / "capabilities.py",
-                ("_LOA_MUC_AM", "_ask_am_luong_loa", "_ask_chon_loa", "_mot_dong"))
+                ("_LOA_MUC_AM", "_TEN_TAT_CA", "_LOA_TAT_CA", "_GIU_NGUYEN", "_MA_GIU",
+                 "_ask_am_luong_loa", "_ask_chon_loa", "_ask_tuy_chon_loa",
+                 "_ma_hoa_ke_hoach", "_giai_ma_ke_hoach", "_ask_am_luong_tung_loa",
+                 "_nguoi_co_neu_am_luong", "_fold_loa", "_mot_dong"))
 
 
 def _ns_doc() -> dict:
     return _nap(GOC / "services" / "agent" / "orchestrator.py",
-                ("_NUT_LOA", "_NUT_CHON_LOA", "_doc_nut_menu_loa"))
+                ("_NUT_LOA", "_NUT_CHON_LOA", "_NUT_LOA_NHIEU", "_NUT_TUY_CHON_LOA",
+                 "_doc_nut_menu_loa"))
 
 
 class MenuAmLuongTests(unittest.TestCase):
@@ -153,15 +158,9 @@ class LietKeLoaTests(unittest.TestCase):
     def test_moi_loa_la_mot_nut(self):
         from services.agent import ask_choices as ac
         _, choices = ac.extract(self.f(NOI_DUNG, self.rows, 0)["text"])
-        self.assertEqual(len(choices), 2)
+        self.assertEqual(len(choices), 4)      # 2 loa + tuỳ chọn + tất cả
         self.assertIn("loa phòng khách", choices[0]["label"])
         self.assertIn("loa bếp", choices[1]["label"])
-
-    def test_nhan_hien_ca_loai_va_dia_chi(self):
-        from services.agent import ask_choices as ac
-        _, choices = ac.extract(self.f(NOI_DUNG, self.rows, 0)["text"])
-        self.assertIn("cast", choices[0]["label"])
-        self.assertIn("192.168.1.9", choices[0]["label"])
 
     def test_khong_nhac_gio_thi_ghi_ro_DOC_NGAY(self):
         self.assertIn("đọc ngay", self.f(NOI_DUNG, self.rows, 0)["text"])
@@ -175,7 +174,7 @@ class LietKeLoaTests(unittest.TestCase):
         from services.agent import ask_choices as ac
         _, choices = ac.extract(
             self.f("đi ngủ thôi\nnhớ tắt đèn\nrồi lên phòng", self.rows, 0)["text"])
-        self.assertEqual(len(choices), 2)
+        self.assertEqual(len(choices), 4)
         self.assertIn("rồi lên phòng", choices[0]["send"])
 
 
@@ -208,6 +207,182 @@ class DocLaiNutTests(unittest.TestCase):
         for c in ("phát thông báo ra loa với nội dung đi ăn cơm",
                   "âm lượng 60%", "xin chào", "mở nhạc ra loa R1 âm lượng 5", ""):
             self.assertIsNone(self.f(c), c)
+
+
+class DanhSachDayDuTests(unittest.TestCase):
+    """Yêu cầu 02/08: mỗi loa kèm DẢI âm lượng, cuối danh sách có «tuỳ chọn» và
+    «tất cả» — cùng khuôn menu chọn model tạo ảnh/video."""
+
+    def setUp(self):
+        self.ns = _ns_menu()
+        self.rows = [LOA_CAST, LOA_BEP, LOA_R1, LOA_DLNA]
+
+    def _menu(self):
+        from services.agent import ask_choices as ac
+        return ac.extract(self.ns["_ask_chon_loa"](NOI_DUNG, self.rows, 0)["text"])
+
+    def test_moi_loa_kem_dai_am_luong(self):
+        _, c = self._menu()
+        self.assertIn("dải 0–100%", c[0]["label"])
+        self.assertIn("chỉ số 0–15", self.ns["_ask_chon_loa"](
+            NOI_DUNG, [LOA_R1], 0)["text"])
+
+    def test_loa_khong_chinh_duoc_thi_noi_ro(self):
+        ra = self.ns["_ask_chon_loa"](NOI_DUNG, [LOA_DLNA], 0)["text"]
+        self.assertIn("không chỉnh được âm lượng", ra)
+
+    def test_hai_lua_chon_cuoi_dung_thu_tu(self):
+        _, c = self._menu()
+        nhan = [x["label"] for x in c]
+        self.assertEqual(len(c), len(self.rows) + 2)
+        self.assertIn("Tuỳ chọn", nhan[-2])
+        self.assertEqual(nhan[-1], "Tất cả loa")
+
+    def test_mot_loa_thi_khong_hien_tat_ca(self):
+        """Một loa mà còn 'tất cả loa' thì vô nghĩa."""
+        from services.agent import ask_choices as ac
+        _, c = ac.extract(self.ns["_ask_chon_loa"](NOI_DUNG, [LOA_CAST], 0)["text"])
+        self.assertNotIn("Tất cả loa", [x["label"] for x in c])
+
+    def test_tuy_chon_hoi_lai_loa_va_am_luong(self):
+        ra = self.ns["_ask_tuy_chon_loa"](NOI_DUNG, self.rows, 0)["text"]
+        self.assertIn("những loa nào", ra)
+        self.assertIn("âm lượng bao nhiêu", ra)
+        for r in self.rows:                     # liệt kê kèm dải để biết gõ gì
+            self.assertIn(str(r["name"]), ra)
+        self.assertIn(NOI_DUNG, ra)             # nội dung không bị mất
+
+
+class HoiAmLuongLanLuotTests(unittest.TestCase):
+    """Yêu cầu 02/08: "chọn tất cả hay tuỳ chọn thì hỏi lần lượt âm lượng các loa
+    được chọn". Mỗi lần một loa, kèm dải RIÊNG của loa đó."""
+
+    def setUp(self):
+        self.ns = _ns_menu()
+        self.doc = _ns_doc()["_doc_nut_menu_loa"]
+        self.rows = [LOA_CAST, LOA_BEP, LOA_R1, LOA_DLNA]
+
+    def _chay_het(self, chon_muc: int = 1):
+        """Bấm hết các vòng, trả kế hoạch cuối."""
+        from services.agent import ask_choices as ac
+        ke = [{"ten": r["name"], "vol": None} for r in self.rows]
+        tieu_de = []
+        for _ in range(10):
+            hoi = self.ns["_ask_am_luong_tung_loa"](NOI_DUNG, ke, self.rows, 0)
+            if not hoi:
+                break
+            t, c = ac.extract(hoi["text"])
+            tieu_de.append(t.splitlines()[0])
+            ke = self.ns["_giai_ma_ke_hoach"](self.doc(c[chon_muc]["send"])["ke_hoach"])
+        return tieu_de, ke
+
+    def test_hoi_tung_loa_mot_va_dem_dung(self):
+        tieu_de, _ = self._chay_het()
+        # 4 loa nhưng loa DLNA không chỉnh được → chỉ hỏi 3, mẫu số phải là 3.
+        self.assertEqual(len(tieu_de), 3)
+        self.assertIn("Loa 1/3", tieu_de[0])
+        self.assertIn("Loa 2/3", tieu_de[1])
+        self.assertIn("Loa 3/3", tieu_de[2])
+
+    def test_moi_cau_hoi_kem_dai_rieng_cua_loa_do(self):
+        from services.agent import ask_choices as ac
+        ke = [{"ten": LOA_R1["name"], "vol": None}]
+        t, _ = ac.extract(self.ns["_ask_am_luong_tung_loa"](
+            NOI_DUNG, ke, [LOA_R1], 0)["text"])
+        self.assertIn("chỉ số 0–15", t)
+
+    def test_loa_khong_chinh_duoc_thi_KHONG_hoi(self):
+        tieu_de, ke = self._chay_het()
+        self.assertFalse([t for t in tieu_de if "loa gác" in t])
+        muc = {m["ten"]: m["vol"] for m in ke}
+        self.assertEqual(muc["loa gác"], self.ns["_GIU_NGUYEN"])
+
+    def test_GIU_NGUYEN_khong_bi_hieu_thanh_0_phan_tram(self):
+        """Lỗi thật: mã hoá 'giữ nguyên' bằng -1 thì giải mã kẹp về 0 = TẮT TIẾNG."""
+        ma = self.ns["_ma_hoa_ke_hoach"]([("loa gác", self.ns["_GIU_NGUYEN"])])
+        ra = self.ns["_giai_ma_ke_hoach"](ma)
+        self.assertEqual(ra[0]["vol"], self.ns["_GIU_NGUYEN"])
+        self.assertNotEqual(ra[0]["vol"], 0)
+
+    def test_ke_hoach_di_tron_qua_ma_hoa(self):
+        ke = [("loa phòng khách", 50), ("loa bếp", None), ("loa R1", 30)]
+        ra = self.ns["_giai_ma_ke_hoach"](self.ns["_ma_hoa_ke_hoach"](ke))
+        self.assertEqual([(m["ten"], m["vol"]) for m in ra],
+                         [("loa phòng khách", 50), ("loa bếp", None), ("loa R1", 30)])
+
+    def test_nut_ke_hoach_doc_lai_duoc_va_mang_thoi_diem(self):
+        from services.agent import ask_choices as ac
+        ke = [{"ten": LOA_CAST["name"], "vol": None}]
+        _, c = ac.extract(self.ns["_ask_am_luong_tung_loa"](
+            NOI_DUNG, ke, [LOA_CAST], 120)["text"])
+        got = self.doc(c[0]["send"])
+        self.assertEqual(got["delay_minutes"], 2.0)
+        self.assertEqual(got["text"], NOI_DUNG)
+        self.assertIn("=30", got["ke_hoach"])
+
+
+class NeuAmLuongTruocThiKhongHoiLaiTests(unittest.TestCase):
+    """Yêu cầu 02/08: "nếu user nói tất cả các loa âm lượng 50% thì vẫn được"."""
+
+    def setUp(self):
+        self.f = _ns_menu()["_nguoi_co_neu_am_luong"]
+
+    def test_nhan_dung_cau_co_neu_am_luong(self):
+        for s in ("tất cả các loa âm lượng 50%", "phát ra loa bếp 40%",
+                  "âm lượng 30", "mức 7", "volume 60"):
+            self.assertTrue(self.f(s), s)
+
+    def test_cau_khong_neu_thi_False(self):
+        for s in ("phát thông báo ra loa", "chuẩn bị đi ngủ thôi các con", ""):
+            self.assertFalse(self.f(s), s)
+
+    def test_con_thieu_thong_tin_theo_cau_NGUOI_go(self):
+        from services.agent import capabilities as caps
+        a = {"text": NOI_DUNG, "speaker": "tất cả", "volume": 50}
+        self.assertFalse(caps.con_thieu_thong_tin(
+            "announce_on_speaker", a, "tất cả các loa âm lượng 50%"))
+        # Model tự điền mà câu người dùng KHÔNG nêu → vẫn phải hỏi.
+        self.assertTrue(caps.con_thieu_thong_tin(
+            "announce_on_speaker", a, "phát thông báo ra loa"))
+
+    def test_ke_hoach_con_dau_hoi_thi_van_thieu(self):
+        from services.agent import capabilities as caps
+        self.assertTrue(caps.con_thieu_thong_tin(
+            "announce_on_speaker", {"text": "x", "ke_hoach": "loa A=50; loa B=?"}))
+        self.assertFalse(caps.con_thieu_thong_tin(
+            "announce_on_speaker", {"text": "x", "ke_hoach": "loa A=50; loa B=giu"}))
+
+    def test_tuy_chon_thi_con_thieu(self):
+        from services.agent import capabilities as caps
+        self.assertTrue(caps.con_thieu_thong_tin(
+            "announce_on_speaker", {"text": "x", "tuy_chon": True}))
+
+
+class QuyDoiPhanTramSangChiSoTests(unittest.TestCase):
+    """Yêu cầu 02/08: "loa có dải âm lượng là số thì từ % quy ra âm lượng số".
+
+    Việc quy đổi ĐÃ có sẵn trong `speakers.set_volume` — chỉ có MỘT chỗ quy đổi,
+    tầng trên luôn truyền tỉ lệ 0..1. Test này giữ điều đó lại.
+    """
+
+    def test_set_volume_quy_ra_chi_so_cho_R1(self):
+        import pathlib
+        src = (GOC / "services" / "voice" / "speakers.py").read_text("utf-8")
+        i = src.index("def set_volume(")
+        khuc = src[i:i + 700]
+        self.assertIn("max_vol", khuc)
+        self.assertIn('kind == "r1"', khuc)
+
+    def test_tang_tren_chi_truyen_ti_le_khong_tu_quy_doi(self):
+        """Bỏ dòng chú thích rồi mới soi — đừng bắt chính lời giải thích."""
+        src = (GOC / "services" / "agent" / "capabilities.py").read_text("utf-8")
+        i = src.index("def _phat_nhieu_loa(")
+        than = src[i:i + 2200]
+        than = than[than.index('"""', than.index('"""') + 3) + 3:]   # bỏ docstring
+        than = "\n".join(l for l in than.splitlines()
+                          if not l.lstrip().startswith("#"))
+        self.assertIn("/ 100.0", than)
+        self.assertNotIn("max_vol", than)
 
 
 class DocLaiNutChonLoaTests(unittest.TestCase):
@@ -561,7 +736,8 @@ class DuongTatKhongMoThemQuyenTests(unittest.TestCase):
 
     def test_cong_duyet_duong_thuong_biet_hoi_du_truoc(self):
         i = self.code.index("approval_gate.needs_approval(user_id, name, risk=cap.risk)")
-        self.assertIn("caps.con_thieu_thong_tin(name, args)", self.code[i:i + 400])
+        self.assertIn("caps.con_thieu_thong_tin(name, args, user_text)",
+                      self.code[i:i + 400])
 
 
 if __name__ == "__main__":

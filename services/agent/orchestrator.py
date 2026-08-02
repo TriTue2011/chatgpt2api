@@ -292,6 +292,26 @@ _NUT_CHON_LOA = re.compile(
 )
 
 
+# Nút «Tuỳ chọn» và nút mang KẾ HOẠCH nhiều loa (capabilities._ask_chon_loa /
+# _ask_am_luong_tung_loa sinh ra):
+#   tuỳ chọn loa để đọc[ sau N phút]: <nội dung>
+#   đọc ra loa nhiều «loa A=50; loa B=?»[ sau N phút]: <nội dung>
+# Kế hoạch nằm TRONG nút nên không cần giữ trạng thái tạm nào trên máy chủ: người
+# dùng thấy trọn kế hoạch trước khi bấm, và không có gì để mất khi khởi động lại.
+_NUT_TUY_CHON_LOA = re.compile(
+    r"^\s*tuỳ\s+chọn\s+loa\s+để\s+đọc"
+    r"(?:\s+sau\s+(?P<phut>\d+(?:[.,]\d+)?)\s*phút)?"
+    r"\s*:\s*(?P<noi_dung>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+_NUT_LOA_NHIEU = re.compile(
+    r"^\s*đọc\s+ra\s+loa\s+nhiều\s+«(?P<ke>[^»]+)»"
+    r"(?:\s+sau\s+(?P<phut>\d+(?:[.,]\d+)?)\s*phút)?"
+    r"\s*:\s*(?P<noi_dung>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _doc_nut_menu_loa(text: str) -> dict | None:
     """args cho `announce_on_speaker` nếu câu là nội dung nút bấm menu loa.
 
@@ -302,6 +322,24 @@ def _doc_nut_menu_loa(text: str) -> dict | None:
     t = (text or "").strip()
     if not t:
         return None
+
+    def _phut_vao(d: dict, phut) -> dict:
+        if phut:
+            try:
+                d["delay_minutes"] = float(str(phut).replace(",", "."))
+            except ValueError:
+                pass
+        return d
+
+    m3 = _NUT_LOA_NHIEU.match(t)
+    if m3:
+        return _phut_vao({"text": m3.group("noi_dung").strip(),
+                          "ke_hoach": m3.group("ke").strip()},
+                         m3.groupdict().get("phut"))
+    m4 = _NUT_TUY_CHON_LOA.match(t)
+    if m4:
+        return _phut_vao({"text": m4.group("noi_dung").strip(), "tuy_chon": True},
+                         m4.groupdict().get("phut"))
     m2 = _NUT_CHON_LOA.match(t)
     if m2:
         args2: dict[str, Any] = {"text": m2.group("noi_dung").strip(),
@@ -1630,7 +1668,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 }
             elif approval_gate.needs_approval(user_id, name, risk=cap.risk) and (
                 not auto_approve or name in approval_gate.always_confirm_names()
-            ) and not caps.con_thieu_thong_tin(name, args):
+            ) and not caps.con_thieu_thong_tin(name, args, user_text):
                 # `con_thieu_thong_tin`: việc còn thiếu thông tin thì HỎI ĐỦ TRƯỚC,
                 # đừng bắt người dùng duyệt một việc họ chưa thấy hết. Lúc thiếu,
                 # handler chỉ trả về câu hỏi/menu — không có tác dụng phụ nào. Chế

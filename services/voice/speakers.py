@@ -346,7 +346,7 @@ def dai_am_luong(rec: dict[str, Any]) -> str:
         return "dải 0–100%"
     if kind == "r1":
         return f"dải 0–100%, loa R1 quy ra chỉ số 0–{int(rec.get('max_vol') or 15)}"
-    return "loa này không chỉnh được âm lượng"
+    return "không chỉnh được âm lượng"
 
 
 def get_volume(rec: dict[str, Any]) -> float | None:
