@@ -1,16 +1,18 @@
 "use client";
 
 /**
- * Panel Zalo Bot — "🔗 Webhook": chế độ nhận tin (webhook ⟷ long-polling) và
- * chuyển tiếp tin ĐẾN ra webhook ngoài (Home Assistant / n8n).
+ * Panel Zalo Bot — "🔗 Webhook": CHỈ chế độ nhận tin (webhook ⟷ long-polling).
+ *
+ * KHÔNG có mục "chuyển tiếp tin ra webhook ngoài" ở đây: việc đó đã có sẵn trong
+ * tab "🎚️ Lọc thread" (config `thread_forward_filters`, hàm
+ * services/agent/capabilities.forward_event — đã nối vào services/zalo_bot.py).
+ * Cấu hình theo TỪNG thread/topic/người, không có công tắc tổng. Thêm một cơ chế
+ * thứ hai ở đây là hai nguồn sự thật cho cùng một việc.
  *
  * Backend: /api/zalo-bot/* (api/zalo_bot.py).
  *   GET  /api/zalo-bot/status         getWebhookInfo từng bot (có gọi mạng)
  *   POST /api/zalo-bot/webhook-config {enabled} → setWebhook / deleteWebhook
  *   POST /api/zalo-bot/apply-mode     áp lại đúng chế độ đang cấu hình
- *   GET  /api/zalo-bot/forward        công tắc + danh sách đích chuyển tiếp
- *   POST /api/zalo-bot/forward        đặt công tắc và/hoặc danh sách
- *   POST /api/zalo-bot/forward/test   bắn payload mẫu thử một URL
  *
  * Docs Zalo Bot Platform (bot.zapps.me/docs):
  *   setWebhook     — POST, tham số `url` (PHẢI HTTPS) + `secret_token` (8–256 ký tự)
@@ -28,12 +30,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { request } from "@/lib/request";
 import {
-  RefreshCw, Webhook, Send, Trash2, Plus, CheckCircle2, XCircle,
-  AlertTriangle, Radio, Copy,
+  RefreshCw, Webhook, CheckCircle2, XCircle, AlertTriangle, Radio, Copy,
 } from "lucide-react";
 
-const INPUT =
-  "w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]";
 const BTN =
   "inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition disabled:opacity-50";
 const BTN_PRIMARY = `${BTN} bg-[var(--neon-cyan)]/15 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)]/25 border border-[var(--neon-cyan)]/30`;
@@ -51,6 +50,8 @@ type BotInfo = {
   info?: { url?: string; updated_at?: number } | null;
   error?: string;
   polling: boolean;
+  /** URL RIÊNG của bot này — thứ setWebhook thật sự đăng ký. */
+  expected_url?: string;
 };
 
 type Status = {
@@ -62,13 +63,8 @@ type Status = {
   polling: boolean;
   bots_count: number;
   bots_polling: number;
-  forward_enabled: boolean;
-  forward_count: number;
   bots: BotInfo[];
 };
-
-type Filter = { chat_id: string; user_ids: string[] };
-type Dest = { id: string; enabled: boolean; url: string; label: string; filters: Filter[] };
 
 function tsLabel(ms?: number): string {
   if (!ms) return "";
@@ -197,7 +193,9 @@ export function ZaloBotWebhookPanel() {
           </button>
         </div>
 
-        <label className="mb-1 block text-xs font-semibold">URL webhook sẽ đăng ký</label>
+        <label className="mb-1 block text-xs font-semibold">
+          URL webhook gốc — mỗi bot còn có URL riêng <code>…/webhook/&lt;bot_id&gt;</code>
+        </label>
         <div className="flex items-center gap-2">
           <code className="flex-1 break-all rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs">
             {expected || "(chưa có — đặt zalo_webhook_url hoặc base_url)"}
@@ -236,7 +234,9 @@ export function ZaloBotWebhookPanel() {
             <p className="text-xs font-semibold">Zalo đang giữ URL nào (getWebhookInfo)</p>
             {status.bots.map((b) => {
               const zaloUrl = String(b.info?.url || "");
-              const lech = !!zaloUrl && !!expected && zaloUrl.replace(/\/$/, "") !== expected.replace(/\/$/, "");
+              // So với URL RIÊNG của chính bot này, không phải URL chung.
+              const mong = String(b.expected_url || expected);
+              const lech = !!zaloUrl && !!mong && zaloUrl.replace(/\/$/, "") !== mong.replace(/\/$/, "");
               return (
                 <div key={b.bot_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-xs">
                   {b.ok ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <XCircle className="size-3.5 text-red-400" />}
@@ -247,6 +247,10 @@ export function ZaloBotWebhookPanel() {
                   </code>
                   {!!b.info?.updated_at && (
                     <span className="text-[var(--muted-foreground)]">{tsLabel(b.info.updated_at)}</span>
+                  )}
+                  {!!b.expected_url && (
+                    <CopyBtn text={b.expected_url} showToast={showToast}
+                             title={`Copy URL riêng của bot này: ${b.expected_url}`} />
                   )}
                   {lech && (
                     <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-amber-400" title="URL Zalo đang giữ khác URL ta sẽ đăng ký — bấm 'Áp lại chế độ'">
@@ -260,9 +264,6 @@ export function ZaloBotWebhookPanel() {
         )}
       </div>
 
-      {/* ── 2. Chuyển tiếp tin ra webhook ngoài ───────────────────────────── */}
-      <ForwardSection showToast={showToast} onChanged={refresh} />
-
       {toast && (
         <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm shadow-lg backdrop-blur
           ${toast.ok ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" : "border-red-400/30 bg-red-400/10 text-red-300"}`}>
@@ -270,206 +271,6 @@ export function ZaloBotWebhookPanel() {
           <span className="max-w-md">{toast.msg}</span>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Chuyển tiếp tin ĐẾN ra webhook ngoài ────────────────────────────────────
-
-function ForwardSection({ showToast, onChanged }:
-  { showToast: (m: string, ok?: boolean) => void; onChanged: () => Promise<void> }) {
-  const [enabled, setEnabled] = useState(false);
-  const [dests, setDests] = useState<Dest[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [dirty, setDirty] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await request.get("/api/zalo-bot/forward");
-      const d = r.data as { enabled?: boolean; destinations?: Dest[] };
-      setEnabled(!!d.enabled);
-      setDests((d.destinations || []).map((x) => ({
-        id: String(x.id || ""),
-        enabled: x.enabled !== false,
-        url: String(x.url || ""),
-        label: String(x.label || ""),
-        filters: (x.filters || []).map((f) => ({
-          chat_id: String(f.chat_id || ""),
-          user_ids: (f.user_ids || []).map(String),
-        })),
-      })));
-      setDirty(false);
-    } catch (e) {
-      showToast(`Lỗi tải cấu hình chuyển tiếp: ${e instanceof Error ? e.message : e}`, false);
-    } finally {
-      setLoading(false);
-    }
-  }, [showToast]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const patch = (i: number, next: Partial<Dest>) => {
-    setDests((cur) => cur.map((d, k) => (k === i ? { ...d, ...next } : d)));
-    setDirty(true);
-  };
-
-  const themDich = () => {
-    setDests((cur) => [...cur, {
-      id: `wh-${cur.length + 1}`, enabled: true, url: "", label: "", filters: [],
-    }]);
-    setDirty(true);
-  };
-
-  const xoaDich = (i: number) => {
-    setDests((cur) => cur.filter((_, k) => k !== i));
-    setDirty(true);
-  };
-
-  const luu = async () => {
-    setSaving(true);
-    try {
-      const r = await request.post("/api/zalo-bot/forward", { destinations: dests });
-      showToast(r.data?.ok ? "Đã lưu danh sách webhook ✓" : "Lưu thất bại", !!r.data?.ok);
-      await load();
-      await onChanged();
-    } catch (e) {
-      showToast(`Lỗi: ${e instanceof Error ? e.message : e}`, false);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const batTat = async (next: boolean) => {
-    setSaving(true);
-    try {
-      await request.post("/api/zalo-bot/forward", { enabled: next });
-      setEnabled(next);
-      showToast(next ? "Đã BẬT chuyển tiếp ✓" : "Đã TẮT chuyển tiếp");
-      await onChanged();
-    } catch (e) {
-      showToast(`Lỗi: ${e instanceof Error ? e.message : e}`, false);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const thu = async (d: Dest) => {
-    if (!d.url.trim()) { showToast("Đích này chưa có URL", false); return; }
-    try {
-      const r = await request.post("/api/zalo-bot/forward/test", { url: d.url, filters: d.filters });
-      const res = r.data as { ok?: boolean; status?: number; error?: string };
-      showToast(
-        res.ok ? `Webhook trả về HTTP ${res.status} ✓` : `Thất bại: ${res.error}`,
-        !!res.ok,
-      );
-    } catch (e) {
-      showToast(`Lỗi: ${e instanceof Error ? e.message : e}`, false);
-    }
-  };
-
-  return (
-    <div className={CARD}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="flex-1 text-sm font-bold flex items-center gap-1.5">
-          <Send className="size-4" /> Chuyển tiếp tin ra webhook ngoài
-        </h2>
-        <button onClick={() => void load()} className={BTN_GHOST} disabled={loading}>
-          <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} /> Tải lại
-        </button>
-        <button onClick={() => void batTat(!enabled)} className={enabled ? BTN_DANGER : BTN_PRIMARY} disabled={saving}>
-          {enabled ? "Tắt chuyển tiếp" : "Bật chuyển tiếp"}
-        </button>
-      </div>
-
-      <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-        Mỗi tin nhắn tới Zalo bot được POST sang các URL dưới đây (Home Assistant, n8n…).
-        Đây là chiều <b>đi ra</b> nên URL mạng nội bộ <code>http://</code> vẫn dùng được —
-        khác chiều Zalo gọi vào vốn đòi HTTPS công khai. Chuyển tiếp chạy trước bước AI,
-        nên tin bị tầng lọc quyền chặn trả lời thì webhook vẫn nhận được.
-      </p>
-
-      <div className={`mb-3 rounded-lg border px-3 py-2 text-xs ${
-        enabled ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                : "border-[var(--border)] text-[var(--muted-foreground)]"
-      }`}>
-        {enabled
-          ? `Đang BẬT — ${dests.filter((d) => d.enabled && d.url).length} đích đang hoạt động.`
-          : "Đang TẮT — không tin nào được chuyển tiếp, kể cả các đích bật riêng bên dưới."}
-      </div>
-
-      <div className="space-y-3">
-        {dests.map((d, i) => (
-          <div key={`${d.id}-${i}`} className="rounded-lg border border-[var(--border)] p-3">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs font-semibold">
-                <input type="checkbox" checked={d.enabled}
-                       onChange={(e) => patch(i, { enabled: e.target.checked })} />
-                Bật
-              </label>
-              <input className={`${INPUT} max-w-44 py-1.5`} placeholder="Tên gợi nhớ (Home Assistant…)"
-                     value={d.label} onChange={(e) => patch(i, { label: e.target.value })} />
-              <div className="flex-1" />
-              <button onClick={() => void thu(d)} className={BTN_GHOST} title="Bắn payload mẫu — không cần bật công tắc tổng">
-                <Send className="size-3" /> Thử
-              </button>
-              <button onClick={() => xoaDich(i)} className={BTN_DANGER}><Trash2 className="size-3" /></button>
-            </div>
-            <input className={`${INPUT} mb-2 font-mono text-xs`}
-                   placeholder="http://172.16.10.x:8123/api/webhook/<id>"
-                   value={d.url} onChange={(e) => patch(i, { url: e.target.value })} />
-            <FilterEditor filters={d.filters} onChange={(f) => patch(i, { filters: f })} />
-          </div>
-        ))}
-        {dests.length === 0 && (
-          <p className="text-xs text-[var(--muted-foreground)]">
-            Chưa có đích nào. Bấm &quot;Thêm webhook&quot; để khai URL đầu tiên.
-          </p>
-        )}
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button onClick={themDich} className={BTN_GHOST}><Plus className="size-3.5" /> Thêm webhook</button>
-        <button onClick={() => void luu()} className={BTN_PRIMARY} disabled={saving || !dirty}>
-          {dirty ? "Lưu thay đổi" : "Đã lưu"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Bộ lọc theo chat ────────────────────────────────────────────────────────
-
-function FilterEditor({ filters, onChange }:
-  { filters: Filter[]; onChange: (f: Filter[]) => void }) {
-  const patch = (i: number, next: Partial<Filter>) =>
-    onChange(filters.map((f, k) => (k === i ? { ...f, ...next } : f)));
-
-  return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--background)]/40 p-2.5">
-      <p className="mb-2 text-[11px] text-[var(--muted-foreground)]">
-        Bộ lọc — để <b>trống</b> là chuyển tiếp <b>mọi chat</b>. Có dòng thì chỉ những
-        Chat ID đó; User ID để trống là mọi người trong chat đó.
-      </p>
-      {filters.map((f, i) => (
-        <div key={i} className="mb-1.5 flex flex-wrap items-center gap-2">
-          <input className={`${INPUT} max-w-52 py-1.5 font-mono text-xs`} placeholder="Chat ID"
-                 value={f.chat_id} onChange={(e) => patch(i, { chat_id: e.target.value })} />
-          <input className={`${INPUT} flex-1 py-1.5 font-mono text-xs`}
-                 placeholder="User ID, cách nhau bởi dấu phẩy (trống = mọi người)"
-                 value={f.user_ids.join(", ")}
-                 onChange={(e) => patch(i, {
-                   user_ids: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                 })} />
-          <button onClick={() => onChange(filters.filter((_, k) => k !== i))} className={BTN_DANGER}>
-            <Trash2 className="size-3" />
-          </button>
-        </div>
-      ))}
-      <button onClick={() => onChange([...filters, { chat_id: "", user_ids: [] }])} className={BTN_GHOST}>
-        <Plus className="size-3" /> Thêm dòng lọc
-      </button>
     </div>
   );
 }

@@ -2,12 +2,12 @@
 
 - POST /api/zalo-bot/webhook        : Zalo POST tin vào (public, verify header
   `X-Bot-Api-Secret-Token`), trả 200 ngay và xử lý ở luồng nền.
+- POST /api/zalo-bot/webhook/{bot_id} : cùng việc, mỗi bot MỘT URL riêng — đây là
+  đường `setWebhook` đăng ký. Đường không có bot_id vẫn nhận (webhook cũ ngoài
+  thực địa không bị phá). bot_id chỉ để ĐỐI CHIẾU, quyền vẫn do secret quyết định.
 - GET  /api/zalo-bot/status         : (admin) trạng thái + getWebhookInfo từng bot.
 - POST /api/zalo-bot/webhook-config : (admin) công tắc bật/tắt webhook.
 - POST /api/zalo-bot/apply-mode     : (admin) áp lại đúng chế độ đang cấu hình.
-- GET  /api/zalo-bot/forward        : (admin) cấu hình CHUYỂN TIẾP tin ra ngoài.
-- POST /api/zalo-bot/forward        : (admin) công tắc tổng + danh sách đích.
-- POST /api/zalo-bot/forward/test   : (admin) bắn payload mẫu để thử một URL.
 - POST /api/zalo-bot/send           : (admin) GỬI RA — cảnh báo + ảnh cục bộ.
   Dành cho Home Assistant: HA POST thẳng tệp ảnh lên, không cần mở HA ra
   Internet và không cần tự dựng URL công khai.
@@ -68,6 +68,37 @@ def create_router() -> APIRouter:
         threading.Thread(target=zb.process_update, args=(body, bot), daemon=True).start()
         return {"ok": True}
 
+    @router.post("/api/zalo-bot/webhook/{bot_id}")
+    async def zalo_bot_webhook_theo_bot(bot_id: str, request: Request):
+        """Cùng việc như trên, nhưng mỗi bot MỘT URL: `…/webhook/<bot_id>`.
+
+        Vì sao cần dù secret trong header đã phân biệt được bot: nhiều bot dùng
+        chung một URL thì người vận hành không nhìn ra URL nào của bot nào, và
+        getWebhookInfo của mọi bot trả về cùng một chuỗi nên không soi được cái
+        nào lệch. Có `<bot_id>` trên URL thì đọc là thấy.
+
+        `bot_id` KHÔNG phải thứ để xác thực — nó chỉ dùng để đối chiếu. Quyền vẫn
+        do secret trong header quyết định, y như đường không có bot_id: bot_id là
+        phần công khai của token, ai cũng đoán được.
+        """
+        hdr = request.headers.get("x-bot-api-secret-token", "")
+        bot = zb.verify_webhook_secret(hdr)
+        if bot is None:
+            logger.warning("Zalo Bot webhook[%s]: secret sai → 403", bot_id[:16])
+            raise HTTPException(status_code=403, detail="Bad secret token")
+        # Lệch thì CHỈ ghi log rồi xử lý tiếp: secret đã đúng nên tin là thật;
+        # từ chối ở đây chỉ làm mất tin khi ai đó vừa đổi token/đường dẫn.
+        that = zb._bot_public_id(bot)
+        if bot_id and that and bot_id != that:
+            logger.warning("Zalo Bot webhook: URL ghi bot_id=%s nhưng secret là của %s",
+                           bot_id[:16], that[:16])
+        try:
+            body = await request.json()
+        except Exception:
+            return {"ok": True}
+        threading.Thread(target=zb.process_update, args=(body, bot), daemon=True).start()
+        return {"ok": True}
+
     # ── Quản trị ─────────────────────────────────────────────────────────────
     @router.get("/api/zalo-bot/status")
     async def status(authorization: str | None = Header(default=None)):
@@ -92,61 +123,6 @@ def create_router() -> APIRouter:
         trên Zalo vẫn trỏ URL cũ (getWebhookInfo lệch expected_webhook_url)."""
         require_admin(authorization)
         return await asyncio.to_thread(zb.apply_mode)
-
-    # ── Chuyển tiếp tin ĐẾN ra webhook ngoài (HA / n8n) ──────────────────────
-
-    @router.get("/api/zalo-bot/forward")
-    async def forward_get(authorization: str | None = Header(default=None)):
-        """Cấu hình chuyển tiếp hiện tại: công tắc tổng + danh sách đích."""
-        require_admin(authorization)
-        return {
-            "enabled": zb.forward_enabled(),
-            "destinations": zb.forward_destinations(),
-        }
-
-    @router.post("/api/zalo-bot/forward")
-    async def forward_set(body: dict | None = None,
-                          authorization: str | None = Header(default=None)):
-        """Đặt công tắc tổng và/hoặc danh sách đích.
-
-        {"enabled": true} chỉ bật/tắt; {"destinations": [...]} chỉ thay danh
-        sách; gửi cả hai thì đổi cả hai. Không gửi trường nào thì báo lỗi thay vì
-        lặng lẽ ghi rỗng — ghi rỗng là xoá mất cấu hình của người ta.
-        """
-        require_admin(authorization)
-        b = body or {}
-        if "enabled" not in b and "destinations" not in b:
-            raise HTTPException(status_code=400,
-                                detail="Cần 'enabled' và/hoặc 'destinations'")
-        updates: dict = {}
-        if "enabled" in b:
-            updates["zalo_bot_forward_enabled"] = bool(b.get("enabled"))
-        if "destinations" in b:
-            dests = b.get("destinations")
-            if not isinstance(dests, list):
-                raise HTTPException(status_code=400, detail="'destinations' phải là list")
-            updates["zalo_bot_forward_webhooks"] = dests
-        from services.config import config as _cfg
-        _cfg.update(updates)
-        return {
-            "ok": True,
-            "enabled": zb.forward_enabled(),
-            "destinations": zb.forward_destinations(),
-        }
-
-    @router.post("/api/zalo-bot/forward/test")
-    async def forward_test(body: dict | None = None,
-                           authorization: str | None = Header(default=None)):
-        """Bắn một payload mẫu tới webhook để thử TRƯỚC khi bật công tắc tổng.
-
-        {"url": "...", "filters": [...]} — bỏ trống url thì lấy đích đang bật đầu
-        tiên. Có gọi mạng ra ngoài nên chạy ngoài event loop.
-        """
-        require_admin(authorization)
-        b = body or {}
-        return await asyncio.to_thread(
-            zb.test_forward, str(b.get("url") or ""), b.get("filters"),
-        )
 
     # ── Gửi RA: cảnh báo + ảnh, cho Home Assistant ───────────────────────────
 
