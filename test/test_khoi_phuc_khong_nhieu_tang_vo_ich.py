@@ -301,5 +301,72 @@ class TestLogOkNoiThat(unittest.TestCase):
         self.assertIn("token active KHÁC", khuc)
 
 
+class TestTaiKhoanBiVoHieuHoa(unittest.TestCase):
+    """Đường T2 (tài khoản Google) phải nhận ra `AccountDeactivated`.
+
+    Đo thật 02/08 (benbap2011@gmail.com): OpenAI đã xóa tài khoản, nên sau khi
+    bấm "Tiếp tục với Google" là sang thẳng auth.openai.com/error — Google
+    không hề trục trặc (đăng nhập lại xong trong 8 giây). Nhưng vòng lặp onboard
+    không biết trang đó là ngõ cụt: nó chụp lại đúng một trang chết 1,2s/lần
+    suốt 131 giây rồi trả "no callback; stuck at …". Chuỗi vô danh đó khiến:
+      · `handle_deactivated` không chạy → account giữ status 'error' → lượt quét
+        định kỳ lôi ra thử lại mỗi 2 tiếng, vô tận;
+      · thông báo rơi vào nhánh gợi ý chung → "Kiểm tra profile Google + mật
+        khẩu/TOTP", sai hướng hoàn toàn.
+    Nhánh hàng loạt (T3) đã bắt `account_deactivated` từ trước; đường Google thì
+    chưa — test này khoá cả hai đầu lại.
+    """
+
+    def test_giai_ma_payload_lay_kind(self):
+        """Hàm thuần → gọi thật. Payload hỏng phải trả "" chứ không nổ."""
+        import ast
+        import base64
+        import json
+
+        src = (GOC / "captcha-solver" / "src" / "codex_google_onboard.py").read_text("utf-8")
+        fn = next(n for n in ast.parse(src).body
+                  if isinstance(n, ast.FunctionDef) and n.name == "_openai_error_kind")
+        ns: dict = {}
+        exec(ast.get_source_segment(src, fn), ns)
+        kind = ns["_openai_error_kind"]
+
+        that = base64.urlsafe_b64encode(json.dumps(
+            {"kind": "AccountDeactivated", "requestId": "5c81b234"}).encode()).decode()
+        self.assertEqual(kind(f"https://auth.openai.com/error?payload={that}"),
+                         "AccountDeactivated")
+        self.assertEqual(kind("https://auth.openai.com/error"), "")
+        self.assertEqual(kind("https://auth.openai.com/error?payload=%%%"), "")
+
+    def test_onboard_dung_ngay_o_trang_loi(self):
+        code = _code(GOC / "captcha-solver" / "src" / "codex_google_onboard.py")
+        i = code.index('"auth.openai.com/error" in url')
+        khuc = code[i:i + 900]
+        self.assertIn('"error_code": "account_deactivated"', khuc)
+        self.assertIn('"state": "failed"', khuc)
+        # Không đọc được payload thì còn đối chiếu chữ trên trang (VN + EN).
+        self.assertIn("đã bị xóa hoặc vô hiệu hóa", khuc)
+        self.assertIn("has been deleted or deactivated", khuc)
+        # Phải nằm TRƯỚC vòng chờ callback, nếu không vẫn đốt hết ngân sách.
+        self.assertLess(i, code.index("no callback; stuck at"))
+
+    def test_t2_bao_deactivated_giong_nhanh_hang_loat(self):
+        code = _code(GOC / "services" / "account_recovery.py")
+        i = code.index("def _codex_reuse")
+        khuc = code[i:code.index("def ", i + 10)]
+        self.assertIn("account_deactivated", khuc)
+        self.assertIn("handle_deactivated(", khuc)
+        self.assertIn("raise CodexAccountDeactivated(email)", khuc)
+
+    def test_khong_bao_that_bai_chung_chung_nua(self):
+        """Nhánh Google phải nuốt CodexAccountDeactivated và return — để không
+        gửi tiếp "KHÔNG tự khôi phục được" đè lên thông báo ⛔ vừa gửi."""
+        code = _code(GOC / "services" / "account_recovery.py")
+        i = code.index("if can_google:")
+        khuc = code[i:code.index("tried_s = ", i)]
+        self.assertIn("except CodexAccountDeactivated:", khuc)
+        self.assertIn("recover_stop_deactivated", khuc)
+        self.assertIn("return", khuc[khuc.index("except CodexAccountDeactivated:"):])
+
+
 if __name__ == "__main__":
     unittest.main()

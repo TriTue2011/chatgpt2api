@@ -122,6 +122,14 @@ def create_app() -> FastAPI:
             start_dead_recovery()
         except Exception as exc:
             _record_startup_failure("codex_error_recovery_scheduler", str(exc))
+        # Phiên Flow (labs.google): tài khoản bị đẩy xuống cuối danh sách không
+        # bao giờ được _next_account chọn lại, nên nhánh xử lý lỗi của adapter
+        # tạo ảnh — đường DUY NHẤT gọi khôi phục — không bao giờ chạm tới nó.
+        try:
+            from services.flow_session_scheduler import start as start_flow_session_scan
+            start_flow_session_scan()
+        except Exception as exc:
+            _record_startup_failure("flow_session_scheduler", str(exc))
         # Listen on :1455 for OpenAI Codex CLI OAuth redirects (auto-exchange)
         try:
             from services.codex_callback_listener import start as start_codex_callback

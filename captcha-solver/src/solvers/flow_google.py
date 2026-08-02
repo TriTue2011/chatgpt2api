@@ -1774,14 +1774,14 @@ async def flow_generate_video(
                         await asyncio.sleep(1.5) # Đợi React render xong menu
                     else:
                         logger.warning("flow_dropdown_skip %s=%s (Trigger not found)", label, target_text)
-                        return
-                
+                        return False
+
                 # Sau khi click trigger (hoặc click lần 1), kiểm tra xem nó có mở ra một dropdown list không
                 # Bằng cách tìm lại đúng text đó, nếu có nhiều hơn 1 element visible -> có dropdown
                 await asyncio.sleep(0.5)
                 locs = pg.locator(f"text='{target_text}'")
                 count = await locs.count()
-                
+
                 # Thường option trong menu sẽ là phần tử cuối cùng hiển thị trên màn hình
                 for i in range(count - 1, -1, -1):
                     el = locs.nth(i)
@@ -1794,14 +1794,22 @@ async def flow_generate_video(
                                 await pg.mouse.click(box['x'] + box['width']/2, box['y'] + box['height']/2)
                                 logger.info("flow_dropdown_set %s=%s (Physical Option Click)", label, target_text)
                                 await asyncio.sleep(0.5)
-                                return
-                                
-                logger.info("flow_dropdown_set %s=%s (Physical Trigger Click/Direct Toggle)", label, target_text)
+                                return True
+
+                # Tới đây nghĩa là KHÔNG bấm được mục nào trong menu. Nếu bước 1 đã
+                # bấm thẳng vào mục đang hiện (hàng kiểu tablist) thì coi như xong;
+                # còn nếu bước 1 không bấm gì thì ta chỉ vừa mở menu rồi thôi — đó
+                # là THẤT BẠI, đừng ghi log như đã đặt được.
+                logger.info("flow_dropdown_set %s=%s (Physical Trigger Click/Direct Toggle, clicked=%s)",
+                            label, target_text, clicked)
+                await asyncio.sleep(0.5)
+                return clicked
 
             except Exception as e:
                 logger.warning("flow_dropdown_error %s=%s: %s", label, target_text, e)
-            
+
             await asyncio.sleep(0.5)
+            return False
 
         # ── Set model/aspect/duration/count dropdowns ─────────────────────
 
@@ -1865,8 +1873,15 @@ async def flow_generate_video(
         # tạo ra video bằng model KHÁC model người dùng yêu cầu mà không ai biết.
         # Mở menu model rồi dump ra để đối chiếu (chủ máy yêu cầu 31/07).
         try:
-            if await _bam_chuot_that("chip model (mở bảng)", _JS_CHIP):
-                await asyncio.sleep(1.2)
+            # PHẢI dùng _bao_dam_bang_mo (chỉ mở khi đang đóng), KHÔNG bấm thẳng
+            # vào chip. Chip là nút BẬT/TẮT: hàng "số bản ghi" ngay trên đã để bảng
+            # ở trạng thái MỞ, nên bấm chip thêm một cái là ĐÓNG nó lại. Đo thật
+            # 02/08 (lượt kiểm chứng 12:11): bấm chip lúc 12:11:13 → 12:11:14 đọc
+            # "DANH SÁCH MODEL = []" rồi "flow_dropdown_skip model=Veo 3.1 - Lite
+            # (Trigger not found)", và ngay dòng sau là "bảng cài đặt đã đóng — mở
+            # lại". Model không bao giờ được đặt; Flow chạy bằng model còn sót của
+            # lượt trước (Omni Flash 8s, 12 tín dụng) dù người dùng chọn Lite.
+            await _bao_dam_bang_mo("trước khi chọn model")
             # Trong bảng, danh sách model còn nằm sau MỘT lớp nữa: nút xổ có chữ
             # "<tên model> arrow_drop_down". Bấm nốt lớp đó mới thấy các lựa chọn
             # kèm số tín dụng. Đo thật: bỏ bước này thì chỉ đọc được đúng nhãn của
@@ -1897,7 +1912,48 @@ async def flow_generate_video(
         except Exception as _exc:
             logger.warning("flow_video: không đọc được danh sách model: %s", _exc)
 
-        await _set_dropdown(page, model_lbl, "model")
+        _dat_model_ok = await _set_dropdown(page, model_lbl, "model")
+
+        # ── KIỂM CHỨNG MODEL — hàng đắt nhất trong bảng, phải soi kỹ nhất ─────
+        #
+        # Đặt model trượt thì Flow im lặng dùng model còn sót của lượt trước, và
+        # người dùng trả tiền cho model họ KHÔNG chọn: xin Lite (10 tín dụng)
+        # nhận Omni Flash 8s (12), hoặc tệ hơn là dính Quality (100). Bộ kiểm
+        # chứng chung bên dưới chỉ soi thời lượng + số lượng nên không bắt được.
+        # Thà dừng và báo lỗi còn hơn tiêu tín dụng vào model sai.
+        _model_that = ""
+        try:
+            _model_that = await page.evaluate("""() => {
+              const ds = Array.from(document.querySelectorAll('button, div[role=button], [aria-haspopup]'));
+              const t = ds.find(b => {
+                const s = (b.innerText || '').trim();
+                return s.length < 60 && /arrow_drop_down/i.test(s)
+                       && /veo|omni|nano|banana|imagen/i.test(s);
+              });
+              return t ? (t.innerText || '').replace(/arrow_drop_down/ig, '').replace(/\\s+/g, ' ').trim() : "";
+            }""")
+        except Exception as _exc:
+            logger.warning("flow_video: không đọc được model đang chọn: %s", _exc)
+        logger.info("flow_video: MODEL đang chọn = %r (yêu cầu %r, đặt được=%s)",
+                    _model_that, model_lbl, _dat_model_ok)
+
+        def _chuan(s: str) -> str:
+            return "".join(c for c in (s or "").lower() if c.isalnum())
+
+        if _model_that and _chuan(model_lbl) not in _chuan(_model_that):
+            logger.error("flow_video: LỆCH MODEL — yêu cầu %r nhưng giao diện đang %r",
+                         model_lbl, _model_that)
+            return {"state": "failed", "error_code": "model_mismatch",
+                    "error": f"Flow đang để model {_model_that!r} chứ không phải "
+                             f"{model_lbl!r} — dừng để không tiêu tín dụng vào "
+                             f"model sai. Chưa bấm Tạo."}
+        if not _dat_model_ok and not _model_that:
+            logger.error("flow_video: không đặt được model %r và cũng không đọc "
+                         "được model đang chọn — dừng", model_lbl)
+            return {"state": "failed", "error_code": "model_unverified",
+                    "error": f"Không đặt được model {model_lbl!r} trên giao diện "
+                             f"Flow và không đọc được model đang chọn — dừng để "
+                             f"không tiêu tín dụng vào model sai. Chưa bấm Tạo."}
 
         # Số tín dụng KHÔNG nằm trong menu model — Flow chỉ ghi MỘT dòng cho lựa
         # chọn HIỆN TẠI ("Quá trình tạo sẽ tốn N tín dụng"). Đọc dòng đó sau khi đã

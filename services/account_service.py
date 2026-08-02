@@ -850,6 +850,18 @@ class AccountService:
     def remove_invalid_token(self, access_token: str, event: str) -> bool:
         # Snapshot before mutate/delete so multi-tier recovery still has email/rt.
         snapshot = self.get_account(access_token)
+        # 'deactivated' = OpenAI đã xóa tài khoản, đang chờ admin trả lời xóa/giữ.
+        # Không hạ về 'error' nữa: hạ xong là lượt quét định kỳ lại coi nó "chết
+        # tạm" và thử khôi phục tiếp, vô tận. Đo thật 02/08 (benbap2011@gmail.com):
+        # vừa đánh dấu deactivated lúc 12:08 thì job refresh_accounts gọi vào đây
+        # ghi đè ngược về 'error' và spawn luôn một lượt khôi phục mới.
+        if str((snapshot or {}).get("status") or "") == "deactivated":
+            logger.info({
+                "event": "skip_invalid_deactivated",
+                "email": str((snapshot or {}).get("email") or "")[:80],
+                "source": event,
+            })
+            return False
         if not config.auto_remove_invalid_accounts:
             self.update_account(access_token, {"status": "error", "quota": 0})
             self._spawn_dead_recovery(snapshot, access_token, event)

@@ -21,6 +21,27 @@ from .claude_web_login import _pick_google_account
 logger = logging.getLogger(__name__)
 
 
+def _openai_error_kind(url: str) -> str:
+    """`kind` trong payload base64 của https://auth.openai.com/error?payload=…
+
+    Ví dụ payload giải mã: {"kind": "AccountDeactivated", "requestId": "…"}.
+    Trả "" nếu không đọc được — người gọi còn nhánh đối chiếu chữ trên trang.
+    """
+    import base64
+    import json
+    from urllib.parse import urlparse, parse_qs
+
+    raw = (parse_qs(urlparse(url).query).get("payload") or [""])[0]
+    if not raw:
+        return ""
+    try:
+        pad = "=" * (-len(raw) % 4)
+        data = json.loads(base64.urlsafe_b64decode(raw + pad))
+        return str(data.get("kind") or "")
+    except Exception:
+        return ""
+
+
 class CodexGoogleOnboardReq(BaseModel):
     profile: str            # vd: google-smarthomebanbap2011
     auth_url: str           # URL OAuth Codex do chatgpt2api sinh (có state+PKCE)
@@ -231,6 +252,26 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
             except Exception:
                 _dbg = ""
             logger.info("codex-g: screen url=%s body=%s", url[:110], _dbg[:260])
+
+            # ── OpenAI đá sang trang lỗi tài khoản bị xóa/vô hiệu hóa ──────────
+            # Google trả danh tính bình thường, OpenAI tra ra "không có tài
+            # khoản" rồi đứng ở /error vĩnh viễn. Không có nhánh này thì vòng
+            # lặp chụp lại đúng một trang chết 1,2s/lần cho tới hết 120s rồi trả
+            # "no callback; stuck at …" — một thất bại vô danh mà chatgpt2api
+            # không đọc được, nên nó báo nhầm thành "kiểm tra mật khẩu/TOTP".
+            # Đo thật 02/08 (benbap2011@gmail.com): 131 giây đứng nhìn một trang
+            # không bao giờ đổi, lặp lại mỗi 2 tiếng theo lượt quét định kỳ.
+            if "auth.openai.com/error" in url and (
+                _openai_error_kind(url) == "AccountDeactivated"
+                or "đã bị xóa hoặc vô hiệu hóa" in content
+                or "has been deleted or deactivated" in content
+            ):
+                logger.warning("codex-g: account_deactivated — dừng ngay url=%s", url[:160])
+                return {
+                    "state": "failed",
+                    "error_code": "account_deactivated",
+                    "error": "OpenAI: tài khoản đã bị xóa hoặc vô hiệu hóa",
+                }
 
             # ── OpenAI MFA challenge (mặc định đòi PASSKEY — bot không ký được) ──
             # Bấm "Hãy thử một phương pháp khác" để lộ các cách thay thế

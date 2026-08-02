@@ -362,6 +362,17 @@ def _codex_reuse(profile: str, email: str) -> str:
     except Exception:
         return ""
     if data.get("state") != "success":
+        # Tài khoản bị OpenAI xóa/vô hiệu hóa — VĨNH VIỄN, y hệt nhánh T3 hàng
+        # loạt bên dưới. Không bắt ở đây thì tài khoản giữ nguyên status 'error'
+        # và lượt quét định kỳ lôi ra thử lại mỗi 2 tiếng, mãi mãi.
+        _deact = f"{data.get('error_code') or ''} {data.get('error') or ''}".lower()
+        if "account_deactivated" in _deact:
+            from services.codex_deactivated import handle_deactivated, CodexAccountDeactivated
+            handle_deactivated(
+                email,
+                reason="T2 mở đăng nhập Codex trong workspace → account_deactivated",
+            )
+            raise CodexAccountDeactivated(email)
         return ""
     _codex_exchange_from_redirect(data.get("redirect_url") or "", auth["state"])
     return _cho_token_song(email)
@@ -834,19 +845,27 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         # (smarthomebanbap2011@gmail.com): chỉ chạy đúng "T2-freshen", nó báo
         # thất bại oan (trang đang ở myaccount.google.com, tức đang đăng nhập),
         # rồi cả thang bị chặn theo và tài khoản nằm chết.
-        if has_profile and _con_gio():
-            if _do_reuse("T2-workspace", "T2-ok",
-                         "[T2] mở đăng nhập Codex trong workspace (tái dùng "
-                         "session Google của profile)"):
-                return
-        if has_creds and _con_gio():
-            if _do_freshen():
-                if _con_gio() and _do_reuse(
-                        "T2-sau-T3", "T3-ok",
-                        "[T3] đăng nhập lại Google + [T2] đăng nhập Codex tại workspace"):
+        from services.codex_deactivated import CodexAccountDeactivated
+        try:
+            if has_profile and _con_gio():
+                if _do_reuse("T2-workspace", "T2-ok",
+                             "[T2] mở đăng nhập Codex trong workspace (tái dùng "
+                             "session Google của profile)"):
                     return
-            else:
-                google_login_failed = True
+            if has_creds and _con_gio():
+                if _do_freshen():
+                    if _con_gio() and _do_reuse(
+                            "T2-sau-T3", "T3-ok",
+                            "[T3] đăng nhập lại Google + [T2] đăng nhập Codex tại workspace"):
+                        return
+                else:
+                    google_login_failed = True
+        except CodexAccountDeactivated:
+            # handle_deactivated đã báo admin + hỏi xóa/giữ. Dừng hẳn, KHÔNG rơi
+            # xuống thông báo "KHÔNG tự khôi phục được" chung chung bên dưới.
+            logger.info({"event": "recover_stop_deactivated",
+                         "provider": provider, "email": email})
+            return
 
     tried_s = " → ".join(tried) if tried else "none"
     # Nguyên nhân CỤ THỂ thắng gợi ý chung.

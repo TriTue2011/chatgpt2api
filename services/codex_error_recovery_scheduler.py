@@ -297,6 +297,17 @@ def schedule_dead_account_recovery(
         return
     if not _is_recoverable_group(account):
         return
+    # Đã kết luận tài khoản bị OpenAI xóa → không còn gì để khôi phục. Lượt quét
+    # định kỳ vốn đã bỏ qua ('deactivated' không nằm trong {error, disabled}),
+    # nhưng đường spawn-ngay này thì chưa — nên một lỗi refresh bất kỳ vẫn kéo
+    # được nó trở lại cả thang T0–T3.
+    if str(account.get("status") or "") == "deactivated":
+        logger.info({
+            "event": "dead_recovery_skip_deactivated",
+            "email": str(account.get("email") or "")[:60],
+            "reason": str(reason)[:80],
+        })
+        return
     snap = dict(account)
 
     def _run() -> None:
