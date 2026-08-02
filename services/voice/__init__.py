@@ -168,10 +168,25 @@ def listen(audio: bytes, src_hint: str = "", lang: str = "", *, session_id: str 
 # ── Media: loa cần URL HTTP, không nhận bytes ────────────────────────────────
 
 
-def save_media(data: bytes, suffix: str = ".wav") -> Path:
-    """Ghi audio vào data/voice/media và trả đường dẫn file."""
+# Tiền tố cho file audio của LỊCH HẸN. `cleanup_media` bỏ qua file có tiền tố này.
+#
+# Vì sao cần: file audio nằm trong `media_dir` để đường `/media/voice/<tên>` phục
+# vụ được cho loa kéo về, nhưng `cleanup_media()` xoá theo TUỔI (mặc định 24h).
+# Một lịch hẹn 8h sáng mai tạo lúc tối nay sẽ bị dọn mất tiếng trước khi tới giờ.
+# Giữ file trong cùng thư mục mà đánh dấu bằng tên là cách gọn nhất — URL không
+# đổi, không cần thư mục thứ hai, không cần sửa route.
+LICH_PREFIX = "lich_"
+
+
+def save_media(data: bytes, suffix: str = ".wav", *, giu_lai: bool = False) -> Path:
+    """Ghi audio vào data/voice/media và trả đường dẫn file.
+
+    `giu_lai=True` → đặt tiền tố `lich_` để `cleanup_media` không xoá theo tuổi.
+    Dùng cho âm thanh của LỊCH HẸN (phát vào ngày mai, tuần sau…).
+    """
     d = vcfg.media_dir()
-    path = d / f"{int(time.time())}_{uuid.uuid4().hex[:8]}{suffix}"
+    ten = f"{int(time.time())}_{uuid.uuid4().hex[:8]}{suffix}"
+    path = d / (LICH_PREFIX + ten if giu_lai else ten)
     path.write_bytes(data)
     return path
 
@@ -199,6 +214,8 @@ def cleanup_media(max_age_hours: int = 0) -> int:
     try:
         for p in vcfg.media_dir().glob("*"):
             try:
+                if p.name.startswith(LICH_PREFIX):
+                    continue        # âm thanh của lịch hẹn — chỉ xoá khi xoá lịch
                 if p.is_file() and p.stat().st_mtime < cutoff:
                     p.unlink()
                     removed += 1
@@ -225,13 +242,24 @@ def _wav_duration_s(wav: bytes) -> float:
         return 0.0
 
 
-def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "") -> str:
+def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "",
+                 *, files_out: list[Path] | None = None) -> str:
     """Đọc `text` rồi phát ra loa. Trả URL file đã phát.
 
     Tối ưu TTFA (VieNeu / câu dài): synthesize **câu đầu** → phát ngay, vừa phát
     vừa synthesize phần còn lại, rồi phát tiếp khi câu đầu gần hết — người nghe
     không phải chờ full WAV (thường 1–2s+ prefill + full decode).
+
+    `files_out`: nếu truyền list, MỌI file audio hàm này tạo sẽ được thêm vào đó.
+    Caller cần nó để xoá file sau khi loa đọc xong (thông báo phát ngay không cần
+    giữ lại). Chỉ trả URL là không đủ: câu dài sinh HAI file mà chỉ URL của file
+    CUỐI được trả về, nên file đầu sẽ nằm lại chờ `cleanup_media` dọn theo tuổi.
     """
+    def _ghi_nhan(p: Path) -> Path:
+        if files_out is not None:
+            files_out.append(p)
+        return p
+
     text = (text or "").strip()
     if not text:
         raise VoiceError("Không có nội dung để đọc.")
@@ -241,14 +269,14 @@ def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "") -> st
     # Câu ngắn / 1 mẩu / không phải pipeline có ích → đường cũ (1 file).
     if len(sents) <= 1:
         wav = speak(text, v)
-        path = save_media(wav)
+        path = _ghi_nhan(save_media(wav))
         url = media_url(path)
         play_on(speaker, url)
         cleanup_media()
         return url
 
     first_wav = speak(sents[0], v)
-    path1 = save_media(first_wav)
+    path1 = _ghi_nhan(save_media(first_wav))
     url1 = media_url(path1)
 
     rest = " ".join(sents[1:]).strip()
@@ -277,7 +305,7 @@ def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "") -> st
             wait = max(0.0, _wav_duration_s(first_wav) - 0.15)
             if wait > 0:
                 time.sleep(wait)
-            path2 = save_media(rest_wav)
+            path2 = _ghi_nhan(save_media(rest_wav))
             url2 = media_url(path2)
             try:
                 play_on(speaker, url2)

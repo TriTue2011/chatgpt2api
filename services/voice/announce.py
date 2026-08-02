@@ -56,23 +56,40 @@ def _do_dai_audio(url: str) -> float:
         return 0.0
 
 
-def _tra_am_luong_sau_khi_phat(rec: dict[str, Any], muc_cu: float, url: str) -> None:
-    """Chờ loa đọc xong rồi đặt lại âm lượng cũ — chạy NỀN để không giữ lượt chat."""
+def _tra_am_luong_sau_khi_phat(rec: dict[str, Any], muc_cu: Optional[float], url: str,
+                               xoa_file: Optional[list] = None) -> None:
+    """Chờ loa đọc xong rồi: đặt lại âm lượng cũ + xoá file audio tạm.
+
+    Chạy NỀN để không giữ lượt chat. Cả hai việc phải CHỜ vì `play_on()` trả về
+    trước khi loa phát xong — xoá file sớm là loa đang kéo dở thì mất tiếng, hạ
+    âm lượng sớm là tụt tiếng giữa câu.
+
+    `xoa_file`: các file audio của thông báo PHÁT NGAY — không cần giữ lại nên
+    xoá luôn cho gọn kho media. Âm thanh của LỊCH HẸN thì ngược lại: tên có tiền
+    tố `lich_`, `cleanup_media` bỏ qua, và chỉ xoá khi xoá lịch.
+    """
     from services.voice import speakers as vspk
 
-    def _cho_roi_tra() -> None:
+    def _cho_roi_don() -> None:
         cho = _do_dai_audio(url)
         if cho > 0:
             time.sleep(cho + 0.4)      # thêm chút để câu cuối không bị tụt tiếng
-        try:
-            vspk.set_volume(rec, float(muc_cu))
-            logger.info("announce: đã trả âm lượng %s về %.2f",
-                        rec.get("name"), float(muc_cu))
-        except Exception as exc:
-            logger.warning("announce: trả âm lượng %s không được: %s",
-                           rec.get("name"), str(exc)[:120])
+        if muc_cu is not None:
+            try:
+                vspk.set_volume(rec, float(muc_cu))
+                logger.info("announce: đã trả âm lượng %s về %.2f",
+                            rec.get("name"), float(muc_cu))
+            except Exception as exc:
+                logger.warning("announce: trả âm lượng %s không được: %s",
+                               rec.get("name"), str(exc)[:120])
+        for p in (xoa_file or []):
+            try:
+                if p.is_file() and not p.name.startswith("lich_"):
+                    p.unlink()
+            except Exception as exc:
+                logger.info("announce: chưa xoá được %s (%s)", p, str(exc)[:80])
 
-    t = threading.Thread(target=_cho_roi_tra, name="announce-restore-vol", daemon=True)
+    t = threading.Thread(target=_cho_roi_don, name="announce-sau-khi-phat", daemon=True)
     t.start()
 
 
@@ -100,9 +117,11 @@ def _run(jid: str) -> None:
             except Exception as exc:   # loa không chỉnh được vol thì vẫn đọc
                 muc_cu = None
                 logger.info("announce: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
-        url = voice.play_text_on(job["text"], rec, str(job.get("voice") or ""))
-        if muc_cu is not None:
-            _tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""))
+        da_tao: list = []
+        url = voice.play_text_on(job["text"], rec, str(job.get("voice") or ""),
+                                 files_out=da_tao)
+        # Thông báo phát ngay: đọc xong là xoá file, khỏi để kho media phình.
+        _tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""), da_tao)
         with _lock:
             job["status"] = "done"
     except Exception as exc:
@@ -167,6 +186,59 @@ def schedule(speaker_query: str, text: str, *, delay_seconds: float,
         return public(jid) or {}
     timer.start()
     return public(jid) or {}
+
+
+def dat_lich(user_id: str, speaker_query: str, text: str, when: str, *,
+             volume: Optional[float] = None, voice_name: str = "") -> dict[str, Any]:
+    """Đặt LỊCH đọc thông báo ra loa — sống qua restart.
+
+    Khác `schedule()`: `schedule` dùng `threading.Timer` trong tiến trình nên mất
+    sạch khi khởi động lại (đủ cho "sau 1 phút", không đủ cho "8h sáng mai"). Hàm
+    này ghi vào SQLite của `agent_reminders` với `mode='loa'` — cùng bảng, cùng
+    vòng chạy, cùng phép chống gửi trùng, cùng bộ hiểu thời gian ("mỗi ngày 6h",
+    "thứ 2 hàng tuần") và cùng chỗ xem/huỷ lịch. Không dựng bộ hẹn giờ thứ hai.
+
+    Âm thanh được tổng hợp NGAY BÂY GIỜ và ghi ra file có tiền tố `lich_` (nên
+    `cleanup_media` không dọn theo tuổi). Tới giờ chỉ việc đẩy URL cho loa — lịch
+    vẫn chạy đúng dù lúc đó engine giọng đang lỗi hay model chưa nạp. Đường dẫn
+    file nằm trong cột `meta` của dòng lịch.
+
+    Ném RuntimeError/ValueError nếu loa chưa rõ, không hiểu thời điểm, hoặc TTS
+    hỏng — để người đặt lịch biết NGAY, không phải chờ tới giờ mới thấy im lặng.
+    """
+    from services import voice
+    from services.agent import reminders as rem
+
+    text = str(text or "").strip()
+    if not text:
+        raise ValueError("Thiếu nội dung thông báo.")
+    rec = _resolve_one(speaker_query)          # ném lỗi sớm nếu loa chưa rõ
+    lich = rem.parse_when(str(when or ""))
+    if not lich or not lich.get("next_run_at"):
+        raise ValueError("Không hiểu thời điểm. VD: '8h sáng mai', 'mỗi ngày 6h', '19:30'.")
+
+    wav = voice.speak(text, voice_name)        # tổng hợp SẴN, lỗi ném ra ngay
+    path = voice.save_media(wav, giu_lai=True)
+    try:
+        row = rem.create(
+            user_id, text, lich, mode="loa",
+            meta_extra={
+                "speaker_id": str(rec.get("id") or ""),
+                "speaker_name": str(rec.get("name") or ""),
+                "audio_path": str(path),
+                "voice": str(voice_name or ""),
+                "volume": None if volume is None else float(volume),
+            },
+        )
+    except Exception:
+        try:
+            path.unlink()                      # tạo lịch hỏng thì đừng để lại file mồ côi
+        except Exception:
+            pass
+        raise
+    logger.info("announce: đã đặt lịch %s ra %s (%s)", row.get("id"),
+                rec.get("name"), rem._fmt_when(row))
+    return row
 
 
 def cancel(jid: str) -> bool:

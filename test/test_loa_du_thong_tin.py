@@ -207,10 +207,11 @@ class PhatNgayPhaiDongBoTests(unittest.TestCase):
         goc = getattr(mod, "play_text_on", None)
         da_goi: list = []
 
-        def _play(text, rec, voice_name=""):
+        def _play(text, rec, voice_name="", *, files_out=None):
             da_goi.append((text, rec.get("name")))
             if loi:
                 raise RuntimeError(loi)
+            return "https://x/media/voice/abc.wav"
 
         mod.play_text_on = _play
         self.addCleanup(lambda: setattr(mod, "play_text_on", goc)
@@ -264,7 +265,7 @@ class TraAmLuongVeMucCuTests(unittest.TestCase):
         goc = {"play": getattr(v, "play_text_on", None),
                "get": vspk.get_volume, "set": vspk.set_volume}
 
-        def _play(text, rec, voice_name=""):
+        def _play(text, rec, voice_name="", *, files_out=None):
             if loi_phat:
                 raise RuntimeError(loi_phat)
             return "https://x/media/voice/abc.wav"

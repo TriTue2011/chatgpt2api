@@ -2800,11 +2800,27 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
             volume = max(0.0, min(100.0, float(vol))) / 100.0
         except (TypeError, ValueError):
             volume = None
+    # Giọng riêng của loa → giọng theo kênh/thread/topic → giọng hệ thống.
+    # Trước bản này không truyền gì nên loa luôn đọc bằng giọng hệ thống.
+    _giong = voice.giong_cho_loa(chosen, session_id=_session_id_loa(ctx))
+
+    # ĐẶT LỊCH (mốc giờ/ngày, hoặc lặp) → ghi vào SQLite, sống qua restart. Hẹn
+    # bằng `threading.Timer` mất sạch khi khởi động lại, không dùng được cho "8h
+    # sáng mai". Âm thanh tổng hợp sẵn ngay lúc đặt và giữ file lại.
+    _khi = str(args.get("when") or args.get("thoi_diem") or "").strip()
+    if _khi:
+        try:
+            _row = vann.dat_lich(str((ctx or {}).get("user_id") or ""),
+                                 str(chosen.get("id")), text, _khi,
+                                 volume=volume, voice_name=_giong)
+        except Exception as exc:
+            return {"text": f"Em đặt lịch không được ạ 😥: {str(exc)[:200]}"}
+        from services.agent import reminders as _rem
+        return {"text": f"[đã đặt lịch đọc “{text}” ra {chosen.get('name')} "
+                        f"{_rem._fmt_when(_row)} — mã {_row.get('id')}]"}
     try:
-        # Giọng riêng của loa → giọng theo kênh/thread/topic → giọng hệ thống.
-        # Trước bản này không truyền gì nên loa luôn đọc bằng giọng hệ thống.
         vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume,
-                      voice=voice.giong_cho_loa(chosen, session_id=_session_id_loa(ctx)))
+                      voice=_giong)
     except Exception as exc:
         # Phát ngay giờ chạy ĐỒNG BỘ nên lỗi thật tới được đây (trước kia nó
         # chìm trong thread nền, người dùng nhận "[đang đọc …]" sai sự thật).
@@ -3649,24 +3665,31 @@ CAPABILITIES: dict[str, Capability] = {
                   "mà chưa rõ → hỏi lại đúng danh sách, không tự chọn.")),
     "announce_on_speaker": Capability(
         name="announce_on_speaker", risk=CHANGE, handler=_h_announce_on_speaker,
-        emoji="🔊", label="Đọc thông báo ra loa (ngay, hoặc hẹn giờ)",
+        emoji="🔊", label="Đọc thông báo ra loa (ngay, hẹn phút, hoặc đặt lịch)",
         description=(
-            "Đọc một câu ra loa. KHÔNG nhắc thời gian ⇒ đọc NGAY (delay_minutes=0) — "
-            "chỉ hẹn giờ khi người dùng nói rõ 'sau N phút' / 'lúc …'. Dùng khi 'phát "
-            "thông báo ra loa …', 'nhắc … bằng loa', kèm âm lượng %. Đọc bằng giọng "
-            "TTS ra loa Cast/DLNA/qua Home Assistant."
+            "Đọc một câu ra loa. KHÔNG nhắc thời gian ⇒ đọc NGAY. Nói rõ mốc giờ/ngày "
+            "hoặc lịch lặp ('8h sáng mai', 'mỗi ngày 6h', 'thứ 2 hàng tuần') ⇒ truyền "
+            "`when` để ĐẶT LỊCH (sống qua khởi động lại). Chỉ nói 'sau N phút' ⇒ dùng "
+            "`delay_minutes`. Dùng khi 'phát thông báo ra loa …', 'nhắc … bằng loa', "
+            "kèm âm lượng %. Đọc bằng giọng TTS ra loa Cast/DLNA/qua Home Assistant."
         ),
         parameters={"type": "object", "properties": {
             "text": {"type": "string", "description": "Nội dung cần đọc ra loa"},
             "speaker": {"type": "string",
                         "description": "Tên loa (bỏ trống = hỏi lại nếu nhà có nhiều loa)"},
+            "when": {"type": "string",
+                     "description": ("Mốc giờ/ngày hoặc lịch lặp, viết nguyên văn lời "
+                                     "người dùng: '8h sáng mai', '19:30', 'mỗi ngày 6h', "
+                                     "'thứ 2 hàng tuần'. Bỏ trống nếu đọc ngay hoặc chỉ "
+                                     "hẹn sau N phút.")},
             "delay_minutes": {"type": "number",
                               "description": "Hẹn sau bao nhiêu phút (0/bỏ trống = đọc ngay)"},
             "volume": {"type": "integer",
                        "description": "Âm lượng phần trăm 0..100 (vd 20). Chỉ áp cho loa Cast."}},
             "required": ["text"]},
-        workflow=("Báo lại tự nhiên: '[đã hẹn …]' hoặc '[đang đọc …]' là dữ liệu. Nhiều "
-                  "loa mà chưa rõ → hỏi lại đúng danh sách, không tự chọn hộ.")),
+        workflow=("Báo lại tự nhiên: '[đã đặt lịch …]', '[đã hẹn …]', '[đang đọc …]' là "
+                  "dữ liệu. Nhiều loa mà chưa rõ → hỏi lại đúng danh sách, không tự chọn "
+                  "hộ. Lịch xem/huỷ được bằng tool nhắc hẹn (cùng một bảng).")),
     "describe_device": Capability(
         name="describe_device", risk=READ, handler=_h_describe_device,
         emoji="🔧", label="Thiết bị này chỉnh được gì",

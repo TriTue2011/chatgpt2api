@@ -377,9 +377,25 @@ def create_router() -> APIRouter:
                 volume = max(0.0, min(100.0, float(vol))) / 100.0
             except (TypeError, ValueError):
                 volume = None
+        # `when` = mốc giờ/ngày hoặc lịch lặp ("8h sáng mai", "mỗi ngày 6h") →
+        # ĐẶT LỊCH trong SQLite, sống qua khởi động lại. Không có `when` thì vẫn
+        # là bộ hẹn giờ nhẹ trong tiến trình như cũ.
+        when = str(body.get("when") or "").strip()
+        _giong = str(body.get("voice") or "").strip()
+        if when:
+            try:
+                row = await run_in_threadpool(
+                    vann.dat_lich, str(body.get("user_id") or "web"), speaker, text,
+                    when, volume=volume, voice_name=_giong)
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(400, str(exc)[:300])
+            from services.agent import reminders as _rem
+            return {"ok": True, "lich": {"id": row.get("id"), "text": row.get("text"),
+                                         "khi": _rem._fmt_when(row)}}
         try:
             job = await run_in_threadpool(
-                vann.schedule, speaker, text, delay_seconds=delay, volume=volume)
+                vann.schedule, speaker, text, delay_seconds=delay, volume=volume,
+                voice=_giong)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(400, str(exc)[:300])
         return {"ok": True, "job": job}

@@ -74,7 +74,7 @@ export function VoiceSpeakersCard() {
   // media_player từ HA — dropdown chọn entity khi thêm loa kiểu 'ha'
   const [haPlayers, setHaPlayers] = useState<{ entity_id: string; name: string }[]>([]);
   // Hẹn giờ thông báo ra loa
-  const [ann, setAnn] = useState({ speaker: "", text: "", delayMin: 1, volPct: 20 });
+  const [ann, setAnn] = useState({ speaker: "", text: "", delayMin: 1, volPct: 20, when: "" });
 
   const load = useCallback(async () => {
     try {
@@ -248,21 +248,28 @@ export function VoiceSpeakersCard() {
     } finally { setBusy(false); }
   };
 
-  // Hẹn giờ đọc thông báo ra loa (sau N phút, kèm âm lượng %).
+  // Đọc ngay / hẹn sau N phút / ĐẶT LỊCH (mốc giờ-ngày, lịch lặp).
+  // Có `when` → ghi vào SQLite, sống qua khởi động lại. Không có → bộ hẹn nhẹ
+  // trong RAM như cũ.
   const sendAnnounce = async () => {
     if (!ann.speaker.trim() || !ann.text.trim()) {
       toast.error("Chọn loa và nhập nội dung thông báo"); return;
     }
     setBusy(true);
     try {
-      await request.post("/api/voice/announce", {
+      const when = ann.when.trim();
+      const r = await request.post("/api/voice/announce", {
         speaker: ann.speaker.trim(), text: ann.text.trim(),
-        delay_seconds: Math.max(0, Number(ann.delayMin) || 0) * 60,
+        when,
+        delay_seconds: when ? 0 : Math.max(0, Number(ann.delayMin) || 0) * 60,
         volume: Number(ann.volPct),
       });
-      toast.success(Number(ann.delayMin) > 0
-        ? `Đã hẹn đọc sau ${ann.delayMin} phút ra ${ann.speaker}`
-        : `Đang đọc ra ${ann.speaker}`);
+      const lich = (r.data as { lich?: { khi?: string } })?.lich;
+      toast.success(lich
+        ? `Đã đặt lịch ${lich.khi || when} ra ${ann.speaker}`
+        : Number(ann.delayMin) > 0
+          ? `Đã hẹn đọc sau ${ann.delayMin} phút ra ${ann.speaker}`
+          : `Đang đọc ra ${ann.speaker}`);
       setAnn({ ...ann, text: "" });
     } catch (e) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -641,8 +648,16 @@ export function VoiceSpeakersCard() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-muted-foreground flex items-center gap-1">
+                Lịch
+                <input value={ann.when} placeholder="8h sáng mai / mỗi ngày 6h"
+                  onChange={(e) => setAnn({ ...ann, when: e.target.value })}
+                  title="Điền mốc giờ-ngày hoặc lịch lặp → lưu vào DB, sống qua khởi động lại. Để trống thì dùng ô 'Sau … phút' (hẹn nhẹ trong RAM)."
+                  className="w-44 rounded-md border border-border bg-background px-2 py-1 text-xs" />
+              </label>
+              <label className="text-[11px] text-muted-foreground flex items-center gap-1">
                 Sau
                 <input type="number" min={0} step={1} value={ann.delayMin}
+                  disabled={!!ann.when.trim()}
                   onChange={(e) => setAnn({ ...ann, delayMin: Number(e.target.value) })}
                   className="w-16 rounded-md border border-border bg-background px-2 py-1 text-xs" /> phút
               </label>
@@ -654,12 +669,16 @@ export function VoiceSpeakersCard() {
               </label>
               <Button type="button" variant="outline" size="sm" className="ml-auto"
                 onClick={() => void sendAnnounce()} disabled={busy}>
-                {Number(ann.delayMin) > 0 ? "Hẹn giờ" : "Đọc ngay"}
+                {ann.when.trim() ? "Đặt lịch" : Number(ann.delayMin) > 0 ? "Hẹn giờ" : "Đọc ngay"}
               </Button>
             </div>
             <p className="text-[10px] text-muted-foreground -mt-1">
-              Đọc bằng giọng TTS ra loa Cast/DLNA/HA. Âm lượng chỉ áp cho loa Cast.
-              Bộ hẹn nhẹ trong RAM — khởi động lại app thì mất hẹn đang chờ.
+              Đọc bằng giọng TTS ra loa Cast/DLNA/HA. Âm lượng chỉ áp cho loa Cast, và
+              phát xong tự trả về mức cũ.
+              <br />
+              Ô <b>Lịch</b>: tiếng được đọc sẵn rồi lưu file, lịch ghi vào DB nên
+              sống qua khởi động lại — xem/huỷ ở phần nhắc hẹn. Để trống ô đó thì
+              ô <b>Sau … phút</b> là bộ hẹn nhẹ trong RAM, khởi động lại là mất.
             </p>
           </div>
         )}

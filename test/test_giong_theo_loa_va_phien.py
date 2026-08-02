@@ -141,7 +141,7 @@ class DuocNoiVaoDuongPhatTests(unittest.TestCase):
 
     def test_announce_truyen_giong_vao_play_text_on(self):
         code = self._code("services", "voice", "announce.py")
-        self.assertIn('play_text_on(job["text"], rec, str(job.get("voice") or ""))', code)
+        self.assertIn('play_text_on(job["text"], rec, str(job.get("voice") or "")', code)
         self.assertIn('"voice": str(voice or "")', code)
 
     def test_hai_handler_loa_deu_tra_giong(self):

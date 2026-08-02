@@ -597,14 +597,30 @@ def _capture_delivery_ctx(channel: str) -> dict[str, Any]:
     return ctx
 
 
+_MODES = ("notify", "task", "loa")
+
+
 def create(
     user_id: str,
     text: str,
     schedule: dict[str, Any],
     *,
     mode: str = "notify",
+    meta_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Insert a reminder. ``schedule`` from parse_when()."""
+    """Insert a reminder. ``schedule`` from parse_when().
+
+    `mode`:
+      notify — gửi tin nhắc vào chat
+      task   — chạy một việc rồi báo kết quả
+      loa    — ĐỌC RA LOA. `meta_extra` mang {speaker_id, audio_path, volume,
+               voice}: âm thanh đã được tổng hợp SẴN lúc đặt lịch và ghi ra file
+               (tiền tố `lich_` nên `cleanup_media` không dọn). Tới giờ chỉ việc
+               phát file đó — không cần TTS lại, nên lịch vẫn chạy đúng dù lúc đó
+               engine giọng đang lỗi hoặc model chưa nạp.
+
+    `meta_extra` gộp vào cột `meta` sẵn có, không thêm cột mới.
+    """
     if not is_enabled():
         raise RuntimeError("Nhắc hẹn đang tắt (agent_reminders.enabled=false).")
     text = (text or "").strip()
@@ -612,9 +628,12 @@ def create(
         raise ValueError("Thiếu nội dung nhắc / nhiệm vụ.")
     if not schedule or not schedule.get("next_run_at"):
         raise ValueError("Không hiểu thời điểm. VD: 'sau 30 phút', 'mỗi ngày 7h', '19:30'.")
-    mode = "task" if str(mode).lower() == "task" else "notify"
+    mode = str(mode).lower() if str(mode).lower() in _MODES else "notify"
     channel, chat_id = channel_of(user_id)
-    meta_json = json.dumps(_capture_delivery_ctx(channel), ensure_ascii=False)
+    _meta = _capture_delivery_ctx(channel)
+    if isinstance(meta_extra, dict):
+        _meta.update(meta_extra)
+    meta_json = json.dumps(_meta, ensure_ascii=False)
     rid = uuid.uuid4().hex[:12]
     now = time.time()
     row = {
@@ -671,31 +690,67 @@ def list_for(user_id: str, *, include_disabled: bool = False) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
+def _xoa_audio_cua_lich(rows: list[dict[str, Any]]) -> None:
+    """Xoá file âm thanh của lịch đọc ra loa khi lịch bị huỷ.
+
+    File này có tiền tố `lich_` nên `cleanup_media` CỐ Ý không dọn theo tuổi (lịch
+    tuần sau vẫn phải còn tiếng). Nên nó chỉ có đúng một đường ra: huỷ lịch.
+    """
+    from pathlib import Path
+    for r in rows:
+        if (r.get("mode") or "") != "loa":
+            continue
+        try:
+            meta = json.loads(str(r.get("meta") or "{}"))
+            duong = str((meta or {}).get("audio_path") or "").strip()
+            if duong:
+                p = Path(duong)
+                if p.is_file():
+                    p.unlink()
+        except Exception as exc:
+            logger.info("agent.reminders: chưa xoá được audio lịch %s (%s)",
+                        r.get("id"), str(exc)[:80])
+
+
 def cancel(user_id: str, reminder_id: str) -> bool:
     rid = (reminder_id or "").strip()
     if not rid:
         return False
     with _lock:
+        rows = [dict(r) for r in _db().execute(
+            "SELECT * FROM reminders WHERE id=? AND user_id=?", (rid, str(user_id)),
+        ).fetchall()]
         cur = _db().execute(
             "UPDATE reminders SET enabled=0 WHERE id=? AND user_id=?",
             (rid, str(user_id)),
         )
         _db().commit()
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        _xoa_audio_cua_lich(rows)
+    return ok
 
 
 def cancel_all(user_id: str) -> int:
     with _lock:
+        rows = [dict(r) for r in _db().execute(
+            "SELECT * FROM reminders WHERE user_id=? AND enabled=1", (str(user_id),),
+        ).fetchall()]
         cur = _db().execute(
             "UPDATE reminders SET enabled=0 WHERE user_id=? AND enabled=1",
             (str(user_id),),
         )
         _db().commit()
-        return cur.rowcount
+        n = cur.rowcount
+    _xoa_audio_cua_lich(rows)
+    return n
+
+
+_MODE_NHAN = {"notify": "nhắc", "task": "việc", "loa": "loa"}
 
 
 def describe(row: dict[str, Any]) -> str:
-    mode_s = "nhắc" if row.get("mode") == "notify" else "việc"
+    mode_s = _MODE_NHAN.get(str(row.get("mode") or ""), "việc")
     return f"• `{row['id']}` [{mode_s}] {_fmt_when(row)} — {row.get('text', '')[:80]}"
 
 
@@ -868,6 +923,63 @@ def tick_once() -> int:
     return fired
 
 
+def _phat_ra_loa(meta: dict[str, Any], text: str) -> tuple[bool, str]:
+    """Phát âm thanh của lịch ra loa. Trả (xong chưa, tên loa / lý do hỏng).
+
+    Âm thanh đã tổng hợp SẴN lúc đặt lịch (`meta['audio_path']`), nên tới giờ chỉ
+    việc đẩy URL cho loa kéo về — lịch vẫn chạy đúng dù engine giọng đang lỗi.
+    File mất (bị dọn tay, đổi volume) thì TTS lại tại chỗ để lịch không im lặng
+    trôi qua.
+
+    Âm lượng: đặt mức của lịch rồi TRẢ VỀ mức cũ sau khi đọc xong — giống đường
+    phát ngay (xem `announce._run`).
+    """
+    from pathlib import Path
+
+    from services import voice
+    from services.voice import announce as vann
+    from services.voice import speakers as vspk
+
+    sid = str(meta.get("speaker_id") or "").strip()
+    rec = vspk.get(sid) if sid else None
+    if not rec:
+        return False, f"không còn loa nào có id «{sid}»"
+
+    muc_cu: float | None = None
+    vol = meta.get("volume")
+    try:
+        if vol not in (None, ""):
+            try:
+                muc_cu = vspk.get_volume(rec)
+            except Exception:
+                muc_cu = None
+            try:
+                vspk.set_volume(rec, float(vol))
+            except Exception as exc:
+                muc_cu = None
+                logger.info("reminders: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
+
+        duong = str(meta.get("audio_path") or "").strip()
+        p = Path(duong) if duong else None
+        if p is not None and p.is_file():
+            url = voice.media_url(p)
+            voice.play_on(rec, url)
+        else:
+            # File đã mất → đọc lại tại chỗ, giữ đúng giọng đã chọn lúc đặt lịch.
+            logger.warning("reminders: mất file âm thanh của lịch (%s) — TTS lại", duong)
+            url = voice.play_text_on(text, rec, str(meta.get("voice") or ""))
+        if muc_cu is not None:
+            vann._tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""))
+        return True, str(rec.get("name") or sid)
+    except Exception as exc:
+        if muc_cu is not None:
+            try:
+                vspk.set_volume(rec, float(muc_cu))
+            except Exception:
+                pass
+        return False, str(exc)[:200]
+
+
 def _fire(row: dict[str, Any], now_ts: float) -> None:
     mode = row.get("mode") or "notify"
     channel = row.get("channel") or "tg"
@@ -904,6 +1016,11 @@ def _fire(row: dict[str, Any], now_ts: float) -> None:
             result = f"(lỗi khi chạy việc: {str(exc)[:120]})"
         body = result or f"Đã xử lý: {text}"
         _send(channel, chat_id, f"⏰ Việc theo lịch:\n{body}", meta)
+    elif mode == "loa":
+        ok, chi_tiet = _phat_ra_loa(meta, text)
+        _send(channel, chat_id,
+              f"🔊 Đã đọc ra {chi_tiet}:\n{text}" if ok
+              else f"🔊 Lịch đọc ra loa không chạy được ạ: {chi_tiet}", meta)
     else:
         _send(channel, chat_id, f"⏰ Nhắc anh/chị: {text}", meta)
 
