@@ -488,6 +488,174 @@ def webhook_url() -> str:
     return f"{base}{WEBHOOK_PATH}" if base else ""
 
 
+# ── Chuyển tiếp tin ĐẾN ra webhook ngoài (Home Assistant / n8n / URL bất kỳ) ──
+#
+# Kênh Zalo Cá Nhân đã có việc này (`zalo_personal_forward_webhooks`); kênh bot
+# thì chưa. Đây là chiều ĐI RA nên chạy được ngay với URL LAN http:// — khác
+# chiều nhận tin của Zalo cloud vốn đòi HTTPS công khai.
+#
+# Config:
+#   zalo_bot_forward_enabled  = false          ← công tắc TỔNG, mặc định TẮT
+#   zalo_bot_forward_webhooks = [
+#     {id, enabled, url, label, filters: [{chat_id, user_ids: []}]}
+#   ]
+# filters rỗng  = chuyển TẤT CẢ chat.
+# user_ids rỗng = mọi người trong chat đó; có list = chỉ những user id đó.
+#
+# Mặc định TẮT là có chủ ý: bật sẵn một cơ chế tự POST ra URL ngoài mà chủ máy
+# chưa kiểm được là đổi hành vi sau khi nâng cấp.
+_FORWARD_TIMEOUT_S = 8
+
+
+def forward_enabled() -> bool:
+    try:
+        return bool(config.get().get("zalo_bot_forward_enabled", False))
+    except Exception:
+        return False
+
+
+def _forward_filters(raw: object) -> list[dict]:
+    """Chuẩn hóa filter → [{chat_id, user_ids}].
+
+    Nhận cả khóa `chat_id` (tên đúng của kênh bot) và `thread_id` (tên bên Zalo
+    Cá Nhân) để chép cấu hình qua lại không phải sửa tay. Đây là BIÊN hệ thống —
+    cấu hình do người vận hành gõ nên phải chịu được cả hai dạng.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        cid = str(it.get("chat_id") or it.get("thread_id") or "").strip()
+        if not cid:
+            continue
+        out.append({
+            "chat_id": cid,
+            "user_ids": [str(u).strip() for u in (it.get("user_ids") or []) if str(u).strip()],
+        })
+    return out
+
+
+def forward_destinations() -> list[dict]:
+    """Danh sách đích chuyển tiếp đã chuẩn hóa (bỏ mục thiếu url)."""
+    try:
+        raw = config.get().get("zalo_bot_forward_webhooks")
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for i, it in enumerate(raw):
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url") or "").strip()
+        if not url:
+            continue
+        out.append({
+            "id": str(it.get("id") or f"wh-{i}"),
+            "enabled": bool(it.get("enabled", True)),
+            "url": url,
+            "label": str(it.get("label") or "").strip(),
+            "filters": _forward_filters(it.get("filters")),
+        })
+    return out
+
+
+def _forward_matches(chat_id: str, user_id: str, filters: list[dict]) -> bool:
+    """filters rỗng = nhận tất cả. Có list thì chat phải khớp; user_ids rỗng =
+    mọi người trong chat đó."""
+    if not filters:
+        return True
+    entry = next((f for f in filters if f.get("chat_id") == str(chat_id or "")), None)
+    if entry is None:
+        return False
+    uids = entry.get("user_ids") or []
+    return not uids or str(user_id or "") in uids
+
+
+def _post_forward(url: str, payload: dict, label: str) -> None:
+    try:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=_FORWARD_TIMEOUT_S) as resp:
+            logger.info("Zalo bot → webhook OK label=%s status=%s chat=%s",
+                        label or url[:48], getattr(resp, "status", "?"),
+                        payload.get("chat_id"))
+    except Exception as exc:
+        logger.warning("Zalo bot → webhook lỗi label=%s: %s", label or url[:48], exc)
+
+
+def forward_incoming(payload: dict) -> None:
+    """POST tin vừa nhận tới MỌI webhook đang bật — bắn rồi quên.
+
+    Gọi từ `_process_message`, tức điểm HỢP LƯU của cả hai chế độ nhận tin
+    (webhook `process_update` và long-poll `_handle_update`). Móc riêng ở đường
+    webhook thì lúc bot chạy long-poll — đúng chế độ đang chạy thật trên máy chủ
+    — việc chuyển tiếp sẽ không bao giờ nổ.
+    """
+    if not forward_enabled():
+        return
+    dests = [d for d in forward_destinations() if d.get("enabled")]
+    if not dests:
+        return
+    chat_id = str(payload.get("chat_id") or "")
+    user_id = str(payload.get("user_id") or "")
+    for dest in dests:
+        if not _forward_matches(chat_id, user_id, dest.get("filters") or []):
+            continue
+        threading.Thread(
+            target=_post_forward,
+            args=(str(dest["url"]), payload, str(dest.get("label") or dest.get("id") or "")),
+            daemon=True,
+        ).start()
+
+
+def test_forward(url: str = "", filters: list | None = None) -> dict:
+    """Gửi một payload mẫu tới 1 webhook (nút Test trên UI / API quản trị).
+
+    KHÔNG phụ thuộc công tắc tổng: đây đúng là lúc người vận hành cần thử xem
+    webhook có chạy được không TRƯỚC khi bật.
+    """
+    dests = forward_destinations()
+    target = (url or "").strip()
+    flt = _forward_filters(filters) if filters is not None else []
+    if not target:
+        for d in dests:
+            if d.get("enabled"):
+                target = str(d["url"])
+                if not flt:
+                    flt = list(d.get("filters") or [])
+                break
+    if not target:
+        return {"ok": False, "error": "Chưa cấu hình URL webhook nào"}
+    chat_id = str(flt[0].get("chat_id")) if flt else "0"
+    uids = (flt[0].get("user_ids") or []) if flt else []
+    payload = {
+        "source": "zalo_bot",
+        "test": True,
+        "chat_id": chat_id,
+        "user_id": str(uids[0]) if uids else "0",
+        "sender": "Test",
+        "is_group": False,
+        "text": "Tin thử từ chatgpt2api (Zalo bot)",
+    }
+    try:
+        req = urllib.request.Request(
+            target,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=_FORWARD_TIMEOUT_S) as resp:
+            return {"ok": True, "status": getattr(resp, "status", 0), "url": target,
+                    "payload": payload}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200], "url": target, "payload": payload}
+
+
 def _with_bot(bot: dict, fn, *args, **kwargs):
     """Chạy fn trong ngữ cảnh bot rồi khôi phục ngữ cảnh cũ. `_api_call` lấy
     token từ thread-local `_current.bot`, nên mọi lệnh nhắm vào MỘT bot cụ thể
@@ -583,6 +751,27 @@ def apply_mode(*, delete_inline: bool = True) -> dict:
             })
         out["polling"] = False
         out["webhook_url"] = webhook_url()
+        # AN TOÀN: đăng ký webhook trượt HẾT thì kênh coi như CHẾT — poll vừa bị
+        # dừng ở trên, mà webhook thì không đặt được. Ca này rất dễ gặp: docs đòi
+        # URL HTTPS công khai, mà base_url thực địa đang là http://<IP LAN>:3030
+        # nên set_webhook từ chối ngay. Bật công tắc rồi bot im lặng hoàn toàn là
+        # cái giá quá đắt cho một lần thử → tự quay về long-polling.
+        #
+        # Hạ luôn công tắc thay vì để cờ bật mà chạy poll: `start_polling` có bất
+        # biến "webhook bật thì không poll", giữ hai thứ lệch nhau là mời lỗi về
+        # sau. Hạ cờ khiến trạng thái chỉ có MỘT nguồn đúng, và người vận hành
+        # thấy công tắc tự tắt kèm lý do thì biết ngay là chưa dùng được.
+        if bots and not any(b["ok"] for b in out["bots"]):
+            ly_do = next((b["error"] for b in out["bots"] if b["error"]), "không rõ")
+            logger.warning("Zalo: setWebhook trượt hết (%s) → quay về long-polling", ly_do)
+            try:
+                config.update({"zalo_webhook_enabled": False})
+            except Exception as exc:
+                logger.warning("Zalo: hạ cờ zalo_webhook_enabled lỗi: %s", exc)
+            out["mode"] = "long-polling"
+            out["fell_back_to_polling"] = True
+            out["fallback_reason"] = ly_do
+            out["polling"] = start_polling()
     else:
         if delete_inline:
             for bot in bots:
@@ -1545,6 +1734,27 @@ def _process_message(text: str, chat_id: str, photo_url: str = "", bot: dict | N
     MẤT VĨNH VIỄN — không trả lời, không cảnh báo admin, không ai retry.
     orchestrate() đã có try/except + fallback riêng bên trong
     _process_message_inner — lưới này KHÔNG thay thế, chỉ bọc thêm bên ngoài."""
+    # Chuyển tiếp ra webhook ngoài TRƯỚC khi xử lý AI, và bọc try riêng: consumer
+    # ngoài (HA/n8n) chết hay URL sai thì tuyệt đối không được làm mất lời đáp.
+    # Đặt ở đây vì đây là điểm hợp lưu của cả webhook lẫn long-poll, và vì tin bị
+    # tầng lọc quyền chặn trả lời thì HA vẫn nên nhận được.
+    try:
+        forward_incoming({
+            "source": "zalo_bot",
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "sender": sender,
+            "is_group": is_group,
+            "chat_name": chat_name,
+            "text": text,
+            "photo_url": photo_url,
+            "file_url": file_url,
+            "file_name": file_name,
+            "file_id": file_id,
+            "voice_url": voice_url,
+        })
+    except Exception as exc:
+        logger.warning("zalo forward_incoming lỗi (chat=%s): %s", chat_id, str(exc)[:160])
     try:
         _process_message_inner(
             text, chat_id, photo_url, bot, sender, file_url, file_name,
@@ -2029,6 +2239,9 @@ def get_status() -> dict:
         "polling": alive > 0,
         "bots_count": len(bots),
         "bots_polling": alive,
+        # Chuyển tiếp ra ngoài — đọc config thuần, không gọi mạng nên poll được.
+        "forward_enabled": forward_enabled(),
+        "forward_count": sum(1 for d in forward_destinations() if d.get("enabled")),
     }
 
 
