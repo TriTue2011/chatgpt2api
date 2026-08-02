@@ -1129,6 +1129,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
             )
         except Exception as exc:
             logger.debug("agent: run_journal failed: %s", exc)
+        # Chốt kết quả cho skill đã dùng trong lượt này. Đây là điểm DUY NHẤT
+        # biết được lượt xong hay hỏng, nên `use_skill` chỉ ghi "đã dùng" rồi để
+        # đây quyết xong/hỏng (xem skill_quality.ghi_ket_qua).
+        try:
+            from services.agent import skill_quality as sq
+            sq.ghi_ket_qua(user_id, str(status or ""))
+        except Exception as exc:
+            logger.debug("agent: chốt điểm skill lỗi: %s", exc)
 
     user_text = (user_text or "").strip()
     if not user_text:

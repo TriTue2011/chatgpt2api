@@ -937,10 +937,16 @@ def _h_teach_skill(args: dict, ctx: dict) -> dict:
         if not items:
             return {"text": "Em chưa học kỹ năng nào ạ. Anh/chị dạy em cách làm một "
                             "việc (các bước) là em nhớ thành skill 🧩."}
+        from services.agent import skill_quality as sq
         lines = ["🧩 Kỹ năng em đã học:"]
         for s in items:
+            _b = sq.bac(s.slug)
+            _ho = sq.ho_so(s.slug)
+            _dem = (f" · dùng {_ho.get('dung')} lần, xong {_ho.get('xong')}, "
+                    f"hỏng {_ho.get('hong')}") if _ho.get("dung") else ""
             lines.append(f"• `{s.slug}` — {s.description or s.name}"
-                         + ("" if s.enabled else " (đang tắt)"))
+                         + ("" if s.enabled else " (đang tắt)")
+                         + f"\n  ↳ {sq.NHAN_BAC.get(_b, _b)}{_dem}")
         return {"text": "\n".join(lines)}
 
     slug = str(args.get("slug") or "").strip()
@@ -960,10 +966,22 @@ def _h_teach_skill(args: dict, ctx: dict) -> dict:
     if not body:
         return {"text": "Anh/chị mô tả giúp em CÁC BƯỚC làm việc này (gọi gì, lấy gì, "
                         "gửi đâu…) — em lưu thành kỹ năng để lần sau tự làm ạ."}
+    # SOI thân skill trước khi ghi. Thân skill sẽ được đưa cho model như một quy
+    # trình ĐỂ LÀM THEO, mà model đang có tool điều khiển nhà / chạy lệnh trên
+    # thiết bị / SSH vào server — và capability này là risk=READ nên không qua
+    # cổng duyệt. Chỉ soi skill TỰ HỌC; skill đóng gói sẵn là code đã xem xét.
+    from services.agent import skill_quality as sq
+    _ly_do = sq.soi_than_skill(body)
+    if _ly_do:
+        logger.warning({"event": "skill_tu_hoc_bi_tu_choi", "ly_do": _ly_do,
+                        "slug": slug, "ten": (name or description)[:80]})
+        return {"text": f"Em chưa lưu kỹ năng này được ạ — nội dung {_ly_do}. "
+                        f"Anh/chị viết lại các bước theo cách bình thường giúp em nhé."}
     try:
         new_slug = sk.write_skill(name, description, body, slug=slug, append=(op == "append"))
     except Exception as exc:
         return {"text": f"Em lưu kỹ năng chưa được 😥 ({exc})."}
+    sq.danh_dau_tu_hoc(new_slug)
     label = name or description or new_slug
     return {"text": f"Dạ em học rồi ạ 🧩 — kỹ năng `{new_slug}` ({label}). "
                     f"Lần sau gặp việc này em tự làm theo."}
@@ -1578,6 +1596,13 @@ def _h_use_skill(args: dict, ctx: dict) -> dict:
         enabled = sk.list_enabled()
         hint = ", ".join(s.slug for s in enabled[:12]) or "(trống)"
         return {"text": f"Không thấy skill `{slug}`. Đang có: {hint}"}
+    # Ghi nhận một lần DÙNG. Xong hay hỏng thì cuối lượt mới biết —
+    # `orchestrator._journal` gọi `ghi_ket_qua` để chốt.
+    try:
+        from services.agent import skill_quality as sq
+        sq.ghi_dung(str((ctx or {}).get("user_id") or ""), slug)
+    except Exception as exc:
+        logger.warning("agent: ghi nhận dùng skill lỗi: %s", exc)
     extra = ""
     if slug in teach.TEACHER_SKILLS:
         vi, en = teach.voice_vi(), teach.voice_en()

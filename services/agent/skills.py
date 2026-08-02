@@ -220,7 +220,19 @@ def list_skills(*, enabled_only: bool = False) -> list[SkillMeta]:
 
 
 def list_enabled() -> list[SkillMeta]:
-    return [s for s in list_skills(enabled_only=False) if s.enabled][: max_list()]
+    """Skill vào bộ định tuyến — BỎ skill hay hỏng.
+
+    Mô tả mỗi skill vào system prompt MỌI LƯỢT CHAT, nên một skill vừa hỏng vừa
+    chiếm suất trong `max_list()` là tốn kép. Chỉ bỏ khi đã đủ mẫu thất bại; chưa
+    dùng lần nào KHÔNG phải là dở (xem `skill_quality.nen_an_khoi_router`).
+    """
+    ds = [s for s in list_skills(enabled_only=False) if s.enabled]
+    try:
+        from services.agent import skill_quality as sq
+        ds = [s for s in ds if not sq.nen_an_khoi_router(s.slug)]
+    except Exception as exc:      # điểm hỏng thì vẫn phải có skill để chạy
+        logger.warning("skills: bỏ qua lọc theo điểm (%s)", exc)
+    return ds[: max_list()]
 
 
 def resolve(slug: str) -> Optional[Path]:
@@ -309,6 +321,15 @@ def write_skill(name: str, description: str, body: str, *, slug: str = "",
     return slug
 
 
+def _quen_diem(slug: str) -> None:
+    """Xoá skill thì xoá luôn điểm — slug dùng lại không thừa hưởng điểm cũ."""
+    try:
+        from services.agent import skill_quality as sq
+        sq.xoa(slug)
+    except Exception:
+        pass
+
+
 def delete_skill(slug: str) -> bool:
     """Xóa hẳn skill do người dùng dạy (cả .disabled)."""
     if not valid_slug(slug):
@@ -318,6 +339,7 @@ def delete_skill(slug: str) -> bool:
             try:
                 if (base / "SKILL.md").is_file():
                     shutil.rmtree(base)
+                    _quen_diem(slug)
                     return True
             except OSError as exc:
                 logger.warning("agent.skills: delete %s failed: %s", slug, exc)
