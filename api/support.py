@@ -106,7 +106,11 @@ def start_limited_account_watcher(stop_event: Event) -> Thread:
     def worker() -> None:
         while not stop_event.is_set():
             try:
-                limited_tokens = account_service.list_limited_tokens()
+                # Chỉ dò tài khoản ĐÃ tới hạn hồi. Trước hạn thì upstream chắc
+                # chắn còn cạn, mà `get_user_info()` lại tính status theo hạn mức
+                # ẢNH nên nó bật `active` sớm cho tài khoản cạn quota TEXT — lượt
+                # chat sau ăn 429. Xem `account_service.giu_han_nghi`.
+                limited_tokens = account_service.list_limited_tokens(due_only=True)
                 if limited_tokens:
                     print(f"[account-limited-watcher] checking {len(limited_tokens)} limited accounts")
                     account_service.refresh_accounts(limited_tokens)

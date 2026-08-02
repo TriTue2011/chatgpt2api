@@ -37,6 +37,15 @@ def _provider_circuit_stats() -> dict:
         return {}
 
 
+def _provider_order_stats() -> dict:
+    """Provider nào đang bị hạ xuống cuối combo vì cạn tài khoản — best-effort."""
+    try:
+        from services.provider_order import provider_order
+        return provider_order.get_stats()
+    except Exception:
+        return {}
+
+
 def _session_affinity_stats() -> dict:
     """Số phiên sticky đang giữ (smart pool) — best-effort."""
     try:
@@ -917,6 +926,7 @@ def create_router(app_version: str) -> APIRouter:
             "quota_watcher": quota_watcher.get_stats(),
             "model_cooldown": model_cooldown.get_stats(),
             "provider_circuits": _provider_circuit_stats(),
+            "provider_order": _provider_order_stats(),
             "session_affinity": _session_affinity_stats(),
             "opencode": {
                 "available": opencode_provider.is_available,

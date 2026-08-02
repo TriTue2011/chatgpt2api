@@ -96,6 +96,58 @@ def account_group(account: dict | None) -> str:
     return GROUP_FREE
 
 
+def han_nghi_chua_toi(account: dict | None) -> bool:
+    """True khi tài khoản đang `limited` và `restore_at` VẪN ở tương lai.
+
+    `restore_at` là hạn nghỉ do chính upstream báo (Codex trả header
+    `x-codex-primary-reset-at` khi 429 usage_limit). Trước hạn đó thì tài khoản
+    chắc chắn còn cạn — mọi request tới nó chỉ đổi lấy một cú 429 nữa.
+    """
+    if not isinstance(account, dict) or str(account.get("status") or "") != "limited":
+        return False
+    raw = account.get("restore_at")
+    if not raw:
+        return False   # không có hạn → để tầng khác quyết (revive_stuck_limited)
+    try:
+        t = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False   # hạn không đọc được → coi như không có hạn
+    return datetime.now(timezone.utc) < t
+
+
+def giu_han_nghi(current: dict | None, result: dict) -> dict:
+    """Bỏ `status`/`restore_at` khỏi kết quả refresh khi hạn nghỉ CHƯA tới.
+
+    Vì sao cần: `OpenAIBackendAPI.get_user_info()` tính `status` từ hạn mức
+    **ảnh** của chatgpt.com (`_extract_quota_and_restore_at` chỉ đọc
+    `feature_name == "image_gen"`), rồi trả `status="active"` khi còn lượt tạo
+    ảnh. Nhưng cú 429 khiến tài khoản thành `limited` lại là quota **text** của
+    Codex — hai đồng hồ khác nhau.
+
+    Đo thật 02/08 trên máy chủ: cả 7 tài khoản Codex đều `status=active` trong
+    khi `restore_at` còn ở tương lai (03/08 06:00 → 11:01). Bộ đếm 5 phút ở
+    `api/support.py` refresh mọi tài khoản `limited`, đồng hồ ảnh nói "còn lượt"
+    ⇒ bật lại `active` ⇒ lượt chat sau lấy ra dùng ⇒ 429. Mà
+    `_handle_openai_oauth_chat` thử tới 8 tài khoản một lượt, nên mỗi câu chat
+    đốt cả một loạt 429 thật trước khi rơi xuống provider kế tiếp.
+
+    Sau hàm này, đồng hồ ảnh vẫn cập nhật `quota` / `limits_progress` / email
+    như cũ — nó chỉ không còn quyền xoá hạn nghỉ do upstream đặt ra.
+    """
+    if not isinstance(result, dict) or not han_nghi_chua_toi(current):
+        return result if isinstance(result, dict) else {}
+    giu = {k: v for k, v in result.items() if k not in ("status", "restore_at")}
+    logger.info({
+        "event": "refresh_khong_xoa_han_nghi",
+        "email": str((current or {}).get("email") or "")[:80],
+        "restore_at": str((current or {}).get("restore_at") or "")[:25],
+        "status_bi_bo": str(result.get("status") or ""),
+    })
+    return giu
+
+
 def _decode_jwt_payload(access_token: str) -> dict | None:
     """Best-effort base64url decode of the JWT payload segment. Returns
     None on any error so callers can fall back to their existing path."""
@@ -1100,12 +1152,20 @@ class AccountService:
                     return dict(account)
         return None
 
-    def list_limited_tokens(self) -> list[str]:
+    def list_limited_tokens(self, *, due_only: bool = False) -> list[str]:
+        """Token của các tài khoản đang `limited`.
+
+        `due_only=True` → chỉ những cái ĐÃ tới hạn hồi (`restore_at` đã qua hoặc
+        không có). Bộ đếm 5 phút ở `api/support.py` dùng cờ này để thôi gọi
+        upstream cho tài khoản còn đang nghỉ — vừa tốn request, vừa là chỗ đồng
+        hồ ảnh bật `active` sớm (xem `giu_han_nghi`).
+        """
         with self._lock:
             return [
                 token
                 for item in self._accounts.values()
                 if item.get("status") == "limited"
+                   and not (due_only and han_nghi_chua_toi(item))
                    and (token := item.get("access_token") or "")
             ]
 
@@ -1456,7 +1516,10 @@ class AccountService:
                 logger.warning({"event": "fetch_remote_tls_skip", "token": anonymize_token(access_token), "error": str(exc)[:120]})
                 return self.get_account(access_token)
             raise
-        return self.update_account(access_token, result)
+        # Đồng hồ ảnh của chatgpt.com KHÔNG được xoá hạn nghỉ của quota text.
+        return self.update_account(
+            access_token, giu_han_nghi(self.get_account(access_token), result)
+        )
 
     def refresh_accounts(self, access_tokens: list[str]) -> dict[str, Any]:
         access_tokens = list(dict.fromkeys(token for token in access_tokens if token))

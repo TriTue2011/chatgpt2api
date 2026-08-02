@@ -30,6 +30,7 @@ from services.config import config
 from services.verbalize import verbalize
 from services.model_cooldown import model_cooldown
 from services.provider_circuit import provider_circuit
+from services.provider_order import provider_order
 from services.search_service import search_service
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
 from utils.log import logger
@@ -3154,6 +3155,10 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         # HA-related queries so the LLM can answer in ONE round-trip instead of
         # doing GetLiveContext / ha_get_state -> wait -> final answer (saves ~7s).
         from services.providers.chatgpt_free import NoFallbackError
+        # Provider đã cạn hết tài khoản thì tụt xuống CUỐI (vẫn được thử nếu mọi
+        # thứ trên nó chết). Thứ tự tính lại từ cấu hình mỗi lượt, nên lúc pool
+        # hồi là nó tự về vị trí cũ — thường là số 1.
+        routes = provider_order.reorder(routes)
         for _route_idx, route in enumerate(routes):
             messages_for_route = list(messages_copy)
             ha_context_injected = False
@@ -3265,6 +3270,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 result = _maybe_verbalize(result, voice)
                 model_cooldown.record_success("combo:" + model, _khoa_nghi(route))
                 provider_circuit.record_success(route.provider)
+                provider_order.record_success(route.provider)
                 return result
             except NoFallbackError as exc:
                 # disable_model_fallback: lỗi CỨNG — không thử member kế tiếp
@@ -3287,6 +3293,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     status_code=_extract_status(last_error), error_body=last_error, provider=route.provider,
                 )
                 provider_circuit.record_failure(route.provider, _extract_status(last_error), last_error)
+                provider_order.record_failure(route.provider, _extract_status(last_error), last_error)
                 continue
         from services.image_utils import is_unsupported_image_error
         if is_unsupported_image_error(last_error):
@@ -3366,8 +3373,10 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         result = _dispatch(route, messages, tools, tool_choice, body)
     except Exception as exc:
         provider_circuit.record_failure(route.provider, _extract_status(str(exc)), str(exc))
+        provider_order.record_failure(route.provider, _extract_status(str(exc)), str(exc))
         raise
     provider_circuit.record_success(route.provider)
+    provider_order.record_success(route.provider)
 
     # Execute MCP tools server-side — HA doesn't know these tools
     if not isinstance(result, dict):
