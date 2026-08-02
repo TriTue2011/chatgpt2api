@@ -305,6 +305,94 @@ _VIDEO_MODELS = {"nhanh": "flow/veo-3.1-fast", "fast": "flow/veo-3.1-fast",
 _NGAN_CAN_MO_RONG = 70
 
 
+def _co_loi_thoai_viet() -> bool:
+    """Có tự sinh lời thoại tiếng Việt cho video hay không (mặc định BẬT)."""
+    try:
+        v = config.data.get("video_loi_thoai_viet")
+        return True if v is None else bool(v)
+    except Exception:
+        return True
+
+
+def _la_chuoi_loi_model(ra: str) -> bool:
+    """Combo cạn provider trả CHUỖI LỖI trong content (không phải resp['error'])."""
+    t = (ra or "").lower()
+    return any(k in t for k in ("all providers failed", "no usable", "last error",
+                                "quota", "rate limit", "unauthenticated", "error:"))
+
+
+def _prompt_video_flow(prompt: str, ctx: dict | None = None) -> str:
+    """Chuẩn bị prompt cho Flow/Veo: mô tả cảnh bằng TIẾNG ANH + lời thoại TIẾNG
+    VIỆT ngắn trong ngoặc kép + '(no subtitles)'. Lỗi → trả prompt gốc.
+
+    BA việc gộp vào MỘT lượt gọi model, vì cả ba đều là "viết lại prompt":
+
+    1. TIẾNG ANH. Tài liệu Veo/Flow ghi rõ Flow chỉ hỗ trợ prompt tiếng Anh. Mà
+       `_mo_rong_prompt_media` lại dặn model viết "bằng tiếng Việt" rồi đưa nguyên
+       tiếng Việt vào Flow — Flow phải tự hiểu, và hiểu kém hơn hẳn. Đây là lý do
+       ngầm làm video đôi khi ra không đúng ý mà không rõ tại sao.
+
+    2. LỜI THOẠI TIẾNG VIỆT. Veo 3.1 sinh âm thanh kèm video một cách tự nhiên, và
+       prompt tiếng Việt KHÔNG tự sinh thoại tiếng Việt — phải nói thẳng ra. Không
+       nói thì nó chọn tiếng Anh, đúng hiện tượng chủ máy gặp 02/08. Cách đúng theo
+       tài liệu: viết mô tả bằng tiếng Anh, còn CÂU CẦN NÓI đặt trong ngoặc kép
+       bằng tiếng Việt — Veo tự lo giọng và khớp môi.
+       Giới hạn 12 từ: tài liệu cảnh báo lời thoại tiếng Việt DÀI dễ gây lỗi.
+
+    3. (no subtitles) — kẻo Veo nướng phụ đề vào hình.
+
+    Chạy cho MỌI độ dài prompt, khác `_mo_rong_prompt_media` (chỉ câu < 70 ký tự).
+    Vì việc ở đây là DỊCH + bổ sung âm thanh, không phải viết lại ý: câu dài người
+    dùng đã tả kỹ vẫn cần dịch sang tiếng Anh mới tới được Flow đúng ý. Nên lời dặn
+    bên dưới nhấn mạnh GIỮ ĐÚNG mọi chi tiết đã nêu.
+    """
+    p = (prompt or "").strip()
+    if not p:
+        return p
+    if _co_loi_thoai_viet():
+        dan_thoai = (
+            '3. LỜI THOẠI: nếu cảnh CÓ NGƯỜI, thêm đúng MỘT câu thoại TIẾNG VIỆT '
+            'tự nhiên, khớp với cảnh, TỐI ĐA 12 TỪ, đặt trong ngoặc kép, ghi rõ ai '
+            'nói. Ví dụ: A young woman says in Vietnamese: "Nước mát quá, anh ơi!" '
+            'Nếu cảnh KHÔNG có người: ghi "no dialogue, ambient sound only".\n')
+    else:
+        dan_thoai = '3. ÂM THANH: ghi "no dialogue, ambient sound only".\n'
+    yeu_cau = (
+        "Bạn viết prompt cho Veo 3.1 (Google Flow). QUY TẮC BẮT BUỘC:\n"
+        "1. Phần MÔ TẢ CẢNH viết bằng TIẾNG ANH — Flow chỉ hiểu tiếng Anh.\n"
+        "2. Mô tả đủ: chủ thể, bối cảnh, ánh sáng, màu sắc, góc máy, chuyển động "
+        "của chủ thể và của máy quay.\n"
+        + dan_thoai +
+        "4. Kết thúc bằng: (no subtitles)\n"
+        "5. GIỮ ĐÚNG mọi chi tiết người dùng đã nêu — chỉ dịch và bổ sung phần "
+        "còn thiếu, KHÔNG đổi chủ thể, KHÔNG bỏ chi tiết nào.\n"
+        "6. Trả về DUY NHẤT prompt, 1 đoạn, tối đa 90 từ. Không giải thích, không "
+        "gạch đầu dòng.\n\n"
+        "Yêu cầu gốc (tiếng Việt): " + p)
+    model = branch_model("default", _channel_of(ctx or {})) or "cx/auto"
+    for lan in range(2):
+        try:
+            resp = call_model(model, [{"role": "user", "content": yeu_cau}],
+                              timeout=60, max_tokens=300)
+            if resp.get("error"):
+                continue
+            ra = (content_of(resp) or "").strip()
+            dong = [d.strip() for d in ra.splitlines() if d.strip()]
+            if dong:
+                ra = max(dong, key=len).strip()
+            if _la_chuoi_loi_model(ra):
+                logger.warning("prompt video Flow: model trả chuỗi lỗi (lần %d)", lan + 1)
+                continue
+            if 15 < len(ra) <= 900:
+                logger.info({"event": "video_prompt_flow", "goc": p[:60],
+                             "moi": ra[:120], "co_thoai": _co_loi_thoai_viet(),
+                             "lan": lan + 1})
+                return ra
+        except Exception as exc:
+            logger.warning("prompt video Flow lỗi (lần %d): %s", lan + 1, str(exc)[:120])
+    return p
+
+
 def _mo_rong_prompt_media(prompt: str, loai: str, ctx: dict | None = None) -> str:
     """Biến câu NGẮN của người dùng thành prompt CHI TIẾT cho máy tạo ảnh/video.
 
@@ -543,10 +631,17 @@ def _h_generate_video(args: dict, ctx: dict) -> dict:
         for k, v in _spec_call_kwargs(chosen, spec).items():
             v_kwargs.setdefault(k, v)
 
-    # Câu ngắn ("tạo video con mèo") → mở rộng thành prompt chi tiết trước khi
-    # đưa vào máy tạo. Chạy SAU khi đã chốt model/thông số nên không làm chậm
-    # phần hỏi đáp. Xem _mo_rong_prompt_media.
-    prompt = _mo_rong_prompt_media(prompt, "video", ctx)
+    # Chuẩn bị prompt. Chạy SAU khi đã chốt model/thông số nên không làm chậm phần
+    # hỏi đáp.
+    #   · Flow/Veo → _prompt_video_flow: mô tả TIẾNG ANH (Flow chỉ hiểu tiếng Anh)
+    #     + lời thoại TIẾNG VIỆT ngắn trong ngoặc kép + (no subtitles). Chạy cho
+    #     MỌI độ dài vì đây là việc DỊCH, không phải viết lại ý.
+    #   · Model khác (Agnes, Veo trực tiếp) → giữ đường cũ: chỉ mở rộng câu ngắn,
+    #     không dịch. Chưa có bằng chứng chúng đòi tiếng Anh nên không đổi.
+    if m_low.startswith("flow/"):
+        prompt = _prompt_video_flow(prompt, ctx)
+    else:
+        prompt = _mo_rong_prompt_media(prompt, "video", ctx)
     resp = call_video(prompt, model=model, **v_kwargs)
     if resp.get("error"):
         _alert_branch("Tạo video (video_gen)", model, resp["error"])
