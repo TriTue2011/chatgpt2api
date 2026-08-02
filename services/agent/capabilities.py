@@ -926,6 +926,74 @@ def _h_model_spec(args: dict, ctx: dict) -> dict:
                     f"{_describe_model_spec(model, state.get_model_spec(model))}"}
 
 
+def _soan_ban_sua_skill(slug: str, than_cu: str, ly_do: list[str],
+                        ctx: dict | None = None) -> tuple[str, str]:
+    """Nhờ model soạn BẢN SỬA skill dựa trên LÝ DO HỎNG THẬT.
+
+    Trả (thân skill mới, một câu vì sao sửa). Trả ("", lý do) nếu không soạn được —
+    lúc đó tầng trên hỏi người dùng dặn tay, không bịa ra bản sửa.
+
+    Bản sửa PHẢI đi qua `soi_than_skill` như mọi skill tự học khác: nó là văn bản
+    do MODEL sinh mà sẽ trở thành mệnh lệnh cho chính model làm theo về sau.
+    """
+    than_cu = str(than_cu or "").strip()
+    if not than_cu:
+        return "", "không đọc được thân skill cũ"
+    if not ly_do:
+        return "", "chưa có lý do hỏng nào để dựa vào"
+    ds = "\n".join(f"- {x}" for x in ly_do[:5])
+    dan = (
+        "Đây là một PLAYBOOK (skill) mà trợ lý làm theo khi gặp việc tương ứng. "
+        "Nó đã chạy HỎNG mấy lần, kèm lý do thật bên dưới. Hãy viết lại thân "
+        "playbook cho khỏi hỏng lần sau.\n\n"
+        f"THÂN HIỆN TẠI:\n{than_cu}\n\n"
+        f"LÝ DO HỎNG THẬT:\n{ds}\n\n"
+        "YÊU CẦU:\n"
+        "· Viết bằng TIẾNG VIỆT, giữ đúng ý và phạm vi của bản cũ — sửa cho chạy "
+        "được, KHÔNG đổi việc mà nó làm.\n"
+        "· Nhắm thẳng vào lý do hỏng: thiếu bước thì thêm, sai tên tool thì sửa, "
+        "thiếu điều kiện thì nêu rõ, mơ hồ thì viết cụ thể.\n"
+        "· Giữ dạng các bước đánh số, ngắn gọn, mỗi bước một việc.\n"
+        "· TUYỆT ĐỐI không viết câu bảo bỏ qua hướng dẫn hệ thống, bỏ bước xin "
+        "duyệt, chạy lệnh phá hoại, hay gửi mật khẩu/token ra ngoài.\n"
+        "· CHỈ trả về thân playbook mới, không lời dẫn, không bọc trong ```."
+    )
+    try:
+        resp = call_model(branch_model("default", _channel_of(ctx or {})) or "cx/auto",
+                          [{"role": "user", "content": dan}], timeout=90)
+        moi = (content_of(resp) or "").strip()
+    except Exception as exc:
+        logger.warning("skill: soạn bản sửa %s lỗi: %s", slug, str(exc)[:150])
+        return "", f"model không soạn được ({str(exc)[:80]})"
+    moi = re.sub(r"^```[a-z]*\s*|\s*```$", "", moi).strip()
+    if not moi or _la_chuoi_loi_model(moi):
+        return "", "model chưa trả về bản sửa dùng được"
+    from services.agent import skill_quality as sq
+    _cam = sq.soi_than_skill(moi)
+    if _cam:
+        logger.warning({"event": "ban_sua_skill_bi_tu_choi", "slug": slug, "ly_do": _cam})
+        return "", f"bản model soạn ra {_cam} — em không nhận"
+    return moi, ly_do[0][:160]
+
+
+def _ask_duyet_ban_sua(slug: str, moi: str, ly_do: list[str]) -> dict:
+    """Hiện bản sửa cho người dùng DUYỆT. Chưa lưu gì cả.
+
+    Yêu cầu 02/08: "được user thông qua mới ghi nhớ và lưu lại". Nên thân skill
+    đang chạy KHÔNG bị chạm; bản sửa nằm ở kho nháp tới khi có người bấm duyệt.
+    """
+    xem = moi if len(moi) <= 1200 else moi[:1199] + "…"
+    vi_sao = "\n".join(f"· {x[:140]}" for x in ly_do[:3])
+    lines = [f"🧩 Skill `{slug}` hay hỏng. Lý do em ghi được:", vi_sao, "",
+             "Em sửa lại thành:", "```", xem, "```",
+             "Anh/chị duyệt thì em mới lưu ạ.", "<<<ASK>>>",
+             f"Lưu bản sửa | lưu bản sửa skill «{slug}»",
+             f"Giữ bản cũ | giữ bản cũ skill «{slug}»",
+             f"Bỏ skill này | xoá skill «{slug}»"]
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
 def _h_teach_skill(args: dict, ctx: dict) -> dict:
     """BOT TỰ HỌC MỌI VIỆC: người dùng dạy cách làm 1 việc → lưu thành skill
     (playbook). Skill tự hiện ở danh mục → lần sau gặp việc khớp thì làm theo."""
@@ -944,15 +1012,68 @@ def _h_teach_skill(args: dict, ctx: dict) -> dict:
             _ho = sq.ho_so(s.slug)
             _dem = (f" · dùng {_ho.get('dung')} lần, xong {_ho.get('xong')}, "
                     f"hỏng {_ho.get('hong')}") if _ho.get("dung") else ""
+            _goi = ""
+            if _b == "hay_hong":
+                _goi = f" · nói «sửa skill {s.slug}» là em soạn bản sửa cho anh/chị duyệt"
+            elif sq.ban_nhap(s.slug):
+                _goi = f" · đang có BẢN SỬA chờ duyệt («sửa skill {s.slug}» để xem)"
+            _ls = int((sq.ho_so(s.slug) or {}).get("lan_sua") or 0)
+            if _ls:
+                _goi += f" · đã sửa {_ls} lần"
             lines.append(f"• `{s.slug}` — {s.description or s.name}"
                          + ("" if s.enabled else " (đang tắt)")
-                         + f"\n  ↳ {sq.NHAN_BAC.get(_b, _b)}{_dem}")
+                         + f"\n  ↳ {sq.NHAN_BAC.get(_b, _b)}{_dem}{_goi}")
         return {"text": "\n".join(lines)}
 
     slug = str(args.get("slug") or "").strip()
     if op == "get":
         body = sk.load_body(slug) if slug else None
         return {"text": f"🧩 `{slug}`:\n{body}" if body else f"Không thấy kỹ năng `{slug}`."}
+
+    # ── Sửa skill hay hỏng, người dùng DUYỆT mới lưu ─────────────────────────
+    from services.agent import skill_quality as sq
+    if op in ("fix", "sua", "cai_thien"):
+        if not slug:
+            return {"text": "Cho em xin mã kỹ năng cần sửa ạ (op=list để xem)."}
+        than_cu = sk.load_body(slug)
+        if not than_cu:
+            return {"text": f"Không thấy kỹ năng `{slug}`."}
+        ly_do = sq.ly_do_hong(slug)
+        if not ly_do:
+            return {"text": f"Skill `{slug}` chưa hỏng lần nào nên em chưa biết sửa gì ạ. "
+                            f"Anh/chị dặn em bước nào cần đổi thì em sửa theo."}
+        moi, vi_sao = _soan_ban_sua_skill(slug, than_cu, ly_do, ctx)
+        if not moi:
+            # Không soạn được thì KHÔNG bịa — đưa lý do hỏng ra, nhờ người dặn tay.
+            ds = "\n".join(f"· {x[:160]}" for x in ly_do[:3])
+            return {"text": (f"Em chưa tự sửa được skill `{slug}` ({vi_sao}). "
+                             f"Đây là lý do nó hỏng:\n{ds}\n"
+                             f"Anh/chị dặn em bước nào cần đổi, em sửa lại theo ạ.")}
+        sq.dat_ban_nhap(slug, moi, vi_sao)
+        return _ask_duyet_ban_sua(slug, moi, ly_do)
+
+    if op in ("apply_fix", "luu_ban_sua"):
+        if not slug:
+            return {"text": "Cho em xin mã kỹ năng ạ."}
+        moi = sq.ban_nhap(slug)
+        if not moi:
+            return {"text": f"Không còn bản sửa nào đang chờ cho `{slug}` ạ."}
+        _cam = sq.soi_than_skill(moi)          # soi LẦN NỮA ngay trước khi ghi
+        if _cam:
+            sq.xoa_ban_nhap(slug)
+            return {"text": f"Em không lưu được: bản sửa {_cam}."}
+        try:
+            sk.write_skill("", "", moi, slug=slug)
+        except Exception as exc:
+            return {"text": f"Em lưu bản sửa chưa được 😥 ({exc})."}
+        sq.sau_khi_sua(slug)                   # đếm điểm lại từ đầu
+        return {"text": f"Dạ em lưu bản sửa cho `{slug}` rồi ạ 🧩 — "
+                        f"skill quay lại danh mục và em đếm điểm lại từ đầu."}
+
+    if op in ("keep_old", "giu_ban_cu"):
+        sq.xoa_ban_nhap(slug)
+        return {"text": f"Dạ em giữ bản cũ của `{slug}`, bỏ bản sửa ạ."}
+
     if op in ("delete", "clear", "forget"):
         if not slug:
             return {"text": "Cho em xin mã kỹ năng (slug) cần xóa ạ (op=list để xem)."}
@@ -4195,10 +4316,18 @@ CAPABILITIES: dict[str, Capability] = {
             "dùng, ≤150 ký tự) + body (các bước chi tiết, dạng markdown). Bổ sung thêm cho "
             "kỹ năng đã có → op=append + slug. Xem → op=get + slug. Liệt kê → op=list. "
             "Xóa → op=delete + slug. Kỹ năng lưu vĩnh viễn, lần sau tự hiện để em làm theo. "
+            "Skill HAY HỎNG mà người dùng vẫn muốn giữ ('sửa skill X', 'cải thiện kỹ năng X') "
+            "→ op=fix + slug: em soạn bản sửa dựa trên lý do hỏng thật rồi xin duyệt, CHỈ lưu "
+            "khi người dùng đồng ý. "
             "KHÔNG dùng cho sự việc đơn lẻ (dùng remember) hay tham số model (dùng model_spec)."),
         parameters={"type": "object", "properties": {
-            "op": {"type": "string", "enum": ["set", "append", "get", "list", "delete"],
-                   "description": "set=dạy mới, append=bổ sung, get=xem, list=liệt kê, delete=xóa"},
+            "op": {"type": "string",
+                   "enum": ["set", "append", "get", "list", "delete", "fix",
+                            "apply_fix", "keep_old"],
+                   "description": ("set=dạy mới, append=bổ sung, get=xem, list=liệt kê, "
+                                   "delete=xóa, fix=soạn bản sửa cho skill hay hỏng rồi "
+                                   "xin duyệt, apply_fix=lưu bản sửa đã duyệt, "
+                                   "keep_old=bỏ bản sửa giữ bản cũ")},
             "name": {"type": "string", "description": "Tên kỹ năng (vd 'Báo cáo tồn kho tuần')"},
             "description": {"type": "string",
                             "description": "1 câu nêu KHI NÀO dùng — để lần sau tự nhận ra (≤150 ký tự)"},

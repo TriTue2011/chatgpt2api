@@ -223,7 +223,8 @@ class DuocNoiVaoBonChoTests(unittest.TestCase):
 
     def test_cuoi_luot_chot_ket_qua(self):
         code = self._code("services", "agent", "orchestrator.py")
-        self.assertIn("sq.ghi_ket_qua(user_id, str(status or \"\"))", code)
+        self.assertIn("sq.ghi_ket_qua(user_id, str(status or \"\"),", code)
+        self.assertIn("str(error or run_error or \"\"))", code)
 
     def test_teach_skill_soi_truoc_khi_ghi(self):
         code = self._code("services", "agent", "capabilities.py")
@@ -243,6 +244,140 @@ class DuocNoiVaoBonChoTests(unittest.TestCase):
         for xau in ("litellm", "requests", "httpx", "numpy", "sklearn",
                     "sentence_transformers", "chromadb", "sqlalchemy"):
             self.assertNotIn(xau, src, xau)
+
+
+class VongSuaSkillTests(_KhoTam):
+    """Skill hay hỏng mà người dùng muốn GIỮ → sửa cho khỏi hỏng, DUYỆT mới lưu.
+
+    Yêu cầu 02/08: "nếu người dùng vẫn muốn giữ thì có cách nào cải thiện skill để
+    không lỗi sau này không, và được user thông qua mới ghi nhớ và lưu lại".
+
+    Bất biến quan trọng nhất: bản sửa nằm ở KHO NHÁP, thân skill đang chạy KHÔNG bị
+    chạm tới khi có người bấm duyệt.
+    """
+
+    def _hong(self, slug: str, *ly_do: str) -> None:
+        for ly in ly_do:
+            sq.ghi_dung("u", slug)
+            sq.ghi_ket_qua("u", "error", ly)
+
+    def test_ghi_LY_DO_hong_khong_chi_dem(self):
+        self._hong("s", "gọi sai tên tool 'tim_sgk'", "thiếu tham số lop")
+        self.assertEqual(sq.ly_do_hong("s"),
+                         ["thiếu tham số lop", "gọi sai tên tool 'tim_sgk'"])
+
+    def test_khong_co_ly_do_thi_ghi_trang_thai_luot(self):
+        sq.ghi_dung("u", "s")
+        sq.ghi_ket_qua("u", "max_steps")
+        self.assertIn("max_steps", sq.ly_do_hong("s")[0])
+
+    def test_chi_giu_may_ly_do_gan_nhat(self):
+        self._hong("s", *[f"lỗi {i}" for i in range(12)])
+        self.assertLessEqual(len(sq.ly_do_hong("s")), sq._GIU_LY_DO)
+        self.assertEqual(sq.ly_do_hong("s")[0], "lỗi 11")   # mới nhất trước
+
+    def test_ban_nhap_KHONG_cham_diem_va_KHONG_cham_skill(self):
+        self._hong("s", "a", "b", "c", "d")
+        self.assertTrue(sq.nen_an_khoi_router("s"))
+        sq.dat_ban_nhap("s", "1. Bước mới\n2. Bước nữa", "vì a")
+        self.assertEqual(sq.bac("s"), "hay_hong")      # điểm y nguyên
+        self.assertEqual(sq.ho_so("s")["hong"], 4)
+
+    def test_ban_nhap_giu_dung_than_va_ly_do(self):
+        sq.dat_ban_nhap("s", "1. Gọi search_sgk đủ tham số", "gọi sai tên tool")
+        self.assertEqual(sq.ban_nhap("s"), "1. Gọi search_sgk đủ tham số")
+        self.assertEqual(sq.ly_do_sua("s"), "gọi sai tên tool")
+
+    def test_chua_co_nhap_thi_tra_rong(self):
+        self.assertEqual(sq.ban_nhap("chua-co"), "")
+        self.assertEqual(sq.ly_do_sua("chua-co"), "")
+
+    def test_duyet_xong_thi_dem_LAI_TU_DAU(self):
+        """Giữ số lần hỏng của bản CŨ thì skill vừa sửa vẫn bị rút — sửa vô nghĩa."""
+        self._hong("s", "a", "b", "c", "d")
+        sq.dat_ban_nhap("s", "1. Bước mới", "vì a")
+        sq.sau_khi_sua("s")
+        h = sq.ho_so("s")
+        self.assertEqual((h["xong"], h["hong"]), (0, 0))
+        self.assertEqual(h["lan_sua"], 1)
+        self.assertEqual(sq.ly_do_hong("s"), [])
+        self.assertFalse(sq.nen_an_khoi_router("s"))
+
+    def test_duyet_xong_thi_don_nhap(self):
+        sq.dat_ban_nhap("s", "1. Bước mới")
+        sq.sau_khi_sua("s")
+        self.assertEqual(sq.ban_nhap("s"), "")
+
+    def test_dem_so_lan_sua_de_biet_khi_nao_nen_bo(self):
+        """Sửa 5 lần vẫn hỏng là dấu hiệu nên bỏ, không phải nên sửa tiếp."""
+        for _ in range(3):
+            sq.dat_ban_nhap("s", "x")
+            sq.sau_khi_sua("s")
+        self.assertEqual(sq.ho_so("s")["lan_sua"], 3)
+
+    def test_giu_ban_cu_thi_bo_nhap_diem_khong_doi(self):
+        self._hong("s", "a", "b", "c", "d")
+        sq.dat_ban_nhap("s", "1. Bước mới")
+        sq.xoa_ban_nhap("s")
+        self.assertEqual(sq.ban_nhap("s"), "")
+        self.assertEqual(sq.ho_so("s")["hong"], 4)      # điểm không bị reset
+
+    def test_nhap_rong_thi_khong_luu(self):
+        self.assertFalse(sq.dat_ban_nhap("s", "   "))
+        self.assertFalse(sq.dat_ban_nhap("", "co than"))
+
+
+class BanSuaPhaiQuaBoSoiTests(unittest.TestCase):
+    """Bản sửa do MODEL soạn cũng là văn bản sẽ thành mệnh lệnh — phải soi."""
+
+    def test_soan_ban_sua_soi_truoc_khi_dat_nhap(self):
+        src = (GOC / "services" / "agent" / "capabilities.py").read_text("utf-8")
+        i = src.index("def _soan_ban_sua_skill(")
+        khuc = src[i:i + 3000]
+        self.assertIn("sq.soi_than_skill(moi)", khuc)
+
+    def test_soi_LAN_NUA_ngay_truoc_khi_ghi_file(self):
+        src = (GOC / "services" / "agent" / "capabilities.py").read_text("utf-8")
+        i = src.index('if op in ("apply_fix", "luu_ban_sua"):')
+        khuc = src[i:i + 900]
+        self.assertLess(khuc.index("sq.soi_than_skill(moi)"),
+                        khuc.index("sk.write_skill("))
+
+    def test_khong_soan_duoc_thi_KHONG_biadat(self):
+        """Model hỏng thì đưa lý do hỏng ra, nhờ người dặn tay — không bịa bản sửa."""
+        src = (GOC / "services" / "agent" / "capabilities.py").read_text("utf-8")
+        i = src.index('if op in ("fix", "sua", "cai_thien"):')
+        khuc = src[i:i + 1800]
+        self.assertIn("Anh/chị dặn em bước nào cần đổi", khuc)
+
+
+class NutDuyetBanSuaTests(unittest.TestCase):
+    def setUp(self):
+        from services.agent.orchestrator import _doc_nut_sua_skill
+        self.f = _doc_nut_sua_skill
+
+    def test_doc_dung_ba_viec(self):
+        self.assertEqual(self.f("lưu bản sửa skill «bao-cao»"),
+                         {"op": "apply_fix", "slug": "bao-cao"})
+        self.assertEqual(self.f("giữ bản cũ skill «bao-cao»"),
+                         {"op": "keep_old", "slug": "bao-cao"})
+        self.assertEqual(self.f("xoá skill «bao-cao»"),
+                         {"op": "delete", "slug": "bao-cao"})
+
+    def test_cau_nguoi_go_khong_lot_vao_day(self):
+        """Bấm nhầm slug ở đây là ghi đè thân một skill khác — phải khớp CHẶT."""
+        for c in ("lưu bản sửa skill bao-cao", "sửa skill bao-cao",
+                  "xoá skill", "lưu bản sửa", ""):
+            self.assertIsNone(self.f(c), c)
+
+    def test_duoc_noi_vao_orchestrator_va_qua_bo_loc_thread(self):
+        code = "\n".join(
+            l for l in (GOC / "services" / "agent" / "orchestrator.py")
+            .read_text("utf-8").splitlines() if not l.lstrip().startswith("#"))
+        i = code.index("_nut_sk = _doc_nut_sua_skill(user_text)")
+        khuc = code[i:i + 800]
+        self.assertIn('caps.group_of("teach_skill") in allow', khuc)
+        self.assertIn("_execute(_cap_sk,", khuc)
 
 
 class SlugKhongRungChuDTests(unittest.TestCase):

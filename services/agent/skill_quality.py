@@ -68,6 +68,8 @@ _HONG = ("error", "max_steps", "blocked")
 _KHONG_TINH = ("denied", "awaiting_approval")
 # Lượt chat treo/mất tăm thì đừng gán kết quả cho skill của lượt trước.
 _CHO_TOI_DA_GIAY = 900
+# Giữ tối đa mấy lý do hỏng gần nhất — đủ để thấy quy luật, không phình file.
+_GIU_LY_DO = 5
 
 # user_id -> (slug, lúc dùng). Cuối lượt mới biết xong hay hỏng, nên phải giữ tạm
 # đúng như `approval_gate.set_pending` giữ đề nghị chờ duyệt.
@@ -208,7 +210,7 @@ def ghi_dung(user_id: str, slug: str) -> None:
         _cho_ket_qua[str(user_id or "")] = (slug, time.time())
 
 
-def ghi_ket_qua(user_id: str, status: str = "") -> None:
+def ghi_ket_qua(user_id: str, status: str = "", error: str = "") -> None:
     """Cuối lượt: gán kết quả cho skill vừa dùng trong lượt đó.
 
     `status` lấy từ `orchestrator._journal`. Lượt không dùng skill nào thì hàm
@@ -233,6 +235,13 @@ def ghi_ket_qua(user_id: str, status: str = "") -> None:
         if st in _HONG:
             m["hong"] = int(m.get("hong") or 0) + 1
             m["hong_cuoi"] = time.time()
+            # GIỮ LÝ DO, không chỉ đếm: muốn sửa skill cho khỏi hỏng lần sau thì
+            # phải biết nó hỏng vì gì. Đếm suông chỉ nói được "có hỏng".
+            ly = str(error or "").strip() or f"lượt kết thúc với trạng thái «{st}»"
+            ds = m.get("ly_do")
+            ds = ds if isinstance(ds, list) else []
+            ds.append({"khi": time.time(), "ly_do": ly[:400]})
+            m["ly_do"] = ds[-_GIU_LY_DO:]
         else:
             m["xong"] = int(m.get("xong") or 0) + 1
         _ghi(data)
@@ -296,9 +305,107 @@ def thong_ke() -> dict[str, Any]:
             "skills": rows}
 
 
+# ── Sửa skill cho khỏi hỏng lần sau ─────────────────────────────────────────
+# Yêu cầu 02/08: "nếu người dùng vẫn muốn giữ thì có cách nào cải thiện skill để
+# không lỗi sau này không, và được user thông qua mới ghi nhớ và lưu lại".
+#
+# Nên: bản sửa nằm ở KHO NHÁP, KHÔNG chạm vào skill đang chạy cho tới khi người
+# dùng bấm duyệt. Nháp để trên đĩa (không nhồi vào nút bấm) vì thân skill dài,
+# nút bấm bị cắt ở 4000 ký tự.
+_NHAP_DIR = Path(DATA_DIR) / "agent" / "skill_drafts"
+
+
+def ly_do_hong(slug: str) -> list[str]:
+    """Các lý do hỏng gần nhất, mới nhất trước."""
+    ds = ho_so(slug).get("ly_do")
+    if not isinstance(ds, list):
+        return []
+    return [str(x.get("ly_do") or "") for x in reversed(ds) if isinstance(x, dict)]
+
+
+def _nhap_path(slug: str) -> Path:
+    return _NHAP_DIR / f"{slug}.md"
+
+
+def dat_ban_nhap(slug: str, body_moi: str, ghi_chu: str = "") -> bool:
+    """Lưu bản sửa vào kho nháp. KHÔNG chạm skill đang chạy."""
+    slug = str(slug or "").strip()
+    body_moi = str(body_moi or "").strip()
+    if not slug or not body_moi:
+        return False
+    try:
+        _NHAP_DIR.mkdir(parents=True, exist_ok=True)
+        p = _nhap_path(slug)
+        dau = f"<!-- vì sao sửa: {ghi_chu.strip()} -->\n" if ghi_chu.strip() else ""
+        p.write_text(dau + body_moi, encoding="utf-8")
+        return True
+    except OSError as exc:
+        logger.warning("skill_quality: lưu nháp %s lỗi: %s", slug, exc)
+        return False
+
+
+def ban_nhap(slug: str) -> str:
+    """Thân skill của bản nháp (bỏ dòng ghi chú). "" = chưa có nháp."""
+    try:
+        p = _nhap_path(str(slug or "").strip())
+        if not p.is_file():
+            return ""
+        tho = p.read_text("utf-8", errors="replace")
+        return re.sub(r"^<!--.*?-->\s*", "", tho, count=1, flags=re.S).strip()
+    except OSError:
+        return ""
+
+
+def ly_do_sua(slug: str) -> str:
+    """Dòng ghi chú «vì sao sửa» của bản nháp."""
+    try:
+        p = _nhap_path(str(slug or "").strip())
+        if not p.is_file():
+            return ""
+        m = re.match(r"^<!--\s*vì sao sửa:\s*(.*?)\s*-->", p.read_text("utf-8"), re.S)
+        return (m.group(1).strip() if m else "")
+    except OSError:
+        return ""
+
+
+def xoa_ban_nhap(slug: str) -> None:
+    try:
+        p = _nhap_path(str(slug or "").strip())
+        if p.is_file():
+            p.unlink()
+    except OSError:
+        pass
+
+
+def sau_khi_sua(slug: str) -> None:
+    """Duyệt bản sửa rồi → XOÁ điểm cũ, đếm lại từ đầu.
+
+    Bắt buộc phải reset: giữ lại số lần hỏng của BẢN CŨ thì skill vừa sửa vẫn bị
+    xem là "hay hỏng" và vẫn bị rút khỏi bộ định tuyến — sửa mà không được dùng
+    lại thì sửa để làm gì. `lan_sua` giữ lại để thấy skill đã sửa mấy lần mà vẫn
+    hỏng (sửa 5 lần vẫn hỏng là dấu hiệu nên bỏ, không phải nên sửa tiếp).
+    """
+    slug = str(slug or "").strip()
+    if not slug:
+        return
+    with _lock:
+        data = _doc()
+        m = _muc(data, slug)
+        m["lan_sua"] = int(m.get("lan_sua") or 0) + 1
+        m["xong"] = 0
+        m["hong"] = 0
+        m["ly_do"] = []
+        m["sua_luc"] = time.time()
+        _ghi(data)
+    xoa_ban_nhap(slug)
+    logger.info("skill_quality: %s đã nhận bản sửa lần %s — đếm điểm lại từ đầu",
+                slug, m.get("lan_sua"))
+
+
 def _reset_for_tests(path: Optional[Path] = None) -> None:
-    global _PATH
+    global _PATH, _NHAP_DIR
     with _lock:
         if path is not None:
             _PATH = Path(path)
+            _NHAP_DIR = Path(path).parent / "skill_drafts"
         _cho_ket_qua.clear()

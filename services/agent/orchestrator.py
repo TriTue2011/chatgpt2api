@@ -266,6 +266,28 @@ def _doc_nut_menu_media(text: str) -> tuple[str, dict] | None:
     return kind, args
 
 
+# Nút bấm của menu DUYỆT BẢN SỬA SKILL (`capabilities._ask_duyet_ban_sua`):
+#   lưu bản sửa skill «slug» / giữ bản cũ skill «slug» / xoá skill «slug»
+# Đọc lại thẳng nên việc «duyệt» đi đúng vào skill đó, không nhờ model đoán lại —
+# bấm nhầm slug ở đây là ghi đè thân một skill khác.
+_NUT_SUA_SKILL = re.compile(
+    r"^\s*(?P<viec>lưu\s+bản\s+sửa|giữ\s+bản\s+cũ|xoá|xóa)\s+skill\s+«(?P<slug>[^»]+)»\s*$",
+    re.IGNORECASE,
+)
+_VIEC_SKILL = {"lưu bản sửa": "apply_fix", "giữ bản cũ": "keep_old",
+               "xoá": "delete", "xóa": "delete"}
+
+
+def _doc_nut_sua_skill(text: str) -> dict | None:
+    """args cho `teach_skill` nếu câu là nút bấm của menu duyệt bản sửa."""
+    m = _NUT_SUA_SKILL.match((text or "").strip())
+    if not m:
+        return None
+    viec = re.sub(r"\s+", " ", m.group("viec").strip().lower())
+    op = _VIEC_SKILL.get(viec)
+    return {"op": op, "slug": m.group("slug").strip()} if op else None
+
+
 # Nút bấm của menu chọn âm lượng loa (`capabilities._ask_am_luong_loa` sinh ra):
 #   đọc ra loa «loa phòng khách» âm lượng 60% sau 2 phút: <nội dung>
 # Đọc lại được thì cả loa, âm lượng, nội dung và thời điểm đều đi đúng vào
@@ -1201,7 +1223,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # đây quyết xong/hỏng (xem skill_quality.ghi_ket_qua).
         try:
             from services.agent import skill_quality as sq
-            sq.ghi_ket_qua(user_id, str(status or ""))
+            sq.ghi_ket_qua(user_id, str(status or ""), str(error or run_error or ""))
         except Exception as exc:
             logger.debug("agent: chốt điểm skill lỗi: %s", exc)
 
@@ -1431,6 +1453,20 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # Vẫn giữ: chế độ chỉ-đọc chặn cứng, bộ lọc chức năng theo thread, và ghi
     # audit — nên đi qua `_execute` (nó ghi `execute_change`) chứ không gọi thẳng
     # handler.
+    # Nút bấm menu DUYỆT BẢN SỬA SKILL → gọi thẳng `teach_skill`. Đọc lại thẳng
+    # nên việc duyệt đi đúng vào skill đó; nhờ model đoán lại có thể ghi đè thân
+    # một skill khác. Vẫn qua bộ lọc chức năng theo thread như mọi capability.
+    _nut_sk = _doc_nut_sua_skill(user_text)
+    if _nut_sk and (allow is None or caps.group_of("teach_skill") in allow):
+        _cap_sk = caps.get("teach_skill")
+        if _cap_sk:
+            out_sk = _finalize(user_id, _execute(_cap_sk, dict(_nut_sk), user_id,
+                                                 user_text=user_text, is_admin=is_admin))
+            hist.append({"role": "assistant", "content": out_sk.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_sk.get("text") or ""), status="sua_skill")
+            return out_sk
+
     _nut_loa = _doc_nut_menu_loa(user_text)
     if _nut_loa and (allow is None or "tts_speaker" in allow):
         if approval_gate.is_blocked("announce_on_speaker", risk="change"):
