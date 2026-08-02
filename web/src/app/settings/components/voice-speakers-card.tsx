@@ -23,6 +23,9 @@ type Speaker = {
   id: string; name: string; kind: string;
   host?: string; port?: number; entity_id?: string; note?: string;
   ws_port?: number; max_vol?: number;
+  // Giọng RIÊNG của loa này. Rỗng = theo giọng của kênh/thread/topic, không có
+  // nữa thì giọng hệ thống. Xem services/voice/__init__.py: giong_cho_loa().
+  voice?: string;
 };
 
 type Found = { host: string; port: number; kind: string; name: string; known?: boolean; control_url?: string };
@@ -168,6 +171,18 @@ export function VoiceSpeakersCard() {
     try {
       await request.post(`/api/voice/speakers/${id}/volume`, { level, save: true });
       toast.success(`Âm lượng ${level}%`);
+    } catch (e) {
+      toast.error(`Lỗi: ${e instanceof Error ? e.message : e}`);
+    }
+  };
+
+  // Giọng riêng cho MỘT loa. Để trống = loa không có ý kiến, tầng dưới rơi xuống
+  // giọng theo kênh/thread/topic rồi giọng hệ thống.
+  const setGiongLoa = async (id: string, voice: string) => {
+    try {
+      await request.patch(`/api/voice/speakers/${id}`, { voice });
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, voice } : r)));
+      toast.success(voice ? `Giọng riêng: ${voice}` : "Theo giọng kênh/thread");
     } catch (e) {
       toast.error(`Lỗi: ${e instanceof Error ? e.message : e}`);
     }
@@ -544,6 +559,16 @@ export function VoiceSpeakersCard() {
               <code className="text-[10px] flex-1 break-all text-muted-foreground">
                 {r.kind === "ha" ? r.entity_id : r.host}
               </code>
+              <select
+                className="rounded-md border border-border bg-background px-1.5 py-1 text-[10px] h-7 max-w-40"
+                title="Giọng riêng của loa này. Để trống = theo giọng đã cài cho kênh / nhóm / topic, không có nữa thì giọng hệ thống."
+                value={r.voice || ""}
+                onChange={(e) => void setGiongLoa(r.id, e.target.value)}>
+                <option value="">Giọng theo kênh/thread</option>
+                {catalog.filter((v) => v.downloaded).map((v) => (
+                  <option key={v.id} value={v.id}>{v.id} · {v.language_label}</option>
+                ))}
+              </select>
               {r.kind === "cast" && (
                 <span className="flex items-center gap-1" title="Âm lượng (kéo rồi thả — lưu làm mặc định)">
                   <Volume2 className="size-3.5 text-muted-foreground" />

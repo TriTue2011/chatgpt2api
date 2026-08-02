@@ -134,7 +134,9 @@ def update(speaker_id: str, patch: dict[str, Any]) -> Optional[dict[str, Any]]:
         if not rec:
             return None
         rec = dict(rec)
-        for key in ("name", "kind", "host", "entity_id", "note"):
+        # `voice`: giọng RIÊNG của loa này (tên giọng TTS). Rỗng = không có ý
+        # kiến, để tầng trên rơi xuống giọng theo phiên rồi giọng hệ thống.
+        for key in ("name", "kind", "host", "entity_id", "note", "voice"):
             if key in patch:
                 rec[key] = str(patch[key] or "").strip()
         if "port" in patch:

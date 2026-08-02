@@ -100,7 +100,7 @@ def _run(jid: str) -> None:
             except Exception as exc:   # loa không chỉnh được vol thì vẫn đọc
                 muc_cu = None
                 logger.info("announce: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
-        url = voice.play_text_on(job["text"], rec)
+        url = voice.play_text_on(job["text"], rec, str(job.get("voice") or ""))
         if muc_cu is not None:
             _tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""))
         with _lock:
@@ -119,10 +119,13 @@ def _run(jid: str) -> None:
 
 
 def schedule(speaker_query: str, text: str, *, delay_seconds: float,
-             volume: Optional[float] = None) -> dict[str, Any]:
+             volume: Optional[float] = None, voice: str = "") -> dict[str, Any]:
     """Hẹn đọc `text` ra loa `speaker_query` sau `delay_seconds`.
 
     volume: 0..1 (tỉ lệ) hoặc — với R1 — chỉ số tuyệt đối (>1). Tuỳ chọn.
+    voice: tên giọng TTS; rỗng = để `play_text_on` lấy giọng mặc định hệ thống.
+        Caller nên truyền `voice.giong_cho_loa(rec, session_id=…)` để giọng riêng
+        của loa / của kênh-thread-topic có tác dụng.
     Ném RuntimeError nếu loa không rõ (0 hoặc >1 kết quả)."""
     text = str(text or "").strip()
     if not text:
@@ -148,6 +151,7 @@ def schedule(speaker_query: str, text: str, *, delay_seconds: float,
             "rec": rec,
             "speaker_name": rec.get("name"),
             "text": text,
+            "voice": str(voice or ""),
             "volume": None if volume is None else float(volume),
             "fire_at": int(time.time() + delay),
             "status": "scheduled",
@@ -185,12 +189,12 @@ def public(jid: str) -> Optional[dict[str, Any]]:
         job = _jobs.get(str(jid or ""))
         if not job:
             return None
-        return {k: job[k] for k in ("id", "speaker_name", "text", "volume", "fire_at", "status")}
+        return {k: job[k] for k in ("id", "speaker_name", "text", "voice", "volume", "fire_at", "status")}
 
 
 def list_jobs() -> list[dict[str, Any]]:
     with _lock:
-        rows = [{k: j[k] for k in ("id", "speaker_name", "text", "volume", "fire_at", "status")}
+        rows = [{k: j[k] for k in ("id", "speaker_name", "text", "voice", "volume", "fire_at", "status")}
                 for j in _jobs.values()]
     rows.sort(key=lambda r: r.get("fire_at") or 0, reverse=True)
     return rows

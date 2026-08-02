@@ -130,9 +130,15 @@ def is_stt_enabled_for_session(session_id: str) -> bool:
 
 
 def get_tts_voice_for_session(session_id: str, default: str = "") -> str:
-    """Trả voice TTS cho session (nếu có riêng, ngược lại trả default/hệ thống)."""
-    cfg_s = get_session_voice_config(session_id)
-    voice = str(cfg_s.get("tts_voice") or "").strip()
+    """Trả voice TTS cho session (nếu có riêng, ngược lại trả default/hệ thống).
+
+    Tra theo TỪNG FIELD (`_resolve_field`) chứ không lấy trọn dict của key khớp
+    đầu tiên. Vì sao: một nhóm chỉ cài `tts_enabled` (không cài giọng) sẽ khớp
+    trước cấp kênh, và nếu lấy trọn dict thì `tts_voice` rỗng ⇒ rơi thẳng về giọng
+    hệ thống, VÔ HIỆU luôn giọng đã cài cho cả kênh. Đúng lý do `_resolve_field`
+    được viết ra — xem chú thích của nó.
+    """
+    voice = str(_resolve_field(session_id, "tts_voice") or "").strip()
     if voice:
         return voice
     return default or vcfg.tts_voice()

@@ -79,6 +79,35 @@ def speak_stream(text: str, voice_name: str = "", *, style: str = "",
     return stream_synthesize(text, voice_name, style=style)
 
 
+def giong_cho_loa(speaker: dict[str, Any], *, session_id: str = "") -> str:
+    """Giọng dùng khi đọc ra MỘT loa cụ thể.
+
+    Yêu cầu 02/08: "giọng nói độc lập cho từng kênh, từng thread, từng topic,
+    từng loa" — bốn trục, và chúng "không liên quan nhau": giọng gán cho loa là
+    của riêng loa, thread/topic không được ghi đè nó.
+
+    Thứ tự:
+      1. giọng gán cho CHÍNH loa đó (Settings → Sổ loa) — cụ thể nhất, thắng hết
+      2. giọng theo phiên (`session_voice`: kênh → bot → nhóm → topic → user) —
+         chỉ dùng khi loa không có ý kiến
+      3. giọng mặc định hệ thống (`speak()` tự lấy khi trả về rỗng)
+
+    Trước bản này đường phát ra loa KHÔNG tra gì cả: `announce._run` gọi
+    `play_text_on(text, rec)` không truyền voice nên luôn rơi về giọng hệ thống,
+    mọi cài đặt riêng theo kênh/thread/topic đều vô hiệu ở loa.
+    """
+    v = str((speaker or {}).get("voice") or "").strip()
+    if v:
+        return v
+    if session_id:
+        try:
+            from services.voice import session_voice as _sv
+            return str(_sv.get_tts_voice_for_session(session_id) or "").strip()
+        except Exception:
+            return ""
+    return ""
+
+
 def speak_reply(text: str, persona_key: str = "", *, session_id: str = "",
                 voice_name: str = "", style: str = "") -> bytes:
     """TTS cho câu TRẢ LỜI của bot: chọn giọng theo phiên + style theo TÍNH CHẤT

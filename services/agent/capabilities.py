@@ -2540,6 +2540,18 @@ def _speaker_scope(ctx: dict) -> tuple[str, str]:
     return ("tg", uid)
 
 
+def _session_id_loa(ctx: dict) -> str:
+    """Khoá phiên cho `session_voice`, dạng `<kênh>:<bot>:<chat>` — cùng quy ước
+    với telegram_bot / zalo_bot (`platform:bot_id:chat_id[#topic][:user_id]`).
+
+    `_candidate_keys` tự lùi dần: chat có '#topic' thì thử topic → cả nhóm → bot →
+    kênh. Nên khoá 3 phần ở đây vẫn kế thừa được cài đặt ở mọi cấp trên.
+    """
+    plat, chat_id = _speaker_scope(ctx)
+    bot_id = str((ctx or {}).get("bot_id") or "").strip()
+    return f"{plat}:{bot_id}:{chat_id}" if chat_id else plat
+
+
 def _h_speak_to_speaker(args: dict, ctx: dict) -> dict:
     """Đọc văn bản rồi phát ra loa trong nhà (Cast / DLNA / qua HA).
 
@@ -2607,9 +2619,14 @@ def _h_speak_to_speaker(args: dict, ctx: dict) -> dict:
             return {"text": _menu(hits)}
         chosen = hits
 
-    voice_name = teach.voice_for_text(text) if (teach.voice_vi() or teach.voice_en()) else ""
+    # Giọng: giọng gán cho CHÍNH loa thắng trước (Settings → Sổ loa), rồi mới tới
+    # giọng theo môn của chế độ Giáo viên, rồi giọng theo kênh/thread/topic.
+    _giong_mon = teach.voice_for_text(text) if (teach.voice_vi() or teach.voice_en()) else ""
+    _sid = _session_id_loa(ctx)
     done, failed = [], []
     for spk in chosen:
+        voice_name = (str(spk.get("voice") or "").strip() or _giong_mon
+                      or voice.giong_cho_loa(spk, session_id=_sid))
         try:
             voice.play_text_on(text, spk, voice_name)
             done.append(str(spk.get("name")))
@@ -2732,6 +2749,7 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     """Đọc thông báo ra loa NGAY hoặc HẸN GIỜ (sau N phút), kèm âm lượng %.
 
     Đọc bằng TTS ra loa Cast/DLNA/HA (R1 chưa đọc TTS trực tiếp — dùng mở nhạc)."""
+    from services import voice
     from services.voice import announce as vann
     from services.voice import permissions as vperm
     from services.voice import speakers as vspk
@@ -2783,7 +2801,10 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
         except (TypeError, ValueError):
             volume = None
     try:
-        vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume)
+        # Giọng riêng của loa → giọng theo kênh/thread/topic → giọng hệ thống.
+        # Trước bản này không truyền gì nên loa luôn đọc bằng giọng hệ thống.
+        vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume,
+                      voice=voice.giong_cho_loa(chosen, session_id=_session_id_loa(ctx)))
     except Exception as exc:
         # Phát ngay giờ chạy ĐỒNG BỘ nên lỗi thật tới được đây (trước kia nó
         # chìm trong thread nền, người dùng nhận "[đang đọc …]" sai sự thật).
