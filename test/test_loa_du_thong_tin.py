@@ -33,6 +33,7 @@ import os
 import pathlib
 import re
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -58,6 +59,13 @@ def _nap(nguon: pathlib.Path, ten: tuple[str, ...], extra: dict | None = None) -
     return ns
 
 
+LOA_CAST = {"id": "spk1", "name": "loa phòng khách", "kind": "cast",
+            "host": "192.168.1.9"}
+LOA_R1 = {"id": "r1a", "name": "loa R1", "kind": "r1", "host": "192.168.1.20",
+          "max_vol": 15}
+LOA_DLNA = {"id": "d1", "name": "loa gác", "kind": "dlna", "host": "192.168.1.30"}
+
+
 def _ns_menu() -> dict:
     return _nap(GOC / "services" / "agent" / "capabilities.py",
                 ("_LOA_MUC_AM", "_ask_am_luong_loa", "_mot_dong"))
@@ -74,13 +82,13 @@ class MenuAmLuongTests(unittest.TestCase):
 
     def test_co_du_cac_muc_va_giu_nguyen(self):
         from services.agent import ask_choices as ac
-        _, choices = ac.extract(self.f(NOI_DUNG, "loa phòng khách", 0)["text"])
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0)["text"])
         nhan = [c["label"] for c in choices]
         self.assertEqual(nhan, ["30%", "50%", "70%", "100%", "Giữ nguyên âm lượng loa"])
 
     def test_nut_mang_du_loa_am_luong_noi_dung(self):
         from services.agent import ask_choices as ac
-        _, choices = ac.extract(self.f(NOI_DUNG, "loa phòng khách", 0)["text"])
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0)["text"])
         send = choices[1]["send"]        # 50%
         self.assertIn("«loa phòng khách»", send)
         self.assertIn("âm lượng 50%", send)
@@ -88,17 +96,45 @@ class MenuAmLuongTests(unittest.TestCase):
 
     def test_co_hen_gio_thi_nut_mang_theo_thoi_diem(self):
         from services.agent import ask_choices as ac
-        _, choices = ac.extract(self.f(NOI_DUNG, "loa phòng khách", 120)["text"])
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 120)["text"])
         self.assertIn("sau 2 phút", choices[0]["send"])
 
     def test_noi_dung_nhieu_dong_KHONG_pha_menu(self):
         """Cùng loại lỗi đã hạ menu chọn model ảnh/video: <<<ASK>>> bóc theo DÒNG."""
         from services.agent import ask_choices as ac
         nhieu_dong = "chuẩn bị đi ăn gà rán\nnhớ rửa tay\nrồi xuống nhà"
-        _, choices = ac.extract(self.f(nhieu_dong, "loa phòng khách", 0)["text"])
+        _, choices = ac.extract(self.f(nhieu_dong, LOA_CAST, 0)["text"])
         self.assertEqual(len(choices), 5)
         self.assertNotIn("\n", choices[0]["send"])
         self.assertIn("rồi xuống nhà", choices[0]["send"])
+
+    def test_ghi_chu_dai_am_luong_theo_LOAI_loa(self):
+        self.assertIn("dải 0–100%", self.f(NOI_DUNG, LOA_CAST, 0)["text"])
+        r1 = self.f(NOI_DUNG, LOA_R1, 0)["text"]
+        self.assertIn("chỉ số 0–15", r1)
+
+    def test_ghi_chu_noi_ro_se_tra_am_luong_ve_muc_cu(self):
+        self.assertIn("trả âm lượng về mức cũ", self.f(NOI_DUNG, LOA_CAST, 0)["text"])
+
+    def test_muc_model_doan_thanh_LUA_CHON_dau_menu(self):
+        """Model tự điền volume thì mức đó là GỢI Ý, không phải hành động."""
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0, goi_y=60)["text"])
+        self.assertEqual(choices[0]["label"], "60% (theo yêu cầu)")
+        self.assertIn("âm lượng 60%", choices[0]["send"])
+        self.assertEqual(len(choices), 6)      # 60% + 4 mức + giữ nguyên
+
+    def test_goi_y_trung_muc_san_co_thi_khong_lap(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0, goi_y=50)["text"])
+        self.assertEqual(len(choices), 5)
+        self.assertEqual(choices[0]["label"], "50% (theo yêu cầu)")
+
+    def test_goi_y_rac_thi_bo_qua(self):
+        from services.agent import ask_choices as ac
+        for x in ("to lên", 999, -5, None, ""):
+            _, choices = ac.extract(self.f(NOI_DUNG, LOA_CAST, 0, goi_y=x)["text"])
+            self.assertEqual(len(choices), 5, x)
 
 
 class DocLaiNutTests(unittest.TestCase):
@@ -108,7 +144,13 @@ class DocLaiNutTests(unittest.TestCase):
     def test_doc_dung_loa_am_luong_noi_dung(self):
         self.assertEqual(
             self.f(f"đọc ra loa «loa phòng khách» âm lượng 60%: {NOI_DUNG}"),
-            {"text": NOI_DUNG, "speaker": "loa phòng khách", "volume": 60})
+            {"text": NOI_DUNG, "speaker": "loa phòng khách", "volume": 60,
+             "am_luong_da_chon": True})
+
+    def test_co_bang_chung_NGUOI_da_chon_muc(self):
+        """Không có cờ này thì handler coi mức là model đoán và hỏi lại."""
+        got = self.f(f"đọc ra loa «loa bếp» âm lượng 30%: {NOI_DUNG}")
+        self.assertTrue(got["am_luong_da_chon"])
 
     def test_giu_nguyen_thi_khong_hoi_lai_am_luong(self):
         got = self.f(f"đọc ra loa «loa bếp» âm lượng giữ nguyên: {NOI_DUNG}")
@@ -133,14 +175,15 @@ class VongKhepKinTests(unittest.TestCase):
         from services.agent import ask_choices as ac
         ask = _ns_menu()["_ask_am_luong_loa"]
         doc = _ns_doc()["_doc_nut_menu_loa"]
-        _, choices = ac.extract(ask(NOI_DUNG, "loa phòng khách", 120)["text"])
-        self.assertEqual(len(choices), 5)
+        _, choices = ac.extract(ask(NOI_DUNG, LOA_CAST, 120, goi_y=60)["text"])
+        self.assertEqual(len(choices), 6)
         for c in choices:
             got = doc(c["send"])
             self.assertIsNotNone(got, c["send"])
             self.assertEqual(got["speaker"], "loa phòng khách")
             self.assertEqual(got["text"], NOI_DUNG)
             self.assertEqual(got["delay_minutes"], 2.0)
+            self.assertTrue(got["am_luong_da_chon"])
             self.assertTrue("volume" in got or got.get("giu_am_luong"))
 
 
@@ -193,6 +236,83 @@ class PhatNgayPhaiDongBoTests(unittest.TestCase):
         ra = self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=600)
         self.assertEqual(ra.get("status"), "scheduled")
         self.ann.cancel(ra["id"])
+
+
+class TraAmLuongVeMucCuTests(unittest.TestCase):
+    """Phát xong phải trả âm lượng về mức cũ — thông báo to một lần không nên đổi
+    luôn mức nghe nhạc của cả nhà.
+
+    Điểm dễ sai: `play_on()` TRẢ VỀ TRƯỚC KHI loa phát xong (chính `play_text_on`
+    phải `time.sleep(độ dài câu 1)` mới dám push câu sau). Trả âm lượng ngay là
+    tụt tiếng giữa câu — nên việc trả phải CHỜ đúng độ dài rồi mới làm, và chạy
+    NỀN để không giữ lượt chat.
+    """
+
+    def setUp(self):
+        from services.voice import announce as ann
+        self.ann = ann
+        self.rec = dict(LOA_CAST)
+        self._resolve_goc = ann._resolve_one
+        ann._resolve_one = lambda q: self.rec
+        self.addCleanup(lambda: setattr(ann, "_resolve_one", self._resolve_goc))
+
+    def _cam(self, *, loi_phat=None, muc_cu=0.25):
+        """Cắm giả loa: ghi lại mọi lần đặt âm lượng theo thứ tự."""
+        import services.voice as v
+        from services.voice import speakers as vspk
+        dat: list[float] = []
+        goc = {"play": getattr(v, "play_text_on", None),
+               "get": vspk.get_volume, "set": vspk.set_volume}
+
+        def _play(text, rec, voice_name=""):
+            if loi_phat:
+                raise RuntimeError(loi_phat)
+            return "https://x/media/voice/abc.wav"
+
+        v.play_text_on = _play
+        vspk.get_volume = lambda rec: muc_cu
+        vspk.set_volume = lambda rec, level: dat.append(round(float(level), 3))
+
+        def _tra_lai():
+            if goc["play"] is not None:
+                v.play_text_on = goc["play"]
+            vspk.get_volume, vspk.set_volume = goc["get"], goc["set"]
+        self.addCleanup(_tra_lai)
+        # Độ dài audio = 0 để phép đo không phải ngủ thật.
+        self.ann._do_dai_audio = lambda url: 0.0
+        return dat
+
+    def test_dat_muc_moi_roi_tra_ve_muc_cu(self):
+        dat = self._cam(muc_cu=0.25)
+        self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0, volume=0.6)
+        for _ in range(50):                     # việc trả chạy ở thread nền
+            if len(dat) >= 2:
+                break
+            time.sleep(0.02)
+        self.assertEqual(dat, [0.6, 0.25])
+
+    def test_khong_yeu_cau_am_luong_thi_khong_cham_vao(self):
+        dat = self._cam()
+        self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0)
+        time.sleep(0.05)
+        self.assertEqual(dat, [])
+
+    def test_phat_hong_van_tra_muc_cu(self):
+        """Không để loa nằm ở mức thông báo chỉ vì lượt đó thất bại."""
+        dat = self._cam(loi_phat="cast không nối được", muc_cu=0.25)
+        with self.assertRaises(RuntimeError):
+            self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0, volume=1.0)
+        self.assertEqual(dat, [1.0, 0.25])
+
+    def test_khong_doc_duoc_muc_cu_thi_khong_doan(self):
+        import services.voice as v
+        from services.voice import speakers as vspk
+        dat = self._cam(muc_cu=0.25)
+        vspk.get_volume = lambda rec: None          # loa không cho đọc
+        self.ann.schedule("loa phòng khách", NOI_DUNG, delay_seconds=0, volume=0.6)
+        time.sleep(0.05)
+        self.assertEqual(dat, [0.6])                # đặt mức mới, KHÔNG trả bừa
+        self.assertTrue(callable(v.play_text_on))
 
 
 class DiaChiCongKhaiTests(unittest.TestCase):

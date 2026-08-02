@@ -2676,28 +2676,53 @@ def _h_play_music_on_speaker(args: dict, ctx: dict) -> dict:
 _LOA_MUC_AM = (30, 50, 70, 100)
 
 
-def _ask_am_luong_loa(text: str, speaker_name: str, delay_seconds: float) -> dict:
-    """Menu chọn âm lượng trước khi đọc ra loa.
+def _ask_am_luong_loa(text: str, rec: dict, delay_seconds: float,
+                      goi_y: object = None) -> dict:
+    """Menu chọn âm lượng trước khi đọc ra loa, có ghi chú dải âm lượng.
 
     Yêu cầu 02/08: "khi phát ra loa cần phải đầy đủ thông tin loa nào, âm lượng
-    bao nhiêu, nội dung là gì". Loa và nội dung đã có ở bước trước; đây là mảnh
-    còn thiếu duy nhất.
+    bao nhiêu, nội dung là gì" + "có ghi chú dải âm lượng". Loa và nội dung đã có
+    ở bước trước; âm lượng là mảnh còn thiếu.
+
+    `goi_y` là mức do TẦNG MODEL điền vào. Nó thành MỘT LỰA CHỌN chứ không được
+    tự động áp: đo thật 02/08, câu "phát thông báo ra loa với nội dung chuẩn bị đi
+    ngủ thôi các con" KHÔNG nêu âm lượng nào, nhưng model vẫn tự điền `volume` nên
+    bước hỏi bị bỏ qua sạch. Người dùng nêu mức thì mức đó nằm sẵn ở đầu menu,
+    bấm một lần là xong — không mất gì.
 
     Nội dung gộp về MỘT dòng — khối <<<ASK>>> được bóc theo từng dòng, nên thông
     báo nhiều dòng sẽ vỡ menu thành các mảnh nội dung (đúng lỗi đã gặp ở menu
     chọn model ảnh/video).
     """
+    from services.voice import speakers as vspk
+
     text = _mot_dong(text)
+    ten = str(rec.get("name") or "")
     short = text if len(text) <= 40 else text[:39] + "…"
     dl = ""
     if delay_seconds and delay_seconds > 0:
         phut = delay_seconds / 60
         dl = f" sau {phut:g} phút"
-    lines = [f'🔊 Đọc “{short}” ra {speaker_name}{dl} — âm lượng bao nhiêu ạ?',
+    lines = [f'🔊 Đọc “{short}” ra {ten}{dl} — âm lượng bao nhiêu ạ?',
+             f"({vspk.dai_am_luong(rec)} · phát xong em trả âm lượng về mức cũ)",
              "<<<ASK>>>"]
+
+    def _dong(nhan: str, v: int) -> str:
+        return f"{nhan} | đọc ra loa «{ten}» âm lượng {v}%{dl}: {text}"
+
+    muc: list[int] = []
+    try:
+        if goi_y not in (None, ""):
+            g = int(round(float(goi_y)))
+            if 0 <= g <= 100:
+                muc.append(g)
+                lines.append(_dong(f"{g}% (theo yêu cầu)", g))
+    except (TypeError, ValueError):
+        pass
     for v in _LOA_MUC_AM:
-        lines.append(f"{v}% | đọc ra loa «{speaker_name}» âm lượng {v}%{dl}: {text}")
-    lines.append(f"Giữ nguyên âm lượng loa | đọc ra loa «{speaker_name}» "
+        if v not in muc:
+            lines.append(_dong(f"{v}%", v))
+    lines.append(f"Giữ nguyên âm lượng loa | đọc ra loa «{ten}» "
                  f"âm lượng giữ nguyên{dl}: {text}")
     lines.append("<<<END>>>")
     return {"text": "\n".join(lines), "deliver_now": True}
@@ -2744,8 +2769,14 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
         delay = 0.0
     volume = None
     vol = args.get("volume")
-    if vol in (None, "") and not args.get("giu_am_luong"):
-        return _ask_am_luong_loa(text, str(chosen.get("name") or ""), delay)
+    # Âm lượng phải do NGƯỜI chọn. `am_luong_da_chon` chỉ được đặt bởi bộ đọc nút
+    # bấm menu (`orchestrator._doc_nut_menu_loa`), nên mức do tầng model tự điền
+    # không bao giờ được áp thẳng — nó chỉ thành gợi ý đầu menu. Loa không chỉnh
+    # được âm lượng (DLNA/HA) thì bỏ qua bước hỏi, khỏi dắt vào đường cùng.
+    if not args.get("am_luong_da_chon") and not args.get("giu_am_luong"):
+        if vspk.ho_tro_am_luong(chosen):
+            return _ask_am_luong_loa(text, chosen, delay, goi_y=vol)
+        vol = None
     if vol not in (None, ""):
         try:
             volume = max(0.0, min(100.0, float(vol))) / 100.0

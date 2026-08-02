@@ -289,8 +289,11 @@ def _doc_nut_menu_loa(text: str) -> dict | None:
     m = _NUT_LOA.match(t)
     if not m:
         return None
+    # `am_luong_da_chon` = bằng chứng NGƯỜI đã chọn mức, không phải model đoán —
+    # `_h_announce_on_speaker` chỉ áp âm lượng khi thấy cờ này.
     args: dict[str, Any] = {"text": m.group("noi_dung").strip(),
-                            "speaker": m.group("loa").strip()}
+                            "speaker": m.group("loa").strip(),
+                            "am_luong_da_chon": True}
     vol = re.sub(r"\s+", "", m.group("vol")).lower()
     if vol.endswith("%"):
         try:

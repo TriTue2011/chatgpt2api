@@ -328,6 +328,49 @@ def media_control(rec: dict[str, Any], action: str) -> None:
             pass
 
 
+def ho_tro_am_luong(rec: dict[str, Any]) -> bool:
+    """Loa này chỉnh được âm lượng không? (xem `set_volume` — chỉ Cast và R1)
+
+    Quan trọng cho tầng hỏi đáp: hỏi âm lượng một loa DLNA/HA rồi mới phát hiện
+    không đặt được là dắt người dùng vào đường cùng.
+    """
+    return str(rec.get("kind") or "") in ("cast", "r1")
+
+
+def dai_am_luong(rec: dict[str, Any]) -> str:
+    """Ghi chú dải âm lượng của loa, viết cho người đọc."""
+    kind = str(rec.get("kind") or "")
+    if kind == "cast":
+        return "dải 0–100%"
+    if kind == "r1":
+        return f"dải 0–100%, loa R1 quy ra chỉ số 0–{int(rec.get('max_vol') or 15)}"
+    return "loa này không chỉnh được âm lượng"
+
+
+def get_volume(rec: dict[str, Any]) -> float | None:
+    """Âm lượng ĐANG đặt (0..1). None = loa không đọc được mức hiện tại.
+
+    Dùng để trả âm lượng về mức cũ sau khi đọc thông báo — thông báo to một lần
+    không nên đổi luôn mức nghe nhạc của cả nhà.
+    """
+    kind = str(rec.get("kind") or "")
+    if kind == "cast":
+        st = speaker_status(rec)
+        if not st.get("supported"):
+            return None
+        return max(0.0, min(1.0, float(st.get("volume") or 0)))
+    if kind == "r1":
+        from services.voice import r1 as _r1
+        info = _r1.get_info(str(rec.get("host") or ""),
+                            port=int(rec.get("port") or 8080))
+        vol = info.get("vol")
+        if vol is None:
+            return None
+        mx = max(1, int(rec.get("max_vol") or 15))
+        return max(0.0, min(1.0, float(vol) / mx))
+    return None
+
+
 def speaker_status(rec: dict[str, Any]) -> dict[str, Any]:
     """Trạng thái loa Cast: âm lượng, mute, đang phát gì."""
     if str(rec.get("kind") or "") != "cast":

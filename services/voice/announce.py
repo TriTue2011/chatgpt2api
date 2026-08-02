@@ -36,6 +36,46 @@ def _resolve_one(speaker_query: str) -> dict[str, Any]:
     return hits[0]
 
 
+def _do_dai_audio(url: str) -> float:
+    """Độ dài (giây) của file vừa phát, tra theo tên file trong kho media.
+
+    `play_on()` TRẢ VỀ TRƯỚC KHI loa phát xong — chính `play_text_on` phải
+    `time.sleep(độ dài câu 1)` mới dám push câu sau để Cast không cắt giữa. Nên
+    muốn trả âm lượng về mức cũ thì phải chờ đúng độ dài này, không thì thông báo
+    bị tụt tiếng ngay giữa câu.
+    """
+    try:
+        from services.voice import config as vcfg
+        from services.voice import _wav_duration_s  # type: ignore[attr-defined]
+        ten = str(url or "").rstrip("/").rsplit("/", 1)[-1]
+        if not ten:
+            return 0.0
+        p = vcfg.media_dir() / ten
+        return _wav_duration_s(p.read_bytes()) if p.is_file() else 0.0
+    except Exception:
+        return 0.0
+
+
+def _tra_am_luong_sau_khi_phat(rec: dict[str, Any], muc_cu: float, url: str) -> None:
+    """Chờ loa đọc xong rồi đặt lại âm lượng cũ — chạy NỀN để không giữ lượt chat."""
+    from services.voice import speakers as vspk
+
+    def _cho_roi_tra() -> None:
+        cho = _do_dai_audio(url)
+        if cho > 0:
+            time.sleep(cho + 0.4)      # thêm chút để câu cuối không bị tụt tiếng
+        try:
+            vspk.set_volume(rec, float(muc_cu))
+            logger.info("announce: đã trả âm lượng %s về %.2f",
+                        rec.get("name"), float(muc_cu))
+        except Exception as exc:
+            logger.warning("announce: trả âm lượng %s không được: %s",
+                           rec.get("name"), str(exc)[:120])
+
+    t = threading.Thread(target=_cho_roi_tra, name="announce-restore-vol", daemon=True)
+    t.start()
+
+
 def _run(jid: str) -> None:
     from services import voice
     from services.voice import speakers as vspk
@@ -45,17 +85,34 @@ def _run(jid: str) -> None:
     if not job or job.get("status") == "cancelled":
         return
     rec = job["rec"]
+    muc_cu: Optional[float] = None
     try:
         vol = job.get("volume")
         if vol is not None:
+            # Đọc mức ĐANG đặt trước khi đổi, để phát xong trả về đúng mức đó.
+            try:
+                muc_cu = vspk.get_volume(rec)
+            except Exception as exc:
+                muc_cu = None
+                logger.info("announce: không đọc được âm lượng cũ (%s)", str(exc)[:80])
             try:
                 vspk.set_volume(rec, float(vol))
             except Exception as exc:   # loa không chỉnh được vol thì vẫn đọc
+                muc_cu = None
                 logger.info("announce: bỏ qua đặt âm lượng (%s)", str(exc)[:80])
-        voice.play_text_on(job["text"], rec)
+        url = voice.play_text_on(job["text"], rec)
+        if muc_cu is not None:
+            _tra_am_luong_sau_khi_phat(rec, muc_cu, str(url or ""))
         with _lock:
             job["status"] = "done"
     except Exception as exc:
+        # Đặt âm lượng xong mà phát hỏng thì vẫn phải trả mức cũ — không để loa
+        # nằm ở mức thông báo chỉ vì lượt đó thất bại.
+        if muc_cu is not None:
+            try:
+                vspk.set_volume(rec, float(muc_cu))
+            except Exception:
+                pass
         with _lock:
             job["status"] = f"error: {str(exc)[:160]}"
         logger.warning("announce: phát lỗi ra %s: %s", rec.get("name"), exc)
