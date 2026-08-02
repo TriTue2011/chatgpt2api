@@ -33,6 +33,7 @@ from collections import Counter
 __all__ = [
     "rules", "looks_degenerate", "pages_seen", "PAGE_MARK_RE",
     "INJECTION_GUARD", "MATH_UNICODE", "MATH_LATEX",
+    "ty_le_chu_la", "co_dau_hieu_bia",
 ]
 
 MATH_UNICODE = "unicode"
@@ -147,6 +148,79 @@ _DEGEN_FILLER = set(".…_-—–=|*+ \t·•’'\"")
 
 def _is_filler(line: str) -> bool:
     return bool(line) and set(line) <= _DEGEN_FILLER
+
+
+# ── Đối chiếu hai bản đọc: bắt chữ BỊA ──────────────────────────────────────
+# Ý lấy từ MonkeyOCRv2: họ chạy ba hệ OCR rồi chỉ giữ phần ba hệ ĐỒNG Ý
+# ("multi-expert labeling with agreement filtering"). Không cài repo đó — nó cần
+# vLLM, flash-attn, CUDA 12.9, GPU — nhưng ý đối chiếu thì viết tay được.
+#
+# Dự án có sẵn HAI bản đọc độc lập cho cùng một trang, và ở đây còn hơn MonkeyOCR
+# một bậc: PDF số có LỚP TEXT NHÚNG, tức bản đọc CHUẨN XÁC và miễn phí, không phải
+# một hệ OCR thứ hai cũng có thể sai. Trang scan thì mới cần tới tesseract (đã có
+# trong image, `vie+eng`).
+#
+# Bắt cái gì: `looks_degenerate` bắt được lặp vòng, mốc trang bắt được thiếu
+# trang — nhưng KHÔNG có gì bắt được model BỊA chữ chưa từng có trên trang. Đó là
+# lỗi tệ nhất cho đường RAG vì nó nằm im trong kho và không có dấu hiệu nào.
+_BO_HINH_RE = re.compile(r"^\s*\[HÌNH:.*$", re.M)
+_BO_TOAN_RE = re.compile(r"\$\$.*?\$\$|\$[^$\n]*\$", re.S)
+_TU_RE = re.compile(r"[0-9a-zà-ỹ]{4,}")
+
+
+def _fold(s: str) -> str:
+    """Bỏ dấu + hạ chữ. Đ/đ đổi tay vì nó là chữ RIÊNG, không phải D có dấu."""
+    import unicodedata
+    t = str(s or "").lower().replace("đ", "d")
+    t = unicodedata.normalize("NFD", t)
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def _tu_noi_dung(md: str) -> list[str]:
+    """Các từ ĐÁNG so sánh trong bản model đọc.
+
+    Bỏ những gì bản đối chiếu KHÔNG THỂ có, kẻo báo động oan:
+      · dòng [HÌNH: …] — mô tả ảnh, do model nhìn mà viết, tesseract không đọc ra
+      · công thức $…$ — lớp text nhúng lưu ký tự rời, tesseract đọc sai be bét
+      · dấu bảng / tiêu đề Markdown — do model thêm vào để dựng cấu trúc
+    """
+    t = _BO_HINH_RE.sub(" ", md or "")
+    t = _BO_TOAN_RE.sub(" ", t)
+    t = re.sub(r"[|#>*`~\-]+", " ", t)
+    return _TU_RE.findall(_fold(t))
+
+
+def ty_le_chu_la(md: str, doi_chieu: str, *, toi_thieu_doi_chieu: int = 200,
+                 toi_thieu_tu: int = 20) -> float | None:
+    """Tỉ lệ từ trong bản model đọc mà bản đối chiếu KHÔNG hề có.
+
+    Trả None = KHÔNG KẾT LUẬN ĐƯỢC, và đó là câu trả lời đúng trong hai ca:
+      · bản đối chiếu quá ít chữ (trang scan mờ, trang toàn hình, tesseract chết)
+      · bản model đọc quá ít từ để đo
+    Trả None thay vì 0 hay 1 là có chủ đích: đoán bừa ở đây nghĩa là hoặc bỏ sót
+    trang bịa, hoặc vu oan một trang đọc đúng.
+    """
+    goc = str(doi_chieu or "")
+    if len(goc.strip()) < toi_thieu_doi_chieu:
+        return None
+    tu = _tu_noi_dung(md)
+    if len(tu) < toi_thieu_tu:
+        return None
+    blob = _fold(goc)
+    la = sum(1 for x in set(tu) if x not in blob)
+    return la / len(set(tu))
+
+
+def co_dau_hieu_bia(md: str, doi_chieu: str, *, nguong: float = 0.5) -> bool:
+    """True khi QUÁ NỬA từ của bản model đọc không có trong bản đối chiếu.
+
+    Ngưỡng để CAO có chủ đích. Hai bản đọc cùng một trang bao giờ cũng lệch: bản
+    đối chiếu dính lỗi nhận dạng, model thì sửa chính tả và bỏ gạch nối cuối dòng.
+    Vu oan một trang đọc đúng còn tệ hơn bỏ sót, vì hậu quả là mất lòng tin vào
+    dữ liệu tốt.
+    """
+    ty = ty_le_chu_la(md, doi_chieu)
+    return ty is not None and ty > nguong
 
 
 def looks_degenerate(md: str) -> bool:

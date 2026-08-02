@@ -223,3 +223,94 @@ class TestThanhPhanTrangDotsOcr:
             src = (_ROOT / "services" / ten).read_text(encoding="utf-8")
             assert "ocr_rules.rules(" in src.replace("_ocr_rules.rules(", "ocr_rules.rules(")
 
+
+THAT = ("Bài 5. Sự nở vì nhiệt của chất rắn. Khi nung nóng, chất rắn nở ra theo "
+        "mọi phương. Thí nghiệm với quả cầu kim loại và vòng kim loại cho thấy "
+        "điều đó rõ ràng. Học sinh quan sát hiện tượng rồi rút ra kết luận. Ứng "
+        "dụng trong đời sống: khe hở giữa hai thanh ray đường sắt, khớp nối cầu "
+        "thép, băng kép trong bàn là điện. Bài tập cuối bài yêu cầu giải thích "
+        "vì sao không nên đổ nước quá đầy vào ấm khi đun.")
+
+
+class TestDoiChieuBatChuBia:
+    """Đối chiếu hai bản đọc để bắt chữ BỊA.
+
+    Ý lấy từ MonkeyOCRv2 ("multi-expert labeling with agreement filtering": chạy 3
+    hệ OCR rồi giữ phần đồng ý). KHÔNG cài repo đó — nó cần vLLM, flash-attn, CUDA
+    12.9 và GPU; máy chủ dự án đo được là KHÔNG có GPU. Ý đối chiếu thì viết tay.
+
+    Dự án có sẵn hai bản đọc độc lập, và hơn cách của MonkeyOCR một bậc: PDF số có
+    LỚP TEXT NHÚNG — bản chuẩn xác, miễn phí. Chỉ trang scan mới cần tesseract.
+
+    Vì sao cần: `looks_degenerate` bắt lặp vòng, mốc trang bắt thiếu trang, nhưng
+    KHÔNG có gì bắt được model BỊA chữ chưa từng có trên trang — lỗi tệ nhất cho
+    đường RAG vì nó nằm im trong kho, không để lại dấu hiệu nào.
+    """
+
+    def test_ban_doc_dung_thi_ty_le_chu_la_gan_khong(self):
+        gan_dung = THAT.replace("rõ ràng", "rất rõ").replace("bàn là", "bàn ủi")
+        assert R.ty_le_chu_la(gan_dung, THAT) < 0.1
+        assert not R.co_dau_hieu_bia(gan_dung, THAT)
+
+    def test_ban_bia_thi_bi_bat(self):
+        bia = ("Bài 5. Định luật bảo toàn động lượng phát biểu tổng động lượng hệ "
+               "kín được bảo toàn. Va chạm mềm và va chạm đàn hồi minh hoạ nguyên "
+               "lí này. Bài tập yêu cầu tính vận tốc sau va chạm của hai viên bi "
+               "thép trên mặt phẳng nhẵn, bỏ qua ma sát và lực cản không khí.")
+        assert R.ty_le_chu_la(bia, THAT) > 0.8
+        assert R.co_dau_hieu_bia(bia, THAT)
+
+    def test_doi_chieu_mong_thi_khong_ket_luan(self):
+        """Trang scan mờ / toàn hình / tesseract chết → None, không đoán bừa.
+
+        Đoán bừa ở đây nghĩa là hoặc bỏ sót trang bịa, hoặc vu oan trang đọc đúng.
+        """
+        assert R.ty_le_chu_la(THAT, "vài chữ") is None
+        assert R.ty_le_chu_la(THAT, "") is None
+        assert not R.co_dau_hieu_bia(THAT, "vài chữ")
+
+    def test_ban_vlm_qua_ngan_thi_khong_ket_luan(self):
+        assert R.ty_le_chu_la("Bài 5.", THAT) is None
+
+    def test_bo_dong_hinh_vi_ban_doi_chieu_khong_the_co(self):
+        """Mô tả ảnh do model NHÌN mà viết — tesseract không đọc ra được."""
+        assert R._tu_noi_dung("[HÌNH: sơ đồ mạch điện có ampe kế và biến trở]") == []
+
+    def test_bo_cong_thuc_vi_hai_ban_luon_lech(self):
+        """Lớp text nhúng lưu ký tự rời, tesseract đọc công thức sai be bét."""
+        assert R._tu_noi_dung("$x^{2} + 1$") == []
+        assert R._tu_noi_dung("$$\\int fdx$$") == []
+
+    def test_bo_dau_bang_va_tieu_de_markdown(self):
+        tu = R._tu_noi_dung("## Bảng nhiệt độ\n| Chất | Nhiệt |\n|---|---|")
+        assert "---" not in tu and "nhiet" in tu
+
+    def test_bo_dau_va_chu_D_khi_so_sanh(self):
+        """"Đường sắt" và "duong sat" phải khớp — khác dấu không phải khác chữ."""
+        assert "duong" in R._tu_noi_dung("đường sắt")
+
+    def test_nguong_de_cao_de_khong_vu_oan(self):
+        """Hai bản đọc cùng trang bao giờ cũng lệch: bản đối chiếu dính lỗi nhận
+        dạng, model thì sửa chính tả và bỏ gạch nối cuối dòng."""
+        lech_vua = THAT.replace("kim loại", "kim khí").replace("nung nóng", "đun nóng")
+        assert not R.co_dau_hieu_bia(lech_vua, THAT)
+
+
+class TestDuocNoiVaoDuongOCR:
+    SRC = (_ROOT / "services" / "pdf_to_word.py").read_text("utf-8")
+
+    def test_uu_tien_lop_text_nhung_roi_moi_tesseract(self):
+        i = self.SRC.index("def _ban_doi_chieu(")
+        khuc = self.SRC[i:i + 900]
+        assert khuc.index('p.get("layer")') < khuc.index("_tess_page")
+
+    def test_chi_bao_chu_khong_bo_trang(self):
+        """Xoá trang dựa trên một phép đo gần đúng thì có ngày xoá mất trang đúng."""
+        i = self.SRC.index("def _canh_bao_neu_bia(")
+        khuc = self.SRC[i:i + 1700]
+        assert "_alert(" in khuc
+        assert "ty is None" in khuc          # mỏng thì im, không báo bừa
+
+    def test_chay_sau_khi_vlm_doc_xong(self):
+        i = self.SRC.index("md = _vlm_page_md(")
+        assert "_canh_bao_neu_bia(md, p, idx)" in self.SRC[i:i + 300]

@@ -524,6 +524,49 @@ def _page_fallback_text(p: dict, layer_ok: bool) -> str:
     return ""
 
 
+def _ban_doi_chieu(p: dict) -> str:
+    """Bản đọc ĐỘC LẬP của cùng trang, để đối chiếu với bản VLM.
+
+    Ưu tiên LỚP TEXT NHÚNG: với PDF số nó là chữ gốc do máy in ra, chính xác tuyệt
+    đối và KHÔNG tốn gì. Chỉ trang scan (không có lớp text) mới phải chạy tesseract.
+    Đây là chỗ dự án hơn cách của MonkeyOCRv2 — họ phải chạy ba hệ OCR rồi lấy phần
+    đồng ý, vì họ không có lớp text nào để dựa vào.
+    """
+    layer = str(p.get("layer") or "").strip()
+    if len(layer) >= 200:
+        return layer
+    try:
+        return _tess_page(p["png"]) or ""
+    except Exception as exc:
+        logger.info("đối chiếu OCR: tesseract không chạy được (%s)", str(exc)[:80])
+        return ""
+
+
+def _canh_bao_neu_bia(md: str, p: dict, idx: int) -> None:
+    """Đối chiếu bản VLM với bản độc lập; lệch quá nửa thì BÁO, KHÔNG bỏ.
+
+    Vì sao chỉ báo mà không bỏ: `looks_degenerate` bắt lặp vòng, mốc trang bắt
+    thiếu trang — nhưng bịa chữ thì không có dấu hiệu nào, nên nó nằm im trong kho
+    RAG. Cần một tiếng còi. Nhưng XOÁ trang dựa trên một phép đo gần đúng thì có
+    ngày xoá mất trang đọc đúng, nên bản VLM vẫn được dùng; việc của hàm này là làm
+    cho chuyện đó THẤY ĐƯỢC.
+    """
+    try:
+        goc = _ban_doi_chieu(p)
+        ty = _ocr_rules.ty_le_chu_la(md, goc)
+        if ty is None:
+            return                      # đối chiếu quá mỏng → không kết luận
+        if ty > 0.5:
+            logger.warning({"event": "ocr_nghi_bia", "trang": idx + 1,
+                            "ty_le_chu_la": round(ty, 2),
+                            "nguon_doi_chieu": "layer" if len(
+                                str(p.get("layer") or "").strip()) >= 200 else "tesseract"})
+            _alert(f"⚠️ OCR trang {idx + 1}: {round(ty * 100)}% chữ model đọc ra "
+                   f"KHÔNG có trong bản đối chiếu — nghi bịa, nên xem lại trang này.")
+    except Exception as exc:
+        logger.info("đối chiếu OCR trang %s bỏ qua (%s)", idx + 1, str(exc)[:80])
+
+
 def _page_md_vlm(p: dict, idx: int, errs: list[str], layer_ok: bool = False,
                  errs_lock: threading.Lock | None = None) -> str:
     """Markdown 1 trang qua VLM; lỗi → layer/tesseract; vẫn dồn lỗi báo admin."""
@@ -537,6 +580,7 @@ def _page_md_vlm(p: dict, idx: int, errs: list[str], layer_ok: bool = False,
     try:
         md = _vlm_page_md(p["png"])
         if md:
+            _canh_bao_neu_bia(md, p, idx)
             return md
         _err(f"trang {idx + 1}: model trả rỗng/từ chối")
     except Exception as exc:
