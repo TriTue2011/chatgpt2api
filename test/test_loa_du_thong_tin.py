@@ -68,12 +68,12 @@ LOA_DLNA = {"id": "d1", "name": "loa gác", "kind": "dlna", "host": "192.168.1.3
 
 def _ns_menu() -> dict:
     return _nap(GOC / "services" / "agent" / "capabilities.py",
-                ("_LOA_MUC_AM", "_ask_am_luong_loa", "_mot_dong"))
+                ("_LOA_MUC_AM", "_ask_am_luong_loa", "_ask_chon_loa", "_mot_dong"))
 
 
 def _ns_doc() -> dict:
     return _nap(GOC / "services" / "agent" / "orchestrator.py",
-                ("_NUT_LOA", "_doc_nut_menu_loa"))
+                ("_NUT_LOA", "_NUT_CHON_LOA", "_doc_nut_menu_loa"))
 
 
 class MenuAmLuongTests(unittest.TestCase):
@@ -137,6 +137,48 @@ class MenuAmLuongTests(unittest.TestCase):
             self.assertEqual(len(choices), 5, x)
 
 
+class LietKeLoaTests(unittest.TestCase):
+    """Phải LIỆT KÊ danh sách loa thật, không để model tự diễn đạt.
+
+    Đo thật 21:25:46 — bot trả "Dạ anh muốn phát ra loa nào ạ — loa phòng khách
+    hay tất cả loa?". Đó là lời MODEL tự nghĩ, không phải danh sách do tool liệt
+    kê. Model tự hỏi nghĩa là nó tự đoán nhà có loa nào.
+    """
+
+    def setUp(self):
+        self.f = _ns_menu()["_ask_chon_loa"]
+        self.rows = [LOA_CAST, dict(LOA_CAST, id="s2", name="loa bếp",
+                                    host="192.168.1.10")]
+
+    def test_moi_loa_la_mot_nut(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, self.rows, 0)["text"])
+        self.assertEqual(len(choices), 2)
+        self.assertIn("loa phòng khách", choices[0]["label"])
+        self.assertIn("loa bếp", choices[1]["label"])
+
+    def test_nhan_hien_ca_loai_va_dia_chi(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(self.f(NOI_DUNG, self.rows, 0)["text"])
+        self.assertIn("cast", choices[0]["label"])
+        self.assertIn("192.168.1.9", choices[0]["label"])
+
+    def test_khong_nhac_gio_thi_ghi_ro_DOC_NGAY(self):
+        self.assertIn("đọc ngay", self.f(NOI_DUNG, self.rows, 0)["text"])
+
+    def test_co_hen_gio_thi_ghi_thoi_diem(self):
+        ra = self.f(NOI_DUNG, self.rows, 120)["text"]
+        self.assertIn("sau 2 phút", ra)
+        self.assertNotIn("đọc ngay", ra)
+
+    def test_noi_dung_nhieu_dong_khong_pha_menu(self):
+        from services.agent import ask_choices as ac
+        _, choices = ac.extract(
+            self.f("đi ngủ thôi\nnhớ tắt đèn\nrồi lên phòng", self.rows, 0)["text"])
+        self.assertEqual(len(choices), 2)
+        self.assertIn("rồi lên phòng", choices[0]["send"])
+
+
 class DocLaiNutTests(unittest.TestCase):
     def setUp(self):
         self.f = _ns_doc()["_doc_nut_menu_loa"]
@@ -168,8 +210,47 @@ class DocLaiNutTests(unittest.TestCase):
             self.assertIsNone(self.f(c), c)
 
 
+class DocLaiNutChonLoaTests(unittest.TestCase):
+    """Nút chọn loa: loa đã rõ, âm lượng CHƯA → handler còn phải hỏi tiếp."""
+
+    def setUp(self):
+        self.f = _ns_doc()["_doc_nut_menu_loa"]
+
+    def test_doc_dung_loa_va_noi_dung(self):
+        self.assertEqual(
+            self.f(f"chọn loa «loa phòng khách» để đọc: {NOI_DUNG}"),
+            {"text": NOI_DUNG, "speaker": "loa phòng khách"})
+
+    def test_KHONG_co_co_am_luong_da_chon(self):
+        """Thiếu cờ này thì `con_thieu_thong_tin` còn True → hỏi âm lượng tiếp."""
+        got = self.f(f"chọn loa «loa bếp» để đọc: {NOI_DUNG}")
+        self.assertNotIn("am_luong_da_chon", got)
+        self.assertNotIn("volume", got)
+
+    def test_mang_theo_thoi_diem(self):
+        got = self.f(f"chọn loa «loa bếp» để đọc sau 2 phút: {NOI_DUNG}")
+        self.assertEqual(got["delay_minutes"], 2.0)
+
+    def test_cau_nguoi_go_khong_lot_vao_day(self):
+        for c in ("chọn loa phòng khách", "phát ra loa phòng khách", "loa bếp"):
+            self.assertIsNone(self.f(c), c)
+
+
 class VongKhepKinTests(unittest.TestCase):
     """Nút menu sinh ra PHẢI đọc lại được — nếu không, âm lượng và loa lại bốc hơi."""
+
+    def test_nut_chon_loa_doc_lai_duoc(self):
+        from services.agent import ask_choices as ac
+        ask = _ns_menu()["_ask_chon_loa"]
+        doc = _ns_doc()["_doc_nut_menu_loa"]
+        rows = [LOA_CAST, dict(LOA_CAST, id="s2", name="loa bếp")]
+        _, choices = ac.extract(ask(NOI_DUNG, rows, 120)["text"])
+        for c, r in zip(choices, rows):
+            got = doc(c["send"])
+            self.assertIsNotNone(got, c["send"])
+            self.assertEqual(got["speaker"], r["name"])
+            self.assertEqual(got["text"], NOI_DUNG)
+            self.assertEqual(got["delay_minutes"], 2.0)
 
     def test_moi_nut_cua_menu_deu_doc_lai_duoc(self):
         from services.agent import ask_choices as ac
@@ -383,32 +464,104 @@ class MenuKhongBiNenTests(unittest.TestCase):
         self.assertFalse(tc.co_menu_chon("chỉ là văn bản thường"))
 
 
-class DuongTatKhongMoThemQuyenTests(unittest.TestCase):
-    """Đường tắt rút ngắn đường đi, KHÔNG được mở thêm quyền.
+class ThuTuHoiRoiMoiDuyetTests(unittest.TestCase):
+    """Hỏi ĐỦ trước, rồi mới có MỘT lần xác nhận thấy trọn việc.
 
-    `announce_on_speaker` là hành động CHANGE, nên phải qua CẢ bộ lọc chức năng
-    theo thread lẫn cổng duyệt — y như đường thường.
+    Đo thật 02/08 21:25 — chủ máy đã nói "loa phòng khách" mà câu duyệt hiện ra:
+
+        Em định Đọc thông báo ra loa (ngay, hoặc hẹn giờ):
+        chuẩn bị đi ngủ thôi các con
+        Anh/chị duyệt không ạ?
+
+    Không có loa, không có âm lượng. Sai ở THỨ TỰ: cổng duyệt hỏi trước khi thông
+    tin đủ, nên người dùng bị bắt duyệt một việc chưa thấy hết.
+    """
+
+    def test_con_thieu_thong_tin_thi_chua_hoi_duyet(self):
+        from services.agent import capabilities as caps
+        # Model tự điền volume KHÔNG tính là người đã chọn.
+        self.assertTrue(caps.con_thieu_thong_tin(
+            "announce_on_speaker", {"text": "x", "speaker": "loa phòng khách"}))
+        self.assertTrue(caps.con_thieu_thong_tin(
+            "announce_on_speaker", {"text": "x", "speaker": "loa", "volume": 50}))
+
+    def test_nguoi_da_chon_am_luong_thi_du_thong_tin(self):
+        from services.agent import capabilities as caps
+        for a in ({"text": "x", "speaker": "loa", "volume": 50, "am_luong_da_chon": True},
+                  {"text": "x", "speaker": "loa", "giu_am_luong": True}):
+            self.assertFalse(caps.con_thieu_thong_tin("announce_on_speaker", a), a)
+
+    def test_khong_dung_den_capability_khac(self):
+        from services.agent import capabilities as caps
+        for ten in ("control_home", "send_to_contact", "generate_video", ""):
+            self.assertFalse(caps.con_thieu_thong_tin(ten, {}), ten)
+
+    def test_cau_duyet_hien_loa_am_luong_thoi_diem(self):
+        from services.agent import approval_gate as ag
+        s = ag.summarize_action("announce_on_speaker",
+                                {"text": NOI_DUNG, "speaker": "loa phòng khách",
+                                 "volume": 50})
+        self.assertIn("loa phòng khách", s)
+        self.assertIn("50%", s)
+        self.assertIn("đọc ngay", s)
+        self.assertIn(NOI_DUNG, s)
+
+    def test_cau_duyet_hien_lich_khi_dat_lich(self):
+        from services.agent import approval_gate as ag
+        s = ag.summarize_action("announce_on_speaker",
+                                {"text": NOI_DUNG, "speaker": "loa bếp",
+                                 "when": "8h sáng mai"})
+        self.assertIn("lịch: 8h sáng mai", s)
+        self.assertNotIn("đọc ngay", s)
+
+    def test_capability_khac_giu_nguyen_cach_tom_tat(self):
+        """Chỉ thêm nhánh cho loa — đừng đổi câu duyệt của tool khác."""
+        from services.agent import approval_gate as ag
+        self.assertEqual(ag.summarize_action("send_to_contact",
+                                             {"to": "Mẹ", "message": "con về muộn"}),
+                         "→ Mẹ: con về muộn")
+        self.assertEqual(ag.summarize_action("control_home", {"command": "bật đèn"}),
+                         "bật đèn")
+
+
+class DuongTatKhongMoThemQuyenTests(unittest.TestCase):
+    """Nút bấm CHÍNH LÀ lời duyệt — nhưng chỉ-đọc và lọc thread vẫn chặn.
+
+    Nội dung nút nói trọn việc (loa nào, âm lượng bao nhiêu, thời điểm, nội dung)
+    và người dùng đọc đúng câu đó rồi bấm, nên nó là lời đồng ý CỤ THỂ HƠN câu
+    "Em định …, duyệt không ạ?". Hỏi duyệt lần hai không thêm thông tin nào.
+
+    Không có đường lách: chuỗi nút nằm trong `user_text` — thứ do NGƯỜI gửi. Tầng
+    model không đặt được gì vào đó.
     """
 
     def setUp(self):
         self.code = "\n".join(
             l for l in (GOC / "services" / "agent" / "orchestrator.py")
             .read_text("utf-8").splitlines() if not l.lstrip().startswith("#"))
-        self.khuc = self.code[self.code.index("_nut_loa = _doc_nut_menu_loa(user_text)"):][:1800]
+        self.khuc = self.code[self.code.index("_nut_loa = _doc_nut_menu_loa(user_text)"):][:1200]
 
     def test_van_qua_bo_loc_chuc_nang_theo_thread(self):
         self.assertIn('allow is None or "tts_speaker" in allow', self.khuc)
 
-    def test_van_qua_cong_duyet(self):
-        self.assertIn('approval_gate.needs_approval(user_id, "announce_on_speaker"', self.khuc)
-        self.assertIn('approval_gate.set_pending(user_id, "announce_on_speaker"', self.khuc)
-
-    def test_che_do_chi_doc_thi_chan(self):
+    def test_che_do_chi_doc_van_chan_cung(self):
         self.assertIn('approval_gate.is_blocked("announce_on_speaker"', self.khuc)
+
+    def test_KHONG_hoi_duyet_lan_hai(self):
+        self.assertNotIn("needs_approval", self.khuc)
+        self.assertNotIn("set_pending", self.khuc)
+
+    def test_van_ghi_audit_bang_cach_di_qua_execute(self):
+        """`_execute` ghi `execute_change` — gọi thẳng handler thì mất bản ghi."""
+        self.assertIn("_execute(_cap_loa,", self.khuc)
 
     def test_dat_truoc_fast_path_HA(self):
         self.assertLess(self.code.index("_nut_loa = _doc_nut_menu_loa(user_text)"),
                         self.code.index("if ha_fastpath and (allow is None"))
+
+    def test_cong_duyet_duong_thuong_biet_hoi_du_truoc(self):
+        i = self.code.index("approval_gate.needs_approval(user_id, name, risk=cap.risk)")
+        self.assertIn("caps.con_thieu_thong_tin(name, args)", self.code[i:i + 400])
 
 
 if __name__ == "__main__":

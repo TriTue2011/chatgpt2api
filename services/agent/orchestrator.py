@@ -281,10 +281,39 @@ _NUT_LOA = re.compile(
 )
 
 
+# Nút bấm của menu CHỌN LOA (`capabilities._ask_chon_loa` sinh ra):
+#   chọn loa «loa phòng khách» sau 2 phút: <nội dung>
+# Bấm nút này thì loa đã rõ nhưng âm lượng CHƯA — handler sẽ hỏi tiếp âm lượng.
+_NUT_CHON_LOA = re.compile(
+    r"^\s*chọn\s+loa\s+«(?P<loa>[^»]+)»\s+để\s+đọc"
+    r"(?:\s+sau\s+(?P<phut>\d+(?:[.,]\d+)?)\s*phút)?"
+    r"\s*:\s*(?P<noi_dung>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def _doc_nut_menu_loa(text: str) -> dict | None:
-    """args cho `announce_on_speaker` nếu câu là nội dung nút bấm menu âm lượng."""
+    """args cho `announce_on_speaker` nếu câu là nội dung nút bấm menu loa.
+
+    Đọc được HAI loại nút, vì luồng có hai bước hỏi:
+      · chọn loa   → loa đã rõ, âm lượng chưa → handler hỏi tiếp âm lượng
+      · chọn âm lượng → đủ thông tin → phát
+    """
     t = (text or "").strip()
-    if not t or "âm lượng" not in t.lower():
+    if not t:
+        return None
+    m2 = _NUT_CHON_LOA.match(t)
+    if m2:
+        args2: dict[str, Any] = {"text": m2.group("noi_dung").strip(),
+                                 "speaker": m2.group("loa").strip()}
+        phut2 = m2.groupdict().get("phut")
+        if phut2:
+            try:
+                args2["delay_minutes"] = float(phut2.replace(",", "."))
+            except ValueError:
+                pass
+        return args2
+    if "âm lượng" not in t.lower():
         return None
     m = _NUT_LOA.match(t)
     if not m:
@@ -1350,30 +1379,28 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # tuyến đoán lại, vốn là chỗ lượt 02/08 nhảy qua nhảy lại giữa hai capability
     # loa rồi mất cả «loa phòng khách» lẫn «60%».
     #
-    # Đây là hành động CHANGE nên VẪN qua cổng duyệt như đường thường (mẫu theo
-    # fast-path HA ngay dưới) — đường tắt rút ngắn đường đi, không mở thêm quyền.
+    # NÚT BẤM CHÍNH LÀ LỜI DUYỆT — không hỏi duyệt lần thứ hai.
+    #
+    # Nội dung nút nói trọn việc: «loa nào» + âm lượng bao nhiêu % + thời điểm +
+    # nội dung đọc. Người dùng đọc đúng câu đó rồi bấm, nên đây là lời đồng ý CỤ
+    # THỂ HƠN câu "Em định Đọc thông báo ra loa: <nội dung>. Duyệt không ạ?".
+    # Hỏi duyệt thêm một lần nữa không thêm thông tin nào, chỉ thêm một vòng.
+    #
+    # Không có đường lách: chuỗi này nằm trong `user_text` — thứ do NGƯỜI gửi
+    # (hoặc do `ask_choices.resolve_reply` tra ra từ con số họ bấm). Tầng model
+    # không đặt được gì vào đó.
+    #
+    # Vẫn giữ: chế độ chỉ-đọc chặn cứng, bộ lọc chức năng theo thread, và ghi
+    # audit — nên đi qua `_execute` (nó ghi `execute_change`) chứ không gọi thẳng
+    # handler.
     _nut_loa = _doc_nut_menu_loa(user_text)
     if _nut_loa and (allow is None or "tts_speaker" in allow):
         if approval_gate.is_blocked("announce_on_speaker", risk="change"):
             return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
-        if approval_gate.needs_approval(user_id, "announce_on_speaker", risk="change") \
-                and not auto_approve:
-            approval_gate.set_pending(user_id, "announce_on_speaker", _nut_loa, user_text)
-            q = approval_gate.format_proposal(
-                "announce_on_speaker", _nut_loa,
-                description="Đọc thông báo ra loa",
-                label="đọc ra loa",
-            )
-            out_q = _finalize(user_id, {"text": q})
-            hist.append({"role": "assistant", "content": out_q.get("text") or q})
-            _persist_history(user_id, hist)
-            return out_q
         try:
             _cap_loa = caps.get("announce_on_speaker")
-            _kq_loa = (_cap_loa.handler(dict(_nut_loa),
-                                        {"user_id": user_id,
-                                         "user_message": user_text,
-                                         "is_admin": is_admin})
+            _kq_loa = (_execute(_cap_loa, dict(_nut_loa), user_id,
+                                user_text=user_text, is_admin=is_admin)
                        if _cap_loa else None)
         except Exception as exc:
             logger.warning({"event": "agent_tat_loa_loi", "error": str(exc)[:150]})
@@ -1603,7 +1630,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 }
             elif approval_gate.needs_approval(user_id, name, risk=cap.risk) and (
                 not auto_approve or name in approval_gate.always_confirm_names()
-            ):
+            ) and not caps.con_thieu_thong_tin(name, args):
+                # `con_thieu_thong_tin`: việc còn thiếu thông tin thì HỎI ĐỦ TRƯỚC,
+                # đừng bắt người dùng duyệt một việc họ chưa thấy hết. Lúc thiếu,
+                # handler chỉ trả về câu hỏi/menu — không có tác dụng phụ nào. Chế
+                # độ chỉ-đọc và bộ lọc chức năng đã chặn ở hai nhánh trên.
                 # FIX1 (security, audit 2026-07): auto_approve (chạy tự động theo
                 # lịch — reminders mode=task) CHỈ được phép bỏ qua màn hỏi duyệt
                 # THÔNG THƯỜNG. Các tool luôn-phải-hỏi (approval_gate._ALWAYS_CONFIRM,

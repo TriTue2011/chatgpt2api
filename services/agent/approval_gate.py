@@ -150,6 +150,31 @@ def summarize_action(capability: str, args: dict[str, Any], description: str = "
     if msg and to:
         s = f"→ {to}: {msg}"
         return s[:280] + ("…" if len(s) > 280 else "")
+    # Loa: PHẢI hiện loa nào + âm lượng + thời điểm, không chỉ nội dung.
+    #
+    # Đo thật 02/08 21:25 — chủ máy nói "loa phòng khách" mà câu duyệt chỉ có
+    # nội dung: duyệt một việc không thấy tham số quan trọng nhất thì lời duyệt
+    # đó chẳng nói lên điều gì, và bản ghi audit cũng không tra lại được.
+    spk = str(args.get("speaker") or "").strip()
+    txt = str(args.get("text") or "").strip()
+    if spk and txt:
+        phan = [f"→ {spk}"]
+        vol = args.get("volume")
+        if vol not in (None, ""):
+            phan.append(f"âm lượng {vol}%")
+        elif args.get("giu_am_luong"):
+            phan.append("giữ nguyên âm lượng")
+        khi = str(args.get("when") or "").strip()
+        if khi:
+            phan.append(f"lịch: {khi}")
+        else:
+            try:
+                _p = float(args.get("delay_minutes") or 0)
+                phan.append(f"sau {_p:g} phút" if _p > 0 else "đọc ngay")
+            except (TypeError, ValueError):
+                phan.append("đọc ngay")
+        s = f"{' · '.join(phan)}\n{txt}"
+        return s[:280] + ("…" if len(s) > 280 else "")
     for key in (
         "command", "request", "fact", "message", "content", "task", "query",
         "text", "to", "name",
@@ -180,6 +205,21 @@ def format_proposal(
     """User-facing approval prompt with ASK chips."""
     summary = summarize_action(capability, args, description)
     verb = (label or description or capability).split(".")[0]
+    # Nói ĐÚNG việc sắp làm, đừng liệt kê các chế độ có thể. Yêu cầu 02/08:
+    # "khi không thời gian thì đâu cần phải «Đọc thông báo ra loa (ngay, hoặc hẹn
+    # giờ)» mà nó phải là «đọc thông báo ra loa ngay»".
+    if capability in ("announce_on_speaker", "speak_to_speaker") and isinstance(args, dict):
+        _khi = str(args.get("when") or "").strip()
+        try:
+            _phut = float(args.get("delay_minutes") or 0)
+        except (TypeError, ValueError):
+            _phut = 0.0
+        if _khi:
+            verb = f"đặt lịch đọc thông báo ra loa ({_khi})"
+        elif _phut > 0:
+            verb = f"hẹn đọc thông báo ra loa sau {_phut:g} phút"
+        else:
+            verb = "đọc thông báo ra loa NGAY"
     return (
         f"Em định **{verb}**:\n{summary}\n\n"
         f"Anh/chị duyệt không ạ?\n"

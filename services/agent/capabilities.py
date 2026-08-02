@@ -2565,6 +2565,34 @@ def _speaker_scope(ctx: dict) -> tuple[str, str]:
     return ("tg", uid)
 
 
+def con_thieu_thong_tin(name: str, args: dict) -> bool:
+    """Lời gọi này còn phải HỎI THÊM người dùng trước khi làm được?
+
+    Cổng duyệt hỏi "Em định …, duyệt không ạ?". Hỏi câu đó khi việc còn thiếu
+    thông tin là bắt người dùng duyệt một việc họ CHƯA THẤY HẾT.
+
+    Đo thật 02/08 21:25 — chủ máy đã nói "loa phòng khách" mà câu duyệt hiện ra
+    chỉ có nội dung, không có loa, không có âm lượng:
+
+        Em định Đọc thông báo ra loa (ngay, hoặc hẹn giờ):
+        chuẩn bị đi ngủ thôi các con
+        Anh/chị duyệt không ạ?
+
+    Sai ở THỨ TỰ, không ở chữ. Yêu cầu là "phát ra loa cần đầy đủ thông tin loa
+    nào, âm lượng bao nhiêu, nội dung là gì" — nên phải hỏi đủ TRƯỚC, rồi mới có
+    một lần xác nhận thấy trọn việc.
+
+    Trả True → orchestrator cho handler chạy TRƯỚC cổng duyệt. An toàn vì lúc
+    thiếu thông tin handler chỉ trả về CÂU HỎI / MENU, không gây tác dụng phụ
+    nào; chế độ chỉ-đọc vẫn chặn trước đó, bộ lọc chức năng theo thread vẫn chặn.
+    """
+    if str(name or "") == "announce_on_speaker":
+        a = args if isinstance(args, dict) else {}
+        # Chưa có bằng chứng NGƯỜI chọn âm lượng → còn phải hỏi.
+        return not (a.get("am_luong_da_chon") or a.get("giu_am_luong"))
+    return False
+
+
 def _session_id_loa(ctx: dict) -> str:
     """Khoá phiên cho `session_voice`, dạng `<kênh>:<bot>:<chat>` — cùng quy ước
     với telegram_bot / zalo_bot (`platform:bot_id:chat_id[#topic][:user_id]`).
@@ -2718,6 +2746,37 @@ def _h_play_music_on_speaker(args: dict, ctx: dict) -> dict:
 _LOA_MUC_AM = (30, 50, 70, 100)
 
 
+def _ask_chon_loa(text: str, rows: list[dict], delay_seconds: float) -> dict:
+    """Menu chọn loa — LIỆT KÊ danh sách loa thật, bấm được.
+
+    Yêu cầu 02/08: "khi yêu cầu phát loa tôi cần nó phải xác định đủ thông tin.
+    liệt kê danh sách loa hiện có."
+
+    Đo thật 21:25:46 — bot trả lời "Dạ anh muốn phát ra loa nào ạ — loa phòng
+    khách hay tất cả loa?". Đó là lời của MODEL tự diễn đạt, không phải danh sách
+    do tool liệt kê: `_speaker_menu` sinh ra "Anh/chị muốn loa nào ạ?" kèm danh
+    sách đánh số. Model tự hỏi nghĩa là nó tự đoán có loa nào — sai một tên là cả
+    lượt đi chệch.
+
+    Dựng thành khối <<<ASK>>> nên mỗi loa là một nút; nội dung nút do CHÍNH code
+    sinh nên `orchestrator._doc_nut_menu_loa` đọc lại chắc chắn, không nhờ model
+    đoán lại lần nữa.
+    """
+    from services.voice import speakers as vspk
+
+    text = _mot_dong(text)
+    short = text if len(text) <= 40 else text[:39] + "…"
+    dl = ""
+    if delay_seconds and delay_seconds > 0:
+        dl = f" sau {delay_seconds / 60:g} phút"
+    lines = [f'🔊 Đọc “{short}” ra loa nào ạ?' + (dl or " (đọc ngay)"), "<<<ASK>>>"]
+    for r in rows:
+        ten = str(r.get("name") or "")
+        lines.append(f"{vspk.describe(r)} | chọn loa «{ten}» để đọc{dl}: {text}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
 def _ask_am_luong_loa(text: str, rec: dict, delay_seconds: float,
                       goi_y: object = None) -> dict:
     """Menu chọn âm lượng trước khi đọc ra loa, có ghi chú dải âm lượng.
@@ -2745,7 +2804,7 @@ def _ask_am_luong_loa(text: str, rec: dict, delay_seconds: float,
     if delay_seconds and delay_seconds > 0:
         phut = delay_seconds / 60
         dl = f" sau {phut:g} phút"
-    lines = [f'🔊 Đọc “{short}” ra {ten}{dl} — âm lượng bao nhiêu ạ?',
+    lines = [f'🔊 Đọc “{short}” ra {ten}{dl or " NGAY"} — âm lượng bao nhiêu ạ?',
              f"({vspk.dai_am_luong(rec)} · phát xong em trả âm lượng về mức cũ)",
              "<<<ASK>>>"]
 
@@ -2784,24 +2843,8 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     if not text:
         return {"text": "Anh/chị muốn thông báo nội dung gì ạ?"}
 
-    plat, chat_id = _speaker_scope(ctx)
-    allowed = vperm.visible_speakers(plat, "", chat_id)
-    if not allowed:
-        return {"text": "Chưa có loa nào được cấp cho khung chat này ạ."}
-    if not target:
-        chosen = allowed[0] if len(allowed) == 1 else None
-        if chosen is None:
-            return {"text": _speaker_menu(allowed)}
-    else:
-        hits = [r for r in vspk.resolve(target)
-                if any(r.get("id") == a.get("id") for a in allowed)]
-        if not hits:
-            return {"text": f"Em không thấy loa «{target}» ạ.\n" + _speaker_menu(allowed)}
-        if len(hits) > 1:
-            return {"text": _speaker_menu(hits)}
-        chosen = hits[0]
-
-    # KHÔNG nhắc thời gian ⇒ đọc NGAY. Chỉ hẹn khi có delay rõ ràng.
+    # KHÔNG nhắc thời gian ⇒ đọc NGAY. Chỉ hẹn khi có delay rõ ràng. Tính TRƯỚC
+    # phần chọn loa vì hai menu bên dưới đều phải mang thời điểm theo.
     delay = 0.0
     try:
         if args.get("delay_seconds") not in (None, ""):
@@ -2810,6 +2853,25 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
             delay = max(0.0, float(args.get("delay_minutes")) * 60)
     except (TypeError, ValueError):
         delay = 0.0
+
+    plat, chat_id = _speaker_scope(ctx)
+    allowed = vperm.visible_speakers(plat, "", chat_id)
+    if not allowed:
+        return {"text": "Chưa có loa nào được cấp cho khung chat này ạ."}
+    if not target:
+        chosen = allowed[0] if len(allowed) == 1 else None
+        if chosen is None:
+            return _ask_chon_loa(text, allowed, delay)     # LIỆT KÊ loa, bấm được
+    else:
+        hits = [r for r in vspk.resolve(target)
+                if any(r.get("id") == a.get("id") for a in allowed)]
+        if not hits:
+            ra = _ask_chon_loa(text, allowed, delay)
+            ra["text"] = f"Em không thấy loa «{target}» ạ.\n" + ra["text"]
+            return ra
+        if len(hits) > 1:
+            return _ask_chon_loa(text, hits, delay)
+        chosen = hits[0]
     volume = None
     vol = args.get("volume")
     # Âm lượng phải do NGƯỜI chọn. `am_luong_da_chon` chỉ được đặt bởi bộ đọc nút
@@ -3690,7 +3752,7 @@ CAPABILITIES: dict[str, Capability] = {
                   "mà chưa rõ → hỏi lại đúng danh sách, không tự chọn.")),
     "announce_on_speaker": Capability(
         name="announce_on_speaker", risk=CHANGE, handler=_h_announce_on_speaker,
-        emoji="🔊", label="Đọc thông báo ra loa (ngay, hẹn phút, hoặc đặt lịch)",
+        emoji="🔊", label="Đọc thông báo ra loa",
         description=(
             "Đọc một câu ra loa. KHÔNG nhắc thời gian ⇒ đọc NGAY. Nói rõ mốc giờ/ngày "
             "hoặc lịch lặp ('8h sáng mai', 'mỗi ngày 6h', 'thứ 2 hàng tuần') ⇒ truyền "
