@@ -804,12 +804,29 @@ def media_retention_hours() -> int:
 
 def public_base_url() -> str:
     """Base URL để loa (Cast/DLNA) kéo file — loa nằm ở LAN nên KHÔNG dùng
-    localhost. Ưu tiên voice.public_base_url, rồi base_url chung."""
+    localhost. Ưu tiên voice.public_base_url, rồi địa chỉ công khai chung.
+
+    Đo thật 02/08: loa im mà bot vẫn báo "[đang đọc …]". Log máy chủ:
+    "Chưa đặt voice.public_base_url — loa trong nhà không tải được file từ
+    localhost". Nhưng địa chỉ công khai ĐÃ có ở hai nơi:
+        ENV CHATGPT2API_BASE_URL   = https://gpt.vhtatn.io.vn
+        telegram_webhook_url       = https://gpt.vhtatn.io.vn
+    Hàm này đọc `config.get().get("base_url")` — DICT THÔ, luôn rỗng, vì biến
+    môi trường chỉ được đọc trong thuộc tính `config.base_url`. Nên nó không
+    thấy gì cả.
+
+    Chuỗi dưới đây khớp với `zalo_bot._public_base()` và `photo_intent`: cùng
+    một địa chỉ công khai thì đọc cùng một chỗ, khỏi phải cấu hình lần thứ tư.
+    """
     v = str(cfg().get("public_base_url") or "").strip()
     if v:
         return v.rstrip("/")
     try:
-        return str(config.get().get("base_url") or "").strip().rstrip("/")
+        # Thuộc tính (không phải dict thô) — nó mới đọc CHATGPT2API_BASE_URL.
+        v = str(config.base_url or "").strip()
+        if v:
+            return v.rstrip("/")
+        return str(config.get().get("telegram_webhook_url") or "").strip().rstrip("/")
     except Exception:
         return ""
 

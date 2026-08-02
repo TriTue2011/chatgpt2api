@@ -228,6 +228,26 @@ def retrieve(token: str, *, max_out: int = 50000) -> Optional[str]:
     return None
 
 
+# Khối menu chọn (`<<<ASK>>>…<<<END>>>`, `JAVIS_ASK [...]`) là GIAO DIỆN cho
+# người dùng, không phải ngữ cảnh model: `ask_choices.extract()` bóc từng dòng
+# thành lựa chọn rồi `format_numbered()` gửi ra kênh. Nén nó là phá menu.
+#
+# Đo thật 02/08 trên máy chủ, cả tạo ảnh và tạo video:
+#     🎨 … muốn vẽ "Candid documentary…" bằng model nào ạ?
+#     [tool output đã nén ~5343 ký tự; bản đầy đủ: expand_tool_result token=…]
+#     1. Mặc định (nhánh đang cài)
+#     2. … [đã bỏ ~5 dòng] …
+#     3. flow/banana-pro
+# Mất 5 model, còn lộ cả dấu debug ra người dùng. Menu vượt trần 4000 ký tự vì
+# mỗi lựa chọn mang theo nguyên prompt (~900 ký tự × 6 model).
+_MENU_RE = re.compile(r"<<<ASK>>>|JAVIS_ASK", re.I)
+
+
+def co_menu_chon(text: str) -> bool:
+    """True khi text mang khối menu chọn — tuyệt đối không được nén."""
+    return bool(_MENU_RE.search(text or ""))
+
+
 def compress(
     text: str,
     *,
@@ -237,6 +257,8 @@ def compress(
     if not is_enabled():
         return text or ""
     raw = text or ""
+    if co_menu_chon(raw):
+        return raw
     if len(raw.encode("utf-8", errors="replace")) < min_bytes():
         return raw
     if len(raw) <= max_chars():

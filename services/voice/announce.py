@@ -73,8 +73,18 @@ def schedule(speaker_query: str, text: str, *, delay_seconds: float,
     rec = _resolve_one(speaker_query)     # ném lỗi sớm nếu loa chưa rõ
     delay = max(0.0, float(delay_seconds))
     jid = uuid.uuid4().hex[:10]
-    timer = threading.Timer(delay, _run, args=(jid,))
-    timer.daemon = True
+    # PHÁT NGAY thì chạy ĐỒNG BỘ để lỗi tới được người dùng.
+    #
+    # Đo thật 02/08: chủ máy bảo "phát ngay", bot trả "[đang đọc … ra loa phòng
+    # khách]" mà loa im. Log máy chủ có nguyên nhân:
+    #   announce: phát lỗi ra loa phòng khách: Chưa đặt voice.public_base_url —
+    #   loa trong nhà không tải được file từ localhost.
+    # Timer(0) chạy trong thread nền nên `schedule()` trả về TRƯỚC khi biết kết
+    # quả; lỗi chỉ vào logger.warning, người dùng nhận một câu báo thành công
+    # sai sự thật. Hẹn giờ (delay > 0) thì vẫn phải chạy nền — không chặn lượt.
+    timer = None if delay <= 0 else threading.Timer(delay, _run, args=(jid,))
+    if timer is not None:
+        timer.daemon = True
     with _lock:
         _jobs[jid] = {
             "id": jid,
@@ -87,6 +97,13 @@ def schedule(speaker_query: str, text: str, *, delay_seconds: float,
             "timer": timer,
         }
         _prune()
+    if timer is None:
+        _run(jid)
+        with _lock:
+            trang_thai = str((_jobs.get(jid) or {}).get("status") or "")
+        if trang_thai.startswith("error:"):
+            raise RuntimeError(trang_thai[len("error:"):].strip())
+        return public(jid) or {}
     timer.start()
     return public(jid) or {}
 

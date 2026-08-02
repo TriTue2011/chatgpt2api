@@ -266,6 +266,48 @@ def _doc_nut_menu_media(text: str) -> tuple[str, dict] | None:
     return kind, args
 
 
+# Nút bấm của menu chọn âm lượng loa (`capabilities._ask_am_luong_loa` sinh ra):
+#   đọc ra loa «loa phòng khách» âm lượng 60% sau 2 phút: <nội dung>
+# Đọc lại được thì cả loa, âm lượng, nội dung và thời điểm đều đi đúng vào
+# `announce_on_speaker` — không phụ thuộc model định tuyến đoán lại, vốn là chỗ
+# lượt chat 02/08 bị nhảy qua nhảy lại giữa hai capability loa và mất mất cả
+# «loa phòng khách» lẫn «60%».
+_NUT_LOA = re.compile(
+    r"^\s*đọc\s+ra\s+loa\s+«(?P<loa>[^»]+)»\s+âm\s+lượng\s+"
+    r"(?P<vol>\d{1,3}\s*%|giữ\s+nguyên)"
+    r"(?:\s+sau\s+(?P<phut>\d+(?:[.,]\d+)?)\s*phút)?"
+    r"\s*:\s*(?P<noi_dung>.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _doc_nut_menu_loa(text: str) -> dict | None:
+    """args cho `announce_on_speaker` nếu câu là nội dung nút bấm menu âm lượng."""
+    t = (text or "").strip()
+    if not t or "âm lượng" not in t.lower():
+        return None
+    m = _NUT_LOA.match(t)
+    if not m:
+        return None
+    args: dict[str, Any] = {"text": m.group("noi_dung").strip(),
+                            "speaker": m.group("loa").strip()}
+    vol = re.sub(r"\s+", "", m.group("vol")).lower()
+    if vol.endswith("%"):
+        try:
+            args["volume"] = int(vol[:-1])
+        except ValueError:
+            args["giu_am_luong"] = True
+    else:
+        args["giu_am_luong"] = True     # "giữ nguyên" — đừng hỏi lại âm lượng
+    phut = m.groupdict().get("phut")
+    if phut:
+        try:
+            args["delay_minutes"] = float(phut.replace(",", "."))
+        except ValueError:
+            pass
+    return args
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -1289,6 +1331,51 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _persist_history(user_id, hist)
                 _journal(str(out_m.get("text") or ""), status="tao_media_fastpath")
                 return out_m
+
+    # 1.48) Nút bấm menu ÂM LƯỢNG LOA → gọi thẳng `announce_on_speaker`.
+    #
+    # Nội dung nút do chính code sinh nên đọc lại chắc chắn. Nhờ vậy loa, âm
+    # lượng, nội dung và thời điểm đi trọn vào tool — thay vì nhờ model định
+    # tuyến đoán lại, vốn là chỗ lượt 02/08 nhảy qua nhảy lại giữa hai capability
+    # loa rồi mất cả «loa phòng khách» lẫn «60%».
+    #
+    # Đây là hành động CHANGE nên VẪN qua cổng duyệt như đường thường (mẫu theo
+    # fast-path HA ngay dưới) — đường tắt rút ngắn đường đi, không mở thêm quyền.
+    _nut_loa = _doc_nut_menu_loa(user_text)
+    if _nut_loa and (allow is None or "tts_speaker" in allow):
+        if approval_gate.is_blocked("announce_on_speaker", risk="change"):
+            return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
+        if approval_gate.needs_approval(user_id, "announce_on_speaker", risk="change") \
+                and not auto_approve:
+            approval_gate.set_pending(user_id, "announce_on_speaker", _nut_loa, user_text)
+            q = approval_gate.format_proposal(
+                "announce_on_speaker", _nut_loa,
+                description="Đọc thông báo ra loa",
+                label="đọc ra loa",
+            )
+            out_q = _finalize(user_id, {"text": q})
+            hist.append({"role": "assistant", "content": out_q.get("text") or q})
+            _persist_history(user_id, hist)
+            return out_q
+        try:
+            _cap_loa = caps.get("announce_on_speaker")
+            _kq_loa = (_cap_loa.handler(dict(_nut_loa),
+                                        {"user_id": user_id,
+                                         "user_message": user_text,
+                                         "is_admin": is_admin})
+                       if _cap_loa else None)
+        except Exception as exc:
+            logger.warning({"event": "agent_tat_loa_loi", "error": str(exc)[:150]})
+            _kq_loa = None
+        if _kq_loa and str(_kq_loa.get("text") or "").strip():
+            logger.info({"event": "agent_tat_loa", "loa": _nut_loa.get("speaker"),
+                         "volume": _nut_loa.get("volume"),
+                         "delay_minutes": _nut_loa.get("delay_minutes") or 0})
+            out_l = _finalize(user_id, _kq_loa)
+            hist.append({"role": "assistant", "content": out_l.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_l.get("text") or ""), status="loa_fastpath")
+            return out_l
 
     # 1.5) HA fast-path (bật/tắt RIÊNG từng bot/tài khoản qua `ha_fastpath`):
     # lệnh điều khiển / câu hỏi nhà RÕ RÀNG → xử lý CỤC BỘ ngay, KHÔNG vòng qua

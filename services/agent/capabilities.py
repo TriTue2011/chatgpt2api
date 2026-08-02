@@ -2673,6 +2673,36 @@ def _h_play_music_on_speaker(args: dict, ctx: dict) -> dict:
     return {"text": f"[đang phát trên {chosen.get('name')}: {title}]"}
 
 
+_LOA_MUC_AM = (30, 50, 70, 100)
+
+
+def _ask_am_luong_loa(text: str, speaker_name: str, delay_seconds: float) -> dict:
+    """Menu chọn âm lượng trước khi đọc ra loa.
+
+    Yêu cầu 02/08: "khi phát ra loa cần phải đầy đủ thông tin loa nào, âm lượng
+    bao nhiêu, nội dung là gì". Loa và nội dung đã có ở bước trước; đây là mảnh
+    còn thiếu duy nhất.
+
+    Nội dung gộp về MỘT dòng — khối <<<ASK>>> được bóc theo từng dòng, nên thông
+    báo nhiều dòng sẽ vỡ menu thành các mảnh nội dung (đúng lỗi đã gặp ở menu
+    chọn model ảnh/video).
+    """
+    text = _mot_dong(text)
+    short = text if len(text) <= 40 else text[:39] + "…"
+    dl = ""
+    if delay_seconds and delay_seconds > 0:
+        phut = delay_seconds / 60
+        dl = f" sau {phut:g} phút"
+    lines = [f'🔊 Đọc “{short}” ra {speaker_name}{dl} — âm lượng bao nhiêu ạ?',
+             "<<<ASK>>>"]
+    for v in _LOA_MUC_AM:
+        lines.append(f"{v}% | đọc ra loa «{speaker_name}» âm lượng {v}%{dl}: {text}")
+    lines.append(f"Giữ nguyên âm lượng loa | đọc ra loa «{speaker_name}» "
+                 f"âm lượng giữ nguyên{dl}: {text}")
+    lines.append("<<<END>>>")
+    return {"text": "\n".join(lines), "deliver_now": True}
+
+
 def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     """Đọc thông báo ra loa NGAY hoặc HẸN GIỜ (sau N phút), kèm âm lượng %.
 
@@ -2703,6 +2733,7 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
             return {"text": _speaker_menu(hits)}
         chosen = hits[0]
 
+    # KHÔNG nhắc thời gian ⇒ đọc NGAY. Chỉ hẹn khi có delay rõ ràng.
     delay = 0.0
     try:
         if args.get("delay_seconds") not in (None, ""):
@@ -2713,6 +2744,8 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
         delay = 0.0
     volume = None
     vol = args.get("volume")
+    if vol in (None, "") and not args.get("giu_am_luong"):
+        return _ask_am_luong_loa(text, str(chosen.get("name") or ""), delay)
     if vol not in (None, ""):
         try:
             volume = max(0.0, min(100.0, float(vol))) / 100.0
@@ -2721,7 +2754,10 @@ def _h_announce_on_speaker(args: dict, ctx: dict) -> dict:
     try:
         vann.schedule(str(chosen.get("id")), text, delay_seconds=delay, volume=volume)
     except Exception as exc:
-        return {"text": f"Em hẹn thông báo không được ạ 😥 ({str(exc)[:120]})."}
+        # Phát ngay giờ chạy ĐỒNG BỘ nên lỗi thật tới được đây (trước kia nó
+        # chìm trong thread nền, người dùng nhận "[đang đọc …]" sai sự thật).
+        viec = "hẹn thông báo" if delay > 0 else "phát ra loa"
+        return {"text": f"Em {viec} không được ạ 😥: {str(exc)[:200]}"}
     if delay > 0:
         mins, secs = int(delay // 60), int(delay % 60)
         when = (f"{mins} phút {secs} giây" if mins and secs else
@@ -3561,11 +3597,12 @@ CAPABILITIES: dict[str, Capability] = {
                   "mà chưa rõ → hỏi lại đúng danh sách, không tự chọn.")),
     "announce_on_speaker": Capability(
         name="announce_on_speaker", risk=CHANGE, handler=_h_announce_on_speaker,
-        emoji="⏰", label="Hẹn giờ / đọc thông báo ra loa",
+        emoji="🔊", label="Đọc thông báo ra loa (ngay, hoặc hẹn giờ)",
         description=(
-            "Đọc một câu ra loa NGAY hoặc HẸN GIỜ sau N phút. Dùng khi 'phát thông "
-            "báo … sau 1 phút ra loa phòng khách', 'nhắc … bằng loa lúc …', kèm âm "
-            "lượng %. Đọc bằng giọng TTS ra loa Cast/DLNA/qua Home Assistant."
+            "Đọc một câu ra loa. KHÔNG nhắc thời gian ⇒ đọc NGAY (delay_minutes=0) — "
+            "chỉ hẹn giờ khi người dùng nói rõ 'sau N phút' / 'lúc …'. Dùng khi 'phát "
+            "thông báo ra loa …', 'nhắc … bằng loa', kèm âm lượng %. Đọc bằng giọng "
+            "TTS ra loa Cast/DLNA/qua Home Assistant."
         ),
         parameters={"type": "object", "properties": {
             "text": {"type": "string", "description": "Nội dung cần đọc ra loa"},
