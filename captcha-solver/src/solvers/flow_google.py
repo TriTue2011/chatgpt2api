@@ -1562,13 +1562,22 @@ async def flow_generate_video(
             sang tên Veo/Omni.
             """
             return bool(await page.evaluate("""() => {
-              const bs = Array.from(document.querySelectorAll('button'));
-              const send = bs.find(b => /arrow_forward/i.test(b.innerText || ''));
-              if (!send) return false;
-              let khung = send;
-              for (let i = 0; i < 5 && khung.parentElement; i++) khung = khung.parentElement;
-              // CHỈ trong khung nhập: thư viện cũng có nhãn model của tác phẩm cũ.
-              const chip = Array.from(khung.querySelectorAll('button[aria-haspopup=menu]'))[0];
+              // Tìm chip cài đặt TRỰC TIẾP, không đi qua nút gửi.
+              //
+              // Bản cũ neo vào nút gửi (arrow_forward) rồi mới lần ra khung nhập.
+              // Trang nào không có nút gửi là mù hoàn toàn: hàm trả false, vòng
+              // lặp kết luận "vẫn ở chế độ tạo ẢNH" rồi ném lỗi — dù chip ngay
+              // trên trang đã ghi "Video · 8s". Đo thật 02/08 (profile
+              // google-mitbap0610): dump DOM thấy 0 nút chứa arrow_forward, ô nhập
+              // textarea offsetParent=null, mà chip 'Video · 8s|crop_16_9|x1' thì
+              // hiện rõ. Cùng lúc profile google-benbap2011 CÓ nút gửi — nên đây
+              // là trạng thái theo từng trang, không phải Flow đổi giao diện.
+              //
+              // Dấu hiệu nhận chip: có 'crop_' (icon tỷ lệ khung) — thứ chỉ chip
+              // cài đặt mới có. Nhãn model của tác phẩm cũ trong thư viện không
+              // kèm 'crop_', nên không lẫn (đúng cái bẫy chú thích 31/07 nói).
+              const chip = Array.from(document.querySelectorAll('button[aria-haspopup=menu]'))
+                .find(b => /crop_/.test(b.innerText || ''));
               if (!chip) return false;
               const s = (chip.innerText || '').trim();
               // DOM thật 31/07 — chip đổi hẳn nội dung theo chế độ:
@@ -1645,6 +1654,12 @@ async def flow_generate_video(
           const vt = ds.find(b => {
             const s = (b.innerText || b.textContent || '').trim();
             if (s.length > 24) return false;
+            // LOẠI nút điều hướng thư viện: 'videocam|Xem video', 'image|Xem hình
+            // ảnh', 'delete|Xem thùng rác'… Chúng khớp /(^|\\s)video$/ nên bản cũ
+            // bấm vào đấy, chỉ đổi cách hiển thị thư viện chứ không đổi chế độ.
+            // Đo thật 02/08: log ghi "đã bấm chuột thật vào tab Video" ĐỦ 3 lần
+            // rồi vẫn báo không chuyển được — vì cả 3 lần bấm nhầm 'Xem video'.
+            if (/(^|[\\s\\n|])Xem\\s/i.test(s)) return false;
             return /(^|[\\s\\n])video$/i.test(s);
           });
           if (!vt) return null;
@@ -1702,11 +1717,49 @@ async def flow_generate_video(
               }).filter(Boolean);
               return [...new Set(ds)].slice(0, 30);
             }""")
+            # Tả ĐÚNG thứ đọc được, đừng kết luận "vẫn ở chế độ tạo ẢNH".
+            #
+            # Câu cũ khẳng định chế độ ảnh trong khi thực tế chip đã là "Video · 8s"
+            # và vấn đề là KHÔNG CÓ khung nhập. Chủ máy đọc thông báo đó rồi hỏi
+            # "sửa flow kiểu gì lại lỗi rồi" — thông báo đẩy người đọc đi sai hướng
+            # đắt hơn nhiều so với việc nó dài thêm một dòng.
+            _chip = await page.evaluate("""() => {
+              const c = Array.from(document.querySelectorAll('button[aria-haspopup=menu]'))
+                .find(b => /crop_/.test(b.innerText || ''));
+              return c ? (c.innerText || '').trim().replace(/\\n/g, '|') : "";
+            }""")
+            _co_o_nhap = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('textarea, [contenteditable=true]'))
+                     .some(e => !!e.offsetParent)""")
+            _ly_do = (
+                "khung nhập không có trên trang (không thấy nút gửi, ô nhập ẩn) — "
+                "dự án này đang ở chế độ xem thư viện, không phải màn soạn"
+                if not _co_o_nhap else
+                f"chip cài đặt đọc được là {_chip!r}, không khớp chế độ video")
             raise RuntimeError(
-                "Không chuyển được sang tab Video của Flow — giao diện vẫn ở chế độ "
-                f"tạo ẢNH nên không thể tạo video. Các nút thấy được: {_thay} "
-                f"|| DOM quanh khung nhập: {_quanh}")
+                f"Không vào được màn soạn video của Flow: {_ly_do}. "
+                f"chip={_chip!r} · có_ô_nhập={_co_o_nhap}. "
+                f"Các nút thấy được: {_thay} || DOM quanh khung nhập: {_quanh}")
         logger.info("flow_video: đã chuyển sang tab Video (đã kiểm chứng)")
+
+        # Đúng chế độ video rồi nhưng KHÔNG có khung soạn thì vẫn vô ích — và tệ
+        # hơn là nó thất bại RẤT CHẬM: `_type_prompt` nuốt lỗi ("type prompt
+        # error") rồi vòng bấm "Tạo" quay tới hết ngân sách (≥300s) mới bỏ cuộc.
+        # Chặn ngay tại đây, và diễn đạt lỗi chứa "không vào được màn soạn" +
+        # "chưa bấm Tạo" để api/veo_video.py nhận ra là lỗi TRƯỚC khi tiêu tín dụng
+        # và đổi sang tài khoản Flow khác thay vì trả 502 cho người dùng.
+        _khung = await page.evaluate("""() => ({
+          oNhap: Array.from(document.querySelectorAll('textarea, [contenteditable=true]'))
+                   .some(e => !!e.offsetParent),
+          nutGui: Array.from(document.querySelectorAll('button'))
+                   .some(b => /arrow_forward/i.test(b.innerText || '')),
+        })""")
+        if not (_khung.get("oNhap") and _khung.get("nutGui")):
+            raise RuntimeError(
+                "Không vào được màn soạn video của Flow: dự án này không có khung "
+                f"soạn (ô nhập hiện={_khung.get('oNhap')}, "
+                f"nút gửi={_khung.get('nutGui')}). Chưa bấm Tạo, chưa tiêu tín dụng "
+                "— cần thử tài khoản Flow khác hoặc mở lại dự án trên noVNC.")
         # Ghi lại các nút CÓ THẬT trong bảng ở chế độ video. Chủ máy hỏi "tab video
         # có chọn thời lượng không" — cứ ghi ra rồi đọc log, đừng đoán. Nếu không có
         # nút 4s/8s/10s thì lời gọi _set_dropdown(duration) bên dưới là vô nghĩa.

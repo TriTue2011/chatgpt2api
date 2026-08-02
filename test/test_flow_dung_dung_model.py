@@ -90,6 +90,100 @@ class TestFlowDatDungModel(unittest.TestCase):
         self.assertLess(i, self.code.index("flow_video_submit"))
 
 
+class TestVaoDuocManSoanVideo(unittest.TestCase):
+    """Nhận chế độ video KHÔNG được phụ thuộc nút gửi, và không bấm nhầm thư viện.
+
+    Đo thật 02/08 trên profile ``google-mitbap0610`` (tài khoản Flow "Backup",
+    đang ở index 0 nên mọi lượt video đều rơi vào nó):
+
+        chip                   = 'Video · 8s|crop_16_9|x1'   ← ĐANG là chế độ video
+        nút gửi (arrow_forward) = KHÔNG có
+        ô nhập textarea         = offsetParent null (ẩn)
+        nút khớp bộ tìm tab cũ  = ['videocam|Xem video']     ← nút LỌC THƯ VIỆN
+
+    Bản cũ neo mọi thứ vào nút gửi rồi mới lần ra khung nhập, nên trang không có
+    nút gửi là mù hoàn toàn: hàm kiểm chế độ trả False, vòng lặp bấm 'Xem video'
+    ba lần (log ghi "đã bấm chuột thật vào tab Video" đủ 3 lần) rồi ném lỗi
+    "giao diện vẫn ở chế độ tạo ẢNH" — sai cả nguyên nhân lẫn việc cần làm.
+
+    Cùng lúc đó profile ``google-benbap2011`` CÓ nút gửi và chip đọc
+    '🍌 Nano Banana 2|crop_16_9|x2', tức đây là trạng thái theo từng trang chứ
+    không phải Flow đổi giao diện.
+    """
+
+    def setUp(self):
+        self.code = _code(GOC / "captcha-solver" / "src" / "solvers" / "flow_google.py")
+        self.ham = _khuc(self.code, "async def _dang_o_tab_video", "async def _bam_chuot_that")
+
+    def test_nhan_che_do_qua_chip_khong_qua_nut_gui(self):
+        self.assertIn("button[aria-haspopup=menu]", self.ham)
+        self.assertIn("/crop_/", self.ham)
+        # Không còn CỔNG "không có nút gửi thì bỏ ngay". Soi đúng câu lệnh đó
+        # chứ không soi chữ 'arrow_forward' — chú thích của bản vá có nhắc lại
+        # hành vi cũ để giải thích, và `_code()` chỉ bỏ chú thích Python (#),
+        # không bỏ chú thích JS (//).
+        self.assertNotIn("if (!send) return false", self.ham)
+        self.assertNotIn("bs.find(b => /arrow_forward/i.test", self.ham)
+
+    def test_bo_tim_tab_loai_nut_thu_vien_xem(self):
+        khuc = _khuc(self.code, "_JS_TAB = ", "async def _mo_bang_cai_dat")
+        self.assertIn("Xem", khuc)
+        self.assertIn("return false", khuc)
+
+    def test_chan_som_khi_khong_co_khung_soan(self):
+        """Có đúng chế độ mà thiếu khung soạn thì phải dừng NGAY.
+
+        Không dừng thì `_type_prompt` nuốt lỗi rồi vòng bấm 'Tạo' quay hết ngân
+        sách (≥300s) — mỗi lượt treo 5 phút trước khi báo lỗi.
+        """
+        i = self.code.index("đã chuyển sang tab Video (đã kiểm chứng)")
+        khuc = self.code[i:i + 1400]
+        self.assertIn("oNhap", khuc)
+        self.assertIn("nutGui", khuc)
+        self.assertIn("Không vào được màn soạn", khuc)
+        # Phải nằm TRƯỚC vòng bấm Tạo.
+        self.assertLess(i, self.code.index("flow_video_submit"))
+
+    def test_loi_mang_dau_hieu_de_tang_tren_doi_tai_khoan(self):
+        """Chuỗi lỗi phải khớp bộ nhận dạng ở api/veo_video.py."""
+        api = _code(GOC / "api" / "veo_video.py")
+        dau_hieu = _khuc(api, "_LOI_TRUOC_KHI_BAM_TAO = (", ")")
+        self.assertIn("không vào được màn soạn", dau_hieu)
+        self.assertIn("chưa bấm tạo", dau_hieu)
+        # Cả hai chuỗi đó phải có thật trong lỗi mà solver ném ra.
+        self.assertIn("Không vào được màn soạn", self.code)
+        self.assertIn("Chưa bấm Tạo", self.code)
+
+
+class TestVideoXoayTaiKhoanKhiLoi(unittest.TestCase):
+    """Lượt video thất bại phải đẩy tài khoản xuống và thử tài khoản khác.
+
+    Đo thật 02/08: `_next_account()` chọn theo ưu tiên CỨNG (index 0 trước), mà
+    nhánh video thất bại là raise 502 luôn — không đẩy tài khoản hỏng xuống,
+    không thử cái khác. Nên "Backup" hỏng ở index 0 làm MỌI lượt tạo video hỏng
+    mãi và không tự khỏi, dù các tài khoản còn lại vẫn tạo được bình thường.
+    Nhánh tạo ẢNH đã có `_reorder_flow_account` từ trước; nhánh video thì chưa.
+    """
+
+    def setUp(self):
+        self.code = _code(GOC / "api" / "veo_video.py")
+
+    def test_co_vong_thu_nhieu_tai_khoan(self):
+        self.assertIn("_reorder_flow_account", self.code)
+        self.assertIn("_next_account(exclude=_da_thu)", self.code)
+
+    def test_thanh_cong_thi_dua_len_dau_that_bai_thi_day_xuong(self):
+        self.assertIn("_reorder_flow_account(acc, to_front=True)", self.code)
+        self.assertIn("_reorder_flow_account(acc, to_front=False)", self.code)
+
+    def test_loi_co_the_sau_khi_bam_tao_thi_KHONG_thu_lai(self):
+        """Tín dụng đã trừ thì chạy lại là trừ lần hai."""
+        i = self.code.index("_co_the_thu_tai_khoan_khac(_loi_cuoi)")
+        khuc = self.code[i:i + 500]
+        self.assertIn("break", khuc)
+        self.assertIn("flow_video_khong_thu_lai", khuc)
+
+
 class TestDeactivatedNamYen(unittest.TestCase):
     def test_khong_ha_deactivated_ve_error(self):
         code = _code(GOC / "services" / "account_service.py")

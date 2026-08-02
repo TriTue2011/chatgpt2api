@@ -178,22 +178,53 @@ async def handle_video_generation(
                 "từ ảnh đầu sang ảnh cuối. Gửi kèm 'image', hoặc bỏ 'last_frame' "
                 "để tạo video chỉ từ mô tả."})
         import httpx
-        from services.image_providers.flow_google import _pool_config, _next_account
+        from services.image_providers.flow_google import (
+            _pool_config, _next_account, _reorder_flow_account, _account_key,
+        )
         flow_cfg = _pool_config()
         from services.captcha import captcha_base
         solver_url = captcha_base(flow_cfg.get("captcha_solver_url"))
-        
+
         acc = _next_account()
         if not acc:
             raise HTTPException(status_code=429, detail={"error": "All Flow accounts are exhausted/in cooldown."})
-            
+
+        # Lỗi XẢY RA TRƯỚC KHI BẤM "Tạo" ⇒ chưa tiêu tín dụng ⇒ ĐỔI TÀI KHOẢN rồi
+        # thử lại là an toàn. Lỗi sau khi bấm thì KHÔNG được thử lại: tín dụng đã
+        # trừ, chạy lại là trừ lần hai.
+        #
+        # Vì sao cần: `_next_account()` chọn theo ưu tiên CỨNG (index 0 trước), mà
+        # nhánh này trước đây thất bại là raise 502 luôn — không đẩy tài khoản hỏng
+        # xuống, không thử tài khoản khác. Nên một tài khoản hỏng ở index 0 làm
+        # MỌI lượt tạo video hỏng mãi, không tự khỏi. Đo thật 02/08:
+        # google-mitbap0610 (index 0) không có khung nhập trên trang dự án →
+        # 100% lượt video trả 502, trong khi google-benbap2011 vẫn tạo được bình
+        # thường. Nhánh tạo ẢNH đã có `_reorder_flow_account` từ trước; nhánh video
+        # thì chưa bao giờ có.
+        _LOI_TRUOC_KHI_BAM_TAO = (
+            "không vào được màn soạn",      # không có khung nhập / chip sai chế độ
+            "không chuyển được sang tab",    # thông báo bản cũ, còn trong log cũ
+            "chưa bấm tạo",                  # model_mismatch / model_unverified
+            "account busy",                  # hồ sơ trình duyệt đang bị lượt khác giữ
+            "signin/rejected",               # Google chặn trình duyệt tự động
+        )
+
+        def _co_the_thu_tai_khoan_khac(loi: str) -> bool:
+            low = (loi or "").lower()
+            return any(k in low for k in _LOI_TRUOC_KHI_BAM_TAO)
+
         # Hạn chờ của ta phải LỚN HƠN ngân sách của solver, không thì ta luôn
         # bỏ cuộc trước và không bao giờ đọc được kết quả. Đo thật 31/07:
         # cả hai đều 300s ⇒ flow/veo-3.1-lite chết ở đúng 300,0s với thông báo
         # rỗng, còn solver vẫn đang giữ hồ sơ trình duyệt nên 3 model sau nhận
         # "Account Busy". `FlowVideoReq.timeout` mặc định 300, trần 600.
         _NGAN_SACH_SOLVER_S = 300
+        _da_thu: set[str] = set()
+        _loi_cuoi = ""
         async with httpx.AsyncClient(timeout=_NGAN_SACH_SOLVER_S + 60) as client:
+          # Tối đa 3 tài khoản: đủ để đi qua một cái hỏng mà không kéo dài vô hạn
+          # (mỗi lượt tới 300s). Hết lượt hoặc lỗi không-thể-thử-lại thì raise.
+          for _lan_tk in range(3):
             try:
                 resp = await client.post(
                     f"{solver_url}/v1/google/flow/generate-video",
@@ -235,6 +266,8 @@ async def handle_video_generation(
                 except Exception:
                     pass
 
+                # Thành công → đưa tài khoản này lên đầu hàng cho lượt sau.
+                _reorder_flow_account(acc, to_front=True)
                 return _luu_thu_vien(data)
             except Exception as exc:
                 # KHÔNG gán `logger` ở đây. Gán cục bộ giữa hàm biến `logger`
@@ -243,8 +276,34 @@ async def handle_video_generation(
                 # ngay trong lúc đang xử lý lỗi ⇒ người dùng nhận HTTP 500
                 # "Internal Server Error" trắng thay vì nguyên nhân thật.
                 # Đo thật 31/07: agnes/agnes-video-v2.0 trả 500 vì đúng lỗi này.
-                logger.error({"event": "flow_video_error", "error": str(exc)})
-                raise HTTPException(status_code=502, detail={"error": _loi_solver(exc, "Flow Video")}) from exc
+                _loi_cuoi = _loi_solver(exc, "Flow Video")
+                logger.error({
+                    "event": "flow_video_error",
+                    "profile": acc.get("profile"),
+                    "label": acc.get("label"),
+                    "try": _lan_tk + 1,
+                    "error": str(exc)[:400],
+                })
+                # Tài khoản này vừa hỏng → đẩy xuống cuối để lượt sau không lấy nó
+                # trước nữa. Đây là thứ nhánh video thiếu, khiến một tài khoản hỏng
+                # ở index 0 làm mọi lượt video hỏng mãi.
+                _reorder_flow_account(acc, to_front=False)
+                _da_thu.add(_account_key(acc))
+                if not _co_the_thu_tai_khoan_khac(_loi_cuoi):
+                    # Có thể đã bấm "Tạo" và tiêu tín dụng → KHÔNG chạy lại.
+                    logger.info({"event": "flow_video_khong_thu_lai",
+                                 "reason": "loi co the xay ra SAU khi bam Tao",
+                                 "error": _loi_cuoi[:200]})
+                    break
+                ke = _next_account(exclude=_da_thu)
+                if not ke:
+                    logger.info({"event": "flow_video_het_tai_khoan",
+                                 "da_thu": len(_da_thu)})
+                    break
+                logger.info({"event": "flow_video_doi_tai_khoan",
+                             "tu": acc.get("label"), "sang": ke.get("label")})
+                acc = ke
+          raise HTTPException(status_code=502, detail={"error": _loi_cuoi or "Flow Video failed"})
 
     # Get credentials from gemini_free config
     providers_cfg = config.data.get("providers") or {}
