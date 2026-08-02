@@ -245,5 +245,43 @@ class DuocNoiVaoBonChoTests(unittest.TestCase):
             self.assertNotIn(xau, src, xau)
 
 
+class SlugKhongRungChuDTests(unittest.TestCase):
+    """Đ/đ phải thành d, không được BỐC HƠI.
+
+    Đo thật 02/08 trên máy chủ: skill chủ máy dạy tên "Định dạng bản tin hàng ngày"
+    nằm ở thư mục `inh-dang-ban-tin-hang-ngay` — rụng chữ đầu.
+
+    Nguyên nhân: NFKD tách được dấu của a/e/o/u… nhưng Đ là một chữ RIÊNG trong
+    bảng chữ cái, không phải D có dấu, nên nó không tách ra gì và
+    `encode("ascii","ignore")` xoá mất luôn. Trong 10 chỗ dùng
+    `unicodedata.normalize` của dự án, ĐÂY là chỗ duy nhất chuyển sang ASCII kiểu
+    đó — các chỗ khác chỉ lọc dấu nên vẫn giữ nguyên chữ Đ.
+    """
+
+    def setUp(self):
+        import importlib
+        self.sk = importlib.import_module("services.agent.skills")
+
+    def test_D_hoa_va_thuong_deu_thanh_d(self):
+        self.assertEqual(self.sk._slugify("Định dạng bản tin hàng ngày"),
+                         "dinh-dang-ban-tin-hang-ngay")
+        self.assertEqual(self.sk._slugify("Điều khiển nhà"), "dieu-khien-nha")
+        self.assertEqual(self.sk._slugify("Đón khách"), "don-khach")
+        self.assertEqual(self.sk._slugify("đèn phòng khách"), "den-phong-khach")
+
+    def test_van_bo_dau_cac_chu_khac_nhu_cu(self):
+        self.assertEqual(self.sk._slugify("Tưới cây buổi sáng"),
+                         "tuoi-cay-buoi-sang")
+        self.assertEqual(self.sk._slugify("Nhắc học bài"), "nhac-hoc-bai")
+
+    def test_slug_sinh_ra_luon_hop_le(self):
+        for x in ("Định dạng bản tin", "Đ", "###", "", "  ", "Đ Đ Đ"):
+            self.assertTrue(self.sk.valid_slug(self.sk._slugify(x)), repr(x))
+
+    def test_khong_rong_va_khong_qua_dai(self):
+        self.assertEqual(self.sk._slugify(""), "skill")
+        self.assertLessEqual(len(self.sk._slugify("Đ" * 200)), 64)
+
+
 if __name__ == "__main__":
     unittest.main()

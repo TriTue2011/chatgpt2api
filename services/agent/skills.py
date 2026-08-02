@@ -278,8 +278,21 @@ def router_block() -> str:
 
 
 def _slugify(name: str) -> str:
-    """Tên tiếng Việt → slug ascii hợp lệ (bỏ dấu, ký tự lạ → '-')."""
-    s = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode()
+    """Tên tiếng Việt → slug ascii hợp lệ (bỏ dấu, ký tự lạ → '-').
+
+    Đ/đ phải đổi tay TRƯỚC khi bỏ dấu. NFKD tách được dấu của a/e/o/u… nhưng Đ là
+    một chữ RIÊNG trong bảng chữ cái, không phải D có dấu, nên nó không tách ra gì
+    và `encode("ascii","ignore")` XOÁ MẤT LUÔN.
+
+    Đo thật 02/08 trên máy chủ: skill chủ máy dạy tên "Định dạng bản tin hàng ngày"
+    nằm ở thư mục `inh-dang-ban-tin-hang-ngay` — rụng chữ đầu. Tương tự "Điều
+    khiển nhà" → `ieu-khien-nha`, "Đón khách" → `on-khach`.
+
+    Cùng cách xử lý với `voice/speakers.py:_fold`, khác ở chỗ nó chỉ đổi `đ` chữ
+    thường (vì đã hạ chữ trước); ở đây hạ chữ SAU nên phải đổi cả hai dạng.
+    """
+    tho = str(name or "").replace("Đ", "D").replace("đ", "d")
+    s = unicodedata.normalize("NFKD", tho).encode("ascii", "ignore").decode()
     s = re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()
     return (s or "skill")[:64]
 
