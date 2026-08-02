@@ -174,3 +174,52 @@ class TestHaiDuongDungChung:
         """Ở pdf_to_word, đầu ra lặp vòng còn được CACHE 7 ngày rồi nạp RAG."""
         src = (_ROOT / "services" / "pdf_to_word.py").read_text(encoding="utf-8")
         assert "_ocr_rules.looks_degenerate(" in src
+
+class TestThanhPhanTrangDotsOcr:
+    """Ba loại thành phần trang mà bộ quy tắc từng bỏ sót.
+
+    Lấy từ bộ 11 loại của dots.ocr (Caption, Footnote, Page-header, Page-footer…).
+    Bộ quy tắc cũ đã nói về bảng, hình, công thức, thứ tự đọc — nhưng KHÔNG nói gì
+    về đầu/chân trang, chú thích cuối trang và chú thích hình, nên model cứ chép
+    lẫn chúng vào thân bài.
+
+    Vì sao đáng khoá: tài liệu dài là chỗ dùng chính (sgk_taphuan, deep_tutor,
+    teacher_assess). Một quyển 40 trang có đầu trang chạy lặp 40 lần cộng 40 số
+    trang — 80 mảnh rác trùng nhau đổ vào RAG, đẩy nội dung thật xuống dưới khi
+    tìm kiếm. Chú thích cuối trang nhồi vào GIỮA câu thì làm hỏng chính đoạn văn
+    nó đang giải thích.
+    """
+
+    def test_bo_dau_chan_trang_chay_lap(self):
+        r = R.rules()
+        assert "Đầu trang / chân trang CHẠY LẶP" in r
+        assert "BỎ, không chép vào thân bài" in r
+
+    def test_van_giu_so_trang_khi_no_la_noi_dung_that(self):
+        """Trang mục lục thì số trang LÀ dữ liệu — bỏ hết là mất mục lục."""
+        assert "trang mục lục thì số trang là dữ liệu" in R.rules()
+
+    def test_chu_thich_cuoi_trang_khong_chen_giua_cau(self):
+        r = R.rules()
+        assert "KHÔNG chèn vào giữa" in r
+        assert "[CHÚ THÍCH]" in r
+        # Giữ dấu đánh số để còn đối chiếu được với chỗ gọi trong bài.
+        assert "Giữ nguyên dấu đánh số" in r
+
+    def test_chu_thich_hinh_gan_lien_hinh(self):
+        assert "NGAY DÒNG SAU [HÌNH:" in R.rules()
+
+    def test_khong_co_hinh_thi_khong_noi_chu_thich_hinh(self):
+        """`figures=False` là đường chỉ lấy chữ — đừng tốn output tả ảnh."""
+        r = R.rules(figures=False)
+        assert "[HÌNH:" not in r
+        # Nhưng đầu/chân trang và chú thích cuối trang thì VẪN cần bỏ/tách.
+        assert "Đầu trang / chân trang CHẠY LẶP" in r
+        assert "[CHÚ THÍCH]" in r
+
+    def test_ba_muc_moi_co_o_CA_HAI_duong_ocr(self):
+        """Cả hai đường đều gọi R.rules() nên tự có — khoá lại để không ai tách ra."""
+        for ten in ("pdf_to_word.py", "agent/sgk_taphuan.py"):
+            src = (_ROOT / "services" / ten).read_text(encoding="utf-8")
+            assert "ocr_rules.rules(" in src.replace("_ocr_rules.rules(", "ocr_rules.rules(")
+

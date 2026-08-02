@@ -80,8 +80,29 @@ def rules(*, math: str = MATH_UNICODE, figures: bool = True) -> str:
         items.append(
             "Hình ảnh / sơ đồ / bản đồ / con dấu / chữ ký: ghi đúng một dòng "
             "[HÌNH: mô tả ngắn những gì THẤY]. Chỉ mô tả điều nhìn thấy, không "
-            "suy diễn, không đặt tên nhân vật nếu trang không ghi tên."
+            "suy diễn, không đặt tên nhân vật nếu trang không ghi tên. "
+            "Nếu hình CÓ chú thích in kèm (\"Hình 2.3. Sơ đồ…\"), chép chú thích "
+            "đó vào NGAY DÒNG SAU [HÌNH: …] — đừng để nó lạc vào đoạn văn khác."
         )
+    # Ba mục dưới đây lấy từ bộ 11 loại thành phần của dots.ocr (Page-header,
+    # Page-footer, Footnote, Caption) — những loại mà bộ quy tắc này chưa nói tới,
+    # nên model cứ chép chúng lẫn vào thân bài.
+    #
+    # Vì sao đáng thêm: tài liệu dài là chỗ dùng chính của dự án (sgk_taphuan,
+    # deep_tutor, teacher_assess). Một quyển 40 trang có đầu trang chạy lặp 40 lần
+    # ("Chương 2 — Sinh học 10") cộng 40 số trang; tất cả đổ vào RAG thành 80 mảnh
+    # rác trùng nhau, đẩy nội dung thật xuống dưới khi tìm kiếm. Còn chú thích cuối
+    # trang bị nhồi vào GIỮA câu thì làm hỏng chính đoạn văn nó đang giải thích.
+    items.append(
+        "Đầu trang / chân trang CHẠY LẶP (tên chương, tên sách, số trang) và số "
+        "trang đứng lẻ: BỎ, không chép vào thân bài. Chỉ giữ khi nó là nội dung "
+        "thật của trang (ví dụ trang mục lục thì số trang là dữ liệu)."
+    )
+    items.append(
+        "Chú thích cuối trang (footnote, dấu ¹ ² hoặc (*)): KHÔNG chèn vào giữa "
+        "câu. Chép xuống cuối phần nội dung trang, mỗi chú thích một dòng, mở đầu "
+        "bằng [CHÚ THÍCH]. Giữ nguyên dấu đánh số để đối chiếu được với chỗ gọi."
+    )
     items.append("Tiêu đề dùng # / ##. Giữ nguyên số bài, tên bài, số thứ tự "
                  "câu hỏi và số bài tập đúng như trên trang.")
     body = "\n".join(f"{i}. {t}" for i, t in enumerate(items, 1))
