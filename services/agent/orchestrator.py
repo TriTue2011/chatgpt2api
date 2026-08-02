@@ -208,6 +208,64 @@ def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
     return None
 
 
+# ── Đường tắt cho NỘI DUNG NÚT BẤM của menu ──────────────────────────────────
+#
+# Chuỗi này do CHÍNH code sinh ra (_ask_video_provider / _ask_video_thoi_luong /
+# _ask_video_so_luong / _param_choice_menu) nên phân tích được chắc chắn, không
+# phải đoán như câu người gõ. Bắt được nó thì hai bước sau — chọn thời lượng và
+# chọn số lượng — cũng ra tức thì, thay vì mỗi bước một lượt gọi model ~10 giây.
+#
+# Hai khuôn:
+#   A) "<việc> bằng model <id>[ params k=v k=v]: <mô tả>"      (menu model/thời
+#      lượng/số lượng — mô tả nằm SAU dấu hai chấm)
+#   B) "<việc> '<mô tả>' bằng model <id> params k=v k=v"       (_param_choice_menu
+#      — mô tả nằm TRONG dấu nháy, params ở cuối, KHÔNG có dấu hai chấm)
+#
+# "bằng mặc định" CỐ Ý không bắt: `_h_generate_video` chỉ dùng model mặc định của
+# nhánh khi ctx có auto_approve, mà bật cờ đó ở đây sẽ bỏ luôn các bước hỏi thời
+# lượng/số lượng — đổi hành vi. Để nó đi đường model như cũ, đó là lựa chọn ít gặp.
+_NUT_MENU_A = re.compile(
+    r"^\s*(?P<viec>tạo\s+video|tạo\s+ảnh|tao\s+anh|vẽ|ve)\s+"
+    r"bằng\s+model\s+(?P<model>\S+?)"
+    r"(?:\s+params\s+(?P<params>[^:]*?))?\s*:\s*(?P<prompt>.*)$",
+    re.IGNORECASE | re.DOTALL)
+_NUT_MENU_B = re.compile(
+    r"^\s*(?P<viec>tạo\s+video|tạo\s+ảnh|tao\s+anh|vẽ|ve)\s+"
+    r"'(?P<prompt>.*)'\s+bằng\s+model\s+(?P<model>\S+)"
+    r"(?:\s+params\s+(?P<params>.*))?$",
+    re.IGNORECASE | re.DOTALL)
+
+
+def _doc_nut_menu_media(text: str) -> tuple[str, dict] | None:
+    """('video'|'image', args cho capability) nếu câu là nội dung nút bấm của menu.
+
+    `args` gồm prompt, model và (nếu có) params đã tách thành dict — đúng dạng
+    `_h_generate_video`/`_h_generate_image` nhận.
+    """
+    t = (text or "").strip()
+    if not t or "bằng model" not in t.lower():
+        return None
+    m = _NUT_MENU_A.match(t) or _NUT_MENU_B.match(t)
+    if not m:
+        return None
+    viec = re.sub(r"\s+", " ", m.group("viec").strip().lower())
+    kind = "video" if viec == "tạo video" else "image"
+    args: dict = {"prompt": m.group("prompt").strip().strip("'").strip(),
+                  "model": m.group("model").strip().rstrip(":")}
+    tho = (m.groupdict().get("params") or "").strip()
+    if tho:
+        params: dict = {}
+        for cap in tho.split():
+            if "=" in cap:
+                k, _, v = cap.partition("=")
+                k, v = k.strip(), v.strip()
+                if k and v:
+                    params[k] = v
+        if params:
+            args["params"] = params
+    return kind, args
+
+
 # In-process cache; durable source of truth is session SQLite when enabled.
 # Kept so a failed DB still allows the current process to converse.
 _history: dict[str, list[dict[str, Any]]] = {}
@@ -1195,15 +1253,24 @@ def _orchestrate_locked(user_text: str, user_id: str,
     #
     # Vẫn đi qua bộ lọc chức năng theo thread (`allow`) như mọi capability khác:
     # đường tắt rút ngắn đường đi, không mở thêm quyền.
-    _yc_media = _la_yeu_cau_tao_media(user_text)
-    if _yc_media:
-        _kind, _prompt_media = _yc_media
+    # Hai nguồn: câu NGƯỜI gõ ("tạo video cảnh biển") và nội dung NÚT BẤM của menu
+    # ("tạo video bằng model flow/veo-3.1-lite params count=1: cảnh biển"). Nút bấm
+    # do chính code sinh nên phân tích chắc chắn — nhờ vậy CẢ BA bước (chọn model →
+    # thời lượng → số lượng) đều ra tức thì, thay vì mỗi bước một lượt model ~10s.
+    _nut = _doc_nut_menu_media(user_text)
+    _yc_media = None if _nut else _la_yeu_cau_tao_media(user_text)
+    if _nut or _yc_media:
+        if _nut:
+            _kind, _args_media = _nut
+        else:
+            _kind, _prompt_media = _yc_media  # type: ignore[misc]
+            _args_media = {"prompt": _prompt_media}
         _cap_name = "generate_video" if _kind == "video" else "generate_image"
         _nhom = "video" if _kind == "video" else "image"
         if allow is None or _nhom in allow:
             try:
                 _cap_m = caps.get(_cap_name)
-                _kq_m = (_cap_m.handler({"prompt": _prompt_media},
+                _kq_m = (_cap_m.handler(dict(_args_media),
                                         {"user_id": user_id,
                                          "user_message": user_text,
                                          "is_admin": is_admin})
@@ -1214,7 +1281,9 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _kq_m = None
             if _kq_m and str(_kq_m.get("text") or "").strip():
                 logger.info({"event": "agent_tat_tao_media", "kind": _kind,
-                             "prompt_len": len(_prompt_media)})
+                             "tu_nut_menu": bool(_nut),
+                             "model": _args_media.get("model") or "",
+                             "params": _args_media.get("params") or {}})
                 out_m = _finalize(user_id, _kq_m)
                 hist.append({"role": "assistant", "content": out_m.get("text") or ""})
                 _persist_history(user_id, hist)

@@ -23,16 +23,17 @@ from __future__ import annotations
 
 import ast
 import pathlib
-import re
 import unittest
 
 GOC = pathlib.Path(__file__).resolve().parents[1]
 NGUON = GOC / "services" / "agent" / "orchestrator.py"
 
-_TEN_CAN = ("_TAT_TAO_MEDIA", "_KHONG_PHAI_TAO_MOI", "_TAT_VE_ANH", "_BO_DAU_MO_TA")
+_TEN_CAN = ("_TAT_TAO_MEDIA", "_KHONG_PHAI_TAO_MOI", "_TAT_VE_ANH", "_BO_DAU_MO_TA",
+            "_NUT_MENU_A", "_NUT_MENU_B")
+_HAM_CAN = ("_la_yeu_cau_tao_media", "_doc_nut_menu_media")
 
 
-def _nap():
+def _nap_ns() -> dict:
     """Nạp RIÊNG bộ nhận ý — import cả orchestrator sẽ kéo theo config/DB/model."""
     src = NGUON.read_text("utf-8")
     tree = ast.parse(src)
@@ -40,11 +41,15 @@ def _nap():
     for n in tree.body:
         if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in _TEN_CAN:
             phan.append(ast.get_source_segment(src, n))
-        if isinstance(n, ast.FunctionDef) and n.name == "_la_yeu_cau_tao_media":
+        if isinstance(n, ast.FunctionDef) and n.name in _HAM_CAN:
             phan.append(ast.get_source_segment(src, n))
     ns: dict = {}
     exec("\n".join(phan), ns)
-    return ns["_la_yeu_cau_tao_media"]
+    return ns
+
+
+def _nap():
+    return _nap_ns()["_la_yeu_cau_tao_media"]
 
 
 class NhanDungYTests(unittest.TestCase):
@@ -112,6 +117,53 @@ class KhongDuocBatSaiTests(unittest.TestCase):
             self.assertIsNone(self.f(c), c)
 
 
+class NutBamMenuRaTucThiTests(unittest.TestCase):
+    """Nội dung nút bấm do CHÍNH code sinh nên phân tích được chắc chắn.
+
+    Bắt được nó thì cả ba bước — chọn model → thời lượng → số lượng — đều ra tức
+    thì, thay vì mỗi bước một lượt gọi model ~10 giây. Chuỗi trong test copy đúng
+    khuôn `capabilities.py` sinh ra (dòng 141, 179/184, 449, 460, 474).
+    """
+
+    def setUp(self):
+        self.f = _nap_ns()["_doc_nut_menu_media"]
+
+    def test_chon_model_khong_params(self):
+        self.assertEqual(
+            self.f("tạo video bằng model flow/veo-3.1-lite: cảnh biển hoàng hôn"),
+            ("video", {"prompt": "cảnh biển hoàng hôn", "model": "flow/veo-3.1-lite"}))
+
+    def test_chon_thoi_luong(self):
+        got = self.f("tạo video bằng model flow/omni-flash params duration=6: mưa rơi")
+        self.assertEqual(got, ("video", {"prompt": "mưa rơi",
+                                         "model": "flow/omni-flash",
+                                         "params": {"duration": "6"}}))
+
+    def test_chon_so_luong_kem_thoi_luong(self):
+        got = self.f("tạo video bằng model flow/omni-flash params count=3 duration=10: mưa")
+        self.assertEqual(got[1]["params"], {"count": "3", "duration": "10"})
+
+    def test_menu_anh_va_menu_tham_so(self):
+        self.assertEqual(self.f("vẽ bằng model flow/banana-2: con mèo mướp"),
+                         ("image", {"prompt": "con mèo mướp", "model": "flow/banana-2"}))
+        # _param_choice_menu: mô tả nằm TRONG nháy, params ở cuối, KHÔNG có dấu ':'
+        got = self.f("vẽ 'con mèo mướp' bằng model gpt-image-2 params size=1024x1024 quality=hd")
+        self.assertEqual(got, ("image", {"prompt": "con mèo mướp",
+                                         "model": "gpt-image-2",
+                                         "params": {"size": "1024x1024",
+                                                    "quality": "hd"}}))
+
+    def test_bang_mac_dinh_CO_Y_khong_bat(self):
+        """`_h_generate_video` chỉ dùng model mặc định khi ctx có auto_approve, mà
+        bật cờ đó ở đây sẽ bỏ luôn các bước hỏi thời lượng/số lượng — đổi hành vi."""
+        self.assertIsNone(self.f("tạo video bằng mặc định: cảnh biển"))
+
+    def test_cau_nguoi_go_va_cau_hoi_khong_lot_vao_day(self):
+        for c in ("tạo video cảnh biển", "xin chào",
+                  "Bạn vừa tạo video bằng model gì"):
+            self.assertIsNone(self.f(c), c)
+
+
 class DuocNoiVaoOrchestratorTests(unittest.TestCase):
     def setUp(self):
         self.code = "\n".join(
@@ -119,13 +171,13 @@ class DuocNoiVaoOrchestratorTests(unittest.TestCase):
             if not l.lstrip().startswith("#"))
 
     def test_goi_dung_capability_theo_loai(self):
-        i = self.code.index("_yc_media = _la_yeu_cau_tao_media(user_text)")
+        i = self.code.index("_nut = _doc_nut_menu_media(user_text)")
         khuc = self.code[i:i + 1800]
         self.assertIn('"generate_video" if _kind == "video" else "generate_image"', khuc)
 
     def test_van_di_qua_bo_loc_chuc_nang(self):
         """Đường tắt rút ngắn đường đi, KHÔNG mở thêm quyền."""
-        i = self.code.index("_yc_media = _la_yeu_cau_tao_media(user_text)")
+        i = self.code.index("_nut = _doc_nut_menu_media(user_text)")
         khuc = self.code[i:i + 1800]
         self.assertIn("allow is None or _nhom in allow", khuc)
 
