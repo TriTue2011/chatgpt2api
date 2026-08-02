@@ -55,6 +55,32 @@ _pending: dict[str, dict[str, Any]] = {}
 _TTL = 600.0
 _LABEL_MAX = 40
 
+# Trần độ dài của `send` — chuỗi được TIÊM LÀM TIN NHẮN kế tiếp khi người dùng
+# chọn. Trước đây là 200, kèm chú thích "để người dùng không bao giờ gửi thứ họ
+# chưa thấy". Nhưng `send` KHÔNG BAO GIỜ ra khỏi máy chủ: kênh chỉ nhận `label`
+# (format_numbered in ra danh sách số; Telegram dùng callback_data 'ask:<i>'), và
+# resolve_reply tra lại `send` theo CHỈ SỐ. Nên trần 200 không bảo vệ điều gì —
+# nó chỉ CẮT MẤT DỮ LIỆU, âm thầm.
+#
+# Đo thật 02/08: menu chọn model nhồi prompt vào chính chuỗi `send`
+# ("tạo video bằng model flow/veo-3.1-lite: <prompt>"). Bốn lượt tạo video/ảnh
+# của chủ máy đều lưu user_text ĐÚNG 200 ký tự, cắt giữa từ ("…đang chạy cầm 1
+# gáo nước, 1 xô nước. Người", "…về phía chàng tr"). Phần mô tả còn lại bị bỏ,
+# nên Flow tạo ra ảnh/video theo prompt BỊ CHẶT — đúng hiện tượng "đưa ra còn sai"
+# mà không có dấu hiệu nào báo.
+#
+# 4000: thoải mái cho prompt ảnh/video chi tiết, vẫn có chặn để không phình vô hạn.
+# Và vượt trần thì GHI LOG — cắt âm thầm là thứ đã làm mất cả buổi để lần ra.
+_SEND_MAX = 4000
+
+
+def _cat_send(send: str, label: str = "") -> str:
+    if len(send) <= _SEND_MAX:
+        return send
+    logger.warning("ask_choices: CẮT `send` %d -> %d ký tự (label=%r) — prompt dài "
+                   "sẽ bị mất phần cuối", len(send), _SEND_MAX, label[:40])
+    return send[:_SEND_MAX]
+
 # Pending choices ĐƯỢC LƯU RA SQLITE (không chỉ RAM). Vì sao: trước đây `_pending`
 # chỉ nằm trong bộ nhớ tiến trình, nên MỖI LẦN app khởi động lại (deploy, crash,
 # health-restart, Portainer update) là mất sạch — người dùng vừa được hỏi
@@ -113,9 +139,7 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
                 continue
             if len(label) > _LABEL_MAX:
                 label = label[: _LABEL_MAX - 1] + "…"
-            # send side also capped so user never "sends" text they didn't see
-            if len(send) > 200:
-                send = send[:200]
+            send = _cat_send(send, label)
             choices.append({"label": label, "send": send or label})
 
     def _sub_ask(m: re.Match) -> str:
@@ -136,14 +160,14 @@ def extract(text: str) -> tuple[str, list[dict[str, str]]]:
                             lab = item.strip()
                             if len(lab) > _LABEL_MAX:
                                 lab = lab[: _LABEL_MAX - 1] + "…"
-                            choices.append({"label": lab, "send": item.strip()[:200]})
+                            choices.append({"label": lab, "send": _cat_send(item.strip(), lab)})
                         elif isinstance(item, dict):
                             lab = str(item.get("label") or item.get("text") or "").strip()
                             send = str(item.get("send") or item.get("value") or lab).strip()
                             if lab:
                                 if len(lab) > _LABEL_MAX:
                                     lab = lab[: _LABEL_MAX - 1] + "…"
-                                choices.append({"label": lab, "send": (send or lab)[:200]})
+                                choices.append({"label": lab, "send": _cat_send(send or lab, lab)})
                 clean = _JAVIS_RE.sub("", clean)
             except Exception:
                 pass
