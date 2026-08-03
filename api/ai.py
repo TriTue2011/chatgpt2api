@@ -189,6 +189,12 @@ def create_router() -> APIRouter:
     ):
         identity = require_identity(authorization)
         payload = body.model_dump(mode="python")
+        # Danh tính ĐÃ XÁC THỰC — nguồn sự thật duy nhất cho phạm vi ký ức dài
+        # hạn. Trước đây MemoryService lấy khoá kho thẳng từ field `user` do
+        # client gửi, nên một bearer token hợp lệ chỉ cần gửi user="<id người
+        # khác>" là đọc được ký ức người đó. Gán ĐÈ vô điều kiện: model cho phép
+        # field lạ nên client gửi được `_principal`, tin nó là mở lại đúng lỗ.
+        payload["_principal"] = str(identity.get("id") or "")
         # HA Conversation / voice surfaces can't render markdown — flag the
         # request so the chat handler force-strips the response. User-Agent
         # contains "HomeAssistant" for both REST and websocket integrations.

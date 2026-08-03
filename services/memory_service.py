@@ -17,8 +17,10 @@ Config (top-level "memory", mọi field đều optional):
     enabled: bool (default TRUE — tắt bằng {"memory": {"enabled": false}})
     k: số ký ức inject (default 5)
     max_items: trần số ký ức mỗi user, vượt thì xoá cũ nhất (default 5000)
-    user_id: default "chatgpt2api" (override per-request bằng field chuẩn
-             OpenAI `user` trong body)
+    user_id: tên kho mặc định, default "chatgpt2api"
+
+Phạm vi kho: theo DANH TÍNH ĐÃ XÁC THỰC (`_principal`, do api/ai.py gán), không
+theo field `user` do client gửi — xem `MemoryService._khoa_kho`.
 """
 
 from __future__ import annotations
@@ -274,6 +276,35 @@ class MemoryService:
             logger.warning({"event": "memory_recall_fail", "error": str(exc)[:200]})
             return []
 
+    # ------------------------------------------------------------ phạm vi
+    def _kho_mac_dinh(self) -> str:
+        return str(self._cfg.get("user_id") or "").strip() or "chatgpt2api"
+
+    def _khoa_kho(self, body: dict[str, Any]) -> str:
+        """Khoá kho ký ức — LẤY TỪ DANH TÍNH ĐÃ XÁC THỰC, không từ client.
+
+        Bản cũ: `body["user"] or cfg or "chatgpt2api"`. Field `user` là field
+        chuẩn OpenAI do CLIENT gửi, nên nó vừa là khoá kho vừa do người gọi tự
+        khai — một bearer token hợp lệ chỉ cần gửi user="<id người khác>" là
+        đọc được ký ức người đó, và ghi đè vào kho đó.
+
+        Bản mới: `_principal` (api/ai.py gán từ danh tính đã xác thực) là gốc
+        phạm vi; `user` chỉ còn là KHOÁ CON bên trong phạm vi đó, không bao giờ
+        vượt ra ngoài.
+
+        Hai lối giữ nguyên kho cũ để ký ức hiện có vẫn đọc được (chưa migration):
+          * không có `_principal` — đường nội bộ (agent runtime, scheduler),
+            không đi qua HTTP nên không có danh tính;
+          * admin không khai `user` — chính kho chung của trợ lý.
+        """
+        principal = str(body.get("_principal") or "").strip()
+        raw_user = str(body.get("user") or "").strip()
+        if not principal:
+            return self._kho_mac_dinh()
+        if principal == "admin" and not raw_user:
+            return self._kho_mac_dinh()
+        return f"{principal}:{raw_user}" if raw_user else principal
+
     # ------------------------------------------------------------ chat hook
     def prepare(self, body: dict[str, Any]) -> _MemoryCapture | None:
         """Recall + inject ký ức vào body['messages']. Trả capture-context để
@@ -300,7 +331,7 @@ class MemoryService:
         except Exception:
             pass
 
-        user_id = str(body.get("user") or self._cfg.get("user_id") or "chatgpt2api").strip()
+        user_id = self._khoa_kho(body)
 
         matches = self.recall(user_text, user_id)
         if matches:
