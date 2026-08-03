@@ -271,9 +271,25 @@ def _notify_all_admins(text: str, *, bot: dict | None = None) -> int:
     return n
 
 
-def _is_admin_chat(chat_id: str) -> bool:
-    """True nếu chat_id là admin thread của bot hiện tại."""
-    return str(chat_id or "").strip() in set(_admin_ids_for_bot())
+def _is_admin_chat(chat_id: str, user_id: str = "") -> bool:
+    """True nếu lượt này thật sự là ADMIN của bot hiện tại.
+
+    NHÓM thì phải xét NGƯỜI GỬI, không chỉ chat_id. Bản cũ chỉ so chat_id, nên
+    khai một NHÓM làm admin thread là cấp quyền admin cho MỌI THÀNH VIÊN nhóm
+    đó — kể cả người chỉ được thêm vào. Quyền admin ở đây mở ra chụp webcam,
+    chụp màn hình, tắt máy từ xa, xem cả kho media và xoá tài khoản Codex.
+
+    Chat 1-1: chat_id CHÍNH LÀ người dùng, nên so chat_id là đủ và đúng.
+    Nhóm (id âm): chỉ nhận khi người gửi tự nó cũng nằm trong danh sách admin.
+    """
+    ds = set(_admin_ids_for_bot())
+    cid = str(chat_id or "").strip()
+    if cid not in ds:
+        return False
+    if not cid.startswith("-"):
+        return True
+    uid = str(user_id or "").strip()
+    return bool(uid) and uid in ds
 
 
 def _alert_new_chat(chat_id: str, sender: str, text: str, served: bool,
@@ -1203,7 +1219,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         "tg", _bot_id(), chat_id, user_id, _cur_topic()) if chat_id else None
     # chat_ids đã bỏ trên UI — AI thường qua bộ lọc thread; admin luôn được phép
     allowed = [str(c) for c in _chat_ids()]
-    _is_admin = bool(chat_id and _is_admin_chat(chat_id))
+    _is_admin = bool(chat_id and _is_admin_chat(chat_id, user_id))
     # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
     # admin KHÔNG thêm trong lọc (thread_filters) và không nằm trong whitelist chat_ids
     # → im lặng hoàn toàn (chỉ nhận log). Muốn admin chat / ra lệnh: thêm thread admin
@@ -1487,7 +1503,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         except Exception:
             pass
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
-                          is_admin=_is_admin_chat(chat_id))
+                          is_admin=_is_admin_chat(chat_id, user_id))
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
         try:
             from services import net_guard

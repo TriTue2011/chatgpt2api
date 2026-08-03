@@ -1325,12 +1325,18 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 0a) Lệnh admin xử lý Codex account_deactivated: "xóa <email>" / "giữ <email>".
     # Chỉ khớp khi có pending deactivated cho email đó (do refresh nhiều tầng tạo),
     # nên không đụng vào chat thường.
-    try:
+    #
+    # CHỈ ADMIN. Bản cũ không xét quyền: bất kỳ ai gõ đúng "xóa <email>" khi đang
+    # có pending đều kích hoạt được đường xoá thật — `codex_deactivated` gỡ tài
+    # khoản khỏi pool và khỏi danh sách đăng nhập. Người thường không được chạm
+    # vào kho tài khoản của máy chủ.
+    if is_admin:
+      try:
         from services.codex_deactivated import try_resolve_admin_reply as _codex_deact_reply
         _cx = _codex_deact_reply(user_text)
         if _cx:
             return {"text": _cx}
-    except Exception:
+      except Exception:
         pass
 
     # 0) Speech Persona wizard — deterministic, ngoài vòng LLM (0 token model).
