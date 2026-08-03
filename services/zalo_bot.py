@@ -319,8 +319,32 @@ def _notify_all_admins(text: str, *, bot: dict | None = None) -> int:
     return n
 
 
-def _is_admin_chat(chat_id: str) -> bool:
+def _la_thread_admin(chat_id: str) -> bool:
+    """Chat này CÓ PHẢI nơi nhận thông báo admin — thuộc tính của CHAT.
+
+    Không phải câu hỏi về quyền. Nó quyết định thread được im lặng / được
+    whitelist / khỏi bị báo "chat lạ" — áp cho cả nhóm, kể cả thành viên thường.
+    """
     return str(chat_id or "").strip() in set(_admin_ids_for_bot())
+
+
+def _is_admin_chat(chat_id: str, user_id: str = "", *, is_group: bool = False) -> bool:
+    """True nếu NGƯỜI GỬI lượt này thật sự là admin của bot hiện tại.
+
+    Bản cũ chỉ so chat_id, nên khai một NHÓM làm admin thread là cấp quyền admin
+    cho MỌI THÀNH VIÊN nhóm đó. Quyền này mở ra chụp webcam, chụp màn hình, tắt
+    máy từ xa, xem cả kho media và xoá tài khoản Codex.
+
+    Chat 1-1: chat_id CHÍNH LÀ người dùng nên so chat_id là đủ.
+    Nhóm: chỉ nhận khi người gửi tự nó cũng nằm trong danh sách admin; thiếu
+    user_id thì từ chối (fail-closed, không đoán theo hướng cấp quyền).
+    """
+    if not _la_thread_admin(chat_id):
+        return False
+    if not is_group:
+        return True
+    uid = str(user_id or "").strip()
+    return bool(uid) and uid in set(_admin_ids_for_bot())
 
 
 def _alert_new_chat(chat_id: str, sender: str, text: str, served: bool,
@@ -1637,8 +1661,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                    user_name=sender, chat_name=chat_name, is_group=is_group,
                    text=text or ("[ảnh]" if photo_url else "") or ("[voice]" if voice_url else "") or (file_name or ""))
 
-    # Admin workspace (đặt tên bot / lưu người lạ) — độc lập từng admin thread
-    if chat_id and text and _is_admin_chat(chat_id):
+    # Admin workspace (đặt tên bot / lưu người lạ) — độc lập từng admin thread.
+    # Đây là đường SỬA CẤU HÌNH nên xét NGƯỜI GỬI, không chỉ chat.
+    if chat_id and text and _is_admin_chat(chat_id, user_id, is_group=is_group):
         try:
             from services.admin_workspace import handle_admin_text
             _ar = handle_admin_text("zalo", chat_id, text)
@@ -1655,14 +1680,18 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     from services.agent import capabilities as _caps
     _allow = _caps.allowed_groups_for_member("zalo", _bot_id(), chat_id, user_id) if chat_id else None
     allowed = [str(c) for c in _chat_ids()]
-    _is_admin = bool(chat_id and _is_admin_chat(chat_id))
+    # HAI câu hỏi khác nhau, đừng trộn:
+    #   _thread_admin — chat này có phải NƠI NHẬN thông báo admin (của CHAT)
+    #   _is_admin     — NGƯỜI GỬI lượt này có quyền admin (của NGƯỜI)
+    _thread_admin = bool(chat_id and _la_thread_admin(chat_id))
+    _is_admin = bool(chat_id and _is_admin_chat(chat_id, user_id, is_group=is_group))
     # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
     # admin KHÔNG thêm trong lọc (thread_filters) và không nằm trong whitelist chat_ids
     # → im lặng hoàn toàn (chỉ nhận log). Muốn admin chat / ra lệnh: thêm thread admin
     # vào Lọc thread. (Trước đây admin được auto-permit vô điều kiện — nay chỉ khi có trong lọc.)
-    if _is_admin and _allow is None and chat_id and str(chat_id) not in allowed:
+    if _thread_admin and _allow is None and chat_id and str(chat_id) not in allowed:
         return
-    if _is_admin and chat_id and str(chat_id) not in allowed:
+    if _thread_admin and chat_id and str(chat_id) not in allowed:
         allowed.append(str(chat_id))
     _low = (text or "").strip().lower()
     # Trong NHÓM tin luôn kèm prefix @tag bot (nền tảng bắt buộc tag mới giao tin)
@@ -1693,7 +1722,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     )
     if not _req_m:
         _tagged_early = True
-    if chat_id and _allow is None and chat_id not in allowed and not _is_admin:
+    # Dùng _thread_admin: thành viên thường trong nhóm admin KHÔNG phải "chat lạ",
+    # xét theo _is_admin thì mỗi tin của họ lại nhả "⛔ Không được phép." vào đúng
+    # nhóm admin đang dùng để nhận thông báo.
+    if chat_id and _allow is None and chat_id not in allowed and not _thread_admin:
         _alert_new_chat(
             chat_id, sender, text, served=not allowed,
             user_id=user_id, is_group=is_group, tagged=_tagged_early,
@@ -1939,7 +1971,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 _skey = f"zalo_{chat_id}:u{user_id}"
         except Exception:
             pass
-        _la_admin = str(chat_id or "").strip() in set(_admin_ids_for_bot())
+        _la_admin = _is_admin_chat(chat_id, user_id, is_group=is_group)
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
                           is_admin=_la_admin)
         try:

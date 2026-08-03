@@ -660,10 +660,35 @@ def _admin_thread_ids_for_account(account_id: str = "") -> set[str]:
 
 
 def _is_admin_thread(account_id: str, thread_id: str) -> bool:
+    """Thread này CÓ PHẢI nơi nhận thông báo admin — thuộc tính của THREAD.
+
+    Không phải câu hỏi về quyền: nó quyết định thread được im lặng / khỏi bị báo
+    "thread lạ", những thứ áp cho cả nhóm. Quyền admin dùng `_la_admin_nguoi_gui`.
+    """
     tid = str(thread_id or "").strip()
     if not tid:
         return False
     return tid in _admin_thread_ids_for_account(account_id)
+
+
+def _la_admin_nguoi_gui(account_id: str, thread_id: str, sender_id: str = "",
+                        *, is_group: bool = False) -> bool:
+    """True nếu NGƯỜI GỬI lượt này thật sự là admin của account này.
+
+    Bản cũ chỉ so thread_id, nên khai một NHÓM làm admin thread là cấp quyền
+    admin cho MỌI THÀNH VIÊN nhóm đó. Quyền này mở ra chụp webcam, chụp màn
+    hình, tắt máy từ xa, xem cả kho media và xoá tài khoản Codex.
+
+    Thread 1-1: thread_id CHÍNH LÀ uid người đối diện nên so thread_id là đủ.
+    Nhóm: chỉ nhận khi sender_id cũng nằm trong danh sách admin; thiếu
+    sender_id thì từ chối (fail-closed).
+    """
+    if not _is_admin_thread(account_id, thread_id):
+        return False
+    if not is_group:
+        return True
+    sid = str(sender_id or "").strip()
+    return bool(sid) and sid in _admin_thread_ids_for_account(account_id)
 
 
 _NHAN_ALL = "@All"      # Zalo hiển thị tag cả nhóm là '@All' (ảnh người dùng 01/08)
@@ -2015,13 +2040,18 @@ def _process_ai(ev: dict) -> None:
     _sender = str(ev.get("sender_id") or "")
     _allow = _caps.allowed_groups_for_member("zalop", acc_id, thread_id, _sender)
     allowed_ids = list(_chat_ids())
-    _is_admin = _is_admin_thread(acc_id, thread_id)
+    # HAI câu hỏi khác nhau, đừng trộn:
+    #   _thread_admin — thread này có phải NƠI NHẬN thông báo admin (của THREAD)
+    #   _is_admin     — NGƯỜI GỬI lượt này có quyền admin (của NGƯỜI)
+    _thread_admin = _is_admin_thread(acc_id, thread_id)
+    _is_admin = _la_admin_nguoi_gui(acc_id, thread_id, _sender,
+                                    is_group=int(thread_type or 0) == 1)
     # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
     # admin KHÔNG thêm trong lọc (thread_filters) và không trong whitelist → im lặng,
     # chỉ nhận log. (Trước đây admin auto-permit — nay bỏ.)
     permitted = (_allow is not None) or (thread_id in allowed_ids)
     if not permitted:
-        if not _is_admin:
+        if not _thread_admin:
             _alert_new_thread(ev)  # admin đã biết — không cảnh báo "thread lạ"
         return  # im lặng — chưa thêm thread vào Lọc thread
 
