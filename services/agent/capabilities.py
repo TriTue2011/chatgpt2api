@@ -3642,7 +3642,13 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
             ten = ten_that
             s = _da.get(ten)
     if s is None:
-        if not dang_noi:
+        # Máy CÓ trong sổ nhưng không có phiên = đang tắt/agent chưa chạy. Khác
+        # hẳn tên lạ, nên câu trả lời phải khác: bảo "em không rõ máy nào" trong
+        # khi máy có thật đẩy người dùng đi kiểm tra sai chỗ (họ đi sửa tên, chứ
+        # không đi bật agent). Bản cũ chỉ nói đúng khi KHÔNG máy nào đang kết nối.
+        _co_trong_so = any(str(d.get("name") or "") == ten
+                           or str(d.get("label") or "") == ten for d in ds)
+        if _co_trong_so or not dang_noi:
             return {"deliver_now": True,
                     "text": f"Máy '{ten}' đang không kết nối nên em chưa chụp được ạ. "
                             "Anh/chị kiểm tra agent trên máy đó còn chạy không nhé."}
@@ -3658,6 +3664,13 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
     _args = {}
     if loai == "webcam" and args.get("device_index") is not None:
         _args["device_index"] = args["device_index"]
+    if loai == "webcam":
+        # Người dùng đòi ảnh nét ("nét nhất", "phân giải cao nhất") → xin agent
+        # mở webcam ở chế độ cao nhất. Không nêu gì thì agent tự dùng mức 'cao'
+        # (1080p) — vẫn hơn hẳn mặc định 640×480 của driver ở bản trước.
+        _dpg = str(args.get("do_phan_giai") or "").strip().lower()
+        if _dpg in ("nhanh", "cao", "max"):
+            _args["do_phan_giai"] = _dpg
     if loai == "screenshot" and args.get("monitor") is not None:
         _args["monitor"] = args["monitor"]
     kq = _da.call_sync(ten, loai, _args)
@@ -4232,6 +4245,10 @@ CAPABILITIES: dict[str, Capability] = {
             "device": {"type": "string",
                        "description": "Tên máy (bỏ trống nếu chỉ có 1 máy đang kết nối)"},
             "device_index": {"type": "integer", "description": "Camera thứ mấy (mặc định 0)"},
+            "do_phan_giai": {"type": "string", "enum": ["nhanh", "cao", "max"],
+                             "description": "Độ phân giải webcam: max khi người dùng "
+                                            "đòi 'nét nhất'/'phân giải cao nhất'; nhanh "
+                                            "khi họ muốn chụp gấp. Bỏ trống = cao (1080p)"},
             "monitor": {"type": "integer", "description": "Màn hình thứ mấy (0 = tất cả)"}},
             "required": ["kind"]}),
     "device_power": Capability(

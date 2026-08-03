@@ -745,12 +745,61 @@ def _anh_ra_b64(raw: bytes, mime: str) -> dict:
             "image": "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode())}
 
 
+# Độ phân giải yêu cầu webcam xuất ra. Driver KHÔNG bắt buộc chiều đúng con số
+# này — nó tự hạ xuống chế độ gần nhất mà nó có, nên đặt cao là cách chuẩn để
+# "xin mức cao nhất" mà không cần dò danh sách chế độ.
+_DPG_WEBCAM = {
+    "nhanh": None,            # để nguyên mặc định driver (cũ) — mở nhanh nhất
+    "cao": (1920, 1080),
+    "max": (3840, 2160),
+}
+_DPG_MAC_DINH = "cao"
+
+
+def _dat_do_phan_giai(cv2, cap, muon: tuple[int, int]) -> None:
+    """Xin webcam xuất ở `muon` (rộng, cao).
+
+    Đặt FOURCC sang MJPG TRƯỚC khi đặt kích thước. Phần lớn webcam USB chỉ có
+    chế độ độ phân giải cao ở luồng MJPG; để nguyên YUY2 (mặc định của nhiều
+    driver) thì băng thông USB không đủ và driver âm thầm tụt về 640×480 — đúng
+    chỗ làm người ta tưởng "đặt rồi mà không ăn".
+    """
+    try:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    except Exception:
+        pass                  # cam không cho đổi FOURCC thì vẫn thử đặt kích thước
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(muon[0]))
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(muon[1]))
+
+
+def _nen_jpeg_vua_tran(cv2, frame, tran: int) -> tuple[bytes, int]:
+    """Nén JPEG, hạ chất lượng dần cho tới khi lọt trần. Trả (bytes, chất lượng).
+
+    Ảnh 4K ở chất lượng 85 có thể vượt trần 6 MB. Trả lỗi lúc đó là tệ nhất: đèn
+    camera đã sáng, người dùng đã chờ, mà không nhận được gì. Hạ chất lượng vẫn
+    cho ra ảnh dùng được — độ phân giải mới là thứ họ xin.
+    """
+    for chat_luong in (85, 70, 55, 40):
+        ok, buf = cv2.imencode(".jpg", frame,
+                               [int(cv2.IMWRITE_JPEG_QUALITY), chat_luong])
+        if not ok:
+            return b"", chat_luong
+        raw = buf.tobytes()
+        if len(raw) <= tran:
+            return raw, chat_luong
+    return raw, 40            # vẫn quá cỡ → để _anh_ra_b64 báo đúng số MB
+
+
 def op_webcam(g: Guard, args: dict) -> dict:
     """Chụp ảnh webcam. Cần --allow-capture.
 
     Dùng OpenCV (cv2) — cùng thư viện WinGuard dùng, chạy cả Windows/macOS/Linux.
     Bỏ vài khung đầu: webcam trả frame đen/chưa cân sáng ở những khung đầu tiên,
     chụp ngay là ra ảnh tối thui (WinGuard cũng chụp nhiều shot vì lý do này).
+
+    `do_phan_giai`: nhanh | cao (mặc định) | max — xem `_DPG_WEBCAM`. Bản trước
+    không đặt gì cả nên luôn nhận mặc định của driver, với DirectShow trên
+    Windows gần như luôn là 640×480 dù cam hỗ trợ 1080p/4K.
     """
     g.need_capture()
     try:
@@ -761,6 +810,10 @@ def op_webcam(g: Guard, args: dict) -> dict:
                          "pip install opencv-python"}
     idx = int(args.get("device_index") or 0)
     bo_khung = max(0, min(30, int(args.get("warmup_frames") or 8)))
+    dpg = str(args.get("do_phan_giai") or _DPG_MAC_DINH).strip().lower()
+    if dpg not in _DPG_WEBCAM:
+        dpg = _DPG_MAC_DINH
+    muon = _DPG_WEBCAM[dpg]
     cap = None
     try:
         # CAP_DSHOW trên Windows: mở nhanh hơn nhiều và ít lỗi hơn backend mặc định.
@@ -770,6 +823,11 @@ def op_webcam(g: Guard, args: dict) -> dict:
             return {"ok": False,
                     "error": "không mở được webcam index=%d (thử index khác, hoặc "
                              "camera đang bị ứng dụng khác giữ)" % idx}
+        if muon is not None:
+            _dat_do_phan_giai(cv2, cap, muon)
+            # Đổi chế độ = cảm biến phải cân sáng lại từ đầu. Giữ nguyên số khung
+            # bỏ đi của bản cũ là ra ảnh tối, đúng cái bản cũ đã tránh được.
+            bo_khung = max(bo_khung, 12)
         frame = None
         for _ in range(bo_khung + 1):
             ok, f = cap.read()
@@ -777,13 +835,16 @@ def op_webcam(g: Guard, args: dict) -> dict:
                 frame = f
         if frame is None:
             return {"ok": False, "error": "webcam mở được nhưng không đọc được khung ảnh"}
-        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-        if not ok:
+        raw, chat_luong = _nen_jpeg_vua_tran(cv2, frame, _TRAN_ANH_BYTE)
+        if not raw:
             return {"ok": False, "error": "không nén được ảnh JPEG"}
-        ra = _anh_ra_b64(buf.tobytes(), "image/jpeg")
+        ra = _anh_ra_b64(raw, "image/jpeg")
         if ra.get("ok"):
+            # width/height đọc từ KHUNG ẢNH THẬT, không phải mức đã xin: driver
+            # có quyền trả chế độ khác, và người dùng cần biết họ nhận được gì.
             h, w = frame.shape[:2]
-            ra.update({"width": int(w), "height": int(h), "device_index": idx})
+            ra.update({"width": int(w), "height": int(h), "device_index": idx,
+                       "do_phan_giai": dpg, "jpeg_quality": chat_luong})
         return ra
     finally:
         if cap is not None:
