@@ -4,20 +4,38 @@
 useDefault = true
 
 # Rule riêng: auth key nội bộ gán thẳng trong code/URL (sự cố đã xảy ra — chặn tái diễn).
+#
+# GIÁ TRỊ mới là thứ bị soi, không phải cả dòng (`secretGroup = 2`) — nhờ vậy
+# allowlist bên dưới lọc được theo đúng giá trị.
+#
+# Vì sao siết lại (đo thật 03/08, bản quét sâu định kỳ trên main): luật cũ nhận
+# BẤT KỲ phép gán nào dài ≥7 ký tự sau `api_key/auth_key/...`, nên nó bắt cả
+# `api_key = os.getenv(...)`, `cfg.api_key = keysArr[0]`, `has_api_key: boolean`,
+# `_BEARER = re.compile(...)`. Kết quả: 62/65 phát hiện là mã bình thường. Một
+# cổng bảo mật lúc nào cũng đỏ vì báo nhầm thì người ta ngừng đọc nó — đó mới là
+# rủi ro thật.
+#
+# Ba điều kiện giữ lại sức bắt: giá trị dài ≥16 ký tự (khoá thật đều dài),
+# KHÔNG có \b ở đầu (tên biến thật là `CHATGPT2API_AUTH_KEY`, ký tự trước "AUTH"
+# là '_' nên \b trượt), và nuốt được cả dạng JSON `"Authorization": "Bearer <token>"`.
 [[rules]]
 id = "chatgpt2api-inline-authkey"
 description = "Auth key gán thẳng trong code/URL"
-regex = '''(?i)(api_key|auth_key|authorization|bearer)\s*[:=]\s*["']?[A-Za-z][A-Za-z0-9@#!$%._-]{6,}["']?'''
-keywords = ["api_key", "auth_key", "bearer"]
+regex = '''(?i)(api[_-]?key|auth[_-]?key|access[_-]?token|authorization|bearer)\b["']?\s*(?:[:=]|\s)\s*["']?(?:bearer\s+)?([A-Za-z0-9][A-Za-z0-9@#$%._-]{15,})["']?'''
+secretGroup = 2
+keywords = ["api_key", "apikey", "auth_key", "authkey", "access_token", "authorization", "bearer"]
 
 [allowlist]
-description = "Placeholder/ví dụ — không phải secret thật"
+description = "Placeholder/ví dụ và phép gán từ biến — không phải secret thật"
 regexes = [
-  '''your_(auth_key|secret_key|vnc_password)''',
+  '''(?i)your[_-]''',
   '''ghp_x+''',
   '''sk-[x]{8,}''',
   '''mat_khau_cua_ban''',
   '''example|placeholder|changeme|xxxx|<[a-z-]+>''',
+  # Gán từ BIẾN hoặc LỜI GỌI HÀM chứ không phải chuỗi cứng:
+  # `os.environ.get`, `module.os.environ.get`, `settings.get_config`.
+  '''^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$''',
 ]
 paths = [
   '''\.env\.example$''',
