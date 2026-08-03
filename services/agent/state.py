@@ -41,12 +41,18 @@ _APPROVALS_FILE = _AGENT_DIR / "approvals.json"
 # file như load_memory) — reuse pattern session.py (turns_fts): content=
 # external table, content_rowid=id, tokenize='unicode61'.
 _MEMORY_DB_PATH = _AGENT_DIR / "memory_fts.sqlite"
+# Trí nhớ THEO PHẠM VI: mỗi phạm vi một file + một index riêng (xem
+# services/agent/scope.py). Tên file là BĂM của khoá phạm vi — không phải khoá
+# đã "làm sạch": bản nháp trước bỏ dấu phân cách nên `a.b@x.com` và `ab@x.com`
+# ra cùng một file, rò dữ liệu giữa hai người.
+_MEMORY_SCOPE_DIR = _AGENT_DIR / "memory"
 
 # Package-shipped default persona used to seed soul.md on first run.
 _DEFAULT_SOUL = Path(__file__).with_name("soul.md")
 
 _lock = threading.RLock()
-_mem_conn: sqlite3.Connection | None = None
+# đường dẫn index → connection (mỗi phạm vi một index, không migration schema)
+_mem_conn: dict[str, sqlite3.Connection] = {}
 _MEM_WORD_RE = re.compile(r"[\wÀ-ỹ]{2,}", re.UNICODE)
 
 # user_id -> {"capability": str, "args": dict, "summary": str, "ts": float}
@@ -58,6 +64,7 @@ def _ensure_dirs() -> None:
     try:
         _AGENT_DIR.mkdir(parents=True, exist_ok=True)
         _USERS_DIR.mkdir(parents=True, exist_ok=True)
+        _MEMORY_SCOPE_DIR.mkdir(parents=True, exist_ok=True)
     except Exception as exc:  # never let a state hiccup break the agent
         logger.warning("agent.state: mkdir failed: %s", exc)
 
@@ -97,15 +104,40 @@ def load_environment(limit_chars: int = 2500) -> str:
 
 # ── Memory (durable family facts) ────────────────────────────────────────────
 
-def load_memory(limit_chars: int = 4000) -> str:
-    """Return recent durable memory (tail of MEMORY.md)."""
-    try:
-        if _MEMORY_FILE.exists():
-            text = _MEMORY_FILE.read_text(encoding="utf-8")
-            return text[-limit_chars:]
-    except Exception as exc:
-        logger.warning("agent.state: read memory failed: %s", exc)
-    return ""
+def _memory_file(pham_vi: str = "") -> Path:
+    """File trí nhớ của một phạm vi. Rỗng = MEMORY.md chung như trước.
+
+    Đọc `_MEMORY_FILE` tại thời điểm gọi (không chụp sẵn) để test hiện có vẫn
+    thay được đường dẫn bằng cách gán `state._MEMORY_FILE`.
+    """
+    if not pham_vi:
+        return _MEMORY_FILE
+    from services.agent.scope import bam_pham_vi
+    return _MEMORY_SCOPE_DIR / f"{bam_pham_vi(pham_vi)}.md"
+
+
+def load_memory(limit_chars: int = 4000, *, pham_vi: str = "") -> str:
+    """Return recent durable memory (tail of MEMORY.md).
+
+    `pham_vi` rỗng = kho chung (đường nội bộ, scheduler, và toàn bộ dữ liệu có
+    từ trước). Có phạm vi thì đọc kho riêng CỘNG kho chung: fact cũ vẫn dùng
+    được, fact mới của người khác thì không lọt sang — migration dữ liệu cũ là
+    bước riêng chủ máy đã hoãn.
+    """
+    def _doc(p: Path) -> str:
+        try:
+            return p.read_text(encoding="utf-8") if p.exists() else ""
+        except Exception as exc:
+            logger.warning("agent.state: read memory failed: %s", exc)
+            return ""
+
+    if not pham_vi:
+        return _doc(_MEMORY_FILE)[-limit_chars:]
+    chung = _doc(_MEMORY_FILE)
+    rieng = _doc(_memory_file(pham_vi))
+    # Kho riêng đứng SAU để nó chiếm phần đuôi khi phải cắt: điều vừa dặn quan
+    # trọng hơn fact chung cũ.
+    return (chung + rieng)[-limit_chars:]
 
 
 def _norm_fact(s: str) -> str:
@@ -117,7 +149,23 @@ def _norm_fact(s: str) -> str:
     return _re.sub(r"\s+", " ", s).strip().lower()
 
 
-def memory_contains(fact: str, threshold: float = 0.82) -> bool:
+def _dong_tri_nho(pham_vi: str = "") -> list[str]:
+    """Mọi dòng trí nhớ mà phạm vi này ĐƯỢC THẤY: kho riêng + kho chung.
+
+    Bộ chặn trùng và bộ cập-nhật phải soi đúng tập này, không thì fact đã có
+    trong kho chung lại bị thêm lần nữa vào kho riêng.
+    """
+    ra: list[str] = []
+    for p in ({_MEMORY_FILE, _memory_file(pham_vi)} if pham_vi else {_MEMORY_FILE}):
+        try:
+            if p.exists():
+                ra.extend(p.read_text(encoding="utf-8").splitlines())
+        except Exception:
+            continue
+    return ra
+
+
+def memory_contains(fact: str, threshold: float = 0.82, *, pham_vi: str = "") -> bool:
     """True nếu `fact` (hoặc gần trùng) ĐÃ có trong MEMORY.md — để chặn 'remember'
     đề xuất/lưu lại điều đã nhớ (model hay lôi nhầm ngữ cảnh, vd thông tin SSH).
 
@@ -130,11 +178,8 @@ def memory_contains(fact: str, threshold: float = 0.82) -> bool:
     nf = _norm_fact(fact)
     if not nf:
         return False
-    try:
-        if not _MEMORY_FILE.exists():
-            return False
-        lines = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    lines = _dong_tri_nho(pham_vi)
+    if not lines:
         return False
     nf_tokens = set(nf.split())
     if not nf_tokens:
@@ -152,16 +197,13 @@ def memory_contains(fact: str, threshold: float = 0.82) -> bool:
     return False
 
 
-def _do_giong(fact: str) -> tuple[float, str]:
-    """(độ giống cao nhất, dòng khớp nhất) giữa `fact` và MEMORY.md."""
+def _do_giong(fact: str, pham_vi: str = "") -> tuple[float, str]:
+    """(độ giống cao nhất, dòng khớp nhất) giữa `fact` và trí nhớ thấy được."""
     nf = _norm_fact(fact)
     if not nf:
         return 0.0, ""
-    try:
-        if not _MEMORY_FILE.exists():
-            return 0.0, ""
-        lines = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
-    except Exception:
+    lines = _dong_tri_nho(pham_vi)
+    if not lines:
         return 0.0, ""
     nf_tokens = set(nf.split())
     if not nf_tokens:
@@ -182,7 +224,8 @@ def _do_giong(fact: str) -> tuple[float, str]:
 
 def nho_hoac_cap_nhat(fact: str, who: str = "", *,
                       nguong_trung: float = 0.97,
-                      nguong_cap_nhat: float = 0.82) -> str:
+                      nguong_cap_nhat: float = 0.82,
+                      pham_vi: str = "") -> str:
     """Ghi nhớ `fact`; nếu nó là BẢN CẬP NHẬT của một dòng cũ thì THAY dòng đó.
 
     Trả về 'trung' (y nguyên, không lưu) | 'cap_nhat' (đã thay dòng cũ) |
@@ -200,43 +243,55 @@ def nho_hoac_cap_nhat(fact: str, who: str = "", *,
     fact = (fact or "").strip()
     if not fact:
         return "trung"
-    cao, dong_cu = _do_giong(fact)
+    cao, dong_cu = _do_giong(fact, pham_vi)
     if cao >= nguong_trung:
         return "trung"
     if cao >= nguong_cap_nhat and dong_cu:
-        _xoa_dong_tri_nho(dong_cu)
-        append_memory(fact, who=who)
+        _xoa_dong_tri_nho(dong_cu, pham_vi)
+        append_memory(fact, who=who, pham_vi=pham_vi)
         return "cap_nhat"
-    append_memory(fact, who=who)
+    append_memory(fact, who=who, pham_vi=pham_vi)
     return "them"
 
 
-def _xoa_dong_tri_nho(dong: str) -> None:
-    """Bỏ một dòng khỏi MEMORY.md và khỏi FTS index (giữ hai bên khớp nhau)."""
+def _xoa_dong_tri_nho(dong: str, pham_vi: str = "") -> None:
+    """Bỏ một dòng khỏi file trí nhớ và khỏi FTS index (giữ hai bên khớp nhau).
+
+    Xoá ở CẢ kho riêng và kho chung. Dòng cần thay có thể nằm ở kho chung (dữ
+    liệu có từ trước khi tách phạm vi); chừa nó lại thì lời dặn mới và lời dặn cũ
+    cùng tồn tại, và người dùng lại KHÔNG THỂ sửa điều bot đã nhớ — đúng cái lỗi
+    `nho_hoac_cap_nhat` sinh ra để chữa.
+    """
     with _lock:
-        try:
-            cu = _MEMORY_FILE.read_text(encoding="utf-8").splitlines()
-            moi = [x for x in cu if x.strip() != dong.strip()]
-            if len(moi) != len(cu):
-                _MEMORY_FILE.write_text("\n".join(moi) + ("\n" if moi else ""),
-                                        encoding="utf-8")
-        except Exception as exc:
-            logger.warning("agent.state: xoá dòng trí nhớ lỗi: %s", exc)
-            return
-        try:
-            db = _mem_db()
-            rows = db.execute(
-                "SELECT id FROM memory_lines WHERE line = ?", (dong,),
-            ).fetchall()
-            for (rid,) in rows:
-                db.execute("DELETE FROM memory_fts WHERE rowid = ?", (rid,))
-                db.execute("DELETE FROM memory_lines WHERE id = ?", (rid,))
-            db.commit()
-        except Exception as exc:
-            logger.warning("agent.state: xoá dòng khỏi FTS lỗi: %s", exc)
+        cac_file = [_MEMORY_FILE]
+        if pham_vi:
+            cac_file.append(_memory_file(pham_vi))
+        for p in cac_file:
+            try:
+                if not p.exists():
+                    continue
+                cu = p.read_text(encoding="utf-8").splitlines()
+                moi = [x for x in cu if x.strip() != dong.strip()]
+                if len(moi) != len(cu):
+                    p.write_text("\n".join(moi) + ("\n" if moi else ""),
+                                 encoding="utf-8")
+            except Exception as exc:
+                logger.warning("agent.state: xoá dòng trí nhớ lỗi: %s", exc)
+        for pv in ({"", pham_vi} if pham_vi else {""}):
+            try:
+                db = _mem_db(pv)
+                rows = db.execute(
+                    "SELECT id FROM memory_lines WHERE line = ?", (dong,),
+                ).fetchall()
+                for (rid,) in rows:
+                    db.execute("DELETE FROM memory_fts WHERE rowid = ?", (rid,))
+                    db.execute("DELETE FROM memory_lines WHERE id = ?", (rid,))
+                db.commit()
+            except Exception as exc:
+                logger.warning("agent.state: xoá dòng khỏi FTS lỗi: %s", exc)
 
 
-def append_memory(fact: str, who: str = "") -> None:
+def append_memory(fact: str, who: str = "", *, pham_vi: str = "") -> None:
     """Append a durable fact (a change action — call only after approval)."""
     fact = (fact or "").strip()
     if not fact:
@@ -244,9 +299,10 @@ def append_memory(fact: str, who: str = "") -> None:
     _ensure_dirs()
     stamp = time.strftime("%Y-%m-%d %H:%M")
     line = f"- [{stamp}]{f' ({who})' if who else ''} {fact}"
+    tep = _memory_file(pham_vi)
     with _lock:
         try:
-            with _MEMORY_FILE.open("a", encoding="utf-8") as f:
+            with tep.open("a", encoding="utf-8") as f:
                 f.write(line + chr(10))
         except Exception as exc:
             logger.warning("agent.state: append memory failed: %s", exc)
@@ -254,7 +310,7 @@ def append_memory(fact: str, who: str = "") -> None:
         # FIX4 (audit 2026-07): đồng bộ FTS ngay khi thêm — chỉ thêm 1 dòng
         # (rẻ hơn nhiều so với rebuild toàn bộ mỗi lần append_memory).
         try:
-            db = _mem_db()
+            db = _mem_db(pham_vi)
             cur = db.execute(
                 "INSERT INTO memory_lines (line) VALUES (?)", (line,),
             )
@@ -262,7 +318,7 @@ def append_memory(fact: str, who: str = "") -> None:
             db.execute(
                 "INSERT INTO memory_fts (rowid, line) VALUES (?,?)", (rid, line),
             )
-            mtime = _MEMORY_FILE.stat().st_mtime
+            mtime = tep.stat().st_mtime
             db.execute(
                 "INSERT INTO memory_meta (key, value) VALUES ('mtime', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -273,13 +329,25 @@ def append_memory(fact: str, who: str = "") -> None:
             logger.warning("agent.state: memory FTS sync failed: %s", exc)
 
 
-def _mem_db() -> sqlite3.Connection:
-    """Kết nối SQLite cho FTS index của MEMORY.md — cùng pattern session.py
-    (turns_fts): bảng gốc + virtual table fts5 content-linked."""
-    global _mem_conn
-    if _mem_conn is None:
+def _mem_db_path(pham_vi: str = "") -> Path:
+    if not pham_vi:
+        return _MEMORY_DB_PATH
+    from services.agent.scope import bam_pham_vi
+    return _MEMORY_SCOPE_DIR / f"{bam_pham_vi(pham_vi)}.sqlite"
+
+
+def _mem_db(pham_vi: str = "") -> sqlite3.Connection:
+    """Kết nối SQLite cho FTS index của file trí nhớ — cùng pattern session.py
+    (turns_fts): bảng gốc + virtual table fts5 content-linked.
+
+    MỖI PHẠM VI MỘT INDEX RIÊNG thay vì thêm cột `scope` vào index đang có: index
+    cũ đã tồn tại trên máy chủ, thêm cột là phải migration schema lúc khởi động.
+    """
+    duong = str(_mem_db_path(pham_vi))
+    conn = _mem_conn.get(duong)
+    if conn is None:
         _ensure_dirs()
-        conn = sqlite3.connect(str(_MEMORY_DB_PATH), check_same_thread=False)
+        conn = sqlite3.connect(duong, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_lines ("
@@ -296,24 +364,25 @@ def _mem_db() -> sqlite3.Connection:
             " key TEXT PRIMARY KEY, value TEXT)"
         )
         conn.commit()
-        _mem_conn = conn
-    return _mem_conn
+        _mem_conn[duong] = conn
+    return conn
 
 
-def _rebuild_memory_index() -> None:
-    """Xây lại toàn bộ FTS index từ MEMORY.md — dùng khi file mới hơn index
+def _rebuild_memory_index(pham_vi: str = "") -> None:
+    """Xây lại toàn bộ FTS index từ file trí nhớ — dùng khi file mới hơn index
     (ai đó sửa tay MEMORY.md ngoài append_memory, hoặc lần đầu chưa có index)."""
-    if not _MEMORY_FILE.exists():
+    tep = _memory_file(pham_vi)
+    if not tep.exists():
         return
     try:
-        text = _MEMORY_FILE.read_text(encoding="utf-8")
-        mtime = _MEMORY_FILE.stat().st_mtime
+        text = tep.read_text(encoding="utf-8")
+        mtime = tep.stat().st_mtime
     except Exception as exc:
         logger.warning("agent.state: read memory for index failed: %s", exc)
         return
     lines = [ln for ln in text.splitlines() if ln.strip()]
     with _lock:
-        db = _mem_db()
+        db = _mem_db(pham_vi)
         try:
             db.execute("DELETE FROM memory_fts")
             db.execute("DELETE FROM memory_lines")
@@ -336,18 +405,19 @@ def _rebuild_memory_index() -> None:
             logger.warning("agent.state: rebuild memory index failed: %s", exc)
 
 
-def _sync_memory_index() -> None:
-    """Rebuild-on-mismatch (cùng cách session.py xử lý lệch dữ liệu): nếu
-    MEMORY.md mới hơn (hoặc khác) mtime đã lưu trong index, xây lại toàn bộ."""
-    if not _MEMORY_FILE.exists():
+def _sync_memory_index(pham_vi: str = "") -> None:
+    """Rebuild-on-mismatch (cùng cách session.py xử lý lệch dữ liệu): nếu file
+    trí nhớ mới hơn (hoặc khác) mtime đã lưu trong index, xây lại toàn bộ."""
+    tep = _memory_file(pham_vi)
+    if not tep.exists():
         return
     try:
-        mtime = _MEMORY_FILE.stat().st_mtime
+        mtime = tep.stat().st_mtime
     except Exception:
         return
     try:
         with _lock:
-            row = _mem_db().execute(
+            row = _mem_db(pham_vi).execute(
                 "SELECT value FROM memory_meta WHERE key='mtime'"
             ).fetchone()
     except Exception as exc:
@@ -358,19 +428,37 @@ def _sync_memory_index() -> None:
     except (TypeError, ValueError):
         indexed = -1.0
     if indexed < 0 or abs(mtime - indexed) > 0.001:
-        _rebuild_memory_index()
+        _rebuild_memory_index(pham_vi)
 
 
-def search_memory(query: str, *, limit: int = 6) -> list[str]:
-    """FIX4 (audit 2026-07): full-text search TOÀN BỘ MEMORY.md (không chỉ
+def search_memory(query: str, *, limit: int = 6, pham_vi: str = "") -> list[str]:
+    """FIX4 (audit 2026-07): full-text search TOÀN BỘ file trí nhớ (không chỉ
     đuôi file ~4-6k ký tự như load_memory) — để một fact CŨ (quá khoảng
     40-80 dòng) vẫn được tìm thấy khi liên quan tới câu hỏi hiện tại. Dùng
     ADDITIVE cùng load_memory() (khối "gần đây" luôn có sẵn) — không thay
-    thế hành vi hiện có, chỉ bổ sung khả năng tìm fact liên quan ở xa."""
+    thế hành vi hiện có, chỉ bổ sung khả năng tìm fact liên quan ở xa.
+
+    Có `pham_vi` → tìm trong kho riêng RỒI kho chung, đúng tập mà load_memory
+    cho thấy; không bao giờ chạm kho của phạm vi khác."""
     q = (query or "").strip()
-    if not q or not _MEMORY_FILE.exists():
+    if not q:
         return []
-    _sync_memory_index()
+    if pham_vi:
+        rieng = _tim_trong_index(q, limit=limit, pham_vi=pham_vi)
+        chung = _tim_trong_index(q, limit=limit)
+        gop: list[str] = []
+        for ln in [*rieng, *chung]:
+            if ln not in gop:
+                gop.append(ln)
+        return gop[:max(1, min(int(limit or 6), 20))]
+    return _tim_trong_index(q, limit=limit)
+
+
+def _tim_trong_index(query: str, *, limit: int = 6, pham_vi: str = "") -> list[str]:
+    q = (query or "").strip()
+    if not q or not _memory_file(pham_vi).exists():
+        return []
+    _sync_memory_index(pham_vi)
     words: list[str] = []
     seen: set[str] = set()
     for w in _MEM_WORD_RE.findall(q.lower()):
@@ -386,7 +474,7 @@ def search_memory(query: str, *, limit: int = 6) -> list[str]:
     limit = max(1, min(int(limit or 6), 20))
     try:
         with _lock:
-            rows = _mem_db().execute(
+            rows = _mem_db(pham_vi).execute(
                 "SELECT ml.line FROM memory_fts "
                 "JOIN memory_lines ml ON ml.id = memory_fts.rowid "
                 "WHERE memory_fts MATCH ? ORDER BY ml.id DESC LIMIT ?",

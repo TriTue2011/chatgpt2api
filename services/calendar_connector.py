@@ -288,12 +288,64 @@ def format_events(events: list[dict[str, Any]] | None = None, *,
     return "\n".join(lines)
 
 
-def prompt_block() -> str:
-    """Cho super_context / system prompt — gộp MỌI lịch đang bật."""
+def khop_muc_tieu(target: str, sc: Any) -> bool:
+    """Khoá kênh nhận `plat[:bot]:chat[#topic]` có trỏ đúng lượt này không?
+
+    Khoá giống hệt tab «Lọc thread». Ở đây chỉ so kênh + chat (+ topic) nên khoá
+    có hay không có phần `bot` đều khớp — super_context không biết bot nào đang
+    chạy, mà chat id thì đã đủ phân biệt.
+
+    Mục tiêu trỏ MỘT topic → chỉ lượt trong đúng topic đó nhận. Mục tiêu trỏ cả
+    nhóm → mọi topic trong nhóm nhận.
+    """
+    phan = str(target or "").strip().split(":")
+    if len(phan) < 2 or not phan[0]:
+        return False
+    if phan[0] != getattr(sc, "kenh", ""):
+        return False
+    chat, _, topic = phan[-1].partition("#")
+    if chat != getattr(sc, "chat", ""):
+        return False
+    return not topic or topic == getattr(sc, "topic", "")
+
+
+def _lich_cho_luot(cal: dict[str, Any], sc: Any) -> bool:
+    """Lịch này có dành cho lượt đang chạy?
+
+    `notify_targets` là chính lời khai của chủ máy về việc lịch này thuộc về
+    thread nào — dùng lại nó, không thêm cài đặt thứ hai để chủ máy phải nhớ.
+
+    Lịch CHƯA khai kênh nhận thì không giới hạn (giữ hành vi cũ): nó là lịch một
+    mình dùng, tắt đi là lấy mất thứ đang chạy mà không ai yêu cầu.
+    """
+    if sc is None:
+        return True
+    targets = cal.get("notify_targets") or []
+    if not targets:
+        return True
+    return any(khop_muc_tieu(t, sc) for t in targets)
+
+
+def prompt_block(user_id: str = "") -> str:
+    """Cho super_context / system prompt — gộp mọi lịch đang bật DÀNH CHO lượt này.
+
+    Trước đây gộp MỌI lịch đang bật, bất kể ai đang nhắn: sự kiện lịch gia đình
+    đi vào system prompt của mọi thread, kể cả nhóm người ngoài. `user_id` là
+    khoá phiên orchestrator; rỗng = đường nội bộ, giữ nguyên hành vi cũ.
+    """
+    sc = None
+    if str(user_id or "").strip():
+        try:
+            from services.agent.scope import tach_khoa_phien
+            sc = tach_khoa_phien(user_id)
+        except Exception:
+            sc = None
     parts: list[str] = []
     try:
         for cal in calendars():
             if not cal.get("enabled"):
+                continue
+            if not _lich_cho_luot(cal, sc):
                 continue
             evs = fetch_events(cal)
             if evs:

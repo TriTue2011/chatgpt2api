@@ -37,6 +37,19 @@ def _channel_of(ctx: dict | None) -> str:
     if uid.startswith("zalo_"):
         return "zalo"
     return "tg" if uid else ""
+
+
+def _pham_vi_of(ctx: dict | None) -> str:
+    """Khoá phạm vi dữ liệu của lượt này — xem services/agent/scope.py.
+
+    Suy ra từ khoá phiên, KHÔNG thay khoá phiên. Lượt nào không có khoá phiên
+    (đường nội bộ) thì trả rỗng = phạm vi mặc định, giữ hành vi cũ.
+    """
+    try:
+        from services.agent.scope import khoa_du_lieu
+        return khoa_du_lieu(str((ctx or {}).get("user_id") or ""))
+    except Exception:
+        return ""
 from services.agent.runtime import (call_model, call_video, content_of,
                                     first_image_url)
 
@@ -820,7 +833,8 @@ def _h_remember(args: dict, ctx: dict) -> dict:
         return {"text": "Anh/chị muốn em ghi nhớ điều gì ạ?"}
     # Trùng y nguyên thì bỏ; GẦN trùng thì đó là bản CẬP NHẬT, phải thay dòng cũ
     # chứ không được bỏ im lặng (xem `state.nho_hoac_cap_nhat`).
-    kq = state.nho_hoac_cap_nhat(fact, who=str(ctx.get("user_id") or ""))
+    kq = state.nho_hoac_cap_nhat(fact, who=str(ctx.get("user_id") or ""),
+                                 pham_vi=_pham_vi_of(ctx))
     if kq == "trung":
         return {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
     if kq == "cap_nhat":
@@ -1786,7 +1800,8 @@ def _h_ingest(args: dict, ctx: dict) -> dict:
     title = str(args.get("title") or "").strip()
     source = str(args.get("source") or "").strip()
     who = str(ctx.get("user_id") or "")
-    out = w.ingest(content, title=title, who=who, source=source)
+    out = w.ingest(content, title=title, who=who, source=source,
+                   pham_vi=_pham_vi_of(ctx))
     return {"text": out.get("text") or "Thu nạp xong."}
 
 
@@ -1795,14 +1810,15 @@ def _h_wiki_search(args: dict, ctx: dict) -> dict:
 
     if not w.is_enabled():
         return {"text": "Wiki đang tắt trên máy chủ ạ."}
+    pv = _pham_vi_of(ctx)
     q = str(args.get("query") or "").strip()
     if not q:
-        recent = w.list_recent(10)
+        recent = w.list_recent(10, pham_vi=pv)
         if not recent:
             return {"text": "Wiki còn trống. Dùng ingest để thu nạp ghi chú."}
         lines = ["Ghi chú gần đây:"] + [f"• `{r['slug']}` — {r['title']}" for r in recent]
         return {"text": "\n".join(lines)}
-    hits = w.search(q, limit=8)
+    hits = w.search(q, limit=8, pham_vi=pv)
     if not hits:
         return {"text": f"Không thấy ghi chú khớp “{q}”."}
     lines = [f"Tìm thấy {len(hits)} ghi chú:"]
@@ -1819,7 +1835,7 @@ def _h_wiki_read(args: dict, ctx: dict) -> dict:
     slug = str(args.get("slug") or "").strip()
     if not slug:
         return {"text": "Cần slug ghi chú (từ wiki_search)."}
-    body = w.read(slug)
+    body = w.read(slug, pham_vi=_pham_vi_of(ctx))
     if not body:
         return {"text": f"Không có ghi chú `{slug}`."}
     return {"text": body[:4000]}
@@ -1856,6 +1872,7 @@ def _h_wiki_digest(args: dict, ctx: dict) -> dict:
 
     if not w.is_enabled():
         return {"text": "Wiki đang tắt trên máy chủ ạ."}
+    pv = _pham_vi_of(ctx)
     op = str(args.get("op") or "read").strip().lower()
     day = str(args.get("day") or "").strip() or None
     force = bool(args.get("force") or op in ("build", "create", "run"))
@@ -1865,6 +1882,7 @@ def _h_wiki_digest(args: dict, ctx: dict) -> dict:
             day,
             force=force or op in ("build", "create", "run"),
             use_llm=bool(use_llm) if use_llm is not None else None,
+            pham_vi=pv,
         )
         if not out.get("ok"):
             return {"text": out.get("text") or "Không tạo được digest."}
@@ -1878,7 +1896,7 @@ def _h_wiki_digest(args: dict, ctx: dict) -> dict:
             body = body[:3500] + "…"
         return {"text": head + body}
     # read
-    body = w.read_digest(day)
+    body = w.read_digest(day, pham_vi=pv)
     if not body:
         d = day or "hôm nay"
         return {

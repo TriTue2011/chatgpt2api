@@ -34,7 +34,11 @@ class _TriNhoTam(unittest.TestCase):
         self._goc = (state._MEMORY_FILE, state._MEMORY_DB_PATH, state._mem_conn)
         state._MEMORY_FILE = self.tep
         state._MEMORY_DB_PATH = self.thu_muc / "m.sqlite"
-        state._mem_conn = None
+        # `_mem_conn` là DICT (đường dẫn index → connection) từ khi trí nhớ tách
+        # theo phạm vi — mỗi phạm vi một index riêng. Gán None ở đây thì mọi lời
+        # gọi FTS ném AttributeError và bị try/except nuốt: test vẫn xanh mà
+        # nhánh index không còn được chạy lần nào.
+        state._mem_conn = {}
 
     def tearDown(self) -> None:
         state._MEMORY_FILE, state._MEMORY_DB_PATH, state._mem_conn = self._goc

@@ -117,7 +117,7 @@ def _build_frontmatter(meta: dict[str, Any]) -> str:
     lines = ["---"]
     for key in (
         "title", "source", "who", "platform", "chat_id",
-        "created_at", "tags", "content_hash",
+        "created_at", "tags", "content_hash", "scope",
     ):
         v = meta.get(key)
         if v is None or v == "":
@@ -167,6 +167,22 @@ def parse_note(path: Path) -> dict[str, Any]:
         "path": str(path),
         "snippet": re.sub(r"\s+", " ", body)[:180],
     }
+
+
+def note_trong_pham_vi(note: dict[str, Any], pham_vi: str) -> bool:
+    """Ghi chú này có thuộc phạm vi đang hỏi?
+
+    `pham_vi` rỗng = không rõ nguồn (đường nội bộ, scheduler) → thấy tất cả,
+    giữ nguyên hành vi cũ cho digest theo giờ và các lối gọi chưa có ngữ cảnh.
+
+    Ghi chú KHÔNG có `scope` là ghi chú tạo trước khi có phạm vi: vẫn cho mọi
+    phạm vi đọc. Ẩn chúng đi là im lặng làm mất wiki đang dùng, mà migration dữ
+    liệu cũ là bước riêng chủ máy đã hoãn lại. Ghi chú MỚI thì luôn có scope.
+    """
+    if not pham_vi:
+        return True
+    cua_note = str((note.get("meta") or {}).get("scope") or "").strip()
+    return not cua_note or cua_note == pham_vi
 
 
 def _slugify(title: str) -> str:
@@ -284,6 +300,7 @@ def ingest(
     source: str = "",
     platform: str = "",
     chat_id: str = "",
+    pham_vi: str = "",
 ) -> dict[str, Any]:
     """Create a wiki note from raw content. Returns {text, slug, path, meta}."""
     if not is_enabled():
@@ -320,6 +337,7 @@ def ingest(
         "created_at": stamp,
         "tags": meta["tags"] or "",
         "content_hash": chash,
+        "scope": str(pham_vi or "").strip(),
     }
     header_human = (
         f"# {meta['title']}\n\n"
@@ -350,7 +368,8 @@ def ingest(
     if also_memory() and mem_line:
         try:
             from services.agent import state
-            state.append_memory(mem_line, who=who or "wiki")
+            state.append_memory(mem_line, who=who or "wiki",
+                                pham_vi=str(pham_vi or "").strip())
         except Exception:
             pass
 
@@ -374,7 +393,7 @@ def ingest(
     }
 
 
-def search(query: str, *, limit: int = 8) -> list[dict[str, Any]]:
+def search(query: str, *, limit: int = 8, pham_vi: str = "") -> list[dict[str, Any]]:
     if not is_enabled():
         return []
     _ensure()
@@ -394,6 +413,9 @@ def search(query: str, *, limit: int = 8) -> list[dict[str, Any]]:
             try:
                 text = p.read_text(encoding="utf-8", errors="replace")
             except OSError:
+                continue
+            fm, _ = split_frontmatter(text)
+            if not note_trong_pham_vi({"meta": fm}, pham_vi):
                 continue
             low = text.lower()
             score = sum(1 for w in words if w in low)
@@ -430,13 +452,19 @@ def search(query: str, *, limit: int = 8) -> list[dict[str, Any]]:
     return out
 
 
-def read(slug: str) -> Optional[str]:
+def read(slug: str, *, pham_vi: str = "") -> Optional[str]:
     if not valid_slug(slug):
         return None
     path = _NOTES_DIR / f"{slug}.md"
     try:
         if path.is_file():
-            text = path.read_text(encoding="utf-8", errors="replace")[: max_note_chars()]
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            fm, _ = split_frontmatter(raw)
+            # Chốt phạm vi ở ĐÂY, không chỉ ở search: slug là chuỗi đoán được và
+            # model có thể nhắc lại slug thấy trong lượt trước của người khác.
+            if not note_trong_pham_vi({"meta": fm}, pham_vi):
+                return None
+            text = raw[: max_note_chars()]
             try:
                 from services.privacy_gate import redact_text
                 text = redact_text(text, session_id="rag:wiki")
@@ -448,7 +476,7 @@ def read(slug: str) -> Optional[str]:
     return None
 
 
-def list_recent(limit: int = 15) -> list[dict[str, str]]:
+def list_recent(limit: int = 15, *, pham_vi: str = "") -> list[dict[str, str]]:
     _ensure()
     out: list[dict[str, str]] = []
     try:
@@ -457,8 +485,12 @@ def list_recent(limit: int = 15) -> list[dict[str, str]]:
             key=lambda x: x.stat().st_mtime,
             reverse=True,
         )
-        for p in files[:limit]:
+        for p in files:
+            if len(out) >= limit:
+                break
             note = parse_note(p)
+            if not note_trong_pham_vi(note, pham_vi):
+                continue
             out.append({
                 "slug": note.get("slug") or p.stem,
                 "title": note.get("title") or p.stem,
@@ -470,7 +502,7 @@ def list_recent(limit: int = 15) -> list[dict[str, str]]:
     return out
 
 
-def notes_for_day(day: str | None = None) -> list[dict[str, Any]]:
+def notes_for_day(day: str | None = None, *, pham_vi: str = "") -> list[dict[str, Any]]:
     """Notes whose created_at / mtime falls on ``day`` (YYYY-MM-DD, VN)."""
     _ensure()
     if not day:
@@ -486,6 +518,8 @@ def notes_for_day(day: str | None = None) -> list[dict[str, Any]]:
     try:
         for p in _NOTES_DIR.glob("*.md"):
             note = parse_note(p)
+            if not note_trong_pham_vi(note, pham_vi):
+                continue
             ts = float(note.get("ts") or 0)
             if start <= ts < end:
                 hits.append(note)
@@ -495,14 +529,24 @@ def notes_for_day(day: str | None = None) -> list[dict[str, Any]]:
     return hits
 
 
-def digest_path(day: str) -> Path:
-    return _DIGEST_DIR / f"{day}.md"
+def digest_path(day: str, pham_vi: str = "") -> Path:
+    """Đường dẫn digest. Có phạm vi → thư mục riêng theo BĂM của phạm vi.
+
+    Băm chứ không dùng chuỗi phạm vi làm tên: chuỗi chứa `|`, `:`, `/` và độ dài
+    không chặn, không dùng làm tên file được. Bản nháp trước lại "làm sạch" bằng
+    cách bỏ dấu phân cách, nên `a.b@x.com` và `ab@x.com` ra cùng một file — rò
+    dữ liệu giữa hai người. Băm không có kiểu hỏng đó.
+    """
+    if not pham_vi:
+        return _DIGEST_DIR / f"{day}.md"
+    from services.agent.scope import bam_pham_vi
+    return _DIGEST_DIR / bam_pham_vi(pham_vi) / f"{day}.md"
 
 
-def read_digest(day: str | None = None) -> Optional[str]:
+def read_digest(day: str | None = None, *, pham_vi: str = "") -> Optional[str]:
     if not day:
         day = _now_vn().strftime("%Y-%m-%d")
-    path = digest_path(day[:10])
+    path = digest_path(day[:10], pham_vi)
     try:
         if path.is_file():
             return path.read_text(encoding="utf-8", errors="replace")[: max_note_chars()]
@@ -516,8 +560,11 @@ def build_daily_digest(
     *,
     force: bool = False,
     use_llm: bool | None = None,
+    pham_vi: str = "",
 ) -> dict[str, Any]:
     """Write digests/YYYY-MM-DD.md from that day's notes (+ MEMORY tail).
+
+    Có `pham_vi` → chỉ gom ghi chú của phạm vi đó và ghi vào file riêng của nó.
 
     Returns {ok, day, path, text, note_count, skipped?}.
     """
@@ -527,7 +574,8 @@ def build_daily_digest(
     if not day:
         day = _now_vn().strftime("%Y-%m-%d")
     day = day.strip()[:10]
-    path = digest_path(day)
+    path = digest_path(day, pham_vi)
+    path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file() and not force:
         body = path.read_text(encoding="utf-8", errors="replace")
         return {
@@ -539,11 +587,11 @@ def build_daily_digest(
             "skipped": True,
         }
 
-    notes = notes_for_day(day)
+    notes = notes_for_day(day, pham_vi=pham_vi)
     mem_lines: list[str] = []
     try:
         from services.agent import state
-        mem = state.load_memory(limit_chars=3000)
+        mem = state.load_memory(limit_chars=3000, pham_vi=pham_vi)
         for ln in mem.splitlines():
             s = ln.strip()
             if s.startswith("-") and day in s:

@@ -555,10 +555,30 @@ def _bo_dau(s: str) -> str:
 _TU_KHOA_SO_THICH_KHONG_DAU = tuple(_bo_dau(k) for k in _TU_KHOA_SO_THICH)
 
 
-def _so_thich_trinh_bay(limit: int = 6) -> list[str]:
-    """Các dòng trí nhớ nói về CÁCH TRÌNH BÀY, lấy mấy dòng gần nhất."""
+def _pham_vi(user_id: str) -> str:
+    """Khoá phạm vi dữ liệu của lượt — xem services/agent/scope.py.
+
+    SUY RA từ khoá phiên, không thay khoá phiên: lần làm trước đổi hình dạng
+    khoá phiên nên `capabilities._channel_of` / `reminders.channel_of` hiểu sai
+    và Zalo bị nhận thành Telegram (4 commit đã revert ở e68ecba).
+    """
     try:
-        mem = state.load_memory()
+        from services.agent.scope import khoa_du_lieu
+        return khoa_du_lieu(str(user_id or ""))
+    except Exception:
+        return ""
+
+
+def _so_thich_trinh_bay(limit: int = 6, pham_vi: str = "") -> list[str]:
+    """Các dòng trí nhớ nói về CÁCH TRÌNH BÀY, lấy mấy dòng gần nhất.
+
+    PHẢI truyền `pham_vi` ở đường chạy thật: `remember` ghi lời dặn vào kho
+    riêng của phạm vi, nên đọc kho chung không thôi là lời dặn vừa lưu không có
+    tác dụng — đúng cái lỗi "ghi nhớ được mà không làm được" file test
+    test_ap_so_thich_trinh_bay.py đang khoá.
+    """
+    try:
+        mem = state.load_memory(pham_vi=pham_vi)
     except Exception:
         return []
     ra: list[str] = []
@@ -644,7 +664,7 @@ _MAT_DANG_TIN = {
 }
 
 
-def _dang_bay_tin() -> dict[str, bool]:
+def _dang_bay_tin(pham_vi: str = "") -> dict[str, bool]:
     """Dáng bản tin suy từ lời dặn, ưu tiên dòng MỚI NHẤT.
 
     Vì sao phải xét theo thứ tự mới→cũ: trí nhớ có thể chứa hai lời dặn NGƯỢC
@@ -658,7 +678,7 @@ def _dang_bay_tin() -> dict[str, bool]:
     ra = {"tom_tat": True, "in_dam": True, "emoji": True, "chi_viet": False}
     con_thieu = set(ra)
     # `_so_thich_trinh_bay()` trả theo thứ tự trong file (cũ → mới) nên đảo lại.
-    for dong in reversed(_so_thich_trinh_bay()):
+    for dong in reversed(_so_thich_trinh_bay(pham_vi=pham_vi)):
         if not con_thieu:
             break
         d = _bo_dau(dong)
@@ -884,7 +904,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     env = state.load_environment()
     if env.strip():
         parts.append("## Môi trường em đang sống (bản đồ hệ thống)\n" + env.strip())
-    mem = state.load_memory()
+    mem = state.load_memory(pham_vi=_pham_vi(user_id))
     if mem.strip():
         parts.append("## Trí nhớ (chuyện đã ghi nhớ)\n" + mem.strip())
     # Người dùng xin đổi CÁCH TRÌNH BÀY nội dung vừa gửi → LÀM LẠI NGAY.
@@ -1432,7 +1452,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # Đo thật 01/08: nhờ model bày lại bản tin 4819 ký tự thì nó KHÔNG
                 # kịp xong trong 20 giây — lần nào cũng hết giờ rồi rơi về bản gốc,
                 # nên người dùng chờ thêm 20 giây để nhận đúng thứ cũ.
-                _dang = _dang_bay_tin()
+                _dang = _dang_bay_tin(_pham_vi(user_id))
                 # Truyền NGUYÊN câu người dùng vào chu_de: get_news_sections tự
                 # cắt từ chung ('tin tức/hôm nay') — còn lại rỗng thì digest 8
                 # mục như cũ, còn lại 'bão'/'giá vàng'… thì tìm ĐÚNG chủ đề. Đo
@@ -1688,8 +1708,9 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     # tác dụng với câu trả lời nhà thông minh.
                     *([{"role": "system", "content":
                         "Người dùng đã dặn cách trình bày:\n"
-                        + "\n".join(f"- {x}" for x in _so_thich_trinh_bay())}]
-                      if _so_thich_trinh_bay() else []),
+                        + "\n".join(f"- {x}" for x in
+                                    _so_thich_trinh_bay(pham_vi=_pham_vi(user_id)))}]
+                      if _so_thich_trinh_bay(pham_vi=_pham_vi(user_id)) else []),
                     {"role": "user", "content": (
                         f"Tin nhắn: {user_text}\nKết quả từ hệ thống nhà: {fp_text}")},
                     # no_smart_home: chỉ nhờ diễn đạt LẠI văn bản — tắt tích hợp HA
@@ -1815,7 +1836,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
             if not cap:
                 result = {"text": f"(không có công cụ {name})"}
             elif name == "remember" and state.memory_contains(
-                    str(args.get("fact") or ""), threshold=0.97):
+                    str(args.get("fact") or ""), threshold=0.97,
+                    pham_vi=_pham_vi(user_id)):
                 # Model đòi ghi nhớ điều ĐÃ có trong bộ nhớ (hay lôi nhầm ngữ cảnh,
                 # vd thông tin SSH) → KHÔNG đề xuất/không lưu lại, chỉ xác nhận ngắn.
                 result = {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
