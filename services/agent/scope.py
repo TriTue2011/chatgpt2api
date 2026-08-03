@@ -52,8 +52,25 @@ class Scope:
 
     @property
     def la_nhom(self) -> bool:
-        """Chat này là nhóm? Chỉ Telegram phân biệt được từ chính id (âm)."""
-        return self.chat.startswith("-")
+        """Chat này là nhóm?
+
+        Hai dấu hiệu, và dấu hiệu thứ hai mới là dấu hiệu tổng quát:
+
+        * id âm — quy ước của RIÊNG Telegram;
+        * khoá phiên CÓ MANG người gửi — mọi adapter chỉ gắn ':u<uid>' khi đang
+          ở nhóm (xem telegram_bot.khoa_phien, zalo_bot._skey, zalo_personal).
+          Chat 1-1 thì chat_id chính là người nên không adapter nào gắn thêm.
+
+        Vì sao phải có dấu hiệu thứ hai: id nhóm Zalo KHÔNG âm (dữ liệu thật
+        trên máy chủ: `zalo_zgr-7c722c7ea91e4040190f`), nên xét mỗi id âm là mọi
+        nhóm Zalo bị coi là chat 1-1 và không bao giờ áp được luật chia sẻ —
+        thành viên cùng nhóm không thấy dữ liệu của nhau dù chưa lọc user.
+
+        Nhóm mà TẮT `group_user_isolation` thì khoá không mang người gửi và id
+        không âm → rơi vào nhánh "không phải nhóm", tức cả nhóm chung một phạm
+        vi. Đó cũng chính là điều luật chia sẻ muốn, nên không cần ngoại lệ.
+        """
+        return self.chat.startswith("-") or bool(self.actor)
 
 
 def tach_khoa_phien(user_id: str) -> Scope:

@@ -110,8 +110,32 @@ class KhoaDuLieu(unittest.TestCase):
                             scope.khoa_du_lieu("-100:u10"))
 
     def test_chat_1_1_luon_tach_du_khong_co_loc(self):
-        self.assertNotEqual(scope.khoa_du_lieu("zalo_1:u1"),
-                            scope.khoa_du_lieu("zalo_2:u2"))
+        """1-1 thì adapter KHÔNG gắn ':u' — chat_id đã chính là người."""
+        self.assertNotEqual(scope.khoa_du_lieu("zalo_1"), scope.khoa_du_lieu("zalo_2"))
+        self.assertNotEqual(scope.khoa_du_lieu("555"), scope.khoa_du_lieu("556"))
+
+    def test_nhom_ZALO_cung_ap_luat_chia_se(self):
+        """Id nhóm Zalo KHÔNG âm (thật: 'zgr-7c722c7ea91e4040190f').
+
+        Xét nhóm chỉ bằng id âm là quy ước riêng Telegram — mọi nhóm Zalo sẽ bị
+        coi là chat 1-1 và không bao giờ chia sẻ được, dù chưa lọc user nào.
+        """
+        nhom = "zalo_zgr-7c722c7ea91e4040190f"
+        self.assertEqual(scope.khoa_du_lieu(f"{nhom}:u9"),
+                         scope.khoa_du_lieu(f"{nhom}:u10"))
+
+    def test_nhom_ZALO_co_loc_user_thi_tach(self):
+        self.cfg = {"thread_user_filters": {"zalo:zgr-abc:9": ["device"]}}
+        self.assertNotEqual(scope.khoa_du_lieu("zalo_zgr-abc:u9"),
+                            scope.khoa_du_lieu("zalo_zgr-abc:u10"))
+
+    def test_nhom_zalo_ca_nhan_id_so_van_chia_se(self):
+        """Thread nhóm Zalo cá nhân là id SỐ, không phân biệt được với 1-1 —
+        dấu hiệu duy nhất là khoá có mang người gửi."""
+        self.assertEqual(scope.khoa_du_lieu("zalop_987:u1"),
+                         scope.khoa_du_lieu("zalop_987:u2"))
+        self.assertNotEqual(scope.khoa_du_lieu("zalop_987"),
+                            scope.khoa_du_lieu("zalop_988"))
 
     # ------------------------------------------------------------------ băm
     def test_bam_khac_nhau_cho_pham_vi_khac_nhau(self):
