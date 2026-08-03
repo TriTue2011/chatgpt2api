@@ -271,6 +271,31 @@ def _notify_all_admins(text: str, *, bot: dict | None = None) -> int:
     return n
 
 
+def khoa_phien(chat_id: str, topic_id: str = "", user_id: str = "") -> str:
+    """Khoá phiên orchestrator của một lượt Telegram.
+
+    Nhóm: mỗi USER một phiên riêng (lịch sử/persona/approval độc lập). Chat 1-1
+    giữ key cũ (chat_id) để không mất lịch sử hiện có. Nhóm bật Topics: mỗi
+    TOPIC một phiên riêng ('chat#topic') — lịch sử không trộn giữa các topic, và
+    persona cài riêng topic có hiệu lực (persona.prompt_for fallback: user-topic
+    → user-nhóm → topic → nhóm).
+
+    PHẢI là chỗ DUY NHẤT tính khoá này. Trước đây khoá được dựng tại chỗ ở
+    đường tin nhắn, còn đường bấm NÚT (_handle_callback_query) lại tra
+    ask_choices bằng chat_id trần — trong nhóm hai khoá khác nhau nên nút bấm
+    không tìm thấy lựa chọn nào và IM LẶNG không làm gì.
+    """
+    base = f"{chat_id}#{topic_id}" if topic_id else str(chat_id)
+    try:
+        from services.config import config as _c2
+        if (str(chat_id).startswith("-") and user_id
+                and getattr(_c2, "group_user_isolation", True)):
+            return f"{base}:u{user_id}"
+    except Exception:
+        pass
+    return base
+
+
 def _la_thread_admin(chat_id: str) -> bool:
     """Chat này CÓ PHẢI nơi nhận thông báo admin — thuộc tính của CHAT.
 
@@ -824,16 +849,22 @@ def _handle_callback_query(cq: dict, bot: dict) -> None:
         except (ValueError, IndexError):
             return
         from services.agent import ask_choices as _ask
-        choices = _ask.get_pending(chat_id)
+        topic_id = str(msg.get("message_thread_id") or "").strip()
+        # Tra bằng ĐÚNG khoá phiên orchestrator đã lưu, không phải chat_id trần:
+        # trong nhóm khoá có kèm ':u<uid>' nên tra theo chat_id không thấy gì và
+        # nút bấm im lặng. Kèm luôn người bấm → người này không tiêu được lựa
+        # chọn đang chờ của người khác trong cùng nhóm.
+        skey = khoa_phien(chat_id, topic_id, user_id)
+        choices = _ask.get_pending(skey)
         if not choices or idx < 0 or idx >= len(choices):
             return
-        _ask.clear_pending(chat_id)
+        _ask.clear_pending(skey)
         chosen = choices[idx].get("send") or choices[idx].get("label") or ""
         if not chosen:
             return
         _process_message(chosen, chat_id, None, None, bot, sender,
                          user_id, is_group, native_mention=True,
-                         topic_id=str(msg.get("message_thread_id") or "").strip())
+                         topic_id=topic_id)
     except Exception as exc:
         logger.warning("Telegram callback_query failed: %s", exc)
     finally:
@@ -1510,15 +1541,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # Nhóm bật Topics: mỗi TOPIC một phiên riêng ('chat#topic') — lịch sử
         # không trộn giữa các topic, và persona cài riêng topic có hiệu lực
         # (persona.prompt_for fallback: user-topic → user-nhóm → topic → nhóm).
-        _skey_base = f"{chat_id}#{_cur_topic()}" if _cur_topic() else str(chat_id)
-        _skey = _skey_base
-        try:
-            from services.config import config as _c2
-            if (str(chat_id).startswith("-") and user_id
-                    and getattr(_c2, "group_user_isolation", True)):
-                _skey = f"{_skey_base}:u{user_id}"
-        except Exception:
-            pass
+        _skey = khoa_phien(chat_id, _cur_topic(), user_id)
         out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
                           is_admin=_is_admin_chat(chat_id, user_id))
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
@@ -1640,7 +1663,11 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         logger.warning("orchestrator error for %s: %s", chat_id, exc)
 
     # Fallback: plain model call
-    key = f"tg_{chat_id}"
+    # Khoá theo PHIÊN, không theo chat: trong nhóm, khoá theo chat_id là mọi
+    # thành viên chung một bộ đệm hội thoại — tin của người này thành ngữ cảnh
+    # của người kia. Đường này chỉ chạy khi orchestrator lỗi, nhưng lúc đó bộ
+    # lọc trộn ngữ cảnh vẫn phải giữ.
+    key = f"tg_{khoa_phien(chat_id, _cur_topic(), user_id)}"
     if key not in _conversations:
         _conversations[key] = [{
             "role": "system",
