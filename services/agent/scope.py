@@ -133,6 +133,52 @@ def dung_scope(channel: str, account_id: str, chat_id: str, *,
                  actor_id if rieng else ACTOR_CHUNG, tenant_id)
 
 
+def co_filter_rieng(channel: str, account_id: str, chat_id: str, actor_id: str,
+                    topic_id: object = None) -> bool:
+    """Người này có bộ lọc RIÊNG trong nhóm/topic này không?
+
+    Nguồn: `thread_user_filters` — CÙNG công tắc với bộ lọc chức năng (chủ máy
+    chốt 03/08: dùng cái đang có, không dựng khai báo thứ hai). Hệ quả đã biết
+    và đã chấp nhận: đặt bộ lọc chức năng cho một người cũng tách luôn bộ nhớ
+    của họ ra khỏi nhóm, và ngược lại.
+
+    `channel`/`account_id` phải dùng ĐÚNG bộ từ vựng của khoá lọc hiện có
+    ('tg', 'zalo', 'zalop' + bot_id/account_id), không được đặt tên mới — hai bộ
+    từ vựng song song là cách chắc chắn nhất để tra nhầm rồi trả về "không có
+    filter" cho người thật sự có.
+
+    Đọc config hỏng thì coi như CÓ filter (tách riêng). Đoán sai theo hướng tách
+    làm dữ liệu phân mảnh — khó chịu nhưng sửa được; đoán sai theo hướng dùng
+    chung là đẩy chuyện riêng của một người vào ngăn cả nhóm đọc được.
+    """
+    from services.agent import capabilities as caps
+
+    try:
+        return caps.user_filter_for_bot(str(channel), str(account_id), str(chat_id),
+                                        str(actor_id), topic_id) is not None
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "scope: khong doc duoc thread_user_filters — coi nhu co filter (tach rieng)")
+        return True
+
+
+def tu_kenh(channel: str, account_id: str, chat_id: str, *, actor_id: str,
+            topic_id: object = None, chat_rieng: bool = False,
+            tenant_id: str = "local") -> Scope:
+    """Phạm vi dữ liệu cho một tin nhắn vừa tới — đường mà ADAPTER nên gọi.
+
+    Tự tra `thread_user_filters` để biết người này có tách riêng không, nên nơi
+    gọi chỉ cần biết những thứ nó vốn đã có trong tay: kênh, bot/account, chat,
+    topic, người gửi, và chat này có phải 1-1 hay không.
+    """
+    co = True if chat_rieng else co_filter_rieng(channel, account_id, chat_id,
+                                                 actor_id, topic_id)
+    return dung_scope(channel, account_id, chat_id, actor_id=actor_id,
+                      topic_id=topic_id, chat_rieng=chat_rieng,
+                      co_filter_user=co, tenant_id=tenant_id)
+
+
 def khoa_yeu_cau(scope: Scope, actor_id: str, request_id: str) -> str:
     """Khoá cho việc ĐANG CHỜ: nút bấm, xin duyệt, chọn ảnh/PDF.
 

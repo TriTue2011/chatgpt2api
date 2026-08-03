@@ -179,5 +179,57 @@ class BatTatFilter(unittest.TestCase):
                          _nhom(actor_id=B).key())
 
 
+class LayFilterTuCauHinhDangCo(unittest.TestCase):
+    """Công tắc tách riêng đọc từ `thread_user_filters` — cùng chỗ với bộ lọc
+    chức năng (chủ máy chốt 03/08: dùng cái đang có, không dựng khai báo thứ hai).
+    """
+
+    def setUp(self):
+        from unittest import mock
+        self.mock = mock
+        from services.agent import capabilities as caps
+        self.caps = caps
+
+    def _voi(self, tra_ve):
+        return self.mock.patch.object(self.caps, "user_filter_for_bot",
+                                      return_value=tra_ve)
+
+    def test_khong_co_ban_ghi_thi_dung_chung_nhom(self):
+        with self._voi(None):
+            s = sc.tu_kenh(TELE, BOT1, NHOM, actor_id=A)
+        self.assertTrue(s.dung_chung)
+
+    def test_co_ban_ghi_thi_tach_rieng(self):
+        with self._voi({"web", "image"}):
+            s = sc.tu_kenh(TELE, BOT1, NHOM, actor_id=A)
+        self.assertFalse(s.dung_chung)
+        self.assertEqual(s.actor_id, A)
+
+    def test_ban_ghi_rong_van_tinh_la_co_filter(self):
+        """Tick rỗng = chặn hết tool, vẫn là 'người này được khai riêng'."""
+        with self._voi(set()):
+            self.assertFalse(sc.tu_kenh(TELE, BOT1, NHOM, actor_id=A).dung_chung)
+
+    def test_chat_1_1_thi_khong_can_tra_config(self):
+        with self.mock.patch.object(self.caps, "user_filter_for_bot") as gia:
+            s = sc.tu_kenh(TELE, BOT1, A, actor_id=A, chat_rieng=True)
+        self.assertFalse(s.dung_chung)
+        gia.assert_not_called()
+
+    def test_doc_config_hong_thi_TACH_RIENG_chu_khong_dung_chung(self):
+        """Fail-closed: đoán sai theo hướng tách chỉ làm phân mảnh; đoán sai theo
+        hướng dùng chung là đẩy chuyện riêng vào ngăn cả nhóm đọc được."""
+        with self.mock.patch.object(self.caps, "user_filter_for_bot",
+                                    side_effect=RuntimeError("config hỏng")):
+            self.assertFalse(sc.tu_kenh(TELE, BOT1, NHOM, actor_id=A).dung_chung)
+
+    def test_truyen_dung_topic_xuong_cau_hinh(self):
+        """Filter khai ở cấp topic phải tra được — không thì topic có filter mà
+        vẫn bị coi là dùng chung."""
+        with self._voi(None) as gia:
+            sc.tu_kenh(TELE, BOT1, NHOM, actor_id=A, topic_id="7")
+        self.assertEqual(gia.call_args[0][4], "7")
+
+
 if __name__ == "__main__":
     unittest.main()
