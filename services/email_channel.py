@@ -543,7 +543,10 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
         user_text = f"Tiêu đề: {subject}\n\n{body}{att_note}".strip()
         try:
             from services.agent.orchestrator import orchestrate
-            out = orchestrate(user_text, _user_id_for(from_addr), ha_fastpath=True)
+            from services.agent import scope as _scope_mod
+            _scope = _scope_mod.context("email", "inbox", str(from_addr),
+                                        actor_id=str(from_addr), chat_rieng=True)
+            out = orchestrate(user_text, _scope, ha_fastpath=True)
             reply = str(out.get("text") or "").strip()
             if out.get("silent") or not reply:
                 reply = "Dạ em đã nhận email nhưng không có nội dung trả lời ạ."

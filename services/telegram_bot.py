@@ -1461,6 +1461,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # bot still answers.
     try:
         from services.agent import orchestrate
+        from services.agent import scope as _scope_mod
         try:
             from services.admin_workspace import (ha_fastpath_for_chat as _ha_fp,
                                                   thread_fastpath_for as _tfp)
@@ -1477,16 +1478,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # Nhóm bật Topics: mỗi TOPIC một phiên riêng ('chat#topic') — lịch sử
         # không trộn giữa các topic, và persona cài riêng topic có hiệu lực
         # (persona.prompt_for fallback: user-topic → user-nhóm → topic → nhóm).
-        _skey_base = f"{chat_id}#{_cur_topic()}" if _cur_topic() else str(chat_id)
-        _skey = _skey_base
-        try:
-            from services.config import config as _c2
-            if (str(chat_id).startswith("-") and user_id
-                    and getattr(_c2, "group_user_isolation", True)):
-                _skey = f"{_skey_base}:u{user_id}"
-        except Exception:
-            pass
-        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
+        _la_nhom = str(chat_id).startswith("-")
+        _scope = _scope_mod.context(
+            "tg", _bid, str(chat_id), actor_id=str(user_id or chat_id),
+            topic_id=_cur_topic(), chat_rieng=not _la_nhom,
+            actor_role="admin" if _is_admin_chat(chat_id) else "user")
+        out = orchestrate(text, _scope, allow=_allow, ha_fastpath=_fp, model=_model,
                           is_admin=_is_admin_chat(chat_id))
         # P0#5 defense-in-depth: lọc lại media URL/path (orchestrator đã lọc).
         try:

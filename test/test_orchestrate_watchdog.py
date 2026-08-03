@@ -15,6 +15,13 @@ import threading
 import time
 import unittest
 
+from services.agent import scope as _scope_mod
+
+def _sc(ai: str):
+    """Scope chat 1-1 cho test — orchestrate() nhận ScopeContext, không nhận chuỗi."""
+    return _scope_mod.context("test", "bot", ai, actor_id=ai, chat_rieng=True)
+
+
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 import services.agent.orchestrator as orch  # noqa: E402
@@ -44,7 +51,7 @@ class OrchestrateWatchdogTests(unittest.TestCase):
         orch._orchestrate_locked = hung
 
         t0 = time.time()
-        out = orch.orchestrate("tin tức hôm nay", "user_treo")
+        out = orch.orchestrate("tin tức hôm nay", _sc("user_treo"))
         elapsed = time.time() - t0
 
         self.assertTrue(started.wait(5), "thân hàm phải được chạy")
@@ -65,12 +72,12 @@ class OrchestrateWatchdogTests(unittest.TestCase):
         orch._orchestrate_locked = slow
         try:
             first = threading.Thread(
-                target=lambda: orch.orchestrate("tin 1", "user_ban"), daemon=True)
+                target=lambda: orch.orchestrate("tin 1", _sc("user_ban")), daemon=True)
             first.start()
             time.sleep(1.0)          # để lượt 1 kịp ôm khoá
 
             t0 = time.time()
-            out = orch.orchestrate("tin 2", "user_ban")
+            out = orch.orchestrate("tin 2", _sc("user_ban"))
             elapsed = time.time() - t0
 
             self.assertLess(elapsed, 20, "không được xếp hàng vô hạn sau lượt kẹt")
@@ -89,7 +96,7 @@ class OrchestrateWatchdogTests(unittest.TestCase):
             return {"text": "trả lời thật", "image_url": "http://x/y.png"}
 
         orch._orchestrate_locked = ok
-        out = orch.orchestrate("chào em", "user_ok", ha_fastpath=False, model="gpt-5.5")
+        out = orch.orchestrate("chào em", _sc("user_ok"), ha_fastpath=False, model="gpt-5.5")
 
         self.assertEqual(out["text"], "trả lời thật")
         self.assertEqual(out["image_url"], "http://x/y.png")
@@ -100,8 +107,8 @@ class OrchestrateWatchdogTests(unittest.TestCase):
     def test_lock_is_released_after_turn(self) -> None:
         """Khoá phải được nhả, nếu không người dùng đó chết vĩnh viễn."""
         orch._orchestrate_locked = lambda *a, **k: {"text": "ok"}
-        orch.orchestrate("lần 1", "user_nha_khoa")
-        lock = orch._user_history_lock("user_nha_khoa")
+        orch.orchestrate("lần 1", _sc("user_nha_khoa"))
+        lock = orch._user_history_lock(_sc("user_nha_khoa"))
         self.assertTrue(lock.acquire(timeout=2), "khoá phải được nhả sau lượt chạy")
         lock.release()
 

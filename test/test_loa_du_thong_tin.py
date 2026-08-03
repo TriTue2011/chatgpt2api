@@ -735,7 +735,7 @@ class DuongTatKhongMoThemQuyenTests(unittest.TestCase):
                         self.code.index("if ha_fastpath and (allow is None"))
 
     def test_cong_duyet_duong_thuong_biet_hoi_du_truoc(self):
-        i = self.code.index("approval_gate.needs_approval(user_id, name, risk=cap.risk)")
+        i = self.code.index("approval_gate.needs_approval(pid, name, risk=cap.risk)")
         self.assertIn("caps.con_thieu_thong_tin(name, args, user_text)",
                       self.code[i:i + 400])
 
@@ -941,9 +941,11 @@ class DuongTatHoiLoaKhongMoThemQuyenTests(unittest.TestCase):
         """Việc có tác dụng phụ thật thì cổng duyệt phải chạy, dù đi đường tắt."""
         self.assertIn('caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)',
                       self.khuc)
-        self.assertIn('approval_gate.needs_approval(user_id, "announce_on_speaker"',
+        # `pid` = khoá NGƯỜI (xem `orchestrator._orchestrate_locked`): nhóm dùng
+        # chung bộ nhớ nhưng nút duyệt phải thuộc về đúng người vừa hỏi.
+        self.assertIn('approval_gate.needs_approval(pid, "announce_on_speaker"',
                       self.khuc)
-        self.assertIn('approval_gate.set_pending(user_id, "announce_on_speaker"', self.khuc)
+        self.assertIn('approval_gate.set_pending(pid, "announce_on_speaker"', self.khuc)
 
     def test_van_ghi_audit_bang_cach_di_qua_execute(self):
         self.assertIn("_execute(_cap_duyet,", self.khuc)

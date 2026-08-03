@@ -133,6 +133,80 @@ def dung_scope(channel: str, account_id: str, chat_id: str, *,
                  actor_id if rieng else ACTOR_CHUNG, tenant_id)
 
 
+@dataclass(frozen=True)
+class ScopeContext:
+    """Toàn bộ định danh của MỘT tin nhắn vừa tới. Adapter dựng đúng một lần rồi
+    truyền nguyên vật này đi, không ghép chuỗi ở đâu nữa.
+
+    Hai khoá, đừng dùng lẫn:
+
+    `data_scope_id`  — lịch sử, memory, goals, persona. Theo quy tắc đã chốt:
+        nhóm/topic không có filter thì CẢ NHÓM DÙNG CHUNG một khoá.
+    `principal_id`   — luôn kèm người gửi, kể cả trong nhóm dùng chung. Dành cho
+        mọi thứ mang tính "của riêng người này": nút đang chờ, xin duyệt, ảnh/PDF
+        họ vừa gửi, quyền xem kho media.
+
+    Vì sao phải có `principal_id` NGAY từ bước này: quy tắc mới chuyển nhóm từ
+    "mỗi người một phiên" sang "cả nhóm dùng chung". Nếu nút bấm và cổng duyệt
+    cũng dùng `data_scope_id` thì trong nhóm, người B bấm "Ok" là duyệt luôn lệnh
+    người A vừa tạo — tắt máy, gửi tin, phát ra loa. Chia sẻ bộ nhớ là ý muốn;
+    chia sẻ quyền xác nhận hành động thì không bao giờ.
+    """
+
+    channel: str
+    account_id: str
+    chat_id: str
+    topic_id: str
+    actor_id: str
+    actor_role: str
+    is_private: bool
+    has_explicit_user_filter: bool
+    data_scope_id: str
+    principal_id: str
+
+    def khoa_yeu_cau(self, request_id: str) -> str:
+        """Khoá cho một yêu cầu đang chờ cụ thể (nút bấm, xin duyệt)."""
+        return f"{self.principal_id}|r={_esc(request_id)}"
+
+
+def context(channel: str, account_id: str, chat_id: str, *, actor_id: str,
+            topic_id: object = None, chat_rieng: bool = False,
+            actor_role: str = "user", tenant_id: str = "local") -> ScopeContext:
+    """Dựng `ScopeContext` cho một tin nhắn — đường DUY NHẤT mà adapter gọi."""
+    co_filter = (False if chat_rieng
+                 else co_filter_rieng(channel, account_id, chat_id, actor_id, topic_id))
+    du_lieu = dung_scope(channel, account_id, chat_id, actor_id=actor_id,
+                         topic_id=topic_id, chat_rieng=chat_rieng,
+                         co_filter_user=co_filter, tenant_id=tenant_id)
+    # principal: LUÔN kèm người gửi, bất kể nhóm có dùng chung hay không.
+    nguoi = dung_scope(channel, account_id, chat_id, actor_id=actor_id,
+                       topic_id=topic_id, chat_rieng=True, tenant_id=tenant_id)
+    return ScopeContext(
+        channel=du_lieu.channel, account_id=du_lieu.account_id,
+        chat_id=du_lieu.chat_id, topic_id=du_lieu.topic_id,
+        actor_id=str(actor_id).strip(), actor_role=str(actor_role or "user"),
+        is_private=bool(chat_rieng), has_explicit_user_filter=bool(co_filter),
+        data_scope_id=du_lieu.key(), principal_id=nguoi.key())
+
+
+def tu_khoa_legacy(khoa: str) -> ScopeContext:
+    """Bọc một khoá ĐỜI CŨ thành ScopeContext mà KHÔNG bịa ra định danh.
+
+    Dùng cho đường chưa chuyển xong — hiện là nhắc việc chạy nền: bảng
+    `reminders` mới chỉ lưu một chuỗi khoá kiểu cũ, chưa có account/topic/actor
+    (đó là bước 5). Bọc như thế này giữ NGUYÊN khoá lưu trữ nên lịch đang hẹn
+    vẫn bắn đúng chỗ cũ, và `channel='legacy'` nói thẳng đây là đường chưa
+    chuyển thay vì giả vờ là scope v2.
+    """
+    k = str(khoa or "").strip()
+    if not k:
+        raise ValueError("Khoá legacy rỗng — không dựng được phạm vi dữ liệu.")
+    return ScopeContext(channel="legacy", account_id="", chat_id=k,
+                        topic_id=TOPIC_CHUNG, actor_id=k, actor_role="user",
+                        is_private=True, has_explicit_user_filter=False,
+                        data_scope_id=k, principal_id=k)
+
+
 def co_filter_rieng(channel: str, account_id: str, chat_id: str, actor_id: str,
                     topic_id: object = None) -> bool:
     """Người này có bộ lọc RIÊNG trong nhóm/topic này không?

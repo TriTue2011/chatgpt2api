@@ -2287,6 +2287,7 @@ def _process_ai(ev: dict) -> None:
     send_typing(thread_id, thread_type)
     try:
         from services.agent import orchestrate
+        from services.agent import scope as _scope_mod
         # Cài đặt RIÊNG từng tài khoản (ownId): fast-path HA + model.
         _acc = str(ev.get("account_id") or "").strip()
         # Ngữ cảnh cho reminders (tạo nhắc hẹn trong lượt orchestrate này).
@@ -2311,16 +2312,13 @@ def _process_ai(ev: dict) -> None:
             pass
         _model = _ai_model(_acc, thread_id)
         # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
-        _skey = f"zalop_{thread_id}"
-        try:
-            _snd = str(ev.get("sender_id") or "")
-            if (int(thread_type) == 1 and _snd
-                    and getattr(config, "group_user_isolation", True)):
-                _skey = f"zalop_{thread_id}:u{_snd}"
-        except Exception:
-            pass
+        _snd = str(ev.get("sender_id") or "") or str(thread_id)
+        _scope = _scope_mod.context(
+            "zalop", _acc, str(thread_id), actor_id=_snd,
+            chat_rieng=int(thread_type) != 1,
+            actor_role="admin" if _is_admin else "user")
         out = orchestrate(
-            text, _skey,
+            text, _scope,
             allow=_allow, ha_fastpath=_fp, model=_model,
             # Quyền admin quyết định phạm vi thư viện media: admin xem cả kho,
             # người thường chỉ media chính họ tạo (đặc tả 31/07).
