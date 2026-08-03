@@ -17,8 +17,9 @@ Config (top-level "memory", mọi field đều optional):
     enabled: bool (default TRUE — tắt bằng {"memory": {"enabled": false}})
     k: số ký ức inject (default 5)
     max_items: trần số ký ức mỗi user, vượt thì xoá cũ nhất (default 5000)
-    user_id: default "chatgpt2api" (override per-request bằng field chuẩn
-             OpenAI `user` trong body)
+    user_id: khoá mặc định khi lời gọi không nêu `user`. KHÔNG còn giá trị
+             mặc định sẵn: bỏ trống thì lượt đó KHÔNG dùng memory (không tra,
+             không ghi) thay vì dồn vào một khoá chung.
 """
 
 from __future__ import annotations
@@ -300,7 +301,20 @@ class MemoryService:
         except Exception:
             pass
 
-        user_id = str(body.get("user") or self._cfg.get("user_id") or "chatgpt2api").strip()
+        # KHÔNG có đường lùi về khoá chung. Bản cũ rơi về "chatgpt2api" khi lời
+        # gọi không nêu người dùng — và đó là cách 1.162 bản ghi memory trên máy
+        # chủ dồn hết vào ĐÚNG MỘT khoá (đo thật 03/08). Ký ức của người này chui
+        # vào prompt của người kia, không ai thấy vì nhìn ngoài nó vẫn "hoạt động".
+        #
+        # Thiếu định danh tin cậy ⇒ TẮT auto-memory cho lượt đó: không tra, không
+        # ghi. Chat qua bot đã có scope thật (adapter dựng `ScopeContext` rồi
+        # truyền xuống), nên đường mất memory ở đây là các lời gọi API thô không
+        # khai `user` — đúng chỗ không nên tự nhận vơ là của ai.
+        user_id = str(body.get("user") or self._cfg.get("user_id") or "").strip()
+        if not user_id:
+            logger.info({"event": "memory_bo_qua_thieu_scope",
+                         "model": model or "", "ly_do": "loi goi khong neu 'user'"})
+            return None
 
         matches = self.recall(user_text, user_id)
         if matches:
