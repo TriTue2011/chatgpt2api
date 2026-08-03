@@ -63,7 +63,8 @@
 
 | Công cụ | Trạng thái | Ở đâu |
 |---|---|---|
-| markitdown (#1) | ĐÃ CÓ | `services/pdf_intent.py` — PDF → Markdown |
+| pdf-inspector | ĐÃ CÓ | `services/pdf_intent.py::markdown_pdf_so` — PDF SỐ → Markdown, lõi Rust chạy trong tiến trình, không gọi dịch vụ nào. Đường CHÍNH. |
+| markitdown (#1) | ĐÃ CÓ | `services/pdf_intent.py` — nay là fallback thứ ba (sau pdf-inspector và PyMuPDF); vẫn là đường chính cho .docx/.pptx/.xlsx và HTML |
 | Context7 (#1) | ĐÃ CÓ | `services/mcp_presets.py` — preset sẵn |
 | headroom (#3) | ĐÃ CÓ | `services/protocol/openai_v1_chat_complete.py` |
 | cloakbrowser (#8) | ĐÃ CÓ | `captcha-solver/src/browser_pool.py` |

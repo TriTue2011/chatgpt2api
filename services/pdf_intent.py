@@ -353,8 +353,64 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
     return "\n".join(lines) + _cost_note(info)
 
 
+def markdown_pdf_so(pdf_path: str, *, max_pages: int | None = None) -> str:
+    """PDF SỐ → Markdown bằng pdf-inspector. Trả '' để caller đi đường cũ.
+
+    pdf-inspector là thư viện Rust CHẠY TRONG TIẾN TRÌNH NÀY (bindings PyO3):
+    không gọi dịch vụ nào, không gửi tệp đi đâu, không cần model. Đúng thứ hợp
+    với PDF của gia đình — nhiều tệp là giấy tờ, học bạ, hoá đơn.
+
+    Vì sao đặt TRƯỚC đường cũ (đo trên máy, không lấy theo quảng cáo của họ):
+      * phân loại số/scan mất 0,7–24 ms, trong khi `analyze_pdf` phải mở tài
+        liệu bằng PyMuPDF và lấy mẫu từng trang;
+      * bảng: cùng ra bảng Markdown như `find_tables()` của PyMuPDF trên tệp
+        thử, nhưng 10 ms so với 168 ms, và ra luôn heading trong cùng một lượt;
+      * tiếng Việt đủ dấu decode đúng (ăn, ớ, ũ, ị, ề) — thử bằng PDF nhúng
+        font Arial Unicode.
+
+    BA CỔNG để rơi về đường cũ, vì đường cũ có OCR còn hàm này thì không:
+      * không phải `text_based` — 'scanned'/'image_based' cần OCR; 'mixed' cũng
+        trả về đường cũ, vì trang cần OCR sẽ ra rỗng và nội dung mất trong im
+        lặng, kiểu hỏng tệ hơn là chậm;
+      * `has_encoding_issues` — chính thư viện báo font hỏng, đừng tin chữ nó
+        đọc ra;
+      * markdown rỗng.
+
+    Thiếu thư viện (ImportError) cũng rơi về đường cũ: bản triển khai không cài
+    được vẫn chạy y như trước.
+    """
+    try:
+        import pdf_inspector
+    except Exception:
+        return ""
+    try:
+        trang = None
+        if isinstance(max_pages, int) and max_pages > 0:
+            trang = list(range(1, max_pages + 1))
+        kq = pdf_inspector.process_pdf(pdf_path, trang) if trang else \
+            pdf_inspector.process_pdf(pdf_path)
+        if str(getattr(kq, "pdf_type", "")) != "text_based":
+            return ""
+        if bool(getattr(kq, "has_encoding_issues", False)):
+            logger.info("pdf-inspector báo font hỏng → đi đường OCR: %s", pdf_path)
+            return ""
+        md = (getattr(kq, "markdown", None) or "").strip()
+        if not md:
+            return ""
+        logger.info("pdf-inspector: %d trang, %d ký tự, %d ms",
+                    getattr(kq, "page_count", 0), len(md),
+                    getattr(kq, "processing_time_ms", 0))
+        return md
+    except Exception as exc:
+        logger.warning("pdf-inspector lỗi, đi đường cũ: %s", str(exc)[:160])
+        return ""
+
+
 def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
-    """PDF → Markdown/text sạch. PDF scan → OCR vision; PDF số → PyMuPDF/markitdown."""
+    """PDF → Markdown/text sạch. PDF số → pdf-inspector; PDF scan → OCR vision."""
+    t = markdown_pdf_so(pdf_path, max_pages=max_pages)
+    if t:
+        return t + _image_section(pdf_path)
     try:
         from services import pdf_to_word as p2w
         info = p2w.analyze_pdf(pdf_path)

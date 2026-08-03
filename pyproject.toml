@@ -27,6 +27,10 @@ dependencies = [
     # Model KHÔNG nằm trong image — tải về volume bằng script (xem voices/).
     "sherpa-onnx>=1.12.0",
     "pychromecast>=14.0.0",
+    # PDF số → Markdown: lõi Rust chạy TRONG tiến trình (PyO3), không gọi dịch
+    # vụ nào. Có wheel dựng sẵn cho manylinux x86_64 + aarch64 (abi3, CPython
+    # ≥3.8) nên image không cần thêm toolchain Rust. Xem pdf_intent.markdown_pdf_so.
+    "pdf-inspector>=0.2.6",
 ]
 
 [dependency-groups]
