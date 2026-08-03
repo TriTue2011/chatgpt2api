@@ -24,8 +24,6 @@ from __future__ import annotations
 import json
 import os
 import unittest
-
-from services.agent import scope as _scope_mod
 from unittest import mock
 
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
@@ -69,10 +67,8 @@ class TestToolTraNhieuAnh(unittest.TestCase):
              mock.patch.object(orch, "_persist_history"), \
              mock.patch.object(orch.run_journal, "log_run"), \
              mock.patch.object(orch, "_ghi_so_anh"):
-            _sc = _scope_mod.context("test", "bot", "test_nhieu_anh",
-                                     actor_id="test_nhieu_anh", chat_rieng=True)
             return orch.orchestrate("Gửi 3 ảnh mới nhất trong thư viện ảnh cho tôi",
-                                    _sc, model="gma/auto:text")
+                                    "test_nhieu_anh", model="gma/auto:text")
 
     def test_chi_co_image_urls_van_phai_toi_tay_nguoi_dung(self):
         """Đây là ca thật đã hỏng: tool trả DUY NHẤT `image_urls`."""

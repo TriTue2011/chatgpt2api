@@ -1030,13 +1030,10 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     return "\n\n".join(parts)
 
 
-def _finalize(principal_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    """Attach ask-choices metadata; strip control blocks; P0#5 filter media URLs.
-
-    Khoá là NGƯỜI (`principal_id`), không phải phạm vi dữ liệu: nút bấm đang chờ
-    phải thuộc về đúng người vừa hỏi, kể cả khi cả nhóm dùng chung bộ nhớ."""
+def _finalize(user_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Attach ask-choices metadata; strip control blocks; P0#5 filter media URLs."""
     try:
-        result = ask_choices.apply_to_result(result, principal_id)
+        result = ask_choices.apply_to_result(result, user_id)
     except Exception:
         pass
     # LLM/tool output = untrusted — chặn SSRF trước khi bot channel fetch/gửi.
@@ -1157,25 +1154,13 @@ def _execute(cap: "caps.Capability", args: dict, user_id: str, *, user_text: str
     return out
 
 
-def orchestrate(user_text: str, scope: "_scope.ScopeContext",
+def orchestrate(user_text: str, user_id: str,
                 allow: set[str] | None = None,
                 ha_fastpath: bool = True,
                 model: str | None = None,
                 auto_approve: bool = False,
                 is_admin: bool = False) -> dict[str, Any]:
-    """`scope` = định danh đầy đủ của tin nhắn, do adapter dựng bằng
-    `scope.context(...)`. Trước bản này mỗi kênh tự ghép một chuỗi khoá rồi
-    truyền xuống dưới cái tên `user_id`, nên không tầng nào biết chuỗi đó là
-    người, là nhóm hay topic — hệ quả đo được: 1.162 memory chung một khoá.
-
-    HAI khoá lấy từ scope, đừng dùng lẫn:
-      · `data_scope_id` — lịch sử, memory, goals, persona, khoá chống chạy song
-        song. Nhóm/topic không có filter thì cả nhóm DÙNG CHUNG.
-      · `principal_id`  — luôn kèm người gửi. Dành cho nút đang chờ và cổng
-        duyệt. Quy tắc mới cho nhóm dùng chung bộ nhớ, nhưng nếu nút bấm cũng
-        chung thì người B bấm "Ok" là duyệt lệnh người A vừa tạo.
-
-    `allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
+    """`allow` = tập nhóm chức năng threadID này được phép (None = tất cả). Lọc
     tool schema + chặn dispatch theo nhóm để giới hạn chức năng cho từng người.
 
     `ha_fastpath` = cài đặt RIÊNG từng bot/tài khoản (Telegram/Zalo): lệnh nhà
@@ -1192,22 +1177,17 @@ def orchestrate(user_text: str, scope: "_scope.ScopeContext",
     câm vĩnh viễn — không trả lời, không báo lỗi, và mọi tin sau của cùng người
     còn kẹt luôn vì khoá lịch sử không bao giờ được nhả.
     """
-    sid = scope.data_scope_id
-    pid = scope.principal_id
-    # Khoá chống chạy song song đi theo DỮ LIỆU: hai người trong nhóm dùng chung
-    # đang cùng ghi một lịch sử, phải xếp hàng với nhau.
-    lock = _user_history_lock(sid)
+    lock = _user_history_lock(user_id)
     if not lock.acquire(timeout=_LOCK_WAIT_S):
         logger.warning({"event": "orchestrate_lock_timeout",
-                        "scope": sid[:60], "waited_s": _LOCK_WAIT_S})
+                        "user_id": str(user_id)[:40], "waited_s": _LOCK_WAIT_S})
         return {"text": "Em còn đang xử lý tin trước của anh/chị, "
                         "chờ em chút rồi nhắn lại giúp em ạ 🙏"}
 
     def _run() -> dict[str, Any]:
         try:
             return _orchestrate_locked(
-                user_text, sid, principal_id=pid, allow=allow,
-                ha_fastpath=ha_fastpath,
+                user_text, user_id, allow=allow, ha_fastpath=ha_fastpath,
                 model=model, auto_approve=auto_approve, is_admin=is_admin,
             )
         finally:
@@ -1224,7 +1204,7 @@ def orchestrate(user_text: str, scope: "_scope.ScopeContext",
             return future.result(timeout=_TURN_BUDGET_S)
         except concurrent.futures.TimeoutError:
             logger.warning({"event": "orchestrate_turn_timeout",
-                            "scope": sid[:60], "budget_s": _TURN_BUDGET_S})
+                            "user_id": str(user_id)[:40], "budget_s": _TURN_BUDGET_S})
             # Bỏ lượt này lại chạy nền (nó sẽ tự nhả khoá) và trả lời NGAY,
             # để người dùng biết có chuyện thay vì ngồi nhìn màn hình trống.
             return {"text": "Em xử lý lâu quá nên tạm dừng ở đây ạ 😥 "
@@ -1234,18 +1214,12 @@ def orchestrate(user_text: str, scope: "_scope.ScopeContext",
 
 
 def _orchestrate_locked(user_text: str, user_id: str,
-                        *, principal_id: str = "",
                         allow: set[str] | None = None,
                         ha_fastpath: bool = True,
                         model: str | None = None,
                         auto_approve: bool = False,
                         is_admin: bool = False) -> dict[str, Any]:
     import time as _time
-    # `user_id` ở đây là khoá DỮ LIỆU (lịch sử/memory/goals) — nhóm dùng chung
-    # thì mọi thành viên cùng một khoá. `pid` là khoá NGƯỜI, luôn riêng từng
-    # người, dùng cho nút đang chờ và cổng duyệt: chia sẻ bộ nhớ là ý muốn, chia
-    # sẻ quyền bấm "Ok" cho lệnh của người khác thì không.
-    pid = str(principal_id or user_id)
     t0 = _time.time()
     tools_used: list[str] = []
     steps_done = 0
@@ -1342,7 +1316,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
     try:
-        picked = ask_choices.resolve_reply(pid, user_text)
+        picked = ask_choices.resolve_reply(user_id, user_text)
         if picked:
             user_text = picked
     except Exception:
@@ -1365,26 +1339,26 @@ def _orchestrate_locked(user_text: str, user_id: str,
         from services.agent import persona as _persona
         _p_out = _persona.handle(user_id, user_text)
         if _p_out is not None:
-            return _finalize(pid, _p_out)
+            return _finalize(user_id, _p_out)
     except Exception as _p_exc:
         logger.warning("persona wizard: %s", _p_exc)
 
     # 1) Resolve a pending approval (confirming a proposed change).
-    pending = approval_gate.get_pending(pid)
+    pending = approval_gate.get_pending(user_id)
     if pending is not None:
         verdict = _classify_reply(user_text)
         if verdict in ("once", "always"):
             cap = caps.get(pending["capability"])
             if verdict == "always" and cap:
-                approval_gate.resolve(pid, "always", capability=cap.name)
+                approval_gate.resolve(user_id, "always", capability=cap.name)
             else:
-                approval_gate.resolve(pid, "once", capability=(cap.name if cap else ""))
+                approval_gate.resolve(user_id, "once", capability=(cap.name if cap else ""))
             if cap:
                 tools_used.append(cap.name)
                 out = _execute(cap, pending.get("args") or {}, user_id, is_admin=is_admin)
                 if verdict == "always":
                     out["text"] = "Dạ, từ giờ việc này em tự làm khỏi hỏi ạ. " + out.get("text", "")
-                fin = _finalize(pid, out)
+                fin = _finalize(user_id, out)
                 _journal(str(fin.get("text") or ""), status="approved")
                 return fin
         elif verdict == "deny":
@@ -1395,7 +1369,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal("thôi", status="denied")
             return {"text": "Dạ thôi em không làm ạ 🙆"}
         # Not a clear yes/no → fall through and treat as a new request.
-        approval_gate.clear_pending(pid)
+        approval_gate.clear_pending(user_id)
 
     hist = _get_history(user_id)
     # Snapshot for SuperContext (before this turn becomes "history").
@@ -1425,7 +1399,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                          "so_luong": _tat.get("so_luong") or 1,
                          "co_media": any(_kq.get(k) for k in
                                          ("image_url", "image_urls", "video_url", "audio_url"))})
-            out_t = _finalize(pid, _kq)
+            out_t = _finalize(user_id, _kq)
             hist.append({"role": "assistant", "content": out_t.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_t.get("text") or ""))
@@ -1489,7 +1463,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             # KHÔNG nhờ model bày lại bản tin nữa: định dạng (chia mục, gạch
             # đầu dòng, bỏ tóm tắt, không link) đã làm trọn bằng code ở trên, mà
             # bản tin lại quá dài để model kịp xử lý trong hạn chờ.
-            out_n = _finalize(pid, _kq_ws)
+            out_n = _finalize(user_id, _kq_ws)
             hist.append({"role": "assistant", "content": out_n.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_n.get("text") or ""))
@@ -1535,7 +1509,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                              "tu_nut_menu": bool(_nut),
                              "model": _args_media.get("model") or "",
                              "params": _args_media.get("params") or {}})
-                out_m = _finalize(pid, _kq_m)
+                out_m = _finalize(user_id, _kq_m)
                 hist.append({"role": "assistant", "content": out_m.get("text") or ""})
                 _persist_history(user_id, hist)
                 _journal(str(out_m.get("text") or ""), status="tao_media_fastpath")
@@ -1569,7 +1543,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if _nut_sk and (allow is None or caps.group_of("teach_skill") in allow):
         _cap_sk = caps.get("teach_skill")
         if _cap_sk:
-            out_sk = _finalize(pid, _execute(_cap_sk, dict(_nut_sk), user_id,
+            out_sk = _finalize(user_id, _execute(_cap_sk, dict(_nut_sk), user_id,
                                                  user_text=user_text, is_admin=is_admin))
             hist.append({"role": "assistant", "content": out_sk.get("text") or ""})
             _persist_history(user_id, hist)
@@ -1592,7 +1566,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             logger.info({"event": "agent_tat_loa", "loa": _nut_loa.get("speaker"),
                          "volume": _nut_loa.get("volume"),
                          "delay_minutes": _nut_loa.get("delay_minutes") or 0})
-            out_l = _finalize(pid, _kq_loa)
+            out_l = _finalize(user_id, _kq_loa)
             hist.append({"role": "assistant", "content": out_l.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_l.get("text") or ""), status="loa_fastpath")
@@ -1623,16 +1597,16 @@ def _orchestrate_locked(user_text: str, user_id: str,
         _cap_duyet = caps.get("announce_on_speaker")
         if (_cap_duyet is not None
                 and not caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)
-                and approval_gate.needs_approval(pid, "announce_on_speaker",
+                and approval_gate.needs_approval(user_id, "announce_on_speaker",
                                                  risk=_cap_duyet.risk)):
             _tom_tat = approval_gate.summarize_action(
                 "announce_on_speaker", _yc_loa, _cap_duyet.description or "")
-            approval_gate.set_pending(pid, "announce_on_speaker", _yc_loa, _tom_tat)
+            approval_gate.set_pending(user_id, "announce_on_speaker", _yc_loa, _tom_tat)
             _hoi_duyet = approval_gate.format_proposal(
                 "announce_on_speaker", _yc_loa,
                 description=_cap_duyet.description or "",
                 label=_cap_duyet.label or "announce_on_speaker")
-            out_d = _finalize(pid, {"text": _hoi_duyet})
+            out_d = _finalize(user_id, {"text": _hoi_duyet})
             hist.append({"role": "assistant", "content": out_d.get("text") or _hoi_duyet})
             _persist_history(user_id, hist)
             _journal(str(out_d.get("text") or ""), status="loa_hoi_duyet")
@@ -1647,7 +1621,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         if _kq_yc and str(_kq_yc.get("text") or "").strip():
             logger.info({"event": "agent_tat_loa_hoi",
                          "loa": _yc_loa.get("speaker") or ""})
-            out_y = _finalize(pid, _kq_yc)
+            out_y = _finalize(user_id, _kq_yc)
             hist.append({"role": "assistant", "content": out_y.get("text") or ""})
             _persist_history(user_id, hist)
             _journal(str(out_y.get("text") or ""), status="loa_hoi_fastpath")
@@ -1669,17 +1643,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
         if (
             fp_text and fp_control
             and approval_gate.gate_ha_fastpath()
-            and approval_gate.needs_approval(pid, "control_home", risk="change")
+            and approval_gate.needs_approval(user_id, "control_home", risk="change")
         ):
             approval_gate.set_pending(
-                pid, "control_home", {"command": user_text}, user_text,
+                user_id, "control_home", {"command": user_text}, user_text,
             )
             q = approval_gate.format_proposal(
                 "control_home", {"command": user_text},
                 description="Điều khiển nhà thông minh",
                 label="điều khiển nhà",
             )
-            out_q = _finalize(pid, {"text": q})
+            out_q = _finalize(user_id, {"text": q})
             hist.append({"role": "assistant", "content": out_q.get("text") or q})
             _persist_history(user_id, hist)
             return out_q
@@ -1721,7 +1695,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         reply = phrased
             except Exception as exc:  # call_model không raise, nhưng phòng hờ
                 logger.info("agent: ha fastpath phrasing skipped: %s", exc)
-            out = _finalize(pid, {"text": reply})
+            out = _finalize(user_id, {"text": reply})
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)
             tools_used.append("ha_fastpath")
@@ -1781,7 +1755,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     hist.pop()
                 _journal("", status="blocked")
                 return {"text": "", "silent": True}
-            out = _finalize(pid, {"text": reply})
+            out = _finalize(user_id, {"text": reply})
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)
             _journal(str(out.get("text") or reply))
@@ -1866,7 +1840,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         f"(thay đổi hệ thống). Anh/chị bật lại autonomy supervised/full nhé."
                     ),
                 }
-            elif approval_gate.needs_approval(pid, name, risk=cap.risk) and (
+            elif approval_gate.needs_approval(user_id, name, risk=cap.risk) and (
                 not auto_approve or name in approval_gate.always_confirm_names()
             ) and not caps.con_thieu_thong_tin(name, args, user_text):
                 # `con_thieu_thong_tin`: việc còn thiếu thông tin thì HỎI ĐỦ TRƯỚC,
@@ -1894,7 +1868,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 summary = approval_gate.summarize_action(
                     name, display_args, cap.description or "",
                 )
-                approval_gate.set_pending(pid, name, args, summary)
+                approval_gate.set_pending(user_id, name, args, summary)
                 pending_approval_q = approval_gate.format_proposal(
                     name, display_args,
                     description=cap.description or "",
@@ -2033,7 +2007,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
             combo_text = (
                 f"{base_text}\n\n{pending_approval_q}" if base_text else pending_approval_q
             )
-            out_q = _finalize(pid, {"text": combo_text, **(produced_media or {}),
+            out_q = _finalize(user_id, {"text": combo_text, **(produced_media or {}),
                                         **_nhieu_anh(produced_images)})
             hist.append({"role": "assistant", "content": out_q.get("text") or combo_text})
             _persist_history(user_id, hist)
@@ -2048,7 +2022,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # đổ vào `produced_images` cũng không được rơi vào đúng cái bẫy đó nữa.
         if produced_media or produced_images:
             text = produced_caption
-            out_m = _finalize(pid, {"text": text, **produced_media,
+            out_m = _finalize(user_id, {"text": text, **produced_media,
                                         **_nhieu_anh(produced_images)})
             hist.append({"role": "assistant", "content": out_m.get("text") or text})
             _persist_history(user_id, hist)
@@ -2057,7 +2031,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # Tạo ảnh/video/nhạc THẤT BẠI (deliver_now) → gửi thẳng câu thật, KHÔNG để
         # LLM kể lại là "đã gửi ở trên" khi thực ra chưa tạo được gì.
         if terminal_reply:
-            out_t = _finalize(pid, {"text": terminal_reply})
+            out_t = _finalize(user_id, {"text": terminal_reply})
             hist.append({"role": "assistant", "content": out_t.get("text") or terminal_reply})
             _persist_history(user_id, hist)
             _journal(str(out_t.get("text") or terminal_reply), status="tool_final")

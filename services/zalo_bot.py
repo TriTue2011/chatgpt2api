@@ -1920,7 +1920,6 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # CHUNG orchestrator với Telegram — cùng persona/memory/capability/setting.
     try:
         from services.agent import orchestrate
-        from services.agent import scope as _scope_mod
         try:
             from services.admin_workspace import (ha_fastpath_for_chat as _ha_fp,
                                                   thread_fastpath_for as _tfp)
@@ -1933,12 +1932,15 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _zalo_model(chat_id)
         # Nhóm: mỗi USER một phiên riêng; 1-1 giữ key cũ (không mất lịch sử).
+        _skey = f"zalo_{chat_id}"
+        try:
+            from services.config import config as _c2
+            if is_group and user_id and getattr(_c2, "group_user_isolation", True):
+                _skey = f"zalo_{chat_id}:u{user_id}"
+        except Exception:
+            pass
         _la_admin = str(chat_id or "").strip() in set(_admin_ids_for_bot())
-        _scope = _scope_mod.context(
-            "zalo", _bid, str(chat_id), actor_id=str(user_id or chat_id),
-            chat_rieng=not is_group,
-            actor_role="admin" if _la_admin else "user")
-        out = orchestrate(text, _scope, allow=_allow, ha_fastpath=_fp, model=_model,
+        out = orchestrate(text, _skey, allow=_allow, ha_fastpath=_fp, model=_model,
                           is_admin=_la_admin)
         try:
             from services import net_guard

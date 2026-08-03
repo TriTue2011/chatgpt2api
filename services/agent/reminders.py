@@ -817,15 +817,12 @@ def _run_task(user_id: str, prompt: str, *, channel: str = "",
               chat_id: str = "", meta: dict | None = None) -> str:
     """Run a one-shot agent turn for a scheduled task (no nested scheduling loop)."""
     from services.agent.orchestrator import orchestrate
-    from services.agent import scope as _scope_mod
     model = _task_model(channel, chat_id, meta or {}) if channel else ""
     # auto_approve=True: user ĐÃ đồng ý khi tạo nhắc nhở → tới giờ TỰ chạy,
     # KHÔNG hỏi duyệt lại (nếu không sẽ mâu thuẫn 'em sẽ tự gửi' rồi lại hỏi).
     out = orchestrate(
         f"[Nhắc việc theo lịch — làm ngay và trả lời ngắn gọn, KHÔNG hỏi lại]\n{prompt}",
-        # Bảng `reminders` chưa có account/topic/actor (bước 5 mới chuyển) nên
-        # giữ NGUYÊN khoá cũ: lịch đang hẹn vẫn ghi/đọc đúng chỗ nó vẫn dùng.
-        _scope_mod.tu_khoa_legacy(user_id),
+        user_id,
         ha_fastpath=True,
         auto_approve=True,
         model=model or None,
