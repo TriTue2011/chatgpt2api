@@ -1398,7 +1398,19 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
                 break
     # Khớp tên RÚT GỌN: câu chứa một đoạn LIÊN TIẾP của tên thiết bị (≥2 từ),
     # vd "cánh gió dọc" ↔ "Cánh gió dọc Panasonic". Chỉ nhận khi DUY NHẤT.
+    #
+    # Đoạn trùng đúng bằng TÊN KHU VỰC thì KHÔNG tính: nó nói người dùng đang
+    # nhắc tới chỗ nào, không nói tới thiết bị nào. Đo thật 03/08 06:48 — "Phát
+    # loa phòng khách âm lượng 60% nội dung các con chuẩn bị đi học thôi" khớp
+    # "phong khach" của «Quạt phòng khách» rồi chỉnh quạt sang mức medium: câu về
+    # LOA mà đi vặn quạt, chữ "loa" bị bỏ qua sạch. Cần tên thiết bị thì đã có
+    # nhánh dưới (lọc theo domain + khu vực) — nhánh đó bắt buộc câu phải nêu
+    # "quạt"/"đèn" nên không nhận nhầm kiểu này.
     if best is None:
+        try:
+            _ten_khu_vuc = set((get_ha_area_index().get("area_names") or {}).keys())
+        except Exception:
+            _ten_khu_vuc = set()
         sub_hits: dict[int, list[tuple[str, str, str]]] = {}
         for nf, cands in ent.items():
             nt = nf.split()
@@ -1408,6 +1420,8 @@ def _ha_local_level(messages: list[dict[str, Any]]) -> str | None:
             for a in range(len(nt)):
                 for b in range(len(nt), a + 1, -1):
                     if b - a >= 2 and _find_sublist(toks, nt[a:b]) >= 0:
+                        if " ".join(nt[a:b]) in _ten_khu_vuc:
+                            continue        # chỉ là tên khu vực → chưa chỉ ra thiết bị
                         longest = max(longest, b - a)
                         break
             if longest >= 2:

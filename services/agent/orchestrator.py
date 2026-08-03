@@ -404,16 +404,22 @@ def _doc_nut_menu_loa(text: str) -> dict | None:
 # "thông báo ra loa phòng khách: cả nhà ăn cơm". Đường tắt 1.49 dùng nó để dựng
 # MENU CHỌN LOA ngay — xem chú thích ở đó.
 #
-# Khuôn: <động từ> [gì đó] ra|qua|bằng|trên loa [tên loa] <dấu mở nội dung> <nội dung>
+# Khuôn: <động từ> [gì đó] [ra|qua|bằng|trên] loa [tên loa] [âm lượng N%]
+#        <dấu mở nội dung> <nội dung>
 # Dấu mở nội dung phải RÕ (":", "nội dung", "rằng") vì đó là chỗ tách tên loa khỏi
 # lời cần đọc. Không có nó thì không đoán bừa — để đường model như cũ.
+#
+# Giới từ trước "loa" là TUỲ CHỌN: đo thật 03/08 06:48 chủ máy gõ "Phát loa phòng
+# khách âm lượng 60% nội dung …" — không có chữ "ra" nên bản đầu không nhận, câu
+# rơi xuống đường tắt Home Assistant và bị hiểu thành lệnh chỉnh quạt.
 _TAT_PHAT_LOA = re.compile(
     r"^\s*(?:ơi\s+|em\s+|bot\s+|bạn\s+|ban\s+)?"
     r"(?:hãy\s+|hay\s+|giúp\s+\S+\s+|giup\s+\S+\s+|cho\s+\S+\s+)?"
     r"(?:phát|phat|đọc|doc|thông\s*báo|thong\s*bao|nhắc|nhac|báo|bao)\s+"
     r"(?P<giua>[^:«»]{0,60}?)"
-    r"(?:ra|qua|bằng|bang|trên|tren)\s+loa\b"
+    r"(?:(?:ra|qua|bằng|bang|trên|tren)\s+)?loa\b"
     r"(?P<loa>[^:«»\n]{0,40}?)"
+    r"(?:\s*(?:âm\s*lượng|am\s*luong|volume|vol)\s*(?P<vol>\d{1,3})\s*%?)?"
     r"(?:\s*:\s*"
     r"|\s+(?:với\s+|voi\s+)?(?:nội\s*dung|noi\s*dung)\s+(?:là\s+|la\s+)?"
     r"|\s+(?:rằng|rang)\s+)"
@@ -422,12 +428,10 @@ _TAT_PHAT_LOA = re.compile(
 
 # Câu có chữ "loa" nhưng KHÔNG phải xin đọc thông báo:
 #   · mở nhạc → `play_music_on_speaker` lo, đừng giành
-#   · quản lý sổ loa (thêm/xoá/kiểm tra/danh sách)
-#   · đã nêu âm lượng → còn đủ thông tin để phát THẬT, phải qua cổng duyệt ở
-#     đường thường (xem điều kiện `con_thieu_thong_tin` tại mục 1.49)
+#   · quản lý sổ loa (thêm/xoá/kiểm tra/danh sách), hỏi có loa nào
 _KHONG_PHAI_PHAT_LOA = re.compile(
     r"(nhạc|nhac|bài\s+hát|bai\s+hat|lofi|karaoke|"
-    r"âm\s*lượng|am\s*luong|volume|"
+    r"loa\s+nào|loa\s+nao|"
     r"danh\s+sách\s+loa|danh\s+sach\s+loa|thêm\s+loa|them\s+loa|"
     r"xoá\s+loa|xóa\s+loa|xoa\s+loa|sửa\s+loa|sua\s+loa|"
     r"kiểm\s+tra\s+loa|kiem\s+tra\s+loa|tắt\s+loa|tat\s+loa)", re.I)
@@ -464,6 +468,18 @@ def _la_yeu_cau_phat_loa(text: str) -> dict | None:
     loa = (m.group("loa") or "").strip(" \t,.-–")
     if loa:
         args["speaker"] = loa
+    vol = m.groupdict().get("vol")
+    if vol:
+        try:
+            args["volume"] = max(0, min(100, int(vol)))
+            # Mức này lấy từ CHÍNH chữ người dùng gõ, không phải model đoán — đúng
+            # nghĩa của `am_luong_da_chon`. Phải ghi vào args vì nó còn phải sống
+            # qua vòng hỏi duyệt: lúc người dùng bấm "ok", handler chạy lại với
+            # `user_message` là "ok", không còn thấy "âm lượng 60%" đâu nữa, và sẽ
+            # hỏi lại âm lượng một lần vô ích.
+            args["am_luong_da_chon"] = True
+        except ValueError:
+            pass
     return args
 
 
@@ -1556,7 +1572,9 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out_l.get("text") or ""), status="loa_fastpath")
             return out_l
 
-    # 1.49) Câu NGƯỜI gõ xin đọc thông báo ra loa → dựng MENU CHỌN LOA ngay.
+    # 1.49) Câu NGƯỜI gõ xin đọc thông báo ra loa → xử lý bằng CODE, không nhờ
+    # model định tuyến: thiếu thông tin thì hiện menu chọn loa, đủ thông tin thì
+    # hiện câu hỏi duyệt. Cả hai đều ra ngay trong lượt đầu.
     #
     # Đo thật 02/08 23:15 — "phát thông báo ra loa với nội dung chuẩn bị đi ngủ
     # thôi các con" nhận lại "Dạ anh muốn phát ra loa nào ạ — loa phòng khách hay
@@ -1568,19 +1586,35 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # thẳng capability, nên menu ra tức thì và `_ask_chon_loa` liệt kê loa THẬT mà
     # khung chat này được cấp.
     #
-    # CHỈ đi tắt khi lời gọi CÒN THIẾU thông tin (`con_thieu_thong_tin`) — lúc đó
-    # handler chỉ trả về MENU, không có tác dụng phụ nào. Câu đã đủ loa + âm lượng
-    # thì để đường thường chạy, vì đó là chỗ cổng duyệt hỏi trước khi phát thật.
+    # Còn thiếu thông tin → handler chỉ trả MENU, không có tác dụng phụ. Đủ thông
+    # tin (loa + âm lượng + nội dung) thì việc này CÓ tác dụng phụ thật, nên vẫn
+    # phải qua cổng duyệt y như đường thường — chỉ khác là câu hỏi duyệt dựng bằng
+    # code nên ra ngay, và mang đúng loa/âm lượng người dùng vừa gõ.
     _yc_loa = _la_yeu_cau_phat_loa(user_text)
-    if (_yc_loa and (allow is None or "tts_speaker" in allow)
-            and caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)):
+    if _yc_loa and (allow is None or "tts_speaker" in allow):
         if approval_gate.is_blocked("announce_on_speaker", risk="change"):
             return {"text": "Chế độ chỉ-đọc: em không được phát ra loa ạ."}
+        _cap_duyet = caps.get("announce_on_speaker")
+        if (_cap_duyet is not None
+                and not caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)
+                and approval_gate.needs_approval(user_id, "announce_on_speaker",
+                                                 risk=_cap_duyet.risk)):
+            _tom_tat = approval_gate.summarize_action(
+                "announce_on_speaker", _yc_loa, _cap_duyet.description or "")
+            approval_gate.set_pending(user_id, "announce_on_speaker", _yc_loa, _tom_tat)
+            _hoi_duyet = approval_gate.format_proposal(
+                "announce_on_speaker", _yc_loa,
+                description=_cap_duyet.description or "",
+                label=_cap_duyet.label or "announce_on_speaker")
+            out_d = _finalize(user_id, {"text": _hoi_duyet})
+            hist.append({"role": "assistant", "content": out_d.get("text") or _hoi_duyet})
+            _persist_history(user_id, hist)
+            _journal(str(out_d.get("text") or ""), status="loa_hoi_duyet")
+            return out_d
         try:
-            _cap_yc = caps.get("announce_on_speaker")
-            _kq_yc = (_execute(_cap_yc, dict(_yc_loa), user_id,
+            _kq_yc = (_execute(_cap_duyet, dict(_yc_loa), user_id,
                                user_text=user_text, is_admin=is_admin)
-                      if _cap_yc else None)
+                      if _cap_duyet else None)
         except Exception as exc:
             logger.warning({"event": "agent_tat_loa_hoi_loi", "error": str(exc)[:150]})
             _kq_yc = None

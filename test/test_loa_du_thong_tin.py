@@ -791,11 +791,31 @@ class DuongTatHoiLoaTests(unittest.TestCase):
     def test_khong_gianh_viec_cua_tool_khac(self):
         for cau in ("mở nhạc ra loa bếp: lofi chill",
                     "phát bài hát ra loa bếp: lofi",
-                    "phát thông báo ra loa âm lượng 50%: cả nhà ăn cơm",
                     "cho xem danh sách loa",
                     "thêm loa mới",
+                    "nhà mình có loa nào",
                     "xin chào em"):
             self.assertIsNone(self.f(cau), cau)
+
+    def test_cau_that_06h48_khong_co_chu_RA(self):
+        """Đo thật 03/08 06:48 — thiếu chữ "ra" nên bản đầu không nhận, câu rơi
+        xuống đường tắt Home Assistant và bị hiểu thành lệnh chỉnh quạt."""
+        got = self.f("Phát loa phòng khách âm lượng 60% "
+                     "nội dung các con chuẩn bị đi học thôi")
+        self.assertEqual(got, {"text": "các con chuẩn bị đi học thôi",
+                               "speaker": "phòng khách", "volume": 60,
+                               "am_luong_da_chon": True})
+
+    def test_muc_nguoi_go_song_qua_vong_hoi_duyet(self):
+        """Bấm "ok" thì handler chạy lại với user_message = "ok" — không còn thấy
+        "âm lượng 60%" nữa, nên bằng chứng phải nằm trong chính args."""
+        from services.agent import capabilities as caps
+        got = self.f("phát ra loa bếp âm lượng 40% nội dung cả nhà ăn cơm")
+        self.assertTrue(got["am_luong_da_chon"])
+        self.assertFalse(caps.con_thieu_thong_tin("announce_on_speaker", got, "ok"))
+
+    def test_neu_am_luong_ma_khong_neu_noi_dung_thi_bo_qua(self):
+        self.assertIsNone(self.f("phát loa phòng khách âm lượng 60%"))
 
     def test_noi_dung_nut_bam_KHONG_lot_vao_day(self):
         """Nút bấm đã có đường riêng (mục 1.48) — vào đây là hiện lại menu vô tận."""
@@ -808,11 +828,98 @@ class DuongTatHoiLoaTests(unittest.TestCase):
         for cau in ("phát thông báo ra loa", "phát thông báo ra loa phòng khách"):
             self.assertIsNone(self.f(cau), cau)
 
-    def test_chi_di_tat_khi_CON_PHAI_HOI(self):
-        """Đủ thông tin thì phải qua cổng duyệt ở đường thường, không đi tắt."""
+    def test_thieu_thong_tin_thi_chi_hien_menu(self):
+        """Chưa rõ loa/âm lượng thì handler chỉ hỏi — không có tác dụng phụ nào."""
         from services.agent import capabilities as caps
         args = self.f("phát thông báo ra loa với nội dung chuẩn bị đi ngủ thôi các con")
         self.assertTrue(caps.con_thieu_thong_tin("announce_on_speaker", args or {}))
+
+
+class CauVeLOAKhongDuocThanhLENH_QUAT_Tests(unittest.TestCase):
+    """Đường tắt Home Assistant không được nhận nhầm câu về loa thành lệnh thiết bị.
+
+    Đo thật 03/08 06:48 trên Zalo (nguyên văn):
+
+        06:48:29 người dùng : Phát loa phòng khách âm lượng 60% nội dung các con
+                              chuẩn bị đi học thôi
+        06:48:39 bot        : Em đã chỉnh Quạt phòng khách sang mức medium.
+
+    `_ha_local_level` khớp tên thiết bị bằng một ĐOẠN LIÊN TIẾP ≥2 từ của tên.
+    "phong khach" (lấy từ «loa phòng khách») là đoạn của «Quạt phòng khách», nên
+    quạt được chọn, rồi "60%" thành preset gần nhất là medium. Chữ "loa" bị bỏ
+    qua sạch, và người dùng nhận một thay đổi thiết bị họ không hề yêu cầu.
+
+    Đoạn trùng đúng bằng TÊN KHU VỰC chỉ nói người dùng đang nhắc tới CHỖ NÀO,
+    không nói tới THIẾT BỊ NÀO.
+    """
+
+    QUAT = {"entity_id": "fan.quat_phong_khach",
+            "attributes": {"friendly_name": "Quạt phòng khách",
+                           "preset_modes": ["low", "medium", "high"],
+                           "supported_features": 0}}
+    QUAT_CAY = {"entity_id": "fan.quat_cay",
+                "attributes": {"friendly_name": "Quạt cây Kangaroo",
+                               "preset_modes": ["low", "medium", "high"],
+                               "supported_features": 0}}
+
+    def _chay(self, cau: str, states: list[dict]) -> tuple[object, list]:
+        """Chạy `_ha_local_level` với HA giả. Trả (câu trả lời, các lệnh đã gọi)."""
+        import types
+        import unicodedata
+
+        da_goi: list[tuple] = []
+
+        def _fold(text: str) -> str:
+            nfkd = unicodedata.normalize("NFKD", str(text).lower())
+            return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+        gia = types.ModuleType("services.ha_client")
+        gia._fold_diacritics = _fold
+        gia.get_states = lambda use_cache=True: states
+        gia.get_exposed_entity_ids = lambda use_cache=True: set()
+        gia.get_ha_area_index = lambda: {
+            "area_names": {"phong khach": "Phòng khách"},
+            "entity_area": {s["entity_id"]: "Phòng khách" for s in states},
+        }
+
+        def _call(domain, service, data):
+            da_goi.append((domain, service, data))
+            return True
+        gia.call_service = _call
+
+        import logging
+        cu = sys.modules.get("services.ha_client")
+        sys.modules["services.ha_client"] = gia
+        try:
+            ns = _nap(GOC / "services" / "protocol" / "openai_v1_chat_complete.py",
+                      ("_ha_local_level", "_find_sublist", "_extract_last_user_text"),
+                      {"logger": logging.getLogger("test_loa")})
+            ra = ns["_ha_local_level"]([{"role": "user", "content": cau}])
+        finally:
+            if cu is not None:
+                sys.modules["services.ha_client"] = cu
+            else:
+                sys.modules.pop("services.ha_client", None)
+        return ra, da_goi
+
+    def test_cau_phat_loa_KHONG_cham_vao_quat(self):
+        ra, da_goi = self._chay("Phát loa phòng khách âm lượng 60% nội dung "
+                                "các con chuẩn bị đi học thôi", [self.QUAT])
+        self.assertIsNone(ra)
+        self.assertEqual(da_goi, [])
+
+    def test_neu_dung_ten_thiet_bi_thi_van_chinh_duoc(self):
+        """Đừng vì chặn nhầm mà làm hỏng lệnh quạt thật."""
+        ra, da_goi = self._chay("quạt phòng khách mức cao", [self.QUAT])
+        self.assertIn("Quạt phòng khách", str(ra))
+        self.assertEqual(da_goi[0][:2], ("fan", "set_preset_mode"))
+        self.assertEqual(da_goi[0][2]["preset_mode"], "high")
+
+    def test_ten_rut_gon_KHONG_phai_khu_vuc_thi_van_khop(self):
+        """«quạt cây» là đoạn tên thật của thiết bị, không phải tên phòng."""
+        ra, da_goi = self._chay("quạt cây mức cao", [self.QUAT_CAY])
+        self.assertIn("Quạt cây Kangaroo", str(ra))
+        self.assertEqual(da_goi[0][2]["preset_mode"], "high")
 
 
 class DuongTatHoiLoaKhongMoThemQuyenTests(unittest.TestCase):
@@ -822,7 +929,7 @@ class DuongTatHoiLoaKhongMoThemQuyenTests(unittest.TestCase):
         self.code = "\n".join(
             l for l in (GOC / "services" / "agent" / "orchestrator.py")
             .read_text("utf-8").splitlines() if not l.lstrip().startswith("#"))
-        self.khuc = self.code[self.code.index("_yc_loa = _la_yeu_cau_phat_loa(user_text)"):][:900]
+        self.khuc = self.code[self.code.index("_yc_loa = _la_yeu_cau_phat_loa(user_text)"):][:1600]
 
     def test_van_qua_bo_loc_chuc_nang_theo_thread(self):
         self.assertIn('allow is None or "tts_speaker" in allow', self.khuc)
@@ -830,12 +937,16 @@ class DuongTatHoiLoaKhongMoThemQuyenTests(unittest.TestCase):
     def test_che_do_chi_doc_van_chan_cung(self):
         self.assertIn('approval_gate.is_blocked("announce_on_speaker"', self.khuc)
 
-    def test_chi_chay_khi_con_thieu_thong_tin(self):
+    def test_du_thong_tin_thi_VAN_hoi_duyet(self):
+        """Việc có tác dụng phụ thật thì cổng duyệt phải chạy, dù đi đường tắt."""
         self.assertIn('caps.con_thieu_thong_tin("announce_on_speaker", _yc_loa, user_text)',
                       self.khuc)
+        self.assertIn('approval_gate.needs_approval(user_id, "announce_on_speaker"',
+                      self.khuc)
+        self.assertIn('approval_gate.set_pending(user_id, "announce_on_speaker"', self.khuc)
 
     def test_van_ghi_audit_bang_cach_di_qua_execute(self):
-        self.assertIn("_execute(_cap_yc,", self.khuc)
+        self.assertIn("_execute(_cap_duyet,", self.khuc)
 
     def test_dat_truoc_fast_path_HA(self):
         self.assertLess(self.code.index("_yc_loa = _la_yeu_cau_phat_loa(user_text)"),
