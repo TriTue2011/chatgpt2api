@@ -152,6 +152,33 @@ def khoa_du_lieu(user_id: str) -> str:
     return "v1|" + "|".join(quote(p, safe="") for p in phan)
 
 
+def khoa_nhat_ky(user_id: str) -> str:
+    """Khoá NHẬT KÝ NHÓM — luôn ở cấp nhóm/topic, BỎ người gửi.
+
+    Khác `khoa_du_lieu`: nhật ký là "sổ chung của cả nhóm" (mọi thành viên góp
+    vào một cuốn để tóm tắt được cả cuộc trò chuyện), nên KHÔNG tách theo người
+    dù nhóm có lọc user. "Việc nhắc tới tôi" thì lọc trong sổ đó theo người-được-
+    nhắc, chứ không tách sổ. Chat 1-1 thì chính nó là "nhóm hai người".
+    """
+    sc = tach_khoa_phien(user_id)
+    if not sc.chat:
+        return "v1|||"
+    phan = [sc.kenh, sc.chat, sc.topic, ""]
+    return "v1|" + "|".join(quote(p, safe="") for p in phan)
+
+
+def nhat_ky_doc_them(user_id: str) -> list[str]:
+    """Phạm vi NHẬT KÝ đọc thêm nhờ kết nối bộ nhớ — ánh xạ mỗi phạm vi liên kết
+    sang khoá nhật ký (cấp nhóm) của nó. Nhật ký đi theo kết nối như memory."""
+    ra: list[str] = []
+    cua_toi = khoa_nhat_ky(user_id)
+    for kp_scope in _pham_vi_lien_ket_raw(user_id):
+        k = khoa_nhat_ky(kp_scope)
+        if k != cua_toi and k not in ra:
+            ra.append(k)
+    return ra
+
+
 # ── Kết nối bộ nhớ ───────────────────────────────────────────────────────────
 # Config `memory_links`: danh sách các mối nối giữa những phạm vi ĐỘC LẬP.
 #
@@ -231,31 +258,27 @@ def _thanh_vien(moi: dict, khoa: str) -> list[dict]:
     return [t for t in ds if isinstance(t, dict)] if isinstance(ds, list) else []
 
 
-def pham_vi_doc_them(user_id: str) -> list[str]:
-    """Các phạm vi mà lượt này ĐƯỢC ĐỌC THÊM nhờ kết nối bộ nhớ.
+def _pham_vi_lien_ket_raw(user_id: str) -> list[str]:
+    """KHOÁ PHIÊN của các thành viên mà lượt này được ĐỌC THÊM nhờ kết nối.
 
-    Không gồm phạm vi của chính nó. Trả danh sách đã bỏ trùng, thứ tự ổn định
-    (theo thứ tự khai trong cấu hình) để prompt không đổi giữa hai lượt giống
-    nhau — prompt nhảy lung tung là hỏng cache và khó dò lỗi.
+    Trả khoá phiên thô (chưa quy về khoá dữ liệu hay nhật ký) để nơi gọi tự ánh
+    xạ: memory dùng `khoa_du_lieu`, nhật ký dùng `khoa_nhat_ky`. Nhờ vậy luật kết
+    nối (bình đẳng/chính phụ) chỉ viết MỘT LẦN ở đây.
 
     chinh_phu MỘT CHIỀU: đứng ở CHÍNH thì đọc được PHỤ; đứng ở PHỤ thì không
-    thấy gì thêm. Một lượt vừa là chính ở mối nối này vừa là phụ ở mối nối khác
-    là bình thường — mỗi mối nối xét riêng.
+    thấy gì thêm. Một lượt vừa là chính ở mối này vừa là phụ ở mối khác là bình
+    thường — mỗi mối xét riêng. Thứ tự ổn định theo thứ tự khai trong cấu hình.
     """
     sc = tach_khoa_phien(user_id)
     if not sc.chat:
         return []
-    cua_toi = khoa_du_lieu(user_id)
     ra: list[str] = []
 
     def _them(ds: list[dict]) -> None:
         for tv in ds:
             kp = khoa_phien_tu_thanh_vien(tv)
-            if not kp:
-                continue
-            k = khoa_du_lieu(kp)
-            if k != cua_toi and k not in ra:
-                ra.append(k)
+            if kp and kp not in ra:
+                ra.append(kp)
 
     for moi in _cac_moi_noi():
         if not bool(moi.get("enabled", True)):
@@ -268,6 +291,17 @@ def pham_vi_doc_them(user_id: str) -> list[str]:
         elif kieu == _KIEU_CHINH_PHU:
             if any(_khop_thanh_vien(t, sc) for t in _thanh_vien(moi, "primary")):
                 _them(_thanh_vien(moi, "secondary"))
+    return ra
+
+
+def pham_vi_doc_them(user_id: str) -> list[str]:
+    """Các phạm vi MEMORY lượt này đọc thêm nhờ kết nối (không gồm chính nó)."""
+    cua_toi = khoa_du_lieu(user_id)
+    ra: list[str] = []
+    for kp in _pham_vi_lien_ket_raw(user_id):
+        k = khoa_du_lieu(kp)
+        if k != cua_toi and k not in ra:
+            ra.append(k)
     return ra
 
 

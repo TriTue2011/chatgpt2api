@@ -2038,6 +2038,18 @@ def _process_ai(ev: dict) -> None:
     from services.agent import capabilities as _caps
     # Tầng lọc: nhóm (thread_id) ∩ user (sender_id) — User ID theo từng nhóm.
     _sender = str(ev.get("sender_id") or "")
+    # NHẬT KÝ NHÓM: ghi MỌI tin nhận được (nếu phạm vi BẬT) — TRƯỚC mọi cổng
+    # lọc/tag, tách hẳn với việc trả lời. Mặc định TẮT nên không bật thì không ghi.
+    try:
+        from services.agent import chatlog as _chatlog
+        _skey_log = f"zalop_{thread_id}"
+        if int(thread_type or 0) == 1 and _sender:
+            _skey_log = f"{_skey_log}:u{_sender}"
+        _chatlog.ghi(_skey_log, sender_id=_sender,
+                     sender_name=str(ev.get("display_name") or "").strip(),
+                     text=text, mentions=[str(m) for m in (ev.get("mentions") or [])])
+    except Exception:
+        pass
     _allow = _caps.allowed_groups_for_member("zalop", acc_id, thread_id, _sender)
     allowed_ids = list(_chat_ids())
     # HAI câu hỏi khác nhau, đừng trộn:

@@ -1213,6 +1213,17 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # thì mọi câu trả lời rơi về topic General dù đã đọc đúng message_thread_id.
     _current.topic = str(topic_id or "")
 
+    # NHẬT KÝ NHÓM: ghi tin CHỮ nhận được (nếu phạm vi BẬT) — TRƯỚC cổng tag,
+    # tách hẳn với việc trả lời. Mặc định TẮT. (Voice log sau khi có STT — v1 bỏ.)
+    if text and is_group:
+        try:
+            from services.agent import chatlog as _chatlog
+            _chatlog.ghi(khoa_phien(chat_id, str(topic_id or ""), user_id),
+                         sender_id=user_id, sender_name=sender, text=text,
+                         mentions=["@all"] if native_mention else None)
+        except Exception:
+            pass
+
     # Voice note → STT → coi như tin nhắn CHỮ: đường đi chỉ thêm bước chuyển
     # đổi, phần sau (lọc quyền, agent, trả lời) giữ nguyên như chat thường.
     if voice_file_id and not text:
