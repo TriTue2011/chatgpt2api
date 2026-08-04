@@ -1761,7 +1761,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
         steps_done = _step + 1
         resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
                           no_smart_home=(allow is not None and "homeassistant" not in allow),
-                          allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}))
+                          allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}),
+                          pham_vi=_pham_vi(user_id), doc_them=_doc_them(user_id))
         if resp.get("error"):
             run_status = "error"
             run_error = str(resp.get("error") or "")[:200]

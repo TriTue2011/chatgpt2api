@@ -109,6 +109,8 @@ def call_model(
     modalities: Optional[list[str]] = None,
     channel: str = "",
     response_format: Optional[dict[str, Any]] = None,
+    pham_vi: str = "",
+    doc_them: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Call a concrete provider model, return the raw OpenAI response dict.
 
@@ -134,6 +136,13 @@ def call_model(
                                "stream": False, "max_tokens": max_tokens,
                                # Skip Agent-runs double-count (orchestrator journals the turn)
                                "x_agent_internal": True}
+    if pham_vi:
+        # Khoá phạm vi ĐẦY ĐỦ của lượt (kênh/chat/topic/người) cho memory_service:
+        # isolate + honor kết nối bộ nhớ (doc_them). Không có nó, lời gọi
+        # agent-internal sẽ bị memory_service BỎ QUA (không dùng kho chung global —
+        # xem memory_service.prepare) để không rò dữ liệu chéo giữa các nhóm/chat.
+        payload["_mem_scope"] = pham_vi
+        payload["_mem_doc_them"] = list(doc_them or [])
     if not allow_fastpath:
         payload["x_skip_fastpath"] = True
     if channel:

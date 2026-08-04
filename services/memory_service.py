@@ -237,39 +237,51 @@ class MemoryService:
             db.commit()
 
     # --------------------------------------------------------------- recall
-    def recall(self, query: str, user_id: str) -> list[str]:
+    def recall(self, query: str, user_id: str,
+               doc_them: list[str] | None = None) -> list[str]:
+        """Top-K ký ức khớp `query` trong phạm vi `user_id`.
+
+        `doc_them` = các phạm vi ĐỌC THÊM nhờ kết nối bộ nhớ (bình đẳng/chính
+        phụ). Chỉ MỞ ĐƯỜNG ĐỌC: recall gộp các phạm vi này, nhưng GHI (store) và
+        gia cố (reinforce) chỉ chạm phạm vi CỦA CHÍNH MÌNH — nối rồi gỡ mà dữ
+        liệu đã chảy sang nhau thì không tách lại được.
+        """
         fts = _fts_query(query)
         if not fts:
             return []
         k = int(self._cfg.get("k") or 5)
         now = time.time()
+        pham_vi = [user_id, *[s for s in (doc_them or []) if s and s != user_id]]
         try:
             with self._lock:
                 db = self._db()
+                ph = ",".join("?" * len(pham_vi))
                 rows = db.execute(
-                    "SELECT m.id, m.content, bm25(memories_fts) AS rank, m.last_seen_at"
+                    "SELECT m.id, m.content, bm25(memories_fts) AS rank,"
+                    " m.last_seen_at, m.user_id"
                     " FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid"
-                    " WHERE memories_fts MATCH ? AND m.user_id = ?"
+                    f" WHERE memories_fts MATCH ? AND m.user_id IN ({ph})"
                     " ORDER BY rank LIMIT ?",
-                    (fts, user_id, k * 3),
+                    (fts, *pham_vi, k * 3),
                 ).fetchall()
                 if not rows:
                     return []
                 # bm25 càng âm càng khớp; cộng boost độ mới (half-life ~7 ngày)
                 scored = []
-                for mid, content, rank, last_seen in rows:
+                for mid, content, rank, last_seen, owner in rows:
                     age_days = max(0.0, (now - float(last_seen or 0)) / 86400.0)
                     recency = 0.5 ** (age_days / 7.0)
-                    scored.append((float(rank) - 2.0 * recency, mid, content))
+                    scored.append((float(rank) - 2.0 * recency, mid, content, owner))
                 scored.sort(key=lambda t: t[0])
                 top = scored[:k]
-                # reinforce: ký ức được dùng thì tươi lại, prune sau cùng
-                ids = [t[1] for t in top]
-                qs = ",".join("?" * len(ids))
-                db.execute(
-                    f"UPDATE memories SET uses = uses + 1, last_seen_at = ? WHERE id IN ({qs})",
-                    [now, *ids],
-                )
+                # reinforce: CHỈ ký ức của chính mình (không ghi vào kho mượn).
+                ids = [t[1] for t in top if t[3] == user_id]
+                if ids:
+                    qs = ",".join("?" * len(ids))
+                    db.execute(
+                        f"UPDATE memories SET uses = uses + 1, last_seen_at = ? WHERE id IN ({qs})",
+                        [now, *ids],
+                    )
                 db.commit()
                 return [t[2] for t in top]
         except Exception as exc:
@@ -313,6 +325,16 @@ class MemoryService:
             return None
         if bool(body.get("_is_ha_request")):
             return None
+        # Lượt của AGENT/bot: orchestrator gắn `_mem_scope` = khoá phạm vi đầy đủ
+        # (kênh/chat/topic/người — services/agent/scope.khoa_du_lieu) và
+        # `_mem_doc_them` = phạm vi đọc thêm nhờ kết nối bộ nhớ. Lượt agent-internal
+        # mà KHÔNG có `_mem_scope` (lời gọi phụ: tóm tắt, diễn đạt lại…) thì TUYỆT
+        # ĐỐI không dùng kho chung — kho chung gộp mọi nhóm/chat, chính là chỗ rò
+        # dữ liệu chéo. Client API ngoài (không phải agent-internal) vẫn theo
+        # `_principal` như cũ.
+        mem_scope = str(body.get("_mem_scope") or "").strip()
+        if not mem_scope and bool(body.get("x_agent_internal")):
+            return None
         model = str(body.get("model") or "").strip()
         if model in IMAGE_MODELS:
             return None
@@ -331,9 +353,11 @@ class MemoryService:
         except Exception:
             pass
 
-        user_id = self._khoa_kho(body)
+        user_id = mem_scope or self._khoa_kho(body)
+        dt = body.get("_mem_doc_them")
+        doc_them = [str(s) for s in dt] if isinstance(dt, list) else []
 
-        matches = self.recall(user_text, user_id)
+        matches = self.recall(user_text, user_id, doc_them=doc_them)
         if matches:
             lines: list[str] = []
             total = 0
