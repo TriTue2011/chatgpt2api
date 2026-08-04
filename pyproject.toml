@@ -20,9 +20,9 @@ dependencies = [
     "uvicorn>=0.44.0",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
-    "gitpython>=3.1.55",
+    "gitpython>=3.1.57",
     "gemini-webapi>=2.0.0",
-    "cryptography>=42.0.0",
+    "cryptography>=50.0.0",
     # Giọng nói: STT chạy local (Zipformer) + phát ra loa Google Cast.
     # Model KHÔNG nằm trong image — tải về volume bằng script (xem voices/).
     "sherpa-onnx>=1.12.0",
