@@ -65,3 +65,10 @@ def khoa_tim(s: str) -> str:
     An toàn khi thiếu pyvi (khi đó chỉ còn bỏ dấu — vẫn khớp được không dấu).
     """
     return fold(segment(s))
+
+# Ghi chú: FTS của memory_service/state/session KHÔNG cần đổi — tokenizer mặc định
+# `unicode61` của SQLite FTS5 đã fold thanh điệu + dấu nguyên âm (remove_diacritics
+# mặc định = 1): "ket" khớp "két", "hoc sinh" khớp "học sinh". Điểm còn thiếu duy
+# nhất của FTS là đ→d ("dong" không khớp "đông") — cả mode 1 lẫn 2 đều không làm.
+# Muốn fold cả đ trong FTS phải index bản đã fold (đổi cấu trúc + dựng lại index),
+# để dành. wiki dùng vi_text.fold nên đã fold đầy đủ (kể cả đ).
