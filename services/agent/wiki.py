@@ -403,9 +403,13 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "",
     if not is_enabled():
         return []
     _ensure()
+    # Khớp KHÔNG phụ thuộc dấu: bỏ dấu cả query lẫn nội dung (vi_text.fold — xử lý
+    # cả đ→d). Gõ "lich tiem phong" vẫn khớp "lịch tiêm phòng". Giữ nguyên file
+    # gốc có dấu; chỉ fold ở tầng so khớp.
+    from services.agent.vi_text import fold as _fold
     words = []
     seen: set[str] = set()
-    for w in _WORD_RE.findall((query or "").lower()):
+    for w in _WORD_RE.findall(_fold(query)):
         if w not in seen:
             seen.add(w)
             words.append(w)
@@ -423,7 +427,7 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "",
             fm, _ = split_frontmatter(text)
             if not note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
                 continue
-            low = text.lower()
+            low = _fold(text)
             score = sum(1 for w in words if w in low)
             if score <= 0:
                 continue
