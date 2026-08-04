@@ -16,6 +16,7 @@ import { ChannelActivityPanel } from "@/components/channel-activity";
 import { ZaloPersonalPanel } from "./zalo-personal-panel";
 import { ZaloBotWebhookPanel } from "./zalo-bot-webhook-panel";
 import { VoiceScopeInline } from "./voice-scope-inline";
+import { MemoryLinksCard } from "./memory-links-card";
 import { useSettingsStore } from "../store";
 
 // Nhóm chức năng cho bộ lọc theo thread — PHẢI khớp capabilities._CAP_GROUP
@@ -532,7 +533,7 @@ export function TelegramCloudflareCard() {
   // Tab KÊNH + tab con — mỗi kênh (Telegram / Zalo Bot / Zalo Cá Nhân) cài đặt
   // ĐỘC LẬP: cài đặt kênh, lọc thread, nhánh agent riêng từng kênh.
   const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop">("tg");
-  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
+  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "memlinks" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
   type DirRow = {
     bot_id: string; bot_label: string; thread_id: string;
@@ -1448,8 +1449,10 @@ export function TelegramCloudflareCard() {
             ...(chTab === "zalo" ? [["zwebhook", "🔗 Webhook"]] : []),
             ["directory", "📒 Danh bạ"],
             ["filter", "🎚️ Lọc thread"],
+            // Nối bộ nhớ giữa các phạm vi — mặc định chúng độc lập tuyệt đối.
+            ["memlinks", "🔗 Kết nối bộ nhớ"],
             ["branches", "🧭 Nhánh agent"],
-          ]) as ["settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches", string][])
+          ]) as ["settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "memlinks" | "branches", string][])
             .map(([k, lb]) => (
               <button key={k} type="button" className={tabBtn(subTab === k)}
                 onClick={() => setSubTab(k)}>
@@ -2025,6 +2028,9 @@ export function TelegramCloudflareCard() {
           </Button>
           </div>
         )}
+
+        {/* ── Kết nối bộ nhớ — CHUNG mọi kênh (nối được xuyên kênh) ── */}
+        {subTab === "memlinks" && <MemoryLinksCard />}
 
         {/* ── Nhánh Agent (định tuyến việc) — RIÊNG kênh đang chọn ── */}
         {subTab === "branches" && (

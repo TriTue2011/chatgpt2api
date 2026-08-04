@@ -151,9 +151,11 @@ def build_bundle(
     # 3) Memory facts matching keywords
     try:
         from services.agent import state
-        from services.agent.scope import khoa_du_lieu
+        from services.agent.scope import khoa_du_lieu, pham_vi_doc_them
         _pv_mem = khoa_du_lieu(user_id)
-        mem = state.load_memory(limit_chars=6000, pham_vi=_pv_mem)
+        _dt_mem = pham_vi_doc_them(user_id)
+        mem = state.load_memory(limit_chars=6000, pham_vi=_pv_mem,
+                                doc_them=_dt_mem)
         lines = _match_memory_lines(mem, words, limit=memory_lines())
         # FIX4 (audit 2026-07): fact CŨ (ngoài cửa sổ đuôi của load_memory,
         # qua khoảng 40-80 dòng) vẫn có thể liên quan — bổ sung kết quả từ
@@ -163,7 +165,7 @@ def build_bundle(
             try:
                 extra = state.search_memory(
                     " ".join(words[:6]), limit=memory_lines(),
-                    pham_vi=_pv_mem,
+                    pham_vi=_pv_mem, doc_them=_dt_mem,
                 )
                 for ln in extra:
                     s = ln.strip()
@@ -191,17 +193,20 @@ def build_bundle(
     if wiki_allowed and words:
         try:
             from services.agent import wiki as w
-            from services.agent.scope import khoa_du_lieu
+            from services.agent.scope import khoa_du_lieu, pham_vi_doc_them
             if w.is_enabled():
                 # Bó ngữ cảnh này đi vào system prompt MỌI lượt, nên nó là chỗ
                 # rò dữ liệu rộng nhất: không lọc phạm vi thì ghi chú của người
                 # này lọt vào prompt của người khác mà không ai gọi tool nào.
                 _pv = khoa_du_lieu(user_id)
-                hits = w.search(" ".join(words[:6]), limit=wiki_hits(), pham_vi=_pv)
+                _dt = pham_vi_doc_them(user_id)
+                hits = w.search(" ".join(words[:6]), limit=wiki_hits(),
+                                pham_vi=_pv, doc_them=_dt)
                 if not hits:
                     hits = [
                         {"slug": h["slug"], "title": h["title"], "snippet": ""}
-                        for h in w.list_recent(limit=min(3, wiki_hits()), pham_vi=_pv)
+                        for h in w.list_recent(limit=min(3, wiki_hits()),
+                                               pham_vi=_pv, doc_them=_dt)
                     ]
                 if hits:
                     lines = []

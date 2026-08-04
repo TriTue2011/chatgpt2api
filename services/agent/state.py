@@ -116,13 +116,17 @@ def _memory_file(pham_vi: str = "") -> Path:
     return _MEMORY_SCOPE_DIR / f"{bam_pham_vi(pham_vi)}.md"
 
 
-def load_memory(limit_chars: int = 4000, *, pham_vi: str = "") -> str:
+def load_memory(limit_chars: int = 4000, *, pham_vi: str = "",
+                doc_them: list[str] | None = None) -> str:
     """Return recent durable memory (tail of MEMORY.md).
 
     `pham_vi` rỗng = kho chung (đường nội bộ, scheduler, và toàn bộ dữ liệu có
     từ trước). Có phạm vi thì đọc kho riêng CỘNG kho chung: fact cũ vẫn dùng
     được, fact mới của người khác thì không lọt sang — migration dữ liệu cũ là
     bước riêng chủ máy đã hoãn.
+
+    `doc_them` = các phạm vi được ĐỌC THÊM nhờ kết nối bộ nhớ (xem
+    scope.pham_vi_doc_them). Chỉ mở đường ĐỌC — ghi vẫn vào `pham_vi`.
     """
     def _doc(p: Path) -> str:
         try:
@@ -133,11 +137,12 @@ def load_memory(limit_chars: int = 4000, *, pham_vi: str = "") -> str:
 
     if not pham_vi:
         return _doc(_MEMORY_FILE)[-limit_chars:]
-    chung = _doc(_MEMORY_FILE)
-    rieng = _doc(_memory_file(pham_vi))
-    # Kho riêng đứng SAU để nó chiếm phần đuôi khi phải cắt: điều vừa dặn quan
-    # trọng hơn fact chung cũ.
-    return (chung + rieng)[-limit_chars:]
+    phan = [_doc(_MEMORY_FILE)]
+    phan += [_doc(_memory_file(k)) for k in (doc_them or []) if k]
+    # Kho RIÊNG đứng cuối để nó chiếm phần đuôi khi phải cắt: điều chính mình
+    # vừa dặn quan trọng hơn fact chung cũ và hơn fact mượn từ chỗ khác.
+    phan.append(_doc(_memory_file(pham_vi)))
+    return "".join(phan)[-limit_chars:]
 
 
 def _norm_fact(s: str) -> str:
@@ -431,27 +436,27 @@ def _sync_memory_index(pham_vi: str = "") -> None:
         _rebuild_memory_index(pham_vi)
 
 
-def search_memory(query: str, *, limit: int = 6, pham_vi: str = "") -> list[str]:
+def search_memory(query: str, *, limit: int = 6, pham_vi: str = "",
+                  doc_them: list[str] | None = None) -> list[str]:
     """FIX4 (audit 2026-07): full-text search TOÀN BỘ file trí nhớ (không chỉ
     đuôi file ~4-6k ký tự như load_memory) — để một fact CŨ (quá khoảng
     40-80 dòng) vẫn được tìm thấy khi liên quan tới câu hỏi hiện tại. Dùng
     ADDITIVE cùng load_memory() (khối "gần đây" luôn có sẵn) — không thay
     thế hành vi hiện có, chỉ bổ sung khả năng tìm fact liên quan ở xa.
 
-    Có `pham_vi` → tìm trong kho riêng RỒI kho chung, đúng tập mà load_memory
-    cho thấy; không bao giờ chạm kho của phạm vi khác."""
+    Có `pham_vi` → tìm trong kho riêng, kho mượn theo kết nối, rồi kho chung —
+    ĐÚNG tập mà load_memory cho thấy; không bao giờ chạm kho ngoài tập đó."""
     q = (query or "").strip()
     if not q:
         return []
-    if pham_vi:
-        rieng = _tim_trong_index(q, limit=limit, pham_vi=pham_vi)
-        chung = _tim_trong_index(q, limit=limit)
-        gop: list[str] = []
-        for ln in [*rieng, *chung]:
+    if not pham_vi:
+        return _tim_trong_index(q, limit=limit)
+    gop: list[str] = []
+    for pv in [pham_vi, *(doc_them or []), ""]:
+        for ln in _tim_trong_index(q, limit=limit, pham_vi=pv):
             if ln not in gop:
                 gop.append(ln)
-        return gop[:max(1, min(int(limit or 6), 20))]
-    return _tim_trong_index(q, limit=limit)
+    return gop[:max(1, min(int(limit or 6), 20))]
 
 
 def _tim_trong_index(query: str, *, limit: int = 6, pham_vi: str = "") -> list[str]:

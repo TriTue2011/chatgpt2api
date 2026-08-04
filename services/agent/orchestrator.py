@@ -569,6 +569,15 @@ def _pham_vi(user_id: str) -> str:
         return ""
 
 
+def _doc_them(user_id: str) -> list[str]:
+    """Phạm vi ĐỌC THÊM được nhờ «Kết nối bộ nhớ» — chỉ mở đường đọc."""
+    try:
+        from services.agent.scope import pham_vi_doc_them
+        return pham_vi_doc_them(str(user_id or ""))
+    except Exception:
+        return []
+
+
 def _so_thich_trinh_bay(limit: int = 6, pham_vi: str = "") -> list[str]:
     """Các dòng trí nhớ nói về CÁCH TRÌNH BÀY, lấy mấy dòng gần nhất.
 
@@ -904,7 +913,8 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     env = state.load_environment()
     if env.strip():
         parts.append("## Môi trường em đang sống (bản đồ hệ thống)\n" + env.strip())
-    mem = state.load_memory(pham_vi=_pham_vi(user_id))
+    mem = state.load_memory(pham_vi=_pham_vi(user_id),
+                            doc_them=_doc_them(user_id))
     if mem.strip():
         parts.append("## Trí nhớ (chuyện đã ghi nhớ)\n" + mem.strip())
     # Người dùng xin đổi CÁCH TRÌNH BÀY nội dung vừa gửi → LÀM LẠI NGAY.

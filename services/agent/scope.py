@@ -152,6 +152,125 @@ def khoa_du_lieu(user_id: str) -> str:
     return "v1|" + "|".join(quote(p, safe="") for p in phan)
 
 
+# ── Kết nối bộ nhớ ───────────────────────────────────────────────────────────
+# Config `memory_links`: danh sách các mối nối giữa những phạm vi ĐỘC LẬP.
+#
+#     [{"id": "ml_1", "kind": "binh_dang", "name": "Nhà mình",
+#       "members": [{"kenh": "tg", "chat": "-100", "topic": "", "user": ""}, …]},
+#      {"id": "ml_2", "kind": "chinh_phu", "name": "Bố mẹ ↔ các con",
+#       "primary": [ …thành viên… ], "secondary": [ …thành viên… ]}]
+#
+# binh_dang — mọi thành viên đọc được của nhau (hai chiều).
+# chinh_phu — CHÍNH đọc được PHỤ; PHỤ không đọc được CHÍNH (một chiều).
+#
+# Thành viên là bản ghi CÓ CẤU TRÚC chứ không phải chuỗi 'plat:bot:chat:user'
+# như tab «Lọc thread». Chuỗi đó nhập nhằng — 'tg:b1:-100' và 'tg:-100:9' cùng
+# ba phần mà phần cuối một đằng là chat, một đằng là người; tab Lọc thread gỡ
+# được vì nó thử tra cả hai kiểu khoá, ở đây thì không có gì để tra.
+#
+# KẾT NỐI CHỈ MỞ ĐƯỜNG ĐỌC. Ghi vẫn luôn vào phạm vi của chính lượt đó: nối rồi
+# gỡ mà dữ liệu đã chảy sang nhau thì không tách lại được nữa.
+_KIEU_BINH_DANG = "binh_dang"
+_KIEU_CHINH_PHU = "chinh_phu"
+
+
+def khoa_phien_tu_thanh_vien(tv: dict) -> str:
+    """Dựng lại khoá phiên từ một thành viên kết nối (nghịch của tach_khoa_phien).
+
+    Đi vòng qua khoá phiên thay vì ghép thẳng khoá phạm vi để chỉ có MỘT nơi
+    biết luật chia sẻ (`khoa_du_lieu`). Ghép thẳng là có hai nơi cùng quyết định
+    "nhóm này tách theo người hay không", và hai nơi đó sẽ lệch nhau.
+    """
+    kenh = str(tv.get("kenh") or "").strip()
+    chat = str(tv.get("chat") or "").strip()
+    topic = str(tv.get("topic") or "").strip()
+    user = str(tv.get("user") or "").strip()
+    if not chat:
+        return ""
+    if kenh == "mail":
+        return f"email_{chat}" if not chat.startswith("email_") else chat
+    goc = f"{chat}#{topic}" if topic else chat
+    if user:
+        goc = f"{goc}:u{user}"
+    if kenh == "zalo":
+        return f"zalo_{goc}"
+    if kenh == "zalop":
+        return f"zalop_{goc}"
+    return goc
+
+
+def _khop_thanh_vien(tv: dict, sc: Scope) -> bool:
+    """Thành viên này có trỏ vào lượt đang chạy không?
+
+    Ô trống = mọi giá trị: `{kenh, chat}` không nêu topic/user thì khớp mọi
+    topic và mọi người trong chat đó. Nhờ vậy nối "cả nhóm" là một dòng, không
+    phải liệt kê từng người.
+    """
+    if str(tv.get("kenh") or "").strip() != sc.kenh:
+        return False
+    if str(tv.get("chat") or "").strip() != sc.chat:
+        return False
+    topic = str(tv.get("topic") or "").strip()
+    if topic and topic != sc.topic:
+        return False
+    user = str(tv.get("user") or "").strip()
+    return not user or user == sc.actor
+
+
+def _cac_moi_noi() -> list[dict]:
+    try:
+        from services.config import config
+        ds = config.get().get("memory_links")
+    except Exception:
+        return []
+    return [m for m in ds if isinstance(m, dict)] if isinstance(ds, list) else []
+
+
+def _thanh_vien(moi: dict, khoa: str) -> list[dict]:
+    ds = moi.get(khoa)
+    return [t for t in ds if isinstance(t, dict)] if isinstance(ds, list) else []
+
+
+def pham_vi_doc_them(user_id: str) -> list[str]:
+    """Các phạm vi mà lượt này ĐƯỢC ĐỌC THÊM nhờ kết nối bộ nhớ.
+
+    Không gồm phạm vi của chính nó. Trả danh sách đã bỏ trùng, thứ tự ổn định
+    (theo thứ tự khai trong cấu hình) để prompt không đổi giữa hai lượt giống
+    nhau — prompt nhảy lung tung là hỏng cache và khó dò lỗi.
+
+    chinh_phu MỘT CHIỀU: đứng ở CHÍNH thì đọc được PHỤ; đứng ở PHỤ thì không
+    thấy gì thêm. Một lượt vừa là chính ở mối nối này vừa là phụ ở mối nối khác
+    là bình thường — mỗi mối nối xét riêng.
+    """
+    sc = tach_khoa_phien(user_id)
+    if not sc.chat:
+        return []
+    cua_toi = khoa_du_lieu(user_id)
+    ra: list[str] = []
+
+    def _them(ds: list[dict]) -> None:
+        for tv in ds:
+            kp = khoa_phien_tu_thanh_vien(tv)
+            if not kp:
+                continue
+            k = khoa_du_lieu(kp)
+            if k != cua_toi and k not in ra:
+                ra.append(k)
+
+    for moi in _cac_moi_noi():
+        if not bool(moi.get("enabled", True)):
+            continue
+        kieu = str(moi.get("kind") or "").strip()
+        if kieu == _KIEU_BINH_DANG:
+            tv_ds = _thanh_vien(moi, "members")
+            if any(_khop_thanh_vien(t, sc) for t in tv_ds):
+                _them(tv_ds)
+        elif kieu == _KIEU_CHINH_PHU:
+            if any(_khop_thanh_vien(t, sc) for t in _thanh_vien(moi, "primary")):
+                _them(_thanh_vien(moi, "secondary"))
+    return ra
+
+
 def bam_pham_vi(khoa: str) -> str:
     """Băm ngắn của MỘT KHOÁ phạm vi — dùng làm tên file / thư mục.
 

@@ -50,6 +50,19 @@ def _pham_vi_of(ctx: dict | None) -> str:
         return khoa_du_lieu(str((ctx or {}).get("user_id") or ""))
     except Exception:
         return ""
+
+
+def _doc_them_of(ctx: dict | None) -> list[str]:
+    """Các phạm vi lượt này ĐỌC THÊM được nhờ «Kết nối bộ nhớ».
+
+    Chỉ dùng cho đường ĐỌC. Ghi vẫn vào `_pham_vi_of` — nối rồi gỡ mà dữ liệu
+    đã chảy sang nhau thì không tách lại được nữa.
+    """
+    try:
+        from services.agent.scope import pham_vi_doc_them
+        return pham_vi_doc_them(str((ctx or {}).get("user_id") or ""))
+    except Exception:
+        return []
 from services.agent.runtime import (call_model, call_video, content_of,
                                     first_image_url)
 
@@ -1810,15 +1823,15 @@ def _h_wiki_search(args: dict, ctx: dict) -> dict:
 
     if not w.is_enabled():
         return {"text": "Wiki đang tắt trên máy chủ ạ."}
-    pv = _pham_vi_of(ctx)
+    pv, dt = _pham_vi_of(ctx), _doc_them_of(ctx)
     q = str(args.get("query") or "").strip()
     if not q:
-        recent = w.list_recent(10, pham_vi=pv)
+        recent = w.list_recent(10, pham_vi=pv, doc_them=dt)
         if not recent:
             return {"text": "Wiki còn trống. Dùng ingest để thu nạp ghi chú."}
         lines = ["Ghi chú gần đây:"] + [f"• `{r['slug']}` — {r['title']}" for r in recent]
         return {"text": "\n".join(lines)}
-    hits = w.search(q, limit=8, pham_vi=pv)
+    hits = w.search(q, limit=8, pham_vi=pv, doc_them=dt)
     if not hits:
         return {"text": f"Không thấy ghi chú khớp “{q}”."}
     lines = [f"Tìm thấy {len(hits)} ghi chú:"]
@@ -1835,7 +1848,7 @@ def _h_wiki_read(args: dict, ctx: dict) -> dict:
     slug = str(args.get("slug") or "").strip()
     if not slug:
         return {"text": "Cần slug ghi chú (từ wiki_search)."}
-    body = w.read(slug, pham_vi=_pham_vi_of(ctx))
+    body = w.read(slug, pham_vi=_pham_vi_of(ctx), doc_them=_doc_them_of(ctx))
     if not body:
         return {"text": f"Không có ghi chú `{slug}`."}
     return {"text": body[:4000]}

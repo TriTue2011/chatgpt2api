@@ -169,11 +169,14 @@ def parse_note(path: Path) -> dict[str, Any]:
     }
 
 
-def note_trong_pham_vi(note: dict[str, Any], pham_vi: str) -> bool:
+def note_trong_pham_vi(note: dict[str, Any], pham_vi: str,
+                       doc_them: list[str] | None = None) -> bool:
     """Ghi chú này có thuộc phạm vi đang hỏi?
 
     `pham_vi` rỗng = không rõ nguồn (đường nội bộ, scheduler) → thấy tất cả,
     giữ nguyên hành vi cũ cho digest theo giờ và các lối gọi chưa có ngữ cảnh.
+
+    `doc_them` = phạm vi mượn được qua kết nối bộ nhớ (scope.pham_vi_doc_them).
 
     Ghi chú KHÔNG có `scope` là ghi chú tạo trước khi có phạm vi: vẫn cho mọi
     phạm vi đọc. Ẩn chúng đi là im lặng làm mất wiki đang dùng, mà migration dữ
@@ -182,7 +185,9 @@ def note_trong_pham_vi(note: dict[str, Any], pham_vi: str) -> bool:
     if not pham_vi:
         return True
     cua_note = str((note.get("meta") or {}).get("scope") or "").strip()
-    return not cua_note or cua_note == pham_vi
+    if not cua_note or cua_note == pham_vi:
+        return True
+    return cua_note in (doc_them or [])
 
 
 def _slugify(title: str) -> str:
@@ -393,7 +398,8 @@ def ingest(
     }
 
 
-def search(query: str, *, limit: int = 8, pham_vi: str = "") -> list[dict[str, Any]]:
+def search(query: str, *, limit: int = 8, pham_vi: str = "",
+           doc_them: list[str] | None = None) -> list[dict[str, Any]]:
     if not is_enabled():
         return []
     _ensure()
@@ -415,7 +421,7 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "") -> list[dict[str, A
             except OSError:
                 continue
             fm, _ = split_frontmatter(text)
-            if not note_trong_pham_vi({"meta": fm}, pham_vi):
+            if not note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
                 continue
             low = text.lower()
             score = sum(1 for w in words if w in low)
@@ -452,7 +458,8 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "") -> list[dict[str, A
     return out
 
 
-def read(slug: str, *, pham_vi: str = "") -> Optional[str]:
+def read(slug: str, *, pham_vi: str = "",
+         doc_them: list[str] | None = None) -> Optional[str]:
     if not valid_slug(slug):
         return None
     path = _NOTES_DIR / f"{slug}.md"
@@ -462,7 +469,7 @@ def read(slug: str, *, pham_vi: str = "") -> Optional[str]:
             fm, _ = split_frontmatter(raw)
             # Chốt phạm vi ở ĐÂY, không chỉ ở search: slug là chuỗi đoán được và
             # model có thể nhắc lại slug thấy trong lượt trước của người khác.
-            if not note_trong_pham_vi({"meta": fm}, pham_vi):
+            if not note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
                 return None
             text = raw[: max_note_chars()]
             try:
@@ -476,7 +483,8 @@ def read(slug: str, *, pham_vi: str = "") -> Optional[str]:
     return None
 
 
-def list_recent(limit: int = 15, *, pham_vi: str = "") -> list[dict[str, str]]:
+def list_recent(limit: int = 15, *, pham_vi: str = "",
+                doc_them: list[str] | None = None) -> list[dict[str, str]]:
     _ensure()
     out: list[dict[str, str]] = []
     try:
@@ -489,7 +497,7 @@ def list_recent(limit: int = 15, *, pham_vi: str = "") -> list[dict[str, str]]:
             if len(out) >= limit:
                 break
             note = parse_note(p)
-            if not note_trong_pham_vi(note, pham_vi):
+            if not note_trong_pham_vi(note, pham_vi, doc_them):
                 continue
             out.append({
                 "slug": note.get("slug") or p.stem,
@@ -502,7 +510,8 @@ def list_recent(limit: int = 15, *, pham_vi: str = "") -> list[dict[str, str]]:
     return out
 
 
-def notes_for_day(day: str | None = None, *, pham_vi: str = "") -> list[dict[str, Any]]:
+def notes_for_day(day: str | None = None, *, pham_vi: str = "",
+                  doc_them: list[str] | None = None) -> list[dict[str, Any]]:
     """Notes whose created_at / mtime falls on ``day`` (YYYY-MM-DD, VN)."""
     _ensure()
     if not day:
@@ -518,7 +527,7 @@ def notes_for_day(day: str | None = None, *, pham_vi: str = "") -> list[dict[str
     try:
         for p in _NOTES_DIR.glob("*.md"):
             note = parse_note(p)
-            if not note_trong_pham_vi(note, pham_vi):
+            if not note_trong_pham_vi(note, pham_vi, doc_them):
                 continue
             ts = float(note.get("ts") or 0)
             if start <= ts < end:
