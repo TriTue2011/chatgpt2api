@@ -154,6 +154,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Nhắc admin nếu có goal doing quá 24h (khi có admin_user_ids)",
         "system": True,
     })
+    tasks.append({
+        "id": "chatlog_nhac_scan",
+        "intent": "write",
+        "text": "Quét nhật ký nhóm: ai nhắc tới + có hẹn → đặt nhắc trước 1 ngày/1 giờ",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -289,9 +295,93 @@ def _notify_user(user_id: str, text: str) -> None:
         logger.info("heartbeat: notify %s failed: %s", user_id, exc)
 
 
+# ── Tự nhắc theo nhật ký nhóm (luật «ai nhắc tôi + có hẹn → báo trước») ────────
+
+def _trich_hen_llm(msgs: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
+    """Nhờ MODEL đọc các tin nhắc-tới, trả mốc hẹn TƯƠNG LAI nếu có (giờ VN).
+
+    Vào: [{id, ts, sender, text}]. Ra: {msg_id: {"iso": 'YYYY-MM-DDTHH:MM',
+    "label": '...'}}. Chỉ giữ id có hẹn RÕ RÀNG — model bỏ qua id không có hẹn.
+    Lỗi/không parse được → {} (không tạo nhắc còn hơn tạo nhầm)."""
+    if not msgs:
+        return {}
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    except Exception:
+        from datetime import datetime as _dt, timezone as _tzc, timedelta as _td
+        tz = _tzc(_td(hours=7))
+    try:
+        from services.agent.runtime import call_model, content_of
+        model = str(config.get().get("telegram_ai_model") or "").strip() or "cx/auto"
+        hom_nay = _dt.now(tz).strftime("%Y-%m-%d (thứ %w)")
+        dong = "\n".join(f'{m["id"]}\t{str(m.get("text") or "")[:200]}' for m in msgs)
+        sys_p = (
+            "Bạn trích LỊCH HẸN từ tin nhắn nhóm tiếng Việt. Hôm nay là "
+            f"{hom_nay}, múi giờ Việt Nam. Mỗi dòng có dạng «id<TAB>nội dung». "
+            "Với dòng nào nêu MỐC THỜI GIAN HẸN CỤ THỂ trong TƯƠNG LAI (vd 'mai "
+            "8h', 'chiều thứ 6', '20/8 14:00', 'thứ Ba tuần sau 9h30'), tính ra "
+            "thời điểm tuyệt đối rồi trả về. Bỏ qua dòng KHÔNG có hẹn rõ (chỉ hỏi "
+            "han, cảm thán, con số vu vơ đều BỎ). CHỈ trả JSON đúng dạng: "
+            '{"hen":[{"id":<số>,"iso":"YYYY-MM-DDTHH:MM","nhan":"<nhãn ngắn>"}]}'
+        )
+        resp = call_model(
+            model,
+            [{"role": "system", "content": sys_p},
+             {"role": "user", "content": dong[:4000]}],
+            timeout=60, max_tokens=500, no_smart_home=True,
+            response_format={"type": "json_object"},
+        )
+        if resp.get("error"):
+            return {}
+        data = json.loads(content_of(resp) or "{}")
+        out: dict[int, dict[str, str]] = {}
+        for h in (data.get("hen") or []):
+            try:
+                out[int(h["id"])] = {"iso": str(h.get("iso") or ""),
+                                     "label": str(h.get("nhan") or "")}
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+    except Exception as exc:
+        logger.info("heartbeat: trich_hen_llm error: %s", exc)
+        return {}
+
+
+def _tao_nhac_reminder(deliver_to: str, text: str, when_ts: float,
+                       meta: dict[str, Any]) -> None:
+    """Đặt một reminder 'once' vào `when_ts`, gửi tới `deliver_to`. Dùng
+    `meta` (bot_id/account…) đã chốt lúc đặt luật để nền gửi đúng chỗ."""
+    from services.agent import reminders as rem
+    sched = {"kind": "once", "due_at": when_ts, "next_run_at": when_ts}
+    rem.create(deliver_to, text, sched, mode="notify",
+               meta_extra=meta if isinstance(meta, dict) else None)
+
+
+def _eval_chatlog_nhac() -> tuple[str, str]:
+    """Quét luật «tự nhắc»: tin nhắc-tới + có hẹn → đặt nhắc trước các mốc."""
+    try:
+        from services.agent import chatlog
+    except Exception as exc:
+        return "skip", f"chatlog import error: {exc}"
+    try:
+        if not chatlog.luat_tat_ca():
+            return "skip", "chưa có luật tự nhắc"
+        from services.agent import reminders as rem
+        if not rem.is_enabled():
+            return "skip", "nhắc hẹn đang tắt (agent_reminders)"
+        n = chatlog.quet_nhac_hen(trich_hen=_trich_hen_llm,
+                                  tao_nhac=_tao_nhac_reminder)
+        return ("act", f"đặt {n} nhắc") if n else ("skip", "không có hẹn mới")
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
+    "chatlog_nhac_scan": _eval_chatlog_nhac,
 }
 
 

@@ -17,6 +17,7 @@ import { ZaloPersonalPanel } from "./zalo-personal-panel";
 import { ZaloBotWebhookPanel } from "./zalo-bot-webhook-panel";
 import { VoiceScopeInline } from "./voice-scope-inline";
 import { MemoryLinksCard } from "./memory-links-card";
+import { ChatlogSettingsCard } from "./chatlog-settings-card";
 import { useSettingsStore } from "../store";
 
 // Nhóm chức năng cho bộ lọc theo thread — PHẢI khớp capabilities._CAP_GROUP
@@ -535,7 +536,7 @@ export function TelegramCloudflareCard() {
   // "memlinks" đứng CÙNG HÀNG với các kênh (không phải tab con): kết nối bộ nhớ
   // nối XUYÊN kênh, nên nó không thuộc riêng kênh nào — để trong từng kênh là
   // lặp lại vô lý và gợi ý sai rằng mỗi kênh có cấu hình riêng.
-  const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop" | "memlinks">("tg");
+  const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop" | "memlinks" | "nhatky">("tg");
   const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
   type DirRow = {
@@ -1401,8 +1402,9 @@ export function TelegramCloudflareCard() {
   };
 
   useEffect(() => {
-    // chTab "memlinks" không có danh bạ → đừng gọi /directory với platform lạ.
-    if (subTab === "directory" && chTab !== "memlinks") void loadDirectory();
+    // chTab "memlinks"/"nhatky" không có danh bạ → đừng gọi /directory platform lạ.
+    if (subTab === "directory" && chTab !== "memlinks" && chTab !== "nhatky")
+      void loadDirectory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subTab, chTab]);
 
@@ -1426,7 +1428,7 @@ export function TelegramCloudflareCard() {
             vì nó là cấu hình CHUNG (nối xuyên kênh), không thuộc riêng kênh nào. */}
         <div className="flex flex-wrap gap-2">
           {([["tg", "📨 Telegram"], ["zalo", "💬 Zalo Bot"], ["zalop", "👤 Zalo Cá Nhân"],
-             ["memlinks", "🔗 Kết nối bộ nhớ"]] as const)
+             ["memlinks", "🔗 Kết nối bộ nhớ"], ["nhatky", "🗒️ Nhật ký nhóm"]] as const)
             .map(([k, lb]) => (
               <button key={k} type="button" className={tabBtn(chTab === k)}
                 onClick={() => {
@@ -1442,9 +1444,9 @@ export function TelegramCloudflareCard() {
               </button>
             ))}
         </div>
-        {/* Tab CON trong kênh — KHÔNG hiện khi đang ở «Kết nối bộ nhớ» (nó không
-            có tab con nào). */}
-        {chTab !== "memlinks" && (
+        {/* Tab CON trong kênh — KHÔNG hiện ở «Kết nối bộ nhớ» / «Nhật ký nhóm»
+            (chúng là cấu hình CHUNG, không có tab con nào). */}
+        {chTab !== "memlinks" && chTab !== "nhatky" && (
         <div className="flex flex-wrap gap-2">
           {(([
             // Zalo Cá Nhân: KHÔNG còn tab "Cài đặt kênh" — mọi thứ nằm trong
@@ -1470,6 +1472,9 @@ export function TelegramCloudflareCard() {
 
         {/* ── Kết nối bộ nhớ — CHUNG mọi kênh (đứng cùng hàng với các kênh) ── */}
         {chTab === "memlinks" && <MemoryLinksCard />}
+
+        {/* ── Nhật ký nhóm — bật/tắt GHI theo phạm vi (opt-in, mặc định tắt) ── */}
+        {chTab === "nhatky" && <ChatlogSettingsCard />}
 
         {/* ── Telegram — Cài đặt kênh ── */}
         {chTab === "tg" && subTab === "settings" && (

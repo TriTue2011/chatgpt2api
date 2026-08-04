@@ -1923,6 +1923,150 @@ def _h_wiki_digest(args: dict, ctx: dict) -> dict:
     return {"text": body}
 
 
+def _h_tom_tat_hoi_thoai(args: dict, ctx: dict) -> dict:
+    """Đọc nhật ký hội thoại NHÓM của một ngày để MODEL tự tóm tắt.
+
+    Không tự gọi model — trả về bản ghi thô (giờ + người + lời), phần tóm tắt do
+    lượt chính viết. Chỉ có dữ liệu nếu phạm vi này đã BẬT nhật ký nhóm; đọc đi
+    theo «Kết nối bộ nhớ» (nhat_ky_doc_them) như mọi đường đọc khác.
+    """
+    from datetime import datetime
+    from services.agent import chatlog
+
+    user_id = str(ctx.get("user_id") or "")
+    if not user_id:
+        return {"text": "Em không xác định được phiên chat 😥."}
+    day = str(args.get("day") or args.get("ngay") or "").strip()[:10] or None
+    rows = chatlog.doc_ngay(user_id, day)
+    if not rows:
+        d = day or "hôm nay"
+        return {"text": (
+            f"Chưa có nhật ký hội thoại cho {d}. "
+            "(Nhật ký nhóm mặc định TẮT — bật trong Cài đặt kênh nếu muốn ghi lại.)")}
+    lines: list[str] = []
+    for r in rows:
+        try:
+            gio = datetime.fromtimestamp(float(r["ts"]), chatlog._TZ).strftime("%H:%M")
+        except Exception:
+            gio = ""
+        sender = str(r.get("sender") or "?").strip() or "?"
+        txt = str(r.get("text") or "").strip().replace("\n", " ")
+        lines.append(f"[{gio}] {sender}: {txt}")
+    body = "\n".join(lines)
+    if len(body) > 6000:
+        body = "…\n" + body[-6000:]        # giữ phần MỚI nhất khi quá dài
+    d = day or datetime.now(chatlog._TZ).strftime("%Y-%m-%d")
+    return {"text": f"Nhật ký nhóm ngày {d} ({len(rows)} tin):\n{body}"}
+
+
+def _h_viec_nhac_toi(args: dict, ctx: dict) -> dict:
+    """Tìm tin NHẮC TỚI một người (tag @tên hoặc @all) trong nhật ký nhóm."""
+    from datetime import datetime
+    from services.agent import chatlog
+
+    user_id = str(ctx.get("user_id") or "")
+    if not user_id:
+        return {"text": "Em không xác định được phiên chat 😥."}
+    me = str(args.get("ten") or args.get("me") or args.get("name") or "").strip()
+    if not me:
+        return {"text": "Cho em biết tên anh/chị (vd 'Việt') để tìm tin nhắc tới ạ."}
+    try:
+        ngay = int(args.get("ngay") or args.get("days") or 7)
+    except (TypeError, ValueError):
+        ngay = 7
+    ngay = max(1, min(ngay, 90))
+    rows = chatlog.nhac_toi(user_id, me, ngay=ngay)
+    if not rows:
+        return {"text": f"Không thấy ai nhắc tới “{me}” trong {ngay} ngày qua."}
+    lines = [f"Có {len(rows)} tin nhắc tới “{me}” ({ngay} ngày qua):"]
+    for r in rows[:50]:
+        try:
+            gio = datetime.fromtimestamp(float(r["ts"]), chatlog._TZ).strftime("%d/%m %H:%M")
+        except Exception:
+            gio = str(r.get("day") or "")
+        sender = str(r.get("sender") or "?").strip() or "?"
+        txt = str(r.get("text") or "").strip().replace("\n", " ")
+        lines.append(f"• [{gio}] {sender}: {txt}")
+    return {"text": "\n".join(lines)}
+
+
+def _mo_ta_lead(minutes: int) -> str:
+    if minutes % 1440 == 0:
+        return f"{minutes // 1440} ngày"
+    if minutes % 60 == 0:
+        return f"{minutes // 60} giờ"
+    return f"{minutes} phút"
+
+
+def _leads_from_arg(v: object) -> list[int] | None:
+    """`gio_truoc` (list số GIỜ) → phút. Không hợp lệ → None (dùng mặc định)."""
+    if not isinstance(v, list):
+        return None
+    out: list[int] = []
+    for x in v:
+        try:
+            m = int(round(float(x) * 60))
+        except (TypeError, ValueError):
+            continue
+        if m > 0:
+            out.append(m)
+    return out or None
+
+
+def _h_luat_nhac(args: dict, ctx: dict) -> dict:
+    """Luật «tự nhắc»: ai nhắc tới TÊN + có lịch hẹn → báo trước các mốc.
+
+    Đặt TỪ CHÍNH CHỖ muốn nhận nhắc (thường là chat riêng với bot): nơi đặt luật
+    chính là nơi nhận nhắc. Các nhóm được đọc theo «Kết nối bộ nhớ» của chỗ này.
+    op=set (mặc định) | list | off.
+    """
+    from services.agent import chatlog
+
+    user_id = str(ctx.get("user_id") or "")
+    if not user_id:
+        return {"text": "Em không xác định được phiên chat 😥."}
+    op = str(args.get("op") or "set").strip().lower()
+
+    if op in ("list", "ds", "xem"):
+        rules = chatlog.luat_ds(user_id)
+        if not rules:
+            return {"text": "Chưa có luật tự nhắc nào ở đây."}
+        lines = ["Luật tự nhắc đang đặt:"]
+        for r in rules:
+            leads = ", ".join(_mo_ta_lead(m) for m in (r["lead_min"] or []))
+            tat = "" if r["enabled"] else " (đã tắt)"
+            lines.append(f"• `{r['id']}` — ai nhắc tới «{r['name']}» + có hẹn → "
+                         f"báo trước {leads}{tat}")
+        return {"text": "\n".join(lines)}
+
+    if op in ("off", "tat", "xoa", "delete", "huy"):
+        rid = str(args.get("id") or "").strip()
+        n = chatlog.luat_tat(user_id, rid or None)
+        return {"text": f"Đã gỡ {n} luật tự nhắc." if n else "Không có luật để gỡ."}
+
+    name = str(args.get("ten") or args.get("name") or "").strip()
+    if not name:
+        return {"text": "Cho em biết TÊN cần theo dõi (vd 'Việt') — ai nhắc tới "
+                        "tên đó kèm lịch hẹn thì em báo trước cho anh/chị."}
+    leads = _leads_from_arg(args.get("gio_truoc"))
+    meta: dict = {}
+    try:
+        from services.agent import reminders as rem
+        ch, _ = rem.channel_of(user_id)
+        meta = rem._capture_delivery_ctx(ch)
+    except Exception:
+        meta = {}
+    r = chatlog.luat_them(user_id, name, lead_min=leads, deliver_meta=meta)
+    if not r:
+        return {"text": "Chưa đặt được luật (thiếu tên hoặc phiên)."}
+    mo_ta = ", ".join(_mo_ta_lead(m) for m in r["lead_min"])
+    return {"text": (
+        f"Xong! Từ giờ ai nhắc tới «{name}» kèm lịch hẹn trong các nhóm mà chỗ "
+        f"này KẾT NỐI bộ nhớ tới, em sẽ báo trước {mo_ta}.\n"
+        f"Để chạy được cần: (1) BẬT «Nhật ký nhóm» cho các nhóm đó, (2) «Kết nối "
+        f"bộ nhớ» nhóm → đây để em đọc được. Gõ `op=list` để xem, `op=off` để gỡ.")}
+
+
 def _h_goals(args: dict, ctx: dict) -> dict:
     """Thread goals kanban: add / list / done / doing / cancel / update."""
     from services.agent import goals as g
@@ -4581,6 +4725,45 @@ CAPABILITIES: dict[str, Capability] = {
             "notes": {"type": "string"},
             "priority": {"type": "integer", "description": "Số càng cao càng ưu tiên"}},
             "required": []}),
+    "tom_tat_hoi_thoai": Capability(
+        name="tom_tat_hoi_thoai", risk=READ, handler=_h_tom_tat_hoi_thoai,
+        emoji="🗒️", label="Đọc nhật ký hội thoại nhóm",
+        description=(
+            "Đọc lại nhật ký hội thoại của NHÓM trong một ngày để tóm tắt. "
+            "Dùng khi user hỏi 'tóm tắt hội thoại hôm nay', 'hôm qua nhóm bàn gì'. "
+            "day=YYYY-MM-DD (mặc định hôm nay). Chỉ có dữ liệu nếu nhật ký nhóm đã bật."
+        ),
+        parameters={"type": "object", "properties": {
+            "day": {"type": "string", "description": "YYYY-MM-DD (mặc định hôm nay)"}},
+            "required": []}),
+    "viec_nhac_toi": Capability(
+        name="viec_nhac_toi", risk=READ, handler=_h_viec_nhac_toi,
+        emoji="🔔", label="Tìm việc nhắc tới tôi",
+        description=(
+            "Tìm tin nhắn trong nhật ký nhóm có NHẮC TỚI một người (tag @tên hoặc @all). "
+            "Dùng khi user hỏi 'có ai nhắc tới tôi', 'việc nào nhắc tới tôi hôm khác'. "
+            "ten=tên người cần tìm; ngay=số ngày nhìn lại (mặc định 7)."
+        ),
+        parameters={"type": "object", "properties": {
+            "ten": {"type": "string", "description": "Tên người cần tìm tin nhắc tới"},
+            "ngay": {"type": "integer", "description": "Số ngày nhìn lại (mặc định 7)"}},
+            "required": ["ten"]}),
+    "luat_nhac": Capability(
+        name="luat_nhac", risk=CHANGE, handler=_h_luat_nhac,
+        emoji="⏰", label="Luật tự nhắc khi được nhắc tới",
+        description=(
+            "Đặt luật ĐỨNG: ai nhắc tới TÊN + có lịch hẹn trong các nhóm đã kết nối "
+            "bộ nhớ → bot tự báo trước (mặc định 1 ngày + 1 giờ). Đặt từ CHÍNH chỗ "
+            "muốn nhận nhắc (chat riêng với bot). op=set|list|off. "
+            "set cần ten; gio_truoc=[số giờ] tùy chọn; off cần id (hoặc gỡ tất cả)."
+        ),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "description": "set | list | off"},
+            "ten": {"type": "string", "description": "Tên cần theo dõi khi được nhắc tới"},
+            "gio_truoc": {"type": "array", "items": {"type": "number"},
+                          "description": "Các mốc báo trước, tính bằng GIỜ (vd [24, 1])"},
+            "id": {"type": "string", "description": "Mã luật để gỡ (op=off)"}},
+            "required": []}),
     "contacts": Capability(
         name="contacts", risk=READ, handler=_h_contacts,
         emoji="📒", label="Danh bạ / ai vừa nhắn",
@@ -4965,6 +5148,8 @@ _CAP_GROUP: dict[str, str] = {
     "ingest": "wiki", "wiki_search": "wiki", "wiki_read": "wiki",
     "wiki_digest": "wiki",
     "goals": "memory",
+    "tom_tat_hoi_thoai": "memory", "viec_nhac_toi": "memory",
+    "luat_nhac": "memory",
     # expand_tool_result: nhóm memory chỉ mang tính phân loại; thực tế luôn
     # khả dụng qua _CORE_TOOLS (schema + dispatch + persona).
     "expand_tool_result": "memory",

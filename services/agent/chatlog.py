@@ -68,6 +68,28 @@ def _db() -> sqlite3.Connection:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_chatlog_scope_day"
                      " ON chatlog(scope, day)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chatlog_scope_ts"
+                     " ON chatlog(scope, ts)")
+        # Luật «tự nhắc»: ai nhắc tới `name` + có hẹn → nhắc `deliver_to` trước
+        # các mốc lead_min. deliver_meta = bối cảnh GỬI chốt lúc đặt luật (bot/
+        # account) để nhắc nền chạy ngoài ngữ cảnh tin vẫn gửi đúng chỗ.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS watch_rules ("
+            " id TEXT PRIMARY KEY,"
+            " deliver_to TEXT NOT NULL,"      # user_id nhận nhắc (thường là DM chủ)
+            " name TEXT NOT NULL,"            # tên cần dò trong lời nhắc
+            " name_fold TEXT NOT NULL,"       # tên đã bỏ dấu để so khớp
+            " lead_min TEXT,"                 # json list phút-trước (vd [1440,60])
+            " deliver_meta TEXT,"             # json bối cảnh gửi (bot_id/account…)
+            " enabled INTEGER NOT NULL DEFAULT 1,"
+            " last_scan_ts REAL,"             # con trỏ quét (chỉ xét tin mới hơn)
+            " created_at REAL NOT NULL)"
+        )
+        # Chống tạo trùng: mỗi (luật, tin, mốc) chỉ đặt nhắc MỘT lần.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS nhac_da_tao ("
+            " k TEXT PRIMARY KEY, created_at REAL NOT NULL)"
+        )
         conn.commit()
         _conn = conn
     return _conn
@@ -258,6 +280,235 @@ def nhac_toi(user_id: str, me: str, *, ngay: int = 7,
         if _MENTION_ALL in toks or any(me_f == t or me_f in t or t in me_f for t in toks):
             out.append({"ts": ts, "day": day, "sender": sname or sid, "text": text})
     return out
+
+
+# ── Luật «tự nhắc» + quét nền ────────────────────────────────────────────────
+
+_LEAD_MAC_DINH = [1440, 60]     # nhắc trước 1 ngày và 1 giờ (phút)
+
+
+def _leads(v: Any) -> list[int]:
+    """Chuẩn hoá danh sách phút-trước; rỗng/hỏng → mặc định [1 ngày, 1 giờ]."""
+    out: list[int] = []
+    for x in (v if isinstance(v, list) else []):
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            out.append(n)
+    # bỏ trùng, nhắc mốc XA trước (sắp xếp giảm dần cho gọn)
+    out = sorted(set(out), reverse=True)
+    return out or list(_LEAD_MAC_DINH)
+
+
+def _row_rule(r: tuple) -> dict[str, Any]:
+    return {"id": r[0], "deliver_to": r[1], "name": r[2],
+            "lead_min": _try_json_list(r[3]), "deliver_meta": _try_json_dict(r[4]),
+            "enabled": bool(r[5]), "last_scan_ts": r[6]}
+
+
+def _try_json_list(s: Any) -> list:
+    try:
+        v = json.loads(s) if s else []
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _try_json_dict(s: Any) -> dict:
+    try:
+        v = json.loads(s) if s else {}
+        return v if isinstance(v, dict) else {}
+    except Exception:
+        return {}
+
+
+def luat_them(deliver_to: str, name: str, *, lead_min: Any = None,
+              deliver_meta: dict | None = None) -> dict[str, Any] | None:
+    """Đặt (hoặc cập nhật) luật tự nhắc cho `deliver_to`. Một tên = một luật."""
+    deliver_to = str(deliver_to or "").strip()
+    name = str(name or "").strip()
+    if not deliver_to or not name:
+        return None
+    nf = _fold(name).strip()
+    leads = _leads(lead_min)
+    meta_json = json.dumps(deliver_meta or {}, ensure_ascii=False)
+    now = time.time()
+    with _lock:
+        db = _db()
+        old = db.execute(
+            "SELECT id FROM watch_rules WHERE deliver_to=? AND name_fold=?",
+            (deliver_to, nf)).fetchone()
+        if old:
+            rid = old[0]
+            db.execute("UPDATE watch_rules SET name=?, lead_min=?, deliver_meta=?,"
+                       " enabled=1 WHERE id=?",
+                       (name, json.dumps(leads), meta_json, rid))
+        else:
+            rid = "wr_" + str(int(now * 1000))
+            # last_scan_ts=0 → lần quét ĐẦU nhìn lại `nhin_lai_ngay` (sàn now-Nd),
+            # bắt luôn hẹn vừa được nhắc mấy hôm trước mà còn sắp tới.
+            db.execute(
+                "INSERT INTO watch_rules (id, deliver_to, name, name_fold, lead_min,"
+                " deliver_meta, enabled, last_scan_ts, created_at)"
+                " VALUES (?,?,?,?,?,?,1,0,?)",
+                (rid, deliver_to, name, nf, json.dumps(leads), meta_json, now))
+        db.commit()
+    return {"id": rid, "deliver_to": deliver_to, "name": name, "lead_min": leads}
+
+
+def luat_ds(deliver_to: str) -> list[dict[str, Any]]:
+    """Danh sách luật của một `deliver_to` (gồm cả luật đã tắt) — cho tool list."""
+    deliver_to = str(deliver_to or "").strip()
+    if not deliver_to:
+        return []
+    with _lock:
+        rows = _db().execute(
+            "SELECT id, deliver_to, name, lead_min, deliver_meta, enabled, last_scan_ts"
+            " FROM watch_rules WHERE deliver_to=? ORDER BY created_at", (deliver_to,)
+        ).fetchall()
+    return [_row_rule(r) for r in rows]
+
+
+def luat_tat(deliver_to: str, rid: str | None = None) -> int:
+    """Tắt (xoá) một luật theo id, hoặc mọi luật của `deliver_to`. Trả số đã tắt."""
+    deliver_to = str(deliver_to or "").strip()
+    if not deliver_to:
+        return 0
+    with _lock:
+        db = _db()
+        if rid:
+            cur = db.execute("DELETE FROM watch_rules WHERE deliver_to=? AND id=?",
+                             (deliver_to, str(rid)))
+        else:
+            cur = db.execute("DELETE FROM watch_rules WHERE deliver_to=?", (deliver_to,))
+        db.commit()
+        return cur.rowcount or 0
+
+
+def luat_tat_ca() -> list[dict[str, Any]]:
+    """Mọi luật ĐANG BẬT (cho vòng quét nền)."""
+    with _lock:
+        rows = _db().execute(
+            "SELECT id, deliver_to, name, lead_min, deliver_meta, enabled, last_scan_ts"
+            " FROM watch_rules WHERE enabled=1").fetchall()
+    return [_row_rule(r) for r in rows]
+
+
+def _dat_con_tro(rid: str, ts: float) -> None:
+    with _lock:
+        db = _db()
+        db.execute("UPDATE watch_rules SET last_scan_ts=? WHERE id=?", (ts, rid))
+        db.commit()
+
+
+def tin_nhac_moi(deliver_to: str, name: str, *, since_ts: float,
+                 limit: int = 100) -> list[dict[str, Any]]:
+    """Tin NHẮC TỚI `name` (hoặc @all) MỚI hơn `since_ts`, trong phạm vi đọc được
+    của `deliver_to` (của mình + “Kết nối bộ nhớ”). Có `id` để chống tạo trùng."""
+    scopes = _scopes_doc(deliver_to)
+    me_f = _fold(name).strip()
+    if not scopes or not me_f:
+        return []
+    try:
+        with _lock:
+            ph = ",".join("?" * len(scopes))
+            rows = _db().execute(
+                f"SELECT id, ts, sender_name, sender_id, text, mentions_fold"
+                f" FROM chatlog WHERE scope IN ({ph}) AND ts > ?"
+                f" ORDER BY ts LIMIT ?",
+                (*scopes, float(since_ts), max(1, min(limit, 500))),
+            ).fetchall()
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for _id, ts, sname, sid, text, mf in rows:
+        toks = (mf or "").split()
+        if _MENTION_ALL in toks or any(me_f == t or me_f in t or t in me_f for t in toks):
+            out.append({"id": _id, "ts": ts, "sender": sname or sid, "text": text})
+    return out
+
+
+def _da_tao(k: str) -> bool:
+    with _lock:
+        return _db().execute(
+            "SELECT 1 FROM nhac_da_tao WHERE k=?", (k,)).fetchone() is not None
+
+
+def _ghi_da_tao(k: str) -> None:
+    with _lock:
+        db = _db()
+        db.execute("INSERT OR IGNORE INTO nhac_da_tao (k, created_at) VALUES (?,?)",
+                   (k, time.time()))
+        # dọn dấu vết quá cũ (>120 ngày) để bảng không phình
+        db.execute("DELETE FROM nhac_da_tao WHERE created_at < ?",
+                   (time.time() - 120 * 86400,))
+        db.commit()
+
+
+def _parse_iso(s: Any) -> float | None:
+    """'YYYY-MM-DDTHH:MM[:SS]' (giờ VN) → epoch; hỏng → None."""
+    t = str(s or "").strip()[:19]
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(t, fmt).replace(tzinfo=_TZ).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def quet_nhac_hen(*, trich_hen: Any, tao_nhac: Any, now: float | None = None,
+                  nhin_lai_ngay: int = 3) -> int:
+    """Quét mọi luật: tin-nhắc-tới MỚI → nhờ `trich_hen` tìm mốc hẹn → đặt nhắc
+    trước từng lead qua `tao_nhac`. Hàm THUẦN (bơm hai callable vào) để test được
+    không cần LLM/DB nhắc thật.
+
+    - `trich_hen(msgs) -> {msg_id: {"iso": str, "label": str} | None}`
+    - `tao_nhac(deliver_to, text, when_ts, meta) -> None`  (raise được, sẽ bỏ qua)
+    Trả về số lượt nhắc đã tạo.
+    """
+    now = now if now is not None else time.time()
+    tao = 0
+    for rule in luat_tat_ca():
+        deliver_to = rule["deliver_to"]
+        name = rule["name"]
+        leads = _leads(rule.get("lead_min"))
+        since = max(float(rule.get("last_scan_ts") or 0), now - nhin_lai_ngay * 86400)
+        try:
+            msgs = tin_nhac_moi(deliver_to, name, since_ts=since)
+            got = trich_hen(msgs) if msgs else {}
+            for m in msgs:
+                info = (got or {}).get(m["id"])
+                if not isinstance(info, dict):
+                    continue
+                appt = _parse_iso(info.get("iso"))
+                if not appt or appt <= now:
+                    continue
+                nhan = str(info.get("label") or m["text"]).strip()[:200]
+                khi = datetime.fromtimestamp(appt, _TZ).strftime("%H:%M %d/%m")
+                for lead in leads:
+                    fire = appt - lead * 60
+                    if fire <= now:
+                        continue
+                    k = f"{rule['id']}:{m['id']}:{lead}"
+                    if _da_tao(k):
+                        continue
+                    truoc = (f"{lead // 1440} ngày" if lead % 1440 == 0
+                             else f"{lead // 60} giờ" if lead % 60 == 0
+                             else f"{lead} phút")
+                    txt = (f"⏰ Nhắc trước {truoc}: {nhan} — lúc {khi}. "
+                           f"({m['sender']} có nhắc tới trong nhóm.)")
+                    try:
+                        tao_nhac(deliver_to, txt, fire, rule.get("deliver_meta") or {})
+                        _ghi_da_tao(k)
+                        tao += 1
+                    except Exception:
+                        pass
+        finally:
+            _dat_con_tro(rule["id"], now)
+    return tao
 
 
 def _reset_for_tests(db_path: Path | None = None) -> None:
