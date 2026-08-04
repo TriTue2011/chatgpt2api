@@ -719,6 +719,29 @@ def stop_polling(join_timeout: float = 2.0) -> int:
         return sum(1 for th in _poll_threads.values() if th.is_alive())
 
 
+def _getupdates_rong(r: dict) -> bool:
+    """Kết quả getUpdates này có nghĩa 'KHÔNG có tin mới trong cửa sổ' không?
+
+    Hai dạng đều là bình thường của long-poll, KHÔNG phải lỗi:
+      * `error_code == 408` — Zalo báo thẳng hết cửa sổ, không có tin;
+      * read-timeout phía client — long-poll giữ kết nối tới hết `timeout` rồi
+        client đọc quá hạn; `_api_call` trả `{"ok": False, "description": "The
+        read operation timed out"}` KHÔNG kèm error_code.
+
+    Vì sao phải gộp read-timeout vào đây: trước đây nó bị tính là LỖI → `fails`
+    tăng dần → backoff `min(2+fails,15)` lên tới 15s KHÔNG poll. getUpdates của
+    Zalo KHÔNG hỗ trợ offset (xem `_next_offset`), nên tin tới trong 15s đó rơi
+    mất — đúng triệu chứng 'được 1 câu rồi thôi'. Coi nó như 408: poll lại ngay,
+    không tăng fails.
+    """
+    if r.get("ok"):
+        return False
+    if r.get("error_code") == 408:
+        return True
+    desc = str(r.get("description") or "").lower()
+    return "timed out" in desc or "timeout" in desc
+
+
 def _next_offset(updates: list, offset: int) -> int:
     """offset kế tiếp = max(update_id) + 1 (khuôn Telegram; SDK zalo-bot-js dùng
     đúng vậy: `getUpdates{timeout, offset}`).
@@ -770,13 +793,15 @@ def _poll_loop(bot: dict) -> None:
         except Exception:
             r = {"ok": False}
         if not r.get("ok"):
-            # 408 timeout = không có tin mới (bình thường). Lỗi khác → backoff nhẹ;
-            # log lần đầu của chuỗi lỗi kẻo poll chết âm thầm không ai biết.
-            code = r.get("error_code")
-            if code != 408 and fails == 0:
+            # 408 / read-timeout = không có tin mới (bình thường long-poll) →
+            # poll LẠI NGAY, không backoff, không tăng fails (xem `_getupdates_rong`:
+            # backoff tới 15s ở đây từng tạo khoảng không-poll làm rơi tin). Lỗi
+            # THẬT (mạng, 5xx) mới backoff nhẹ; log lần đầu kẻo poll chết âm thầm.
+            trong = _getupdates_rong(r)
+            if not trong and fails == 0:
                 logger.warning("Zalo getUpdates lỗi (bot %s…): %s", token[:6], str(r)[:200])
-            time.sleep(1 if code == 408 else min(2 + fails, 15))
-            fails = 0 if code == 408 else fails + 1
+            time.sleep(1 if trong else min(2 + fails, 15))
+            fails = 0 if trong else fails + 1
             continue
         fails = 0
         res = r.get("result")
