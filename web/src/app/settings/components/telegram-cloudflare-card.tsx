@@ -532,8 +532,11 @@ export function TelegramCloudflareCard() {
     { telegram: {}, zalo: {} });
   // Tab KÊNH + tab con — mỗi kênh (Telegram / Zalo Bot / Zalo Cá Nhân) cài đặt
   // ĐỘC LẬP: cài đặt kênh, lọc thread, nhánh agent riêng từng kênh.
-  const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop">("tg");
-  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "memlinks" | "branches">("settings");
+  // "memlinks" đứng CÙNG HÀNG với các kênh (không phải tab con): kết nối bộ nhớ
+  // nối XUYÊN kênh, nên nó không thuộc riêng kênh nào — để trong từng kênh là
+  // lặp lại vô lý và gợi ý sai rằng mỗi kênh có cấu hình riêng.
+  const [chTab, setChTab] = useState<"tg" | "zalo" | "zalop" | "memlinks">("tg");
+  const [subTab, setSubTab] = useState<"settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches">("settings");
   // Danh bạ thread (setting ∪ auto bot) — tab riêng mỗi kênh
   type DirRow = {
     bot_id: string; bot_label: string; thread_id: string;
@@ -1398,7 +1401,8 @@ export function TelegramCloudflareCard() {
   };
 
   useEffect(() => {
-    if (subTab === "directory") void loadDirectory();
+    // chTab "memlinks" không có danh bạ → đừng gọi /directory với platform lạ.
+    if (subTab === "directory" && chTab !== "memlinks") void loadDirectory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subTab, chTab]);
 
@@ -1418,9 +1422,11 @@ export function TelegramCloudflareCard() {
         <div className="text-sm font-semibold flex items-center gap-2">
           <MessageCircle className="size-4 text-blue-500" /> Kênh chat
         </div>
-        {/* Tab KÊNH — mỗi kênh cài đặt độc lập */}
+        {/* Tab KÊNH — mỗi kênh cài đặt độc lập; «Kết nối bộ nhớ» đứng cùng hàng
+            vì nó là cấu hình CHUNG (nối xuyên kênh), không thuộc riêng kênh nào. */}
         <div className="flex flex-wrap gap-2">
-          {([["tg", "📨 Telegram"], ["zalo", "💬 Zalo Bot"], ["zalop", "👤 Zalo Cá Nhân"]] as const)
+          {([["tg", "📨 Telegram"], ["zalo", "💬 Zalo Bot"], ["zalop", "👤 Zalo Cá Nhân"],
+             ["memlinks", "🔗 Kết nối bộ nhớ"]] as const)
             .map(([k, lb]) => (
               <button key={k} type="button" className={tabBtn(chTab === k)}
                 onClick={() => {
@@ -1436,7 +1442,9 @@ export function TelegramCloudflareCard() {
               </button>
             ))}
         </div>
-        {/* Tab CON trong kênh */}
+        {/* Tab CON trong kênh — KHÔNG hiện khi đang ở «Kết nối bộ nhớ» (nó không
+            có tab con nào). */}
+        {chTab !== "memlinks" && (
         <div className="flex flex-wrap gap-2">
           {(([
             // Zalo Cá Nhân: KHÔNG còn tab "Cài đặt kênh" — mọi thứ nằm trong
@@ -1449,10 +1457,8 @@ export function TelegramCloudflareCard() {
             ...(chTab === "zalo" ? [["zwebhook", "🔗 Webhook"]] : []),
             ["directory", "📒 Danh bạ"],
             ["filter", "🎚️ Lọc thread"],
-            // Nối bộ nhớ giữa các phạm vi — mặc định chúng độc lập tuyệt đối.
-            ["memlinks", "🔗 Kết nối bộ nhớ"],
             ["branches", "🧭 Nhánh agent"],
-          ]) as ["settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "memlinks" | "branches", string][])
+          ]) as ["settings" | "zaccounts" | "zwebhook" | "directory" | "filter" | "branches", string][])
             .map(([k, lb]) => (
               <button key={k} type="button" className={tabBtn(subTab === k)}
                 onClick={() => setSubTab(k)}>
@@ -1460,6 +1466,10 @@ export function TelegramCloudflareCard() {
               </button>
             ))}
         </div>
+        )}
+
+        {/* ── Kết nối bộ nhớ — CHUNG mọi kênh (đứng cùng hàng với các kênh) ── */}
+        {chTab === "memlinks" && <MemoryLinksCard />}
 
         {/* ── Telegram — Cài đặt kênh ── */}
         {chTab === "tg" && subTab === "settings" && (
@@ -2028,9 +2038,6 @@ export function TelegramCloudflareCard() {
           </Button>
           </div>
         )}
-
-        {/* ── Kết nối bộ nhớ — CHUNG mọi kênh (nối được xuyên kênh) ── */}
-        {subTab === "memlinks" && <MemoryLinksCard />}
 
         {/* ── Nhánh Agent (định tuyến việc) — RIÊNG kênh đang chọn ── */}
         {subTab === "branches" && (
