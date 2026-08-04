@@ -71,6 +71,11 @@ function maThanhVien(tv: ThanhVien): string {
   return [tv.kenh, tv.chat, tv.topic, tv.user].join("|");
 }
 
+/** Id an toàn cho thuộc tính HTML (datalist) — chat id có thể chứa '-', '#'. */
+function maNhomAnToan(tv: ThanhVien): string {
+  return `${tv.kenh}-${tv.chat}-${tv.topic}`.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
 function nhanThanhVien(tv: ThanhVien, ten?: string): string {
   const dich = tv.chat + (tv.topic ? ` › topic ${tv.topic}` : "")
     + (tv.user ? ` › người ${tv.user}` : "");
@@ -104,6 +109,22 @@ export function MemoryLinksCard() {
     chonDuoc.push({ ma, nhan: nhanThanhVien(tv, meta[key]?.name), tv });
   }
   const nhanMap = new Map(chonDuoc.map((c) => [c.ma, c.nhan]));
+
+  // Người ĐÃ BIẾT của từng nhóm — dựng từ chính các khoá `thread_user_filters`.
+  // Nhóm nào có mặt ở đây tức là đã đặt lọc theo từng người, nghĩa là MỖI NGƯỜI
+  // một bộ nhớ riêng: nối "cả nhóm" sẽ trỏ vào một bộ nhớ không ai ghi vào, nên
+  // phải nêu đích danh người. Đây là danh sách để nêu đích danh.
+  const nguoiCuaNhom = new Map<string, string[]>();
+  for (const key of Object.keys(tuf)) {
+    const tv = tachKhoa(key, true);
+    if (!tv || !tv.user) continue;
+    const oNhom = `${tv.kenh}|${tv.chat}|${tv.topic}`;
+    const ds = nguoiCuaNhom.get(oNhom) || [];
+    if (!ds.includes(tv.user)) ds.push(tv.user);
+    nguoiCuaNhom.set(oNhom, ds);
+  }
+  const nguoiCua = (tv: ThanhVien): string[] =>
+    nguoiCuaNhom.get(`${tv.kenh}|${tv.chat}|${tv.topic}`) || [];
 
   useEffect(() => {
     if (inited.current || !config) return;
@@ -167,6 +188,16 @@ export function MemoryLinksCard() {
   const boTV = (r: MoiNoi, o: "members" | "primary" | "secondary", ma: string) =>
     sua(r.uiId, { [o]: r[o].filter((t) => maThanhVien(t) !== ma) } as Partial<MoiNoi>);
 
+  /** Đổi trường `user` của một dòng đã nối. Rỗng = cả nhóm. */
+  const datUser = (r: MoiNoi, o: "members" | "primary" | "secondary",
+                   ma: string, user: string) => {
+    const moi = r[o].map((t) => (maThanhVien(t) === ma ? { ...t, user } : t));
+    // Đặt trùng với một dòng đã có thì bỏ dòng vừa sửa, không giữ hai dòng y nhau.
+    const loc = moi.filter((t, i) =>
+      moi.findIndex((x) => maThanhVien(x) === maThanhVien(t)) === i);
+    sua(r.uiId, { [o]: loc } as Partial<MoiNoi>);
+  };
+
   /** Một ô danh sách thành viên (dùng cho cả bình đẳng lẫn chính/phụ). */
   const OThanhVien = ({ r, o, tieuDe }: {
     r: MoiNoi; o: "members" | "primary" | "secondary"; tieuDe: string;
@@ -177,18 +208,51 @@ export function MemoryLinksCard() {
         <div className="text-[10px] text-muted-foreground mb-1">Chưa có ai.</div>
       )}
       <div className="space-y-1 mb-2">
-        {r[o].map((t) => (
-          <div key={maThanhVien(t)}
-            className="flex items-center justify-between gap-2 text-[11px] rounded bg-muted/40 px-2 py-1">
-            {/* Đã nối rồi mà sau đó bị xoá khỏi «Lọc thread» thì không còn tên —
-                vẫn hiện dòng đó để chủ máy thấy và tự gỡ, không im lặng biến mất. */}
-            <span className="truncate">
-              {nhanMap.get(maThanhVien(t)) || nhanThanhVien(t)}
-            </span>
-            <button type="button" className="text-red-500 shrink-0"
-              onClick={() => boTV(r, o, maThanhVien(t))}>✕</button>
-          </div>
-        ))}
+        {r[o].map((t) => {
+          const ma = maThanhVien(t);
+          const dsNguoi = nguoiCua({ ...t, user: "" });
+          const tachNguoi = dsNguoi.length > 0;
+          return (
+            <div key={ma} className="rounded bg-muted/40 px-2 py-1">
+              <div className="flex items-center justify-between gap-2 text-[11px]">
+                {/* Đã nối rồi mà sau đó bị xoá khỏi «Lọc thread» thì không còn
+                    tên — vẫn hiện dòng đó để chủ máy thấy và tự gỡ, không im
+                    lặng biến mất. */}
+                <span className="truncate">
+                  {nhanMap.get(ma) || nhanThanhVien(t)}
+                </span>
+                <button type="button" className="text-red-500 shrink-0"
+                  onClick={() => boTV(r, o, ma)}>✕</button>
+              </div>
+              {/* Trường NGƯỜI. Nhóm đã lọc theo từng người thì mỗi người là một
+                  bộ nhớ riêng — nối "cả nhóm" trỏ vào bộ nhớ không ai ghi vào,
+                  nên phải nêu đích danh ở đây. */}
+              <div className="flex items-center gap-1 mt-1">
+                <span className="text-[10px] text-muted-foreground shrink-0">Người:</span>
+                <input
+                  className="h-6 flex-1 min-w-0 rounded border border-input bg-background px-1.5 text-[10px]"
+                  list={`nguoi-${r.uiId}-${o}-${maNhomAnToan(t)}`}
+                  placeholder={tachNguoi ? "⚠ chọn đích danh" : "cả nhóm"}
+                  value={t.user}
+                  onChange={(e) => datUser(r, o, ma, e.target.value.trim())} />
+                <datalist id={`nguoi-${r.uiId}-${o}-${maNhomAnToan(t)}`}>
+                  {dsNguoi.map((u) => <option key={u} value={u} />)}
+                </datalist>
+                {t.user && (
+                  <button type="button" className="text-[10px] text-muted-foreground shrink-0"
+                    title="Bỏ trống = cả nhóm"
+                    onClick={() => datUser(r, o, ma, "")}>cả nhóm</button>
+                )}
+              </div>
+              {tachNguoi && !t.user && (
+                <p className="text-[10px] text-amber-600 mt-0.5">
+                  Nhóm này đã lọc theo từng người → mỗi người một bộ nhớ riêng.
+                  Để trống là nối vào bộ nhớ chung của nhóm mà không ai ghi vào.
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
       <select
         className="w-full h-7 rounded border border-input bg-background px-2 text-[11px]"
@@ -281,10 +345,16 @@ export function MemoryLinksCard() {
         </div>
       ))}
 
-      <p className="text-[10px] text-muted-foreground">
-        Chọn <b>cả nhóm</b> thì mọi người trong nhóm đó đều được tính. Nhóm đã đặt lọc
-        theo từng người (tab «Lọc thread» → cấp User) thì mỗi người là một bộ nhớ
-        riêng — muốn nối đích danh ai thì chọn dòng người đó.
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Mỗi dòng đã nối có ô <b>Người</b>: để trống là <b>cả nhóm</b> (ai trong nhóm
+        cũng được tính); điền vào là chỉ đúng người đó.<br />
+        Nhóm đã đặt lọc theo từng người (tab «Lọc thread» → cấp User) thì{" "}
+        <b>mỗi người là một bộ nhớ riêng</b> — ô Người sẽ gợi ý sẵn danh sách và
+        nhắc chọn đích danh, vì để trống sẽ nối vào bộ nhớ chung của nhóm mà không
+        ai ghi vào.<br />
+        Trong <b>chính phụ</b>, các bên Chính <b>độc lập với nhau</b> (không tự động
+        bình đẳng), các bên Phụ cũng vậy. Muốn hai bên Chính đọc được của nhau thì
+        tạo thêm một kết nối <b>bình đẳng</b> riêng.
       </p>
     </div>
   );
