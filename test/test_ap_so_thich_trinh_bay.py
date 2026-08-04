@@ -256,20 +256,20 @@ class TestDangBayTinTheoThuTuMoiCu(unittest.TestCase):
 
     def test_dong_moi_thang_dong_cu(self):
         self.assertEqual(self._dang([self.CU, self.MOI]),
-                         {"tom_tat": False, "in_dam": True, "emoji": True})
+                         {"tom_tat": False, "in_dam": True, "emoji": True, "chi_viet": False})
 
     def test_dao_thu_tu_thi_dao_ket_qua(self):
         """Chứng minh thứ tự THẬT SỰ được dùng, không phải trùng hợp."""
         self.assertEqual(self._dang([self.MOI, self.CU]),
-                         {"tom_tat": False, "in_dam": False, "emoji": False})
+                         {"tom_tat": False, "in_dam": False, "emoji": False, "chi_viet": False})
 
     def test_mat_khong_ai_noi_toi_thi_giu_mac_dinh(self):
         self.assertEqual(self._dang(["Anh tên là Việt, ở Hà Nội."]),
-                         {"tom_tat": True, "in_dam": True, "emoji": True})
+                         {"tom_tat": True, "in_dam": True, "emoji": True, "chi_viet": False})
 
     def test_khong_co_loi_dan_nao(self):
         self.assertEqual(self._dang([]),
-                         {"tom_tat": True, "in_dam": True, "emoji": True})
+                         {"tom_tat": True, "in_dam": True, "emoji": True, "chi_viet": False})
 
     def test_moi_mat_xet_doc_lap(self):
         """Dòng mới chỉ nói về emoji thì KHÔNG được đổi luôn mặt in đậm."""

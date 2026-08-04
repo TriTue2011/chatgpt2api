@@ -71,11 +71,6 @@ function maThanhVien(tv: ThanhVien): string {
   return [tv.kenh, tv.chat, tv.topic, tv.user].join("|");
 }
 
-/** Id an toàn cho thuộc tính HTML (datalist) — chat id có thể chứa '-', '#'. */
-function maNhomAnToan(tv: ThanhVien): string {
-  return `${tv.kenh}-${tv.chat}-${tv.topic}`.replace(/[^A-Za-z0-9_-]/g, "_");
-}
-
 function nhanThanhVien(tv: ThanhVien, ten?: string): string {
   const dich = tv.chat + (tv.topic ? ` › topic ${tv.topic}` : "")
     + (tv.user ? ` › người ${tv.user}` : "");
@@ -208,12 +203,16 @@ export function MemoryLinksCard() {
         <div className="text-[10px] text-muted-foreground mb-1">Chưa có ai.</div>
       )}
       <div className="space-y-1 mb-2">
-        {r[o].map((t) => {
+        {r[o].map((t, idx) => {
           const ma = maThanhVien(t);
           const dsNguoi = nguoiCua({ ...t, user: "" });
           const tachNguoi = dsNguoi.length > 0;
+          // React key + id theo VỊ TRÍ, không theo `ma`: `ma` chứa `t.user`, nên
+          // nếu key đổi mỗi lần gõ vào ô Người thì input bị remount và MẤT FOCUS
+          // sau từng ký tự. Vị trí ổn định suốt lúc sửa (ta map tại chỗ).
+          const dlId = `nguoi-${r.uiId}-${o}-${idx}`;
           return (
-            <div key={ma} className="rounded bg-muted/40 px-2 py-1">
+            <div key={`${r.uiId}-${o}-${idx}`} className="rounded bg-muted/40 px-2 py-1">
               <div className="flex items-center justify-between gap-2 text-[11px]">
                 {/* Đã nối rồi mà sau đó bị xoá khỏi «Lọc thread» thì không còn
                     tên — vẫn hiện dòng đó để chủ máy thấy và tự gỡ, không im
@@ -231,11 +230,11 @@ export function MemoryLinksCard() {
                 <span className="text-[10px] text-muted-foreground shrink-0">Người:</span>
                 <input
                   className="h-6 flex-1 min-w-0 rounded border border-input bg-background px-1.5 text-[10px]"
-                  list={`nguoi-${r.uiId}-${o}-${maNhomAnToan(t)}`}
+                  list={dlId}
                   placeholder={tachNguoi ? "⚠ chọn đích danh" : "cả nhóm"}
                   value={t.user}
                   onChange={(e) => datUser(r, o, ma, e.target.value.trim())} />
-                <datalist id={`nguoi-${r.uiId}-${o}-${maNhomAnToan(t)}`}>
+                <datalist id={dlId}>
                   {dsNguoi.map((u) => <option key={u} value={u} />)}
                 </datalist>
                 {t.user && (
