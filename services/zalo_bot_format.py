@@ -81,6 +81,28 @@ def _pick_from_layers(
     return None
 
 
+_RTF_KHOA: dict[str, tuple[str, str]] = {
+    "gach_chan": ("markdown_underline", "zalo_markdown_underline"),
+    "danh_sach": ("markdown_list", "zalo_markdown_list"),
+    "thut_le": ("markdown_indent", "zalo_markdown_indent"),
+}
+_TAT = {"0", "false", "off", "no", "none", "khong", "không", "tat", "tắt"}
+
+
+def resolve_zalo_rtf(bot: dict | None = None, chat_id: str | None = None) -> dict[str, bool]:
+    """Gạch chân / danh sách / thụt lề của Zalo cá nhân: admin → bot → channel.
+
+    Mặc định BẬT cả ba — đây là định dạng bot TỰ áp theo văn bản, không phải
+    thứ người dùng phải đi bật. Muốn tắt thì ra lệnh cho bot (capability
+    ``cai_dat_dinh_dang``) hoặc đặt khoá config tương ứng.
+    """
+    ra: dict[str, bool] = {}
+    for ten, (khoa, khoa_kenh) in _RTF_KHOA.items():
+        raw = _pick_from_layers(bot, chat_id, (khoa,), (khoa_kenh,))
+        ra[ten] = True if raw is None else str(raw).strip().lower() not in _TAT
+    return ra
+
+
 def resolve_zalo_bot_color(bot: dict | None = None, chat_id: str | None = None) -> str | None:
     """Màu nhấn mạnh: admin → bot → channel. none/off → không tô màu."""
     def _norm(v: object) -> str | None:

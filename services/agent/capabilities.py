@@ -2683,6 +2683,66 @@ def _h_cai_dat_cau_duyet(args: dict, ctx: dict) -> dict:
                      "Dạ từ giờ lúc xin duyệt gửi tin em chỉ đưa ba lựa chọn thôi ạ 🧾")}
 
 
+def _h_cai_dat_dinh_dang(args: dict, ctx: dict) -> dict:
+    """Bật/tắt định dạng chữ bằng LỜI, không phải bằng màn cài đặt.
+
+    Yêu cầu 05/08: "màu thì cài đặt, nhưng in đậm / in nghiêng thì tự động thay
+    đổi phù hợp với văn bản cả zalo lẫn tele, khi cần thiết tôi yêu cầu không
+    dùng nữa … bằng ra lệnh cho bot". Màu vẫn nằm ở Settings; mấy thứ còn lại
+    bot tự áp và chỉ đổi khi được bảo.
+
+    `nhan_manh` (tự tô đậm số/đơn vị/ý chính) áp cho CẢ Telegram lẫn Zalo — hai
+    kênh dùng chung `telegram/emphasis.py`. Ba cái còn lại là style riêng của
+    Zalo cá nhân (zca-js: u / lst_1 / lst_2 / ind_), Telegram không có.
+    """
+    from services.config import config as _cfg
+
+    doi: dict[str, object] = {}
+    if "nhan_manh" in args:
+        doi["telegram_emphasis_enabled"] = _la_bat(args.get("nhan_manh"))
+    kieu = str(args.get("kieu") or "").strip().lower()
+    if kieu in ("bold", "dam", "đậm"):
+        doi["telegram_emphasis_style"] = "bold"
+    elif kieu in ("italic", "nghieng", "nghiêng"):
+        doi["telegram_emphasis_style"] = "italic"
+    for ten, khoa in (("gach_chan", "zalo_markdown_underline"),
+                      ("danh_sach", "zalo_markdown_list"),
+                      ("thut_le", "zalo_markdown_indent")):
+        if ten in args:
+            doi[khoa] = _la_bat(args.get(ten))
+    if not doi:
+        from services.telegram.emphasis import channel_emphasis_settings
+        from services.zalo_bot_format import resolve_zalo_rtf
+        em = channel_emphasis_settings()
+        rtf = resolve_zalo_rtf()
+        return {"text": (
+            "Đang để: tự nhấn mạnh {} (kiểu {}), gạch chân {}, danh sách {}, "
+            "thụt lề {}.".format(
+                "BẬT" if em.get("enabled") else "TẮT", em.get("style") or "bold",
+                "BẬT" if rtf["gach_chan"] else "TẮT",
+                "BẬT" if rtf["danh_sach"] else "TẮT",
+                "BẬT" if rtf["thut_le"] else "TẮT"))}
+    _cfg.update(doi)
+    ten = {
+        "telegram_emphasis_enabled": "tự nhấn mạnh",
+        "telegram_emphasis_style": "kiểu nhấn mạnh",
+        "zalo_markdown_underline": "gạch chân",
+        "zalo_markdown_list": "danh sách",
+        "zalo_markdown_indent": "thụt lề",
+    }
+    return {"text": "Dạ em chỉnh rồi ạ ✍️ — " + ", ".join(
+        f"{ten.get(k, k)}: " + (("bật" if v else "tắt") if isinstance(v, bool) else str(v))
+        for k, v in doi.items())}
+
+
+def _la_bat(v: object) -> bool:
+    """LLM hay trả chuỗi — bool("false") là True nên phải xét chữ."""
+    if isinstance(v, str):
+        return v.strip().lower() not in (
+            "false", "0", "no", "khong", "không", "tat", "tắt", "bo", "bỏ")
+    return bool(v)
+
+
 _MEDIA_EXT = {
     "image": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
     "video": (".mp4", ".webm", ".mov"),
@@ -4913,6 +4973,26 @@ CAPABILITIES: dict[str, Capability] = {
             "hien_noi_dung": {"type": "boolean",
                               "description": "true = hiện người nhận + nội dung; "
                                              "false = chỉ ba lựa chọn"}}}),
+    "cai_dat_dinh_dang": Capability(
+        name="cai_dat_dinh_dang", risk=READ, handler=_h_cai_dat_dinh_dang,
+        emoji="✍️", label="Định dạng chữ bot gửi",
+        description=(
+            "Bật/tắt định dạng chữ bot tự áp vào câu trả lời. Dùng khi người dùng "
+            "ra lệnh về CÁCH TRÌNH BÀY chữ: 'đừng in đậm nữa' → nhan_manh=false; "
+            "'in nghiêng thay vì in đậm' → kieu=italic; 'bỏ gạch chân' → "
+            "gach_chan=false; 'đừng dùng danh sách' → danh_sach=false; 'bỏ thụt "
+            "lề' → thut_le=false. Hỏi đang để thế nào thì gọi không kèm tham số. "
+            "MÀU CHỮ thì KHÔNG ở đây — màu chỉnh trong Settings."
+        ),
+        parameters={"type": "object", "properties": {
+            "nhan_manh": {"type": "boolean",
+                          "description": "Tự tô đậm số / đơn vị / ý chính (cả Telegram lẫn Zalo)"},
+            "kieu": {"type": "string", "enum": ["bold", "italic"],
+                     "description": "Nhấn mạnh bằng in đậm hay in nghiêng"},
+            "gach_chan": {"type": "boolean", "description": "Gạch chân (chỉ Zalo cá nhân)"},
+            "danh_sach": {"type": "boolean",
+                          "description": "Đổi '- ' / '1. ' thành danh sách của Zalo (chỉ Zalo cá nhân)"},
+            "thut_le": {"type": "boolean", "description": "Thụt lề nhiều cấp (chỉ Zalo cá nhân)"}}}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
         emoji="📗", label="Tìm SGK (lớp 1–12 · mọi môn)",
@@ -5248,6 +5328,7 @@ _CAP_GROUP: dict[str, str] = {
     "expand_tool_result": "memory",
     "contacts": "contacts", "send_to_contact": "contacts",
     "cai_dat_cau_duyet": "contacts",
+    "cai_dat_dinh_dang": "contacts",
     "office_files": "office", "office_create": "office",
     "office_view": "office", "office_query": "office",
     "office_add": "office", "office_set": "office",

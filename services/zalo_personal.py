@@ -695,11 +695,14 @@ _NHAN_ALL = "@All"      # Zalo hiển thị tag cả nhóm là '@All' (ảnh ng�
 
 
 def send_message(thread_id: str, text: str, thread_type: int = 0, account: str = "",
-                 *, rich: bool = True, mention_all: bool = False) -> dict:
+                 *, rich: bool = True, mention_all: bool = False,
+                 co_nut_chon: bool = False) -> dict:
     """Gửi text (tự cắt khúc ~2000). Styles RTF zca-js (giống Zalo Bot: đậm+màu+cỡ).
 
     thread_type: 0=user, 1=group.
     rich=True: emphasis + markdown_color/size (per admin_entries acc nếu match).
+    co_nut_chon=True: tin này là MENU đánh số → không đổi "1." thành danh sách
+        native của Zalo, giữ con số trong phần chữ.
     mention_all=True: tag CẢ NHÓM. Chèn '@All ' đầu tin rồi gắn mention
         {pos:0, uid:'-1', len:4} — uid '-1' là mã Zalo hiểu là 'nhắc mọi người'
         (đã xác minh trong zca-js: type = uid=='-1' ? 1 : 0). Chỉ áp cho NHÓM
@@ -726,6 +729,8 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     except Exception:
         pass
 
+    # Gạch chân / danh sách / thụt lề — bot TỰ áp theo văn bản (mặc định bật).
+    rtf = {"gach_chan": True, "danh_sach": True, "thut_le": True}
     if rich:
         try:
             from services.telegram.emphasis import emphasize_text
@@ -733,9 +738,12 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         except Exception:
             pass
         try:
-            from services.zalo_bot_format import resolve_zalo_bot_color, resolve_zalo_bot_size
+            from services.zalo_bot_format import (
+                resolve_zalo_bot_color, resolve_zalo_bot_size, resolve_zalo_rtf,
+            )
             color = resolve_zalo_bot_color(bot_like or None, str(thread_id)) or "orange"
             size = resolve_zalo_bot_size(bot_like or None, str(thread_id))
+            rtf = resolve_zalo_rtf(bot_like or None, str(thread_id))
         except Exception:
             try:
                 from services.zalo_markdown import config_markdown_color
@@ -763,7 +771,14 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         msg_obj: dict = {"msg": ch, "ttl": 0, "quote": None}
         if md_on and markdown_to_zalo_message is not None:
             try:
-                parsed = markdown_to_zalo_message(ch, color=color, size=size)
+                parsed = markdown_to_zalo_message(
+                    ch, color=color, size=size,
+                    gach_chan=rtf["gach_chan"],
+                    # Menu chọn giữ "1." DẠNG CHỮ: để Zalo tự đánh số thì con số
+                    # rời khỏi phần chữ, mà cả `ask_choices.format_numbered` lẫn
+                    # thói quen gõ "1" của người dùng đều bám vào con số đó.
+                    danh_sach=rtf["danh_sach"] and not co_nut_chon,
+                    thut_le=rtf["thut_le"])
                 msg_obj["msg"] = parsed.get("msg") or ch
                 styles = parsed.get("styles") or []
                 if styles:
@@ -2482,7 +2497,7 @@ def _process_ai(ev: dict) -> None:
         # (kèm voice). Ngược lại: gửi được voice → bỏ chữ; không → gửi chữ.
         _sender = str(ev.get("sender_id") or "")
         if has_choices:
-            send_message(thread_id, reply, thread_type)
+            send_message(thread_id, reply, thread_type, co_nut_chon=True)
             _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply)
         elif not _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply):
             send_message(thread_id, reply, thread_type)

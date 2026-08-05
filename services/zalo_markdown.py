@@ -22,7 +22,10 @@ ZALO_COLORS: dict[str, str] = {
 }
 
 HEADING_STYLES: dict[int, str] = {
-    1: "f_20,b",
+    # f_18 chứ không phải f_20: bảng TextStyle của zca-js chỉ có f_13 (Small) và
+    # f_18 (Big). "f_20" là mã Zalo không biết, gửi lên coi như không có — tiêu
+    # đề cấp 1 xưa nay chỉ đậm chứ chưa bao giờ to lên.
+    1: "f_18,b",
     2: "f_18,b",
     3: "b",
     4: "f_13",
@@ -57,16 +60,113 @@ def _resolve_color_token(color: str | None) -> str | None:
     return c
 
 
+_RE_CHAM = re.compile(r"^([ \t]*)[-*•][ \t]+(?=\S)")
+_RE_SO = re.compile(r"^([ \t]*)\d{1,2}[.)][ \t]+(?=\S)")
+_RE_THUT = re.compile(r"^([ \t]+)(?=\S)")
+_MUC_THUT_TOI_DA = 4
+
+
+def _muc_thut(khoang: str) -> int:
+    """Hai dấu cách (hoặc một tab) = MỘT cấp; Zalo nhận ind_10…ind_40."""
+    cot = sum(2 if ch == "\t" else 1 for ch in khoang)
+    return min(_MUC_THUT_TOI_DA, cot // 2)
+
+
+def _kieu_theo_dong(
+    msg: str,
+    styles: list[dict[str, Any]],
+    *,
+    danh_sach: bool = True,
+    thut_le: bool = True,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Bóc dấu đầu dòng "- " / "1. " + khoảng thụt lề, đổi thành style của Zalo.
+
+    Zalo có sẵn ``lst_1`` (chấm đầu dòng), ``lst_2`` (đánh số) và ``ind_10…40``
+    (thụt lề) — xem bảng TextStyle trong zca-js. Trước đây bot không dùng cái
+    nào, nên mọi danh sách tới tay người đọc dưới dạng chữ "-" và "1." thô.
+
+    Ký tự dấu đầu dòng bị BỎ khỏi chuỗi (Zalo tự vẽ chấm/số), nên mọi style
+    inline nằm sau đó phải dời trái đúng số ký tự đã bỏ — không thì vùng đậm
+    tô lệch sang chữ bên cạnh.
+
+    ``lst_`` và ``ind_`` để RIÊNG hai mục style cùng vùng: zca-js mô hình styles
+    là danh sách, chưa có gì bảo đảm Zalo hiểu chuỗi gộp "lst_1,ind_10".
+    """
+    if not (danh_sach or thut_le):
+        return msg, styles
+
+    manh: list[str] = []
+    style_dong: list[dict[str, Any]] = []
+    moc_bo: list[tuple[int, int]] = []   # (vị trí CŨ, tổng ký tự đã bỏ tới đó)
+    vi_tri_cu = 0
+    vi_tri_moi = 0
+    da_bo = 0
+    for dong in msg.split("\n"):
+        dau_dong_cu = vi_tri_cu
+        vi_tri_cu += len(dong) + 1       # +1 cho '\n'
+        tok: list[str] = []
+        bo_dau = 0
+        m = _RE_CHAM.match(dong) if danh_sach else None
+        if m is None and danh_sach:
+            m = _RE_SO.match(dong)
+            if m is not None:
+                tok.append("lst_2")
+        elif m is not None:
+            tok.append("lst_1")
+        if m is not None:
+            bo_dau = m.end()
+            cap = _muc_thut(m.group(1))
+        else:
+            mt = _RE_THUT.match(dong) if thut_le else None
+            cap = _muc_thut(mt.group(1)) if mt else 0
+            if mt is not None and cap:
+                bo_dau = mt.end()
+        if thut_le and cap:
+            tok.append(f"ind_{cap}0")
+
+        than = dong[bo_dau:]
+        if bo_dau:
+            da_bo += bo_dau
+            moc_bo.append((dau_dong_cu + bo_dau, da_bo))
+        for t in tok:
+            style_dong.append({"start": vi_tri_moi, "len": len(than), "st": t})
+        manh.append(than)
+        vi_tri_moi += len(than) + 1
+
+    if not moc_bo and not style_dong:
+        return msg, styles
+
+    def _doi(p: int) -> int:
+        d = 0
+        for moc, tong in moc_bo:
+            if p >= moc:
+                d = tong
+            else:
+                break
+        return max(0, p - d)
+
+    for s in styles:
+        s["start"] = _doi(int(s["start"]))
+    return "\n".join(manh), styles + style_dong
+
+
 def markdown_to_zalo_message(
     text: str,
     *,
     color: str | None = "orange",
     size: str | None = "normal",
+    gach_chan: bool = True,
+    danh_sach: bool = True,
+    thut_le: bool = True,
 ) -> dict[str, Any]:
     """Convert markdown-ish LLM text → {msg, styles} cho Zalo personal (zca-js).
 
-    Hỗ trợ: **bold**, *italic*, ~~strike~~, ``code``, # headings, > quote, [t](url).
-    size: normal | big → thêm ``f_18`` (TextStyle.Big trong zca-js).
+    Hỗ trợ: **bold**, *italic*, __underline__, ~~strike~~, ``code``, # headings,
+    > quote, [t](url), "- " / "1. " thành danh sách, khoảng trắng đầu dòng thành
+    thụt lề. size: normal | big → thêm ``f_18`` (TextStyle.Big trong zca-js).
+
+    Ba công tắc `gach_chan` / `danh_sach` / `thut_le` lấy từ cài đặt của tài
+    khoản (xem `zalo_bot_format.resolve_zalo_rtf`).
     """
     if not text or not isinstance(text, str):
         return {"msg": str(text or ""), "styles": []}
@@ -159,7 +259,7 @@ def markdown_to_zalo_message(
             i += 2
             continue
 
-        if i + 1 < n and text[i : i + 2] == "__":
+        if gach_chan and i + 1 < n and text[i : i + 2] == "__":
             if stack and stack[-1][2] == "u":
                 _, open_pos, _ = stack.pop()
                 content = text[open_pos + 2 : i]
@@ -181,23 +281,28 @@ def markdown_to_zalo_message(
 
         i += 1
 
-    if not matched:
-        return {"msg": text, "styles": []}
-
-    matched.sort(key=lambda m: m[0])
-    parts: list[str] = []
+    final_msg = text
     styles: list[dict[str, Any]] = []
-    offset = 0
-    last_end = 0
-    for orig_start, orig_end, content, token in matched:
-        parts.append(text[last_end:orig_start])
-        out_start = orig_start - offset
-        styles.append({"start": out_start, "len": len(content), "st": token})
-        parts.append(content)
-        offset += (orig_end - orig_start) - len(content)
-        last_end = orig_end
-    parts.append(text[last_end:])
-    final_msg = "".join(parts)
+    if matched:
+        matched.sort(key=lambda m: m[0])
+        parts: list[str] = []
+        offset = 0
+        last_end = 0
+        for orig_start, orig_end, content, token in matched:
+            parts.append(text[last_end:orig_start])
+            out_start = orig_start - offset
+            styles.append({"start": out_start, "len": len(content), "st": token})
+            parts.append(content)
+            offset += (orig_end - orig_start) - len(content)
+            last_end = orig_end
+        parts.append(text[last_end:])
+        final_msg = "".join(parts)
+
+    # Dấu đầu dòng + thụt lề → style THEO DÒNG của Zalo (lst_1/lst_2/ind_).
+    final_msg, styles = _kieu_theo_dong(
+        final_msg, styles, danh_sach=danh_sach, thut_le=thut_le)
+    if not styles:
+        return {"msg": final_msg, "styles": []}
 
     # Python pos → JS UTF-16
     for s in styles:

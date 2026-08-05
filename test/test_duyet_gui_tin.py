@@ -240,6 +240,74 @@ class HoiLaiPhaiCoDanhSachDanhSoTests(unittest.TestCase):
         self.assertTrue(all("8h sáng nhé" not in c["label"] for c in chon), chon)
 
 
+class DinhDangZaloTests(unittest.TestCase):
+    """Zalo cá nhân có 13 kiểu chữ (bảng TextStyle của zca-js), bot mới dùng 9.
+
+    Yêu cầu 05/08: "màu thì cài đặt, nhưng in đậm / in nghiêng thì tự động thay
+    đổi phù hợp với văn bản … khi cần thiết tôi yêu cầu không dùng nữa bằng ra
+    lệnh cho bot". Nên danh sách / thụt lề / gạch chân bot TỰ áp, và đổi được
+    bằng lời qua `cai_dat_dinh_dang` chứ không phải đi tick trong Settings.
+    """
+
+    def _md(self, text: str, **kw):
+        from services.zalo_markdown import markdown_to_zalo_message
+
+        return markdown_to_zalo_message(text, color="orange", size="normal", **kw)
+
+    def test_dau_dau_dong_thanh_danh_sach_cua_zalo(self):
+        ra = self._md("- mục một\n- mục hai")
+        self.assertEqual(ra["msg"], "mục một\nmục hai")
+        self.assertEqual([s["st"] for s in ra["styles"]], ["lst_1", "lst_1"])
+
+    def test_danh_so_thanh_lst_2(self):
+        ra = self._md("1. số một\n2. số hai")
+        self.assertEqual(ra["msg"], "số một\nsố hai")
+        self.assertEqual([s["st"] for s in ra["styles"]], ["lst_2", "lst_2"])
+
+    def test_thut_le_theo_cap(self):
+        ra = self._md("- cha\n  - con\n    - chau")
+        self.assertIn("ind_10", [s["st"] for s in ra["styles"]])
+        self.assertIn("ind_20", [s["st"] for s in ra["styles"]])
+
+    def test_bo_dau_dau_dong_khong_lam_lech_vung_dam(self):
+        """Bỏ '- ' làm chuỗi ngắn đi — style inline phía sau phải dời theo."""
+        ra = self._md("- **đậm** trong mục")
+        dam = [s for s in ra["styles"] if "b" in s["st"].split(",")][0]
+        self.assertEqual(ra["msg"][dam["start"]:dam["start"] + dam["len"]], "đậm")
+
+    def test_tat_thi_giu_nguyen_chu(self):
+        ra = self._md("- mục một", danh_sach=False, thut_le=False)
+        self.assertEqual(ra["msg"], "- mục một")
+        self.assertEqual(ra["styles"], [])
+
+    def test_tieu_de_cap_1_dung_f_18(self):
+        """f_20 không có trong bảng TextStyle của zca-js — gửi lên là mã lạ."""
+        ra = self._md("# Tiêu đề")
+        self.assertIn("f_18", ra["styles"][0]["st"])
+        self.assertNotIn("f_20", ra["styles"][0]["st"])
+
+    def test_ra_lenh_bang_loi_doi_duoc_cai_dat(self):
+        from services.agent import capabilities as caps
+
+        self.assertEqual(caps.group_of("cai_dat_dinh_dang"), "contacts")
+        with mock.patch.object(config, "update") as ghi:
+            caps.get("cai_dat_dinh_dang").handler(
+                {"nhan_manh": "false", "kieu": "italic", "danh_sach": False}, {})
+        ghi.assert_called_once_with({
+            "telegram_emphasis_enabled": False,
+            "telegram_emphasis_style": "italic",
+            "zalo_markdown_list": False,
+        })
+
+    def test_hoi_khong_kem_tham_so_thi_chi_bao_trang_thai(self):
+        from services.agent import capabilities as caps
+
+        with mock.patch.object(config, "update") as ghi:
+            ra = caps.get("cai_dat_dinh_dang").handler({}, {})
+        ghi.assert_not_called()
+        self.assertIn("danh sách", ra.get("text") or "")
+
+
 class MenuDanhSoMotKieuTests(unittest.TestCase):
     """Mọi menu đánh số theo MỘT kiểu: "1. ", không dùng keycap "1️⃣".
 
