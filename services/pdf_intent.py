@@ -472,7 +472,15 @@ def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
                 max_pages=max_pages,
             )
             if t:
-                return t
+                # PDF SCAN cũng phải gắn phần hình ảnh — ba nhánh kia đều gắn,
+                # riêng nhánh này quên. Nghịch lý: file scan là loại mà MỌI
+                # trang đều là ảnh, tức đúng loại cần ảnh nhất, lại là loại duy
+                # nhất bị bỏ ảnh. Trang nào OCR ra chữ thì chữ tới nơi còn ảnh
+                # trang đó biến mất (chủ máy báo 05/08).
+                #
+                # `_image_section` trả về MỘT KHỐI MARKDOWN có chú thích + liên
+                # kết, không nhúng nhị phân, nên không làm bản chuyển phình.
+                return t + _image_section(pdf_path)
         else:
             t = p2w.digital_pdf_markdown(pdf_path)
             if t:

@@ -356,5 +356,29 @@ class TelegramCungNhanWordExcelTests(unittest.TestCase):
     def test_co_nhanh_tom_tat(self):
         self.assertIn("intent == _pi.TOM_TAT", self._src())
 
+
+class ScanCungPhaiGanAnhTests(unittest.TestCase):
+    """PDF scan cũng gắn phần hình ảnh — ba nhánh kia gắn, riêng nhánh này quên.
+
+    Chủ máy báo 05/08: "chuyển file pdf hình như không gán trang là hình ảnh vào
+    bản chuyển… chuyển sang chữ được thì không gán ảnh trang pdf đó vào". Đúng
+    vậy, và nghịch lý ở chỗ file scan là loại MỌI trang đều là ảnh — đúng loại
+    cần ảnh nhất — lại là loại duy nhất bị bỏ.
+    """
+
+    def test_moi_nhanh_extract_markdown_deu_gan_anh(self):
+        import ast
+
+        src = (GOC / "services" / "pdf_intent.py").read_text("utf-8")
+        ham = next(n for n in ast.parse(src).body
+                   if isinstance(n, ast.FunctionDef) and n.name == "extract_markdown")
+        than = ast.get_source_segment(src, ham) or ""
+        # Mọi `return t` trả CHỮ ĐÃ BÓC đều phải kèm _image_section.
+        tra_tron = [d.strip() for d in than.splitlines()
+                    if d.strip() in ("return t", "return t + _image_section(pdf_path)")]
+        self.assertTrue(tra_tron)
+        self.assertNotIn("return t", tra_tron,
+                         "còn nhánh trả chữ mà không gắn phần hình ảnh")
+
 if __name__ == "__main__":
     unittest.main()
