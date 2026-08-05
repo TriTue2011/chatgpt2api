@@ -15,11 +15,13 @@ Công tắc mới `thread_user_only` (khóa giống `thread_filters`) trả lờ
 Vế sau là lý do chốt chặn được đặt SAU khối ghi nhật ký nhóm trong cả hai kênh
 có nhật ký: ghi ≠ trả lời, cùng lý lẽ với cổng tag.
 
-File này khoá bốn hành vi:
+File này khoá năm hành vi:
   * tắt công tắc (mặc định) → mọi người vẫn nói được, y như trước;
   * bật → người CÓ bản ghi qua được, người KHÔNG có bị chặn;
   * bản ghi ở cấp topic thắng bản ghi cả nhóm;
-  * chốt chặn nằm SAU khối nhật ký ở cả zalo_personal lẫn telegram_bot.
+  * chốt chặn nằm SAU khối nhật ký ở cả zalo_personal lẫn telegram_bot;
+  * người dùng nêu đích danh kênh thì câu của họ thắng giá trị model đoán
+    (lỗi gửi nhầm kênh 05/08 13:12).
 """
 from __future__ import annotations
 
@@ -118,6 +120,39 @@ class ChuanHoaConfigTests(unittest.TestCase):
                          {NHOM: True})
         self.assertEqual(chuan(None), {})
         self.assertEqual(chuan("bậy"), {})
+
+
+
+class KenhNguoiDungNeuThangTests(unittest.TestCase):
+    """Người dùng nêu đích danh kênh thì câu của họ THẮNG giá trị model đoán.
+
+    Đo thật 05/08 13:12 — chủ máy gõ "bằng zalo cá nhân" (mã `zalop`) mà tool
+    nhận platform='zalo' (Zalo Bot) nên tra nhầm danh bạ, trả về
+    "«8845089824387263227» không thấy trong danh bạ kênh zalo". Bản cũ chỉ hỏi
+    "người dùng CÓ nêu kênh không" (để bỏ platform khi họ không nêu), không hề
+    đối chiếu model ánh xạ có ĐÚNG kênh họ nêu hay không.
+    """
+
+    def test_nhan_dung_kenh_tu_cau_noi(self):
+        from services.agent.capabilities import _kenh_nguoi_dung_neu as f
+
+        for cau, mong in (
+                ("gửi vào nhóm homeassistant bằng zalo cá nhân", "zalop"),
+                ("gui bang zalo ca nhan", "zalop"),
+                ("gửi cho mẹ bằng zalo bot", "zalo"),
+                ("gửi qua oa", "zalo"),
+                ("nhắn qua telegram cho anh A", "tg"),
+                # Mập mờ → trả "" để giữ nguyên giá trị model, không đoán bừa.
+                ("gửi bằng zalo", ""),
+                ("gửi cho mẹ", ""),
+                ("", "")):
+            self.assertEqual(f(cau.lower()), mong, cau)
+
+    def test_zalo_ca_nhan_khong_bi_doc_thanh_zalo_bot(self):
+        """"zalo cá nhân" chứa cả 'zalo' — thứ tự xét phải cho 'cá nhân' thắng."""
+        from services.agent.capabilities import _kenh_nguoi_dung_neu as f
+
+        self.assertEqual(f("bằng zalo cá nhân"), "zalop")
 
 
 if __name__ == "__main__":

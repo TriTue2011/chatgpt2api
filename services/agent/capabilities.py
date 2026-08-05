@@ -2354,6 +2354,25 @@ def _admin_recipient(platform: str, ctx: dict) -> dict | None:
     return None
 
 
+def _kenh_nguoi_dung_neu(s: str) -> str:
+    """Câu của NGƯỜI nêu đích danh kênh nào? "" = không nêu / không rõ.
+
+    Cùng bảng ánh xạ với mô tả tham số `platform` của `send_to_contact`:
+    'cá nhân' → zalop, 'bot'/'oa' → zalo, 'telegram' → tg. Thứ tự xét quan
+    trọng: "zalo cá nhân" chứa cả 'zalo' lẫn 'cá nhân' nên phải hỏi 'cá nhân'
+    TRƯỚC. Chữ 'zalo' trơ trọi thì mập mờ — trả "" để giữ nguyên giá trị model.
+    """
+    if not s:
+        return ""
+    if "cá nhân" in s or "ca nhan" in s or re.search(r"\bzalop\b", s):
+        return "zalop"
+    if re.search(r"\b(bot|oa)\b", s):
+        return "zalo"
+    if re.search(r"\b(telegram|tele|tg)\b", s):
+        return "tg"
+    return ""
+
+
 def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     """Gửi tin tới contact đã lưu — TÁCH nhiều người theo dấu phẩy, LỌC theo
     đúng kênh đang dùng (không quét cả 3 kênh), hỗ trợ tg/zalo/zalop."""
@@ -2373,6 +2392,18 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     platform = str(args.get("platform") or "").strip().lower()
     if platform in ("telegram", "tele"):
         platform = "tg"
+    # Người dùng NÊU ĐÍCH DANH kênh nào thì câu của họ THẮNG giá trị model đoán.
+    #
+    # Đo thật 05/08 13:12 — chủ máy gõ "bằng zalo cá nhân" (mã `zalop`) mà tool
+    # nhận platform='zalo' (Zalo Bot), nên đi tra nhầm danh bạ rồi trả
+    # "«8845089824387263227» không thấy trong danh bạ kênh zalo". Bản cũ chỉ hỏi
+    # "người dùng CÓ nêu kênh không" để bỏ platform khi họ không nêu — không hề
+    # đối chiếu xem model ánh xạ ĐÚNG kênh nào họ nêu.
+    _kenh_noi = _kenh_nguoi_dung_neu(str((ctx or {}).get("user_message") or "").lower())
+    if _kenh_noi and _kenh_noi != platform:
+        logger.info({"event": "send_to_contact_sua_kenh",
+                     "model_doan": platform or "(trống)", "nguoi_neu": _kenh_noi})
+        platform = _kenh_noi
     # KÊNH đang dùng (từ user_id: zalop_/zalo_/tg) — chốt phạm vi danh bạ để
     # không khớp nhầm thread_id của kênh khác, không gửi lộn sang kênh khác.
     if not platform:
@@ -2453,6 +2484,11 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         or re.search(r"\b(" + "|".join(_CH_WORDS) + r")\b", user_raw) is not None
     )
 
+    # Model ánh xạ sai kênh thì câu của người dùng thắng (xem chú thích ở chỗ
+    # tính `platform` phía trên) — nếu không, `search_platforms` vẫn đi tra
+    # nhầm danh bạ dù `platform` đã được sửa.
+    if _kenh_noi and _kenh_noi != _ap:
+        _ap = _kenh_noi
     if _ap and user_raw and not user_mentioned_channel:
         explicit_platform = ""
     else:
