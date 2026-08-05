@@ -106,10 +106,18 @@ def save_account(email: str, password: str, totp_secret: str = "", label: str = 
 
 def delete_account(email: str) -> bool:
     c = _conn()
-    c.execute("DELETE FROM accounts WHERE email = ?", (email,))
-    deleted = c.rowcount > 0
-    c.commit()
-    c.close()
+    # `rowcount` nằm trên CON TRỎ, không nằm trên kết nối. Bản cũ đọc
+    # `c.rowcount` nên ném AttributeError ngay TRƯỚC `c.commit()` — lệnh xoá
+    # không bao giờ được ghi xuống, tài khoản vẫn nguyên trong kho rồi lần đồng
+    # bộ sau lại nạp về, trông y như hệ thống "tự thêm tài khoản free".
+    # Đo trên máy chủ 05/08: xoá smarthomebenbap@gmail.com trả HTTP 500, tới
+    # 19:06 tài khoản đó xuất hiện lại với "Thêm 1 free".
+    try:
+        cur = c.execute("DELETE FROM accounts WHERE email = ?", (email,))
+        deleted = cur.rowcount > 0
+        c.commit()
+    finally:
+        c.close()
     return deleted
 
 
