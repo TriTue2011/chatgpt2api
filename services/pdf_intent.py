@@ -344,7 +344,10 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
     shown = 0
     for code in INTENT_ORDER:
         if code in intents:
-            lines.append(f"{n}️⃣ {catalog[code]}")
+            # "1." chứ không phải keycap "1️⃣": Zalo dựng keycap bằng font khác,
+            # chủ máy thấy ô vuông vỡ phông (ảnh chụp 05/08 10:48). Cùng một kiểu
+            # đánh số với `ask_choices.format_numbered` cho mọi menu.
+            lines.append(f"{n}. {catalog[code]}")
             n += 1
             shown += 1
     if not shown:

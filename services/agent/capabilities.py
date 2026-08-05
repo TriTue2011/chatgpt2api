@@ -2539,9 +2539,20 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         bl = f" · bot {c['bot_label']}" if c["bot_label"] else ""
         return f"{c['name'] or c['chat_id']} ({kind}, {ch}{bl})"
 
+    def _label_nut(c: dict) -> str:
+        """Nhãn NÚT CHỌN. `ask_choices` cắt ở 40 ký tự nên xếp thứ quan trọng
+        lên trước: kênh (thứ phân biệt chính) → loại → tên → bot. `_label` để
+        tên trước nên các ứng viên trùng tên bị cắt mất đúng phần khác nhau."""
+        kind = "nhóm" if c["kind"] == "group" else "riêng"
+        ch = _CH_LABEL.get(c["platform"], c["platform"])
+        bl = f" ({c['bot_label']})" if c["bot_label"] else ""
+        return f"{ch} · {kind} · {c['name'] or c['chat_id']}{bl}"
+
     sent: list[str] = []
     failed: list[str] = []
     ambiguous: list[str] = []
+    # (ref, ứng viên) của các ref còn mập mờ — để dựng DANH SÁCH ĐÁNH SỐ ở cuối.
+    mo_ho: list[tuple[str, list[dict]]] = []
     resolved: list[dict] = []
     for ref in refs:
         cands = _cands(ref)
@@ -2555,6 +2566,7 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
                 ambiguous.append(
                     f"«{ref}» chưa nêu rõ kênh gửi (Zalo cá nhân / Zalo bot / Telegram) — nói rõ giúp em: {opts}"
                 )
+                mo_ho.append((ref, list(show[:7])))
                 continue
         # Chắc chắn: đúng MỘT mục khớp chính xác → gửi (hoặc chỉ ghi nhận khi resolve_only).
         if len(exact) == 1:
@@ -2586,6 +2598,7 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
         why = " / ".join(reasons) or "chưa đủ chắc chắn"
         opts = "; ".join(_label(c) for c in show[:8])
         ambiguous.append(f"«{ref}» {why} — nói rõ giúp em: {opts}")
+        mo_ho.append((ref, list(show[:7])))
 
     # resolve_only: trả kết quả tra cho caller (vd _h_schedule) tự quyết — hỏi
     # lại khi mập mờ/thiếu, hay đặt lịch khi đã rõ. KHÔNG gửi gì ở đây.
@@ -2599,6 +2612,31 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
             "text": ("❓ " + "; ".join(_bits)) if _bits else "",
         }
 
+    # Vướng ĐÚNG MỘT người nhận, chưa gửi được gì → hỏi bằng DANH SÁCH ĐÁNH SỐ.
+    #
+    # Yêu cầu 05/08: "những cái nào có lựa chọn sẵn thì danh sách đánh số để lựa
+    # chọn, còn cần user đánh thì mới không đưa ra lựa chọn". Ứng viên là tập
+    # HỮU HẠN đã tra được, nên không có cớ gì bắt người dùng gõ lại tên kênh.
+    #
+    # Bản cũ trả một câu văn "«X» có ở nhiều kênh — nói rõ giúp em: A; B; C":
+    # người dùng phải tự gõ, mà model thì hay đoán bừa kênh. Khối <<<ASK>>> do
+    # CODE dựng nên mỗi ứng viên là một số bấm được — cùng khuôn `_ask_chon_loa`.
+    #
+    # Chỉ làm khi vướng một ref: nhiều người nhận cùng mập mờ thì một danh sách
+    # không nói được đang chọn cho ai, để nguyên câu liệt kê cũ.
+    if len(mo_ho) == 1 and not sent and not failed:
+        _ref, _rows = mo_ho[0]
+        _dong = [f"❓ «{_ref}» có mấy chỗ trùng tên, gửi vào chỗ nào ạ?", "<<<ASK>>>"]
+        # `_mot_dong`: menu bóc THEO TỪNG DÒNG, tin nhắn nhiều dòng sẽ vỡ thành
+        # nhiều lựa chọn rác và đẩy các ứng viên thật ra khỏi danh sách 8 mục.
+        _noi_dung_1_dong = _mot_dong(message)
+        for c in _rows:
+            _dong.append(f"{_label_nut(c)} | gửi tin cho chat_id {c['chat_id']} "
+                         f"qua kênh {c['platform']} nội dung: {_noi_dung_1_dong}")
+        _dong.append("Thôi, không gửi nữa | thôi không gửi tin đó nữa")
+        _dong.append("<<<END>>>")
+        return {"text": "\n".join(_dong)}
+
     parts = []
     if sent:
         parts.append(f"✅ Đã gửi: {', '.join(sent)}")
@@ -2609,6 +2647,40 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     if not parts:
         return {"text": f"Không gửi được `{raw_ref}`. Dùng contacts op=list."}
     return {"text": "\n".join(parts)}
+
+
+def _h_cai_dat_cau_duyet(args: dict, ctx: dict) -> dict:
+    """Đổi CÁCH HIỆN câu xin duyệt khi gửi tin — dặn bằng lời là ăn ngay.
+
+    Đo thật 04/08 22:15–22:19: chủ máy dặn bốn lần "chỉ đưa ra lựa chọn, không
+    nhắc lại nội dung". Bot lưu vào bộ nhớ, hứa, rồi không đổi được gì — câu
+    duyệt do `approval_gate.format_proposal` dựng bằng code, còn bộ nhớ chỉ đi
+    vào prompt của model. Ghi nhớ một điều mình không làm được thì tệ hơn không
+    nhớ, nên chỗ này biến lời dặn thành CÀI ĐẶT thật.
+
+    risk=READ (không qua cổng duyệt): tool này chỉ đổi cách hỏi một câu, không
+    gửi gì ra ngoài, không đụng dữ liệu — bắt duyệt để đổi cách duyệt đúng là
+    thứ ồn ào mà chủ máy đang phàn nàn. Việc GỬI vẫn phải duyệt như cũ, và audit
+    log vẫn ghi đủ người nhận + nội dung dù câu duyệt có hiện hay không.
+    """
+    from services.agent import approval_gate as _ag
+
+    raw = args.get("hien_noi_dung")
+    if raw is None:
+        dang = _ag.hien_noi_dung_gui_tin()
+        return {"text": ("Câu duyệt gửi tin đang hiện cả người nhận và nội dung ạ."
+                         if dang else
+                         "Câu duyệt gửi tin đang chỉ đưa ba lựa chọn thôi ạ.")}
+    # Model hay trả chuỗi "false" — bool("false") là True, nên phải xét chuỗi.
+    if isinstance(raw, str):
+        bat = raw.strip().lower() not in (
+            "false", "0", "no", "khong", "không", "tat", "tắt", "an", "ẩn")
+    else:
+        bat = bool(raw)
+    _ag.dat_hien_noi_dung_gui_tin(bat)
+    return {"text": ("Dạ từ giờ lúc xin duyệt gửi tin em hiện cả người nhận và "
+                     "nội dung ạ 🧾" if bat else
+                     "Dạ từ giờ lúc xin duyệt gửi tin em chỉ đưa ba lựa chọn thôi ạ 🧾")}
 
 
 _MEDIA_EXT = {
@@ -4806,8 +4878,14 @@ CAPABILITIES: dict[str, Capability] = {
             "(1) Bằng kênh gì (Zalo cá nhân / Zalo bot / Telegram) - "
             "(2) Đến người/nhóm nào - "
             "(3) Nội dung tin nhắn gì. "
-            "Nếu người dùng chưa nêu rõ gửi bằng kênh nào và đối tượng nhận có ở nhiều kênh (hoặc chưa chắc chắn), "
-            "BẮT BUỘC HỎI LẠI người dùng để xác nhận kênh trước khi gửi."
+            "ĐỦ CẢ 3 TRONG CÂU NGƯỜI DÙNG → GỌI TOOL NGAY. TUYỆT ĐỐI KHÔNG tự viết "
+            "câu xin duyệt ('duyệt không ạ?', 'anh/chị xác nhận nhé?') trước khi gọi: "
+            "gọi tool xong hệ thống TỰ hiện ba lựa chọn duyệt, tự hỏi thêm là bắt "
+            "người dùng xác nhận HAI lần cho một việc. "
+            "THIẾU yếu tố nào thì hỏi ĐÚNG yếu tố đó rồi gọi tool ngay khi đủ. "
+            "Riêng chuyện người nhận có ở nhiều kênh / trùng tên: CỨ GỌI TOOL, tool "
+            "tự liệt kê danh sách đánh số cho người dùng chọn — đừng tự đoán kênh, "
+            "cũng đừng tự hỏi bằng lời."
         ),
         parameters={"type": "object", "properties": {
             "to": {"type": "string", "description": "Alias / tên / chat_id"},
@@ -4820,6 +4898,21 @@ CAPABILITIES: dict[str, Capability] = {
             "image_url": {"type": "string", "description": "Link/đường dẫn ảnh cần gửi cho người/nhóm đó (message = chú thích)"},
             "mention_all": {"type": "boolean", "description": "true = TAG CẢ NHÓM (@All). Chỉ có tác dụng khi gửi vào NHÓM Zalo cá nhân. Dùng khi người dùng nói 'tag cả nhóm', 'nhắc mọi người', 'gọi cả nhà', 'thông báo cả nhóm'."}},
             "required": ["message"]}),
+    "cai_dat_cau_duyet": Capability(
+        name="cai_dat_cau_duyet", risk=READ, handler=_h_cai_dat_cau_duyet,
+        emoji="🧾", label="Cách hiện câu duyệt gửi tin",
+        description=(
+            "Đổi CÁCH HIỆN câu xin duyệt khi gửi tin cho người/nhóm khác. Dùng khi "
+            "người dùng dặn về CHÍNH câu hỏi duyệt đó: 'thêm nội dung vào câu lựa "
+            "chọn', 'hiện nội dung khi hỏi duyệt' → hien_noi_dung=true; 'chỉ đưa ra "
+            "lựa chọn', 'đừng nhắc lại nội dung' → hien_noi_dung=false. Hỏi đang "
+            "để kiểu nào thì gọi không kèm tham số. TUYỆT ĐỐI KHÔNG dùng `remember` "
+            "cho việc này: câu duyệt do hệ thống dựng, ghi nhớ không đổi được nó."
+        ),
+        parameters={"type": "object", "properties": {
+            "hien_noi_dung": {"type": "boolean",
+                              "description": "true = hiện người nhận + nội dung; "
+                                             "false = chỉ ba lựa chọn"}}}),
     "search_sgk": Capability(
         name="search_sgk", risk=READ, handler=_h_search_sgk,
         emoji="📗", label="Tìm SGK (lớp 1–12 · mọi môn)",
@@ -5154,6 +5247,7 @@ _CAP_GROUP: dict[str, str] = {
     # khả dụng qua _CORE_TOOLS (schema + dispatch + persona).
     "expand_tool_result": "memory",
     "contacts": "contacts", "send_to_contact": "contacts",
+    "cai_dat_cau_duyet": "contacts",
     "office_files": "office", "office_create": "office",
     "office_view": "office", "office_query": "office",
     "office_add": "office", "office_set": "office",

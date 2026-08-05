@@ -53,10 +53,10 @@ def test_ask_text_respects_filter():
     assert "Phân tích" in t
     assert "Tạo ảnh" in t
     assert "kiến thức" not in t.lower() or "RAG kiến thức" not in t
-    # numbered 1,2 only
-    assert "1️⃣" in t
-    assert "2️⃣" in t
-    assert "3️⃣" not in t
+    # numbered 1,2 only — kiểu "1." (keycap "1️⃣" vỡ phông Zalo, ảnh 05/08 10:48)
+    assert "1. " in t
+    assert "2. " in t
+    assert "3. " not in t
 
 
 def test_pending_stages(tmp_path=None):

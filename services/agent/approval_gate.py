@@ -16,6 +16,9 @@ Config (``agent_approval``)::
     auto_approve: list[str] — tool names always allowed for everyone
     gate_ha_fastpath: bool (default False) — if True, HA local control
         also pauses for approval (usually leave False for instant lights)
+    hien_noi_dung_gui_tin: bool (default False) — câu duyệt GỬI TIN có kèm
+        người nhận + nội dung không. Người dùng đổi bằng lời qua capability
+        ``cai_dat_cau_duyet``; xem `format_proposal`.
 """
 
 from __future__ import annotations
@@ -92,6 +95,23 @@ def auto_approve_names() -> set[str]:
 
 def gate_ha_fastpath() -> bool:
     return bool(_cfg().get("gate_ha_fastpath", False))
+
+
+def hien_noi_dung_gui_tin() -> bool:
+    """Câu duyệt GỬI TIN có kèm người nhận + nội dung không? Mặc định KHÔNG."""
+    return bool(_cfg().get("hien_noi_dung_gui_tin", False))
+
+
+def dat_hien_noi_dung_gui_tin(bat: bool) -> bool:
+    """Ghi cài đặt vào config rồi trả về giá trị mới.
+
+    `config.update` chỉ trộn sâu cho providers, khoá khác bị THAY nguyên cụm —
+    nên phải chép `agent_approval` cũ ra rồi mới ghi, kẻo mất level/ttl/auto_approve.
+    """
+    cur = dict(_cfg())
+    cur["hien_noi_dung_gui_tin"] = bool(bat)
+    config.update({"agent_approval": cur})
+    return bool(bat)
 
 
 def always_confirm_names() -> set[str]:
@@ -226,7 +246,7 @@ def format_proposal(
     label: str = "",
 ) -> str:
     """User-facing approval prompt with ASK chips."""
-    if capability in _TOOL_CHI_LUA_CHON:
+    if capability in _TOOL_CHI_LUA_CHON and not hien_noi_dung_gui_tin():
         return _KHOI_ASK
     summary = summarize_action(capability, args, description)
     verb = (label or description or capability).split(".")[0]

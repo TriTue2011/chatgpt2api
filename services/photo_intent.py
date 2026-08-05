@@ -199,7 +199,8 @@ def ask_text(intents: set[str] | None = None) -> str:
     shown = 0
     for code in INTENT_ORDER:
         if code in intents:
-            lines.append(f"{n}️⃣ {catalog[code]}")
+            # "1." chứ không phải keycap "1️⃣" — xem chú thích ở `pdf_intent.ask_text`.
+            lines.append(f"{n}. {catalog[code]}")
             n += 1
             shown += 1
     if not shown:

@@ -21,11 +21,16 @@ Kèm theo là lỗi thứ hai trong chính đoạn chat đó: câu phàn nàn "K
 nội dung mà" bị tính là lời TỪ CHỐI (bắt đầu bằng "không") nên bot đáp "Dạ thôi
 em không làm ạ".
 
-File này khoá năm hành vi:
+File này khoá tám hành vi:
   * câu duyệt gửi tin CHỈ có ba lựa chọn — không mở lời, không người nhận,
     không nội dung;
   * ba kênh không chèn "..." lấp chỗ trống lên trên ba lựa chọn đó;
   * pending + audit vẫn giữ nội dung đầy đủ (tra lại được đã duyệt gửi cái gì);
+  * DẶN BẰNG LỜI đổi được cách hiện đó thật (capability `cai_dat_cau_duyet`),
+    không phải chỉ được "ghi nhớ" rồi thôi;
+  * người nhận trùng tên / nhiều kênh → hỏi bằng DANH SÁCH ĐÁNH SỐ bấm được,
+    không bắt người dùng gõ lại tên kênh;
+  * mọi menu đánh số MỘT kiểu "1. ", không dùng keycap "1️⃣" (vỡ phông Zalo);
   * lời duyệt phải là câu NGẮN — câu nói chuyện dài không bị tính là ok/thôi;
   * DÁN LẠI nguyên câu duyệt của bot không được tính là lời duyệt.
 """
@@ -35,9 +40,11 @@ import ast
 import pathlib
 import unicodedata
 import unittest
+from unittest import mock
 
 from services.agent import approval_gate as gate
 from services.agent import orchestrator as orch
+from services.config import config
 
 GOC = pathlib.Path(__file__).resolve().parents[1]
 
@@ -111,6 +118,148 @@ class CauDuyetGuiTinTests(unittest.TestCase):
         self.assertIn("50%", q)
         self.assertIn("Em định", q)
         self.assertIn("Anh/chị duyệt không ạ?", q)
+
+
+class DanBangLoiThiAnNgayTests(unittest.TestCase):
+    """Dặn bằng lời phải ĐỔI ĐƯỢC câu duyệt — không chỉ được "ghi nhớ" rồi thôi.
+
+    Yêu cầu 05/08: "thử làm yêu cầu 2 xem được không, nếu không được xây dựng
+    code cho được" — yêu cầu 2 là "từ giờ về sau thêm nội dung vào câu lựa chọn".
+    Trước đó bot chỉ lưu được vào bộ nhớ, mà bộ nhớ không chạm tới câu duyệt.
+    """
+
+    def _cau_duyet(self) -> str:
+        return gate.format_proposal(
+            "send_to_contact", {"to": NGUOI_NHAN, "message": NOI_DUNG},
+            label="Gửi tin cho người trong danh bạ (chọn bot)")
+
+    def test_bat_len_thi_cau_duyet_co_nguoi_nhan_va_noi_dung(self):
+        with mock.patch.dict(config.data,
+                             {"agent_approval": {"hien_noi_dung_gui_tin": True}}):
+            q = self._cau_duyet()
+        self.assertIn(NGUOI_NHAN, q)
+        self.assertIn(NOI_DUNG, q)
+        self.assertIn("Anh/chị duyệt không ạ?", q)
+
+    def test_mac_dinh_va_khi_tat_thi_van_chi_ba_lua_chon(self):
+        for cfg in ({}, {"hien_noi_dung_gui_tin": False}):
+            with mock.patch.dict(config.data, {"agent_approval": cfg}):
+                q = self._cau_duyet()
+            self.assertNotIn(NOI_DUNG, q, cfg)
+            self.assertNotIn(NGUOI_NHAN, q, cfg)
+
+    def test_ghi_cai_dat_khong_lam_mat_khoa_anh_em(self):
+        """`config.update` thay NGUYÊN CỤM agent_approval — đừng nuốt level/ttl."""
+        with mock.patch.dict(config.data,
+                             {"agent_approval": {"level": "supervised",
+                                                 "ttl_seconds": 900}}), \
+                mock.patch.object(config, "update") as ghi:
+            gate.dat_hien_noi_dung_gui_tin(True)
+        ghi.assert_called_once_with({"agent_approval": {
+            "level": "supervised", "ttl_seconds": 900,
+            "hien_noi_dung_gui_tin": True}})
+
+    def test_tool_doi_duoc_ca_hai_chieu(self):
+        from services.agent import capabilities as caps
+
+        cap = caps.get("cai_dat_cau_duyet")
+        self.assertIsNotNone(cap)
+        self.assertEqual(caps.group_of("cai_dat_cau_duyet"), "contacts")
+        for tham_so, mong in (({"hien_noi_dung": True}, True),
+                              ({"hien_noi_dung": False}, False),
+                              # Model hay trả CHUỖI — bool("false") là True.
+                              ({"hien_noi_dung": "false"}, False),
+                              ({"hien_noi_dung": "true"}, True)):
+            with mock.patch.object(gate, "dat_hien_noi_dung_gui_tin") as dat:
+                cap.handler(dict(tham_so), {})
+            dat.assert_called_once_with(mong)
+
+    def test_hoi_khong_kem_tham_so_thi_chi_bao_dang_de_kieu_nao(self):
+        from services.agent import capabilities as caps
+
+        with mock.patch.object(gate, "dat_hien_noi_dung_gui_tin") as dat, \
+                mock.patch.dict(config.data, {"agent_approval": {}}):
+            ra = caps.get("cai_dat_cau_duyet").handler({}, {})
+        dat.assert_not_called()
+        self.assertIn("ba lựa chọn", ra.get("text") or "")
+
+
+class HoiLaiPhaiCoDanhSachDanhSoTests(unittest.TestCase):
+    """Ứng viên là tập HỮU HẠN đã tra được → hỏi bằng danh sách đánh số.
+
+    Yêu cầu 05/08: "những cái nào có lựa chọn sẵn thì danh sách đánh số để lựa
+    chọn, còn cần user đánh thì mới không đưa ra lựa chọn theo kiểu đánh số".
+    Bản cũ trả một câu văn "«X» chưa nêu rõ kênh — nói rõ giúp em: A; B" bắt
+    người dùng gõ lại tên kênh.
+    """
+
+    def _goi(self, args: dict) -> dict:
+        from services import channel_contacts as cc
+        from services.agent import capabilities as caps
+
+        def _thu_muc(pf: str):
+            if pf == "zalop":
+                return [{"bot_id": "", "bot_label": "", "thread_id": "111",
+                         "kind": "group", "name": "homeassistant"}]
+            if pf == "tg":
+                return [{"bot_id": "222", "bot_label": "Bot Nhà", "thread_id": "333",
+                         "kind": "group", "name": "homeassistant"}]
+            return []
+
+        with mock.patch.object(cc, "resolve_alias", return_value=[]), \
+                mock.patch.object(cc, "list_directory", side_effect=_thu_muc):
+            return caps.get("send_to_contact").handler(
+                args, {"user_id": "zalop_9", "user_message": ""})
+
+    def test_trung_ten_nhieu_kenh_thi_ra_danh_sach_bam_duoc(self):
+        from services.agent import ask_choices
+
+        ra = self._goi({"to": NGUOI_NHAN, "message": NOI_DUNG})
+        loi, chon = ask_choices.extract(ra.get("text") or "")
+        self.assertGreaterEqual(len(chon), 2)
+        danh_sach = ask_choices.format_numbered(loi, chon)
+        self.assertIn("1. ", danh_sach)
+        self.assertIn("2. ", danh_sach)
+        self.assertIn("Zalo cá nhân", danh_sach)
+        self.assertIn("Telegram", danh_sach)
+        # Bấm số nào là gửi thẳng vào ĐÚNG chat đó, không hỏi lại kênh lần nữa.
+        self.assertTrue(any("111" in c["send"] for c in chon), chon)
+        self.assertTrue(any("thôi" in c["send"].lower() for c in chon), chon)
+
+    def test_khong_con_bat_nguoi_dung_go_lai_ten_kenh(self):
+        ra = self._goi({"to": NGUOI_NHAN, "message": NOI_DUNG})
+        self.assertNotIn("nói rõ giúp em", ra.get("text") or "")
+
+    def test_tin_nhieu_dong_khong_lam_vo_danh_sach(self):
+        """Menu bóc theo TỪNG DÒNG — tin xuống dòng sẽ đẻ ra lựa chọn rác."""
+        from services.agent import ask_choices
+
+        ra = self._goi({"to": NGUOI_NHAN, "message": "mai đi họp\n8h sáng nhé"})
+        _, chon = ask_choices.extract(ra.get("text") or "")
+        self.assertEqual(len(chon), 3, chon)
+        self.assertTrue(all("8h sáng nhé" not in c["label"] for c in chon), chon)
+
+
+class MenuDanhSoMotKieuTests(unittest.TestCase):
+    """Mọi menu đánh số theo MỘT kiểu: "1. ", không dùng keycap "1️⃣".
+
+    Ảnh chụp 05/08 10:48 — menu PDF trên Zalo hiện ô vuông vỡ phông ở chỗ số,
+    vì keycap là ký tự ghép Zalo dựng bằng font khác. `ask_choices` vốn đã dùng
+    "1. " nên quy hết về kiểu đó.
+    """
+
+    def test_khong_con_keycap_trong_menu(self):
+        for ten in ("pdf_intent.py", "photo_intent.py"):
+            src = (GOC / "services" / ten).read_text("utf-8")
+            self.assertNotIn('{n}️⃣', src, ten)
+
+    def test_menu_pdf_danh_so_bang_dau_cham(self):
+        from services import pdf_intent as pi
+
+        t = pi.ask_text("a.pdf", {pi.WORD, pi.EXCEL})
+        self.assertIn("1. ", t)
+        self.assertIn("2. ", t)
+        self.assertNotIn("️⃣", t)
 
 
 class LoiDuyetPhaiNganTests(unittest.TestCase):

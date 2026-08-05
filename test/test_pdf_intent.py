@@ -27,8 +27,9 @@ class CostNoteTests(unittest.TestCase):
         self.assertIn("⚠️", msg)
         self.assertIn("38 trang", msg)
         self.assertIn("38 lượt", msg)   # số lượt gọi vision = số trang OCR
-        # Vẫn giữ nguyên câu hỏi 1/2 phía trên.
-        self.assertIn("1️⃣", msg)
+        # Vẫn giữ nguyên câu hỏi 1/2 phía trên. Đánh số kiểu "1." — keycap "1️⃣"
+        # vỡ phông trên Zalo (ảnh chụp 05/08 10:48), xem `pdf_intent.ask_text`.
+        self.assertIn("1. ", msg)
 
     def test_over_cap_mentions_first_pages_only(self) -> None:
         msg = pi.ask_text("a.pdf", {pi.RAG_KNOWLEDGE},
