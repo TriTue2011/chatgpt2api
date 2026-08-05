@@ -98,6 +98,11 @@ class ThuMucTheoLoaiTests(unittest.TestCase):
             with self.subTest(ten=ten):
                 self.assertEqual(lt.thu_muc_loai(ten), mong)
 
+    def test_anh_co_thu_muc_rieng(self):
+        for ten in ("hinh.jpg", "chup.PNG", "cu.heic", "dong.gif"):
+            with self.subTest(ten=ten):
+                self.assertEqual(lt.thu_muc_loai(ten), "Ảnh")
+
     def test_loai_la_thi_vao_khac(self):
         self.assertEqual(lt.thu_muc_loai("ghi-am.mp3"), "Khác")
 
@@ -179,12 +184,46 @@ class HanGiuVaGioDongBoTests(unittest.TestCase):
 
     def test_han_giu_am_thi_ve_khong(self):
         lt.config = _CauHinhGia({"luu_tru_online": {
-            "zalop": {"enabled": True, "kho": "d", "giu_ngay": -5}}})
-        self.assertEqual(lt.cai_dat("zalop", "n")["giu_ngay"], 0)
+            "zalop": {"enabled": True, "kho": "d", "giu_ngay": {"PDF": -5}}}})
+        self.assertEqual(lt.cai_dat("zalop", "n")["giu_ngay"]["PDF"], 0)
 
     def test_han_giu_online_mac_dinh_dai_hon_cuc_bo(self):
         """Cục bộ 30 ngày; online phải dài hơn, không thì đám mây vô nghĩa."""
         self.assertGreater(lt.MAC_DINH_GIU_NGAY, 30)
+
+
+class HanGiuTachTheoMucTests(unittest.TestCase):
+    """Hạn giữ online đặt RIÊNG từng mục — ảnh có thể giữ ngắn, nhật ký giữ dài."""
+
+    def setUp(self):
+        self._goc = _gan({"luu_tru_online": {"zalop": {
+            "enabled": True, "kho": "drive",
+            "giu_ngay": {"PDF": 400, "Ảnh": 60, "Nhật ký": 730}}}})
+
+    def tearDown(self):
+        lt.config = self._goc
+
+    def test_moi_muc_lay_dung_han_cua_no(self):
+        cd = lt.cai_dat("zalop", "n")
+        self.assertEqual(lt.han_giu(cd, "a.pdf"), 400)
+        self.assertEqual(lt.han_giu(cd, "hinh.jpg"), 60)
+        self.assertEqual(lt.han_giu(cd, "2026-08.jsonl", nhat_ky=True), 730)
+
+    def test_muc_khong_khai_thi_ve_mac_dinh(self):
+        self.assertEqual(lt.han_giu(lt.cai_dat("zalop", "n"), "a.docx"),
+                         lt.MAC_DINH_GIU_NGAY)
+
+    def test_du_moi_muc_trong_ket_qua(self):
+        giu = lt.cai_dat("zalop", "n")["giu_ngay"]
+        for m in lt.CAC_MUC:
+            self.assertIn(m, giu)
+
+    def test_cau_hinh_dang_cu_mot_so_van_hieu(self):
+        """Cấu hình viết trước lúc tách mục: một số = mọi mục cùng hạn đó."""
+        lt.config = _CauHinhGia({"luu_tru_online": {
+            "zalop": {"enabled": True, "kho": "d", "giu_ngay": 90}}})
+        giu = lt.cai_dat("zalop", "n")["giu_ngay"]
+        self.assertEqual(set(giu.values()), {90})
 
 
 if __name__ == "__main__":

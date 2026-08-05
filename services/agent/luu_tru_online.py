@@ -33,18 +33,27 @@ from utils.log import logger
 # Hạn giữ online mặc định: dài hơn hạn cục bộ (30 ngày của images) để đám mây
 # thật sự là nơi giữ lâu, chứ không phải bản sao hết hạn cùng lúc.
 MAC_DINH_GIU_NGAY = 365
+# Giờ đồng bộ CHỈ áp cho nhật ký, chạy hằng ngày. Tệp thì đã hỏi admin ngay lúc
+# nhận nên không cần đồng bộ theo giờ — chủ máy chốt 05/08.
 MAC_DINH_GIO_DONG_BO = "03:00"   # giờ thấp điểm, không đụng lúc nhà đang dùng
 
-# Mỗi loại một thư mục con — chủ máy nêu rõ: "mỗi mục PDF, word, excel,
-# powerpoint, nhật ký thì lại tạo 1 folder riêng, để khi tìm kiếm cũng dễ".
+# Mỗi mục một thư mục con, KHÔNG lưu chung — chủ máy nêu rõ "để khi tìm kiếm
+# cũng dễ". Hạn giữ online cũng chia theo đúng các mục này.
 THU_MUC_THEO_LOAI: dict[str, str] = {
     ".pdf": "PDF",
     ".doc": "Word", ".docx": "Word",
     ".xls": "Excel", ".xlsx": "Excel",
     ".ppt": "PowerPoint", ".pptx": "PowerPoint",
+    ".jpg": "Ảnh", ".jpeg": "Ảnh", ".png": "Ảnh", ".gif": "Ảnh",
+    ".webp": "Ảnh", ".heic": "Ảnh", ".bmp": "Ảnh", ".tif": "Ảnh", ".tiff": "Ảnh",
 }
 THU_MUC_NHAT_KY = "Nhật ký"
 THU_MUC_KHAC = "Khác"
+
+#: Mọi mục có thể đặt hạn giữ riêng. Giao diện dựng ô nhập từ danh sách này nên
+#: thêm mục mới ở đây là giao diện có ngay, không phải sửa hai chỗ.
+CAC_MUC: tuple[str, ...] = ("PDF", "Word", "Excel", "PowerPoint",
+                            THU_MUC_NHAT_KY, "Ảnh", THU_MUC_KHAC)
 
 
 def thu_muc_loai(ten_tep: str) -> str:
@@ -83,6 +92,18 @@ def _so_ngay(v: Any, mac_dinh: int) -> int:
     return max(0, n)
 
 
+def _giu_ngay(v: Any) -> dict[str, int]:
+    """Hạn giữ online tách RIÊNG theo từng mục — {'PDF': 365, 'Ảnh': 90, …}.
+
+    Nhận cả một SỐ đơn: đó là dạng cũ, hiểu là "mọi mục cùng hạn này". Giữ lại
+    để cấu hình viết trước lúc tách mục không im lặng rơi về mặc định.
+    """
+    if isinstance(v, dict):
+        return {m: _so_ngay(v.get(m), MAC_DINH_GIU_NGAY) for m in CAC_MUC}
+    chung = _so_ngay(v, MAC_DINH_GIU_NGAY)
+    return {m: chung for m in CAC_MUC}
+
+
 _GIO_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
@@ -104,7 +125,7 @@ def cai_dat(kenh: str, chat: str = "", topic: str = "", user: str = "") -> dict:
     mây rồi mới nhận được lệnh xoá.
     """
     mac_dinh = {"enabled": False, "kho": "", "thu_muc": "",
-                "hoi_truoc": True, "giu_ngay": MAC_DINH_GIU_NGAY,
+                "hoi_truoc": True, "giu_ngay": _giu_ngay(None),
                 "gio_dong_bo": MAC_DINH_GIO_DONG_BO}
     try:
         cfg = config.get().get("luu_tru_online")
@@ -123,10 +144,19 @@ def cai_dat(kenh: str, chat: str = "", topic: str = "", user: str = "") -> dict:
             "kho": kho,
             "thu_muc": str(v.get("thu_muc") or "").strip().strip("/"),
             "hoi_truoc": bool(v.get("hoi_truoc", True)),
-            "giu_ngay": _so_ngay(v.get("giu_ngay"), MAC_DINH_GIU_NGAY),
+            "giu_ngay": _giu_ngay(v.get("giu_ngay")),
             "gio_dong_bo": _gio(v.get("gio_dong_bo")),
         }
     return mac_dinh
+
+
+def han_giu(cd: dict, ten_tep: str = "", *, nhat_ky: bool = False) -> int:
+    """Hạn giữ online (ngày) của ĐÚNG mục mà tệp này thuộc về. 0 = giữ mãi."""
+    muc = THU_MUC_NHAT_KY if nhat_ky else thu_muc_loai(ten_tep)
+    giu = (cd or {}).get("giu_ngay")
+    if isinstance(giu, dict):
+        return _so_ngay(giu.get(muc), MAC_DINH_GIU_NGAY)
+    return _so_ngay(giu, MAC_DINH_GIU_NGAY)
 
 
 def duong_dan_dich(cd: dict, ten_tep: str, *, nhat_ky: bool = False) -> str:
