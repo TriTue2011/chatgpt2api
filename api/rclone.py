@@ -40,6 +40,34 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=400, detail={"error": kq.get("error")})
         return kq
 
+    @router.post("/drive/start")
+    def drive_start(payload: dict[str, Any],
+                    authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Dựng đường dẫn cấp quyền Google Drive để người dùng bấm vào."""
+        require_admin(authorization)
+        kq = rc.drive_duong_dan_dang_nhap(str(payload.get("client_id") or ""),
+                                          str(payload.get("scope") or "drive"))
+        if not kq.get("ok"):
+            raise HTTPException(status_code=400, detail={"error": kq.get("error")})
+        return kq
+
+    @router.post("/drive/exchange")
+    def drive_exchange(payload: dict[str, Any],
+                       authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Đổi mã cấp quyền lấy token rồi khai luôn kho Drive."""
+        require_admin(authorization)
+        kq = rc.drive_doi_ma_lay_token(
+            str(payload.get("ten") or ""),
+            str(payload.get("client_id") or ""),
+            str(payload.get("client_secret") or ""),
+            str(payload.get("redirect_url") or ""),
+            scope=str(payload.get("scope") or "drive"),
+            root_folder_id=str(payload.get("root_folder_id") or ""),
+        )
+        if not kq.get("ok"):
+            raise HTTPException(status_code=400, detail={"error": kq.get("error")})
+        return kq
+
     @router.post("/khoa-json")
     def luu_khoa_json(payload: dict[str, Any],
                       authorization: str | None = Header(None)) -> dict[str, Any]:

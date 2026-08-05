@@ -208,6 +208,97 @@ def dat_config(noi_dung: str) -> dict:
     return {"ok": True, "remotes": remotes()}
 
 
+# ── Đăng nhập Google Drive bằng đường dẫn (không cần dòng lệnh) ─────────────
+# Cùng lối với thẻ đăng nhập Codex: máy chủ dựng đường dẫn → người dùng cấp
+# quyền → dán lại đường dẫn đích chứa mã → máy chủ đổi lấy token. Kiểu dán lại
+# này tránh phải mở cổng gọi ngược công khai, hợp với máy chủ nằm sau NAT.
+#
+# Dùng mã ứng dụng RIÊNG của chủ máy chứ không dùng mã dùng chung của rclone:
+# rclone giấu khoá bí mật trong mã máy nên không lấy ra được, và mã dùng chung
+# hay bị Google chặn với thông báo "Access blocked: Rclone's request is invalid".
+
+_DRIVE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
+_DRIVE_TOKEN = "https://oauth2.googleapis.com/token"
+#: rclone nghe ở cổng này khi tự cấp quyền. Ta không nghe, nhưng vẫn phải khai
+#: đúng để khớp với mục "Authorized redirect URI" của ứng dụng Desktop.
+_DRIVE_REDIRECT = "http://127.0.0.1:53682/"
+
+
+def drive_duong_dan_dang_nhap(client_id: str, scope: str = "drive") -> dict:
+    """Dựng đường dẫn để người dùng bấm vào cấp quyền Google Drive."""
+    cid = str(client_id or "").strip()
+    if not cid:
+        return {"ok": False, "error": "Thiếu Client ID"}
+    from urllib.parse import urlencode
+    q = urlencode({
+        "client_id": cid,
+        "redirect_uri": _DRIVE_REDIRECT,
+        "response_type": "code",
+        "scope": f"https://www.googleapis.com/auth/{str(scope or 'drive').strip()}",
+        # offline + consent: BẮT BUỘC để Google trả refresh_token. Thiếu nó thì
+        # token hết hạn sau một giờ và kho ngừng chạy vào hôm sau.
+        "access_type": "offline",
+        "prompt": "consent",
+    })
+    return {"ok": True, "auth_url": f"{_DRIVE_AUTH}?{q}"}
+
+
+def _ma_tu_duong_dan(s: str) -> str:
+    """Lấy `code` từ đường dẫn người dùng dán lại. Dán thẳng mã cũng nhận."""
+    s = str(s or "").strip()
+    if not s:
+        return ""
+    if "code=" not in s:
+        return s          # người dùng dán thẳng mã, không phải cả đường dẫn
+    from urllib.parse import parse_qs, urlparse
+    return (parse_qs(urlparse(s).query).get("code") or [""])[0]
+
+
+def drive_doi_ma_lay_token(ten: str, client_id: str, client_secret: str,
+                           redirect_url: str, *, scope: str = "drive",
+                           root_folder_id: str = "") -> dict:
+    """Đổi mã cấp quyền lấy token rồi khai luôn remote Drive."""
+    if not _TEN_REMOTE.match(str(ten or "")):
+        return {"ok": False, "error": "Tên kho chỉ gồm chữ, số, dấu . _ -"}
+    ma = _ma_tu_duong_dan(redirect_url)
+    if not ma:
+        return {"ok": False, "error": "Không tìm thấy mã trong đường dẫn vừa dán"}
+    try:
+        from curl_cffi import requests
+        r = requests.post(_DRIVE_TOKEN, data={
+            "code": ma,
+            "client_id": str(client_id or "").strip(),
+            "client_secret": str(client_secret or "").strip(),
+            "redirect_uri": _DRIVE_REDIRECT,
+            "grant_type": "authorization_code",
+        }, timeout=60)
+    except Exception as exc:
+        return {"ok": False, "error": f"Không gọi được Google: {str(exc)[:150]}"}
+    if r.status_code != 200:
+        # Google trả lỗi rõ ràng ở đây (mã hết hạn, sai secret…) — đưa nguyên
+        # văn ra cho người dùng, đoán mò chỗ này rất mất thời gian.
+        return {"ok": False, "error": f"Google từ chối: {r.text[:200]}"}
+    tok = r.json()
+    if not tok.get("refresh_token"):
+        return {"ok": False, "error":
+                "Google không trả refresh_token — token sẽ hết hạn sau một giờ. "
+                "Hãy bấm lại nút đăng nhập và cấp quyền lại từ đầu."}
+    from datetime import datetime, timedelta, timezone
+    het_han = datetime.now(timezone.utc) + timedelta(
+        seconds=int(tok.get("expires_in") or 3600))
+    token_json = json.dumps({
+        "access_token": tok.get("access_token"),
+        "token_type": tok.get("token_type") or "Bearer",
+        "refresh_token": tok.get("refresh_token"),
+        "expiry": het_han.isoformat(),
+    })
+    tham_so = {"client_id": client_id, "client_secret": client_secret,
+               "token": token_json, "scope": scope}
+    if str(root_folder_id or "").strip():
+        tham_so["root_folder_id"] = root_folder_id
+    return tao_remote(ten, "drive", tham_so)
+
+
 def luu_khoa_json(ten: str, noi_dung: str) -> dict:
     """Lưu tệp khoá JSON của tài khoản dịch vụ, trả về đường dẫn để điền vào form.
 

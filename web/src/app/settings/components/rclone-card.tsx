@@ -60,9 +60,14 @@ const KHO: Record<string, {
     loai: "drive",
     ghiChu: "Drive CÁ NHÂN bắt buộc dùng token — không dùng được tài khoản dịch vụ. Google chặn ở tầng hạn mức: tài khoản dịch vụ không có dung lượng riêng, và ghi vào thư mục được chia sẻ trong «Drive của tôi» sẽ báo lỗi 403 storageQuotaExceeded dù đã cấp quyền chỉnh sửa. Tài khoản dịch vụ chỉ dùng được với Shared Drive của Google Workspace trả phí — có thì điền tệp khoá JSON và mã ổ chung ở dưới.",
     truong: [
-      { khoa: "token", nhan: "Token (dán nguyên chuỗi JSON)", biMat: true,
+      { khoa: "client_id", nhan: "Client ID", batBuoc: true,
+        goiY: "…apps.googleusercontent.com",
+        chuThich: "Google Cloud → Credentials → OAuth client ID → loại Desktop app." },
+      { khoa: "client_secret", nhan: "Client Secret", batBuoc: true, biMat: true,
+        chuThich: "Lấy cùng chỗ với Client ID." },
+      { khoa: "token", nhan: "Token (nếu đã có sẵn)", biMat: true,
         goiY: '{"access_token":"…","refresh_token":"…","expiry":"…"}',
-        chuThich: "Cách DUY NHẤT dùng được với Drive cá nhân." },
+        chuThich: "Bỏ trống nếu dùng nút «Đăng nhập Google» bên dưới." },
       { khoa: "root_folder_id", nhan: "Mã thư mục gốc", goiY: "1AbCdEf…",
         chuThich: "Lấy từ địa chỉ thư mục trên trình duyệt: .../folders/<mã này>" },
       { khoa: "scope", nhan: "Phạm vi quyền", macDinh: "drive",
@@ -340,6 +345,40 @@ export function RcloneCard() {
     } catch (e) { setThongBao(loi(e)); } finally { setBanRon(""); }
   };
 
+  // ── Đăng nhập Google Drive bằng đường dẫn, khỏi chạy dòng lệnh ─────────────
+  const [duongDanDangNhap, setDuongDanDangNhap] = useState("");
+  const [duongDanTraVe, setDuongDanTraVe] = useState("");
+
+  const batDauDangNhap = async () => {
+    setBanRon("dn");
+    try {
+      const { data } = await request.post("/api/rclone/drive/start",
+        { client_id: giaTri.client_id || "", scope: giaTri.scope || "drive" });
+      setDuongDanDangNhap(String(data?.auth_url || ""));
+      window.open(String(data?.auth_url || ""), "_blank", "noopener");
+      setThongBao("Cấp quyền xong, trình duyệt sẽ báo lỗi không mở được trang — "
+        + "đó là bình thường. Sao chép TOÀN BỘ đường dẫn trên thanh địa chỉ rồi dán vào ô bên dưới.");
+    } catch (e) { setThongBao(loi(e)); } finally { setBanRon(""); }
+  };
+
+  const hoanTatDangNhap = async () => {
+    setBanRon("dn2");
+    try {
+      await request.post("/api/rclone/drive/exchange", {
+        ten: tenMoi,
+        client_id: giaTri.client_id || "",
+        client_secret: giaTri.client_secret || "",
+        redirect_url: duongDanTraVe,
+        scope: giaTri.scope || "drive",
+        root_folder_id: giaTri.root_folder_id || "",
+      });
+      setThongBao(`Đã khai xong kho "${tenMoi}" bằng tài khoản Google vừa đăng nhập.`);
+      setTenMoi(""); setDuongDanDangNhap(""); setDuongDanTraVe("");
+      doiLoai(loaiMoi);
+      await napTrangThai();
+    } catch (e) { setThongBao(loi(e)); } finally { setBanRon(""); }
+  };
+
   const themRemote = async () => {
     setBanRon("them");
     try {
@@ -588,6 +627,40 @@ export function RcloneCard() {
                   </div>
                 ))}
               </div>
+
+              {/* Drive: đăng nhập bằng đường dẫn — không phải chạy dòng lệnh nào */}
+              {loaiMoi === "drive" ? (
+                <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3">
+                  <p className="text-xs font-medium">Đăng nhập bằng trình duyệt (không cần dòng lệnh)</p>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    Cần Client ID và Client Secret riêng: vào Google Cloud → APIs &amp; Services → Credentials →
+                    Create credentials → OAuth client ID → chọn <strong>Desktop app</strong>. Điền hai ô đó ở trên rồi bấm nút dưới đây.
+                  </p>
+                  <Button variant="outline" className="h-10 rounded-xl"
+                    onClick={() => void batDauDangNhap()}
+                    disabled={!giaTri.client_id || ban_ron === "dn"}>
+                    {ban_ron === "dn" ? <LoaderCircle className="size-4 animate-spin" /> : <Plug className="size-4" />}
+                    Đăng nhập Google
+                  </Button>
+                  {duongDanDangNhap ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-[var(--muted-foreground)]">
+                        Trang không mở? <a href={duongDanDangNhap} target="_blank" rel="noopener noreferrer"
+                          className="underline">bấm vào đây</a>. Cấp quyền xong, trình duyệt báo lỗi không kết nối được —
+                        đó là bình thường, cứ sao chép nguyên đường dẫn trên thanh địa chỉ.
+                      </p>
+                      <Input value={duongDanTraVe} onChange={(e) => setDuongDanTraVe(e.target.value)}
+                        placeholder="http://127.0.0.1:53682/?state=…&code=…"
+                        className="h-11 rounded-xl" />
+                      <Button className="h-10 rounded-xl" onClick={() => void hoanTatDangNhap()}
+                        disabled={!tenMoi.trim() || !duongDanTraVe.trim() || ban_ron === "dn2"}>
+                        {ban_ron === "dn2" ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                        Hoàn tất và tạo kho
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="flex flex-wrap items-center justify-end gap-3">
                 {thieuTruongBatBuoc.length ? (

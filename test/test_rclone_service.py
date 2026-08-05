@@ -106,6 +106,33 @@ class CheBiMatTests(unittest.TestCase):
         self.assertIn("provider = Cloudflare", ra)
         self.assertIn("region = auto", ra)
 
+    def test_duong_dan_dang_nhap_co_du_tham_so_song_con(self):
+        """Thiếu offline+consent thì Google không trả refresh_token, và kho chết
+        sau một giờ — lỗi chỉ lộ ra vào hôm sau nên phải khoá bằng test."""
+        kq = rc.drive_duong_dan_dang_nhap("abc.apps.googleusercontent.com")
+        self.assertTrue(kq["ok"])
+        u = kq["auth_url"]
+        self.assertIn("access_type=offline", u)
+        self.assertIn("prompt=consent", u)
+        self.assertIn("response_type=code", u)
+        self.assertIn("abc.apps.googleusercontent.com", u)
+
+    def test_thieu_client_id_thi_bao_ro(self):
+        self.assertFalse(rc.drive_duong_dan_dang_nhap("")["ok"])
+
+    def test_lay_ma_tu_duong_dan_dan_lai(self):
+        self.assertEqual(
+            rc._ma_tu_duong_dan("http://127.0.0.1:53682/?state=xyz&code=4/0AbC_dEf&scope=drive"),
+            "4/0AbC_dEf")
+
+    def test_dan_thang_ma_cung_nhan(self):
+        self.assertEqual(rc._ma_tu_duong_dan("4/0AbC_dEf"), "4/0AbC_dEf")
+
+    def test_ten_kho_khong_hop_le_thi_tu_choi_truoc_khi_goi_google(self):
+        kq = rc.drive_doi_ma_lay_token("a b;c", "id", "secret", "?code=x")
+        self.assertFalse(kq["ok"])
+        self.assertIn("Tên kho", kq["error"])
+
     def test_luu_khoa_json_dung_dinh_dang(self):
         kq = rc.luu_khoa_json("khoa cua toi.json", json.dumps({
             "type": "service_account", "client_email": "bot@duan.iam.gserviceaccount.com",
