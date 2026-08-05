@@ -1272,6 +1272,12 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # Nhóm KHÔNG bật Topics → _cur_topic() = None → đúng 2 cấp như trước.
     _allow = _caps.allowed_groups_for_member(
         "tg", _bot_id(), chat_id, user_id, _cur_topic()) if chat_id else None
+    # Chỉ người trong danh sách mới được giao tiếp (công tắc theo thread/topic) —
+    # xem `capabilities.duoc_giao_tiep`. Khác câu "được dùng chức năng nào".
+    # ĐẶT SAU khối nhật ký nhóm ở trên là CỐ Ý: chỉ không phản hồi, nhật ký vẫn ghi.
+    if chat_id and not _caps.duoc_giao_tiep(
+            "tg", _bot_id(), chat_id, user_id, _cur_topic()):
+        return
     # chat_ids đã bỏ trên UI — AI thường qua bộ lọc thread; admin luôn được phép
     allowed = [str(c) for c in _chat_ids()]
     # HAI câu hỏi khác nhau, đừng trộn:

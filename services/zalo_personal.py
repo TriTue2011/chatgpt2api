@@ -2076,6 +2076,14 @@ def _process_ai(ev: dict) -> None:
     # Admin = NƠI NHẬN THÔNG BÁO. Chức năng chat/AI của thread do LỌC THREAD quyết định:
     # admin KHÔNG thêm trong lọc (thread_filters) và không trong whitelist → im lặng,
     # chỉ nhận log. (Trước đây admin auto-permit — nay bỏ.)
+    # Chỉ người trong danh sách mới được giao tiếp (công tắc theo thread). Câu
+    # hỏi này KHÁC câu "được dùng chức năng nào": người bị lọc mà không tick
+    # nhóm nào thì quyền là tập RỖNG — vẫn khác None nên bot vẫn tán gẫu.
+    #
+    # ĐẶT SAU khối nhật ký nhóm ở trên là CỐ Ý: yêu cầu là "chỉ không phản hồi,
+    # nhưng nhật ký vẫn phải có". Ghi ≠ trả lời, cùng lý lẽ với cổng tag.
+    if not _caps.duoc_giao_tiep("zalop", acc_id, thread_id, _sender):
+        return  # im lặng, đúng như thread chưa được thêm vào Lọc thread
     permitted = (_allow is not None) or (thread_id in allowed_ids)
     if not permitted:
         if not _thread_admin:

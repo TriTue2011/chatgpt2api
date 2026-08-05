@@ -1704,6 +1704,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # - trong NHÓM: quyền = giao(nhóm, user) — tầng lọc User ID theo từng nhóm.
     from services.agent import capabilities as _caps
     _allow = _caps.allowed_groups_for_member("zalo", _bot_id(), chat_id, user_id) if chat_id else None
+    # Chỉ người trong danh sách mới được giao tiếp (công tắc theo thread) — xem
+    # `capabilities.duoc_giao_tiep`. Khác hẳn câu "được dùng chức năng nào".
+    if chat_id and not _caps.duoc_giao_tiep("zalo", _bot_id(), chat_id, user_id):
+        return
     allowed = [str(c) for c in _chat_ids()]
     # HAI câu hỏi khác nhau, đừng trộn:
     #   _thread_admin — chat này có phải NƠI NHẬN thông báo admin (của CHAT)

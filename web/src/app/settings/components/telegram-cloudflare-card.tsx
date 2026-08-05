@@ -639,6 +639,8 @@ export function TelegramCloudflareCard() {
   type TopicRow = {
     id: number; topicId: string; name?: string; groups: string[];
     users: UserRow[]; requireMention: boolean; mentionKeyword: string;
+    /** Chỉ người trong danh sách mới được giao tiếp (config thread_user_only) */
+    userOnly: boolean;
     forward: boolean; forwardUrl: string;
     aiModel: string; haFastpath: string;
   };
@@ -648,6 +650,8 @@ export function TelegramCloudflareCard() {
     id: number; botKey: string; chatId: string; kind: string; name?: string;
     groups: string[];
     users: UserRow[]; requireMention: boolean; mentionKeyword: string;
+    /** Chỉ người trong danh sách mới được giao tiếp (config thread_user_only) */
+    userOnly: boolean;
     forward: boolean; forwardUrl: string;
     /** Model riêng của thread này — trống = dùng model mặc định của bot/kênh */
     aiModel: string;
@@ -671,6 +675,7 @@ export function TelegramCloudflareCard() {
     const tf = (config as any)?.thread_filters as Record<string, string[]> | undefined;
     const tuf = (config as any)?.thread_user_filters as Record<string, string[]> | undefined;
     const tmf = (config as any)?.thread_mention_filters as Record<string, { required?: boolean; keyword?: string }> | undefined;
+    const tuo = (config as any)?.thread_user_only as Record<string, boolean> | undefined;
     const tff = (config as any)?.thread_forward_filters as Record<string, { enabled?: boolean; url?: string; tag_mode?: boolean }> | undefined;
     const tfMeta = (config as any)?.thread_filter_meta as Record<string, { kind?: string; name?: string }> | undefined;
     // Model riêng theo thread/user (backend: admin_workspace.thread_model_for)
@@ -708,7 +713,7 @@ export function TelegramCloudflareCard() {
         return {
           id: rowSeq.current++, botKey, chatId, kind: kindOf(key), name: nameOf(key),
           groups: Array.isArray(groups) ? groups : [], users: [],
-          requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+          requireMention: false, mentionKeyword: "", userOnly: false, forward: false, forwardUrl: "",
           aiModel: modelOf(key),
           haFastpath: fpOf(key),
           topics: [],
@@ -722,7 +727,7 @@ export function TelegramCloudflareCard() {
         r = {
           id: rowSeq.current++, botKey, chatId, kind: kindOf(k), name: nameOf(k),
           groups: [...FUNCTION_GROUPS.map(([gk]) => gk)], users: [],
-          requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+          requireMention: false, mentionKeyword: "", userOnly: false, forward: false, forwardUrl: "",
           aiModel: modelOf(k),
           haFastpath: fpOf(k),
           topics: [],
@@ -743,7 +748,7 @@ export function TelegramCloudflareCard() {
         t = {
           id: rowSeq.current++, topicId, name: nameOf(tk),
           groups: Array.isArray(tf?.[tk]) ? (tf as Record<string, string[]>)[tk] : [...r.groups],
-          users: [], requireMention: false, mentionKeyword: "",
+          users: [], requireMention: false, mentionKeyword: "", userOnly: false,
           forward: false, forwardUrl: "",
           aiModel: modelOf(tk), haFastpath: fpOf(tk),
         };
@@ -797,6 +802,14 @@ export function TelegramCloudflareCard() {
       const target = got.topic ?? got.row;
       target.requireMention = !!v?.required;
       target.mentionKeyword = String(v?.keyword || "");
+    }
+
+    // 2b. Chỉ-người-trong-danh-sách → gắn vào nhóm HOẶC topic
+    for (const [key, v] of Object.entries(tuo || {})) {
+      if (!v) continue;
+      const got = resolveKey(key);
+      if (!got) continue;
+      (got.topic ?? got.row).userOnly = true;
     }
 
     // 3. User filters: khóa '<parent>:<user>' (user cấp nhóm) hoặc
@@ -884,6 +897,7 @@ export function TelegramCloudflareCard() {
     const tf: Record<string, string[]> = {};
     const tuf: Record<string, string[]> = {};
     const tmf: Record<string, { required: boolean; keyword: string }> = {};
+    const tuo: Record<string, boolean> = {};
     const tff: Record<string, { enabled: boolean; url: string; tag_mode: boolean }> = {};
     const tfMeta: Record<string, { kind: string; name?: string }> = {};
     const tmodels: Record<string, string> = {};
@@ -912,6 +926,7 @@ export function TelegramCloudflareCard() {
       if (r.kind !== "user") {
         if (r.requireMention || r.mentionKeyword.trim())
           tmf[parent] = { required: r.requireMention, keyword: r.mentionKeyword.trim() };
+        if (r.userOnly) tuo[parent] = true;
         // Lớp user CẤP NHÓM (áp cho mọi topic chưa có bản ghi riêng cho user đó)
         // và lớp user TRONG TỪNG TOPIC — cùng một hàm ghi, chỉ khác tiền tố khóa.
         const writeUsers = (
@@ -952,6 +967,7 @@ export function TelegramCloudflareCard() {
           tfMeta[tkey] = { kind: "topic", ...(tpName ? { name: tpName } : {}) };
           if (t.requireMention || t.mentionKeyword.trim())
             tmf[tkey] = { required: t.requireMention, keyword: t.mentionKeyword.trim() };
+          if (t.userOnly) tuo[tkey] = true;
           const tUrl = t.forwardUrl.trim();
           if (t.forward || tUrl)
             tff[tkey] = { enabled: t.forward && !!tUrl, url: tUrl, tag_mode: false };
@@ -962,6 +978,7 @@ export function TelegramCloudflareCard() {
     setField("thread_filters", tf);
     setField("thread_user_filters", tuf);
     setField("thread_mention_filters", tmf);
+    setField("thread_user_only", tuo);
     setField("thread_forward_filters", tff);
     setField("thread_filter_meta", tfMeta);
     setField("thread_models", tmodels);
@@ -971,7 +988,7 @@ export function TelegramCloudflareCard() {
     commitFilters([...filterRows, {
       id: rowSeq.current++, botKey: tabFilterOptions[0]?.value || chTab,
       chatId: "", kind: "group", name: "", groups: [], users: [],
-      requireMention: false, mentionKeyword: "", forward: false, forwardUrl: "",
+      requireMention: false, mentionKeyword: "", userOnly: false, forward: false, forwardUrl: "",
       aiModel: "",
       haFastpath: "",
       topics: [],
@@ -1005,7 +1022,7 @@ export function TelegramCloudflareCard() {
             // nhiên cắt mất chức năng nào; user tự bỏ tick những gì không muốn.
             id: rowSeq.current++, topicId: "", name: "", groups: [...r.groups],
             users: [], requireMention: r.requireMention,
-            mentionKeyword: r.mentionKeyword,
+            mentionKeyword: r.mentionKeyword, userOnly: r.userOnly,
             forward: false, forwardUrl: "", aiModel: "", haFastpath: "",
           }],
         }
@@ -1811,6 +1828,15 @@ export function TelegramCloudflareCard() {
                     className="h-8 text-xs"
                   />
                 )}
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="size-3.5"
+                    checked={row.userOnly}
+                    onChange={() => setFilterField(row.id, { userOnly: !row.userOnly })}
+                  />
+                  🔒 Chỉ người trong danh sách mới được giao tiếp — ai không có tên bên dưới thì bot bỏ qua im lặng
+                </label>
               </div>
               )}
 
@@ -1962,6 +1988,15 @@ export function TelegramCloudflareCard() {
                           onChange={() => setTopicField(row.id, t.id, { requireMention: !t.requireMention })}
                         />
                         🏷️ Trong topic này: bắt buộc tag bot mới trả lời
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="size-3.5"
+                          checked={t.userOnly}
+                          onChange={() => setTopicField(row.id, t.id, { userOnly: !t.userOnly })}
+                        />
+                        🔒 Chỉ người trong danh sách mới được giao tiếp
                       </label>
                       {t.requireMention && (
                         <Input

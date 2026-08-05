@@ -5589,6 +5589,49 @@ def allowed_groups_for_member(platform: str, bot_id: str, chat_id: str,
     return group_allow & user_allow
 
 
+def chi_nguoi_trong_danh_sach(platform: str, bot_id: str, chat_id: str,
+                              topic_id: str | int | None = None) -> bool:
+    """Thread này có bật chế độ "chỉ người trong danh sách mới được giao tiếp"?
+
+    Config `thread_user_only`: khóa giống `thread_filters`
+    ('plat:bot:chat[#topic]' hoặc 'plat:chat[#topic]') → bool. Bản ghi của TOPIC
+    thắng bản ghi cả nhóm, đúng khuôn `mention_required_for`. Không cấu hình →
+    False = ai trong thread cũng nói được (hành vi xưa nay).
+    """
+    try:
+        from services.config import config
+        m = config.get().get("thread_user_only") or {}
+    except Exception:
+        return False
+    if not isinstance(m, dict):
+        return False
+    for k in _thread_keys(platform, bot_id, chat_id, topic_id):
+        if k in m:
+            return bool(m.get(k))
+    return False
+
+
+def duoc_giao_tiep(platform: str, bot_id: str, chat_id: str,
+                   user_id: str | int | None,
+                   topic_id: str | int | None = None) -> bool:
+    """Người này có được NÓI CHUYỆN với bot trong thread này không?
+
+    Tách hẳn khỏi `allowed_groups_for_member` — đó là câu hỏi "được dùng CHỨC
+    NĂNG nào", còn đây là "bot có nghe không". Trước đây hai câu bị gộp: người bị
+    lọc mà không tick nhóm nào thì quyền là tập RỖNG (khác None = chưa cấu
+    hình), nên bot vẫn tán gẫu bình thường, chỉ không gọi được tool — không có
+    cách nào bảo "trong nhóm này chỉ mấy người sau được nói chuyện".
+
+    Tắt công tắc (mặc định) → luôn True, mọi thread đang chạy giữ nguyên hành vi.
+    Bật → chỉ ai CÓ bản ghi trong `thread_user_filters` (ở bất kỳ cấp khóa nào)
+    mới qua; người lạ bị bot bỏ qua im lặng.
+    """
+    if not chi_nguoi_trong_danh_sach(platform, bot_id, chat_id, topic_id):
+        return True
+    return user_filter_for_bot(platform, bot_id, chat_id,
+                               str(user_id or ""), topic_id) is not None
+
+
 def mention_required_for(platform: str, bot_id: str, chat_id: str,
                          topic_id: str | int | None = None) -> tuple[bool, str]:
     """Thread có YÊU CẦU tag bot mới trả lời không? Đọc config `thread_mention_filters`

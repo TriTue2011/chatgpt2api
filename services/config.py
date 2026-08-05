@@ -360,6 +360,20 @@ def _normalize_thread_user_filters(value: object) -> dict[str, list[str]]:
     return _normalize_thread_filters(value)
 
 
+def _normalize_thread_user_only(value: object) -> dict[str, bool]:
+    """Chuẩn hóa `thread_user_only`: dict thread_key(str) -> bool.
+
+    True = thread đó CHỈ nghe những người có bản ghi trong `thread_user_filters`,
+    ai khác bot bỏ qua im lặng. Khóa rỗng và giá trị False bị loại luôn cho cấu
+    hình khỏi phình — không có bản ghi nghĩa là tắt, đúng mặc định."""
+    out: dict[str, bool] = {}
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str) and k.strip() and bool(v):
+                out[k.strip()] = True
+    return out
+
+
 def _normalize_thread_mention_filters(value: object) -> dict[str, dict]:
     """Chuẩn hóa `thread_mention_filters`: dict thread_key -> {required: bool,
     keyword: str}. Bỏ khóa rỗng; chấp nhận cả giá trị bool (cũ) → {required, ''}."""
@@ -1094,6 +1108,7 @@ class ConfigStore:
         data["thread_filters"] = _normalize_thread_filters(self.data.get("thread_filters"))
         data["thread_user_filters"] = _normalize_thread_user_filters(self.data.get("thread_user_filters"))
         data["thread_mention_filters"] = _normalize_thread_mention_filters(self.data.get("thread_mention_filters"))
+        data["thread_user_only"] = _normalize_thread_user_only(self.data.get("thread_user_only"))
         data["thread_forward_filters"] = _normalize_thread_forward_filters(self.data.get("thread_forward_filters"))
         data["channel_blacklist"] = _normalize_channel_blacklist(self.data.get("channel_blacklist"))
         data["telegram_bots"] = self.telegram_bots()
@@ -1151,6 +1166,8 @@ class ConfigStore:
                 next_data["thread_user_filters"] = _normalize_thread_user_filters(next_data.get("thread_user_filters"))
             if "thread_mention_filters" in next_data:
                 next_data["thread_mention_filters"] = _normalize_thread_mention_filters(next_data.get("thread_mention_filters"))
+            if "thread_user_only" in next_data:
+                next_data["thread_user_only"] = _normalize_thread_user_only(next_data.get("thread_user_only"))
             if "thread_forward_filters" in next_data:
                 next_data["thread_forward_filters"] = _normalize_thread_forward_filters(next_data.get("thread_forward_filters"))
             if "channel_blacklist" in next_data:
