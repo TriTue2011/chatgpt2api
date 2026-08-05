@@ -1268,7 +1268,7 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str, *, is_group: bool
 
 
 def _handle_pdf(chat_id: str, url: str, name: str = "",
-                allow: set[str] | None = None) -> None:
+                allow: set[str] | None = None, user_id: str = "") -> None:
     """Nhận PDF → RAG kiến thức / teacher (Zalo Bot KHÔNG gửi Word/Excel)."""
     from services import pdf_intent as _pi
     # Bỏ word/excel — API không sendDocument
@@ -1288,7 +1288,10 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
     if not data:
         send_message(chat_id, "📄 Không tải được file PDF.")
         return
-    info = _pi.set_pending(f"zalo:{_bot_id()}:{chat_id}", data, name or "document.pdf")
+    # Khoá phải khớp TỪNG CHỮ với `_pkey` chỗ đọc bản chờ — tạo một đằng tra một
+    # nẻo thì người dùng chọn số mãi không ra gì.
+    info = _pi.set_pending(f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}",
+                           data, name or "document.pdf")
     send_message(chat_id, _pi.ask_text(name or "PDF", intents, info))
 
 
@@ -1824,7 +1827,12 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
     # chờ theo từng người (chủ máy chốt 05/08).
     _pkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
-    if text and chat_id and _pi.has_pending(_pkey):
+    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi
+    if text and chat_id and _pi.has_pending(_pkey) and _la_moi(text):
+        # Yêu cầu MỚI thì đóng bản chờ cũ rồi để câu này đi tiếp bình
+        # thường — không nuốt câu của người dùng làm câu trả lời.
+        _pi.pop_pending(_pkey)
+    elif text and chat_id and _pi.has_pending(_pkey):
         _pend = _pi.get_pending(_pkey) or {}
         _full_allow = _pi.allowed_intents(_allow)
         if _pend.get("stage") == "teacher_meta":
@@ -1859,8 +1867,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
 
     # Ảnh chờ: menu 1–4 / hỏi prompt / teacher meta (giống Telegram)
     from services import photo_intent as _phi
-    _phkey = f"zalo:{_bot_id()}:{chat_id}"
-    if text and chat_id and _phi.has_pending(_phkey):
+    _phkey = f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}"
+    if text and chat_id and _phi.has_pending(_phkey) and _la_moi(text):
+        _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
+    elif text and chat_id and _phi.has_pending(_phkey):
         _pend = _phi.get_pending(_phkey) or {}
         _allowed_ph = _phi.allowed_intents(_allow)
         stage = str(_pend.get("stage") or "choose")
@@ -1927,7 +1937,7 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             if fp:
                 u = fp if str(fp).startswith("http") else f"{ZALO_API}/file/bot{_bot_token()}/{fp}"
         if u:
-            _handle_pdf(chat_id, str(u), file_name or "", _allow)
+            _handle_pdf(chat_id, str(u), file_name or "", _allow, user_id)
             return
         send_message(chat_id, "📄 Em thấy file PDF nhưng không lấy được đường tải, anh/chị gửi lại giúp em nhé.")
         return

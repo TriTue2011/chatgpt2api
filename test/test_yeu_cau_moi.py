@@ -63,15 +63,45 @@ class KhongNhanNhamCauTraLoiTests(unittest.TestCase):
                 self.assertFalse(la_moi(c))
 
 
-class ApVaoLuongZalopTests(unittest.TestCase):
-    """Cả hai nhánh chờ (tài liệu và ảnh) đều phải xét yêu cầu mới trước."""
+class ApChoCaBaKenhTests(unittest.TestCase):
+    """Cả ba kênh, cả hai nhánh chờ (tài liệu và ảnh) đều phải xét yêu cầu mới."""
 
-    def test_hai_nhanh_deu_dong_ban_cho_cu(self):
-        src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
-        self.assertIn("_la_moi_pdf(text)", src, "nhánh tài liệu chưa xét yêu cầu mới")
-        self.assertIn("_la_moi(text)", src, "nhánh ảnh chưa xét yêu cầu mới")
-        self.assertIn("_pi.pop_pending(pkey)", src)
-        self.assertIn("_phi.pop_pending_full(pkey)", src)
+    KENH = ("zalo_personal.py", "telegram_bot.py", "zalo_bot.py")
+
+    def _src(self, tep: str) -> str:
+        return (GOC / "services" / tep).read_text("utf-8")
+
+    def test_moi_kenh_deu_goi_bo_nhan_dien(self):
+        for tep in self.KENH:
+            with self.subTest(tep=tep):
+                self.assertIn("la_yeu_cau_moi", self._src(tep),
+                              f"{tep} chưa xét yêu cầu mới")
+
+    def test_moi_kenh_deu_dong_ca_hai_loai_ban_cho(self):
+        for tep in self.KENH:
+            with self.subTest(tep=tep):
+                s = self._src(tep)
+                self.assertIn("_pi.pop_pending(", s, f"{tep}: chưa đóng bản chờ tài liệu")
+                self.assertIn("_phi.pop_pending_full(", s, f"{tep}: chưa đóng bản chờ ảnh")
+
+
+class KhoaTaoVaTraPhaiKhopTests(unittest.TestCase):
+    """Khoá lúc TẠO bản chờ phải khớp từng chữ với khoá lúc ĐỌC.
+
+    Telegram và Zalo Bot viết tay khoá ở chỗ tạo thay vì dùng biến chung, nên khi
+    thêm người gửi vào khoá đọc mà quên chỗ tạo thì tạo một đằng tra một nẻo:
+    người dùng gửi tệp, chọn số, và không bao giờ ra gì.
+    """
+
+    def test_moi_khoa_ban_cho_deu_kem_nguoi_gui(self):
+        import re
+        for tep in ("telegram_bot.py", "zalo_bot.py"):
+            src = (GOC / "services" / tep).read_text("utf-8")
+            # Mọi chuỗi khoá bản chờ dạng f"tg:…" / f"zalo:…" có chat_id.
+            for m in re.finditer(r'f"(tg|zalo):\{_bot_id\(\)\}:\{chat_id\}[^"]*"', src):
+                with self.subTest(tep=tep, khoa=m.group(0)):
+                    self.assertIn("user_id", m.group(0),
+                                  f"{tep}: khoá bản chờ thiếu người gửi → lệch khoá")
 
 
 if __name__ == "__main__":
