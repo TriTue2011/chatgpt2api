@@ -2218,7 +2218,10 @@ def _process_ai(ev: dict) -> None:
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
-    if text and _pi.has_pending(pkey):
+    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi_pdf
+    if text and _pi.has_pending(pkey) and _la_moi_pdf(text):
+        _pi.pop_pending(pkey)   # yêu cầu mới → đóng bản chờ, đi tiếp bình thường
+    elif text and _pi.has_pending(pkey):
         _pend = _pi.get_pending(pkey) or {}
         _acc = str(ev.get("account_id") or "")
         _uid = str(ev.get("sender_id") or "")
@@ -2255,7 +2258,14 @@ def _process_ai(ev: dict) -> None:
     from services import photo_intent as _phi
     _acc = str(ev.get("account_id") or "")
     _uid = str(ev.get("sender_id") or "")
-    if text and _phi.has_pending(pkey):
+    from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi
+    if text and _phi.has_pending(pkey) and _la_moi(text):
+        # Yêu cầu MỚI thì đóng bản chờ cũ rồi để câu này đi tiếp như bình thường.
+        # Không đóng thì: đang chờ mô tả ảnh mà nói "gửi file cho nhóm A" là câu
+        # đó bị lấy làm mô tả ảnh; đang chờ lớp+môn thì bị hỏi lại mãi, khoá chặt
+        # 10 phút. Quy tắc chủ máy chốt 05/08.
+        _phi.pop_pending_full(pkey)
+    elif text and _phi.has_pending(pkey):
         _pend = _phi.get_pending(pkey) or {}
         _allowed_ph = _phi.allowed_intents(_allow)
         stage = str(_pend.get("stage") or "choose")
