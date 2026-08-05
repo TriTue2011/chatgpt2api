@@ -2226,6 +2226,22 @@ _ACTIVITY_KW = ("viec nen lam", "nen lam gi", "nen tranh", "viec kieng", "kieng 
                 "co dep khong", "lam gi tot")
 
 
+def _la_cau_hoi_gio(fd: str) -> bool:
+    """Câu này có ĐANG HỎI mấy giờ không? (`fd` = chữ đã bỏ dấu, đ→d)
+
+    Đo thật 04/08 22:15:53 — chủ máy dặn "Từ bây giờ không nhắc lại nội dung chỉ
+    đưa ra lựa chọn" và nhận lại "Dạ, bây giờ là 22 giờ 15 phút, Thứ Ba…". Cụm
+    "từ bây giờ" mở đầu một lời DẶN chứ không hỏi giờ, nhưng đường tắt cũ chỉ tìm
+    chuỗi con "bay gio" nên cướp luôn lượt đó.
+
+    "may gio" / "gio roi" thì tự nó đã là câu hỏi, dài ngắn gì cũng nhận. Riêng
+    "bay gio" chỉ nhận khi câu ngắn gọn đúng bằng chữ đó.
+    """
+    if "may gio" in fd or "gio roi" in fd:
+        return True
+    return "bay gio" in fd and len(fd.split()) <= 3
+
+
 def _ha_local_lunar(messages: list[dict[str, Any]]) -> str | None:
     """Answer âm/dương-lịch questions by computing locally (Hồ Ngọc Đức) — accurate
     & instant, no MCP/model. Handles 'âm lịch hôm nay', solar→lunar and lunar→solar
@@ -2250,7 +2266,7 @@ def _ha_local_lunar(messages: list[dict[str, Any]]) -> str | None:
     fd = f.replace("đ", "d")
 
     # Time-only fast-path: "mấy giờ", "bây giờ", "giờ rồi" → trả giờ ngay.
-    if ("may gio" in fd or "bay gio" in fd or "gio roi" in fd) and "hoang dao" not in fd and "gio tot" not in fd:
+    if _la_cau_hoi_gio(fd) and "hoang dao" not in fd and "gio tot" not in fd:
         import datetime as _dt
         from zoneinfo import ZoneInfo as _Z
         now = _dt.datetime.now(_Z("Asia/Ho_Chi_Minh"))

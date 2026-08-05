@@ -2375,7 +2375,11 @@ def _process_ai(ev: dict) -> None:
             pass
         if out.get("silent"):
             return
-        reply = (out.get("text") or "").strip() or "..."
+        # Trống + có nút chọn → `format_numbered` điền danh sách, đừng chèn "..."
+        # (câu duyệt gửi tin nay CHỈ có ba lựa chọn).
+        reply = (out.get("text") or "").strip()
+        if not reply and not out.get("choices"):
+            reply = "..."
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
         sent_media = False

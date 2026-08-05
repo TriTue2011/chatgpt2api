@@ -617,8 +617,13 @@ def send_message(chat_id: int | str, text: str,
 def _send_agent_reply(chat_id: str, out: dict) -> None:
     """Send orchestrator text (+ optional ask-choice inline keyboard)."""
     from services.agent import ask_choices as _ask
-    reply = (out.get("text") or "").strip() or "..."
+    # Trống + có nút chọn → `format_numbered` điền danh sách, đừng chèn "..."
+    # (câu duyệt gửi tin nay CHỈ có ba lựa chọn). Trống mà không nút thì vẫn cần
+    # "..." vì Telegram không nhận tin rỗng.
+    reply = (out.get("text") or "").strip()
     choices = out.get("choices") or []
+    if not reply and not choices:
+        reply = "..."
     markup = None
     if choices:
         try:
@@ -1563,7 +1568,10 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             pass
         if out.get("silent"):
             return  # thread lọc yêu cầu chức năng bị tắt → bỏ qua, không nhắn gì
-        reply = (out.get("text") or "").strip() or "..."
+        # Trống + có nút chọn → `format_numbered` điền danh sách, đừng chèn "..."
+        reply = (out.get("text") or "").strip()
+        if not reply and not out.get("choices"):
+            reply = "..."
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
         if isinstance(image_urls, list) and len(image_urls) > 1:

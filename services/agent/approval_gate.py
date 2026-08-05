@@ -195,6 +195,29 @@ def summarize_action(capability: str, args: dict[str, Any], description: str = "
         return f"{description.split('.')[0]} — {raw}"
     return raw or capability
 
+_KHOI_ASK = (
+    "<<<ASK>>>\n"
+    "Ok, làm đi | ok\n"
+    "Luôn luôn (khỏi hỏi lại) | luôn luôn\n"
+    "Thôi | thôi\n"
+    "<<<END>>>"
+)
+
+# Tool GỬI TIN: câu duyệt CHỈ CÒN ba lựa chọn — không mở lời, không nhắc người
+# nhận, không chép lại nội dung tin.
+#
+# Đo thật 04/08 22:15–22:19 — chủ máy gõ "gửi vào nhóm homeassistant bằng zalo cá
+# nhân với nội dung 'mai đi họp'" rồi phải nhắc BỐN lần "chỉ đưa ra lựa chọn,
+# không nhắc lại nội dung". Bot còn lưu đúng câu dặn đó vào bộ nhớ mà câu duyệt
+# vẫn y nguyên: câu duyệt do CODE ở đây dựng, còn bộ nhớ chỉ đi vào prompt của
+# model, nên dặn kiểu gì cũng không đổi được chữ này.
+#
+# Người dùng vừa gõ yêu cầu ngay câu trên, nên nhắc lại là tiếng ồn. Chỉ gọn ở
+# phần HIỆN RA — `set_pending` và audit log vẫn giữ tóm tắt đầy đủ, tra lại vẫn
+# biết đã duyệt gửi gì cho ai.
+_TOOL_CHI_LUA_CHON: tuple[str, ...] = ("send_to_contact",)
+
+
 def format_proposal(
     capability: str,
     args: dict[str, Any],
@@ -203,6 +226,8 @@ def format_proposal(
     label: str = "",
 ) -> str:
     """User-facing approval prompt with ASK chips."""
+    if capability in _TOOL_CHI_LUA_CHON:
+        return _KHOI_ASK
     summary = summarize_action(capability, args, description)
     verb = (label or description or capability).split(".")[0]
     # Nói ĐÚNG việc sắp làm, đừng liệt kê các chế độ có thể. Yêu cầu 02/08:
@@ -220,8 +245,9 @@ def format_proposal(
             verb = f"hẹn đọc thông báo ra loa sau {_phut:g} phút"
         else:
             verb = "đọc thông báo ra loa NGAY"
+    dau_de = f"Em định **{verb}**:\n{summary}" if summary else f"Em định **{verb}**."
     return (
-        f"Em định **{verb}**:\n{summary}\n\n"
+        f"{dau_de}\n\n"
         f"Anh/chị duyệt không ạ?\n"
         f"<<<ASK>>>\n"
         f"Ok, làm đi | ok\n"

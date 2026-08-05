@@ -1112,10 +1112,23 @@ def _persist_history(user_id: str, hist: list[dict[str, Any]]) -> None:
         logger.warning("agent: persist session failed: %s", exc)
 
 
+# Lời duyệt là câu NGẮN. Bản cũ chỉ ghi điều đó trong docstring mà không kiểm.
+#
+# Đo thật 04/08 22:16:56 — chủ máy đang phàn nàn "Không nhắc lại nội dung mà" thì
+# nhận lại "Dạ thôi em không làm ạ": câu bắt đầu bằng "không" nên bị tính là lời
+# TỪ CHỐI. Câu dài là người đang NÓI CHUYỆN, không phải đang bấm nút.
+#
+# Không khớp thì lượt đó rơi xuống đường thường và pending bị xoá — tức là không
+# làm gì cả, hướng an toàn.
+_MAX_TU_LOI_DUYET = 5
+
+
 def _classify_reply(text: str) -> Optional[str]:
     """Return 'always' | 'once' | 'deny' | None for a short confirmation reply."""
     t = (text or "").strip().lower()
     if not t:
+        return None
+    if len(t.split()) > _MAX_TU_LOI_DUYET:
         return None
     if any(k in t for k in _APPROVE_ALWAYS):
         return "always"

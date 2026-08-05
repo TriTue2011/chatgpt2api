@@ -2006,7 +2006,10 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             pass
         if out.get("silent"):
             return  # thread lọc yêu cầu chức năng bị tắt → bỏ qua, không nhắn gì
-        reply = (out.get("text") or "").strip() or "..."
+        # Trống + có nút chọn → `format_numbered` điền danh sách, đừng chèn "..."
+        reply = (out.get("text") or "").strip()
+        if not reply and not out.get("choices"):
+            reply = "..."
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
         sent_photo = False
