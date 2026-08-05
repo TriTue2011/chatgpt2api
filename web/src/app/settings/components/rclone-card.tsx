@@ -24,6 +24,9 @@ type Truong = {
   macDinh?: string;
   /** Tập giá trị hữu hạn → hiện danh sách chọn thay vì bắt gõ tay. */
   chon?: string[];
+  /** Ô nhận ĐƯỜNG DẪN tệp trên máy chủ → cho chọn tệp rồi tự tải lên, thay vì
+   *  bắt người dùng tự chép tệp lên máy chủ rồi gõ lại đường dẫn cho đúng. */
+  taiTep?: boolean;
 };
 
 /** Bảy kho chủ máy quan tâm, cộng hai lớp bọc ngoài đã chốt (crypt, union).
@@ -50,7 +53,7 @@ const KHO: Record<string, {
       "Vào «APIs & Services» → «Library», tìm «Google Drive API» rồi bấm Enable.",
       "Vào «APIs & Services» → «Credentials» → Create credentials → Service account. Đặt tên bất kỳ rồi bấm Done.",
       "Bấm vào tài khoản dịch vụ vừa tạo → thẻ «Keys» → Add key → Create new key → chọn JSON. Tệp khoá tự tải về máy.",
-      "Chép tệp JSON đó lên máy chủ, ví dụ vào /app/data/rclone/khoa.json, rồi điền đúng đường dẫn ấy vào ô bên dưới.",
+      "Bấm «Chọn tệp» ở ô Tệp khoá JSON bên dưới và chọn đúng tệp vừa tải về — hệ thống tự đưa lên máy chủ, không phải tự chép.",
       "Sao chép địa chỉ email của tài khoản dịch vụ (dạng ten@duan.iam.gserviceaccount.com) — nó hiện ngay trong trang Credentials.",
       "Mở Google Drive, chuột phải vào thư mục muốn bot dùng → Chia sẻ → dán email đó vào, cấp quyền «Người chỉnh sửa». Bước này bắt buộc, bỏ qua là bot không thấy gì.",
       "Mở thư mục đó ra, nhìn thanh địa chỉ có dạng .../folders/<mã> — sao chép phần mã dán vào ô «Mã thư mục gốc».",
@@ -59,9 +62,8 @@ const KHO: Record<string, {
     loai: "drive",
     ghiChu: "Không cần trình duyệt lần nào. Nhưng tài khoản dịch vụ không có dung lượng riêng — phải vào Drive chia sẻ thư mục đích cho địa chỉ email của nó, rồi dán mã thư mục vào ô bên dưới.",
     truong: [
-      { khoa: "service_account_file", nhan: "Đường dẫn tệp khoá JSON", batBuoc: true,
-        goiY: "/app/data/rclone/khoa.json",
-        chuThich: "Tải tệp khoá từ Google Cloud rồi đặt vào thư mục data của máy chủ." },
+      { khoa: "service_account_file", nhan: "Tệp khoá JSON", batBuoc: true, taiTep: true,
+        chuThich: "Chọn tệp khoá vừa tải từ Google Cloud — hệ thống tự lưu lên máy chủ." },
       { khoa: "scope", nhan: "Phạm vi quyền", macDinh: "drive",
         chon: ["drive", "drive.readonly", "drive.file", "drive.appfolder",
                "drive.metadata.readonly"],
@@ -322,6 +324,20 @@ export function RcloneCard() {
     } catch (e) { setThongBao(loi(e)); } finally { setBanRon(""); }
   };
 
+  /** Đọc tệp khoá ở máy người dùng rồi gửi lên máy chủ, điền lại đường dẫn đã lưu. */
+  const taiKhoaLen = async (khoa: string, tep: File) => {
+    setBanRon(`tep:${khoa}`);
+    try {
+      const noiDung = await tep.text();
+      const { data } = await request.post("/api/rclone/khoa-json",
+        { ten: tenMoi || tep.name, noi_dung: noiDung });
+      setGiaTri((s) => ({ ...s, [khoa]: String(data?.duong_dan || "") }));
+      setThongBao(data?.email
+        ? `Đã lưu tệp khoá. Nhớ chia sẻ thư mục trên Drive cho ${data.email}`
+        : "Đã lưu tệp khoá.");
+    } catch (e) { setThongBao(loi(e)); } finally { setBanRon(""); }
+  };
+
   const themRemote = async () => {
     setBanRon("them");
     try {
@@ -529,7 +545,22 @@ export function RcloneCard() {
                     <label className="text-xs font-medium">
                       {t.nhan}{t.batBuoc ? <span className="text-red-500"> *</span> : null}
                     </label>
-                    {t.chon ? (
+                    {t.taiTep ? (
+                      <div className="space-y-1">
+                        <input type="file" accept="application/json,.json"
+                          disabled={ban_ron === `tep:${t.khoa}`}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) void taiKhoaLen(t.khoa, f);
+                          }}
+                          className="block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--secondary)] file:px-3 file:py-2 file:text-sm" />
+                        {giaTri[t.khoa] ? (
+                          <p className="text-xs text-[var(--muted-foreground)]">
+                            Đã lưu: <code className="rounded bg-[var(--secondary)] px-1">{giaTri[t.khoa]}</code>
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : t.chon ? (
                       // Tập giá trị hữu hạn thì cho chọn, không bắt gõ tay —
                       // gõ sai một chữ là hỏng mà không biết hỏng ở đâu.
                       <select

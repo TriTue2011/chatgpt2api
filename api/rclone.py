@@ -40,6 +40,17 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=400, detail={"error": kq.get("error")})
         return kq
 
+    @router.post("/khoa-json")
+    def luu_khoa_json(payload: dict[str, Any],
+                      authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Nhận tệp khoá JSON tài khoản dịch vụ từ giao diện, trả đường dẫn đã lưu."""
+        require_admin(authorization)
+        kq = rc.luu_khoa_json(str(payload.get("ten") or ""),
+                              str(payload.get("noi_dung") or ""))
+        if not kq.get("ok"):
+            raise HTTPException(status_code=400, detail={"error": kq.get("error")})
+        return kq
+
     @router.post("/remotes")
     def them_remote(payload: dict[str, Any],
                     authorization: str | None = Header(None)) -> dict[str, Any]:

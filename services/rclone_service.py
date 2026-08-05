@@ -208,6 +208,38 @@ def dat_config(noi_dung: str) -> dict:
     return {"ok": True, "remotes": remotes()}
 
 
+def luu_khoa_json(ten: str, noi_dung: str) -> dict:
+    """Lưu tệp khoá JSON của tài khoản dịch vụ, trả về đường dẫn để điền vào form.
+
+    Bắt người dùng tự SCP tệp lên máy chủ là một bước thừa và dễ sai đường dẫn.
+    Tệp nằm cùng thư mục với rclone.conf, quyền 0600 — nó là khoá thật, ai đọc
+    được là truy cập được toàn bộ kho lưu trữ.
+    """
+    try:
+        du_lieu = json.loads(noi_dung or "")
+    except (json.JSONDecodeError, TypeError):
+        return {"ok": False, "error": "Tệp không phải JSON hợp lệ"}
+    if not isinstance(du_lieu, dict):
+        return {"ok": False, "error": "Tệp JSON không đúng dạng khoá tài khoản dịch vụ"}
+    # Kiểm đúng loại tệp: người dùng rất dễ chọn nhầm tệp JSON khác trong máy,
+    # mà chọn nhầm thì rclone chỉ báo lỗi xác thực khó hiểu ở tận lúc dùng.
+    thieu = [k for k in ("client_email", "private_key") if not du_lieu.get(k)]
+    if thieu:
+        return {"ok": False, "error":
+                "Đây không phải tệp khoá tài khoản dịch vụ (thiếu "
+                + ", ".join(thieu) + "). Tải lại tệp JSON từ Google Cloud."}
+    # Tên tệp do người dùng đặt → chỉ giữ ký tự an toàn, không cho thoát thư mục.
+    an_toan = re.sub(r"[^A-Za-z0-9._-]+", "_", str(ten or "").strip())[:60]
+    an_toan = an_toan.removesuffix(".json") or "khoa"
+    p = conf_path().parent / f"{an_toan}.json"
+    p.write_text(json.dumps(du_lieu), "utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return {"ok": True, "duong_dan": str(p), "email": str(du_lieu.get("client_email") or "")}
+
+
 def tao_remote(ten: str, loai: str, tham_so: dict) -> dict:
     """Khai một remote không cần OAuth (S3, R2, WebDAV, SFTP, FTP…)."""
     ten = str(ten or "").strip()

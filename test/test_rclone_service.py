@@ -8,6 +8,7 @@ mở lại đường rò.
 
 Chạy được cả khi máy KHÔNG cài rclone: mọi test ở đây kiểm phần logic thuần.
 """
+import json
 import os
 import sys
 import tempfile
@@ -104,6 +105,33 @@ class CheBiMatTests(unittest.TestCase):
         self.assertIn("type = drive", ra)
         self.assertIn("provider = Cloudflare", ra)
         self.assertIn("region = auto", ra)
+
+    def test_luu_khoa_json_dung_dinh_dang(self):
+        kq = rc.luu_khoa_json("khoa cua toi.json", json.dumps({
+            "type": "service_account", "client_email": "bot@duan.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----abc",
+        }))
+        self.assertTrue(kq["ok"], kq.get("error"))
+        p = Path(kq["duong_dan"])
+        self.assertTrue(p.exists())
+        # Khoá thật: ai đọc được là vào được toàn bộ kho lưu trữ.
+        self.assertEqual(oct(p.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(kq["email"], "bot@duan.iam.gserviceaccount.com")
+
+    def test_ten_tep_khong_thoat_duoc_thu_muc(self):
+        kq = rc.luu_khoa_json("../../etc/passwd", json.dumps({
+            "client_email": "a@b.c", "private_key": "x"}))
+        self.assertTrue(kq["ok"])
+        self.assertEqual(Path(kq["duong_dan"]).parent, rc.conf_path().parent)
+
+    def test_chon_nham_tep_json_khac_thi_bao_ro(self):
+        """Chọn nhầm tệp là chuyện thường; báo mơ hồ thì lỗi lộ ra tận lúc dùng."""
+        kq = rc.luu_khoa_json("linh tinh", json.dumps({"hello": "world"}))
+        self.assertFalse(kq["ok"])
+        self.assertIn("tài khoản dịch vụ", kq["error"])
+
+    def test_khong_phai_json_thi_tu_choi(self):
+        self.assertFalse(rc.luu_khoa_json("x", "day khong phai json")["ok"])
 
     def test_khong_nhan_lai_ban_da_che(self):
         """Dán lại bản đã che sẽ ghi ••• thành token thật — phải chặn."""
