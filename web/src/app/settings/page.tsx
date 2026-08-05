@@ -8,6 +8,7 @@ import { SettingsSection } from "@/components/settings-section";
 
 import { BackupSettingsCard } from "./components/backup-settings-card";
 import { RcloneCard } from "./components/rclone-card";
+import { LuuTruOnlineCard } from "./components/luu-tru-online-card";
 import { HACard } from "./components/ha-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
@@ -187,6 +188,7 @@ function SettingsPageContent() {
           icon={<span className="text-lg">☁️</span>}
         >
           <RcloneCard />
+          <LuuTruOnlineCard />
         </SettingsSection>
 
         <SettingsSection
