@@ -57,13 +57,28 @@ def _gc() -> None:
                 pass
 
 
-def set_pending(key: str, pdf_bytes: bytes, name: str) -> dict:
-    """Lưu PDF chờ ý định. Trả info {'pages','scanned','ocr'}."""
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+#: Đuôi file Office nhận được như PDF — cùng menu ý định, cùng đường nạp RAG.
+#: Yêu cầu 05/08: "chưa làm được … nạp rag kiến thức, nạp rag teacher như pdf
+#: cho word và excel". Không có Word/Excel ở đây vì chuyển .docx → .docx vô nghĩa.
+DUOI_OFFICE: tuple[str, ...] = (".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt")
+
+
+def la_office(ten: str) -> bool:
+    return str(ten or "").strip().lower().endswith(DUOI_OFFICE)
+
+
+def set_pending(key: str, pdf_bytes: bytes, name: str, duoi: str = ".pdf") -> dict:
+    """Lưu file chờ ý định. Trả info {'pages','scanned','ocr'}.
+
+    `duoi` phải đúng loại file THẬT: markitdown nhận dạng theo đuôi, đặt nhầm
+    .pdf cho một file .docx là nó đọc ra rỗng."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=duoi or ".pdf")
     tmp.write(pdf_bytes)
     tmp.close()
     info: dict = {}
     try:
+        if duoi and duoi.lower() != ".pdf":
+            raise RuntimeError("khong phai PDF")   # Office: không có số trang/scan
         from services import pdf_to_word as p2w
         a = p2w.analyze_pdf(tmp.name)
         info = {
@@ -288,6 +303,14 @@ ASK_TEACHER = (
 )
 
 
+def y_dinh_cho_office(allow: set[str] | None) -> set[str]:
+    """Ý định hợp lệ cho file Office = phần RAG của `allowed_intents`.
+
+    Bỏ WORD/EXCEL: người dùng gửi .docx vào rồi "chuyển Word" thì chẳng ra gì.
+    """
+    return {i for i in allowed_intents(allow) if i in (RAG_KNOWLEDGE, RAG_TEACHER)}
+
+
 def allowed_intents(allow: set[str] | None) -> set[str]:
     """Ý định PDF theo bộ lọc thread.
 
@@ -333,7 +356,9 @@ def _cost_note(info: dict | None) -> str:
 
 def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
     """Câu hỏi ý định — chỉ các lựa chọn được phép (số 1..N khớp parse_intent)."""
-    lines = [f"📄 Đã nhận PDF: **{name}**", "Bạn muốn làm gì?"]
+    # Gọi đúng tên loại file: "Đã nhận PDF: bao-cao.docx" là sai hiển nhiên.
+    _loai = "Word/Excel" if la_office(name) else "PDF"
+    lines = [f"📄 Đã nhận {_loai}: **{name}**", "Bạn muốn làm gì?"]
     catalog = {
         RAG_KNOWLEDGE: "📚 Nạp **RAG kiến thức** (tự phát hiện chủ đề → wiki)",
         RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
@@ -410,7 +435,18 @@ def markdown_pdf_so(pdf_path: str, *, max_pages: int | None = None) -> str:
 
 
 def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
-    """PDF → Markdown/text sạch. PDF số → pdf-inspector; PDF scan → OCR vision."""
+    """PDF → Markdown/text sạch. PDF số → pdf-inspector; PDF scan → OCR vision.
+
+    File Office (.docx/.xlsx/.pptx) đi THẲNG markitdown: hai bước PDF phía dưới
+    chắc chắn hỏng với chúng, mà mỗi bước hỏng là một lần mở file + ghi log rác.
+    """
+    if la_office(pdf_path):
+        try:
+            from markitdown import MarkItDown
+            return (MarkItDown().convert(pdf_path).text_content or "").strip()
+        except Exception as exc:
+            logger.warning("markitdown doc file Office loi: %s", exc)
+            return ""
     t = markdown_pdf_so(pdf_path, max_pages=max_pages)
     if t:
         return t + _image_section(pdf_path)
@@ -567,10 +603,17 @@ def ingest_teacher(
         from services.agent import sgk_fetch as _sf
         from services.agent import teacher_workspace as tw
         k = str(kind or "sgk").strip().lower() or "sgk"
+        # File Office: `import_sgk_pdf` bóc chữ bằng đường PDF, nên phải bơm
+        # sẵn `text` (markitdown đọc) — không thì nó nạp một kho rỗng, im lặng.
+        _chu = extract_markdown(pdf_path) if la_office(pdf_path) else ""
+        if la_office(pdf_path) and not _chu.strip():
+            return {"ok": False, "error": f"Không đọc được nội dung {Path_name(pdf_path)}"}
         r = tw.import_sgk_pdf(
             pdf_path,
             grade=int(grade),
             subject=str(subject),
+            text=_chu,
+            keep_pdf=not la_office(pdf_path),
             mode="append",
             title="",
             source_name=name or Path_name(pdf_path),

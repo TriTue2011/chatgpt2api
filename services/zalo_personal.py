@@ -2293,19 +2293,34 @@ def _process_ai(ev: dict) -> None:
     # File đính kèm
     if ev.get("msg_type") == "share.file" and ev.get("attachment_url"):
         name = (ev.get("file_name") or "").strip()
-        if name.lower().endswith(".pdf") or ".pdf" in str(ev["attachment_url"]).lower():
-            intents = _pi.allowed_intents(_allow)
+        _la_pdf = (name.lower().endswith(".pdf")
+                   or ".pdf" in str(ev["attachment_url"]).lower())
+        # File Office đi CHUNG đường với PDF — cùng menu ý định, cùng đường nạp
+        # RAG. Yêu cầu 05/08: "nạp rag kiến thức, nạp rag teacher như pdf cho
+        # word và excel". Khác đúng hai chỗ: menu không có mục chuyển Word/Excel
+        # (đổi .docx sang .docx thì vô nghĩa), và file tạm phải giữ ĐÚNG đuôi
+        # thật vì markitdown nhận dạng theo đuôi.
+        _la_office = _pi.la_office(name)
+        if _la_pdf or _la_office:
+            intents = (_pi.y_dinh_cho_office(_allow) if _la_office
+                       else _pi.allowed_intents(_allow))
             if not intents:
                 return
             send_typing(thread_id, thread_type)
             data = _download(ev["attachment_url"])
             if not data:
-                send_message(thread_id, "📄 Không tải được file PDF.", thread_type)
+                send_message(thread_id, "📄 Không tải được file.", thread_type)
                 return
-            info = _pi.set_pending(pkey, data, name or "document.pdf")
-            send_message(thread_id, _pi.ask_text(name or "PDF", intents, info), thread_type)
+            _duoi = ("." + name.rsplit(".", 1)[-1].lower()) if _la_office else ".pdf"
+            info = _pi.set_pending(pkey, data, name or "document.pdf", _duoi)
+            send_message(thread_id,
+                         _pi.ask_text(name or ("Office" if _la_office else "PDF"),
+                                      intents, info),
+                         thread_type)
             return
-        send_message(thread_id, f"📎 Hiện em chỉ hỗ trợ chuyển PDF → Word. File: {name or 'không rõ'}", thread_type)
+        send_message(thread_id,
+                     f"📎 Em nhận PDF, Word, Excel và PowerPoint thôi ạ. "
+                     f"File: {name or 'không rõ'}", thread_type)
         return
 
     # Ảnh: không caption → menu; có caption → parse intent / hỏi prompt nếu cần.

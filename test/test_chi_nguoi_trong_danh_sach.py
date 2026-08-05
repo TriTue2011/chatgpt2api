@@ -234,5 +234,57 @@ class GuiTepTrongWorkspaceTests(unittest.TestCase):
         # Tên dài bị cắt, nhưng đuôi phải còn nguyên.
         self.assertTrue(f("x" * 90 + ".pdf", ".docx").endswith(".docx"))
 
+
+class NhanWordExcelNhuPdfTests(unittest.TestCase):
+    """Word/Excel gửi vào bot đi CHUNG đường với PDF — cùng menu ý định.
+
+    Đo thật 05/08 13:23: bot trả "📎 Hiện em chỉ hỗ trợ chuyển PDF → Word" cho
+    mọi file không phải PDF, nên .docx/.xlsx chưa từng có menu nào. Yêu cầu của
+    chủ máy: "nạp rag kiến thức, nạp rag teacher như pdf cho word và excel".
+    """
+
+    def test_nhan_dien_file_office(self):
+        from services import pdf_intent as pi
+
+        for t in ("a.docx", "B.XLSX", "x.pptx", "y.doc"):
+            self.assertTrue(pi.la_office(t), t)
+        for t in ("a.pdf", "anh.png", "", "docx"):
+            self.assertFalse(pi.la_office(t), t)
+
+    def test_menu_office_chi_co_hai_muc_rag(self):
+        """Gửi .docx vào rồi "chuyển Word" thì vô nghĩa — bỏ hai mục chuyển đổi."""
+        from services import pdf_intent as pi
+
+        self.assertEqual(pi.y_dinh_cho_office(None),
+                         {pi.RAG_KNOWLEDGE, pi.RAG_TEACHER})
+        # Bộ lọc thread vẫn siết được như cũ.
+        self.assertEqual(pi.y_dinh_cho_office({"rag"}), {pi.RAG_KNOWLEDGE})
+        self.assertEqual(pi.y_dinh_cho_office({"word"}), set())
+
+    def test_menu_goi_dung_ten_loai_file(self):
+        from services import pdf_intent as pi
+
+        self.assertIn("Đã nhận Word/Excel",
+                      pi.ask_text("bao-cao.docx", pi.y_dinh_cho_office(None)))
+        self.assertIn("Đã nhận PDF",
+                      pi.ask_text("a.pdf", pi.allowed_intents(None)))
+
+    def test_file_tam_giu_dung_duoi_that(self):
+        """markitdown nhận dạng theo ĐUÔI — đặt nhầm .pdf là đọc ra rỗng."""
+        from pathlib import Path
+        from services import pdf_intent as pi
+
+        pi.set_pending("k-test", b"PK\x03\x04 gia lap docx", "bao-cao.docx", ".docx")
+        try:
+            p = pi.get_pending("k-test") or {}
+            self.assertTrue(Path(p.get("path") or "").name.endswith(".docx"))
+        finally:
+            pi.pop_pending("k-test")
+
+    def test_kenh_zalo_ca_nhan_khong_con_chan_file_office(self):
+        src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
+        self.assertNotIn("Hiện em chỉ hỗ trợ chuyển PDF → Word", src)
+        self.assertIn("_pi.la_office(name)", src)
+
 if __name__ == "__main__":
     unittest.main()
