@@ -97,6 +97,19 @@ RUN ARCH=$(dpkg --print-architecture) && \
       ln -sf /opt/piper/piper /usr/local/bin/piper ; \
     else echo "piper: bo qua kien truc $ARCH" ; fi
 
+# rclone — cầu nối tới 150+ dịch vụ lưu trữ (Google Drive, OneDrive, Dropbox,
+# S3/R2, WebDAV, SFTP…). Một binary Go tĩnh, không kéo thư viện nào theo, nên
+# dùng gói .deb sẵn có là đủ — khỏi thêm unzip vào image.
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+      amd64|arm64) RC="rclone-current-linux-${ARCH}.deb" ;; \
+      *) RC="" ;; \
+    esac && \
+    if [ -n "$RC" ]; then \
+      wget -q "https://downloads.rclone.org/${RC}" -O /tmp/rclone.deb && \
+      dpkg -i /tmp/rclone.deb && rm /tmp/rclone.deb && rclone version | head -1 ; \
+    else echo "rclone: bo qua kien truc $ARCH" ; fi
+
 # cloudflared (Cloudflare Tunnel, used by chatgpt2api)
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in amd64) CF="amd64" ;; arm64) CF="arm64" ;; *) echo "unsupported: $ARCH"; exit 1 ;; esac && \

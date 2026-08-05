@@ -7,6 +7,7 @@ import { useAuthGuard } from "@/lib/use-auth-guard";
 import { SettingsSection } from "@/components/settings-section";
 
 import { BackupSettingsCard } from "./components/backup-settings-card";
+import { RcloneCard } from "./components/rclone-card";
 import { HACard } from "./components/ha-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
@@ -178,6 +179,14 @@ function SettingsPageContent() {
         >
           <TeacherSettingsCard />
           <PersonasCard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Kho lưu trữ đám mây"
+          description="Google Drive, OneDrive, Dropbox, S3/R2, WebDAV… qua rclone — bot xem, tải về và gửi lên"
+          icon={<span className="text-lg">☁️</span>}
+        >
+          <RcloneCard />
         </SettingsSection>
 
         <SettingsSection

@@ -38,6 +38,7 @@ const FUNCTION_GROUPS: [string, string][] = [
   ["skills", "🧩 Skill / Workflow"],
   ["wiki", "📖 Wiki / Ingest"],
   ["contacts", "📒 Danh bạ / gửi tin"],
+  ["kho_dam_may", "☁️ Kho đám mây (rclone)"],
   ["tts_reply", "🔉 Trả lời bằng giọng nói"],
   ["tts_speaker", "📢 Được ra lệnh phát loa"],
   ["teacher", "📚 Giáo viên (tiểu học · THCS · THPT)"],

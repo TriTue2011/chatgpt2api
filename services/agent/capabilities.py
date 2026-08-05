@@ -4380,6 +4380,77 @@ def _h_office_send(args: dict, ctx: dict) -> dict:
     return {"text": caption, "doc_path": str(p)}
 
 
+def _h_kho_dam_may(args: dict, ctx: dict) -> dict:
+    """Đọc kho lưu trữ đám mây qua rclone: liệt kê remote, xem thư mục, tải về."""
+    from services import rclone_service as rcl
+    op = str(args.get("op") or "remotes").strip().lower()
+    dd = str(args.get("duong_dan") or "").strip()
+
+    if op == "remotes":
+        ds = rcl.remotes()
+        if not ds:
+            return {"text": "Chưa khai kho lưu trữ nào. Vào Cài đặt → Kho đám mây "
+                            "để thêm Google Drive, OneDrive, S3… ạ."}
+        dong = "\n".join(f"{i}. {r['name']} ({r['type']})"
+                         for i, r in enumerate(ds, 1))
+        return {"text": f"Các kho đang khai:\n{dong}"}
+
+    if op == "ls":
+        kq = rcl.liet_ke(dd)
+        if not kq.get("ok"):
+            return {"text": f"Không xem được: {kq.get('error')}"}
+        muc = kq.get("muc") or []
+        if not muc:
+            return {"text": f"Thư mục {dd} trống ạ."}
+        dong = []
+        for i, m in enumerate(muc, 1):
+            if m["la_thu_muc"]:
+                dong.append(f"{i}. 📁 {m['ten']}")
+            else:
+                dong.append(f"{i}. 📄 {m['ten']} ({_co_file(m['co'])})")
+        them = "\n… còn nữa" if kq.get("bi_cat") else ""
+        return {"text": f"{dd}\n" + "\n".join(dong) + them}
+
+    if op == "doc":
+        kq = rcl.doc_chu(dd)
+        if not kq.get("ok"):
+            return {"text": f"Không đọc được: {kq.get('error')}"}
+        return {"text": kq.get("noi_dung") or "(file rỗng)"}
+
+    if op == "tai_ve":
+        kq = rcl.tai_ve(dd, ten_luu=str(args.get("ten_luu") or ""))
+        if not kq.get("ok"):
+            return {"text": f"Không tải được: {kq.get('error')}"}
+        from pathlib import Path as _P
+        return {"text": f"Đã tải {_P(kq['duong_dan']).name} về "
+                        f"({_co_file(kq.get('co') or 0)}) ạ."}
+
+    return {"text": "op phải là: remotes | ls | doc | tai_ve"}
+
+
+def _co_file(n: int) -> str:
+    """Cỡ file cho người đọc: 1,2 MB dễ hiểu hơn 1258291."""
+    n = int(n or 0)
+    for don_vi, nguong in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= nguong:
+            return f"{n / nguong:.1f} {don_vi}".replace(".", ",")
+    return f"{n} B"
+
+
+def _h_kho_dam_may_gui(args: dict, ctx: dict) -> dict:
+    """Gửi file lên kho đám mây, hoặc xoá file trên đó. Đưa dữ liệu RA NGOÀI."""
+    from services import rclone_service as rcl
+    op = str(args.get("op") or "gui_len").strip().lower()
+    if op == "xoa":
+        kq = rcl.xoa(str(args.get("duong_dan") or ""))
+        return {"text": "Đã xoá ạ." if kq.get("ok")
+                else f"Không xoá được: {kq.get('error')}"}
+    kq = rcl.gui_len(str(args.get("tep") or ""), str(args.get("thu_muc") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không gửi được: {kq.get('error')}"}
+    return {"text": f"Đã gửi lên {kq['duong_dan']} ({_co_file(kq.get('co') or 0)}) ạ."}
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 CAPABILITIES: dict[str, Capability] = {
@@ -5404,6 +5475,37 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["path"]},
         workflow=("Kênh Zalo Bot API không nhận file — hệ thống tự fallback "
                   "hướng dẫn; không cần tự xử lý.")),
+    "kho_dam_may": Capability(
+        name="kho_dam_may", risk=READ, handler=_h_kho_dam_may,
+        emoji="☁️", label="Kho đám mây (xem / tải về)",
+        description=(
+            "Kho lưu trữ đám mây qua rclone (Google Drive, OneDrive, Dropbox, "
+            "S3…). op=remotes liệt kê các kho; ls xem một thư mục; doc đọc nội "
+            "dung file text; tai_ve tải file về workspace. duong_dan dạng "
+            "'ten_kho:thu/muc/file.pdf'."),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "description": "remotes | ls | doc | tai_ve"},
+            "duong_dan": {"type": "string",
+                          "description": "Dạng 'ten_kho:thu/muc' hoặc 'ten_kho:file.pdf'"},
+            "ten_luu": {"type": "string", "description": "Tên file khi lưu (op=tai_ve)"}},
+            "required": ["op"]},
+        workflow=("Chưa biết tên kho thì gọi op=remotes trước. Tải về xong file "
+                  "nằm trong workspace — dùng office_send để gửi cho người dùng.")),
+    "kho_dam_may_gui": Capability(
+        name="kho_dam_may_gui", risk=CHANGE, handler=_h_kho_dam_may_gui,
+        emoji="⬆️", label="Kho đám mây (gửi lên / xoá)",
+        description=(
+            "GỬI file trong workspace lên kho đám mây, hoặc XOÁ file trên đó. "
+            "op=gui_len cần tep (tên file trong workspace) + thu_muc "
+            "('ten_kho:thu/muc'). op=xoa cần duong_dan."),
+        parameters={"type": "object", "properties": {
+            "op": {"type": "string", "description": "gui_len | xoa"},
+            "tep": {"type": "string", "description": "Tên file trong workspace (op=gui_len)"},
+            "thu_muc": {"type": "string", "description": "'ten_kho:thu/muc' (op=gui_len)"},
+            "duong_dan": {"type": "string", "description": "'ten_kho:file' (op=xoa)"}},
+            "required": ["op"]},
+        workflow=("Đưa dữ liệu RA NGOÀI máy chủ nên luôn qua bước duyệt. Chỉ gửi "
+                  "được file đã nằm trong workspace, không gửi file hệ thống.")),
 }
 
 
@@ -5440,6 +5542,7 @@ _CAP_GROUP: dict[str, str] = {
     # expand_tool_result: nhóm memory chỉ mang tính phân loại; thực tế luôn
     # khả dụng qua _CORE_TOOLS (schema + dispatch + persona).
     "expand_tool_result": "memory",
+    "kho_dam_may": "kho_dam_may", "kho_dam_may_gui": "kho_dam_may",
     "contacts": "contacts", "send_to_contact": "contacts",
     "cai_dat_cau_duyet": "contacts",
     "cai_dat_dinh_dang": "contacts",
