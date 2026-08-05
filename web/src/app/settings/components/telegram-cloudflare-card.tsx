@@ -38,7 +38,10 @@ const FUNCTION_GROUPS: [string, string][] = [
   ["skills", "🧩 Skill / Workflow"],
   ["wiki", "📖 Wiki / Ingest"],
   ["contacts", "📒 Danh bạ / gửi tin"],
-  ["kho_dam_may", "☁️ Kho đám mây (rclone)"],
+  // Đây là công tắc QUYỀN: thread này có được dùng công cụ kho đám mây không.
+  // Chọn lưu vào tài khoản/thư mục nào là việc của tab «Lưu trữ online» — nhãn
+  // cũ chỉ ghi "Kho đám mây (rclone)" nên bị hiểu nhầm là chỗ chọn kho.
+  ["kho_dam_may", "☁️ Cho phép dùng kho đám mây"],
   ["tts_reply", "🔉 Trả lời bằng giọng nói"],
   ["tts_speaker", "📢 Được ra lệnh phát loa"],
   ["teacher", "📚 Giáo viên (tiểu học · THCS · THPT)"],
