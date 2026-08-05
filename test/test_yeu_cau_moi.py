@@ -31,6 +31,19 @@ class NhanRaYeuCauMoiTests(unittest.TestCase):
             with self.subTest(c=c):
                 self.assertTrue(la_moi(c), f"bỏ sót yêu cầu mới: {c}")
 
+    def test_go_khong_dau_van_nhan_ra(self):
+        """Người dùng gõ điện thoại rất hay bỏ dấu — trượt nhóm này là hỏng thật.
+
+        Đo trên máy chủ 05/08: bản đầu chỉ khớp khi có dấu đầy đủ nên
+        "gui file cho nhom A" không được nhận là yêu cầu mới.
+        """
+        for c in ("gui file bao-cao.docx cho nhom A",
+                  "bat den phong khach len",
+                  "nhac toi luc 8 gio toi mai",
+                  "thoi tiet Ha Noi ngay mai the nao"):
+            with self.subTest(c=c):
+                self.assertTrue(la_moi(c), f"gõ không dấu bị bỏ sót: {c}")
+
 
 class KhongNhanNhamCauTraLoiTests(unittest.TestCase):
     """Đây là phía nguy hiểm — nhận nhầm là người dùng mất bản chờ."""

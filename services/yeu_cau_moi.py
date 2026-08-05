@@ -22,27 +22,41 @@ cho việc đang chờ gần như luôn ngắn ("1", "phân tích", "lớp 4 to�
 from __future__ import annotations
 
 import re
+import unicodedata
 
 #: Câu trả lời cho việc đang chờ gần như luôn ngắn. Dưới ngưỡng này thì không
 #: xét là yêu cầu mới, dù có trúng từ khoá — "gửi" một mình không phải mệnh lệnh.
 _TOI_THIEU_TU = 3
 
-#: Động từ ra lệnh của các năng lực khác. Mỗi cụm phải đủ đặc trưng để không
-#: đụng vào lời trả lời thông thường.
+def bo_dau(s: str) -> str:
+    """Bỏ dấu tiếng Việt để so khớp. 'gửi file' và 'gui file' phải như nhau.
+
+    Người dùng gõ điện thoại rất hay bỏ dấu — "gui file cho nhom A", "bat den
+    phong khach" là cách viết bình thường. Bản đầu chỉ khớp khi có dấu đầy đủ
+    nên trượt sạch nhóm này; đo trên máy chủ 05/08 mới lộ ra.
+    """
+    s = str(s or "").replace("đ", "d").replace("Đ", "D")
+    return "".join(c for c in unicodedata.normalize("NFD", s)
+                   if not unicodedata.combining(c))
+
+
+#: Động từ ra lệnh của các năng lực khác, viết ở dạng ĐÃ BỎ DẤU vì `la_yeu_cau_moi`
+#: bỏ dấu câu nói trước khi so. Mỗi cụm phải đủ đặc trưng để không đụng vào lời
+#: trả lời thông thường.
 _MENH_LENH = re.compile(
     r"\b("
-    r"gửi\s+(file|tệp|tài\s*liệu|ảnh|tin|tin\s*nhắn)|"
-    r"tải\s+(lên|về|file|tệp)|"
-    r"lưu\s+(lên|vào)\s+(kho|drive|đám\s*mây)|"
-    r"(bật|tắt|mở|đóng)\s+(đèn|quạt|điều\s*hoà|máy|cửa|tivi|tv)|"
-    r"mấy\s+giờ|giờ\s+rồi|"
-    r"nhắc\s+(tôi|em|anh|chị|lúc|vào)|"
-    r"đặt\s+(lịch|báo\s*thức|hẹn)|"
-    r"tìm\s+(kiếm|giúp|trên\s*mạng)|"
-    r"tra\s+cứu|"
-    r"thời\s+tiết|"
-    r"dịch\s+(sang|giúp)|"
-    r"tóm\s+tắt\s+(bài|trang|link|web)"
+    r"gui\s+(file|tep|tai\s*lieu|anh|tin|tin\s*nhan)|"
+    r"tai\s+(len|ve|file|tep)|"
+    r"luu\s+(len|vao)\s+(kho|drive|dam\s*may)|"
+    r"(bat|tat|mo|dong)\s+(den|quat|dieu\s*hoa|may|cua|tivi|tv)|"
+    r"may\s+gio|gio\s+roi|"
+    r"nhac\s+(toi|em|anh|chi|luc|vao)|"
+    r"dat\s+(lich|bao\s*thuc|hen)|"
+    r"tim\s+(kiem|giup|tren\s*mang)|"
+    r"tra\s+cuu|"
+    r"thoi\s+tiet|"
+    r"dich\s+(sang|giup)|"
+    r"tom\s+tat\s+(bai|trang|link|web)"
     r")\b",
     re.IGNORECASE,
 )
@@ -58,4 +72,4 @@ def la_yeu_cau_moi(text: str) -> bool:
     # Câu mở đầu bằng một con số gần như luôn là chọn mục trong menu.
     if re.match(r"^\s*[1-9]\b", s):
         return False
-    return bool(_MENH_LENH.search(s))
+    return bool(_MENH_LENH.search(bo_dau(s)))
