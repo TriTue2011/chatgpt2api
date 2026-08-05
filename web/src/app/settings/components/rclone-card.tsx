@@ -12,11 +12,18 @@ import { request } from "@/lib/request";
 type Remote = { name: string; type: string };
 type Muc = { ten: string; la_thu_muc: boolean; co: number; sua_luc: string };
 
-/** Các loại kho khai thẳng được ở đây — chúng chỉ cần khoá/mật khẩu.
- *  Google Drive, OneDrive, Dropbox KHÔNG có ở đây vì chúng đòi mở trình duyệt
- *  để cấp quyền; với chúng phải chạy `rclone authorize` trên máy có màn hình
- *  rồi dán kết quả vào ô cấu hình bên dưới. */
+/** Các loại kho khai thẳng được ở đây.
+ *
+ *  Google Drive CÓ trong danh sách: khai bằng *tài khoản dịch vụ* thì không cần
+ *  trình duyệt lần nào — điền đường dẫn tệp khoá JSON là chạy. Bù lại tài khoản
+ *  dịch vụ không có dung lượng riêng, nên phải chia sẻ thư mục đích trên Drive
+ *  cho email của nó; khi đó nó ghi vào thư mục của chủ máy.
+ *
+ *  OneDrive/Dropbox thì vẫn phải cấp quyền qua trình duyệt — nhanh nhất là mở
+ *  đường hầm `ssh -L localhost:53682:localhost:53682` rồi chạy `rclone config`
+ *  trên máy chủ, cấu hình rơi thẳng vào đó, khỏi dán gì. */
 const LOAI_KHONG_CAN_OAUTH: Array<[string, string]> = [
+  ["drive", "Google Drive (tài khoản dịch vụ — service_account_file = …)"],
   ["s3", "S3 / Cloudflare R2 / Wasabi / MinIO"],
   ["webdav", "WebDAV (Nextcloud, ownCloud…)"],
   ["sftp", "SFTP (qua SSH)"],
@@ -277,11 +284,21 @@ export function RcloneCard() {
                   Thêm kho
                 </Button>
               </div>
-              <p className="text-xs text-[var(--muted-foreground)]">
-                Google Drive, OneDrive, Dropbox phải cấp quyền qua trình duyệt nên không khai thẳng ở đây được. Chạy
-                <code className="mx-1 rounded bg-[var(--secondary)] px-1">rclone config</code>
-                trên một máy có màn hình, rồi dán đoạn cấu hình thu được vào ô bên dưới.
-              </p>
+              <div className="space-y-1 text-xs text-[var(--muted-foreground)]">
+                <p>
+                  <strong>Google Drive khai thẳng ở đây được</strong> nếu dùng tài khoản dịch vụ: chọn loại Google Drive rồi
+                  điền <code className="rounded bg-[var(--secondary)] px-1">service_account_file = /app/data/rclone/khoa.json</code>.
+                  Không cần trình duyệt lần nào. Nhớ vào Drive chia sẻ thư mục đích cho email của tài khoản dịch vụ đó —
+                  nó không có dung lượng riêng, phải ghi nhờ vào thư mục của anh/chị.
+                </p>
+                <p>
+                  OneDrive và Dropbox vẫn phải cấp quyền qua trình duyệt. Nhanh nhất là mở đường hầm
+                  <code className="mx-1 rounded bg-[var(--secondary)] px-1">ssh -L localhost:53682:localhost:53682 root@máy-chủ</code>
+                  rồi chạy <code className="mx-1 rounded bg-[var(--secondary)] px-1">rclone config</code> trên máy chủ và trả lời
+                  <strong> Y</strong> ở bước hỏi trình duyệt — mở đường dẫn nó in ra bằng trình duyệt máy mình là xong,
+                  cấu hình rơi thẳng vào máy chủ, khỏi dán gì vào ô bên dưới.
+                </p>
+              </div>
             </div>
 
             {/* Cấu hình thô */}
