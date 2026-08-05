@@ -577,7 +577,9 @@ export function RcloneCard() {
 
               {/* Hướng dẫn lấy từng thông tin — hiện ngay khi đổi loại kho, để
                   không phải rời trang đi tra tài liệu rồi quay lại. */}
-              <details open className="rounded-xl border border-[var(--border)] px-3 py-2">
+              {/* Đóng sẵn: hướng dẫn dài, mở mặc định thì đẩy các ô nhập xuống
+                  quá xa và mỗi lần đổi loại kho lại phải cuộn lại từ đầu. */}
+              <details className="rounded-xl border border-[var(--border)] px-3 py-2">
                 <summary className="cursor-pointer text-xs font-medium">
                   Lấy các thông tin này ở đâu — {KHO[loaiMoi]?.nhan}
                 </summary>
@@ -658,11 +660,22 @@ export function RcloneCard() {
                       <Input value={duongDanTraVe} onChange={(e) => setDuongDanTraVe(e.target.value)}
                         placeholder="http://127.0.0.1:53682/?state=…&code=…"
                         className="h-11 rounded-xl" />
-                      <Button className="h-10 rounded-xl" onClick={() => void hoanTatDangNhap()}
-                        disabled={!tenMoi.trim() || !duongDanTraVe.trim() || ban_ron === "dn2"}>
-                        {ban_ron === "dn2" ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-                        Hoàn tất và tạo kho
-                      </Button>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button className="h-10 rounded-xl" onClick={() => void hoanTatDangNhap()}
+                          disabled={!tenMoi.trim() || !duongDanTraVe.trim() || ban_ron === "dn2"}>
+                          {ban_ron === "dn2" ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                          Hoàn tất và tạo kho
+                        </Button>
+                        {/* Nút khoá mà không nói vì sao thì trông y như bị treo —
+                            chủ máy báo đúng cảnh đó ngày 05/08. */}
+                        {!tenMoi.trim() || !duongDanTraVe.trim() ? (
+                          <span className="text-xs text-[var(--muted-foreground)]">
+                            Còn thiếu: {[!tenMoi.trim() && "Tên gọi của kho (ô trên cùng)",
+                                         !duongDanTraVe.trim() && "đường dẫn vừa sao chép"]
+                                        .filter(Boolean).join(" · ")}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   ) : null}
                 </div>
