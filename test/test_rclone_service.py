@@ -142,6 +142,30 @@ class KhongQuaShellTests(unittest.TestCase):
         # Luôn trỏ đúng file cấu hình riêng, không dùng cái mặc định của máy.
         self.assertIn("--config", da_goi["lenh"])
 
+    def test_tao_remote_luon_ep_lam_roi_mat_khau(self):
+        """Thiếu --obscure thì khoá API dạng base64 dài bị lưu nguyên văn.
+
+        Tài liệu rclone: nó không phân biệt được mật khẩu thật với mật khẩu đã
+        làm rối khi chuỗi dài từ 22 ký tự và chỉ gồm ký tự base64 — mà khoá API
+        thì hầu hết đúng dạng đó.
+        """
+        da_goi = {}
+
+        class _KQ:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+
+        goc_run = rc.subprocess.run
+        goc_which = rc.shutil.which
+        rc.subprocess.run = lambda lenh, **kw: (da_goi.setdefault("lenh", lenh), _KQ())[1]
+        rc.shutil.which = lambda _n: "/usr/bin/rclone"
+        self.addCleanup(setattr, rc.subprocess, "run", goc_run)
+        self.addCleanup(setattr, rc.shutil, "which", goc_which)
+
+        rc.tao_remote("mega1", "mega", {"user": "a@b.c", "pass": "MatKhauRatDaiVaBase64Nhe123"})
+        self.assertIn("--obscure", da_goi["lenh"])
+
     def test_thieu_rclone_thi_bao_ro_chu_khong_no(self):
         goc = rc.shutil.which
         rc.shutil.which = lambda _n: None

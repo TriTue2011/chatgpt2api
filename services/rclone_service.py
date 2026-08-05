@@ -216,7 +216,13 @@ def tao_remote(ten: str, loai: str, tham_so: dict) -> dict:
     loai = str(loai or "").strip()
     if not loai:
         return {"ok": False, "error": "thiếu loại remote"}
-    args = ["config", "create", ten, loai]
+    # `--obscure`: BẮT BUỘC. Mặc định rclone tự làm rối các ô mật khẩu, nhưng
+    # tài liệu của họ nói rõ nó không phân biệt được mật khẩu thật với mật khẩu
+    # đã làm rối khi chuỗi dài từ 22 ký tự và chỉ gồm ký tự base64 — mà khoá API
+    # thì hầu hết đúng dạng đó. Đoán nhầm là lưu nguyên văn, và kết nối hỏng mà
+    # không rõ vì sao. Ô ở giao diện luôn nhận mật khẩu THẬT nên ép làm rối là
+    # đúng trong mọi trường hợp.
+    args = ["config", "create", ten, loai, "--obscure"]
     for k, v in (tham_so or {}).items():
         k = str(k).strip()
         if k and str(v).strip():

@@ -17,160 +17,215 @@ type Truong = {
   khoa: string;
   nhan: string;
   batBuoc?: boolean;
-  /** Ô mật khẩu: che khi gõ. rclone tự làm rối các giá trị này khi lưu xuống. */
+  /** Ô mật khẩu: che khi gõ. Máy chủ luôn chạy kèm `--obscure` khi lưu. */
   biMat?: boolean;
   goiY?: string;
   chuThich?: string;
   macDinh?: string;
+  /** Tập giá trị hữu hạn → hiện danh sách chọn thay vì bắt gõ tay. */
+  chon?: string[];
 };
 
-/** Mỗi loại kho khai đủ trường của riêng nó, MỖI THÔNG TIN MỘT Ô RIÊNG.
+/** Bảy kho chủ máy quan tâm, cộng hai lớp bọc ngoài đã chốt (crypt, union).
  *
- *  Danh sách này chỉ gồm các loại **tự chạy được**: điền xong là dùng, không
- *  phải mở trình duyệt cấp quyền lần nào. Google Drive vào được nhờ đường tài
- *  khoản dịch vụ; OneDrive và Dropbox không có ở đây vì chúng buộc phải cấp
- *  quyền qua trình duyệt (xem ghi chú dưới biểu mẫu).
+ *  Tên khoá và giá trị hợp lệ lấy thẳng từ tài liệu rclone (đọc 05/08/2026):
+ *  rclone.org/drive, /googlephotos, /s3, /swift, /mega.
  *
- *  Thêm loại mới chỉ cần thêm một mục ở đây — biểu mẫu tự dựng ô theo nó, và
- *  `tao_remote` phía máy chủ vốn nhận tham số tuỳ ý nên không phải sửa gì thêm.
+ *  `loai` là kiểu rclone THẬT — nhiều mục dùng chung kiểu `s3` nhưng khác nhà
+ *  cung cấp, nên khoá của bảng này là tên hiển thị chứ không phải kiểu rclone.
+ *  `coDinh` là tham số gắn cứng theo mục, người dùng không phải điền.
  */
-const KHO: Record<string, { nhan: string; ghiChu?: string; truong: Truong[] }> = {
+const KHO: Record<string, {
+  nhan: string;
+  loai: string;
+  coDinh?: Record<string, string>;
+  ghiChu?: string;
+  /** Hướng dẫn lấy từng thông tin, hiện ngay khi chọn loại kho. */
+  cacBuoc: string[];
+  truong: Truong[];
+}> = {
   drive: {
+    cacBuoc: [
+      "Vào console.cloud.google.com, tạo một dự án mới (hoặc chọn dự án có sẵn).",
+      "Vào «APIs & Services» → «Library», tìm «Google Drive API» rồi bấm Enable.",
+      "Vào «APIs & Services» → «Credentials» → Create credentials → Service account. Đặt tên bất kỳ rồi bấm Done.",
+      "Bấm vào tài khoản dịch vụ vừa tạo → thẻ «Keys» → Add key → Create new key → chọn JSON. Tệp khoá tự tải về máy.",
+      "Chép tệp JSON đó lên máy chủ, ví dụ vào /app/data/rclone/khoa.json, rồi điền đúng đường dẫn ấy vào ô bên dưới.",
+      "Sao chép địa chỉ email của tài khoản dịch vụ (dạng ten@duan.iam.gserviceaccount.com) — nó hiện ngay trong trang Credentials.",
+      "Mở Google Drive, chuột phải vào thư mục muốn bot dùng → Chia sẻ → dán email đó vào, cấp quyền «Người chỉnh sửa». Bước này bắt buộc, bỏ qua là bot không thấy gì.",
+      "Mở thư mục đó ra, nhìn thanh địa chỉ có dạng .../folders/<mã> — sao chép phần mã dán vào ô «Mã thư mục gốc».",
+    ],
     nhan: "Google Drive (tài khoản dịch vụ)",
-    ghiChu: "Tài khoản dịch vụ không có dung lượng riêng — vào Drive chia sẻ thư mục đích cho email của nó, rồi dán mã thư mục vào ô dưới.",
+    loai: "drive",
+    ghiChu: "Không cần trình duyệt lần nào. Nhưng tài khoản dịch vụ không có dung lượng riêng — phải vào Drive chia sẻ thư mục đích cho địa chỉ email của nó, rồi dán mã thư mục vào ô bên dưới.",
     truong: [
       { khoa: "service_account_file", nhan: "Đường dẫn tệp khoá JSON", batBuoc: true,
         goiY: "/app/data/rclone/khoa.json",
         chuThich: "Tải tệp khoá từ Google Cloud rồi đặt vào thư mục data của máy chủ." },
-      { khoa: "root_folder_id", nhan: "Mã thư mục gốc trên Drive",
-        goiY: "1AbCdEf…", chuThich: "Lấy từ địa chỉ thư mục: .../folders/<mã này>" },
-      { khoa: "team_drive", nhan: "Mã Shared Drive (nếu dùng ổ chung)" },
+      { khoa: "scope", nhan: "Phạm vi quyền", macDinh: "drive",
+        chon: ["drive", "drive.readonly", "drive.file", "drive.appfolder",
+               "drive.metadata.readonly"],
+        chuThich: "drive = toàn quyền. drive.file = chỉ thấy tệp do bot tạo ra." },
+      { khoa: "root_folder_id", nhan: "Mã thư mục gốc", goiY: "1AbCdEf…",
+        chuThich: "Lấy từ địa chỉ thư mục trên trình duyệt: .../folders/<mã này>" },
+      { khoa: "team_drive", nhan: "Mã ổ chung (Shared Drive)" },
+      { khoa: "impersonate", nhan: "Mạo danh người dùng (Workspace)",
+        goiY: "nguoidung@tenmien.com",
+        chuThich: "Chỉ dùng cho Google Workspace có uỷ quyền toàn miền. Không có thì bỏ trống và dùng cách chia sẻ thư mục." },
     ],
   },
-  googlecloudstorage: {
-    nhan: "Google Cloud Storage",
+  googlephotos: {
+    cacBuoc: [
+      "Trên một máy CÓ MÀN HÌNH (máy tính của anh/chị), tải rclone từ rclone.org/downloads.",
+      "Mở cửa sổ dòng lệnh, chạy: rclone authorize \"googlephotos\"",
+      "Trình duyệt tự mở ra — đăng nhập tài khoản Google có thư viện ảnh, rồi bấm Cho phép.",
+      "Quay lại cửa sổ dòng lệnh, nó in ra một chuỗi dài bắt đầu bằng {\"access_token\":",
+      "Sao chép NGUYÊN chuỗi đó, cả hai dấu ngoặc nhọn, rồi dán vào ô Token bên dưới.",
+    ],
+    nhan: "Google Photos",
+    loai: "googlephotos",
+    ghiChu: "Google Photos KHÔNG dùng được tài khoản dịch vụ — đây là loại duy nhất trong danh sách bắt buộc cấp quyền qua trình duyệt một lần. Chạy `rclone authorize \"googlephotos\"` trên máy có màn hình rồi dán chuỗi token nó in ra vào ô dưới.",
     truong: [
-      { khoa: "service_account_file", nhan: "Đường dẫn tệp khoá JSON", batBuoc: true,
-        goiY: "/app/data/rclone/khoa.json" },
-      { khoa: "project_number", nhan: "Mã dự án" },
-      { khoa: "bucket_policy_only", nhan: "Chỉ dùng quyền cấp bucket", macDinh: "true" },
+      { khoa: "token", nhan: "Token (dán nguyên chuỗi JSON)", batBuoc: true, biMat: true,
+        goiY: '{"access_token":"…","refresh_token":"…","expiry":"…"}' },
+      { khoa: "client_id", nhan: "Client ID",
+        chuThich: "Bỏ trống thì dùng của rclone — chậm hơn vì dùng chung hạn mức." },
+      { khoa: "client_secret", nhan: "Client Secret", biMat: true },
+      { khoa: "read_only", nhan: "Chỉ đọc", macDinh: "true", chon: ["true", "false"],
+        chuThich: "Nên để true: bot chỉ xem ảnh, không sửa được thư viện ảnh của gia đình." },
     ],
   },
-  s3: {
-    nhan: "S3 / Cloudflare R2 / Wasabi / MinIO",
+  r2: {
+    cacBuoc: [
+      "Đăng nhập dash.cloudflare.com, vào mục R2.",
+      "Bấm «Manage R2 API Tokens» → «Create API token».",
+      "Chọn quyền «Object Read & Write», chọn bucket muốn dùng, rồi bấm Create.",
+      "Trang kết quả hiện Access Key ID và Secret Access Key — sao chép cả hai NGAY, phần Secret chỉ hiện đúng một lần.",
+      "Endpoint nằm ngay trang đó, dạng https://<mã tài khoản>.r2.cloudflarestorage.com — sao chép luôn.",
+    ],
+    nhan: "Cloudflare R2",
+    loai: "s3",
+    coDinh: { provider: "Cloudflare" },
+    ghiChu: "Lấy Access Key trong Cloudflare: R2 → Manage API Tokens. Endpoint nằm ngay trang tổng quan R2.",
     truong: [
-      { khoa: "provider", nhan: "Nhà cung cấp", batBuoc: true, macDinh: "Cloudflare",
-        goiY: "Cloudflare | AWS | Wasabi | Minio | Other" },
       { khoa: "access_key_id", nhan: "Access Key ID", batBuoc: true },
       { khoa: "secret_access_key", nhan: "Secret Access Key", batBuoc: true, biMat: true },
-      { khoa: "endpoint", nhan: "Endpoint",
-        goiY: "https://<mã>.r2.cloudflarestorage.com",
-        chuThich: "R2, Wasabi, MinIO thì bắt buộc. AWS thì để trống, chỉ cần vùng." },
-      { khoa: "region", nhan: "Vùng", macDinh: "auto", goiY: "auto | ap-southeast-1" },
+      { khoa: "endpoint", nhan: "Endpoint", batBuoc: true,
+        goiY: "https://<mã tài khoản>.r2.cloudflarestorage.com" },
+      { khoa: "region", nhan: "Vùng", macDinh: "auto",
+        chuThich: "R2 luôn là auto — Cloudflare tự trải bucket ra các trung tâm dữ liệu." },
     ],
   },
-  b2: {
-    nhan: "Backblaze B2",
+  megas4: {
+    cacBuoc: [
+      "Đăng nhập mega.io, vào mục S4 (MEGA S4 Object Storage).",
+      "Tạo một Access Key mới, lưu lại Access Key ID và Secret Access Key.",
+      "Xem dữ liệu của mình đặt ở vùng nào, rồi chọn đúng vùng đó ở ô Endpoint bên dưới.",
+    ],
+    nhan: "MEGA S4 (giao thức S3)",
+    loai: "s3",
+    coDinh: { provider: "Mega" },
     truong: [
-      { khoa: "account", nhan: "Application Key ID", batBuoc: true },
-      { khoa: "key", nhan: "Application Key", batBuoc: true, biMat: true },
+      { khoa: "access_key_id", nhan: "Access Key ID", batBuoc: true },
+      { khoa: "secret_access_key", nhan: "Secret Access Key", batBuoc: true, biMat: true },
+      { khoa: "endpoint", nhan: "Endpoint theo vùng", batBuoc: true,
+        macDinh: "s3.ap-tokyo.megas4.com",
+        chon: ["s3.ap-tokyo.megas4.com", "s3.eu-amsterdam.megas4.com",
+               "s3.eu-luxembourg.megas4.com", "s3.eu-paris.megas4.com",
+               "s3.eu-barcelona.megas4.com", "s3.ca-montreal.megas4.com",
+               "s3.ca-vancouver.megas4.com"],
+        chuThich: "Chọn vùng gần Việt Nam nhất thì nhanh nhất — Tokyo." },
     ],
   },
-  azureblob: {
-    nhan: "Azure Blob Storage",
-    truong: [
-      { khoa: "account", nhan: "Tên tài khoản lưu trữ", batBuoc: true },
-      { khoa: "key", nhan: "Khoá truy cập", biMat: true,
-        chuThich: "Điền khoá, hoặc bỏ trống và dùng ô SAS URL bên dưới." },
-      { khoa: "sas_url", nhan: "SAS URL", biMat: true },
+  drime: {
+    cacBuoc: [
+      "Đăng nhập Drime, vào phần Cài đặt → S3 hoặc API.",
+      "Tạo khoá truy cập mới, lưu lại Access Key ID và Secret.",
+      "Sao chép địa chỉ endpoint S3 mà trang đó hiển thị.",
     ],
-  },
-  webdav: {
-    nhan: "WebDAV (Nextcloud, ownCloud, Synology…)",
+    nhan: "Drime (giao thức S3)",
+    loai: "s3",
+    coDinh: { provider: "Other" },
+    ghiChu: "Rclone chưa có Drime trong danh sách nhà cung cấp sẵn, nên khai theo kiểu S3 chung. Endpoint lấy trong trang cài đặt S3 của Drime.",
     truong: [
-      { khoa: "url", nhan: "Địa chỉ WebDAV", batBuoc: true,
-        goiY: "https://may-chu/remote.php/dav/files/tentaikhoan/" },
-      { khoa: "vendor", nhan: "Loại máy chủ", macDinh: "nextcloud",
-        goiY: "nextcloud | owncloud | sharepoint | other" },
-      { khoa: "user", nhan: "Tên đăng nhập", batBuoc: true },
-      { khoa: "pass", nhan: "Mật khẩu", batBuoc: true, biMat: true,
-        chuThich: "Nextcloud nên dùng mật khẩu ứng dụng, đừng dùng mật khẩu chính." },
-    ],
-  },
-  sftp: {
-    nhan: "SFTP (qua SSH)",
-    truong: [
-      { khoa: "host", nhan: "Máy chủ", batBuoc: true, goiY: "192.168.1.10" },
-      { khoa: "port", nhan: "Cổng", macDinh: "22" },
-      { khoa: "user", nhan: "Tên đăng nhập", batBuoc: true },
-      { khoa: "pass", nhan: "Mật khẩu", biMat: true,
-        chuThich: "Điền mật khẩu, hoặc bỏ trống và dùng khoá riêng bên dưới." },
-      { khoa: "key_file", nhan: "Đường dẫn khoá riêng", goiY: "/app/data/rclone/id_ed25519" },
-    ],
-  },
-  ftp: {
-    nhan: "FTP",
-    truong: [
-      { khoa: "host", nhan: "Máy chủ", batBuoc: true },
-      { khoa: "port", nhan: "Cổng", macDinh: "21" },
-      { khoa: "user", nhan: "Tên đăng nhập", batBuoc: true },
-      { khoa: "pass", nhan: "Mật khẩu", batBuoc: true, biMat: true },
-      { khoa: "tls", nhan: "Dùng TLS", macDinh: "true" },
-    ],
-  },
-  smb: {
-    nhan: "SMB / chia sẻ mạng Windows",
-    truong: [
-      { khoa: "host", nhan: "Máy chủ", batBuoc: true },
-      { khoa: "user", nhan: "Tên đăng nhập", batBuoc: true },
-      { khoa: "pass", nhan: "Mật khẩu", batBuoc: true, biMat: true },
-      { khoa: "domain", nhan: "Miền", macDinh: "WORKGROUP" },
+      { khoa: "access_key_id", nhan: "Access Key ID", batBuoc: true },
+      { khoa: "secret_access_key", nhan: "Secret Access Key", batBuoc: true, biMat: true },
+      { khoa: "endpoint", nhan: "Endpoint", batBuoc: true, goiY: "https://s3.drime.cloud" },
+      { khoa: "region", nhan: "Vùng", goiY: "để trống nếu không rõ" },
     ],
   },
   mega: {
-    nhan: "MEGA",
+    cacBuoc: [
+      "Mở mega.nz bằng trình duyệt và đăng nhập ÍT NHẤT MỘT LẦN. Bắt buộc: MEGA chỉ sinh khoá mã hoá sau lần đăng nhập đầu tiên, chưa có khoá thì rclone báo sai mật khẩu dù mật khẩu đúng.",
+      "Điền chính email và mật khẩu vừa đăng nhập vào hai ô bên dưới.",
+      "Nếu tài khoản có bật xác thực hai bước thì điền thêm mã 6 số vào ô tương ứng.",
+    ],
+    nhan: "MEGA (tài khoản thường)",
+    loai: "mega",
+    ghiChu: "Phải đăng nhập MEGA bằng trình duyệt ÍT NHẤT MỘT LẦN trước đã — MEGA chỉ sinh khoá mã hoá sau lần đăng nhập đầu, chưa có khoá thì rclone báo sai mật khẩu dù mật khẩu đúng.",
     truong: [
       { khoa: "user", nhan: "Email đăng nhập", batBuoc: true },
       { khoa: "pass", nhan: "Mật khẩu", batBuoc: true, biMat: true },
+      { khoa: "2fa", nhan: "Mã xác thực hai bước",
+        chuThich: "Chỉ điền nếu tài khoản có bật xác thực hai bước." },
+      { khoa: "hard_delete", nhan: "Xoá hẳn thay vì bỏ vào thùng rác",
+        macDinh: "false", chon: ["false", "true"] },
     ],
   },
-  seafile: {
-    nhan: "Seafile",
-    truong: [
-      { khoa: "url", nhan: "Địa chỉ máy chủ", batBuoc: true, goiY: "https://seafile.tenmien.vn/" },
-      { khoa: "user", nhan: "Email đăng nhập", batBuoc: true },
-      { khoa: "pass", nhan: "Mật khẩu", batBuoc: true, biMat: true },
-      { khoa: "library", nhan: "Tên thư viện" },
+  swift: {
+    cacBuoc: [
+      "Vào bảng điều khiển OpenStack của nhà cung cấp → «API Access» → «Download OpenStack RC File».",
+      "Mở tệp vừa tải bằng trình soạn thảo văn bản. Trong đó có các dòng OS_USERNAME, OS_PASSWORD, OS_AUTH_URL, OS_TENANT_NAME.",
+      "Chép từng giá trị sang đúng ô cùng tên bên dưới.",
+      "Ô Vùng cứ để trống trước; nếu máy chủ báo lỗi thì mới quay lại điền.",
     ],
-  },
-  storj: {
-    nhan: "Storj",
+    nhan: "OpenStack Swift",
+    loai: "swift",
     truong: [
-      { khoa: "access_grant", nhan: "Access Grant", batBuoc: true, biMat: true },
+      { khoa: "user", nhan: "Tên đăng nhập", batBuoc: true, chuThich: "Biến môi trường OS_USERNAME" },
+      { khoa: "key", nhan: "Mật khẩu", batBuoc: true, biMat: true, chuThich: "OS_PASSWORD" },
+      { khoa: "auth", nhan: "Địa chỉ máy chủ xác thực", batBuoc: true,
+        goiY: "https://auth.example.com/v3", chuThich: "OS_AUTH_URL" },
+      { khoa: "tenant", nhan: "Tên dự án (tenant)", batBuoc: true, chuThich: "OS_TENANT_NAME" },
+      { khoa: "domain", nhan: "Miền người dùng", macDinh: "Default",
+        chuThich: "Cần cho xác thực Keystone phiên bản 3." },
+      { khoa: "region", nhan: "Vùng", chuThich: "Thử bỏ trống trước; máy chủ báo lỗi thì mới điền." },
+      { khoa: "auth_version", nhan: "Phiên bản xác thực", macDinh: "3", chon: ["3", "2", "1", "0"] },
     ],
   },
   crypt: {
+    cacBuoc: [
+      "Khai xong kho thật trước đã (Google Drive, R2…), và nhớ tên kho đó.",
+      "Điền tên kho kèm thư mục vào ô «Kho bọc bên trong», ví dụ drive:ThuMucMaHoa.",
+      "Tự đặt hai mật khẩu và LƯU LẠI Ở CHỖ KHÁC. Mất là mất luôn dữ liệu, không ai khôi phục hộ được.",
+    ],
     nhan: "🔒 Mã hoá — bọc ngoài một kho đã khai",
-    ghiChu: "Đây là thứ làm các phạm vi thật sự không thấy của nhau khi dữ liệu đã lên mây: nó mã hoá cả nội dung lẫn tên tệp trước khi gửi đi. Mất hai mật khẩu dưới đây là mất luôn dữ liệu — không ai khôi phục hộ được.",
+    loai: "crypt",
+    ghiChu: "Đây là thứ làm các phạm vi thật sự không thấy của nhau khi dữ liệu đã lên mây: mã hoá cả nội dung lẫn tên tệp trước khi gửi đi. Mất hai mật khẩu dưới đây là mất luôn dữ liệu, không ai khôi phục hộ được.",
     truong: [
-      { khoa: "remote", nhan: "Kho bọc bên trong", batBuoc: true,
-        goiY: "drive:ThuMucMaHoa",
+      { khoa: "remote", nhan: "Kho bọc bên trong", batBuoc: true, goiY: "drive:ThuMucMaHoa",
         chuThich: "Tên một kho đã khai ở trên, kèm thư mục." },
       { khoa: "password", nhan: "Mật khẩu", batBuoc: true, biMat: true },
       { khoa: "password2", nhan: "Mật khẩu phụ (làm rối tên tệp)", biMat: true },
       { khoa: "filename_encryption", nhan: "Mã hoá tên tệp", macDinh: "standard",
-        goiY: "standard | obfuscate | off" },
+        chon: ["standard", "obfuscate", "off"] },
     ],
   },
   union: {
+    cacBuoc: [
+      "Khai từng tài khoản thành các kho riêng trước, ví dụ drive1, drive2, drive3.",
+      "Điền tên các kho đó vào ô «Các kho thành viên», cách nhau bằng dấu cách, nhớ dấu hai chấm ở cuối mỗi tên.",
+    ],
     nhan: "🧩 Gộp nhiều tài khoản thành một",
+    loai: "union",
     ghiChu: "Ghi tệp mới vào tài khoản còn nhiều chỗ trống nhất, bỏ qua tài khoản dưới 1 GB. Hợp để gom nhiều tài khoản miễn phí thành một kho lớn.",
     truong: [
       { khoa: "upstreams", nhan: "Các kho thành viên", batBuoc: true,
         goiY: "drive1: drive2: drive3:",
         chuThich: "Tên các kho đã khai, cách nhau bằng dấu cách." },
       { khoa: "create_policy", nhan: "Chọn kho khi ghi tệp mới", macDinh: "epmfs",
-        goiY: "epmfs = còn nhiều chỗ nhất" },
+        chon: ["epmfs", "eplfs", "lus", "lfs", "epall", "all"],
+        chuThich: "epmfs = kho còn nhiều chỗ trống nhất." },
     ],
   },
 };
@@ -267,13 +322,16 @@ export function RcloneCard() {
   const themRemote = async () => {
     setBanRon("them");
     try {
-      // Chỉ gửi ô có giá trị: rclone ghi cả khoá rỗng vào cấu hình, làm bẩn file.
-      const ts: Record<string, string> = {};
+      // Tham số gắn cứng theo mục (vd R2 luôn là provider=Cloudflare) đi trước,
+      // rồi tới các ô người dùng điền. Chỉ gửi ô CÓ giá trị: rclone ghi cả khoá
+      // rỗng vào cấu hình, làm bẩn file và che mất giá trị mặc định của nó.
+      const ts: Record<string, string> = { ...(KHO[loaiMoi]?.coDinh || {}) };
       for (const t of KHO[loaiMoi]?.truong || []) {
         const v = (giaTri[t.khoa] || "").trim();
         if (v) ts[t.khoa] = v;
       }
-      await request.post("/api/rclone/remotes", { ten: tenMoi, loai: loaiMoi, tham_so: ts });
+      await request.post("/api/rclone/remotes",
+        { ten: tenMoi, loai: KHO[loaiMoi].loai, tham_so: ts });
       setThongBao(`Đã thêm kho "${tenMoi}". Thêm kho nữa thì điền tiếp bên dưới.`);
       // Dọn sạch để thêm kho tiếp theo — mỗi lần là một kho RIÊNG, không gộp.
       setTenMoi("");
@@ -330,7 +388,7 @@ export function RcloneCard() {
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Kho lưu trữ đám mây</h2>
               <p className="text-sm text-[var(--muted-foreground)]">
-                Nối Google Drive, OneDrive, Dropbox, S3/R2, WebDAV… qua rclone. Bot đọc, tải về và gửi lên được.
+                Nối Google Drive, Google Photos, Cloudflare R2, MEGA, Swift, Drime qua rclone. Bot xem, tải về và gửi lên được.
               </p>
             </div>
           </div>
@@ -451,20 +509,43 @@ export function RcloneCard() {
                 </p>
               ) : null}
 
+              {/* Hướng dẫn lấy từng thông tin — hiện ngay khi đổi loại kho, để
+                  không phải rời trang đi tra tài liệu rồi quay lại. */}
+              <details open className="rounded-xl border border-[var(--border)] px-3 py-2">
+                <summary className="cursor-pointer text-xs font-medium">
+                  Lấy các thông tin này ở đâu — {KHO[loaiMoi]?.nhan}
+                </summary>
+                <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs text-[var(--muted-foreground)]">
+                  {(KHO[loaiMoi]?.cacBuoc || []).map((b, i) => <li key={i}>{b}</li>)}
+                </ol>
+              </details>
+
               <div className="grid gap-3 sm:grid-cols-2">
                 {(KHO[loaiMoi]?.truong || []).map((t) => (
                   <div key={t.khoa} className="space-y-1">
                     <label className="text-xs font-medium">
                       {t.nhan}{t.batBuoc ? <span className="text-red-500"> *</span> : null}
                     </label>
-                    <Input
-                      type={t.biMat ? "password" : "text"}
-                      autoComplete="off"
-                      value={giaTri[t.khoa] || ""}
-                      onChange={(e) => setGiaTri((s) => ({ ...s, [t.khoa]: e.target.value }))}
-                      placeholder={t.goiY || ""}
-                      className="h-11 rounded-xl"
-                    />
+                    {t.chon ? (
+                      // Tập giá trị hữu hạn thì cho chọn, không bắt gõ tay —
+                      // gõ sai một chữ là hỏng mà không biết hỏng ở đâu.
+                      <select
+                        value={giaTri[t.khoa] || t.macDinh || t.chon[0]}
+                        onChange={(e) => setGiaTri((s) => ({ ...s, [t.khoa]: e.target.value }))}
+                        className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm"
+                      >
+                        {t.chon.map((v) => <option key={v} value={v}>{v}</option>)}
+                      </select>
+                    ) : (
+                      <Input
+                        type={t.biMat ? "password" : "text"}
+                        autoComplete="off"
+                        value={giaTri[t.khoa] || ""}
+                        onChange={(e) => setGiaTri((s) => ({ ...s, [t.khoa]: e.target.value }))}
+                        placeholder={t.goiY || ""}
+                        className="h-11 rounded-xl"
+                      />
+                    )}
                     {t.chuThich ? (
                       <p className="text-xs text-[var(--muted-foreground)]">{t.chuThich}</p>
                     ) : null}
@@ -484,21 +565,14 @@ export function RcloneCard() {
                   Thêm kho
                 </Button>
               </div>
-              <div className="space-y-1 text-xs text-[var(--muted-foreground)]">
-                <p>
-                  <strong>Google Drive khai thẳng ở đây được</strong> nếu dùng tài khoản dịch vụ: chọn loại Google Drive rồi
-                  điền <code className="rounded bg-[var(--secondary)] px-1">service_account_file = /app/data/rclone/khoa.json</code>.
-                  Không cần trình duyệt lần nào. Nhớ vào Drive chia sẻ thư mục đích cho email của tài khoản dịch vụ đó —
-                  nó không có dung lượng riêng, phải ghi nhờ vào thư mục của anh/chị.
-                </p>
-                <p>
-                  OneDrive và Dropbox vẫn phải cấp quyền qua trình duyệt. Nhanh nhất là mở đường hầm
-                  <code className="mx-1 rounded bg-[var(--secondary)] px-1">ssh -L localhost:53682:localhost:53682 root@máy-chủ</code>
-                  rồi chạy <code className="mx-1 rounded bg-[var(--secondary)] px-1">rclone config</code> trên máy chủ và trả lời
-                  <strong> Y</strong> ở bước hỏi trình duyệt — mở đường dẫn nó in ra bằng trình duyệt máy mình là xong,
-                  cấu hình rơi thẳng vào máy chủ, khỏi dán gì vào ô bên dưới.
-                </p>
-              </div>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                Tám trong chín loại trên điền xong là chạy ngay. Riêng <strong>Google Photos</strong> bắt buộc cấp quyền qua
+                trình duyệt một lần. Ngại chép token thì có cách khác: mở đường hầm
+                <code className="mx-1 rounded bg-[var(--secondary)] px-1">ssh -L localhost:53682:localhost:53682 root@máy-chủ</code>
+                rồi chạy <code className="mx-1 rounded bg-[var(--secondary)] px-1">rclone config</code> ngay trên máy chủ và trả lời
+                <strong> Y</strong> ở bước hỏi trình duyệt — mở đường dẫn nó in ra bằng trình duyệt máy mình, cấu hình rơi
+                thẳng vào máy chủ, khỏi dán gì vào đây.
+              </p>
             </div>
 
             {/* Cấu hình thô */}
