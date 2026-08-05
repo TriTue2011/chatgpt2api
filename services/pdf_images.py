@@ -2,8 +2,9 @@
 
 Học từ repo Arkon: mỗi ảnh trích từ PDF được vision AI mô tả (caption), lưu file
 với UUID rồi nhúng marker vào Markdown — RAG/tóm tắt tìm được hình theo caption,
-bot lấy lại ảnh thật qua image_path(uuid). CHỈ áp cho PDF số: PDF scan thì cả
-trang là một ảnh, đường OCR vision đã ghi [HÌNH: …] inline sẵn rồi.
+bot lấy lại ảnh thật qua image_path(uuid). Áp cho PDF số (`extract_and_caption`)
+và file Office .docx/.xlsx/.pptx (`extract_office_images`). PDF scan thì cả trang
+là một ảnh, đường OCR vision đã ghi [HÌNH: …] inline sẵn rồi.
 
 Best-effort toàn tập: thiếu thư viện / vision lỗi / ảnh hỏng → bỏ qua ảnh đó,
 không bao giờ làm gãy đường RAG. Ảnh lưu DATA_DIR/pdf_images/<uuid>.jpg, TTL 30
@@ -108,19 +109,82 @@ def extract_and_caption(pdf_path: str, max_images: int = MAX_IMAGES) -> list[dic
                     jpeg = buf.getvalue()
                 except Exception:
                     continue
-                iid = uuid.uuid4().hex
-                (_dir() / f"{iid}.jpg").write_bytes(jpeg)
-                cap = ""
-                try:
-                    cap = _caption(jpeg)
-                except Exception as exc:
-                    logger.warning("pdf_images: caption lỗi (bỏ qua): %s", str(exc)[:120])
-                out.append({"id": iid, "page": pno + 1,
-                            "caption": cap or "hình trong tài liệu"})
+                out.append(_ghi_anh(jpeg, pno + 1))
                 if len(out) >= max_images:
                     break
     finally:
         doc.close()
+    _purge_old()
+    return out
+
+
+def _ghi_anh(jpeg: bytes, page: int) -> dict:
+    """Lưu ảnh theo UUID + caption. Caption lỗi thì vẫn giữ ảnh với mô tả chung."""
+    iid = uuid.uuid4().hex
+    (_dir() / f"{iid}.jpg").write_bytes(jpeg)
+    cap = ""
+    try:
+        cap = _caption(jpeg)
+    except Exception as exc:
+        logger.warning("pdf_images: caption lỗi (bỏ qua): %s", str(exc)[:120])
+    return {"id": iid, "page": page, "caption": cap or "hình trong tài liệu"}
+
+
+# ── Ảnh nhúng trong file Office ─────────────────────────────────────────────
+# .docx/.xlsx/.pptx là file ZIP theo chuẩn OOXML: ảnh nằm nguyên vẹn trong thư
+# mục media, lấy ra chỉ cần mở nén — không cần thư viện phân tích tài liệu nào.
+# Đường PDF không dùng lại được vì nó đọc qua PyMuPDF theo trang.
+
+_MEDIA_DIR = ("word/media/", "ppt/media/", "xl/media/")
+_DUOI_ANH = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp")
+_SO_RE = re.compile(r"(\d+)")
+
+
+def _khoa_tu_nhien(ten: str) -> list:
+    """image2 đứng trước image10 — sắp theo chuỗi thuần thì ngược lại."""
+    return [int(p) if p.isdigit() else p for p in _SO_RE.split(ten.lower())]
+
+
+def extract_office_images(path: str, max_images: int = MAX_IMAGES) -> list[dict]:
+    """Trích ảnh nhúng của .docx/.xlsx/.pptx + caption. Trả [{'id','page','caption'}, …].
+
+    Cùng bộ lọc và cùng trần số ảnh với đường PDF. Office không có khái niệm
+    trang nên `page` = 0; `markdown_section` bỏ tiền tố "Trang" khi thấy 0.
+    Định dạng cũ (.doc/.xls/.ppt) không phải ZIP → trả rỗng, không báo lỗi.
+    """
+    import zipfile
+
+    from PIL import Image
+
+    out: list[dict] = []
+    try:
+        zf = zipfile.ZipFile(path)
+    except Exception:
+        return out
+    try:
+        ten_anh = sorted(
+            (n for n in zf.namelist()
+             if n.startswith(_MEDIA_DIR) and n.lower().endswith(_DUOI_ANH)),
+            key=_khoa_tu_nhien,
+        )
+        for ten in ten_anh:
+            if len(out) >= max_images:
+                break
+            try:
+                raw = zf.read(ten)
+                if len(raw) < _MIN_BYTES:
+                    continue
+                im = Image.open(io.BytesIO(raw))
+                if im.width < _MIN_DIM or im.height < _MIN_DIM:
+                    continue
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, "JPEG", quality=85)
+                jpeg = buf.getvalue()
+            except Exception:
+                continue
+            out.append(_ghi_anh(jpeg, 0))
+    finally:
+        zf.close()
     _purge_old()
     return out
 
@@ -131,7 +195,8 @@ def markdown_section(images: list[dict]) -> str:
         return ""
     lines = ["## Hình ảnh trong tài liệu", ""]
     for im in images:
-        lines.append(f"- Trang {im['page']}: ![{im['caption']}](image://{im['id']})")
+        dau = f"Trang {im['page']}: " if im.get("page") else ""
+        lines.append(f"- {dau}![{im['caption']}](image://{im['id']})")
     return "\n".join(lines)
 
 

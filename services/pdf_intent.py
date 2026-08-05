@@ -455,10 +455,14 @@ def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
     if la_office(pdf_path):
         try:
             from markitdown import MarkItDown
-            return (MarkItDown().convert(pdf_path).text_content or "").strip()
+            t = (MarkItDown().convert(pdf_path).text_content or "").strip()
         except Exception as exc:
             logger.warning("markitdown doc file Office loi: %s", exc)
             return ""
+        # markitdown bỏ hẳn ảnh nhúng: file Word/PowerPoint nhiều hình đi qua nó
+        # chỉ còn chữ. Lấy ảnh thẳng từ thư mục media trong file nén (xem
+        # pdf_images.extract_office_images) rồi gắn y như PDF vẫn làm.
+        return (t + _image_section(pdf_path)) if t else ""
     t = markdown_pdf_so(pdf_path, max_pages=max_pages)
     if t:
         return t + _image_section(pdf_path)
@@ -505,7 +509,9 @@ def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
 def _image_section(pdf_path: str) -> str:
     try:
         from services import pdf_images
-        sec = pdf_images.markdown_section(pdf_images.extract_and_caption(pdf_path))
+        anh = (pdf_images.extract_office_images(pdf_path) if la_office(pdf_path)
+               else pdf_images.extract_and_caption(pdf_path))
+        sec = pdf_images.markdown_section(anh)
         return ("\n\n" + sec) if sec else ""
     except Exception as exc:
         logger.warning("pdf_images lỗi (bỏ qua): %s", str(exc)[:150])
