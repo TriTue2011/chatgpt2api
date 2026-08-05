@@ -32,10 +32,11 @@ RAG_KNOWLEDGE = "rag_knowledge"
 RAG_TEACHER = "rag_teacher"
 WORD = "word"
 EXCEL = "excel"
+TOM_TAT = "tom_tat"
 # legacy alias
 RAG = "rag"  # maps to rag_knowledge
 
-ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL}
+ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT}
 
 # Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL`, không giữ bảng thứ
 # hai (thêm loại một chỗ mà chỗ kia vẫn nhãn cũ là lỗi im lặng).
@@ -137,7 +138,9 @@ def pop_pending(key: str) -> dict | None:
 
 
 # Thứ tự hiển thị ổn định trong ask_text (số 1..N theo các mục còn được phép).
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL)
+#: Tóm tắt thêm ở CUỐI, không chen vào giữa: số thứ tự các mục cũ là thứ
+#: người dùng đã quen gõ, đổi chỗ là họ bấm nhầm việc.
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT)
 
 
 def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
@@ -166,9 +169,12 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         return EXCEL
     if any(w in t for w in ("word", "docx", "chuyển word", "chuyen word", "convert word")):
         return WORD
-    if t in {"rag"} or any(w in t for w in (
-        "tóm tắt", "tom tat", "summary", "tổng hợp", "tong hop", "nạp rag", "nap rag",
+    if any(w in t for w in (
+        "tóm tắt", "tom tat", "summary", "tổng hợp", "tong hop", "tóm lược",
+        "tom luoc", "nội dung gì", "noi dung gi",
     )):
+        return TOM_TAT
+    if t in {"rag"} or any(w in t for w in ("nạp rag", "nap rag")):
         return RAG_KNOWLEDGE
     if any(w in t for w in ("convert", "chuyển file", "chuyen file")) and "word" in t:
         return WORD
@@ -179,6 +185,9 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "2": 2, "2️⃣": 2, "2.": 2, "2)": 2,
         "3": 3, "3️⃣": 3, "3.": 3, "3)": 3,
         "4": 4, "4️⃣": 4, "4.": 4, "4)": 4,
+        # Bảng này từng dừng ở 4 — thêm mục thứ 5 (tóm tắt) mà quên đây thì gõ
+        # "5" ra None, bot im lặng đúng lúc người dùng vừa bấm chọn.
+        "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
     }
     if t in num_map:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
@@ -308,7 +317,8 @@ def y_dinh_cho_office(allow: set[str] | None) -> set[str]:
 
     Bỏ WORD/EXCEL: người dùng gửi .docx vào rồi "chuyển Word" thì chẳng ra gì.
     """
-    return {i for i in allowed_intents(allow) if i in (RAG_KNOWLEDGE, RAG_TEACHER)}
+    return {i for i in allowed_intents(allow)
+            if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT)}
 
 
 def allowed_intents(allow: set[str] | None) -> set[str]:
@@ -324,6 +334,7 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     out: set[str] = set()
     if "rag" in allow or "summary" in allow or "wiki" in allow:
         out.add(RAG_KNOWLEDGE)
+        out.add(TOM_TAT)
     if "teacher" in allow:
         out.add(RAG_TEACHER)
     # teacher without explicit rag still can use knowledge if wiki? no — keep strict
@@ -364,6 +375,7 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
         RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
         WORD: "📝 Chuyển **Word** (.docx)",
         EXCEL: "📊 Chuyển **Excel** (.xlsx)",
+        TOM_TAT: "✍️ **Tóm tắt** nội dung (không nạp vào kho nào)",
     }
     n = 1
     shown = 0

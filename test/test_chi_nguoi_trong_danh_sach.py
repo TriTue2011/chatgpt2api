@@ -251,14 +251,15 @@ class NhanWordExcelNhuPdfTests(unittest.TestCase):
         for t in ("a.pdf", "anh.png", "", "docx"):
             self.assertFalse(pi.la_office(t), t)
 
-    def test_menu_office_chi_co_hai_muc_rag(self):
+    def test_menu_office_bo_hai_muc_chuyen_doi(self):
         """Gửi .docx vào rồi "chuyển Word" thì vô nghĩa — bỏ hai mục chuyển đổi."""
         from services import pdf_intent as pi
 
         self.assertEqual(pi.y_dinh_cho_office(None),
-                         {pi.RAG_KNOWLEDGE, pi.RAG_TEACHER})
+                         {pi.RAG_KNOWLEDGE, pi.RAG_TEACHER, pi.TOM_TAT})
         # Bộ lọc thread vẫn siết được như cũ.
-        self.assertEqual(pi.y_dinh_cho_office({"rag"}), {pi.RAG_KNOWLEDGE})
+        self.assertEqual(pi.y_dinh_cho_office({"rag"}),
+                         {pi.RAG_KNOWLEDGE, pi.TOM_TAT})
         self.assertEqual(pi.y_dinh_cho_office({"word"}), set())
 
     def test_menu_goi_dung_ten_loai_file(self):
@@ -285,6 +286,75 @@ class NhanWordExcelNhuPdfTests(unittest.TestCase):
         src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
         self.assertNotIn("Hiện em chỉ hỗ trợ chuyển PDF → Word", src)
         self.assertIn("_pi.la_office(name)", src)
+
+
+class MucTomTatTests(unittest.TestCase):
+    """Menu tài liệu có mục TÓM TẮT — đọc rồi trả bản tóm, không nạp kho nào.
+
+    Trước đây "tóm tắt" bị `parse_intent` trả về `rag_knowledge`, mà mục đó vừa
+    tóm tắt vừa GHI VÀO WIKI. Ai chỉ muốn đọc nhanh một tài liệu thì không có
+    lựa chọn nào không để lại dấu vết.
+    """
+
+    def test_menu_pdf_co_muc_thu_nam(self):
+        from services import pdf_intent as pi
+
+        t = pi.ask_text("a.pdf", pi.allowed_intents(None))
+        self.assertIn("5. ", t)
+        self.assertIn("Tóm tắt", t)
+
+    def test_so_thu_tu_cac_muc_cu_khong_doi(self):
+        """Người dùng quen gõ số — chen mục mới vào giữa là họ bấm nhầm việc."""
+        from services import pdf_intent as pi
+
+        a = pi.allowed_intents(None)
+        self.assertEqual([pi.parse_intent(str(i), a) for i in range(1, 6)],
+                         [pi.RAG_KNOWLEDGE, pi.RAG_TEACHER, pi.WORD, pi.EXCEL,
+                          pi.TOM_TAT])
+
+    def test_office_cung_co_tom_tat(self):
+        from services import pdf_intent as pi
+
+        self.assertIn(pi.TOM_TAT, pi.y_dinh_cho_office(None))
+        self.assertEqual(
+            [pi.parse_intent(str(i), pi.y_dinh_cho_office(None)) for i in range(1, 4)],
+            [pi.RAG_KNOWLEDGE, pi.RAG_TEACHER, pi.TOM_TAT])
+
+    def test_tu_khoa_tom_tat_khong_con_roi_vao_rag(self):
+        from services import pdf_intent as pi
+
+        for t in ("tóm tắt", "tom tat", "summary", "tóm lược"):
+            self.assertEqual(pi.parse_intent(t), pi.TOM_TAT, t)
+        # "nạp rag" vẫn là nạp kho, không phải tóm tắt.
+        self.assertEqual(pi.parse_intent("nạp rag"), pi.RAG_KNOWLEDGE)
+
+    def test_kenh_co_nhanh_xu_ly_tom_tat(self):
+        src = (GOC / "services" / "zalo_personal.py").read_text("utf-8")
+        self.assertIn("intent == _pi.TOM_TAT", src)
+
+
+class TelegramCungNhanWordExcelTests(unittest.TestCase):
+    """Telegram cũng nhận Word/Excel + có mục tóm tắt, y như Zalo cá nhân.
+
+    Yêu cầu 05/08: "làm thêm tele vì zalo bot không có gửi file". Kiểm ở mức
+    chuỗi nguồn — import telegram_bot kéo theo cả client mạng.
+    """
+
+    def _src(self) -> str:
+        return (GOC / "services" / "telegram_bot.py").read_text("utf-8")
+
+    def test_khong_con_chan_file_khong_phai_pdf(self):
+        src = self._src()
+        self.assertNotIn("Hiện chỉ hỗ trợ PDF. File:", src)
+        self.assertIn("_pi.la_office(doc_name)", src)
+
+    def test_dung_menu_office_va_giu_dung_duoi_file(self):
+        src = self._src()
+        self.assertIn("_pi.y_dinh_cho_office(_allow)", src)
+        self.assertIn("doc_name, _duoi)", src)
+
+    def test_co_nhanh_tom_tat(self):
+        self.assertIn("intent == _pi.TOM_TAT", self._src())
 
 if __name__ == "__main__":
     unittest.main()

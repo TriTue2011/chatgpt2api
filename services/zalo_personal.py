@@ -1888,6 +1888,20 @@ def _do_pdf_intent(
             ):
                 reply = "📊 Em đã tạo Excel nhưng gửi file chưa được."
                 send_message(thread_id, reply, thread_type)
+        elif intent == _pi.TOM_TAT:
+            # Tóm tắt THUẦN: đọc file, trả bản tóm tắt, KHÔNG nạp vào kho nào.
+            # Khác `RAG_KNOWLEDGE` ở chỗ đó — mục cũ vừa tóm tắt vừa ghi wiki,
+            # nên ai chỉ muốn đọc nhanh một tài liệu thì không có lựa chọn nào.
+            kind = "pdf_tom_tat"
+            _tt = _pi.summarize_pdf(path, _ai_model(account, thread_id))
+            if not (_tt or "").strip():
+                status = "error"
+                err = "khong doc duoc noi dung"
+                reply = "⚠️ Em không đọc được nội dung file này để tóm tắt ạ."
+            else:
+                from services import pdf_images as _pimg
+                reply = f"✍️ Tóm tắt **{name}**\n\n" + _pimg.humanize_markers(_tt)
+            send_message(thread_id, reply, thread_type)
         elif intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
             if not grade or not subject:

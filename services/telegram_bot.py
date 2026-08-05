@@ -995,6 +995,18 @@ def _do_pdf_intent(
                 err = str(r.get("error") or "")[:150]
                 reply = f"⚠️ Không chuyển được sang Excel: {err}"
                 send_message(chat_id, reply)
+        elif intent == _pi.TOM_TAT:
+            # Tóm tắt THUẦN: đọc file, trả bản tóm, KHÔNG nạp vào kho nào.
+            kind = "pdf_tom_tat"
+            _tt = _pi.summarize_pdf(path, _tg_model(chat_id, user_id))
+            if not (_tt or "").strip():
+                status = "error"
+                err = "khong doc duoc noi dung"
+                reply = "⚠️ Không đọc được nội dung file này để tóm tắt."
+            else:
+                from services import pdf_images as _pimg
+                reply = f"✍️ Tóm tắt **{name}**\n\n" + _pimg.humanize_markers(_tt)
+            send_message(chat_id, reply)
         elif intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
             if not grade or not subject:
@@ -1522,18 +1534,26 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # Handle document (PDF) — HỎI ý định trước (1=RAG / 2=Word), không tự quyết.
     if document:
         doc_name = document.get("file_name", "document.pdf")
-        if not str(doc_name).lower().endswith(".pdf"):
-            send_message(chat_id, f"📎 Hiện chỉ hỗ trợ PDF. File: {doc_name}")
+        # Word/Excel đi CHUNG đường với PDF — cùng menu ý định, cùng đường nạp
+        # RAG, y như bên Zalo cá nhân. Khác hai chỗ: menu bỏ mục chuyển
+        # Word/Excel, và file tạm giữ ĐÚNG đuôi thật cho markitdown nhận dạng.
+        _la_office = _pi.la_office(doc_name)
+        if not str(doc_name).lower().endswith(".pdf") and not _la_office:
+            send_message(chat_id, "📎 Hiện chỉ hỗ trợ PDF, Word, Excel và "
+                                  f"PowerPoint. File: {doc_name}")
             return
-        _pdf_intents = _pi.allowed_intents(_allow)
+        _pdf_intents = (_pi.y_dinh_cho_office(_allow) if _la_office
+                        else _pi.allowed_intents(_allow))
         if not _pdf_intents:
-            return  # thread lọc không có nhóm tài liệu → bỏ qua PDF, không nhắn gì
+            return  # thread lọc không có nhóm tài liệu → bỏ qua, không nhắn gì
         _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
         file_data = _download_file(document.get("file_id", ""))
         if not file_data:
-            send_message(chat_id, "❌ Không thể tải file PDF.")
+            send_message(chat_id, "❌ Không thể tải file.")
             return
-        _pdf_info = _pi.set_pending(f"tg:{_bot_id()}:{chat_id}", file_data, doc_name)
+        _duoi = ("." + str(doc_name).rsplit(".", 1)[-1].lower()) if _la_office else ".pdf"
+        _pdf_info = _pi.set_pending(f"tg:{_bot_id()}:{chat_id}", file_data,
+                                    doc_name, _duoi)
         send_message(chat_id, _pi.ask_text(doc_name, _pdf_intents, _pdf_info))
         return
 

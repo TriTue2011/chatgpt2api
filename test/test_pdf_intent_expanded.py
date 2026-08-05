@@ -27,7 +27,9 @@ class PdfIntentParseTests(unittest.TestCase):
         self.assertEqual(pi.parse_intent("teacher sgk"), pi.RAG_TEACHER)
         self.assertEqual(pi.parse_intent("chuyển word"), pi.WORD)
         self.assertEqual(pi.parse_intent("excel bảng"), pi.EXCEL)
-        self.assertEqual(pi.parse_intent("tóm tắt"), pi.RAG_KNOWLEDGE)  # legacy
+        # "tóm tắt" nay là MỤC RIÊNG (đọc rồi trả bản tóm, không nạp kho
+        # nào). Trước đây nó rơi vào rag_knowledge — mục đó ghi cả vào wiki.
+        self.assertEqual(pi.parse_intent("tóm tắt"), pi.TOM_TAT)
 
     def test_teacher_meta(self) -> None:
         self.assertEqual(pi.parse_teacher_meta("5 toán"), {"grade": 5, "subject": "toan"})
