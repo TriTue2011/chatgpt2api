@@ -196,7 +196,25 @@ def emphasize_for_zalo_bot(
     color = resolve_zalo_bot_color(bot, cid)
     size = resolve_zalo_bot_size(bot, cid)
     body = wrap_bold_with_md_style(body, color=color, size=size)
+    body = _gach_chan_zalo_bot(body)
     return body
+
+
+_RE_GACH_CHAN = re.compile(r"__(.+?)__", re.DOTALL)
+
+
+def _gach_chan_zalo_bot(text: str) -> str:
+    """``__chữ__`` → ``{underline}chữ{/underline}``.
+
+    Hai kênh Zalo viết gạch chân KHÁC NHAU: Zalo cá nhân nhận mã kiểu ``u`` (nên
+    `zalo_markdown` đọc thẳng ``__…__``), còn Zalo Bot chỉ hiểu thẻ
+    ``{underline}`` trong markdown của nó. Không đổi thì dấu gạch dưới tới tay
+    người đọc dưới dạng ``__chữ__`` thô — hoặc bị đường lui xoá mất.
+
+    Đo thật 05/08 11:19 trên Bot Mít Bắp: tin gửi bằng parse_mode=markdown hiện
+    ĐÚNG đậm / nghiêng / gạch chân / màu / chữ to / chấm đầu dòng / đánh số.
+    """
+    return _RE_GACH_CHAN.sub(r"{underline}\1{/underline}", text or "")
 
 
 def build_send_message_payload(

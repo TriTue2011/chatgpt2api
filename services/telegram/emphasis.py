@@ -55,6 +55,19 @@ _STATUS = re.compile(
 _ALREADY_MD = re.compile(r"(\*\*.+?\*\*|`[^`]+`|__.+?__)", re.DOTALL)
 
 
+def _la_so_thu_tu_dau_dong(text: str, m: "re.Match") -> bool:
+    """Số này có phải SỐ THỨ TỰ mở đầu một mục danh sách không?
+
+    Đúng khi trước nó chỉ có khoảng trắng tính từ đầu dòng, và ngay sau nó là
+    "." hoặc ")" rồi khoảng trắng — tức khuôn "1. mục" / "2) mục".
+    """
+    dau = text.rfind("\n", 0, m.start()) + 1
+    if text[dau:m.start()].strip():
+        return False
+    sau = text[m.end():m.end() + 2]
+    return len(sau) >= 2 and sau[0] in ".)" and sau[1] in " \t"
+
+
 def _cfg_get() -> dict[str, Any]:
     try:
         from services.config import config
@@ -205,6 +218,13 @@ def _emphasize_plain(plain: str, st: dict, style: str) -> str:
 
     if st.get("numbers") or st.get("units"):
         def num_repl(m: re.Match) -> str:
+            # SỐ THỨ TỰ đầu dòng ("1. ", "2) ") KHÔNG phải số liệu — tô đậm nó
+            # vừa vô nghĩa vừa phá dấu đầu dòng: "1. mục" thành "**1**. mục" thì
+            # cả Zalo lẫn Telegram hết nhận ra đây là danh sách đánh số.
+            # Đo thật 05/08: câu trả lời có danh sách gửi qua Zalo Bot ra
+            # "{orange}**1**{/orange}. so mot" — số đứng lẻ, danh sách vỡ.
+            if _la_so_thu_tu_dau_dong(out, m):
+                return m.group(0)
             num, unit = m.group(1) or "", m.group(2) or ""
             if unit and st.get("units"):
                 return _wrap(f"{num}{unit}", style)

@@ -308,6 +308,52 @@ class DinhDangZaloTests(unittest.TestCase):
         self.assertIn("danh sách", ra.get("text") or "")
 
 
+class DinhDangZaloBotTests(unittest.TestCase):
+    """Zalo Bot: đo thật 05/08 11:19 trên Bot Mít Bắp.
+
+    Gửi `parse_mode=markdown` thì Zalo hiện ĐÚNG đậm / nghiêng / gạch chân /
+    màu / chữ to / chấm đầu dòng / đánh số. Đường `text_styles` cũng ăn b, u,
+    lst_1, lst_2 nhưng `ind_10` KHÔNG thụt — nên giữ nguyên đường markdown.
+
+    Hai kênh Zalo viết gạch chân khác nhau: cá nhân nhận mã `u` (từ `__…__`),
+    Bot chỉ hiểu thẻ `{underline}`.
+    """
+
+    def _gui(self, text: str) -> str:
+        from services.zalo_bot_format import build_send_message_payload
+
+        return build_send_message_payload("1", text, rich=True)[0]["text"]
+
+    def test_gach_chan_doi_sang_the_cua_zalo_bot(self):
+        self.assertEqual(self._gui("__gach chan__"),
+                         "{underline}gach chan{/underline}")
+
+    def test_dau_dau_dong_giu_nguyen_cho_zalo_tu_ve(self):
+        self.assertEqual(self._gui("- muc mot\n- muc hai"), "- muc mot\n- muc hai")
+
+    def test_so_thu_tu_khong_bi_to_dam_lam_vo_danh_sach(self):
+        """"1. mục" thành "**1**. mục" là danh sách vỡ — cả Zalo lẫn Telegram."""
+        self.assertEqual(self._gui("1. so mot\n2) so hai"), "1. so mot\n2) so hai")
+
+    def test_so_lieu_that_van_duoc_nhan_manh(self):
+        ra = self._gui("Nhiet do 29°C, do am 79%")
+        self.assertIn("**29°C**", ra)
+        self.assertIn("**79%**", ra)
+
+    def test_so_giua_cau_van_duoc_nhan_manh(self):
+        self.assertIn("**2**", self._gui("Ban thang 1. Sau do 2 nguoi"))
+
+    def test_zalo_ca_nhan_cung_huong_loi_sua_so_thu_tu(self):
+        """Trước bản sửa, "**1**." làm `_RE_SO` hết khớp → mất luôn lst_2."""
+        from services.telegram.emphasis import emphasize_text
+        from services.zalo_markdown import markdown_to_zalo_message
+
+        ra = markdown_to_zalo_message(emphasize_text("1. so mot\n2. so hai"),
+                                      color="orange", size="normal")
+        self.assertEqual(ra["msg"], "so mot\nso hai")
+        self.assertEqual([s["st"] for s in ra["styles"]], ["lst_2", "lst_2"])
+
+
 class MenuDanhSoMotKieuTests(unittest.TestCase):
     """Mọi menu đánh số theo MỘT kiểu: "1. ", không dùng keycap "1️⃣".
 
