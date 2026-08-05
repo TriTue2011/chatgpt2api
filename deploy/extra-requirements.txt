@@ -11,7 +11,12 @@ chromadb>=0.5.0
 fastembed>=0.4.0,<0.6.0
 boto3>=1.35.0
 lxml>=5.3.0
-markitdown[pdf]>=0.0.1
+# Phải khai ĐỦ phần phụ cho từng loại tệp: markitdown chỉ nhận .docx khi có
+# mammoth, .pptx khi có python-pptx. Image đang chạy chỉ có [pdf] nên mọi file
+# Word gửi qua bot đều đổ MissingDependencyException ngay bước đọc — đo trên
+# máy chủ 05/08: "DocxConverter threw MissingDependencyException". Excel may mắn
+# chạy được vì openpyxl đã có sẵn do gói khác kéo theo.
+markitdown[pdf,docx,xlsx,xls,pptx]>=0.0.1
 pytesseract>=0.3.0
 pdf2image>=1.17.0
 vnstock>=4.0.0
