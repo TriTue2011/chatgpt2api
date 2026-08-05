@@ -186,6 +186,24 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     return out
 
 
+#: Chuỗi tag người dùng gõ để gọi bot: '@BenBap', '@Botmitbap'…
+_TAG_RE = re.compile(r"@[^\s@]{1,32}")
+
+
+def bo_tag(text: str) -> str:
+    """Bỏ phần tag bot khỏi lời kèm ảnh, trả phần chữ THẬT sự có nội dung.
+
+    Trong nhóm phải tag bot mới gọi được nó, nên lời kèm ảnh gần như luôn mở đầu
+    bằng '@TenBot'. Nếu không bóc ra thì lời kèm không bao giờ rỗng, và nhánh
+    "chưa nói gì → hiện menu" không bao giờ chạy: tag bot rồi gửi ảnh suông là bị
+    đoán bừa thành «phân tích ảnh» thay vì được hỏi muốn làm gì.
+
+    Đo thật 05/08: chủ máy tag bot kèm ảnh, hệ thống gửi lên model đúng một chuỗi
+    "@Botmitbap" làm yêu cầu phân tích.
+    """
+    return _TAG_RE.sub(" ", str(text or "")).strip()
+
+
 def ask_text(intents: set[str] | None = None) -> str:
     intents = intents if intents is not None else ALL_INTENTS
     catalog = {

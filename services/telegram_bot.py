@@ -1406,7 +1406,10 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
 
     # Trả lời ý định PDF: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
-    _pkey = f"tg:{_bot_id()}:{chat_id}"
+    # Kèm NGƯỜI GỬI: bản cũ chỉ tới chat nên trong nhóm, A gửi tệp rồi bot hỏi
+    # muốn làm gì, B nói câu bất kỳ là câu đó bị nhận làm trả lời của A. Chờ là
+    # chờ theo từng người (chủ máy chốt 05/08).
+    _pkey = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
     if text and chat_id and _pi.has_pending(_pkey):
         _pend = _pi.get_pending(_pkey) or {}
         # Bước 2: đang chờ lớp + môn cho RAG teacher

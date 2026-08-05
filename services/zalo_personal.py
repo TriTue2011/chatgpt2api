@@ -2210,7 +2210,11 @@ def _process_ai(ev: dict) -> None:
             )
             return
 
-    pkey = f"zalop:{ev.get('account_id')}:{thread_id}"
+    # Khoá chờ phải kèm NGƯỜI GỬI. Bản cũ chỉ tới thread nên trong nhóm, A gửi
+    # ảnh rồi bot hỏi "muốn làm gì", B nói câu bất kỳ là câu đó bị nhận làm trả
+    # lời của A — B cướp mất lượt mà không ai biết, và A trả lời sau thì bản chờ
+    # đã bị lấy đi rồi. Chờ là chờ theo từng người (chủ máy chốt 05/08).
+    pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
@@ -2350,7 +2354,12 @@ def _process_ai(ev: dict) -> None:
         if not data:
             send_message(thread_id, _img_err, thread_type)
             return
-        caption = (text or "").strip()
+        # Bóc phần tag bot ra trước khi xét "có nói gì không". Trong nhóm phải
+        # tag mới gọi được bot, nên lời kèm ảnh gần như luôn mở đầu bằng
+        # '@TenBot' — không bóc thì nó không bao giờ rỗng và nhánh hiện menu bên
+        # dưới không bao giờ chạy, tag bot rồi gửi ảnh suông là bị đoán bừa
+        # thành «phân tích ảnh» (chủ máy báo 05/08, 20:55).
+        caption = _phi.bo_tag(text)
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:
             _phi.set_pending(pkey, data)
