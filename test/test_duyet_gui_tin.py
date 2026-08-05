@@ -21,7 +21,7 @@ Kèm theo là lỗi thứ hai trong chính đoạn chat đó: câu phàn nàn "K
 nội dung mà" bị tính là lời TỪ CHỐI (bắt đầu bằng "không") nên bot đáp "Dạ thôi
 em không làm ạ".
 
-File này khoá tám hành vi:
+File này khoá chín hành vi:
   * câu duyệt gửi tin CHỈ có ba lựa chọn — không mở lời, không người nhận,
     không nội dung;
   * ba kênh không chèn "..." lấp chỗ trống lên trên ba lựa chọn đó;
@@ -32,7 +32,9 @@ File này khoá tám hành vi:
     không bắt người dùng gõ lại tên kênh;
   * mọi menu đánh số MỘT kiểu "1. ", không dùng keycap "1️⃣" (vỡ phông Zalo);
   * lời duyệt phải là câu NGẮN — câu nói chuyện dài không bị tính là ok/thôi;
-  * DÁN LẠI nguyên câu duyệt của bot không được tính là lời duyệt.
+  * DÁN LẠI nguyên câu duyệt của bot không được tính là lời duyệt;
+  * gửi FILE thì câu duyệt hiện TÊN FILE — tên file không phải nội dung tin, mà
+    là thứ duy nhất phân biệt gửi đúng với gửi nhầm.
 """
 from __future__ import annotations
 
@@ -459,6 +461,38 @@ class HoiGioChuKhongPhaiDanDoTests(unittest.TestCase):
                     "anh ơi cho em hỏi bây giờ là mấy giờ rồi ạ", "giờ rồi em"):
             self.assertTrue(_LA_CAU_HOI_GIO(_bo_dau(cau)), cau)
 
+
+
+class CauDuyetGuiFileTests(unittest.TestCase):
+    """Gửi FILE thì câu duyệt hiện TÊN FILE, dù đang ở chế độ chỉ-ba-lựa-chọn.
+
+    Chốt 05/08: tên file không phải "nội dung tin nhắn" — nó là thứ duy nhất
+    phân biệt gửi đúng với gửi nhầm, nhất là khi người dùng nói "gửi file vừa
+    tạo" và bot tự lấy file mới nhất. Gửi nhầm tài liệu vào nhóm thì không rút
+    lại được.
+    """
+
+    def _duyet(self, **args) -> str:
+        return gate.format_proposal("send_to_contact",
+                                    {"to": NGUOI_NHAN, **args},
+                                    label="Gửi tin cho người trong danh bạ")
+
+    def test_co_file_thi_hien_ten_file(self):
+        q = self._duyet(file="HTT_-_Phuong_an_CHCN_co_so.docx")
+        self.assertIn("📎 HTT_-_Phuong_an_CHCN_co_so.docx", q)
+        self.assertIn("<<<ASK>>>", q)
+        # Vẫn không nhắc người nhận hay nội dung.
+        self.assertNotIn(NGUOI_NHAN, q)
+
+    def test_chi_hien_ten_khong_hien_ca_duong_dan(self):
+        q = self._duyet(file="thu/muc/con/bao-cao.xlsx")
+        self.assertIn("📎 bao-cao.xlsx", q)
+        self.assertNotIn("thu/muc/con", q)
+
+    def test_tin_chu_thuong_van_chi_ba_lua_chon(self):
+        q = self._duyet(message=NOI_DUNG)
+        self.assertNotIn("📎", q)
+        self.assertNotIn(NOI_DUNG, q)
 
 if __name__ == "__main__":
     unittest.main()

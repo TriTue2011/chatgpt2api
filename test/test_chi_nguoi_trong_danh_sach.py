@@ -21,7 +21,9 @@ File này khoá năm hành vi:
   * bản ghi ở cấp topic thắng bản ghi cả nhóm;
   * chốt chặn nằm SAU khối nhật ký ở cả zalo_personal lẫn telegram_bot;
   * người dùng nêu đích danh kênh thì câu của họ thắng giá trị model đoán
-    (lỗi gửi nhầm kênh 05/08 13:12).
+    (lỗi gửi nhầm kênh 05/08 13:12);
+  * gửi FILE có sẵn sang người/nhóm khác — chặn đường dẫn ra ngoài workspace,
+    Zalo Bot báo thẳng là không gửi được, và bản Word/Excel giữ TÊN GỐC.
 """
 from __future__ import annotations
 
@@ -154,6 +156,83 @@ class KenhNguoiDungNeuThangTests(unittest.TestCase):
 
         self.assertEqual(f("bằng zalo cá nhân"), "zalop")
 
+
+
+class GuiTepTrongWorkspaceTests(unittest.TestCase):
+    """Gửi file đã có sang người/nhóm khác + giữ tên file khi chuyển PDF.
+
+    Đo thật 05/08 13:22–13:24: chủ máy bảo "gửi file word vào nhóm homeassistant"
+    mà bot cứ đòi tải file lên — tool gửi tin chỉ nhận ảnh và thoại, không có
+    đường nào cho tài liệu. Kèm theo: bản Word tới tay mang tên uuid thuần
+    ("1785910932720-d5cc…docx"), mở ra mới biết là tài liệu gì.
+    """
+
+    def test_chan_duong_dan_thoat_ra_ngoai_workspace(self):
+        """Tên file do MODEL điền — không chốt thì '../..' đọc được file hệ thống."""
+        import tempfile
+        from services.agent.capabilities import tep_trong_workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("services.officecli.status",
+                            return_value={"ok": True, "workspace": tmp}):
+                duong, loi = tep_trong_workspace("../../etc/passwd")
+        self.assertEqual(duong, "")
+        self.assertIn("ngoài workspace", loi)
+
+    def test_lay_file_moi_nhat_cho_cau_noi_tu_nhien(self):
+        import tempfile
+        import time
+        from pathlib import Path
+        from services.agent.capabilities import tep_trong_workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cu = Path(tmp) / "cu.docx"
+            cu.write_text("x")
+            time.sleep(0.01)
+            moi = Path(tmp) / "moi.docx"
+            moi.write_text("y")
+            with mock.patch("services.officecli.status",
+                            return_value={"ok": True, "workspace": tmp}):
+                duong, loi = tep_trong_workspace("moi_nhat")
+                self.assertEqual(loi, "")
+                self.assertEqual(Path(duong).name, "moi.docx")
+                # Tên cụ thể vẫn tra đúng file đó.
+                duong2, loi2 = tep_trong_workspace("cu.docx")
+                self.assertEqual(loi2, "")
+                self.assertEqual(Path(duong2).name, "cu.docx")
+
+    def test_khong_thay_file_thi_bao_ro(self):
+        import tempfile
+        from services.agent.capabilities import tep_trong_workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("services.officecli.status",
+                            return_value={"ok": True, "workspace": tmp}):
+                duong, loi = tep_trong_workspace("khong-co.docx")
+        self.assertEqual(duong, "")
+        self.assertIn("không thấy file", loi)
+
+    def test_zalo_bot_bao_thang_la_khong_gui_duoc_file(self):
+        """API Zalo Bot không có sendDocument — báo rõ, đừng im lặng."""
+        from services.agent.capabilities import _send_one_contact
+
+        ok, mo_ta = _send_one_contact(
+            {"platform": "zalo", "bot_id": "1", "chat_id": "9", "alias": "Nhóm X"},
+            "chú thích", file_path="/tmp/bao-cao.docx")
+        self.assertFalse(ok)
+        self.assertIn("không gửi được file", mo_ta)
+        self.assertIn("bao-cao.docx", mo_ta)
+
+    def test_ten_file_word_giu_theo_ten_pdf_goc(self):
+        from services.zalo_personal import _ten_tep_phuc_vu as f
+
+        self.assertEqual(f("HTT - Phướng án CHCN cơ sở.pdf", ".docx"),
+                         "HTT_-_Phuong_an_CHCN_co_so.docx")
+        self.assertEqual(f("báo cáo quý 1.PDF", ".xlsx"), "bao_cao_quy_1.xlsx")
+        # Không có tên thì vẫn phải ra một tên đọc được, không rỗng.
+        self.assertEqual(f("   ", ".docx"), "tai-lieu.docx")
+        # Tên dài bị cắt, nhưng đuôi phải còn nguyên.
+        self.assertTrue(f("x" * 90 + ".pdf", ".docx").endswith(".docx"))
 
 if __name__ == "__main__":
     unittest.main()

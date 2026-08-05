@@ -2221,8 +2221,50 @@ def _fetch_media_bytes(url: str) -> bytes | None:
         return None
 
 
+def tep_trong_workspace(ten: str) -> tuple[str, str]:
+    """Giải tên file người dùng nêu → đường dẫn THẬT trong workspace Office.
+
+    Trả (đường_dẫn, lỗi) — có lỗi thì đường dẫn rỗng.
+
+    Tên file do MODEL điền nên là nguồn không tin cậy: đường dẫn được giải theo
+    symlink rồi mới kiểm tiền tố, không thì một chuỗi '../../etc/…' là gửi được
+    file hệ thống ra ngoài. Cùng mô hình allowlist với c2a-agent.
+
+    "moi_nhat"/"mới nhất"/"" → file mới sửa gần nhất trong workspace, cho câu nói
+    tự nhiên kiểu "gửi file vừa chuyển từ pdf sang" (đo thật 05/08 13:23).
+    """
+    from pathlib import Path
+
+    try:
+        from services import officecli as oc
+        goc = Path(oc.status().get("workspace") or "").resolve()
+    except Exception as exc:
+        return "", f"workspace Office chưa sẵn sàng ({str(exc)[:80]})"
+    if not goc or not goc.is_dir():
+        return "", "workspace Office chưa sẵn sàng"
+
+    ten = str(ten or "").strip()
+    if ten.lower() in ("", "moi_nhat", "mới nhất", "moi nhat", "latest",
+                       "vừa tạo", "vua tao"):
+        cac = [p for p in goc.rglob("*") if p.is_file()]
+        if not cac:
+            return "", "workspace chưa có file nào"
+        p = max(cac, key=lambda x: x.stat().st_mtime)
+        return str(p), ""
+
+    p = (goc / ten).resolve()
+    try:
+        p.relative_to(goc)
+    except ValueError:
+        return "", f"«{ten}» nằm ngoài workspace — không gửi"
+    if not p.is_file():
+        return "", f"không thấy file «{ten}» trong workspace"
+    return str(p), ""
+
+
 def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None,
                       audio_path: str = "", image_url: str = "",
+                      file_path: str = "",
                       mention_all: bool = False) -> tuple[bool, str]:
     """Gửi 1 tin tới 1 contact đã resolve. Trả (ok, mô tả kết quả).
 
@@ -2249,7 +2291,11 @@ def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None
             prev = tg._cur_bot()
             try:
                 tg._current.bot = bot
-                if audio_wav:
+                if file_path:
+                    from pathlib import Path as _P
+                    _f = _P(file_path)
+                    r = tg.send_document(chat, _f.read_bytes(), _f.name, caption=cap)
+                elif audio_wav:
                     r = tg.send_audio(chat, audio_wav, caption=cap)
                 elif image_url:
                     img = _fetch_media_bytes(image_url)
@@ -2263,6 +2309,13 @@ def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None
             return (bool(r.get("ok")), f"«{title}»" if r.get("ok")
                     else f"«{title}» lỗi: {r}")
         if plat == "zalo":
+            if file_path:
+                # Zalo Bot API KHÔNG có sendDocument. Nói thẳng thay vì im lặng
+                # hay báo thành công giả — file không tới nơi thì phải biết.
+                from pathlib import Path as _P
+                return False, (f"«{title}» Zalo Bot không gửi được file "
+                               f"({_P(file_path).name}) — gửi bằng Zalo cá nhân "
+                               "hoặc Telegram nhé")
             from services import zalo_bot as zb
             bot = zb._find_bot_by_id(bid) if hasattr(zb, "_find_bot_by_id") else None
             if bot is None:
@@ -2294,6 +2347,12 @@ def _send_one_contact(rec: dict, message: str, *, audio_wav: bytes | None = None
             # Zalo Cá nhân: gửi bằng chính account (bot_id=ownId), nhóm→type 1
             from services import zalo_personal as zp
             ttype = 1 if is_group else 0
+            if file_path:
+                ok = zp._send_file_robust(chat, file_path, cap[:200], ttype,
+                                          account=bid)
+                from pathlib import Path as _P
+                return (ok, f"«{title}» ({_P(file_path).name})" if ok
+                        else f"«{title}» gửi file lỗi")
             if audio_path:
                 ok = zp._send_file_robust(chat, audio_path, cap[:200], ttype, account=bid)
                 return (ok, f"«{title}»" if ok else f"«{title}» gửi file thoại lỗi")
@@ -2411,16 +2470,29 @@ def _h_send_to_contact(args: dict, ctx: dict) -> dict:
     # resolve_only: chỉ TRA + phát hiện mập mờ, KHÔNG gửi. Dùng khi đặt việc
     # hẹn giờ để hỏi lại NGAY lúc tạo (lúc user còn đó) thay vì đoán lúc bắn.
     resolve_only = bool(args.get("_resolve_only"))
-    if not raw_ref or not message:
-        _no = "Cần `to`/`name` (alias) và `message`."
+    # FILE đính kèm: tên file trong workspace Office. Có file thì `message` chỉ
+    # còn là chú thích nên không bắt buộc nữa.
+    ten_tep = str(args.get("file") or args.get("file_name")
+                  or args.get("document") or "").strip()
+    if not raw_ref or (not message and not ten_tep):
+        _no = "Cần `to`/`name` (alias) và `message` (hoặc `file`)."
         return {"need_clarify": True, "text": _no} if resolve_only else {"text": _no}
 
-    # Media kèm theo (thoại TTS / ảnh) — tạo MỘT lần, dùng cho MỌI người nhận.
+    # Media kèm theo (thoại TTS / ảnh / file) — dựng MỘT lần, dùng cho MỌI người nhận.
     want_voice = bool(args.get("voice") or args.get("as_voice") or args.get("send_voice"))
     img_url = str(args.get("image_url") or args.get("image") or "").strip()
     media_kw: dict = {}
+    if ten_tep and not resolve_only:
+        _duong, _loi_tep = tep_trong_workspace(ten_tep)
+        if _loi_tep:
+            return {"text": f"⚠️ {_loi_tep}"}
+        media_kw["file_path"] = _duong
     if not resolve_only:
-        if want_voice:
+        # File thắng thoại/ảnh: hai nhánh dưới GÁN ĐÈ `media_kw` nên chạy tiếp
+        # là mất đường dẫn file vừa giải xong.
+        if media_kw.get("file_path"):
+            pass
+        elif want_voice:
             try:
                 from services import voice as _voice
                 if not _voice.tts_ready():
@@ -4965,6 +5037,11 @@ CAPABILITIES: dict[str, Capability] = {
             "(vd 'gửi âm thanh xin chào vào nhóm Docker bằng zalo cá nhân' → "
             "to='Docker', message='xin chào', platform='zalop', voice=true). "
             "GỬI ẢNH: image_url=link/đường dẫn ảnh, message=chú thích. "
+            "GỬI FILE (Word/Excel/PDF đã có trong workspace): file=tên file, "
+            "message=chú thích (không bắt buộc). Không nhớ tên thì gọi "
+            "`office_files` để liệt kê. Người dùng nói 'file vừa chuyển/vừa tạo' "
+            "→ file='moi_nhat'. Zalo Bot KHÔNG gửi được file (API không có), "
+            "chỉ Zalo cá nhân và Telegram. "
             "TAG CẢ NHÓM: 'tag cả nhóm', 'nhắc mọi người', 'gọi cả nhà' → mention_all=true "
             "(chỉ tác dụng với NHÓM Zalo cá nhân). "
             "Chỉ dùng send_voice_message khi gửi âm thanh vào CHÍNH chat đang nói."
@@ -4992,6 +5069,7 @@ CAPABILITIES: dict[str, Capability] = {
             "platform": {"type": "string", "description": "CHỈ TRUYỀN NẾU người dùng NÊU RÕ kênh trong câu ('cá nhân' -> 'zalop', 'bot' -> 'zalo', 'telegram' -> 'tg'). BỎ TRỐNG NẾU người dùng chưa nêu rõ kênh!"},
             "voice": {"type": "boolean", "description": "true = đọc `message` thành FILE ÂM THANH (TTS) rồi gửi cho người/nhóm đó thay vì gửi chữ"},
             "image_url": {"type": "string", "description": "Link/đường dẫn ảnh cần gửi cho người/nhóm đó (message = chú thích)"},
+            "file": {"type": "string", "description": "Tên file trong workspace Office cần gửi (vd 'bao-cao.docx'); 'moi_nhat' = file mới tạo gần nhất"},
             "mention_all": {"type": "boolean", "description": "true = TAG CẢ NHÓM (@All). Chỉ có tác dụng khi gửi vào NHÓM Zalo cá nhân. Dùng khi người dùng nói 'tag cả nhóm', 'nhắc mọi người', 'gọi cả nhà', 'thông báo cả nhóm'."}},
             "required": ["message"]}),
     "cai_dat_cau_duyet": Capability(

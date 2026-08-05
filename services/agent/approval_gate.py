@@ -247,6 +247,17 @@ def format_proposal(
 ) -> str:
     """User-facing approval prompt with ASK chips."""
     if capability in _TOOL_CHI_LUA_CHON and not hien_noi_dung_gui_tin():
+        # GỬI FILE thì hiện TÊN FILE, dù đang ở chế độ chỉ-ba-lựa-chọn.
+        #
+        # Tên file không phải "nội dung tin nhắn" — nó là thứ DUY NHẤT phân biệt
+        # gửi đúng với gửi nhầm, nhất là khi người dùng nói "gửi file vừa tạo"
+        # và bot tự lấy file mới nhất. Duyệt gửi tài liệu vào nhóm mà không thấy
+        # tên thì là duyệt mù, và gửi nhầm tài liệu thì không rút lại được.
+        _tep = str((args or {}).get("file") or (args or {}).get("file_name")
+                   or (args or {}).get("document") or "").strip()
+        if _tep:
+            from pathlib import Path as _P
+            return f"📎 {_P(_tep).name}\n\n{_KHOI_ASK}"
         return _KHOI_ASK
     summary = summarize_action(capability, args, description)
     verb = (label or description or capability).split(".")[0]

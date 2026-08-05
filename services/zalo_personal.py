@@ -1760,17 +1760,45 @@ def _download(url: str) -> bytes | None:
         return None
 
 
-def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str) -> None:
+def _ten_tep_phuc_vu(ten_goc: str, duoi: str) -> str:
+    """'<tên PDF gốc>' + đuôi mới → tên file NGƯỜI NHẬN nhìn thấy.
+
+    Đo thật 05/08 13:22 — chuyển "HTT - Phướng án CHCN cơ sở.pdf" sang Word thì
+    file tới tay là "1785910932720-d5cc523b18004c3d9e6841938369d7e7.docx": tên
+    cũ là chuỗi uuid thuần, mở ra mới biết là tài liệu gì.
+
+    Bỏ dấu về ASCII: tên này nằm trong URL mà máy chủ Zalo phải tự tải về, chữ
+    có dấu chưa chắc qua được mọi tầng mã hoá. Ký tự lạ → '_', gộp '_' liên
+    tiếp, cắt 60 ký tự cho gọn.
+    """
+    import re as _re
+    import unicodedata as _ud
+
+    goc = str(ten_goc or "").strip()
+    if goc.lower().endswith(".pdf"):
+        goc = goc[:-4]
+    goc = "".join(c for c in _ud.normalize("NFD", goc)
+                  if _ud.category(c) != "Mn").replace("đ", "d").replace("Đ", "D")
+    goc = _re.sub(r"[^A-Za-z0-9._-]+", "_", goc).strip("._-")
+    goc = _re.sub(r"_{2,}", "_", goc)[:60]
+    return f"{goc or 'tai-lieu'}{duoi}"
+
+
+def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
+                ten_goc: str = "") -> None:
     """Gửi file Word: ưu tiên gửi FILE THẬT qua bot server (sendFileByAccount cần
-    URL công khai) — fallback nhắn link tải."""
+    URL công khai) — fallback nhắn link tải.
+
+    `ten_goc` = tên file PDF người dùng gửi vào, để bản Word GIỮ ĐÚNG tên đó.
+    Thư mục con uuid lo phần chống trùng, nên tên file không cần uuid nữa."""
     import uuid
-    out_dir = config.images_dir / "docs"
+    out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
     out_dir.mkdir(parents=True, exist_ok=True)
-    fn = f"{uuid.uuid4().hex}.docx"
+    fn = _ten_tep_phuc_vu(ten_goc, ".docx")
     with open(docx_path, "rb") as f:
         (out_dir / fn).write_bytes(f.read())
     # Gửi FILE .docx thật (sendFile); không dán link trừ khi mọi URL fail.
-    rel = f"/images/docs/{fn}"
+    rel = f"/images/docs/{out_dir.name}/{fn}"
     if _send_file_robust(thread_id, rel, f"Bản Word ({how})", thread_type):
         return
     base = _public_base()
@@ -1826,7 +1854,7 @@ def _do_pdf_intent(
                 return
             how = "giữ layout" if r.get("method") == "layout" else "OCR (PDF scan)"
             reply = f"📝 Bản Word ({how})"
-            _serve_docx(thread_id, thread_type, docx_tmp, how)
+            _serve_docx(thread_id, thread_type, docx_tmp, how, name)
         elif intent == _pi.EXCEL:
             kind = "pdf_excel"
             xlsx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".xlsx"
@@ -1842,12 +1870,14 @@ def _do_pdf_intent(
             # serve via images/docs like word
             import shutil
             import uuid
-            out_dir = config.images_dir / "docs"
+            # Giữ TÊN GỐC như bản Word (xem `_ten_tep_phuc_vu`); thư mục con
+            # uuid lo chống trùng.
+            out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
             out_dir.mkdir(parents=True, exist_ok=True)
-            fn = f"{uuid.uuid4().hex}.xlsx"
+            fn = _ten_tep_phuc_vu(name, ".xlsx")
             dest = out_dir / fn
             shutil.copy2(xlsx_tmp, dest)
-            rel = f"/images/docs/{fn}"
+            rel = f"/images/docs/{out_dir.name}/{fn}"
             pages = r.get("pages_extracted")
             reply = (
                 f"📊 Bản Excel ({r.get('method')}, {r.get('sheets')} sheet"
