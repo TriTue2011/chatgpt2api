@@ -572,6 +572,19 @@ def _md_from_pdf_text(raw: str, *, title: str) -> str:
                     parts.append(" ".join(buf))
                     buf = []
                 continue
+            if s.startswith("|"):
+                # HÀNG BẢNG giữ nguyên từng dòng. Gộp như dòng văn xuôi thì cả
+                # bảng dồn lại thành MỘT dòng: đo trên đầu ra markitdown của
+                # .xlsx được 9 hàng vào → 2 dòng ra, không còn phân biệt được ô
+                # nào thuộc hàng nào. Excel gần như chỉ toàn bảng nên mất bảng
+                # là mất gần hết nội dung nạp vào kho.
+                if buf:
+                    parts.append(" ".join(buf))
+                    buf = []
+                if parts and parts[-1].strip() and not parts[-1].startswith("|"):
+                    parts.append("")   # bảng cần một dòng trống phía trên
+                parts.append(s)
+                continue
             is_chapter = bool(_CHAPTER_HEAD.match(s)) or (
                 len(s) < 90
                 and (
