@@ -23,6 +23,9 @@ const LOAI_KHONG_CAN_OAUTH: Array<[string, string]> = [
   ["ftp", "FTP"],
   ["b2", "Backblaze B2"],
   ["smb", "SMB / chia sẻ mạng Windows"],
+  // Hai kiểu kho ĐẶC BIỆT: chúng bọc ngoài các kho khác chứ không tự nối đi đâu.
+  ["crypt", "🔒 Mã hoá — bọc ngoài một kho đã khai (remote = ten_kho:thu/muc)"],
+  ["union", "🧩 Gộp nhiều tài khoản thành một (upstreams = kho1: kho2: kho3:)"],
 ];
 
 function coFile(n: number): string {
