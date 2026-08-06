@@ -276,8 +276,12 @@ export function LuuTruOnlineCard() {
                   onChange={(e) => setEntry(key, { thread_admin: e.target.value })}
                   className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm">
                   <option value="">— chưa chọn: sẽ không hỏi —</option>
-                  {opts.filter((o) => o.key !== key).map((o) => (
-                    <option key={o.key} value={o.key}>{o.label}</option>
+                  {/* KHÔNG loại chính thread này ra: chat 1-1 với admin thì hỏi
+                      ngay tại đó là đúng nhất, chọn chỗ khác mới là lạ. */}
+                  {opts.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.key === key ? `${o.label} (hỏi ngay tại đây)` : o.label}
+                    </option>
                   ))}
                 </select>
                 <p className="text-xs text-[var(--muted-foreground)]">
