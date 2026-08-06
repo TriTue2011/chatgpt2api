@@ -310,13 +310,19 @@ def moi_luu(kenh: str, chat: str, *, ten_tep: str, du_lieu: bytes,
                                f"bỏ qua {ten_tep}")
                 return
         tep = luu_vao_thu_muc_lam_viec(ten_tep, du_lieu)
-        pv = (kenh, chat, topic, user)
         if not cd.get("hoi_truoc"):
-            day_nen(tep, cd, pham_vi=pv)
+            day_nen(tep, cd, pham_vi=(kenh, chat, topic, user))
             return
         khoa = khoa_cho_thread(kenh, dinh_danh, chat_admin)
         dat_cho(khoa, tep=tep, kenh=kenh, chat=chat, topic=topic, user=user)
-        gui_toi_admin(khoa_admin, chuan_bi_hoi(ten_tep, ten_nhom=ten_nhom),
-                      dinh_danh=dinh_danh)
+        if not gui_toi_admin(khoa_admin, chuan_bi_hoi(ten_tep, ten_nhom=ten_nhom),
+                             dinh_danh=dinh_danh):
+            # Câu hỏi không tới được admin thì không ai trả lời được nó. Dọn
+            # luôn: để lại là một bản chờ chết kèm một tệp nằm mãi trong thư mục
+            # làm việc, mà không có gì trên màn hình cho thấy điều đó.
+            bo_cho(khoa)
+            _xoa_cuc_bo(tep)
+            logger.warning(f"luu_tru_online: không gửi được câu hỏi tới "
+                           f"{khoa_admin} — đã bỏ {ten_tep}, không lưu")
     except Exception as exc:
         logger.warning(f"luu_tru_online: mời lưu {ten_tep} lỗi: {str(exc)[:150]}")

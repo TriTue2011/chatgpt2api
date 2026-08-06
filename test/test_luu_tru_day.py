@@ -310,6 +310,16 @@ class MoiLuuTests(unittest.TestCase):
         self.assertEqual(self.da_gui, [])
         self.assertEqual(self.nen.da_day, [])
 
+    def test_gui_hong_thi_don_sach_chu_khong_de_ban_cho_chet(self):
+        """Admin không nhận được câu hỏi thì không ai trả lời được nó."""
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": False
+        self._cau_hinh()
+        self._goi()
+        self.assertFalse(ld.lay_cho("zalop:acc1:admin9"),
+                         "để lại bản chờ mà không ai trả lời được")
+        con = list((Path(self.tmp.name) / "da_nhan").glob("*"))
+        self.assertEqual(con, [], "tệp nằm lại trong thư mục làm việc")
+
     def test_tep_nam_trong_thu_muc_lam_viec(self):
         """rclone bị khoá trong workspace — ngoài đó là không gửi lên được."""
         self._cau_hinh()
