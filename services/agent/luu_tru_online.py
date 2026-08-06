@@ -197,6 +197,30 @@ def dat_luon_luon_luu(kenh: str, chat: str, topic: str = "", user: str = "") -> 
     return False
 
 
+def thread_admin_nhan(kenh: str, chat: str = "", topic: str = "", user: str = "") -> str:
+    """Thread admin nhận câu hỏi xác nhận cho phạm vi này. '' = chưa khai.
+
+    Chủ máy chốt 05/08: "nhỡ có nhiều admin thì không biết gửi cho ai". Nên mỗi
+    phạm vi chỉ định RIÊNG một thread admin, tra theo đúng chuỗi khoá hẹp→rộng
+    của nhật ký. Chưa khai thì trả rỗng — caller tự quyết (bỏ qua hoặc tự lưu),
+    KHÔNG đoán bừa một admin: gửi tài liệu của nhóm này sang admin của nhóm khác
+    là rò dữ liệu, tệ hơn hẳn so với không hỏi.
+    """
+    try:
+        cfg = config.get().get("luu_tru_online")
+    except Exception:
+        return ""
+    if not isinstance(cfg, dict):
+        return ""
+    for k in _cac_khoa_cai_dat(kenh, chat, topic, user):
+        v = cfg.get(k)
+        if isinstance(v, dict):
+            t = str(v.get("thread_admin") or "").strip()
+            if t:
+                return t
+    return ""
+
+
 def canh_bao_ma_hoa(kho: str) -> str:
     """Nhắc khi kho đích KHÔNG mã hoá. Chuỗi rỗng = đã mã hoá, không cần nhắc.
 

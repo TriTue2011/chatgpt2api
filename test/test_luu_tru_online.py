@@ -226,5 +226,29 @@ class HanGiuTachTheoMucTests(unittest.TestCase):
         self.assertEqual(set(giu.values()), {90})
 
 
+
+class ThreadAdminNhanTests(unittest.TestCase):
+    """Nhiều admin thì phải chỉ rõ ai nhận câu hỏi xác nhận."""
+
+    def setUp(self):
+        self._goc = _gan({"luu_tru_online": {
+            "zalop": {"enabled": True, "kho": "d", "thread_admin": "zalop:admin-chung"},
+            "zalop:nhom1": {"enabled": True, "kho": "d", "thread_admin": "zalop:admin-nhom1"},
+            "zalop:nhom2": {"enabled": True, "kho": "d"},
+        }})
+
+    def tearDown(self):
+        lt.config = self._goc
+
+    def test_lay_admin_cua_dung_pham_vi(self):
+        self.assertEqual(lt.thread_admin_nhan("zalop", "nhom1"), "zalop:admin-nhom1")
+
+    def test_khong_khai_thi_ke_thua_muc_rong_hon(self):
+        self.assertEqual(lt.thread_admin_nhan("zalop", "nhom2"), "zalop:admin-chung")
+
+    def test_khong_co_gi_thi_tra_rong_chu_khong_doan(self):
+        """Đoán bừa một admin là gửi tài liệu nhóm này sang admin nhóm khác."""
+        self.assertEqual(lt.thread_admin_nhan("tg", "nhom-la"), "")
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,8 @@ type CaiDat = {
   hoi_truoc?: boolean;
   giu_ngay?: Record<string, number>;
   gio_dong_bo?: string;
+  /** Thread admin nhận câu hỏi xác nhận. Nhiều admin thì phải chỉ rõ ai. */
+  thread_admin?: string;
 };
 
 const NHAN_KENH: Record<string, string> = {
@@ -230,7 +232,7 @@ export function LuuTruOnlineCard() {
               </Button>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium">Tài khoản lưu</label>
                 <select value={cd.kho || ""} onChange={(e) => setEntry(key, { kho: e.target.value })}
@@ -266,6 +268,20 @@ export function LuuTruOnlineCard() {
                 </div>
                 <p className="text-xs text-[var(--muted-foreground)]">
                   Bấm 📂 để lấy danh sách thư mục có sẵn trên kho.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium">Thread admin nhận xác nhận</label>
+                <select value={cd.thread_admin || ""}
+                  onChange={(e) => setEntry(key, { thread_admin: e.target.value })}
+                  className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm">
+                  <option value="">— chưa chọn: sẽ không hỏi —</option>
+                  {opts.filter((o) => o.key !== key).map((o) => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Nhiều admin thì phải chỉ rõ gửi cho ai. Bỏ trống = không hỏi, tệp không được lưu.
                 </p>
               </div>
               <div className="space-y-1">
