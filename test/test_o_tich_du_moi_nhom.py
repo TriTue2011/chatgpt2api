@@ -60,5 +60,38 @@ class OTichDuMoiNhomTests(unittest.TestCase):
         self.assertEqual(thua, [], f"ô tích trỏ vào nhóm không tồn tại: {thua}")
 
 
+class MoiCongCuDeuCoNhomTests(unittest.TestCase):
+    """Tầng dưới ô tích: mọi công cụ của bot phải được gắn vào một nhóm.
+
+    Công cụ vắng trong `_CAP_GROUP` thì `group_of()` trả '_ungrouped', và chốt
+    chặn ở orchestrator coi là KHÔNG được phép rồi bỏ qua IM LẶNG. Người dùng
+    hỏi mà bot không trả lời, cũng không báo lỗi, dù thread đã bật đúng nhóm —
+    đã xảy ra thật 15/07/2026 với các tool Home Assistant.
+
+    Hỏng kiểu này TỆ HƠN thiếu ô tích: thiếu ô tích thì ít ra nhìn màn hình còn
+    thấy vắng, còn thiếu nhóm thì không dấu hiệu nào cả.
+
+    Đo 07/08: 70 công cụ, 0 công cụ mồ côi.
+    """
+
+    def test_khong_cong_cu_nao_mo_coi(self) -> None:
+        from services.agent.capabilities import CAPABILITIES, _CORE_TOOLS, group_of
+        mo_coi = sorted(n for n in CAPABILITIES
+                        if group_of(n) == "_ungrouped" and n not in _CORE_TOOLS)
+        self.assertEqual(mo_coi, [], (
+            f"Công cụ {mo_coi} chưa gắn nhóm trong `_CAP_GROUP` → thread có bật "
+            f"lọc sẽ bỏ qua chúng IM LẶNG. Thêm nhóm cho từng cái."
+        ))
+
+    def test_nhom_cua_cong_cu_deu_co_o_tich(self) -> None:
+        """Gắn công cụ vào một nhóm không có ô tích cũng là mồ côi trá hình:
+        nhóm đó không bao giờ tick được nên công cụ vĩnh viễn bị chặn."""
+        from services.agent.capabilities import CAPABILITIES, _CORE_TOOLS, group_of
+        giao_dien = _nhom_trong_giao_dien()
+        xau = sorted({group_of(n) for n in CAPABILITIES if n not in _CORE_TOOLS}
+                     - giao_dien - {"_ungrouped"})
+        self.assertEqual(xau, [], f"nhóm có công cụ nhưng không có ô tích: {xau}")
+
+
 if __name__ == "__main__":
     unittest.main()
