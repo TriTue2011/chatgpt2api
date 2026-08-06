@@ -145,6 +145,13 @@ def build_instruction(meta: dict[str, Any], *, has_images: bool = False) -> str:
     return base
 
 
+# Dấu nhận biết tin nhắn system do CHÍNH máy chủ chèn để ép JSON. Là hằng số ở
+# tầng module vì nơi khác cũng phải nhận ra nó: `_chi_giu_loi_dan_anh` bỏ prompt
+# hệ thống của HA nhưng PHẢI giữ tin này lại — bỏ nó là model phân tích đúng mà
+# trả lời văn xuôi, rồi khâu ép JSON điền mặc định thành "0 người".
+MARKER_JSON_SCHEMA = "[response_format_json_schema]"
+
+
 def inject_response_format_prompt(body: dict[str, Any]) -> dict[str, Any]:
     """Mutate body messages to enforce JSON schema for non-native providers.
 
@@ -164,7 +171,7 @@ def inject_response_format_prompt(body: dict[str, Any]) -> dict[str, Any]:
         messages = []
         body["messages"] = messages
     # Avoid double-inject on retries
-    marker = "[response_format_json_schema]"
+    marker = MARKER_JSON_SCHEMA
     for m in messages:
         if isinstance(m, dict) and marker in str(m.get("content") or ""):
             return body

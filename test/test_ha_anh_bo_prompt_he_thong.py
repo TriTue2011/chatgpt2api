@@ -21,6 +21,7 @@ import unittest
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 from services.protocol.openai_v1_chat_complete import _chi_giu_loi_dan_anh  # noqa: E402
+from services.protocol.response_format import MARKER_JSON_SCHEMA  # noqa: E402
 from utils.helper import extract_chat_prompt  # noqa: E402
 
 _PERSONA = "NHÂN VẬT: Nam, 18-25 tuổi, Hà Nội. Xưng em, gọi anh/chị."
@@ -65,6 +66,40 @@ class HaGuiAnhTests(unittest.TestCase):
                 _anh(_LOI_DAN)]
         ra = _chi_giu_loi_dan_anh(msgs, {"_is_ha_request": True})
         self.assertEqual([m["role"] for m in ra], ["user", "assistant", "user"])
+
+
+class GiuLenhEpJsonTests(unittest.TestCase):
+    """Tin system do CHÍNH máy chủ chèn để ép JSON thì PHẢI giữ.
+
+    Đo thật lúc 21:15 06/08 trên máy chủ, bản sửa đầu bỏ mọi tin system: model
+    phân tích ĐÚNG ("tôi thấy có một người trong ảnh… đầu tròn, thân người, hai
+    tay hai chân") nhưng trả lời VĂN XUÔI vì không còn ai bảo nó trả JSON, rồi
+    khâu ép JSON điền mặc định — camera vẫn nhận "0 người". Bỏ prompt của HA là
+    đúng, bỏ lệnh của chính mình là tự bắn vào chân.
+    """
+
+    def _voi_lenh_json(self) -> list[dict]:
+        return [
+            {"role": "system", "content": _PERSONA},
+            {"role": "system", "content": f"{MARKER_JSON_SCHEMA}\nCHỈ trả về JSON…"},
+            {"role": "system", "content": _PROMPT_HA},
+            _anh(_LOI_DAN),
+        ]
+
+    def test_giu_lenh_json_bo_hai_tin_kia(self) -> None:
+        ra = _chi_giu_loi_dan_anh(self._voi_lenh_json(), {"_is_ha_request": True})
+        self.assertEqual([m["role"] for m in ra], ["system", "user"])
+        self.assertIn(MARKER_JSON_SCHEMA, str(ra[0]["content"]))
+
+    def test_khong_con_luot_user_thi_giu_nguyen(self) -> None:
+        """Chỉ còn lệnh của máy chủ mà không còn việc cần làm thì thà giữ nguyên
+        — gửi đi một request không có yêu cầu nào là chắc chắn sai."""
+        msgs = [{"role": "system", "content": _PROMPT_HA},
+                {"role": "system", "content": [
+                    {"type": "image_url",
+                     "image_url": {"url": "data:image/png;base64,AAAA"}},
+                    {"type": "text", "text": MARKER_JSON_SCHEMA}]}]
+        self.assertEqual(_chi_giu_loi_dan_anh(msgs, {"_is_ha_request": True}), msgs)
 
 
 class KhongDuocChamVaoTests(unittest.TestCase):

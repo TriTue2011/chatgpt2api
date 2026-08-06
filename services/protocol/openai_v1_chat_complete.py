@@ -2847,24 +2847,43 @@ def _chi_giu_loi_dan_anh(messages: list[dict[str, Any]],
         "em/anh chị", bỏ đi là bot mất giọng ở toàn bộ trợ lý nhà.
       · Ảnh do chính bot nhận (Zalo/Telegram/tab chat) — không mang cờ HA nên
         không đi vào đây, đường phân tích ảnh của bot giữ nguyên persona.
+
+    VÀ GIỮ LẠI tin system do CHÍNH MÁY CHỦ chèn để ép JSON (dấu
+    `response_format.MARKER_JSON_SCHEMA`). Đo thật lúc 21:15 06/08, bản đầu bỏ
+    tất: model phân tích ĐÚNG ("tôi thấy có một người trong ảnh… đầu tròn, thân
+    người, hai tay hai chân") nhưng trả lời VĂN XUÔI vì không còn ai bảo nó trả
+    JSON, rồi khâu ép JSON điền mặc định — vẫn ra "0 người". Bỏ prompt của HA là
+    đúng, bỏ lệnh của chính mình là tự bắn vào chân.
     """
     if not isinstance(messages, list) or not body.get("_is_ha_request"):
         return messages
     if not _messages_have_images(messages):
         return messages
-    con_lai = [m for m in messages
-               if not (isinstance(m, dict) and str(m.get("role") or "") == "system")]
-    bo = len(messages) - len(con_lai)
-    if not bo:
+    from services.protocol.response_format import MARKER_JSON_SCHEMA
+
+    def _cua_may_chu(m: dict) -> bool:
+        return MARKER_JSON_SCHEMA in str(m.get("content") or "")
+
+    def _bo_di(m: object) -> bool:
+        return (isinstance(m, dict) and str(m.get("role") or "") == "system"
+                and not _cua_may_chu(m))
+
+    con_lai = [m for m in messages if not _bo_di(m)]
+    if len(con_lai) == len(messages):
         return messages
-    # Bỏ hết mà không còn tin nhắn nào thì giữ nguyên: thà để prompt HA lấn còn
-    # hơn gửi request rỗng (mọi provider trả 400, camera không có báo nào cả).
-    if not con_lai:
-        logger.warning({"event": "ha_vision_chi_co_system", "so_tin": len(messages)})
+    # Còn lại toàn tin của chính máy chủ (không có lượt user nào) thì giữ nguyên:
+    # thà để prompt HA lấn còn hơn gửi request thiếu việc cần làm.
+    if not any(isinstance(m, dict) and str(m.get("role") or "") != "system"
+               for m in con_lai):
+        logger.warning({"event": "ha_vision_khong_co_luot_user", "so_tin": len(messages)})
         return messages
-    logger.info({"event": "ha_vision_bo_system", "so_tin_bo": bo,
-                 "ky_tu_bo": sum(len(str(m.get("content") or "")) for m in messages
-                                 if isinstance(m, dict) and m.get("role") == "system")})
+    logger.info({
+        "event": "ha_vision_bo_system",
+        "so_tin_bo": len(messages) - len(con_lai),
+        "ky_tu_bo": sum(len(str(m.get("content") or "")) for m in messages if _bo_di(m)),
+        "giu_lenh_json": any(isinstance(m, dict) and m.get("role") == "system"
+                             and _cua_may_chu(m) for m in con_lai),
+    })
     return con_lai
 
 
