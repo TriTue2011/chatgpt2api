@@ -279,6 +279,47 @@ def cac_kho_doc_duoc(user_id: str) -> list[dict]:
     return ra
 
 
+def _khoa_pham_vi_thanh_khoa_phien(khoa: str) -> str:
+    """Khoá cấu hình 'kenh:chat[#topic][:user]' → khoá phiên orchestrator.
+
+    Đi vòng qua `scope.khoa_phien_tu_thanh_vien` chứ không tự ghép chuỗi: luật
+    ghép khoá phiên của từng kênh chỉ được nằm ở MỘT chỗ.
+    """
+    from services.agent.scope import khoa_phien_tu_thanh_vien
+    kenh, _, con = str(khoa or "").strip().partition(":")
+    if not kenh or not con:
+        return ""
+    chat_topic, _, user = con.rpartition(":") if con.count(":") else (con, "", "")
+    if not chat_topic:
+        chat_topic, user = con, ""
+    chat, _, topic = chat_topic.partition("#")
+    return khoa_phien_tu_thanh_vien(
+        {"kenh": kenh, "chat": chat, "topic": topic, "user": user})
+
+
+def ban_do_doc_duoc() -> dict[str, list[dict]]:
+    """Mỗi phạm vi đã khai kho đọc được những kho nào — cho giao diện hiển thị.
+
+    Khai kết nối rồi mà không thấy được "ai đọc được của ai" thì chủ máy phải
+    dò trong mã. Trả về đúng thứ `cac_kho_doc_duoc` tính, không tính lại ở giao
+    diện: hai nơi cùng quyết định quyền đọc là hai nơi sẽ lệch nhau.
+    """
+    try:
+        cfg = config.get().get("luu_tru_online")
+    except Exception:
+        return {}
+    if not isinstance(cfg, dict):
+        return {}
+    ra: dict[str, list[dict]] = {}
+    for khoa, v in cfg.items():
+        if not isinstance(v, dict) or not v.get("enabled"):
+            continue
+        kp = _khoa_pham_vi_thanh_khoa_phien(khoa)
+        if kp:
+            ra[str(khoa)] = cac_kho_doc_duoc(kp)
+    return ra
+
+
 def _trong_pham_vi(duong_dan: str, kho: str, thu_muc: str) -> bool:
     """`duong_dan` có nằm trong `kho:thu_muc` không.
 

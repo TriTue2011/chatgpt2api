@@ -103,6 +103,18 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         return rc.kiem_tra(ten)
 
+    @router.get("/kho-doc-duoc")
+    def kho_doc_duoc(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Mỗi phạm vi đã bật «Lưu trữ online» đọc được những kho nào.
+
+        Tính ở phía máy chủ chứ không để giao diện tự suy từ `memory_links`: hai
+        nơi cùng quyết định quyền đọc là hai nơi sẽ lệch nhau, và lệch về quyền
+        đọc thì hiển thị nói một đằng, bot làm một nẻo.
+        """
+        require_admin(authorization)
+        from services.agent import luu_tru_online as lt
+        return {"ok": True, "ban_do": lt.ban_do_doc_duoc()}
+
     @router.get("/ls")
     def liet_ke(duong_dan: str, authorization: str | None = Header(None)) -> dict[str, Any]:
         require_admin(authorization)

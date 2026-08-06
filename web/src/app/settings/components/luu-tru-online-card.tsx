@@ -22,6 +22,7 @@ import { request } from "@/lib/request";
 import { useSettingsStore } from "../store";
 
 type ThanhVien = { kenh: string; chat: string; topic: string; user: string };
+type KhoDocDuoc = { kho: string; thu_muc: string; cua_minh: boolean };
 type CaiDat = {
   enabled?: boolean;
   kho?: string;
@@ -92,6 +93,10 @@ export function LuuTruOnlineCard() {
   const meta = (cfg.thread_filter_meta || {}) as Record<string, { name?: string }>;
 
   const [khoCo, setKhoCo] = useState<string[]>([]);
+  /** Phạm vi nào đọc được kho nào — máy chủ tính, giao diện chỉ hiện.
+   *  Tự suy từ `memory_links` ở đây là hai nơi cùng quyết định quyền đọc, và
+   *  lệch nhau thì hiển thị nói một đằng bot làm một nẻo. */
+  const [banDo, setBanDo] = useState<Record<string, KhoDocDuoc[]>>({});
   const [dangTai, setDangTai] = useState(true);
   const [chonThem, setChonThem] = useState("");
   /** Thư mục có sẵn trên từng kho — nạp khi bấm «Chọn», để khỏi gõ tay tên thư mục. */
@@ -120,8 +125,11 @@ export function LuuTruOnlineCard() {
       })
       .catch(() => { /* chưa có rclone thì để danh sách rỗng, có nhắc bên dưới */ })
       .finally(() => { if (!huy) setDangTai(false); });
+    request.get("/api/rclone/kho-doc-duoc")
+      .then(({ data }) => { if (!huy) setBanDo(data?.ban_do || {}); })
+      .catch(() => { /* chưa lưu cấu hình thì chưa có bản đồ — không sao */ });
     return () => { huy = true; };
-  }, []);
+  }, [settings]);
 
   // Danh sách chọn: ba «cả kênh» + nhóm/topic/người lấy từ «Lọc thread».
   const opts: { key: string; label: string }[] = [];
@@ -297,6 +305,30 @@ export function LuuTruOnlineCard() {
                 <p className="text-xs text-[var(--muted-foreground)]">Chỉ áp cho nhật ký — tệp thì hỏi ngay lúc nhận.</p>
               </div>
             </div>
+
+            {/* Đọc được kho nào — máy chủ tính theo «Kết nối bộ nhớ». Không có
+                khối này thì khai kết nối xong phải dò trong mã mới biết ai đọc
+                được của ai. */}
+            {(banDo[key] || []).length > 0 && (
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/40 p-3">
+                <div className="text-xs font-medium">Thread này đọc được</div>
+                <ul className="mt-1 space-y-0.5">
+                  {(banDo[key] || []).map((k) => (
+                    <li key={k.kho + "|" + k.thu_muc} className="text-xs">
+                      <span className="font-mono">{k.kho}:{k.thu_muc}</span>{" "}
+                      {k.cua_minh
+                        ? <span className="text-[var(--muted-foreground)]">— kho của chính nó (ghi được)</span>
+                        : <span className="text-amber-600 dark:text-amber-400">— qua «Kết nối bộ nhớ», chỉ ĐỌC</span>}
+                    </li>
+                  ))}
+                </ul>
+                {(banDo[key] || []).length === 1 && (
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    Chưa nối với phạm vi nào — độc lập hoàn toàn.
+                  </p>
+                )}
+              </div>
+            )}
 
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cd.hoi_truoc !== false}
