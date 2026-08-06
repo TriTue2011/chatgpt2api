@@ -46,13 +46,22 @@ LENH_CD = ("lưu bản đã chuyển lên kho online",
            "lưu cả tệp gốc và bản đã chuyển lên kho online",
            "không lưu gì lên kho online")
 
+#: Tóm tắt không sinh ra tệp thứ hai để chọn, nên chỉ CÓ/KHÔNG — chủ máy chốt
+#: 05/08: "tóm tắt → chỉ hỏi có lưu tệp không".
+LUA_CHON_TT = ("Lưu bản tóm tắt", "Không lưu")
+LENH_TT = ("lưu bản tóm tắt lên kho online", "không lưu bản tóm tắt")
+
 KIEU_NHAN = "nhan"            # vừa nhận tệp
 KIEU_CHUYEN_DOI = "chuyen_doi"  # vừa chuyển đổi xong
+KIEU_TOM_TAT = "tom_tat"        # vừa tóm tắt xong
 
 
 def _bang(kieu: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    return ((LUA_CHON_CD, LENH_CD) if kieu == KIEU_CHUYEN_DOI
-            else (LUA_CHON, LENH))
+    if kieu == KIEU_CHUYEN_DOI:
+        return LUA_CHON_CD, LENH_CD
+    if kieu == KIEU_TOM_TAT:
+        return LUA_CHON_TT, LENH_TT
+    return LUA_CHON, LENH
 
 
 def cau_hoi(ten_tep: str, *, ten_nhom: str = "") -> str:
@@ -98,6 +107,18 @@ def chuan_bi_hoi_chuyen_doi(ten_goc: str, ten_moi: str) -> str:
     return ac.format_numbered(sach, lua_chon)
 
 
+def chuan_bi_hoi_tom_tat(ten_goc: str) -> str:
+    """Câu hỏi sau-tóm-tắt ĐÃ ĐÁNH SỐ. Chỉ hai lựa chọn."""
+    from services.agent import ask_choices as ac
+    khoi = (f"📝 Đã tóm tắt {ten_goc}. Lưu bản tóm tắt lên kho đám mây ạ?\n"
+            "<<<ASK>>>\n"
+            f"{LUA_CHON_TT[0]} | {LENH_TT[0]}\n"
+            f"{LUA_CHON_TT[1]} | {LENH_TT[1]}\n"
+            "<<<END>>>")
+    sach, lua_chon = ac.extract(khoi)
+    return ac.format_numbered(sach, lua_chon)
+
+
 def chon_tu_tra_loi(khoa_admin: str, text: str) -> int:
     """Câu admin vừa nói là lựa chọn nào (1/2/3)? 0 = không phải lựa chọn.
 
@@ -113,9 +134,11 @@ def chon_tu_tra_loi(khoa_admin: str, text: str) -> int:
     ban = lay_cho(khoa_admin)
     if not t or not ban:
         return 0
-    if t in {"1", "2", "3"}:
-        return int(t)
     nhan_ds, lenh_ds = _bang(str(ban.get("kieu") or KIEU_NHAN))
+    # Chặn theo SỐ MỤC của đúng bảng đó: lối tóm tắt chỉ có hai mục, nhận "3" là
+    # nhận một lựa chọn không tồn tại rồi rơi vào nhánh nào cũng sai.
+    if t.isdigit() and 1 <= int(t) <= len(nhan_ds):
+        return int(t)
     for i, (nhan, lenh) in enumerate(zip(nhan_ds, lenh_ds), 1):
         if t in (nhan.lower(), lenh.lower()):
             return i
@@ -230,8 +253,17 @@ def tra_loi(khoa_admin: str, chon: int) -> dict:
     bo_cho(khoa_admin)
     tep = str(ban.get("tep") or "")
     ten = Path(tep).name
-    if str(ban.get("kieu") or KIEU_NHAN) == KIEU_CHUYEN_DOI:
+    _kieu = str(ban.get("kieu") or KIEU_NHAN)
+    if _kieu == KIEU_CHUYEN_DOI:
         return _tra_loi_chuyen_doi(ban, chon)
+    if _kieu == KIEU_TOM_TAT:
+        if chon != 1:
+            _xoa_cuc_bo(tep)
+            return {"ok": True, "text": "Vâng, em không lưu bản tóm tắt ạ."}
+        pv = (ban["kenh"], ban["chat"], ban.get("topic") or "",
+              ban.get("user") or "")
+        day_nen(tep, lt.cai_dat(*pv), pham_vi=pv)
+        return {"ok": True, "text": f"Đang lưu {ten} lên kho đám mây ạ."}
 
     if chon == 3:
         _xoa_cuc_bo(tep)
@@ -274,6 +306,42 @@ def _tra_loi_chuyen_doi(ban: dict, chon: int) -> dict:
     # Chỉ lưu bản đã chuyển → bản gốc tạm ở đây không còn việc gì.
     _xoa_cuc_bo(goc)
     return {"ok": True, "text": f"Đang lưu {ten_moi} lên kho đám mây ạ."}
+
+
+def moi_luu_tom_tat(kenh: str, chat: str, *, ten_goc: str, tom_tat: str,
+                    topic: str = "", user: str = "", dinh_danh: str = "") -> None:
+    """Vừa tóm tắt xong → hỏi admin có lưu BẢN TÓM TẮT lên kho không.
+
+    Vì sao lưu bản tóm tắt mà không phải tệp gốc: tệp gốc đã được hỏi ngay lúc
+    nhận (`moi_luu`), hỏi lại là hỏi hai lần về cùng một tệp. Bản tóm tắt mới là
+    thứ vừa sinh ra và chưa ai hỏi — cũng là thứ đáng nằm trên kho, để lần sau
+    tìm lại khỏi phải đọc lại cả tài liệu.
+    """
+    try:
+        noi_dung = str(tom_tat or "").strip()
+        if not noi_dung:
+            return
+        cd = lt.cai_dat(kenh, chat, topic, user)
+        if not cd.get("enabled"):
+            return
+        khoa_admin = lt.thread_admin_nhan(kenh, chat, topic, user)
+        k_admin, chat_admin, _ = tach_thread_admin(khoa_admin)
+        if not chat_admin or k_admin != kenh:
+            return
+        goc = Path(str(ten_goc or "tai-lieu")).stem or "tai-lieu"
+        tep = luu_vao_thu_muc_lam_viec(f"{goc}-tom-tat.md",
+                                       noi_dung.encode("utf-8"))
+        khoa = khoa_cho_thread(kenh, dinh_danh, chat_admin)
+        dat_cho(khoa, tep=tep, kieu=KIEU_TOM_TAT,
+                kenh=kenh, chat=chat, topic=topic, user=user)
+        if not gui_toi_admin(khoa_admin, chuan_bi_hoi_tom_tat(ten_goc),
+                             dinh_danh=dinh_danh):
+            bo_cho(khoa)
+            _xoa_cuc_bo(tep)
+            logger.warning(f"luu_tru_online: không gửi được câu hỏi sau tóm tắt "
+                           f"tới {khoa_admin} — đã bỏ bản tóm tắt")
+    except Exception as exc:
+        logger.warning(f"luu_tru_online: hỏi sau tóm tắt lỗi: {str(exc)[:150]}")
 
 
 def moi_luu_sau_chuyen_doi(kenh: str, chat: str, *, tep_goc: str, ten_goc: str,

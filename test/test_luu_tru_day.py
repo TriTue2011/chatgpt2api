@@ -303,6 +303,105 @@ class SauChuyenDoiTests(unittest.TestCase):
         self.assertEqual(con, [])
 
 
+class SauTomTatTests(unittest.TestCase):
+    """Chủ máy chốt: "tóm tắt → chỉ hỏi có lưu tệp không" — hai lựa chọn.
+
+    Lưu BẢN TÓM TẮT chứ không phải tệp gốc: tệp gốc đã được hỏi ngay lúc nhận,
+    hỏi lại là hỏi hai lần về cùng một tệp.
+    """
+
+    KHOA = "zalop:acc1:admin9"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        goc = Path(self.tmp.name)
+
+        from services import rclone_service as rcl
+        self._ws = rcl.workspace_dir
+        rcl.workspace_dir = lambda: goc
+        self.addCleanup(setattr, rcl, "workspace_dir", self._ws)
+
+        self.nen = _Nen()
+        self._day_goc = ld.day_nen
+        ld.day_nen = self.nen
+        self.addCleanup(setattr, ld, "day_nen", self._day_goc)
+
+        self.da_gui = []
+        self._gui_goc = ld.gui_toi_admin
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": (
+            self.da_gui.append((khoa, text)) or True)
+        self.addCleanup(setattr, ld, "gui_toi_admin", self._gui_goc)
+
+        self._cfg_goc = lt.config
+        lt.config = _CauHinhGia({"luu_tru_online": {"zalop:nhom1": {
+            "enabled": True, "kho": "drive", "thu_muc": "GD",
+            "thread_admin": "zalop:admin9"}}})
+        self.addCleanup(setattr, lt, "config", self._cfg_goc)
+        ld._cho.clear()
+
+    def _hoi(self, tom_tat="Nội dung chính: họp thứ ba."):
+        ld.moi_luu_tom_tat("zalop", "nhom1", ten_goc="bao-cao.pdf",
+                           tom_tat=tom_tat, dinh_danh="acc1")
+
+    def test_chi_hai_lua_chon(self):
+        self._hoi()
+        text = self.da_gui[0][1]
+        self.assertIn("1. Lưu bản tóm tắt", text)
+        self.assertIn("2. Không lưu", text)
+        self.assertNotIn("3.", text, "tóm tắt không có lựa chọn thứ ba")
+
+    def test_go_3_khong_duoc_nhan(self):
+        """Bảng chỉ có hai mục — nhận "3" là nhận một lựa chọn không tồn tại."""
+        self._hoi()
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "3"), 0)
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "2"), 2)
+
+    def test_chon_1_thi_day_ban_tom_tat(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 1)
+        self.assertEqual(len(self.nen.da_day), 1)
+        tep, dich = self.nen.da_day[0]
+        self.assertTrue(Path(tep).name.endswith("-tom-tat.md"))
+        self.assertIn("bao-cao", Path(tep).name)
+        self.assertEqual(dich, "drive:GD/Khác")
+
+    def test_noi_dung_tom_tat_duoc_ghi_ra_tep(self):
+        self._hoi("Họp lúc 9 giờ thứ ba.")
+        tep = Path(ld.lay_cho(self.KHOA)["tep"])
+        self.assertEqual(tep.read_text("utf-8"), "Họp lúc 9 giờ thứ ba.")
+
+    def test_chon_2_thi_khong_day_va_don_sach(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 2)
+        self.assertEqual(self.nen.da_day, [])
+        self.assertEqual(list((Path(self.tmp.name) / "da_nhan").glob("*")), [])
+
+    def test_tom_tat_rong_thi_khong_hoi(self):
+        self._hoi("   ")
+        self.assertEqual(self.da_gui, [])
+
+    def test_chua_bat_pham_vi_thi_khong_hoi(self):
+        lt.config = _CauHinhGia({"luu_tru_online": {}})
+        self._hoi()
+        self.assertEqual(self.da_gui, [])
+
+    def test_gui_hong_thi_don_sach(self):
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": False
+        self._hoi()
+        self.assertFalse(ld.lay_cho(self.KHOA))
+        self.assertEqual(list((Path(self.tmp.name) / "da_nhan").glob("*")), [])
+
+    def test_ba_loi_dung_ba_bang_khac_nhau(self):
+        """Lẫn bảng là admin bấm "2" ở lối này ra việc của lối kia."""
+        self.assertEqual(len(ld._bang(ld.KIEU_NHAN)[0]), 3)
+        self.assertEqual(len(ld._bang(ld.KIEU_CHUYEN_DOI)[0]), 3)
+        self.assertEqual(len(ld._bang(ld.KIEU_TOM_TAT)[0]), 2)
+        nhan = [ld._bang(k)[0] for k in
+                (ld.KIEU_NHAN, ld.KIEU_CHUYEN_DOI, ld.KIEU_TOM_TAT)]
+        self.assertEqual(len({tuple(n) for n in nhan}), 3)
+
+
 class TachThreadAdminTests(unittest.TestCase):
 
     def test_khoa_nhom(self):
@@ -492,6 +591,13 @@ class NoiVaoKenhTests(unittest.TestCase):
         i_hoi = src.index("_moi_luu_sau_chuyen_doi(chat_id, user_id, path, name,")
         i_xoa = src.index("os.unlink(docx_path)")
         self.assertLess(i_hoi, i_xoa)
+
+    def test_hai_kenh_co_tom_tat_deu_hoi_sau_khi_xong(self):
+        for ten in ("zalo_personal.py", "telegram_bot.py"):
+            with self.subTest(ten=ten):
+                src = self._src(ten)
+                self.assertIn("moi_luu_tom_tat(", src)
+                self.assertIn("_moi_luu_tom_tat(", src)
 
     def test_moi_kenh_deu_doc_tra_loi_admin(self):
         for ten in self.KENH:

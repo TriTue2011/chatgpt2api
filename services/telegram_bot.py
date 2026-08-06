@@ -967,6 +967,19 @@ def _moi_luu_sau_chuyen_doi(chat_id: str, user_id: str, tep_goc: str,
         logger.warning("tg luu_tru_online sau chuyen doi: %s", str(exc)[:150])
 
 
+def _moi_luu_tom_tat(chat_id: str, user_id: str, ten_goc: str,
+                     tom_tat: str) -> None:
+    """Vừa gửi bản tóm tắt → hỏi admin có lưu nó lên kho đám mây không."""
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu_tom_tat("tg", str(chat_id), ten_goc=ten_goc, tom_tat=tom_tat,
+                             topic=str(_cur_topic() or ""),
+                             user=str(user_id or ""),
+                             dinh_danh=str(_bot_id() or ""))
+    except Exception as exc:
+        logger.warning("tg luu_tru_online sau tom tat: %s", str(exc)[:150])
+
+
 def _do_pdf_intent(
     chat_id: str,
     pending: dict | None,
@@ -1068,6 +1081,8 @@ def _do_pdf_intent(
                 from services import pdf_images as _pimg
                 reply = f"✍️ Tóm tắt **{name}**\n\n" + _pimg.humanize_markers(_tt)
             send_message(chat_id, reply)
+            if (_tt or "").strip():
+                _moi_luu_tom_tat(chat_id, user_id, name, _tt)
         elif intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
             if not grade or not subject:

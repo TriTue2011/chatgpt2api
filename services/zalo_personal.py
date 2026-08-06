@@ -1848,6 +1848,18 @@ def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes) -> N
         logger.warning("zalop luu_tru_online: %s", str(exc)[:150])
 
 
+def _moi_luu_tom_tat(thread_id: str, account: str, user_id: str, ten_goc: str,
+                     tom_tat: str) -> None:
+    """Vừa gửi bản tóm tắt → hỏi admin có lưu nó lên kho đám mây không."""
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu_tom_tat("zalop", str(thread_id), ten_goc=ten_goc,
+                             tom_tat=tom_tat, user=str(user_id or ""),
+                             dinh_danh=str(account or ""))
+    except Exception as exc:
+        logger.warning("zalop luu_tru_online sau tom tat: %s", str(exc)[:150])
+
+
 def _moi_luu_sau_chuyen_doi(*, ev_user_id: str, thread_id: str, account: str,
                             tep_goc: str, ten_goc: str, tep_moi: str,
                             duoi: str) -> None:
@@ -1971,6 +1983,8 @@ def _do_pdf_intent(
                 from services import pdf_images as _pimg
                 reply = f"✍️ Tóm tắt **{name}**\n\n" + _pimg.humanize_markers(_tt)
             send_message(thread_id, reply, thread_type)
+            if (_tt or "").strip():
+                _moi_luu_tom_tat(thread_id, account, user_id, name, _tt)
         elif intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
             if not grade or not subject:
