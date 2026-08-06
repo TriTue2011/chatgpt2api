@@ -4260,6 +4260,59 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
 # thật) — các tool soạn/sửa trả text để orchestrator không cắt vòng lặp sớm.
 
 
+def _h_office_cat(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.cat_theo_tieu_de(str(args.get("tep") or ""),
+                             cap=int(args.get("cap") or 0),
+                             thu_muc=str(args.get("thu_muc") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không cắt được: {kq.get('error')}"}
+    ds = ", ".join(kq.get("cac_tep") or [])
+    return {"text": (f"✂️ Đã cắt thành {kq['so_phan']} phần (theo tiêu đề cấp "
+                     f"{kq['cap']}) trong {kq['thu_muc']}:\n{ds}")}
+
+
+def _h_office_noi(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    ds = args.get("cac_tep")
+    kq = ob.noi_tep(list(ds) if isinstance(ds, list) else [],
+                    str(args.get("ten_ra") or ""),
+                    dinh_dang=str(args.get("dinh_dang") or "docx"))
+    if not kq.get("ok"):
+        return {"text": f"Không nối được: {kq.get('error')}"}
+    them = ("\n⚠️ Bỏ qua: " + "; ".join(kq["bo_qua"])) if kq.get("bo_qua") else ""
+    return {"text": f"🔗 Đã nối {kq['so_tep']} tệp thành {kq['ten']} ạ.{them}",
+            "doc_path": kq.get("duong_dan")}
+
+
+def _h_office_thong_tin(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.doc_thong_tin(str(args.get("tep") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không đọc được thông tin: {kq.get('error')}"}
+    nhan = {"ten": "Tên", "loai": "Loại", "co_byte": "Cỡ (byte)",
+            "sua_luc": "Sửa lúc", "tao_luc": "Tạo lúc", "tac_gia": "Tác giả",
+            "tieu_de": "Tiêu đề", "so_doan": "Số đoạn", "so_bang": "Số bảng",
+            "so_tu": "Số từ", "so_trang": "Số trang", "so_sheet": "Số sheet",
+            "cac_sheet": "Các sheet", "so_dong": "Số dòng",
+            "so_slide": "Số slide", "ghi_chu": "Ghi chú"}
+    dong = [f"- {nhan.get(k, k)}: {v}" for k, v in kq.items()
+            if k != "ok" and v not in ("", None, {}, [])]
+    return {"text": "📋 Thông tin tài liệu\n" + "\n".join(dong)}
+
+
+def _h_office_bao_cao(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.tao_bao_cao(str(args.get("tep_du_lieu") or ""),
+                        str(args.get("ten_ra") or ""),
+                        mau_md=str(args.get("mau_md") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không tạo được báo cáo: {kq.get('error')}"}
+    theo = " theo mẫu" if kq.get("theo_mau") else ""
+    return {"text": f"📑 Đã lập {kq['ten']}{theo} từ {kq['so_sheet']} sheet ạ.",
+            "doc_path": kq.get("duong_dan")}
+
+
 def _h_office_so_sanh(args: dict, ctx: dict) -> dict:
     """So hai tài liệu. Bù việc `officecli` không có — xem services/office_bo_sung."""
     from services import office_bo_sung as ob
@@ -5449,6 +5502,54 @@ CAPABILITIES: dict[str, Capability] = {
     # risk=READ có chủ đích: mọi tool chỉ đụng sandbox DATA_DIR/office (như
     # generate_image) — risk=CHANGE làm supervised-mode kẹt phê duyệt giữa
     # chuỗi create→add→send (resume sau duyệt KHÔNG nối tiếp vòng lặp).
+    "office_cat": Capability(
+        name="office_cat", risk=READ, handler=_h_office_cat,
+        emoji="✂️", label="Cắt tài liệu theo tiêu đề",
+        description=("Cắt một tài liệu dài thành nhiều tệp .md theo tiêu đề. "
+                     "cap=0 (mặc định) tự lấy cấp tiêu đề nông nhất tài liệu "
+                     "đang dùng, nên tài liệu chỉ có '#' vẫn cắt được."),
+        parameters={"type": "object", "properties": {
+            "tep": {"type": "string"},
+            "cap": {"type": "integer", "description": "1='#', 2='##'; 0 = tự chọn"},
+            "thu_muc": {"type": "string", "description": "để trống = tạo thư mục mới"}},
+            "required": ["tep"]},
+        workflow="Dùng khi người dùng muốn tách một tài liệu dài ra từng phần."),
+    "office_noi": Capability(
+        name="office_noi", risk=READ, handler=_h_office_noi,
+        emoji="🔗", label="Nối nhiều tệp thành một",
+        description=("Ghép nội dung nhiều tài liệu thành MỘT tệp. KHÁC "
+                     "office_merge (cái đó trộn dữ liệu vào mẫu). Nối .docx thì "
+                     "giữ được đậm/nghiêng và bảng."),
+        parameters={"type": "object", "properties": {
+            "cac_tep": {"type": "array", "items": {"type": "string"},
+                        "description": "ít nhất hai tệp"},
+            "ten_ra": {"type": "string", "description": "vd tong_hop.docx"},
+            "dinh_dang": {"type": "string", "enum": ["docx", "md"]}},
+            "required": ["cac_tep", "ten_ra"]},
+        workflow=("Tệp nào không đọc được thì kết quả có mục 'Bỏ qua' — đọc lại "
+                  "cho người dùng biết, đừng im lặng.")),
+    "office_thong_tin": Capability(
+        name="office_thong_tin", risk=READ, handler=_h_office_thong_tin,
+        emoji="📋", label="Thông tin tài liệu",
+        description=("Tác giả, ngày tạo/sửa, cỡ tệp, số trang (PDF), số sheet "
+                     "(Excel), số slide (PowerPoint), số đoạn/bảng/từ (Word)."),
+        parameters={"type": "object", "properties": {
+            "tep": {"type": "string"}}, "required": ["tep"]},
+        workflow="Dùng khi người dùng hỏi 'tệp này bao nhiêu trang', 'ai soạn'."),
+    "office_bao_cao": Capability(
+        name="office_bao_cao", risk=READ, handler=_h_office_bao_cao,
+        emoji="📑", label="Lập báo cáo từ bảng tính",
+        description=("Excel/CSV → báo cáo .docx. Không có mẫu thì tự dựng "
+                     "(thống kê + dữ liệu từng sheet). Có mẫu Markdown thì đi "
+                     "theo mẫu: mỗi dòng là một đoạn, `{{bang:TênSheet}}` thay "
+                     "bằng bảng thật, `{{thong_ke:TênSheet}}` thay bằng bảng "
+                     "min/max/trung bình/tổng."),
+        parameters={"type": "object", "properties": {
+            "tep_du_lieu": {"type": "string", "description": "vd so_lieu.xlsx"},
+            "ten_ra": {"type": "string", "description": "vd bao_cao.docx"},
+            "mau_md": {"type": "string", "description": "mẫu Markdown, để trống = tự dựng"}},
+            "required": ["tep_du_lieu", "ten_ra"]},
+        workflow="Tạo xong → office_send gửi cho người dùng."),
     "office_so_sanh": Capability(
         name="office_so_sanh", risk=READ, handler=_h_office_so_sanh,
         emoji="🔍", label="So sánh hai tài liệu",
@@ -5679,6 +5780,8 @@ _CAP_GROUP: dict[str, str] = {
     "office_merge": "office", "office_send": "office",
     "office_so_sanh": "office", "office_thong_ke": "office",
     "office_thay_the": "office", "office_tao_slide": "office",
+    "office_cat": "office", "office_noi": "office",
+    "office_thong_tin": "office", "office_bao_cao": "office",
     # Tool Home Assistant do GATEWAY tiêm (services/ha_client.get_ha_tools),
     # không phải capability của agent. Thiếu chúng ở đây thì group_of() trả
     # "_ungrouped", và chốt chặn ở orchestrator coi là KHÔNG được phép rồi bỏ
