@@ -225,6 +225,91 @@ def thread_admin_nhan(kenh: str, chat: str = "", topic: str = "", user: str = ""
     return ""
 
 
+# ── Phạm vi nào đọc/ghi được kho nào ─────────────────────────────────────────
+# Chủ máy chốt 06/08: "tôi muốn nó độc lập như nhật ký — chỉ khi kết nối mới có
+# quyền đọc, tải về; tải lên thì vẫn chỉ tải lên đám mây được cài đặt thôi".
+#
+# Nên hai chiều KHÁC HẲN nhau:
+#
+#   ĐỌC  — kho của chính phạm vi này, CỘNG kho của các phạm vi đã «Kết nối bộ
+#          nhớ» (bình đẳng hai chiều, chính-phụ một chiều — luật nằm ở
+#          `scope._pham_vi_lien_ket_raw`, không viết lại ở đây).
+#   GHI  — CHỈ kho của chính phạm vi này. Kết nối không mở đường ghi: nối rồi gỡ
+#          mà dữ liệu đã chảy sang nhau thì không tách lại được.
+#
+# Trước bản này, năng lực `kho_dam_may` cho đọc MỌI kho đã khai, bất kể thread
+# nào gọi — tức nhóm nào bật năng lực đó là cả nhóm xem được toàn bộ đám mây của
+# chủ máy.
+
+
+def _mot_kho(kenh: str, chat: str, topic: str, user: str) -> dict:
+    cd = cai_dat(kenh, chat, topic, user)
+    if not cd.get("enabled"):
+        return {}
+    return {"kho": cd["kho"], "thu_muc": cd.get("thu_muc") or "",
+            "pham_vi": [kenh, chat, topic, user]}
+
+
+def kho_ghi_duoc(user_id: str) -> dict:
+    """Kho DUY NHẤT phạm vi này được ghi lên. {} nếu chưa khai."""
+    from services.agent.scope import tach_khoa_phien
+    sc = tach_khoa_phien(user_id)
+    if not sc.chat:
+        return {}
+    return _mot_kho(sc.kenh, sc.chat, sc.topic, sc.actor)
+
+
+def cac_kho_doc_duoc(user_id: str) -> list[dict]:
+    """Các kho phạm vi này đọc được: của mình trước, rồi của phạm vi đã kết nối.
+
+    Mỗi mục thêm `cua_minh` để giao diện/bot nói rõ đâu là kho của chính mình.
+    """
+    from services.agent.scope import kho_doc_them
+    ra: list[dict] = []
+    minh = kho_ghi_duoc(user_id)
+    if minh:
+        ra.append({**minh, "cua_minh": True})
+    for kenh, chat, topic, user in kho_doc_them(user_id):
+        k = _mot_kho(kenh, chat, topic, user)
+        if not k:
+            continue
+        if any(x["kho"] == k["kho"] and x["thu_muc"] == k["thu_muc"] for x in ra):
+            continue
+        ra.append({**k, "cua_minh": False})
+    return ra
+
+
+def _trong_pham_vi(duong_dan: str, kho: str, thu_muc: str) -> bool:
+    """`duong_dan` có nằm trong `kho:thu_muc` không.
+
+    So theo TỪNG ĐOẠN đường dẫn, không so tiền tố chuỗi: 'drive:c2a-rieng' có
+    tiền tố 'drive:c2a' nhưng là thư mục KHÁC, cho qua là lộ dữ liệu.
+    """
+    s = str(duong_dan or "").strip()
+    if ":" not in s:
+        return False
+    ten, _, phan = s.partition(":")
+    if ten != kho:
+        return False
+    goc = str(thu_muc or "").strip("/")
+    if not goc:
+        return True                     # khai cả kho → mọi thư mục trong đó
+    duong = phan.strip("/")
+    return duong == goc or duong.startswith(goc + "/")
+
+
+def duoc_doc(user_id: str, duong_dan: str) -> bool:
+    """Phạm vi này được đọc đường dẫn đó không (kho mình + kho đã kết nối)."""
+    return any(_trong_pham_vi(duong_dan, k["kho"], k["thu_muc"])
+               for k in cac_kho_doc_duoc(user_id))
+
+
+def duoc_ghi(user_id: str, duong_dan: str) -> bool:
+    """Phạm vi này được ghi vào đường dẫn đó không — CHỈ kho của chính nó."""
+    k = kho_ghi_duoc(user_id)
+    return bool(k) and _trong_pham_vi(duong_dan, k["kho"], k["thu_muc"])
+
+
 # ── Sổ những tệp ĐÃ ĐẨY LÊN ──────────────────────────────────────────────────
 # Vì sao phải có sổ: hạn giữ online nghĩa là XOÁ tệp trên tài khoản đám mây của
 # chủ máy. Nếu dọn theo kiểu "liệt kê thư mục rồi xoá tệp cũ hơn N ngày" thì một

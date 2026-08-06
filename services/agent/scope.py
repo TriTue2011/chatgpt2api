@@ -317,6 +317,27 @@ def _pham_vi_lien_ket_raw(user_id: str) -> list[str]:
     return ra
 
 
+def kho_doc_them(user_id: str) -> list[tuple[str, str, str, str]]:
+    """Phạm vi mà lượt này ĐỌC THÊM được KHO ĐÁM MÂY của họ, nhờ kết nối.
+
+    Trả (kênh, chat, topic, người) để `luu_tru_online` tra cấu hình kho — cùng
+    nếp với `nhat_ky_doc_them`: luật kết nối (bình đẳng / chính phụ) chỉ viết một
+    lần ở `_pham_vi_lien_ket_raw`, mỗi bên tiêu thụ tự ánh xạ sang khoá của mình.
+
+    Kết nối CHỈ MỞ ĐƯỜNG ĐỌC. Ghi vẫn vào kho của chính phạm vi đó — xem
+    `luu_tru_online.kho_ghi_duoc`.
+    """
+    ra: list[tuple[str, str, str, str]] = []
+    for kp in _pham_vi_lien_ket_raw(user_id):
+        sc = tach_khoa_phien(kp)
+        if not sc.chat:
+            continue
+        t = (sc.kenh, sc.chat, sc.topic, sc.actor)
+        if t not in ra:
+            ra.append(t)
+    return ra
+
+
 def pham_vi_doc_them(user_id: str) -> list[str]:
     """Các phạm vi MEMORY lượt này đọc thêm nhờ kết nối (không gồm chính nó)."""
     cua_toi = khoa_du_lieu(user_id)

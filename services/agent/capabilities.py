@@ -4381,19 +4381,36 @@ def _h_office_send(args: dict, ctx: dict) -> dict:
 
 
 def _h_kho_dam_may(args: dict, ctx: dict) -> dict:
-    """Đọc kho lưu trữ đám mây qua rclone: liệt kê remote, xem thư mục, tải về."""
+    """Đọc kho lưu trữ đám mây qua rclone: liệt kê kho, xem thư mục, tải về.
+
+    ĐỘC LẬP THEO PHẠM VI như nhật ký (chủ máy chốt 06/08): mỗi thread chỉ thấy
+    kho đã cài cho chính nó, cộng kho của các phạm vi đã «Kết nối bộ nhớ». Bản
+    trước cho đọc MỌI kho đã khai bất kể thread nào gọi — tức nhóm nào bật năng
+    lực này là cả nhóm xem được toàn bộ đám mây của chủ máy.
+    """
     from services import rclone_service as rcl
+    from services.agent import luu_tru_online as lt
     op = str(args.get("op") or "remotes").strip().lower()
     dd = str(args.get("duong_dan") or "").strip()
+    uid = str(ctx.get("user_id") or "")
+
+    kho_ds = lt.cac_kho_doc_duoc(uid)
+    if not kho_ds:
+        return {"text": "Chỗ này chưa được cài kho đám mây nào ạ. Vào Cài đặt → "
+                        "Lưu trữ online để chọn kho cho thread này."}
 
     if op == "remotes":
-        ds = rcl.remotes()
-        if not ds:
-            return {"text": "Chưa khai kho lưu trữ nào. Vào Cài đặt → Kho đám mây "
-                            "để thêm Google Drive, OneDrive, S3… ạ."}
-        dong = "\n".join(f"{i}. {r['name']} ({r['type']})"
-                         for i, r in enumerate(ds, 1))
-        return {"text": f"Các kho đang khai:\n{dong}"}
+        dong = []
+        for i, k in enumerate(kho_ds, 1):
+            duong = k["kho"] + ":" + (k["thu_muc"] or "")
+            dong.append(f"{i}. {duong}" + ("" if k["cua_minh"] else " (qua kết nối)"))
+        return {"text": "Kho dùng được ở đây:\n" + "\n".join(dong)}
+
+    if dd and not lt.duoc_doc(uid, dd):
+        # Nói rõ chỗ nào dùng được, đừng chỉ báo "không được phép" — người dùng
+        # không có cách nào tự biết mình gõ sai kho hay không có quyền.
+        goi_y = ", ".join(k["kho"] + ":" + (k["thu_muc"] or "") for k in kho_ds)
+        return {"text": f"Chỗ này không đọc được {dd} ạ. Dùng được: {goi_y}."}
 
     if op == "ls":
         kq = rcl.liet_ke(dd)
@@ -4438,9 +4455,24 @@ def _co_file(n: int) -> str:
 
 
 def _h_kho_dam_may_gui(args: dict, ctx: dict) -> dict:
-    """Gửi file lên kho đám mây, hoặc xoá file trên đó. Đưa dữ liệu RA NGOÀI."""
+    """Gửi file lên kho đám mây, hoặc xoá file trên đó. Đưa dữ liệu RA NGOÀI.
+
+    CHỈ ghi vào kho của CHÍNH phạm vi này. Kết nối chỉ mở đường đọc (chủ máy
+    chốt 06/08: "tải lên thì vẫn chỉ tải lên đám mây được cài đặt thôi") — nối
+    rồi gỡ mà dữ liệu đã chảy sang nhau thì không tách lại được nữa.
+    """
     from services import rclone_service as rcl
+    from services.agent import luu_tru_online as lt
     op = str(args.get("op") or "gui_len").strip().lower()
+    uid = str(ctx.get("user_id") or "")
+    cua_minh = lt.kho_ghi_duoc(uid)
+    if not cua_minh:
+        return {"text": "Chỗ này chưa được cài kho đám mây nào để lưu ạ. Vào "
+                        "Cài đặt → Lưu trữ online để chọn kho cho thread này."}
+    _dich = str(args.get("duong_dan") if op == "xoa" else args.get("thu_muc") or "")
+    if not lt.duoc_ghi(uid, _dich):
+        duong = cua_minh["kho"] + ":" + (cua_minh["thu_muc"] or "")
+        return {"text": f"Chỗ này chỉ ghi được vào {duong} ạ."}
     if op == "xoa":
         kq = rcl.xoa(str(args.get("duong_dan") or ""))
         return {"text": "Đã xoá ạ." if kq.get("ok")
