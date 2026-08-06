@@ -416,3 +416,37 @@ class DungKhoaNhatKyThatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogGoiDungMotThamSoTests(unittest.TestCase):
+    """`utils.log.Logger` nhận ĐÚNG MỘT tham số, không phải %-format nhiều vế.
+
+    Đo thật 06/08 trên máy chủ: `start()` gọi `logger.info("... %d giây", n)` →
+    TypeError ngay trong lời gọi khởi động, nên vòng nền KHÔNG BAO GIỜ chạy, và
+    dấu hiệu duy nhất là một dòng `startup_step_failed` lẫn giữa log. Lần trước
+    tôi lọc bằng grep `%s` nên bỏ sót đúng dòng dùng `%d` — nay soi bằng AST.
+    """
+
+    MODULE = ("services/agent/nhat_ky_dong_bo.py", "services/agent/luu_tru_day.py",
+              "services/agent/luu_tru_online.py")
+
+    def test_khong_loi_goi_logger_nao_nhieu_tham_so(self):
+        import ast
+        for f in self.MODULE:
+            src = (GOC / f).read_text("utf-8")
+            for n in ast.walk(ast.parse(src)):
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                        and isinstance(n.func.value, ast.Name)
+                        and n.func.value.id == "logger"
+                        and len(n.args) + len(n.keywords) > 1):
+                    self.fail(f"{f}:{n.lineno} logger.{n.func.attr} có "
+                              f"{len(n.args)} tham số — utils.log.Logger chỉ nhận 1")
+
+    def test_logger_that_su_chi_nhan_mot_tham_so(self):
+        """Nếu Logger đổi sang nhận %-format thì bài trên thành vô nghĩa."""
+        import inspect
+        from utils.log import Logger
+        for ten in ("info", "warning"):
+            sig = inspect.signature(getattr(Logger, ten))
+            self.assertEqual(len(sig.parameters), 2,  # self + message
+                             f"Logger.{ten} đã đổi chữ ký — xem lại bài kiểm trên")

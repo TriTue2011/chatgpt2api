@@ -305,7 +305,7 @@ def start() -> None:
     _da_chay = True
     _stop.clear()
     threading.Thread(target=_vong, name="nhat-ky-dong-bo", daemon=True).start()
-    logger.info("nhat_ky_dong_bo: đã bật vòng nền, quét mỗi %d giây", CHU_KY_QUET_S)
+    logger.info(f"nhat_ky_dong_bo: đã bật vòng nền, quét mỗi {CHU_KY_QUET_S} giây")
 
 
 def stop() -> None:
