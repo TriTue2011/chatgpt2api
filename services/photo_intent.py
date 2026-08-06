@@ -233,62 +233,6 @@ def het_cho_anh(key: str) -> None:
     _cho_anh.pop(str(key), None)
 
 
-# ── Nhớ ảnh vừa gửi trong nhóm, kể cả khi cổng tag đã loại nó ────────────────
-# Đo thật trên máy chủ 06/08 lúc 11:43–11:45 (nhóm Homeassistant): chủ máy tag
-# bot, 17 giây sau gửi ảnh KHÔNG tag, rồi tag lại "mô tả ảnh". Ảnh tới nơi đầy
-# đủ (`msgType: 'chat.photo'` + href) nhưng bị cổng "trong nhóm phải tag bot"
-# loại — và loại IM LẶNG, vì dòng log báo điều đó nằm ở mức INFO trong khi logger
-# của module đang ở mức WARNING. Ba câu tag sau đó chỉ nhận lời chào chung.
-#
-# Zalo không cho vừa tag vừa đính ảnh trong một tin, nên "tag rồi gửi ảnh" là
-# cách người ta buộc phải làm. Vì vậy: NHỚ đường dẫn ảnh của thread (chỉ đường
-# dẫn, không tải về — không tốn băng thông, không giữ ảnh của người lạ), để câu
-# tag ngay sau đó còn dùng được.
-_ANH_GAN_DAY_TTL = 600.0     # 10 phút
-_anh_gan_day: dict[str, tuple[str, float]] = {}
-
-
-def nho_anh_gan_day(khoa_thread: str, url: str) -> None:
-    """Ghi nhận ảnh vừa xuất hiện trong thread. Gọi TRƯỚC cổng tag."""
-    if khoa_thread and url:
-        _anh_gan_day[str(khoa_thread)] = (str(url), time.time())
-
-
-def lay_anh_gan_day(khoa_thread: str) -> str:
-    """Đường dẫn ảnh gần nhất còn hạn của thread. '' nếu không có."""
-    v = _anh_gan_day.get(str(khoa_thread))
-    if not v:
-        return ""
-    url, t = v
-    if time.time() - t > _ANH_GAN_DAY_TTL:
-        _anh_gan_day.pop(str(khoa_thread), None)
-        return ""
-    return url
-
-
-def quen_anh_gan_day(khoa_thread: str) -> None:
-    _anh_gan_day.pop(str(khoa_thread), None)
-
-
-#: Câu hỏi VỀ ẢNH mà không kèm ảnh — "mô tả ảnh", "ảnh này là gì", "xem ảnh"…
-#: So sau khi bỏ dấu. Cố ý HẸP: chỉ nhận câu thật sự nói về ảnh, vì nhận rộng là
-#: mọi câu có chữ "ảnh" đều lôi tấm ảnh cũ ra phân tích.
-_HOI_VE_ANH_RE = re.compile(
-    r"\b(mo ta|phan tich|xem|doc|dich|nhin|kiem tra|giai|nay la gi|la gi|co gi)\b"
-    r"[^.!?]{0,20}\b(anh|hinh|tam anh|buc anh|tam hinh)\b"
-    r"|\b(anh|hinh|tam anh|buc anh|tam hinh)\b[^.!?]{0,20}"
-    r"\b(nay|tren|vua gui|do)\b",
-    re.IGNORECASE)
-
-
-def hoi_ve_anh(text: str) -> bool:
-    """Câu này có phải đang hỏi về một tấm ảnh không?"""
-    t = _bo_dau_anh(str(text or "")).lower().strip()
-    if not t:
-        return False
-    return bool(_HOI_VE_ANH_RE.search(t))
-
-
 #: Chuỗi tag người dùng gõ để gọi bot: '@BenBap', '@Botmitbap'…
 _TAG_RE = re.compile(r"@[^\s@]{1,32}")
 

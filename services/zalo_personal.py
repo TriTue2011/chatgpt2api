@@ -2277,16 +2277,6 @@ def _process_ai(ev: dict) -> None:
 
     # Khoá chờ — tính SỚM vì cổng tag bên dưới cần tra nó.
     pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
-    # Khoá cấp THREAD: ảnh gửi trong nhóm là của cả nhóm, ai hỏi về nó cũng được.
-    tkey = f"zalop:{ev.get('account_id')}:{thread_id}"
-
-    # NHỚ ảnh vừa xuất hiện TRƯỚC cổng tag. Zalo không cho vừa tag vừa đính ảnh,
-    # nên "tag bot → gửi ảnh → tag hỏi" là cách người ta buộc phải làm; cổng tag
-    # loại tấm ảnh giữa chừng thì câu hỏi sau đó không còn gì để xem. Chỉ nhớ
-    # ĐƯỜNG DẪN, không tải về.
-    if ev.get("msg_type") == "chat.photo" and ev.get("attachment_url"):
-        from services import photo_intent as _phi_nho
-        _phi_nho.nho_anh_gan_day(tkey, str(ev["attachment_url"]))
 
     # Bộ lọc TAG (nhóm): native mention / keyword / @alias — chung tag_gate_allows.
     if thread_type == 1 and thread_id:
@@ -2436,29 +2426,6 @@ def _process_ai(ev: dict) -> None:
                 )
             return
 
-    # Hỏi VỀ ẢNH mà không kèm ảnh: lấy tấm vừa gửi trong thread ra dùng. Đặt SAU
-    # các bản chờ (bản chờ là việc đang dở của đúng người đó, phải xong trước) và
-    # TRƯỚC nhánh nhận ảnh mới.
-    if text and not _phi.has_pending(pkey) and _phi.hoi_ve_anh(text):
-        _url_cu = _phi.lay_anh_gan_day(tkey)
-        if _url_cu:
-            logger.warning(
-                "zalop dung lai anh vua gui trong thread %s (cong tag đa loai no)",
-                thread_id)
-            _data_cu = _download(_url_cu)
-            _data_cu, _err_cu = (_phi.prepare_incoming(_data_cu)
-                                 if _data_cu else (None, "📷 Ảnh cũ tải không được."))
-            if _data_cu:
-                _phi.quen_anh_gan_day(tkey)
-                _cap_cu = _phi.bo_tag(text)
-                _do_photo_request(
-                    thread_id, thread_type, _data_cu, _cap_cu, _allow,
-                    intent=_phi.parse_intent(_cap_cu, _phi.allowed_intents(_allow))
-                    or _phi.ANALYZE,
-                    user_id=_uid, account=_acc,
-                )
-                return
-
     # Lưu trữ online: admin trả lời "1/2/3" cho tệp đang chờ. Khoá theo THREAD
     # (không kèm người) vì nhóm admin thì ai trả lời cũng được. Đặt SAU các bản
     # chờ pdf/ảnh: những bản chờ đó theo TỪNG NGƯỜI nên là việc riêng của họ,
@@ -2524,8 +2491,6 @@ def _process_ai(ev: dict) -> None:
         if not data:
             send_message(thread_id, _img_err, thread_type)
             return
-        # Ảnh này đã vào đường xử lý chính → không cần nhớ để dùng lại nữa.
-        _phi.quen_anh_gan_day(tkey)
         # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
         from services.agent.luu_tru_day import ten_anh as _ten_anh
         _moi_luu_online(ev, thread_id, _ten_anh(data), data)
