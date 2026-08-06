@@ -2825,6 +2825,49 @@ def _apply_branch_routing(body: dict[str, Any]) -> dict[str, Any] | Iterator[dic
                                [m for m in messages if isinstance(m, dict)], body)
 
 
+def _chi_giu_loi_dan_anh(messages: list[dict[str, Any]],
+                         body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Request TỪ HA CÓ KÈM ẢNH: bỏ mọi tin nhắn system, giữ lời dặn phân tích.
+
+    ĐO THẬT 06/08 trên máy chủ (bảng `runs`, hint='vision', source_kind='ha'):
+    request HA mang hơn 1500 ký tự mở đầu, thứ tự là persona của bot ("NHÂN VẬT:
+    Nam, 18-25 tuổi… xưng em, gọi anh/chị", do `api/ai.py` chèn cho mọi request
+    HA) rồi tới prompt của HA ("You are a Home Assistant expert…"), lời dặn phân
+    tích nằm SAU CÙNG trong tin nhắn user. Model trả về lời chào theo persona,
+    `response_format.normalize_content` không bóc được JSON nên điền mặc định →
+    camera báo "0 người" một cách chắc chắn. Cùng ảnh đó, cùng họ model, gửi
+    riêng 198 ký tự lời dặn thì trả đúng `humans_detected: 1`.
+
+    Hai tin nhắn system đó đều là thứ ĐÈ LÊN việc cần làm, không phải bối cảnh:
+    persona bắt viết văn nói tiếng Việt có đệm "nhỉ/nhé/ạ", còn prompt HA bắt
+    nhập vai trợ lý nhà — trong khi việc là trả về JSON sáu trường.
+
+    CHỈ áp cho request TỪ HA VÀ CÓ ẢNH. Hai đường không được chạm tới:
+      · HA hỏi bằng giọng nói (không ảnh) — persona chính là thứ tạo ra giọng
+        "em/anh chị", bỏ đi là bot mất giọng ở toàn bộ trợ lý nhà.
+      · Ảnh do chính bot nhận (Zalo/Telegram/tab chat) — không mang cờ HA nên
+        không đi vào đây, đường phân tích ảnh của bot giữ nguyên persona.
+    """
+    if not isinstance(messages, list) or not body.get("_is_ha_request"):
+        return messages
+    if not _messages_have_images(messages):
+        return messages
+    con_lai = [m for m in messages
+               if not (isinstance(m, dict) and str(m.get("role") or "") == "system")]
+    bo = len(messages) - len(con_lai)
+    if not bo:
+        return messages
+    # Bỏ hết mà không còn tin nhắn nào thì giữ nguyên: thà để prompt HA lấn còn
+    # hơn gửi request rỗng (mọi provider trả 400, camera không có báo nào cả).
+    if not con_lai:
+        logger.warning({"event": "ha_vision_chi_co_system", "so_tin": len(messages)})
+        return messages
+    logger.info({"event": "ha_vision_bo_system", "so_tin_bo": bo,
+                 "ky_tu_bo": sum(len(str(m.get("content") or "")) for m in messages
+                                 if isinstance(m, dict) and m.get("role") == "system")})
+    return con_lai
+
+
 def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     try:
         import json
@@ -2865,6 +2908,12 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     model = _strip_marker(model)  # 'cx/auto:text' -> 'cx/auto' để dispatch đúng
     def _vz(t):
         return verbalize(t) if (voice and t) else t
+
+    # HA gửi ảnh sang phân tích: prompt hệ thống (persona bot + prompt HA) không
+    # phải bối cảnh mà là thứ ĐÈ LÊN lời dặn phân tích — xem `_chi_giu_loi_dan_anh`.
+    # Đặt SAU `voice` để không đổi cách nhận diện văn xuôi, và TRƯỚC mọi tầng tiêm
+    # bối cảnh bên dưới để chỉ bỏ đúng phần client gửi lên.
+    messages = _chi_giu_loi_dan_anh(messages, body)
 
     # Task sinh nội dung (ai_task.generate_data...) → bỏ qua MỌI fast-path nội bộ
     # để model thật sinh đúng output (tránh prompt chứa "âm lịch"/"trạng thái" bị
@@ -3231,7 +3280,10 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 # Circuit-breaker per provider: mạch đang MỞ (fail liên tiếp) →
                 # bỏ qua nhanh khỏi đốt timeout. KHÔNG chặn route CUỐI — luôn
                 # giữ 1 đường thoát để không chết cứng.
-                if _route_idx < len(routes) - 1 and not provider_circuit.allow(route.provider):
+                # Đếm RIÊNG theo combo (`nhom=model`): provider hỏng đúng một
+                # loại việc (vd đọc chữ được, đính kèm nhiều ảnh thì không) chỉ
+                # được rút khỏi loại việc đó, các combo khác không mất nó.
+                if _route_idx < len(routes) - 1 and not provider_circuit.allow(route.provider, nhom=model):
                     logger.info({"event": "combo_skip_circuit", "combo": model, "provider": route.provider})
                     last_error = f"{route.provider} circuit open (fail liên tiếp)"
                     continue
@@ -3299,7 +3351,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                 )
                 result = _maybe_verbalize(result, voice)
                 model_cooldown.record_success("combo:" + model, _khoa_nghi(route))
-                provider_circuit.record_success(route.provider)
+                provider_circuit.record_success(route.provider, nhom=model)
                 provider_order.record_success(route.provider)
                 return result
             except NoFallbackError as exc:
@@ -3322,7 +3374,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
                     account_id="combo:" + model, model=_khoa_nghi(route),
                     status_code=_extract_status(last_error), error_body=last_error, provider=route.provider,
                 )
-                provider_circuit.record_failure(route.provider, _extract_status(last_error), last_error)
+                provider_circuit.record_failure(route.provider, _extract_status(last_error), last_error, nhom=model)
                 provider_order.record_failure(route.provider, _extract_status(last_error), last_error)
                 continue
         from services.image_utils import is_unsupported_image_error
@@ -3398,14 +3450,18 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     )
 
     # Single-model: KHÔNG chặn bằng circuit (không có route thay thế) — chỉ ghi
-    # nhận kết quả để combo/health nhìn thấy sức khỏe provider.
+    # nhận kết quả, và ghi vào nhóm RIÊNG của model này (`nhom=model`) đúng như
+    # combo ghi vào nhóm của combo. Ghi chung một bộ đếm là request tab chat gọi
+    # thẳng một model, lỗi ba lần, làm combo của trợ lý nhà mất provider đó 60
+    # giây — hai việc khác nhau không được kéo nhau. Dấu hiệu THẬT SỰ toàn cục
+    # (provider cạn hết tài khoản) vẫn ghi chung qua `provider_order` bên dưới.
     try:
         result = _dispatch(route, messages, tools, tool_choice, body)
     except Exception as exc:
-        provider_circuit.record_failure(route.provider, _extract_status(str(exc)), str(exc))
+        provider_circuit.record_failure(route.provider, _extract_status(str(exc)), str(exc), nhom=model)
         provider_order.record_failure(route.provider, _extract_status(str(exc)), str(exc))
         raise
-    provider_circuit.record_success(route.provider)
+    provider_circuit.record_success(route.provider, nhom=model)
     provider_order.record_success(route.provider)
 
     # Execute MCP tools server-side — HA doesn't know these tools

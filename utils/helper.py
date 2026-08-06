@@ -433,22 +433,31 @@ def extract_chat_image(body: dict[str, object]) -> list[tuple[bytes, str]]:
 
 
 def extract_chat_prompt(body: dict[str, object]) -> str:
+    """Lời nhắc VẼ ẢNH của một request /v1/chat/completions.
+
+    Chỉ lấy tin nhắn user CUỐI, không nối mọi lượt user trong hội thoại: HA và
+    các client chat đều gửi kèm lịch sử, nên bản cũ nối hết lại biến "vẽ con mèo"
+    thành "thời tiết thế nào\\nvẽ con mèo" — model ảnh nhận cả câu hỏi thời tiết
+    làm mô tả. Vẽ ảnh cần ĐÚNG câu yêu cầu, lượt trước không phải bối cảnh.
+
+    Tin nhắn system vẫn bị bỏ như cũ (persona bot, prompt Home Assistant): đó là
+    cách nhập vai, không phải mô tả ảnh.
+    """
     direct_prompt = str(body.get("prompt") or "").strip()
     if direct_prompt:
         return direct_prompt
     messages = body.get("messages")
     if not isinstance(messages, list):
         return ""
-    prompt_parts: list[str] = []
-    for message in messages:
+    for message in reversed(messages):
         if not isinstance(message, dict):
             continue
         if str(message.get("role") or "").strip().lower() != "user":
             continue
         prompt = extract_prompt_from_message_content(message.get("content"))
         if prompt:
-            prompt_parts.append(prompt)
-    return "\n".join(prompt_parts).strip()
+            return prompt.strip()
+    return ""
 
 
 def parse_image_count(raw_value: object) -> int:

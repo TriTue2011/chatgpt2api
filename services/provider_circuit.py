@@ -11,6 +11,20 @@ mỗi request. Quy tắc an toàn:
 - 413 (payload size) KHÔNG tính fail — lỗi request, không phải sức khỏe provider.
 - Caller KHÔNG bao giờ chặn lựa chọn cuối cùng còn lại (tránh chết cứng).
 - Tắt bằng config smart_pool.enabled=false → allow() luôn True.
+
+ĐẾM RIÊNG THEO TỪNG NHÓM VIỆC (`nhom` = tên combo: 'AI vision', 'AI text'…)
+Yêu cầu của chủ máy 06/08: "cx chưa hồi mà cgf hết đính kèm nhiều ảnh (chat vẫn
+bình thường nhé) thì vision đổi sang nv, chat vẫn giữ cgf".
+
+Một provider hỏng ĐÚNG MỘT VIỆC là chuyện thật, không phải giả thiết: ChatGPT
+Free đọc chữ bình thường nhưng có thể chặn đính kèm nhiều ảnh. Đếm chung một bộ
+là ba lần vision lỗi làm chat mất luôn provider số 1 trong 60 giây, dù chat chưa
+lỗi lần nào. Nhóm việc lấy luôn tên combo — cùng khoá mà `model_cooldown` đã dùng
+(`combo:<tên>`) — vì mỗi loại việc trong dự án này là một combo riêng
+(`agent_branches`: vision → "AI vision", chat → "AI text").
+
+Không truyền `nhom` thì đếm chung như trước: request gọi thẳng một model đơn
+không có loại việc nào để tách.
 """
 from __future__ import annotations
 
@@ -38,9 +52,17 @@ def _enabled() -> bool:
     return True
 
 
+def _khoa(provider: str, nhom: str = "") -> str:
+    """Khoá đếm — provider, cộng nhóm việc nếu có (xem docstring đầu file)."""
+    p = str(provider or "").strip()
+    n = str(nhom or "").strip()
+    return f"{p}@{n}" if n else p
+
+
 @dataclass
 class CircuitState:
     provider: str
+    nhom: str = ""
     state: str = "closed"            # closed | open | half_open
     consecutive_failures: int = 0
     opened_at: float = 0.0
@@ -50,6 +72,7 @@ class CircuitState:
     def to_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
+            "nhom_viec": self.nhom,
             "state": self.state,
             "consecutive_failures": self.consecutive_failures,
             "opened_seconds_ago": round(time.time() - self.opened_at) if self.opened_at else 0,
@@ -63,16 +86,17 @@ class ProviderCircuit:
         self._lock = threading.Lock()
         self._states: dict[str, CircuitState] = {}
 
-    def _get(self, provider: str) -> CircuitState:
-        st = self._states.get(provider)
+    def _get(self, provider: str, nhom: str = "") -> CircuitState:
+        k = _khoa(provider, nhom)
+        st = self._states.get(k)
         if st is None:
-            st = CircuitState(provider=provider)
-            self._states[provider] = st
+            st = CircuitState(provider=str(provider or "").strip(), nhom=str(nhom or "").strip())
+            self._states[k] = st
         return st
 
-    def allow(self, provider: str) -> bool:
-        """True = được thử provider này. Mạch mở quá open_seconds → half_open
-        (cho đúng 1 request thăm dò đi qua)."""
+    def allow(self, provider: str, nhom: str = "") -> bool:
+        """True = được thử provider này CHO NHÓM VIỆC này. Mạch mở quá
+        open_seconds → half_open (cho đúng 1 request thăm dò đi qua)."""
         if not _enabled():
             return True
         provider = str(provider or "").strip()
@@ -80,34 +104,37 @@ class ProviderCircuit:
             return True
         open_seconds = _cfg_int("circuit_open_seconds", 60)
         with self._lock:
-            st = self._states.get(provider)
+            st = self._states.get(_khoa(provider, nhom))
             if st is None or st.state == "closed":
                 return True
             if st.state == "open":
                 if time.time() - st.opened_at >= open_seconds:
                     st.state = "half_open"
-                    logger.info({"event": "circuit_half_open", "provider": provider})
+                    logger.info({"event": "circuit_half_open", "provider": provider,
+                                 "nhom_viec": str(nhom or "")})
                     return True
                 return False
             # half_open: đã có 1 request thăm dò đang chạy → chặn request khác
             return False
 
-    def record_success(self, provider: str) -> None:
+    def record_success(self, provider: str, nhom: str = "") -> None:
         if not _enabled():
             return
         provider = str(provider or "").strip()
         if not provider:
             return
         with self._lock:
-            st = self._states.get(provider)
+            st = self._states.get(_khoa(provider, nhom))
             if st and (st.consecutive_failures or st.state != "closed"):
-                logger.info({"event": "circuit_closed", "provider": provider})
+                logger.info({"event": "circuit_closed", "provider": provider,
+                             "nhom_viec": str(nhom or "")})
                 st.state = "closed"
                 st.consecutive_failures = 0
                 st.opened_at = 0.0
                 st.last_error = ""
 
-    def record_failure(self, provider: str, status_code: int = 0, error: str = "") -> None:
+    def record_failure(self, provider: str, status_code: int = 0, error: str = "",
+                       nhom: str = "") -> None:
         if not _enabled():
             return
         provider = str(provider or "").strip()
@@ -117,7 +144,7 @@ class ProviderCircuit:
             return  # request-size, không phải sức khỏe provider (như model_cooldown)
         threshold = max(1, _cfg_int("circuit_threshold", 3))
         with self._lock:
-            st = self._get(provider)
+            st = self._get(provider, nhom)
             st.consecutive_failures += 1
             st.last_error = str(error or "")[:200]
             # half_open thăm dò fail → mở lại ngay; closed đạt ngưỡng → mở.
@@ -126,6 +153,7 @@ class ProviderCircuit:
                     st.total_opens += 1
                     logger.warning({
                         "event": "circuit_open", "provider": provider,
+                        "nhom_viec": str(nhom or ""),
                         "failures": st.consecutive_failures,
                         "error": st.last_error[:120],
                     })

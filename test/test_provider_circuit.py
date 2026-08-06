@@ -79,5 +79,84 @@ class ProviderCircuitTests(unittest.TestCase):
         self.assertIn("opencode", stats["providers"])
 
 
+class MachTheoNhomViecTests(unittest.TestCase):
+    """Đếm riêng theo từng nhóm việc (tên combo).
+
+    Yêu cầu của chủ máy 06/08: ChatGPT Free hỏng phần đính kèm nhiều ảnh thì
+    nhánh Phân tích ảnh phải xoay sang model khác, còn nhánh Chat vẫn giữ nó —
+    "chat vẫn bình thường nhé". Đếm chung một bộ là ba lượt ảnh lỗi làm trợ lý
+    nhà mất provider số 1 trong 60 giây dù chat chưa lỗi lần nào.
+    """
+
+    def test_loi_o_nhanh_anh_khong_chan_nhanh_chat(self) -> None:
+        pc = ProviderCircuit()
+        with _sp(circuit_threshold=3):
+            for _ in range(3):
+                pc.record_failure("chatgpt_free", 400, "too many attachments",
+                                  nhom="AI vision")
+            self.assertFalse(pc.allow("chatgpt_free", nhom="AI vision"))
+            self.assertTrue(pc.allow("chatgpt_free", nhom="AI text"))
+
+    def test_thanh_cong_nhanh_nay_khong_dong_mach_nhanh_kia(self) -> None:
+        pc = ProviderCircuit()
+        with _sp(circuit_threshold=1):
+            pc.record_failure("cx", 500, "x", nhom="AI vision")
+            pc.record_success("cx", nhom="AI text")
+            self.assertFalse(pc.allow("cx", nhom="AI vision"))
+
+    def test_khong_khai_nhom_thi_dem_chung_nhu_cu(self) -> None:
+        """Bỏ trống `nhom` phải giữ y hành vi cũ — không có loại việc để tách."""
+        pc = ProviderCircuit()
+        with _sp(circuit_threshold=2):
+            pc.record_failure("nv", 500, "x")
+            pc.record_failure("nv", 500, "x")
+            self.assertFalse(pc.allow("nv"))
+
+    def test_nhom_khong_lam_ro_ri_sang_khoa_chung(self) -> None:
+        """Mạch của một nhóm KHÔNG được chặn lối gọi không khai nhóm, và ngược
+        lại: hai bộ đếm phải rời nhau hẳn, không phải một bộ có tiền tố."""
+        pc = ProviderCircuit()
+        with _sp(circuit_threshold=1):
+            pc.record_failure("agnes", 500, "x", nhom="AI vision")
+            self.assertTrue(pc.allow("agnes"))
+            pc.record_failure("agnes", 500, "x")
+            self.assertFalse(pc.allow("agnes"))
+            # Nhóm khác vẫn sạch dù khoá chung đã mở.
+            self.assertTrue(pc.allow("agnes", nhom="AI text"))
+
+    def test_stats_noi_ro_nhom_viec_nao(self) -> None:
+        pc = ProviderCircuit()
+        with _sp(circuit_threshold=1):
+            pc.record_failure("chatgpt_free", 500, "boom", nhom="AI vision")
+            stats = pc.get_stats()
+        muc = stats["providers"]["chatgpt_free@AI vision"]
+        self.assertEqual(muc["provider"], "chatgpt_free")
+        self.assertEqual(muc["nhom_viec"], "AI vision")
+
+
+class DauNoiVaoComboTests(unittest.TestCase):
+    """Chốt phần ĐẤU NỐI: combo phải truyền tên combo làm nhóm việc.
+
+    Tách được ở `provider_circuit` mà chỗ gọi quên truyền `nhom` thì mọi bài
+    trên đây vẫn xanh còn máy thật vẫn dính lỗi cũ — đây là kiểu hỏng đã xảy ra
+    thật trong dự án này (một hàm đúng, cắm sai chỗ).
+    """
+
+    def _nguon(self) -> str:
+        from pathlib import Path
+        p = (Path(__file__).resolve().parent.parent
+             / "services" / "protocol" / "openai_v1_chat_complete.py")
+        return p.read_text(encoding="utf-8")
+
+    def test_moi_loi_goi_circuit_deu_khai_nhom(self) -> None:
+        import re
+        src = self._nguon()
+        goi = [m.group(0) for m in re.finditer(
+            r"provider_circuit\.(?:allow|record_success|record_failure)\([^\n]*", src)]
+        self.assertTrue(goi, "không tìm thấy lời gọi provider_circuit nào")
+        thieu = [g for g in goi if "nhom=" not in g]
+        self.assertEqual(thieu, [], f"lời gọi chưa khai nhóm việc: {thieu}")
+
+
 if __name__ == "__main__":
     unittest.main()

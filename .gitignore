@@ -45,6 +45,10 @@ scratch_*.sh
 # PDF import thật, session sqlite, file test cục bộ).
 data/agent/
 data/tts_pdf_test/
+# Thông tin đăng nhập kho đám mây (token Drive/Drime/MEGA…) — chưa bao giờ được
+# lên git. Xem `services/rclone_service.py`: tệp này nằm ngoài config.json, mode
+# 0600, và giao diện chỉ hiện bản đã che.
+data/rclone/
 deploy/*
 # …except build-critical files used by the unified Dockerfile (no secrets)
 !deploy/supervisord.conf
