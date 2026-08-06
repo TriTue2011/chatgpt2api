@@ -2192,9 +2192,23 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _id_info, thread_type, account=acc_id, rich=True)
         return
 
+    # Khoá chờ — tính SỚM vì cổng tag bên dưới cần tra nó.
+    pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
+
     # Bộ lọc TAG (nhóm): native mention / keyword / @alias — chung tag_gate_allows.
     if thread_type == 1 and thread_id:
+        # NGOẠI LỆ: bot vừa xin ảnh của chính người này, hoặc đang giữ bản chờ
+        # của họ → cho câu/ảnh tiếp theo đi qua dù không tag. Không có ngoại lệ
+        # này thì bot hỏi "gửi ảnh đi" rồi tự bịt tai: ảnh tới máy chủ nhưng bị
+        # cổng loại ngay, không lời gọi vision nào (đo thật 06/08 lúc 07:07).
+        from services import photo_intent as _phi_cho
+        from services import pdf_intent as _pi_cho
+        _dang_cho = (_phi_cho.dang_cho_anh(pkey) or _phi_cho.has_pending(pkey)
+                     or _pi_cho.has_pending(pkey))
         _req, _kw = _caps.mention_required_for("zalop", ev.get("account_id") or "", thread_id)
+        if _dang_cho:
+            _req = False
+            _phi_cho.het_cho_anh(pkey)   # dùng một lần, tránh mở cổng mãi
         _native = is_bot_tagged(ev, "")  # mention / @alias (không cần keyword)
         if _req and not _caps.tag_gate_allows(
             required=True,
@@ -2214,7 +2228,7 @@ def _process_ai(ev: dict) -> None:
     # ảnh rồi bot hỏi "muốn làm gì", B nói câu bất kỳ là câu đó bị nhận làm trả
     # lời của A — B cướp mất lượt mà không ai biết, và A trả lời sau thì bản chờ
     # đã bị lấy đi rồi. Chờ là chờ theo từng người (chủ máy chốt 05/08).
-    pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
+    # `pkey` đã tính ở trên, ngay trước cổng tag — cổng đó cần tra bản chờ.
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
@@ -2481,6 +2495,13 @@ def _process_ai(ev: dict) -> None:
         reply = (out.get("text") or "").strip()
         if not reply and not out.get("choices"):
             reply = "..."
+        # Bot vừa nói câu xin ảnh → ghi nhận đang chờ ảnh của ĐÚNG người này, để
+        # tấm ảnh gửi sau đó đi qua được cổng chặn-nếu-không-tag trong nhóm.
+        try:
+            from services import photo_intent as _phi_xin
+            _phi_xin.danh_dau_neu_xin_anh(pkey, reply)
+        except Exception:
+            pass
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
         sent_media = False

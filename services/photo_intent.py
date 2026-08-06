@@ -186,6 +186,53 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     return out
 
 
+# ── Bot đang chờ NGƯỜI DÙNG gửi ảnh ────────────────────────────────────────
+# Khác `_pending` (bot giữ ảnh, chờ người chọn làm gì): đây là chiều ngược lại —
+# bot vừa nói "gửi ảnh đi" và đang đợi ảnh tới.
+#
+# Cần vì trong nhóm bot chỉ nghe khi được tag. Người dùng tag bot hỏi "phân tích
+# ảnh", bot xin ảnh, rồi họ gửi ảnh KHÔNG tag — ảnh tới máy chủ nhưng bị cổng
+# chặn-nếu-không-tag loại ngay, không có lời gọi vision nào. Đo thật trên máy chủ
+# 06/08 lúc 07:07: log có `msgType: 'chat.photo'` kèm đường dẫn ảnh, rồi im bặt.
+_CHO_ANH_TTL = 300.0      # 5 phút: xin ảnh xong mà 5 phút chưa gửi thì coi như thôi
+_cho_anh: dict[str, float] = {}
+
+#: Câu bot nói khi cần ảnh. Khớp thì bật cờ chờ. Viết KHÔNG DẤU vì so sau khi bỏ
+#: dấu — mô hình có lúc trả lời thiếu dấu.
+_XIN_ANH_RE = re.compile(
+    r"(gui|dua|cho).{0,12}(anh|hinh|link anh)|anh.{0,10}(muon|can).{0,10}phan tich",
+    re.IGNORECASE)
+
+
+def _bo_dau_anh(s: str) -> str:
+    import unicodedata
+    s = str(s or "").replace("đ", "d").replace("Đ", "D")
+    return "".join(c for c in unicodedata.normalize("NFD", s)
+                   if not unicodedata.combining(c))
+
+
+def danh_dau_neu_xin_anh(key: str, reply: str) -> bool:
+    """Bot vừa nói câu xin ảnh → ghi nhận đang chờ ảnh của ĐÚNG người đó."""
+    if not key or not _XIN_ANH_RE.search(_bo_dau_anh(reply)):
+        return False
+    _cho_anh[str(key)] = time.time()
+    return True
+
+
+def dang_cho_anh(key: str) -> bool:
+    t = _cho_anh.get(str(key))
+    if not t:
+        return False
+    if time.time() - t > _CHO_ANH_TTL:
+        _cho_anh.pop(str(key), None)
+        return False
+    return True
+
+
+def het_cho_anh(key: str) -> None:
+    _cho_anh.pop(str(key), None)
+
+
 #: Chuỗi tag người dùng gõ để gọi bot: '@BenBap', '@Botmitbap'…
 _TAG_RE = re.compile(r"@[^\s@]{1,32}")
 
