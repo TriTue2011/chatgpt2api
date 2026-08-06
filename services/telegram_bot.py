@@ -982,7 +982,14 @@ def _do_pdf_intent(
     err = ""
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
     try:
-        if intent == _pi.WORD:
+        if intent == _pi.LUU_ONLINE:
+            kind = "pdf_luu_online"
+            from services.agent import luu_tru_day as _ltd
+            reply = _ltd.luu_ngay("tg", str(chat_id), tep=path, ten_tep=name,
+                                  topic=str(_cur_topic() or ""),
+                                  user=str(user_id or ""))
+            send_message(chat_id, reply)
+        elif intent == _pi.WORD:
             kind = "pdf_word"
             from services.pdf_to_word import convert_pdf_to_docx
             docx_path = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
@@ -1474,7 +1481,10 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                 loai_sach=meta.get("kind") or "sgk", chu_thich=text,
             )
             return
-        _allowed_i = _pi.allowed_intents(_allow)
+        # Bộ ý định phải là bộ ĐÃ HIỆN trong menu, không phải bộ suy lại từ
+        # `_allow`: tệp Office hiện 3 mục mà giải số theo 5 mục thì gõ "3" ra
+        # WORD trong khi màn hình ghi "3. Tóm tắt".
+        _allowed_i = _pi.y_dinh_da_moi(_pend, _pi.allowed_intents(_allow))
         _intent = _pi.parse_intent(text, _allowed_i)
         if _intent:
             if _intent == "rag":
@@ -1614,6 +1624,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             return
         _pdf_intents = (_pi.y_dinh_cho_office(_allow) if _la_office
                         else _pi.allowed_intents(_allow))
+        _pdf_intents = _pi.them_luu_online(
+            _pdf_intents, "tg", str(chat_id), topic=str(_cur_topic() or ""),
+            user=str(user_id or ""))
         if not _pdf_intents:
             return  # thread lọc không có nhóm tài liệu → bỏ qua, không nhắn gì
         _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -1625,7 +1638,8 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # Khoá phải khớp TỪNG CHỮ với `_pkey` chỗ đọc bản chờ — tạo một đằng tra
         # một nẻo thì người dùng chọn số mãi không ra gì.
         _pdf_info = _pi.set_pending(f"tg:{_bot_id()}:{chat_id}:{user_id or ''}",
-                                    file_data, doc_name, _duoi)
+                                    file_data, doc_name, _duoi,
+                                    intents=_pdf_intents)
         send_message(chat_id, _pi.ask_text(doc_name, _pdf_intents, _pdf_info))
         _moi_luu_online(chat_id, user_id, chat_name, doc_name, file_data)
         return

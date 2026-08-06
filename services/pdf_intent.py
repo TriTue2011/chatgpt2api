@@ -33,10 +33,13 @@ RAG_TEACHER = "rag_teacher"
 WORD = "word"
 EXCEL = "excel"
 TOM_TAT = "tom_tat"
+#: Lưu thẳng lên kho đám mây, không nạp RAG, không chuyển đổi. Chỉ hiện khi phạm
+#: vi đó đã khai «Lưu trữ online» — không thì nó là lựa chọn không làm được gì.
+LUU_ONLINE = "luu_online"
 # legacy alias
 RAG = "rag"  # maps to rag_knowledge
 
-ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT}
+ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, LUU_ONLINE}
 
 # Nhãn loại tài liệu — soi chiếu `sgk_taphuan.DOC_KIND_LABEL`, không giữ bảng thứ
 # hai (thêm loại một chỗ mà chỗ kia vẫn nhãn cũ là lỗi im lặng).
@@ -68,11 +71,15 @@ def la_office(ten: str) -> bool:
     return str(ten or "").strip().lower().endswith(DUOI_OFFICE)
 
 
-def set_pending(key: str, pdf_bytes: bytes, name: str, duoi: str = ".pdf") -> dict:
+def set_pending(key: str, pdf_bytes: bytes, name: str, duoi: str = ".pdf",
+                intents: set[str] | None = None) -> dict:
     """Lưu file chờ ý định. Trả info {'pages','scanned','ocr'}.
 
     `duoi` phải đúng loại file THẬT: markitdown nhận dạng theo đuôi, đặt nhầm
-    .pdf cho một file .docx là nó đọc ra rỗng."""
+    .pdf cho một file .docx là nó đọc ra rỗng.
+
+    `intents` là bộ ý định ĐÃ HIỆN trong menu. Nhớ lại để lúc giải số người dùng
+    gõ dùng đúng bộ đó — xem `y_dinh_da_moi`."""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=duoi or ".pdf")
     tmp.write(pdf_bytes)
     tmp.close()
@@ -103,6 +110,7 @@ def set_pending(key: str, pdf_bytes: bytes, name: str, duoi: str = ".pdf") -> di
             "info": info,
             "stage": "choose",  # choose | teacher_meta
             "intent": None,
+            "intents": sorted(intents) if intents else None,
         }
         _gc()
     return info
@@ -140,7 +148,19 @@ def pop_pending(key: str) -> dict | None:
 # Thứ tự hiển thị ổn định trong ask_text (số 1..N theo các mục còn được phép).
 #: Tóm tắt thêm ở CUỐI, không chen vào giữa: số thứ tự các mục cũ là thứ
 #: người dùng đã quen gõ, đổi chỗ là họ bấm nhầm việc.
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT)
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, LUU_ONLINE)
+
+
+def y_dinh_da_moi(pend: dict | None, mac_dinh: set[str]) -> set[str]:
+    """Bộ ý định ĐÃ HIỆN trong menu của bản chờ này.
+
+    Giải số người dùng gõ PHẢI dùng đúng bộ này. Trước đây menu dựng bằng
+    `y_dinh_cho_office` (3 mục) còn lúc giải số lại dùng `allowed_intents`
+    (5 mục), nên với tệp .docx gõ "3" ra WORD trong khi màn hình ghi
+    "3. Tóm tắt" — bấm đúng số mà ra việc khác.
+    """
+    ds = (pend or {}).get("intents")
+    return set(ds) if ds else set(mac_dinh)
 
 
 def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
@@ -174,6 +194,11 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "tom luoc", "nội dung gì", "noi dung gi",
     )):
         return TOM_TAT
+    if any(w in t for w in (
+        "lưu online", "luu online", "lưu đám mây", "luu dam may", "lên mây",
+        "len may", "lưu drive", "luu drive", "lưu kho", "luu kho", "upload",
+    )):
+        return LUU_ONLINE
     if t in {"rag"} or any(w in t for w in ("nạp rag", "nap rag")):
         return RAG_KNOWLEDGE
     if any(w in t for w in ("convert", "chuyển file", "chuyen file")) and "word" in t:
@@ -188,6 +213,7 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         # Bảng này từng dừng ở 4 — thêm mục thứ 5 (tóm tắt) mà quên đây thì gõ
         # "5" ra None, bot im lặng đúng lúc người dùng vừa bấm chọn.
         "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
+        "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
     }
     if t in num_map:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
@@ -318,7 +344,7 @@ def y_dinh_cho_office(allow: set[str] | None) -> set[str]:
     Bỏ WORD/EXCEL: người dùng gửi .docx vào rồi "chuyển Word" thì chẳng ra gì.
     """
     return {i for i in allowed_intents(allow)
-            if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT)}
+            if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT, LUU_ONLINE)}
 
 
 def allowed_intents(allow: set[str] | None) -> set[str]:
@@ -330,7 +356,11 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     - excel:         nhóm 'word' (cùng quyền office) hoặc có 'excel' nếu sau này tách
     """
     if allow is None:
-        return set(ALL_INTENTS)
+        # LUU_ONLINE không nằm trong bộ mặc định: nó chỉ có nghĩa khi phạm vi đã
+        # khai kho đám mây, mà điều đó `allow` không biết. Kênh tự thêm bằng
+        # `them_luu_online` — hiện một lựa chọn không làm được gì thì tệ hơn là
+        # không hiện.
+        return set(ALL_INTENTS) - {LUU_ONLINE}
     out: set[str] = set()
     if "rag" in allow or "summary" in allow or "wiki" in allow:
         out.add(RAG_KNOWLEDGE)
@@ -344,6 +374,21 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     if "excel" in allow:
         out.add(EXCEL)
     return out
+
+
+def them_luu_online(intents: set[str], kenh: str, chat: str, *,
+                    topic: str = "", user: str = "") -> set[str]:
+    """Thêm mục «Lưu lên kho đám mây» nếu phạm vi này đã khai kho.
+
+    Không khai kho thì không thêm: đó là lựa chọn bấm vào không ra gì.
+    """
+    try:
+        from services.agent import luu_tru_online as lt
+        if lt.cai_dat(kenh, chat, topic, user).get("enabled"):
+            return set(intents) | {LUU_ONLINE}
+    except Exception as exc:
+        logger.debug("them_luu_online bỏ qua: %s", exc)
+    return set(intents)
 
 
 def _cost_note(info: dict | None) -> str:
@@ -376,6 +421,7 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
         WORD: "📝 Chuyển **Word** (.docx)",
         EXCEL: "📊 Chuyển **Excel** (.xlsx)",
         TOM_TAT: "✍️ **Tóm tắt** nội dung (không nạp vào kho nào)",
+        LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không nạp, không chuyển)",
     }
     n = 1
     shown = 0

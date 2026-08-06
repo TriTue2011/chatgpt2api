@@ -1877,7 +1877,13 @@ def _do_pdf_intent(
     send_typing(thread_id, thread_type)
     temps: list[str] = [path]
     try:
-        if intent == _pi.WORD:
+        if intent == _pi.LUU_ONLINE:
+            kind = "pdf_luu_online"
+            from services.agent import luu_tru_day as _ltd
+            reply = _ltd.luu_ngay("zalop", str(thread_id), tep=path, ten_tep=name,
+                                  user=str(user_id or ""))
+            send_message(thread_id, reply, thread_type)
+        elif intent == _pi.WORD:
             kind = "pdf_word"
             docx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".docx"
             temps.append(docx_tmp)
@@ -2296,7 +2302,10 @@ def _process_ai(ev: dict) -> None:
                 loai_sach=meta.get("kind") or "sgk", chu_thich=text,
             )
             return
-        _allowed_i = _pi.allowed_intents(_allow)
+        # Bộ ý định phải là bộ ĐÃ HIỆN trong menu, không phải bộ suy lại từ
+        # `_allow`: tệp Office hiện 3 mục mà giải số theo 5 mục thì gõ "3" ra
+        # WORD trong khi màn hình ghi "3. Tóm tắt".
+        _allowed_i = _pi.y_dinh_da_moi(_pend, _pi.allowed_intents(_allow))
         _intent = _pi.parse_intent(text, _allowed_i)
         if _intent:
             if _intent == "rag":
@@ -2405,6 +2414,9 @@ def _process_ai(ev: dict) -> None:
         if _la_pdf or _la_office:
             intents = (_pi.y_dinh_cho_office(_allow) if _la_office
                        else _pi.allowed_intents(_allow))
+            intents = _pi.them_luu_online(
+                intents, "zalop", str(thread_id),
+                user=str(ev.get("sender_id") or ""))
             if not intents:
                 return
             send_typing(thread_id, thread_type)
@@ -2413,7 +2425,8 @@ def _process_ai(ev: dict) -> None:
                 send_message(thread_id, "📄 Không tải được file.", thread_type)
                 return
             _duoi = ("." + name.rsplit(".", 1)[-1].lower()) if _la_office else ".pdf"
-            info = _pi.set_pending(pkey, data, name or "document.pdf", _duoi)
+            info = _pi.set_pending(pkey, data, name or "document.pdf", _duoi,
+                                   intents=intents)
             send_message(thread_id,
                          _pi.ask_text(name or ("Office" if _la_office else "PDF"),
                                       intents, info),

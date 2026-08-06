@@ -39,7 +39,11 @@ class PdfIntentParseTests(unittest.TestCase):
         self.assertIsNone(pi.parse_teacher_meta("lớp 5"))
 
     def test_allowed_intents(self) -> None:
-        self.assertEqual(pi.allowed_intents(None), pi.ALL_INTENTS)
+        # `luu_online` KHÔNG nằm trong bộ mặc định: nó chỉ có nghĩa khi phạm vi
+        # đã khai kho đám mây, mà `allow` không biết điều đó. Kênh tự thêm bằng
+        # `them_luu_online` — xem test_y_dinh_luu_online.
+        self.assertEqual(pi.allowed_intents(None),
+                         pi.ALL_INTENTS - {pi.LUU_ONLINE})
         a = pi.allowed_intents({"rag", "word"})
         self.assertIn(pi.RAG_KNOWLEDGE, a)
         self.assertIn(pi.WORD, a)

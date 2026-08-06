@@ -351,7 +351,10 @@ class TelegramCungNhanWordExcelTests(unittest.TestCase):
     def test_dung_menu_office_va_giu_dung_duoi_file(self):
         src = self._src()
         self.assertIn("_pi.y_dinh_cho_office(_allow)", src)
-        self.assertIn("doc_name, _duoi)", src)
+        # Đuôi thật vẫn phải truyền vào set_pending (markitdown nhận dạng theo
+        # đuôi). Nay có thêm `intents=` phía sau nên khớp theo tham số, không
+        # khớp theo cả cụm "doc_name, _duoi)".
+        self.assertIn("file_data, doc_name, _duoi,", src)
 
     def test_co_nhanh_tom_tat(self):
         self.assertIn("intent == _pi.TOM_TAT", self._src())

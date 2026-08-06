@@ -280,6 +280,29 @@ def khoa_cho_thread(kenh: str, dinh_danh: str, chat: str) -> str:
     return f"{kenh}:{dinh_danh}:{chat}"
 
 
+def luu_ngay(kenh: str, chat: str, *, tep: str, ten_tep: str = "",
+             topic: str = "", user: str = "") -> str:
+    """Đẩy một tệp lên kho NGAY, không hỏi ai. Trả câu báo lại cho người dùng.
+
+    Dùng cho hai lối: người dùng tự chọn mục «Lưu lên kho đám mây» trong menu ý
+    định, và hỏi-sau-khi-chuyển-đổi. Cả hai đều là người dùng VỪA tự quyết, nên
+    hỏi admin lần nữa là hỏi lại điều vừa được trả lời.
+    """
+    try:
+        cd = lt.cai_dat(kenh, chat, topic, user)
+        if not cd.get("enabled"):
+            return "Phạm vi này chưa khai kho đám mây nào ạ."
+        ten = str(ten_tep or "").strip() or Path(tep).name
+        cuc_bo = luu_vao_thu_muc_lam_viec(ten, Path(tep).read_bytes())
+        if not day_nen(cuc_bo, cd, pham_vi=(kenh, chat, topic, user)):
+            return "Chưa đẩy được lên kho, em ghi log rồi ạ."
+        dich = lt.duong_dan_dich(cd, Path(cuc_bo).name)
+        return f"☁️ Đang lưu {Path(cuc_bo).name} vào {dich} ạ."
+    except Exception as exc:
+        logger.warning(f"luu_tru_online: lưu ngay {ten_tep} lỗi: {str(exc)[:150]}")
+        return "Chưa lưu được lên kho, em ghi log rồi ạ."
+
+
 def moi_luu(kenh: str, chat: str, *, ten_tep: str, du_lieu: bytes,
             topic: str = "", user: str = "", ten_nhom: str = "",
             dinh_danh: str = "") -> None:

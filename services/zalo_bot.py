@@ -1288,6 +1288,8 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
     from services import pdf_intent as _pi
     # Bỏ word/excel — API không sendDocument
     intents = _pi.allowed_intents(allow) - {_pi.WORD, _pi.EXCEL}
+    intents = _pi.them_luu_online(intents, "zalo", str(chat_id),
+                                  user=str(user_id or ""))
     if not intents:
         full = _pi.allowed_intents(allow) or set()
         if full & {_pi.WORD, _pi.EXCEL}:
@@ -1306,7 +1308,7 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
     # Khoá phải khớp TỪNG CHỮ với `_pkey` chỗ đọc bản chờ — tạo một đằng tra một
     # nẻo thì người dùng chọn số mãi không ra gì.
     info = _pi.set_pending(f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}",
-                           data, name or "document.pdf")
+                           data, name or "document.pdf", intents=intents)
     send_message(chat_id, _pi.ask_text(name or "PDF", intents, info))
     _moi_luu_online(chat_id, user_id, name or "document.pdf", data)
 
@@ -1870,8 +1872,12 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 loai_sach=meta.get("kind") or "sgk", chu_thich=text,
             )
             return
-        # parse theo intents bot có thể làm (RAG); word/excel vẫn parse được bằng keyword
-        _parse_allow = _full_allow | {_pi.WORD, _pi.EXCEL}
+        # Giải số theo ĐÚNG bộ đã hiện trong menu. Bản cũ nhồi thêm WORD/EXCEL
+        # vào bộ này "để keyword word/excel vẫn parse được" — nhưng `parse_intent`
+        # khớp TỪ KHOÁ trước và không dùng bộ này, còn số thì lại đánh theo nó.
+        # Nên việc nhồi thêm không giúp gì cho từ khoá mà làm lệch số: menu Zalo
+        # Bot bỏ Word/Excel, người dùng gõ "3" là ra việc thứ ba của bảng KHÁC.
+        _parse_allow = _pi.y_dinh_da_moi(_pend, _full_allow)
         _intent = _pi.parse_intent(text, _parse_allow if _parse_allow else None)
         if _intent:
             if _intent == "rag":
@@ -1879,6 +1885,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             # Word/Excel: handler báo không hỗ trợ file
             if _intent in {_pi.WORD, _pi.EXCEL}:
                 _do_pdf_intent(chat_id, _pi.pop_pending(_pkey), _intent, user_id=user_id)
+                return
+            if _intent == _pi.LUU_ONLINE:
+                from services.agent import luu_tru_day as _ltd
+                _pend_lo = _pi.pop_pending(_pkey) or {}
+                send_message(chat_id, _ltd.luu_ngay(
+                    "zalo", str(chat_id), tep=str(_pend_lo.get("path") or ""),
+                    ten_tep=str(_pend_lo.get("name") or ""),
+                    user=str(user_id or "")))
                 return
             if _intent not in _full_allow:
                 return
