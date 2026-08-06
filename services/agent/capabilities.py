@@ -5599,7 +5599,7 @@ CAPABILITIES: dict[str, Capability] = {
                   "hướng dẫn; không cần tự xử lý.")),
     "kho_dam_may": Capability(
         name="kho_dam_may", risk=READ, handler=_h_kho_dam_may,
-        emoji="☁️", label="Kho đám mây (xem / tải về)",
+        emoji="☁️", label="Kho đám mây (xem / tải về)",  # tải về áp cả kho mượn
         description=(
             "Kho lưu trữ đám mây qua rclone (Google Drive, OneDrive, Dropbox, "
             "S3…). op=remotes liệt kê các kho; ls xem một thư mục; doc đọc nội "
@@ -5611,8 +5611,12 @@ CAPABILITIES: dict[str, Capability] = {
                           "description": "Dạng 'ten_kho:thu/muc' hoặc 'ten_kho:file.pdf'"},
             "ten_luu": {"type": "string", "description": "Tên file khi lưu (op=tai_ve)"}},
             "required": ["op"]},
-        workflow=("Chưa biết tên kho thì gọi op=remotes trước. Tải về xong file "
-                  "nằm trong workspace — dùng office_send để gửi cho người dùng.")),
+        workflow=("Chưa biết tên kho thì gọi op=remotes trước — nó CHỈ trả các "
+                  "kho chỗ này được phép, gồm cả kho mượn qua «Kết nối bộ nhớ». "
+                  "Người dùng nhờ GỬI FILE mà file nằm ở kho mượn thì vẫn làm "
+                  "được: op=tai_ve tải về workspace rồi office_send gửi đi. "
+                  "Kho mượn chỉ KHÔNG lưu lên được, còn xem và tải về thì bình "
+                  "thường.")),
     "kho_dam_may_gui": Capability(
         name="kho_dam_may_gui", risk=CHANGE, handler=_h_kho_dam_may_gui,
         emoji="⬆️", label="Kho đám mây (gửi lên / xoá)",

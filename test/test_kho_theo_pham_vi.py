@@ -254,6 +254,75 @@ class CUNG_MOT_KHO_KHAC_THU_MUC_ThiVanDocLapTests(_Nen):
         self.assertFalse(lt.duoc_doc(_B, "drive-1:Gia dinh"))
 
 
+class TAI_VE_QUA_KET_NOI_VanPhaiDuocTests(_Nen):
+    """Chủ máy chốt 06/08: "qua «Kết nối bộ nhớ», thêm download để khi có yêu cầu
+    gửi file vẫn được".
+
+    Kho mượn qua kết nối phải TẢI VỀ được, không thì gặp câu "gửi cho tôi file X"
+    mà X nằm ở kho mượn là bot bó tay. Chỉ đường LƯU LÊN mới bị khoá.
+
+    Tải về rồi gửi đi được vì `rclone_service.workspace_dir()` và
+    `officecli.workspace()` là CÙNG một thư mục (`OFFICECLI_WORKSPACE`), nên tệp
+    vừa tải xuống là `office_send` gửi đi được ngay.
+    """
+
+    def setUp(self):
+        super().setUp()
+        _gan({"memory_links": [{
+            "id": "ml_1", "kind": "binh_dang", "enabled": True,
+            "members": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
+                        {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}],
+        }]})
+        from services.agent import capabilities as caps
+        from services import rclone_service as rcl
+        self.caps = caps
+        self.da_tai = []
+        self._goc = rcl.tai_ve
+        rcl.tai_ve = lambda dd, ten_luu="": (
+            self.da_tai.append(dd) or {"ok": True, "duong_dan": "/ws/x.pdf", "co": 9})
+        self.addCleanup(setattr, rcl, "tai_ve", self._goc)
+
+    def _goi(self, duong_dan, op="tai_ve"):
+        return self.caps._h_kho_dam_may(
+            {"op": op, "duong_dan": duong_dan}, {"user_id": _A})["text"]
+
+    def test_tai_ve_tu_kho_MUON_thi_duoc(self):
+        t = self._goi("drive-B:rieng/bao-cao.pdf")
+        self.assertIn("Đã tải", t)
+        self.assertEqual(self.da_tai, ["drive-B:rieng/bao-cao.pdf"])
+
+    def test_tai_ve_tu_kho_MINH_thi_duoc(self):
+        self.assertIn("Đã tải", self._goi("drive-A:c2a/a.pdf"))
+
+    def test_tai_ve_kho_NGOAI_pham_vi_thi_chan(self):
+        t = self._goi("drive-LA:khac/x.pdf")
+        self.assertNotIn("Đã tải", t)
+        self.assertEqual(self.da_tai, [], "đã gọi rclone dù không được phép")
+
+    def test_cau_bao_loi_NOI_RO_dung_duoc_kho_nao(self):
+        """Chỉ báo 'không được phép' thì người dùng không biết mình gõ sai gì."""
+        t = self._goi("drive-LA:khac/x.pdf")
+        self.assertIn("drive-A", t)
+        self.assertIn("drive-B", t)
+
+    def test_liet_ke_kho_co_ca_kho_muon(self):
+        t = self.caps._h_kho_dam_may({"op": "remotes"}, {"user_id": _A})["text"]
+        self.assertIn("drive-A", t)
+        self.assertIn("drive-B", t)
+        self.assertIn("kết nối", t, "phải nói rõ kho nào là kho mượn")
+
+    def test_LUU_LEN_kho_muon_van_bi_chan(self):
+        t = self.caps._h_kho_dam_may_gui(
+            {"op": "gui_len", "tep": "x.pdf", "thu_muc": "drive-B:rieng"},
+            {"user_id": _A})["text"]
+        self.assertIn("chỉ ghi được", t)
+
+    def test_workspace_tai_ve_va_workspace_gui_file_LA_MOT(self):
+        """Hai thư mục khác nhau thì tải về xong không gửi đi được."""
+        from services import officecli, rclone_service as rcl
+        self.assertEqual(officecli.workspace(), rcl.workspace_dir())
+
+
 class NangLucBotPhaiDiQuaRanhGioiTests(unittest.TestCase):
     """Làm hàm phân giải mà năng lực không gọi thì ranh giới không có hiệu lực."""
 

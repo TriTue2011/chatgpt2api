@@ -317,8 +317,8 @@ export function LuuTruOnlineCard() {
                     <li key={k.kho + "|" + k.thu_muc} className="text-xs">
                       <span className="font-mono">{k.kho}:{k.thu_muc}</span>{" "}
                       {k.cua_minh
-                        ? <span className="text-[var(--muted-foreground)]">— kho của chính nó (ghi được)</span>
-                        : <span className="text-amber-600 dark:text-amber-400">— qua «Kết nối bộ nhớ», chỉ ĐỌC</span>}
+                        ? <span className="text-[var(--muted-foreground)]">— kho của chính nó: xem, tải về, lưu lên</span>
+                        : <span className="text-amber-600 dark:text-amber-400">— qua «Kết nối bộ nhớ»: xem và TẢI VỀ được (gửi file được), KHÔNG lưu lên</span>}
                     </li>
                   ))}
                 </ul>
