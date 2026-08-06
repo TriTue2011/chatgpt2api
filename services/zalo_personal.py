@@ -1848,6 +1848,26 @@ def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes) -> N
         logger.warning("zalop luu_tru_online: %s", str(exc)[:150])
 
 
+def _moi_luu_sau_chuyen_doi(*, ev_user_id: str, thread_id: str, account: str,
+                            tep_goc: str, ten_goc: str, tep_moi: str,
+                            duoi: str) -> None:
+    """Vừa gửi bản đã chuyển → hỏi admin lưu bản nào lên kho đám mây.
+
+    `account` là định danh tài khoản Zalo cá nhân — bản chờ khoá theo nó, phải
+    khớp với khoá lúc đọc trả lời (`khoa_cho_thread`).
+    """
+    try:
+        from pathlib import Path as _P
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu_sau_chuyen_doi(
+            "zalop", str(thread_id), tep_goc=tep_goc, ten_goc=ten_goc,
+            du_lieu_moi=_P(tep_moi).read_bytes(),
+            ten_moi=_ten_tep_phuc_vu(ten_goc, duoi),
+            user=str(ev_user_id or ""), dinh_danh=str(account or ""))
+    except Exception as exc:
+        logger.warning("zalop luu_tru_online sau chuyen doi: %s", str(exc)[:150])
+
+
 def _do_pdf_intent(
     thread_id: str,
     thread_type: int,
@@ -1898,6 +1918,9 @@ def _do_pdf_intent(
             how = "giữ layout" if r.get("method") == "layout" else "OCR (PDF scan)"
             reply = f"📝 Bản Word ({how})"
             _serve_docx(thread_id, thread_type, docx_tmp, how, name)
+            _moi_luu_sau_chuyen_doi(ev_user_id=user_id, thread_id=thread_id,
+                                    account=account, tep_goc=path, ten_goc=name,
+                                    tep_moi=docx_tmp, duoi=".docx")
         elif intent == _pi.EXCEL:
             kind = "pdf_excel"
             xlsx_tmp = (path[:-4] if path.endswith(".pdf") else path) + ".xlsx"
@@ -1931,6 +1954,9 @@ def _do_pdf_intent(
             ):
                 reply = "📊 Em đã tạo Excel nhưng gửi file chưa được."
                 send_message(thread_id, reply, thread_type)
+            _moi_luu_sau_chuyen_doi(ev_user_id=user_id, thread_id=thread_id,
+                                    account=account, tep_goc=path, ten_goc=name,
+                                    tep_moi=xlsx_tmp, duoi=".xlsx")
         elif intent == _pi.TOM_TAT:
             # Tóm tắt THUẦN: đọc file, trả bản tóm tắt, KHÔNG nạp vào kho nào.
             # Khác `RAG_KNOWLEDGE` ở chỗ đó — mục cũ vừa tóm tắt vừa ghi wiki,

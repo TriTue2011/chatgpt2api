@@ -38,6 +38,22 @@ LENH = ("lưu tệp vừa nhận lên kho online",
         "luôn luôn lưu tệp của phạm vi này lên kho online",
         "xoá tệp vừa nhận, không lưu")
 
+#: Sau khi CHUYỂN ĐỔI thì có hai tệp, nên ba lựa chọn khác hẳn lúc mới nhận —
+#: chủ máy chốt 05/08: "chuyển đổi → ba lựa chọn: tệp PDF gốc, tệp đã chuyển,
+#: hoặc cả hai".
+LUA_CHON_CD = ("Bản đã chuyển", "Cả tệp gốc và bản đã chuyển", "Không lưu")
+LENH_CD = ("lưu bản đã chuyển lên kho online",
+           "lưu cả tệp gốc và bản đã chuyển lên kho online",
+           "không lưu gì lên kho online")
+
+KIEU_NHAN = "nhan"            # vừa nhận tệp
+KIEU_CHUYEN_DOI = "chuyen_doi"  # vừa chuyển đổi xong
+
+
+def _bang(kieu: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    return ((LUA_CHON_CD, LENH_CD) if kieu == KIEU_CHUYEN_DOI
+            else (LUA_CHON, LENH))
+
 
 def cau_hoi(ten_tep: str, *, ten_nhom: str = "") -> str:
     """Khối lựa chọn gửi cho admin. Ba lựa chọn, đánh số, bấm chọn được."""
@@ -47,6 +63,16 @@ def cau_hoi(ten_tep: str, *, ten_nhom: str = "") -> str:
             f"{LUA_CHON[0]} | {LENH[0]}\n"
             f"{LUA_CHON[1]} | {LENH[1]}\n"
             f"{LUA_CHON[2]} | {LENH[2]}\n"
+            "<<<END>>>")
+
+
+def cau_hoi_chuyen_doi(ten_goc: str, ten_moi: str) -> str:
+    """Khối lựa chọn sau khi chuyển đổi xong. Ba lựa chọn, đánh số."""
+    return (f"📎 Đã chuyển {ten_goc} → {ten_moi}. Lưu lên kho đám mây ạ?\n"
+            "<<<ASK>>>\n"
+            f"{LUA_CHON_CD[0]} | {LENH_CD[0]}\n"
+            f"{LUA_CHON_CD[1]} | {LENH_CD[1]}\n"
+            f"{LUA_CHON_CD[2]} | {LENH_CD[2]}\n"
             "<<<END>>>")
 
 
@@ -65,6 +91,13 @@ def chuan_bi_hoi(ten_tep: str, *, ten_nhom: str = "") -> str:
     return ac.format_numbered(sach, lua_chon)
 
 
+def chuan_bi_hoi_chuyen_doi(ten_goc: str, ten_moi: str) -> str:
+    """Câu hỏi sau-chuyển-đổi ĐÃ ĐÁNH SỐ, gửi thẳng vào thread admin được."""
+    from services.agent import ask_choices as ac
+    sach, lua_chon = ac.extract(cau_hoi_chuyen_doi(ten_goc, ten_moi))
+    return ac.format_numbered(sach, lua_chon)
+
+
 def chon_tu_tra_loi(khoa_admin: str, text: str) -> int:
     """Câu admin vừa nói là lựa chọn nào (1/2/3)? 0 = không phải lựa chọn.
 
@@ -77,11 +110,13 @@ def chon_tu_tra_loi(khoa_admin: str, text: str) -> int:
     admin đều bị hiểu thành lệnh lưu tệp.
     """
     t = str(text or "").strip().lower()
-    if not t or not lay_cho(khoa_admin):
+    ban = lay_cho(khoa_admin)
+    if not t or not ban:
         return 0
     if t in {"1", "2", "3"}:
         return int(t)
-    for i, (nhan, lenh) in enumerate(zip(LUA_CHON, LENH), 1):
+    nhan_ds, lenh_ds = _bang(str(ban.get("kieu") or KIEU_NHAN))
+    for i, (nhan, lenh) in enumerate(zip(nhan_ds, lenh_ds), 1):
         if t in (nhan.lower(), lenh.lower()):
             return i
     return 0
@@ -152,12 +187,19 @@ def luu_vao_thu_muc_lam_viec(ten_tep: str, du_lieu: bytes) -> str:
 
 
 def dat_cho(khoa_admin: str, *, tep: str, kenh: str, chat: str,
-            topic: str = "", user: str = "") -> None:
-    """Ghi nhận một tệp đang chờ admin trả lời."""
+            topic: str = "", user: str = "", tep_2: str = "",
+            kieu: str = KIEU_NHAN) -> None:
+    """Ghi nhận tệp đang chờ admin trả lời.
+
+    `tep_2` + `kieu=KIEU_CHUYEN_DOI`: lối sau-chuyển-đổi, khi đó `tep` là bản
+    GỐC và `tep_2` là bản ĐÃ CHUYỂN — ba lựa chọn khác hẳn (xem `LUA_CHON_CD`).
+    """
     with _khoa:
         _don_het_han()
         _cho[str(khoa_admin)] = {"tep": str(tep), "kenh": kenh, "chat": chat,
-                                 "topic": topic, "user": user, "luc": time.time()}
+                                 "topic": topic, "user": user,
+                                 "tep_2": str(tep_2 or ""), "kieu": kieu,
+                                 "luc": time.time()}
 
 
 def lay_cho(khoa_admin: str) -> dict:
@@ -188,6 +230,8 @@ def tra_loi(khoa_admin: str, chon: int) -> dict:
     bo_cho(khoa_admin)
     tep = str(ban.get("tep") or "")
     ten = Path(tep).name
+    if str(ban.get("kieu") or KIEU_NHAN) == KIEU_CHUYEN_DOI:
+        return _tra_loi_chuyen_doi(ban, chon)
 
     if chon == 3:
         _xoa_cuc_bo(tep)
@@ -203,6 +247,73 @@ def tra_loi(khoa_admin: str, chon: int) -> dict:
                               ban.get("topic") or "", ban.get("user") or ""))
     them = " Từ giờ phạm vi này tự lưu, khỏi hỏi lại ạ." if chon == 2 else ""
     return {"ok": True, "text": f"Đang lưu {ten} lên kho đám mây.{them}"}
+
+
+def _tra_loi_chuyen_doi(ban: dict, chon: int) -> dict:
+    """1 = bản đã chuyển, 2 = cả hai, 3 = không lưu gì.
+
+    Tách hàm riêng vì ba lựa chọn ở đây KHÁC HẲN lúc mới nhận tệp: không có mục
+    "luôn luôn lưu" (chuyển đổi là việc người dùng chủ động gọi từng lần), và
+    "không lưu" chỉ bỏ hai bản tạm chứ không phải quyết định gì về phạm vi.
+    """
+    goc = str(ban.get("tep") or "")
+    moi = str(ban.get("tep_2") or "")
+    ten_moi = Path(moi).name
+    if chon == 3:
+        _xoa_cuc_bo(goc)
+        _xoa_cuc_bo(moi)
+        return {"ok": True, "text": "Vâng, em không lưu lên kho ạ."}
+
+    pv = (ban["kenh"], ban["chat"], ban.get("topic") or "", ban.get("user") or "")
+    cd = lt.cai_dat(*pv)
+    day_nen(moi, cd, pham_vi=pv)
+    if chon == 2:
+        day_nen(goc, cd, pham_vi=pv)
+        return {"ok": True,
+                "text": f"Đang lưu cả {Path(goc).name} và {ten_moi} lên kho ạ."}
+    # Chỉ lưu bản đã chuyển → bản gốc tạm ở đây không còn việc gì.
+    _xoa_cuc_bo(goc)
+    return {"ok": True, "text": f"Đang lưu {ten_moi} lên kho đám mây ạ."}
+
+
+def moi_luu_sau_chuyen_doi(kenh: str, chat: str, *, tep_goc: str, ten_goc: str,
+                           du_lieu_moi: bytes, ten_moi: str, topic: str = "",
+                           user: str = "", dinh_danh: str = "") -> None:
+    """Vừa chuyển đổi xong → hỏi admin lưu bản nào lên kho.
+
+    Chủ máy chốt 05/08: "sau khi làm xong ... thì hỏi thêm có lưu online không.
+    Chuyển đổi → ba lựa chọn: tệp PDF gốc, tệp đã chuyển, hoặc cả hai."
+
+    Bản đã chuyển bị xoá ngay sau khi gửi cho người dùng, nên phải chép sang thư
+    mục làm việc TRƯỚC khi hỏi — hỏi xong mới chép thì lúc admin trả lời không
+    còn tệp nào.
+    """
+    try:
+        cd = lt.cai_dat(kenh, chat, topic, user)
+        if not cd.get("enabled"):
+            return
+        khoa_admin = lt.thread_admin_nhan(kenh, chat, topic, user)
+        k_admin, chat_admin, _ = tach_thread_admin(khoa_admin)
+        if not chat_admin or k_admin != kenh:
+            # Cùng luật với lúc nhận tệp: chưa chọn admin (hoặc admin ở kênh
+            # khác) thì không hỏi, không lưu.
+            return
+        moi = luu_vao_thu_muc_lam_viec(ten_moi, du_lieu_moi)
+        goc = luu_vao_thu_muc_lam_viec(ten_goc, Path(tep_goc).read_bytes())
+        khoa = khoa_cho_thread(kenh, dinh_danh, chat_admin)
+        dat_cho(khoa, tep=goc, tep_2=moi, kieu=KIEU_CHUYEN_DOI,
+                kenh=kenh, chat=chat, topic=topic, user=user)
+        if not gui_toi_admin(khoa_admin,
+                             chuan_bi_hoi_chuyen_doi(ten_goc, ten_moi),
+                             dinh_danh=dinh_danh):
+            bo_cho(khoa)
+            _xoa_cuc_bo(moi)
+            _xoa_cuc_bo(goc)
+            logger.warning(f"luu_tru_online: không gửi được câu hỏi sau chuyển "
+                           f"đổi tới {khoa_admin} — đã bỏ {ten_moi}")
+    except Exception as exc:
+        logger.warning(f"luu_tru_online: hỏi sau chuyển đổi {ten_moi} lỗi: "
+                       f"{str(exc)[:150]}")
 
 
 def _xoa_cuc_bo(tep: str) -> None:

@@ -952,6 +952,21 @@ def _moi_luu_online(chat_id: str, user_id: str, chat_name: str,
         logger.warning("tg luu_tru_online: %s", str(exc)[:150])
 
 
+def _moi_luu_sau_chuyen_doi(chat_id: str, user_id: str, tep_goc: str,
+                            ten_goc: str, du_lieu_moi: bytes,
+                            ten_moi: str) -> None:
+    """Vừa gửi bản đã chuyển → hỏi admin lưu bản nào lên kho đám mây."""
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu_sau_chuyen_doi(
+            "tg", str(chat_id), tep_goc=tep_goc, ten_goc=ten_goc,
+            du_lieu_moi=du_lieu_moi, ten_moi=ten_moi,
+            topic=str(_cur_topic() or ""), user=str(user_id or ""),
+            dinh_danh=str(_bot_id() or ""))
+    except Exception as exc:
+        logger.warning("tg luu_tru_online sau chuyen doi: %s", str(exc)[:150])
+
+
 def _do_pdf_intent(
     chat_id: str,
     pending: dict | None,
@@ -1002,6 +1017,8 @@ def _do_pdf_intent(
                     .get(r.get("method"), "OCR (PDF scan)")
                 reply = f"📝 Bản Word ({how})"
                 send_document(chat_id, data, f"{base}.docx", caption=reply)
+                _moi_luu_sau_chuyen_doi(chat_id, user_id, path, name,
+                                        data, f"{base}.docx")
                 try:
                     os.unlink(docx_path)
                 except Exception:
@@ -1028,6 +1045,8 @@ def _do_pdf_intent(
                     chat_id, data, f"{base}.xlsx",
                     caption=reply,
                 )
+                _moi_luu_sau_chuyen_doi(chat_id, user_id, path, name,
+                                        data, f"{base}.xlsx")
                 try:
                     os.unlink(xlsx_path)
                 except Exception:

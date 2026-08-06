@@ -194,6 +194,115 @@ class DocTraLoiCuaAdminTests(_Base):
             self.assertIn(f"{i}. {nhan}", s)
 
 
+class SauChuyenDoiTests(unittest.TestCase):
+    """Chủ máy chốt: chuyển đổi xong → ba lựa chọn (bản đã chuyển / cả hai /
+    không lưu). Khác hẳn ba lựa chọn lúc mới nhận tệp."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        goc = Path(self.tmp.name)
+        self.goc_pdf = goc / "bao-cao.pdf"
+        self.goc_pdf.write_bytes(b"pdf goc")
+
+        from services import rclone_service as rcl
+        self._ws = rcl.workspace_dir
+        rcl.workspace_dir = lambda: goc
+        self.addCleanup(setattr, rcl, "workspace_dir", self._ws)
+
+        self.nen = _Nen()
+        self._day_goc = ld.day_nen
+        ld.day_nen = self.nen
+        self.addCleanup(setattr, ld, "day_nen", self._day_goc)
+
+        self.da_gui = []
+        self._gui_goc = ld.gui_toi_admin
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": (
+            self.da_gui.append((khoa, text)) or True)
+        self.addCleanup(setattr, ld, "gui_toi_admin", self._gui_goc)
+
+        self._cfg_goc = lt.config
+        lt.config = _CauHinhGia({"luu_tru_online": {"zalop:nhom1": {
+            "enabled": True, "kho": "drive", "thu_muc": "GD",
+            "thread_admin": "zalop:admin9"}}})
+        self.addCleanup(setattr, lt, "config", self._cfg_goc)
+        ld._cho.clear()
+
+    KHOA = "zalop:acc1:admin9"
+
+    def _hoi(self):
+        ld.moi_luu_sau_chuyen_doi(
+            "zalop", "nhom1", tep_goc=str(self.goc_pdf), ten_goc="bao-cao.pdf",
+            du_lieu_moi=b"docx moi", ten_moi="bao-cao.docx", dinh_danh="acc1")
+
+    def test_hoi_dung_ba_lua_chon_cua_loi_chuyen_doi(self):
+        self._hoi()
+        self.assertEqual(len(self.da_gui), 1)
+        text = self.da_gui[0][1]
+        for i, nhan in enumerate(ld.LUA_CHON_CD, 1):
+            self.assertIn(f"{i}. {nhan}", text)
+        self.assertNotIn("Luôn luôn lưu", text,
+                         "chuyển đổi là việc gọi từng lần, không có 'luôn luôn'")
+
+    def test_chua_tra_loi_thi_chua_day_gi(self):
+        self._hoi()
+        self.assertEqual(self.nen.da_day, [])
+
+    def test_chon_1_chi_day_ban_da_chuyen(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 1)
+        self.assertEqual([Path(t).name for t, _ in self.nen.da_day],
+                         ["bao-cao.docx"])
+        self.assertEqual(self.nen.da_day[0][1], "drive:GD/Word")
+
+    def test_chon_2_day_ca_hai_vao_dung_thu_muc_loai(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 2)
+        dich = {Path(t).name: d for t, d in self.nen.da_day}
+        self.assertEqual(dich["bao-cao.docx"], "drive:GD/Word")
+        self.assertEqual(dich["bao-cao.pdf"], "drive:GD/PDF")
+
+    def test_chon_3_khong_day_gi_va_don_sach(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 3)
+        self.assertEqual(self.nen.da_day, [])
+        con = list((Path(self.tmp.name) / "da_nhan").glob("*"))
+        self.assertEqual(con, [], "không lưu mà vẫn để lại bản tạm")
+
+    def test_chon_1_thi_ban_goc_tam_khong_nam_lai(self):
+        self._hoi()
+        ld.tra_loi(self.KHOA, 1)
+        con = sorted(p.name for p in (Path(self.tmp.name) / "da_nhan").glob("*"))
+        self.assertEqual(con, ["bao-cao.docx"])
+
+    def test_go_nhan_cua_loi_chuyen_doi_ra_dung_so(self):
+        self._hoi()
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, ld.LUA_CHON_CD[1]), 2)
+
+    def test_nhan_cua_loi_NHAN_TEP_khong_khop_o_day(self):
+        """Hai bảng lựa chọn khác nhau — không được lẫn."""
+        self._hoi()
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "Luôn luôn lưu (khỏi hỏi lại)"), 0)
+
+    def test_chua_bat_pham_vi_thi_khong_hoi(self):
+        lt.config = _CauHinhGia({"luu_tru_online": {}})
+        self._hoi()
+        self.assertEqual(self.da_gui, [])
+
+    def test_chua_chon_admin_thi_khong_hoi(self):
+        lt.config = _CauHinhGia({"luu_tru_online": {"zalop:nhom1": {
+            "enabled": True, "kho": "drive", "thu_muc": "GD"}}})
+        self._hoi()
+        self.assertEqual(self.da_gui, [])
+
+    def test_gui_hong_thi_don_sach(self):
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": False
+        self._hoi()
+        self.assertFalse(ld.lay_cho(self.KHOA))
+        con = list((Path(self.tmp.name) / "da_nhan").glob("*"))
+        self.assertEqual(con, [])
+
+
 class TachThreadAdminTests(unittest.TestCase):
 
     def test_khoa_nhom(self):
@@ -366,6 +475,23 @@ class NoiVaoKenhTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     src.count("_moi_luu_online("), 3,
                     "cần gọi ở cả nhánh nhận tệp và nhánh nhận ảnh")
+
+    def test_hai_kenh_co_chuyen_doi_deu_hoi_sau_khi_xong(self):
+        """Zalo Bot không chuyển Word/Excel nên không có gì để hỏi ở đó."""
+        for ten in ("zalo_personal.py", "telegram_bot.py"):
+            with self.subTest(ten=ten):
+                src = self._src(ten)
+                self.assertIn("moi_luu_sau_chuyen_doi(", src)
+                self.assertGreaterEqual(
+                    src.count("_moi_luu_sau_chuyen_doi("), 3,
+                    "phải hỏi ở CẢ nhánh Word và nhánh Excel")
+
+    def test_hoi_truoc_khi_xoa_ban_da_chuyen(self):
+        """Bản đã chuyển bị xoá ngay sau khi gửi — hỏi sau đó là không còn tệp."""
+        src = self._src("telegram_bot.py")
+        i_hoi = src.index("_moi_luu_sau_chuyen_doi(chat_id, user_id, path, name,")
+        i_xoa = src.index("os.unlink(docx_path)")
+        self.assertLess(i_hoi, i_xoa)
 
     def test_moi_kenh_deu_doc_tra_loi_admin(self):
         for ten in self.KENH:
