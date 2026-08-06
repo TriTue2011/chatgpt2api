@@ -33,6 +33,15 @@ const FUNCTION_GROUPS: [string, string][] = [
   ["memory", "🧠 Ghi nhớ"],
   ["rag", "📚 RAG / tài liệu"],
   ["word", "📝 PDF → Word"],
+  // BẢNG NÀY PHẢI ĐỦ MỌI NHÓM của `capabilities.all_groups()`. Thiếu một nhóm
+  // KHÔNG phải là "nhóm đó mặc kệ": mỗi lần lưu bộ lọc, `config._dong_dau_nhom_da_biet`
+  // đóng dấu `known` = TOÀN BỘ nhóm phía máy chủ, nên nhóm vắng ô tích bị
+  // `allowed_groups_for` đọc thành "chủ máy CỐ Ý tắt" và khoá vĩnh viễn — không
+  // có đường nào bật lại từ giao diện. Đo thật 06/08: `office` vắng ở đây nên
+  // 18 công cụ tài liệu tắt ở CẢ 5 thread, chủ máy không tìm thấy ô để bật.
+  // Có bài `test_o_tich_du_moi_nhom` chốt lại; thêm nhóm mới thì thêm cả đây.
+  ["office", "📄 Tài liệu Office (Word · Excel · PowerPoint)"],
+  ["device", "🔌 Thiết bị (chụp màn hình · tắt/mở máy)"],
   ["summary", "🧾 Tổng hợp thông tin"],
   ["schedule", "⏰ Nhắc hẹn / định kỳ"],
   ["skills", "🧩 Skill / Workflow"],
