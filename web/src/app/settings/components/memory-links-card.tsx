@@ -115,11 +115,22 @@ function LinksCard({ the }: { the: CauHinhThe }) {
   const tf = (cfg.thread_filters || {}) as Record<string, unknown>;
   const tuf = (cfg.thread_user_filters || {}) as Record<string, unknown>;
   const meta = (cfg.thread_filter_meta || {}) as Record<string, { name?: string }>;
+  // Thread TỰ THÊM bên «Lọc nhật ký» — thứ không có ở «Lọc thread» kênh nào
+  // (bot ngồi im trong đó). Chủ máy chốt 07/08: chỉ có MỘT chỗ đăng ký thread
+  // lạ, là «Lọc nhật ký»; các tab kết nối chỉ ĐỌC LẠI, không dựng ô thêm riêng.
+  //
+  // Khoá chatlog là 'kenh:chat[#topic][:user]' — KHÔNG kèm bot, khác khoá «Lọc
+  // thread». Nên ba phần trở lên chắc chắn là có NGƯỜI ở cuối; đoán sai chỗ này
+  // là chat bị đọc thành người và mối nối trỏ vào hư không.
+  const cl = (cfg.chatlog_settings || {}) as Record<string, unknown>;
+  const khoaNhatKy = Object.keys(cl).filter((k) => k.includes(":"));
+
   const chonDuoc: { ma: string; nhan: string; tv: ThanhVien }[] = [];
   const daCo = new Set<string>();
   for (const [key, laNguoi] of [
     ...Object.keys(tf).map((k) => [k, false] as [string, boolean]),
     ...Object.keys(tuf).map((k) => [k, true] as [string, boolean]),
+    ...khoaNhatKy.map((k) => [k, k.split(":").length >= 3] as [string, boolean]),
   ]) {
     const tv = tachKhoa(key, laNguoi);
     if (!tv) continue;

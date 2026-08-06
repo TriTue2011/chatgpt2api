@@ -17,10 +17,13 @@
  * (đọc bởi services/agent/chatlog.cai_dat).
  */
 
+import { useState } from "react";
 import { useSettingsStore } from "../store";
 
 type ThanhVien = { kenh: string; chat: string; topic: string; user: string };
-type CaiDat = { enabled?: boolean; retention_days?: number };
+/** `tag_only` — xem `services/agent/chatlog.cai_dat`. Thiếu = false = ghi cả
+ *  tin không tag, tức bản ghi cũ giữ nguyên hành vi. */
+type CaiDat = { enabled?: boolean; retention_days?: number; tag_only?: boolean };
 
 const NHAN_KENH: Record<string, string> = {
   tg: "Telegram", zalo: "Zalo Bot", zalop: "Zalo cá nhân", mail: "Email",
@@ -69,6 +72,12 @@ function nhanChatlog(tv: ThanhVien, ten?: string): string {
 export function ChatlogSettingsCard() {
   const config = useSettingsStore((s) => s.config);
   const setField = useSettingsStore((s) => s.setField);
+  /** Khối «Tự thêm» — gấp sẵn, chỉ mở khi cần khai thread lạ. */
+  const [moTuThem, setMoTuThem] = useState(false);
+  const [tKenh, setTKenh] = useState("zalop");
+  const [tChat, setTChat] = useState("");
+  const [tTopic, setTTopic] = useState("");
+  const [tUser, setTUser] = useState("");
 
   const cfg = (config || {}) as Record<string, unknown>;
   const settings = (cfg.chatlog_settings || {}) as Record<string, CaiDat>;
@@ -152,7 +161,55 @@ export function ChatlogSettingsCard() {
           {opts.filter((o) => !settings[o.key])
             .map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
+        <button type="button"
+          className="h-8 shrink-0 rounded border border-input px-2 text-[11px]"
+          onClick={() => setMoTuThem((v) => !v)}>
+          {moTuThem ? "✕ Đóng" : "✏️ Tự thêm"}
+        </button>
       </div>
+
+      {/* TỰ THÊM — thread bot ĐANG Ở TRONG nhưng chưa khai ở «Lọc thread» kênh
+          nào, nên không có trong danh sách trên. Bot vẫn im lặng ở đó (không
+          khai «Lọc thread» = không trả lời), nhưng nhật ký thì ghi được: mã đặt
+          khối ghi TRƯỚC cổng im lặng, cố ý.
+
+          BẮT BUỘC chọn kênh: id thô không nói được nó thuộc kênh nào, mà khoá
+          phạm vi luôn mở đầu bằng kênh — thiếu là bản ghi trỏ vào hư không và
+          KHÔNG có lỗi nào báo ra. */}
+      {moTuThem && (
+        <div className="rounded-lg border border-dashed border-border p-2.5 space-y-2">
+          <p className="text-[10px] text-muted-foreground">
+            Thêm thread <b>chưa có</b> ở «Lọc thread» kênh nào. Bot vẫn không trả lời
+            ở đó — chỉ ghi nhật ký. Cá nhân = chat 1-1 với bot; nhóm/topic thì{" "}
+            <b>bot phải ở trong đó</b>.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={tKenh} onChange={(e) => setTKenh(e.target.value)}
+              className="h-8 rounded border border-input bg-background px-2 text-[12px]">
+              {Object.entries(NHAN_KENH).filter(([k]) => k !== "mail")
+                .map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <input value={tChat} onChange={(e) => setTChat(e.target.value.trim())}
+              placeholder="Chat / Thread ID"
+              className="h-8 w-[190px] rounded border border-input bg-background px-2 text-[12px]" />
+            <input value={tTopic} onChange={(e) => setTTopic(e.target.value.trim())}
+              placeholder="Topic (Telegram, bỏ trống nếu không)"
+              className="h-8 w-[210px] rounded border border-input bg-background px-2 text-[12px]" />
+            <input value={tUser} onChange={(e) => setTUser(e.target.value.trim())}
+              placeholder="Người (bỏ trống = cả nhóm)"
+              className="h-8 w-[170px] rounded border border-input bg-background px-2 text-[12px]" />
+            <button type="button" disabled={!tChat}
+              className="h-8 rounded border border-input px-3 text-[11px] disabled:opacity-40"
+              onClick={() => {
+                const goc = tTopic ? `${tChat}#${tTopic}` : tChat;
+                addEntry(tUser ? `${tKenh}:${goc}:${tUser}` : `${tKenh}:${goc}`);
+                setTChat(""); setTTopic(""); setTUser("");
+              }}>
+              ➕ Thêm
+            </button>
+          </div>
+        </div>
+      )}
 
       {entries.length === 0 && (
         <p className="text-[11px] text-muted-foreground">
@@ -177,7 +234,7 @@ export function ChatlogSettingsCard() {
                 <button type="button" className="text-[11px] text-red-500"
                   onClick={() => delEntry(key)}>🗑 Bỏ</button>
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                 <span>Giữ lại</span>
                 <input type="number" min={0} max={3650}
                   className="h-7 w-20 rounded border border-input bg-background px-2 text-[12px]"
@@ -187,6 +244,15 @@ export function ChatlogSettingsCard() {
                     setEntry(key, { retention_days: Number.isFinite(n) ? Math.max(0, n) : 30 });
                   }} />
                 <span>ngày {days === 0 ? "(0 = giữ tới khi đầy ~20.000 tin)" : ""}</span>
+                {/* Ô này CHẠY NGƯỢC CHIỀU mọi ô khác trong tab: tick vào là
+                    SIẾT LẠI. Mặc định bỏ tick = ghi cả hội thoại không tag, kể
+                    cả khi «Lọc thread» đang bắt buộc tag — ghi ≠ trả lời. */}
+                <label className="ml-auto flex items-center gap-1"
+                  title="Bỏ tick = ghi cả tin không tag (mặc định). Tick = chỉ ghi tin có tag bot.">
+                  <input type="checkbox" checked={st.tag_only === true}
+                    onChange={(e) => setEntry(key, { tag_only: e.target.checked })} />
+                  Chỉ ghi tin có <b>tag bot</b>
+                </label>
               </div>
             </div>
           );

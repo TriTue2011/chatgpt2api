@@ -134,7 +134,14 @@ export function LuuTruOnlineCard() {
     return () => { huy = true; };
   }, [settings]);
 
-  // Danh sách chọn: ba «cả kênh» + nhóm/topic/người lấy từ «Lọc thread».
+  // Danh sách chọn: ba «cả kênh» + nhóm/topic/người từ «Lọc thread», CỘNG các
+  // thread tự thêm bên «Lọc nhật ký» (chỗ bot ngồi im, không khai ở kênh nào).
+  // Chỉ có MỘT chỗ đăng ký thread lạ — tab này đọc lại, không dựng ô thêm riêng.
+  //
+  // Lưu ý khi dùng thread loại đó cho kho đám mây: đọc và tải về chạy bình
+  // thường; TẢI LÊN thì cần bot có lượt hoạt động để hỏi admin duyệt, mà bot
+  // ngồi im thì không có lượt nào.
+  const cl = (cfg.chatlog_settings || {}) as Record<string, unknown>;
   const opts: { key: string; label: string }[] = [];
   const daCo = new Set<string>();
   for (const k of ["tg", "zalo", "zalop"]) {
@@ -144,6 +151,10 @@ export function LuuTruOnlineCard() {
   for (const [key, laNguoi] of [
     ...Object.keys(tf).map((k) => [k, false] as [string, boolean]),
     ...Object.keys(tuf).map((k) => [k, true] as [string, boolean]),
+    // Khoá chatlog 'kenh:chat[#topic][:user]' — không kèm bot, nên ba phần trở
+    // lên là chắc chắn có NGƯỜI ở cuối.
+    ...Object.keys(cl).filter((k) => k.includes(":"))
+      .map((k) => [k, k.split(":").length >= 3] as [string, boolean]),
   ]) {
     const tv = tachKhoa(key, laNguoi);
     if (!tv) continue;
