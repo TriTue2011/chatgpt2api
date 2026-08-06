@@ -267,10 +267,23 @@ def _khop_thanh_vien(tv: dict, sc: Scope) -> bool:
     return not user or user == sc.actor
 
 
-def _cac_moi_noi() -> list[dict]:
+# Hai SỔ KẾT NỐI tách rời, cùng luật nhưng khai riêng.
+#
+#   `memory_links`   — bộ nhớ, wiki, nhật ký.
+#   `luu_tru_links`  — KHO ĐÁM MÂY.
+#
+# Vì sao tách: nối bộ nhớ là cho nhau đọc điều đã ghi nhớ; nối kho đám mây là
+# cho nhau đọc TỆP trong thư mục Drive. Hai việc khác hẳn nhau về mức riêng tư,
+# và chủ máy có thể muốn cái này mà không muốn cái kia. Dùng chung một sổ thì
+# nối bộ nhớ là kho tự mở theo, không có cách nào tắt riêng.
+KHOA_NOI_BO_NHO = "memory_links"
+KHOA_NOI_KHO = "luu_tru_links"
+
+
+def _cac_moi_noi(khoa_cfg: str = KHOA_NOI_BO_NHO) -> list[dict]:
     try:
         from services.config import config
-        ds = config.get().get("memory_links")
+        ds = config.get().get(khoa_cfg)
     except Exception:
         return []
     return [m for m in ds if isinstance(m, dict)] if isinstance(ds, list) else []
@@ -281,12 +294,15 @@ def _thanh_vien(moi: dict, khoa: str) -> list[dict]:
     return [t for t in ds if isinstance(t, dict)] if isinstance(ds, list) else []
 
 
-def _pham_vi_lien_ket_raw(user_id: str) -> list[str]:
+def _pham_vi_lien_ket_raw(user_id: str, khoa_cfg: str = KHOA_NOI_BO_NHO) -> list[str]:
     """KHOÁ PHIÊN của các thành viên mà lượt này được ĐỌC THÊM nhờ kết nối.
 
     Trả khoá phiên thô (chưa quy về khoá dữ liệu hay nhật ký) để nơi gọi tự ánh
     xạ: memory dùng `khoa_du_lieu`, nhật ký dùng `khoa_nhat_ky`. Nhờ vậy luật kết
     nối (bình đẳng/chính phụ) chỉ viết MỘT LẦN ở đây.
+
+    `khoa_cfg` chọn SỔ kết nối nào — bộ nhớ hay kho đám mây. Luật giống nhau,
+    danh sách khai khác nhau; xem chú thích ở `KHOA_NOI_BO_NHO`.
 
     chinh_phu MỘT CHIỀU: đứng ở CHÍNH thì đọc được PHỤ; đứng ở PHỤ thì không
     thấy gì thêm. Một lượt vừa là chính ở mối này vừa là phụ ở mối khác là bình
@@ -303,7 +319,7 @@ def _pham_vi_lien_ket_raw(user_id: str) -> list[str]:
             if kp and kp not in ra:
                 ra.append(kp)
 
-    for moi in _cac_moi_noi():
+    for moi in _cac_moi_noi(khoa_cfg):
         if not bool(moi.get("enabled", True)):
             continue
         kieu = str(moi.get("kind") or "").strip()
@@ -324,11 +340,15 @@ def kho_doc_them(user_id: str) -> list[tuple[str, str, str, str]]:
     nếp với `nhat_ky_doc_them`: luật kết nối (bình đẳng / chính phụ) chỉ viết một
     lần ở `_pham_vi_lien_ket_raw`, mỗi bên tiêu thụ tự ánh xạ sang khoá của mình.
 
+    ĐỌC SỔ RIÊNG `luu_tru_links`, KHÔNG phải `memory_links`. Nối bộ nhớ là cho
+    nhau đọc điều đã ghi nhớ; nối kho là cho nhau đọc TỆP trong thư mục Drive —
+    hai mức riêng tư khác hẳn nhau, phải bật tắt được độc lập.
+
     Kết nối CHỈ MỞ ĐƯỜNG ĐỌC. Ghi vẫn vào kho của chính phạm vi đó — xem
     `luu_tru_online.kho_ghi_duoc`.
     """
     ra: list[tuple[str, str, str, str]] = []
-    for kp in _pham_vi_lien_ket_raw(user_id):
+    for kp in _pham_vi_lien_ket_raw(user_id, KHOA_NOI_KHO):
         sc = tach_khoa_phien(kp)
         if not sc.chat:
             continue

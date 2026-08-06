@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * «Kết nối bộ nhớ» — nối những phạm vi ĐỘC LẬP lại với nhau.
+ * Kết nối phạm vi — nối những phạm vi ĐỘC LẬP lại với nhau.
  *
  * Mặc định mỗi kênh / nhóm / topic / người là một phạm vi riêng, không thấy dữ
  * liệu của nhau (services/agent/scope.py). Tab này khai những chỗ CÓ liên quan:
@@ -16,7 +16,17 @@
  * người ở `thread_user_filters`. Không dựng danh sách thứ hai để chủ máy phải
  * đặt tên hai lần.
  *
- * Ghi ra config `memory_links` (đọc bởi services/agent/scope.pham_vi_doc_them).
+ * HAI SỔ KẾT NỐI TÁCH RỜI, dùng CHUNG một thẻ này:
+ *
+ *   `memory_links`  → «Kết nối bộ nhớ»     (scope.pham_vi_doc_them)
+ *   `luu_tru_links` → «Kết nối kho đám mây» (scope.kho_doc_them)
+ *
+ * Tách vì nối bộ nhớ là cho nhau đọc điều đã ghi nhớ, còn nối kho là cho nhau
+ * đọc TỆP trong thư mục Drive — hai mức riêng tư khác hẳn nhau. Dùng chung một
+ * sổ thì nối bộ nhớ là kho tự mở theo, không tắt riêng được.
+ *
+ * Chép thẻ này ra làm hai bản là hai bản sẽ lệch nhau; nên nó nhận `configKey`
+ * và vài nhãn, còn luật hiển thị chỉ viết một lần.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -78,7 +88,19 @@ function nhanThanhVien(tv: ThanhVien, ten?: string): string {
   return ten ? `${ten} · ${kenh} ${dich}` : `${kenh} ${dich}`;
 }
 
-export function MemoryLinksCard() {
+/** Nhãn khác nhau giữa hai sổ — phần còn lại dùng chung. */
+type CauHinhThe = {
+  /** Khoá config được ghi ra: 'memory_links' | 'luu_tru_links'. */
+  configKey: string;
+  /** Tiền tố id mối nối, để đọc log biết ngay là sổ nào. */
+  idPrefix: string;
+  /** Danh từ chèn vào câu giải thích: 'bộ nhớ' | 'kho đám mây'. */
+  doiTuong: string;
+  /** Chiều GHI của từng loại — khác nhau thật, không gộp một câu được. */
+  cauGhi: React.ReactNode;
+};
+
+function LinksCard({ the }: { the: CauHinhThe }) {
   const config = useSettingsStore((s) => s.config);
   const setField = useSettingsStore((s) => s.setField);
   const [rows, setRows] = useState<MoiNoi[]>([]);
@@ -124,7 +146,7 @@ export function MemoryLinksCard() {
   useEffect(() => {
     if (inited.current || !config) return;
     inited.current = true;
-    const ds = Array.isArray(cfg.memory_links) ? (cfg.memory_links as unknown[]) : [];
+    const ds = Array.isArray(cfg[the.configKey]) ? (cfg[the.configKey] as unknown[]) : [];
     const tvList = (v: unknown): ThanhVien[] =>
       Array.isArray(v)
         ? v.filter((x) => x && typeof x === "object").map((x) => {
@@ -148,12 +170,12 @@ export function MemoryLinksCard() {
         secondary: tvList(o.secondary),
       } as MoiNoi;
     }));
-  }, [config, cfg.memory_links]);
+  }, [config, cfg[the.configKey], the.configKey]);
 
   const luu = (ds: MoiNoi[]) => {
     setRows(ds);
-    setField("memory_links", ds.map((r) => ({
-      id: r.id || `ml_${r.uiId}`,
+    setField(the.configKey, ds.map((r) => ({
+      id: r.id || `${the.idPrefix}${r.uiId}`,
       kind: r.kind,
       name: r.name,
       enabled: r.enabled,
@@ -164,7 +186,7 @@ export function MemoryLinksCard() {
   };
 
   const them = (kind: MoiNoi["kind"]) => luu([...rows, {
-    uiId: seq.current++, id: `ml_${Date.now()}`, kind, enabled: true,
+    uiId: seq.current++, id: `${the.idPrefix}${Date.now()}`, kind, enabled: true,
     name: kind === "binh_dang" ? "Nhóm bình đẳng" : "Chính phụ",
     members: [], primary: [], secondary: [],
   }]);
@@ -224,7 +246,7 @@ export function MemoryLinksCard() {
                   onClick={() => boTV(r, o, ma)}>✕</button>
               </div>
               {/* Trường NGƯỜI. Nhóm đã lọc theo từng người thì mỗi người là một
-                  bộ nhớ riêng — nối "cả nhóm" trỏ vào bộ nhớ không ai ghi vào,
+                  phạm vi riêng — nối "cả nhóm" trỏ vào phạm vi không ai ghi vào,
                   nên phải nêu đích danh ở đây. */}
               <div className="flex items-center gap-1 mt-1">
                 <span className="text-[10px] text-muted-foreground shrink-0">Người:</span>
@@ -245,8 +267,8 @@ export function MemoryLinksCard() {
               </div>
               {tachNguoi && !t.user && (
                 <p className="text-[10px] text-amber-600 mt-0.5">
-                  Nhóm này đã lọc theo từng người → mỗi người một bộ nhớ riêng.
-                  Để trống là nối vào bộ nhớ chung của nhóm mà không ai ghi vào.
+                  Nhóm này đã lọc theo từng người → mỗi người một {the.doiTuong} riêng.
+                  Để trống là nối vào {the.doiTuong} chung của nhóm mà không ai ghi vào.
                 </p>
               )}
             </div>
@@ -268,13 +290,12 @@ export function MemoryLinksCard() {
   return (
     <div className="space-y-3 mt-1">
       <p className="text-[10px] text-muted-foreground leading-relaxed">
-        Mặc định mỗi nhóm / topic / người là một <b>bộ nhớ riêng</b>, không thấy của
-        nhau. Ở đây khai những chỗ CÓ liên quan.<br />
+        Mặc định mỗi nhóm / topic / người là một <b>{the.doiTuong} riêng</b>, không
+        thấy của nhau. Ở đây khai những chỗ CÓ liên quan.<br />
         <b>Bình đẳng</b>: các thành viên đọc được của nhau (hai chiều).{" "}
         <b>Chính phụ</b>: bên <b>Chính</b> đọc được bên <b>Phụ</b>, bên Phụ KHÔNG đọc
         được bên Chính (một chiều).<br />
-        Kết nối chỉ mở đường <b>đọc</b> — ghi vẫn vào bộ nhớ của chính nơi đó, nên gỡ
-        kết nối là hết thấy ngay.
+        {the.cauGhi}
       </p>
 
       {chonDuoc.length === 0 && (
@@ -293,7 +314,7 @@ export function MemoryLinksCard() {
 
       {rows.length === 0 && (
         <p className="text-[11px] text-muted-foreground">
-          Chưa có kết nối nào — mọi bộ nhớ đang độc lập hoàn toàn.
+          Chưa có kết nối nào — mọi {the.doiTuong} đang độc lập hoàn toàn.
         </p>
       )}
 
@@ -348,13 +369,53 @@ export function MemoryLinksCard() {
         Mỗi dòng đã nối có ô <b>Người</b>: để trống là <b>cả nhóm</b> (ai trong nhóm
         cũng được tính); điền vào là chỉ đúng người đó.<br />
         Nhóm đã đặt lọc theo từng người (tab «Lọc thread» → cấp User) thì{" "}
-        <b>mỗi người là một bộ nhớ riêng</b> — ô Người sẽ gợi ý sẵn danh sách và
-        nhắc chọn đích danh, vì để trống sẽ nối vào bộ nhớ chung của nhóm mà không
-        ai ghi vào.<br />
+        <b>mỗi người là một {the.doiTuong} riêng</b> — ô Người sẽ gợi ý sẵn danh sách
+        và nhắc chọn đích danh, vì để trống sẽ nối vào {the.doiTuong} chung của nhóm
+        mà không ai ghi vào.<br />
         Trong <b>chính phụ</b>, các bên Chính <b>độc lập với nhau</b> (không tự động
         bình đẳng), các bên Phụ cũng vậy. Muốn hai bên Chính đọc được của nhau thì
         tạo thêm một kết nối <b>bình đẳng</b> riêng.
       </p>
+    </div>
+  );
+}
+
+export function MemoryLinksCard() {
+  return <LinksCard the={{
+    configKey: "memory_links",
+    idPrefix: "ml_",
+    doiTuong: "bộ nhớ",
+    cauGhi: (
+      <>
+        Kết nối chỉ mở đường <b>đọc</b> — ghi vẫn vào bộ nhớ của chính nơi đó, nên
+        gỡ kết nối là hết thấy ngay.
+      </>
+    ),
+  }} />;
+}
+
+export function LuuTruLinksCard() {
+  return (
+    <div className="space-y-2 mt-1">
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Sổ này <b>tách hẳn</b> với «Kết nối bộ nhớ»: nối bộ nhớ là cho nhau đọc điều
+        đã ghi nhớ, nối ở đây là cho nhau đọc <b>tệp trong thư mục Drive</b>. Nối bên
+        kia KHÔNG tự mở kho bên này, và ngược lại.
+      </p>
+      <LinksCard the={{
+        configKey: "luu_tru_links",
+        idPrefix: "kho_",
+        doiTuong: "kho đám mây",
+        cauGhi: (
+          <>
+            Kết nối chỉ mở đường <b>đọc và tải về</b>. <b>Tải lên vẫn chỉ vào kho của
+            chính nơi đó</b> (khai ở tab «Lưu trữ online»), dù đã nối — nên gỡ kết nối
+            là hết đọc được ngay, chưa từng có tệp nào chảy sang nhau.<br />
+            Trong cùng một kho, mỗi phạm vi chỉ thấy <b>đúng thư mục của mình</b>; thư
+            mục khác trong kho đó vẫn kín.
+          </>
+        ),
+      }} />
     </div>
   );
 }

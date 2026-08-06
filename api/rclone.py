@@ -107,7 +107,7 @@ def create_router() -> APIRouter:
     def kho_doc_duoc(authorization: str | None = Header(None)) -> dict[str, Any]:
         """Mỗi phạm vi đã bật «Lưu trữ online» đọc được những kho nào.
 
-        Tính ở phía máy chủ chứ không để giao diện tự suy từ `memory_links`: hai
+        Tính ở phía máy chủ chứ không để giao diện tự suy từ `luu_tru_links`: hai
         nơi cùng quyết định quyền đọc là hai nơi sẽ lệch nhau, và lệch về quyền
         đọc thì hiển thị nói một đằng, bot làm một nẻo.
         """

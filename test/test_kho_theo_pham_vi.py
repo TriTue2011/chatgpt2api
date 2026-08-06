@@ -12,6 +12,12 @@ Hai chiều KHÁC HẲN nhau, và đó là điểm dễ làm lẫn nhất:
 
     ĐỌC  kho mình  +  kho của phạm vi đã kết nối
     GHI  CHỈ kho mình
+
+SỔ KẾT NỐI RIÊNG (`luu_tru_links`), không phải `memory_links`. Chủ máy 06/08:
+"Chưa có kết nối dữ liệu đám mây, mới chỉ thấy kết nối bộ nhớ". Bản trước cho
+kho ăn theo sổ của bộ nhớ, nên nối bộ nhớ là kho TỰ MỞ theo và không tắt riêng
+được — trong khi đọc điều đã ghi nhớ với đọc tệp trong thư mục Drive là hai mức
+riêng tư khác hẳn nhau.
 """
 import os
 import sys
@@ -124,7 +130,7 @@ class NOI_BINH_DANG_ThiDocDuocCuaNhauTests(_Nen):
 
     def setUp(self):
         super().setUp()
-        _gan({"memory_links": [{
+        _gan({"luu_tru_links": [{
             "id": "ml_1", "kind": "binh_dang", "name": "Nhà mình", "enabled": True,
             "members": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
                         {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}],
@@ -141,7 +147,7 @@ class NOI_BINH_DANG_ThiDocDuocCuaNhauTests(_Nen):
         self.assertFalse(ds[1]["cua_minh"])
 
     def test_TAT_ket_noi_thi_thoi(self):
-        _gan({"memory_links": [{
+        _gan({"luu_tru_links": [{
             "id": "ml_1", "kind": "binh_dang", "enabled": False,
             "members": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
                         {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}],
@@ -149,12 +155,69 @@ class NOI_BINH_DANG_ThiDocDuocCuaNhauTests(_Nen):
         self.assertFalse(lt.duoc_doc(_A, "drive-B:rieng"))
 
 
+class HAI_SO_TACH_ROITests(_Nen):
+    """Nối bộ nhớ KHÔNG mở kho, và ngược lại.
+
+    Chủ máy 06/08: "Chưa có kết nối dữ liệu đám mây, mới chỉ thấy kết nối bộ
+    nhớ". Bản trước cho `kho_doc_them` đọc thẳng `memory_links`, nên khai một
+    mối nối bộ nhớ là kho đám mây tự mở theo — không có cách nào cho hai nhóm
+    chung trí nhớ mà vẫn giữ riêng thư mục Drive.
+    """
+
+    _THANH_VIEN = [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
+                   {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}]
+
+    def test_noi_BO_NHO_khong_mo_kho(self):
+        _gan({"memory_links": [{"id": "ml_1", "kind": "binh_dang",
+                                "enabled": True, "members": self._THANH_VIEN}]})
+        self.assertFalse(lt.duoc_doc(_A, "drive-B:rieng"))
+        self.assertEqual([k["kho"] for k in lt.cac_kho_doc_duoc(_A)], ["drive-A"])
+
+    def test_noi_KHO_khong_mo_bo_nho(self):
+        from services.agent import scope
+        _gan({"luu_tru_links": [{"id": "kho_1", "kind": "binh_dang",
+                                 "enabled": True, "members": self._THANH_VIEN}]})
+        self.assertTrue(lt.duoc_doc(_A, "drive-B:rieng"))
+        self.assertEqual(scope.pham_vi_doc_them(_A), [])
+
+    def test_noi_ca_hai_thi_ca_hai_mo(self):
+        from services.agent import scope
+        moi = [{"id": "x1", "kind": "binh_dang", "enabled": True,
+                "members": self._THANH_VIEN}]
+        _gan({"memory_links": list(moi), "luu_tru_links": list(moi)})
+        self.assertTrue(lt.duoc_doc(_A, "drive-B:rieng"))
+        self.assertNotEqual(scope.pham_vi_doc_them(_A), [])
+
+    def test_hai_so_khai_khac_nhau_thi_moi_ben_theo_so_cua_minh(self):
+        """Nối bộ nhớ A↔B nhưng nối kho A→C: kho chỉ mở đúng C, không mở B."""
+        from services.agent import scope
+        _gan({
+            "luu_tru_online": {
+                "zalop:nhomA": {"enabled": True, "kho": "drive-A", "thu_muc": "c2a"},
+                "zalop:nhomB": {"enabled": True, "kho": "drive-B", "thu_muc": "rieng"},
+                "zalop:nhomC": {"enabled": True, "kho": "drive-C", "thu_muc": "chung"},
+            },
+            "memory_links": [{"id": "ml_1", "kind": "binh_dang", "enabled": True,
+                              "members": self._THANH_VIEN}],
+            "luu_tru_links": [{"id": "kho_1", "kind": "binh_dang", "enabled": True,
+                               "members": [self._THANH_VIEN[0],
+                                           {"kenh": "zalop", "chat": "nhomC",
+                                            "topic": "", "user": ""}]}],
+        })
+        self.assertFalse(lt.duoc_doc(_A, "drive-B:rieng"))
+        self.assertTrue(lt.duoc_doc(_A, "drive-C:chung"))
+        # Bộ nhớ thì ngược lại — thấy B, không dính gì tới C.
+        them = scope.pham_vi_doc_them(_A)
+        self.assertTrue(any("nhomB" in k for k in them), them)
+        self.assertFalse(any("nhomC" in k for k in them), them)
+
+
 class NOI_CHINH_PHU_MotChieuTests(_Nen):
     """Chính đọc được phụ; phụ KHÔNG đọc được chính."""
 
     def setUp(self):
         super().setUp()
-        _gan({"memory_links": [{
+        _gan({"luu_tru_links": [{
             "id": "ml_2", "kind": "chinh_phu", "name": "Bố mẹ ↔ con",
             "enabled": True,
             "primary": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""}],
@@ -173,7 +236,7 @@ class GHI_CHI_VAO_KHO_CUA_MINHTests(_Nen):
 
     def setUp(self):
         super().setUp()
-        _gan({"memory_links": [{
+        _gan({"luu_tru_links": [{
             "id": "ml_1", "kind": "binh_dang", "enabled": True,
             "members": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
                         {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}],
@@ -235,7 +298,7 @@ class CUNG_MOT_KHO_KHAC_THU_MUC_ThiVanDocLapTests(_Nen):
 
     def test_noi_roi_thi_doc_duoc_thu_muc_kia_NHUNG_khong_ghi(self):
         _gan({"luu_tru_online": dict(self.KHO_CHUNG),
-              "memory_links": [{
+              "luu_tru_links": [{
                   "id": "ml_1", "kind": "binh_dang", "enabled": True,
                   "members": [
                       {"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
@@ -268,7 +331,7 @@ class TAI_VE_QUA_KET_NOI_VanPhaiDuocTests(_Nen):
 
     def setUp(self):
         super().setUp()
-        _gan({"memory_links": [{
+        _gan({"luu_tru_links": [{
             "id": "ml_1", "kind": "binh_dang", "enabled": True,
             "members": [{"kenh": "zalop", "chat": "nhomA", "topic": "", "user": ""},
                         {"kenh": "zalop", "chat": "nhomB", "topic": "", "user": ""}],
