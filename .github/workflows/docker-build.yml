@@ -27,7 +27,16 @@ jobs:
   # đủ đã có trong Docker build stage.
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 25 phút, không phải 10. Đo 06-07/08: bốn lượt liên tiếp chết ở đúng mốc 10
+    # phút và GitHub báo trạng thái "cancelled" — nhìn qua tưởng bị huỷ vì push
+    # chồng, nhưng workflow này KHÔNG có khối `concurrency` nên không lượt nào
+    # huỷ lượt nào. Nó hết giờ thật.
+    #
+    # Phần lâu không phải là test (cả bộ chạy ~27 giây trong container): nó là
+    # `uv sync --frozen` + cài Bun + typecheck web, cộng lúc runner GitHub tắc.
+    # Cắt bớt test để vừa 10 phút là cắt nhầm chỗ — cổng chặn mất tác dụng mà
+    # nguyên nhân vẫn còn.
+    timeout-minutes: 25
     env:
       # pyproject ghim mirror aliyun (nhanh ở VN, chậm trên GH runner) — ép PyPI.
       UV_DEFAULT_INDEX: https://pypi.org/simple
