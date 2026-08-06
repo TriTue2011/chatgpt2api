@@ -4260,6 +4260,46 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
 # thật) — các tool soạn/sửa trả text để orchestrator không cắt vòng lặp sớm.
 
 
+def _h_office_so_sanh(args: dict, ctx: dict) -> dict:
+    """So hai tài liệu. Bù việc `officecli` không có — xem services/office_bo_sung."""
+    from services import office_bo_sung as ob
+    kq = ob.so_sanh(str(args.get("tep_a") or ""), str(args.get("tep_b") or ""),
+                    dinh_dang=str(args.get("dinh_dang") or "markdown"))
+    if not kq.get("ok"):
+        return {"text": f"Không so sánh được: {kq.get('error')}"}
+    them = "\n\n(báo cáo dài, đã cắt bớt)" if kq.get("bi_cat") else ""
+    return {"text": (kq.get("bao_cao") or "") + them}
+
+
+def _h_office_thong_ke(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.thong_ke_bang(str(args.get("tep") or ""),
+                          sheet=str(args.get("sheet") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không thống kê được: {kq.get('error')}"}
+    them = "\n\n(báo cáo dài, đã cắt bớt)" if kq.get("bi_cat") else ""
+    return {"text": (kq.get("bao_cao") or "") + them}
+
+
+def _h_office_thay_the(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.tim_thay_the(str(args.get("tep") or ""), str(args.get("tim") or ""),
+                         str(args.get("thay") or ""),
+                         tat_ca=bool(args.get("tat_ca", True)))
+    if not kq.get("ok"):
+        return {"text": f"Không sửa được: {kq.get('error')}"}
+    return {"text": kq.get("text") or "Xong ạ."}
+
+
+def _h_office_tao_slide(args: dict, ctx: dict) -> dict:
+    from services import office_bo_sung as ob
+    kq = ob.tao_slide(str(args.get("dan_y") or ""), str(args.get("ten_tep") or ""))
+    if not kq.get("ok"):
+        return {"text": f"Không tạo được slide: {kq.get('error')}"}
+    return {"text": f"🖼️ Đã tạo {kq['ten']} — {kq['so_slide']} slide ạ.",
+            "doc_path": kq.get("duong_dan")}
+
+
 def _h_office_files(args: dict, ctx: dict) -> dict:
     from services import officecli as oc
     st = oc.status()
@@ -5409,6 +5449,56 @@ CAPABILITIES: dict[str, Capability] = {
     # risk=READ có chủ đích: mọi tool chỉ đụng sandbox DATA_DIR/office (như
     # generate_image) — risk=CHANGE làm supervised-mode kẹt phê duyệt giữa
     # chuỗi create→add→send (resume sau duyệt KHÔNG nối tiếp vòng lặp).
+    "office_so_sanh": Capability(
+        name="office_so_sanh", risk=READ, handler=_h_office_so_sanh,
+        emoji="🔍", label="So sánh hai tài liệu",
+        description=("So hai tài liệu (.docx/.pdf/.xlsx/.md) và nói rõ thêm gì, "
+                     "bỏ gì, sửa gì. Giữ được bảng vì dùng đúng đường trích xuất "
+                     "của bot."),
+        parameters={"type": "object", "properties": {
+            "tep_a": {"type": "string", "description": "tài liệu thứ nhất"},
+            "tep_b": {"type": "string", "description": "tài liệu thứ hai"},
+            "dinh_dang": {"type": "string", "enum": ["markdown", "unified"],
+                          "description": "markdown = dễ đọc (mặc định)"}},
+            "required": ["tep_a", "tep_b"]},
+        workflow=("Dùng khi người dùng hỏi 'hai bản này khác nhau chỗ nào', "
+                  "'so sánh bản cũ với bản mới'. Cả hai tệp phải nằm trong "
+                  "workspace — office_files để xem có gì.")),
+    "office_thong_ke": Capability(
+        name="office_thong_ke", risk=READ, handler=_h_office_thong_ke,
+        emoji="📊", label="Thống kê bảng tính",
+        description=("Thống kê nhanh .xlsx/.csv: số dòng cột, chỗ thiếu dữ liệu, "
+                     "nhỏ nhất / lớn nhất / trung bình / tổng của từng cột số."),
+        parameters={"type": "object", "properties": {
+            "tep": {"type": "string", "description": "vd bang_luong.xlsx"},
+            "sheet": {"type": "string", "description": "để trống = mọi sheet"}},
+            "required": ["tep"]},
+        workflow="Dùng khi người dùng hỏi 'bảng này có gì', 'tổng cột X bao nhiêu'."),
+    "office_thay_the": Capability(
+        name="office_thay_the", risk=CHANGE, handler=_h_office_thay_the,
+        emoji="✏️", label="Tìm & thay thế trong tài liệu",
+        description=("Đổi một cụm từ nằm rải khắp .docx/.xlsx, KỂ CẢ trong bảng. "
+                     "Ghi thẳng vào tệp đó — giữ định dạng đậm/nghiêng."),
+        parameters={"type": "object", "properties": {
+            "tep": {"type": "string"},
+            "tim": {"type": "string", "description": "cụm cần đổi"},
+            "thay": {"type": "string", "description": "đổi thành"},
+            "tat_ca": {"type": "boolean", "description": "false = chỉ chỗ đầu tiên"}},
+            "required": ["tep", "tim", "thay"]},
+        workflow=("SỬA THẲNG vào tệp, không có bản lùi — nói rõ sẽ đổi bao nhiêu "
+                  "chỗ trước khi làm nếu người dùng chưa nêu cụ thể.")),
+    "office_tao_slide": Capability(
+        name="office_tao_slide", risk=READ, handler=_h_office_tao_slide,
+        emoji="🖼️", label="Tạo slide từ dàn ý",
+        description=("Dàn ý Markdown → .pptx. Mỗi '#'/'##' là một slide, gạch "
+                     "đầu dòng là các ý trong slide đó."),
+        parameters={"type": "object", "properties": {
+            "dan_y": {"type": "string",
+                      "description": "vd '# Mở đầu\n- Chào\n## Nội dung\n- Ý 1'"},
+            "ten_tep": {"type": "string", "description": "vd bai_giang.pptx"}},
+            "required": ["dan_y", "ten_tep"]},
+        workflow=("Tạo xong → office_send gửi cho người dùng. Soạn dàn ý theo "
+                  "đúng yêu cầu, KHÔNG tự bịa thêm slide.")),
     "office_files": Capability(
         name="office_files", risk=READ, handler=_h_office_files,
         emoji="📁", label="Xem kho file Office",
@@ -5583,6 +5673,8 @@ _CAP_GROUP: dict[str, str] = {
     "office_add": "office", "office_set": "office",
     "office_remove": "office", "office_batch": "office",
     "office_merge": "office", "office_send": "office",
+    "office_so_sanh": "office", "office_thong_ke": "office",
+    "office_thay_the": "office", "office_tao_slide": "office",
     # Tool Home Assistant do GATEWAY tiêm (services/ha_client.get_ha_tools),
     # không phải capability của agent. Thiếu chúng ở đây thì group_of() trả
     # "_ungrouped", và chốt chặn ở orchestrator coi là KHÔNG được phép rồi bỏ
