@@ -1848,6 +1848,48 @@ def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes) -> N
         logger.warning("zalop luu_tru_online: %s", str(exc)[:150])
 
 
+def _nhan_tep_ngam(ev: dict, thread_id: str) -> None:
+    """Thread bot NGỒI IM nhận được tệp/ảnh → vẫn hỏi admin để lưu lên kho.
+
+    Chủ máy 07/08: "nếu kiểu ghi nhận ngầm để tải lên thì sao". Làm được, vì
+    câu hỏi duyệt KHÔNG gửi vào thread nhận tệp mà sang **thread admin** — nên
+    bot không phải nói câu nào ở đây, sự im lặng của nhóm không bị phá.
+
+    Cùng nếp với nhật ký: khối ghi nhật ký cũng đặt trước cổng im lặng, vì
+    "chỉ không phản hồi, nhưng nhật ký vẫn phải có".
+
+    Ba điều bắt buộc, đừng nới:
+      · KHÔNG gửi gì vào `thread_id`. Nhánh này chỉ tải tệp về rồi giao cho
+        `moi_luu`; mọi phản hồi đi đường admin. Thêm một `send_message` vào đây
+        là thread im lặng bỗng lên tiếng — đúng thứ chủ máy tắt đi.
+      · Phạm vi chưa khai kho hoặc chưa chọn thread admin thì `moi_luu` tự
+        thoát; không tự đoán thay.
+      · Mọi lỗi chặn tại đây — thread này vốn không được phục vụ, hỏng gì cũng
+        không được làm rơi lượt xử lý của thread khác.
+    """
+    try:
+        if not ev.get("attachment_url"):
+            return
+        loai = str(ev.get("msg_type") or "")
+        if loai == "share.file":
+            ten = (ev.get("file_name") or "").strip() or "document"
+        elif loai == "chat.photo":
+            ten = ""            # đặt tên theo đuôi ảnh ở dưới
+        else:
+            return
+        data = _download(ev["attachment_url"])
+        if not data:
+            return
+        if not ten:
+            from services.agent.luu_tru_day import ten_anh as _ten_anh
+            ten = _ten_anh(data)
+        logger.info("zalop nhan tep ngam: thread=%s ten=%s bytes=%d"
+                    % (thread_id, ten, len(data)))
+        _moi_luu_online(ev, thread_id, ten, data)
+    except Exception as exc:
+        logger.warning("zalop nhan_tep_ngam: %s", str(exc)[:150])
+
+
 def _moi_luu_tom_tat(thread_id: str, account: str, user_id: str, ten_goc: str,
                      tom_tat: str) -> None:
     """Vừa gửi bản tóm tắt → hỏi admin có lưu nó lên kho đám mây không."""
@@ -2221,6 +2263,7 @@ def _process_ai(ev: dict) -> None:
     # ĐẶT SAU khối nhật ký nhóm ở trên là CỐ Ý: yêu cầu là "chỉ không phản hồi,
     # nhưng nhật ký vẫn phải có". Ghi ≠ trả lời, cùng lý lẽ với cổng tag.
     if not _caps.duoc_giao_tiep("zalop", acc_id, thread_id, _sender):
+        _nhan_tep_ngam(ev, thread_id)
         return  # im lặng, đúng như thread chưa được thêm vào Lọc thread
     permitted = (_allow is not None) or (thread_id in allowed_ids)
     if not permitted:
