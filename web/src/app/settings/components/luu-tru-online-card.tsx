@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Cloud, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { Cloud, FolderOpen, LoaderCircle, Plus, Save, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -80,6 +80,8 @@ function nhan(tv: ThanhVien, ten?: string): string {
 export function LuuTruOnlineCard() {
   const config = useSettingsStore((s) => s.config);
   const setField = useSettingsStore((s) => s.setField);
+  const saveConfig = useSettingsStore((s) => s.saveConfig);
+  const isSavingConfig = useSettingsStore((s) => s.isSavingConfig);
 
   const cfg = (config || {}) as Record<string, unknown>;
   const settings = (cfg.luu_tru_online || {}) as Record<string, CaiDat>;
@@ -90,6 +92,21 @@ export function LuuTruOnlineCard() {
   const [khoCo, setKhoCo] = useState<string[]>([]);
   const [dangTai, setDangTai] = useState(true);
   const [chonThem, setChonThem] = useState("");
+  /** Thư mục có sẵn trên từng kho — nạp khi bấm «Chọn», để khỏi gõ tay tên thư mục. */
+  const [thuMucCua, setThuMucCua] = useState<Record<string, string[]>>({});
+  const [dangDoc, setDangDoc] = useState("");
+
+  const napThuMuc = async (kho: string) => {
+    if (!kho) return;
+    setDangDoc(kho);
+    try {
+      const { data } = await request.get("/api/rclone/ls", { params: { duong_dan: `${kho}:` } });
+      const ds = (Array.isArray(data?.muc) ? data.muc : [])
+        .filter((m: { la_thu_muc: boolean }) => m.la_thu_muc)
+        .map((m: { ten: string }) => m.ten);
+      setThuMucCua((s) => ({ ...s, [kho]: ds }));
+    } catch { setThuMucCua((s) => ({ ...s, [kho]: [] })); } finally { setDangDoc(""); }
+  };
 
   useEffect(() => {
     let huy = false;
@@ -224,9 +241,32 @@ export function LuuTruOnlineCard() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium">Thư mục gốc</label>
-                <Input value={cd.thu_muc || ""} placeholder="vd: Gia đình"
-                  onChange={(e) => setEntry(key, { thu_muc: e.target.value })}
-                  className="h-10 rounded-xl" />
+                <div className="flex gap-2">
+                  {(thuMucCua[cd.kho || ""] || []).length ? (
+                    <select value={cd.thu_muc || ""}
+                      onChange={(e) => setEntry(key, { thu_muc: e.target.value })}
+                      className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 text-sm">
+                      <option value="">— thư mục gốc của kho —</option>
+                      {(thuMucCua[cd.kho || ""] || []).map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input value={cd.thu_muc || ""} placeholder="để trống = thư mục gốc"
+                      onChange={(e) => setEntry(key, { thu_muc: e.target.value })}
+                      className="h-10 rounded-xl" />
+                  )}
+                  <Button variant="outline" size="sm" className="h-10 shrink-0 rounded-xl"
+                    onClick={() => void napThuMuc(cd.kho || "")}
+                    disabled={!cd.kho || dangDoc === cd.kho}>
+                    {dangDoc === cd.kho
+                      ? <LoaderCircle className="size-4 animate-spin" />
+                      : <FolderOpen className="size-4" />}
+                  </Button>
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Bấm 📂 để lấy danh sách thư mục có sẵn trên kho.
+                </p>
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium">Giờ đồng bộ nhật ký</label>
@@ -267,6 +307,19 @@ export function LuuTruOnlineCard() {
             </p>
           </div>
         ))}
+
+        {/* BẮT BUỘC có: mọi thay đổi phía trên mới chỉ nằm trong trình duyệt.
+            Không bấm Lưu thì tải lại trang là mất sạch, và bot không đọc được. */}
+        <div className="flex items-center justify-end gap-3 border-t border-[var(--border)] pt-4">
+          <span className="text-xs text-[var(--muted-foreground)]">
+            Thay đổi chỉ có hiệu lực sau khi lưu.
+          </span>
+          <Button className="h-10 rounded-xl" onClick={() => void saveConfig()}
+            disabled={isSavingConfig}>
+            {isSavingConfig ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+            Lưu
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
