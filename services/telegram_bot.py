@@ -632,8 +632,19 @@ def gui_chu_dong(dich: str, text: str) -> bool:
         _current.topic = truoc
 
 
-def _send_agent_reply(chat_id: str, out: dict) -> None:
-    """Send orchestrator text (+ optional ask-choice inline keyboard)."""
+def _send_agent_reply(chat_id: str, out: dict, user_id: str = "") -> None:
+    """Send orchestrator text (+ optional ask-choice inline keyboard).
+
+    `user_id`: để ghi nhận "bot vừa xin ảnh của người này" — tấm ảnh gửi sau đó
+    mới đi qua được cổng chặn-nếu-không-tag trong nhóm.
+    """
+    if user_id:
+        try:
+            from services import photo_intent as _phi_xin
+            _phi_xin.danh_dau_neu_xin_anh(
+                f"tg:{_bot_id()}:{chat_id}:{user_id}", str(out.get("text") or ""))
+        except Exception:
+            pass
     from services.agent import ask_choices as _ask
     # Trống + có nút chọn → `format_numbered` điền danh sách, đừng chèn "..."
     # (câu duyệt gửi tin nay CHỈ có ba lựa chọn). Trống mà không nút thì vẫn cần
@@ -1491,6 +1502,18 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             _cst.mo(_ckey)
         elif _req and _cst.dang_cho(_ckey):
             _req = False
+        # NGOẠI LỆ như Zalo cá nhân: bot vừa xin ảnh của chính người này, hoặc
+        # đang giữ bản chờ "chọn 1/2/3" của họ → câu/ảnh tiếp theo đi qua dù
+        # không tag. Cửa sổ sau-tag sống 5 phút còn bản chờ sống 10 — thiếu
+        # ngoại lệ này thì đúng 5 phút giữa hai mốc đó, người dùng bấm số mà
+        # không có gì xảy ra.
+        if _req:
+            from services import photo_intent as _phi_cho
+            from services import pdf_intent as _pi_cho
+            if (_phi_cho.dang_cho_anh(_ckey) or _phi_cho.has_pending(_ckey)
+                    or _pi_cho.has_pending(_ckey)):
+                _req = False
+                _phi_cho.het_cho_anh(_ckey)   # dùng một lần, tránh mở cổng mãi
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
@@ -1829,7 +1852,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             out.get(k) for k in ("image_url", "video_path", "video_url", "audio_path", "audio_url")
         ):
             # Có nút chọn số → giữ chữ (không voice-only), voice kèm nếu bật.
-            _send_agent_reply(chat_id, out)
+            _send_agent_reply(chat_id, out, user_id=user_id)
             _maybe_voice_reply(chat_id, user_id, reply)
         elif not _maybe_voice_reply(chat_id, user_id, reply):
             # tts_reply tắt / TTS lỗi → gửi chữ; bật + gửi được voice → chỉ voice.

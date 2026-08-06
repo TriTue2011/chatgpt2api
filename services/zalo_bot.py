@@ -1842,6 +1842,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             _cst.mo(_ckey)
         elif _req and _cst.dang_cho(_ckey):
             _req = False
+        # NGOẠI LỆ như Zalo cá nhân — xem chú thích bên telegram_bot.
+        if _req:
+            from services import photo_intent as _phi_cho
+            from services import pdf_intent as _pi_cho
+            if (_phi_cho.dang_cho_anh(_ckey) or _phi_cho.has_pending(_ckey)
+                    or _pi_cho.has_pending(_ckey)):
+                _req = False
+                _phi_cho.het_cho_anh(_ckey)
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
@@ -2087,6 +2095,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         reply = (out.get("text") or "").strip()
         if not reply and not out.get("choices"):
             reply = "..."
+        # Bot vừa nói câu xin ảnh → ghi nhận đang chờ ảnh của ĐÚNG người này, để
+        # tấm ảnh gửi sau đó đi qua được cổng chặn-nếu-không-tag trong nhóm.
+        try:
+            from services import photo_intent as _phi_xin
+            _phi_xin.danh_dau_neu_xin_anh(
+                f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}", reply)
+        except Exception:
+            pass
         image_url = out.get("image_url")
         image_urls = out.get("image_urls")
         sent_photo = False

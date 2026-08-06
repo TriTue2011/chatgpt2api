@@ -146,5 +146,61 @@ class NoiVaoBaKenhTests(unittest.TestCase):
         self.assertIn("{ev.get('sender_id') or ''}", src)
 
 
+class BaKenhPhaiGIONG_NHAUTests(unittest.TestCase):
+    """Chủ máy hỏi 06/08: "tele và zalo bot đã làm giống zalo cá nhân chưa".
+
+    Lúc hỏi thì CHƯA: hai kênh kia thiếu ba ngoại lệ ở cổng tag. Hậu quả: cửa sổ
+    sau-tag sống 5 phút còn bản chờ "chọn 1/2/3" sống 10 phút, nên đúng 5 phút
+    giữa hai mốc đó người dùng bấm số mà không có gì xảy ra. Bài này chốt lại sự
+    đồng đều để lần sau thêm ngoại lệ cho một kênh mà quên hai kênh kia thì đỏ.
+    """
+
+    KENH = ("zalo_personal.py", "telegram_bot.py", "zalo_bot.py")
+
+    #: Việc nào cũng phải có ở CẢ BA kênh.
+    CHUNG = (
+        ("mở cửa sổ chờ khi bị tag", "_cst.mo("),
+        ("tra cửa sổ chờ ở cổng tag", "_cst.dang_cho("),
+        ("ngoại lệ: bot đang xin ảnh", "dang_cho_anh("),
+        ("đánh dấu khi bot xin ảnh", "danh_dau_neu_xin_anh("),
+        ("ngoại lệ: đang chờ chọn ảnh", "_phi_cho.has_pending("),
+        ("ngoại lệ: đang chờ chọn tệp", "_pi_cho.has_pending("),
+        ("hỏi lưu online khi nhận tệp", "_moi_luu_online("),
+        ("đọc trả lời 1/2/3 của admin", "chon_tu_tra_loi("),
+        ("mục «Lưu lên kho đám mây»", "them_luu_online("),
+    )
+
+    def _src(self, ten):
+        return (GOC / "services" / ten).read_text("utf-8")
+
+    def test_ba_kenh_deu_co_du_cac_viec_chung(self):
+        for ten in self.KENH:
+            src = self._src(ten)
+            for nhan, dau in self.CHUNG:
+                with self.subTest(kenh=ten, viec=nhan):
+                    self.assertIn(dau, src, f"{ten} thiếu: {nhan}")
+
+    def test_ngoai_le_ban_cho_dung_khoa_KEM_NGUOI(self):
+        """Khoá thiếu người gửi thì A gửi tệp, B bấm "1" là cướp mất lượt của A."""
+        for ten, tien_to in (("telegram_bot.py", "tg"), ("zalo_bot.py", "zalo")):
+            with self.subTest(kenh=ten):
+                src = self._src(ten)
+                self.assertIn(
+                    '_ckey = f"' + tien_to + ':{_bot_id()}:{chat_id}:'
+                    "{user_id or ''}\"", src)
+                # Ngoại lệ phải tra bằng CHÍNH khoá đó, không tự dựng khoá khác.
+                self.assertIn("_phi_cho.has_pending(_ckey)", src)
+                self.assertIn("_pi_cho.has_pending(_ckey)", src)
+
+    def test_hai_viec_chi_co_o_kenh_gui_duoc_tep(self):
+        """Zalo Bot không gửi được Word/Excel nên không có gì để hỏi sau đó."""
+        for ten in ("zalo_personal.py", "telegram_bot.py"):
+            with self.subTest(kenh=ten):
+                src = self._src(ten)
+                self.assertIn("moi_luu_sau_chuyen_doi(", src)
+                self.assertIn("moi_luu_tom_tat(", src)
+        self.assertNotIn("moi_luu_sau_chuyen_doi(", self._src("zalo_bot.py"))
+
+
 if __name__ == "__main__":
     unittest.main()
