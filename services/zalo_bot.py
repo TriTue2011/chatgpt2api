@@ -2074,10 +2074,12 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
             _fp = bool(_active_bot().get("ha_fastpath", True))
         _model = _zalo_model(chat_id)
         # Nhóm: mỗi USER một phiên riêng; 1-1 giữ key cũ (không mất lịch sử).
+        # Nhóm: mỗi USER một phiên riêng. CHỈ hội thoại live tách theo người —
+        # bộ nhớ và nhật ký vẫn dùng chung cả nhóm.
         _skey = f"zalo_{chat_id}"
         try:
-            from services.config import config as _c2
-            if is_group and user_id and getattr(_c2, "group_user_isolation", True):
+            from services.agent.scope import tach_phien_theo_nguoi as _tach
+            if is_group and user_id and _tach():
                 _skey = f"zalo_{chat_id}:u{user_id}"
         except Exception:
             pass

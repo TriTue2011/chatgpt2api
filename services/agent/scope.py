@@ -128,6 +128,29 @@ def _co_loc_user(sc: Scope) -> bool:
     return any(str(k).startswith(dau) and dich in str(k) for k in filters)
 
 
+def tach_phien_theo_nguoi() -> bool:
+    """Trong NHÓM, mỗi người một phiên hội thoại riêng? Mặc định CÓ.
+
+    Chủ máy chốt 06/08: "tách nhưng chỉ tách ở hội thoại live với bot thôi, còn
+    đâu những cái khác giữ nguyên, nhất là nhật ký, bộ nhớ". Đây đúng là ranh
+    giới đó — hàm này CHỈ chi phối khoá phiên (`sess.load_history`…), không đụng
+    tới `khoa_du_lieu` (bộ nhớ) hay `khoa_nhat_ky` (sổ chung), hai hàm đó tự bỏ
+    người gửi ra theo luật riêng của chúng.
+
+    Đọc từ CONFIG. Bản cũ viết `getattr(config, "group_user_isolation", True)` —
+    `config` là đối tượng kho cấu hình, KHÔNG có thuộc tính tên đó, nên nó luôn
+    rơi về mặc định và công tắc không bao giờ có tác dụng. Đo trên máy chủ
+    06/08: `getattr` trả về đúng giá trị mặc định, khoá không hề nằm trong
+    config.json.
+    """
+    try:
+        from services.config import config
+        v = (config.get() or {}).get("group_user_isolation")
+    except Exception:
+        return True
+    return True if v is None else bool(v)
+
+
 def khoa_du_lieu(user_id: str) -> str:
     """Khoá phạm vi dữ liệu (wiki / digest / lịch / ghi chú) cho một lượt.
 

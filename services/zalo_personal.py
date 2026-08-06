@@ -2593,11 +2593,13 @@ def _process_ai(ev: dict) -> None:
             pass
         _model = _ai_model(_acc, thread_id)
         # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
+        # CHỈ hội thoại live tách theo người — bộ nhớ và nhật ký vẫn dùng chung
+        # cả nhóm (`scope.khoa_du_lieu` / `khoa_nhat_ky` tự bỏ người ra).
         _skey = f"zalop_{thread_id}"
         try:
+            from services.agent.scope import tach_phien_theo_nguoi as _tach
             _snd = str(ev.get("sender_id") or "")
-            if (int(thread_type) == 1 and _snd
-                    and getattr(config, "group_user_isolation", True)):
+            if int(thread_type) == 1 and _snd and _tach():
                 _skey = f"zalop_{thread_id}:u{_snd}"
         except Exception:
             pass

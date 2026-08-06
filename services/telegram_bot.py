@@ -284,12 +284,17 @@ def khoa_phien(chat_id: str, topic_id: str = "", user_id: str = "") -> str:
     đường tin nhắn, còn đường bấm NÚT (_handle_callback_query) lại tra
     ask_choices bằng chat_id trần — trong nhóm hai khoá khác nhau nên nút bấm
     không tìm thấy lựa chọn nào và IM LẶNG không làm gì.
+
+    Công tắc `group_user_isolation` đọc từ CONFIG (config.get()), không phải
+    thuộc tính Python của đối tượng config. Bản cũ dùng
+    `getattr(config, "group_user_isolation", True)` — `config` không có thuộc
+    tính đó nên nó LUÔN trả về mặc định, tức công tắc không bao giờ có tác dụng.
+    Mặc định vẫn là TÁCH (chủ máy chốt 06/08: "tách ở hội thoại live với bot").
     """
     base = f"{chat_id}#{topic_id}" if topic_id else str(chat_id)
     try:
-        from services.config import config as _c2
-        if (str(chat_id).startswith("-") and user_id
-                and getattr(_c2, "group_user_isolation", True)):
+        from services.agent.scope import tach_phien_theo_nguoi as _tach
+        if str(chat_id).startswith("-") and user_id and _tach():
             return f"{base}:u{user_id}"
     except Exception:
         pass
