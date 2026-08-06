@@ -121,10 +121,21 @@ def _cac_khoa_cai_dat(kenh: str, chat: str, topic: str, user: str) -> list[str]:
 def cai_dat(kenh: str, chat: str, topic: str = "", user: str = "") -> dict:
     """Cấu hình ghi nhật ký hiệu lực cho một phạm vi. Mặc định TẮT.
 
-    Trả {enabled, retention_days, compact}. Đọc `chatlog_settings` (dict khoá
-    'plat:chat[#topic][:user]' → {enabled, retention_days, compact}).
+    Trả {enabled, retention_days, compact, tag_only}. Đọc `chatlog_settings`
+    (dict khoá 'plat:chat[#topic][:user]' → bản ghi cùng tên trường).
+
+    `tag_only` — chủ máy chốt 07/08: ô «Tag bot» trong «Lọc nhật ký» chạy NGƯỢC
+    CHIỀU các ô khác. Bỏ tick (mặc định) = ghi cả hội thoại KHÔNG tag; tick vào
+    = SIẾT LẠI, chỉ tin có tag bot mới lưu.
+
+    Vì sao mặc định là "ghi cả tin không tag" dù «Lọc thread» đang bắt buộc tag:
+    **ghi ≠ trả lời**. Bot chỉ đáp khi được gọi tên, nhưng nhật ký nhóm sinh ra
+    để có biên bản đầy đủ. Ba công tắc tag rời nhau hẳn — trả lời
+    (`thread_mention_filters`), đẩy webhook (`thread_forward_filters.tag_mode`),
+    và ghi nhật ký (`tag_only` ở đây) — đừng gộp.
     """
-    mac_dinh = {"enabled": False, "retention_days": _MAC_DINH_NGAY, "compact": False}
+    mac_dinh = {"enabled": False, "retention_days": _MAC_DINH_NGAY,
+                "compact": False, "tag_only": False}
     try:
         cfg = config.get().get("chatlog_settings")
     except Exception:
@@ -141,7 +152,8 @@ def cai_dat(kenh: str, chat: str, topic: str = "", user: str = "") -> dict:
                 rd = _MAC_DINH_NGAY
             return {"enabled": bool(v.get("enabled", False)),
                     "retention_days": max(0, rd),
-                    "compact": bool(v.get("compact", False))}
+                    "compact": bool(v.get("compact", False)),
+                    "tag_only": bool(v.get("tag_only", False))}
     return mac_dinh
 
 
@@ -171,10 +183,20 @@ def _mentions_fold(text: str, mentions: list[str] | None) -> str:
 
 
 def ghi(user_id: str, *, sender_id: str = "", sender_name: str = "",
-        text: str = "", mentions: list[str] | None = None) -> bool:
+        text: str = "", mentions: list[str] | None = None,
+        tagged: bool | None = None) -> bool:
     """Ghi một tin vào nhật ký NẾU phạm vi này bật. Trả True nếu đã ghi.
 
     Không raise. Chỉ ghi CHỮ (text rỗng → bỏ qua).
+
+    `tagged` — tin này CÓ tag bot không. Chỉ dùng khi phạm vi bật `tag_only`.
+    Bên gọi tự tính vì mỗi kênh nhận diện tag một kiểu (zca-js mentions, entity
+    Telegram, @alias, từ khoá); `ghi()` chỉ có `mentions` thô nên không tự suy
+    ra được "trong đám được nhắc có bot hay không".
+
+    `tagged=None` + `tag_only` bật = KHÔNG BIẾT nên VẪN GHI. Chọn giữ tin thay
+    vì bỏ tin: kênh nào quên truyền cờ thì hậu quả là nhật ký rộng hơn ý muốn —
+    còn làm ngược lại thì nhật ký im lặng rỗng và không ai biết vì sao.
     """
     text = (text or "").strip()
     if not text:
@@ -186,6 +208,8 @@ def ghi(user_id: str, *, sender_id: str = "", sender_name: str = "",
             return False
         st = cai_dat(sc.kenh, sc.chat, sc.topic, sc.actor)
         if not st["enabled"]:
+            return False
+        if st.get("tag_only") and tagged is False:
             return False
         scope_key = khoa_nhat_ky(user_id)
         now = time.time()

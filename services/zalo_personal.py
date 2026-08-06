@@ -2187,9 +2187,20 @@ def _process_ai(ev: dict) -> None:
         _skey_log = f"zalop_{thread_id}"
         if int(thread_type or 0) == 1 and _sender:
             _skey_log = f"{_skey_log}:u{_sender}"
+        # `tagged` cho luật «Tag bot» của «Lọc nhật ký» (mặc định TẮT nên phần
+        # lớn phạm vi không dùng tới). Tra từ khoá tag của chính thread này chứ
+        # không truyền chuỗi rỗng: chủ máy đặt từ khoá riêng thì tin tag bằng từ
+        # khoá đó vẫn phải tính là CÓ tag, không thì bật `tag_only` xong nhật ký
+        # rỗng mà không hiểu vì sao.
+        try:
+            _, _kw_log = _caps.mention_required_for(
+                "zalop", str(ev.get("account_id") or ""), thread_id)
+        except Exception:
+            _kw_log = ""
         _chatlog.ghi(_skey_log, sender_id=_sender,
                      sender_name=str(ev.get("display_name") or "").strip(),
-                     text=text, mentions=[str(m) for m in (ev.get("mentions") or [])])
+                     text=text, mentions=[str(m) for m in (ev.get("mentions") or [])],
+                     tagged=is_bot_tagged(ev, _kw_log))
     except Exception:
         pass
     _allow = _caps.allowed_groups_for_member("zalop", acc_id, thread_id, _sender)

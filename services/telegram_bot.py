@@ -1327,9 +1327,21 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     if text and is_group:
         try:
             from services.agent import chatlog as _chatlog
+            # `tagged` cho luật «Tag bot» của «Lọc nhật ký». Dựng lại y công
+            # thức `_tagged` dùng ở đoạn webhook bên dưới (mention native HOẶC
+            # từ khoá tag của thread) — ở đây chưa chạy tới đoạn đó.
+            try:
+                from services.agent import capabilities as _caps_log
+                _, _kw_log = _caps_log.mention_required_for(
+                    "tg", _bot_id(), chat_id, str(topic_id or ""))
+            except Exception:
+                _kw_log = ""
+            _tag_log = bool(native_mention) or (
+                bool(_kw_log) and _kw_log.lower() in (text or "").lower())
             _chatlog.ghi(khoa_phien(chat_id, str(topic_id or ""), user_id),
                          sender_id=user_id, sender_name=sender, text=text,
-                         mentions=["@all"] if native_mention else None)
+                         mentions=["@all"] if native_mention else None,
+                         tagged=_tag_log)
         except Exception:
             pass
 

@@ -104,6 +104,9 @@ function LinksCard({ the }: { the: CauHinhThe }) {
   const config = useSettingsStore((s) => s.config);
   const setField = useSettingsStore((s) => s.setField);
   const [rows, setRows] = useState<MoiNoi[]>([]);
+  /** Mối nối nào đang mở. Mặc định GẤP những mối đã có thành viên — nhiều mối
+   *  mở hết một lúc thì trang dài, phải cuộn mới thấy nút thêm. */
+  const [moRong, setMoRong] = useState<Record<number, boolean>>({});
   const seq = useRef(1);
   const inited = useRef(false);
 
@@ -289,14 +292,34 @@ function LinksCard({ the }: { the: CauHinhThe }) {
 
   return (
     <div className="space-y-3 mt-1">
-      <p className="text-[10px] text-muted-foreground leading-relaxed">
-        Mặc định mỗi nhóm / topic / người là một <b>{the.doiTuong} riêng</b>, không
-        thấy của nhau. Ở đây khai những chỗ CÓ liên quan.<br />
-        <b>Bình đẳng</b>: các thành viên đọc được của nhau (hai chiều).{" "}
-        <b>Chính phụ</b>: bên <b>Chính</b> đọc được bên <b>Phụ</b>, bên Phụ KHÔNG đọc
-        được bên Chính (một chiều).<br />
-        {the.cauGhi}
-      </p>
+      {/* Hướng dẫn GẤP SẴN — đọc một lần là nhớ, để mở suốt thì đẩy phần việc
+          thật xuống dưới màn hình. Dòng tóm tắt luôn thấy. */}
+      <details className="text-[10px] text-muted-foreground leading-relaxed">
+        <summary className="cursor-pointer select-none">
+          Mặc định mỗi nhóm / topic / người là một <b>{the.doiTuong} riêng</b> —
+          bấm để xem cách hoạt động
+        </summary>
+        <div className="mt-1 space-y-1">
+          <p>
+            <b>Bình đẳng</b>: các thành viên đọc được của nhau (hai chiều).{" "}
+            <b>Chính phụ</b>: bên <b>Chính</b> đọc được bên <b>Phụ</b>, bên Phụ KHÔNG
+            đọc được bên Chính (một chiều).
+          </p>
+          <p>{the.cauGhi}</p>
+          <p>
+            Mỗi dòng đã nối có ô <b>Người</b>: để trống là <b>cả nhóm</b>; điền vào là
+            chỉ đúng người đó. Nhóm đã đặt lọc theo từng người («Lọc thread» → cấp
+            User) thì <b>mỗi người là một {the.doiTuong} riêng</b> — ô Người gợi ý sẵn
+            danh sách và nhắc chọn đích danh, vì để trống sẽ nối vào {the.doiTuong}{" "}
+            chung của nhóm mà không ai ghi vào.
+          </p>
+          <p>
+            Trong <b>chính phụ</b>, các bên Chính <b>độc lập với nhau</b> (không tự
+            động bình đẳng), các bên Phụ cũng vậy. Muốn hai bên Chính đọc được của
+            nhau thì tạo thêm một kết nối <b>bình đẳng</b> riêng.
+          </p>
+        </div>
+      </details>
 
       {chonDuoc.length === 0 && (
         <p className="text-[11px] text-amber-600">
@@ -318,9 +341,23 @@ function LinksCard({ the }: { the: CauHinhThe }) {
         </p>
       )}
 
-      {rows.map((r) => (
+      {rows.map((r) => {
+        const soTV = r.kind === "binh_dang"
+          ? r.members.length : r.primary.length + r.secondary.length;
+        // Mở sẵn mối nối CHƯA có ai (đang dựng dở); mối đã xong thì gấp lại cho
+        // trang ngắn — cùng nếp với «Lọc thread».
+        const mo = moRong[r.uiId] ?? soTV === 0;
+        const thieu = r.kind === "binh_dang"
+          ? r.members.length === 1
+          : (r.primary.length === 0 || r.secondary.length === 0);
+        return (
         <div key={r.uiId} className="rounded-lg border border-border p-3 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">
+            <button type="button" aria-label={mo ? "Thu gọn" : "Mở rộng"}
+              className="inline-flex size-5 shrink-0 items-center justify-center rounded border border-border bg-muted/40 text-[10px] text-muted-foreground"
+              onClick={() => setMoRong((s) => ({ ...s, [r.uiId]: !mo }))}>
+              {mo ? "▾" : "▸"}
+            </button>
             <span className={"text-[10px] px-2 py-0.5 rounded-full "
               + (r.kind === "binh_dang"
                 ? "bg-emerald-500/15 text-emerald-600"
@@ -330,6 +367,13 @@ function LinksCard({ the }: { the: CauHinhThe }) {
             <Input className="h-7 text-xs max-w-[240px]" value={r.name}
               placeholder="Tên kết nối (vd: Nhà mình)"
               onChange={(e) => sua(r.uiId, { name: e.target.value })} />
+            {/* Lúc gấp phải thấy ĐỦ để biết có cần mở ra không: số thành viên,
+                và dấu ⚠ nếu mối nối chưa đủ đôi (mở ra mới biết là vô ích). */}
+            {!mo && (
+              <span className="text-[10px] text-muted-foreground">
+                {soTV} thành viên{thieu ? " · ⚠ chưa đủ" : ""}
+              </span>
+            )}
             <label className="flex items-center gap-1 text-[11px]">
               <input type="checkbox" checked={r.enabled}
                 onChange={(e) => sua(r.uiId, { enabled: e.target.checked })} />
@@ -341,6 +385,7 @@ function LinksCard({ the }: { the: CauHinhThe }) {
             </button>
           </div>
 
+          {mo && (<>
           <div className="flex gap-2 flex-wrap">
             {r.kind === "binh_dang" ? (
               <OThanhVien r={r} o="members" tieuDe="Thành viên (đọc được của nhau)" />
@@ -362,20 +407,11 @@ function LinksCard({ the }: { the: CauHinhThe }) {
               Cần ít nhất một bên Chính và một bên Phụ.
             </p>
           )}
+          </>)}
         </div>
-      ))}
+        );
+      })}
 
-      <p className="text-[10px] text-muted-foreground leading-relaxed">
-        Mỗi dòng đã nối có ô <b>Người</b>: để trống là <b>cả nhóm</b> (ai trong nhóm
-        cũng được tính); điền vào là chỉ đúng người đó.<br />
-        Nhóm đã đặt lọc theo từng người (tab «Lọc thread» → cấp User) thì{" "}
-        <b>mỗi người là một {the.doiTuong} riêng</b> — ô Người sẽ gợi ý sẵn danh sách
-        và nhắc chọn đích danh, vì để trống sẽ nối vào {the.doiTuong} chung của nhóm
-        mà không ai ghi vào.<br />
-        Trong <b>chính phụ</b>, các bên Chính <b>độc lập với nhau</b> (không tự động
-        bình đẳng), các bên Phụ cũng vậy. Muốn hai bên Chính đọc được của nhau thì
-        tạo thêm một kết nối <b>bình đẳng</b> riêng.
-      </p>
     </div>
   );
 }

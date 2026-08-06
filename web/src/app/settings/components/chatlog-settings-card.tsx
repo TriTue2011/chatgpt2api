@@ -119,16 +119,29 @@ export function ChatlogSettingsCard() {
 
   return (
     <div className="space-y-3 mt-1">
-      <p className="text-[10px] text-muted-foreground leading-relaxed">
-        <b>Mặc định TẮT.</b> Bật ở đây để bot GHI LẠI mọi tin nó nghe được trong một
-        phạm vi (để sau tóm tắt / tìm «việc nhắc tới tôi»). Bot vẫn chỉ <b>trả lời</b>{" "}
-        khi được tag — ghi ≠ trả lời.<br />
-        Chỉ ghi được ở nơi bot NGHE được tin không-tag: <b>Zalo Cá Nhân</b>, và{" "}
-        <b>Telegram</b> khi bot là admin (hoặc tắt privacy mode). Zalo Bot API chỉ nhận
-        tin có tag nên nhật ký sẽ thưa.<br />
-        Đặt độc lập theo <b>kênh / nhóm / topic / người</b>, khoá hẹp đè khoá rộng
-        (bật cả kênh nhưng tắt riêng một nhóm → nhóm đó không ghi).
-      </p>
+      {/* Hướng dẫn GẤP SẴN — mở suốt thì đẩy danh sách phạm vi xuống dưới màn
+          hình. Câu quan trọng nhất («mặc định TẮT») vẫn thấy lúc gấp. */}
+      <details className="text-[10px] text-muted-foreground leading-relaxed">
+        <summary className="cursor-pointer select-none">
+          <b>Mặc định TẮT</b> — bấm để xem ghi được ở đâu và kế thừa thế nào
+        </summary>
+        <div className="mt-1 space-y-1">
+          <p>
+            Bật ở đây để bot GHI LẠI mọi tin nó nghe được trong một phạm vi (để sau
+            tóm tắt / tìm «việc nhắc tới tôi»). Bot vẫn chỉ <b>trả lời</b> khi được
+            tag — ghi ≠ trả lời.
+          </p>
+          <p>
+            Chỉ ghi được ở nơi bot NGHE được tin không-tag: <b>Zalo Cá Nhân</b>, và{" "}
+            <b>Telegram</b> khi bot là admin (hoặc tắt privacy mode). Zalo Bot API chỉ
+            nhận tin có tag nên nhật ký sẽ thưa.
+          </p>
+          <p>
+            Đặt độc lập theo <b>kênh / nhóm / topic / người</b>, khoá hẹp đè khoá rộng
+            (bật cả kênh nhưng tắt riêng một nhóm → nhóm đó không ghi).
+          </p>
+        </div>
+      </details>
 
       <div className="flex items-center gap-2">
         <select

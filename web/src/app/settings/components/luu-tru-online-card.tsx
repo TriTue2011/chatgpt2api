@@ -99,6 +99,9 @@ export function LuuTruOnlineCard() {
   const [banDo, setBanDo] = useState<Record<string, KhoDocDuoc[]>>({});
   const [dangTai, setDangTai] = useState(true);
   const [chonThem, setChonThem] = useState("");
+  /** Phạm vi nào đang mở. Mặc định GẤP phạm vi đã chọn kho — mỗi khối chiếm gần
+   *  một màn hình nên để mở hết là phải cuộn rất lâu. */
+  const [moRong, setMoRong] = useState<Record<string, boolean>>({});
   /** Thư mục có sẵn trên từng kho — nạp khi bấm «Chọn», để khỏi gõ tay tên thư mục. */
   const [thuMucCua, setThuMucCua] = useState<Record<string, string[]>>({});
   const [dangDoc, setDangDoc] = useState("");
@@ -226,20 +229,38 @@ export function LuuTruOnlineCard() {
           </p>
         ) : null}
 
-        {entries.map(([key, cd]) => (
+        {entries.map(([key, cd]) => {
+          // Mở sẵn phạm vi CHƯA chọn kho (đang dựng dở); phạm vi đã xong thì gấp
+          // lại — mỗi phạm vi chiếm gần một màn hình, ba phạm vi là phải cuộn mãi
+          // mới tới nút thêm.
+          const mo = moRong[key] ?? !cd.kho;
+          return (
           <div key={key} className="space-y-3 rounded-xl border border-[var(--border)] p-4">
             <div className="flex flex-wrap items-center gap-3">
+              <button type="button" aria-label={mo ? "Thu gọn" : "Mở rộng"}
+                className="inline-flex size-6 shrink-0 items-center justify-center rounded border border-[var(--border)] text-xs text-[var(--muted-foreground)]"
+                onClick={() => setMoRong((s) => ({ ...s, [key]: !mo }))}>
+                {mo ? "▾" : "▸"}
+              </button>
               <label className="flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" checked={cd.enabled !== false}
                   onChange={(e) => setEntry(key, { enabled: e.target.checked })} />
                 {nhanMap.get(key) || key}
               </label>
+              {/* Lúc gấp vẫn phải biết nó đang lưu đi đâu, và thiếu gì. */}
+              {!mo && (
+                <span className="text-xs text-[var(--muted-foreground)]">
+                  {cd.kho ? `${cd.kho}:${cd.thu_muc || ""}` : "⚠ chưa chọn kho"}
+                  {cd.kho && !cd.thread_admin ? " · ⚠ chưa chọn thread admin" : ""}
+                </span>
+              )}
               <Button variant="ghost" size="sm" className="ml-auto rounded-lg"
                 onClick={() => xoa(key)}>
                 <Trash2 className="size-4" />
               </Button>
             </div>
 
+            {mo && (<>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1">
                 <label className="text-xs font-medium">Tài khoản lưu</label>
@@ -358,8 +379,10 @@ export function LuuTruOnlineCard() {
               Tệp tự vào thư mục con theo loại: {CAC_MUC.join(" · ")}. Đặt cùng một tài khoản cho nhiều thread
               cũng được — mỗi thread vẫn có thư mục gốc riêng.
             </p>
+            </>)}
           </div>
-        ))}
+          );
+        })}
 
         {/* BẮT BUỘC có: mọi thay đổi phía trên mới chỉ nằm trong trình duyệt.
             Không bấm Lưu thì tải lại trang là mất sạch, và bot không đọc được. */}

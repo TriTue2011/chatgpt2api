@@ -186,3 +186,52 @@ class HanGiu(_Moi):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TagBotTrongLocNhatKyTests(_Moi):
+    """Ô «Tag bot» của «Lọc nhật ký» — CHẠY NGƯỢC CHIỀU các ô khác.
+
+    Chủ máy chốt 07/08: bỏ tick (mặc định) = ghi cả hội thoại KHÔNG tag; tick
+    vào = SIẾT LẠI, chỉ tin có tag bot mới lưu.
+
+    Đây là công tắc tag THỨ BA, rời hẳn hai cái đã có ở «Lọc thread»: trả lời
+    (`thread_mention_filters`) và đẩy webhook (`thread_forward_filters.tag_mode`).
+    Gộp ba cái là hỏng đúng cái ý nghĩa của nhật ký nhóm — **ghi ≠ trả lời**.
+    """
+
+    def _bat_tag_only(self, khoa: str, tag_only: bool):
+        self.cfg.setdefault("chatlog_settings", {})[khoa] = {
+            "enabled": True, "retention_days": 30, "tag_only": tag_only}
+
+    def test_mac_dinh_ghi_ca_tin_khong_tag(self):
+        self._bat("zalop:g1")
+        self.assertTrue(chatlog.ghi(G1, sender_id="9", text="hôm nay trời đẹp",
+                                    tagged=False))
+
+    def test_bat_tag_only_thi_tin_khong_tag_bi_bo(self):
+        self._bat_tag_only("zalop:g1", True)
+        self.assertFalse(chatlog.ghi(G1, sender_id="9", text="hôm nay trời đẹp",
+                                     tagged=False))
+
+    def test_bat_tag_only_van_ghi_tin_co_tag(self):
+        self._bat_tag_only("zalop:g1", True)
+        self.assertTrue(chatlog.ghi(G1, sender_id="9", text="@bot bật đèn",
+                                    tagged=True))
+
+    def test_khong_biet_co_tag_hay_khong_thi_VAN_GHI(self):
+        """Kênh nào quên truyền cờ thì hậu quả là nhật ký RỘNG hơn ý muốn — còn
+        làm ngược lại thì nhật ký im lặng rỗng và không ai biết vì sao."""
+        self._bat_tag_only("zalop:g1", True)
+        self.assertTrue(chatlog.ghi(G1, sender_id="9", text="không rõ", tagged=None))
+
+    def test_cai_dat_tra_ve_tag_only(self):
+        self._bat_tag_only("zalop:g1", True)
+        self.assertTrue(chatlog.cai_dat("zalop", "g1")["tag_only"])
+
+    def test_ban_ghi_CU_khong_co_truong_nay_thi_ghi_het(self):
+        """Cấu hình đang chạy trên máy chủ không có `tag_only` — phải giữ NGUYÊN
+        hành vi cũ, không được im lặng bớt tin của chủ máy."""
+        self._bat("zalop:g1")
+        self.assertFalse(chatlog.cai_dat("zalop", "g1")["tag_only"])
+        self.assertTrue(chatlog.ghi(G1, sender_id="9", text="tin chay",
+                                    tagged=False))
