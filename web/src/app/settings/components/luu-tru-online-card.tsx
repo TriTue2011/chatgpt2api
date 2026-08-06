@@ -282,6 +282,7 @@ export function LuuTruOnlineCard() {
                 </select>
                 <p className="text-xs text-[var(--muted-foreground)]">
                   Nhiều admin thì phải chỉ rõ gửi cho ai. Bỏ trống = không hỏi, tệp không được lưu.
+                  Phải chọn thread CÙNG KÊNH với nơi nhận tệp — trả lời chéo kênh chưa hỗ trợ.
                 </p>
               </div>
               <div className="space-y-1">

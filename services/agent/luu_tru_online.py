@@ -24,10 +24,14 @@ KHÁC nhật ký ở ba chỗ, đừng bê nguyên si:
 """
 from __future__ import annotations
 
+import json
 import re
+import threading
+import time
+from pathlib import Path
 from typing import Any
 
-from services.config import config
+from services.config import DATA_DIR, config
 from utils.log import logger
 
 # Hạn giữ online mặc định: dài hơn hạn cục bộ (30 ngày của images) để đám mây
@@ -193,7 +197,7 @@ def dat_luon_luon_luu(kenh: str, chat: str, topic: str = "", user: str = "") -> 
                 config.update({"luu_tru_online": moi})
                 return True
     except Exception as exc:
-        logger.warning("luu_tru_online: đặt luôn-luôn-lưu lỗi: %s", str(exc)[:120])
+        logger.warning(f"luu_tru_online: đặt luôn-luôn-lưu lỗi: {str(exc)[:120]}")
     return False
 
 
@@ -219,6 +223,68 @@ def thread_admin_nhan(kenh: str, chat: str = "", topic: str = "", user: str = ""
             if t:
                 return t
     return ""
+
+
+# ── Sổ những tệp ĐÃ ĐẨY LÊN ──────────────────────────────────────────────────
+# Vì sao phải có sổ: hạn giữ online nghĩa là XOÁ tệp trên tài khoản đám mây của
+# chủ máy. Nếu dọn theo kiểu "liệt kê thư mục rồi xoá tệp cũ hơn N ngày" thì một
+# thư mục chủ máy chọn sẵn (đã có tài liệu riêng trong đó) sẽ bị bot xoá mất tài
+# liệu cũ — hỏng dữ liệu thật, không phải chỉ mất tính năng.
+#
+# Nên: chỉ xoá đúng những tệp CHÍNH BOT đã đẩy lên, ghi lại trong sổ này. Mất sổ
+# thì không xoá gì cả — hỏng về phía an toàn.
+
+_SO_PATH = Path(DATA_DIR) / "agent" / "luu_tru_da_day.json"
+_TRAN_SO = 20000            # van an toàn, đừng để sổ phình vô hạn
+_khoa_so = threading.RLock()
+
+
+def _doc_so() -> dict[str, dict]:
+    try:
+        v = json.loads(_SO_PATH.read_text("utf-8"))
+        return v if isinstance(v, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _ghi_so_file(so: dict[str, dict]) -> None:
+    try:
+        _SO_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SO_PATH.write_text(json.dumps(so, ensure_ascii=False), "utf-8")
+    except OSError as exc:
+        logger.warning(f"luu_tru_online: ghi sổ lỗi: {str(exc)[:120]}")
+
+
+def ghi_so(duong_dan: str, kenh: str, chat: str, topic: str = "", user: str = "",
+           *, nhat_ky: bool = False) -> None:
+    """Ghi nhận một tệp đã đẩy lên, kèm phạm vi để sau tra đúng hạn giữ của nó."""
+    dd = str(duong_dan or "").strip()
+    if not dd:
+        return
+    with _khoa_so:
+        so = _doc_so()
+        so[dd] = {"luc": time.time(), "pham_vi": [kenh, chat, topic, user],
+                  "nhat_ky": bool(nhat_ky)}
+        if len(so) > _TRAN_SO:
+            cu = sorted(so.items(), key=lambda kv: float(kv[1].get("luc") or 0))
+            so = dict(cu[-_TRAN_SO:])
+        _ghi_so_file(so)
+
+
+def so_da_day() -> dict[str, dict]:
+    """Toàn bộ sổ — {đường dẫn trên kho: {luc, pham_vi, nhat_ky}}."""
+    with _khoa_so:
+        return _doc_so()
+
+
+def xoa_khoi_so(cac_duong_dan: list[str]) -> None:
+    if not cac_duong_dan:
+        return
+    with _khoa_so:
+        so = _doc_so()
+        for dd in cac_duong_dan:
+            so.pop(str(dd), None)
+        _ghi_so_file(so)
 
 
 def canh_bao_ma_hoa(kho: str) -> str:

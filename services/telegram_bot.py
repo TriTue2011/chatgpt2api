@@ -614,6 +614,24 @@ def send_message(chat_id: int | str, text: str,
     return last
 
 
+def gui_chu_dong(dich: str, text: str) -> bool:
+    """Gửi tới một thread KHÁC thread đang xử lý. `dich` dạng '<chat>[:<topic>]'.
+
+    Phải xoá topic thread-local trước khi gửi: `send_message` ưu tiên topic của
+    TIN ĐANG XỬ LÝ để trả lời đúng chỗ người ta hỏi, nhưng ở đây đích là chỗ
+    khác — giữ topic cũ là gửi vào một topic không tồn tại bên chat đích.
+    """
+    truoc = getattr(_current, "topic", None)
+    _current.topic = ""
+    try:
+        return bool(send_message(dich, text).get("ok"))
+    except Exception as exc:
+        logger.warning("tg gửi chủ động tới %s lỗi: %s", dich, str(exc)[:150])
+        return False
+    finally:
+        _current.topic = truoc
+
+
 def _send_agent_reply(chat_id: str, out: dict) -> None:
     """Send orchestrator text (+ optional ask-choice inline keyboard)."""
     from services.agent import ask_choices as _ask
@@ -915,6 +933,23 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str) -> bool:
 def _download_file(file_id: str) -> bytes | None:
     """Download a file from Telegram by file_id."""
     return _cli().download_file(file_id)
+
+
+def _moi_luu_online(chat_id: str, user_id: str, chat_name: str,
+                    ten_tep: str, du_lieu: bytes) -> None:
+    """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
+
+    Mặc định phạm vi nào cũng TẮT nên hàm này thường thoát ngay, và mọi lỗi đều
+    chặn tại đây: nhận tệp là việc chính, lưu đám mây là việc phụ đi kèm.
+    """
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu("tg", str(chat_id), user=str(user_id or ""),
+                     topic=str(_cur_topic() or ""),
+                     ten_tep=ten_tep, du_lieu=du_lieu,
+                     ten_nhom=str(chat_name or ""), dinh_danh=str(_bot_id() or ""))
+    except Exception as exc:
+        logger.warning("tg luu_tru_online: %s", str(exc)[:150])
 
 
 def _do_pdf_intent(
@@ -1395,6 +1430,16 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     if is_group and chat_id:
         _req, _kw = _caps.mention_required_for(
             "tg", _bot_id(), chat_id, _cur_topic())
+        # NGOẠI LỆ: nhóm này đang được hỏi "lưu tệp lên kho đám mây?" thì câu
+        # trả lời "1/2/3" không tag vẫn phải qua cổng. Không có ngoại lệ này là
+        # bot tự hỏi rồi tự bịt tai — đúng cái đã xảy ra với ảnh hôm 06/08.
+        # Chỉ mở cho ĐÚNG câu trả lời, không mở cho mọi tin trong 30 phút chờ:
+        # mở rộng thế là tắt luôn yêu cầu tag của nhóm đó.
+        if _req and text:
+            from services.agent import luu_tru_day as _ltd_cho
+            if _ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
+                    "tg", str(_bot_id() or ""), str(chat_id)), text):
+                _req = False
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
@@ -1500,6 +1545,18 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                 )
             return
 
+    # Lưu trữ online: admin trả lời "1/2/3" cho tệp đang chờ. Khoá theo THREAD
+    # (không kèm người) vì nhóm admin thì ai trả lời cũng được. Đặt SAU các bản
+    # chờ pdf/ảnh: những bản chờ đó theo TỪNG NGƯỜI nên là việc riêng của họ,
+    # phải được ưu tiên trước câu hỏi chung của cả thread.
+    if text and not photo and not document:
+        from services.agent import luu_tru_day as _ltd
+        _khoa_kho = _ltd.khoa_cho_thread("tg", str(_bot_id() or ""), str(chat_id))
+        _chon_kho = _ltd.chon_tu_tra_loi(_khoa_kho, text)
+        if _chon_kho:
+            send_message(chat_id, _ltd.tra_loi(_khoa_kho, _chon_kho)["text"])
+            return
+
     # Handle photo — có caption: thử parse menu/intent; không caption: menu
     if photo:
         _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -1514,6 +1571,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         if not file_data:
             send_message(chat_id, _img_err)
             return
+        # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
+        from services.agent.luu_tru_day import ten_anh as _ten_anh
+        _moi_luu_online(chat_id, user_id, chat_name, _ten_anh(file_data), file_data)
         caption = (text or "").strip()
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:
@@ -1567,6 +1627,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         _pdf_info = _pi.set_pending(f"tg:{_bot_id()}:{chat_id}:{user_id or ''}",
                                     file_data, doc_name, _duoi)
         send_message(chat_id, _pi.ask_text(doc_name, _pdf_intents, _pdf_info))
+        _moi_luu_online(chat_id, user_id, chat_name, doc_name, file_data)
         return
 
     if not text or not chat_id:

@@ -1267,6 +1267,21 @@ def _maybe_voice_reply(chat_id: str, user_id: str, reply: str, *, is_group: bool
     return False
 
 
+def _moi_luu_online(chat_id: str, user_id: str, ten_tep: str,
+                    du_lieu: bytes) -> None:
+    """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
+
+    Mặc định phạm vi nào cũng TẮT nên hàm này thường thoát ngay.
+    """
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu("zalo", str(chat_id), user=str(user_id or ""),
+                     ten_tep=ten_tep, du_lieu=du_lieu,
+                     dinh_danh=str(_bot_id() or ""))
+    except Exception as exc:
+        logger.warning(f"zalo luu_tru_online: {str(exc)[:150]}")
+
+
 def _handle_pdf(chat_id: str, url: str, name: str = "",
                 allow: set[str] | None = None, user_id: str = "") -> None:
     """Nhận PDF → RAG kiến thức / teacher (Zalo Bot KHÔNG gửi Word/Excel)."""
@@ -1293,6 +1308,7 @@ def _handle_pdf(chat_id: str, url: str, name: str = "",
     info = _pi.set_pending(f"zalo:{_bot_id()}:{chat_id}:{user_id or ''}",
                            data, name or "document.pdf")
     send_message(chat_id, _pi.ask_text(name or "PDF", intents, info))
+    _moi_luu_online(chat_id, user_id, name or "document.pdf", data)
 
 
 def _zalo_journal(
@@ -1808,6 +1824,14 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     # Keyword có → phải khớp (hoặc text chứa id/label bot).
     if is_group and chat_id:
         _req, _kw = _caps.mention_required_for("zalo", _bot_id(), chat_id)
+        # NGOẠI LỆ: nhóm này đang được hỏi "lưu tệp lên kho đám mây?" thì câu
+        # trả lời "1/2/3" không tag vẫn phải qua cổng. Chỉ mở cho ĐÚNG câu trả
+        # lời, không mở cho mọi tin trong 30 phút chờ.
+        if _req and text:
+            from services.agent import luu_tru_day as _ltd_cho
+            if _ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
+                    "zalo", str(_bot_id() or ""), str(chat_id)), text):
+                _req = False
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
@@ -1949,6 +1973,17 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         )
         return
 
+    # Lưu trữ online: admin trả lời "1/2/3" cho tệp đang chờ. Khoá theo THREAD
+    # (không kèm người) vì nhóm admin thì ai trả lời cũng được. Đặt SAU các bản
+    # chờ pdf/ảnh: những bản chờ đó theo TỪNG NGƯỜI nên là việc riêng của họ.
+    if text and not photo_url and not file_url:
+        from services.agent import luu_tru_day as _ltd
+        _khoa_kho = _ltd.khoa_cho_thread("zalo", str(_bot_id() or ""), str(chat_id))
+        _chon_kho = _ltd.chon_tu_tra_loi(_khoa_kho, text)
+        if _chon_kho:
+            send_message(chat_id, _ltd.tra_loi(_khoa_kho, _chon_kho)["text"])
+            return
+
     # Ảnh: không caption → menu 1–4; có caption → parse intent / hỏi prompt nếu cần.
     if photo_url:
         _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -1961,6 +1996,9 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
         if not data:
             send_message(chat_id, _img_err)
             return
+        # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
+        from services.agent.luu_tru_day import ten_anh as _ten_anh
+        _moi_luu_online(chat_id, user_id, _ten_anh(data), data)
         caption = (text or "").strip()
         _allowed_ph = _phi.allowed_intents(_allow)
         if not caption:

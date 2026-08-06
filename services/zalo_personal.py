@@ -823,6 +823,24 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     return last
 
 
+def gui_chu_dong(thread_id: str, text: str, *, account: str = "") -> dict:
+    """Gửi tới một thread KHÁC thread đang xử lý — tự dò chat riêng hay nhóm.
+
+    Cấu hình chỉ ghi id thread, không ghi loại; gửi sai loại thì zca-js báo lỗi
+    và tin không tới nơi. Nên thử loại đoán được trước, hỏng thì thử chiều còn
+    lại — thà tốn một lời gọi còn hơn câu hỏi xác nhận rơi vào hư không.
+    """
+    from services.admin_workspace import guess_chat_kind
+    thu = [1, 0] if guess_chat_kind(thread_id) == "group" else [0, 1]
+    kq: dict = {"ok": False}
+    for tt in thu:
+        kq = send_message(thread_id, text, tt, account=account,
+                          rich=False, co_nut_chon=True)
+        if kq.get("ok"):
+            return kq
+    return kq
+
+
 def send_photo(thread_id: str, image_url: str, caption: str = "",
                thread_type: int = 0, account: str = "") -> dict:
     acc = _account_for_send(account)
@@ -1811,6 +1829,25 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
     logger.warning("zalop Word sendFile fail path=%s", link)
 
 
+def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes) -> None:
+    """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
+
+    Mặc định phạm vi nào cũng TẮT nên hàm này thường thoát ngay, và mọi lỗi đều
+    chặn tại đây: nhận tệp là việc chính, lưu đám mây là việc phụ đi kèm.
+    """
+    try:
+        from services.agent import luu_tru_day as _ltd
+        _ltd.moi_luu(
+            "zalop", str(thread_id),
+            user=str(ev.get("sender_id") or ""),
+            ten_tep=ten_tep, du_lieu=du_lieu,
+            ten_nhom=str(ev.get("chat_name") or ""),
+            dinh_danh=str(ev.get("account_id") or ""),
+        )
+    except Exception as exc:
+        logger.warning("zalop luu_tru_online: %s", str(exc)[:150])
+
+
 def _do_pdf_intent(
     thread_id: str,
     thread_type: int,
@@ -2203,8 +2240,16 @@ def _process_ai(ev: dict) -> None:
         # cổng loại ngay, không lời gọi vision nào (đo thật 06/08 lúc 07:07).
         from services import photo_intent as _phi_cho
         from services import pdf_intent as _pi_cho
+        # Bản chờ «lưu tệp lên kho đám mây?» khoá theo THREAD (nhóm admin thì ai
+        # trả lời cũng được), khác ba bản chờ trên khoá theo từng người. Chỉ mở
+        # cổng cho ĐÚNG câu trả lời "1/2/3", không mở cho mọi tin trong 30 phút
+        # chờ — mở rộng thế là tắt luôn yêu cầu tag của nhóm đó.
+        from services.agent import luu_tru_day as _ltd_cho
         _dang_cho = (_phi_cho.dang_cho_anh(pkey) or _phi_cho.has_pending(pkey)
-                     or _pi_cho.has_pending(pkey))
+                     or _pi_cho.has_pending(pkey)
+                     or bool(_ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
+                         "zalop", str(ev.get("account_id") or ""),
+                         str(thread_id)), text or "")))
         _req, _kw = _caps.mention_required_for("zalop", ev.get("account_id") or "", thread_id)
         if _dang_cho:
             _req = False
@@ -2332,6 +2377,20 @@ def _process_ai(ev: dict) -> None:
                 )
             return
 
+    # Lưu trữ online: admin trả lời "1/2/3" cho tệp đang chờ. Khoá theo THREAD
+    # (không kèm người) vì nhóm admin thì ai trả lời cũng được. Đặt SAU các bản
+    # chờ pdf/ảnh: những bản chờ đó theo TỪNG NGƯỜI nên là việc riêng của họ,
+    # phải được ưu tiên trước câu hỏi chung của cả thread.
+    if text and ev.get("msg_type") not in {"share.file", "chat.photo"}:
+        from services.agent import luu_tru_day as _ltd
+        _khoa_kho = _ltd.khoa_cho_thread("zalop", str(ev.get("account_id") or ""),
+                                         str(thread_id))
+        _chon_kho = _ltd.chon_tu_tra_loi(_khoa_kho, text)
+        if _chon_kho:
+            send_message(thread_id, _ltd.tra_loi(_khoa_kho, _chon_kho)["text"],
+                         thread_type)
+            return
+
     # File đính kèm
     if ev.get("msg_type") == "share.file" and ev.get("attachment_url"):
         name = (ev.get("file_name") or "").strip()
@@ -2359,6 +2418,7 @@ def _process_ai(ev: dict) -> None:
                          _pi.ask_text(name or ("Office" if _la_office else "PDF"),
                                       intents, info),
                          thread_type)
+            _moi_luu_online(ev, thread_id, name or "document.pdf", data)
             return
         send_message(thread_id,
                      f"📎 Em nhận PDF, Word, Excel và PowerPoint thôi ạ. "
@@ -2378,6 +2438,9 @@ def _process_ai(ev: dict) -> None:
         if not data:
             send_message(thread_id, _img_err, thread_type)
             return
+        # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
+        from services.agent.luu_tru_day import ten_anh as _ten_anh
+        _moi_luu_online(ev, thread_id, _ten_anh(data), data)
         # Bóc phần tag bot ra trước khi xét "có nói gì không". Trong nhóm phải
         # tag mới gọi được bot, nên lời kèm ảnh gần như luôn mở đầu bằng
         # '@TenBot' — không bóc thì nó không bao giờ rỗng và nhánh hiện menu bên

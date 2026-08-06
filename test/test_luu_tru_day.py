@@ -35,7 +35,7 @@ class _Nen:
     def __init__(self):
         self.da_day = []
 
-    def __call__(self, tep, cd, nhat_ky=False):
+    def __call__(self, tep, cd, nhat_ky=False, pham_vi=None):
         if not (cd or {}).get("enabled"):
             return False
         self.da_day.append((tep, lt.duong_dan_dich(cd, Path(tep).name, nhat_ky=nhat_ky)))
@@ -140,6 +140,260 @@ class CauHoiTests(unittest.TestCase):
 
     def test_co_duong_thoat_khoi_bi_hoi_mai(self):
         self.assertIn("khỏi hỏi lại", ld.cau_hoi("a.pdf"))
+
+
+class DocTraLoiCuaAdminTests(_Base):
+    """Admin gõ "1" phải ra đúng lệnh, và tra nhiều lần vẫn ra cùng kết quả."""
+
+    KHOA = "zalop:acc:admin1"
+
+    def setUp(self):
+        super().setUp()
+        ld._cho.clear()
+        ld.dat_cho(self.KHOA, tep=str(self.tep), kenh="zalop", chat="nhom1")
+
+    def test_go_so_ra_dung_lua_chon(self):
+        for so in (1, 2, 3):
+            with self.subTest(so=so):
+                self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, str(so)), so)
+
+    def test_go_dung_nhan_cung_ra_lua_chon(self):
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, ld.LUA_CHON[2]), 3)
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, ld.LENH[0]), 1)
+
+    def test_khong_phan_biet_hoa_thuong(self):
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "XOÁ"), 3)
+
+    def test_cau_thuong_khong_bi_nhan_vo(self):
+        for t in ("hôm nay trời đẹp", "gửi file cho nhóm A", "", "4", "10"):
+            with self.subTest(t=t):
+                self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, t), 0)
+
+    def test_khong_co_tep_cho_thi_so_khong_co_nghia(self):
+        """Nhóm admin nói chuyện bình thường: mọi câu "1" không được thành lệnh."""
+        ld.bo_cho(self.KHOA)
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "1"), 0)
+
+    def test_tra_hai_lan_van_ra_ket_qua(self):
+        """Cổng tag tra một lần, phần xử lý tra lần nữa — tra là mất thì hỏng."""
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "1"), 1)
+        self.assertEqual(ld.chon_tu_tra_loi(self.KHOA, "1"), 1)
+
+    def test_chi_tra_loi_moi_tieu_ban_cho(self):
+        ld.chon_tu_tra_loi(self.KHOA, "1")
+        self.assertTrue(ld.lay_cho(self.KHOA))
+        ld.tra_loi(self.KHOA, 1)
+        self.assertFalse(ld.lay_cho(self.KHOA))
+
+    def test_cau_hoi_da_danh_so_cho_admin_doc(self):
+        s = ld.chuan_bi_hoi("bao-cao.pdf", ten_nhom="Nhóm A")
+        self.assertNotIn("<<<ASK>>>", s, "khối điều khiển phải bóc trước khi gửi")
+        self.assertIn("bao-cao.pdf", s)
+        self.assertIn("Nhóm A", s)
+        for i, nhan in enumerate(ld.LUA_CHON, 1):
+            self.assertIn(f"{i}. {nhan}", s)
+
+
+class TachThreadAdminTests(unittest.TestCase):
+
+    def test_khoa_nhom(self):
+        self.assertEqual(ld.tach_thread_admin("zalop:nhom9"), ("zalop", "nhom9", ""))
+
+    def test_khoa_co_topic(self):
+        self.assertEqual(ld.tach_thread_admin("tg:-100123#7"), ("tg", "-100123", "7"))
+
+    def test_khoa_cap_nguoi_van_ra_thread(self):
+        self.assertEqual(ld.tach_thread_admin("zalop:nhom9:userA"),
+                         ("zalop", "nhom9", ""))
+        self.assertEqual(ld.tach_thread_admin("tg:-100123#7:9"),
+                         ("tg", "-100123", "7"))
+
+    def test_khoa_ca_kenh_khong_gui_duoc(self):
+        """'zalop' là cả kênh — không có thread nào để gửi tới."""
+        self.assertEqual(ld.tach_thread_admin("zalop"), ("", "", ""))
+
+
+class DuoiAnhTests(unittest.TestCase):
+    """Đặt sai đuôi là trên đám mây mở ra bằng ứng dụng sai."""
+
+    def test_nhan_theo_byte_dau(self):
+        for dau, mong in ((b"\xff\xd8\xff\xe0", ".jpg"), (b"\x89PNG\r\n", ".png"),
+                          (b"GIF89a", ".gif"), (b"RIFF\x00\x00\x00\x00WEBP", ".webp")):
+            with self.subTest(mong=mong):
+                self.assertEqual(ld.duoi_anh(dau), mong)
+
+    def test_khong_nhan_ra_thi_ve_jpg(self):
+        self.assertEqual(ld.duoi_anh(b"khong ro"), ".jpg")
+
+    def test_ten_anh_vao_dung_muc_anh(self):
+        self.assertEqual(lt.thu_muc_loai(ld.ten_anh(b"\x89PNG\r\n")), "Ảnh")
+
+
+class MoiLuuTests(unittest.TestCase):
+    """Cổng vào: tệp vừa nhận có được hỏi/đẩy hay không."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # Khoá phía cục bộ của rclone: ép thư mục làm việc về thư mục tạm.
+        from services import rclone_service as rcl
+        self._ws_goc = rcl.workspace_dir
+        rcl.workspace_dir = lambda: Path(self.tmp.name)
+        self.addCleanup(setattr, rcl, "workspace_dir", self._ws_goc)
+
+        self.nen = _Nen()
+        self._day_goc = ld.day_nen
+        ld.day_nen = self.nen
+        self.addCleanup(setattr, ld, "day_nen", self._day_goc)
+
+        self.da_gui = []
+        self._gui_goc = ld.gui_toi_admin
+        ld.gui_toi_admin = lambda khoa, text, dinh_danh="": (
+            self.da_gui.append((khoa, text)) or True)
+        self.addCleanup(setattr, ld, "gui_toi_admin", self._gui_goc)
+
+        self._cfg_goc = lt.config
+        self.addCleanup(setattr, lt, "config", self._cfg_goc)
+        ld._cho.clear()
+
+    def _cau_hinh(self, **them):
+        goc = {"enabled": True, "kho": "drive", "thu_muc": "GD",
+               "hoi_truoc": True, "thread_admin": "zalop:admin9"}
+        lt.config = _CauHinhGia({"luu_tru_online": {"zalop:nhom1": {**goc, **them}}})
+
+    def _goi(self):
+        ld.moi_luu("zalop", "nhom1", ten_tep="bao-cao.pdf", du_lieu=b"x",
+                   dinh_danh="acc1")
+
+    def test_pham_vi_tat_thi_khong_dong_gi(self):
+        self._cau_hinh(enabled=False)
+        self._goi()
+        self.assertEqual(self.da_gui, [])
+        self.assertEqual(self.nen.da_day, [])
+
+    def test_bat_thi_hoi_dung_thread_admin(self):
+        self._cau_hinh()
+        self._goi()
+        self.assertEqual(len(self.da_gui), 1)
+        self.assertEqual(self.da_gui[0][0], "zalop:admin9")
+        self.assertIn("bao-cao.pdf", self.da_gui[0][1])
+
+    def test_hoi_xong_moi_day_chu_khong_day_truoc(self):
+        """Chủ máy chốt: xoá là KHÔNG lên mây — nên không được đẩy lúc hỏi."""
+        self._cau_hinh()
+        self._goi()
+        self.assertEqual(self.nen.da_day, [], "đẩy lên trước khi admin trả lời")
+
+    def test_ban_cho_dat_dung_khoa_thread_admin(self):
+        self._cau_hinh()
+        self._goi()
+        self.assertTrue(ld.lay_cho("zalop:acc1:admin9"),
+                        "khoá bản chờ phải khớp khoá kênh dựng lúc đọc trả lời")
+
+    def test_tat_hoi_truoc_thi_day_thang(self):
+        self._cau_hinh(hoi_truoc=False)
+        self._goi()
+        self.assertEqual(self.da_gui, [])
+        self.assertEqual(len(self.nen.da_day), 1)
+        self.assertEqual(self.nen.da_day[0][1], "drive:GD/PDF")
+
+    def test_chua_chon_admin_thi_khong_hoi_va_khong_luu(self):
+        self._cau_hinh(thread_admin="")
+        self._goi()
+        self.assertEqual(self.da_gui, [])
+        self.assertEqual(self.nen.da_day, [])
+
+    def test_admin_khac_kenh_thi_bo_qua_chu_khong_hoi_hong(self):
+        """Gửi được sang kênh khác nhưng trả lời tra không ra — đừng hỏi nửa vời."""
+        self._cau_hinh(thread_admin="tg:-100999")
+        self._goi()
+        self.assertEqual(self.da_gui, [])
+        self.assertEqual(self.nen.da_day, [])
+
+    def test_tep_nam_trong_thu_muc_lam_viec(self):
+        """rclone bị khoá trong workspace — ngoài đó là không gửi lên được."""
+        self._cau_hinh()
+        self._goi()
+        tep = Path(ld.lay_cho("zalop:acc1:admin9")["tep"])
+        self.assertTrue(tep.exists())
+        self.assertIn(Path(self.tmp.name), tep.parents)
+
+    def test_trung_ten_khong_ghi_de_tep_truoc(self):
+        self._cau_hinh()
+        self._goi()
+        t1 = ld.lay_cho("zalop:acc1:admin9")["tep"]
+        ld.moi_luu("zalop", "nhom1", ten_tep="bao-cao.pdf", du_lieu=b"khac",
+                   dinh_danh="acc1")
+        t2 = ld.lay_cho("zalop:acc1:admin9")["tep"]
+        self.assertNotEqual(t1, t2)
+        self.assertEqual(Path(t1).read_bytes(), b"x")
+
+    def test_ten_tep_co_ky_tu_thoat_thu_muc(self):
+        self._cau_hinh()
+        ld.moi_luu("zalop", "nhom1", ten_tep="../../etc/passwd", du_lieu=b"x",
+                   dinh_danh="acc1")
+        tep = Path(ld.lay_cho("zalop:acc1:admin9")["tep"])
+        self.assertIn(Path(self.tmp.name), tep.parents)
+
+
+class NoiVaoKenhTests(unittest.TestCase):
+    """Ba kênh phải THẬT SỰ gọi vào — làm module xong mà không cắm là vô dụng.
+
+    Giao diện «Lưu trữ online» cho chọn cả ba kênh, nên kênh nào không cắm là ô
+    tích ở đó bật lên mà không có gì xảy ra, và không có lỗi nào để lần ra.
+    """
+
+    KENH = ("zalo_personal.py", "telegram_bot.py", "zalo_bot.py")
+
+    def _src(self, ten):
+        return (GOC / "services" / ten).read_text("utf-8")
+
+    def test_moi_kenh_moi_luu_ca_tep_va_anh(self):
+        for ten in self.KENH:
+            with self.subTest(ten=ten):
+                src = self._src(ten)
+                self.assertIn("_ltd.moi_luu(", src)
+                self.assertGreaterEqual(
+                    src.count("_moi_luu_online("), 3,
+                    "cần gọi ở cả nhánh nhận tệp và nhánh nhận ảnh")
+
+    def test_moi_kenh_deu_doc_tra_loi_admin(self):
+        for ten in self.KENH:
+            with self.subTest(ten=ten):
+                src = self._src(ten)
+                self.assertIn("_ltd.khoa_cho_thread(", src)
+                self.assertIn("chon_tu_tra_loi(", src)
+                self.assertIn("_ltd.tra_loi(", src)
+
+    def test_cong_tag_mo_cho_cau_tra_loi_cua_admin(self):
+        """Nhóm admin bắt buộc tag: gõ "1" mà bị cổng tag loại là bot tự bịt tai."""
+        for ten in self.KENH:
+            with self.subTest(ten=ten):
+                src = self._src(ten)
+                i_cong = src.index("Bộ lọc TAG")
+                i_doc = src.index("_ltd_cho.chon_tu_tra_loi(")
+                i_xu_ly = src.index("_ltd.tra_loi(")
+                self.assertLess(i_doc, i_xu_ly,
+                                "cổng tag phải tra bản chờ TRƯỚC phần xử lý")
+                self.assertLess(abs(i_doc - i_cong), 2000,
+                                "lời tra phải nằm trong khối cổng tag")
+
+    def test_khoa_dat_va_khoa_doc_dung_MOT_ham(self):
+        """Dựng khoá một đằng tra một nẻo là lỗi đã gặp — ép cả hai qua một hàm."""
+        for ten in self.KENH:
+            with self.subTest(ten=ten):
+                self.assertIn("_ltd.khoa_cho_thread(", self._src(ten))
+
+    def test_kenh_dung_dung_tien_to_cua_no(self):
+        """Sai tiền tố là bản chờ đặt một chỗ, tra một chỗ khác."""
+        for ten, tien_to in (("zalo_personal.py", '"zalop"'),
+                             ("telegram_bot.py", '"tg"'),
+                             ("zalo_bot.py", '"zalo"')):
+            with self.subTest(ten=ten):
+                import re
+                src = self._src(ten)
+                self.assertIn(f"khoa_cho_thread({tien_to}", src)
+                self.assertRegex(src, re.compile(r"moi_luu\(\s*" + tien_to))
 
 
 if __name__ == "__main__":
