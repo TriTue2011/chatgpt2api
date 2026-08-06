@@ -100,6 +100,13 @@ def create_app() -> FastAPI:
             start_codex_refresh()
         except Exception as exc:
             _record_startup_failure("codex_refresh_scheduler", str(exc))
+        # Đồng bộ nhật ký nhóm lên đám mây + dọn tệp online quá hạn giữ. Tự nằm
+        # im nếu không phạm vi nào bật «Lưu trữ online» (mặc định TẮT hết).
+        try:
+            from services.agent.nhat_ky_dong_bo import start as start_nhat_ky_sync
+            start_nhat_ky_sync()
+        except Exception as exc:
+            _record_startup_failure("nhat_ky_dong_bo", str(exc))
         # Định kỳ tự tìm & nạp SGK (mặc định TẮT — bật ở Cài đặt Giáo viên)
         try:
             from services.sgk_autofill_scheduler import start as start_sgk_autofill

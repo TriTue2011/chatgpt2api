@@ -282,6 +282,50 @@ def nhac_toi(user_id: str, me: str, *, ngay: int = 7,
     return out
 
 
+# ── Đọc theo phạm vi để ĐỒNG BỘ LÊN ĐÁM MÂY ──────────────────────────────────
+# Khác các hàm đọc ở trên: không đi theo kết nối bộ nhớ, không lọc người-được-
+# nhắc. Đồng bộ là sao lưu NGUYÊN SỔ của đúng một phạm vi, nên phải đọc thô.
+
+def cac_scope() -> list[str]:
+    """Mọi phạm vi đang có tin trong nhật ký."""
+    try:
+        with _lock:
+            rows = _db().execute("SELECT DISTINCT scope FROM chatlog").fetchall()
+    except Exception:
+        return []
+    return [r[0] for r in rows if r[0]]
+
+
+def ngay_va_dem(scope_key: str) -> dict[str, tuple[int, float]]:
+    """{ngày: (số tin, ts mới nhất)} của một phạm vi.
+
+    Dùng để biết một NGÀY có đổi gì kể từ lần đồng bộ trước hay không — đẩy lại
+    nguyên tệp mỗi đêm cho những ngày không đổi là tốn băng thông vô ích.
+    """
+    try:
+        with _lock:
+            rows = _db().execute(
+                "SELECT day, COUNT(*), MAX(ts) FROM chatlog WHERE scope=?"
+                " GROUP BY day ORDER BY day", (str(scope_key),)).fetchall()
+    except Exception:
+        return {}
+    return {r[0]: (int(r[1] or 0), float(r[2] or 0)) for r in rows if r[0]}
+
+
+def doc_scope_ngay(scope_key: str, day: str) -> list[dict[str, Any]]:
+    """Toàn bộ tin của một phạm vi trong một ngày, theo thứ tự thời gian."""
+    try:
+        with _lock:
+            rows = _db().execute(
+                "SELECT ts, day, sender_id, sender_name, text FROM chatlog"
+                " WHERE scope=? AND day=? ORDER BY ts", (str(scope_key), str(day))
+            ).fetchall()
+    except Exception:
+        return []
+    return [{"ts": r[0], "ngay": r[1], "sender_id": r[2] or "",
+             "sender": r[3] or r[2] or "", "text": r[4]} for r in rows]
+
+
 # ── Luật «tự nhắc» + quét nền ────────────────────────────────────────────────
 
 _LEAD_MAC_DINH = [1440, 60]     # nhắc trước 1 ngày và 1 giờ (phút)
