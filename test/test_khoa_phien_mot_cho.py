@@ -41,11 +41,43 @@ class KhoaPhien(unittest.TestCase):
                             tg.khoa_phien("-100", "8", "9"))
 
     def test_tat_group_user_isolation_thi_khong_kem_nguoi(self):
-        from services.config import config
-        with mock.patch.object(type(config), "group_user_isolation",
-                               new_callable=mock.PropertyMock,
-                               return_value=False, create=True):
+        """Công tắc nằm trong CONFIG, không phải thuộc tính của đối tượng config.
+
+        Bản cũ của bài này patch `type(config).group_user_isolation` với
+        `create=True` — tức TỰ BỊA ra một thuộc tính không tồn tại. Nó chỉ chứng
+        minh "nếu config có thuộc tính đó thì mã sẽ đọc", chưa bao giờ chứng minh
+        công tắc chạy thật; và đo trên máy chủ 06/08 thì khoá không hề nằm trong
+        config.json nên `getattr(..., True)` luôn trả mặc định.
+        """
+        import services.config as cfg_mod
+
+        class _Gia:
+            def __init__(self, d):
+                self.data = d
+
+            def get(self):
+                return self.data
+
+        goc = cfg_mod.config
+        cfg_mod.config = _Gia({"group_user_isolation": False})
+        try:
             self.assertEqual(tg.khoa_phien("-100", "", "9"), "-100")
+        finally:
+            cfg_mod.config = goc
+
+    def test_khong_khai_cong_tac_thi_MAC_DINH_tach_theo_nguoi(self):
+        import services.config as cfg_mod
+
+        class _Gia:
+            def get(self):
+                return {}
+
+        goc = cfg_mod.config
+        cfg_mod.config = _Gia()
+        try:
+            self.assertEqual(tg.khoa_phien("-100", "", "9"), "-100:u9")
+        finally:
+            cfg_mod.config = goc
 
     def test_khong_biet_nguoi_gui_thi_ve_khoa_nhom(self):
         self.assertEqual(tg.khoa_phien("-100", "", ""), "-100")
