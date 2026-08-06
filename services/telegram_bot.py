@@ -1481,6 +1481,16 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             if _ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
                     "tg", str(_bot_id() or ""), str(chat_id)), text):
                 _req = False
+        # Tag bot = mở cửa sổ chờ cho ĐÚNG người đó; tin tiếp theo của họ (ảnh,
+        # tệp, chữ) đi qua mà không cần tag lại. Trên điện thoại không đính được
+        # ảnh vào cùng tin có tag, nên không có cửa sổ này thì ảnh gửi ngay sau
+        # đó bị loại.
+        from services import cho_sau_tag as _cst
+        _ckey = f"tg:{_bot_id()}:{chat_id}:{user_id or ''}"
+        if native_mention:
+            _cst.mo(_ckey)
+        elif _req and _cst.dang_cho(_ckey):
+            _req = False
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,

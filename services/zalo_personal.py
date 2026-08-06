@@ -2291,16 +2291,25 @@ def _process_ai(ev: dict) -> None:
         # cổng cho ĐÚNG câu trả lời "1/2/3", không mở cho mọi tin trong 30 phút
         # chờ — mở rộng thế là tắt luôn yêu cầu tag của nhóm đó.
         from services.agent import luu_tru_day as _ltd_cho
+        from services import cho_sau_tag as _cst
         _dang_cho = (_phi_cho.dang_cho_anh(pkey) or _phi_cho.has_pending(pkey)
                      or _pi_cho.has_pending(pkey)
                      or bool(_ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
                          "zalop", str(ev.get("account_id") or ""),
-                         str(thread_id)), text or "")))
+                         str(thread_id)), text or ""))
+                     # Vừa tag bot xong → chờ họ gửi tiếp (ảnh/tệp/chữ). Zalo
+                     # không cho vừa tag vừa đính ảnh nên đây là đường DUY NHẤT
+                     # để tấm ảnh gửi ngay sau đó tới được phần xử lý.
+                     or _cst.dang_cho(pkey))
         _req, _kw = _caps.mention_required_for("zalop", ev.get("account_id") or "", thread_id)
         if _dang_cho:
             _req = False
             _phi_cho.het_cho_anh(pkey)   # dùng một lần, tránh mở cổng mãi
-        _native = is_bot_tagged(ev, "")  # mention / @alias (không cần keyword)
+        _native = is_bot_tagged(ev, "")
+        if _native:
+            # TAG là mở cửa sổ chờ — bất kể tin này có kèm yêu cầu hay không.
+            # Chủ máy chốt 06/08: "tag tên bot rồi chờ đợi thông tin từ user".
+            _cst.mo(pkey)
         if _req and not _caps.tag_gate_allows(
             required=True,
             keyword=_kw,
