@@ -26,10 +26,17 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 _THE = GOC / "web" / "src" / "app" / "settings" / "components"
 
+# Image triển khai KHÔNG chứa mã nguồn web (chỉ có bản đã build), nên trong
+# container các bài soi .tsx báo lỗi và trông y như hồi quy thật. Đo 07/08:
+# 7 bài lỗi kiểu này làm tổng lỗi nhảy 52 → 59, mất một lúc mới truy ra.
+# Bỏ qua khi thiếu nguồn; trên CI có đủ mã nên chúng vẫn chạy như thường.
+_CO_NGUON_WEB = _THE.exists()
+
 #: Thẻ nào phải đọc `chatlog_settings` để dựng danh sách chọn.
 _TIEU_THU = ["memory-links-card.tsx", "luu-tru-online-card.tsx"]
 
 
+@unittest.skipUnless(_CO_NGUON_WEB, "image không có mã nguồn web")
 class MotChoDangKyTests(unittest.TestCase):
     def test_cac_tab_deu_doc_thread_tu_them(self) -> None:
         thieu = []

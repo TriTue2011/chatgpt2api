@@ -30,6 +30,12 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 _THE = GOC / "web" / "src" / "app" / "settings" / "components" / "telegram-cloudflare-card.tsx"
 
+# Image triển khai KHÔNG chứa mã nguồn web (chỉ có bản đã build), nên trong
+# container các bài soi .tsx báo lỗi và trông y như hồi quy thật. Đo 07/08:
+# 7 bài lỗi kiểu này làm tổng lỗi nhảy 52 → 59, mất một lúc mới truy ra.
+# Bỏ qua khi thiếu nguồn; trên CI có đủ mã nên chúng vẫn chạy như thường.
+_CO_NGUON_WEB = _THE.exists()
+
 
 def _nhom_trong_giao_dien() -> set[str]:
     """Các khoá nhóm khai trong bảng `FUNCTION_GROUPS` của thẻ Lọc thread."""
@@ -40,6 +46,7 @@ def _nhom_trong_giao_dien() -> set[str]:
     return set(re.findall(r'\[\s*"([a-z_]+)"\s*,', m.group(1)))
 
 
+@unittest.skipUnless(_CO_NGUON_WEB, "image không có mã nguồn web")
 class OTichDuMoiNhomTests(unittest.TestCase):
     def test_giao_dien_khong_thieu_nhom_nao(self) -> None:
         from services.agent.capabilities import all_groups
@@ -60,6 +67,7 @@ class OTichDuMoiNhomTests(unittest.TestCase):
         self.assertEqual(thua, [], f"ô tích trỏ vào nhóm không tồn tại: {thua}")
 
 
+@unittest.skipUnless(_CO_NGUON_WEB, "image không có mã nguồn web")
 class MoiCongCuDeuCoNhomTests(unittest.TestCase):
     """Tầng dưới ô tích: mọi công cụ của bot phải được gắn vào một nhóm.
 
