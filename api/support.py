@@ -43,6 +43,32 @@ def require_auth_key(authorization: str | None) -> None:
     require_identity(authorization)
 
 
+# Trần mặc định cho upload đọc thẳng vào RAM (audio/ảnh/PDF). Trước đây các
+# endpoint `await file.read()` không giới hạn → một user key hợp lệ đẩy file
+# khổng lồ là cạn RAM container. 50MB đủ cho ảnh/audio/PDF thực tế.
+UPLOAD_MAX_BYTES_DEFAULT = 50 * 1024 * 1024
+
+
+async def read_upload_limited(file, max_bytes: int = UPLOAD_MAX_BYTES_DEFAULT) -> bytes:
+    """Đọc UploadFile theo khối, ném HTTP 413 nếu vượt max_bytes.
+
+    Đọc tới max_bytes+1 để phát hiện vượt trần mà không nạp trọn file quá cỡ
+    vào RAM."""
+    chunks: list[bytes] = []
+    read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        read += len(chunk)
+        if read > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail={"error": f"File vượt giới hạn {max_bytes // (1024*1024)}MB"})
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def require_admin(authorization: str | None) -> dict[str, object]:
     identity = require_identity(authorization)
     if identity.get("role") != "admin":

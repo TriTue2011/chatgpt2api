@@ -113,8 +113,9 @@ def create_router() -> APIRouter:
         # khiến user key 403 sau khi micro đã ghi được.
         require_identity(authorization)
         from services import voice
+        from api.support import read_upload_limited
 
-        data = await file.read()
+        data = await read_upload_limited(file)
         if not data:
             raise HTTPException(400, "File rỗng")
         hint = (file.filename or "").rsplit(".", 1)[-1] if file.filename else ""

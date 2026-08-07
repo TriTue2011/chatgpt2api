@@ -3941,6 +3941,12 @@ def _cap_mcp_result(text: str, limit: int = 8000) -> str:
 # lấy phần đã xong và đi tiếp — tuyệt đối không chờ vô hạn, vì kênh chat gọi
 # orchestrate() thẳng trong tiến trình và KHÔNG có timeout nào ở trên nữa.
 _MCP_TOOLS_BUDGET = 30
+# Trần số tool call xử lý MỖI lượt và số thread song song. Trước đây pool dùng
+# max_workers=len(jobs) và không giới hạn số job → model (hoặc prompt-injection)
+# phát 100 tool call là tạo 100 thread cùng lúc, cạn thread/kết nối và kích hoạt
+# 100 hành động HA/MCP. Dedup vẫn giữ; đây là trần cứng phía trên.
+_MCP_MAX_TOOL_CALLS = 32
+_MCP_MAX_WORKERS = 8
 
 
 def _execute_mcp_tools_in_response(
@@ -4066,6 +4072,11 @@ def _execute_mcp_tools_in_response(
         if len(jobs) < len(parsed):
             logger.info({"event": "mcp_tool_calls_deduped",
                          "before": len(parsed), "after": len(jobs)})
+        # Trần cứng: bỏ bớt tool vượt ngưỡng thay vì tạo pool khổng lồ.
+        if len(jobs) > _MCP_MAX_TOOL_CALLS:
+            logger.warning({"event": "mcp_tool_calls_capped",
+                            "requested": len(jobs), "cap": _MCP_MAX_TOOL_CALLS})
+            jobs = dict(list(jobs.items())[:_MCP_MAX_TOOL_CALLS])
 
         results: dict[str, str | None] = {}
         if len(jobs) > 1:
@@ -4075,7 +4086,8 @@ def _execute_mcp_tools_in_response(
             # shutdown(wait=True) — chặn VĨNH VIỄN theo đúng thread đang kẹt.
             # Request không bao giờ trả về, không exception nào nổi lên, nên
             # kênh Zalo/Telegram im lặng tuyệt đối và thread rò ra vĩnh viễn.
-            pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs))
+            pool = concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(jobs), _MCP_MAX_WORKERS))
             try:
                 fmap = {}
                 for sig, (tool_name, args) in jobs.items():

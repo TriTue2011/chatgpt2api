@@ -572,18 +572,39 @@ class BackupService:
             if key:
                 client.delete_object(key)
 
+    # Trần khi đọc backup TAR: chống bom giải nén / backup hỏng làm cạn RAM.
+    _TAR_MAX_MEMBERS = 5000
+    _TAR_MAX_MEMBER_BYTES = 64 * 1024 * 1024      # 64MB/file
+    _TAR_MAX_TOTAL_BYTES = 512 * 1024 * 1024      # 512MB tổng đã giải nén
+
     def _decode_archive_detail(self, payload: bytes) -> dict[str, object]:
         files: list[dict[str, object]] = []
         snapshots: list[dict[str, object]] = []
         metadata: dict[str, object] = {}
+        total_read = 0
         try:
             with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
                 members = [member for member in archive.getmembers() if member.isfile()]
+                if len(members) > self._TAR_MAX_MEMBERS:
+                    raise BackupError(
+                        f"备份文件过多（{len(members)}），超出上限，可能已损坏或被篡改")
                 for member in members:
+                    # Bỏ file khai kích thước vượt trần TRƯỚC khi đọc (member.size
+                    # từ header, không phải đọc thật) — chặn bom giải nén.
+                    if getattr(member, "size", 0) > self._TAR_MAX_MEMBER_BYTES:
+                        raise BackupError(
+                            f"备份中文件 {member.name} 过大，超出解压上限")
+                    if total_read > self._TAR_MAX_TOTAL_BYTES:
+                        raise BackupError("备份解压总大小超出上限，已停止")
                     extracted = archive.extractfile(member)
                     if extracted is None:
                         continue
-                    raw = extracted.read()
+                    # Đọc có trần: dù header khai nhỏ, vẫn không đọc quá giới hạn.
+                    raw = extracted.read(self._TAR_MAX_MEMBER_BYTES + 1)
+                    if len(raw) > self._TAR_MAX_MEMBER_BYTES:
+                        raise BackupError(
+                            f"备份中文件 {member.name} 实际大小超出解压上限")
+                    total_read += len(raw)
                     name = member.name
                     if name == "backup-metadata.json":
                         try:

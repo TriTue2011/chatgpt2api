@@ -77,9 +77,10 @@ def create_router() -> APIRouter:
         uploads = [*(image or []), *(image_list or [])]
         if not uploads:
             raise HTTPException(status_code=400, detail={"error": "image file is required"})
+        from api.support import read_upload_limited
         images: list[tuple[bytes, str, str]] = []
         for upload in uploads:
-            image_data = await upload.read()
+            image_data = await read_upload_limited(upload)
             if not image_data:
                 raise HTTPException(status_code=400, detail={"error": "image file is empty"})
             images.append((image_data, upload.filename or "image.png", upload.content_type or "image/png"))

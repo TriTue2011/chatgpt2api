@@ -35,6 +35,28 @@ from services import zalo_bot as zb
 
 logger = logging.getLogger(__name__)
 
+# Trần số lượt webhook đang xử lý đồng thời. Trước đây mỗi webhook hợp lệ tạo
+# một thread không giới hạn → secret lộ (kèm lỗi settings-secret exposure) là
+# spam làm cạn thread/RAM và kích hoạt hàng loạt lượt AI. Vượt trần thì BỎ tin
+# (trả 200 để Zalo không retry bão hoà) — thà rớt vài tin hơn sập cả bot.
+_WEBHOOK_MAX_INFLIGHT = 32
+_webhook_sem = threading.BoundedSemaphore(_WEBHOOK_MAX_INFLIGHT)
+
+
+def _spawn_bounded_update(body: dict, bot) -> None:
+    if not _webhook_sem.acquire(blocking=False):
+        logger.warning("Zalo Bot webhook: quá %d lượt đồng thời → bỏ tin",
+                       _WEBHOOK_MAX_INFLIGHT)
+        return
+
+    def _run() -> None:
+        try:
+            zb.process_update(body, bot)
+        finally:
+            _webhook_sem.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+
 
 def create_router() -> APIRouter:
     router = APIRouter()
@@ -65,7 +87,7 @@ def create_router() -> APIRouter:
             # Body không phải JSON → nhận 200 rồi bỏ qua, đừng để Zalo retry mãi
             # một payload vốn không đọc được.
             return {"ok": True}
-        threading.Thread(target=zb.process_update, args=(body, bot), daemon=True).start()
+        _spawn_bounded_update(body, bot)
         return {"ok": True}
 
     @router.post("/api/zalo-bot/webhook/{bot_id}")
@@ -96,7 +118,7 @@ def create_router() -> APIRouter:
             body = await request.json()
         except Exception:
             return {"ok": True}
-        threading.Thread(target=zb.process_update, args=(body, bot), daemon=True).start()
+        _spawn_bounded_update(body, bot)
         return {"ok": True}
 
     # ── Quản trị ─────────────────────────────────────────────────────────────

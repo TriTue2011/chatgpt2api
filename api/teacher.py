@@ -783,7 +783,8 @@ def create_router() -> APIRouter:
                 f"loại tài liệu không hợp lệ: {kind_in!r} — nhận "
                 f"{', '.join(sorted(sf.KIND_COLLECTION))}"))
 
-        data = await file.read()
+        from api.support import read_upload_limited
+        data = await read_upload_limited(file)
         name = file.filename or "sgk.pdf"
 
         def _run() -> dict:
