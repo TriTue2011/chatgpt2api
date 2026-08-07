@@ -124,6 +124,19 @@ class GeminiProvider:
         if not usable:
             raise RuntimeError("All Gemini API keys rate limited. Try again later.")
 
+        # Lỗi thuộc về KEY (không phải request) → bỏ qua key đó, thử key kế
+        # tiếp; chỉ raise khi hết sạch key. Trước đây bất kỳ mã ≠200/≠429 là
+        # raise NGAY, nên MỘT key hỏng lẫn trong pool giết cả lượt vision/chat
+        # dù các key khác còn tốt (đo thật 07/08: 2/6 key hỏng — một key sai
+        # "API key not valid" 400, một project bị Google cấm 403 — làm ~1/3
+        # request rơi xuống chatgpt_free với "Gemini error 400/403").
+        #   400 INVALID_ARGUMENT / 401 / 403 PERMISSION_DENIED: key sai hoặc
+        #     project bị cấm → không tự hồi, treo key lâu (1 giờ).
+        #   429: rate limit tạm thời → treo ngắn (60s).
+        # Body phải đọc bằng resp.content: stream=True làm resp.text rỗng nên
+        # log cũ ghi "Gemini error 400: " trống, không ai biết key nào hỏng.
+        _KEY_ERR = {400, 401, 403, 429}
+        last_error = ""
         for key in usable:
             resp = None
             try:
@@ -131,30 +144,36 @@ class GeminiProvider:
                     url, headers={"Content-Type": "application/json", "x-goog-api-key": key},
                     json=body, timeout=300, stream=True,
                 )
-                if resp.status_code == 429:
-                    # Đóng handle trước khi sang key khác — stream=True không
-                    # đóng = rò socket+eventfd.
-                    try:
-                        resp.close()
-                    except Exception:
-                        pass
-                    resp = None
-                    self._rate_limited[key] = time.time() + 60
-                    logger.info({"event": "gemini_key_rate_limited",
-                                 "key_suffix": key[-6:], "remaining": len(usable) - usable.index(key) - 1})
-                    continue
                 if resp.status_code != 200:
                     status = resp.status_code
+                    # stream=True: resp.content/.text RỖNG — body chỉ đọc được
+                    # qua iter_content() (đo thật trong curl_cffi). Đây là lý do
+                    # log cũ ghi "Gemini error 400: " trống suốt.
                     try:
-                        body_preview = (resp.text or "")[:200]
+                        body_preview = b"".join(resp.iter_content()).decode("utf-8", "replace")[:200]
                     except Exception:
-                        body_preview = ""
+                        try:
+                            body_preview = (resp.content or b"").decode("utf-8", "replace")[:200]
+                        except Exception:
+                            body_preview = ""
                     try:
                         resp.close()
                     except Exception:
                         pass
                     resp = None
-                    raise RuntimeError(f"Gemini error {status}: {body_preview}")
+                    last_error = f"Gemini error {status}: {body_preview}"
+                    if status in _KEY_ERR:
+                        # 429 hồi nhanh; 400/401/403 là key/project chết → treo lâu.
+                        self._rate_limited[key] = time.time() + (60 if status == 429 else 3600)
+                        logger.info({
+                            "event": "gemini_key_skip", "status": status,
+                            "key_suffix": key[-6:], "detail": body_preview[:120],
+                            "remaining": len(usable) - usable.index(key) - 1,
+                        })
+                        continue
+                    # Mã khác (5xx…) có thể do request hoặc Google-side: vẫn thử
+                    # key còn lại, giữ last_error để raise nếu hết key.
+                    continue
                 # Ownership chuyển sang parser (đóng trong finally của _parse_gemini_stream).
                 stream = _parse_gemini_stream(resp, model)
                 resp = None
@@ -165,7 +184,8 @@ class GeminiProvider:
                         resp.close()
                     except Exception:
                         pass
-                raise RuntimeError(f"Gemini connection failed: {exc}") from exc
+                last_error = f"Gemini connection failed: {exc}"
+                continue
             except Exception:
                 if resp is not None:
                     try:
@@ -173,7 +193,7 @@ class GeminiProvider:
                     except Exception:
                         pass
                 raise
-        raise RuntimeError("All Gemini API keys rate limited. Try again later.")
+        raise RuntimeError(last_error or "All Gemini API keys rate limited. Try again later.")
 
 
 def _convert_request(messages, tools):

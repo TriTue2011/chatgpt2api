@@ -29,7 +29,14 @@ class _FakeResp:
     def __init__(self, status_code: int, text: str = ""):
         self.status_code = status_code
         self.text = text
+        # stream=True: provider đọc body lỗi qua iter_content(); .content/.text
+        # rỗng trong curl_cffi (đo thật). Fake bắt chước đúng vậy.
+        self.content = b""
+        self._body = text.encode("utf-8")
         self.closed = False
+
+    def iter_content(self):
+        yield self._body
 
     def close(self) -> None:
         self.closed = True
@@ -41,14 +48,15 @@ class _FakeRequests:
     class RequestsError(Exception):
         pass
 
-    def __init__(self, status_by_key: dict[str, int]):
+    def __init__(self, status_by_key: dict[str, int], body_by_key: dict[str, str] | None = None):
         self.status_by_key = status_by_key
+        self.body_by_key = body_by_key or {}
         self.calls: list[str] = []          # key của từng lượt gọi, theo thứ tự
 
     def post(self, url, headers=None, json=None, timeout=None, stream=None):
         key = (headers or {}).get("x-goog-api-key", "")
         self.calls.append(key)
-        return _FakeResp(self.status_by_key.get(key, 200))
+        return _FakeResp(self.status_by_key.get(key, 200), self.body_by_key.get(key, ""))
 
 
 class GeminiKeyRotationTests(unittest.TestCase):
@@ -111,6 +119,49 @@ class GeminiKeyRotationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             p.chat_completions([{"role": "user", "content": "hi"}])
         self.assertEqual(fake.calls, [], "đang cooldown cả loạt thì đừng nã thêm")
+
+    def test_key_sai_400_bo_qua_sang_key_tot(self) -> None:
+        """Key sai (400 'API key not valid') KHÔNG giết cả lượt — sang key kế.
+
+        Đo thật 07/08: 2/6 key hỏng (một 400 key sai, một 403 project cấm)
+        làm ~1/3 request vision/chat rơi xuống chatgpt_free. Trước bản vá, mã
+        ≠200/≠429 là raise ngay ở key đầu tiên gặp phải."""
+        first, second = _KEYS[0], _KEYS[1]
+        fake = _FakeRequests(
+            {first: 400},
+            {first: '{"error":{"code":400,"message":"API key not valid."}}'})
+        gemini_free.requests = fake
+        p = self._provider()
+        out = p.chat_completions([{"role": "user", "content": "hi"}])
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(fake.calls, [first, second], "400 → sang đúng key kế")
+        self.assertIn(first, p._rate_limited, "key sai phải bị treo")
+        self.assertGreater(p._rate_limited[first], __import__("time").time() + 1000,
+                           "key sai treo LÂU (1 giờ), không phải 60s như 429")
+
+    def test_project_bi_cam_403_bo_qua(self) -> None:
+        first, second = _KEYS[0], _KEYS[1]
+        fake = _FakeRequests(
+            {first: 403},
+            {first: '{"error":{"status":"PERMISSION_DENIED"}}'})
+        gemini_free.requests = fake
+        p = self._provider()
+        out = p.chat_completions([{"role": "user", "content": "hi"}])
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(fake.calls, [first, second])
+        self.assertIn(first, p._rate_limited)
+
+    def test_moi_key_400_thi_raise_kem_ly_do_that(self) -> None:
+        """Hết key nào chạy được → raise, và lỗi phải NÊU body thật (không
+        còn 'Gemini error 400: ' trống như log cũ do stream=True)."""
+        fake = _FakeRequests(
+            {k: 400 for k in _KEYS},
+            {k: '{"error":{"message":"API key not valid."}}' for k in _KEYS})
+        gemini_free.requests = fake
+        with self.assertRaises(RuntimeError) as ctx:
+            self._provider().chat_completions([{"role": "user", "content": "hi"}])
+        self.assertIn("API key not valid", str(ctx.exception))
+        self.assertEqual(len(fake.calls), len(_KEYS), "thử đủ mọi key rồi mới bỏ")
 
 
 if __name__ == "__main__":
