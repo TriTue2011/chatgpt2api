@@ -1,0 +1,104 @@
+# =====================================================================
+# STACK CHỐT cho Portainer trên host .38 — c2a + xiaozhi-server (loa R1).
+# Dán TOÀN BỘ file này vào Portainer → Stacks → Editor.
+#
+# KHÔNG cần gõ lệnh tạo file trên host: service `xiaozhi-config` TỰ SINH
+# /opt/.../data/.config.yaml lúc khởi động, lấy key TỰ ĐỘNG từ ${AUTH_KEY}
+# (chính biến c2a đang dùng). Bạn chỉ cần có sẵn AUTH_KEY trong Environment
+# của stack (đã có cho c2a).
+#
+# Đổi SERVER_IP nếu host không phải 172.16.10.38.
+# =====================================================================
+
+services:
+  c2a:
+    image: ghcr.io/tritue2011/chatgpt2api:latest
+    container_name: c2a
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3030:80"
+      - "6080:6080"
+      - "3001:3001"
+      - "10600:10600"
+      - "10700:10700"
+    volumes:
+      - /opt/c2a/data:/app/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
+      - STORAGE_BACKEND=postgres
+      - DATABASE_URL=postgresql://c2a_user:${DB_PASSWORD}@host.docker.internal:5432/c2a_db
+      - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
+      - CAPTCHA_SOLVER_API_KEY=${AUTH_KEY}
+      - ZALO_SERVER_API_KEY=${AUTH_KEY}
+      - VNC_PASSWORD=${VNC_PASSWORD}
+      - CHATGPT2API_BASE_URL=https://gpt.vhtatn.io.vn
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/version')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Tự sinh .config.yaml vào volume (chạy 1 lần rồi thoát). Không lệnh host.
+  xiaozhi-config:
+    image: busybox:1.36
+    environment:
+      - AUTH_KEY=${AUTH_KEY}
+      - SERVER_IP=172.16.10.38
+    volumes:
+      - xiaozhi-data:/out
+    command:
+      - sh
+      - -c
+      - |
+        cat > /out/.config.yaml <<'CFG'
+        server:
+          ip: 0.0.0.0
+          port: 8000
+          http_port: 8003
+          websocket: ws://__SERVER_IP__:8000/xiaozhi/v1/
+          vision_explain: http://__SERVER_IP__:8003/mcp/vision/explain
+        selected_module:
+          VAD: SileroVAD
+          ASR: OpenaiASR
+          LLM: C2A
+          TTS: OpenAITTS
+          Intent: function_call
+          Memory: nomem
+        LLM:
+          C2A: {type: openai, model_name: gpt-4o, url: "http://c2a:80/v1/", api_key: "__AUTH_KEY__"}
+        ASR:
+          OpenaiASR: {type: openai, base_url: "http://c2a:80/v1/audio/transcriptions", api_key: "__AUTH_KEY__", model_name: whisper-1, output_dir: tmp/}
+        TTS:
+          OpenAITTS: {type: openai, api_url: "http://c2a:80/v1/audio/speech", api_key: "__AUTH_KEY__", model: tts-1, voice: "", speed: 1, output_dir: tmp/}
+        CFG
+        sed -i -e "s#__AUTH_KEY__#$$AUTH_KEY#g" -e "s#__SERVER_IP__#$$SERVER_IP#g" /out/.config.yaml
+        echo "[xiaozhi-config] da ghi /out/.config.yaml"
+
+  xiaozhi-server:
+    image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_latest
+    container_name: xiaozhi-esp32-server
+    restart: unless-stopped
+    depends_on:
+      xiaozhi-config:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"     # WebSocket audio — loa nối vào
+      - "8003:8003"     # OTA — loa trỏ tới http://172.16.10.38:8003/xiaozhi/ota/
+    volumes:
+      - xiaozhi-data:/opt/xiaozhi-esp32-server/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  xiaozhi-data:

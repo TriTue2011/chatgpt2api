@@ -40,6 +40,17 @@ docker logs -f xiaozhi-esp32-server           # thấy WS :8000, OTA :8003
 **Portainer** (host .38): dùng **Stack từ Git repository** để có sẵn thư mục
 `xiaozhi-server/` cho bind mount; đặt 2 biến trên trong phần Environment của stack.
 
+## ⭐ Bản CHỐT (zero-CLI) — [stack.portainer.yml](stack.portainer.yml)
+
+Dán trọn [stack.portainer.yml](stack.portainer.yml) vào Portainer → Update. Service
+`xiaozhi-config` **tự sinh** `.config.yaml` từ `${AUTH_KEY}` (không gõ lệnh tạo file
+trên host). Mọi thứ còn lại làm trong **web UI c2a**: chọn giọng, bật MCP "Loa Phicomm
+R1", chat/ra lệnh. Chỉ đổi `SERVER_IP` nếu host ≠ 172.16.10.38.
+
+> Bước duy nhất KHÔNG có nút web UI là **tải model giọng** (`/api/voice/speech` trả
+> 404 "chạy scripts/download_…" nếu thiếu). Trên `.38` đã tải sẵn (26/07) nên bỏ qua;
+> kiểm trong web UI c2a mục Giọng nói / `/api/voice/status`.
+
 ## Cách 2 — Portainer stack gộp (host-path, khớp .38 hiện tại)
 
 Nếu bạn sửa stack bằng **web-editor Portainer** (không kéo từ Git), dùng đường dẫn
