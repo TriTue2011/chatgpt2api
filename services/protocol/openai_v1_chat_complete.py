@@ -465,16 +465,20 @@ def _pipeline_extract_content(result: Any) -> str:
 
 
 def _pipeline_chay_thu_bat() -> bool:
-    """Có chạy thử code trước khi bố soi không. Tắt được vì đây là THỰC THI
-    code do model sinh — phải có công tắc, đừng để chỉ sửa được bằng cách vá
-    code. Mặc định BẬT (chủ máy chốt 31/07/2026: dùng cách B, chạy trong
-    container)."""
+    """Có CHẠY THẬT code do model sinh trước khi bố soi không.
+
+    MẶC ĐỊNH TẮT (đổi 07/08/2026 theo yêu cầu bảo mật): tầng chạy thử chỉ có
+    blacklist chuỗi + giới hạn CPU/RAM/file, KHÔNG cô lập mạng/filesystem và
+    container chạy root — không phải sandbox thật. Chỉ soi TĨNH (`kiem_tinh`)
+    vẫn chạy cho mọi code. Chỉ bật lại (`pipeline_chay_thu=true`) khi có sandbox
+    riêng: user không phải root, không mạng, filesystem read-only, seccomp/cgroup.
+    Trước đây mặc định BẬT (chủ máy chốt 31/07 dùng cách B); nay lật lại."""
     try:
         from services.config import config as _c
         v = (_c.data or {}).get("pipeline_chay_thu")
-        return True if v is None else bool(v)
+        return bool(v) if v is not None else False
     except Exception:
-        return True
+        return False
 
 
 def _chay_thu_code(combo_name: str, code: str, rnd: int) -> str:
@@ -2945,6 +2949,13 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # returns are suppressed via _gen_task; control actions opt back in.
     _agent_mode = bool(body.get("x_skip_fastpath"))
     _gen_task = _is_generation_task(body, messages) or _agent_mode
+    # Fast-path HA (confirm/level/intent) THỰC THI điều khiển nhà TRƯỚC khi tới
+    # tool schema, nên phải chịu CHUNG bộ lọc nhóm: thread/vai bị chặn nhóm
+    # 'homeassistant' (x_allowed_groups) thì KHÔNG được đi fast-path, kẻo key
+    # vai 'user' vẫn bật/tắt được thiết bị dù trần tool đã chặn (báo cáo 07/08
+    # — Critical: role ceiling ở api/ai.py bị bypass tại đây). Gộp vào cờ để
+    # cả ba nhánh dưới cùng tắt.
+    _ha_fp_blocked = _gen_task or _thread_denies(body, "homeassistant")
     # Thread bị lọc thiếu nhóm homeassistant → KHÔNG thu thập facts từ HA
     # (trạng thái đèn/cảm biến…) — đây là kênh rò cuối cùng khiến thread bị
     # lọc vẫn "biết" đèn đang bật dù tool + context + HA tools đã chặn hết.
@@ -2970,7 +2981,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
 
     # HA RT2 fast-path: a control command already ran on the previous turn;
     # synthesize the confirmation and skip the second model round-trip (~2-8s).
-    _ha_confirm = None if _gen_task else _vz(_ha_confirm_text(messages))
+    _ha_confirm = None if _ha_fp_blocked else _vz(_ha_confirm_text(messages))
     if _ha_confirm is not None:
         logger.info({"event": "ha_confirm_shortcircuit", "text": _ha_confirm})
         if body.get("stream"):
@@ -2985,7 +2996,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # RT1 LEVEL fast-path: tốc độ quạt (%), quay/dừng quay quạt, độ sáng đèn (%) —
     # HA-native intent không set được mức này, nên tự call_service rồi trả xác nhận.
     try:
-        _level = None if _gen_task else _vz(_ha_local_level(messages))
+        _level = None if _ha_fp_blocked else _vz(_ha_local_level(messages))
     except Exception as exc:
         _level = None
         logger.warning({"event": "ha_local_level_error", "error": str(exc)[:150]})
@@ -3004,11 +3015,19 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # HassTurnOn/Off tool_call WITHOUT the model (~ms vs ~5s codex). HA then
     # executes it. Unclear/ambiguous commands return None → normal model path.
     try:
-        _local_tcs = None if _gen_task else _ha_local_intent(messages)
+        _local_tcs = None if _ha_fp_blocked else _ha_local_intent(messages)
     except Exception as exc:
         _local_tcs = None
         logger.warning({"event": "ha_local_intent_error", "error": str(exc)[:150]})
     if _local_tcs:
+        # Trần số lệnh fast-path MỖI lượt: một câu không thể điều khiển hàng
+        # loạt thiết bị cùng lúc (chống lạm dụng/prompt-injection bung nhiều
+        # lệnh). Vượt trần thì cắt bớt + ghi log.
+        _FP_MAX = 8
+        if len(_local_tcs) > _FP_MAX:
+            logger.warning({"event": "ha_local_intent_capped",
+                            "requested": len(_local_tcs), "cap": _FP_MAX})
+            _local_tcs = _local_tcs[:_FP_MAX]
         logger.info({"event": "ha_local_canonicalized", "n": len(_local_tcs),
                      "calls": [f'{t["function"]["name"]}:{t["function"]["arguments"]}'
                                for t in _local_tcs]})
@@ -3052,7 +3071,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # read the real sensor and answer directly, so the model can't fabricate a
     # value. Unrecognised / ambiguous → None → normal model path.
     try:
-        _local_ans = None if _gen_task else _ha_local_query(messages)
+        _local_ans = None if _ha_fp_blocked else _ha_local_query(messages)
     except Exception as exc:
         _local_ans = None
         logger.warning({"event": "ha_local_query_error", "error": str(exc)[:150]})
@@ -3071,7 +3090,7 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # RT1 status fast-path: câu hỏi TRẠNG THÁI thiết bị on/off ("trạng thái đèn
     # phòng học") → đọc state thật, trả tức thì (~ms) thay vì ~3s qua model.
     try:
-        _status = None if _gen_task else _vz(_ha_local_status(messages))
+        _status = None if _ha_fp_blocked else _vz(_ha_local_status(messages))
     except Exception as exc:
         _status = None
         logger.warning({"event": "ha_local_status_error", "error": str(exc)[:150]})
