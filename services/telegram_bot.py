@@ -952,12 +952,26 @@ def _download_file(file_id: str) -> bytes | None:
 
 
 def _moi_luu_online(chat_id: str, user_id: str, chat_name: str,
-                    ten_tep: str, du_lieu: bytes) -> None:
+                    ten_tep: str, du_lieu: bytes, *,
+                    menu_dang_mo: bool = False) -> None:
     """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
 
     Mặc định phạm vi nào cũng TẮT nên hàm này thường thoát ngay, và mọi lỗi đều
     chặn tại đây: nhận tệp là việc chính, lưu đám mây là việc phụ đi kèm.
+    
+    `menu_dang_mo` — vừa gửi menu ý định cho tệp này. Khi đó KHÔNG hỏi lưu, theo
+    luật chủ máy chốt 07/08: **chỉ hỏi lưu sau khi đã xong việc**. Hai menu cùng
+    sống thì menu kho không bấm số được (bản chờ pdf được xét trước rồi return),
+    và hỏi lúc vừa nhận là hỏi sớm — chưa biết sẽ chuyển hay không thì chưa trả
+    lời được "lưu bản nào".
+
+    Không mất đường nào: menu ý định đã có sẵn mục «☁️ Lưu lên kho đám mây», còn
+    vừa chuyển vừa lưu thì sau khi chuyển xong bot hỏi tiếp đủ bốn lựa chọn.
     """
+    if menu_dang_mo:
+        logger.info({"event": "bo_hoi_luu_vi_menu_dang_mo",
+                     "tep": str(ten_tep)[:60]})
+        return
     try:
         from services.agent import luu_tru_day as _ltd
         _ltd.moi_luu("tg", str(chat_id), user=str(user_id or ""),
@@ -1725,7 +1739,8 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
                                     file_data, doc_name, _duoi,
                                     intents=_pdf_intents)
         send_message(chat_id, _pi.ask_text(doc_name, _pdf_intents, _pdf_info))
-        _moi_luu_online(chat_id, user_id, chat_name, doc_name, file_data)
+        _moi_luu_online(chat_id, user_id, chat_name, doc_name, file_data,
+                        menu_dang_mo=True)
         return
 
     if not text or not chat_id:

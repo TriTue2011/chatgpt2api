@@ -41,9 +41,17 @@ LENH = ("lưu tệp vừa nhận lên kho online",
 #: Sau khi CHUYỂN ĐỔI thì có hai tệp, nên ba lựa chọn khác hẳn lúc mới nhận —
 #: chủ máy chốt 05/08: "chuyển đổi → ba lựa chọn: tệp PDF gốc, tệp đã chuyển,
 #: hoặc cả hai".
-LUA_CHON_CD = ("Bản đã chuyển", "Cả tệp gốc và bản đã chuyển", "Không lưu")
+#: BỐN lựa chọn, không phải ba. Đặc tả 05/08 vốn ghi "tệp PDF gốc, tệp đã
+#: chuyển, hoặc cả hai" nhưng bản viết đầu làm rơi mất mục **bản gốc** — chủ
+#: máy phát hiện 07/08 và yêu cầu thêm lại.
+#:
+#: "Không lưu" GIỮ NGUYÊN Ở CUỐI: mục phủ định nằm cuối là nếp chung của mọi
+#: menu trong dự án, và đổi nó lên trên là người quen bấm số cũ sẽ lưu nhầm.
+LUA_CHON_CD = ("Bản đã chuyển", "Cả tệp gốc và bản đã chuyển", "Bản gốc",
+               "Không lưu")
 LENH_CD = ("lưu bản đã chuyển lên kho online",
            "lưu cả tệp gốc và bản đã chuyển lên kho online",
+           "lưu tệp gốc lên kho online",
            "không lưu gì lên kho online")
 
 #: Tóm tắt không sinh ra tệp thứ hai để chọn, nên chỉ CÓ/KHÔNG — chủ máy chốt
@@ -76,12 +84,17 @@ def cau_hoi(ten_tep: str, *, ten_nhom: str = "") -> str:
 
 
 def cau_hoi_chuyen_doi(ten_goc: str, ten_moi: str) -> str:
-    """Khối lựa chọn sau khi chuyển đổi xong. Ba lựa chọn, đánh số."""
+    """Khối lựa chọn sau khi chuyển đổi xong, đánh số theo ĐÚNG bảng `LUA_CHON_CD`.
+
+    Duyệt bảng chứ không viết tay từng dòng: bản trước liệt kê cứng ba dòng nên
+    khi đặc tả có bốn mục thì mục **bản gốc** rơi mất mà không tầng nào báo —
+    bảng vẫn đúng, câu hỏi vẫn gửi được, chỉ là thiếu một lựa chọn. Duyệt bảng
+    thì thêm mục vào bảng là câu hỏi tự có.
+    """
+    dong = "\n".join(f"{lc} | {le}" for lc, le in zip(LUA_CHON_CD, LENH_CD))
     return (f"📎 Đã chuyển {ten_goc} → {ten_moi}. Lưu lên kho đám mây ạ?\n"
             "<<<ASK>>>\n"
-            f"{LUA_CHON_CD[0]} | {LENH_CD[0]}\n"
-            f"{LUA_CHON_CD[1]} | {LENH_CD[1]}\n"
-            f"{LUA_CHON_CD[2]} | {LENH_CD[2]}\n"
+            f"{dong}\n"
             "<<<END>>>")
 
 
@@ -282,27 +295,37 @@ def tra_loi(khoa_admin: str, chon: int) -> dict:
 
 
 def _tra_loi_chuyen_doi(ban: dict, chon: int) -> dict:
-    """1 = bản đã chuyển, 2 = cả hai, 3 = không lưu gì.
+    """1 = bản đã chuyển · 2 = cả hai · 3 = bản gốc · 4 = không lưu gì.
 
-    Tách hàm riêng vì ba lựa chọn ở đây KHÁC HẲN lúc mới nhận tệp: không có mục
+    Tách hàm riêng vì các lựa chọn ở đây KHÁC HẲN lúc mới nhận tệp: không có mục
     "luôn luôn lưu" (chuyển đổi là việc người dùng chủ động gọi từng lần), và
     "không lưu" chỉ bỏ hai bản tạm chứ không phải quyết định gì về phạm vi.
+
+    Mỗi nhánh phải DỌN bản tạm nó không dùng tới. Bỏ sót một nhánh thì thư mục
+    làm việc phình ra theo từng lượt chuyển đổi mà không ai thấy — nên viết
+    tường minh cả bốn, không dùng đường rơi chung.
     """
     goc = str(ban.get("tep") or "")
     moi = str(ban.get("tep_2") or "")
-    ten_moi = Path(moi).name
-    if chon == 3:
+    ten_goc, ten_moi = Path(goc).name, Path(moi).name
+    if chon == 4:
         _xoa_cuc_bo(goc)
         _xoa_cuc_bo(moi)
         return {"ok": True, "text": "Vâng, em không lưu lên kho ạ."}
 
     pv = (ban["kenh"], ban["chat"], ban.get("topic") or "", ban.get("user") or "")
     cd = lt.cai_dat(*pv)
+
+    if chon == 3:
+        # Chỉ bản gốc — bản đã chuyển vừa gửi cho người dùng rồi, bỏ bản tạm.
+        day_nen(goc, cd, pham_vi=pv)
+        _xoa_cuc_bo(moi)
+        return {"ok": True, "text": f"Đang lưu {ten_goc} lên kho đám mây ạ."}
+
     day_nen(moi, cd, pham_vi=pv)
     if chon == 2:
         day_nen(goc, cd, pham_vi=pv)
-        return {"ok": True,
-                "text": f"Đang lưu cả {Path(goc).name} và {ten_moi} lên kho ạ."}
+        return {"ok": True, "text": f"Đang lưu cả {ten_goc} và {ten_moi} lên kho ạ."}
     # Chỉ lưu bản đã chuyển → bản gốc tạm ở đây không còn việc gì.
     _xoa_cuc_bo(goc)
     return {"ok": True, "text": f"Đang lưu {ten_moi} lên kho đám mây ạ."}

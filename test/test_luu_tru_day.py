@@ -262,12 +262,23 @@ class SauChuyenDoiTests(unittest.TestCase):
         self.assertEqual(dich["bao-cao.docx"], "drive:GD/Word")
         self.assertEqual(dich["bao-cao.pdf"], "drive:GD/PDF")
 
-    def test_chon_3_khong_day_gi_va_don_sach(self):
+    def test_chon_4_khong_day_gi_va_don_sach(self):
+        """"Không lưu" nay là số 4 — mục «Bản gốc» chen vào vị trí 3 (07/08)."""
         self._hoi()
-        ld.tra_loi(self.KHOA, 3)
+        ld.tra_loi(self.KHOA, 4)
         self.assertEqual(self.nen.da_day, [])
         con = list((Path(self.tmp.name) / "da_nhan").glob("*"))
         self.assertEqual(con, [], "không lưu mà vẫn để lại bản tạm")
+
+    def test_chon_3_chi_day_BAN_GOC_va_bo_ban_chuyen(self):
+        """Đặc tả 05/08 vốn có "tệp PDF gốc" nhưng bản viết đầu làm rơi mất; chủ
+        máy phát hiện 07/08. Nhánh này phải đẩy ĐÚNG bản gốc và dọn bản đã
+        chuyển — bỏ sót là thư mục làm việc phình theo từng lượt."""
+        self._hoi()
+        ld.tra_loi(self.KHOA, 3)
+        self.assertEqual([Path(t).name for t, _ in self.nen.da_day], ["bao-cao.pdf"])
+        con = sorted(p.name for p in (Path(self.tmp.name) / "da_nhan").glob("*"))
+        self.assertEqual(con, ["bao-cao.pdf"], "bản đã chuyển còn nằm lại")
 
     def test_chon_1_thi_ban_goc_tam_khong_nam_lai(self):
         self._hoi()
@@ -395,7 +406,7 @@ class SauTomTatTests(unittest.TestCase):
     def test_ba_loi_dung_ba_bang_khac_nhau(self):
         """Lẫn bảng là admin bấm "2" ở lối này ra việc của lối kia."""
         self.assertEqual(len(ld._bang(ld.KIEU_NHAN)[0]), 3)
-        self.assertEqual(len(ld._bang(ld.KIEU_CHUYEN_DOI)[0]), 3)
+        self.assertEqual(len(ld._bang(ld.KIEU_CHUYEN_DOI)[0]), 4)   # + «Bản gốc» 07/08
         self.assertEqual(len(ld._bang(ld.KIEU_TOM_TAT)[0]), 2)
         nhan = [ld._bang(k)[0] for k in
                 (ld.KIEU_NHAN, ld.KIEU_CHUYEN_DOI, ld.KIEU_TOM_TAT)]
@@ -640,3 +651,87 @@ class NoiVaoKenhTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CauHoiDiTheoBangTests(unittest.TestCase):
+    """Câu hỏi sau-chuyển-đổi phải LIỆT KÊ ĐỦ mọi mục của `LUA_CHON_CD`.
+
+    Đây là chỗ đã hỏng một lần: bản viết đầu ghi cứng ba dòng trong
+    `cau_hoi_chuyen_doi` trong khi đặc tả 05/08 có bốn mục ("tệp PDF gốc, tệp đã
+    chuyển, hoặc cả hai"), nên mục **bản gốc** rơi mất suốt hai ngày. Bảng vẫn
+    đúng, câu hỏi vẫn gửi được, không tầng nào báo lỗi — chủ máy phải tự phát
+    hiện lúc dùng thật.
+
+    Nay câu hỏi duyệt thẳng bảng; bài này chốt để không ai viết tay lại.
+    """
+
+    def test_moi_muc_trong_bang_deu_ra_man_hinh(self):
+        cau = ld.cau_hoi_chuyen_doi("a.pdf", "a.docx")
+        thieu = [x for x in ld.LUA_CHON_CD if x not in cau]
+        self.assertEqual(thieu, [], f"mục có trong bảng mà không hiện: {thieu}")
+
+    def test_moi_muc_deu_co_LENH_di_kem(self):
+        """Thiếu lệnh thì mục đó bấm được nhưng không ai biết nó làm gì."""
+        self.assertEqual(len(ld.LUA_CHON_CD), len(ld.LENH_CD))
+        cau = ld.cau_hoi_chuyen_doi("a.pdf", "a.docx")
+        for le in ld.LENH_CD:
+            self.assertIn(le, cau)
+
+    def test_muc_phu_dinh_luon_o_CUOI(self):
+        """Mục "không lưu" nằm cuối là nếp chung của mọi menu trong dự án. Đổi
+        nó lên trên là người quen bấm số cũ sẽ lưu nhầm thứ họ định bỏ."""
+        self.assertIn("Không lưu", ld.LUA_CHON_CD[-1])
+        self.assertIn("Không lưu", ld.LUA_CHON_TT[-1])
+        self.assertIn("Xoá", ld.LUA_CHON[-1])
+
+
+class KhongHoiLuuKhiMenuDangMoTests(unittest.TestCase):
+    """Vừa gửi menu ý định thì KHÔNG hỏi lưu — chốt đủ ba kênh.
+
+    Sự cố thật 07/08 08:35–08:36 trên Zalo cá nhân: bot gửi menu ý định (6 mục)
+    rồi gửi tiếp menu kho (3 mục) trong cùng một phần nghìn giây. Bản chờ pdf
+    được xét TRƯỚC rồi return, nên menu kho KHÔNG BAO GIỜ bấm số được — chủ máy
+    gõ "4" định trả lời menu kho, bot hiểu là "4. Chuyển Excel" và chạy OCR một
+    PDF scan 4 trang.
+
+    Luật chủ máy chốt: **chỉ hỏi lưu sau khi đã xong việc**. Menu 1 vẫn giữ mục
+    «☁️ Lưu lên kho đám mây» cho ai chỉ muốn lưu (chọn nó là `luu_ngay` lưu
+    thẳng, không hỏi lại); còn chuyển đổi thì hỏi ở bước sau, khi đó mới trả lời
+    được "lưu bản nào".
+
+    Soi mã nguồn vì ba kênh là ba đường xử lý riêng — sửa một kênh quên hai kênh
+    kia là kiểu hỏng đã lặp lại nhiều lần trong dự án này.
+    """
+
+    KENH = ("services/zalo_personal.py", "services/telegram_bot.py",
+            "services/zalo_bot.py")
+
+    def _ham(self, ten: str):
+        import ast
+        from pathlib import Path
+        goc = Path(__file__).resolve().parents[1]
+        cay = ast.parse((goc / ten).read_text(encoding="utf-8"))
+        for n in ast.walk(cay):
+            if isinstance(n, ast.FunctionDef) and n.name == "_moi_luu_online":
+                return n
+        raise AssertionError(f"{ten}: không có _moi_luu_online")
+
+    def test_ba_kenh_deu_nhan_co_menu_dang_mo(self):
+        for ten in self.KENH:
+            kw = [a.arg for a in self._ham(ten).args.kwonlyargs]
+            self.assertIn("menu_dang_mo", kw, f"{ten} thiếu cờ menu_dang_mo")
+
+    def test_ba_kenh_deu_TRUYEN_co_o_cho_nhan_tep(self):
+        from pathlib import Path
+        goc = Path(__file__).resolve().parents[1]
+        for ten in self.KENH:
+            src = (goc / ten).read_text(encoding="utf-8")
+            self.assertIn("menu_dang_mo=True", src,
+                          f"{ten}: khai cờ nhưng không chỗ nào truyền → vô dụng")
+
+    def test_menu_y_dinh_van_con_muc_luu_kho(self):
+        """Bỏ câu hỏi thứ hai chỉ đúng khi menu 1 CÒN mục lưu. Mất cả hai là
+        không còn đường nào lưu tệp gốc."""
+        from services import pdf_intent as pi
+        cau = pi.ask_text("a.pdf", {pi.WORD, pi.TOM_TAT, pi.LUU_ONLINE})
+        self.assertIn("kho đám mây", cau.lower())

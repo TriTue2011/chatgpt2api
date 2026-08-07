@@ -1829,14 +1829,37 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
     logger.warning("zalop Word sendFile fail path=%s", link)
 
 
-def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes) -> None:
+def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes,
+                    *, menu_dang_mo: bool = False) -> None:
     """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
 
     Mặc định phạm vi nào cũng TẮT nên hàm này thường thoát ngay, và mọi lỗi đều
     chặn tại đây: nhận tệp là việc chính, lưu đám mây là việc phụ đi kèm.
+
+    `menu_dang_mo` — vừa gửi menu ý định (Nạp RAG / Chuyển Word / Tóm tắt / Lưu
+    kho) cho tệp này. Khi đó KHÔNG hỏi lưu, theo đúng luật chủ máy chốt 07/08:
+    **chỉ hỏi lưu sau khi đã xong việc**.
+
+    Hai lý do, và lý do đầu là hỏng thật chứ không phải bất tiện:
+
+      · Hai menu cùng sống thì menu kho KHÔNG BAO GIỜ bấm số được — bản chờ pdf
+        được xét TRƯỚC (`zalo_personal` ~2393) rồi return. Đo thật 07/08 08:36:
+        chủ máy gõ "4" định trả lời menu kho, bot hiểu là "4. Chuyển Excel" của
+        menu ý định và chạy OCR một PDF scan 4 trang.
+      · Hỏi lúc vừa nhận là hỏi SỚM: chưa biết sẽ chuyển hay tóm tắt thì chưa
+        trả lời được "lưu bản nào". Hỏi sau mới có mục «Cả tệp gốc và bản đã
+        chuyển».
+
+    Không mất đường nào: menu ý định đã có sẵn mục «☁️ Lưu lên kho đám mây» cho
+    ai chỉ muốn lưu, còn vừa chuyển vừa lưu thì sau khi chuyển xong bot hỏi tiếp
+    với đủ bốn lựa chọn (bản đã chuyển / cả hai / bản gốc / không lưu).
     """
     try:
         from services.agent import luu_tru_day as _ltd
+        if menu_dang_mo:
+            logger.info({"event": "bo_hoi_luu_vi_menu_dang_mo",
+                         "thread": str(thread_id), "tep": ten_tep[:60]})
+            return
         _ltd.moi_luu(
             "zalop", str(thread_id),
             user=str(ev.get("sender_id") or ""),
@@ -2534,7 +2557,8 @@ def _process_ai(ev: dict) -> None:
                          _pi.ask_text(name or ("Office" if _la_office else "PDF"),
                                       intents, info),
                          thread_type)
-            _moi_luu_online(ev, thread_id, name or "document.pdf", data)
+            _moi_luu_online(ev, thread_id, name or "document.pdf", data,
+                            menu_dang_mo=True)
             return
         send_message(thread_id,
                      f"📎 Em nhận PDF, Word, Excel và PowerPoint thôi ạ. "
@@ -2556,6 +2580,10 @@ def _process_ai(ev: dict) -> None:
             return
         # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
         from services.agent.luu_tru_day import ten_anh as _ten_anh
+        # ẢNH thì GIỮ NGUYÊN câu hỏi: menu ảnh (`photo_intent.ask_text`) chưa có
+        # mục «Lưu lên kho đám mây» như menu PDF, nên bỏ câu hỏi ở đây là mất
+        # HẲN đường lưu ảnh. Việc đúng phải làm là thêm mục lưu vào menu ảnh
+        # rồi mới bỏ — chưa làm thì chưa bỏ.
         _moi_luu_online(ev, thread_id, _ten_anh(data), data)
         # Bóc phần tag bot ra trước khi xét "có nói gì không". Trong nhóm phải
         # tag mới gọi được bot, nên lời kèm ảnh gần như luôn mở đầu bằng
