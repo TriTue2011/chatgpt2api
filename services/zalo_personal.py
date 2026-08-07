@@ -2180,6 +2180,20 @@ def _do_photo_request(
             err = f"intent {it} not allowed"
             return
 
+        if it == _phi.LUU_ONLINE:
+            # Ảnh đi thẳng lên kho, không phân tích không tạo. Cùng đường với
+            # `pdf_intent.LUU_ONLINE`: `luu_ngay` lưu luôn, KHÔNG hỏi lại lần
+            # nữa — luật của chủ máy là chỉ hỏi lưu sau khi xong việc, mà đây
+            # chính là việc đã xong.
+            kind = "photo_luu_online"
+            from services.agent import luu_tru_day as _ltd
+            _ten = _ltd.ten_anh(file_data)
+            _tam = _ltd.luu_vao_thu_muc_lam_viec(_ten, file_data)
+            reply = _ltd.luu_ngay("zalop", str(thread_id), tep=_tam, ten_tep=_ten,
+                                  user=str(user_id or ""))
+            send_message(thread_id, reply, thread_type)
+            return
+
         if it == _phi.GENERATE:
             kind = "photo_generate"
             out = _phi.generate_from_photo(file_data, request_text, channel="zalop")
@@ -2461,7 +2475,9 @@ def _process_ai(ev: dict) -> None:
         _phi.pop_pending_full(pkey)
     elif text and _phi.has_pending(pkey):
         _pend = _phi.get_pending(pkey) or {}
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.allowed_intents(_allow), "zalop", str(thread_id),
+            user=str(ev.get("sender_id") or ""))
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -2580,18 +2596,18 @@ def _process_ai(ev: dict) -> None:
             return
         # Ảnh cũng có thư mục riêng và hạn giữ riêng trên đám mây (mục «Ảnh»).
         from services.agent.luu_tru_day import ten_anh as _ten_anh
-        # ẢNH thì GIỮ NGUYÊN câu hỏi: menu ảnh (`photo_intent.ask_text`) chưa có
-        # mục «Lưu lên kho đám mây» như menu PDF, nên bỏ câu hỏi ở đây là mất
-        # HẲN đường lưu ảnh. Việc đúng phải làm là thêm mục lưu vào menu ảnh
-        # rồi mới bỏ — chưa làm thì chưa bỏ.
-        _moi_luu_online(ev, thread_id, _ten_anh(data), data)
+        # Menu ảnh NAY đã có mục «☁️ Lưu lên kho đám mây» (photo_intent 07/08),
+        # nên ảnh theo cùng luật với tệp: không hỏi chồng lúc vừa nhận.
+        _moi_luu_online(ev, thread_id, _ten_anh(data), data, menu_dang_mo=True)
         # Bóc phần tag bot ra trước khi xét "có nói gì không". Trong nhóm phải
         # tag mới gọi được bot, nên lời kèm ảnh gần như luôn mở đầu bằng
         # '@TenBot' — không bóc thì nó không bao giờ rỗng và nhánh hiện menu bên
         # dưới không bao giờ chạy, tag bot rồi gửi ảnh suông là bị đoán bừa
         # thành «phân tích ảnh» (chủ máy báo 05/08, 20:55).
         caption = _phi.bo_tag(text)
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_luu_online(
+            _phi.allowed_intents(_allow), "zalop", str(thread_id),
+            user=str(ev.get("sender_id") or ""))
         if not caption:
             _phi.set_pending(pkey, data)
             send_message(thread_id, _phi.ask_text(_allowed_ph), thread_type)

@@ -820,8 +820,19 @@ def _run_task(user_id: str, prompt: str, *, channel: str = "",
     model = _task_model(channel, chat_id, meta or {}) if channel else ""
     # auto_approve=True: user ĐÃ đồng ý khi tạo nhắc nhở → tới giờ TỰ chạy,
     # KHÔNG hỏi duyệt lại (nếu không sẽ mâu thuẫn 'em sẽ tự gửi' rồi lại hỏi).
+    # "KHÔNG hỏi DUYỆT lại" — KHÔNG phải "không được hỏi gì". Bản cũ ghi cộc lốc
+    # "KHÔNG hỏi lại" nên cấm luôn cả việc hỏi THÔNG TIN, mà nhiều việc theo lịch
+    # sinh ra chính là để hỏi.
+    #
+    # Đo thật 07/08 07:45 trên máy chủ: việc "Hỏi anh lấy thông tin nhân sự trong
+    # ngày để lập báo cáo theo mẫu…" chạy ra đúng một câu chào — "Dạ em đây ạ 😊
+    # Anh cần em giúp việc gì hôm nay nè?". Model bị cấm hỏi, lại bị bảo trả lời
+    # ngắn gọn, nên nó chào rồi thôi. Việc đó chạy 5 lần, hỏng cả 5.
     out = orchestrate(
-        f"[Nhắc việc theo lịch — làm ngay và trả lời ngắn gọn, KHÔNG hỏi lại]\n{prompt}",
+        "[Nhắc việc theo lịch — làm ngay. Đã được duyệt sẵn nên KHÔNG hỏi xin "
+        "phép lại; nhưng nếu việc này YÊU CẦU hỏi người dùng để lấy thông tin "
+        "thì cứ hỏi đúng như lời dặn bên dưới.]\n"
+        f"{prompt}",
         user_id,
         ha_fastpath=True,
         auto_approve=True,

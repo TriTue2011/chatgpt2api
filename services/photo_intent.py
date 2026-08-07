@@ -32,8 +32,14 @@ RAG_KNOWLEDGE = "rag_knowledge"
 RAG_TEACHER = "rag_teacher"
 ANALYZE = "analyze"
 GENERATE = "generate"
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE)
-ALL_INTENTS = set(INTENT_ORDER)
+#: Lưu thẳng ảnh lên kho đám mây. ĐỨNG CUỐI và KHÔNG nằm trong
+#: `ALL_INTENTS`: mục này chỉ hiện khi phạm vi đã khai kho — xem
+#: `them_luu_online`. Có nó thì đường lưu ảnh nằm NGAY trong menu, khỏi
+#: phải gửi câu hỏi thứ hai chồng lên (xem sự cố 07/08 ở
+#: `luu_tru_day.KhongHoiLuuKhiMenuDangMoTests`).
+LUU_ONLINE = "luu_online"
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, LUU_ONLINE)
+ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE}
 
 ASK_PROMPT_ANALYZE = (
     "🔍 Phân tích ảnh — em cần **câu hỏi / yêu cầu** cụ thể.\n"
@@ -258,6 +264,7 @@ def ask_text(intents: set[str] | None = None) -> str:
         RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
         ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
         GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
+        LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
     }
     lines = ["📷 Đã nhận ảnh. Bạn muốn em làm gì?"]
     n = 1
@@ -283,6 +290,16 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     if not t:
         return None
     # keywords
+    # Đặt TRƯỚC nhánh phân tích: nhánh đó bắt cụm "ảnh này", nên câu
+    # "lưu ảnh này lên kho" sẽ bị nó nuốt nếu xét sau.
+    #
+    # Xét ĐỘNG TỪ + NƠI LƯU rời nhau, không đòi cụm liền: người ta viết "lưu ảnh
+    # này lên kho" chứ ít khi viết đúng "lưu lên kho". Đòi cả hai vế nên "lưu"
+    # một mình (vd "lưu ý giúp em") không kích nhầm.
+    _dong_tu = ("lưu", "luu", "cất", "cat ", "upload", "tải lên", "tai len", "đẩy", "day ")
+    _noi = ("kho", "đám mây", "dam may", "drive", "cloud", "online")
+    if any(v in t for v in _dong_tu) and any(n in t for n in _noi):
+        return LUU_ONLINE
     if any(w in t for w in (
         "kiến thức", "kien thuc", "wiki", "tri thức", "tri thuc", "nạp rag kiến",
         "knowledge",
@@ -659,3 +676,24 @@ def ingest_teacher_from_photo(
     except Exception as exc:
         logger.warning("ingest_teacher_from_photo: %s", exc)
         return {"ok": False, "error": str(exc), "text": ""}
+
+
+def them_luu_online(intents: set[str], kenh: str, chat: str, *,
+                    topic: str = "", user: str = "") -> set[str]:
+    """Thêm mục «Lưu lên kho đám mây» vào menu ẢNH nếu phạm vi đã khai kho.
+
+    Cùng luật với `pdf_intent.them_luu_online`: không khai kho thì không thêm —
+    đó là lựa chọn bấm vào không ra gì.
+
+    Có mục này thì đường lưu ảnh nằm ngay trong menu, nên kênh không cần gửi câu
+    hỏi lưu thứ hai. Hai menu cùng sống trong một khung chat là hỏng thật: bản
+    chờ ảnh được xét trước rồi return, menu kho phía dưới không bao giờ bấm số
+    được (sự cố 07/08 với menu PDF, cùng cơ chế).
+    """
+    try:
+        from services.agent import luu_tru_online as lt
+        if lt.cai_dat(kenh, chat, topic, user).get("enabled"):
+            return set(intents) | {LUU_ONLINE}
+    except Exception as exc:
+        logger.debug("photo them_luu_online bỏ qua: %s", exc)
+    return set(intents)

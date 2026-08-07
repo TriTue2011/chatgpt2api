@@ -94,3 +94,43 @@ class CongTagCoNgoaiLeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MenuAnhCoMucLuuKhoTests(unittest.TestCase):
+    """Menu ảnh phải có mục «Lưu lên kho đám mây» khi phạm vi đã khai kho.
+
+    Bỏ câu hỏi lưu lúc vừa nhận ảnh (07/08) CHỈ đúng khi menu còn đường lưu.
+    Mất cả hai là không còn cách nào đưa ảnh lên kho — nên hai điều đó buộc
+    phải đi cùng nhau, và bài này giữ chúng lại với nhau.
+    """
+
+    def test_khai_kho_thi_menu_co_muc_luu(self):
+        from unittest import mock
+        from services import photo_intent as pi
+        with mock.patch("services.agent.luu_tru_online.cai_dat",
+                        return_value={"enabled": True}):
+            ds = pi.them_luu_online({pi.ANALYZE}, "zalop", "g1")
+        self.assertIn(pi.LUU_ONLINE, ds)
+        self.assertIn("kho đám mây", pi.ask_text(ds).lower())
+
+    def test_CHUA_khai_kho_thi_khong_bay_muc_vo_dung(self):
+        from unittest import mock
+        from services import photo_intent as pi
+        with mock.patch("services.agent.luu_tru_online.cai_dat",
+                        return_value={"enabled": False}):
+            ds = pi.them_luu_online({pi.ANALYZE}, "zalop", "g1")
+        self.assertNotIn(pi.LUU_ONLINE, ds)
+
+    def test_khong_nam_trong_ALL_INTENTS(self):
+        """Nằm trong ALL_INTENTS là mọi phạm vi đều thấy, kể cả nơi chưa khai
+        kho — bấm vào không ra gì."""
+        from services import photo_intent as pi
+        self.assertNotIn(pi.LUU_ONLINE, pi.ALL_INTENTS)
+
+    def test_tu_khoa_luu_khong_bi_nhanh_phan_tich_nuot(self):
+        """Nhánh phân tích bắt cụm "ảnh này", nên "lưu ảnh này lên kho" phải
+        được xét TRƯỚC, không thì rơi vào phân tích."""
+        from services import photo_intent as pi
+        cho = {pi.ANALYZE, pi.GENERATE, pi.LUU_ONLINE}
+        self.assertEqual(pi.parse_intent("lưu ảnh này lên kho", cho), pi.LUU_ONLINE)
+        self.assertEqual(pi.parse_intent("phân tích ảnh này", cho), pi.ANALYZE)
