@@ -264,18 +264,20 @@ def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "",
     if not text:
         raise VoiceError("Không có nội dung để đọc.")
     v = (voice_name or vcfg.tts_voice()).strip()
+    from services.voice import tone as _tone
+    st = _tone.style_for(text)   # tự chọn tu_nhien/tin_tuc/doc_truyen theo nội dung (chỉ tác dụng với VieNeu)
     sents = _split_sentences(text, max_chars=180)
 
     # Câu ngắn / 1 mẩu / không phải pipeline có ích → đường cũ (1 file).
     if len(sents) <= 1:
-        wav = speak(text, v)
+        wav = speak(text, v, style=st)
         path = _ghi_nhan(save_media(wav))
         url = media_url(path)
         play_on(speaker, url)
         cleanup_media()
         return url
 
-    first_wav = speak(sents[0], v)
+    first_wav = speak(sents[0], v, style=st)
     path1 = _ghi_nhan(save_media(first_wav))
     url1 = media_url(path1)
 
@@ -286,7 +288,7 @@ def play_text_on(text: str, speaker: dict[str, Any], voice_name: str = "",
     def _synth_rest() -> None:
         nonlocal rest_wav, rest_err
         try:
-            rest_wav = speak(rest, v)
+            rest_wav = speak(rest, v, style=st)
         except Exception as exc:
             rest_err = exc
 
