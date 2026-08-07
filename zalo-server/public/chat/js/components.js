@@ -1,6 +1,6 @@
 // components.js — UI rendering
 
-import { formatTime, formatDate, escapeHtml, truncate, getInitials, getAvatarColor, emojify } from './utils.js';
+import { formatTime, formatDate, escapeHtml, safeUrl, truncate, getInitials, getAvatarColor, emojify } from './utils.js';
 
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 
@@ -42,7 +42,7 @@ export function renderConversations(convs, activeId, onClick) {
         return `
             <div class="conversation-item${active}" data-id="${c.id}" data-type="${c.type}">
                 <div class="conversation-avatar" style="background:${color}20;color:${color}">
-                    ${c.avatar ? `<img src="${c.avatar}" alt="">` : initials}
+                    ${c.avatar ? `<img src="${safeUrl(c.avatar)}" alt="">` : initials}
                 </div>
                 <div class="conversation-body">
                     <div class="conversation-name">${escapeHtml(c.name)}${typeBadge}</div>
@@ -67,7 +67,7 @@ function renderAvatar(name, avatar, size = 'msg') {
     const initials = getInitials(name);
     const color = getAvatarColor(name);
     if (avatar) {
-        return `<img src="${avatar}" alt="" class="avatar-img avatar-${size}" style="background:${color}20">`;
+        return `<img src="${safeUrl(avatar)}" alt="" class="avatar-img avatar-${size}" style="background:${color}20">`;
     }
     return `<span class="avatar-text avatar-${size}" style="background:${color}20;color:${color}">${initials}</span>`;
 }
@@ -79,7 +79,7 @@ export function renderChatHeader(conv) {
     const color = getAvatarColor(conv.name);
 
     $('#chat-avatar').innerHTML = conv.avatar
-        ? `<img src="${conv.avatar}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
+        ? `<img src="${safeUrl(conv.avatar)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover">`
         : initials;
     $('#chat-avatar').style.background = `${color}20`;
     $('#chat-avatar').style.color = color;
@@ -96,20 +96,20 @@ let lastDateDivider = '';
 
 function renderBubble(m) {
     if (m.attachment && m.attachment.type === 'photo' && m.attachment.url) {
-        let html = `<img src="${m.attachment.url}" alt="Ảnh" class="msg-image" loading="lazy" onclick="window.open(this.src)">`;
+        let html = `<img src="${safeUrl(m.attachment.url)}" alt="Ảnh" class="msg-image" loading="lazy" onclick="window.open(this.src)">`;
         if (m.content && m.content !== '[Ảnh]') {
             html += `<div class="msg-text">${emojify(escapeHtml(m.content))}</div>`;
         }
         return html;
     }
     if (m.attachment && m.attachment.type === 'sticker' && m.attachment.url) {
-        return `<img src="${m.attachment.url}" alt="Sticker" class="msg-sticker" loading="lazy">`;
+        return `<img src="${safeUrl(m.attachment.url)}" alt="Sticker" class="msg-sticker" loading="lazy">`;
     }
     if (m.attachment && m.attachment.type === 'video' && m.attachment.url) {
-        return `<div class="msg-attachment"><span>🎬</span> <a href="${m.attachment.url}" target="_blank">Xem video</a></div>`;
+        return `<div class="msg-attachment"><span>🎬</span> <a href="${safeUrl(m.attachment.url)}" target="_blank" rel="noopener noreferrer">Xem video</a></div>`;
     }
     if (m.attachment && m.attachment.url) {
-        return `<div class="msg-attachment"><span>📎</span> <a href="${m.attachment.url}" target="_blank">${escapeHtml(m.content || 'Tệp đính kèm')}</a></div>`;
+        return `<div class="msg-attachment"><span>📎</span> <a href="${safeUrl(m.attachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(m.content || 'Tệp đính kèm')}</a></div>`;
     }
     return emojify(escapeHtml(m.content || ''));
 }

@@ -30,6 +30,23 @@ export function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// URL an toàn để nhét vào src="…" / href="…". escapeHtml KHÔNG escape dấu ",
+// nên URL từ dữ liệu Zalo (avatar/ảnh) kiểu `x" onerror="alert(1)` phá được
+// attribute → XSS. Chỉ cho http/https/data:image/ + đường dẫn tương đối; vô
+// hiệu hoá dấu " (và ' ). javascript:, data:text/html… → trả rỗng.
+export function safeUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    const neutralize = (s) => s.replace(/"/g, '%22').replace(/'/g, '%27');
+    if (raw.startsWith('/') && !raw.startsWith('//')) return neutralize(raw);
+    try {
+        const u = new URL(raw, window.location.origin);
+        if (u.protocol === 'http:' || u.protocol === 'https:') return neutralize(u.href);
+        if (u.protocol === 'data:' && /^data:image\//i.test(raw)) return neutralize(raw);
+    } catch (e) { /* URL không hợp lệ → rỗng */ }
+    return '';
+}
+
 export function truncate(str, len = 50) {
     if (!str) return '';
     return str.length > len ? str.slice(0, len) + '...' : str;
