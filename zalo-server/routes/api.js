@@ -143,6 +143,11 @@ import {
 
 const router = express.Router();
 
+// Endpoint dev/debug (test-login, test-json, debug-users-file) chỉ bật khi
+// đặt ZALO_DEV_ENDPOINTS=1. Production KHÔNG bật → chúng trả 404, không lộ
+// thông tin user và không còn là bề mặt tấn công.
+const DEV_ENDPOINTS = process.env.ZALO_DEV_ENDPOINTS === '1';
+
 // Dành cho ES Module: xác định __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -151,17 +156,14 @@ const __dirname = path.dirname(__filename);
 // Đăng nhập
 router.post('/login', (req, res) => {
   try {
-    console.log('Login attempt:', req.body);
-
+    // KHÔNG log req.body (chứa mật khẩu thô) hay kết quả validateUser.
     const { username, password } = req.body;
 
     if (!username || !password) {
-      console.log('Missing username or password');
       return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' });
     }
 
     const user = validateUser(username, password);
-    console.log('User validation result:', user);
 
     if (!user) {
       return res.status(401).json({ success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' });
@@ -173,7 +175,6 @@ router.post('/login', (req, res) => {
       return res.status(500).json({
         success: false,
         message: 'Lỗi server: session không khả dụng',
-        debug: 'req.session is undefined'
       });
     }
 
@@ -181,12 +182,6 @@ router.post('/login', (req, res) => {
     req.session.authenticated = true;
     req.session.username = user.username;
     req.session.role = user.role;
-
-    console.log('Login successful, session set:', {
-      authenticated: req.session.authenticated,
-      username: req.session.username,
-      role: req.session.role
-    });
 
     res.json({ success: true, user });
   } catch (error) {
@@ -278,33 +273,23 @@ router.delete('/users', adminMiddleware, async (req, res) => {
 
 // Đổi mật khẩu
 router.post('/change-password', (req, res) => {
-  console.log('Change password request received');
-  console.log('Session info:', req.session ? 'exists' : 'missing');
-  console.log('Authenticated:', req.session?.authenticated);
-  console.log('Username:', req.session?.username);
-
   if (!req.session.authenticated) {
-    console.log('Authentication check failed - user not logged in');
     return res.status(401).json({ success: false, message: 'Chưa đăng nhập' });
   }
 
-  console.log('Request body:', JSON.stringify(req.body));
+  // KHÔNG log req.body (chứa mật khẩu cũ + mới).
   const { oldPassword, newPassword } = req.body;
 
   if (!oldPassword || !newPassword) {
-    console.log('Missing required fields - oldPassword or newPassword');
     return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ mật khẩu cũ và mới' });
   }
 
-  console.log(`Calling changePassword for user: ${req.session.username}`);
   const success = changePassword(req.session.username, oldPassword, newPassword);
-  console.log(`Change password result: ${success ? 'SUCCESS' : 'FAILED'}`);
 
   if (!success) {
     return res.status(400).json({ success: false, message: 'Mật khẩu cũ không chính xác' });
   }
 
-  console.log('Password change successful - sending response');
   res.json({ success: true, message: 'Đã đổi mật khẩu thành công' });
 });
 
@@ -324,33 +309,18 @@ router.get('/check-auth', (req, res) => {
 // API đăng nhập đơn giản (không dùng file users.json)
 router.post('/simple-login', (req, res) => {
   try {
-    console.log('Simple login attempt:', req.body);
-
-    // Đảm bảo có dữ liệu hợp lệ
+    // KHÔNG log req.body (chứa mật khẩu).
     if (!req.body || typeof req.body !== 'object') {
-      console.error('Invalid request body:', req.body);
-      const errorResponse = { success: false, message: 'Dữ liệu không hợp lệ' };
-      console.log('Sending 400 response (invalid body):', JSON.stringify(errorResponse)); // Log before return
       res.setHeader('Content-Type', 'application/json');
-      return res.status(400).json(errorResponse);
+      return res.status(400).json({ success: false, message: 'Dữ liệu không hợp lệ' });
     }
 
     const { username, password } = req.body;
 
     if (!username || !password) {
-      console.log('Missing username or password');
-      const errorResponse = { success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' };
-      console.log('Sending 400 response (missing credentials):', JSON.stringify(errorResponse)); // Log before return
       res.setHeader('Content-Type', 'application/json');
-      return res.status(400).json(errorResponse);
+      return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' });
     }
-
-    // Kiểm tra session object
-    console.log('Session before login:', req.session ? 'exists' : 'missing');
-
-    // Sử dụng hàm validateUser để xác thực
-    console.log(`Login attempt: username=${username}, password=provided`);
-    console.log(`Session info: session ${req.session ? 'exists ' + req.sessionID : 'missing'}`);
 
     const user = validateUser(username, password);
 
@@ -358,10 +328,8 @@ router.post('/simple-login', (req, res) => {
       // Xử lý trường hợp không có req.session
       if (!req.session) {
         console.error('Session object is not available - missing session middleware?');
-        const errorResponse = { success: false, message: 'Lỗi server: session không khả dụng' };
-        console.log('Sending 500 response (session missing):', JSON.stringify(errorResponse)); // Log before return
         res.setHeader('Content-Type', 'application/json');
-        return res.status(500).json(errorResponse);
+        return res.status(500).json({ success: false, message: 'Lỗi server: session không khả dụng' });
       }
 
       // Thiết lập session với thông tin người dùng đã xác thực
@@ -369,33 +337,22 @@ router.post('/simple-login', (req, res) => {
       req.session.username = user.username;
       req.session.role = user.role;
 
-      console.log('Session set, returning response immediately');
-
-      const successResponse = {
+      // Trả về user THẬT (username/role đã xác thực), không hardcode admin/admin
+      // — frontend không được hiển thị/quyết định quyền dựa trên vai giả.
+      res.setHeader('Content-Type', 'application/json');
+      return res.json({
         success: true,
-        user: { username: 'admin', role: 'admin' },
+        user: { username: user.username, role: user.role },
         sessionID: req.sessionID || 'unknown'
-      };
-      console.log('Sending 200 response (login success):', JSON.stringify(successResponse)); // Log before return
-      res.setHeader('Content-Type', 'application/json');
-      return res.json(successResponse);
+      });
     } else {
-      const errorResponse = { success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' };
-      console.log('Sending 401 response (invalid credentials):', JSON.stringify(errorResponse)); // Log before return
       res.setHeader('Content-Type', 'application/json');
-      return res.status(401).json(errorResponse);
+      return res.status(401).json({ success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' });
     }
   } catch (error) {
     console.error('Simple login error:', error);
-    // Luôn đảm bảo trả về JSON
-    const errorResponse = {
-      success: false,
-      message: 'Lỗi server',
-      error: error.message || 'Unknown error'
-    };
-    console.log('Sending 500 response (catch block):', JSON.stringify(errorResponse)); // Log before return
     res.setHeader('Content-Type', 'application/json');
-    return res.status(500).json(errorResponse);
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 });
 
@@ -611,45 +568,30 @@ router.get('/session-test', (req, res) => {
 
 // Thêm một API đăng nhập đơn giản mới để test - simplified
 router.post('/test-login', (req, res) => {
-  console.log('Test login received:', req.body);
+  // Endpoint dev — chỉ bật khi ZALO_DEV_ENDPOINTS=1; production trả 404.
+  if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
 
   try {
+    // KHÔNG log req.body (chứa mật khẩu).
     const { username, password } = req.body || {};
 
-    console.log(`Login attempt: username=${username}, password=${typeof password === 'string' ? 'provided' : 'missing'}`);
-    console.log('Session info:', req.session ? 'session exists' : 'no session', req.sessionID || 'no session ID');
-
-    // Basic validation
     if (!username || !password) {
-      console.log('Missing username or password');
       return res.status(400).json({ success: false, message: 'Tài khoản và mật khẩu không được để trống' });
     }
-
-    // Sử dụng hàm validateUser để xác thực
-    console.log(`Login attempt: username=${username}, password=provided`);
-    console.log(`Session info: session ${req.session ? 'exists ' + req.sessionID : 'missing'}`);
 
     const user = validateUser(username, password);
 
     if (user) {
-      // Set session if available
       if (req.session) {
         req.session.authenticated = true;
         req.session.username = user.username;
         req.session.role = user.role;
-
-        // Force save session to ensure cookie is set
         req.session.save(err => {
-          if (err) {
-            console.error('Session save error:', err);
-          }
-
-          console.log('Session saved:', req.sessionID);
-
-          // Success response with session ID
+          if (err) console.error('Session save error:', err);
+          // Trả user THẬT, không hardcode admin/admin.
           return res.json({
             success: true,
-            user: { username: 'admin', role: 'admin' },
+            user: { username: user.username, role: user.role },
             sessionID: req.sessionID,
             message: 'Đăng nhập thành công'
           });
@@ -658,29 +600,23 @@ router.post('/test-login', (req, res) => {
         console.error('No session object available');
         return res.json({
           success: true,
-          user: { username: 'admin', role: 'admin' },
+          user: { username: user.username, role: user.role },
           sessionAvailable: false,
           message: 'Đăng nhập thành công, nhưng session không khả dụng'
         });
       }
     } else {
-      // Invalid credentials
-      console.log('Invalid credentials');
       return res.status(401).json({ success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' });
     }
   } catch (error) {
     console.error('Error in test-login:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Lỗi server',
-      error: error.message
-    });
+    return res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 });
 
-// API test JSON đơn giản
+// API test JSON đơn giản — dev only (echo lại body, không dùng ở production).
 router.post('/test-json', (req, res) => {
-  // Trả về chính xác request body được gửi lên
+  if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
   res.setHeader('Content-Type', 'application/json');
   return res.json({
     success: true,
@@ -806,6 +742,9 @@ router.get('/debug-webhook-config', (req, res) => {
 
 // Endpoint debug để kiểm tra file users.json
 router.get('/debug-users-file', (req, res) => {
+    // Endpoint dev — trước đây PUBLIC, lộ username/role/độ dài+prefix salt-hash
+    // cho bất kỳ ai. Chỉ bật khi ZALO_DEV_ENDPOINTS=1; production trả 404.
+    if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
     try {
         const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
         const fileExists = fs.existsSync(userFilePath);
