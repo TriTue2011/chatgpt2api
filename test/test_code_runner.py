@@ -129,6 +129,19 @@ class TestKhongRoSecret(unittest.TestCase):
         duong_dan = kq["stdout"].strip().splitlines()[-1]
         self.assertFalse(os.path.exists(duong_dan), f"còn sót thư mục {duong_dan}")
 
+    def test_bom_ram_bi_gioi_han_chan(self):
+        """Code ngốn RAM (qua được blacklist vì không chạm hệ thống) phải bị
+        RLIMIT_AS chặn bằng MemoryError, không làm cạn RAM container. Bỏ qua
+        nếu chạy trên nền không có module `resource` (không phải POSIX)."""
+        try:
+            import resource  # noqa: F401
+        except ImportError:
+            self.skipTest("không có module resource (không phải POSIX)")
+        kq = cr.chay("x = [0] * (10**10)\nprint(len(x))")
+        self.assertTrue(kq["da_chay"], kq)
+        self.assertFalse(kq["ok"], "cấp phát 10^10 phần tử phải thất bại vì trần RAM")
+        self.assertIn("MemoryError", kq["stderr"] + kq["chan_doan"])
+
 
 if __name__ == "__main__":
     unittest.main()

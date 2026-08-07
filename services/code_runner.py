@@ -280,6 +280,33 @@ def kiem_tinh(code: str) -> str:
             "phải nhận xét chủ quan:\n- " + "\n- ".join(van_de))
 
 
+# Trần tài nguyên cho tiến trình con (đặt bằng setrlimit trong preexec_fn).
+# Báo cáo bảo mật 07/08: bộ chạy KHÔNG giới hạn RAM/CPU nên code sinh (dù đã
+# lọc blacklist) vẫn có thể `[0]*10**10` làm cạn RAM cả container. setrlimit là
+# per-process, không cần root/cgroup, không đổi công tắc bật/tắt.
+_RAM_TRAN_BYTE = 1024 * 1024 * 1024      # 1 GB address space
+_FILE_TRAN_BYTE = 64 * 1024 * 1024       # 64 MB mỗi file (chống ghi đầy đĩa)
+
+
+def _dat_gioi_han_tai_nguyen(han_giay: float):
+    """Trả preexec_fn đặt rlimit CPU/RAM/kích-thước-file; None nếu không có
+    module `resource` (không phải POSIX). RLIMIT_NPROC CỐ Ý bỏ: nó đếm theo UID
+    toàn hệ, đặt thấp sẽ chặn cả tiến trình khác của container."""
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    def _dat():
+        # CPU giây: cứng hơn timeout treo tường — chặn vòng lặp ngốn CPU thật.
+        cpu = int(han_giay) + 2
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
+        resource.setrlimit(resource.RLIMIT_AS, (_RAM_TRAN_BYTE, _RAM_TRAN_BYTE))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (_FILE_TRAN_BYTE, _FILE_TRAN_BYTE))
+
+    return _dat
+
+
 def chay(code: str, han_giay: float = HAN_GIAY) -> dict[str, object]:
     """Chạy thử code. Trả dict:
 
@@ -307,6 +334,7 @@ def chay(code: str, han_giay: float = HAN_GIAY) -> dict[str, object]:
                 env=_moi_truong_sach(),
                 capture_output=True, text=True, timeout=han_giay,
                 start_new_session=True,             # nhóm tiến trình riêng để diệt được cả con cháu
+                preexec_fn=_dat_gioi_han_tai_nguyen(han_giay),  # trần CPU/RAM/file (setrlimit)
             )
         except subprocess.TimeoutExpired:
             logger.warning({"event": "code_run_timeout", "han_giay": han_giay})
