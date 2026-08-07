@@ -119,7 +119,7 @@ services:
         condition: service_started
     ports:
       - "8000:8000"     # WebSocket audio — loa nối vào
-      - "8003:8003"     # OTA — loa trỏ tới http://<host>:8003/xiaozhi/ota/
+      - "8003:8003"     # OTA — loa trỏ tới http://<host>:8002/xiaozhi/ota/
     volumes:
       - /opt/c2a/data/xiaozhi/data:/opt/xiaozhi-esp32-server/data
     security_opt:
@@ -136,7 +136,7 @@ volumes:
 # 4) Đặt XZ_MANAGER_SECRET = giá trị vừa copy vào Environment của stack → Update lại.
 # 5) Console → 参数管理:
 #      server.websocket = ws://<SERVER_IP>:8000/xiaozhi/v1/
-#      server.ota       = http://<SERVER_IP>:8003/xiaozhi/ota/
+#      server.ota       = http://<SERVER_IP>:8002/xiaozhi/ota/
 #    (<SERVER_IP> = IP LAN host — đặt Ở ĐÂY, không cần env.)
 # 6) Console → 模型配置 (Model Config) — trỏ c2a qua DOMAIN/IP host (KHÔNG dùng
 #    tên `c2a` vì khác stack/mạng), key = AUTH_KEY của c2a:
@@ -145,5 +145,5 @@ volumes:
 #      TTS : kiểu OpenAI → https://gpt.vhtatn.io.vn/v1/audio/speech
 #      → giờ CHỌN model/giọng/STT/persona bất kỳ trong console.
 # 7) Đăng ký thiết bị (theo MAC loa) trong console; trỏ OTA loa (panel 8081) về
-#    http://<SERVER_IP>:8003/xiaozhi/ota/ → reboot → "Alexa".
+#    http://<SERVER_IP>:8002/xiaozhi/ota/ → reboot → "Alexa".
 # =====================================================================

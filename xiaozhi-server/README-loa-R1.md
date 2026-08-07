@@ -69,7 +69,7 @@ xuyên; để riêng thì update c2a không đụng tới xiaozhi.
 Lần đầu (tóm tắt; chi tiết ở đầu file stack):
 1. Deploy (để trống `XZ_MANAGER_SECRET`) → console `http://<host>:8002` → đăng ký admin.
 2. Console → 参数管理 → copy `server.secret` → đặt `XZ_MANAGER_SECRET` trong Environment → Update lại.
-3. Console → 参数管理: `server.websocket=ws://<SERVER_IP>:8000/xiaozhi/v1/`, `server.ota=http://<SERVER_IP>:8003/xiaozhi/ota/`.
+3. Console → 参数管理: `server.websocket=ws://<SERVER_IP>:8000/xiaozhi/v1/`, `server.ota=http://<SERVER_IP>:8002/xiaozhi/ota/`.
 4. Console → 模型配置: LLM/ASR/TTS kiểu OpenAI trỏ `https://gpt.vhtatn.io.vn/...` (key=AUTH_KEY) → chọn model/giọng/STT tuỳ ý.
 
 ⚠️ Java+MySQL+Redis, nặng hơn hẳn; chưa test build được — dựng bám sát compose chính chủ, kiểm khi deploy.
@@ -88,7 +88,7 @@ khác"):
     restart: unless-stopped
     ports:
       - "8000:8000"     # WebSocket — loa nối vào
-      - "8003:8003"     # OTA — loa trỏ tới http://<SERVER_IP>:8003/xiaozhi/ota/
+      - "8003:8003"     # OTA — loa trỏ tới http://<SERVER_IP>:8002/xiaozhi/ota/
     volumes:
       - /opt/xiaozhi/data:/opt/xiaozhi-esp32-server/data
     security_opt:
@@ -159,7 +159,7 @@ thiết bị của xiaozhi hoặc chặn bằng Cloudflare Access. Loa qua WAN s
 
 2. **Trỏ loa vật lý về server** (mỗi máy/mạng khác nhau): mở panel loa
    `http://<IP-loa>:8081` → OTA Server → **Tùy chỉnh** → nhập
-   `http://<SERVER_IP>:8003/xiaozhi/ota/` → Lưu → reboot loa.
+   `http://<SERVER_IP>:8002/xiaozhi/ota/` → Lưu → reboot loa.
    *(Chỉ đổi SAU KHI xiaozhi-server đã chạy.)*
 
 Nói **"Alexa"** → hỏi → c2a trả lời bằng giọng Việt.
