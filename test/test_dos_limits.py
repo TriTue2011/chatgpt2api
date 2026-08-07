@@ -71,22 +71,21 @@ class TarRestoreLimitTests(unittest.TestCase):
         self.assertEqual(len(out["snapshots"]), 3)
 
 
-class ZaloWebhookBoundTests(unittest.TestCase):
-    def test_het_slot_thi_bo_tin_khong_spawn(self):
-        import api.zalo_bot as zbmod
-        called = []
-        with mock.patch.object(zbmod.zb, "process_update",
-                               side_effect=lambda b, bot: called.append(1)):
-            # Vét sạch semaphore → lượt kế phải bị bỏ, không gọi process_update.
-            sem = zbmod._webhook_sem
-            got = [sem.acquire(blocking=False) for _ in range(zbmod._WEBHOOK_MAX_INFLIGHT)]
-            try:
-                self.assertTrue(all(got))
-                zbmod._spawn_bounded_update({"x": 1}, object())
-                self.assertEqual(called, [], "hết slot thì KHÔNG xử lý")
-            finally:
-                for _ in got:
-                    sem.release()
+class ZaloWorkerBoundTests(unittest.TestCase):
+    def test_het_slot_thi_bo_tin(self):
+        # Bound worker Zalo Bot nay ở services.zalo_bot._zalo_worker (đặt ở đúng
+        # điểm spawn _process_message). Vét sạch pool → lượt kế bị bỏ (False),
+        # không gọi fn. (Semaphore api-level cũ _webhook_sem đã bỏ ở 994be1f.)
+        from services.ingress_guard import make_worker_pool
+        import threading
+        spawn = make_worker_pool("zalo_test", 1)
+        release = threading.Event()
+        calls = []
+        self.assertTrue(spawn(lambda: (calls.append(1), release.wait(2))))
+        # Slot đã đầy → lượt kế bị bỏ, KHÔNG chạy fn thứ hai.
+        self.assertFalse(spawn(lambda: calls.append(2)))
+        release.set()
+        self.assertNotIn(2, calls)
 
 
 if __name__ == "__main__":

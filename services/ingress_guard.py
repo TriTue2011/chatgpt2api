@@ -51,6 +51,23 @@ async def read_json_limited(request, max_bytes: int = DEFAULT_MAX_BODY) -> Any:
     return json.loads(raw)
 
 
+async def read_body_limited(request, max_bytes: int) -> bytes:
+    """Đọc RAW body theo chunk, dừng khi vượt max_bytes (ném BodyTooLarge).
+
+    Cho proxy/upload cần bytes thô (không JSON). Chống body vô hạn nạp RAM kể
+    cả chunked (không Content-Length)."""
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > max_bytes:
+            raise BodyTooLarge(f"body > {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def make_worker_pool(name: str, max_inflight: int) -> Callable[..., bool]:
     """Trả hàm `spawn(fn, *args, **kwargs) -> bool`: chạy fn ở thread nền NHƯNG
     giữ một slot semaphore tới khi fn KẾT THÚC. Hết slot → bỏ (trả False), log.

@@ -111,9 +111,17 @@ async function loadUsers() {
             el.innerHTML = '<div class="empty-state"><p>Không có người dùng nào.</p></div>';
             return;
         }
+        // Escape username (dữ liệu ngoài) trước khi vào innerHTML/attribute —
+        // chống stored XSS (báo cáo bảo mật 07/08).
+        var esc = function (s) {
+            return (s == null ? '' : String(s))
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        };
         var h = '<div class="table-wrap"><table><thead><tr><th>Tên đăng nhập</th><th>Vai trò</th><th style="width:80px">Thao tác</th></tr></thead><tbody>';
         d.users.forEach(function(u) {
-            h += '<tr><td>' + u.username + '</td><td><span class="badge ' + (u.role === 'admin' ? 'badge-info' : 'badge-muted') + '">' + (u.role === 'admin' ? 'Quản trị viên' : 'Người dùng') + '</span></td><td><button class="btn btn-danger btn-sm del-user-btn" data-username="' + u.username + '">Xóa</button></td></tr>';
+            var un = esc(u.username);
+            h += '<tr><td>' + un + '</td><td><span class="badge ' + (u.role === 'admin' ? 'badge-info' : 'badge-muted') + '">' + (u.role === 'admin' ? 'Quản trị viên' : 'Người dùng') + '</span></td><td><button class="btn btn-danger btn-sm del-user-btn" data-username="' + un + '">Xóa</button></td></tr>';
         });
         h += '</tbody></table></div>';
         el.innerHTML = h;

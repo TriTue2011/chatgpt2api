@@ -19,8 +19,13 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import Response
 
 from api.support import require_admin
+from services.ingress_guard import read_body_limited, BodyTooLarge
 
 HUB_URL = os.getenv("MCP_HUB_INTERNAL_URL", "http://127.0.0.1:8005").rstrip("/")
+
+# Trần body cho proxy admin → hub (Studio ingest tài liệu có thể lớn, nhưng
+# không vô hạn). 100MB đủ cho tài liệu thực tế, chặn nạp RAM vô tội vạ.
+_MAX_PROXY_BODY = 100 * 1024 * 1024
 
 # RAG ingest / AI source-analysis can legitimately take a minute or two.
 _TIMEOUT = httpx.Timeout(connect=5.0, read=180.0, write=180.0, pool=5.0)
@@ -40,7 +45,10 @@ def create_router() -> APIRouter:
     async def proxy(path: str, request: Request, authorization: str | None = Header(default=None)):
         require_admin(authorization)
         url = f"{HUB_URL}/{path}"
-        body = await request.body()
+        try:
+            body = await read_body_limited(request, _MAX_PROXY_BODY)
+        except BodyTooLarge:
+            return Response(content=b"Payload qua lon (>100MB)", status_code=413)
         fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             upstream = await client.request(

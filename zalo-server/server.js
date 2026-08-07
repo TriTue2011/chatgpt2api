@@ -22,16 +22,26 @@ const server = http.createServer(app);
 // tin nhắn Zalo cho bất kỳ ai — báo cáo bảo mật 07/08). Nay dùng noServer +
 // tự xử lý 'upgrade': chỉ path /ws, kiểm Origin same-host, XÁC THỰC session
 // (cùng middleware với HTTP), giới hạn số kết nối.
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }); // trần 1MB/khung
 const _WS_MAX = 50;
+
+// Origin allowlist: khai ZALO_WS_ALLOWED_ORIGINS (phẩy) = danh sách origin
+// HTTPS cụ thể (khuyến nghị khi chạy sau tunnel). Chưa khai → fallback same-host
+// (LAN dev). "Không dựa vào so sánh host đơn thuần" khi đã có allowlist.
+const _WS_ORIGINS = String(process.env.ZALO_WS_ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 // Lưu trữ kết nối WebSocket
 export const webSocketClients = new Set();
 
 function _originOk(req) {
-  // Không có Origin (client không phải trình duyệt) → cho qua; có thì phải
-  // khớp Host (chống trình duyệt lạ nối cross-site). WS vẫn cần session hợp lệ.
   const origin = req.headers.origin;
+  if (_WS_ORIGINS.length) {
+    // Có allowlist → BẮT BUỘC Origin khớp chính xác một origin đã khai.
+    return !!origin && _WS_ORIGINS.includes(origin);
+  }
+  // Chưa khai allowlist: không có Origin (client không phải trình duyệt) cho
+  // qua; có thì phải khớp Host (chống cross-site cơ bản). Vẫn cần session admin.
   if (!origin) return true;
   try {
     return new URL(origin).host === req.headers.host;
@@ -63,9 +73,12 @@ server.on('upgrade', (req, socket, head) => {
   // gọi setHeader/end nên phải có stub kẻo ném lỗi.
   const fakeRes = { setHeader() {}, getHeader() {}, removeHeader() {}, end() {}, writeHead() {}, on() {} };
   sessionMiddleware(req, fakeRes, () => {
-    if (!req.session || !req.session.authenticated) {
-      console.warn('WS upgrade từ chối: chưa đăng nhập');
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    // WS phát TOÀN BỘ tin nhắn Zalo → chỉ ADMIN. User thường (nếu có) không
+    // được nghe chung. Muốn cho user xem Zalo phải thiết kế ACL theo
+    // tài khoản/thread, không broadcast chung.
+    if (!req.session || !req.session.authenticated || req.session.role !== 'admin') {
+      console.warn('WS upgrade từ chối: cần đăng nhập admin');
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;
     }

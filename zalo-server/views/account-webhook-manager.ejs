@@ -173,18 +173,26 @@ async function updateAccountsList() {
     var tbody = document.getElementById('accounts-list');
     if (!accounts.length) { tbody.innerHTML = '<tr><td colspan="5" class="text-muted">Không có tài khoản nào đăng nhập</td></tr>'; return; }
     var configs = await getWebhookConfigs();
+    // Escape dữ liệu ngoài (ownId/phoneNumber/proxy từ Zalo) trước khi vào
+    // innerHTML — chống stored XSS (báo cáo bảo mật 07/08).
+    var esc = function (s) {
+        return (s == null ? '' : String(s))
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
     tbody.innerHTML = '';
     accounts.forEach(function(a) {
         var hasWH = configs && configs.accounts && configs.accounts[a.ownId];
+        var oid = esc(a.ownId);
         var tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + a.ownId + '</td>' +
-            '<td>' + (a.phoneNumber || 'N/A') + '</td>' +
-            '<td>' + (a.proxy || 'Không có') + '</td>' +
+            '<td>' + oid + '</td>' +
+            '<td>' + esc(a.phoneNumber || 'N/A') + '</td>' +
+            '<td>' + esc(a.proxy || 'Không có') + '</td>' +
             '<td><span class="badge ' + (hasWH ? 'badge-success' : 'badge-muted') + '">' + (hasWH ? 'Đã cấu hình' : 'Chưa cấu hình') + '</span></td>' +
             '<td style="display:flex;gap:6px">' +
-                '<button class="btn btn-outline btn-sm config-btn" data-ownid="' + a.ownId + '">Cấu hình</button>' +
-                (hasWH ? '<button class="btn btn-danger btn-sm del-btn" data-ownid="' + a.ownId + '">Xóa</button>' : '') +
+                '<button class="btn btn-outline btn-sm config-btn" data-ownid="' + oid + '">Cấu hình</button>' +
+                (hasWH ? '<button class="btn btn-danger btn-sm del-btn" data-ownid="' + oid + '">Xóa</button>' : '') +
             '</td>';
         tbody.appendChild(tr);
     });

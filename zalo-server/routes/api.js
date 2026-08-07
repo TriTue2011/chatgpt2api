@@ -763,7 +763,10 @@ router.delete('/account-webhook/:ownId', adminMiddleware, (req, res) => {
 });
 
 // Endpoint debug để kiểm tra trạng thái webhookConfig
-router.get('/debug-webhook-config', (req, res) => {
+router.get('/debug-webhook-config', adminMiddleware, (req, res) => {
+    // Endpoint debug — lộ cấu hình webhook (URL). Bịt ở production (chỉ bật
+    // ZALO_DEV_ENDPOINTS=1) và bắt buộc admin.
+    if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
     try {
         const webhookConfigs = getAllWebhookConfigs();
         const fileExists = fs.existsSync(path.join(__dirname, 'webhookConfig.json'));

@@ -805,6 +805,9 @@ async def handle_webhook(request) -> dict:
         return {"ok": False}
     except Exception:
         return {"ok": False}
+    # JSON hợp lệ nhưng không phải object (vd [] / null) → body.get() sẽ 500.
+    if not isinstance(body, dict):
+        return {"ok": False}
 
     # De-dupe Telegram webhook retries
     bid_pub = _bot_public_id(bot)

@@ -632,7 +632,20 @@ def create_app() -> FastAPI:
         content = b""
         filename_raw = ""
         if has_file:
-            content = await file.read()
+            # Đọc CÓ TRẦN (100MB) thay vì file.read() vô hạn — chặn upload khổng
+            # lồ làm cạn RAM hub (báo cáo bảo mật 07/08).
+            _MAX = 100 * 1024 * 1024
+            _buf = []
+            _total = 0
+            while True:
+                _chunk = await file.read(1024 * 1024)
+                if not _chunk:
+                    break
+                _total += len(_chunk)
+                if _total > _MAX:
+                    return {"ok": False, "error": "File quá lớn (>100MB)."}
+                _buf.append(_chunk)
+            content = b"".join(_buf)
             filename_raw = file.filename or ""
 
         # Chạy nền + chờ có giới hạn. Tài liệu ngắn xong trong ngưỡng chờ thì

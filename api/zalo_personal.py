@@ -48,6 +48,9 @@ def create_router() -> APIRouter:
             return {"ok": False}
         except Exception:
             return {"ok": False}
+        # JSON hợp lệ nhưng không phải object ([]/null) → handle_event lỗi.
+        if not isinstance(body, dict):
+            return {"ok": False}
         # Bound worker: hết slot thì bỏ tin (shed-load) thay vì tạo vô hạn thread.
         _zp_worker(zp.handle_event, body, event)
         return {"ok": True}
