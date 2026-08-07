@@ -291,6 +291,17 @@ PRESETS: list[MCPPreset] = [
         homepage="https://gitmcp.io",
         tags=["developer", "generic", "no-auth"],
     ),
+
+    # ── Loa Phicomm R1 (AI Box) — MCP server chạy sẵn TRÊN LOA ──────────────
+    # Điều khiển loa bằng lời từ mọi kênh: âm lượng, mở nhạc Zing/YouTube, đài
+    # VOV, dừng/next/prev, báo thức, gửi Zalo. Loa tự expose MCP tại :8083.
+    # ⚠️ URL là IP LAN của loa — SỬA cho đúng loa của bạn (mặc định 172.16.10.17).
+    MCPPreset(
+        id="phicomm_r1", name="Loa Phicomm R1", icon="🔊", category="ha",
+        description="Điều khiển loa R1/AI Box: âm lượng, mở nhạc Zing/YouTube, đài VOV, báo thức. Đổi IP cho đúng loa của bạn.",
+        url="http://172.16.10.17:8083/",
+        tags=["device", "speaker", "music", "no-auth", "lan"],
+    ),
 ]
 
 

@@ -40,6 +40,79 @@ docker logs -f xiaozhi-esp32-server           # thấy WS :8000, OTA :8003
 **Portainer** (host .38): dùng **Stack từ Git repository** để có sẵn thư mục
 `xiaozhi-server/` cho bind mount; đặt 2 biến trên trong phần Environment của stack.
 
+## Cách 2 — Portainer stack gộp (host-path, khớp .38 hiện tại)
+
+Nếu bạn sửa stack bằng **web-editor Portainer** (không kéo từ Git), dùng đường dẫn
+tuyệt đối trên host thay cho bind mount `./` — khớp đúng khuôn `/opt/c2a/data` bạn
+đang dùng. Thêm service này **cùng stack** với `c2a` (vẫn "một stack, không compose
+khác"):
+
+```yaml
+  xiaozhi-server:
+    image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:server_latest
+    container_name: xiaozhi-esp32-server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"     # WebSocket — loa nối vào
+      - "8003:8003"     # OTA — loa trỏ tới http://<SERVER_IP>:8003/xiaozhi/ota/
+    volumes:
+      - /opt/xiaozhi/data:/opt/xiaozhi-esp32-server/data
+    security_opt:
+      - no-new-privileges:true
+```
+
+Tạo file config một lần trên host (thay `<AUTH_KEY>` = đúng `${AUTH_KEY}` của stack):
+
+```bash
+sudo mkdir -p /opt/xiaozhi/data
+sudo tee /opt/xiaozhi/data/.config.yaml >/dev/null <<'YAML'
+server:
+  ip: 0.0.0.0
+  port: 8000
+  http_port: 8003
+  websocket: ws://172.16.10.38:8000/xiaozhi/v1/
+  vision_explain: http://172.16.10.38:8003/mcp/vision/explain
+selected_module:
+  VAD: SileroVAD
+  ASR: OpenaiASR
+  LLM: C2A
+  TTS: OpenAITTS
+  Intent: function_call
+  Memory: nomem
+LLM:
+  C2A: {type: openai, model_name: gpt-4o, url: "http://c2a:80/v1/", api_key: "<AUTH_KEY>"}
+ASR:
+  OpenaiASR: {type: openai, base_url: "http://c2a:80/v1/audio/transcriptions", api_key: "<AUTH_KEY>", model_name: whisper-1, output_dir: tmp/}
+TTS:
+  OpenAITTS: {type: openai, api_url: "http://c2a:80/v1/audio/speech", api_key: "<AUTH_KEY>", model: tts-1, voice: "", speed: 1, output_dir: tmp/}
+YAML
+```
+
+`http://c2a:80` phân giải được vì **cùng stack** với c2a. Cổng 8000/8003 không đụng
+c2a (3030/6080/3001/10600/10700).
+
+## Cách 3 — Loa ở xa, không cùng LAN: dùng qua domain
+
+Firmware loa hỗ trợ `https://`/`wss://`. Đưa xiaozhi-server ra internet qua reverse
+proxy (cái đang phục vụ `gpt.vhtatn.io.vn`) và đổi URL advertise sang domain — còn
+LLM/STT/TTS vẫn gọi nội bộ `c2a:80`:
+
+```yaml
+# trong .config.yaml
+server:
+  websocket: wss://loa.vhtatn.io.vn/xiaozhi/v1/
+  vision_explain: https://loa.vhtatn.io.vn/mcp/vision/explain
+```
+
+Reverse proxy (TLS + cho phép WebSocket upgrade):
+- `wss://loa.vhtatn.io.vn/xiaozhi/v1/`  → `xiaozhi-server:8000` (bật header `Upgrade`/`Connection`)
+- `https://loa.vhtatn.io.vn/xiaozhi/ota/` và `/mcp/...` → `xiaozhi-server:8003`
+
+Trên loa: OTA Tùy chỉnh → `https://loa.vhtatn.io.vn/xiaozhi/ota/`.
+
+⚠️ Mở ra internet: ai biết domain cũng cắm loa vào được. Nên bật đăng ký/allowlist
+thiết bị của xiaozhi hoặc chặn bằng Cloudflare Access. Loa qua WAN sẽ trễ hơn LAN.
+
 ## Hai việc theo bản chất KHÔNG nhét vào image được
 
 1. **Tải model giọng 1 lần** (nặng, nằm ngoài image — Dockerfile ghi rõ tải lúc
@@ -57,19 +130,34 @@ docker logs -f xiaozhi-esp32-server           # thấy WS :8000, OTA :8003
 
 Nói **"Alexa"** → hỏi → c2a trả lời bằng giọng Việt.
 
-## Điều khiển mọi thứ bằng giọng nói (MCP tool của loa)
+## R1 là một MCP server sẵn — điều khiển từ MỌI kênh (gần như không cần code)
 
-Firmware loa tự dựng MCP server; khi nối vào xiaozhi-server, tool tự xuất hiện cho
-LLM gọi (`Intent: function_call`, c2a đã hỗ trợ `tools`/`tool_calls`).
+Loa chạy sẵn **MCP server tại `http://<IP-loa>:8083/`** (tên `AIBOX-Phicomm-R1`;
+kiểm 07/08/2026: POST JSON-RPC `initialize`/`tools/list`/`tools/call` chạy, CORS mở).
+Vì c2a **thêm MCP server bằng toggle**, chỉ cần đăng ký URL này là R1 thành "một chức
+năng tích-để-bật", và LLM gọi được từ **mọi kênh** (web/Telegram/Zalo), không chỉ loa.
 
-| Nói | Tool loa |
+**Cách thêm:** c2a → Cài đặt → MCP → thêm server `http://172.16.10.17:8083/`
+(nếu UI đòi endpoint SSE thì `http://172.16.10.17:8083/sse`) → bật toggle.
+
+**10 tool thật (đã xác minh qua `tools/list`):**
+
+| Nói | Tool |
 |---|---|
 | "Đặt âm lượng 40%" | `R1_speaker_set_volume` (0–100) |
-| "Mở bài … trên YouTube" | YouTube search/play (NewPipe, chạy trên loa) |
-| "Mở nhạc … Zing" | `play_zing` / `search_song` / `play_song` |
-| "Tạo/thêm/xoá playlist" | `create_playlist` / `add_song` / `remove_song` |
-| "Chỉnh bass / EQ / loudness" | `set_bass` / `set_eq` / `set_loudness` |
-| "Đổi đèn …" | `background_light` / `frame_light` / `music_light` |
+| "Mở nhạc/kể chuyện … (Zing)" | `R1_music_zing_play` |
+| "Mở … trên YouTube" | `R1_youtube_music_play` / `R1_youtube_music_playlist` |
+| "Dừng / bài tiếp / bài trước / phát tiếp" | `R1_music_stop` |
+| "Mở/tắt đài VOV" | `R1_radio_play` / `R1_radio_stop` |
+| "Loa thế nào rồi" | `R1_get_device_status` |
+| "Đặt/sửa báo thức" | `R1_alarm_manage` |
+| "Gửi Zalo …" | `R1_send_zalo_message` |
+
+**Không có trong MCP:** *reboot* và *tắt nguồn cứng*. MCP chỉ có chỉnh âm lượng
+(đặt 0 = im) + `R1_music_stop`. Reboot-bằng-giọng phải đi kênh khác (WS shell :8080),
+cần thêm dependency WebSocket + build lại image → để riêng, không làm trừ khi cần.
+
+Khi nói trực tiếp với loa (qua xiaozhi-server), chính bộ tool này cũng tự lộ cho LLM.
 
 ## Kiểm khi chạy thật
 
