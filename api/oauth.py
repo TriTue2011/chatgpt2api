@@ -87,11 +87,9 @@ def create_router() -> APIRouter:
         if password:
             require_admin(f"Bearer {password}")
             return
-        # Query parameter fallback: ?password=xxx
-        qp = str(request.query_params.get("password") or "").strip()
-        if qp:
-            require_admin(f"Bearer {qp}")
-            return
+        # BỎ fallback ?password=xxx trên query: mật khẩu trên URL lọt vào
+        # access-log/proxy/history (báo cáo 07/08). POST đã có Bearer header +
+        # routerPassword trong body nên query là thừa.
         from fastapi import HTTPException
         raise HTTPException(status_code=401, detail={"error": "Missing authentication"})
 
