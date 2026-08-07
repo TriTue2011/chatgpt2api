@@ -498,16 +498,20 @@ def _chay_thu_code(combo_name: str, code: str, rnd: int) -> str:
     nên bỏ phần chạy (vd đoạn sửa một hàm trong services/ — chạy riêng lẻ chỉ ra
     ImportError giả, bắt con sửa theo là làm hỏng code đang đúng).
     """
-    if not _pipeline_chay_thu_bat():
-        return ""
     try:
         from services import code_runner
         _code_py = code_runner.boc_code_python(code)
+        # SOI TĨNH LUÔN chạy — kể cả khi chạy-thật bị TẮT. Trước đây return sớm
+        # theo _pipeline_chay_thu_bat() vô tình tắt cả soi tĩnh (báo cáo 07/08).
         tinh = code_runner.kiem_tinh(_code_py)
         if tinh:
             logger.info({"event": "pipeline_soi_tinh_loi", "combo": combo_name,
                          "round": rnd, "gop_y": tinh[:200]})
             return tinh
+        # Soi tĩnh sạch. CHỈ chạy thật khi được bật tường minh (mặc định TẮT —
+        # tầng chạy chưa phải sandbox thật).
+        if not _pipeline_chay_thu_bat():
+            return ""
         kq = code_runner.chay(_code_py)
     except Exception as exc:      # bộ chạy lỗi thì bỏ qua, đừng chặn cả lượt
         logger.warning({"event": "pipeline_chay_thu_err", "combo": combo_name,

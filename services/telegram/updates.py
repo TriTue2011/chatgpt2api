@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import threading
 import time
 from typing import Any, Callable
@@ -29,16 +30,22 @@ def match_bot_by_secret(
     *,
     secret_fn: Callable[[str], str] | None = None,
 ) -> dict | None:
-    """Pick bot whose derived secret matches header. Single-bot: lenient fallback."""
+    """Pick bot whose derived secret matches header, so sánh HẰNG THỜI GIAN.
+
+    KHÔNG có fallback single-bot: trước đây `if len(enabled)==1: return enabled[0]`
+    trả bot dù header secret SAI hay RỖNG → bất kỳ ai POST vào webhook cũng kích
+    hoạt worker AI (auth bypass, báo cáo 07/08). Nay secret sai/rỗng luôn bị từ
+    chối, kể cả khi chỉ có một bot.
+    """
     fn = secret_fn or webhook_secret_for
     enabled = [b for b in bots if b.get("enabled", True)]
     hdr = (header_secret or "").strip()
+    if not hdr:
+        return None
     for b in enabled:
         tok = str(b.get("token") or "").strip()
-        if tok and fn(tok) == hdr:
+        if tok and hmac.compare_digest(fn(tok), hdr):
             return b
-    if len(enabled) == 1:
-        return enabled[0]
     return None
 
 

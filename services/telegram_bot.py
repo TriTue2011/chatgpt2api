@@ -26,10 +26,15 @@ from services.telegram import (
     webhook_secret_for,
 )
 from services.telegram.client import TelegramClient
+from services.ingress_guard import make_worker_pool, read_json_limited, BodyTooLarge
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API = DEFAULT_API_BASE
+
+# Bound worker AI Telegram (webhook): giữ slot tới khi _process_message /
+# _handle_callback_query xong. Trước đây webhook spawn thread không giới hạn.
+_tg_worker = make_worker_pool("telegram", 24)
 
 
 def _to_telegram_markdown(text: str) -> str:
@@ -786,14 +791,19 @@ def send_document(chat_id: int | str, doc_bytes: bytes, filename: str, caption: 
 
 async def handle_webhook(request) -> dict:
     """Handle incoming Telegram webhook POST. Returns immediately, processes AI in background."""
-    try:
-        hdr = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        body = await request.json()
-    except Exception:
-        return {"ok": False}
+    # XÁC THỰC secret TRƯỚC khi đọc body (đừng nạp RAM cho request chưa xác thực).
+    hdr = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     bot = match_bot_by_secret(_bots(), hdr, secret_fn=_webhook_secret_for)
     if bot is None:
         logger.warning("Telegram webhook bad/ambiguous secret")
+        return {"ok": False}
+    # Body cap qua stream — chặn chunked (không Content-Length) nạp vô hạn RAM.
+    try:
+        body = await read_json_limited(request)
+    except BodyTooLarge:
+        logger.warning("Telegram webhook: body quá lớn → bỏ")
+        return {"ok": False}
+    except Exception:
         return {"ok": False}
 
     # De-dupe Telegram webhook retries
@@ -805,8 +815,7 @@ async def handle_webhook(request) -> dict:
     cq = body.get("callback_query")
     if cq:
         _current.bot = bot
-        t = threading.Thread(target=_handle_callback_query, args=(cq, bot), daemon=True)
-        t.start()
+        _tg_worker(_handle_callback_query, cq, bot)   # bound: hết slot thì bỏ
         return {"ok": True}
 
     # my_chat_member: user block/unblock — ghi log nhẹ, không agent
@@ -857,12 +866,9 @@ async def handle_webhook(request) -> dict:
     except Exception:
         native_mention = False
 
-    t = threading.Thread(target=_process_message,
-                         args=(text, chat_id, photo, document, bot, sender,
-                               user_id, is_group, native_mention, chat_name,
-                               voice_file_id, topic_id),
-                         daemon=True)
-    t.start()
+    _tg_worker(_process_message, text, chat_id, photo, document, bot, sender,
+               user_id, is_group, native_mention, chat_name,
+               voice_file_id, topic_id)   # bound: hết slot thì bỏ tin
     return {"ok": True}
 
 

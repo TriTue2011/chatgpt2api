@@ -73,10 +73,15 @@ class TestUpdates(unittest.TestCase):
         b = match_bot_by_secret(bots, sec)
         self.assertEqual(b["token"], tok)
 
-    def test_match_single_lenient(self):
+    def test_single_bot_secret_sai_thi_tu_choi(self):
+        # BẢO MẬT: dù chỉ một bot, secret SAI/RỖNG phải bị từ chối (không còn
+        # fallback lenient trả bot bừa → auth bypass webhook).
         bots = [{"token": "1:a", "enabled": True}]
-        b = match_bot_by_secret(bots, "wrong")
-        self.assertEqual(b["token"], "1:a")
+        self.assertIsNone(match_bot_by_secret(bots, "wrong"))
+        self.assertIsNone(match_bot_by_secret(bots, ""))
+        # secret ĐÚNG vẫn khớp.
+        good = webhook_secret_for("1:a")
+        self.assertEqual(match_bot_by_secret(bots, good)["token"], "1:a")
 
     def test_dedupe(self):
         d = UpdateDedupe()

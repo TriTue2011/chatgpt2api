@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 
 from fastapi import (APIRouter, File, Form, Header, HTTPException, Request,
                      UploadFile)
@@ -35,41 +34,23 @@ from services import zalo_bot as zb
 
 logger = logging.getLogger(__name__)
 
-# Trần số lượt webhook đang xử lý đồng thời. Trước đây mỗi webhook hợp lệ tạo
-# một thread không giới hạn → secret lộ (kèm lỗi settings-secret exposure) là
-# spam làm cạn thread/RAM và kích hoạt hàng loạt lượt AI. Vượt trần thì BỎ tin
-# (trả 200 để Zalo không retry bão hoà) — thà rớt vài tin hơn sập cả bot.
-_WEBHOOK_MAX_INFLIGHT = 32
-_webhook_sem = threading.BoundedSemaphore(_WEBHOOK_MAX_INFLIGHT)
-
-# Trần kích thước body webhook (Content-Length) — chặn payload khổng lồ làm cạn
-# RAM ngay ở bước request.json(), TRƯỚC khi tới semaphore giới hạn thread.
-_WEBHOOK_MAX_BODY = 2 * 1024 * 1024
+# Bound worker + body cap nay ở tầng CHUNG: process_update (services.zalo_bot)
+# tự bound qua _zalo_worker khi spawn _process_message, và read_json_limited
+# chặn body vô hạn (kể cả chunked). api chỉ cần: xác thực → đọc body giới hạn →
+# process_update (non-blocking, tự spawn worker có bound). Bỏ semaphore ở đây
+# vì nó nhả trước khi worker thật chạy (process_update trả về ngay) — vô tác dụng.
+from services.ingress_guard import read_json_limited, BodyTooLarge
 
 
-def _reject_if_body_too_large(request: Request) -> None:
-    cl = request.headers.get("content-length")
-    if cl:
-        try:
-            if int(cl) > _WEBHOOK_MAX_BODY:
-                raise HTTPException(status_code=413, detail="Payload quá lớn")
-        except ValueError:
-            pass
-
-
-def _spawn_bounded_update(body: dict, bot) -> None:
-    if not _webhook_sem.acquire(blocking=False):
-        logger.warning("Zalo Bot webhook: quá %d lượt đồng thời → bỏ tin",
-                       _WEBHOOK_MAX_INFLIGHT)
-        return
-
-    def _run() -> None:
-        try:
-            zb.process_update(body, bot)
-        finally:
-            _webhook_sem.release()
-
-    threading.Thread(target=_run, daemon=True).start()
+async def _read_body_or_413(request: Request) -> dict:
+    try:
+        return await read_json_limited(request)
+    except BodyTooLarge:
+        raise HTTPException(status_code=413, detail="Payload quá lớn")
+    except HTTPException:
+        raise
+    except Exception:
+        return {}
 
 
 def create_router() -> APIRouter:
@@ -89,20 +70,17 @@ def create_router() -> APIRouter:
         # Starlette headers không phân biệt hoa/thường (docs viết
         # `X-Bot-Api-Secret-Token`, SDK zalo-bot-js viết `x-bot-api-secret-token`
         # — cùng một header theo HTTP).
-        _reject_if_body_too_large(request)
+        # XÁC THỰC secret TRƯỚC khi đọc body (không tốn RAM cho req chưa xác thực).
         hdr = request.headers.get("x-bot-api-secret-token", "")
         bot = zb.verify_webhook_secret(hdr)
         if bot is None:
             # Không log giá trị header: nó CHÍNH LÀ secret, vào log là rò.
             logger.warning("Zalo Bot webhook: secret sai → 403")
             raise HTTPException(status_code=403, detail="Bad secret token")
-        try:
-            body = await request.json()
-        except Exception:
-            # Body không phải JSON → nhận 200 rồi bỏ qua, đừng để Zalo retry mãi
-            # một payload vốn không đọc được.
+        body = await _read_body_or_413(request)   # stream cap 2MB (cả chunked)
+        if not body:
             return {"ok": True}
-        _spawn_bounded_update(body, bot)
+        zb.process_update(body, bot)   # non-blocking; worker AI đã bound trong đó
         return {"ok": True}
 
     @router.post("/api/zalo-bot/webhook/{bot_id}")
@@ -118,7 +96,6 @@ def create_router() -> APIRouter:
         do secret trong header quyết định, y như đường không có bot_id: bot_id là
         phần công khai của token, ai cũng đoán được.
         """
-        _reject_if_body_too_large(request)
         hdr = request.headers.get("x-bot-api-secret-token", "")
         bot = zb.verify_webhook_secret(hdr)
         if bot is None:
@@ -130,11 +107,10 @@ def create_router() -> APIRouter:
         if bot_id and that and bot_id != that:
             logger.warning("Zalo Bot webhook: URL ghi bot_id=%s nhưng secret là của %s",
                            bot_id[:16], that[:16])
-        try:
-            body = await request.json()
-        except Exception:
+        body = await _read_body_or_413(request)
+        if not body:
             return {"ok": True}
-        _spawn_bounded_update(body, bot)
+        zb.process_update(body, bot)
         return {"ok": True}
 
     # ── Quản trị ─────────────────────────────────────────────────────────────

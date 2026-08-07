@@ -32,8 +32,15 @@ import urllib.request
 from typing import Any
 
 from services.config import config
+from services.ingress_guard import make_worker_pool
 
 logger = logging.getLogger(__name__)
+
+# Bound worker AI Zalo Bot ở ĐÚNG điểm spawn _process_message (webhook mới,
+# webhook cũ /zalo/webhook, và long-poll đều đi qua process_update). Semaphore
+# giữ slot tới khi _process_message xong — khác chỗ cũ (bound quanh
+# process_update vốn trả về ngay sau khi tự spawn thread → vô tác dụng).
+_zalo_worker = make_worker_pool("zalo_bot", 24)
 # uvicorn không gắn handler cho root logger → INFO của module này ("Zalo IN",
 # "long-polling started") không ra docker logs, chẩn đoán mù. Gắn handler riêng.
 if not logging.getLogger().handlers and not logger.handlers:
@@ -1552,16 +1559,22 @@ async def handle_webhook(request) -> dict:
     (api/zalo_bot.py) vì nó trả 403 thật khi secret sai, còn hàm này chỉ trả
     {ok:false} kèm HTTP 200 (khuôn cũ, không đổi kẻo phá caller).
     """
-    try:
-        hdr = request.headers.get("X-Bot-Api-Secret-Token", "")
-        body = await request.json()
-    except Exception:
-        return {"ok": False}
+    # XÁC THỰC secret TRƯỚC khi đọc body (đừng tốn RAM cho request chưa xác thực).
+    hdr = request.headers.get("X-Bot-Api-Secret-Token", "")
     bot = verify_webhook_secret(hdr)
     if bot is None:
         logger.warning("Zalo webhook: secret sai")
         return {"ok": False}
-    process_update(body, bot)
+    # Body cap qua stream (chống chunked không Content-Length nạp vô hạn RAM).
+    from services.ingress_guard import read_json_limited, BodyTooLarge
+    try:
+        body = await read_json_limited(request)
+    except BodyTooLarge:
+        logger.warning("Zalo webhook (legacy): body quá lớn → bỏ")
+        return {"ok": False}
+    except Exception:
+        return {"ok": False}
+    process_update(body, bot)   # đã bound worker bên trong (_zalo_worker)
     return {"ok": True}
 
 
@@ -1613,11 +1626,10 @@ def process_update(body: dict, bot: dict) -> bool:
     voice_url = _extract_voice_url(msg)
     if not chat_id:
         return False
-    threading.Thread(target=_process_message,
-                     args=(text, chat_id, photo_url, bot, sender, f_url, f_name, f_id,
-                           user_id, is_group, chat_name, voice_url),
-                     daemon=True).start()
-    return True
+    # Bound qua semaphore: hết slot thì bỏ tin (shed-load) thay vì tạo vô hạn
+    # thread. Áp cho MỌI đường (webhook mới/cũ + long-poll) vì đều tới đây.
+    return _zalo_worker(_process_message, text, chat_id, photo_url, bot, sender,
+                        f_url, f_name, f_id, user_id, is_group, chat_name, voice_url)
 
 
 def _extract_meta(msg: dict) -> tuple[str, bool]:
