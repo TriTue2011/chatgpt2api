@@ -42,6 +42,20 @@ logger = logging.getLogger(__name__)
 _WEBHOOK_MAX_INFLIGHT = 32
 _webhook_sem = threading.BoundedSemaphore(_WEBHOOK_MAX_INFLIGHT)
 
+# Trần kích thước body webhook (Content-Length) — chặn payload khổng lồ làm cạn
+# RAM ngay ở bước request.json(), TRƯỚC khi tới semaphore giới hạn thread.
+_WEBHOOK_MAX_BODY = 2 * 1024 * 1024
+
+
+def _reject_if_body_too_large(request: Request) -> None:
+    cl = request.headers.get("content-length")
+    if cl:
+        try:
+            if int(cl) > _WEBHOOK_MAX_BODY:
+                raise HTTPException(status_code=413, detail="Payload quá lớn")
+        except ValueError:
+            pass
+
 
 def _spawn_bounded_update(body: dict, bot) -> None:
     if not _webhook_sem.acquire(blocking=False):
@@ -75,6 +89,7 @@ def create_router() -> APIRouter:
         # Starlette headers không phân biệt hoa/thường (docs viết
         # `X-Bot-Api-Secret-Token`, SDK zalo-bot-js viết `x-bot-api-secret-token`
         # — cùng một header theo HTTP).
+        _reject_if_body_too_large(request)
         hdr = request.headers.get("x-bot-api-secret-token", "")
         bot = zb.verify_webhook_secret(hdr)
         if bot is None:
@@ -103,6 +118,7 @@ def create_router() -> APIRouter:
         do secret trong header quyết định, y như đường không có bot_id: bot_id là
         phần công khai của token, ai cũng đoán được.
         """
+        _reject_if_body_too_large(request)
         hdr = request.headers.get("x-bot-api-secret-token", "")
         bot = zb.verify_webhook_secret(hdr)
         if bot is None:
@@ -167,7 +183,9 @@ def create_router() -> APIRouter:
         `chat_id` để trống → gửi cho admin của bot đang hoạt động.
         """
         require_admin(authorization)
-        raw = await photo.read() if photo is not None else b""
+        # Đọc ảnh có TRẦN (chống upload khổng lồ làm cạn RAM) thay vì read() trần.
+        from api.support import read_upload_limited
+        raw = await read_upload_limited(photo) if photo is not None else b""
         if not raw and not photo_url and not text.strip():
             raise HTTPException(status_code=400,
                                 detail="Cần ít nhất một trong: text, photo, photo_url")

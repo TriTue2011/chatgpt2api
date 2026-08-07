@@ -8,6 +8,7 @@ import { loadWebhookConfig } from './services/webhookService.js';
 import routes from './routes/index.js';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import sharp from 'sharp';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -134,9 +135,16 @@ app.use((req, res, next) => {
     });
 })();
 
-// Định nghĩa SESSION_SECRET từ biến môi trường hoặc mặc định
-const sessionSecret = process.env.SESSION_SECRET || 'zalo-server-secret-key';
-console.log("Using session secret:", sessionSecret ? "Configured properly" : "MISSING SESSION SECRET");
+// SESSION_SECRET: KHÔNG dùng default cứng ('zalo-server-secret-key' đoán được
+// → giả mạo session ký khi service lộ ra mạng). Ưu tiên env; thiếu env thì
+// sinh NGẪU NHIÊN mỗi lần chạy (session không sống qua restart — người dùng
+// đăng nhập lại — nhưng không còn secret đoán được). Đặt SESSION_SECRET để
+// session bền qua restart.
+const sessionSecret = (process.env.SESSION_SECRET || '').trim()
+  || crypto.randomBytes(32).toString('hex');
+if (!(process.env.SESSION_SECRET || '').trim()) {
+  console.warn('[BẢO MẬT] Chưa đặt SESSION_SECRET — dùng secret NGẪU NHIÊN phiên này (session không sống qua restart). Hãy đặt SESSION_SECRET.');
+}
 
 const FileStore = sessionFileStore(session);
 
