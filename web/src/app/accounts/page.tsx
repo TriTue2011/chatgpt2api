@@ -208,6 +208,54 @@ function accountLabel(account: Account) {
   return account.email || tryDecodeJwtEmail(account.access_token) || maskToken(account.access_token);
 }
 
+/** Tên tiếng Việt gọn cho từng hạng mức của ChatGPT. */
+const NHAN_HAN_MUC: Record<string, string> = {
+  file_upload: "tải tệp",
+  image_gen: "tạo ảnh",
+  paste_text_to_file: "dán văn bản",
+  deep_research: "nghiên cứu sâu",
+  reason: "suy luận",
+};
+
+/** "3,9h" · "12 phút" · "" — khoảng cách tới mốc hồi, rút gọn cho badge. */
+function conBaoLau(iso?: string | null): string {
+  if (!iso) return "";
+  const t = Date.parse(String(iso).replace(" ", "T"));
+  if (!Number.isFinite(t)) return "";
+  const gio = (t - Date.now()) / 3_600_000;
+  if (gio <= 0) return "sắp xong";
+  if (gio < 1) return `${Math.max(1, Math.round(gio * 60))} phút`;
+  if (gio < 48) return `${gio.toFixed(1).replace(".", ",")}h`;
+  return `${Math.round(gio / 24)} ngày`;
+}
+
+/**
+ * Các hạng mục ĐÃ CẠN của một tài khoản, mỗi cái kèm giờ hồi CỦA CHÍNH NÓ.
+ *
+ * Vì sao cần: cột `status` chỉ có active/limited/disabled nên không diễn tả nổi
+ * "còn chữ, hết tải tệp". Đo 07/08 trên máy thật, tài khoản
+ * smarthomebanbap2011 hiện `active` trong khi đã hết lượt tải tệp — nhìn màn
+ * hình thì giống hệt một tài khoản khoẻ, mà gửi tệp vào là hỏng.
+ *
+ * Và KHÔNG dùng `restore_at` của cả tài khoản làm giờ hồi: cùng tài khoản đó,
+ * file_upload hồi sau 5,4h còn `restore_at` là 535h — lệch nhau 100 lần. Mỗi
+ * hạng mục có `reset_after` riêng, phải lấy đúng cái của nó.
+ */
+function canCanhBao(account: Account): { ten: string; nhan: string; hoi: string }[] {
+  const lp = account.limits_progress;
+  if (!Array.isArray(lp)) return [];
+  return lp
+    .filter((x) => x && typeof x === "object" && Number(x.remaining ?? 0) <= 0)
+    .map((x) => {
+      const ten = String(x.feature_name || "");
+      return {
+        ten,
+        nhan: NHAN_HAN_MUC[ten] || ten.replace(/_/g, " "),
+        hoi: conBaoLau((x as { reset_after?: string }).reset_after),
+      };
+    });
+}
+
 function downloadTokens(accounts: Account[]) {
   const content = `${accounts.map((account) => account.access_token).join("\n")}\n`;
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -1384,6 +1432,19 @@ function AccountsPageContent() {
                                                     {account.type}
                                                   </Badge>
                                                 ) : null}
+                                                {/* Hạng mục ĐÃ CẠN, mỗi cái kèm giờ hồi CỦA CHÍNH NÓ. Cột
+                                                    `status` chỉ có active/limited/disabled nên không diễn
+                                                    tả nổi "còn chữ, hết tải tệp" — nhìn màn hình thì một
+                                                    tài khoản còn 2 lượt chữ trông y hệt một tài khoản khoẻ.
+                                                    Và KHÔNG dùng `restore_at` chung: đo 07/08 trên máy thật,
+                                                    một tài khoản có file_upload hồi sau 5,4h trong khi
+                                                    restore_at của cả tài khoản là 535h — lệch 100 lần. */}
+                                                {canCanhBao(account).map((c) => (
+                                                  <Badge key={c.ten} variant="secondary"
+                                                    className="rounded text-[10px] px-1 py-0 bg-amber-100 text-amber-800 border border-amber-300">
+                                                    hết {c.nhan}{c.hoi ? ` · hồi ${c.hoi}` : ""}
+                                                  </Badge>
+                                                ))}
                                               </div>
                                             </div>
                                           </div>
