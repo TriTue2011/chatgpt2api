@@ -62,8 +62,22 @@ def resolve_image_base_url(request: Request) -> str:
     ở `x-forwarded-host` (không có thì `host`). Lấy theo request nên mở bằng IP
     LAN vẫn ra http://IP như cũ — không hỏng đường nội bộ.
     """
-    host = (request.headers.get("x-forwarded-host")
-            or request.headers.get("host") or "").strip()
+    fwd_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    real_host = (request.headers.get("host") or "").strip()
+    # x-forwarded-host do client gửi → có thể giả để API phát URL trỏ host tuỳ ý.
+    # Nếu admin đã khai security.trusted_hosts, CHỈ nhận forwarded-host nằm trong
+    # allowlist; ngoài allowlist thì bỏ, dùng host thật / base_url canonical.
+    # Chưa khai allowlist → giữ hành vi cũ (tunnel Cloudflare + LAN IP vẫn chạy).
+    allow: set[str] = set()
+    try:
+        sec = config.get().get("security")
+        if isinstance(sec, dict) and isinstance(sec.get("trusted_hosts"), list):
+            allow = {str(h).strip().lower() for h in sec["trusted_hosts"] if str(h).strip()}
+    except Exception:
+        allow = set()
+    if fwd_host and allow and fwd_host.split(":")[0].lower() not in allow:
+        fwd_host = ""   # forwarded-host giả → bỏ
+    host = fwd_host or real_host
     if host:
         proto = (request.headers.get("x-forwarded-proto")
                  or request.url.scheme or "http").split(",")[0].strip()

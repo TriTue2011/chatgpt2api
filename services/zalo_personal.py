@@ -1497,6 +1497,10 @@ def _zca_js_payload(body: dict, ev: dict) -> dict:
 
 def _post_webhook(url: str, payload: dict, label: str, ev: dict, event_name: str) -> None:
     try:
+        from services.net_guard import is_http_url
+        if not is_http_url(url):
+            logger.warning("Zalo personal webhook bỏ qua URL scheme lạ: %s", str(url)[:80])
+            return
         req = urllib.request.Request(
             url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

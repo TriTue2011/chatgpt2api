@@ -124,10 +124,30 @@ def install(names: list[str] | None = None, force: bool | None = None) -> tuple[
         return False, "❌ Gateway thiếu paramiko để SSH cài pyscript."
     installed = []
     try:
+        from services.config import DATA_DIR
         cli = paramiko.SSHClient()
-        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — SSH noi bo HA .200, creds tu config
+        # Trust-on-first-use + fail-closed khi host key ĐỔI: nạp known_hosts đã
+        # lưu; nếu HA từng thấy mà key khác đi (MITM giữa mạng nội bộ) paramiko
+        # raise BadHostKeyException BẤT KỂ policy. AutoAddPolicy chỉ xử lý host
+        # LẦN ĐẦU, sau đó save_host_keys ghim lại. Trước đây AutoAdd trần khiến
+        # mọi key đều được nhận mỗi lần → giả máy HA lấy được mật khẩu SSH.
+        known = DATA_DIR / "ha_known_hosts"
+        try:
+            cli.load_system_host_keys()
+        except Exception:
+            pass
+        if known.exists():
+            try:
+                cli.load_host_keys(str(known))
+            except Exception:
+                pass
+        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # chỉ áp cho host CHƯA từng thấy
         cli.connect(ssh["host"], port=ssh["port"], username=ssh["user"],
                     password=ssh["pw"], timeout=20)
+        try:
+            cli.save_host_keys(str(known))   # ghim key để lần sau xác minh
+        except Exception:
+            pass
         sftp = cli.open_sftp()
         remote_dir = ssh["config_dir"] + "/pyscript"
         try:

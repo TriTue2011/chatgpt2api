@@ -154,6 +154,18 @@ def check_url(url: str, *, allow_hosts: set[str] | None = None) -> str:
     return raw
 
 
+def is_http_url(url: str) -> bool:
+    """True nếu URL là http/https có host. Dùng cho các URL do ADMIN cấu hình
+    (webhook forward, MCP hub) — CỐ Ý cho phép IP nội bộ (HA .200, n8n LAN là
+    hợp lệ) nhưng chặn scheme lạ (file://, gopher://, ftp://…) vốn biến URL
+    thành đường đọc file/SSRF khi admin token bị lộ."""
+    try:
+        u = urlparse(str(url or "").strip())
+        return u.scheme in ("http", "https") and bool(u.hostname)
+    except Exception:
+        return False
+
+
 def is_self_images_url(url: str) -> bool:
     """True nếu URL trỏ media nội bộ ``/images/`` (gateway tự phục vụ)."""
     raw = str(url or "").strip()

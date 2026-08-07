@@ -6216,6 +6216,13 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
             return False
         if tag_mode and not tagged:
             return False  # tag_mode: tin KHÔNG tag → không chuyển, AI trả lời
+        # Chỉ http/https (webhook LAN như HA/n8n hợp lệ) — chặn scheme lạ
+        # (file://…) biến URL webhook thành đường đọc file khi config bị lộ.
+        from services.net_guard import is_http_url
+        if not is_http_url(url):
+            from utils.log import logger
+            logger.warning({"event": "thread_forward_bad_scheme", "url": str(url)[:80]})
+            return False
         import json as _json
         import threading as _t
         import urllib.request as _rq

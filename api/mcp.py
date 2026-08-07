@@ -230,6 +230,11 @@ def create_router() -> APIRouter:
         hub_url = str((body or {}).get("hub_url", "")).strip().rstrip("/")
         if not hub_url:
             raise HTTPException(status_code=400, detail="hub_url is required")
+        # Chỉ http/https (cho phép LAN vì hub có thể nội bộ) — chặn file://,
+        # gopher://… biến hub_url thành đường đọc file/SSRF nếu admin token lộ.
+        from services.net_guard import is_http_url
+        if not is_http_url(hub_url):
+            raise HTTPException(status_code=400, detail="hub_url phải là http(s)")
         # Threadpool: urlopen là lời gọi CHẶN. Gateway chạy uvicorn --workers 1
         # nên chặn event loop ở đây là đóng băng cả bot lẫn web UI tới 10 giây,
         # chỉ vì một hub không phản hồi.
