@@ -99,35 +99,44 @@ function showMsg(msg, type) {
             return fetch(INGRESS_PATH + '/api/account-webhooks').then(function(r) { return r.json(); }).then(function(wd) {
                 var configs = (wd.success && wd.data && wd.data.accounts) ? wd.data.accounts : {};
 
+                // Escape đầy đủ (& < > " ') cho dữ liệu ngoài nhét vào innerHTML —
+                // dùng cho cả text lẫn attribute value="…" (URL webhook có thể
+                // chứa " phá attribute). Chống stored XSS (báo cáo 07/08).
+                var esc = function (s) {
+                    return (s == null ? '' : String(s))
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                };
                 accounts.forEach(function(a) {
                     var cfg = configs[a.ownId] || {};
+                    var oid = esc(a.ownId);
                     var card = document.createElement('div');
                     card.className = 'card wh-card';
                     card.innerHTML =
                         '<div class="card-header">' +
-                            '<span>Tài khoản: ' + (a.phoneNumber || a.ownId) + ' <span class="badge badge-muted" style="font-family:monospace">' + a.ownId + '</span></span>' +
+                            '<span>Tài khoản: ' + esc(a.phoneNumber || a.ownId) + ' <span class="badge badge-muted" style="font-family:monospace">' + oid + '</span></span>' +
                         '</div>' +
                         '<div class="card-body">' +
                             '<div class="wh-row">' +
                                 '<label>Webhook tin nhắn</label>' +
-                                '<input class="form-input msg-url" type="text" value="' + (cfg.messageWebhookUrl || '') + '" placeholder="URL webhook nhận tin nhắn">' +
-                                '<button class="btn btn-accent btn-sm save-btn" data-type="messageWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
-                                '<button class="btn btn-outline btn-sm test-btn" data-type="messageWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                                '<input class="form-input msg-url" type="text" value="' + esc(cfg.messageWebhookUrl || '') + '" placeholder="URL webhook nhận tin nhắn">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="messageWebhookUrl" data-ownid="' + oid + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="messageWebhookUrl" data-ownid="' + oid + '">Thử</button>' +
                             '</div>' +
                             '<div class="wh-row">' +
                                 '<label>Webhook sự kiện nhóm</label>' +
-                                '<input class="form-input group-url" type="text" value="' + (cfg.groupEventWebhookUrl || '') + '" placeholder="URL webhook nhận sự kiện nhóm">' +
-                                '<button class="btn btn-accent btn-sm save-btn" data-type="groupEventWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
-                                '<button class="btn btn-outline btn-sm test-btn" data-type="groupEventWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                                '<input class="form-input group-url" type="text" value="' + esc(cfg.groupEventWebhookUrl || '') + '" placeholder="URL webhook nhận sự kiện nhóm">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="groupEventWebhookUrl" data-ownid="' + oid + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="groupEventWebhookUrl" data-ownid="' + oid + '">Thử</button>' +
                             '</div>' +
                             '<div class="wh-row">' +
                                 '<label>Webhook reaction</label>' +
-                                '<input class="form-input reaction-url" type="text" value="' + (cfg.reactionWebhookUrl || '') + '" placeholder="URL webhook nhận reaction">' +
-                                '<button class="btn btn-accent btn-sm save-btn" data-type="reactionWebhookUrl" data-ownid="' + a.ownId + '">Lưu</button>' +
-                                '<button class="btn btn-outline btn-sm test-btn" data-type="reactionWebhookUrl" data-ownid="' + a.ownId + '">Thử</button>' +
+                                '<input class="form-input reaction-url" type="text" value="' + esc(cfg.reactionWebhookUrl || '') + '" placeholder="URL webhook nhận reaction">' +
+                                '<button class="btn btn-accent btn-sm save-btn" data-type="reactionWebhookUrl" data-ownid="' + oid + '">Lưu</button>' +
+                                '<button class="btn btn-outline btn-sm test-btn" data-type="reactionWebhookUrl" data-ownid="' + oid + '">Thử</button>' +
                             '</div>' +
                             '<div style="text-align:right">' +
-                                '<button class="btn btn-danger btn-sm del-all-btn" data-ownid="' + a.ownId + '">Xóa tất cả webhook</button>' +
+                                '<button class="btn btn-danger btn-sm del-all-btn" data-ownid="' + oid + '">Xóa tất cả webhook</button>' +
                             '</div>' +
                         '</div>';
                     container.appendChild(card);

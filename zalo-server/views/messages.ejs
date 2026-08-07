@@ -131,6 +131,15 @@ function connectWS() {
 }
 connectWS();
 
+// Escape cho nội dung ngoài (tin nhắn Zalo, tên người gửi…) trước khi nhét vào
+// innerHTML — nếu không, tin nhắn chứa <script>/onerror sẽ CHẠY khi admin mở
+// trang (stored XSS, báo cáo bảo mật 07/08).
+function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = (s == null ? '' : String(s));
+    return d.innerHTML;
+}
+
 function addMessage(data) {
     msgHistory.push(data);
     var div = document.createElement('div');
@@ -139,16 +148,16 @@ function addMessage(data) {
     var html = '';
     var tid = data.threadId || data.fromThreadId;
     if (tid) {
-        html += '<div><span class="thread-id-link" data-tid="' + tid + '">Thread ID: ' + tid + '</span></div>';
+        html += '<div><span class="thread-id-link" data-tid="' + esc(tid) + '">Thread ID: ' + esc(tid) + '</span></div>';
     }
-    if (data.message) html += '<div style="margin-top:4px"><strong>Tin nhắn:</strong> ' + data.message + '</div>';
+    if (data.message) html += '<div style="margin-top:4px"><strong>Tin nhắn:</strong> ' + esc(data.message) + '</div>';
     if (data.fromUser) {
         var name = typeof data.fromUser === 'object' ? (data.fromUser.name || '') : data.fromUser;
-        html += '<div><strong>Từ:</strong> ' + name + '</div>';
+        html += '<div><strong>Từ:</strong> ' + esc(name) + '</div>';
     }
     html += '<div class="msg-meta">Nhận lúc: ' + new Date().toLocaleTimeString() + '</div>';
     html += '<button class="btn btn-outline btn-sm" style="margin-top:6px" onclick="this.nextElementSibling.classList.toggle(\'open\')">Xem chi tiết</button>';
-    html += '<div class="msg-detail"><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+    html += '<div class="msg-detail"><pre>' + esc(JSON.stringify(data, null, 2)) + '</pre></div>';
 
     div.innerHTML = html;
     msgContainer.insertBefore(div, msgContainer.firstChild);
