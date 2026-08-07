@@ -176,6 +176,10 @@ def call_model(
         req = urllib.request.Request(
             _base(), data=json.dumps(payload).encode(),
             headers={"Authorization": f"Bearer {config.auth_key}",
+                     # Header nội bộ: gateway CHỈ tin x_agent_internal khi header
+                     # này khớp auth_key (client ngoài không đặt được) — chống
+                     # né Agent run journal bằng cách tự gắn cờ trong body.
+                     "X-Agent-Internal-Key": str(config.auth_key or ""),
                      "Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode())

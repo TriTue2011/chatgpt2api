@@ -46,14 +46,32 @@ def lockout_sec() -> float:
     return float(max(60, _cfg_int("login_lockout_sec", 900)))
 
 
-def client_ip_from_request(request) -> str:  # noqa: ANN001 — FastAPI Request
-    """Ưu tiên X-Forwarded-For (sau reverse proxy), fallback client.host."""
+def _trust_forwarded_for() -> bool:
+    """Chỉ tin X-Forwarded-For khi admin xác nhận có reverse proxy tin cậy phía
+    trước (security.trust_forwarded_for=true). Mặc định TẮT."""
     try:
-        xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-        if xff:
-            return xff[:128]
+        from services.config import config
+        sec = config.get().get("security")
+        return bool(isinstance(sec, dict) and sec.get("trust_forwarded_for"))
     except Exception:
-        pass
+        return False
+
+
+def client_ip_from_request(request) -> str:  # noqa: ANN001 — FastAPI Request
+    """IP dùng để rate-limit login.
+
+    MẶC ĐỊNH dùng request.client.host (địa chỉ TCP thật). X-Forwarded-For do
+    client tự gửi nên KHÔNG tin trừ khi admin bật security.trust_forwarded_for
+    (có reverse proxy đặt header). Nếu không, brute-force chỉ cần đổi header
+    XFF mỗi lần là thành "IP mới" → vô hiệu hoá lockout (báo cáo 07/08).
+    """
+    if _trust_forwarded_for():
+        try:
+            xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            if xff:
+                return xff[:128]
+        except Exception:
+            pass
     try:
         if request.client and request.client.host:
             return str(request.client.host)[:128]

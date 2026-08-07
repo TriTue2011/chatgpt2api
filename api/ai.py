@@ -31,6 +31,20 @@ def _client_host(request: Request) -> str:
         return ""
 
 
+def _internal_header_ok(request: Request) -> bool:
+    """True nếu request mang header nội bộ khớp auth_key — chỉ đường agent
+    runtime tự gọi localhost mới đặt được (nó biết auth_key). Dùng để tin cờ
+    x_agent_internal mà không cho client ngoài giả mạo. So sánh hằng thời gian."""
+    try:
+        import hmac
+        from services.config import config
+        got = request.headers.get("x-agent-internal-key") or ""
+        want = str(getattr(config, "auth_key", "") or "")
+        return bool(got) and bool(want) and hmac.compare_digest(str(got), want)
+    except Exception:
+        return False
+
+
 class ImageGenerationRequest(BaseModel):
     # Allow extra fields so adapters (Flow) can read `extra_body` /
     # per-provider overrides without each new field requiring a schema
@@ -189,6 +203,14 @@ def create_router() -> APIRouter:
     ):
         identity = require_identity(authorization)
         payload = body.model_dump(mode="python")
+        # x_agent_internal đánh dấu "vòng nội bộ của agent" → BỎ QUA Agent run
+        # journal. Model cho phép field lạ nên client NGOÀI gửi được cờ này để
+        # né audit. Chỉ tin khi request mang header nội bộ khớp auth_key (đường
+        # agent runtime tự gọi localhost đặt header đó). Mọi request ngoài: bóc
+        # sạch cờ trước khi dùng.
+        payload.pop("x_agent_internal", None)
+        if _internal_header_ok(request):
+            payload["x_agent_internal"] = True
         # Danh tính ĐÃ XÁC THỰC — nguồn sự thật duy nhất cho phạm vi ký ức dài
         # hạn. Trước đây MemoryService lấy khoá kho thẳng từ field `user` do
         # client gửi, nên một bearer token hợp lệ chỉ cần gửi user="<id người

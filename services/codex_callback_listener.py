@@ -44,8 +44,10 @@ def _set_last(result: dict[str, Any]) -> None:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt: str, *args) -> None:  # quieter
-        logger.info({"event": "codex_callback_http", "msg": fmt % args})
+    def log_message(self, fmt: str, *args) -> None:  # noqa: ARG002
+        # KHÔNG log request-line: nó chứa query ?code=…&state=… (authorization
+        # code OAuth). Chỉ ghi một dòng trơ, không tham số.
+        logger.info({"event": "codex_callback_http"})
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -55,17 +57,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(b"not found")
             return
 
+        import html as _html
         qs = parse_qs(parsed.query)
         code = (qs.get("code") or [""])[0]
         state = (qs.get("state") or [""])[0]
         full_url = f"http://localhost:{_PORT}{self.path}"
+        # self.path do bên gọi kiểm soát → escape trước khi nhúng vào HTML
+        # (chống reflected XSS; dù nay đã bind loopback vẫn escape phòng thủ).
+        full_url_html = _html.escape(full_url)
 
         if not code or not state:
             body = (
                 "<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
                 "<h2>Thiếu code/state</h2>"
                 f"<p>Copy URL này vào form dán callback:</p>"
-                f"<code style='word-break:break-all'>{full_url}</code>"
+                f"<code style='word-break:break-all'>{full_url_html}</code>"
                 "</body></html>"
             ).encode()
             self.send_response(400)
@@ -111,9 +117,9 @@ class _Handler(BaseHTTPRequestHandler):
             _set_last({"ok": False, "error": err, "redirect_url": full_url})
             body = (
                 "<html><body style='font-family:sans-serif;padding:40px;text-align:center'>"
-                f"<h2 style='color:red'>Lỗi exchange: {err}</h2>"
+                f"<h2 style='color:red'>Lỗi exchange: {_html.escape(err)}</h2>"
                 f"<p>Copy URL sau vào form dán callback:</p>"
-                f"<code style='word-break:break-all'>{full_url}</code>"
+                f"<code style='word-break:break-all'>{full_url_html}</code>"
                 "</body></html>"
             ).encode()
             self.send_response(400)
@@ -133,7 +139,10 @@ def start() -> None:
     def _run() -> None:
         global _server
         try:
-            _server = HTTPServer(("0.0.0.0", _PORT), _Handler)
+            # Bind LOOPBACK: listener chỉ phục vụ callback OAuth từ trình duyệt
+            # trên cùng máy/qua tunnel, không cần lộ ra mọi interface của
+            # container (giảm bề mặt tấn công mạng).
+            _server = HTTPServer(("127.0.0.1", _PORT), _Handler)
             logger.info({"event": "codex_callback_listener_started", "port": _PORT})
             _server.serve_forever()
         except OSError as exc:
