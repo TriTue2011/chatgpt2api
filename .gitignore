@@ -131,3 +131,7 @@ data/hf/
 !voices/**/*.json
 # zalo-server (Node nhung)
 zalo-server/node_modules/
+
+# Credential file — KHÔNG commit (chứa hash mật khẩu admin)
+zalo-server/data/cookies/users.json
+zalo-server/data/cookies/

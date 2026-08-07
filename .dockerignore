@@ -14,3 +14,7 @@ assets
 README.md
 
 zalo-server/node_modules
+
+# Không đưa data runtime của zalo-server (cookies/users.json/sessions) vào
+# build context — tránh nhúng credential vào image.
+zalo-server/data

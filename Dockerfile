@@ -32,7 +32,9 @@ RUN NEXT_PUBLIC_APP_VERSION="$(cat /app/VERSION)" bun run build
 FROM node:22-bookworm-slim AS zalo-build
 WORKDIR /zalo-server
 COPY zalo-server/package.json zalo-server/package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+# npm ci (không phải npm install): cài ĐÚNG theo package-lock → build tái lập,
+# không tự nâng phiên bản lúc build (giảm rủi ro supply-chain — báo cáo 07/08).
+RUN npm ci --omit=dev --no-audit --no-fund
 COPY zalo-server ./
 
 # ── Stage 2: unified runtime ───────────────────────────────────────────────
@@ -232,7 +234,12 @@ COPY --from=zalo-build /zalo-server /app/zalo-server
 # zalo-server: users.json dùng cwd/data, cookies/sessions/messages dùng
 # DATA_DIRECTORY → symlink data về /app/data/zalo_bot để mọi thứ persist chung.
 RUN mkdir -p /app/data && ln -sf /app/data/chroma_db /app/chroma_db \
+    && rm -rf /app/zalo-server/data \
     && ln -sf /app/data/zalo_bot /app/zalo-server/data
+# rm -rf TRƯỚC khi symlink: COPY ở trên mang theo cả /app/zalo-server/data (gồm
+# cookies/users.json nhúng trong image). `ln -sf` vào một THƯ MỤC ĐÃ TỒN TẠI chỉ
+# tạo link BÊN TRONG nó, không thay thế → image dùng users.json admin/admin nhúng
+# sẵn và data không persist (báo cáo bảo mật 07/08). Xoá dir trước rồi mới link.
 
 COPY deploy/supervisord.conf /etc/supervisor/conf.d/c2a.conf
 
