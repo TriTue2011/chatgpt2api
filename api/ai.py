@@ -31,6 +31,37 @@ def _client_host(request: Request) -> str:
         return ""
 
 
+# Nhóm hành động vật lý/máy chủ — key vai 'user' KHÔNG được chạm mặc định.
+_DANGER_GROUPS = {"homeassistant", "device", "server", "code"}
+
+
+def _effective_allowed_groups(role: str, server_allowed, client_allowed):
+    """Trần nhóm chức năng cho MỘT request /v1/chat, giao (thu hẹp) các trần:
+
+    - server_allowed: ha_allowed_groups admin cấu hình (None = chưa cấu hình).
+    - role ceiling: vai 'user' → mọi nhóm TRỪ _DANGER_GROUPS; admin → không trần.
+    - client_allowed: x_allowed_groups client tự khai (chỉ THU HẸP thêm).
+
+    Trả list sorted để gán vào payload['x_allowed_groups'], hoặc None nếu không
+    có trần nào (giữ hành vi cũ: admin + chưa cấu hình gì = full)."""
+    role_ceiling = None
+    if str(role or "") != "admin":
+        try:
+            from services.agent import capabilities as _caps_role
+            role_ceiling = {g for g in _caps_role.all_groups() if g not in _DANGER_GROUPS}
+        except Exception:
+            role_ceiling = None
+    ceilings = [c for c in (server_allowed, role_ceiling) if c is not None]
+    if ceilings:
+        final = set.intersection(*ceilings) if len(ceilings) > 1 else set(ceilings[0])
+        if client_allowed is not None:
+            final = final & client_allowed
+        return sorted(final)
+    if client_allowed is not None:
+        return sorted(client_allowed)
+    return None
+
+
 def _internal_header_ok(request: Request) -> bool:
     """True nếu request mang header nội bộ khớp auth_key — chỉ đường agent
     runtime tự gọi localhost mới đặt được (nó biết auth_key). Dùng để tin cờ
@@ -246,11 +277,14 @@ def create_router() -> APIRouter:
             _server_allowed = None
         _client_ag = payload.get("x_allowed_groups")
         _client_allowed = {str(g) for g in _client_ag} if isinstance(_client_ag, list) else None
-        if _server_allowed is not None:
-            _final_allowed = (_server_allowed & _client_allowed) if _client_allowed is not None else _server_allowed
-            payload["x_allowed_groups"] = sorted(_final_allowed)
-        elif _client_allowed is not None:
-            payload["x_allowed_groups"] = sorted(_client_allowed)
+        # TRẦN THEO VAI: key vai 'user' KHÔNG được nhóm hành động vật lý/máy chủ
+        # mặc định. Admin (gồm HA dùng auth_key admin) full. Trước đây endpoint
+        # chỉ gắn _principal, không xét role → bearer user hợp lệ chạm được
+        # HA/SSH/ghi cấu hình khi admin chưa cấu hình ha_allowed_groups.
+        _eff = _effective_allowed_groups(
+            str(identity.get("role") or ""), _server_allowed, _client_allowed)
+        if _eff is not None:
+            payload["x_allowed_groups"] = _eff
         # Inject base_url so gma provider can build persistent local media URLs
         payload["base_url"] = resolve_image_base_url(request)
         client_host = _client_host(request)
