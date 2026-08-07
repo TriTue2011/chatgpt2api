@@ -337,12 +337,21 @@ def _rtk_compress_messages(messages: list[dict[str, Any]], max_bytes: int = _MAX
     # Separate image-containing messages — never drop them
     img_msgs = [m for m in other_msgs if _has_image_content(m)]
     other_msgs = [m for m in other_msgs if not _has_image_content(m)]
+    # Câu user CUỐI là yêu cầu hiện tại — không bao giờ vứt, chỉ nén (Step 5).
+    # Cùng invariant với _truncate_messages: vứt nó là model chỉ còn system
+    # prompt và trả lời bằng một câu chào.
+    last_user = None
+    for i in range(len(other_msgs) - 1, -1, -1):
+        if other_msgs[i].get("role") == "user":
+            last_user = other_msgs.pop(i)
+            break
+    keep_tail = [last_user] if last_user is not None else []
     while other_msgs:
-        test_payload = json.dumps(system_msgs + img_msgs + other_msgs, ensure_ascii=False, default=str)
+        test_payload = json.dumps(system_msgs + img_msgs + other_msgs + keep_tail, ensure_ascii=False, default=str)
         if len(test_payload.encode("utf-8")) <= max_bytes:
             break
         other_msgs.pop(0)
-    other_msgs = img_msgs + other_msgs  # Image messages first
+    other_msgs = img_msgs + other_msgs + keep_tail  # Image messages first
 
     # Step 4: Truncate system message (keep first 70% + last 30%)
     test_payload = json.dumps(system_msgs + other_msgs, ensure_ascii=False, default=str)
@@ -385,11 +394,15 @@ def _payload_size_bytes(messages: list[dict[str, Any]]) -> int:
         if isinstance(content, list):
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "image":
-                    data = part.get("data")
-                    if isinstance(data, (bytes, bytearray)):
-                        total += len(data)
-                    else:
-                        total += len(json.dumps(part, ensure_ascii=False, default=str).encode("utf-8"))
+                    # Ảnh KHÔNG đi trong JSON payload: OpenAIBackendAPI upload
+                    # qua /backend-api/files rồi chỉ gửi asset_pointer (vài
+                    # trăm byte). Tính bytes thật của ảnh vào trần 45KB làm
+                    # MỘT tấm ảnh camera (~300KB) tự nó vượt trần → vòng cắt
+                    # bên dưới vứt sạch tin chữ, kể cả câu lệnh "phân tích
+                    # ảnh" (đo thật 07/08 20:07: model chỉ còn system prompt,
+                    # trả "Hi! How can I help you today?" → bộ ép JSON điền
+                    # mặc định humans_detected=0 cho MỌI khung hình).
+                    total += 200
                 else:
                     total += len(json.dumps(part, ensure_ascii=False, default=str).encode("utf-8"))
         else:
@@ -415,8 +428,14 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     were actually well under the cap.
 
     If you reorganize this function, run
-    `plans/test_vision_truncation_regression.py` and keep the existing
+    `test/test_giu_cau_user_khi_cat_payload.py` and keep the existing
     behaviour — text-only history can still be trimmed, images cannot.
+
+    INVARIANT THỨ HAI — câu user CUỐI không bao giờ bị vứt, chỉ được nén.
+    Vòng pop(0) bên dưới cắt từ cũ tới mới; khi RIÊNG system prompt đã vượt
+    trần (agent nhét tài liệu 86 tool vào system: >45KB) thì nó vứt sạch cả
+    câu hỏi vừa gửi → ChatGPT web chỉ thấy system prompt và trả một câu chào
+    ("Dạ em đây ạ 😊…" — đo thật 07/08 19:46–19:47, 4/4 lượt chat Zalo).
     """
     if _payload_size_bytes(messages) <= _MAX_PAYLOAD_BYTES:
         return messages
@@ -426,10 +445,19 @@ def _truncate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     img_msgs = [m for m in other_msgs if _has_image_content(m)]
     text_msgs = [m for m in other_msgs if not _has_image_content(m)]
 
+    # Rút câu user cuối ra khỏi danh sách cắt — nó là YÊU CẦU hiện tại.
+    last_user = None
+    for i in range(len(text_msgs) - 1, -1, -1):
+        if text_msgs[i].get("role") == "user":
+            last_user = text_msgs.pop(i)
+            break
+    keep_tail = [last_user] if last_user is not None else []
+
     while text_msgs:
-        if _payload_size_bytes(system_msgs + img_msgs + text_msgs) <= _MAX_PAYLOAD_BYTES:
+        if _payload_size_bytes(system_msgs + img_msgs + text_msgs + keep_tail) <= _MAX_PAYLOAD_BYTES:
             break
         text_msgs.pop(0)
+    text_msgs = text_msgs + keep_tail
 
     remaining = system_msgs + img_msgs + text_msgs
     if _payload_size_bytes(remaining) > _MAX_PAYLOAD_BYTES and system_msgs:
