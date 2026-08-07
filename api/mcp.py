@@ -255,15 +255,18 @@ def create_router() -> APIRouter:
         except Exception as e:
             return {"ok": False, "error": f"Cannot connect to hub: {e}"}
 
-        mcp_names = hub_info.get("mcps") or []
-        mcp_details = hub_info.get("mcp_details") or []
-        # Build a lookup for labels/descriptions
-        detail_map = {d["id"]: d for d in mcp_details}
-        installed = config.data.get("mcp_servers") or {}
-        if isinstance(installed, list):
-            installed = {item.get("id", str(i)): item for i, item in enumerate(installed) if isinstance(item, dict)}
-        elif not isinstance(installed, dict):
-            installed = {}
+        # VALIDATE dữ liệu hub (không tin tuyệt đối — hub méo có thể gây 500).
+        if not isinstance(hub_info, dict):
+            return {"ok": False, "error": "Hub trả về dữ liệu không hợp lệ"}
+        _raw_names = hub_info.get("mcps") or []
+        mcp_names = [str(n) for n in _raw_names if isinstance(n, (str, int)) and str(n).strip()] \
+            if isinstance(_raw_names, list) else []
+        _raw_details = hub_info.get("mcp_details") or []
+        # Chỉ nhận detail là dict CÓ id (trước đây d["id"] thiếu key → KeyError → 500).
+        detail_map = {str(d["id"]): d for d in _raw_details
+                      if isinstance(d, dict) and d.get("id")} \
+            if isinstance(_raw_details, list) else {}
+        installed = _normalize_mcp(config.data.get("mcp_servers") or {})
         mcps = []
         for name in mcp_names:
             url = f"{hub_url}/{name}/mcp"

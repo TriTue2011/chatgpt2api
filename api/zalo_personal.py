@@ -10,15 +10,20 @@ server (http://<ip>:3001) — các endpoint ở đây chỉ phục vụ web UI c
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
-import threading
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from api.support import require_admin
 from services import zalo_personal as zp
+from services.ingress_guard import make_worker_pool, read_json_limited, BodyTooLarge
 
 logger = logging.getLogger(__name__)
+
+# Bound worker xử lý sự kiện Zalo Personal — trước đây mỗi webhook spawn thread
+# không giới hạn (báo cáo bảo mật 07/08). Giữ slot tới khi handle_event xong.
+_zp_worker = make_worker_pool("zalo_personal", 24)
 
 
 def create_router() -> APIRouter:
@@ -29,14 +34,22 @@ def create_router() -> APIRouter:
     async def zalo_personal_webhook(request: Request):
         secret = request.query_params.get("secret", "")
         event = request.query_params.get("event", "message")
-        if secret != zp.webhook_secret():
+        # So sánh HẰNG THỜI GIAN (secret đi qua query — nên chỉ expose endpoint
+        # này qua loopback/mạng Docker, không public URL chứa secret).
+        expected = str(zp.webhook_secret() or "")
+        if not expected or not hmac.compare_digest(str(secret), expected):
             logger.warning("Zalo personal webhook: secret sai")
             raise HTTPException(status_code=403, detail="Bad secret")
+        # Body cap qua stream (chặn chunked nạp vô hạn RAM).
         try:
-            body = await request.json()
+            body = await read_json_limited(request)
+        except BodyTooLarge:
+            logger.warning("Zalo personal webhook: body quá lớn → bỏ")
+            return {"ok": False}
         except Exception:
             return {"ok": False}
-        threading.Thread(target=zp.handle_event, args=(body, event), daemon=True).start()
+        # Bound worker: hết slot thì bỏ tin (shed-load) thay vì tạo vô hạn thread.
+        _zp_worker(zp.handle_event, body, event)
         return {"ok": True}
 
     # ── Quản trị (web UI) ────────────────────────────────────────────────────
