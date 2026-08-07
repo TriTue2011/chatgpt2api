@@ -36,7 +36,10 @@ services:
       - MYSQL_DATABASE=xiaozhi_esp32_server
       - MYSQL_INITDB_ARGS=--character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
-      - /opt/c2a/data/xiaozhi/mysql:/var/lib/mysql
+      # MySQL PHẢI dùng named volume (Docker quản lý) — bind vào thư mục chung
+      # của c2a hay gây init lỗi (quyền/dữ liệu dở) → backend 502. Named volume
+      # khởi tạo sạch, reset được ngay trong Portainer.
+      - xiaozhi-mysql:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -121,6 +124,9 @@ services:
       - /opt/c2a/data/xiaozhi/data:/opt/xiaozhi-esp32-server/data
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  xiaozhi-mysql:      # MySQL do Docker quản lý (init sạch, reset trong Portainer)
 
 # =====================================================================
 # QUY TRÌNH LẦN ĐẦU (một lần):
