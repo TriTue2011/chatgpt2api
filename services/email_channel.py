@@ -278,12 +278,14 @@ def _allowed(acc: dict[str, Any], sender: str) -> bool:
         a = str(item or "").strip().lower()
         if not a:
             continue
+        # `*` = admin CỐ Ý cho tất cả (email agent nay chạy tool read-only +
+        # tắt HA fastpath nên rủi ro giới hạn). Khớp CHÍNH XÁC hoặc theo @domain.
         if a == "*" or a == sender_l:
             return True
-        if a.startswith("@") and sender_l.endswith(a):
+        if a.startswith("@") and (sender_l.endswith(a) or sender_l == a[1:]):
             return True
-        if a in sender_l:
-            return True
+        # BỎ khớp chuỗi con `a in sender_l`: nó cho "admin" khớp
+        # "admin@evil.com" → giả mạo người gửi lọt allowlist (báo cáo 07/08).
     return False
 
 
@@ -543,7 +545,15 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
         user_text = f"Tiêu đề: {subject}\n\n{body}{att_note}".strip()
         try:
             from services.agent.orchestrator import orchestrate
-            out = orchestrate(user_text, _user_id_for(from_addr), ha_fastpath=True)
+            from services.agent import capabilities as _caps
+            # Email đến từ người gửi KHÔNG xác thực được (header From giả được),
+            # nên email agent KHÔNG được chạm nhóm hành động vật lý/máy chủ:
+            # homeassistant/device/server/code. Tắt luôn HA fast-path. Giữ các
+            # nhóm đọc/tra cứu (web, wiki, office, tóm tắt…) để vẫn hữu ích.
+            _email_deny = {"homeassistant", "device", "server", "code"}
+            _email_allow = {g for g in _caps.all_groups() if g not in _email_deny}
+            out = orchestrate(user_text, _user_id_for(from_addr),
+                              allow=_email_allow, ha_fastpath=False)
             reply = str(out.get("text") or "").strip()
             if out.get("silent") or not reply:
                 reply = "Dạ em đã nhận email nhưng không có nội dung trả lời ạ."
