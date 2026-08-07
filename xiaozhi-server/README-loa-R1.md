@@ -51,23 +51,28 @@ R1", chat/ra lệnh. Chỉ đổi `SERVER_IP` nếu host ≠ 172.16.10.38.
 > 404 "chạy scripts/download_…" nếu thiếu). Trên `.38` đã tải sẵn (26/07) nên bỏ qua;
 > kiểm trong web UI c2a mục Giọng nói / `/api/voice/status`.
 
-## Module đầy đủ (console 智控台) — [stack.portainer.full.yml](stack.portainer.full.yml)
+## Module đầy đủ, STACK RIÊNG — [stack.portainer.full.yml](stack.portainer.full.yml)
 
 Muốn **chọn model/giọng/STT/persona bất kỳ trong web console** (thay vì sửa file):
-dùng bản đầy đủ — thêm console `:8002` + MySQL + Redis (tổng 4 container xiaozhi
-cạnh c2a). MySQL/Redis **không dùng chung Postgres của c2a được** (khác engine);
-data để chung thư mục `/opt/c2a/data/xiaozhi`.
+bản đầy đủ có console `:8002` + MySQL + Redis. Deploy như **một stack Portainer
+RIÊNG, tách khỏi c2a** — vì xiaozhi hiếm khi cập nhật còn c2a cập nhật thường
+xuyên; để riêng thì update c2a không đụng tới xiaozhi.
 
-Chế độ full: `.config.yaml` chỉ trỏ manager-api + secret; mọi cấu hình
-(LLM/model/ASR/TTS/giọng/persona/SERVER_IP) nằm **trong console**.
+- MySQL/Redis **không dùng chung Postgres của c2a được** (khác engine); data để
+  chung `/opt/c2a/data/xiaozhi` (một chỗ backup, dù stack riêng).
+- Vì khác stack → **khác mạng Docker → không gọi được tên `c2a`**. Trong console,
+  trỏ LLM/ASR/TTS về c2a qua **domain** `https://gpt.vhtatn.io.vn/...` (hoặc IP host
+  `http://172.16.10.38:3030/...`).
+- Chế độ full: `.config.yaml` chỉ trỏ manager-api + secret; mọi cấu hình khác
+  (LLM/model/ASR/TTS/giọng/persona/SERVER_IP) nằm **trong console**.
 
 Lần đầu (tóm tắt; chi tiết ở đầu file stack):
-1. Deploy (để trống `XZ_MANAGER_SECRET`) → mở console `http://<host>:8002` → đăng ký admin.
+1. Deploy (để trống `XZ_MANAGER_SECRET`) → console `http://<host>:8002` → đăng ký admin.
 2. Console → 参数管理 → copy `server.secret` → đặt `XZ_MANAGER_SECRET` trong Environment → Update lại.
 3. Console → 参数管理: `server.websocket=ws://<SERVER_IP>:8000/xiaozhi/v1/`, `server.ota=http://<SERVER_IP>:8003/xiaozhi/ota/`.
-4. Console → 模型配置: LLM/ASR/TTS kiểu OpenAI trỏ `http://c2a:80/...` (key=AUTH_KEY) → chọn model/giọng/STT tuỳ ý.
+4. Console → 模型配置: LLM/ASR/TTS kiểu OpenAI trỏ `https://gpt.vhtatn.io.vn/...` (key=AUTH_KEY) → chọn model/giọng/STT tuỳ ý.
 
-⚠️ Thêm Java+MySQL+Redis, nặng hơn hẳn; chưa test build được — dựng bám sát compose chính chủ, kiểm khi deploy.
+⚠️ Java+MySQL+Redis, nặng hơn hẳn; chưa test build được — dựng bám sát compose chính chủ, kiểm khi deploy.
 
 ## Cách 2 — Portainer stack gộp (host-path, khớp .38 hiện tại)
 

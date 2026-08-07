@@ -1,64 +1,31 @@
 # =====================================================================
-# STACK MODULE ĐẦY ĐỦ (智控台) — c2a + xiaozhi full: server + web console
-# + MySQL + Redis. Dán TOÀN BỘ vào Portainer → Stacks → Editor.
+# STACK RIÊNG cho XIAOZHI (module đầy đủ 智控台) — TÁCH KHỎI c2a.
+# server + web console + MySQL + Redis. Dán vào Portainer như MỘT STACK RIÊNG.
 #
-# Khác bản nhẹ: LLM/model, giọng (TTS), STT, persona, SERVER_IP... KHÔNG nằm
-# trong file này nữa — cấu hình HẾT trong CONSOLE web tại http://<host>:8002.
-# File này chỉ trỏ xiaozhi-server về manager-api + secret.
+# Vì sao tách: xiaozhi hiếm khi cập nhật, c2a cập nhật thường xuyên — để riêng
+# thì update c2a không đụng/không restart xiaozhi.
+#
+# c2a nằm ở STACK KHÁC → mạng Docker khác → KHÔNG gọi được tên `c2a`. Nên khi
+# cấu hình LLM/ASR/TTS trong console, trỏ c2a qua DOMAIN hoặc IP host:
+#     https://gpt.vhtatn.io.vn/...      (khuyến nghị — không phụ thuộc IP)
+#   hoặc  http://172.16.10.38:3030/...  (LAN, nhanh hơn, không TLS)
+#
+# Mọi cấu hình (model/giọng/STT/persona/SERVER_IP/URL c2a + key) đặt HẾT trong
+# CONSOLE http://<host>:8002. File này chỉ trỏ manager-api + secret.
 #
 # ⚠️ CHƯA test build được ở đây — dựng bám sát docker-compose_all.yml chính chủ.
 #
-# Environment của stack cần:
-#   - AUTH_KEY        : (cho c2a, đã có)
-#   - DB_PASSWORD, VNC_PASSWORD : (cho c2a, đã có)
-#   - XZ_DB_PASSWORD  : (tuỳ chọn) mật khẩu MySQL nội bộ của xiaozhi; mặc định 123456.
-#   - XZ_MANAGER_SECRET : LẤY SAU bước 1 (xem QUY TRÌNH LẦN ĐẦU cuối file). Deploy
-#                         lần đầu để trống, sau đó điền rồi Update lại.
+# Environment của stack này cần:
+#   - XZ_DB_PASSWORD    : (tuỳ chọn) mật khẩu MySQL nội bộ; mặc định 123456.
+#   - XZ_MANAGER_SECRET : LẤY SAU bước 1 (xem QUY TRÌNH LẦN ĐẦU cuối file).
+# (KHÔNG cần AUTH_KEY ở đây — key c2a nhập trong console, không phải stack này.)
 #
-# MySQL/Redis KHÔNG dùng chung với c2a được (c2a là PostgreSQL; console xiaozhi
-# bắt buộc MySQL). Data để chung thư mục /opt/c2a/data/xiaozhi cho gọn backup.
+# MySQL/Redis riêng (c2a là PostgreSQL; console xiaozhi bắt buộc MySQL — không
+# chung được). Data để dưới /opt/c2a/data/xiaozhi (chung chỗ backup với c2a, dù
+# là stack riêng). Muốn tách hẳn thì đổi thành /opt/xiaozhi.
 # =====================================================================
 
 services:
-  c2a:
-    image: ghcr.io/tritue2011/chatgpt2api:latest
-    container_name: c2a
-    restart: unless-stopped
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "3030:80"
-      - "6080:6080"
-      - "3001:3001"
-      - "10600:10600"
-      - "10700:10700"
-    volumes:
-      - /opt/c2a/data:/app/data
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    environment:
-      - TZ=Asia/Ho_Chi_Minh
-      - STORAGE_BACKEND=postgres
-      - DATABASE_URL=postgresql://c2a_user:${DB_PASSWORD}@host.docker.internal:5432/c2a_db
-      - CHATGPT2API_AUTH_KEY=${AUTH_KEY}
-      - CAPTCHA_SOLVER_API_KEY=${AUTH_KEY}
-      - ZALO_SERVER_API_KEY=${AUTH_KEY}
-      - VNC_PASSWORD=${VNC_PASSWORD}
-      - CHATGPT2API_BASE_URL=https://gpt.vhtatn.io.vn
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:80/version')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # ── MySQL cho console xiaozhi (riêng, KHÔNG chung Postgres của c2a) ────────
   xiaozhi-esp32-server-db:
     image: mysql:latest
     container_name: xiaozhi-esp32-server-db
@@ -90,7 +57,7 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # ── Console web (智控台) — cấu hình model/giọng/STT/persona qua UI ─────────
+  # Console web (智控台) — cấu hình model/giọng/STT/persona qua UI
   xiaozhi-esp32-server-web:
     image: ghcr.io/xinnan-tech/xiaozhi-esp32-server:web_latest
     container_name: xiaozhi-esp32-server-web
@@ -161,16 +128,16 @@ services:
 # 2) Mở console http://<host>:8002 → đăng ký user đầu tiên = super admin.
 # 3) Console → 参数管理 (Parameter Management) → tìm 'server.secret' → copy giá trị.
 # 4) Đặt XZ_MANAGER_SECRET = giá trị vừa copy vào Environment của stack → Update lại.
-#    (xiaozhi-config sinh lại .config.yaml, xiaozhi-server kết nối được manager-api.)
-# 5) Trong console → 参数管理:
+# 5) Console → 参数管理:
 #      server.websocket = ws://<SERVER_IP>:8000/xiaozhi/v1/
 #      server.ota       = http://<SERVER_IP>:8003/xiaozhi/ota/
-#    (<SERVER_IP> = IP LAN host — đặt Ở ĐÂY, không cần env nữa.)
-# 6) Console → 模型配置 (Model Config):
-#      LLM  : kiểu OpenAI → url http://c2a:80/v1/                 , key = AUTH_KEY
-#      ASR  : kiểu OpenAI → http://c2a:80/v1/audio/transcriptions  , key = AUTH_KEY
-#      TTS  : kiểu OpenAI → http://c2a:80/v1/audio/speech          , key = AUTH_KEY
-#      → giờ bạn CHỌN model/giọng/STT/persona bất kỳ ngay trong console.
-# 7) Đăng ký thiết bị (theo MAC loa) trong console; trỏ OTA loa tại panel 8081 về
+#    (<SERVER_IP> = IP LAN host — đặt Ở ĐÂY, không cần env.)
+# 6) Console → 模型配置 (Model Config) — trỏ c2a qua DOMAIN/IP host (KHÔNG dùng
+#    tên `c2a` vì khác stack/mạng), key = AUTH_KEY của c2a:
+#      LLM : kiểu OpenAI → https://gpt.vhtatn.io.vn/v1/
+#      ASR : kiểu OpenAI → https://gpt.vhtatn.io.vn/v1/audio/transcriptions
+#      TTS : kiểu OpenAI → https://gpt.vhtatn.io.vn/v1/audio/speech
+#      → giờ CHỌN model/giọng/STT/persona bất kỳ trong console.
+# 7) Đăng ký thiết bị (theo MAC loa) trong console; trỏ OTA loa (panel 8081) về
 #    http://<SERVER_IP>:8003/xiaozhi/ota/ → reboot → "Alexa".
 # =====================================================================
