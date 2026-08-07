@@ -148,6 +148,45 @@ const router = express.Router();
 // thông tin user và không còn là bề mặt tấn công.
 const DEV_ENDPOINTS = process.env.ZALO_DEV_ENDPOINTS === '1';
 
+// Rate-limit đăng nhập theo IP (in-memory): chặn brute-force mật khẩu. Trước
+// đây không có giới hạn nào → dò mật khẩu không tốn kém gì.
+const _LOGIN_MAX_FAILS = 10;
+const _LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const _LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const _loginFails = new Map();   // ip -> {count, first, lockUntil}
+
+function _loginClientIp(req) {
+  // req.ip tôn trọng trust proxy của app; fallback socket. KHÔNG tin thẳng
+  // X-Forwarded-For thô (giả được) — express đã xử qua trust proxy.
+  return String(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
+function _loginRateLimit(req, res) {
+  const ip = _loginClientIp(req);
+  const now = Date.now();
+  const rec = _loginFails.get(ip);
+  if (rec && rec.lockUntil && rec.lockUntil > now) {
+    const remain = Math.ceil((rec.lockUntil - now) / 1000);
+    res.status(429).json({ success: false, message: `Quá nhiều lần sai. Thử lại sau ${remain}s.` });
+    return false;
+  }
+  return true;
+}
+
+function _loginRecordFail(req) {
+  const ip = _loginClientIp(req);
+  const now = Date.now();
+  let rec = _loginFails.get(ip);
+  if (!rec || now - rec.first > _LOGIN_WINDOW_MS) rec = { count: 0, first: now, lockUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= _LOGIN_MAX_FAILS) { rec.lockUntil = now + _LOGIN_LOCKOUT_MS; rec.count = 0; }
+  _loginFails.set(ip, rec);
+}
+
+function _loginRecordSuccess(req) {
+  _loginFails.delete(_loginClientIp(req));
+}
+
 // Dành cho ES Module: xác định __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,6 +195,7 @@ const __dirname = path.dirname(__filename);
 // Đăng nhập
 router.post('/login', (req, res) => {
   try {
+    if (!_loginRateLimit(req, res)) return;
     // KHÔNG log req.body (chứa mật khẩu thô) hay kết quả validateUser.
     const { username, password } = req.body;
 
@@ -166,8 +206,10 @@ router.post('/login', (req, res) => {
     const user = validateUser(username, password);
 
     if (!user) {
+      _loginRecordFail(req);
       return res.status(401).json({ success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' });
     }
+    _loginRecordSuccess(req);
 
     // Kiểm tra req.session tồn tại
     if (!req.session) {
@@ -309,6 +351,7 @@ router.get('/check-auth', (req, res) => {
 // API đăng nhập đơn giản (không dùng file users.json)
 router.post('/simple-login', (req, res) => {
   try {
+    if (!_loginRateLimit(req, res)) return;
     // KHÔNG log req.body (chứa mật khẩu).
     if (!req.body || typeof req.body !== 'object') {
       res.setHeader('Content-Type', 'application/json');
@@ -336,6 +379,7 @@ router.post('/simple-login', (req, res) => {
       req.session.authenticated = true;
       req.session.username = user.username;
       req.session.role = user.role;
+      _loginRecordSuccess(req);
 
       // Trả về user THẬT (username/role đã xác thực), không hardcode admin/admin
       // — frontend không được hiển thị/quyết định quyền dựa trên vai giả.
@@ -346,6 +390,7 @@ router.post('/simple-login', (req, res) => {
         sessionID: req.sessionID || 'unknown'
       });
     } else {
+      _loginRecordFail(req);
       res.setHeader('Content-Type', 'application/json');
       return res.status(401).json({ success: false, message: 'Tài khoản hoặc mật khẩu không chính xác' });
     }

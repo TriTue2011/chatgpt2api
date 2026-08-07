@@ -7,6 +7,28 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// PBKDF2: bản ghi CŨ dùng 1000 vòng (yếu). Bản ghi MỚI dùng 600000 (OWASP
+// khuyến nghị ≥210k cho PBKDF2-SHA512). Lưu số vòng THEO TỪNG bản ghi để bản
+// cũ vẫn đăng nhập được (xác minh bằng đúng số vòng của nó), bản mới mạnh hơn.
+const PBKDF2_ITERS = 600000;
+const PBKDF2_LEGACY = 1000;
+
+function _hash(password, salt, iters) {
+  return crypto.pbkdf2Sync(password, salt, iters, 64, 'sha512').toString('hex');
+}
+
+// Mật khẩu admin ban đầu: ưu tiên env. KHÔNG có env → sinh NGẪU NHIÊN và cảnh
+// báo (không còn 'admin' cứng đoán được). Trả {password, fromEnv}.
+function _initialAdminSecret() {
+  const env = String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim();
+  if (env) return { password: env, fromEnv: true };
+  return { password: crypto.randomBytes(18).toString('base64url'), fromEnv: false };
+}
+
+function _adminUsername() {
+  return String(process.env.ZALO_SERVER_ADMIN_USERNAME || 'admin').trim() || 'admin';
+}
+
 // Đường dẫn đến file lưu thông tin đăng nhập
 const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
 
@@ -32,21 +54,28 @@ const initUserFile = () => {
     if (!fs.existsSync(userFilePath)) {
       console.log("File users.json không tồn tại, đang tạo...");
 
-      // Tạo mật khẩu mặc định 'admin' cho người dùng 'admin'
-      const defaultPassword = 'admin';
+      // Mật khẩu admin ban đầu: env ZALO_SERVER_ADMIN_PASSWORD, hoặc NGẪU NHIÊN.
+      // KHÔNG còn mặc định 'admin' đoán được.
+      const uname = _adminUsername();
+      const { password, fromEnv } = _initialAdminSecret();
       const salt = crypto.randomBytes(16).toString('hex');
-      const hash = crypto.pbkdf2Sync(defaultPassword, salt, 1000, 64, 'sha512').toString('hex');
-
       const users = [{
-        username: 'admin',
+        username: uname,
         salt,
-        hash,
-        role: 'admin' // Thêm quyền admin
+        hash: _hash(password, salt, PBKDF2_ITERS),
+        iterations: PBKDF2_ITERS,
+        role: 'admin',
       }];
-
-      // Tạo file users.json — KHÔNG log nội dung (chứa salt/hash).
       fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
-      console.log('Đã tạo file users.json với tài khoản admin ban đầu');
+      if (fromEnv) {
+        console.log(`Đã tạo users.json với admin '${uname}' (mật khẩu từ ZALO_SERVER_ADMIN_PASSWORD)`);
+      } else {
+        // In MỘT LẦN để chủ máy đăng nhập rồi đổi — không có env thì đây là
+        // đường duy nhất biết mật khẩu (không còn admin/admin).
+        console.warn(`[BẢO MẬT] Chưa đặt ZALO_SERVER_ADMIN_PASSWORD. Đã sinh mật khẩu admin NGẪU NHIÊN cho '${uname}':`);
+        console.warn(`[BẢO MẬT]   ${password}`);
+        console.warn('[BẢO MẬT] Hãy đăng nhập, ĐỔI mật khẩu, rồi đặt ZALO_SERVER_ADMIN_PASSWORD để lần sau không sinh ngẫu nhiên.');
+      }
     } else {
       // Kiểm tra file hợp lệ — KHÔNG log nội dung (chứa salt/hash).
       try {
@@ -54,20 +83,22 @@ const initUserFile = () => {
         JSON.parse(content); // Kiểm tra xem có phải JSON hợp lệ
       } catch (readError) {
         console.error("Lỗi khi đọc/phân tích file users.json:", readError);
-        // Nếu file không đúng định dạng JSON, tạo lại
-        const defaultPassword = 'admin';
+        // File hỏng → tạo lại, KHÔNG dùng admin/admin (env hoặc ngẫu nhiên).
+        const uname = _adminUsername();
+        const { password, fromEnv } = _initialAdminSecret();
         const salt = crypto.randomBytes(16).toString('hex');
-        const hash = crypto.pbkdf2Sync(defaultPassword, salt, 1000, 64, 'sha512').toString('hex');
-
         const users = [{
-          username: 'admin',
+          username: uname,
           salt,
-          hash,
-          role: 'admin'
+          hash: _hash(password, salt, PBKDF2_ITERS),
+          iterations: PBKDF2_ITERS,
+          role: 'admin',
         }];
-
         fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
-        console.log('Đã tạo lại file users.json với tài khoản mặc định: admin/admin');
+        if (!fromEnv) {
+          console.warn(`[BẢO MẬT] users.json hỏng, đã tạo lại admin '${uname}' với mật khẩu NGẪU NHIÊN:`);
+          console.warn(`[BẢO MẬT]   ${password}`);
+        }
       }
     }
   } catch (error) {
@@ -108,13 +139,12 @@ export const addUser = (username, password, role = 'user') => {
   }
 
   const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 1000, 64, 'sha512').toString('hex');
-
   users.push({
     username,
     salt,
-    hash,
-    role
+    hash: _hash(password, salt, PBKDF2_ITERS),
+    iterations: PBKDF2_ITERS,
+    role,
   });
 
   fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
@@ -192,7 +222,9 @@ export const validateUser = (username, password) => {
   // TUYỆT ĐỐI không log password/salt/hash — trước đây in mật khẩu thô + full
   // hash + salt mỗi lượt login, mà bot tự đăng nhập mỗi phút nên credential
   // rò liên tục ra docker logs (báo cáo bảo mật 07/08 xác nhận trên máy chủ).
-  const hash = crypto.pbkdf2Sync(password, user.salt, 1000, 64, 'sha512').toString('hex');
+  // Xác minh bằng ĐÚNG số vòng của bản ghi (bản cũ 1000, bản mới 600000).
+  const iters = Number(user.iterations) || PBKDF2_LEGACY;
+  const hash = _hash(password, user.salt, iters);
   const stored = Buffer.from(String(user.hash), 'hex');
   const computed = Buffer.from(hash, 'hex');
   const ok = stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
@@ -224,7 +256,8 @@ export const changePassword = (username, oldPassword, newPassword) => {
   }
 
   const user = users[userIndex];
-  const hash = crypto.pbkdf2Sync(oldPassword, user.salt, 1000, 64, 'sha512').toString('hex');
+  const iters = Number(user.iterations) || PBKDF2_LEGACY;
+  const hash = _hash(oldPassword, user.salt, iters);
   const stored = Buffer.from(String(user.hash), 'hex');
   const computed = Buffer.from(hash, 'hex');
   const ok = stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
@@ -232,11 +265,12 @@ export const changePassword = (username, oldPassword, newPassword) => {
     return false; // Mật khẩu cũ không chính xác
   }
 
-  // Cập nhật mật khẩu mới
+  // Cập nhật mật khẩu mới — nâng lên số vòng MẠNH (600000).
   const salt = crypto.randomBytes(16).toString('hex');
-  const newHash = crypto.pbkdf2Sync(newPassword, salt, 1000, 64, 'sha512').toString('hex');
+  const newHash = _hash(newPassword, salt, PBKDF2_ITERS);
   users[userIndex].salt = salt;
   users[userIndex].hash = newHash;
+  users[userIndex].iterations = PBKDF2_ITERS;
 
   try {
     // Ghi qua file tạm rồi rename (atomic) — KHÔNG log nội dung.

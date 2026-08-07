@@ -88,9 +88,16 @@ def _server_url() -> str:
 
 
 def _credentials() -> tuple[str, str]:
+    # Ưu tiên env dùng CHUNG với zalo-server (ZALO_SERVER_ADMIN_USERNAME/PASSWORD):
+    # đặt env một chỗ thì cả server seed lẫn bot login đều khớp, gỡ được mặc
+    # định admin/admin. Không có env → config → admin/admin (giữ tương thích).
+    import os as _os
     c = _cfg()
-    return (str(c.get("zalo_personal_username") or "admin").strip(),
-            str(c.get("zalo_personal_password") or "admin").strip())
+    env_u = str(_os.environ.get("ZALO_SERVER_ADMIN_USERNAME") or "").strip()
+    env_p = str(_os.environ.get("ZALO_SERVER_ADMIN_PASSWORD") or "").strip()
+    user = env_u or str(c.get("zalo_personal_username") or "admin").strip()
+    pw = env_p or str(c.get("zalo_personal_password") or "admin").strip()
+    return (user, pw)
 
 
 def _default_account() -> str:

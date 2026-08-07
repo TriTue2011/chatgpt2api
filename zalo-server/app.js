@@ -152,7 +152,9 @@ app.use(session({
   saveUninitialized: false,
   name: 'zalo-server.sid',
   cookie: {
-    secure: false,
+    // secure BẬT khi ZALO_COOKIE_SECURE=1 (triển khai chỉ-HTTPS qua tunnel).
+    // Mặc định false để không phá đăng nhập LAN qua HTTP (chủ máy dùng cả hai).
+    secure: process.env.ZALO_COOKIE_SECURE === '1',
     httpOnly: true,
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 ngày
     path: '/',
