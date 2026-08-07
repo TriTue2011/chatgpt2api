@@ -138,15 +138,23 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         import secrets
 
-        devs = dict(config.data.get("device_agents") or {})
-        cfg = devs.get(name)
-        if not isinstance(cfg, dict):
+        new_token = secrets.token_urlsafe(32)
+
+        def _apply(data):
+            devs = dict(data.get("device_agents") or {})
+            c = devs.get(name)
+            if not isinstance(c, dict):
+                return None
+            c = dict(c)
+            c["token"] = new_token
+            devs[name] = c
+            data["device_agents"] = devs
+            return c
+
+        # ATOMIC read-modify-write: tránh hai request ghi đè nhau (undo rotate).
+        cfg = config.mutate(_apply)
+        if cfg is None:
             raise HTTPException(404, f"không có thiết bị '{name}'")
-        cfg = dict(cfg)
-        cfg["token"] = secrets.token_urlsafe(32)
-        devs[name] = cfg
-        config.data["device_agents"] = devs
-        config._save()
         session = da.get(name)
         if session is not None:
             session.fail_all("token đã được xoay — chạy lại agent với token mới")
@@ -189,12 +197,8 @@ def create_router() -> APIRouter:
             # rỗng dễ bị hiểu nhầm là "mở tất cả".
             raise HTTPException(400, "phải khai ít nhất một thư mục trong 'paths'")
 
-        devs = dict(config.data.get("device_agents") or {})
-        if name in devs:
-            raise HTTPException(409, f"thiết bị '{name}' đã tồn tại — "
-                                     f"xoá trước (DELETE /api/devices/{name}) rồi thêm lại")
         token = secrets.token_urlsafe(32)
-        devs[name] = {
+        new_entry = {
             "label": str((payload or {}).get("label") or name),
             "token": token,
             "paths": paths,
@@ -204,18 +208,29 @@ def create_router() -> APIRouter:
             "can_capture": bool((payload or {}).get("can_capture", False)),
             "enabled": True,
         }
-        config.data["device_agents"] = devs
-        config._save()
+
+        def _apply(data):
+            devs = dict(data.get("device_agents") or {})
+            if name in devs:
+                return None   # đã tồn tại (kiểm TRONG khoá → chống race đăng ký trùng)
+            devs[name] = new_entry
+            data["device_agents"] = devs
+            return new_entry
+
+        created = config.mutate(_apply)
+        if created is None:
+            raise HTTPException(409, f"thiết bị '{name}' đã tồn tại — "
+                                     f"xoá trước (DELETE /api/devices/{name}) rồi thêm lại")
         logger.info({"event": "device_registered", "device": name,
-                     "paths": len(paths), "can_write": devs[name]["can_write"],
-                     "can_exec": devs[name]["can_exec"],
-                     "can_power": devs[name]["can_power"],
-                     "can_capture": devs[name]["can_capture"]})
+                     "paths": len(paths), "can_write": created["can_write"],
+                     "can_exec": created["can_exec"],
+                     "can_power": created["can_power"],
+                     "can_capture": created["can_capture"]})
         return {"ok": True, "name": name, "token": token,
-                "paths": paths, "can_write": devs[name]["can_write"],
-                "can_exec": devs[name]["can_exec"],
-                "can_power": devs[name]["can_power"],
-                "can_capture": devs[name]["can_capture"],
+                "paths": paths, "can_write": created["can_write"],
+                "can_exec": created["can_exec"],
+                "can_power": created["can_power"],
+                "can_capture": created["can_capture"],
                 "ws_url": _agent_ws_url(),
                 "note": "Giữ token này — nó không hiện lại ở đâu khác."}
 
@@ -230,27 +245,34 @@ def create_router() -> APIRouter:
         Body: {label?, paths?, can_write?, can_exec?, can_power?, can_capture?}
         """
         require_admin(authorization)
-        devs = dict(config.data.get("device_agents") or {})
-        cfg = devs.get(name)
-        if not isinstance(cfg, dict):
-            raise HTTPException(404, f"không có thiết bị '{name}'")
-        cfg = dict(cfg)
         body = payload or {}
-
-        if "label" in body:
-            cfg["label"] = str(body.get("label") or name)
+        # Validate paths TRƯỚC (không cần khoá) để trả 400 sớm.
+        new_paths = None
         if "paths" in body:
-            paths = [str(p).strip() for p in (body.get("paths") or []) if str(p).strip()]
-            if not paths:
+            new_paths = [str(p).strip() for p in (body.get("paths") or []) if str(p).strip()]
+            if not new_paths:
                 raise HTTPException(400, "phải khai ít nhất một thư mục trong 'paths'")
-            cfg["paths"] = paths
-        for key in ("can_write", "can_exec", "can_power", "can_capture"):
-            if key in body:
-                cfg[key] = bool(body.get(key))
 
-        devs[name] = cfg
-        config.data["device_agents"] = devs
-        config._save()
+        def _apply(data):
+            devs = dict(data.get("device_agents") or {})
+            c = devs.get(name)
+            if not isinstance(c, dict):
+                return None
+            c = dict(c)
+            if "label" in body:
+                c["label"] = str(body.get("label") or name)
+            if new_paths is not None:
+                c["paths"] = new_paths
+            for key in ("can_write", "can_exec", "can_power", "can_capture"):
+                if key in body:
+                    c[key] = bool(body.get(key))
+            devs[name] = c
+            data["device_agents"] = devs
+            return c
+
+        cfg = config.mutate(_apply)
+        if cfg is None:
+            raise HTTPException(404, f"không có thiết bị '{name}'")
         # Phiên đang mở đọc quyền từ cfg cũ — trỏ lại để đổi có hiệu lực ngay,
         # không phải chờ thiết bị nối lại.
         session = da.get(name)
@@ -286,8 +308,7 @@ def create_router() -> APIRouter:
         lại Windows — không có gì để gỡ).
         """
         require_admin(authorization)
-        devs = dict(config.data.get("device_agents") or {})
-        if name not in devs:
+        if name not in (config.data.get("device_agents") or {}):
             raise HTTPException(404, f"không có thiết bị '{name}'")
 
         # Bước 1 — nhờ chính agent tự gỡ, KHI NÓ CÒN ONLINE.
@@ -313,10 +334,12 @@ def create_router() -> APIRouter:
                 "thiết bị đang offline nên không gỡ được từ xa — nếu máy đó còn "
                 "dùng, chạy trên máy:  & \"$env:TEMP\\c2a-install.ps1\" -Uninstall")
 
-        # Bước 2 — xoá ở dự án.
-        devs.pop(name, None)
-        config.data["device_agents"] = devs
-        config._save()
+        # Bước 2 — xoá ở dự án (ATOMIC, đọc lại trong khoá).
+        def _apply(data):
+            devs = dict(data.get("device_agents") or {})
+            devs.pop(name, None)
+            data["device_agents"] = devs
+        config.mutate(_apply)
         # Phiên đang mở phải bị ngắt — nếu không, token đã xoá vẫn dùng được
         # tới khi thiết bị tự rớt mạng.
         session = da.get(name)

@@ -767,6 +767,19 @@ class ConfigStore:
                 return local_data
             return backend_data if isinstance(backend_data, dict) else {}
 
+    def mutate(self, fn):
+        """Read-modify-write config.data ATOMIC dưới một khoá duy nhất.
+
+        Trước đây route (Devices/MCP) đọc config.data, sửa dict rồi mới _save():
+        hai request đồng thời có thể ghi đè nhau (mất cấu hình MCP, undo rotate
+        token thiết bị). `fn(data)` được gọi với self.data trong khi giữ _lock,
+        và _save() chạy ngay sau đó cùng khoá (RLock nên tái nhập được). Trả về
+        giá trị fn trả (tiện lấy token vừa sinh…)."""
+        with self._lock:
+            result = fn(self.data)
+            self._save()
+            return result
+
     def _save(self) -> None:
         with self._lock:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
