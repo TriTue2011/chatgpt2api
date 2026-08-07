@@ -148,8 +148,11 @@ if (!(process.env.SESSION_SECRET || '').trim()) {
 
 const FileStore = sessionFileStore(session);
 
-// Thiết lập session với file store để tồn tại qua restart
-app.use(session({
+// Export session middleware để dùng lại khi xác thực WebSocket upgrade
+// (server.js) — WS trước đây nhận MỌI kết nối, broadcast toàn bộ tin nhắn cho
+// bất kỳ ai (báo cáo bảo mật 07/08). Cùng một session middleware nên cùng cách
+// xác thực với HTTP.
+export const sessionMiddleware = session({
   store: new FileStore({
     path: path.join(getDataDirectory(), 'sessions'),
     ttl: 30 * 24 * 60 * 60, // 30 ngày (tính bằng giây)
@@ -169,7 +172,8 @@ app.use(session({
     sameSite: 'lax'
   },
   rolling: true // Gia hạn session mỗi lần request
-}));
+});
+app.use(sessionMiddleware);
 
 // Log để debug session
 app.use((req, res, next) => {
