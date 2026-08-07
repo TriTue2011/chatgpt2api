@@ -13,6 +13,16 @@ on:
       - "v*"
   workflow_dispatch:
 
+# Serialize theo nhánh: push dồn dập (nhiều commit liên tiếp) trước đây tạo ra
+# hàng loạt run BUILD chạy SONG SONG, cùng push image lớn lên GHCR một lúc →
+# tranh chấp registry, một số run nhận `denied: 403 Forbidden` ở bước push (đo
+# 07/08: build OK, chỉ push fail). Nhóm concurrency + cancel-in-progress khiến
+# chỉ commit MỚI NHẤT build tới cùng; commit cũ đang chạy bị HUỶ (không tính là
+# fail), nên không còn chồng chéo và không còn 403 do tranh chấp.
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # GHCR refs must be lowercase; github.repository_owner is "TriTue2011" (mixed
   # case) which fails push-by-digest with "repository name must be lowercase".
@@ -28,9 +38,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     # 25 phút, không phải 10. Đo 06-07/08: bốn lượt liên tiếp chết ở đúng mốc 10
-    # phút và GitHub báo trạng thái "cancelled" — nhìn qua tưởng bị huỷ vì push
-    # chồng, nhưng workflow này KHÔNG có khối `concurrency` nên không lượt nào
-    # huỷ lượt nào. Nó hết giờ thật.
+    # phút vì HẾT GIỜ thật (không phải bị huỷ). LƯU Ý: nay ĐÃ thêm khối
+    # `concurrency` ở đầu file — push chồng sẽ huỷ lượt cũ (trạng thái
+    # "cancelled", không phải "failure").
     #
     # Phần lâu không phải là test (cả bộ chạy ~27 giây trong container): nó là
     # `uv sync --frozen` + cài Bun + typecheck web, cộng lúc runner GitHub tắc.
