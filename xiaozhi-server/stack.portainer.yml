@@ -7,7 +7,11 @@
 # (chính biến c2a đang dùng). Bạn chỉ cần có sẵn AUTH_KEY trong Environment
 # của stack (đã có cho c2a).
 #
-# Đổi SERVER_IP nếu host không phải 172.16.10.38.
+# Chỉnh nhanh:
+#   - SERVER_IP  : IP LAN của host (loa quay số tới). Mặc định 172.16.10.38.
+#   - R1_PERSONA : tính cách/persona loa nói. Sửa thẳng ở env dưới, không cần
+#                  đụng phần còn lại.
+#   - Giọng đọc  : để trong web UI c2a (mục Giọng nói). voice="" = giọng mặc định.
 # =====================================================================
 
 services:
@@ -55,6 +59,7 @@ services:
     environment:
       - AUTH_KEY=${AUTH_KEY}
       - SERVER_IP=172.16.10.38
+      - R1_PERSONA=Bạn là trợ lý trong loa thông minh R1 đặt tại nhà. Nói tiếng Việt tự nhiên, thân thiện, ngắn gọn, dễ nghe khi đọc thành tiếng; trả lời thẳng vào việc, tránh liệt kê dài. Khi được nhờ mở nhạc/chỉnh âm lượng/đặt báo thức thì gọi đúng công cụ của loa.
     volumes:
       - xiaozhi-data:/out
     command:
@@ -62,6 +67,7 @@ services:
       - -c
       - |
         cat > /out/.config.yaml <<'CFG'
+        prompt: "__PERSONA__"
         server:
           ip: 0.0.0.0
           port: 8000
@@ -82,7 +88,7 @@ services:
         TTS:
           OpenAITTS: {type: openai, api_url: "http://c2a:80/v1/audio/speech", api_key: "__AUTH_KEY__", model: tts-1, voice: "", speed: 1, output_dir: tmp/}
         CFG
-        sed -i -e "s#__AUTH_KEY__#$$AUTH_KEY#g" -e "s#__SERVER_IP__#$$SERVER_IP#g" /out/.config.yaml
+        sed -i -e "s#__AUTH_KEY__#$$AUTH_KEY#g" -e "s#__SERVER_IP__#$$SERVER_IP#g" -e "s#__PERSONA__#$$R1_PERSONA#g" /out/.config.yaml
         echo "[xiaozhi-config] da ghi /out/.config.yaml"
 
   xiaozhi-server:
