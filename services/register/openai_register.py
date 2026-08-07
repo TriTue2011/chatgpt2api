@@ -24,6 +24,23 @@ from services.account_service import account_service
 from services.register import mail_provider
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _tls_verify() -> bool:
+    """Xác minh TLS cho luồng đăng ký — MẶC ĐỊNH BẬT. Trước đây TẮT verify trên
+    toàn bộ session, mà các request sau gửi password/OTP/OAuth code + nhận
+    access/refresh token → MITM đọc/sửa được. Chỉ tắt khi admin thật sự cần
+    (proxy nội bộ cắt TLS) qua security.register_tls_verify=false."""
+    try:
+        from services.config import config as _app_config
+        sec = _app_config.get().get("security")
+        if isinstance(sec, dict) and sec.get("register_tls_verify") is False:
+            return False
+    except Exception:
+        pass
+    return True
+
+
 base_dir = Path(__file__).resolve().parent
 config = {
     "mail": {
@@ -303,7 +320,7 @@ def build_sentinel_token(session: requests.Session, device_id: str, flow: str) -
             "sec-ch-ua-platform": '"Windows"',
         },
         timeout=20,
-        verify=False,
+        verify=_tls_verify(),
     )
     data = _response_json(resp)
     token = str(data.get("token") or "").strip()
@@ -325,13 +342,13 @@ def _is_socks_proxy(proxy: str) -> bool:
 
 def create_session(proxy: str = "") -> Any:
     if _is_socks_proxy(proxy):
-        return curl_requests.Session(impersonate="chrome", verify=False, proxy=proxy)
+        return curl_requests.Session(impersonate="chrome", verify=_tls_verify(), proxy=proxy)
     session = requests.Session()
     retry = Retry(total=2, connect=2, read=2, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
     adapter = HTTPAdapter(max_retries=retry, pool_connections=50, pool_maxsize=50)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
-    session.verify = False
+    session.verify = _tls_verify()
     if proxy:
         session.proxies.update({"http": proxy, "https": proxy})
     return session
@@ -353,11 +370,11 @@ def validate_otp(session: requests.Session, device_id: str, code: str):
     headers["referer"] = f"{auth_base}/email-verification"
     headers["oai-device-id"] = device_id
     headers.update(_make_trace_headers())
-    resp, error = request_with_local_retry(session, "post", f"{auth_base}/api/accounts/email-otp/validate", json={"code": code}, headers=headers, verify=False)
+    resp, error = request_with_local_retry(session, "post", f"{auth_base}/api/accounts/email-otp/validate", json={"code": code}, headers=headers, verify=_tls_verify())
     if resp is not None and resp.status_code == 200:
         return resp, ""
     headers["openai-sentinel-token"] = build_sentinel_token(session, device_id, "authorize_continue")
-    resp, error = request_with_local_retry(session, "post", f"{auth_base}/api/accounts/email-otp/validate", json={"code": code}, headers=headers, verify=False)
+    resp, error = request_with_local_retry(session, "post", f"{auth_base}/api/accounts/email-otp/validate", json={"code": code}, headers=headers, verify=_tls_verify())
     return resp, error
 
 
@@ -379,7 +396,7 @@ def extract_oauth_callback_params_from_consent_session(session: requests.Session
         consent_url = f"{auth_base}{consent_url}"
     current_url = consent_url
     for _ in range(10):
-        response = session.get(current_url, headers=navigate_headers, verify=False, timeout=30, allow_redirects=False)
+        response = session.get(current_url, headers=navigate_headers, verify=_tls_verify(), timeout=30, allow_redirects=False)
         callback_params = extract_oauth_callback_params_from_url(str(response.url)) or extract_oauth_callback_params_from_url(str(response.headers.get("Location") or "").strip())
         if callback_params:
             return callback_params
@@ -403,7 +420,7 @@ def extract_oauth_callback_params_from_consent_session(session: requests.Session
     headers["referer"] = consent_url
     headers["oai-device-id"] = device_id
     headers.update(_make_trace_headers())
-    ws_resp = session.post(f"{auth_base}/api/accounts/workspace/select", json={"workspace_id": workspace_id}, headers=headers, verify=False, timeout=30, allow_redirects=False)
+    ws_resp = session.post(f"{auth_base}/api/accounts/workspace/select", json={"workspace_id": workspace_id}, headers=headers, verify=_tls_verify(), timeout=30, allow_redirects=False)
     callback_params = extract_oauth_callback_params_from_url(str(ws_resp.headers.get("Location") or "").strip())
     if callback_params:
         return callback_params
@@ -422,7 +439,7 @@ def extract_oauth_callback_params_from_consent_session(session: requests.Session
     body = {"org_id": org_id}
     if project_id:
         body["project_id"] = project_id
-    org_resp = session.post(f"{auth_base}/api/accounts/organization/select", json=body, headers=org_headers, verify=False, timeout=30, allow_redirects=False)
+    org_resp = session.post(f"{auth_base}/api/accounts/organization/select", json=body, headers=org_headers, verify=_tls_verify(), timeout=30, allow_redirects=False)
     return extract_oauth_callback_params_from_url(str(org_resp.headers.get("Location") or "").strip())
 
 
@@ -439,7 +456,7 @@ def _handle_email_verification_link(session: requests.Session, verification_url:
         # Navigate to the verification page
         headers = dict(navigate_headers)
         headers["referer"] = verification_url
-        resp = session.get(verification_url, headers=headers, allow_redirects=True, verify=False, timeout=30)
+        resp = session.get(verification_url, headers=headers, allow_redirects=True, verify=_tls_verify(), timeout=30)
         
         if resp is None:
             print(f"[email_verify] Failed to load verification page")
@@ -489,7 +506,7 @@ def _handle_email_verification_link(session: requests.Session, verification_url:
             # Click the verification link
             verify_headers = dict(navigate_headers)
             verify_headers["referer"] = final_url
-            verify_resp = session.get(verify_url, headers=verify_headers, allow_redirects=True, verify=False, timeout=30)
+            verify_resp = session.get(verify_url, headers=verify_headers, allow_redirects=True, verify=_tls_verify(), timeout=30)
             
             if verify_resp:
                 step(index, "Verification link clicked successfully")
@@ -511,7 +528,7 @@ def exchange_platform_tokens(session: requests.Session, device_id: str, code_ver
         # Fallback: direct GET to consent_url with redirects, extract code from final URL
         print(f"[exchange_platform_tokens] primary method failed, trying fallback, continue_url={consent_url[:120]}")
         try:
-            r = session.get(consent_url, headers=navigate_headers, allow_redirects=True, verify=False, timeout=30)
+            r = session.get(consent_url, headers=navigate_headers, allow_redirects=True, verify=_tls_verify(), timeout=30)
             final_url = str(r.url)
             print(f"[exchange_platform_tokens] fallback final_url={final_url[:120]}")
             callback_params = extract_oauth_callback_params_from_url(final_url)
@@ -539,7 +556,7 @@ def exchange_platform_tokens(session: requests.Session, device_id: str, code_ver
             "client_id": platform_oauth_client_id,
             "code_verifier": code_verifier,
         },
-        verify=False,
+        verify=_tls_verify(),
         timeout=60,
     )
     data = _response_json(resp)
@@ -598,7 +615,7 @@ class PlatformRegistrar:
             "code_challenge_method": "S256",
             "auth0Client": platform_auth0_client,
         }
-        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/authorize?{urlencode(params)}", headers=self._navigate_headers(f"{platform_base}/"), allow_redirects=True, verify=False)
+        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/authorize?{urlencode(params)}", headers=self._navigate_headers(f"{platform_base}/"), allow_redirects=True, verify=_tls_verify())
         if resp is None or resp.status_code != 200:
             err = _response_json(resp).get("error", {}) if resp is not None else {}
             detail = f": {err.get('code', '')} - {err.get('message', '')}".strip(" -") if err else ""
@@ -613,7 +630,7 @@ class PlatformRegistrar:
         step(index, "开始提交注册密码")
         headers = self._json_headers(f"{auth_base}/create-account/password")
         headers["openai-sentinel-token"] = build_sentinel_token(self.session, self.device_id, "username_password_create")
-        resp, error = request_with_local_retry(self.session, "post", f"{auth_base}/api/accounts/user/register", json={"username": email, "password": password}, headers=headers, verify=False)
+        resp, error = request_with_local_retry(self.session, "post", f"{auth_base}/api/accounts/user/register", json={"username": email, "password": password}, headers=headers, verify=_tls_verify())
         if resp is None or resp.status_code != 200:
             data = _response_json(resp) if resp is not None else {}
             if data.get("message") == "Failed to create account. Please try again.":
@@ -624,7 +641,7 @@ class PlatformRegistrar:
 
     def _send_otp(self, index: int) -> None:
         step(index, "开始发送验证码")
-        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/email-otp/send", headers=self._navigate_headers(f"{auth_base}/create-account/password"), allow_redirects=True, verify=False)
+        resp, error = request_with_local_retry(self.session, "get", f"{auth_base}/api/accounts/email-otp/send", headers=self._navigate_headers(f"{auth_base}/create-account/password"), allow_redirects=True, verify=_tls_verify())
         if resp is None or resp.status_code not in (200, 302):
             raise RuntimeError(error or f"send_otp_http_{getattr(resp, 'status_code', 'unknown')}")
         step(index, "发送验证码完成")
@@ -640,7 +657,7 @@ class PlatformRegistrar:
         step(index, "开始创建账号资料")
         headers = self._json_headers(f"{auth_base}/about-you")
         headers["openai-sentinel-token"] = build_sentinel_token(self.session, self.device_id, "oauth_create_account")
-        resp, error = request_with_local_retry(self.session, "post", f"{auth_base}/api/accounts/create_account", json={"name": name, "birthdate": birthdate}, headers=headers, verify=False)
+        resp, error = request_with_local_retry(self.session, "post", f"{auth_base}/api/accounts/create_account", json={"name": name, "birthdate": birthdate}, headers=headers, verify=_tls_verify())
         if resp is None or resp.status_code not in (200, 302):
             data = _response_json(resp) if resp is not None else {}
             if data.get("message") == "Failed to create account. Please try again.":
@@ -683,7 +700,7 @@ class PlatformRegistrar:
             self.session, "get",
             f"{auth_base}/api/accounts/authorize?{urlencode(params)}",
             headers=self._navigate_headers(f"{platform_base}/"),
-            allow_redirects=True, verify=False,
+            allow_redirects=True, verify=_tls_verify(),
         )
         if resp is None:
             raise RuntimeError(error or "platform_login_authorize_failed")
@@ -701,7 +718,7 @@ class PlatformRegistrar:
                 json={"username": {"kind": "email", "value": email}},
                 headers=h,
                 allow_redirects=False,
-                verify=False,
+                verify=_tls_verify(),
             )
 
         step(index, "开始提交邮箱")
@@ -718,7 +735,7 @@ class PlatformRegistrar:
                 self.session, "get",
                 f"{auth_base}/api/accounts/authorize?{urlencode(params)}",
                 headers=self._navigate_headers(f"{platform_base}/"),
-                allow_redirects=True, verify=False,
+                allow_redirects=True, verify=_tls_verify(),
             )
             if resp is None:
                 raise RuntimeError(error or "platform_login_authorize_retry_failed")
@@ -745,7 +762,7 @@ class PlatformRegistrar:
             json={"password": password},
             headers=headers,
             allow_redirects=False,
-            verify=False,
+            verify=_tls_verify(),
         )
         if resp is None or resp.status_code != 200:
             raise RuntimeError(error or f"password_verify_http_{getattr(resp, 'status_code', '')}")
