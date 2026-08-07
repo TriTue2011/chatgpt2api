@@ -77,12 +77,16 @@ services:
       CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?CAPTCHA_SOLVER_API_KEY chưa đặt}
       # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
       ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?ZALO_SERVER_API_KEY chưa đặt}
-      # [REQUIRED] Bí mật ký session zalo-server — KHÔNG đặt là session mất sau
-      # mỗi restart (mỗi lần chạy sinh secret ngẫu nhiên). Đặt để session bền.
-      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET chưa đặt — session sẽ mất sau restart}
-      # [REQUIRED] Mật khẩu admin zalo-server (seed lần đầu + bot Python login
-      # cùng giá trị này). Không đặt là seed ngẫu nhiên → bot mất đăng nhập.
-      ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:?ZALO_SERVER_ADMIN_PASSWORD chưa đặt}
+      # [KHUYẾN NGHỊ] Bí mật ký session zalo-server. Không đặt thì app tự sinh
+      # NGẪU NHIÊN mỗi lần chạy (an toàn, nhưng session mất sau mỗi restart —
+      # phải đăng nhập lại). Đặt một chuỗi ngẫu nhiên cố định để session bền.
+      # CỐ Ý không bắt buộc: thiếu nó không tạo lỗ hổng, chặn deploy là vô ích.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      # [KHUYẾN NGHỊ] Mật khẩu admin zalo-server. CHỈ dùng khi users.json chưa
+      # tồn tại (seed lần đầu); đã có file thì không ảnh hưởng. Bot Python đọc
+      # CÙNG biến này để đăng nhập, nên nếu seed mới thì phải đặt, kẻo mật khẩu
+      # sinh ngẫu nhiên và bot không đăng nhập được.
+      ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:-}
       ZALO_SERVER_ADMIN_USERNAME: ${ZALO_SERVER_ADMIN_USERNAME:-admin}
       # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
       # không phá đăng nhập LAN qua HTTP.
