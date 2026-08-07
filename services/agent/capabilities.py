@@ -4230,10 +4230,33 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     except Exception:
         return {"text": "Máy chủ chưa cài thư viện SSH (paramiko) nên em chưa vào được ạ."}
     cli = paramiko.SSHClient()
-    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # nosec B507 — may LAN ad-hoc, user tu cap creds, khong pin duoc host key
+    # Trust-on-first-use + fail khi host key ĐỔI: nạp known_hosts đã lưu; host
+    # từng thấy mà key khác đi (MITM) → paramiko raise BadHostKeyException BẤT
+    # KỂ policy. AutoAdd chỉ áp host LẦN ĐẦU; save_host_keys ghim lại. Trước đây
+    # AutoAdd trần nhận mọi key mỗi lần → giả máy lấy được mật khẩu SSH.
+    try:
+        from services.config import DATA_DIR
+        _known = DATA_DIR / "ssh_known_hosts"
+        try:
+            cli.load_system_host_keys()
+        except Exception:
+            pass
+        if _known.exists():
+            try:
+                cli.load_host_keys(str(_known))
+            except Exception:
+                pass
+    except Exception:
+        _known = None
+    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # chỉ cho host CHƯA từng thấy
     try:
         cli.connect(host, port=port, username=user, password=password, timeout=15,
                     allow_agent=False, look_for_keys=False)
+        if _known is not None:
+            try:
+                cli.save_host_keys(str(_known))
+            except Exception:
+                pass
     except Exception as exc:
         return {"text": f"Em không đăng nhập được {host} 😥 ({str(exc)[:120]})."}
     out = [f"Thông tin máy {host}:"]

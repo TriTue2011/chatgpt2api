@@ -834,8 +834,12 @@ router.get('/debug-users-file', (req, res) => {
     }
 });
 
-// Endpoint để reset mật khẩu admin về mặc định (chỉ admin, chỉ POST)
+// Endpoint reset mật khẩu admin — TRƯỚC đây reset về 'admin' cứng (PBKDF2 1000
+// vòng) → backdoor: một admin (hoặc session giả nhờ SESSION_SECRET cũ) đặt lại
+// về mật khẩu đoán được. Nay: bịt ở production (chỉ bật khi ZALO_DEV_ENDPOINTS=1),
+// và khi chạy thì đặt mật khẩu NGẪU NHIÊN 600.000 vòng, trả về một lần.
 router.post('/reset-admin-password', adminMiddleware, (req, res) => {
+    if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
     try {
         const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
         const fileExists = fs.existsSync(userFilePath);
@@ -869,14 +873,15 @@ router.post('/reset-admin-password', adminMiddleware, (req, res) => {
             });
         }
 
-        // Tạo mật khẩu mặc định mới
-        const defaultPassword = 'admin';
+        // Mật khẩu NGẪU NHIÊN (không còn 'admin' đoán được) + 600.000 vòng.
+        const newPassword = crypto.randomBytes(18).toString('base64url');
         const salt = crypto.randomBytes(16).toString('hex');
-        const hash = crypto.pbkdf2Sync(defaultPassword, salt, 1000, 64, 'sha512').toString('hex');
+        const hash = crypto.pbkdf2Sync(newPassword, salt, 600000, 64, 'sha512').toString('hex');
 
         // Cập nhật user admin
         users[adminIndex].salt = salt;
         users[adminIndex].hash = hash;
+        users[adminIndex].iterations = 600000;
 
         // Ghi lại file
         try {
@@ -889,7 +894,8 @@ router.post('/reset-admin-password', adminMiddleware, (req, res) => {
 
             return res.json({
                 success: true,
-                message: 'Đã reset mật khẩu admin về mặc định (admin)'
+                message: 'Đã reset mật khẩu admin (ngẫu nhiên) — lưu lại ngay, chỉ hiện MỘT lần',
+                password: newPassword
             });
         } catch (writeError) {
             return res.status(500).json({

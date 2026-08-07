@@ -77,6 +77,16 @@ services:
       CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?CAPTCHA_SOLVER_API_KEY chưa đặt}
       # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
       ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?ZALO_SERVER_API_KEY chưa đặt}
+      # [REQUIRED] Bí mật ký session zalo-server — KHÔNG đặt là session mất sau
+      # mỗi restart (mỗi lần chạy sinh secret ngẫu nhiên). Đặt để session bền.
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET chưa đặt — session sẽ mất sau restart}
+      # [REQUIRED] Mật khẩu admin zalo-server (seed lần đầu + bot Python login
+      # cùng giá trị này). Không đặt là seed ngẫu nhiên → bot mất đăng nhập.
+      ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:?ZALO_SERVER_ADMIN_PASSWORD chưa đặt}
+      ZALO_SERVER_ADMIN_USERNAME: ${ZALO_SERVER_ADMIN_USERNAME:-admin}
+      # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
+      # không phá đăng nhập LAN qua HTTP.
+      ZALO_COOKIE_SECURE: ${ZALO_COOKIE_SECURE:-0}
       STORAGE_BACKEND: json
       # [Optional] Public base URL for image links
       # CHATGPT2API_BASE_URL: https://your-domain.com
