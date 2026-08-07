@@ -4370,6 +4370,28 @@ def _restore_tool_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
     return result
 
 
+def _sniff_image_mime(data: bytes) -> str:
+    """Đoán MIME ảnh từ magic bytes. Trả "" nếu không phải ảnh nhận dạng được.
+
+    Dùng khi tải ảnh HTTP: net_guard.fetch_media trả bytes (không có header),
+    và tin Content-Type của server ngoài là không an toàn — nên nhận dạng theo
+    magic bytes thay vì header.
+    """
+    if not data or len(data) < 12:
+        return ""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:2] == b"BM":
+        return "image/bmp"
+    return ""
+
+
 def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert internal image format → OpenAI vision API format.
     Downloads HTTP URLs and converts to base64 (OpenAI can't fetch external URLs).
@@ -4404,21 +4426,29 @@ def _convert_images_for_openai(messages: list[dict[str, Any]]) -> list[dict[str,
                         if isinstance(url, str) and url.startswith("data:"):
                             new_parts.append(part)  # Already base64
                         elif isinstance(url, str) and url.startswith("http"):
-                            # Download and convert to base64 (OpenAI can't fetch external URLs)
+                            # Download and convert to base64 (OpenAI can't fetch external URLs).
+                            # SSRF: URL này do client/model cung cấp. Phải đi qua
+                            # net_guard.fetch_media — chặn IP nội bộ/loopback/metadata,
+                            # DNS-rebinding, redirect ra private, và có trần byte.
+                            # KHÔNG dùng urllib.urlopen thẳng (đường cũ cho phép
+                            # đọc localhost/LAN/169.254.169.254 rồi base64 lên provider).
                             try:
-                                # Use standard requests for image downloads (no impersonation needed)
-                                import urllib.request
-                                req = urllib.request.Request(url, headers={
-                                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                from services import net_guard
+                                img_data = net_guard.fetch_media(url, timeout=15,
+                                                                 max_bytes=20 * 1024 * 1024)
+                                mime = _sniff_image_mime(img_data)
+                                if not mime:
+                                    # Không phải ảnh nhận dạng được (vd SSRF trả
+                                    # trang HTML/JSON nội bộ) → bỏ, không nhồi lên
+                                    # provider dưới danh nghĩa ảnh.
+                                    logger.warning({"event": "image_download_not_image",
+                                                    "url": url[:120]})
+                                    continue
+                                b64 = base64.b64encode(img_data).decode("ascii")
+                                new_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
                                 })
-                                with urllib.request.urlopen(req, timeout=15) as resp:
-                                    img_data = resp.read()
-                                    mime = resp.headers.get("Content-Type", "image/jpeg")
-                                    b64 = base64.b64encode(img_data).decode("ascii")
-                                    new_parts.append({
-                                        "type": "image_url",
-                                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                    })
                             except Exception as e:
                                 logger.warning({"event": "image_download_failed", "url": url[:120], "error": str(e)[:100]})
                         continue

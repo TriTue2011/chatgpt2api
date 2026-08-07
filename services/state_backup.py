@@ -410,9 +410,22 @@ class StateBackup:
         return removed
 
     def delete_backup(self, filename: str) -> bool:
-        """Delete a specific backup file by filename."""
-        filepath = BACKUP_DIR / filename
-        if filepath.exists():
+        """Delete a specific backup file by filename.
+
+        Chống path traversal: `filename` do client gửi (admin token có thể bị
+        lộ qua các đường đã báo), nên phải bảo đảm đường giải ra VẪN nằm trong
+        BACKUP_DIR — nếu không, `../../etc/x` sẽ xoá file ngoài thư mục backup
+        mà tiến trình container có quyền ghi.
+        """
+        base = BACKUP_DIR.resolve()
+        filepath = (base / filename).resolve()
+        try:
+            filepath.relative_to(base)
+        except ValueError:
+            logger.warning({"event": "delete_backup_path_rejected", "filename": str(filename)[:120]})
+            return False
+        # Chỉ xoá file thường trong thư mục backup, không theo symlink ra ngoài.
+        if filepath.is_file() and not filepath.is_symlink():
             filepath.unlink()
             return True
         return False
