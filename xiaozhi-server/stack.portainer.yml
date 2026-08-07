@@ -3,9 +3,9 @@
 # Dán TOÀN BỘ file này vào Portainer → Stacks → Editor.
 #
 # KHÔNG cần gõ lệnh tạo file trên host: service `xiaozhi-config` TỰ SINH
-# /opt/.../data/.config.yaml lúc khởi động, lấy key TỰ ĐỘNG từ ${AUTH_KEY}
-# (chính biến c2a đang dùng). Bạn chỉ cần có sẵn AUTH_KEY trong Environment
-# của stack (đã có cho c2a).
+# /opt/c2a/data/xiaozhi/.config.yaml lúc khởi động (CHUNG thư mục data với c2a),
+# lấy key TỰ ĐỘNG từ ${AUTH_KEY} (chính biến c2a đang dùng). Bạn chỉ cần có sẵn
+# AUTH_KEY trong Environment của stack (đã có cho c2a).
 #
 # KHÔNG gắn mặc định trong file — mọi thông tin lấy từ Environment của stack
 # (Portainer → Stacks → Environment variables), giống AUTH_KEY:
@@ -67,7 +67,8 @@ services:
       # Persona: dùng nếu bạn đặt R1_PERSONA; không đặt thì dùng câu dưới.
       - R1_PERSONA=${R1_PERSONA:-Bạn là trợ lý trong loa thông minh R1 đặt tại nhà. Nói tiếng Việt tự nhiên, thân thiện, ngắn gọn, dễ nghe khi đọc thành tiếng; trả lời thẳng vào việc, tránh liệt kê dài. Khi được nhờ mở nhạc/chỉnh âm lượng/đặt báo thức thì gọi đúng công cụ của loa.}
     volumes:
-      - xiaozhi-data:/out
+      # Dùng CHUNG thư mục data của c2a (/opt/c2a/data), namespaced subfolder.
+      - /opt/c2a/data/xiaozhi:/out
     command:
       - sh
       - -c
@@ -108,9 +109,7 @@ services:
       - "8000:8000"     # WebSocket audio — loa nối vào
       - "8003:8003"     # OTA — loa trỏ tới http://172.16.10.38:8003/xiaozhi/ota/
     volumes:
-      - xiaozhi-data:/opt/xiaozhi-esp32-server/data
+      # Chung /opt/c2a/data với c2a — không cần named volume riêng.
+      - /opt/c2a/data/xiaozhi:/opt/xiaozhi-esp32-server/data
     security_opt:
       - no-new-privileges:true
-
-volumes:
-  xiaozhi-data:
