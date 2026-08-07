@@ -18,6 +18,14 @@ class InstallRequest(BaseModel):
     url_override: str = ""  # For GitMCP: user fills in owner/repo
 
 
+def _normalize_mcp(installed) -> dict:
+    """mcp_servers có thể là list (bản cũ) hoặc dict → luôn trả dict."""
+    if isinstance(installed, list):
+        return {item.get("id", str(i)): item
+                for i, item in enumerate(installed) if isinstance(item, dict)}
+    return installed if isinstance(installed, dict) else {}
+
+
 def create_router() -> APIRouter:
     router = APIRouter()
 
@@ -71,12 +79,6 @@ def create_router() -> APIRouter:
         if preset is None and not body.url_override:
             raise HTTPException(status_code=404, detail=f"Unknown preset: {body.id}")
 
-        installed = config.data.get("mcp_servers") or {}
-        if isinstance(installed, list):
-            installed = {item.get("id", str(i)): item for i, item in enumerate(installed) if isinstance(item, dict)}
-        elif not isinstance(installed, dict):
-            installed = {}
-
         url = body.url_override or (preset.url if preset else "")
         if not url:
             raise HTTPException(
@@ -84,19 +86,22 @@ def create_router() -> APIRouter:
                 detail=f"Preset '{body.id}' cần URL riêng của từng hệ thống — truyền url_override (vd URL webhook ha-mcp)",
             )
         name = preset.name if preset else body.id
-        installed[body.id] = {
+        import time
+        entry = {
             "url": url,
             "name": name,
             "enabled": True,
             "api_key": body.api_key or None,
             "requires_api_key": preset.requires_api_key if preset else bool(body.api_key),
-            "installed_at": None,
+            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        import time
-        installed[body.id]["installed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        config.data["mcp_servers"] = installed
-        config._save()
+        # ATOMIC: đọc lại + merge trong khoá (tránh hai request ghi đè mất cấu hình).
+        def _apply(d):
+            inst = _normalize_mcp(d.get("mcp_servers") or {})
+            inst[body.id] = entry
+            d["mcp_servers"] = inst
+        config.mutate(_apply)
         try:
             from services.mcp_client import invalidate_tools_cache
             invalidate_tools_cache()
@@ -111,16 +116,16 @@ def create_router() -> APIRouter:
         authorization: str | None = Header(default=None),
     ):
         require_admin(authorization)
-        installed = config.data.get("mcp_servers") or {}
-        if isinstance(installed, list):
-            installed = {item.get("id", str(i)): item for i, item in enumerate(installed) if isinstance(item, dict)}
-        elif not isinstance(installed, dict):
-            installed = {}
 
-        if preset_id in installed:
-            del installed[preset_id]
-            config.data["mcp_servers"] = installed
-            config._save()
+        def _apply(d):
+            inst = _normalize_mcp(d.get("mcp_servers") or {})
+            existed = preset_id in inst
+            if existed:
+                del inst[preset_id]
+                d["mcp_servers"] = inst
+            return existed
+        removed = config.mutate(_apply)
+        if removed:
             try:
                 from services.mcp_client import invalidate_tools_cache
                 invalidate_tools_cache()
@@ -135,26 +140,28 @@ def create_router() -> APIRouter:
         authorization: str | None = Header(default=None),
     ):
         require_admin(authorization)
-        installed = config.data.get("mcp_servers") or {}
-        if isinstance(installed, list):
-            installed = {item.get("id", str(i)): item for i, item in enumerate(installed) if isinstance(item, dict)}
-        elif not isinstance(installed, dict):
-            installed = {}
 
-        entry = installed.get(preset_id)
-        if entry is None:
+        _res: dict = {}
+
+        def _apply(d):
+            inst = _normalize_mcp(d.get("mcp_servers") or {})
+            entry = inst.get(preset_id)
+            if entry is None:
+                return False
+            entry["enabled"] = not bool(entry.get("enabled", True))
+            inst[preset_id] = entry
+            d["mcp_servers"] = inst
+            _res["enabled"] = entry["enabled"]
+            return True
+        if not config.mutate(_apply):
             raise HTTPException(status_code=404, detail=f"Not installed: {preset_id}")
-
-        entry["enabled"] = not bool(entry.get("enabled", True))
-        config.data["mcp_servers"] = installed
-        config._save()
         try:
             from services.mcp_client import invalidate_tools_cache
             invalidate_tools_cache()
         except Exception:
             pass
-        logger.info({"event": "mcp_toggled", "id": preset_id, "enabled": entry["enabled"]})
-        return {"ok": True, "id": preset_id, "enabled": entry["enabled"]}
+        logger.info({"event": "mcp_toggled", "id": preset_id, "enabled": _res["enabled"]})
+        return {"ok": True, "id": preset_id, "enabled": _res["enabled"]}
 
     @router.post("/api/mcp/ha-docs/refresh")
     async def refresh_ha_docs(authorization: str | None = Header(default=None)):
@@ -192,22 +199,23 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=502, detail="; ".join(data.get("errors") or ["Hub không tạo được KB"]))
 
         # Đăng ký MCP ask_ha_docs vào gateway để agent gọi được (hub mount KB động lúc khởi động)
-        installed = config.data.get("mcp_servers") or {}
-        if isinstance(installed, list):
-            installed = {item.get("id", str(i)): item for i, item in enumerate(installed) if isinstance(item, dict)}
-        elif not isinstance(installed, dict):
-            installed = {}
-        if KB_NAME not in installed:
-            installed[KB_NAME] = {
-                "url": f"http://127.0.0.1:8005/{KB_NAME}/mcp",
-                "name": KB_LABEL,
-                "enabled": True,
-                "api_key": None,
-                "requires_api_key": False,
-                "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-            config.data["mcp_servers"] = installed
-            config._save()
+        _entry = {
+            "url": f"http://127.0.0.1:8005/{KB_NAME}/mcp",
+            "name": KB_LABEL,
+            "enabled": True,
+            "api_key": None,
+            "requires_api_key": False,
+            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+
+        def _apply(d):
+            inst = _normalize_mcp(d.get("mcp_servers") or {})
+            added = KB_NAME not in inst
+            if added:
+                inst[KB_NAME] = _entry
+                d["mcp_servers"] = inst
+            return added
+        if config.mutate(_apply):
             try:
                 from services.mcp_client import invalidate_tools_cache
                 invalidate_tools_cache()
@@ -269,18 +277,20 @@ def create_router() -> APIRouter:
                 "installed": name in installed,
                 "enabled": bool(info.get("enabled", True)),
             })
-        # Auto-update URLs for already installed MCPs
-        updated = 0
-        for name in mcp_names:
-            url = f"{hub_url}/{name}/mcp"
-            if name in installed:
-                old_url = installed[name].get("url", "")
-                if old_url != url:
-                    installed[name]["url"] = url
-                    updated += 1
+        # Auto-update URLs for already installed MCPs — ATOMIC, đọc lại trong khoá.
+        def _apply(d):
+            inst = _normalize_mcp(d.get("mcp_servers") or {})
+            upd = 0
+            for name in mcp_names:
+                url = f"{hub_url}/{name}/mcp"
+                if name in inst and inst[name].get("url", "") != url:
+                    inst[name]["url"] = url
+                    upd += 1
+            if upd:
+                d["mcp_servers"] = inst
+            return upd
+        updated = config.mutate(_apply)
         if updated > 0:
-            config.data["mcp_servers"] = installed
-            config._save()
             logger.info({"event": "mcp_urls_updated", "count": updated, "hub_url": hub_url})
 
         return {"ok": True, "hub_name": hub_info.get("name", ""), "mcps": mcps, "urls_updated": updated}
