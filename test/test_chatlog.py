@@ -235,3 +235,53 @@ class TagBotTrongLocNhatKyTests(_Moi):
         self.assertFalse(chatlog.cai_dat("zalop", "g1")["tag_only"])
         self.assertTrue(chatlog.ghi(G1, sender_id="9", text="tin chay",
                                     tagged=False))
+
+
+class GhiHoatDongTheoNhomTests(_Moi):
+    """21 ô chức năng lọc phần bot LÀM GÌ — `ghi_hoat_dong`.
+
+    Khác `ghi()` (ghi LỜI NGƯỜI NÓI, do ô «Tag bot» điều khiển). Hai thứ vào
+    chung một cuốn nhật ký nhưng hai công tắc khác nhau, đúng như chủ máy chốt
+    07/08.
+
+    `nhom` lấy từ tool THẬT SỰ chạy (`capabilities.group_of`), không đoán theo
+    từ khoá: `runs.sqlite` trên máy chủ đã ghi sẵn tên tool thật (`remember`,
+    `web_search`, `generate_image`, `device_capture`…) nên orchestrator tính
+    được chính xác, khỏi phải dựng bộ phân loại phỏng đoán.
+    """
+
+    def _bat_nhom(self, khoa: str, nhom):
+        self.cfg.setdefault("chatlog_settings", {})[khoa] = {
+            "enabled": True, "retention_days": 30, "groups": nhom}
+
+    def test_thieu_truong_groups_thi_GHI_HET(self):
+        """Cấu hình đang chạy trên máy chủ không có `groups` — phải giữ nguyên
+        hành vi, không được im lặng bớt hoạt động của chủ máy."""
+        self._bat("zalop:g1")
+        self.assertIsNone(chatlog.cai_dat("zalop", "g1")["groups"])
+        self.assertTrue(chatlog.ghi_hoat_dong(G1, nhom="web", mo_ta="web_search"))
+
+    def test_nhom_duoc_tick_thi_ghi(self):
+        self._bat_nhom("zalop:g1", ["web", "memory"])
+        self.assertTrue(chatlog.ghi_hoat_dong(G1, nhom="web", mo_ta="web_search"))
+
+    def test_nhom_KHONG_tick_thi_bo(self):
+        self._bat_nhom("zalop:g1", ["memory"])
+        self.assertFalse(chatlog.ghi_hoat_dong(G1, nhom="web", mo_ta="web_search"))
+
+    def test_pham_vi_TAT_nhat_ky_thi_khong_ghi_gi(self):
+        self.assertFalse(chatlog.ghi_hoat_dong(G1, nhom="web", mo_ta="web_search"))
+
+    def test_tool_chua_gan_nhom_thi_bo_qua(self):
+        """`_ungrouped` là công cụ chưa khai nhóm — ghi vào nhật ký một dòng
+        '[_ungrouped]' thì vô nghĩa với người đọc."""
+        self._bat("zalop:g1")
+        self.assertFalse(chatlog.ghi_hoat_dong(G1, nhom="_ungrouped", mo_ta="x"))
+        self.assertFalse(chatlog.ghi_hoat_dong(G1, nhom="", mo_ta="x"))
+
+    def test_dong_hoat_dong_KHONG_bi_o_tag_bot_chan(self):
+        """Ô «Tag bot» lọc lời NGƯỜI NÓI. Hoạt động của bot không phải lời người
+        nói, bật tag_only mà mất luôn hoạt động là lẫn hai công tắc."""
+        self.cfg.setdefault("chatlog_settings", {})["zalop:g1"] = {
+            "enabled": True, "retention_days": 30, "tag_only": True}
+        self.assertTrue(chatlog.ghi_hoat_dong(G1, nhom="web", mo_ta="web_search"))

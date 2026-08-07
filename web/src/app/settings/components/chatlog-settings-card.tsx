@@ -23,7 +23,20 @@ import { useSettingsStore } from "../store";
 type ThanhVien = { kenh: string; chat: string; topic: string; user: string };
 /** `tag_only` — xem `services/agent/chatlog.cai_dat`. Thiếu = false = ghi cả
  *  tin không tag, tức bản ghi cũ giữ nguyên hành vi. */
-type CaiDat = { enabled?: boolean; retention_days?: number; tag_only?: boolean };
+type CaiDat = { enabled?: boolean; retention_days?: number; tag_only?: boolean;
+                groups?: string[] };
+
+/** 21 nhóm chức năng — nhãn phải khớp «Lọc thread» (test_o_tich_du_moi_nhom). */
+const NHOM_CHUC_NANG: [string, string][] = [
+  ["homeassistant", "🏠 Nhà (HA)"], ["server", "🖥️ Server"], ["image", "🎨 Ảnh"],
+  ["video", "🎬 Video"], ["music", "🎵 Nhạc"], ["web", "🌐 Web"], ["code", "💻 Code"],
+  ["memory", "🧠 Ghi nhớ"], ["rag", "📚 RAG / tài liệu"], ["word", "📝 PDF → Word"],
+  ["office", "📄 Tài liệu Office"], ["device", "🔌 Thiết bị"],
+  ["summary", "🧾 Tổng hợp"], ["schedule", "⏰ Nhắc hẹn"], ["skills", "🧩 Skill"],
+  ["wiki", "📖 Wiki"], ["contacts", "📒 Danh bạ"], ["kho_dam_may", "☁️ Kho đám mây"],
+  ["tts_reply", "🔉 Trả lời giọng nói"], ["tts_speaker", "📢 Phát loa"],
+  ["teacher", "📚 Giáo viên"],
+];
 
 const NHAN_KENH: Record<string, string> = {
   tg: "Telegram", zalo: "Zalo Bot", zalop: "Zalo cá nhân", mail: "Email",
@@ -104,6 +117,25 @@ export function ChatlogSettingsCard() {
     opts.push({ key: clKey, label: nhanChatlog(tv, meta[key]?.name) });
   }
   const nhanMap = new Map(opts.map((o) => [o.key, o.label]));
+
+  /** Nhóm hiện ra cho một khoá chatlog.
+   *
+   *  Thread ĐÃ có bên «Lọc thread» → chỉ các nhóm đã tick bên đó (không vượt
+   *  quyền được, chỉ thu hẹp). Thread TỰ THÊM → đủ cả 21, vì nó không thừa
+   *  hưởng quyền từ đâu cả. Đúng luật chủ máy chốt 07/08. */
+  const nhomChoThread = (khoa: string): [string, string][] => {
+    for (const [k, v] of Object.entries(tf)) {
+      const tv = tachKhoa(k, false);
+      if (tv && khoaChatlog(tv) === khoa && Array.isArray(v))
+        return NHOM_CHUC_NANG.filter(([g]) => (v as string[]).includes(g));
+    }
+    for (const [k, v] of Object.entries(tuf)) {
+      const tv = tachKhoa(k, true);
+      if (tv && khoaChatlog(tv) === khoa && Array.isArray(v))
+        return NHOM_CHUC_NANG.filter(([g]) => (v as string[]).includes(g));
+    }
+    return NHOM_CHUC_NANG;
+  };
 
   const entries = Object.entries(settings);
 
@@ -254,6 +286,41 @@ export function ChatlogSettingsCard() {
                   Chỉ ghi tin có <b>tag bot</b>
                 </label>
               </div>
+
+              {/* 21 ô chức năng — lọc phần bot LÀM GÌ (tra web, bật đèn, tạo
+                  ảnh…). Khác ô «Tag bot» ở trên: cái đó lọc LỜI NGƯỜI NÓI.
+
+                  KHÔNG khai `groups` = ghi hết, nên cấu hình đang chạy không
+                  đổi hành vi. Bỏ tick một mục là bớt ghi mục đó.
+
+                  Chỉ hiện các nhóm thread này ĐƯỢC PHÉP dùng bên «Lọc thread» —
+                  bày ra nhóm nó không có quyền là bày lựa chọn tick xong chẳng
+                  đổi gì. Thread tự thêm (không có bên «Lọc thread») thì hiện đủ
+                  cả 21. */}
+              <details className="text-[10px]">
+                <summary className="cursor-pointer select-none text-muted-foreground">
+                  Ghi hoạt động của bot:{" "}
+                  <b>{st.groups ? `${st.groups.length}/${nhomChoThread(key).length} nhóm`
+                                 : "tất cả"}</b> — bấm để chọn bớt
+                </summary>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                  {nhomChoThread(key).map(([g, nhan]) => {
+                    const dang = st.groups ? st.groups.includes(g) : true;
+                    return (
+                      <label key={g} className="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="checkbox" className="size-3" checked={dang}
+                          onChange={() => {
+                            const tatCa = nhomChoThread(key).map(([x]) => x);
+                            const cu = st.groups ?? tatCa;
+                            const moi = dang ? cu.filter((x) => x !== g) : [...cu, g];
+                            setEntry(key, { groups: moi });
+                          }} />
+                        {nhan}
+                      </label>
+                    );
+                  })}
+                </div>
+              </details>
             </div>
           );
         })}

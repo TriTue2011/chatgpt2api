@@ -1317,6 +1317,19 @@ def _orchestrate_locked(user_text: str, user_id: str,
                         groups.append(g)
             except Exception:
                 groups = []
+            # NHẬT KÝ NHÓM — ghi thêm dòng HOẠT ĐỘNG (bot vừa làm gì), lọc theo
+            # 21 ô chức năng của «Lọc nhật ký». Dùng lại `groups` vừa tính từ
+            # tool THẬT SỰ chạy, nên không phải đoán theo từ khoá.
+            #
+            # Đặt ở đây vì đây là chỗ DUY NHẤT mọi kênh đi qua sau khi xong việc;
+            # cắm ở từng kênh là ba chỗ, sửa một quên hai như đã xảy ra nhiều lần.
+            try:
+                from services.agent import chatlog as _cl
+                for _g in groups:
+                    _cl.ghi_hoat_dong(user_id, nhom=_g,
+                                      mo_ta=", ".join(tools_used or []) or run_kind)
+            except Exception:
+                pass
             run_journal.log_run(
                 user_id=user_id,
                 user_text=user_text,

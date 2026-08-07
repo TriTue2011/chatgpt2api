@@ -103,3 +103,34 @@ class MoiCongCuDeuCoNhomTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_CO_NGUON_WEB, "image không có mã nguồn web")
+class BangNhomTrongLocNhatKyTests(unittest.TestCase):
+    """«Lọc nhật ký» có bảng 21 nhóm RIÊNG — phải khớp bảng của «Lọc thread».
+
+    Hai bảng lệch nhau thì có nhóm bật được ở «Lọc thread» mà không lọc được ở
+    nhật ký (hoặc ngược lại: tick một nhóm không tồn tại, bấm xong chẳng đổi
+    gì). Cùng loại hỏng với `office` thiếu ô tích — không tầng nào báo.
+
+    Không gộp làm một bảng vì hai thẻ nằm ở hai tệp khác nhau và không import
+    lẫn nhau; bài này là thứ giữ chúng đồng bộ.
+    """
+
+    def _bang(self, ten: str, bien: str) -> set:
+        src = (_THE.parent / ten).read_text(encoding="utf-8") \
+            if _THE.is_file() else (_THE / ten).read_text(encoding="utf-8")
+        m = re.search(bien + r"[^=]*=\s*\[(.*?)\n\];", src, re.S)
+        self.assertIsNotNone(m, f"{ten}: không tìm thấy {bien}")
+        return set(re.findall(r'\[\s*"([a-z_]+)"\s*,', m.group(1)))
+
+    def test_hai_bang_khop_nhau(self):
+        loc = self._bang("telegram-cloudflare-card.tsx", "const FUNCTION_GROUPS")
+        nk = self._bang("chatlog-settings-card.tsx", "const NHOM_CHUC_NANG")
+        self.assertEqual(sorted(loc - nk), [], "nhóm có ở «Lọc thread» mà thiếu ở «Lọc nhật ký»")
+        self.assertEqual(sorted(nk - loc), [], "nhóm bịa ở «Lọc nhật ký»")
+
+    def test_khop_luon_may_chu(self):
+        from services.agent.capabilities import all_groups
+        nk = self._bang("chatlog-settings-card.tsx", "const NHOM_CHUC_NANG")
+        self.assertEqual(sorted(set(all_groups()) - nk), [])

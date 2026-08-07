@@ -135,7 +135,7 @@ def cai_dat(kenh: str, chat: str, topic: str = "", user: str = "") -> dict:
     và ghi nhật ký (`tag_only` ở đây) — đừng gộp.
     """
     mac_dinh = {"enabled": False, "retention_days": _MAC_DINH_NGAY,
-                "compact": False, "tag_only": False}
+                "compact": False, "tag_only": False, "groups": None}
     try:
         cfg = config.get().get("chatlog_settings")
     except Exception:
@@ -150,10 +150,12 @@ def cai_dat(kenh: str, chat: str, topic: str = "", user: str = "") -> dict:
                          else _MAC_DINH_NGAY)
             except (TypeError, ValueError):
                 rd = _MAC_DINH_NGAY
+            nh = v.get("groups")
             return {"enabled": bool(v.get("enabled", False)),
                     "retention_days": max(0, rd),
                     "compact": bool(v.get("compact", False)),
-                    "tag_only": bool(v.get("tag_only", False))}
+                    "tag_only": bool(v.get("tag_only", False)),
+                    "groups": [str(x) for x in nh] if isinstance(nh, list) else None}
     return mac_dinh
 
 
@@ -584,3 +586,42 @@ def _reset_for_tests(db_path: Path | None = None) -> None:
     _conn = None
     if db_path is not None:
         _DB_PATH = db_path
+
+
+def ghi_hoat_dong(user_id: str, *, nhom: str, mo_ta: str) -> bool:
+    """Ghi một dòng HOẠT ĐỘNG của bot vào nhật ký (bot vừa làm gì).
+
+    Khác `ghi()` — cái đó ghi LỜI NGƯỜI NÓI. Hai thứ vào chung một cuốn nhưng do
+    hai công tắc khác nhau điều khiển, đúng như chủ máy chốt 07/08:
+
+        21 ô chức năng  → lọc phần bot LÀM GÌ   (hàm này)
+        ô Tag bot       → lọc LỜI NGƯỜI NÓI     (`ghi`)
+
+    `nhom` là nhóm chức năng đã tính từ tool thật sự chạy
+    (`capabilities.group_of`), không phải đoán theo từ khoá — orchestrator đã
+    tính sẵn nên ở đây chỉ việc lọc.
+
+    `groups` rỗng/thiếu = GHI HẾT. Cấu hình đang chạy không có trường này nên
+    hành vi không đổi cho tới khi chủ máy chủ động bớt.
+    """
+    nhom = str(nhom or "").strip()
+    if not nhom or nhom == "_ungrouped":
+        return False
+    try:
+        from services.agent.scope import tach_khoa_phien
+        sc = tach_khoa_phien(user_id)
+        if not sc.chat:
+            return False
+        st = cai_dat(sc.kenh, sc.chat, sc.topic, sc.actor)
+        if not st["enabled"]:
+            return False
+        cho_phep = st.get("groups")
+        if isinstance(cho_phep, list) and nhom not in cho_phep:
+            return False
+    except Exception as exc:
+        logger.debug("chatlog.ghi_hoat_dong bỏ qua: %s", exc)
+        return False
+    # Người gửi là chính bot: dòng hoạt động không phải lời của ai trong nhóm,
+    # để trống sender thì lúc đọc lại không phân biệt được với tin người nói.
+    return ghi(user_id, sender_id="bot", sender_name="bot",
+               text=f"[{nhom}] {mo_ta}"[:400], tagged=True)
