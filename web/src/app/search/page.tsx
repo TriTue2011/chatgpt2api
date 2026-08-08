@@ -13,6 +13,13 @@ const SEARCH_BACKENDS = [
   { value: "brave", label: "Brave Search", desc: "Brave Search API — 2.000 req/tháng miễn phí", icon: Search },
 ];
 
+/** Backend xác thực bằng API key → cần ô nhập, và xoay được nhiều khoá.
+ *  `searxng` tự host nên không có khoá; `gemini` đặt ở Cài đặt → Gemini. */
+const BACKEND_CAN_KHOA: Record<string, {nhan: string; goi_y: string}> = {
+  serper: {nhan: "Serper.dev", goi_y: "2.500 req/tháng mỗi khoá — serper.dev"},
+  brave:  {nhan: "Brave Search", goi_y: "2.000 req/tháng mỗi khoá — brave.com/search/api"},
+};
+
 type CustomProvider = {
   name: string;
   prefix: string;
@@ -21,9 +28,9 @@ type CustomProvider = {
 function SearchPageContent() {
   const [config, setConfig] = useState<any>({});
   const [combo, setCombo] = useState<string[]>([]);
-  const [geminiKey, setGeminiKey] = useState("");
-  const [geminiModel, setGeminiModel] = useState("gemini-2.5-flash");
-  const [geminiModels, setGeminiModels] = useState<string[]>([]);
+  // Nhiều khoá cho mỗi backend, mỗi dòng một khoá. Máy chủ xoay vòng và treo
+  // tạm khoá vừa bị 429/401/403, nên hết hạn mức khoá này thì sang khoá khác.
+  const [khoaBackend, setKhoaBackend] = useState<Record<string, string>>({});
   const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,14 +49,14 @@ function SearchPageContent() {
       setConfig({ enabled: true, auto_detect: true, max_results: 3, ...searchCfg });
       setCombo(searchCfg.search_combo || ["gemini"]);
       const providers = cfg.providers || {};
-      const geminiCfg = providers.gemini_free || {};
-      setGeminiKey(geminiCfg.api_key || "");
-      setGeminiModel(geminiCfg.model || "gemini-2.5-flash");
-      // Lấy model đã tick trong tab Quản lý Model (extra_models)
-      const enabledModels: string[] = Array.isArray(geminiCfg.extra_models) && geminiCfg.extra_models.length > 0
-        ? geminiCfg.extra_models
-        : ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.0-flash"];
-      setGeminiModels(enabledModels);
+      const nap: Record<string, string> = {};
+      for (const ten of Object.keys(BACKEND_CAN_KHOA)) {
+        const pc = providers[ten] || {};
+        const ds: string[] = Array.isArray(pc.api_keys) ? pc.api_keys : [];
+        const gop = ds.length ? ds : (pc.api_key ? [pc.api_key] : []);
+        nap[ten] = gop.filter(Boolean).join("\n");
+      }
+      setKhoaBackend(nap);
     } catch (e) {
       console.error(e);
     } finally {
@@ -115,11 +122,16 @@ function SearchPageContent() {
         search: { ...config, search_combo: combo },
         providers: {
           ...config.providers || {},
-          gemini_free: {
-            enabled: true,
-            api_key: geminiKey,
-            model: geminiModel,
-          },
+          // Chỉ gửi backend ĐANG trong combo: gửi cả những cái đã bỏ ra sẽ ghi
+          // đè cấu hình của chúng bằng chuỗi rỗng trên màn hình này.
+          ...Object.fromEntries(
+            Object.keys(BACKEND_CAN_KHOA)
+              .filter((ten) => combo.includes(ten))
+              .map((ten) => {
+                const ds = (khoaBackend[ten] || "")
+                  .split("\n").map((k) => k.trim()).filter(Boolean);
+                return [ten, {enabled: true, api_key: ds[0] || "", api_keys: ds}];
+              })),
         },
       });
       setMsg("Đã lưu!");
@@ -168,22 +180,20 @@ function SearchPageContent() {
         </label>
       </div>
 
-      {/* Gemini API Key */}
+      {/* Khoá + model Gemini KHÔNG sửa ở đây.
+
+          Trước đây màn hình này có ô nhập riêng, mà Cài đặt → Gemini cũng có —
+          hai chỗ sửa cùng một trường thì sớm muộn cũng lệch nhau. Tệ hơn: ô ở
+          đây chỉ nhận MỘT khoá, nên lưu từ màn hình này sẽ đè lên danh sách
+          nhiều khoá bên Cài đặt. */}
       <div className="rounded-[16px] p-5 card-3d card-tint-violet">
-        <h3 className="text-[15px] font-bold text-[var(--foreground)] mb-3">Gemini API Key</h3>
-        <input type="text" value={geminiKey}
-          onChange={(e) => setGeminiKey(e.target.value)}
-          placeholder="AIzaSy... (lấy tại aistudio.google.com/apikey)"
-          className="w-full rounded-[10px] border border-[var(--border)] bg-[var(--muted)] px-3 py-2.5 text-[13.5px] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-300" />
-        <div className="flex items-center gap-3 mt-3">
-          <label className="text-[13px] text-[var(--muted-foreground)] w-16">Model:</label>
-          <select value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}
-            className="rounded-[10px] border border-[var(--border)] bg-[var(--muted)] px-2 py-1.5 text-[13px] text-[var(--foreground)] focus:border-amber-400 focus:outline-none">
-            {geminiModels.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-        </div>
+        <h3 className="text-[15px] font-bold text-[var(--foreground)] mb-2">Gemini</h3>
+        <p className="text-[13px] text-[var(--muted-foreground)]">
+          Khoá, model mặc định và <b>model tìm kiếm</b> của Gemini đặt ở{" "}
+          <a href="/settings" className="underline hover:text-[var(--foreground)]">
+            Cài đặt → Gemini AI Studio
+          </a>. Ở đó quản lý được nhiều khoá và chọn model từ tab Quản lý Model.
+        </p>
       </div>
 
       {/* Search Combo */}
@@ -228,6 +238,30 @@ function SearchPageContent() {
                 </div>
               );
             })}
+            {/* Khoá của các backend ĐANG dùng — mỗi dòng một khoá.
+
+                Máy chủ xoay vòng và treo tạm khoá vừa bị 429/401/403 trong 60
+                giây, nên hết hạn mức khoá này thì tự sang khoá khác. Đặt ngay
+                dưới danh sách thứ tự là vì hai thứ này luôn được sửa cùng lúc:
+                thêm một backend thì việc kế tiếp luôn là dán khoá cho nó. */}
+            {combo.filter((b) => BACKEND_CAN_KHOA[b]).map((b) => (
+              <div key={`khoa-${b}`} className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">
+                <label className="text-[12px] font-medium text-[var(--foreground)]">
+                  Khoá {BACKEND_CAN_KHOA[b].nhan}
+                </label>
+                <textarea
+                  value={khoaBackend[b] || ""}
+                  onChange={(e) => setKhoaBackend((prev) => ({...prev, [b]: e.target.value}))}
+                  rows={3}
+                  placeholder={"Mỗi dòng một khoá\nkhoa-thu-nhat\nkhoa-thu-hai"}
+                  className="mt-1 w-full rounded-[10px] border border-[var(--border)] bg-[var(--muted)] px-3 py-2 font-mono text-[12px] text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:border-amber-400 focus:outline-none"
+                />
+                <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
+                  {BACKEND_CAN_KHOA[b].goi_y} · Nhiều khoá thì hết hạn mức khoá này
+                  sẽ tự chuyển sang khoá kế tiếp.
+                </p>
+              </div>
+            ))}
           </div>
         )}
 

@@ -66,6 +66,58 @@ _DAU_HIEU_KHO_NHA = (
 _TU_CHI_MEDIA = ("ảnh", "hình", "video", "clip", "nhạc", "bài hát")
 
 
+class XoayKhoa:
+    """Xoay nhiều API key của một provider tìm kiếm, treo tạm khoá vừa bị chặn.
+
+    Brave cho 2.000 request/tháng, Serper 2.500 — hết là backend đó câm cho tới
+    tháng sau. Nhiều khoá thì hết cái này sang cái kia; không xoay thì lợi ích
+    của việc có nhiều khoá bằng không.
+
+    Dùng VÒNG LẶP chứ không đệ quy. `GeminiGrounding.search` bản cũ gọi lại
+    chính nó sau mỗi 429 — đúng cái đã phải sửa ở `providers/gemini_free.py`,
+    vì mỗi lần thử lại chồng thêm một khung stack và ngoại lệ thật bị chôn dưới
+    một chuỗi lời gọi dài chẳng liên quan.
+    """
+
+    TREO_GIAY = 60.0
+
+    def __init__(self, provider_id: str) -> None:
+        self.provider_id = provider_id
+        self._treo: dict[str, float] = {}
+        self._vi_tri = 0
+
+    def danh_sach(self) -> list[str]:
+        cfg = (config.data.get("providers") or {}).get(self.provider_id) or {}
+        don = str(cfg.get("api_key") or "").strip()
+        nhieu = cfg.get("api_keys") or []
+        if not isinstance(nhieu, list):
+            nhieu = []
+        ds = [str(k).strip() for k in nhieu if str(k).strip()]
+        if don and don not in ds:
+            ds.insert(0, don)
+        return ds
+
+    def kha_dung(self) -> list[str]:
+        """Khoá chưa bị treo, bắt đầu từ vị trí xoay hiện tại.
+
+        Xoay vòng chứ không luôn bắt đầu từ khoá đầu: nếu không, khoá số một
+        gánh toàn bộ lưu lượng và hết hạn mức trước hẳn các khoá còn lại.
+        """
+        ds = self.danh_sach()
+        if not ds:
+            return []
+        bay_gio = time.time()
+        n = len(ds)
+        xoay = [ds[(self._vi_tri + i) % n] for i in range(n)]
+        self._vi_tri = (self._vi_tri + 1) % n
+        return [k for k in xoay if self._treo.get(k, 0) <= bay_gio]
+
+    def treo_khoa(self, khoa: str, ly_do: str = "") -> None:
+        self._treo[khoa] = time.time() + self.TREO_GIAY
+        logger.warning({"event": "search_khoa_bi_treo", "provider": self.provider_id,
+                        "key_suffix": khoa[-4:], "ly_do": ly_do[:60]})
+
+
 class SearchBackend:
     """Base class for search backends."""
 
@@ -85,41 +137,42 @@ class SerperSearch(SearchBackend):
 
     BASE_URL = "https://google.serper.dev/search"
 
-    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
-        provider_config = (config.data.get("providers") or {}).get("serper") or {}
-        api_key = str(provider_config.get("api_key") or "").strip()
+    _xoay = XoayKhoa("serper")
 
-        if not api_key:
+    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
+        khoa_ds = self._xoay.kha_dung()
+        if not khoa_ds:
             logger.warning({"event": "serper_no_api_key"})
             return []
 
-        try:
-            resp = requests.post(
-                self.BASE_URL,
-                headers={
-                    "X-API-KEY": api_key,
-                    "Content-Type": "application/json",
-                },
-                json={"q": query, "num": max_results},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                logger.warning({"event": "serper_error", "status": resp.status_code})
-                return []
+        for api_key in khoa_ds:
+            try:
+                resp = requests.post(
+                    self.BASE_URL,
+                    headers={"X-API-KEY": api_key,
+                             "Content-Type": "application/json"},
+                    json={"q": query, "num": max_results},
+                    timeout=15,
+                )
+                if resp.status_code in (429, 401, 403):
+                    self._xoay.treo_khoa(api_key, f"HTTP {resp.status_code}")
+                    continue
+                if resp.status_code != 200:
+                    logger.warning({"event": "serper_error", "status": resp.status_code})
+                    return []
 
-            data = resp.json()
-            results: list[dict[str, str]] = []
-            for item in (data.get("organic") or [])[:max_results]:
-                results.append({
+                data = resp.json()
+                return [{
                     "title": str(item.get("title") or ""),
                     "snippet": str(item.get("snippet") or ""),
                     "url": str(item.get("link") or ""),
-                })
-            return results
+                } for item in (data.get("organic") or [])[:max_results]]
+            except Exception as exc:
+                logger.warning({"event": "serper_exception", "error": str(exc)[:120]})
+                continue
 
-        except Exception as exc:
-            logger.warning({"event": "serper_exception", "error": str(exc)})
-            return []
+        logger.warning({"event": "serper_het_khoa", "so_khoa": len(khoa_ds)})
+        return []
 
 
 # Engine mặc định cho tiếng Việt — chọn theo engine_traits.json của SearXNG:
@@ -275,41 +328,44 @@ class BraveSearch(SearchBackend):
 
     BASE_URL = "https://api.search.brave.com/res/v1/web/search"
 
-    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
-        provider_config = (config.data.get("providers") or {}).get("brave") or {}
-        api_key = str(provider_config.get("api_key") or "").strip()
+    _xoay = XoayKhoa("brave")
 
-        if not api_key:
+    def search(self, query: str, max_results: int = 3) -> list[dict[str, str]]:
+        khoa_ds = self._xoay.kha_dung()
+        if not khoa_ds:
             logger.warning({"event": "brave_no_api_key"})
             return []
 
-        try:
-            resp = requests.get(
-                self.BASE_URL,
-                headers={
-                    "X-Subscription-Token": api_key,
-                    "Accept": "application/json",
-                },
-                params={"q": query, "count": max_results},
-                timeout=15,
-            )
-            if resp.status_code != 200:
-                logger.warning({"event": "brave_error", "status": resp.status_code})
-                return []
+        for api_key in khoa_ds:
+            try:
+                resp = requests.get(
+                    self.BASE_URL,
+                    headers={"X-Subscription-Token": api_key,
+                             "Accept": "application/json"},
+                    params={"q": query, "count": max_results},
+                    timeout=15,
+                )
+                if resp.status_code in (429, 401, 403):
+                    # Hết hạn mức hoặc khoá chết — thử khoá kế tiếp, đừng bỏ cuộc.
+                    self._xoay.treo_khoa(api_key, f"HTTP {resp.status_code}")
+                    continue
+                if resp.status_code != 200:
+                    logger.warning({"event": "brave_error", "status": resp.status_code})
+                    return []
 
-            data = resp.json()
-            results: list[dict[str, str]] = []
-            for item in (data.get("web", {}).get("results") or [])[:max_results]:
-                results.append({
+                data = resp.json()
+                return [{
                     "title": str(item.get("title") or ""),
                     "snippet": str(item.get("description") or ""),
                     "url": str(item.get("url") or ""),
-                })
-            return results
+                } for item in (data.get("web", {}).get("results") or [])[:max_results]]
+            except Exception as exc:
+                # Lỗi mạng của MỘT khoá không có nghĩa các khoá khác cũng hỏng.
+                logger.warning({"event": "brave_exception", "error": str(exc)[:120]})
+                continue
 
-        except Exception as exc:
-            logger.warning({"event": "brave_exception", "error": str(exc)})
-            return []
+        logger.warning({"event": "brave_het_khoa", "so_khoa": len(khoa_ds)})
+        return []
 
 
 class GeminiGrounding(SearchBackend):
