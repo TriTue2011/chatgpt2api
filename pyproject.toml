@@ -36,6 +36,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    # Chỉ để CHẠY TEST host-key SSH. Runtime lấy paramiko từ
+    # deploy/extra-requirements.txt; Dockerfile dùng `uv sync --no-dev` nên
+    # nhóm này không vào image.
+    "paramiko>=3.4.0",
     "pytest>=8",
 ]
 

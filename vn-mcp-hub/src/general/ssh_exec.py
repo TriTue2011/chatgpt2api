@@ -210,13 +210,19 @@ def _tofu_policy():
     class _Tofu(paramiko.MissingHostKeyPolicy):
         def missing_host_key(self, client, hostname, key):
             fp = _fingerprint(key)
-            client.get_host_keys().add(hostname, key.get_name(), key)
+            # FAIL-CLOSED: không ghi được xuống đĩa thì mọi lần kết nối sau đều
+            # là "lần đầu" — đúng cái lỗ đang bịt. Từ chối, đừng chấp nhận suông.
             try:
                 KNOWN_HOSTS.parent.mkdir(parents=True, exist_ok=True)
+                client.get_host_keys().add(hostname, key.get_name(), key)
                 client.save_host_keys(str(KNOWN_HOSTS))
                 os.chmod(KNOWN_HOSTS, 0o600)
             except Exception as exc:
-                logger.warning("ssh_exec: không ghi được known_hosts (%s)", exc)
+                raise paramiko.SSHException(
+                    f"Từ chối kết nối tới {hostname}: không lưu được khoá máy chủ vào "
+                    f"{KNOWN_HOSTS} ({exc}). Không lưu được nghĩa là lần sau không phát "
+                    f"hiện được khoá đổi. (vân tay lần này: {fp})"
+                ) from exc
             logger.warning(
                 "ssh_exec: TOFU — ghi nhớ khoá LẦN ĐẦU cho %s (%s %s). "
                 "Hãy đối chiếu với vân tay thật của máy chủ; sai là có người đứng giữa.",
