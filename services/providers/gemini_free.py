@@ -86,6 +86,10 @@ class GeminiProvider:
             raise RuntimeError("Gemini API key not configured")
 
         tim_web = _muon_tim_web(model, kwargs)
+        # Hậu tố `-search` là quy ước CỦA TA, Google không biết nó. Phải bóc ra
+        # trước khi dựng URL, không thì gọi vào một model không tồn tại và nhận
+        # 404 — một lỗi chẳng liên quan gì tới việc người dùng vừa yêu cầu.
+        model = _bo_hau_to_search(model)
         contents, system_instruction, gemini_tools = _convert_request(
             messages, tools, google_search=tim_web)
 
@@ -197,6 +201,22 @@ class GeminiProvider:
                         pass
                 raise
         raise RuntimeError(last_error or "All Gemini API keys rate limited. Try again later.")
+
+
+_HAU_TO_SEARCH = ("-websearch", "-search")
+
+
+def _bo_hau_to_search(model: str) -> str:
+    """Bóc hậu tố quy ước của ta ra khỏi tên model gửi cho Google.
+
+    `-websearch` phải xét TRƯỚC `-search`: xét ngược lại thì
+    `gemini-3.6-flash-websearch` chỉ rụng `-search` và còn lại đuôi `-web`.
+    """
+    m = str(model or "").strip()
+    for hau_to in _HAU_TO_SEARCH:
+        if m.lower().endswith(hau_to):
+            return m[: -len(hau_to)]
+    return m
 
 
 def _muon_tim_web(model: str, kwargs: dict) -> bool:

@@ -26,6 +26,18 @@ FALLBACK_MODELS = {
     "gemini_free": [
         "gemini_free/auto",
         "gemini_free/gemini-2.5-flash",
+        # Đo 08/08/2026: cả hai nhận được text, ảnh PNG và video MP4.
+        # 3.6-flash cho chuỗi nhiều ảnh/video và cần mô tả chính xác hơn;
+        # 3.5-flash-lite cho cảnh báo hàng loạt, nhanh và rẻ hơn.
+        "gemini_free/gemini-3.6-flash",
+        "gemini_free/gemini-3.5-flash-lite",
+        # Biến thể CÓ tra web (Google Search grounding). Hậu tố `-search` là
+        # quy ước của repo (giống `api/claude.py`) và bị bóc ra trước khi gọi
+        # Google. Phải khai riêng ở đây thì client mới chọn được — grounding
+        # KHÔNG còn tự bật cho mọi request nữa, vì nó tiêu một hạn mức riêng
+        # rất chặt và từng làm hỏng cả đường Vision của camera.
+        "gemini_free/gemini-3.6-flash-search",
+        "gemini_free/gemini-2.5-flash-search",
     ],
     "chatgpt": [
         "chatgpt/auto",

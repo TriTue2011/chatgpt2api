@@ -81,6 +81,62 @@ class NhanDangYeuCauTimWebTests(unittest.TestCase):
         self.assertFalse(_muon_tim_web("gemini-3.6-flash-search", {"google_search": False}))
 
 
+class BocHauToTruocKhiGoiGoogleTests(unittest.TestCase):
+    """`-search` là quy ước CỦA TA — Google không biết nó.
+
+    Không bóc ra thì URL trỏ vào một model không tồn tại và nhận 404: một lỗi
+    chẳng liên quan gì tới việc người dùng vừa yêu cầu, nên rất tốn công lần.
+    """
+
+    def test_boc_dung_hau_to(self):
+        from services.providers.gemini_free import _bo_hau_to_search
+        self.assertEqual(_bo_hau_to_search("gemini-3.6-flash-search"), "gemini-3.6-flash")
+        self.assertEqual(_bo_hau_to_search("gemini-2.5-flash-websearch"), "gemini-2.5-flash")
+
+    def test_websearch_duoc_xet_TRUOC_search(self):
+        """Xét ngược thì `-websearch` chỉ rụng `-search`, còn lại đuôi `-web`."""
+        from services.providers.gemini_free import _bo_hau_to_search
+        self.assertNotIn("-web", _bo_hau_to_search("gemini-3.6-flash-websearch"))
+
+    def test_ten_thuong_khong_bi_dong_vao(self):
+        from services.providers.gemini_free import _bo_hau_to_search
+        for m in ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"):
+            self.assertEqual(_bo_hau_to_search(m), m)
+
+    def test_khong_boc_nham_giua_ten(self):
+        from services.providers.gemini_free import _bo_hau_to_search
+        self.assertEqual(_bo_hau_to_search("gemini-search-pro"), "gemini-search-pro")
+
+    def test_chat_completions_boc_TRUOC_khi_dung_url(self):
+        src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")
+        i = src.index("def chat_completions")
+        than = src[i:]
+        vi_boc = than.index("_bo_hau_to_search(model)")
+        vi_url = than.index("f\"{_gemini_base_url()}/models/{model}")
+        self.assertLess(vi_boc, vi_url, "dựng URL trước khi bóc hậu tố")
+
+
+class PhoiRaDanhSachModelTests(unittest.TestCase):
+    """Không khai ở /v1/models thì client không có cách nào chọn được."""
+
+    # Đọc khối literal trong mã nguồn thay vì import: `openai_v1_models` kéo
+    # theo `utils/pow.py`, vốn dùng cú pháp cần Python 3.10+. Ở đây thứ cần
+    # kiểm CHÍNH LÀ một danh sách hằng, nên đọc văn bản là kiểm trung thực.
+    def _khoi_gemini(self) -> str:
+        src = (GOC / "services/protocol/openai_v1_models.py").read_text(encoding="utf-8")
+        i = src.index('"gemini_free": [')
+        return src[i:src.index("],", i)]
+
+    def test_hai_model_da_do_deu_co_mat(self):
+        khoi = self._khoi_gemini()
+        self.assertIn('"gemini_free/gemini-3.6-flash"', khoi)
+        self.assertIn('"gemini_free/gemini-3.5-flash-lite"', khoi)
+
+    def test_co_bien_the_search_de_bat_grounding(self):
+        self.assertIn('-search"', self._khoi_gemini(),
+                      "bỏ tự chèn mà không để đường bật lại = mất hẳn tính năng")
+
+
 class NoiGoiTests(unittest.TestCase):
     def test_chen_nam_TRONG_dieu_kien(self):
         src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")
