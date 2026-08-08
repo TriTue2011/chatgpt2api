@@ -2,7 +2,14 @@ import { httpRequest, request } from "@/lib/request";
 
 export type AccountType = string;
 export type AccountStatus = "active" | "limited" | "error" | "disabled";
-export type ImageModel = "gpt-image-2" | "codex-gpt-image-2";
+/** Mã model tạo ảnh.
+ *
+ * Là `string` chứ không phải union: danh sách model được NẠP ĐỘNG từ
+ * `GET /v1/models` lúc chạy (flow/nano-banana-pro, gemini/…, sdwebui/… …), nên
+ * union hai giá trị `"gpt-image-2" | "codex-gpt-image-2"` của bản cũ chưa bao
+ * giờ đúng — nó chỉ tạo ra lỗi kiểu giả mà `ignoreBuildErrors` che đi, còn giá
+ * trị mặc định thật của giao diện là "flow/nano-banana-pro". */
+export type ImageModel = string;
 export type AuthRole = "admin" | "user";
 
 export type Account = {
@@ -93,6 +100,10 @@ export type BackupSettings = {
   enabled: boolean;
   provider: "cloudflare_r2" | string;
   account_id: string;
+  /** R2 Endpoint (S3 API), dạng https://<account-id>.r2.cloudflarestorage.com.
+   *  Giao diện có ô nhập và store vẫn ghi trường này, chỉ kiểu là thiếu — nên
+   *  TypeScript báo lỗi ở cả ba nơi mà `ignoreBuildErrors` đang che đi. */
+  endpoint: string;
   access_key_id: string;
   secret_access_key: string;
   bucket: string;

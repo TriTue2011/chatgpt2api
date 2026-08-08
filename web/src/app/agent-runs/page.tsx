@@ -98,9 +98,12 @@ function timeAgo(ts: number) {
   return `${Math.floor(mins / 1440)}d trước`;
 }
 
-function statusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
+// Badge không có biến thể "destructive" — bảng biến thể là default/secondary/
+// outline/success/warning/danger/info/violet. Truyền "destructive" nên cva rơi
+// về kiểu mặc định: dòng lỗi hiện ra y hệt dòng bình thường, không hề đỏ.
+function statusVariant(s: string): "default" | "secondary" | "danger" | "outline" {
   if (s === "ok" || s === "media" || s === "ha_fastpath" || s === "success") return "default";
-  if (s === "error" || s === "max_steps" || s === "failed") return "destructive";
+  if (s === "error" || s === "max_steps" || s === "failed") return "danger";
   if (s === "awaiting_approval" || s === "approved") return "secondary";
   return "outline";
 }

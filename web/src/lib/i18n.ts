@@ -250,6 +250,8 @@ export const translations = {
     nav_zalo: "Zalo Personal",
     nav_image: "Draw",
     nav_imageLibrary: "Image Gallery",
+    nav_video: "Create Video",
+    nav_videoLibrary: "Video Gallery",
     nav_search: "Search",
     nav_backup: "Backup",
     nav_agentRuns: "Agent runs",

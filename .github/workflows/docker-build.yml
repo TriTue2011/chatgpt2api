@@ -74,12 +74,16 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      # Codebase còn ~20 lỗi type sẵn có (next.config ignoreBuildErrors=true)
-      # → typecheck chạy để HIỂN THỊ trong log nhưng CHƯA chặn build. Dọn hết
-      # lỗi type rồi bỏ continue-on-error để thành gate cứng.
-      - name: Web typecheck (informational)
+      # CỔNG CHẶN CỨNG từ 08/08/2026: 26 lỗi type sẵn có đã dọn hết và
+      # `ignoreBuildErrors` đã gỡ khỏi next.config.ts, nên `next build` trong
+      # Docker cũng tự fail khi có lỗi type. Bước này chỉ để phát hiện SỚM
+      # (30 giây) thay vì chờ hết một lượt build image ~30 phút.
+      #
+      # --frozen-lockfile dùng lại được từ 07a3eae: trước đó bun.lock lệch với
+      # khối `overrides` của package.json nên bước cài fail ngay; commit đó sinh
+      # lại lock nên nay đã khớp (đo tại chỗ: "no changes").
+      - name: Web typecheck (gate)
         working-directory: web
-        continue-on-error: true
         run: |
           bun install --frozen-lockfile
           bunx tsc --noEmit

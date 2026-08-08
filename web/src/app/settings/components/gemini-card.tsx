@@ -98,7 +98,7 @@ export function GeminiCard() {
             </Badge>
             {geminiEnabled
               ? <Badge className="bg-green-500/15 text-green-600 border-green-500/30 text-xs flex items-center gap-1"><CheckCircle2 className="size-3" /> Bật</Badge>
-              : <Badge variant="destructive" className="text-xs flex items-center gap-1"><XCircle className="size-3" /> Tắt</Badge>
+              : <Badge variant="danger" className="text-xs flex items-center gap-1"><XCircle className="size-3" /> Tắt</Badge>
             }
           </div>
         </div>

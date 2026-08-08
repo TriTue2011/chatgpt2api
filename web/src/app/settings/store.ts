@@ -41,6 +41,7 @@ function normalizeConfig(config: SettingsConfig): SettingsConfig {
       enabled: false,
       provider: "cloudflare_r2",
       account_id: "",
+      endpoint: "",
       access_key_id: "",
       secret_access_key: "",
       bucket: "",
@@ -187,7 +188,9 @@ type SettingsStore = {
   setSensitiveWordsText: (value: string) => void;
   setAIReviewField: (key: "enabled" | "base_url" | "api_key" | "model" | "prompt", value: string | boolean) => void;
   setField: (key: string, value: unknown) => void;
-  setBackupField: (key: keyof BackupSettings, value: string | boolean) => void;
+  // `interval_minutes` và `rotation_keep` là SỐ — chữ ký cũ chỉ nhận
+  // string|boolean nên nút chọn chu kỳ không hợp kiểu.
+  setBackupField: (key: keyof BackupSettings, value: string | boolean | number) => void;
   setBackupInclude: (key: keyof BackupSettings["include"], value: boolean) => void;
 
   loadRegister: (silent?: boolean) => Promise<void>;

@@ -1454,7 +1454,7 @@ function AccountsPageContent() {
                                             <QuotaBar label="Tạo ảnh" remaining={quotaVal} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at, lang).relative : undefined} ordinal={featureRanks['image_gen']?.[account.access_token]} />
                                           ) : null}
                                           {account.limits_progress?.map((lp, i) => (
-                                            <QuotaBar key={i} label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`} remaining={lp.remaining ?? 0} total={(lp as any).total} resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined} ordinal={featureRanks[lp.feature_name]?.[account.access_token]} />
+                                            <QuotaBar key={i} label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`} remaining={lp.remaining ?? 0} total={(lp as any).total} resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined} ordinal={featureRanks[lp.feature_name ?? ""]?.[account.access_token]} />
                                           ))}
                                           <div className="flex items-center justify-between text-[11px] text-[var(--muted-foreground)] pt-1 border-t border-[var(--border)]">
                                             <span>Dùng lần cuối</span>

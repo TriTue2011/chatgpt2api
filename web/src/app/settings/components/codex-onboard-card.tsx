@@ -33,7 +33,9 @@ export function CodexOnboardCard() {
     setGmailAppPassword(fromCfgPass || localStorage.getItem("codex_gmail_pass") || "");
 
     // Get captcha-solver info
-    const provs = config?.providers || {};
+    // `config.providers` khai là Record chung nên TypeScript không biết có khoá
+    // nào; khai rõ hình dạng CHỈ phần đang đọc thay vì ép `any`.
+    const provs = (config?.providers || {}) as Record<string, { captcha_solver_api_key?: string }>;
     const cgFree = provs.chatgpt_free || {};
     const flow = provs.flow || {};
     setCsUrl("/api/captcha");

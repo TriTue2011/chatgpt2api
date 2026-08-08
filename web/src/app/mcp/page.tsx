@@ -671,7 +671,10 @@ type AnalyzeResult = Coverage & {
   pending?: boolean; job_id?: string; batches?: number; raw_fallback?: boolean;
 };
 
-type KbRow = { name: string; chunks: number; indexed?: boolean };
+// Tên KHÁC KbRow ở đầu file: đó là hàng của tab Knowledge Base (label/builtin),
+// còn đây là hàng danh sách kho RAG (chunks/indexed). Trùng tên nên TypeScript
+// báo "Duplicate identifier" và mọi chỗ dùng bị lấy nhầm hình dạng.
+type KbIndexRow = { name: string; chunks: number; indexed?: boolean };
 
 const vnNum = (n: number) => n.toLocaleString("vi-VN");
 
@@ -699,7 +702,7 @@ function IngestTab({ showToast }: TabProps) {
   const [raw, setRaw] = useState("");
   const [openId, setOpenId] = useState<number | null>(null);
   const [cov, setCov] = useState<Coverage | null>(null);
-  const [kbs, setKbs] = useState<KbRow[]>([]);
+  const [kbs, setKbs] = useState<KbIndexRow[]>([]);
   const [targetKb, setTargetKb] = useState("");
   const [newKb, setNewKb] = useState(false);
   const [kbName, setKbName] = useState("");
@@ -710,7 +713,7 @@ function IngestTab({ showToast }: TabProps) {
   const loadKbs = useCallback(async () => {
     try {
       const r = await request.get(`${RAG}/list`);
-      const list: KbRow[] = r.data?.collections || [];
+      const list: KbIndexRow[] = r.data?.collections || [];
       setKbs(list);
       setTargetKb((cur) => cur || (list[0]?.name ?? ""));
     } catch { /* ignore */ }
@@ -1121,7 +1124,10 @@ function DevicesTab({ showToast }: TabProps) {
   // cứu bí mật).
   const [fresh, setFresh] = useState<{
     name: string; token: string; paths: string[];
-    perm: { write: boolean; exec: boolean; power: boolean };
+    // `capture` (quyền nhìn webcam/màn hình) đã được ghi vào state và truyền
+    // xuống hàm dựng lệnh cài, chỉ là kiểu ở đây thiếu — nên TypeScript báo lỗi
+    // ở ba nơi mà `ignoreBuildErrors` che mất.
+    perm: { write: boolean; exec: boolean; power: boolean; capture: boolean };
   } | null>(null);
   const [os, setOs] = useState<OsId>("win");
   const [mode, setMode] = useState<"domain" | "lan">("domain");
