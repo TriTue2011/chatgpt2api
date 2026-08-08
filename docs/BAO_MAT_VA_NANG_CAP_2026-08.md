@@ -260,6 +260,10 @@ domain công khai) — xem mục 6.
 | Tên browser profile của captcha-solver ghép thẳng vào đường dẫn → `../../` tạo được thư mục profile ở bất kỳ đâu trên đĩa | Chỉ nhận slug `[A-Za-z0-9_-]{1,64}`, kiểm `relative_to` SAU khi `resolve` (kiểm chuỗi không đủ khi có symlink) |
 | Prompt ảnh tiếng Việt bị gửi sang ChatGPT OAuth/Gemini để dịch **kể cả khi chọn provider chạy cục bộ**; prompt gốc và bản dịch lọt vào log; cache dict vô hạn | Công tắc `image_translate_prompt` (mặc định bật); log chỉ còn độ dài; cache `OrderedDict` trần 512 mục, TTL 6 giờ, có khoá |
 | `save_image_bytes` luôn đặt đuôi `.png` dù nội dung là JPEG/WebP → StaticFiles phát sai `Content-Type`, Zalo/Telegram hoặc proxy có quyền từ chối | Chọn đuôi theo magic bytes |
+| **Bom tài liệu**: `.docx`/`.pptx`/`.xlsx`/`.epub` đều là ZIP; một ZIP 40KB khai báo được vài GB sau giải nén, mà MarkItDown/OCR giải nén thật | `services/doc_guard.py`: đọc bảng mục lục ZIP (không giải nén), chặn theo số entry, tổng sau giải nén và **tỉ lệ nén** 150:1; PDF trần 3.000 trang; chặn zip-slip. Cắm ở `extract_markdown` — điểm vào chung bao cả nhánh Office |
+| Thiếu `nav_video`/`nav_videoLibrary` ở bản dịch **tiếng Anh** → hai mục menu hiện rỗng khi chọn tiếng Anh | Thêm khoá; 5 lỗi TypeScript cùng một gốc |
+| Badge dùng biến thể `"destructive"` **không tồn tại** (bảng là `danger`) → dòng agent-run LỖI và Gemini "Tắt" hiện ra không đỏ, y hệt dòng bình thường | Đổi sang `danger` |
+| `BackupSettings` thiếu `endpoint` dù giao diện có ô "R2 Endpoint (S3 API)" và store vẫn ghi trường đó | Bổ sung vào kiểu; `setBackupField` nhận thêm `number` cho `interval_minutes` |
 
 ### XSS & rò rỉ dữ liệu
 
@@ -371,7 +375,6 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
   trường secret chỉ-ghi.
 - Chưa có CSP; `/images/` chưa có URL ký hạn; SSE vẫn nhận `?token=` trên query.
 - Dockerfile chưa pin digest/checksum cho binary tải về; container chạy `root`.
-- Frontend còn 26 lỗi TypeScript, `ignoreBuildErrors: true` đang che lỗi build.
 - **Dependency Node của `zalo-server/`**: 8–9 lỗ hổng mức cao (`axios`, `ws`,
   `sharp`, `image-size`). **Không** chạy `npm audit fix --force` — nâng lockfile
   ở nhánh riêng rồi build và chạy hồi quy. `image-size` chưa có bản vá, trước
@@ -388,9 +391,10 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - **DNS rebinding.** `url_guard` kiểm địa chỉ trước khi gọi và ở mỗi chặng
   redirect, nhưng giữa lúc kiểm và lúc mở kết nối vẫn còn một khe rất hẹp để
   tên miền đổi bản ghi. Bịt hẳn phải tự nối theo IP đã ghim và tự lo SNI/TLS.
-- **Bom tài liệu (ZIP/PDF/Office).** Đã có trần byte đầu vào, nhưng chưa giới
-  hạn tỉ lệ giải nén, tổng số entry, số trang/ảnh và thời gian xử lý trước khi
-  đưa vào OCR/MarkItDown. Cùng loại lỗi với bom ảnh, chỉ khác định dạng.
+- **Thời gian xử lý tài liệu.** `doc_guard` đã chặn tỉ lệ nén, số entry và số
+  trang, nhưng chưa có trần THỜI GIAN cho OCR/MarkItDown: một PDF trong hạn
+  trang vẫn có thể chiếm luồng rất lâu. Cần timeout + hàng đợi có trần như đã
+  làm cho tác vụ ảnh.
 - **`fallback_providers`** trong `services/backend_router.py` được gán nhưng
   không thấy nơi thực thi. Hoặc triển khai fallback thật ở dispatcher, hoặc bỏ
   hẳn field và ghi rõ chỉ combo model mới có fallback.
