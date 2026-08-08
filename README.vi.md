@@ -91,6 +91,9 @@ VNC_PASSWORD=mat_khau_vnc_manh
 # Nên đặt cho production (xem tài liệu bảo mật bên dưới)
 SESSION_SECRET=            # tạo bằng: openssl rand -base64 48
 ZALO_SERVER_ADMIN_PASSWORD=
+# Mã hoá mật khẩu + hạt giống TOTP đã lưu — xem mục "Mã hoá credential" bên dưới
+VAULT_MASTER_KEY=          # python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+VAULT_REQUIRE_ENCRYPTION=1
 ```
 
 **Bước 3: Tạo file cấu hình docker-compose.yml**
@@ -130,6 +133,11 @@ services:
       ZALO_COOKIE_SECURE: "0"    # GIỮ "0": bot gọi zalo-server qua HTTP nội bộ
       ZALO_WS_ALLOWED_ORIGINS: ${ZALO_WS_ALLOWED_ORIGINS:-}
 
+      # Mã hoá mật khẩu + hạt giống TOTP trong data/accounts.db.
+      # Để rỗng có chủ ý: thiếu khoá KHÔNG được làm container không lên.
+      VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
+      VAULT_REQUIRE_ENCRYPTION: ${VAULT_REQUIRE_ENCRYPTION:-}
+
     security_opt:
       - no-new-privileges:true
 ```
@@ -159,6 +167,47 @@ Nếu bạn sử dụng Portainer để quản lý Docker:
 5. Trong phần Web editor, dán đoạn mã `docker-compose.yml` phía trên vào.
 6. Chú ý chỉnh sửa `CHATGPT2API_AUTH_KEY` thành mật khẩu bảo mật của riêng bạn và đường dẫn volume `/opt/c2a/data:/app/data`.
 7. Cuộn xuống dưới cùng và bấm **Deploy the stack**. Chờ khoảng 1-2 phút để hệ thống tải về và khởi chạy.
+8. Portainer đọc `${BIẾN}` từ ô **Environment variables** của chính stack, không đọc file `.env` trên máy chủ — nhập mọi biến vào đó.
+
+### 🔐 Mã hoá credential (`VAULT_MASTER_KEY`)
+
+Mỗi lần bạn thêm một tài khoản, **mật khẩu và hạt giống TOTP** của nó được lưu
+vào `data/accounts.db`. Hạt giống TOTP không phải "mã 6 số" — nó sinh ra *mọi*
+mã 6 số từ nay về sau, nên lộ nó là mất hẳn yếu tố thứ hai chứ không phải mất
+một lần đăng nhập. File đó nằm trên volume dữ liệu và đi theo mọi bản sao lưu.
+
+Đặt `VAULT_MASTER_KEY` thì cả hai trường được mã hoá bằng AES-256-GCM. Tạo khoá:
+
+```bash
+python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+```
+
+Bốn điều nên biết:
+
+- **Đừng đổi, đừng mất.** Dữ liệu đã mã hoá mà sai khoá thì giải ra rỗng — mọi
+  mật khẩu và hạt giống đã lưu phải nhập lại từ đầu. Giữ một bản khoá ngoài máy chủ.
+- **Khoá sai định dạng thì hỏng im lặng.** Phải là base64 của **đúng 32 byte**.
+  Sai thì hệ thống ghi một dòng log rồi quay về lưu chữ thường — nên đặt kèm
+  `VAULT_REQUIRE_ENCRYPTION=1` để biến tình huống đó thành từ chối ghi.
+- **Cố ý KHÔNG bắt buộc để khởi động.** Thiếu khoá không được phép làm container
+  không lên: mất cả hệ thống tệ hơn nhiều so với thứ khoá này bảo vệ.
+- **Dữ liệu cũ chuyển dần.** Bản ghi cũ chưa mã hoá vẫn đọc bình thường và được
+  mã hoá ở **lần ghi kế tiếp** của chính nó. Muốn xong ngay thì mở từng tài
+  khoản đã lưu bấm lưu lại một lượt.
+
+**Tài khoản được lưu ở đâu:** `Cài đặt` → thẻ **"Provider qua tài khoản Google"**
+— ba ô Email / Mật khẩu / TOTP, bấm lưu là ghi vào `accounts.db`. Đây cũng là chỗ
+bấm lưu lại để chuyển bản ghi cũ sang dạng mã hoá.
+
+Ngoài ra credential còn được lưu tự động khi bạn onboard qua các thẻ **ChatGPT
+via Google OAuth**, **Flow**, **Claude**, **Gemini Web**. Còn muốn thêm hoặc đổi
+riêng hạt giống TOTP cho một tài khoản đã có thì vào trang `Tài khoản`, bấm
+**+ Set TOTP** ở cuối dòng tài khoản đó — máy chủ sinh mã 6 số tại chỗ, không
+cần trang web sinh mã bên ngoài.
+
+Nó bảo vệ dữ liệu **lúc nghỉ** — bản backup, volume bị sao chép, ổ đĩa bị lấy.
+Nó không bảo vệ trước kẻ đã vào được bên trong container, vì lúc đó khoá nằm sẵn
+trong biến môi trường của tiến trình.
 
 
 ---

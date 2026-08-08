@@ -47,6 +47,8 @@ các bước nâng cấp từ bản cũ, và cách xử lý những sự cố ha
 |---|---|
 | `SESSION_SECRET` | App tự sinh ngẫu nhiên mỗi lần chạy → **mọi phiên đăng nhập zalo-server mất sau mỗi restart**. Tạo bằng `openssl rand -base64 48` |
 | `ZALO_SERVER_ADMIN_PASSWORD` | Khi seed lần đầu (chưa có `users.json`) sẽ sinh mật khẩu **ngẫu nhiên**, và **bot Python không đăng nhập được** vì nó đọc cùng biến này |
+| `VAULT_MASTER_KEY` | Mật khẩu và **hạt giống TOTP** trong `data/accounts.db` nằm dạng **chữ thường**, đi theo mọi bản sao lưu. Hạt giống TOTP sinh ra mọi mã 6 số về sau — lộ nó là mất hẳn yếu tố thứ hai. Phải là base64 của **đúng 32 byte**: `python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"`. **Đặt rồi đừng đổi** — sai khoá thì dữ liệu đã mã hoá giải ra rỗng |
+| `VAULT_REQUIRE_ENCRYPTION` | Khoá sai định dạng hoặc thiếu sẽ **âm thầm quay về lưu chữ thường**, chỉ để lại một dòng log. Đặt `1` để biến tình huống đó thành **từ chối ghi credential** |
 
 ### Tuỳ chọn
 
@@ -80,6 +82,9 @@ DB_PASSWORD=mat_khau_postgres_manh
 # openssl rand -base64 48
 SESSION_SECRET=chuoi_ngau_nhien_toi_thieu_32_byte
 ZALO_SERVER_ADMIN_PASSWORD=mat_khau_admin_zalo_manh
+# base64 của ĐÚNG 32 byte — python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+VAULT_MASTER_KEY=
+VAULT_REQUIRE_ENCRYPTION=1
 
 # ── TUỲ CHỌN ──────────────────────────────────────────────────────────
 ZALO_SERVER_ADMIN_USERNAME=admin

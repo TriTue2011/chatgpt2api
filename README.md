@@ -108,6 +108,9 @@ VNC_PASSWORD=strong_vnc_password
 # Recommended in production (see the security guide below)
 SESSION_SECRET=            # openssl rand -base64 48
 ZALO_SERVER_ADMIN_PASSWORD=
+# Encrypts saved passwords + TOTP seeds at rest — see "Credential encryption" below
+VAULT_MASTER_KEY=          # python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+VAULT_REQUIRE_ENCRYPTION=1
 ```
 
 **Step 3: Create docker-compose.yml file**
@@ -148,6 +151,11 @@ services:
       ZALO_COOKIE_SECURE: "0"    # keep "0": the bot talks to zalo-server over HTTP
       ZALO_WS_ALLOWED_ORIGINS: ${ZALO_WS_ALLOWED_ORIGINS:-}
 
+      # Encrypts saved passwords + TOTP seeds inside data/accounts.db.
+      # Left empty on purpose: a missing key must not stop the container.
+      VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
+      VAULT_REQUIRE_ENCRYPTION: ${VAULT_REQUIRE_ENCRYPTION:-}
+
     security_opt:
       - no-new-privileges:true
 ```
@@ -176,6 +184,47 @@ If you use Portainer to manage Docker:
 4. In the Web editor section, paste the `docker-compose.yml` code from above.
 5. Make sure to edit `CHATGPT2API_AUTH_KEY` to your own secure password.
 6. Scroll to the bottom and click **Deploy the stack**. Wait 1-2 minutes for the system to download and launch.
+7. Portainer reads `${VAR}` from the stack's own **Environment variables** panel, not from a `.env` file on the host — add every variable there.
+
+### 🔐 Credential encryption (`VAULT_MASTER_KEY`)
+
+When you onboard an account, its **password and TOTP seed** are stored in
+`data/accounts.db`. A TOTP seed is not "a 6-digit code" — it generates *every*
+future code, so leaking it costs you the second factor permanently, not one
+login. That file lives on the data volume and travels with every backup you take.
+
+Set `VAULT_MASTER_KEY` and both fields are encrypted with AES-256-GCM. Generate one:
+
+```bash
+python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+```
+
+Four things worth knowing:
+
+- **Never change or lose it.** Encrypted rows decrypt to empty with the wrong key
+  — every saved password and seed would have to be re-entered. Keep a copy off the server.
+- **A malformed key fails silently.** It must be base64 of *exactly* 32 bytes.
+  Anything else logs one line and falls back to plaintext, so also set
+  `VAULT_REQUIRE_ENCRYPTION=1` — that turns the fallback into a refusal to write.
+- **It is not required to boot, on purpose.** A missing key must never stop the
+  container: losing the whole system is worse than what the key protects.
+- **Existing rows migrate lazily.** Old plaintext rows keep working and are
+  encrypted on their *next write*. To convert everything now, open each saved
+  account and re-save it.
+
+**Where accounts are saved:** `Settings` → the **"Provider qua tài khoản Google"**
+card — Email / Password / TOTP, and saving writes to `accounts.db`. That is also
+where you re-save to migrate old plaintext rows.
+
+Credentials are also stored automatically when you onboard through the **ChatGPT
+via Google OAuth**, **Flow**, **Claude** or **Gemini Web** cards. To add or change
+only the TOTP seed of an existing account, open the `Accounts` page and click
+**+ Set TOTP** at the bottom of that account's row — the server generates the
+6-digit code itself, so no external code-generator site is involved.
+
+This protects data at rest — backups, a copied volume, a stolen disk. It does not
+protect against someone who is already inside the container, where the key sits in
+the process environment.
 
 ---
 
