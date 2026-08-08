@@ -122,6 +122,76 @@ class DuongCameraFailClosedTests(unittest.TestCase):
                       "phải trả lỗi tường minh để automation THẤY là thất bại")
 
 
+class LuongStreamTests(unittest.TestCase):
+    """Nhánh STREAM — đúng đường Home Assistant đi, và là chỗ bản vá đầu BỎ SÓT.
+
+    aa4832b chỉ vá nhánh dict. Nhánh stream vẫn gọi `normalize_content` với mặc
+    định cho phép dựng JSON, nên gateway vẫn phát `{"humans_detected":0,...}` từ
+    một câu văn xuôi.
+    """
+
+    def _stream(self, noi_dung: str):
+        yield {"id": "x", "model": "m", "created": 1,
+               "choices": [{"index": 0, "delta": {"role": "assistant", "content": noi_dung}}]}
+        yield {"id": "x", "model": "m", "created": 1,
+               "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+
+    def _body_camera(self, *, co_anh: bool) -> dict:
+        phan = [{"type": "text",
+                 "text": "Phân tích chuỗi hình ảnh, trả humans_detected và animals_detected."}]
+        if co_anh:
+            phan.append({"type": "image_url",
+                         "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQSkZJRg=="}})
+        return {"messages": [{"role": "user", "content": phan}], "stream": True}
+
+    def test_stream_co_anh_van_xuoi_thi_nem_loi(self):
+        with self.assertRaises(KhongPhanTichDuocAnh):
+            rf.enforce_vision_json_if_needed(self._stream(VAN_XUOI),
+                                             self._body_camera(co_anh=True))
+
+    def test_stream_khong_bao_gio_phat_humans_detected_0(self):
+        try:
+            out = rf.enforce_vision_json_if_needed(self._stream(VAN_XUOI),
+                                                   self._body_camera(co_anh=True))
+            noi_dung = "".join(
+                str((c.get("choices") or [{}])[0].get("delta", {}).get("content") or "")
+                for c in out
+            )
+        except KhongPhanTichDuocAnh:
+            return
+        self.fail(f"stream vẫn phát JSON bịa: {noi_dung}")
+
+    def test_loi_no_TRUOC_khi_stream_bat_dau(self):
+        """Phải ném NGAY lúc gọi, không phải lúc lặp.
+
+        Nếu lỗi chỉ nổ khi tầng HTTP kéo phần tử đầu tiên thì header đã gửi và
+        SSE đã mở — không còn cách nào trả 502, người gọi nhận stream đứt.
+        """
+        with self.assertRaises(KhongPhanTichDuocAnh):
+            # KHÔNG lặp kết quả — chỉ gọi hàm.
+            rf.enforce_vision_json_if_needed(self._stream(VAN_XUOI),
+                                             self._body_camera(co_anh=True))
+
+    def test_stream_json_that_van_di_qua(self):
+        that = ('{"humans_detected": 3, "humans_detected_summary": "ba người",'
+                ' "humans_detected_description": "đứng ở sân",'
+                ' "animals_detected": 0, "animals_detected_summary": "",'
+                ' "animals_detected_description": ""}')
+        out = list(rf.enforce_vision_json_if_needed(self._stream(that),
+                                                    self._body_camera(co_anh=True)))
+        noi_dung = "".join(
+            str((c.get("choices") or [{}])[0].get("delta", {}).get("content") or "")
+            for c in out
+        )
+        import json
+        self.assertEqual(json.loads(noi_dung)["humans_detected"], 3)
+
+    def test_stream_khong_co_anh_thi_khong_nem(self):
+        out = rf.enforce_vision_json_if_needed(self._stream(VAN_XUOI),
+                                               self._body_camera(co_anh=False))
+        self.assertTrue(list(out))
+
+
 class GiuModelNguoiDungChonTests(unittest.TestCase):
     def test_model_cu_the_khong_bi_doi(self):
         from services.protocol.openai_v1_chat_complete import _model_la_auto

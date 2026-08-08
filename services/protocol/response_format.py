@@ -629,58 +629,73 @@ def enforce_vision_json_if_needed(
     if not _looks_like_vision_analysis("", body):
         return result
 
-    def _wrap(it: Iterator[dict[str, Any]] = result, m: dict = meta) -> Iterator[dict[str, Any]]:
-        full = ""
-        model = ""
-        cid = ""
-        created = int(time.time())
-        pending: list[dict[str, Any]] = []
-        for chunk in it:
-            if not isinstance(chunk, dict):
-                continue
-            model = model or str(chunk.get("model") or "")
-            cid = cid or str(chunk.get("id") or "")
-            created = int(chunk.get("created") or created)
-            try:
-                for ch in chunk.get("choices") or []:
-                    delta = (ch or {}).get("delta") or {}
-                    if isinstance(delta, dict) and isinstance(delta.get("content"), str):
-                        full += delta["content"]
-            except Exception:
-                pass
-            pending.append(chunk)
-        if not _looks_like_vision_analysis(full, body) and extract_json_object(full) is None:
-            yield from pending
-            return
-        cleaned = normalize_content(full, m)
+    # Gom TOÀN BỘ stream NGAY BÂY GIỜ, không nằm trong generator.
+    #
+    # Vì sao quan trọng: phần dựng JSON vốn đã phải đọc hết stream mới làm được
+    # (nó cần `full`), nên bọc trong generator chẳng tiết kiệm gì — chỉ khiến
+    # việc gom xảy ra ở lần `next()` đầu tiên, tức SAU khi tầng HTTP đã gửi
+    # header và mở SSE. Lúc đó ném lỗi thì không còn cách nào trả 502: người
+    # gọi nhận một stream đứt giữa chừng. Gom ở đây thì lỗi nổ TRƯỚC khi phản
+    # hồi bắt đầu, và `/v1/chat/completions` trả 502 tử tế.
+    full = ""
+    model = ""
+    cid = ""
+    created = int(time.time())
+    pending: list[dict[str, Any]] = []
+    for chunk in result:
+        if not isinstance(chunk, dict):
+            continue
+        model = model or str(chunk.get("model") or "")
+        cid = cid or str(chunk.get("id") or "")
+        created = int(chunk.get("created") or created)
         try:
-            json.loads(cleaned)
+            for ch in chunk.get("choices") or []:
+                delta = (ch or {}).get("delta") or {}
+                if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                    full += delta["content"]
         except Exception:
-            yield from pending
-            return
-        logger.info({
-            "event": "vision_json_enforced_stream",
-            "in_chars": len(full),
-            "out_chars": len(cleaned),
-            "preview": cleaned[:180],
-        })
-        rid = cid or f"chatcmpl-{uuid.uuid4().hex}"
-        yield {
+            pass
+        pending.append(chunk)
+
+    def _phat(chunks: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        yield from chunks
+
+    if not _looks_like_vision_analysis(full, body) and extract_json_object(full) is None:
+        return _phat(pending)
+
+    # CÙNG luật với nhánh non-stream. Bỏ sót chỗ này là bỏ sót ĐÚNG đường mà
+    # Home Assistant đi (blueprint camera gọi stream), nên bản vá trước vẫn để
+    # lọt `{"humans_detected": 0}` bịa ra từ một câu văn xuôi.
+    co_anh = body_has_images(body)
+    cleaned = normalize_content(full, meta, cho_phep_mac_dinh=not co_anh)
+    try:
+        json.loads(cleaned)
+    except Exception:
+        return _phat(pending)
+    logger.info({
+        "event": "vision_json_enforced_stream",
+        "in_chars": len(full),
+        "out_chars": len(cleaned),
+        "preview": cleaned[:180],
+    })
+    rid = cid or f"chatcmpl-{uuid.uuid4().hex}"
+    return _phat([
+        {
             "id": rid,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model or "json",
-            "choices": [{"index": 0, "delta": {"role": "assistant", "content": cleaned}, "finish_reason": None}],
-        }
-        yield {
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": cleaned},
+                         "finish_reason": None}],
+        },
+        {
             "id": rid,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model or "json",
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
-
-    return _wrap()
+        },
+    ])
 
 
 def _enforce_stream(

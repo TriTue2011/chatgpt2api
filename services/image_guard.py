@@ -155,6 +155,42 @@ def kiem_bo_anh(
             )
 
 
+def giai_ma_data_url(url: str, *, max_bytes: int = MAX_IMAGE_BYTES,
+                     ten: str = "") -> tuple[bytes, str]:
+    """`data:<mime>;base64,<...>` → (bytes, mime), có trần và kiểm nội dung.
+
+    Dùng cho MỌI đường vision chat (Gemini Web, Claude, ChatGPT backend). Trước
+    đây mỗi nơi tự `base64.b64decode(...)` không trần, trong khi nhánh URL http
+    ngay cạnh đã có `max_bytes` — nên client chỉ cần đổi từ link sang data-URL
+    là đi vòng qua hết mọi giới hạn.
+
+    Đo độ dài chuỗi base64 TRƯỚC khi giải mã: `b64decode` cấp phát bản giải mã
+    rồi mới trả về, nên đo sau là RAM đã mất.
+    """
+    nhan = f" ({ten})" if ten else ""
+    s = str(url or "")
+    if "," not in s:
+        raise ImageRejected(f"data-URL không hợp lệ{nhan}: thiếu dấu phẩy ngăn phần dữ liệu.")
+    head, b64 = s.split(",", 1)
+    mime = (head[5:].split(";")[0] or "image/png").lower() if head.startswith("data:") else "image/png"
+
+    uoc_luong = len(b64) * 3 // 4
+    if uoc_luong > max_bytes:
+        raise ImageRejected(
+            f"Ảnh quá lớn{nhan}: ~{uoc_luong // (1024 * 1024)}MB, "
+            f"trần {max_bytes // (1024 * 1024)}MB."
+        )
+    import base64 as _b64
+    try:
+        data = _b64.b64decode(b64)
+    except Exception as exc:
+        raise ImageRejected(f"Không giải mã được ảnh base64{nhan}: {str(exc)[:80]}") from exc
+
+    # magic bytes + trần điểm ảnh/khung hình — chặn cả bom nén lẫn tệp không phải ảnh.
+    kiem_anh(data, ten=ten, max_bytes=max_bytes)
+    return data, mime
+
+
 def kiem_anh_hoac_none(data: bytes | None, **kw: Any) -> str | None:
     """Như :func:`kiem_anh` nhưng trả None thay vì raise — cho chỗ best-effort."""
     try:

@@ -419,12 +419,14 @@ def _extract_images(messages: list[dict[str, Any]]) -> list[tuple[bytes, str]]:
                 continue
             url = str(((p.get("image_url") or {}).get("url") or "")).strip()
             if url.startswith("data:"):
+                # `pass` khi hỏng là âm thầm bỏ ảnh rồi vẫn gọi model — sinh ra
+                # "phân tích ảnh" mà chẳng có ảnh nào. Báo lỗi rõ ràng.
+                from services.image_guard import ImageRejected, giai_ma_data_url
                 try:
-                    head, b64 = url.split(",", 1)
-                    mime = (head[5:].split(";")[0] or "image/png").lower()
-                    out.append(_downscale_image(base64.b64decode(b64), mime))
-                except Exception:
-                    pass
+                    data, mime = giai_ma_data_url(url, ten="ảnh gửi Claude")
+                except ImageRejected as exc:
+                    raise HTTPException(status_code=400, detail={"error": exc.ly_do}) from exc
+                out.append(_downscale_image(data, mime))
             elif url.startswith("http"):
                 # URL do client cung cấp → SSRF guard trước khi tải.
                 try:

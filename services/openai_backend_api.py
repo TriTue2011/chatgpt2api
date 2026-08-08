@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from curl_cffi import requests
+from fastapi import HTTPException
 from PIL import Image
 
 from services.account_service import account_service
@@ -467,16 +468,19 @@ class OpenAIBackendAPI:
                     img_bytes: Optional[bytes] = None
                     img_mime = "image/png"
                     if url.startswith("data:"):
+                        # Trước đây `b64decode` không trần rồi `continue` khi
+                        # hỏng: client chỉ cần đổi link sang data-URL là đi vòng
+                        # qua `max_bytes` của nhánh http ngay bên dưới, còn ảnh
+                        # hỏng thì bị bỏ im lặng và model vẫn được gọi.
+                        from services.image_guard import ImageRejected, giai_ma_data_url
                         try:
-                            head, payload = url.split(",", 1)
-                            if head.startswith("data:") and ";" in head:
-                                m = head.split(";", 1)[0][5:].strip()
-                                if m:
-                                    img_mime = m
-                            img_bytes = base64.b64decode(payload)
-                        except Exception as e:
-                            logger.warning({"event": "chatgpt_image_url_decode_failed", "error": str(e)[:120]})
-                            continue
+                            img_bytes, img_mime = giai_ma_data_url(
+                                url, ten="ảnh gửi ChatGPT")
+                        except ImageRejected as exc:
+                            logger.warning({"event": "chatgpt_image_rejected",
+                                            "ly_do": exc.ly_do[:200]})
+                            raise HTTPException(status_code=400,
+                                                detail={"error": exc.ly_do}) from exc
                     elif url.startswith(("http://", "https://")):
                         # URL do client cung cấp → SSRF guard (net_guard).
                         try:

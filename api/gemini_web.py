@@ -29,6 +29,7 @@ import uuid
 from typing import Any, Iterator
 
 from curl_cffi import requests
+from fastapi import HTTPException
 
 
 def _ghim_cache_cookie_ben() -> None:
@@ -601,12 +602,20 @@ _GMA_ALIASES = {
 
 def _resolve_model(model: str, prompt: str = ""):
 
-    """alias → gemini_webapi Model enum; None = để server tự chọn."""
+    """alias → gemini_webapi Model enum; None = để server tự chọn.
+
+    Người gọi CHỈ ĐÍCH DANH một model không tồn tại → ném 400. Chỉ `auto` mới
+    được phép rơi về mặc định.
+    """
     m = str(model or "").strip().lower()
     for pfx in ("gma/", "gemini-web/", "gemini_web_api/"):
         if m.startswith(pfx):
             m = m[len(pfx):]
             break
+    # Ghi lại NGAY: `m` bị gán lại nhiều lần bên dưới (định tuyến theo prompt,
+    # default trong config), nên hỏi sau là không còn phân biệt được "người dùng
+    # chọn" với "hệ thống tự chọn".
+    nguoi_dung_chi_dinh = bool(m) and m != "auto"
     # 1. Smart routing first! If UI selected auto, we intercept music prompts.
     if not m or m == "auto":
         p = prompt.lower()
@@ -659,25 +668,47 @@ def _resolve_model(model: str, prompt: str = ""):
 
     da_khai = m                      # tên NGƯỜI DÙNG khai, trước khi đổi alias
     m = _GMA_ALIASES.get(m, m)
+    # Tách HAI nguyên nhân, đừng gộp: thư viện thiếu/hỏng là lỗi của bản triển
+    # khai, không phải của người gọi. Gộp chung thì một lần import hỏng sẽ làm
+    # MỌI model hợp lệ trả 400 — hỏng hẳn kênh Gemini (test bắt được đúng chỗ này).
     try:
         from gemini_webapi.constants import Model
+    except Exception as exc:
+        _logger().warning({
+            "event": "gma_thu_vien_khong_nap_duoc",
+            "error": str(exc)[:150],
+            "thuc_te": "auto (server Gemini tự chọn)",
+        })
+        return None
+    try:
         return Model.from_name(m)
     except Exception:
-        # Trả None = "để server Gemini tự chọn". Người gọi vẫn nhận HTTP 200 và
-        # một câu trả lời — nhưng TỪ MODEL KHÁC cái họ yêu cầu, mà trước đây chỉ
-        # ghi mức INFO nên không ai thấy. Đo thật 08/08: `gma/3.6-flash` trả OK
-        # trong khi thực chất chạy model auto.
-        #
-        # Vẫn rơi về auto chứ không ném lỗi: bản gemini_webapi trên máy chủ có
-        # thể thiếu một tên model hợp lệ, và làm hỏng hẳn một kênh đang chạy thì
-        # tệ hơn là trả lời bằng model mặc định. Nhưng phải NÓI TO.
+        if nguoi_dung_chi_dinh:
+            # Người gọi chọn ĐÍCH DANH một model không tồn tại. Rơi về auto ở
+            # đây là trả HTTP 200 bằng MODEL KHÁC — họ tưởng đang dùng A mà
+            # thực tế nhận B, và không có cách nào biết. Đo thật 08/08:
+            # `gma/3.6-flash` trả "OK" trong khi chạy model auto.
+            # Ném 400 TRƯỚC khi gọi upstream: không tốn lượt, và nói đúng lỗi.
+            _logger().warning({
+                "event": "gma_model_khong_ton_tai",
+                "yeu_cau": da_khai,
+                "sau_alias": m,
+            })
+            raise HTTPException(status_code=400, detail={
+                "error": f"Model '{da_khai}' không tồn tại ở Gemini Web. "
+                         "Xem danh sách hợp lệ trong GET /v1/models (tiền tố gma/), "
+                         "hoặc dùng 'gma/auto' để hệ thống tự chọn.",
+                "code": "model_not_found",
+            })
+        # Đường AUTO: hệ thống tự chọn nên rơi về mặc định là hợp lý — người gọi
+        # không hề khai model nào để mà sai. Vẫn ghi warning vì nó cho biết cấu
+        # hình `default_models`/`enabled_models` đang trỏ vào một tên đã chết.
         _logger().warning({
             "event": "gma_unknown_model_fallback",
-            "yeu_cau": da_khai,
             "sau_alias": m,
             "thuc_te": "auto (server Gemini tự chọn)",
-            "canh_bao": "Model yêu cầu KHÔNG tồn tại — câu trả lời đến từ model khác. "
-                        "Kiểm tra lại tên, hoặc chọn model có trong GET /v1/models.",
+            "canh_bao": "Tên model trong cấu hình không còn tồn tại — đang chạy bằng "
+                        "mặc định của server. Sửa default_models/enabled_models.",
         })
         return None
 
@@ -717,12 +748,14 @@ def _prepare_files(messages: list[dict[str, Any]]) -> list[str]:
             url = str(((p.get("image_url") or {}).get("url") or "")).strip()
             data, mime = b"", "image/png"
             if url.startswith("data:"):
+                # Không `continue` khi hỏng: âm thầm bỏ ảnh rồi vẫn gọi model là
+                # cách sinh ra "phân tích ảnh" mà chẳng có ảnh nào — đúng kiểu
+                # hỏng của sự cố camera 08/08.
+                from services.image_guard import ImageRejected, giai_ma_data_url
                 try:
-                    head, b64 = url.split(",", 1)
-                    mime = (head[5:].split(";")[0] or "image/png").lower()
-                    data = base64.b64decode(b64)
-                except Exception:
-                    continue
+                    data, mime = giai_ma_data_url(url, ten="ảnh gửi Gemini")
+                except ImageRejected as exc:
+                    raise HTTPException(status_code=400, detail={"error": exc.ly_do}) from exc
             elif url.startswith("http"):
                 # URL do client cung cấp → SSRF guard trước khi tải.
                 try:
