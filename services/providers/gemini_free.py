@@ -85,7 +85,9 @@ class GeminiProvider:
         if not keys:
             raise RuntimeError("Gemini API key not configured")
 
-        contents, system_instruction, gemini_tools = _convert_request(messages, tools)
+        tim_web = _muon_tim_web(model, kwargs)
+        contents, system_instruction, gemini_tools = _convert_request(
+            messages, tools, google_search=tim_web)
 
         body: dict[str, Any] = {
             "contents": contents,
@@ -104,7 +106,8 @@ class GeminiProvider:
 
         url = f"{_gemini_base_url()}/models/{model}:streamGenerateContent?alt=sse"
 
-        logger.info({"event": "gemini_request", "model": model, "has_tools": bool(gemini_tools)})
+        logger.info({"event": "gemini_request", "model": model,
+                     "has_tools": bool(gemini_tools), "google_search": tim_web})
 
         # ── Xoay key bằng VÒNG LẶP, mỗi key thử đúng MỘT lần ─────────────────
         # Bản cũ retry 429 bằng cách gọi ĐỆ QUY chính chat_completions(), mà
@@ -196,7 +199,19 @@ class GeminiProvider:
         raise RuntimeError(last_error or "All Gemini API keys rate limited. Try again later.")
 
 
-def _convert_request(messages, tools):
+def _muon_tim_web(model: str, kwargs: dict) -> bool:
+    """Người gọi có THẬT SỰ muốn tìm web không.
+
+    Theo đúng quy ước đã có trong repo (`api/claude.py`): hậu tố `-search` /
+    `-websearch` trong tên model. Thêm kwarg tường minh cho nơi gọi trong mã.
+    """
+    if "google_search" in kwargs:
+        return bool(kwargs.get("google_search"))
+    m = str(model or "").lower()
+    return "-search" in m or "-websearch" in m
+
+
+def _convert_request(messages, tools, *, google_search: bool = False):
     """Convert OpenAI format → Gemini format with vision + video support."""
     import base64 as b64
 
@@ -291,9 +306,21 @@ def _convert_request(messages, tools):
         if decls:
             gtools.append({"functionDeclarations": decls})
             
-    # Auto-inject Google Search grounding to match ChatGPT's built-in browser behavior
-    gtools.append({"googleSearch": {}})
-    
+    # CHỈ thêm khi người gọi thật sự muốn tìm web.
+    #
+    # Bản cũ chèn `googleSearch` vào MỌI request "để giống hành vi duyệt web
+    # sẵn có của ChatGPT". Cái giá không nhìn thấy được: grounding bằng Google
+    # Search tính vào một hạn mức RIÊNG, chặt hơn nhiều so với hạn mức sinh
+    # nội dung. Cùng một khoá, cùng một model, gọi thẳng thì 200 mà qua đây
+    # thì 429 — nên triệu chứng hiện ra là "khoá hết quota", và người ta đi
+    # thay khoá thay vì tìm nguyên nhân.
+    #
+    # Với đường Vision của Home Assistant thì nó vô nghĩa hoàn toàn: phân tích
+    # một khung hình camera không cần tra web, mà lại hỏng vì nó.
+    if google_search:
+        gtools.append({"googleSearch": {}})
+
+
     return contents, si, gtools
 
 def _parse_gemini_stream(response, model: str) -> Iterator[dict[str, Any]]:
