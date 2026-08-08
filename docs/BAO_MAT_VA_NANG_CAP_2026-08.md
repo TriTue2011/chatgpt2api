@@ -232,6 +232,7 @@ domain công khai) — xem mục 6.
 | Webhook/MCP URL cho phép `file://`, `gopher://` | Chỉ `http`/`https` (vẫn cho LAN) |
 | Path traversal khi xoá backup | `resolve().relative_to(BACKUP_DIR)` |
 | Token/mật khẩu lọt access-log qua query string | Tắt `--access-log` của uvicorn, bỏ `?password=` |
+| `gitpython 3.1.57` — 5 CVE đã công bố (backend lưu trữ `git`) | Nâng lockfile lên `3.1.58`; `pyproject.toml` không đổi vì đã là `>=3.1.57` |
 
 ### DoS & ổn định
 
@@ -355,7 +356,11 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - Chưa có CSP; `/images/` chưa có URL ký hạn; SSE vẫn nhận `?token=` trên query.
 - Dockerfile chưa pin digest/checksum cho binary tải về; container chạy `root`.
 - Frontend còn 26 lỗi TypeScript, `ignoreBuildErrors: true` đang che lỗi build.
-- Dependency: zalo-server 8 lỗ hổng mức cao, web 2 lỗ hổng mức trung bình.
+- Dependency Node: zalo-server 8–9 lỗ hổng mức cao (`axios`, `ws`, `sharp`,
+  `image-size`), web 1–2 mức trung bình. **Không** chạy `npm audit fix --force`
+  — nâng lockfile ở nhánh riêng rồi build và chạy hồi quy. `image-size` chưa có
+  bản vá, nên trước mắt giảm bề mặt xử lý ảnh không tin cậy.
+  (Phía Python đã sạch: xem `gitpython` ở mục 5.)
 - **ACL nhiều người dùng cho zalo-server.** Hiện dashboard và chat chỉ mở cho vai
   `admin`, vì hệ thống không có cách giới hạn một tài khoản chỉ xem được một số
   tài khoản Zalo hay một số cuộc trò chuyện. Muốn cho vai `user` vào chat thì

@@ -128,9 +128,10 @@ def install(names: list[str] | None = None, force: bool | None = None) -> tuple[
         cli = paramiko.SSHClient()
         # Trust-on-first-use + fail-closed khi host key ĐỔI: nạp known_hosts đã
         # lưu; nếu HA từng thấy mà key khác đi (MITM giữa mạng nội bộ) paramiko
-        # raise BadHostKeyException BẤT KỂ policy. AutoAddPolicy chỉ xử lý host
-        # LẦN ĐẦU, sau đó save_host_keys ghim lại. Trước đây AutoAdd trần khiến
-        # mọi key đều được nhận mỗi lần → giả máy HA lấy được mật khẩu SSH.
+        # raise BadHostKeyException BẤT KỂ policy. Policy chỉ xử lý host LẦN ĐẦU
+        # rồi tự ghim key lại. Trước đây AutoAdd trần khiến mọi key đều được nhận
+        # mỗi lần → giả máy HA lấy được mật khẩu SSH.
+        from services.ssh_tofu import tofu_policy
         known = DATA_DIR / "ha_known_hosts"
         try:
             cli.load_system_host_keys()
@@ -141,7 +142,7 @@ def install(names: list[str] | None = None, force: bool | None = None) -> tuple[
                 cli.load_host_keys(str(known))
             except Exception:
                 pass
-        cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # chỉ áp cho host CHƯA từng thấy
+        cli.set_missing_host_key_policy(tofu_policy(known))  # chỉ áp cho host CHƯA từng thấy
         cli.connect(ssh["host"], port=ssh["port"], username=ssh["user"],
                     password=ssh["pw"], timeout=20)
         try:

@@ -4232,8 +4232,9 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
     cli = paramiko.SSHClient()
     # Trust-on-first-use + fail khi host key ĐỔI: nạp known_hosts đã lưu; host
     # từng thấy mà key khác đi (MITM) → paramiko raise BadHostKeyException BẤT
-    # KỂ policy. AutoAdd chỉ áp host LẦN ĐẦU; save_host_keys ghim lại. Trước đây
+    # KỂ policy. Policy chỉ áp host LẦN ĐẦU rồi tự ghim key lại. Trước đây
     # AutoAdd trần nhận mọi key mỗi lần → giả máy lấy được mật khẩu SSH.
+    from services.ssh_tofu import tofu_policy
     try:
         from services.config import DATA_DIR
         _known = DATA_DIR / "ssh_known_hosts"
@@ -4248,7 +4249,7 @@ def _h_remote_system_status(args: dict, ctx: dict) -> dict:
                 pass
     except Exception:
         _known = None
-    cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())  # chỉ cho host CHƯA từng thấy
+    cli.set_missing_host_key_policy(tofu_policy(_known))  # chỉ cho host CHƯA từng thấy
     try:
         cli.connect(host, port=port, username=user, password=password, timeout=15,
                     allow_agent=False, look_for_keys=False)
