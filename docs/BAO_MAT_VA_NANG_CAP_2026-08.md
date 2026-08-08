@@ -356,11 +356,25 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - Chưa có CSP; `/images/` chưa có URL ký hạn; SSE vẫn nhận `?token=` trên query.
 - Dockerfile chưa pin digest/checksum cho binary tải về; container chạy `root`.
 - Frontend còn 26 lỗi TypeScript, `ignoreBuildErrors: true` đang che lỗi build.
-- Dependency Node: zalo-server 8–9 lỗ hổng mức cao (`axios`, `ws`, `sharp`,
-  `image-size`), web 1–2 mức trung bình. **Không** chạy `npm audit fix --force`
-  — nâng lockfile ở nhánh riêng rồi build và chạy hồi quy. `image-size` chưa có
-  bản vá, nên trước mắt giảm bề mặt xử lý ảnh không tin cậy.
-  (Phía Python đã sạch: xem `gitpython` ở mục 5.)
+- **Dependency Node** — việc duy nhất còn làm workflow Security đỏ. Phía Python
+  đã sạch (xem `gitpython` ở mục 5). Cần một nhánh riêng vì:
+  - `web/`: `nanoid < 3.3.17` mức **cao** (đây là thứ làm bước
+    `npm audit --audit-level=high` fail) và `postcss ≤ 8.5.22` mức trung bình.
+    nanoid chỉ là dependency bắc cầu của postcss → next, và postcss chỉ chạy
+    lúc **build**, nên rủi ro thực tế với bản đang chạy rất thấp. Cách vá gọn
+    là thêm `"nanoid": "^3.3.17"` vào `overrides` của `web/package.json` (chỗ
+    này đã có sẵn override cho `postcss` và `sharp`).
+    **Bẫy đã đo ngày 08/08:** `web/bun.lock` hiện **lệch** với `overrides` —
+    chạy `bun install` để sinh lại lock sẽ kéo theo 34 dòng thay đổi ngoài ý
+    muốn, trong đó có hạ `sharp` từ 0.34.5 xuống 0.33.5 trên mọi nền tảng.
+    `sharp` là bộ tối ưu ảnh của Next.js, nên phải `bun run build` và xem lại
+    ảnh thật rồi mới merge. Nhớ sửa **cả hai** lock: image build bằng
+    `bun.lock`, còn `package-lock.json` chỉ để `npm audit` đọc — sửa mỗi
+    `package-lock.json` là cổng xanh mà image vẫn dính lỗ hổng.
+  - `postcss` muốn hết cảnh báo phải `npm audit fix --force` → kéo lên
+    `next@16.3.0`, ngoài khoảng phiên bản đang khai. **Đừng làm.**
+  - `zalo-server/`: 8–9 lỗ hổng mức cao (`axios`, `ws`, `sharp`, `image-size`).
+    `image-size` chưa có bản vá — trước mắt giảm bề mặt xử lý ảnh không tin cậy.
 - **ACL nhiều người dùng cho zalo-server.** Hiện dashboard và chat chỉ mở cho vai
   `admin`, vì hệ thống không có cách giới hạn một tài khoản chỉ xem được một số
   tài khoản Zalo hay một số cuộc trò chuyện. Muốn cho vai `user` vào chat thì
