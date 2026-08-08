@@ -342,8 +342,29 @@ def coerce_to_schema(data: dict[str, Any], schema: dict[str, Any]) -> dict[str, 
     return out
 
 
-def normalize_content(text: str, meta: dict[str, Any] | None) -> str:
-    """Return single-line JSON string suitable for HA structured parse."""
+class KhongPhanTichDuocAnh(RuntimeError):
+    """Model không trả JSON đọc được cho một yêu cầu phân tích ảnh.
+
+    Tồn tại để phân biệt hai chuyện mà bản cũ gộp làm một: "đã phân tích và
+    thấy 0 người" với "không phân tích được". Xem :func:`normalize_content`.
+    """
+
+
+def normalize_content(text: str, meta: dict[str, Any] | None, *,
+                      cho_phep_mac_dinh: bool = True) -> str:
+    """Return single-line JSON string suitable for HA structured parse.
+
+    `cho_phep_mac_dinh=False`: không đọc được JSON thì NÉM
+    :class:`KhongPhanTichDuocAnh` thay vì dựng object toàn giá trị mặc định.
+
+    Vì sao phải có công tắc đó — đây là lỗi nguy hiểm nhất đã gặp: schema camera
+    khai `humans_detected` kiểu integer, mà mặc định của integer là **0**. Nên
+    khi mọi provider vision đều hỏng và request rơi xuống một model CHỈ-CHỮ,
+    model đó trả vài dòng văn xuôi, hàm này không bóc được JSON, rồi dựng ra
+    `{"humans_detected": 0, ...}` và Home Assistant đọc thành "KHÔNG CÓ NGƯỜI".
+    Một hệ báo động im lặng báo an toàn còn tệ hơn một hệ báo lỗi ầm ĩ: người
+    dùng không có cách nào biết rằng chẳng có tấm ảnh nào từng được nhìn.
+    """
     if not meta:
         return text
     schema = meta.get("schema") if isinstance(meta.get("schema"), dict) else {}
@@ -351,9 +372,23 @@ def normalize_content(text: str, meta: dict[str, Any] | None) -> str:
     if obj is None and schema:
         obj = recover_fields_from_mangled(text, schema)
     if obj is None:
-        # Build defaults so HA never gets empty unparseable blob
         props = _schema_properties(schema)
+        if props and not cho_phep_mac_dinh:
+            logger.error({
+                "event": "vision_khong_doc_duoc_json",
+                "props": list(props.keys()),
+                "raw_preview": str(text or "")[:300],
+                "ly_do": "model không trả JSON — KHÔNG dựng giá trị mặc định vì "
+                         "humans_detected=0 sẽ bị đọc thành 'không có người'",
+            })
+            raise KhongPhanTichDuocAnh(
+                "Không phân tích được ảnh: model trả về văn bản không phải JSON. "
+                "Thường là vì mọi provider vision đều hỏng và yêu cầu rơi xuống một "
+                "model chỉ xử lý chữ. KHÔNG suy ra 'không có người' từ kết quả này."
+            )
         if props:
+            # Đường không-vision: dựng mặc định như cũ để client cấu trúc vẫn
+            # parse được. Ở đây "0" không mang nghĩa an toàn/nguy hiểm nào.
             obj = {k: _default_for_type(_prop_type(info)) for k, info in props.items()}
             logger.warning({
                 "event": "response_format_fallback_defaults",
@@ -566,7 +601,15 @@ def enforce_vision_json_if_needed(
             # also check request messages for vision task even if answer empty
             if not _looks_like_vision_analysis("", body):
                 return result
-        cleaned = normalize_content(raw, meta)
+        # cho_phep_mac_dinh=False: đây CHÍNH LÀ đường camera của Home Assistant.
+        # Không bóc được JSON thì ném, không dựng `humans_detected: 0` giả.
+        #
+        # Chỉ fail-closed khi request THẬT SỰ có ảnh. `_looks_like_vision_analysis`
+        # nhận dạng bằng cụm từ ("chuỗi hình ảnh", "humans_detected"…), mà một
+        # câu chat bình thường cũng có thể chứa chúng — lúc đó ném lỗi là biến
+        # một cuộc trò chuyện đang chạy tốt thành 502.
+        co_anh = body_has_images(body)
+        cleaned = normalize_content(raw, meta, cho_phep_mac_dinh=not co_anh)
         # Only rewrite if we improved parseability
         if cleaned and (cleaned != raw or extract_json_object(raw) is None):
             try:

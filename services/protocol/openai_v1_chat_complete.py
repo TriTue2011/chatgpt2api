@@ -942,13 +942,21 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         pass
     # Enforce pure JSON for response_format json_schema / json_object
     # and for HA camera vision prompts that need from_json (blueprint JSON mode).
+    from services.protocol.response_format import (
+        KhongPhanTichDuocAnh,
+        enforce_response_format,
+        enforce_vision_json_if_needed,
+    )
     try:
-        from services.protocol.response_format import (
-            enforce_response_format,
-            enforce_vision_json_if_needed,
-        )
         result = enforce_response_format(result, body if isinstance(body, dict) else None)
         result = enforce_vision_json_if_needed(result, body if isinstance(body, dict) else None)
+    except KhongPhanTichDuocAnh as _v_exc:
+        # KHÔNG nuốt lỗi này. Nuốt rồi trả `result` nguyên bản nghĩa là Home
+        # Assistant nhận văn xuôi của một model chỉ-chữ, `from_json` hỏng, và
+        # blueprint lại hiểu thành 0 người — đúng cái vòng đang muốn cắt.
+        # Trả lỗi tường minh để automation THẤY là phân tích thất bại.
+        logger.error({"event": "vision_analysis_failed", "error": str(_v_exc)[:300]})
+        raise HTTPException(status_code=502, detail={"error": str(_v_exc)}) from _v_exc
     except Exception as _rf_exc:
         logger.warning({"event": "response_format_enforce_error", "error": str(_rf_exc)[:150]})
     return result
@@ -2771,6 +2779,32 @@ def _branch_code_review(code_model: str, reviewer: str,
     return completion_response(model=code_model, content=code, messages=messages)
 
 
+def _model_la_auto(model: Any) -> bool:
+    """True nếu người gọi KHÔNG chỉ đích danh một model của provider.
+
+    Coi là "auto": rỗng, `auto`, `<tiền tố>/auto`, và tên COMBO do người dùng
+    đặt. Combo được tính vào đây có chủ đích: các bot (Telegram/Zalo) gửi đúng
+    tên combo rồi dựa vào định tuyến nhánh để đổi sang nhánh phù hợp — chặn luôn
+    combo là làm hỏng đường đang chạy tốt.
+
+    KHÔNG coi là auto: `cgf/gpt-5-5-instant`, `gma/3.1-pro`… Người gọi đã chọn
+    thì giữ nguyên.
+    """
+    m = _strip_marker(str(model or "")).strip().lower()
+    if not m or m == "auto" or m.endswith("/auto"):
+        return True
+    try:
+        combos = config.data.get("combo_models") or {}
+        if m in {str(k).strip().lower() for k in combos}:
+            return True
+        pipes = config.data.get("pipeline_models") or {}
+        if m in {str(k).strip().lower() for k in pipes}:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _apply_branch_routing(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]] | None:
     """Đổi body["model"] sang model nhánh khi request là việc chuyên biệt (trả
     None để flow thường tiếp tục); riêng nhánh code có reviewer thì chạy luôn
@@ -2778,6 +2812,15 @@ def _apply_branch_routing(body: dict[str, Any]) -> dict[str, Any] | Iterator[dic
     if body.get("_branch_inner") or body.get("tools") or body.get("tool_choice"):
         return None
     if not config.get().get("branch_routing_global", True):
+        return None
+    # CHỈ tự đổi model khi người gọi để "auto". Người gọi đã chỉ đích danh một
+    # model thì giữ nguyên — đổi ngầm là phá đúng thứ họ vừa chọn.
+    #
+    # Đây là một mắt xích của sự cố camera 08/08: request từ Home Assistant có
+    # ảnh bị ép sang combo "AI vision" bất kể model đã khai, nên khi combo đó
+    # cạn provider vision thì không còn đường nào quay lại model người dùng
+    # muốn — nó rơi thẳng xuống một model chỉ-chữ.
+    if not _model_la_auto(body.get("model")):
         return None
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
