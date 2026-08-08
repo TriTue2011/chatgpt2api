@@ -187,10 +187,23 @@ def encode_images(images: Iterable[tuple[bytes, str, str]]) -> list[str]:
     return [base64.b64encode(data).decode("ascii") for data, _, _ in images if data]
 
 
+# Đuôi tệp theo định dạng thật. StaticFiles đoán content-type TỪ ĐUÔI, nên lưu
+# một ảnh JPEG dưới tên .png là phát ra `image/png` cho nội dung JPEG — trình
+# duyệt thường vẫn hiện, nhưng Zalo/Telegram hoặc proxy giữa đường có quyền từ
+# chối. Provider trả JPEG/WebP là chuyện bình thường (format_image_result nhận
+# cả hai), nên không thể mặc định .png cho tất cả.
+_DUOI_THEO_DINH_DANG = {
+    "jpeg": "jpg", "png": "png", "gif": "gif", "webp": "webp",
+    "bmp": "bmp", "tiff": "tiff", "avif": "avif", "heic": "heic",
+}
+
+
 def save_image_bytes(image_data: bytes, base_url: str | None = None) -> str:
     config.cleanup_old_images()
     file_hash = hashlib.md5(image_data, usedforsecurity=False).hexdigest()
-    filename = f"{int(time.time())}_{file_hash}.png"
+    from services.image_utils import sniff_format
+    duoi = _DUOI_THEO_DINH_DANG.get(sniff_format(image_data), "png")
+    filename = f"{int(time.time())}_{file_hash}.{duoi}"
     relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
     file_path = config.images_dir / relative_dir / filename
     file_path.parent.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+import threading
 import time
+from collections import OrderedDict
 from typing import Any, Iterator
 
 from curl_cffi import requests as cffi_requests
@@ -24,20 +26,64 @@ from utils.log import logger
 
 _NON_EN = re.compile(r'[^\x00-\x7F]')
 
-# Translation cache: {original: english}
-_translation_cache: dict[str, str] = {}
+# Cache bản dịch, có TRẦN và HẠN. Trước đây là dict thường không giới hạn: mỗi
+# prompt tiếng Việt khác nhau nằm lại vĩnh viễn trong RAM tiến trình — vừa rò rỉ
+# bộ nhớ, vừa giữ nội dung người dùng lâu hơn cần thiết.
+_TRANSLATION_CACHE_MAX = 512
+_TRANSLATION_CACHE_TTL = 6 * 3600.0
+_translation_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+_translation_lock = threading.Lock()
+
+
+def _cache_lay(khoa: str) -> str | None:
+    with _translation_lock:
+        muc = _translation_cache.get(khoa)
+        if not muc:
+            return None
+        dat, gia_tri = muc
+        if time.time() - dat > _TRANSLATION_CACHE_TTL:
+            _translation_cache.pop(khoa, None)
+            return None
+        _translation_cache.move_to_end(khoa)
+        return gia_tri
+
+
+def _cache_dat(khoa: str, gia_tri: str) -> None:
+    with _translation_lock:
+        _translation_cache[khoa] = (time.time(), gia_tri)
+        _translation_cache.move_to_end(khoa)
+        while len(_translation_cache) > _TRANSLATION_CACHE_MAX:
+            _translation_cache.popitem(last=False)
 
 
 def _needs_translation(text: str) -> bool:
     return bool(_NON_EN.search(text))
 
 
+def _translation_enabled() -> bool:
+    """Dịch prompt sang tiếng Anh có được BẬT không (mặc định: có).
+
+    Vì sao phải có công tắc: hàm dịch gửi prompt sang ChatGPT OAuth rồi fallback
+    Gemini — kể cả khi người dùng cố tình chọn SD WebUI hay một provider chạy
+    cục bộ. Với người chọn provider local vì lý do riêng tư, đó là gửi nội dung
+    ra ngoài mà họ không hề yêu cầu. Đặt `image_translate_prompt: false` trong
+    config để tắt.
+    """
+    value = config.data.get("image_translate_prompt", True)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _translate_prompt(prompt: str) -> str:
     """Translate non-English prompt → English using ChatGPT (Codex OAuth)."""
     if not _needs_translation(prompt):
         return prompt
-    if prompt in _translation_cache:
-        return _translation_cache[prompt]
+    if not _translation_enabled():
+        return prompt
+    da_co = _cache_lay(prompt)
+    if da_co is not None:
+        return da_co
 
     translate_prompt = (
         "Translate the following image generation prompt to English. "
@@ -63,9 +109,12 @@ def _translate_prompt(prompt: str) -> str:
             if choices:
                 translated = str(choices[0].get("message", {}).get("content", "")).strip()
                 if translated:
+                    # KHÔNG ghi prompt gốc/bản dịch vào log: đó là nội dung
+                    # người dùng, và log đi vào file + UI Logs. Ghi độ dài là đủ
+                    # để chẩn đoán "có dịch không, dịch ra dài bao nhiêu".
                     logger.info({"event": "prompt_translated", "source": "chatgpt",
-                                  "original": prompt[:120], "english": translated[:250]})
-                    _translation_cache[prompt] = translated
+                                 "chars": [len(prompt), len(translated)]})
+                    _cache_dat(prompt, translated)
                     return translated
     except Exception as exc:
         logger.warning({"event": "translation_chatgpt_failed", "error": str(exc)[:100]})
@@ -99,8 +148,8 @@ def _translate_prompt(prompt: str) -> str:
                     translated = "".join(p.get("text", "") for p in parts).strip()
                     if translated:
                         logger.info({"event": "prompt_translated", "source": "gemini",
-                                      "original": prompt[:120], "english": translated[:250]})
-                        _translation_cache[prompt] = translated
+                                     "chars": [len(prompt), len(translated)]})
+                        _cache_dat(prompt, translated)
                         return translated
         except Exception as exc:
             logger.warning({"event": "translation_gemini_failed", "error": str(exc)[:100]})

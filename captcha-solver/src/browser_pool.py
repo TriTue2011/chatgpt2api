@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -185,6 +186,10 @@ def _select_stealth_script() -> str:
     return _STEALTH_SCRIPT_FIREFOX if settings.browser.lower() == "firefox" else _STEALTH_SCRIPT_CHROMIUM
 # Chrome single-instance lock files that linger after a crash and block
 # the next launch with "Profile is already in use".
+# Tên profile hợp lệ: chỉ chữ/số/gạch. Không dấu chấm, không gạch chéo → không
+# có "..", không có đường dẫn tuyệt đối.
+_PROFILE_SLUG = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
 _CHROME_LOCK_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
 # Firefox profile lock files that persist after crash/kill
 _FIREFOX_LOCK_FILES = ("lock", ".parentlock", "parent.lock")
@@ -288,7 +293,21 @@ class BrowserPool:
                 logger.error("eviction loop error: %s", e)
 
     def _profile_dir(self, profile: str) -> Path:
-        path = settings.data_dir / "profiles" / profile
+        # Tên profile đến từ request. Ghép thẳng vào đường dẫn thì "../../etc"
+        # hay một đường dẫn tuyệt đối sẽ tạo thư mục profile trình duyệt (và ghi
+        # dữ liệu vào đó) ở BẤT KỲ đâu trên đĩa. Chỉ nhận slug, rồi kiểm lại sau
+        # khi resolve — kiểm chuỗi thôi là chưa đủ khi có symlink giữa đường.
+        ten = str(profile or "").strip()
+        if not _PROFILE_SLUG.fullmatch(ten):
+            raise ValueError(
+                f"Tên profile không hợp lệ: {ten!r}. Chỉ chấp nhận chữ, số, '-' và '_' (1-64 ký tự)."
+            )
+        goc = (settings.data_dir / "profiles").resolve()
+        path = (goc / ten).resolve()
+        try:
+            path.relative_to(goc)
+        except ValueError:
+            raise ValueError(f"Tên profile thoát ra ngoài thư mục profiles: {ten!r}") from None
         path.mkdir(parents=True, exist_ok=True)
         return path
 

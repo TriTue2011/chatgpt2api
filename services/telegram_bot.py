@@ -26,7 +26,34 @@ from services.telegram import (
     webhook_secret_for,
 )
 from services.telegram.client import TelegramClient
+from services.telegram.constants import MAX_UPLOAD_FILE_BYTES
 from services.ingress_guard import make_worker_pool, read_json_limited, BodyTooLarge
+
+
+def _doc_media_co_tran(kieu: str, src: str, max_bytes: int, nhan: str) -> bytes:
+    """Đọc media để GỬI đi, có trần dung lượng. Vượt trần → ValueError.
+
+    Vì sao cần: bản cũ `open(src).read()` / `Path.read_bytes()` nạp cả tệp vào
+    RAM rồi `call_multipart` dựng thêm một bản sao nữa trong bộ đệm multipart —
+    một video 2GB do provider trả về là 4GB RAM. Telegram cũng từ chối tệp quá
+    50MB, nên đọc hết rồi mới biết là phí hoàn toàn.
+
+    Với tệp trên đĩa: hỏi `stat()` TRƯỚC khi đọc, nên tệp quá lớn không tốn một
+    byte RAM nào. Với URL: `fetch_media` đã có sẵn tham số `max_bytes` (đi kèm
+    kiểm SSRF và redirect) — trước đây gọi mà không truyền nên nó dùng mặc định
+    rộng hơn trần thật của Telegram.
+    """
+    if kieu == "path":
+        from pathlib import Path as _P
+        p = _P(src)
+        co = p.stat().st_size
+        if co > max_bytes:
+            raise ValueError(
+                f"{nhan} quá lớn: {co // (1024 * 1024)}MB, trần {max_bytes // (1024 * 1024)}MB"
+            )
+        return p.read_bytes()
+    from services import net_guard
+    return net_guard.fetch_media(src, timeout=120, max_bytes=max_bytes)
 
 logger = logging.getLogger(__name__)
 
@@ -1846,12 +1873,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             da_gui = 0
             for i, (kieu, src) in enumerate(nguon):
                 try:
-                    if kieu == "path":
-                        with open(src, "rb") as f:
-                            vid = f.read()
-                    else:
-                        from services import net_guard
-                        vid = net_guard.fetch_media(src, timeout=120)
+                    vid = _doc_media_co_tran(kieu, src, MAX_UPLOAD_FILE_BYTES, "video")
                     send_video(chat_id, vid, caption=reply[:1000] if i == 0 else "")
                     da_gui += 1
                 except Exception as exc:
@@ -1866,12 +1888,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         audio_url = out.get("audio_url")
         if audio_path or audio_url:
             try:
-                if audio_path:
-                    with open(audio_path, "rb") as f:
-                        aud = f.read()
-                else:
-                    from services import net_guard
-                    aud = net_guard.fetch_media(str(audio_url), timeout=120)
+                aud = _doc_media_co_tran(
+                    "path" if audio_path else "url",
+                    str(audio_path or audio_url), MAX_UPLOAD_FILE_BYTES, "audio")
                 send_audio(chat_id, aud, caption=reply[:1000])
                 return
             except Exception as exc:
@@ -1883,8 +1902,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             try:
                 from pathlib import Path as _P
                 _p = _P(str(doc_path))
-                send_document(chat_id, _p.read_bytes(), _p.name,
-                              caption=reply[:1000])
+                send_document(chat_id,
+                              _doc_media_co_tran("path", str(_p), MAX_UPLOAD_FILE_BYTES, "tài liệu"),
+                              _p.name, caption=reply[:1000])
                 return
             except Exception as exc:
                 logger.warning("send doc failed: %s", exc)

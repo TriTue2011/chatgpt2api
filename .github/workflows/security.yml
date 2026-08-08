@@ -75,3 +75,27 @@ jobs:
           npm audit --omit=dev --omit=optional --audit-level=high \
             || { echo "::error::npm audit high/critical findings"; exit 1; }
 
+      # zalo-server là code CHẠY THẬT trong image (Dockerfile: npm ci --omit=dev)
+      # nhưng trước nay không hề được audit — CVE của express/ws/axios/sharp đi
+      # thẳng vào production mà không ai thấy.
+      #
+      # Vì sao gate ở `critical` chứ không phải `high`: đo ngày 08/08 còn 2 lỗ
+      # HIGH không vá được mà không phá vỡ tương thích — `sharp <0.35.0` (phải
+      # nhảy 0.35.3, breaking) và `image-size` (chưa có bản vá). Đặt gate ở
+      # `high` là CI đỏ vĩnh viễn cho tới khi có nhánh nâng dependency, mà cổng
+      # đỏ mãi thì người ta bỏ qua nó — tệ hơn không có cổng.
+      #
+      # 9 lỗ HIGH khác (ws, axios, express, body-parser…) vá được bằng
+      # `npm audit fix` KHÔNG --force; việc đó chạm 27 gói gồm cả tầng
+      # express-session, nên phải làm ở nhánh riêng có test đăng nhập thật.
+      - name: npm audit (zalo-server SCA — báo cáo)
+        working-directory: zalo-server
+        continue-on-error: true
+        run: npm audit --omit=dev --omit=optional --audit-level=high
+
+      - name: npm audit critical (zalo-server SCA — cổng chặn)
+        working-directory: zalo-server
+        run: |
+          npm audit --omit=dev --omit=optional --audit-level=critical \
+            || { echo "::error::zalo-server có lỗ hổng CRITICAL"; exit 1; }
+
