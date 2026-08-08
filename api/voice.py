@@ -127,11 +127,28 @@ def create_router() -> APIRouter:
 
     # ── File audio cho loa (không auth: Cast/DLNA không gửi header) ──────
     @router.get("/media/voice/{name}")
-    async def media_voice(name: str):
+    async def media_voice(name: str, exp: str = "", sig: str = ""):
+        """File audio cho loa kéo về.
+
+        Chromecast/DLNA không gửi được `Authorization`, nên đường này xác thực
+        bằng CHỮ KÝ trong URL thay vì header. `media_url()` luôn phát URL đã
+        ký; việc BẮT BUỘC có chữ ký nằm sau cờ `security.signed_media_required`
+        (mặc định tắt) để URL đã nằm trong hàng đợi lịch hẹn không chết theo
+        lần cập nhật.
+        """
         from services.voice import config as vcfg
 
         if not _SAFE_NAME.match(name or ""):
             raise HTTPException(404, "not found")
+
+        from services.config import config as _cfg
+        _sec = _cfg.get().get("security")
+        _bat_buoc = bool(_sec.get("signed_media_required")) if isinstance(_sec, dict) else False
+        if _bat_buoc:
+            from services.signed_url import kiem_chu_ky
+            if not kiem_chu_ky(f"/media/voice/{name}", exp, sig, pham_vi="voice"):
+                raise HTTPException(403, "chữ ký không hợp lệ hoặc đã hết hạn")
+
         path = vcfg.media_dir() / name
         if not path.is_file():
             raise HTTPException(404, "not found")

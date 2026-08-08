@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.support import require_admin
 from services.register_service import register_service
+
+logger = logging.getLogger(__name__)
 
 
 class RegisterConfigRequest(BaseModel):
@@ -50,9 +53,37 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         return {"register": register_service.reset()}
 
+    @router.post("/api/register/events-ticket")
+    async def register_events_ticket(authorization: str | None = Header(default=None)):
+        """Xin vé mở SSE. Xác thực bằng header như mọi endpoint khác."""
+        identity = require_admin(authorization)
+        from services.sse_ticket import kho_ve
+        ve, ttl = kho_ve.cap(identity)
+        return {"ok": True, "ticket": ve, "expires_in": ttl}
+
     @router.get("/api/register/events")
-    async def register_events(token: str = ""):
-        require_admin(f"Bearer {token}")
+    async def register_events(token: str = "", ticket: str = ""):
+        """SSE. Ưu tiên vé; `token=` giữ lại để không cắt client cũ.
+
+        `EventSource` không gửi được header tuỳ ý nên đường này buộc phải nhận
+        xác thực qua query string — mà query string thì vào access log, lịch sử
+        trình duyệt và header Referer. Vé sống 60 giây và dùng một lần, nên lộ
+        cũng gần như vô hại; còn `token=` chính là KHOÁ ADMIN, lộ là mất tất cả.
+        """
+        if ticket:
+            from services.sse_ticket import kho_ve
+            if kho_ve.dung(ticket) is None:
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": "Vé không hợp lệ, đã dùng hoặc đã hết hạn",
+                            "code": "sse_ticket_invalid"})
+        else:
+            # Đường cũ — còn để client chưa cập nhật vẫn chạy. Ghi cảnh báo để
+            # biết khi nào không còn ai dùng mà bỏ hẳn.
+            logger.warning({"event": "sse_token_trong_url",
+                            "msg": "client còn dùng ?token= (khoá admin trong URL); "
+                                   "hãy chuyển sang /api/register/events-ticket"})
+            require_admin(f"Bearer {token}")
 
         async def stream():
             last = ""

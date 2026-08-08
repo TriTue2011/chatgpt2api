@@ -254,6 +254,20 @@ export type RegisterConfig = {
 };
 
 /**
+ * Xin vé mở SSE. Vé sống 60 giây và dùng đúng một lần.
+ *
+ * `EventSource` không gửi được header tuỳ ý nên xác thực buộc phải đi qua query
+ * string. Trước đây chỗ đó là chính khoá admin — mà query string vào access
+ * log, lịch sử trình duyệt và header Referer.
+ */
+export async function xinVeSSE() {
+  return httpRequest<{ ok: boolean; ticket: string; expires_in: number }>(
+    "/api/register/events-ticket",
+    { method: "POST", body: {} },
+  );
+}
+
+/**
  * Ai đang đăng nhập, hỏi bằng CHÍNH cookie phiên.
  *
  * Cố ý không dùng lại `login()`: hàm đó luôn đặt header

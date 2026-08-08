@@ -203,7 +203,15 @@ def media_url(path: Path) -> str:
             "Chưa đặt voice.public_base_url — loa trong nhà không tải được file "
             "từ localhost. Điền IP/domain của gateway trong Settings."
         )
-    return f"{base}/media/voice/{path.name}"
+    duong = f"/media/voice/{path.name}"
+    # Luôn KÝ, kể cả khi máy chủ chưa bắt buộc kiểm: URL ký vẫn phục vụ được
+    # bởi bản chưa bật kiểm (nó chỉ bỏ qua hai tham số thừa). Nhờ vậy khi bật
+    # cờ `security.signed_media_required` thì các URL đã phát ra vẫn còn dùng
+    # được, không có khoảng trống loa câm.
+    #
+    # Hạn dài hơn mặc định vì lịch hẹn phát vào ngày mai vẫn phải tải được.
+    from services.signed_url import ky_duong_dan
+    return f"{base}{duong}?{ky_duong_dan(duong, pham_vi='voice', song_giay=7 * 24 * 3600)}"
 
 
 def cleanup_media(max_age_hours: int = 0) -> int:

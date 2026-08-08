@@ -5,8 +5,7 @@ import { LoaderCircle } from "lucide-react";
 
 import webConfig from "@/constants/common-env";
 import { useAuthGuard } from "@/lib/use-auth-guard";
-import type { RegisterConfig } from "@/lib/api";
-import { getStoredAuthKey } from "@/store/auth";
+import { xinVeSSE, type RegisterConfig } from "@/lib/api";
 
 import { useSettingsStore } from "../settings/store";
 import { RegisterCard } from "./components/register-card";
@@ -25,16 +24,39 @@ function RegisterDataController() {
   useEffect(() => {
     let source: EventSource | null = null;
     let closed = false;
-    void getStoredAuthKey().then((token) => {
-      if (closed || !token) return;
-      const baseUrl = webConfig.apiUrl.replace(/\/$/, "");
-      source = new EventSource(`${baseUrl}/api/register/events?token=${encodeURIComponent(token)}`);
-      source.onmessage = (event) => {
-        setRegisterConfig(JSON.parse(event.data) as RegisterConfig);
-      };
-    });
+    let hen: ReturnType<typeof setTimeout> | null = null;
+
+    // Vé dùng ĐÚNG MỘT LẦN, nên phải tự nối lại bằng vé mới: cơ chế reconnect
+    // sẵn có của EventSource sẽ mở lại đúng URL cũ và nhận 401 vĩnh viễn. Không
+    // xử lý ở đây thì một lần mạng chớp là bảng tiến trình đứng im mà không báo
+    // gì — kiểu hỏng im lặng khó lần nhất.
+    const noi = async () => {
+      if (closed) return;
+      try {
+        const {ticket} = await xinVeSSE();
+        if (closed || !ticket) return;
+        const baseUrl = webConfig.apiUrl.replace(/\/$/, "");
+        source = new EventSource(
+          `${baseUrl}/api/register/events?ticket=${encodeURIComponent(ticket)}`,
+          {withCredentials: true},
+        );
+        source.onmessage = (event) => {
+          setRegisterConfig(JSON.parse(event.data) as RegisterConfig);
+        };
+        source.onerror = () => {
+          source?.close();
+          source = null;
+          if (!closed) hen = setTimeout(() => void noi(), 3000);
+        };
+      } catch {
+        if (!closed) hen = setTimeout(() => void noi(), 5000);
+      }
+    };
+    void noi();
+
     return () => {
       closed = true;
+      if (hen) clearTimeout(hen);
       source?.close();
     };
   }, [setRegisterConfig]);
