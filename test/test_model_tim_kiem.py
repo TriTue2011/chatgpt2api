@@ -115,3 +115,41 @@ class LocModelVeAnhTests(unittest.TestCase):
         # biểu tượng đứng trước.
         i = self.CARD.index("🧩 Quản lý Model")
         self.assertIn("allModels.map", self.CARD[i:i + 1200])
+
+
+class TickPhaiVaoDUNG_CHO_Tests(unittest.TestCase):
+    """`/v1/models` lọc theo `model_settings.enabled_models`, không phải
+    `providers.gemini_free.extra_models`.
+
+    `extra_models` KHÔNG có dòng mã Python nào đọc tới — tick ở card Gemini vì
+    thế chẳng ảnh hưởng gì, trong khi trang Quản lý Model tick vào chỗ khác.
+    Hai danh sách lệch nhau mà không có dấu hiệu nào; chủ máy chỉ phát hiện khi
+    thấy ô chọn model liệt kê thứ mình không bật.
+    """
+
+    CARD = (GOC / "web/src/app/settings/components/gemini-card.tsx").read_text(encoding="utf-8")
+
+    def test_extra_models_thuc_su_khong_ai_doc(self):
+        """Nếu về sau có nơi đọc nó thì test này phải đỏ để xem lại thiết kế."""
+        import subprocess
+        # Bỏ thư mục test: chính test này có nhắc tên trường.
+        ra = subprocess.run(["grep", "-rn", "extra_models", "--include=*.py",
+                             "services", "api", "captcha-solver", "vn-mcp-hub"],
+                            cwd=str(GOC), capture_output=True, text=True)
+        self.assertEqual(ra.stdout.strip(), "",
+                         "đã có nơi đọc extra_models — thiết kế đổi, xem lại card")
+
+    def test_card_doc_tu_model_settings(self):
+        self.assertIn("ms?.enabled_models?.gemini_free", self.CARD)
+
+    def test_card_GHI_vao_model_settings(self):
+        i = self.CARD.index("async function save")
+        than = self.CARD[i:i + 1800]
+        self.assertIn("model_settings: ms", than)
+        self.assertNotIn("extra_models", than, "vẫn ghi vào trường chết")
+
+    def test_giu_nguyen_phan_con_lai_cua_model_settings(self):
+        """`config.update` thay nguyên khối — gửi thiếu `default_models` là xoá."""
+        i = self.CARD.index("const ms = {")
+        self.assertIn("...modelSettings", self.CARD[i:i + 300])
+        self.assertIn("...(modelSettings?.enabled_models || {})", self.CARD[i:i + 400])

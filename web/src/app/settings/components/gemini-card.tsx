@@ -16,6 +16,7 @@ export function GeminiCard() {
   const [geminiEnabled, setGeminiEnabled]   = useState(true);
   const [allModels, setAllModels]           = useState<string[]>([]);  // từ /v1/models (gemini_free)
   const [enabledModels, setEnabledModels]   = useState<string[]>([]);  // đã tick
+  const [modelSettings, setModelSettings]   = useState<any>({});       // giữ nguyên phần còn lại
 
   // Model TRẢ LỜI, lọc khỏi danh sách đã tick.
   //
@@ -51,8 +52,17 @@ export function GeminiCard() {
         .map((m: any) => String(m.id || ""));
       setAllModels(mAll.sort());
 
-      // extra_models: danh sách đã tick; default = tất cả
-      const saved: string[] = Array.isArray(p.extra_models) ? p.extra_models : mAll;
+      // Danh sách đã tick lấy từ `model_settings.enabled_models.gemini_free` —
+      // ĐÚNG chỗ mà `/v1/models` đọc để lọc (`_apply_enabled_filter`).
+      //
+      // Bản cũ đọc/ghi `providers.gemini_free.extra_models`, một trường KHÔNG
+      // có dòng mã Python nào đọc tới. Tick ở đây vì thế chẳng ảnh hưởng gì,
+      // trong khi trang Quản lý Model tick vào chỗ khác — hai danh sách lệch
+      // nhau mà không có dấu hiệu nào.
+      const ms = (cfg.model_settings || {}) as any;
+      setModelSettings(ms);
+      const saved: string[] = Array.isArray(ms?.enabled_models?.gemini_free)
+        ? ms.enabled_models.gemini_free : [];
       setEnabledModels(saved.length > 0 ? saved : mAll);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -77,9 +87,18 @@ export function GeminiCard() {
         api_keys:     keyList,
         model:        geminiModel,
         search_model: searchModel,
-        extra_models: enabledModels,
       };
-      await request.post("/api/settings", { providers });
+      // Ghi danh sách tick vào ĐÚNG chỗ `/v1/models` đọc. Gộp trên bản hiện
+      // tại chứ không dựng mới: `config.update` thay nguyên khối `model_settings`,
+      // nên gửi thiếu `default_models` là xoá mất nó.
+      const ms = {
+        ...modelSettings,
+        enabled_models: {
+          ...(modelSettings?.enabled_models || {}),
+          gemini_free: enabledModels,
+        },
+      };
+      await request.post("/api/settings", { providers, model_settings: ms });
       toast.success("Đã lưu!");
     } catch (e: any) { toast.error(e?.message || "Lỗi lưu"); }
     finally { setSaving(false); }
