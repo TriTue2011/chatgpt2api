@@ -383,6 +383,38 @@ noVNC cùng profile, mở `claude.ai`, đăng nhập / đồng ý điều khoả
 `_SOLVER_KEY_TTL = 300.0` cache sessionKey theo profile, và `_RELOGIN_COOLDOWN
 = 300.0` giữ nhịp tự đăng nhập lại.
 
+### 6b.3. Kiểm khoá solver mà không cần đọc khoá
+
+Lệch khoá đã gây sự cố hai lần trong một tuần (Flow 07/08, Claude 08/08) và cả
+hai lần đều tốn thời gian vì triệu chứng là *"không lấy được session"* chứ
+không phải *"sai khoá"*. `GET /api/agent/branches/health` nay đối chiếu sẵn:
+
+```bash
+curl -sS -H "Authorization: Bearer $CHATGPT2API_AUTH_KEY" \
+  http://127.0.0.1:8000/api/agent/branches/health | jq .captcha_solver
+```
+
+```json
+{
+  "expected_key_configured": true,
+  "checked":  [{"provider": "claude", "status": "key_mismatch"},
+               {"provider": "flow",   "status": "key_match"}],
+  "warnings": [{"provider": "claude", "status": "key_mismatch"}]
+}
+```
+
+Trạng thái: `key_match` · `key_mismatch` · `provider_key_missing` (khai
+`captcha_solver_url` nhưng thiếu khoá → gọi solver không kèm `Authorization`) ·
+`CAPTCHA_SOLVER_API_KEY_missing` · provider không dùng solver thì không xuất
+hiện. Phản hồi **không** chứa khoá, hash, tiền tố hay độ dài.
+
+Lệch khoá **không** làm `ok` thành `false` — về kiến trúc một provider được
+phép dùng solver riêng — nhưng câu cảnh báo có trong `tom_tat`.
+
+Đối chiếu chạy trên `config.data` (bản đang chạy), không phải `config.get()`:
+`get()` tự điền `providers.flow.captcha_solver_api_key` từ biến môi trường nên
+trang Cài đặt luôn *trông như* có khoá, trong khi lúc gọi thật header đi rỗng.
+
 ---
 
 ## 7. Xử lý sự cố

@@ -66,7 +66,9 @@
       "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"grep -n \\\\\"function sendMessage\\\\|content ==\\\\|typeof content\\\\|handleMessage\\(content\\\\|handleMessage\\(msg\\\\|= content\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs | head -12\"')",
       "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"sed -n \\\\\"421,445p\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs\"')",
       "Bash(ssh root@172.16.10.38 \"docker exec -i c2a tee /app/services/zalo_personal.py > /dev/null\")",
-      "Bash(ssh root@172.16.10.38 'docker exec -w /app -e PYTHONPATH=/app c2a /app/.venv/bin/python -c \" *)"
+      "Bash(ssh root@172.16.10.38 'docker exec -w /app -e PYTHONPATH=/app c2a /app/.venv/bin/python -c \" *)",
+      "Bash(ssh root@172.16.10.38 'for i in 1 2 3 4 5 6; do s=$\\(docker ps --format \"{{.Names}} {{.Status}}\" | grep \"^c2a \"\\); if echo \"$s\" | grep -q healthy; then echo \"READY: $s\"; break; fi; echo \"cho... $s\"; sleep 10; done')",
+      "Bash(ssh root@172.16.10.38 'docker logs --since 90m c2a 2>&1 | grep -iE \"no usable chatgpt|chatgpt.free|cx/gpt|media_prompt_mo_rong|tao video|video.*error|all providers failed\" | tail -12')"
     ]
   }
 }

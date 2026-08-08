@@ -24,7 +24,9 @@ thử một lượt.
 """
 from __future__ import annotations
 
+import hmac
 import logging
+import os
 from typing import Any
 
 from services.agent.branches import BRANCHES, branch_model
@@ -136,8 +138,81 @@ def _ghim_mot_model(model: str) -> bool:
     return True
 
 
+# ── Khoá captcha-solver của provider lệch với CAPTCHA_SOLVER_API_KEY ────────
+# Cùng họ lỗi với phần trên: cấu hình sai KHÔNG báo sai cấu hình, nó báo một
+# triệu chứng ở chỗ khác. Ở đây triệu chứng là "không lấy được session" / HTTP
+# 401 từ solver, nên người ta đi tìm phía đăng nhập chứ không nghĩ tới khoá.
+# Đã mất thời gian chẩn đoán hai lần trong một tuần: Flow (07/08) rồi Claude
+# (08/08/2026).
+#
+# Đọc ``config.data`` chứ KHÔNG phải ``config.get()``. ``get()`` tự điền
+# ``providers.flow.captcha_solver_api_key`` từ biến môi trường (config.py:1100)
+# và không ghi ngược vào ``self.data``; trong khi MỌI nơi gọi thật —
+# ``api/claude._claude_cfg``, ``flow_google._pool_config``,
+# ``api/gemini_web._solver_cfg`` — đều đọc ``config.data``. So với ``get()`` là
+# so với thứ trang Cài đặt hiển thị, không phải thứ đang chạy; đúng khe hở đã
+# để lọt lần trước.
+#
+# Trạng thái: key_match · key_mismatch · provider_key_missing ·
+# CAPTCHA_SOLVER_API_KEY_missing · not_configured (bỏ qua, không cảnh báo).
+_CAU_CANH_BAO: dict[str, str] = {
+    "key_mismatch":
+        "{p} dùng captcha solver nhưng key khác CAPTCHA_SOLVER_API_KEY; "
+        "tự khôi phục session có thể thất bại 401.",
+    "provider_key_missing":
+        "{p} khai captcha_solver_url nhưng không có captcha_solver_api_key; "
+        "lệnh gọi solver sẽ đi không kèm Authorization.",
+    "CAPTCHA_SOLVER_API_KEY_missing":
+        "{p} cần captcha solver nhưng biến môi trường CAPTCHA_SOLVER_API_KEY "
+        "chưa đặt; không có gì để đối chiếu.",
+}
+
+
+def kiem_khoa_captcha() -> dict[str, Any]:
+    """Đối chiếu khoá solver của từng provider với ``CAPTCHA_SOLVER_API_KEY``.
+
+    Chỉ xét provider CÓ khai dùng solver. Provider không khai thì im lặng —
+    một bộ kiểm hay kêu oan sẽ bị bỏ qua cả lúc kêu đúng.
+
+    KHÔNG trả về giá trị khoá, hash, tiền tố hay độ dài. Chỉ trả tên provider
+    và một nhãn trạng thái; so sánh bằng ``hmac.compare_digest``.
+    """
+    env_key = os.getenv("CAPTCHA_SOLVER_API_KEY", "").strip()
+    providers = config.data.get("providers") or {}
+    if not isinstance(providers, dict):
+        providers = {}
+
+    da_kiem: list[dict[str, str]] = []
+    for ten, cfg in sorted(providers.items()):
+        if not isinstance(cfg, dict):
+            continue
+        url = str(cfg.get("captcha_solver_url") or "").strip()
+        key = str(cfg.get("captcha_solver_api_key") or "").strip()
+        if not url and not key:
+            continue                      # not_configured — không dùng solver
+
+        if not env_key:
+            trang_thai = "CAPTCHA_SOLVER_API_KEY_missing"
+        elif not key:
+            trang_thai = "provider_key_missing"
+        elif hmac.compare_digest(key, env_key):
+            trang_thai = "key_match"
+        else:
+            trang_thai = "key_mismatch"
+        da_kiem.append({"provider": str(ten), "status": trang_thai})
+
+    return {
+        "expected_key_configured": bool(env_key),
+        # Cần `checked` để phân biệt "không cảnh báo vì mọi thứ khớp" với
+        # "không cảnh báo vì chẳng quét provider nào" — hai tình huống trông
+        # giống hệt nhau nếu chỉ nhìn `warnings` rỗng.
+        "checked": da_kiem,
+        "warnings": [r for r in da_kiem if r["status"] != "key_match"],
+    }
+
+
 def check() -> dict[str, Any]:
-    """Quét mọi nhánh. Trả {ok, branches: [...], tom_tat}."""
+    """Quét mọi nhánh. Trả {ok, branches: [...], captcha_solver, tom_tat}."""
     ids = _model_ids()
     rows: list[dict[str, Any]] = []
     for name, (label, default) in BRANCHES.items():
@@ -177,10 +252,15 @@ def check() -> dict[str, Any]:
 
     bad = [r for r in rows if r["state"] in ("model_khong_ton_tai", "thieu_xac_thuc")]
     ghim = [r for r in rows if r["ghim_cung"] and r["state"] == "ok"]
+    captcha = kiem_khoa_captcha()
     return {
+        # KHÔNG tính lệch khoá captcha vào `ok`: về kiến trúc, một provider
+        # được phép dùng solver riêng với khoá riêng hợp lệ. Nó là cảnh báo,
+        # không phải kết luận hỏng.
         "ok": not bad,
         "checked_models": len(ids),
         "branches": rows,
+        "captcha_solver": captcha,
         # KHÔNG tính vào `ok`: ghim cứng vẫn CHẠY ĐƯỢC, chỉ là không có dự
         # phòng. Cho nó làm đỏ cả bộ kiểm là biến một cảnh báo hữu ích thành
         # tiếng ồn, rồi người ta bỏ qua cả lúc nó kêu đúng.
@@ -197,6 +277,13 @@ def check() -> dict[str, Any]:
             " · Nhánh ghim MỘT model cụ thể (hết lượt là không có gì thay thế): "
             + ", ".join(f"{r['branch']}={r['model']}" for r in ghim)
             + ". Nên đổi sang '<provider>/auto' hoặc một combo."
+        ) + (
+            ""
+            if not captcha["warnings"] else
+            " · " + " ".join(
+                _CAU_CANH_BAO[w["status"]].format(p=w["provider"])
+                for w in captcha["warnings"]
+            )
         ),
     }
 
