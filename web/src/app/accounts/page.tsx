@@ -737,25 +737,13 @@ function AccountsPageContent() {
   // Reorder an API key within a provider pool (Agnes AI, Gemini, etc.)
   const handleReorderProviderKey = async (providerId: string, keyIndex: number, action: "promote" | "demote") => {
     try {
-      const cur = (await request.get("/api/settings")).data as any;
-      const providers = { ...((cur?.config?.providers) || {}) };
-      const cfg = { ...((providers[providerId] as any) || {}) };
-      
-      const keysArr = Array.isArray(cfg.api_keys) ? cfg.api_keys.slice() : (cfg.api_key ? [cfg.api_key] : []);
-      if (keyIndex < 0 || keyIndex >= keysArr.length) return;
-      
-      const [targetKey] = keysArr.splice(keyIndex, 1);
-      if (action === "promote") {
-        keysArr.unshift(targetKey);
-      } else {
-        keysArr.push(targetKey);
-      }
-      
-      cfg.api_keys = keysArr;
-      cfg.api_key = keysArr[0] || "";
-      providers[providerId] = cfg;
-      
-      await request.post("/api/settings", { providers });
+      // Gửi CHỈ SỐ cho máy chủ tự xáo, không kéo cả pool khoá về trình duyệt.
+      // Cách cũ (GET config → tự xáo mảng → POST lại) chỉ chạy khi trình duyệt
+      // cầm được giá trị khoá thật — mà đó đúng là thứ đã bỏ đi khi che secret.
+      await request.post(`/api/providers/${encodeURIComponent(providerId)}/keys/reorder`, {
+        index: keyIndex,
+        action,
+      });
       toast.success(action === "promote" ? "Đã đặt key làm #1" : "Đã chuyển key xuống cuối");
       void fetchProviderTree();
     } catch (e: any) {

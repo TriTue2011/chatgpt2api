@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 
+import { boNhanSecret, type BanDoSecret } from "@/lib/secret-markers";
+
 import {
   createCPAPool,
   deleteBackup,
@@ -131,6 +133,15 @@ function normalizeFiles(items: CPARemoteFile[]) {
 
 type SettingsStore = {
   config: SettingsConfig | null;
+  /**
+   * `đường.dẫn → đã có giá trị hay chưa`, cho các trường bí mật mà máy chủ
+   * không trả giá trị nữa. Ô nhập để trống, nhưng giao diện vẫn nói được
+   * "đã đặt" — không có nó thì người dùng không phân biệt nổi "chưa cấu hình"
+   * với "đã cấu hình nhưng không hiển thị".
+   *
+   * Rỗng khi máy chủ chưa bật cờ che (không có nhãn nào để mà ghi nhận).
+   */
+  secretDaDat: BanDoSecret;
   isLoadingConfig: boolean;
   isSavingConfig: boolean;
   backups: BackupItem[];
@@ -233,6 +244,7 @@ type SettingsStore = {
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   config: null,
+  secretDaDat: {},
   isLoadingConfig: true,
   isSavingConfig: false,
   backups: [],
@@ -288,9 +300,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ isLoadingConfig: true });
     try {
       const data = await fetchSettingsConfig();
-      const normalized = normalizeConfig(data.config);
+      // Bỏ nhãn `{"is_set": true}` TRƯỚC khi chuẩn hoá: `normalizeConfig` gọi
+      // String()/Number() lên các trường, mà String({is_set:true}) ra
+      // "[object Object]" — và chuỗi đó sẽ được LƯU NGƯỢC lên máy chủ như một
+      // khoá thật ở lần bấm Lưu kế tiếp.
+      const {config: khongNhan, daDat} = boNhanSecret(data.config);
       set({
-        config: normalized,
+        config: normalizeConfig(khongNhan),
+        secretDaDat: daDat,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không tải được cấu hình hệ thống");
@@ -340,9 +357,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           passphrase: String(config.backup?.passphrase || "").trim(),
         },
       });
-      set({
-        config: normalizeConfig(data.config),
-      });
+      {
+        const {config: khongNhan, daDat} = boNhanSecret(data.config);
+        set({
+          config: normalizeConfig(khongNhan),
+          secretDaDat: daDat,
+        });
+      }
       toast.success("Đã lưu cấu hình");
       return true;
     } catch (error) {

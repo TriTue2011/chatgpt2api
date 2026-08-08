@@ -548,6 +548,52 @@ def create_router(app_version: str) -> APIRouter:
             result = che_giau(result)
         return {"config": result}
 
+    class DoiThuTuKhoaRequest(BaseModel):
+        index: int
+        action: str = "promote"
+
+    @router.post("/api/providers/{provider_id}/keys/reorder")
+    async def doi_thu_tu_khoa(provider_id: str, body: DoiThuTuKhoaRequest,
+                              authorization: str | None = Header(default=None)):
+        """Đổi thứ tự một khoá trong pool, theo CHỈ SỐ.
+
+        Trước đây web làm việc này bằng cách GET toàn bộ config, tự xáo mảng
+        `api_keys` rồi POST lại. Cách đó chỉ chạy được khi trình duyệt cầm
+        được giá trị khoá thật — mà đó đúng là thứ ta vừa bỏ đi. Không có
+        endpoint này thì bật cờ che secret sẽ biến nút "đưa lên #1" thành một
+        nút không làm gì, im lặng: mảng khoá tới nơi thành nhãn `is_set`, bộ
+        lọc ghi bỏ qua, giao diện vẫn báo thành công.
+        """
+        require_admin(authorization)
+        providers = config.data.get("providers") or {}
+        cfg = providers.get(provider_id)
+        if not isinstance(cfg, dict):
+            raise HTTPException(status_code=404,
+                                detail={"error": f"Không có provider '{provider_id}'"})
+        khoa = list(cfg.get("api_keys") or [])
+        if not khoa and str(cfg.get("api_key") or "").strip():
+            khoa = [str(cfg["api_key"]).strip()]
+        if not 0 <= body.index < len(khoa):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": f"index {body.index} ngoài phạm vi (có {len(khoa)} khoá)"})
+
+        muc = khoa.pop(body.index)
+        if body.action == "promote":
+            khoa.insert(0, muc)
+        elif body.action == "demote":
+            khoa.append(muc)
+        else:
+            raise HTTPException(status_code=400,
+                                detail={"error": "action phải là 'promote' hoặc 'demote'"})
+
+        config.update({"providers": {provider_id: {"api_keys": khoa,
+                                                   "api_key": khoa[0]}}})
+        logger.info({"event": "doi_thu_tu_khoa", "provider": provider_id,
+                     "index": body.index, "action": body.action, "tong": len(khoa)})
+        # KHÔNG trả khoá về — chỉ trả số lượng, đủ để giao diện tải lại.
+        return {"ok": True, "count": len(khoa)}
+
     # ── Cloudflare Tunnel ──
     @router.get("/api/tunnel/status")
     async def tunnel_status(authorization: str | None = Header(default=None)):
