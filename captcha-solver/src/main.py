@@ -33,6 +33,7 @@ from .accounts_db import (
     list_accounts,
     resolve_account,
     save_account,
+    set_totp,
 )
 from .auto_login import (
     get_session as get_login_session,
@@ -1738,6 +1739,47 @@ async def api_accounts_get(email: str) -> dict[str, Any]:
         "has_password": bool(str(acct.get("password") or "").strip()),
         "has_totp": bool(str(acct.get("totp_secret") or "").strip()),
     }
+
+
+@app.get("/v1/accounts/saved/{email}/totp", dependencies=[Depends(require_api_key)])
+async def api_accounts_totp(email: str) -> dict[str, Any]:
+    """MÃ TOTP hiện tại — không bao giờ trả hạt giống.
+
+    Giao diện trước đây tự sinh mã trong trình duyệt, nên nó phải giữ HẠT
+    GIỐNG trong `localStorage`. Hạt giống sinh ra mọi mã 6 số từ nay về sau;
+    mã 6 số thì chết sau 30 giây. Đưa việc sinh mã về máy chủ là đổi một bí
+    mật vĩnh viễn lấy một giá trị dùng một lần.
+    """
+    import time as _t
+
+    acct = get_account(email)
+    if not acct:
+        raise HTTPException(404, "Account not found")
+    seed = str(acct.get("totp_secret") or "").strip()
+    if not seed:
+        raise HTTPException(404, "Tài khoản này chưa có TOTP")
+    try:
+        import pyotp
+    except Exception:
+        raise HTTPException(503, "pyotp chưa cài trên máy chủ")
+    try:
+        code = pyotp.TOTP(seed).now()
+    except Exception:
+        # Hạt giống hỏng (hoặc mất VAULT_MASTER_KEY nên giải mã ra rỗng).
+        raise HTTPException(422, "Hạt giống TOTP không hợp lệ")
+    return {"code": code, "seconds_remaining": 30 - int(_t.time()) % 30}
+
+
+class DatTotpReq(BaseModel):
+    totp_secret: str = ""
+
+
+@app.put("/v1/accounts/saved/{email}/totp", dependencies=[Depends(require_api_key)])
+async def api_accounts_set_totp(email: str, req: DatTotpReq) -> dict[str, Any]:
+    """Đặt/xoá hạt giống TOTP. Nhận vào, KHÔNG bao giờ trả ra."""
+    if not set_totp(email, str(req.totp_secret or "").strip()):
+        raise HTTPException(404, "Account not found")
+    return {"ok": True, "has_totp": bool(str(req.totp_secret or "").strip())}
 
 
 @app.post("/v1/accounts/saved", dependencies=[Depends(require_api_key)])

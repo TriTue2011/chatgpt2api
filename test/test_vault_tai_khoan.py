@@ -232,3 +232,44 @@ class KhongLoTotpRaDanhSachTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KhongGiuHatGiongOTrinhDuyetTests(unittest.TestCase):
+    """Hạt giống TOTP sinh ra MỌI mã 6 số từ nay về sau; mã thì chết sau 30 giây.
+
+    Giữ hạt giống trong `localStorage` nghĩa là một lỗ XSS lấy được yếu tố thứ
+    hai của tài khoản Google — vĩnh viễn, và không thu hồi được ngoài việc đăng
+    ký lại 2FA. Đưa việc sinh mã về máy chủ là đổi một bí mật vĩnh viễn lấy một
+    giá trị dùng một lần.
+    """
+
+    def test_may_chu_tra_MA_chu_khong_tra_hat_giong(self):
+        src = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
+        i = src.index("async def api_accounts_totp")
+        than = src[i:i + 1600]
+        self.assertIn('"code": code', than)
+        self.assertNotIn("totp_secret\": seed", than)
+        self.assertNotIn("return {\"totp_secret\"", than)
+
+    def test_dat_TOTP_khong_dung_toi_mat_khau(self):
+        """`save_account` ghi cả mật khẩu — giao diện đặt TOTP không có nó."""
+        src = (GOC / "captcha-solver/src/accounts_db.py").read_text(encoding="utf-8")
+        i = src.index("def set_totp")
+        than = src[i:src.index("def delete_account")]
+        self.assertIn("UPDATE accounts SET totp_secret", than)
+        self.assertNotIn("password", than.split('"""')[2])
+
+    def test_web_khong_con_ghi_hat_giong_vao_localStorage(self):
+        src = (GOC / "web/src/components/account-totp-display.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("function saveSecrets", src,
+                         "vẫn còn đường ghi hạt giống xuống trình duyệt")
+        self.assertIn("donHatGiongCu", src,
+                      "phải dọn hạt giống cũ khỏi máy người dùng")
+
+    def test_web_uu_tien_ma_tu_may_chu(self):
+        src = (GOC / "web/src/components/account-totp-display.tsx").read_text(encoding="utf-8")
+        i = src.index("const refresh = useCallback")
+        than = src[i:i + 1200]
+        vi_may_chu = than.index("/totp")
+        vi_cuc_bo = than.index("generateTotpCode")
+        self.assertLess(vi_may_chu, vi_cuc_bo, "vẫn sinh mã cục bộ trước")

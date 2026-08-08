@@ -16,7 +16,15 @@ type Props = {
   csUrl: string;
   csApiKey: string;
   selected: string;
-  onSelect: (email: string, account: { email: string; password: string; totp_secret: string }) => void;
+  /**
+   * `password` và `totp_secret` LUÔN rỗng kể từ 08/08/2026 — máy chủ không trả
+   * credential về trình duyệt nữa. Giữ hai trường để không phải sửa mọi nơi
+   * gọi; dùng `has_password`/`has_totp` khi cần biết đã cấu hình hay chưa.
+   */
+  onSelect: (email: string, account: {
+    email: string; password: string; totp_secret: string;
+    has_password?: boolean; has_totp?: boolean;
+  }) => void;
   disabled?: boolean;
   refreshKey?: number;
 };
@@ -66,17 +74,27 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
       return;
     }
     try {
+      // KHÔNG lấy credential về trình duyệt nữa. Endpoint này giờ chỉ trả
+      // email/nhãn/`has_password`/`has_totp` — mật khẩu và hạt giống TOTP nằm
+      // trong `accounts.db` đã mã hoá và không rời khỏi máy chủ.
+      //
+      // Đăng nhập đi đường `/v1/session/auto-login-saved`: nó nhận tên profile
+      // rồi TỰ tra credential. Form vì thế để trống ô mật khẩu — đó là chủ ý,
+      // không phải thiếu dữ liệu.
       const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(email)}`, {
         headers: { Authorization: `Bearer ${csApiKey}` },
       });
       if (res.ok) {
         const acct = await res.json();
-        onSelect(email, acct);
+        onSelect(email, {
+          email: String(acct?.email || email),
+          password: "",
+          totp_secret: "",
+          has_password: Boolean(acct?.has_password),
+          has_totp: Boolean(acct?.has_totp),
+        });
         return;
       }
-      // Stale cache: dropdown showed an account that no longer exists on the
-      // server (404) or auth changed. Don't fail silently — warn + reset the
-      // selection + refresh the list so it self-heals.
       onSelect("", { email: "", password: "", totp_secret: "" });
       if (res.status === 404) {
         toast.error("Tài khoản này không còn trên server — đã làm mới danh sách");

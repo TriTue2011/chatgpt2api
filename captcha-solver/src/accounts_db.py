@@ -138,6 +138,25 @@ def save_account(email: str, password: str, totp_secret: str = "", label: str = 
     return d
 
 
+def set_totp(email: str, totp_secret: str) -> bool:
+    """Chỉ cập nhật hạt giống TOTP, KHÔNG đụng mật khẩu.
+
+    Cần một đường riêng vì `save_account` ghi cả mật khẩu — giao diện đặt TOTP
+    thì không có mật khẩu trong tay, gọi `save_account` là xoá mất nó.
+    """
+    tt = vault.ma_hoa(totp_secret, email, "totp_secret")
+    c = _conn()
+    try:
+        cur = c.execute(
+            "UPDATE accounts SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE email = ?", (tt, email))
+        ok = cur.rowcount > 0
+        c.commit()
+    finally:
+        c.close()
+    return ok
+
+
 def delete_account(email: str) -> bool:
     c = _conn()
     # `rowcount` nằm trên CON TRỎ, không nằm trên kết nối. Bản cũ đọc

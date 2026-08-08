@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { request } from "@/lib/request";
+import { coPhienTrinhDuyet, headerXacThuc } from "@/lib/browser-session";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -177,8 +178,13 @@ export default function ChatPage() {
     const next = speakQueueRef.current.shift();
     if (!next) return;
     speakingRef.current = true;
+    // `<audio src>` không gửi được header — nên bản cũ nhét KHOÁ ADMIN vào query
+    // string, y hệt lỗi đã sửa ở đường SSE. Có phiên cookie thì trình duyệt tự
+    // gửi cookie cho request này, khỏi cần `key=` nữa.
+    const co_phien = coPhienTrinhDuyet();
     const url = `/api/voice/stream?voice=${encodeURIComponent(voiceIdRef.current)}`
-      + `&key=${encodeURIComponent(authKeyRef.current)}&text=${encodeURIComponent(next)}`;
+      + (co_phien ? "" : `&key=${encodeURIComponent(authKeyRef.current)}`)
+      + `&text=${encodeURIComponent(next)}`;
     const a = new Audio(url);
     audioRef.current = a;
     const done = () => { speakingRef.current = false; audioRef.current = null; playNext(); };
@@ -303,7 +309,7 @@ export default function ChatPage() {
           fd.append("file", blob, `mic.${ext}`);
           const resp = await fetch("/v1/audio/transcriptions", {
             method: "POST",
-            headers: { Authorization: `Bearer ${authKeyRef.current}` },
+            headers: headerXacThuc(authKeyRef.current),
             body: fd,
           });
           const data = await resp.json().catch(() => ({}));
@@ -394,15 +400,16 @@ export default function ChatPage() {
         try { authKey = localStorage.getItem("chatgpt2api_auth_key") || ""; } catch(e) {}
       }
       authKeyRef.current = authKey;
-      console.log("Chat: authKey available:", !!authKey, "length:", authKey.length);
-      if (!authKey) {
+      // Sau khi di trú sang cookie thì KHÔNG còn khoá nào trong kho — đòi
+      // Bearer ở đây là chat chết ngay sau lần đăng nhập đầu tiên.
+      if (!authKey && !coPhienTrinhDuyet()) {
         setMessages(prev => [...prev, { role: "assistant", content: "Lỗi: Chưa đăng nhập. Vui lòng refresh trang và đăng nhập lại." }]);
         setStreaming(false);
         return;
       }
       const resp = await fetch("/v1/chat/completions", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": authKey ? `Bearer ${authKey}` : "" },
+        headers: { "Content-Type": "application/json", ...headerXacThuc(authKey) },
         body: JSON.stringify({
           model, stream: true,
           messages: [

@@ -62,6 +62,18 @@ export function nhanCsrfToken(token: string): void {
     if (token) luuCsrfToken(token);
 }
 
+/**
+ * Header xác thực cho các lời gọi `fetch` THẲNG (không qua axios `request`).
+ *
+ * Có phiên cookie → gắn `X-CSRF-Token`, cookie tự đi kèm. Chưa di trú → Bearer
+ * như cũ. Không có gì cả → trả rỗng, để nơi gọi tự quyết định báo lỗi.
+ */
+export function headerXacThuc(khoaBearer = ""): Record<string, string> {
+    const csrf = layCsrfToken();
+    if (csrf) return {"X-CSRF-Token": csrf};
+    return khoaBearer ? {Authorization: `Bearer ${khoaBearer}`} : {};
+}
+
 export function coPhienTrinhDuyet(): boolean {
     return Boolean(layCsrfToken());
 }

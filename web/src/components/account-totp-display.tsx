@@ -6,32 +6,44 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
+import { request } from "@/lib/request";
 
 const STORAGE_KEY = "chatgpt2api_totp_secrets";
 
+/**
+ * Hạt giống TOTP KHÔNG còn được lưu ở trình duyệt.
+ *
+ * Hạt giống sinh ra mọi mã 6 số từ nay về sau; mã 6 số thì chết sau 30 giây.
+ * Giữ hạt giống trong `localStorage` nghĩa là một lỗ XSS lấy được yếu tố thứ
+ * hai của tài khoản Google — vĩnh viễn, và không cách nào thu hồi ngoài việc
+ * đăng ký lại 2FA. Nay máy chủ giữ hạt giống (đã mã hoá AES-256-GCM trong
+ * `accounts.db`) và chỉ trả MÃ HIỆN TẠI.
+ *
+ * Hai hàm dưới đây chỉ còn để DỌN dữ liệu cũ khỏi máy người dùng.
+ */
 function loadSecrets(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
   } catch { return {}; }
 }
 
-function saveSecrets(secrets: Record<string, string>) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(secrets));
+/** Xoá hạt giống còn sót lại từ bản cũ. Gọi khi đã lấy được mã từ máy chủ. */
+export function donHatGiongCu(email: string) {
+  try {
+    const secrets = loadSecrets();
+    if (!(email in secrets)) return;
+    delete secrets[email];
+    if (Object.keys(secrets).length) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(secrets));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch { /* chế độ riêng tư chặn storage */ }
 }
 
 export function getTotpSecret(email: string): string {
   const secrets = loadSecrets();
   return secrets[email] || "";
-}
-
-export function setTotpSecret(email: string, secret: string) {
-  const secrets = loadSecrets();
-  if (secret.trim()) {
-    secrets[email] = secret.trim();
-  } else {
-    delete secrets[email];
-  }
-  saveSecrets(secrets);
 }
 
 export function AccountTotpDisplay({ email, label }: { email: string; label?: string }) {
@@ -47,12 +59,26 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
   }, [email]);
 
   const refresh = useCallback(async (sec: string) => {
+    // Ưu tiên MÃ do máy chủ sinh: hạt giống nằm trong `accounts.db` đã mã hoá,
+    // không cần rời khỏi máy chủ. Chỉ rơi về bản cục bộ khi máy chủ chưa có
+    // tài khoản đó (bản cũ, chưa di trú).
+    try {
+      const r = await request.get(
+        `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`);
+      const d = r.data as { code?: string; seconds_remaining?: number };
+      if (d?.code) {
+        setCode(d.code);
+        setRemaining(Number(d.seconds_remaining ?? totpSecondsRemaining()));
+        donHatGiongCu(email);
+        return;
+      }
+    } catch { /* máy chủ chưa có → dùng bản cục bộ bên dưới */ }
     if (!sec.trim()) { setCode(""); return; }
     try {
       setCode(await generateTotpCode(sec));
       setRemaining(totpSecondsRemaining());
     } catch { setCode(""); }
-  }, []);
+  }, [email]);
 
   useEffect(() => {
     if (!secret.trim()) { setCode(""); return; }
@@ -61,17 +87,35 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [secret, refresh]);
 
-  const handleSave = () => {
-    setTotpSecret(email, secret);
-    setShowInput(false);
-    toast.success("Đã lưu TOTP secret");
+  // Gửi hạt giống LÊN MÁY CHỦ (nơi nó được mã hoá), không lưu ở trình duyệt.
+  const datTotpTrenMayChu = async (seed: string) => {
+    await request.put(
+      `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`,
+      {totp_secret: seed});
   };
 
-  const handleClear = () => {
-    setTotpSecret(email, "");
-    setSecret("");
-    setCode("");
-    toast.success("Đã xóa TOTP secret");
+  const handleSave = async () => {
+    try {
+      await datTotpTrenMayChu(secret.trim());
+      donHatGiongCu(email);
+      setShowInput(false);
+      toast.success("Đã lưu TOTP secret trên máy chủ");
+      void refresh("");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không lưu được TOTP secret");
+    }
+  };
+
+  const handleClear = async () => {
+    try {
+      await datTotpTrenMayChu("");
+      donHatGiongCu(email);
+      setSecret("");
+      setCode("");
+      toast.success("Đã xóa TOTP secret");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không xoá được TOTP secret");
+    }
   };
 
   const copyCode = () => {
