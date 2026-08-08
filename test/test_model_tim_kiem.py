@@ -62,29 +62,41 @@ class ChonModelRiengChoTimKiemTests(unittest.TestCase):
         self.assertEqual(self._model({}), "gemini-2.5-flash")
 
 
-class GiaoDienLayTuQuanLyModelTests(unittest.TestCase):
-    def test_co_o_chon_model_tim_kiem(self):
-        self.assertIn("Model tìm kiếm", CARD)
-        self.assertIn("search_model: searchModel", CARD)
+class MotBackendMotCho_Tests(unittest.TestCase):
+    """Cấu hình một backend không nên trải ra hai tab.
 
-    def test_danh_sach_lay_tu_model_DA_TICK(self):
-        """Danh sách cứng sẽ lệch khỏi thực tế ngay lần thượng nguồn đổi tên."""
-        i = CARD.index("Model tìm kiếm")
-        than = CARD[i:i + 1200]
-        self.assertIn("modelTraLoi.map", than,
-                      "ô này phải dùng chung nguồn với Quản lý Model (đã lọc model ảnh)")
+    `search_model` CHỈ `GeminiGrounding` dùng tới, nên nó thuộc về tab Search —
+    ngay cạnh chỗ bật backend `gemini`. Khoá và model mặc định của Gemini thì ở
+    lại Cài đặt, vì chúng phục vụ cả chat, vision và HA chứ không riêng tìm kiếm.
+    """
 
-    def test_co_lua_chon_de_trong(self):
-        """Không có lựa chọn rỗng thì không quay lại dùng model mặc định được."""
-        i = CARD.index("Model tìm kiếm")
-        self.assertIn('<option value="">', CARD[i:i + 1200])
+    TRANG = (GOC / "web/src/app/search/page.tsx").read_text(encoding="utf-8")
+    CARD = (GOC / "web/src/app/settings/components/gemini-card.tsx").read_text(encoding="utf-8")
 
-    def test_nap_lai_gia_tri_da_luu(self):
-        self.assertIn('setSearchModel(p.search_model || "")', CARD)
+    def test_o_chon_nam_o_tab_Search(self):
+        self.assertIn("Model cho Gemini Google Search", self.TRANG)
+        self.assertIn("search_model: modelGrounding", self.TRANG)
 
+    def test_KHONG_con_o_do_o_Cai_dat(self):
+        self.assertNotIn("search_model", self.CARD,
+                         "hai chỗ sửa cùng một trường thì sớm muộn cũng lệch nhau")
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_chi_hien_khi_backend_gemini_dang_dung(self):
+        self.assertIn('combo.includes("gemini") &&', self.TRANG)
+
+    def test_chi_gui_search_model_KHONG_kem_khoa(self):
+        """Gửi một khoá đơn từng xoá sạch pool khoá Gemini (sự cố 08/08)."""
+        i = self.TRANG.index("gemini_free: {search_model")
+        khoi = self.TRANG[i:i + 160]
+        self.assertNotIn("api_key", khoi)
+
+    def test_danh_sach_lay_tu_Quan_ly_Model_va_bo_model_anh(self):
+        self.assertIn("enabled_models || {}).gemini_free", self.TRANG)
+        self.assertIn('!m.startsWith("gemini-image/")', self.TRANG)
+
+    def test_khoa_Gemini_o_LAI_Cai_dat(self):
+        """Khoá phục vụ cả chat/vision — kéo sang tab Search là chia sai."""
+        self.assertIn("api_keys:     keyList", self.CARD)
 
 
 class LocModelVeAnhTests(unittest.TestCase):
@@ -101,12 +113,12 @@ class LocModelVeAnhTests(unittest.TestCase):
         self.assertIn('modelTraLoi = enabledModels.filter', self.CARD)
         self.assertIn('!m.startsWith("gemini-image/")', self.CARD)
 
-    def test_hai_o_chon_deu_dung_danh_sach_da_loc(self):
-        for neo in ("Model mặc định", "Model tìm kiếm"):
-            i = self.CARD.index(neo)
-            than = self.CARD[i:i + 900]
-            self.assertIn("modelTraLoi.map", than, f"ô «{neo}» chưa lọc model ảnh")
-            self.assertNotIn("enabledModels.map", than)
+    def test_o_chon_model_mac_dinh_dung_danh_sach_da_loc(self):
+        """Ô «Model tìm kiếm» đã chuyển sang tab Search; ở đây còn ô mặc định."""
+        i = self.CARD.index("Model mặc định")
+        than = self.CARD[i:i + 900]
+        self.assertIn("modelTraLoi.map", than, "ô «Model mặc định» chưa lọc model ảnh")
+        self.assertNotIn("enabledModels.map", than)
 
     def test_phan_TICK_van_giu_model_anh(self):
         """Tick quyết định model nào hiện ra trong /v1/models cho cả hệ thống —

@@ -31,6 +31,11 @@ function SearchPageContent() {
   // Nhiều khoá cho mỗi backend, mỗi dòng một khoá. Máy chủ xoay vòng và treo
   // tạm khoá vừa bị 429/401/403, nên hết hạn mức khoá này thì sang khoá khác.
   const [khoaBackend, setKhoaBackend] = useState<Record<string, string>>({});
+  // Model cho backend `gemini` (Google Search grounding). Chỉ NƠI NÀY dùng tới
+  // `providers.gemini_free.search_model`, nên nó thuộc về đây chứ không phải
+  // trang Cài đặt — cấu hình một backend không nên trải ra hai tab.
+  const [modelGrounding, setModelGrounding] = useState("");
+  const [modelGeminiCoSan, setModelGeminiCoSan] = useState<string[]>([]);
   const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,6 +62,12 @@ function SearchPageContent() {
         nap[ten] = gop.filter(Boolean).join("\n");
       }
       setKhoaBackend(nap);
+      const gf = providers.gemini_free || {};
+      setModelGrounding(gf.search_model || "");
+      // Cùng nguồn với /v1/models và trang Quản lý Model. Bỏ model VẼ ẢNH: chọn
+      // `imagen-*` làm model tra web là hỏng, mà giao diện không cho thấy gì.
+      const bat: string[] = ((cfg.model_settings || {}).enabled_models || {}).gemini_free || [];
+      setModelGeminiCoSan(bat.filter((m: string) => !m.startsWith("gemini-image/")));
     } catch (e) {
       console.error(e);
     } finally {
@@ -132,6 +143,9 @@ function SearchPageContent() {
                   .split("\n").map((k) => k.trim()).filter(Boolean);
                 return [ten, {enabled: true, api_key: ds[0] || "", api_keys: ds}];
               })),
+          // CHỈ gửi `search_model` — không kèm `api_key`/`api_keys`, vì gửi một
+          // khoá đơn từng xoá sạch pool khoá Gemini (sự cố 08/08, xem 3f31ad8).
+          ...(combo.includes("gemini") ? {gemini_free: {search_model: modelGrounding}} : {}),
         },
       });
       setMsg("Đã lưu!");
@@ -244,6 +258,28 @@ function SearchPageContent() {
                 giây, nên hết hạn mức khoá này thì tự sang khoá khác. Đặt ngay
                 dưới danh sách thứ tự là vì hai thứ này luôn được sửa cùng lúc:
                 thêm một backend thì việc kế tiếp luôn là dán khoá cho nó. */}
+            {combo.includes("gemini") && (
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">
+                <label className="text-[12px] font-medium text-[var(--foreground)]">
+                  Model cho Gemini Google Search
+                </label>
+                <select
+                  value={modelGrounding && modelGeminiCoSan.includes(modelGrounding) ? modelGrounding : ""}
+                  onChange={(e) => setModelGrounding(e.target.value)}
+                  className="mt-1 w-full rounded-[10px] border border-[var(--border)] bg-[var(--muted)] px-3 py-2 text-[13px] text-[var(--foreground)] focus:border-amber-400 focus:outline-none"
+                >
+                  <option value="">-- Dùng model mặc định của Gemini --</option>
+                  {modelGeminiCoSan.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[10px] text-[var(--muted-foreground)]">
+                  Danh sách lấy từ Quản lý Model (đã bỏ model vẽ ảnh). Khoá Gemini
+                  đặt ở Cài đặt → Gemini — nó phục vụ cả chat và vision, không
+                  riêng tìm kiếm.
+                </p>
+              </div>
+            )}
             {combo.filter((b) => BACKEND_CAN_KHOA[b]).map((b) => (
               <div key={`khoa-${b}`} className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">
                 <label className="text-[12px] font-medium text-[var(--foreground)]">

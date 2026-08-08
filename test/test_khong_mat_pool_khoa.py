@@ -74,11 +74,18 @@ class MotKhoaDonKhongXoaPoolTests(unittest.TestCase):
 class TrangSearchKhongCon_GuiKhoaGeminiTests(unittest.TestCase):
     """Nguồn phát của sự cố đã bị gỡ ở 041ef4a — chốt để không quay lại."""
 
-    def test_tab_search_khong_gui_gemini_free(self):
+    def test_tab_search_khong_gui_KHOA_gemini(self):
+        """Tab Search ĐƯỢC gửi `search_model` (trường của riêng nó), nhưng
+        TUYỆT ĐỐI không kèm `api_key`/`api_keys` — đó là đường đã mất 4 khoá."""
         src = (GOC / "web/src/app/search/page.tsx").read_text(encoding="utf-8")
-        i = src.index("async function save")
-        self.assertNotIn("gemini_free", src[i:i + 1600],
-                         "tab Search lại gửi khoá Gemini — đúng đường đã mất 4 khoá")
+        i = src.index("gemini_free: {")
+        khoi = src[i:i + 200]
+        self.assertNotIn("api_key", khoi)
+        self.assertIn("search_model", khoi)
+
+    def test_tab_search_khong_con_o_nhap_khoa_gemini(self):
+        src = (GOC / "web/src/app/search/page.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("setGeminiKey", src)
 
 
 if __name__ == "__main__":

@@ -15,22 +15,11 @@ from utils.log import logger
 
 
 # Fallback static models — used when API fetch fails
-# Model do CHÍNH TA định nghĩa, thượng nguồn không có — LUÔN được ghép vào.
+# Model do CHÍNH TA định nghĩa mà thượng nguồn không có — LUÔN được ghép vào.
 #
-# Khác hẳn `FALLBACK_MODELS`: cái đó chỉ dùng khi lấy danh sách động THẤT BẠI.
-# Đặt nhầm vào đó thì ai có khoá chạy được sẽ không bao giờ thấy — Google trả
-# danh sách, nhánh fallback không chạy, và alias biến mất mà không có lỗi nào.
-# (Đúng lỗi của bản 88ddff5.)
-#
-# Hậu tố `-search` bật Google Search grounding cho model CHAT; nó bị bóc ra
-# trước khi gọi Google (`_bo_hau_to_search`). Phải khai tường minh thì client
-# mới chọn được, vì grounding KHÔNG còn tự bật cho mọi request.
-ALIAS_MODELS: dict[str, list[str]] = {
-    "gemini_free": [
-        "gemini_free/gemini-3.6-flash-search",
-        "gemini_free/gemini-2.5-flash-search",
-    ],
-}
+# Khác `FALLBACK_MODELS`: cái đó chỉ dùng khi lấy danh sách động THẤT BẠI.
+# Để trống là đúng — mọi model hiện tại đều do thượng nguồn khai.
+ALIAS_MODELS: dict[str, list[str]] = {}
 
 FALLBACK_MODELS = {
     "opencode": [

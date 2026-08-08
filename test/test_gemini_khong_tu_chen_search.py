@@ -65,108 +65,49 @@ class MacDinhKhongChenTests(unittest.TestCase):
         self.assertTrue(any("functionDeclarations" in t for t in gtools))
 
 
-class NhanDangYeuCauTimWebTests(unittest.TestCase):
-    """Bám quy ước sẵn có của repo: `api/claude.py` dùng hậu tố `-search`."""
+class MotMoiDuyNhatTests(unittest.TestCase):
+    """Grounding chỉ có MỘT đường bật: kwarg tường minh.
 
-    def test_hau_to_search_thi_bat(self):
-        for m in ("gemini-3.6-flash-search", "gemini-3.5-flash-lite-websearch"):
-            self.assertTrue(_muon_tim_web(m, {}), f"{m} phải bật tìm web")
+    Từng có ba đường cho cùng một việc — combo tìm kiếm (backend `gemini`),
+    trường `search_model`, và hậu tố `-search` trong tên model. Ba đường thì
+    người dùng phải nhớ đường nào làm gì, còn ta phải giữ cả ba đúng; và khi
+    chúng lệch nhau thì triệu chứng hiện ra ở chỗ chẳng liên quan.
 
-    def test_ten_thuong_thi_tat(self):
-        for m in ("gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", ""):
-            self.assertFalse(_muon_tim_web(m, {}), f"{m} không được tự bật")
-
-    def test_kwarg_tuong_minh_de_len_ten_model(self):
-        self.assertTrue(_muon_tim_web("gemini-3.6-flash", {"google_search": True}))
-        self.assertFalse(_muon_tim_web("gemini-3.6-flash-search", {"google_search": False}))
-
-
-class BocHauToTruocKhiGoiGoogleTests(unittest.TestCase):
-    """`-search` là quy ước CỦA TA — Google không biết nó.
-
-    Không bóc ra thì URL trỏ vào một model không tồn tại và nhận 404: một lỗi
-    chẳng liên quan gì tới việc người dùng vừa yêu cầu, nên rất tốn công lần.
+    Nay chỉ còn: muốn tra web thì chọn backend `gemini` trong combo tìm kiếm.
+    Kwarg `google_search` giữ lại cho mã gọi nội bộ (chính backend đó dùng).
     """
 
-    def test_boc_dung_hau_to(self):
-        from services.providers.gemini_free import _bo_hau_to_search
-        self.assertEqual(_bo_hau_to_search("gemini-3.6-flash-search"), "gemini-3.6-flash")
-        self.assertEqual(_bo_hau_to_search("gemini-2.5-flash-websearch"), "gemini-2.5-flash")
+    def test_kwarg_tuong_minh_van_bat_duoc(self):
+        self.assertTrue(_muon_tim_web("bat-ky", {"google_search": True}))
 
-    def test_websearch_duoc_xet_TRUOC_search(self):
-        """Xét ngược thì `-websearch` chỉ rụng `-search`, còn lại đuôi `-web`."""
-        from services.providers.gemini_free import _bo_hau_to_search
-        self.assertNotIn("-web", _bo_hau_to_search("gemini-3.6-flash-websearch"))
+    def test_khong_co_kwarg_thi_TAT(self):
+        self.assertFalse(_muon_tim_web("gemini-3.6-flash", {}))
 
-    def test_ten_thuong_khong_bi_dong_vao(self):
-        from services.providers.gemini_free import _bo_hau_to_search
-        for m in ("gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"):
-            self.assertEqual(_bo_hau_to_search(m), m)
+    def test_TEN_MODEL_khong_con_bat_duoc_grounding(self):
+        """Bỏ hậu tố `-search`: một tên model không được là công tắc ẩn."""
+        for m in ("gemini-3.6-flash-search", "gemini-2.5-flash-websearch"):
+            self.assertFalse(_muon_tim_web(m, {}),
+                             f"{m} vẫn bật grounding qua tên — cơ chế thứ ba chưa bỏ hết")
 
-    def test_khong_boc_nham_giua_ten(self):
-        from services.providers.gemini_free import _bo_hau_to_search
-        self.assertEqual(_bo_hau_to_search("gemini-search-pro"), "gemini-search-pro")
-
-    def test_chat_completions_boc_TRUOC_khi_dung_url(self):
+    def test_khong_con_ham_boc_hau_to(self):
         src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")
-        i = src.index("def chat_completions")
-        than = src[i:]
-        vi_boc = than.index("_bo_hau_to_search(model)")
-        vi_url = than.index("f\"{_gemini_base_url()}/models/{model}")
-        self.assertLess(vi_boc, vi_url, "dựng URL trước khi bóc hậu tố")
+        self.assertNotIn("_bo_hau_to_search", src)
+        self.assertNotIn("_HAU_TO_SEARCH", src)
 
-
-class PhoiRaDanhSachModelTests(unittest.TestCase):
-    """Không khai ở /v1/models thì client không có cách nào chọn được."""
-
-    # Đọc khối literal trong mã nguồn thay vì import: `openai_v1_models` kéo
-    # theo `utils/pow.py`, vốn dùng cú pháp cần Python 3.10+. Ở đây thứ cần
-    # kiểm CHÍNH LÀ một danh sách hằng, nên đọc văn bản là kiểm trung thực.
-    def _nguon(self) -> str:
-        return (GOC / "services/protocol/openai_v1_models.py").read_text(encoding="utf-8")
-
-    def test_bien_the_search_LUON_duoc_ghep_khong_phai_fallback(self):
-        """Bản 88ddff5 đặt chúng vào `FALLBACK_MODELS`, mà khối đó chỉ chạy khi
-        `provider_name not in all_models` — tức là chỉ khi lấy danh sách động
-        THẤT BẠI. Ai có khoá chạy được thì Google trả danh sách, nhánh fallback
-        không chạy, và alias biến mất mà không có lỗi nào."""
-        src = self._nguon()
-        self.assertIn("ALIAS_MODELS", src)
-        i = src.index("ALIAS_MODELS: dict")
-        self.assertIn("gemini_free/gemini-3.6-flash-search", src[i:i + 700])
-        # Và phải nằm NGOÀI khối fallback có điều kiện.
-        j = src.index("for provider_name, alias_list in ALIAS_MODELS.items():")
-        k = src.index("# Apply fallbacks for providers that returned nothing")
-        self.assertLess(j, k, "alias bị ghép sau/trong khối fallback")
-
-    def test_FALLBACK_khong_con_giu_bien_the_search(self):
-        src = self._nguon()
-        i = src.index('FALLBACK_MODELS = {')
+    def test_khong_con_alias_search_trong_danh_sach_model(self):
+        src = (GOC / "services/protocol/openai_v1_models.py").read_text(encoding="utf-8")
+        i = src.index("FALLBACK_MODELS = {")
         j = src.index('"chatgpt": [', i)
-        self.assertNotIn("-search", src[i:j],
-                         "biến thể -search vẫn nằm trong FALLBACK (chỉ chạy khi fetch hỏng)")
+        self.assertNotIn("-search", src[i:j])
+        k = src.index("ALIAS_MODELS: dict")
+        self.assertIn("ALIAS_MODELS: dict[str, list[str]] = {}", src[k:k + 200],
+                      "alias để trống — mọi model đều do thượng nguồn khai")
 
-    def _khoi_gemini(self) -> str:
-        """Khối gemini_free trong FALLBACK_MODELS — KHÔNG phải trong ALIAS_MODELS.
-
-        Cả hai dict đều có khoá `gemini_free`, và ALIAS đứng trước trong file,
-        nên tìm lần xuất hiện đầu tiên là đọc nhầm khối.
-        """
-        src = self._nguon()
-        goc = src.index("FALLBACK_MODELS = {")
-        i = src.index('"gemini_free": [', goc)
-        return src[i:src.index("],", i)]
-
-    def test_hai_model_da_do_deu_co_mat(self):
-        khoi = self._khoi_gemini()
-        self.assertIn('"gemini_free/gemini-3.6-flash"', khoi)
-        self.assertIn('"gemini_free/gemini-3.5-flash-lite"', khoi)
-
-    def test_co_bien_the_search_de_bat_grounding(self):
-        src = self._nguon()
-        i = src.index("ALIAS_MODELS: dict")
-        self.assertIn('-search"', src[i:i + 700],
-                      "bỏ tự chèn mà không để đường bật lại = mất hẳn tính năng")
+    def test_backend_gemini_VAN_luon_bat_grounding(self):
+        """Bỏ đường thừa mà bỏ luôn tính năng thì là hỏng, không phải gọn."""
+        src = (GOC / "services/search_service.py").read_text(encoding="utf-8")
+        i = src.index("class GeminiGrounding")
+        self.assertIn("google_search", src[i:i + 4000])
 
 
 class ThongBaoLoiNoiDUNG_NGUYEN_NHANTests(unittest.TestCase):
@@ -182,8 +123,8 @@ class ThongBaoLoiNoiDUNG_NGUYEN_NHANTests(unittest.TestCase):
         i = src.index('if tim_web and "429" in str(last_error')
         than = src[i:i + 700]
         self.assertIn("GOOGLE SEARCH GROUNDING", than)
-        self.assertIn("_bo_hau_to_search(model)", than,
-                      "phải chỉ ra tên model dùng được thay thế")
+        self.assertIn("combo tìm kiếm", than,
+                      "phải chỉ ra đường dùng được thay thế")
 
     def test_khong_doi_thong_bao_khi_KHONG_dung_search(self):
         """Request thường mà 429 thì đúng là hết hạn mức thật — đừng đổ nhầm."""

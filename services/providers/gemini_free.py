@@ -86,10 +86,6 @@ class GeminiProvider:
             raise RuntimeError("Gemini API key not configured")
 
         tim_web = _muon_tim_web(model, kwargs)
-        # Hậu tố `-search` là quy ước CỦA TA, Google không biết nó. Phải bóc ra
-        # trước khi dựng URL, không thì gọi vào một model không tồn tại và nhận
-        # 404 — một lỗi chẳng liên quan gì tới việc người dùng vừa yêu cầu.
-        model = _bo_hau_to_search(model)
         contents, system_instruction, gemini_tools = _convert_request(
             messages, tools, google_search=tim_web)
 
@@ -212,37 +208,24 @@ class GeminiProvider:
             raise RuntimeError(
                 f"Gemini từ chối vì hết hạn mức GOOGLE SEARCH GROUNDING (không phải "
                 f"hạn mức sinh nội dung): {last_error}. Chính các khoá này vẫn gọi "
-                f"được nếu bỏ tra web — dùng '{_bo_hau_to_search(model)}' thay cho "
-                f"biến thể '-search', hoặc chờ hạn mức grounding hồi.")
+                f"được nếu bỏ tra web. Grounding chỉ dùng cho backend `gemini` "
+                f"trong combo tìm kiếm — chờ hạn mức hồi, hoặc dùng backend "
+                f"khác (SearXNG/Brave/Serper).")
         raise RuntimeError(last_error or "All Gemini API keys rate limited. Try again later.")
 
 
-_HAU_TO_SEARCH = ("-websearch", "-search")
-
-
-def _bo_hau_to_search(model: str) -> str:
-    """Bóc hậu tố quy ước của ta ra khỏi tên model gửi cho Google.
-
-    `-websearch` phải xét TRƯỚC `-search`: xét ngược lại thì
-    `gemini-3.6-flash-websearch` chỉ rụng `-search` và còn lại đuôi `-web`.
-    """
-    m = str(model or "").strip()
-    for hau_to in _HAU_TO_SEARCH:
-        if m.lower().endswith(hau_to):
-            return m[: -len(hau_to)]
-    return m
-
-
 def _muon_tim_web(model: str, kwargs: dict) -> bool:
-    """Người gọi có THẬT SỰ muốn tìm web không.
+    """Người gọi có THẬT SỰ muốn Google Search grounding không.
 
-    Theo đúng quy ước đã có trong repo (`api/claude.py`): hậu tố `-search` /
-    `-websearch` trong tên model. Thêm kwarg tường minh cho nơi gọi trong mã.
+    CHỈ qua kwarg tường minh. Trước đây còn nhận hậu tố `-search` trong tên
+    model, nhưng đó là cơ chế THỨ BA cho cùng một việc: combo tìm kiếm ở tab
+    Search đã có backend `gemini`, mà backend đó vốn LUÔN bật grounding. Ba
+    đường cho một việc thì người dùng phải nhớ đường nào làm gì, còn ta phải
+    giữ cả ba đúng — không đáng.
+
+    Grounding vẫn dùng được: chọn backend `gemini` trong combo tìm kiếm.
     """
-    if "google_search" in kwargs:
-        return bool(kwargs.get("google_search"))
-    m = str(model or "").lower()
-    return "-search" in m or "-websearch" in m
+    return bool(kwargs.get("google_search"))
 
 
 def _convert_request(messages, tools, *, google_search: bool = False):
