@@ -125,6 +125,12 @@ services:
       # đã bật mã hoá trong khi vẫn ghi chữ thường.
       VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
       #
+      # Đặt "1" để TỪ CHỐI ghi credential dạng chữ thường khi thiếu khoá, thay
+      # vì âm thầm ghi rồi chỉ để lại một dòng log. Không có nó thì chỉ cần gõ
+      # sai định dạng khoá một lần (phải là base64 của ĐÚNG 32 byte) là mọi mật
+      # khẩu và hạt giống TOTP quay về plaintext mà không ai biết.
+      VAULT_REQUIRE_ENCRYPTION: ${VAULT_REQUIRE_ENCRYPTION:-}
+      #
       # [Tuỳ chọn] Chạy bốn dịch vụ ứng dụng dưới người dùng không đặc quyền.
       # Mặc định `root` = hành vi hiện tại. Muốn đổi thì phải làm CẢ HAI:
       #

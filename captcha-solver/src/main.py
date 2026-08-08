@@ -56,6 +56,11 @@ from .claude_web_login import (
     start_claude_web_login,
     submit_2fa_code as submit_claude_web_2fa_code,
 )
+from .openai_native_login import (
+    get_session as get_openai_session,
+    start_openai_login,
+    submit_2fa_code as submit_openai_2fa_code,
+)
 from .solvers.gemini_web import (
     analyze_image as gemini_web_analyze_image,
     chat as gemini_web_chat,
@@ -1096,6 +1101,65 @@ async def api_gemini_web_relogin_via_google(profile: str) -> dict[str, Any]:
         totp_secret=acct.get("totp_secret", ""),
     )
     return {**session.to_dict(), "note": "Poll /v1/gemini-web/{profile}/onboard-status."}
+
+
+# ── ChatGPT bằng tài khoản OpenAI gốc (email + mật khẩu + TOTP) ─────────
+#
+# Khác `/v1/chatgpt/onboard`: đường đó bấm "Continue with Google" và chỉ phục vụ
+# tài khoản Google. Đường này điền thẳng vào form của OpenAI, cho tài khoản mua
+# theo lô — thứ mà đuôi email (@gmail hay @icloud) không nói lên được gì.
+
+class OpenAIOnboardReq(BaseModel):
+    profile: str = "openai-default"
+    email: str = ""
+    password: str = ""
+    totp_secret: str = ""
+
+
+@app.post("/v1/openai-native/onboard", dependencies=[Depends(require_api_key)])
+async def api_openai_native_onboard(req: OpenAIOnboardReq) -> dict[str, Any]:
+    session = await start_openai_login(
+        profile=req.profile, email=req.email, password=req.password,
+        totp_secret=req.totp_secret,
+    )
+    if req.email.strip() and req.password.strip():
+        try:
+            save_account(req.email, req.password, req.totp_secret, "")
+        except Exception:
+            pass
+    return {
+        **session.to_dict(),
+        "novnc": settings.novnc_external_url,
+        "note": "Theo dõi /v1/openai-native/{profile}/onboard-status. "
+                "Không có hạt giống TOTP thì phiên dừng ở state=need_code.",
+    }
+
+
+@app.get("/v1/openai-native/{profile}/onboard-status",
+         dependencies=[Depends(require_api_key)])
+async def api_openai_native_status(profile: str) -> dict[str, Any]:
+    session = get_openai_session(profile)
+    if session is None:
+        return {"profile": profile, "state": "none", "message": "Chưa có phiên onboard"}
+    return session.to_dict()
+
+
+@app.post("/v1/openai-native/{profile}/onboard-2fa-code",
+          dependencies=[Depends(require_api_key)])
+async def api_openai_native_2fa_code(profile: str, req: TwoFactorCodeReq) -> dict[str, Any]:
+    if not submit_openai_2fa_code(profile, req.code):
+        raise HTTPException(status_code=409, detail="Phiên không ở state=need_code")
+    return {"profile": profile, "submitted": True}
+
+
+@app.get("/v1/openai-native/{profile}/token", dependencies=[Depends(require_api_key)])
+async def api_openai_native_token(profile: str) -> dict[str, Any]:
+    """Access token đã lấy được. Chỉ trả khi phiên đã success."""
+    session = get_openai_session(profile)
+    if session is None or not session.access_token:
+        raise HTTPException(404, "Chưa có token cho hồ sơ này")
+    return {"profile": profile, "email": session.captured_email,
+            "access_token": session.access_token}
 
 
 # ── Claude Web (claude.ai) ──────────────────────────────────────────────
