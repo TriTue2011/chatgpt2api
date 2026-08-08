@@ -207,6 +207,14 @@ def _luu_anh_lay_duong_dan(raw: bytes) -> str:
 
     from services.protocol.conversation import save_image_bytes
 
+    # Kiểm TRƯỚC khi mở: `Image.open(...).convert()` giải nén thật, nên ảnh bom
+    # nén sẽ nổ ở đúng dòng đó nếu không chặn từ đây.
+    from services.image_guard import ImageRejected, kiem_anh
+    try:
+        kiem_anh(raw, ten="ảnh gửi Zalo")
+    except ImageRejected as exc:
+        raise HTTPException(status_code=400, detail=exc.ly_do) from exc
+
     if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
         try:
             import io

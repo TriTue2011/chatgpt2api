@@ -168,8 +168,13 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         body = None
         if request.method in {"POST", "PUT", "DELETE"}:
+            # `await request.json()` nạp TOÀN BỘ body vào RAM không giới hạn, và
+            # kiểm Content-Length cũng không đủ (request chunked không có header
+            # đó). read_json_limited đọc theo chunk và dừng ngay khi vượt trần.
             try:
-                body = await request.json()
+                body = await read_json_limited(request)
+            except BodyTooLarge:
+                raise HTTPException(status_code=413, detail={"error": "payload too large"})
             except Exception:
                 body = None
         return await asyncio.to_thread(zp.proxy_raw, request.method, "/" + path, body, 60.0)

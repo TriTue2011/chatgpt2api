@@ -13,6 +13,21 @@ from services.content_filter import request_text
 from services.log_service import LOG_TYPE_CALL, log_service
 from services.protocol import openai_v1_image_edit, openai_v1_image_generations
 
+# Trần tác vụ ảnh chạy đồng thời. Bản cũ tạo MỘT threading.Thread cho mỗi tác
+# vụ, không giới hạn: một người dùng hợp lệ chỉ cần gửi nhiều client_task_id
+# khác nhau là dựng được vô số thread, cạn RAM/CPU và đốt sạch quota provider.
+MAX_CONCURRENT_TASKS = 6      # toàn hệ thống
+MAX_CONCURRENT_PER_OWNER = 2  # mỗi danh tính
+
+
+class TaskQueueFull(RuntimeError):
+    """Hết chỗ chạy tác vụ ảnh — người gọi trả 429, KHÔNG xếp hàng vô hạn."""
+
+    def __init__(self, ly_do: str) -> None:
+        self.ly_do = ly_do
+        super().__init__(ly_do)
+
+
 TASK_STATUS_QUEUED = "queued"
 TASK_STATUS_RUNNING = "running"
 TASK_STATUS_SUCCESS = "success"
@@ -93,6 +108,11 @@ class ImageTaskService:
         self.retention_days_getter = retention_days_getter or (lambda: config.image_retention_days)
         self._lock = threading.RLock()
         self._tasks: dict[str, dict[str, Any]] = {}
+        # Trần đồng thời: một semaphore chung + đếm theo chủ sở hữu. Giữ slot tới
+        # khi tác vụ THỰC SỰ xong (nhả trong finally của _run_task), nếu không
+        # thì trần chỉ giới hạn tốc độ tạo thread chứ không giới hạn số thread.
+        self._slots = threading.BoundedSemaphore(MAX_CONCURRENT_TASKS)
+        self._dang_chay: dict[str, int] = {}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._tasks = self._load_locked()
@@ -211,16 +231,71 @@ class ImageTaskService:
             should_start = True
 
         if should_start:
+            try:
+                self._giu_slot(owner)
+            except TaskQueueFull:
+                # Bỏ tác vụ vừa ghi: để lại trạng thái "queued" mà không có gì
+                # chạy thì nó treo mãi và người dùng không gửi lại được (khoá
+                # idempotency đã bị chiếm).
+                with self._lock:
+                    self._tasks.pop(key, None)
+                    self._save_locked()
+                raise
             thread = threading.Thread(
                 target=self._run_task,
-                args=(key, mode, payload, dict(identity), _clean(payload.get("model"), "gpt-image-2")),
+                args=(key, mode, payload, dict(identity), _clean(payload.get("model"), "gpt-image-2"), owner),
                 name=f"image-task-{task_id[:16]}",
                 daemon=True,
             )
             thread.start()
         return _public_task(task)
 
+    def _giu_slot(self, owner: str) -> None:
+        """Chiếm một slot chạy. Hết chỗ → TaskQueueFull (người gọi trả 429)."""
+        with self._lock:
+            dang = self._dang_chay.get(owner, 0)
+            if dang >= MAX_CONCURRENT_PER_OWNER:
+                raise TaskQueueFull(
+                    f"Bạn đang có {dang} tác vụ ảnh chạy dở (trần {MAX_CONCURRENT_PER_OWNER}). "
+                    "Chờ xong một tác vụ rồi gửi tiếp."
+                )
+        if not self._slots.acquire(blocking=False):
+            raise TaskQueueFull(
+                f"Hệ thống đang chạy đủ {MAX_CONCURRENT_TASKS} tác vụ ảnh. Thử lại sau ít phút."
+            )
+        with self._lock:
+            self._dang_chay[owner] = self._dang_chay.get(owner, 0) + 1
+
+    def _nha_slot(self, owner: str) -> None:
+        with self._lock:
+            con = self._dang_chay.get(owner, 0) - 1
+            if con > 0:
+                self._dang_chay[owner] = con
+            else:
+                self._dang_chay.pop(owner, None)
+        try:
+            self._slots.release()
+        except ValueError:
+            pass
+
     def _run_task(
+        self,
+        key: str,
+        mode: str,
+        payload: dict[str, Any],
+        identity: dict[str, object],
+        model: str,
+        owner: str = "",
+    ) -> None:
+        try:
+            self._chay_task(key, mode, payload, identity, model)
+        finally:
+            # Nhả slot ở ĐÂY, không phải ngay sau khi start thread: giữ tới lúc
+            # việc thật xong mới là trần đồng thời, nhả sớm là vô tác dụng.
+            if owner:
+                self._nha_slot(owner)
+
+    def _chay_task(
         self,
         key: str,
         mode: str,

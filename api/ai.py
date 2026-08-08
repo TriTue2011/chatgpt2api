@@ -5,7 +5,9 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.support import require_identity, resolve_image_base_url
+from services import image_guard
 from services.content_filter import check_request, request_text
+from services.image_guard import ImageRejected
 from services.ingress_guard import BodyTooLarge, read_upload_limited
 from services.log_service import (
     KIND_IMAGE,
@@ -35,12 +37,12 @@ def _client_host(request: Request) -> str:
 # Nhóm hành động vật lý/máy chủ — key vai 'user' KHÔNG được chạm mặc định.
 _DANGER_GROUPS = {"homeassistant", "device", "server", "code"}
 
-# Trần cho /v1/images/edits. `await upload.read()` không tham số nạp cả file vào
-# RAM, và multipart cho phép gửi bao nhiêu phần tuỳ thích — một request đủ để
-# hạ gateway. Ảnh thật hiếm khi quá 20MB.
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024
-_MAX_EDIT_IMAGES = 8
-_MAX_EDIT_TOTAL_BYTES = 48 * 1024 * 1024
+# Trần cho /v1/images/edits — lấy từ services.image_guard để CÙNG một luật với
+# /api/image-tasks/edits. Trước đây hai đường vào tự đặt trần riêng và lệch nhau,
+# nên chỉ cần đổi cửa là lách được.
+_MAX_IMAGE_BYTES = image_guard.MAX_IMAGE_BYTES
+_MAX_EDIT_IMAGES = image_guard.MAX_IMAGES_PER_REQUEST
+_MAX_EDIT_TOTAL_BYTES = image_guard.MAX_TOTAL_IMAGE_BYTES
 
 
 def _effective_allowed_groups(role: str, server_allowed, client_allowed):
@@ -233,6 +235,12 @@ def create_router() -> APIRouter:
             if total_bytes > _MAX_EDIT_TOTAL_BYTES:
                 raise HTTPException(status_code=413, detail={"error": "images too large in total"})
             images.append((image_data, upload.filename or "image.png", upload.content_type or "image/png"))
+        # Nội dung: magic bytes + trần điểm ảnh. Trần byte KHÔNG chặn được ảnh
+        # bom nén — file 40KB khai báo 50.000×50.000 là ~10GB RAM khi giải nén.
+        try:
+            image_guard.kiem_bo_anh(images)
+        except ImageRejected as exc:
+            raise HTTPException(status_code=400, detail={"error": exc.ly_do}) from exc
         payload = {
             "prompt": prompt,
             "images": images,

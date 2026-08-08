@@ -144,6 +144,17 @@ def normalize(data: bytes | None, *, max_dim: int = 0,
     from PIL import Image
 
     _register_plugins()
+    # Chặn bom nén TRƯỚC `img.load()`. `Image.open` chỉ đọc header nên rẻ; còn
+    # `load()` mới thật sự giải nén — một file 40KB khai báo 50.000×50.000 sẽ
+    # ngốn ~10GB ở đúng dòng đó. Import trong hàm để tránh vòng import
+    # (image_guard dùng lại sniff_format/describe của chính module này).
+    from services.image_guard import ImageRejected, kiem_anh
+    try:
+        kiem_anh(raw, max_bytes=1 << 62)   # trần byte do nơi gọi tự lo
+    except ImageRejected as exc:
+        logger.warning({"event": "image_bomb_blocked", "ly_do": str(exc)[:160], **describe(raw)})
+        raise UnsupportedImage(sniff_format(raw), len(raw)) from exc
+
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
