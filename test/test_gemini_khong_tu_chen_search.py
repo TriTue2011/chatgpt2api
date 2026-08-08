@@ -137,6 +137,29 @@ class PhoiRaDanhSachModelTests(unittest.TestCase):
                       "bỏ tự chèn mà không để đường bật lại = mất hẳn tính năng")
 
 
+class ThongBaoLoiNoiDUNG_NGUYEN_NHANTests(unittest.TestCase):
+    """Hạn mức grounding cạn cũng trả đúng chữ "exceeded your current quota".
+
+    Thông báo mặc định vì thế dẫn người trực đi thay khoá, trong khi chính
+    những khoá đó vẫn gọi được nếu bỏ tra web. Đo 08/08/2026: 5/5 khoá như
+    vậy, và cả tôi lẫn chủ máy đều đọc nhầm triệu chứng này.
+    """
+
+    def test_bao_ro_la_han_muc_GROUNDING(self):
+        src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")
+        i = src.index('if tim_web and "429" in str(last_error')
+        than = src[i:i + 700]
+        self.assertIn("GOOGLE SEARCH GROUNDING", than)
+        self.assertIn("_bo_hau_to_search(model)", than,
+                      "phải chỉ ra tên model dùng được thay thế")
+
+    def test_khong_doi_thong_bao_khi_KHONG_dung_search(self):
+        """Request thường mà 429 thì đúng là hết hạn mức thật — đừng đổ nhầm."""
+        src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")
+        i = src.index('if tim_web and "429" in str(last_error')
+        self.assertIn("tim_web and", src[i:i + 60])
+
+
 class NoiGoiTests(unittest.TestCase):
     def test_chen_nam_TRONG_dieu_kien(self):
         src = (GOC / "services/providers/gemini_free.py").read_text(encoding="utf-8")

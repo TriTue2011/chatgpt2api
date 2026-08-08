@@ -200,6 +200,20 @@ class GeminiProvider:
                     except Exception:
                         pass
                 raise
+        # Nói đúng NGUYÊN NHÂN, không chỉ triệu chứng.
+        #
+        # Grounding bằng Google Search tiêu một hạn mức RIÊNG, chặt hơn hẳn hạn
+        # mức sinh nội dung. Khi hạn mức đó cạn, Google vẫn trả đúng chữ
+        # "exceeded your current quota" — nên thông báo mặc định dẫn người trực
+        # đi thay khoá, trong khi chính những khoá đó vẫn gọi được nếu bỏ
+        # Search. Đo 08/08/2026: 5/5 khoá đều như vậy, và cả tôi lẫn chủ máy
+        # đều mất thời gian vì đọc nhầm triệu chứng này.
+        if tim_web and "429" in str(last_error or ""):
+            raise RuntimeError(
+                f"Gemini từ chối vì hết hạn mức GOOGLE SEARCH GROUNDING (không phải "
+                f"hạn mức sinh nội dung): {last_error}. Chính các khoá này vẫn gọi "
+                f"được nếu bỏ tra web — dùng '{_bo_hau_to_search(model)}' thay cho "
+                f"biến thể '-search', hoặc chờ hạn mức grounding hồi.")
         raise RuntimeError(last_error or "All Gemini API keys rate limited. Try again later.")
 
 
