@@ -126,6 +126,9 @@ class KhoPhienTrinhDuyet:
                 "tao_luc": bay_gio,
                 "het_han": bay_gio + THOI_HAN_GIAY,
                 "lan_cuoi": bay_gio,
+                # Mốc lần cuối GHI XUỐNG ĐĨA — tách khỏi `lan_cuoi` (mốc dùng
+                # thật). Xem chú thích trong `tra_cuu`.
+                "da_ghi_luc": bay_gio,
             }
             self._ghi()
         return sid, csrf
@@ -144,12 +147,19 @@ class KhoPhienTrinhDuyet:
                     self._phien.pop(khoa, None)
                     self._ghi()
                 return None
-            # Chỉ ghi đĩa khi mốc đã cũ hơn 5 phút — tránh ghi file mỗi request.
-            if bay_gio - float(ban_ghi.get("lan_cuoi") or 0) > 300:
-                ban_ghi["lan_cuoi"] = bay_gio
+            # Ghi đĩa khi mốc TRÊN ĐĨA đã cũ hơn 5 phút — không phải khi mốc
+            # trong RAM cũ hơn 5 phút.
+            #
+            # Bản đầu so với `lan_cuoi` rồi cũng cập nhật chính nó trong RAM,
+            # nên với người dùng bấm liên tục thì khoảng cách không bao giờ
+            # vượt 5 phút và ĐĨA KHÔNG BAO GIỜ ĐƯỢC GHI. Dùng ba ngày rồi
+            # redeploy là bị đá ra ngoài, vì file vẫn giữ mốc đăng nhập đầu
+            # tiên — càng dùng nhiều càng dễ dính, đúng chiều ngược với trực
+            # giác nên rất khó lần.
+            ban_ghi["lan_cuoi"] = bay_gio
+            if bay_gio - float(ban_ghi.get("da_ghi_luc") or 0) > 300:
+                ban_ghi["da_ghi_luc"] = bay_gio
                 self._ghi()
-            else:
-                ban_ghi["lan_cuoi"] = bay_gio
             return dict(ban_ghi)
 
     def kiem_csrf(self, sid: str, csrf: str) -> bool:

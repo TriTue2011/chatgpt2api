@@ -19,6 +19,7 @@ from api.support import _legacy_admin_identity, extract_bearer_token, require_id
 from services.auth_service import auth_service
 from services.browser_session import COOKIE_NAME, THOI_HAN_GIAY, kho_phien
 from services.browser_session_middleware import bat_phien_trinh_duyet
+from services.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,25 @@ class DangNhapRequest(BaseModel):
 def _la_https(request: Request) -> bool:
     fwd = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
     return (fwd or request.url.scheme or "").lower() == "https"
+
+
+def _cho_phep_cookie_khong_secure() -> bool:
+    """Cờ `security.allow_insecure_cookie`. Mặc định TẮT.
+
+    Bản đầu tự hạ cờ `Secure` khi request là HTTP thuần, để không làm hỏng các
+    triển khai LAN. Nhưng như vậy là im lặng phát ra một cookie phiên đi được
+    trên đường không mã hoá — ai nghe được đường truyền là lấy được phiên, mà
+    chẳng có dấu hiệu nào cho thấy điều đó đang xảy ra.
+
+    Nay fail-closed: HTTP thuần thì TỪ CHỐI đăng nhập, kèm thông báo nói rõ hai
+    lựa chọn. Ai thật sự cần chạy HTTP trong LAN thì bật cờ này — một quyết
+    định có ghi lại, không phải một mặc định âm thầm.
+    """
+    try:
+        sec = config.get().get("security")
+        return bool(sec.get("allow_insecure_cookie")) if isinstance(sec, dict) else False
+    except Exception:
+        return False
 
 
 def create_router() -> APIRouter:
@@ -60,8 +80,21 @@ def create_router() -> APIRouter:
                             "code": "invalid_key"}},
                 status_code=401)
 
-        sid, csrf = kho_phien.tao(identity)
         secure = _la_https(request)
+        if not secure and not _cho_phep_cookie_khong_secure():
+            logger.warning({"event": "phien_trinh_duyet_tu_choi_http_thuan"})
+            return JSONResponse(
+                {"detail": {
+                    "error": "Phiên trình duyệt cần HTTPS. Cookie phiên phát trên "
+                             "HTTP thuần đi được trên đường không mã hoá, nên ai "
+                             "nghe được đường truyền là lấy được phiên. Hãy mở "
+                             "trang qua domain HTTPS, hoặc — chỉ khi thật sự cần "
+                             "chạy HTTP trong LAN — bật "
+                             "security.allow_insecure_cookie trong Cài đặt.",
+                    "code": "https_required"}},
+                status_code=400)
+
+        sid, csrf = kho_phien.tao(identity)
         resp = JSONResponse({
             "ok": True,
             "role": identity.get("role"),
@@ -78,16 +111,16 @@ def create_router() -> APIRouter:
             max_age=THOI_HAN_GIAY,
             httponly=True,      # JavaScript không đọc được → XSS không lấy được phiên
             samesite="lax",
-            # `Secure` CHỈ khi request thật sự là HTTPS. Đặt cứng Secure sẽ làm
-            # trình duyệt vứt cookie trên mọi triển khai LAN chạy HTTP thuần —
-            # đăng nhập "thành công" mà vào lại vẫn trắng, không dấu vết. Sau
-            # tunnel HTTPS thì cờ này tự bật.
+            # Tới được đây thì hoặc request LÀ HTTPS, hoặc chủ máy đã bật
+            # `security.allow_insecure_cookie` một cách tường minh. Không còn
+            # đường nào âm thầm phát cookie không Secure.
             secure=secure,
             path="/",
         )
         if not secure:
             logger.warning({"event": "phien_trinh_duyet_cookie_khong_secure",
-                            "msg": "request không phải HTTPS nên cookie không có cờ Secure"})
+                            "msg": "HTTP thuần + allow_insecure_cookie đang BẬT — "
+                                   "cookie phiên đi trên đường không mã hoá"})
         logger.info({"event": "phien_trinh_duyet_tao",
                      "role": identity.get("role"), "secure": secure})
         return resp

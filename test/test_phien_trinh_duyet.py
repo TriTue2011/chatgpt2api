@@ -11,9 +11,11 @@ cho tới khi frontend sẵn sàng.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -123,6 +125,77 @@ class KhoPhienTests(_KhoTam):
         self.kho.tao(self.ADMIN)
         che_do = (Path(self._tmp.name) / "browser_sessions.json").stat().st_mode & 0o777
         self.assertEqual(che_do, 0o600, f"file phiên đang là {oct(che_do)}")
+
+
+class GhiDiaDinhKyTests(_KhoTam):
+    """Người dùng CÀNG hoạt động thì càng dễ bị đá — nên rất khó lần.
+
+    Bản đầu so mốc rồi cũng cập nhật chính mốc đó trong RAM, nên với người bấm
+    liên tục thì khoảng cách không bao giờ vượt 5 phút và ĐĨA KHÔNG BAO GIỜ
+    được ghi. Dùng ba ngày rồi redeploy là mất phiên, dù vẫn đang dùng.
+    """
+
+    def _doc_dia(self) -> dict:
+        return json.loads(
+            (Path(self._tmp.name) / "browser_sessions.json").read_text(encoding="utf-8"))
+
+    def test_dung_lien_tuc_van_duoc_ghi_dia_dinh_ky(self):
+        sid, _ = self.kho.tao(self.ADMIN)
+        khoa = bs._bam(sid)
+        moc_dau = float(self._doc_dia()[khoa]["lan_cuoi"])
+        # Giả lập: phiên đã sống 10 phút, người dùng bấm liên tục nên `lan_cuoi`
+        # luôn mới, nhưng lần GHI ĐĨA gần nhất là 10 phút trước.
+        self.kho._phien[khoa]["da_ghi_luc"] = time.time() - 600
+        self.kho._phien[khoa]["lan_cuoi"] = time.time() - 1
+        self.kho.tra_cuu(sid)
+        self.assertGreater(float(self._doc_dia()[khoa]["lan_cuoi"]), moc_dau,
+                           "đĩa vẫn giữ mốc cũ dù phiên đang được dùng")
+
+    def test_dung_lien_tuc_KHONG_ghi_dia_moi_request(self):
+        """Ghi mỗi request là I/O vô ích ở đường nóng."""
+        sid, _ = self.kho.tao(self.ADMIN)
+        p = Path(self._tmp.name) / "browser_sessions.json"
+        truoc = p.stat().st_mtime_ns
+        for _ in range(20):
+            self.kho.tra_cuu(sid)
+        self.assertEqual(p.stat().st_mtime_ns, truoc, "ghi đĩa mỗi request")
+
+    def test_phien_dung_lien_tuc_song_qua_khoi_dong_lai(self):
+        """Ràng buộc cuối cùng, đúng thứ người dùng cảm nhận được."""
+        sid, csrf = self.kho.tao(self.ADMIN)
+        khoa = bs._bam(sid)
+        self.kho._phien[khoa]["da_ghi_luc"] = time.time() - 600
+        self.kho.tra_cuu(sid)                       # một request "gần đây"
+        kho_moi = KhoPhienTrinhDuyet()              # như vừa redeploy
+        self.assertIsNotNone(kho_moi.tra_cuu(sid))
+        self.assertTrue(kho_moi.kiem_csrf(sid, csrf))
+
+
+class CookieBatBuocHttpsTests(unittest.TestCase):
+    """Phát cookie phiên trên HTTP thuần = ai nghe đường truyền là lấy được."""
+
+    def test_http_thuan_bi_TU_CHOI_chu_khong_ha_co_am_tham(self):
+        src = (GOC / "api/browser_auth.py").read_text(encoding="utf-8")
+        i = src.index("secure = _la_https(request)")
+        than = src[i:i + 900]
+        self.assertIn("https_required", than)
+        self.assertIn("status_code=400", than)
+
+    def test_co_duong_thoat_tuong_minh_cho_LAN(self):
+        """Fail-closed mà không có lối ra là buộc người ta tắt cả tính năng."""
+        src = (GOC / "api/browser_auth.py").read_text(encoding="utf-8")
+        self.assertIn("allow_insecure_cookie", src)
+
+    def test_co_do_mac_dinh_TAT(self):
+        """Đọc mã nguồn thay vì import: `api.browser_auth` kéo theo pydantic,
+        vốn cần cú pháp Python 3.10+ để giải chú thích kiểu."""
+        src = (GOC / "api/browser_auth.py").read_text(encoding="utf-8")
+        i = src.index("def _cho_phep_cookie_khong_secure")
+        than = src[i:i + 900]
+        self.assertIn("return False", than,
+                      "không đọc được config thì phải coi như TẮT")
+        self.assertNotIn("return True", than.split("return False")[0],
+                         "có đường trả True trước khi tới mặc định")
 
 
 class OriginTests(unittest.TestCase):

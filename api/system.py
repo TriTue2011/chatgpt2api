@@ -559,8 +559,14 @@ def create_router(app_version: str) -> APIRouter:
         Đổi lại, endpoint này không đọc gì ngoài ba trường, chặn body quá cỡ, và
         gộp trùng để một trang vi phạm không làm ngập log.
         """
-        raw = await request.body()
-        if len(raw) > 16 * 1024:
+        # `await request.body()` nạp TRỌN body rồi mới đo — với request chunked
+        # (không Content-Length) thì trần 16KB kiểm sau khi RAM đã mất. Endpoint
+        # này lại không auth, nên đó là một đường DoS mở sẵn.
+        # `read_body_limited` dừng ngay giữa chừng khi vượt trần.
+        from services.ingress_guard import BodyTooLarge, read_body_limited
+        try:
+            raw = await read_body_limited(request, 16 * 1024)
+        except BodyTooLarge:
             return {"ok": True, "bo_qua": "body quá lớn"}
         try:
             from services.csp import ghi_bao_cao

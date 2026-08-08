@@ -115,6 +115,19 @@ class ChuKyMediaTests(unittest.TestCase):
 
 
 class NoiGoiTests(unittest.TestCase):
+    def test_han_URL_voice_KHONG_dai(self):
+        """URL đã ký tự nó mở được file — hạn 7 ngày biến mỗi link rò ra
+        thành một tuần truy cập tự do. Lịch hẹn cần URL ký NGAY TRƯỚC LÚC
+        PHÁT, không phải một link sống lâu."""
+        from services.signed_url import HAN_MAC_DINH_GIAY
+        src = (GOC / "services/voice/__init__.py").read_text(encoding="utf-8")
+        i = src.index("def media_url")
+        than = src[i:i + 1600]
+        self.assertNotIn("7 * 24 * 3600", than, "URL voice vẫn sống 7 ngày")
+        self.assertIn("song_giay=HAN_MAC_DINH_GIAY", than)
+        self.assertLessEqual(HAN_MAC_DINH_GIAY, 900,
+                             "hạn mặc định quá dài cho một URL tự mở được file")
+
     def test_media_url_luon_ky(self):
         """Phát URL chưa ký thì bật cờ bắt buộc lên là loa câm ngay."""
         src = (GOC / "services/voice/__init__.py").read_text(encoding="utf-8")

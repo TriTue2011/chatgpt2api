@@ -209,9 +209,13 @@ def media_url(path: Path) -> str:
     # cờ `security.signed_media_required` thì các URL đã phát ra vẫn còn dùng
     # được, không có khoảng trống loa câm.
     #
-    # Hạn dài hơn mặc định vì lịch hẹn phát vào ngày mai vẫn phải tải được.
-    from services.signed_url import ky_duong_dan
-    return f"{base}{duong}?{ky_duong_dan(duong, pham_vi='voice', song_giay=7 * 24 * 3600)}"
+    # HẠN NGẮN. Bản đầu để 7 ngày cho lịch hẹn phát vào ngày mai — nhưng URL đã
+    # ký là một thứ tự nó mở được file, nên hạn 7 ngày biến mỗi link rò ra
+    # thành một tuần truy cập tự do. Lịch hẹn không cần URL sống lâu: nó chỉ
+    # cần một URL ký NGAY TRƯỚC LÚC PHÁT, và đó là việc của nơi phát lịch
+    # (`media_url` được gọi lại lúc đó), không phải của cái link cũ.
+    from services.signed_url import HAN_MAC_DINH_GIAY, ky_duong_dan
+    return f"{base}{duong}?{ky_duong_dan(duong, pham_vi='voice', song_giay=HAN_MAC_DINH_GIAY)}"
 
 
 def cleanup_media(max_age_hours: int = 0) -> int:

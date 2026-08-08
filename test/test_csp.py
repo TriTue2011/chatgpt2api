@@ -118,10 +118,23 @@ class KhongGhiNguyenPayloadTests(unittest.TestCase):
     def test_endpoint_khong_doi_auth_va_chan_body_qua_co(self):
         src = (GOC / "api/system.py").read_text(encoding="utf-8")
         i = src.index("async def csp_report")
-        than = src[i:i + 1400]
+        than = src[i:i + 1600]
         self.assertNotIn("require_admin", than,
                          "đòi auth thì không nhận được báo cáo nào")
         self.assertIn("16 * 1024", than)
+
+    def test_doc_body_theo_CHUNK_chu_khong_nap_tron_roi_moi_do(self):
+        """`await request.body()` nạp trọn rồi mới đo — với request chunked
+        (không Content-Length) thì trần kiểm sau khi RAM đã mất. Endpoint này
+        lại KHÔNG auth, nên đó là một đường DoS mở sẵn."""
+        src = (GOC / "api/system.py").read_text(encoding="utf-8")
+        i = src.index("async def csp_report")
+        than = src[i:i + 1600]
+        self.assertIn("read_body_limited(request, 16 * 1024)", than)
+        # Bắt vào LỆNH GÁN, không phải chuỗi trần: chú thích ngay trên đó có
+        # nhắc `await request.body()` để giải thích vì sao đã bỏ.
+        self.assertNotIn("raw = await request.body()", than,
+                         "vẫn nạp trọn body trước khi đo")
 
 
 if __name__ == "__main__":
