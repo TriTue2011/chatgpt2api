@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from api import accounts, ai, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -332,10 +332,19 @@ def create_app() -> FastAPI:
         app.add_middleware(SecurityHeadersMiddleware)
     except Exception as exc:
         _log_startup_failure("security_headers", exc)
+    # Phiên trình duyệt (cookie HttpOnly + CSRF). Tự no-op khi cờ
+    # `security.browser_sessions_enabled` chưa bật, nên gắn vô điều kiện là an
+    # toàn — bật/tắt được ngay trong Settings mà không phải khởi động lại.
+    try:
+        from services.browser_session_middleware import PhienTrinhDuyetMiddleware
+        app.add_middleware(PhienTrinhDuyetMiddleware)
+    except Exception as exc:
+        _log_startup_failure("browser_sessions", exc)
     app.include_router(ai.create_router())
     app.include_router(claude.create_router())  # standalone, OpenAI-compatible /v1/claude/*
     app.include_router(accounts.create_router())
     app.include_router(oauth.create_router())
+    app.include_router(browser_auth.create_router())
     app.include_router(image_tasks.create_router())
     app.include_router(mcp.create_router())
     app.include_router(mcp_admin.create_router())  # proxy to internal vn-mcp-hub (127.0.0.1:8005)

@@ -31,9 +31,27 @@ def _legacy_admin_identity(token: str) -> dict[str, object] | None:
     return None
 
 
+def _danh_tinh_tu_cookie() -> dict[str, object] | None:
+    """Danh tính do PhienTrinhDuyetMiddleware giải từ cookie, nếu có.
+
+    Import trong hàm: middleware import ngược `services.config`, mà module này
+    được nạp rất sớm — để ở đầu file là vòng import.
+    """
+    try:
+        from services.browser_session_middleware import danh_tinh_cookie
+        return danh_tinh_cookie.get()
+    except Exception:
+        return None
+
+
 def require_identity(authorization: str | None) -> dict[str, object]:
     token = extract_bearer_token(authorization)
-    identity = _legacy_admin_identity(token) or auth_service.authenticate(token)
+    # Bearer TRƯỚC, cookie SAU. Request nào mang Bearer thì đi đúng đường cũ —
+    # HA, Zalo, script và API ngoài không đổi hành vi một chút nào.
+    if token:
+        identity = _legacy_admin_identity(token) or auth_service.authenticate(token)
+    else:
+        identity = _danh_tinh_tu_cookie()
     if identity is None:
         raise HTTPException(status_code=401, detail={"error": "Khóa không hợp lệ hoặc đã hết hạn — vui lòng đăng nhập lại"})
     return identity
