@@ -38,7 +38,12 @@ GENERATE = "generate"
 #: phải gửi câu hỏi thứ hai chồng lên (xem sự cố 07/08 ở
 #: `luu_tru_day.KhongHoiLuuKhiMenuDangMoTests`).
 LUU_ONLINE = "luu_online"
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, LUU_ONLINE)
+#: Đưa ảnh vào bài đăng Facebook Page. Như LUU_ONLINE: đứng cuối và KHÔNG nằm
+#: trong `ALL_INTENTS` — chỉ hiện khi nhóm chức năng 'facebook' bật cho thread
+#: VÀ đã kết nối Page (xem `them_dang_facebook`).
+FACEBOOK = "facebook"
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, LUU_ONLINE,
+                FACEBOOK)
 ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE}
 
 ASK_PROMPT_ANALYZE = (
@@ -265,6 +270,7 @@ def ask_text(intents: set[str] | None = None) -> str:
         ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
         GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
+        FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
     }
     lines = ["📷 Đã nhận ảnh. Bạn muốn em làm gì?"]
     n = 1
@@ -300,6 +306,10 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
     _noi = ("kho", "đám mây", "dam may", "drive", "cloud", "online")
     if any(v in t for v in _dong_tu) and any(n in t for n in _noi):
         return LUU_ONLINE
+    # Đăng Facebook — xét TRƯỚC nhánh phân tích vì "đăng ảnh này lên facebook"
+    # chứa cụm "ảnh này" mà nhánh phân tích sẽ nuốt nếu xét sau.
+    if "facebook" in t or re.search(r"\bfb\b|len face|lên face|dang face|đăng face", t):
+        return FACEBOOK
     if any(w in t for w in (
         "kiến thức", "kien thuc", "wiki", "tri thức", "tri thuc", "nạp rag kiến",
         "knowledge",
@@ -322,6 +332,10 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "2": 2, "2️⃣": 2, "2.": 2, "2)": 2,
         "3": 3, "3️⃣": 3, "3.": 3, "3)": 3,
         "4": 4, "4️⃣": 4, "4.": 4, "4)": 4,
+        # Menu nay dài tới 6 mục (thêm ☁️ kho đám mây + 📘 Facebook) — thiếu
+        # số là mục cuối hiện ra mà gõ số không chọn được.
+        "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
+        "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
     }
     if t in num_map:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
@@ -696,4 +710,23 @@ def them_luu_online(intents: set[str], kenh: str, chat: str, *,
             return set(intents) | {LUU_ONLINE}
     except Exception as exc:
         logger.debug("photo them_luu_online bỏ qua: %s", exc)
+    return set(intents)
+
+
+def them_dang_facebook(intents: set[str], allow: set[str] | None) -> set[str]:
+    """Thêm mục «Đăng lên Facebook» vào menu ẢNH — cùng luật với
+    `them_luu_online`: chưa đủ điều kiện thì không bày ra lựa chọn bấm vào
+    không ra gì.
+
+    Điều kiện: nhóm chức năng 'facebook' bật cho thread (allow=None nghĩa là
+    thread không lọc → được), VÀ đã kết nối ít nhất một Page.
+    """
+    if allow is not None and "facebook" not in allow:
+        return set(intents)
+    try:
+        from services import facebook_page as fbp
+        if fbp.danh_sach_page():
+            return set(intents) | {FACEBOOK}
+    except Exception as exc:
+        logger.debug("photo them_dang_facebook bỏ qua: %s", exc)
     return set(intents)

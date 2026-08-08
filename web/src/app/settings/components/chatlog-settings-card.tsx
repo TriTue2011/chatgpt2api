@@ -35,7 +35,7 @@ const NHOM_CHUC_NANG: [string, string][] = [
   ["summary", "🧾 Tổng hợp"], ["schedule", "⏰ Nhắc hẹn"], ["skills", "🧩 Skill"],
   ["wiki", "📖 Wiki"], ["contacts", "📒 Danh bạ"], ["kho_dam_may", "☁️ Kho đám mây"],
   ["tts_reply", "🔉 Trả lời giọng nói"], ["tts_speaker", "📢 Phát loa"],
-  ["teacher", "📚 Giáo viên"],
+  ["teacher", "📚 Giáo viên"], ["facebook", "📘 Đăng Facebook Page"],
 ];
 
 const NHAN_KENH: Record<string, string> = {

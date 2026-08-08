@@ -341,6 +341,10 @@ class SettingsUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class FacebookConnectRequest(BaseModel):
+    user_token: str = ""
+
+
 class ProfileNameRequest(BaseModel):
     name: str = ""
 
@@ -482,6 +486,25 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         from services.privacy_gate import privacy_public_status
         return {"ok": True, "privacy": privacy_public_status()}
+
+    @router.post("/api/facebook/connect")
+    async def facebook_connect(body: FacebookConnectRequest,
+                               authorization: str | None = Header(default=None)):
+        """Đổi user token → dài hạn + nạp danh sách Page (card 📘 Facebook).
+
+        Card gửi user_token vừa dán (app_id/app_secret đã lưu qua /api/settings
+        trước đó). KHÔNG trả access_token của Page về client — UI chỉ cần
+        id/tên/ảnh, token nằm trong config và bị settings_secrets che khi đọc.
+        """
+        require_admin(authorization)
+        from services import facebook_page as fbp
+        try:
+            pages = fbp.ket_noi(str(body.user_token or "").strip())
+        except fbp.LoiFacebook as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "pages": [
+            {"id": p["id"], "name": p.get("name") or "",
+             "picture": p.get("picture") or ""} for p in pages]}
 
     @router.post("/api/settings")
     async def save_settings(body: SettingsUpdateRequest, authorization: str | None = Header(default=None)):

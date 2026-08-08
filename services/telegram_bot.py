@@ -871,9 +871,15 @@ async def handle_webhook(request) -> dict:
     # không nhìn thấy) nên topic được TRUYỀN qua args của _process_message. Gán ở
     # luồng event-loop chỉ để lại giá trị cũ, dễ khiến lần gửi sau (API khác,
     # chat khác) dính topic lạ → Telegram trả "message thread not found".
-    text = (msg.get("text") or "").strip()
+    # Ảnh/video Telegram mang lời kèm trong `caption`, không phải `text` —
+    # không đọc thì "gửi ảnh kèm chú thích" luôn rơi vào nhánh menu như thể
+    # người dùng chưa nói gì (nhánh caption phía dưới thành mã chết).
+    text = (msg.get("text") or msg.get("caption") or "").strip()
     photo = msg.get("photo")
     document = msg.get("document")
+    # Video: chỉ luồng Facebook dùng (xem _process_message_inner) — ngoài luồng
+    # đó hành vi giữ nguyên như trước: bỏ qua.
+    video = msg.get("video")
     # Voice note / file ghi âm → STT ở luồng nền rồi đi tiếp như tin nhắn chữ.
     _vo = msg.get("voice") or msg.get("audio") or {}
     voice_file_id = str(_vo.get("file_id") or "") if isinstance(_vo, dict) else ""
@@ -898,7 +904,7 @@ async def handle_webhook(request) -> dict:
 
     _tg_worker(_process_message, text, chat_id, photo, document, bot, sender,
                user_id, is_group, native_mention, chat_name,
-               voice_file_id, topic_id)   # bound: hết slot thì bỏ tin
+               voice_file_id, topic_id, video)   # bound: hết slot thì bỏ tin
     return {"ok": True}
 
 
@@ -1260,11 +1266,27 @@ def _do_photo_request(
         it = intent or (
             _phi.GENERATE if _phi.classify(request) == _phi.GENERATE else _phi.ANALYZE
         )
-        allowed = _phi.allowed_intents(allow)
+        allowed = _phi.them_dang_facebook(_phi.allowed_intents(allow), allow)
         if it not in allowed and allow is not None:
             # generate blocked without image group
             status = "blocked"
             err = f"intent {it} not allowed"
+            return
+
+        if it == _phi.FACEBOOK:
+            # Ảnh → URL công khai của chính bot, rồi BƠM LẠI pipeline như một
+            # tin nhắn (cùng đường với nút bấm ask:<n>): URL vào lịch sử phiên
+            # để lượt sau người dùng chốt caption, model gom mọi URL đã nhận
+            # vào MỘT lời gọi `dang_facebook` (bài nhiều ảnh).
+            kind = "photo_facebook"
+            from services.protocol.conversation import save_image_bytes
+            url = save_image_bytes(file_data)
+            inject = f"thêm ảnh vào bài đăng facebook: {url}"
+            if request:
+                inject += f" — {request}"
+            _process_message(inject, chat_id, None, None, None, "", user_id,
+                             str(chat_id).startswith("-"), True, "", "",
+                             _cur_topic() or "")
             return
 
         if it == _phi.GENERATE:
@@ -1337,7 +1359,7 @@ def _do_photo_request(
             pass
 
 
-def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "") -> None:
+def _process_message(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None) -> None:
     """Process a Telegram message in background thread.
 
     Lưới AN TOÀN NGOÀI CÙNG quanh TOÀN BỘ pipeline (_process_message_inner):
@@ -1350,7 +1372,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
     try:
         _process_message_inner(
             text, chat_id, photo, document, bot, sender, user_id, is_group,
-            native_mention, chat_name, voice_file_id, topic_id,
+            native_mention, chat_name, voice_file_id, topic_id, video,
         )
     except Exception as exc:
         logger.warning("tg _process_message lỗi (chat=%s user=%s): %s", chat_id, user_id, exc)
@@ -1363,7 +1385,7 @@ def _process_message(text: str, chat_id: str, photo: list | None = None, documen
             pass
 
 
-def _process_message_inner(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "") -> None:
+def _process_message_inner(text: str, chat_id: str, photo: list | None = None, document: dict | None = None, bot: dict | None = None, sender: str = "", user_id: str = "", is_group: bool = False, native_mention: bool = False, chat_name: str = "", voice_file_id: str = "", topic_id: str = "", video: dict | None = None) -> None:
     """Nội dung xử lý thật (bọc lưới an toàn ở _process_message phía trên)."""
     if bot is not None:
         _current.bot = bot  # luồng mới → gắn lại ngữ cảnh bot để gửi đúng token
@@ -1524,6 +1546,25 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             send_message(chat_id, _id_info)
         return
 
+    # Lệnh /facebook — menu đăng bài Page, do CODE dựng (không qua LLM), cùng
+    # nếp /id. Nhận cả "/facebook@TênBot" và "/fb". Nhóm chức năng 'facebook'
+    # phải bật cho thread; tắt thì nói rõ thay vì im lặng — người gõ ĐÍCH DANH
+    # lệnh này xứng đáng biết vì sao không có gì xảy ra.
+    # Nhận "/facebook", "/fb", "/facebook@TênBot" và cả "@TênBot /facebook"
+    # (bóc tag như photo_intent.bo_tag để lệnh trong nhóm không trượt).
+    from services.photo_intent import bo_tag as _bo_tag_fb
+    if chat_id and _bo_tag_fb(_low).split("@", 1)[0].strip() in {"/facebook", "/fb"}:
+        if _allow is not None and "facebook" not in _allow:
+            send_message(chat_id, "📘 Chức năng Facebook đang tắt cho chỗ này — "
+                                  "bật nhóm «📘 Facebook» trong Cài đặt ▸ Lọc thread.")
+            return
+        from services import facebook_page as _fbp
+        from services.agent import ask_choices as _ask_fb
+        _fbkey = khoa_phien(chat_id, _cur_topic(), user_id)
+        _out_fb = _ask_fb.apply_to_result({"text": _fbp.menu_ask(_fbkey)}, _fbkey)
+        _send_agent_reply(chat_id, _out_fb, user_id)
+        return
+
     # Chuyển tiếp webhook (HA / n8n / URL bất kỳ) theo 'Lọc chức năng theo
     # thread' — TRƯỚC bộ lọc tag (tin nhóm không tag vẫn chuyển được).
     # Thread bật → mọi user (trừ user tắt riêng); thread không bật → user nào
@@ -1639,7 +1680,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         _phi.pop_pending_full(_phkey)   # yêu cầu mới → đóng bản chờ
     elif text and chat_id and _phi.has_pending(_phkey):
         _pend = _phi.get_pending(_phkey) or {}
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             from services import pdf_intent as _pi
@@ -1719,7 +1760,7 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         from services.agent.luu_tru_day import ten_anh as _ten_anh
         _moi_luu_online(chat_id, user_id, chat_name, _ten_anh(file_data), file_data)
         caption = (text or "").strip()
-        _allowed_ph = _phi.allowed_intents(_allow)
+        _allowed_ph = _phi.them_dang_facebook(_phi.allowed_intents(_allow), _allow)
         if not caption:
             _phi.set_pending(_phkey, file_data)
             send_message(chat_id, _phi.ask_text(_allowed_ph))
@@ -1743,6 +1784,30 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             )
             return
         _do_photo_request(chat_id, file_data, caption, _allow, intent=intent, user_id=user_id)
+        return
+
+    # Handle video — CHỈ phục vụ luồng Facebook (nhóm 'facebook' bật + đã nối
+    # Page); ngoài luồng đó giữ nguyên hành vi cũ: bỏ qua im lặng. Bot API chỉ
+    # cho tải file ≤ 20MB (MAX_DOWNLOAD_BYTES) nên video lớn phải đi đường link.
+    if video and isinstance(video, dict):
+        if _phi.FACEBOOK not in _phi.them_dang_facebook(set(), _allow):
+            return
+        _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+        _vdata = _download_file(str(video.get("file_id") or ""))
+        if not _vdata:
+            send_message(chat_id, "🎬 Video này em không tải được (Telegram chỉ "
+                                  "cho bot lấy file tới 20MB) — anh/chị gửi em "
+                                  "link mp4 công khai nhé.")
+            return
+        from services import facebook_page as _fbp_v
+        _vurl = _fbp_v.luu_media_cong_khai(_vdata, "mp4")
+        _vinject = f"thêm video vào bài đăng facebook: {_vurl}"
+        _vcap = (text or "").strip()
+        if _vcap:
+            _vinject += f" — {_vcap}"
+        _process_message(_vinject, chat_id, None, None, None, "", user_id,
+                         str(chat_id).startswith("-"), True, "", "",
+                         _cur_topic() or "")
         return
 
     # Handle document (PDF) — HỎI ý định trước (1=RAG / 2=Word), không tự quyết.

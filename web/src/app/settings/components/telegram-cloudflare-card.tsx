@@ -54,6 +54,9 @@ const FUNCTION_GROUPS: [string, string][] = [
   ["tts_reply", "🔉 Trả lời bằng giọng nói"],
   ["tts_speaker", "📢 Được ra lệnh phát loa"],
   ["teacher", "📚 Giáo viên (tiểu học · THCS · THPT)"],
+  // Quyền dùng lệnh /facebook + tool đăng bài. Gắn Page nào cho thread nào là
+  // việc của card «Facebook» (mục Gắn Page theo thread).
+  ["facebook", "📘 Đăng Facebook Page"],
 ];
 
 type AdminEntry = {

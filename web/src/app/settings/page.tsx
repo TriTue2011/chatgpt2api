@@ -10,6 +10,7 @@ import { BackupSettingsCard } from "./components/backup-settings-card";
 import { RcloneCard } from "./components/rclone-card";
 import { LuuTruOnlineCard } from "./components/luu-tru-online-card";
 import { HACard } from "./components/ha-card";
+import { FacebookCard } from "./components/facebook-card";
 import { EmailCalendarCard } from "./components/email-calendar-card";
 import { VoiceSpeakersCard } from "./components/voice-speakers-card";
 import { TeacherSettingsCard } from "./components/teacher-settings-card";
@@ -24,6 +25,7 @@ import { FlowCard } from "./components/flow-card";
 import { ChatGPTOnboardCard } from "./components/chatgpt-onboard-card";
 import { CodexOnboardCard } from "./components/codex-onboard-card";
 import { GoogleProvidersCard } from "./components/google-providers-card";
+import { OpenAINativeCard } from "./components/openai-native-card";
 import { ImportBrowserDialog } from "./components/import-browser-dialog";
 import { SettingsHeader } from "./components/settings-header";
 import { UserKeysCard } from "./components/user-keys-card";
@@ -118,6 +120,14 @@ function SettingsPageContent() {
         </SettingsSection>
 
         <SettingsSection
+          title="ChatGPT bằng tài khoản OpenAI gốc"
+          description="Tài khoản có mật khẩu của chính OpenAI (không đăng nhập qua Google). Đuôi email @gmail hay @icloud đều có thể là loại này."
+          icon={<KeyRound className="size-5" />}
+        >
+          <OpenAINativeCard />
+        </SettingsSection>
+
+        <SettingsSection
           title="Codex Auto-Login (Đăng nhập Hàng loạt)"
           description="Danh sách tài khoản Codex (Github) để tự động đăng nhập hàng loạt lấy JWT"
           icon={<Plug className="size-5" />}
@@ -155,6 +165,14 @@ function SettingsPageContent() {
           icon={<Archive className="size-5" />}
         >
           <HACard />
+        </SettingsSection>
+
+        <SettingsSection
+          title="Facebook Page"
+          description="Đăng bài lên Page qua chat: lệnh /facebook, gửi ảnh/video qua kênh, gắn Page theo thread"
+          icon={<span className="text-lg">📘</span>}
+        >
+          <FacebookCard />
         </SettingsSection>
 
         <SettingsSection

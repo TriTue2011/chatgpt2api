@@ -65,6 +65,7 @@ const GROUP_LABELS: Record<string, string> = {
   tts_reply: "🔉 Trả lời bằng giọng nói",
   tts_speaker: "📢 Được ra lệnh phát loa",
   teacher: "📚 Giáo viên (tiểu học · THCS · THPT)",
+  facebook: "📘 Đăng Facebook Page",
   chat: "💬 Chat",
 };
 

@@ -2161,6 +2161,43 @@ def _zalop_journal(
         pass
 
 
+def _fb_gui_orchestrate(thread_id: str, thread_type: int, account: str,
+                        user_id: str, allow: set | None, inject: str) -> None:
+    """Bơm một câu vào orchestrator rồi trả lời — cho luồng Facebook.
+
+    Telegram có đường replay (_process_message như nút ask:<n>); Zalo không có
+    nên gọi thẳng orchestrate rồi tự format (đánh số lựa chọn) như nhánh
+    orchestrate chính. Khoá phiên PHẢI trùng _skey của _process_ai, không thì
+    câu này rơi vào lịch sử khác với hội thoại đang diễn ra.
+    """
+    from services.agent.orchestrator import orchestrate
+    _skey = f"zalop_{thread_id}"
+    try:
+        from services.agent.scope import tach_phien_theo_nguoi as _tach
+        if int(thread_type or 0) == 1 and user_id and _tach():
+            _skey = f"zalop_{thread_id}:u{user_id}"
+    except Exception:
+        pass
+    out = orchestrate(inject, _skey, allow=allow)
+    reply = str((out or {}).get("text") or "")
+    choices = (out or {}).get("choices") or []
+    if choices:
+        from services.agent import ask_choices as _ask
+        reply = _ask.format_numbered(reply, choices)
+    # Cùng hook với nhánh orchestrate chính: bot trả lời kiểu "gửi thêm ảnh đi"
+    # thì mở cửa sổ chờ ảnh cho ĐÚNG người này — thiếu nó thì trong nhóm bắt
+    # tag, tấm ảnh thứ hai gửi không tag bị cổng loại im lặng.
+    try:
+        from services import photo_intent as _phi_xin
+        _phi_xin.danh_dau_neu_xin_anh(
+            f"zalop:{account}:{thread_id}:{user_id or ''}", reply)
+    except Exception:
+        pass
+    if reply:
+        send_message(thread_id, reply, thread_type,
+                     account=account or "", co_nut_chon=bool(choices))
+
+
 def _do_photo_request(
     thread_id: str,
     thread_type: int,
@@ -2185,10 +2222,27 @@ def _do_photo_request(
         it = intent or (
             _phi.GENERATE if _phi.classify(request_text) == _phi.GENERATE else _phi.ANALYZE
         )
-        allowed = _phi.allowed_intents(allow)
+        allowed = _phi.them_dang_facebook(_phi.allowed_intents(allow), allow)
         if it not in allowed and allow is not None:
             status = "blocked"
             err = f"intent {it} not allowed"
+            return
+
+        if it == _phi.FACEBOOK:
+            # Ảnh → URL công khai của chính bot, rồi bơm lại orchestrator như
+            # một lượt chat: URL vào lịch sử phiên để người dùng gửi thêm ảnh /
+            # chốt caption, model gom mọi URL đã nhận vào MỘT lời gọi
+            # `dang_facebook`. Telegram đi đường _process_message; Zalo không
+            # có đường replay nên gọi thẳng orchestrate rồi tự trả lời (cùng
+            # cách format với nhánh orchestrate chính: đánh số lựa chọn).
+            kind = "photo_facebook"
+            from services.protocol.conversation import save_image_bytes
+            url = save_image_bytes(file_data)
+            inject = f"thêm ảnh vào bài đăng facebook: {url}"
+            if request_text:
+                inject += f" — {request_text}"
+            _fb_gui_orchestrate(thread_id, thread_type, account or "",
+                                user_id, allow, inject)
             return
 
         if it == _phi.LUU_ONLINE:
@@ -2377,6 +2431,38 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _id_info, thread_type, account=acc_id, rich=True)
         return
 
+    # Lệnh /facebook — menu đăng bài Page, do CODE dựng (không qua LLM), cùng
+    # nếp /id. Nhóm chức năng 'facebook' phải bật; tắt thì nói rõ thay vì im
+    # lặng — người gõ ĐÍCH DANH lệnh này xứng đáng biết vì sao không có gì xảy ra.
+    # Bóc tag bot trước khi so ("@TênBot /facebook" là cách gọi thường gặp
+    # trong nhóm Zalo — không bóc thì lệnh mở đầu bằng '@' và không bao giờ khớp).
+    from services import photo_intent as _phi_fb
+    if _phi_fb.bo_tag(text).lower() in {"/facebook", "/fb"}:
+        _acc_fb = str(ev.get("account_id") or "").strip()
+        if _allow is not None and "facebook" not in _allow:
+            send_message(thread_id, "📘 Chức năng Facebook đang tắt cho chỗ này — "
+                                    "bật nhóm «📘 Facebook» trong Cài đặt ▸ Lọc thread.",
+                         thread_type, account=_acc_fb)
+            return
+        # Khoá phiên PHẢI trùng với _skey của orchestrate bên dưới, không thì
+        # người dùng trả "1/2/3" mà resolve_reply không thấy bản chờ nào.
+        _fbkey = f"zalop_{thread_id}"
+        try:
+            from services.agent.scope import tach_phien_theo_nguoi as _tach_fb
+            _snd_fb = str(ev.get("sender_id") or "")
+            if int(thread_type or 0) == 1 and _snd_fb and _tach_fb():
+                _fbkey = f"zalop_{thread_id}:u{_snd_fb}"
+        except Exception:
+            pass
+        from services import facebook_page as _fbp
+        from services.agent import ask_choices as _ask_fb
+        _out_fb = _ask_fb.apply_to_result({"text": _fbp.menu_ask(_fbkey)}, _fbkey)
+        _reply_fb = _ask_fb.format_numbered(
+            str(_out_fb.get("text") or ""), _out_fb.get("choices") or [])
+        send_message(thread_id, _reply_fb, thread_type, account=_acc_fb,
+                     co_nut_chon=bool(_out_fb.get("choices")))
+        return
+
     # Khoá chờ — tính SỚM vì cổng tag bên dưới cần tra nó.
     pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
 
@@ -2486,9 +2572,9 @@ def _process_ai(ev: dict) -> None:
         _phi.pop_pending_full(pkey)
     elif text and _phi.has_pending(pkey):
         _pend = _phi.get_pending(pkey) or {}
-        _allowed_ph = _phi.them_luu_online(
+        _allowed_ph = _phi.them_dang_facebook(_phi.them_luu_online(
             _phi.allowed_intents(_allow), "zalop", str(thread_id),
-            user=str(ev.get("sender_id") or ""))
+            user=str(ev.get("sender_id") or "")), _allow)
         stage = str(_pend.get("stage") or "choose")
         if stage == "teacher_meta":
             meta = _pi.parse_teacher_meta(text)
@@ -2616,9 +2702,9 @@ def _process_ai(ev: dict) -> None:
         # dưới không bao giờ chạy, tag bot rồi gửi ảnh suông là bị đoán bừa
         # thành «phân tích ảnh» (chủ máy báo 05/08, 20:55).
         caption = _phi.bo_tag(text)
-        _allowed_ph = _phi.them_luu_online(
+        _allowed_ph = _phi.them_dang_facebook(_phi.them_luu_online(
             _phi.allowed_intents(_allow), "zalop", str(thread_id),
-            user=str(ev.get("sender_id") or ""))
+            user=str(ev.get("sender_id") or "")), _allow)
         if not caption:
             _phi.set_pending(pkey, data)
             send_message(thread_id, _phi.ask_text(_allowed_ph), thread_type)
@@ -2645,6 +2731,28 @@ def _process_ai(ev: dict) -> None:
             thread_id, thread_type, data, caption, _allow,
             intent=intent, user_id=_uid, account=_acc,
         )
+        return
+
+    # Video: CHỈ phục vụ luồng Facebook (nhóm 'facebook' bật + đã nối Page) —
+    # ngoài điều kiện đó rơi tiếp xuống dưới, giữ nguyên hành vi cũ (trước giờ
+    # chat.video không có handler nào).
+    if (ev.get("msg_type") in {"chat.video", "chat.video.msg"}
+            and ev.get("attachment_url")
+            and _phi.FACEBOOK in _phi.them_dang_facebook(set(), _allow)):
+        send_typing(thread_id, thread_type)
+        data = _download(ev["attachment_url"])
+        if not data:
+            send_message(thread_id, "🎬 Em không tải được video — anh/chị gửi "
+                                    "em link mp4 công khai cũng được ạ.",
+                         thread_type)
+            return
+        from services import facebook_page as _fbp_v
+        _vurl = _fbp_v.luu_media_cong_khai(data, "mp4")
+        _vinject = f"thêm video vào bài đăng facebook: {_vurl}"
+        _vcap = _phi.bo_tag(text)
+        if _vcap:
+            _vinject += f" — {_vcap}"
+        _fb_gui_orchestrate(thread_id, thread_type, _acc, _uid, _allow, _vinject)
         return
 
     # Tin GHI ÂM → STT → coi như tin nhắn chữ (đường đi chỉ thêm bước chuyển

@@ -4600,6 +4600,108 @@ def _h_kho_dam_may_gui(args: dict, ctx: dict) -> dict:
     return {"text": f"Đã gửi lên {kq['duong_dan']} ({_co_file(kq.get('co') or 0)}) ạ."}
 
 
+def _h_facebook_trang_thai(args: dict, ctx: dict) -> dict:
+    """Kiểm tra kết nối Facebook + Page nào gắn với thread này. Chỉ ĐỌC."""
+    from services import facebook_page as fbp
+    uid = str(ctx.get("user_id") or "")
+    dong = [fbp.kiem_tra()]
+    cua_thread = fbp.pages_cho_thread(uid)
+    if cua_thread:
+        ten = ", ".join(p.get("name") or p["id"] for p in cua_thread)
+        dong.append(f"Thread này đăng được lên: {ten}")
+    elif fbp.danh_sach_page():
+        dong.append("Thread này CHƯA gắn Page nào — vào Cài đặt ▸ Facebook, "
+                    "mục «Gắn Page theo thread» để chọn.")
+    return {"text": "\n".join(d for d in dong if d)}
+
+
+def _h_dang_facebook(args: dict, ctx: dict) -> dict:
+    """Đăng bài lên Facebook Page — chữ / link / ảnh / video.
+
+    Media nhận qua `media_urls` (URL đã công khai hoặc /images/… của chính bot;
+    ảnh gửi qua kênh được luồng photo-intent đổi sẵn thành URL như vậy).
+    Page phải nằm trong danh sách GẮN với thread (facebook_page.pages_cho_thread)
+    — nhiều page mà chưa chỉ định thì trả menu chọn, không tự đoán.
+    """
+    from services import facebook_page as fbp
+    uid = str(ctx.get("user_id") or "")
+    loai = str(args.get("loai") or "").strip().lower()
+    message = str(args.get("message") or "").strip()
+    link = str(args.get("link") or "").strip()
+    media = [str(u).strip() for u in (args.get("media_urls") or [])
+             if str(u).strip()]
+
+    pages = fbp.pages_cho_thread(uid)
+    if not pages:
+        if not fbp.danh_sach_page():
+            return {"text": "Chưa kết nối Facebook ạ. Vào Cài đặt ▸ Facebook: "
+                            "điền app_id, app_secret, dán user token rồi bấm "
+                            "Kết nối."}
+        return {"text": "Thread này chưa gắn Page nào ạ. Vào Cài đặt ▸ "
+                        "Facebook, mục «Gắn Page theo thread» để chọn Page "
+                        "cho chỗ này trước."}
+
+    page_id = str(args.get("page_id") or "").strip()
+    if page_id and page_id not in {p["id"] for p in pages}:
+        ten = ", ".join(p.get("name") or p["id"] for p in pages)
+        return {"text": f"Page {page_id} không gắn với thread này. "
+                        f"Thread đăng được lên: {ten}."}
+    if not page_id:
+        if len(pages) == 1:
+            page_id = pages[0]["id"]
+        else:
+            # Nhiều Page: menu chọn, `send` nhồi đủ dữ liệu để lượt sau gọi
+            # lại tool không phải hỏi thêm. deliver_now: menu do CODE dựng,
+            # không cho model tự chế (cùng lý do _ask_media_provider).
+            phan = [f"loại {loai or 'chu'}"]
+            if message:
+                phan.append(f"nội dung: {_mot_dong(message)}")
+            if link:
+                phan.append(f"link: {link}")
+            if media:
+                phan.append("media: " + " ".join(media))
+            duoi = " — ".join(phan)
+            lines = ["📘 Đăng lên Page nào ạ?", "<<<ASK>>>"]
+            for p in pages:
+                nhan = p.get("name") or p["id"]
+                lines.append(f"{nhan} | đăng lên facebook page {p['id']} {duoi}")
+            lines.append("<<<END>>>")
+            return {"text": "\n".join(lines), "deliver_now": True}
+
+    if not loai:
+        loai = "anh" if media and not link else ("link" if link else "chu")
+
+    try:
+        if loai == "anh":
+            if not media:
+                return {"text": "Chưa có ảnh nào ạ — gửi ảnh vào đây rồi chọn "
+                                "«Đăng lên Facebook», hoặc đưa em link ảnh."}
+            kq = fbp.dang_anh(page_id, media, caption=message)
+        elif loai == "video":
+            if not media:
+                return {"text": "Chưa có video ạ — đưa em link file mp4 công "
+                                "khai (hoặc gửi video qua kênh)."}
+            kq = fbp.dang_video(page_id, media[0], mo_ta=message)
+        elif loai == "link":
+            if not link:
+                return {"text": "Thiếu link ạ — đưa em URL cần chia sẻ."}
+            kq = fbp.dang_bai_chu(page_id, message, link=link)
+        else:
+            if not message:
+                return {"text": "Bài chữ mà chưa có nội dung ạ — anh/chị đưa "
+                                "em nội dung nhé."}
+            kq = fbp.dang_bai_chu(page_id, message, link=link)
+    except fbp.LoiFacebook as exc:
+        them = (" Vào Cài đặt ▸ Facebook bấm Kết nối lại nhé."
+                if exc.can_noi_lai else "")
+        return {"text": f"❌ Không đăng được: {exc}.{them}"}
+
+    ten_page = next((p.get("name") or p["id"] for p in pages
+                     if p["id"] == page_id), page_id)
+    duong = kq.get("url") or ""
+    return {"text": f"✅ Đã đăng lên {ten_page}" + (f":\n{duong}" if duong else ".")}
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 CAPABILITIES: dict[str, Capability] = {
@@ -5757,6 +5859,48 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["op"]},
         workflow=("Đưa dữ liệu RA NGOÀI máy chủ nên luôn qua bước duyệt. Chỉ gửi "
                   "được file đã nằm trong workspace, không gửi file hệ thống.")),
+    "facebook_trang_thai": Capability(
+        name="facebook_trang_thai", risk=READ, handler=_h_facebook_trang_thai,
+        emoji="📘", label="Kiểm tra kết nối Facebook",
+        description=(
+            "Kiểm tra kết nối Facebook Page: token còn sống không, thread này "
+            "gắn Page nào. Dùng khi user hỏi 'facebook nối chưa', 'đăng được "
+            "lên page nào', hoặc chọn «Kiểm tra kết nối» trong menu /facebook."
+        ),
+        parameters={"type": "object", "properties": {}, "required": []}),
+    "dang_facebook": Capability(
+        name="dang_facebook", risk=CHANGE, handler=_h_dang_facebook,
+        emoji="📘", label="Đăng bài lên Facebook Page",
+        description=(
+            "Đăng bài lên Facebook Page đã gắn với thread. "
+            "loai=chu|link|anh|video. message=nội dung/caption; link=URL chia "
+            "sẻ (loai=link); media_urls=danh sách URL ảnh (loai=anh) hoặc "
+            "ĐÚNG MỘT URL video mp4 (loai=video); page_id=Page đích (bỏ trống "
+            "nếu thread chỉ gắn một Page). "
+            "QUAN TRỌNG: message CHỈ chứa nội dung thật của bài — bỏ các từ "
+            "khung như 'đăng bài', 'với nội dung', 'caption là'. "
+            "KHÔNG tự bịa media_urls: chỉ dùng URL người dùng đưa hoặc URL "
+            "/images/… đã xuất hiện trong hội thoại (ảnh gửi qua kênh)."
+        ),
+        workflow=(
+            "Thiếu nội dung/ảnh/link thì HỎI trước, đừng đăng bài rỗng. Người "
+            "dùng gửi thêm ảnh qua kênh trong lúc đang soạn → gom TẤT CẢ URL "
+            "ảnh đã nhận trong hội thoại vào MỘT bài (media_urls nhiều phần "
+            "tử), chỉ đăng khi người dùng chốt caption hoặc nói đăng đi. "
+            "Muốn nhờ soạn nội dung thì soạn xong phải đọc lại cho người dùng "
+            "duyệt rồi mới gọi tool. Đăng xong trả nguyên link bài."
+        ),
+        parameters={"type": "object", "properties": {
+            "loai": {"type": "string", "description": "chu | link | anh | video"},
+            "message": {"type": "string",
+                        "description": "Nội dung bài / caption (chỉ nội dung thật)"},
+            "link": {"type": "string", "description": "URL chia sẻ khi loai=link"},
+            "media_urls": {"type": "array", "items": {"type": "string"},
+                           "description": "URL ảnh (loai=anh, 1..n) hoặc 1 URL "
+                                          "video mp4 (loai=video)"},
+            "page_id": {"type": "string",
+                        "description": "Page đích; bỏ trống nếu thread chỉ gắn 1 Page"}},
+            "required": []}),
 }
 
 
@@ -5816,6 +5960,7 @@ _CAP_GROUP: dict[str, str] = {
     "ha_upsert_config": "homeassistant", "ha_upsert_helper": "homeassistant",
     "ha_read_config_file": "homeassistant", "ha_write_config_file": "homeassistant",
     "ha_home_map": "homeassistant", "ha_pyscript_setup": "homeassistant",
+    "dang_facebook": "facebook", "facebook_trang_thai": "facebook",
     "search_sgk": "teacher", "list_teacher_workspaces": "teacher",
     "teacher_memory": "teacher",
     "teacher_lesson": "teacher",
