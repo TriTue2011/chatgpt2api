@@ -210,6 +210,39 @@ class MultiOnboardReq(BaseModel):
     headless: bool = True
 
 
+def bu_credential(req) -> tuple[str, str]:
+    """Trả (mật khẩu, hạt giống TOTP) — lấy từ kho khi request gửi rỗng.
+
+    Từ 08/08/2026 máy chủ KHÔNG trả mật khẩu và hạt giống về trình duyệt nữa
+    (`api_accounts_get`), vì trả ra là vô hiệu hoá toàn bộ lớp mã hoá của
+    `vault.py`. Nhưng các thẻ onboard vẫn gửi đúng những trường đó lên, nên sau
+    khi chọn một tài khoản đã lưu thì form rỗng và bấm đăng nhập là gửi mật khẩu
+    RỖNG — hỏng mà không ai hiểu vì sao.
+
+    Đây là mảnh còn thiếu của đường mà `/v1/session/auto-login-saved` đã đi:
+    người gọi chỉ cần nói tài khoản nào, mật khẩu tự tra ở phía máy chủ và không
+    rời khỏi tiến trình solver. Nhờ làm ở đây, MỌI thẻ onboard được vá cùng lúc
+    mà không phải sửa từng file giao diện.
+
+    Giá trị gửi lên vẫn được ưu tiên: người dùng gõ tay mật khẩu mới thì đó là ý
+    định thật, kho không được đè lên.
+    """
+    mk = str(getattr(req, "password", "") or "").strip()
+    tt = str(getattr(req, "totp_secret", "") or "").strip()
+    if mk and tt:
+        return mk, tt
+    khoa = str(getattr(req, "email", "") or "").strip() or \
+        str(getattr(req, "profile", "") or "").strip()
+    if not khoa:
+        return mk, tt
+    try:
+        acct = resolve_account(khoa) or {}
+    except Exception:
+        return mk, tt
+    return (mk or str(acct.get("password") or "").strip(),
+            tt or str(acct.get("totp_secret") or "").strip())
+
+
 class TwoFactorCodeReq(BaseModel):
     code: str
 
@@ -640,16 +673,20 @@ async def api_auto_login(req: AutoLoginReq) -> dict[str, Any]:
     — the user can finish the remaining steps manually and the saved
     cookies persist either way.
     """
+    mat_khau, hat_giong = bu_credential(req)
     session = await start_auto_login(
         profile=req.profile,
         email=req.email,
-        password=req.password,
+        password=mat_khau,
         prefer_method=req.prefer_method,
-        totp_secret=req.totp_secret,
+        totp_secret=hat_giong,
     )
-    # Auto-save credentials to shared accounts DB
-    try: save_account(req.email, req.password, req.totp_secret, "")
-    except Exception: pass
+    # Chỉ ghi lại kho khi THẬT SỰ có giá trị mới. `save_account` ghi đè, nên gọi
+    # nó với chuỗi rỗng là xoá mất mật khẩu đã lưu — mà form giờ luôn rỗng sau
+    # khi chọn một tài khoản có sẵn.
+    if req.email.strip() and str(req.password or "").strip():
+        try: save_account(req.email, req.password, req.totp_secret, "")
+        except Exception: pass
     return {
         **session.to_dict(),
         "novnc": settings.novnc_external_url,
@@ -684,6 +721,10 @@ async def _run_multi(req: MultiOnboardReq) -> None:
     auth code (if any) via the existing /auto-login-2fa-code endpoint
     on the SAME profile."""
     import asyncio as _asyncio
+    # Giải credential MỘT lần cho cả lượt: form có thể rỗng vì người dùng chọn
+    # tài khoản đã lưu thay vì gõ lại (máy chủ không trả mật khẩu về trình duyệt
+    # nữa). Mọi bước dịch vụ bên dưới dùng chung hai biến này.
+    mat_khau, hat_giong = bu_credential(req)
     state = _multi_state(req.profile)
     state["stage"] = "google_login"
     state["started_at"] = time.time()
@@ -693,7 +734,7 @@ async def _run_multi(req: MultiOnboardReq) -> None:
         await start_auto_login(
             profile=req.profile,
             email=req.email,
-            password=req.password,
+            password=mat_khau,
             prefer_method=req.prefer_method,
         )
         deadline = time.time() + 360
@@ -723,7 +764,7 @@ async def _run_multi(req: MultiOnboardReq) -> None:
             try:
                 if svc == "gemini_web":
                     s = await start_gemini_web_login(
-                        profile=req.profile, email=req.email, password=req.password,
+                        profile=req.profile, email=req.email, password=mat_khau,
                     )
                 elif svc == "flow":
                     # Flow login = Google session + open labs.google. The
@@ -734,7 +775,7 @@ async def _run_multi(req: MultiOnboardReq) -> None:
                     # ChatGPT rides the shared Google session via reuse_session
                     # (no profile nuke, no 2nd 2FA) — just SSO + scrape JWT.
                     await start_chatgpt_onboard(
-                        profile=req.profile, email=req.email, password=req.password,
+                        profile=req.profile, email=req.email, password=mat_khau,
                         reuse_session=True,
                     )
                     cgpt_deadline = time.time() + 240
@@ -762,7 +803,7 @@ async def _run_multi(req: MultiOnboardReq) -> None:
                 elif svc in ("claude_web", "claude"):
                     # Claude rides the shared Google session — scrape sessionKey.
                     await start_claude_web_login(
-                        profile=req.profile, email=req.email, password=req.password,
+                        profile=req.profile, email=req.email, password=mat_khau,
                     )
                     cl_deadline = time.time() + 240
                     while time.time() < cl_deadline:
@@ -1053,13 +1094,15 @@ async def api_gemini_web_models(profile: str, headless: bool = True, timeout: in
 
 @app.post("/v1/gemini-web/onboard", dependencies=[Depends(require_api_key)])
 async def api_gemini_web_onboard(req: GeminiWebOnboardReq) -> dict[str, Any]:
-    prefer = getattr(req, "prefer_method", "auth" if req.totp_secret else "tap")
+    mat_khau, hat_giong = bu_credential(req)
+    prefer = getattr(req, "prefer_method", "auth" if hat_giong else "tap")
     session = await start_gemini_web_login(
-        profile=req.profile, email=req.email, password=req.password,
-        totp_secret=req.totp_secret, prefer_method=prefer,
+        profile=req.profile, email=req.email, password=mat_khau,
+        totp_secret=hat_giong, prefer_method=prefer,
     )
-    try: save_account(req.email, req.password, req.totp_secret, "")
-    except Exception: pass
+    if req.email.strip() and str(req.password or "").strip():
+        try: save_account(req.email, req.password, req.totp_secret, "")
+        except Exception: pass
     return {
         **session.to_dict(),
         "novnc": settings.novnc_external_url,
@@ -1118,9 +1161,10 @@ class OpenAIOnboardReq(BaseModel):
 
 @app.post("/v1/openai-native/onboard", dependencies=[Depends(require_api_key)])
 async def api_openai_native_onboard(req: OpenAIOnboardReq) -> dict[str, Any]:
+    mat_khau, hat_giong = bu_credential(req)
     session = await start_openai_login(
-        profile=req.profile, email=req.email, password=req.password,
-        totp_secret=req.totp_secret,
+        profile=req.profile, email=req.email, password=mat_khau,
+        totp_secret=hat_giong,
     )
     if req.email.strip() and req.password.strip():
         try:
@@ -1166,10 +1210,11 @@ async def api_openai_native_token(profile: str) -> dict[str, Any]:
 
 @app.post("/v1/claude-web/onboard", dependencies=[Depends(require_api_key)])
 async def api_claude_web_onboard(req: ClaudeWebOnboardReq) -> dict[str, Any]:
-    prefer = getattr(req, "prefer_method", "auth" if req.totp_secret else "tap")
+    mat_khau, hat_giong = bu_credential(req)
+    prefer = getattr(req, "prefer_method", "auth" if hat_giong else "tap")
     session = await start_claude_web_login(
-        profile=req.profile, email=req.email, password=req.password,
-        totp_secret=req.totp_secret, prefer_method=prefer,
+        profile=req.profile, email=req.email, password=mat_khau,
+        totp_secret=hat_giong, prefer_method=prefer,
     )
     # Chỉ lưu credential khi có email thực, tránh ghi đè rác vào DB
     if req.email.strip() and req.password.strip():
@@ -1410,18 +1455,19 @@ class ChatGPT2FACodeReq(BaseModel):
 @app.post("/v1/chatgpt/onboard", dependencies=[Depends(require_api_key)])
 async def api_chatgpt_onboard(req: ChatGPTOnboardReq) -> dict[str, Any]:
     """Onboard ChatGPT via Google. If totp_secret provided, 2FA is automatic."""
-    prefer = getattr(req, "prefer_method", "auth" if req.totp_secret else "tap")
+    mat_khau, hat_giong = bu_credential(req)
+    prefer = getattr(req, "prefer_method", "auth" if hat_giong else "tap")
     session = await start_chatgpt_onboard(
         profile=req.profile,
         email=req.email,
-        password=req.password,
-        totp_secret=req.totp_secret,
+        password=mat_khau,
+        totp_secret=hat_giong,
         prefer_method=prefer,
         reuse_session=req.reuse_session,
     )
-    # Auto-save credentials to shared accounts DB
-    try: save_account(req.email, req.password, req.totp_secret, "")
-    except Exception: pass
+    if req.email.strip() and str(req.password or "").strip():
+        try: save_account(req.email, req.password, req.totp_secret, "")
+        except Exception: pass
     return {
         **session.to_dict(),
         "note": "Poll /v1/chatgpt/{profile}/onboard-status. "
