@@ -1039,8 +1039,10 @@ class ConfigStore:
         Rỗng = chưa cấu hình → không bật allowlist. Cố ý fail-OPEN: bật nhầm là
         mọi request trả 400 và người dùng mất luôn đường vào để sửa lại config.
         """
+        # Đọc qua get() chứ không phải self.data: đó là hợp đồng mà nơi gọi
+        # (resolve_image_base_url) và test đang dựa vào.
         try:
-            sec = self.data.get("security")
+            sec = self.get().get("security")
             if isinstance(sec, dict) and isinstance(sec.get("trusted_hosts"), list):
                 return [str(h).strip() for h in sec["trusted_hosts"] if str(h).strip()]
         except Exception:
