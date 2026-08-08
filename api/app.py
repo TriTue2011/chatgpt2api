@@ -226,13 +226,8 @@ def create_app() -> FastAPI:
             _zalo_personal_start()
         except Exception as exc:
             _record_startup_failure("zalo_personal", str(exc))
-        # Start Codex-inspired usage snapshot poller (15s proactive rate-limit polling)
-        try:
-            from services.usage_snapshot_poller import usage_snapshot_poller
-            poller_task = asyncio.create_task(usage_snapshot_poller.start())
-        except Exception as exc:
-            _record_startup_failure("usage_snapshot_poller", str(exc))
-            poller_task = None
+        # Hạn mức Codex không cần dịch vụ nền: mỗi phản hồi Codex đã mang sẵn họ
+        # header `x-codex-*`, `services/codex_usage.py` đọc ngay tại chỗ.
         # Initialize project docs watcher (AGENTS.md / CLAUDE.md auto-reload)
         try:
             from services.project_docs_watcher import project_docs_watcher
@@ -275,8 +270,6 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
             await quota_watcher.stop()
-            if poller_task is not None:
-                await usage_snapshot_poller.stop()
             stop_event.set()
             thread.join(timeout=1)
             backup_service.stop()

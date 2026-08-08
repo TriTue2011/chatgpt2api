@@ -18,6 +18,7 @@ from curl_cffi import requests
 
 from services.config import config
 from services.account_service import account_service
+from services import codex_usage
 from utils.log import logger
 
 CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
@@ -477,6 +478,11 @@ class CodexOAuthProvider:
                     timeout=300, stream=True,
                     impersonate="chrome110",
                 )
+                # Mỗi phản hồi Codex đều mang sẵn họ header `x-codex-*` với phần
+                # trăm đã dùng, độ dài cửa sổ và mốc phục hồi. Đọc ở đây thì hạn
+                # mức luôn tươi mà không tốn thêm một request nào — bản trước
+                # thăm dò riêng 15 giây/lần và trả về toàn số rỗng.
+                codex_usage.ghi_nhan_tu_header(access_token, resp.headers)
 
                 if resp.status_code == 401:
                     # Try OAuth refresh once before giving up on this token
@@ -494,6 +500,7 @@ class CodexOAuthProvider:
                             timeout=300, stream=True,
                             impersonate="chrome110",
                         )
+                        codex_usage.ghi_nhan_tu_header(access_token, resp.headers)
                         if resp.status_code == 401:
                             # Refresh worked but the new token is still 401. Could be
                             # transient (rotation race) — count it; disable only after

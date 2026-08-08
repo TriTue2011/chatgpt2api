@@ -928,6 +928,55 @@ def create_router() -> APIRouter:
             raise HTTPException(status_code=404, detail={"error": "server not found"})
         return {"import_job": server.get("import_job")}
 
+    @router.get("/api/accounts/codex-usage")
+    async def codex_usage_status(authorization: str | None = Header(default=None)):
+        """Hạn mức thật của từng tài khoản Codex — cửa sổ chính/phụ, credit reset.
+
+        Tách khỏi `/api/v1/provider-tree` có chủ ý: cây provider phải trả về ngay
+        để màn hình Tài khoản vẽ được, còn ở đây có thể phải ra mạng. Giao diện
+        gọi sau khi đã vẽ xong, nên chậm ở đây không làm chậm trang.
+
+        Bốn thanh `limits_progress` mà màn hình đang vẽ là hạn mức tính năng của
+        chatgpt.com. Với tài khoản codex thì thứ khiến chúng `limited` lại là hạn
+        mức chữ trả về ở đây — hai đồng hồ khác nhau.
+        """
+        require_admin(authorization)
+        from services import codex_usage
+
+        # Lọc theo account_group chứ không theo `type` thô: một tài khoản gói
+        # trả phí (plus/go/business) nằm trong pool codex dù `type` của nó là
+        # thứ khác, và chính `openai_oauth.get_token_for_request` cũng chọn theo
+        # nhóm này. Lọc lệch đi thì `xoa_ngoai` bên dưới sẽ xoá nhầm bản ghi của
+        # đúng những tài khoản đang chạy.
+        from services.account_service import GROUP_CODEX
+        accounts = [a for a in account_service.list_accounts()
+                    if account_group(a) == GROUP_CODEX]
+        codex_usage.kho_han_muc.xoa_ngoai(
+            [str(a.get("access_token") or "") for a in accounts]
+        )
+
+        def _mot(acc: dict) -> tuple[str, dict]:
+            token = str(acc.get("access_token") or "")
+            tt = codex_usage.thong_tin_token(token)
+            if not tt["la_jwt"]:
+                # Token phiên (JWE / blob đăng nhập) chứ không phải access token.
+                # Mọi lời gọi bằng nó chỉ đổi lấy 401, nên đừng gọi — và nói rõ
+                # lý do thay vì để ô trống không giải thích được.
+                return token, {"token_khong_hop_le": True}
+            ban = codex_usage.lam_moi(token) or {}
+            return token, {**ban, "token_khong_hop_le": False}
+
+        def _tat_ca() -> dict:
+            if not accounts:
+                return {}
+            # Song song: sáu tài khoản nối tiếp nhau, mỗi cái tối đa 20 giây, là
+            # hai phút chờ cho một lần mở trang. TTL khiến lần mở sau tức thì.
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(6, len(accounts))) as pool:
+                return dict(pool.map(_mot, accounts))
+
+        return {"items": await run_in_threadpool(_tat_ca)}
+
     @router.get("/api/accounts/status")
     async def account_status(authorization: str | None = Header(default=None)):
         """Rich account pool status — codext-style status header.
@@ -956,13 +1005,13 @@ def create_router() -> APIRouter:
                 "health_score": round(account_service.get_health_score(acc.get("access_token") or ""), 2),
             })
 
-        # Usage snapshot data if poller is active
+        # Hạn mức Codex — gom từ chính lưu lượng đã chạy, không thăm dò riêng.
         snapshots = {}
         try:
-            from services.usage_snapshot_poller import usage_snapshot_poller
-            snapshots = usage_snapshot_poller.get_status_summary()
+            from services import codex_usage
+            snapshots = codex_usage.kho_han_muc.tat_ca()
         except Exception:
-            snapshots = {"status": "poller_not_active"}
+            snapshots = {}
 
         # Parked task data
         parked = []
@@ -994,7 +1043,7 @@ def create_router() -> APIRouter:
                 "by_status": status_counts,
                 "accounts": detailed,
             },
-            "usage_snapshots": snapshots,
+            "codex_han_muc": snapshots,
             "parked_tasks": parked,
             "backoff": backoff_stats,
             "cooldown": cooldown_summary,

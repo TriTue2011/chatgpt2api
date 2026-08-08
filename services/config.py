@@ -894,14 +894,6 @@ class ConfigStore:
         return str(value).strip()
 
     @property
-    def usage_snapshot_polling_enabled(self) -> bool:
-        """Enable proactive rate-limit polling (codext-style 15s interval)."""
-        value = self.data.get("usage_snapshot_polling_enabled", True)
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
-
-    @property
     def auto_switch_on_rate_limit(self) -> bool:
         """Auto-switch to next account when hitting usage limit (codext-style)."""
         value = self.data.get("auto_switch_on_rate_limit", True)
@@ -1107,7 +1099,6 @@ class ConfigStore:
         data["auto_remove_invalid_accounts"] = self.auto_remove_invalid_accounts
         data["auto_remove_rate_limited_accounts"] = self.auto_remove_rate_limited_accounts
         data["usage_limit_resume_prompt"] = self.usage_limit_resume_prompt
-        data["usage_snapshot_polling_enabled"] = self.usage_snapshot_polling_enabled
         data["auto_switch_on_rate_limit"] = self.auto_switch_on_rate_limit
         data["project_docs_watch_enabled"] = self.project_docs_watch_enabled
         data["log_levels"] = self.log_levels

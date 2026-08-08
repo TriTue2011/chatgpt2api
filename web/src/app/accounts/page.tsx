@@ -299,6 +299,103 @@ function formatRelativeTime(value: string | null | undefined, lang: "vi" | "en")
   return `${Math.floor(hrs / 24)} ${t.daysAgo}`;
 }
 
+/** Một cửa sổ hạn mức Codex — khác hẳn bốn thanh tính năng của chatgpt.com. */
+type CuaSoHanMuc = {
+  da_dung_pct: number;
+  con_lai_pct: number;
+  cua_so_phut: number | null;
+  nhan: string;
+  reset_at: number | null;
+  con_bao_lau_giay: number | null;
+};
+
+type CodexHanMuc = {
+  token_khong_hop_le?: boolean;
+  nguon?: string;
+  plan?: string;
+  gioi_han_dang_ap?: string;
+  chinh?: CuaSoHanMuc | null;
+  phu?: CuaSoHanMuc | null;
+  cham_tran?: boolean;
+  credit_reset?: number;
+  luc_do?: number;
+};
+
+function motKhiNao(resetAt?: number | null): string {
+  if (!resetAt) return "";
+  const conLai = resetAt * 1000 - Date.now();
+  if (conLai <= 0) return "đã tới hạn phục hồi";
+  const gio = Math.floor(conLai / 3_600_000);
+  if (gio < 24) return `còn ${gio}h${Math.floor((conLai % 3_600_000) / 60_000)}p`;
+  return `còn ${Math.floor(gio / 24)} ngày ${gio % 24}h`;
+}
+
+/** Thanh hạn mức Codex: vẽ theo PHẦN TRĂM ĐÃ DÙNG, không phải số lượt còn lại.
+ *
+ * Codex chỉ nói "đã dùng bao nhiêu phần trăm của cửa sổ này" chứ không nói còn
+ * mấy lượt — ép nó vào `QuotaBar` (vốn tính từ số lượt) sẽ ra con số bịa. */
+function ThanhCodex({ ten, cua_so }: { ten: string; cua_so: CuaSoHanMuc }) {
+  const conLai = cua_so.con_lai_pct;
+  const mau = conLai > 30 ? "bg-emerald-500" : conLai > 5 ? "bg-amber-400" : "bg-rose-500";
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className={`size-2 rounded-full shrink-0 ${mau}`} />
+          <span className="text-[11px] font-medium text-[var(--muted-foreground)]">{ten}</span>
+          {cua_so.nhan && (
+            <span className="px-1.5 py-0.5 rounded-[4px] bg-[var(--secondary)] text-[9px] font-bold text-[var(--muted-foreground)]">
+              {cua_so.nhan}
+            </span>
+          )}
+        </div>
+        <span className="text-[10px] text-[var(--muted-foreground)] shrink-0">{motKhiNao(cua_so.reset_at)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 h-1.5 rounded-full bg-[var(--secondary)] overflow-hidden">
+          <div className={`h-full rounded-full transition-all ${mau}`} style={{ width: `${conLai}%` }} />
+        </div>
+        <span className={`text-[11px] font-bold shrink-0 w-16 text-right ${mau.replace("bg-", "text-")}`}>
+          còn {conLai}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function KhoiHanMucCodex({ hm }: { hm?: CodexHanMuc }) {
+  if (!hm) return null;
+  if (hm.token_khong_hop_le) {
+    return (
+      <div className="rounded-[8px] border border-amber-300 bg-amber-50 px-2.5 py-2 text-[10px] text-amber-800">
+        Tài khoản này đang giữ token phiên đăng nhập, không phải access token của Codex.
+        Không đọc được hạn mức, và mọi lượt chat qua Codex sẽ hỏng. Cần đăng nhập lại tài khoản.
+      </div>
+    );
+  }
+  if (!hm.chinh && !hm.phu) return null;
+  return (
+    <div className="space-y-2 rounded-[8px] bg-[var(--secondary)]/40 px-2.5 py-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+          Hạn mức Codex
+        </span>
+        {hm.plan && (
+          <span className="text-[10px] font-medium text-[var(--muted-foreground)]">gói {hm.plan}</span>
+        )}
+      </div>
+      {hm.chinh && <ThanhCodex ten="Cửa sổ chính" cua_so={hm.chinh} />}
+      {hm.phu && <ThanhCodex ten="Cửa sổ phụ" cua_so={hm.phu} />}
+      {!!hm.credit_reset && hm.credit_reset > 0 && (
+        <div className="text-[10px] text-emerald-700">
+          Có {hm.credit_reset} lượt reset hạn mức chưa dùng — xoá sạch cửa sổ hiện tại ngay,
+          không phải chờ tới mốc phục hồi.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function QuotaBar({
   label, remaining, total, resetAfter, ordinal
 }: { label: string; remaining: number; total?: number; resetAfter?: string | null; ordinal?: number }) {
@@ -350,6 +447,7 @@ function AccountsPageContent() {
   const t = (key: TranslationKey) => translations[lang][key] || key;
   const didLoadRef = useRef(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [codexHanMuc, setCodexHanMuc] = useState<Record<string, CodexHanMuc>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
@@ -398,7 +496,20 @@ function AccountsPageContent() {
     didLoadRef.current = true;
     void loadAccounts();
     void fetchProviderTree();
+    void fetchCodexHanMuc();
   }, []);
+
+  // Gọi RỜI khỏi cây provider: endpoint này có thể phải ra mạng hỏi chatgpt.com,
+  // còn cây provider phải trả về ngay để trang vẽ được. Trang hiện lên trước,
+  // hạn mức Codex điền vào sau.
+  const fetchCodexHanMuc = async () => {
+    try {
+      const res = await request.get("/api/accounts/codex-usage");
+      setCodexHanMuc(((res.data as any) || {}).items || {});
+    } catch {
+      // Không có hạn mức thì phần đó không hiện — không phải lỗi của cả trang.
+    }
+  };
 
   const fetchProviderTree = async () => {
     await buildProviderTree();
@@ -1441,6 +1552,14 @@ function AccountsPageContent() {
                                           ) : (!hasLimitsImageGen && !imageQuotaUnknown(account)) ? (
                                             <QuotaBar label="Tạo ảnh" remaining={quotaVal} resetAfter={account.restore_at ? formatRestoreAt(account.restore_at, lang).relative : undefined} ordinal={featureRanks['image_gen']?.[account.access_token]} />
                                           ) : null}
+                                          {/* Hạn mức Codex đứng TRƯỚC bốn thanh tính năng, vì với
+                                              tài khoản codex thì chính nó — chứ không phải chúng —
+                                              quyết định tài khoản còn dùng được hay không. Bốn thanh
+                                              dưới là hạn mức tính năng của chatgpt.com; một tài khoản
+                                              codex có thể còn nguyên lượt tạo ảnh mà vẫn không chat
+                                              được. Đó là hai đồng hồ khác nhau, xem `giu_han_nghi`
+                                              trong services/account_service.py. */}
+                                          <KhoiHanMucCodex hm={codexHanMuc[account.access_token]} />
                                           {account.limits_progress?.map((lp, i) => (
                                             <QuotaBar key={i} label={t(lp.feature_name as TranslationKey) ?? lp.feature_name ?? `Limit ${i + 1}`} remaining={lp.remaining ?? 0} total={(lp as any).total} resetAfter={lp.reset_after ? formatRestoreAt(lp.reset_after, lang).relative : undefined} ordinal={featureRanks[lp.feature_name ?? ""]?.[account.access_token]} />
                                           ))}
