@@ -134,11 +134,26 @@ def create_router() -> APIRouter:
         return resp
 
     @router.get("/auth/browser-session")
-    async def browser_session(authorization: str | None = Header(default=None)):
-        """Ai đang đăng nhập. Dùng lúc tải trang để biết còn phiên hay không."""
+    async def browser_session(request: Request,
+                              authorization: str | None = Header(default=None)):
+        """Ai đang đăng nhập, KÈM một CSRF token mới cho phiên hiện tại.
+
+        Vì sao trả CSRF ở đây: token nằm trong `sessionStorage`, vốn RIÊNG cho
+        từng tab. Mở tab thứ hai là tab đó không có token, dù cookie phiên vẫn
+        còn nguyên. Bản đầu coi đó là "hết phiên" và gọi `clearStoredAuthSession`
+        — mà hàm đó xoá kho DÙNG CHUNG và thu hồi luôn phiên phía máy chủ, nên
+        mở thêm một tab là đăng xuất ở MỌI tab.
+
+        Trả token ở đây an toàn: request phải kèm cookie `HttpOnly`, và
+        same-origin policy chặn trang khác đọc phản hồi này.
+        """
         identity = require_identity(authorization)
-        return {"ok": True, "id": identity.get("id"), "name": identity.get("name"),
-                "role": identity.get("role"),
-                "nguon": identity.get("nguon") or "bearer"}
+        ra = {"ok": True, "id": identity.get("id"), "name": identity.get("name"),
+              "role": identity.get("role"),
+              "nguon": identity.get("nguon") or "bearer"}
+        sid = request.cookies.get(COOKIE_NAME, "")
+        if sid and kho_phien.tra_cuu(sid):
+            ra["csrf_token"] = kho_phien.cap_lai_csrf(sid)
+        return ra
 
     return router

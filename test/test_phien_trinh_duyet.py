@@ -171,6 +171,52 @@ class GhiDiaDinhKyTests(_KhoTam):
         self.assertTrue(kho_moi.kiem_csrf(sid, csrf))
 
 
+class DaTabTests(_KhoTam):
+    """Mở tab thứ hai KHÔNG được làm đăng xuất ở mọi tab.
+
+    `sessionStorage` riêng theo tab, nên tab mới có cookie mà không có CSRF
+    token. Bản đầu coi đó là hết phiên rồi gọi `clearStoredAuthSession` — hàm
+    đó xoá kho DÙNG CHUNG và thu hồi cả phiên phía máy chủ.
+
+    Cấp token MỚI cho tab hai cũng sai: nó vô hiệu hoá tab một, tức là đổi một
+    lỗi đa tab lấy một lỗi đa tab khác. Vì vậy token suy ra TẤT ĐỊNH từ session
+    id — mọi tab của cùng một phiên có cùng một token.
+    """
+
+    def test_moi_tab_deu_nhan_CUNG_mot_token(self):
+        sid, csrf = self.kho.tao(self.ADMIN)
+        self.assertEqual(self.kho.cap_lai_csrf(sid), csrf)
+        self.assertEqual(self.kho.cap_lai_csrf(sid), csrf, "cấp lại ra giá trị khác")
+
+    def test_cap_lai_KHONG_lam_hong_token_dang_dung(self):
+        sid, csrf = self.kho.tao(self.ADMIN)
+        self.kho.cap_lai_csrf(sid)          # tab thứ hai xin token
+        self.assertTrue(self.kho.kiem_csrf(sid, csrf), "tab thứ nhất bị vô hiệu hoá")
+
+    def test_phien_KHAC_thi_token_KHAC(self):
+        sid1, csrf1 = self.kho.tao(self.ADMIN)
+        sid2, csrf2 = self.kho.tao(self.ADMIN)
+        self.assertNotEqual(csrf1, csrf2)
+        self.assertFalse(self.kho.kiem_csrf(sid2, csrf1))
+
+    def test_phien_da_chet_thi_khong_cap_lai(self):
+        sid, _ = self.kho.tao(self.ADMIN)
+        self.kho.thu_hoi(sid)
+        self.assertEqual(self.kho.cap_lai_csrf(sid), "")
+
+    def test_khong_luu_token_ra_dia(self):
+        """Suy ra tất định thì không cần lưu — và không nên lưu."""
+        sid, csrf = self.kho.tao(self.ADMIN)
+        thoi = (Path(self._tmp.name) / "browser_sessions.json").read_text(encoding="utf-8")
+        self.assertNotIn(csrf, thoi)
+        self.assertNotIn("csrf_bam", thoi)
+
+    def test_endpoint_tra_token_cho_tab_moi(self):
+        src = (GOC / "api/browser_auth.py").read_text(encoding="utf-8")
+        i = src.index("async def browser_session")
+        self.assertIn("cap_lai_csrf", src[i:i + 1400])
+
+
 class CookieBatBuocHttpsTests(unittest.TestCase):
     """Phát cookie phiên trên HTTP thuần = ai nghe đường truyền là lấy được."""
 

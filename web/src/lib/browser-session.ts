@@ -57,6 +57,11 @@ function luuCsrfToken(token: string) {
     }
 }
 
+/** Nhận CSRF token do máy chủ cấp lại cho tab này (xem `/auth/browser-session`). */
+export function nhanCsrfToken(token: string): void {
+    if (token) luuCsrfToken(token);
+}
+
 export function coPhienTrinhDuyet(): boolean {
     return Boolean(layCsrfToken());
 }

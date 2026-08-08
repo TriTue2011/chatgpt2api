@@ -52,6 +52,25 @@ def _bam(gia_tri: str) -> str:
     return hashlib.sha256(gia_tri.encode("utf-8")).hexdigest()
 
 
+def csrf_tu_sid(sid: str) -> str:
+    """CSRF token suy ra TẤT ĐỊNH từ session id.
+
+    Vì sao không sinh ngẫu nhiên rồi lưu hash: token nằm ở `sessionStorage`,
+    vốn riêng theo tab. Sinh mới cho tab thứ hai là token của tab thứ nhất hết
+    hiệu lực — vẫn đúng cái lỗi đa tab, chỉ ở dạng khác. Suy ra tất định thì
+    mọi tab của cùng một phiên có cùng một token, và không phải lưu gì thêm.
+
+    An toàn vì đây là mẫu "signed double-submit": kẻ tấn công cross-site không
+    đọc được cookie (`HttpOnly`) nên không suy ra được token, và cũng không đọc
+    được phản hồi chứa token (same-origin policy).
+    """
+    if not sid:
+        return ""
+    from services.config import config
+    khoa = hashlib.sha256(("c2a-csrf:" + str(config.auth_key or "")).encode()).digest()
+    return hmac.new(khoa, sid.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 class KhoPhienTrinhDuyet:
     """Kho phiên, lưu ra đĩa để redeploy không đá mọi người ra ngoài."""
 
@@ -108,7 +127,7 @@ class KhoPhienTrinhDuyet:
     def tao(self, identity: dict[str, Any]) -> tuple[str, str]:
         """Tạo phiên mới. Trả (session_id, csrf_token) DẠNG GỐC — lần duy nhất."""
         sid = secrets.token_urlsafe(32)
-        csrf = secrets.token_urlsafe(32)
+        csrf = csrf_tu_sid(sid)
         bay_gio = time.time()
         with self._khoa:
             self._nap()
@@ -122,7 +141,6 @@ class KhoPhienTrinhDuyet:
                 "chu_the": str(identity.get("id") or ""),
                 "ten": str(identity.get("name") or ""),
                 "vai_tro": str(identity.get("role") or ""),
-                "csrf_bam": _bam(csrf),
                 "tao_luc": bay_gio,
                 "het_han": bay_gio + THOI_HAN_GIAY,
                 "lan_cuoi": bay_gio,
@@ -163,17 +181,24 @@ class KhoPhienTrinhDuyet:
             return dict(ban_ghi)
 
     def kiem_csrf(self, sid: str, csrf: str) -> bool:
-        """So HẰNG THỜI GIAN trên bytes.
+        """Phiên còn hạn VÀ token khớp giá trị suy ra từ chính session id.
 
-        Trên bytes vì ``compare_digest`` ném TypeError với chuỗi ngoài ASCII —
-        token do ta sinh thì luôn ASCII, nhưng giá trị header là do CLIENT gửi
-        và họ gửi được bất cứ thứ gì.
+        So HẰNG THỜI GIAN trên bytes: ``compare_digest`` ném TypeError với chuỗi
+        ngoài ASCII, mà giá trị header là do CLIENT gửi — họ gửi được bất cứ thứ
+        gì, kể cả tiếng Việt có dấu.
         """
-        ban_ghi = self.tra_cuu(sid)
-        if not ban_ghi or not csrf:
+        if not csrf or not self.tra_cuu(sid):
             return False
-        return hmac.compare_digest(_bam(csrf).encode(),
-                                   str(ban_ghi.get("csrf_bam") or "").encode())
+        return hmac.compare_digest(csrf_tu_sid(sid).encode(),
+                                   str(csrf).strip().encode())
+
+    def cap_lai_csrf(self, sid: str) -> str:
+        """Token của phiên này, cho tab chưa có nó. "" nếu phiên đã chết.
+
+        Không sinh giá trị mới — xem `csrf_tu_sid`. Cấp mới sẽ vô hiệu hoá tab
+        đang mở, tức là đổi một lỗi đa tab lấy một lỗi đa tab khác.
+        """
+        return csrf_tu_sid(sid) if sid and self.tra_cuu(sid) else ""
 
     def thu_hoi(self, sid: str) -> bool:
         if not sid:

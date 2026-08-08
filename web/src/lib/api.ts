@@ -276,7 +276,8 @@ export async function xinVeSSE() {
  * cookie. Ở đây không đặt header nào, để interceptor đi nhánh cookie.
  */
 export async function fetchBrowserSession() {
-  return httpRequest<{ ok: boolean; id: string; name: string; role: "admin" | "user"; nguon: string }>(
+  return httpRequest<{ ok: boolean; id: string; name: string; role: "admin" | "user";
+                       nguon: string; csrf_token?: string }>(
     "/auth/browser-session",
     { redirectOnUnauthorized: false },
   );

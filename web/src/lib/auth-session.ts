@@ -2,7 +2,7 @@
 
 import webConfig from "@/constants/common-env";
 import { fetchBrowserSession, login } from "@/lib/api";
-import { coPhienTrinhDuyet, dangNhapPhien } from "@/lib/browser-session";
+import { dangNhapPhien, nhanCsrfToken } from "@/lib/browser-session";
 import { clearStoredAuthSession, getStoredAuthSession, setStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 
 export async function getValidatedAuthSession(): Promise<StoredAuthSession | null> {
@@ -14,15 +14,16 @@ export async function getValidatedAuthSession(): Promise<StoredAuthSession | nul
   // Đã di trú sang cookie: hỏi bằng đúng cookie, KHÔNG dùng `login()` — hàm đó
   // luôn gắn `Authorization: Bearer <khoá>`, mà giờ không còn khoá.
   if (storedSession.viaCookie) {
-    // CSRF token nằm ở `sessionStorage`: mở tab mới là mất, dù cookie vẫn còn.
-    // Không có nó thì mọi thao tác POST/PUT/DELETE sẽ bị chặn 403, nên phải
-    // coi như chưa đăng nhập và để người dùng vào lại.
-    if (!coPhienTrinhDuyet()) {
-      await clearStoredAuthSession();
-      return null;
-    }
+    // CSRF token nằm ở `sessionStorage`, vốn RIÊNG theo tab: mở tab thứ hai là
+    // tab đó không có token, dù cookie phiên vẫn còn nguyên.
+    //
+    // Bản đầu coi đó là "hết phiên" và gọi `clearStoredAuthSession` — mà hàm đó
+    // xoá kho DÙNG CHUNG và thu hồi luôn phiên phía máy chủ, nên mở thêm một
+    // tab là ĐĂNG XUẤT Ở MỌI TAB. Nay xin lại token: `/auth/browser-session`
+    // xác thực bằng chính cookie và trả token của phiên hiện tại.
     try {
       const data = await fetchBrowserSession();
+      if (data.csrf_token) nhanCsrfToken(data.csrf_token);
       const nextSession: StoredAuthSession = {
         key: "",
         role: data.role,
