@@ -120,6 +120,54 @@ class DoiChieuKhoaTests(_Nen):
             [{"provider": "flow", "status": "provider_key_missing"}],
             "đang kiểm trên bản đã được env điền sẵn, không phải bản đang chạy")
 
+    def test_khoa_co_dau_khong_lam_sap_bo_kiem(self):
+        """`hmac.compare_digest` ném TypeError khi chuỗi có ký tự ngoài ASCII.
+
+        "comparing strings with non-ASCII characters is not supported" — một
+        khoá có dấu sẽ biến bộ kiểm sức khoẻ thành HTTP 500, tức là đúng lúc
+        cần nó nhất thì nó chết. So trên bytes thì không.
+        """
+        self.dat({"claude": {"captcha_solver_url": "/api/captcha",
+                             "captcha_solver_api_key": "khóa-bí-mật"}},
+                 env_key="khoa-bi-mat")
+        self.assertEqual(branch_health.kiem_khoa_captcha()["warnings"],
+                         [{"provider": "claude", "status": "key_mismatch"}])
+
+    def test_khoa_co_dau_van_khop_duoc(self):
+        self.dat({"claude": {"captcha_solver_url": "/api/captcha",
+                             "captcha_solver_api_key": "khóa-bí-mật"}},
+                 env_key="khóa-bí-mật")
+        self.assertEqual(branch_health.kiem_khoa_captcha()["warnings"], [])
+
+    def test_solver_rieng_khong_bi_bao_lech(self):
+        """`captcha_base` giữ nguyên URL HTTPS lạ — solver riêng là hợp lệ.
+
+        Khoá của một solver riêng KHÔNG có lý do gì phải trùng
+        CAPTCHA_SOLVER_API_KEY của solver nội bộ; báo lệch ở đây là kêu oan.
+        """
+        self.dat({"claude": {"captcha_solver_url": "https://solver.example.com",
+                             "captcha_solver_api_key": KHOA_KHAC}})
+        kq = branch_health.kiem_khoa_captcha()
+        self.assertEqual(kq["warnings"], [])
+        self.assertEqual(
+            kq["checked"],
+            [{"provider": "claude", "status": "independent_solver_not_compared"}])
+
+    def test_moi_dang_url_noi_bo_deu_duoc_so(self):
+        """Ba dạng dưới đây `captcha_base` đều quy về 127.0.0.1:8010."""
+        self.dat({})          # giữ nguyên trạng một lần, rồi thay tự do bên dưới
+        for url in ("/api/captcha", "", "http://127.0.0.1:8010",
+                    "http://captcha-solver:8010",
+                    "https://vi-du.com/api/captcha"):
+            with self.subTest(url=url):
+                config.data = {"providers": {
+                    "claude": {"captcha_solver_url": url,
+                               "captcha_solver_api_key": KHOA_KHAC}}}
+                self.assertEqual(
+                    branch_health.kiem_khoa_captcha()["warnings"],
+                    [{"provider": "claude", "status": "key_mismatch"}],
+                    f"{url!r} là solver nội bộ, phải được đối chiếu")
+
     def test_khong_ro_ri_gia_tri_khoa(self):
         self.dat({
             "flow": {"captcha_solver_url": "/api/captcha",

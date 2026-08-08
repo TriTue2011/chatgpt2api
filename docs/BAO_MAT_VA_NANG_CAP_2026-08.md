@@ -389,9 +389,17 @@ Lệch khoá đã gây sự cố hai lần trong một tuần (Flow 07/08, Claud
 hai lần đều tốn thời gian vì triệu chứng là *"không lấy được session"* chứ
 không phải *"sai khoá"*. `GET /api/agent/branches/health` nay đối chiếu sẵn:
 
+Gateway nghe cổng **80 bên trong container**, host publish ra **3030**
+(`docker-compose.yml`: `"3030:80"`), nên chọn đúng ngữ cảnh:
+
 ```bash
+# chạy trên host 172.16.10.38
 curl -sS -H "Authorization: Bearer $CHATGPT2API_AUTH_KEY" \
-  http://127.0.0.1:8000/api/agent/branches/health | jq .captcha_solver
+  http://127.0.0.1:3030/api/agent/branches/health | jq .captcha_solver
+
+# chạy bên trong container: docker exec c2a sh -c '...'
+curl -sS -H "Authorization: Bearer $CHATGPT2API_AUTH_KEY" \
+  http://127.0.0.1:80/api/agent/branches/health | jq .captcha_solver
 ```
 
 ```json
@@ -405,8 +413,15 @@ curl -sS -H "Authorization: Bearer $CHATGPT2API_AUTH_KEY" \
 
 Trạng thái: `key_match` · `key_mismatch` · `provider_key_missing` (khai
 `captcha_solver_url` nhưng thiếu khoá → gọi solver không kèm `Authorization`) ·
-`CAPTCHA_SOLVER_API_KEY_missing` · provider không dùng solver thì không xuất
-hiện. Phản hồi **không** chứa khoá, hash, tiền tố hay độ dài.
+`CAPTCHA_SOLVER_API_KEY_missing` · `independent_solver_not_compared`. Provider
+không dùng solver thì không xuất hiện. Phản hồi **không** chứa khoá, hash,
+tiền tố hay độ dài.
+
+Chỉ solver **nội bộ** mới được đối chiếu. Trỏ vào một solver riêng
+(`https://solver.example.com`) thì khoá của nó không có lý do gì phải trùng
+`CAPTCHA_SOLVER_API_KEY`, nên trạng thái là `independent_solver_not_compared`:
+có trong `checked` để anh biết nó đã được nhìn tới, nhưng không vào `warnings`.
+Luật "thế nào là nội bộ" lấy thẳng từ `captcha_base()`, không chép lại.
 
 Lệch khoá **không** làm `ok` thành `false` — về kiến trúc một provider được
 phép dùng solver riêng — nhưng câu cảnh báo có trong `tom_tat`.

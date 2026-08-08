@@ -153,8 +153,18 @@ def _ghim_mot_model(model: str) -> bool:
 # so với thứ trang Cài đặt hiển thị, không phải thứ đang chạy; đúng khe hở đã
 # để lọt lần trước.
 #
+# CHỈ so khi provider trỏ vào solver NỘI BỘ. ``captcha_base()`` giữ nguyên một
+# URL HTTPS lạ (services/captcha.py:23) — tức là solver riêng được hỗ trợ thật,
+# và khoá riêng của nó KHÔNG có lý do gì phải trùng ``CAPTCHA_SOLVER_API_KEY``.
+# Báo lệch cho trường hợp đó là kêu oan, mà bộ kiểm kêu oan thì sẽ bị bỏ qua cả
+# lúc kêu đúng. Dùng thẳng ``captcha_base`` để luật "thế nào là nội bộ" chỉ nằm
+# một chỗ, sửa ở đó thì đây theo.
+#
 # Trạng thái: key_match · key_mismatch · provider_key_missing ·
-# CAPTCHA_SOLVER_API_KEY_missing · not_configured (bỏ qua, không cảnh báo).
+# CAPTCHA_SOLVER_API_KEY_missing · independent_solver_not_compared (solver
+# riêng — ghi nhận, không cảnh báo) · not_configured (bỏ qua hẳn).
+_KHONG_CANH_BAO = frozenset({"key_match", "independent_solver_not_compared"})
+
 _CAU_CANH_BAO: dict[str, str] = {
     "key_mismatch":
         "{p} dùng captcha solver nhưng key khác CAPTCHA_SOLVER_API_KEY; "
@@ -171,12 +181,15 @@ _CAU_CANH_BAO: dict[str, str] = {
 def kiem_khoa_captcha() -> dict[str, Any]:
     """Đối chiếu khoá solver của từng provider với ``CAPTCHA_SOLVER_API_KEY``.
 
-    Chỉ xét provider CÓ khai dùng solver. Provider không khai thì im lặng —
-    một bộ kiểm hay kêu oan sẽ bị bỏ qua cả lúc kêu đúng.
+    Chỉ xét provider CÓ khai dùng solver, và trong đó chỉ SO những provider
+    trỏ vào solver nội bộ. Provider không khai thì im lặng — một bộ kiểm hay
+    kêu oan sẽ bị bỏ qua cả lúc kêu đúng.
 
     KHÔNG trả về giá trị khoá, hash, tiền tố hay độ dài. Chỉ trả tên provider
-    và một nhãn trạng thái; so sánh bằng ``hmac.compare_digest``.
+    và một nhãn trạng thái.
     """
+    from services.captcha import INTERNAL, captcha_base
+
     env_key = os.getenv("CAPTCHA_SOLVER_API_KEY", "").strip()
     providers = config.data.get("providers") or {}
     if not isinstance(providers, dict):
@@ -191,11 +204,17 @@ def kiem_khoa_captcha() -> dict[str, Any]:
         if not url and not key:
             continue                      # not_configured — không dùng solver
 
-        if not env_key:
+        if captcha_base(url) != INTERNAL:
+            trang_thai = "independent_solver_not_compared"
+        elif not env_key:
             trang_thai = "CAPTCHA_SOLVER_API_KEY_missing"
         elif not key:
             trang_thai = "provider_key_missing"
-        elif hmac.compare_digest(key, env_key):
+        # So trên BYTES: `compare_digest` ném TypeError khi chuỗi có ký tự
+        # ngoài ASCII ("comparing strings with non-ASCII characters is not
+        # supported"), mà đây là bộ kiểm sức khoẻ — một khoá có dấu sẽ biến
+        # nó thành HTTP 500 thay vì một dòng cảnh báo.
+        elif hmac.compare_digest(key.encode("utf-8"), env_key.encode("utf-8")):
             trang_thai = "key_match"
         else:
             trang_thai = "key_mismatch"
@@ -207,7 +226,7 @@ def kiem_khoa_captcha() -> dict[str, Any]:
         # "không cảnh báo vì chẳng quét provider nào" — hai tình huống trông
         # giống hệt nhau nếu chỉ nhìn `warnings` rỗng.
         "checked": da_kiem,
-        "warnings": [r for r in da_kiem if r["status"] != "key_match"],
+        "warnings": [r for r in da_kiem if r["status"] not in _KHONG_CANH_BAO],
     }
 
 
