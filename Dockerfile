@@ -14,18 +14,17 @@
 # Prefer least-privilege via security_opt:no-new-privileges (compose) until stack split.
 FROM node:22-alpine AS web-build
 WORKDIR /app/web
-RUN npm install -g bun
-COPY web/package.json web/bun.lock ./
-# bun hay "Fail extracting tarball for next" trên amd64 (bug giải nén hardlink,
-# lỗi rải rác theo mạng/arch — arm64 không dính). Dùng backend=copyfile (bền
-# hơn hardlink) + thử lại 3 lần, xoá cache giữa các lần; hết 3 lần vẫn lỗi thì
-# fail thật (dấu || cuối truyền exit code).
-RUN bun install --backend=copyfile \
-    || (rm -rf /root/.bun/install/cache; bun install --backend=copyfile) \
-    || (rm -rf /root/.bun/install/cache; bun install --backend=copyfile)
+# npm ci, KHÔNG phải bun. Trước đây image build bằng `bun.lock` còn `npm audit`
+# đọc `package-lock.json` — hai cây phụ thuộc khác nhau, nên kết quả audit mô
+# tả một thứ KHÔNG phải thứ đang chạy. Một lockfile thì audit và image nói về
+# cùng một cây.
+#
+# Đã bỏ luôn cả `npm install -g bun`: node:22-alpine có sẵn npm.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY VERSION /app/VERSION
 COPY web ./
-RUN NEXT_PUBLIC_APP_VERSION="$(cat /app/VERSION)" bun run build
+RUN NEXT_PUBLIC_APP_VERSION="$(cat /app/VERSION)" npm run build
 
 # ── Stage 1b: install the embedded Zalo server (Node zca-js) deps ──────────
 # Nhúng thẳng server Zalo cá nhân vào image thay vì pull image bên thứ ba.

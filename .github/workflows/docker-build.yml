@@ -71,22 +71,42 @@ jobs:
         working-directory: zalo-server
         run: node --test test/rbac.test.js
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       # CỔNG CHẶN CỨNG từ 08/08/2026: 26 lỗi type sẵn có đã dọn hết và
       # `ignoreBuildErrors` đã gỡ khỏi next.config.ts, nên `next build` trong
       # Docker cũng tự fail khi có lỗi type. Bước này chỉ để phát hiện SỚM
       # (30 giây) thay vì chờ hết một lượt build image ~30 phút.
       #
-      # --frozen-lockfile dùng lại được từ 07a3eae: trước đó bun.lock lệch với
-      # khối `overrides` của package.json nên bước cài fail ngay; commit đó sinh
-      # lại lock nên nay đã khớp (đo tại chỗ: "no changes").
+      # npm ci (không phải bun) từ 08/08/2026: image cũng build bằng npm ci nên
+      # cổng này và image nói về CÙNG một cây phụ thuộc. Trước đây image dùng
+      # bun.lock còn audit đọc package-lock.json — audit mô tả thứ không chạy.
       - name: Web typecheck (gate)
         working-directory: web
         run: |
-          bun install --frozen-lockfile
-          bunx tsc --noEmit
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+
+      # Chỉ CRITICAL mới chặn. `--omit=dev` là chủ ý: web xuất bản TĨNH
+      # (next.config `output: 'export'`), nên devDependencies không đi vào
+      # image và không phục vụ request nào — để chúng chặn merge là biến cổng
+      # này thành thứ người ta quen bỏ qua.
+      - name: Web audit (critical chặn)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=critical
+
+      # Báo cáo mức high, KHÔNG chặn — để thấy mà xử lý có kế hoạch.
+      - name: Web audit (high — chỉ báo cáo)
+        working-directory: web
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Zalo-server audit (critical chặn)
+        working-directory: zalo-server
+        run: npm audit --omit=dev --audit-level=critical
 
   # Build each architecture on its NATIVE runner (fast; no QEMU emulation of the
   # ~9GB browser+ML image). arm64 uses GitHub's free hosted arm64 runner
