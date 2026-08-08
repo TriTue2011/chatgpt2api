@@ -1716,11 +1716,28 @@ async def api_accounts_list() -> list[dict]:
 
 @app.get("/v1/accounts/saved/{email}", dependencies=[Depends(require_api_key)])
 async def api_accounts_get(email: str) -> dict[str, Any]:
-    """Get full account details including password (for auto-login)."""
+    """Thông tin tài khoản — KHÔNG kèm mật khẩu lẫn hạt giống TOTP.
+
+    Bản cũ trả `dict(acct)` nguyên vẹn, tức là mật khẩu Google và hạt giống
+    TOTP đi thẳng về trình duyệt. Điều đó vô hiệu hoá toàn bộ lớp mã hoá của
+    `vault.py`: mã hoá tại chỗ chẳng còn nghĩa gì khi có một endpoint giải mã
+    sẵn rồi đưa ra ngoài.
+
+    Không cần nó nữa: `/v1/session/auto-login-saved` đăng nhập bằng cách TỰ tra
+    credential từ kho, chỉ nhận tên profile. Mật khẩu không rời khỏi tiến
+    trình solver.
+    """
     acct = get_account(email)
     if not acct:
         raise HTTPException(404, "Account not found")
-    return dict(acct)
+    return {
+        "email": acct.get("email"),
+        "label": acct.get("label"),
+        "created_at": acct.get("created_at"),
+        "updated_at": acct.get("updated_at"),
+        "has_password": bool(str(acct.get("password") or "").strip()),
+        "has_totp": bool(str(acct.get("totp_secret") or "").strip()),
+    }
 
 
 @app.post("/v1/accounts/saved", dependencies=[Depends(require_api_key)])

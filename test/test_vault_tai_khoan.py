@@ -136,6 +136,72 @@ class TuongThichNguocTests(_Nen):
         self.assertEqual(self.vault.ma_hoa("", "a@gmail.com", "password"), "")
 
 
+class FailClosedODuongGhiTests(_Nen):
+    """Cờ `VAULT_REQUIRE_ENCRYPTION` — thà không lưu được còn hơn lưu chữ thường.
+
+    Không có nó thì chủ máy đặt VAULT_MASTER_KEY sai định dạng sẽ tưởng đã bật
+    mã hoá, trong khi hệ thống vẫn ghi chữ thường và chỉ có một dòng log.
+    """
+
+    def setUp(self):
+        self._env_cu = os.environ.get("VAULT_REQUIRE_ENCRYPTION")
+
+        def tra_lai():
+            if self._env_cu is None:
+                os.environ.pop("VAULT_REQUIRE_ENCRYPTION", None)
+            else:
+                os.environ["VAULT_REQUIRE_ENCRYPTION"] = self._env_cu
+
+        self.addCleanup(tra_lai)
+
+    def test_mac_dinh_TAT_thi_van_ghi_duoc(self):
+        os.environ.pop("VAULT_REQUIRE_ENCRYPTION", None)
+        self.dat_khoa(None)
+        self.assertEqual(self.vault.ma_hoa("abc", "a@gmail.com", "password"), "abc")
+
+    def test_bat_len_ma_thieu_khoa_thi_TU_CHOI_ghi(self):
+        os.environ["VAULT_REQUIRE_ENCRYPTION"] = "1"
+        self.dat_khoa(None)
+        with self.assertRaises(self.vault.VaultChuaSanSang):
+            self.vault.ma_hoa("mat-khau", "a@gmail.com", "password")
+
+    def test_bat_len_ma_khoa_SAI_DINH_DANG_cung_tu_choi(self):
+        """Khoá sai định dạng nguy hiểm hơn khoá thiếu: người đặt tưởng đã bật."""
+        os.environ["VAULT_REQUIRE_ENCRYPTION"] = "1"
+        self.dat_khoa("khong-phai-base64!!")
+        with self.assertRaises(self.vault.VaultChuaSanSang):
+            self.vault.ma_hoa("mat-khau", "a@gmail.com", "password")
+
+    def test_gia_tri_rong_khong_bi_chan(self):
+        """Không có gì để mã hoá thì không có gì để từ chối."""
+        os.environ["VAULT_REQUIRE_ENCRYPTION"] = "1"
+        self.dat_khoa(None)
+        self.assertEqual(self.vault.ma_hoa("", "a@gmail.com", "password"), "")
+
+
+class ComposeVaEndpointTests(unittest.TestCase):
+    def test_compose_anh_xa_THAT_chu_khong_phai_comment(self):
+        """Để dạng comment thì giá trị trong .env không tới được container —
+        người đặt biến tưởng đã bật mã hoá trong khi vẫn ghi chữ thường."""
+        src = (GOC / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertRegex(src, r"(?m)^\s{6}VAULT_MASTER_KEY:\s+\$\{VAULT_MASTER_KEY")
+
+    def test_endpoint_KHONG_tra_credential_ve_trinh_duyet(self):
+        """Mã hoá tại chỗ vô nghĩa nếu có endpoint giải mã sẵn rồi đưa ra ngoài."""
+        src = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
+        i = src.index("async def api_accounts_get")
+        than = src[i:src.index("async def api_accounts_save")]
+        self.assertNotIn("return dict(acct)", than,
+                         "vẫn trả nguyên bản ghi gồm password + totp_secret")
+        self.assertIn('"has_password"', than)
+        self.assertIn('"has_totp"', than)
+
+    def test_van_con_duong_dang_nhap_phia_may_chu(self):
+        """Bỏ endpoint mà không có đường thay thế là bỏ luôn tính năng."""
+        src = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
+        self.assertIn("auto-login-saved", src)
+
+
 class KhongLoTotpRaDanhSachTests(unittest.TestCase):
     """`list_accounts` từng ghi 'without password for safety' mà vẫn trả TOTP."""
 

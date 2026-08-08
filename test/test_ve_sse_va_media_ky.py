@@ -114,6 +114,47 @@ class ChuKyMediaTests(unittest.TestCase):
         self.assertNotIn(os.environ["CHATGPT2API_AUTH_KEY"], q["sig"])
 
 
+class VeRangVaoPhienTests(unittest.TestCase):
+    """Vé chỉ dùng được từ CHÍNH phiên đã xin nó.
+
+    Không ràng thì ai đọc được vé trong 60 giây — log của reverse proxy, lịch
+    sử trình duyệt, người ngồi cạnh — đều mở được stream từ máy khác. Sống
+    ngắn và dùng một lần vẫn chưa đủ: kẻ đọc được log gần như luôn đọc được
+    NGAY, không phải sau một ngày.
+    """
+
+    def setUp(self):
+        self.kho = KhoVe()
+
+    def test_dung_phien_thi_qua(self):
+        ve, _ = self.kho.cap(ADMIN, "bam-phien-A")
+        self.assertIsNotNone(self.kho.dung(ve, "bam-phien-A"))
+
+    def test_phien_KHAC_thi_khong_dung_duoc(self):
+        ve, _ = self.kho.cap(ADMIN, "bam-phien-A")
+        self.assertIsNone(self.kho.dung(ve, "bam-phien-B"))
+
+    def test_khong_kem_phien_thi_khong_dung_duoc_ve_da_rang(self):
+        ve, _ = self.kho.cap(ADMIN, "bam-phien-A")
+        self.assertIsNone(self.kho.dung(ve, ""))
+
+    def test_ve_xin_bang_Bearer_thi_khong_rang(self):
+        """Bearer không có phiên cookie — vẫn còn hai lớp: một lần + 60 giây."""
+        ve, _ = self.kho.cap(ADMIN, "")
+        self.assertIsNotNone(self.kho.dung(ve, ""))
+
+    def test_ve_bi_tu_choi_van_BIEN_MAT(self):
+        """Không xoá thì kẻ đoán phiên có thể thử đi thử lại cùng một vé."""
+        ve, _ = self.kho.cap(ADMIN, "bam-phien-A")
+        self.assertIsNone(self.kho.dung(ve, "sai"))
+        self.assertIsNone(self.kho.dung(ve, "bam-phien-A"), "vé vẫn còn sau lần thử sai")
+
+    def test_co_tat_han_duong_token_cu(self):
+        """Không có công tắc thì 'tạm thời' sẽ thành vĩnh viễn."""
+        src = (GOC / "api/register.py").read_text(encoding="utf-8")
+        self.assertIn("sse_legacy_token_disabled", src)
+
+
 class NoiGoiTests(unittest.TestCase):
     def test_han_URL_voice_KHONG_dai(self):
         """URL đã ký tự nó mở được file — hạn 7 ngày biến mỗi link rò ra
@@ -144,8 +185,8 @@ class NoiGoiTests(unittest.TestCase):
     def test_sse_uu_tien_ve_va_canh_bao_duong_cu(self):
         src = (GOC / "api/register.py").read_text(encoding="utf-8")
         i = src.index("async def register_events")
-        than = src[i:i + 1600]
-        self.assertIn("kho_ve.dung(ticket)", than)
+        than = src[i:i + 2600]
+        self.assertIn("kho_ve.dung(ticket, _phien_bam(request))", than)
         self.assertIn("sse_token_trong_url", than,
                       "phải ghi cảnh báo để biết khi nào bỏ được đường ?token=")
 

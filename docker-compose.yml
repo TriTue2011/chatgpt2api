@@ -119,7 +119,11 @@ services:
       # (chúng trả rỗng, đăng nhập tự động sẽ hỏng). Mất khoá thì phải nhập lại
       # mật khẩu và TOTP cho từng tài khoản. Sao lưu khoá cùng chỗ với các bí
       # mật khác, KHÔNG để cạnh accounts.db.
-      # VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
+      # Để trống = không mã hoá (có log cảnh báo) — xem services/vault.py.
+      # PHẢI là ánh xạ thật, không phải comment: để dạng comment thì giá trị
+      # trong .env không bao giờ tới được container, và người đặt biến sẽ tưởng
+      # đã bật mã hoá trong khi vẫn ghi chữ thường.
+      VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
 
     security_opt:
       - no-new-privileges:true

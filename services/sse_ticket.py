@@ -19,6 +19,7 @@ mới — ghi ra đĩa chỉ tạo thêm một chỗ chứa bí mật mà chẳn
 """
 from __future__ import annotations
 
+import hmac
 import secrets
 import threading
 import time
@@ -40,8 +41,15 @@ class KhoVe:
         for k in het:
             self._ve.pop(k, None)
 
-    def cap(self, identity: dict[str, Any]) -> tuple[str, float]:
-        """Cấp vé mới cho danh tính đã xác thực. Trả (vé, số giây còn sống)."""
+    def cap(self, identity: dict[str, Any],
+            phien_bam: str = "") -> tuple[str, float]:
+        """Cấp vé mới cho danh tính đã xác thực. Trả (vé, số giây còn sống).
+
+        `phien_bam` = hash session-id của phiên ĐÃ xin vé. Vé chỉ dùng được từ
+        chính phiên đó — không có ràng buộc này thì ai đọc được vé trong 60
+        giây (log proxy, lịch sử trình duyệt, người ngồi cạnh) đều mở được
+        stream từ máy khác.
+        """
         bay_gio = time.time()
         ve = secrets.token_urlsafe(32)
         with self._khoa:
@@ -50,14 +58,20 @@ class KhoVe:
                 # Bỏ vé sắp hết hạn nhất — nó gần vô dụng nhất.
                 cu = min(self._ve, key=lambda k: self._ve[k][0])
                 self._ve.pop(cu, None)
-            self._ve[ve] = (bay_gio + TTL_GIAY, dict(identity))
+            muc = dict(identity)
+            muc["_phien_bam"] = str(phien_bam or "")
+            self._ve[ve] = (bay_gio + TTL_GIAY, muc)
         return ve, TTL_GIAY
 
-    def dung(self, ve: str) -> dict[str, Any] | None:
+    def dung(self, ve: str, phien_bam: str = "") -> dict[str, Any] | None:
         """Đổi vé lấy danh tính. Vé BIẾN MẤT ngay, dùng lại không được.
 
         Xoá trước khi trả về (chứ không sau khi stream đóng) để hai request
         đến cùng lúc với cùng một vé thì chỉ một cái qua được.
+
+        Vé cấp cho một phiên thì CHỈ phiên đó dùng được. Vé cấp không kèm phiên
+        (xin bằng Bearer) thì không ràng buộc — lúc đó nó vẫn còn hai lớp bảo
+        vệ: dùng một lần và sống 60 giây.
         """
         if not ve:
             return None
@@ -68,7 +82,13 @@ class KhoVe:
         if not muc:
             return None
         han, identity = muc
-        return identity if han > bay_gio else None
+        if han <= bay_gio:
+            return None
+        can = str(identity.get("_phien_bam") or "")
+        if can and not hmac.compare_digest(can.encode(),
+                                           str(phien_bam or "").encode()):
+            return None
+        return identity
 
     def so_ve(self) -> int:
         with self._khoa:

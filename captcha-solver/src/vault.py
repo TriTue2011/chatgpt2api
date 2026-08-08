@@ -74,6 +74,20 @@ def _aad(email: str, truong: str) -> bytes:
     return f"{str(email or '').strip().lower()}|{str(truong or '').strip()}".encode("utf-8")
 
 
+class VaultChuaSanSang(RuntimeError):
+    """Chưa có khoá mà lại định ghi credential mới."""
+
+
+def _bat_buoc_ma_hoa() -> bool:
+    """`VAULT_REQUIRE_ENCRYPTION=1` → từ chối ghi credential khi chưa có khoá.
+
+    Mặc định TẮT để bản ghi cũ và luồng đang chạy không đứng. Bật lên thì
+    đường GHI fail-closed: thà không lưu được mật khẩu mới còn hơn lưu chữ
+    thường trong khi chủ máy tưởng đã mã hoá.
+    """
+    return str(os.environ.get("VAULT_REQUIRE_ENCRYPTION", "")).strip() in {"1", "true", "yes", "on"}
+
+
 def ma_hoa(gia_tri: str, email: str, truong: str) -> str:
     """Trả chuỗi để lưu vào DB. Chưa có khoá → trả nguyên giá trị."""
     gt = str(gia_tri or "")
@@ -81,6 +95,12 @@ def ma_hoa(gia_tri: str, email: str, truong: str) -> str:
         return ""
     k = _khoa()
     if k is None:
+        if _bat_buoc_ma_hoa():
+            raise VaultChuaSanSang(
+                "VAULT_REQUIRE_ENCRYPTION đang bật nhưng VAULT_MASTER_KEY chưa "
+                "đặt (hoặc sai định dạng) — từ chối ghi credential dạng chữ "
+                "thường. Sinh khoá: python3 -c \"import base64,os;"
+                "print(base64.b64encode(os.urandom(32)).decode())\"")
         return gt
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -118,4 +138,5 @@ def da_ma_hoa(luu_tru: str) -> bool:
     return str(luu_tru or "").startswith(TIEN_TO)
 
 
-__all__ = ["TIEN_TO", "da_ma_hoa", "dang_bat", "giai_ma", "ma_hoa"]
+__all__ = ["TIEN_TO", "VaultChuaSanSang", "da_ma_hoa", "dang_bat",
+           "giai_ma", "ma_hoa"]

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -53,16 +53,30 @@ def create_router() -> APIRouter:
         require_admin(authorization)
         return {"register": register_service.reset()}
 
+    def _phien_bam(request: Request) -> str:
+        """Hash của session-id trong cookie, hoặc "" nếu đi bằng Bearer.
+
+        Vé được RÀNG vào phiên đã xin nó: ai đọc được vé trong 60 giây (log
+        proxy, lịch sử trình duyệt) cũng không mở được stream từ máy khác.
+        """
+        try:
+            from services.browser_session import COOKIE_NAME, _bam
+            sid = request.cookies.get(COOKIE_NAME, "")
+            return _bam(sid) if sid else ""
+        except Exception:
+            return ""
+
     @router.post("/api/register/events-ticket")
-    async def register_events_ticket(authorization: str | None = Header(default=None)):
+    async def register_events_ticket(request: Request,
+                                     authorization: str | None = Header(default=None)):
         """Xin vé mở SSE. Xác thực bằng header như mọi endpoint khác."""
         identity = require_admin(authorization)
         from services.sse_ticket import kho_ve
-        ve, ttl = kho_ve.cap(identity)
+        ve, ttl = kho_ve.cap(identity, _phien_bam(request))
         return {"ok": True, "ticket": ve, "expires_in": ttl}
 
     @router.get("/api/register/events")
-    async def register_events(token: str = "", ticket: str = ""):
+    async def register_events(request: Request, token: str = "", ticket: str = ""):
         """SSE. Ưu tiên vé; `token=` giữ lại để không cắt client cũ.
 
         `EventSource` không gửi được header tuỳ ý nên đường này buộc phải nhận
@@ -72,14 +86,23 @@ def create_router() -> APIRouter:
         """
         if ticket:
             from services.sse_ticket import kho_ve
-            if kho_ve.dung(ticket) is None:
+            if kho_ve.dung(ticket, _phien_bam(request)) is None:
                 raise HTTPException(
                     status_code=401,
                     detail={"error": "Vé không hợp lệ, đã dùng hoặc đã hết hạn",
                             "code": "sse_ticket_invalid"})
         else:
-            # Đường cũ — còn để client chưa cập nhật vẫn chạy. Ghi cảnh báo để
-            # biết khi nào không còn ai dùng mà bỏ hẳn.
+            # Đường cũ — còn để client chưa cập nhật vẫn chạy. Tắt hẳn được
+            # bằng `security.sse_legacy_token_disabled` khi đã chắc không còn
+            # ai dùng; không có công tắc thì "tạm thời" sẽ thành vĩnh viễn.
+            from services.config import config as _cfg
+            _sec = _cfg.get().get("security")
+            if isinstance(_sec, dict) and _sec.get("sse_legacy_token_disabled"):
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error": "Đường ?token= đã tắt — hãy xin vé ở "
+                                     "/api/register/events-ticket",
+                            "code": "sse_legacy_token_disabled"})
             logger.warning({"event": "sse_token_trong_url",
                             "msg": "client còn dùng ?token= (khoá admin trong URL); "
                                    "hãy chuyển sang /api/register/events-ticket"})
