@@ -4,6 +4,7 @@
 
 **📚 Các tài liệu hướng dẫn (Click để xem chi tiết):**
 - **[📘 Hướng dẫn CHI TIẾT từng tab, từng ô cài đặt — đọc trước nếu mới cài lần đầu](HUONG_DAN.md)**
+- **[🔐 Bảo mật & nâng cấp 08/2026 — biến môi trường mới, các lỗ hổng đã vá, xử lý sự cố](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)** ⬅️ *bắt buộc đọc nếu đang nâng cấp*
 - **[📖 Hướng Dẫn Sử Dụng & Đăng Nhập ChatGPT2API](README_ChatGPT2API.vi.md)**
 - **[🧠 Hướng Dẫn Dạy AI & Cấu Hình VN MCP Hub](README_VN_MCP_HUB.vi.md)**
 
@@ -70,8 +71,29 @@ mkdir -p /opt/chatgpt2api
 cd /opt/chatgpt2api
 ```
 
-**Bước 2: Tạo file cấu hình docker-compose.yml**
-Sử dụng trình soạn thảo `nano` để tạo file:
+**Bước 2: Tạo file `.env`**
+
+Từ bản vá bảo mật 08/2026, mọi secret **phải** khai bằng biến môi trường — không
+còn giá trị mặc định đoán được, và stack sẽ **dừng deploy** nếu thiếu biến bắt
+buộc. Chép [`.env.example`](.env.example) rồi điền:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Tối thiểu cần:
+```bash
+CHATGPT2API_AUTH_KEY=khoa_admin_manh
+CAPTCHA_SOLVER_API_KEY=khoa_captcha_manh
+ZALO_SERVER_API_KEY=khoa_zalo_api_manh
+VNC_PASSWORD=mat_khau_vnc_manh
+# Nên đặt cho production (xem tài liệu bảo mật bên dưới)
+SESSION_SECRET=            # tạo bằng: openssl rand -base64 48
+ZALO_SERVER_ADMIN_PASSWORD=
+```
+
+**Bước 3: Tạo file cấu hình docker-compose.yml**
 ```bash
 nano docker-compose.yml
 ```
@@ -84,21 +106,43 @@ services:
     container_name: c2a
     restart: unless-stopped
     ports:
-      - "3030:80"     # API + giao diện web
-      - "6080:6080"   # noVNC — đăng nhập web thủ công (captcha-solver)
-      - "10600:10600" # Wyoming Protocol server nhúng (TTS+STT cho Home Assistant)
+      - "3030:80"                # API + giao diện web
+      - "127.0.0.1:6080:6080"    # noVNC — chỉ localhost (bỏ 127.0.0.1 nếu cần LAN)
+      - "3001:3001"              # zalo-server — chỉ giữ nếu HA ở máy khác
+      - "10600:10600"            # Wyoming (TTS+STT cho Home Assistant)
     volumes:
       # 1 thư mục dữ liệu duy nhất: accounts, config, KB + chroma, profile trình duyệt
       - ./c2a-data:/app/data
     environment:
-      - CHATGPT2API_AUTH_KEY=mat_khau_cua_ban   # ĐỔI MẬT KHẨU NÀY
-      - CAPTCHA_SOLVER_API_KEY=mat_khau_cua_ban # ĐỔI MẬT KHẨU NÀY
-      - STORAGE_BACKEND=json
+      STORAGE_BACKEND: json
+
+      # Bắt buộc — thiếu là deploy dừng ngay
+      CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:?required}
+      CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?required}
+      ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?required}
+      VNC_PASSWORD: ${VNC_PASSWORD:?required}
+
+      # zalo-server. Image TRƯỚC hotfix 6d8c039 đòi các biến này phải TỒN TẠI
+      # (dù rỗng), nếu thiếu supervisord không parse được config → crash loop.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:-}
+      ZALO_SERVER_ADMIN_USERNAME: ${ZALO_SERVER_ADMIN_USERNAME:-admin}
+      ZALO_COOKIE_SECURE: "0"    # GIỮ "0": bot gọi zalo-server qua HTTP nội bộ
+      ZALO_WS_ALLOWED_ORIGINS: ${ZALO_WS_ALLOWED_ORIGINS:-}
+
+    security_opt:
+      - no-new-privileges:true
 ```
 > Ghi chú: MCP Hub (8005) và Captcha API (8010) chỉ chạy nội bộ trong container nên không cần publish ra ngoài.
+>
+> 📘 **Đang nâng cấp từ bản cũ, hoặc gặp crash loop / Zalo báo `401`?**
+> Đọc **[docs/BAO_MAT_VA_NANG_CAP_2026-08.md](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)**
+> — liệt kê đầy đủ biến môi trường, các lỗ hổng đã vá, các bước nâng cấp và cách
+> xử lý sự cố.
+
 Lưu lại bằng cách nhấn `Ctrl + X`, sau đó nhấn `Y` và `Enter`.
 
-**Bước 3: Khởi động hệ thống**
+**Bước 4: Khởi động hệ thống**
 Chạy lệnh sau để tải image và khởi động các container:
 ```bash
 docker compose up -d

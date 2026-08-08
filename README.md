@@ -4,6 +4,7 @@
 
 **📚 Documentation Links (Click to view details):**
 - **[📘 Hướng dẫn TIẾNG VIỆT chi tiết từng tab, từng ô cài đặt — đọc trước nếu mới cài lần đầu](HUONG_DAN.md)**
+- **[🔐 Security & upgrade notes 2026-08 — new env vars, patched issues, troubleshooting](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)** ⬅️ *required reading when upgrading*
 - **[📖 ChatGPT2API User & Login Guide](README_ChatGPT2API.md)**
 - **[🧠 VN MCP Hub RAG & Configuration Guide](README_VN_MCP_HUB.md)**
 
@@ -87,12 +88,33 @@ mkdir -p /opt/chatgpt2api
 cd /opt/chatgpt2api
 ```
 
-**Step 2: Create docker-compose.yml file**
-Use the `nano` editor to create the file:
+**Step 2: Create the `.env` file**
+
+Since the 2026-08 security update, secrets **must** come from environment
+variables — there are no guessable defaults left, and the stack refuses to start
+if a required one is missing. Copy [`.env.example`](.env.example) and fill it in:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Minimum required:
+```bash
+CHATGPT2API_AUTH_KEY=strong_admin_key
+CAPTCHA_SOLVER_API_KEY=strong_captcha_key
+ZALO_SERVER_API_KEY=strong_zalo_api_key
+VNC_PASSWORD=strong_vnc_password
+# Recommended in production (see the security guide below)
+SESSION_SECRET=            # openssl rand -base64 48
+ZALO_SERVER_ADMIN_PASSWORD=
+```
+
+**Step 3: Create docker-compose.yml file**
 ```bash
 nano docker-compose.yml
 ```
-Paste the following code into the file:
+Paste the following:
 ```yaml
 services:
   # All-in-one: API gateway + VN MCP Hub + Captcha Solver in one container
@@ -101,25 +123,44 @@ services:
     container_name: c2a
     restart: unless-stopped
     ports:
-      - "3030:80"      # API + web dashboard
-      - "6080:6080"    # noVNC (set VNC_PASSWORD; LAN only, not WAN)
-      - "3001:3001"    # zalo-server (HA/integration on LAN)
-      - "10600:10600"  # Wyoming multi — vi/en TTS+STT (HA often on another host)
+      - "3030:80"                # API + web dashboard
+      - "127.0.0.1:6080:6080"    # noVNC — localhost only (drop the prefix for LAN)
+      - "3001:3001"              # zalo-server (only if HA runs on another host)
+      - "10600:10600"            # Wyoming multi — vi/en TTS+STT
     volumes:
       # Single data dir: accounts, config, KB + chroma, browser profiles
       - ./c2a-data:/app/data
     environment:
-      - CHATGPT2API_AUTH_KEY=your_secure_password   # CHANGE THIS PASSWORD
-      - CAPTCHA_SOLVER_API_KEY=your_secure_password # CHANGE THIS PASSWORD
-      - VNC_PASSWORD=your_vnc_password               # REQUIRED when using :6080
-      - STORAGE_BACKEND=json
+      STORAGE_BACKEND: json
+
+      # Required — deploy stops if any is missing
+      CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:?required}
+      CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?required}
+      ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?required}
+      VNC_PASSWORD: ${VNC_PASSWORD:?required}
+
+      # zalo-server. Images built before hotfix 6d8c039 require these variables
+      # to EXIST (may be empty) — otherwise supervisord cannot parse its config
+      # and the container crash-loops.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:-}
+      ZALO_SERVER_ADMIN_USERNAME: ${ZALO_SERVER_ADMIN_USERNAME:-admin}
+      ZALO_COOKIE_SECURE: "0"    # keep "0": the bot talks to zalo-server over HTTP
+      ZALO_WS_ALLOWED_ORIGINS: ${ZALO_WS_ALLOWED_ORIGINS:-}
+
+    security_opt:
+      - no-new-privileges:true
 ```
 > Note: MCP Hub (8005) and Captcha API (8010) run only inside the container, so they don't need to be published.
 > Homelab: do **not** bind `10600`/`3001` to `127.0.0.1` if Home Assistant is on a different machine.
+> 📘 **Upgrading from an older version, or hitting a crash loop / Zalo `401`?**
+> Read **[docs/BAO_MAT_VA_NANG_CAP_2026-08.md](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)**
+> — it lists every environment variable, the security fixes, migration steps and
+> troubleshooting.
 
 Save the file by pressing `Ctrl + X`, then press `Y` and `Enter`.
 
-**Step 3: Start the system**
+**Step 4: Start the system**
 Run the following command to download the image and start the containers:
 ```bash
 docker compose up -d
