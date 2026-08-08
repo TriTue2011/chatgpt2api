@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from typing import Any
@@ -26,6 +27,8 @@ from services.rate_limit_backoff import rate_limit_backoff
 from services.quota_watcher import quota_watcher
 from services.ninerouter_backup_import import import_9router_backup_from_api
 from services.oauth_service import get_codex_auth_url, exchange_codex_code, get_chatgpt_session_url, detect_token_type
+
+logger = logging.getLogger(__name__)
 
 
 def _provider_circuit_stats() -> dict:
@@ -438,10 +441,28 @@ def create_router(app_version: str) -> APIRouter:
     async def get_version():
         return {"version": app_version}
 
+    def _che_secret_bat_khong() -> bool:
+        """Cờ `security.settings_redact_secrets`. Mặc định TẮT.
+
+        Bật khi frontend CHƯA biết nhãn `{"is_set": …}` thì mọi ô secret trong
+        trang Cài đặt hiện `[object Object]`. Nên bật cùng lúc với bản web
+        tương ứng, không sớm hơn. Đường GHI thì lọc vô điều kiện — nó chỉ
+        chặn mất mát, không đổi thứ gì đang chạy.
+        """
+        try:
+            sec = config.get().get("security")
+            return bool(sec.get("settings_redact_secrets")) if isinstance(sec, dict) else False
+        except Exception:
+            return False
+
     @router.get("/api/settings")
     async def get_settings(authorization: str | None = Header(default=None)):
         require_admin(authorization)
-        return {"config": config.get()}
+        cfg = config.get()
+        if _che_secret_bat_khong():
+            from services.settings_secrets import che_giau
+            cfg = che_giau(cfg)
+        return {"config": cfg}
 
     @router.get("/api/agent/branches/health")
     async def agent_branches_health(authorization: str | None = Header(default=None)):
@@ -468,7 +489,25 @@ def create_router(app_version: str) -> APIRouter:
         # exclude_unset: only apply fields the client actually sent — avoids
         # wiping multi-key providers when a partial settings body is posted.
         _changed = body.model_dump(mode="python", exclude_unset=True)
+        # Lọc VÔ ĐIỀU KIỆN, không sau cờ: `web/src/app/combos/page.tsx` GET
+        # config rồi POST NGUYÊN CẢ config trở lại. Khi che secret được bật,
+        # payload đó mang toàn nhãn `{"is_set":…}`, và không có bộ lọc này thì
+        # lần lưu đầu tiên ghi nhãn che đè lên khoá thật — mất sạch, mất im
+        # lặng. Lọc luôn cả khi cờ đang tắt: nó chỉ bỏ những trường không mang
+        # giá trị mới, nên không đổi hành vi nào đang chạy.
+        from services.settings_secrets import loc_ghi, xoa_theo_duong_dan
+        _xoa = _changed.pop("clear_secret_fields", None)
+        _changed = loc_ghi(_changed, config.data)
         result = config.update(_changed)
+        # Xoá hẳn phải TƯỜNG MINH: gửi chuỗi rỗng không xoá được gì, vì một ô
+        # input trống do trang chưa nạp xong là chuyện thường và nó không được
+        # phép đồng nghĩa với "xoá khoá R2".
+        if isinstance(_xoa, list) and _xoa:
+            _du_lieu = dict(config.data)
+            _da_xoa = xoa_theo_duong_dan(_du_lieu, [str(x) for x in _xoa])
+            if _da_xoa:
+                result = config.update(_du_lieu)
+                logger.info({"event": "settings_xoa_secret", "fields": _da_xoa})
         # If tunnel token changed, restart tunnel
         if "cloudflare_tunnel_token" in _changed:
             try:
@@ -502,6 +541,11 @@ def create_router(app_version: str) -> APIRouter:
                 _zp_changed()
             except Exception:
                 pass
+        # Phản hồi của POST cũng phải che: nó trả nguyên config sau khi lưu,
+        # nên bỏ sót chỗ này là che GET xong vẫn rò trọn bộ qua đường lưu.
+        if _che_secret_bat_khong():
+            from services.settings_secrets import che_giau
+            result = che_giau(result)
         return {"config": result}
 
     # ── Cloudflare Tunnel ──
