@@ -233,6 +233,7 @@ domain công khai) — xem mục 6.
 | Path traversal khi xoá backup | `resolve().relative_to(BACKUP_DIR)` |
 | Token/mật khẩu lọt access-log qua query string | Tắt `--access-log` của uvicorn, bỏ `?password=` |
 | `gitpython 3.1.57` — 5 CVE đã công bố (backend lưu trữ `git`) | Nâng lockfile lên `3.1.58`; `pyproject.toml` không đổi vì đã là `>=3.1.57` |
+| `nanoid < 3.3.17` mức **cao** (bắc cầu qua `postcss` → `next` trong `web/`) | Thêm `"nanoid": "^3.3.17"` vào `overrides` của `web/package.json`, sinh lại **cả hai** lockfile → 3.3.18. Giữ nhánh 3.x vì `postcss` cần `^3.3.11`; `nanoid` 6 sẽ làm hỏng nó |
 
 ### DoS & ổn định
 
@@ -356,25 +357,14 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - Chưa có CSP; `/images/` chưa có URL ký hạn; SSE vẫn nhận `?token=` trên query.
 - Dockerfile chưa pin digest/checksum cho binary tải về; container chạy `root`.
 - Frontend còn 26 lỗi TypeScript, `ignoreBuildErrors: true` đang che lỗi build.
-- **Dependency Node** — việc duy nhất còn làm workflow Security đỏ. Phía Python
-  đã sạch (xem `gitpython` ở mục 5). Cần một nhánh riêng vì:
-  - `web/`: `nanoid < 3.3.17` mức **cao** (đây là thứ làm bước
-    `npm audit --audit-level=high` fail) và `postcss ≤ 8.5.22` mức trung bình.
-    nanoid chỉ là dependency bắc cầu của postcss → next, và postcss chỉ chạy
-    lúc **build**, nên rủi ro thực tế với bản đang chạy rất thấp. Cách vá gọn
-    là thêm `"nanoid": "^3.3.17"` vào `overrides` của `web/package.json` (chỗ
-    này đã có sẵn override cho `postcss` và `sharp`).
-    **Bẫy đã đo ngày 08/08:** `web/bun.lock` hiện **lệch** với `overrides` —
-    chạy `bun install` để sinh lại lock sẽ kéo theo 34 dòng thay đổi ngoài ý
-    muốn, trong đó có hạ `sharp` từ 0.34.5 xuống 0.33.5 trên mọi nền tảng.
-    `sharp` là bộ tối ưu ảnh của Next.js, nên phải `bun run build` và xem lại
-    ảnh thật rồi mới merge. Nhớ sửa **cả hai** lock: image build bằng
-    `bun.lock`, còn `package-lock.json` chỉ để `npm audit` đọc — sửa mỗi
-    `package-lock.json` là cổng xanh mà image vẫn dính lỗ hổng.
-  - `postcss` muốn hết cảnh báo phải `npm audit fix --force` → kéo lên
-    `next@16.3.0`, ngoài khoảng phiên bản đang khai. **Đừng làm.**
-  - `zalo-server/`: 8–9 lỗ hổng mức cao (`axios`, `ws`, `sharp`, `image-size`).
-    `image-size` chưa có bản vá — trước mắt giảm bề mặt xử lý ảnh không tin cậy.
+- **Dependency Node của `zalo-server/`**: 8–9 lỗ hổng mức cao (`axios`, `ws`,
+  `sharp`, `image-size`). **Không** chạy `npm audit fix --force` — nâng lockfile
+  ở nhánh riêng rồi build và chạy hồi quy. `image-size` chưa có bản vá, trước
+  mắt giảm bề mặt xử lý ảnh không tin cậy.
+- **`postcss` ở `web/`** còn cảnh báo mức trung bình (GHSA-fxqj-rqcc-2cmp).
+  Muốn hết phải `npm audit fix --force` → kéo lên `next@16.3.0`, ngoài khoảng
+  phiên bản đang khai. **Đừng làm** khi chưa có kế hoạch nâng Next.js. Mức này
+  không làm đỏ cổng CI (`--audit-level=high`).
 - **ACL nhiều người dùng cho zalo-server.** Hiện dashboard và chat chỉ mở cho vai
   `admin`, vì hệ thống không có cách giới hạn một tài khoản chỉ xem được một số
   tài khoản Zalo hay một số cuộc trò chuyện. Muốn cho vai `user` vào chat thì
