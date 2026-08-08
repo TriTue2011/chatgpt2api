@@ -106,6 +106,20 @@ services:
       VNC_PASSWORD: ${VNC_PASSWORD:?VNC_PASSWORD chưa đặt — noVNC publish ra LAN cần mật khẩu}
       # URL noVNC mà UI captcha mở trên máy khác trong LAN (đổi IP host của bạn)
       # CAPTCHA_SOLVER_NOVNC_EXTERNAL_URL: "http://172.16.10.38:6080/vnc.html?host=172.16.10.38&port=6080&autoconnect=1"
+      #
+      # [Khuyến nghị] Khoá mã hoá mật khẩu Google + hạt giống TOTP trong
+      # /data/accounts.db (AES-256-GCM). base64 của 32 byte ngẫu nhiên:
+      #     python3 -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"
+      #
+      # CỐ Ý KHÔNG bắt buộc: thiếu nó thì vẫn ghi chữ thường như cũ và chỉ có
+      # log cảnh báo. Bắt buộc sẽ làm container không lên được sau khi cập
+      # nhật — mất cả hệ thống tệ hơn nhiều so với thứ nó định bảo vệ.
+      #
+      # ĐẶT RỒI THÌ ĐỪNG ĐỔI: đổi khoá là không đọc được các bản ghi đã mã hoá
+      # (chúng trả rỗng, đăng nhập tự động sẽ hỏng). Mất khoá thì phải nhập lại
+      # mật khẩu và TOTP cho từng tài khoản. Sao lưu khoá cùng chỗ với các bí
+      # mật khác, KHÔNG để cạnh accounts.db.
+      # VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
 
     security_opt:
       - no-new-privileges:true
