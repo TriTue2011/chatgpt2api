@@ -311,6 +311,80 @@ Ngoài ra:
 
 ---
 
+## 6b. Khôi phục Vision: Gemini Web và Claude
+
+Hai quy trình này phải làm **bằng tay trong trình duyệt** (đăng nhập Google,
+màn hình đồng ý) nên không tự động hoá được. Mọi khẳng định dưới đây đã đối
+chiếu với mã ngày 08/08/2026.
+
+> **Không dán `captcha_solver_api_key`, cookie Google hay `sessionKey` vào chat,
+> issue hay commit.** Các mục dưới chỉ nhắc TÊN trường, không nhắc giá trị.
+
+### 6b.1. Gemini Web — thoát khỏi tài khoản khách
+
+Triệu chứng: gửi ảnh nhận `guest account cannot do vision/upload`.
+
+Nguyên nhân: hồ sơ trình duyệt không có cookie **`__Secure-1PSID`**. Mã lọc
+đúng cookie đó (`api/gemini_web.py`), và hồ sơ nào thiếu bị xếp xuống cuối như
+"guest" — Google trả `1100/UNAUTHENTICATED` cho mọi thao tác upload.
+
+1. **Không mở noVNC ra Internet.** Từ máy của bạn:
+   ```bash
+   ssh -L 6080:127.0.0.1:6080 root@172.16.10.38
+   ```
+   rồi mở `http://localhost:6080/vnc.html?autoconnect=1`.
+2. Web admin → **Settings → Gemini Web API**. Chọn một **profile Google thật**
+   (ví dụ `google-benbap…`), **không** dùng profile `*-default`.
+3. Bấm **Tái dùng profile / Reuse profile**.
+4. Báo `failed` → vào noVNC, đăng nhập Google **trong đúng profile đó**, mở
+   `gemini.google.com`, xong màn hình đồng ý nếu có, rồi bấm Reuse lại.
+5. Xác nhận config đã ghi:
+   ```yaml
+   providers:
+     gemini_web_api:
+       enabled: true
+       profile: google-ten-profile
+       profiles: [google-ten-profile]
+   ```
+6. Thử một ảnh JPEG **nhỏ** với `gma/auto`. Chỉ tính là xong khi không còn dòng
+   `guest account cannot do vision`.
+
+Cookie lưu ở `/app/data/gemini_cookies`, mà `/opt/c2a/data` được mount vào
+`/app/data`, nên **session sống qua restart**.
+
+Gemini Free API còn 429 thì để nó chờ quota hồi; tạm dùng Gemini Web đã xác
+thực làm Vision chính. **Đừng** xoay nhiều tài khoản Free để né quota.
+
+### 6b.2. Claude — đồng bộ khoá captcha-solver
+
+Claude đọc **riêng** hai trường dưới đây; nó **không** kế thừa từ `flow`
+(`api/claude.py` đọc thẳng `providers.claude.captcha_solver_api_key`). Đây là
+lý do Claude không tự đăng nhập lại được.
+
+```yaml
+providers:
+  claude:
+    captcha_solver_url: "/api/captcha"
+    captcha_solver_api_key: <GIỐNG providers.flow.captcha_solver_api_key>
+    profiles: [google-ten-profile]
+    enabled: true
+    model: auto
+```
+
+Cách an toàn nhất là **không sửa tay**: Settings → **Google Providers** → chọn
+profile Google đã đăng nhập → bấm riêng **Tái dùng Claude**. Giao diện tự ghi
+`/api/captcha`, chép khoá đang dùng của Flow, và thêm profile vào Claude.
+
+Sau đó thử `claude/auto` bằng một prompt chữ ngắn. Chưa có session thì vào
+noVNC cùng profile, mở `claude.ai`, đăng nhập / đồng ý điều khoản, rồi bấm
+**Tái dùng Claude** lại.
+
+**Không cần restart container.** Nếu vẫn thấy session cũ thì chờ tối đa 5 phút:
+`_SOLVER_KEY_TTL = 300.0` cache sessionKey theo profile, và `_RELOGIN_COOLDOWN
+= 300.0` giữ nhịp tự đăng nhập lại.
+
+---
+
 ## 7. Xử lý sự cố
 
 **Container restart liên tục, log ghi `Error: Format string ... ENV_SESSION_SECRET ... cannot be expanded`**
