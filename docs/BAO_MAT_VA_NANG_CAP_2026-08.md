@@ -250,6 +250,16 @@ domain công khai) — xem mục 6.
 | Proxy có cap request nhưng **buffer response upstream vô hạn** (`upstream.content`) | `read_upstream_limited` — cắt response ở đúng trần, trả 502 |
 | Hub `/api/studio/convert` đọc `await file.read()` không trần | Dùng chung `read_upload_limited` (100MB) như `analyze_source` |
 | Cache tool MCP đóng băng kết quả **rỗng** 15 phút khi hub chưa kịp lên → bot mất sạch tool sau mỗi lần khởi động | Phân biệt "server không có tool" với "không nối được"; chưa nối được thì TTL rút còn 30 giây |
+| **Ảnh bom nén**: trần byte không chặn được. Một PNG vài chục KB khai báo 50.000×50.000 điểm ảnh → Pillow giải nén ra hàng GB RAM, trần byte hoàn toàn vô can | `services/image_guard.py`: đọc HEADER (không `load()`), chặn theo cạnh (20.000), tổng điểm ảnh (50 triệu) và số khung hình (512); `DecompressionBombWarning` nâng thành lỗi. Áp cho upload, ảnh Zalo, `image_utils.normalize` và thumbnail |
+| `/api/image-tasks/edits` là đường upload ảnh **thứ hai**, chỉ có trần 50MB mỗi tệp — không giới hạn số ảnh, không giới hạn tổng. Đổi cửa là lách sạch trần của `/v1/images/edits` | Hai đường dùng CHUNG hằng số của `image_guard`: 8 ảnh / 20MB mỗi ảnh / 48MB tổng, cộng kiểm nội dung |
+| Mỗi tác vụ ảnh tạo **một thread**, không giới hạn. Gửi nhiều `client_task_id` khác nhau là dựng vô số thread và đốt sạch quota provider | Semaphore chung 6 + trần 2 mỗi danh tính, quá tải trả **429**. Slot nhả trong `finally` nên trần tính theo việc THẬT, không phải theo tốc độ tạo thread |
+| Zalo Personal passthrough `await request.json()` không giới hạn (chunked lọt qua kiểm Content-Length) | `read_json_limited`, 413 khi vượt trần |
+| Telegram gửi video/audio/tài liệu đọc cả tệp vào RAM rồi multipart nhân bản thêm lần nữa (video 2GB ≈ 4GB RAM) | Hỏi `stat()` TRƯỚC khi đọc; nhánh URL truyền `max_bytes` xuống `fetch_media` (tham số vốn đã có kèm kiểm SSRF, chỉ là không ai truyền) |
+| `/v1/video/compose` nhận mảng clip base64 dài tuỳ ý; `/v1/video/story` nhận `n_scenes` tuỳ ý mà mỗi cảnh là một lượt Veo **có tính phí** | compose: 24 clip / 200MB mỗi clip / 600MB tổng, đo độ dài base64 TRƯỚC khi giải mã. story: trần 12 cảnh, duration kẹp 1–60 |
+| Tải video từ URL do provider trả về: httpx thẳng, tự đi redirect, `r.content` không giới hạn | Qua `net_guard.fetch_media` (SSRF + kiểm lại mỗi redirect + trần 500MB) |
+| Tên browser profile của captcha-solver ghép thẳng vào đường dẫn → `../../` tạo được thư mục profile ở bất kỳ đâu trên đĩa | Chỉ nhận slug `[A-Za-z0-9_-]{1,64}`, kiểm `relative_to` SAU khi `resolve` (kiểm chuỗi không đủ khi có symlink) |
+| Prompt ảnh tiếng Việt bị gửi sang ChatGPT OAuth/Gemini để dịch **kể cả khi chọn provider chạy cục bộ**; prompt gốc và bản dịch lọt vào log; cache dict vô hạn | Công tắc `image_translate_prompt` (mặc định bật); log chỉ còn độ dài; cache `OrderedDict` trần 512 mục, TTL 6 giờ, có khoá |
+| `save_image_bytes` luôn đặt đuôi `.png` dù nội dung là JPEG/WebP → StaticFiles phát sai `Content-Type`, Zalo/Telegram hoặc proxy có quyền từ chối | Chọn đuôi theo magic bytes |
 
 ### XSS & rò rỉ dữ liệu
 
@@ -378,6 +388,17 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - **DNS rebinding.** `url_guard` kiểm địa chỉ trước khi gọi và ở mỗi chặng
   redirect, nhưng giữa lúc kiểm và lúc mở kết nối vẫn còn một khe rất hẹp để
   tên miền đổi bản ghi. Bịt hẳn phải tự nối theo IP đã ghim và tự lo SNI/TLS.
+- **Bom tài liệu (ZIP/PDF/Office).** Đã có trần byte đầu vào, nhưng chưa giới
+  hạn tỉ lệ giải nén, tổng số entry, số trang/ảnh và thời gian xử lý trước khi
+  đưa vào OCR/MarkItDown. Cùng loại lỗi với bom ảnh, chỉ khác định dạng.
+- **`fallback_providers`** trong `services/backend_router.py` được gán nhưng
+  không thấy nơi thực thi. Hoặc triển khai fallback thật ở dispatcher, hoặc bỏ
+  hẳn field và ghi rõ chỉ combo model mới có fallback.
+- **Model `enabled`** hiện chủ yếu ảnh hưởng danh sách `GET /v1/models` và chế
+  độ auto. Nếu "disabled" là chính sách bắt buộc chứ không chỉ ẩn khỏi UI thì
+  phải chặn trước dispatch và có test cho việc gọi thẳng model đã tắt.
+- **Thư viện ảnh** quét toàn ổ, mở mọi tệp để lấy kích thước và ZIP toàn bộ kết
+  quả trong RAM, không phân trang.
 
 **Nếu đã từng dùng giao diện trước bản vá này**, nên xoay: khoá admin, token
 tunnel, mật khẩu Gmail app và TOTP seed.
