@@ -76,10 +76,14 @@ _MODEL_ALIASES = {
 
 # All Flow models we expose. Used by list_models() so the chatgpt2api UI
 # dropdown shows the same options the Flow website does.
+# `internal` PHẢI khớp `_MODEL_ALIASES` ở trên — đó là tên thật gửi xuống bộ lái.
+# Trước đây `imagen-4` ghi "IMAGEN_4" ở đây trong khi alias gửi "IMAGEN_3_5"; hai
+# bảng nói khác nhau nên bảng nhãn bên bộ lái trông như đã đủ, và một yêu cầu
+# tạo ảnh đã lặng lẽ dựng thành video (sự cố 08/08/2026).
 FLOW_MODELS = [
     {"id": "flow/banana-pro", "label": "Nano Banana Pro",   "internal": "NANO_BANANA_PRO"},
     {"id": "flow/banana-2",   "label": "Nano Banana 2",     "internal": "NARWHAL"},
-    {"id": "flow/imagen-4",   "label": "Imagen 4",          "internal": "IMAGEN_4"},
+    {"id": "flow/imagen-4",   "label": "Imagen 4",          "internal": "IMAGEN_3_5"},
     {"id": "flow/auto",       "label": "Auto (Pro)",        "internal": "NANO_BANANA_PRO"},
 ]
 

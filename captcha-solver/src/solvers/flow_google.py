@@ -568,8 +568,19 @@ async def generate_image(
             "IMAGE_ASPECT_RATIO_PORTRAIT_3_4": "3:4",
             "IMAGE_ASPECT_RATIO_PORTRAIT": "9:16",
         }
+        # Nhãn hiện trên dropdown của Flow, tra theo tên NỘI BỘ mà phía dịch vụ
+        # gửi xuống (`services/image_providers/flow_google.py::_MODEL_ALIASES`).
+        #
+        # Hai khoá `NARWHAL` và `IMAGEN_3_5` từng THIẾU ở đây, mà chúng lại đúng
+        # là thứ `flow/banana-2` và `flow/imagen-4` gửi xuống. Thiếu nhãn thì
+        # `_set_dropdown` bấm hụt, dropdown giữ nguyên lựa chọn cũ, và Flow dựng
+        # bằng model còn sót lại từ lần trước — sự cố 08/08/2026: một yêu cầu
+        # TẠO ẢNH chạy 98 giây rồi trừ tín dụng video Omni Flash 8 giây.
         _MODEL_LABEL = {
             "NANO_BANANA_PRO": "Nano Banana Pro",
+            "NARWHAL": "Nano Banana 2",
+            "IMAGEN_3_5": "Imagen 4",
+            # Giữ tên cũ làm bí danh phòng cấu hình cũ còn gửi chúng.
             "NANO_BANANA_2": "Nano Banana 2",
             "IMAGEN_4": "Imagen 4",
         }
@@ -586,7 +597,46 @@ async def generate_image(
             logger.debug("flow_menu_open skipped: %s", e)
 
         await _set_dropdown(page, aspect_label, "aspect")
-        await _set_dropdown(page, model_label, "model")
+        # ── KIỂM CHỨNG MODEL — giống hệt cách đường VIDEO đã làm từ 02/08 ────
+        #
+        # Model là thứ duy nhất trong ba dropdown mà chọn hụt sẽ đổi hẳn LOẠI sản
+        # phẩm và tiêu tín dụng của loại khác. Tỉ lệ khung hình hay số lượng bấm
+        # hụt thì chỉ ra ảnh sai kích thước — khó chịu nhưng rẻ.
+        #
+        # KHÔNG tin vào giá trị trả về của `_set_dropdown`: có nhánh nó trả
+        # `clicked`, tức "đã bấm một cái gì đó", chứ không phải "đã chọn đúng
+        # mục". Phải đọc ngược cái chip đang hiện rồi so.
+        _dat_ok = await _set_dropdown(page, model_label, "model")
+        _model_that = ""
+        try:
+            _model_that = await page.evaluate("""() => {
+              const ds = Array.from(document.querySelectorAll('button, div[role=button], [aria-haspopup]'));
+              const t = ds.find(b => {
+                const s = (b.innerText || '').trim();
+                return s.length < 60 && /arrow_drop_down/i.test(s)
+                       && /veo|omni|nano|banana|imagen/i.test(s);
+              });
+              return t ? (t.innerText || '').replace(/arrow_drop_down/ig, '').replace(/\\s+/g, ' ').trim() : "";
+            }""")
+        except Exception as _exc:
+            logger.warning("flow_image: không đọc được model đang chọn: %s", _exc)
+        logger.info("flow_image: MODEL đang chọn = %r (yêu cầu %r, đặt được=%s)",
+                    _model_that, model_label, _dat_ok)
+
+        def _chuan(s: str) -> str:
+            return "".join(c for c in (s or "").lower() if c.isalnum())
+
+        if _model_that and _chuan(model_label) not in _chuan(_model_that):
+            raise RuntimeError(
+                f"Flow đang để model {_model_that!r} chứ không phải "
+                f"{model_label!r} — dừng, chưa bấm Tạo. Sự cố 08/08/2026: bước "
+                f"này bấm hụt rồi vẫn tạo, một yêu cầu ẢNH chạy 98 giây và trừ "
+                f"tín dụng video Omni Flash 8 giây.")
+        if not _dat_ok and not _model_that:
+            raise RuntimeError(
+                f"Không đặt được model {model_label!r} và cũng không đọc được "
+                f"model đang chọn — dừng để không tạo bằng model còn sót lại của "
+                f"lượt trước. Nếu Flow vừa đổi giao diện thì cập nhật bảng nhãn.")
         
         # New Google Flow UI count labels: 1x, x2, x3, x4
         count_label = "1x" if count == 1 else f"x{count}"
