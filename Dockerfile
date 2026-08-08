@@ -12,7 +12,7 @@
 #   docker buildx imagetools inspect node:22-alpine --format '{{json .Manifest}}'
 # USER non-root: deferred — runtime needs root for Xvfb/x11vnc/noVNC + supervisor.
 # Prefer least-privilege via security_opt:no-new-privileges (compose) until stack split.
-FROM node:22-alpine AS web-build
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS web-build
 WORKDIR /app/web
 # npm ci, KHÔNG phải bun. Trước đây image build bằng `bun.lock` còn `npm audit`
 # đọc `package-lock.json` — hai cây phụ thuộc khác nhau, nên kết quả audit mô
@@ -28,7 +28,7 @@ RUN NEXT_PUBLIC_APP_VERSION="$(cat /app/VERSION)" npm run build
 
 # ── Stage 1b: install the embedded Zalo server (Node zca-js) deps ──────────
 # Nhúng thẳng server Zalo cá nhân vào image thay vì pull image bên thứ ba.
-FROM node:22-bookworm-slim AS zalo-build
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS zalo-build
 WORKDIR /zalo-server
 COPY zalo-server/package.json zalo-server/package-lock.json* ./
 # npm ci (không phải npm install): cài ĐÚNG theo package-lock → build tái lập,
@@ -37,7 +37,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 COPY zalo-server ./
 
 # ── Stage 2: unified runtime ───────────────────────────────────────────────
-FROM python:3.13-slim AS app
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS app
 # NOTE (P1#10): image runs as root for browser/VNC stack. Do NOT switch USER yet
 # without splitting captcha/noVNC into a separate privileged sidecar.
 # Pin digests on next rebuild when free build quota returns:
@@ -45,8 +45,8 @@ FROM python:3.13-slim AS app
 
 # Node.js runtime (chạy zalo-server nhúng). Copy nguyên bản cài đặt Node từ image
 # node:22 — python:3.13-slim và node:22 cùng nền Debian bookworm nên ABI khớp.
-COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -88,12 +88,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # không phình thêm ~1.2 GB. Bản binary chỉ có amd64/arm64.
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) PP="piper_linux_x86_64.tar.gz" ;; \
-      arm64) PP="piper_linux_aarch64.tar.gz" ;; \
+      amd64) PP="piper_linux_x86_64.tar.gz"; PP_SHA="a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992" ;; \
+      arm64) PP="piper_linux_aarch64.tar.gz"; PP_SHA="fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb" ;; \
       *) PP="" ;; \
     esac && \
     if [ -n "$PP" ]; then \
       wget -q "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/${PP}" -O /tmp/piper.tgz && \
+      echo "${PP_SHA}  /tmp/piper.tgz" | sha256sum -c - && \
       mkdir -p /opt && tar -xzf /tmp/piper.tgz -C /opt && rm /tmp/piper.tgz && \
       ln -sf /opt/piper/piper /usr/local/bin/piper ; \
     else echo "piper: bo qua kien truc $ARCH" ; fi
@@ -101,20 +102,38 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # rclone — cầu nối tới 150+ dịch vụ lưu trữ (Google Drive, OneDrive, Dropbox,
 # S3/R2, WebDAV, SFTP…). Một binary Go tĩnh, không kéo thư viện nào theo, nên
 # dùng gói .deb sẵn có là đủ — khỏi thêm unzip vào image.
+# GHIM PHIÊN BẢN: trước đây dùng `rclone-current-linux-*.deb` — một URL DI
+# ĐỘNG, nên mỗi lần build có thể ra một binary khác mà không ai biết, và không
+# có checksum nào kiểm được. Checksum dưới đây lấy từ SHA256SUMS thượng nguồn.
+ARG RCLONE_VERSION=v1.75.0
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64|arm64) RC="rclone-current-linux-${ARCH}.deb" ;; \
-      *) RC="" ;; \
+      amd64) RC_SHA="266598b5c66a42b821571332013cc85a88ffcff8939cf0643861c8d033dd3a4a" ;; \
+      arm64) RC_SHA="081c605cbf47ade3114e78db2130766a23281a12b79cdd5774b11dad6c6c0931" ;; \
+      *) RC_SHA="" ;; \
     esac && \
-    if [ -n "$RC" ]; then \
-      wget -q "https://downloads.rclone.org/${RC}" -O /tmp/rclone.deb && \
+    if [ -n "$RC_SHA" ]; then \
+      RC="rclone-${RCLONE_VERSION}-linux-${ARCH}.deb" && \
+      wget -q "https://downloads.rclone.org/${RCLONE_VERSION}/${RC}" -O /tmp/rclone.deb && \
+      echo "${RC_SHA}  /tmp/rclone.deb" | sha256sum -c - && \
       dpkg -i /tmp/rclone.deb && rm /tmp/rclone.deb && rclone version | head -1 ; \
     else echo "rclone: bo qua kien truc $ARCH" ; fi
 
 # cloudflared (Cloudflare Tunnel, used by chatgpt2api)
+#
+# GHIM PHIÊN BẢN: trước đây dùng `/releases/latest/download/` — mỗi lần build
+# lấy bản mới nhất TẠI THỜI ĐIỂM ĐÓ, nên hai lần build cùng một commit có thể
+# ra hai image khác nhau, và một bản thượng nguồn hỏng sẽ vào thẳng production
+# mà không qua bước xem xét nào.
+ARG CLOUDFLARED_VERSION=2026.7.3
 RUN ARCH=$(dpkg --print-architecture) && \
-    case "$ARCH" in amd64) CF="amd64" ;; arm64) CF="arm64" ;; *) echo "unsupported: $ARCH"; exit 1 ;; esac && \
-    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF}.deb" -O /tmp/cf.deb && \
+    case "$ARCH" in \
+      amd64) CF_SHA="049777d30f9bf93da6df8bbe31383460eb2aa51a832c6551824d56f9fcc55974" ;; \
+      arm64) CF_SHA="d3ea7d22dd337b465da33d6bc1c4b3cfd381407447a2a7d29542c19783430db3" ;; \
+      *) echo "unsupported: $ARCH"; exit 1 ;; \
+    esac && \
+    wget -q "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${ARCH}.deb" -O /tmp/cf.deb && \
+    echo "${CF_SHA}  /tmp/cf.deb" | sha256sum -c - && \
     dpkg -i /tmp/cf.deb && rm /tmp/cf.deb
 
 # OfficeCLI binary (Word/Excel/PPT) — agent tools office_* gọi TRỰC TIẾP
@@ -124,13 +143,14 @@ RUN ARCH=$(dpkg --print-architecture) && \
 ARG OFFICECLI_VERSION=v1.0.140
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
-      amd64) OC="officecli-linux-x64" ;; \
-      arm64) OC="officecli-linux-arm64" ;; \
+      amd64) OC="officecli-linux-x64"; OC_SHA="cee68cc2108074e5ae5ad114e1cd5cab4514da8ead4983d5d94aa0acba4f41e8" ;; \
+      arm64) OC="officecli-linux-arm64"; OC_SHA="924dd58f57891d1b3fe8cf77f06990f58f8f0c0ddf6fe22e1d91c7f10d3e7576" ;; \
       *) OC="" ;; \
     esac && \
     if [ -n "$OC" ]; then \
       wget -q "https://github.com/iOfficeAI/OfficeCLI/releases/download/${OFFICECLI_VERSION}/${OC}" \
         -O /usr/local/bin/officecli && \
+      echo "${OC_SHA}  /usr/local/bin/officecli" | sha256sum -c - && \
       chmod +x /usr/local/bin/officecli && \
       /usr/local/bin/officecli --version || echo "officecli: binary installed (version check optional)" ; \
     else echo "officecli: skip unsupported arch $ARCH" ; fi
