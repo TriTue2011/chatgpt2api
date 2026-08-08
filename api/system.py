@@ -548,6 +548,27 @@ def create_router(app_version: str) -> APIRouter:
             result = che_giau(result)
         return {"config": result}
 
+    @router.post("/api/csp-report")
+    async def csp_report(request: Request):
+        """Nơi trình duyệt gửi vi phạm CSP.
+
+        KHÔNG auth, cố ý: trình duyệt gửi báo cáo bằng một request riêng, không
+        kèm cookie lẫn header của trang. Đòi auth ở đây là không nhận được báo
+        cáo nào — tức là mù đúng lúc cần thấy.
+
+        Đổi lại, endpoint này không đọc gì ngoài ba trường, chặn body quá cỡ, và
+        gộp trùng để một trang vi phạm không làm ngập log.
+        """
+        raw = await request.body()
+        if len(raw) > 16 * 1024:
+            return {"ok": True, "bo_qua": "body quá lớn"}
+        try:
+            from services.csp import ghi_bao_cao
+            ghi_bao_cao(json.loads(raw.decode("utf-8", "replace")) or {})
+        except Exception:
+            pass
+        return {"ok": True}
+
     class DoiThuTuKhoaRequest(BaseModel):
         index: int
         action: str = "promote"

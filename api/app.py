@@ -323,7 +323,14 @@ def create_app() -> FastAPI:
         # Mặc định ["*"] (self-host); production sau tunnel đặt config
         # `cors_allow_origins` = danh sách domain để whitelist.
         allow_origins=_cors,
-        allow_credentials=False,
+        # Cookie phiên chỉ đi kèm request cross-origin khi allow_credentials
+        # bật. Production thì web và API CÙNG origin (`webConfig.apiUrl` rỗng)
+        # nên không cần; nhưng chế độ dev gọi từ cổng khác thì cần.
+        #
+        # Chỉ bật khi đã khai origin cụ thể: chuẩn CORS CẤM đi cùng
+        # `allow_origins=["*"]`, và trình duyệt sẽ từ chối MỌI request thay vì
+        # báo cấu hình sai — một kiểu hỏng rất khó lần.
+        allow_credentials=_cors != ["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )

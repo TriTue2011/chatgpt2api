@@ -24,6 +24,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "Permissions-Policy",
             "camera=(self), microphone=(self), geolocation=(), payment=()",
         )
+        # CSP — mặc định TẮT; bật thì báo cáo trước, siết sau (services/csp.py).
+        try:
+            from services.config import config
+            from services.csp import bat_csp, chuoi_chinh_sach, dang_siet
+            if bat_csp(config):
+                siet = dang_siet(config)
+                ten = "Content-Security-Policy" if siet else "Content-Security-Policy-Report-Only"
+                h.setdefault(ten, chuoi_chinh_sach(co_report_uri=not siet))
+        except Exception:
+            # Header bảo mật hỏng KHÔNG được làm hỏng phản hồi.
+            pass
         # HSTS only when request is HTTPS (direct or behind TLS-terminating proxy)
         try:
             proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
