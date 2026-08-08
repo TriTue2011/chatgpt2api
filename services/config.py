@@ -220,20 +220,41 @@ def _merge_provider_config(old: dict, new: dict) -> dict:
     merged = {**old_norm, **new_norm}
 
     old_keys: list[str] = old_norm.get("api_keys") or []
-    new_has_keys_field = "api_keys" in new or "apiKeys" in new or "api_key" in new or "apiKey" in new
+    # CHỈ một danh sách `api_keys` GỬI RÕ RÀNG mới được thay danh sách cũ.
+    #
+    # Sự cố thật 08/08/2026 — mất 4 trong 5 khoá Gemini. Trang Search gửi
+    # `{api_key: <khoá đầu>, model: …}` (không kèm `api_keys`).
+    # `_normalize_multi_api_keys` dựng `api_keys=[khoá đó]` từ khoá đơn, rồi
+    # nhánh đầu tưởng đó là "danh sách mới có một phần tử" và ghi đè cả pool.
+    # Người dùng chỉ bấm Lưu ở màn hình tìm kiếm, không đụng gì tới khoá.
+    #
+    # Phân biệt bằng `new` THÔ, không phải bản đã chuẩn hoá: sau chuẩn hoá thì
+    # "gửi một khoá đơn" và "gửi danh sách một phần tử" trông giống hệt nhau.
+    new_co_danh_sach = "api_keys" in new or "apiKeys" in new
+    new_has_keys_field = new_co_danh_sach or "api_key" in new or "apiKey" in new
     new_keys: list[str] = new_norm.get("api_keys") or []
     new_single = str(new_norm.get("api_key") or "").strip()
 
-    if new_has_keys_field and new_keys:
+    if new_co_danh_sach and new_keys:
         merged["api_keys"] = new_keys
         merged["api_key"] = new_keys[0]
-    elif new_has_keys_field and not new_keys and new_single and old_keys:
+    elif new_single and old_keys:
+        # Chỉ gửi MỘT khoá → không bao giờ là lệnh xoá pool.
         if new_single in old_keys:
             merged["api_keys"] = old_keys
             merged["api_key"] = new_single
         else:
-            merged["api_keys"] = [new_single]
+            merged["api_keys"] = [new_single] + old_keys
             merged["api_key"] = new_single
+    elif new_has_keys_field and not new_keys and new_single:
+        merged["api_keys"] = [new_single]
+        merged["api_key"] = new_single
+    elif new_co_danh_sach and not new_keys and old_keys:
+        # Danh sách RỖNG không phải lệnh xoá: một form chưa nạp xong cũng gửi
+        # `[]`. Giống hệt quy ước đã chốt ở `settings_secrets.loc_ghi` — rỗng
+        # thì giữ nguyên, muốn xoá thì phải tường minh (`clear_secret_fields`).
+        merged["api_keys"] = old_keys
+        merged["api_key"] = str(old_norm.get("api_key") or "").strip() or old_keys[0]
     elif not new_has_keys_field and old_keys:
         merged["api_keys"] = old_keys
         if new_single and new_single not in old_keys:

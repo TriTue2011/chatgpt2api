@@ -71,8 +71,8 @@ class GiaoDienLayTuQuanLyModelTests(unittest.TestCase):
         """Danh sách cứng sẽ lệch khỏi thực tế ngay lần thượng nguồn đổi tên."""
         i = CARD.index("Model tìm kiếm")
         than = CARD[i:i + 1200]
-        self.assertIn("enabledModels.map", than,
-                      "ô này phải dùng chung nguồn với Quản lý Model")
+        self.assertIn("modelTraLoi.map", than,
+                      "ô này phải dùng chung nguồn với Quản lý Model (đã lọc model ảnh)")
 
     def test_co_lua_chon_de_trong(self):
         """Không có lựa chọn rỗng thì không quay lại dùng model mặc định được."""
@@ -85,3 +85,33 @@ class GiaoDienLayTuQuanLyModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocModelVeAnhTests(unittest.TestCase):
+    """`/v1/models` xếp cả `gemini-image/*` vào owned_by=gemini_free.
+
+    Hai ô chọn model TRẢ LỜI vì thế từng liệt kê cả `imagen-3.0-generate-001`.
+    Chọn nó làm model chat hay model tra web thì gọi là hỏng, mà giao diện chẳng
+    có gì cho thấy đó là model VẼ ẢNH.
+    """
+
+    CARD = (GOC / "web/src/app/settings/components/gemini-card.tsx").read_text(encoding="utf-8")
+
+    def test_co_danh_sach_rieng_cho_model_tra_loi(self):
+        self.assertIn('modelTraLoi = enabledModels.filter', self.CARD)
+        self.assertIn('!m.startsWith("gemini-image/")', self.CARD)
+
+    def test_hai_o_chon_deu_dung_danh_sach_da_loc(self):
+        for neo in ("Model mặc định", "Model tìm kiếm"):
+            i = self.CARD.index(neo)
+            than = self.CARD[i:i + 900]
+            self.assertIn("modelTraLoi.map", than, f"ô «{neo}» chưa lọc model ảnh")
+            self.assertNotIn("enabledModels.map", than)
+
+    def test_phan_TICK_van_giu_model_anh(self):
+        """Tick quyết định model nào hiện ra trong /v1/models cho cả hệ thống —
+        ảnh thì đúng là cần, chỉ không được lẫn vào ô chọn model trả lời."""
+        # Lần xuất hiện ĐẦU là trong chú thích của hàm nạp; khối giao diện có
+        # biểu tượng đứng trước.
+        i = self.CARD.index("🧩 Quản lý Model")
+        self.assertIn("allModels.map", self.CARD[i:i + 1200])

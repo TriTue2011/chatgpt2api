@@ -16,6 +16,17 @@ export function GeminiCard() {
   const [geminiEnabled, setGeminiEnabled]   = useState(true);
   const [allModels, setAllModels]           = useState<string[]>([]);  // từ /v1/models (gemini_free)
   const [enabledModels, setEnabledModels]   = useState<string[]>([]);  // đã tick
+
+  // Model TRẢ LỜI, lọc khỏi danh sách đã tick.
+  //
+  // `/v1/models` xếp cả `gemini-image/*` (Imagen, *-flash-image) vào
+  // owned_by=gemini_free, nên hai ô chọn bên dưới từng liệt kê cả
+  // `imagen-3.0-generate-001` — chọn nó làm model chat hay model tra web thì
+  // gọi là hỏng, mà giao diện chẳng có gì cho thấy đó là model VẼ ẢNH.
+  //
+  // Vẫn giữ chúng ở phần tick: tick quyết định model nào hiện ra trong
+  // /v1/models cho cả hệ thống, và ảnh thì đúng là cần.
+  const modelTraLoi = enabledModels.filter((m) => !m.startsWith("gemini-image/"));
   const [loading, setLoading]               = useState(true);
   const [saving, setSaving]                 = useState(false);
 
@@ -137,14 +148,14 @@ export function GeminiCard() {
         <div className="flex items-center gap-3">
           <label className="text-sm text-[var(--foreground)] whitespace-nowrap">Model mặc định:</label>
           <select
-            value={enabledModels.includes(geminiModel) ? geminiModel : (enabledModels[0] || "")}
+            value={modelTraLoi.includes(geminiModel) ? geminiModel : (modelTraLoi[0] || "")}
             onChange={(e) => setGeminiModel(e.target.value)}
             className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm text-[var(--foreground)]"
           >
-            {enabledModels.length === 0 && (
-              <option value="">-- Chưa tick model nào --</option>
+            {modelTraLoi.length === 0 && (
+              <option value="">-- Chưa tick model chữ nào --</option>
             )}
-            {enabledModels.map((mv) => (
+            {modelTraLoi.map((mv) => (
               <option key={mv} value={mv}>{mv}</option>
             ))}
           </select>
@@ -158,20 +169,22 @@ export function GeminiCard() {
         <div className="flex items-center gap-3">
           <label className="text-sm text-[var(--foreground)] whitespace-nowrap">Model tìm kiếm:</label>
           <select
-            value={searchModel && enabledModels.includes(searchModel) ? searchModel : ""}
+            value={searchModel && modelTraLoi.includes(searchModel) ? searchModel : ""}
             onChange={(e) => setSearchModel(e.target.value)}
             className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm text-[var(--foreground)]"
           >
             <option value="">-- Dùng model mặc định --</option>
-            {enabledModels.map((mv) => (
+            {modelTraLoi.map((mv) => (
               <option key={mv} value={mv}>{mv}</option>
             ))}
           </select>
         </div>
         <p className="-mt-1 text-xs text-[var(--muted-foreground)]">
-          Chỉ dùng cho Google Search grounding. Để trống thì dùng model mặc định ở trên.
-          Danh sách lấy từ chính các model đã tick bên dưới — chọn model không tick
-          sẽ không gọi được.
+          Chỉ dùng cho Google Search grounding — nên chọn TÊN MODEL THƯỜNG, không
+          phải biến thể <code className="bg-[var(--secondary)] px-1 rounded">-search</code>:
+          đường này luôn bật grounding sẵn. (Hậu tố <code className="bg-[var(--secondary)] px-1 rounded">-search</code>
+          là để bật tra web cho model CHAT, việc khác.)
+          Để trống thì dùng model mặc định ở trên. Model vẽ ảnh đã được lọc bỏ.
         </p>
 
         {/* Model management – enable/disable per model (like other providers) */}
