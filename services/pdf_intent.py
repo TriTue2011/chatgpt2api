@@ -465,6 +465,17 @@ def markdown_pdf_so(pdf_path: str, *, max_pages: int | None = None) -> str:
     Thiếu thư viện (ImportError) cũng rơi về đường cũ: bản triển khai không cài
     được vẫn chạy y như trước.
     """
+    # Cổng bom tài liệu, đặt ở ĐÂY vì đây là điểm vào chung của mọi kênh
+    # (Telegram, Zalo, email, Zalo cá nhân) cho tệp PDF/Office. Kiểm theo đường
+    # dẫn nên không nạp cả tệp vào RAM — nạp 100MB chỉ để đi kiểm là tự tạo ra
+    # đúng vấn đề đang muốn chặn.
+    from services.doc_guard import DocRejected, kiem_tai_lieu_theo_duong_dan
+    try:
+        kiem_tai_lieu_theo_duong_dan(pdf_path)
+    except DocRejected as exc:
+        logger.warning({"event": "doc_bomb_blocked", "ly_do": str(exc)[:200]})
+        raise
+
     try:
         import pdf_inspector
     except Exception:
