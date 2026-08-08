@@ -118,6 +118,24 @@ def _auth_status(model: str) -> tuple[str, str]:
     return ("khong_ro", "chưa biết backend nào giữ xác thực cho tiền tố này")
 
 
+def _ghim_mot_model(model: str) -> bool:
+    """True nếu nhánh trỏ vào MỘT model cụ thể — tức là không có dự phòng.
+
+    Không tính là ghim cứng: rỗng (đã báo riêng), `auto`, `<provider>/auto`, và
+    tên COMBO (không có tiền tố backend — combo tự xoay qua nhiều model).
+
+    Có tính: `gma/3.1-pro`, `claude/sonnet-5`, `flow/veo-3.1-fast`, `gma/image`.
+    `gma/image` là chọn năng lực chứ không phải ghim phiên bản, nhưng nó CŨNG
+    không có gì thay thế khi hỏng — nên vẫn hiện ra là đúng, không phải nhiễu.
+    """
+    m = str(model or "").strip().lower()
+    if not m or m == "auto" or m.endswith("/auto"):
+        return False
+    if "/" not in m:
+        return False          # combo / nhãn — đã có nhánh kiểm riêng ở trên
+    return True
+
+
 def check() -> dict[str, Any]:
     """Quét mọi nhánh. Trả {ok, branches: [...], tom_tat}."""
     ids = _model_ids()
@@ -154,17 +172,31 @@ def check() -> dict[str, Any]:
             "branch": name, "label": label, "model": model,
             "default": default, "state": state, "note": note,
             "auth": auth,
+            "ghim_cung": _ghim_mot_model(model),
         })
 
     bad = [r for r in rows if r["state"] in ("model_khong_ton_tai", "thieu_xac_thuc")]
+    ghim = [r for r in rows if r["ghim_cung"] and r["state"] == "ok"]
     return {
         "ok": not bad,
         "checked_models": len(ids),
         "branches": rows,
+        # KHÔNG tính vào `ok`: ghim cứng vẫn CHẠY ĐƯỢC, chỉ là không có dự
+        # phòng. Cho nó làm đỏ cả bộ kiểm là biến một cảnh báo hữu ích thành
+        # tiếng ồn, rồi người ta bỏ qua cả lúc nó kêu đúng.
+        "canh_bao_ghim_cung": [
+            {"branch": r["branch"], "model": r["model"]} for r in ghim
+        ],
         "tom_tat": (
             "Tất cả nhánh đều trỏ vào model có thật và có nguồn xác thực."
             if not bad else
             "Có nhánh sẽ KHÔNG chạy: " + ", ".join(f"{r['branch']} ({r['note']})" for r in bad)
+        ) + (
+            ""
+            if not ghim else
+            " · Nhánh ghim MỘT model cụ thể (hết lượt là không có gì thay thế): "
+            + ", ".join(f"{r['branch']}={r['model']}" for r in ghim)
+            + ". Nên đổi sang '<provider>/auto' hoặc một combo."
         ),
     }
 

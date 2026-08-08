@@ -17,12 +17,25 @@ from __future__ import annotations
 from services.config import config
 
 # name -> (label tiếng Việt cho UI/persona, model mặc định khi chưa cấu hình)
+# Quy tắc chọn MẶC ĐỊNH: ưu tiên `<provider>/auto`, tránh ghim một phiên bản
+# model cụ thể.
+#
+# Ghim cứng hỏng theo hai đường, đã dính cả hai:
+#   * model bị khai tử hoặc đổi tên → nhánh chết lặng;
+#   * tài khoản/khoá của đúng model đó hết lượt → KHÔNG có gì thay thế, dù
+#     provider vẫn còn model khác dùng được.
+# Đường thứ hai chính là sự cố camera 08/08: nhánh vision ghim `gma/3.1-pro`,
+# nên khi Gemini kẹt là hết đường, request rơi xuống một model chỉ-chữ.
+#
+# `<provider>/auto` để provider tự chọn model khả dụng và tự xoay tài khoản, và
+# quan trọng hơn: chủ máy đổi được trong Settings mà không phải sửa code — đúng
+# quy tắc 3 ở đầu file.
 BRANCHES: dict[str, tuple[str, str]] = {
-    "image_gen":  ("Vẽ / tạo ảnh",        "gma/image"),
-    "vision":     ("Phân tích ảnh",        "gma/3.1-pro"),
+    "image_gen":  ("Vẽ / tạo ảnh",        "gma/image"),  # năng lực riêng, không có 'auto'
+    "vision":     ("Phân tích ảnh",        "gma/auto"),
     "music_gen":  ("Tạo nhạc",             "gma/auto"),
     "video_gen":  ("Tạo video",            "flow/veo-3.1-fast"),
-    "code":       ("Viết / sửa code",      "claude/sonnet-5"),
+    "code":       ("Viết / sửa code",      "claude/auto"),
     "code_reviewer": ("Kiểm duyệt code",   ""),  # trống = tắt tầng review
     # Hai nhánh dưới đây ĐÃ ĐƯỢC CODE GỌI TỪ TRƯỚC nhưng chưa khai ở bảng này,
     # nên `branch_model()` luôn trả rỗng và bên gọi phải ghim cứng một model
