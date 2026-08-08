@@ -12,6 +12,7 @@ import { request } from "@/lib/request";
 export function GeminiCard() {
   const [geminiKey, setGeminiKey]           = useState("");
   const [geminiModel, setGeminiModel]       = useState("gemini-2.5-flash");
+  const [searchModel, setSearchModel]       = useState("");             // providers.gemini_free.search_model
   const [geminiEnabled, setGeminiEnabled]   = useState(true);
   const [allModels, setAllModels]           = useState<string[]>([]);  // từ /v1/models (gemini_free)
   const [enabledModels, setEnabledModels]   = useState<string[]>([]);  // đã tick
@@ -29,6 +30,7 @@ export function GeminiCard() {
       const keys = [p.api_key || "", ...(p.api_keys || [])].filter(Boolean);
       setGeminiKey([...new Set(keys)].join("\n"));
       setGeminiModel(p.model || "gemini-2.5-flash");
+      setSearchModel(p.search_model || "");
       setGeminiEnabled(p.enabled !== false);
 
       // Lấy danh sách model thật từ /v1/models (tab Quản lý Model)
@@ -63,6 +65,7 @@ export function GeminiCard() {
         api_key:      keyList[0] || "",
         api_keys:     keyList,
         model:        geminiModel,
+        search_model: searchModel,
         extra_models: enabledModels,
       };
       await request.post("/api/settings", { providers });
@@ -146,6 +149,30 @@ export function GeminiCard() {
             ))}
           </select>
         </div>
+
+        {/* Model TÌM KIẾM — cùng nguồn danh sách với ô trên.
+            `search_service._get_model()` đọc `providers.gemini_free.search_model`
+            rồi mới rơi về `model`; trước đây không có ô nào đặt nó, nên trường đó
+            luôn rỗng và tìm kiếm dùng chung model với chat. Tách ra để chọn model
+            rẻ/nhanh cho tra web mà không đổi model trả lời. */}
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-[var(--foreground)] whitespace-nowrap">Model tìm kiếm:</label>
+          <select
+            value={searchModel && enabledModels.includes(searchModel) ? searchModel : ""}
+            onChange={(e) => setSearchModel(e.target.value)}
+            className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm text-[var(--foreground)]"
+          >
+            <option value="">-- Dùng model mặc định --</option>
+            {enabledModels.map((mv) => (
+              <option key={mv} value={mv}>{mv}</option>
+            ))}
+          </select>
+        </div>
+        <p className="-mt-1 text-xs text-[var(--muted-foreground)]">
+          Chỉ dùng cho Google Search grounding. Để trống thì dùng model mặc định ở trên.
+          Danh sách lấy từ chính các model đã tick bên dưới — chọn model không tick
+          sẽ không gọi được.
+        </p>
 
         {/* Model management – enable/disable per model (like other providers) */}
         <div className="space-y-2">
