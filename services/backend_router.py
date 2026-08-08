@@ -241,8 +241,22 @@ class BackendRouter:
 
         # Resolve "auto" to provider's default model (check user config first)
         if resolved_model == "auto" or not resolved_model:
+            # Nguồn model mặc định: tab QUẢN LÝ MODEL (`default_models`).
+            #
+            # Đó là nơi duy nhất nên đặt model cho chat/vision/HA/ảnh. Trường
+            # `providers.<tên>.model` chỉ còn để đọc CẤU HÌNH CŨ — giữ lại để
+            # bản đang chạy không đổi hành vi sau khi cập nhật, nhưng không có
+            # giao diện nào ghi vào nó nữa.
+            #
+            # Trước đây hai chỗ cùng nói về "model mặc định" nên chúng lệch
+            # nhau được, và bước lọc `enabled_models` bên dưới lặng lẽ đè lên
+            # cái ở Cài đặt.
+            ms = config.data.get("model_settings") or {}
+            mac_dinh = str(((ms.get("default_models") or {}).get(provider) or "")).strip()
+            if mac_dinh.startswith(f"{provider}/"):
+                mac_dinh = mac_dinh[len(provider) + 1:]
             provider_cfg = (config.data.get("providers") or {}).get(provider) or {}
-            user_model = str(provider_cfg.get("model") or "").strip()
+            user_model = mac_dinh or str(provider_cfg.get("model") or "").strip()
             resolved_model = user_model or self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
 
             # Filter to enabled models only (model_settings)
@@ -259,6 +273,25 @@ class BackendRouter:
                     if m:
                         real_models.append(m)
                 if real_models and (resolved_model == "auto" or resolved_model not in real_models):
+                    # `enabled_models` (tab Quản lý Model) ĐÈ LÊN
+                    # `providers.<tên>.model` (ô "Model mặc định" ở Cài đặt).
+                    #
+                    # Hai chỗ cùng nói về "model mặc định của provider" nên
+                    # chúng lệch nhau được: bỏ tick đúng model đang đặt làm mặc
+                    # định thì hệ thống lặng lẽ chuyển sang model đầu danh sách.
+                    # Không ai thấy gì, chỉ thấy "sao nó trả lời bằng model
+                    # khác". Ghi log để lần sau tra ra được trong một phút.
+                    if resolved_model != "auto" and resolved_model not in real_models:
+                        from utils.log import logger as _lg
+                        _lg.warning({
+                            "event": "model_mac_dinh_bi_de",
+                            "provider": provider,
+                            "cau_hinh": resolved_model,
+                            "dung_thay": real_models[0],
+                            "msg": "Model mặc định ở Cài đặt KHÔNG có trong danh "
+                                   "sách đã tick ở Quản lý Model — dùng model đầu "
+                                   "danh sách. Tick nó, hoặc đổi model mặc định.",
+                        })
                     resolved_model = real_models[0]  # First real enabled model
 
         # Calculate payload size if not provided

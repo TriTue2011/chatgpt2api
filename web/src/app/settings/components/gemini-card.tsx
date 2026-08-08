@@ -11,22 +11,8 @@ import { request } from "@/lib/request";
 
 export function GeminiCard() {
   const [geminiKey, setGeminiKey]           = useState("");
-  const [geminiModel, setGeminiModel]       = useState("gemini-2.5-flash");
   const [geminiEnabled, setGeminiEnabled]   = useState(true);
-  const [allModels, setAllModels]           = useState<string[]>([]);  // từ /v1/models (gemini_free)
-  const [enabledModels, setEnabledModels]   = useState<string[]>([]);  // đã tick
-  const [modelSettings, setModelSettings]   = useState<any>({});       // giữ nguyên phần còn lại
 
-  // Model TRẢ LỜI, lọc khỏi danh sách đã tick.
-  //
-  // `/v1/models` xếp cả `gemini-image/*` (Imagen, *-flash-image) vào
-  // owned_by=gemini_free, nên hai ô chọn bên dưới từng liệt kê cả
-  // `imagen-3.0-generate-001` — chọn nó làm model chat hay model tra web thì
-  // gọi là hỏng, mà giao diện chẳng có gì cho thấy đó là model VẼ ẢNH.
-  //
-  // Vẫn giữ chúng ở phần tick: tick quyết định model nào hiện ra trong
-  // /v1/models cho cả hệ thống, và ảnh thì đúng là cần.
-  const modelTraLoi = enabledModels.filter((m) => !m.startsWith("gemini-image/"));
   const [loading, setLoading]               = useState(true);
   const [saving, setSaving]                 = useState(false);
 
@@ -40,36 +26,10 @@ export function GeminiCard() {
       const p    = (cfg.providers || {}).gemini_free || {};
       const keys = [p.api_key || "", ...(p.api_keys || [])].filter(Boolean);
       setGeminiKey([...new Set(keys)].join("\n"));
-      setGeminiModel(p.model || "gemini-2.5-flash");
       setGeminiEnabled(p.enabled !== false);
 
-      // Lấy danh sách model thật từ /v1/models (tab Quản lý Model)
-      const mRes = await request.get("/v1/models");
-      const mAll: string[] = ((mRes.data as any)?.data || [])
-        .filter((m: any) => m.owned_by === "gemini_free" && !String(m.id || "").includes(":"))
-        .map((m: any) => String(m.id || ""));
-      setAllModels(mAll.sort());
-
-      // Danh sách đã tick lấy từ `model_settings.enabled_models.gemini_free` —
-      // ĐÚNG chỗ mà `/v1/models` đọc để lọc (`_apply_enabled_filter`).
-      //
-      // Bản cũ đọc/ghi `providers.gemini_free.extra_models`, một trường KHÔNG
-      // có dòng mã Python nào đọc tới. Tick ở đây vì thế chẳng ảnh hưởng gì,
-      // trong khi trang Quản lý Model tick vào chỗ khác — hai danh sách lệch
-      // nhau mà không có dấu hiệu nào.
-      const ms = (cfg.model_settings || {}) as any;
-      setModelSettings(ms);
-      const saved: string[] = Array.isArray(ms?.enabled_models?.gemini_free)
-        ? ms.enabled_models.gemini_free : [];
-      setEnabledModels(saved.length > 0 ? saved : mAll);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }
-
-  function toggleModel(model: string) {
-    setEnabledModels((prev) =>
-      prev.includes(model) ? prev.filter((m) => m !== model) : [...prev, model]
-    );
   }
 
   async function save() {
@@ -83,19 +43,8 @@ export function GeminiCard() {
         enabled:      geminiEnabled,
         api_key:      keyList[0] || "",
         api_keys:     keyList,
-        model:        geminiModel,
       };
-      // Ghi danh sách tick vào ĐÚNG chỗ `/v1/models` đọc. Gộp trên bản hiện
-      // tại chứ không dựng mới: `config.update` thay nguyên khối `model_settings`,
-      // nên gửi thiếu `default_models` là xoá mất nó.
-      const ms = {
-        ...modelSettings,
-        enabled_models: {
-          ...(modelSettings?.enabled_models || {}),
-          gemini_free: enabledModels,
-        },
-      };
-      await request.post("/api/settings", { providers, model_settings: ms });
+      await request.post("/api/settings", { providers });
       toast.success("Đã lưu!");
     } catch (e: any) { toast.error(e?.message || "Lỗi lưu"); }
     finally { setSaving(false); }
@@ -160,61 +109,20 @@ export function GeminiCard() {
           </p>
         </div>
 
-        {/* Default model — only picks from ticked models */}
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-[var(--foreground)] whitespace-nowrap">Model mặc định:</label>
-          <select
-            value={modelTraLoi.includes(geminiModel) ? geminiModel : (modelTraLoi[0] || "")}
-            onChange={(e) => setGeminiModel(e.target.value)}
-            className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2 py-1.5 text-sm text-[var(--foreground)]"
-          >
-            {modelTraLoi.length === 0 && (
-              <option value="">-- Chưa tick model chữ nào --</option>
-            )}
-            {modelTraLoi.map((mv) => (
-              <option key={mv} value={mv}>{mv}</option>
-            ))}
-          </select>
-        </div>
+        {/* Model KHÔNG đặt ở đây nữa.
 
-        {/* Model management – enable/disable per model (like other providers) */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-[var(--foreground)]">🧩 Quản lý Model</label>
-            <div className="flex gap-2">
-              <button onClick={() => setEnabledModels(allModels)}
-                className="text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] underline">
-                Chọn tất
-              </button>
-              <button onClick={() => setEnabledModels([])}
-                className="text-[10px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] underline">
-                Bỏ tất
-              </button>
-            </div>
-          </div>
+            Chốt phân chia: Cài đặt giữ KHOÁ, tab Quản lý Model chọn model cho
+            chat/vision/HA/ảnh, tab Search chọn model tra web. Trước đây card
+            này có cả ô "Model mặc định" lẫn phần tick riêng — hai nguồn cho
+            cùng một việc, và bước lọc `enabled_models` lặng lẽ đè lên ô ở đây
+            khi hai bên lệch nhau. */}
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3">
           <p className="text-xs text-[var(--muted-foreground)]">
-            Tick để bật model trong danh sách /v1/models (dùng gma/&lt;model&gt; vẫn hoạt động dù không tick).
+            Chọn model cho chat / vision / HA / ảnh ở tab{" "}
+            <a href="/models" className="underline hover:text-[var(--foreground)]">Quản lý Model</a>
+            {" "}(gồm cả nút «Đặt mặc định»). Model tra web đặt ở tab{" "}
+            <a href="/search" className="underline hover:text-[var(--foreground)]">Search</a>.
           </p>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] divide-y divide-[var(--border)]">
-            {allModels.length === 0 && (
-              <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">Đang tải danh sách model...</p>
-            )}
-            {allModels.map((mv) => (
-              <label key={mv}
-                className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-[var(--card)] transition-colors">
-                <input
-                  type="checkbox"
-                  checked={enabledModels.includes(mv)}
-                  onChange={() => toggleModel(mv)}
-                  className="size-4 accent-stone-400 shrink-0"
-                />
-                <span className="text-xs text-[var(--foreground)] font-mono">{mv}</span>
-                {mv === geminiModel && (
-                  <Badge variant="secondary" className="ml-auto text-[9px] px-1.5 py-0">mặc định</Badge>
-                )}
-              </label>
-            ))}
-          </div>
         </div>
 
         <div className="flex justify-end">
