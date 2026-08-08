@@ -121,10 +121,23 @@ class TheoDuongDanTests(unittest.TestCase):
 
 
 class DiemVaoChungTests(unittest.TestCase):
-    def test_pdf_intent_goi_cong_kiem(self):
+    def test_extract_markdown_goi_cong_kiem(self):
+        """Guard phải nằm ở `extract_markdown`, KHÔNG phải `markdown_pdf_so`.
+
+        `extract_markdown` mới là điểm vào chung của mọi kênh và nó bao cả nhánh
+        Office — nhánh đó gọi MarkItDown THẲNG nên guard đặt trong
+        `markdown_pdf_so` không che được. `markdown_pdf_so` lại có hợp đồng "trả
+        '' để caller rơi về đường cũ", ném lỗi ở đó là phá hợp đồng.
+        """
         src = (GOC / "services/pdf_intent.py").read_text(encoding="utf-8")
-        self.assertIn("kiem_tai_lieu_theo_duong_dan", src,
-                      "markdown_pdf_so là điểm vào chung của mọi kênh — phải kiểm ở đó")
+        self.assertIn("kiem_tai_lieu_theo_duong_dan", src)
+        vi_tri_guard = src.index("kiem_tai_lieu_theo_duong_dan(pdf_path)")
+        vi_tri_extract = src.index("def extract_markdown(")
+        vi_tri_pdf_so = src.index("def markdown_pdf_so(")
+        self.assertGreater(vi_tri_guard, vi_tri_extract,
+                           "guard phải nằm TRONG extract_markdown")
+        self.assertGreater(vi_tri_extract, vi_tri_pdf_so,
+                           "giả định thứ tự hàm trong file đã đổi — xem lại test này")
 
 
 if __name__ == "__main__":

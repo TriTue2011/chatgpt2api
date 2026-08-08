@@ -465,17 +465,6 @@ def markdown_pdf_so(pdf_path: str, *, max_pages: int | None = None) -> str:
     Thiếu thư viện (ImportError) cũng rơi về đường cũ: bản triển khai không cài
     được vẫn chạy y như trước.
     """
-    # Cổng bom tài liệu, đặt ở ĐÂY vì đây là điểm vào chung của mọi kênh
-    # (Telegram, Zalo, email, Zalo cá nhân) cho tệp PDF/Office. Kiểm theo đường
-    # dẫn nên không nạp cả tệp vào RAM — nạp 100MB chỉ để đi kiểm là tự tạo ra
-    # đúng vấn đề đang muốn chặn.
-    from services.doc_guard import DocRejected, kiem_tai_lieu_theo_duong_dan
-    try:
-        kiem_tai_lieu_theo_duong_dan(pdf_path)
-    except DocRejected as exc:
-        logger.warning({"event": "doc_bomb_blocked", "ly_do": str(exc)[:200]})
-        raise
-
     try:
         import pdf_inspector
     except Exception:
@@ -509,6 +498,27 @@ def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
     File Office (.docx/.xlsx/.pptx) đi THẲNG markitdown: hai bước PDF phía dưới
     chắc chắn hỏng với chúng, mà mỗi bước hỏng là một lần mở file + ghi log rác.
     """
+    # Cổng bom tài liệu. Đặt ở ĐÂY chứ không phải trong markdown_pdf_so vì:
+    #  * đây mới là điểm vào chung của mọi kênh (Telegram, Zalo, email, Zalo cá
+    #    nhân), và nó bao cả nhánh Office — nhánh đó gọi MarkItDown THẲNG nên
+    #    guard đặt trong markdown_pdf_so không hề che được;
+    #  * markdown_pdf_so có hợp đồng "trả '' để caller rơi về đường cũ"; ném lỗi
+    #    ở đó là phá hợp đồng (đo thật: làm đỏ test_pdf_inspector_cuc_bo).
+    # Ném chứ không nuốt: nuốt rồi trả '' sẽ đẩy quả bom xuống đúng đường OCR
+    # phía dưới — tức là vẫn giải nén, chỉ chậm hơn.
+    #
+    # Tệp không tồn tại thì KHÔNG phải việc của guard: giữ nguyên hành vi cũ
+    # (rơi về đường dưới) để không đổi hợp đồng với những nơi gọi sẵn có.
+    from pathlib import Path as _Path
+
+    from services.doc_guard import DocRejected, kiem_tai_lieu_theo_duong_dan
+    if _Path(pdf_path).is_file():
+        try:
+            kiem_tai_lieu_theo_duong_dan(pdf_path)
+        except DocRejected as exc:
+            logger.warning({"event": "doc_bomb_blocked", "ly_do": str(exc)[:200]})
+            raise
+
     if la_office(pdf_path):
         try:
             from markitdown import MarkItDown
