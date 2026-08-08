@@ -55,6 +55,11 @@ FALLBACK_MODELS = {
     ],
     "openai_oauth": [
         "cx/auto",
+        # GPT 5.6 — tier Codex dùng cho tài khoản Free (chủ máy chốt 08/08/2026).
+        # Hậu tố sau "cx/" được truyền THẲNG sang Codex (openai_oauth.py), nên
+        # tên này vốn đã route được; thiếu ở đây chỉ làm nó không hiện trong danh
+        # sách và không đưa vào enabled_models được.
+        "cx/gpt-5.6-terra", "cx/gpt-5.6-terra-review",
         # GPT 5.5
         "cx/gpt-5.5", "cx/gpt-5.5-review",
         "cx/gpt-5-5", "cx/gpt-5-5-instant", "cx/gpt-5-5-thinking",
@@ -1002,8 +1007,12 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
                     })
 
     # Always inject Claude models to the global registry so they appear in UI
+    # `sonnet-5` CÓ trong CLAUDE_MODEL_ALIASES và CÓ trong /v1/claude/models,
+    # nhưng thiếu ở đây — hai danh sách lệch nhau, nên model chạy được mà không
+    # chọn được từ giao diện chính. Đặt đầu danh sách vì đây là bản Sonnet mới nhất.
     claude_models = ["claude/auto"]
-    for b in ["fable-5", "opus-4.8", "sonnet-4.6", "haiku-4.5", "opus-4.7", "opus-4.6", "opus-3"]:
+    for b in ["sonnet-5", "fable-5", "opus-4.8", "sonnet-4.6", "haiku-4.5",
+              "opus-4.7", "opus-4.6", "opus-3"]:
         for e in ["", "-low", "-medium", "-high", "-max"]:
             for t in ["", "-thinking"]:
                 claude_models.append(f"claude/{b}{e}{t}")
@@ -1013,7 +1022,13 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
             data.append({"id": mid, "object": "model", "created": 0, "owned_by": "claude"})
 
     # Gemini web-cookie API models
-    gma_models = ["gma/auto", "gma/image", "gma/3.1-flash", "gma/3.1-flash-thu-nghiem",
+    # 3.5-* đã có trong _GMA_ALIASES của api/gemini_web.py (nên gọi thẳng vẫn
+    # chạy — đo thật 08/08: gma/3.5-flash trả OK, adapter gọi BASIC_FLASH) nhưng
+    # chưa từng được LIỆT KÊ ở đây, nên không chọn được trong giao diện và không
+    # đưa vào enabled_models được.
+    gma_models = ["gma/auto", "gma/image",
+                  "gma/3.5-flash", "gma/3.5-flash-mo-rong",
+                  "gma/3.1-flash", "gma/3.1-flash-thu-nghiem",
                   "gma/3.1-pro", "gma/3.1-pro-mo-rong",
                   "gma/3.1-flash-lite"]
     for mid in gma_models:

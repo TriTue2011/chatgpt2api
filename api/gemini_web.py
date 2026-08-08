@@ -583,6 +583,12 @@ _GMA_ALIASES = {
     "3.1-pro": "gemini-3-pro",                      # 3.1 Pro (Tiêu chuẩn)
     "3.1-pro-mo-rong": "gemini-3-pro-advanced",     # 3.1 Pro (Mở rộng)
     "3.1-flash-lite": "gemini-3-flash",             # Flash-Lite (lib chưa tách → flash)
+    # Hai tên này ĐÃ được liệt kê trong gma_models của /v1/models từ trước nhưng
+    # KHÔNG có ở bảng này, nên chọn chúng trong giao diện là rơi thẳng vào nhánh
+    # gma_unknown_model_fallback: trả HTTP 200 bằng model auto, không báo gì.
+    # Đích của chúng là hai giá trị đã có sẵn ở trên, không phải tên mới bịa ra.
+    "3.1-flash": "gemini-3-flash",
+    "3.1-flash-thu-nghiem": "gemini-3-flash-thinking",
     # Alias cũ — vẫn nhận để không vỡ request đã cấu hình
     "flash": "gemini-3-flash",
     "flash-lite": "gemini-3-flash",
@@ -651,12 +657,28 @@ def _resolve_model(model: str, prompt: str = ""):
     if not m or m == "auto":
         m = "3.5-flash"
 
+    da_khai = m                      # tên NGƯỜI DÙNG khai, trước khi đổi alias
     m = _GMA_ALIASES.get(m, m)
     try:
         from gemini_webapi.constants import Model
         return Model.from_name(m)
     except Exception:
-        _logger().info({"event": "gma_unknown_model_fallback", "model": m})
+        # Trả None = "để server Gemini tự chọn". Người gọi vẫn nhận HTTP 200 và
+        # một câu trả lời — nhưng TỪ MODEL KHÁC cái họ yêu cầu, mà trước đây chỉ
+        # ghi mức INFO nên không ai thấy. Đo thật 08/08: `gma/3.6-flash` trả OK
+        # trong khi thực chất chạy model auto.
+        #
+        # Vẫn rơi về auto chứ không ném lỗi: bản gemini_webapi trên máy chủ có
+        # thể thiếu một tên model hợp lệ, và làm hỏng hẳn một kênh đang chạy thì
+        # tệ hơn là trả lời bằng model mặc định. Nhưng phải NÓI TO.
+        _logger().warning({
+            "event": "gma_unknown_model_fallback",
+            "yeu_cau": da_khai,
+            "sau_alias": m,
+            "thuc_te": "auto (server Gemini tự chọn)",
+            "canh_bao": "Model yêu cầu KHÔNG tồn tại — câu trả lời đến từ model khác. "
+                        "Kiểm tra lại tên, hoặc chọn model có trong GET /v1/models.",
+        })
         return None
 
 
