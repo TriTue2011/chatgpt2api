@@ -2381,7 +2381,25 @@ export async function loginZaloAccount(customProxy, cred) {
                         const stats = fs.statSync(filePath);
                         try {
                             const sizeOf = await import('image-size').then(module => module.default || module);
-                            const dimensions = sizeOf(filePath);
+                            // Đưa BUFFER ĐẦU FILE thay vì đường dẫn.
+                            //
+                            // `image-size` đang có lỗ DoS (high) mà thượng nguồn
+                            // CHƯA có bản vá — `npm audit` báo `fixAvailable:
+                            // false`. Ảnh ở đây do người dùng Zalo gửi lên nên
+                            // là dữ liệu kẻ tấn công điều khiển được.
+                            //
+                            // Truyền đường dẫn thì thư viện tự đọc bao nhiêu tuỳ
+                            // nó; truyền buffer thì nó chỉ thấy đúng phần ta cho
+                            // thấy. Kích thước ảnh của JPEG/PNG/GIF/WebP đều nằm
+                            // trong vài KB đầu, nên 256 KB là thừa cho việc đọc
+                            // đúng mà vẫn chặn được đầu vào khổng lồ.
+                            const TRAN_HEADER = 256 * 1024;
+                            const doDoc = Math.min(stats.size, TRAN_HEADER);
+                            const dau = Buffer.alloc(doDoc);
+                            const fdH = fs.openSync(filePath, 'r');
+                            try { fs.readSync(fdH, dau, 0, doDoc, 0); }
+                            finally { fs.closeSync(fdH); }
+                            const dimensions = sizeOf(dau);
                             return { width: dimensions.width, height: dimensions.height, size: stats.size };
                         } catch (importError) {
                             const buffer = Buffer.alloc(24);

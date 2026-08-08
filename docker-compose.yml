@@ -124,6 +124,19 @@ services:
       # trong .env không bao giờ tới được container, và người đặt biến sẽ tưởng
       # đã bật mã hoá trong khi vẫn ghi chữ thường.
       VAULT_MASTER_KEY: ${VAULT_MASTER_KEY:-}
+      #
+      # [Tuỳ chọn] Chạy bốn dịch vụ ứng dụng dưới người dùng không đặc quyền.
+      # Mặc định `root` = hành vi hiện tại. Muốn đổi thì phải làm CẢ HAI:
+      #
+      #   APP_USER: c2a
+      #   APP_PORT: 8080          # cổng 80 là đặc quyền, non-root không bind được
+      #   ports:  - "3030:8080"   # và sửa ánh xạ cho khớp
+      #
+      # supervisord tự `chown -R` /app/data trước khi khởi động, nên không phải
+      # chown thủ công trên host. Bộ X (noVNC) vẫn chạy root — đây là bước tách
+      # quyền cho phần phục vụ request, chưa phải non-root hoàn toàn.
+      APP_USER: ${APP_USER:-root}
+      APP_PORT: ${APP_PORT:-80}
 
     security_opt:
       - no-new-privileges:true

@@ -154,6 +154,17 @@ RUN ARCH=$(dpkg --print-architecture) && \
       chmod +x /usr/local/bin/officecli && \
       /usr/local/bin/officecli --version || echo "officecli: binary installed (version check optional)" ; \
     else echo "officecli: skip unsupported arch $ARCH" ; fi
+# Người dùng không đặc quyền cho bốn dịch vụ ứng dụng.
+#
+# TẠO SẴN nhưng KHÔNG dùng mặc định: `APP_USER=root` giữ nguyên hành vi hiện
+# tại. Đổi `APP_USER: c2a` trong compose là chuyển sang non-root — supervisord
+# tự chown /app/data trước khi khởi động (xem deploy/supervisord.conf).
+#
+# Bộ X (Xvfb/x11vnc/noVNC) vẫn cần root nên container chưa non-root hoàn toàn;
+# đây là bước tách quyền cho phần phục vụ request, không phải bước cuối.
+RUN groupadd -g 1000 c2a && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin c2a
+ENV APP_USER=root
+
 ENV OFFICECLI_BIN=/usr/local/bin/officecli \
     OFFICECLI_WORKSPACE=/app/data/office \
     OFFICECLI_SKIP_UPDATE=1
