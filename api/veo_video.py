@@ -66,11 +66,13 @@ def _luu_thu_vien(ket_qua: dict[str, Any]) -> dict[str, Any]:
             if not url.startswith(("http://", "https://")):
                 continue
             try:
-                import httpx
-                with httpx.Client(timeout=120, follow_redirects=True) as client:
-                    r = client.get(url)
-                    r.raise_for_status()
-                    raw = r.content
+                # URL này do PROVIDER trả về, không phải hằng số của ta — nên
+                # vẫn phải đi qua net_guard: chặn SSRF, kiểm lại sau mỗi
+                # redirect, và cắt theo trần byte. Bản cũ dùng httpx thẳng với
+                # follow_redirects=True rồi `r.content` không giới hạn.
+                from services import net_guard
+                raw = net_guard.fetch_media(url, timeout=120,
+                                            max_bytes=MAX_VIDEO_DOWNLOAD_BYTES)
             except Exception as exc:
                 logger.warning({"event": "video_library_download_failed",
                                 "error": str(exc)[:120]})
@@ -353,12 +355,33 @@ async def handle_video_generation(
     })
 
 
-def _decode_media(b64: str) -> bytes:
-    """Nhận b64 hoặc data-URL ('data:video/mp4;base64,...') → bytes."""
+# Trần cho /v1/video/compose. Không có trần thì một request base64 vài GB là đủ
+# cạn RAM rồi cạn đĩa tạm; số clip không giới hạn còn kéo ffmpeg chạy vô hạn.
+MAX_COMPOSE_CLIPS = 24
+MAX_CLIP_BYTES = 200 * 1024 * 1024
+MAX_COMPOSE_TOTAL_BYTES = 600 * 1024 * 1024
+MAX_STORY_SCENES = 12
+# Video provider trả về: giữ rộng tay nhưng KHÔNG vô hạn.
+MAX_VIDEO_DOWNLOAD_BYTES = 500 * 1024 * 1024
+
+
+def _decode_media(b64: str, *, max_bytes: int = MAX_CLIP_BYTES, nhan: str = "clip") -> bytes:
+    """Nhận b64 hoặc data-URL ('data:video/mp4;base64,...') → bytes.
+
+    Đo độ dài chuỗi base64 TRƯỚC khi giải mã: b64decode cấp phát bản giải mã rồi
+    mới trả về, nên đo sau là RAM đã mất. Chuỗi base64 dài hơn dữ liệu thật ~4/3.
+    """
     import base64 as _b64
     s = str(b64 or "")
     if "," in s and s.strip().lower().startswith("data:"):
         s = s.split(",", 1)[1]
+    uoc_luong = len(s) * 3 // 4
+    if uoc_luong > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": f"{nhan} quá lớn: ~{uoc_luong // (1024 * 1024)}MB, "
+                             f"trần {max_bytes // (1024 * 1024)}MB"},
+        )
     return _b64.b64decode(s)
 
 
@@ -382,18 +405,34 @@ async def handle_video_compose(
     clips_b64 = (body or {}).get("clips") or []
     if not isinstance(clips_b64, list) or not clips_b64:
         raise HTTPException(status_code=400, detail={"error": "clips (list b64) is required"})
+    if len(clips_b64) > MAX_COMPOSE_CLIPS:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"too many clips: {len(clips_b64)} (max {MAX_COMPOSE_CLIPS})"},
+        )
 
     tmp: list[str] = []
     audio_path = None
     try:
+        tong = 0
         for c in clips_b64:
+            raw = _decode_media(c, nhan="clip")
+            # Trần TỔNG: từng clip trong hạn nhưng 24 clip cộng lại vẫn đủ để
+            # lấp đĩa tạm và treo ffmpeg.
+            tong += len(raw)
+            if tong > MAX_COMPOSE_TOTAL_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"error": f"clips too large in total (max "
+                                     f"{MAX_COMPOSE_TOTAL_BYTES // (1024 * 1024)}MB)"},
+                )
             fd, p = tempfile.mkstemp(suffix=".mp4"); os.close(fd)
-            Path(p).write_bytes(_decode_media(c)); tmp.append(p)
+            Path(p).write_bytes(raw); tmp.append(p)
         clip_paths = list(tmp)
         audio_b64 = (body or {}).get("audio")
         if audio_b64:
             fd, ap = tempfile.mkstemp(suffix=".wav"); os.close(fd)
-            Path(ap).write_bytes(_decode_media(audio_b64)); tmp.append(ap); audio_path = ap
+            Path(ap).write_bytes(_decode_media(audio_b64, nhan="audio")); tmp.append(ap); audio_path = ap
         try:
             out = await run_in_threadpool(concat_clips, clip_paths, audio_path, None)
         except VideoError as exc:
@@ -444,6 +483,21 @@ async def handle_video_story(
         dur = int((body or {}).get("duration") or 6)
     except (TypeError, ValueError):
         n, dur = 3, 6
+    # Mỗi cảnh là MỘT lượt gọi Veo có tính phí và tốn vài chục giây. Không chặn
+    # thì `n_scenes: 10000` (hoặc một mảng `scenes` dài tuỳ ý) vừa treo tiến
+    # trình vừa đốt sạch quota — đây là chi phí thật, không chỉ là RAM.
+    if isinstance(scenes, list) and len(scenes) > MAX_STORY_SCENES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"too many scenes: {len(scenes)} (max {MAX_STORY_SCENES})"},
+        )
+    if n > MAX_STORY_SCENES:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"n_scenes too large: {n} (max {MAX_STORY_SCENES})"},
+        )
+    n = max(1, n)
+    dur = max(1, min(60, dur))
     aspect = str((body or {}).get("aspect_ratio") or "9:16")
 
     try:
