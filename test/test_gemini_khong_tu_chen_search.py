@@ -122,9 +122,39 @@ class PhoiRaDanhSachModelTests(unittest.TestCase):
     # Đọc khối literal trong mã nguồn thay vì import: `openai_v1_models` kéo
     # theo `utils/pow.py`, vốn dùng cú pháp cần Python 3.10+. Ở đây thứ cần
     # kiểm CHÍNH LÀ một danh sách hằng, nên đọc văn bản là kiểm trung thực.
+    def _nguon(self) -> str:
+        return (GOC / "services/protocol/openai_v1_models.py").read_text(encoding="utf-8")
+
+    def test_bien_the_search_LUON_duoc_ghep_khong_phai_fallback(self):
+        """Bản 88ddff5 đặt chúng vào `FALLBACK_MODELS`, mà khối đó chỉ chạy khi
+        `provider_name not in all_models` — tức là chỉ khi lấy danh sách động
+        THẤT BẠI. Ai có khoá chạy được thì Google trả danh sách, nhánh fallback
+        không chạy, và alias biến mất mà không có lỗi nào."""
+        src = self._nguon()
+        self.assertIn("ALIAS_MODELS", src)
+        i = src.index("ALIAS_MODELS: dict")
+        self.assertIn("gemini_free/gemini-3.6-flash-search", src[i:i + 700])
+        # Và phải nằm NGOÀI khối fallback có điều kiện.
+        j = src.index("for provider_name, alias_list in ALIAS_MODELS.items():")
+        k = src.index("# Apply fallbacks for providers that returned nothing")
+        self.assertLess(j, k, "alias bị ghép sau/trong khối fallback")
+
+    def test_FALLBACK_khong_con_giu_bien_the_search(self):
+        src = self._nguon()
+        i = src.index('FALLBACK_MODELS = {')
+        j = src.index('"chatgpt": [', i)
+        self.assertNotIn("-search", src[i:j],
+                         "biến thể -search vẫn nằm trong FALLBACK (chỉ chạy khi fetch hỏng)")
+
     def _khoi_gemini(self) -> str:
-        src = (GOC / "services/protocol/openai_v1_models.py").read_text(encoding="utf-8")
-        i = src.index('"gemini_free": [')
+        """Khối gemini_free trong FALLBACK_MODELS — KHÔNG phải trong ALIAS_MODELS.
+
+        Cả hai dict đều có khoá `gemini_free`, và ALIAS đứng trước trong file,
+        nên tìm lần xuất hiện đầu tiên là đọc nhầm khối.
+        """
+        src = self._nguon()
+        goc = src.index("FALLBACK_MODELS = {")
+        i = src.index('"gemini_free": [', goc)
         return src[i:src.index("],", i)]
 
     def test_hai_model_da_do_deu_co_mat(self):
@@ -133,7 +163,9 @@ class PhoiRaDanhSachModelTests(unittest.TestCase):
         self.assertIn('"gemini_free/gemini-3.5-flash-lite"', khoi)
 
     def test_co_bien_the_search_de_bat_grounding(self):
-        self.assertIn('-search"', self._khoi_gemini(),
+        src = self._nguon()
+        i = src.index("ALIAS_MODELS: dict")
+        self.assertIn('-search"', src[i:i + 700],
                       "bỏ tự chèn mà không để đường bật lại = mất hẳn tính năng")
 
 

@@ -15,6 +15,23 @@ from utils.log import logger
 
 
 # Fallback static models — used when API fetch fails
+# Model do CHÍNH TA định nghĩa, thượng nguồn không có — LUÔN được ghép vào.
+#
+# Khác hẳn `FALLBACK_MODELS`: cái đó chỉ dùng khi lấy danh sách động THẤT BẠI.
+# Đặt nhầm vào đó thì ai có khoá chạy được sẽ không bao giờ thấy — Google trả
+# danh sách, nhánh fallback không chạy, và alias biến mất mà không có lỗi nào.
+# (Đúng lỗi của bản 88ddff5.)
+#
+# Hậu tố `-search` bật Google Search grounding cho model CHAT; nó bị bóc ra
+# trước khi gọi Google (`_bo_hau_to_search`). Phải khai tường minh thì client
+# mới chọn được, vì grounding KHÔNG còn tự bật cho mọi request.
+ALIAS_MODELS: dict[str, list[str]] = {
+    "gemini_free": [
+        "gemini_free/gemini-3.6-flash-search",
+        "gemini_free/gemini-2.5-flash-search",
+    ],
+}
+
 FALLBACK_MODELS = {
     "opencode": [
         "oc/auto",
@@ -31,13 +48,6 @@ FALLBACK_MODELS = {
         # 3.5-flash-lite cho cảnh báo hàng loạt, nhanh và rẻ hơn.
         "gemini_free/gemini-3.6-flash",
         "gemini_free/gemini-3.5-flash-lite",
-        # Biến thể CÓ tra web (Google Search grounding). Hậu tố `-search` là
-        # quy ước của repo (giống `api/claude.py`) và bị bóc ra trước khi gọi
-        # Google. Phải khai riêng ở đây thì client mới chọn được — grounding
-        # KHÔNG còn tự bật cho mọi request nữa, vì nó tiêu một hạn mức riêng
-        # rất chặt và từng làm hỏng cả đường Vision của camera.
-        "gemini_free/gemini-3.6-flash-search",
-        "gemini_free/gemini-2.5-flash-search",
     ],
     "chatgpt": [
         "chatgpt/auto",
@@ -892,6 +902,18 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     # Add dynamically fetched models
     for provider_name, models in sorted(all_models.items()):
         for model_id in sorted(models):
+            if model_id not in seen:
+                seen.add(model_id)
+                data.append({
+                    "id": model_id,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": provider_name,
+                })
+
+    # Alias do ta định nghĩa: ghép LUÔN, không phụ thuộc lấy động thành công.
+    for provider_name, alias_list in ALIAS_MODELS.items():
+        for model_id in alias_list:
             if model_id not in seen:
                 seen.add(model_id)
                 data.append({
