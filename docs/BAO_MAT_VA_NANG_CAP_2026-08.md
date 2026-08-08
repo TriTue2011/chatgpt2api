@@ -21,7 +21,7 @@ các bước nâng cấp từ bản cũ, và cách xử lý những sự cố ha
 | Key vai `user` không còn chạm được Home Assistant / SSH / thiết bị | Tích hợp dùng key `user` mất quyền điều khiển nhà | Dùng khoá admin (`CHATGPT2API_AUTH_KEY`) cho HA |
 | WebSocket zalo-server yêu cầu đăng nhập **admin** | Trang chat cũ không nhận tin nếu chưa đăng nhập | Đăng nhập dashboard trước khi mở chat |
 | CORS đọc từ `cors_allow_origins` (mặc định vẫn `*`) | Không đổi hành vi nếu chưa cấu hình | Nên khai domain thật (mục 6) |
-| `ZALO_SERVER_API_KEY` chỉ dùng được cho **route gửi tin** | Key này không còn mở dashboard / lịch sử chat / quản lý người dùng (trả 403 `API_KEY_OUT_OF_SCOPE`) | Home Assistant không bị ảnh hưởng; script nào dùng key để đọc dashboard phải chuyển sang đăng nhập tài khoản |
+| `ZALO_SERVER_API_KEY` chỉ dùng được cho **route GỬI nội dung** | Key gửi được tin, ảnh, album, tệp, video, sticker, link, card — kể cả biến thể `…ByAccount`. Không còn: đọc lịch sử chat, tra số điện thoại ra người dùng, tạo/sửa nhóm, kết bạn, dashboard. Ngoài phạm vi → 403 `API_KEY_OUT_OF_SCOPE` | Luồng gửi thông báo của Home Assistant không bị ảnh hưởng. Script nào dùng key để **đọc** phải chuyển sang đăng nhập tài khoản admin |
 | Dashboard và chat zalo-server yêu cầu vai **admin** | Tài khoản vai `user` bị 403 ở mọi trang trừ đổi mật khẩu | Dùng tài khoản admin. Cần nhiều người dùng thì phải làm ACL trước (mục 8) |
 | Tool đọc web của MCP Hub chặn địa chỉ **nội bộ** | `read_url`, `get_law_detail`, ingest theo URL không còn đọc được `127.0.0.1`, `192.168.*`, `169.254.169.254` | Không cần làm gì. Muốn nạp tài liệu nội bộ thì tải file lên thay vì đưa URL |
 | `vn_law` chỉ đọc được các cổng văn bản pháp luật | URL ngoài `thuvienphapluat.vn`, `vbpl.vn`, `chinhphu.vn`, `moj.gov.vn` bị từ chối | Dùng `read_url` cho trang khác |
@@ -214,7 +214,7 @@ domain công khai) — xem mục 6.
 | Giả IP bằng `X-Forwarded-For` để né khoá brute-force | Mặc định dùng `request.client.host`; chỉ tin XFF khi `security.trust_forwarded_for` |
 | Client tự gắn cờ `x_agent_internal` để né nhật ký kiểm toán | Chỉ tin khi có header nội bộ khớp `auth_key` |
 | WebSocket zalo-server phát **toàn bộ tin nhắn** cho mọi client, không xác thực | `noServer` + xác thực session **admin** + kiểm Origin + `maxPayload` 1MB + giới hạn 50 kết nối |
-| API key tích hợp (`ZALO_SERVER_API_KEY`) đi qua middleware chung → mở được cả dashboard, lịch sử chat, quản lý người dùng | Allowlist: key chỉ dùng cho route gửi tin/tra cứu tích hợp; ngoài đó trả 403 |
+| API key tích hợp (`ZALO_SERVER_API_KEY`) đi qua middleware chung → mở được cả dashboard, lịch sử chat, quản lý người dùng | Allowlist **chỉ-gửi**, liệt kê đủ tên từng route (gồm `…ByAccount`); ngoài đó trả 403. Danh sách này **độc lập** với `SENSITIVE_API_PREFIXES` — dùng chung như bản đầu khiến key gửi thông báo đọc được cả `getGroupChatHistoryByAccount` và `findUser` |
 | Route UI/chat chỉ kiểm "đã đăng nhập", không kiểm vai → tài khoản vai `user` đọc toàn bộ hội thoại và gửi tin thay mọi tài khoản Zalo | Thêm cổng vai `dashboardRoleMiddleware`: dashboard/chat cần vai `admin`; chỉ chừa đổi mật khẩu và đăng xuất |
 | Header `Host` / `X-Forwarded-Host` giả mạo được (allowlist chỉ dùng lúc dựng URL ảnh) | `TrustedHostMiddleware` thật, bật khi khai `security.trusted_hosts`; luôn cho `localhost` để healthcheck nội bộ không gãy |
 
@@ -331,9 +331,14 @@ chắn là do cài lại: xoá dòng của host đó trong `/app/data/ssh_known_
 chạy lại. Vân tay đang ghi nhớ xem bằng `ssh_list_servers`.
 
 **Home Assistant / script gọi zalo-server trả 403 `API_KEY_OUT_OF_SCOPE`**
-`ZALO_SERVER_API_KEY` giờ chỉ dùng được cho các route gửi tin/tra cứu tích hợp
-(`/api/sendmessage`, `/api/sendImageToUser`, `/api/getUserInfo`…). Gọi dashboard,
-lịch sử chat hay quản lý người dùng thì phải đăng nhập bằng tài khoản admin.
+`ZALO_SERVER_API_KEY` chỉ dùng được cho các route **gửi nội dung**:
+`/api/sendmessage`, `/api/sendMessageByAccount`, `/api/sendImageToUser|Group`,
+`/api/sendImagesToUser|Group`, `/api/sendFile`, `/api/sendVideo|Voice|Sticker|
+Link|Card…ByAccount` — mỗi cái đều có biến thể `…ByAccount`.
+Bị 403 nghĩa là đang gọi việc **đọc hoặc quản trị**: lịch sử chat
+(`getGroupChatHistoryByAccount`), tra người dùng (`findUser`, `getUserInfo`),
+tạo/sửa nhóm, kết bạn, hay dashboard. Những việc đó phải đăng nhập tài khoản
+admin — cố ý, vì key này cấp cho tích hợp gửi thông báo.
 
 **Đăng nhập được nhưng mọi trang trả 403 "Chỉ admin mới vào được"**
 Tài khoản đang dùng có vai `user`. Dashboard và chat hiện yêu cầu vai `admin` —

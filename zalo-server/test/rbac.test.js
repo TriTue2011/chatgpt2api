@@ -67,11 +67,37 @@ function chay(req) {
   return { res, daQua };
 }
 
-test('API key dùng được cho route tích hợp gửi tin', () => {
-  assert.equal(isApiKeyRoute('/api/sendmessage'), true);
-  assert.equal(isApiKeyRoute('/api/sendImageToGroup'), true);
-  const { daQua } = chay(reqVoiApiKey('/api/sendmessage'));
-  assert.equal(daQua, true, 'Home Assistant phải gửi tin được như cũ');
+test('API key gửi được mọi loại nội dung, gồm cả biến thể ByAccount', () => {
+  // Biến thể ByAccount là thứ docs/ZALO_ANH_VA_HOME_ASSISTANT.md hướng dẫn dùng
+  // để gửi album. Khớp theo tiền tố `/api/sendImagesToUser` KHÔNG bắt được tên
+  // `/api/sendImagesToUserByAccount`, nên phải liệt kê đủ tên — test này chốt lại.
+  for (const p of ['/api/sendmessage', '/api/sendMessageByAccount',
+                   '/api/sendImageToUser', '/api/sendImageToUserByAccount',
+                   '/api/sendImageToGroup', '/api/sendImageToGroupByAccount',
+                   '/api/sendImagesToUser', '/api/sendImagesToUserByAccount',
+                   '/api/sendImagesToGroup', '/api/sendImagesToGroupByAccount',
+                   '/api/sendFile', '/api/sendFileByAccount',
+                   '/api/sendVideoByAccount', '/api/sendVoiceByAccount',
+                   '/api/sendStickerByAccount', '/api/sendLinkByAccount']) {
+    assert.equal(isApiKeyRoute(p), true, `${p} phải nằm trong phạm vi API key`);
+    const { daQua } = chay(reqVoiApiKey(p));
+    assert.equal(daQua, true, `tích hợp gửi thông báo bị chặn ở ${p}`);
+  }
+});
+
+test('API key KHÔNG đọc được lịch sử chat, không tra người dùng, không sửa nhóm', () => {
+  // Chính sách chốt 08/08: key này chỉ để GỬI. Đây là danh sách từng nằm trong
+  // phạm vi key (kế thừa nhầm từ nhóm "route từng public") và nay phải bị chặn.
+  for (const p of ['/api/getGroupChatHistoryByAccount',
+                   '/api/findUser', '/api/getUserInfo', '/api/getGroupInfo',
+                   '/api/createGroup', '/api/addUserToGroup',
+                   '/api/removeUserFromGroup', '/api/sendFriendRequest']) {
+    assert.equal(isApiKeyRoute(p), false, `${p} không được nằm trong phạm vi API key`);
+    const { res, daQua } = chay(reqVoiApiKey(p));
+    assert.equal(daQua, false, `API key vẫn lọt vào ${p}`);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.body.code, 'API_KEY_OUT_OF_SCOPE');
+  }
 });
 
 test('API key KHÔNG mở được dashboard / chat / quản lý người dùng', () => {
@@ -82,6 +108,14 @@ test('API key KHÔNG mở được dashboard / chat / quản lý người dùng'
     assert.equal(daQua, false, `API key vẫn lọt vào ${p}`);
     assert.equal(res.statusCode, 403, `${p} phải trả 403`);
     assert.equal(res.body.code, 'API_KEY_OUT_OF_SCOPE');
+  }
+});
+
+test('admin đăng nhập vẫn làm được những việc key không được phép', () => {
+  for (const p of ['/api/getGroupChatHistoryByAccount', '/api/findUser',
+                   '/api/createGroup']) {
+    const { daQua } = chay(reqVoiPhien(p, 'admin'));
+    assert.equal(daQua, true, `admin phải vào được ${p}`);
   }
 });
 

@@ -335,7 +335,8 @@ export const authMiddleware = (req, res, next) => {
     }
     return res.status(403).json({
       success: false,
-      message: 'API key chỉ dùng được cho các route tích hợp gửi tin, không dùng cho dashboard/chat. Hãy đăng nhập bằng tài khoản.',
+      message: 'ZALO_SERVER_API_KEY chỉ dùng được cho các route GỬI nội dung (tin, ảnh, tệp, video, sticker). '
+        + 'Đọc lịch sử chat, tra người dùng, tạo/sửa nhóm, kết bạn và dashboard đều cần đăng nhập tài khoản admin.',
       code: 'API_KEY_OUT_OF_SCOPE',
     });
   }
@@ -466,9 +467,54 @@ const SENSITIVE_API_PREFIXES = [
   '/api/getGroupChatHistoryByAccount',
 ];
 
-/** Route TÍCH HỢP được phép xác thực bằng API key. Ngoài danh sách này, API key
- * không thay thế được phiên đăng nhập. */
-const API_KEY_ROUTES = [...SENSITIVE_API_PREFIXES];
+/**
+ * Route được phép xác thực bằng ZALO_SERVER_API_KEY: **CHỈ GỬI NỘI DUNG**.
+ *
+ * Chính sách (chủ máy chốt 08/08/2026): key này cấp cho tích hợp gửi thông báo
+ * (Home Assistant, script), nên nó chỉ được gửi tin/ảnh/tệp/video/sticker.
+ * Mọi thứ khác — đọc lịch sử chat, tra số điện thoại ra người dùng, tạo và sửa
+ * nhóm, kết bạn — phải đăng nhập bằng tài khoản admin.
+ *
+ * Vì sao không dùng lại SENSITIVE_API_PREFIXES như bản trước: danh sách đó trả
+ * lời câu hỏi KHÁC — "route nào từng public và nay phải xác thực". Dùng chung
+ * khiến key gửi thông báo đọc được `getGroupChatHistoryByAccount` (toàn bộ lịch
+ * sử nhóm) và `findUser` (tra số điện thoại), rộng hơn mục đích rất nhiều. Hai
+ * danh sách từ đây độc lập.
+ *
+ * Liệt kê ĐỦ TÊN từng route, gồm cả biến thể `…ByAccount`: tài liệu
+ * docs/ZALO_ANH_VA_HOME_ASSISTANT.md hướng dẫn gửi album qua
+ * `sendImagesToUserByAccount`, mà khớp theo tiền tố `/api/sendImagesToUser`
+ * KHÔNG bắt được tên đó (không phải `/` hay `?` đứng sau).
+ *
+ * KHÔNG có ở đây, có chủ đích: sendFriendRequest (kết bạn — đổi quan hệ tài
+ * khoản), sendReportByAccount (báo cáo vi phạm lên Zalo), và các sự kiện trạng
+ * thái sendSeen/sendDelivered/sendTyping (đổi trạng thái đã-đọc của tài khoản
+ * thật, không phải gửi nội dung).
+ */
+const API_KEY_ROUTES = [
+  // Tin nhắn chữ
+  '/api/sendmessage',
+  '/api/sendMessageByAccount',
+  // Ảnh đơn
+  '/api/sendImageToUser',
+  '/api/sendImageToUserByAccount',
+  '/api/sendImageToGroup',
+  '/api/sendImageToGroupByAccount',
+  '/api/sendImageByAccount',
+  // Album nhiều ảnh
+  '/api/sendImagesToUser',
+  '/api/sendImagesToUserByAccount',
+  '/api/sendImagesToGroup',
+  '/api/sendImagesToGroupByAccount',
+  // Tệp / phương tiện khác
+  '/api/sendFile',
+  '/api/sendFileByAccount',
+  '/api/sendVideoByAccount',
+  '/api/sendVoiceByAccount',
+  '/api/sendStickerByAccount',
+  '/api/sendLinkByAccount',
+  '/api/sendCardByAccount',
+];
 
 /** True nếu path nằm trong phạm vi API key. */
 export const isApiKeyRoute = (path) => {
