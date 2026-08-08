@@ -34,6 +34,10 @@ const CORE_MODELS = ["ha-agent", "chatgpt/auto", "cgf/auto", "oc/auto", "gemini_
 
 function ModelsPageContent() {
   const [available, setAvailable] = useState<Record<string, string[]>>({});
+  // Model TẠO VIDEO, do backend phân loại. Provider `flow` giữ cả model ảnh lẫn
+  // model video chung một nhóm, mà nhìn tên thì không phân biệt nổi — nên lấy
+  // danh sách từ một nguồn thay vì đoán ở đây.
+  const [videoModels, setVideoModels] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<ModelSettings>({ enabled_models: {}, default_models: {} });
   const [loading, setLoading] = useState(true);
   const [dirty, setDirty] = useState(false);
@@ -55,6 +59,7 @@ function ModelsPageContent() {
         request.get("/api/v1/model-settings"),
       ]);
       setAvailable((availRes.data as any)?.providers || {});
+      setVideoModels(new Set((availRes.data as any)?.video_models || []));
       setSettings((settingsRes.data as any)?.model_settings || { enabled_models: {}, default_models: {} });
       // Auto-collapse all providers on first load
       const provs = Object.keys((availRes.data as any)?.providers || {});
@@ -262,6 +267,13 @@ function ModelsPageContent() {
             (m.endsWith(":text") && CORE_MODELS.includes(m.slice(0, -":text".length)));
           const coreModels = models.filter(isCore);
           const regularModels = models.filter((m) => !isCore(m));
+          // Tách model tạo video ra khối riêng. Chúng dùng chung tiền tố `flow/`
+          // với model ảnh nhưng đi đường khác hẳn: yêu cầu ảnh qua
+          // `backend_router`, yêu cầu video qua `api/veo_video.py`. Chỉ đường ảnh
+          // đọc ô "Đặt mặc định", nên để nút đó cạnh một model video là mời
+          // người dùng đặt một thứ vừa vô tác dụng cho video vừa làm hỏng ảnh.
+          const modelVideo = regularModels.filter((m) => videoModels.has(m));
+          const modelAnhChat = regularModels.filter((m) => !videoModels.has(m));
 
           return (
             <div
@@ -352,7 +364,7 @@ function ModelsPageContent() {
                       </div>
                     </div>
                     <div className="columns-1 gap-1 sm:columns-2 lg:columns-3">
-                      {regularModels.map((modelId) => {
+                      {modelAnhChat.map((modelId) => {
                         const enabled = isEnabled(provider, modelId);
                         const isDefault = defaultModel === modelId;
                         const shortName = modelId
@@ -418,6 +430,48 @@ function ModelsPageContent() {
                             >
                               {isDefault ? "Mặc định" : "Đặt mặc định"}
                             </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Model tạo video — tick để ẩn/hiện, KHÔNG có ô mặc định */}
+                {modelVideo.length > 0 && (
+                  <div className="mt-4 pt-3 border-t border-[var(--border)]">
+                    <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">
+                      Model tạo video
+                    </p>
+                    <p className="mb-2 text-[10px] text-[var(--muted-foreground)]">
+                      Không đặt mặc định ở đây: model video được chọn ngay lúc tạo, trong tab Tạo Video.
+                      Tick ở đây chỉ quyết định model nào xuất hiện trong danh sách chọn.
+                    </p>
+                    <div className="columns-1 gap-1 sm:columns-2 lg:columns-3">
+                      {modelVideo.map((modelId) => {
+                        const enabled = isEnabled(provider, modelId);
+                        return (
+                          <div key={modelId} className="mb-1 break-inside-avoid flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleModel(provider, modelId)}
+                              className={cn(
+                                "size-5 rounded border-2 flex items-center justify-center shrink-0 transition",
+                                enabled
+                                  ? "border-violet-500 bg-violet-500/20"
+                                  : "border-[var(--border)] bg-[var(--secondary)]/50",
+                              )}
+                            >
+                              {enabled && <Check className="size-3 text-violet-400" />}
+                            </button>
+                            <span
+                              className={cn(
+                                "flex-1 text-xs font-mono truncate transition",
+                                enabled ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
+                              )}
+                            >
+                              {modelId}
+                            </span>
                           </div>
                         );
                       })}

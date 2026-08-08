@@ -105,12 +105,29 @@ _ASPECT_FROM_LABEL: dict[str, str] = {
 
 
 def _resolve_model(model: str) -> str:
-    """Map a 'flow/<alias>' model string to the Flow imageModelName."""
+    """Map a 'flow/<alias>' model string to the Flow imageModelName.
+
+    Tên lạ vẫn được cho đi qua (viết hoa nguyên văn) để model ảnh mới của Flow
+    dùng được ngay mà không cần sửa mã. Nhưng tên model VIDEO thì chặn: Flow đặt
+    cả hai loại chung một không gian tên `flow/`, nên một cấu hình lệch có thể
+    đẩy `flow/veo-3.1-fast` vào đây, và cho qua sẽ gửi `imageModelName:
+    "VEO-3.1-FAST"` — một giá trị Flow không hiểu, hỏng mà không nói vì sao.
+    """
     raw = (model or "").strip().lower()
     if raw.startswith("flow/"):
         raw = raw[len("flow/"):]
+    if raw in _MODEL_ALIASES:
+        return _MODEL_ALIASES[raw]
+    from utils.helper import VIDEO_GEN_MODELS
+    if f"flow/{raw}" in VIDEO_GEN_MODELS:
+        raise ValueError(
+            f"'flow/{raw}' là model TẠO VIDEO, không tạo được ảnh. Model ảnh của "
+            f"Flow: {', '.join(sorted(m['id'] for m in FLOW_MODELS))}. Nếu đây là "
+            f"model mặc định đang đặt trong Quản lý Model thì đổi lại bằng một "
+            f"model ảnh."
+        )
     # Default to the strongest model when no alias is given.
-    return _MODEL_ALIASES.get(raw, raw.upper() if raw else "NANO_BANANA_PRO")
+    return raw.upper() if raw else "NANO_BANANA_PRO"
 
 
 def _resolve_aspect(size: str | None) -> str:

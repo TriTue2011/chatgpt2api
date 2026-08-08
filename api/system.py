@@ -1578,7 +1578,18 @@ def create_router(app_version: str) -> APIRouter:
         # Sort each group
         for owner in grouped:
             grouped[owner].sort()
-        return {"providers": grouped}
+        # Model TẠO VIDEO, gọi riêng ra để giao diện khỏi đoán theo tên.
+        #
+        # Provider `flow` giữ cả hai loại chung một nhóm `owned_by`: ba model ảnh
+        # và bốn model video. Gộp chúng vào một thẻ với một ô "Đặt mặc định" là
+        # cách sinh ra lỗi im lặng — đặt nhầm một model video làm mặc định thì
+        # đường ẢNH lấy luôn tên đó (đường video không đọc ô này).
+        from utils.helper import classify_model_capability
+        video_models = sorted(
+            mid for ds in grouped.values() for mid in ds
+            if "video_gen" in classify_model_capability(mid)
+        )
+        return {"providers": grouped, "video_models": video_models}
 
     @router.get("/api/v1/models-with-capabilities")
     async def get_models_with_capabilities(authorization: str | None = Header(default=None)):

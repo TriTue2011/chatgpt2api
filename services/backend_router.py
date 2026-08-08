@@ -16,7 +16,21 @@ import re
 from typing import Any
 
 from services.config import config
-from utils.helper import IMAGE_MODELS
+from utils.helper import IMAGE_MODELS, VIDEO_GEN_MODELS
+
+
+def la_model_video(provider: str, model: str) -> bool:
+    """True khi `model` là model TẠO VIDEO của `provider`.
+
+    Provider `flow` giữ cả model ảnh lẫn model video trong cùng một không gian
+    tên, nên chỉ nhìn tiền tố `flow/` là không phân biệt được. `VIDEO_GEN_MODELS`
+    trong `utils/helper.py` là danh sách đã có sẵn cho đúng việc này.
+    """
+    m = str(model or "").strip()
+    if not m:
+        return False
+    day_du = m if "/" in m else f"{provider}/{m}"
+    return day_du in VIDEO_GEN_MODELS
 
 # Internal output-format markers appended to combo steps (cx/auto:text, .../auto:tts…).
 # They pick voice-vs-text phrasing (decided once at top level) and are NOT real
@@ -253,8 +267,30 @@ class BackendRouter:
             # cái ở Cài đặt.
             ms = config.data.get("model_settings") or {}
             mac_dinh = str(((ms.get("default_models") or {}).get(provider) or "")).strip()
+            # Một yêu cầu ẢNH không bao giờ được giải ra model VIDEO.
+            #
+            # Provider `flow` giữ cả hai loại trong cùng một không gian tên: ba
+            # model ảnh (banana-2, banana-pro, imagen-4) và bốn model video
+            # (omni-flash, veo-3.1-*). Tab Quản lý Model gom chúng thành MỘT thẻ
+            # với MỘT ô mặc định, nên đặt nhầm một tên veo vào đó là đường ảnh
+            # lấy luôn tên đó. Nó không dừng ở đấy: `flow_google._resolve_model`
+            # không biết alias veo nên trả về chính chuỗi viết hoa
+            # ("VEO-3.1-FAST") rồi gửi thẳng cho Flow làm `imageModelName`.
+            #
+            # Đường video KHÔNG đi qua đây (`api/veo_video.py` nhận tên nguyên
+            # văn), nên lọc ở đây không cắt mất đường nào của video.
             if mac_dinh.startswith(f"{provider}/"):
                 mac_dinh = mac_dinh[len(provider) + 1:]
+            if is_image and mac_dinh and la_model_video(provider, mac_dinh):
+                from utils.log import logger as _lg
+                _lg.warning({
+                    "event": "mac_dinh_anh_la_model_video",
+                    "provider": provider,
+                    "bi_bo": mac_dinh,
+                    "msg": "Model mặc định của provider này là model VIDEO — bỏ "
+                           "qua cho yêu cầu ảnh. Đặt lại bằng một model ảnh.",
+                })
+                mac_dinh = ""
             provider_cfg = (config.data.get("providers") or {}).get(provider) or {}
             user_model = mac_dinh or str(provider_cfg.get("model") or "").strip()
             resolved_model = user_model or self.PROVIDER_DEFAULT_MODELS.get(provider, "auto")
@@ -266,6 +302,12 @@ class BackendRouter:
                 real_models = []
                 for m in enabled:
                     m = m.strip()
+                    # Rủi ro thật không nằm ở ô mặc định mà ở các ô TICK: bỏ tick
+                    # hết model ảnh của Flow và chỉ giữ veo thì `flow/auto` rơi
+                    # xuống `real_models[0]` — một tên video — mà không ai chạm
+                    # vào ô mặc định lần nào.
+                    if is_image and la_model_video(provider, m):
+                        continue
                     if m in ("auto", f"{provider}/auto"):
                         continue
                     if m.startswith(f"{provider}/"):

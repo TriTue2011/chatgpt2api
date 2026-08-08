@@ -76,13 +76,28 @@ class XungDotModelMacDinhTests(unittest.TestCase):
 
     SRC = (GOC / "services/backend_router.py").read_text(encoding="utf-8")
 
+    def _giai(self, mac_dinh: str | None, cu: str | None) -> str:
+        """Giải `gemini_free/auto` với `default_models` và trường cũ cho trước."""
+        from services.backend_router import backend_router
+        from services.config import config
+        goc = config.data
+        self.addCleanup(lambda: setattr(config, "data", goc))
+        ms = {"default_models": {"gemini_free": mac_dinh}} if mac_dinh else {}
+        config.data = {"model_settings": ms,
+                       "providers": {"gemini_free": {"model": cu} if cu else {}}}
+        return backend_router.route("gemini_free/auto").model
+
     def test_van_giu_thu_tu_giai(self):
-        """default_models → providers.*.model (cấu hình cũ) → mặc định của mã."""
-        i = self.SRC.index('if resolved_model == "auto" or not resolved_model:')
-        than = self.SRC[i:i + 1600]
-        self.assertIn('(ms.get("default_models") or {}).get(provider)', than)
-        self.assertIn('provider_cfg.get("model")', than)
-        self.assertIn("PROVIDER_DEFAULT_MODELS", than)
+        """default_models → providers.*.model (cấu hình cũ) → mặc định của mã.
+
+        Đo bằng HÀNH VI chứ không bằng khoảng cách chữ trong mã nguồn: bản trước
+        cắt một cửa sổ 1400 ký tự từ `route()` rồi tìm chuỗi trong đó, nên chỉ
+        cần thêm một đoạn chú thích là test đỏ dù hành vi không đổi.
+        """
+        self.assertEqual(self._giai("gemini_free/moi", "cu"), "moi")
+        self.assertEqual(self._giai(None, "cu"), "cu")
+        self.assertNotIn(self._giai(None, None), ("", "auto"),
+                         "không cấu hình gì thì phải rơi về mặc định của mã")
 
     def test_khi_bi_de_thi_GHI_LOG_chu_khong_im_lang(self):
         self.assertIn("model_mac_dinh_bi_de", self.SRC)
@@ -128,15 +143,21 @@ class BaTabBaViecTests(unittest.TestCase):
     def test_model_tra_web_o_tab_Search(self):
         self.assertIn("search_model: modelGrounding", self.TRANG_SEARCH)
 
+    def _giai(self, mac_dinh: str | None, cu: str | None) -> str:
+        from services.backend_router import backend_router
+        from services.config import config
+        goc = config.data
+        self.addCleanup(lambda: setattr(config, "data", goc))
+        ms = {"default_models": {"gemini_free": mac_dinh}} if mac_dinh else {}
+        config.data = {"model_settings": ms,
+                       "providers": {"gemini_free": {"model": cu} if cu else {}}}
+        return backend_router.route("gemini_free/auto").model
+
     def test_router_doc_default_models_TRUOC(self):
         """Nguồn duy nhất cho model mặc định là tab Quản lý Model."""
-        i = self.ROUTER.index('if resolved_model == "auto" or not resolved_model:')
-        than = self.ROUTER[i:i + 1400]
-        vi_moi = than.index('(ms.get("default_models") or {}).get(provider)')
-        vi_cu = than.index('provider_cfg.get("model")')
-        self.assertLess(vi_moi, vi_cu, "vẫn ưu tiên trường cũ ở providers.*")
+        self.assertEqual(self._giai("gemini_free/tu-quan-ly-model", "tu-cai-dat"),
+                         "tu-quan-ly-model", "vẫn ưu tiên trường cũ ở providers.*")
 
     def test_van_doc_duoc_cau_hinh_CU(self):
         """Bỏ hẳn `providers.*.model` là đổi hành vi của bản đang chạy."""
-        i = self.ROUTER.index('if resolved_model == "auto" or not resolved_model:')
-        self.assertIn('provider_cfg.get("model")', self.ROUTER[i:i + 1400])
+        self.assertEqual(self._giai(None, "tu-cai-dat"), "tu-cai-dat")
