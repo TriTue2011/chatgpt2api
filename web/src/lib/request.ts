@@ -1,6 +1,7 @@
 import axios, {AxiosError, type AxiosRequestConfig} from "axios";
 
 import webConfig from "@/constants/common-env";
+import {layCsrfToken} from "@/lib/browser-session";
 import {clearStoredAuthSession, getStoredAuthKey} from "@/store/auth";
 
 type RequestConfig = AxiosRequestConfig & {
@@ -30,15 +31,34 @@ function errorMessageFromValue(value: unknown): string {
 
 export const request = axios.create({
     baseURL: webConfig.apiUrl.replace(/\/$/, ""),
+    // Cần thiết để cookie phiên (HttpOnly) đi kèm request. Không bật thì
+    // trình duyệt bỏ cookie ở mọi lời gọi cross-origin và phiên vô dụng.
+    withCredentials: true,
 });
+
+const PHUONG_THUC_DOI_TRANG_THAI = new Set(["post", "put", "patch", "delete"]);
 
 request.interceptors.request.use(async (config) => {
     const nextConfig = {...config};
-    const authKey = await getStoredAuthKey();
     const headers = {...(nextConfig.headers || {})} as Record<string, string>;
-    if (authKey && !headers.Authorization) {
-        headers.Authorization = `Bearer ${authKey}`;
+
+    const csrf = layCsrfToken();
+    if (csrf) {
+        // Có phiên cookie → xác thực bằng cookie, KHÔNG gắn Bearer nữa. Đây
+        // chính là điểm của cả bản thay đổi: sau khi di trú, JavaScript không
+        // còn giữ thứ gì mở được API.
+        if (PHUONG_THUC_DOI_TRANG_THAI.has(String(nextConfig.method || "get").toLowerCase())) {
+            headers["X-CSRF-Token"] = csrf;
+        }
+    } else {
+        // Chưa di trú (máy chủ chưa bật cờ, hoặc phiên đã hết) → đường Bearer
+        // như cũ. Giữ nhánh này để web mới chạy được với cả image cũ.
+        const authKey = await getStoredAuthKey();
+        if (authKey && !headers.Authorization) {
+            headers.Authorization = `Bearer ${authKey}`;
+        }
     }
+
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
     nextConfig.headers = headers;

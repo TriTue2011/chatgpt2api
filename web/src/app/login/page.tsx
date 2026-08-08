@@ -8,7 +8,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import webConfig from "@/constants/common-env";
 import { login } from "@/lib/api";
+import { dangNhapPhien } from "@/lib/browser-session";
 import { useRedirectIfAuthenticated } from "@/lib/use-auth-guard";
 import { getDefaultRouteForRole, setStoredAuthSession } from "@/store/auth";
 
@@ -29,11 +31,16 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       const data = await login(normalizedAuthKey);
+      // Đổi ngay khoá lấy cookie phiên. Máy chủ chưa bật cờ thì trả 404 và ta
+      // giữ nguyên đường cũ — nhờ vậy bản web này chạy được với cả image chưa
+      // có tính năng, không phải canh đúng thời điểm bật.
+      const phien = await dangNhapPhien(webConfig.apiUrl, normalizedAuthKey);
       await setStoredAuthSession({
-        key: normalizedAuthKey,
+        key: phien.trangThai === "thanh_cong" ? "" : normalizedAuthKey,
         role: data.role,
         subjectId: data.subject_id,
         name: data.name,
+        ...(phien.trangThai === "thanh_cong" ? {viaCookie: true} : {}),
       });
       router.replace(getDefaultRouteForRole(data.role));
     } catch (error) {

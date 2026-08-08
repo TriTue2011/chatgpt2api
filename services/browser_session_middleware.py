@@ -99,8 +99,15 @@ class PhienTrinhDuyetMiddleware:
         headers = {k.decode("latin-1").lower(): v.decode("latin-1")
                    for k, v in scope.get("headers") or []}
 
-        # Có Bearer → đường cũ, không đụng cookie, không đòi CSRF.
-        if headers.get("authorization", "").lower().startswith("bearer "):
+        # Có Bearer THẬT → đường cũ, không đụng cookie, không đòi CSRF.
+        #
+        # Phải kiểm cả phần token chứ không chỉ tiền tố: một header rỗng kiểu
+        # `Authorization: Bearer ` (client dựng chuỗi từ biến rỗng — chuyện rất
+        # dễ xảy ra ở frontend) sẽ khớp tiền tố, làm middleware bỏ qua cookie,
+        # rồi `require_identity` cũng không có token nào để dùng → 401 dù người
+        # dùng đang có phiên hợp lệ.
+        auth = headers.get("authorization", "")
+        if auth[:7].lower() == "bearer " and auth[7:].strip():
             await self.app(scope, receive, send)
             return
 

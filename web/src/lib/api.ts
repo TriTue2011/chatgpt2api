@@ -253,6 +253,21 @@ export type RegisterConfig = {
   }>;
 };
 
+/**
+ * Ai đang đăng nhập, hỏi bằng CHÍNH cookie phiên.
+ *
+ * Cố ý không dùng lại `login()`: hàm đó luôn đặt header
+ * `Authorization: Bearer <khoá>`, mà sau khi di trú thì không còn khoá — header
+ * sẽ thành `Bearer ` rỗng, và máy chủ coi đó là "request Bearer" nên bỏ qua
+ * cookie. Ở đây không đặt header nào, để interceptor đi nhánh cookie.
+ */
+export async function fetchBrowserSession() {
+  return httpRequest<{ ok: boolean; id: string; name: string; role: "admin" | "user"; nguon: string }>(
+    "/auth/browser-session",
+    { redirectOnUnauthorized: false },
+  );
+}
+
 export async function login(authKey: string) {
   const normalizedAuthKey = String(authKey || "").trim();
   return httpRequest<LoginResponse>("/auth/login", {

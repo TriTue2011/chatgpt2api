@@ -209,6 +209,136 @@ class BearerKhongDoiHanhViTests(unittest.TestCase):
         self.assertFalse(issubclass(PhienTrinhDuyetMiddleware, BaseHTTPMiddleware))
 
 
+class MiddlewareChayThatTests(_KhoTam):
+    """Chạy middleware qua giao thức ASGI thật, không grep mã nguồn.
+
+    Grep chỉ chứng minh mã CÓ MẶT. Nó không bắt được thứ đã suýt lọt ở đây:
+    header `Authorization: Bearer ` rỗng khớp tiền tố "bearer " nên middleware
+    coi là request Bearer và bỏ qua cookie, rồi `require_identity` cũng không
+    có token nào — người dùng có phiên hợp lệ vẫn nhận 401.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import services.browser_session_middleware as mw
+        from services.config import config
+        self.mw = mw
+        self._kho_cu = mw.kho_phien
+        self._data_cu = config.data
+        self.config = config
+        mw.kho_phien = self.kho
+        config.data = {"security": {"browser_sessions_enabled": True}}
+        self.addCleanup(self._tra_lai_mw)
+        self.sid, self.csrf = self.kho.tao(self.ADMIN)
+
+    def _tra_lai_mw(self):
+        self.mw.kho_phien = self._kho_cu
+        self.config.data = self._data_cu
+
+    def _chay(self, headers: dict, method: str = "GET", path: str = "/api/settings"):
+        """Trả (đã_xuống_dưới, danh_tính_thấy_được, các_message_đã_gửi)."""
+        import asyncio
+
+        thay: dict = {}
+        gui: list = []
+
+        async def app_duoi(scope, receive, send):
+            thay["xuong"] = True
+            thay["danh_tinh"] = self.mw.danh_tinh_cookie.get()
+
+        async def send(msg):
+            gui.append(msg)
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        scope = {
+            "type": "http", "method": method, "path": path,
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        }
+        asyncio.run(self.mw.PhienTrinhDuyetMiddleware(app_duoi)(scope, receive, send))
+        return thay.get("xuong", False), thay.get("danh_tinh"), gui
+
+    def _ma_tra_ve(self, gui: list) -> int:
+        for m in gui:
+            if m.get("type") == "http.response.start":
+                return int(m.get("status") or 0)
+        return 0
+
+    def test_bearer_that_di_thang_khong_doc_cookie(self):
+        xuong, danh_tinh, _ = self._chay(
+            {"authorization": "Bearer khoa-that", "cookie": f"c2a_session={self.sid}"})
+        self.assertTrue(xuong)
+        self.assertIsNone(danh_tinh, "có Bearer mà vẫn giải danh tính từ cookie")
+
+    def test_bearer_RONG_khong_duoc_chan_duong_cookie(self):
+        """Đúng lỗi đã suýt ship: frontend dựng `Bearer ${khoa}` với khoá rỗng."""
+        xuong, danh_tinh, _ = self._chay(
+            {"authorization": "Bearer ", "cookie": f"c2a_session={self.sid}"})
+        self.assertTrue(xuong)
+        self.assertIsNotNone(danh_tinh, "header Bearer rỗng đã nuốt mất phiên cookie")
+        self.assertEqual(danh_tinh["role"], "admin")
+
+    def test_cookie_hop_le_thi_giai_duoc_danh_tinh(self):
+        xuong, danh_tinh, _ = self._chay({"cookie": f"c2a_session={self.sid}"})
+        self.assertTrue(xuong)
+        self.assertEqual(danh_tinh["role"], "admin")
+        self.assertEqual(danh_tinh["nguon"], "cookie")
+
+    def test_khong_co_cookie_thi_khong_dung_gi(self):
+        xuong, danh_tinh, _ = self._chay({})
+        self.assertTrue(xuong)
+        self.assertIsNone(danh_tinh)
+
+    def test_POST_bang_cookie_thieu_CSRF_thi_403(self):
+        xuong, _, gui = self._chay(
+            {"cookie": f"c2a_session={self.sid}", "host": "vidu.com"}, method="POST")
+        self.assertFalse(xuong, "request đổi trạng thái lọt xuống dù thiếu CSRF")
+        self.assertEqual(self._ma_tra_ve(gui), 403)
+
+    def test_POST_du_CSRF_va_origin_thi_qua(self):
+        xuong, danh_tinh, _ = self._chay(
+            {"cookie": f"c2a_session={self.sid}", "host": "vidu.com",
+             "origin": "https://vidu.com", "x-csrf-token": self.csrf}, method="POST")
+        self.assertTrue(xuong)
+        self.assertEqual(danh_tinh["role"], "admin")
+
+    def test_POST_origin_la_trang_khac_thi_403(self):
+        xuong, _, gui = self._chay(
+            {"cookie": f"c2a_session={self.sid}", "host": "vidu.com",
+             "origin": "https://ke-tan-cong.com", "x-csrf-token": self.csrf},
+            method="POST")
+        self.assertFalse(xuong)
+        self.assertEqual(self._ma_tra_ve(gui), 403)
+
+    def test_GET_bang_cookie_khong_doi_CSRF(self):
+        """GET không đổi trạng thái — bắt CSRF ở đây chỉ làm hỏng việc đọc."""
+        xuong, danh_tinh, _ = self._chay(
+            {"cookie": f"c2a_session={self.sid}", "host": "vidu.com"}, method="GET")
+        self.assertTrue(xuong)
+        self.assertIsNotNone(danh_tinh)
+
+    def test_dang_nhap_duoc_mien_CSRF(self):
+        """Chưa có phiên thì chưa có token nào để mà gửi."""
+        xuong, _, gui = self._chay(
+            {"cookie": f"c2a_session={self.sid}", "host": "vidu.com"},
+            method="POST", path="/auth/browser-login")
+        self.assertTrue(xuong)
+
+    def test_tat_co_thi_khong_giai_danh_tinh(self):
+        self.config.data = {}
+        xuong, danh_tinh, _ = self._chay({"cookie": f"c2a_session={self.sid}"})
+        self.assertTrue(xuong)
+        self.assertIsNone(danh_tinh)
+
+    def test_khong_ro_ri_danh_tinh_sang_request_sau(self):
+        """ContextVar không reset là request kế tiếp thừa hưởng quyền admin."""
+        self._chay({"cookie": f"c2a_session={self.sid}"})
+        self.assertIsNone(self.mw.danh_tinh_cookie.get())
+        _, danh_tinh, _ = self._chay({})
+        self.assertIsNone(danh_tinh)
+
+
 @unittest.skipIf(sys.version_info < (3, 10),
                  "cú pháp `str | None` trong chuỗi import cần Python 3.10+")
 class NapDuocThatTests(unittest.TestCase):
