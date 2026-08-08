@@ -19,8 +19,13 @@ from fastapi.responses import Response
 
 from api.support import extract_bearer_token
 from services.config import config
+from services.ingress_guard import BodyTooLarge, read_body_limited, read_upstream_limited
 
 CAPTCHA_URL = os.getenv("CAPTCHA_SOLVER_URL_INTERNAL", "http://127.0.0.1:8010").rstrip("/")
+
+# Trần cho cả request lẫn response của proxy. Luồng captcha là JSON điều khiển +
+# ảnh screenshot, không phải kênh truyền file — 32MB đã rất rộng tay.
+_MAX_PROXY_BODY = 32 * 1024 * 1024
 
 # Onboarding can take a while; status polls are quick.
 # Codex batch login: MS OTC + IMAP poll (150s) + consent + OAuth callback → up to ~420s worst case.
@@ -63,19 +68,28 @@ def create_router() -> APIRouter:
         if not _authorized(authorization):
             raise HTTPException(status_code=401, detail={"error": "Unauthorized"})
         url = f"{CAPTCHA_URL}/{path}"
-        body = await request.body()
+        try:
+            body = await read_body_limited(request, _MAX_PROXY_BODY)
+        except BodyTooLarge:
+            raise HTTPException(status_code=413, detail={"error": "payload too large"})
         fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
         key = _captcha_key()
         if key:
             fwd_headers["Authorization"] = f"Bearer {key}"  # inject real captcha key
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            upstream = await client.request(
+            async with client.stream(
                 request.method, url, params=request.query_params, content=body, headers=fwd_headers,
-            )
-        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
+            ) as upstream:
+                try:
+                    payload = await read_upstream_limited(upstream, _MAX_PROXY_BODY)
+                except BodyTooLarge:
+                    raise HTTPException(status_code=502, detail={"error": "upstream response too large"})
+                status = upstream.status_code
+                resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
+                ctype = upstream.headers.get("content-type")
         return Response(
-            content=upstream.content, status_code=upstream.status_code,
-            headers=resp_headers, media_type=upstream.headers.get("content-type"),
+            content=payload, status_code=status,
+            headers=resp_headers, media_type=ctype,
         )
 
     return router

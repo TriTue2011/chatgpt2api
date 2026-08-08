@@ -19,7 +19,7 @@ from fastapi import APIRouter, Header, Request
 from fastapi.responses import Response
 
 from api.support import require_admin
-from services.ingress_guard import read_body_limited, BodyTooLarge
+from services.ingress_guard import read_body_limited, read_upstream_limited, BodyTooLarge
 
 HUB_URL = os.getenv("MCP_HUB_INTERNAL_URL", "http://127.0.0.1:8005").rstrip("/")
 
@@ -50,20 +50,28 @@ def create_router() -> APIRouter:
         except BodyTooLarge:
             return Response(content=b"Payload qua lon (>100MB)", status_code=413)
         fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
+        # Đọc response CÓ TRẦN: cap request mà để `upstream.content` nạp không
+        # giới hạn thì vẫn còn nguyên đường làm cạn RAM gateway.
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            upstream = await client.request(
+            async with client.stream(
                 request.method,
                 url,
                 params=request.query_params,
                 content=body,
                 headers=fwd_headers,
-            )
-        resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
+            ) as upstream:
+                try:
+                    payload = await read_upstream_limited(upstream, _MAX_PROXY_BODY)
+                except BodyTooLarge:
+                    return Response(content=b"Hub tra ve qua lon (>100MB)", status_code=502)
+                status = upstream.status_code
+                resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
+                ctype = upstream.headers.get("content-type")
         return Response(
-            content=upstream.content,
-            status_code=upstream.status_code,
+            content=payload,
+            status_code=status,
             headers=resp_headers,
-            media_type=upstream.headers.get("content-type"),
+            media_type=ctype,
         )
 
     return router

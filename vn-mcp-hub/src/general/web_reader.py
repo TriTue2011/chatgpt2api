@@ -17,6 +17,8 @@ import logging
 
 from fastmcp import FastMCP
 
+from src.url_guard import SsrfBlocked, check_url, safe_get, url_is_internal
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("web_reader")
@@ -28,25 +30,34 @@ _UA = (
 
 
 def _fetch_html(url: str, timeout: float = 20.0) -> tuple[str, str]:
-    """Return (html, engine). Try Scrapling (stealth HTTP) then httpx."""
+    """Return (html, engine). Try Scrapling (stealth HTTP) then httpx.
+
+    URL đã được check_url() chặn SSRF trước khi vào đây.
+    """
     # 1) Scrapling Fetcher — stealth HTTP (realistic fingerprint headers via
     #    browserforge), no browser engine. Scrapling >=0.4 returns a Response
     #    with .html_content; stealthy headers are on by default.
+    #    follow_redirects=False: scrapling tự đi redirect thì chặng sau KHÔNG
+    #    qua check_url — một trang public 302 sang 127.0.0.1 là lọt. Gặp redirect
+    #    thì bỏ scrapling, để safe_get đi từng chặng có kiểm.
     try:
         from scrapling.fetchers import Fetcher  # lazy: optional dep
-        page = Fetcher.get(url, timeout=int(timeout))
+        page = Fetcher.get(url, timeout=int(timeout), follow_redirects=False)
+        status = int(getattr(page, "status", 200) or 200)
+        if 300 <= status < 400:
+            raise RuntimeError(f"redirect {status} — chuyển sang đường có kiểm SSRF từng chặng")
         html = getattr(page, "html_content", None) or getattr(page, "body", None) or ""
         if html:
             return html, "scrapling"
     except Exception as exc:  # not installed or failed → fallback
         logger.info("web_reader: scrapling unavailable/failed (%s), using httpx", exc)
-    # 2) httpx fallback
-    import httpx
-    with httpx.Client(timeout=timeout, follow_redirects=True,
-                      headers={"User-Agent": _UA, "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8"}) as c:
-        r = c.get(url)
-        r.raise_for_status()
-        return r.text, "httpx"
+    # 2) httpx fallback — có chặn SSRF, giới hạn dung lượng, kiểm từng redirect
+    text, _final = safe_get(
+        url,
+        headers={"User-Agent": _UA, "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8"},
+        timeout=timeout,
+    )
+    return text, "httpx"
 
 
 def _html_to_markdown(html: str) -> str:
@@ -82,7 +93,13 @@ def read_url(url: str, max_chars: int = 12000) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
+        url = check_url(url)
+    except SsrfBlocked as exc:
+        return f"Từ chối đọc URL này: {exc}"
+    try:
         html, engine = _fetch_html(url)
+    except SsrfBlocked as exc:
+        return f"Từ chối đọc URL này: {exc}"
     except Exception as exc:
         return f"Không tải được trang: {exc}"
     md = _html_to_markdown(html)
@@ -109,6 +126,10 @@ async def read_url_rendered(url: str, max_chars: int = 12000) -> str:
     """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
+    try:
+        url = check_url(url)
+    except SsrfBlocked as exc:
+        return f"Từ chối đọc URL này: {exc}"
     # Render with the patchright Chromium already bundled in the image (the
     # same stealth browser the captcha-solver uses) — no extra dependency.
     try:
@@ -116,11 +137,29 @@ async def read_url_rendered(url: str, max_chars: int = 12000) -> str:
     except Exception as exc:
         return f"Trình duyệt render chưa sẵn sàng: {exc}. Hãy thử read_url."
     html = ""
+
+    async def _chan_noi_bo(route, request):
+        """Trình duyệt tự đi redirect, tự tải ảnh/script/iframe và tự chạy JS
+        `fetch()`. Kiểm mỗi URL đầu vào là chưa đủ: trang độc chỉ cần nhúng
+        <img src="http://169.254.169.254/…"> hay điều hướng sang localhost.
+        Chặn ở tầng request nên bắt được TẤT CẢ các đường đó."""
+        try:
+            if url_is_internal(request.url):
+                await route.abort()
+                return
+            await route.continue_()
+        except Exception:
+            try:
+                await route.abort()
+            except Exception:
+                pass
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
                 page = await browser.new_page(user_agent=_UA)
+                await page.route("**/*", _chan_noi_bo)
                 await page.goto(url, wait_until="networkidle", timeout=45000)
                 html = await page.content()
             finally:
@@ -149,7 +188,10 @@ def extract_text(url: str, selector: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
+        url = check_url(url)
         html, _ = _fetch_html(url)
+    except SsrfBlocked as exc:
+        return f"Từ chối đọc URL này: {exc}"
     except Exception as exc:
         return f"Không tải được trang: {exc}"
     from bs4 import BeautifulSoup

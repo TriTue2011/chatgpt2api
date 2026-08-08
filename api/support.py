@@ -94,13 +94,7 @@ def resolve_image_base_url(request: Request) -> str:
     # Nếu admin đã khai security.trusted_hosts, CHỈ nhận forwarded-host nằm trong
     # allowlist; ngoài allowlist thì bỏ, dùng host thật / base_url canonical.
     # Chưa khai allowlist → giữ hành vi cũ (tunnel Cloudflare + LAN IP vẫn chạy).
-    allow: set[str] = set()
-    try:
-        sec = config.get().get("security")
-        if isinstance(sec, dict) and isinstance(sec.get("trusted_hosts"), list):
-            allow = {str(h).strip().lower() for h in sec["trusted_hosts"] if str(h).strip()}
-    except Exception:
-        allow = set()
+    allow = {h.lower() for h in config.trusted_hosts}
     if fwd_host and allow and fwd_host.split(":")[0].lower() not in allow:
         fwd_host = ""   # forwarded-host giả → bỏ
     host = fwd_host or real_host

@@ -322,12 +322,22 @@ export const authMiddleware = (req, res, next) => {
     return next();
   }
 
-  // P0#4: Bearer / X-Api-Key khớp env (HA integration không dùng session cookie)
+  // P0#4: Bearer / X-Api-Key khớp env (HA integration không dùng session cookie).
+  // API key chỉ có nghĩa cho các route TÍCH HỢP gửi tin. Trước đây nó đi qua
+  // middleware chung nên một key cấp cho Home Assistant mở được cả dashboard,
+  // lịch sử chat và trang quản lý người dùng — quyền rộng hơn mục đích rất nhiều.
   const expected = getServerApiKey();
   const token = extractApiToken(req);
   if (expected && token && timingSafeEqualStr(token, expected)) {
-    req.apiKeyAuth = true;
-    return next();
+    if (isApiKeyRoute(req.path)) {
+      req.apiKeyAuth = true;
+      return next();
+    }
+    return res.status(403).json({
+      success: false,
+      message: 'API key chỉ dùng được cho các route tích hợp gửi tin, không dùng cho dashboard/chat. Hãy đăng nhập bằng tài khoản.',
+      code: 'API_KEY_OUT_OF_SCOPE',
+    });
   }
 
   // API request: return 401 JSON instead of HTML redirect
@@ -353,6 +363,42 @@ export const adminMiddleware = (req, res, next) => {
   }
 
   res.status(403).send('Không có quyền truy cập. Chỉ admin mới có thể thực hiện chức năng này.');
+};
+
+/** Route mọi tài khoản đã đăng nhập đều dùng được, không cần vai admin. */
+const SELF_SERVICE_ROUTES = [
+  '/change-password',
+  '/api/change-password',
+  '/api/logout',
+  '/api/check-auth',
+];
+
+/**
+ * Cổng vai cho phần dashboard/chat: đã qua authMiddleware rồi, giờ đòi thêm
+ * vai 'admin'.
+ *
+ * Vì sao chặn hẳn thay vì lọc dữ liệu: hệ thống KHÔNG có ACL theo tài khoản
+ * Zalo hay theo cuộc trò chuyện. Trước bản này, một tài khoản vai 'user' đăng
+ * nhập được là đọc toàn bộ lịch sử chat của mọi tài khoản và gửi tin thay
+ * chúng — quyền ngang admin. Khi chưa có ACL thì đóng là lựa chọn đúng; muốn
+ * cho 'user' vào chat thì phải làm ACL theo account/conversation trước (và lọc
+ * cả dữ liệu broadcast qua WebSocket).
+ */
+export const dashboardRoleMiddleware = (req, res, next) => {
+  if (req.apiKeyAuth) return next();  // route tích hợp, đã kiểm ở authMiddleware
+  const p = req.path || '';
+  if (SELF_SERVICE_ROUTES.some((r) => p === r)) return next();
+  if (req.session && req.session.authenticated && req.session.role === 'admin') {
+    return next();
+  }
+  if (p.startsWith('/api/') || (req.headers.accept || '').includes('application/json')) {
+    return res.status(403).json({
+      success: false,
+      message: 'Tài khoản này không có quyền quản trị.',
+      code: 'FORBIDDEN_ROLE',
+    });
+  }
+  return res.status(403).send('Không có quyền truy cập. Chỉ admin mới vào được trang này.');
 };
 
 // Lấy toàn bộ danh sách người dùng (chỉ admin mới có quyền)
@@ -419,6 +465,18 @@ const SENSITIVE_API_PREFIXES = [
   '/api/sendImagesToGroup',
   '/api/getGroupChatHistoryByAccount',
 ];
+
+/** Route TÍCH HỢP được phép xác thực bằng API key. Ngoài danh sách này, API key
+ * không thay thế được phiên đăng nhập. */
+const API_KEY_ROUTES = [...SENSITIVE_API_PREFIXES];
+
+/** True nếu path nằm trong phạm vi API key. */
+export const isApiKeyRoute = (path) => {
+  const p = String(path || '');
+  return API_KEY_ROUTES.some(
+    (pref) => p === pref || p.startsWith(pref + '/') || p.startsWith(pref + '?')
+  );
+};
 
 // Kiểm tra xem route có phải là public hay không
 export const isPublicRoute = (path) => {

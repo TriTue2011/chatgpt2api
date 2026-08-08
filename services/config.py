@@ -1033,6 +1033,21 @@ class ConfigStore:
         return ["*"]
 
     @property
+    def trusted_hosts(self) -> list[str]:
+        """Domain/IP hợp lệ cho header Host (config `security.trusted_hosts`).
+
+        Rỗng = chưa cấu hình → không bật allowlist. Cố ý fail-OPEN: bật nhầm là
+        mọi request trả 400 và người dùng mất luôn đường vào để sửa lại config.
+        """
+        try:
+            sec = self.data.get("security")
+            if isinstance(sec, dict) and isinstance(sec.get("trusted_hosts"), list):
+                return [str(h).strip() for h in sec["trusted_hosts"] if str(h).strip()]
+        except Exception:
+            pass
+        return []
+
+    @property
     def telegram_notify_enabled(self) -> bool:
         value = self.data.get("telegram_notify_enabled", True)
         if isinstance(value, str):

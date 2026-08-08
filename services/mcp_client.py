@@ -271,8 +271,13 @@ _sessions_lock = threading.Lock()
 # A new MCP server appearing in config still triggers an immediate re-probe
 # via invalidate_tools_cache().
 _TOOLS_CACHE_TTL = 900.0
+# TTL rút ngắn khi có server dò KHÔNG NỐI ĐƯỢC. Hub trong cùng container khởi
+# động sau gateway ~40s; lần dò đầu gặp "connection refused" và bản cũ đóng băng
+# kết quả RỖNG suốt 15 phút — bot mất sạch tool dù hub đã lên từ lâu.
+_TOOLS_CACHE_FAIL_TTL = 30.0
 _tools_cache: list[dict[str, Any]] | None = None
 _tools_cache_ts: float = 0.0
+_tools_cache_ttl: float = _TOOLS_CACHE_TTL
 _tools_cache_signature: str = ""
 _tools_cache_lock = threading.Lock()
 
@@ -299,22 +304,30 @@ def _enabled_signature(installed: list[dict]) -> str:
     return ";".join(sorted(parts))
 
 
-def _collect_tools_one(info: dict) -> tuple[str, list[dict[str, Any]]]:
-    """Worker: probe one MCP and return (name, tools)."""
+def _collect_tools_one(info: dict) -> tuple[str, list[dict[str, Any]], bool]:
+    """Worker: probe one MCP → (name, tools, nối_được).
+
+    `get_tools()` trả [] cho CẢ hai trường hợp "server không có tool" và "không
+    nối được", nên phải hỏi `ensure_connected()` riêng: chỉ có nó phân biệt được
+    hub chưa lên với hub rỗng, và người gọi cần biết để đừng cache lâu.
+    """
+    name = info.get("name", "unknown")
     url = info.get("url", "")
     api_key = str(info.get("api_key") or "")
     if not url:
-        return info.get("name", "unknown"), []
+        return name, [], True
     key = _session_key(url, api_key)
     with _sessions_lock:
         if key not in _sessions:
             _sessions[key] = MCPSession(url, api_key)
         session = _sessions[key]
     try:
-        return info.get("name", "unknown"), session.get_tools()
+        if not session.ensure_connected():
+            return name, [], False
+        return name, session.get_tools(), True
     except Exception as exc:
-        logger.warning({"event": "mcp_session_failed", "name": info.get("name", "unknown"), "error": str(exc)})
-        return info.get("name", "unknown"), []
+        logger.warning({"event": "mcp_session_failed", "name": name, "error": str(exc)})
+        return name, [], False
 
 
 def get_enabled_mcp_tools() -> list[dict[str, Any]]:
@@ -324,7 +337,7 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
     servers. A single dead MCP (circuit-broken) costs ~0ms; a healthy MCP
     only pays the one-time cold-start cost.
     """
-    global _tools_cache, _tools_cache_ts, _tools_cache_signature
+    global _tools_cache, _tools_cache_ts, _tools_cache_ttl, _tools_cache_signature
 
     installed = config.data.get("mcp_servers") or []
     if isinstance(installed, dict):
@@ -340,7 +353,7 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
     if (
         _tools_cache is not None
         and signature == _tools_cache_signature
-        and (now - _tools_cache_ts) < _TOOLS_CACHE_TTL
+        and (now - _tools_cache_ts) < _tools_cache_ttl
     ):
         return list(_tools_cache)
 
@@ -349,7 +362,7 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
         if (
             _tools_cache is not None
             and signature == _tools_cache_signature
-            and (now - _tools_cache_ts) < _TOOLS_CACHE_TTL
+            and (now - _tools_cache_ts) < _tools_cache_ttl
         ):
             return list(_tools_cache)
 
@@ -363,16 +376,20 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
         # Probe all enabled MCPs in parallel.
         seen_names: set[str] = set()
         all_tools: list[dict[str, Any]] = []
+        unreachable: list[str] = []
         workers = min(_PROBE_WORKERS, max(1, len(enabled)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_collect_tools_one, info): info for info in enabled}
             for fut in as_completed(futures):
                 info = futures[fut]
                 try:
-                    name, tools = fut.result()
+                    name, tools, connected = fut.result()
                 except Exception as exc:
                     logger.warning({"event": "mcp_session_failed", "name": info.get("name", "unknown"), "error": str(exc)})
+                    unreachable.append(info.get("name", "unknown"))
                     continue
+                if not connected:
+                    unreachable.append(name)
                 for t in tools:
                     fname = t.get("function", {}).get("name", "")
                     if fname and fname not in seen_names:
@@ -382,7 +399,16 @@ def get_enabled_mcp_tools() -> list[dict[str, Any]]:
 
         _tools_cache = all_tools
         _tools_cache_ts = now
+        # Có server chưa nối được → giữ kết quả này rất ngắn để lần sau dò lại,
+        # thay vì đóng băng danh sách thiếu tool suốt 15 phút.
+        _tools_cache_ttl = _TOOLS_CACHE_FAIL_TTL if unreachable else _TOOLS_CACHE_TTL
         _tools_cache_signature = signature
+        if unreachable:
+            logger.warning({
+                "event": "mcp_partial_discovery",
+                "unreachable": unreachable[:5],
+                "retry_in_s": _TOOLS_CACHE_FAIL_TTL,
+            })
         return list(all_tools)
 
 
@@ -391,10 +417,11 @@ def invalidate_tools_cache() -> None:
 
     Call this after editing the MCP server list (install / uninstall / toggle).
     """
-    global _tools_cache, _tools_cache_ts, _tools_cache_signature
+    global _tools_cache, _tools_cache_ts, _tools_cache_ttl, _tools_cache_signature
     with _tools_cache_lock:
         _tools_cache = None
         _tools_cache_ts = 0.0
+        _tools_cache_ttl = _TOOLS_CACHE_TTL
         _tools_cache_signature = ""
 
 

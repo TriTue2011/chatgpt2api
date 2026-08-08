@@ -68,6 +68,41 @@ async def read_body_limited(request, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
+async def read_upload_limited(upload, max_bytes: int) -> bytes:
+    """Đọc một UploadFile theo khối, ném BodyTooLarge khi vượt trần.
+
+    `await upload.read()` không tham số nạp cả file vào RAM — với multipart thì
+    Content-Length của request cũng không cho biết từng phần to bao nhiêu.
+    """
+    total = 0
+    chunks: list[bytes] = []
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise BodyTooLarge(f"file > {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def read_upstream_limited(resp, max_bytes: int) -> bytes:
+    """Đọc response upstream (httpx streaming) theo khối, cắt khi vượt trần.
+
+    Proxy nào cũng phải có: cap request mà không cap response thì upstream độc
+    (hoặc bị chiếm) vẫn kéo được RAM của gateway xuống đất.
+    """
+    total = 0
+    chunks: list[bytes] = []
+    async for chunk in resp.aiter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise BodyTooLarge(f"upstream response > {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def make_worker_pool(name: str, max_inflight: int) -> Callable[..., bool]:
     """Trả hàm `spawn(fn, *args, **kwargs) -> bool`: chạy fn ở thread nền NHƯNG
     giữ một slot semaphore tới khi fn KẾT THÚC. Hết slot → bỏ (trả False), log.

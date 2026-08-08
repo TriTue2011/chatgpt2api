@@ -91,6 +91,12 @@ services:
       # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
       # không phá đăng nhập LAN qua HTTP.
       ZALO_COOKIE_SECURE: ${ZALO_COOKIE_SECURE:-0}
+      # Origin được phép mở WebSocket của zalo-server (phẩy ngăn cách). ĐỂ TRỐNG
+      # là dùng luật same-host — đúng cho triển khai LAN/Portainer. Chỉ khai khi
+      # zalo-server đứng sau một domain cố định, và khai ĐÚNG origin của CHÍNH
+      # zalo-server (khai domain của app chính sẽ chặn nhầm trang chat).
+      # supervisord KHÔNG cần liệt kê lại: tiến trình con thừa hưởng env container.
+      ZALO_WS_ALLOWED_ORIGINS: ${ZALO_WS_ALLOWED_ORIGINS:-}
       STORAGE_BACKEND: json
       # [Optional] Public base URL for image links
       # CHATGPT2API_BASE_URL: https://your-domain.com

@@ -21,6 +21,11 @@ các bước nâng cấp từ bản cũ, và cách xử lý những sự cố ha
 | Key vai `user` không còn chạm được Home Assistant / SSH / thiết bị | Tích hợp dùng key `user` mất quyền điều khiển nhà | Dùng khoá admin (`CHATGPT2API_AUTH_KEY`) cho HA |
 | WebSocket zalo-server yêu cầu đăng nhập **admin** | Trang chat cũ không nhận tin nếu chưa đăng nhập | Đăng nhập dashboard trước khi mở chat |
 | CORS đọc từ `cors_allow_origins` (mặc định vẫn `*`) | Không đổi hành vi nếu chưa cấu hình | Nên khai domain thật (mục 6) |
+| `ZALO_SERVER_API_KEY` chỉ dùng được cho **route gửi tin** | Key này không còn mở dashboard / lịch sử chat / quản lý người dùng (trả 403 `API_KEY_OUT_OF_SCOPE`) | Home Assistant không bị ảnh hưởng; script nào dùng key để đọc dashboard phải chuyển sang đăng nhập tài khoản |
+| Dashboard và chat zalo-server yêu cầu vai **admin** | Tài khoản vai `user` bị 403 ở mọi trang trừ đổi mật khẩu | Dùng tài khoản admin. Cần nhiều người dùng thì phải làm ACL trước (mục 8) |
+| Tool đọc web của MCP Hub chặn địa chỉ **nội bộ** | `read_url`, `get_law_detail`, ingest theo URL không còn đọc được `127.0.0.1`, `192.168.*`, `169.254.169.254` | Không cần làm gì. Muốn nạp tài liệu nội bộ thì tải file lên thay vì đưa URL |
+| `vn_law` chỉ đọc được các cổng văn bản pháp luật | URL ngoài `thuvienphapluat.vn`, `vbpl.vn`, `chinhphu.vn`, `moj.gov.vn` bị từ chối | Dùng `read_url` cho trang khác |
+| SSH của MCP Hub ghi nhớ khoá máy chủ | Khoá máy chủ đổi (cài lại OS) → lệnh SSH bị **từ chối** | Xoá dòng host đó trong `/app/data/ssh_known_hosts` rồi chạy lại |
 
 ---
 
@@ -209,6 +214,9 @@ domain công khai) — xem mục 6.
 | Giả IP bằng `X-Forwarded-For` để né khoá brute-force | Mặc định dùng `request.client.host`; chỉ tin XFF khi `security.trust_forwarded_for` |
 | Client tự gắn cờ `x_agent_internal` để né nhật ký kiểm toán | Chỉ tin khi có header nội bộ khớp `auth_key` |
 | WebSocket zalo-server phát **toàn bộ tin nhắn** cho mọi client, không xác thực | `noServer` + xác thực session **admin** + kiểm Origin + `maxPayload` 1MB + giới hạn 50 kết nối |
+| API key tích hợp (`ZALO_SERVER_API_KEY`) đi qua middleware chung → mở được cả dashboard, lịch sử chat, quản lý người dùng | Allowlist: key chỉ dùng cho route gửi tin/tra cứu tích hợp; ngoài đó trả 403 |
+| Route UI/chat chỉ kiểm "đã đăng nhập", không kiểm vai → tài khoản vai `user` đọc toàn bộ hội thoại và gửi tin thay mọi tài khoản Zalo | Thêm cổng vai `dashboardRoleMiddleware`: dashboard/chat cần vai `admin`; chỉ chừa đổi mật khẩu và đăng xuất |
+| Header `Host` / `X-Forwarded-Host` giả mạo được (allowlist chỉ dùng lúc dựng URL ảnh) | `TrustedHostMiddleware` thật, bật khi khai `security.trusted_hosts`; luôn cho `localhost` để healthcheck nội bộ không gãy |
 
 ### Thực thi mã & truy cập hệ thống
 
@@ -217,7 +225,10 @@ domain công khai) — xem mục 6.
 | Chạy Python do LLM sinh, mặc định **bật**, không có sandbox thật | **Mặc định TẮT**; chỉ soi tĩnh. Bật lại bằng `pipeline_chay_thu=true` |
 | Bộ chạy code không giới hạn RAM/CPU | `setrlimit`: RAM 1GB, CPU, file 64MB |
 | SSH dùng `AutoAddPolicy` (nhận mọi host key → MITM lấy mật khẩu) | Trust-on-first-use qua `known_hosts`, fail khi host key đổi (2 vị trí) |
+| MCP Hub vẫn dùng `AutoAddPolicy` **không** đọc/ghi `known_hosts` → mọi lần kết nối đều là "lần đầu", khoá đổi cũng không ai biết | TOFU ghi ra `/app/data/ssh_known_hosts`, từ chối khi khoá đổi; `ssh_list_servers` in vân tay SHA256 để đối chiếu |
 | SSRF: tải `image_url` bằng `urlopen` thẳng | Qua `net_guard.fetch_media` + kiểm magic bytes |
+| SSRF ở MCP Hub: `read_url`, `read_url_rendered`, `extract_text`, `get_law_detail`, ingest theo URL nhận URL tự do — prompt injection đọc được `169.254.169.254` (credential cloud) hay `127.0.0.1:3001` (API nội bộ) | Module chung `src/url_guard.py`: chỉ `http`/`https`, phân giải DNS rồi chặn loopback/private/link-local (kể cả IPv6 bọc IPv4), **kiểm lại từng chặng redirect**, trần 5MB + timeout. Trình duyệt render chặn ở tầng request nên bắt cả subresource và điều hướng nội bộ |
+| `vn_law` nhận URL bất kỳ dù chỉ có nghĩa với site pháp luật | Allowlist domain (`thuvienphapluat.vn`, `vbpl.vn`, `chinhphu.vn`, `moj.gov.vn`) |
 | Webhook/MCP URL cho phép `file://`, `gopher://` | Chỉ `http`/`https` (vẫn cho LAN) |
 | Path traversal khi xoá backup | `resolve().relative_to(BACKUP_DIR)` |
 | Token/mật khẩu lọt access-log qua query string | Tắt `--access-log` của uvicorn, bỏ `?password=` |
@@ -232,6 +243,11 @@ domain công khai) — xem mục 6.
 | Model phát 100 tool call → 100 thread | Trần 32 tool/lượt, tối đa 8 worker |
 | Đọc backup TAR không giới hạn | Trần số file, kích thước mỗi file và tổng |
 | Ghi config đồng thời ghi đè nhau (mất cấu hình MCP, undo rotate token) | `ConfigStore.mutate()` khoá cả đọc-sửa-ghi |
+| `/v1/images/edits` đọc `await upload.read()` không trần, không giới hạn số ảnh | Trần 20MB/ảnh, 8 ảnh, tổng 48MB |
+| Proxy captcha đọc `await request.body()` không trần | `read_body_limited` 32MB, trả 413 |
+| Proxy có cap request nhưng **buffer response upstream vô hạn** (`upstream.content`) | `read_upstream_limited` — cắt response ở đúng trần, trả 502 |
+| Hub `/api/studio/convert` đọc `await file.read()` không trần | Dùng chung `read_upload_limited` (100MB) như `analyze_source` |
+| Cache tool MCP đóng băng kết quả **rỗng** 15 phút khi hub chưa kịp lên → bot mất sạch tool sau mỗi lần khởi động | Phân biệt "server không có tool" với "không nối được"; chưa nối được thì TTL rút còn 30 giây |
 
 ### XSS & rò rỉ dữ liệu
 
@@ -255,7 +271,11 @@ Trong **Settings** của dashboard (hoặc `config.json`):
   "cors_allow_origins": ["https://your-domain.com", "http://192.168.1.10:3030"],
 
   "security": {
-    // Chặn giả mạo X-Forwarded-Host khi dựng URL ảnh
+    // Domain/IP hợp lệ cho header Host. Khai vào đây là BẬT TrustedHostMiddleware:
+    // request có Host ngoài danh sách bị trả 400 (localhost luôn được phép để
+    // healthcheck nội bộ không gãy). Cũng dùng để chặn X-Forwarded-Host giả khi
+    // dựng URL ảnh. Khai THIẾU một domain đang dùng = tự khoá mình ra ngoài,
+    // nên liệt kê đủ mọi đường vào: domain public, IP LAN, tên container.
     "trusted_hosts": ["your-domain.com", "192.168.1.10"],
 
     // Chỉ bật khi CÓ reverse proxy đặt X-Forwarded-For
@@ -293,8 +313,29 @@ mục 4.
 - Hoặc `ZALO_WS_ALLOWED_ORIGINS` khai origin không khớp nơi đang mở trang → để trống.
 
 **MCP tools `count: 0`, log `Connection refused ... 127.0.0.1:8005`**
-App dò MCP trước khi hub kịp mở cổng. Cache tool giữ 15 phút — chờ hết hạn, hoặc
-tắt/bật lại một MCP trong tab quản trị để dò lại.
+App dò MCP trước khi hub kịp mở cổng (hub cần ~40 giây để mount hết MCP). Từ bản
+này, khi có server chưa nối được thì cache chỉ giữ **30 giây** rồi dò lại — chờ
+một lượt là tự khỏi, log ghi `mcp_partial_discovery`. Bản cũ giữ 15 phút; muốn
+dò lại ngay thì tắt/bật một MCP trong tab quản trị.
+
+**Tool `read_url` / ingest URL trả `Từ chối đọc URL này: …`**
+URL trỏ vào vùng nội bộ (loopback, `192.168.*`, `10.*`, `169.254.*`) — bị chặn có
+chủ đích để prompt injection không đọc được service nội bộ hay metadata cloud.
+Cần nạp tài liệu nội bộ thì tải file lên, đừng đưa URL.
+
+**Lệnh SSH qua MCP báo `khoá máy chủ ĐÃ ĐỔI`**
+Máy đích đổi host key (thường do cài lại OS) — hoặc có người đứng giữa. Nếu chắc
+chắn là do cài lại: xoá dòng của host đó trong `/app/data/ssh_known_hosts` rồi
+chạy lại. Vân tay đang ghi nhớ xem bằng `ssh_list_servers`.
+
+**Home Assistant / script gọi zalo-server trả 403 `API_KEY_OUT_OF_SCOPE`**
+`ZALO_SERVER_API_KEY` giờ chỉ dùng được cho các route gửi tin/tra cứu tích hợp
+(`/api/sendmessage`, `/api/sendImageToUser`, `/api/getUserInfo`…). Gọi dashboard,
+lịch sử chat hay quản lý người dùng thì phải đăng nhập bằng tài khoản admin.
+
+**Đăng nhập được nhưng mọi trang trả 403 "Chỉ admin mới vào được"**
+Tài khoản đang dùng có vai `user`. Dashboard và chat hiện yêu cầu vai `admin` —
+xem mục 8 để biết vì sao và cần gì để mở lại cho nhiều người dùng.
 
 **`R2 restore failed: InvalidBucketName`**
 Sửa `/opt/c2a/data/studio/r2.json`: `bucket` chỉ là tên trần (không `https://`,
@@ -315,6 +356,14 @@ Những mục này cần build frontend/Docker và kiểm thử trên trình duy
 - Dockerfile chưa pin digest/checksum cho binary tải về; container chạy `root`.
 - Frontend còn 26 lỗi TypeScript, `ignoreBuildErrors: true` đang che lỗi build.
 - Dependency: zalo-server 8 lỗ hổng mức cao, web 2 lỗ hổng mức trung bình.
+- **ACL nhiều người dùng cho zalo-server.** Hiện dashboard và chat chỉ mở cho vai
+  `admin`, vì hệ thống không có cách giới hạn một tài khoản chỉ xem được một số
+  tài khoản Zalo hay một số cuộc trò chuyện. Muốn cho vai `user` vào chat thì
+  phải làm ACL theo account/conversation **và** lọc cả dữ liệu broadcast qua
+  WebSocket — nửa vời là hở đúng chỗ vừa bịt.
+- **DNS rebinding.** `url_guard` kiểm địa chỉ trước khi gọi và ở mỗi chặng
+  redirect, nhưng giữa lúc kiểm và lúc mở kết nối vẫn còn một khe rất hẹp để
+  tên miền đổi bản ghi. Bịt hẳn phải tự nối theo IP đã ghim và tự lo SNI/TLS.
 
 **Nếu đã từng dùng giao diện trước bản vá này**, nên xoay: khoá admin, token
 tunnel, mật khẩu Gmail app và TOTP seed.

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.support import require_identity, resolve_image_base_url
 from services.content_filter import check_request, request_text
+from services.ingress_guard import BodyTooLarge, read_upload_limited
 from services.log_service import (
     KIND_IMAGE,
     KIND_VISION,
@@ -33,6 +34,13 @@ def _client_host(request: Request) -> str:
 
 # Nhóm hành động vật lý/máy chủ — key vai 'user' KHÔNG được chạm mặc định.
 _DANGER_GROUPS = {"homeassistant", "device", "server", "code"}
+
+# Trần cho /v1/images/edits. `await upload.read()` không tham số nạp cả file vào
+# RAM, và multipart cho phép gửi bao nhiêu phần tuỳ thích — một request đủ để
+# hạ gateway. Ảnh thật hiếm khi quá 20MB.
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_EDIT_IMAGES = 8
+_MAX_EDIT_TOTAL_BYTES = 48 * 1024 * 1024
 
 
 def _effective_allowed_groups(role: str, server_allowed, client_allowed):
@@ -206,11 +214,24 @@ def create_router() -> APIRouter:
         uploads = [*(image or []), *(image_list or [])]
         if not uploads:
             raise HTTPException(status_code=400, detail={"error": "image file is required"})
+        if len(uploads) > _MAX_EDIT_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": f"too many images (max {_MAX_EDIT_IMAGES})"},
+            )
         images: list[tuple[bytes, str, str]] = []
+        total_bytes = 0
         for upload in uploads:
-            image_data = await upload.read()
+            try:
+                image_data = await read_upload_limited(upload, _MAX_IMAGE_BYTES)
+            except BodyTooLarge:
+                raise HTTPException(status_code=413, detail={"error": "image file too large"})
             if not image_data:
                 raise HTTPException(status_code=400, detail={"error": "image file is empty"})
+            # Trần TỔNG: từng ảnh trong hạn nhưng 8 ảnh cộng lại vẫn đủ nặng.
+            total_bytes += len(image_data)
+            if total_bytes > _MAX_EDIT_TOTAL_BYTES:
+                raise HTTPException(status_code=413, detail={"error": "images too large in total"})
             images.append((image_data, upload.filename or "image.png", upload.content_type or "image/png"))
         payload = {
             "prompt": prompt,

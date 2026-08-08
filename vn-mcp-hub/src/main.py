@@ -50,6 +50,32 @@ logger = logging.getLogger("vn-mcp-hub")
 # in the parent FastAPI lifespan so FastMCP's session manager initializes.
 _mcp_sub_apps: list = []
 
+# Trần cho mọi file upload vào hub. `await file.read()` không tham số đọc TOÀN
+# BỘ vào RAM: một request 4 GB là đủ giết hub, kéo theo bot mất sạch tool.
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+
+class UploadTooLarge(Exception):
+    """File upload vượt trần cho phép."""
+
+
+async def read_upload_limited(file, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
+    """Đọc file upload theo từng khối, dừng NGAY khi vượt trần.
+
+    Đọc rồi mới đo là quá muộn — RAM đã mất. Phải cắt giữa chừng.
+    """
+    buf: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise UploadTooLarge(f"File quá lớn (>{max_bytes // (1024 * 1024)}MB).")
+        buf.append(chunk)
+    return b"".join(buf)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -428,9 +454,18 @@ def create_app() -> FastAPI:
                 except ImportError:
                     return {"ok": False, "error": "Thiếu thư viện beautifulsoup4. Vui lòng build lại Docker."}
 
-                req = urllib.request.Request(url_str, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=10)
-                html = resp.read().decode("utf-8", errors="ignore")
+                # urllib.urlopen nhận thẳng URL của người dùng: không chặn
+                # 127.0.0.1 / 169.254.169.254, tự đi redirect, đọc không giới
+                # hạn. safe_get làm cả ba việc đó.
+                from src.url_guard import SsrfBlocked, safe_get
+                try:
+                    html, _final_url = safe_get(
+                        url_str,
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        timeout=10.0,
+                    )
+                except SsrfBlocked as exc:
+                    return {"ok": False, "error": f"Từ chối tải URL này: {exc}"}
                 soup = BeautifulSoup(html, "html.parser")
                 raw_text = soup.get_text(separator="\n", strip=True)
                 if not raw_text.strip():
@@ -632,20 +667,10 @@ def create_app() -> FastAPI:
         content = b""
         filename_raw = ""
         if has_file:
-            # Đọc CÓ TRẦN (100MB) thay vì file.read() vô hạn — chặn upload khổng
-            # lồ làm cạn RAM hub (báo cáo bảo mật 07/08).
-            _MAX = 100 * 1024 * 1024
-            _buf = []
-            _total = 0
-            while True:
-                _chunk = await file.read(1024 * 1024)
-                if not _chunk:
-                    break
-                _total += len(_chunk)
-                if _total > _MAX:
-                    return {"ok": False, "error": "File quá lớn (>100MB)."}
-                _buf.append(_chunk)
-            content = b"".join(_buf)
+            try:
+                content = await read_upload_limited(file)
+            except UploadTooLarge as exc:
+                return {"ok": False, "error": str(exc)}
             filename_raw = file.filename or ""
 
         # Chạy nền + chờ có giới hạn. Tài liệu ngắn xong trong ngưỡng chờ thì
@@ -715,7 +740,10 @@ def create_app() -> FastAPI:
         file = form.get("file")
         if not (file and hasattr(file, "read")):
             return {"ok": False, "error": "Không nhận được file hợp lệ."}
-        content = await file.read()
+        try:
+            content = await read_upload_limited(file)
+        except UploadTooLarge as exc:
+            return {"ok": False, "error": str(exc)}
         if not content:
             return {"ok": False, "error": "File bạn tải lên rỗng (0 bytes)."}
         filename = (file.filename or "").lower()

@@ -297,11 +297,32 @@ def create_app() -> FastAPI:
                   docs_url="/docs" if _docs_on else None,
                   redoc_url="/redoc" if _docs_on else None,
                   openapi_url="/openapi.json" if _docs_on else None)
+    # Host allowlist THẬT (không chỉ dùng lúc dựng URL ảnh): chặn Host/
+    # X-Forwarded-Host giả — kiểu tấn công dùng để đầu độc cache, làm link reset
+    # mật khẩu trỏ sang máy kẻ tấn công, hoặc lách reverse proxy.
+    # CHỈ bật khi admin đã khai `security.trusted_hosts`. Bật mặc định là tự khoá
+    # mình ra ngoài ở mọi triển khai LAN (host là IP, đổi theo mạng).
+    _trusted = config.trusted_hosts
+    if _trusted:
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+        # localhost luôn được phép: supervisord/healthcheck và các tiến trình
+        # trong cùng container gọi qua 127.0.0.1, không đi qua domain.
+        allowed = sorted(set(_trusted) | {"localhost", "127.0.0.1", "::1"})
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed)
+        logger.info({"event": "trusted_hosts_enabled", "hosts": allowed})
+
+    _cors = config.cors_allow_origins
+    if _cors == ["*"]:
+        logger.warning({
+            "event": "cors_wildcard",
+            "msg": "cors_allow_origins đang là '*'. Đứng sau domain public thì hãy "
+                   "khai danh sách origin cụ thể trong Settings (cors_allow_origins).",
+        })
     app.add_middleware(
         CORSMiddleware,
         # Mặc định ["*"] (self-host); production sau tunnel đặt config
         # `cors_allow_origins` = danh sách domain để whitelist.
-        allow_origins=config.cors_allow_origins,
+        allow_origins=_cors,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],

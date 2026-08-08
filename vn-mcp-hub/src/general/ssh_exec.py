@@ -19,7 +19,10 @@ Tools:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -28,10 +31,15 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+logger = logging.getLogger(__name__)
+
 mcp = FastMCP("ssh_exec")
 
 DATA_DIR = Path(os.getenv("VN_HUB_DATA_DIR", "/app/data"))
 REGISTRY = DATA_DIR / "ssh_servers.json"
+# Khoá máy chủ đã ghi nhớ, định dạng known_hosts chuẩn của OpenSSH/paramiko
+# (paramiko tự ghi "[host]:port" khi port khác 22).
+KNOWN_HOSTS = DATA_DIR / "ssh_known_hosts"
 _LOCK = threading.Lock()
 
 # Trần độ dài output trả về model để tránh phình context.
@@ -183,12 +191,73 @@ def find_server(name: str) -> dict[str, Any] | None:
 # ── SSH connect / exec ──────────────────────────────────────────────────────
 
 
+def _fingerprint(key) -> str:
+    """Vân tay SHA256 dạng OpenSSH — cùng chuỗi `ssh-keyscan | ssh-keygen -lf` in ra."""
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def _tofu_policy():
+    """Policy TOFU: lần ĐẦU gặp một host thì ghi nhớ khoá vào KNOWN_HOSTS.
+
+    Vì sao không dùng AutoAddPolicy: nó ghi nhớ vào bộ nhớ rồi VỨT ĐI khi tiến
+    trình kết thúc, nên mọi lần kết nối đều là "lần đầu" và khoá máy chủ có đổi
+    cũng không ai biết — đúng định nghĩa của lỗ hổng MITM. Ghi ra file thì lần
+    sau paramiko tự so khoá và ném BadHostKeyException khi lệch.
+    """
+    import paramiko
+
+    class _Tofu(paramiko.MissingHostKeyPolicy):
+        def missing_host_key(self, client, hostname, key):
+            fp = _fingerprint(key)
+            client.get_host_keys().add(hostname, key.get_name(), key)
+            try:
+                KNOWN_HOSTS.parent.mkdir(parents=True, exist_ok=True)
+                client.save_host_keys(str(KNOWN_HOSTS))
+                os.chmod(KNOWN_HOSTS, 0o600)
+            except Exception as exc:
+                logger.warning("ssh_exec: không ghi được known_hosts (%s)", exc)
+            logger.warning(
+                "ssh_exec: TOFU — ghi nhớ khoá LẦN ĐẦU cho %s (%s %s). "
+                "Hãy đối chiếu với vân tay thật của máy chủ; sai là có người đứng giữa.",
+                hostname, key.get_name(), fp,
+            )
+
+    return _Tofu()
+
+
+def known_host_fingerprints() -> dict[str, str]:
+    """{host_hoặc_[host]:port → vân tay} đã ghi nhớ, để admin đối chiếu."""
+    import paramiko
+
+    out: dict[str, str] = {}
+    if not KNOWN_HOSTS.exists():
+        return out
+    try:
+        hk = paramiko.HostKeys(str(KNOWN_HOSTS))
+    except Exception:
+        return out
+    for host, keys in hk.items():
+        for key in keys.values():
+            out[host] = _fingerprint(key)
+    return out
+
+
 def connect(entry: dict[str, Any]):
-    """Mở một paramiko.SSHClient đã kết nối tới server (caller tự đóng)."""
+    """Mở một paramiko.SSHClient đã kết nối tới server (caller tự đóng).
+
+    Khoá máy chủ được kiểm theo KNOWN_HOSTS: khớp thì đi tiếp, chưa có thì ghi
+    nhớ (TOFU), ĐỔI thì từ chối kết nối.
+    """
     import paramiko
 
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if KNOWN_HOSTS.exists():
+        try:
+            client.load_host_keys(str(KNOWN_HOSTS))
+        except Exception as exc:
+            logger.warning("ssh_exec: không đọc được known_hosts (%s)", exc)
+    client.set_missing_host_key_policy(_tofu_policy())
     connect_kw: dict[str, Any] = {
         "hostname": entry["host"],
         "port": int(entry.get("port", 22)),
@@ -235,6 +304,12 @@ def run_command(server: str, command: str, timeout: int = 30) -> str:
     try:
         code, out, err = _run_ssh(entry, cmd, timeout)
     except Exception as exc:
+        if type(exc).__name__ == "BadHostKeyException":
+            return (
+                f"❌ TỪ CHỐI kết nối '{server}': khoá máy chủ ĐÃ ĐỔI so với lần trước. "
+                "Hoặc máy đã cài lại/đổi khoá, hoặc có người đứng giữa. "
+                f"Nếu chắc chắn là do cài lại, xoá dòng của host này trong {KNOWN_HOSTS} rồi thử lại."
+            )
         return f"❌ Lỗi SSH tới '{server}' ({entry.get('username')}@{entry.get('host')}): {exc}"
     body = out if out else ""
     if err.strip():
@@ -254,11 +329,14 @@ def ssh_list_servers() -> str:
     servers = list_servers_safe()
     if not servers:
         return "Chưa khai báo server SSH nào. Dùng ssh_add_server để thêm."
+    fps = known_host_fingerprints()
     lines = ["Các server SSH đã khai báo:"]
     for s in servers:
         auth = "password" if s["has_password"] else ("key" if s["has_key"] else "chưa có auth")
         danger = " ⚠️allow_dangerous" if s["allow_dangerous"] else ""
-        lines.append(f"- {s['name']}: {s['username']}@{s['host']}:{s['port']} ({auth}){danger}")
+        port = int(s.get("port") or 22)
+        fp = fps.get(s["host"] if port == 22 else f"[{s['host']}]:{port}", "chưa ghi nhớ")
+        lines.append(f"- {s['name']}: {s['username']}@{s['host']}:{port} ({auth}){danger}\n  khoá máy chủ: {fp}")
     return "\n".join(lines)
 
 

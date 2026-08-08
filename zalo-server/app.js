@@ -3,7 +3,7 @@ import express from 'express';
 import session from 'express-session';
 import sessionFileStore from 'session-file-store';
 import cookieParser from 'cookie-parser';
-import { authMiddleware, isPublicRoute, getServerApiKey } from './services/authService.js';
+import { authMiddleware, dashboardRoleMiddleware, isPublicRoute, getServerApiKey } from './services/authService.js';
 import { loadWebhookConfig } from './services/webhookService.js';
 import routes from './routes/index.js';
 import fs from 'fs';
@@ -146,6 +146,24 @@ if (!(process.env.SESSION_SECRET || '').trim()) {
   console.warn('[BẢO MẬT] Chưa đặt SESSION_SECRET — dùng secret NGẪU NHIÊN phiên này (session không sống qua restart). Hãy đặt SESSION_SECRET.');
 }
 
+// ZALO_COOKIE_SECURE chỉ nhận "0" hoặc "1". Mọi giá trị khác ("true", "yes",
+// "on"…) rơi vào nhánh false một cách IM LẶNG — người triển khai tưởng đã bật
+// cookie Secure trong khi thực tế chưa. Nói to ra thay vì để họ tự đoán.
+const cookieSecureRaw = (process.env.ZALO_COOKIE_SECURE ?? '').trim();
+if (cookieSecureRaw !== '' && cookieSecureRaw !== '0' && cookieSecureRaw !== '1') {
+  console.warn(
+    `[BẢO MẬT] ZALO_COOKIE_SECURE="${cookieSecureRaw}" không hợp lệ — chỉ chấp nhận "0" hoặc "1". ` +
+    'Đang hiểu là "0" (cookie KHÔNG có cờ Secure). Muốn bật thì đặt đúng ZALO_COOKIE_SECURE=1.'
+  );
+}
+const cookieSecure = cookieSecureRaw === '1';
+if (cookieSecure) {
+  console.warn(
+    '[BẢO MẬT] ZALO_COOKIE_SECURE=1 — cookie session chỉ gửi qua HTTPS. ' +
+    'Bot Python gọi http://127.0.0.1:3001 sẽ MẤT phiên; chỉ dùng khi zalo-server đứng sau HTTPS hoàn toàn.'
+  );
+}
+
 const FileStore = sessionFileStore(session);
 
 // Export session middleware để dùng lại khi xác thực WebSocket upgrade
@@ -165,7 +183,7 @@ export const sessionMiddleware = session({
   cookie: {
     // secure BẬT khi ZALO_COOKIE_SECURE=1 (triển khai chỉ-HTTPS qua tunnel).
     // Mặc định false để không phá đăng nhập LAN qua HTTP (chủ máy dùng cả hai).
-    secure: process.env.ZALO_COOKIE_SECURE === '1',
+    secure: cookieSecure,
     httpOnly: true,
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 ngày
     path: '/',
@@ -192,7 +210,7 @@ app.use((req, res, next) => {
 
   // Áp dụng middleware xác thực cho các route khác
   console.log(`Applying auth middleware for protected route: ${req.path}`);
-  authMiddleware(req, res, next);
+  authMiddleware(req, res, () => dashboardRoleMiddleware(req, res, next));
 });
 
 // Thiết lập route

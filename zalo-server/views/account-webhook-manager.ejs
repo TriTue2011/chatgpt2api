@@ -207,9 +207,12 @@ async function updateAccountsList() {
 
 function updateSelect() {
     var sel = document.getElementById('ownId');
-    sel.innerHTML = '<option value="">-- Chọn tài khoản --</option>';
+    // Dựng option bằng new Option() thay vì ghép chuỗi vào innerHTML: ownId và
+    // phoneNumber đến từ dữ liệu tài khoản Zalo, không phải hằng số của trang.
+    sel.replaceChildren(new Option('-- Chọn tài khoản --', ''));
     accounts.forEach(function(a) {
-        sel.innerHTML += '<option value="' + a.ownId + '">' + a.ownId + ' (' + (a.phoneNumber || 'N/A') + ')</option>';
+        var nhan = String(a.ownId) + ' (' + (a.phoneNumber || 'N/A') + ')';
+        sel.add(new Option(nhan, String(a.ownId)));
     });
 }
 

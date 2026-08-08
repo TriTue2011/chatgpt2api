@@ -17,15 +17,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
 from bs4 import BeautifulSoup
 from fastmcp import FastMCP
+
+from src.url_guard import SsrfBlocked, safe_get
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("vn_law")
 
 TVPL_SEARCH = "https://thuvienphapluat.vn/page/tim-van-ban.aspx"
+
+# get_law_detail nhận URL từ model → phải allowlist. Tool này chỉ có nghĩa với
+# hai cổng văn bản pháp luật; mở tự do là biến nó thành công cụ đọc mọi URL
+# (kể cả nội bộ) mà không ai để ý vì tên tool nghe vô hại.
+LAW_DOMAINS = ("thuvienphapluat.vn", "vbpl.vn", "chinhphu.vn", "moj.gov.vn")
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -37,10 +43,14 @@ HEADERS = {
 
 def _search_tvpl(keyword: str) -> list[dict[str, Any]]:
     try:
-        with httpx.Client(timeout=15.0, follow_redirects=True, headers=HEADERS) as client:
-            r = client.get(TVPL_SEARCH, params={"keyword": keyword, "type": "0"})
-            r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        text, _ = safe_get(
+            TVPL_SEARCH,
+            params={"keyword": keyword, "type": "0"},
+            headers=HEADERS,
+            timeout=15.0,
+            allowed_domains=LAW_DOMAINS,
+        )
+        soup = BeautifulSoup(text, "html.parser")
     except Exception as exc:
         logger.warning("TVPL search failed for '%s': %s", keyword, exc)
         return []
@@ -60,10 +70,10 @@ def _search_tvpl(keyword: str) -> list[dict[str, Any]]:
 
 def _fetch_doc(url: str) -> str:
     try:
-        with httpx.Client(timeout=20.0, follow_redirects=True, headers=HEADERS) as client:
-            r = client.get(url)
-            r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        text, _ = safe_get(url, headers=HEADERS, timeout=20.0, allowed_domains=LAW_DOMAINS)
+        soup = BeautifulSoup(text, "html.parser")
+    except SsrfBlocked as exc:
+        return f"Từ chối tải URL này: {exc}"
     except Exception as exc:
         return f"Lỗi tải văn bản: {exc}"
     body = (
