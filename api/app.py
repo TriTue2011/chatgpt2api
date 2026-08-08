@@ -7,7 +7,6 @@ from threading import Event
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 
 from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
@@ -370,7 +369,11 @@ def create_app() -> FastAPI:
     except Exception as exc:
         _log_startup_failure("teacher_api", exc)
     config.images_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/images", StaticFiles(directory=str(config.images_dir)), name="images")
+    # KHÔNG mount StaticFiles: nó phục vụ mọi file cho mọi người, không có chỗ
+    # nào cắm được phép kiểm. `api/media.py` là một route thường nên kiểm được
+    # chữ ký / phiên, và tự chặn đi lên thư mục cha.
+    from api import media as media_api
+    app.include_router(media_api.create_router())
 
     # Veo video generation — journaled into Agent runs (kind=video_gen)
     @app.post("/v1/video/generations")

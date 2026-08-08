@@ -73,6 +73,22 @@ def ky_duong_dan(duong: str, *, pham_vi: str = "media",
     return f"exp={han}&sig={sig}&scope={quote(pham_vi)}"
 
 
+def ky_url(url: str, *, pham_vi: str = "images",
+           song_giay: float = HAN_MAC_DINH_GIAY) -> str:
+    """Ký một URL ĐẦY ĐỦ (đã có scheme/host), trả lại URL kèm chữ ký.
+
+    Dùng cho nơi phát URL ra ngoài — Zalo và Telegram nhận URL rồi TỰ đi tải,
+    nên chúng không gửi được cookie lẫn header nào. Không ký thì khi bật
+    `security.signed_media_required`, ảnh gửi đi sẽ 403 ở phía họ.
+    """
+    from urllib.parse import urlsplit
+    u = urlsplit(str(url or ""))
+    if not u.path:
+        return url
+    noi = "&" if u.query else "?"
+    return f"{url}{noi}{ky_duong_dan(u.path, pham_vi=pham_vi, song_giay=song_giay)}"
+
+
 def kiem_chu_ky(duong: str, exp: str, sig: str, *, pham_vi: str = "media",
                 phuong_thuc: str = "GET") -> bool:
     """True nếu chữ ký đúng và chưa hết hạn."""
@@ -90,4 +106,4 @@ def kiem_chu_ky(duong: str, exp: str, sig: str, *, pham_vi: str = "media",
     return hmac.compare_digest(mong_doi.encode(), str(sig).strip().encode())
 
 
-__all__ = ["HAN_MAC_DINH_GIAY", "kiem_chu_ky", "ky_duong_dan"]
+__all__ = ["HAN_MAC_DINH_GIAY", "kiem_chu_ky", "ky_duong_dan", "ky_url"]
