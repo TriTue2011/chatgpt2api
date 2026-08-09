@@ -66,7 +66,8 @@
       "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"grep -n \\\\\"function sendMessage\\\\|content ==\\\\|typeof content\\\\|handleMessage\\(content\\\\|handleMessage\\(msg\\\\|= content\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs | head -12\"')",
       "Bash(ssh root@172.16.10.38 'docker exec c2a sh -c \"sed -n \\\\\"421,445p\\\\\" /app/zalo-server/node_modules/zca-js/dist/cjs/apis/sendMessage.cjs\"')",
       "Bash(ssh root@172.16.10.38 \"docker exec -i c2a tee /app/services/zalo_personal.py > /dev/null\")",
-      "Bash(ssh root@172.16.10.38 'docker exec -w /app -e PYTHONPATH=/app c2a /app/.venv/bin/python -c \" *)"
+      "Bash(ssh root@172.16.10.38 'docker exec -w /app -e PYTHONPATH=/app c2a /app/.venv/bin/python -c \" *)",
+      "Bash(ssh -o ConnectTimeout=8 -o BatchMode=yes root@172.16.10.38 'uptime; echo ---; iptables -t nat -S POSTROUTING | grep -i 172.19 || echo \"KHONG CO luat NAT cho 172.19.0.0/16\"')"
     ]
   }
 }
