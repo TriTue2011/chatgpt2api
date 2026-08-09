@@ -221,12 +221,24 @@ def kiem_model_anh(model: str) -> str:
     return ten
 
 
-def _ngu_canh(project_id: str, tier: str, session_id: str,
+def _ngu_canh(project_id: str, session_id: str,
               recaptcha: str | None) -> dict[str, Any]:
+    """`clientContext` — dựng theo BẢN CHỤP REQUEST THẬT của giao diện Flow
+    (09/08/2026), không phải theo bản gỡ rối nữa.
+
+    Client thật gửi ĐÚNG bốn trường: projectId, tool, sessionId, recaptchaContext.
+    KHÔNG có `userPaygateTier`. Bản gỡ rối VEO3 AI Studio có trường đó
+    (PAYGATE_TIER_ONE cho ảnh, TIER_TWO cho video) và ta bê nguyên sang — đường
+    ảnh may mắn được Google bỏ qua, còn đường video trả thẳng 403 "The caller
+    does not have permission". Khai một bậc trả phí mà tài khoản không có thì bị
+    từ chối, hợp lý.
+
+    `sessionId` có dấu chấm phẩy đứng trước, kể cả ở đường ảnh — bản chụp cho
+    thấy ";1786253707634". Trước đây ta gửi ảnh không có dấu này.
+    """
     ctx: dict[str, Any] = {
         "projectId": project_id,
         "tool": TOOL,
-        "userPaygateTier": tier,
         "sessionId": session_id,
     }
     if recaptcha:
@@ -257,8 +269,8 @@ def than_tao_anh(
     bắn `count` lời gọi song song qua giao diện.
     """
     ten_model = kiem_model_anh(model)
-    sid = session_id or str(int(time.time() * 1000))
-    ctx = _ngu_canh(project_id, "PAYGATE_TIER_ONE", sid, recaptcha)
+    sid = session_id or (";" + str(int(time.time() * 1000)))
+    ctx = _ngu_canh(project_id, sid, recaptcha)
     so = max(1, int(count))
     hat = seeds or [random.randint(0, 99998) for _ in range(so)]
     yeu_cau = [
@@ -373,17 +385,9 @@ def than_tao_video(
     session_id: str | None = None,
     batch_id: str | None = None,
     seeds: list[int] | None = None,
-    tier: str = "PAYGATE_TIER_TWO",
 ) -> dict[str, Any]:
     """Thân cho `v1/video:batchAsyncGenerateVideo*`. Xem `CHE_DO_VIDEO` để biết
-    chế độ nào đi tới endpoint nào.
-
-    `tier` để mở được vì nó là nghi can số một của lỗi 403 "The caller does not
-    have permission" đo được 09/08/2026: đường ẢNH gửi `PAYGATE_TIER_ONE` và
-    chạy tốt trên tài khoản này, còn đường VIDEO gửi `PAYGATE_TIER_TWO` theo bản
-    gỡ rối và bị từ chối. Chưa biết cái nào đúng nên chưa đổi mặc định — để đo
-    được cả hai mà không phải dựng lại image mỗi lần.
-    """
+    chế độ nào đi tới endpoint nào."""
     if che_do not in CHE_DO_VIDEO:
         raise ValueError(f"chế độ video lạ: {che_do!r}; "
                          f"chỉ có {', '.join(CHE_DO_VIDEO)}")
@@ -400,7 +404,7 @@ def than_tao_video(
             f"{'Ảnh đầu và ảnh cuối đều bắt buộc.' if che_do == 'image_start_end' else ''}"
         )
     sid = session_id or (";" + str(int(time.time() * 1000)))
-    ctx = _ngu_canh(project_id, tier, sid, recaptcha)
+    ctx = _ngu_canh(project_id, sid, recaptcha)
 
     goc: dict[str, Any] = {
         "aspectRatio": TY_LE_VIDEO.get(aspect_ratio, "VIDEO_ASPECT_RATIO_LANDSCAPE"),
@@ -449,6 +453,25 @@ def doc_gen_ids(dap: dict[str, Any]) -> list[str]:
         ma = ((wf.get("metadata") or {}).get("primaryMediaId")) or wf.get("name")
         if ma and ma not in ra:
             ra.append(str(ma))
+    return ra
+
+
+def doc_link_anh(dap: dict[str, Any]) -> list[str]:
+    """Link ảnh nằm ở `media[].image.generatedImage.fifeUrl`.
+
+    Bản chụp request thật 09/08/2026 cho thấy đáp của lệnh tạo ĐÃ kèm link, nên
+    không phải đi đổi id lấy link nữa. Trước đây ta tưởng không có, vì dò regex
+    trên `str(dap)` — mà `str()` của dict Python dùng NHÁY ĐƠN, còn regex thì
+    tìm nháy kép, nên không bao giờ khớp. Đọc theo cấu trúc thay vì dò chuỗi.
+
+    Link đã ký (`Expires` + `Signature`) và CDN trả `access-control-allow-origin: *`
+    nên tải được bằng HTTP thường, không cần cookie hay bearer.
+    """
+    ra: list[str] = []
+    for m in (dap.get("media") or []):
+        u = ((m.get("image") or {}).get("generatedImage") or {}).get("fifeUrl")
+        if u and u not in ra:
+            ra.append(str(u))
     return ra
 
 
@@ -665,8 +688,10 @@ async def tao_anh(*, profile: str, project_id: str, prompt: str,
     # Đáp của lệnh tạo KHÔNG kèm link (đo trên lượt tạo thật đầu tiên
     # 09/08/2026). Vẫn thử moi từ thân phòng khi Flow đổi ý, rồi mới đi đổi id
     # lấy link — một `mediaId` không có link thì bên gọi chẳng làm gì được.
-    link = re.findall(r'"(https://flow-content\.google/image/[^"]+)"', str(dap))
+    link = doc_link_anh(dap)
     if not link:
+        # Đáp thiếu link thì mới phải mở trình duyệt đổi id — tốn thêm vài giây
+        # nên chỉ dùng làm đường lui.
         bang = await lay_link_media(profile, ten, headless)
         link = [bang[t] for t in ten if bang.get(t)]
     return {
@@ -685,8 +710,7 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
                     anh: list[dict[str, Any]] | None = None,
                     headless: bool = True, timeout: float = 180,
                     cho_xong: bool = False, cho_toi_da: float = 600,
-                    nhip: float = 5,
-                    tier: str = "PAYGATE_TIER_TWO") -> dict[str, Any]:
+                    nhip: float = 5) -> dict[str, Any]:
     """Gửi lệnh tạo video. Mặc định trả ngay `gen_ids`, KHÔNG chờ video xong.
 
     Đường DOM hiện tại giữ một request HTTP mở suốt 300 giây và đã đo được là
@@ -713,7 +737,7 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
         bearer,
         than_tao_video(project_id=project_id, prompt=prompt, che_do=che_do,
                        model_key=khoa, aspect_ratio=aspect_ratio, count=count,
-                       anh=anh, recaptcha=recaptcha, tier=tier),
+                       anh=anh, recaptcha=recaptcha),
         timeout,
     )
     gen_ids = doc_gen_ids(dap)

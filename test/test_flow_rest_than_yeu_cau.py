@@ -167,10 +167,32 @@ class ThanTaoAnh(unittest.TestCase):
         self.assertEqual(than["clientContext"]["projectId"], "p1")
         self.assertEqual(than["requests"][0]["clientContext"]["projectId"], "p1")
 
-    def test_tier_anh_la_mot_khong_phai_hai(self):
-        """Ảnh dùng PAYGATE_TIER_ONE, video dùng TIER_TWO — app gửi khác nhau."""
-        self.assertEqual(self._than()["clientContext"]["userPaygateTier"],
-                         "PAYGATE_TIER_ONE")
+    def test_khong_khai_bac_tra_phi(self):
+        """Client thật KHÔNG gửi `userPaygateTier` — xem bản chụp request
+        09/08/2026. Ta từng bê trường này từ bản gỡ rối sang; đường ảnh được
+        Google bỏ qua, còn đường video trả thẳng 403 "The caller does not have
+        permission"."""
+        than = self._than()
+        for ctx in (than["clientContext"], than["requests"][0]["clientContext"]):
+            self.assertNotIn("userPaygateTier", ctx)
+        self.assertEqual(set(than["clientContext"]),
+                         {"projectId", "tool", "sessionId"})
+
+    def test_session_id_co_dau_cham_phay_dung_truoc(self):
+        """Bản chụp cho thấy ";1786253707634", kể cả ở đường ảnh."""
+        than = FR.than_tao_anh(project_id="p1", prompt="x", model="NARWHAL")
+        self.assertTrue(than["clientContext"]["sessionId"].startswith(";"))
+
+    def test_doc_duoc_link_anh_tu_dap(self):
+        """Link nằm ở media[].image.generatedImage.fifeUrl. Bản cũ dò regex trên
+        `str(dap)` — chuỗi đó dùng nháy ĐƠN nên không bao giờ khớp nháy kép."""
+        dap = {"media": [{"name": "m1", "image": {"generatedImage": {
+            "fifeUrl": "https://flow-content.google/image/m1?Expires=1&Signature=x"}}}]}
+        self.assertEqual(FR.doc_link_anh(dap),
+                         ["https://flow-content.google/image/m1?Expires=1&Signature=x"])
+
+    def test_dap_khong_co_link_thi_tra_rong(self):
+        self.assertEqual(FR.doc_link_anh({"media": [{"name": "m1"}]}), [])
 
     def test_recaptcha_gan_vao_ca_hai_tang(self):
         than = self._than(recaptcha="TOK")
@@ -226,7 +248,7 @@ class ThanTaoVideo(unittest.TestCase):
         self.assertIs(than["useV2ModelConfig"], True)
         self.assertEqual(than["mediaGenerationContext"]["audioFailurePreference"],
                          "RETURN_SILENCED_VIDEOS")
-        self.assertEqual(than["clientContext"]["userPaygateTier"], "PAYGATE_TIER_TWO")
+        self.assertNotIn("userPaygateTier", than["clientContext"])
 
     def test_text_to_video_khong_gan_anh(self):
         than = self._than("text_to_video", anh=self.ANH)
