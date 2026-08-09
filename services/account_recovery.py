@@ -738,6 +738,29 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
+def con_tang_trinh_duyet(email: str, provider: str) -> bool:
+    """Sau tầng T0 (refresh_token) còn tầng TRÌNH DUYỆT nào chạy được không?
+
+    T0 nằm ở `recover_and_notify`, các tầng trình duyệt nằm ở
+    `recover_provider_account`, và người gọi (`codex_error_recovery_scheduler`)
+    chạy LẦN LƯỢT cả hai. Nhưng T0 không hề biết điều đó nên nó tự kết luận
+    "❌ Cần đăng nhập lại thủ công" ngay khi thiếu refresh_token — rồi vài giây
+    sau tầng trình duyệt mới bắt đầu và báo "→ Đang tự khôi phục…". Người nhận
+    đọc được lời tuyên bố thua TRƯỚC cả lúc hệ thống bắt đầu thử, nên hoặc đi
+    đăng nhập tay một tài khoản mà máy tự chữa được, hoặc mất tin vào thông báo.
+
+    Tách phép kiểm ra đây để T0 và tầng trình duyệt nói CÙNG một sự thật.
+    """
+    prov = _PROVIDERS.get(provider) or {}
+    if not prov.get("enabled"):
+        return False
+    profile = _profile_for(email)
+    can_google = bool(prov.get("reuse") and (_has_profile(profile)
+                                             or _has_google_creds(profile, email)))
+    can_batch = bool(prov.get("batch") and _dong_hang_loat(email) is not None)
+    return can_google or can_batch
+
+
 def recover_provider_account(account: dict[str, Any], provider: str, reason: str) -> None:
     """Các tầng khôi phục SAU KHI tầng 1 (refresh_token) đã trượt — thread nền.
 
@@ -795,6 +818,9 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # tức không tồn tại đường đăng nhập lại nào để mà thử.
     can_google = bool(reuse and (has_profile or has_creds))
     can_batch = bool(batch and hang_loat)
+    # Giữ nguyên phép kiểm tại chỗ (đã có `reuse`/`batch` trong tay) — nó phải
+    # cho cùng kết quả với `con_tang_trinh_duyet`, thứ mà T0 dùng để biết có nên
+    # im lặng nhường lượt hay không.
     if not (can_google or can_batch):
         logger.info({
             "event": "recover_skip_no_tier",
@@ -985,8 +1011,16 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
             logger.info({"event": "recovery_skip_anonymous", "provider": group,
                          "email": email, "reason": reason[:120]})
             return None
+        # CÒN tầng trình duyệt phía sau thì T0 KHÔNG được tuyên bố thua. Người
+        # gọi sẽ chạy tiếp T1–T3 ngay sau đây; báo "cần đăng nhập tay" lúc này
+        # là nói sai, và nói trước cả lúc hệ thống bắt đầu thử.
+        if con_tang_trinh_duyet(email, group):
+            logger.info({"event": "recovery_t0_nhuong_luot", "email": email,
+                         "provider": group, "reason": reason[:120]})
+            return None
         _notify(f"⚠️ {label} — {email}\nLỗi: {reason}\n"
-                f"→ [T0] Không có refresh_token nên không tự khôi phục được.\n"
+                f"→ [T0] Không có refresh_token, và không còn đường đăng nhập lại "
+                f"tự động nào cho tài khoản này.\n"
                 f"❌ Cần đăng nhập lại thủ công qua noVNC (cổng 6080).",
                 {**det, "step": "T0-no-refresh-token", "reason": reason})
         logger.warning({"event": "recovery_no_refresh", "email": email, "reason": reason})
@@ -1018,7 +1052,15 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
     except Exception as exc:
         logger.warning({"event": "recovery_error", "email": email, "error": str(exc)[:150]})
 
+    # Cùng lý do như nhánh thiếu refresh_token: còn tầng trình duyệt thì đây
+    # CHƯA phải kết luận cuối, chỉ là một tầng trượt.
+    if con_tang_trinh_duyet(email, group):
+        _notify(f"🔧 {label} — {email}\n[T0] Refresh trượt ({reason}) — "
+                f"chuyển sang đăng nhập lại bằng trình duyệt…",
+                {**det, "step": "T0-refresh-failed-tiep-tuc", "reason": reason})
+        return None
     _notify(f"❌ {label} — {email}\n[T0] Refresh THẤT BẠI ({reason}).\n"
-            f"→ refresh_token có thể đã hết hạn. Cần đăng nhập lại qua noVNC (`:6080`).",
+            f"→ refresh_token có thể đã hết hạn, và không còn đường tự động nào "
+            f"khác. Cần đăng nhập lại qua noVNC (`:6080`).",
             {**det, "step": "T0-refresh-failed", "reason": reason})
     return None
