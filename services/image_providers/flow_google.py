@@ -88,17 +88,34 @@ _MODEL_ALIASES = {
     "gem-pix-2": "GEM_PIX_2",
 }
 
+# Model ảnh Flow đã bỏ. Giữ danh sách này để `_resolve_model` nói thẳng "model
+# đã bị bỏ" thay vì để tên rơi xuống nhánh "tên lạ" rồi gửi một chuỗi vô nghĩa
+# xuống API. Cấu hình đang chạy là dữ liệu chứ không phải mã: gỡ khỏi bảng bí
+# danh không gỡ được khỏi Quản lý Model của một hệ thống đang chạy.
+_MODEL_ANH_DA_NGHI = {
+    "imagen-4": "IMAGEN_3_5 trả 404 khi đo 09/08/2026",
+    "imagen4": "IMAGEN_3_5 trả 404 khi đo 09/08/2026",
+    "imagen": "IMAGEN_3_5 trả 404 khi đo 09/08/2026",
+    "imagen-3-5": "IMAGEN_3_5 trả 404 khi đo 09/08/2026",
+    "imagen3_5": "IMAGEN_3_5 trả 404 khi đo 09/08/2026",
+}
+
 # All Flow models we expose. Used by list_models() so the chatgpt2api UI
 # dropdown shows the same options the Flow website does.
 # `internal` PHẢI khớp `_MODEL_ALIASES` ở trên — đó là tên thật gửi xuống bộ lái.
 # Trước đây `imagen-4` ghi "IMAGEN_4" ở đây trong khi alias gửi "IMAGEN_3_5"; hai
 # bảng nói khác nhau nên bảng nhãn bên bộ lái trông như đã đủ, và một yêu cầu
 # tạo ảnh đã lặng lẽ dựng thành video (sự cố 08/08/2026).
+# Flow chỉ còn BA model ảnh (09/08/2026). `flow/auto` đứng cuối không phải model
+# của Flow — nó là chỗ giữ chỗ do ta tạo ra để xoay model, và `backend_router`
+# xử lý nó như placeholder (bỏ qua khi lọc danh sách đã tick). Giữ trong bảng
+# này để thông báo lỗi vẫn nêu nó ra như một giá trị hợp lệ để truyền vào.
 FLOW_MODELS = [
     {"id": "flow/banana-pro",    "label": "Nano Banana Pro",    "internal": "GEM_PIX_2"},
     {"id": "flow/banana-2",      "label": "Nano Banana 2",      "internal": "NARWHAL"},
     {"id": "flow/banana-2-lite", "label": "Nano Banana 2 Lite", "internal": "HARBOR_SEAL"},
-    {"id": "flow/auto",          "label": "Auto (Pro)",         "internal": "GEM_PIX_2"},
+    # Không phải model Flow — xem ghi chú ngay trên.
+    {"id": "flow/auto",          "label": "Auto (xoay model)",  "internal": "GEM_PIX_2"},
 ]
 
 _ASPECT_FROM_SIZE: dict[tuple[int, int], str] = {
@@ -130,12 +147,25 @@ def _resolve_model(model: str) -> str:
     cả hai loại chung một không gian tên `flow/`, nên một cấu hình lệch có thể
     đẩy `flow/veo-3.1-fast` vào đây, và cho qua sẽ gửi `imageModelName:
     "VEO-3.1-FAST"` — một giá trị Flow không hiểu, hỏng mà không nói vì sao.
+
+    Model ảnh ĐÃ NGHỈ cũng chặn, cùng lý do. Cấu hình đang chạy là dữ liệu, không
+    phải mã: gỡ `flow/imagen-4` khỏi bảng bí danh không gỡ nó khỏi Quản lý Model
+    của một hệ thống đang chạy. Cho nó rơi xuống nhánh "tên lạ" sẽ gửi
+    `imageModelName: "IMAGEN-4"` — một chuỗi vô nghĩa — rồi nhận 400 không nêu
+    trường nào sai. Thà nói thẳng là model đã bị Flow bỏ.
     """
     raw = (model or "").strip().lower()
     if raw.startswith("flow/"):
         raw = raw[len("flow/"):]
     if raw in _MODEL_ALIASES:
         return _MODEL_ALIASES[raw]
+    if raw in _MODEL_ANH_DA_NGHI:
+        raise ValueError(
+            f"'flow/{raw}' là model ảnh Flow ĐÃ BỎ ({_MODEL_ANH_DA_NGHI[raw]}). "
+            f"Model ảnh còn dùng được: "
+            f"{', '.join(sorted(m['id'] for m in FLOW_MODELS))}. Nếu đây là model "
+            f"đang chọn trong Quản lý Model thì đổi lại."
+        )
     from utils.helper import VIDEO_GEN_MODELS
     if f"flow/{raw}" in VIDEO_GEN_MODELS:
         raise ValueError(
@@ -145,7 +175,7 @@ def _resolve_model(model: str) -> str:
             f"model ảnh."
         )
     # Default to the strongest model when no alias is given.
-    return raw.upper() if raw else "NANO_BANANA_PRO"
+    return raw.upper() if raw else "GEM_PIX_2"
 
 
 def _resolve_aspect(size: str | None) -> str:

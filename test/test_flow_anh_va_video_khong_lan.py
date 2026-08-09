@@ -1,7 +1,7 @@
 """Flow giữ model ảnh và model video chung một tên miền — đừng để chúng lẫn.
 
 Provider `flow` phơi ra tám model trong CÙNG một nhóm: bốn model ảnh
-(`flow/auto`, `banana-pro`, `banana-2`, `imagen-4`) và bốn model video
+(`flow/auto`, `banana-pro`, `banana-2`, `banana-2-lite`) và bốn model video
 (`omni-flash`, `veo-3.1-lite/fast/quality`). Tab Quản lý Model gom chúng thành
 một thẻ với MỘT ô "Đặt mặc định".
 
@@ -120,6 +120,21 @@ class ResolveModelTests(unittest.TestCase):
                 _resolve_model(m)
             loi = str(ctx.exception)
             self.assertIn("VIDEO", loi)
+            self.assertIn("flow/banana-pro", loi, "lỗi phải chỉ ra model dùng được")
+
+    def test_model_anh_DA_BO_bi_tu_choi_kem_ly_do(self):
+        """Cấu hình đang chạy là dữ liệu, không phải mã.
+
+        Gỡ `flow/imagen-4` khỏi bảng bí danh không gỡ nó khỏi Quản lý Model của
+        một hệ thống đang chạy. Nếu để nó rơi xuống nhánh "tên lạ" thì ta gửi
+        `imageModelName: "IMAGEN-4"` — chuỗi vô nghĩa — và nhận về 400 không nêu
+        trường nào sai, đúng kiểu lỗi tốn cả buổi để lần ra.
+        """
+        for m in ("flow/imagen-4", "flow/imagen", "imagen-3-5"):
+            with self.assertRaises(ValueError, msg=m) as ctx:
+                _resolve_model(m)
+            loi = str(ctx.exception)
+            self.assertIn("ĐÃ BỎ", loi)
             self.assertIn("flow/banana-pro", loi, "lỗi phải chỉ ra model dùng được")
 
     def test_ten_LA_van_di_qua_duoc(self):

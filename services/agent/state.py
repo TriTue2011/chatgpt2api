@@ -513,7 +513,7 @@ def load_model_specs() -> dict:
 
 def get_model_spec(model_id: str) -> dict | None:
     """Spec của model — khớp id chính xác, hoặc theo ĐUÔI (bỏ prefix provider) để
-    'imagen-4' khớp 'flow/imagen-4'."""
+    'banana-pro' khớp 'flow/banana-pro'."""
     mid = str(model_id or "").strip()
     if not mid:
         return None
