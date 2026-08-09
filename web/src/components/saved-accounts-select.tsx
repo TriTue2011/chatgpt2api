@@ -27,25 +27,36 @@ type Props = {
   }) => void;
   disabled?: boolean;
   refreshKey?: number;
+  /**
+   * Kho credential nào: "google" (mặc định) hay "openai". Hai kho TÁCH BIỆT —
+   * cùng một địa chỉ email có thể nằm ở cả hai với hai mật khẩu khác nhau.
+   * Không truyền đúng thì thẻ OpenAI gốc hiện tài khoản Google và người dùng
+   * chọn nhầm, rồi luồng đăng nhập nhận về mật khẩu của dịch vụ kia.
+   */
+  loai?: "google" | "openai";
 };
 
+// Cache PHẢI tách theo kho: dùng chung một khoá thì thẻ OpenAI gốc chớp hiện
+// danh sách tài khoản Google ở lần vẽ đầu (trước khi fetch về), người dùng kịp
+// bấm là chọn nhầm sang kho kia.
 const STORAGE_KEY = "chatgpt2api_saved_accounts_cache";
+const khoaCache = (loai: string) => `${STORAGE_KEY}_${loai}`;
 
 // Hide junk rows (empty / non-email like "" or "a") so only real accounts show.
 function isValidAccount(a: SavedAccount): boolean {
   return !!a && typeof a.email === "string" && a.email.trim().length > 2;
 }
 
-function cacheAccounts(accounts: SavedAccount[]) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts)); } catch {}
+function cacheAccounts(loai: string, accounts: SavedAccount[]) {
+  try { localStorage.setItem(khoaCache(loai), JSON.stringify(accounts)); } catch {}
 }
 
-function loadCached(): SavedAccount[] {
-  try { return (JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]") as SavedAccount[]).filter(isValidAccount); } catch { return []; }
+function loadCached(loai: string): SavedAccount[] {
+  try { return (JSON.parse(localStorage.getItem(khoaCache(loai)) || "[]") as SavedAccount[]).filter(isValidAccount); } catch { return []; }
 }
 
-export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disabled, refreshKey }: Props) {
-  const [accounts, setAccounts] = useState<SavedAccount[]>(loadCached());
+export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disabled, refreshKey, loai = "google" }: Props) {
+  const [accounts, setAccounts] = useState<SavedAccount[]>(() => loadCached(loai));
   // Cờ "kho đang giữ gì" của tài khoản đang chọn. Server chỉ trả has_password/
   // has_totp — không có cách nào xem giá trị thật từ trình duyệt.
   const [flags, setFlags] = useState<{ pw: boolean; totp: boolean } | null>(null);
@@ -69,7 +80,7 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
   async function fetchTotpCode() {
     if (!selected) return;
     try {
-      const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(selected)}/totp`, {
+      const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(selected)}/totp?loai=${loai}`, {
         headers: { Authorization: `Bearer ${csApiKey}` },
       });
       const d = await res.json().catch(() => null);
@@ -91,17 +102,17 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
     // now a constant ("/api/captcha"), so without it the list never re-fetches
     // with a valid token and stays empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [csUrl, csApiKey, refreshKey]);
+  }, [csUrl, csApiKey, refreshKey, loai]);
 
   async function fetchAccounts() {
     try {
-      const res = await fetch(`${csUrl}/v1/accounts/saved`, {
+      const res = await fetch(`${csUrl}/v1/accounts/saved?loai=${loai}`, {
         headers: { Authorization: `Bearer ${csApiKey}` },
       });
       if (res.ok) {
         const data = (await res.json() as SavedAccount[]).filter(isValidAccount);
         setAccounts(data);
-        cacheAccounts(data);
+        cacheAccounts(loai, data);
       }
     } catch { /* ignore */ }
   }
@@ -121,7 +132,7 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
       // Đăng nhập đi đường `/v1/session/auto-login-saved`: nó nhận tên profile
       // rồi TỰ tra credential. Form vì thế để trống ô mật khẩu — đó là chủ ý,
       // không phải thiếu dữ liệu.
-      const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(email)}`, {
+      const res = await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(email)}?loai=${loai}`, {
         headers: { Authorization: `Bearer ${csApiKey}` },
       });
       if (res.ok) {
@@ -148,7 +159,7 @@ export function SavedAccountsSelect({ csUrl, csApiKey, selected, onSelect, disab
 
   async function deleteAccount(email: string) {
     try {
-      await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(email)}`, {
+      await fetch(`${csUrl}/v1/accounts/saved/${encodeURIComponent(email)}?loai=${loai}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${csApiKey}` },
       });

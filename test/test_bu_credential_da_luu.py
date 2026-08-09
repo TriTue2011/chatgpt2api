@@ -43,9 +43,19 @@ class YeuCauGia:
 
 
 def _bu(monkey_store: dict):
-    """Nạp `bu_credential` với `resolve_account` giả — khỏi cần sqlite thật."""
+    """Nạp `bu_credential` với `resolve_account` giả — khỏi cần sqlite thật.
+
+    Từ 09/08/2026 `bu_credential` còn suy ra KHO (google / openai gốc) từ tên hồ
+    sơ rồi truyền xuống, nên hàm giả phải nhận thêm tham số đó. Kho ở đây không
+    ảnh hưởng khẳng định nào — chuyện tách kho được chốt riêng ở
+    `test_tach_kho_credential.py`.
+    """
     than = NGUON[NGUON.index("def bu_credential"):NGUON.index("class TwoFactorCodeReq")]
-    ns = {"resolve_account": lambda k: monkey_store.get(k)}
+    ns = {
+        "resolve_account": lambda k, loai=None: monkey_store.get(k),
+        "loai_theo_profile": lambda p: (
+            "openai" if str(p or "").strip().lower().startswith("openai-") else "google"),
+    }
     exec(compile(than, "bu", "exec"), ns)
     return ns["bu_credential"]
 

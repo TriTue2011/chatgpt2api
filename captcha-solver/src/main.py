@@ -28,9 +28,12 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .accounts_db import (
+    LOAI_GOOGLE,
+    LOAI_OPENAI,
     delete_account,
     get_account,
     list_accounts,
+    loai_theo_profile,
     resolve_account,
     save_account,
     set_totp,
@@ -231,12 +234,17 @@ def bu_credential(req) -> tuple[str, str]:
     tt = str(getattr(req, "totp_secret", "") or "").strip()
     if mk and tt:
         return mk, tt
-    khoa = str(getattr(req, "email", "") or "").strip() or \
-        str(getattr(req, "profile", "") or "").strip()
+    ho_so = str(getattr(req, "profile", "") or "").strip()
+    khoa = str(getattr(req, "email", "") or "").strip() or ho_so
     if not khoa:
         return mk, tt
+    # Kho nào là do TÊN HỒ SƠ quyết định, không phải email: cùng một địa chỉ
+    # `@gmail.com` có thể có bản ghi ở cả hai kho với hai mật khẩu khác nhau.
+    # Tra nhầm kho là gõ mật khẩu Google vào form OpenAI (hoặc ngược lại), và
+    # sai vài lần liên tiếp thì tài khoản bị khoá.
+    kho = loai_theo_profile(ho_so) if ho_so else None
     try:
-        acct = resolve_account(khoa) or {}
+        acct = resolve_account(khoa, kho) or {}
     except Exception:
         return mk, tt
     return (mk or str(acct.get("password") or "").strip(),
@@ -1168,7 +1176,9 @@ async def api_openai_native_onboard(req: OpenAIOnboardReq) -> dict[str, Any]:
     )
     if req.email.strip() and req.password.strip():
         try:
-            save_account(req.email, req.password, req.totp_secret, "")
+            # Kho RIÊNG: mật khẩu ở đây là mật khẩu của chính OpenAI. Ghi chung
+            # kho Google là đè mất mật khẩu Google của cùng địa chỉ email đó.
+            save_account(req.email, req.password, req.totp_secret, "", LOAI_OPENAI)
         except Exception:
             pass
     return {
@@ -1722,7 +1732,10 @@ async def _auto_refresh_loop(interval_minutes: int = 30):
         try:
             from .accounts_db import list_accounts as db_list
 
-            accounts = db_list()
+            # CHỈ kho Google: vòng này đăng nhập lại bằng `start_chatgpt_onboard`
+            # (bấm "Continue with Google"). Cho tài khoản OpenAI gốc vào đây là
+            # gõ mật khẩu OpenAI vào form Google — sai liên tiếp thì bị khoá.
+            accounts = db_list(LOAI_GOOGLE)
             for acct in accounts:
                 if not _refresh_running:
                     break
@@ -1751,7 +1764,7 @@ async def _auto_refresh_loop(interval_minutes: int = 30):
 
                     # Scrape failed — full re-login
                     try:
-                        full = get_account(email)
+                        full = get_account(email, LOAI_GOOGLE)
                         if not full:
                             continue
 
@@ -1891,16 +1904,23 @@ class SaveAccountReq(BaseModel):
     password: str
     totp_secret: str = ""
     label: str = ""
+    # 'google' (mặc định) hay 'openai' — hai kho tách biệt, xem accounts_db.
+    loai: str = "google"
 
 
 @app.get("/v1/accounts/saved", dependencies=[Depends(require_api_key)])
-async def api_accounts_list() -> list[dict]:
-    """List saved accounts (no passwords exposed)."""
-    return list_accounts()
+async def api_accounts_list(loai: str = "") -> list[dict]:
+    """List saved accounts (no passwords exposed).
+
+    `loai=google` / `loai=openai` để lấy ĐÚNG một kho. Bỏ trống trả cả hai —
+    chỉ dùng cho việc quản trị; giao diện luôn truyền loại, nếu không thẻ
+    OpenAI gốc lại hiện tài khoản Google và người dùng chọn nhầm.
+    """
+    return list_accounts(loai.strip().lower() or None)
 
 
 @app.get("/v1/accounts/saved/{email}", dependencies=[Depends(require_api_key)])
-async def api_accounts_get(email: str) -> dict[str, Any]:
+async def api_accounts_get(email: str, loai: str = "") -> dict[str, Any]:
     """Thông tin tài khoản — KHÔNG kèm mật khẩu lẫn hạt giống TOTP.
 
     Bản cũ trả `dict(acct)` nguyên vẹn, tức là mật khẩu Google và hạt giống
@@ -1912,7 +1932,7 @@ async def api_accounts_get(email: str) -> dict[str, Any]:
     credential từ kho, chỉ nhận tên profile. Mật khẩu không rời khỏi tiến
     trình solver.
     """
-    acct = get_account(email)
+    acct = get_account(email, loai.strip().lower() or None)
     if not acct:
         raise HTTPException(404, "Account not found")
     return {
@@ -1926,7 +1946,7 @@ async def api_accounts_get(email: str) -> dict[str, Any]:
 
 
 @app.get("/v1/accounts/saved/{email}/totp", dependencies=[Depends(require_api_key)])
-async def api_accounts_totp(email: str) -> dict[str, Any]:
+async def api_accounts_totp(email: str, loai: str = "") -> dict[str, Any]:
     """MÃ TOTP hiện tại — không bao giờ trả hạt giống.
 
     Giao diện trước đây tự sinh mã trong trình duyệt, nên nó phải giữ HẠT
@@ -1936,7 +1956,7 @@ async def api_accounts_totp(email: str) -> dict[str, Any]:
     """
     import time as _t
 
-    acct = get_account(email)
+    acct = get_account(email, loai.strip().lower() or None)
     if not acct:
         raise HTTPException(404, "Account not found")
     seed = str(acct.get("totp_secret") or "").strip()
@@ -1963,9 +1983,9 @@ class DatTotpReq(BaseModel):
 
 
 @app.put("/v1/accounts/saved/{email}/totp", dependencies=[Depends(require_api_key)])
-async def api_accounts_set_totp(email: str, req: DatTotpReq) -> dict[str, Any]:
+async def api_accounts_set_totp(email: str, req: DatTotpReq, loai: str = "") -> dict[str, Any]:
     """Đặt/xoá hạt giống TOTP. Nhận vào, KHÔNG bao giờ trả ra."""
-    if not set_totp(email, str(req.totp_secret or "").strip()):
+    if not set_totp(email, str(req.totp_secret or "").strip(), loai.strip().lower() or None):
         raise HTTPException(404, "Account not found")
     return {"ok": True, "has_totp": bool(str(req.totp_secret or "").strip())}
 
@@ -1983,13 +2003,13 @@ async def api_accounts_save(req: SaveAccountReq) -> dict[str, Any]:
     if "@" not in email:
         email = f"{email}@gmail.com"
         
-    return save_account(email, req.password, req.totp_secret, req.label)
+    return save_account(email, req.password, req.totp_secret, req.label, req.loai)
 
 
 @app.delete("/v1/accounts/saved/{email}", dependencies=[Depends(require_api_key)])
-async def api_accounts_delete(email: str) -> dict[str, Any]:
+async def api_accounts_delete(email: str, loai: str = "") -> dict[str, Any]:
     """Delete a saved account."""
-    ok = delete_account(email)
+    ok = delete_account(email, loai.strip().lower() or None)
     if not ok:
         raise HTTPException(404, "Account not found")
     return {"ok": True, "email": email}

@@ -170,6 +170,7 @@ export function OpenAINativeCard() {
         </p>
 
         <SavedAccountsSelect
+          loai="openai"
           csUrl={cs.url}
           csApiKey={cs.apiKey}
           selected={chon}

@@ -30,25 +30,114 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+# Hai kho tách biệt trong cùng một bảng, phân bằng cột `loai`:
+#
+#   'google' — tài khoản Google. Mật khẩu là mật khẩu GOOGLE, 2FA của Google.
+#              Phục vụ Flow, Gemini web, Claude web, ChatGPT-qua-Google, Codex.
+#   'openai' — tài khoản OpenAI gốc. Mật khẩu là mật khẩu của chính OPENAI,
+#              2FA của OpenAI. Chỉ phục vụ luồng `openai_native_login`.
+#
+# VÌ SAO PHẢI TÁCH: cùng một địa chỉ `@gmail.com` có thể vừa là tài khoản Google
+# vừa là tài khoản OpenAI gốc, với HAI mật khẩu khác hẳn nhau. Bảng cũ để
+# `email` UNIQUE nên hai thứ đó đè lên nhau, và `resolve_account` khớp theo
+# localpart nên luồng đăng nhập OpenAI có thể nhận về mật khẩu Google (và ngược
+# lại) — sai mật khẩu liên tiếp là đường ngắn nhất tới khoá tài khoản.
+LOAI_GOOGLE = "google"
+LOAI_OPENAI = "openai"
+_LOAI_HOP_LE = (LOAI_GOOGLE, LOAI_OPENAI)
+
+
+def _chuan_loai(loai: str | None) -> str:
+    l = str(loai or "").strip().lower()
+    return l if l in _LOAI_HOP_LE else LOAI_GOOGLE
+
+
+def _thu_muc_profile() -> str:
+    """Thư mục hồ sơ trình duyệt, suy từ đường dẫn DB (cùng `data_dir`)."""
+    return os.path.join(os.path.dirname(_DB_PATH), "profiles")
+
+
+def _loai_theo_ho_so(email: str) -> str:
+    """Đoán loại của một bản ghi CŨ bằng hồ sơ trình duyệt có thật trên đĩa.
+
+    Chỉ dùng MỘT LẦN lúc chuyển đổi. Hồ sơ `openai-<localpart>` chỉ có thể do
+    thẻ OpenAI gốc tạo ra, nên nó là bằng chứng chắc chắn; không có thì mặc định
+    'google' — đúng với mọi bản ghi có từ trước, vì trước đây kho này chỉ dùng
+    cho tài khoản Google.
+    """
+    local = (email or "").split("@")[0]
+    an_toan = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in local)
+    try:
+        co = set(os.listdir(_thu_muc_profile()))
+    except OSError:
+        return LOAI_GOOGLE
+    for ten in (local, an_toan, an_toan.lower()):
+        if f"openai-{ten}" in co:
+            return LOAI_OPENAI
+    return LOAI_GOOGLE
+
+
 def init_db() -> None:
     c = _conn()
     c.execute("""
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
             password TEXT NOT NULL,
             totp_secret TEXT NOT NULL DEFAULT '',
             label TEXT DEFAULT '',
+            loai TEXT NOT NULL DEFAULT 'google',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (email, loai)
         )
     """)
+    cot = {r[1] for r in c.execute("PRAGMA table_info(accounts)")}
+    if "loai" not in cot:
+        # Bảng cũ: `email` UNIQUE một mình. Phải DỰNG LẠI mới đổi được ràng buộc
+        # sang UNIQUE(email, loai) — SQLite không ALTER được UNIQUE. Làm gọn
+        # trong MỘT transaction: DDL của SQLite có transaction, nên hoặc xong
+        # hẳn hoặc không đổi gì. Kho này giữ credential, nửa vời là mất mật khẩu.
+        cu = c.execute("SELECT email, password, totp_secret, label, "
+                       "created_at, updated_at FROM accounts").fetchall()
+        c.execute("BEGIN")
+        try:
+            c.execute("""
+                CREATE TABLE accounts_moi (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    totp_secret TEXT NOT NULL DEFAULT '',
+                    label TEXT DEFAULT '',
+                    loai TEXT NOT NULL DEFAULT 'google',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (email, loai)
+                )
+            """)
+            for r in cu:
+                c.execute(
+                    "INSERT INTO accounts_moi (email, password, totp_secret, label, "
+                    "loai, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                    (r["email"], r["password"], r["totp_secret"], r["label"],
+                     _loai_theo_ho_so(r["email"]), r["created_at"], r["updated_at"]),
+                )
+            c.execute("DROP TABLE accounts")
+            c.execute("ALTER TABLE accounts_moi RENAME TO accounts")
+            c.execute("COMMIT")
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
     c.commit()
     c.close()
 
 
-def list_accounts() -> list[dict]:
+def list_accounts(loai: str | None = None) -> list[dict]:
     """Danh sách tài khoản — KHÔNG kèm mật khẩu lẫn hạt giống TOTP.
+
+    `loai=None` trả CẢ HAI kho (dùng cho việc quản trị/di trú). Giao diện và
+    mọi luồng đăng nhập phải truyền loại rõ ràng, nếu không thẻ OpenAI gốc lại
+    hiện tài khoản Google và người dùng chọn nhầm.
 
     Bản cũ ghi chú "without password for safety" nhưng vẫn trả `totp_secret`.
     Hạt giống TOTP không phải "mã 6 số": nó SINH RA mọi mã 6 số từ nay về sau,
@@ -56,9 +145,16 @@ def list_accounts() -> list[dict]:
     chỉ trả cờ `has_totp` — đủ cho giao diện, không đủ để mạo danh.
     """
     c = _conn()
-    rows = c.execute(
-        "SELECT id, email, totp_secret, label, created_at, updated_at FROM accounts ORDER BY email"
-    ).fetchall()
+    if loai is None:
+        rows = c.execute(
+            "SELECT id, email, totp_secret, label, loai, created_at, updated_at "
+            "FROM accounts ORDER BY email"
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT id, email, totp_secret, label, loai, created_at, updated_at "
+            "FROM accounts WHERE loai = ? ORDER BY email", (_chuan_loai(loai),)
+        ).fetchall()
     c.close()
     ra = []
     for r in rows:
@@ -68,10 +164,17 @@ def list_accounts() -> list[dict]:
     return ra
 
 
-def get_account(email: str) -> Optional[dict]:
-    """Bản ghi đầy đủ, đã giải mã. Chỉ dùng cho luồng đăng nhập thật."""
+def get_account(email: str, loai: str | None = None) -> Optional[dict]:
+    """Bản ghi đầy đủ, đã giải mã. Chỉ dùng cho luồng đăng nhập thật.
+
+    `loai=None` = lấy bản ghi Google (giữ nguyên hành vi của mọi nơi gọi cũ).
+    Luồng OpenAI gốc PHẢI truyền `loai='openai'`: cùng một địa chỉ email có thể
+    có hai bản ghi với hai mật khẩu khác nhau, lấy nhầm là gõ mật khẩu Google
+    vào form OpenAI rồi bị khoá vì sai liên tiếp.
+    """
     c = _conn()
-    row = c.execute("SELECT * FROM accounts WHERE email = ?", (email,)).fetchone()
+    row = c.execute("SELECT * FROM accounts WHERE email = ? AND loai = ?",
+                    (email, _chuan_loai(loai))).fetchone()
     c.close()
     if not row:
         return None
@@ -82,14 +185,29 @@ def get_account(email: str) -> Optional[dict]:
     return d
 
 
-def resolve_account(profile_or_email: str) -> Optional[dict]:
+def loai_theo_profile(profile_or_email: str) -> str:
+    """Hồ sơ `openai-…` thuộc kho OpenAI gốc; mọi thứ còn lại thuộc kho Google."""
+    return (LOAI_OPENAI if str(profile_or_email or "").strip().lower().startswith("openai-")
+            else LOAI_GOOGLE)
+
+
+def resolve_account(profile_or_email: str, loai: str | None = None) -> Optional[dict]:
     """Tìm credential theo EMAIL chính xác, hoặc theo PROFILE NAME (google-benbap2011,
     chatgpt-benbap2011, claude-web-benbap2011...) bằng cách bỏ tiền tố dịch vụ rồi
     khớp localpart email. Nhờ vậy MỘT Google account đã lưu phục vụ MỌI profile dịch
-    vụ cùng localpart → reuse không cần nhập lại mật khẩu."""
+    vụ cùng localpart → reuse không cần nhập lại mật khẩu.
+
+    Việc khớp theo localpart CHỈ được phép trong CÙNG MỘT KHO. Không có ràng
+    buộc đó thì `openai-benbap2011` sẽ khớp trúng tài khoản Google
+    `benbap2011@gmail.com` và luồng đăng nhập OpenAI nhận về mật khẩu Google —
+    sai mật khẩu vài lần liên tiếp là đủ để OpenAI khoá tài khoản.
+
+    `loai=None` → suy từ tiền tố hồ sơ. Truyền tay khi người gọi chỉ có email.
+    """
     if not profile_or_email:
         return None
-    acct = get_account(profile_or_email)          # khớp email chính xác
+    kho = _chuan_loai(loai) if loai else loai_theo_profile(profile_or_email)
+    acct = get_account(profile_or_email, kho)     # khớp email chính xác
     if acct:
         return acct
     name = profile_or_email.strip().lower()
@@ -102,35 +220,44 @@ def resolve_account(profile_or_email: str) -> Optional[dict]:
     name = name.replace("-", "").replace(".", "")
     if not name:
         return None
-    for a in list_accounts():
+    for a in list_accounts(kho):
         local = str(a.get("email") or "").split("@")[0].lower().replace(".", "").replace("-", "")
         if local == name:
-            return get_account(a["email"])
+            return get_account(a["email"], kho)
     return None
 
 
-def save_account(email: str, password: str, totp_secret: str = "", label: str = "") -> dict:
-    """Insert or update an account. Returns the saved row (without password)."""
+def save_account(email: str, password: str, totp_secret: str = "", label: str = "",
+                 loai: str | None = None) -> dict:
+    """Insert or update an account. Returns the saved row (without password).
+
+    Ghi vào ĐÚNG kho `loai`. Cùng một email ở hai kho là hai bản ghi độc lập —
+    lưu mật khẩu OpenAI không được đè lên mật khẩu Google của cùng địa chỉ đó.
+    """
+    kho = _chuan_loai(loai)
     # Mã hoá TRƯỚC khi chạm SQL — không để giá trị thường đi vào câu lệnh,
     # vì SQLite ghi cả câu lệnh vào WAL.
     mk = vault.ma_hoa(password, email, "password")
     tt = vault.ma_hoa(totp_secret, email, "totp_secret")
     c = _conn()
-    existing = c.execute("SELECT id FROM accounts WHERE email = ?", (email,)).fetchone()
+    existing = c.execute("SELECT id FROM accounts WHERE email = ? AND loai = ?",
+                         (email, kho)).fetchone()
     if existing:
         c.execute(
             """UPDATE accounts
                SET password = ?, totp_secret = ?, label = ?, updated_at = CURRENT_TIMESTAMP
-               WHERE email = ?""",
-            (mk, tt, label, email),
+               WHERE email = ? AND loai = ?""",
+            (mk, tt, label, email, kho),
         )
     else:
         c.execute(
-            "INSERT INTO accounts (email, password, totp_secret, label) VALUES (?, ?, ?, ?)",
-            (email, mk, tt, label),
+            "INSERT INTO accounts (email, password, totp_secret, label, loai) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (email, mk, tt, label, kho),
         )
     c.commit()
-    row = c.execute("SELECT id, email, totp_secret, label, created_at, updated_at FROM accounts WHERE email = ?", (email,)).fetchone()
+    row = c.execute("SELECT id, email, totp_secret, label, loai, created_at, updated_at "
+                    "FROM accounts WHERE email = ? AND loai = ?", (email, kho)).fetchone()
     c.close()
     if not row:
         return {}
@@ -139,7 +266,7 @@ def save_account(email: str, password: str, totp_secret: str = "", label: str = 
     return d
 
 
-def set_totp(email: str, totp_secret: str) -> bool:
+def set_totp(email: str, totp_secret: str, loai: str | None = None) -> bool:
     """Chỉ cập nhật hạt giống TOTP, KHÔNG đụng mật khẩu.
 
     Cần một đường riêng vì `save_account` ghi cả mật khẩu — giao diện đặt TOTP
@@ -150,7 +277,7 @@ def set_totp(email: str, totp_secret: str) -> bool:
     try:
         cur = c.execute(
             "UPDATE accounts SET totp_secret = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE email = ?", (tt, email))
+            "WHERE email = ? AND loai = ?", (tt, email, _chuan_loai(loai)))
         ok = cur.rowcount > 0
         c.commit()
     finally:
@@ -158,7 +285,7 @@ def set_totp(email: str, totp_secret: str) -> bool:
     return ok
 
 
-def delete_account(email: str) -> bool:
+def delete_account(email: str, loai: str | None = None) -> bool:
     c = _conn()
     # `rowcount` nằm trên CON TRỎ, không nằm trên kết nối. Bản cũ đọc
     # `c.rowcount` nên ném AttributeError ngay TRƯỚC `c.commit()` — lệnh xoá
@@ -167,7 +294,8 @@ def delete_account(email: str) -> bool:
     # Đo trên máy chủ 05/08: xoá smarthomebenbap@gmail.com trả HTTP 500, tới
     # 19:06 tài khoản đó xuất hiện lại với "Thêm 1 free".
     try:
-        cur = c.execute("DELETE FROM accounts WHERE email = ?", (email,))
+        cur = c.execute("DELETE FROM accounts WHERE email = ? AND loai = ?",
+                        (email, _chuan_loai(loai)))
         deleted = cur.rowcount > 0
         c.commit()
     finally:
