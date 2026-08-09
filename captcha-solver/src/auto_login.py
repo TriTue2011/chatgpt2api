@@ -775,25 +775,23 @@ async def do_google_login_steps(
     async def _bam_lai_vao_mail() -> bool:
         """BẤM LẠI VÀO MAIL — đúng thao tác của lần đầu.
 
-        Ưu tiên tile tài khoản ở màn "Chọn tài khoản"; không có tile thì điền
-        email vào ô rồi bấm Tiếp theo. True nếu đã bấm/điền được gì.
+        THỨ TỰ QUAN TRỌNG: có Ô NHẬP email hiện ra thì ĐIỀN, đó là ưu tiên tuyệt
+        đối. Chỉ khi KHÔNG có ô nhập mới đi tìm tile — vì màn "Chọn tài khoản"
+        không có ô nhập, còn màn identifier thì có; hai màn đó loại trừ nhau.
+
+        Bản cũ làm ngược: dò tile TRƯỚC, và nhánh dò thứ hai nhận bất kỳ phần tử
+        nào có innerText CHỨA email, không hề kiểm phần tử đó có hiển thị không.
+        Trên màn identifier vẫn có phần tử ẩn dính chuỗi email, nên nó "bấm"
+        trúng một thứ vô hình, trả True, và nhánh điền email KHÔNG BAO GIỜ chạy.
+
+        Đo thật 09/08/2026 (google-nguyenvanviet210290): log ghi "bấm lại vào
+        mail lần 125" trong khi ảnh noVNC cho thấy ô email vẫn TRỐNG TRƠN. Vòng
+        lặp quay đủ 420 giây rồi báo "không vào được ô mật khẩu (Google chặn
+        hoặc đổi giao diện)" — đổ lỗi cho Google, trong khi chưa từng gõ nổi một
+        ký tự. Vì tầng T3 của khôi phục nhiều tầng gọi đúng luồng này, mọi lượt
+        tự khôi phục tài khoản Google đều trượt theo cùng một lý do sai.
         """
         try:
-            tile = await page.evaluate(
-                """(em) => {
-                    const els = Array.from(document.querySelectorAll('div[data-identifier],li,div[role=link],div[role=button],a,div[jsname]'));
-                    for (const e of els) {
-                        const id = (e.getAttribute('data-identifier')||'').toLowerCase();
-                        if (id && id === em) { e.click(); return true; }
-                    }
-                    for (const e of els) {
-                        if ((e.innerText||'').toLowerCase().includes(em)) { e.click(); return true; }
-                    }
-                    return false;
-                }""", session.email.lower()
-            )
-            if tile:
-                return True
             for _sel in ('input[type="email"]', 'input#identifierId',
                          'input[name="identifier"]', 'input[autocomplete="username"]',
                          'input[autocomplete="email"]'):
@@ -821,6 +819,32 @@ async def do_google_login_steps(
                         return True
                 except Exception:
                     continue
+
+            # Không có ô nhập → đang ở màn "Chọn tài khoản". Bấm đúng tile của
+            # email này. BẮT BUỘC kiểm hiển thị: phần tử ẩn vẫn nhận `click()`
+            # mà không xảy ra gì, và trả True là nuốt mất cả vòng thử.
+            tile = await page.evaluate(
+                """(em) => {
+                    const hien = (e) => {
+                        if (!e.offsetParent) return false;
+                        const r = e.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    };
+                    const els = Array.from(document.querySelectorAll(
+                        'div[data-identifier],li,div[role=link],div[role=button],a,div[jsname]'));
+                    for (const e of els) {
+                        const id = (e.getAttribute('data-identifier')||'').toLowerCase();
+                        if (id && id === em && hien(e)) { e.click(); return true; }
+                    }
+                    for (const e of els) {
+                        if (!hien(e)) continue;
+                        if ((e.innerText||'').toLowerCase().includes(em)) { e.click(); return true; }
+                    }
+                    return false;
+                }""", session.email.lower()
+            )
+            if tile:
+                return True
         except Exception:
             pass
         return False

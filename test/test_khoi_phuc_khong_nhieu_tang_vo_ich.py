@@ -106,11 +106,25 @@ class TestKienTriNhuChiDangNhap(unittest.TestCase):
         khuc = self.code[max(0, i - 400):i]
         self.assertNotIn("%", khuc.split("await asyncio.sleep")[-1])
 
-    def test_bam_lai_vao_mail_uu_tien_tile_roi_moi_den_o_email(self):
+    def test_bam_lai_vao_mail_uu_tien_O_EMAIL_roi_moi_den_tile(self):
+        """ĐẢO so với bản trước, vì bản trước encode đúng một con bug.
+
+        Khẳng định cũ ("tile trước, ô email sau") không kèm lý do nào — khác mọi
+        test còn lại trong file này, cái nào cũng ghi sự cố mà nó khoá lại. Và
+        nó chốt cứng đúng thứ tự đã gây ra sự cố 09/08/2026: nhánh dò tile nhận
+        bất kỳ phần tử nào có innerText chứa email, không kiểm hiển thị, nên trên
+        màn identifier nó bấm trúng một phần tử ẩn rồi trả True — nhánh điền
+        email không bao giờ chạy. Log: "bấm lại vào mail lần 125" trong khi ảnh
+        noVNC cho thấy ô email trống trơn, rồi báo "Google chặn" oan.
+
+        Hai màn loại trừ nhau nên thứ tự mới không mơ hồ: màn identifier CÓ ô
+        nhập và KHÔNG có tile; màn "Chọn tài khoản" có tile và KHÔNG có ô nhập.
+        Chi tiết ở `test_dien_email_truoc_khi_bam_tile.py`.
+        """
         i = self.code.index("async def _bam_lai_vao_mail")
-        khuc = self.code[i:i + 2600]
-        self.assertIn("data-identifier", khuc)
-        self.assertLess(khuc.index("data-identifier"), khuc.index('input[type="email"]'))
+        khuc = self.code[i:self.code.index("_CAPTCHA_SELECTORS", i)]
+        self.assertIn("data-identifier", khuc, "vẫn phải giữ nhánh tile")
+        self.assertLess(khuc.index('input[type="email"]'), khuc.index("data-identifier"))
 
     def test_khong_tu_them_buoc_dung_tai_khoan_khac(self):
         """Bước này KHÔNG có trong luồng "Chỉ đăng nhập" — đã bỏ hẳn."""
