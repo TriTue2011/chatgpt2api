@@ -1492,6 +1492,47 @@ async def api_chatgpt_onboard_2fa_code(profile: str, req: ChatGPT2FACodeReq) -> 
     return {"profile": profile, "state": session.state, "message": "Da nhan ma"}
 
 
+# Tiền tố tên profile của các đường onboard — dùng để lần ra localpart rồi tìm
+# profile ANH EM của cùng một tài khoản.
+_TIEN_TO_HO_SO = ("google-", "chatgpt-web-", "chatgpt-", "openai-",
+                  "gemini-web-", "gemini-", "claude-web-", "claude-")
+
+
+def _ho_so_ung_vien(profile: str) -> list[str]:
+    """Các profile có thể chứa phiên ChatGPT của tài khoản này, theo thứ tự ưu tiên.
+
+    Bộ lịch làm mới JWT (`services/jwt_refresh_scheduler._profile_for_email`)
+    suy ra tên profile là `google-<localpart>` cho MỌI tài khoản, vì JWT không
+    nói tài khoản đã đăng nhập bằng đường nào. Tài khoản OpenAI gốc lại nằm ở
+    `openai-<localpart>` (quy ước của `openai-native-card.tsx`), nên yêu cầu làm
+    mới trỏ vào một profile không phải của nó: tier 1 không có phiên nào để
+    quét, và tier 2 chạy luồng Google cho một tài khoản không hề có mật khẩu
+    Google — hỏng cả hai tầng, tài khoản kẹt tới lúc có người bấm tay.
+
+    KHÔNG suy ra kiểu tài khoản bằng "thư mục nào có thật" như
+    `account_recovery._profile_for`: ở đây thư mục `google-<localpart>` KHÔNG
+    phải bằng chứng. Chính tier 1 tạo ra nó — `pool.page()` mở Chrome với
+    user_data_dir đó, nên sau đúng một lần làm mới hụt, tài khoản OpenAI gốc
+    cũng có một thư mục `google-` đầy đủ nhưng chưa từng đăng nhập. Ngược lại
+    `openai-<localpart>` chỉ có thể do thẻ OpenAI gốc tạo, nên nó LÀ bằng chứng.
+    """
+    ten = str(profile or "").strip()
+    local = ten
+    for pfx in _TIEN_TO_HO_SO:
+        if ten.startswith(pfx):
+            local = ten[len(pfx):]
+            break
+    ds = [ten] if ten else []
+    anh_em = f"openai-{local}" if local else ""
+    if anh_em and anh_em != ten:
+        try:
+            if (settings.data_dir / "profiles" / anh_em).is_dir():
+                ds.append(anh_em)
+        except OSError:
+            pass
+    return ds
+
+
 @app.get("/v1/chatgpt/{profile}/refresh-jwt", dependencies=[Depends(require_api_key)])
 async def api_chatgpt_refresh_jwt(profile: str) -> dict[str, Any]:
     """Re-scrape JWT from session, or full re-login if expired.
@@ -1499,58 +1540,91 @@ async def api_chatgpt_refresh_jwt(profile: str) -> dict[str, Any]:
     Strategy:
     1. Try scraping JWT from existing browser session (fast)
     2. If JWT missing/expired, look up saved credentials from accounts_db
-    3. Run full ChatGPT onboard with saved email/password/totp_secret
+    3. Run full re-login — luồng OpenAI gốc hay luồng Google tuỳ theo profile
     4. Return fresh JWT
     """
+    ung_vien = _ho_so_ung_vien(profile)
     # Step 1: Try quick scrape from existing session
-    try:
-        async with pool.page(profile=profile, headless=True) as page:
-            if "chatgpt.com" not in (page.url or ""):
-                await page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=20_000)
-                await asyncio.sleep(3.0)
-            from .chatgpt_login import _scrape_chatgpt_token
-            token, email, preview = await _scrape_chatgpt_token(page)
-            if token:
-                logger.info("refresh_jwt: quick scrape OK for %s", profile)
-                await _update_chatgpt2api_token(token)   # đẩy JWT mới vào pool chatgpt2api
-                return {
-                    "profile": profile,
-                    "ok": True,
-                    "method": "scrape",
-                    "access_token": token,
-                    "access_token_preview": preview,
-                    "captured_email": email,
-                }
-    except Exception:
-        pass
+    for ten in ung_vien:
+        try:
+            async with pool.page(profile=ten, headless=True) as page:
+                if "chatgpt.com" not in (page.url or ""):
+                    await page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=20_000)
+                    await asyncio.sleep(3.0)
+                from .chatgpt_login import _scrape_chatgpt_token
+                token, email, preview = await _scrape_chatgpt_token(page)
+                if token:
+                    logger.info("refresh_jwt: quick scrape OK for %s", ten)
+                    await _update_chatgpt2api_token(token)   # đẩy JWT mới vào pool chatgpt2api
+                    return {
+                        "profile": ten,
+                        "ok": True,
+                        "method": "scrape",
+                        "access_token": token,
+                        "access_token_preview": preview,
+                        "captured_email": email,
+                    }
+        except Exception:
+            continue
 
-    # Step 2: Quick scrape failed — try full re-login with saved credentials
+    # Step 2: Quick scrape failed — try full re-login with saved credentials.
+    # Đăng nhập lại vào ứng viên CUỐI: `_ho_so_ung_vien` chỉ thêm profile
+    # `openai-` khi nó có thật, và chỉ thẻ OpenAI gốc tạo ra được nó — có nó
+    # nghĩa là tài khoản này đi đường OpenAI gốc, không phải đường Google.
+    profile = ung_vien[-1] if ung_vien else profile
     acct = resolve_account(profile)
     if not acct:
         return {"profile": profile, "ok": False, "error": "Session expired + no saved credentials found for this profile"}
 
-    logger.info("refresh_jwt: session expired for %s, re-logging in with saved credentials", profile)
+    # Tài khoản OpenAI gốc giữ mật khẩu và 2FA ở OpenAI, không có đường Google
+    # nào để đi — chạy `start_chatgpt_onboard` cho nó là bấm "Continue with
+    # Google" rồi điền mật khẩu OpenAI vào form của Google, chắc chắn hỏng.
+    la_openai_goc = profile.startswith("openai-")
+    logger.info("refresh_jwt: session expired for %s, re-logging in with saved credentials (%s)",
+                profile, "openai-goc" if la_openai_goc else "google")
     try:
-        from .chatgpt_login import start_chatgpt_onboard, get_session as get_chatgpt_session
-
         # Kill old session
         await pool.close_profile(profile)
 
-        # Start re-login
-        session = await start_chatgpt_onboard(
-            profile=profile,
-            email=acct["email"],
-            password=acct["password"],
-            totp_secret=acct.get("totp_secret", ""),
-        )
+        # Start re-login. Hai luồng khác nhau ở cách đăng nhập, nhưng phiên trả
+        # về cùng bộ trường (state / access_token / captured_email) nên vòng chờ
+        # bên dưới dùng chung.
+        if la_openai_goc:
+            # `start_openai_login` tự sinh mã 6 số từ hạt giống trong kho, nên
+            # không cần ai nhập tay — điều kiện để việc này chạy được không
+            # người trông.
+            await start_openai_login(
+                profile=profile,
+                email=acct["email"],
+                password=acct["password"],
+                totp_secret=acct.get("totp_secret", ""),
+            )
+            doc_phien = get_openai_session
+        else:
+            await start_chatgpt_onboard(
+                profile=profile,
+                email=acct["email"],
+                password=acct["password"],
+                totp_secret=acct.get("totp_secret", ""),
+            )
+            doc_phien = get_chatgpt_session
 
         # Wait for completion (poll up to 5 minutes)
         deadline = time.time() + 300
         while time.time() < deadline:
             await asyncio.sleep(2.0)
-            s = get_chatgpt_session(profile)
+            s = doc_phien(profile)
             if not s:
                 continue
+            if la_openai_goc and s.state == "need_code":
+                # Tài khoản bật 2FA nhưng kho không có hạt giống → luồng đăng
+                # nhập đang chờ người gõ mã 6 số, mà ở đây không có ai. Trả lời
+                # ngay thay vì treo hết 5 phút rồi mới báo "timed out": người
+                # vận hành cần biết là THIẾU HẠT GIỐNG, không phải mạng chậm.
+                # Chỉ áp cho luồng OpenAI gốc — đường Gmail giữ nguyên hành vi cũ.
+                return {"profile": profile, "ok": False,
+                        "error": "Cần mã 2FA nhập tay — kho chưa có hạt giống TOTP "
+                                 "cho tài khoản này, không tự đăng nhập lại được"}
             if s.state == "success":
                 if s.access_token:
                     # Update chatgpt2api accounts pool
@@ -1558,7 +1632,7 @@ async def api_chatgpt_refresh_jwt(profile: str) -> dict[str, Any]:
                     return {
                         "profile": profile,
                         "ok": True,
-                        "method": "relogin",
+                        "method": "relogin-openai" if la_openai_goc else "relogin",
                         "access_token": s.access_token,
                         "access_token_preview": s.access_token_preview,
                         "captured_email": s.captured_email,

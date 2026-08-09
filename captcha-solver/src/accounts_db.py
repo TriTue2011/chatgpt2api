@@ -93,8 +93,9 @@ def resolve_account(profile_or_email: str) -> Optional[dict]:
     if acct:
         return acct
     name = profile_or_email.strip().lower()
-    for pfx in ("google-", "chatgpt-web-", "chatgpt-", "gemini-web-", "gemini-",
-                "claude-web-", "claude-", "codex-", "github-"):
+    for pfx in ("google-", "chatgpt-web-", "chatgpt-", "openai-",
+                "gemini-web-", "gemini-", "claude-web-", "claude-",
+                "codex-", "github-"):
         if name.startswith(pfx):
             name = name[len(pfx):]
             break
