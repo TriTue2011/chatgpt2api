@@ -152,6 +152,18 @@ function dauVet(r: RunRow): BuocDich[] {
   return Array.isArray(t) ? (t as BuocDich[]) : [];
 }
 
+/** Model THẬT của một bước, chỉ trả về khi nó thêm thông tin.
+ *
+ * `r.model` là thứ được YÊU CẦU — với combo ('AI text', 'AI vision'…) nó là tên
+ * combo chứ không phải model nào cả, nên phải hiện model thật mà combo đã chọn.
+ * Gọi thẳng một model thật thì hai giá trị trùng nhau, và lặp lại nó ở mỗi dòng
+ * chỉ làm loãng thứ đang cần nhìn: TÀI KHOẢN nào đã dùng.
+ */
+function modelThat(b: BuocDich, r: RunRow): string {
+  const m = String(b.model || "").trim();
+  return m && m !== String(r.model || "").trim() ? m : "";
+}
+
 function groupsOf(r: RunRow): string[] {
   const metaGroups = (r.meta as { groups?: string[] } | undefined)?.groups;
   if (Array.isArray(metaGroups) && metaGroups.length) {
@@ -391,7 +403,13 @@ function AgentRunsContent() {
                 <p className="text-xs font-medium text-muted-foreground">Tới (provider)</p>
                 <p className="mt-1 text-sm">{detail.to_label || "—"}</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {detail.dest_provider || "—"} · {detail.dest_account || "—"} · model={detail.dest_model || detail.model || "—"}
+                  {detail.dest_provider || "—"} · {detail.dest_account || "—"}
+                  {/* Model thật chỉ hiện khi khác thứ được yêu cầu — tức khi
+                      đây là một combo và nó đã chọn ra model nào. Gọi thẳng
+                      model thật thì tên model đã nằm ở dòng tiêu đề bên trên,
+                      lặp lại chỉ làm loãng thứ cần nhìn là TÀI KHOẢN. */}
+                  {modelThat({ model: detail.dest_model }, detail)
+                    && ` · model thật=${detail.dest_model}`}
                 </p>
               </div>
             </div>
@@ -410,7 +428,9 @@ function AgentRunsContent() {
                       <span className="text-muted-foreground">{i + 1}.</span>
                       <Badge variant="outline">{b.provider || "—"}</Badge>
                       <span className="font-mono">{b.account || b.account_id || "—"}</span>
-                      {b.model && <span className="text-muted-foreground">· {b.model}</span>}
+                      {modelThat(b, detail) && (
+                        <span className="text-muted-foreground">· {modelThat(b, detail)}</span>
+                      )}
                     </div>
                   ))}
                 </div>
