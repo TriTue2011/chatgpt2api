@@ -63,6 +63,10 @@ export function GoogleProvidersCard() {
   const [geminiSt, setGeminiSt] = useState<LoginSt|null>(null);
   const [claudeSt, setClaudeSt] = useState<LoginSt|null>(null);
   const [selAcc, setSelAcc] = useState("");
+  // Kho đang giữ gì cho tài khoản đã chọn. Máy chủ không trả mật khẩu về trình
+  // duyệt nữa (vá bảo mật 08/08) nên đây là thứ duy nhất phân biệt được ô trống
+  // là "chưa lưu" hay "đã lưu nhưng không hiện".
+  const [khoCo, setKhoCo] = useState({ pw:false, totp:false });
   const [savedKey, setSavedKey] = useState(0);
   const [totpCode, setTotpCode] = useState("");
   const [totpRem, setTotpRem] = useState(30);
@@ -140,12 +144,26 @@ export function GoogleProvidersCard() {
     } catch {}
   }
 
+  // Chọn tài khoản đã lưu thì ô mật khẩu ĐƯƠNG NHIÊN trống. Máy chủ tự tra kho
+  // khi request gửi rỗng (`bu_credential`), nên đòi mật khẩu ở đây là tự chặn
+  // mình TRƯỚC khi request kịp đi — chọn xong bấm "Chỉ đăng nhập" chỉ nhận được
+  // toast "Cần email + mật khẩu" và không có gì chạy cả.
+  const duMatKhau = !!draft.password || (!!selAcc && khoCo.pw);
+
   async function autoLoginOnly() {
-    if(!draft.email.trim()||!draft.password) { toast.error("Cần email + mật khẩu"); return; }
+    if(!draft.email.trim()||!duMatKhau) {
+      toast.error(selAcc ? "Tài khoản đã lưu này chưa có mật khẩu trong kho — nhập tay"
+                         : "Cần email + mật khẩu");
+      return;
+    }
     const profile = profileOf(draft.email);
     stopPoll(); setRunning(true); setLoginSt(null);
     try {
-      const r = await request.post(`${cs.url}/v1/session/auto-login`, { profile, email:draft.email.trim(), password:draft.password, totp_secret:draft.totpSecret.trim(), prefer_method:draft.totpSecret.trim()?"auth":"tap" });
+      // prefer_method phải theo hạt giống THẬT SỰ dùng được, kể cả khi nó nằm
+      // trong kho chứ không nằm trên form. Cứ nhìn ô trống rồi gửi "tap" là bắt
+      // tài khoản có Authenticator đi đường xác minh thiết bị — không ai bấm.
+      const coTotp = !!draft.totpSecret.trim() || (!!selAcc && khoCo.totp);
+      const r = await request.post(`${cs.url}/v1/session/auto-login`, { profile, email:draft.email.trim(), password:draft.password, totp_secret:draft.totpSecret.trim(), prefer_method:coTotp?"auth":"tap" });
       const d = r.data;
       setLoginSt({...d, profile});
       const vncWin = window.open(`${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=1`,"_blank","noopener,width=1024,height=720");
@@ -283,7 +301,7 @@ export function GoogleProvidersCard() {
           <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5"><KeyRound className="size-3.5"/>Đăng nhập tài khoản Google</p>
           <p className="text-[10px] text-blue-700/70">Lưu tài khoản và đăng nhập Google vào browser profile. Sau đó dùng các nút Tái dùng bên dưới để thêm từng provider.</p>
 
-          <SavedAccountsSelect csUrl={cs.url} csApiKey={cs.apiKey} selected={selAcc} onSelect={(email,acct)=>{setSelAcc(email);setDraft({email:acct.email,password:acct.password,totpSecret:acct.totp_secret||""});}} disabled={running} refreshKey={savedKey}/>
+          <SavedAccountsSelect csUrl={cs.url} csApiKey={cs.apiKey} selected={selAcc} onSelect={(email,acct)=>{setSelAcc(email);setKhoCo({pw:!!acct.has_password,totp:!!acct.has_totp});setDraft({email:acct.email,password:acct.password,totpSecret:acct.totp_secret||""});}} disabled={running} refreshKey={savedKey}/>
 
           <div className="grid gap-2 sm:grid-cols-2">
             <div>

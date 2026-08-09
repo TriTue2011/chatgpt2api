@@ -47,6 +47,10 @@ export function OpenAINativeCard() {
   const [tt, setTt] = useState<TrangThai | null>(null);
   const [maTay, setMaTay] = useState("");
   const [chon, setChon] = useState("");
+  // Kho đang giữ gì cho tài khoản đã chọn. Máy chủ không trả mật khẩu về trình
+  // duyệt nữa (vá bảo mật 08/08), chỉ trả hai cờ này — nên đây là thứ duy nhất
+  // cho biết ô trống là "chưa lưu" hay "đã lưu nhưng không hiện".
+  const [khoCo, setKhoCo] = useState({ pw: false, totp: false });
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -65,9 +69,16 @@ export function OpenAINativeCard() {
     if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
   }, []);
 
+  // Chọn một tài khoản đã lưu thì ô mật khẩu ĐƯƠNG NHIÊN trống — máy chủ không
+  // trả credential về trình duyệt nữa. Máy chủ tự tra kho khi request gửi rỗng
+  // (`bu_credential`), nên đòi mật khẩu ở đây là tự chặn mình trước khi request
+  // kịp đi: chọn tài khoản xong bấm nút chỉ nhận được "Cần email + mật khẩu".
+  const duMatKhau = !!draft.password || (!!chon && khoCo.pw);
+
   const batDau = async () => {
-    if (!draft.email.trim() || !draft.password) {
-      toast.error("Cần email + mật khẩu");
+    if (!draft.email.trim() || !duMatKhau) {
+      toast.error(chon ? "Tài khoản đã lưu này chưa có mật khẩu trong kho — nhập tay"
+                       : "Cần email + mật khẩu");
       return;
     }
     const profile = _profileTu(draft.email);
@@ -164,6 +175,7 @@ export function OpenAINativeCard() {
           selected={chon}
           onSelect={(email, acct) => {
             setChon(email);
+            setKhoCo({ pw: !!acct.has_password, totp: !!acct.has_totp });
             setDraft({ email: acct.email, password: acct.password,
                        totpSecret: acct.totp_secret || "" });
           }}
