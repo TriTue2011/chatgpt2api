@@ -426,6 +426,24 @@ class FlowImageAdapter(BaseImageAdapter):
             logger.info({"event": "flow_account_chosen",
                          "label": account.get("label"),
                          "profile": account["profile"]})
+            # Báo lên request_context để Agent runs hiện ĐÚNG tài khoản đã dùng.
+            # Trước đây chỉ Gemini web và OpenAI OAuth gọi `note_provider_account`,
+            # nên mọi lượt đi qua Flow đều hiện "—" ở cột tài khoản: người vận
+            # hành thấy ảnh sinh ra mà không biết tài khoản nào đã sinh, và khi
+            # một tài khoản bị chặn thì không lần ra được nó từ lịch sử chạy.
+            # `set_dest` cũng nối vào dest_trail, nên nhiều tài khoản trong cùng
+            # một lượt (xoay vòng sau lỗi) đều được ghi lại chứ không chỉ cái cuối.
+            try:
+                from services.request_context import note_provider_account
+                note_provider_account(
+                    "flow",
+                    str(account.get("label") or account["profile"]),
+                    model=model,
+                    account_id=str(account["profile"]),
+                    project_id=str(account.get("project_id") or ""),
+                )
+            except Exception:
+                pass
         else:
             # `_next_account()` trả None trong HAI trường hợp khác nhau hẳn:
             # chưa khai tài khoản nào, HOẶC có tài khoản nhưng đang trong thời

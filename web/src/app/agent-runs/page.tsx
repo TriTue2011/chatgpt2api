@@ -138,6 +138,20 @@ function kindLabel(kind: string): string {
   return KIND_LABELS[kind] || kind || "—";
 }
 
+type BuocDich = { provider?: string; account?: string; account_id?: string; model?: string };
+
+/** Lịch sử provider/tài khoản/model đã đi qua trong một lượt.
+ *
+ * Máy chủ ghi sẵn vào `meta.dest_trail` (`request_context.set_dest` nối vào mỗi
+ * lần một provider báo tài khoản nó dùng), nhưng trang này trước nay chỉ vẽ cái
+ * CUỐI CÙNG — nên một lượt xoay vòng qua nhiều tài khoản nhìn vào không biết đã
+ * thử những gì.
+ */
+function dauVet(r: RunRow): BuocDich[] {
+  const t = (r.meta as { dest_trail?: unknown } | undefined)?.dest_trail;
+  return Array.isArray(t) ? (t as BuocDich[]) : [];
+}
+
 function groupsOf(r: RunRow): string[] {
   const metaGroups = (r.meta as { groups?: string[] } | undefined)?.groups;
   if (Array.isArray(metaGroups) && metaGroups.length) {
@@ -381,6 +395,27 @@ function AgentRunsContent() {
                 </p>
               </div>
             </div>
+
+            {/* Lịch sử ĐẦY ĐỦ provider/tài khoản/model đã đi qua trong lượt này.
+                Hai dòng trên chỉ là cái CUỐI CÙNG — một lượt xoay vòng qua nhiều
+                tài khoản (hết lượt, bị chặn, lỗi rồi thử tài khoản kế) thì nhìn
+                vào đó không biết đã thử những gì. `dest_trail` được máy chủ ghi
+                sẵn nhưng trước nay không vẽ ra. */}
+            {Array.isArray(dauVet(detail)) && dauVet(detail).length > 0 && (
+              <div>
+                <p className="font-medium">Đã đi qua ({dauVet(detail).length})</p>
+                <div className="mt-1.5 space-y-1">
+                  {dauVet(detail).map((b, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="text-muted-foreground">{i + 1}.</span>
+                      <Badge variant="outline">{b.provider || "—"}</Badge>
+                      <span className="font-mono">{b.account || b.account_id || "—"}</span>
+                      {b.model && <span className="text-muted-foreground">· {b.model}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Nhóm chức năng — cùng taxonomy với bộ lọc thread (ảnh #1) */}
             <div>
