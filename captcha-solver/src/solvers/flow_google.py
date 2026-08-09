@@ -343,6 +343,23 @@ async def _humanize(page, moves: int = 7) -> None:
         logger.warning("flow_humanize_failed: %s", _exc)
 
 
+# Dấu hiệu Playwright báo trang/ngữ cảnh/trình duyệt đã đóng. Gặp cái này thì
+# MỌI thao tác sau đều chết y hệt: thử lại là phí sạch ngân sách, mà hỏi trang
+# để chẩn đoán còn ném tiếp một lỗi khác đè mất nguyên nhân thật.
+_DAU_HIEU_TRANG_DONG = (
+    "target page, context or browser has been closed",
+    "target closed",
+    "browser has been closed",
+    "context has been closed",
+    "session closed",
+)
+
+
+def _trang_da_dong(exc: BaseException) -> bool:
+    loi = str(exc).lower()
+    return any(d in loi for d in _DAU_HIEU_TRANG_DONG)
+
+
 async def generate_image(
     project_id: str,
     prompt: str,
@@ -926,9 +943,24 @@ async def generate_image(
             except Exception as exc:
                 last_err = f"DOM extraction failed: {exc}"
                 logger.warning("flow_dom_extract attempt=%d failed: %s", _attempt, str(exc)[:120])
-                
-                # Check if it was a reCAPTCHA error or daily limit
-                body_text = await page.content()
+
+                # Trình duyệt đã đóng → dừng hẳn, đừng quay vòng trên một trang
+                # đã chết cho tới hết ngân sách.
+                if _trang_da_dong(exc):
+                    logger.warning("flow_page_closed attempt=%d — dừng vòng thử lại", _attempt)
+                    break
+
+                # Chẩn đoán reCAPTCHA/giới hạn ngày. ĐÂY LÀ ĐƯỜNG PHỤ, KHÔNG
+                # ĐƯỢC PHÉP NÉM: bản cũ gọi `page.content()` trần trong chính
+                # khối bắt lỗi, nên khi trang đã đóng thì bộ xử lý lỗi tự ném
+                # lỗi mới, thoát khỏi vòng thử lại và biến một lần hỏng tạm
+                # thành 502 mang thông báo sai chỗ ("Page.content: Target page,
+                # context or browser has been closed") — che mất nguyên nhân
+                # thật vốn đã nằm sẵn trong `last_err`.
+                try:
+                    body_text = await page.content()
+                except Exception:
+                    body_text = ""
                 low = body_text.lower()
                 is_recaptcha = "recaptcha" in low or "unusual" in low or "permission" in low
                 if is_recaptcha:
@@ -2247,6 +2279,14 @@ async def flow_generate_video(
             remaining_credits = None
 
             while time.time() - wait_start < 300:
+                # Trình duyệt đóng giữa lúc chờ render thì mọi `page.evaluate`
+                # bên dưới ném lỗi thô của Playwright, lọt thẳng ra ngoài thành
+                # 502 khó hiểu. Kiểm một lần ở đầu mỗi vòng để dừng sớm với lý
+                # do đọc được — cùng bệnh đã sửa ở `generate_image`.
+                if page.is_closed():
+                    raise RuntimeError(
+                        "Trình duyệt đóng giữa lúc chờ video render — chưa lấy được "
+                        f"video nào sau {int(time.time() - wait_start)}s")
                 # Phát hiện UI navigate sang gallery
                 if not nav_detected:
                     nav = await page.evaluate("""() =>
