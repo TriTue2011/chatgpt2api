@@ -39,6 +39,10 @@ export function ChatGPTOnboardCard() {
     apiKey: "",
   });
   const [draft, setDraft] = useState({ email: "", password: "", code: "", totpSecret: "" });
+  // Kho đang giữ gì cho tài khoản đã chọn. Máy chủ không trả mật khẩu về trình
+  // duyệt nữa (vá bảo mật 08/08) nên đây là thứ duy nhất phân biệt được ô trống
+  // là "chưa lưu" hay "đã lưu nhưng không hiện".
+  const [khoCo, setKhoCo] = useState({ pw: false, totp: false });
   const [running, setRunning] = useState(false);
   const [session, setSession] = useState<OnboardState | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -153,9 +157,18 @@ export function ChatGPTOnboardCard() {
     }
   }
 
+  // Chọn tài khoản đã lưu thì ô mật khẩu ĐƯƠNG NHIÊN trống — máy chủ tự tra kho
+  // khi request gửi rỗng (`bu_credential`). Đòi mật khẩu ở đây là tự chặn mình
+  // trước khi request kịp đi. KHÔNG dùng cho `handleSaveAccount`: lưu là ghi đè,
+  // gửi rỗng lên đó là xoá mất credential đang có.
+  const duMatKhau = !!draft.password || (!!selectedAccount && khoCo.pw);
+  const coTotp = !!draft.totpSecret.trim() || (!!selectedAccount && khoCo.totp);
+
   async function onboardAndAddToPool() {
-    if (!draft.email.trim() || !draft.password) {
-      toast.error("Cần email + mật khẩu Google");
+    if (!draft.email.trim() || !duMatKhau) {
+      toast.error(selectedAccount
+        ? "Tài khoản đã lưu này chưa có mật khẩu trong kho — nhập tay"
+        : "Cần email + mật khẩu Google");
       return;
     }
     const profile = profileSuggestion();
@@ -285,8 +298,10 @@ export function ChatGPTOnboardCard() {
   // (ChatGPT/Gemini/Flow) via the "Tái dùng" buttons. 2FA: TOTP auto, else
   // approve on noVNC (device-tap).
   async function autoLoginOnly() {
-    if (!draft.email.trim() || !draft.password) {
-      toast.error("Cần email + mật khẩu Google");
+    if (!draft.email.trim() || !duMatKhau) {
+      toast.error(selectedAccount
+        ? "Tài khoản đã lưu này chưa có mật khẩu trong kho — nhập tay"
+        : "Cần email + mật khẩu Google");
       return;
     }
     const profile = profileSuggestion();
@@ -302,7 +317,10 @@ export function ChatGPTOnboardCard() {
           email: draft.email.trim(),
           password: draft.password,
           totp_secret: draft.totpSecret.trim(),
-          prefer_method: draft.totpSecret.trim() ? "auth" : "tap",
+          // Theo hạt giống THẬT SỰ dùng được, kể cả khi nó nằm trong kho chứ
+          // không nằm trên form — nếu không thì tài khoản có Authenticator bị
+          // đẩy sang đường xác minh thiết bị và treo vì không ai bấm.
+          prefer_method: coTotp ? "auth" : "tap",
         }),
       });
       if (!res.ok) throw new Error(`auto-login HTTP ${res.status}`);
@@ -442,6 +460,7 @@ export function ChatGPTOnboardCard() {
             selected={selectedAccount}
             onSelect={(email, acct) => {
               setSelectedAccount(email);
+              setKhoCo({ pw: !!acct.has_password, totp: !!acct.has_totp });
               setDraft({ email: acct.email, password: acct.password, code: "", totpSecret: acct.totp_secret || "" });
             }}
             disabled={running}
