@@ -1873,7 +1873,11 @@ async def api_accounts_totp(email: str) -> dict[str, Any]:
     except Exception:
         raise HTTPException(503, "pyotp chưa cài trên máy chủ")
     try:
-        code = pyotp.TOTP(seed).now()
+        # Hạt giống hay được phát dạng nhóm 4 ký tự cách nhau bằng khoảng trắng.
+        # Đường đăng nhập thật (openai_native_login) đã strip; ở đây phải strip
+        # theo, nếu không nút "Xem mã TOTP" báo "không hợp lệ" oan một hạt giống
+        # mà đăng nhập vẫn dùng tốt.
+        code = pyotp.TOTP(seed.replace(" ", "")).now()
     except Exception:
         # Hạt giống hỏng (hoặc mất VAULT_MASTER_KEY nên giải mã ra rỗng).
         raise HTTPException(422, "Hạt giống TOTP không hợp lệ")
