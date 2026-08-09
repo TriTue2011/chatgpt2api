@@ -453,8 +453,60 @@ async def start_chatgpt_onboard(
         await pool.close_profile(profile)
         await _nuke_profile(profile)
 
-    asyncio.create_task(_run_onboard_v2(session, password))
+    asyncio.create_task(_chay_onboard_co_han(session, password))
     return session
+
+
+# Trần thời gian cho MỘT lượt onboard. Các bước bên trong đã có hạn riêng, nhưng
+# chúng CỘNG DỒN được: đo thật 09/08/2026 một lượt chạy 608 giây và vẫn đang
+# chạy, dù vòng vào-ô-mật-khẩu chỉ có ngân sách 420 giây.
+_NGAN_SACH_ONBOARD_S = 480.0
+
+# Đang chờ NGƯỜI thì không tính giờ: đồng hồ chỉ đếm lúc máy tự làm. Cắt ngang
+# lúc người đang gõ captcha trên noVNC là phá đúng thứ mình vừa nhờ họ làm.
+_CHO_NGUOI = ("need_code", "need_captcha", "need_tap")
+
+
+async def _chay_onboard_co_han(session: ChatGPTOnboardSession, password: str) -> None:
+    """Chạy onboard, và ĐẢM BẢO nhả trình duyệt kể cả khi nó treo.
+
+    VÌ SAO CẦN: mỗi hồ sơ chỉ một việc dùng trình duyệt tại một thời điểm. Một
+    lượt onboard treo không chỉ tự hỏng — nó GIỮ KHOÁ HỒ SƠ, nên mọi việc khác
+    trên cùng tài khoản (đăng nhập lại, khôi phục, tạo ảnh) xếp hàng phía sau và
+    cũng chết theo. Bên gọi `_cgf_onboard_once` bỏ cuộc sau 180 giây, nhưng tác
+    vụ này thì không biết điều đó và cứ chạy tiếp — chủ máy nhìn noVNC thấy
+    trình duyệt nằm đó mãi: "xong lỗi cũng không thấy đóng workspace lại".
+
+    Vòng canh giờ chạy song song thay vì bọc `asyncio.wait_for` quanh cả tác vụ,
+    vì cần TẠM DỪNG đồng hồ khi phiên đang chờ người (`need_code`/`need_captcha`
+    /`need_tap`) — những lúc đó chờ lâu là đúng, không phải treo.
+    """
+    viec = asyncio.create_task(_run_onboard_v2(session, password))
+    han = time.time() + _NGAN_SACH_ONBOARD_S
+    try:
+        while not viec.done():
+            await asyncio.sleep(5.0)
+            if session.state in _CHO_NGUOI:
+                han = time.time() + _NGAN_SACH_ONBOARD_S   # dừng đồng hồ
+                continue
+            if time.time() > han:
+                logger.warning("chatgpt_login: onboard quá %.0fs — dừng và nhả hồ sơ %s",
+                               _NGAN_SACH_ONBOARD_S, session.profile)
+                viec.cancel()
+                break
+        await asyncio.gather(viec, return_exceptions=True)
+    finally:
+        if session.state not in ("success", "failed"):
+            session.state = "failed"
+            session.error = (f"Quá {_NGAN_SACH_ONBOARD_S:.0f}s chưa xong — đã dừng và "
+                             f"nhả trình duyệt để việc khác trên hồ sơ này chạy được")
+            session.completed_at = time.time()
+        # `_run_onboard_v2` tự đóng ở đường bình thường; ở đường bị huỷ thì nó
+        # không chạy tới đó, nên phải đóng tại đây. Đóng hai lần là vô hại.
+        try:
+            await pool.close_profile(session.profile)
+        except Exception:
+            logger.debug("close_profile sau khi dừng onboard bỏ qua", exc_info=True)
 
 
 async def _nuke_profile(profile: str, max_wait: float = 10.0) -> None:
