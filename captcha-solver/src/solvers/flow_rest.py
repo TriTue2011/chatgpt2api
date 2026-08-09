@@ -21,27 +21,27 @@ Không còn DOM, nên không còn cả lớp lỗi "bấm hụt".
   * Cửa duy nhất là reCAPTCHA. Thiếu token thì 403 "reCAPTCHA evaluation failed".
   * `imageModelName` được kiểm TRƯỚC reCAPTCHA nên đo được trực tiếp:
 
+        GEM_PIX_2        hợp lệ   (đi tiếp tới cửa reCAPTCHA)
         NARWHAL          hợp lệ   (đi tiếp tới cửa reCAPTCHA)
         HARBOR_SEAL      hợp lệ   (đi tiếp tới cửa reCAPTCHA)
-        IMAGEN_3_5       404      tài khoản này không có
+        GEM_PIX          404      có thật nhưng tài khoản này không có
+        IMAGEN_3_5       404      có thật nhưng tài khoản này không có
         NANO_BANANA_PRO  400      INVALID_ARGUMENT — KHÔNG phải hằng số có thật
         IMAGEN_4         400      INVALID_ARGUMENT — KHÔNG phải hằng số có thật
+        GEM_PIX_3        400      INVALID_ARGUMENT — chưa tồn tại
 
-    `NANO_BANANA_PRO` đang là model mặc định của `flow/auto` và `flow/banana-pro`
-    bên `services/image_providers/flow_google.py`, và là cả giá trị dự phòng
-    cuối cùng của `_resolve_model()`. Đường DOM không lộ ra vì nó chỉ dùng chuỗi
-    đó làm khoá tra NHÃN dropdown; đường này gửi thẳng nên phải chặn tại chỗ,
-    kèm thông báo nêu tên đúng — xem `kiem_model_anh()`.
+KHỚP VỚI QUẢN LÝ MODEL — RỒI, từ 09/08/2026. Bảng ánh xạ hiện tại, đã đo:
 
-KHỚP VỚI QUẢN LÝ MODEL — CHƯA. Bảng `_MODEL_ALIASES` bên
-`services/image_providers/flow_google.py` đang chào bốn model ảnh, mà ba trong
-số đó hỏng nếu đi đường này: `flow/banana-pro` và `flow/auto` cùng trỏ vào
-`NANO_BANANA_PRO` (400), `flow/imagen-4` trỏ vào `IMAGEN_3_5` (404 trên tài
-khoản đã đo). Chỉ `flow/banana-2` → `NARWHAL` là chạy. Sửa bảng đó phải sửa
-ĐỒNG THỜI bảng nhãn dropdown trong `flow_google.py` của bộ lái, nếu không đường
-DOM sẽ bấm hụt — đúng cơ chế đã gây sự cố 08/08/2026, và
-`test/test_flow_khong_tao_nham_loai.py` canh chính ràng buộc đó. Chưa làm ở đây
-vì chưa đo được `NARWHAL` và `HARBOR_SEAL` ứng với nhãn nào.
+        flow/banana-pro     → GEM_PIX_2
+        flow/auto           → GEM_PIX_2
+        flow/banana-2       → NARWHAL
+        flow/banana-2-lite  → HARBOR_SEAL
+
+`flow/imagen-4` đã bỏ khỏi Quản lý Model. `NANO_BANANA_PRO` — tên mà
+`flow/banana-pro` trỏ vào suốt thời gian trước — hoá ra chưa bao giờ là hằng số
+có thật; đường DOM che mất vì nó chỉ dùng chuỗi đó làm khoá tra NHÃN dropdown
+chứ không gửi xuống API. `kiem_model_anh()` chặn tại chỗ kèm thông báo nêu tên
+đúng, phòng cấu hình cũ còn sót.
 
 NGUỒN THÂN YÊU CẦU. Dựng theo bản gỡ rối của VEO3 AI Studio 1.08 (ứng dụng
 Electron gọi cùng API này). Những trường chưa đo được trực tiếp — hằng số tỷ lệ
@@ -75,14 +75,16 @@ TOOL = "PINHOLE"
 _TOKEN_SONG_S = 45 * 60
 _token_cache: dict[str, tuple[str, float]] = {}
 
-# Hai tên đã đo là KHÔNG tồn tại. Danh sách này chỉ để chặn cái đã biết sai —
+# Các tên đã đo là KHÔNG tồn tại. Danh sách này chỉ để chặn cái đã biết sai —
 # tên lạ vẫn cho đi qua, vì Flow thêm model mới liên tục và chặn cứng sẽ khoá
 # mất model mới ngay ngày nó ra.
 MODEL_ANH_DA_DO_LA_SAI = {
-    "NANO_BANANA_PRO": "400 INVALID_ARGUMENT (đo 09/08/2026)",
+    "NANO_BANANA_PRO": "400 INVALID_ARGUMENT (đo 09/08/2026), thay bằng GEM_PIX_2",
     "IMAGEN_4": "400 INVALID_ARGUMENT (đo 09/08/2026)",
+    "GEM_PIX_3": "400 INVALID_ARGUMENT (đo 09/08/2026), chưa tồn tại",
 }
-MODEL_ANH_DA_DO_LA_DUNG = ("NARWHAL", "HARBOR_SEAL")
+# Thứ tự có nghĩa: phần tử đầu là model mạnh nhất, dùng khi bên gọi không nêu tên.
+MODEL_ANH_DA_DO_LA_DUNG = ("GEM_PIX_2", "NARWHAL", "HARBOR_SEAL")
 
 # Tỷ lệ khung hình ảnh — theo bản gỡ rối VEO3 AI Studio 1.08, CHƯA đo trực tiếp
 # (API kiểm trường này sau cửa reCAPTCHA nên phép đo hôm 09/08 chưa chạm tới).

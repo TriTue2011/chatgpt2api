@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 # Defaults — strongest model (Nano Banana Pro), 16:9 landscape, 1 image per
 # request. Override per-call by passing model / aspect_ratio / count.
-DEFAULT_MODEL = "NANO_BANANA_PRO"
+#
+# GEM_PIX_2 chứ không phải NANO_BANANA_PRO: đo 09/08/2026 cho thấy tên sau
+# không phải hằng số có thật của Flow (API trả 400 INVALID_ARGUMENT). Đường
+# DOM không lộ ra vì nó chọn model bằng cách bấm NHÃN dropdown.
+DEFAULT_MODEL = "GEM_PIX_2"
 DEFAULT_TOOL = "PINHOLE"
 DEFAULT_ASPECT = "IMAGE_ASPECT_RATIO_LANDSCAPE"
 DEFAULT_COUNT = 1
@@ -46,23 +50,37 @@ _ASPECT_LABELS = {
 }
 
 # Flow UI model labels (matches the dropdown text in the screenshot).
-# IMPORTANT: Flow's API uses IMAGEN_3_5 internally even though the UI
-# shows "Imagen 4" — the user's captured request body confirmed this.
+#
+# Tên NỘI BỘ ở cột trái đã đo thẳng vào API 09/08/2026: GEM_PIX_2, NARWHAL,
+# HARBOR_SEAL hợp lệ; NANO_BANANA_PRO trả 400 (không tồn tại); IMAGEN_3_5 trả
+# 404 (có thật nhưng tài khoản không có). Nhãn "Nano Banana Pro" không đổi —
+# chỉ tên nội bộ sau nó đổi từ NANO_BANANA_PRO sang GEM_PIX_2.
+#
+# "Nano Banana 2 Lite" là nhãn SUY RA cho HARBOR_SEAL, chưa đọc được từ giao
+# diện thật. Bấm hụt nhãn không còn im lặng: `generate_image` đọc ngược chip
+# model rồi từ chối bấm Tạo nếu lệch, nên sai nhãn là lỗi ồn ào chứ không phải
+# tiêu tín dụng vào model sai như sự cố 08/08/2026.
 _MODEL_LABELS = {
-    "NANO_BANANA_PRO": "Nano Banana Pro",
+    "GEM_PIX_2":       "Nano Banana Pro",
     "NARWHAL":         "Nano Banana 2",
+    "HARBOR_SEAL":     "Nano Banana 2 Lite",
     "IMAGEN_3_5":      "Imagen 4",
-    "IMAGEN_4":        "Imagen 4",  # back-compat alias
+    # Bí danh cũ — cấu hình đã lưu có thể còn gửi những tên này.
+    "NANO_BANANA_PRO": "Nano Banana Pro",
+    "IMAGEN_4":        "Imagen 4",
 }
 
 # When the request interceptor overrides imageModelName, map our friendly
 # constants to the actual Flow API enum values. IMAGEN_4 isn't recognized
 # by the Flow API — it must be IMAGEN_3_5.
 _MODEL_API_VALUE = {
-    "NANO_BANANA_PRO": "NANO_BANANA_PRO",
+    "GEM_PIX_2":       "GEM_PIX_2",
     "NARWHAL":         "NARWHAL",
+    "HARBOR_SEAL":     "HARBOR_SEAL",
     "IMAGEN_4":        "IMAGEN_3_5",   # UI alias → real API value
     "IMAGEN_3_5":      "IMAGEN_3_5",
+    # Tên chết: API trả 400. Dịch sang tên còn sống để cấu hình cũ không gãy.
+    "NANO_BANANA_PRO": "GEM_PIX_2",
 }
 
 
@@ -594,10 +612,15 @@ async def generate_image(
         # bằng model còn sót lại từ lần trước — sự cố 08/08/2026: một yêu cầu
         # TẠO ẢNH chạy 98 giây rồi trừ tín dụng video Omni Flash 8 giây.
         _MODEL_LABEL = {
-            "NANO_BANANA_PRO": "Nano Banana Pro",
+            "GEM_PIX_2": "Nano Banana Pro",
             "NARWHAL": "Nano Banana 2",
+            "HARBOR_SEAL": "Nano Banana 2 Lite",
             "IMAGEN_3_5": "Imagen 4",
             # Giữ tên cũ làm bí danh phòng cấu hình cũ còn gửi chúng.
+            # NANO_BANANA_PRO là tên CHẾT (API trả 400 khi đo 09/08/2026) nhưng
+            # vẫn phải có nhãn ở đây, vì đường DOM chọn model bằng cách bấm nhãn
+            # chứ không gửi tên nội bộ — thiếu nhãn là bấm hụt.
+            "NANO_BANANA_PRO": "Nano Banana Pro",
             "NANO_BANANA_2": "Nano Banana 2",
             "IMAGEN_4": "Imagen 4",
         }

@@ -19,10 +19,12 @@ IMAGE_MODELS = {
     "gemini-image/gemini-2.5-flash-image",
     "gemini-image/gemini-3.1-flash-image-preview",
     # Google Labs Flow image models (driven via captcha-solver)
-    "flow/auto",            # → Nano Banana Pro
-    "flow/banana-pro",      # → Nano Banana Pro
-    "flow/banana-2",        # → Nano Banana 2
-    "flow/imagen-4",        # → Imagen 4
+    "flow/auto",            # → Nano Banana Pro  (GEM_PIX_2)
+    "flow/banana-pro",      # → Nano Banana Pro  (GEM_PIX_2)
+    "flow/banana-2",        # → Nano Banana 2    (NARWHAL)
+    "flow/banana-2-lite",   # → Nano Banana 2 Lite (HARBOR_SEAL)
+    # `flow/imagen-4` đã bỏ: Flow không còn chào model này, và tên nội bộ
+    # IMAGEN_3_5 trả 404 "Requested entity was not found" khi đo 09/08/2026.
 }
 
 # Google Labs Flow video generation models

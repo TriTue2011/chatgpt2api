@@ -131,9 +131,9 @@ Tên model (đều ánh xạ tới `imageModelName` của Flow):
 
 | Model chatgpt2api | Model Flow | Ghi chú |
 |---|---|---|
-| `flow/banana-2` | `NARWHAL` | Nano Banana 2 — mặc định, nhanh nhất |
-| `flow/banana-pro` | `NANO_BANANA_PRO` | Chất lượng cao hơn, chậm hơn |
-| `flow/imagen-4` | `IMAGEN_4` | Imagen 4 |
+| `flow/banana-pro` | `GEM_PIX_2` | Nano Banana Pro — mặc định, mạnh nhất |
+| `flow/banana-2` | `NARWHAL` | Nano Banana 2 |
+| `flow/banana-2-lite` | `HARBOR_SEAL` | Nano Banana 2 Lite |
 | `flow/<bất kỳ>` | Viết hoa và chuyển tiếp | Tùy chọn mở rộng cho model mới |
 
 ### Dùng từ Home Assistant

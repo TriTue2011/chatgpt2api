@@ -145,9 +145,9 @@ Model aliases (all map to Flow's `imageModelName`):
 
 | chatgpt2api model | Flow model | Notes |
 |---|---|---|
-| `flow/banana-2` | `NARWHAL` | Nano Banana 2 — default, fastest |
-| `flow/banana-pro` | `NANO_BANANA_PRO` | higher quality, slower |
-| `flow/imagen-4` | `IMAGEN_4` | Imagen 4 |
+| `flow/banana-pro` | `GEM_PIX_2` | Nano Banana Pro — default, strongest |
+| `flow/banana-2` | `NARWHAL` | Nano Banana 2 |
+| `flow/banana-2-lite` | `HARBOR_SEAL` | Nano Banana 2 Lite |
 | `flow/<anything>` | uppercased, forwarded | escape hatch for new models |
 
 ### Use from Home Assistant

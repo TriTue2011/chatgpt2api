@@ -87,6 +87,38 @@ class ChanModelDaDoLaSai(unittest.TestCase):
             self.assertNotIn(f'model: str = "{ten}"', than)
 
 
+class QuanLyModelKhongDuocChaoTenChet(unittest.TestCase):
+    """Bảng bí danh phía dịch vụ không được trỏ vào tên API đã đo là không có.
+
+    Đây chính là lớp lỗi vừa xảy ra: `flow/banana-pro` và `flow/auto` trỏ vào
+    `NANO_BANANA_PRO` suốt một thời gian dài mà không ai thấy, vì đường DOM chỉ
+    dùng chuỗi đó làm khoá tra NHÃN dropdown chứ không bao giờ gửi xuống API.
+    Chỉ tới khi đường REST gửi thẳng mới lộ ra là tên đó chưa từng tồn tại.
+
+    Test này bắt tay đôi giữa hai file: cái đo được (flow_rest) và cái đang chào
+    ra ngoài (Quản lý Model).
+    """
+
+    def _alias(self) -> dict:
+        import ast
+        nguon = (GOC / "services/image_providers/flow_google.py").read_text(encoding="utf-8")
+        for nut in ast.walk(ast.parse(nguon)):
+            if (isinstance(nut, ast.Assign) and isinstance(nut.value, ast.Dict)
+                    and any(isinstance(t, ast.Name) and t.id == "_MODEL_ALIASES"
+                            for t in nut.targets)):
+                return ast.literal_eval(nut.value)
+        self.fail("không đọc được _MODEL_ALIASES")
+
+    def test_khong_bi_danh_nao_tro_vao_ten_da_do_la_sai(self):
+        chet = set(FR.MODEL_ANH_DA_DO_LA_SAI)
+        pham = sorted({v for v in self._alias().values() if v in chet})
+        self.assertEqual(pham, [], f"Quản lý Model đang chào tên API không tồn tại: {pham}")
+
+    def test_model_manh_nhat_van_la_ten_con_song(self):
+        """`auto` là thứ người dùng nhận khi không chọn gì — sai là hỏng mặc định."""
+        self.assertIn(self._alias().get("auto"), FR.MODEL_ANH_DA_DO_LA_DUNG)
+
+
 class MaLoiKhongDuocLaThanhCong(unittest.TestCase):
     """`LoiFlowRest` không bao giờ được mang mã 2xx.
 

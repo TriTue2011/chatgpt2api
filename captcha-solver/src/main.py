@@ -315,8 +315,9 @@ class FlowImageReq(BaseModel):
     # buttons: IMAGE_ASPECT_RATIO_LANDSCAPE_4_3, _SQUARE, _PORTRAIT_3_4,
     # _PORTRAIT (9:16).
     aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE"
-    # Strongest model by default. NARWHAL = Nano Banana 2, IMAGEN_4 = Imagen 4.
-    model: str = "NANO_BANANA_PRO"
+    # Strongest model by default. GEM_PIX_2 = Nano Banana Pro,
+    # NARWHAL = Nano Banana 2, HARBOR_SEAL = Nano Banana 2 Lite.
+    model: str = "GEM_PIX_2"
     # 1-4 images per request. Best-effort — Flow uses project default if
     # the dropdown click misses.
     count: int = Field(default=1, ge=1, le=4)
@@ -588,8 +589,9 @@ async def api_flow_generate_video(req: FlowVideoReq):
 class FlowRestImageReq(BaseModel):
     project_id: str
     prompt: str
-    # NANO_BANANA_PRO bị API trả 400 (đo 09/08/2026) nên KHÔNG dùng làm mặc định.
-    model: str = "NARWHAL"
+    # GEM_PIX_2 = "Nano Banana Pro", model mạnh nhất và đã đo là hợp lệ
+    # 09/08/2026. NANO_BANANA_PRO bị API trả 400 nên không dùng làm mặc định.
+    model: str = "GEM_PIX_2"
     aspect_ratio: str = "16:9"
     count: int = Field(default=1, ge=1, le=4)
     # Ảnh tham chiếu dạng base64; được đẩy lên Flow trước rồi gắn vào imageInputs.

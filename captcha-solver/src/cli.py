@@ -256,7 +256,7 @@ async def cmd_gen(args: list[str]) -> int:
             project_id=project_id,
             prompt=prompt,
             aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
-            model="NANO_BANANA_PRO",
+            model="GEM_PIX_2",
             count=1,
             tool="PINHOLE",
             profile=profile,

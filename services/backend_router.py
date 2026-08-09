@@ -270,7 +270,7 @@ class BackendRouter:
             # Một yêu cầu ẢNH không bao giờ được giải ra model VIDEO.
             #
             # Provider `flow` giữ cả hai loại trong cùng một không gian tên: ba
-            # model ảnh (banana-2, banana-pro, imagen-4) và bốn model video
+            # model ảnh (banana-pro, banana-2, banana-2-lite) và bốn model video
             # (omni-flash, veo-3.1-*). Tab Quản lý Model gom chúng thành MỘT thẻ
             # với MỘT ô mặc định, nên đặt nhầm một tên veo vào đó là đường ảnh
             # lấy luôn tên đó. Nó không dừng ở đấy: `flow_google._resolve_model`

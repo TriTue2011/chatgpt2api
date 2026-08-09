@@ -99,16 +99,20 @@ class MacDinhVideo_KhongDuocRoiVaoDuongAnhTests(unittest.TestCase):
     def test_chi_MODEL_video_bi_bo_QUA_chu_khong_bo_ca_bo_loc(self):
         """Bỏ nguyên bộ lọc khi gặp model video sẽ làm tick của người dùng mất
         tác dụng — model đã bỏ tick lại hiện ra."""
-        self._dat(tick=["flow/veo-3.1-fast", "flow/imagen-4"])
-        self.assertEqual(backend_router.route("flow/auto").model, "imagen-4")
+        self._dat(tick=["flow/veo-3.1-fast", "flow/banana-2-lite"])
+        self.assertEqual(backend_router.route("flow/auto").model, "banana-2-lite")
 
 
 class ResolveModelTests(unittest.TestCase):
     def test_tra_dung_ten_noi_bo_cho_model_anh(self):
-        self.assertEqual(_resolve_model("flow/imagen-4"), "IMAGEN_3_5")
+        """Tên nội bộ đã đo thẳng vào API 09/08/2026 — xem chú thích ở
+        `_MODEL_ALIASES`. `NANO_BANANA_PRO` (giá trị cũ của auto/banana-pro)
+        chưa từng là hằng số có thật: API trả 400 INVALID_ARGUMENT."""
+        self.assertEqual(_resolve_model("flow/banana-pro"), "GEM_PIX_2")
         self.assertEqual(_resolve_model("flow/banana-2"), "NARWHAL")
-        self.assertEqual(_resolve_model("flow/auto"), "NANO_BANANA_PRO")
-        self.assertEqual(_resolve_model(""), "NANO_BANANA_PRO")
+        self.assertEqual(_resolve_model("flow/banana-2-lite"), "HARBOR_SEAL")
+        self.assertEqual(_resolve_model("flow/auto"), "GEM_PIX_2")
+        self.assertEqual(_resolve_model(""), "GEM_PIX_2")
 
     def test_ten_model_VIDEO_bi_TU_CHOI_chu_khong_viet_hoa_roi_gui_di(self):
         for m in VIDEO:
@@ -116,7 +120,7 @@ class ResolveModelTests(unittest.TestCase):
                 _resolve_model(m)
             loi = str(ctx.exception)
             self.assertIn("VIDEO", loi)
-            self.assertIn("flow/imagen-4", loi, "lỗi phải chỉ ra model dùng được")
+            self.assertIn("flow/banana-pro", loi, "lỗi phải chỉ ra model dùng được")
 
     def test_ten_LA_van_di_qua_duoc(self):
         """Chặn hẳn tên lạ sẽ khiến model ảnh mới của Flow phải chờ sửa mã."""

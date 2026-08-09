@@ -27,13 +27,16 @@ round-robin; on quota/rate errors we mark an account "cooldown" for an
 hour and prefer the next one. Add new accounts by sending the captcha-
 solver a manual-login session with a new profile name and signing in.
 
-Model aliases (case-insensitive, matches the Flow UI labels):
+Model aliases (case-insensitive, matches the Flow UI labels). Tên nội bộ ở cột
+phải đã được ĐO THẲNG vào API ngày 09/08/2026 — xem chú thích ở `_MODEL_ALIASES`:
 
-    flow/banana-2     → NARWHAL          (Nano Banana 2)
-    flow/banana       → NARWHAL          (alias)
-    flow/auto         → NARWHAL          (default)
-    flow/banana-pro   → NANO_BANANA_PRO  (Nano Banana Pro)
-    flow/imagen-4     → IMAGEN_4         (Imagen 4)
+    flow/banana-pro     → GEM_PIX_2    (Nano Banana Pro)
+    flow/auto           → GEM_PIX_2    (mặc định, model mạnh nhất)
+    flow/banana-2       → NARWHAL      (Nano Banana 2)
+    flow/banana-2-lite  → HARBOR_SEAL  (Nano Banana 2 Lite)
+
+`flow/imagen-4` đã bỏ: Flow không còn chào model này và tên nội bộ IMAGEN_3_5
+trả 404 trên tài khoản đang dùng.
 
 Anything else after `flow/` is forwarded verbatim as the imageModelName,
 so future models work without code changes.
@@ -53,25 +56,36 @@ from services.image_providers._base import BaseImageAdapter, now_sec
 from utils.log import logger
 
 
+# ĐO THẲNG VÀO API 09/08/2026 (tài khoản google-benbap115). Flow kiểm
+# `imageModelName` TRƯỚC cửa reCAPTCHA nên đọc được kết quả từng tên mà không
+# tốn tín dụng nào:
+#
+#     GEM_PIX_2        hợp lệ
+#     NARWHAL          hợp lệ
+#     HARBOR_SEAL      hợp lệ
+#     GEM_PIX          có thật nhưng tài khoản không có (404)
+#     IMAGEN_3_5       có thật nhưng tài khoản không có (404)
+#     NANO_BANANA_PRO  400 INVALID_ARGUMENT — KHÔNG phải hằng số có thật
+#     GEM_PIX_3        400 INVALID_ARGUMENT — chưa tồn tại
+#
+# `NANO_BANANA_PRO` từng là mặc định của `auto`/`best`/`banana-pro` ở đây suốt
+# một thời gian dài mà không ai thấy sai, vì đường DOM chỉ dùng chuỗi này làm
+# khoá tra NHÃN dropdown chứ không bao giờ gửi nó xuống API. Đường REST
+# (`captcha-solver/src/solvers/flow_rest.py`) gửi thẳng, nên tên sai là 400 ngay.
 _MODEL_ALIASES = {
     "banana": "NARWHAL",
     "banana-2": "NARWHAL",
     "narwhal": "NARWHAL",
-    # `auto` and empty fall through to the strongest model so users get
-    # Nano Banana Pro out of the box without having to know the alias.
-    "auto": "NANO_BANANA_PRO",
-    "": "NANO_BANANA_PRO",
-    "best": "NANO_BANANA_PRO",
-    "banana-pro": "NANO_BANANA_PRO",
-    "nano-banana-pro": "NANO_BANANA_PRO",
-    # Flow's API enum is IMAGEN_3_5 even though the UI labels it "Imagen 4".
-    # Captured request body confirms. captcha-solver maps either form to
-    # the real enum, so any of these aliases works.
-    "imagen-4": "IMAGEN_3_5",
-    "imagen4": "IMAGEN_3_5",
-    "imagen": "IMAGEN_3_5",
-    "imagen-3-5": "IMAGEN_3_5",
-    "imagen3_5": "IMAGEN_3_5",
+    "banana-2-lite": "HARBOR_SEAL",
+    "harbor-seal": "HARBOR_SEAL",
+    # `auto` và chuỗi rỗng rơi về model mạnh nhất để người dùng không cần biết
+    # bí danh vẫn có Nano Banana Pro.
+    "auto": "GEM_PIX_2",
+    "": "GEM_PIX_2",
+    "best": "GEM_PIX_2",
+    "banana-pro": "GEM_PIX_2",
+    "nano-banana-pro": "GEM_PIX_2",
+    "gem-pix-2": "GEM_PIX_2",
 }
 
 # All Flow models we expose. Used by list_models() so the chatgpt2api UI
@@ -81,10 +95,10 @@ _MODEL_ALIASES = {
 # bảng nói khác nhau nên bảng nhãn bên bộ lái trông như đã đủ, và một yêu cầu
 # tạo ảnh đã lặng lẽ dựng thành video (sự cố 08/08/2026).
 FLOW_MODELS = [
-    {"id": "flow/banana-pro", "label": "Nano Banana Pro",   "internal": "NANO_BANANA_PRO"},
-    {"id": "flow/banana-2",   "label": "Nano Banana 2",     "internal": "NARWHAL"},
-    {"id": "flow/imagen-4",   "label": "Imagen 4",          "internal": "IMAGEN_3_5"},
-    {"id": "flow/auto",       "label": "Auto (Pro)",        "internal": "NANO_BANANA_PRO"},
+    {"id": "flow/banana-pro",    "label": "Nano Banana Pro",    "internal": "GEM_PIX_2"},
+    {"id": "flow/banana-2",      "label": "Nano Banana 2",      "internal": "NARWHAL"},
+    {"id": "flow/banana-2-lite", "label": "Nano Banana 2 Lite", "internal": "HARBOR_SEAL"},
+    {"id": "flow/auto",          "label": "Auto (Pro)",         "internal": "GEM_PIX_2"},
 ]
 
 _ASPECT_FROM_SIZE: dict[tuple[int, int], str] = {
