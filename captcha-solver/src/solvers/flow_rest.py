@@ -62,6 +62,14 @@ MODEL VIDEO — quét đủ họ 09/08/2026, cả hai tỷ lệ khung hình:
     16:9 lẫn 9:16. Nếu tỷ lệ có ràng buộc thì nó nằm sau cửa reCAPTCHA, chỗ chưa
     đo miễn phí được.
 
+ĐƯỜNG VIDEO GỬI TỪ TRONG TRANG, KHÔNG DÙNG httpx. Đường ảnh gửi bằng httpx
+trần và chạy tốt; đường video cùng token, cùng reCAPTCHA hợp lệ, model hợp lệ,
+đường dẫn đúng — vẫn 403 "The caller does not have permission". Đã loại trừ
+từng khả năng bằng phép đo (hết quyền, sai bậc trả phí, sai đường dẫn, sai tên
+model — xem `_goi_video_trong_trang`). Còn lại đúng một khác biệt: request của
+đường DOM phát ra TỪ TRONG TRANG nên mang origin/referer/sec-fetch và header
+riêng của Chrome. CHƯA XÁC NHẬN đây là nguyên nhân — cần một lượt deploy nữa.
+
 ĐƯỜNG VIDEO — đo 09/08/2026, ba trong bốn endpoint đạt ngay, một sai:
 
   * `batchAsyncGenerateVideoText`, `…StartImage`, `…ReferenceImages` đều đạt.
@@ -627,6 +635,75 @@ async def lay_link_media(profile: str, ten_media: list[str],
     return {k: v for k, v in (ra or {}).items() if v}
 
 
+_JS_POST = """
+async ({url, bearer, body}) => {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Authorization': 'Bearer ' + bearer,
+                'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    let data;
+    try { data = await r.json(); } catch (e) { data = await r.text(); }
+    return {status: r.status, data};
+  } catch (e) { return {status: 0, data: String(e)}; }
+}
+"""
+
+
+async def _goi_video_trong_trang(profile: str, headless: bool, url: str,
+                                 dung_than, action: str) -> dict[str, Any]:
+    """Đúc reCAPTCHA và GỬI request video NGAY TRONG TRANG, một lượt mở duy nhất.
+
+    VÌ SAO KHÔNG DÙNG httpx NHƯ ĐƯỜNG ẢNH. Đo 09/08/2026: đường ẢNH gửi bằng
+    httpx trần (không cookie, không header riêng của Chrome) chạy tốt. Đường
+    VIDEO thì cùng token, cùng reCAPTCHA hợp lệ, model hợp lệ, endpoint đúng —
+    vẫn trả 403 "The caller does not have permission". Đã loại trừ:
+
+        * hết quyền tạo video   — đường DOM tạo được video thật trên chính tài
+                                  khoản đó (200, MP4 2,1 MB)
+        * sai bậc trả phí       — thử TIER_TWO, bỏ hẳn trường, TIER_ONE: cả ba
+                                  đều 403
+        * sai đường dẫn         — mọi biến thể có project đều 404, chỉ
+                                  `/v1/video:*` là có thật
+        * sai tên model         — quét đủ họ, khoá dùng là khoá đã đo là có
+
+    Còn lại đúng một khác biệt: request của đường DOM phát ra TỪ TRONG TRANG nên
+    mang `origin: https://labs.google`, `referer`, `sec-fetch-*` và các header
+    riêng của Chrome. Đường video nhiều khả năng kiểm những thứ đó, còn đường
+    ảnh thì không. Gửi trong trang là cách duy nhất có được chúng mà không phải
+    giả mạo từng cái.
+
+    `dung_than(recaptcha)` là hàm dựng thân yêu cầu — nhận token vừa đúc, vì
+    token chỉ sống khoảng hai phút nên phải gắn ngay trước khi gửi.
+    """
+    from ..browser_pool import pool
+    from .flow_google import _get_recaptcha_token
+
+    async with pool.page(profile=profile, headless=headless) as page:
+        if "labs.google" not in (page.url or ""):
+            await page.goto("https://labs.google/fx/tools/flow",
+                            wait_until="domcontentloaded", timeout=30_000)
+        bearer = await _bearer_tu_trang(page, profile)
+        recaptcha, sitekey = await _get_recaptcha_token(page, action=action)
+        logger.info("flow_rest gửi video trong trang profile=%s sitekey=%s",
+                    profile, sitekey[:16])
+        kq = await page.evaluate(_JS_POST, {
+            "url": url, "bearer": bearer, "body": dung_than(recaptcha)})
+
+    ma = int((kq or {}).get("status") or 0)
+    du_lieu = (kq or {}).get("data")
+    if ma != 200:
+        msg = du_lieu
+        if isinstance(du_lieu, dict):
+            msg = (du_lieu.get("error") or {}).get("message") or str(du_lieu)[:200]
+        raise LoiFlowRest(ma or 502, str(msg)[:300])
+    if not isinstance(du_lieu, dict):
+        raise LoiFlowRest(502, f"đáp video không phải JSON: {str(du_lieu)[:200]}")
+    return du_lieu
+
+
 async def _lay_recaptcha(profile: str, headless: bool, action: str) -> str:
     """Đúc token reCAPTCHA. LUÔN phải mở trang, và phải gọi NGAY TRƯỚC lệnh gửi.
 
@@ -756,17 +833,14 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
     """
     bat_dau = time.time()
     khoa = model_key or chon_model_video(che_do, model_label, duration)
-    bearer = await lay_bearer(profile, headless)
-    # Đúc reCAPTCHA ngay trước khi gửi — ảnh tham chiếu (nếu có) đã được bên gọi
-    # đẩy lên từ trước nên không còn gì chen vào giữa.
-    recaptcha = await _lay_recaptcha(profile, headless, "VIDEO_GENERATION")
-    dap = await _post(
+    dap = await _goi_video_trong_trang(
+        profile, headless,
         f"{API_HOST}/v1/video:{CHE_DO_VIDEO[che_do]}",
-        bearer,
-        than_tao_video(project_id=project_id, prompt=prompt, che_do=che_do,
-                       model_key=khoa, aspect_ratio=aspect_ratio, count=count,
-                       anh=anh, recaptcha=recaptcha, tier=tier),
-        timeout,
+        lambda rc: than_tao_video(
+            project_id=project_id, prompt=prompt, che_do=che_do, model_key=khoa,
+            aspect_ratio=aspect_ratio, count=count, anh=anh, recaptcha=rc,
+            tier=tier),
+        "VIDEO_GENERATION",
     )
     gen_ids = doc_gen_ids(dap)
     if not gen_ids:
