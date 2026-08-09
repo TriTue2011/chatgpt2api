@@ -58,7 +58,15 @@ export function OpenAINativeCard() {
       try {
         const d = await request.get("/api/settings");
         const flow = ((d.data as any)?.config?.providers || {}).flow || {};
-        setCs({ url: flow.captcha_solver_url || "/api/captcha",
+        // LUÔN đi qua proxy cùng gốc `/api/captcha`. `captcha_solver_url` trong
+        // config là địa chỉ NỘI BỘ để máy chủ gọi máy chủ (`http://127.0.0.1:8010`)
+        // — đem nó cho trình duyệt dùng là bảo trình duyệt gọi vào chính máy của
+        // người dùng. Mọi request im lặng hỏng: danh sách tài khoản hiện "(0)"
+        // dù kho có, và bấm "Đăng nhập và thêm vào pool" thì không có request
+        // nào tới máy chủ (đo 09/08/2026: 0 POST /v1/openai-native/onboard trong
+        // 60 phút, cả trên PC lẫn điện thoại). Thẻ Google ép cứng proxy từ trước
+        // nên vẫn chạy — chính chỗ lệch đó làm lỗi trông như "chỉ thẻ này hỏng".
+        setCs({ url: "/api/captcha",
                 apiKey: flow.captcha_solver_api_key || "" });
       } catch { /* để mặc định */ }
     })();
