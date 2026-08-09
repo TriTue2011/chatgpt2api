@@ -43,9 +43,9 @@ API_HOST = "https://aisandbox-pa.googleapis.com"
 # Aspect ratio labels in the Flow UI dropdown (Vietnamese locale).
 _ASPECT_LABELS = {
     "IMAGE_ASPECT_RATIO_LANDSCAPE":      "16:9",
-    "IMAGE_ASPECT_RATIO_LANDSCAPE_4_3":  "4:3",
+    "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE":  "4:3",
     "IMAGE_ASPECT_RATIO_SQUARE":         "1:1",
-    "IMAGE_ASPECT_RATIO_PORTRAIT_3_4":   "3:4",
+    "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR":   "3:4",
     "IMAGE_ASPECT_RATIO_PORTRAIT":       "9:16",
 }
 
@@ -598,9 +598,9 @@ async def generate_image(
 
         _ASPECT_LABEL = {
             "IMAGE_ASPECT_RATIO_LANDSCAPE": "16:9",
-            "IMAGE_ASPECT_RATIO_LANDSCAPE_4_3": "4:3",
+            "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE": "4:3",
             "IMAGE_ASPECT_RATIO_SQUARE": "1:1",
-            "IMAGE_ASPECT_RATIO_PORTRAIT_3_4": "3:4",
+            "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR": "3:4",
             "IMAGE_ASPECT_RATIO_PORTRAIT": "9:16",
         }
         # Nhãn hiện trên dropdown của Flow, tra theo tên NỘI BỘ mà phía dịch vụ

@@ -475,7 +475,7 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
         # 21:05 mới thấy "auto-evicting idle profile". Cookie/session vẫn được
         # giữ vì close_profile ghi user-data-dir xuống đĩa, không xoá profile.
         try:
-            await pool.close_profile(req.profile)
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
             logger.info("codex-g: đã đóng browser profile=%s", req.profile)
         except Exception as close_err:
             logger.warning({"event": "codex_google_onboard_close_error",

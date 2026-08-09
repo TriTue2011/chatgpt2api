@@ -547,9 +547,10 @@ async def _chay_onboard_co_han(session: ChatGPTOnboardSession, password: str) ->
                              f"nhả trình duyệt để việc khác trên hồ sơ này chạy được")
             session.completed_at = time.time()
         # `_run_onboard_v2` tự đóng ở đường bình thường; ở đường bị huỷ thì nó
-        # không chạy tới đó, nên phải đóng tại đây. Đóng hai lần là vô hại.
+        # không chạy tới đó, nên phải đóng tại đây. Đóng hai lần là vô hại —
+        # nhưng đóng trúng lượt đăng nhập của việc khác thì không.
         try:
-            await pool.close_profile(session.profile)
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau khi dừng onboard bỏ qua", exc_info=True)
 
@@ -1865,10 +1866,13 @@ async def _run_onboard_v2(session, password: str) -> None:
         session.completed_at = time.time()
         logger.exception("onboard_v2 failed")
     
-    # Close browser after SSO so it doesn't linger in noVNC
+    # Close browser after SSO so it doesn't linger in noVNC.
+    # `bo_qua_khi_dang_nhap=True`: đây CHÍNH LÀ dòng đã giết tầng T3 lúc
+    # 05:48:57 ngày 10/08/2026 — lượt onboard này kết thúc và đóng hồ sơ đúng 2
+    # giây sau khi lượt đăng nhập Google vừa nhận context.
     if session.state in ("failed", "success"):
         try:
-            await pool.close_profile(session.profile)
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
             logger.info("closed browser after chatgpt onboard profile=%s state=%s", session.profile, session.state)
         except Exception:
             logger.debug("close_profile after chatgpt onboard skipped", exc_info=True)

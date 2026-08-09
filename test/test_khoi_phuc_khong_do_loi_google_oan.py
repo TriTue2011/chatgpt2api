@@ -63,6 +63,14 @@ def _than(nguon: str, dau: str, cuoi: str) -> str:
     return nguon[i:nguon.index(cuoi, i)]
 
 
+def _chi_code(nguon: str) -> str:
+    """Bỏ dòng chú thích. Bắt buộc cho các khẳng định 'có gọi kèm tham số X':
+    chú thích ở đây thường NHẮC ĐÚNG tên tham số đó, nên nếu không bỏ thì test
+    xanh nhờ một câu văn và chẳng gác được dòng code nào (đã dính đúng bẫy này
+    khi viết file)."""
+    return "\n".join(d for d in nguon.splitlines() if not d.lstrip().startswith("#"))
+
+
 # ── Lỗi 1: close_profile chờ vô hạn ngay trong handler ───────────────────────
 
 class DongHoSoPhaiCoHan(unittest.TestCase):
@@ -272,6 +280,74 @@ class ThongBaoChiNoiThuDaDo(unittest.TestCase):
         cuoi = self._chay("", trang_thai="error")[-1]
         self.assertIn("error", cuoi)
         self.assertNotIn("Google chặn", cuoi)
+
+
+# ── Tái phát 10/08/2026: dọn dẹp của việc này giết lượt đăng nhập của việc kia ─
+
+class DonDepKhongDuocGietLuotDangNhap(unittest.TestCase):
+    """Sau khi ba lỗi trên được vá, lượt khôi phục kế tiếp trượt với lý do MỚI —
+    và lần này là lý do thật, đo được, do chính lỗi 3 phơi ra:
+
+        → Lý do: Page.goto: Target page, context or browser has been closed.
+
+    Log máy chủ 10/08/2026:
+        05:45:49  opened context google-benbap115 (T2 onboard ChatGPT)
+        05:45:49  cưỡi session Google sẵn có — bỏ qua nuke      ← lỗi 2 đã vá
+        05:48:55  close_profile: bận quá 5s — bỏ lượt đóng      ← lỗi 1 đã vá
+        05:48:57  auto-login crashed profile=google-benbap115   ← lỗi MỚI
+        05:48:57  closed browser after chatgpt onboard state=failed
+
+    Tầng T2 hết giờ chờ ở phía người gọi (180s) trong khi tác vụ máy chủ chạy
+    tới 188s. Tầng T3 nhận context trong khe 2 giây đó, rồi bước dọn dẹp của T2
+    đóng đúng cái context ấy.
+
+    Các luồng đăng nhập lấy context bằng `get()` và thao tác NGOÀI khoá hồ sơ
+    (khác `page()` — cái đó giữ khoá suốt lượt), nên khoá không bảo vệ được họ.
+    Hàng rào đúng đã có sẵn từ 31/07: cờ `dang_dang_nhap` + tham số
+    `bo_qua_khi_dang_nhap`. Nó chỉ chưa được dựng ở các bước DỌN DẸP.
+    """
+
+    # (file, hàm/đoạn chứa lời gọi) — mọi chỗ mang nghĩa "xong việc của TÔI"
+    DON_DEP = [
+        ("captcha-solver/src/auto_login.py", "closed browser after onboard profile"),
+        ("captcha-solver/src/chatgpt_login.py", "closed browser after chatgpt onboard profile"),
+        ("captcha-solver/src/chatgpt_login.py", "close_profile sau khi dừng onboard bỏ qua"),
+        ("captcha-solver/src/gemini_web_login.py", "closed browser after %s onboard profile"),
+        ("captcha-solver/src/claude_web_login.py", "closed browser after %s onboard profile"),
+        ("captcha-solver/src/openai_native_login.py", "close_profile sau onboard bo qua"),
+        ("captcha-solver/src/codex_google_onboard.py", "codex-g: đã đóng browser profile"),
+        ("captcha-solver/src/github_codex_onboard.py", "codex_onboard_close_profile_error"),
+        ("captcha-solver/src/main.py", "Đảm bảo tắt ngay trình duyệt sau khi xử lý xong"),
+    ]
+
+    def test_moi_buoc_don_dep_deu_ne_luot_dang_nhap(self):
+        for duong_dan, moc in self.DON_DEP:
+            with self.subTest(file=duong_dan, moc=moc):
+                nguon = (GOC / duong_dan).read_text(encoding="utf-8")
+                i = nguon.index(moc)
+                # Lời gọi nằm ngay quanh mốc (trước với nhánh có log sau, sau với
+                # nhánh có comment trước) → soi cả hai phía.
+                quanh = nguon[max(0, i - 400):i + 400]
+                self.assertIn("close_profile", quanh)
+                self.assertIn("bo_qua_khi_dang_nhap=True", quanh,
+                              f"{duong_dan}: bước dọn dẹp này vẫn đóng được trình "
+                              f"duyệt giữa lượt đăng nhập của việc khác")
+
+    def test_nut_dong_tay_van_dong_that(self):
+        """Người bấm 'đóng' hay xoá hồ sơ là YÊU CẦU TƯỜNG MINH — không được né."""
+        nguon = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
+        for moc in ('async def api_session_close', "Irreversible — the login session"):
+            i = nguon.index(moc)
+            quanh = nguon[i:i + 700]
+            self.assertIn("close_profile", quanh)
+            self.assertNotIn("bo_qua_khi_dang_nhap", quanh)
+
+    def test_co_dang_nhap_thi_close_profile_khong_cham_khoa(self):
+        """Né phải xảy ra TRƯỚC khi chạm khoá — nếu không thì nó vừa không đóng
+        vừa vẫn xếp hàng chờ."""
+        than = _than(NGUON_POOL, "async def close_profile", "def is_loaded")
+        self.assertLess(than.index("if bo_qua_khi_dang_nhap and self.dang_dang_nhap"),
+                        than.index("lock = await self._lock_for(profile)"))
 
 
 if __name__ == "__main__":

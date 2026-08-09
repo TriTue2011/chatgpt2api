@@ -1252,7 +1252,9 @@ async def _run(session: LoginSession, password: str) -> None:
         pool.xong_dang_nhap(session.profile)
     if session.state in ("failed", "success"):
         try:
-            await pool.close_profile(session.profile)
+            # Lượt của MÌNH đã xong (cờ vừa được gỡ ở trên). Cờ còn bật nghĩa là
+            # một lượt đăng nhập KHÁC đang chạy trên cùng hồ sơ — đừng đóng.
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
             logger.info("closed browser after onboard profile=%s state=%s", session.profile, session.state)
         except Exception:
             logger.debug("close_profile after onboard skipped", exc_info=True)

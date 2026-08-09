@@ -194,7 +194,7 @@ async def _run(session: ClaudeWebLoginSession, password: str) -> None:
         pool.xong_dang_nhap(session.profile)
     if session.state in ("success", "failed"):
         try:
-            await pool.close_profile(session.profile)
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
             logger.info("closed browser after %s onboard profile=%s", session.state, session.profile)
         except Exception:
             logger.debug("close_profile after onboard skipped", exc_info=True)

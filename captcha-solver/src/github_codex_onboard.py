@@ -1028,6 +1028,6 @@ async def run_codex_onboard(req: CodexOnboardReq) -> dict[str, Any]:
     finally:
         # Robust close: ensure next account's browser can launch even if this one crashed.
         try:
-            await pool.close_profile(profile)
+            await pool.close_profile(profile, bo_qua_khi_dang_nhap=True)
         except Exception as close_err:
             logger.warning({'event': 'codex_onboard_close_profile_error', 'profile': profile, 'error': str(close_err)[:160]})

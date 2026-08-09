@@ -122,6 +122,42 @@ class QuanLyModelKhongDuocChaoTenChet(unittest.TestCase):
         self.assertIn(self._alias().get("auto"), FR.MODEL_ANH_DA_DO_LA_DUNG)
 
 
+class TyLeKhungHinhDungHangSoCoThat(unittest.TestCase):
+    """Hằng số tỷ lệ đã ĐO 10/08/2026, và hai file phải nói cùng một thứ.
+
+    Tỷ lệ được kiểm TRƯỚC cửa reCAPTCHA và Google báo kèm tên trường, nên quét
+    được miễn phí: `..._FOUR_THREE` / `..._THREE_FOUR` hợp lệ, còn `..._4_3` /
+    `..._3_4` KHÔNG tồn tại — mà hai dạng sau đúng là thứ bảng bên dịch vụ dùng
+    suốt thời gian qua. Đường DOM che mất vì nó chỉ dùng chuỗi làm khoá tra nhãn
+    dropdown, y hệt cách `NANO_BANANA_PRO` sống sót.
+    """
+
+    KHONG_TON_TAI = ("IMAGE_ASPECT_RATIO_LANDSCAPE_4_3", "IMAGE_ASPECT_RATIO_PORTRAIT_3_4",
+                     "VIDEO_ASPECT_RATIO_SQUARE", "VIDEO_ASPECT_RATIO_LANDSCAPE_FOUR_THREE")
+
+    def test_khong_file_nao_con_dung_hang_so_da_do_la_khong_co(self):
+        for duong in ("services/image_providers/flow_google.py",
+                      "captcha-solver/src/solvers/flow_google.py",
+                      "captcha-solver/src/solvers/flow_rest.py"):
+            nguon = (GOC / duong).read_text(encoding="utf-8")
+            for hang in self.KHONG_TON_TAI:
+                with self.subTest(duong=duong, hang=hang):
+                    # Cho phép nhắc trong chú thích (dòng bắt đầu bằng # hoặc
+                    # nằm trong docstring), chỉ cấm dùng làm giá trị thật.
+                    self.assertNotIn(f'"{hang}"', nguon)
+
+    def test_bang_ty_le_anh_chi_chua_hang_so_da_do_la_co(self):
+        CO = {"IMAGE_ASPECT_RATIO_SQUARE", "IMAGE_ASPECT_RATIO_LANDSCAPE",
+              "IMAGE_ASPECT_RATIO_PORTRAIT", "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+              "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"}
+        self.assertEqual(set(FR.TY_LE_ANH.values()) - CO, set())
+
+    def test_video_chi_co_hai_ty_le(self):
+        """Đo: chỉ LANDSCAPE và PORTRAIT. Không có SQUARE, không có 4:3."""
+        self.assertEqual(set(FR.TY_LE_VIDEO.values()),
+                         {"VIDEO_ASPECT_RATIO_LANDSCAPE", "VIDEO_ASPECT_RATIO_PORTRAIT"})
+
+
 class MaLoiKhongDuocLaThanhCong(unittest.TestCase):
     """`LoiFlowRest` không bao giờ được mang mã 2xx.
 

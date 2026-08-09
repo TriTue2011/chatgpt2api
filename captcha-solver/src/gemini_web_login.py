@@ -227,7 +227,7 @@ async def _run(session: GeminiWebLoginSession, password: str) -> None:
     # để mở → phải nhấn X tay). Reuse sau tự mở lại headless.
     if session.state in ("success", "failed"):
         try:
-            await pool.close_profile(session.profile)
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
             logger.info("closed browser after %s onboard profile=%s", session.state, session.profile)
         except Exception:
             logger.debug("close_profile after onboard skipped", exc_info=True)

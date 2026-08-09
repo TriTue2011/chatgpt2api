@@ -127,12 +127,24 @@ _ASPECT_FROM_SIZE: dict[tuple[int, int], str] = {
 }
 
 # Friendly aspect strings ("16:9", "4:3", ...) → Flow API constant.
+#
+# ĐO THẲNG VÀO API 10/08/2026. Tỷ lệ được kiểm TRƯỚC cửa reCAPTCHA và Google báo
+# lỗi kèm TÊN TRƯỜNG ("Invalid value at 'requests[0].image_aspect_ratio'"), nên
+# quét được miễn phí:
+#
+#     SQUARE / LANDSCAPE / PORTRAIT                     hợp lệ
+#     LANDSCAPE_FOUR_THREE / PORTRAIT_THREE_FOUR        hợp lệ
+#     LANDSCAPE_4_3 / PORTRAIT_3_4                      KHÔNG tồn tại
+#
+# Hai dạng cuối là thứ bảng này dùng suốt thời gian qua. Đường DOM che mất vì nó
+# chỉ dùng chuỗi làm khoá tra NHÃN dropdown, không bao giờ gửi xuống API — y hệt
+# cách `NANO_BANANA_PRO` sống sót. Bảng nhãn bên bộ lái đã sửa theo cùng lượt.
 _ASPECT_FROM_LABEL: dict[str, str] = {
     "16:9":     "IMAGE_ASPECT_RATIO_LANDSCAPE",
-    "4:3":      "IMAGE_ASPECT_RATIO_LANDSCAPE_4_3",
+    "4:3":      "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
     "1:1":      "IMAGE_ASPECT_RATIO_SQUARE",
     "square":   "IMAGE_ASPECT_RATIO_SQUARE",
-    "3:4":      "IMAGE_ASPECT_RATIO_PORTRAIT_3_4",
+    "3:4":      "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
     "9:16":     "IMAGE_ASPECT_RATIO_PORTRAIT",
     "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
     "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",

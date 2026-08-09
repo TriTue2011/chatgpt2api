@@ -312,7 +312,8 @@ class FlowImageReq(BaseModel):
     project_id: str
     prompt: str
     # Default 16:9 landscape. Other supported values matching Flow's pill
-    # buttons: IMAGE_ASPECT_RATIO_LANDSCAPE_4_3, _SQUARE, _PORTRAIT_3_4,
+    # buttons: IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE, _SQUARE,
+    # IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR,
     # _PORTRAIT (9:16).
     aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE"
     # Strongest model by default. GEM_PIX_2 = Nano Banana Pro,
@@ -1988,7 +1989,8 @@ async def _auto_refresh_loop(interval_minutes: int = 30):
                         logger.warning("auto_refresh: %s error: %s", email, str(exc)[:100])
                 finally:
                     # Đảm bảo tắt ngay trình duyệt sau khi xử lý xong tài khoản này
-                    await pool.close_profile(profile)
+                    # — trừ khi một lượt đăng nhập khác đang dùng đúng hồ sơ đó.
+                    await pool.close_profile(profile, bo_qua_khi_dang_nhap=True)
 
         except Exception as exc:
             logger.warning("auto_refresh: loop error: %s", str(exc)[:120])

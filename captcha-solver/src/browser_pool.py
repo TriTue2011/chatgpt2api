@@ -242,6 +242,17 @@ class BrowserPool:
         # google-benbap115 đóng trình duyệt đúng lúc phục hồi phiên Claude đang
         # mở claude.ai ⇒ báo "đăng nhập lại Google cũng không xong" tuy tài khoản
         # không hỏng.
+        #
+        # TÁI PHÁT 10/08/2026, cùng hồ sơ, vì cờ này chỉ được truyền ở 8 lời gọi
+        # trong `main.py` — còn các bước DỌN DẸP cuối mỗi lượt onboard/đăng nhập
+        # thì không. Tầng T2 (onboard ChatGPT) kết thúc lúc 05:48:57 và đóng hồ
+        # sơ đúng 2 giây sau khi tầng T3 vừa nhận context, giết `page.goto` giữa
+        # chừng: "Target page, context or browser has been closed".
+        #
+        # LUẬT: mọi lời gọi `close_profile` mang nghĩa "xong việc của TÔI, đừng
+        # để trình duyệt nằm lại" phải truyền `bo_qua_khi_dang_nhap=True`. Nhả
+        # muộn thì chỉ tốn RAM tới lượt quét nhàn rỗi; đóng nhầm thì giết lượt
+        # đăng nhập của việc khác.
         self._dang_dang_nhap: set[str] = set()
 
     def dau_dang_nhap(self, profile: str) -> None:

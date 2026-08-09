@@ -284,7 +284,7 @@ async def _run(session: OpenAILoginSession, password: str) -> None:
         pool.xong_dang_nhap(session.profile)
     if session.state in ("success", "failed"):
         try:
-            await pool.close_profile(session.profile)
+            await pool.close_profile(session.profile, bo_qua_khi_dang_nhap=True)
         except Exception:
             logger.debug("close_profile sau onboard bo qua", exc_info=True)
 
