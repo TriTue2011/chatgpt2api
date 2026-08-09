@@ -676,6 +676,17 @@ async def api_flow_rest_image(req: FlowRestImageReq) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("flow rest generate-image failed")
         raise _loi_flow_rest(exc) from exc
+    finally:
+        # Nhả trình duyệt y như ba endpoint DOM ở trên. THIẾU KHỐI NÀY là lỗi
+        # thật, đo 09/08/2026: sau một buổi gọi thử, ba hồ sơ Flow còn nguyên ba
+        # Chromium sống (`/v1/session/list` báo loaded=true, pages=1) và CPU/RAM
+        # của container leo lên trông thấy. Đường REST mở trình duyệt ít hơn
+        # đường DOM nhiều, nhưng "ít hơn" không phải "không cần dọn".
+        try:
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
+        except Exception:
+            logger.debug("close_profile sau lượt Flow REST bỏ qua", exc_info=True)
+
 
 
 @app.post("/v1/google/flow/rest/generate-video", dependencies=[Depends(require_api_key)])
@@ -724,6 +735,17 @@ async def api_flow_rest_video(req: FlowRestVideoReq) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("flow rest generate-video failed")
         raise _loi_flow_rest(exc) from exc
+    finally:
+        # Nhả trình duyệt y như ba endpoint DOM ở trên. THIẾU KHỐI NÀY là lỗi
+        # thật, đo 09/08/2026: sau một buổi gọi thử, ba hồ sơ Flow còn nguyên ba
+        # Chromium sống (`/v1/session/list` báo loaded=true, pages=1) và CPU/RAM
+        # của container leo lên trông thấy. Đường REST mở trình duyệt ít hơn
+        # đường DOM nhiều, nhưng "ít hơn" không phải "không cần dọn".
+        try:
+            await pool.close_profile(req.profile, bo_qua_khi_dang_nhap=True)
+        except Exception:
+            logger.debug("close_profile sau lượt Flow REST bỏ qua", exc_info=True)
+
 
 
 @app.post("/v1/google/flow/rest/video-status", dependencies=[Depends(require_api_key)])

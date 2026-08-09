@@ -602,19 +602,40 @@ class BrowserPool:
         finally:
             lock.release()
 
-    async def close_profile(self, profile: str, *, bo_qua_khi_dang_nhap: bool = False) -> bool:
+    async def close_profile(self, profile: str, *, bo_qua_khi_dang_nhap: bool = False,
+                            cho_toi_da: float | None = None) -> bool:
         """Đóng trình duyệt của hồ sơ.
 
         `bo_qua_khi_dang_nhap=True`: KHÔNG đóng nếu hồ sơ đang có luồng đăng nhập
         chạy dở. Dùng cho các việc chỉ muốn nhả RAM (tạo ảnh/video Flow) — nhả
         muộn 5 phút theo hạn nhàn rỗi thì chỉ tốn RAM, còn đóng sai lúc thì làm
         chết cả lượt đăng nhập của việc khác.
+
+        `cho_toi_da`: giống `get()` — số giây tối đa chờ tới lượt, hết giờ thì ném
+        `HoSoDangBan`. Mặc định None = chờ vô hạn, giữ nguyên hành vi cũ.
+
+        VÌ SAO CẦN: hàm này chờ khoá hồ sơ y như `get()`, nên nó cũng treo y như
+        `get()` — chỉ khác là nó bị gọi ở chỗ KHÔNG ai đặt hạn. Đo thật 09/08/2026
+        (benbap115@gmail.com): `start_auto_login` gọi nó trong lúc một lượt onboard
+        ChatGPT đang giữ hồ sơ, handler HTTP `/v1/session/auto-login-saved` nằm im
+        và KHÔNG BAO GIỜ trả lời — access log của solver không có nổi một dòng cho
+        yêu cầu đó. Bên gọi hết hạn 30 giây rồi báo "Google chặn", trong khi trình
+        duyệt còn chưa mở.
         """
         if bo_qua_khi_dang_nhap and self.dang_dang_nhap(profile):
             logger.info("close_profile BỎ QUA profile=%s — đang có luồng đăng nhập", profile)
             return False
         lock = await self._lock_for(profile)
-        async with lock:
+        if cho_toi_da is None:
+            await lock.acquire()
+        else:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=cho_toi_da)
+            except asyncio.TimeoutError:
+                logger.info("close_profile: hồ sơ %s bận quá %.0fs — bỏ lượt đóng",
+                            profile, cho_toi_da)
+                raise HoSoDangBan(profile, cho_toi_da) from None
+        try:
             entry = self._contexts.pop(profile, None)
             if entry is None:
                 return False
@@ -623,6 +644,8 @@ class BrowserPool:
             except Exception:
                 pass
             return True
+        finally:
+            lock.release()
 
     def is_loaded(self, profile: str) -> bool:
         return profile in self._contexts

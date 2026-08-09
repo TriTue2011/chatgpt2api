@@ -450,6 +450,12 @@ async def _nuke_profile(profile: str, max_wait: float = 10.0) -> None:
         logger.error("auto_login: profile cleanup failed completely: %s", exc)
 
 
+# Hạn chờ khi dọn context cũ lúc khởi động một lượt đăng nhập. Ngắn có chủ ý:
+# đây chỉ là dọn dẹp, còn việc chờ tới lượt dùng hồ sơ là của `_run_inner`
+# (hạn 120s, báo "Hồ sơ đang bận"). Xem `start_auto_login`.
+_HAN_DON_CONTEXT_S = 5.0
+
+
 async def start_auto_login(
     profile: str,
     email: str,
@@ -482,8 +488,23 @@ async def start_auto_login(
     )
     _sessions[profile] = session
 
-    # Always close old context before reusing it
-    await pool.close_profile(profile)
+    # Dọn context cũ trước khi dùng lại — CÓ HẠN, và hết giờ KHÔNG phải lỗi.
+    #
+    # Hàm này phải trả lời NGAY để bên gọi có phiên mà poll; mọi việc chờ tới
+    # lượt dùng hồ sơ thuộc về `_run_inner` (đã có hạn 120s và kết thúc bằng lý
+    # do đọc được: "Hồ sơ đang bận — chưa tới lượt").
+    #
+    # Đo thật 09/08/2026 (google-benbap115): một lượt onboard ChatGPT đang giữ
+    # hồ sơ, `close_profile` chờ vô hạn ngay tại đây nên handler
+    # `/v1/session/auto-login-saved` KHÔNG BAO GIỜ trả lời — solver không ghi nổi
+    # một dòng access log cho yêu cầu đó. Tầng T3 của auto-recovery hết hạn 30
+    # giây, nuốt lỗi, rồi báo "không vào được ô mật khẩu (Google chặn)" cho một
+    # trình duyệt chưa từng mở.
+    try:
+        await pool.close_profile(profile, cho_toi_da=_HAN_DON_CONTEXT_S)
+    except HoSoDangBan:
+        logger.info("auto_login: hồ sơ %s đang bận lúc dọn context — "
+                    "để _run_inner chờ có hạn rồi báo lý do", profile)
     # await _nuke_profile(profile)  # REMOVED to preserve ChatGPT/Codex cache
 
     task = asyncio.create_task(_run(session, password))

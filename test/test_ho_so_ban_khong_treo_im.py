@@ -107,8 +107,13 @@ class LuongDangNhapTests(unittest.TestCase):
         self.assertIn("cho_toi_da=", NGUON_LOGIN)
 
     def test_bat_HoSoDangBan_va_ket_thuc_co_ly_do(self):
-        i = NGUON_LOGIN.index("except HoSoDangBan")
-        than = NGUON_LOGIN[i:i + 700]
+        # Neo vào ĐÚNG chỗ mở trình duyệt của lượt đăng nhập (`_run_inner`), chứ
+        # không phải "lần xuất hiện đầu tiên trong file". `start_auto_login` cũng
+        # bắt `HoSoDangBan` từ 09/08/2026, nhưng ở đó hết giờ KHÔNG phải lỗi: nó
+        # chỉ bỏ bước dọn context rồi để chính chỗ này chờ có hạn và báo lý do.
+        i = NGUON_LOGIN.index("ctx = await pool.get(profile=session.profile")
+        than = NGUON_LOGIN[i:i + 900]
+        self.assertIn("except HoSoDangBan", than)
         self.assertIn('session.state = "failed"', than,
                       "phải kết thúc phiên, không để nguyên 'starting'")
         self.assertIn("bận", than, "lý do phải nói rõ là bận, không phải lỗi chung chung")

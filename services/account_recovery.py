@@ -196,6 +196,19 @@ def _has_google_creds(profile: str, email: str = "") -> bool:
 # khoá mỗi profile — không phải cache, không cần hết hạn.
 _LAST_LOGIN_STATE: dict[str, str] = {}
 
+# Lý do đọc được đi kèm trạng thái đó — CHÍNH LÀ thứ solver nói ("Hồ sơ đang bận
+# — chưa tới lượt", "no saved Google credentials…") hoặc lỗi mạng của chính lượt
+# gọi này. Thiếu nó thì mọi kiểu trượt đều bị in ra bằng một câu đoán mò.
+_LAST_LOGIN_NOTE: dict[str, str] = {}
+
+
+def _ghi_ket_qua(profile: str, state: str, note: str = "") -> None:
+    """Ghi trạng thái + lý do của lượt đăng nhập Google gần nhất."""
+    if state:
+        _LAST_LOGIN_STATE[profile] = state
+    _LAST_LOGIN_NOTE[profile] = (note or "")[:200]
+
+
 # Những trạng thái nghĩa là PHẢI CÓ NGƯỜI, máy chờ thêm cũng vô ích:
 # - need_captcha : Google bắt captcha; auto_login chỉ gắn cờ rồi đợi người gõ
 #                  trên noVNC. Thiếu nó trong danh sách này thì vòng poll chờ hết
@@ -226,8 +239,9 @@ def _freshen_google(profile: str) -> bool:
             time.sleep(cho)  # giãn cách như bấm tay lần lượt
         r = requests.post(f"{base}/v1/session/auto-login-saved", headers=H,
                           json={"profile": profile}, timeout=30)
-        st = (r.json() or {}).get("state", "")
-        _LAST_LOGIN_STATE[profile] = st
+        d = r.json() or {}
+        st = d.get("state", "")
+        _ghi_ket_qua(profile, st, str(d.get("error") or d.get("message") or ""))
         if st in ("failed", "blocked", "error"):
             return False
         # Poll tối đa ~700s — KHỚP ngân sách thật của auto_login: 420s cho giai
@@ -243,8 +257,7 @@ def _freshen_google(profile: str) -> bool:
             except Exception:
                 continue
             state = str(s.get("state") or "")
-            if state:
-                _LAST_LOGIN_STATE[profile] = state
+            _ghi_ket_qua(profile, state, str(s.get("error") or s.get("message") or ""))
             if state in ("success", "done", "logged_in"):
                 return True
             if state in ("failed", "blocked", "error") or state in _CAN_NGUOI:
@@ -252,8 +265,21 @@ def _freshen_google(profile: str) -> bool:
                 # làm captcha tự biến mất, chỉ giữ trình duyệt mở vô ích.
                 return False
         _LAST_LOGIN_STATE.setdefault(profile, "timeout")
+        _LAST_LOGIN_NOTE.setdefault(profile, "hết 700s vẫn chưa xong")
         return False
-    except Exception:
+    except Exception as exc:
+        # KHÔNG được nuốt. Lượt trượt vì lỗi mạng/timeout trông y hệt lượt trượt
+        # vì Google chặn, nếu chỗ này im lặng. Đo thật 09/08/2026
+        # (benbap115@gmail.com): handler `/v1/session/auto-login-saved` treo vì hồ
+        # sơ đang bận, POST hết hạn 30s, `except Exception: return False` trần
+        # nuốt sạch — không log, không trạng thái — nên tin báo cho chủ máy nói
+        # "không vào được ô mật khẩu (Google chặn)" về một trình duyệt chưa mở.
+        _ghi_ket_qua(profile, "error", f"{type(exc).__name__}: {exc}")
+        logger.warning({
+            "event": "freshen_google_error",
+            "profile": profile,
+            "error": str(exc)[:200],
+        })
         return False
     finally:
         # Đóng mốc SAU khi phiên này xong để tài khoản kế tiếp tính giãn cách từ
@@ -265,6 +291,11 @@ def _freshen_google(profile: str) -> bool:
 def trang_thai_dang_nhap_cuoi(profile: str) -> str:
     """Trạng thái auto-login cuối của profile ("" nếu chưa từng thử)."""
     return _LAST_LOGIN_STATE.get(profile, "")
+
+
+def ly_do_dang_nhap_cuoi(profile: str) -> str:
+    """Lý do đọc được kèm trạng thái đó ("" nếu không có)."""
+    return _LAST_LOGIN_NOTE.get(profile, "")
 
 
 # ── Steps riêng theo provider ────────────────────────────────────────────────
@@ -511,46 +542,53 @@ def _cgf_reuse(profile: str, email: str) -> str:
     """ChatGPT-free (web JWT): ride Google/ChatGPT session → scrape JWT →
     upsert free pool (chỉ email đã có). '' nếu fail.
 
-    Thử 2 lần:
-      1) reuse_session=True  (nhanh nếu cookie Google/ChatGPT còn)
-      2) reuse_session=False (SSO đầy đủ hơn khi cookie ChatGPT chết
-         nhưng profile Google vẫn còn — tránh kẹt cookie NextAuth rác)
+    ĐÚNG MỘT lượt, `reuse_session=True`.
+
+    Bản cũ thử thêm lượt hai với `reuse_session=False`, ý là "SSO đầy đủ hơn khi
+    cookie ChatGPT chết nhưng profile Google vẫn còn". Ý đó không thực hiện được:
+    `_cgf_onboard_once` luôn gửi email và mật khẩu RỖNG, nên lượt hai không có gì
+    để đăng nhập Google — nó chỉ kịp XOÁ hồ sơ (đường `reuse_session=False` gọi
+    `_nuke_profile`) rồi lặp vô ích.
+
+    Đo thật 09/08/2026 (benbap115@gmail.com): lượt hai xoá mất phiên Google đang
+    sống lúc 22:13:41, chạy tiếp 7 phút rưỡi với ô email trống ("bấm lại vào mail
+    lần 35"), giữ khoá hồ sơ — nên tầng T3 xếp hàng phía sau treo luôn và cả
+    thang khôi phục báo hỏng. Tài khoản đi từ "chỉ hỏng token" thành "mất luôn
+    phiên Google", phải đăng nhập tay.
     """
-    for reuse in (True, False):
-        token = _cgf_onboard_once(profile, reuse_session=reuse)
-        if not token or not token.startswith("eyJ"):
-            continue
-        try:
-            from services.account_service import account_service
-            # Chỉ refresh/cập nhật tài khoản free ĐÃ có trong pool (cùng email).
-            # Không tự thêm email mới từ profile captcha / saved accounts.
-            existing = account_service.find_free_by_email(email)
-            if not existing:
-                logger.info({
-                    "event": "cgf_reuse_skip_not_in_pool",
-                    "email": email,
-                    "hint": "Chỉ refresh account free user đã thêm tay — không auto-add",
-                })
-                return ""
-            account_service.upsert_free_token(token, {
-                "status": "active",
-                "email": email,
-            })
+    token = _cgf_onboard_once(profile, reuse_session=True)
+    if not token or not token.startswith("eyJ"):
+        return ""
+    try:
+        from services.account_service import account_service
+        # Chỉ refresh/cập nhật tài khoản free ĐÃ có trong pool (cùng email).
+        # Không tự thêm email mới từ profile captcha / saved accounts.
+        existing = account_service.find_free_by_email(email)
+        if not existing:
             logger.info({
-                "event": "cgf_reuse_ok",
+                "event": "cgf_reuse_skip_not_in_pool",
                 "email": email,
-                "profile": profile,
-                "reuse_session": reuse,
-            })
-            return token
-        except Exception as exc:
-            logger.warning({
-                "event": "cgf_reuse_upsert_failed",
-                "email": email,
-                "error": str(exc)[:160],
+                "hint": "Chỉ refresh account free user đã thêm tay — không auto-add",
             })
             return ""
-    return ""
+        account_service.upsert_free_token(token, {
+            "status": "active",
+            "email": email,
+        })
+        logger.info({
+            "event": "cgf_reuse_ok",
+            "email": email,
+            "profile": profile,
+            "reuse_session": True,
+        })
+        return token
+    except Exception as exc:
+        logger.warning({
+            "event": "cgf_reuse_upsert_failed",
+            "email": email,
+            "error": str(exc)[:160],
+        })
+        return ""
 
 
 # ── gma (Gemini web) — theo PROFILE (không có token pool, cookie fetch live) ──
@@ -939,7 +977,14 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # đọc đi sai hướng khi thực tế là Google bắt captcha: mật khẩu, TOTP, IMAP đều
     # đúng cả, không có gì để "kiểm tra". Đo thật 30/07 với benbap2011@gmail.com —
     # log auto_login ghi rõ captcha, còn thông báo lại bảo đi soi cấu hình.
+    #
+    # Và KHÔNG khẳng định thứ chưa đo. Đo thật 09/08/2026 (benbap115@gmail.com):
+    # lượt T3 hết hạn 30s ở tầng HTTP vì hồ sơ đang bận — trình duyệt chưa từng
+    # mở — mà tin báo vẫn nói chắc "không vào được ô mật khẩu (Google chặn hoặc
+    # đổi giao diện)". Chủ máy bấm tay "Chỉ đăng nhập" ngay sau đó thì vào bình
+    # thường, nên câu đổ lỗi cho Google vừa sai vừa làm mất tin vào thông báo.
     trang_thai = trang_thai_dang_nhap_cuoi(profile) if can_google else ""
+    ly_do = ly_do_dang_nhap_cuoi(profile) if can_google else ""
     if trang_thai == "need_captcha":
         hint = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
                 "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP/IMAP không liên quan.")
@@ -947,9 +992,10 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         hint = ("Google đòi mã 2FA phải người bấm (profile này chưa có TOTP) — "
                 "xử lý trên noVNC cổng 6080, hoặc thêm TOTP cho profile.")
     elif google_login_failed:
-        hint = (f"Đăng nhập lại Google không vào được ô mật khẩu (Google chặn hoặc "
-                f"đổi giao diện) — đăng nhập tay MỘT lần qua noVNC cổng 6080 "
-                f"(profile {profile}), xong hệ thống tự dùng lại session đó.")
+        vi_sao = ly_do or f"solver báo trạng thái '{trang_thai or 'không rõ'}'"
+        hint = (f"Đăng nhập lại Google chưa xong. Lý do: {vi_sao}. Đăng nhập tay "
+                f"MỘT lần qua noVNC cổng 6080 (profile {profile}), xong hệ thống "
+                f"tự dùng lại session đó.")
     elif hang_loat:
         hint = ("Soi lại dòng email|pass của tài khoản này trong Settings Codex "
                 "(codex_auto_list) + IMAP Gmail dùng chung.")

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .browser_pool import pool
+from .browser_pool import HoSoDangBan, pool
 from .auto_login import click_google_oauth_consent
 
 try:
@@ -396,6 +396,11 @@ def get_session(profile: str) -> Optional[ChatGPTOnboardSession]:
     return _sessions.get(profile)
 
 
+# Hạn chờ khi đóng trình duyệt của hồ sơ trước lúc xoá nó. Chạy trong handler
+# HTTP nên phải có hạn — xem `browser_pool.close_profile`.
+_HAN_DONG_HO_SO_S = 15.0
+
+
 async def _has_google_session(profile: str) -> bool:
     """Best-effort: does `profile` already hold Google SSO cookies? Read-only —
     never wipes. Lets ChatGPT ride a Google session that a prior Gemini/Flow/
@@ -403,7 +408,9 @@ async def _has_google_session(profile: str) -> bool:
     try:
         ctx = pool.get_cached(profile)
         if ctx is None:
-            ctx = await pool.get(profile=profile, headless=False)
+            # CÓ HẠN: hàm này chạy trong handler HTTP. Hồ sơ đang bận thì thà trả
+            # lời "không thấy phiên" còn hơn treo cả yêu cầu (xem `close_profile`).
+            ctx = await pool.get(profile=profile, headless=False, cho_toi_da=10.0)
         cookies = await ctx.cookies()
         names = {c.get("name") for c in cookies}
         return any(ck in names for ck in _GOOGLE_LOGIN_COOKIES)
@@ -440,17 +447,55 @@ async def start_chatgpt_onboard(
     )
     _sessions[profile] = session
 
-    if reuse_session and await _has_google_session(profile):
+    # KHÔNG có mật khẩu thì KHÔNG tồn tại đường đăng nhập Google mới — chỉ có thể
+    # cưỡi phiên sẵn có. Xoá hồ sơ trong tình huống đó là tự tay phá thứ duy nhất
+    # còn dùng được, rồi chạy một lượt đăng nhập chắc chắn hỏng.
+    #
+    # Đo thật 09/08/2026 (benbap115@gmail.com): tầng T2 của auto-recovery gọi
+    # endpoint này hai lần với email="" password="". Lần hai đặt
+    # reuse_session=False nên nhánh dưới XOÁ hồ sơ ("nuked profile
+    # google-benbap115" — mất luôn phiên Google đang sống), rồi đăng nhập với
+    # email rỗng: đoạn dò tile so khớp chuỗi rỗng nên bấm trúng phần tử đầu tiên
+    # gặp được ("clicked account tile for  on chooser screen"), sau đó lặp "bấm
+    # lại vào mail" 35 lần suốt 7 phút rưỡi và giữ khoá hồ sơ. Tài khoản đi từ
+    # "chỉ hỏng token" thành "mất luôn phiên Google", còn tầng T3 xếp hàng phía
+    # sau thì chết theo.
+    co_mat_khau = bool((password or "").strip())
+    # `and` chập mạch có chủ ý: chỉ dò phiên khi phiên thật sự là đường đi, giữ
+    # nguyên hành vi cũ cho lượt "đăng nhập mới có mật khẩu".
+    cuoi_duoc = (reuse_session or not co_mat_khau) and await _has_google_session(profile)
+    if cuoi_duoc:
         # Keep the existing Google cookies — that's what reuse mode is for.
-        logger.info("chatgpt_login: reuse_session + Google session present for %s — skipping nuke", profile)
+        logger.info("chatgpt_login: cưỡi session Google sẵn có cho %s — bỏ qua nuke", profile)
+        session.reuse_session = True
         session.message = "Tai su dung session Google san co..."
+    elif not co_mat_khau:
+        session.state = "failed"
+        session.error = ("Hồ sơ không có phiên Google mà lượt gọi cũng không kèm mật "
+                         "khẩu — không có đường nào để đăng nhập. Đăng nhập lại tài "
+                         "khoản Google trước rồi tái dùng.")
+        session.completed_at = time.time()
+        logger.warning("chatgpt_login: %s — không phiên Google, không mật khẩu → bỏ "
+                       "lượt thay vì xoá hồ sơ rồi thử vô ích", profile)
+        return session
     else:
         # Kill any existing browser context and nuke old profile.
         # We must wait for Chrome processes to fully exit before deleting,
         # otherwise shutil.rmtree fails silently (ignore_errors=True) and
         # the new context reuses old cookies → Google skips login screen.
+        #
+        # CÓ HẠN như mọi lời gọi `close_profile` trong handler HTTP. Hết giờ thì
+        # DỪNG chứ không đi tiếp: bỏ qua bước xoá rồi vẫn onboard là đăng nhập
+        # đè lên hồ sơ của việc khác đang chạy.
         session.reuse_session = False
-        await pool.close_profile(profile)
+        try:
+            await pool.close_profile(profile, cho_toi_da=_HAN_DONG_HO_SO_S)
+        except HoSoDangBan as exc:
+            session.state = "failed"
+            session.error = f"{exc} — thử lại sau khi việc kia xong."
+            session.completed_at = time.time()
+            logger.warning("chatgpt_login: %s đang bận, không xoá hồ sơ giữa chừng", profile)
+            return session
         await _nuke_profile(profile)
 
     asyncio.create_task(_chay_onboard_co_han(session, password))
