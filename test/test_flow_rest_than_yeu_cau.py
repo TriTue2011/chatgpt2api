@@ -19,9 +19,9 @@ khoá tra NHÃN dropdown. Ngày ai đó nối đường REST vào adapter cũ, m
 đi thẳng xuống Google và mọi lượt tạo ảnh 400. Test đầu tiên ở đây chốt việc
 chặn phải xảy ra tại chỗ, kèm thông báo nêu tên đúng.
 
-Phần còn lại chốt hình dạng thân yêu cầu tạo ảnh: `clientContext` phải có ở cả
-hai tầng, `count` phải nhân bản request chứ không bắn nhiều lời gọi, và mã lỗi
-không bao giờ được mang giá trị 2xx.
+Phần còn lại chốt bốn chế độ video, vì chúng khác nhau ở đúng những chi tiết dễ
+lẫn: endpoint nào, ảnh nằm ở trường nào, và `cropCoordinates` chỉ có ở chế độ
+ảnh-đầu-và-cuối chứ không có ở chế độ ảnh-đầu.
 """
 from __future__ import annotations
 
@@ -92,9 +92,9 @@ class MaLoiKhongDuocLaThanhCong(unittest.TestCase):
 
     `main.py::_loi_flow_rest` chuyển thẳng `.status` thành `HTTPException`, nên
     một lỗi mang mã 200 sẽ trả về HTTP 200 kèm thân `detail` — bên gọi đọc thấy
-    thành công trong khi thật ra hỏng. Hai chỗ "HTTP 200 nhưng thân đáp vô dụng"
-    (upload không có mediaId, đáp thiếu media) từng dùng mã 200 đúng theo nghĩa
-    đen của tầng HTTP, và đó là cái bẫy.
+    thành công trong khi thật ra hỏng. Ba chỗ "HTTP 200 nhưng thân đáp vô dụng"
+    (upload không có mediaId, đáp thiếu media, đáp thiếu Generation ID) từng
+    dùng mã 200 đúng theo nghĩa đen của tầng HTTP, và đó là cái bẫy.
     """
 
     def test_moi_ma_nem_ra_deu_tu_400_tro_len(self):
@@ -167,6 +167,218 @@ class ThanTaoAnh(unittest.TestCase):
     def test_model_sai_nem_loi_truoc_khi_dung_than(self):
         with self.assertRaises(ValueError):
             self._than(model="NANO_BANANA_PRO")
+
+
+class ThanTaoVideo(unittest.TestCase):
+    ANH = [{"name": "Lan.png", "mediaId": "m1"}, {"name": "Hoa.png", "mediaId": "m2"}]
+
+    def _than(self, che_do, **kw):
+        goc = dict(project_id="p1", prompt="Lan đang chạy", che_do=che_do,
+                   model_key="k", session_id=";111", batch_id="b1", seeds=[7])
+        goc.update(kw)
+        return FR.than_tao_video(**goc)
+
+    def test_bon_che_do_deu_co_endpoint(self):
+        self.assertEqual(set(FR.CHE_DO_VIDEO), {
+            "text_to_video", "image_start", "image_start_end", "component"})
+
+    def test_che_do_la_bi_chan(self):
+        with self.assertRaises(ValueError):
+            self._than("image_to_video")
+
+    def test_khung_chung(self):
+        than = self._than("text_to_video")
+        self.assertIs(than["useV2ModelConfig"], True)
+        self.assertEqual(than["mediaGenerationContext"]["audioFailurePreference"],
+                         "RETURN_SILENCED_VIDEOS")
+        self.assertEqual(than["clientContext"]["userPaygateTier"], "PAYGATE_TIER_TWO")
+
+    def test_text_to_video_khong_gan_anh(self):
+        than = self._than("text_to_video", anh=self.ANH)
+        yc = than["requests"][0]
+        self.assertNotIn("startImage", yc)
+        self.assertNotIn("referenceImages", yc)
+
+    def test_image_start_khong_kem_crop(self):
+        """Chỉ chế độ ảnh-đầu-và-cuối mới gửi cropCoordinates."""
+        yc = self._than("image_start", anh=self.ANH)["requests"][0]
+        self.assertEqual(yc["startImage"], {"mediaId": "m1"})
+        self.assertNotIn("endImage", yc)
+
+    def test_image_start_end_co_crop_phu_tron_khung(self):
+        yc = self._than("image_start_end", anh=self.ANH)["requests"][0]
+        for khoa in ("startImage", "endImage"):
+            self.assertEqual(yc[khoa]["cropCoordinates"],
+                             {"top": 0, "left": 0, "bottom": 1, "right": 1})
+        self.assertEqual(yc["startImage"]["mediaId"], "m1")
+        self.assertEqual(yc["endImage"]["mediaId"], "m2")
+
+    def test_image_start_end_chi_mot_anh_thi_khong_co_end(self):
+        yc = self._than("image_start_end", anh=self.ANH[:1])["requests"][0]
+        self.assertIn("startImage", yc)
+        self.assertNotIn("endImage", yc)
+
+    def test_component_gan_reference_images(self):
+        yc = self._than("component", anh=self.ANH)["requests"][0]
+        self.assertEqual(yc["referenceImages"], [
+            {"mediaId": "m1", "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"},
+            {"mediaId": "m2", "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"},
+        ])
+
+    def test_component_cat_prompt_theo_ten_tep(self):
+        yc = self._than("component", anh=self.ANH)["requests"][0]
+        phan = yc["textInput"]["structuredPrompt"]["parts"]
+        self.assertEqual(phan[0]["reference"]["media"]["mediaId"], "m1")
+        self.assertEqual(phan[0]["reference"]["media"]["handle"], "Lan.png")
+        self.assertEqual(phan[1]["text"], " đang chạy")
+
+
+class TachPromptTheoAnh(unittest.TestCase):
+    def test_khong_ten_nao_khop_thi_giu_nguyen_prompt(self):
+        phan = FR.tach_prompt_theo_anh("trời mưa", [{"name": "Lan.png", "mediaId": "m1"}])
+        self.assertEqual(phan, [{"text": "trời mưa"}])
+
+    def test_ten_dai_duoc_uu_tien(self):
+        """'Lan Anh' không được để 'Lan' cắt mất."""
+        anh = [{"name": "Lan.png", "mediaId": "m1"},
+               {"name": "Lan Anh.png", "mediaId": "m2"}]
+        phan = FR.tach_prompt_theo_anh("Lan Anh cười", anh)
+        self.assertEqual(phan[0]["reference"]["media"]["mediaId"], "m2")
+
+    def test_moi_media_chi_nhac_mot_lan(self):
+        anh = [{"name": "Lan.png", "mediaId": "m1"}]
+        phan = FR.tach_prompt_theo_anh("Lan gặp Lan", anh)
+        so_ref = sum(1 for p in phan if "reference" in p)
+        self.assertEqual(so_ref, 1)
+
+    def test_giu_doan_van_ban_truoc_va_sau(self):
+        anh = [{"name": "Lan.png", "mediaId": "m1"}]
+        phan = FR.tach_prompt_theo_anh("cô Lan cười", anh)
+        self.assertEqual(phan[0], {"text": "cô "})
+        self.assertEqual(phan[-1], {"text": " cười"})
+
+    def test_khong_phan_biet_hoa_thuong(self):
+        anh = [{"name": "Lan.png", "mediaId": "m1"}]
+        phan = FR.tach_prompt_theo_anh("LAN cười", anh)
+        self.assertTrue(any("reference" in p for p in phan))
+
+    def test_anh_thieu_media_id_bi_bo_qua(self):
+        phan = FR.tach_prompt_theo_anh("Lan cười", [{"name": "Lan.png"}])
+        self.assertEqual(phan, [{"text": "Lan cười"}])
+
+
+class ChonModelVideo(unittest.TestCase):
+    def test_hai_che_do_khung_hinh_bo_qua_nhan(self):
+        """App gán cứng biến thể Lite ưu tiên thấp; chọn Quality cũng không đổi."""
+        self.assertEqual(
+            FR.chon_model_video("image_start", "Veo 3.1 - Quality", "8s"),
+            "veo_3_1_i2v_lite_low_priority")
+        self.assertEqual(
+            FR.chon_model_video("image_start_end", "Veo 3.1 - Quality", "8s"),
+            "veo_3_1_interpolation_lite_low_priority")
+
+    def test_nhan_doi_thanh_khoa_t2v(self):
+        self.assertEqual(FR.chon_model_video("text_to_video", "Veo 3.1 - Fast", None),
+                         "veo_3_1_t2v_fast")
+
+    def test_component_dung_bang_r2v(self):
+        self.assertEqual(FR.chon_model_video("component", "Veo 3.1 - Fast", None),
+                         "veo_3_1_r2v_fast")
+
+    def test_omni_flash_gan_so_giay(self):
+        self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", "8s"),
+                         "abra_t2v_8s")
+
+    def test_omni_flash_thieu_thoi_luong_thi_ve_5s(self):
+        self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", None),
+                         "abra_t2v_5s")
+
+    def test_nhan_la_ve_mac_dinh(self):
+        self.assertEqual(FR.chon_model_video("text_to_video", "Model Nao Do", None),
+                         "veo_3_1_t2v_lite_low_priority")
+
+
+class DocDapTraLoi(unittest.TestCase):
+    def test_uu_tien_primary_media_id(self):
+        dap = {"workflows": [
+            {"name": "w1", "metadata": {"primaryMediaId": "m1"}},
+            {"name": "w2"},
+        ]}
+        self.assertEqual(FR.doc_gen_ids(dap), ["m1", "w2"])
+
+    def test_bo_trung(self):
+        dap = {"workflows": [{"metadata": {"primaryMediaId": "m1"}},
+                             {"metadata": {"primaryMediaId": "m1"}}]}
+        self.assertEqual(FR.doc_gen_ids(dap), ["m1"])
+
+    def test_khong_co_workflow_thi_rong(self):
+        self.assertEqual(FR.doc_gen_ids({}), [])
+
+    def test_trang_thai_xong_lay_duoc_link(self):
+        dap = {"media": [{
+            "name": "m1", "videoUrl": "https://x/v.mp4",
+            "mediaMetadata": {"mediaStatus": {"mediaGenerationStatus":
+                                              "MEDIA_GENERATION_STATUS_SUCCESSFUL"}},
+        }]}
+        tt = FR.doc_trang_thai(dap, ["m1"])
+        self.assertEqual(tt["m1"]["status"], "COMPLETED")
+        self.assertEqual(tt["m1"]["url"], "https://x/v.mp4")
+
+    def test_trang_thai_hong_giu_ly_do(self):
+        dap = {"media": [{
+            "name": "m1",
+            "mediaMetadata": {"mediaStatus": {
+                "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_FAILED",
+                "failureReason": "vi phạm chính sách"}},
+        }]}
+        tt = FR.doc_trang_thai(dap, ["m1"])
+        self.assertEqual(tt["m1"]["status"], "FAILED")
+        self.assertEqual(tt["m1"]["reason"], "vi phạm chính sách")
+
+    def test_chua_thay_trong_dap_thi_van_la_dang_chay(self):
+        """Thiếu tin không được coi là hỏng, nếu không vòng chờ sẽ bỏ cuộc sớm."""
+        tt = FR.doc_trang_thai({"media": []}, ["m1"])
+        self.assertEqual(tt["m1"]["status"], "PROCESSING")
+
+
+class ChoXongRoiTra(unittest.TestCase):
+    """Chế độ `wait` — chỉ dùng cho bên gọi không có hàng đợi.
+
+    Đường DOM cũ giữ một request HTTP mở suốt 300 giây và đã đo được là chết
+    đúng mốc đó với thông báo RỖNG. Đường REST sinh ra để bỏ cái bẫy đó, nên
+    `wait` phải mặc định TẮT — bật mặc định là lặng lẽ dựng lại y nguyên nó.
+    """
+
+    def test_wait_mac_dinh_tat(self):
+        nguon = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
+        dau = nguon.index("class FlowRestVideoReq")
+        than = nguon[dau:nguon.index("class FlowRestStatusReq")]
+        self.assertIn("wait: bool = False", than)
+
+    def test_gom_ket_qua_dung_khoa_url(self):
+        """`api/veo_video.py` đọc thẳng data[0]["url"] — đổi tên là hỏng ngầm."""
+        xong, hong = FR.gom_ket_qua({
+            "m1": {"status": "COMPLETED", "url": "https://x/1.mp4", "reason": None},
+        })
+        self.assertEqual(xong, [{"url": "https://x/1.mp4", "id": "m1"}])
+        self.assertEqual(hong, [])
+
+    def test_gom_ket_qua_tach_cai_hong_kem_ly_do(self):
+        xong, hong = FR.gom_ket_qua({
+            "m1": {"status": "COMPLETED", "url": "https://x/1.mp4", "reason": None},
+            "m2": {"status": "FAILED", "url": None, "reason": "vi phạm chính sách"},
+        })
+        self.assertEqual(len(xong), 1)
+        self.assertEqual(hong, ["m2: vi phạm chính sách"])
+
+    def test_xong_nhung_thieu_url_thi_khong_tinh_la_xong(self):
+        xong, _ = FR.gom_ket_qua({"m1": {"status": "COMPLETED", "url": None}})
+        self.assertEqual(xong, [])
+
+    def test_con_dang_chay(self):
+        self.assertTrue(FR.con_dang_chay({"m1": {"status": "PROCESSING"}}))
+        self.assertFalse(FR.con_dang_chay({"m1": {"status": "COMPLETED"},
+                                           "m2": {"status": "FAILED"}}))
 
 
 if __name__ == "__main__":

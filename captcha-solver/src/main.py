@@ -576,15 +576,13 @@ async def api_flow_generate_video(req: FlowVideoReq):
 
 # ── Flow qua REST (đường song song, không đụng ba endpoint DOM ở trên) ─────
 #
-# Endpoint dưới đây gọi thẳng API mà giao diện Flow gọi, trình duyệt chỉ còn
+# Ba endpoint dưới đây gọi thẳng API mà giao diện Flow gọi, trình duyệt chỉ còn
 # dùng để xin access_token và đúc token reCAPTCHA (~1 giây/lượt thay vì 60-300
 # giây điều khiển giao diện). Xem `src/solvers/flow_rest.py` để biết phép đo
 # 09/08/2026 đã chốt được những gì.
 #
 # Đặt cạnh chứ không thay thế: đường DOM vẫn là mặc định cho tới khi đường này
 # chạy đủ lâu trên thật. Quay lại chỉ là đổi bên gọi, không phải revert.
-#
-# Video đi sau, cùng khuôn này — phần dùng chung trong flow_rest.py đã sẵn.
 
 
 class FlowRestImageReq(BaseModel):
@@ -599,6 +597,38 @@ class FlowRestImageReq(BaseModel):
     profile: str = "google-fx"
     headless: bool = True
     timeout: int = Field(default=180, ge=30, le=600)
+
+
+class FlowRestVideoReq(BaseModel):
+    project_id: str
+    prompt: str
+    # text_to_video | image_start | image_start_end | component
+    mode: str = "text_to_video"
+    model_label: str | None = None
+    model_key: str | None = None
+    aspect_ratio: str = "16:9"
+    duration: str | None = None
+    count: int = Field(default=1, ge=1, le=4)
+    # [{name, image_b64}] — `name` là tên file, và ở chế độ "component" nó chính
+    # là từ khoá phải xuất hiện trong prompt thì ảnh mới được trỏ tới.
+    images: list[dict[str, str]] = Field(default_factory=list)
+    profile: str = "google-fx"
+    headless: bool = True
+    timeout: int = Field(default=180, ge=30, le=600)
+    # Chờ video xong rồi mới trả, kèm khoá `data` đúng hình dạng đường DOM cũ.
+    # MẶC ĐỊNH TẮT: bật là dựng lại đúng cái bẫy giữ một request HTTP mở hàng
+    # trăm giây mà đường này sinh ra để bỏ đi. Chỉ bật cho bên gọi không có
+    # hàng đợi (hiện là `api/veo_video.py`).
+    wait: bool = False
+    wait_timeout: int = Field(default=600, ge=60, le=1800)
+
+
+class FlowRestStatusReq(BaseModel):
+    project_id: str
+    gen_ids: list[str]
+    profile: str = "google-fx"
+    headless: bool = True
+    timeout: int = Field(default=60, ge=10, le=300)
 
 
 def _loi_flow_rest(exc: Exception) -> HTTPException:
@@ -638,6 +668,72 @@ async def api_flow_rest_image(req: FlowRestImageReq) -> dict[str, Any]:
         raise
     except Exception as exc:
         logger.exception("flow rest generate-image failed")
+        raise _loi_flow_rest(exc) from exc
+
+
+@app.post("/v1/google/flow/rest/generate-video", dependencies=[Depends(require_api_key)])
+async def api_flow_rest_video(req: FlowRestVideoReq) -> dict[str, Any]:
+    """Gửi lệnh tạo video Flow qua REST.
+
+    Mặc định trả về `gen_ids` sau 1-2 giây; bên gọi tra tiến độ bằng
+    /v1/google/flow/rest/video-status. Với `wait: true` thì chờ xong rồi trả
+    thêm khoá `data` đúng hình dạng mà `api/veo_video.py` đang đợi.
+    """
+    import base64 as _b64
+
+    from .solvers.flow_rest import lay_bearer, tao_video, upload_anh_tham_chieu
+
+    try:
+        anh: list[dict[str, Any]] = []
+        if req.images:
+            # Ảnh phải có mediaId trước khi gửi lệnh tạo. Lấy token một lần rồi
+            # đẩy tuần tự — mỗi ảnh là một lời gọi HTTP, không cần trình duyệt.
+            bearer = await lay_bearer(req.profile, req.headless)
+            for it in req.images:
+                du_lieu = _b64.b64decode(it.get("image_b64") or "")
+                media_id = await upload_anh_tham_chieu(
+                    bearer=bearer, project_id=req.project_id, du_lieu=du_lieu,
+                )
+                anh.append({"name": it.get("name") or "", "mediaId": media_id})
+        return await tao_video(
+            profile=req.profile,
+            project_id=req.project_id,
+            prompt=req.prompt,
+            che_do=req.mode,
+            model_label=req.model_label,
+            model_key=req.model_key,
+            aspect_ratio=req.aspect_ratio,
+            duration=req.duration,
+            count=req.count,
+            anh=anh,
+            headless=req.headless,
+            timeout=req.timeout,
+            cho_xong=req.wait,
+            cho_toi_da=req.wait_timeout,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("flow rest generate-video failed")
+        raise _loi_flow_rest(exc) from exc
+
+
+@app.post("/v1/google/flow/rest/video-status", dependencies=[Depends(require_api_key)])
+async def api_flow_rest_video_status(req: FlowRestStatusReq) -> dict[str, Any]:
+    """Tra tiến độ video. Token còn hạn thì không đụng tới trình duyệt."""
+    from .solvers.flow_rest import trang_thai_video
+    try:
+        return await trang_thai_video(
+            profile=req.profile,
+            project_id=req.project_id,
+            gen_ids=req.gen_ids,
+            headless=req.headless,
+            timeout=req.timeout,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("flow rest video-status failed")
         raise _loi_flow_rest(exc) from exc
 
 

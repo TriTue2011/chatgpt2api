@@ -45,16 +45,16 @@ vì chưa đo được `NARWHAL` và `HARBOR_SEAL` ứng với nhãn nào.
 
 NGUỒN THÂN YÊU CẦU. Dựng theo bản gỡ rối của VEO3 AI Studio 1.08 (ứng dụng
 Electron gọi cùng API này). Những trường chưa đo được trực tiếp — hằng số tỷ lệ
-khung hình — đều ghi rõ là "theo bản gỡ rối, chưa đo".
+khung hình, khoá model video — đều ghi rõ là "theo bản gỡ rối, chưa đo".
 
-CHƯA LÀM: tạo video (`v1/video:batchAsyncGenerateVideo*`), nâng ảnh
-(`flow/upsampleImage`), sửa video (`…EditVideo`). Thêm sau, theo đúng khuôn ở
-đây — phần dùng chung (`lay_bearer`, `_lay_recaptcha`, `_post`,
-`upload_anh_tham_chieu`) đã sẵn cho cả hai loại.
+CHƯA LÀM: nâng ảnh (`flow/upsampleImage`), sửa video (`…EditVideo`), và giọng
+đọc trong chế độ thành phần (`referenceAudio`). Thêm sau khi cần, theo đúng
+khuôn ở đây.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import random
@@ -97,6 +97,45 @@ TY_LE_ANH = {
     "4:3": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
     "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
 }
+TY_LE_VIDEO = {
+    "16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+    "9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+}
+
+# Bốn chế độ video và endpoint tương ứng.
+CHE_DO_VIDEO = {
+    "text_to_video": "batchAsyncGenerateVideoText",
+    "image_start": "batchAsyncGenerateVideoStartImage",
+    "image_start_end": "batchAsyncGenerateVideoStartAndEndImage",
+    "component": "batchAsyncGenerateVideoReferenceImages",
+}
+
+# Khoá model video theo nhãn trên giao diện — theo bản gỡ rối, CHƯA đo.
+# Hai chế độ khung hình bị app gán CỨNG một khoá, không theo nhãn người dùng
+# chọn; giữ nguyên hành vi đó vì chưa biết các biến thể khác có tồn tại không.
+MODEL_VIDEO_T2V = {
+    "Omni Flash": "abra_t2v_{giay}s",
+    "Veo 3.1 - Lite": "veo_3_1_t2v_lite",
+    "Veo 3.1 - Fast": "veo_3_1_t2v_fast",
+    "Veo 3.1 - Quality": "veo_3_1_t2v",
+    "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_t2v_lite_low_priority",
+}
+MODEL_VIDEO_R2V = {
+    "Omni Flash": "abra_r2v_{giay}s",
+    "Veo 3.1 - Lite": "veo_3_1_r2v_lite",
+    "Veo 3.1 - Fast": "veo_3_1_r2v_fast",
+    "Veo 3.1 - Quality": "veo_3_1_r2v",
+    "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_r2v_lite_low_priority",
+}
+MODEL_VIDEO_MAC_DINH = {
+    "text_to_video": "veo_3_1_t2v_lite_low_priority",
+    "component": "veo_3_1_r2v_lite_low_priority",
+    "image_start": "veo_3_1_i2v_lite_low_priority",
+    "image_start_end": "veo_3_1_interpolation_lite_low_priority",
+}
+
+# Toạ độ cắt phủ trọn khung — app gửi đúng giá trị này cho ảnh đầu/cuối.
+_CAT_TRON_KHUNG = {"top": 0, "left": 0, "bottom": 1, "right": 1}
 
 
 class LoiFlowRest(RuntimeError):
@@ -189,6 +228,183 @@ def than_tao_anh(
         "useNewMedia": True,
         "requests": yeu_cau,
     }
+
+
+def tach_prompt_theo_anh(prompt: str, anh: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chế độ "thành phần": cắt prompt thành các mảnh text xen ảnh tham chiếu.
+
+    Tên file (bỏ đuôi) chính là từ khoá tìm trong prompt. Ảnh nào tên không xuất
+    hiện trong prompt thì KHÔNG có mảnh `reference` nào trỏ tới — nó chỉ nằm ở
+    `referenceImages`. Đây là hành vi của app, và cũng là chỗ người dùng hay
+    hiểu nhầm: đặt tên file không khớp prompt thì ảnh gần như không tác dụng.
+
+    Mỗi `mediaId` chỉ được nhắc một lần dù tên xuất hiện nhiều lần.
+    """
+    moc: list[dict[str, str]] = []
+    for a in anh:
+        ten_tep = str(a.get("name") or a.get("fileName") or "")
+        tu_khoa = re.sub(r"\.[^/.]+$", "", ten_tep)
+        if tu_khoa and a.get("mediaId"):
+            moc.append({"token": tu_khoa, "handle": ten_tep, "mediaId": str(a["mediaId"])})
+    if not moc:
+        return [{"text": prompt}]
+
+    # Tên dài trước, để "Lan Anh" không bị "Lan" cắt mất.
+    moc.sort(key=lambda m: len(m["token"]), reverse=True)
+    mau = re.compile(r"\b(" + "|".join(re.escape(m["token"]) for m in moc) + r")\b",
+                     re.IGNORECASE)
+
+    phan: list[dict[str, Any]] = []
+    da_dung: set[str] = set()
+    vi_tri = 0
+    for khop in mau.finditer(prompt):
+        m = next((x for x in moc if x["token"].lower() == khop.group(1).lower()), None)
+        if m is None or m["mediaId"] in da_dung:
+            continue
+        if khop.start() > vi_tri:
+            phan.append({"text": prompt[vi_tri:khop.start()]})
+        phan.append({"reference": {"media": {"handle": m["handle"],
+                                             "mediaId": m["mediaId"]}}})
+        da_dung.add(m["mediaId"])
+        vi_tri = khop.end()
+    if vi_tri < len(prompt):
+        phan.append({"text": prompt[vi_tri:]})
+    return phan or [{"text": prompt}]
+
+
+def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str:
+    """Khoá model theo chế độ + nhãn giao diện.
+
+    Hai chế độ khung hình bỏ qua nhãn: app gán cứng biến thể Lite ưu tiên thấp,
+    nên chọn "Veo 3.1 - Quality" ở đó cũng không đổi được gì. Giữ nguyên hành vi
+    để không phát sinh khoá model chưa biết có tồn tại hay không.
+    """
+    if che_do in ("image_start", "image_start_end"):
+        return MODEL_VIDEO_MAC_DINH[che_do]
+    bang = MODEL_VIDEO_R2V if che_do == "component" else MODEL_VIDEO_T2V
+    khoa = bang.get(nhan or "", MODEL_VIDEO_MAC_DINH.get(che_do, ""))
+    if "{giay}" in khoa:
+        giay = re.sub(r"[^0-9]", "", str(duration or "")) or "5"
+        khoa = khoa.format(giay=giay)
+    return khoa
+
+
+def than_tao_video(
+    *,
+    project_id: str,
+    prompt: str,
+    che_do: str = "text_to_video",
+    model_key: str,
+    aspect_ratio: str = "16:9",
+    count: int = 1,
+    anh: list[dict[str, Any]] | None = None,
+    recaptcha: str | None = None,
+    session_id: str | None = None,
+    batch_id: str | None = None,
+    seeds: list[int] | None = None,
+) -> dict[str, Any]:
+    """Thân cho `v1/video:batchAsyncGenerateVideo*`. Xem `CHE_DO_VIDEO` để biết
+    chế độ nào đi tới endpoint nào."""
+    if che_do not in CHE_DO_VIDEO:
+        raise ValueError(f"chế độ video lạ: {che_do!r}; "
+                         f"chỉ có {', '.join(CHE_DO_VIDEO)}")
+    anh = anh or []
+    sid = session_id or (";" + str(int(time.time() * 1000)))
+    ctx = _ngu_canh(project_id, "PAYGATE_TIER_TWO", sid, recaptcha)
+
+    goc: dict[str, Any] = {
+        "aspectRatio": TY_LE_VIDEO.get(aspect_ratio, "VIDEO_ASPECT_RATIO_LANDSCAPE"),
+        "videoModelKey": model_key,
+        "metadata": {},
+    }
+    if che_do == "component":
+        goc["textInput"] = {"structuredPrompt": {"parts": tach_prompt_theo_anh(prompt, anh)}}
+        if anh:
+            goc["referenceImages"] = [
+                {"mediaId": a["mediaId"], "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
+                for a in anh if a.get("mediaId")
+            ]
+    else:
+        goc["textInput"] = {"structuredPrompt": {"parts": [{"text": prompt}]}}
+        if che_do == "image_start" and anh:
+            goc["startImage"] = {"mediaId": anh[0]["mediaId"]}
+        elif che_do == "image_start_end":
+            # Chỉ chế độ này mới kèm cropCoordinates — app gửi đúng như vậy.
+            if anh:
+                goc["startImage"] = {"mediaId": anh[0]["mediaId"],
+                                     "cropCoordinates": dict(_CAT_TRON_KHUNG)}
+            if len(anh) > 1:
+                goc["endImage"] = {"mediaId": anh[1]["mediaId"],
+                                   "cropCoordinates": dict(_CAT_TRON_KHUNG)}
+
+    so = max(1, int(count))
+    hat = seeds or [random.randint(0, 99998) for _ in range(so)]
+    return {
+        "mediaGenerationContext": {
+            "batchId": batch_id or str(uuid.uuid4()),
+            "audioFailurePreference": "RETURN_SILENCED_VIDEOS",
+        },
+        "clientContext": dict(ctx),
+        "requests": [{**goc, "seed": hat[i % len(hat)]} for i in range(so)],
+        "useV2ModelConfig": True,
+    }
+
+
+def doc_gen_ids(dap: dict[str, Any]) -> list[str]:
+    """Lấy ID theo dõi từ đáp của lệnh tạo video.
+
+    App ưu tiên `metadata.primaryMediaId`, lùi về `name`. Giữ thứ tự và bỏ trùng.
+    """
+    ra: list[str] = []
+    for wf in (dap.get("workflows") or []):
+        ma = ((wf.get("metadata") or {}).get("primaryMediaId")) or wf.get("name")
+        if ma and ma not in ra:
+            ra.append(str(ma))
+    return ra
+
+
+def gom_ket_qua(trang_thai: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Gộp bảng tiến độ thành (danh sách item xong, danh sách lý do hỏng).
+
+    Hình dạng item phải là `{"url": ...}` vì `api/veo_video.py` đọc thẳng
+    `data[0]["url"]` và `_luu_thu_vien()` cũng dựa vào đó để tải video về thư
+    viện. Đổi tên trường ở đây là làm hỏng cả hai chỗ mà không ai báo.
+    """
+    xong: list[dict[str, Any]] = []
+    hong: list[str] = []
+    for gen_id, tt in trang_thai.items():
+        if tt.get("status") == "COMPLETED" and tt.get("url"):
+            xong.append({"url": tt["url"], "id": gen_id})
+        elif tt.get("status") == "FAILED":
+            hong.append(f"{gen_id}: {tt.get('reason') or 'không rõ lý do'}")
+    return xong, hong
+
+
+def con_dang_chay(trang_thai: dict[str, dict[str, Any]]) -> bool:
+    """Còn ID nào chưa ngã ngũ không (chưa COMPLETED và chưa FAILED)."""
+    return any(tt.get("status") not in ("COMPLETED", "FAILED")
+               for tt in trang_thai.values())
+
+
+def doc_trang_thai(dap: dict[str, Any], gen_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Chuẩn hoá đáp của lệnh tra tiến độ thành {gen_id: {status, url, reason}}."""
+    ra = {g: {"status": "PROCESSING", "url": None, "reason": None} for g in gen_ids}
+    for m in (dap.get("media") or []):
+        ten = m.get("name")
+        if not ten or ten not in ra:
+            continue
+        tt = ((m.get("mediaMetadata") or {}).get("mediaStatus") or {})
+        trang_thai = str(tt.get("mediaGenerationStatus") or "")
+        if "SUCCESSFUL" in trang_thai or "COMPLETED" in trang_thai:
+            ra[ten] = {"status": "COMPLETED", "url": m.get("videoUrl"), "reason": None}
+        elif "FAILED" in trang_thai:
+            ra[ten] = {
+                "status": "FAILED",
+                "url": None,
+                "reason": tt.get("failureReason") or tt.get("errorMessage")
+                or "Google báo thất bại, không nêu lý do",
+            }
+    return ra
 
 
 # ── Trình duyệt: chỉ để lấy token ─────────────────────────────────────────
@@ -323,3 +539,90 @@ async def tao_anh(*, profile: str, project_id: str, prompt: str,
     }
 
 
+async def tao_video(*, profile: str, project_id: str, prompt: str,
+                    che_do: str = "text_to_video", model_label: str | None = None,
+                    model_key: str | None = None, aspect_ratio: str = "16:9",
+                    duration: str | None = None, count: int = 1,
+                    anh: list[dict[str, Any]] | None = None,
+                    headless: bool = True, timeout: float = 180,
+                    cho_xong: bool = False, cho_toi_da: float = 600,
+                    nhip: float = 5) -> dict[str, Any]:
+    """Gửi lệnh tạo video. Mặc định trả ngay `gen_ids`, KHÔNG chờ video xong.
+
+    Đường DOM hiện tại giữ một request HTTP mở suốt 300 giây và đã đo được là
+    chết đúng mốc đó với thông báo rỗng. Ở đây lệnh gửi xong là trả (1-2 giây),
+    hợp với hàng đợi tác vụ sẵn có.
+
+    `cho_xong=True` thì hàm tự tra tiến độ mỗi `nhip` giây cho tới khi xong hoặc
+    quá `cho_toi_da`, rồi trả thêm khoá `data` đúng hình dạng mà
+    `api/veo_video.py` đang đợi. Chỉ bật khi bên gọi thật sự không có hàng đợi —
+    bật mặc định là dựng lại đúng cái bẫy 300 giây vừa bỏ đi.
+
+    `anh` là danh sách {name, mediaId} — dùng `upload_anh_tham_chieu` để lấy
+    `mediaId` trước. Với chế độ "component", `name` phải là tên file vì nó chính
+    là từ khoá tìm trong prompt.
+    """
+    bat_dau = time.time()
+    khoa = model_key or chon_model_video(che_do, model_label, duration)
+    bearer = await lay_bearer(profile, headless)
+    # Đúc reCAPTCHA ngay trước khi gửi — ảnh tham chiếu (nếu có) đã được bên gọi
+    # đẩy lên từ trước nên không còn gì chen vào giữa.
+    recaptcha = await _lay_recaptcha(profile, headless, "VIDEO_GENERATION")
+    dap = await _post(
+        f"{API_HOST}/v1/video:{CHE_DO_VIDEO[che_do]}",
+        bearer,
+        than_tao_video(project_id=project_id, prompt=prompt, che_do=che_do,
+                       model_key=khoa, aspect_ratio=aspect_ratio, count=count,
+                       anh=anh, recaptcha=recaptcha),
+        timeout,
+    )
+    gen_ids = doc_gen_ids(dap)
+    if not gen_ids:
+        raise LoiFlowRest(502, f"đáp không có Generation ID: {str(dap)[:300]}")
+    ket: dict[str, Any] = {
+        "gen_ids": gen_ids,
+        "project_id": project_id,
+        "video_model_key": khoa,
+        "che_do": che_do,
+        "elapsed_ms": int((time.time() - bat_dau) * 1000),
+    }
+    if not cho_xong:
+        return ket
+
+    han = time.time() + cho_toi_da
+    trang_thai: dict[str, dict[str, Any]] = {}
+    while time.time() < han:
+        await asyncio.sleep(nhip)
+        trang_thai = await trang_thai_video(profile=profile, project_id=project_id,
+                                            gen_ids=gen_ids, headless=headless)
+        if not con_dang_chay(trang_thai):
+            break
+    xong, hong = gom_ket_qua(trang_thai)
+    ket["data"] = xong
+    ket["elapsed_ms"] = int((time.time() - bat_dau) * 1000)
+    if hong:
+        ket["that_bai"] = hong
+    if not xong:
+        # Không có video nào ra thì đây là hỏng thật — phải ném, nếu không bên
+        # gọi nhận `data: []` rồi coi như thành công và ghi một mục rỗng vào
+        # thư viện.
+        if hong:
+            raise LoiFlowRest(502, "Google báo thất bại: " + "; ".join(hong))
+        raise LoiFlowRest(504, f"hết {int(cho_toi_da)}s chờ Google dựng video "
+                               f"(gen_ids={', '.join(gen_ids)})")
+    return ket
+
+
+async def trang_thai_video(*, profile: str, project_id: str, gen_ids: list[str],
+                           headless: bool = True, timeout: float = 60) -> dict[str, Any]:
+    """Tra tiến độ. Dùng token đã cache nên thường KHÔNG mở trình duyệt.
+
+    Lệnh này không cần reCAPTCHA (chỉ đọc), nên chừng nào token còn hạn thì cả
+    vòng chờ chạy hoàn toàn bằng HTTP.
+    """
+    bearer = await lay_bearer(profile, headless)
+    dap = await _post(f"{API_HOST}/v1/video:batchCheckAsyncVideoGenerationStatus",
+                      bearer,
+                      {"media": [{"name": g, "projectId": project_id} for g in gen_ids]},
+                      timeout)
+    return doc_trang_thai(dap, gen_ids)
