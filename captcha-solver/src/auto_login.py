@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .browser_pool import pool
+from .browser_pool import HoSoDangBan, pool
 
 try:
     import pyotp
@@ -1220,7 +1220,24 @@ async def _run_inner(session: LoginSession, password: str) -> None:
         session.state = "starting"
         session.message = "Đang mở Chrome (headful → noVNC)"
         # KHÔNG force_recreate để giữ lại cache/cookie của các dịch vụ khác (ChatGPT, Codex)
-        ctx = await pool.get(profile=session.profile, headless=False, force_recreate=False)
+        #
+        # CÓ HẠN CHỜ: mỗi hồ sơ chỉ một việc dùng trình duyệt tại một thời điểm.
+        # Không đặt hạn thì lượt đăng nhập nằm im vô hạn khi hồ sơ đang bận, mà
+        # giao diện vẫn hiện "Đang đăng nhập…" — đo thật 09/08/2026: kẹt 366
+        # giây vì một lượt khôi phục ChatGPT đang giữ cùng hồ sơ. 120 giây đủ
+        # cho một lượt Flow/onboard bình thường nhả ra, mà không bắt người dùng
+        # nhìn màn hình chết.
+        try:
+            ctx = await pool.get(profile=session.profile, headless=False,
+                                 force_recreate=False, cho_toi_da=120.0)
+        except HoSoDangBan as exc:
+            session.state = "failed"
+            session.message = "Hồ sơ đang bận — chưa tới lượt"
+            session.error = (f"{exc} — việc khác (khôi phục ChatGPT / tạo ảnh Flow) "
+                             f"đang dùng trình duyệt của hồ sơ này. Thử lại sau.")
+            session.completed_at = time.time()
+            logger.warning("auto_login: bỏ lượt vì hồ sơ bận profile=%s", session.profile)
+            return
 
         pages = ctx.pages
         page = pages[0] if pages else await ctx.new_page()

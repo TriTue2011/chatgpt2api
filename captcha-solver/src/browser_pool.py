@@ -195,6 +195,23 @@ _CHROME_LOCK_FILES = ("SingletonLock", "SingletonSocket", "SingletonCookie")
 _FIREFOX_LOCK_FILES = ("lock", ".parentlock", "parent.lock")
 
 
+class HoSoDangBan(RuntimeError):
+    """Hồ sơ đang được một việc khác dùng, chờ quá hạn cho phép.
+
+    Khác một lỗi thật: trình duyệt và phiên đăng nhập đều lành lặn, chỉ là tới
+    lượt chưa. Nơi bắt được ngoại lệ này phải nói đúng như vậy thay vì báo hỏng
+    — báo hỏng thì tầng khôi phục phía trên lại đi đăng nhập lại một tài khoản
+    không có vấn đề gì.
+    """
+
+    def __init__(self, profile: str, cho_toi_da: float):
+        super().__init__(
+            f"Hồ sơ {profile} đang bận (một việc khác đang dùng trình duyệt) — "
+            f"đã chờ {cho_toi_da:.0f}s")
+        self.profile = profile
+        self.cho_toi_da = cho_toi_da
+
+
 @dataclass
 class _PoolEntry:
     ctx: BrowserContext
@@ -529,6 +546,7 @@ class BrowserPool:
         profile: str = "default",
         headless: bool = True,
         force_recreate: bool = False,
+        cho_toi_da: float | None = None,
     ) -> BrowserContext:
         """Return a context for the given profile, creating one if needed.
 
@@ -538,10 +556,30 @@ class BrowserPool:
         If `force_recreate=True`, any cached context is closed and a fresh
         one is launched — useful when the UI offers a "restart browser"
         button or when the headless/headful mode changes.
+
+        `cho_toi_da`: số giây tối đa chờ tới lượt dùng hồ sơ; hết giờ thì ném
+        `HoSoDangBan`. Mặc định None = chờ vô hạn, giữ nguyên hành vi cũ cho mọi
+        nơi gọi sẵn có.
+
+        VÌ SAO CẦN: mỗi hồ sơ chỉ một việc dùng trình duyệt tại một thời điểm.
+        Đo thật 09/08/2026: một lượt khôi phục ChatGPT giữ hồ sơ
+        `google-nguyenvanviet210290` (bên gọi đã hết hạn chờ 180s và bỏ cuộc,
+        nhưng tác vụ phía máy chủ vẫn chạy), rồi người dùng bấm "Chỉ đăng nhập"
+        trên đúng hồ sơ đó — lượt đăng nhập nằm im trong `get()` 366 giây, giao
+        diện vẫn hiện "Đang đăng nhập…". Không phân biệt được với đang chạy, mà
+        noVNC lại chiếu cửa sổ ChatGPT của việc kia nên càng khó hiểu.
         """
         await self.start()
         lock = await self._lock_for(profile)
-        async with lock:
+        if cho_toi_da is None:
+            await lock.acquire()
+        else:
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=cho_toi_da)
+            except asyncio.TimeoutError:
+                logger.info("get: hồ sơ %s bận quá %.0fs — bỏ lượt", profile, cho_toi_da)
+                raise HoSoDangBan(profile, cho_toi_da) from None
+        try:
             entry = self._contexts.get(profile)
             if entry is not None and not force_recreate:
                 # Reuse only when the mode matches AND the context is still alive.
@@ -561,6 +599,8 @@ class BrowserPool:
             ctx, page = await self._open_context(profile, headless=headless)
             self._contexts[profile] = _PoolEntry(ctx=ctx, page=page, headless=headless, last_used=time.time())
             return ctx
+        finally:
+            lock.release()
 
     async def close_profile(self, profile: str, *, bo_qua_khi_dang_nhap: bool = False) -> bool:
         """Đóng trình duyệt của hồ sơ.
