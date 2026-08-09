@@ -107,7 +107,7 @@ def _profiles() -> list[str]:
 def _scan_once() -> None:
     if not is_enabled():
         return
-    from services.account_recovery import _flow_session_ok, flow_recover_and_notify
+    from services.account_recovery import _flow_session_trang_thai, flow_recover_and_notify
 
     profiles = _profiles()
     if not profiles:
@@ -125,6 +125,7 @@ def _scan_once() -> None:
     cap = _max_per_cycle()
     da_kiem = 0
     chet = 0
+    ban = 0
     now = time.time()
     for profile in profiles:
         if da_kiem >= cap:
@@ -135,7 +136,15 @@ def _scan_once() -> None:
             _last_check[profile] = now
         da_kiem += 1
         try:
-            if _flow_session_ok(profile):
+            tt = _flow_session_trang_thai(profile)
+            if tt == "ok":
+                continue
+            if tt == "ban":
+                # Hồ sơ đang tạo ảnh/video → `pool.page()` fast-failover 429.
+                # Đó là tài khoản KHOẺ nhất có thể, không phải mất phiên. Bỏ
+                # qua lượt này, vòng sau kiểm lại.
+                ban += 1
+                logger.info({"event": "flow_session_busy", "profile": profile})
                 continue
             chet += 1
             logger.warning({"event": "flow_session_dead", "profile": profile})
@@ -153,6 +162,7 @@ def _scan_once() -> None:
         "profiles": len(profiles),
         "checked": da_kiem,
         "dead": chet,
+        "busy": ban,
         "max_per_cycle": cap,
     })
 

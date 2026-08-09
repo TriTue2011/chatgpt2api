@@ -638,9 +638,25 @@ def gma_recover_and_notify(profile: str, reason: str = "mất session") -> None:
 
 # ── flow (Google Labs Flow / Veo) — theo PROFILE, session labs.google ─────────
 
-def _flow_session_ok(profile: str) -> bool:
-    """Session Flow của profile còn sống không: get-or-create-project trả
-    project_id nghĩa là labs.google đã hydrate + đăng nhập OK."""
+def _flow_session_trang_thai(profile: str) -> str:
+    """Phiên Flow của profile: 'ok' | 'ban' | 'mat'.
+
+    VÌ SAO PHẢI TÁCH 'ban' RA: `get-or-create-project` lấy trình duyệt bằng
+    `pool.page()`, mà hàm đó fast-failover **429 Account Busy** ngay khi hồ sơ
+    đang bị lượt khác giữ — tức là đúng lúc tài khoản đang TẠO ẢNH/VIDEO. Bản
+    cũ chỉ đọc `project_id`, nên 429 rơi vào nhánh "không có project_id" và bị
+    kết luận là MẤT PHIÊN.
+
+    Hậu quả đo thật 09/08/2026 (chủ máy báo "tôi thấy vẫn vào và tạo được mà
+    nhỉ"): bộ quét định kỳ bắt gặp một tài khoản đang tạo ảnh → báo "mất phiên
+    labs.google" → chạy T2 đăng nhập lại Google (tuần tự toàn hệ thống, vài
+    phút, và mỗi lần login tự động là một lần mời Google bung captcha) → kiểm
+    lại vẫn bận → kết luận "KHÔNG tự khôi phục được, cần đăng nhập tay". Toàn
+    bộ chuỗi đó xảy ra trên một tài khoản HOÀN TOÀN KHOẺ.
+
+    Bận thì im lặng bỏ qua: vòng quét sau sẽ kiểm lại. Chỉ 'mat' mới được kích
+    hoạt khôi phục.
+    """
     import requests
     url, api_key = _solver_cfg()
     H = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -648,9 +664,21 @@ def _flow_session_ok(profile: str) -> bool:
         r = requests.post(f"{url.rstrip('/')}/v1/google/flow/get-or-create-project",
                           headers=H, json={"profile": profile, "headless": True,
                                            "timeout": 150}, timeout=170)
-        return bool((r.json() or {}).get("project_id"))
+        if r.status_code == 429:
+            return "ban"
+        return "ok" if (r.json() or {}).get("project_id") else "mat"
     except Exception:
-        return False
+        return "mat"
+
+
+def _flow_session_ok(profile: str) -> bool:
+    """Còn giữ cho các chỗ chỉ cần biết phiên có dùng được ngay không.
+
+    'ban' KHÔNG phải 'ok' (chưa chứng minh được phiên còn sống) nhưng cũng
+    tuyệt đối không phải 'mat'. Nơi nào ra quyết định khôi phục thì phải gọi
+    `_flow_session_trang_thai` để thấy đủ ba trạng thái.
+    """
+    return _flow_session_trang_thai(profile) == "ok"
 
 
 def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
@@ -664,9 +692,17 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
 
     started = time.time()
     det = {"provider": "flow", "profile": profile}
+    # Kiểm TRƯỚC khi báo động. Hồ sơ đang bận tạo ảnh/video là tài khoản KHOẺ —
+    # báo "đang tự khôi phục" rồi mới phát hiện ra thì người nhận đã hoảng, và
+    # dòng "KHÔNG khôi phục được" ở cuối là lời báo sai.
+    tt = _flow_session_trang_thai(profile)
+    if tt == "ban":
+        logger.info({"event": "recover_skip_busy", "provider": "flow", "profile": profile,
+                     "reason": reason[:120]})
+        return
     _notify(f"⚠️ Flow — {profile}\nLỗi: {reason}\n→ Đang tự khôi phục…",
             {**det, "step": "start", "reason": reason})
-    if _flow_session_ok(profile):
+    if tt == "ok":
         _notify(f"✅ Flow — {profile}\nKhôi phục xong ([T1] phiên labs.google còn sống).",
                 {**det, "step": "T1-reuse-ok"})
         logger.info({"event": "recover_ok", "provider": "flow", "tier": "reuse", "profile": profile})
@@ -674,7 +710,10 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
     if time.time() - started < _RECOVER_BUDGET_S:
         _notify(f"🔧 Flow — {profile}\n[T1] mất phiên → [T2] đang đăng nhập lại tài khoản Google…",
                 {**det, "step": "T2-freshen"})
-        if _freshen_google(profile) and _flow_session_ok(profile):
+        # Sau khi đăng nhập lại, 'ban' cũng là tin tốt: hồ sơ đang phục vụ một
+        # lượt việc khác, tức trình duyệt sống và có phiên. Đòi đúng 'ok' ở đây
+        # là lại báo hỏng cho một tài khoản vừa khôi phục xong.
+        if _freshen_google(profile) and _flow_session_trang_thai(profile) in ("ok", "ban"):
             _notify(f"✅ Flow — {profile}\nKhôi phục xong ([T2] đăng nhập Google + tái lập phiên).",
                     {**det, "step": "T2-freshen-ok"})
             logger.info({"event": "recover_ok", "provider": "flow", "tier": "freshen", "profile": profile})

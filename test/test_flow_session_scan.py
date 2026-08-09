@@ -60,12 +60,12 @@ class TestQuetPhien(unittest.TestCase):
     def setUp(self):
         self.goi_khoi_phuc: list[str] = []
         self.da_kiem: list[str] = []
-        self._ok_that = ar._flow_session_ok
+        self._ok_that = ar._flow_session_trang_thai
         self._recover_that = ar.flow_recover_and_notify
         fss._last_check.clear()
 
     def tearDown(self):
-        ar._flow_session_ok = self._ok_that
+        ar._flow_session_trang_thai = self._ok_that
         ar.flow_recover_and_notify = self._recover_that
         sys.modules.pop("services.image_providers.flow_google", None)
         fss._last_check.clear()
@@ -73,11 +73,11 @@ class TestQuetPhien(unittest.TestCase):
     def _cai_dat(self, accounts: list[dict], phien_song: set[str]) -> None:
         _gia_lap_pool(accounts)
 
-        def _ok(profile: str) -> bool:
+        def _ok(profile: str) -> str:
             self.da_kiem.append(profile)
-            return profile in phien_song
+            return "ok" if profile in phien_song else "mat"
 
-        ar._flow_session_ok = _ok
+        ar._flow_session_trang_thai = _ok
         ar.flow_recover_and_notify = lambda p, reason="": self.goi_khoi_phuc.append(p)
 
     def test_chi_khoi_phuc_profile_mat_phien(self):
@@ -117,12 +117,12 @@ class TestQuetPhien(unittest.TestCase):
         self.assertEqual(self.goi_khoi_phuc, ["google-cuoi"])
 
     def test_loi_mot_profile_khong_chan_nhung_cai_sau(self):
-        def _no(profile: str) -> bool:
+        def _no(profile: str) -> str:
             self.da_kiem.append(profile)
             raise RuntimeError("solver sập")
 
         self._cai_dat([{"profile": "google-a"}, {"profile": "google-b"}], phien_song=set())
-        ar._flow_session_ok = _no
+        ar._flow_session_trang_thai = _no
         fss._scan_once()  # không được ném ra ngoài
         self.assertEqual(self.da_kiem, ["google-a", "google-b"])
 
