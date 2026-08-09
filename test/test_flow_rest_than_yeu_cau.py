@@ -324,15 +324,6 @@ class TachPromptTheoAnh(unittest.TestCase):
 
 
 class ChonModelVideo(unittest.TestCase):
-    def test_hai_che_do_khung_hinh_bo_qua_nhan(self):
-        """App gán cứng biến thể Lite ưu tiên thấp; chọn Quality cũng không đổi."""
-        self.assertEqual(
-            FR.chon_model_video("image_start", "Veo 3.1 - Quality", "8s"),
-            "veo_3_1_i2v_lite_low_priority")
-        self.assertEqual(
-            FR.chon_model_video("image_start_end", "Veo 3.1 - Quality", "8s"),
-            "veo_3_1_interpolation_lite_low_priority")
-
     def test_nhan_doi_thanh_khoa_t2v(self):
         self.assertEqual(FR.chon_model_video("text_to_video", "Veo 3.1 - Fast", None),
                          "veo_3_1_t2v_fast")
@@ -434,13 +425,37 @@ class DoThatTrenDuongVideo(unittest.TestCase):
     def test_text_to_video_khong_doi_anh(self):
         self.assertEqual(len(self._than("text_to_video", [])["requests"]), 1)
 
-    def test_khoa_model_da_do_la_404_bi_chan_kem_ten_thay_the(self):
-        # "Veo 3.1 - Quality" ở chế độ thành phần → veo_3_1_r2v → 404.
-        with self.assertRaises(ValueError) as ngu_canh:
-            FR.chon_model_video("component", "Veo 3.1 - Quality", None)
-        loi = str(ngu_canh.exception)
-        self.assertIn("veo_3_1_r2v", loi)
-        self.assertIn("veo_3_1_r2v_lite", loi, "phải nêu khoá còn dùng được")
+    def test_che_do_co_anh_khong_co_ban_fast_hay_quality(self):
+        """Quét đủ họ 09/08: i2v, interpolation, r2v đều KHÔNG có Fast/Quality —
+        `veo_3_1_r2v`, `veo_3_1_i2v_fast`… đều 404. Phải báo lỗi nêu bản có thật
+        chứ không lặng lẽ hạ xuống Lite."""
+        for che_do in ("component", "image_start", "image_start_end"):
+            for nhan in ("Veo 3.1 - Fast", "Veo 3.1 - Quality"):
+                with self.subTest(che_do=che_do, nhan=nhan):
+                    with self.assertRaises(ValueError) as ngu_canh:
+                        FR.chon_model_video(che_do, nhan, None)
+                    self.assertIn("Veo 3.1 - Lite", str(ngu_canh.exception))
+
+    def test_hai_che_do_khung_hinh_ton_trong_nhan_lite(self):
+        """Có HAI bản Lite. Bản cũ gán cứng bản ưu tiên thấp nên người chọn
+        "Lite" vẫn bị đẩy xuống hàng chờ chậm mà không biết."""
+        self.assertEqual(FR.chon_model_video("image_start", "Veo 3.1 - Lite", None),
+                         "veo_3_1_i2v_lite")
+        self.assertEqual(
+            FR.chon_model_video("image_start", "Veo 3.1 - Lite [Lower Priority]", None),
+            "veo_3_1_i2v_lite_low_priority")
+        self.assertEqual(FR.chon_model_video("image_start_end", "Veo 3.1 - Lite", None),
+                         "veo_3_1_interpolation_lite")
+
+    def test_nhan_la_van_ve_mac_dinh(self):
+        """Nhãn ngoài bộ nhãn giao diện thì không chặn — cấu hình cũ vẫn chạy."""
+        self.assertEqual(FR.chon_model_video("text_to_video", "Model nao do", None),
+                         "veo_3_1_t2v_lite_low_priority")
+
+    def test_omni_flash_chi_co_o_t2v_va_component(self):
+        for che_do in ("image_start", "image_start_end"):
+            with self.subTest(che_do=che_do), self.assertRaises(ValueError):
+                FR.chon_model_video(che_do, "Omni Flash", "8s")
 
     def test_omni_flash_mac_dinh_khong_con_la_5_giay(self):
         """5 giây trả 404. Trước đây nó là mặc định khi thiếu thời lượng."""
@@ -458,10 +473,24 @@ class DoThatTrenDuongVideo(unittest.TestCase):
                 FR.chon_model_video("text_to_video", "Omni Flash", f"{giay}s"),
                 f"abra_t2v_{giay}s")
 
-    def test_moi_khoa_trong_bang_video_deu_khong_nam_trong_nhom_404(self):
-        """Trừ nhánh r2v Fast/Quality — đó là hai khoá cố ý giữ để báo lỗi rõ."""
-        for khoa in FR.MODEL_VIDEO_MAC_DINH.values():
-            self.assertNotIn(khoa, FR.MODEL_VIDEO_DA_DO_LA_KHONG_CO)
+    def test_moi_khoa_trong_bang_deu_la_khoa_da_do_la_CO(self):
+        """Bảng chỉ được chứa khoá đã quét ra là dùng được (09/08/2026)."""
+        DA_DO_LA_CO = {
+            "veo_3_1_t2v", "veo_3_1_t2v_fast", "veo_3_1_t2v_lite",
+            "veo_3_1_t2v_lite_low_priority",
+            "veo_3_1_i2v_lite", "veo_3_1_i2v_lite_low_priority",
+            "veo_3_1_interpolation_lite", "veo_3_1_interpolation_lite_low_priority",
+            "veo_3_1_r2v_lite", "veo_3_1_r2v_lite_low_priority",
+        }
+        for che_do, bang in FR.MODEL_VIDEO.items():
+            for nhan, khoa in bang.items():
+                with self.subTest(che_do=che_do, nhan=nhan):
+                    if "{giay}" in khoa:
+                        for g in FR.GIAY_OMNI_FLASH:
+                            self.assertIn(khoa.format(giay=g).rsplit("_", 1)[0],
+                                          ("abra_t2v", "abra_r2v"))
+                    else:
+                        self.assertIn(khoa, DA_DO_LA_CO)
 
 
 class ChoXongRoiTra(unittest.TestCase):

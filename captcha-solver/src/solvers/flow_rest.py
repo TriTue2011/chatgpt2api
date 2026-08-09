@@ -52,6 +52,16 @@ có thật; đường DOM che mất vì nó chỉ dùng chuỗi đó làm khoá 
 chứ không gửi xuống API. `kiem_model_anh()` chặn tại chỗ kèm thông báo nêu tên
 đúng, phòng cấu hình cũ còn sót.
 
+MODEL VIDEO — quét đủ họ 09/08/2026, cả hai tỷ lệ khung hình:
+
+  * Chỉ họ t2v có đủ bốn bậc (Quality / Fast / Lite / Lite ưu tiên thấp).
+  * Ba chế độ có ảnh — i2v, interpolation, r2v — KHÔNG có bản Fast hay Quality
+    (đều 404), nhưng mỗi chế độ có HAI bản Lite: `_lite` và `_lite_low_priority`.
+  * Omni Flash: 4s, 6s, 8s, 10s có ở cả t2v lẫn r2v. Không có 5s, không có 12s.
+  * Tỷ lệ khung hình KHÔNG đổi tính hợp lệ của tên model — mọi khoá đều qua ở cả
+    16:9 lẫn 9:16. Nếu tỷ lệ có ràng buộc thì nó nằm sau cửa reCAPTCHA, chỗ chưa
+    đo miễn phí được.
+
 ĐƯỜNG VIDEO — đo 09/08/2026, ba trong bốn endpoint đạt ngay, một sai:
 
   * `batchAsyncGenerateVideoText`, `…StartImage`, `…ReferenceImages` đều đạt.
@@ -134,67 +144,72 @@ CHE_DO_VIDEO = {
     "component": "batchAsyncGenerateVideoReferenceImages",
 }
 
-# Khoá model video theo nhãn trên giao diện. ĐO THẲNG VÀO API 09/08/2026 trên
-# endpoint `v1/video:batchAsyncGenerateVideoText`. Lưu ý khác biệt với đường
-# ảnh: khoá video không dùng được trả 404 "Requested entity was not found",
-# KHÔNG phải 400 — nên không phân biệt được "không tồn tại" với "tài khoản
-# không có". Với ta thì hai cái đó như nhau: gửi lên là hỏng.
+# Khoá model video theo CHẾ ĐỘ và nhãn giao diện. QUÉT ĐỦ HỌ 09/08/2026 trên
+# `v1/video:batchAsyncGenerateVideoText`, cả hai tỷ lệ khung hình.
 #
-# Đạt (403, tức qua kiểm tham số):
-#   veo_3_1_t2v, veo_3_1_t2v_fast, veo_3_1_t2v_lite, veo_3_1_t2v_lite_low_priority
-#   veo_3_1_i2v_lite_low_priority, veo_3_1_interpolation_lite_low_priority
-#   veo_3_1_r2v_lite, veo_3_1_r2v_lite_low_priority
-#   abra_t2v_4s, abra_t2v_6s, abra_t2v_8s, abra_r2v_8s
+# Tên model bị kiểm TRƯỚC cả reCAPTCHA lẫn quyền nên quét được miễn phí: 403 là
+# có, 404 là không dùng được. Khác đường ảnh — ở đó tên sai trả 400.
 #
-# Trả 404 (KHÔNG dùng được): abra_t2v_5s, abra_r2v_5s, veo_3_1_r2v,
-# veo_3_1_r2v_fast
-MODEL_VIDEO_T2V = {
-    "Omni Flash": "abra_t2v_{giay}s",
-    "Veo 3.1 - Lite": "veo_3_1_t2v_lite",
-    "Veo 3.1 - Fast": "veo_3_1_t2v_fast",
-    "Veo 3.1 - Quality": "veo_3_1_t2v",
-    "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_t2v_lite_low_priority",
-}
-# Chế độ "thành phần" nghèo model hơn hẳn: bản Fast và Quality của r2v đều trả
-# 404. Giữ nguyên ánh xạ để `chon_model_video` báo lỗi nêu đúng tên thay vì lặng
-# lẽ hạ xuống Lite — người dùng chọn Quality mà nhận Lite là đúng kiểu hỏng đã
-# gây sự cố 08/08/2026, chỉ khác chiều.
-MODEL_VIDEO_R2V = {
-    "Omni Flash": "abra_r2v_{giay}s",
-    "Veo 3.1 - Lite": "veo_3_1_r2v_lite",
-    "Veo 3.1 - Fast": "veo_3_1_r2v_fast",
-    "Veo 3.1 - Quality": "veo_3_1_r2v",
-    "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_r2v_lite_low_priority",
-}
+# Hai điều quét ra mà bản gỡ rối không nói:
+#
+#   * BA chế độ có ảnh (i2v, interpolation, r2v) KHÔNG hề có bản Fast hay
+#     Quality — `veo_3_1_i2v`, `veo_3_1_i2v_fast`, `veo_3_1_interpolation`,
+#     `veo_3_1_interpolation_fast`, `veo_3_1_r2v`, `veo_3_1_r2v_fast` đều 404.
+#     Chỉ họ t2v mới đủ bốn bậc.
+#   * Nhưng mỗi chế độ đó có HAI bản Lite: `_lite` và `_lite_low_priority`.
+#     Ứng dụng gốc gán cứng bản ưu tiên thấp, ta bê theo — nên người chọn
+#     "Veo 3.1 - Lite" vẫn bị đẩy xuống hàng chờ chậm mà không biết. Nay tách ra.
+#
+# Tỷ lệ khung hình KHÔNG đổi tính hợp lệ của tên model: mọi khoá đều qua ở cả
+# 16:9 lẫn 9:16. Nếu tỷ lệ có ràng buộc thì nó nằm sau cửa reCAPTCHA, chưa đo được.
+#
+# Omni Flash: 4s, 6s, 8s, 10s đều có ở CẢ t2v lẫn r2v. Không có 5s, không có 12s.
+NHAN_OMNI = "Omni Flash"
+NHAN_LITE = "Veo 3.1 - Lite"
+NHAN_LITE_CHO = "Veo 3.1 - Lite [Lower Priority]"
+NHAN_FAST = "Veo 3.1 - Fast"
+NHAN_QUALITY = "Veo 3.1 - Quality"
 
-# Khoá đã đo là gửi lên sẽ 404. Chặn tại chỗ kèm tên thay thế, vì thông báo gốc
-# của Google ("Requested entity was not found") không nói model nào sai.
-MODEL_VIDEO_DA_DO_LA_KHONG_CO = {
-    "abra_t2v_5s": "Omni Flash chỉ có 4s, 6s, 8s — không có 5s",
-    "abra_r2v_5s": "Omni Flash chỉ có 4s, 6s, 8s — không có 5s",
-    "veo_3_1_r2v": "chế độ thành phần không có bản Quality; dùng Lite",
-    "veo_3_1_r2v_fast": "chế độ thành phần không có bản Fast; dùng Lite",
+MODEL_VIDEO: dict[str, dict[str, str]] = {
+    "text_to_video": {
+        NHAN_OMNI: "abra_t2v_{giay}s",
+        NHAN_LITE: "veo_3_1_t2v_lite",
+        NHAN_LITE_CHO: "veo_3_1_t2v_lite_low_priority",
+        NHAN_FAST: "veo_3_1_t2v_fast",
+        NHAN_QUALITY: "veo_3_1_t2v",
+    },
+    "component": {
+        NHAN_OMNI: "abra_r2v_{giay}s",
+        NHAN_LITE: "veo_3_1_r2v_lite",
+        NHAN_LITE_CHO: "veo_3_1_r2v_lite_low_priority",
+    },
+    "image_start": {
+        NHAN_LITE: "veo_3_1_i2v_lite",
+        NHAN_LITE_CHO: "veo_3_1_i2v_lite_low_priority",
+    },
+    "image_start_end": {
+        NHAN_LITE: "veo_3_1_interpolation_lite",
+        NHAN_LITE_CHO: "veo_3_1_interpolation_lite_low_priority",
+    },
 }
-# Thời lượng Omni Flash có thật. 5 giây KHÔNG có, mà 5 lại từng là giá trị mặc
-# định khi bên gọi không nêu thời lượng — tức nhánh mặc định của Omni Flash
-# trước đây trỏ thẳng vào một model không tồn tại.
+# Nhãn dùng khi bên gọi không nêu: bản ưu tiên thấp, rẻ nhất.
+NHAN_MAC_DINH = NHAN_LITE_CHO
+MODEL_VIDEO_MAC_DINH = {m: b[NHAN_MAC_DINH] for m, b in MODEL_VIDEO.items()}
+# Mọi nhãn giao diện, để phân biệt "nhãn lạ" với "nhãn có thật nhưng chế độ này
+# không có" — hai thứ cần thông báo khác nhau.
+MOI_NHAN = {NHAN_OMNI, NHAN_LITE, NHAN_LITE_CHO, NHAN_FAST, NHAN_QUALITY}
+
+# Thời lượng Omni Flash có thật, đo cho cả t2v và r2v. 5 giây KHÔNG có, mà 5 lại
+# từng là mặc định khi bên gọi không nêu thời lượng.
 GIAY_OMNI_FLASH = (4, 6, 8, 10)
 GIAY_OMNI_FLASH_MAC_DINH = 8
 
 # Đường VIDEO có gửi `userPaygateTier`, và giá trị đúng là ONE — đọc được từ
-# telemetry thật của giao diện Flow 09/08/2026:
-#     MEDIA_GENERATION_PAYGATE_TIER = "PAYGATE_TIER_ONE"
-#     MEDIA_GENERATION_SETTINGS = {"modelKey":"abra_t2v_10s", ...}
-# Bản gỡ rối VEO3 AI Studio ghi TIER_TWO và ta bê nguyên sang: 403 "The caller
-# does not have permission". Bỏ hẳn trường cũng 403. Đường ẢNH thì ngược lại —
-# bản chụp request thật cho thấy ảnh KHÔNG gửi trường này.
+# telemetry thật của giao diện Flow 09/08/2026 (MEDIA_GENERATION_PAYGATE_TIER).
+# Bản gỡ rối ghi TIER_TWO và ta bê nguyên sang: 403 "The caller does not have
+# permission". Bỏ hẳn trường cũng 403. Đường ẢNH thì ngược lại — bản chụp
+# request thật cho thấy ảnh KHÔNG gửi trường này.
 TIER_VIDEO = "PAYGATE_TIER_ONE"
-MODEL_VIDEO_MAC_DINH = {
-    "text_to_video": "veo_3_1_t2v_lite_low_priority",
-    "component": "veo_3_1_r2v_lite_low_priority",
-    "image_start": "veo_3_1_i2v_lite_low_priority",
-    "image_start_end": "veo_3_1_interpolation_lite_low_priority",
-}
 
 # Toạ độ cắt phủ trọn khung — app gửi đúng giá trị này cho ảnh đầu/cuối.
 _CAT_TRON_KHUNG = {"top": 0, "left": 0, "bottom": 1, "right": 1}
@@ -349,21 +364,28 @@ def tach_prompt_theo_anh(prompt: str, anh: list[dict[str, Any]]) -> list[dict[st
 
 
 def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str:
-    """Khoá model theo chế độ + nhãn giao diện.
+    """Khoá model theo CHẾ ĐỘ + nhãn giao diện.
 
-    Hai chế độ khung hình bỏ qua nhãn: app gán cứng biến thể Lite ưu tiên thấp,
-    nên chọn "Veo 3.1 - Quality" ở đó cũng không đổi được gì. Giữ nguyên hành vi
-    vì đo cho thấy đúng hai khoá đó là dùng được.
+    Ba chế độ có ảnh chỉ có hai bản Lite (xem chú thích ở `MODEL_VIDEO`), nên
+    chọn "Fast" hay "Quality" ở đó là ném lỗi nêu rõ chế độ này có gì — thay vì
+    lặng lẽ hạ xuống Lite. Người chọn Quality mà nhận Lite là đúng kiểu hỏng đã
+    gây sự cố 08/08/2026, chỉ khác chiều.
 
-    Ném `ValueError` khi khoá tính ra nằm trong nhóm đã đo là 404. Thà hỏng ngay
-    ở đây với thông báo nêu tên thay thế, còn hơn để Google trả "Requested entity
-    was not found" — câu đó không nói model nào sai, và ở đường video thì khoá
-    hỏng trả 404 chứ không phải 400 nên càng dễ tưởng là lỗi tài khoản.
+    Nhãn LẠ (không nằm trong bộ nhãn giao diện) thì vẫn rơi về mặc định, để cấu
+    hình cũ hoặc bên gọi tự do không bị chặn cứng.
     """
-    if che_do in ("image_start", "image_start_end"):
-        return MODEL_VIDEO_MAC_DINH[che_do]
-    bang = MODEL_VIDEO_R2V if che_do == "component" else MODEL_VIDEO_T2V
-    khoa = bang.get(nhan or "", MODEL_VIDEO_MAC_DINH.get(che_do, ""))
+    bang = MODEL_VIDEO.get(che_do)
+    if bang is None:
+        raise ValueError(f"chế độ video lạ: {che_do!r}; chỉ có {', '.join(MODEL_VIDEO)}")
+    ten = nhan or NHAN_MAC_DINH
+    if ten not in bang:
+        if ten in MOI_NHAN:
+            raise ValueError(
+                f"chế độ {che_do} không có bản {ten!r}. Bản dùng được: "
+                f"{', '.join(sorted(bang))}."
+            )
+        ten = NHAN_MAC_DINH
+    khoa = bang[ten]
     if "{giay}" in khoa:
         so = re.sub(r"[^0-9]", "", str(duration or ""))
         giay = int(so) if so else GIAY_OMNI_FLASH_MAC_DINH
@@ -373,13 +395,6 @@ def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str
                 f"{', '.join(f'{g}s' for g in GIAY_OMNI_FLASH)}."
             )
         khoa = khoa.format(giay=giay)
-    if khoa in MODEL_VIDEO_DA_DO_LA_KHONG_CO:
-        con_dung = sorted(v for v in bang.values()
-                          if "{giay}" not in v and v not in MODEL_VIDEO_DA_DO_LA_KHONG_CO)
-        raise ValueError(
-            f"'{khoa}' không dùng được ({MODEL_VIDEO_DA_DO_LA_KHONG_CO[khoa]}). "
-            f"Khoá còn dùng được cho chế độ {che_do}: {', '.join(con_dung)}."
-        )
     return khoa
 
 
