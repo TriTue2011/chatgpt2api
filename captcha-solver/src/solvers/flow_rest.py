@@ -10,6 +10,15 @@ File này gửi thẳng JSON tới đúng API mà giao diện đó gọi. Trình
 hai việc, mỗi việc khoảng một giây: xin `access_token` và đúc token reCAPTCHA.
 Không còn DOM, nên không còn cả lớp lỗi "bấm hụt".
 
+CHẠY THẬT LẦN ĐẦU 09/08/2026: `POST /v1/google/flow/rest/generate-image` trong
+container trả **HTTP 200 sau 35 giây**, kèm `mediaId` thật. Đây là câu trả lời
+cho ẩn số để ngỏ suốt quá trình: token reCAPTCHA đúc trong trình duyệt của
+container DÙNG ĐƯỢC cho request phát từ chính tiến trình đó, dù request không đi
+qua ngữ cảnh trang. Kiến trúc "trình duyệt làm máy phát token" chạy được.
+
+Đáp của lệnh tạo chỉ có `mediaId`, KHÔNG có link ảnh — link phải đổi thêm một
+lượt qua `media.getMediaUrlRedirect`; xem `lay_link_media()`.
+
 ĐO THẬT 09/08/2026, tài khoản `google-benbap115`, project 55575914-…:
 
   * Tiến trình Python thuần — không cookie, không `x-browser-validation`,
@@ -517,6 +526,49 @@ async def lay_bearer(profile: str, headless: bool = True) -> str:
         return await _bearer_tu_trang(page, profile)
 
 
+_JS_LINK_MEDIA = """
+async (ten_media) => {
+  const ra = {};
+  for (const ten of ten_media) {
+    try {
+      const r = await fetch(
+        'https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=' +
+        encodeURIComponent(ten));
+      ra[ten] = r.ok ? r.url : null;
+    } catch (e) { ra[ten] = null; }
+  }
+  return ra;
+}
+"""
+
+
+async def lay_link_media(profile: str, ten_media: list[str],
+                         headless: bool = True) -> dict[str, str]:
+    """`mediaId` → link CDN đã ký. Cần trình duyệt vì trpc dựa vào cookie.
+
+    Đáp của lệnh tạo ảnh chỉ có `mediaId`, KHÔNG có link (đo 09/08/2026 trên
+    lượt tạo thật đầu tiên). Link lấy qua `media.getMediaUrlRedirect` — đúng
+    endpoint mà ứng dụng gốc dùng cho video, hoá ra dùng được cho cả ảnh: nó
+    chuyển hướng sang `https://flow-content.google/image/<id>?Expires=…&
+    Signature=…` và thân là JPEG thật.
+
+    Link đã ký nên tải được từ bất kỳ đâu, không cần cookie — bên gọi cứ HTTP
+    thường mà lấy. Chỉ riêng bước ĐỔI id lấy link là cần phiên đăng nhập.
+
+    Gom cả danh sách vào MỘT lượt mở trang: mở trình duyệt là phần đắt nhất,
+    còn mỗi lượt fetch bên trong chỉ vài chục mili giây.
+    """
+    if not ten_media:
+        return {}
+    from ..browser_pool import pool
+    async with pool.page(profile=profile, headless=headless) as page:
+        if "labs.google" not in (page.url or ""):
+            await page.goto("https://labs.google/fx/tools/flow",
+                            wait_until="domcontentloaded", timeout=30_000)
+        ra = await page.evaluate(_JS_LINK_MEDIA, list(ten_media))
+    return {k: v for k, v in (ra or {}).items() if v}
+
+
 async def _lay_recaptcha(profile: str, headless: bool, action: str) -> str:
     """Đúc token reCAPTCHA. LUÔN phải mở trang, và phải gọi NGAY TRƯỚC lệnh gửi.
 
@@ -599,9 +651,16 @@ async def tao_anh(*, profile: str, project_id: str, prompt: str,
         timeout,
     )
     ten = [m["name"] for m in (dap.get("media") or []) if m.get("name")]
-    link = re.findall(r'"(https://flow-content\.google/image/[^"]+)"', str(dap))
     if not ten:
         raise LoiFlowRest(502, f"đáp không có media: {str(dap)[:300]}")
+
+    # Đáp của lệnh tạo KHÔNG kèm link (đo trên lượt tạo thật đầu tiên
+    # 09/08/2026). Vẫn thử moi từ thân phòng khi Flow đổi ý, rồi mới đi đổi id
+    # lấy link — một `mediaId` không có link thì bên gọi chẳng làm gì được.
+    link = re.findall(r'"(https://flow-content\.google/image/[^"]+)"', str(dap))
+    if not link:
+        bang = await lay_link_media(profile, ten, headless)
+        link = [bang[t] for t in ten if bang.get(t)]
     return {
         "media_ids": ten,
         "urls": link,
