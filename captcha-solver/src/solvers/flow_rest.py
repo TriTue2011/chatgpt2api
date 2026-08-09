@@ -178,8 +178,17 @@ MODEL_VIDEO_DA_DO_LA_KHONG_CO = {
 # Thời lượng Omni Flash có thật. 5 giây KHÔNG có, mà 5 lại từng là giá trị mặc
 # định khi bên gọi không nêu thời lượng — tức nhánh mặc định của Omni Flash
 # trước đây trỏ thẳng vào một model không tồn tại.
-GIAY_OMNI_FLASH = (4, 6, 8)
+GIAY_OMNI_FLASH = (4, 6, 8, 10)
 GIAY_OMNI_FLASH_MAC_DINH = 8
+
+# Đường VIDEO có gửi `userPaygateTier`, và giá trị đúng là ONE — đọc được từ
+# telemetry thật của giao diện Flow 09/08/2026:
+#     MEDIA_GENERATION_PAYGATE_TIER = "PAYGATE_TIER_ONE"
+#     MEDIA_GENERATION_SETTINGS = {"modelKey":"abra_t2v_10s", ...}
+# Bản gỡ rối VEO3 AI Studio ghi TIER_TWO và ta bê nguyên sang: 403 "The caller
+# does not have permission". Bỏ hẳn trường cũng 403. Đường ẢNH thì ngược lại —
+# bản chụp request thật cho thấy ảnh KHÔNG gửi trường này.
+TIER_VIDEO = "PAYGATE_TIER_ONE"
 MODEL_VIDEO_MAC_DINH = {
     "text_to_video": "veo_3_1_t2v_lite_low_priority",
     "component": "veo_3_1_r2v_lite_low_priority",
@@ -222,7 +231,7 @@ def kiem_model_anh(model: str) -> str:
 
 
 def _ngu_canh(project_id: str, session_id: str,
-              recaptcha: str | None) -> dict[str, Any]:
+              recaptcha: str | None, tier: str | None = None) -> dict[str, Any]:
     """`clientContext` — dựng theo BẢN CHỤP REQUEST THẬT của giao diện Flow
     (09/08/2026), không phải theo bản gỡ rối nữa.
 
@@ -241,6 +250,8 @@ def _ngu_canh(project_id: str, session_id: str,
         "tool": TOOL,
         "sessionId": session_id,
     }
+    if tier:
+        ctx["userPaygateTier"] = tier
     if recaptcha:
         ctx["recaptchaContext"] = {
             "token": recaptcha,
@@ -385,6 +396,7 @@ def than_tao_video(
     session_id: str | None = None,
     batch_id: str | None = None,
     seeds: list[int] | None = None,
+    tier: str = TIER_VIDEO,
 ) -> dict[str, Any]:
     """Thân cho `v1/video:batchAsyncGenerateVideo*`. Xem `CHE_DO_VIDEO` để biết
     chế độ nào đi tới endpoint nào."""
@@ -404,7 +416,7 @@ def than_tao_video(
             f"{'Ảnh đầu và ảnh cuối đều bắt buộc.' if che_do == 'image_start_end' else ''}"
         )
     sid = session_id or (";" + str(int(time.time() * 1000)))
-    ctx = _ngu_canh(project_id, sid, recaptcha)
+    ctx = _ngu_canh(project_id, sid, recaptcha, tier)
 
     goc: dict[str, Any] = {
         "aspectRatio": TY_LE_VIDEO.get(aspect_ratio, "VIDEO_ASPECT_RATIO_LANDSCAPE"),
@@ -710,7 +722,8 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
                     anh: list[dict[str, Any]] | None = None,
                     headless: bool = True, timeout: float = 180,
                     cho_xong: bool = False, cho_toi_da: float = 600,
-                    nhip: float = 5) -> dict[str, Any]:
+                    nhip: float = 5,
+                    tier: str = TIER_VIDEO) -> dict[str, Any]:
     """Gửi lệnh tạo video. Mặc định trả ngay `gen_ids`, KHÔNG chờ video xong.
 
     Đường DOM hiện tại giữ một request HTTP mở suốt 300 giây và đã đo được là
@@ -737,7 +750,7 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
         bearer,
         than_tao_video(project_id=project_id, prompt=prompt, che_do=che_do,
                        model_key=khoa, aspect_ratio=aspect_ratio, count=count,
-                       anh=anh, recaptcha=recaptcha),
+                       anh=anh, recaptcha=recaptcha, tier=tier),
         timeout,
     )
     gen_ids = doc_gen_ids(dap)

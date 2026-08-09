@@ -623,6 +623,11 @@ class FlowRestVideoReq(BaseModel):
     # hàng đợi (hiện là `api/veo_video.py`).
     wait: bool = False
     wait_timeout: int = Field(default=600, ge=60, le=1800)
+    # Bậc trả phí khai trong `clientContext`. Mặc định PAYGATE_TIER_ONE — đọc
+    # từ telemetry thật của giao diện Flow. Mở ra được vì đây là thuộc tính của
+    # TÀI KHOẢN chứ không phải hằng số: telemetry báo tier theo từng tài khoản,
+    # nên tài khoản bậc khác sẽ cần giá trị khác.
+    paygate_tier: str = "PAYGATE_TIER_ONE"
 
 
 class FlowRestStatusReq(BaseModel):
@@ -712,6 +717,7 @@ async def api_flow_rest_video(req: FlowRestVideoReq) -> dict[str, Any]:
             timeout=req.timeout,
             cho_xong=req.wait,
             cho_toi_da=req.wait_timeout,
+            tier=req.paygate_tier,
         )
     except HTTPException:
         raise

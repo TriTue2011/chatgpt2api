@@ -248,7 +248,11 @@ class ThanTaoVideo(unittest.TestCase):
         self.assertIs(than["useV2ModelConfig"], True)
         self.assertEqual(than["mediaGenerationContext"]["audioFailurePreference"],
                          "RETURN_SILENCED_VIDEOS")
-        self.assertNotIn("userPaygateTier", than["clientContext"])
+        # Đường VIDEO CÓ gửi bậc trả phí, và giá trị đúng là ONE — đọc từ
+        # telemetry thật của giao diện Flow. Bản gỡ rối ghi TWO và ta bê nguyên
+        # sang: 403 "The caller does not have permission". Bỏ hẳn trường cũng
+        # 403. Đường ẢNH thì ngược lại, không gửi trường này.
+        self.assertEqual(than["clientContext"]["userPaygateTier"], "PAYGATE_TIER_ONE")
 
     def test_text_to_video_khong_gan_anh(self):
         than = self._than("text_to_video", anh=self.ANH)
