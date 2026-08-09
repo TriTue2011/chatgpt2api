@@ -184,6 +184,50 @@ class ComposeTests(unittest.TestCase):
                       self.COMPOSE)
 
 
+class ManChanPhienKetThucTests(unittest.TestCase):
+    """Màn chắn "Phiên của bạn đã kết thúc" phải được bấm qua trước khi điền email.
+
+    ĐO THẬT 09/08/2026 trên máy chủ, tài khoản OpenAI gốc thật. Luồng chết ở
+    ngay màn hình đầu với thông báo "Không tìm thấy ô email trên
+    auth.openai.com — trang có thể đang chặn (Cloudflare)". Không phải
+    Cloudflare: chỉ cần đã ghé `chatgpt.com` một lần — mà bước dò phiên sẵn có
+    ở đầu `_run_inner` thì LUÔN ghé — là trang đăng nhập trả về một màn chắn
+    không có lấy một thẻ `<input>` nào. `_dien` chờ hết 6 bộ chọn × 20 giây
+    (đúng 120 giây quan sát được) rồi bỏ cuộc.
+
+    Hai cách đã thử và LOẠI, ghi lại để không ai đi lại:
+      · đổi URL đăng nhập  → vẫn ra màn chắn (đã đo trên cả hai URL);
+      · xoá cookie trước khi vào → vẫn ra màn chắn.
+    Cách chạy được là bấm chính link "Đăng nhập" của màn chắn; sau cú bấm trang
+    thành "Chào mừng trở lại" với ô email, URL không đổi. Chạy thật sau khi vá:
+    qua màn chắn → mật khẩu → mã TOTP đúng ngay lần 1 → lấy được access token.
+    """
+
+    def test_co_ham_qua_man_chan(self):
+        self.assertIn("async def _qua_man_chan", THAN)
+
+    def test_bam_qua_man_chan_truoc_khi_dien_email(self):
+        vi_tri_bam = THAN.index("await _qua_man_chan(page)")
+        vi_tri_dien = THAN.index("_dien(page, _O_EMAIL")
+        self.assertLess(vi_tri_bam, vi_tri_dien,
+                        "phải bấm qua màn chắn TRƯỚC khi tìm ô email, "
+                        "nếu không _dien chờ vô ích 120 giây rồi báo lỗi sai hướng")
+
+    def test_khong_bam_nham_khi_da_o_form(self):
+        # Vào thẳng trang đăng nhập (hồ sơ chưa ghé chatgpt.com) thì ra form
+        # luôn, không có màn chắn. Bấm bừa lúc đó là rời khỏi form.
+        i = THAN.index("async def _qua_man_chan")
+        than_ham = THAN[i:i + 1400]
+        self.assertIn("_O_EMAIL[0]", than_ham,
+                      "phải kiểm có ô email chưa rồi mới bấm")
+
+    def test_man_chan_co_nhieu_bo_chon_du_phong(self):
+        i = NGUON.index("_NUT_MAN_CHAN = (")
+        khoi = NGUON[i:NGUON.index("\n)", i)]
+        self.assertGreaterEqual(khoi.count("'"), 6,
+                                "_NUT_MAN_CHAN có ít hơn 3 bộ chọn dự phòng")
+
+
 class ChuaKiemChungTrenTrangThatTests(unittest.TestCase):
     """Ghi lại cho rõ ràng: phần nào ở đây CHƯA được chứng minh.
 

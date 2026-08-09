@@ -54,7 +54,13 @@ except ImportError:  # pragma: no cover - môi trường thiếu gói
 logger = logging.getLogger(__name__)
 
 _CHATGPT_HOME = "https://chatgpt.com/"
-_AUTH_LOGIN = "https://auth.openai.com/u/login"
+# Đo thật 09/08/2026 trên máy chủ: `https://auth.openai.com/u/login` KHÔNG còn
+# là trang nhập email. Nó trả về màn chắn "Phiên của bạn đã kết thúc" — không có
+# một thẻ <input> nào, chỉ có link "Đăng nhập" trỏ sang
+# `chatgpt.com/auth/login_with`, mà đường đó lại rơi vào thử thách Cloudflare
+# (`__cf_chl_rt_tk`) cũng không có ô nhập. Vào thẳng `/log-in` thì ra đúng trang
+# "Chào mừng trở lại" với ô `input[name="email"]`.
+_AUTH_LOGIN = "https://auth.openai.com/log-in"
 
 # Ô email ở màn hình 1. Auth0 đổi `name`/`id` theo bản dựng nên bắt bằng nhiều
 # dấu hiệu, ưu tiên cái cụ thể nhất trước.
@@ -82,6 +88,13 @@ _O_MA = (
     'input[id="code"]',
     'input[inputmode="numeric"]',
     'input[name="otp"]',
+)
+
+# Link "Đăng nhập" trên màn chắn "Phiên của bạn đã kết thúc" — xem `_qua_man_chan`.
+_NUT_MAN_CHAN = (
+    'a[href*="login_with"]',
+    'a:has-text("Đăng nhập")',
+    'a:has-text("Log in")',
 )
 
 _NUT_TIEP_TUC = (
@@ -157,6 +170,38 @@ async def _dien(page, selectors: tuple[str, ...], gia_tri: str,
             await o.click(timeout=3000)
             await o.fill(gia_tri)
             return True
+        except Exception:
+            continue
+    return False
+
+
+async def _qua_man_chan(page) -> bool:
+    """Bấm qua màn chắn "Phiên của bạn đã kết thúc" nếu đang đứng ở đó.
+
+    Đo thật 09/08/2026 trên máy chủ. Chỉ cần đã ghé `chatgpt.com` một lần — mà
+    bước dò phiên sẵn có ở đầu luồng thì LUÔN ghé — là trang đăng nhập của
+    OpenAI trả về màn chắn này thay vì form. Nó không có lấy một thẻ `<input>`
+    nào, nên `_dien` chờ hết 6 selector × 20 giây rồi báo "không tìm thấy ô
+    email"; đọc thông báo đó ai cũng tưởng bị Cloudflare chặn, nhưng không phải.
+
+    Đã thử và LOẠI hai cách: đổi sang URL đăng nhập khác (cùng ra màn chắn), và
+    xoá cookie trước khi vào (vẫn ra màn chắn). Đường đúng là bấm chính cái link
+    "Đăng nhập" mà màn chắn đưa ra — bấm xong trang thành "Chào mừng trở lại"
+    với ô email, vẫn ở nguyên URL cũ.
+    """
+    try:
+        if await page.locator(_O_EMAIL[0]).first.count() > 0:
+            return False          # đã là form đăng nhập, không có màn chắn nào
+    except Exception:
+        pass
+    for sel in _NUT_MAN_CHAN:
+        try:
+            nut = page.locator(sel).first
+            if await nut.count() > 0 and await nut.is_visible():
+                await nut.click(timeout=5000)
+                await asyncio.sleep(6.0)
+                logger.info("openai_login: qua man chan phien ket thuc")
+                return True
         except Exception:
             continue
     return False
@@ -276,6 +321,7 @@ async def _run_inner(session: OpenAILoginSession, password: str) -> None:
     session.message = "Mở trang đăng nhập OpenAI..."
     await page.goto(_AUTH_LOGIN, wait_until="domcontentloaded", timeout=45_000)
     await asyncio.sleep(2.5)
+    await _qua_man_chan(page)
 
     session.message = "Điền email..."
     if not await _dien(page, _O_EMAIL, session.email):
