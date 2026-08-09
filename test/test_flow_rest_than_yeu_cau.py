@@ -488,10 +488,16 @@ class DoThatTrenDuongVideo(unittest.TestCase):
         self.assertEqual(FR.chon_model_video("text_to_video", "Model nao do", None),
                          "veo_3_1_t2v_lite_low_priority")
 
-    def test_omni_flash_chi_co_o_t2v_va_component(self):
-        for che_do in ("image_start", "image_start_end"):
-            with self.subTest(che_do=che_do), self.assertRaises(ValueError):
-                FR.chon_model_video(che_do, "Omni Flash", "8s")
+    def test_omni_flash_co_o_ba_che_do_tru_anh_dau_cuoi(self):
+        """Đo 10/08: abra_i2v_* CÓ (4/6/8/10s), abra_interpolation_* thì không."""
+        self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", "8s"),
+                         "abra_t2v_8s")
+        self.assertEqual(FR.chon_model_video("image_start", "Omni Flash", "10s"),
+                         "abra_i2v_10s")
+        self.assertEqual(FR.chon_model_video("component", "Omni Flash", "4s"),
+                         "abra_r2v_4s")
+        with self.assertRaises(ValueError):
+            FR.chon_model_video("image_start_end", "Omni Flash", "8s")
 
     def test_omni_flash_mac_dinh_khong_con_la_5_giay(self):
         """5 giây trả 404. Trước đây nó là mặc định khi thiếu thời lượng."""
@@ -522,9 +528,11 @@ class DoThatTrenDuongVideo(unittest.TestCase):
             for nhan, khoa in bang.items():
                 with self.subTest(che_do=che_do, nhan=nhan):
                     if "{giay}" in khoa:
+                        # Omni Flash có ở t2v, i2v và r2v — không có ở
+                        # interpolation (abra_interpolation_* không tồn tại).
                         for g in FR.GIAY_OMNI_FLASH:
                             self.assertIn(khoa.format(giay=g).rsplit("_", 1)[0],
-                                          ("abra_t2v", "abra_r2v"))
+                                          ("abra_t2v", "abra_i2v", "abra_r2v"))
                     else:
                         self.assertIn(khoa, DA_DO_LA_CO)
 

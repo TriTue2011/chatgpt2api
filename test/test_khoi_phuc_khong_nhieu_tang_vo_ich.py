@@ -256,10 +256,15 @@ class TestXongViecThiDongTab(unittest.TestCase):
     """
 
     def test_codex_google_onboard_dong_browser(self):
+        # Khớp tới dấu mở ngoặc thôi, đừng chốt cứng cả danh sách tham số: từ
+        # 10/08/2026 lời gọi có thêm `bo_qua_khi_dang_nhap=True` để không đóng
+        # trúng lượt đăng nhập của việc khác (xem
+        # test_khoi_phuc_khong_do_loi_google_oan.py). Điều test này khoá là "xong
+        # thì đóng", không phải chữ ký lời gọi.
         code = _code(GOC / "captcha-solver" / "src" / "codex_google_onboard.py")
         self.assertIn("finally:", code)
         i = code.index("finally:")
-        self.assertIn("pool.close_profile(req.profile)", code[i:i + 600])
+        self.assertIn("pool.close_profile(req.profile", code[i:i + 600])
 
     def test_moi_luong_onboard_deu_co_dong(self):
         goc = GOC / "captcha-solver" / "src"

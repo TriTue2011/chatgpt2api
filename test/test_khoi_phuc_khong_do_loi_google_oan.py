@@ -317,13 +317,13 @@ class DonDepKhongDuocGietLuotDangNhap(unittest.TestCase):
         ("captcha-solver/src/openai_native_login.py", "close_profile sau onboard bo qua"),
         ("captcha-solver/src/codex_google_onboard.py", "codex-g: đã đóng browser profile"),
         ("captcha-solver/src/github_codex_onboard.py", "codex_onboard_close_profile_error"),
-        ("captcha-solver/src/main.py", "Đảm bảo tắt ngay trình duyệt sau khi xử lý xong"),
+        ("captcha-solver/src/main.py", 'auto_refresh: %s error: %s'),
     ]
 
     def test_moi_buoc_don_dep_deu_ne_luot_dang_nhap(self):
         for duong_dan, moc in self.DON_DEP:
             with self.subTest(file=duong_dan, moc=moc):
-                nguon = (GOC / duong_dan).read_text(encoding="utf-8")
+                nguon = _chi_code((GOC / duong_dan).read_text(encoding="utf-8"))
                 i = nguon.index(moc)
                 # Lời gọi nằm ngay quanh mốc (trước với nhánh có log sau, sau với
                 # nhánh có comment trước) → soi cả hai phía.
@@ -335,8 +335,8 @@ class DonDepKhongDuocGietLuotDangNhap(unittest.TestCase):
 
     def test_nut_dong_tay_van_dong_that(self):
         """Người bấm 'đóng' hay xoá hồ sơ là YÊU CẦU TƯỜNG MINH — không được né."""
-        nguon = (GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8")
-        for moc in ('async def api_session_close', "Irreversible — the login session"):
+        nguon = _chi_code((GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8"))
+        for moc in ('async def api_session_close', 'if not profile or "/" in profile'):
             i = nguon.index(moc)
             quanh = nguon[i:i + 700]
             self.assertIn("close_profile", quanh)

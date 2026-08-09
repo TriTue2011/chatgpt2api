@@ -57,7 +57,9 @@ MODEL VIDEO — quét đủ họ 09/08/2026, cả hai tỷ lệ khung hình:
   * Chỉ họ t2v có đủ bốn bậc (Quality / Fast / Lite / Lite ưu tiên thấp).
   * Ba chế độ có ảnh — i2v, interpolation, r2v — KHÔNG có bản Fast hay Quality
     (đều 404), nhưng mỗi chế độ có HAI bản Lite: `_lite` và `_lite_low_priority`.
-  * Omni Flash: 4s, 6s, 8s, 10s có ở cả t2v lẫn r2v. Không có 5s, không có 12s.
+  * Omni Flash: 4s, 6s, 8s, 10s — có ở t2v, i2v VÀ r2v. Không có 5s, không có
+    12s. Riêng chế độ ảnh-đầu-và-cuối thì KHÔNG có Omni Flash
+    (`abra_interpolation_*` không tồn tại).
   * Tỷ lệ khung hình KHÔNG đổi tính hợp lệ của tên model — mọi khoá đều qua ở cả
     16:9 lẫn 9:16. Nếu tỷ lệ có ràng buộc thì nó nằm sau cửa reCAPTCHA, chỗ chưa
     đo miễn phí được.
@@ -192,6 +194,9 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
         NHAN_LITE_CHO: "veo_3_1_r2v_lite_low_priority",
     },
     "image_start": {
+        # Omni Flash CÓ ở chế độ này (abra_i2v_4/6/8/10s) — đo 10/08/2026. Bản
+        # trước chặn nó theo suy đoán vì bản gỡ rối không nhắc tới.
+        NHAN_OMNI: "abra_i2v_{giay}s",
         NHAN_LITE: "veo_3_1_i2v_lite",
         NHAN_LITE_CHO: "veo_3_1_i2v_lite_low_priority",
     },
@@ -752,13 +757,19 @@ async def upload_anh_tham_chieu(*, bearer: str, project_id: str, du_lieu: bytes,
         "clientContext": {"projectId": project_id, "tool": TOOL},
         "imageBytes": base64.b64encode(du_lieu).decode("ascii"),
     }, timeout)
+    # Đáp thật (đo 10/08/2026) đặt id ở `media.name`, KHÔNG phải `name` tầng
+    # ngoài:
+    #     {"media": {"name": "<mediaId>", "projectId": …, "workflowId": …, …}}
+    # Bản cũ chỉ dò ba khoá tầng ngoài rồi rơi xuống nhánh regex UUID trên
+    # `str(dap)` — và vô tình lấy đúng, vì `name` tình cờ đứng trước `projectId`
+    # trong đáp. Google đảo thứ tự khoá một cái là ta trả về projectId làm
+    # mediaId, rồi lệnh tạo video hỏng ở tận đâu đó với thông báo không liên quan.
+    media = dap.get("media")
+    if isinstance(media, dict) and media.get("name"):
+        return str(media["name"])
     for khoa in ("name", "mediaId", "id"):
         if dap.get(khoa):
             return str(dap[khoa])
-    tim = re.search(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
-                    str(dap))
-    if tim:
-        return tim.group(0)
     raise LoiFlowRest(502, f"đáp upload không có mediaId: {str(dap)[:200]}")
 
 
