@@ -5,12 +5,15 @@ JSON cho Google thay vì bấm giao diện. Mọi thứ trước đây "bấm sa
 trên màn hình" nay nằm hết trong một dict — sai một tên trường thì Google trả
 400 INVALID_ARGUMENT không nói trường nào, hoặc tệ hơn là nhận và dựng sai loại.
 
-ĐO THẬT 09/08/2026 (tài khoản google-benbap115). API kiểm `imageModelName`
-TRƯỚC cửa reCAPTCHA nên đo được trực tiếp từng tên:
+ĐO THẬT 09/08/2026 (tài khoản google-benbap115). Tên model bị kiểm TRƯỚC cửa
+reCAPTCHA nên đo được trực tiếp từng tên mà không tốn tín dụng:
 
-    NARWHAL / HARBOR_SEAL   hợp lệ
-    NANO_BANANA_PRO         400 INVALID_ARGUMENT — KHÔNG tồn tại
-    IMAGEN_4                400 INVALID_ARGUMENT — KHÔNG tồn tại
+    ẢNH    GEM_PIX_2 / NARWHAL / HARBOR_SEAL   hợp lệ
+           NANO_BANANA_PRO / IMAGEN_4          400 — KHÔNG tồn tại
+           GEM_PIX / IMAGEN_3_5                404 — tài khoản không có
+
+    VIDEO  abra_t2v_5s / abra_r2v_5s           404 — Omni Flash chỉ có 4/6/8s
+           veo_3_1_r2v / veo_3_1_r2v_fast      404 — thành phần chỉ có Lite
 
 `NANO_BANANA_PRO` lại đang là model mặc định của `flow/auto` và `flow/banana-pro`
 ở `services/image_providers/flow_google.py`, và là giá trị dự phòng cuối cùng
@@ -20,8 +23,8 @@ khoá tra NHÃN dropdown. Ngày ai đó nối đường REST vào adapter cũ, m
 chặn phải xảy ra tại chỗ, kèm thông báo nêu tên đúng.
 
 Phần còn lại chốt bốn chế độ video, vì chúng khác nhau ở đúng những chi tiết dễ
-lẫn: endpoint nào, ảnh nằm ở trường nào, và `cropCoordinates` chỉ có ở chế độ
-ảnh-đầu-và-cuối chứ không có ở chế độ ảnh-đầu.
+lẫn: endpoint nào, ảnh nằm ở trường nào, và chế độ ảnh-đầu-và-cuối đòi CẢ HAI
+ảnh (thiếu ảnh cuối là 400, không nói thiếu trường nào).
 """
 from __future__ import annotations
 
@@ -245,11 +248,6 @@ class ThanTaoVideo(unittest.TestCase):
         self.assertEqual(yc["startImage"]["mediaId"], "m1")
         self.assertEqual(yc["endImage"]["mediaId"], "m2")
 
-    def test_image_start_end_chi_mot_anh_thi_khong_co_end(self):
-        yc = self._than("image_start_end", anh=self.ANH[:1])["requests"][0]
-        self.assertIn("startImage", yc)
-        self.assertNotIn("endImage", yc)
-
     def test_component_gan_reference_images(self):
         yc = self._than("component", anh=self.ANH)["requests"][0]
         self.assertEqual(yc["referenceImages"], [
@@ -314,16 +312,19 @@ class ChonModelVideo(unittest.TestCase):
                          "veo_3_1_t2v_fast")
 
     def test_component_dung_bang_r2v(self):
-        self.assertEqual(FR.chon_model_video("component", "Veo 3.1 - Fast", None),
-                         "veo_3_1_r2v_fast")
+        """Nhãn Fast/Quality ở chế độ thành phần trỏ vào khoá 404 — xem
+        `DoThatTrenDuongVideo`. Chỉ Lite là dùng được."""
+        self.assertEqual(FR.chon_model_video("component", "Veo 3.1 - Lite", None),
+                         "veo_3_1_r2v_lite")
 
     def test_omni_flash_gan_so_giay(self):
         self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", "8s"),
                          "abra_t2v_8s")
 
-    def test_omni_flash_thieu_thoi_luong_thi_ve_5s(self):
+    def test_omni_flash_thieu_thoi_luong_thi_ve_mac_dinh_co_that(self):
+        """Xem `DoThatTrenDuongVideo`: 5 giây trả 404, mặc định phải là 8."""
         self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", None),
-                         "abra_t2v_5s")
+                         f"abra_t2v_{FR.GIAY_OMNI_FLASH_MAC_DINH}s")
 
     def test_nhan_la_ve_mac_dinh(self):
         self.assertEqual(FR.chon_model_video("text_to_video", "Model Nao Do", None),
@@ -371,6 +372,70 @@ class DocDapTraLoi(unittest.TestCase):
         """Thiếu tin không được coi là hỏng, nếu không vòng chờ sẽ bỏ cuộc sớm."""
         tt = FR.doc_trang_thai({"media": []}, ["m1"])
         self.assertEqual(tt["m1"]["status"], "PROCESSING")
+
+
+class DoThatTrenDuongVideo(unittest.TestCase):
+    """Hai lỗi đo được ngày 09/08/2026, chốt lại để đừng ai gỡ ra.
+
+    Khoá model hỏng ở đường VIDEO trả 404 chứ không phải 400 như đường ảnh, và
+    thông báo là "Requested entity was not found" — không nói model nào sai.
+    Endpoint …StartAndEndImage thiếu ảnh cuối thì trả 400 cũng không nói thiếu
+    trường nào. Cả hai đều là loại lỗi tốn hàng giờ nếu phải lần từ thông báo.
+    """
+
+    ANH = [{"name": "a.png", "mediaId": "m1"}, {"name": "b.png", "mediaId": "m2"}]
+
+    def _than(self, che_do, anh):
+        return FR.than_tao_video(project_id="p1", prompt="x", che_do=che_do,
+                                 model_key="k", anh=anh, seeds=[1],
+                                 session_id=";1", batch_id="b1")
+
+    def test_anh_dau_cuoi_thieu_anh_cuoi_thi_dung_ngay(self):
+        with self.assertRaises(ValueError) as ngu_canh:
+            self._than("image_start_end", self.ANH[:1])
+        self.assertIn("cần 2 ảnh", str(ngu_canh.exception))
+
+    def test_anh_dau_cuoi_du_hai_anh_thi_co_ca_hai_truong(self):
+        yc = self._than("image_start_end", self.ANH)["requests"][0]
+        self.assertEqual(yc["startImage"]["mediaId"], "m1")
+        self.assertEqual(yc["endImage"]["mediaId"], "m2")
+
+    def test_che_do_can_anh_ma_khong_co_anh_thi_dung(self):
+        for che_do in ("image_start", "image_start_end", "component"):
+            with self.subTest(che_do=che_do), self.assertRaises(ValueError):
+                self._than(che_do, [])
+
+    def test_text_to_video_khong_doi_anh(self):
+        self.assertEqual(len(self._than("text_to_video", [])["requests"]), 1)
+
+    def test_khoa_model_da_do_la_404_bi_chan_kem_ten_thay_the(self):
+        # "Veo 3.1 - Quality" ở chế độ thành phần → veo_3_1_r2v → 404.
+        with self.assertRaises(ValueError) as ngu_canh:
+            FR.chon_model_video("component", "Veo 3.1 - Quality", None)
+        loi = str(ngu_canh.exception)
+        self.assertIn("veo_3_1_r2v", loi)
+        self.assertIn("veo_3_1_r2v_lite", loi, "phải nêu khoá còn dùng được")
+
+    def test_omni_flash_mac_dinh_khong_con_la_5_giay(self):
+        """5 giây trả 404. Trước đây nó là mặc định khi thiếu thời lượng."""
+        self.assertEqual(FR.chon_model_video("text_to_video", "Omni Flash", None),
+                         "abra_t2v_8s")
+
+    def test_omni_flash_thoi_luong_khong_co_that_bi_chan(self):
+        with self.assertRaises(ValueError) as ngu_canh:
+            FR.chon_model_video("text_to_video", "Omni Flash", "5s")
+        self.assertIn("4s, 6s, 8s", str(ngu_canh.exception))
+
+    def test_ba_thoi_luong_do_duoc_deu_di_qua(self):
+        for giay in FR.GIAY_OMNI_FLASH:
+            self.assertEqual(
+                FR.chon_model_video("text_to_video", "Omni Flash", f"{giay}s"),
+                f"abra_t2v_{giay}s")
+
+    def test_moi_khoa_trong_bang_video_deu_khong_nam_trong_nhom_404(self):
+        """Trừ nhánh r2v Fast/Quality — đó là hai khoá cố ý giữ để báo lỗi rõ."""
+        for khoa in FR.MODEL_VIDEO_MAC_DINH.values():
+            self.assertNotIn(khoa, FR.MODEL_VIDEO_DA_DO_LA_KHONG_CO)
 
 
 class ChoXongRoiTra(unittest.TestCase):

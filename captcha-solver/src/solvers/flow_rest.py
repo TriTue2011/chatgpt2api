@@ -43,9 +43,22 @@ có thật; đường DOM che mất vì nó chỉ dùng chuỗi đó làm khoá 
 chứ không gửi xuống API. `kiem_model_anh()` chặn tại chỗ kèm thông báo nêu tên
 đúng, phòng cấu hình cũ còn sót.
 
+ĐƯỜNG VIDEO — đo 09/08/2026, ba trong bốn endpoint đạt ngay, một sai:
+
+  * `batchAsyncGenerateVideoText`, `…StartImage`, `…ReferenceImages` đều đạt.
+  * `…StartAndEndImage` đòi CẢ HAI ảnh. Thiếu `endImage` là 400 "Request
+    contains an invalid argument" — không nói thiếu trường nào.
+    `cropCoordinates` thì tuỳ chọn: có hay không, số nguyên hay số thực đều qua.
+  * Khoá model hỏng ở đường video trả **404**, không phải 400 như đường ảnh, nên
+    rất dễ tưởng là lỗi tài khoản. Đo được: `abra_t2v_5s`, `abra_r2v_5s`,
+    `veo_3_1_r2v`, `veo_3_1_r2v_fast` đều 404. Omni Flash chỉ có 4s/6s/8s —
+    và 5 giây từng là mặc định khi bên gọi không nêu thời lượng, tức nhánh mặc
+    định của Omni Flash trước đây trỏ thẳng vào model không tồn tại.
+  * `upload_anh_tham_chieu()` đã chạy thật và trả về mediaId hợp lệ.
+
 NGUỒN THÂN YÊU CẦU. Dựng theo bản gỡ rối của VEO3 AI Studio 1.08 (ứng dụng
 Electron gọi cùng API này). Những trường chưa đo được trực tiếp — hằng số tỷ lệ
-khung hình, khoá model video — đều ghi rõ là "theo bản gỡ rối, chưa đo".
+khung hình — đều ghi rõ là "theo bản gỡ rối, chưa đo".
 
 CHƯA LÀM: nâng ảnh (`flow/upsampleImage`), sửa video (`…EditVideo`), và giọng
 đọc trong chế độ thành phần (`referenceAudio`). Thêm sau khi cần, theo đúng
@@ -112,9 +125,20 @@ CHE_DO_VIDEO = {
     "component": "batchAsyncGenerateVideoReferenceImages",
 }
 
-# Khoá model video theo nhãn trên giao diện — theo bản gỡ rối, CHƯA đo.
-# Hai chế độ khung hình bị app gán CỨNG một khoá, không theo nhãn người dùng
-# chọn; giữ nguyên hành vi đó vì chưa biết các biến thể khác có tồn tại không.
+# Khoá model video theo nhãn trên giao diện. ĐO THẲNG VÀO API 09/08/2026 trên
+# endpoint `v1/video:batchAsyncGenerateVideoText`. Lưu ý khác biệt với đường
+# ảnh: khoá video không dùng được trả 404 "Requested entity was not found",
+# KHÔNG phải 400 — nên không phân biệt được "không tồn tại" với "tài khoản
+# không có". Với ta thì hai cái đó như nhau: gửi lên là hỏng.
+#
+# Đạt (403, tức qua kiểm tham số):
+#   veo_3_1_t2v, veo_3_1_t2v_fast, veo_3_1_t2v_lite, veo_3_1_t2v_lite_low_priority
+#   veo_3_1_i2v_lite_low_priority, veo_3_1_interpolation_lite_low_priority
+#   veo_3_1_r2v_lite, veo_3_1_r2v_lite_low_priority
+#   abra_t2v_4s, abra_t2v_6s, abra_t2v_8s, abra_r2v_8s
+#
+# Trả 404 (KHÔNG dùng được): abra_t2v_5s, abra_r2v_5s, veo_3_1_r2v,
+# veo_3_1_r2v_fast
 MODEL_VIDEO_T2V = {
     "Omni Flash": "abra_t2v_{giay}s",
     "Veo 3.1 - Lite": "veo_3_1_t2v_lite",
@@ -122,6 +146,10 @@ MODEL_VIDEO_T2V = {
     "Veo 3.1 - Quality": "veo_3_1_t2v",
     "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_t2v_lite_low_priority",
 }
+# Chế độ "thành phần" nghèo model hơn hẳn: bản Fast và Quality của r2v đều trả
+# 404. Giữ nguyên ánh xạ để `chon_model_video` báo lỗi nêu đúng tên thay vì lặng
+# lẽ hạ xuống Lite — người dùng chọn Quality mà nhận Lite là đúng kiểu hỏng đã
+# gây sự cố 08/08/2026, chỉ khác chiều.
 MODEL_VIDEO_R2V = {
     "Omni Flash": "abra_r2v_{giay}s",
     "Veo 3.1 - Lite": "veo_3_1_r2v_lite",
@@ -129,6 +157,20 @@ MODEL_VIDEO_R2V = {
     "Veo 3.1 - Quality": "veo_3_1_r2v",
     "Veo 3.1 - Lite [Lower Priority]": "veo_3_1_r2v_lite_low_priority",
 }
+
+# Khoá đã đo là gửi lên sẽ 404. Chặn tại chỗ kèm tên thay thế, vì thông báo gốc
+# của Google ("Requested entity was not found") không nói model nào sai.
+MODEL_VIDEO_DA_DO_LA_KHONG_CO = {
+    "abra_t2v_5s": "Omni Flash chỉ có 4s, 6s, 8s — không có 5s",
+    "abra_r2v_5s": "Omni Flash chỉ có 4s, 6s, 8s — không có 5s",
+    "veo_3_1_r2v": "chế độ thành phần không có bản Quality; dùng Lite",
+    "veo_3_1_r2v_fast": "chế độ thành phần không có bản Fast; dùng Lite",
+}
+# Thời lượng Omni Flash có thật. 5 giây KHÔNG có, mà 5 lại từng là giá trị mặc
+# định khi bên gọi không nêu thời lượng — tức nhánh mặc định của Omni Flash
+# trước đây trỏ thẳng vào một model không tồn tại.
+GIAY_OMNI_FLASH = (4, 6, 8)
+GIAY_OMNI_FLASH_MAC_DINH = 8
 MODEL_VIDEO_MAC_DINH = {
     "text_to_video": "veo_3_1_t2v_lite_low_priority",
     "component": "veo_3_1_r2v_lite_low_priority",
@@ -279,15 +321,33 @@ def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str
 
     Hai chế độ khung hình bỏ qua nhãn: app gán cứng biến thể Lite ưu tiên thấp,
     nên chọn "Veo 3.1 - Quality" ở đó cũng không đổi được gì. Giữ nguyên hành vi
-    để không phát sinh khoá model chưa biết có tồn tại hay không.
+    vì đo cho thấy đúng hai khoá đó là dùng được.
+
+    Ném `ValueError` khi khoá tính ra nằm trong nhóm đã đo là 404. Thà hỏng ngay
+    ở đây với thông báo nêu tên thay thế, còn hơn để Google trả "Requested entity
+    was not found" — câu đó không nói model nào sai, và ở đường video thì khoá
+    hỏng trả 404 chứ không phải 400 nên càng dễ tưởng là lỗi tài khoản.
     """
     if che_do in ("image_start", "image_start_end"):
         return MODEL_VIDEO_MAC_DINH[che_do]
     bang = MODEL_VIDEO_R2V if che_do == "component" else MODEL_VIDEO_T2V
     khoa = bang.get(nhan or "", MODEL_VIDEO_MAC_DINH.get(che_do, ""))
     if "{giay}" in khoa:
-        giay = re.sub(r"[^0-9]", "", str(duration or "")) or "5"
+        so = re.sub(r"[^0-9]", "", str(duration or ""))
+        giay = int(so) if so else GIAY_OMNI_FLASH_MAC_DINH
+        if giay not in GIAY_OMNI_FLASH:
+            raise ValueError(
+                f"Omni Flash không có bản {giay} giây. Thời lượng có thật: "
+                f"{', '.join(f'{g}s' for g in GIAY_OMNI_FLASH)}."
+            )
         khoa = khoa.format(giay=giay)
+    if khoa in MODEL_VIDEO_DA_DO_LA_KHONG_CO:
+        con_dung = sorted(v for v in bang.values()
+                          if "{giay}" not in v and v not in MODEL_VIDEO_DA_DO_LA_KHONG_CO)
+        raise ValueError(
+            f"'{khoa}' không dùng được ({MODEL_VIDEO_DA_DO_LA_KHONG_CO[khoa]}). "
+            f"Khoá còn dùng được cho chế độ {che_do}: {', '.join(con_dung)}."
+        )
     return khoa
 
 
@@ -311,6 +371,17 @@ def than_tao_video(
         raise ValueError(f"chế độ video lạ: {che_do!r}; "
                          f"chỉ có {', '.join(CHE_DO_VIDEO)}")
     anh = anh or []
+    # ĐO 09/08/2026: endpoint …StartAndEndImage đòi CẢ HAI ảnh. Thiếu `endImage`
+    # thì trả 400 "Request contains an invalid argument" — không nói thiếu
+    # trường nào. (`cropCoordinates` thì tuỳ chọn: có hay không, số nguyên hay
+    # số thực, đều qua.) Ba chế độ còn lại có ảnh cũng phải có ít nhất một, nếu
+    # không thân yêu cầu thiếu hẳn trường ảnh và Google trả đúng 400 đó.
+    can_it_nhat = {"image_start": 1, "image_start_end": 2, "component": 1}.get(che_do, 0)
+    if len(anh) < can_it_nhat:
+        raise ValueError(
+            f"chế độ {che_do} cần {can_it_nhat} ảnh, mới nhận được {len(anh)}. "
+            f"{'Ảnh đầu và ảnh cuối đều bắt buộc.' if che_do == 'image_start_end' else ''}"
+        )
     sid = session_id or (";" + str(int(time.time() * 1000)))
     ctx = _ngu_canh(project_id, "PAYGATE_TIER_TWO", sid, recaptcha)
 
@@ -321,23 +392,22 @@ def than_tao_video(
     }
     if che_do == "component":
         goc["textInput"] = {"structuredPrompt": {"parts": tach_prompt_theo_anh(prompt, anh)}}
-        if anh:
-            goc["referenceImages"] = [
-                {"mediaId": a["mediaId"], "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
-                for a in anh if a.get("mediaId")
-            ]
+        goc["referenceImages"] = [
+            {"mediaId": a["mediaId"], "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
+            for a in anh if a.get("mediaId")
+        ]
     else:
         goc["textInput"] = {"structuredPrompt": {"parts": [{"text": prompt}]}}
-        if che_do == "image_start" and anh:
+        if che_do == "image_start":
             goc["startImage"] = {"mediaId": anh[0]["mediaId"]}
         elif che_do == "image_start_end":
-            # Chỉ chế độ này mới kèm cropCoordinates — app gửi đúng như vậy.
-            if anh:
-                goc["startImage"] = {"mediaId": anh[0]["mediaId"],
-                                     "cropCoordinates": dict(_CAT_TRON_KHUNG)}
-            if len(anh) > 1:
-                goc["endImage"] = {"mediaId": anh[1]["mediaId"],
-                                   "cropCoordinates": dict(_CAT_TRON_KHUNG)}
+            # Số lượng ảnh đã được chốt ở đầu hàm nên khỏi phải thử lại ở đây.
+            # `cropCoordinates` là tuỳ chọn (đo 09/08) — giữ lại vì app gốc gửi,
+            # và nó nói rõ ý định "dùng trọn khung, không cắt".
+            goc["startImage"] = {"mediaId": anh[0]["mediaId"],
+                                 "cropCoordinates": dict(_CAT_TRON_KHUNG)}
+            goc["endImage"] = {"mediaId": anh[1]["mediaId"],
+                               "cropCoordinates": dict(_CAT_TRON_KHUNG)}
 
     so = max(1, int(count))
     hat = seeds or [random.randint(0, 99998) for _ in range(so)]
