@@ -574,6 +574,73 @@ async def api_flow_generate_video(req: FlowVideoReq):
         raise HTTPException(status_code=502, detail=f"Download video failed: {exc}")
 
 
+# ── Flow qua REST (đường song song, không đụng ba endpoint DOM ở trên) ─────
+#
+# Endpoint dưới đây gọi thẳng API mà giao diện Flow gọi, trình duyệt chỉ còn
+# dùng để xin access_token và đúc token reCAPTCHA (~1 giây/lượt thay vì 60-300
+# giây điều khiển giao diện). Xem `src/solvers/flow_rest.py` để biết phép đo
+# 09/08/2026 đã chốt được những gì.
+#
+# Đặt cạnh chứ không thay thế: đường DOM vẫn là mặc định cho tới khi đường này
+# chạy đủ lâu trên thật. Quay lại chỉ là đổi bên gọi, không phải revert.
+#
+# Video đi sau, cùng khuôn này — phần dùng chung trong flow_rest.py đã sẵn.
+
+
+class FlowRestImageReq(BaseModel):
+    project_id: str
+    prompt: str
+    # NANO_BANANA_PRO bị API trả 400 (đo 09/08/2026) nên KHÔNG dùng làm mặc định.
+    model: str = "NARWHAL"
+    aspect_ratio: str = "16:9"
+    count: int = Field(default=1, ge=1, le=4)
+    # Ảnh tham chiếu dạng base64; được đẩy lên Flow trước rồi gắn vào imageInputs.
+    images_b64: list[str] = Field(default_factory=list)
+    profile: str = "google-fx"
+    headless: bool = True
+    timeout: int = Field(default=180, ge=30, le=600)
+
+
+def _loi_flow_rest(exc: Exception) -> HTTPException:
+    """Giữ nguyên mã HTTP của Google để bên gọi phân biệt được loại hỏng.
+
+    429 (hết ngạch) và 403 (reCAPTCHA) cần xử lý khác nhau hẳn: cái đầu là cho
+    tài khoản nghỉ rồi xoay sang tài khoản khác, cái sau là đúc lại token. Gộp
+    hết thành 502 như đường cũ thì bên gọi không phân biệt được.
+    """
+    from .solvers.flow_rest import LoiFlowRest
+    if isinstance(exc, LoiFlowRest):
+        return HTTPException(status_code=exc.status, detail=exc.message)
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/v1/google/flow/rest/generate-image", dependencies=[Depends(require_api_key)])
+async def api_flow_rest_image(req: FlowRestImageReq) -> dict[str, Any]:
+    """Tạo ảnh Flow qua REST. Đồng bộ — trả media_ids + link xem trước."""
+    import base64 as _b64
+
+    from .solvers.flow_rest import tao_anh
+    try:
+        return await tao_anh(
+            profile=req.profile,
+            project_id=req.project_id,
+            prompt=req.prompt,
+            model=req.model,
+            aspect_ratio=req.aspect_ratio,
+            count=req.count,
+            anh_tham_chieu=[_b64.b64decode(x) for x in req.images_b64],
+            headless=req.headless,
+            timeout=req.timeout,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("flow rest generate-image failed")
+        raise _loi_flow_rest(exc) from exc
+
+
 @app.post(
     "/v1/google/flow/get-or-create-project",
     dependencies=[Depends(require_api_key)],
