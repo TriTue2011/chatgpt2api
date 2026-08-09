@@ -1534,6 +1534,21 @@ async def flow_generate_video(
                         _cap["bearer"] = ah[7:]
                         logger.info("flow_video: bearer captured len=%d", len(_cap["bearer"]))
 
+                # THÂN YÊU CẦU THẬT mà giao diện Flow gửi đi. Đường REST
+                # (`flow_rest.py`) phải dựng lại đúng thân này, và 09/08/2026
+                # nó nhận 403 "The caller does not have permission" ở đường
+                # video trong khi đường ảnh chạy tốt — nghĩa là còn lệch ở đâu
+                # đó mà thông báo của Google không chỉ ra. Ghi lại một lần cho
+                # có bản đối chiếu; không có bí mật nào trong thân (bearer nằm
+                # ở header), nên cắt 900 ký tự là đủ mà không lộ gì.
+                if "aisandbox-pa.googleapis.com/v1/video:" in url and resp.request.method == "POST":
+                    try:
+                        logger.info("flow_video: THÂN YÊU CẦU THẬT %s -> %s",
+                                    url.rsplit("/", 1)[-1],
+                                    (resp.request.post_data or "")[:900])
+                    except Exception:
+                        pass
+
                 # Bắt thông tin gen từ batchAsyncGenerateVideoText response
                 if "batchAsyncGenerateVideoText" in url and resp.request.method == "POST":
                     try:

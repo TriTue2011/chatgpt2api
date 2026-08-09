@@ -373,9 +373,17 @@ def than_tao_video(
     session_id: str | None = None,
     batch_id: str | None = None,
     seeds: list[int] | None = None,
+    tier: str = "PAYGATE_TIER_TWO",
 ) -> dict[str, Any]:
     """Thân cho `v1/video:batchAsyncGenerateVideo*`. Xem `CHE_DO_VIDEO` để biết
-    chế độ nào đi tới endpoint nào."""
+    chế độ nào đi tới endpoint nào.
+
+    `tier` để mở được vì nó là nghi can số một của lỗi 403 "The caller does not
+    have permission" đo được 09/08/2026: đường ẢNH gửi `PAYGATE_TIER_ONE` và
+    chạy tốt trên tài khoản này, còn đường VIDEO gửi `PAYGATE_TIER_TWO` theo bản
+    gỡ rối và bị từ chối. Chưa biết cái nào đúng nên chưa đổi mặc định — để đo
+    được cả hai mà không phải dựng lại image mỗi lần.
+    """
     if che_do not in CHE_DO_VIDEO:
         raise ValueError(f"chế độ video lạ: {che_do!r}; "
                          f"chỉ có {', '.join(CHE_DO_VIDEO)}")
@@ -392,7 +400,7 @@ def than_tao_video(
             f"{'Ảnh đầu và ảnh cuối đều bắt buộc.' if che_do == 'image_start_end' else ''}"
         )
     sid = session_id or (";" + str(int(time.time() * 1000)))
-    ctx = _ngu_canh(project_id, "PAYGATE_TIER_TWO", sid, recaptcha)
+    ctx = _ngu_canh(project_id, tier, sid, recaptcha)
 
     goc: dict[str, Any] = {
         "aspectRatio": TY_LE_VIDEO.get(aspect_ratio, "VIDEO_ASPECT_RATIO_LANDSCAPE"),
@@ -677,7 +685,8 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
                     anh: list[dict[str, Any]] | None = None,
                     headless: bool = True, timeout: float = 180,
                     cho_xong: bool = False, cho_toi_da: float = 600,
-                    nhip: float = 5) -> dict[str, Any]:
+                    nhip: float = 5,
+                    tier: str = "PAYGATE_TIER_TWO") -> dict[str, Any]:
     """Gửi lệnh tạo video. Mặc định trả ngay `gen_ids`, KHÔNG chờ video xong.
 
     Đường DOM hiện tại giữ một request HTTP mở suốt 300 giây và đã đo được là
@@ -704,7 +713,7 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
         bearer,
         than_tao_video(project_id=project_id, prompt=prompt, che_do=che_do,
                        model_key=khoa, aspect_ratio=aspect_ratio, count=count,
-                       anh=anh, recaptcha=recaptcha),
+                       anh=anh, recaptcha=recaptcha, tier=tier),
         timeout,
     )
     gen_ids = doc_gen_ids(dap)

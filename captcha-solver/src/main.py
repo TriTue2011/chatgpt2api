@@ -623,6 +623,11 @@ class FlowRestVideoReq(BaseModel):
     # hàng đợi (hiện là `api/veo_video.py`).
     wait: bool = False
     wait_timeout: int = Field(default=600, ge=60, le=1800)
+    # Nghi can số một của 403 "The caller does not have permission" (đo
+    # 09/08/2026): đường ảnh chạy với PAYGATE_TIER_ONE trên chính tài khoản
+    # này, đường video gửi TIER_TWO theo bản gỡ rối thì bị từ chối. Mở ra để
+    # đo được cả hai mà không phải dựng lại image.
+    paygate_tier: str = "PAYGATE_TIER_TWO"
 
 
 class FlowRestStatusReq(BaseModel):
@@ -712,6 +717,7 @@ async def api_flow_rest_video(req: FlowRestVideoReq) -> dict[str, Any]:
             timeout=req.timeout,
             cho_xong=req.wait,
             cho_toi_da=req.wait_timeout,
+            tier=req.paygate_tier,
         )
     except HTTPException:
         raise
