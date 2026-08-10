@@ -537,6 +537,43 @@ class DoThatTrenDuongVideo(unittest.TestCase):
                         self.assertIn(khoa, DA_DO_LA_CO)
 
 
+class KhoaModelDoiTheoTyLe(unittest.TestCase):
+    """9:16 dùng KHOÁ MODEL KHÁC, không phải chỉ đổi `aspectRatio`.
+
+    Bản chụp request thật 10/08/2026 từ giao diện Flow ở chế độ dọc khai
+    `videoModelName: "veo_3_1_t2v_fast_portrait"`, và telemetry cùng lượt khai
+    `modelKey` y hệt. Quét API khớp: chỉ hai khoá t2v có bản `_portrait`.
+
+    Chỗ này dễ sai âm thầm: gửi khoá thường kèm aspectRatio PORTRAIT vẫn QUA
+    được vòng kiểm tham số, nên không có gì báo là mình đang xin sai model.
+    """
+
+    def test_hai_khoa_t2v_doi_sang_ban_doc(self):
+        self.assertEqual(FR.khoa_theo_ty_le("veo_3_1_t2v", "9:16"),
+                         "veo_3_1_t2v_portrait")
+        self.assertEqual(FR.khoa_theo_ty_le("veo_3_1_t2v_fast", "9:16"),
+                         "veo_3_1_t2v_fast_portrait")
+
+    def test_16_9_giu_nguyen(self):
+        for k in ("veo_3_1_t2v", "veo_3_1_t2v_fast", "veo_3_1_i2v_lite"):
+            self.assertEqual(FR.khoa_theo_ty_le(k, "16:9"), k)
+
+    def test_khoa_khong_co_ban_doc_thi_giu_nguyen(self):
+        """Lite, i2v, interpolation, r2v, Omni Flash đều không có bản dọc."""
+        for k in ("veo_3_1_t2v_lite", "veo_3_1_t2v_lite_low_priority",
+                  "veo_3_1_i2v_lite", "veo_3_1_interpolation_lite",
+                  "veo_3_1_r2v_lite", "abra_t2v_8s"):
+            self.assertEqual(FR.khoa_theo_ty_le(k, "9:16"), k)
+
+    def test_chon_model_video_ap_dung_ty_le(self):
+        self.assertEqual(
+            FR.chon_model_video("text_to_video", "Veo 3.1 - Fast", None, "9:16"),
+            "veo_3_1_t2v_fast_portrait")
+        self.assertEqual(
+            FR.chon_model_video("text_to_video", "Veo 3.1 - Fast", None, "16:9"),
+            "veo_3_1_t2v_fast")
+
+
 class ChoXongRoiTra(unittest.TestCase):
     """Chế độ `wait` — chỉ dùng cho bên gọi không có hàng đợi.
 

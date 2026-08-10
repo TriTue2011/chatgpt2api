@@ -205,6 +205,34 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
         NHAN_LITE_CHO: "veo_3_1_interpolation_lite_low_priority",
     },
 }
+# 9:16 DÙNG KHOÁ MODEL KHÁC, không phải chỉ đổi `aspectRatio`.
+#
+# Bản chụp request thật 10/08/2026 (giao diện Flow, chế độ dọc):
+#     videoModelName:   "veo_3_1_t2v_fast_portrait"
+#     videoAspectRatio: "VIDEO_ASPECT_RATIO_PORTRAIT"
+# và telemetry cùng lượt khai `modelKey: "veo_3_1_t2v_fast_portrait"`.
+#
+# Quét API khớp với bản chụp: chỉ hai khoá t2v có bản `_portrait`. Các bản Lite,
+# cả họ i2v/interpolation/r2v, và Omni Flash đều KHÔNG có — `veo_3_1_t2v_lite_portrait`
+# trả 404.
+#
+# Với những khoá không có bản dọc thì gửi khoá thường kèm
+# `aspectRatio: VIDEO_ASPECT_RATIO_PORTRAIT` — cách đó qua được vòng kiểm tham
+# số, nhưng CHƯA đo được là nó có ra video dọc thật hay không. Ai đụng tới chỗ
+# này nhớ đo lại bằng cách xem `video.generatedVideo.aspectRatio` trong đáp.
+KHOA_DOC = {
+    "veo_3_1_t2v": "veo_3_1_t2v_portrait",
+    "veo_3_1_t2v_fast": "veo_3_1_t2v_fast_portrait",
+}
+
+
+def khoa_theo_ty_le(khoa: str, ty_le: str) -> str:
+    """Đổi sang bản dọc khi cần. 16:9 giữ nguyên."""
+    if ty_le == "9:16":
+        return KHOA_DOC.get(khoa, khoa)
+    return khoa
+
+
 # Nhãn dùng khi bên gọi không nêu: bản ưu tiên thấp, rẻ nhất.
 NHAN_MAC_DINH = NHAN_LITE_CHO
 MODEL_VIDEO_MAC_DINH = {m: b[NHAN_MAC_DINH] for m, b in MODEL_VIDEO.items()}
@@ -376,7 +404,8 @@ def tach_prompt_theo_anh(prompt: str, anh: list[dict[str, Any]]) -> list[dict[st
     return phan or [{"text": prompt}]
 
 
-def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str:
+def chon_model_video(che_do: str, nhan: str | None, duration: str | None,
+                     ty_le: str = "16:9") -> str:
     """Khoá model theo CHẾ ĐỘ + nhãn giao diện.
 
     Ba chế độ có ảnh chỉ có hai bản Lite (xem chú thích ở `MODEL_VIDEO`), nên
@@ -408,7 +437,7 @@ def chon_model_video(che_do: str, nhan: str | None, duration: str | None) -> str
                 f"{', '.join(f'{g}s' for g in GIAY_OMNI_FLASH)}."
             )
         khoa = khoa.format(giay=giay)
-    return khoa
+    return khoa_theo_ty_le(khoa, ty_le)
 
 
 def than_tao_video(
@@ -843,7 +872,8 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
     là từ khoá tìm trong prompt.
     """
     bat_dau = time.time()
-    khoa = model_key or chon_model_video(che_do, model_label, duration)
+    khoa = (khoa_theo_ty_le(model_key, aspect_ratio) if model_key
+            else chon_model_video(che_do, model_label, duration, aspect_ratio))
     dap = await _goi_video_trong_trang(
         profile, headless,
         f"{API_HOST}/v1/video:{CHE_DO_VIDEO[che_do]}",
