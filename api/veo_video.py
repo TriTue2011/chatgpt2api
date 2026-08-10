@@ -593,6 +593,10 @@ async def handle_video_story(
                 credentials, scenes=scenes, prompt=prompt, n_scenes=n,
                 auth_key=auth_key, aspect_ratio=aspect, duration=dur,
                 chain_frames=bool((body or {}).get("chain_frames", True)),
+                # `flow/*` → dựng từng cảnh bằng Flow; rỗng/khác → Veo qua API
+                # Gemini như trước. Không có tham số này thì không cách nào dùng
+                # bậc Lite của Flow cho video dài, dù chính nó là bậc rẻ nhất.
+                model=str((body or {}).get("model") or ""),
             )
         )
     except VideoError as exc:

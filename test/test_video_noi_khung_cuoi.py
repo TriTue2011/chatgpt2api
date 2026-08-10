@@ -124,6 +124,32 @@ class NoiCanhTruyenKhungCuoi(unittest.TestCase):
             S.make_story_video({}, scenes=["một", "hai", "ba"])
         self.assertEqual(lay.call_count, 2)
 
+    def test_model_flow_thi_di_Flow_chu_khong_goi_Veo(self):
+        """Video dài bằng bậc Lite của Flow: `model="flow/*"` phải rẽ sang Flow.
+
+        Không có nhánh này thì mọi lượt ghép cảnh đều đi Veo qua API Gemini, và
+        bậc Lite của Flow — bậc rẻ nhất — không dùng được cho video dài.
+        """
+        goi: list[dict] = []
+        with mock.patch.object(
+                S, "_clip_bang_flow",
+                side_effect=lambda p, **kw: (goi.append(kw), base64.b64encode(b"MP4").decode())[1]):
+            S.make_story_video({}, scenes=["một", "hai"], model="flow/veo-3.1-lite",
+                               aspect_ratio="16:9")
+        self.assertEqual(len(goi), 2)
+        self.assertEqual(goi[0]["model"], "flow/veo-3.1-lite")
+        self.assertEqual(goi[0]["aspect_ratio"], "16:9")
+        # Cảnh đầu không có khung nối, cảnh sau phải có.
+        self.assertEqual(goi[0]["khung_dau"], "")
+        self.assertTrue(goi[1]["khung_dau"])
+        # Và KHÔNG được gọi Veo lần nào.
+        self.assertEqual(len(self.goi), 0)
+
+    def test_model_rong_van_di_Veo_nhu_cu(self):
+        """Đổi đường cho Flow không được làm hỏng đường Veo đang chạy."""
+        S.make_story_video({}, scenes=["một", "hai"])
+        self.assertEqual(len(self.goi), 2)
+
     def test_lay_khung_hong_thi_van_ra_video(self):
         """ffmpeg hỏng ở giữa chừng không được làm mất trắng cả video."""
         with mock.patch.object(S, "_khung_cuoi_b64",
