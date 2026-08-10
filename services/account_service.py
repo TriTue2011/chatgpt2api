@@ -26,6 +26,61 @@ _TOKEN_AUDIENCE_OPENAI_API = "api.openai.com"
 # merged into free in api/accounts.py).
 PAID_PLANS = {"plus", "pro", "go", "business", "team", "enterprise"}
 
+# Bậc gói — gói CAO dùng trước. Chốt với chủ máy 10/08/2026:
+# pro > team/enterprise > business > plus > go > free.
+#
+# Chỉ có tác dụng TRONG CÙNG một pool. Gói đã tách pool sẵn (`account_group`)
+# nên bậc này thực tế chỉ phân định bên trong nhóm `codex` — nơi plus/go và các
+# token mang thẻ `codex` nằm chung. Pool `free` toàn plan=free nên bậc bằng nhau
+# và thứ tự giữ nguyên như trước.
+#
+# KHÔNG dùng bậc này để chọn pool: pool do thứ tự provider trong `combo_models`
+# quyết, không phải do đây.
+PLAN_RANK = {"pro": 5, "team": 4, "enterprise": 4, "business": 3, "plus": 2, "go": 1}
+
+# Tài khoản vừa bị đẩy xuống cuối (429/cạn quota) nằm dưới đáy trong bao lâu.
+# Cùng tinh thần với `provider_demote_seconds` của `provider_order`: hạ tạm thời
+# rồi tự về chỗ cũ, không phải loại vĩnh viễn. Chỉnh bằng
+# `smart_pool.account_demote_seconds`.
+_HA_TAI_KHOAN_GIAY = 900
+
+
+def bac_goi(account: dict | None) -> int:
+    """Bậc gói của tài khoản (cao hơn = dùng trước). Không rõ gói → 0 như free."""
+    if not isinstance(account, dict):
+        return 0
+    return PLAN_RANK.get(str(account.get("plan") or "").strip().lower(), 0)
+
+
+def dang_bi_ha(account: dict | None) -> bool:
+    """Tài khoản có đang trong thời gian bị đẩy xuống cuối hàng không?
+
+    `demote_account()` đẩy tài khoản vừa dính 429 xuống cuối pool, nhưng thứ tự
+    pool chỉ còn tác dụng khi mọi tiêu chí khác BẰNG NHAU. Khi đã xếp theo bậc
+    gói thì một tài khoản Plus vừa cạn sẽ lại thắng ngay ở lượt sau — đúng thứ
+    chủ máy dặn tránh 10/08/2026: "ưu tiên nhưng khi hết quota thì cũng sắp xếp
+    xuống cuối chứ không phải lúc nào cũng số #1". Nên việc bị hạ phải thành một
+    tiêu chí ĐỨNG TRÊN bậc gói, và muốn vậy thì phải có mốc thời gian.
+    """
+    if not isinstance(account, dict):
+        return False
+    moc = account.get("demoted_at")
+    if not moc:
+        return False
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(str(moc), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return False
+    han = _HA_TAI_KHOAN_GIAY
+    sp = config.data.get("smart_pool")
+    if isinstance(sp, dict):
+        try:
+            han = max(30, int(sp.get("account_demote_seconds", _HA_TAI_KHOAN_GIAY)))
+        except Exception:
+            han = _HA_TAI_KHOAN_GIAY
+    return (datetime.now() - dt).total_seconds() < han
+
 # Canonical account groups. There are exactly four logical pools and every
 # account maps to exactly one. Keeping the mapping in ONE place lets the
 # free / codex / openai providers stay fully independent instead of each
@@ -500,12 +555,34 @@ class AccountService:
             if int(self._image_inflight.get(token, 0)) < max_concurrency
         ]
 
+    def _bac_uu_tien(self, token: str) -> tuple[int, int]:
+        """(chưa bị hạ, bậc gói) của một token — khoá ưu tiên của ĐƯỜNG ẢNH.
+
+        Không có thành phần sức khoẻ như `_selection_key`: đường ảnh cố tình xoay
+        vòng để dàn tải và đếm slot đang chạy, nên trong cùng một bậc phải giữ
+        nguyên vòng xoay đó."""
+        return (0 if dang_bi_ha(self._accounts.get(token) or {}) else 1,
+                bac_goi(self._accounts.get(token) or {}))
+
+    def _loc_bac_cao_nhat(self, tokens: list[str]) -> list[str]:
+        """Giữ lại các token ở bậc ưu tiên cao nhất, bỏ phần còn lại.
+
+        Lọc chứ không sắp xếp: xoay vòng trên danh sách đã sắp vẫn rơi xuống bậc
+        thấp sau mỗi lượt. Bậc cao bận hết (hoặc `limited`) thì chúng đã rụng
+        khỏi danh sách ứng viên từ trước, nên bậc dưới tự lên thay — ưu tiên chứ
+        không phải chặn đường."""
+        if len(tokens) < 2:
+            return tokens
+        cao_nhat = max(self._bac_uu_tien(t) for t in tokens)
+        return [t for t in tokens if self._bac_uu_tien(t) == cao_nhat]
+
     def _acquire_next_candidate_token(self, excluded_tokens: set[str] | None = None) -> str:
         with self._image_slot_condition:
             while True:
                 if not self._list_ready_candidate_tokens(excluded_tokens):
                     raise RuntimeError("no available image quota")
-                tokens = self._list_available_candidate_tokens(excluded_tokens)
+                tokens = self._loc_bac_cao_nhat(
+                    self._list_available_candidate_tokens(excluded_tokens))
                 if tokens:
                     access_token = tokens[self._index % len(tokens)]
                     self._index += 1
@@ -623,9 +700,9 @@ class AccountService:
                 candidates.append((token, account))
             if not candidates:
                 return ""
-            if len(candidates) > 1 and self._weighted_enabled():
-                # max() ổn định → điểm bằng nhau giữ nguyên thứ tự FIFO.
-                return max(candidates, key=lambda c: self._selection_weight(c[1]))[0]
+            if len(candidates) > 1:
+                # max() ổn định → khoá bằng nhau giữ nguyên thứ tự FIFO.
+                return max(candidates, key=lambda c: self._selection_key(c[1]))[0]
             return candidates[0][0]
 
     @staticmethod
@@ -634,6 +711,26 @@ class AccountService:
         if isinstance(sp, dict):
             return bool(sp.get("enabled", True)) and bool(sp.get("weighted", True))
         return True
+
+    @classmethod
+    def _selection_key(cls, account: dict) -> tuple[int, int, float]:
+        """Khoá chọn account, so sánh theo BẬC — trên trước, dưới chỉ để phá hoà.
+
+            1. chưa bị hạ  (vừa cạn quota → xuống đáy, thắng cả bậc gói)
+            2. bậc gói     (pro > team/enterprise > business > plus > go > free)
+            3. sức khoẻ    (success-rate + né account vừa dùng — `_selection_weight`)
+
+        Dùng bộ ba thay cho một con số vì mỗi luật cần một THỨ BẬC rõ ràng: gộp
+        vào một số thì phải cân hằng số cho luật nọ khỏi nuốt luật kia, và lần
+        chỉnh sau sẽ không ai biết vì sao con số đó là 0.1 chứ không phải 0.3.
+        `max()` so sánh tuple theo thứ tự từ trái, và ổn định — bằng nhau cả ba
+        thì giữ nguyên thứ tự pool (FIFO) y như trước.
+
+        Tắt `smart_pool` chỉ bỏ tiêu chí 3 (heuristic), KHÔNG bỏ hai tiêu chí
+        đầu: đó là chính sách chủ máy chọn, không phải phỏng đoán của máy.
+        """
+        suc_khoe = cls._selection_weight(account) if cls._weighted_enabled() else 0.0
+        return (0 if dang_bi_ha(account) else 1, bac_goi(account), suc_khoe)
 
     @staticmethod
     def _selection_weight(account: dict) -> float:
@@ -975,6 +1072,12 @@ class AccountService:
             current = self._accounts.pop(access_token, None)
             if current is None:
                 return
+            # Ghi mốc bị hạ, KHÔNG chỉ đổi vị trí. Vị trí trong pool chỉ còn tác
+            # dụng khi mọi tiêu chí khác bằng nhau, nên từ lúc xếp theo bậc gói
+            # (10/08/2026) thì một tài khoản gói cao vừa cạn vẫn thắng ngay lượt
+            # sau nếu không có mốc này. Xem `dang_bi_ha`.
+            current = dict(current)
+            current["demoted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._accounts[access_token] = current  # re-insert at tail
             self._save_accounts()
         # Account bị demote → gỡ mọi phiên sticky đang dính vào nó.
@@ -1455,6 +1558,10 @@ class AccountService:
             image_quota_unknown = bool(next_item.get("image_quota_unknown"))
             if success:
                 next_item["success"] = int(next_item.get("success") or 0) + 1
+                # Dùng lại được rồi thì hết bị hạ — về đúng chỗ cũ ngay, không
+                # phải chờ hết cửa sổ. Cùng cách `provider_order` đối xử với
+                # provider hồi phục.
+                next_item.pop("demoted_at", None)
                 if not image_quota_unknown:
                     next_item["quota"] = max(0, int(next_item.get("quota") or 0) - 1)
                 if not image_quota_unknown and next_item["quota"] == 0:

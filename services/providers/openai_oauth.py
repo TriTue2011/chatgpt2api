@@ -825,10 +825,12 @@ class CodexOAuthProvider:
                     continue
                 candidates.append((token, item))
             if candidates:
-                # smart_pool.weighted: chọn theo success-rate + né vừa dùng;
-                # tắt/1 ứng viên → FIFO đầu tiên y hệt cũ.
-                if len(candidates) > 1 and account_service._weighted_enabled():
-                    token, item = max(candidates, key=lambda c: account_service._selection_weight(c[1]))
+                # Cùng khoá chọn với `get_text_access_token`: chưa bị hạ → bậc
+                # gói (pro > team/enterprise > business > plus > go) → sức khoẻ.
+                # Đây CHÍNH LÀ pool trộn nhiều bậc gói, nên bậc gói chỉ thật sự
+                # phân định ở đây. Một ứng viên → giữ nguyên FIFO như cũ.
+                if len(candidates) > 1:
+                    token, item = max(candidates, key=lambda c: account_service._selection_key(c[1]))
                 else:
                     token, item = candidates[0]
                 try:
