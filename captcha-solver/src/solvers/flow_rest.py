@@ -207,14 +207,21 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
 }
 # 9:16 DÙNG KHOÁ MODEL KHÁC, không phải chỉ đổi `aspectRatio`.
 #
-# Bản chụp request thật 10/08/2026 (giao diện Flow, chế độ dọc):
-#     videoModelName:   "veo_3_1_t2v_fast_portrait"
-#     videoAspectRatio: "VIDEO_ASPECT_RATIO_PORTRAIT"
-# và telemetry cùng lượt khai `modelKey: "veo_3_1_t2v_fast_portrait"`.
+# BA BẢN CHỤP THẬT 10/08/2026 từ giao diện Flow ở chế độ dọc, mỗi bản một bậc —
+# cả ba đều đọc được `generatedVideo.model` trong đáp, tức tên Google THẬT SỰ
+# dùng, không phải nhãn ta tự đặt:
 #
-# Quét API khớp với bản chụp: chỉ hai khoá t2v có bản `_portrait`. Các bản Lite,
-# cả họ i2v/interpolation/r2v, và Omni Flash đều KHÔNG có — `veo_3_1_t2v_lite_portrait`
-# trả 404.
+#     Veo 3.1 - Quality  ->  "veo_3_1_t2v_portrait"
+#     Veo 3.1 - Fast     ->  "veo_3_1_t2v_fast_portrait"
+#     Veo 3.1 - Lite     ->  "veo_3_1_t2v_lite"        (khoá THƯỜNG, không đổi)
+#
+# Cả ba lượt đều kèm `aspectRatio: VIDEO_ASPECT_RATIO_PORTRAIT` và đáp trả
+# `generatedVideo.aspectRatio = VIDEO_ASPECT_RATIO_PORTRAIT` — tức Lite ra được
+# video dọc bằng chính khoá thường.
+#
+# Quét API khớp: chỉ hai khoá t2v có bản `_portrait`. Các bản Lite, cả họ
+# i2v/interpolation/r2v, và Omni Flash đều KHÔNG có —
+# `veo_3_1_t2v_lite_portrait` trả 404.
 #
 # Với những khoá không có bản dọc thì gửi khoá thường kèm
 # `aspectRatio: VIDEO_ASPECT_RATIO_PORTRAIT` — cách đó qua được vòng kiểm tham

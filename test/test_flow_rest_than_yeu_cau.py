@@ -559,6 +559,15 @@ class KhoaModelDoiTheoTyLe(unittest.TestCase):
     được vòng kiểm tham số, nên không có gì báo là mình đang xin sai model.
     """
 
+    def test_ba_bac_t2v_khop_ba_ban_chup_that(self):
+        """Mỗi dòng ứng với một bản chụp `generatedVideo.model` 10/08/2026."""
+        self.assertEqual(FR.chon_model_video("text_to_video", "Veo 3.1 - Quality", None, "9:16"),
+                         "veo_3_1_t2v_portrait")
+        self.assertEqual(FR.chon_model_video("text_to_video", "Veo 3.1 - Fast", None, "9:16"),
+                         "veo_3_1_t2v_fast_portrait")
+        self.assertEqual(FR.chon_model_video("text_to_video", "Veo 3.1 - Lite", None, "9:16"),
+                         "veo_3_1_t2v_lite")
+
     def test_hai_khoa_t2v_doi_sang_ban_doc(self):
         self.assertEqual(FR.khoa_theo_ty_le("veo_3_1_t2v", "9:16"),
                          "veo_3_1_t2v_portrait")
