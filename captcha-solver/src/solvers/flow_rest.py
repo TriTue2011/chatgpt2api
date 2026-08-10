@@ -972,6 +972,13 @@ async def tao_video(*, profile: str, project_id: str, prompt: str,
         "che_do": che_do,
         "elapsed_ms": int((time.time() - bat_dau) * 1000),
     }
+    # Số tín dụng còn lại nằm ngay trong đáp của lệnh tạo. Phải chuyển ra ngoài:
+    # `api/veo_video.py` ghi nó vào cấu hình tài khoản để hiện trên giao diện, và
+    # đường DOM cũ đưa nó qua `data[0].metadata.remainingCredits`. Không chuyển
+    # thì phần theo dõi tín dụng chết âm thầm — vẫn chạy, chỉ là số không bao giờ
+    # đổi nữa.
+    if isinstance(dap.get("remainingCredits"), (int, float)):
+        ket["remaining_credits"] = dap["remainingCredits"]
     if not cho_xong:
         return ket
 

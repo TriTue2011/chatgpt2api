@@ -113,6 +113,59 @@ def _loi_solver(exc: Exception, nhan: str) -> str:
     return f"{nhan} generation failed: {ly_do}"
 
 
+# ── Đổi hợp đồng cho đường REST của Flow ──────────────────────────────────────
+#
+# Đường REST nhận NHÃN giao diện ("Veo 3.1 - Lite") rồi tự tra ra khoá model, và
+# tự chèn hậu tố `_portrait` khi cần. Đường giao diện cũ thì nhận chuỗi
+# "flow/veo-3.1-lite" rồi tự dựng khoá — và bảng dựng khoá đó có hai lỗi đã đo:
+# `veo_3_1_t2v_quality` không tồn tại (tên thật là `veo_3_1_t2v`), còn việc nối
+# thêm `_portrait` cho bậc Lite cũng sai (Lite không có bản dọc, nó dùng khoá
+# thường kèm cờ khung hình). Chuyển sang nhãn là bỏ được cả hai.
+_NHAN_MODEL_FLOW = {
+    "flow/veo-3.1-lite": "Veo 3.1 - Lite",
+    "veo-3.1-lite": "Veo 3.1 - Lite",
+    "flow/veo-3.1-fast": "Veo 3.1 - Fast",
+    "veo-3.1-fast": "Veo 3.1 - Fast",
+    "flow/veo-3.1-quality": "Veo 3.1 - Quality",
+    "veo-3.1-quality": "Veo 3.1 - Quality",
+    "flow/omni-flash": "Omni Flash",
+    "omni-flash": "Omni Flash",
+    "veo/veo-3.1-generate-preview": "Veo 3.1 - Lite",
+    "veo-3.1-generate-preview": "Veo 3.1 - Lite",
+}
+# KHÔNG mặc định sang bậc "[Lower Priority]": khoá `*_low_priority` có thật nhưng
+# tài khoản của ta không được dùng, Google trả 403 "The caller does not have
+# permission" — đúng thứ đã chặn cả đường video suốt 09-10/08/2026.
+_NHAN_MODEL_MAC_DINH = "Veo 3.1 - Lite"
+
+
+def _nhan_model_flow(model: str) -> str:
+    return _NHAN_MODEL_FLOW.get(str(model or "").strip().lower(), _NHAN_MODEL_MAC_DINH)
+
+
+def _che_do_video(image: str | None, last_frame: str | None) -> str:
+    """Chế độ suy từ ảnh đính kèm, vì đó là thứ quyết định endpoint bên Google."""
+    if image and last_frame:
+        return "image_start_end"
+    if image:
+        return "image_start"
+    return "text_to_video"
+
+
+def _anh_video(image: str | None, last_frame: str | None) -> list[dict[str, str]]:
+    """Ảnh cho đường REST: danh sách `{name, image_b64}`, THỨ TỰ có nghĩa.
+
+    Ảnh đầu phải đứng trước ảnh cuối — chế độ nội suy hai đầu đọc theo vị trí,
+    đảo thứ tự là video chạy ngược.
+    """
+    ra: list[dict[str, str]] = []
+    if image:
+        ra.append({"name": "start.png", "image_b64": image})
+    if last_frame:
+        ra.append({"name": "end.png", "image_b64": last_frame})
+    return ra
+
+
 async def handle_video_generation(
     body: dict[str, Any],
     authorization: str | None = None,
@@ -203,24 +256,23 @@ async def handle_video_generation(
         # 100% lượt video trả 502, trong khi google-benbap2011 vẫn tạo được bình
         # thường. Nhánh tạo ẢNH đã có `_reorder_flow_account` từ trước; nhánh video
         # thì chưa bao giờ có.
-        _LOI_TRUOC_KHI_BAM_TAO = (
-            "không vào được màn soạn",      # không có khung nhập / chip sai chế độ
-            "không chuyển được sang tab",    # thông báo bản cũ, còn trong log cũ
-            "chưa bấm tạo",                  # model_mismatch / model_unverified
-            "account busy",                  # hồ sơ trình duyệt đang bị lượt khác giữ
-            "signin/rejected",               # Google chặn trình duyệt tự động
-            # Trang chưa dựng xong giao diện — xảy ra lúc TẢI TRANG, tức chắc chắn
-            # trước mọi cú bấm "Tạo". Đo thật 02/08: Backup trượt (chưa bấm Tạo) →
-            # đổi sang Spare 1 → Spare 1 trả "Flow UI never hydrated: timeout
-            # 45000ms", chuỗi đó KHÔNG khớp danh sách này nên vòng lặp dừng sớm và
-            # bỏ luôn 2 tài khoản còn lại, dù chẳng tài khoản nào tiêu tín dụng.
-            "never hydrated",
-            "profile is logged out",          # cùng nhóm: chết ở bước tải trang
+        # Đường REST có ĐÚNG MỘT lằn ranh: lệnh tạo trả về Generation ID hay chưa.
+        # Chưa có ID thì Google chưa nhận việc, chưa trừ gì — đổi tài khoản thoải
+        # mái. Có ID rồi mà hỏng (chờ quá lâu, Google báo dựng thất bại) thì tín
+        # dụng ĐÃ trừ, chạy lại là trừ lần hai.
+        #
+        # Trước đây đây là danh sách các chuỗi lỗi "xảy ra trước khi bấm Tạo" của
+        # đường giao diện — vừa dài vừa phải đoán, và đã từng bỏ sót đúng một
+        # chuỗi ("never hydrated") làm hệ thống bỏ luôn hai tài khoản còn rảnh.
+        # Đường REST không cần đoán nữa: chỉ hai dấu hiệu dưới đây là "đã tiêu".
+        _DAU_HIEU_DA_TIEU_TIN_DUNG = (
+            "gen_ids=",              # 504 hết giờ chờ — kèm ID nên chắc chắn đã nhận
+            "google báo thất bại",   # 502 Google nhận rồi mới dựng hỏng
         )
 
         def _co_the_thu_tai_khoan_khac(loi: str) -> bool:
             low = (loi or "").lower()
-            return any(k in low for k in _LOI_TRUOC_KHI_BAM_TAO)
+            return not any(k in low for k in _DAU_HIEU_DA_TIEU_TIN_DUNG)
 
         # Hạn chờ của ta phải LỚN HƠN ngân sách của solver, không thì ta luôn
         # bỏ cuộc trước và không bao giờ đọc được kết quả. Đo thật 31/07:
@@ -236,23 +288,28 @@ async def handle_video_generation(
           for _lan_tk in range(3):
             try:
                 resp = await client.post(
-                    f"{solver_url}/v1/google/flow/generate-video",
+                    f"{solver_url}/v1/google/flow/rest/generate-video",
                     json={
                         "project_id": acc.get("project_id", ""),
                         "profile": acc.get("profile", "google-fx"),
                         "prompt": prompt,
-                        "model": model,
+                        # Chế độ suy từ ảnh đính kèm, không phải tham số riêng:
+                        # có cả ảnh đầu và ảnh cuối → nội suy hai đầu; chỉ ảnh đầu
+                        # → ảnh-sang-video; không ảnh nào → văn-bản-sang-video.
+                        "mode": _che_do_video(image, last_frame),
+                        "model_label": _nhan_model_flow(model),
                         "aspect_ratio": aspect_ratio,
-                        # captcha-solver khai `FlowVideoReq.duration: str | None`.
-                        # `duration` ở đây đọc thẳng từ body thô nên vẫn có thể là
-                        # số nguyên; gửi số là solver trả 422 rồi bị bọc thành 502.
-                        # Đo thật 31/07: gửi duration=4 → "Input should be a valid string".
+                        # Solver khai `duration: str | None`; gửi số nguyên là 422
+                        # rồi bị bọc thành 502. Đo thật 31/07.
                         "duration": None if duration is None else str(duration),
-                        # Flow: hàng "Số bản ghi" trên giao diện chỉ có x1..x4.
+                        # Flow chỉ nhận 1..4 bản mỗi lượt.
                         "count": max(1, min(4, n_yeu_cau)),
-                        "image": image,
-                        "last_frame": last_frame,
-                        "headless": False
+                        "images": _anh_video(image, last_frame),
+                        # Bên gọi này không có hàng đợi nên phải chờ tại chỗ —
+                        # đúng trường hợp `wait` được thêm vào để phục vụ.
+                        "wait": True,
+                        "wait_timeout": _NGAN_SACH_SOLVER_S,
+                        "headless": True,
                     },
                     headers={"authorization": authorization or ""}
                 )
@@ -260,8 +317,13 @@ async def handle_video_generation(
                 data = resp.json()
                 
                 try:
-                    meta = data.get("data", [{}])[0].get("metadata", {})
-                    credits = meta.get("remainingCredits")
+                    # Đường REST đưa số tín dụng ra tầng ngoài; đường giao diện cũ
+                    # để trong `data[0].metadata`. Đọc cả hai để bản ghi cũ trong
+                    # thư viện vẫn hiểu được.
+                    credits = data.get("remaining_credits")
+                    if credits is None:
+                        meta = data.get("data", [{}])[0].get("metadata", {})
+                        credits = meta.get("remainingCredits")
                     if credits is not None:
                         from services.config import config
                         providers = config.data.get("providers") or {}

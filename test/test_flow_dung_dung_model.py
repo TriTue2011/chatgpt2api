@@ -142,12 +142,23 @@ class TestVaoDuocManSoanVideo(unittest.TestCase):
         self.assertIn('if not _khung.get("oNhap"):', khuc)
         self.assertNotIn('_khung.get("oNhap") and _khung.get("nutGui")', khuc)
 
-    def test_loi_luc_tai_trang_van_duoc_doi_tai_khoan(self):
-        """'never hydrated' xảy ra lúc TẢI TRANG → chắc chắn chưa bấm Tạo."""
+    def test_loi_chua_tieu_tin_dung_van_duoc_doi_tai_khoan(self):
+        """Điều test này bảo vệ không đổi: một lượt hỏng mà CHƯA tiêu tín dụng thì
+        không được chặn các tài khoản còn rảnh.
+
+        Cách diễn đạt thì đã đổi. Trước đây là danh sách chuỗi lỗi "xảy ra trước
+        khi bấm Tạo" của đường giao diện, và chính test này sinh ra vì danh sách
+        đó bỏ sót "never hydrated". Nay video đi đường REST, nơi có đúng MỘT lằn
+        ranh — đã có Generation ID hay chưa — nên logic lật lại: mặc định thử
+        tiếp, chỉ dừng khi thấy dấu hiệu đã tiêu. Không còn danh sách để bỏ sót.
+        """
         api = _code(GOC / "api" / "veo_video.py")
-        dau_hieu = _khuc(api, "_LOI_TRUOC_KHI_BAM_TAO = (", ")")
-        self.assertIn("never hydrated", dau_hieu)
-        self.assertIn("profile is logged out", dau_hieu)
+        dau_hieu = _khuc(api, "_DAU_HIEU_DA_TIEU_TIN_DUNG = (", ")")
+        self.assertIn("gen_ids=", dau_hieu)
+        self.assertIn("google báo thất bại", dau_hieu)
+        self.assertIn("return not any(k in low for k in _DAU_HIEU_DA_TIEU_TIN_DUNG)", api)
+        # Danh sách cũ phải biến mất hẳn — để lại là hai bộ luật cùng tồn tại.
+        self.assertNotIn("_LOI_TRUOC_KHI_BAM_TAO", api)
 
     def test_chan_som_khi_khong_co_khung_soan(self):
         """Có đúng chế độ mà thiếu khung soạn thì phải dừng NGAY.
@@ -163,15 +174,17 @@ class TestVaoDuocManSoanVideo(unittest.TestCase):
         # Phải nằm TRƯỚC vòng bấm Tạo.
         self.assertLess(i, self.code.index("flow_video_submit"))
 
-    def test_loi_mang_dau_hieu_de_tang_tren_doi_tai_khoan(self):
-        """Chuỗi lỗi phải khớp bộ nhận dạng ở api/veo_video.py."""
-        api = _code(GOC / "api" / "veo_video.py")
-        dau_hieu = _khuc(api, "_LOI_TRUOC_KHI_BAM_TAO = (", ")")
-        self.assertIn("không vào được màn soạn", dau_hieu)
-        self.assertIn("chưa bấm tạo", dau_hieu)
-        # Cả hai chuỗi đó phải có thật trong lỗi mà solver ném ra.
-        self.assertIn("Không vào được màn soạn", self.code)
-        self.assertIn("Chưa bấm Tạo", self.code)
+    def test_hai_dau_hieu_da_tieu_khop_dung_loi_solver_nem_ra(self):
+        """Bộ nhận dạng phải khớp lỗi THẬT mà `flow_rest` ném, không phải chuỗi bịa.
+
+        Đây là nửa còn lại của cùng một cặp: nhận dạng sai chuỗi thì bộ luật vô
+        hiệu — hoặc chạy lại một lượt đã trừ tiền, hoặc chặn oan tài khoản rảnh.
+        """
+        rest = _code(GOC / "captcha-solver" / "src" / "solvers" / "flow_rest.py")
+        # 504 hết giờ chờ: thông báo kèm gen_ids nên chắc chắn Google đã nhận việc.
+        self.assertIn("gen_ids={', '.join(gen_ids)}", rest)
+        # 502 Google nhận rồi mới dựng hỏng.
+        self.assertIn("Google báo thất bại", rest)
 
 
 class TestVideoXoayTaiKhoanKhiLoi(unittest.TestCase):
