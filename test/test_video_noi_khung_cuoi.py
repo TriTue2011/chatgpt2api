@@ -158,6 +158,16 @@ class GhepPhaiTONTRONGKhungHinh(unittest.TestCase):
         self.assertIn("concat_clips(clip_paths, audio_path, None, width=w, height=h)",
                       self.ma)
 
+    def test_video_ghep_phai_vao_thu_vien(self):
+        """Đo 10/08/2026: ghép 4 clip ra MP4 32 giây, thư viện vẫn đúng 16 mục.
+
+        Chính bản dài — thứ tốn nhiều tín dụng nhất để dựng — lại là thứ duy
+        nhất không được lưu: tải lại trang là mất, "Quản lý Video" không thấy.
+        """
+        i = self.ma.index("def handle_video_compose")
+        j = self.ma.index("def handle_video_story")
+        self.assertIn("_luu_thu_vien(", self.ma[i:j])
+
 
 class NoiCanhTruyenKhungCuoi(unittest.TestCase):
     """Cảnh sau phải NHẬN khung cuối cảnh trước — chỗ sai thì im lặng."""

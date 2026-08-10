@@ -537,7 +537,13 @@ async def handle_video_compose(
             os.unlink(out)
         except Exception:
             pass
-        return {"created": int(time.time()), "data": [{"b64_json": data}]}
+        # Ghi vào thư viện y như nhánh tạo video. Thiếu bước này thì video vừa
+        # ghép chỉ tồn tại trong đáp HTTP: tải lại trang là mất, và "Quản lý
+        # Video" không bao giờ thấy nó. Đo 10/08/2026: ghép 4 clip ra MP4 32
+        # giây, thư viện vẫn đúng 16 mục như trước. Chính bản 30 giây — thứ tốn
+        # nhiều tín dụng nhất để dựng — lại là thứ duy nhất không được lưu.
+        return _luu_thu_vien(
+            {"created": int(time.time()), "data": [{"b64_json": data}]})
     finally:
         for p in tmp:
             try:
