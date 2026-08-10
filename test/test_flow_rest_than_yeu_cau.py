@@ -400,6 +400,17 @@ class DocDapTraLoi(unittest.TestCase):
     def test_khong_co_workflow_thi_rong(self):
         self.assertEqual(FR.doc_gen_ids({}), [])
 
+    def test_xong_ma_dap_khong_co_link_thi_van_bao_xong(self):
+        """Đáp thật của lệnh tra tiến độ KHÔNG kèm `videoUrl` (bản chụp
+        10/08/2026) — link phải đổi thêm một lượt. Nếu ở đây coi "thiếu link" là
+        chưa xong thì vòng chờ quay mãi tới hết giờ."""
+        dap = {"media": [{"name": "m1", "mediaMetadata": {"mediaStatus": {
+            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL"}}}]}
+        tt = FR.doc_trang_thai(dap, ["m1"])
+        self.assertEqual(tt["m1"]["status"], "COMPLETED")
+        self.assertIsNone(tt["m1"]["url"])
+        self.assertFalse(FR.con_dang_chay(tt))
+
     def test_trang_thai_xong_lay_duoc_link(self):
         dap = {"media": [{
             "name": "m1", "videoUrl": "https://x/v.mp4",

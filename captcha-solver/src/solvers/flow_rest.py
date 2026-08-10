@@ -568,7 +568,18 @@ def con_dang_chay(trang_thai: dict[str, dict[str, Any]]) -> bool:
 
 
 def doc_trang_thai(dap: dict[str, Any], gen_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Chuẩn hoá đáp của lệnh tra tiến độ thành {gen_id: {status, url, reason}}."""
+    """Chuẩn hoá đáp của lệnh tra tiến độ thành {gen_id: {status, url, reason}}.
+
+    `url` CÓ THỂ RỖNG dù đã xong. Bản chụp đáp thật 10/08/2026 của
+    `batchCheckAsyncVideoGenerationStatus` không hề có trường `videoUrl` — đáp
+    chỉ mang `mediaMetadata.mediaStatus`, `video.generatedVideo` và
+    `video.operation`. Giao diện Flow lấy link bằng một lượt riêng qua
+    `media.getMediaUrlRedirect`, đúng như đường ẢNH.
+
+    Bản gỡ rối VEO3 AI Studio có đọc `videoUrl` nên vẫn giữ nhánh đó phòng khi
+    Flow trả về; thiếu thì bên gọi phải tự đi đổi id lấy link —
+    `trang_thai_video()` làm việc đó.
+    """
     ra = {g: {"status": "PROCESSING", "url": None, "reason": None} for g in gen_ids}
     for m in (dap.get("media") or []):
         ten = m.get("name")
@@ -932,4 +943,15 @@ async def trang_thai_video(*, profile: str, project_id: str, gen_ids: list[str],
                       bearer,
                       {"media": [{"name": g, "projectId": project_id} for g in gen_ids]},
                       timeout)
-    return doc_trang_thai(dap, gen_ids)
+    tt = doc_trang_thai(dap, gen_ids)
+
+    # Xong mà không có link thì đi đổi id lấy link — đáp thật KHÔNG kèm
+    # `videoUrl` (xem `doc_trang_thai`). Chỉ mở trình duyệt khi thật sự có cái
+    # cần đổi, nên vòng chờ vẫn chạy bằng HTTP cho tới đúng lượt cuối.
+    thieu = [g for g, v in tt.items() if v.get("status") == "COMPLETED" and not v.get("url")]
+    if thieu:
+        bang = await lay_link_media(profile, thieu, headless)
+        for g, u in bang.items():
+            if g in tt:
+                tt[g]["url"] = u
+    return tt
