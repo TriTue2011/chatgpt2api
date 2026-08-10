@@ -143,6 +143,58 @@ def _nhan_model_flow(model: str) -> str:
     return _NHAN_MODEL_FLOW.get(str(model or "").strip().lower(), _NHAN_MODEL_MAC_DINH)
 
 
+GIAY_OMNI = (4, 6, 8, 10)
+
+
+def _giay_moi_canh(model: str, duration: int) -> int:
+    """Một cảnh dài bao nhiêu giây với model này, khi bên gọi đã CHỌN độ dài.
+
+    Đã đo 09-10/08/2026:
+      * bậc Veo 3.1 của Flow (Lite/Fast/Quality) ra clip CỐ ĐỊNH 8 giây; trường
+        `duration` không có tác dụng, độ dài không nằm trong khoá model.
+      * Omni Flash thì độ dài NẰM TRONG khoá (`abra_t2v_{giây}s`) và chỉ có
+        4/6/8/10 giây — 5 và 12 giây trả 404.
+      * Ngoài Flow là Veo qua API Gemini, nơi `duration` đúng là số giây mỗi clip.
+    """
+    m = str(model or "").strip().lower()
+    if "omni" in m:
+        return duration if duration in GIAY_OMNI else 8
+    if m.startswith("flow/"):
+        return 8
+    return max(1, duration)
+
+
+def _chia_canh(model: str, tong_giay: int, duration: int | None) -> tuple[int, int]:
+    """SỐ GIÂY muốn → (số cảnh, số giây mỗi cảnh). Chia theo khả năng của model.
+
+    Số clip cần dựng KHÔNG chỉ phụ thuộc số giây mà còn phụ thuộc model, vì mỗi
+    họ model có bộ độ dài clip khác nhau:
+
+        Veo 3.1 (Lite/Fast/Quality)   chỉ 8 giây      → 30 giây = 4 clip (ra 32)
+        Omni Flash                    4/6/8/10 giây   → 30 giây = 3 clip 10 giây,
+                                                        ĐÚNG 30, ít clip hơn
+        Veo qua API Gemini            `duration` tuỳ  → theo bên gọi
+
+    Với Omni Flash mà bên gọi KHÔNG tự chọn độ dài, ta chọn hộ: ưu tiên chia
+    TRỌN số giây (không thừa), trong các cách chia trọn thì lấy cách ít clip
+    nhất — mỗi clip là một lượt gọi có tính phí và tốn vài chục giây. Không chia
+    trọn được thì lấy cách thừa ít nhất, rồi mới tới ít clip.
+
+    Bên gọi đã nêu `duration` thì tôn trọng: họ có thể cố ý muốn clip ngắn.
+    """
+    tong_giay = max(1, int(tong_giay))
+    m = str(model or "").strip().lower()
+    if "omni" in m and duration not in GIAY_OMNI:
+        # (thừa bao nhiêu, bao nhiêu clip) — nhỏ hơn là tốt hơn, theo thứ tự đó.
+        def diem(g: int) -> tuple[int, int]:
+            so = -(-tong_giay // g)
+            return (so * g - tong_giay, so)
+        tot = min(GIAY_OMNI, key=diem)
+        return -(-tong_giay // tot), tot
+    moi_canh = _giay_moi_canh(model, int(duration or 0))
+    return -(-tong_giay // moi_canh), moi_canh
+
+
 def _che_do_video(image: str | None, last_frame: str | None) -> str:
     """Chế độ suy từ ảnh đính kèm, vì đó là thứ quyết định endpoint bên Google."""
     if image and last_frame:
@@ -584,6 +636,38 @@ async def handle_video_story(
         dur = int((body or {}).get("duration") or 6)
     except (TypeError, ValueError):
         n, dur = 3, 6
+    # Người dùng nghĩ bằng SỐ GIÂY, không bằng số cảnh. Số cảnh là chi tiết bên
+    # trong: bậc Veo 3.1 của Flow ra clip CỐ ĐỊNH 8 giây, nên "30 giây" là 4 cảnh
+    # (ra 32 giây). Bắt bên gọi tự chia là buộc họ phải biết độ dài clip của từng
+    # bậc — thứ chính họ không kiểm soát được.
+    #
+    # `total_seconds` thắng `n_scenes` khi cả hai cùng có: nó là ý muốn, còn
+    # `n_scenes` là cách thực hiện.
+    tong_giay = (body or {}).get("total_seconds")
+    if tong_giay not in (None, "", 0):
+        try:
+            tong_giay = int(tong_giay)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "total_seconds must be a number"}) from None
+        if tong_giay < 1:
+            raise HTTPException(status_code=400,
+                                detail={"error": "total_seconds must be >= 1"})
+        # Số clip phụ thuộc CẢ model, không chỉ số giây: Omni Flash chọn được
+        # 4/6/8/10 giây nên 30 giây chia TRỌN bằng 3 clip 10 giây, còn bậc Veo
+        # 3.1 cố định 8 giây thì buộc 4 clip và ra 32 giây.
+        n, moi_canh = _chia_canh(
+            str((body or {}).get("model") or ""), tong_giay,
+            int((body or {}).get("duration") or 0) or None)
+        # Độ dài đã chọn phải đi tiếp xuống dưới, nếu không Omni Flash vẫn dựng
+        # clip 8 giây trong khi ta đã tính số cảnh theo 10 giây → thiếu thời lượng.
+        dur = moi_canh
+        if n > MAX_STORY_SCENES:
+            raise HTTPException(status_code=400, detail={
+                "error": f"total_seconds {tong_giay} cần {n} cảnh, quá trần "
+                         f"{MAX_STORY_SCENES} (tối đa "
+                         f"{MAX_STORY_SCENES * moi_canh} giây với model này)"})
     # Mỗi cảnh là MỘT lượt gọi Veo có tính phí và tốn vài chục giây. Không chặn
     # thì `n_scenes: 10000` (hoặc một mảng `scenes` dài tuỳ ý) vừa treo tiến
     # trình vừa đốt sạch quota — đây là chi phí thật, không chỉ là RAM.
@@ -620,4 +704,9 @@ async def handle_video_story(
         os.unlink(out)
     except Exception:
         pass
-    return {"created": int(time.time()), "data": [{"b64_json": data}]}
+    # Lưu thư viện y như hai nhánh kia. Từng CẢNH đã được lưu (mỗi cảnh đi qua
+    # `/v1/video/generations`), nhưng bản GHÉP — thứ người dùng thật sự đặt hàng
+    # và tốn nhiều tín dụng nhất — thì không, vì nhánh này gọi `concat_clips`
+    # trực tiếp chứ không qua endpoint ghép. Thiếu bước này thì Quản lý Video
+    # đầy các cảnh 8 giây rời mà không có bản dài nào.
+    return _luu_thu_vien({"created": int(time.time()), "data": [{"b64_json": data}]})

@@ -42,7 +42,8 @@ def _nap_ham_thuan() -> types.SimpleNamespace:
     Bóc đúng chúng ra để test hành vi THẬT thay vì chỉ soi chuỗi.
     """
     can = {"_NHAN_MODEL_FLOW", "_NHAN_MODEL_MAC_DINH",
-           "_nhan_model_flow", "_che_do_video", "_anh_video"}
+           "_nhan_model_flow", "_che_do_video", "_anh_video", "_giay_moi_canh",
+           "_chia_canh", "GIAY_OMNI"}
     cay = ast.parse(NGUON)
     giu: list[ast.stmt] = []
     for nut in cay.body:
@@ -136,6 +137,85 @@ class TinDungVanDuocGhi(unittest.TestCase):
     def test_van_doc_duoc_cho_cu(self):
         """Bản ghi cũ trong thư viện để tín dụng trong metadata."""
         self.assertIn('meta.get("remainingCredits")', MA)
+
+
+class NguoiDungNoiSOGIAY_KhongNoiSOCANH(unittest.TestCase):
+    """Bắt bên gọi truyền `n_scenes` là buộc họ biết độ dài clip của từng bậc.
+
+    Bậc Veo 3.1 của Flow ra clip CỐ ĐỊNH 8 giây (`duration` không có tác dụng,
+    độ dài không nằm trong khoá model), còn Omni Flash thì độ dài NẰM TRONG khoá
+    và chỉ có 4/6/8/10 giây. Người dùng không kiểm soát được những thứ đó nên
+    không thể tự chia — họ chỉ biết muốn video dài bao nhiêu giây.
+    """
+
+    def test_bac_veo_cua_flow_luon_8_giay(self):
+        for m in ("flow/veo-3.1-lite", "flow/veo-3.1-fast", "flow/veo-3.1-quality"):
+            with self.subTest(model=m):
+                # `duration` truyền gì cũng không đổi được độ dài clip.
+                self.assertEqual(V._giay_moi_canh(m, 6), 8)
+                self.assertEqual(V._giay_moi_canh(m, 10), 8)
+
+    def test_omni_flash_theo_do_dai_co_that(self):
+        for g in (4, 6, 8, 10):
+            with self.subTest(giay=g):
+                self.assertEqual(V._giay_moi_canh("flow/omni-flash", g), g)
+
+    def test_omni_flash_do_dai_khong_co_thi_ve_8(self):
+        """5 và 12 giây trả 404 — đo 09/08/2026."""
+        for g in (5, 12, 0):
+            with self.subTest(giay=g):
+                self.assertEqual(V._giay_moi_canh("flow/omni-flash", g), 8)
+
+    def test_ngoai_flow_thi_duration_dung_la_giay_moi_canh(self):
+        self.assertEqual(V._giay_moi_canh("", 6), 6)
+        self.assertEqual(V._giay_moi_canh("veo/veo-3.1-generate-preview", 5), 5)
+
+    def test_so_clip_phu_thuoc_CA_MODEL_khong_chi_so_giay(self):
+        """Cùng 30 giây, hai họ model cần số clip khác nhau."""
+        self.assertEqual(V._chia_canh("flow/veo-3.1-lite", 30, None), (4, 8))
+        # Omni Flash chia TRỌN 30 giây bằng 3 clip 10 giây — vừa đúng số giây
+        # vừa ít lượt gọi hơn.
+        self.assertEqual(V._chia_canh("flow/omni-flash", 30, None), (3, 10))
+
+    def test_uu_tien_chia_TRON_roi_moi_toi_it_clip(self):
+        """24 giây: 10s cho 3 clip (thừa 6), 8s cho 3 clip (thừa 0) → chọn 8s."""
+        self.assertEqual(V._chia_canh("flow/omni-flash", 24, None), (3, 8))
+        # 12 giây: 6s×2 chia trọn, 10s×2 thừa 8 → chọn 6s.
+        self.assertEqual(V._chia_canh("flow/omni-flash", 12, None), (2, 6))
+
+    def test_ben_goi_tu_chon_do_dai_thi_ton_trong(self):
+        """Người dùng cố ý muốn clip ngắn thì không được tự đổi hộ."""
+        self.assertEqual(V._chia_canh("flow/omni-flash", 30, 4), (8, 4))
+
+    def test_do_dai_da_chon_phai_di_tiep_xuong_duoi(self):
+        """Tính số cảnh theo 10 giây mà vẫn dựng clip 8 giây là thiếu thời lượng."""
+        i = MA.index("n, moi_canh = _chia_canh(")
+        self.assertIn("dur = moi_canh", MA[i:i + 700])
+
+    def test_lam_tron_LEN_khong_lam_tron_xuong(self):
+        """30 giây với clip 8 giây → 4 cảnh (32 giây), không phải 3 cảnh (24).
+        Làm tròn xuống là giao THIẾU so với điều người dùng xin."""
+        self.assertEqual(V._chia_canh("flow/veo-3.1-lite", 30, None)[0], 4)
+        self.assertEqual(V._chia_canh("flow/veo-3.1-lite", 1, None)[0], 1)
+        self.assertEqual(V._chia_canh("flow/veo-3.1-lite", 17, None)[0], 3)
+
+    def test_total_seconds_thang_n_scenes(self):
+        """Cả hai cùng có thì số giây thắng: nó là ý muốn, `n_scenes` là cách làm."""
+        self.assertIn('tong_giay = (body or {}).get("total_seconds")', MA)
+        i = MA.index('tong_giay = (body or {}).get("total_seconds")')
+        self.assertIn("n, moi_canh = _chia_canh(", MA[i:i + 900])
+
+    def test_ban_GHEP_cung_phai_vao_thu_vien(self):
+        """Từng cảnh đã được lưu vì đi qua /v1/video/generations, nhưng bản ghép
+        thì gọi `concat_clips` trực tiếp. Thiếu bước lưu là Quản lý Video đầy
+        cảnh 8 giây rời mà không có bản dài nào."""
+        i = MA.index("def handle_video_story")
+        self.assertIn("_luu_thu_vien(", MA[i:])
+
+    def test_xin_qua_dai_thi_bao_ro_tran_theo_GIAY(self):
+        """Báo trần bằng số cảnh thì người gọi vẫn phải tự nhân — nói bằng giây."""
+        i = MA.index("total_seconds {tong_giay} cần {n} cảnh")
+        self.assertIn("giây với model này", MA[i:i + 300])
 
 
 class GoiSolverBangKHOA_CUA_SOLVER(unittest.TestCase):
