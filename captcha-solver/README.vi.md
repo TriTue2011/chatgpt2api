@@ -29,7 +29,15 @@ POST /v1/solve/turnstile           {url, sitekey?, profile?, headless?, timeout?
 POST /v1/solve/recaptcha3          {url, sitekey, action, profile?, headless?}
 POST /v1/solve/recaptcha2          {url, profile?, headless?}
 POST /v1/browser/run               {url, script?, wait_for?, profile?, headless?}
+POST /v1/google/flow/rest/generate-image {project_id, prompt, aspect_ratio?, ...}
+                                    ← ĐƯỜNG NÊN DÙNG cho ảnh: gọi thẳng API, khung
+                                      hình luôn đúng, ảnh gốc, 30s thay vì 73-94s
 POST /v1/google/flow/generate-image {project_id, prompt, return_binary?, ...}
+                                    ← đường cũ, điều khiển giao diện. Cú bấm chọn
+                                      khung hình có thể TRƯỢT mà không báo (Flow
+                                      nhớ lựa chọn cũ theo hồ sơ → xin 16:9 ra
+                                      9:16), và ảnh lấy từ màn hình nên nhỏ hơn
+                                      ảnh gốc ~7% mỗi chiều. Đo 10/08/2026.
 POST /v1/session/manual-login      {url, profile}   ← mở trong noVNC để người dùng đăng nhập
 GET  /v1/session/list                                ← liệt kê các profile đã lưu
 GET  /v1/session/{profile}/status

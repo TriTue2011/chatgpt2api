@@ -38,7 +38,15 @@ POST /v1/solve/turnstile           {url, sitekey?, profile?, headless?, timeout?
 POST /v1/solve/recaptcha3          {url, sitekey, action, profile?, headless?}
 POST /v1/solve/recaptcha2          {url, profile?, headless?}
 POST /v1/browser/run               {url, script?, wait_for?, profile?, headless?}
+POST /v1/google/flow/rest/generate-image {project_id, prompt, aspect_ratio?, ...}
+                                    ← PREFERRED for images: calls the API directly,
+                                      aspect always honored, full-size image, ~30s
 POST /v1/google/flow/generate-image {project_id, prompt, return_binary?, ...}
+                                    ← legacy UI-driving path. The aspect-ratio click
+                                      can silently MISS (Flow remembers the previous
+                                      choice per profile → ask 16:9, get 9:16), and
+                                      the image is scraped from the page so it is
+                                      ~7% smaller per side. Measured 2026-08-10.
 POST /v1/session/manual-login      {url, profile}   ← open in noVNC for human login
 GET  /v1/session/list                                ← list saved profiles
 GET  /v1/session/{profile}/status

@@ -1,12 +1,32 @@
 """Google Labs Flow image adapter — proxies to the captcha-solver service.
 
-Flow runs only behind a real browser (Patchright + Chrome on Xvfb) because
-its UI is heavily client-side. We can't talk to Google's Flow endpoint
-directly from a Python HTTP client — Cloudflare-style heuristics + a
-required reCAPTCHA Enterprise token reject any non-browser caller. So we
-delegate to the captcha-solver microservice which keeps a logged-in
-Chromium session per Google account ("profile") and drives the Flow UI
-on our behalf.
+Đoạn này TỪNG viết rằng không thể gọi thẳng API của Flow bằng HTTP thường, phải
+điều khiển giao diện qua trình duyệt. Sai — đo ngày 09-10/08/2026: gọi thẳng
+`aisandbox-pa.googleapis.com` chạy tốt, chỉ cần bearer lấy từ phiên đã đăng nhập
+cộng một token reCAPTCHA Enterprise (cả hai vẫn lấy qua trình duyệt, nhưng lượt
+TẠO ẢNH thì đi bằng HTTP thuần).
+
+Nay adapter gọi đường REST của captcha-solver. Lý do đổi, đều là số đo thật trên
+cùng model Nano Banana Pro cùng một tài khoản:
+
+                    xin 16:9        xin 9:16       thời gian
+    REST        1376x768  ĐÚNG   768x1376 ĐÚNG      30-33s
+    giao diện    720x1280  SAI    720x1280           73-94s
+
+Đường giao diện phải BẤM vào ô chọn khung hình, và cú bấm đó trượt: Flow nhớ lựa
+chọn của lượt trước theo từng hồ sơ nên một lượt video dọc để lại 9:16, rồi mọi
+lượt ảnh sau đó im lặng ra ảnh dọc. Nó còn lấy ảnh bằng `src` của thẻ <img> đang
+hiện trên trang — tức bản đã co để vừa khung xem, mất ~7% mỗi chiều. Đường REST
+gửi thẳng hằng số khung hình và tên model nên cả họ lỗi "bấm hụt" không tồn tại,
+và link ảnh là link gốc đã ký trên CDN.
+
+Phần xoay tài khoản, thời gian nghỉ sau lỗi, và ghi tài khoản vào nhật ký nằm ở
+`build_url`/`build_headers` nên không dính gì tới việc gọi đường nào — đổi đường
+không chạm vào chúng.
+
+VIDEO thì CHƯA đổi: đường REST cho video còn trả 403 "The caller does not have
+permission" sau khi đã qua cửa reCAPTCHA, chưa lý giải được. Video vẫn đi bằng
+giao diện, nơi nó đã dựng ra MP4 thật.
 
 Provider config (config.json):
 
@@ -148,6 +168,18 @@ _ASPECT_FROM_LABEL: dict[str, str] = {
     "9:16":     "IMAGE_ASPECT_RATIO_PORTRAIT",
     "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
     "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+}
+
+# Đường REST nhận NHÃN ("16:9") rồi tự tra sang hằng số, nên phải đi ngược lại.
+# Không đảo `_ASPECT_FROM_LABEL` bằng vòng lặp: nó có bí danh (`portrait`,
+# `landscape`, `square`) trỏ trùng hằng số, đảo ra sẽ nhận nhãn nào tuỳ thứ tự
+# khoá — đúng loại phụ thuộc ngầm mà đọc mã không thấy.
+_ASPECT_LABEL_FROM_CONST: dict[str, str] = {
+    "IMAGE_ASPECT_RATIO_LANDSCAPE": "16:9",
+    "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE": "4:3",
+    "IMAGE_ASPECT_RATIO_SQUARE": "1:1",
+    "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR": "3:4",
+    "IMAGE_ASPECT_RATIO_PORTRAIT": "9:16",
 }
 
 
@@ -401,7 +433,7 @@ class FlowImageAdapter(BaseImageAdapter):
         account = self._current_account(key_try, credentials=credentials)
         if credentials is not None and account is not None:
             credentials["_flow_account"] = account
-        return f"{base}/v1/google/flow/generate-image"
+        return f"{base}/v1/google/flow/rest/generate-image"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
         """Build the captcha-solver Flow request.
@@ -444,26 +476,26 @@ class FlowImageAdapter(BaseImageAdapter):
 
         out: dict[str, Any] = {
             "prompt": prompt,
-            "aspect_ratio": aspect,
+            # REST nhận NHÃN, không nhận hằng số IMAGE_ASPECT_RATIO_*. Gửi sai
+            # dạng là Google trả 400 kèm tên trường, không âm thầm ra sai khung.
+            "aspect_ratio": _ASPECT_LABEL_FROM_CONST.get(aspect, "16:9"),
             "model": flow_model,
             "count": count,
-            # binary mode returns the FIRST image's bytes; for count > 1 the
-            # rest are in the JSON manifest. Set False if you want all URLs.
-            "return_binary": count == 1,
-            # Nano Banana Pro often needs >80s AFTER submit; 180 left only ~75s
-            # of post-submit wait (budget = timeout-15 minus ~60s of UI prep).
+            # Không còn bước chuẩn bị giao diện nào nên lượt tạo nhanh hơn nhiều
+            # (đo 30-33s so với 73-94s của đường cũ); vẫn để rộng vì Nano Banana
+            # Pro có lúc chậm.
             "timeout": 280,
-            "headless": False,
+            # Trình duyệt chỉ còn dùng để lấy bearer + token reCAPTCHA, không
+            # phải để bấm gì, nên không cần hiện màn hình.
+            "headless": True,
         }
-        # Img2img best-effort: if chat/edit path attached reference image bytes,
-        # forward base64 so captcha-solver can use it when supported (ignored otherwise).
+        # Img2img: REST nhận MẢNG base64 (`images_b64`), khác đường cũ chỉ nhận
+        # một tấm — sửa ảnh nhiều tấm nay không bị cắt còn một.
         import base64 as _b64
         from services.image_providers._base import first_image_bytes_mime
         raw, mime = first_image_bytes_mime(body.get("images") or [])
         if raw:
-            out["image_b64"] = _b64.b64encode(bytes(raw)).decode("ascii")
-            out["image_mime"] = mime or "image/jpeg"
-            out["has_reference_image"] = True
+            out["images_b64"] = [_b64.b64encode(bytes(raw)).decode("ascii")]
         return out
 
     def build_headers(
@@ -551,40 +583,33 @@ class FlowImageAdapter(BaseImageAdapter):
                     _mark_quota_exhausted(account)
                 raise RuntimeError(f"flow quota/rate: HTTP {response.status_code}: {text[:200]}")
             return None
-        ct = (response.headers.get("content-type") or "").lower()
-        if ct.startswith("image/"):
-            return {
-                "data": [{
-                    "b64_json": base64.b64encode(response.content).decode("ascii"),
-                    "_mime": ct,
-                    "_flow_meta": {
-                        "model": response.headers.get("x-flow-model"),
-                        "seed": response.headers.get("x-flow-seed"),
-                        "id": response.headers.get("x-flow-image-id"),
-                        "elapsed_ms": response.headers.get("x-flow-elapsed-ms"),
-                    },
-                }],
-            }
-        # Fallback: JSON response with URL list (when binary mode disabled).
+        # Đường REST luôn trả JSON: {"media_ids": [...], "urls": [...], "model",
+        # "project_id", "elapsed_ms"}. Không còn nhánh nhận thẳng byte ảnh — đó
+        # là của đường giao diện với cờ `return_binary`.
         try:
             payload = response.json()
         except Exception:
             return None
-        images = payload.get("images") or []
-        if not images:
+        urls = [str(u) for u in (payload.get("urls") or []) if u]
+        if not urls:
             return {"data": []}
+        meta_chung = {
+            "model": payload.get("model"),
+            "media_ids": payload.get("media_ids"),
+            "elapsed_ms": payload.get("elapsed_ms"),
+        }
         data: list[dict[str, Any]] = []
-        for im in images:
-            url = im.get("url")
-            if not url:
-                continue
+        for url in urls:
             try:
-                r2 = requests.get(url, timeout=30)
+                # Link CDN đã ký sẵn (`Expires` + `Signature`) và trả
+                # `access-control-allow-origin: *` — tải được bằng HTTP thường,
+                # không cần cookie hay bearer. Đo 09/08/2026.
+                r2 = requests.get(url, timeout=60)
                 r2.raise_for_status()
                 data.append({
                     "b64_json": base64.b64encode(r2.content).decode("ascii"),
                     "_mime": r2.headers.get("content-type", "image/jpeg"),
-                    "_flow_meta": im,
+                    "_flow_meta": meta_chung,
                 })
             except Exception as exc:
                 logger.warning({"event": "flow_download_failed", "url": url[:120], "error": str(exc)})
