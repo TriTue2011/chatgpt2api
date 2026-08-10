@@ -521,7 +521,15 @@ async def handle_video_compose(
             fd, ap = tempfile.mkstemp(suffix=".wav"); os.close(fd)
             Path(ap).write_bytes(_decode_media(audio_b64, nhan="audio")); tmp.append(ap); audio_path = ap
         try:
-            out = await run_in_threadpool(concat_clips, clip_paths, audio_path, None)
+            # `aspect_ratio` được khai trong tài liệu của endpoint này từ đầu
+            # nhưng CHƯA BAO GIỜ được dùng: lệnh gọi bỏ trắng width/height nên
+            # `concat_clips` lấy mặc định 1080x1920, tức khung DỌC. Ghép clip
+            # 16:9 bằng đường này là bị scale lên rồi cắt hai bên thành dọc —
+            # đo 10/08/2026: ghép hai clip 1280x720, kết quả ra 1080x1920.
+            ty_le = str((body or {}).get("aspect_ratio") or "9:16")
+            w, h = (1920, 1080) if ty_le == "16:9" else (1080, 1920)
+            out = await run_in_threadpool(
+                lambda: concat_clips(clip_paths, audio_path, None, width=w, height=h))
         except VideoError as exc:
             raise HTTPException(status_code=500, detail={"error": str(exc)}) from exc
         data = base64.b64encode(Path(out).read_bytes()).decode()

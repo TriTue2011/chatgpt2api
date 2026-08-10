@@ -133,6 +133,32 @@ class LenhGhepDungThuTuDauVao(unittest.TestCase):
         self.assertIn("[v0][v1][v2]concat=n=3:v=1:a=0", loc)
 
 
+class GhepPhaiTONTRONGKhungHinh(unittest.TestCase):
+    """`/v1/video/compose` khai nhận `aspect_ratio` nhưng chưa bao giờ dùng.
+
+    Lệnh gọi bỏ trắng width/height nên `concat_clips` lấy mặc định 1080x1920,
+    tức khung DỌC. Đo 10/08/2026: ghép hai clip 1280x720 kèm
+    `aspect_ratio: "16:9"`, kết quả ra 1080x1920 — clip ngang bị scale lên rồi
+    cắt mất hai bên. Lỗi không ném ra, chỉ là video sai khung.
+    """
+
+    def setUp(self):
+        self.ma = "\n".join(
+            l for l in (Path(__file__).resolve().parents[1] / "api/veo_video.py")
+            .read_text(encoding="utf-8").splitlines()
+            if not l.lstrip().startswith("#"))
+
+    def test_doc_ty_le_tu_than_yeu_cau(self):
+        self.assertIn('(body or {}).get("aspect_ratio") or "9:16"', self.ma)
+
+    def test_16_9_ra_khung_ngang(self):
+        self.assertIn('(1920, 1080) if ty_le == "16:9" else (1080, 1920)', self.ma)
+
+    def test_truyen_width_height_xuong_ham_ghep(self):
+        self.assertIn("concat_clips(clip_paths, audio_path, None, width=w, height=h)",
+                      self.ma)
+
+
 class NoiCanhTruyenKhungCuoi(unittest.TestCase):
     """Cảnh sau phải NHẬN khung cuối cảnh trước — chỗ sai thì im lặng."""
 
