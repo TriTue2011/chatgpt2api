@@ -162,6 +162,28 @@ class GoiSolverBangKHOA_CUA_SOLVER(unittest.TestCase):
         self.assertIn("headers=dau_solver", MA)
 
 
+class GhiTAI_KHOAN_THAT_VAO_NHAT_KY(unittest.TestCase):
+    """Đo 10/08/2026: hai lượt video `ok` mà `dest_provider`/`dest_account` rỗng.
+
+    Nhật ký chỉ hiện lại model mà người gọi xin, nên khi một tài khoản bị Google
+    chặn thì không lần ra được nó từ lịch sử chạy — đúng vấn đề đã sửa cho đường
+    ẢNH, còn sót ở đường video.
+    """
+
+    def test_co_khai_tai_khoan(self):
+        self.assertIn("note_provider_account(", MA)
+        self.assertIn('"flow", str(acc.get("label")', MA)
+
+    def test_khai_TRONG_vong_xoay_tai_khoan(self):
+        """Khai ngoài vòng lặp thì lượt đổi sang tài khoản khác không được ghi,
+        mà đó đúng là lượt cần biết nhất."""
+        i = MA.index("for _lan_tk in range(3):")
+        j = MA.index("note_provider_account(", i)
+        k = MA.index("rest/generate-video", i)
+        self.assertLess(i, j)
+        self.assertLess(j, k)
+
+
 class ChiKhongThuLAI_KHI_DA_TIEU_TIN_DUNG(unittest.TestCase):
     """Lằn ranh của đường REST là có Generation ID hay chưa.
 

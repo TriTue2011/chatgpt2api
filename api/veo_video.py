@@ -295,6 +295,23 @@ async def handle_video_generation(
           # (mỗi lượt tới 300s). Hết lượt hoặc lỗi không-thể-thử-lại thì raise.
           for _lan_tk in range(3):
             try:
+                # Khai tài khoản THẬT đang dùng cho lượt này. Không khai thì
+                # "Agent runs" để trống cột tài khoản và chỉ hiện lại model mà
+                # người gọi xin — đo 10/08/2026: hai lượt video ok mà
+                # dest_provider/dest_account đều rỗng, nên khi một tài khoản bị
+                # chặn thì không lần ra được nó từ lịch sử. Đường ẢNH đã khai từ
+                # trước (`flow_google.build_headers`); gọi ở TRONG vòng lặp để
+                # lượt xoay tài khoản sau lỗi cũng được ghi, không chỉ cái đầu.
+                try:
+                    from services.request_context import note_provider_account
+                    note_provider_account(
+                        "flow", str(acc.get("label") or acc.get("profile") or ""),
+                        model=_nhan_model_flow(model),
+                        account_id=str(acc.get("profile") or ""),
+                        project_id=str(acc.get("project_id") or ""),
+                    )
+                except Exception:
+                    pass
                 resp = await client.post(
                     f"{solver_url}/v1/google/flow/rest/generate-video",
                     json={
