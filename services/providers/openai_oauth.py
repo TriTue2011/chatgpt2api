@@ -354,15 +354,6 @@ def _responses_to_chat_chunk(event: dict[str, Any], model: str, completion_id: s
 
     return None
 
-def _log_event(event: dict):
-    try:
-        with open("/tmp/codex_events.log", "a", encoding="utf-8") as f:
-            import json
-            f.write(json.dumps(event) + "\n")
-    except:
-        pass
-
-
 class CodexOAuthProvider:
     """Direct Codex OAuth — no 9router dependency."""
 
@@ -712,8 +703,6 @@ class CodexOAuthProvider:
                         event = json.loads(payload)
                     except Exception:
                         continue
-
-                    _log_event(event)
 
                     chunk = _responses_to_chat_chunk(event, model, completion_id, created)
                     if chunk:

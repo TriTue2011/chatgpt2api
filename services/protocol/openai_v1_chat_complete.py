@@ -2939,12 +2939,11 @@ def _chi_giu_loi_dan_anh(messages: list[dict[str, Any]],
 
 
 def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    try:
-        import json
-        with open("/tmp/last_req.json", "w", encoding="utf-8") as f:
-            f.write(json.dumps(body, ensure_ascii=False))
-    except Exception:
-        pass
+    # (Đã GỠ đoạn ghi `/tmp/last_req.json` mỗi request. Nó đổ NGUYÊN body — cả
+    # system prompt, cả lịch sử hội thoại, cả nội dung người dùng vừa gõ — ra
+    # một file /tmp mà mọi tiến trình trong container đọc được, và ghi lại từ
+    # đầu ở mọi lượt. Muốn xem body khi gỡ lỗi thì bật log mức DEBUG, đừng để
+    # đường ghi thường trực.)
 
     # Setting việc trên Tele áp dụng cho MỌI client — chat thường mới dùng model tab.
     try:
@@ -3556,8 +3555,6 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
             result = _wrap_mcp_stream(result, messages, route, body)
     elif isinstance(result, dict):
         result = _execute_mcp_tools_in_response(messages, result, route, body)
-        import json
-        logger.info({"event": "debug_final_result", "result": json.dumps(result, ensure_ascii=False)[:2000]})
 
     _struct = bool(body.get("_response_format_meta") or body.get("response_format") or body.get("_structured_output"))
     result = _maybe_strip_markdown(
@@ -3566,15 +3563,10 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
         force=(ha_context_injected or bool(body.get("_is_ha_request"))) and not _struct,
     )
     result = _maybe_verbalize(result, voice)
-    try:
-        import json
-        with open("/tmp/last_response.json", "w", encoding="utf-8") as f:
-            if isinstance(result, dict):
-                f.write(json.dumps(result, ensure_ascii=False))
-            else:
-                f.write("STREAM_GENERATOR")
-    except Exception:
-        pass
+    # (Đã GỠ đoạn ghi `/tmp/last_response.json` + log `debug_final_result` ở
+    # trên. Cả hai đổ NGUYÊN câu trả lời ra ngoài mỗi lượt — file /tmp thì mọi
+    # tiến trình cùng container đọc được, log thì 2000 ký tự nội dung người dùng
+    # nằm lại trong nhật ký. Đây là vết gỡ lỗi, không phải tính năng.)
     return result
 
 
@@ -3712,6 +3704,31 @@ def _should_inject_search(body: dict, ha_pristine: bool, is_vision: bool,
         return False
     if _thread_denies(body, "web"):
         return False  # thread bị lọc, không có nhóm 'web' → không tự search hộ
+    if body.get("x_agent_internal") and body.get("tools"):
+        # VÒNG AGENTIC của trợ lý: nó mang theo bộ tool của chính nó, trong đó
+        # CÓ `web_search` — nó tự quyết định lúc nào cần tra web. Tiêm thêm kết
+        # quả tìm kiếm vào đây là cướp lượt, vì khối tiêm mở đầu bằng "BẮT BUỘC
+        # ĐỌC VÀ TRẢ LỜI DỰA TRÊN ĐÂY" (search_service.inject_search_results) và
+        # được nhét vào TRƯỚC câu hỏi thật trong cùng tin nhắn người dùng.
+        #
+        # Đo thật 10/08 trên máy chủ: "Hiện nay tôi có lịch hẹn nào" khớp mẫu
+        # 'hiện nay' (SEARCH_INTENT_PATTERNS) ⇒ đem cả câu đi tra Internet ⇒ bot
+        # trả về lịch âm Bính Ngọ, rồi "Dạ em đã nhận phần dữ liệu tìm kiếm rồi
+        # ạ" — không lượt nào gọi tool `schedule` để xem/huỷ lịch nhắc.
+        #
+        # Cùng một lớp lỗi với ca `library_media` hồi 31/07 (xem chú thích trong
+        # search_service.needs_search). Lần đó vá bằng cách liệt kê từ khoá của
+        # riêng thư viện ảnh; đây là chặn tận gốc: lượt nào có tool riêng thì
+        # nhường quyền quyết định cho nó.
+        #
+        # Điều kiện đòi ĐỦ HAI: `x_agent_internal` (gateway chỉ gắn khi header
+        # nội bộ khớp auth_key — xem api/ai.py) và `tools`. Đây là chỗ mấu chốt
+        # để bản sửa KHÔNG làm mất đường tra web: chỉ VÒNG QUYẾT ĐỊNH bị loại,
+        # còn khi model quyết định tra thật thì `capabilities._h_web_search` gọi
+        # xuống gateway một lượt MỚI không kèm tool → lượt đó vẫn được tiêm đủ
+        # (KB nội bộ + các backend + native search) y như trước. Lời gọi phụ khác
+        # của capability (tóm tắt, dịch…) cũng vậy.
+        return False
     is_ha = bool(ha_pristine) or bool(body.get("_is_ha_request"))
     if not is_ha:
         return True
@@ -5214,7 +5231,18 @@ _MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+", re.MULTILINE)
 # response isn't converted to proper inline citations.
 #   citeturn0search0 / citeturn0search0turn0search2turn0search8 / ...
 #   [oaicite:0] / 【oaicite:0】 / oaicite:N (various brackets)
-_CITE_TURN = re.compile(r"cite(?:turn\d+\w+)+")
+#
+# Ký tự Unicode VÙNG RIÊNG (U+E200…U+E20F) bọc quanh dấu trích dẫn phải được
+# tính vào mẫu — KHÔNG chỉ ở hai đầu mà cả GIỮA 'cite' và 'turn…'. Model web
+# chèn \ue200cite\ue202turn0search0\ue201, nên mẫu cũ (đòi 'cite' liền ngay
+# 'turn') không khớp và dấu trích dẫn đi thẳng ra người dùng.
+#
+# Đo thật 10/08 trên máy chủ: câu trả lời lịch âm kết thúc bằng
+# 'Lập thu \ue200cite\ue202turn0search0turn0search6\ue201'. Mắt thường KHÔNG thấy ký
+# riêng nên nhìn vào log thì nó giống y dạng mẫu cũ vốn xử lý được — đó là lý
+# do lỗi này sống lâu. Cùng cách chống đã dùng cho _ENTITY_LEAK bên dưới.
+_PUA = "[\ue200-\ue20f]*"
+_CITE_TURN = re.compile(rf"{_PUA}cite{_PUA}(?:turn\d+\w+{_PUA})+")
 _OAICITE = re.compile(r"[\[【]?\s*oaicite[^\]】\)]*[\]】\)]?")
 # Tool-call args leaking as text: `entity["city","Hà Nội",...]` — match the
 # `entity[ "string", "string", ... ]` shape with at least one quoted arg so we

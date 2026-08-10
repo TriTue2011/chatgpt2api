@@ -1156,13 +1156,38 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
 
     if op == "cancel":
         rid = str(args.get("id") or "").strip()
-        if rid in ("*", "all", "tất cả", "tat ca"):
+        if rid.lower() in ("*", "all", "tất cả", "tat ca"):
             n = rem.cancel_all(user_id)
             return {"text": f"Dạ em đã huỷ {n} mục ạ." if n else "Không còn mục nào để huỷ ạ."}
-        if not rid:
-            return {"text": "Cho em xin mã nhắc (id) cần huỷ, hoặc id=all để huỷ hết."}
-        ok = rem.cancel(user_id, rid)
-        return {"text": f"Đã huỷ `{rid}` ạ." if ok else f"Không thấy nhắc `{rid}` (hoặc đã huỷ)."}
+        # Có mã đúng thì huỷ luôn. KHÔNG phải mã thì coi chuỗi đó là TÊN và tự tra
+        # — mã chỉ hiện lúc đặt lịch, tin nhắn khi lịch bắn không mang mã, nên
+        # bản cũ (chỉ nhận mã) đẩy người dùng vào chỗ bí: đo thật 10/08 trên máy
+        # chủ, "Hủy lịch báo cáo nhân sự" bị hỏi mã ba lượt liền và không mục nào
+        # được huỷ. Xem `reminders.tim_theo_ten` cho luật khớp tên.
+        if rid and rem.cancel(user_id, rid):
+            return {"text": f"Đã huỷ `{rid}` ạ."}
+        ten = str(args.get("text") or args.get("name") or "").strip() or rid
+        khop = rem.tim_theo_ten(user_id, ten) if ten else []
+        if len(khop) == 1:
+            r = khop[0]
+            if rem.cancel(user_id, str(r.get("id") or "")):
+                return {"text": "Dạ em huỷ rồi ạ: "
+                                f"{rem.describe(r).lstrip('• ').strip()}"}
+            return {"text": "Mục đó vừa được huỷ hoặc đã hết hạn rồi ạ."}
+        if len(khop) > 1:
+            # NHIỀU mục khớp → HỎI, tuyệt đối không tự chọn: huỷ nhầm lịch là
+            # mất hẳn (cancel tắt mục và xoá cả file âm thanh của lịch đọc loa).
+            lines = [f"Có {len(khop)} mục khớp “{ten}” ạ, anh/chị cho em biết huỷ mục nào:"]
+            lines += [rem.describe(r) for r in khop]
+            return {"text": "\n".join(lines)}
+        rows = rem.list_for(user_id)
+        if not rows:
+            return {"text": "Hiện không có nhắc/việc nào đang chờ nên không có gì để huỷ ạ."}
+        lines = [f"Em không thấy mục nào khớp “{ten}” ạ. Đang chờ có:" if ten
+                 else "Anh/chị muốn huỷ mục nào ạ? Đang chờ có:"]
+        lines += [rem.describe(r) for r in rows]
+        lines.append("Anh/chị nhắn tên hoặc mã mục cần huỷ, hoặc nói «huỷ tất cả».")
+        return {"text": "\n".join(lines)}
 
     # create
     text = str(args.get("text") or args.get("message") or "").strip()
@@ -5097,10 +5122,16 @@ CAPABILITIES: dict[str, Capability] = {
             "required": ["op"]}),
     "schedule": Capability(
         name="schedule", risk=READ, handler=_h_schedule,
-        emoji="⏰", label="Đặt nhắc / việc định kỳ",
+        emoji="⏰", label="Nhắc hẹn & việc định kỳ — đặt, XEM danh sách, HUỶ",
         description=(
             "Đặt nhắc hẹn, việc định kỳ, xem danh sách hoặc huỷ. "
             "op=create|list|cancel. mode=notify (chỉ nhắc chữ) | task (em tự làm rồi báo). "
+            "XEM: mọi câu hỏi về lịch ĐÃ ĐẶT ('có lịch nào', 'xem lịch nhắc', 'lịch hẹn "
+            "của tôi', 'còn việc gì theo lịch') → op=list. Danh sách nằm ở đây, KHÔNG "
+            "phải trên Internet và KHÔNG phải trong một ứng dụng nào khác. "
+            "HUỶ: op=cancel + id nếu biết mã; KHÔNG biết mã thì truyền text=tên lịch "
+            "('báo cáo nhân sự') — em tự tra theo nội dung. Đừng hỏi mã trước khi thử, "
+            "mã chỉ hiện lúc đặt nên người dùng thường không có. id='all' = huỷ hết. "
             "Thời điểm: when (vd 'sau 30 phút', 'mỗi ngày 7h') hoặc in_minutes / "
             "every_minutes / every_day_at / at. "
             "LỊCH LẶP LINH HOẠT (ưu tiên khi lặp phức tạp): unit=second|minute|hour|"
@@ -5127,7 +5158,9 @@ CAPABILITIES: dict[str, Capability] = {
             "op": {"type": "string", "enum": ["create", "list", "cancel"],
                    "description": "create (mặc định) | list | cancel"},
             "text": {"type": "string",
-                     "description": "Nội dung nhắc hoặc mô tả việc cần làm"},
+                     "description": "Nội dung nhắc hoặc mô tả việc cần làm. "
+                                    "Khi op=cancel: TÊN lịch cần huỷ (khớp theo nội dung, "
+                                    "không cần dấu, không cần đúng thứ tự từ)"},
             "mode": {"type": "string", "enum": ["notify", "task"],
                      "description": "notify=chỉ nhắc; task=em tự chạy agent rồi báo"},
             "when": {"type": "string",
@@ -5164,7 +5197,8 @@ CAPABILITIES: dict[str, Capability] = {
             "send_platform": {"type": "string", "enum": ["tg", "zalo", "zalop"],
                               "description": "Kênh gửi nếu người dùng nêu rõ; bỏ trống = kênh hiện tại"},
             "id": {"type": "string",
-                   "description": "Mã nhắc khi huỷ (hoặc 'all')"}},
+                   "description": "Mã nhắc khi huỷ, hoặc 'all' để huỷ hết. "
+                                  "Không biết mã thì BỎ TRỐNG và dùng text=tên lịch"}},
             "required": []}),
     "search_history": Capability(
         name="search_history", risk=READ, handler=_h_search_history,

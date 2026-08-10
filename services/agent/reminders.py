@@ -16,7 +16,11 @@ Config (top-level ``agent_reminders``)::
 
     enabled: bool (default True)
     tick_seconds: int (default 20)
-    max_task_seconds: int (default 120)  — wall clock budget for task mode
+
+Trần thời gian của việc mode=task do ``orchestrator.orchestrate`` áp (hằng số
+``_TURN_BUDGET_S`` trong module đó), KHÔNG có knob riêng ở đây. Bản trước liệt kê
+ở chỗ này một khoá ``max_task_seconds`` mà không một dòng code nào đọc: đặt nó
+vào config là vô hiệu, mà người đọc tài liệu lại tin là đã có trần riêng.
 """
 
 from __future__ import annotations
@@ -688,6 +692,40 @@ def list_for(user_id: str, *, include_disabled: bool = False) -> list[dict[str, 
                 (str(user_id),),
             ).fetchall()
     return [dict(r) for r in rows]
+
+
+# Từ chỉ BẢN THÂN cái lời nhắc, không phải nội dung của nó. Người dùng gọi "huỷ
+# LỊCH báo cáo nhân sự" trong khi nội dung mục lại là "Hỏi anh lấy thông tin nhân
+# sự trong ngày để lập báo cáo theo mẫu…" — đòi khớp cả chữ "lịch" là không bao
+# giờ khớp. Danh sách giữ HẸP: chỉ mấy từ gọi tên loại việc, không gồm từ nội
+# dung (đừng thêm "ngày", "hằng" — chúng nằm trong nội dung thật của nhiều mục).
+_TU_GOI_LICH = frozenset({"lich", "nhac", "hen", "viec", "muc", "cai"})
+
+
+def tim_theo_ten(user_id: str, ten: str) -> list[dict[str, Any]]:
+    """Các mục ĐANG CHỜ của người này có nội dung khớp `ten`, khớp không cần dấu.
+
+    Vì sao cần: mã nhắc (`a1b2c3d4e5f6`) chỉ hiện đúng một lần lúc đặt lịch, và
+    tin nhắn khi lịch bắn KHÔNG mang mã. Nên hỏi "cho em xin mã" là hỏi vào thứ
+    người dùng không có — đo thật 10/08 trên máy chủ: ba lượt liền bot xin mã,
+    không huỷ được mục nào. Họ gọi lịch bằng TÊN thì phải huỷ được bằng tên.
+
+    Luật khớp: bỏ mấy từ gọi tên loại việc (`_TU_GOI_LICH`), rồi ĐÒI ĐỦ mọi từ
+    còn lại xuất hiện trong nội dung mục — không đòi đúng thứ tự. Đủ-mọi-từ chứ
+    không phải khớp-một-từ, để "báo cáo nhân sự" không quét luôn mọi mục có chữ
+    "báo". Không còn từ nào sau khi bỏ (người dùng chỉ nói "huỷ lịch nhắc") thì
+    trả rỗng — nơi gọi sẽ đưa danh sách ra cho họ chọn, chứ đây KHÔNG đoán.
+    """
+    from services.agent.vi_text import fold
+    tu = [t for t in fold(ten).split() if t and t not in _TU_GOI_LICH]
+    if not tu:
+        return []
+    ra: list[dict[str, Any]] = []
+    for r in list_for(user_id):
+        noi_dung = fold(str(r.get("text") or ""))
+        if all(t in noi_dung for t in tu):
+            ra.append(r)
+    return ra
 
 
 def _xoa_audio_cua_lich(rows: list[dict[str, Any]]) -> None:
