@@ -189,6 +189,10 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
         NHAN_QUALITY: "veo_3_1_t2v",
     },
     "component": {
+        # KHÔNG có bậc Fast lẫn Quality, và đây không phải chuyện chưa tìm ra
+        # tên khoá: chọn Quality rồi thêm ảnh thì chính giao diện Flow chặn lại
+        # — "Bạn không thể dùng thành phần hình ảnh với mô hình này"
+        # (đo 10/08/2026). Bậc cao của Veo 3.1 không nhận ảnh tham chiếu.
         NHAN_OMNI: "abra_r2v_{giay}s",
         NHAN_LITE: "veo_3_1_r2v_lite",
         NHAN_LITE_CHO: "veo_3_1_r2v_lite_low_priority",
@@ -433,10 +437,11 @@ def chon_model_video(che_do: str, nhan: str | None, duration: str | None,
                      ty_le: str = "16:9") -> str:
     """Khoá model theo CHẾ ĐỘ + nhãn giao diện.
 
-    Ba chế độ có ảnh chỉ có hai bản Lite (xem chú thích ở `MODEL_VIDEO`), nên
-    chọn "Fast" hay "Quality" ở đó là ném lỗi nêu rõ chế độ này có gì — thay vì
-    lặng lẽ hạ xuống Lite. Người chọn Quality mà nhận Lite là đúng kiểu hỏng đã
-    gây sự cố 08/08/2026, chỉ khác chiều.
+    Không chế độ nào có đủ năm bậc (xem bảng `MODEL_VIDEO`): chỉ văn-bản-sang-
+    video có Fast, và Thành phần thì không có cả Fast lẫn Quality. Xin một bậc
+    mà chế độ đó không có là ném lỗi nêu rõ chế độ này có gì — thay vì lặng lẽ
+    hạ xuống Lite. Người chọn Quality mà nhận Lite là đúng kiểu hỏng đã gây sự
+    cố 08/08/2026, chỉ khác chiều.
 
     Nhãn LẠ (không nằm trong bộ nhãn giao diện) thì vẫn rơi về mặc định, để cấu
     hình cũ hoặc bên gọi tự do không bị chặn cứng.
