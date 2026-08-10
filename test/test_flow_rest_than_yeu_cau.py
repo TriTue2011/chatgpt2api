@@ -282,8 +282,9 @@ class ThanTaoVideo(unittest.TestCase):
     def test_khung_chung(self):
         than = self._than("text_to_video")
         self.assertIs(than["useV2ModelConfig"], True)
+        # Payload thật của giao diện: thà hỏng còn hơn trả video câm.
         self.assertEqual(than["mediaGenerationContext"]["audioFailurePreference"],
-                         "RETURN_SILENCED_VIDEOS")
+                         "BLOCK_SILENCED_VIDEOS")
         # Đường VIDEO CÓ gửi bậc trả phí, và giá trị đúng là ONE — đọc từ
         # telemetry thật của giao diện Flow. Bản gỡ rối ghi TWO và ta bê nguyên
         # sang: 403 "The caller does not have permission". Bỏ hẳn trường cũng
@@ -472,16 +473,35 @@ class DoThatTrenDuongVideo(unittest.TestCase):
     def test_text_to_video_khong_doi_anh(self):
         self.assertEqual(len(self._than("text_to_video", [])["requests"]), 1)
 
-    def test_che_do_co_anh_khong_co_ban_fast_hay_quality(self):
-        """Quét đủ họ 09/08: i2v, interpolation, r2v đều KHÔNG có Fast/Quality —
-        `veo_3_1_r2v`, `veo_3_1_i2v_fast`… đều 404. Phải báo lỗi nêu bản có thật
-        chứ không lặng lẽ hạ xuống Lite."""
+    def test_ba_che_do_co_anh_khong_co_ban_fast(self):
+        """Không chế độ có ảnh nào có bậc Fast — `veo_3_1_i2v_fast`,
+        `veo_3_1_r2v_fast`… đều 404. Phải báo lỗi nêu bản có thật chứ không lặng
+        lẽ hạ xuống Lite."""
         for che_do in ("component", "image_start", "image_start_end"):
-            for nhan in ("Veo 3.1 - Fast", "Veo 3.1 - Quality"):
-                with self.subTest(che_do=che_do, nhan=nhan):
-                    with self.assertRaises(ValueError) as ngu_canh:
-                        FR.chon_model_video(che_do, nhan, None)
-                    self.assertIn("Veo 3.1 - Lite", str(ngu_canh.exception))
+            with self.subTest(che_do=che_do):
+                with self.assertRaises(ValueError) as ngu_canh:
+                    FR.chon_model_video(che_do, "Veo 3.1 - Fast", None)
+                self.assertIn("Veo 3.1 - Lite", str(ngu_canh.exception))
+
+    def test_hai_che_do_anh_co_bac_quality_ten_khac_han(self):
+        """Payload thật của giao diện dùng họ `i2v_s`, không phải `interpolation`
+        hay `r2v` như tên tôi suy ra từ khuôn t2v."""
+        self.assertEqual(FR.chon_model_video("image_start", "Veo 3.1 - Quality", None),
+                         "veo_3_1_i2v_s")
+        self.assertEqual(FR.chon_model_video("image_start_end", "Veo 3.1 - Quality", None),
+                         "veo_3_1_i2v_s_fl")
+        # Chế độ thành phần thì vẫn chưa tìm ra bậc Quality nào.
+        with self.assertRaises(ValueError):
+            FR.chon_model_video("component", "Veo 3.1 - Quality", None)
+
+    def test_bac_chuan_i2v_co_ban_doc_o_ca_hai_che_do(self):
+        """`_portrait` chèn TRƯỚC `_fl`, không nối đuôi — đo 10/08/2026."""
+        self.assertEqual(
+            FR.chon_model_video("image_start", "Veo 3.1 - Quality", None, "9:16"),
+            "veo_3_1_i2v_s_portrait")
+        self.assertEqual(
+            FR.chon_model_video("image_start_end", "Veo 3.1 - Quality", None, "9:16"),
+            "veo_3_1_i2v_s_portrait_fl")
 
     def test_hai_che_do_khung_hinh_ton_trong_nhan_lite(self):
         """Có HAI bản Lite. Bản cũ gán cứng bản ưu tiên thấp nên người chọn
@@ -532,6 +552,7 @@ class DoThatTrenDuongVideo(unittest.TestCase):
             "veo_3_1_t2v", "veo_3_1_t2v_fast", "veo_3_1_t2v_lite",
             "veo_3_1_t2v_lite_low_priority",
             "veo_3_1_i2v_lite", "veo_3_1_i2v_lite_low_priority",
+            "veo_3_1_i2v_s", "veo_3_1_i2v_s_fl",
             "veo_3_1_interpolation_lite", "veo_3_1_interpolation_lite_low_priority",
             "veo_3_1_r2v_lite", "veo_3_1_r2v_lite_low_priority",
         }

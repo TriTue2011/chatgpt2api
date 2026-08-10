@@ -194,13 +194,19 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
         NHAN_LITE_CHO: "veo_3_1_r2v_lite_low_priority",
     },
     "image_start": {
-        # Omni Flash CÓ ở chế độ này (abra_i2v_4/6/8/10s) — đo 10/08/2026. Bản
-        # trước chặn nó theo suy đoán vì bản gỡ rối không nhắc tới.
+        # Omni Flash CÓ ở chế độ này (abra_i2v_4/6/8/10s) — đo 10/08/2026.
         NHAN_OMNI: "abra_i2v_{giay}s",
+        # Bậc chuẩn `_s` là thứ giao diện Flow thật sự dùng cho Quality, và là
+        # khoá DUY NHẤT của chế độ này có bản dọc.
+        NHAN_QUALITY: "veo_3_1_i2v_s",
         NHAN_LITE: "veo_3_1_i2v_lite",
         NHAN_LITE_CHO: "veo_3_1_i2v_lite_low_priority",
     },
     "image_start_end": {
+        # `_fl` = first-last. Payload thật của giao diện dùng
+        # `veo_3_1_i2v_s_portrait_fl` — cả một họ khoá mà không cách nào đoán ra
+        # từ bản gỡ rối; họ `interpolation_*` cũng có thật nhưng chỉ bậc Lite.
+        NHAN_QUALITY: "veo_3_1_i2v_s_fl",
         NHAN_LITE: "veo_3_1_interpolation_lite",
         NHAN_LITE_CHO: "veo_3_1_interpolation_lite_low_priority",
     },
@@ -230,6 +236,9 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
 KHOA_DOC = {
     "veo_3_1_t2v": "veo_3_1_t2v_portrait",
     "veo_3_1_t2v_fast": "veo_3_1_t2v_fast_portrait",
+    # Họ i2v bậc chuẩn: `_portrait` chèn TRƯỚC hậu tố `_fl`, không phải nối đuôi.
+    "veo_3_1_i2v_s": "veo_3_1_i2v_s_portrait",
+    "veo_3_1_i2v_s_fl": "veo_3_1_i2v_s_portrait_fl",
 }
 
 
@@ -259,7 +268,16 @@ GIAY_OMNI_FLASH_MAC_DINH = 8
 # request thật cho thấy ảnh KHÔNG gửi trường này.
 TIER_VIDEO = "PAYGATE_TIER_ONE"
 
-# Toạ độ cắt phủ trọn khung — app gửi đúng giá trị này cho ảnh đầu/cuối.
+# Toạ độ cắt. Ta gửi phủ trọn khung, tức "dùng cả ảnh, không cắt".
+#
+# Giao diện Flow thì KHÔNG làm vậy: payload thật 10/08/2026 gửi
+#     startImage.cropCoordinates = {top:0, left:0.3954, bottom:1, right:0.6046}
+# — nó tự cắt giữa để ảnh nguồn (4040×1324, rất ngang) khớp khung dọc 9:16.
+#
+# Phủ trọn khung là hằng số hợp lệ (đo: có hay không, số nguyên hay số thực đều
+# qua), nên đây không phải lỗi — chỉ là bố cục khác. Muốn giống giao diện thì
+# phải đọc kích thước ảnh nguồn rồi tính cắt giữa theo tỷ lệ đích; chưa làm vì
+# chưa có nhu cầu và vì đoán công thức là cách hỏng thầm lặng.
 _CAT_TRON_KHUNG = {"top": 0, "left": 0, "bottom": 1, "right": 1}
 
 
@@ -511,7 +529,12 @@ def than_tao_video(
     return {
         "mediaGenerationContext": {
             "batchId": batch_id or str(uuid.uuid4()),
-            "audioFailurePreference": "RETURN_SILENCED_VIDEOS",
+            # Payload thật của giao diện gửi BLOCK_SILENCED_VIDEOS: thà hỏng
+            # còn hơn trả về video câm. Bản gỡ rối VEO3 ghi RETURN_SILENCED_VIDEOS
+            # — nghĩa NGƯỢC LẠI — và ta bê theo suốt. Cả hai đều là hằng số hợp
+            # lệ nên không có gì báo sai; chỉ khác ở chỗ người dùng nhận được gì
+            # khi Google dựng hụt phần tiếng.
+            "audioFailurePreference": "BLOCK_SILENCED_VIDEOS",
         },
         "clientContext": dict(ctx),
         "requests": [{**goc, "seed": hat[i % len(hat)]} for i in range(so)],
