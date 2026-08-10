@@ -175,20 +175,23 @@ def _chia_canh(model: str, tong_giay: int, duration: int | None) -> tuple[int, i
                                                         ĐÚNG 30, ít clip hơn
         Veo qua API Gemini            `duration` tuỳ  → theo bên gọi
 
-    Với Omni Flash mà bên gọi KHÔNG tự chọn độ dài, ta chọn hộ: ưu tiên chia
-    TRỌN số giây (không thừa), trong các cách chia trọn thì lấy cách ít clip
-    nhất — mỗi clip là một lượt gọi có tính phí và tốn vài chục giây. Không chia
-    trọn được thì lấy cách thừa ít nhất, rồi mới tới ít clip.
+    Với Omni Flash mà bên gọi KHÔNG tự chọn độ dài, ta chọn hộ, và ƯU TIÊN SỐ
+    MỘT LÀ CHI PHÍ: lấy cách ÍT CLIP NHẤT trước, bằng nhau mới xét cách thừa ít
+    giây hơn. Mỗi clip là một lượt gọi Google có tính phí, cộng vài chục giây
+    chờ, cộng một mối nối nữa có thể lệch hình — nên ít clip rẻ hơn theo cả ba
+    nghĩa. Ví dụ 24 giây: 3 clip 8 giây (đúng 24) thắng 4 clip 6 giây; 14 giây:
+    2 clip 8 giây (ra 16) thắng 3 clip 6 giây (ra 18).
 
     Bên gọi đã nêu `duration` thì tôn trọng: họ có thể cố ý muốn clip ngắn.
     """
     tong_giay = max(1, int(tong_giay))
     m = str(model or "").strip().lower()
     if "omni" in m and duration not in GIAY_OMNI:
-        # (thừa bao nhiêu, bao nhiêu clip) — nhỏ hơn là tốt hơn, theo thứ tự đó.
+        # (bao nhiêu clip, thừa bao nhiêu giây) — nhỏ hơn là tốt hơn, THEO THỨ
+        # TỰ ĐÓ: chi phí trước, khớp thời lượng sau.
         def diem(g: int) -> tuple[int, int]:
             so = -(-tong_giay // g)
-            return (so * g - tong_giay, so)
+            return (so, so * g - tong_giay)
         tot = min(GIAY_OMNI, key=diem)
         return -(-tong_giay // tot), tot
     moi_canh = _giay_moi_canh(model, int(duration or 0))

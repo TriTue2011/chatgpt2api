@@ -177,11 +177,27 @@ class NguoiDungNoiSOGIAY_KhongNoiSOCANH(unittest.TestCase):
         # vừa ít lượt gọi hơn.
         self.assertEqual(V._chia_canh("flow/omni-flash", 30, None), (3, 10))
 
-    def test_uu_tien_chia_TRON_roi_moi_toi_it_clip(self):
-        """24 giây: 10s cho 3 clip (thừa 6), 8s cho 3 clip (thừa 0) → chọn 8s."""
+    def test_omni_uu_tien_CHI_PHI_roi_moi_toi_khop_thoi_luong(self):
+        """Ít clip trước, thừa ít giây sau — vì mỗi clip là một lượt gọi tính phí,
+        cộng vài chục giây chờ, cộng một mối nối nữa có thể lệch hình."""
+        # 24 giây: 3 clip 8s (đúng 24) thắng 4 clip 6s.
         self.assertEqual(V._chia_canh("flow/omni-flash", 24, None), (3, 8))
-        # 12 giây: 6s×2 chia trọn, 10s×2 thừa 8 → chọn 6s.
+        # 12 giây: 2 clip 8s (ra 16) và 2 clip 6s (đúng 12) cùng 2 clip → chọn
+        # cách thừa ít hơn là 6s.
         self.assertEqual(V._chia_canh("flow/omni-flash", 12, None), (2, 6))
+        # 14 giây: 2 clip 8s (ra 16, thừa 2) thắng 3 clip 6s (ra 18) — DÙ 3 clip
+        # 6s cũng không chia trọn. Ít clip là tiêu chí đầu.
+        self.assertEqual(V._chia_canh("flow/omni-flash", 14, None), (2, 8))
+        # 20 giây: 2 clip 10s, đúng 20 và ít clip nhất.
+        self.assertEqual(V._chia_canh("flow/omni-flash", 20, None), (2, 10))
+
+    def test_omni_khong_bao_gio_chon_nhieu_clip_hon_can_thiet(self):
+        """Với mọi mốc giây, số clip phải là ít nhất có thể (dùng clip 10 giây)."""
+        for giay in range(1, 61):
+            n, moi = V._chia_canh("flow/omni-flash", giay, None)
+            it_nhat = -(-giay // 10)
+            with self.subTest(giay=giay):
+                self.assertEqual(n, it_nhat)
 
     def test_ben_goi_tu_chon_do_dai_thi_ton_trong(self):
         """Người dùng cố ý muốn clip ngắn thì không được tự đổi hộ."""
