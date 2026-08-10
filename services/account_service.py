@@ -44,6 +44,19 @@ PLAN_RANK = {"pro": 5, "team": 4, "enterprise": 4, "business": 3, "plus": 2, "go
 # `smart_pool.account_demote_seconds`.
 _HA_TAI_KHOAN_GIAY = 900
 
+# Số lượt ẢNH lỗi LIÊN TIẾP của cùng một tài khoản trước khi hạ nó xuống đáy.
+# Lần đầu chỉ đếm — vòng xoay của `_acquire_next_candidate_token` đã tự sang tài
+# khoản kế ở lượt sau, nên hạ ngay từ một lượt lỗi lẻ (nội dung bị chặn, 5xx chớp
+# nhoáng) là đẩy một tài khoản lành xuống đáy 15 phút.
+#
+# VÌ SAO PHẢI CÓ MỐC HẠ Ở ĐƯỜNG ẢNH: `_bac_uu_tien` cố ý KHÔNG có thành phần sức
+# khoẻ (để giữ vòng xoay dàn tải), nên bộ đếm `fail` một mình không đẩy được tài
+# khoản nào xuống. Trước khi có bậc gói thì điều đó vô hại — đường ảnh xoay đều
+# trên mọi tài khoản khả dụng nên tài khoản lỗi chỉ ăn 1/N lượt. Từ lúc
+# `_loc_bac_cao_nhat` chỉ giữ bậc cao nhất thì một tài khoản gói cao đang lỗi mà
+# là tài khoản gói cao DUY NHẤT sẽ nhận 100% lượt ảnh. Đây bịt đúng chỗ đó.
+_NGUONG_HA_KHI_LOI = 2
+
 
 def bac_goi(account: dict | None) -> int:
     """Bậc gói của tài khoản (cao hơn = dùng trước). Không rõ gói → 0 như free."""
@@ -1562,6 +1575,7 @@ class AccountService:
                 # phải chờ hết cửa sổ. Cùng cách `provider_order` đối xử với
                 # provider hồi phục.
                 next_item.pop("demoted_at", None)
+                next_item.pop("fail_streak", None)
                 if not image_quota_unknown:
                     next_item["quota"] = max(0, int(next_item.get("quota") or 0) - 1)
                 if not image_quota_unknown and next_item["quota"] == 0:
@@ -1571,6 +1585,15 @@ class AccountService:
                     next_item["status"] = "active"
             else:
                 next_item["fail"] = int(next_item.get("fail") or 0) + 1
+                # Lỗi LIÊN TIẾP lần thứ `_NGUONG_HA_KHI_LOI` mới hạ; lần đầu chỉ
+                # đếm rồi để vòng xoay tự sang tài khoản kế. Đóng dấu `demoted_at`
+                # y như đường 429 nên nó rơi vào ĐÚNG tiêu chí 1 của
+                # `_selection_key` / `_bac_uu_tien` — đứng trên bậc gói, tức tài
+                # khoản gói cao đang lỗi cũng phải nhường. Không thêm cơ chế mới.
+                lien_tiep = int(next_item.get("fail_streak") or 0) + 1
+                next_item["fail_streak"] = lien_tiep
+                if lien_tiep >= _NGUONG_HA_KHI_LOI:
+                    next_item["demoted_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             account = self._normalize_account(next_item)
             if account is None:
                 return None

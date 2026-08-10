@@ -216,5 +216,96 @@ class MocBiHaTests(unittest.TestCase):
             self.assertFalse(dang_bi_ha(sv._accounts["t"]))
 
 
+class LoiChuKhongPhaiCanQuotaTests(unittest.TestCase):
+    """Tài khoản LỖI (không phải cạn quota) cũng phải tụt đáy — lần lỗi thứ hai.
+
+    Chốt với chủ máy 10/08/2026: "lần đầu lỗi chuyển acc, lần tiếp dùng lỗi thì
+    hạ".
+
+    Vì sao cần: `_bac_uu_tien` của đường ảnh cố ý KHÔNG có thành phần sức khoẻ
+    (giữ vòng xoay dàn tải), nên bộ đếm `fail` một mình không đẩy được tài khoản
+    nào xuống. Trước khi có bậc gói thì vô hại — đường ảnh xoay đều nên tài khoản
+    lỗi chỉ ăn 1/N lượt. Từ lúc `_loc_bac_cao_nhat` chỉ giữ bậc cao nhất, một tài
+    khoản gói cao đang lỗi mà là tài khoản gói cao DUY NHẤT sẽ nhận 100% lượt.
+    """
+
+    def _sv(self, tmp: str, *cap: tuple[str, str]) -> AccountService:
+        sv = AccountService(JSONStorageBackend(Path(tmp) / "accounts.json"))
+        for token, plan in cap:
+            sv.add_accounts([token])
+            sv.update_account(token, {"status": "active", "plan": plan,
+                                      "quota": 10, "image_quota_unknown": True})
+        return sv
+
+    def test_loi_lan_dau_KHONG_ha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("t", "plus"))
+            sv.mark_image_result("t", False)
+            self.assertFalse(dang_bi_ha(sv._accounts["t"]),
+                             "lỗi lẻ mà đã hạ 15 phút thì tài khoản lành bị oan")
+            self.assertEqual(sv._accounts["t"].get("fail_streak"), 1)
+
+    def test_loi_lien_tiep_lan_hai_thi_ha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("t", "plus"))
+            sv.mark_image_result("t", False)
+            sv.mark_image_result("t", False)
+            self.assertTrue(dang_bi_ha(sv._accounts["t"]))
+
+    def test_thanh_cong_giua_hai_lan_loi_thi_reset_streak(self):
+        """"LIÊN TIẾP" phải đúng nghĩa liên tiếp — xen một lượt tốt là tính lại."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("t", "plus"))
+            sv.mark_image_result("t", False)
+            sv.mark_image_result("t", True)
+            self.assertIsNone(sv._accounts["t"].get("fail_streak"))
+            sv.mark_image_result("t", False)
+            self.assertFalse(dang_bi_ha(sv._accounts["t"]),
+                             "streak chưa reset nên lỗi lẻ thứ hai bị hạ oan")
+
+    def test_goi_cao_dang_loi_phai_nhuong_cho_goi_thap(self):
+        """Đúng cảnh gây lo: pro lỗi mà là gói cao duy nhất → ăn 100% lượt ảnh."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("pro", "pro"), ("go", "go"))
+            self.assertEqual(sv._loc_bac_cao_nhat(["pro", "go"]), ["pro"])
+            sv.mark_image_result("pro", False)
+            self.assertEqual(sv._loc_bac_cao_nhat(["pro", "go"]), ["pro"],
+                             "lần đầu chỉ chuyển acc, chưa được hạ")
+            sv.mark_image_result("pro", False)
+            self.assertEqual(sv._loc_bac_cao_nhat(["pro", "go"]), ["go"],
+                             "pro lỗi liên tiếp mà vẫn giữ ngôi bậc cao nhất")
+
+    def test_hoi_phuc_thi_ve_cho_cu_ngay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("pro", "pro"), ("go", "go"))
+            sv.mark_image_result("pro", False)
+            sv.mark_image_result("pro", False)
+            self.assertEqual(sv._loc_bac_cao_nhat(["pro", "go"]), ["go"])
+            sv.mark_image_result("pro", True)
+            self.assertEqual(sv._loc_bac_cao_nhat(["pro", "go"]), ["pro"],
+                             "dùng lại được rồi thì phải về ngay, không chờ 15 phút")
+
+    def test_moc_ha_khong_bi_normalize_lam_rung(self):
+        """`mark_image_result` đi qua `_normalize_account` — trường lạ mà bị lọc
+        thì mốc hạ mất âm thầm, triệu chứng y như chưa sửa gì."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("t", "plus"))
+            sv.mark_image_result("t", False)
+            sv.mark_image_result("t", False)
+            luu = sv._accounts["t"]
+            self.assertIn("demoted_at", luu)
+            self.assertIn("fail_streak", luu)
+
+    def test_van_dem_fail_tich_luy_nhu_cu(self):
+        """Thêm streak KHÔNG được thay bộ đếm `fail` — `_selection_weight` của
+        đường text đọc nó để tính success-rate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._sv(tmp, ("t", "plus"))
+            sv.mark_image_result("t", False)
+            sv.mark_image_result("t", True)
+            sv.mark_image_result("t", False)
+            self.assertEqual(int(sv._accounts["t"].get("fail") or 0), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
