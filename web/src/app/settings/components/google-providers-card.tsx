@@ -24,14 +24,14 @@ function nextLabel(existing: string[]) {
 }
 
 function StatusBox({ st }: { st: LoginSt }) {
-  const color = st.state==="success"?"border-emerald-300 bg-emerald-50":st.state==="failed"?"border-rose-300 bg-rose-50":st.state==="need_tap"?"border-violet-300 bg-violet-50":st.state==="need_code"?"border-amber-300 bg-amber-50":"border-blue-200 bg-[var(--card)]";
+  const color = st.state==="success"?"border-emerald-300 bg-emerald-50 text-slate-800":st.state==="failed"?"border-rose-300 bg-rose-50 text-slate-800":st.state==="need_tap"?"border-violet-300 bg-violet-50 text-slate-800":st.state==="need_code"?"border-amber-300 bg-amber-50 text-slate-800":"border-blue-200 bg-[var(--card)] text-[var(--foreground)]";
   return (
     <div className={`rounded-lg border p-2 text-xs space-y-1 ${color}`}>
       <div className="flex flex-wrap items-center gap-2">
         {(st.state==="running"||st.state==="starting") && <LoaderCircle className="size-3 animate-spin"/>}
         <span className="font-semibold uppercase tracking-wide">{st.state}</span>
-        <span className="text-[var(--muted-foreground)] flex-1">{st.message}</span>
-        {st.elapsed_sec != null && <span className="text-[var(--muted-foreground)] font-mono text-[10px]">{st.elapsed_sec}s</span>}
+        <span className="opacity-80 flex-1">{st.message}</span>
+        {st.elapsed_sec != null && <span className="opacity-70 font-mono text-[10px]">{st.elapsed_sec}s</span>}
       </div>
       {st.state==="need_tap" && (
         <div className="flex items-center gap-2 rounded bg-violet-100/60 px-2 py-1">
@@ -352,10 +352,10 @@ export function GoogleProvidersCard() {
               <p className="text-[11px] font-semibold text-emerald-700">Tài khoản hiện có ({flowCfg.accounts.length}) — #1 ưu tiên trước</p>
               {flowCfg.accounts.map((a,i)=>(
                 <div key={`${a.profile}:${a.project_id}`} className="flex items-center gap-2 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-1.5">
-                  <span className={`shrink-0 min-w-[24px] text-center text-[11px] font-bold font-mono rounded px-1 ${i===0?"bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300":"bg-[var(--secondary)] text-[var(--muted-foreground)]"}`}>#{i+1}</span>
+                  <span className={`shrink-0 min-w-[24px] text-center text-[11px] font-bold font-mono rounded px-1 ${i===0?"bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300":"bg-[var(--secondary)] text-[var(--foreground)]/80"}`}>#{i+1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-medium text-[var(--foreground)]">{a.label||a.profile}</div>
-                    <div className="text-[10px] text-[var(--muted-foreground)] font-mono truncate">{a.profile} · {a.project_id}</div>
+                    <div className="text-[11px] text-[var(--foreground)]/75 font-mono truncate">{a.profile} · {a.project_id}</div>
                   </div>
                   <Button className="h-6 w-6 p-0 rounded bg-rose-50 text-rose-500 hover:bg-rose-100" onClick={()=>void saveFlow({...flowCfg,accounts:flowCfg.accounts.filter((_,j)=>j!==i)})} disabled={savingFlow}><Trash2 className="size-3"/></Button>
                 </div>

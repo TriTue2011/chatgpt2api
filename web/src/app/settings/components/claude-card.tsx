@@ -462,11 +462,11 @@ export function ClaudeCard() {
 
           {session && session.state !== "none" && (
             <div className={`mt-2 rounded-lg border p-3 text-xs space-y-2 ${
-              session.state === "success" ? "border-emerald-300 bg-emerald-50/70"
-              : session.state === "failed" ? "border-rose-300 bg-rose-50/70"
-              : session.state === "need_tap" ? "border-violet-300 bg-violet-50/70"
-              : session.state === "need_code" ? "border-amber-300 bg-amber-50/70"
-              : "border-orange-200 bg-[var(--card)]/80"
+              session.state === "success" ? "border-emerald-300 bg-emerald-50/70 text-slate-800"
+              : session.state === "failed" ? "border-rose-300 bg-rose-50/70 text-slate-800"
+              : session.state === "need_tap" ? "border-violet-300 bg-violet-50/70 text-slate-800"
+              : session.state === "need_code" ? "border-amber-300 bg-amber-50/70 text-slate-800"
+              : "border-orange-200 bg-[var(--card)]/80 text-[var(--foreground)]"
             }`}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
@@ -481,9 +481,9 @@ export function ClaudeCard() {
                   )}
                   {session.state}
                 </span>
-                <span className="text-[var(--muted-foreground)]">{session.message}</span>
+                <span className="opacity-80">{session.message}</span>
                 {typeof session.elapsed_sec === "number" && (
-                  <span className="ml-auto text-[10px] text-[var(--muted-foreground)] font-mono">{session.elapsed_sec}s</span>
+                  <span className="ml-auto text-[10px] opacity-70 font-mono">{session.elapsed_sec}s</span>
                 )}
               </div>
 
