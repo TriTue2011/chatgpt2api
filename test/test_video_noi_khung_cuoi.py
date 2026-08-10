@@ -80,6 +80,59 @@ class LenhLayKhungCuoi(unittest.TestCase):
             A.extract_last_frame("/khong/co/that.mp4")
 
 
+class LenhGhepDungThuTuDauVao(unittest.TestCase):
+    """Lọc `concat` của ffmpeg đọc n*(v+a) đầu vào theo nhóm ĐOẠN, không theo LOẠI.
+
+    Đo 10/08/2026 khi ghép 4 clip Flow 8 giây: bản cũ xếp `[v0][v1][v2][v3]` rồi
+    mới tới `[0:a][1:a][2:a][3:a]`, nên ffmpeg nhận nhầm một nhánh video vào chân
+    audio và chết lúc dựng đồ thị lọc. Với MỘT clip thì hai cách xếp trùng nhau
+    nên lỗi ẩn hoàn toàn — đường ghép video dài giữ tiếng gốc chưa bao giờ chạy.
+    """
+
+    def _loc(self, so_clip: int, co_voiceover: bool = False) -> str:
+        tep = []
+        for i in range(so_clip):
+            fd, p = tempfile.mkstemp(suffix=f"_{i}.mp4")
+            os.close(fd)
+            Path(p).write_bytes(b"\0" * 32)
+            tep.append(p)
+        tieng = None
+        if co_voiceover:
+            fd, tieng = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
+            Path(tieng).write_bytes(b"\0" * 32)
+        fd, ra = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+        Path(ra).write_bytes(b"\0" * 32)
+        ket = mock.Mock(returncode=0, stderr=b"")
+        with mock.patch.object(subprocess, "run", return_value=ket) as chay:
+            A.concat_clips(tep, tieng, ra)
+        for p in tep + ([tieng] if tieng else []) + [ra]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        cmd = chay.call_args[0][0]
+        return cmd[cmd.index("-filter_complex") + 1]
+
+    def test_giu_tieng_goc_thi_xen_ke_video_audio(self):
+        loc = self._loc(4)
+        self.assertIn("[v0][0:a][v1][1:a][v2][2:a][v3][3:a]concat=n=4:v=1:a=1", loc)
+
+    def test_khong_con_xep_het_video_roi_moi_toi_audio(self):
+        loc = self._loc(3)
+        self.assertNotIn("[v0][v1][v2][0:a]", loc)
+
+    def test_mot_clip_van_dung(self):
+        """Ca duy nhất trước đây chạy được — không được làm hỏng nó."""
+        self.assertIn("[v0][0:a]concat=n=1:v=1:a=1", self._loc(1))
+
+    def test_co_voiceover_thi_chi_concat_video(self):
+        """Nhánh thay tiếng bằng voiceover xếp toàn video là ĐÚNG (a=0)."""
+        loc = self._loc(3, co_voiceover=True)
+        self.assertIn("[v0][v1][v2]concat=n=3:v=1:a=0", loc)
+
+
 class NoiCanhTruyenKhungCuoi(unittest.TestCase):
     """Cảnh sau phải NHẬN khung cuối cảnh trước — chỗ sai thì im lặng."""
 

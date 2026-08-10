@@ -113,8 +113,21 @@ def concat_clips(
         maps = ["-map", "[v]", "-map", f"{n}:a", "-c:a", "aac", "-b:a", "192k", "-shortest"]
     else:
         # Giữ tiếng gốc clip: concat cả video lẫn audio (clip Veo có audio).
-        albls = "".join(f"[{i}:a]" for i in range(n))
-        parts.append(f"{vlabels}{albls}concat=n={n}:v=1:a=1[v][a]")
+        #
+        # THỨ TỰ ĐẦU VÀO PHẢI XEN KẼ THEO TỪNG ĐOẠN: [v0][a0][v1][a1]…
+        # Lọc `concat` đọc n*(v+a) đầu vào theo nhóm ĐOẠN, không phải theo LOẠI.
+        # Bản cũ xếp hết video rồi mới tới hết audio (`[v0][v1][a0][a1]`), nên
+        # ffmpeg nhận nhầm một nhánh video vào chân audio và chết ngay lúc dựng
+        # đồ thị lọc:
+        #
+        #     Media type mismatch between 'Parsed_setsar_7' output pad 0 (video)
+        #     and 'Parsed_concat_16' input pad 1 (audio)
+        #
+        # Với MỘT clip thì hai cách xếp trùng nhau nên không ai thấy; từ hai clip
+        # trở lên là luôn hỏng. Nghĩa là đường ghép video dài giữ tiếng gốc chưa
+        # bao giờ chạy được — đo 10/08/2026 khi ghép 4 clip Flow 8 giây.
+        xen_ke = "".join(f"[v{i}][{i}:a]" for i in range(n))
+        parts.append(f"{xen_ke}concat=n={n}:v=1:a=1[v][a]")
         maps = ["-map", "[v]", "-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
 
     cmd += ["-filter_complex", ";".join(parts)]
