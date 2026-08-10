@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-import re
-import threading
 import time
-from collections import OrderedDict
 from typing import Any, Iterator
 
 from curl_cffi import requests as cffi_requests
@@ -25,137 +22,40 @@ from services.image_providers._base import now_sec
 from services.request_context import note_provider_account
 from utils.log import logger
 
-_NON_EN = re.compile(r'[^\x00-\x7F]')
 
-# Cache bản dịch, có TRẦN và HẠN. Trước đây là dict thường không giới hạn: mỗi
-# prompt tiếng Việt khác nhau nằm lại vĩnh viễn trong RAM tiến trình — vừa rò rỉ
-# bộ nhớ, vừa giữ nội dung người dùng lâu hơn cần thiết.
-_TRANSLATION_CACHE_MAX = 512
-_TRANSLATION_CACHE_TTL = 6 * 3600.0
-_translation_cache: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
-_translation_lock = threading.Lock()
+def _nhan_khoa(credentials: dict[str, Any] | None, key_try: int) -> str:
+    """Tên gọi được của KHOÁ API đang dùng, để nhật ký chỉ ra đúng cái nào.
 
-
-def _cache_lay(khoa: str) -> str | None:
-    with _translation_lock:
-        muc = _translation_cache.get(khoa)
-        if not muc:
-            return None
-        dat, gia_tri = muc
-        if time.time() - dat > _TRANSLATION_CACHE_TTL:
-            _translation_cache.pop(khoa, None)
-            return None
-        _translation_cache.move_to_end(khoa)
-        return gia_tri
-
-
-def _cache_dat(khoa: str, gia_tri: str) -> None:
-    with _translation_lock:
-        _translation_cache[khoa] = (time.time(), gia_tri)
-        _translation_cache.move_to_end(khoa)
-        while len(_translation_cache) > _TRANSLATION_CACHE_MAX:
-            _translation_cache.popitem(last=False)
-
-
-def _needs_translation(text: str) -> bool:
-    return bool(_NON_EN.search(text))
-
-
-def _translation_enabled() -> bool:
-    """Dịch prompt sang tiếng Anh có được BẬT không (mặc định: có).
-
-    Vì sao phải có công tắc: hàm dịch gửi prompt sang ChatGPT OAuth rồi fallback
-    Gemini — kể cả khi người dùng cố tình chọn SD WebUI hay một provider chạy
-    cục bộ. Với người chọn provider local vì lý do riêng tư, đó là gửi nội dung
-    ra ngoài mà họ không hề yêu cầu. Đặt `image_translate_prompt: false` trong
-    config để tắt.
+    Chỉ lấy 4 ký tự cuối. Đủ để đối chiếu với danh sách khoá trong cấu hình khi
+    một khoá bị chặn, mà không ghi bí mật vào nhật ký.
     """
-    value = config.data.get("image_translate_prompt", True)
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
+    c = credentials or {}
+    ds = [str(k) for k in (c.get("apiKeys") or []) if k] or \
+         ([str(c.get("apiKey"))] if c.get("apiKey") else [])
+    if not ds:
+        return ""
+    k = ds[key_try % len(ds)]
+    duoi = k[-4:] if len(k) >= 4 else "?"
+    return f"khoá #{key_try % len(ds) + 1}/{len(ds)} (…{duoi})"
 
 
-def _translate_prompt(prompt: str) -> str:
-    """Translate non-English prompt → English using ChatGPT (Codex OAuth)."""
-    if not _needs_translation(prompt):
-        return prompt
-    if not _translation_enabled():
-        return prompt
-    da_co = _cache_lay(prompt)
-    if da_co is not None:
-        return da_co
+def _khai_tai_khoan(route: Any, credentials: dict[str, Any] | None,
+                    key_try: int) -> None:
+    """Ghi provider + model + khoá đang dùng vào ngữ cảnh yêu cầu.
 
-    translate_prompt = (
-        "Translate the following image generation prompt to English. "
-        "Output ONLY the English translation. Be faithful and detailed, "
-        "preserve all visual descriptions, lighting, style, composition, "
-        "camera angles, mood. Output ONLY the translated prompt, nothing else:\n\n"
-        + prompt
-    )
-
-    # Try ChatGPT via Codex OAuth
+    KHÔNG ghi đè khi adapter đã tự khai một tài khoản có tên thật: Flow gọi
+    `note_provider_account` ngay trong `build_headers` với nhãn hồ sơ ("Main",
+    "Spare 2") — thông tin đó giá trị hơn "khoá #1" nên phải để nguyên.
+    """
     try:
-        from services.providers.openai_oauth import codex_oauth
-
-        token = codex_oauth.get_token_for_request()
-        result = codex_oauth.chat_completions(
-            access_token=token,
-            messages=[{"role": "user", "content": translate_prompt}],
-            model="auto",
-            stream=False,
-        )
-        if isinstance(result, dict):
-            choices = result.get("choices") or []
-            if choices:
-                translated = str(choices[0].get("message", {}).get("content", "")).strip()
-                if translated:
-                    # KHÔNG ghi prompt gốc/bản dịch vào log: đó là nội dung
-                    # người dùng, và log đi vào file + UI Logs. Ghi độ dài là đủ
-                    # để chẩn đoán "có dịch không, dịch ra dài bao nhiêu".
-                    logger.info({"event": "prompt_translated", "source": "chatgpt",
-                                 "chars": [len(prompt), len(translated)]})
-                    _cache_dat(prompt, translated)
-                    return translated
-    except Exception as exc:
-        logger.warning({"event": "translation_chatgpt_failed", "error": str(exc)[:100]})
-
-    # Fallback: Gemini Free
-    cfg = config.data.get("providers") or {}
-    gemini_cfg = cfg.get("gemini_free") or {}
-    api_key = str(gemini_cfg.get("api_key") or "").strip()
-    if not api_key:
-        keys = gemini_cfg.get("api_keys") or []
-        if isinstance(keys, list) and keys:
-            api_key = str(keys[0]).strip()
-    if api_key:
-        try:
-            from services.providers.gemini_free import _gemini_base_url
-            base = _gemini_base_url()
-            resp = cffi_requests.post(
-                f"{base}/models/gemini-2.5-flash:generateContent?key={api_key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": translate_prompt}]}],
-                    "generationConfig": {"temperature": 0.1, "maxOutputTokens": 512},
-                },
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                candidates = data.get("candidates") or []
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    translated = "".join(p.get("text", "") for p in parts).strip()
-                    if translated:
-                        logger.info({"event": "prompt_translated", "source": "gemini",
-                                     "chars": [len(prompt), len(translated)]})
-                        _cache_dat(prompt, translated)
-                        return translated
-        except Exception as exc:
-            logger.warning({"event": "translation_gemini_failed", "error": str(exc)[:100]})
-
-    return prompt
+        from services.request_context import get_dest, note_provider_account
+        cu = get_dest() or {}
+        if str(cu.get("provider") or "") == str(route.provider) and cu.get("account"):
+            return
+        note_provider_account(route.provider, _nhan_khoa(credentials, key_try),
+                              model=route.model)
+    except Exception:
+        pass
 
 
 def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
@@ -178,7 +78,6 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
         pass
 
     prompt = str(body.get("prompt") or "")
-    prompt = _translate_prompt(prompt)
     body = {**body, "prompt": prompt}
     n = max(1, min(4, int(body.get("n") or 1)))
     response_format = str(body.get("response_format") or "b64_json")
@@ -241,6 +140,13 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
                     "url": url[:120],
                     "key_try": key_try,
                 })
+                # Khai lại cho TỪNG lần thử khoá. Lượt đầu đã khai ở
+                # `_handle_single_image`, nhưng khai một lần là chỉ biết khoá
+                # ĐẦU TIÊN: khi khoá 1 bị 429 và khoá 3 mới chạy được, nhật ký
+                # vẫn chỉ ra khoá 1 — đúng lúc cần biết khoá nào còn sống thì
+                # nó nói sai. Đo 10/08/2026: cột tài khoản trống với mọi nhà
+                # dùng khoá API (NVIDIA, Agnes…) vì chỉ Flow tự khai tên hồ sơ.
+                _khai_tai_khoan(route, credentials, key_try)
 
                 resp = cffi_requests.post(
                     url,
@@ -490,7 +396,6 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
 
     # Web-scrape providers: gemini_web (Imagen)
     if route.provider == "gemini_web":
-        prompt = _translate_prompt(prompt) if prompt else prompt
         logger.info({
             "event": "image_routed_to_web",
             "provider": route.provider,
@@ -501,7 +406,6 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
         
     # HTTP API providers: gemini_web_api
     if route.provider == "gemini_web_api":
-        prompt = _translate_prompt(prompt) if prompt else prompt
         logger.info({
             "event": "image_routed_to_gma",
             "provider": route.provider,
