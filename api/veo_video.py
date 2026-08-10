@@ -505,6 +505,7 @@ async def handle_video_story(
             lambda: make_story_video(
                 credentials, scenes=scenes, prompt=prompt, n_scenes=n,
                 auth_key=auth_key, aspect_ratio=aspect, duration=dur,
+                chain_frames=bool((body or {}).get("chain_frames", True)),
             )
         )
     except VideoError as exc:

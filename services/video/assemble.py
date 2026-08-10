@@ -29,6 +29,40 @@ def _ffprobe_duration(path: str) -> float:
         return 0.0
 
 
+def extract_last_frame(clip_path: str, out_path: str | None = None) -> str:
+    """Lấy khung hình CUỐI của clip ra file PNG. Trả đường dẫn PNG.
+
+    Đây là mắt xích để nối cảnh: khung cuối của cảnh N làm khung ĐẦU của cảnh
+    N+1, nên chỗ cắt không nhảy hình. Không có nó thì mỗi cảnh là một video rời,
+    ghép lại vẫn thấy giật ở mỗi mối nối.
+
+    `-sseof -0.1` tua tới mốc 0,1 giây TRƯỚC KHI HẾT rồi lấy đúng một khung.
+    Không dùng `-ss <độ dài>` vì độ dài ffprobe báo lệch vài mili giây so với
+    khung cuối thật, tua quá đuôi là ffmpeg trả file rỗng mà vẫn báo thành công.
+    """
+    if not clip_path or not Path(str(clip_path)).is_file():
+        raise VideoError(f"Không có clip để lấy khung cuối: {clip_path!r}")
+    if out_path is None:
+        fd, out_path = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-sseof", "-0.1", "-i", str(clip_path), "-vframes", "1", str(out_path)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=120)
+    except FileNotFoundError as exc:
+        raise VideoError("Thiếu ffmpeg trong image — không lấy được khung cuối.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise VideoError("ffmpeg lấy khung cuối quá lâu (timeout).") from exc
+
+    # ffmpeg trả mã 0 kèm file rỗng khi mốc tua rơi ngoài clip — phải tự kiểm.
+    if proc.returncode != 0 or not Path(out_path).is_file() \
+            or Path(out_path).stat().st_size == 0:
+        err = proc.stderr.decode("utf-8", "ignore")[:400] if proc.stderr else ""
+        raise VideoError(f"ffmpeg lấy khung cuối lỗi: {err}")
+    return str(out_path)
+
+
 def concat_clips(
     clips: list[str],
     audio_path: str | None = None,

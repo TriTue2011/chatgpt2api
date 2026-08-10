@@ -5,6 +5,11 @@ image (giống services/voice dùng ffmpeg cho audio). Clip do Veo sinh
 (image→video) rồi nối lại + ghép voiceover.
 """
 
-from services.video.assemble import VideoError, assemble_slideshow, concat_clips
+from services.video.assemble import (
+    VideoError,
+    assemble_slideshow,
+    concat_clips,
+    extract_last_frame,
+)
 
-__all__ = ["concat_clips", "assemble_slideshow", "VideoError"]
+__all__ = ["concat_clips", "assemble_slideshow", "extract_last_frame", "VideoError"]
