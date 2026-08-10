@@ -350,5 +350,87 @@ class DonDepKhongDuocGietLuotDangNhap(unittest.TestCase):
                         than.index("lock = await self._lock_for(profile)"))
 
 
+# ── Cùng cái bẫy của lỗi 1, cửa vào khác: các đường ĐĂNG NHẬP LẠI ────────────
+
+class DangNhapLaiKhongDuocChoVoHan(unittest.TestCase):
+    """Bốn endpoint đăng nhập lại + một vòng nền cũng gọi `close_profile` không
+    hạn, ngay trong handler HTTP — y hệt lỗi 1, chỉ khác cửa vào.
+
+    Hai cái đầu nằm trên đường TỰ ĐỘNG, không phải nút bấm tay:
+      · GET  /v1/chatgpt/{profile}/refresh-jwt        ← jwt_refresh_scheduler
+      · POST /v1/chatgpt/{profile}/relogin-via-google ← solver_selfheal (khi 401)
+      · POST /v1/gemini-web/{profile}/relogin-via-google
+      · POST /v1/claude-web/{profile}/relogin-via-google
+      · _auto_refresh_loop (30 phút/lượt trong solver)
+
+    Hồ sơ đang bận thì handler nằm im, nơi gọi hết hạn 30 giây rồi ghi "self-heal
+    thất bại" — sai địa chỉ. Nặng hơn: handler bỏ dở VẪN XẾP HÀNG, tới lượt là
+    đóng trình duyệt, giết lượt đăng nhập đã nhận hồ sơ trong lúc đó.
+
+    Không đo được lần nào trong 48 giờ trước 10/08/2026 (log không có dòng
+    `solver_selfheal` nào), nên đây là mối nguy đọc từ code chứ không phải sự cố
+    đã xảy ra — vá trước khi nó kịp xảy ra.
+    """
+
+    NGUON = None
+
+    def setUp(self):
+        self.nguon = _chi_code((GOC / "captcha-solver/src/main.py").read_text(encoding="utf-8"))
+
+    def test_ham_don_ho_so_co_han_va_tra_ly_do(self):
+        than = _than(self.nguon, "async def _don_ho_so_truoc_khi_dang_nhap", "def require_api_key")
+        self.assertIn("cho_toi_da=_HAN_DON_TRUOC_DANG_NHAP_S", than)
+        self.assertIn("except HoSoDangBan", than)
+        self.assertIn("return \"\"", than, "xong việc phải trả chuỗi rỗng")
+
+    def test_ba_endpoint_dung_han_bang_409(self):
+        """Dừng hẳn, KHÔNG bỏ qua bước dọn rồi vẫn đăng nhập — làm vậy là đăng
+        nhập đè lên hồ sơ việc khác đang dùng.
+
+        Neo vào ĐƯỜNG DẪN route (duy nhất trong file) chứ không vào tên hàm
+        `start_*_login` — mấy tên đó còn xuất hiện ở multi-onboard và onboard
+        thường, neo vào là bắt nhầm chỗ."""
+        for route in ("/v1/gemini-web/{profile}/relogin-via-google",
+                      "/v1/claude-web/{profile}/relogin-via-google",
+                      "/v1/chatgpt/{profile}/relogin-via-google"):
+            with self.subTest(route=route):
+                i = self.nguon.index(route)
+                khuc = self.nguon[i:i + 900]
+                self.assertIn("_don_ho_so_truoc_khi_dang_nhap(profile)", khuc)
+                self.assertIn("raise HTTPException(409", khuc)
+
+    def test_refresh_jwt_tra_loi_dung_dang_cua_no(self):
+        """Endpoint này báo lỗi bằng trường `error` chứ không ném — giữ đúng dạng
+        để jwt_refresh_scheduler đọc được lý do."""
+        i = self.nguon.index('la_openai_goc = profile.startswith("openai-")')
+        khuc = self.nguon[i:i + 600]
+        self.assertIn("_don_ho_so_truoc_khi_dang_nhap(profile)", khuc)
+        self.assertIn('"ok": False', khuc)
+
+    def test_vong_nen_bo_qua_tai_khoan_chu_khong_treo_ca_vong(self):
+        i = self.nguon.index("async def _auto_refresh_loop")
+        khuc = self.nguon[i:]
+        j = khuc.index("_don_ho_so_truoc_khi_dang_nhap(profile)")
+        self.assertIn("continue", khuc[j:j + 300])
+        self.assertNotIn("raise HTTPException", khuc[j:j + 300],
+                         "vòng nền không có ai nhận HTTP — bỏ qua tài khoản thôi")
+
+    def test_khong_con_loi_goi_khong_han_nao_ngoai_hai_cho_co_chu_y(self):
+        """Cổng chặn cho mọi lời gọi THÊM MỚI sau này.
+
+        Chỉ hai chỗ được phép chờ vô hạn, vì cả hai là yêu cầu tường minh của
+        người dùng, né ở đó mới là sai: nút đóng phiên, và xoá hồ sơ.
+        """
+        khong_han = [
+            d.strip() for d in self.nguon.splitlines()
+            if "pool.close_profile(" in d
+            and "cho_toi_da" not in d and "bo_qua_khi_dang_nhap" not in d
+        ]
+        self.assertEqual(len(khong_han), 2, f"còn lời gọi không hạn lạ: {khong_han}")
+        for moc in ('async def api_session_close', 'if not profile or "/" in profile'):
+            i = self.nguon.index(moc)
+            self.assertIn("pool.close_profile(profile)", self.nguon[i:i + 700])
+
+
 if __name__ == "__main__":
     unittest.main()

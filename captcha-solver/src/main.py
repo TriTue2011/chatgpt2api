@@ -72,7 +72,7 @@ from .solvers.gemini_web import (
     list_models as gemini_web_list_models,
     get_plan as gemini_web_get_plan,
 )
-from .browser_pool import pool
+from .browser_pool import HoSoDangBan, pool
 from .settings import settings
 from .solvers.browser_run import browser_run
 from .solvers.flow_google import (
@@ -95,6 +95,36 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("captcha-solver")
+
+# Hạn chờ cho bước "nhả trình duyệt cũ trước khi đăng nhập lại".
+_HAN_DON_TRUOC_DANG_NHAP_S = 20.0
+
+
+async def _don_ho_so_truoc_khi_dang_nhap(profile: str) -> str:
+    """Đóng trình duyệt cũ của hồ sơ trước khi đăng nhập lại. Trả "" nếu xong,
+    hoặc câu lý do nếu hồ sơ đang bận — nơi gọi PHẢI dừng khi nhận được lý do.
+
+    VÌ SAO PHẢI CÓ HẠN CHỜ: `close_profile` mặc định chờ khoá hồ sơ VÔ HẠN. Các
+    đường đăng nhập lại gọi nó ngay trong handler HTTP, nên hồ sơ đang bận đồng
+    nghĩa yêu cầu nằm im không bao giờ trả lời — đúng cơ chế đã gây sự cố
+    benbap115@gmail.com ngày 09/08/2026 ở đường `auto-login-saved`. Nơi gọi
+    (`jwt_refresh_scheduler`, `solver_selfheal`) hết hạn 30 giây rồi ghi log
+    "self-heal thất bại", đưa người đọc đi sai hướng.
+
+    Nặng hơn: handler bị bỏ dở vẫn ĐỨNG XẾP HÀNG. Lúc việc kia nhả hồ sơ thì nó
+    tới lượt và đóng trình duyệt — nếu khi ấy đã có lượt đăng nhập khác nhận hồ
+    sơ thì lượt đó chết, y hệt cảnh 05:48:57 ngày 10/08/2026.
+
+    VÌ SAO HẾT GIỜ PHẢI DỪNG HẲN: đây là bước dọn BẮT BUỘC trước khi đăng nhập.
+    Bỏ qua rồi vẫn đăng nhập tiếp nghĩa là đăng nhập đè lên hồ sơ mà việc khác
+    đang dùng.
+    """
+    try:
+        await pool.close_profile(profile, cho_toi_da=_HAN_DON_TRUOC_DANG_NHAP_S)
+        return ""
+    except HoSoDangBan as exc:
+        logger.warning("relogin: bỏ lượt vì hồ sơ %s đang bận", profile)
+        return f"{exc} — thử lại sau khi việc kia xong."
 
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
@@ -1340,7 +1370,8 @@ async def api_gemini_web_relogin_via_google(profile: str) -> dict[str, Any]:
     acct = resolve_account(profile)
     if not acct:
         raise HTTPException(404, f"No saved credentials for profile '{profile}'")
-    await pool.close_profile(profile)
+    if (ban := await _don_ho_so_truoc_khi_dang_nhap(profile)):
+        raise HTTPException(409, ban)
     session = await start_gemini_web_login(
         profile=profile, email=acct["email"], password=acct["password"],
         totp_secret=acct.get("totp_secret", ""),
@@ -1471,7 +1502,8 @@ async def api_claude_web_relogin_via_google(profile: str) -> dict[str, Any]:
     # Nhả trình duyệt cũ TRƯỚC khi đăng nhập lại — giống hai nhánh gemini-web và
     # chatgpt. Thiếu bước này thì hồ sơ hỏng vẫn còn một Chromium sống, vừa ăn
     # RAM vừa có thể giữ khoá hồ sơ làm lượt đăng nhập mới phải chờ.
-    await pool.close_profile(profile)
+    if (ban := await _don_ho_so_truoc_khi_dang_nhap(profile)):
+        raise HTTPException(409, ban)
     session = await start_claude_web_login(
         profile=profile,
         email=acct["email"],
@@ -1787,8 +1819,11 @@ async def api_chatgpt_refresh_jwt(profile: str) -> dict[str, Any]:
     logger.info("refresh_jwt: session expired for %s, re-logging in with saved credentials (%s)",
                 profile, "openai-goc" if la_openai_goc else "google")
     try:
-        # Kill old session
-        await pool.close_profile(profile)
+        # Kill old session. Hồ sơ đang bận thì DỪNG — endpoint này trả lỗi bằng
+        # trường `error` chứ không ném, nên giữ đúng dạng đó để nơi gọi
+        # (`jwt_refresh_scheduler`) đọc được lý do thay vì hết hạn chờ.
+        if (ban := await _don_ho_so_truoc_khi_dang_nhap(profile)):
+            return {"profile": profile, "ok": False, "error": ban}
 
         # Start re-login. Hai luồng khác nhau ở cách đăng nhập, nhưng phiên trả
         # về cùng bộ trường (state / access_token / captured_email) nên vòng chờ
@@ -1896,7 +1931,8 @@ async def api_chatgpt_relogin_via_google(profile: str) -> dict[str, Any]:
     if not acct:
         raise HTTPException(404, f"No saved credentials for profile '{profile}'")
 
-    await pool.close_profile(profile)
+    if (ban := await _don_ho_so_truoc_khi_dang_nhap(profile)):
+        raise HTTPException(409, ban)
     from .chatgpt_login import start_chatgpt_onboard
     session = await start_chatgpt_onboard(
         profile=profile,
@@ -1962,7 +1998,11 @@ async def _auto_refresh_loop(interval_minutes: int = 30):
                         if not full:
                             continue
 
-                        await pool.close_profile(profile)
+                        # Vòng nền: hồ sơ bận thì BỎ QUA tài khoản này, sang cái
+                        # kế. Đứng chờ ở đây là treo cả vòng quét 30 phút.
+                        if (ban := await _don_ho_so_truoc_khi_dang_nhap(profile)):
+                            logger.info("auto_refresh: bỏ qua %s — %s", email, ban)
+                            continue
                         await asyncio.sleep(1.0)
 
                         session = await start_chatgpt_onboard(
