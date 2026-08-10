@@ -138,6 +138,30 @@ class TinDungVanDuocGhi(unittest.TestCase):
         self.assertIn('meta.get("remainingCredits")', MA)
 
 
+class GoiSolverBangKHOA_CUA_SOLVER(unittest.TestCase):
+    """Đo 10/08/2026: đường video chuyển tiếp khoá của NGƯỜI GỌI xuống solver.
+
+    Solver trả 401 "invalid api key" và bên gọi nhận "Flow Video generation
+    failed: invalid api key" — hỏng ở 0 giây, chưa từng chạm tới Google. Khoá
+    solver trong cấu hình khác khoá bảng điều khiển (đã so: 'Tri…' so với
+    'Anh…'), nên lỗi này chặn MỌI lượt gọi qua `/v1/video/generations`; nhật ký
+    không có lượt video nào là khớp với điều đó.
+
+    Vì sao trước giờ không ai thấy: mọi lượt tạo video thành công đều đi qua
+    proxy `/api/captcha`, và proxy tự thay bằng khoá đúng. Đường nội bộ này thì
+    không. Đường ẢNH vốn đã dùng khoá cấu hình (`flow_google.build_headers`).
+    """
+
+    def test_doc_khoa_tu_cau_hinh(self):
+        self.assertIn('flow_cfg.get("captcha_solver_api_key")', MA)
+
+    def test_khong_con_chuyen_tiep_khoa_nguoi_goi(self):
+        self.assertNotIn('headers={"authorization": authorization or ""}', MA)
+
+    def test_dung_dau_solver_khi_goi(self):
+        self.assertIn("headers=dau_solver", MA)
+
+
 class ChiKhongThuLAI_KHI_DA_TIEU_TIN_DUNG(unittest.TestCase):
     """Lằn ranh của đường REST là có Generation ID hay chưa.
 

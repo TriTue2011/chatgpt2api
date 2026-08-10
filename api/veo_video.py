@@ -239,6 +239,14 @@ async def handle_video_generation(
         flow_cfg = _pool_config()
         from services.captcha import captcha_base
         solver_url = captcha_base(flow_cfg.get("captcha_solver_url"))
+        # Khoá gọi solver phải là khoá CẤU HÌNH của solver, không phải khoá của
+        # người gọi. Chỗ này vốn chuyển tiếp `authorization` xuống thẳng, nên
+        # solver trả 401 "invalid api key" và bên gọi nhận
+        # "Flow Video generation failed: invalid api key" — hỏng ngay ở 0 giây,
+        # chưa từng chạm tới Google. Đường ẢNH đã dùng khoá cấu hình từ trước
+        # (`flow_google.build_headers`); đường video thì chưa bao giờ.
+        khoa_solver = str(flow_cfg.get("captcha_solver_api_key") or "")
+        dau_solver = {"Authorization": f"Bearer {khoa_solver}"} if khoa_solver else {}
 
         acc = _next_account()
         if not acc:
@@ -311,7 +319,7 @@ async def handle_video_generation(
                         "wait_timeout": _NGAN_SACH_SOLVER_S,
                         "headless": True,
                     },
-                    headers={"authorization": authorization or ""}
+                    headers=dau_solver,
                 )
                 resp.raise_for_status()
                 data = resp.json()
