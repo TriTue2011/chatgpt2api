@@ -200,9 +200,11 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
     "image_start": {
         # Omni Flash CÓ ở chế độ này (abra_i2v_4/6/8/10s) — đo 10/08/2026.
         NHAN_OMNI: "abra_i2v_{giay}s",
-        # Bậc chuẩn `_s` là thứ giao diện Flow thật sự dùng cho Quality, và là
-        # khoá DUY NHẤT của chế độ này có bản dọc.
+        # Hai bậc cao đi theo họ `_s`, và chỉ chúng có bản dọc. Bậc Fast từng
+        # bị khai nhầm là "không có" vì tôi dò họ KHÔNG có `_s`
+        # (`veo_3_1_i2v_fast` → 404); đo lại đúng họ thì nó có — 10/08/2026.
         NHAN_QUALITY: "veo_3_1_i2v_s",
+        NHAN_FAST: "veo_3_1_i2v_s_fast",
         NHAN_LITE: "veo_3_1_i2v_lite",
         NHAN_LITE_CHO: "veo_3_1_i2v_lite_low_priority",
     },
@@ -210,7 +212,12 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
         # `_fl` = first-last. Payload thật của giao diện dùng
         # `veo_3_1_i2v_s_portrait_fl` — cả một họ khoá mà không cách nào đoán ra
         # từ bản gỡ rối; họ `interpolation_*` cũng có thật nhưng chỉ bậc Lite.
+        #
+        # KHÔNG có Omni Flash ở đây: giao diện Flow báo thẳng "Mô hình này không
+        # hỗ trợ khung hình kết thúc" (10/08/2026), và quả thật không khoá
+        # `abra_*` nào nhận hậu tố `_fl`.
         NHAN_QUALITY: "veo_3_1_i2v_s_fl",
+        NHAN_FAST: "veo_3_1_i2v_s_fast_fl",
         NHAN_LITE: "veo_3_1_interpolation_lite",
         NHAN_LITE_CHO: "veo_3_1_interpolation_lite_low_priority",
     },
@@ -229,9 +236,13 @@ MODEL_VIDEO: dict[str, dict[str, str]] = {
 # `generatedVideo.aspectRatio = VIDEO_ASPECT_RATIO_PORTRAIT` — tức Lite ra được
 # video dọc bằng chính khoá thường.
 #
-# Quét API khớp: chỉ hai khoá t2v có bản `_portrait`. Các bản Lite, cả họ
-# i2v/interpolation/r2v, và Omni Flash đều KHÔNG có —
-# `veo_3_1_t2v_lite_portrait` trả 404.
+# Quét API khớp: có bản `_portrait` là hai khoá t2v bậc cao và hai khoá thuộc
+# họ `i2v_s` (kể cả bản `_fl`). Mọi bản Lite, cả họ `interpolation_*` lẫn
+# `r2v_*`, và Omni Flash đều KHÔNG có — `veo_3_1_t2v_lite_portrait` và
+# `veo_3_1_r2v_lite_portrait` đều trả 404.
+#
+# Vị trí hậu tố có quy tắc: `_portrait` đứng SAU `_fast` và TRƯỚC `_fl`. Đảo
+# thứ tự là 404 (`veo_3_1_i2v_s_portrait_fast` không tồn tại).
 #
 # Với những khoá không có bản dọc thì gửi khoá thường kèm
 # `aspectRatio: VIDEO_ASPECT_RATIO_PORTRAIT` — cách đó qua được vòng kiểm tham
@@ -243,6 +254,8 @@ KHOA_DOC = {
     # Họ i2v bậc chuẩn: `_portrait` chèn TRƯỚC hậu tố `_fl`, không phải nối đuôi.
     "veo_3_1_i2v_s": "veo_3_1_i2v_s_portrait",
     "veo_3_1_i2v_s_fl": "veo_3_1_i2v_s_portrait_fl",
+    "veo_3_1_i2v_s_fast": "veo_3_1_i2v_s_fast_portrait",
+    "veo_3_1_i2v_s_fast_fl": "veo_3_1_i2v_s_fast_portrait_fl",
 }
 
 
@@ -437,8 +450,8 @@ def chon_model_video(che_do: str, nhan: str | None, duration: str | None,
                      ty_le: str = "16:9") -> str:
     """Khoá model theo CHẾ ĐỘ + nhãn giao diện.
 
-    Không chế độ nào có đủ năm bậc (xem bảng `MODEL_VIDEO`): chỉ văn-bản-sang-
-    video có Fast, và Thành phần thì không có cả Fast lẫn Quality. Xin một bậc
+    Không chế độ nào có đủ năm bậc (xem bảng `MODEL_VIDEO`): Thành phần không
+    có Fast lẫn Quality, còn ảnh đầu+cuối thì không có Omni Flash. Xin một bậc
     mà chế độ đó không có là ném lỗi nêu rõ chế độ này có gì — thay vì lặng lẽ
     hạ xuống Lite. Người chọn Quality mà nhận Lite là đúng kiểu hỏng đã gây sự
     cố 08/08/2026, chỉ khác chiều.

@@ -366,8 +366,8 @@ class ChonModelVideo(unittest.TestCase):
                          "veo_3_1_t2v_fast")
 
     def test_component_dung_bang_r2v(self):
-        """Nhãn Fast/Quality ở chế độ thành phần trỏ vào khoá 404 — xem
-        `DoThatTrenDuongVideo`. Chỉ Lite là dùng được."""
+        """Chế độ thành phần chỉ có Omni Flash và hai bản Lite; Fast lẫn Quality
+        đều bị chính giao diện Flow chặn."""
         self.assertEqual(FR.chon_model_video("component", "Veo 3.1 - Lite", None),
                          "veo_3_1_r2v_lite")
 
@@ -473,15 +473,30 @@ class DoThatTrenDuongVideo(unittest.TestCase):
     def test_text_to_video_khong_doi_anh(self):
         self.assertEqual(len(self._than("text_to_video", [])["requests"]), 1)
 
-    def test_ba_che_do_co_anh_khong_co_ban_fast(self):
-        """Không chế độ có ảnh nào có bậc Fast — `veo_3_1_i2v_fast`,
-        `veo_3_1_r2v_fast`… đều 404. Phải báo lỗi nêu bản có thật chứ không lặng
-        lẽ hạ xuống Lite."""
-        for che_do in ("component", "image_start", "image_start_end"):
-            with self.subTest(che_do=che_do):
-                with self.assertRaises(ValueError) as ngu_canh:
-                    FR.chon_model_video(che_do, "Veo 3.1 - Fast", None)
-                self.assertIn("Veo 3.1 - Lite", str(ngu_canh.exception))
+    def test_hai_che_do_anh_co_bac_fast_theo_ho_s(self):
+        """Bậc Fast của hai chế độ ảnh nằm ở họ `_s`, không phải họ trần.
+
+        `veo_3_1_i2v_fast` trả 404 nên tôi từng khai cả hai chế độ này không có
+        Fast — sai, chỉ là dò nhầm họ tên. Đo lại 10/08/2026: `veo_3_1_i2v_s_fast`
+        và `veo_3_1_i2v_s_fast_fl` đều có thật.
+        """
+        self.assertEqual(FR.chon_model_video("image_start", "Veo 3.1 - Fast", None),
+                         "veo_3_1_i2v_s_fast")
+        self.assertEqual(FR.chon_model_video("image_start_end", "Veo 3.1 - Fast", None),
+                         "veo_3_1_i2v_s_fast_fl")
+
+    def test_thanh_phan_khong_co_fast(self):
+        """Chế độ Thành phần thì thật sự không có Fast — phải báo lỗi nêu bản có
+        thật chứ không lặng lẽ hạ xuống Lite."""
+        with self.assertRaises(ValueError) as ngu_canh:
+            FR.chon_model_video("component", "Veo 3.1 - Fast", None)
+        self.assertIn("Veo 3.1 - Lite", str(ngu_canh.exception))
+
+    def test_anh_dau_cuoi_khong_co_omni_flash(self):
+        """Giao diện Flow báo "Mô hình này không hỗ trợ khung hình kết thúc", và
+        không khoá `abra_*` nào nhận hậu tố `_fl`."""
+        with self.assertRaises(ValueError):
+            FR.chon_model_video("image_start_end", "Omni Flash", "8s")
 
     def test_hai_che_do_anh_co_bac_quality_ten_khac_han(self):
         """Payload thật của giao diện dùng họ `i2v_s`, không phải `interpolation`
@@ -490,7 +505,9 @@ class DoThatTrenDuongVideo(unittest.TestCase):
                          "veo_3_1_i2v_s")
         self.assertEqual(FR.chon_model_video("image_start_end", "Veo 3.1 - Quality", None),
                          "veo_3_1_i2v_s_fl")
-        # Chế độ thành phần thì vẫn chưa tìm ra bậc Quality nào.
+        # Chế độ thành phần KHÔNG có bậc Quality, và đây không phải chuyện chưa
+        # dò ra tên: giao diện Flow chặn thẳng "Bạn không thể dùng thành phần
+        # hình ảnh với mô hình này" (10/08/2026).
         with self.assertRaises(ValueError):
             FR.chon_model_video("component", "Veo 3.1 - Quality", None)
 
@@ -547,12 +564,13 @@ class DoThatTrenDuongVideo(unittest.TestCase):
                 f"abra_t2v_{giay}s")
 
     def test_moi_khoa_trong_bang_deu_la_khoa_da_do_la_CO(self):
-        """Bảng chỉ được chứa khoá đã quét ra là dùng được (09/08/2026)."""
+        """Bảng chỉ được chứa khoá đã quét ra là dùng được (10/08/2026)."""
         DA_DO_LA_CO = {
             "veo_3_1_t2v", "veo_3_1_t2v_fast", "veo_3_1_t2v_lite",
             "veo_3_1_t2v_lite_low_priority",
             "veo_3_1_i2v_lite", "veo_3_1_i2v_lite_low_priority",
             "veo_3_1_i2v_s", "veo_3_1_i2v_s_fl",
+            "veo_3_1_i2v_s_fast", "veo_3_1_i2v_s_fast_fl",
             "veo_3_1_interpolation_lite", "veo_3_1_interpolation_lite_low_priority",
             "veo_3_1_r2v_lite", "veo_3_1_r2v_lite_low_priority",
         }
