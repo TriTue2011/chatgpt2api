@@ -22,6 +22,7 @@ from services.backend_router import backend_router
 from services.config import config
 from services.image_providers import get_image_adapter, is_noauth_image_provider
 from services.image_providers._base import now_sec
+from services.request_context import note_provider_account
 from utils.log import logger
 
 _NON_EN = re.compile(r'[^\x00-\x7F]')
@@ -418,6 +419,19 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
 
 def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     """Handle image generation for a single model (adapter or ChatGPT DALL-E)."""
+    # Ghi NGAY model thật vào ngữ cảnh yêu cầu, TRƯỚC khi gọi adapter.
+    #
+    # Combo "AI image" gồm tám model chênh nhau rất xa về chất lượng, và khi
+    # model đầu bận thì nó lặng lẽ tụt xuống model sau. Nhật ký chỉ có tên combo
+    # (`log_service` lấy `dest_model or self.model`, mà `self.model` chính là
+    # "AI image"), nên ảnh ra mờ hay sai khung hình là không cách nào truy được
+    # model nào đã dựng. Từ đây mọi lượt đều có ít nhất provider + model thật.
+    #
+    # Provider nào biết TÀI KHOẢN cụ thể (Flow) vẫn gọi lại `note_provider_account`
+    # bên trong adapter; `set_dest` ghi đè nên bản đầy đủ hơn thắng, còn cả hai
+    # đều được giữ trong `dest_trail`.
+    note_provider_account(route.provider, model=route.model)
+
     prompt = str(body.get("prompt") or "")
     model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)

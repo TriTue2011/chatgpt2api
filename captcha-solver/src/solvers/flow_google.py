@@ -636,12 +636,53 @@ async def generate_image(
         except Exception as e:
             logger.debug("flow_menu_open skipped: %s", e)
 
-        await _set_dropdown(page, aspect_label, "aspect")
+        # ── KIỂM CHỨNG TỶ LỆ KHUNG HÌNH ──────────────────────────────────────
+        #
+        # Chỗ này từng bấm xong là đi tiếp, với lý lẽ "bấm hụt tỷ lệ chỉ ra ảnh
+        # sai kích thước — khó chịu nhưng rẻ". Không rẻ: Flow NHỚ lựa chọn theo
+        # từng hồ sơ, nên một lượt VIDEO 9:16 để dropdown lại ở 9:16, rồi mọi
+        # lượt ẢNH sau đó lặng lẽ ra ảnh dọc dù người dùng xin 16:9 — không log
+        # nào ghi, không ai biết cho tới khi nhìn tận mắt tấm ảnh.
+        async def _doc_ty_le_dang_chon() -> str:
+            try:
+                return await page.evaluate("""() => {
+                  const ds = Array.from(document.querySelectorAll('button, div[role=button], [aria-haspopup]'));
+                  const t = ds.find(b => {
+                    const s = (b.innerText || '').trim();
+                    return s.length < 30 && /arrow_drop_down/i.test(s)
+                           && /\\d+\\s*:\\s*\\d+/.test(s);
+                  });
+                  if (!t) return "";
+                  const m = (t.innerText || '').match(/\\d+\\s*:\\s*\\d+/);
+                  return m ? m[0].replace(/\\s+/g, '') : "";
+                }""")
+            except Exception as _exc:
+                logger.warning("flow_image: không đọc được tỷ lệ đang chọn: %s", _exc)
+                return ""
+
+        _ty_le_that = ""
+        for _lan in range(2):
+            await _set_dropdown(page, aspect_label, "aspect")
+            _ty_le_that = await _doc_ty_le_dang_chon()
+            if not _ty_le_that or _ty_le_that == aspect_label:
+                break
+            logger.warning("flow_image: tỷ lệ đang là %r nhưng xin %r — bấm lại",
+                           _ty_le_that, aspect_label)
+        # Đọc không ra thì đi tiếp (giao diện có thể đã đổi) — chỉ chặn khi đọc
+        # ĐƯỢC và thấy sai, y như nhánh model bên dưới.
+        if _ty_le_that and _ty_le_that != aspect_label:
+            raise RuntimeError(
+                f"Flow đang để khung hình {_ty_le_that!r} chứ không phải "
+                f"{aspect_label!r} — dừng, chưa bấm Tạo. Flow nhớ lựa chọn theo "
+                f"hồ sơ, nên một lượt video dọc để lại dropdown ở 9:16 và mọi "
+                f"lượt ảnh sau đó ra ảnh dọc mà không ai hay.")
+
         # ── KIỂM CHỨNG MODEL — giống hệt cách đường VIDEO đã làm từ 02/08 ────
         #
         # Model là thứ duy nhất trong ba dropdown mà chọn hụt sẽ đổi hẳn LOẠI sản
         # phẩm và tiêu tín dụng của loại khác. Tỉ lệ khung hình hay số lượng bấm
-        # hụt thì chỉ ra ảnh sai kích thước — khó chịu nhưng rẻ.
+        # hụt thì chỉ ra ảnh sai kích thước — nay tỷ lệ cũng được kiểm ở trên,
+        # vì "sai kích thước" hoá ra là lỗi im lặng kéo dài nhiều ngày.
         #
         # KHÔNG tin vào giá trị trả về của `_set_dropdown`: có nhánh nó trả
         # `clicked`, tức "đã bấm một cái gì đó", chứ không phải "đã chọn đúng
