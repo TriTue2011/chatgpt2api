@@ -133,6 +133,66 @@ class LenhGhepDungThuTuDauVao(unittest.TestCase):
         self.assertIn("[v0][v1][v2]concat=n=3:v=1:a=0", loc)
 
 
+class DocPromptCanhTuDapLLM(unittest.TestCase):
+    """Bộ tách cảnh của gateway làm TỐT, nhưng bước đọc kết quả ném hết đi.
+
+    Đo 10/08/2026 trên máy chạy thật: LLM trả bốn prompt cảnh có nhân vật xuyên
+    suốt, mỗi cảnh một dòng, ngăn nhau bằng dấu phẩy cuối dòng — không phải mảng
+    JSON. Bản cũ chỉ nhận JSON (tìm `[` và `]`), không thấy là coi như thất bại
+    rồi âm thầm trả về `[prompt] * n`. Hệ quả: cả bốn cảnh dùng CHUNG một mô tả,
+    model dựng ra bốn biến thể na ná nhau, nối lại càng thấy vô lý — mà không
+    log nào ghi lại.
+    """
+
+    DAP_THAT = (
+        "A cinematic early morning scene at a tiny seaside coffee shop in Vietnam, "
+        "the same young Vietnamese barista opening wooden shutters as warm light spills in.,\n"
+        "Inside the same small Vietnamese seaside cafe, the same barista prepares "
+        "traditional coffee with a metal phin filter, steam rising from the cup.,\n"
+        "The same traveler sits by the window of the seaside cafe, slowly stirring "
+        "the coffee while gentle ocean waves roll behind the glass.,\n"
+        "Wide shot of the same seaside cafe from the beach, barista and traveler "
+        "small in frame, morning light warm across the sand."
+    )
+
+    def test_doc_duoc_dap_van_ban_thuong(self):
+        ra = S._doc_canh(self.DAP_THAT)
+        self.assertEqual(len(ra), 4)
+        self.assertTrue(all(len(x) > 40 for x in ra))
+        # Không được còn dấu phẩy ngăn dòng ở cuối mỗi cảnh.
+        self.assertFalse(any(x.endswith(",") for x in ra))
+
+    def test_bon_canh_phai_KHAC_nhau(self):
+        """Đây là toàn bộ mục đích: bốn cảnh giống nhau là video vô lý."""
+        ra = S._doc_canh(self.DAP_THAT)
+        self.assertEqual(len(set(ra)), len(ra))
+
+    def test_van_doc_duoc_mang_JSON(self):
+        """Model nào chịu trả JSON thì đường cũ vẫn phải chạy."""
+        ra = S._doc_canh('["' + "canh mot day du dai de vuot nguong doc" + '", "'
+                         + "canh hai cung day du dai de vuot nguong doc" + '"]')
+        self.assertEqual(len(ra), 2)
+
+    def test_bo_so_thu_tu_va_gach_dau_dong(self):
+        ra = S._doc_canh(
+            "1. Canh mot mo ta day du de vuot qua nguong ky tu toi thieu\n"
+            "2) Canh hai mo ta day du de vuot qua nguong ky tu toi thieu\n"
+            "- Canh ba mo ta day du de vuot qua nguong ky tu toi thieu")
+        self.assertEqual(len(ra), 3)
+        self.assertFalse(any(x[0].isdigit() or x[0] in "-*•" for x in ra))
+
+    def test_bo_dong_dan_nhap(self):
+        ra = S._doc_canh(
+            "Here are 4 scenes:\n"
+            "Canh mot mo ta day du de vuot qua nguong ky tu toi thieu roi\n"
+            "Canh hai mo ta day du de vuot qua nguong ky tu toi thieu roi")
+        self.assertEqual(len(ra), 2)
+
+    def test_dap_rong_thi_tra_rong(self):
+        self.assertEqual(S._doc_canh(""), [])
+        self.assertEqual(S._doc_canh("   "), [])
+
+
 class GhepPhaiTONTRONGKhungHinh(unittest.TestCase):
     """`/v1/video/compose` khai nhận `aspect_ratio` nhưng chưa bao giờ dùng.
 

@@ -10,10 +10,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import tempfile
 
 from services.image_providers.veo_video import veo_adapter
 from services.video.assemble import VideoError, concat_clips, extract_last_frame
+from utils.log import logger
 
 
 def _la_model_flow(model: str) -> bool:
@@ -108,15 +110,56 @@ def _split_scenes(prompt: str, n: int, auth_key: str = "") -> list[str]:
             timeout=120,
         )
         content = r.json()["choices"][0]["message"]["content"]
-        start, end = content.find("["), content.rfind("]")
-        arr = json.loads(content[start:end + 1]) if start >= 0 < end else []
-        scenes = [str(s).strip() for s in arr if str(s).strip()]
+        scenes = _doc_canh(content)
         if scenes:
             return scenes[:n]
-    except Exception:
-        pass
-    # Fallback: lặp cùng prompt cho đủ n cảnh (vẫn ra video, kém đa dạng).
+        logger.warning({"event": "story_tach_canh_khong_doc_duoc",
+                        "dau_dap": str(content)[:200]})
+    except Exception as exc:
+        logger.warning({"event": "story_tach_canh_loi", "error": str(exc)[:200]})
+    # Đường lui: lặp cùng prompt cho đủ n cảnh. PHẢI log, vì hệ quả không nhìn
+    # thấy từ ngoài — video vẫn ra, chỉ là bốn cảnh cùng một mô tả nên dựng ra
+    # bốn biến thể na ná nhau, nối lại càng thấy vô lý. Đo 10/08/2026: cả bốn
+    # cảnh của một lượt thật đều mang nguyên câu gốc mà không log nào ghi lại.
+    logger.warning({"event": "story_dung_prompt_lap", "so_canh": max(1, n),
+                    "hau_qua": "các cảnh giống nhau, video kém liền mạch"})
     return [prompt] * max(1, n)
+
+
+def _doc_canh(content: str) -> list[str]:
+    """Đọc danh sách prompt cảnh từ đáp của LLM. Chấp nhận nhiều dạng.
+
+    Bản cũ CHỈ nhận mảng JSON: tìm `[` và `]`, không thấy là coi như thất bại.
+    Nhưng model thường trả văn bản thường dù đã bị yêu cầu trả JSON — đo
+    10/08/2026: nó viết bốn prompt cảnh rất tốt, mỗi cảnh một dòng, ngăn nhau
+    bằng dấu phẩy cuối dòng. Bước đọc ném hết đi rồi rơi về lặp prompt gốc, nên
+    chất lượng tách cảnh TỐT của hệ thống bị chính chỗ này làm mất.
+    """
+    s = str(content or "").strip()
+    if not s:
+        return []
+    # 1) Mảng JSON, nếu model chịu trả đúng dạng.
+    dau, cuoi = s.find("["), s.rfind("]")
+    if dau >= 0 < cuoi and cuoi > dau:
+        try:
+            arr = json.loads(s[dau:cuoi + 1])
+            ra = [str(x).strip() for x in arr if str(x).strip()]
+            if ra:
+                return ra
+        except (ValueError, TypeError):
+            pass
+    # 2) Mỗi cảnh một dòng — dạng model hay dùng nhất. Bỏ số thứ tự, gạch đầu
+    #    dòng, dấu nháy và dấu phẩy cuối dòng.
+    dong: list[str] = []
+    for l in s.splitlines():
+        t = l.strip().strip(",").strip()
+        t = re.sub(r'^\s*(?:[-*•]|\d+[.)])\s*', "", t)
+        t = t.strip().strip('"').strip("'").strip()
+        # Bỏ dòng dẫn nhập kiểu "Here are 4 scenes:" — ngắn và có dấu hai chấm.
+        if len(t) < 25 or (t.endswith(":") and len(t) < 80):
+            continue
+        dong.append(t)
+    return dong
 
 
 def make_story_video(
