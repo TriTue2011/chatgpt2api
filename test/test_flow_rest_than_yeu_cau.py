@@ -382,7 +382,7 @@ class ChonModelVideo(unittest.TestCase):
 
     def test_nhan_la_ve_mac_dinh(self):
         self.assertEqual(FR.chon_model_video("text_to_video", "Model Nao Do", None),
-                         "veo_3_1_t2v_lite_low_priority")
+                         "veo_3_1_t2v_lite")
 
 
 class DocDapTraLoi(unittest.TestCase):
@@ -534,7 +534,7 @@ class DoThatTrenDuongVideo(unittest.TestCase):
     def test_nhan_la_van_ve_mac_dinh(self):
         """Nhãn ngoài bộ nhãn giao diện thì không chặn — cấu hình cũ vẫn chạy."""
         self.assertEqual(FR.chon_model_video("text_to_video", "Model nao do", None),
-                         "veo_3_1_t2v_lite_low_priority")
+                         "veo_3_1_t2v_lite")
 
     def test_omni_flash_co_o_ba_che_do_tru_anh_dau_cuoi(self):
         """Đo 10/08: abra_i2v_* CÓ (4/6/8/10s), abra_interpolation_* thì không."""

@@ -180,6 +180,11 @@ NHAN_LITE_CHO = "Veo 3.1 - Lite [Lower Priority]"
 NHAN_FAST = "Veo 3.1 - Fast"
 NHAN_QUALITY = "Veo 3.1 - Quality"
 
+# CẢNH BÁO về các bậc `[Lower Priority]`: khoá `*_low_priority` có thật trên API
+# nhưng tài khoản của ta KHÔNG được dùng — Google trả 403 "The caller does not
+# have permission" (đo 10/08/2026, xem chú thích ở `NHAN_MAC_DINH`). Giữ chúng
+# trong bảng vì tên là tên thật và tài khoản gói cao hơn có thể dùng được, nhưng
+# ĐỪNG đặt làm mặc định. Ai chọn bậc đó sẽ nhận 403 nói về quyền.
 MODEL_VIDEO: dict[str, dict[str, str]] = {
     "text_to_video": {
         NHAN_OMNI: "abra_t2v_{giay}s",
@@ -266,8 +271,23 @@ def khoa_theo_ty_le(khoa: str, ty_le: str) -> str:
     return khoa
 
 
-# Nhãn dùng khi bên gọi không nêu: bản ưu tiên thấp, rẻ nhất.
-NHAN_MAC_DINH = NHAN_LITE_CHO
+# Nhãn dùng khi bên gọi không nêu.
+#
+# TỪNG là `NHAN_LITE_CHO` (bản ưu tiên thấp, rẻ nhất) và đó là NGUYÊN NHÂN của
+# cái 403 chặn đường video suốt 09-10/08/2026. Các khoá `*_low_priority` CÓ THẬT
+# nhưng tài khoản của ta KHÔNG ĐƯỢC DÙNG, và Google từ chối bằng đúng câu
+# "The caller does not have permission". Đo trên tài khoản Main, giữ nguyên mọi
+# thứ khác, chỉ đổi một trường:
+#
+#     veo_3_1_t2v_lite_low_priority  ->  403 The caller does not have permission
+#     veo_3_1_t2v_lite               ->  200, và ra MP4 thật 2,1 MB
+#
+# BÀI HỌC ĐẮT: phép dò tên model (gửi KHÔNG kèm reCAPTCHA rồi đọc mã trả về) coi
+# 403 là "tên hợp lệ". Sai — ở đó có HAI loại 403 khác nhau hẳn: "tên này Google
+# biết" và "tên này bạn không được dùng". Cả hai đều 403 nên phép dò không phân
+# biệt được, và tôi đã kết luận `_low_priority` dùng được trong khi nó bị chặn.
+# Ai dò thêm khoá mới nhớ đọc THÔNG ĐIỆP, đừng chỉ đọc mã số.
+NHAN_MAC_DINH = NHAN_LITE
 MODEL_VIDEO_MAC_DINH = {m: b[NHAN_MAC_DINH] for m, b in MODEL_VIDEO.items()}
 # Mọi nhãn giao diện, để phân biệt "nhãn lạ" với "nhãn có thật nhưng chế độ này
 # không có" — hai thứ cần thông báo khác nhau.
