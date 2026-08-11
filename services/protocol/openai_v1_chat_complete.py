@@ -1216,6 +1216,26 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                 best_a, best_n = ao, len(at)
         return best_a
 
+    def _fuzzy_controls(service: str, seg: list[str]) -> list[tuple[str, dict]]:
+        """Không khớp CHÍNH XÁC tên nào → xếp hạng đa tín hiệu trên toàn bộ thiết
+        bị (bắt lỗi nhận dạng giọng nói: "đèn trần phòng khác", tên dính chữ,
+        gọi thiếu chữ). Cổng CHẶT hơn đường thường vì chọn nhầm ở đây là điều
+        khiển nhầm thiết bị; không qua cổng thì trả rỗng để model xử lý như cũ."""
+        try:
+            from services.ha_intent_rank import pick_entity_fuzzy
+            picked = pick_entity_fuzzy(
+                seg, ent_by_name, entity_area, service=service, skip_tokens=_CONN,
+            )
+        except Exception:
+            return []
+        if not picked:
+            return []
+        eid, dom, orig = picked
+        args: dict = {"name": orig, "domain": [dom], "_eids": [eid]}
+        if area := entity_area.get(eid):
+            args["area"] = area
+        return [(service, args)]
+
     def _segment_controls(service: str, seg: list[str]) -> list[tuple[str, dict]]:
         """All controls in one verb-segment → [(service, args)…]."""
         # Non-overlapping entity-name matches, longest first.
@@ -1286,7 +1306,7 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                             args["area"] = ar
                         out.append((service, args))
                 # still ambiguous → skip
-            return out
+            return out or _fuzzy_controls(service, seg)
         # Generic device-class + area (whole class in an area); hoặc + từ "tất cả"
         # → toàn bộ class ("tắt hết đèn" → tắt mọi light, không cần area).
         for phrase, dom in sorted(_LOCAL_DEVICE_CLASS.items(), key=lambda kv: -len(kv[0].split())):
@@ -1303,7 +1323,7 @@ def _ha_local_intent(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | N
                     if eids:
                         out.append((service, {"domain": [dom], "_eids": eids}))
                 break
-        return out
+        return out or _fuzzy_controls(service, seg)
 
     results: list[tuple[str, dict]] = []
     for k, (vi, svc) in enumerate(verbs):
