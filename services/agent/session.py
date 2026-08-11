@@ -254,6 +254,39 @@ def search(user_id: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]
     ]
 
 
+def users_active_since(ts: float) -> list[tuple[str, int]]:
+    """user_id + số turn ghi được kể từ ``ts``, nhiều nhất trước — nguồn ứng
+    viên cho pipeline chưng cất hồ sơ (services.agent.distill)."""
+    if not is_enabled():
+        return []
+    try:
+        with _lock:
+            rows = _db().execute(
+                "SELECT user_id, COUNT(*) AS n FROM turns WHERE created_at > ? "
+                "GROUP BY user_id ORDER BY n DESC",
+                (float(ts),),
+            ).fetchall()
+    except Exception:
+        return []
+    return [(str(r[0]), int(r[1])) for r in rows]
+
+
+def count_turns_since(user_id: str, ts: float) -> int:
+    """Số turn của một user kể từ ``ts`` — distill dùng để bỏ qua user chưa
+    có đủ chất liệu mới."""
+    if not is_enabled() or not user_id:
+        return 0
+    try:
+        with _lock:
+            row = _db().execute(
+                "SELECT COUNT(*) FROM turns WHERE user_id=? AND created_at > ?",
+                (str(user_id), float(ts)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 def clear_history(user_id: str) -> None:
     """Wipe session messages + summary (turns log kept for audit/search)."""
     if not user_id:

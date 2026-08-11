@@ -160,6 +160,12 @@ def _parse_tasks() -> list[dict[str, Any]]:
         "text": "Quét nhật ký nhóm: ai nhắc tới + có hẹn → đặt nhắc trước 1 ngày/1 giờ",
         "system": True,
     })
+    tasks.append({
+        "id": "user_profile_distill",
+        "intent": "read",
+        "text": "Chưng cất hồ sơ người dùng + fact từ hội thoại (mỗi ngày, sau giờ cấu hình)",
+        "system": True,
+    })
 
     _ensure_heartbeat_md()
     try:
@@ -378,10 +384,29 @@ def _eval_chatlog_nhac() -> tuple[str, str]:
         return "skip", f"error: {exc}"
 
 
+def _eval_distill() -> tuple[str, str]:
+    """Chưng cất hồ sơ người dùng (L3) + fact (L1) — services.agent.distill."""
+    try:
+        from services.agent import distill
+        if not distill.is_enabled():
+            return "skip", "distill tắt (agent_distill)"
+        if not distill.due_now():
+            return "skip", "chưa đến giờ hoặc hôm nay đã chạy"
+        # Chạy NỀN: lô này gọi model tối đa ~12 phút — không được ghim thread
+        # heartbeat (chatlog_nhac_scan + task người dùng còn chờ sau nó).
+        # run_once tự NHẬN ngày ngay khi bắt đầu nên tick sau không chạy đúp.
+        threading.Thread(target=distill.run_once, name="agent-distill",
+                         daemon=True).start()
+        return "act", "chưng cất hồ sơ chạy nền (kết quả xem log distill)"
+    except Exception as exc:
+        return "skip", f"error: {exc}"
+
+
 _HANDLERS: dict[str, Callable[[], tuple[str, str]]] = {
     "wiki_daily_digest": _eval_wiki_digest,
     "open_goals_nudge": _eval_open_goals,
     "chatlog_nhac_scan": _eval_chatlog_nhac,
+    "user_profile_distill": _eval_distill,
 }
 
 

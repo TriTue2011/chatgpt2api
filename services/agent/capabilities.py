@@ -1862,6 +1862,9 @@ def _h_wiki_search(args: dict, ctx: dict) -> dict:
     lines = [f"Tìm thấy {len(hits)} ghi chú:"]
     for h in hits:
         lines.append(f"• `{h['slug']}` — {h['title']}\n  {h['snippet'][:140]}")
+        lien_quan = h.get("related") or []
+        if lien_quan:
+            lines.append("  ↳ liên quan: " + ", ".join(f"`{s}`" for s in lien_quan))
     return {"text": "\n".join(lines)}
 
 
@@ -1876,7 +1879,16 @@ def _h_wiki_read(args: dict, ctx: dict) -> dict:
     body = w.read(slug, pham_vi=_pham_vi_of(ctx), doc_them=_doc_them_of(ctx))
     if not body:
         return {"text": f"Không có ghi chú `{slug}`."}
-    return {"text": body[:4000]}
+    if len(body) > 4000:
+        # Giữ footer "Ghi chú liên quan" (wiki.read đặt ở cuối) khi cắt trần —
+        # cắt thô từng nuốt gợi ý điều hướng của đúng các note dài cần nó nhất.
+        moc = body.rfind("\n\n---\nGhi chú liên quan")
+        if moc > 0:
+            duoi = body[moc:]
+            body = body[: max(0, 4000 - len(duoi))] + duoi
+        else:
+            body = body[:4000]
+    return {"text": body}
 
 
 def _h_expand_tool_result(args: dict, ctx: dict) -> dict:

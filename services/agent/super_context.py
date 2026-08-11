@@ -144,6 +144,13 @@ def build_bundle(
         from services.agent import state
         prof = (state.load_user_profile(user_id) or "").strip()
         if prof:
+            # Bỏ marker + dòng "_Cập nhật …" của khối tự chưng cất (distill):
+            # ngân sách chỉ 400 ký tự, đừng đốt ~70 ký tự vào chữ trang trí.
+            prof = prof.replace(state.PROFILE_AUTO_MARKER, "")
+            prof = "\n".join(
+                ln for ln in prof.splitlines()
+                if not ln.strip().startswith("_Cập nhật ")
+            ).strip()
             sections.append("### Hồ sơ người này\n" + prof[:400])
     except Exception as exc:
         logger.debug("super_context: profile: %s", exc)

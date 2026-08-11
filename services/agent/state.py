@@ -154,17 +154,32 @@ def _norm_fact(s: str) -> str:
     return _re.sub(r"\s+", " ", s).strip().lower()
 
 
-def _dong_tri_nho(pham_vi: str = "") -> list[str]:
-    """Mọi dòng trí nhớ mà phạm vi này ĐƯỢC THẤY: kho riêng + kho chung.
+def _dong_tri_nho(pham_vi: str = "", *,
+                  duoi_moi_tep: int | None = None) -> list[str]:
+    """Mọi dòng trí nhớ mà phạm vi này ĐƯỢC THẤY: kho riêng rồi kho chung.
 
     Bộ chặn trùng và bộ cập-nhật phải soi đúng tập này, không thì fact đã có
     trong kho chung lại bị thêm lần nữa vào kho riêng.
+
+    Duyệt theo LIST cố định (không phải set): thứ tự set của hai Path đổi theo
+    PYTHONHASHSEED mỗi tiến trình, làm caller nào cắt cửa sổ trên kết quả
+    (vd vớt tam-gram trong _tim_trong_index) đổi hành vi qua mỗi lần restart.
+    ``duoi_moi_tep``: chỉ lấy N dòng cuối MỖI tệp — cửa sổ đều cho cả kho
+    riêng lẫn kho chung, kho chung to không nuốt chỗ của kho riêng.
     """
+    cac_tep = [_memory_file(pham_vi), _MEMORY_FILE] if pham_vi else [_MEMORY_FILE]
     ra: list[str] = []
-    for p in ({_MEMORY_FILE, _memory_file(pham_vi)} if pham_vi else {_MEMORY_FILE}):
+    da_doc: set[str] = set()
+    for p in cac_tep:
+        if str(p) in da_doc:
+            continue
+        da_doc.add(str(p))
         try:
             if p.exists():
-                ra.extend(p.read_text(encoding="utf-8").splitlines())
+                lines = p.read_text(encoding="utf-8").splitlines()
+                if duoi_moi_tep:
+                    lines = lines[-duoi_moi_tep:]
+                ra.extend(lines)
         except Exception:
             continue
     return ra
@@ -460,6 +475,14 @@ def search_memory(query: str, *, limit: int = 6, pham_vi: str = "",
 
 
 def _tim_trong_index(query: str, *, limit: int = 6, pham_vi: str = "") -> list[str]:
+    """Truy hồi LAI (học từ TencentDB-Agent-Memory: nhiều tín hiệu trộn bằng
+    RRF thay vì một ORDER BY duy nhất): bm25 + độ mới + bao phủ tam-gram.
+
+    Bản cũ ``ORDER BY ml.id DESC`` nghĩa là trong các dòng khớp BẤT KỲ từ nào,
+    cứ mới nhất thắng — dòng khớp NHIỀU từ (đúng ý hỏi) thua một dòng mới
+    khớp đúng một từ. Bm25 sửa điều đó; độ mới vẫn giữ làm một tín hiệu; và
+    khi FTS trả về quá ít (từ khoá gõ sai chính tả không khớp từ nguyên vẹn
+    nào), quét thẳng đuôi file bằng tam-gram để vớt dòng gần đúng."""
     q = (query or "").strip()
     if not q or not _memory_file(pham_vi).exists():
         return []
@@ -479,8 +502,19 @@ def _tim_trong_index(query: str, *, limit: int = 6, pham_vi: str = "") -> list[s
     limit = max(1, min(int(limit or 6), 20))
     try:
         with _lock:
-            rows = _mem_db(pham_vi).execute(
-                "SELECT ml.line FROM memory_fts "
+            db = _mem_db(pham_vi)
+            rows = db.execute(
+                "SELECT ml.id, ml.line, bm25(memory_fts) AS r FROM memory_fts "
+                "JOIN memory_lines ml ON ml.id = memory_fts.rowid "
+                "WHERE memory_fts MATCH ? ORDER BY r LIMIT 50",
+                (fts_query,),
+            ).fetchall()
+            # Pool bm25 LIMIT 50 có thể đánh rơi dòng khớp MỚI NHẤT khi có
+            # hơn 50 dòng khớp (dòng mới dài thường bm25 yếu hơn dòng cũ ngắn
+            # lặp từ). Bản cũ `ORDER BY id DESC` luôn bảo đảm N dòng mới nhất
+            # có mặt — giữ bảo đảm đó bằng truy vấn thứ hai gộp vào pool.
+            rows_moi = db.execute(
+                "SELECT ml.id, ml.line FROM memory_fts "
                 "JOIN memory_lines ml ON ml.id = memory_fts.rowid "
                 "WHERE memory_fts MATCH ? ORDER BY ml.id DESC LIMIT ?",
                 (fts_query, limit),
@@ -488,7 +522,52 @@ def _tim_trong_index(query: str, *, limit: int = 6, pham_vi: str = "") -> list[s
     except Exception as exc:
         logger.warning("agent.state: search_memory failed: %s", exc)
         return []
-    return [r[0] for r in rows]
+
+    from services.agent.rrf import NGUONG_VOT, bao_phu_gram, tam_gram, xep_hang_rrf
+    from services.agent.vi_text import fold
+
+    gq = tam_gram(fold(q))
+    # bm25 của SQLite: nhỏ hơn = khớp hơn (rows đã ORDER BY r).
+    hang_bm25: list[str] = []
+    ung_vien: dict[str, int] = {}  # line -> id (bản mới nhất nếu trùng chữ)
+    for rid, line, _r in rows:
+        if line not in ung_vien:
+            hang_bm25.append(line)
+            ung_vien[line] = int(rid)
+        else:
+            ung_vien[line] = max(ung_vien[line], int(rid))
+    for rid, line in rows_moi:
+        if line not in ung_vien:
+            ung_vien[line] = int(rid)  # ngoài top bm25 → không vào hang_bm25
+    gan: dict[str, float] = {}
+    # Vớt bằng tam-gram CHỈ khi FTS trắng tay (mọi từ trong query đều sai
+    # chính tả/dính nhau). Gate hẹp vì đường này chạy mỗi lượt chat: đừng
+    # đọc lại file + quét gram khi FTS đã có kết quả.
+    if not ung_vien:
+        for i, ln in enumerate(_dong_tri_nho(pham_vi, duoi_moi_tep=300)):
+            d = bao_phu_gram(gq, fold(ln))
+            if d >= NGUONG_VOT:
+                # pseudo-id âm giữ đúng thứ tự quét (dòng sau = mới hơn)
+                ung_vien[ln] = -1_000_000 + i
+                gan[ln] = d
+    for ln in ung_vien:
+        if ln not in gan:
+            gan[ln] = bao_phu_gram(gq, fold(ln))
+    hang_moi = sorted(ung_vien, key=lambda ln: -ung_vien[ln])
+    hang_gan = sorted((ln for ln, d in gan.items() if d > 0.0),
+                      key=lambda ln: -gan[ln])
+    ket = list(xep_hang_rrf([hang_bm25, hang_moi, hang_gan])[:limit])
+    # Bảo đảm kế thừa từ bản cũ (ORDER BY id DESC): dòng khớp MỚI NHẤT luôn
+    # có mặt trong kết quả — fact vừa dặn ("mật khẩu wifi MỚI là…") không được
+    # phép vô hình chỉ vì 60 dòng cũ cùng chủ đề trộn điểm RRF tốt hơn.
+    if rows_moi:
+        moi_nhat = rows_moi[0][1]
+        if moi_nhat not in ket:
+            if len(ket) >= limit:
+                ket[-1] = moi_nhat
+            else:
+                ket.append(moi_nhat)
+    return ket
 
 
 # ── Model specs (bot tự học tham số/form từng model — tự tiến hóa) ────────────
@@ -581,6 +660,49 @@ def load_user_profile(user_id: str) -> str:
     except Exception as exc:
         logger.warning("agent.state: read user %s failed: %s", user_id, exc)
     return ""
+
+
+# Ranh giới giữa phần soạn tay và phần bot tự chưng cất trong users/<uid>.md.
+# save_user_profile chỉ thay phần DƯỚI marker — ghi chú tay phía trên giữ nguyên.
+PROFILE_AUTO_MARKER = "<!-- phần dưới do bot tự chưng cất — đừng sửa tay -->"
+
+
+def save_user_profile(user_id: str, auto_text: str, *,
+                      max_chars: int = 4000) -> bool:
+    """Ghi khối hồ sơ TỰ CHƯNG CẤT cho user (pipeline distill gọi mỗi ngày).
+
+    File cũ chưa có marker được coi là soạn tay toàn bộ: giữ nguyên và nối
+    khối tự động xuống dưới. File có marker thì chỉ phần dưới marker bị thay.
+    """
+    auto_text = (auto_text or "").strip()
+    if not auto_text:
+        return False
+    if len(auto_text) > max_chars:
+        auto_text = auto_text[:max_chars]
+    _ensure_dirs()
+    try:
+        _USERS_DIR.mkdir(parents=True, exist_ok=True)
+        p = _USERS_DIR / f"{_safe(user_id)}.md"
+        tay = ""
+        if p.exists():
+            cu = p.read_text(encoding="utf-8")
+            tay = cu.split(PROFILE_AUTO_MARKER, 1)[0].rstrip()
+        # Giờ VN (UTC+7 cố định, không DST) — container chạy UTC, strftime
+        # trần sẽ lệch ngày so với các mốc VN trong thân hồ sơ do distill ghi.
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + 7 * 3600))
+        parts = ([tay, ""] if tay else []) + [
+            PROFILE_AUTO_MARKER,
+            f"_Cập nhật {stamp}_",
+            "",
+            auto_text,
+            "",
+        ]
+        with _lock:
+            p.write_text("\n".join(parts), encoding="utf-8")
+        return True
+    except Exception as exc:
+        logger.warning("agent.state: write user %s failed: %s", user_id, exc)
+        return False
 
 
 def _safe(name: str) -> str:

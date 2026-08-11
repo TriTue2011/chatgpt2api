@@ -398,6 +398,83 @@ def ingest(
     }
 
 
+# Link graph kiểu Obsidian (học từ Wiki + Link Graph của TencentDB-Agent-Memory):
+# thân note nhắc [[slug]] là một cạnh xuôi; note khác nhắc [[slug-này]] là backlink.
+# Nhận cả biến thể index.md đang ghi: [[notes/<slug>|Tiêu đề]] — người dùng /
+# model chép kiểu đó vào thân note thì cạnh vẫn phải được nhận ra.
+_LINK_RE = re.compile(
+    r"\[\[\s*(?:notes/)?([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*(?:\|[^\]]*)?\]\]")
+
+
+def _links_in(text: str) -> list[str]:
+    out: list[str] = []
+    for m in _LINK_RE.findall(text or ""):
+        if m not in out:
+            out.append(m)
+    return out
+
+
+def lien_quan(slug: str, *, pham_vi: str = "",
+              doc_them: list[str] | None = None, limit: int = 5,
+              quet_backlink: int = 200) -> list[str]:
+    """Ghi chú liên quan theo link graph: [[link]] xuôi từ note này + backlink
+    trỏ về nó. Chỉ trả slug có thật và TRONG PHẠM VI của người hỏi (link xuôi
+    cũng phải qua cửa phạm vi — slug là chuỗi đoán được).
+
+    Chi phí: link xuôi giải trực tiếp theo tên file (O(số link)); backlink
+    buộc phải quét kho nên chỉ soi ``quet_backlink`` note MỚI NHẤT — đánh đổi
+    chủ ý: note quá cũ không hiện làm backlink, đổi lấy wiki_read không phải
+    đọc cả kho ngày một to (photo/pdf intent tự ingest mỗi tệp thành note).
+    """
+    path = _NOTES_DIR / f"{slug}.md"
+    raw = ""
+    try:
+        if path.is_file():
+            raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        raw = ""
+    ket: list[str] = []
+    # Link xuôi: đọc đúng các file được nhắc tới.
+    for other in _links_in(raw):
+        if other == slug or other in ket:
+            continue
+        p = _NOTES_DIR / f"{other}.md"
+        try:
+            if not p.is_file():
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        fm, _ = split_frontmatter(text)
+        if note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
+            ket.append(other)
+            if len(ket) >= limit:
+                return ket
+    # Backlink: quét bounded, lọc thô bằng substring trước khi chạy regex.
+    try:
+        files = sorted(_NOTES_DIR.glob("*.md"),
+                       key=lambda x: x.stat().st_mtime,
+                       reverse=True)[:quet_backlink]
+    except OSError:
+        return ket
+    for p in files:
+        other = p.stem
+        if other == slug or other in ket:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if slug not in text or slug not in _links_in(text):
+            continue
+        fm, _ = split_frontmatter(text)
+        if note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
+            ket.append(other)
+            if len(ket) >= limit:
+                break
+    return ket
+
+
 def search(query: str, *, limit: int = 8, pham_vi: str = "",
            doc_them: list[str] | None = None) -> list[dict[str, Any]]:
     if not is_enabled():
@@ -417,7 +494,13 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "",
             break
     if not words:
         return []
+    # Truy hồi lai (học từ TencentDB-Agent-Memory): ba tín hiệu — số từ khớp,
+    # độ mới, bao phủ tam-gram (vớt query gõ sai chính tả không khớp từ nguyên
+    # vẹn nào) — trộn bằng RRF thay vì chỉ sort theo score.
+    from services.agent.rrf import NGUONG_VOT, bao_phu_gram, tam_gram, xep_hang_rrf
+    gq = tam_gram(_fold(query))
     hits: list[dict[str, Any]] = []
+    slug_trong_pham_vi: set[str] = set()
     try:
         for p in sorted(_NOTES_DIR.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
             try:
@@ -427,10 +510,17 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "",
             fm, _ = split_frontmatter(text)
             if not note_trong_pham_vi({"meta": fm}, pham_vi, doc_them):
                 continue
+            slug_trong_pham_vi.add(p.stem)
             low = _fold(text)
             score = sum(1 for w in words if w in low)
+            # Tam-gram CHỈ để vớt note không khớp từ nào — vòng quét này chạy
+            # mỗi lượt chat (super_context), dựng bộ gram trên toàn văn từng
+            # note đã khớp từ là phần đắt nhất mà không thêm tín hiệu gì mấy.
+            do_gan = 0.0
             if score <= 0:
-                continue
+                do_gan = bao_phu_gram(gq, low)
+                if do_gan < NGUONG_VOT:
+                    continue
             title = p.stem
             for line in text.splitlines():
                 if line.startswith("# "):
@@ -444,11 +534,27 @@ def search(query: str, *, limit: int = 8, pham_vi: str = "",
                 "title": title,
                 "score": score,
                 "snippet": snippet,
+                "_gan": do_gan,
+                "_text": text,
             })
     except OSError:
         return []
-    hits.sort(key=lambda h: (-h["score"], h["slug"]))
+    hang_tu = [h["slug"] for h in sorted(hits, key=lambda h: (-h["score"], h["slug"]))]
+    hang_moi = [h["slug"] for h in hits]  # vòng glob đã đi theo mtime giảm dần
+    hang_gan = [h["slug"] for h in sorted(hits, key=lambda h: -h["_gan"])
+                if h["_gan"] > 0.0]
+    thu_tu = {s: i for i, s in enumerate(xep_hang_rrf([hang_tu, hang_moi, hang_gan]))}
+    hits.sort(key=lambda h: thu_tu[h["slug"]])  # mọi slug đều có trong hang_tu
     out = hits[: max(1, min(limit, 20))]
+    # Link graph 1 bậc — CHỈ link xuôi (backlink để dành cho wiki.read, đó là
+    # khác biệt chủ ý chứ không phải hai bản lệch nhau). Chỉ tính cho hit
+    # được trả về, không tốn regex cho hit bị cắt sau xếp hạng.
+    for h in out:
+        text = h.pop("_text")
+        links = _links_in(text) if "[[" in text else []
+        h["related"] = [s for s in links
+                        if s != h["slug"] and s in slug_trong_pham_vi][:3]
+        h.pop("_gan", None)
     # P1#7: redact snippet before LLM context
     try:
         from services.privacy_gate import redact_text
@@ -479,6 +585,21 @@ def read(slug: str, *, pham_vi: str = "",
             try:
                 from services.privacy_gate import redact_text
                 text = redact_text(text, session_id="rag:wiki")
+            except Exception:
+                pass
+            # Link graph 1 bậc: mách model các note nối với note này để lần
+            # theo được ngữ cảnh mà không phải search lại từ đầu.
+            try:
+                lq = lien_quan(slug, pham_vi=pham_vi, doc_them=doc_them)
+                if lq:
+                    footer = ("\n\n---\nGhi chú liên quan (đọc bằng wiki_read): "
+                              + ", ".join(f"`{s}`" for s in lq))
+                    # Footer nằm TRONG trần max_note_chars (giữ hợp đồng cũ
+                    # "read() không vượt trần") — note dài thì nhường chỗ,
+                    # không để footer bị xén cụt ở cuối.
+                    if len(text) + len(footer) > max_note_chars():
+                        text = text[: max_note_chars() - len(footer)]
+                    text += footer
             except Exception:
                 pass
             return text
