@@ -34,6 +34,8 @@ import hashlib
 import hmac as _hmac
 import ipaddress
 import logging
+import re
+import threading
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -428,20 +430,138 @@ def menu_ask(user_id: str) -> str:
                     "«Gắn Page theo thread» trước khi đăng.")
     dong += [
         "<<<ASK>>>",
-        "✍️ Đăng bài chữ | tôi muốn đăng bài chữ lên facebook: hỏi tôi nội dung, "
-        "chờ tôi duyệt rồi mới đăng",
-        "🔗 Đăng link | tôi muốn đăng link lên facebook: hỏi tôi link và lời dẫn "
-        "rồi đăng sau khi tôi duyệt",
+        # Chữ / link / video-URL: `send` là SENTINEL do code bắt (bat_dau_flow),
+        # KHÔNG phải câu lệnh cho LLM. Vì sao: ba mục này cần nhập tiếp một tin
+        # tự do (nội dung/link/url); để LLM tự dẫn thì một URL lạ (repo GitHub…)
+        # kéo model sang việc khác là đứt mạch (đo thật 11/08). Code giữ trạng
+        # thái chờ, bắt đúng tin kế tiếp làm input rồi mới qua cổng duyệt.
+        f"✍️ Đăng bài chữ | {FLOW_CHU}",
+        f"🔗 Đăng link | {FLOW_LINK}",
+        # Ảnh vẫn để LLM dẫn: ảnh gửi qua kênh có luồng photo-intent CÓ trạng
+        # thái chờ riêng (kèm mục «Đăng Facebook»), không dính lỗi này.
         "🖼️ Đăng ảnh | tôi muốn đăng ảnh lên facebook: nhắc tôi gửi ảnh vào đây "
         "(gửi được nhiều ảnh), gom đủ rồi hỏi tôi caption",
-        "🎬 Đăng video | tôi muốn đăng video lên facebook: hỏi tôi link video mp4 "
-        "công khai hoặc để tôi gửi video vào đây",
+        f"🎬 Đăng video | {FLOW_VIDEO}",
         "✨ Nhờ AI soạn bài | nhờ AI soạn bài đăng facebook: hỏi tôi chủ đề và ý "
         "chính, soạn xong đọc lại cho tôi duyệt rồi mới đăng",
         "🔎 Kiểm tra kết nối | kiểm tra kết nối facebook",
         "<<<END>>>",
     ]
     return "\n".join(dong)
+
+
+# ── Luồng đăng bài CÓ TRẠNG THÁI CHỜ (chữ / link / video-URL) ────────────────
+# Menu /facebook trước đây chỉ đẩy một câu lệnh tiếng Việt cho LLM rồi xoá bản
+# chờ ngay; tin kế tiếp (link/nội dung) thành một lượt chat trắng, và một URL lạ
+# (vd repo GitHub) kéo LLM sang việc khác là đứt mạch. Nay bắt input ở CODE
+# (giống pdf_intent/photo_intent), không qua LLM diễn giải; bước đăng thật vẫn
+# đi qua capability `dang_facebook` (risk=CHANGE) + cổng duyệt như thường.
+
+FLOW_CHU = "__fb_flow__:chu"
+FLOW_LINK = "__fb_flow__:link"
+FLOW_VIDEO = "__fb_flow__:video"
+_FLOW_SENTINELS = {FLOW_CHU, FLOW_LINK, FLOW_VIDEO}
+
+_flow_lock = threading.RLock()
+_flow: dict[str, dict[str, Any]] = {}   # key -> {stage, ts, link?/video?}
+_FLOW_TTL = 15 * 60
+
+# Chỉ THOÁT flow khi người dùng nói RÕ là thôi — không dùng `la_yeu_cau_moi`
+# rộng như pdf/ảnh, vì nội dung bài đăng có thể trông y như một câu lệnh và bị
+# hiểu nhầm là "yêu cầu mới", đá văng đúng nội dung họ vừa gõ.
+_HUY_RE = re.compile(r"^\s*(hu[ỷy]|th[ôo]i|tho[áa]t|d[ừu]ng|cancel)\b", re.I)
+_BO_LOI_DAN = {"đăng", "dang", "đăng luôn", "dang luon", "bỏ qua", "bo qua",
+               "không", "khong", "ko", "trống", "trong", "-", "."}
+
+
+def _flow_get(key: str) -> dict | None:
+    with _flow_lock:
+        p = _flow.get(str(key))
+        if not p:
+            return None
+        if time.time() - float(p.get("ts") or 0) > _FLOW_TTL:
+            _flow.pop(str(key), None)
+            return None
+        return p
+
+
+def co_flow(key: str) -> bool:
+    return _flow_get(key) is not None
+
+
+def xoa_flow(key: str) -> None:
+    with _flow_lock:
+        _flow.pop(str(key), None)
+
+
+def _flow_set(key: str, stage: str, **extra: Any) -> None:
+    with _flow_lock:
+        cur = _flow.get(str(key)) or {}
+        cur.update(extra)
+        cur["stage"] = stage
+        cur["ts"] = time.time()
+        _flow[str(key)] = cur
+
+
+def bat_dau_flow(key: str, send_text: str) -> str | None:
+    """`send_text` (đã qua resolve_reply) là sentinel của mục cần nhập tiếp?
+    Có → đặt trạng thái chờ + trả câu nhắc. Không → None (không phải flow FB)."""
+    s = (send_text or "").strip()
+    if s not in _FLOW_SENTINELS:
+        return None
+    if not pages_cho_thread(key):
+        if not danh_sach_page():
+            return ("📘 Chưa kết nối Facebook. Vào Cài đặt ▸ Facebook: điền "
+                    "app_id, app_secret, dán user token rồi bấm Kết nối.")
+        return ("Thread này chưa gắn Page nào ạ. Vào Cài đặt ▸ Facebook, mục "
+                "«Gắn Page theo thread» để chọn Page cho chỗ này trước.")
+    if s == FLOW_CHU:
+        _flow_set(key, "cho_chu")
+        return "✍️ Anh/chị gõ NỘI DUNG bài đăng nhé. (gõ «huỷ» để thôi)"
+    if s == FLOW_LINK:
+        _flow_set(key, "cho_link")
+        return "🔗 Anh/chị dán LINK cần đăng nhé. (gõ «huỷ» để thôi)"
+    _flow_set(key, "cho_video")
+    return ("🎬 Anh/chị dán LINK video mp4 công khai (hoặc gửi thẳng video vào "
+            "đây cũng được). (gõ «huỷ» để thôi)")
+
+
+def tiep_flow(key: str, text: str) -> dict | None:
+    """Nhận tin kế tiếp khi đang chờ. Trả một trong:
+      {"huy": True}      — người dùng xin thôi (đã xoá bản chờ)
+      {"hoi": "<nhắc>"}  — cần thêm input, GIỮ bản chờ
+      {"dang": {args}}   — đủ input → args cho capability `dang_facebook`
+    None nếu không có bản chờ cho key này.
+    """
+    p = _flow_get(key)
+    if not p:
+        return None
+    t = (text or "").strip()
+    if not t or _HUY_RE.match(t):
+        xoa_flow(key)
+        return {"huy": True}
+    stage = str(p.get("stage") or "")
+    if stage == "cho_chu":
+        xoa_flow(key)
+        return {"dang": {"loai": "chu", "message": t}}
+    if stage == "cho_link":
+        _flow_set(key, "cho_link_loi_dan", link=t)
+        return {"hoi": "📝 Lời dẫn kèm link (hoặc gõ «đăng» để đăng không lời dẫn):"}
+    if stage == "cho_link_loi_dan":
+        xoa_flow(key)
+        loi = "" if t.lower() in _BO_LOI_DAN else t
+        return {"dang": {"loai": "link", "link": str(p.get("link") or ""),
+                         "message": loi}}
+    if stage == "cho_video":
+        _flow_set(key, "cho_video_mo_ta", video=t)
+        return {"hoi": "📝 Mô tả kèm video (hoặc gõ «đăng» để đăng không mô tả):"}
+    if stage == "cho_video_mo_ta":
+        xoa_flow(key)
+        mo = "" if t.lower() in _BO_LOI_DAN else t
+        return {"dang": {"loai": "video", "media_urls": [str(p.get("video") or "")],
+                         "message": mo}}
+    xoa_flow(key)
+    return {"huy": True}
 
 
 def kiem_tra() -> str:

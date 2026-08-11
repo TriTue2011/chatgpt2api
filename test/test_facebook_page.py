@@ -279,3 +279,101 @@ def test_dang_len_page_chua_nap_bao_ro(monkeypatch):
     with pytest.raises(fb.LoiFacebook) as exc:
         fb.dang_bai_chu("999", "x")
     assert "Kết nối lại" in str(exc.value)
+
+
+# ── Luồng đăng bài CÓ TRẠNG THÁI CHỜ (chữ / link / video-URL) ────────────────
+# Bịt lỗi 11/08: sau khi chọn «đăng link» từ menu /facebook, dán URL (repo
+# GitHub) thì LLM lạc sang trợ lý code, đứt mạch. Nay code giữ trạng thái chờ.
+
+_CFG_1PAGE = {"facebook": {"pages": [
+    {"id": "111", "name": "Blog cá nhân", "access_token": "tokA"}]}}
+
+
+@pytest.mark.pure
+def test_menu_ask_dung_sentinel_cho_chu_link_video(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    menu = fb.menu_ask("zalop_1")
+    assert fb.FLOW_CHU in menu
+    assert fb.FLOW_LINK in menu
+    assert fb.FLOW_VIDEO in menu
+
+
+@pytest.mark.pure
+def test_flow_dang_chu_bat_input_thang(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_chu"
+    fb.xoa_flow(k)
+    nhac = fb.bat_dau_flow(k, fb.FLOW_CHU)
+    assert nhac and "NỘI DUNG" in nhac
+    assert fb.co_flow(k)
+    r = fb.tiep_flow(k, "Chào cả nhà nhé")
+    assert r == {"dang": {"loai": "chu", "message": "Chào cả nhà nhé"}}
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_flow_dang_link_url_khong_bi_dien_giai(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_link"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    # dán đúng URL từng gây lỗi — phải được BẮT làm link, không lạc
+    r1 = fb.tiep_flow(k, "https://github.com/colbymchenry/codegraph")
+    assert "hoi" in r1 and fb.co_flow(k)          # hỏi lời dẫn, giữ chờ
+    r2 = fb.tiep_flow(k, "Repo hay nè")
+    assert r2["dang"]["loai"] == "link"
+    assert r2["dang"]["link"] == "https://github.com/colbymchenry/codegraph"
+    assert r2["dang"]["message"] == "Repo hay nè"
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_flow_link_bo_qua_loi_dan(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_link2"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://x.com")
+    r = fb.tiep_flow(k, "đăng")
+    assert r["dang"]["message"] == ""
+    assert r["dang"]["link"] == "https://x.com"
+
+
+@pytest.mark.pure
+def test_flow_video_url_va_mo_ta(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_vid"
+    fb.xoa_flow(k)
+    nhac = fb.bat_dau_flow(k, fb.FLOW_VIDEO)
+    assert "video" in nhac.lower()
+    fb.tiep_flow(k, "https://cdn/x.mp4")
+    r = fb.tiep_flow(k, "clip nè")
+    assert r["dang"] == {"loai": "video", "media_urls": ["https://cdn/x.mp4"],
+                         "message": "clip nè"}
+
+
+@pytest.mark.pure
+def test_flow_huy_thoat_sach(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_huy"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    assert fb.tiep_flow(k, "thôi") == {"huy": True}
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_bat_dau_flow_khong_sentinel_tra_none(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    assert fb.bat_dau_flow("k", "một câu bình thường") is None
+    assert fb.tiep_flow("k_khong_cho", "gì đó") is None
+
+
+@pytest.mark.pure
+def test_bat_dau_flow_chua_gan_page_khong_dat_cho(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig({"facebook": {}}))
+    k = "zalop_nopage"
+    fb.xoa_flow(k)
+    nhac = fb.bat_dau_flow(k, fb.FLOW_LINK)
+    assert nhac and "Chưa kết nối" in nhac
+    assert not fb.co_flow(k)   # không có page thì không mở trạng thái chờ

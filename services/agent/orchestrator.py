@@ -1452,6 +1452,54 @@ def _orchestrate_locked(user_text: str, user_id: str,
     if len(hist) > max_h * 2:
         del hist[: len(hist) - max_h * 2]
 
+    # 1.35) Luồng Facebook CÓ TRẠNG THÁI CHỜ (chữ / link / video-URL). Chặn
+    # TRƯỚC LLM: tin nhập link/nội dung phải được bắt đúng làm input của bài
+    # đăng, không để model diễn giải thành việc khác (một URL repo GitHub từng
+    # kéo model sang chế độ trợ lý code — đo thật 11/08). Bước đăng thật vẫn qua
+    # capability `dang_facebook` (risk=CHANGE) + cổng duyệt như mọi hành động.
+    if allow is None or "facebook" in allow:
+        from services import facebook_page as _fbp
+
+        def _fb_tra(text_ra: str, *, status: str) -> dict[str, Any]:
+            _o = _finalize(user_id, {"text": text_ra})
+            hist.append({"role": "assistant", "content": _o.get("text") or text_ra})
+            _persist_history(user_id, hist)
+            _journal(str(_o.get("text") or ""), status=status)
+            return _o
+
+        def _fb_dang(args_fb: dict) -> dict[str, Any]:
+            """Đưa args đã gom qua ĐÚNG đường duyệt+thực thi của dang_facebook."""
+            _cap = caps.get("dang_facebook")
+            if approval_gate.is_blocked("dang_facebook", risk="change"):
+                return _fb_tra("Chế độ chỉ-đọc: em không đăng Facebook được ạ.",
+                               status="fb_chi_doc")
+            if _cap is not None and approval_gate.needs_approval(
+                    user_id, "dang_facebook", risk=_cap.risk):
+                _tt = approval_gate.summarize_action(
+                    "dang_facebook", args_fb, _cap.description or "")
+                approval_gate.set_pending(user_id, "dang_facebook", args_fb, _tt)
+                _hoi = approval_gate.format_proposal(
+                    "dang_facebook", args_fb, description=_cap.description or "",
+                    label=_cap.label or "dang_facebook")
+                return _fb_tra(_hoi, status="fb_hoi_duyet")
+            _kq = (_execute(_cap, args_fb, user_id, user_text=user_text,
+                            is_admin=is_admin) if _cap else {"text": "Thiếu tool đăng."})
+            return _fb_tra(str(_kq.get("text") or "Đã xử lý."), status="fb_dang")
+
+        # (a) Người dùng vừa chọn mục menu (user_text đã là sentinel qua resolve_reply)
+        _fb_nhac = _fbp.bat_dau_flow(user_id, user_text)
+        if _fb_nhac is not None:
+            return _fb_tra(_fb_nhac, status="fb_flow_bat_dau")
+        # (b) Đang chờ input cho bài Facebook → bắt tin này
+        if _fbp.co_flow(user_id):
+            _r = _fbp.tiep_flow(user_id, user_text)
+            if _r and _r.get("huy"):
+                return _fb_tra("Đã huỷ soạn bài Facebook ạ.", status="fb_huy")
+            if _r and _r.get("hoi"):
+                return _fb_tra(str(_r["hoi"]), status="fb_flow_hoi")
+            if _r and _r.get("dang") is not None:
+                return _fb_dang(dict(_r["dang"]))
+
     # 1.4) Đường tắt LẤY MEDIA ĐÃ TẠO: xem chú thích ở `_tat_lay_media`. Chạy
     # TRƯỚC vòng agent vì việc này xác định hoàn toàn và model nhỏ không gọi
     # được tool. Vẫn tôn trọng phân quyền nhóm như mọi tool khác.
