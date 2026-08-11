@@ -273,9 +273,14 @@ export function FacebookCard() {
                 setThreadMoi("");
               }}>Thêm thread</Button>
           </div>
-          <p className="text-[10px] text-muted-foreground">
-            Nhớ bấm <b>Lưu</b> phía trên sau khi gắn.
-          </p>
+          <div className="flex items-center gap-2 pt-1">
+            <Button type="button" size="sm" onClick={luu}>
+              {saved ? "Đã lưu!" : "Lưu gắn Page"}
+            </Button>
+            <span className="text-[10px] text-muted-foreground">
+              Gắn/bỏ Page hoặc thêm thread xong phải bấm Lưu mới có hiệu lực.
+            </span>
+          </div>
         </div>
       </CardContent>
     </Card>
