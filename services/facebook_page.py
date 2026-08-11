@@ -196,7 +196,12 @@ def ket_noi(user_token: str = "") -> list[dict]:
     cfg = nap()
     app_id = str(cfg.get("app_id") or "").strip()
     app_secret = str(cfg.get("app_secret") or "").strip()
-    token = str(user_token or cfg.get("user_token") or "").strip()
+    # «Làm tươi» không dán token mới: user_token ngắn hạn bị XOÁ sau mỗi lần
+    # kết nối thành công, nên phải rơi tiếp về user_token_long — token dài hạn
+    # đổi lại chính nó qua fb_exchange_token vẫn hợp lệ. Thiếu fallback này,
+    # bấm «Kết nối» lần hai luôn báo «Chưa đủ … user_token» (đo thật 11/08).
+    token = str(user_token or cfg.get("user_token")
+                or cfg.get("user_token_long") or "").strip()
     if not (app_id and app_secret and token):
         raise LoiFacebook("Chưa đủ app_id / app_secret / user_token — "
                           "điền trong Cài đặt ▸ Facebook trước")

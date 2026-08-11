@@ -37,6 +37,33 @@ export function FacebookCard() {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [saved, setSaved] = useState(false);
+  // Tên hiển thị cho khoá thread (kenh:chat → tên nhóm/người) — lấy từ danh bạ
+  // /api/channels/directory; thiếu tên thì dropdown vẫn chạy, chỉ hiện khoá thô.
+  const [tenThread, setTenThread] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let dung = false;
+    (async () => {
+      const ra: Record<string, string> = {};
+      for (const plat of ["tg", "zalo", "zalop"]) {
+        try {
+          const r = await request.get(`/api/channels/directory?platform=${plat}`);
+          const rows = (r.data as { rows?: Array<Record<string, unknown>> })?.rows || [];
+          for (const row of rows) {
+            const tid = String(row.thread_id || "").trim();
+            const ten = String(row.name || "").trim();
+            if (tid && ten && !ra[`${plat}:${tid}`]) ra[`${plat}:${tid}`] = ten;
+          }
+        } catch { /* danh bạ lỗi → bỏ qua, không chặn card */ }
+      }
+      if (!dung) setTenThread(ra);
+    })();
+    return () => { dung = true; };
+  }, []);
+
+  // Tên cho khoá có #topic: tra khoá đầy đủ trước, rồi rơi về khoá nhóm gốc.
+  const tenCho = (khoa: string) =>
+    tenThread[khoa] || tenThread[khoa.split("#")[0]] || "";
 
   useEffect(() => {
     setAppId(String(fb.app_id || ""));
@@ -98,7 +125,19 @@ export function FacebookCard() {
         { user_token: userToken.trim() });
       const d = r.data as { ok?: boolean; error?: string; pages?: FbPage[] };
       if (d.ok) {
-        setMsg(`✅ Đã nối ${d.pages?.length || 0} Page — token Page không hết hạn.`);
+        const soPage = d.pages?.length || 0;
+        if (soPage > 0) {
+          setMsg(`✅ Đã nối ${soPage} Page — token Page không hết hạn.`);
+        } else {
+          // Token đổi được nhưng /me/accounts rỗng — gần như chắc chắn là
+          // chuyện bên Facebook, nói thẳng việc cần làm thay vì ✅ gây hiểu nhầm.
+          setMsg("⚠️ Token hợp lệ nhưng 0 Page: tài khoản Facebook tạo token "
+            + "chưa có vai trò trên Page nào (hoặc chưa chọn Page lúc cấp quyền "
+            + "trong Graph API Explorer). Cách sửa: vào Page → Cài đặt → Quyền "
+            + "truy cập Trang, cấp quyền cho tài khoản này — hoặc đăng nhập "
+            + "Explorer bằng đúng tài khoản quản trị Page — rồi tạo token mới "
+            + "và bấm Kết nối lại.");
+        }
         setUserToken("");
         await loadConfig();
       } else {
@@ -155,9 +194,11 @@ export function FacebookCard() {
           <p className="text-xs text-muted-foreground mt-1">
             developers.facebook.com → Tools → Graph API Explorer → chọn app,
             cấp quyền <b>pages_show_list, pages_manage_posts, pages_read_engagement,
-            business_management</b> → Generate Access Token → dán vào đây rồi bấm
-            «Kết nối». Server tự đổi sang token dài hạn; token Page lấy ra
-            không hết hạn.
+            business_management</b> (+ <b>publish_video</b> nếu đăng video),
+            nhớ <b>chọn đúng Page</b> trong hộp thoại cấp quyền → Generate Access
+            Token → dán vào đây rồi bấm «Kết nối». Server tự đổi sang token dài
+            hạn; token Page lấy ra không hết hạn. Bấm «Kết nối» không dán gì =
+            làm tươi danh sách Page bằng token đã lưu.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -192,6 +233,11 @@ export function FacebookCard() {
             <div key={khoa}
               className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <code className="shrink-0">{khoa}</code>
+              {tenCho(khoa) ? (
+                <span className="shrink-0 text-muted-foreground">
+                  ({tenCho(khoa)})
+                </span>
+              ) : null}
               {pages.map((p) => (
                 <label key={p.id}
                   className="flex items-center gap-1 cursor-pointer select-none">
@@ -215,7 +261,9 @@ export function FacebookCard() {
               placeholder="vd: tg:-1001234567890 hoặc zalop:zgr-abc…"
               className="max-w-xs" />
             <datalist id="fb-thread-goi-y">
-              {goiYThread.map((k) => <option key={k} value={k} />)}
+              {goiYThread.map((k) => (
+                <option key={k} value={k} label={tenCho(k) || undefined} />
+              ))}
             </datalist>
             <Button type="button" variant="outline" size="sm"
               disabled={!/^(tg|zalo|zalop):.+/.test(threadMoi.trim())}

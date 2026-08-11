@@ -148,6 +148,32 @@ def test_ket_noi_thieu_cau_hinh_bao_ro(monkeypatch):
     assert "app_id" in str(exc.value)
 
 
+@pytest.mark.adapter
+def test_ket_noi_lam_tuoi_bang_token_dai_han(monkeypatch):
+    """user_token ngắn bị xoá sau lần nối trước — bấm «Kết nối» không dán gì
+    phải dùng lại user_token_long, không được báo «Chưa đủ … user_token»."""
+    cfg = _FakeConfig({"facebook": {
+        "app_id": "ap1", "app_secret": "s3cret",
+        "user_token": "", "user_token_long": "DAI-CU"}})
+
+    def handler(request):
+        p = request.url.path
+        q = httpx.QueryParams(request.url.query)
+        if p.endswith("/oauth/access_token"):
+            assert q["fb_exchange_token"] == "DAI-CU"
+            return httpx.Response(200, json={"access_token": "DAI-MOI"})
+        if p.endswith("/me/accounts"):
+            return httpx.Response(200, json={
+                "data": [{"id": "111", "name": "Page Nhà",
+                          "access_token": "tokA"}], "paging": {}})
+        raise AssertionError(f"đường lạ: {p}")
+
+    _lap(monkeypatch, cfg, handler)
+    pages = fb.ket_noi()
+    assert [p["id"] for p in pages] == ["111"]
+    assert cfg.data["facebook"]["user_token_long"] == "DAI-MOI"
+
+
 # ── Gắn Page theo thread ─────────────────────────────────────────────────────
 
 @pytest.mark.pure
