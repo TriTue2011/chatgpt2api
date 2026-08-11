@@ -48,8 +48,18 @@ class NhanDangTruongBiMatTests(unittest.TestCase):
         for ten in ("api_key", "api_keys", "auth-key", "secret_access_key",
                     "access_key_id", "zalo_bot_token", "cloudflare_tunnel_token",
                     "captcha_solver_api_key", "session_key", "password",
-                    "cookies", "webhook_secret", "totp_seed"):
+                    "cookies", "webhook_secret", "totp_seed",
+                    # token dài hạn Facebook — từng lọt lưới vì đuôi "_long"
+                    "user_token_long", "token_long"):
             self.assertTrue(la_truong_bi_mat(ten), f"{ten} phải bị coi là bí mật")
+
+    def test_user_token_long_bi_che_trong_facebook(self):
+        """Đo thật 11/08: user_token_long trả về web UI dạng THÔ vì luật đuôi
+        chỉ khớp '_token' — token dài hạn 60 ngày của Facebook lộ ra client."""
+        ra = che_giau({"facebook": {"user_token_long": "EAAB-token-that",
+                                    "app_id": "123"}})
+        self.assertTrue(la_nhan_che(ra["facebook"]["user_token_long"]))
+        self.assertEqual(ra["facebook"]["app_id"], "123")
 
     def test_khong_che_nham_truong_binh_thuong(self):
         """Che nhầm là mất một ô cấu hình mà không ai hiểu vì sao."""

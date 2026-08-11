@@ -43,6 +43,10 @@ _TEN_BI_MAT: frozenset[str] = frozenset({
     "session_key", "sessionkey", "sessionid",
     "password", "passwd", "pass",
     "token", "refresh_token", "access_token", "bot_token", "tunnel_token",
+    # token_long: luật đuôi chỉ khớp "_token" nên "user_token_long" từng LỌT
+    # LƯỚI — token dài hạn Facebook trả về web UI dạng thô (đo thật 11/08).
+    # Thêm "token_long" để bắt cả tên đúng lẫn mọi "*_token_long" sau này.
+    "token_long", "user_token_long",
     "cookie", "cookies",
     "credential", "credentials",
     "private_key", "totp_secret", "totp_seed", "seed",
