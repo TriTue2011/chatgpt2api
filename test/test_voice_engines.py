@@ -9,7 +9,7 @@ from unittest import mock
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 from services.voice import config as vcfg  # noqa: E402
-from services.voice import engines  # noqa: E402
+from services.voice import engines, tts_cache  # noqa: E402
 
 
 def _wav16(ms: int = 100) -> bytes:
@@ -115,8 +115,14 @@ class SentenceSplitTests(unittest.TestCase):
 
 
 class StreamSynthesizeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Cache audio dùng chung cả tiến trình — dọn để mỗi test tự đứng.
+        tts_cache.clear()
+        self.addCleanup(tts_cache.clear)
+
     def test_non_vieneu_streams_per_sentence(self) -> None:
-        # Piper/Kokoro: mỗi câu gọi synthesize() 1 lần, yield (rate, pcm).
+        # Piper/Kokoro: mỗi câu gọi synthesize() 1 lần, yield (rate, pcm),
+        # giữa hai câu chèn thêm một mẩu im lặng cho có nhịp nghỉ.
         calls: list[str] = []
 
         def fake_synth(sent: str, v: str = "", *, style: str = "") -> bytes:
@@ -129,7 +135,8 @@ class StreamSynthesizeTests(unittest.TestCase):
                 mock.patch.object(engines, "synthesize", side_effect=fake_synth):
             out = list(engines.stream_synthesize(text, "ngochuyennew"))
         self.assertEqual(len(calls), 2)
-        self.assertEqual(len(out), 2)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(set(out[1][1]), {0})     # mẩu giữa là khoảng lặng
         self.assertTrue(all(r == 16000 and isinstance(p, bytes) for r, p in out))
 
     def test_vieneu_uses_frame_stream(self) -> None:
@@ -301,7 +308,7 @@ class PlayTextOnPipelineTests(unittest.TestCase):
         plays: list[str] = []
         n = {"i": 0}
 
-        def fake_speak(text: str, voice_name: str = "") -> bytes:
+        def fake_speak(text: str, voice_name: str = "", *, style: str = "") -> bytes:
             calls_speak.append(text)
             return _wav16(200)
 

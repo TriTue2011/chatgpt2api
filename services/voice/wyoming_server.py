@@ -47,6 +47,12 @@ _servers_lock = threading.Lock()
 _DONE = object()          # sentinel: worker thread đã hết audio
 _QUEUE_MAX = 8            # lookahead có backpressure, chặn phình RAM
 
+# Hạn mức chống client hỏng/ác ý làm phình RAM gateway (ý từ wyoming-vietnamese
+# const.py). Cả ba đều rộng hơn nhiều lần nhu cầu thật của HA Assist.
+_MAX_DATA_BYTES = 64 * 1024          # phần JSON của một event
+_MAX_PAYLOAD_BYTES = 4 * 1024 * 1024  # phần nhị phân (audio) của một event
+_MAX_STT_SECONDS = 120                # trần audio gom cho MỘT lần nhận dạng
+
 
 # ── Khung giao thức ──────────────────────────────────────────────────────────
 
@@ -68,8 +74,16 @@ async def _read_event(reader: asyncio.StreamReader) -> dict[str, Any] | None:
     except Exception:
         return None
     data = dict(header.get("data") or {})
-    dlen = int(header.get("data_length") or 0)
-    plen = int(header.get("payload_length") or 0)
+    try:
+        dlen = int(header.get("data_length") or 0)
+        plen = int(header.get("payload_length") or 0)
+    except (TypeError, ValueError):
+        return None
+    # Header do client khai — tin thẳng nghĩa là cho client cấp phát RAM tuỳ ý.
+    if not (0 <= dlen <= _MAX_DATA_BYTES) or not (0 <= plen <= _MAX_PAYLOAD_BYTES):
+        logger.warning("wyoming: event qua lon (data=%d, payload=%d) — dong ket noi",
+                       dlen, plen)
+        return None
     if dlen:
         try:
             data.update(json.loads(await reader.readexactly(dlen)))
@@ -633,6 +647,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         "lang": _resolve_stt_lang(server_lang),
         "program": "",
         "ha_lang": "",  # last HA language (for TTS voice pick)
+        "full": False,  # đã chạm trần _MAX_STT_SECONDS (chỉ cảnh báo 1 lần)
     }
     loop = asyncio.get_running_loop()
     try:
@@ -676,10 +691,23 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                 asr["width"] = int(ev["data"].get("width") or 2)
                 asr["channels"] = int(ev["data"].get("channels") or 1)
                 asr["pcm"] = bytearray()
+                asr["full"] = False
                 if not asr["lang"]:
                     asr["lang"] = _resolve_stt_lang(server_lang)
             elif t == "audio-chunk":
-                asr["pcm"] += ev["payload"]
+                # Satellite treo (gửi audio-start rồi phát mãi, không audio-stop)
+                # sẽ nhồi RAM gateway tới chết nếu cứ cộng dồn. Cắt ở 2 phút:
+                # câu lệnh nhà thật dài lắm cũng chỉ vài giây.
+                cap = (_MAX_STT_SECONDS * int(asr["rate"])
+                       * int(asr["width"]) * int(asr["channels"]))
+                if len(asr["pcm"]) + len(ev["payload"]) > cap:
+                    if not asr["full"]:
+                        asr["full"] = True
+                        logger.warning(
+                            "wyoming: audio vuot %ds — bo phan du, chi nhan dang %d byte dau",
+                            _MAX_STT_SECONDS, len(asr["pcm"]))
+                else:
+                    asr["pcm"] += ev["payload"]
             elif t == "audio-stop":
                 text = ""
                 t0 = time.time()

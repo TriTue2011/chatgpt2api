@@ -376,5 +376,103 @@ class WyomingEnVoiceConfigTests(unittest.TestCase):
         self.assertNotEqual(v, "")
 
 
+class EventSizeGuardTests(unittest.TestCase):
+    """Header do client khai — tin thẳng nghĩa là cho client cấp phát RAM tuỳ ý."""
+
+    @staticmethod
+    def _read(raw: bytes):
+        async def go():
+            r = asyncio.StreamReader()
+            r.feed_data(raw)
+            r.feed_eof()
+            return await wy._read_event(r)
+        return _run(go())
+
+    def test_normal_event_still_reads(self) -> None:
+        ev = self._read(json.dumps({"type": "ping"}).encode() + b"\n")
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev["type"], "ping")
+
+    def test_payload_event_still_reads(self) -> None:
+        payload = b"\x00" * 32
+        hdr = json.dumps({"type": "audio-chunk", "payload_length": len(payload)}).encode()
+        ev = self._read(hdr + b"\n" + payload)
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev["payload"], payload)
+
+    def test_oversized_payload_closes_connection(self) -> None:
+        hdr = json.dumps({"type": "audio-chunk", "payload_length": 999_999_999}).encode()
+        self.assertIsNone(self._read(hdr + b"\n"))
+
+    def test_oversized_data_closes_connection(self) -> None:
+        hdr = json.dumps({"type": "synthesize", "data_length": 10_000_000}).encode()
+        self.assertIsNone(self._read(hdr + b"\n"))
+
+    def test_non_numeric_length_closes_connection(self) -> None:
+        hdr = json.dumps({"type": "ping", "payload_length": "rac"}).encode()
+        self.assertIsNone(self._read(hdr + b"\n"))
+
+    def test_negative_length_closes_connection(self) -> None:
+        hdr = json.dumps({"type": "ping", "payload_length": -5}).encode()
+        self.assertIsNone(self._read(hdr + b"\n"))
+
+
+class SttBufferCapTests(unittest.TestCase):
+    """Satellite treo (audio-start rồi phát mãi) không được nhồi RAM gateway."""
+
+    def test_audio_beyond_cap_is_dropped(self) -> None:
+        rate, width, ch = 16000, 2, 1
+        cap = wy._MAX_STT_SECONDS * rate * width * ch
+        seen: dict[str, int] = {}
+
+        def fake_transcribe(wav: bytes, hint: str = "", lang: str = "") -> str:
+            seen["bytes"] = len(wav)
+            return "x"
+
+        def frame(ev_type: str, data=None, payload: bytes = b"") -> bytes:
+            d = json.dumps(data or {}).encode()
+            hdr = {"type": ev_type, "data_length": len(d)}
+            if payload:
+                hdr["payload_length"] = len(payload)
+            return json.dumps(hdr).encode() + b"\n" + d + payload
+
+        async def go():
+            server = await asyncio.start_server(
+                lambda r, w: wy._handle(r, w, "vi"), "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(frame("audio-start", {"rate": rate, "width": width, "channels": ch}))
+            chunk = bytes(rate * width)          # 1 giây audio mỗi chunk
+            for _ in range(wy._MAX_STT_SECONDS + 80):
+                writer.write(frame("audio-chunk", {}, chunk))
+            writer.write(frame("audio-stop"))
+            await writer.drain()
+            for _ in range(50):
+                line = await asyncio.wait_for(reader.readline(), timeout=10)
+                if not line:
+                    break
+                hdr = json.loads(line)
+                if int(hdr.get("data_length") or 0):
+                    await reader.readexactly(int(hdr["data_length"]))
+                if int(hdr.get("payload_length") or 0):
+                    await reader.readexactly(int(hdr["payload_length"]))
+                if hdr["type"] == "transcript":
+                    break
+            writer.close()
+            # Nhường vòng lặp vài nhịp để _handle thấy EOF và thoát gọn, khỏi
+            # để lại task treo lúc đóng event loop.
+            for _ in range(10):
+                await asyncio.sleep(0)
+            server.close()
+            await server.wait_closed()
+
+        with mock.patch.object(wy.engines, "transcribe", fake_transcribe):
+            _run(go())
+
+        # +44 byte header WAV do _pcm_to_wav bọc quanh PCM.
+        self.assertLessEqual(seen.get("bytes", 0), cap + 100)
+        self.assertGreater(seen.get("bytes", 0), cap * 0.9)
+
+
 if __name__ == "__main__":
     unittest.main()

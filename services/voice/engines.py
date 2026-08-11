@@ -23,6 +23,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from services.voice import config as vcfg
+from services.voice import tts_cache
 
 logger = logging.getLogger(__name__)
 
@@ -249,9 +250,17 @@ def _vieneu_kwargs(voice: str, style: str = "") -> dict:
 
 
 def _float_to_pcm16(audio) -> bytes:
+    """float32 [-1, 1] → PCM16 little-endian.
+
+    nan_to_num trước khi clip: model ONNX thỉnh thoảng nhả NaN/inf ở đuôi câu,
+    mà np.clip GIỮ NGUYÊN NaN, còn ép kiểu NaN sang số nguyên là hành vi không
+    xác định — tuỳ CPU và bản numpy mà ra 0 hay ra giá trị hết biên (nghe thành
+    tiếng "bụp"). Ép NaN thành im lặng để mọi máy cho cùng kết quả.
+    """
     import numpy as np
-    return (np.clip(np.asarray(audio, dtype=np.float32), -1.0, 1.0)
-            * 32767.0).astype("<i2").tobytes()
+    samples = np.nan_to_num(np.asarray(audio, dtype=np.float32),
+                            nan=0.0, posinf=1.0, neginf=-1.0)
+    return (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
 
 
 def _vieneu_tts(text: str, voice: str, style: str = "") -> bytes:
@@ -369,16 +378,28 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         raise VoiceError("TTS đang tắt.")
     errors: list[str] = []
     v = (voice or vcfg.tts_voice()).strip()
+    ck = tts_cache.key("wav", text, v, style)
+    cached = tts_cache.get(ck)
+    if cached is not None:
+        return cached
+
+    def _done(wav: bytes) -> bytes:
+        # CHỈ cache khi chưa engine nào lỗi: nếu VieNeu hỏng và rơi xuống Piper,
+        # cache lại sẽ khoá cứng giọng dự phòng suốt cả ngày dù VieNeu đã hồi.
+        if not errors:
+            tts_cache.put(ck, wav, size_bytes=len(wav))
+        return wav
+
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
-            return _vieneu_tts(text, v, style)
+            return _done(_vieneu_tts(text, v, style))
         except Exception as exc:
             errors.append(f"vieneu: {str(exc)[:120]}")
             logger.warning("voice: TTS vieneu that bai: %s", str(exc)[:160])
             v = ""          # fallback: giọng Piper mặc định
     elif v.startswith(vcfg.KOKORO_PREFIX):
         try:
-            return _kokoro_tts(text, v)
+            return _done(_kokoro_tts(text, v))
         except Exception as exc:
             errors.append(f"kokoro: {str(exc)[:120]}")
             logger.warning("voice: TTS kokoro that bai: %s", str(exc)[:160])
@@ -386,11 +407,11 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     for mode in _backend_order(backend):
         try:
             if mode == "local":
-                return _piper_local(text, v)
+                return _done(_piper_local(text, v))
             uri = vcfg.tts_wyoming_url()
             if not uri:
                 continue
-            return _wyoming_tts(text, uri)
+            return _done(_wyoming_tts(text, uri))
         except Exception as exc:
             errors.append(f"{mode}: {str(exc)[:120]}")
             logger.warning("voice: TTS %s that bai: %s", mode, str(exc)[:160])
@@ -403,10 +424,50 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
 # ở 1 thread nên mượt). Các engine còn lại (Kokoro/Piper/Wyoming) không stream
 # theo frame → cắt câu rồi đọc từng câu: câu xong tới đâu phát tới đó.
 
+import random as _random
 import re as _re
 
 # Kết thúc câu: . ! ? … và xuống dòng. Giữ ranh giới để không mất dấu.
 _SENT_SPLIT = _re.compile(r"(?<=[.!?…。！？])\s+|\n+")
+
+_MAX_GAP_MS = 3000
+_gap_rng = _random.Random()
+
+
+def _jitter_ms(base_ms: int, jitter_percent: int) -> int:
+    """Rải khoảng lặng quanh giá trị đặt để nhịp nghỉ không đều như máy đếm.
+
+    Khoảng nghỉ giống hệt nhau ở mọi ranh giới câu nghe ra ngay là máy đọc;
+    lệch vài chục mili giây mỗi lần thì tự nhiên hơn (ý từ wyoming-vietnamese).
+    """
+    if base_ms <= 0 or jitter_percent <= 0:
+        return max(0, base_ms)
+    spread = base_ms * jitter_percent / 100
+    ms = round(_gap_rng.uniform(base_ms - spread, base_ms + spread))
+    return max(0, min(int(ms), _MAX_GAP_MS))
+
+
+def _silence_pcm(ms: int, rate: int) -> bytes:
+    """PCM16 mono im lặng dài `ms` mili giây ở tần số lấy mẫu `rate`."""
+    if ms <= 0 or rate <= 0:
+        return b""
+    return bytes(round(rate * ms / 1000) * 2)
+
+
+def _comma_cut(s: str, limit: int) -> int:
+    """Vị trí dấu phẩy gần `limit` nhất để xẻ câu dài, -1 nếu không có chỗ nào.
+
+    Bỏ qua phẩy nằm GIỮA HAI CHỮ SỐ ("1,5 triệu", "33,8 độ") — cắt ngay đó thì
+    engine đọc thành "một" … nghỉ … "năm triệu", sai hẳn con số. Mẹo này lấy từ
+    wyoming-vietnamese (`_is_numeric_separator`).
+    """
+    cut = s.rfind(",", 0, limit)
+    while cut > 0:
+        after = s[cut + 1] if cut + 1 < len(s) else ""
+        if not (s[cut - 1].isdigit() and after.isdigit()):
+            return cut
+        cut = s.rfind(",", 0, cut)
+    return -1
 
 
 def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
@@ -418,7 +479,7 @@ def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
         if not s:
             continue
         while len(s) > max_chars:
-            cut = s.rfind(",", 0, max_chars)
+            cut = _comma_cut(s, max_chars)
             cut = cut if cut > max_chars // 2 else max_chars
             out.append(s[:cut].strip())
             s = s[cut:].strip(" ,")
@@ -584,9 +645,13 @@ def warmup_tts(voice: str = "") -> dict:
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó.
 
-    VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó).
+    VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó),
+    chèn khoảng lặng giữa hai câu cho có nhịp nghỉ.
     Không bao giờ ném giữa chừng cho lỗi 1 câu: bỏ qua câu lỗi, đọc tiếp.
     `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu.
+
+    Đọc trọn vẹn không lỗi thì audio được cache (xem tts_cache); câu y hệt lần
+    sau phát ra ngay, không gọi engine.
     """
     text = (text or "").strip()
     if not text:
@@ -595,26 +660,62 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
         raise VoiceError("TTS đang tắt.")
     v = (voice or vcfg.tts_voice()).strip()
 
+    ck = tts_cache.key("stream", text, v, style)
+    hit = tts_cache.get(ck)
+    if hit is not None:
+        yield from hit
+        return
+
+    # Gom bản sao audio để cache. Vượt trần mỗi mục thì bỏ gom luôn (captured =
+    # None) — đằng nào cũng không nhét vừa, giữ tiếp chỉ phí RAM.
+    _limit = tts_cache.max_item_bytes()
+    captured: list[tuple[int, bytes]] | None = [] if _limit > 0 else None
+    _captured_bytes = 0
+
+    def _keep(item: tuple[int, bytes]) -> None:
+        nonlocal captured, _captured_bytes
+        if captured is None:
+            return
+        _captured_bytes += len(item[1])
+        if _captured_bytes > _limit:
+            captured = None
+        else:
+            captured.append(item)
+
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
             yielded = False
             for item in _vieneu_stream(text, v, style):
                 yielded = True
+                _keep(item)
                 yield item
             if yielded:
+                if captured:
+                    tts_cache.put(ck, captured, size_bytes=_captured_bytes)
                 return
         except Exception as exc:
             logger.warning("voice: stream vieneu that bai, fallback cau: %s",
                            str(exc)[:160])
+        captured, _captured_bytes = ([] if _limit > 0 else None), 0
         v = ""   # fallback về Piper mặc định theo câu ở dưới
 
     # Kokoro/Piper/Wyoming/fallback: đọc theo câu, dùng lại synthesize().
+    gap_ms = vcfg.tts_sentence_silence_ms()
+    jitter = vcfg.tts_silence_jitter_percent()
+    last_rate = 0
     errors: list[str] = []
     for sent in _split_sentences(text):
         try:
             wav = synthesize(sent, v, style=style)
             rate, width, _channels, pcm = _wav_parts(wav)
             if width == 2 and pcm:
+                if last_rate and gap_ms:
+                    gap = _silence_pcm(_jitter_ms(gap_ms, jitter), last_rate)
+                    if gap:
+                        _keep((last_rate, gap))
+                        yield (last_rate, gap)
+                last_rate = rate
+                _keep((rate, pcm))
                 yield (rate, pcm)
             else:
                 # WAV không đúng định dạng mong đợi (không phải 16-bit hoặc
@@ -626,6 +727,8 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
             logger.warning("voice: stream cau that bai: %s", str(exc)[:160])
     if errors and len(errors) >= len(_split_sentences(text)):
         raise VoiceError("Không đọc được câu nào — " + "; ".join(errors[:3]))
+    if not errors and captured:
+        tts_cache.put(ck, captured, size_bytes=_captured_bytes)
 
 
 # ── STT ──────────────────────────────────────────────────────────────────────

@@ -499,6 +499,51 @@ def tts_warmup() -> bool:
     return bool(v)
 
 
+def tts_cache_mb() -> int:
+    """Trần RAM (MB) cho cache audio TTS. 0 = tắt. Mặc định 64 MB.
+
+    Trợ lý nhà lặp lại vài chục câu ("Đã bật đèn phòng khách"...) — đọc lần hai
+    trở đi lấy thẳng từ cache, không tốn CPU. Xem services/voice/tts_cache.py.
+    """
+    raw = _sub("tts").get("cache_mb")
+    if raw is None or str(raw).strip() == "":
+        return 64
+    try:
+        return max(0, min(int(raw), 512))
+    except (TypeError, ValueError):
+        return 64
+
+
+def tts_sentence_silence_ms() -> int:
+    """Khoảng lặng chèn GIỮA hai câu ở đường đọc-theo-câu. 0 = tắt (dính liền).
+
+    Chỉ áp cho Piper/Kokoro/Wyoming — mỗi câu là một lần gọi engine riêng nên
+    nối thẳng thì nghe hụt hơi, không có nhịp nghỉ. VieNeu đọc cả đoạn một lần
+    (frame-level) nên tự có nhịp, không chèn.
+    """
+    raw = _sub("tts").get("sentence_silence_ms")
+    if raw is None or str(raw).strip() == "":
+        return 350
+    try:
+        return max(0, min(int(raw), 3000))
+    except (TypeError, ValueError):
+        return 350
+
+
+def tts_silence_jitter_percent() -> int:
+    """Dao động ±% quanh khoảng lặng để nhịp nghỉ không đều tăm tắp như máy đếm.
+
+    0 = tắt dao động. Mặc định 25%.
+    """
+    raw = _sub("tts").get("silence_jitter_percent")
+    if raw is None or str(raw).strip() == "":
+        return 25
+    try:
+        return max(0, min(int(raw), 100))
+    except (TypeError, ValueError):
+        return 25
+
+
 def _hf_has(repo: str, rel_pattern: str) -> bool:
     """File đã có trong cache HF chưa (hub/models--org--repo/snapshots/*/rel)."""
     root = hf_cache_dir() / "hub" / ("models--" + repo.replace("/", "--")) / "snapshots"
