@@ -10,12 +10,28 @@ Mỗi giọng ~64 MB, cả 19 giọng ~1,2 GB nên mặc định chỉ tải gi�
     python scripts/download_nghitts_voices.py --list           # xem danh mục
     python scripts/download_nghitts_voices.py --check          # chỉ kiểm tra
     python scripts/download_nghitts_voices.py --espeak         # chỉ lo espeak-ng-data
+    python scripts/download_nghitts_voices.py --upstream ...   # lấy từ nghitts.app
 
 Chọn giọng trong WebUI: id dạng "nghi:ngoc-huyen-moi", "nghi:my-tam"…
 
-MỖI FILE ĐỀU ĐỐI CHIẾU SHA-256 đã ghim trong services/voice/nghitts_voices.py.
-Nguồn tải là API công khai không có phiên bản, chủ trang thay file dưới cùng tên
-lúc nào cũng được; băm lệch thì DỪNG chứ không ghi đè giọng đang chạy.
+HAI NGUỒN, giống cách download_stt_model.py làm với model Zipformer:
+
+  1. **GitHub Release** của chính repo này (mặc định) — bản gương do ta giữ.
+     Repo public nên tải thẳng bằng URL, không cần `gh` trên máy đích. Không
+     phụ thuộc trang nguồn còn sống hay có đổi file hay không.
+  2. **nghitts.app** (`--upstream`) — nguồn gốc, dùng khi dựng lại bản gương
+     hoặc khi Release chưa có giọng đó.
+
+MỖI FILE ĐỀU ĐỐI CHIẾU SHA-256 đã ghim trong services/voice/nghitts_voices.py,
+cho cả hai nguồn. Nguồn gốc là API công khai không có phiên bản, chủ trang thay
+file dưới cùng tên lúc nào cũng được; băm lệch thì DỪNG chứ không ghi đè giọng
+đang chạy. Bản gương trên Release cũng kiểm băm y hệt nên không có nguồn nào
+được tin sẵn.
+
+Dựng lại bản gương trên Release (chỉ làm khi thêm/đổi giọng):
+
+    python scripts/download_nghitts_voices.py --all --upstream
+    python scripts/download_nghitts_voices.py --publish
 """
 
 from __future__ import annotations
@@ -26,6 +42,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -35,6 +52,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = ROOT / "data" / "nghitts"
+
+# Bản gương trên Release của chính repo này — giống hệt cách model Zipformer
+# được giữ (xem download_stt_model.py). Tên asset đặt theo MÃ giọng chứ không
+# theo tên hiển thị: GitHub đổi khoảng trắng trong tên asset thành dấu chấm nên
+# "Ngọc Huyền (mới).onnx" tải về sẽ ra một cái tên khác hẳn.
+RELEASE_REPO = os.environ.get("C2A_REPO", "TriTue2011/chatgpt2api")
+RELEASE_TAG = "nghitts-voices-v1"
 
 # Nạp THẲNG file danh mục, không qua `from services.voice import ...`: import cả
 # gói sẽ kéo theo services.config và bắt phải có CHATGPT2API_AUTH_KEY, trong khi
@@ -56,13 +80,19 @@ PIPER_URL = ("https://github.com/rhasspy/piper/releases/download/2023.11.14-2/"
 PIPER_SHA256 = "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992"
 ESPEAK_NEED = ("phondata", "phontab", "vi_dict", "lang/aav/vi")
 USER_AGENT = "chatgpt2api-voice-downloader/1.0"
-ESPEAK_CANDIDATES = [
-    DEST / "espeak-ng-data",
-    ROOT / "data" / "kokoro" / "espeak-ng-data",
-    Path("/opt/piper/espeak-ng-data"),
-    Path("/usr/share/espeak-ng-data"),
-    Path("/usr/lib/espeak-ng-data"),
-]
+def _espeak_candidates() -> list[Path]:
+    """Nơi tìm espeak-ng-data, theo thứ tự ưu tiên.
+
+    Tính lúc GỌI chứ không phải lúc nạp module: `--dest` đổi DEST sau khi module
+    đã nạp, dựng sẵn danh sách sẽ trỏ nhầm về thư mục mặc định.
+    """
+    return [
+        DEST / "espeak-ng-data",
+        ROOT / "data" / "kokoro" / "espeak-ng-data",
+        Path("/opt/piper/espeak-ng-data"),
+        Path("/usr/share/espeak-ng-data"),
+        Path("/usr/lib/espeak-ng-data"),
+    ] + sorted(Path("/usr/lib").glob("*-linux-gnu/espeak-ng-data"))
 
 
 def _show(path: Path) -> str:
@@ -122,7 +152,7 @@ def _espeak_ok(base: Path) -> bool:
 
 
 def _find_espeak() -> Path | None:
-    for c in ESPEAK_CANDIDATES:
+    for c in _espeak_candidates():
         if _espeak_ok(c):
             return c
     return None
@@ -182,7 +212,29 @@ def voice_complete(voice) -> bool:
                for n in (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE))
 
 
-def download_voice(voice) -> bool:
+def _asset_name(voice, local_name: str) -> str:
+    """Tên file trên Release: "ban-mai.onnx", "ban-mai.onnx.json"."""
+    return f"{voice.id}{local_name[len('model'):]}"
+
+
+def _has_gh() -> bool:
+    return shutil.which("gh") is not None
+
+
+def _fetch_release(voice, local: str, sha: str, dest: Path) -> None:
+    """Lấy một file từ GitHub Release. Bản gương cũng kiểm băm — không nguồn nào
+    được tin sẵn.
+
+    Repo này public nên tải thẳng bằng URL, KHÔNG cần `gh` trên máy đích. `gh`
+    chỉ cần khi ĐẨY bản gương lên (--publish).
+    """
+    asset = _asset_name(voice, local)
+    url = (f"https://github.com/{RELEASE_REPO}/releases/download/"
+           f"{RELEASE_TAG}/{urllib.parse.quote(asset)}")
+    _fetch(url, dest, sha, f"{asset} ← Release {RELEASE_TAG}")
+
+
+def download_voice(voice, upstream: bool = False) -> bool:
     """Tải một giọng; trả True nếu sau cùng đủ file. Đã đủ thì bỏ qua."""
     voice_dir = DEST / voice.id
     if voice_complete(voice):
@@ -194,9 +246,12 @@ def download_voice(voice) -> bool:
         if dest.is_file() and _sha256(dest) == sha:
             print(f"[co]  {_show(dest)}")
             continue
-        url = f"{nv.BASE_URL}/{urllib.parse.quote(remote, safe='')}"
         try:
-            _fetch(url, dest, sha, f"{remote} → {_show(dest)}")
+            if upstream:
+                url = f"{nv.BASE_URL}/{urllib.parse.quote(remote, safe='')}"
+                _fetch(url, dest, sha, f"{remote} → {_show(dest)}")
+            else:
+                _fetch_release(voice, local, sha, dest)
         except Exception as exc:
             print(f"[LOI] {voice.id}: {exc}", file=sys.stderr)
             return False
@@ -206,6 +261,66 @@ def download_voice(voice) -> bool:
         print(f"[LOI] {voice.id}: khong sinh duoc tokens.txt — {exc}", file=sys.stderr)
         return False
     return voice_complete(voice)
+
+
+def cmd_publish() -> int:
+    """Đẩy các giọng đang có dưới thư mục đích lên Release làm bản gương.
+
+    Chỉ dùng khi thêm/đổi giọng. Đối chiếu băm TRƯỚC khi đẩy để không bao giờ
+    đưa một file hỏng lên làm nguồn chuẩn cho máy khác tải về.
+    """
+    if not _has_gh():
+        print("Can GitHub CLI (gh) da `gh auth login`.", file=sys.stderr)
+        return 1
+    have = [v for v in nv.VOICES
+            if (DEST / v.id / nv.MODEL_FILE).is_file()
+            and (DEST / v.id / nv.CONFIG_FILE).is_file()]
+    if not have:
+        print(f"Khong co giong nao trong {DEST} de day len.", file=sys.stderr)
+        return 1
+
+    exists = subprocess.run(
+        ["gh", "release", "view", RELEASE_TAG, "-R", RELEASE_REPO],
+        capture_output=True, text=True).returncode == 0
+    if not exists:
+        print(f"[tao] release {RELEASE_TAG}")
+        proc = subprocess.run(
+            ["gh", "release", "create", RELEASE_TAG, "-R", RELEASE_REPO,
+             "--title", "NghiTTS Vietnamese voices v1",
+             "--notes", "Bản gương 19 giọng tiếng Việt NghiTTS (VITS 22,05 kHz) "
+                        "cho scripts/download_nghitts_voices.py. Nguồn gốc: "
+                        "https://nghitts.app. SHA-256 từng file ghim trong "
+                        "services/voice/nghitts_voices.py.",
+             "--latest=false"],
+            capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"[LOI] tao release: {proc.stderr.strip()[:300]}", file=sys.stderr)
+            return 1
+
+    failed = []
+    for v in have:
+        for _remote, local, sha in v.artifacts:
+            src = DEST / v.id / local
+            got = _sha256(src)
+            if got != sha:
+                print(f"[LOI] {_show(src)} bam lech ({got}) — BO QUA, khong day len",
+                      file=sys.stderr)
+                failed.append(v.id)
+                continue
+            asset = _asset_name(v, local)
+            with tempfile.TemporaryDirectory() as td:
+                staged = Path(td) / asset          # gh lấy tên asset từ tên file
+                shutil.copy2(src, staged)
+                print(f"[day] {asset} ({src.stat().st_size / 1048576:.0f} MB)")
+                proc = subprocess.run(
+                    ["gh", "release", "upload", RELEASE_TAG, str(staged),
+                     "-R", RELEASE_REPO, "--clobber"],
+                    capture_output=True, text=True)
+            if proc.returncode != 0:
+                print(f"[LOI] day {asset}: {proc.stderr.strip()[:200]}", file=sys.stderr)
+                failed.append(v.id)
+    print(f"\nDay len {RELEASE_TAG}: {len(have) - len(set(failed))}/{len(have)} giong.")
+    return 1 if failed else 0
 
 
 def cmd_list() -> int:
@@ -228,6 +343,7 @@ def cmd_check() -> int:
 
 
 def main() -> int:
+    global DEST      # phải khai trước MỌI lần dùng DEST trong hàm này
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("voices", nargs="*", help="mã giọng cần tải (trống = giọng mặc định)")
@@ -235,12 +351,22 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="liệt kê danh mục rồi thoát")
     ap.add_argument("--check", action="store_true", help="chỉ kiểm tra rồi thoát")
     ap.add_argument("--espeak", action="store_true", help="chỉ lo espeak-ng-data rồi thoát")
+    ap.add_argument("--upstream", action="store_true",
+                    help="lấy từ nguồn gốc nghitts.app thay vì bản gương trên Release")
+    ap.add_argument("--publish", action="store_true",
+                    help=f"đẩy giọng đang có lên Release {RELEASE_TAG} (chỉ khi thêm/đổi giọng)")
+    ap.add_argument("--dest", default="", help=f"thư mục đích (mặc định {DEST})")
     args = ap.parse_args()
+
+    if args.dest:
+        DEST = Path(args.dest)
 
     if args.list:
         return cmd_list()
     if args.check:
         return cmd_check()
+    if args.publish:
+        return cmd_publish()
     if args.espeak:
         return 0 if ensure_espeak() is not None else 1
 

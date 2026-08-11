@@ -92,6 +92,73 @@ Model tải xong **chưa đủ** — phải bật cờ trong config (`data/confi
 Thứ tự thắng (hẹp → rộng): **User trong topic → User cả nhóm → Topic → Nhóm →
 Bot → Kênh**.
 
+### 1.4. Giọng NghiTTS — 19 giọng tiếng Việt
+
+Giọng thứ tư bên cạnh VieNeu/Piper/Kokoro. Chọn bằng id **`nghi:<mã giọng>`**.
+VITS 22,05 kHz, chạy trên `sherpa-onnx` đã có sẵn trong image.
+
+Mỗi giọng là một model riêng ~64 MB, **tải rời từng giọng** — không cần tải hết
+1,2 GB nếu chỉ dùng một hai giọng.
+
+| Mã giọng | Tên hiển thị | Giọng vùng |
+|---|---|---|
+| `ban-mai` | Ban Mai | Bắc/chuẩn |
+| `chieu-thanh` | Chiếu Thành | **Nam bộ** |
+| `duy-onyx-moi` | Duy Onyx (mới) | Bắc/chuẩn |
+| `duy-oryx` | Duy Oryx | Bắc/chuẩn |
+| `lac-phi` | Lạc Phi | Bắc/chuẩn |
+| `mai-phuong` | Mai Phương | Bắc/chuẩn |
+| `minh-khang` | Minh Khang | Bắc/chuẩn |
+| `minh-quang` | Minh Quang | Bắc/chuẩn |
+| `manh-dung` | Mạnh Dũng | Bắc/chuẩn |
+| `my-tam` | Mỹ Tâm | Bắc/chuẩn |
+| `my-tam-real` | Mỹ Tâm Real | **Nam bộ** |
+| `ngoc-huyen-moi` | Ngọc Huyền (mới) — **mặc định** | Bắc/chuẩn |
+| `ngoc-ngan` | Ngọc Ngạn | Bắc/chuẩn |
+| `phuong-trang` | Phương Trang | Bắc/chuẩn |
+| `thanh-phuong-viettel` | Thanh Phương Viettel | Bắc/chuẩn |
+| `thien-tam` | Thiện Tâm | **Nam bộ** |
+| `tran-thanh` | Trấn Thành | Bắc/chuẩn |
+| `tai-an` | Tài An | Bắc/chuẩn |
+| `viet-thao` | Việt Thảo | Bắc/chuẩn |
+
+**Bước 1 — tải giọng** (trong container `c2a` trên server):
+
+```bash
+P=/app/.venv/bin/python
+docker exec c2a $P /app/scripts/download_nghitts_voices.py --list      # xem có gì, đã tải gì
+docker exec c2a $P /app/scripts/download_nghitts_voices.py my-tam ngoc-ngan
+docker exec c2a $P /app/scripts/download_nghitts_voices.py --all       # cả 19 (~1,2 GB)
+docker exec c2a $P /app/scripts/download_nghitts_voices.py --check     # kiểm lại
+```
+
+**Bước 2 — chọn giọng.** Vào WebUI → **Giọng nói**, giọng NghiTTS hiện trong danh
+mục với nhãn `NghiTTS 22kHz · <tên> · <giọng vùng>`. Bấm nghe thử rồi đặt làm
+giọng mặc định. Giọng chưa tải vẫn hiện trong danh mục nhưng bị đánh dấu chưa
+tải, và nút nghe thử sẽ báo đúng lệnh cần chạy.
+
+Đặt bằng tay trong `data/config.json` cũng được: `voice.tts.voice = "nghi:my-tam"`.
+
+**Nguồn tải.** Mặc định lấy từ **GitHub Release** `nghitts-voices-v1` của chính
+repo này — bản gương do ta giữ, giống cách model Zipformer được giữ. Repo public
+nên tải thẳng bằng URL, **không cần `gh`** trên server. Thêm `--upstream` để lấy
+từ nguồn gốc nghitts.app. Cả hai đường đều đối chiếu SHA-256 ghim trong
+`services/voice/nghitts_voices.py` — băm lệch thì dừng, không ghi đè giọng đang
+chạy.
+
+**espeak-ng-data.** NghiTTS phiên âm bằng espeak nên cần thư mục dữ liệu này.
+Không phải cài gì thêm: bản piper trong image (`/opt/piper/espeak-ng-data`) đã
+kèm đủ. Máy nào thiếu thì `--espeak` tự rút ra từ đúng gói piper mà Dockerfile
+đang dùng.
+
+**Ghi chú vận hành.**
+- Chỉ giữ **2 model trong RAM** cùng lúc (19 model là hơn 1 GB). Đổi bằng
+  `voice.tts.nghi_max_loaded`. Đổi giọng qua lại nhiều hơn 2 giọng thì lần đổi
+  sẽ tốn vài giây nạp lại.
+- Giọng NghiTTS hỏng thì tự rơi về Piper như VieNeu/Kokoro — trợ lý không câm.
+- Thêm/đổi giọng trong danh mục thì dựng lại bản gương:
+  `python scripts/download_nghitts_voices.py --all --upstream` rồi `--publish`.
+
 ---
 
 ## 2. Telegram — cài từ đầu
