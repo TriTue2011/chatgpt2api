@@ -1235,7 +1235,7 @@ def create_app() -> FastAPI:
 
 
 MCP_LABELS = {
-    "vn_weather": ("Thời tiết VN", "Thời tiết 63 tỉnh thành, 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr)", "weather"),
+    "vn_weather": ("Thời tiết VN", "Thời tiết 63 tỉnh thành, 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr); bão nhiệt đới + cảnh báo CAP qua Windy", "weather"),
     "vn_news": ("Tin tức VN", "Tin mới nhất từ VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, BBC, Google News", "news"),
     "vn_currency": ("Tỷ giá & Vàng", "Tỷ giá Vietcombank, giá vàng SJC, ngoại tệ", "finance"),
     "vn_petrol": ("Giá xăng dầu", "Giá bán lẻ xăng RON 95/E5, dầu DO/hỏa/Mazút Petrolimex (Vùng 1 + 2)", "finance"),

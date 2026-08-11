@@ -35,6 +35,7 @@ DEFAULTS: dict[str, dict[str, bool]] = {
         "accuweather": False,   # needs API key
         "nws": True,            # US National Weather Service, free
         "wttr": True,
+        "windy": True,          # bão nhiệt đới + cảnh báo CAP, free, không key
     },
     "federated_search": {
         "ddg": True,

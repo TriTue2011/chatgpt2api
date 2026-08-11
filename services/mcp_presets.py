@@ -29,7 +29,8 @@ PRESETS: list[MCPPreset] = [
     # ── VN Core (local vn-mcp-hub) ──────────────────────────────────────────
     MCPPreset(
         id="vn_weather", name="Thời tiết VN", icon="🌤️", category="vn",
-        description="Thời tiết 63 tỉnh thành Việt Nam qua wttr.in. Không cần key.",
+        description="Thời tiết 63 tỉnh thành Việt Nam, kèm tin bão nhiệt đới và "
+                    "dự báo đổ bộ (nguồn Windy). Không cần key.",
         url="http://127.0.0.1:8005/vn_weather/mcp",
         tags=["vietnam", "weather", "free"],
     ),

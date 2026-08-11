@@ -2248,7 +2248,70 @@ def _ha_local_weather(
             out += f" {_w}"
     except Exception:
         pass
+    # Bão nhiệt đới (Windy, cache 4'): chỉ thêm khi có cơn dự báo đổ bộ Việt Nam
+    # hoặc cơn ở gần. Khác cảnh báo trên: đó là dông/gió giật tại chỗ trong 12h.
+    try:
+        from services.thoi_tiet_bao import cau_canh_bao_bao, toa_do_nha
+        _b = cau_canh_bao_bao(*(toa_do_nha() or (None, None)))
+        if _b:
+            out += f" {_b}"
+    except Exception:
+        pass
     return out.rstrip()
+
+
+# Cụm chỉ ý TẠO ẢNH/VIDEO. Câu "vẽ cảnh trời bão" là tả cảnh, không phải hỏi tin
+# bão — `_ha_local_weather` cũng chặn bằng danh sách tương đương.
+_VE_ANH_KW = ("ve ", "ve cho", "ve mot", "ve buc", "ve canh", "tao anh",
+              "tao hinh", "tao buc", "tao video", "tao clip", "lam anh",
+              "lam video", "generate")
+
+
+def _ha_local_bao(messages: list[dict[str, Any]]) -> str | None:
+    """Trả lời câu hỏi về BÃO từ feed công khai của Windy (services/thoi_tiet_bao).
+
+    KHÔNG cần Home Assistant: HA chỉ để biết toạ độ nhà. Thiếu HA thì vẫn nói được
+    cơn nào đổ bộ tỉnh nào và lúc nào, chỉ bỏ phần khoảng cách tới người hỏi.
+
+    Trả None khi câu không hỏi về bão, HOẶC khi không gọi được Windy — im lặng để
+    lượt chat rơi sang tra mạng, chứ không được suy ra là trời yên.
+    """
+    last_user = -1
+    for i, m in enumerate(messages):
+        if isinstance(m, dict) and m.get("role") == "user":
+            last_user = i
+    if last_user < 0:
+        return None
+    for m in messages[last_user + 1:]:
+        if isinstance(m, dict) and m.get("role") in ("tool", "assistant"):
+            return None
+    raw = str(_extract_last_user_text(messages) or "")
+    if not raw.strip():
+        return None
+    try:
+        from services.ha_client import _fold_diacritics
+        from services import thoi_tiet_bao
+    except Exception:
+        return None
+    fd = _fold_diacritics(raw).replace("đ", "d")
+    # Ý TẠO ẢNH/VIDEO thì "trời bão" là câu TẢ CẢNH, không phải hỏi tin bão —
+    # cùng cách chặn mà `_ha_local_weather` đang dùng.
+    if any(k in fd for k in _VE_ANH_KW):
+        return None
+    y_dinh = thoi_tiet_bao.y_dinh_cau_hoi(raw, fd)
+    if not y_dinh:
+        return None
+    try:
+        cau = thoi_tiet_bao.tra_loi_bao(
+            y_dinh, *(thoi_tiet_bao.toa_do_nha() or (None, None)))
+    except Exception as exc:
+        logger.warning({"event": "bao_fastpath_failed", "error": str(exc)[:150]})
+        return None
+    if not cau:
+        logger.info({"event": "bao_fastpath_windy_unreachable", "y_dinh": y_dinh})
+        return None
+    logger.info({"event": "bao_fastpath_answered", "y_dinh": y_dinh})
+    return cau
 
 
 _LUNAR_KW = ("am lich", "duong lich", "lich am", "lich duong", "can chi",
@@ -2606,7 +2669,8 @@ def ha_local_fastpath_answer(user_text: str) -> tuple[str | None, bool]:
     # _ha_local_entity_state đứng ĐẦU: câu nhắc entity_id tường minh là truy
     # vấn tất định — trả từ dữ liệu HA thật, không để model phán quyền rồi
     # [BLOCKED] oan (đo 2026-07-28).
-    for fn in (_ha_local_entity_state, _ha_local_query, _ha_local_status, _ha_local_lunar):
+    for fn in (_ha_local_entity_state, _ha_local_query, _ha_local_status,
+               _ha_local_lunar, _ha_local_bao):
         try:
             r = fn(messages)
         except Exception as exc:
@@ -2637,7 +2701,7 @@ def _collect_fastpath_facts(messages: list[dict[str, Any]]) -> str:
     gõ chữ, không phải TTS Assist.
     """
     facts: list[str] = []
-    for fn in (_ha_local_lunar, _ha_local_status, _ha_local_query):
+    for fn in (_ha_local_lunar, _ha_local_status, _ha_local_query, _ha_local_bao):
         try:
             r = fn(messages)
         except Exception:
@@ -3193,8 +3257,12 @@ def _handle_main(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, An
     # RT1 weather fast-path: read the AccuWeather/HA weather entity directly →
     # accurate for the user's location (no broken geocode), no model guessing.
     # keep_units khi model :text / combo AI text (voice=False).
+    # Câu hỏi về BÃO đứng trước: nó cụ thể hơn, và "thời tiết hôm nay có bão
+    # không" khớp cả hai đường (bão không đọc entity thời tiết của HA).
     try:
-        _wea = None if _gen_task else _ha_local_weather(messages, keep_units=not voice)
+        _wea = None if _gen_task else (
+            _ha_local_bao(messages)
+            or _ha_local_weather(messages, keep_units=not voice))
     except Exception as exc:
         _wea = None
         logger.warning({"event": "ha_local_weather_error", "error": str(exc)[:150]})

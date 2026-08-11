@@ -73,7 +73,7 @@ volumes:
 ### VN Core (7)
 | MCP | Mô tả |
 |-----|-------|
-| vn_weather | Thời tiết 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr) |
+| vn_weather | Thời tiết 4 nguồn (Open-Meteo, AccuWeather, NWS, wttr) + bão nhiệt đới và cảnh báo CAP (Windy, không cần key) |
 | vn_news | Tin tức 6 nguồn (VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, BBC, Google) |
 | vn_currency | Tỷ giá Vietcombank, giá vàng SJC |
 | vn_lunar | Lịch âm dương, can chi |

@@ -544,6 +544,110 @@ def get_minutecast(city: str) -> str:
     return f"{name} sắp mưa sau khoảng {first * 15} phút nữa."
 
 
+# ── Bao nhiet doi + canh bao CAP (nguon Windy, khong can khoa API) ─────────
+#
+# Logic dung CHUNG voi gateway o `services/thoi_tiet_bao.py` — khong copy sang
+# day. Hub chay voi PYTHONPATH=/app/mcp_hub (xem deploy/supervisord.conf) nen goc
+# repo chua co tren sys.path; them vao mot lan khi can.
+
+def _bao_mod():
+    """Nap services.thoi_tiet_bao. None neu khong voi tới duoc (chay doc lap)."""
+    import sys
+    from pathlib import Path
+    goc = str(Path(__file__).resolve().parents[3])
+    if goc not in sys.path:
+        sys.path.append(goc)
+    try:
+        from services import thoi_tiet_bao
+        return thoi_tiet_bao
+    except Exception as exc:
+        logger.warning("thoi_tiet_bao khong nap duoc: %s", exc)
+        return None
+
+
+def _toa_do_cua(city: str) -> tuple[float, float, str] | None:
+    """Geocode mot dia danh VN -> (lat, lon, ten). None neu khong ra."""
+    if not (city or "").strip():
+        return None
+    prov, dist = _vn_district_lookup(city)
+    res = _accuweather_resolve(city, prefer_prov=prov or "")
+    if res["status"] == "ok":
+        return res["lat"], res["lon"], res["name"]
+    coords = _geocode_coords(prov or city)
+    if coords:
+        return coords[0], coords[1], (f"{dist or city}, {prov}" if prov else city)
+    return None
+
+
+@mcp.tool()
+def get_storms(city: str = "") -> str:
+    """Bao nhiet doi dang hoat dong + du bao do bo Viet Nam (nguon Windy, free).
+
+    Tra ve: cap bao theo thang Viet Nam, gio, ap suat, huong di chuyen, tinh du
+    kien do bo va thoi diem. Neu co `city`, tinh them khoang cach tu bao toi dia
+    danh do va khoang cach tu diem do bo toi dia danh do.
+
+    Args:
+        city: Dia danh de tinh khoang cach (vd 'Ha Noi', 'Da Nang'). Bo trong thi
+              chi bao phan do bo, khong co khoang cach.
+    """
+    return _tra_loi_bao(city, "tong_quan")
+
+
+@mcp.tool()
+def get_storm_landfall(city: str = "", y_dinh: str = "sap_do_bo") -> str:
+    """Bao nao sap do bo Viet Nam, vao tinh nao, luc nao, cach dia danh bao xa.
+
+    Args:
+        city: Dia danh tham chieu (vd 'Ha Noi'). Bo trong van tra loi duoc phan
+              tinh do bo va thoi diem, chi thieu khoang cach.
+        y_dinh: 'sap_do_bo' (con do bo som nhat, mac dinh) | 'do_bo_gan_toi' (con
+              do bo gan dia danh nhat) | 'con_cach_bao_xa' (bao con cach cho do
+              bo bao xa) | 'gan_toi' | 'so_luong' | 'tong_quan'.
+    """
+    return _tra_loi_bao(city, y_dinh)
+
+
+def _tra_loi_bao(city: str, y_dinh: str) -> str:
+    """Than chung cua hai tool bao o tren."""
+    if not _is_enabled("windy"):
+        return "Nguon Windy dang tat trong Sources. Bat 'windy' trong Studio de xem tin bao."
+    tb = _bao_mod()
+    if tb is None:
+        return "Chua nap duoc module theo doi bao (services/thoi_tiet_bao.py)."
+    if y_dinh not in tb.Y_DINH_BAO:
+        y_dinh = "tong_quan"
+    lat = lon = None
+    noi = ""
+    if (city or "").strip():
+        toa_do = _toa_do_cua(city)
+        if not toa_do:
+            return f"Mình chưa xác định được vị trí {city}."
+        lat, lon, noi = toa_do
+    cau = tb.tra_loi_bao(y_dinh, lat, lon, _titlecase_vn(noi))
+    # Chuoi rong = KHONG goi duoc Windy. Phai noi ro, tuyet doi khong duoc suy ra
+    # thanh "khong co bao" — dang bao ma bao het bao la kieu sai te nhat.
+    return cau or "Mình chưa gọi được dữ liệu bão từ Windy, anh thử lại sau nhé."
+
+
+@mcp.tool()
+def get_weather_alerts(city: str) -> str:
+    """Canh bao thoi tiet CHINH THUC (chuan CAP) cho mot dia danh, qua Windy.
+
+    Args:
+        city: Dia danh (vd 'Ha Noi', 'Quang Binh').
+    """
+    if not _is_enabled("windy"):
+        return "Nguon Windy dang tat trong Sources. Bat 'windy' trong Studio."
+    tb = _bao_mod()
+    if tb is None:
+        return "Chua nap duoc module theo doi bao (services/thoi_tiet_bao.py)."
+    toa_do = _toa_do_cua(city)
+    if not toa_do:
+        return f"Mình chưa xác định được vị trí {city}."
+    return tb.ban_tin_canh_bao_cap(toa_do[0], toa_do[1])
+
+
 @mcp.tool()
 def get_forecast(city: str, days: int = 3) -> str:
     """Lay du bao thoi tiet 1-3 ngay.
