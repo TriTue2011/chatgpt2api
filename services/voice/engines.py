@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import wave
+from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -327,6 +328,79 @@ def _kokoro_tts(text: str, voice: str) -> bytes:
     return _pcm_to_wav(pcm, int(audio.sample_rate), 2, 1)
 
 
+# ── TTS: NghiTTS (19 giọng tiếng Việt, VITS 22,05 kHz qua sherpa-onnx) ───────
+
+_nghi_lock = threading.Lock()
+# Mỗi giọng là MỘT model riêng (~60–80 MB) nên không nạp hết được: giữ vài
+# giọng dùng gần đây theo kiểu LRU, quá hạn mức thì bỏ giọng cũ nhất.
+_nghi: OrderedDict[str, object] = OrderedDict()
+
+
+def _nghi_voice_id(voice: str) -> str:
+    """"nghi:ban-mai" → "ban-mai"; không phải giọng NghiTTS → rỗng."""
+    if not voice.startswith(vcfg.NGHI_PREFIX):
+        return ""
+    return voice[len(vcfg.NGHI_PREFIX):].strip()
+
+
+def _get_nghi(voice_id: str):
+    """Engine sherpa-onnx cho một giọng, nạp một lần rồi tái dùng."""
+    from services.voice import nghitts_voices as nv
+
+    if nv.get(voice_id) is None:
+        raise VoiceError(f"Không có giọng NghiTTS '{voice_id}' trong danh mục.")
+    model_dir = vcfg.nghi_voice_dir(voice_id)
+    if model_dir is None:
+        raise VoiceError(
+            f"Giọng NghiTTS '{voice_id}' chưa tải "
+            f"(chạy scripts/download_nghitts_voices.py {voice_id}).")
+    espeak = vcfg.nghi_espeak_data_dir()
+    if espeak is None:
+        raise VoiceError(
+            "Thiếu espeak-ng-data cho NghiTTS "
+            "(chạy scripts/download_nghitts_voices.py --espeak).")
+    with _nghi_lock:
+        cached = _nghi.get(voice_id)
+        if cached is not None:
+            _nghi.move_to_end(voice_id)
+            return cached
+        try:
+            import sherpa_onnx
+        except Exception as exc:
+            raise VoiceError("Chưa cài sherpa-onnx trong image.") from exc
+        cfg = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                    model=str(model_dir / nv.MODEL_FILE),
+                    tokens=str(model_dir / nv.TOKENS_FILE),
+                    data_dir=str(espeak),
+                ),
+                provider="cpu",
+                num_threads=vcfg.tts_threads(),
+            ),
+        )
+        tts = sherpa_onnx.OfflineTts(cfg)
+        _nghi[voice_id] = tts
+        while len(_nghi) > vcfg.nghi_max_loaded():
+            old_id, _ = _nghi.popitem(last=False)
+            logger.info("voice: bo model NghiTTS '%s' khoi RAM (het han muc)", old_id)
+        return tts
+
+
+def _nghi_tts(text: str, voice: str) -> bytes:
+    """Giọng "nghi:<mã>" → WAV 22,05 kHz tiếng Việt."""
+    from services.voice import nghitts_voices as nv
+
+    tts = _get_nghi(_nghi_voice_id(voice) or nv.DEFAULT_ID)
+    # Mỗi model một giọng (num_speakers = 1) nên sid luôn 0.
+    with _nghi_lock:
+        audio = tts.generate(text, sid=0, speed=1.0)
+    samples = audio.samples if audio is not None else None
+    if samples is None or len(samples) == 0:
+        raise VoiceError("NghiTTS không tạo được âm thanh.")
+    return _pcm_to_wav(_float_to_pcm16(samples), int(audio.sample_rate), 2, 1)
+
+
 # ── TTS ──────────────────────────────────────────────────────────────────────
 
 
@@ -403,6 +477,13 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
         except Exception as exc:
             errors.append(f"kokoro: {str(exc)[:120]}")
             logger.warning("voice: TTS kokoro that bai: %s", str(exc)[:160])
+            v = ""          # fallback: giọng Piper mặc định
+    elif v.startswith(vcfg.NGHI_PREFIX):
+        try:
+            return _done(_nghi_tts(text, v))
+        except Exception as exc:
+            errors.append(f"nghitts: {str(exc)[:120]}")
+            logger.warning("voice: TTS nghitts that bai: %s", str(exc)[:160])
             v = ""          # fallback: giọng Piper mặc định
     for mode in _backend_order(backend):
         try:
@@ -630,6 +711,13 @@ def warmup_tts(voice: str = "") -> dict:
             }
             out.update({k: adapt[k] for k in adapt if k not in out})
             return out
+        if v.startswith(vcfg.NGHI_PREFIX) and vcfg.nghi_ready():
+            # Nạp lạnh một model VITS mất vài giây; warm trước để lần đọc đầu
+            # của người dùng không phải chờ.
+            _nghi_tts("Xin chào.", v)
+            ms = int((_time.perf_counter() - t0) * 1000)
+            logger.info("voice: warmup NghiTTS xong (%d ms, voice=%s)", ms, v)
+            return {"ok": True, "engine": "nghitts", "ms": ms, "voice": v}
         if v.startswith(vcfg.KOKORO_PREFIX) and vcfg.kokoro_model_dir():
             _kokoro_tts("Hello.", v)
             ms = int((_time.perf_counter() - t0) * 1000)

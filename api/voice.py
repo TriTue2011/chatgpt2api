@@ -209,6 +209,18 @@ def create_router() -> APIRouter:
                 raise HTTPException(
                     404, "Model Kokoro chưa tải (chạy scripts/download_kokoro_model.py).")
             sample = _PREVIEW_TEXT_EN
+        elif vname.startswith(vcfg.NGHI_PREFIX):
+            # Tải từng giọng một nên báo đúng mã giọng đang thiếu, đừng bắt
+            # người dùng đoán xem phải tải cái gì.
+            vid = vname[len(vcfg.NGHI_PREFIX):].strip()
+            if vcfg.nghi_voice_dir(vid) is None:
+                raise HTTPException(
+                    404, f"Giọng NghiTTS '{vid}' chưa tải "
+                         f"(chạy scripts/download_nghitts_voices.py {vid}).")
+            if vcfg.nghi_espeak_data_dir() is None:
+                raise HTTPException(
+                    404, "Thiếu espeak-ng-data cho NghiTTS "
+                         "(chạy scripts/download_nghitts_voices.py --espeak).")
         elif vname and vcfg.voice_model_path(vname) is None:
             raise HTTPException(
                 404, f"Giọng '{vname}' chưa tải về (chạy download_piper_voices.py --pack full).")

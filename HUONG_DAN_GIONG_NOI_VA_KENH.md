@@ -20,6 +20,7 @@ model tải một lần là giữ qua mọi lần update container.
 | **VieNeu-TTS v3 Turbo** | Giọng đọc chính (48 kHz, đọc được câu trộn Anh–Việt) | `data/hf` | `download_vieneu_model.py` |
 | Piper | Giọng đọc nhẹ, nhanh | `data/piper` | `download_piper_voices.py` |
 | Kokoro | Giọng đọc thay thế | `data/kokoro` | `download_kokoro_model.py` |
+| **NghiTTS** | 19 giọng tiếng Việt (22 kHz, Bắc + Nam bộ) — tải từng giọng, mỗi giọng ~64 MB | `data/nghitts` | `download_nghitts_voices.py` |
 | **Zipformer tiếng Việt** | STT — nghe tin nhắn thoại tiếng Việt | `data/stt` | `download_stt_model.py` |
 | **Parakeet-TDT 0.6B v2** | STT — nghe **tiếng Anh** (CPU, nhanh hơn Whisper) | `data/stt-en` | `download_stt_en_model.py` |
 
@@ -30,6 +31,11 @@ model tải một lần là giữ qua mọi lần update container.
 # DÙNG /app/.venv/bin/python (python hệ thống thiếu thư viện):
 docker exec c2a /app/.venv/bin/python /app/scripts/download_stt_model.py --hf   # STT tiếng Việt
 docker exec c2a /app/.venv/bin/python /app/scripts/download_stt_en_model.py     # STT tiếng Anh
+
+# NghiTTS — xem danh mục rồi tải riêng từng giọng muốn dùng (đừng tải cả 19,
+# hết 1,2 GB mà thường chỉ dùng một hai giọng).
+docker exec c2a /app/.venv/bin/python /app/scripts/download_nghitts_voices.py --list
+docker exec c2a /app/.venv/bin/python /app/scripts/download_nghitts_voices.py my-tam ngoc-ngan
 docker exec c2a /app/.venv/bin/python /app/scripts/download_vieneu_model.py     # TTS VieNeu (tự chọn int8/fp32 theo CPU)
 ```
 

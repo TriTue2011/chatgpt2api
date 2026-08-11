@@ -31,6 +31,7 @@ PIPER_DIR = Path(DATA_DIR) / "piper"
 STT_DIR = Path(DATA_DIR) / "stt"
 STT_EN_DIR = Path(DATA_DIR) / "stt-en"   # Parakeet-TDT (tiếng Anh)
 KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
+NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Việt)
 MEDIA_DIR = Path(DATA_DIR) / "voice" / "media"
 # Manifest 19 giọng (nằm TRONG image — chỉ là danh mục, không phải model).
 VOICES_MANIFEST = Path(BASE_DIR) / "voices" / "piper" / "voices.json"
@@ -38,11 +39,12 @@ VOICES_MANIFEST = Path(BASE_DIR) / "voices" / "piper" / "voices.json"
 _DEFAULT_VOICE = "ngochuyennew"
 
 # Giọng namespaced: "vieneu:<Tên>" → VieNeu v3 Turbo, "kokoro:<tên>" → Kokoro
-# tiếng Anh, id trần → Piper.
+# tiếng Anh, "nghi:<mã>" → NghiTTS tiếng Việt, id trần → Piper.
 VIENEU_PREFIX = "vieneu:"
 VIENEU_BACKBONE_REPO = "pnnbao-ump/VieNeu-TTS-v3-Turbo"
 VIENEU_CODEC_REPO = "OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX"
 KOKORO_PREFIX = "kokoro:"
+NGHI_PREFIX = "nghi:"        # "nghi:<mã giọng>" → NghiTTS, xem nghitts_voices.py
 # 11 giọng của gói kokoro-en-v0_19 (sherpa-onnx) — thứ tự = speaker id (sid).
 KOKORO_VOICE_NAMES = [
     "af", "af_bella", "af_nicole", "af_sarah", "af_sky",
@@ -98,6 +100,19 @@ def voice_catalog() -> list[dict[str, Any]]:
             "language": "vi-en",
             "language_label": label,
             "downloaded": vn_ready,
+            "default": False,
+        })
+    # Giọng NghiTTS tiếng Việt — id "nghi:<mã>". Tải từng giọng một nên cờ
+    # downloaded xét RIÊNG từng giọng, không xét cả gói như Kokoro/VieNeu.
+    from services.voice import nghitts_voices as _nv
+    nghi_have = set(nghi_downloaded_ids())
+    for nvoice in _nv.VOICES:
+        out.append({
+            "id": f"{NGHI_PREFIX}{nvoice.id}",
+            "language": nvoice.language,
+            "language_label": f"NghiTTS 22kHz · {nvoice.name} · "
+                              + _LANG_LABEL.get(nvoice.language, nvoice.language),
+            "downloaded": nvoice.id in nghi_have,
             "default": False,
         })
     # Giọng Kokoro tiếng Anh — id "kokoro:<tên>" (af=nữ Mỹ, am=nam Mỹ,
@@ -171,7 +186,7 @@ def piper_binary() -> str:
 def voice_model_path(name: str = "") -> Path | None:
     """File .onnx của giọng trong data/piper (None nếu chưa tải)."""
     v = (name or tts_voice()).strip()
-    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX)):
+    if v.startswith((VIENEU_PREFIX, KOKORO_PREFIX, NGHI_PREFIX)):
         v = _DEFAULT_VOICE   # giọng namespaced không phải file Piper — fallback
     if not v:
         return None
@@ -195,7 +210,8 @@ def is_tts_enabled() -> bool:
     has_piper = bool(piper_binary()) and voice_model_path() is not None
     has_vieneu = vieneu_installed() and vieneu_model_ready()
     has_kokoro = kokoro_model_dir() is not None
-    has_local = has_piper or has_vieneu or has_kokoro
+    has_nghi = nghi_ready()
+    has_local = has_piper or has_vieneu or has_kokoro or has_nghi
     has_wyoming = bool(tts_wyoming_url())
     if b == "local":
         return has_local
@@ -599,6 +615,103 @@ def kokoro_model_file() -> Path | None:
     return hits[0]
 
 
+# ── NghiTTS (19 giọng tiếng Việt, VITS 22,05 kHz qua sherpa-onnx) ────────────
+# Cùng nguyên tắc Kokoro: danh mục trong image (nghitts_voices.py), model ngoài
+# volume data/nghitts/<mã giọng>/ — tải bằng scripts/download_nghitts_voices.py.
+
+
+def nghi_dir() -> Path:
+    """Thư mục gốc chứa model NghiTTS; đè bằng ``voice.tts.nghi_dir``."""
+    d = str(_sub("tts").get("nghi_dir") or "").strip()
+    return Path(d) if d else NGHI_DIR
+
+
+def nghi_voice_dir(voice_id: str) -> Path | None:
+    """Thư mục một giọng khi đã đủ 3 file (model, cấu hình, tokens), None nếu chưa.
+
+    Mã giọng phải nằm trong danh mục — chặn luôn đường dẫn kiểu "../" đi ra
+    ngoài thư mục model.
+    """
+    from services.voice import nghitts_voices as nv
+
+    voice = nv.get(voice_id)
+    if voice is None:
+        return None
+    base = nghi_dir() / voice.id
+    need = (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE)
+    return base if all((base / n).is_file() for n in need) else None
+
+
+def nghi_downloaded_ids() -> list[str]:
+    """Mã các giọng NghiTTS đã tải đủ file trên volume."""
+    from services.voice import nghitts_voices as nv
+
+    return [v.id for v in nv.VOICES if nghi_voice_dir(v.id) is not None]
+
+
+def nghi_espeak_data_dir() -> Path | None:
+    """Thư mục espeak-ng-data dùng cho phonemizer NghiTTS, None nếu không có.
+
+    NghiTTS là VITS phonemizer espeak nên bắt buộc có dữ liệu này. KHÔNG cần
+    thêm gì vào image: bản piper trong /opt/piper đã kèm sẵn (đã kiểm bản
+    2023.11.14-2, có đủ vi_dict và lang/aav/vi). Gói Kokoro cũng kèm một bản.
+    Thứ tự tìm: cạnh model → Kokoro → piper → hệ thống. Ép bằng
+    ``voice.tts.nghi_espeak_dir``.
+    """
+    need = ("phondata", "phontab", "vi_dict", "lang/aav/vi")
+
+    def ok(p: Path) -> bool:
+        return all((p / n).is_file() for n in need)
+
+    forced = str(_sub("tts").get("nghi_espeak_dir") or "").strip()
+    if forced:
+        p = Path(forced).expanduser()
+        return p if ok(p) else None
+    candidates = [
+        nghi_dir() / "espeak-ng-data",
+        KOKORO_DIR / "espeak-ng-data",
+        Path("/opt/piper/espeak-ng-data"),
+        Path("/usr/share/espeak-ng-data"),
+        Path("/usr/lib/espeak-ng-data"),
+    ]
+    candidates += sorted(Path("/usr/lib").glob("*-linux-gnu/espeak-ng-data"))
+    for c in candidates:
+        try:
+            if ok(c):
+                return c
+        except OSError:
+            continue
+    return None
+
+
+def nghi_all_ids() -> list[str]:
+    """Mã của mọi giọng trong danh mục, kể cả giọng chưa tải."""
+    from services.voice import nghitts_voices as nv
+
+    return [v.id for v in nv.VOICES]
+
+
+def nghi_ready() -> bool:
+    """Có ít nhất một giọng đã tải VÀ có espeak-ng-data để đọc."""
+    return bool(nghi_downloaded_ids()) and nghi_espeak_data_dir() is not None
+
+
+def nghi_max_loaded() -> int:
+    """Số model NghiTTS giữ đồng thời trong RAM (mặc định 2).
+
+    Mỗi model khoảng 60–80 MB; nạp cả 19 giọng là hơn 1 GB. Giữ vài giọng dùng
+    gần đây là đủ cho nhà dùng 1–2 giọng, mà đổi giọng vẫn không phải nạp lại
+    ngay lần sau.
+    """
+    raw = _sub("tts").get("nghi_max_loaded")
+    if raw is None or str(raw).strip() == "":
+        return 2
+    try:
+        return max(1, min(int(raw), 19))
+    except (TypeError, ValueError):
+        return 2
+
+
 def kokoro_sid(name: str) -> int:
     """Tên giọng Kokoro → speaker id; sai tên = 0 (giọng af mặc định)."""
     try:
@@ -909,6 +1022,14 @@ def status() -> dict[str, Any]:
             "max_chars": vieneu_max_chars(),
             "style": vieneu_style(),
             "voices": len(vieneu_voices()),
+        },
+        "nghitts": {
+            "model_ready": nghi_ready(),
+            "downloaded": nghi_downloaded_ids(),
+            "voices": len(nghi_all_ids()),
+            "espeak_data": str(nghi_espeak_data_dir() or ""),
+            "max_loaded": nghi_max_loaded(),
+            "threads": tts_threads(),
         },
         "kokoro": {
             "model_ready": kokoro_model_dir() is not None,

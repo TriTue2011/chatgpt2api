@@ -126,6 +126,7 @@ data/piper/
 data/stt/
 data/stt-en/
 data/kokoro/
+data/nghitts/
 data/hf/
 *.onnx
 !voices/**/*.json
