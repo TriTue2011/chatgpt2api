@@ -199,27 +199,45 @@ class StreamSynthesizeCacheTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
 
 
+class CacheKeyTests(unittest.TestCase):
+    def test_silence_settings_change_the_key(self) -> None:
+        # Chỉnh nhịp nghỉ xong nghe thử mà ra bản cache cũ thì tưởng là hỏng.
+        with mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=350):
+            k1 = tts_cache.key("stream", "xin chào", "piper:test", "")
+        with mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=600):
+            k2 = tts_cache.key("stream", "xin chào", "piper:test", "")
+        with mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=180):
+            k3 = tts_cache.key("stream", "xin chào", "piper:test", "")
+        self.assertNotEqual(k1, k2)
+        self.assertNotEqual(k1, k3)
+
+
 class ConfigDefaultsTests(unittest.TestCase):
     def test_defaults(self) -> None:
         with mock.patch.object(vcfg, "_sub", return_value={}):
             self.assertEqual(vcfg.tts_cache_mb(), 64)
             self.assertEqual(vcfg.tts_sentence_silence_ms(), 350)
             self.assertEqual(vcfg.tts_silence_jitter_percent(), 25)
+            # Nghỉ theo mệnh đề đổi cách đọc (mỗi mệnh đề một lần gọi engine)
+            # nên mặc định TẮT — ai thích nhịp đó thì tự bật trong Cài đặt.
+            self.assertEqual(vcfg.tts_clause_silence_ms(), 0)
 
     def test_values_are_clamped(self) -> None:
         with mock.patch.object(vcfg, "_sub", return_value={
                 "cache_mb": 9999, "sentence_silence_ms": 99999,
-                "silence_jitter_percent": 500}):
+                "clause_silence_ms": 99999, "silence_jitter_percent": 500}):
             self.assertEqual(vcfg.tts_cache_mb(), 512)
             self.assertEqual(vcfg.tts_sentence_silence_ms(), 3000)
+            self.assertEqual(vcfg.tts_clause_silence_ms(), 3000)
             self.assertEqual(vcfg.tts_silence_jitter_percent(), 100)
 
     def test_garbage_falls_back_to_default(self) -> None:
         with mock.patch.object(vcfg, "_sub", return_value={
                 "cache_mb": "rac", "sentence_silence_ms": "rac",
-                "silence_jitter_percent": "rac"}):
+                "clause_silence_ms": "rac", "silence_jitter_percent": "rac"}):
             self.assertEqual(vcfg.tts_cache_mb(), 64)
             self.assertEqual(vcfg.tts_sentence_silence_ms(), 350)
+            self.assertEqual(vcfg.tts_clause_silence_ms(), 0)
             self.assertEqual(vcfg.tts_silence_jitter_percent(), 25)
 
 

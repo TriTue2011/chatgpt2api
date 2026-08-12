@@ -22,6 +22,17 @@ def _wav16(ms: int = 100) -> bytes:
     return buf.getvalue()
 
 
+def _wav22(ms: int = 100) -> bytes:
+    """WAV 22,05 kHz — giả engine dự phòng có tần số khác _wav16."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * round(22.05 * ms))
+    return buf.getvalue()
+
+
 class KokoroConfigTests(unittest.TestCase):
     def test_sid_mapping(self) -> None:
         self.assertEqual(vcfg.kokoro_sid("af"), 0)
@@ -114,6 +125,101 @@ class SentenceSplitTests(unittest.TestCase):
         self.assertTrue(all(len(p) <= 120 for p in parts))
 
 
+class ClauseSplitTests(unittest.TestCase):
+    def test_splits_on_comma_and_keeps_the_mark(self) -> None:
+        parts = engines._split_clauses(
+            "Hôm nay trời rất đẹp, nắng vàng rực rỡ cả ngày.")
+        self.assertEqual(len(parts), 2)
+        self.assertTrue(parts[0].endswith(","))
+
+    def test_comma_between_digits_is_not_a_boundary(self) -> None:
+        # "1,5 triệu" cắt ở phẩy thì engine đọc thành hai số rời.
+        s = "Giá bán khoảng 1,5 triệu đồng cho mỗi thùng hàng."
+        self.assertEqual(engines._split_clauses(s), [s])
+        gio = "Chuyến bay khởi hành lúc 12:30 chiều nay nhé."
+        self.assertEqual(engines._split_clauses(gio), [gio])
+
+    def test_short_clause_merged_into_neighbour(self) -> None:
+        parts = engines._split_clauses("Vâng, tôi đã bật đèn phòng khách rồi.")
+        self.assertEqual(len(parts), 1)      # "Vâng," quá ngắn → gộp
+
+    def test_segments_mark_clause_and_sentence_boundaries(self) -> None:
+        text = "Hôm nay trời rất đẹp, nắng vàng rực rỡ. Chúng ta đi dạo nhé."
+        kinds = [k for _, k in engines._split_segments(text, clause_ms=180)]
+        self.assertEqual(kinds, ["clause", "sentence", "sentence"])
+        # clause_ms = 0 → không xẻ theo mệnh đề nữa
+        kinds0 = [k for _, k in engines._split_segments(text, clause_ms=0)]
+        self.assertEqual(kinds0, ["sentence", "sentence"])
+
+
+class SynthesizeSilenceTests(unittest.TestCase):
+    """Khoảng lặng phải có trong CẢ WAV một-lần (loa, voice note), không chỉ stream."""
+
+    def setUp(self) -> None:
+        tts_cache.clear()
+        self.addCleanup(tts_cache.clear)
+        self.calls: list[str] = []
+
+    def _fake_one(self, text: str, voice: str = "", *, style: str = "") -> bytes:
+        self.calls.append(text)
+        return _wav16(50)
+
+    def _patch(self, sentence_ms: int, clause_ms: int, jitter: int = 0):
+        return (
+            mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=sentence_ms),
+            mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=clause_ms),
+            mock.patch.object(vcfg, "tts_silence_jitter_percent", return_value=jitter),
+        )
+
+    def test_gap_between_sentences_lands_in_the_wav(self) -> None:
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        p1, p2, p3 = self._patch(400, 0)
+        with p1, p2, p3, mock.patch.object(engines, "_synthesize_one",
+                                           side_effect=self._fake_one):
+            wav = engines.synthesize(text, "ngochuyennew")
+        self.assertEqual(len(self.calls), 2)
+        rate, width, channels, pcm = engines._wav_parts(wav)
+        self.assertEqual((rate, width, channels), (16000, 2, 1))
+        # 2 mẩu 50 ms + 1 khoảng lặng 400 ms, PCM16 mono @16 kHz
+        self.assertEqual(len(pcm), 2 * (16 * 50 * 2) + 16 * 400 * 2)
+
+    def test_clause_gap_splits_inside_a_sentence(self) -> None:
+        text = "Hôm nay trời rất đẹp, nắng vàng rực rỡ cả ngày."
+        p1, p2, p3 = self._patch(0, 200)
+        with p1, p2, p3, mock.patch.object(engines, "_synthesize_one",
+                                           side_effect=self._fake_one):
+            wav = engines.synthesize(text, "ngochuyennew")
+        self.assertEqual(len(self.calls), 2)
+        _rate, _w, _c, pcm = engines._wav_parts(wav)
+        self.assertEqual(len(pcm), 2 * (16 * 50 * 2) + 16 * 200 * 2)
+
+    def test_silence_off_reads_whole_text_in_one_call(self) -> None:
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        p1, p2, p3 = self._patch(0, 0)
+        with p1, p2, p3, mock.patch.object(engines, "_synthesize_one",
+                                           side_effect=self._fake_one):
+            engines.synthesize(text, "ngochuyennew")
+        self.assertEqual(self.calls, [text])
+
+    def test_format_change_midway_falls_back_to_one_call(self) -> None:
+        # Câu 2 rơi xuống engine dự phòng (tần số khác) → nối vào là méo tiếng.
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+
+        def doi_dinh_dang(t: str, v: str = "", *, style: str = "") -> bytes:
+            self.calls.append(t)
+            return _wav16(50) if len(self.calls) != 2 else _wav22(50)
+
+        p1, p2, p3 = self._patch(400, 0)
+        with p1, p2, p3, mock.patch.object(engines, "_synthesize_one",
+                                           side_effect=doi_dinh_dang):
+            wav = engines.synthesize(text, "ngochuyennew")
+        self.assertEqual(self.calls[-1], text)      # đọc lại trọn văn bản
+        self.assertEqual(engines._wav_parts(wav)[0], 16000)
+
+
 class StreamSynthesizeTests(unittest.TestCase):
     def setUp(self) -> None:
         # Cache audio dùng chung cả tiến trình — dọn để mỗi test tự đứng.
@@ -149,6 +255,63 @@ class StreamSynthesizeTests(unittest.TestCase):
             out = list(engines.stream_synthesize("Xin chào.", "vieneu:Phạm Tuyên"))
         self.assertEqual(len(out), 2)
         self.assertTrue(all(r == 48000 for r, _ in out))
+
+    def test_vieneu_gets_gap_between_sentences(self) -> None:
+        # Khoảng lặng áp cho MỌI engine, VieNeu cũng đọc theo câu khi bật.
+        seen: list[str] = []
+
+        def fake_stream(text: str, v: str, style: str = ""):
+            seen.append(text)
+            yield (48000, b"\x01\x00" * 100)
+
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
+                mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=300), \
+                mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=0), \
+                mock.patch.object(vcfg, "tts_silence_jitter_percent", return_value=0), \
+                mock.patch.object(engines, "_vieneu_stream", side_effect=fake_stream):
+            out = list(engines.stream_synthesize(text, "vieneu:Phạm Tuyên"))
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(set(out[1][1]), {0})              # mẩu giữa im lặng
+        self.assertEqual(len(out[1][1]), 48 * 300 * 2)     # 300 ms @48 kHz
+
+    def test_vieneu_reads_whole_text_when_silence_off(self) -> None:
+        seen: list[str] = []
+
+        def fake_stream(text: str, v: str, style: str = ""):
+            seen.append(text)
+            yield (48000, b"\x01\x00" * 100)
+
+        text = ("Hôm nay trời rất đẹp và nắng vàng rực rỡ. "
+                "Chúng ta cùng nhau đi dạo ngoài công viên nhé.")
+        with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
+                mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=0), \
+                mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=0), \
+                mock.patch.object(engines, "_vieneu_stream", side_effect=fake_stream):
+            out = list(engines.stream_synthesize(text, "vieneu:Phạm Tuyên"))
+        self.assertEqual(seen, [text])       # một lần gọi cho cả đoạn
+        self.assertEqual(len(out), 1)
+
+    def test_clause_gap_streams_per_clause(self) -> None:
+        calls: list[str] = []
+
+        def fake_synth(sent: str, v: str = "", *, style: str = "") -> bytes:
+            calls.append(sent)
+            return _wav16(50)
+
+        text = "Hôm nay trời rất đẹp, nắng vàng rực rỡ cả ngày."
+        with mock.patch.object(vcfg, "tts_backend", return_value="local"), \
+                mock.patch.object(vcfg, "tts_sentence_silence_ms", return_value=0), \
+                mock.patch.object(vcfg, "tts_clause_silence_ms", return_value=200), \
+                mock.patch.object(vcfg, "tts_silence_jitter_percent", return_value=0), \
+                mock.patch.object(engines, "synthesize", side_effect=fake_synth):
+            out = list(engines.stream_synthesize(text, "ngochuyennew"))
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0].endswith(","))
+        self.assertEqual(len(out), 3)
+        self.assertEqual(len(out[1][1]), 16 * 200 * 2)     # 200 ms @16 kHz
 
 
 class VieNeuThreadConfigTests(unittest.TestCase):

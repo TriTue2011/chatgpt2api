@@ -155,7 +155,8 @@ def key(kind: str, text: str, voice: str, style: str) -> bytes:
     """Khoá cho một lần đọc. ``kind`` tách audio nguyên khối với audio theo mẩu.
 
     Băm luôn cấu hình engine: đổi precision hay length_scale là audio đổi, khoá
-    phải đổi theo kẻo phát lại bản cũ.
+    phải đổi theo kẻo phát lại bản cũ. Khoảng lặng cũng nằm trong khoá — vừa
+    chỉnh nhịp nghỉ trong Cài đặt mà nghe thử lại ra bản cũ thì tưởng là hỏng.
     """
     from services.voice import config as vcfg
 
@@ -164,6 +165,9 @@ def key(kind: str, text: str, voice: str, style: str) -> bytes:
             vcfg.tts_backend(),
             vcfg.vieneu_precision(),
             str(vcfg.tts_length_scale()),
+            str(vcfg.tts_sentence_silence_ms()),
+            str(vcfg.tts_clause_silence_ms()),
+            str(vcfg.tts_silence_jitter_percent()),
         ))
     except Exception:
         engine_cfg = ""

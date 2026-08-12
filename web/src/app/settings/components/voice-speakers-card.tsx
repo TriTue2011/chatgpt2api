@@ -373,6 +373,46 @@ export function VoiceSpeakersCard() {
               onChange={(e) => patchVoice("tts", { wyoming_url: e.target.value })}
               placeholder="tcp://192.0.2.10:10200" />
           </div>
+
+          {/* Nhịp nghỉ khi đọc — áp cho mọi engine, xem services/voice/engines.py */}
+          <div className="sm:col-span-2 grid gap-2 sm:grid-cols-3 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div>
+              <label className="text-xs text-muted-foreground">Nghỉ giữa hai câu (ms)</label>
+              <Input type="number" min={0} max={3000} step={10}
+                value={String(ttsCfg.sentence_silence_ms ?? "")}
+                onChange={(e) => patchVoice("tts", {
+                  sentence_silence_ms: e.target.value === "" ? "" : Number(e.target.value),
+                })}
+                placeholder="350 (mặc định)" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Nghỉ sau dấu phẩy (ms)</label>
+              <Input type="number" min={0} max={3000} step={10}
+                value={String(ttsCfg.clause_silence_ms ?? "")}
+                onChange={(e) => patchVoice("tts", {
+                  clause_silence_ms: e.target.value === "" ? "" : Number(e.target.value),
+                })}
+                placeholder="0 = tắt (thử 180)" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Dao động ngẫu nhiên (%)</label>
+              <Input type="number" min={0} max={100} step={5}
+                value={String(ttsCfg.silence_jitter_percent ?? "")}
+                onChange={(e) => patchVoice("tts", {
+                  silence_jitter_percent: e.target.value === "" ? "" : Number(e.target.value),
+                })}
+                placeholder="25 (mặc định)" />
+            </div>
+            <p className="sm:col-span-3 text-[10px] text-muted-foreground">
+              Áp cho <b>mọi giọng</b> (VieNeu, NghiTTS, Piper, Kokoro, Wyoming): văn bản được
+              cắt thành mẩu, mỗi mẩu đọc một lần rồi nối lại bằng khoảng lặng. Nghỉ sau dấu
+              phẩy &gt; 0 cho nhịp rõ hơn nhưng đọc lâu hơn và ngữ điệu từng mệnh đề tách rời
+              nhau — thấy gượng thì để 0. Cả hai ô nghỉ = 0 → đọc trọn đoạn trong một lần,
+              nhanh nhất và liền mạch nhất. Dao động rải ngẫu nhiên ±% quanh mỗi khoảng nghỉ
+              để nhịp không đều tăm tắp như máy đếm. Số trong ngoặc chỉ là gợi ý — ô trống
+              nghĩa là dùng mặc định.
+            </p>
+          </div>
         </div>
 
         <div className="text-xs font-semibold text-muted-foreground pt-1">🎤 Cấu hình nghe (STT)</div>

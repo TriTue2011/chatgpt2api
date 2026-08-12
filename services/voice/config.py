@@ -531,11 +531,12 @@ def tts_cache_mb() -> int:
 
 
 def tts_sentence_silence_ms() -> int:
-    """Khoảng lặng chèn GIỮA hai câu ở đường đọc-theo-câu. 0 = tắt (dính liền).
+    """Khoảng lặng chèn GIỮA hai câu. 0 = tắt (đọc dính liền).
 
-    Chỉ áp cho Piper/Kokoro/Wyoming — mỗi câu là một lần gọi engine riêng nên
-    nối thẳng thì nghe hụt hơi, không có nhịp nghỉ. VieNeu đọc cả đoạn một lần
-    (frame-level) nên tự có nhịp, không chèn.
+    Áp cho MỌI engine (Piper/Kokoro/NghiTTS/Wyoming/VieNeu): văn bản được cắt
+    thành câu, mỗi câu một lần gọi engine, nối lại bằng đúng khoảng lặng này.
+    Đặt 0 (cùng với clause_silence_ms) thì đọc trọn văn bản trong một lần gọi
+    như trước — nhanh nhất, ngữ điệu liền mạch nhất.
     """
     raw = _sub("tts").get("sentence_silence_ms")
     if raw is None or str(raw).strip() == "":
@@ -544,6 +545,23 @@ def tts_sentence_silence_ms() -> int:
         return max(0, min(int(raw), 3000))
     except (TypeError, ValueError):
         return 350
+
+
+def tts_clause_silence_ms() -> int:
+    """Khoảng lặng sau dấu phẩy / chấm phẩy / hai chấm TRONG một câu. 0 = tắt.
+
+    Bật (vd 180 ms, như add-on wyoming-vietnamese) thì mỗi mệnh đề thành một
+    lần gọi engine riêng: nhịp nghỉ rõ hơn nhưng đổi lại engine đọc từng mệnh
+    đề như một câu độc lập (ngữ điệu tách rời) và tốn thêm thời gian tổng hợp.
+    Vì vậy mặc định 0 — người dùng tự bật trong Cài đặt nếu thích nhịp đó.
+    """
+    raw = _sub("tts").get("clause_silence_ms")
+    if raw is None or str(raw).strip() == "":
+        return 0
+    try:
+        return max(0, min(int(raw), 3000))
+    except (TypeError, ValueError):
+        return 0
 
 
 def tts_silence_jitter_percent() -> int:

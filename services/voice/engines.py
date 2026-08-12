@@ -437,9 +437,10 @@ def _backend_order(backend: str) -> list[str]:
     return ["local", "wyoming"]
 
 
-def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
-    """Text → WAV bytes. Ném VoiceError nếu không có đường nào chạy được.
+def _synthesize_one(text: str, voice: str = "", *, style: str = "") -> bytes:
+    """MỘT lần gọi engine cho trọn `text` → WAV bytes, KHÔNG chèn khoảng lặng.
 
+    Ném VoiceError nếu không có đường nào chạy được.
     Giọng namespaced ("vieneu:<Tên>") đi thẳng engine tương ứng; lỗi thì rơi
     xuống Piper/Wyoming với giọng mặc định để trợ lý không bao giờ "câm".
     `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu; engine khác bỏ qua.
@@ -497,6 +498,54 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
             errors.append(f"{mode}: {str(exc)[:120]}")
             logger.warning("voice: TTS %s that bai: %s", mode, str(exc)[:160])
     raise VoiceError("Không tổng hợp được giọng nói — " + "; ".join(errors))
+
+
+def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
+    """Text → WAV bytes, có chèn khoảng lặng giữa câu / giữa mệnh đề.
+
+    Khoảng lặng lấy từ config (`voice.tts.sentence_silence_ms`,
+    `clause_silence_ms`, `silence_jitter_percent` — chỉnh trong Cài đặt) và áp
+    cho MỌI engine: text được cắt thành mẩu, mỗi mẩu một lần gọi engine, nối
+    lại bằng im lặng. Cả hai khoảng lặng = 0 → đọc trọn text một lần như cũ.
+
+    Hàm cắt/ghép nằm ở khối "TTS streaming" bên dưới (dùng chung với
+    `stream_synthesize`).
+    """
+    text = (text or "").strip()
+    if not text:
+        raise VoiceError("Không có nội dung để đọc.")
+    sent_ms, clause_ms, jitter = _silence_plan()
+    if sent_ms <= 0 and clause_ms <= 0:
+        return _synthesize_one(text, voice, style=style)
+    segs = _split_segments(text, clause_ms=clause_ms)
+    if len(segs) <= 1:
+        return _synthesize_one(text, voice, style=style)
+
+    fmt: tuple[int, int, int] | None = None
+    pcm_parts: list[bytes] = []
+    for i, (seg, kind) in enumerate(segs):
+        rate, width, channels, pcm = _wav_parts(
+            _synthesize_one(seg, voice, style=style))
+        if fmt is None:
+            fmt = (rate, width, channels)
+        elif (rate, width, channels) != fmt:
+            # Giữa chừng engine rơi xuống bản dự phòng (khác tần số / độ rộng
+            # mẫu) — nối thẳng vào là méo tiếng. Bỏ ghép, đọc lại một lần.
+            logger.warning("voice: dinh dang WAV doi giua chung → doc lai tron van ban")
+            return _synthesize_one(text, voice, style=style)
+        if not pcm:
+            continue
+        pcm_parts.append(pcm)
+        if i < len(segs) - 1 and (width, channels) == (2, 1):
+            gap = _silence_pcm(
+                _jitter_ms(sent_ms if kind == "sentence" else clause_ms, jitter),
+                rate)
+            if gap:
+                pcm_parts.append(gap)
+    if fmt is None or not pcm_parts:
+        raise VoiceError("Không tổng hợp được giọng nói.")
+    rate, width, channels = fmt
+    return _pcm_to_wav(b"".join(pcm_parts), rate, width, channels)
 
 
 # ── TTS streaming: "chữ sinh ra tới đâu đọc tới đó" ──────────────────────────
@@ -584,6 +633,65 @@ def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
         else:
             merged.append(buf)
     return merged
+
+
+# Ranh giới MỆNH ĐỀ trong một câu: phẩy, chấm phẩy, hai chấm.
+_CLAUSE_MARKS = ",;:，；："
+
+
+def _split_clauses(s: str, min_chars: int = 12) -> list[str]:
+    """Xẻ MỘT câu tại dấu phẩy/chấm phẩy/hai chấm, GIỮ dấu ở cuối mẩu.
+
+    Giữ lại dấu để engine đọc mẩu như một mệnh đề (ngữ điệu lửng) chứ không
+    như một câu trọn vẹn (ngữ điệu xuống hẳn).
+
+    Bỏ qua dấu nằm GIỮA HAI CHỮ SỐ — "1,5 triệu" hay "12:30" mà cắt ở đó thì
+    engine đọc thành hai số rời, sai nội dung. Mẩu ngắn hơn `min_chars` được
+    gộp sang mẩu sau để không sinh clip audio vụn.
+    """
+    out: list[str] = []
+    buf = ""
+    for i, ch in enumerate(s):
+        buf += ch
+        if ch not in _CLAUSE_MARKS:
+            continue
+        truoc = s[i - 1] if i > 0 else ""
+        sau = s[i + 1] if i + 1 < len(s) else ""
+        if truoc.isdigit() and sau.isdigit():
+            continue
+        piece = buf.strip()
+        if len(piece) >= min_chars:
+            out.append(piece)
+            buf = ""
+    tail = buf.strip()
+    if tail:
+        if out and len(tail) < min_chars:
+            out[-1] = (out[-1] + " " + tail).strip()
+        else:
+            out.append(tail)
+    return out
+
+
+def _split_segments(text: str, max_chars: int = 240, *,
+                    clause_ms: int = 0) -> list[tuple[str, str]]:
+    """Cắt text thành [(mẩu, loại ranh giới SAU mẩu)] — loại ∈ sentence|clause.
+
+    Caller dựa vào loại ranh giới để chọn khoảng lặng dài (hết câu) hay ngắn
+    (hết mệnh đề). `clause_ms <= 0` → không xẻ theo mệnh đề, mỗi mẩu là một câu
+    y như `_split_sentences`.
+    """
+    out: list[tuple[str, str]] = []
+    for sent in _split_sentences(text, max_chars):
+        parts = _split_clauses(sent) if clause_ms > 0 else [sent]
+        for i, p in enumerate(parts):
+            out.append((p, "sentence" if i == len(parts) - 1 else "clause"))
+    return out
+
+
+def _silence_plan() -> tuple[int, int, int]:
+    """(nghỉ hết câu, nghỉ hết mệnh đề, dao động %) — đọc config một lần/lượt."""
+    return (vcfg.tts_sentence_silence_ms(), vcfg.tts_clause_silence_ms(),
+            vcfg.tts_silence_jitter_percent())
 
 
 def _vieneu_stream(text: str, voice: str, style: str = ""):
@@ -733,8 +841,10 @@ def warmup_tts(voice: str = "") -> dict:
 def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     """Generator yield (sample_rate, pcm16_mono_bytes) — đọc tới đâu phát tới đó.
 
-    VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó),
-    chèn khoảng lặng giữa hai câu cho có nhịp nghỉ.
+    VieNeu → frame-level; còn lại → theo câu (đọc xong câu nào phát câu đó).
+    Giữa hai mẩu chèn khoảng lặng theo config: hết câu dùng
+    `sentence_silence_ms`, hết mệnh đề (dấu phẩy…) dùng `clause_silence_ms`.
+    Cả hai = 0 thì VieNeu đọc trọn đoạn trong một lần gọi như trước.
     Không bao giờ ném giữa chừng cho lỗi 1 câu: bỏ qua câu lỗi, đọc tiếp.
     `style` (tu_nhien|tin_tuc|doc_truyen) chỉ tác dụng với VieNeu.
 
@@ -770,13 +880,33 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
         else:
             captured.append(item)
 
+    sent_ms, clause_ms, jitter = _silence_plan()
+    segs = _split_segments(text, clause_ms=clause_ms)
+
+    def _gap_ms(kind: str) -> int:
+        """Khoảng lặng (đã rải ngẫu nhiên) cho ranh giới vừa đọc xong."""
+        return _jitter_ms(sent_ms if kind == "sentence" else clause_ms, jitter)
+
     if v.startswith(vcfg.VIENEU_PREFIX):
         try:
             yielded = False
-            for item in _vieneu_stream(text, v, style):
-                yielded = True
-                _keep(item)
-                yield item
+            last_rate = 0
+            prev_kind = ""
+            # Không đặt khoảng lặng nào → giữ đường cũ: một lần gọi cho cả đoạn,
+            # engine tự lo nhịp (ngữ điệu liền mạch nhất).
+            khuc = segs if (sent_ms > 0 or clause_ms > 0) else [(text, "")]
+            for seg, kind in khuc:
+                if prev_kind and last_rate:
+                    gap = _silence_pcm(_gap_ms(prev_kind), last_rate)
+                    if gap:
+                        _keep((last_rate, gap))
+                        yield (last_rate, gap)
+                for item in _vieneu_stream(seg, v, style):
+                    yielded = True
+                    last_rate = item[0]
+                    _keep(item)
+                    yield item
+                prev_kind = kind
             if yielded:
                 if captured:
                     tts_cache.put(ck, captured, size_bytes=_captured_bytes)
@@ -788,21 +918,21 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
         v = ""   # fallback về Piper mặc định theo câu ở dưới
 
     # Kokoro/Piper/Wyoming/fallback: đọc theo câu, dùng lại synthesize().
-    gap_ms = vcfg.tts_sentence_silence_ms()
-    jitter = vcfg.tts_silence_jitter_percent()
     last_rate = 0
+    prev_kind = ""
     errors: list[str] = []
-    for sent in _split_sentences(text):
+    for sent, kind in segs:
         try:
             wav = synthesize(sent, v, style=style)
             rate, width, _channels, pcm = _wav_parts(wav)
             if width == 2 and pcm:
-                if last_rate and gap_ms:
-                    gap = _silence_pcm(_jitter_ms(gap_ms, jitter), last_rate)
+                if last_rate and prev_kind:
+                    gap = _silence_pcm(_gap_ms(prev_kind), last_rate)
                     if gap:
                         _keep((last_rate, gap))
                         yield (last_rate, gap)
                 last_rate = rate
+                prev_kind = kind
                 _keep((rate, pcm))
                 yield (rate, pcm)
             else:
@@ -813,7 +943,7 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
         except Exception as exc:
             errors.append(str(exc)[:100])
             logger.warning("voice: stream cau that bai: %s", str(exc)[:160])
-    if errors and len(errors) >= len(_split_sentences(text)):
+    if errors and len(errors) >= len(segs):
         raise VoiceError("Không đọc được câu nào — " + "; ".join(errors[:3]))
     if not errors and captured:
         tts_cache.put(ck, captured, size_bytes=_captured_bytes)
