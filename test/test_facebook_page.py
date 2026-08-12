@@ -498,3 +498,36 @@ def test_loi_dan_chon_dang_tran(monkeypatch):
     assert r["dang"] == {"loai": "link", "link": "https://vd.com/bai",
                          "message": ""}
     assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_yeu_cau_ai_bat_goi_tool_dang_khong_de_bai_roi_mat(monkeypatch):
+    """Đo thật 12/08: model in bài ra rồi dừng, lượt sau bài không còn đâu.
+
+    Lời giao việc phải nêu ĐÚNG lời gọi tool, và nói rõ gọi tool không phải tự
+    đăng — nếu không nó xung với câu "không tự đăng" trong skill.
+    """
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ai_goi"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    y = fb.tiep_flow(k, fb.CHON_AI_LINK)["ai"]
+    assert "dang_facebook" in y
+    assert 'loai="link"' in y
+    assert 'link="https://vd.com/bai"' in y
+    assert "KHÔNG phải là tự đăng" in y
+    assert ":::" in y                      # có dặn bỏ khung model tự bịa
+
+
+@pytest.mark.pure
+def test_yeu_cau_ai_bai_video_goi_dung_media_urls(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ai_vid"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_VIDEO)
+    fb.tiep_flow(k, "https://cdn/x.mp4")
+    fb.tiep_flow(k, "viết giúp tôi bài giới thiệu clip")
+    y = fb.tiep_flow(k, fb.CHON_AI)["ai"]
+    assert 'loai="video"' in y
+    assert 'media_urls=["https://cdn/x.mp4"]' in y

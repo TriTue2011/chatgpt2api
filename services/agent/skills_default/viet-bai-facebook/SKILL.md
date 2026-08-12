@@ -28,11 +28,15 @@ chấm AI".
 2. Viết nháp: rút NỘI DUNG ra rồi viết văn MỚI từ đó — đừng tráo từ câu gốc.
    Áp 9 đòn bẩy bên dưới ngay khi viết.
 3. Tự soát theo mục "Trước khi trình" — **đếm thật**, sửa hết dấu hiệu máy.
-4. Đọc lại bản nháp cho người dùng **DUYỆT**. Không tự đăng.
-5. Khi họ đồng ý → gọi tool **`dang_facebook`**: `loai=chu`,
-   `message=<bài>` (kèm `link` hoặc `media_urls` nếu có). `message` CHỈ chứa nội
-   dung thật của bài — bỏ từ khung như "đăng bài", "caption là". Tool tự đưa qua
-   cổng duyệt trước khi đăng thật.
+4. Soạn xong thì **gọi luôn tool `dang_facebook`** — đừng in bài ra rồi ngồi
+   chờ họ trả lời. Tool đi qua cổng duyệt (risk=CHANGE): bài được hiện ra và
+   chặn lại chờ người dùng bấm duyệt, nên gọi tool KHÔNG phải là tự đăng, mà
+   CHÍNH LÀ bước đọc lại cho duyệt. In bài ra rồi dừng thì bài rơi mất: lượt
+   sau người dùng hỏi "đăng chưa" là không còn gì đang chờ (đo thật 12/08).
+5. Tham số: `loai=chu` (hoặc `link` / `video` nếu có kèm), `message=<bài>`, thêm
+   `link` hoặc `media_urls` khi có. `message` CHỈ chứa nội dung thật của bài,
+   viết trơn — bỏ từ khung như "đăng bài", "caption là", không bọc trong khung
+   hay thẻ nào.
 
 ## 9 đòn bẩy hành văn giống người (bản tiếng Việt)
 1. **Từ có sức nặng.** Chọn động từ/danh từ cụ thể thay từ chung chung. Mỗi đoạn

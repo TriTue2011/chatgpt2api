@@ -607,7 +607,25 @@ def _yeu_cau_ai(p: dict) -> str:
     video = str(p.get("video") or "")
     if video:
         dong.append(f"Bài đăng kèm video {video}.")
-    dong.append("Soạn xong đọc lại cho tôi duyệt rồi mới đăng.")
+    # PHẢI nói rõ "gọi tool", và nói rõ gọi tool KHÔNG phải tự đăng. Đo thật
+    # 12/08 19:32: câu "soạn xong đọc lại cho tôi duyệt rồi mới đăng" làm model
+    # dán bài ra rồi dừng; lượt sau hỏi "đăng bài chưa" nó trả lời không thấy
+    # yêu cầu nào đang chờ — bài viết xong mà rơi mất. Cổng duyệt (risk=CHANGE)
+    # CHÍNH LÀ bước đọc lại cho duyệt, và nó giữ trạng thái, không phụ thuộc
+    # việc model có nhớ qua lượt hay không.
+    if link:
+        goi = f'dang_facebook với loai="link", link="{link}", message=<bài vừa soạn>'
+    elif video:
+        goi = ('dang_facebook với loai="video", media_urls=["' + video
+               + '"], message=<bài vừa soạn>')
+    else:
+        goi = 'dang_facebook với loai="chu", message=<bài vừa soạn>'
+    dong.append(
+        f"Soạn xong thì GỌI NGAY tool {goi}. Gọi tool chính là bước đọc lại cho "
+        "tôi duyệt: cổng duyệt hiện bài ra và chặn lại chờ tôi xác nhận, nên "
+        "gọi tool KHÔNG phải là tự đăng. Đừng chỉ in bài ra rồi ngồi chờ tôi "
+        "trả lời. Trường message chỉ chứa nội dung bài, viết trơn — không bọc "
+        "trong khung, thẻ, hay dấu «:::» nào.")
     return " ".join(dong)
 
 
