@@ -559,5 +559,39 @@ def test_yeu_cau_ai_doi_bai_co_do_sau_khong_chung_chung(monkeypatch):
     y = fb.tiep_flow(k, fb.CHON_AI_LINK)["ai"]
     assert "ĐỌC KỸ" in y
     assert "MỘT lượt" not in y            # câu ép nông đã bỏ
-    assert "300" in y and "450" in y      # có mốc độ dài
+    # Mốc 300–450 từ từng làm bài ngắn hơn bản model tự viết khi chưa đăng —
+    # chủ máy so hai bản rồi kêu (12/08). Nay đặt mốc dài.
+    assert "700" in y and "1000" in y
+    assert "Đừng tự rút ngắn" in y
     assert "không bịa" in y               # nhưng vẫn cấm bịa để có chi tiết
+
+
+@pytest.mark.pure
+def test_don_bai_bo_rac_khung_va_dau_trich_dan():
+    """Rác đã lọt lên Page thật 12/08: khung ```social_post và turn0search1.
+
+    `turn0search1` do tầng grounding của provider ghép vào, dính liền chữ —
+    dặn model đừng chèn không cứu được, phải dọn bằng code.
+    """
+    tho = (
+        "```social_post 48391\n"
+        "CodeGraph: thêm bộ não kiến trúc cho AI lập trình\n"
+        "Nó dùng Tree-sitter để phân tích mã nguồn. turn0search1\n"
+        ":::\n"
+        "\n\n\n"
+        "urlCodeGraph trên GitHubturn0search1\n"
+    )
+    sach = fb.don_bai(tho)
+    assert "social_post" not in sach
+    assert "turn0search1" not in sach
+    assert "48391" not in sach
+    assert ":::" not in sach
+    assert "\n\n\n" not in sach            # dòng trống đã dồn lại
+    assert "Tree-sitter" in sach           # nội dung thật còn nguyên
+    assert "CodeGraph trên GitHub" in sach
+
+
+@pytest.mark.pure
+def test_tach_bai_da_don_rac_luon(monkeypatch):
+    txt = f"{fb.BAI_MO}\nBài thật. turn0search1\n{fb.BAI_DONG}"
+    assert fb.tach_bai(txt) == "Bài thật."

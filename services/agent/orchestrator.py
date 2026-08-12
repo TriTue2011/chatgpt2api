@@ -1866,10 +1866,12 @@ def _orchestrate_locked(user_text: str, user_id: str,
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
         # max_tokens: mặc định của runtime là 900, quá ngắn cho một bài viết.
-        # Đo thật 12/08 21:29: bài Facebook 300–450 từ tiếng Việt bị cắt ngang
-        # giữa câu ("Ví dụ:") vì cạn token — tiếng Việt tốn khoảng 2 token/từ.
+        # Đo thật 12/08 21:29: bài Facebook bị cắt ngang giữa câu ("Ví dụ:") vì
+        # cạn token. Tiếng Việt tốn khoảng 2 token/từ, mà bài dài nhất luồng
+        # Facebook đặt hàng là 1000 từ → cần cỡ 2000 chỉ cho phần bài, chưa tính
+        # lời dẫn. Đây là TRẦN, không phải đích: câu trả lời thường không dài ra.
         resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
-                          max_tokens=2400,
+                          max_tokens=4000,
                           no_smart_home=(allow is not None and "homeassistant" not in allow),
                           allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}),
                           pham_vi=_pham_vi(user_id), doc_them=_doc_them(user_id))

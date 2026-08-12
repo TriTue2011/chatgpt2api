@@ -63,7 +63,9 @@ class TranTokenTests(unittest.TestCase):
             with mock.patch.object(orch, "call_model",
                                    return_value=_XONG) as fake:
                 orch.orchestrate("viết giúp tôi một bài dài", "zalop_tok")
-        self.assertGreaterEqual(fake.call_args.kwargs.get("max_tokens", 0), 2000)
+        # Bài dài nhất luồng Facebook đặt hàng là 1000 từ ≈ 2000 token tiếng
+        # Việt, chưa tính lời dẫn — trần phải dư ra kha khá.
+        self.assertGreaterEqual(fake.call_args.kwargs.get("max_tokens", 0), 3000)
 
 if __name__ == "__main__":
     unittest.main()

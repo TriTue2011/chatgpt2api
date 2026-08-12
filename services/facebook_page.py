@@ -498,17 +498,45 @@ BAI_DONG = "<<<HETBAI>>>"
 _BAI_RE = re.compile(re.escape(BAI_MO) + r"(.*?)" + re.escape(BAI_DONG), re.S)
 
 
+# Rác của tầng model/provider lọt vào bài đã đăng thật (đo 12/08): khung
+# ```social_post 48391 model tự bịa, và dấu trích dẫn của bộ tìm kiếm dính liền
+# chữ — "urlCodeGraph trên GitHubturn0search1". Dặn model đừng chèn là không đủ:
+# `turn0search1` do tầng grounding của provider ghép vào, không phải model viết.
+# Nên DỌN BẰNG CODE, giống chuyện bắt bài không tin lời dặn gọi tool.
+_RAC_RE: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^\s*`{3,}\s*social_post[^\n]*$", re.M | re.I),
+    re.compile(r"^\s*:{3,}\s*social_post[^\n]*$", re.M | re.I),
+    re.compile(r"^\s*:{3,}\s*$", re.M),
+    re.compile(r"turn\d+(?:search|view|news|image|forecast|product)\d+", re.I),
+    # Neo trích dẫn: ký tự vùng riêng U+E200–E203 và khoảng trắng rộng-0.
+    # Viết bằng MÃ, không dán ký tự thật — dán vào thì editor hay lint xoá
+    # mất lúc nào không biết, mà đọc code cũng không ai thấy nó ở đó.
+    re.compile("[\ue200-\ue203\u200b\ufeff]"),
+)
+
+
+def don_bai(text: str) -> str:
+    """Bỏ rác khung/trích dẫn khỏi bài trước khi đưa lên Page."""
+    s = text or ""
+    for rx in _RAC_RE:
+        s = rx.sub("", s)
+    s = re.sub(r"[ \t]+\n", "\n", s)          # khoảng trắng cuối dòng
+    s = re.sub(r"\n{3,}", "\n\n", s)          # dòng trống dồn lại
+    return s.strip()
+
+
 def tach_bai(text: str) -> str | None:
-    """Lấy phần bài giữa hai dấu. None nếu model không bọc (gọi bên gọi tự lo)."""
+    """Lấy phần bài giữa hai dấu, đã dọn rác. None nếu model không bọc."""
     m = _BAI_RE.search(text or "")
     if not m:
         return None
-    return m.group(1).strip() or None
+    return don_bai(m.group(1)) or None
 
 
 def bo_dau_bai(text: str) -> str:
-    """Xoá hai dấu khỏi câu hiện cho người dùng — không để lộ ra màn hình."""
-    return (text or "").replace(BAI_MO, "").replace(BAI_DONG, "").strip()
+    """Model không bọc → lấy cả câu trả lời, vẫn phải bỏ dấu và dọn rác."""
+    s = (text or "").replace(BAI_MO, "").replace(BAI_DONG, "")
+    return don_bai(s)
 
 
 CHON_AI_LINK = "__fb_flow__:ai_link"   # AI đọc link rồi viết, khỏi gõ gì
@@ -640,7 +668,9 @@ def _yeu_cau_ai(p: dict) -> str:
             "dùng — nêu đích danh thứ có thật trên trang (công nghệ dùng, cách "
             "cài và chạy, nó dựng được những quan hệ nào, nối được công cụ "
             "nào). Đừng dừng ở câu chung chung kiểu «giúp AI hiểu code nhanh "
-            "hơn». Cỡ 300–450 từ, đủ để người đọc hiểu mà quyết có thử không.")
+            "hơn». Viết DÀI và ĐỦ CHI TIẾT — cỡ 700–1000 từ, có mục rõ ràng "
+            "(nó là gì / làm được gì / cách cài và dùng / ai nên dùng), kèm câu "
+            "lệnh thật nếu trang có. Đừng tự rút ngắn cho «gọn».")
     video = str(p.get("video") or "")
     if video:
         dong.append(f"Bài đăng kèm video {video}.")
@@ -654,8 +684,9 @@ def _yeu_cau_ai(p: dict) -> str:
         f"Viết xong thì bọc CHÍNH XÁC phần bài vào giữa {BAI_MO} và {BAI_DONG} "
         "— hệ thống tự lấy phần trong đó đưa qua cổng duyệt cho tôi bấm, anh "
         "không phải gọi tool đăng nào cả. Trong hai dấu đó chỉ có nội dung bài, "
-        "viết trơn: không lời dẫn kiểu «Dạ em đã đọc…», không khung, không thẻ, "
-        "không dấu «:::». Muốn nói gì thêm với tôi thì viết BÊN NGOÀI hai dấu.")
+        "viết trơn: không lời dẫn kiểu «Dạ em đã đọc…», không khung ```, không "
+        "thẻ, không dấu «:::», không chèn dấu trích dẫn nguồn. Muốn nói gì thêm "
+        "với tôi thì viết BÊN NGOÀI hai dấu.")
     return " ".join(dong)
 
 
