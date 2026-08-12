@@ -114,6 +114,31 @@ class FacebookFlowOrchestrateTests(unittest.TestCase):
         args = (approval_gate.get_pending(self._uid) or {}).get("args") or {}
         self.assertEqual(args.get("link"), _REPO)
 
+    def test_bam_mot_nut_la_ai_doc_link_roi_viet(self) -> None:
+        """Bước lời dẫn có nút — bấm là AI viết, không phải gõ chữ nào."""
+        orch.orchestrate(fbp.FLOW_LINK, self._uid)
+        # Khối <<<ASK>>> bị _finalize tách ra thành `choices` (nút bấm), nên
+        # nhãn nút KHÔNG còn trong `text` — kiểm đúng chỗ nó nằm.
+        out_menu = orch.orchestrate(_REPO, self._uid)
+        nhan = [c["label"] for c in (out_menu.get("choices") or [])]
+        self.assertEqual(len(nhan), 4, nhan)
+        self.assertTrue(any("đọc link" in n.lower() for n in nhan), nhan)
+
+        self._boom.stop()
+        fake = mock.Mock(return_value={
+            "choices": [{"message": {"content": "Đây là bài nháp ạ."}}]})
+        with mock.patch.object(orch, "call_model", fake):
+            out = orch.orchestrate(fbp.CHON_AI_LINK, self._uid)
+        self._boom.start()
+
+        self.assertFalse(fbp.co_flow(self._uid))
+        self.assertIsNone(approval_gate.get_pending(self._uid))
+        self.assertIn("nháp", (out.get("text") or "").lower())
+        gui = "\n".join(str(m.get("content") or "")
+                        for m in fake.call_args[0][1])
+        self.assertIn(_REPO, gui)
+        self.assertNotIn(fbp.CHON_AI_LINK, gui)
+
     def test_cau_duyet_cho_nhin_thay_link(self) -> None:
         self._den_buoc_chon("Repo hay nè")
         out = orch.orchestrate(fbp.CHON_NGUYEN, self._uid)

@@ -431,3 +431,70 @@ def test_bat_dau_flow_chua_gan_page_khong_dat_cho(monkeypatch):
     nhac = fb.bat_dau_flow(k, fb.FLOW_LINK)
     assert nhac and "Chưa kết nối" in nhac
     assert not fb.co_flow(k)   # không có page thì không mở trạng thái chờ
+
+
+@pytest.mark.pure
+def test_buoc_loi_dan_link_co_menu_bon_huong(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_menu_ld"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    hoi = fb.tiep_flow(k, "https://vd.com/bai")["hoi"]
+    assert "<<<ASK>>>" in hoi
+    for s in (fb.CHON_AI_LINK, fb.CHON_AI_Y, fb.CHON_TU_GO, fb.CHON_TRAN):
+        assert s in hoi
+
+
+@pytest.mark.pure
+def test_loi_dan_chon_ai_doc_link_khoi_go_gi(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ld_ai"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    r = fb.tiep_flow(k, fb.CHON_AI_LINK)
+    assert "https://vd.com/bai" in r["ai"]
+    assert "«»" not in r["ai"]           # không đẻ ra yêu cầu rỗng
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_loi_dan_chon_cho_y_chinh_roi_ai_viet(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ld_y"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    assert "ý chính" in fb.tiep_flow(k, fb.CHON_AI_Y)["hoi"]
+    r = fb.tiep_flow(k, "repo này giúp coder đọc code nhanh")
+    assert "repo này giúp coder đọc code nhanh" in r["ai"]
+    assert "https://vd.com/bai" in r["ai"]
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_loi_dan_chon_tu_go_thi_dang_y_nguyen_khong_hoi_lai(monkeypatch):
+    """Đã chốt tự gõ thì khỏi hỏi «y nguyên hay nhờ viết» lần nữa."""
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ld_go"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    assert "lời dẫn" in fb.tiep_flow(k, fb.CHON_TU_GO)["hoi"].lower()
+    r = fb.tiep_flow(k, "Repo hay nè")
+    assert r["dang"] == {"loai": "link", "link": "https://vd.com/bai",
+                         "message": "Repo hay nè"}
+    assert not fb.co_flow(k)
+
+
+@pytest.mark.pure
+def test_loi_dan_chon_dang_tran(monkeypatch):
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ld_tran"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    r = fb.tiep_flow(k, fb.CHON_TRAN)
+    assert r["dang"] == {"loai": "link", "link": "https://vd.com/bai",
+                         "message": ""}
+    assert not fb.co_flow(k)

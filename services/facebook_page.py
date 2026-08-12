@@ -484,12 +484,23 @@ _BO_LOI_DAN = {"đăng", "dang", "đăng luôn", "dang luon", "bỏ qua", "bo qu
 CHON_NGUYEN = "__fb_flow__:nguyen"
 CHON_AI = "__fb_flow__:ai"
 
+# Bước lời dẫn kèm link: bấm chọn được, khỏi phải gõ. Bốn hướng thật sự khác
+# nhau ở chỗ AI có viết không và lấy ý từ đâu — gộp lại thì mất một hướng.
+# Bài LINK làm được «AI tự đọc rồi viết» vì `read_webpage` đọc được trang; bài
+# chữ và bài video không có gì cho AI đọc nên bước của chúng giữ như cũ.
+CHON_AI_LINK = "__fb_flow__:ai_link"   # AI đọc link rồi viết, khỏi gõ gì
+CHON_AI_Y = "__fb_flow__:ai_y"         # người dùng cho ý chính, AI viết
+CHON_TU_GO = "__fb_flow__:tu_go"       # tự gõ lời dẫn, đăng y nguyên
+CHON_TRAN = "__fb_flow__:tran"         # đăng link trần
+
 # Câu nhắc của từng bước — để một chỗ vì bước bắt đầu VÀ bước hỏi lại (khi
 # người dùng gửi ảnh giữa chừng) đều cần đúng câu này.
 _NHAC = {
     "cho_chu": "✍️ Anh/chị gõ NỘI DUNG bài đăng nhé. (gõ «huỷ» để thôi)",
     "cho_link": "🔗 Anh/chị dán LINK cần đăng nhé. (gõ «huỷ» để thôi)",
-    "cho_link_loi_dan": "📝 Lời dẫn kèm link (hoặc gõ «đăng» để đăng không lời dẫn):",
+    "cho_y_chinh": "💡 Anh/chị cho em ý chính đi (vài chữ cũng được), em viết "
+                   "thành bài rồi đọc lại cho duyệt:",
+    "cho_loi_dan": "📝 Anh/chị gõ lời dẫn nhé — em đăng y nguyên chữ đó:",
     "cho_video": "🎬 Anh/chị dán LINK video mp4 công khai (hoặc gửi thẳng video "
                  "vào đây cũng được). (gõ «huỷ» để thôi)",
     "cho_video_mo_ta": "📝 Mô tả kèm video (hoặc gõ «đăng» để đăng không mô tả):",
@@ -546,8 +557,22 @@ def _hoi_cach_dang() -> str:
     ])
 
 
+def _hoi_loi_dan_link() -> str:
+    return "\n".join([
+        "📝 Lời dẫn kèm link — bấm chọn hoặc gõ thẳng lời dẫn cũng được ạ:",
+        "<<<ASK>>>",
+        f"✨ Em đọc link rồi tự viết bài | {CHON_AI_LINK}",
+        f"💡 Anh/chị cho ý chính, em viết | {CHON_AI_Y}",
+        f"📝 Anh/chị tự gõ lời dẫn | {CHON_TU_GO}",
+        f"📄 Đăng link trần, không lời dẫn | {CHON_TRAN}",
+        "<<<END>>>",
+    ])
+
+
 def _nhac_cua(stage: str) -> str:
     """Câu hỏi của bước đang đứng — dùng để hỏi lại mà không mất bản chờ."""
+    if stage == "cho_link_loi_dan":
+        return _hoi_loi_dan_link()
     return _NHAC.get(stage) or _hoi_cach_dang()
 
 
@@ -568,13 +593,17 @@ def _yeu_cau_ai(p: dict) -> str:
     Viết ở đây (cạnh luồng) chứ không ở orchestrator: chỗ này biết bài có link
     hay video kèm theo, orchestrator thì không.
     """
-    dong = ["nhờ AI soạn bài đăng facebook theo yêu cầu sau: "
-            f"«{str(p.get('noi_dung') or '')}».",
+    y = str(p.get("noi_dung") or "").strip()
+    dong = [f"nhờ AI soạn bài đăng facebook theo yêu cầu sau: «{y}»." if y
+            else "nhờ AI soạn bài đăng facebook.",
             "Dùng skill viết bài Facebook giọng người thật (bớt giọng AI)."]
     link = str(p.get("link") or "")
     if link:
-        dong.append(f"Bài đăng kèm link {link} — đọc trang đó lấy dữ liệu thật "
-                    "rồi mới viết, không bịa.")
+        # "Đọc MỘT lượt": đo thật 12/08, model tiêu hết trần bước cho vòng
+        # read_webpage → find_in_text ×2 → read_webpage rồi chưa viết được gì.
+        dong.append(f"Bài đăng kèm link {link} — đọc trang đó MỘT lượt lấy dữ "
+                    "liệu thật rồi viết luôn, đừng tra lại nhiều vòng, "
+                    "không bịa.")
     video = str(p.get("video") or "")
     if video:
         dong.append(f"Bài đăng kèm video {video}.")
@@ -634,15 +663,33 @@ def tiep_flow(key: str, text: str) -> dict | None:
         return {"hoi": _hoi_cach_dang()}
     if stage == "cho_link":
         _flow_set(key, "cho_link_loi_dan", link=t)
-        return {"hoi": _NHAC["cho_link_loi_dan"]}
+        return {"hoi": _hoi_loi_dan_link()}
     if stage == "cho_link_loi_dan":
         # Bỏ lời dẫn thì không còn gì cho AI phát triển → đăng thẳng, khỏi hỏi.
-        if t.lower() in _BO_LOI_DAN:
+        if t == CHON_TRAN or t.lower() in _BO_LOI_DAN:
             xoa_flow(key)
             return {"dang": {"loai": "link", "link": str(p.get("link") or ""),
                              "message": ""}}
+        if t == CHON_AI_LINK:                  # khỏi gõ gì, AI tự đọc trang
+            xoa_flow(key)
+            return {"ai": _yeu_cau_ai({**p, "loai": "link", "noi_dung": ""})}
+        if t == CHON_AI_Y:
+            _flow_set(key, "cho_y_chinh", loai="link")
+            return {"hoi": _NHAC["cho_y_chinh"]}
+        if t == CHON_TU_GO:
+            _flow_set(key, "cho_loi_dan", loai="link")
+            return {"hoi": _NHAC["cho_loi_dan"]}
+        # Gõ thẳng lời dẫn (không bấm nút): chưa rõ muốn y nguyên hay nhờ viết
+        # → hỏi tiếp như các loại bài khác.
         _flow_set(key, "cho_cach", loai="link", noi_dung=t)
         return {"hoi": _hoi_cach_dang()}
+    if stage == "cho_y_chinh":                 # đã chốt nhờ AI viết từ trước
+        xoa_flow(key)
+        return {"ai": _yeu_cau_ai({**p, "noi_dung": t})}
+    if stage == "cho_loi_dan":                 # đã chốt đăng y nguyên từ trước
+        xoa_flow(key)
+        loi = "" if t.lower() in _BO_LOI_DAN else t
+        return {"dang": {**_args_dang(p), "message": loi}}
     if stage == "cho_video":
         _flow_set(key, "cho_video_mo_ta", video=t)
         return {"hoi": _NHAC["cho_video_mo_ta"]}

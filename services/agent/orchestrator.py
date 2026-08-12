@@ -44,7 +44,14 @@ from services.agent.runtime import call_model, content_of
 
 logger = logging.getLogger(__name__)
 
-_MAX_STEPS = 4
+# Trần số vòng model-gọi-tool trong MỘT lượt. Để 4 thì mọi việc dạng
+# "tra tài liệu rồi viết" đều chết giữa đường: đo thật 12/08 trên máy chủ, nhánh
+# «để em viết bài Facebook» tiêu đúng 4 bước cho use_skill → read_webpage →
+# find_in_text ×2 → read_webpage rồi hết lượt, trả về câu "xử lý hơi lâu" khi
+# chưa viết được chữ nào (runs.sqlite: status=max_steps, 33,8 giây).
+# Chặn thời gian thật vẫn là `_TURN_BUDGET_S` (240 giây) bên dưới, nên nới bước
+# không mở đường cho lượt chạy vô hạn.
+_MAX_STEPS = 7
 
 # ── Đường tắt "lấy media đã tạo trong thư viện" ──────────────────────────────
 #
