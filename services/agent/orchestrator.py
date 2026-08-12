@@ -1497,7 +1497,16 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 return _fb_tra("Đã huỷ soạn bài Facebook ạ.", status="fb_huy")
             if _r and _r.get("hoi"):
                 return _fb_tra(str(_r["hoi"]), status="fb_flow_hoi")
-            if _r and _r.get("dang") is not None:
+            # Người dùng bấm «để em viết thành bài»: rời máy trạng thái, giao
+            # yêu cầu cho vòng agent bên dưới (skill viết bài + read_webpage +
+            # dang_facebook). KHÔNG return — rơi xuống chạy tiếp như một lượt
+            # chat thường. Sửa luôn dòng vừa ghi vào lịch sử, vì nó đang là
+            # sentinel `__fb_flow__:ai` — model đọc lại thấy rác.
+            if _r and _r.get("ai"):
+                user_text = str(_r["ai"])
+                if hist and hist[-1].get("role") == "user":
+                    hist[-1]["content"] = user_text
+            elif _r and _r.get("dang") is not None:
                 return _fb_dang(dict(_r["dang"]))
 
     # 1.4) Đường tắt LẤY MEDIA ĐÃ TẠO: xem chú thích ở `_tat_lay_media`. Chạy

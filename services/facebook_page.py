@@ -435,6 +435,8 @@ def menu_ask(user_id: str) -> str:
         # tự do (nội dung/link/url); để LLM tự dẫn thì một URL lạ (repo GitHub…)
         # kéo model sang việc khác là đứt mạch (đo thật 11/08). Code giữ trạng
         # thái chờ, bắt đúng tin kế tiếp làm input rồi mới qua cổng duyệt.
+        # Gom xong nội dung mới hỏi «đăng y nguyên hay để AI viết» — nhánh AI
+        # giao lại cho vòng agent, xem `_hoi_cach_dang`.
         f"✍️ Đăng bài chữ | {FLOW_CHU}",
         f"🔗 Đăng link | {FLOW_LINK}",
         # Ảnh vẫn để LLM dẫn: ảnh gửi qua kênh có luồng photo-intent CÓ trạng
@@ -473,6 +475,36 @@ _HUY_RE = re.compile(r"^\s*(hu[ỷy]|th[ôo]i|tho[áa]t|d[ừu]ng|cancel)\b", re
 _BO_LOI_DAN = {"đăng", "dang", "đăng luôn", "dang luon", "bỏ qua", "bo qua",
                "không", "khong", "ko", "trống", "trong", "-", "."}
 
+# Có nội dung rồi thì hỏi thêm MỘT bước: đăng y nguyên, hay để AI phát triển
+# thành bài. Trước đây chỉ có nhánh y nguyên, nên gõ một YÊU CẦU ("viết bài về
+# repo này") là nó lên Page đúng câu yêu cầu đó (đo thật 12/08).
+# Nhánh AI trả quyền lại cho vòng agent (skill `viet-bai-facebook` +
+# `read_webpage` + `dang_facebook`). LLM chỉ vào cuộc khi người dùng BẤM CHỌN,
+# nên URL lạ vẫn không tự kéo model đi việc khác — đúng lý do luồng này tồn tại.
+CHON_NGUYEN = "__fb_flow__:nguyen"
+CHON_AI = "__fb_flow__:ai"
+
+# Câu nhắc của từng bước — để một chỗ vì bước bắt đầu VÀ bước hỏi lại (khi
+# người dùng gửi ảnh giữa chừng) đều cần đúng câu này.
+_NHAC = {
+    "cho_chu": "✍️ Anh/chị gõ NỘI DUNG bài đăng nhé. (gõ «huỷ» để thôi)",
+    "cho_link": "🔗 Anh/chị dán LINK cần đăng nhé. (gõ «huỷ» để thôi)",
+    "cho_link_loi_dan": "📝 Lời dẫn kèm link (hoặc gõ «đăng» để đăng không lời dẫn):",
+    "cho_video": "🎬 Anh/chị dán LINK video mp4 công khai (hoặc gửi thẳng video "
+                 "vào đây cũng được). (gõ «huỷ» để thôi)",
+    "cho_video_mo_ta": "📝 Mô tả kèm video (hoặc gõ «đăng» để đăng không mô tả):",
+}
+
+# Gửi thẳng ảnh/video vào bot thì kênh (Zalo/Telegram) KHÔNG đưa tệp cho luồng
+# này, mà bơm vào orchestrator một câu tiếng Việt kèm URL đã lưu công khai —
+# xem telegram_bot.py `inject` / zalo_personal.py `_vinject`. Máy trạng thái ở
+# đây chặn trước LLM nên nuốt luôn cả câu đó làm nội dung/link: chọn «Đăng
+# link» rồi gửi một video là link của bài thành nguyên câu "thêm video vào bài
+# đăng facebook: https://…" (đo thật 12/08). Bắt riêng ở đây.
+_TIN_MEDIA_RE = re.compile(
+    r"^\s*th[êe]m\s+([ảa]nh|video)\s+v[àa]o\s+b[àa]i\s+[đd][ăa]ng\s+facebook:\s*(\S+)",
+    re.I)
+
 
 def _flow_get(key: str) -> dict | None:
     with _flow_lock:
@@ -503,6 +535,53 @@ def _flow_set(key: str, stage: str, **extra: Any) -> None:
         _flow[str(key)] = cur
 
 
+def _hoi_cach_dang() -> str:
+    return "\n".join([
+        "Đăng y nguyên chữ vừa gõ, hay để em viết thành bài rồi đọc lại cho "
+        "anh/chị duyệt ạ?",
+        "<<<ASK>>>",
+        f"📄 Đăng y nguyên | {CHON_NGUYEN}",
+        f"✨ Để em viết thành bài | {CHON_AI}",
+        "<<<END>>>",
+    ])
+
+
+def _nhac_cua(stage: str) -> str:
+    """Câu hỏi của bước đang đứng — dùng để hỏi lại mà không mất bản chờ."""
+    return _NHAC.get(stage) or _hoi_cach_dang()
+
+
+def _args_dang(p: dict) -> dict:
+    """Bản chờ đã đủ → args cho capability `dang_facebook` (đăng y nguyên)."""
+    loai = str(p.get("loai") or "chu")
+    args: dict[str, Any] = {"loai": loai, "message": str(p.get("noi_dung") or "")}
+    if loai == "link":
+        args["link"] = str(p.get("link") or "")
+    elif loai == "video":
+        args["media_urls"] = [str(p.get("video") or "")]
+    return args
+
+
+def _yeu_cau_ai(p: dict) -> str:
+    """Câu giao việc cho vòng agent khi người dùng chọn «để em viết thành bài».
+
+    Viết ở đây (cạnh luồng) chứ không ở orchestrator: chỗ này biết bài có link
+    hay video kèm theo, orchestrator thì không.
+    """
+    dong = ["nhờ AI soạn bài đăng facebook theo yêu cầu sau: "
+            f"«{str(p.get('noi_dung') or '')}».",
+            "Dùng skill viết bài Facebook giọng người thật (bớt giọng AI)."]
+    link = str(p.get("link") or "")
+    if link:
+        dong.append(f"Bài đăng kèm link {link} — đọc trang đó lấy dữ liệu thật "
+                    "rồi mới viết, không bịa.")
+    video = str(p.get("video") or "")
+    if video:
+        dong.append(f"Bài đăng kèm video {video}.")
+    dong.append("Soạn xong đọc lại cho tôi duyệt rồi mới đăng.")
+    return " ".join(dong)
+
+
 def bat_dau_flow(key: str, send_text: str) -> str | None:
     """`send_text` (đã qua resolve_reply) là sentinel của mục cần nhập tiếp?
     Có → đặt trạng thái chờ + trả câu nhắc. Không → None (không phải flow FB)."""
@@ -515,15 +594,9 @@ def bat_dau_flow(key: str, send_text: str) -> str | None:
                     "app_id, app_secret, dán user token rồi bấm Kết nối.")
         return ("Thread này chưa gắn Page nào ạ. Vào Cài đặt ▸ Facebook, mục "
                 "«Gắn Page theo thread» để chọn Page cho chỗ này trước.")
-    if s == FLOW_CHU:
-        _flow_set(key, "cho_chu")
-        return "✍️ Anh/chị gõ NỘI DUNG bài đăng nhé. (gõ «huỷ» để thôi)"
-    if s == FLOW_LINK:
-        _flow_set(key, "cho_link")
-        return "🔗 Anh/chị dán LINK cần đăng nhé. (gõ «huỷ» để thôi)"
-    _flow_set(key, "cho_video")
-    return ("🎬 Anh/chị dán LINK video mp4 công khai (hoặc gửi thẳng video vào "
-            "đây cũng được). (gõ «huỷ» để thôi)")
+    buoc = {FLOW_CHU: "cho_chu", FLOW_LINK: "cho_link"}.get(s, "cho_video")
+    _flow_set(key, buoc)
+    return _NHAC[buoc]
 
 
 def tiep_flow(key: str, text: str) -> dict | None:
@@ -541,25 +614,56 @@ def tiep_flow(key: str, text: str) -> dict | None:
         xoa_flow(key)
         return {"huy": True}
     stage = str(p.get("stage") or "")
+
+    m = _TIN_MEDIA_RE.match(t)
+    if m:
+        kieu = "video" if m.group(1).lower() == "video" else "ảnh"
+        if stage == "cho_video" and kieu == "video":
+            # Đúng lời hứa in ra ở bước này: «hoặc gửi thẳng video vào đây».
+            _flow_set(key, "cho_video_mo_ta", video=m.group(2))
+            return {"hoi": _NHAC["cho_video_mo_ta"]}
+        # Các bước khác: bài đang soạn không ghép media rời vào được. Nói thẳng
+        # và GIỮ bản chờ — nuốt hay xoá đều mất công người dùng đã gõ.
+        return {"hoi": f"Bài đang soạn dở không ghép {kieu} vào được ạ. Muốn "
+                       f"đăng {kieu} thì gõ «huỷ» rồi chọn mục «🖼️ Đăng ảnh» "
+                       f"hoặc «🎬 Đăng video» ở menu /facebook nhé.\n\n"
+                       + _nhac_cua(stage)}
+
     if stage == "cho_chu":
-        xoa_flow(key)
-        return {"dang": {"loai": "chu", "message": t}}
+        _flow_set(key, "cho_cach", loai="chu", noi_dung=t)
+        return {"hoi": _hoi_cach_dang()}
     if stage == "cho_link":
         _flow_set(key, "cho_link_loi_dan", link=t)
-        return {"hoi": "📝 Lời dẫn kèm link (hoặc gõ «đăng» để đăng không lời dẫn):"}
+        return {"hoi": _NHAC["cho_link_loi_dan"]}
     if stage == "cho_link_loi_dan":
-        xoa_flow(key)
-        loi = "" if t.lower() in _BO_LOI_DAN else t
-        return {"dang": {"loai": "link", "link": str(p.get("link") or ""),
-                         "message": loi}}
+        # Bỏ lời dẫn thì không còn gì cho AI phát triển → đăng thẳng, khỏi hỏi.
+        if t.lower() in _BO_LOI_DAN:
+            xoa_flow(key)
+            return {"dang": {"loai": "link", "link": str(p.get("link") or ""),
+                             "message": ""}}
+        _flow_set(key, "cho_cach", loai="link", noi_dung=t)
+        return {"hoi": _hoi_cach_dang()}
     if stage == "cho_video":
         _flow_set(key, "cho_video_mo_ta", video=t)
-        return {"hoi": "📝 Mô tả kèm video (hoặc gõ «đăng» để đăng không mô tả):"}
+        return {"hoi": _NHAC["cho_video_mo_ta"]}
     if stage == "cho_video_mo_ta":
-        xoa_flow(key)
-        mo = "" if t.lower() in _BO_LOI_DAN else t
-        return {"dang": {"loai": "video", "media_urls": [str(p.get("video") or "")],
-                         "message": mo}}
+        if t.lower() in _BO_LOI_DAN:
+            xoa_flow(key)
+            return {"dang": {"loai": "video",
+                             "media_urls": [str(p.get("video") or "")],
+                             "message": ""}}
+        _flow_set(key, "cho_cach", loai="video", noi_dung=t)
+        return {"hoi": _hoi_cach_dang()}
+    if stage == "cho_cach":
+        if t == CHON_AI:
+            xoa_flow(key)
+            return {"ai": _yeu_cau_ai(p)}
+        if t == CHON_NGUYEN:
+            xoa_flow(key)
+            return {"dang": _args_dang(p)}
+        # Gõ gì khác (không bấm nút) → hỏi lại, GIỮ nguyên bài đã soạn. Không
+        # đoán ý ở đây: đoán sai là đăng nhầm lên Page, không lùi được.
+        return {"hoi": _hoi_cach_dang()}
     xoa_flow(key)
     return {"huy": True}
 

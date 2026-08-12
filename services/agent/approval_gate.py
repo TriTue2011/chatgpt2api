@@ -195,6 +195,22 @@ def summarize_action(capability: str, args: dict[str, Any], description: str = "
                 phan.append("đọc ngay")
         s = f"{' · '.join(phan)}\n{txt}"
         return s[:280] + ("…" if len(s) > 280 else "")
+    # Bài Facebook: PHẢI hiện link / media kèm theo, không chỉ lời dẫn. Vòng
+    # `for key` bên dưới bắt trúng `message` rồi trả về ngay, nên câu duyệt của
+    # một bài link chỉ có lời dẫn — duyệt mà không thấy mình đang đẩy link nào
+    # lên Page, bản ghi audit tra lại cũng không ra (đo thật 12/08).
+    if capability == "dang_facebook":
+        dong = [msg[:200] + "…" if len(msg) > 200 else msg] if msg else []
+        link = str(args.get("link") or "").strip()
+        if link:
+            dong.append(f"🔗 {link}")
+        media = [str(u).strip() for u in (args.get("media_urls") or [])
+                 if str(u).strip()]
+        if media:
+            nhan = "🎬" if str(args.get("loai") or "").lower() == "video" else "🖼️"
+            dong.append(f"{nhan} " + " ".join(media))
+        # Link/media KHÔNG cắt ngắn: đó chính là thứ cần nhìn để duyệt.
+        return "\n".join(dong) if dong else "(bài trống)"
     for key in (
         "command", "request", "fact", "message", "content", "task", "query",
         "text", "to", "name",

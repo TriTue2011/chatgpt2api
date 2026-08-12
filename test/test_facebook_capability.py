@@ -135,3 +135,44 @@ def test_handler_suy_loai_tu_du_lieu(monkeypatch):
             {"user_id": "-1"})
     assert nhan["urls"] == ["https://x/1.jpg"]
     assert "✅" in out["text"]
+
+
+@pytest.mark.pure
+def test_cau_duyet_hien_link_va_media_khong_chi_loi_dan():
+    """Duyệt bài link mà chỉ thấy lời dẫn thì không biết mình đẩy link nào."""
+    from services.agent import approval_gate as ag
+    s = ag.summarize_action(
+        "dang_facebook",
+        {"loai": "link", "message": "Repo hay nè",
+         "link": "https://github.com/colbymchenry/codegraph"})
+    assert "Repo hay nè" in s
+    assert "https://github.com/colbymchenry/codegraph" in s
+
+    v = ag.summarize_action(
+        "dang_facebook",
+        {"loai": "video", "message": "clip nè",
+         "media_urls": ["https://cdn/x.mp4"]})
+    assert "https://cdn/x.mp4" in v
+
+    # Bài chữ trần: vẫn chỉ là nội dung, không đẻ thêm dòng rỗng
+    assert ag.summarize_action(
+        "dang_facebook", {"loai": "chu", "message": "Chào cả nhà"}) == "Chào cả nhà"
+
+
+@pytest.mark.pure
+def test_cau_duyet_khong_cat_mat_link_khi_loi_dan_dai():
+    """Lời dẫn dài không được đẩy link ra ngoài phần bị cắt."""
+    from services.agent import approval_gate as ag
+    s = ag.summarize_action(
+        "dang_facebook",
+        {"loai": "link", "message": "x" * 600, "link": "https://vd.com/bai-viet"})
+    assert "https://vd.com/bai-viet" in s
+
+
+@pytest.mark.pure
+def test_cau_duyet_capability_khac_giu_nguyen():
+    """Chỉ thêm nhánh cho dang_facebook — tool khác giữ nguyên cách tóm tắt."""
+    from services.agent import approval_gate as ag
+    assert ag.summarize_action("send_to_contact",
+                               {"to": "Mẹ", "message": "con về muộn"}) == "→ Mẹ: con về muộn"
+    assert ag.summarize_action("control_home", {"command": "bật đèn"}) == "bật đèn"

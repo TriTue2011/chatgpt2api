@@ -307,7 +307,9 @@ def test_flow_dang_chu_bat_input_thang(monkeypatch):
     assert nhac and "NỘI DUNG" in nhac
     assert fb.co_flow(k)
     r = fb.tiep_flow(k, "Chào cả nhà nhé")
-    assert r == {"dang": {"loai": "chu", "message": "Chào cả nhà nhé"}}
+    assert "hoi" in r and fb.co_flow(k)            # hỏi đăng y nguyên hay nhờ AI
+    r2 = fb.tiep_flow(k, fb.CHON_NGUYEN)
+    assert r2 == {"dang": {"loai": "chu", "message": "Chào cả nhà nhé"}}
     assert not fb.co_flow(k)
 
 
@@ -321,9 +323,11 @@ def test_flow_dang_link_url_khong_bi_dien_giai(monkeypatch):
     r1 = fb.tiep_flow(k, "https://github.com/colbymchenry/codegraph")
     assert "hoi" in r1 and fb.co_flow(k)          # hỏi lời dẫn, giữ chờ
     r2 = fb.tiep_flow(k, "Repo hay nè")
-    assert r2["dang"]["loai"] == "link"
-    assert r2["dang"]["link"] == "https://github.com/colbymchenry/codegraph"
-    assert r2["dang"]["message"] == "Repo hay nè"
+    assert "hoi" in r2 and fb.co_flow(k)           # hỏi đăng y nguyên hay nhờ AI
+    r3 = fb.tiep_flow(k, fb.CHON_NGUYEN)
+    assert r3["dang"]["loai"] == "link"
+    assert r3["dang"]["link"] == "https://github.com/colbymchenry/codegraph"
+    assert r3["dang"]["message"] == "Repo hay nè"
     assert not fb.co_flow(k)
 
 
@@ -347,9 +351,59 @@ def test_flow_video_url_va_mo_ta(monkeypatch):
     nhac = fb.bat_dau_flow(k, fb.FLOW_VIDEO)
     assert "video" in nhac.lower()
     fb.tiep_flow(k, "https://cdn/x.mp4")
-    r = fb.tiep_flow(k, "clip nè")
+    assert "hoi" in fb.tiep_flow(k, "clip nè")
+    r = fb.tiep_flow(k, fb.CHON_NGUYEN)
     assert r["dang"] == {"loai": "video", "media_urls": ["https://cdn/x.mp4"],
                          "message": "clip nè"}
+
+
+@pytest.mark.pure
+def test_flow_gui_thang_video_o_buoc_cho_video(monkeypatch):
+    """«hoặc gửi thẳng video vào đây» — kênh bơm một câu, phải lấy đúng URL."""
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_vid2"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_VIDEO)
+    r = fb.tiep_flow(k, "thêm video vào bài đăng facebook: https://cdn/y.mp4")
+    assert "hoi" in r and "mô tả" in r["hoi"].lower()
+    assert fb._flow[k]["video"] == "https://cdn/y.mp4"     # KHÔNG nuốt cả câu
+    fb.tiep_flow(k, "clip nè")
+    r2 = fb.tiep_flow(k, fb.CHON_NGUYEN)
+    assert r2["dang"]["media_urls"] == ["https://cdn/y.mp4"]
+
+
+@pytest.mark.pure
+def test_flow_gui_anh_giua_chung_khong_bi_nuot_lam_link(monkeypatch):
+    """Đang chờ LINK mà gửi ảnh: không được biến cả câu bơm thành link."""
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_anh"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    r = fb.tiep_flow(k, "thêm ảnh vào bài đăng facebook: https://x/a.png")
+    assert "hoi" in r
+    assert "không ghép" in r["hoi"]
+    assert "LINK" in r["hoi"]                    # hỏi lại đúng bước đang đứng
+    assert fb.co_flow(k)                         # giữ bản chờ
+    assert "link" not in fb._flow[k]             # chưa nhận gì làm link
+    # gõ link thật vẫn chạy tiếp bình thường
+    assert "hoi" in fb.tiep_flow(k, "https://vd.com/bai")
+    assert fb._flow[k]["link"] == "https://vd.com/bai"
+
+
+@pytest.mark.pure
+def test_flow_chon_nho_ai_tra_yeu_cau_kem_link(monkeypatch):
+    """Nhánh AI: trả câu giao việc có đủ yêu cầu gốc + link, không trả «dang»."""
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_ai"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://github.com/colbymchenry/codegraph")
+    fb.tiep_flow(k, "viết bài về tác dụng của repo với coder")
+    r = fb.tiep_flow(k, fb.CHON_AI)
+    assert "dang" not in r
+    assert "viết bài về tác dụng của repo với coder" in r["ai"]
+    assert "https://github.com/colbymchenry/codegraph" in r["ai"]
+    assert not fb.co_flow(k)
 
 
 @pytest.mark.pure
