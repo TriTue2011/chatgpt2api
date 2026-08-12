@@ -531,3 +531,21 @@ def test_yeu_cau_ai_bai_video_goi_dung_media_urls(monkeypatch):
     y = fb.tiep_flow(k, fb.CHON_AI)["ai"]
     assert 'loai="video"' in y
     assert 'media_urls=["https://cdn/x.mp4"]' in y
+
+
+@pytest.mark.pure
+def test_yeu_cau_ai_doi_bai_co_do_sau_khong_chung_chung(monkeypatch):
+    """Đo thật 12/08: bài ra chung chung vì lời giao việc ép «đọc MỘT lượt».
+
+    Trần bước lúc đó là 4 nên phải ép thế; nay là 7, đổi lại và đòi độ sâu.
+    """
+    monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
+    k = "zalop_sau"
+    fb.xoa_flow(k)
+    fb.bat_dau_flow(k, fb.FLOW_LINK)
+    fb.tiep_flow(k, "https://vd.com/bai")
+    y = fb.tiep_flow(k, fb.CHON_AI_LINK)["ai"]
+    assert "ĐỌC KỸ" in y
+    assert "MỘT lượt" not in y            # câu ép nông đã bỏ
+    assert "300" in y and "450" in y      # có mốc độ dài
+    assert "không bịa" in y               # nhưng vẫn cấm bịa để có chi tiết

@@ -599,11 +599,19 @@ def _yeu_cau_ai(p: dict) -> str:
             "Dùng skill viết bài Facebook giọng người thật (bớt giọng AI)."]
     link = str(p.get("link") or "")
     if link:
-        # "Đọc MỘT lượt": đo thật 12/08, model tiêu hết trần bước cho vòng
-        # read_webpage → find_in_text ×2 → read_webpage rồi chưa viết được gì.
-        dong.append(f"Bài đăng kèm link {link} — đọc trang đó MỘT lượt lấy dữ "
-                    "liệu thật rồi viết luôn, đừng tra lại nhiều vòng, "
-                    "không bịa.")
+        # Bản trước ép "đọc MỘT lượt, đừng tra lại nhiều vòng" — viết thế khi
+        # trần bước còn là 4, để model đừng cạn bước trước lúc viết. Trần nay là
+        # 7 nên đổi lại được, và PHẢI đổi: đọc một lượt thì bài ra chung chung,
+        # toàn câu "giúp AI hiểu code nhanh hơn" mà không nói nó làm gì (đo thật
+        # 12/08 19:32, chủ máy nhận xét "ngắn và xúc tích quá").
+        dong.append(
+            f"Bài đăng kèm link {link} — ĐỌC KỸ trang đó lấy dữ liệu thật, tra "
+            "thêm vài lượt cũng được nếu chưa đủ chi tiết, nhưng không bịa. "
+            "Bài phải nói RÕ nó là cái gì, làm được gì, dùng ra sao, ai nên "
+            "dùng — nêu đích danh thứ có thật trên trang (công nghệ dùng, cách "
+            "cài và chạy, nó dựng được những quan hệ nào, nối được công cụ "
+            "nào). Đừng dừng ở câu chung chung kiểu «giúp AI hiểu code nhanh "
+            "hơn». Cỡ 300–450 từ, đủ để người đọc hiểu mà quyết có thử không.")
     video = str(p.get("video") or "")
     if video:
         dong.append(f"Bài đăng kèm video {video}.")
