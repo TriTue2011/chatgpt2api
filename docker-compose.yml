@@ -78,7 +78,7 @@ services:
       # Máy dịch tự dựng trong stack (service `libretranslate` bên dưới). Khai ở
       # ĐÂY chứ không bắt admin sửa config.json: dựng compose là dịch chạy —
       # lệnh /dich của bot + mục 🌐 khi gửi tệp/ảnh. Xoá biến này = tắt hẳn.
-      TRANSLATE_URL: ${TRANSLATE_URL:-http://libretranslate:5000}
+      TRANSLATE_URL: ${TRANSLATE_URL:-http://vn-translate:5000}
       # Dịch sang tiếng Anh trước khi gửi LLM rồi dịch phản hồi về tiếng Việt.
       # MẶC ĐỊNH TẮT — đổi hành vi của MỌI lượt gọi model, phải tự bật.
       # Xem docs/DICH_LIBRETRANSLATE.md mục 5 trước khi đặt "1".
@@ -287,7 +287,36 @@ services:
   #
   # Init container đổi chủ thư mục trước, chạy một lần rồi thoát — nhờ vậy tiến
   # trình chính vẫn KHÔNG phải root, và không ai phải gõ chown bằng tay trên host.
+  # ── vn-translate: máy dịch RIÊNG (NLLB-200 + thuật ngữ chuyên ngành) ─────
+  #
+  # Engine dịch mặc định của stack (TRANSLATE_URL ở trên): dịch thẳng
+  # vi↔ja/ko/zh không bắc cầu, giữ tên riêng tốt hơn Argos, thuật ngữ điện tử/
+  # y tế/xây dựng/CNTT/pháp lý dịch bằng bảng tra. Xem vn-translate/README.md.
+  # libretranslate vẫn ở dưới sau profile — muốn quay lại: đổi TRANSLATE_URL và
+  # `docker compose --profile libretranslate up -d`.
+  vn-translate:
+    image: ghcr.io/tritue2011/vn-translate:latest
+    container_name: vn-translate
+    restart: unless-stopped
+    environment:
+      TT_LANGS: ${TT_LANGS:-en,vi,ja,ko,zh-Hans}
+      # Thang model: hỏng thì tự chuyển model kế (xem vn-translate/app/engine.py).
+      TT_MODELS: ${TT_MODELS:-JustFrederik/nllb-200-distilled-600M-ct2-int8,JustFrederik/nllb-200-distilled-1.3B-ct2-int8}
+      TT_THREADS: "4"
+    volumes:
+      - vn_translate_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health',timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      # Lần đầu tải model ~600 MB mới dịch được — đừng báo unhealthy lúc tải.
+      start_period: 300s
+    security_opt:
+      - no-new-privileges:true
+
   libretranslate-init:
+    profiles: ["libretranslate"]
     image: busybox:stable
     container_name: libretranslate-init
     user: root
@@ -297,6 +326,7 @@ services:
     restart: "no"
 
   libretranslate:
+    profiles: ["libretranslate"]
     image: libretranslate/libretranslate:latest
     container_name: libretranslate
     restart: unless-stopped
@@ -350,3 +380,4 @@ services:
 
 volumes:
   searxng-data:
+  vn_translate_data:

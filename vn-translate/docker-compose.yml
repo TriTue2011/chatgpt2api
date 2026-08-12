@@ -1,0 +1,28 @@
+# vn-translate chạy RIÊNG. Client là gateway c2a: đặt TRANSLATE_URL=http://vn-translate:5000
+# (cùng mạng stack) — API giống LibreTranslate nên không sửa gì phía gateway.
+services:
+  vn-translate:
+    image: ghcr.io/tritue2011/vn-translate:latest
+    container_name: vn-translate
+    restart: unless-stopped
+    environment:
+      # Ngôn ngữ khai ra ngoài (NLLB dịch THẲNG mọi cặp trong danh sách này,
+      # vi↔ja không phải bắc cầu qua tiếng Anh như Argos).
+      TT_LANGS: "en,vi,ja,ko,zh-Hans"
+      # Thang model: hỏng/tải lỗi thì tự nhảy sang model kế (yêu cầu chủ máy).
+      TT_MODELS: "JustFrederik/nllb-200-distilled-600M-ct2-int8,JustFrederik/nllb-200-distilled-1.3B-ct2-int8"
+      TT_THREADS: "4"
+      TT_GLOSSARY: "1"
+    volumes:
+      - vn_translate_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health',timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 300s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  vn_translate_data:

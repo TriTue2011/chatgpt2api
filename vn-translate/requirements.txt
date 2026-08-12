@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn>=0.30
+ctranslate2>=4.0
+transformers>=4.44
+sentencepiece>=0.2
+huggingface_hub>=0.24
+langdetect>=1.0.9
+# transformers cần một trong hai; tokenizer NLLB dùng bản rust (tokenizers) là đủ,
+# KHÔNG cần torch — image nhẹ đi ~800 MB.
+tokenizers>=0.19
