@@ -28,12 +28,45 @@ except ImportError:
     _HAS_NUMPY = False
 
 
-def _make_voice_files(root: Path, voice_id: str) -> Path:
+def _make_voice_files(root: Path, voice_id: str, prepared: bool = True) -> Path:
     d = root / voice_id
     d.mkdir(parents=True, exist_ok=True)
     for name in (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE):
         (d / name).write_text("x", encoding="utf-8")
+    if prepared:
+        (d / nv.PREPARED_FILE).write_text("{}", encoding="utf-8")
     return d
+
+
+def _decode_metadata_props(blob: bytes) -> list[tuple[str, str]]:
+    """Giải mã ngược metadata_props — bộ giải MÃ RIÊNG, không dùng lại hàm mã
+    hoá đang được kiểm, để bài kiểm không tự chứng minh chính nó."""
+    def varint(buf: bytes, i: int) -> tuple[int, int]:
+        val = shift = 0
+        while True:
+            b = buf[i]
+            i += 1
+            val |= (b & 0x7F) << shift
+            if not b & 0x80:
+                return val, i
+            shift += 7
+
+    out: list[tuple[str, str]] = []
+    i = 0
+    while i < len(blob):
+        tag, i = varint(blob, i)
+        assert tag >> 3 == 14 and tag & 7 == 2, "phải là metadata_props (trường 14)"
+        size, i = varint(blob, i)
+        entry, i = blob[i:i + size], i + size
+        pair: dict[int, str] = {}
+        j = 0
+        while j < len(entry):
+            t, j = varint(entry, j)
+            n, j = varint(entry, j)
+            pair[t >> 3] = entry[j:j + n].decode("utf-8")
+            j += n
+        out.append((pair[1], pair[2]))
+    return out
 
 
 def _make_espeak(root: Path) -> Path:
@@ -122,6 +155,59 @@ class TokensFromConfigTests(unittest.TestCase):
                 nv.tokens_from_config({"phoneme_id_map": bad})
 
 
+class SherpaMetadataTests(unittest.TestCase):
+    """Model NghiTTS xuất ra không có metadata; thiếu bản vá này sherpa-onnx
+    dừng ngay với "'sample_rate' does not exist in the metadata"."""
+
+    def _cfg(self, **over) -> dict:
+        cfg = {"audio": {"sample_rate": nv.SAMPLE_RATE}, "num_speakers": 1,
+               "phoneme_type": "espeak", "espeak": {"voice": "vi"}}
+        cfg.update(over)
+        return cfg
+
+    def test_seven_fields_sherpa_needs(self) -> None:
+        got = dict(nv.sherpa_metadata(self._cfg()))
+        self.assertEqual(got["sample_rate"], str(nv.SAMPLE_RATE))
+        self.assertEqual(got["n_speakers"], "1")
+        self.assertEqual(got["model_type"], "vits")
+        self.assertEqual(got["comment"], "piper")
+        self.assertEqual(got["has_espeak"], "1")
+        self.assertEqual(got["voice"], "vi")
+
+    def test_south_voice_keeps_its_espeak_voice(self) -> None:
+        got = dict(nv.sherpa_metadata(self._cfg(espeak={"voice": nv.LANG_SOUTH})))
+        self.assertEqual(got["voice"], nv.LANG_SOUTH)
+
+    def test_rejects_config_that_would_describe_the_model_wrongly(self) -> None:
+        for bad in (self._cfg(audio={"sample_rate": 16000}),
+                    self._cfg(num_speakers=2),
+                    self._cfg(phoneme_type="text"),
+                    self._cfg(espeak={}),
+                    self._cfg(espeak="vi")):
+            with self.assertRaises(ValueError):
+                nv.sherpa_metadata(bad)
+
+    def test_encoding_round_trips(self) -> None:
+        entries = nv.sherpa_metadata(self._cfg())
+        blob = nv.encode_onnx_metadata(entries)
+        self.assertEqual(_decode_metadata_props(blob), list(entries))
+
+    def test_encoding_handles_long_and_unicode_values(self) -> None:
+        entries = (("k" * 200, "Tiếng Việt có dấu"),)
+        self.assertEqual(_decode_metadata_props(nv.encode_onnx_metadata(entries)),
+                         list(entries))
+
+    def test_appending_to_an_onnx_keeps_earlier_bytes_intact(self) -> None:
+        # Nối thêm vào cuối file .onnx được là nhờ protobuf: nối hai bản mã hoá
+        # tương đương gộp trường, nên phần đầu phải nguyên vẹn từng byte.
+        body = b"\x08\x07"          # một trường bất kỳ có sẵn trong ModelProto
+        blob = nv.encode_onnx_metadata(nv.sherpa_metadata(self._cfg()))
+        merged = body + blob
+        self.assertTrue(merged.startswith(body))
+        self.assertEqual(_decode_metadata_props(merged[len(body):]),
+                         list(nv.sherpa_metadata(self._cfg())))
+
+
 class ModelDirTests(unittest.TestCase):
     def test_none_until_all_three_files_exist(self) -> None:
         with TemporaryDirectory() as td:
@@ -134,6 +220,10 @@ class ModelDirTests(unittest.TestCase):
                 (d / nv.CONFIG_FILE).write_text("x", encoding="utf-8")
                 self.assertIsNone(vcfg.nghi_voice_dir("ban-mai"))
                 (d / nv.TOKENS_FILE).write_text("x", encoding="utf-8")
+                # Đủ 3 file nhưng CHƯA vá metadata → sherpa-onnx sẽ từ chối nạp,
+                # nên vẫn phải coi là chưa dùng được.
+                self.assertIsNone(vcfg.nghi_voice_dir("ban-mai"))
+                (d / nv.PREPARED_FILE).write_text("{}", encoding="utf-8")
                 self.assertEqual(vcfg.nghi_voice_dir("ban-mai"), d)
 
     def test_unknown_id_never_touches_disk(self) -> None:

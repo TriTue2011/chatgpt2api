@@ -28,10 +28,16 @@ file dưới cùng tên lúc nào cũng được; băm lệch thì DỪNG chứ 
 đang chạy. Bản gương trên Release cũng kiểm băm y hệt nên không có nguồn nào
 được tin sẵn.
 
-Dựng lại bản gương trên Release (chỉ làm khi thêm/đổi giọng):
+Model NghiTTS xuất ra KHÔNG có metadata ONNX nên sherpa-onnx từ chối nạp; sau
+khi tải, script vá 7 trường metadata vào file (xem nghitts_voices.sherpa_metadata)
+và ghi một dấu ghi nhận cạnh đó. Vì vậy băm của model.onnx trên đĩa KHÁC băm đã
+ghim — đó là bình thường, dấu ghi nhận mới là thứ để đối chiếu.
 
-    python scripts/download_nghitts_voices.py --all --upstream
-    python scripts/download_nghitts_voices.py --publish
+Dựng lại bản gương trên Release (chỉ làm khi thêm/đổi giọng) — bản gương phải là
+bản GỐC chưa vá:
+
+    python scripts/download_nghitts_voices.py --all --upstream --no-prepare --dest /tmp/guong
+    python scripts/download_nghitts_voices.py --publish --dest /tmp/guong
 """
 
 from __future__ import annotations
@@ -80,6 +86,8 @@ PIPER_URL = ("https://github.com/rhasspy/piper/releases/download/2023.11.14-2/"
 PIPER_SHA256 = "a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992"
 ESPEAK_NEED = ("phondata", "phontab", "vi_dict", "lang/aav/vi")
 USER_AGENT = "chatgpt2api-voice-downloader/1.0"
+
+
 def _espeak_candidates() -> list[Path]:
     """Nơi tìm espeak-ng-data, theo thứ tự ưu tiên.
 
@@ -206,10 +214,83 @@ def _write_tokens(voice_dir: Path) -> None:
     print(f"[ok]  {_show(out)} ({len(tokens)} token)")
 
 
+def _marker_path(voice_dir: Path) -> Path:
+    return voice_dir / nv.PREPARED_FILE
+
+
+def _prepared_ok(voice_dir: Path, source_sha: str) -> bool:
+    """Model đã vá metadata và vẫn đúng bản đó chưa.
+
+    So kích thước + mtime thay vì băm lại: băm một đồ hình 60 MB cho mỗi giọng,
+    mỗi lần chạy, là quá đắt mà chẳng thêm bảo đảm nào — file bị sửa lén thì
+    mtime cũng đổi.
+    """
+    model = voice_dir / nv.MODEL_FILE
+    marker = _marker_path(voice_dir)
+    if not model.is_file() or not marker.is_file():
+        return False
+    try:
+        rec = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    st = model.stat()
+    return (rec.get("source_sha256") == source_sha
+            and rec.get("output_size") == st.st_size
+            and rec.get("output_mtime_ns") == st.st_mtime_ns)
+
+
+def _prepare_model(voice_dir: Path, source_sha: str) -> None:
+    """Vá metadata vào model.onnx để sherpa-onnx nạp được. Chạy lại vô hại.
+
+    Model gốc KHÔNG có metadata nên sherpa-onnx từ chối nạp; xem
+    nghitts_voices.sherpa_metadata. Ghi ra file tạm rồi thay nguyên tử, và lưu
+    băm của BẢN GỐC vào dấu ghi nhận — nhờ vậy lần chạy sau biết file hiện tại
+    ứng với bản gốc nào mà khỏi tải lại.
+    """
+    if _prepared_ok(voice_dir, source_sha):
+        return
+    model = voice_dir / nv.MODEL_FILE
+    cfg = json.loads((voice_dir / nv.CONFIG_FILE).read_text(encoding="utf-8"))
+    meta = nv.encode_onnx_metadata(nv.sherpa_metadata(cfg))
+
+    got = _sha256(model)
+    if got != source_sha:
+        # Đã vá rồi mà mất dấu ghi nhận (vd xoá nhầm) — vá tiếp là hỏng file.
+        raise ValueError(
+            f"{_show(model)} khong khop ban goc (bam {got}). Xoa thu muc giong "
+            f"nay roi tai lai.")
+    tmp = model.with_name(f".{model.name}.{os.getpid()}.tmp")
+    try:
+        with model.open("rb") as src, tmp.open("wb") as out:
+            shutil.copyfileobj(src, out, 1024 * 1024)
+            out.write(meta)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, model)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    st = model.stat()
+    marker = _marker_path(voice_dir)
+    mtmp = marker.with_name(f".{marker.name}.{os.getpid()}.tmp")
+    try:
+        mtmp.write_text(json.dumps({
+            "source_sha256": source_sha,
+            "output_size": st.st_size,
+            "output_mtime_ns": st.st_mtime_ns,
+            "metadata_bytes": len(meta),
+        }, sort_keys=True), encoding="utf-8")
+        os.replace(mtmp, marker)
+    finally:
+        mtmp.unlink(missing_ok=True)
+    print(f"[va]  {_show(model)} +{len(meta)} byte metadata cho sherpa-onnx")
+
+
 def voice_complete(voice) -> bool:
     d = DEST / voice.id
-    return all((d / n).is_file()
-               for n in (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE))
+    return (all((d / n).is_file()
+                for n in (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE))
+            and _prepared_ok(d, voice.model_sha256))
 
 
 def _asset_name(voice, local_name: str) -> str:
@@ -234,7 +315,7 @@ def _fetch_release(voice, local: str, sha: str, dest: Path) -> None:
     _fetch(url, dest, sha, f"{asset} ← Release {RELEASE_TAG}")
 
 
-def download_voice(voice, upstream: bool = False) -> bool:
+def download_voice(voice, upstream: bool = False, prepare: bool = True) -> bool:
     """Tải một giọng; trả True nếu sau cùng đủ file. Đã đủ thì bỏ qua."""
     voice_dir = DEST / voice.id
     if voice_complete(voice):
@@ -243,6 +324,11 @@ def download_voice(voice, upstream: bool = False) -> bool:
     print(f"--- {voice.id} ({voice.name}, {voice.language}) ---")
     for remote, local, sha in voice.artifacts:
         dest = voice_dir / local
+        # Model đã vá metadata thì băm khác bản gốc — hỏi dấu ghi nhận, đừng so
+        # băm rồi tưởng hỏng mà tải lại 64 MB.
+        if local == nv.MODEL_FILE and prepare and _prepared_ok(voice_dir, sha):
+            print(f"[co]  {_show(dest)} (da va metadata)")
+            continue
         if dest.is_file() and _sha256(dest) == sha:
             print(f"[co]  {_show(dest)}")
             continue
@@ -257,10 +343,12 @@ def download_voice(voice, upstream: bool = False) -> bool:
             return False
     try:
         _write_tokens(voice_dir)
+        if prepare:
+            _prepare_model(voice_dir, voice.model_sha256)
     except Exception as exc:
-        print(f"[LOI] {voice.id}: khong sinh duoc tokens.txt — {exc}", file=sys.stderr)
+        print(f"[LOI] {voice.id}: {exc}", file=sys.stderr)
         return False
-    return voice_complete(voice)
+    return voice_complete(voice) if prepare else True
 
 
 def cmd_publish() -> int:
@@ -303,7 +391,10 @@ def cmd_publish() -> int:
             src = DEST / v.id / local
             got = _sha256(src)
             if got != sha:
-                print(f"[LOI] {_show(src)} bam lech ({got}) — BO QUA, khong day len",
+                extra = (" — file nay da VA METADATA, ban guong phai la ban GOC; "
+                         "dung `--all --upstream --no-prepare` vao mot thu muc rieng")
+                print(f"[LOI] {_show(src)} bam lech ({got}) — BO QUA, khong day len"
+                      + (extra if _marker_path(src.parent).is_file() else ""),
                       file=sys.stderr)
                 failed.append(v.id)
                 continue
@@ -355,6 +446,8 @@ def main() -> int:
                     help="lấy từ nguồn gốc nghitts.app thay vì bản gương trên Release")
     ap.add_argument("--publish", action="store_true",
                     help=f"đẩy giọng đang có lên Release {RELEASE_TAG} (chỉ khi thêm/đổi giọng)")
+    ap.add_argument("--no-prepare", action="store_true",
+                    help="giữ model NGUYÊN BẢN, không vá metadata (dùng khi dựng bản gương)")
     ap.add_argument("--dest", default="", help=f"thư mục đích (mặc định {DEST})")
     args = ap.parse_args()
 
@@ -387,7 +480,8 @@ def main() -> int:
         print("[LOI] khong co espeak-ng-data — NghiTTS khong doc duoc", file=sys.stderr)
         return 1
 
-    failed = [v.id for v in wanted if not download_voice(v)]
+    failed = [v.id for v in wanted
+              if not download_voice(v, args.upstream, not args.no_prepare)]
     done = len(wanted) - len(failed)
     print(f"\nXong: {done}/{len(wanted)} giọng." if not failed
           else f"\nXong: {done}/{len(wanted)} giọng. HỎNG: {', '.join(failed)}")

@@ -627,7 +627,12 @@ def nghi_dir() -> Path:
 
 
 def nghi_voice_dir(voice_id: str) -> Path | None:
-    """Thư mục một giọng khi đã đủ 3 file (model, cấu hình, tokens), None nếu chưa.
+    """Thư mục một giọng khi đã đủ file dùng được, None nếu chưa.
+
+    Đòi cả dấu ghi nhận đã-vá-metadata: model NghiTTS nguyên bản không có
+    metadata nên sherpa-onnx từ chối nạp (xem nghitts_voices.sherpa_metadata).
+    Thiếu dấu này mà vẫn nhận thì giọng hiện ra trong danh mục rồi bấm vào mới
+    lỗi — thà coi như chưa tải.
 
     Mã giọng phải nằm trong danh mục — chặn luôn đường dẫn kiểu "../" đi ra
     ngoài thư mục model.
@@ -638,7 +643,7 @@ def nghi_voice_dir(voice_id: str) -> Path | None:
     if voice is None:
         return None
     base = nghi_dir() / voice.id
-    need = (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE)
+    need = (nv.MODEL_FILE, nv.CONFIG_FILE, nv.TOKENS_FILE, nv.PREPARED_FILE)
     return base if all((base / n).is_file() for n in need) else None
 
 

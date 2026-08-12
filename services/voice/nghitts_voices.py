@@ -27,6 +27,8 @@ DEFAULT_ID = "ngoc-huyen-moi"
 MODEL_FILE = "model.onnx"
 CONFIG_FILE = "model.onnx.json"
 TOKENS_FILE = "tokens.txt"
+# Dấu ghi nhận model đã được vá metadata (xem sherpa_metadata bên dưới).
+PREPARED_FILE = ".model.onnx.prepared.json"
 
 SAMPLE_RATE = 22050
 
@@ -119,6 +121,78 @@ BY_ID: dict[str, NghiVoice] = {v.id: v for v in VOICES}
 def get(voice_id: str) -> NghiVoice | None:
     """Giọng theo mã, None nếu mã lạ. Caller quyết định báo lỗi hay rơi mặc định."""
     return BY_ID.get((voice_id or "").strip())
+
+
+def sherpa_metadata(config: dict) -> tuple[tuple[str, str], ...]:
+    """Bảy trường metadata mà sherpa-onnx đòi nhưng bản xuất NghiTTS không có.
+
+    Model NghiTTS là VITS kiểu Piper nhưng xuất ra với `metadata_props` RỖNG
+    (đã đo: 0 key). Nạp thẳng thì sherpa-onnx dừng ngay ở
+    `offline-tts-vits-model.cc` với "'sample_rate' does not exist in the
+    metadata". Mọi thứ sherpa cần đều nằm sẵn trong model.onnx.json, chỉ là
+    nằm sai chỗ — hàm này rút ra để ghi vào đúng chỗ.
+
+    Kiểm luôn ba điều kiện của cấu hình: đúng tần số lấy mẫu, đúng một giọng,
+    và phiên âm bằng espeak. Sai một trong ba thì dừng, vì lúc đó metadata ta
+    ghi vào sẽ mô tả sai model và tiếng đọc ra sẽ méo chứ không lỗi rõ ràng.
+
+    Cách làm học từ luuquangvu/wyoming-vietnamese (`download.py`).
+    """
+    audio = config.get("audio")
+    if not isinstance(audio, dict) or audio.get("sample_rate") != SAMPLE_RATE:
+        raise ValueError(f"Cấu hình NghiTTS phải là audio {SAMPLE_RATE} Hz.")
+    if config.get("num_speakers") != 1:
+        raise ValueError("Cấu hình NghiTTS phải có đúng một giọng.")
+    if config.get("phoneme_type") != "espeak":
+        raise ValueError("Cấu hình NghiTTS phải dùng âm vị espeak.")
+    espeak = config.get("espeak")
+    voice = espeak.get("voice") if isinstance(espeak, dict) else None
+    if not isinstance(voice, str) or not voice:
+        raise ValueError("Cấu hình NghiTTS không có espeak.voice.")
+    return (
+        ("sample_rate", str(SAMPLE_RATE)),
+        ("n_speakers", "1"),
+        ("model_type", "vits"),
+        ("comment", "piper"),
+        ("language", "Vietnamese"),
+        ("voice", voice),
+        ("has_espeak", "1"),
+    )
+
+
+def _varint(value: int) -> bytes:
+    if value < 0:
+        raise ValueError("varint không nhận số âm.")
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _text_field(field_number: int, value: str) -> bytes:
+    raw = value.encode("utf-8")
+    return _varint((field_number << 3) | 2) + _varint(len(raw)) + raw
+
+
+def encode_onnx_metadata(entries: tuple[tuple[str, str], ...]) -> bytes:
+    """Mã hoá `metadata_props` của ONNX ModelProto — không cần gói `onnx`.
+
+    Ghi được bằng cách NỐI THÊM vào cuối file .onnx là nhờ tính chất của
+    protobuf: nối hai bản mã hoá của cùng một message tương đương việc gộp
+    trường, và `metadata_props` (trường 14) là trường lặp nên các mục thêm vào
+    cuối được gộp vào danh sách sẵn có. Nhờ vậy không phải giải mã rồi mã hoá
+    lại cả đồ hình 60 MB, cũng không phải kéo thêm phụ thuộc `onnx` vào image.
+    """
+    out = bytearray()
+    tag = _varint((14 << 3) | 2)
+    for key, value in entries:
+        entry = _text_field(1, key) + _text_field(2, value)
+        out.extend(tag)
+        out.extend(_varint(len(entry)))
+        out.extend(entry)
+    return bytes(out)
 
 
 def tokens_from_config(config: dict) -> list[str]:

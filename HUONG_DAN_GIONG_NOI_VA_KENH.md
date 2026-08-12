@@ -156,8 +156,12 @@ kèm đủ. Máy nào thiếu thì `--espeak` tự rút ra từ đúng gói pipe
   `voice.tts.nghi_max_loaded`. Đổi giọng qua lại nhiều hơn 2 giọng thì lần đổi
   sẽ tốn vài giây nạp lại.
 - Giọng NghiTTS hỏng thì tự rơi về Piper như VieNeu/Kokoro — trợ lý không câm.
-- Thêm/đổi giọng trong danh mục thì dựng lại bản gương:
-  `python scripts/download_nghitts_voices.py --all --upstream` rồi `--publish`.
+- Model NghiTTS xuất ra **không có metadata ONNX**, sherpa-onnx sẽ từ chối nạp.
+  Script tự vá 7 trường metadata vào file sau khi tải rồi ghi một dấu ghi nhận
+  cạnh đó, nên **băm của `model.onnx` trên đĩa khác băm đã ghim** — đó là bình
+  thường. Giọng thiếu dấu ghi nhận bị coi như chưa tải, không hiện cho HA.
+- Thêm/đổi giọng trong danh mục thì dựng lại bản gương bằng bản **gốc chưa vá**:
+  `--all --upstream --no-prepare --dest /tmp/guong` rồi `--publish --dest /tmp/guong`.
 
 ---
 
