@@ -1464,6 +1464,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # đăng, không để model diễn giải thành việc khác (một URL repo GitHub từng
     # kéo model sang chế độ trợ lý code — đo thật 11/08). Bước đăng thật vẫn qua
     # capability `dang_facebook` (risk=CHANGE) + cổng duyệt như mọi hành động.
+    _fb_ai_args: dict[str, Any] | None = None   # đặt khi vào nhánh «AI viết bài»
     if allow is None or "facebook" in allow:
         from services import facebook_page as _fbp
 
@@ -1513,6 +1514,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 user_text = str(_r["ai"])
                 if hist and hist[-1].get("role") == "user":
                     hist[-1]["content"] = user_text
+                # Bài viết ra PHẢI quay về cổng duyệt, và không tin vào việc
+                # model có chịu gọi tool hay không — xem chú thích ở
+                # facebook_page.BAI_MO. Giữ sẵn args, phần chốt ở chỗ vòng lặp
+                # trả lời bằng văn (tìm `_fb_ai_args`).
+                _fb_ai_args = dict(_r.get("ai_args") or {})
             elif _r and _r.get("dang") is not None:
                 return _fb_dang(dict(_r["dang"]))
 
@@ -1859,7 +1865,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
     seen_workflows: set[str] = set()  # tier-2: inject each workflow note once/turn
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
+        # max_tokens: mặc định của runtime là 900, quá ngắn cho một bài viết.
+        # Đo thật 12/08 21:29: bài Facebook 300–450 từ tiếng Việt bị cắt ngang
+        # giữa câu ("Ví dụ:") vì cạn token — tiếng Việt tốn khoảng 2 token/từ.
         resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
+                          max_tokens=2400,
                           no_smart_home=(allow is not None and "homeassistant" not in allow),
                           allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}),
                           pham_vi=_pham_vi(user_id), doc_them=_doc_them(user_id))
@@ -1893,6 +1903,17 @@ def _orchestrate_locked(user_text: str, user_id: str,
                     hist.pop()
                 _journal("", status="blocked")
                 return {"text": "", "silent": True}
+            # Bài Facebook do AI viết: KHÔNG trả ra màn hình rồi bỏ đó. Lấy phần
+            # trong <<<BAI>>>…<<<HETBAI>>> đưa qua cổng duyệt. Model không bọc
+            # thì lấy cả câu trả lời — cổng duyệt hiện nguyên văn cho chủ máy
+            # xem trước khi đăng, nên thà hiện thừa lời dẫn còn hơn mất bài
+            # (12/08 19:32 và 21:29 đều mất bài vì tin vào lời dặn gọi tool).
+            if _fb_ai_args is not None:
+                _bai = _fbp.tach_bai(reply) or _fbp.bo_dau_bai(reply)
+                if _bai:
+                    return _fb_dang({**_fb_ai_args, "message": _bai})
+                logger.warning({"event": "fb_ai_bai_rong",
+                                "user_id": str(user_id)[:40]})
             out = _finalize(user_id, {"text": reply})
             hist.append({"role": "assistant", "content": out.get("text") or reply})
             _persist_history(user_id, hist)

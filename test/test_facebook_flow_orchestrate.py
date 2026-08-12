@@ -124,16 +124,24 @@ class FacebookFlowOrchestrateTests(unittest.TestCase):
         self.assertEqual(len(nhan), 4, nhan)
         self.assertTrue(any("đọc link" in n.lower() for n in nhan), nhan)
 
+        # Model trả lời có lời dẫn + bài bọc trong dấu, y như thật.
         self._boom.stop()
+        noi_dung = f"Dạ em đọc kỹ rồi ạ.\n{fbp.BAI_MO}\nBài thật đây.\n{fbp.BAI_DONG}"
         fake = mock.Mock(return_value={
-            "choices": [{"message": {"content": "Đây là bài nháp ạ."}}]})
+            "choices": [{"message": {"content": noi_dung}}]})
         with mock.patch.object(orch, "call_model", fake):
             out = orch.orchestrate(fbp.CHON_AI_LINK, self._uid)
         self._boom.start()
 
         self.assertFalse(fbp.co_flow(self._uid))
-        self.assertIsNone(approval_gate.get_pending(self._uid))
-        self.assertIn("nháp", (out.get("text") or "").lower())
+        # Bài PHẢI về cổng duyệt, và chỉ lấy phần trong dấu — bỏ lời dẫn
+        pend = approval_gate.get_pending(self._uid)
+        self.assertIsNotNone(pend)
+        args = pend.get("args") or {}
+        self.assertEqual(args.get("message"), "Bài thật đây.")
+        self.assertEqual(args.get("link"), _REPO)
+        self.assertEqual(args.get("loai"), "link")
+        self.assertNotIn(fbp.BAI_MO, out.get("text") or "")
         gui = "\n".join(str(m.get("content") or "")
                         for m in fake.call_args[0][1])
         self.assertIn(_REPO, gui)
@@ -157,9 +165,12 @@ class FacebookFlowOrchestrateTests(unittest.TestCase):
         self._boom.start()
 
         self.assertFalse(fbp.co_flow(self._uid))
-        # Không đăng thẳng: chưa có gì ở cổng duyệt, bài phải qua model trước
-        self.assertIsNone(approval_gate.get_pending(self._uid))
-        self.assertIn("nháp", (out.get("text") or "").lower())
+        # Model KHÔNG bọc bài (không theo dấu) → vẫn phải về cổng duyệt, lấy cả
+        # câu trả lời. Thà hiện thừa lời dẫn cho chủ máy xem còn hơn mất bài.
+        pend = approval_gate.get_pending(self._uid)
+        self.assertIsNotNone(pend)
+        self.assertIn("nháp", str((pend.get("args") or {}).get("message") or "").lower())
+        _ = out
 
         self.assertTrue(fake.called)
         messages = fake.call_args[0][1]

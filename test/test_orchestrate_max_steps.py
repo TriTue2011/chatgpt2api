@@ -53,5 +53,17 @@ class TranSoBuocTests(unittest.TestCase):
         self.assertTrue(str(out.get("text") or "").strip())
 
 
+
+class TranTokenTests(unittest.TestCase):
+    """Đo thật 12/08 21:29: bài Facebook 300–450 từ bị cắt ngang giữa câu vì
+    runtime mặc định max_tokens=900. Tiếng Việt tốn cỡ 2 token/từ."""
+
+    def test_vong_lap_xin_du_token_cho_mot_bai_viet(self) -> None:
+        with install_data_dir():
+            with mock.patch.object(orch, "call_model",
+                                   return_value=_XONG) as fake:
+                orch.orchestrate("viết giúp tôi một bài dài", "zalop_tok")
+        self.assertGreaterEqual(fake.call_args.kwargs.get("max_tokens", 0), 2000)
+
 if __name__ == "__main__":
     unittest.main()

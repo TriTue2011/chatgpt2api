@@ -502,22 +502,22 @@ def test_loi_dan_chon_dang_tran(monkeypatch):
 
 @pytest.mark.pure
 def test_yeu_cau_ai_bat_goi_tool_dang_khong_de_bai_roi_mat(monkeypatch):
-    """Đo thật 12/08: model in bài ra rồi dừng, lượt sau bài không còn đâu.
-
-    Lời giao việc phải nêu ĐÚNG lời gọi tool, và nói rõ gọi tool không phải tự
-    đăng — nếu không nó xung với câu "không tự đăng" trong skill.
+    """Đo thật 12/08 (19:32 và 21:29): dặn model gọi tool đăng đều trượt — lần
+    hai nhật ký ghi steps=1, tools=[]. Nay model chỉ phải BỌC bài; args cho cổng
+    duyệt do code giữ sẵn, không phụ thuộc model.
     """
     monkeypatch.setattr(fb, "config", _FakeConfig(_CFG_1PAGE))
     k = "zalop_ai_goi"
     fb.xoa_flow(k)
     fb.bat_dau_flow(k, fb.FLOW_LINK)
     fb.tiep_flow(k, "https://vd.com/bai")
-    y = fb.tiep_flow(k, fb.CHON_AI_LINK)["ai"]
-    assert "dang_facebook" in y
-    assert 'loai="link"' in y
-    assert 'link="https://vd.com/bai"' in y
-    assert "KHÔNG phải là tự đăng" in y
-    assert ":::" in y                      # có dặn bỏ khung model tự bịa
+    r = fb.tiep_flow(k, fb.CHON_AI_LINK)
+    assert fb.BAI_MO in r["ai"] and fb.BAI_DONG in r["ai"]
+    assert "không phải gọi tool đăng nào" in r["ai"]
+    assert ":::" in r["ai"]                # vẫn dặn bỏ khung model tự bịa
+    # args cho cổng duyệt đã sẵn, chỉ thiếu message (bài model sắp viết)
+    assert r["ai_args"] == {"loai": "link", "message": "",
+                            "link": "https://vd.com/bai"}
 
 
 @pytest.mark.pure
@@ -528,9 +528,21 @@ def test_yeu_cau_ai_bai_video_goi_dung_media_urls(monkeypatch):
     fb.bat_dau_flow(k, fb.FLOW_VIDEO)
     fb.tiep_flow(k, "https://cdn/x.mp4")
     fb.tiep_flow(k, "viết giúp tôi bài giới thiệu clip")
-    y = fb.tiep_flow(k, fb.CHON_AI)["ai"]
-    assert 'loai="video"' in y
-    assert 'media_urls=["https://cdn/x.mp4"]' in y
+    r = fb.tiep_flow(k, fb.CHON_AI)
+    assert r["ai_args"] == {"loai": "video", "message": "",
+                            "media_urls": ["https://cdn/x.mp4"]}
+
+
+@pytest.mark.pure
+def test_tach_bai_lay_dung_phan_trong_dau():
+    txt = ("Dạ em đã đọc kỹ trang rồi ạ.\n"
+           f"{fb.BAI_MO}\nBài thật nằm ở đây.\nDòng hai.\n{fb.BAI_DONG}\n"
+           "Em soạn vậy được chưa anh?")
+    assert fb.tach_bai(txt) == "Bài thật nằm ở đây.\nDòng hai."
+    assert fb.tach_bai("không có dấu nào") is None
+    # Không bọc → bên gọi dùng bo_dau_bai, không được để lộ dấu ra màn hình
+    assert fb.BAI_MO not in fb.bo_dau_bai(txt)
+    assert fb.BAI_DONG not in fb.bo_dau_bai(txt)
 
 
 @pytest.mark.pure

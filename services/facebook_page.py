@@ -488,6 +488,29 @@ CHON_AI = "__fb_flow__:ai"
 # nhau ở chỗ AI có viết không và lấy ý từ đâu — gộp lại thì mất một hướng.
 # Bài LINK làm được «AI tự đọc rồi viết» vì `read_webpage` đọc được trang; bài
 # chữ và bài video không có gì cho AI đọc nên bước của chúng giữ như cũ.
+
+# Bài do AI viết KHÔNG đi bằng lời dặn model gọi tool. Dặn hai lần đều trượt:
+# 12/08 19:32 model in bài rồi dừng; 12/08 21:29 (đã dặn "GỌI NGAY tool") nó
+# vẫn chỉ viết văn — nhật ký ghi steps=1, tools=[]. Nay model chỉ phải bọc bài
+# trong hai dấu dưới đây, còn việc đưa vào cổng duyệt là do CODE làm.
+BAI_MO = "<<<BAI>>>"
+BAI_DONG = "<<<HETBAI>>>"
+_BAI_RE = re.compile(re.escape(BAI_MO) + r"(.*?)" + re.escape(BAI_DONG), re.S)
+
+
+def tach_bai(text: str) -> str | None:
+    """Lấy phần bài giữa hai dấu. None nếu model không bọc (gọi bên gọi tự lo)."""
+    m = _BAI_RE.search(text or "")
+    if not m:
+        return None
+    return m.group(1).strip() or None
+
+
+def bo_dau_bai(text: str) -> str:
+    """Xoá hai dấu khỏi câu hiện cho người dùng — không để lộ ra màn hình."""
+    return (text or "").replace(BAI_MO, "").replace(BAI_DONG, "").strip()
+
+
 CHON_AI_LINK = "__fb_flow__:ai_link"   # AI đọc link rồi viết, khỏi gõ gì
 CHON_AI_Y = "__fb_flow__:ai_y"         # người dùng cho ý chính, AI viết
 CHON_TU_GO = "__fb_flow__:tu_go"       # tự gõ lời dẫn, đăng y nguyên
@@ -569,6 +592,12 @@ def _hoi_loi_dan_link() -> str:
     ])
 
 
+def _ket_ai(p: dict) -> dict:
+    """Kết quả nhánh AI: câu giao việc + args sẵn cho cổng duyệt (thiếu message,
+    orchestrator điền bằng bài model viết ra)."""
+    return {"ai": _yeu_cau_ai(p), "ai_args": {**_args_dang(p), "message": ""}}
+
+
 def _nhac_cua(stage: str) -> str:
     """Câu hỏi của bước đang đứng — dùng để hỏi lại mà không mất bản chờ."""
     if stage == "cho_link_loi_dan":
@@ -621,19 +650,12 @@ def _yeu_cau_ai(p: dict) -> str:
     # yêu cầu nào đang chờ — bài viết xong mà rơi mất. Cổng duyệt (risk=CHANGE)
     # CHÍNH LÀ bước đọc lại cho duyệt, và nó giữ trạng thái, không phụ thuộc
     # việc model có nhớ qua lượt hay không.
-    if link:
-        goi = f'dang_facebook với loai="link", link="{link}", message=<bài vừa soạn>'
-    elif video:
-        goi = ('dang_facebook với loai="video", media_urls=["' + video
-               + '"], message=<bài vừa soạn>')
-    else:
-        goi = 'dang_facebook với loai="chu", message=<bài vừa soạn>'
     dong.append(
-        f"Soạn xong thì GỌI NGAY tool {goi}. Gọi tool chính là bước đọc lại cho "
-        "tôi duyệt: cổng duyệt hiện bài ra và chặn lại chờ tôi xác nhận, nên "
-        "gọi tool KHÔNG phải là tự đăng. Đừng chỉ in bài ra rồi ngồi chờ tôi "
-        "trả lời. Trường message chỉ chứa nội dung bài, viết trơn — không bọc "
-        "trong khung, thẻ, hay dấu «:::» nào.")
+        f"Viết xong thì bọc CHÍNH XÁC phần bài vào giữa {BAI_MO} và {BAI_DONG} "
+        "— hệ thống tự lấy phần trong đó đưa qua cổng duyệt cho tôi bấm, anh "
+        "không phải gọi tool đăng nào cả. Trong hai dấu đó chỉ có nội dung bài, "
+        "viết trơn: không lời dẫn kiểu «Dạ em đã đọc…», không khung, không thẻ, "
+        "không dấu «:::». Muốn nói gì thêm với tôi thì viết BÊN NGOÀI hai dấu.")
     return " ".join(dong)
 
 
@@ -698,7 +720,7 @@ def tiep_flow(key: str, text: str) -> dict | None:
                              "message": ""}}
         if t == CHON_AI_LINK:                  # khỏi gõ gì, AI tự đọc trang
             xoa_flow(key)
-            return {"ai": _yeu_cau_ai({**p, "loai": "link", "noi_dung": ""})}
+            return _ket_ai({**p, "loai": "link", "noi_dung": ""})
         if t == CHON_AI_Y:
             _flow_set(key, "cho_y_chinh", loai="link")
             return {"hoi": _NHAC["cho_y_chinh"]}
@@ -711,7 +733,7 @@ def tiep_flow(key: str, text: str) -> dict | None:
         return {"hoi": _hoi_cach_dang()}
     if stage == "cho_y_chinh":                 # đã chốt nhờ AI viết từ trước
         xoa_flow(key)
-        return {"ai": _yeu_cau_ai({**p, "noi_dung": t})}
+        return _ket_ai({**p, "noi_dung": t})
     if stage == "cho_loi_dan":                 # đã chốt đăng y nguyên từ trước
         xoa_flow(key)
         loi = "" if t.lower() in _BO_LOI_DAN else t
@@ -730,7 +752,7 @@ def tiep_flow(key: str, text: str) -> dict | None:
     if stage == "cho_cach":
         if t == CHON_AI:
             xoa_flow(key)
-            return {"ai": _yeu_cau_ai(p)}
+            return _ket_ai(p)
         if t == CHON_NGUYEN:
             xoa_flow(key)
             return {"dang": _args_dang(p)}
