@@ -65,6 +65,10 @@ deploy/*
 !deploy/searxng/settings.yml
 !deploy/device_agent/c2a_agent.py
 !deploy/device_agent/README.md
+# Compose chạy RIÊNG máy dịch LibreTranslate. KHÔNG chứa bí mật: chỉ tên image,
+# cờ LT_* và tên mạng. Xem docs/DICH_LIBRETRANSLATE.md.
+!deploy/libretranslate/
+!deploy/libretranslate/docker-compose.yml
 build_and_push.sh
 update_server.ps1
 setup_ssh_key.py

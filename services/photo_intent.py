@@ -38,11 +38,15 @@ GENERATE = "generate"
 #: phải gửi câu hỏi thứ hai chồng lên (xem sự cố 07/08 ở
 #: `luu_tru_day.KhongHoiLuuKhiMenuDangMoTests`).
 LUU_ONLINE = "luu_online"
+#: Đọc chữ trong ảnh rồi DỊCH (OCR bằng vision + máy chủ dịch tự dựng). KHÔNG
+#: nằm trong `ALL_INTENTS`; `allowed_intents` tự thêm khi đã cấu hình
+#: `translate_url` — xem `_dich_neu_co`.
+DICH = "dich"
 #: Đưa ảnh vào bài đăng Facebook Page. Như LUU_ONLINE: đứng cuối và KHÔNG nằm
 #: trong `ALL_INTENTS` — chỉ hiện khi nhóm chức năng 'facebook' bật cho thread
 #: VÀ đã kết nối Page (xem `them_dang_facebook`).
 FACEBOOK = "facebook"
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, LUU_ONLINE,
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE, DICH, LUU_ONLINE,
                 FACEBOOK)
 ALL_INTENTS = {RAG_KNOWLEDGE, RAG_TEACHER, ANALYZE, GENERATE}
 
@@ -183,7 +187,7 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     - generate: image
     """
     if allow is None:
-        return set(ALL_INTENTS)
+        return set(ALL_INTENTS) | _dich_neu_co()
     out: set[str] = set()
     if "rag" in allow or "summary" in allow or "wiki" in allow:
         out.add(RAG_KNOWLEDGE)
@@ -194,7 +198,22 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
     out.add(ANALYZE)
     if "image" in allow:
         out.add(GENERATE)
-    return out
+    return out | _dich_neu_co()
+
+
+def _dich_neu_co() -> set[str]:
+    """{DICH} nếu đã dựng máy chủ dịch trong stack, ngược lại rỗng.
+
+    Cùng lý lẽ (và cùng chỗ đặt cổng) với `pdf_intent._dich_neu_co`: điều kiện
+    là cấu hình toàn cục `translate_url`, nên gác ngay trong `allowed_intents`
+    để menu và nhánh giải số của cả ba kênh không bao giờ lệch nhau.
+    """
+    try:
+        from services import translate_service as ts
+        return {DICH} if ts.is_configured() else set()
+    except Exception as exc:  # pragma: no cover
+        logger.debug("photo: bỏ qua mục dịch: %s", exc)
+        return set()
 
 
 # ── Bot đang chờ NGƯỜI DÙNG gửi ảnh ────────────────────────────────────────
@@ -269,6 +288,7 @@ def ask_text(intents: set[str] | None = None) -> str:
         RAG_TEACHER: "🎓 Nạp **RAG teacher / SGK** (hỏi lớp + môn)",
         ANALYZE: "🔍 **Phân tích ảnh** (hỏi thêm yêu cầu)",
         GENERATE: "🎨 **Tạo ảnh** từ ảnh này (hỏi thêm mô tả)",
+        DICH: "🌐 **Dịch chữ trong ảnh** (đọc chữ rồi dịch Việt ⇄ Anh)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không phân tích, không tạo)",
         FACEBOOK: "📘 **Đăng lên Facebook** (gửi thêm ảnh được, chốt caption sau)",
     }
@@ -319,6 +339,10 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "teacher", "sgk", "giáo viên", "giao vien", "sách giáo khoa", "sach giao khoa",
     )):
         return RAG_TEACHER
+    # Dịch xét TRƯỚC nhánh phân tích: "dịch chữ trong ảnh này" chứa cả "đọc chữ"
+    # lẫn "ảnh này" nên nhánh phân tích sẽ nuốt nếu xét sau.
+    if any(w in t for w in ("dịch", "dich", "translate", "chuyển ngữ", "chuyen ngu")):
+        return DICH
     if any(w in t for w in (
         "phân tích", "phan tich", "mô tả", "mo ta", "ocr", "đọc chữ", "doc chu",
         "ảnh này", "anh nay", "analyze", "describe", "what is",
@@ -332,10 +356,11 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "2": 2, "2️⃣": 2, "2.": 2, "2)": 2,
         "3": 3, "3️⃣": 3, "3.": 3, "3)": 3,
         "4": 4, "4️⃣": 4, "4.": 4, "4)": 4,
-        # Menu nay dài tới 6 mục (thêm ☁️ kho đám mây + 📘 Facebook) — thiếu
-        # số là mục cuối hiện ra mà gõ số không chọn được.
+        # Menu nay dài tới 7 mục (thêm ☁️ kho đám mây + 📘 Facebook + 🌐 dịch) —
+        # thiếu số là mục cuối hiện ra mà gõ số không chọn được.
         "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
         "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
+        "7": 7, "7️⃣": 7, "7.": 7, "7)": 7,
     }
     if t in num_map:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
@@ -420,8 +445,15 @@ def bad_image_reply(exc: Exception) -> str:
     )
 
 
-def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -> str:
-    """Vision analysis with explicit prompt."""
+def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "",
+                  neo_tieng_viet: bool = True, max_tokens: int = 900) -> str:
+    """Vision analysis with explicit prompt.
+
+    `neo_tieng_viet=False` bỏ câu neo ngôn ngữ bên dưới. Chỉ dùng cho việc CHÉP
+    LẠI chữ trong ảnh (OCR để đem đi dịch — xem `translate_service.dich_anh`):
+    ở đó câu neo là phản tác dụng, model sẽ tự dịch ảnh sang tiếng Việt rồi máy
+    dịch nhận vào một bản đã Việt hoá, không còn gì để dịch.
+    """
     from services.agent.branches import branch_model
     from services.agent.runtime import call_model, content_of
     from services.image_utils import UnsupportedImage, normalize
@@ -431,9 +463,10 @@ def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -> str:
     # ngôn ngữ (đo thật 31/07: "mô tả ảnh và tóm tắt" → trả lời TOÀN tiếng Trung).
     # Ép trả lời đúng ngôn ngữ người dùng — mặc định tiếng Việt trừ khi chính câu
     # hỏi dùng ngôn ngữ khác.
-    q = ("[Trả lời HOÀN TOÀN bằng tiếng Việt, trừ khi câu hỏi bên dưới dùng ngôn "
-         "ngữ khác thì theo ngôn ngữ đó. TUYỆT ĐỐI KHÔNG chèn chữ Trung/Nhật/Hàn "
-         "nếu người dùng không dùng.]\n\n" + q)
+    if neo_tieng_viet:
+        q = ("[Trả lời HOÀN TOÀN bằng tiếng Việt, trừ khi câu hỏi bên dưới dùng ngôn "
+             "ngữ khác thì theo ngôn ngữ đó. TUYỆT ĐỐI KHÔNG chèn chữ Trung/Nhật/Hàn "
+             "nếu người dùng không dùng.]\n\n" + q)
     # Chuẩn hoá TRƯỚC khi gọi model: ảnh HEIC/JXL/tải hỏng mà lọt xuống provider
     # thì provider nào cũng chết y hệt → combo đốt sạch đường rồi báo "cạn provider".
     try:
@@ -447,7 +480,7 @@ def analyze_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -> str:
         {"type": "image_url", "image_url": {"url": data_url}},
     ]}]
     _vm = branch_model("vision", channel)
-    resp = call_model(_vm, msgs, timeout=180, max_tokens=900)
+    resp = call_model(_vm, msgs, timeout=180, max_tokens=max_tokens)
     if resp.get("error"):
         try:
             from services.notifier import notify_admin

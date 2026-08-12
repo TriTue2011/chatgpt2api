@@ -2,7 +2,7 @@
 
 **Quy tắc:** Hành vi đã có owner → file khác **không** assert lại logic đó; chỉ dùng fake/fixture và kiểm concern riêng của mình.
 
-**Seam:** mock thế giới ngoài chỉ qua [`_fakes.py`](_fakes.py) (S1…S8). Xem conftest markers: `pure` | `adapter` | `integration` | `e2e`.
+**Seam:** mock thế giới ngoài chỉ qua [`_fakes.py`](_fakes.py) (S1…S9). Xem conftest markers: `pure` | `adapter` | `integration` | `e2e`.
 
 CI gợi ý: `pytest -m "pure or adapter" -q`  
 E2E: `pytest -m e2e --run-e2e`
@@ -21,6 +21,7 @@ E2E: `pytest -m e2e --run-e2e`
 | S6 | Bot Telegram/Zalo | `FakeBotAPI`, `install_bot_api` |
 | S7 | MCP | `FakeMCP`, `install_mcp` |
 | S8 | Doc/media (fitz…) | `FakeFitzDoc`, `install_fitz` (ưu tiên lib thật khi rẻ) |
+| S9 | LibreTranslate HTTP | `FakeTranslate`, `install_translate` |
 
 ---
 
@@ -32,6 +33,9 @@ E2E: `pytest -m e2e --run-e2e`
 | STT normalize (ALLCAPS, noise) | `test_voice_engines.py` | |
 | Wyoming STT routing / lang | `test_voice_wyoming.py` | |
 | Marker `image://` / PDF token gate / parse 1·2 | `test_pdf_intent.py` | |
+| Client LibreTranslate + lệnh `/dich` | `test_translate_service.py` | seam S9 |
+| Dịch TỆP / ẢNH (`/translate_file`, OCR, ngưỡng .docx) | `test_translate_tep.py` | seam S9 |
+| Trục dịch quanh LLM (vi→en→vi, lời dặn) | `test_translate_pivot.py` | seam S9 |
 | Privacy redact / vault / secret_ref | `test_privacy_gate.py` | |
 | Auth key / roles (hash logic) | `test_auth_service.py` | Endpoint chỉ 401/200 |
 | Backend route + circuit/cooldown | `test_backend_router.py`, `test_provider_circuit.py`, `test_session_affinity.py` | |

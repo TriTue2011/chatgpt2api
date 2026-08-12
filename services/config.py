@@ -938,6 +938,65 @@ class ConfigStore:
         return False
 
     @property
+    def translate_url(self) -> str:
+        """LibreTranslate TỰ DỰNG trong stack, ví dụ http://libretranslate:5000.
+
+        Đọc biến môi trường ``TRANSLATE_URL`` TRƯỚC config.json — cùng nếp với
+        ``CHATGPT2API_BASE_URL`` / ``CAPTCHA_SOLVER_URL``. Nhờ vậy chỉ cần dựng
+        compose (compose đặt biến này trỏ vào service ``libretranslate`` cùng
+        stack) là dịch chạy, không phải sửa file cấu hình nào.
+
+        Rỗng = tắt hẳn mọi tính năng dịch (lệnh /dich, dịch tệp/ảnh, trục dịch).
+        Cố ý KHÔNG có giá trị mặc định: mặc định sẵn một URL nghĩa là mọi bản
+        triển khai KHÔNG có máy chủ dịch (HA addon, bản lite, máy dev) vẫn bày
+        mục 🌐 ra menu rồi chờ timeout. Và dịch phải chạy trong stack của mình,
+        không qua bên thứ ba."""
+        return str(
+            os.getenv("TRANSLATE_URL")
+            or self.data.get("translate_url")
+            or ""
+        ).strip().rstrip("/")
+
+    @property
+    def translate_api_key(self) -> str:
+        """Chỉ cần khi máy chủ dịch bật LT_API_KEYS. Ưu tiên biến môi trường
+        ``TRANSLATE_API_KEY`` — bí mật thuộc về env, không phải config.json."""
+        return str(
+            os.getenv("TRANSLATE_API_KEY")
+            or self.data.get("translate_api_key")
+            or ""
+        ).strip()
+
+    @property
+    def translate_timeout(self) -> int:
+        """Giây chờ máy chủ dịch. Mặc định 20."""
+        val = _normalize_positive_int(self.data.get("translate_timeout"), 20, minimum=1)
+        return val if val <= 300 else 300
+
+    @property
+    def translate_docx_threshold(self) -> int:
+        """Bản dịch dài hơn ngần này KÝ TỰ thì gửi bằng tệp .docx thay vì tin nhắn.
+
+        Mặc định 3000: Telegram chặn một tin ở 4096 ký tự và Zalo còn thấp hơn,
+        nên bản dịch một tài liệu vài trang bị cắt vụn thành chuỗi tin nhắn.
+        Đặt 0 để luôn gửi bằng tin nhắn."""
+        return _normalize_positive_int(self.data.get("translate_docx_threshold"),
+                                      3000, minimum=0)
+
+    @property
+    def translate_pivot_enabled(self) -> bool:
+        """Dịch sang tiếng Anh TRƯỚC khi gửi LLM, và dịch phản hồi về tiếng Việt.
+
+        Mặc định False: bật cái này là đổi hành vi của MỌI lượt gọi model, nên
+        phải là quyết định tường minh của admin. Cần translate_url mới có tác
+        dụng. Bật được bằng biến môi trường ``TRANSLATE_PIVOT=1`` để khai thẳng
+        trong compose, không phải sửa config.json."""
+        env = os.getenv("TRANSLATE_PIVOT")
+        if env is not None and env.strip():
+            return _normalize_bool(env, False)
+        return _normalize_bool(self.data.get("translate_pivot_enabled"), False)
+
+    @property
     def openai_default_model(self) -> str:
         """Default model for web session routed through OpenAI API."""
         return str(self.data.get("openai_default_model") or "gpt-4o").strip()

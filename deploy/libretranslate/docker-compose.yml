@@ -1,0 +1,110 @@
+# ============================================================================
+# LibreTranslate CHẠY RIÊNG — stack độc lập, không đụng vào stack c2a.
+#
+# Dùng bản này khi không muốn sửa compose của c2a (vd stack c2a đang chạy ổn,
+# hoặc muốn tắt/bật/nâng cấp máy dịch riêng). Bản gộp-trong-một-stack nằm ở
+# `docker-compose.yml` ở gốc repo — CHỌN MỘT, đừng dựng cả hai (trùng
+# container_name và trùng cả thư mục model).
+#
+#   docker compose -f deploy/libretranslate/docker-compose.yml up -d
+#
+# ── Rồi trỏ c2a vào nó: chọn MỘT trong hai cách ────────────────────────────
+#
+# CÁCH A — cùng mạng Docker (khuyến nghị: không mở cổng nào ra host).
+#   Bỏ chú thích khối `networks` ở CUỐI file này, sửa `name:` cho khớp mạng của
+#   stack c2a (`docker network ls | grep c2a` — Portainer đặt tên theo stack, vd
+#   stack "c2a" → mạng "c2a_default"), rồi trong compose của c2a đặt:
+#       TRANSLATE_URL: http://libretranslate:5000
+#
+# CÁCH B — qua host, không cần biết tên mạng. Bỏ chú thích khối `ports` bên
+#   dưới, rồi trong compose của c2a đặt:
+#       TRANSLATE_URL: http://host.docker.internal:5000
+#   (c2a đã có `extra_hosts: host.docker.internal:host-gateway` nên chạy được.)
+#   Nhớ để cổng 5000 chỉ nghe trên loopback như mẫu bên dưới — máy dịch không
+#   có xác thực, mở ra LAN/WAN là ai cũng gọi được.
+#
+# LẦN ĐẦU `up` TẢI 756 MB MODEL (đo thật 12/08), mất vài phút mới dịch được.
+# /health trả 200 ngay nhưng /translate còn báo lỗi trong lúc đó.
+# ============================================================================
+
+services:
+  # Vì sao cần init: Dockerfile của LibreTranslate tạo user `libretranslate`
+  # uid/gid 1032 rồi `USER libretranslate`, nhưng thư mục mount vào thì thuộc
+  # root (Docker tạo mới thư mục host của bind mount bằng root, và không copy
+  # quyền từ image vào bind mount bao giờ). Tiến trình uid 1032 không tạo nổi
+  # `.local/share` → chết ngay ở `import argostranslate` với PermissionError,
+  # kèm dòng gây nhiễu "'' is not a valid port number" vì entrypoint.sh gọi
+  # print_args_env.py cũng chết theo nên PORT thành rỗng.
+  #
+  # Init chạy bằng root ĐÚNG MỘT LẦN rồi thoát → tiến trình chính vẫn không phải
+  # root, và không ai phải gõ chown bằng tay trên host.
+  libretranslate-init:
+    image: busybox:stable
+    container_name: libretranslate-init
+    user: root
+    command: ["sh", "-c", "mkdir -p /data/share /data/cache && chown -R 1032:1032 /data"]
+    volumes:
+      - /opt/libretranslate-models:/data
+    restart: "no"
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: libretranslate
+    restart: unless-stopped
+
+    depends_on:
+      libretranslate-init:
+        condition: service_completed_successfully
+
+    # CÁCH B — mở cổng qua host. Giữ "127.0.0.1:" ở đầu: máy dịch không có xác
+    # thực nào, bỏ nó đi là cả LAN gọi được.
+    # ports:
+    #   - "127.0.0.1:5000:5000"
+
+    environment:
+      # Bốn cặp đang dùng: Anh⇄Việt, Việt⇄Nhật, Việt⇄Hàn, Việt⇄Trung.
+      #
+      # "en" PHẢI có mặt dù không ai xin cặp Anh–Nhật: 98/100 gói model của
+      # Argos có tiếng Anh ở một đầu (cặp trực tiếp duy nhất không qua tiếng Anh
+      # là pt↔es), tức KHÔNG TỒN TẠI model vi↔ja. Argos dựng đường bắc cầu
+      # vi→en→ja lúc nạp. Bỏ "en" ra là ba cặp Nhật/Hàn/Trung chết theo.
+      #
+      # Lọc theo CẢ HAI ĐẦU (init.py: from_code và to_code đều phải trong danh
+      # sách) → 8 gói, 756 MB: en→ja 120,5 · ja→en 117,2 · en→ko 120,8 ·
+      # ko→en 118,9 · en→zh 70,7 · zh→en 74,5 · en→vi 67,8 · vi→en 65,9.
+      #
+      # Chỉ cần Anh⇄Việt thì đặt LT_LOAD_ONLY=en,vi → 134 MB.
+      # "zh" là chữ Hán GIẢN THỂ (khai ra ngoài là "zh-Hans"); thêm "zt" nếu cần
+      # phồn thể. Bỏ hẳn biến này = nạp cả 50 ngôn ngữ, vài GB.
+      LT_LOAD_ONLY: ${LT_LOAD_ONLY:-en,vi,ja,ko,zh}
+      LT_UPDATE_MODELS: "true"
+      LT_API_KEYS: "false"
+      LT_TRANSLATION_CACHE: "memory://"
+      LT_THREADS: "4"
+
+    volumes:
+      # Thiếu dòng này là mỗi lần dựng lại container phải tải lại 756 MB.
+      - /opt/libretranslate-models:/home/libretranslate/.local:rw
+
+    healthcheck:
+      test: ["CMD-SHELL", "./venv/bin/python scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      # Dài vì lần đầu phải tải 756 MB model mới mở cổng 5000. Để ngắn thì
+      # container bị đánh dấu unhealthy suốt lúc tải — báo động giả.
+      start_period: 900s
+      retries: 3
+
+    security_opt:
+      - no-new-privileges:true
+
+    # CÁCH A — cùng mạng với c2a. Bỏ chú thích cả khối này VÀ khối `networks` ở
+    # cuối file.
+    # networks:
+    #   - c2a
+
+# networks:
+#   c2a:
+#     external: true
+#     # Sửa cho khớp mạng của stack c2a: `docker network ls | grep c2a`.
+#     name: c2a_default

@@ -2045,6 +2045,34 @@ def _do_pdf_intent(
             _moi_luu_sau_chuyen_doi(ev_user_id=user_id, thread_id=thread_id,
                                     account=account, tep_goc=path, ten_goc=name,
                                     tep_moi=xlsx_tmp, duoi=".xlsx")
+        elif intent == _pi.DICH:
+            # Dịch tài liệu bằng máy chủ dịch tự dựng. docx/pptx/odt/txt/epub/
+            # html quay lại ĐÚNG định dạng gốc; PDF/Excel thì Argos không dựng
+            # lại được nên trả về chữ.
+            kind = "pdf_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_tep(path, name)
+            reply = _ts.bao_cao_dich(r, name)
+            if not r.get("ok"):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
+                send_message(thread_id, reply, thread_type)
+            elif r.get("kieu") == "tep":
+                import uuid
+                ten_moi = str(r.get("ten") or name)
+                duoi_moi = ten_moi[ten_moi.rfind("."):] if "." in ten_moi else ""
+                stem = ten_moi[:-len(duoi_moi)] if duoi_moi else ten_moi
+                out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
+                out_dir.mkdir(parents=True, exist_ok=True)
+                fn = _ten_tep_phuc_vu(stem, duoi_moi)
+                (out_dir / fn).write_bytes(r["data"])
+                rel = f"/images/docs/{out_dir.name}/{fn}"
+                if not _send_file_robust(thread_id, rel, reply, thread_type,
+                                         account=account):
+                    reply = "🌐 Em đã dịch xong nhưng gửi file chưa được ạ."
+                    send_message(thread_id, reply, thread_type)
+            else:
+                send_message(thread_id, reply, thread_type)
         elif intent == _pi.TOM_TAT:
             # Tóm tắt THUẦN: đọc file, trả bản tóm tắt, KHÔNG nạp vào kho nào.
             # Khác `RAG_KNOWLEDGE` ở chỗ đó — mục cũ vừa tóm tắt vừa ghi wiki,
@@ -2295,6 +2323,29 @@ def _do_photo_request(
         if it == _phi.RAG_TEACHER:
             kind = "photo_rag"
             reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
+            send_message(thread_id, reply, thread_type)
+            return
+
+        if it == _phi.DICH:
+            kind = "photo_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_anh(file_data, channel="zalop")
+            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
+            if r.get("ok") and r.get("kieu") == "tep":
+                # Bản dịch dài → .docx (xem translate_service._dong_goi_chu).
+                import uuid
+                out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
+                out_dir.mkdir(parents=True, exist_ok=True)
+                fn = _ten_tep_phuc_vu("chu-trong-anh", ".docx")
+                (out_dir / fn).write_bytes(r["data"])
+                if not _send_file_robust(
+                        thread_id, f"/images/docs/{out_dir.name}/{fn}", reply,
+                        thread_type, account=account):
+                    send_message(thread_id, r.get("text") or reply, thread_type)
+                return
+            if not r.get("ok"):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
             send_message(thread_id, reply, thread_type)
             return
 

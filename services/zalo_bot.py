@@ -1405,6 +1405,19 @@ def _do_pdf_intent(
             err = "zalo_bot_no_file"
             send_message(chat_id, reply)
             return
+        if intent == _pi.DICH:
+            # Zalo Bot không gửi được tệp → buộc trả CHỮ (chi_chu=True), kể cả
+            # với .docx mà máy chủ dịch dựng lại được: một bản dịch không có
+            # đường tới tay người dùng thì bằng không.
+            kind = "pdf_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_tep(path, name, chi_chu=True)
+            reply = _ts.bao_cao_dich(r, name)
+            if not r.get("ok"):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
+            send_message(chat_id, reply)
+            return
         if intent == _pi.RAG_TEACHER:
             kind = "pdf_teacher"
             if not grade or not subject:
@@ -1533,6 +1546,19 @@ def _do_photo_request(
         if it == _phi.RAG_TEACHER:
             kind = "photo_rag"
             reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
+            send_message(chat_id, reply)
+            return
+
+        if it == _phi.DICH:
+            # chi_chu=True: Zalo Bot không gửi được tệp, nên bản dịch dài phải
+            # đi bằng chữ (send_message tự cắt theo trần của nền tảng).
+            kind = "photo_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_anh(file_data, channel="zalo", chi_chu=True)
+            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
+            if not r.get("ok"):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
             send_message(chat_id, reply)
             return
 
@@ -1830,6 +1856,15 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                 f"🆔 Yêu cầu /id từ {'nhóm' if is_group else 'chat'}:\n{_id_info}"):
             send_message(chat_id, _id_info)
         return
+
+    # Lệnh /dich — dịch máy tự dựng (LibreTranslate trong stack), do CODE làm,
+    # KHÔNG qua LLM. Cùng nếp /id. Zalo nhóm luôn kèm prefix @tag bot nên phải
+    # bóc tag trước khi so khớp. Dùng CHỮ GỐC (không phải _low) để giữ chữ hoa.
+    if chat_id and text:
+        from services import translate_service as _ts
+        if _ts.la_lenh_dich(text):
+            send_message(chat_id, _ts.lenh_dich(text))
+            return
 
     # Chuyển tiếp webhook — tagged = keyword / text @bot / platform group delivery
     _req_fw, _kw_fw = _caps.mention_required_for("zalo", _bot_id(), chat_id)

@@ -13,6 +13,7 @@ S5 Storage         — DATA_DIR tmp (accounts, config, workspace)
 S6 Bot API         — telegram/zalo send_message / send_photo / _api_call
 S7 MCP             — mcp_client transport
 S8 Doc/media libs  — fitz/docx/tesseract (thật hoặc stub nhẹ)
+S9 LibreTranslate  — translate_service._goi (máy chủ dịch tự dựng)
 
 Usage
 -----
@@ -613,10 +614,116 @@ def install_fitz(pages: list[str] | None = None) -> Iterator[FakeFitzDoc]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# S9 — LibreTranslate HTTP (services.translate_service._goi)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class FakeTranslate:
+    """Máy chủ LibreTranslate giả (S9).
+
+    Nói đúng giao thức thật của LibreTranslate 1.9.6: ``/translate`` trả
+    ``translatedText`` cùng KIỂU với ``q`` gửi lên (chuỗi → chuỗi, danh sách →
+    danh sách), ``/detect`` trả danh sách xếp theo độ tự tin giảm dần.
+
+    Bản dịch mặc định là ``"<mã đích>:<chữ gốc>"`` — đủ để test khẳng định "đoạn
+    này đã dịch, đoạn kia giữ nguyên" mà không cần model thật.
+    """
+
+    def __init__(
+        self,
+        lang: str = "vi",
+        confidence: float = 95.0,
+        codes: tuple[str, ...] = ("en", "vi"),
+        loi: str = "",
+        dinh_dang_tep: tuple[str, ...] = (".txt", ".docx", ".pptx", ".odt",
+                                          ".odp", ".epub", ".html"),
+        dich_tep_duoc: bool = True,
+    ) -> None:
+        self.lang = lang
+        self.confidence = confidence
+        self.codes = codes
+        self.loi = loi
+        self.dinh_dang_tep = dinh_dang_tep
+        self.dich_tep_duoc = dich_tep_duoc
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.file_calls: list[dict[str, Any]] = []
+
+    def goi(self, path: str, payload: dict[str, Any] | None = None) -> Any:
+        self.calls.append((path, dict(payload or {})))
+        SEAM_LOG.add("S9", "translate", path)
+        if self.loi:
+            from services.translate_service import LoiDich
+
+            raise LoiDich(self.loi)
+        if path == "/languages":
+            return [{"code": c, "name": c.upper(), "targets": list(self.codes)}
+                    for c in self.codes]
+        if path == "/health":
+            return {"status": "ok"}
+        if path == "/frontend/settings":
+            return {"charLimit": -1, "apiKeys": False,
+                    "filesTranslation": self.dich_tep_duoc,
+                    "supportedFilesFormat": list(self.dinh_dang_tep)
+                    if self.dich_tep_duoc else []}
+        if path == "/detect":
+            return [{"confidence": self.confidence, "language": self.lang}]
+        if path == "/translate":
+            q = (payload or {}).get("q")
+            tgt = str((payload or {}).get("target") or "xx")
+            if isinstance(q, list):
+                return {"translatedText": [f"{tgt}:{x}" for x in q]}
+            return {"translatedText": f"{tgt}:{q}"}
+        raise AssertionError(f"đường dẫn lạ: {path}")
+
+    def tep(self, path: str, name: str, target: str, source: str = "auto") -> tuple:
+        """Thay cho ``translate_file`` (multipart + tải về, không đi qua ``_goi``)."""
+        self.file_calls.append({"path": path, "name": name, "target": target,
+                                "source": source})
+        SEAM_LOG.add("S9", "translate_file", name)
+        if self.loi:
+            from services.translate_service import LoiDich
+
+            raise LoiDich(self.loi)
+        return b"PK-da-dich", f"{name}.{target}"
+
+    @property
+    def da_gui(self) -> list[str]:
+        """Mọi đoạn chữ THẬT SỰ được gửi tới ``/translate`` (đã trải phẳng)."""
+        ra: list[str] = []
+        for path, payload in self.calls:
+            if path != "/translate":
+                continue
+            q = payload.get("q")
+            ra.extend(q if isinstance(q, list) else [str(q)])
+        return ra
+
+
+@contextmanager
+def install_translate(fake: FakeTranslate | None = None) -> Iterator[FakeTranslate]:
+    """Chặn seam HTTP của translate_service + xoá mọi bộ đệm giữa các test."""
+    from services import translate_service as ts
+
+    fake = fake or FakeTranslate()
+
+    def _reset() -> None:
+        ts._cache.clear()
+        ts._langs_cache = (0.0, [])
+        ts._setting_cache = (0.0, {})
+
+    _reset()
+    with mock.patch.object(ts, "_goi", side_effect=fake.goi), \
+            mock.patch.object(ts, "translate_file", side_effect=fake.tep):
+        try:
+            yield fake
+        finally:
+            _reset()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Registry helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8")
+SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9")
 
 SEAM_INSTALLERS = {
     "S1": install_provider_http,
@@ -627,6 +734,7 @@ SEAM_INSTALLERS = {
     "S6": install_bot_api,
     "S7": install_mcp,
     "S8": install_fitz,
+    "S9": install_translate,
 }
 
 

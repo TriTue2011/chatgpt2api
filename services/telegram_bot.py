@@ -1141,6 +1141,23 @@ def _do_pdf_intent(
                 err = str(r.get("error") or "")[:150]
                 reply = f"⚠️ Không chuyển được sang Excel: {err}"
                 send_message(chat_id, reply)
+        elif intent == _pi.DICH:
+            # Dịch tài liệu bằng máy chủ dịch tự dựng. docx/pptx/odt/txt/epub/
+            # html quay lại ĐÚNG định dạng gốc (LibreTranslate dựng lại tệp);
+            # PDF và Excel thì Argos không dựng lại được nên trả về chữ.
+            kind = "pdf_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_tep(path, name)
+            reply = _ts.bao_cao_dich(r, name)
+            if r.get("ok") and r.get("kieu") == "tep":
+                send_document(chat_id, r["data"], r["ten"], caption=reply)
+                _moi_luu_sau_chuyen_doi(chat_id, user_id, path, name,
+                                        r["data"], r["ten"])
+            else:
+                if not r.get("ok"):
+                    status = "error"
+                    err = str(r.get("error") or "")[:150]
+                send_message(chat_id, reply)
         elif intent == _pi.TOM_TAT:
             # Tóm tắt THUẦN: đọc file, trả bản tóm, KHÔNG nạp vào kho nào.
             kind = "pdf_tom_tat"
@@ -1329,6 +1346,24 @@ def _do_photo_request(
             kind = "photo_rag"
             reply = "⚠️ RAG teacher ảnh cần lớp + môn (vd: `5 toán`)."
             send_message(chat_id, reply)
+            return
+
+        if it == _phi.DICH:
+            # Đọc chữ trong ảnh (vision) rồi dịch bằng máy chủ dịch tự dựng.
+            # Ảnh chụp cả trang tài liệu ra bản dịch dài hơn trần 4096 ký tự của
+            # một tin Telegram → dich_anh tự đóng thành .docx (kieu="tep").
+            kind = "photo_dich"
+            from services import translate_service as _ts
+            r = _ts.dich_anh(file_data, channel="tg")
+            reply = _ts.bao_cao_dich(r, "chữ trong ảnh")
+            if not r.get("ok"):
+                status = "error"
+                err = str(r.get("error") or "")[:200]
+                send_message(chat_id, reply)
+            elif r.get("kieu") == "tep":
+                send_document(chat_id, r["data"], r["ten"], caption=reply)
+            else:
+                send_message(chat_id, reply)
             return
 
         # analyze
@@ -1564,6 +1599,16 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         _out_fb = _ask_fb.apply_to_result({"text": _fbp.menu_ask(_fbkey)}, _fbkey)
         _send_agent_reply(chat_id, _out_fb, user_id)
         return
+
+    # Lệnh /dich — dịch máy tự dựng (LibreTranslate trong stack), do CODE làm,
+    # KHÔNG qua LLM: hỏi model dịch thì tốn hạn mức và trả về lời rào đón. Cùng
+    # nếp /id, /facebook. Nhận "/dich@TênBot" và "@TênBot /dich ..." (bóc tag).
+    # Trả lời trên CHỮ GỐC (không dùng _low) — dịch phải giữ nguyên chữ hoa.
+    if chat_id and text:
+        from services import translate_service as _ts
+        if _ts.la_lenh_dich(text):
+            send_message(chat_id, _ts.lenh_dich(text))
+            return
 
     # Chuyển tiếp webhook (HA / n8n / URL bất kỳ) theo 'Lọc chức năng theo
     # thread' — TRƯỚC bộ lọc tag (tin nhóm không tag vẫn chuyển được).

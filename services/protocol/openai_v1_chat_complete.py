@@ -32,6 +32,10 @@ from services.model_cooldown import model_cooldown
 from services.provider_circuit import provider_circuit
 from services.provider_order import provider_order
 from services.search_service import search_service
+# Cờ "lượt gọi NỘI BỘ" cắm vào body của các lượt gọi trong pipeline — trục dịch
+# bỏ qua chúng. Định nghĩa thuộc `translate_pivot`; import tên thật ở đây để hai
+# bên không bao giờ lệch chuỗi khoá.
+from services.translate_pivot import NOI_BO
 from utils.helper import build_chat_image_markdown_content, extract_chat_image, extract_chat_prompt, is_image_chat_request, parse_image_count
 from utils.log import logger
 
@@ -616,7 +620,12 @@ def _run_pipeline_review(
     `code_ban_dau` = code ĐÃ viết sẵn (vd nhiều con chia phần rồi ghép) — có thì
     bỏ lượt gọi con đầu tiên, đi thẳng vào chạy thử và soi.
     """
-    ns_body = {**body, "stream": False}
+    # NOI_BO: mọi lượt gọi trong pipeline này là lượt gọi NỘI BỘ, không phải câu
+    # của người dùng. Cắm cờ để trục dịch KHÔNG đụng vào — `_PIPELINE_REVIEWER_
+    # PROMPT` và `_PIPELINE_REVISE_PROMPT` nhúng code THÔ (không bọc ```), mà
+    # `translate_service.translate` chỉ bảo vệ khối mã có dấu huyền, nên để trục
+    # dịch chạy ở đây là code bị dịch thành văn xuôi và reviewer đọc phải rác.
+    ns_body = {**body, "stream": False, NOI_BO: True}
     code = (code_ban_dau or "").strip() or _pipeline_extract_content(
         _dispatch(editor_route, editor_messages, None, None, ns_body)).strip()
     for rnd in range(max_rounds):
@@ -668,6 +677,8 @@ def _run_pipeline_combo(
     plan_model = ""
     arch_body = dict(body)
     arch_body["stream"] = False
+    # Lượt gọi NỘI BỘ của pipeline — xem chú thích ở `_run_pipeline_review`.
+    arch_body[NOI_BO] = True
     arch_messages = [{"role": "system", "content": _PIPELINE_ARCHITECT_PROMPT}] + list(messages)
     for am in architects:
         route = None
@@ -4446,6 +4457,32 @@ def _slim_tools_for_free(tools: list[dict[str, Any]] | None) -> list[dict[str, A
 
 
 def _dispatch(route, messages, tools, tool_choice, body):
+    """Cửa DUY NHẤT ra model thật — trục dịch bọc ở đúng đây.
+
+    Mọi provider đều đi qua hàm này, và mọi tầng xử lý tiếng Việt (lệnh nhà
+    thông minh, thời tiết, âm lịch, nhánh Agent) đã chạy xong TRƯỚC đây. Nên đây
+    là chỗ duy nhất dịch được sang tiếng Anh mà không tắt mất chúng — xem
+    ``services/translate_pivot``. Trục tắt (mặc định) thì hàm này chỉ là một lần
+    gọi hàm thẳng, không tốn gì.
+    """
+    truc = None
+    try:
+        from services import translate_pivot as _tp
+        messages, truc = _tp.dich_truoc_khi_gui(messages, tools, body)
+    except Exception as exc:
+        logger.warning({"event": "translate_pivot_error", "error": str(exc)[:200]})
+        truc = None
+    result = _dispatch_provider(route, messages, tools, tool_choice, body)
+    if truc is not None:
+        try:
+            from services import translate_pivot as _tp
+            result = _tp.dich_lai_phan_hoi(result, truc)
+        except Exception as exc:
+            logger.warning({"event": "translate_pivot_back_error", "error": str(exc)[:200]})
+    return result
+
+
+def _dispatch_provider(route, messages, tools, tool_choice, body):
     """Dispatch to the correct provider handler."""
     route.model = _strip_marker(route.model)
     # RTK compression thresholds — 24KB → 80KB → 100KB. We sit at the

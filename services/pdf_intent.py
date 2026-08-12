@@ -33,6 +33,11 @@ RAG_TEACHER = "rag_teacher"
 WORD = "word"
 EXCEL = "excel"
 TOM_TAT = "tom_tat"
+#: Dịch tài liệu bằng máy chủ dịch TỰ DỰNG (LibreTranslate trong stack). KHÔNG
+#: nằm trong `ALL_INTENTS`; `allowed_intents` tự thêm khi đã cấu hình
+#: `translate_url` — xem `_dich_neu_co`. Chưa dựng máy chủ mà vẫn hiện mục này
+#: thì đó là lựa chọn bấm vào chỉ nhận được câu báo lỗi.
+DICH = "dich"
 #: Lưu thẳng lên kho đám mây, không nạp RAG, không chuyển đổi. Chỉ hiện khi phạm
 #: vi đó đã khai «Lưu trữ online» — không thì nó là lựa chọn không làm được gì.
 LUU_ONLINE = "luu_online"
@@ -148,7 +153,8 @@ def pop_pending(key: str) -> dict | None:
 # Thứ tự hiển thị ổn định trong ask_text (số 1..N theo các mục còn được phép).
 #: Tóm tắt thêm ở CUỐI, không chen vào giữa: số thứ tự các mục cũ là thứ
 #: người dùng đã quen gõ, đổi chỗ là họ bấm nhầm việc.
-INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, LUU_ONLINE)
+INTENT_ORDER = (RAG_KNOWLEDGE, RAG_TEACHER, WORD, EXCEL, TOM_TAT, DICH,
+                LUU_ONLINE)
 
 
 def y_dinh_da_moi(pend: dict | None, mac_dinh: set[str]) -> set[str]:
@@ -194,6 +200,11 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         "tom luoc", "nội dung gì", "noi dung gi",
     )):
         return TOM_TAT
+    # Cả hai lối viết (có dấu / không dấu) như mọi nhánh trên: `t` chỉ được hạ
+    # chữ thường, KHÔNG bỏ dấu.
+    if any(w in t for w in ("dịch", "dich", "translate", "chuyển ngữ",
+                            "chuyen ngu")):
+        return DICH
     if any(w in t for w in (
         "lưu online", "luu online", "lưu đám mây", "luu dam may", "lên mây",
         "len may", "lưu drive", "luu drive", "lưu kho", "luu kho", "upload",
@@ -214,6 +225,8 @@ def parse_intent(text: str, allowed: set[str] | None = None) -> str | None:
         # "5" ra None, bot im lặng đúng lúc người dùng vừa bấm chọn.
         "5": 5, "5️⃣": 5, "5.": 5, "5)": 5,
         "6": 6, "6️⃣": 6, "6.": 6, "6)": 6,
+        # Menu nay dài tới 7 mục (thêm 🌐 Dịch tài liệu).
+        "7": 7, "7️⃣": 7, "7.": 7, "7)": 7,
     }
     if t in num_map:
         opts = [c for c in INTENT_ORDER if allowed is None or c in allowed]
@@ -344,7 +357,7 @@ def y_dinh_cho_office(allow: set[str] | None) -> set[str]:
     Bỏ WORD/EXCEL: người dùng gửi .docx vào rồi "chuyển Word" thì chẳng ra gì.
     """
     return {i for i in allowed_intents(allow)
-            if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT, LUU_ONLINE)}
+            if i in (RAG_KNOWLEDGE, RAG_TEACHER, TOM_TAT, DICH, LUU_ONLINE)}
 
 
 def allowed_intents(allow: set[str] | None) -> set[str]:
@@ -360,7 +373,7 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
         # khai kho đám mây, mà điều đó `allow` không biết. Kênh tự thêm bằng
         # `them_luu_online` — hiện một lựa chọn không làm được gì thì tệ hơn là
         # không hiện.
-        return set(ALL_INTENTS) - {LUU_ONLINE}
+        return (set(ALL_INTENTS) - {LUU_ONLINE}) | _dich_neu_co()
     out: set[str] = set()
     if "rag" in allow or "summary" in allow or "wiki" in allow:
         out.add(RAG_KNOWLEDGE)
@@ -373,7 +386,28 @@ def allowed_intents(allow: set[str] | None) -> set[str]:
         out.add(EXCEL)  # office conversion family
     if "excel" in allow:
         out.add(EXCEL)
-    return out
+    return out | _dich_neu_co()
+
+
+def _dich_neu_co() -> set[str]:
+    """{DICH} nếu đã dựng máy chủ dịch trong stack, ngược lại rỗng.
+
+    Cổng nằm NGAY TRONG `allowed_intents` (khác LUU_ONLINE — mục đó do kênh tự
+    thêm) vì điều kiện của nó là cấu hình TOÀN CỤC `translate_url`, không phụ
+    thuộc phạm vi chat. Nhờ vậy cả ba kênh (Telegram, Zalo Bot, Zalo cá nhân)
+    có mục này cùng lúc, và cái quan trọng hơn: menu dựng bằng cùng một bộ mà
+    lúc giải số người dùng gõ cũng dùng bộ đó — thêm ở kênh mà quên nhánh giải
+    số là bấm đúng số ra việc khác (xem `y_dinh_da_moi`).
+
+    Không gắn nhóm chức năng riêng: dịch không nạp RAG, không đụng kho đám mây,
+    cùng hạng "tiện ích lõi" như `photo_intent.ANALYZE`.
+    """
+    try:
+        from services import translate_service as ts
+        return {DICH} if ts.is_configured() else set()
+    except Exception as exc:  # pragma: no cover — import vòng/cấu hình lỗi
+        logger.debug("bỏ qua mục dịch: %s", exc)
+        return set()
 
 
 def them_luu_online(intents: set[str], kenh: str, chat: str, *,
@@ -421,6 +455,7 @@ def ask_text(name: str, intents: set[str], info: dict | None = None) -> str:
         WORD: "📝 Chuyển **Word** (.docx)",
         EXCEL: "📊 Chuyển **Excel** (.xlsx)",
         TOM_TAT: "✍️ **Tóm tắt** nội dung (không nạp vào kho nào)",
+        DICH: "🌐 **Dịch tài liệu** (Việt ⇄ Anh, máy dịch tự dựng)",
         LUU_ONLINE: "☁️ **Lưu lên kho đám mây** (không nạp, không chuyển)",
     }
     n = 1

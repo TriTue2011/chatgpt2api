@@ -104,6 +104,7 @@ class SoTrongMenuKhopSoGiaiRaTests(unittest.TestCase):
             # Nhãn của ý định giải ra phải chính là nhãn đứng ở vị trí đó.
             tu_khoa = {pi.RAG_KNOWLEDGE: "RAG kiến thức", pi.RAG_TEACHER: "RAG teacher",
                        pi.WORD: "Word", pi.EXCEL: "Excel", pi.TOM_TAT: "Tóm tắt",
+                       pi.DICH: "Dịch tài liệu",
                        pi.LUU_ONLINE: "kho đám mây"}[y]
             self.assertIn(tu_khoa, nhan[i - 1],
                           f"gõ {i} ra {y} nhưng màn hình ghi {nhan[i - 1]!r}")
@@ -119,10 +120,17 @@ class SoTrongMenuKhopSoGiaiRaTests(unittest.TestCase):
         self._khop("a.pdf", {pi.TOM_TAT, pi.LUU_ONLINE})
 
     def test_moi_muc_deu_go_so_duoc_khong_bo_sot(self):
-        """Bảng số trong parse_intent từng dừng ở 4 rồi ở 5 — nay phải tới 6."""
-        nhan = self._muc_trong_menu("a.pdf", set(pi.ALL_INTENTS))
+        """Bảng số trong parse_intent từng dừng ở 4, rồi 5, rồi 6 — nay là 7.
+
+        Dùng INTENT_ORDER chứ không ALL_INTENTS: các mục có ĐIỀU KIỆN
+        (LUU_ONLINE cần kho đám mây, DICH cần máy chủ dịch) cố ý nằm ngoài
+        ALL_INTENTS, nhưng khi hiện ra thì vẫn phải gõ số chọn được.
+        """
+        moi_muc = set(pi.INTENT_ORDER)
+        nhan = self._muc_trong_menu("a.pdf", moi_muc)
         self.assertEqual(len(nhan), len(pi.INTENT_ORDER))
-        self.assertIsNotNone(pi.parse_intent(str(len(nhan)), set(pi.ALL_INTENTS)))
+        self.assertIsNotNone(pi.parse_intent(str(len(nhan)), moi_muc))
+        self._khop("a.pdf", moi_muc)
 
 
 class NhoBoYDinhDaHienTests(unittest.TestCase):

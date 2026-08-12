@@ -75,6 +75,14 @@ services:
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:?CHATGPT2API_AUTH_KEY chưa đặt — hãy khai một khoá mạnh}
       # captcha-solver internal auth (claude/gemini/flow web logins)
       CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?CAPTCHA_SOLVER_API_KEY chưa đặt}
+      # Máy dịch tự dựng trong stack (service `libretranslate` bên dưới). Khai ở
+      # ĐÂY chứ không bắt admin sửa config.json: dựng compose là dịch chạy —
+      # lệnh /dich của bot + mục 🌐 khi gửi tệp/ảnh. Xoá biến này = tắt hẳn.
+      TRANSLATE_URL: ${TRANSLATE_URL:-http://libretranslate:5000}
+      # Dịch sang tiếng Anh trước khi gửi LLM rồi dịch phản hồi về tiếng Việt.
+      # MẶC ĐỊNH TẮT — đổi hành vi của MỌI lượt gọi model, phải tự bật.
+      # Xem docs/DICH_LIBRETRANSLATE.md mục 5 trước khi đặt "1".
+      TRANSLATE_PIVOT: ${TRANSLATE_PIVOT:-0}
       # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
       ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?ZALO_SERVER_API_KEY chưa đặt}
       # [KHUYẾN NGHỊ] Bí mật ký session zalo-server. Không đặt thì app tự sinh
@@ -250,6 +258,93 @@ services:
 
     cap_drop: [ALL]
     cap_add: [CHOWN, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+
+  # ── LibreTranslate: máy dịch TỰ CHỦ, không qua bên thứ ba ────────────────
+  #
+  # Cùng nếp SearXNG ở trên: nằm trong stack, không publish cổng, và gateway tự
+  # dùng nhờ biến TRANSLATE_URL đã khai ở service c2a — không ai phải bấm bật.
+  # Nhân dịch là Argos Translate chạy hẳn trong container; sau khi tải model
+  # xong thì không lượt dịch nào ra Internet.
+  #
+  # LẦN ĐẦU `up` SẼ TẢI 756 MB MODEL (đo thật 12/08) và mất vài phút mới dịch
+  # được. /health trả 200 ngay nhưng /translate còn báo lỗi trong lúc đó. Model
+  # nằm ở /opt/libretranslate-models nên các lần sau KHÔNG tải lại.
+  #
+  # CỐ Ý KHÔNG `depends_on: condition: service_healthy` từ c2a: c2a không được
+  # chờ 756 MB tải xong mới lên. Trục dịch fail-open — máy dịch chưa sẵn sàng
+  # thì bot vẫn chạy y như chưa có tính năng này.
+  #
+  # ĐO THẬT 12/08 — vì sao có `libretranslate-init`: Dockerfile của
+  # LibreTranslate tạo user `libretranslate` uid/gid 1032 rồi `USER
+  # libretranslate`, nhưng thư mục mount vào thì thuộc **root** (Docker tạo mới
+  # thư mục host của bind mount bằng root, và KHÔNG copy quyền từ image vào bind
+  # mount bao giờ). Tiến trình uid 1032 không tạo nổi `.local/share` → chết ngay
+  # ở `import argostranslate` với PermissionError, kèm dòng gây nhiễu
+  # "'' is not a valid port number" vì entrypoint.sh gọi print_args_env.py cũng
+  # chết theo nên PORT thành rỗng.
+  #
+  # Init container đổi chủ thư mục trước, chạy một lần rồi thoát — nhờ vậy tiến
+  # trình chính vẫn KHÔNG phải root, và không ai phải gõ chown bằng tay trên host.
+  libretranslate-init:
+    image: busybox:stable
+    container_name: libretranslate-init
+    user: root
+    command: ["sh", "-c", "mkdir -p /data/share /data/cache && chown -R 1032:1032 /data"]
+    volumes:
+      - /opt/libretranslate-models:/data
+    restart: "no"
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: libretranslate
+    restart: unless-stopped
+
+    depends_on:
+      libretranslate-init:
+        condition: service_completed_successfully
+
+    environment:
+      # Đúng bốn cặp đang dùng: Anh⇄Việt, Việt⇄Nhật, Việt⇄Hàn, Việt⇄Trung.
+      #
+      # "en" PHẢI có mặt dù không ai xin cặp Anh–Nhật: 98/100 gói model của
+      # Argos có tiếng Anh ở một đầu (cặp trực tiếp duy nhất không qua tiếng Anh
+      # là pt↔es), tức KHÔNG TỒN TẠI model vi↔ja. Argos dựng đường bắc cầu
+      # vi→en→ja lúc nạp. Bỏ "en" ra là ba cặp Nhật/Hàn/Trung chết theo.
+      #
+      # Lọc theo CẢ HAI ĐẦU (init.py: from_code và to_code đều phải trong danh
+      # sách) → 8 gói, 756 MB: en→ja 120,5 · ja→en 117,2 · en→ko 120,8 ·
+      # ko→en 118,9 · en→zh 70,7 · zh→en 74,5 · en→vi 67,8 · vi→en 65,9.
+      #
+      # Chỉ cần Anh⇄Việt thì đặt LT_LOAD_ONLY=en,vi trong .env → 134 MB.
+      # "zh" là chữ Hán GIẢN THỂ (khai ra ngoài là "zh-Hans"); thêm "zt" nếu
+      # cần phồn thể. Bỏ hẳn biến này = nạp cả 50 ngôn ngữ, vài GB.
+      LT_LOAD_ONLY: ${LT_LOAD_ONLY:-en,vi,ja,ko,zh}
+      LT_UPDATE_MODELS: "true"
+      # Chỉ c2a gọi vào qua mạng nội bộ của compose → không cần khoá API, không
+      # cần giới hạn tần suất. Bật LT_API_KEYS chỉ khi có ý định mở ra ngoài.
+      LT_API_KEYS: "false"
+      # Đệm bản dịch phía MÁY CHỦ (gateway có bộ đệm riêng). Tài liệu và lịch sử
+      # hội thoại lặp lại nhiều nên đáng bật.
+      LT_TRANSLATION_CACHE: "memory://"
+      LT_THREADS: "4"
+
+    volumes:
+      # Thiếu dòng này là mỗi lần dựng lại container phải tải lại 756 MB.
+      # Bind mount (không phải named volume) để xem/dọn model thẳng trên host.
+      - /opt/libretranslate-models:/home/libretranslate/.local:rw
+
+    healthcheck:
+      test: ["CMD-SHELL", "./venv/bin/python scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      # start_period dài vì lần đầu nó tải 756 MB model mới mở cổng 5000. Để 20s
+      # như các service khác thì container bị đánh dấu unhealthy suốt lúc tải —
+      # báo động giả, và ai nhìn Portainer cũng tưởng nó hỏng.
+      start_period: 900s
+      retries: 3
+
     security_opt:
       - no-new-privileges:true
 
