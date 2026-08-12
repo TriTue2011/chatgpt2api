@@ -51,9 +51,11 @@ Ghi chú:
   image mới đã ghim `onnxruntime<1.28` trong `deploy/extra-requirements.txt`;
   gặp trên image cũ thì update image.
 
-> **Server 172.16.10.38 (2026-07-26): đã tải đủ VieNeu (14 giọng) + STT tiếng
-> Việt + STT tiếng Anh, và đã bật sẵn `en_enabled` — chỉ cần tick 🎙️ theo phạm
-> vi là dùng được ngay.**
+> **Server 172.16.10.38 (2026-08-12): đã tải đủ VieNeu (14 giọng) + Piper (19)
+> + Kokoro (11) + **NghiTTS (19)** + STT tiếng Việt + STT tiếng Anh, và đã bật
+> sẵn `en_enabled`. Home Assistant qua Wyoming thấy đủ **63 giọng**. Đo tại chỗ:
+> NghiTTS đọc với RTF ≈ 0,15 (nhanh gấp ~7 lần thời gian thực) khi model đã nằm
+> trong RAM; câu lặp lại lấy từ cache, gần như tức thì.**
 
 ### 1.2. Bật STT tiếng Anh (mặc định TẮT)
 
