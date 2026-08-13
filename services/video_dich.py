@@ -373,15 +373,29 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
     if ma_nguon == dich:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
 
+    return _dich_va_dong_goi(doan, ma_nguon or nguon, dich, dai)
+
+
+def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
+                      dai_giay: float) -> dict[str, Any]:
+    """Các đoạn chữ có mốc → dịch → khung đạt chuẩn → gói kết quả.
+
+    Phần dùng chung của hai đường vào: phụ đề lấy từ YouTube và chữ máy tự
+    nghe từ tệp. ``nguon == dich`` thì bỏ bước dịch — bản chép lời có mốc thời
+    gian tự nó đã hữu ích (video tiếng Việt → phụ đề tiếng Việt).
+    """
     nhom = gop_doan(bo_trung(doan))
-    chu_goc = [d.chu for d in nhom]
-    ban_dich: list[str] = []
-    try:
-        for i in range(0, len(chu_goc), LO_MOI_LUOT):
-            ban_dich.extend(ts.translate_batch(
-                chu_goc[i:i + LO_MOI_LUOT], dich, ma_nguon or "auto"))
-    except ts.LoiDich as exc:
-        return {"ok": False, "error": f"máy chủ dịch lỗi: {exc}"}
+    if nguon == dich:
+        ban_dich = [d.chu for d in nhom]
+    else:
+        chu_goc = [d.chu for d in nhom]
+        ban_dich = []
+        try:
+            for i in range(0, len(chu_goc), LO_MOI_LUOT):
+                ban_dich.extend(ts.translate_batch(
+                    chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
+        except ts.LoiDich as exc:
+            return {"ok": False, "error": f"máy chủ dịch lỗi: {exc}"}
 
     # Gộp để DỊCH, cắt lại để ĐỌC: khung 150 ký tự dịch đúng nghĩa nhưng không
     # ai đọc kịp trên màn hình.
@@ -393,11 +407,42 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
         "srt": srt.encode("utf-8"),
         "ten": f"phu-de.{dich}.srt",
         "chu": "\n".join(d.chu for d in da_dich),
-        "nguon": ma_nguon or nguon,
+        "nguon": nguon,
         "dich": dich,
         "so_doan": len(da_dich),
-        "phut": int(round(dai / 60)),
+        "phut": int(round(dai_giay / 60)),
     }
+
+
+#: Tệp phải NGHE (không có phụ đề sẵn) dài nhất ngần này. Đo thật 13/08: nghe
+#: + dịch mất ~0,6 lần thời lượng video trên máy 4 nhân — 30 phút video là
+#: ~18 phút chờ, dài hơn nữa thành bất lịch sự. Đường link YouTube không dính
+#: trần này (phụ đề lấy sẵn, gần như miễn phí).
+TRAN_GIAY_NGHE = 30 * 60
+
+
+def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:
+    """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
+
+    Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
+    (``video_asr``) thay vì phụ đề YouTube. Video nói tiếng Việt mà đích cũng
+    tiếng Việt thì trả bản CHÉP LỜI — vẫn là phụ đề dùng được.
+    """
+    from services import video_asr as va
+
+    try:
+        cau, nguon, _giay_tieng = va.nghe_tep(duong, tran_giay=TRAN_GIAY_NGHE)
+    except va.LoiNghe as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        logger.warning("nghe tệp %s lỗi: %s", ten, str(exc)[:200])
+        return {"ok": False, "error": f"nghe tệp lỗi: {str(exc)[:200]}"}
+
+    doan = [Doan(c.bat_dau, c.ket_thuc, c.chu) for c in cau]
+    dich = str(target or "").lower() or ts.chon_dich_sang(nguon)
+    if dich != nguon and not ts.is_configured():
+        return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
+    return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc)
 
 
 def soat_srt(srt: str) -> list[str]:

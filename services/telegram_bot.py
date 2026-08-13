@@ -1604,7 +1604,9 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # KHÔNG qua LLM: hỏi model dịch thì tốn hạn mức và trả về lời rào đón. Cùng
     # nếp /id, /facebook. Nhận "/dich@TênBot" và "@TênBot /dich ..." (bóc tag).
     # Trả lời trên CHỮ GỐC (không dùng _low) — dịch phải giữ nguyên chữ hoa.
-    if chat_id and text:
+    # `not video`: "/dich" làm CHÚ THÍCH của video là lệnh cho nhánh video ở
+    # dưới, nuốt ở đây thì video không bao giờ được xử lý.
+    if chat_id and text and not video:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
             # Link video thì đi đường phụ đề: trả .srt nạp được vào trình phát,
@@ -1853,7 +1855,42 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     # Page); ngoài luồng đó giữ nguyên hành vi cũ: bỏ qua im lặng. Bot API chỉ
     # cho tải file ≤ 20MB (MAX_DOWNLOAD_BYTES) nên video lớn phải đi đường link.
     if video and isinstance(video, dict):
-        if _phi.FACEBOOK not in _phi.them_dang_facebook(set(), _allow):
+        # Hai việc làm được với video: DỊCH thành phụ đề, hoặc ĐĂNG Facebook.
+        # Chú thích có /dich → dịch. Không thì giữ nếp cũ (Facebook); nhóm
+        # không bật Facebook thì dịch thay vì im lặng như trước.
+        from services import translate_service as _ts_v
+        _muon_dich_v = bool(text) and _ts_v.la_lenh_dich(text)
+        _fb_duoc = _phi.FACEBOOK in _phi.them_dang_facebook(set(), _allow)
+        if _muon_dich_v or not _fb_duoc:
+            from services import video_dich as _vd_v
+            _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+            _vdata = _download_file(str(video.get("file_id") or ""))
+            if not _vdata:
+                send_message(chat_id, "🎬 Video này em không tải được (Telegram "
+                                      "chỉ cho bot lấy tệp tới 20MB) — video "
+                                      "YouTube thì gửi em link nhé.")
+                return
+            send_message(chat_id, "🎬 Em đang nghe và dịch, video dài có thể "
+                                  "mất vài phút ạ…")
+            import os as _os_v
+            import tempfile as _tmp_v
+            with _tmp_v.NamedTemporaryFile(suffix=".mp4", delete=False) as _fv:
+                _fv.write(_vdata)
+                _vpath_v = _fv.name
+            try:
+                _rv_v = _vd_v.dich_tep_video(_vpath_v, str(video.get("file_name") or "video.mp4"))
+            finally:
+                try:
+                    _os_v.unlink(_vpath_v)
+                except OSError:
+                    pass
+            if _rv_v.get("ok"):
+                send_document(chat_id, _rv_v["srt"], _rv_v["ten"],
+                              caption=_vd_v.bao_cao(_rv_v))
+                if len(_rv_v["chu"]) <= 1500:
+                    send_message(chat_id, _rv_v["chu"])
+            else:
+                send_message(chat_id, _vd_v.bao_cao(_rv_v))
             return
         _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
         _vdata = _download_file(str(video.get("file_id") or ""))
@@ -1880,6 +1917,41 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # RAG, y như bên Zalo cá nhân. Khác hai chỗ: menu bỏ mục chuyển
         # Word/Excel, và file tạm giữ ĐÚNG đuôi thật cho markitdown nhận dạng.
         _la_office = _pi.la_office(doc_name)
+        # Video/âm thanh gửi dạng TỆP → nghe ra chữ rồi dịch thành phụ đề.
+        from services import video_asr as _va_d
+        if _va_d.la_tep_nghe_duoc(doc_name):
+            from services import video_dich as _vd_d
+            _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+            _ddata = _download_file(document.get("file_id", ""))
+            if not _ddata:
+                send_message(chat_id, "🎬 Không tải được tệp — Telegram chỉ cho "
+                                      "bot lấy tệp tới 20MB. Video YouTube thì "
+                                      "gửi em link nhé.")
+                return
+            send_message(chat_id, "🎬 Em đang nghe và dịch, video dài có thể "
+                                  "mất vài phút ạ…")
+            import os as _os_d
+            import tempfile as _tmp_d
+            _suf_d = ("." + str(doc_name).rsplit(".", 1)[-1].lower()
+                      if "." in str(doc_name) else ".mp4")
+            with _tmp_d.NamedTemporaryFile(suffix=_suf_d, delete=False) as _fd:
+                _fd.write(_ddata)
+                _dpath = _fd.name
+            try:
+                _rd = _vd_d.dich_tep_video(_dpath, str(doc_name))
+            finally:
+                try:
+                    _os_d.unlink(_dpath)
+                except OSError:
+                    pass
+            if _rd.get("ok"):
+                send_document(chat_id, _rd["srt"], _rd["ten"],
+                              caption=_vd_d.bao_cao(_rd))
+                if len(_rd["chu"]) <= 1500:
+                    send_message(chat_id, _rd["chu"])
+            else:
+                send_message(chat_id, _vd_d.bao_cao(_rd))
+            return
         if not str(doc_name).lower().endswith(".pdf") and not _la_office:
             send_message(chat_id, "📎 Hiện chỉ hỗ trợ PDF, Word, Excel và "
                                   f"PowerPoint. File: {doc_name}")

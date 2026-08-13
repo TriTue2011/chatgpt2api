@@ -2773,6 +2773,45 @@ def _process_ai(ev: dict) -> None:
             _moi_luu_online(ev, thread_id, name or "document.pdf", data,
                             menu_dang_mo=True)
             return
+        # Video / âm thanh → NGHE ra chữ rồi dịch thành phụ đề .srt. Đi thẳng
+        # không hỏi menu: khác PDF (7 ý định), tệp video chỉ có một việc làm
+        # được. Nghe bằng CPU nên nói trước là lâu, kẻo tưởng bot chết.
+        from services import video_asr as _va
+        if _va.la_tep_nghe_duoc(name):
+            send_message(thread_id, "🎬 Em đang nghe và dịch, video dài có "
+                                    "thể mất vài phút ạ…", thread_type)
+            send_typing(thread_id, thread_type)
+            data = _download(ev["attachment_url"])
+            if not data:
+                send_message(thread_id, "🎬 Không tải được tệp.", thread_type)
+                return
+            if len(data) > 250 * 1024 * 1024:
+                send_message(thread_id,
+                             f"🎬 Tệp {len(data) // (1024 * 1024)}MB — quá mức "
+                             "250MB em xử lý được. Video YouTube thì gửi em "
+                             "link sẽ nhanh hơn nhiều ạ.", thread_type)
+                return
+            import os as _os
+            import tempfile as _tmpf
+            from services import video_dich as _vd
+            _suf = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ".mp4"
+            with _tmpf.NamedTemporaryFile(suffix=_suf, delete=False) as _f:
+                _f.write(data)
+                _vpath = _f.name
+            try:
+                _rv = _vd.dich_tep_video(_vpath, name)
+            finally:
+                try:
+                    _os.unlink(_vpath)
+                except OSError:
+                    pass
+            send_message(thread_id, _vd.bao_cao(_rv), thread_type)
+            if _rv.get("ok"):
+                _serve_bytes(thread_id, thread_type, _rv["srt"], _rv["ten"],
+                             "Phụ đề")
+                if len(_rv["chu"]) <= 1500:
+                    send_message(thread_id, _rv["chu"], thread_type)
+            return
         send_message(thread_id,
                      f"📎 Em nhận PDF, Word, Excel và PowerPoint thôi ạ. "
                      f"File: {name or 'không rõ'}", thread_type)
