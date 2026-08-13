@@ -176,3 +176,60 @@ def test_cau_duyet_capability_khac_giu_nguyen():
     assert ag.summarize_action("send_to_contact",
                                {"to": "Mẹ", "message": "con về muộn"}) == "→ Mẹ: con về muộn"
     assert ag.summarize_action("control_home", {"command": "bật đèn"}) == "bật đèn"
+
+
+@pytest.mark.pure
+def test_dang_xong_nho_bai_va_moi_chia_se_nhom(monkeypatch):
+    """Đăng Page xong: nhớ bài cho «chia sẻ vào nhóm», auto tắt → gắn nút hỏi."""
+    import services.facebook_group as fbg
+    h = caps.CAPABILITIES["dang_facebook"].handler
+    monkeypatch.setattr(fbp, "pages_cho_thread", lambda uid: [_PAGES[0]])
+    monkeypatch.setattr(fbp, "dang_bai_chu",
+                        lambda p, m, link="": {"id": "111_5",
+                                               "url": "https://fb.com/p/5"})
+    monkeypatch.setattr(fbg, "nap_nhom", lambda: [{"id": "g1", "name": "g1"}])
+    monkeypatch.setattr(fbg, "auto_share_bat", lambda: False)
+    fbg._bai_cuoi.clear()
+    out = h({"loai": "link", "message": "bài", "link": "https://vd.com"},
+            {"user_id": "u7"})
+    assert "Chia sẻ vào 1 nhóm" in out["text"]
+    assert "__fb_nhom__:chia_se" in out["text"]
+    # bài được nhớ với link GỐC (không phải permalink) để nhóm có giá trị thật
+    p = fbg.bai_cuoi("u7")
+    assert p["message"] == "bài" and p["link"] == "https://vd.com"
+
+
+@pytest.mark.pure
+def test_dang_xong_auto_bat_thi_chia_se_ngay(monkeypatch):
+    import services.facebook_group as fbg
+    h = caps.CAPABILITIES["dang_facebook"].handler
+    monkeypatch.setattr(fbp, "pages_cho_thread", lambda uid: [_PAGES[0]])
+    monkeypatch.setattr(fbp, "dang_bai_chu",
+                        lambda p, m, link="": {"id": "111_5",
+                                               "url": "https://fb.com/p/5"})
+    monkeypatch.setattr(fbg, "nap_nhom", lambda: [{"id": "g1", "name": "g1"}])
+    monkeypatch.setattr(fbg, "auto_share_bat", lambda: True)
+    goi = {}
+
+    def _gia(uid, bai, nhom=None):
+        goi["bai"] = bai
+        return "📤 đang chia sẻ nền"
+
+    monkeypatch.setattr(fbg, "chia_se_nen", _gia)
+    out = h({"loai": "chu", "message": "bài chữ"}, {"user_id": "u8"})
+    assert "đang chia sẻ nền" in out["text"]
+    # bài chữ không có link ngoài → nhóm nhận permalink bài Page
+    assert goi["bai"]["link"] == "https://fb.com/p/5"
+
+
+@pytest.mark.pure
+def test_khong_co_nhom_thi_cau_bao_giu_nguyen(monkeypatch):
+    """Không cấu hình nhóm → câu báo đăng Page y như trước, không thêm gì."""
+    import services.facebook_group as fbg
+    h = caps.CAPABILITIES["dang_facebook"].handler
+    monkeypatch.setattr(fbp, "pages_cho_thread", lambda uid: [_PAGES[0]])
+    monkeypatch.setattr(fbp, "dang_bai_chu",
+                        lambda p, m, link="": {"id": "111_5", "url": ""})
+    monkeypatch.setattr(fbg, "nap_nhom", lambda: [])
+    out = h({"loai": "chu", "message": "bài"}, {"user_id": "u9"})
+    assert out["text"] == "✅ Đã đăng lên Page Nhà."

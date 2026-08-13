@@ -199,6 +199,14 @@ class BrowserRunReq(BaseModel):
     timeout: int = Field(default=30, ge=5, le=300)
 
 
+class FacebookGroupPostReq(BaseModel):
+    group_id: str
+    message: str
+    profile: str = "facebook"
+    headless: bool = True
+    timeout: int = Field(default=90, ge=15, le=300)
+
+
 class ManualLoginReq(BaseModel):
     url: str
     profile: str = "default"
@@ -844,6 +852,24 @@ async def api_browser_run(req: BrowserRunReq) -> dict[str, Any]:
         logger.exception("browser run failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+
+
+@app.post("/v1/facebook/group-post", dependencies=[Depends(require_api_key)])
+async def api_facebook_group_post(req: FacebookGroupPostReq) -> dict[str, Any]:
+    """Đăng bài vào nhóm Facebook bằng phiên trong profile (mặc định 'facebook').
+
+    Đăng nhập một lần qua /v1/session/manual-login với url=facebook.com — sau
+    đó gọi endpoint này chạy headless. Lỗi selector kèm ảnh chụp để vá từ xa.
+    """
+    from .solvers.facebook_group import post_to_group
+    try:
+        return await post_to_group(
+            req.group_id, req.message,
+            profile=req.profile, headless=req.headless, timeout=req.timeout,
+        )
+    except Exception as exc:
+        logger.exception("facebook group-post failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post("/v1/session/manual-login", dependencies=[Depends(require_api_key)])

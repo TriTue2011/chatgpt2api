@@ -444,6 +444,7 @@ def menu_ask(user_id: str) -> str:
         "🖼️ Đăng ảnh | tôi muốn đăng ảnh lên facebook: nhắc tôi gửi ảnh vào đây "
         "(gửi được nhiều ảnh), gom đủ rồi hỏi tôi caption",
         f"🎬 Đăng video | {FLOW_VIDEO}",
+        f"👥 Đăng vào nhóm | {FLOW_NHOM}",
         "✨ Nhờ AI soạn bài | nhờ AI soạn bài đăng facebook: hỏi tôi chủ đề và ý "
         "chính, soạn xong đọc lại cho tôi duyệt rồi mới đăng",
         "🔎 Kiểm tra kết nối | kiểm tra kết nối facebook",
@@ -583,6 +584,17 @@ def bo_dau_bai(text: str) -> str:
     return s
 
 
+# Nhóm: menu con «Đăng vào nhóm» — đăng bằng TÀI KHOẢN cá nhân qua trình duyệt
+# (Meta gỡ Groups API 04/2024, xem services/facebook_group.py), nên không cần
+# Page gắn thread. Mọi mục đều là sentinel code bắt, cùng lý do với FLOW_*.
+FLOW_NHOM = "__fb_flow__:nhom"
+NHOM_CHIA_SE = "__fb_nhom__:chia_se"
+NHOM_THEM = "__fb_nhom__:them"
+NHOM_AUTO = "__fb_nhom__:auto"
+NHOM_LOGIN = "__fb_nhom__:login"
+NHOM_GO = "__fb_nhom__:go"
+NHOM_OK = "__fb_nhom__:ok"
+
 CHON_AI_LINK = "__fb_flow__:ai_link"   # AI đọc link rồi viết, khỏi gõ gì
 CHON_AI_Y = "__fb_flow__:ai_y"         # người dùng cho ý chính, AI viết
 CHON_TU_GO = "__fb_flow__:tu_go"       # tự gõ lời dẫn, đăng y nguyên
@@ -599,6 +611,8 @@ _NHAC = {
     "cho_video": "🎬 Anh/chị dán LINK video mp4 công khai (hoặc gửi thẳng video "
                  "vào đây cũng được). (gõ «huỷ» để thôi)",
     "cho_video_mo_ta": "📝 Mô tả kèm video (hoặc gõ «đăng» để đăng không mô tả):",
+    "cho_nhom_link": "👥 Anh/chị dán LINK nhóm (facebook.com/groups/…, dán được "
+                     "nhiều link một lúc). (gõ «huỷ» để thôi)",
 }
 
 # Gửi thẳng ảnh/video vào bot thì kênh (Zalo/Telegram) KHÔNG đưa tệp cho luồng
@@ -734,10 +748,87 @@ def _yeu_cau_ai(p: dict) -> str:
     return " ".join(dong)
 
 
+def _hoi_chia_se_nhom(key: str) -> str | None:
+    """Câu xác nhận chia sẻ bài Page gần nhất vào nhóm. None nếu chưa có bài."""
+    from services import facebook_group as fbg
+    bai = fbg.bai_cuoi(key)
+    if not bai:
+        return None
+    xem = str(bai.get("message") or "").strip().replace("\n", " ")[:160]
+    link = str(bai.get("link") or "").strip()
+    dong = ["📤 Chia sẻ bài này vào "
+            f"{len(fbg.nap_nhom())} nhóm đã lưu nhé?"]
+    if xem:
+        dong.append(f"«{xem}…»" if len(xem) >= 160 else f"«{xem}»")
+    if link:
+        dong.append(f"🔗 {link}")
+    dong += ["<<<ASK>>>", f"Ok, chia sẻ | {NHOM_OK}", "Thôi | huỷ", "<<<END>>>"]
+    return "\n".join(dong)
+
+
+def _xu_ly_nhom(key: str, s: str) -> str:
+    """Menu «Đăng vào nhóm» — mọi nút là hành động code làm thẳng, không LLM."""
+    from services import facebook_group as fbg
+    if s == NHOM_THEM:
+        _flow_set(key, "cho_nhom_link")
+        return _NHAC["cho_nhom_link"]
+    if s == NHOM_AUTO:
+        bat = fbg.doi_auto_share()
+        return ("🔁 Từ giờ đăng bài Page xong em TỰ chia sẻ vào các nhóm đã lưu."
+                if bat else "🔁 Đã tắt tự chia sẻ — đăng Page xong em sẽ hỏi.")
+    if s == NHOM_LOGIN:
+        return fbg.mo_dang_nhap()
+    if s == NHOM_GO:
+        n = fbg.go_het_nhom()
+        return f"🗑 Đã gỡ {n} nhóm khỏi danh sách."
+    if s == NHOM_OK:
+        p = _flow_get(key)
+        if not p or p.get("stage") != "cho_nhom_ok":
+            return "Không có đợt chia sẻ nào đang chờ ạ."
+        xoa_flow(key)
+        return fbg.chia_se_nen(key, fbg.bai_cuoi(key) or {})
+    if s == NHOM_CHIA_SE:
+        if not fbg.nap_nhom():
+            _flow_set(key, "cho_nhom_link")
+            return ("Chưa có nhóm nào được lưu — " + _NHAC["cho_nhom_link"])
+        hoi = _hoi_chia_se_nhom(key)
+        if hoi is None:
+            return ("Chưa có bài Page nào vừa đăng để chia sẻ ạ. Anh/chị đăng "
+                    "một bài lên Page trước (menu /facebook), xong em chia sẻ "
+                    "tiếp vào nhóm.")
+        _flow_set(key, "cho_nhom_ok")
+        return hoi
+    # FLOW_NHOM — menu con
+    ds = fbg.nap_nhom()
+    dong = [f"👥 Nhóm Facebook — đã lưu {len(ds)} nhóm"
+            + (f" ({', '.join(g['name'] for g in ds[:5])}"
+               + ("…" if len(ds) > 5 else "") + ")" if ds else ""),
+            "Tự chia sẻ sau mỗi bài Page: "
+            + ("BẬT" if fbg.auto_share_bat() else "TẮT")]
+    if fbg.dang_chay():
+        dong.append("⏳ Đang có một đợt chia sẻ chạy nền.")
+    else:
+        kq = fbg.ket_qua_gan_nhat()
+        if kq:
+            dong.append("Kết quả đợt gần nhất: " + " · ".join(kq[:8]))
+    dong += [
+        "<<<ASK>>>",
+        f"📤 Chia sẻ bài Page gần nhất | {NHOM_CHIA_SE}",
+        f"➕ Thêm nhóm | {NHOM_THEM}",
+        f"🔁 Bật/Tắt tự chia sẻ | {NHOM_AUTO}",
+        f"🔑 Đăng nhập Facebook cho bot | {NHOM_LOGIN}",
+        f"🗑 Gỡ hết nhóm | {NHOM_GO}",
+        "<<<END>>>",
+    ]
+    return "\n".join(dong)
+
+
 def bat_dau_flow(key: str, send_text: str) -> str | None:
     """`send_text` (đã qua resolve_reply) là sentinel của mục cần nhập tiếp?
     Có → đặt trạng thái chờ + trả câu nhắc. Không → None (không phải flow FB)."""
     s = (send_text or "").strip()
+    if s == FLOW_NHOM or s.startswith("__fb_nhom__:"):
+        return _xu_ly_nhom(key, s)
     if s not in _FLOW_SENTINELS:
         return None
     if not pages_cho_thread(key):
@@ -824,6 +915,20 @@ def tiep_flow(key: str, text: str) -> dict | None:
                              "message": ""}}
         _flow_set(key, "cho_cach", loai="video", noi_dung=t)
         return {"hoi": _hoi_cach_dang()}
+    if stage == "cho_nhom_link":
+        from services import facebook_group as fbg
+        moi = fbg.them_nhom(t)
+        if not moi:
+            return {"hoi": "Em không thấy link nhóm nào trong đó ạ — dán dạng "
+                           "facebook.com/groups/… nhé. (gõ «huỷ» để thôi)"}
+        xoa_flow(key)
+        return {"text": f"✅ Đã lưu thêm {len(moi)} nhóm "
+                        f"(tổng {len(fbg.nap_nhom())}). Vào /facebook ▸ "
+                        f"«Đăng vào nhóm» để chia sẻ bài."}
+    if stage == "cho_nhom_ok":
+        # Nút «Ok» là sentinel nên bat_dau_flow bắt trước khi tới đây; tới đây
+        # nghĩa là người dùng gõ chữ khác → hỏi lại, GIỮ bản chờ (như cho_cach).
+        return {"hoi": _hoi_chia_se_nhom(key) or "Bài chờ chia sẻ đã quá hạn ạ."}
     if stage == "cho_cach":
         if t == CHON_AI:
             xoa_flow(key)

@@ -4736,7 +4736,28 @@ def _h_dang_facebook(args: dict, ctx: dict) -> dict:
     ten_page = next((p.get("name") or p["id"] for p in pages
                      if p["id"] == page_id), page_id)
     duong = kq.get("url") or ""
-    return {"text": f"✅ Đã đăng lên {ten_page}" + (f":\n{duong}" if duong else ".")}
+    text = f"✅ Đã đăng lên {ten_page}" + (f":\n{duong}" if duong else ".")
+    # Nhóm Facebook: nhớ bài này để «chia sẻ vào nhóm» (Meta gỡ Groups API nên
+    # phần nhóm đi bằng trình duyệt — services/facebook_group.py). Bật tự chia
+    # sẻ thì chạy nền luôn; chưa bật thì gắn nút hỏi. Hỏng phần nhóm không được
+    # làm hỏng câu báo đã đăng Page — bài Page ĐÃ lên thật rồi.
+    try:
+        from services import facebook_group as fbg
+        # Nhóm nhận chữ + MỘT link: ưu tiên link gốc trong bài; bài ảnh/video
+        # không có link thì dùng permalink bài Page (media không đăng lại được).
+        link_nhom = link or duong
+        fbg.ghi_bai_cuoi(uid, message, link=link_nhom, url=duong)
+        nhom = fbg.nap_nhom()
+        if nhom and fbg.auto_share_bat():
+            text += "\n" + fbg.chia_se_nen(uid, {"message": message,
+                                                 "link": link_nhom})
+        elif nhom:
+            text += ("\n<<<ASK>>>\n"
+                     f"📤 Chia sẻ vào {len(nhom)} nhóm | __fb_nhom__:chia_se\n"
+                     "<<<END>>>")
+    except Exception as exc:
+        logger.debug("fb nhóm sau khi đăng: %s", exc)
+    return {"text": text}
 
 
 # ── Registry ─────────────────────────────────────────────────────────────────

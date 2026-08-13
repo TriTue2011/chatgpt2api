@@ -1505,6 +1505,10 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 return _fb_tra("Đã huỷ soạn bài Facebook ạ.", status="fb_huy")
             if _r and _r.get("hoi"):
                 return _fb_tra(str(_r["hoi"]), status="fb_flow_hoi")
+            # Nhánh nhóm: việc đã làm thẳng trong flow (lưu nhóm, bật chia sẻ
+            # nền…) — chỉ cần trả lời, không qua cổng duyệt dang_facebook.
+            if _r and _r.get("text"):
+                return _fb_tra(str(_r["text"]), status="fb_nhom")
             # Người dùng bấm «để em viết thành bài»: rời máy trạng thái, giao
             # yêu cầu cho vòng agent bên dưới (skill viết bài + read_webpage +
             # dang_facebook). KHÔNG return — rơi xuống chạy tiếp như một lượt
