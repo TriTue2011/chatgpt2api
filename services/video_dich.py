@@ -561,10 +561,12 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
 
 
 #: Tệp phải NGHE (không có phụ đề sẵn) dài nhất ngần này. Đo thật 13/08: nghe
-#: + dịch mất ~0,6 lần thời lượng video trên máy 4 nhân — 30 phút video là
-#: ~18 phút chờ, dài hơn nữa thành bất lịch sự. Đường link YouTube không dính
-#: trần này (phụ đề lấy sẵn, gần như miễn phí).
-TRAN_GIAY_NGHE = 30 * 60
+#: + dịch mất ~0,6 lần thời lượng video trên máy 4 nhân. 150 phút đủ một bộ
+#: PHIM ~2 tiếng — chủ máy chốt mức này 13/08, chấp nhận chờ ~1,5 tiếng/phim;
+#: tab web có báo tiến độ nên chờ lâu vẫn nhìn thấy máy đang làm. RAM đo được:
+#: 2,5 giờ tiếng ≈ 0,9GB lúc đỉnh, máy còn 8GB — lọt. Đường link YouTube
+#: không dính trần này (phụ đề lấy sẵn, gần như miễn phí).
+TRAN_GIAY_NGHE = 150 * 60
 
 
 def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:

@@ -32,8 +32,10 @@ from services.config import config
 
 logger = logging.getLogger(__name__)
 
-#: Trần cả tệp — bằng trần đường Zalo cá nhân, một video 720p ~30 phút vẫn lọt.
-TRAN_TEP = 250 * 1024 * 1024
+#: Trần cả tệp. Cao hơn đường Zalo (250MB, tải nguyên tệp vào RAM) vì ở đây
+#: khúc ghi thẳng xuống đĩa: 4GB đủ PHIM 1080p ~2 tiếng — khớp trần thời
+#: lượng nghe 150 phút, đĩa máy chủ còn ~50GB (đo 13/08).
+TRAN_TEP = 4 * 1024 * 1024 * 1024
 #: Trần MỘT khúc upload. Client cắt 25MB; 32MB là dư an toàn, và dưới hẳn mức
 #: ~100MB mà Cloudflare chặn.
 TRAN_KHUC = 32 * 1024 * 1024

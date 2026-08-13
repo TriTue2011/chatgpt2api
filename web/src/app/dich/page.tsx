@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 /** Khúc upload 25MB — đường domain qua Cloudflare chặn thân request ~100MB,
  *  nên tệp lớn phải đi thành nhiều request nhỏ; LAN thì đằng nào cũng nhanh. */
 const KHUC = 25 * 1024 * 1024;
-const TRAN_TEP = 250 * 1024 * 1024;
+const TRAN_TEP = 4 * 1024 * 1024 * 1024;
 
 const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,"
   + ".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
@@ -178,7 +178,7 @@ function DichPageContent() {
           {tep ? (
             <span className="text-[var(--foreground)]">{tep.name} • {(tep.size / 1024 / 1024).toFixed(1)}MB</span>
           ) : (
-            <span>Bấm chọn hoặc kéo thả — video/âm thanh (≤250MB, ≤30 phút), ảnh, PDF/Word/Excel…</span>
+            <span>Bấm chọn hoặc kéo thả — video/âm thanh (≤4GB, ≤150 phút — phim 2h nghe mất ~1,5h), ảnh, PDF/Word/Excel…</span>
           )}
         </button>
         <input ref={chonTep} type="file" accept={DUOI_NHAN} className="hidden"
