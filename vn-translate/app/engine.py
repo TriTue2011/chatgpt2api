@@ -67,6 +67,36 @@ def co_chu(s: str) -> bool:
     return any(c.isalpha() for c in s)
 
 
+#: Dòng chỉ gồm 2+ từ TOÀN CHỮ CÁI, không dấu câu, không chữ số.
+_DANG_TEN = re.compile(r"^[^\W\d_]+(?: [^\W\d_]+)+$")
+#: Tên người dài nhất còn nhận (họ + đệm + tên, kể cả tên bốn năm chữ). Đếm TỪ
+#: chứ không đếm ký tự: một câu viết hoa từng chữ vẫn có thể ngắn.
+_TEN_NHIEU_TU_NHAT = 5
+
+
+def la_ten_rieng(s: str) -> bool:
+    """Dòng này là TÊN RIÊNG đứng một mình (tên người trong ảnh chụp chat…).
+
+    NLLB không có ngữ cảnh để dịch một cái tên trần nên nó BỊA ra cả câu — đo
+    thật 13/08 trên ảnh chụp Zalo: "Vu Minh Tuan" → "You know what?",
+    "Nguyễn Huy Văn" → "What is it?". Model 1.3B còn tệ hơn: "I'm going to kill
+    you." Đây không phải dịch dở mà là CHẾ NỘI DUNG, nên chặn ở đây.
+
+    Nhận diện hẹp, cố ý bỏ sót hơn là bắt nhầm: từ nào cũng viết hoa, chỉ chữ
+    cái và dấu cách, ít nhất hai từ, không quá dài. Câu chat thường có ít nhất
+    một từ viết thường nên không dính; nhắn một từ ("Được") cũng không dính.
+
+    ĐÁNH ĐỔI đã cân nhắc: tiêu đề tiếng Anh kiểu Title Case không dấu câu
+    ("Time Awareness") sẽ giữ nguyên thay vì được dịch. Người đọc vẫn thấy bản
+    gốc — nhẹ hơn nhiều so với việc bịa một câu chưa ai từng viết.
+    """
+    s = s.strip()
+    if not _DANG_TEN.match(s):
+        return False
+    tu = s.split()
+    return len(tu) <= _TEN_NHIEU_TU_NHAT and all(t[:1].isupper() for t in tu)
+
+
 def _cat_manh(text: str) -> list[str]:
     """Một dòng dài → các mảnh ~_TRAN_MANH ký tự, cắt ở ranh giới câu."""
     if len(text) <= _TRAN_MANH:
@@ -104,7 +134,7 @@ def _khung(texts: list[str]) -> tuple[list[list[Dong]], list[str]]:
     for t in texts:
         cac_dong: list[Dong] = []
         for dong in (t or "").split("\n"):
-            if not co_chu(dong):
+            if not co_chu(dong) or la_ten_rieng(dong):
                 cac_dong.append((dong, [], ""))
                 continue
             trai = dong[:len(dong) - len(dong.lstrip())]

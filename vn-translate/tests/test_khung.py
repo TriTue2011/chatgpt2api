@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.engine import _ghep, _khung, co_chu
+from app.engine import _ghep, _khung, co_chu, la_ten_rieng
 
 
 def _dich_gia(can: list[str]) -> list[str]:
@@ -70,6 +70,35 @@ def test_cau_dai_cat_nhieu_manh_ghep_lai_mot_dong():
     ra = _ghep(khung, _dich_gia(can))[0]
     assert "\n" not in ra
     assert ra.startswith("vi:Sentence number 0")
+
+
+@pytest.mark.parametrize("s", [
+    "Vu Minh Tuan", "Nguyễn Huy Văn", "John Smith", "Trần Thị Bích Ngọc",
+])
+def test_ten_rieng_duoc_nhan_ra(s):
+    assert la_ten_rieng(s) is True
+
+
+@pytest.mark.parametrize("s", [
+    "Được",                                     # nhắn một từ — phải dịch
+    "Xong học sinh khen AI giảng bài dễ hiểu",  # có từ viết thường
+    "không cần đứng lớp nữa",
+    "Formatting Constraints (For TTS Safety):",  # có dấu câu → tiêu đề, phải dịch
+    "Input data:",
+    "Chào Anh Đi Đâu Đấy Hôm Nay",   # viết hoa từng chữ nhưng quá nhiều từ
+    "", "   ", "10:51",
+])
+def test_khong_nham_la_ten_rieng(s):
+    assert la_ten_rieng(s) is False
+
+
+def test_ten_nguoi_trong_anh_chat_khong_vao_model():
+    """Ảnh chụp chat: tên người gửi phải ra nguyên văn, KHÔNG bị bịa thành câu."""
+    goc = "Vu Minh Tuan\nXong học sinh khen AI giảng bài dễ hiểu\n10:51"
+    khung, can = _khung([goc])
+    assert can == ["Xong học sinh khen AI giảng bài dễ hiểu"]
+    assert _ghep(khung, _dich_gia(can))[0] == (
+        "Vu Minh Tuan\nvi:Xong học sinh khen AI giảng bài dễ hiểu\n10:51")
 
 
 def test_khong_co_gi_de_dich_thi_can_rong():
