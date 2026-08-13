@@ -509,26 +509,57 @@ def _record_auth_status(key: str, cli) -> None:
         pass
 
 
+# Lock init RIÊNG từng client (học GeminiClientPool của Gemini-FastAPI):
+# một account nguội/chết đang init lại KHÔNG được chặn request của account khác.
+_init_locks: dict[str, threading.Lock] = {}
+
+
 def _get_client(psid: str, psidts: str):
     key = psid[:32]
     with _client_lock:
         cli = _clients.get(key)
         if cli is not None:
             return cli
+        khoa_init = _init_locks.setdefault(key, threading.Lock())
+    # init NGOÀI _client_lock — trước đây giữ lock toàn cục suốt cả init (tới
+    # 60s): một account chết re-init là mọi request khác đứng chờ, kể cả
+    # request chỉ cần client ĐÃ cache.
+    with khoa_init:
+        with _client_lock:
+            cli = _clients.get(key)     # double-check: thread khác vừa init xong
+            if cli is not None:
+                return cli
         from gemini_webapi import GeminiClient
         cli = GeminiClient(secure_1psid=psid, secure_1psidts=psidts or None, watchdog_timeout=180, timeout=180)
-        _run(cli.init(timeout=180, auto_close=False, auto_refresh=True), timeout=60)
-        _clients[key] = cli
+        # Timeout ngoài (200) phải LỚN HƠN timeout trong (180): trước đây ngoài
+        # 60 < trong 180 nên future bị bỏ sau 60s nhưng coroutine init vẫn chạy
+        # tiếp trên loop nền với auto_refresh — client "mồ côi" xoay 1PSIDTS
+        # song song với lần init sau của chính profile đó (race hỏng cookie).
+        _run(cli.init(timeout=180, auto_close=False, auto_refresh=True), timeout=200)
+        with _client_lock:
+            _clients[key] = cli
         _record_auth_status(key, cli)
         _logger().info({"event": "gma_client_init", "psid_prefix": psid[:12],
                         "auth": _auth_status.get(key, (0, None))[1]})
         return cli
 
 
-def _drop_client(psid: str) -> None:
+def _drop_client(psid: str, profile: str | None = None) -> None:
+    """Bỏ client hỏng + cookie cache CỦA RIÊNG profile đó.
+
+    Trước đây chỗ này _cookie_cache.clear() cả pool: một profile hỏng auth là
+    mọi profile khoẻ phải gọi lại captcha-solver để lấy cookie (mỗi lần solver
+    mở một browser context — tốn CPU và giành lock với đăng nhập tay).
+    """
     with _client_lock:
         _clients.pop(psid[:32], None)
-    _cookie_cache.clear()
+    if profile:
+        _cookie_cache.pop(profile, None)
+        return
+    # Không biết profile → tìm entry mang đúng psid này (vẫn hẹp hơn clear cả pool)
+    for ten, (_ts, ck) in list(_cookie_cache.items()):
+        if ck.get("__Secure-1PSID") == psid:
+            _cookie_cache.pop(ten, None)
 
 
 def prewarm_clients() -> int:
@@ -1204,7 +1235,7 @@ def _bo_qua_guest(psid: str, profile: str) -> RuntimeError:
     Trả sẵn RuntimeError để caller giữ làm last_exc (đường stream trước đây
     `continue` tay không: cả pool toàn guest là stream kết thúc RỖNG im lặng)."""
     _logger().info({"event": "gma_skip_guest", "profile": profile})
-    _drop_client(psid)
+    _drop_client(psid, profile)
     try:
         from services.solver_selfheal import try_relogin, GEMINI
         sc = _solver_cfg()
@@ -1426,7 +1457,7 @@ def handle_gemini_web_api_chat(
                 ))
                 if _needs_relogin:
                     _logger().warning({"event": "gma_session_selfheal", "profile": profile, "error": str(exc)[:120]})
-                    _drop_client(psid)
+                    _drop_client(psid, profile)
                     _tu_chua_phien_nen(profile, exc)
                     last_exc = exc
                     continue
@@ -1545,7 +1576,7 @@ def handle_gemini_web_api_chat(
                             continue
                         if any(k in err for k in ("auth", "cookie", "1psid", "401", "403",
                                                   "1100", "unauthenticated", "failed to generate")):
-                            _drop_client(psid)
+                            _drop_client(psid, profile)
                             _tu_chua_phien_nen(profile, exc)
                             last_exc = exc
                             continue
@@ -1668,7 +1699,7 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
                 
             if any(k in err for k in ("auth", "cookie", "1psid", "401", "403")):
                 _logger().warning({"event": "gma_auth_retry", "profile": profile, "error": str(exc)[:120]})
-                _drop_client(psid)
+                _drop_client(psid, profile)
                 if profile and profile != "static-config":
                     try:
                         account_service.update_account(profile, {"status": "disabled"})
