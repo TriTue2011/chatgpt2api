@@ -1,7 +1,11 @@
 fastapi>=0.115
 uvicorn>=0.30
 ctranslate2>=4.0
-transformers>=4.44
+# GHIM DƯỚI 5: transformers 5.x không nạp nổi tokenizer T5 của EnViT5
+# ("argument 'vocab': 'dict' object cannot be converted to 'Sequence'" — đo thật
+# 13/08). Đã đối chiếu NLLB trên 4.57 và 5.15: bản dịch GIỐNG HỆT nhau, nên hạ
+# xuống không mất gì. Bỏ ghim là lần build sau tự nhảy lên 5.x và chết EnViT5.
+transformers>=4.44,<5
 sentencepiece>=0.2
 huggingface_hub>=0.24
 langdetect>=1.0.9

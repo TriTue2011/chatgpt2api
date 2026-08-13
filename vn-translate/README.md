@@ -5,15 +5,44 @@ thứ ba**. API **giống LibreTranslate** nên client nào nói chuyện đư�
 LibreTranslate là dùng được ngay — với gateway chatgpt2api chỉ cần đổi
 `TRANSLATE_URL`.
 
-## Hơn LibreTranslate/Argos ở đâu (đo thật 12/08/2026, CPU)
+## Hai máy dịch, chọn theo CẶP ngôn ngữ
 
-| | Argos (LibreTranslate) | vn-translate (NLLB-200) |
+| Cặp | Engine | Vì sao |
+|---|---|---|
+| **en↔vi** | **EnViT5** (VietAI, 275M, nhúng sẵn trong image) | Model chuyên một cặp thắng đậm model đa ngữ — số đo ở dưới |
+| ja / ko / zh… | NLLB-200 (tải về volume lần đầu) | EnViT5 chỉ biết en và vi |
+
+EnViT5 hỏng thì lượt đó tự rơi xuống NLLB, người dùng không thấy lỗi.
+
+### Số đo FLORES-200 devtest (300 câu, CPU 4 nhân, 13/08/2026)
+
+Đã chuẩn hoá NFC + thống nhất vị trí dấu thanh trước khi chấm — bỏ bước này
+thì BLEU tụt từ 100 xuống 5,5 dù bản dịch giống hệt bản mẫu. chrF++ đáng tin
+hơn BLEU với tiếng Việt vì không phụ thuộc cách tách từ.
+
+| Hướng | Engine | BLEU | chrF++ | ms/câu |
+|---|---|---|---|---|
+| en→vi | NLLB-200-600M | 38,45 | 57,54 | 1255 |
+| en→vi | **EnViT5** | **42,95** | **61,22** | **422** |
+| en→vi | OPUS-MT tc-bible-big 2024 | 42,07 | 60,42 | 373 |
+| vi→en | NLLB-200-600M | 36,32 | 59,59 | 1017 |
+| vi→en | **EnViT5** | 38,44 | **62,36** | 376 |
+| vi→en | OPUS-MT tc-bible-big 2024 | 38,78 | 62,35 | 302 |
+
+Chữ ký chấm điểm: `chrF2++ nrefs:1|case:mixed|eff:yes|nc:6|nw:2|space:no|version:2.6.0`,
+`BLEU nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0`. Cả EnViT5 lẫn
+OPUS-MT hơn NLLB có ý nghĩa thống kê (paired bootstrap, p ≤ 0,004). Giữa hai
+model đó thì chênh lệch nằm trong sai số; chọn EnViT5 vì **một model chạy được
+cả hai chiều** (OPUS-MT cần hai model, gấp đôi RAM và đĩa).
+
+### So với LibreTranslate/Argos (đo 12/08/2026)
+
+| | Argos (LibreTranslate) | vn-translate |
 |---|---|---|
 | "Hôm nay Hà Nội thời tiết thế nào ạ?" → en | "How are the weather today?" — **mất "Hà Nội"** | "How's the weather in Hanoi today?" |
 | vi→ja/ko/zh | bắc cầu 2 lần qua tiếng Anh | dịch **thẳng** một lượt |
 | Thuật ngữ "circuit breaker" | dịch bậy theo nghĩa phổ thông | **"áp-tô-mát"** — tra bảng, đúng 100% |
-| Model | 8 gói, 756 MB cho 5 thứ tiếng | 1 model ~600 MB, 200 ngôn ngữ |
-| Tốc độ câu ngắn | ~0,3–1s | ~0,5s |
+| Model | 8 gói, 756 MB cho 5 thứ tiếng | EnViT5 265 MB sẵn trong image + NLLB tải khi cần |
 
 **Tầng thuật ngữ chuyên ngành**: 5 bảng mẫu (điện tử, y tế, xây dựng, CNTT,
 pháp lý). Văn bản khớp ≥2 thuật ngữ của một ngành thì bảng ngành đó được áp;
@@ -35,14 +64,16 @@ dịch lỗi 2 lần liên tiếp thì tự nhảy sang model kế.
 
 ```bash
 docker compose up -d          # trong thư mục vn-translate/
-# lần đầu tải model ~600 MB vào volume; /health sống ngay, /translate sẵn sàng sau vài phút
+# en↔vi dịch được NGAY (EnViT5 nằm trong image); lần đầu dịch ja/ko/zh mới tải
+# NLLB ~600 MB vào volume
 curl -s -X POST http://127.0.0.1:5000/translate -H 'Content-Type: application/json' \
   -d '{"q":"xin chào","source":"vi","target":"en"}'
 ```
 
 Biến môi trường: `TT_LANGS` (mặc định `en,vi,ja,ko,zh-Hans` — thêm mã có trong
-`app/engine.py::ISO2FLORES` là xong, không tải thêm gì), `TT_MODELS`,
-`TT_THREADS`, `TT_GLOSSARY=0` để tắt tầng thuật ngữ.
+`app/engine.py::ISO2FLORES` là xong, không tải thêm gì), `TT_MODELS` (thang model
+NLLB), `TT_THREADS`, `TT_GLOSSARY=0` để tắt tầng thuật ngữ, `TT_ENVIT5_DIR=""`
+để tắt EnViT5 và cho mọi cặp quay về NLLB.
 
 ## Nối vào chatgpt2api
 
@@ -60,4 +91,7 @@ lệnh /dich, dịch tệp/ảnh của bot chạy như cũ, chất lượng mớ
 chưa có ở v1: gateway tự rơi về đường trích-chữ, docx sẽ trả bản dịch dạng chữ/.docx
 do gateway tự dựng.)
 
-Giấy phép model NLLB: CC-BY-NC-4.0 — dùng cá nhân/nội bộ, không bán dịch vụ dịch.
+Giấy phép model: EnViT5 **OpenRAIL** (thương mại được, trừ danh sách mục đích bị
+cấm); NLLB **CC-BY-NC-4.0** — cá nhân/nội bộ, không bán dịch vụ dịch. Muốn sạch
+hoàn toàn về giấy phép thì tắt nhánh NLLB (`TT_LANGS="en,vi"`), khi đó chỉ còn
+EnViT5.

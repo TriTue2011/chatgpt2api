@@ -20,7 +20,6 @@ import logging
 import os
 import re
 import threading
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +65,10 @@ def co_chu(s: str) -> bool:
     """
     return any(c.isalpha() for c in s)
 
+
+#: EnViT5 học trên văn bản đã tách từ kiểu Moses nên nhả ra dạng rời: "I ca n't
+#: take", "the school 's gate". Dán lại các đuôi rút gọn tiếng Anh.
+_DINH_LAI = re.compile(r"\s+(n't|'s|'re|'ve|'ll|'d|'m)\b")
 
 #: Dòng chỉ gồm 2+ từ TOÀN CHỮ CÁI, không dấu câu, không chữ số.
 _DANG_TEN = re.compile(r"^[^\W\d_]+(?: [^\W\d_]+)+$")
@@ -168,7 +171,23 @@ class KhongCoNgonNgu(ValueError):
 
 
 class Engine:
-    """Bọc CTranslate2 + tokenizer, kèm thang model tự chuyển khi lỗi."""
+    """Bọc CTranslate2 + tokenizer, kèm thang model tự chuyển khi lỗi.
+
+    HAI máy dịch, chọn theo CẶP ngôn ngữ:
+
+    - ``en↔vi`` → **EnViT5** (VietAI, 275M, nhúng sẵn trong image). Model
+      chuyên đúng một cặp nên thắng đậm model đa ngữ: trên bộ test PhoMT,
+      EnViT5 hơn M2M100 — cùng họ kiến trúc với NLLB và to gấp 4,4 lần —
+      khoảng 9,5 BLEU cả hai chiều, và vượt cả Google Translate.
+    - cặp còn lại (ja/ko/zh…) → **NLLB-200**, vì EnViT5 chỉ biết en và vi.
+
+    EnViT5 hỏng thì lượt đó rơi xuống NLLB chứ không báo lỗi cho người dùng.
+
+    Vì sao không bỏ hẳn NLLB: đo thật 13/08 trên chính câu chủ máy gửi, NLLB
+    dịch việt→anh nuốt cả vế sau và có câu ngược hẳn nghĩa ("Anh cho em xin
+    lại số tài khoản" → "I'll give you the account number"). Nhưng nó là thứ
+    duy nhất phủ được nhật/hàn/trung nên vẫn giữ cho các cặp đó.
+    """
 
     def __init__(self) -> None:
         self.models = [m.strip() for m in
@@ -181,6 +200,57 @@ class Engine:
         self._tok = None           # transformers tokenizer
         self._lock = threading.Lock()
         self.model_dang_dung = ""
+        # EnViT5 — đường chính cho en↔vi. Đặt TT_ENVIT5_DIR="" để tắt hẳn,
+        # mọi cặp quay về NLLB như bản cũ.
+        self.envit5_dir = os.getenv("TT_ENVIT5_DIR", "/opt/envit5").strip()
+        self._e_tr = None
+        self._e_tok = None
+        self._e_hong = False       # đã thử nạp và hỏng → thôi thử lại
+
+    # ── EnViT5 (en↔vi) ──────────────────────────────────────────────────────
+    def _co_envit5(self) -> bool:
+        """Nạp EnViT5 nếu chưa nạp. Thiếu/hỏng thì trả False, KHÔNG raise —
+        gọi xong lượt dịch vẫn phải chạy được bằng NLLB."""
+        if self._e_tr is not None:
+            return True
+        if self._e_hong or not self.envit5_dir or not os.path.isdir(self.envit5_dir):
+            return False
+        try:
+            import ctranslate2
+            import transformers
+            self._e_tr = ctranslate2.Translator(
+                self.envit5_dir, device="cpu", inter_threads=1,
+                intra_threads=self.threads)
+            self._e_tok = transformers.AutoTokenizer.from_pretrained(self.envit5_dir)
+            logger.info("đã nạp EnViT5 cho en↔vi: %s", self.envit5_dir)
+            return True
+        except Exception as exc:
+            self._e_hong = True
+            self._e_tr = self._e_tok = None
+            logger.warning("nạp EnViT5 lỗi, en↔vi quay về NLLB: %s", str(exc)[:200])
+            return False
+
+    def _dich_envit5(self, manh: list[str], nguon: str, dich: str) -> list[str]:
+        """EnViT5 nhận tiền tố ngôn ngữ NGUỒN trong chính văn bản ("vi: …") và
+        trả về kèm tiền tố đích ("en: …") — khác hẳn NLLB (token FLORES)."""
+        vao = [self._e_tok.convert_ids_to_tokens(self._e_tok.encode(f"{nguon}: {m}"))
+               for m in manh]
+        kq = self._e_tr.translate_batch(vao, beam_size=4, max_batch_size=16,
+                                        batch_type="examples")
+        ra: list[str] = []
+        for r in kq:
+            s = self._e_tok.decode(
+                self._e_tok.convert_tokens_to_ids(r.hypotheses[0]),
+                skip_special_tokens=True).strip()
+            for tien_to in (f"{dich}: ", "en: ", "vi: "):
+                if s.startswith(tien_to):
+                    s = s[len(tien_to):]
+                    break
+            # Model hay bọc cả câu trong ngoặc kép dù bản gốc không có.
+            if len(s) > 1 and s[0] == '"' == s[-1] and '"' not in s[1:-1]:
+                s = s[1:-1]
+            ra.append(_DINH_LAI.sub(r"\1", s).strip())
+        return ra
 
     # ── nạp / chuyển model ──────────────────────────────────────────────────
     def _nap_mot(self, repo: str) -> None:
@@ -223,11 +293,17 @@ class Engine:
         self._nap()
 
     def san_sang(self) -> bool:
-        return self._tr is not None
+        return self._tr is not None or self._e_tr is not None
 
     def khoi_dong(self) -> None:
+        """Nạp sẵn EnViT5 (cặp dùng nhiều nhất, nằm sẵn trong image nên nhanh).
+
+        NLLB nạp LƯỜI — chỉ khi có người dịch nhật/hàn/trung, vì nó phải tải
+        600 MB từ mạng. Trước đây nạp sẵn NLLB là bắt mọi lần khởi động chờ
+        tải, kể cả khi cả ngày chỉ dịch anh↔việt.
+        """
         with self._lock:
-            if self._tr is None:
+            if not self._co_envit5() and self._tr is None:
                 self._nap()
 
     # ── dịch ────────────────────────────────────────────────────────────────
@@ -241,11 +317,28 @@ class Engine:
             raise KhongCoNgonNgu(f"{nguon} is not supported")
         if dich not in ISO2FLORES:
             raise KhongCoNgonNgu(f"{dich} is not supported")
+
+        # Mổ dòng MỘT LẦN, dùng chung cho cả hai máy dịch: dòng trống và tên
+        # riêng không được lọt vào model nào cả.
+        khung, can = _khung(texts)
+        if not can:
+            return list(texts)
+
+        if {nguon, dich} == {"en", "vi"}:
+            with self._lock:
+                if self._co_envit5():
+                    try:
+                        return _ghep(khung, self._dich_envit5(can, nguon, dich))
+                    except Exception as exc:
+                        # Rơi xuống NLLB ngay trong lượt này: người dùng thà
+                        # nhận bản dịch kém hơn còn hơn nhận thông báo lỗi.
+                        logger.warning("EnViT5 lỗi, lượt này dùng NLLB: %s",
+                                       str(exc)[:200])
         with self._lock:
             if self._tr is None:
                 self._nap()
             try:
-                ra = self._dich_khoa(texts, nguon, dich)
+                ra = _ghep(khung, self._dich_nllb(can, nguon, dich))
                 self.loi_lien_tiep = 0
                 return ra
             except Exception as exc:
@@ -255,30 +348,25 @@ class Engine:
                 if self.loi_lien_tiep < NGUONG_LOI:
                     raise
                 self._chuyen_model()
-                ra = self._dich_khoa(texts, nguon, dich)
+                ra = _ghep(khung, self._dich_nllb(can, nguon, dich))
                 self.loi_lien_tiep = 0
                 return ra
 
-    def _dich_khoa(self, texts: list[str], nguon: str, dich: str) -> list[str]:
-        """Thân dịch thật — gọi khi ĐÃ giữ _lock và model đã nạp."""
+    def _dich_nllb(self, manh: list[str], nguon: str, dich: str) -> list[str]:
+        """Thân dịch NLLB — gọi khi ĐÃ giữ _lock và model đã nạp."""
         fl_nguon, fl_dich = ISO2FLORES[nguon], ISO2FLORES[dich]
         self._tok.src_lang = fl_nguon
-
-        khung, can = _khung(texts)
-        if not can:
-            return list(texts)
-
-        vao = [self._tok.convert_ids_to_tokens(self._tok.encode(m)) for m in can]
+        vao = [self._tok.convert_ids_to_tokens(self._tok.encode(m)) for m in manh]
         kq = self._tr.translate_batch(
             vao, target_prefix=[[fl_dich]] * len(vao),
             beam_size=4, max_batch_size=16, batch_type="examples",
         )
-        ra_manh: list[str] = []
+        ra: list[str] = []
         for r in kq:
             tokens = r.hypotheses[0][1:]  # bỏ token ngôn ngữ đích ở đầu
-            ra_manh.append(self._tok.decode(
+            ra.append(self._tok.decode(
                 self._tok.convert_tokens_to_ids(tokens), skip_special_tokens=True))
-        return _ghep(khung, ra_manh)
+        return ra
 
 
 engine = Engine()
