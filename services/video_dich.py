@@ -491,9 +491,13 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
     if not _ma_video(url):
         return {"ok": False, "error": LOI_CHUA_CO_TIENG}
 
-    dich = str(target or "").lower() or "vi"
+    # Đích cuối chỉ chốt được SAU khi biết tiếng của phụ đề (dạng "cap:xx"
+    # phụ thuộc nguồn); ở bước xếp thứ tự track chỉ cần một gợi ý — lấy vi.
+    goi_y = str(target or "").lower()
+    if not goi_y or goi_y.startswith("cap:"):
+        goi_y = "vi"
     try:
-        doan, nguon = lay_phu_de(url, dich)
+        doan, nguon = lay_phu_de(url, goi_y)
     except Exception as exc:
         logger.warning("lấy phụ đề %s lỗi: %s", url, str(exc)[:200])
         return {"ok": False, "error": str(exc)[:300]}
@@ -507,6 +511,7 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
                          f"{TRAN_GIAY // 60} phút mà em dịch được"}
 
     ma_nguon = ts._chuan_ma(nguon.split("-")[0], ts.lang_codes()) or nguon.split("-")[0]
+    dich = ts.giai_ma_target(ma_nguon, target)
     if ma_nguon == dich:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
 
@@ -587,7 +592,7 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any
         return {"ok": False, "error": f"nghe tệp lỗi: {str(exc)[:200]}"}
 
     doan = [Doan(c.bat_dau, c.ket_thuc, c.chu) for c in cau]
-    dich = str(target or "").lower() or ts.chon_dich_sang(nguon)
+    dich = ts.giai_ma_target(nguon, target)
     if dich != nguon and not ts.is_configured():
         return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
     return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc)

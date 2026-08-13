@@ -292,6 +292,25 @@ def chon_dich_sang(nguon: str) -> str:
     return EN if str(nguon or "").lower() == VI else VI
 
 
+def giai_ma_target(nguon: str, target: str = "") -> str:
+    """Mã đích từ lựa chọn người dùng + ngôn ngữ nguồn ĐÃ nhận diện.
+
+    Ba dạng ``target`` (tab Dịch web chọn theo CẶP, chốt 14/08):
+
+    - ``""``        → cặp Việt ↔ Anh mặc định (``chon_dich_sang``).
+    - ``"cap:zh"``  → cặp Việt ↔ Trung: nguồn tiếng Việt thì sang ``zh``,
+      còn lại về ``vi``. Tương tự ``cap:ja``, ``cap:ko``, ``cap:en``.
+    - mã trơ (``"en"``) → như cũ, dành cho bot chat "/dich tiếng anh …".
+    """
+    t = str(target or "").strip().lower()
+    if not t:
+        return chon_dich_sang(nguon)
+    if t.startswith("cap:"):
+        kia = t[4:] or EN
+        return kia if str(nguon or "").lower() == VI else VI
+    return t
+
+
 # ── Dịch TỆP ────────────────────────────────────────────────────────────────
 #: Đuôi tệp ``/translate_file`` xử lý được, đọc từ argos-translate-files: Txt,
 #: Odt, Odp, Docx, Pptx, Epub, Html. Đây là bản DỰ PHÒNG khi không đọc được
@@ -508,7 +527,7 @@ def dich_tep(path: str, name: str, target: str = "", *,
             # Cần biết ngôn ngữ tệp TRƯỚC khi gọi để chọn đích. Máy chủ cũng tự
             # nhận diện được với source="auto", nhưng nó không chọn đích thay ta.
             nguon, _ = detect(_trich_chu_tep(path)[:3000] or ten)
-            dich = str(target or "").lower() or chon_dich_sang(nguon)
+            dich = giai_ma_target(nguon, target)
             if nguon and nguon == dich:
                 return {"ok": False, "error": f"tệp đã là tiếng `{dich}`"}
             data, ten_moi = translate_file(path, ten, dich, nguon or "auto")
@@ -518,7 +537,7 @@ def dich_tep(path: str, name: str, target: str = "", *,
         if not chu:
             return {"ok": False, "error": "không đọc được nội dung tệp"}
         nguon, _ = detect(chu[:5000])
-        dich = str(target or "").lower() or chon_dich_sang(nguon)
+        dich = giai_ma_target(nguon, target)
         if nguon and nguon == dich:
             return {"ok": False, "error": f"tệp đã là tiếng `{dich}`"}
         ban_dich = translate(chu, dich, nguon or "auto")
@@ -584,7 +603,7 @@ def dich_anh(image_bytes: bytes, target: str = "", *, channel: str = "",
         return {"ok": False, "error": "không thấy chữ nào trong ảnh"}
     try:
         nguon, _ = detect(chu[:5000])
-        dich = str(target or "").lower() or chon_dich_sang(nguon)
+        dich = giai_ma_target(nguon, target)
         ban_dich = chu if (nguon and nguon == dich) else translate(
             chu, dich, nguon or "auto")
     except LoiDich as exc:

@@ -60,6 +60,9 @@ class DichChuRequest(BaseModel):
 class DichTepRequest(BaseModel):
     viec_id: str
     target: str = ""
+    #: Riêng video/âm thanh: "phu-de" (mặc định, .srt) hay "chu" (văn bản
+    #: dịch thuần — người dùng chỉ cần lời thoại, không cần mốc thời gian).
+    kieu_ra: str = "phu-de"
 
 
 def _don_cu() -> None:
@@ -120,21 +123,32 @@ def _chay_nen(viec_id: str, ham) -> None:
     threading.Thread(target=_lo, daemon=True, name=f"dich-{viec_id}").start()
 
 
-def _xong_phu_de(viec_id: str, r: dict[str, Any]) -> None:
-    """Kết quả ``dich_video`` / ``dich_tep_video`` → sổ việc."""
+def _xong_phu_de(viec_id: str, r: dict[str, Any], kieu_ra: str = "phu-de") -> None:
+    """Kết quả ``dich_video`` / ``dich_tep_video`` → sổ việc.
+
+    ``kieu_ra="chu"``: người dùng chỉ cần LỜI THOẠI đã dịch, không cần mốc
+    thời gian — trả văn bản + tệp .txt, không trả .srt.
+    """
     from services import video_dich as vd
 
     if not r.get("ok"):
         _cap_nhat(viec_id, trang_thai="loi", loi=vd.bao_cao(r), luc=time.time())
         return
-    srt = r["srt"].decode("utf-8")
-    # Kèm bản chữ-trên cho video đã có chữ in cứng ở đáy hình (VLC/MX hiểu).
-    ten_tren = f"phu-de-tren.{r['dich']}.srt"
-    tep = _luu_ket_tep([(r["ten"], r["srt"]),
-                        (ten_tren, vd.srt_chu_tren(srt).encode("utf-8"))])
+    if kieu_ra == "chu":
+        tep = _luu_ket_tep([(f"loi-thoai.{r['dich']}.txt",
+                             r["chu"].encode("utf-8"))])
+        ket_qua = {"kieu": "chu", "text": r["chu"][:TRAN_CHU_XEM],
+                   "nguon": r["nguon"], "dich": r["dich"], "tep": tep}
+    else:
+        srt = r["srt"].decode("utf-8")
+        # Kèm bản chữ-trên cho video đã có chữ in cứng ở đáy hình (VLC/MX hiểu).
+        ten_tren = f"phu-de-tren.{r['dich']}.srt"
+        tep = _luu_ket_tep([(r["ten"], r["srt"]),
+                            (ten_tren, vd.srt_chu_tren(srt).encode("utf-8"))])
+        ket_qua = {"kieu": "phu-de", "text": r["chu"][:TRAN_CHU_XEM],
+                   "nguon": r["nguon"], "dich": r["dich"], "tep": tep}
     _cap_nhat(viec_id, trang_thai="xong", luc=time.time(), bao_cao=vd.bao_cao(r),
-              ket_qua={"kieu": "phu-de", "text": r["chu"][:TRAN_CHU_XEM],
-                       "nguon": r["nguon"], "dich": r["dich"], "tep": tep})
+              ket_qua=ket_qua)
 
 
 def _xong_chu_hoac_tep(viec_id: str, ket: dict[str, Any], ten: str) -> None:
@@ -187,7 +201,7 @@ def create_router() -> APIRouter:
 
         try:
             nguon, _ = ts.detect(nd[:5000])
-            dich = (body.target or "").lower() or ts.chon_dich_sang(nguon)
+            dich = ts.giai_ma_target(nguon, body.target)
             if nguon and nguon == dich:
                 raise HTTPException(
                     400, detail={"error": f"Văn bản đã là tiếng `{dich}`"})
@@ -258,6 +272,7 @@ def create_router() -> APIRouter:
             v["buoc"] = "đang chuẩn bị…"
             ten, duong = v["ten"], v["duong"]
         viec_id, target = body.viec_id, body.target
+        kieu_ra = "chu" if body.kieu_ra == "chu" else "phu-de"
 
         from services import video_asr as va
         from services import video_dich as vd
@@ -271,7 +286,7 @@ def create_router() -> APIRouter:
                     r = vd.dich_tep_video(duong, ten, target)
                 finally:
                     Path(duong).unlink(missing_ok=True)
-                _xong_phu_de(viec_id, r)
+                _xong_phu_de(viec_id, r, kieu_ra)
 
             _chay_nen(viec_id, _video)
         elif thap.endswith(_DUOI_ANH):

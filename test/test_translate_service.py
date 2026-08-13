@@ -368,3 +368,20 @@ def test_truc_dich_bat_duoc_bang_bien_moi_truong(monkeypatch):
     assert tp.dang_bat() is False
     monkeypatch.setenv("TRANSLATE_PIVOT", "1")
     assert tp.dang_bat() is True
+
+
+# ── Cặp ngôn ngữ của tab Dịch web ───────────────────────────────────────────
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("nguon, target, cho_doi", [
+    ("vi", "", "en"), ("en", "", "vi"), ("zh", "", "vi"),   # mặc định Việt↔Anh
+    ("vi", "cap:zh", "zh"), ("zh", "cap:zh", "vi"),          # cặp Việt↔Trung
+    ("en", "cap:zh", "vi"),   # nguồn NGOÀI cặp → về tiếng Việt
+    ("vi", "cap:ja", "ja"), ("ja", "cap:ja", "vi"),
+    ("vi", "cap:ko", "ko"), ("ko", "cap:ko", "vi"),
+    ("vi", "en", "en"), ("en", "vi", "vi"),                  # mã trơ giữ nguyên
+    ("vi", "cap:", "en"),                                     # cặp rỗng → như en
+])
+def test_giai_ma_target_theo_cap(nguon, target, cho_doi):
+    assert ts.giai_ma_target(nguon, target) == cho_doi

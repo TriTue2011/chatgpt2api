@@ -15,14 +15,18 @@ const TRAN_TEP = 4 * 1024 * 1024 * 1024;
 const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,"
   + ".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
 
+/** Chọn theo CẶP, máy tự nhận diện chiều: nguồn tiếng Việt thì dịch sang
+ *  tiếng kia, ngược lại dịch về tiếng Việt. Video/âm thanh: bộ nghe hiện có
+ *  tiếng Việt + Anh; Trung/Nhật/Hàn mới áp cho chữ, ảnh, tài liệu, link. */
 const DICH_SANG = [
-  { value: "", label: "Tự chọn (Việt ↔ Anh)" },
-  { value: "vi", label: "Tiếng Việt" },
-  { value: "en", label: "Tiếng Anh" },
-  { value: "ja", label: "Tiếng Nhật" },
-  { value: "ko", label: "Tiếng Hàn" },
-  { value: "zh", label: "Tiếng Trung" },
+  { value: "", label: "Việt ↔ Anh (tự nhận diện)" },
+  { value: "cap:zh", label: "Việt ↔ Trung" },
+  { value: "cap:ja", label: "Việt ↔ Nhật" },
+  { value: "cap:ko", label: "Việt ↔ Hàn" },
 ];
+
+const DUOI_NGHE = [".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp",
+  ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"];
 
 type KetQua = {
   kieu: string;                 // "chu" | "tep" | "phu-de"
@@ -43,6 +47,7 @@ function DichPageContent() {
   const [chu, setChu] = useState("");
   const [target, setTarget] = useState("");
   const [tep, setTep] = useState<File | null>(null);
+  const [kieuRa, setKieuRa] = useState("phu-de");
   const [dangChay, setDangChay] = useState(false);
   const [tienDo, setTienDo] = useState(0);       // % upload; -1 = không upload
   const [buoc, setBuoc] = useState("");
@@ -120,7 +125,7 @@ function DichPageContent() {
         setTienDo(Math.round(((i + 1) / tong) * 100));
       }
       setTienDo(-1);
-      await request.post("/api/dich/tep", { viec_id: viecId, target });
+      await request.post("/api/dich/tep", { viec_id: viecId, target, kieu_ra: kieuRa });
       setBuoc("đang xử lý…");
       await thamDo(viecId);
     } catch (e) {
@@ -183,6 +188,21 @@ function DichPageContent() {
         </button>
         <input ref={chonTep} type="file" accept={DUOI_NHAN} className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) setTep(f); e.target.value = ""; }} />
+        {tep && DUOI_NGHE.some((d) => tep.name.toLowerCase().endsWith(d)) && (
+          <div className="flex items-center gap-5 text-sm">
+            <span className="text-[var(--muted-foreground)]">Kết quả:</span>
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input type="radio" name="kieu-ra" checked={kieuRa === "phu-de"}
+                onChange={() => setKieuRa("phu-de")} disabled={dangChay} />
+              Phụ đề (.srt, có mốc thời gian)
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input type="radio" name="kieu-ra" checked={kieuRa === "chu"}
+                onChange={() => setKieuRa("chu")} disabled={dangChay} />
+              Bản chữ (lời thoại đã dịch)
+            </label>
+          </div>
+        )}
         <div className="flex items-center justify-end gap-3">
           {tienDo >= 0 && dangChay && (
             <span className="text-sm text-[var(--muted-foreground)]">đang tải lên {tienDo}%</span>

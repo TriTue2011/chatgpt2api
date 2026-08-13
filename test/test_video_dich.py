@@ -186,11 +186,23 @@ def test_video_qua_dai_thi_tu_choi(monkeypatch):
     assert r["ok"] is False and "quá mức" in r["error"]
 
 
-def test_phu_de_da_dung_tieng_dich_thi_bao(monkeypatch):
+def test_phu_de_tieng_viet_mac_dinh_dich_sang_anh(monkeypatch):
+    """Không chỉ định đích thì theo CẶP Việt ↔ Anh — phụ đề vi dịch sang en,
+    nhất quán với /dich chữ (đổi hành vi 14/08: trước đây báo lỗi vô ích
+    "phụ đề đã là tiếng vi")."""
+    monkeypatch.setattr(vd, "lay_phu_de", _phu_de_gia(
+        [vd.Doan(0.0, 2.0, "xin chào")], ma="vi"))
+    with install_translate(FakeTranslate(lang="vi", codes=("en", "vi"))):
+        r = vd.dich_video("https://youtu.be/aircAruvnKk")
+    assert r["ok"] is True and r["nguon"] == "vi" and r["dich"] == "en"
+
+
+def test_phu_de_da_dung_tieng_dich_chi_dinh_tro_thi_bao(monkeypatch):
+    """Chỉ định TRƠ đúng tiếng của phụ đề thì vẫn phải báo — không có gì để dịch."""
     monkeypatch.setattr(vd, "lay_phu_de", _phu_de_gia(
         [vd.Doan(0.0, 2.0, "xin chào")], ma="vi"))
     with install_translate(FakeTranslate(codes=("en", "vi"))):
-        r = vd.dich_video("https://youtu.be/aircAruvnKk")
+        r = vd.dich_video("https://youtu.be/aircAruvnKk", target="vi")
     assert r["ok"] is False and "đã là tiếng" in r["error"]
 
 
