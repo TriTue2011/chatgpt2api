@@ -2514,6 +2514,18 @@ def _process_ai(ev: dict) -> None:
                      co_nut_chon=bool(_out_fb.get("choices")))
         return
 
+    # Lệnh /dich — dịch máy trong stack, do CODE làm, KHÔNG qua LLM (hỏi model
+    # dịch thì tốn hạn mức, chậm, và tin dài bị cắt bớt — đo thật 13/08 khi
+    # khối này còn thiếu: /dich rơi vào LLM). Cùng nếp /id, /facebook: đứng
+    # TRƯỚC cổng tag để trong nhóm gõ đích danh lệnh là chạy. So trên CHỮ GỐC
+    # (không dùng _low) — dịch phải giữ nguyên chữ hoa.
+    if text:
+        from services import translate_service as _ts
+        if _ts.la_lenh_dich(text):
+            send_message(thread_id, _ts.lenh_dich(text), thread_type,
+                         account=acc_id, rich=True)
+            return
+
     # Khoá chờ — tính SỚM vì cổng tag bên dưới cần tra nó.
     pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
 

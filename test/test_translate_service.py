@@ -32,6 +32,8 @@ def _co_may_chu_dich(monkeypatch):
     "/dich@BenBapBot hello",
     "@BenBapBot /dich hello",
     "  /dich  hello  ",
+    # Lệnh rồi XUỐNG DÒNG dán cả khối — khuôn tin thật 13/08 trên Zalo cá nhân.
+    "/dich\naction: ai_task.generate_data\ndata:\n  task_name: Generate content",
 ])
 def test_nhan_moi_dang_lenh_dich(text):
     assert ts.la_lenh_dich(text) is True
