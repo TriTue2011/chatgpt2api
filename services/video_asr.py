@@ -171,51 +171,80 @@ def gom_khung(tokens: list[str], moc: list[float], goc: float) -> list[Cau]:
     return ra
 
 
+#: Mỗi cửa sổ dò tối đa ngần này giây, gom đủ ~8 giây quanh mỗi mốc lấy mẫu.
+_DO_CUA_SO = 10.0
+_DO_MOI_MOC = 8.0
+#: Dưới ngần này token coi như model không nghe ra gì (nhạc nền, im lặng).
+_TOKEN_TOI_THIEU = 5
+#: Model en phải tự tin hơn model vi quá mức này mới thắng — máy ưu tiên tiếng
+#: Việt, và video Việt chêm từ tiếng Anh là chuyện thường.
+_CHENH_THANG = 0.1
+
+
 def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]]) -> str:
     """Video nói tiếng gì — vi hay en.
 
-    Nghe ~20 giây đầu bằng model TIẾNG VIỆT rồi hỏi langdetect. Model vi nghe
-    tiếng Anh vẫn nhả ra âm tiết Việt-ish nên không tin một chiều: nếu kết quả
-    không ra "vi" thì nghe lại bằng model EN; model en nhận ra tiếng Anh thật
-    thì langdetect bảo "en". Cả hai mù mờ thì lấy vi — máy này ưu tiên tiếng
-    Việt và model vi là model chính.
+    Nghe THỬ vài mẫu bằng CẢ HAI model rồi so độ tự tin giải mã
+    (``ys_log_probs`` của transducer): model đúng ngôn ngữ tự tin ~-0.04,
+    model sai ~-0.5÷-0.6, nhạc nền ~-1.7 hoặc im lặng — đo thật 13/08 trên
+    video tiếng Anh (Zootopia) và giọng TTS tiếng Việt, hai phía cách nhau
+    hơn 10 lần nên không cần thư viện đoán ngôn ngữ nào nữa. Bản trước dùng
+    langdetect chết từ trứng nước: thư viện không có trong image, cộng với
+    mẫu "20 giây đầu" dính ngay nhạc mở màn → mọi tệp rơi về mặc định vi
+    (video Zootopia 25 phút bị nghe bằng model Việt, đo thật 13/08).
+
+    Mẫu lấy RẢI ở 1/4, 1/2 và 3/4 danh sách đoạn tiếng — video hay mở màn
+    bằng nhạc, giữa thân video mới chắc là lời nói.
     """
     from services.voice import engines as eng
 
-    lay: list = []
-    tong = 0.0
-    for b, k in doan:
-        lay.append(mau[int(b * rate):int(k * rate)])
-        tong += k - b
-        if tong >= 20:
-            break
-    import numpy as np
+    cua_so: list = []
+    da_lay: set[int] = set()
+    for phan in (0.25, 0.5, 0.75):
+        i = min(len(doan) - 1, int(len(doan) * phan))
+        tong = 0.0
+        while i < len(doan) and tong < _DO_MOI_MOC:
+            if i not in da_lay:
+                da_lay.add(i)
+                b, k = doan[i]
+                k = min(k, b + _DO_CUA_SO)
+                cua_so.append(mau[int(b * rate):int(k * rate)])
+                tong += k - b
+            i += 1
 
-    thu = np.concatenate(lay) if lay else mau[: rate * 20]
-
-    def _doan_ngon_ngu(lang: str) -> str:
+    def _tu_tin(lang: str) -> tuple[float, int]:
+        """(trung bình log-prob, số token) khi nghe các cửa sổ mẫu."""
+        du: list[float] = []
         try:
             # Lấy recognizer TRƯỚC khi giữ khoá: _get_recognizer tự xin
             # _stt_lock bên trong, mà khoá này không tái nhập — gọi lồng là
             # tự khoá chết mình (treo thật 13/08, đúng 10 phút timeout).
             rec = eng._get_recognizer(lang)
-            with eng._stt_lock:
-                tokens, _ = _nghe_mot_doan(rec, thu, rate)
-            chu = "".join(tokens).strip()
-            if len(chu) < 8:
-                return ""
-            from langdetect import DetectorFactory, detect
-            DetectorFactory.seed = 0
-            return detect(chu.lower())
+            for thu in cua_so:
+                with eng._stt_lock:
+                    stream = rec.create_stream()
+                    stream.accept_waveform(rate, thu)
+                    rec.decode_stream(stream)
+                    du.extend(float(x) for x in
+                              (getattr(stream.result, "ys_log_probs", None) or []))
         except Exception as exc:
             logger.info("dò ngôn ngữ bằng model %s lỗi: %s", lang, str(exc)[:120])
-            return ""
+            return -9.9, 0
+        if not du:
+            return -9.9, 0
+        return sum(du) / len(du), len(du)
 
-    if _doan_ngon_ngu("vi") == "vi":
-        return "vi"
-    if _doan_ngon_ngu("en") == "en":
-        return "en"
-    return "vi"
+    vi_tb, vi_n = _tu_tin("vi")
+    en_tb, en_n = _tu_tin("en")
+    if en_n < _TOKEN_TOI_THIEU:
+        ra = "vi"
+    elif vi_n < _TOKEN_TOI_THIEU:
+        ra = "en"
+    else:
+        ra = "en" if en_tb > vi_tb + _CHENH_THANG else "vi"
+    logger.info("dò ngôn ngữ: vi %.3f (%d token) / en %.3f (%d token) → %s",
+                vi_tb, vi_n, en_tb, en_n, ra)
+    return ra
 
 
 def nghe_tep(duong: str, tran_giay: float = 0) -> tuple[list[Cau], str, float]:

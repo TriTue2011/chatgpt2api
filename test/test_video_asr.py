@@ -109,6 +109,116 @@ def test_gom_khung_lech_so_luong_thi_bo():
     assert va.gom_khung([], [], 0.0) == []
 
 
+# ── Dò ngôn ngữ bằng độ tự tin hai model ────────────────────────────────────
+#
+# Đo thật 13/08 trên máy chủ: model ĐÚNG ngôn ngữ tự tin ~-0.04, model SAI
+# ~-0.5÷-0.6, nhạc nền ~-1.7 hoặc im lặng. Test dùng đúng các con số đo được.
+
+
+def _lap_engines_gia(monkeypatch, ket_qua, ghi_nhan=None):
+    """Cắm module engines GIẢ: ``ket_qua[lang] = (logprob, token mỗi cửa sổ)``."""
+    import sys
+    import threading
+    import types
+
+    eng = types.ModuleType("services.voice.engines")
+    eng._stt_lock = threading.Lock()
+
+    class _Rec:
+        def __init__(self, lang):
+            self.lang = lang
+
+        def create_stream(self):
+            lp, n = ket_qua[self.lang]
+
+            def _nhan(rate, thu):
+                if ghi_nhan is not None:
+                    ghi_nhan.append((self.lang, thu))
+
+            return types.SimpleNamespace(
+                accept_waveform=_nhan,
+                result=types.SimpleNamespace(ys_log_probs=[lp] * n))
+
+        def decode_stream(self, stream):
+            pass
+
+    eng._get_recognizer = lambda lang: _Rec(lang)
+    goi = types.ModuleType("services.voice")
+    goi.engines = eng
+    monkeypatch.setitem(sys.modules, "services.voice", goi)
+    monkeypatch.setitem(sys.modules, "services.voice.engines", eng)
+
+
+_RATE_GIA = 100  # đủ để chỉ số lát cắt ra nguyên, mảng test bé
+
+
+def _doan_deu(so: int):
+    """``so`` đoạn tiếng, mỗi đoạn 1 giây, nối liền nhau."""
+    return [(float(i), float(i + 1)) for i in range(so)]
+
+
+def test_chon_en_khi_model_en_tu_tin_hon(monkeypatch):
+    _lap_engines_gia(monkeypatch, {"vi": (-0.518, 4), "en": (-0.042, 4)})
+    mau = np.zeros(40 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40)) == "en"
+
+
+def test_chon_vi_khi_model_vi_tu_tin_hon(monkeypatch):
+    _lap_engines_gia(monkeypatch, {"vi": (-0.043, 4), "en": (-0.621, 6)})
+    mau = np.zeros(40 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40)) == "vi"
+
+
+def test_suyt_soat_thi_uu_tien_tieng_viet(monkeypatch):
+    """Video Việt chêm từ Anh là chuyện thường — en phải hơn RÕ mới thắng."""
+    _lap_engines_gia(monkeypatch, {"vi": (-0.35, 4), "en": (-0.30, 4)})
+    mau = np.zeros(40 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40)) == "vi"
+
+
+def test_ca_hai_cam_lang_thi_mac_dinh_vi(monkeypatch):
+    _lap_engines_gia(monkeypatch, {"vi": (0.0, 0), "en": (0.0, 0)})
+    mau = np.zeros(10 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(10)) == "vi"
+
+
+def test_vi_cam_en_noi_thi_chon_en(monkeypatch):
+    _lap_engines_gia(monkeypatch, {"vi": (0.0, 0), "en": (-0.05, 3)})
+    mau = np.zeros(40 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40)) == "en"
+
+
+def test_en_it_token_qua_khong_du_tin(monkeypatch):
+    """1 cửa sổ × 4 token < ngưỡng 5 — dù tự tin cũng chưa đủ bằng chứng."""
+    _lap_engines_gia(monkeypatch, {"vi": (0.0, 0), "en": (-0.05, 4)})
+    mau = np.zeros(1 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(1)) == "vi"
+
+
+def test_mau_lay_giua_than_video_khong_dinh_nhac_mo_man(monkeypatch):
+    """Video Zootopia hỏng vì lấy mẫu 20s đầu toàn nhạc — mẫu phải rải từ 1/4
+    danh sách đoạn trở đi, không đụng phần mở màn."""
+    ghi: list = []
+    _lap_engines_gia(monkeypatch, {"vi": (-0.5, 4), "en": (-0.05, 4)},
+                     ghi_nhan=ghi)
+    mau = np.arange(40 * _RATE_GIA, dtype=np.float32)   # giá trị = vị trí
+    va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40))
+    assert ghi, "phải có cửa sổ mẫu"
+    # 40 đoạn → mốc 1/4 là đoạn 10 → mọi lát cắt bắt đầu từ giây 10 trở đi.
+    assert min(thu[0] for _, thu in ghi) >= 10 * _RATE_GIA
+
+
+def test_doan_it_khong_nghe_trung_lap(monkeypatch):
+    """1 đoạn duy nhất mà 3 mốc lấy mẫu đều trỏ vào — chỉ nghe MỘT lần/model."""
+    ghi: list = []
+    _lap_engines_gia(monkeypatch, {"vi": (-0.04, 9), "en": (-0.6, 9)},
+                     ghi_nhan=ghi)
+    mau = np.zeros(5 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, [(0.0, 5.0)]) == "vi"
+    assert len([1 for lang, _ in ghi if lang == "vi"]) == 1
+    assert len([1 for lang, _ in ghi if lang == "en"]) == 1
+
+
 # ── dich_tep_video: hợp đồng, không đụng sherpa ─────────────────────────────
 
 

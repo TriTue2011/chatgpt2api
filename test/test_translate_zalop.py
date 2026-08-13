@@ -56,3 +56,13 @@ def test_dich_tren_zalo_ca_nhan_do_code_tra_loi(monkeypatch):
     assert sent, "bot phải trả lời ngay bằng bản dịch, không im lặng"
     assert sent[0].startswith("🌐")
     assert "vi:" in sent[0]  # nội dung đã qua máy dịch (en → vi), không phải LLM
+
+
+def test_ten_tep_phuc_vu_khong_dup_duoi():
+    """Tên gốc đã mang đuôi sắp gắn thì không được nhân đôi — đo thật 13/08:
+    phụ đề video tới tay tên "phu-de.en.srt.srt"."""
+    from services import zalo_personal as zp
+
+    assert zp._ten_tep_phuc_vu("phu-de.en.srt", ".srt") == "phu-de.en.srt"
+    assert zp._ten_tep_phuc_vu("Báo cáo quý.pdf", ".docx") == "Bao_cao_quy.docx"
+    assert zp._ten_tep_phuc_vu("", ".srt") == "tai-lieu.srt"

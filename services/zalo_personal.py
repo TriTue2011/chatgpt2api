@@ -1811,7 +1811,11 @@ def _ten_tep_phuc_vu(ten_goc: str, duoi: str) -> str:
     import unicodedata as _ud
 
     goc = str(ten_goc or "").strip()
-    if goc.lower().endswith(".pdf"):
+    # Tên gốc đã mang sẵn đuôi sắp gắn thì bỏ đi, kẻo ra "phu-de.srt.srt"
+    # (đo thật 13/08 với phụ đề video). Đuôi KHÁC (pdf → docx) cũng bỏ.
+    if duoi and goc.lower().endswith(duoi.lower()):
+        goc = goc[: -len(duoi)]
+    elif goc.lower().endswith(".pdf"):
         goc = goc[:-4]
     goc = "".join(c for c in _ud.normalize("NFD", goc)
                   if _ud.category(c) != "Mn").replace("đ", "d").replace("Đ", "D")
