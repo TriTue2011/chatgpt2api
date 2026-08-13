@@ -293,11 +293,16 @@ def gop_doan(doan: list[Doan]) -> list[Doan]:
 
 
 def _moc(giay: float) -> str:
-    """Giây → "HH:MM:SS,mmm" đúng khuôn SRT."""
-    giay = max(0.0, float(giay))
-    gio, con = divmod(int(giay), 3600)
+    """Giây → "HH:MM:SS,mmm" đúng khuôn SRT.
+
+    Quy hết ra mili-giây TRƯỚC rồi mới tách giờ-phút-giây: làm tròn phần lẻ
+    riêng thì 455.9996 ra ",1000" — bốn chữ số, không nhảy giây (đo thật
+    13/08: 5/429 khung video Zootopia dính, soat_srt bắt được).
+    """
+    tong_ms = max(0, int(round(float(giay) * 1000)))
+    giay_nguyen, ms = divmod(tong_ms, 1000)
+    gio, con = divmod(giay_nguyen, 3600)
     phut, giay_le = divmod(con, 60)
-    ms = int(round((giay - int(giay)) * 1000))
     return f"{gio:02d}:{phut:02d}:{giay_le:02d},{ms:03d}"
 
 

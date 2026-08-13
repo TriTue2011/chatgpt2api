@@ -101,6 +101,15 @@ def test_moc_thoi_gian_dung_khuon_srt():
 
 
 @pytest.mark.pure
+def test_moc_phan_le_tron_len_phai_nhay_giay():
+    """0.9996s làm tròn kiểu 'phần lẻ × 1000' ra ',1000' — bốn chữ số ms,
+    không nhảy giây. Đo thật 13/08: 5/429 khung video Zootopia dính."""
+    assert vd._moc(455.9996) == "00:07:36,000"
+    assert vd._moc(59.9999) == "00:01:00,000"
+    assert vd._moc(3599.9995) == "01:00:00,000"
+
+
+@pytest.mark.pure
 def test_srt_dung_khuon_va_danh_so_tu_1():
     """Khung đầu kết thúc SỚM hơn 24 ms so với mốc bắt đầu khung sau — chừa
     khoảng hở, không thì trình phát đè hai dòng lên nhau."""
