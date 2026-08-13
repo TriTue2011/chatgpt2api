@@ -1840,6 +1840,24 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
     logger.warning("zalop Word sendFile fail path=%s", link)
 
 
+def _serve_bytes(thread_id: str, thread_type: int, du_lieu: bytes, ten: str,
+                 ghi_chu: str = "") -> None:
+    """Gửi một tệp có sẵn trong bộ nhớ (phụ đề .srt…) — cùng đường với
+    ``_serve_docx``: ghi ra thư mục phục vụ HTTP rồi gọi sendFile, vì bot server
+    Zalo chỉ nhận URL công khai chứ không nhận bytes."""
+    import uuid
+    out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fn = _ten_tep_phuc_vu(ten, ten[ten.rfind("."):] if "." in ten else ".txt")
+    (out_dir / fn).write_bytes(du_lieu)
+    rel = f"/images/docs/{out_dir.name}/{fn}"
+    if _send_file_robust(thread_id, rel, ghi_chu or ten, thread_type):
+        return
+    send_message(thread_id, f"📎 Em tạo được {fn} nhưng gửi tệp chưa được ạ.",
+                 thread_type)
+    logger.warning("zalop sendFile fail path=%s", rel)
+
+
 def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes,
                     *, menu_dang_mo: bool = False) -> None:
     """Tệp/ảnh vừa nhận → hỏi admin có lưu lên kho đám mây không.
@@ -2522,6 +2540,25 @@ def _process_ai(ev: dict) -> None:
     if text:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
+            # Link video → phụ đề .srt (gửi được tệp qua bot server).
+            from services import video_dich as _vd
+            _nd_vd = _ts._bo_tag_dau(text)
+            if _vd.la_link_video(_nd_vd):
+                send_message(thread_id, "🎬 Đang lấy phụ đề và dịch, chờ em chút ạ…",
+                             thread_type, account=acc_id)
+                _rv = _vd.dich_video(_nd_vd)
+                if not _rv.get("ok"):
+                    send_message(thread_id, _vd.bao_cao(_rv), thread_type,
+                                 account=acc_id)
+                    return
+                send_message(thread_id, _vd.bao_cao(_rv), thread_type,
+                             account=acc_id)
+                _serve_bytes(thread_id, thread_type, _rv["srt"], _rv["ten"],
+                             "Phụ đề đã dịch")
+                if len(_rv["chu"]) <= 1500:
+                    send_message(thread_id, _rv["chu"], thread_type,
+                                 account=acc_id)
+                return
             send_message(thread_id, _ts.lenh_dich(text), thread_type,
                          account=acc_id, rich=True)
             return

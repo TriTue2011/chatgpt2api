@@ -1863,6 +1863,23 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
     if chat_id and text:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
+            # Link video → phụ đề. Zalo Bot không gửi được tệp nên trả CHỮ;
+            # bản dài bị cắt, nói rõ để người dùng biết còn phần sau.
+            from services import video_dich as _vd
+            _noi_dung = _ts._bo_tag_dau(text)
+            if _vd.la_link_video(_noi_dung):
+                send_message(chat_id, "🎬 Đang lấy phụ đề và dịch, chờ em chút ạ…")
+                _rv = _vd.dich_video(_noi_dung)
+                if not _rv.get("ok"):
+                    send_message(chat_id, _vd.bao_cao(_rv))
+                    return
+                _chu = _rv["chu"]
+                _dai = len(_chu) > 3000
+                send_message(chat_id, _vd.bao_cao(_rv) + "\n\n"
+                             + (_chu[:3000] + "\n… (còn nữa — Zalo Bot không "
+                                "gửi được tệp .srt, nhắn qua Telegram để nhận "
+                                "đủ phụ đề)" if _dai else _chu))
+                return
             send_message(chat_id, _ts.lenh_dich(text))
             return
 

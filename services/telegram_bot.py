@@ -1607,6 +1607,24 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
     if chat_id and text:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
+            # Link video thì đi đường phụ đề: trả .srt nạp được vào trình phát,
+            # thay vì trả lại chính cái link (URL nằm trong _KHONG_DICH).
+            from services import video_dich as _vd
+            _noi_dung = _ts._bo_tag_dau(text)
+            if _vd.la_link_video(_noi_dung):
+                _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+                send_message(chat_id, "🎬 Đang lấy phụ đề và dịch, chờ em chút ạ…")
+                _rv = _vd.dich_video(_noi_dung)
+                if _rv.get("ok"):
+                    send_document(chat_id, _rv["srt"], _rv["ten"],
+                                  caption=_vd.bao_cao(_rv))
+                    # Video ngắn thì gửi kèm bản chữ để đọc luôn trong chat,
+                    # khỏi phải mở tệp. Dài thì .srt là đủ.
+                    if len(_rv["chu"]) <= 1500:
+                        send_message(chat_id, _rv["chu"])
+                else:
+                    send_message(chat_id, _vd.bao_cao(_rv))
+                return
             send_message(chat_id, _ts.lenh_dich(text))
             return
 
