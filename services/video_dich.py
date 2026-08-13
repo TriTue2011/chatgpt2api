@@ -39,12 +39,14 @@ LO_MOI_LUOT = 20
 #: Gộp các đoạn phụ đề ngắn liền nhau lại trước khi dịch. Phụ đề tự sinh của
 #: YouTube cắt ~1–2 giây một mảnh, giữa câu — dịch từng mảnh đó thì máy dịch mất
 #: hết ngữ cảnh và cho ra chuỗi mảnh vụn. Gộp tới ranh giới CÂU rồi mới dịch.
-GOP_TOI_GIAY = 12.0
-# 150 chứ không phải 200: bản dịch tiếng Việt NỞ RA so với bản tiếng Anh, nên
-# khung gộp sát trần sẽ vượt tốc độ đọc sau khi dịch. (Mức nở thật thì các
-# nguồn nói 15–30% nhưng đều là trang tiếp thị, không có phép đo — nên đây là
-# ước lượng thận trọng, đo lại rồi chỉnh.)
-GOP_TOI_KY_TU = 150
+# Trần gộp là mức CỨNG chống phụ đề không dấu câu chạy dài vô tận, KHÔNG phải
+# cỡ mong muốn: luật gộp duy nhất là "dừng khi HẾT CÂU". Bản đầu đặt trần mềm
+# 150 ký tự/12 giây cắt được ngang câu — mảnh lơ lửng ("trying to cut a bone.")
+# rơi sang đơn vị dịch sau và bị máy dịch nuốt (đo thật 13/08 trên video dạy
+# nấu ăn). Câu 350 ký tự vẫn nằm gọn trong sức T5 (~512 token), còn hiển thị
+# đã có cat_khung lo, không phải việc của bước gộp.
+GOP_TOI_GIAY = 25.0
+GOP_TOI_KY_TU = 350
 
 # ── Chuẩn hiển thị phụ đề ───────────────────────────────────────────────────
 # Gộp câu để DỊCH cho đúng nghĩa, rồi cắt lại thành khung để ĐỌC cho kịp. Hai
@@ -272,10 +274,12 @@ def cat_khung(doan: list[Doan]) -> list[Doan]:
 
 
 def gop_doan(doan: list[Doan]) -> list[Doan]:
-    """Gộp mảnh vụn thành câu trọn vẹn để máy dịch có ngữ cảnh.
+    """Gộp mảnh vụn thành CÂU TRỌN VẸN để máy dịch có ngữ cảnh.
 
-    Dừng gộp khi: đã hết câu (gặp . ? !), hoặc quá ``GOP_TOI_GIAY``, hoặc quá
-    ``GOP_TOI_KY_TU``. Mốc thời gian lấy từ mảnh đầu tới mảnh cuối của nhóm.
+    Luật duy nhất: dừng khi hết câu (gặp . ? ! …). Hai trần ``GOP_TOI_GIAY`` /
+    ``GOP_TOI_KY_TU`` chỉ là chốt an toàn cho phụ đề KHÔNG có dấu câu — chạm
+    trần nghĩa là buộc phải cắt ngang câu, và mảnh sau sẽ dịch kém. Mốc thời
+    gian lấy từ mảnh đầu tới mảnh cuối của nhóm.
     """
     ra: list[Doan] = []
     for d in doan:
@@ -324,8 +328,10 @@ def chuan_thoi_gian(doan: list[Doan]) -> list[Doan]:
             ket = min(ket, doan[i + 1].bat_dau - KHE_TOI_THIEU)
         # Thà một khung ngắn hơn mức tối thiểu còn hơn để phụ đề TRÔI dần khỏi
         # tiếng nói: BBC chốt rằng chữ và mốc thời gian quan trọng hơn cách
-        # trình bày.
-        ket = max(ket, bat_dau + 0.001)
+        # trình bày. Đệm 2ms chứ không phải 1ms: SRT ghi tới mili-giây, đệm
+        # 1ms có thể bị LÀM TRÒN về trùng mốc (soát bắt được ở khung 338,
+        # đo thật 13/08).
+        ket = max(ket, bat_dau + 0.002)
         ra.append(Doan(bat_dau, ket, d.chu))
     return ra
 
