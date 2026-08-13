@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,7 +40,43 @@ LO_MOI_LUOT = 20
 #: YouTube cắt ~1–2 giây một mảnh, giữa câu — dịch từng mảnh đó thì máy dịch mất
 #: hết ngữ cảnh và cho ra chuỗi mảnh vụn. Gộp tới ranh giới CÂU rồi mới dịch.
 GOP_TOI_GIAY = 12.0
-GOP_TOI_KY_TU = 200
+# 150 chứ không phải 200: bản dịch tiếng Việt NỞ RA so với bản tiếng Anh, nên
+# khung gộp sát trần sẽ vượt tốc độ đọc sau khi dịch. (Mức nở thật thì các
+# nguồn nói 15–30% nhưng đều là trang tiếp thị, không có phép đo — nên đây là
+# ước lượng thận trọng, đo lại rồi chỉnh.)
+GOP_TOI_KY_TU = 150
+
+# ── Chuẩn hiển thị phụ đề ───────────────────────────────────────────────────
+# Gộp câu để DỊCH cho đúng nghĩa, rồi cắt lại thành khung để ĐỌC cho kịp. Hai
+# việc khác nhau: khung 150 ký tự dịch rất tốt nhưng không ai đọc kịp trên màn
+# hình. Con số dưới đây lấy từ hướng dẫn nhà phát hành, không tự đặt:
+#
+#   Netflix (có bản riêng cho tiếng Việt) và TED: 42 ký tự/dòng, tối đa 2 dòng.
+#   Netflix: tốc độ đọc 20 ký tự/giây (người lớn), mỗi khung hiện tối đa 7 giây,
+#   khoảng hở giữa hai khung tối thiểu 2 khung phim.
+#   Subtitle Edit (mặc định của công cụ phụ đề dùng nhiều nhất): tối thiểu
+#   1000 ms mỗi khung, hở tối thiểu 24 ms.
+#
+# BBC quy định RIÊNG cho video DỌC (9:16, dạng TikTok/Shorts): vùng phụ đề rộng
+# 90% khung nên chỉ vừa ~25 ký tự/dòng, đổi lại được 3 dòng. Khi làm nhánh
+# TikTok thì phải đổi hai hằng số đầu, áp 42 vào video dọc là tràn chữ.
+KY_TU_MOI_DONG = 42
+SO_DONG_TOI_DA = 2
+TOC_DOC = 20.0          # ký tự mỗi giây
+GIAY_TOI_THIEU = 1.0
+GIAY_TOI_DA = 7.0
+KHE_TOI_THIEU = 0.024   # khoảng hở giữa hai khung liền nhau
+
+
+def _dai(s: str) -> int:
+    """Đếm ký tự sau khi CHUẨN HOÁ NFC.
+
+    Tiếng Việt có hai cách lưu hợp lệ trông y hệt nhau trên màn hình: dạng gộp
+    (NFC) và dạng tách dấu rời (NFD). Cùng một dòng, NFC đếm 39 ký tự thì NFD
+    đếm 54 — đếm trên dạng NFD sẽ cắt oan dòng đang hợp lệ, và lỗi này im lặng
+    hoàn toàn.
+    """
+    return len(unicodedata.normalize("NFC", s))
 
 _YT = re.compile(
     r"(?:youtube\.com/(?:watch\?(?:[^\s&]*&)*v=|embed/|v/|shorts/|live/)"
@@ -137,6 +174,103 @@ def lay_phu_de(url: str, dich_sang: str = "vi") -> tuple[list[Doan], str]:
     raise ValueError(f"không lấy được phụ đề nào (thử {co[:5]}): {loi_cuoi}")
 
 
+def bo_trung(doan: list[Doan]) -> list[Doan]:
+    """Bỏ chữ lặp của phụ đề dạng CUỘN.
+
+    Phụ đề tự sinh YouTube cuộn như bảng chạy chữ: mỗi mảnh mới lặp lại phần
+    đuôi của mảnh trước để người xem đọc kịp. Chuyển thẳng sang SRT thì được
+    một tệp đầy dòng nhân đôi và mốc đè nhau — lỗi này mở trên yt-dlp từ 2021
+    tới nay chưa ai sửa, nên phải tự lọc.
+
+    Hai kiểu lặp đều xử lý: mảnh mới nằm TRỌN trong mảnh trước (bỏ hẳn), và
+    mảnh mới CHỒNG một phần đuôi mảnh trước (cắt phần chồng).
+    """
+    ra: list[Doan] = []
+    for d in doan:
+        chu = d.chu.strip()
+        if not chu:
+            continue
+        if ra:
+            truoc = ra[-1].chu
+            if chu in truoc:
+                # Lặp trọn: giữ mốc kết thúc muộn hơn để khung không bị ngắt sớm.
+                ra[-1] = Doan(ra[-1].bat_dau, max(ra[-1].ket_thuc, d.ket_thuc), truoc)
+                continue
+            # Đuôi mảnh trước trùng đầu mảnh này → cắt phần trùng. Dò từ chồng
+            # NHIỀU nhất xuống, kẻo cắt thiếu và còn lại chữ lặp.
+            toi_da = min(len(truoc), len(chu))
+            for n in range(toi_da, 3, -1):
+                if truoc.endswith(chu[:n]):
+                    chu = chu[n:].lstrip()
+                    break
+            if not chu:
+                ra[-1] = Doan(ra[-1].bat_dau, max(ra[-1].ket_thuc, d.ket_thuc), truoc)
+                continue
+        ra.append(Doan(d.bat_dau, d.ket_thuc, chu))
+    return ra
+
+
+def goi_dong(chu: str) -> list[str]:
+    """Chữ → danh sách KHUNG, mỗi khung ≤ ``SO_DONG_TOI_DA`` dòng và mỗi dòng
+    ≤ ``KY_TU_MOI_DONG`` ký tự.
+
+    Xếp DÒNG trực tiếp chứ không cắt khung rồi mới ngắt dòng: cách sau chỉ ràng
+    buộc được dòng trên, dòng dưới vẫn tràn (đo thật 13/08 — 43 dòng dài 43–45
+    ký tự lọt qua). Xếp dòng thì mỗi dòng đúng giới hạn ngay lúc dựng.
+
+    Không cân độ dài hai dòng: BBC nói rõ khi chữ, mốc thời gian và ngắt dòng
+    xung đột thì chữ và mốc quan trọng hơn ngắt dòng.
+
+    Từ đơn dài hơn cả một dòng (URL, tên hoá chất) thì để nguyên — cắt giữa từ
+    tệ hơn tràn dòng.
+    """
+    khung: list[str] = []
+    dong: list[str] = []
+    hien = ""
+    for t in chu.split():
+        thu = f"{hien} {t}".strip()
+        if hien and _dai(thu) > KY_TU_MOI_DONG:
+            dong.append(hien)
+            hien = t
+            if len(dong) == SO_DONG_TOI_DA:
+                khung.append("\n".join(dong))
+                dong = []
+        else:
+            hien = thu
+    if hien:
+        dong.append(hien)
+    if dong:
+        khung.append("\n".join(dong))
+    return khung
+
+
+def cat_khung(doan: list[Doan]) -> list[Doan]:
+    """Khung dài → nhiều khung đọc kịp, chia thời gian theo độ dài chữ.
+
+    Vì sao cần: gộp câu để dịch cho đúng nghĩa sinh ra khung 150 ký tự — dịch
+    tốt nhưng không ai đọc kịp trên màn hình.
+
+    Thời gian chia theo TỈ LỆ số ký tự và KHÔNG BAO GIỜ vượt ra ngoài khoảng của
+    khung gốc: nới ra là đè sang khung sau (đo thật 13/08). Khung gốc quá ngắn
+    cho lượng chữ thì đành vượt tốc độ đọc — ``chuan_thoi_gian`` sẽ kéo dài
+    trong phần khoảng hở còn trống, hết chỗ thì thôi.
+    """
+    ra: list[Doan] = []
+    for d in doan:
+        chu = " ".join(d.chu.split())
+        if not chu:
+            continue
+        phan = goi_dong(chu)
+        tong = sum(_dai(p) for p in phan) or 1
+        dai_khung = max(d.ket_thuc - d.bat_dau, 0.001)
+        moc = d.bat_dau
+        for p in phan:
+            giay = dai_khung * _dai(p) / tong
+            ra.append(Doan(moc, moc + giay, p))
+            moc += giay
+    return ra
+
+
 def gop_doan(doan: list[Doan]) -> list[Doan]:
     """Gộp mảnh vụn thành câu trọn vẹn để máy dịch có ngữ cảnh.
 
@@ -163,11 +297,43 @@ def _moc(giay: float) -> str:
     return f"{gio:02d}:{phut:02d}:{giay_le:02d},{ms:03d}"
 
 
+def chuan_thoi_gian(doan: list[Doan]) -> list[Doan]:
+    """Ép mốc thời gian về đúng chuẩn hiển thị.
+
+    Bốn luật, theo thứ tự: mỗi khung ít nhất ``GIAY_TOI_THIEU``; kéo dài thêm
+    nếu chữ vượt ``TOC_DOC`` để người ta đọc kịp; không quá ``GIAY_TOI_DA``; và
+    luôn chừa ``KHE_TOI_THIEU`` trước khung sau.
+
+    Luật cuối là luật hay bị quên nhất: thiếu nó thì khung này kết thúc SAU khi
+    khung sau đã bắt đầu, trình phát hiện đè hai dòng lên nhau.
+    """
+    ra: list[Doan] = []
+    for i, d in enumerate(doan):
+        # Đẩy mốc BẮT ĐẦU muộn lại nếu khung trước còn đang hiện. Đây là chỗ
+        # bảo đảm không đè, và nó phải đứng trên mọi luật khác: trước đó tôi
+        # dùng sàn "giữ ít nhất 0,2 giây" ở mốc kết thúc, sàn đó ghi đè luật
+        # khoảng hở và sinh ra 8 khung chồng nhau (đo thật 13/08).
+        bat_dau = d.bat_dau
+        if ra and bat_dau < ra[-1].ket_thuc + KHE_TOI_THIEU:
+            bat_dau = ra[-1].ket_thuc + KHE_TOI_THIEU
+
+        can = _dai(d.chu.replace("\n", " ")) / TOC_DOC
+        ket = max(d.ket_thuc, bat_dau + max(GIAY_TOI_THIEU, can))
+        ket = min(ket, bat_dau + GIAY_TOI_DA)
+        if i + 1 < len(doan):
+            ket = min(ket, doan[i + 1].bat_dau - KHE_TOI_THIEU)
+        # Thà một khung ngắn hơn mức tối thiểu còn hơn để phụ đề TRÔI dần khỏi
+        # tiếng nói: BBC chốt rằng chữ và mốc thời gian quan trọng hơn cách
+        # trình bày.
+        ket = max(ket, bat_dau + 0.001)
+        ra.append(Doan(bat_dau, ket, d.chu))
+    return ra
+
+
 def lam_srt(doan: list[Doan]) -> str:
     khoi = []
-    for i, d in enumerate(doan, 1):
-        ket = max(d.ket_thuc, d.bat_dau + 0.5)
-        khoi.append(f"{i}\n{_moc(d.bat_dau)} --> {_moc(ket)}\n{d.chu}\n")
+    for i, d in enumerate(chuan_thoi_gian(doan), 1):
+        khoi.append(f"{i}\n{_moc(d.bat_dau)} --> {_moc(d.ket_thuc)}\n{d.chu}\n")
     return "\n".join(khoi)
 
 
@@ -207,7 +373,7 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
     if ma_nguon == dich:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
 
-    nhom = gop_doan(doan)
+    nhom = gop_doan(bo_trung(doan))
     chu_goc = [d.chu for d in nhom]
     ban_dich: list[str] = []
     try:
@@ -217,7 +383,10 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
     except ts.LoiDich as exc:
         return {"ok": False, "error": f"máy chủ dịch lỗi: {exc}"}
 
-    da_dich = [Doan(d.bat_dau, d.ket_thuc, b) for d, b in zip(nhom, ban_dich)]
+    # Gộp để DỊCH, cắt lại để ĐỌC: khung 150 ký tự dịch đúng nghĩa nhưng không
+    # ai đọc kịp trên màn hình.
+    da_dich = cat_khung([Doan(d.bat_dau, d.ket_thuc, b)
+                         for d, b in zip(nhom, ban_dich)])
     srt = lam_srt(da_dich)
     return {
         "ok": True,
@@ -229,6 +398,45 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
         "so_doan": len(da_dich),
         "phut": int(round(dai / 60)),
     }
+
+
+def soat_srt(srt: str) -> list[str]:
+    """Soát một tệp .srt theo chuẩn hiển thị → danh sách lỗi (rỗng = đạt).
+
+    Vòng kiểm chứng chạy được cho khâu cắt khung: không có nó thì "trông có vẻ
+    xong" là tín hiệu duy nhất, và mọi lỗi nằm chờ tới lúc người dùng mở tệp.
+    """
+    loi: list[str] = []
+    khoi = [k for k in srt.strip().split("\n\n") if k.strip()]
+    truoc_ket = -1.0
+    for k in khoi:
+        dong = k.split("\n")
+        if len(dong) < 3:
+            loi.append(f"khung {dong[0] if dong else '?'}: thiếu dòng")
+            continue
+        so, moc, *chu = dong
+        m = re.match(r"(\d\d):(\d\d):(\d\d),(\d\d\d) --> "
+                     r"(\d\d):(\d\d):(\d\d),(\d\d\d)$", moc)
+        if not m:
+            loi.append(f"khung {so}: mốc sai khuôn ({moc})")
+            continue
+        g = [int(x) for x in m.groups()]
+        bd = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000
+        kt = g[4] * 3600 + g[5] * 60 + g[6] + g[7] / 1000
+        if len(chu) > SO_DONG_TOI_DA:
+            loi.append(f"khung {so}: {len(chu)} dòng (tối đa {SO_DONG_TOI_DA})")
+        for d in chu:
+            if _dai(d) > KY_TU_MOI_DONG:
+                loi.append(f"khung {so}: dòng {_dai(d)} ký tự "
+                           f"(tối đa {KY_TU_MOI_DONG})")
+        if kt <= bd:
+            loi.append(f"khung {so}: mốc kết thúc không sau mốc bắt đầu")
+        elif kt - bd > GIAY_TOI_DA + 0.01:
+            loi.append(f"khung {so}: hiện {kt - bd:.1f}s (tối đa {GIAY_TOI_DA})")
+        if bd < truoc_ket:
+            loi.append(f"khung {so}: chồng lên khung trước")
+        truoc_ket = kt
+    return loi
 
 
 def bao_cao(r: dict[str, Any]) -> str:

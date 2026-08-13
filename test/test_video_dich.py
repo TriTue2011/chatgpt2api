@@ -102,16 +102,19 @@ def test_moc_thoi_gian_dung_khuon_srt():
 
 @pytest.mark.pure
 def test_srt_dung_khuon_va_danh_so_tu_1():
+    """Khung đầu kết thúc SỚM hơn 24 ms so với mốc bắt đầu khung sau — chừa
+    khoảng hở, không thì trình phát đè hai dòng lên nhau."""
     srt = vd.lam_srt([vd.Doan(0.0, 2.0, "câu một"), vd.Doan(2.0, 4.25, "câu hai")])
-    assert srt.startswith("1\n00:00:00,000 --> 00:00:02,000\ncâu một\n")
+    assert srt.startswith("1\n00:00:00,000 --> 00:00:01,976\ncâu một\n")
     assert "2\n00:00:02,000 --> 00:00:04,250\ncâu hai\n" in srt
 
 
 @pytest.mark.pure
 def test_khung_qua_ngan_duoc_keo_dai_toi_thieu():
-    """Phụ đề có mốc kết thúc trùng mốc bắt đầu thì trình phát bỏ qua."""
+    """Mốc kết thúc trùng mốc bắt đầu thì trình phát bỏ qua khung. Kéo lên mức
+    tối thiểu 1000 ms (mặc định của Subtitle Edit)."""
     srt = vd.lam_srt([vd.Doan(5.0, 5.0, "nhanh")])
-    assert "00:00:05,000 --> 00:00:05,500" in srt
+    assert "00:00:05,000 --> 00:00:06,000" in srt
 
 
 # ── Đường đầy đủ ────────────────────────────────────────────────────────────
@@ -135,8 +138,9 @@ def test_dich_video_tra_ve_srt_va_chu(monkeypatch):
     assert r["nguon"] == "en" and r["dich"] == "vi"
     assert r["so_doan"] == 2
     srt = r["srt"].decode()
-    assert srt.startswith("1\n00:00:00,000 --> 00:00:02,000\nvi:Hello there.")
+    assert srt.startswith("1\n00:00:00,000 --> 00:00:01,976\nvi:Hello there.")
     assert "vi:This is a test." in srt
+    assert vd.soat_srt(srt) == []
 
 
 def test_khong_co_link_thi_noi_ro():
@@ -210,6 +214,111 @@ def test_thu_tu_bo_ban_da_dich_san_xuong_cuoi():
 @pytest.mark.pure
 def test_thu_tu_khong_co_ban_tu_sinh_thi_uu_tien_tieng_anh():
     assert vd._thu_tu([("th", False), ("en", False), ("ru", False)], "vi")[0] == "en"
+
+
+# ── Chuẩn hiển thị: đếm ký tự, cắt khung, mốc thời gian ─────────────────────
+
+
+@pytest.mark.pure
+def test_dem_ky_tu_chuan_hoa_unicode():
+    """Cùng một dòng lưu hai dạng Unicode trông y hệt nhau nhưng len() chênh
+    nhau rất nhiều — đếm trên dạng tách dấu sẽ cắt oan dòng hợp lệ."""
+    import unicodedata
+
+    nfc = "Nghiên cứu tiếng Việt đã được thực hiện"
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert len(nfd) > len(nfc)          # len() thô: hai số khác nhau
+    assert vd._dai(nfd) == vd._dai(nfc)  # _dai: bằng nhau
+
+
+@pytest.mark.pure
+def test_goi_dong_moi_DONG_deu_trong_gioi_han():
+    """Cắt khung rồi mới ngắt dòng thì chỉ dòng TRÊN được ràng buộc, dòng dưới
+    tràn — đo thật 13/08 lọt 43 dòng dài 43–45 ký tự."""
+    chu = " ".join(["Việt"] * 60)
+    khung = vd.goi_dong(chu)
+    assert len(khung) > 1
+    for k in khung:
+        dong = k.split("\n")
+        assert len(dong) <= vd.SO_DONG_TOI_DA
+        assert all(vd._dai(d) <= vd.KY_TU_MOI_DONG for d in dong)
+    assert " ".join(" ".join(khung).split()) == chu   # không mất chữ nào
+
+
+@pytest.mark.pure
+def test_goi_dong_cau_ngan_giu_mot_dong():
+    assert vd.goi_dong("xin chào") == ["xin chào"]
+
+
+@pytest.mark.pure
+def test_goi_dong_tu_don_dai_hon_ca_dong_thi_de_nguyen():
+    """Cắt giữa một URL hay tên hoá chất tệ hơn là để nó tràn dòng."""
+    dai = "x" * 60
+    assert vd.goi_dong(dai) == [dai]
+
+
+@pytest.mark.pure
+def test_cat_khung_khong_de_khung_qua_dai():
+    """Khung gộp để dịch có thể 150 ký tự; hiển thị chỉ được 2×42."""
+    chu = " ".join(["từ"] * 90)          # ~270 ký tự
+    ra = vd.cat_khung([vd.Doan(0.0, 20.0, chu)])
+    assert len(ra) > 1
+    for d in ra:
+        for dong in d.chu.split("\n"):
+            assert vd._dai(dong) <= vd.KY_TU_MOI_DONG
+    assert ra[0].bat_dau == 0.0
+    assert all(ra[i].bat_dau <= ra[i + 1].bat_dau for i in range(len(ra) - 1))
+
+
+@pytest.mark.pure
+def test_bo_trung_phu_de_cuon():
+    """Phụ đề tự sinh cuộn: mảnh sau lặp đuôi mảnh trước."""
+    doan = [
+        vd.Doan(0.0, 2.0, "hôm nay chúng ta"),
+        vd.Doan(1.0, 3.0, "hôm nay chúng ta sẽ nói về"),
+        vd.Doan(2.0, 4.0, "sẽ nói về mạng nơ-ron"),
+    ]
+    ra = vd.bo_trung(doan)
+    ghep = " ".join(d.chu for d in ra)
+    assert ghep.count("hôm nay chúng ta") == 1
+    assert ghep.count("sẽ nói về") == 1
+    assert "mạng nơ-ron" in ghep
+
+
+@pytest.mark.pure
+def test_chuan_thoi_gian_chua_khe_va_ep_toi_thieu():
+    doan = [vd.Doan(0.0, 0.1, "ngắn"), vd.Doan(1.0, 1.2, "kế tiếp")]
+    ra = vd.chuan_thoi_gian(doan)
+    assert ra[0].ket_thuc <= ra[1].bat_dau - vd.KHE_TOI_THIEU + 1e-9
+    assert ra[1].ket_thuc - ra[1].bat_dau >= vd.GIAY_TOI_THIEU - 1e-9
+
+
+@pytest.mark.pure
+def test_chuan_thoi_gian_khong_vuot_toi_da():
+    ra = vd.chuan_thoi_gian([vd.Doan(0.0, 30.0, "x" * 80)])
+    assert ra[0].ket_thuc - ra[0].bat_dau <= vd.GIAY_TOI_DA + 1e-9
+
+
+@pytest.mark.pure
+def test_soat_srt_bat_duoc_loi_that():
+    xau = ("1\n00:00:00,000 --> 00:00:20,000\n" + "x" * 60 + "\n\n"
+           "2\n00:00:10,000 --> 00:00:12,000\nchong khung\n")
+    loi = vd.soat_srt(xau)
+    assert any("ký tự" in x for x in loi)
+    assert any("tối đa" in x for x in loi)
+    assert any("chồng" in x for x in loi)
+
+
+def test_srt_sinh_ra_dat_toan_bo_chuan(monkeypatch):
+    """Vòng kiểm chứng thật: dịch xong thì tệp .srt phải đạt cả bốn luật."""
+    doan = [vd.Doan(i * 6.0, i * 6.0 + 5.5,
+                    "This is a fairly long sentence number %d that will need "
+                    "splitting into several cues." % i) for i in range(6)]
+    monkeypatch.setattr(vd, "lay_phu_de", _phu_de_gia(doan))
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_video("https://youtu.be/aircAruvnKk")
+    assert r["ok"] is True
+    assert vd.soat_srt(r["srt"].decode()) == []
 
 
 @pytest.mark.pure
