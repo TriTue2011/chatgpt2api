@@ -969,8 +969,14 @@ class ConfigStore:
 
     @property
     def translate_timeout(self) -> int:
-        """Giây chờ máy chủ dịch. Mặc định 20."""
-        val = _normalize_positive_int(self.data.get("translate_timeout"), 20, minimum=1)
+        """Giây chờ máy chủ dịch. Mặc định 120.
+
+        Số này đặt cho engine THẦN KINH chạy CPU (vn-translate/NLLB): một khối
+        vài chục dòng mất 10–30 giây trên máy 4 nhân — đo thật 13/08, và mức cũ
+        20 giây làm /dich văn bản dài báo "timed out" dù máy dịch vẫn đang chạy
+        bình thường. Argos ngày trước ~0,2 giây/câu nên 20 là đủ.
+        """
+        val = _normalize_positive_int(self.data.get("translate_timeout"), 120, minimum=1)
         return val if val <= 300 else 300
 
     @property

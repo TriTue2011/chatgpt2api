@@ -53,7 +53,7 @@ tiên hơn `config.json`, cùng nếp `CHATGPT2API_BASE_URL`:
 | `TRANSLATE_URL` | `translate_url` | compose đặt `http://libretranslate:5000` | Rỗng = tắt hẳn mọi tính năng dịch. |
 | `TRANSLATE_PIVOT` | `translate_pivot_enabled` | `0` | Dịch sang tiếng Anh trước khi gửi LLM. Xem mục 5 **trước khi** bật. |
 | `TRANSLATE_API_KEY` | `translate_api_key` | `""` | Chỉ cần khi máy chủ bật `LT_API_KEYS=true`. |
-| — | `translate_timeout` | `20` | Giây chờ máy chủ dịch. |
+| — | `translate_timeout` | `120` | Giây chờ máy chủ dịch. Đặt cho vn-translate/NLLB chạy CPU: khối vài chục dòng mất 10–30 giây trên máy 4 nhân. |
 | — | `translate_docx_threshold` | `3000` | Bản dịch dài hơn ngần này ký tự thì gửi bằng `.docx` thay vì tin nhắn. `0` = luôn gửi tin nhắn. |
 | `LT_LOAD_ONLY` | — | `en,vi,ja,ko,zh` | Ngôn ngữ máy chủ nạp. Xem mục 2b. |
 

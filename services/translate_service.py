@@ -34,7 +34,7 @@ Cấu hình (config.json, khoá top-level — xem ``services/config.py``):
 
     translate_url      "http://libretranslate:5000"   (rỗng = tắt hẳn)
     translate_api_key  ""     chỉ cần khi máy chủ bật LT_API_KEYS
-    translate_timeout  20     giây
+    translate_timeout  120    giây (engine thần kinh chạy CPU cần nhiều)
 
 URL này do admin đặt (dịch vụ nội bộ trong stack) nên KHÔNG đi qua
 ``net_guard`` — cùng nếp với self-call gateway và Home Assistant.
