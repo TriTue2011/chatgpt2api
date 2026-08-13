@@ -12,6 +12,7 @@ import { clearStoredAuthSession, type StoredAuthSession } from "@/store/auth";
 
 const adminNavItems = [
   { href: "/image", label: "Vẽ ảnh" },
+  { href: "/dich", label: "Dịch" },
   { href: "/accounts", label: "Quản lý tài khoản" },
   { href: "/register", label: "Đăng ký" },
   { href: "/image-manager", label: "Quản lý ảnh" },

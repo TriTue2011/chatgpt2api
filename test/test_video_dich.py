@@ -101,6 +101,21 @@ def test_moc_thoi_gian_dung_khuon_srt():
 
 
 @pytest.mark.pure
+def test_srt_chu_tren_chen_the_an8_moi_khung():
+    """Video có chữ in cứng ở đáy hình → bản {\\an8} đẩy phụ đề lên mép trên
+    (ảnh chủ máy gửi 13/08: hai lớp chữ đè nhau không đọc nổi)."""
+    srt = ("1\n00:00:01,000 --> 00:00:02,000\nDòng một\nDòng hai\n\n"
+           "2\n00:00:03,000 --> 00:00:04,000\nKhung hai\n")
+    ra = vd.srt_chu_tren(srt)
+    khoi = ra.strip().split("\n\n")
+    assert khoi[0].split("\n")[2] == "{\\an8}Dòng một"
+    assert khoi[0].split("\n")[3] == "Dòng hai"      # chỉ dòng đầu mang thẻ
+    assert khoi[1].split("\n")[2] == "{\\an8}Khung hai"
+    # Bỏ thẻ đi thì phải y nguyên bản gốc — không được đổi gì khác.
+    assert ra.replace("{\\an8}", "").strip() == srt.strip()
+
+
+@pytest.mark.pure
 def test_moc_phan_le_tron_len_phai_nhay_giay():
     """0.9996s làm tròn kiểu 'phần lẻ × 1000' ra ',1000' — bốn chữ số ms,
     không nhảy giây. Đo thật 13/08: 5/429 khung video Zootopia dính."""

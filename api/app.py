@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, dich, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -356,6 +356,7 @@ def create_app() -> FastAPI:
     app.include_router(rclone.create_router())  # kho lưu trữ đám mây qua rclone (Drive, OneDrive, S3…)
     app.include_router(system.create_router(app_version))
     app.include_router(voice.create_router())
+    app.include_router(dich.create_router())  # tab Dịch: chữ/ảnh/tài liệu/video, upload cắt khúc
     try:
         from api import teacher as teacher_api
         app.include_router(teacher_api.create_router())

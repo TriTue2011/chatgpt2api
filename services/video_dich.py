@@ -348,6 +348,23 @@ def lam_srt(doan: list[Doan]) -> str:
     return "\n".join(khoi)
 
 
+def srt_chu_tren(srt: str) -> str:
+    """Bản phụ đề hiện Ở MÉP TRÊN màn hình — thẻ ``{\\an8}`` đầu mỗi khung.
+
+    Cho video ĐÃ CÓ chữ in cứng ở đáy hình (video dạy tiếng hay gặp): phụ đề
+    dịch đè lên chữ gốc thành hai lớp không đọc nổi (ảnh chủ máy gửi 13/08).
+    VLC / MX Player / mpv đều hiểu thẻ này; trình phát không hiểu sẽ hiện
+    nguyên chữ ``{\\an8}`` — nên đây là BẢN KÈM THÊM, không thay bản thường.
+    """
+    ra = []
+    for k in srt.strip().split("\n\n"):
+        dong = k.split("\n")
+        if len(dong) >= 3:
+            dong[2] = "{\\an8}" + dong[2]
+        ra.append("\n".join(dong))
+    return "\n\n".join(ra) + "\n"
+
+
 # ── Từ khoá giảng dạy (video dạy ngoại ngữ) ─────────────────────────────────
 # Video dạy tiếng Anh giảng khác biệt "cut" vs "chop" — dịch cả hai thành "cắt"
 # là bài học biến mất (đo thật 13/08). Che từ bằng token lạ để model giữ nguyên

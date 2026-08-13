@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard, Users, Cpu, Combine, ImageIcon, Search, Archive, Settings,
-  LogOut, ChevronRight, Sparkles, PanelLeftClose,
+  LogOut, ChevronRight, Sparkles, PanelLeftClose, Languages,
   Video, Film, Plug, MessageSquare, MessageCircle, Activity, GraduationCap,
 } from "lucide-react";
 import webConfig from "@/constants/common-env";
@@ -47,6 +47,7 @@ export const navGroups: NavGroup[] = [
       { href: "/image-manager", labelKey: "nav_imageLibrary" as TranslationKey, icon: Archive },
       { href: "/video", labelKey: "nav_video" as TranslationKey, icon: Video },
       { href: "/video-manager", labelKey: "nav_videoLibrary" as TranslationKey, icon: Film },
+      { href: "/dich", labelKey: "nav_dich" as TranslationKey, icon: Languages },
     ],
   },
   {
