@@ -28,7 +28,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from . import terms
-from .engine import ISO2FLORES, TEN_NGON_NGU, KhongCoNgonNgu, engine
+from .engine import ISO2FLORES, TEN_NGON_NGU, KhongCoNgonNgu, co_chu, engine
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("vn-translate")
@@ -119,10 +119,7 @@ def _dich_mot(text: str, nguon: str, dich: str) -> tuple[str, list[str]]:
     # Chỉ gửi mảnh CÓ CHỮ; mảnh toàn dấu câu đi thẳng qua. Tokenizer NLLB nuốt
     # khoảng trắng ở biên khi decode → phải đắp lại biên của mảnh GỐC, không thì
     # thuật ngữ dính vào chữ bên cạnh ("áp-tô-mátbên cạnh" — đo thật 12/08).
-    def _co_chu(s: str) -> bool:
-        return any(c.isalpha() for c in s)
-
-    can = [i for i, (ok, s) in enumerate(doan) if ok and _co_chu(s)]
+    can = [i for i, (ok, s) in enumerate(doan) if ok and co_chu(s)]
     ghep = [s for _, s in doan]
     if can:
         ra = engine.dich([doan[i][1] for i in can], nguon, dich)

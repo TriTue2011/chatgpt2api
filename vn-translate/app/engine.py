@@ -57,6 +57,16 @@ _CAT_CAU = re.compile(r"(?<=[.!?。！？])\s+")
 _TRAN_MANH = 400
 
 
+def co_chu(s: str) -> bool:
+    """Chuỗi này có chữ để mà dịch không.
+
+    NLLB nhận đầu vào KHÔNG có chữ thì không im lặng — nó BỊA ra một câu. Đo
+    thật 13/08: khối YAML nhiều dòng trống dịch xong mọc đầy dòng "Tương tự:",
+    mỗi dòng trống một câu rác. Nên mảnh không có chữ phải đi vòng qua model.
+    """
+    return any(c.isalpha() for c in s)
+
+
 def _cat_manh(text: str) -> list[str]:
     """Một dòng dài → các mảnh ~_TRAN_MANH ký tự, cắt ở ranh giới câu."""
     if len(text) <= _TRAN_MANH:
@@ -72,6 +82,55 @@ def _cat_manh(text: str) -> list[str]:
     if dem:
         ra.append(dem)
     return ra or [text]
+
+
+#: Một dòng sau khi mổ: (thụt lề trái, các mảnh cần dịch, đuôi phải). Dòng
+#: không có chữ thì mảnh rỗng và cả dòng nằm nguyên trong phần "trái".
+Dong = tuple[str, list[str], str]
+
+
+def _khung(texts: list[str]) -> tuple[list[list[Dong]], list[str]]:
+    """Mổ lô văn bản thành khung dòng + danh sách mảnh CẦN dịch.
+
+    Tách riêng khỏi ``Engine._dich_khoa`` để kiểm được mà không cần model: hai
+    thứ dễ hỏng ở đây (dòng trống lọt vào model, thụt lề bị nuốt) đều là chuyện
+    ghép chữ thuần tuý.
+
+    Thụt lề giữ bằng cách CẮT RA rồi đắp lại: tokenizer NLLB bỏ khoảng trắng
+    biên khi decode, mà mất thụt lề là hỏng luôn YAML/mã người ta nhờ dịch.
+    """
+    khung: list[list[Dong]] = []
+    can: list[str] = []
+    for t in texts:
+        cac_dong: list[Dong] = []
+        for dong in (t or "").split("\n"):
+            if not co_chu(dong):
+                cac_dong.append((dong, [], ""))
+                continue
+            trai = dong[:len(dong) - len(dong.lstrip())]
+            phai = dong[len(dong.rstrip()):]
+            manh = _cat_manh(dong.strip())
+            can.extend(manh)
+            cac_dong.append((trai, manh, phai))
+        khung.append(cac_dong)
+    return khung, can
+
+
+def _ghep(khung: list[list[Dong]], ra_manh: list[str]) -> list[str]:
+    """Khung + bản dịch từng mảnh → lô văn bản, đúng số dòng như bản gốc."""
+    ra: list[str] = []
+    vt = 0
+    for cac_dong in khung:
+        chu: list[str] = []
+        for trai, manh, phai in cac_dong:
+            if not manh:
+                chu.append(trai)
+                continue
+            phan = [x.strip() for x in ra_manh[vt:vt + len(manh)]]
+            vt += len(manh)
+            chu.append(f"{trai}{' '.join(phan)}{phai}")
+        ra.append("\n".join(chu))
+    return ra
 
 
 class KhongCoNgonNgu(ValueError):
@@ -175,22 +234,11 @@ class Engine:
         fl_nguon, fl_dich = ISO2FLORES[nguon], ISO2FLORES[dich]
         self._tok.src_lang = fl_nguon
 
-        # Trải phẳng: mỗi text → nhiều mảnh câu, nhớ chỉ số để ghép lại.
-        manh: list[str] = []
-        cua: list[tuple[int, int]] = []  # (chỉ số text, số mảnh)
-        for i, t in enumerate(texts):
-            if not (t or "").strip():
-                cua.append((i, 0))
-                continue
-            ds = []
-            for dong in t.split("\n"):
-                ds.extend(_cat_manh(dong) if dong.strip() else [dong])
-            cua.append((i, len(ds)))
-            manh.extend(ds)
-        if not manh:
+        khung, can = _khung(texts)
+        if not can:
             return list(texts)
 
-        vao = [self._tok.convert_ids_to_tokens(self._tok.encode(m)) for m in manh]
+        vao = [self._tok.convert_ids_to_tokens(self._tok.encode(m)) for m in can]
         kq = self._tr.translate_batch(
             vao, target_prefix=[[fl_dich]] * len(vao),
             beam_size=4, max_batch_size=16, batch_type="examples",
@@ -200,17 +248,7 @@ class Engine:
             tokens = r.hypotheses[0][1:]  # bỏ token ngôn ngữ đích ở đầu
             ra_manh.append(self._tok.decode(
                 self._tok.convert_tokens_to_ids(tokens), skip_special_tokens=True))
-
-        ra: list[str] = []
-        vt = 0
-        for i, so in cua:
-            if so == 0:
-                ra.append(texts[i])
-            else:
-                ra.append("\n".join(ra_manh[vt:vt + so]) if "\n" in texts[i]
-                          else " ".join(ra_manh[vt:vt + so]))
-                vt += so
-        return ra
+        return _ghep(khung, ra_manh)
 
 
 engine = Engine()
