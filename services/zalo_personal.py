@@ -1778,12 +1778,19 @@ def _alert_new_thread(ev: dict) -> None:
 
 # ── Xử lý AI (chung orchestrator với Telegram/Zalo Bot) ───────────────────────
 
-def _download(url: str) -> bytes | None:
+def _download(url: str, *, tran_byte: int = 0,
+              timeout: float = 30) -> bytes | None:
     # attachment_url đến TỪ webhook (không tin cậy) → chặn SSRF: cấm IP nội bộ,
     # chỉ http/https, có trần dung lượng. Xem services/net_guard.
+    #
+    # ``tran_byte`` nới trần CHO RIÊNG lượt gọi (mặc định net_guard là 50MB —
+    # tệp video 720p vượt ngay, đo thật 13/08: "Nội dung vượt trần 52428800").
+    # Vẫn đi qua net_guard, chỉ đổi giới hạn, không mở lỗ SSRF nào mới.
     try:
         from services import net_guard
-        return net_guard.safe_fetch(url, timeout=30)
+        if tran_byte:
+            return net_guard.safe_fetch(url, timeout=timeout, max_bytes=tran_byte)
+        return net_guard.safe_fetch(url, timeout=timeout)
     except Exception as exc:
         logger.warning("Zalo personal download lỗi: %s", exc)
         return None
@@ -2781,15 +2788,15 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, "🎬 Em đang nghe và dịch, video dài có "
                                     "thể mất vài phút ạ…", thread_type)
             send_typing(thread_id, thread_type)
-            data = _download(ev["attachment_url"])
+            # Trần 250MB + 5 phút tải: video dài hơn mức nghe được (30 phút)
+            # cũng chỉ cỡ này. Trần mặc định 50MB của net_guard giữ nguyên cho
+            # mọi đường tải khác.
+            data = _download(ev["attachment_url"],
+                             tran_byte=250 * 1024 * 1024, timeout=300)
             if not data:
-                send_message(thread_id, "🎬 Không tải được tệp.", thread_type)
-                return
-            if len(data) > 250 * 1024 * 1024:
-                send_message(thread_id,
-                             f"🎬 Tệp {len(data) // (1024 * 1024)}MB — quá mức "
-                             "250MB em xử lý được. Video YouTube thì gửi em "
-                             "link sẽ nhanh hơn nhiều ạ.", thread_type)
+                send_message(thread_id, "🎬 Không tải được tệp (quá 250MB hoặc "
+                                        "mạng lỗi). Video YouTube thì gửi em "
+                                        "link sẽ nhanh hơn nhiều ạ.", thread_type)
                 return
             import os as _os
             import tempfile as _tmpf
