@@ -343,6 +343,115 @@ def lam_srt(doan: list[Doan]) -> str:
     return "\n".join(khoi)
 
 
+# ── Từ khoá giảng dạy (video dạy ngoại ngữ) ─────────────────────────────────
+# Video dạy tiếng Anh giảng khác biệt "cut" vs "chop" — dịch cả hai thành "cắt"
+# là bài học biến mất (đo thật 13/08). Che từ bằng token lạ để model giữ nguyên
+# thì cộng đồng đã thử và báo hỏng với NLLB/Marian (CTranslate2 #1798 "none of
+# them worked"). Cách có tiền lệ chạy được: XỬ LÝ PHÍA ĐÍCH — dịch bình thường
+# rồi đính từ gốc vào khung nào đang giảng từ đó, kiểu "…đang cắt [chopping]".
+# Người xem thấy từ gốc ngay tại chỗ, không phụ thuộc model có nghe lời không.
+
+_TU_THUONG = {"the", "a", "an", "to", "it", "this", "that", "you", "we", "i",
+              "is", "are", "was", "be", "do", "so", "and", "or", "but", "word",
+              "verb", "noun", "yes", "no", "okay", "right", "like", "just",
+              "kind", "of", "not", "very", "them", "him", "her", "i'm", "it's",
+              "that's", "don't", "you're", "what", "when", "how", "why"}
+_TRICH_DAN = re.compile(r"[\"“”‘’']([A-Za-z][A-Za-z' -]{1,24})[\"“”‘’']")
+_MAU_GIANG = (
+    re.compile(r"\bthe (?:word|verb|noun|phrase|term) [\"']?([A-Za-z-]{3,})", re.I),
+    re.compile(r"\b([A-Za-z-]{3,}) means\b", re.I),
+    re.compile(r"\b([A-Za-z-]{3,}) (?:vs\.?|versus) ([A-Za-z-]{3,})", re.I),
+)
+#: Tiếng ồn phụ đề: nhãn âm thanh "[snorts]"/"[music]" và ký hiệu đổi người
+#: nói ">>" — không lọc thì "[snorts]" thành ứng viên từ khoá (đo thật 13/08).
+_ON_PHU_DE = re.compile(r"\[[^\]]*\]|>+")
+
+
+def _goc_tu(w: str) -> str:
+    """Quy dạng biến hình đơn giản về gốc: cutting/cuts/chopped → cut/chop.
+
+    Cào bằng đuôi -ing/-ed/-s và phụ âm đôi — đủ cho việc ĐẾM các dạng của
+    cùng một từ được giảng, không phải bộ phân tích hình thái.
+    """
+    w = w.lower()
+    for duoi in ("ing", "ed", "es", "s"):
+        if w.endswith(duoi) and len(w) - len(duoi) >= 3:
+            w = w[: len(w) - len(duoi)]
+            break
+    if len(w) >= 4 and w[-1] == w[-2]:
+        w = w[:-1]
+    return w
+
+
+def tu_khoa_giang_day(nhom: list[Doan]) -> set[str]:
+    """Dò các từ đang ĐƯỢC GIẢNG trong video dạy ngoại ngữ → tập GỐC từ.
+
+    Ba điều kiện, phải đủ CẢ BA (đo trên video dạy nấu ăn 33 phút thật):
+
+    1. Có tín hiệu giảng: đứng sau "say/says/said" trong cùng vế câu ("we could
+       say that I'm kind of CHOPPING"), trong ngoặc kép, hoặc khớp mẫu
+       "the word X" / "X means" / "X vs Y".
+    2. Xuất hiện ≥ 5 lần trong cả video — từ được dạy bị nhắc đi nhắc lại.
+    3. Xuất hiện ở ≥ 2 DẠNG biến hình (cut×19 + cutting×10; chopping×3 +
+       chop×2) — người dạy chia động từ quanh bài giảng. Đây là cái lọc tách
+       từ được DẠY khỏi từ chỉ hay được DÙNG: "beautiful"×5 chỉ có một dạng.
+
+    Bản đầu còn tín hiệu "khung 1–2 từ" — đo thật ra 21 từ khoá giả ("Oh.",
+    "Trust me.", "Beautiful.") nên bỏ. Không có tiền lệ đo sẵn cho bộ tín hiệu
+    này (đã tra); ngưỡng đặt chặt: thà bỏ sót còn hơn chú thích bậy.
+    """
+    diem: dict[str, int] = {}
+    xuat_hien: dict[str, int] = {}
+    dang: dict[str, set[str]] = {}
+
+    def _cong(tu: str, d: int) -> None:
+        goc = _goc_tu(tu)
+        if goc and len(goc) >= 3 and goc not in _TU_THUONG:
+            diem[goc] = diem.get(goc, 0) + d
+
+    for d in nhom:
+        chu = _ON_PHU_DE.sub(" ", d.chu)
+        tu_trong = re.findall(r"[A-Za-z][A-Za-z'-]*", chu)
+        for t in tu_trong:
+            goc = _goc_tu(t)
+            if goc not in _TU_THUONG:
+                xuat_hien[goc] = xuat_hien.get(goc, 0) + 1
+                dang.setdefault(goc, set()).add(t.lower())
+        # Từ nội dung đầu tiên ngay sau "say" trong cùng vế câu.
+        thap = [t.lower() for t in tu_trong]
+        for i, t in enumerate(thap):
+            if t in ("say", "says", "said"):
+                for u in thap[i + 1:i + 7]:
+                    if len(u) >= 3 and u not in _TU_THUONG:
+                        _cong(u, 2)
+                        break
+        for m in _TRICH_DAN.finditer(chu):
+            for t in m.group(1).split():
+                _cong(t, 2)
+        for mau in _MAU_GIANG:
+            for m in mau.finditer(chu):
+                for t in m.groups():
+                    if t:
+                        _cong(t, 2)
+    return {g for g, v in diem.items()
+            if v >= 2 and xuat_hien.get(g, 0) >= 5 and len(dang.get(g, ())) >= 2}
+
+
+def dinh_tu_goc(nguon: str, ban_dich: str, khoa: set[str]) -> str:
+    """Khung nguồn có từ đang giảng → đính dạng GỐC của từ vào cuối bản dịch.
+
+    Đính đúng DẠNG xuất hiện ("[chopping]" chứ không phải "[chop]") — người
+    học cần thấy đúng chữ người nói vừa dùng.
+    """
+    if not khoa:
+        return ban_dich
+    thay = []
+    for t in re.findall(r"[A-Za-z][A-Za-z'-]*", nguon):
+        if _goc_tu(t) in khoa and t.lower() not in (x.lower() for x in thay):
+            thay.append(t.lower())
+    return f"{ban_dich} [{', '.join(thay)}]" if thay else ban_dich
+
+
 def dich_video(text: str, target: str = "") -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
 
@@ -402,6 +511,15 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                     chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
         except ts.LoiDich as exc:
             return {"ok": False, "error": f"máy chủ dịch lỗi: {exc}"}
+        # Video dạy tiếng Anh: đính từ gốc đang được giảng vào khung tương ứng
+        # ("…đang cắt [chopping]") — mẫu dò chỉ viết cho tiếng Anh nên chỉ chạy
+        # khi nguồn là en. Video thường không có tín hiệu giảng dạy → tập rỗng,
+        # không đổi gì.
+        if nguon.startswith("en"):
+            khoa = tu_khoa_giang_day(nhom)
+            if khoa:
+                ban_dich = [dinh_tu_goc(d.chu, b, khoa)
+                            for d, b in zip(nhom, ban_dich)]
 
     # Gộp để DỊCH, cắt lại để ĐỌC: khung 150 ký tự dịch đúng nghĩa nhưng không
     # ai đọc kịp trên màn hình.

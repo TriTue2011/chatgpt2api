@@ -321,6 +321,71 @@ def test_srt_sinh_ra_dat_toan_bo_chuan(monkeypatch):
     assert vd.soat_srt(r["srt"].decode()) == []
 
 
+# ── Từ khoá giảng dạy ───────────────────────────────────────────────────────
+
+
+def _khung_day_cat_chop():
+    """Rút từ video thật: mỗi từ được dạy phải đạt CẢ ba cửa — có tín hiệu
+    giảng, ≥5 lần xuất hiện, ≥2 dạng biến hình."""
+    return [
+        vd.Doan(0, 4, 'Today we learn the word "cut" and the word "chop".'),
+        vd.Doan(4, 8, "We could say that >> [snorts] >> I'm kind of chopping "
+                      "the potatoes, kind of cutting them."),
+        vd.Doan(8, 12, "If I was chopping them, it would be like this."),
+        vd.Doan(12, 15, "So I am cutting the potatoes into small cubes."),
+        vd.Doan(15, 18, "We say to cut something into pieces."),
+        vd.Doan(18, 20, "You cut it twice, then chop the rest."),
+        vd.Doan(20, 23, "One more cut here and one chop there."),
+    ]
+
+
+@pytest.mark.pure
+def test_do_ra_tu_dang_duoc_giang():
+    khoa = vd.tu_khoa_giang_day(_khung_day_cat_chop())
+    assert "cut" in khoa and "chop" in khoa
+
+
+@pytest.mark.pure
+def test_video_thuong_khong_do_nham():
+    """Video nấu ăn thường (không giảng từ) → tập rỗng, không chú thích bậy.
+    Có cả từ lặp nhiều ("potatoes") lẫn câu cảm thán ngắn — hai bẫy đã dính."""
+    nhom = [
+        vd.Doan(0, 4, "Today I will cook a steak with potatoes."),
+        vd.Doan(4, 8, "First, season the beef with salt and pepper."),
+        vd.Doan(8, 12, "Then cut the potatoes and boil the potatoes well."),
+        vd.Doan(12, 16, "Cook each side for three minutes."),
+        vd.Doan(16, 18, "Beautiful."),
+        vd.Doan(18, 20, "Oh. Trust me."),
+        vd.Doan(20, 24, "The potatoes and the potato skins look great."),
+    ]
+    assert vd.tu_khoa_giang_day(nhom) == set()
+
+
+@pytest.mark.pure
+def test_goc_tu_quy_dang_bien_hinh():
+    assert vd._goc_tu("cutting") == "cut"
+    assert vd._goc_tu("chopping") == "chop"
+    assert vd._goc_tu("chops") == "chop"
+    assert vd._goc_tu("cuts") == "cut"
+
+
+@pytest.mark.pure
+def test_dinh_dung_DANG_xuat_hien_vao_ban_dich():
+    khoa = {"chop", "cut"}
+    ra = vd.dinh_tu_goc("I'm kind of chopping the potatoes, kind of cutting them.",
+                        "Tôi đang cắt khoai tây, đang cắt chúng.", khoa)
+    assert ra.endswith("[chopping, cutting]")
+    ra2 = vd.dinh_tu_goc("So I am cutting the potatoes.",
+                         "Vậy tôi đang cắt khoai tây.", khoa)
+    assert ra2.endswith("[cutting]")
+
+
+@pytest.mark.pure
+def test_khung_khong_co_tu_khoa_thi_giu_nguyen():
+    assert vd.dinh_tu_goc("Let's get started.", "Bắt đầu thôi.",
+                          {"cut"}) == "Bắt đầu thôi."
+
+
 @pytest.mark.pure
 def test_bao_cao_doc_duoc():
     assert "Không dịch được" in vd.bao_cao({"ok": False, "error": "x"})
