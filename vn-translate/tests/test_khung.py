@@ -62,6 +62,27 @@ def test_lo_nhieu_van_ban_giu_dung_vi_tri():
     assert ra == ["vi:Alpha", "", "  ", "vi:Beta\n\nvi:Gamma"]
 
 
+def test_nhieu_cau_tach_tung_cau_truoc_khi_vao_model():
+    """Model học trên CẶP CÂU — đưa 3 câu một lượt là nó nuốt câu (đo thật
+    13/08: câu cuối biến mất). Mỗi câu phải là một mảnh riêng."""
+    goc = "Now, I grab my knife. My knife broke today. I know it sounds stupid."
+    khung, can = _khung([goc])
+    assert can == ["Now, I grab my knife.", "My knife broke today.",
+                   "I know it sounds stupid."]
+    assert _ghep(khung, _dich_gia(can))[0] == (
+        "vi:Now, I grab my knife. vi:My knife broke today. "
+        "vi:I know it sounds stupid.")
+
+
+def test_cau_don_qua_dai_cat_o_dau_phay():
+    goc = ("The first clause goes here and keeps going with many words, "
+           * 12).strip().rstrip(",") + "."
+    _, can = _khung([goc])
+    assert len(can) > 1
+    assert all(len(m) <= 400 for m in can)
+    assert " ".join(can).replace("  ", " ").startswith("The first clause")
+
+
 def test_cau_dai_cat_nhieu_manh_ghep_lai_mot_dong():
     """Dòng >400 ký tự bị cắt theo câu — ghép lại phải vẫn là MỘT dòng."""
     goc = " ".join(f"Sentence number {i} is here." for i in range(40))

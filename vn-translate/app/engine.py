@@ -101,20 +101,28 @@ def la_ten_rieng(s: str) -> bool:
 
 
 def _cat_manh(text: str) -> list[str]:
-    """Một dòng dài → các mảnh ~_TRAN_MANH ký tự, cắt ở ranh giới câu."""
-    if len(text) <= _TRAN_MANH:
-        return [text]
+    """Một dòng → TỪNG CÂU riêng; câu đơn quá dài cắt thêm ở dấu phẩy.
+
+    Vì sao từng câu chứ không gom tới ~400 ký tự như bản đầu: EnViT5/NLLB học
+    trên CẶP CÂU — đưa nhiều câu trong một lượt là mời model NUỐT câu. Đo thật
+    13/08: chuỗi 3 câu ("Now, I'm going to grab my knife. My knife, which I
+    damaged… cut a bone. I know it sounds stupid.") dịch ra đúng 2 câu, câu
+    cuối biến mất không dấu vết. Dịch từng câu thì không có gì để nuốt.
+    """
     ra: list[str] = []
-    dem = ""
     for cau in _CAT_CAU.split(text):
-        if dem and len(dem) + len(cau) + 1 > _TRAN_MANH:
-            ra.append(dem)
-            dem = cau
-        else:
-            dem = f"{dem} {cau}".strip() if dem else cau
-    if dem:
-        ra.append(dem)
-    return ra or [text]
+        cau = cau.strip()
+        while len(cau) > _TRAN_MANH:
+            cat = cau.rfind(",", _TRAN_MANH // 2, _TRAN_MANH)
+            if cat < 0:
+                cat = cau.rfind(" ", _TRAN_MANH // 2, _TRAN_MANH)
+            if cat < 0:
+                cat = _TRAN_MANH
+            ra.append(cau[:cat + 1].strip())
+            cau = cau[cat + 1:].strip()
+        if cau:
+            ra.append(cau)
+    return ra or ([text] if text else [])
 
 
 #: Một dòng sau khi mổ: (thụt lề trái, các mảnh cần dịch, đuôi phải). Dòng
