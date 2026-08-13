@@ -595,3 +595,63 @@ def test_don_bai_bo_rac_khung_va_dau_trich_dan():
 def test_tach_bai_da_don_rac_luon(monkeypatch):
     txt = f"{fb.BAI_MO}\nBài thật. turn0search1\n{fb.BAI_DONG}"
     assert fb.tach_bai(txt) == "Bài thật."
+
+
+@pytest.mark.pure
+def test_tach_bai_nhan_fence_canvas_cua_model():
+    """13/08: model bọc bằng :::writing{...} thay vì dấu của mình, và lời dẫn
+    "Dạ anh…" đứng trước fence lên thẳng Page. Fence phải được nhận làm chỗ bọc."""
+    txt = ('Dạ anh, em đã đọc kỹ trang GitHub rồi ạ. Em sẽ viết theo kiểu bài '
+           'công nghệ.\n'
+           ':::writing{variant="social_post" id="48391"}\n'
+           'Có một vấn đề khá quen thuộc khi dùng AI để viết code.\n'
+           'Link: https://github.com/addyosmani/agent-skills\n')  # quên đóng
+    bai = fb.tach_bai(txt)
+    assert bai is not None
+    assert bai.startswith("Có một vấn đề")
+    assert "Dạ anh" not in bai
+    assert ":::" not in bai
+
+
+@pytest.mark.pure
+def test_tach_bai_fence_co_dong_bo_phan_sau():
+    txt = (':::social_post:48391\nBài thật.\n:::\nEm soạn vậy được chưa anh?')
+    assert fb.tach_bai(txt) == "Bài thật."
+
+
+@pytest.mark.pure
+def test_tach_bai_fence_backtick_khong_cat_o_code_block():
+    """```social_post mở bài; khối ```bash bên trong KHÔNG được coi là dấu đóng."""
+    txt = ('```social_post 48391\n'
+           'Cài đặt:\n```bash\nnpx skills add addyosmani/agent-skills\n```\n'
+           'Ai nên dùng? Nhiều người.\n')
+    bai = fb.tach_bai(txt)
+    assert "npx skills add" in bai
+    assert "Ai nên dùng? Nhiều người." in bai
+
+
+@pytest.mark.pure
+def test_don_bai_bo_the_xem_truoc_link_o_duoi():
+    """13/08: thẻ xem-trước «Tiêu đề \\n domain \\n Tiêu đề» dính đuôi bài."""
+    tit = ("GitHub - addyosmani/agent-skills: Production-grade engineering "
+           "skills for AI coding agents.")
+    tho = f"Bài viết.\n#AI #CodingAgent\n{tit}\ngithub.com\n{tit}\n"
+    sach = fb.don_bai(tho)
+    assert sach.endswith("#AI #CodingAgent")
+    assert "github.com" not in sach
+    # Domain lẻ GIỮA bài thì để yên — chỉ gỡ bộ ba ở đuôi
+    giua = "Xem tại\ngithub.com\nnhé.\nHết bài."
+    assert "github.com" in fb.don_bai(giua)
+
+
+@pytest.mark.pure
+def test_bo_dau_bai_cat_loi_dan_chat_khi_khong_boc():
+    """12/08 21:29: model không bọc gì, mở bằng "Dạ anh, em đã đọc…" rồi ---."""
+    bai = "Khi AI viết code cho dự án lớn, vấn đề là hiểu cả hệ thống. " * 5
+    txt = ("Dạ anh, em đã đọc kỹ trang CodeGraph rồi ạ. Em sẽ viết theo kiểu "
+           "bài Facebook chia sẻ công nghệ.\n\n---\n\n" + bai)
+    ra = fb.bo_dau_bai(txt)
+    assert ra == bai.strip()
+    # Phần sau lời dẫn quá ngắn → KHÔNG cắt, giữ nguyên cho cổng duyệt hiện
+    ngan = "Dạ anh, em đã đọc kỹ rồi ạ.\n\nBài ngắn."
+    assert "Dạ anh" in fb.bo_dau_bai(ngan)

@@ -505,8 +505,10 @@ _BAI_RE = re.compile(re.escape(BAI_MO) + r"(.*?)" + re.escape(BAI_DONG), re.S)
 # Nên DỌN BẰNG CODE, giống chuyện bắt bài không tin lời dặn gọi tool.
 _RAC_RE: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*`{3,}\s*social_post[^\n]*$", re.M | re.I),
-    re.compile(r"^\s*:{3,}\s*social_post[^\n]*$", re.M | re.I),
-    re.compile(r"^\s*:{3,}\s*$", re.M),
+    # MỌI dòng mở đầu bằng ::: — cú pháp directive, không bao giờ là chữ của
+    # một bài Facebook. Mẫu cũ chỉ khớp «:::social_post…» nên lọt
+    # «:::writing{variant="social_post" id="48391"}» lên Page thật (13/08).
+    re.compile(r"^[ \t]*:{3,}[^\n]*$", re.M),
     re.compile(r"turn\d+(?:search|view|news|image|forecast|product)\d+", re.I),
     # Neo trích dẫn: ký tự vùng riêng U+E200–E203 và khoảng trắng rộng-0.
     # Viết bằng MÃ, không dán ký tự thật — dán vào thì editor hay lint xoá
@@ -515,28 +517,70 @@ _RAC_RE: tuple[re.Pattern[str], ...] = (
 )
 
 
+# Chỗ model TỰ bọc bài thay vì dùng dấu của mình. Đo thật 12–13/08, ba lần ba
+# kiểu, cùng bịa một id: «:::social_post:48391», «```social_post 48391», rồi
+# «:::writing{variant="social_post" id="48391"}» — tức là định dạng canvas nó
+# được luyện sẵn, dặn "đừng chèn khung" là thua từ đầu. Nhận luôn các fence đó
+# làm chỗ bọc: nhờ vậy lời dẫn chat đứng TRƯỚC fence ("Dạ anh, em đã đọc…")
+# không lọt vào bài — 13/08 nó đã lên Page thật.
+# Dòng mở: :::<tên>… hoặc ```social_post…; dòng đóng: ::: trần (model hay quên
+# đóng thì lấy tới hết). KHÔNG coi ``` trần là dấu đóng — bài kỹ thuật có khối
+# code ```bash thật, cắt ở đó là mất nửa bài.
+_FENCE_MO_RE = re.compile(
+    r"^[ \t]*(?::{3,}[ \t]*[^\s:][^\n]*|`{3,}[ \t]*social_post\b[^\n]*)$",
+    re.M | re.I)
+_FENCE_DONG_RE = re.compile(r"^[ \t]*:{3,}[ \t]*$", re.M)
+
+# Lời dẫn chat mở đầu ("Dạ anh, em đã đọc kỹ… Em sẽ viết…") khi model không bọc
+# gì cả — đo thật 12/08 21:29, lời dẫn đó lên thẳng Page. Chỉ cắt đoạn ĐẦU mở
+# bằng Dạ/Vâng; điều kiện "phần còn lại đủ dài" xét ở chỗ dùng.
+_LOI_DAN_RE = re.compile(
+    r"\A(?:Dạ|Vâng)\b[^\n]*(?:\n[^\n]+)*[ \t]*\n[ \t]*\n(?:-{3,}[ \t]*\n\s*)?")
+
+
 def don_bai(text: str) -> str:
     """Bỏ rác khung/trích dẫn khỏi bài trước khi đưa lên Page."""
     s = text or ""
     for rx in _RAC_RE:
         s = rx.sub("", s)
+    # Thẻ xem-trước link provider dán vào ĐUÔI bài: «Tiêu đề \n domain \n Tiêu
+    # đề» — đo thật 13/08, "GitHub - …\ngithub.com\nGitHub - …" lên thẳng Page.
+    # Chỉ gỡ đúng bộ ba đó ở cuối; không đụng dòng domain lẻ giữa bài.
+    s = re.sub(r"\n+([^\n]{5,160}?)[ \t]*\n+[\w.-]+\.[a-z]{2,63}[ \t]*\n+\1[ \t]*\s*\Z",
+               "", s)
     s = re.sub(r"[ \t]+\n", "\n", s)          # khoảng trắng cuối dòng
     s = re.sub(r"\n{3,}", "\n\n", s)          # dòng trống dồn lại
     return s.strip()
 
 
 def tach_bai(text: str) -> str | None:
-    """Lấy phần bài giữa hai dấu, đã dọn rác. None nếu model không bọc."""
+    """Lấy phần bài model bọc lại, đã dọn rác. None nếu không nhận ra chỗ bọc.
+
+    Ưu tiên dấu của mình (<<<BAI>>>), sau đó tới fence canvas model tự bịa —
+    xem chú thích ở _FENCE_MO_RE."""
     m = _BAI_RE.search(text or "")
-    if not m:
-        return None
-    return don_bai(m.group(1)) or None
+    if m:
+        return don_bai(m.group(1)) or None
+    mo = _FENCE_MO_RE.search(text or "")
+    if mo:
+        phan = (text or "")[mo.end():]
+        dong = _FENCE_DONG_RE.search(phan)
+        if dong:
+            phan = phan[:dong.start()]
+        return don_bai(phan) or None
+    return None
 
 
 def bo_dau_bai(text: str) -> str:
-    """Model không bọc → lấy cả câu trả lời, vẫn phải bỏ dấu và dọn rác."""
+    """Model không bọc gì → lấy cả câu trả lời: bỏ dấu, dọn rác, cắt lời dẫn
+    chat ở đầu. Ngưỡng 200 ký tự: phần sau lời dẫn còn ngắn hơn thế thì nó
+    không phải một bài viết — thà giữ nguyên cho cổng duyệt hiện ra."""
     s = (text or "").replace(BAI_MO, "").replace(BAI_DONG, "")
-    return don_bai(s)
+    s = don_bai(s)
+    m = _LOI_DAN_RE.match(s)
+    if m and len(s) - m.end() >= 200:
+        s = s[m.end():].strip()
+    return s
 
 
 CHON_AI_LINK = "__fb_flow__:ai_link"   # AI đọc link rồi viết, khỏi gõ gì
