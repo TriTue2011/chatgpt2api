@@ -782,6 +782,54 @@ def _cleanup(paths: list[str]) -> None:
             os.unlink(p)
         except Exception:
             pass
+        # message.txt nằm trong thư mục riêng gma_txt_* (để giữ đúng TÊN TỆP
+        # khi upload) — xoá luôn thư mục rỗng đó.
+        try:
+            cha = os.path.dirname(p)
+            if os.path.basename(cha).startswith("gma_txt_"):
+                os.rmdir(cha)
+        except Exception:
+            pass
+
+
+# ── Prompt quá dài → đính kèm message.txt (học từ Gemini-FastAPI) ───────────
+
+# gemini.google.com nhận ~1M ký tự/lượt; chừa 10% an toàn như Gemini-FastAPI.
+_GMA_MAX_CHARS_MAC_DINH = 900_000
+
+_LOI_NHAN_TEP_DAI = (
+    "The full input is too long to send inline, so it is attached as "
+    "message.txt. Read the attached message.txt and respond as if its "
+    "contents were the user's message in this conversation."
+)
+
+
+def _gioi_han_ky_tu() -> int:
+    try:
+        return int(_cfg().get("max_chars") or _GMA_MAX_CHARS_MAC_DINH)
+    except Exception:
+        return _GMA_MAX_CHARS_MAC_DINH
+
+
+def _dong_goi_prompt_dai(prompt: str, files: list[str],
+                         gioi_han: int | None = None) -> tuple[str, list[str]]:
+    """Prompt vượt trần ký tự → ghi NGUYÊN VĂN vào tệp message.txt đính kèm.
+
+    Trước đây payload lớn chỉ có đường nén head+tail (mất chữ ở giữa). Đính tệp
+    thì Gemini đọc trọn nội dung — không mất gì. Cần tài khoản đăng nhập để
+    upload (guest bị chặn 1100) — đường chọn account sẵn có đã ưu tiên
+    authenticated khi files không rỗng nên tự khớp.
+    Trả (prompt_mới, files_mới); tệp mới do caller _cleanup như files thường.
+    """
+    lim = gioi_han if gioi_han is not None else _gioi_han_ky_tu()
+    if len(prompt) <= lim:
+        return prompt, files
+    d = tempfile.mkdtemp(prefix="gma_txt_")
+    duong = os.path.join(d, "message.txt")
+    with open(duong, "w", encoding="utf-8") as f:
+        f.write(prompt)
+    _logger().info({"event": "gma_prompt_dinh_tep", "chars": len(prompt)})
+    return _LOI_NHAN_TEP_DAI, [duong] + list(files)
 
 
 def _openai_chunk(model: str, cid: str, created: int,
@@ -834,12 +882,18 @@ def _save_media_via_client(media_obj, gma_dir, full_size: bool = False) -> str |
 
 # ── Handler (main /v1/chat/completions router) ──────────────────────────────
 
-def _generate_stream(client, prompt: str, files: list[str], model_enum, base_url: str = "", cookies: dict | None = None):
+def _generate_stream(client, prompt: str, files: list[str], model_enum, base_url: str = "", cookies: dict | None = None, chat_session=None):
     kwargs: dict[str, Any] = {}
     if files:
         kwargs["files"] = files
     if model_enum is not None:
         kwargs["model"] = model_enum
+    # Gắn vào một ChatSession thì gemini_webapi tự cập nhật metadata
+    # [cid, rid, rcid] trong lúc stream — sau lượt này caller đọc
+    # chat_session.metadata để LƯU KHO và lượt sau tiếp nối cuộc chat native
+    # thay vì phát lại lịch sử (học từ Gemini-FastAPI).
+    if chat_session is not None:
+        kwargs["chat"] = chat_session
 
     _base = (base_url or "").rstrip("/")
     from services.config import config as _cfg
@@ -934,9 +988,9 @@ def _generate_stream(client, prompt: str, files: list[str], model_enum, base_url
             if md_text:
                 yield md_text
 
-def _generate_text(client, prompt: str, files: list[str], model_enum, base_url: str = "", cookies: dict | None = None) -> str:
+def _generate_text(client, prompt: str, files: list[str], model_enum, base_url: str = "", cookies: dict | None = None, chat_session=None) -> str:
     res = ""
-    for chunk in _generate_stream(client, prompt, files, model_enum, base_url, cookies):
+    for chunk in _generate_stream(client, prompt, files, model_enum, base_url, cookies, chat_session=chat_session):
         res += chunk
     return res
 
@@ -1024,6 +1078,141 @@ def _extract_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
     cleaned_text = re.sub(r"\[ToolCalls\].*?\[/ToolCalls\]", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
     return cleaned_text, tool_calls
 
+
+class _LocToolCallStream:
+    """Chặn khối [ToolCalls]/[Call:…] lộ ra stream SSE khi request có tools.
+
+    Trước đây đường stream phát thẳng text_delta nên client thấy nguyên văn
+    protocol tool-call thay vì nhận delta `tool_calls` (đường non-stream thì
+    extract đàng hoàng). Bộ lọc này (rút gọn từ StreamingOutputFilter của
+    Gemini-FastAPI): feed() trả phần chữ AN TOÀN để phát ngay; từ marker
+    [ToolCalls]/[Call: trở đi thì nuốt hết (caller extract từ full_text lúc
+    kết stream); đuôi chunk trông như marker đang dở ("[Tool", "[Ca") được
+    GIỮ LẠI chờ chunk sau, khỏi phát nhầm nửa marker.
+    """
+
+    _MARKER = re.compile(r"\[(?:ToolCalls\]|Call:)", re.IGNORECASE)
+    _DUOI_DO_DANG = re.compile(r"\[[A-Za-z]{0,9}$")
+
+    def __init__(self) -> None:
+        self._giu = ""
+        self._chan = False
+
+    def feed(self, chunk: str) -> str:
+        if self._chan:
+            return ""
+        buf = self._giu + chunk
+        m = self._MARKER.search(buf)
+        if m:
+            self._chan = True
+            self._giu = ""
+            return buf[: m.start()]
+        t = self._DUOI_DO_DANG.search(buf)
+        if t:
+            self._giu = buf[t.start():]
+            return buf[: t.start()]
+        self._giu = ""
+        return buf
+
+    def flush(self) -> str:
+        """Hết stream: trả đuôi đang giữ nếu hoá ra KHÔNG phải marker."""
+        if self._chan:
+            return ""
+        out = self._giu
+        self._giu = ""
+        return out
+
+
+# ── Kho tiếp nối hội thoại native (metadata cid/rid/rcid) ────────────────────
+
+def _ten_model_cho_kho(model: str) -> str:
+    """Khoá model trong kho: tên người dùng khai (đã bỏ tiền tố, hạ chữ thường).
+
+    Không dùng enum đã resolve — smart-routing theo prompt có thể đổi enum giữa
+    các lượt của cùng một cuộc chat, làm hash lệch dù client giữ nguyên model.
+    """
+    m = str(model or "").strip().lower()
+    for pfx in ("gma/", "gemini-web/", "gemini_web_api/"):
+        if m.startswith(pfx):
+            m = m[len(pfx):]
+            break
+    return m or "auto"
+
+
+def _tim_tiep_noi(messages: list[dict[str, Any]], ten_kho: str):
+    """Khớp prefix lịch sử với kho; hỏng kho thì coi như không khớp (chỉ tối ưu)."""
+    try:
+        from services.gma_conversation_store import kho_gma
+        khop = kho_gma().tim(messages, ten_kho)
+        if khop and khop["so_tin"] < len(messages):
+            return khop
+    except Exception as exc:
+        _logger().warning({"event": "gma_kho_tim_loi", "error": str(exc)[:120]})
+    return None
+
+
+def _luu_tiep_noi(messages: list[dict[str, Any]], ten_kho: str, profile: str,
+                  chat_session, tin_assistant: dict[str, Any]) -> None:
+    """Lưu (lịch sử + câu trả lời) → metadata phiên native, cho lượt sau tiếp nối."""
+    try:
+        meta = list(getattr(chat_session, "metadata", None) or [])
+        if not meta or not meta[0]:
+            return
+        from services.gma_conversation_store import kho_gma
+        kho_gma().luu(list(messages) + [tin_assistant], ten_kho,
+                      str(profile or ""), meta)
+    except Exception as exc:
+        _logger().warning({"event": "gma_kho_luu_loi", "error": str(exc)[:120]})
+
+
+def _xoa_tiep_noi(khop) -> None:
+    try:
+        from services.gma_conversation_store import kho_gma
+        kho_gma().xoa(khop["strict_hash"])
+    except Exception:
+        pass
+
+
+def _co_anh(messages: list[dict[str, Any]]) -> bool:
+    """Lịch sử có ảnh không — dùng xếp hạng account, KHÔNG tải ảnh về."""
+    for msg in messages or []:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "image_url":
+                return True
+    return False
+
+
+def _tu_chua_phien_nen(profile: str, exc: Exception) -> None:
+    """Tự chữa phiên Google chết ở nền — chỉ profile thật (google-*) mới có
+    creds đã lưu; placeholder/static-config gọi recover chỉ tổ spam ❌."""
+    if not profile or not profile.startswith("google-"):
+        return
+    try:
+        import threading as _t
+        from services.account_recovery import gma_recover_and_notify
+        _t.Thread(target=gma_recover_and_notify,
+                  args=(profile, str(exc)[:60]), daemon=True).start()
+    except Exception:
+        pass
+
+
+def _bo_qua_guest(psid: str, profile: str) -> RuntimeError:
+    """Guest không upload/vision được (Google 1100) — bỏ nhanh + hẹn relogin.
+    Trả sẵn RuntimeError để caller giữ làm last_exc (đường stream trước đây
+    `continue` tay không: cả pool toàn guest là stream kết thúc RỖNG im lặng)."""
+    _logger().info({"event": "gma_skip_guest", "profile": profile})
+    _drop_client(psid)
+    try:
+        from services.solver_selfheal import try_relogin, GEMINI
+        sc = _solver_cfg()
+        try_relogin(sc.get("url", ""), sc.get("api_key", ""), GEMINI, profile)
+    except Exception:
+        pass
+    return RuntimeError("guest account cannot do vision/upload")
+
 def _flatten_messages_with_tools(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> str:
     parts = []
     
@@ -1081,7 +1270,14 @@ def handle_gemini_web_api_chat(
     body: dict[str, Any] | None = None,
     base_url: str = "",
 ) -> dict[str, Any] | Iterator[dict[str, Any]]:
-    """Provider handler cho router chính (gma/* models)."""
+    """Provider handler cho router chính (gma/* models).
+
+    Hai chế độ gửi (học từ Gemini-FastAPI):
+      - TIẾP NỐI: lịch sử khớp kho hội thoại native → start_chat(metadata) và
+        chỉ gửi phần tin nhắn MỚI. Payload nhỏ, ngữ cảnh server-side còn nguyên.
+      - PHÁT LẠI: không khớp (hoặc tiếp nối hỏng) → flatten cả transcript như cũ.
+    Trả lời xong luôn lưu (lịch sử + câu trả lời) → metadata để lượt sau tiếp nối.
+    """
     from services.account_service import account_service
 
     # Lấy tools từ request body
@@ -1094,47 +1290,89 @@ def handle_gemini_web_api_chat(
     # nhạc (Lyria) là công cụ RIÊNG chỉ giao diện web kích hoạt được. Ép chỉ tổ
     # khiến bot nói dối "đã tạo nhạc" kèm link chết — tệ hơn thoái thác thật thà.
     # Nhạc thật cần đường điều khiển trình duyệt (như video Flow) — chưa làm.
-    files = _prepare_files(messages)
     model_enum = _resolve_model(model, prompt)
-    if files:
-        _logger().info({"event": "gma_images", "count": len(files)})
-    _logger().info({"event": "gma_request", "model": str(model_enum or "auto"),
-                    "msg_count": len(messages or [])})
 
-    req_features = ["file_upload"] if files else ["text"]
+    ten_kho = _ten_model_cho_kho(model)
+    khop = _tim_tiep_noi(messages, ten_kho)
+    con_lai = messages[khop["so_tin"]:] if khop else messages
+
+    _logger().info({"event": "gma_request", "model": str(model_enum or "auto"),
+                    "msg_count": len(messages or []), "tiep_noi": bool(khop),
+                    "gui_moi": len(con_lai)})
+
+    req_features = ["file_upload"] if _co_anh(messages) else ["text"]
     available_creds = _get_cookies_ranked(required_features=req_features)
     if not available_creds:
-        _cleanup(files)
         raise RuntimeError(
             "Gemini web-api not configured or all accounts exhausted: set providers.gemini_web_api.psid "
             "(cookie __Secure-1PSID) or onboard a gemini_web profile")
 
-    def _call_with_retry() -> str:
+    # Cuộc chat native sống trong TÀI KHOẢN đã tạo nó — tiếp nối phải đi đúng
+    # profile chủ. Chủ không còn cookie trong pool thì đành phát lại.
+    cred_chu = None
+    if khop:
+        cred_chu = next((c for c in available_creds if c[2] == khop["profile"]), None)
+        if cred_chu is None:
+            khop = None
+            con_lai = messages
+
+    # Danh sách lượt thử: tiếp nối (nếu có) trước, rồi phát lại qua từng account.
+    luot_thu: list[tuple[bool, tuple[str, str, str]]] = []
+    if khop and cred_chu:
+        luot_thu.append((True, cred_chu))
+    luot_thu.extend((False, c) for c in available_creds)
+
+    # (prompt, files) dựng MỘT LẦN cho mỗi chế độ và dùng lại qua các lượt thử —
+    # khỏi tải lại ảnh/ghi lại message.txt mỗi lần đổi account. Dọn ở _don_goi().
+    goi_san: dict[bool, tuple[str, list[str]]] = {}
+
+    def _goi_cho(tiep_noi: bool) -> tuple[str, list[str]]:
+        if tiep_noi not in goi_san:
+            nguon = con_lai if tiep_noi else messages
+            p = _flatten_messages_with_tools(nguon, tools) if tiep_noi else prompt
+            files = _prepare_files(nguon)
+            # Prompt vượt trần ký tự → đính nguyên văn vào message.txt (không nén mất chữ).
+            goi_san[tiep_noi] = _dong_goi_prompt_dai(p, files)
+        return goi_san[tiep_noi]
+
+    def _don_goi() -> None:
+        for _p, fs in goi_san.values():
+            _cleanup(fs)
+        goi_san.clear()
+
+    # Dựng sẵn gói cho lượt thử ĐẦU TIÊN ngay tại đây: ảnh data: hỏng phải nổi
+    # thành HTTP 400 TRƯỚC khi mở stream SSE (hành vi cũ), không phải giữa chừng.
+    try:
+        _goi_cho(luot_thu[0][0])
+    except Exception:
+        _don_goi()
+        raise
+
+    def _call_with_retry() -> tuple[str, Any, str]:
+        """Trả (text, chat_session, profile) — chat_session để lưu metadata vào kho."""
         last_exc = None
-        for psid, psidts, profile in available_creds:
+        for tiep_noi, (psid, psidts, profile) in luot_thu:
+            co_files = False
             try:
                 client = _get_client(psid, psidts)
-                # Vision/upload only works on AUTHENTICATED accounts — skip a
-                # known-guest account fast (≈init cost) instead of paying a full
-                # upload+generate that rejects with 1100.
+                p, files = _goi_cho(tiep_noi)
+                co_files = bool(files)
+                chat = (client.start_chat(metadata=list(khop["metadata"]))
+                        if tiep_noi else client.start_chat())
+                # Vision/upload (kể cả message.txt) chỉ chạy trên account đã
+                # đăng nhập — guest bị Google chặn 1100, bỏ nhanh khỏi tốn lượt.
                 if files:
                     st = getattr(client, "account_status", None)
                     if st is not None and getattr(st, "name", "") != "AVAILABLE":
-                        _logger().info({"event": "gma_skip_guest", "profile": profile})
-                        _drop_client(psid)
-                        try:
-                            from services.solver_selfheal import try_relogin, GEMINI
-                            sc = _solver_cfg()
-                            try_relogin(sc.get("url", ""), sc.get("api_key", ""), GEMINI, profile)
-                        except Exception:
-                            pass
-                        last_exc = last_exc or RuntimeError("guest account cannot do vision/upload")
+                        last_exc = last_exc or _bo_qua_guest(psid, profile)
                         continue
                 # Build Google session cookies for CDN download (ảnh/nhạc)
                 _cookies = {"__Secure-1PSID": psid}
                 if psidts:
                     _cookies["__Secure-1PSIDTS"] = psidts
-                text = _generate_text(client, prompt, files, model_enum, base_url=base_url, cookies=_cookies)
+                text = _generate_text(client, p, files, model_enum,
+                                      base_url=base_url, cookies=_cookies,
+                                      chat_session=chat)
 
                 # Detect REAL quota limits (not Flash fake "limit resets" declines)
                 if _looks_like_real_gma_quota(str(text), has_files=bool(files)):
@@ -1149,22 +1387,33 @@ def handle_gemini_web_api_chat(
                     )
                 except Exception:
                     pass
-                return text
+                return text, chat, profile
+            except HTTPException:
+                raise          # lỗi của REQUEST (vd ảnh hỏng) — không phải account
             except Exception as exc:
+                if tiep_noi:
+                    # Metadata có thể đã chết (Google quên/đóng cuộc chat) — xoá
+                    # bản ghi rồi rơi về PHÁT LẠI; account này vẫn được thử tiếp
+                    # ở các lượt phát lại phía sau nên không mất gì.
+                    _logger().info({"event": "gma_tiep_noi_hong",
+                                    "profile": profile, "error": str(exc)[:120]})
+                    _xoa_tiep_noi(khop)
+                    last_exc = exc
+                    continue
                 err = str(exc).lower()
-                
+
                 # Quota exhaustion
                 if "quota_exhausted" in err:
                     _logger().warning({"event": "gma_quota_hit", "profile": profile})
                     if profile and profile != "static-config":
                         account_service.record_profile_quota_failure(
                             profile=profile,
-                            quota_type="file_upload" if files else "text_limit",
+                            quota_type="file_upload" if co_files else "text_limit",
                             account_type="gemini_web_api"
                         )
                     last_exc = exc
                     continue
-                    
+
                 # Session UNAUTHENTICATED / expired 1PSID / generate rejected
                 # (Gemini "1100"): the stored cookies are stale. SELF-HEAL — since
                 # gma reuses the Google account, relogin-via-google refreshes the
@@ -1178,24 +1427,12 @@ def handle_gemini_web_api_chat(
                 if _needs_relogin:
                     _logger().warning({"event": "gma_session_selfheal", "profile": profile, "error": str(exc)[:120]})
                     _drop_client(psid)
-                    # Chỉ tự khôi phục PROFILE THẬT (google-*). Bỏ qua
-                    # placeholder 'gemini-web-default'/'static-config' (không có
-                    # phiên Google/creds → recover chỉ tổ spam ❌).
-                    if profile and profile.startswith("google-"):
-                        # Thang tái dùng → đăng nhập Google → báo Telegram, chạy
-                        # thread nền, debounce 30ph/profile trong hàm.
-                        try:
-                            import threading as _t
-                            from services.account_recovery import gma_recover_and_notify
-                            _t.Thread(target=gma_recover_and_notify,
-                                      args=(profile, str(exc)[:60]), daemon=True).start()
-                        except Exception:
-                            pass
+                    _tu_chua_phien_nen(profile, exc)
                     last_exc = exc
                     continue
 
                 raise exc
-        
+
         # If we loop through all credentials and fail
         if last_exc:
             raise last_exc
@@ -1206,76 +1443,136 @@ def handle_gemini_web_api_chat(
 
     if stream:
         def sse() -> Iterator[dict[str, Any]]:
+            last_exc = None
+            role_da_gui = False
             try:
-                last_exc = None
-                success = False
-                for psid, psidts, profile in available_creds:
+                for tiep_noi, (psid, psidts, profile) in luot_thu:
+                    co_files = False
                     try:
                         client = _get_client(psid, psidts)
+                        p, files = _goi_cho(tiep_noi)
+                        co_files = bool(files)
                         if files:
                             st = getattr(client, "account_status", None)
                             if st is not None and getattr(st, "name", "") != "AVAILABLE":
-                                _drop_client(psid)
+                                # Trước đây chỗ này `continue` tay không: pool toàn
+                                # guest là stream kết thúc RỖNG với finish=stop,
+                                # không ai biết lỗi. Giữ last_exc để cuối vòng báo.
+                                last_exc = last_exc or _bo_qua_guest(psid, profile)
                                 continue
+                        chat = (client.start_chat(metadata=list(khop["metadata"]))
+                                if tiep_noi else client.start_chat())
                         _cookies = {"__Secure-1PSID": psid}
                         if psidts: _cookies["__Secure-1PSIDTS"] = psidts
-                        
-                        yield _openai_chunk(model, cid, created, {"role": "assistant", "content": ""})
-                        
+
+                        if not role_da_gui:
+                            yield _openai_chunk(model, cid, created, {"role": "assistant", "content": ""})
+                            role_da_gui = True
+
+                        # Có tools → lọc khối [ToolCalls] khỏi content (trước đây
+                        # stream phát nguyên văn protocol cho client thấy).
+                        loc = _LocToolCallStream() if tools else None
                         full_text = ""
+                        da_phat = ""
                         if getattr(model_enum, "name", "") == "BASIC_PRO":
                             initial_msg = "⏳ Hệ thống đang xử lý tạo media/nhạc (quá trình này mất khoảng 60-90 giây), vui lòng đợi...\n\n"
                             full_text += initial_msg
+                            da_phat += initial_msg
                             yield _openai_chunk(model, cid, created, {"content": initial_msg})
-                        for chunk in _generate_stream(client, prompt, files, model_enum, base_url=base_url, cookies=_cookies):
+                        for chunk in _generate_stream(client, p, files, model_enum,
+                                                      base_url=base_url, cookies=_cookies,
+                                                      chat_session=chat):
                             full_text += chunk
-                            yield _openai_chunk(model, cid, created, {"content": chunk})
-                            
-                        if _looks_like_real_gma_quota(full_text, has_files=bool(files)):
+                            phat = loc.feed(chunk) if loc else chunk
+                            if phat:
+                                da_phat += phat
+                                yield _openai_chunk(model, cid, created, {"content": phat})
+                        if loc:
+                            duoi = loc.flush()
+                            if duoi:
+                                da_phat += duoi
+                                yield _openai_chunk(model, cid, created, {"content": duoi})
+
+                        if _looks_like_real_gma_quota(full_text, has_files=co_files):
                             raise RuntimeError("QUOTA_EXHAUSTED")
-                            
-                        success = True
-                        break
+
+                        tool_calls: list[dict[str, Any]] = []
+                        if tools:
+                            _, tool_calls = _extract_tool_calls(full_text)
+                            if tool_calls:
+                                yield _openai_chunk(model, cid, created, {"tool_calls": [
+                                    {"index": i, **tc} for i, tc in enumerate(tool_calls)
+                                ]})
+
+                        tin_luu: dict[str, Any] = {"role": "assistant", "content": da_phat}
+                        if tool_calls:
+                            tin_luu["tool_calls"] = tool_calls
+                        _luu_tiep_noi(messages, ten_kho, profile, chat, tin_luu)
+                        try:
+                            from services.request_context import note_provider_account
+                            note_provider_account(
+                                "gma",
+                                account=str(profile or "")[:120],
+                                model=str(model_enum or model or "gma/auto")[:80],
+                            )
+                        except Exception:
+                            pass
+
+                        yield _openai_chunk(model, cid, created, {},
+                                            finish="tool_calls" if tool_calls else "stop")
+                        return
+                    except HTTPException:
+                        raise
                     except Exception as exc:
+                        if tiep_noi:
+                            _logger().info({"event": "gma_tiep_noi_hong",
+                                            "profile": profile, "error": str(exc)[:120]})
+                            _xoa_tiep_noi(khop)
+                            last_exc = exc
+                            continue
                         err = str(exc).lower()
                         if "quota_exhausted" in err or "quota" in err:
                             if "quota_exhausted" in err and profile and profile != "static-config":
                                 try:
                                     account_service.record_profile_quota_failure(
                                         profile=profile,
-                                        quota_type="file_upload" if files else "text_limit",
+                                        quota_type="file_upload" if co_files else "text_limit",
                                         account_type="gemini_web_api",
                                     )
                                 except Exception:
                                     pass
                             last_exc = exc
                             continue
-                        if any(k in err for k in ("auth", "cookie", "1psid", "401", "403", "1100")):
+                        if any(k in err for k in ("auth", "cookie", "1psid", "401", "403",
+                                                  "1100", "unauthenticated", "failed to generate")):
                             _drop_client(psid)
+                            _tu_chua_phien_nen(profile, exc)
                             last_exc = exc
                             continue
                         raise
-                        
-                if not success and last_exc:
-                    raise last_exc
-                    
-                yield _openai_chunk(model, cid, created, {}, finish="stop")
+
+                raise (last_exc or RuntimeError("No available accounts to fulfill request"))
             finally:
-                _cleanup(files)
+                _don_goi()
         return sse()
 
     try:
-        text = _call_with_retry()
-        clean_text, tool_calls = _extract_tool_calls(text)
+        text, chat, profile = _call_with_retry()
     finally:
-        _cleanup(files)
-        
-    msg: dict[str, Any] = {"role": "assistant"}
+        _don_goi()
+    clean_text, tool_calls = _extract_tool_calls(text)
+
+    # content giữ cả khi có tool_calls (trước đây bị VỨT: model vừa nói vừa gọi
+    # tool là mất phần nói; OpenAI cho phép content đi kèm tool_calls).
+    msg: dict[str, Any] = {"role": "assistant", "content": clean_text or None}
     if tool_calls:
         msg["tool_calls"] = tool_calls
-    else:
-        msg["content"] = clean_text
-        
+
+    tin_luu: dict[str, Any] = {"role": "assistant", "content": clean_text}
+    if tool_calls:
+        tin_luu["tool_calls"] = tool_calls
+    _luu_tiep_noi(messages, ten_kho, profile, chat, tin_luu)
+
     return {
         "id": cid, "object": "chat.completion", "created": created, "model": model,
         "choices": [{"index": 0, "message": msg,
