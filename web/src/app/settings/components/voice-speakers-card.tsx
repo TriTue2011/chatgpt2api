@@ -45,7 +45,21 @@ type VoiceStatus = {
 type VoiceItem = {
   id: string; language: string; language_label: string;
   downloaded: boolean; default: boolean;
+  // Kết quả đo phát âm — chỉ giọng tiếng Việt đã đo mới có.
+  // Xem services/voice/chat_luong_giong.py và scripts/kiem_phat_am.py.
+  phat_am?: {
+    nhan: string; diem: number; tong: number;
+    am_xat: number; rung: string[]; dat: boolean;
+  };
 };
+
+/** Nhãn phát âm cho danh sách chọn giọng — giọng chưa đo thì không thêm gì.
+ *  Có nhãn này thì người chọn thấy ngay giọng nào rụng phụ âm, thay vì phải
+ *  nghe thử 52 giọng mới biết. */
+function nhanPhatAm(v: VoiceItem): string {
+  if (!v.phat_am) return "";
+  return v.phat_am.dat ? " · đọc rõ" : ` · ⚠ ${v.phat_am.nhan}`;
+}
 
 const KIND_LABEL: Record<string, string> = {
   cast: "Google Cast", dlna: "DLNA / UPnP", ha: "Qua Home Assistant", r1: "Loa R1 (Phicomm)",
@@ -387,7 +401,7 @@ export function VoiceSpeakersCard() {
               {catalog.length === 0 && <option value="">(chưa tải giọng nào)</option>}
               {catalog.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {v.id}{v.language_label ? ` · ${v.language_label}` : ""}{v.downloaded ? "" : " (chưa tải)"}
+                  {v.id}{v.language_label ? ` · ${v.language_label}` : ""}{nhanPhatAm(v)}{v.downloaded ? "" : " (chưa tải)"}
                 </option>
               ))}
             </select>
@@ -489,7 +503,7 @@ export function VoiceSpeakersCard() {
                         {catalog.length === 0 && <option value="">(chưa tải giọng nào)</option>}
                         {catalog.map((v) => (
                           <option key={v.id} value={v.id}>
-                            {v.id}{v.language_label ? ` · ${v.language_label}` : ""}{v.downloaded ? "" : " (chưa tải)"}
+                            {v.id}{v.language_label ? ` · ${v.language_label}` : ""}{nhanPhatAm(v)}{v.downloaded ? "" : " (chưa tải)"}
                           </option>
                         ))}
                       </select>
@@ -699,6 +713,7 @@ export function VoiceSpeakersCard() {
                   {catalog.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.id}{v.default ? " ⭐" : ""} · {v.language_label}
+                      {nhanPhatAm(v)}
                       {v.downloaded ? "" : " · chưa tải"}
                       {v.id === current ? " · đang dùng" : ""}
                     </option>
@@ -807,7 +822,9 @@ export function VoiceSpeakersCard() {
                 onChange={(e) => void setGiongLoa(r.id, e.target.value)}>
                 <option value="">Giọng theo kênh/thread</option>
                 {catalog.filter((v) => v.downloaded).map((v) => (
-                  <option key={v.id} value={v.id}>{v.id} · {v.language_label}</option>
+                  <option key={v.id} value={v.id}>
+                    {v.id} · {v.language_label}{nhanPhatAm(v)}
+                  </option>
                 ))}
               </select>
               {r.kind === "cast" && (

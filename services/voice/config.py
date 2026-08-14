@@ -137,6 +137,14 @@ def voice_catalog() -> list[dict[str, Any]]:
             "downloaded": kk_ready,
             "default": False,
         })
+    # Kết quả ĐO phát âm (giọng tiếng Việt) — để người chọn giọng thấy giọng nào
+    # rụng phụ âm thay vì phải nghe thử 52 giọng mới biết. Giọng chưa đo thì
+    # không có trường này.
+    from services.voice import chat_luong_giong as _clg
+    for v in out:
+        nx = _clg.nhan_xet(str(v.get("id") or ""))
+        if nx is not None:
+            v["phat_am"] = nx
     return out
 
 
