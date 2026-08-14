@@ -182,12 +182,18 @@ _CHENH_THANG = 0.1
 
 
 def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
-                   ung_vien: tuple[str, str] = ("vi", "en")) -> str:
-    """Video nói tiếng gì — so tiếng Việt với MỘT ứng viên còn lại.
+                   ung_vien: tuple[str, ...] = ("vi", "en")) -> str:
+    """Video nói tiếng gì — so độ tự tin giữa CÁC model ứng viên.
 
-    ``ung_vien``: cặp model đem so, phần tử đầu luôn là ``vi`` (nhà ưu tiên
-    tiếng Việt); phần tử sau do người dùng chọn cặp ngôn ngữ (en/zh/ja/ko).
-    Model ứng viên chưa tải trên đĩa thì phía đó câm → tự rơi về ``vi``.
+    ``ung_vien``: nhóm tiếng đem so (theo tính năng + thread — xem
+    ``vcfg.stt_nhom_tieng``). Một tiếng = khoá cứng, không đo gì. Hai tiếng =
+    phép so đã đo chắc (đúng ~-0,04 vs sai ~-0,5). Ba tiếng trở lên vẫn chạy
+    nhưng mỗi tiếng thêm là thêm một lượt nghe: chậm gấp N và biên an toàn hẹp
+    lại — UI phải nói rõ điều đó cho người chọn.
+
+    Tiếng Việt (nếu có trong nhóm) được cộng biên ``_CHENH_THANG``: máy này ưu
+    tiên tiếng Việt và video Việt chêm từ ngoại là chuyện thường. Model chưa
+    tải trên đĩa thì phía đó câm → không thắng được.
 
     Nghe THỬ vài mẫu bằng CẢ HAI model rồi so độ tự tin giải mã
     (``ys_log_probs`` của transducer): model đúng ngôn ngữ tự tin ~-0.04,
@@ -239,22 +245,29 @@ def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
             return -9.9, 0
         return sum(du) / len(du), len(du)
 
-    khac = ung_vien[1] if len(ung_vien) > 1 and ung_vien[1] != "vi" else "en"
-    vi_tb, vi_n = _tu_tin("vi")
-    khac_tb, khac_n = _tu_tin(khac)
-    if khac_n < _TOKEN_TOI_THIEU:
-        ra = "vi"
-    elif vi_n < _TOKEN_TOI_THIEU:
-        ra = khac
-    else:
-        ra = khac if khac_tb > vi_tb + _CHENH_THANG else "vi"
-    logger.info("dò ngôn ngữ: vi %.3f (%d token) / %s %.3f (%d token) → %s",
-                vi_tb, vi_n, khac, khac_tb, khac_n, ra)
+    nhom = [x for x in dict.fromkeys(ung_vien) if x] or ["vi"]
+    if len(nhom) == 1:
+        return nhom[0]          # khoá cứng: không tốn lượt nghe nào để dò
+    diem: dict[str, tuple[float, int]] = {}
+    for lang in nhom:
+        diem[lang] = _tu_tin(lang)
+    # Điểm so sánh: tiếng Việt được cộng biên ưu tiên.
+    def _xep(lang: str) -> float:
+        tb, n = diem[lang]
+        if n < _TOKEN_TOI_THIEU:
+            return -99.0        # câm (chưa tải model / nhạc nền) → không thắng
+        return tb + (_CHENH_THANG if lang == "vi" else 0.0)
+
+    ra = max(nhom, key=_xep)
+    if _xep(ra) <= -99.0:       # mọi model đều câm → về mặc định
+        ra = "vi" if "vi" in nhom else nhom[0]
+    logger.info("dò ngôn ngữ trong %s: %s → %s", nhom,
+                {k: (round(v[0], 3), v[1]) for k, v in diem.items()}, ra)
     return ra
 
 
 def nghe_tep(duong: str, tran_giay: float = 0,
-             ung_vien: tuple[str, str] = ("vi", "en")) -> tuple[list[Cau], str, float]:
+             ung_vien: tuple[str, ...] = ("vi", "en")) -> tuple[list[Cau], str, float]:
     """Tệp video/âm thanh → (các khung chữ có mốc, ngôn ngữ, số giây tiếng).
 
     ``ung_vien``: cặp ngôn ngữ đem dò (xem ``_chon_ngon_ngu``) — người dùng

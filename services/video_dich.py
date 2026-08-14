@@ -652,20 +652,34 @@ def dich_tep_phu_de(duong: str, ten: str = "", target: str = "", *,
     return _dich_va_dong_goi(doan, nguon or "auto", dich, doan[-1].ket_thuc)
 
 
-def _ung_vien_nghe(target: str) -> tuple[str, str]:
-    """Cặp model NGHE đem dò theo lựa chọn đích: "cap:zh" → so vi với zh…
+def _ung_vien_nghe(target: str, session_id: str = "") -> tuple[str, ...]:
+    """Nhóm model NGHE đem dò cho một lượt dịch video.
 
-    Chỉ dạng cặp mới đổi ứng viên — người dùng đã nói rõ video thuộc cặp nào.
-    Còn lại (mặc định, mã trơ) giữ vi/en như trước.
+    Thứ tự quyết định (chốt 14/08 — "mỗi loại phải có cài đặt riêng"):
+
+    1. Người dùng chọn CẶP ("cap:zh") → so đúng vi với zh. Họ đã nói rõ video
+       thuộc cặp nào thì không có lý gì đi dò cả 5 tiếng.
+    2. Không nêu cặp → nhóm tiếng của TÍNH NĂNG phụ đề, có đè theo thread
+       (``voice.dung_cho.phu_de.stt_tieng`` / ``voice_sessions.json``).
+    3. Cuối cùng mới về ``("vi", "en")``.
     """
     t = str(target or "").lower()
-    if t.startswith("cap:") and t[4:] in ("zh", "ja", "ko"):
+    if t.startswith("cap:") and t[4:] in ("zh", "ja", "ko", "en"):
         return ("vi", t[4:])
+    try:
+        from services.voice import config as vcfg
+        # Mặc định của RIÊNG phụ đề: cặp vi/en — phép so đã đo chắc và là
+        # hành vi đang chạy. Không mượn ô của tin nhắn thoại.
+        nhom = vcfg.stt_nhom_tieng("phu_de", session_id, ["vi", "en"])
+        if nhom:
+            return tuple(nhom)
+    except Exception as exc:
+        logger.info("lấy nhóm tiếng nghe lỗi: %s", str(exc)[:120])
     return ("vi", "en")
 
 
 def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
-                   chep_loi: bool = False) -> dict[str, Any]:
+                   chep_loi: bool = False, session_id: str = "") -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
     Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
@@ -675,8 +689,9 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     from services import video_asr as va
 
     try:
-        cau, nguon, _giay_tieng = va.nghe_tep(duong, tran_giay=TRAN_GIAY_NGHE,
-                                              ung_vien=_ung_vien_nghe(target))
+        cau, nguon, _giay_tieng = va.nghe_tep(
+            duong, tran_giay=TRAN_GIAY_NGHE,
+            ung_vien=_ung_vien_nghe(target, session_id))
     except va.LoiNghe as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:

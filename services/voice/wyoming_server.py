@@ -835,7 +835,7 @@ def _run(port: int, server_lang: str, vai: str = "both") -> None:
             if s["port"] == port:
                 s["loop"] = loop
     try:
-        loop.run_until_complete(_main(port, server_lang))
+        loop.run_until_complete(_main(port, server_lang, vai))
     except Exception as exc:
         logger.warning("voice: Wyoming server [%s] :%d dung: %s",
                        server_lang or "multi", port, str(exc)[:160])

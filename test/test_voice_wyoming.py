@@ -529,3 +529,22 @@ def test_supertonic_sid_kep_bien(monkeypatch):
     assert vcfg.supertonic_sid("ja") == 7
     assert vcfg.supertonic_sid("ko") == 9     # kẹp trần 9
     assert vcfg.supertonic_sid("xx") == 0
+
+
+def test_run_truyen_vai_xuong_main(monkeypatch):
+    """BUG 14/08 (chủ máy phát hiện): _run nhận `vai` nhưng gọi _main thiếu nó
+    → mọi cổng chạy "both", HA thấy cổng 10600 và 10700 y như nhau (một
+    integration có cả stt-vi lẫn tts-vi). Ghim đường truyền tham số."""
+    import asyncio
+
+    from services.voice import wyoming_server as wy
+
+    da_goi: list[tuple] = []
+
+    async def _main_gia(port, server_lang, vai="both"):
+        da_goi.append((port, server_lang, vai))
+
+    monkeypatch.setattr(wy, "_main", _main_gia)
+    monkeypatch.setattr(asyncio, "set_event_loop", lambda loop: None)
+    wy._run(10601, "en", "tts")
+    assert da_goi == [(10601, "en", "tts")]

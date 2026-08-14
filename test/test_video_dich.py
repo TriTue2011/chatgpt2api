@@ -432,12 +432,25 @@ def test_bao_cao_doc_duoc():
 
 @pytest.mark.pure
 @pytest.mark.parametrize("target, cho_doi", [
-    ("", ("vi", "en")), ("cap:zh", ("vi", "zh")), ("cap:ja", ("vi", "ja")),
-    ("cap:ko", ("vi", "ko")), ("cap:en", ("vi", "en")), ("en", ("vi", "en")),
-    ("vi", ("vi", "en")),
+    ("cap:zh", ("vi", "zh")), ("cap:ja", ("vi", "ja")),
+    ("cap:ko", ("vi", "ko")), ("cap:en", ("vi", "en")),
 ])
-def test_ung_vien_nghe_theo_cap(target, cho_doi):
+def test_ung_vien_nghe_theo_cap_nguoi_dung_chon(target, cho_doi):
+    """Chọn CẶP thì chỉ so hai tiếng đó — không đi dò cả 5 (chậm, dễ sai)."""
     assert vd._ung_vien_nghe(target) == cho_doi
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("target", ["", "en", "vi"])
+def test_ung_vien_nghe_khong_neu_cap_thi_theo_cai_dat(target, monkeypatch):
+    """Không nêu cặp → lấy nhóm tiếng của TÍNH NĂNG phụ đề (đè được theo
+    thread). Chưa cấu hình gì thì về ("vi","en") như cũ."""
+    from services.config import config
+    monkeypatch.setitem(config.data, "voice", {})
+    assert vd._ung_vien_nghe(target) == ("vi", "en")
+    monkeypatch.setitem(config.data, "voice",
+                        {"dung_cho": {"phu_de": {"stt_tieng": "vi,ja,ko"}}})
+    assert vd._ung_vien_nghe(target) == ("vi", "ja", "ko")
 
 
 # ── Tệp phụ đề có sẵn (.srt/.vtt) ───────────────────────────────────────────

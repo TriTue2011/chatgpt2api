@@ -804,8 +804,8 @@ def stt_language() -> str:
     """Ngôn ngữ STT do chatgpt2api cấu hình (Settings → Giọng nói).
 
     - ``vi``   — Zipformer tiếng Việt (mặc định; offline EN đã tắt)
-    - ``en``   — Parakeet English (chỉ khi ``stt.en_enabled: true``)
-    - ``auto`` — dual VI+EN khi en_enabled và đủ 2 model
+    - ``en``   — Parakeet English (cần model trên đĩa)
+    - ``auto`` — dò trong nhóm tiếng đã bật (xem ``stt_nhom_tieng``)
     """
     v = str(_sub("stt").get("language") or "vi").strip().lower().replace("_", "-")
     if v in {"auto", "mul", "multi", "und", "*"}:
@@ -823,15 +823,22 @@ def stt_language() -> str:
 
 
 def stt_en_enabled() -> bool:
-    """Bật STT tiếng Anh (Parakeet). Mặc định **tắt** — offline EN chưa chuẩn.
+    """Còn để tương thích caller cũ — nay LUÔN True nếu model có trên đĩa.
 
-    Config: ``voice.stt.en_enabled: true`` để bật lại khi cần.
+    Bỏ cờ ``voice.stt.en_enabled`` (14/08): nó là di tích thời "offline EN chưa
+    chuẩn", trong khi Parakeet đo được 21,3% WER trên talk show và các tiếng
+    zh/ja/ko thêm sau KHÔNG có cờ nào tương tự — có model là dùng. Cờ này còn
+    làm hỏng thầm: người dùng chọn `en` trong Cài đặt mà quên tick thì máy im
+    lặng rơi về tiếng Việt.
+
+    Đặt ``voice.stt.en_enabled: false`` vẫn TẮT được (đường lui cho ai đang
+    dùng), nhưng mặc định là bật.
     """
     raw = _sub("stt").get("en_enabled")
     if raw is None:
-        return False
+        return True
     if isinstance(raw, str):
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
     return bool(raw)
 
 
@@ -1080,6 +1087,107 @@ def public_base_url() -> str:
         return str(config.get().get("telegram_webhook_url") or "").strip().rstrip("/")
     except Exception:
         return ""
+
+
+#: Tính năng nào cần STT/TTS — mỗi tính năng MỘT cấu hình riêng, không dùng
+#: chung (chủ máy chốt 14/08: "mỗi loại cần đến stt, tts phải có cài đặt riêng,
+#: không chung nhau"). Khoá config: ``voice.dung_cho.<tên>.{stt_tieng,tts_giong}``.
+TINH_NANG = {
+    "tin_thoai": "Tin nhắn thoại gửi bot",
+    "phu_de": "Phụ đề video / dịch tệp",
+    "dam_thoai": "Đàm thoại hai chiều (mic)",
+    "loa": "Thông báo ra loa",
+}
+
+#: Tiếng có thể nghe/đọc. Mở rộng ở đây là mở rộng cả UI lẫn bộ dò.
+TIENG_HO_TRO = ("vi", "en", "ja", "zh", "ko")
+
+
+def _dung_cho(ten: str) -> dict[str, Any]:
+    d = _sub("dung_cho").get(str(ten or ""))
+    return d if isinstance(d, dict) else {}
+
+
+def stt_nhom_tieng(tinh_nang: str = "", session_id: str = "",
+                   mac_dinh: list[str] | None = None) -> list[str]:
+    """Nhóm tiếng đem NGHE cho một tính năng (và một thread, nếu có).
+
+    Thứ tự tra: đè theo thread (``voice_sessions.json`` — xem ``session_voice``)
+    → cấu hình của TÍNH NĂNG → ``mac_dinh`` do CHÍNH caller đưa → ``[]``.
+
+    KHÔNG rơi về ``voice.stt.language``: ô đó là của riêng tin nhắn thoại. Rơi
+    về nó nghĩa là ai đặt "chỉ tiếng Việt" cho voice note thì phụ đề video cũng
+    thôi nhận ra tiếng Anh — đúng kiểu dùng chung cài đặt mà chủ máy yêu cầu bỏ
+    (14/08). Mỗi tính năng tự khai mặc định của mình.
+
+    Trả về DANH SÁCH vì thread chọn được nhiều tiếng. Một tiếng = khoá cứng,
+    nhanh và chuẩn nhất; hai tiếng = dò bằng độ tự tin giải mã (đo 14/08: model
+    đúng tiếng ~-0,04 so với model sai ~-0,5 — rất chắc); ba tiếng trở lên =
+    mỗi tiếng thêm một lượt nghe nên chậm gấp N và dễ sai hơn.
+
+    Chỉ giữ tiếng CÓ MODEL trên đĩa — chọn tiếng chưa tải thì im lặng bỏ qua
+    còn tệ hơn báo thẳng, nên caller nào cần thì tự đối chiếu ``stt_co_model``.
+    """
+    ra: list[str] = []
+    if session_id:
+        try:
+            from services.voice import session_voice as _sv
+            cfg_s = _sv.get_session_voice_config(session_id) or {}
+            ra = _tach_tieng(cfg_s.get("stt_nhom_tieng") or cfg_s.get("stt_language"))
+        except Exception:
+            ra = []
+    if not ra and tinh_nang:
+        ra = _tach_tieng(_dung_cho(tinh_nang).get("stt_tieng"))
+    if not ra:
+        ra = list(mac_dinh or [])
+    return [x for x in ra if x in TIENG_HO_TRO]
+
+
+def _tach_tieng(raw: Any) -> list[str]:
+    """"vi,en" | ["vi","en"] | "auto" → danh sách mã tiếng (auto = mọi tiếng
+    CÓ model, để bản cũ đặt "auto" vẫn hiểu được)."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        t = raw.strip().lower()
+        if not t:
+            return []
+        if t in {"auto", "mul", "multi", "und", "*"}:
+            return [x for x in TIENG_HO_TRO if stt_co_model(x)]
+        raw = t.replace(";", ",").split(",")
+    ra: list[str] = []
+    for x in raw or []:
+        ma = str(x or "").strip().lower().split("-", 1)[0]
+        if ma and ma not in ra:
+            ra.append(ma)
+    return ra
+
+
+def stt_co_model(lang: str) -> bool:
+    """Tiếng này có model NGHE trên đĩa chưa."""
+    ma = str(lang or "").lower()
+    if ma == "vi":
+        return stt_model_dir() is not None
+    if ma == "en":
+        return stt_en_model_dir() is not None
+    return stt_them_model_dir(ma) is not None
+
+
+def tts_giong_cho(tinh_nang: str, lang: str = "vi") -> str:
+    """Giọng ĐỌC của một tính năng cho một tiếng.
+
+    Đè theo tính năng (``voice.dung_cho.<tên>.tts_giong``) → bảng giọng theo
+    tiếng (mục "Theo từng tiếng" trong Cài đặt) → giọng mặc định của máy.
+    """
+    rieng = str(_dung_cho(tinh_nang).get("tts_giong") or "").strip()
+    if rieng:
+        return rieng
+    ma = str(lang or "vi").lower()
+    if ma == "en":
+        return wyoming_en_voice()
+    if ma in ("zh", "ja", "ko"):
+        return f"dangu:{ma}"
+    return tts_voice()
 
 
 def _so_giong_them() -> dict[str, int]:
