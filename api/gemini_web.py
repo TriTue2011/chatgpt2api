@@ -902,6 +902,27 @@ def _save_media_via_client(media_obj, gma_dir, full_size: bool = False) -> str |
             
         if saved_path and os.path.exists(str(saved_path)):
             fname = os.path.basename(str(saved_path))
+            # Ảnh Gemini SINH RA mang watermark ngôi sao góc phải-dưới — gỡ tại
+            # chỗ trước khi trả đường dẫn. Chỉ đụng GeneratedImage: ảnh
+            # WebImage (Gemini nhặt từ tìm kiếm web) là ảnh của người khác.
+            # Bọc riêng để lỗi ở bước gỡ chỉ bỏ qua việc gỡ, không làm mất ảnh
+            # đã tải; ghi qua file tạm + os.replace để không bao giờ để lại
+            # file cụt khi ghi dở chừng.
+            try:
+                from gemini_webapi.types import GeneratedImage
+                from services.gemini_watermark import maybe_remove_watermark, removal_enabled
+                if (isinstance(media_obj, GeneratedImage) and removal_enabled()
+                        and fname.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))):
+                    with open(str(saved_path), "rb") as fh:
+                        cleaned = maybe_remove_watermark(fh.read(), origin="gma")
+                    if cleaned is not None:
+                        tmp_path = f"{saved_path}.tmp"
+                        with open(tmp_path, "wb") as fh:
+                            fh.write(cleaned)
+                        os.replace(tmp_path, str(saved_path))
+            except Exception as exc:
+                _logger().warning({"event": "gma_watermark_skip", "file": fname,
+                                   "error": str(exc)[:200]})
             _logger().info({"event": "gma_media_saved", "file": fname})
             return f"gma/{fname}"
             

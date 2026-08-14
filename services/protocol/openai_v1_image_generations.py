@@ -402,7 +402,8 @@ def _handle_single_image(route, body: dict[str, Any]) -> dict[str, Any] | Iterat
             "n": n,
         })
         from services.providers.web_proxy import handle_gemini_web_image_gen
-        return handle_gemini_web_image_gen(prompt, n=n, response_format=response_format)
+        return handle_gemini_web_image_gen(prompt, n=n, response_format=response_format,
+                                           base_url=base_url_str or "")
         
     # HTTP API providers: gemini_web_api
     if route.provider == "gemini_web_api":

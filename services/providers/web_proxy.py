@@ -496,10 +496,10 @@ def handle_gemini_web_chat(
     return _build_openai_response(text, full_model)
 
 
-def handle_gemini_web_image_gen(prompt: str, n: int = 1, response_format: str = "url") -> dict[str, Any]:
+def handle_gemini_web_image_gen(prompt: str, n: int = 1, response_format: str = "url",
+                                base_url: str = "") -> dict[str, Any]:
     """OpenAI /v1/images/generations handler for Gemini Web (Imagen).
     Returns OpenAI-format {"created": ..., "data": [{"url": ...}]}."""
-    from curl_cffi import requests as cffi_requests
     import base64
     cfg = _web_provider_cfg("gemini_web")
     profile = str(cfg.get("profile") or "gemini-web-default")
@@ -519,20 +519,37 @@ def handle_gemini_web_image_gen(prompt: str, n: int = 1, response_format: str = 
                   op="image_gen", started_at=started_at, prompt_len=len(prompt),
                   extra={"n": n, "got": len(urls), **meta})
                   
+    # Tải ảnh về để GỠ WATERMARK ngôi sao Gemini trước khi trả — kể cả khi
+    # client xin "url": ảnh sạch được tự host qua save_image_bytes thay vì trả
+    # thẳng URL googleusercontent còn watermark. Cờ tắt thì đường "url" trả
+    # thẳng URL gốc như trước, không tốn lượt tải nào. Tải/lưu lỗi thì lùi về
+    # URL gốc (còn watermark nhưng ảnh vẫn đến tay người dùng).
+    from services.gemini_watermark import maybe_remove_watermark, removal_enabled
+
+    go_watermark = removal_enabled()
     data = []
     for u in urls:
+        if response_format != "b64_json" and not go_watermark:
+            data.append({"url": u})
+            continue
+        try:
+            from services.net_guard import fetch_media
+            raw = fetch_media(u, timeout=30)
+        except Exception:
+            data.append({"url": u})  # Fallback: không tải được thì giữ URL gốc
+            continue
+        cleaned = maybe_remove_watermark(raw, origin="gemini_web") if go_watermark else None
         if response_format == "b64_json":
+            data.append({"b64_json": base64.b64encode(cleaned if cleaned is not None else raw).decode("ascii")})
+        elif cleaned is not None:
             try:
-                r = cffi_requests.get(u, timeout=30)
-                if r.status_code == 200:
-                    data.append({"b64_json": base64.b64encode(r.content).decode("ascii")})
-                else:
-                    data.append({"url": u}) # Fallback
+                from services.protocol.conversation import save_image_bytes
+                data.append({"url": save_image_bytes(cleaned, base_url or None)})
             except Exception:
-                data.append({"url": u})
+                data.append({"url": u})  # đĩa đầy / read-only: giữ URL gốc thay vì 500
         else:
             data.append({"url": u})
-            
+
     return {"created": int(time.time()), "data": data}
 
 def _resolve_web_profiles(cfg: dict[str, Any], *, default: str) -> list[str]:

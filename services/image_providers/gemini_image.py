@@ -176,6 +176,11 @@ class GeminiImageAdapter(BaseImageAdapter):
 
     def normalize(self, parsed: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         data = parsed.get("data") or []
+        # Ảnh Gemini free tier mang watermark ngôi sao góc phải-dưới. Gỡ ngay
+        # tại adapter để MỌI đường dùng adapter này (generations, edits, image
+        # tasks) đều sạch; dò không thấy thì giữ nguyên từng ảnh.
+        from services.gemini_watermark import strip_watermark_b64_items
+        strip_watermark_b64_items(data, origin="gemini_api")
         return {"created": now_sec(), "data": data}
 
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:

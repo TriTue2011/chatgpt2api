@@ -617,6 +617,10 @@ class FlowImageAdapter(BaseImageAdapter):
 
     def normalize(self, parsed: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         data = parsed.get("data") or []
+        # Ảnh Flow (Imagen/Google Labs) nay cũng mang watermark ngôi sao như
+        # Gemini (xác nhận 14/08/2026) — gỡ tại adapter, dò không thấy thì giữ nguyên.
+        from services.gemini_watermark import strip_watermark_b64_items
+        strip_watermark_b64_items(data, origin="flow")
         return {"created": now_sec(), "data": data}
 
     # ── Health-based rotation hooks (called by the image dispatcher) ──────
