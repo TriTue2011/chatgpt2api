@@ -597,6 +597,38 @@ luồng đọc đồng thời. Nặng hơn image thường ~6GB; host cần driv
 `nvidia-container-toolkit` + compose `gpus: all`. Một phiên chat đơn lẻ thì image
 thường (CPU 1 nhân, RTF < 1) là đủ.
 
+### 4.2f. Kiểm chất lượng phát âm và chất lượng nghe (khi thêm giọng / model mới)
+
+Hai bệ đo tự động, dùng khi bạn thêm giọng hoặc đổi model và muốn biết nó đọc đủ
+phụ âm hay không — thay vì nghe thử từng giọng bằng tai.
+
+```bash
+# ĐỌC (TTS): mỗi câu đọc lại 3 lần rồi cho STT của chính máy nghe lại
+docker exec c2a /app/.venv/bin/python /app/scripts/kiem_phat_am.py vi --lap 3
+docker exec c2a /app/.venv/bin/python /app/scripts/kiem_phat_am.py en zh ja ko --lap 3
+
+# NGHE (STT): tiếng NGƯỜI kèm bản chữ đúng — cần tải bộ FLEURS trước (xem docstring)
+docker exec c2a /app/.venv/bin/python /app/scripts/kiem_nghe.py vi --so 200
+```
+
+Bảng đọc phủ đủ phụ âm đầu và phụ âm cuối tiếng Việt, cộng 10–16 câu cho mỗi
+tiếng còn lại. Ba điều cần biết khi đọc kết quả:
+
+- **Câu mà ≥70% giọng đều sai** được tách riêng và không dùng để xếp hạng: đó
+  hoặc là STT nghe không ra, hoặc cả họ model đọc kém. Muốn phân định thì đo một
+  **họ giọng khác** (ví dụ Piper so với NghiTTS) — chữ nào chỉ một họ sai thì lỗi
+  ở họ đó.
+- **Chữ đồng âm không tính là rụng.** Tiếng Việt Bắc bộ: d/gi/r cùng đọc /z/, s/x
+  cùng /s/, ch/tr cùng /tɕ/. Máy nghe "da" ra "ra" là âm vẫn còn, chỉ khác chữ.
+- **Cột "âm xát"** đo riêng độ rõ của /s/ (chữ x, s). Cần cột này vì vòng
+  TTS→STT chỉ bắt được âm *bị thay* hoặc *bị mất*; âm còn mà đọc quá nhẹ thì máy
+  vẫn nghe ra trong khi tai người đã thấy lệch ("xin" nghe như "chin"). Số này
+  chỉ đáng tin ở mức thứ tự và mức thô mạnh/yếu.
+
+Kết quả đo ngày 14/08/2026 nằm trong `services/voice/chat_luong_giong.py`, và
+hiện thành nhãn ngay trong ô chọn giọng ("đọc rõ" / "⚠ rụng gi, k, d · âm xát
+yếu") nên không cần tra tài liệu mới biết giọng nào tốt.
+
 ### 4.3. Khai báo loa
 
 Phần **📢 Loa đã kết nối**. Ba kiểu:
