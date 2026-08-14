@@ -322,6 +322,79 @@ def create_router() -> APIRouter:
             _chay_nen(viec_id, _tai_lieu)
         return {"viec_id": viec_id}
 
+    @router.post("/api/dich/noi")
+    async def dich_noi(tieng: UploadFile = File(...), lang_noi: str = Form(...),
+                       lang_kia: str = Form(...), tts: str = Form("0"),
+                       authorization: str | None = Header(None)):
+        """Một LƯỢT đàm thoại: nghe tiếng ``lang_noi`` → dịch sang ``lang_kia``.
+
+        Bấm-nói-thả, không streaming: blob mic vài chục giây → nghe bằng model
+        offline của ĐÚNG tiếng người bấm (không cần dò — người dùng bấm mic
+        bên nào là khai tiếng bên đó) → dịch → tuỳ chọn đọc bản dịch.
+        TTS chỉ có giọng vi (NghiTTS/Piper) và en (Kokoro); tiếng khác trả
+        chữ thôi.
+        """
+        require_admin(authorization)
+        hop_le = {"vi", "en", "zh", "ja", "ko"}
+        lang_noi = str(lang_noi or "").lower()
+        lang_kia = str(lang_kia or "").lower()
+        if lang_noi not in hop_le or lang_kia not in hop_le or lang_noi == lang_kia:
+            raise HTTPException(400, detail={"error": "Cặp tiếng không hợp lệ"})
+        from services import translate_service as ts
+        if not ts.is_configured():
+            raise HTTPException(
+                503, detail={"error": "Chưa cấu hình máy chủ dịch (translate_url)"})
+        du_lieu = await read_upload_limited(tieng, 16 * 1024 * 1024)
+
+        from services import video_asr as va
+        from services.voice import engines as eng
+
+        duoi = Path(str(tieng.filename or "mic.webm")).suffix or ".webm"
+        tam = Path(tempfile.gettempdir()) / f"noi-{uuid.uuid4().hex[:8]}{duoi}"
+        tam.write_bytes(du_lieu)
+        try:
+            wav = va._boc_tieng(str(tam))
+        except va.LoiNghe as exc:
+            raise HTTPException(400, detail={"error": str(exc)})
+        finally:
+            tam.unlink(missing_ok=True)
+        try:
+            mau, rate = va._doc_wav(wav)
+        finally:
+            Path(wav).unlink(missing_ok=True)
+        if len(mau) / rate > 90:
+            raise HTTPException(400, detail={
+                "error": "Một lượt nói tối đa 90 giây — video dài thì dùng ô Dịch tệp"})
+        doan = va.cat_doan_tieng(mau, rate) or [(0.0, len(mau) / rate)]
+        try:
+            rec = eng._get_recognizer(lang_noi)
+        except Exception as exc:
+            raise HTTPException(503, detail={"error": str(exc)[:200]})
+        manh: list[str] = []
+        for b, k in doan:
+            with eng._stt_lock:
+                tokens, _ = va._nghe_mot_doan(
+                    rec, mau[int(b * rate):int(k * rate)], rate)
+            manh.append("".join(tokens).strip())
+        chu_goc = eng._normalize_stt(" ".join(m for m in manh if m))
+        if not chu_goc:
+            return {"goc": "", "dich": "", "tieng": None}
+        try:
+            ban_dich = ts.translate(chu_goc, lang_kia, lang_noi)
+        except ts.LoiDich as exc:
+            raise HTTPException(502, detail={"error": str(exc)})
+
+        tieng_b64 = None
+        if str(tts) == "1" and lang_kia in ("vi", "en"):
+            try:
+                import base64
+                giong = "" if lang_kia == "vi" else "kokoro:"
+                tieng_b64 = base64.b64encode(
+                    eng.synthesize(ban_dich, giong)).decode("ascii")
+            except Exception as exc:   # thiếu model giọng → vẫn trả chữ
+                logger.info("đàm thoại TTS lỗi: %s", str(exc)[:120])
+        return {"goc": chu_goc, "dich": ban_dich, "tieng": tieng_b64}
+
     @router.get("/api/dich/viec/{viec_id}")
     async def xem_viec(viec_id: str, authorization: str | None = Header(None)):
         require_admin(authorization)

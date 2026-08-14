@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Languages, LoaderCircle, Upload, FileText, Download, Copy, Check } from "lucide-react";
+import { Languages, LoaderCircle, Upload, FileText, Download, Copy, Check, Mic, MessagesSquare } from "lucide-react";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import webConfig from "@/constants/common-env";
@@ -149,7 +149,7 @@ function DichPageContent() {
   const goc = (webConfig.apiUrl || "").replace(/\/$/, "");
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 p-6">
+    <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Languages className="size-6" />
         <div>
@@ -265,8 +265,146 @@ function DichPageContent() {
   );
 }
 
+const NGON_NGU: Record<string, string> = {
+  vi: "Tiếng Việt", en: "Tiếng Anh", zh: "Tiếng Trung", ja: "Tiếng Nhật", ko: "Tiếng Hàn",
+};
+
+/** Đàm thoại 2 chiều bấm-nói-thả: bấm mic bên tiếng nào là máy nghe tiếng đó
+ *  rồi dịch sang bên kia. Không streaming — mỗi lượt nói là một lần gửi. */
+function DamThoai() {
+  const [tiengKia, setTiengKia] = useState("en");
+  const [docTts, setDocTts] = useState(true);
+  const [dangGhi, setDangGhi] = useState("");        // "" | mã tiếng đang ghi
+  const [dangXuLy, setDangXuLy] = useState(false);
+  const [loi, setLoi] = useState("");
+  const [luot, setLuot] = useState<{ ben: string; goc: string; dich: string }[]>([]);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  async function nhanMic(lang: string) {
+    setLoi("");
+    if (dangGhi) {
+      mediaRef.current?.stop();
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setLoi("Trình duyệt không hỗ trợ micro (cần HTTPS hoặc mở qua domain).");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      let mime = "";
+      for (const c of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]) {
+        if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(c)) { mime = c; break; }
+      }
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setDangGhi("");
+        const type = mr.mimeType || mime || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type });
+        if (blob.size < 800) return;   // bấm nhầm, chưa nói gì
+        setDangXuLy(true);
+        try {
+          const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+          const khac = lang === "vi" ? tiengKia : "vi";
+          const fd = new FormData();
+          fd.append("tieng", blob, `mic.${ext}`);
+          fd.append("lang_noi", lang);
+          fd.append("lang_kia", khac);
+          fd.append("tts", docTts ? "1" : "0");
+          const res = await request.post("/api/dich/noi", fd);
+          const d = res.data as { goc: string; dich: string; tieng: string | null };
+          if (d.goc) {
+            setLuot((prev) => [...prev, { ben: lang, goc: d.goc, dich: d.dich }]);
+            if (d.tieng) void new Audio(`data:audio/wav;base64,${d.tieng}`).play().catch(() => {});
+          } else {
+            setLoi("Không nghe ra chữ nào — thử nói lại gần mic hơn.");
+          }
+        } catch (e) {
+          setLoi(layLoi(e));
+        }
+        setDangXuLy(false);
+      };
+      mr.start(250);
+      mediaRef.current = mr;
+      setDangGhi(lang);
+    } catch {
+      setLoi("Không truy cập được micro — kiểm tra quyền Micro của trình duyệt (ổ khóa cạnh URL).");
+    }
+  }
+
+  const hai_ben = ["vi", tiengKia];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-sm">
+          Cặp phiên dịch:
+          <select value={tiengKia} onChange={(e) => { setTiengKia(e.target.value); setLuot([]); }}
+            disabled={!!dangGhi || dangXuLy}
+            className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
+            {["en", "zh", "ja", "ko"].map((m) => (
+              <option key={m} value={m}>Việt ↔ {NGON_NGU[m].replace("Tiếng ", "")}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={docTts} onChange={(e) => setDocTts(e.target.checked)} />
+          Đọc bản dịch thành tiếng (có giọng Việt + Anh)
+        </label>
+        {dangXuLy && (
+          <span className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
+            <LoaderCircle className="size-4 animate-spin" /> đang nghe và dịch…
+          </span>
+        )}
+      </div>
+      {loi && <div className="rounded-[12px] bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-400">{loi}</div>}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {hai_ben.map((lang) => (
+          <div key={lang} className="flex min-h-72 flex-col rounded-[16px] border border-[var(--border)] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="font-medium">{NGON_NGU[lang]}</span>
+              <button type="button" onClick={() => nhanMic(lang)}
+                disabled={dangXuLy || (!!dangGhi && dangGhi !== lang)}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-40",
+                  dangGhi === lang ? "animate-pulse bg-red-600 hover:bg-red-700" : "bg-slate-900 hover:bg-slate-800")}>
+                <Mic className="size-4" />
+                {dangGhi === lang ? "Bấm để dừng" : "Bấm rồi nói"}
+              </button>
+            </div>
+            <div className="flex-1 space-y-2 overflow-y-auto text-sm">
+              {luot.length === 0 && (
+                <p className="text-[var(--muted-foreground)]">
+                  Bấm mic bên {NGON_NGU[lang]} khi người nói dùng {NGON_NGU[lang].toLowerCase()}…
+                </p>
+              )}
+              {luot.map((t, i) =>
+                t.ben === lang ? (
+                  <p key={i} className="rounded-[10px] bg-[var(--muted)] p-2">🎙 {t.goc}</p>
+                ) : (
+                  <p key={i} className="rounded-[10px] border border-[var(--border)] p-2">→ {t.dich}</p>
+                ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-[var(--muted-foreground)]">
+        Mỗi lượt nói tối đa 90 giây. Máy nghe theo tiếng của nút mic đã bấm — không đoán tiếng, nên
+        hai người cứ thay nhau bấm đúng bên mình. Tiếng Trung/Nhật/Hàn: bản dịch hiện chữ (chưa có giọng đọc).
+      </p>
+    </div>
+  );
+}
+
 export default function DichPage() {
   const { isCheckingAuth, session } = useAuthGuard(["admin"]);
+  const [tab, setTab] = useState<"dich" | "dam-thoai">("dich");
 
   if (isCheckingAuth || !session || session.role !== "admin") {
     return (
@@ -276,5 +414,21 @@ export default function DichPage() {
     );
   }
 
-  return <DichPageContent />;
+  return (
+    <div className="mx-auto max-w-3xl space-y-4 p-6 pb-2">
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setTab("dich")}
+          className={cn("flex items-center gap-2 rounded-[12px] px-4 py-2 text-sm font-medium",
+            tab === "dich" ? "bg-slate-900 text-white" : "border border-[var(--border)] hover:border-slate-400")}>
+          <Languages className="size-4" /> Dịch
+        </button>
+        <button type="button" onClick={() => setTab("dam-thoai")}
+          className={cn("flex items-center gap-2 rounded-[12px] px-4 py-2 text-sm font-medium",
+            tab === "dam-thoai" ? "bg-slate-900 text-white" : "border border-[var(--border)] hover:border-slate-400")}>
+          <MessagesSquare className="size-4" /> Đàm thoại
+        </button>
+      </div>
+      {tab === "dich" ? <DichPageContent /> : <DamThoai />}
+    </div>
+  );
 }
