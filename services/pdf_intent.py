@@ -527,16 +527,66 @@ def markdown_pdf_so(pdf_path: str, *, max_pages: int | None = None) -> str:
         return ""
 
 
+def markdown_office_so(path: str) -> str:
+    """Tệp Office/EPUB → Markdown bằng anydoc. Trả '' để caller đi markitdown.
+
+    anydoc cùng nhà với `pdf-inspector` ở `markdown_pdf_so`, và cùng một kiểu:
+    lõi Rust CHẠY TRONG TIẾN TRÌNH NÀY (bindings PyO3) — không dựng thêm tiến
+    trình, không mở cổng, không gửi tệp đi đâu. Bot đọc tài liệu người lạ gửi
+    tới nên điều đó là bắt buộc, không phải tuỳ chọn.
+
+    Vì sao đặt TRƯỚC markitdown: markitdown dựng .docx bằng cách nối chữ từng
+    đoạn nên MẤT HẾT BẢNG — đúng lý do `office_bo_sung` phải đi đường khác, và
+    `pdf_to_word.digital_pdf_markdown` cũng ghi lại. anydoc đưa mọi định dạng
+    qua MỘT mô hình tài liệu rồi MỘT bộ xuất GFM, nên bảng, chú thích cuối
+    trang và tham chiếu chéo còn nguyên, và đầu ra khớp luôn với nhánh PDF vốn
+    đã dùng cùng một lõi.
+
+    BA CỔNG để rơi về markitdown:
+      * thiếu thư viện (ImportError) — bản triển khai không cài vẫn chạy y như
+        trước;
+      * anydoc không nhận tệp: `.xls` nhị phân cũ và `.html` KHÔNG có trong
+        bảng định dạng của nó (`UnsupportedError`), tệp đặt mật khẩu
+        (`EncryptedError`), tệp hỏng (`MalformedError`), tệp vượt hạn tài
+        nguyên (`ResourceLimitError`) — markitdown còn đọc được một số loại đó;
+      * Markdown ra rỗng.
+
+    KHÔNG gắn mục hình ảnh, y như `markdown_pdf_so`: anydoc để bytes ảnh ở
+    `document.assets` chứ không nhúng vào Markdown, nên ảnh vẫn là việc của
+    `_image_section` ở caller.
+    """
+    try:
+        import anydoc
+    except Exception:
+        return ""
+    bat_dau = time.monotonic()
+    try:
+        md = (anydoc.to_markdown(path) or "").strip()
+    except Exception as exc:
+        # `info` chứ không `warning`: định dạng anydoc không nhận là chuyện
+        # BÌNH THƯỜNG ở đây (mọi .xls và .html đều rơi vào nhánh này), và đã có
+        # đường lùi ngay sau. Ghi warning sẽ biến log thành rác.
+        logger.info("anydoc bỏ %s (%s) → đi đường markitdown",
+                    path, type(exc).__name__)
+        return ""
+    if not md:
+        return ""
+    logger.info("anydoc: %d ký tự, %d ms", len(md),
+                int((time.monotonic() - bat_dau) * 1000))
+    return md
+
+
 def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
     """PDF → Markdown/text sạch. PDF số → pdf-inspector; PDF scan → OCR vision.
 
-    File Office (.docx/.xlsx/.pptx) đi THẲNG markitdown: hai bước PDF phía dưới
-    chắc chắn hỏng với chúng, mà mỗi bước hỏng là một lần mở file + ghi log rác.
+    File Office (.docx/.xlsx/.pptx) đi anydoc rồi markitdown, KHÔNG xuống hai
+    bước PDF phía dưới: chúng chắc chắn hỏng với định dạng này, mà mỗi bước
+    hỏng là một lần mở file + ghi log rác.
     """
     # Cổng bom tài liệu. Đặt ở ĐÂY chứ không phải trong markdown_pdf_so vì:
     #  * đây mới là điểm vào chung của mọi kênh (Telegram, Zalo, email, Zalo cá
-    #    nhân), và nó bao cả nhánh Office — nhánh đó gọi MarkItDown THẲNG nên
-    #    guard đặt trong markdown_pdf_so không hề che được;
+    #    nhân), và nó bao cả nhánh Office — nhánh đó gọi anydoc/markitdown
+    #    THẲNG nên guard đặt trong markdown_pdf_so không hề che được;
     #  * markdown_pdf_so có hợp đồng "trả '' để caller rơi về đường cũ"; ném lỗi
     #    ở đó là phá hợp đồng (đo thật: làm đỏ test_pdf_inspector_cuc_bo).
     # Ném chứ không nuốt: nuốt rồi trả '' sẽ đẩy quả bom xuống đúng đường OCR
@@ -555,14 +605,18 @@ def extract_markdown(pdf_path: str, *, max_pages: int | None = None) -> str:
             raise
 
     if la_office(pdf_path):
-        try:
-            from markitdown import MarkItDown
-            t = (MarkItDown().convert(pdf_path).text_content or "").strip()
-        except Exception as exc:
-            logger.warning("markitdown doc file Office loi: %s", exc)
-            return ""
-        # markitdown bỏ hẳn ảnh nhúng: file Word/PowerPoint nhiều hình đi qua nó
-        # chỉ còn chữ. Lấy ảnh thẳng từ thư mục media trong file nén (xem
+        t = markdown_office_so(pdf_path)
+        if not t:
+            try:
+                from markitdown import MarkItDown
+                t = (MarkItDown().convert(pdf_path).text_content or "").strip()
+            except Exception as exc:
+                logger.warning("markitdown doc file Office loi: %s", exc)
+                return ""
+        # CẢ HAI đường trên chỉ trả về CHỮ: markitdown bỏ hẳn ảnh nhúng, còn
+        # anydoc để bytes ảnh ở `document.assets` và trong Markdown chỉ in alt
+        # text. Nên file Word/PowerPoint nhiều hình đi qua đây đều mất hình.
+        # Lấy ảnh thẳng từ thư mục media trong file nén (xem
         # pdf_images.extract_office_images) rồi gắn y như PDF vẫn làm.
         return (t + _image_section(pdf_path)) if t else ""
     t = markdown_pdf_so(pdf_path, max_pages=max_pages)

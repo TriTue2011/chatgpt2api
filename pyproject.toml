@@ -31,6 +31,19 @@ dependencies = [
     # vụ nào. Có wheel dựng sẵn cho manylinux x86_64 + aarch64 (abi3, CPython
     # ≥3.8) nên image không cần thêm toolchain Rust. Xem pdf_intent.markdown_pdf_so.
     "pdf-inspector>=0.2.6",
+    # Office/EPUB (.docx/.pptx/.xlsx/.odt/.rtf/.epub) → Markdown. CÙNG NHÀ với
+    # pdf-inspector ở trên và cùng một kiểu: lõi Rust trong tiến trình, wheel
+    # abi3 dựng sẵn cho manylinux x86_64 + aarch64 nên image không cần Rust.
+    # Đặt trước markitdown vì markitdown nối chữ từng đoạn nên mất bảng;
+    # markitdown vẫn ở lại làm đường lùi cho .xls nhị phân cũ và .html.
+    # Xem pdf_intent.markdown_office_so.
+    #
+    # GHIM Ở 0.1.8, ĐỪNG BUMP LÊN 0.1.9 CHO ĐẸP: index mặc định của dự án là
+    # mirror Aliyun (xem [[tool.uv.index]] cuối file) và mirror đó chậm hơn
+    # pypi.org vài ngày. Docker cài bằng `uv sync --frozen`, nên đòi một bản
+    # mirror chưa có là VỠ BUILD chứ không phải cài bản cũ hơn. API hai bản y
+    # nhau (đã so `_anydoc.pyi`: to_markdown / to_markdown_bytes / to_document).
+    "firecrawl-anydoc>=0.1.8",
 ]
 
 [dependency-groups]

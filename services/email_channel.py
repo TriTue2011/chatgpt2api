@@ -355,7 +355,10 @@ def _attachment_text(filename: str, payload: bytes) -> str:
     """Nội dung CHỮ của một tệp đính kèm ('' nếu không đọc được).
 
     PDF dùng chung đường trích của luồng PDF (OCR nếu là bản scan); tệp Office /
-    HTML qua markitdown; tệp text đọc trực tiếp. Không raise."""
+    EPUB qua anydoc rồi markitdown — dùng chung `pdf_intent.markdown_office_so`
+    với luồng PDF để chỉ có MỘT đường đọc tài liệu trong dự án; .html/.htm và
+    .xls nhị phân cũ anydoc không nhận nên rơi hẳn về markitdown. Tệp text đọc
+    trực tiếp. Không raise."""
     name = str(filename or "file")
     ext = os.path.splitext(name)[1].lower()
     if not payload or len(payload) > _ATTACH_MAX:
@@ -380,8 +383,12 @@ def _attachment_text(filename: str, payload: bytes) -> str:
                 f.write(payload)
                 path = f.name
             try:
-                from markitdown import MarkItDown
-                return (MarkItDown().convert(path).text_content or "")[:_ATTACH_CHARS]
+                from services.pdf_intent import markdown_office_so
+                t = markdown_office_so(path)
+                if not t:
+                    from markitdown import MarkItDown
+                    t = MarkItDown().convert(path).text_content or ""
+                return t[:_ATTACH_CHARS]
             finally:
                 try:
                     os.unlink(path)
