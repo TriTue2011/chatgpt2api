@@ -385,3 +385,62 @@ def test_truc_dich_bat_duoc_bang_bien_moi_truong(monkeypatch):
 ])
 def test_giai_ma_target_theo_cap(nguon, target, cho_doi):
     assert ts.giai_ma_target(nguon, target) == cho_doi
+
+
+# ── Định tuyến CPU/GPU theo lô ──────────────────────────────────────────────
+
+
+def _bat_gpu(monkeypatch, nguong=8):
+    from services.config import config
+
+    monkeypatch.delenv("TRANSLATE_URL_LO", raising=False)
+    monkeypatch.setitem(config.data, "translate_url", "http://cpu:5000")
+    monkeypatch.setitem(config.data, "translate_url_lo", "http://gpu:5000")
+    monkeypatch.setitem(config.data, "translate_lo_toi_thieu", nguong)
+
+
+def test_lo_lon_di_may_gpu(monkeypatch):
+    _bat_gpu(monkeypatch)
+    with install_translate(FakeTranslate(codes=("en", "vi"))) as fake:
+        ra = ts.translate_batch([f"Sentence {i}." for i in range(10)], "vi", "en")
+    assert len(ra) == 10 and all(x.startswith("vi:") for x in ra)
+    goi_dich = [p for path, p in fake.calls if path == "/translate"]
+    assert goi_dich and goi_dich[0]["_base"] == "http://gpu:5000"
+
+
+def test_cau_le_van_di_cpu(monkeypatch):
+    """Câu đơn GPU thua CPU vì overhead — dưới ngưỡng phải đi máy CPU."""
+    _bat_gpu(monkeypatch)
+    with install_translate(FakeTranslate(codes=("en", "vi"))) as fake:
+        ts.translate_batch(["One sentence."], "vi", "en")
+    goi_dich = [p for path, p in fake.calls if path == "/translate"]
+    assert goi_dich and goi_dich[0]["_base"] == ""
+
+
+def test_gpu_chet_thi_roi_ve_cpu(monkeypatch):
+    """Máy NVR tắt/bận thì việc lô tự về máy CPU — không đứt dịch vụ."""
+    _bat_gpu(monkeypatch)
+
+    class _GpuHong(FakeTranslate):
+        def goi(self, path, payload=None, *, base=""):
+            if base:
+                raise ts.LoiDich("connection refused")
+            return super().goi(path, payload, base=base)
+
+    with install_translate(_GpuHong(codes=("en", "vi"))) as fake:
+        ra = ts.translate_batch([f"Sentence {i}." for i in range(10)], "vi", "en")
+    assert all(x.startswith("vi:") for x in ra)
+    goi_dich = [p for path, p in fake.calls if path == "/translate"]
+    assert goi_dich[-1]["_base"] == ""     # lượt thành công là máy CPU
+
+
+def test_khong_khai_gpu_thi_nhu_cu(monkeypatch):
+    from services.config import config
+
+    monkeypatch.delenv("TRANSLATE_URL_LO", raising=False)
+    monkeypatch.setitem(config.data, "translate_url", "http://cpu:5000")
+    monkeypatch.delitem(config.data, "translate_url_lo", raising=False)
+    with install_translate(FakeTranslate(codes=("en", "vi"))) as fake:
+        ts.translate_batch([f"Sentence {i}." for i in range(10)], "vi", "en")
+    goi_dich = [p for path, p in fake.calls if path == "/translate"]
+    assert goi_dich and goi_dich[0]["_base"] == ""

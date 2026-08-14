@@ -1,0 +1,41 @@
+# vn-translate bản GPU — chạy trên máy có card NVIDIA (RTX 2060 Super, máy
+# NVR .220). Dùng cho việc dịch theo LÔ (phụ đề phim, tài liệu dài): CTranslate2
+# trên GPU nhanh ~10× bản CPU khi batch (benchmark chính chủ OpenNMT); câu lẻ
+# vẫn đi bản CPU trên .38 — định tuyến ở services/translate_service.py.
+#
+# Khác Dockerfile (bản CPU) hai điểm:
+# - Nền nvidia/cuda 12.4 + cuDNN 9 (ctranslate2 ≥4.5 đòi đúng cặp này;
+#   driver máy NVR 590 dư chuẩn).
+# - KHÔNG có tầng chuyển đổi EnViT5: build ngay trên máy đích, thư mục
+#   envit5-ct2/ chép sẵn vào build context từ image CPU đang chạy trên .38
+#   (docker cp từ container vn-translate) — đỡ kéo torch 800MB về máy NVR.
+#
+# Build trên máy NVR:
+#   tar từ .38:  docker exec vn-translate tar -cC /opt envit5 | tar -xC <ctx>/
+#                rồi đổi tên thành envit5-ct2/
+#   docker build -f Dockerfile.gpu -t vn-translate-gpu .
+#   docker run -d --name vn-translate-gpu --gpus all --restart unless-stopped \
+#     -p 5000:5000 -v vn-translate-data:/data vn-translate-gpu
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY envit5-ct2 /opt/envit5
+COPY app ./app
+
+COPY entrypoint.sh /entrypoint.sh
+RUN useradd --system --uid 1033 vntranslate && mkdir -p /data \
+    && chown 1033:1033 /data && chmod +x /entrypoint.sh
+VOLUME /data
+EXPOSE 5000
+
+ENV TT_MODEL_DIR=/data/models TT_GLOSSARY_DIR=/data/glossary HOME=/data HF_HOME=/data/hf \
+    TT_ENVIT5_DIR=/opt/envit5 \
+    TT_THIET_BI=cuda
+ENTRYPOINT ["/entrypoint.sh"]

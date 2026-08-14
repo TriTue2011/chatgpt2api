@@ -202,6 +202,13 @@ class Engine:
                        os.getenv("TT_MODELS", _MODELS_MAC_DINH).split(",") if m.strip()]
         self.model_dir = os.getenv("TT_MODEL_DIR", "/data/models")
         self.threads = int(os.getenv("TT_THREADS", "4"))
+        # TT_THIET_BI=cuda cho bản GPU (RTX 2060S trên máy NVR, khảo sát
+        # 14/08: dịch lô nhanh ~10×). Trên cuda dùng int8_float16 — card
+        # CC ≥ 7.0 chạy lớp int8 bằng tensor core, lớp còn lại fp16;
+        # trên cpu giữ "default" (model đã là int8 sẵn).
+        self.thiet_bi = os.getenv("TT_THIET_BI", "cpu").strip() or "cpu"
+        self.kieu_tinh = os.getenv("TT_KIEU_TINH", "").strip() or (
+            "int8_float16" if self.thiet_bi == "cuda" else "default")
         self.chi_so = 0            # model đang dùng trong self.models
         self.loi_lien_tiep = 0
         self._tr = None            # ctranslate2.Translator
@@ -227,7 +234,8 @@ class Engine:
             import ctranslate2
             import transformers
             self._e_tr = ctranslate2.Translator(
-                self.envit5_dir, device="cpu", inter_threads=1,
+                self.envit5_dir, device=self.thiet_bi,
+                compute_type=self.kieu_tinh, inter_threads=1,
                 intra_threads=self.threads)
             self._e_tok = transformers.AutoTokenizer.from_pretrained(self.envit5_dir)
             logger.info("đã nạp EnViT5 cho en↔vi: %s", self.envit5_dir)
@@ -267,7 +275,8 @@ class Engine:
         from huggingface_hub import snapshot_download
 
         duong = snapshot_download(repo, cache_dir=self.model_dir)
-        self._tr = ctranslate2.Translator(duong, device="cpu",
+        self._tr = ctranslate2.Translator(duong, device=self.thiet_bi,
+                                          compute_type=self.kieu_tinh,
                                           inter_threads=1, intra_threads=self.threads)
         # Bản CT2 cộng đồng giữ nguyên tokenizer HF trong cùng repo.
         self._tok = transformers.AutoTokenizer.from_pretrained(duong)

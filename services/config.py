@@ -865,6 +865,12 @@ class ConfigStore:
             return 3
 
     @property
+    def remove_gemini_watermark(self) -> bool:
+        """Gỡ watermark ngôi sao Gemini khỏi ảnh sinh ra (services/gemini_watermark.py).
+        Bật mặc định; tắt bằng "remove_gemini_watermark": false khi Google đổi format."""
+        return _normalize_bool(self.data.get("remove_gemini_watermark"), True)
+
+    @property
     def auto_remove_invalid_accounts(self) -> bool:
         value = self.data.get("auto_remove_invalid_accounts", False)
         if isinstance(value, str):
@@ -966,6 +972,30 @@ class ConfigStore:
             or self.data.get("translate_api_key")
             or ""
         ).strip()
+
+    @property
+    def translate_url_lo(self) -> str:
+        """Máy dịch GPU cho việc theo LÔ (phụ đề phim, tài liệu dài) — ví dụ
+        http://172.16.10.220:5000 (vn-translate-gpu trên máy NVR, RTX 2060S).
+
+        Rỗng = tắt: mọi việc đi ``translate_url`` như cũ. Có giá trị thì chỉ
+        LÔ ĐỦ LỚN mới sang GPU (xem ``translate_lo_toi_thieu``) — dịch câu lẻ
+        GPU thua CPU vì overhead (đo cộng đồng LibreTranslate: 1 câu CPU 3,6s
+        vs GPU 4,5s; 1000 câu GPU nhanh ~46 lần). GPU lỗi/tắt thì tự rơi về
+        máy CPU — thêm GPU không bao giờ làm đứt dịch vụ."""
+        return str(
+            os.getenv("TRANSLATE_URL_LO")
+            or self.data.get("translate_url_lo")
+            or ""
+        ).strip().rstrip("/")
+
+    @property
+    def translate_lo_toi_thieu(self) -> int:
+        """Lô từ bao nhiêu ĐOẠN trở lên mới đáng sang GPU (mặc định 8)."""
+        try:
+            return max(1, int(self.data.get("translate_lo_toi_thieu") or 8))
+        except (TypeError, ValueError):
+            return 8
 
     @property
     def translate_timeout(self) -> int:

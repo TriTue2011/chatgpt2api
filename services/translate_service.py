@@ -107,8 +107,11 @@ def is_configured() -> bool:
     return bool(config.translate_url)
 
 
-def _goi(path: str, payload: dict[str, Any] | None = None) -> Any:
-    base = config.translate_url
+def _goi(path: str, payload: dict[str, Any] | None = None, *,
+         base: str = "") -> Any:
+    """Gọi máy chủ dịch. ``base`` rỗng = máy CPU mặc định (``translate_url``);
+    truyền URL khác để gọi máy GPU (định tuyến theo lô ở ``translate_batch``)."""
+    base = base or config.translate_url
     if not base:
         raise LoiDich("chưa cấu hình translate_url")
     url = base + path
@@ -229,7 +232,19 @@ def translate_batch(texts: list[str], target: str, source: str = "auto") -> list
         return out
     payload = {"q": [texts[i] for i in can_gui], "source": src, "target": tgt,
                "format": "text"}
-    body = _goi("/translate", payload)
+    # Định tuyến theo LÔ: lô đủ lớn đi máy GPU (nếu khai), lỗi thì rơi về máy
+    # CPU tại chỗ — thêm GPU không bao giờ làm đứt dịch vụ. Câu lẻ luôn đi CPU
+    # (GPU thua CPU với câu đơn vì overhead — số đo cộng đồng LibreTranslate).
+    body = None
+    gpu = config.translate_url_lo
+    if gpu and len(can_gui) >= config.translate_lo_toi_thieu:
+        try:
+            body = _goi("/translate", payload, base=gpu)
+        except LoiDich as exc:
+            logger.warning("máy dịch GPU %s lỗi (%s) — rơi về máy CPU",
+                           gpu, str(exc)[:120])
+    if body is None:
+        body = _goi("/translate", payload)
     got = (body or {}).get("translatedText")
     if not isinstance(got, list) or len(got) != len(can_gui):
         raise LoiDich("máy chủ trả translatedText không khớp số đoạn đã gửi")

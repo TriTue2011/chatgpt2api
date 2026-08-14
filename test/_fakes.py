@@ -648,8 +648,10 @@ class FakeTranslate:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.file_calls: list[dict[str, Any]] = []
 
-    def goi(self, path: str, payload: dict[str, Any] | None = None) -> Any:
-        self.calls.append((path, dict(payload or {})))
+    def goi(self, path: str, payload: dict[str, Any] | None = None, *,
+            base: str = "") -> Any:
+        # ``_base`` ghi kèm để test định tuyến CPU/GPU ("" = máy CPU mặc định).
+        self.calls.append((path, {**dict(payload or {}), "_base": base}))
         SEAM_LOG.add("S9", "translate", path)
         if self.loi:
             from services.translate_service import LoiDich
