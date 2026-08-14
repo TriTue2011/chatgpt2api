@@ -160,6 +160,7 @@ def set_session_voice_config(
     tts_voice: str | None = None,
     tts_backend: str = "",
     stt_language: str = "",
+    stt_nhom_tieng: str | None = None,
     stt_engine: str = "",
     stt_backend: str = "",
     tts_enabled: bool | None = None,
@@ -190,6 +191,14 @@ def set_session_voice_config(
             updated["tts_backend"] = tts_backend.strip()
         if stt_language:
             updated["stt_language"] = stt_language.strip()
+        if stt_nhom_tieng is not None:
+            # Danh sách tiếng đem NGHE cho thread này ("vi,en"). "" = xoá đè,
+            # về cấu hình của tính năng. Xem vcfg.stt_nhom_tieng.
+            nt = stt_nhom_tieng.strip()
+            if nt:
+                updated["stt_nhom_tieng"] = nt
+            else:
+                updated.pop("stt_nhom_tieng", None)
         if stt_engine:
             updated["stt_engine"] = stt_engine.strip()
         if stt_backend:

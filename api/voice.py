@@ -588,6 +588,9 @@ def create_router() -> APIRouter:
                        else str(body.get("tts_voice")).strip()),
             tts_backend=str(body.get("tts_backend") or "").strip(),
             stt_language=str(body.get("stt_language") or "").strip(),
+            # Nhóm tiếng đem nghe cho thread này ("vi,en"); "" = xoá đè.
+            stt_nhom_tieng=(None if body.get("stt_nhom_tieng") is None
+                            else str(body.get("stt_nhom_tieng")).strip()),
             stt_engine=str(body.get("stt_engine") or "").strip(),
             stt_backend=str(body.get("stt_backend") or "").strip(),
             # None = giữ nguyên; đặt ở key cấp kênh ('tg'/'zalo'/'zalop') là

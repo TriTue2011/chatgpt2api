@@ -143,6 +143,19 @@ export function VoiceSpeakersCard() {
     setField("voice", { ...voiceCfg, [section]: { ...base, ...patch } });
   };
 
+  // Cấu hình RIÊNG từng tính năng (chốt 14/08: "mỗi loại cần đến stt, tts phải
+  // có cài đặt riêng, không chung nhau"). voice.dung_cho.<tên>.stt_tieng.
+  const dungCho = (voiceCfg.dung_cho as Record<string, Record<string, unknown>>) || {};
+  const patchDungCho = (ten: string, patch: Record<string, unknown>) => {
+    setField("voice", {
+      ...voiceCfg,
+      dung_cho: { ...dungCho, [ten]: { ...(dungCho[ten] || {}), ...patch } },
+    });
+  };
+  const tiengCua = (ten: string): string[] =>
+    String((dungCho[ten] || {}).stt_tieng || "")
+      .split(",").map((x) => x.trim()).filter(Boolean);
+
   const addSpeaker = async () => {
     if (!draft.name.trim()) { toast.error("Đặt tên loa trước (vd 'loa phòng khách')"); return; }
     setBusy(true);
@@ -384,6 +397,52 @@ export function VoiceSpeakersCard() {
             <Input value={String(ttsCfg.wyoming_url || "")}
               onChange={(e) => patchVoice("tts", { wyoming_url: e.target.value })}
               placeholder="tcp://192.0.2.10:10200" />
+          </div>
+
+          {/* ── THEO TỪNG TÍNH NĂNG — tính năng nào nghe tiếng nào. Tách hẳn
+              khỏi nhau: đặt "chỉ tiếng Việt" cho tin nhắn thoại KHÔNG còn làm
+              phụ đề video thôi nhận ra tiếng Anh (bug cũ, vá 14/08). Bỏ trống
+              = dùng mặc định của chính tính năng đó. */}
+          <div className="sm:col-span-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div className="text-xs font-medium">
+              Theo từng tính năng — tiếng đem NGHE (bỏ trống = mặc định của tính năng đó)
+            </div>
+            {([
+              ["tin_thoai", "🎙️ Tin nhắn thoại gửi bot", "mặc định: Việt"],
+              ["phu_de", "🎬 Phụ đề video / dịch tệp", "mặc định: Việt + Anh"],
+              ["dam_thoai", "💬 Đàm thoại hai chiều", "theo cặp đã chọn trong tab Dịch"],
+            ] as const).map(([ma, nhan, ghi]) => (
+              <div key={ma} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                <span className="w-56 shrink-0">{nhan}</span>
+                {(["vi", "en", "ja", "zh", "ko"] as const).map((lng) => (
+                  <label key={lng} className="flex cursor-pointer items-center gap-1 select-none">
+                    <input type="checkbox" className="size-3.5"
+                      checked={tiengCua(ma).includes(lng)}
+                      disabled={ma === "dam_thoai"}
+                      onChange={(e) => {
+                        const cur = tiengCua(ma);
+                        const moi = e.target.checked
+                          ? [...cur, lng] : cur.filter((x) => x !== lng);
+                        patchDungCho(ma, { stt_tieng: moi.join(",") });
+                      }} />
+                    {{ vi: "Việt", en: "Anh", ja: "Nhật", zh: "Trung", ko: "Hàn" }[lng]}
+                  </label>
+                ))}
+                <span className="text-[11px] opacity-70">{ghi}</span>
+                {tiengCua(ma).length >= 3 && (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-500">
+                    ⚠️ {tiengCua(ma).length} tiếng = {tiengCua(ma).length} lượt nghe mỗi lần
+                  </span>
+                )}
+              </div>
+            ))}
+            <p className="text-[10px] text-muted-foreground">
+              Một tiếng = khoá cứng, nhanh và chuẩn nhất (không tốn lượt dò nào). Hai tiếng =
+              máy dò bằng độ tự tin giải mã — đo thật 14/08: model đúng tiếng ~-0,04 so với
+              model sai ~-0,5, rất chắc. Ba tiếng trở lên vẫn chạy nhưng mỗi tiếng thêm là
+              thêm một lượt nghe (chậm gấp N) và biên an toàn hẹp lại. Muốn khác nhau theo
+              từng nhóm/người thì đè ở «Kênh chat» (mục 🎙️ Tiếng nghe của từng phạm vi).
+            </p>
           </div>
 
           {/* ── THEO TỪNG TIẾNG — mỗi tiếng một mục THU GỌN (bấm mới xoè):

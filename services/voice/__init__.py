@@ -157,10 +157,14 @@ def listen(audio: bytes, src_hint: str = "", lang: str = "", *, session_id: str 
             from services.agent import teacher
             stt_cfg = teacher.stt_for_subject(subject)
             lang = stt_cfg.get("language") or ""
-        elif session_id:
-            from services.voice import session_voice
-            stt_cfg = session_voice.get_stt_config_for_session(session_id)
-            lang = stt_cfg.get("language") or ""
+        else:
+            # Nhóm tiếng của tính năng TIN NHẮN THOẠI, đè được theo thread
+            # (chốt 14/08: mỗi tính năng một cài đặt riêng). Một tiếng = khoá
+            # cứng; nhiều tiếng = "auto" cho transcribe tự dò trong nhóm đó.
+            from services.voice import config as _vc
+            nhom = _vc.stt_nhom_tieng("tin_thoai", session_id or "",
+                                      [_vc.stt_language()])
+            lang = nhom[0] if len(nhom) == 1 else ("auto" if nhom else "")
     return transcribe(audio, src_hint, lang)
 
 

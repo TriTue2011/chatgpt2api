@@ -548,3 +548,51 @@ def test_run_truyen_vai_xuong_main(monkeypatch):
     monkeypatch.setattr(asyncio, "set_event_loop", lambda loop: None)
     wy._run(10601, "en", "tts")
     assert da_goi == [(10601, "en", "tts")]
+
+
+# ── (c) Nhóm tiếng theo TÍNH NĂNG + đè theo THREAD (14/08) ──────────────────
+
+
+def test_nhom_tieng_theo_tinh_nang_va_thread(monkeypatch, tmp_path):
+    """Thứ tự: đè theo thread → cấu hình tính năng → mặc định của caller.
+    KHÔNG mượn voice.stt.language (bẫy dùng chung mà chủ máy yêu cầu bỏ)."""
+    from services.config import config
+    from services.voice import config as vc
+    from services.voice import session_voice as sv
+
+    monkeypatch.setattr(sv, "_DATA_PATH", tmp_path / "voice_sessions.json",
+                        raising=False)
+    # 1) chưa cấu hình gì → mặc định do caller khai
+    monkeypatch.setitem(config.data, "voice", {"stt": {"language": "vi"}})
+    assert vc.stt_nhom_tieng("phu_de", "", ["vi", "en"]) == ["vi", "en"]
+    assert vc.stt_nhom_tieng("tin_thoai", "", ["vi"]) == ["vi"]
+
+    # 2) cấu hình của TÍNH NĂNG thắng mặc định — và chỉ tính năng đó đổi
+    monkeypatch.setitem(config.data, "voice", {
+        "stt": {"language": "vi"},
+        "dung_cho": {"tin_thoai": {"stt_tieng": "vi,ja"}},
+    })
+    assert vc.stt_nhom_tieng("tin_thoai", "", ["vi"]) == ["vi", "ja"]
+    assert vc.stt_nhom_tieng("phu_de", "", ["vi", "en"]) == ["vi", "en"]
+
+
+def test_nhom_tieng_bo_ma_la(monkeypatch):
+    from services.config import config
+    from services.voice import config as vc
+
+    monkeypatch.setitem(config.data, "voice",
+                        {"dung_cho": {"phu_de": {"stt_tieng": "vi,xx,ja"}}})
+    assert vc.stt_nhom_tieng("phu_de", "", ["vi"]) == ["vi", "ja"]
+
+
+def test_tts_giong_cho_tung_tieng(monkeypatch):
+    """Giọng đọc: đè theo tính năng → bảng giọng theo tiếng."""
+    from services.config import config
+    from services.voice import config as vc
+
+    monkeypatch.setitem(config.data, "voice", {})
+    assert vc.tts_giong_cho("loa", "ja") == "dangu:ja"
+    assert vc.tts_giong_cho("loa", "zh") == "dangu:zh"
+    monkeypatch.setitem(config.data, "voice",
+                        {"dung_cho": {"loa": {"tts_giong": "nghi:ban-mai"}}})
+    assert vc.tts_giong_cho("loa", "ja") == "nghi:ban-mai"   # tính năng thắng

@@ -1240,10 +1240,13 @@ def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:
         lang = "vi"
     wav16 = to_wav_16k_mono(audio, src_hint)
     if lang == "auto":
-        # Local auto: vi trước, en sau (cùng logic wyoming _transcribe_auto)
-        for try_lang in ("vi", "en"):
+        # Local auto: thử theo nhóm tiếng của tính năng tin nhắn thoại (14/08 —
+        # trước đây cứng vi rồi en). Thứ tự giữ vi trước: máy ưu tiên tiếng Việt.
+        _nhom = vcfg.stt_nhom_tieng("tin_thoai", "", ["vi", "en"])
+        _thu = [x for x in ("vi", "en", "ja", "zh", "ko") if x in _nhom] or ["vi"]
+        for try_lang in _thu:
             try:
-                if try_lang == "vi" and vcfg.stt_model_dir() is None:
+                if not vcfg.stt_co_model(try_lang):
                     continue
                 if try_lang == "en" and vcfg.stt_en_model_dir() is None:
                     continue
