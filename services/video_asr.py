@@ -277,6 +277,7 @@ def nghe_tep(duong: str, tran_giay: float = 0,
     và TRƯỚC khi nghe (đắt). Raise ``LoiNghe`` với thông điệp đưa thẳng được
     cho người dùng.
     """
+    from services import nghe_gpu
     from services.voice import engines as eng
 
     wav = _boc_tieng(duong)
@@ -291,16 +292,31 @@ def nghe_tep(duong: str, tran_giay: float = 0,
         if not doan:
             raise LoiNghe("không thấy tiếng nói nào trong tệp")
         lang = _chon_ngon_ngu(mau, rate, doan, ung_vien)
-        rec = eng._get_recognizer(lang)
 
+        # Nghe bằng máy GPU trước NẾU tiếng này đã đo là tại chỗ nghe kém (mặc
+        # định en và ko — model tại chỗ bỏ trắng 7% và 45% đoạn). Nhận diện
+        # ngôn ngữ vẫn làm tại chỗ: nó rẻ và đã chạy đúng. Lỗi thì rơi xuống
+        # đường tại chỗ ngay bên dưới, phụ đề không bao giờ vì thế mà đứt.
         ra: list[Cau] = []
-        for b, k in doan:
-            # Khoá theo TỪNG đoạn chứ không cả vòng lặp: bộ nghe dùng chung với
-            # voice note của bot, giữ khoá suốt một video 30 phút là chặn mọi
-            # tin nhắn thoại ngần ấy thời gian.
-            with eng._stt_lock:
-                tokens, moc = _nghe_mot_doan(rec, mau[int(b * rate):int(k * rate)], rate)
-            ra.extend(gom_khung(tokens, moc, b))
+        if nghe_gpu.dung_duoc(lang):
+            try:
+                tokens, moc = nghe_gpu.nghe(wav, lang)
+                ra = gom_khung(tokens, moc, 0.0)   # mốc GPU đã là tuyệt đối
+                logger.info("phụ đề: nghe %s bằng máy GPU — %d khung", lang, len(ra))
+            except nghe_gpu.LoiNgheGpu as exc:
+                logger.info("phụ đề: máy GPU không nghe được (%s) — nghe tại chỗ",
+                            str(exc)[:120])
+
+        if not ra:
+            rec = eng._get_recognizer(lang)
+            for b, k in doan:
+                # Khoá theo TỪNG đoạn chứ không cả vòng lặp: bộ nghe dùng chung
+                # với voice note của bot, giữ khoá suốt một video 30 phút là
+                # chặn mọi tin nhắn thoại ngần ấy thời gian.
+                with eng._stt_lock:
+                    tokens, moc = _nghe_mot_doan(
+                        rec, mau[int(b * rate):int(k * rate)], rate)
+                ra.extend(gom_khung(tokens, moc, b))
 
         sach = [Cau(c.bat_dau, c.ket_thuc, eng._normalize_stt(c.chu)) for c in ra]
         sach = [c for c in sach if c.chu]

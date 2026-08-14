@@ -83,6 +83,22 @@ def _doc_tsv(duong: Path) -> list[tuple[str, str]]:
     return ra
 
 
+def _nghe_gpu(tep: Path, lang: str, url: str, batch: int = 2) -> str:
+    """Nghe bằng dịch vụ faster-whisper trên máy GPU (fw-nghe), trả bản chữ.
+
+    Có mặt ở đây để so ĐÚNG cùng bộ dữ liệu với đường local — chọn đường nghe
+    cho phụ đề phải dựa vào số đo trên cùng bản thu, không dựa vào phỏng đoán.
+    """
+    import requests
+
+    with tep.open("rb") as f:
+        r = requests.post(f"{url.rstrip('/')}/nghe",
+                          files={"tep": (tep.name, f, "audio/wav")},
+                          data={"lang": lang, "batch": str(batch)}, timeout=600)
+    r.raise_for_status()
+    return " ".join(d.get("chu") or "" for d in (r.json().get("doan") or []))
+
+
 def _tu(s: str, lang: str) -> list[str]:
     """Tách thành đơn vị để so: tiếng Trung/Nhật/Hàn tính theo KÝ TỰ."""
     chuan = _chuan(s)
@@ -122,7 +138,7 @@ def _lech_phu_am(dung: list[str], nghe: list[str]) -> list[tuple[str, str]]:
     return ra
 
 
-def do_mot_tieng(lang: str, so: int, thu_muc: Path) -> None:
+def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
     ma = MA_FLEURS[lang]
     tsv = thu_muc / f"{ma}.test.tsv"
     if not tsv.is_file():
@@ -135,7 +151,8 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path) -> None:
     # 857 bản thu thành 857 lượt quét.
     kho = {t.name: t for t in (thu_muc / ma).rglob("*.wav")}
     print(f"\n=== NGHE tiếng {lang} · bộ FLEURS {ma} · {len(cap)} bản thu "
-          f"({len(kho)} tệp trên đĩa), đo {min(so, len(cap))} bản")
+          f"({len(kho)} tệp trên đĩa), đo {min(so, len(cap))} bản"
+          + (f" · qua GPU {gpu}" if gpu else " · model local"))
 
     tong_tu = tong_loi = 0
     tong_kt = tong_loi_kt = 0
@@ -162,7 +179,8 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path) -> None:
                 print(f"  LỖI đọc tệp {ten}: {str(exc)[:110]}")
             continue
         try:
-            ra = eng.transcribe(wav16, lang=lang)
+            ra = (_nghe_gpu(tep, lang, gpu) if gpu
+                  else eng.transcribe(wav16, lang=lang))
         except Exception:
             # "Không nghe ra chữ nào" phải tính là SAI TRỌN, không được bỏ qua:
             # bỏ qua thì con số đẹp lên đúng ở những bản khó nhất, mà với người
@@ -206,10 +224,13 @@ def main() -> None:
     ap.add_argument("tieng", nargs="+", choices=[*MA_FLEURS, "all"])
     ap.add_argument("--so", type=int, default=200, help="số bản thu mỗi tiếng")
     ap.add_argument("--thu-muc", default=str(FLEURS_DIR))
+    ap.add_argument("--gpu", default="",
+                    help="đo qua dịch vụ faster-whisper thay vì model local, "
+                         "ví dụ http://172.16.10.220:5002")
     a = ap.parse_args()
     tiengs = list(MA_FLEURS) if "all" in a.tieng else a.tieng
     for lang in tiengs:
-        do_mot_tieng(lang, max(1, a.so), Path(a.thu_muc))
+        do_mot_tieng(lang, max(1, a.so), Path(a.thu_muc), a.gpu.strip())
 
 
 if __name__ == "__main__":

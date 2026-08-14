@@ -93,6 +93,14 @@ services:
       # câu 0,84s vs 54s trên CPU. Câu lẻ vẫn đi máy CPU (GPU thua ở câu
       # đơn); GPU lỗi/tắt thì tự rơi về CPU và nghỉ GPU 5 phút. Trống = tắt.
       TRANSLATE_URL_LO: ${TRANSLATE_URL_LO:-}
+      # TUỲ CHỌN — máy NGHE thứ hai chạy GPU (faster-whisper large-v3) cho phụ
+      # đề. Lý do có nó: đo 14/08 trên bộ FLEURS, model nghe tại chỗ BỎ TRẮNG 7%
+      # đoạn tiếng Anh và 45% đoạn tiếng Hàn — không trả chữ nào mà cũng không
+      # báo lỗi, nên phụ đề mất dòng mà không ai biết. Chỉ những tiếng trong
+      # voice.stt.gpu_tieng (mặc định en,ko) mới sang GPU; tiếng Việt giữ tại
+      # chỗ. GPU lỗi/tắt thì tự rơi về model tại chỗ và nghỉ GPU 5 phút. Trống =
+      # tắt. Dựng dịch vụ: xem fw-nghe/ và docs/NGHE_GPU.md.
+      NGHE_URL_GPU: ${NGHE_URL_GPU:-}
       # Dịch sang tiếng Anh trước khi gửi LLM rồi dịch phản hồi về tiếng Việt.
       # MẶC ĐỊNH TẮT — đổi hành vi của MỌI lượt gọi model, phải tự bật.
       # Xem docs/DICH_MAY_TU_CHU.md mục 5 trước khi đặt "1".

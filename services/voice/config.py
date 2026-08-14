@@ -951,6 +951,39 @@ def stt_threads() -> int:
         return max(1, auto_tts_threads())
 
 
+def stt_gpu_url() -> str:
+    """Máy nghe GPU (faster-whisper) cho PHỤ ĐỀ — ví dụ http://172.16.10.220:5002.
+
+    Rỗng = tắt, mọi việc nghe đi model tại chỗ như cũ. Có giá trị thì chỉ những
+    tiếng trong ``stt_gpu_tieng()`` mới sang GPU, và GPU lỗi thì tự rơi về tại
+    chỗ (xem services/nghe_gpu.py). Dịch vụ nằm ở fw-nghe/ trong repo này.
+    """
+    import os
+
+    return str(os.getenv("NGHE_URL_GPU")
+               or _sub("stt").get("gpu_url") or "").strip().rstrip("/")
+
+
+#: Tiếng gửi sang máy GPU khi có khai địa chỉ. Mặc định lấy theo SỐ ĐO trên bộ
+#: FLEURS 14/08/2026 — chỉ những tiếng mà model tại chỗ bỏ trắng đoạn:
+#: en bỏ trắng 7%, ko bỏ trắng 45%. Tiếng Việt giữ tại chỗ (9,3% sai từ, không
+#: bỏ trắng bản nào) để việc thường ngày không phụ thuộc máy thứ hai.
+STT_GPU_TIENG_MAC_DINH = ("en", "ko")
+
+
+def stt_gpu_tieng() -> tuple[str, ...]:
+    """Những tiếng nghe bằng máy GPU. Đặt qua voice.stt.gpu_tieng ("en,ko")."""
+    raw = _sub("stt").get("gpu_tieng")
+    if raw is None or str(raw).strip() == "":
+        return STT_GPU_TIENG_MAC_DINH
+    if isinstance(raw, (list, tuple)):
+        muc = [str(x) for x in raw]
+    else:
+        muc = str(raw).replace(";", ",").split(",")
+    return tuple(dict.fromkeys(
+        x.strip().lower() for x in muc if x and x.strip()))
+
+
 def has_local_stt() -> bool:
     if stt_model_dir() is None:
         return False
