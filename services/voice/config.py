@@ -873,6 +873,36 @@ def kokoro_zh_sid() -> int:
         return 0
 
 
+def supertonic_sid(lang: str) -> int:
+    """Giọng Supertonic cho ja/ko (sid 0..9: M1-M5 nam, F1-F5 nữ).
+
+    Config ``voice.tts.supertonic_ja_sid`` / ``supertonic_ko_sid`` — chỉnh
+    trong Cài đặt → Loa & giọng nói."""
+    raw = _sub("tts").get(f"supertonic_{str(lang or '').lower()}_sid")
+    try:
+        return min(9, max(0, int(raw)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def wyoming_port_them() -> dict[str, int]:
+    """Cổng Wyoming RIÊNG theo tiếng — HA thêm mỗi cổng một integration,
+    mỗi integration một entity TTS/STT nói đúng giọng tiếng đó.
+
+    Config ``voice.wyoming_server.port_en / port_zh / port_ja / port_ko``;
+    0 / rỗng = không mở cổng đó. Nhớ publish cổng trong compose."""
+    w = _wy()
+    ra: dict[str, int] = {}
+    for lang in ("en", "zh", "ja", "ko"):
+        try:
+            p = int(w.get(f"port_{lang}") or 0)
+        except (TypeError, ValueError):
+            p = 0
+        if p > 0:
+            ra[lang] = p
+    return ra
+
+
 def stt_them_model_dir(lang: str) -> Path | None:
     """Thư mục model nghe của ngôn ngữ THÊM (zh/ja/ko) — ``None`` khi chưa tải.
 

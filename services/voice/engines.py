@@ -407,7 +407,7 @@ def synthesize_da_ngu(text: str, lang: str) -> bytes:
         import sherpa_onnx
         tts = _get_supertonic()
         gc = sherpa_onnx.GenerationConfig()
-        gc.sid = 0
+        gc.sid = vcfg.supertonic_sid(lang)
         gc.num_steps = 4          # câu ngắn: đổi vài % chất lượng lấy tốc độ
         gc.speed = 1.0
         gc.extra["lang"] = lang   # Supertonic bắt buộc khai tiếng theo lượt
@@ -966,6 +966,12 @@ def stream_synthesize(text: str, voice: str = "", *, style: str = ""):
     if vcfg.tts_backend() == "off":
         raise VoiceError("TTS đang tắt.")
     v = (voice or vcfg.tts_voice()).strip()
+    # Giọng "dangu:<zh|ja|ko>" — Kokoro đa ngữ / Supertonic (cổng Wyoming theo
+    # tiếng dùng id này). Không stream theo câu: model đọc trọn rồi phát.
+    if v.startswith("dangu:"):
+        rate, _w, _c, pcm = _wav_parts(synthesize_da_ngu(text, v[len("dangu:"):]))
+        yield rate, pcm
+        return
 
     ck = tts_cache.key("stream", text, v, style)
     hit = tts_cache.get(ck)
@@ -1207,6 +1213,8 @@ def transcribe(audio: bytes, src_hint: str = "", lang: str = "") -> str:
         lang = "vi"
     elif lang in {"auto", "mul", "multi", "und", "*"}:
         lang = "auto"
+    elif lang.split("-", 1)[0] in vcfg.STT_THEM_DIR:
+        lang = lang.split("-", 1)[0]   # zh/ja/ko — cổng Wyoming theo tiếng
     else:
         lang = "vi"
     wav16 = to_wav_16k_mono(audio, src_hint)

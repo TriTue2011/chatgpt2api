@@ -476,3 +476,37 @@ class SttBufferCapTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Cổng Wyoming theo tiếng zh/ja/ko (14/08) ────────────────────────────────
+
+
+def test_giong_cong_khoa_tieng_la_dangu():
+    from services.voice import wyoming_server as wy
+
+    assert wy._resolve_tts_voice("ja") == "dangu:ja"
+    assert wy._resolve_tts_voice("zh", client_voice="kokoro:af") == "dangu:zh"
+    assert wy._resolve_stt_lang("ko") == "ko"
+    assert wy._ha_lang_to_stt("en-US", "ja") == "ja"   # cổng khoá thắng HA
+
+
+def test_wyoming_port_them_doc_config(monkeypatch):
+    from services.config import config
+    from services.voice import config as vcfg
+
+    monkeypatch.setitem(config.data, "voice", {"wyoming_server": {
+        "port_en": 10601, "port_zh": "10602", "port_ja": 0, "port_ko": "",
+    }})
+    assert vcfg.wyoming_port_them() == {"en": 10601, "zh": 10602}
+
+
+def test_supertonic_sid_kep_bien(monkeypatch):
+    from services.config import config
+    from services.voice import config as vcfg
+
+    monkeypatch.setitem(config.data, "voice", {"tts": {
+        "supertonic_ja_sid": 7, "supertonic_ko_sid": 99,
+    }})
+    assert vcfg.supertonic_sid("ja") == 7
+    assert vcfg.supertonic_sid("ko") == 9     # kẹp trần 9
+    assert vcfg.supertonic_sid("xx") == 0

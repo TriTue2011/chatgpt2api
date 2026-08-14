@@ -47,6 +47,12 @@ _servers_lock = threading.Lock()
 _DONE = object()          # sentinel: worker thread đã hết audio
 _QUEUE_MAX = 8            # lookahead có backpressure, chặn phình RAM
 
+#: Cổng theo tiếng cho zh/ja/ko (voice.wyoming_server.port_zh/ja/ko): mỗi cổng
+#: một integration HA, TTS đọc bằng giọng của tiếng đó (Kokoro đa ngữ /
+#: Supertonic), STT nghe bằng Zipformer tiếng đó nếu model đã tải.
+_NGON_NGU_THEM = ("zh", "ja", "ko")
+_TEN_TIENG = {"zh": "Chinese", "ja": "Japanese", "ko": "Korean"}
+
 # Hạn mức chống client hỏng/ác ý làm phình RAM gateway (ý từ wyoming-vietnamese
 # const.py). Cả ba đều rộng hơn nhiều lần nhu cầu thật của HA Assist.
 _MAX_DATA_BYTES = 64 * 1024          # phần JSON của một event
@@ -150,6 +156,49 @@ def _is_multi_stt() -> bool:
     return has_vi and has_en and vcfg.stt_language() == "auto"
 
 
+def _tts_them_san_sang(lang: str) -> bool:
+    """Model ĐỌC của tiếng zh/ja/ko đã nằm trên volume chưa."""
+    if lang == "zh":
+        d = vcfg.KOKORO_ZH_DIR
+        return (d / "voices.bin").is_file() and bool(list(d.glob("model*.onnx")))
+    return (vcfg.SUPERTONIC_DIR / "tts.json").is_file()
+
+
+def _info_data_them(lang: str) -> dict[str, Any]:
+    """Catalog cho cổng khoá tiếng zh/ja/ko — một giọng cố định (dangu:<lang>,
+    sid chọn trong Cài đặt) + STT Zipformer tiếng đó nếu model đã tải."""
+    ten = _TEN_TIENG.get(lang, lang)
+    data: dict[str, Any] = {}
+    if _tts_them_san_sang(lang):
+        may = "Kokoro đa ngữ" if lang == "zh" else "Supertonic"
+        data["tts"] = [{
+            "name": f"chatgpt2api-tts-{lang}",
+            "description": f"Gateway TTS {ten} ({may})",
+            "attribution": _ATTR, "installed": True, "version": None,
+            "voices": [{
+                "name": f"dangu:{lang}",
+                "description": f"{ten} · {may} (giọng chọn trong Cài đặt)",
+                "attribution": _ATTR, "installed": True, "version": None,
+                "languages": _lang_codes(lang),
+            }],
+            "supports_synthesize_streaming": True,
+        }]
+    if vcfg.stt_them_model_dir(lang) is not None:
+        data["asr"] = [{
+            "name": f"chatgpt2api-stt-{lang}",
+            "description": f"Gateway STT — {ten} Zipformer",
+            "attribution": _ATTR, "installed": True, "version": None,
+            "languages": _lang_codes(lang),
+            "models": [{
+                "name": lang, "description": f"{ten} Zipformer",
+                "attribution": _ATTR, "installed": True, "version": None,
+                "languages": _lang_codes(lang),
+            }],
+            "supports_transcript_streaming": False,
+        }]
+    return data
+
+
 def _info_data(lang: str = "") -> dict[str, Any]:
     """Danh mục TTS + ASR cho HA Wyoming — pattern microsoft-stt/tts.
 
@@ -158,6 +207,8 @@ def _info_data(lang: str = "") -> dict[str, Any]:
     ngôn ngữ đó (mode locked legacy, không mở cổng thứ hai).
     """
     lang = (lang or "").strip().lower()
+    if lang in _NGON_NGU_THEM:
+        return _info_data_them(lang)
     has_vi, has_en = _stt_engines()
 
     if lang == "vi":
@@ -285,7 +336,7 @@ def _resolve_stt_lang(server_lang: str = "") -> str:
     - Ngược lại theo config stt.language, kẹp model có sẵn.
     """
     sl = (server_lang or "").strip().lower()
-    if sl in {"vi", "en"}:
+    if sl in {"vi", "en"} or sl in _NGON_NGU_THEM:
         return sl
     has_vi, has_en = _stt_engines()
     if has_vi and has_en and vcfg.stt_language() == "auto":
@@ -309,7 +360,7 @@ def _ha_lang_to_stt(ha_lang: str, server_lang: str = "") -> str:
     - multi + HA auto/rỗng → dual-pass auto-detect
     """
     sl = (server_lang or "").strip().lower()
-    if sl in {"vi", "en"}:
+    if sl in {"vi", "en"} or sl in _NGON_NGU_THEM:
         return sl
     # Operator khóa cứng vi|en trong Settings
     cfg = vcfg.stt_language()
@@ -366,6 +417,10 @@ def _resolve_tts_voice(
     sl = (server_lang or "").strip().lower()
     vname = (client_voice or "").strip()
     hint = (lang_hint or "").strip().lower().replace("_", "-")
+    if sl in _NGON_NGU_THEM:
+        # Cổng khoá tiếng zh/ja/ko: giọng cố định theo tiếng, sid chọn trong
+        # Cài đặt — client gửi voice gì cũng không đổi được tiếng của cổng.
+        return f"dangu:{sl}"
     if sl == "en":
         if vname and _voice_primary(vname) == "en":
             return vname
@@ -783,6 +838,9 @@ def _run(port: int, server_lang: str) -> None:
 
 def _has_capability(server_lang: str = "") -> bool:
     """Có ít nhất 1 TTS voice HOẶC STT model."""
+    if server_lang in _NGON_NGU_THEM:
+        return _tts_them_san_sang(server_lang) \
+            or vcfg.stt_them_model_dir(server_lang) is not None
     if not server_lang:
         has_tts = any(v.get("downloaded") for v in vcfg.voice_catalog())
         has_vi, has_en = _stt_engines()
@@ -840,6 +898,20 @@ def start() -> None:
         "voice: Wyoming MULTI :%d — STT=%s TTS=all voices — mode=%s",
         port, "+".join(langs) or "none", mode,
     )
+    # Cổng RIÊNG theo tiếng (voice.wyoming_server.port_en/zh/ja/ko): HA thêm
+    # mỗi cổng một integration — entity TTS/STT khoá đúng tiếng đó. Nhớ
+    # publish cổng trong compose thì HA máy khác mới gọi vào được.
+    for them_lang, them_port in vcfg.wyoming_port_them().items():
+        if them_port == port:
+            logger.warning("voice: port_%s trùng cổng multi %d — bỏ qua",
+                           them_lang, port)
+            continue
+        if not _has_capability(them_lang):
+            logger.info("voice: bỏ cổng Wyoming %s :%d — chưa tải model",
+                        them_lang, them_port)
+            continue
+        _start_one(them_port, them_lang)
+        logger.info("voice: Wyoming [%s] :%d", them_lang, them_port)
 
 
 def stop() -> None:

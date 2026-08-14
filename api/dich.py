@@ -401,7 +401,10 @@ def create_router() -> APIRouter:
             try:
                 import base64
                 if lang_kia in ("vi", "en"):
-                    giong = "" if lang_kia == "vi" else "kokoro:"
+                    # Giọng lấy theo Cài đặt → Loa & giọng nói (vi mặc định
+                    # của máy; en theo voice.wyoming_server.en_voice).
+                    from services.voice import config as vc
+                    giong = "" if lang_kia == "vi" else vc.wyoming_en_voice()
                     wav = eng.synthesize(ban_dich, giong)
                 else:   # zh/ja/ko — giọng riêng của phiên dịch đàm thoại
                     wav = eng.synthesize_da_ngu(ban_dich, lang_kia)
