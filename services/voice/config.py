@@ -1149,6 +1149,12 @@ def status() -> dict[str, Any]:
             "language": stt_language(),
             "sherpa_installed": has_local_stt(),
             "wyoming_url": stt_wyoming_url(),
+            # Model nghe theo tiếng (zh/ja/ko) — có trên volume = dùng được
+            # (cổng Wyoming 107xx tự mở). Tải: scripts/download_stt_da_ngu.py
+            "them_ready": {
+                lang: stt_them_model_dir(lang) is not None
+                for lang in STT_THEM_DIR
+            },
         },
         "public_base_url": public_base_url(),
     }

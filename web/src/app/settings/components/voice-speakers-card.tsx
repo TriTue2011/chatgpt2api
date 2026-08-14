@@ -35,7 +35,8 @@ type VoiceStatus = {
           piper_bin?: string; local_voices?: string[]; wyoming_url?: string };
   stt?: { enabled?: boolean; backend?: string; model_ready?: boolean;
           en_model_ready?: boolean; language?: string;
-          sherpa_installed?: boolean; wyoming_url?: string };
+          sherpa_installed?: boolean; wyoming_url?: string;
+          them_ready?: Record<string, boolean> };
   public_base_url?: string;
 };
 
@@ -523,6 +524,16 @@ export function VoiceSpeakersCard() {
               🇬🇧 Bật STT tiếng Anh (Parakeet)
               {stt?.en_model_ready ? "" : " — chưa tải model (mục tải bên dưới)"}
             </label>
+            {/* Model nghe theo tiếng: có model = cổng Wyoming 107xx tự mở.
+                Không có ô bật/tắt riêng — nghe không có "giọng" để chọn. */}
+            <div className="mt-1 text-[11px] text-muted-foreground">
+              Model nghe:{" "}
+              {([["vi", stt?.model_ready], ["en", stt?.en_model_ready],
+                 ["ja", stt?.them_ready?.ja], ["zh", stt?.them_ready?.zh],
+                 ["ko", stt?.them_ready?.ko]] as [string, boolean | undefined][])
+                .map(([l, ok]) => `${l} ${ok ? "✓" : "✗"}`).join(" · ")}
+              {" "}(✗ = tải bằng scripts/download_stt_da_ngu.py)
+            </div>
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs text-muted-foreground">Wyoming STT client (tuỳ chọn)</label>
