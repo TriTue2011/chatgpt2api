@@ -140,3 +140,10 @@ zalo-server/node_modules/
 # Credential file — KHÔNG commit (chứa hash mật khẩu admin)
 zalo-server/data/cookies/users.json
 zalo-server/data/cookies/
+
+# Serena (MCP đọc/sửa code theo ký hiệu, chạy CỤC BỘ trên máy dev). Cả hai đều
+# là cấu hình của MÁY, không phải của dự án: `.mcp.json` trỏ vào binary nằm
+# ngoài repo, còn `.serena/` là cache + project.yml serena tự sinh. Người clone
+# repo không cần chúng, và không nên bị một máy chủ MCP cắm vào sau lưng.
+.mcp.json
+.serena/
