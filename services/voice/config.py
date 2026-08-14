@@ -38,6 +38,9 @@ STT_THEM_DIR = {
     "ko": Path(DATA_DIR) / "stt-ko",
 }
 KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
+#: TTS cho phiên dịch đàm thoại — tải bằng scripts/download_tts_da_ngu.py.
+KOKORO_ZH_DIR = Path(DATA_DIR) / "kokoro-zh"     # Kokoro đa ngữ v1.1 (100 giọng Trung)
+SUPERTONIC_DIR = Path(DATA_DIR) / "supertonic"   # Supertonic-3 (31 tiếng, dùng ja/ko)
 NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Việt)
 MEDIA_DIR = Path(DATA_DIR) / "voice" / "media"
 # Manifest 19 giọng (nằm TRONG image — chỉ là danh mục, không phải model).
@@ -858,6 +861,16 @@ def stt_en_model_present() -> bool:
     """True nếu file model Parakeet đã tải, BẤT KỂ cờ en_enabled bật/tắt
     (giúp caller báo đúng "đang tắt" thay vì "chưa tải")."""
     return _stt_en_dir_raw() is not None
+
+
+def kokoro_zh_sid() -> int:
+    """Giọng Trung mặc định của Kokoro đa ngữ v1.1 (sid 0..102, 100 giọng
+    Trung). Đổi giọng qua ``voice.tts.kokoro_zh_sid``."""
+    raw = _sub("tts").get("kokoro_zh_sid")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
 
 
 def stt_them_model_dir(lang: str) -> Path | None:

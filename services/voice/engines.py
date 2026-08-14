@@ -312,6 +312,115 @@ def _get_kokoro():
         return _kokoro
 
 
+_da_ngu_lock = threading.Lock()
+_da_ngu: dict = {}   # "zh" | "ja-ko" → sherpa_onnx.OfflineTts (nạp 1 lần)
+
+
+def _get_kokoro_zh():
+    """Kokoro đa ngữ v1.1 — 100 giọng TRUNG (thu âm chuyên nghiệp) + 3 Anh.
+
+    Khác gói kokoro-en đang chạy đúng phần frontend: thêm lexicon zh/en,
+    dict/ và rule FST đọc số/ngày/số điện thoại kiểu Trung.
+    """
+    d = vcfg.KOKORO_ZH_DIR
+    if not (d / "voices.bin").is_file() or not list(d.glob("model*.onnx")):
+        raise VoiceError(
+            "Model Kokoro tiếng Trung chưa tải (chạy scripts/download_tts_da_ngu.py zh).")
+    with _da_ngu_lock:
+        if "zh" in _da_ngu:
+            return _da_ngu["zh"]
+        import sherpa_onnx
+        model_file = sorted(d.glob("model*.onnx"))[0]
+        cfg = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                    model=str(model_file),
+                    voices=str(d / "voices.bin"),
+                    tokens=str(d / "tokens.txt"),
+                    data_dir=str(d / "espeak-ng-data"),
+                    dict_dir=str(d / "dict"),
+                    lexicon=f"{d / 'lexicon-us-en.txt'},{d / 'lexicon-zh.txt'}",
+                ),
+                provider="cpu",
+                num_threads=vcfg.tts_threads(),
+            ),
+            rule_fsts=",".join(str(d / f) for f in
+                               ("date-zh.fst", "number-zh.fst", "phone-zh.fst")
+                               if (d / f).is_file()),
+        )
+        _da_ngu["zh"] = sherpa_onnx.OfflineTts(cfg)
+        return _da_ngu["zh"]
+
+
+def _get_supertonic():
+    """Supertonic-3 (31 ngôn ngữ, dùng cho ja/ko) — frontend theo Unicode,
+    không cần espeak-ng-data; sherpa-onnx ≥1.13.2 (bản ghim 1.13.4 có)."""
+    d = vcfg.SUPERTONIC_DIR
+    if not (d / "tts.json").is_file():
+        raise VoiceError(
+            "Model Supertonic chưa tải (chạy scripts/download_tts_da_ngu.py ja-ko).")
+    with _da_ngu_lock:
+        if "ja-ko" in _da_ngu:
+            return _da_ngu["ja-ko"]
+        import sherpa_onnx
+
+        def _mot(mau: str) -> str:
+            hits = sorted(d.glob(mau))
+            if not hits:
+                raise VoiceError(f"Gói Supertonic thiếu file khớp '{mau}'.")
+            return str(hits[0])
+
+        cfg = sherpa_onnx.OfflineTtsConfig(
+            model=sherpa_onnx.OfflineTtsModelConfig(
+                supertonic=sherpa_onnx.OfflineTtsSupertonicModelConfig(
+                    duration_predictor=_mot("duration_predictor*.onnx"),
+                    text_encoder=_mot("text_encoder*.onnx"),
+                    vector_estimator=_mot("vector_estimator*.onnx"),
+                    vocoder=_mot("vocoder*.onnx"),
+                    tts_json=str(d / "tts.json"),
+                    unicode_indexer=_mot("unicode_indexer*"),
+                    voice_style=_mot("voice*.bin"),
+                ),
+                provider="cpu",
+                num_threads=vcfg.tts_threads(),
+            ),
+        )
+        _da_ngu["ja-ko"] = sherpa_onnx.OfflineTts(cfg)
+        return _da_ngu["ja-ko"]
+
+
+def synthesize_da_ngu(text: str, lang: str) -> bytes:
+    """Đọc BẢN DỊCH tiếng zh/ja/ko → WAV bytes — cho phiên dịch đàm thoại.
+
+    Tách khỏi ``synthesize`` (vi/en, nhiều giọng, chèn lặng theo câu): ở đây
+    câu ngắn, mỗi tiếng một giọng mặc định, ưu tiên độ trễ.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise VoiceError("Không có nội dung để đọc.")
+    lang = str(lang or "").lower()
+    if lang == "zh":
+        tts = _get_kokoro_zh()
+        with _da_ngu_lock:
+            audio = tts.generate(text, sid=vcfg.kokoro_zh_sid(), speed=1.0)
+    elif lang in ("ja", "ko"):
+        import sherpa_onnx
+        tts = _get_supertonic()
+        gc = sherpa_onnx.GenerationConfig()
+        gc.sid = 0
+        gc.num_steps = 4          # câu ngắn: đổi vài % chất lượng lấy tốc độ
+        gc.speed = 1.0
+        gc.extra["lang"] = lang   # Supertonic bắt buộc khai tiếng theo lượt
+        with _da_ngu_lock:
+            audio = tts.generate(text, gc)
+    else:
+        raise VoiceError(f"Chưa có giọng đọc cho tiếng '{lang}'.")
+    samples = audio.samples or []
+    if not samples:
+        raise VoiceError("Không tạo được âm thanh.")
+    return _pcm_to_wav(_float_to_pcm16(samples), int(audio.sample_rate), 2, 1)
+
+
 def _kokoro_tts(text: str, voice: str) -> bytes:
     """Giọng "kokoro:<tên>" → WAV 24 kHz (chỉ đọc tiếng Anh)."""
     tts = _get_kokoro()

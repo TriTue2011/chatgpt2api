@@ -354,7 +354,7 @@ function DamThoai() {
         </label>
         <label className="flex cursor-pointer items-center gap-1.5 text-sm">
           <input type="checkbox" checked={docTts} onChange={(e) => setDocTts(e.target.checked)} />
-          Đọc bản dịch thành tiếng (có giọng Việt + Anh)
+          Đọc bản dịch thành tiếng
         </label>
         {dangXuLy && (
           <span className="flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">
@@ -396,7 +396,8 @@ function DamThoai() {
       </div>
       <p className="text-xs text-[var(--muted-foreground)]">
         Mỗi lượt nói tối đa 90 giây. Máy nghe theo tiếng của nút mic đã bấm — không đoán tiếng, nên
-        hai người cứ thay nhau bấm đúng bên mình. Tiếng Trung/Nhật/Hàn: bản dịch hiện chữ (chưa có giọng đọc).
+        hai người cứ thay nhau bấm đúng bên mình. Giọng đọc: Việt (NghiTTS), Anh (Kokoro),
+        Trung (Kokoro đa ngữ), Nhật + Hàn (Supertonic) — thiếu model giọng nào thì bên đó chỉ hiện chữ.
       </p>
     </div>
   );

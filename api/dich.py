@@ -385,12 +385,15 @@ def create_router() -> APIRouter:
             raise HTTPException(502, detail={"error": str(exc)})
 
         tieng_b64 = None
-        if str(tts) == "1" and lang_kia in ("vi", "en"):
+        if str(tts) == "1":
             try:
                 import base64
-                giong = "" if lang_kia == "vi" else "kokoro:"
-                tieng_b64 = base64.b64encode(
-                    eng.synthesize(ban_dich, giong)).decode("ascii")
+                if lang_kia in ("vi", "en"):
+                    giong = "" if lang_kia == "vi" else "kokoro:"
+                    wav = eng.synthesize(ban_dich, giong)
+                else:   # zh/ja/ko — giọng riêng của phiên dịch đàm thoại
+                    wav = eng.synthesize_da_ngu(ban_dich, lang_kia)
+                tieng_b64 = base64.b64encode(wav).decode("ascii")
             except Exception as exc:   # thiếu model giọng → vẫn trả chữ
                 logger.info("đàm thoại TTS lỗi: %s", str(exc)[:120])
         return {"goc": chu_goc, "dich": ban_dich, "tieng": tieng_b64}
