@@ -389,11 +389,29 @@ def _get_supertonic():
         return _da_ngu["ja-ko"]
 
 
-def synthesize_da_ngu(text: str, lang: str) -> bytes:
+def so_giong_da_ngu(lang: str) -> int:
+    """Số giọng model của tiếng đó có (zh 103 · ja/ko 10 — đo 14/08).
+
+    Cho UI dựng danh sách chọn. Model chưa tải → 0 (không raise).
+    """
+    try:
+        lang = str(lang or "").lower()
+        if lang == "zh":
+            return int(_get_kokoro_zh().num_speakers)
+        if lang in ("ja", "ko"):
+            return int(_get_supertonic().num_speakers)
+    except Exception as exc:
+        logger.info("đếm giọng %s lỗi: %s", lang, str(exc)[:120])
+    return 0
+
+
+def synthesize_da_ngu(text: str, lang: str, sid: int = -1) -> bytes:
     """Đọc BẢN DỊCH tiếng zh/ja/ko → WAV bytes — cho phiên dịch đàm thoại.
 
     Tách khỏi ``synthesize`` (vi/en, nhiều giọng, chèn lặng theo câu): ở đây
     câu ngắn, mỗi tiếng một giọng mặc định, ưu tiên độ trễ.
+
+    ``sid >= 0`` đè giọng trong config — để NGHE THỬ từng giọng trước khi lưu.
     """
     text = (text or "").strip()
     if not text:
@@ -401,13 +419,14 @@ def synthesize_da_ngu(text: str, lang: str) -> bytes:
     lang = str(lang or "").lower()
     if lang == "zh":
         tts = _get_kokoro_zh()
+        giong = sid if sid >= 0 else vcfg.kokoro_zh_sid()
         with _da_ngu_lock:
-            audio = tts.generate(text, sid=vcfg.kokoro_zh_sid(), speed=1.0)
+            audio = tts.generate(text, sid=giong, speed=1.0)
     elif lang in ("ja", "ko"):
         import sherpa_onnx
         tts = _get_supertonic()
         gc = sherpa_onnx.GenerationConfig()
-        gc.sid = vcfg.supertonic_sid(lang)
+        gc.sid = sid if sid >= 0 else vcfg.supertonic_sid(lang)
         gc.num_steps = 4          # câu ngắn: đổi vài % chất lượng lấy tốc độ
         gc.speed = 1.0
         gc.extra["lang"] = lang   # Supertonic bắt buộc khai tiếng theo lượt

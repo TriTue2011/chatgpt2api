@@ -184,7 +184,7 @@ def create_router() -> APIRouter:
 
     @router.get("/api/voice/preview")
     async def voice_preview(voice: str = "", stream: int = 0, key: str = "",
-                            text: str = "",
+                            text: str = "", sid: int = -1,
                             authorization: str | None = Header(default=None)):
         """Đọc thử một đoạn bằng giọng chỉ định → WAV, nghe ngay trên web.
 
@@ -208,7 +208,19 @@ def create_router() -> APIRouter:
                 "ja": "こんにちは！これは日本語の音声サンプルです。自然に聞こえますか？",
                 "ko": "안녕하세요! 한국어 음성 샘플입니다. 자연스럽게 들리나요?",
             }
-            sample = mau_dangu.get(vname[len("dangu:"):], _PREVIEW_TEXT_EN)
+            lang_dangu = vname[len("dangu:"):]
+            sample = mau_dangu.get(lang_dangu, _PREVIEW_TEXT_EN)
+            # Nghe thử TỪNG giọng trước khi lưu: sid đè config, và đi đường
+            # không-stream (stream_synthesize không mang sid).
+            if custom:
+                sample = custom
+            from services.voice import engines as _eng
+            try:
+                wav = await run_in_threadpool(
+                    _eng.synthesize_da_ngu, sample, lang_dangu, int(sid))
+            except Exception as exc:
+                raise HTTPException(503, str(exc)[:300])
+            return Response(content=wav, media_type="audio/wav")
         elif vname.startswith(vcfg.VIENEU_PREFIX):
             if not vcfg.vieneu_model_ready():
                 raise HTTPException(

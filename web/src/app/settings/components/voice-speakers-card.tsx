@@ -38,6 +38,7 @@ type VoiceStatus = {
           sherpa_installed?: boolean; wyoming_url?: string;
           them_ready?: Record<string, boolean> };
   doc_them_ready?: Record<string, boolean>;
+  so_giong_them?: Record<string, number>;
   public_base_url?: string;
 };
 
@@ -103,14 +104,18 @@ export function VoiceSpeakersCard() {
   // Nghe thử theo DÒNG CHẢY: chữ tổng hợp tới đâu phát tới đó (stream=1) nên nghe
   // gần như tức thì thay vì chờ ~3-4s tổng hợp trọn câu. Thẻ <audio> không gửi
   // được header nên đính token qua query `key=` (giống tab Chat).
-  const preview = async (voiceId: string, text?: string) => {
+  const preview = async (voiceId: string, text?: string, sid?: number) => {
     setPreviewing(voiceId);
     try {
       const { getStoredAuthKey } = await import("@/store/auth");
       let key = await getStoredAuthKey();
       if (!key) { try { key = localStorage.getItem("chatgpt2api_auth_key") || ""; } catch { /* noop */ } }
       const say = (text || "").trim();
-      const url = `/api/voice/preview?stream=1&voice=${encodeURIComponent(voiceId)}`
+      // Giọng zh/ja/ko: gửi kèm sid để nghe thử ĐÚNG giọng đang chọn trước
+      // khi lưu, và đi đường không-stream (stream không mang sid).
+      const daNgu = voiceId.startsWith("dangu:");
+      const url = `/api/voice/preview?stream=${daNgu ? 0 : 1}&voice=${encodeURIComponent(voiceId)}`
+        + (daNgu && sid !== undefined && sid >= 0 ? `&sid=${sid}` : "")
         + (say ? `&text=${encodeURIComponent(say.slice(0, 600))}` : "")
         + `&key=${encodeURIComponent(key || "")}`;
       const audio = new Audio(url);
@@ -129,6 +134,8 @@ export function VoiceSpeakersCard() {
   const sttCfg = (voiceCfg.stt as Record<string, unknown>) || {};
 
   const wyCfg = (voiceCfg.wyoming_server as Record<string, unknown>) || {};
+  // Số giọng model zh/ja/ko có (máy chủ đếm từ chính model — không hardcode).
+  const soGiong: Record<string, number> = status?.so_giong_them || {};
 
   const patchVoice = (section: "tts" | "stt" | "wyoming_server",
                       patch: Record<string, unknown>) => {
@@ -391,19 +398,19 @@ export function VoiceSpeakersCard() {
             {([
               { ma: "vi", ten: "🇻🇳 Tiếng Việt", i: 0,
                 doc: Boolean(tts?.model_ready), nghe: Boolean(stt?.model_ready),
-                giongThu: String(ttsCfg.voice || tts?.voice || "") },
+                giongThu: String(ttsCfg.voice || tts?.voice || ""), sid: -1 },
               { ma: "en", ten: "🇬🇧 Tiếng Anh", i: 1,
                 doc: Boolean(status?.doc_them_ready?.en), nghe: Boolean(stt?.en_model_ready),
-                giongThu: String(wyCfg.en_voice || "kokoro:af") },
+                giongThu: String(wyCfg.en_voice || "kokoro:af"), sid: -1 },
               { ma: "ja", ten: "🇯🇵 Tiếng Nhật", i: 2,
                 doc: Boolean(status?.doc_them_ready?.ja), nghe: Boolean(stt?.them_ready?.ja),
-                giongThu: "dangu:ja" },
+                giongThu: "dangu:ja", sid: Number(ttsCfg.supertonic_ja_sid ?? 0) },
               { ma: "zh", ten: "🇨🇳 Tiếng Trung", i: 3,
                 doc: Boolean(status?.doc_them_ready?.zh), nghe: Boolean(stt?.them_ready?.zh),
-                giongThu: "dangu:zh" },
+                giongThu: "dangu:zh", sid: Number(ttsCfg.kokoro_zh_sid ?? 0) },
               { ma: "ko", ten: "🇰🇷 Tiếng Hàn", i: 4,
                 doc: Boolean(status?.doc_them_ready?.ko), nghe: Boolean(stt?.them_ready?.ko),
-                giongThu: "dangu:ko" },
+                giongThu: "dangu:ko", sid: Number(ttsCfg.supertonic_ko_sid ?? 0) },
             ] as const).map((r) => (
               <details key={r.ma} className="group rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5">
                 <summary className="flex cursor-pointer select-none items-center gap-2 text-xs list-none">
@@ -439,12 +446,17 @@ export function VoiceSpeakersCard() {
                         ))}
                       </select>
                     ) : r.ma === "zh" ? (
-                      <Input type="number" min={0} max={102}
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
                         value={String(ttsCfg.kokoro_zh_sid ?? "")}
                         onChange={(e) => patchVoice("tts", {
                           kokoro_zh_sid: e.target.value === "" ? "" : Number(e.target.value),
-                        })}
-                        placeholder="số giọng 0–102 (mặc định 0)" />
+                        })}>
+                        <option value="">Giọng 0 (mặc định)</option>
+                        {Array.from({ length: soGiong.zh || 0 }, (_, sid) => (
+                          <option key={sid} value={sid}>Giọng {sid}</option>
+                        ))}
+                        {!soGiong.zh && <option value="0">(chưa tải model giọng Trung)</option>}
+                      </select>
                     ) : (
                       <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
                         value={String(ttsCfg[`supertonic_${r.ma}_sid`] ?? "")}
@@ -452,7 +464,7 @@ export function VoiceSpeakersCard() {
                           [`supertonic_${r.ma}_sid`]: e.target.value === "" ? "" : Number(e.target.value),
                         })}>
                         <option value="">0 · Nam M1 (mặc định)</option>
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((sid) => (
+                        {Array.from({ length: soGiong[r.ma] || 10 }, (_, sid) => (
                           <option key={sid} value={sid}>
                             {sid} · {sid < 5 ? `Nam M${sid + 1}` : `Nữ F${sid - 4}`}
                           </option>
@@ -480,7 +492,7 @@ export function VoiceSpeakersCard() {
                   </div>
                   <div className="sm:col-span-4">
                     <button type="button" disabled={!r.doc || previewing === r.giongThu}
-                      onClick={() => void preview(r.giongThu)}
+                      onClick={() => void preview(r.giongThu, undefined, r.sid)}
                       className="rounded-md border border-border px-3 py-1.5 text-xs hover:border-slate-400 disabled:opacity-40">
                       {previewing === r.giongThu ? "Đang đọc…" : "🔊 Nghe thử"}
                     </button>
@@ -531,7 +543,13 @@ export function VoiceSpeakersCard() {
           </div>
         </div>
 
-        <div className="text-xs font-semibold text-muted-foreground pt-1">🎤 Cấu hình nghe (STT)</div>
+        {/* Khối này CHỈ chi phối tin nhắn thoại gửi bot (Telegram/Zalo) và API
+            /v1/audio/transcriptions. Home Assistant KHÔNG dùng nó nữa — HA đi
+            cổng nghe riêng từng tiếng (10700-10704), xem mục "Theo từng tiếng"
+            phía trên. */}
+        <div className="text-xs font-semibold text-muted-foreground pt-1">
+          🎤 Nghe (STT) — tin nhắn thoại gửi bot &amp; API
+        </div>
         <div className="grid gap-2 sm:grid-cols-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
           <div>
             <label className="text-xs text-muted-foreground">Backend nghe (STT)</label>
@@ -546,7 +564,7 @@ export function VoiceSpeakersCard() {
           </div>
           <div>
             <label className="text-xs text-muted-foreground">
-              Ngôn ngữ STT (chatgpt2api — không theo HA Assist)
+              Ngôn ngữ nghe cho tin nhắn thoại (không áp cho HA)
             </label>
             <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
               value={String(sttCfg.language || stt?.language || "vi")}
@@ -564,16 +582,7 @@ export function VoiceSpeakersCard() {
               🇬🇧 Bật STT tiếng Anh (Parakeet)
               {stt?.en_model_ready ? "" : " — chưa tải model (mục tải bên dưới)"}
             </label>
-            {/* Model nghe theo tiếng: có model = cổng Wyoming 107xx tự mở.
-                Không có ô bật/tắt riêng — nghe không có "giọng" để chọn. */}
-            <div className="mt-1 text-[11px] text-muted-foreground">
-              Model nghe:{" "}
-              {([["vi", stt?.model_ready], ["en", stt?.en_model_ready],
-                 ["ja", stt?.them_ready?.ja], ["zh", stt?.them_ready?.zh],
-                 ["ko", stt?.them_ready?.ko]] as [string, boolean | undefined][])
-                .map(([l, ok]) => `${l} ${ok ? "✓" : "✗"}`).join(" · ")}
-              {" "}(✗ = tải bằng scripts/download_stt_da_ngu.py)
-            </div>
+
           </div>
           <div className="sm:col-span-2">
             <label className="text-xs text-muted-foreground">Wyoming STT client (tuỳ chọn)</label>

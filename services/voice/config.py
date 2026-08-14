@@ -1082,6 +1082,26 @@ def public_base_url() -> str:
         return ""
 
 
+def _so_giong_them() -> dict[str, int]:
+    """Số giọng của model zh/ja/ko cho UI. Chỉ đếm khi model ĐÃ tải —
+    ``so_giong_da_ngu`` nạp model để hỏi, gọi lúc chưa có file là tốn công
+    vô ích (và /api/voice/status bị gọi mỗi lần mở trang Cài đặt)."""
+    ra = {"zh": 0, "ja": 0, "ko": 0}
+    co_zh = (KOKORO_ZH_DIR / "voices.bin").is_file()
+    co_st = (SUPERTONIC_DIR / "tts.json").is_file()
+    if not (co_zh or co_st):
+        return ra
+    try:
+        from services.voice.engines import so_giong_da_ngu
+    except Exception:
+        return ra
+    if co_zh:
+        ra["zh"] = so_giong_da_ngu("zh")
+    if co_st:
+        ra["ja"] = ra["ko"] = so_giong_da_ngu("ja")
+    return ra
+
+
 def status() -> dict[str, Any]:
     """Trạng thái cho UI Settings / API."""
     return {
@@ -1163,5 +1183,8 @@ def status() -> dict[str, Any]:
             "ja": (SUPERTONIC_DIR / "tts.json").is_file(),
             "ko": (SUPERTONIC_DIR / "tts.json").is_file(),
         },
+        # Số giọng model zh/ja/ko có (đo 14/08: zh 103 · ja/ko 10) — UI dựng
+        # danh sách chọn từ đây, không hardcode. Model chưa tải → 0.
+        "so_giong_them": _so_giong_them(),
         "public_base_url": public_base_url(),
     }

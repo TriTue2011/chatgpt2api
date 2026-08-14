@@ -7,16 +7,21 @@
 #   docker compose up -d --build    # chỉ khi cần build lại
 #
 # Cổng (homelab / multi-host — mặc định publish LAN):
-#   3030   API + Web UI
-#   6080   noVNC (đăng nhập web thủ công) — BẮT BUỘC đặt VNC_PASSWORD
-#   3001   zalo-server (HA / integration có thể ở máy khác)
-#   10600  Wyoming multi — TTS+STT vi/en (1 integration HA, pattern microsoft-stt/tts)
-#          (Home Assistant thường KHÔNG cùng host → không bind 127.0.0.1)
+#   3030        API + Web UI
+#   6080        noVNC (đăng nhập web thủ công) — BẮT BUỘC đặt VNC_PASSWORD
+#   3001        zalo-server (HA / integration có thể ở máy khác)
+#   10600-604   Wyoming ĐỌC (TTS) — việt · anh · nhật · trung · hàn
+#   10700-704   Wyoming NGHE (STT) — cùng thứ tự tiếng
+#          Quy chuẩn 14/08: mỗi cổng MỘT vai MỘT tiếng → HA thêm từng
+#          integration, pipeline Assist không lẫn tiếng. Cổng chỉ mở khi có
+#          model tiếng đó; chọn giọng + đổi/tắt cổng trong Cài đặt → Giọng
+#          nói & Loa → "Theo từng tiếng". Home Assistant thường KHÔNG cùng
+#          host → đừng bind 127.0.0.1.
 #
 # Siết chặt hơn (cùng host hoặc SSH tunnel):
 #   - "127.0.0.1:6080:6080"
 #   - "127.0.0.1:3001:3001"
-#   - "127.0.0.1:10600:10600"
+#   - "127.0.0.1:10600-10604:10600-10604"
 # Chỉ làm vậy khi client thật sự chạy trên cùng máy host Docker.
 #
 # Sidecar (không gộp vào service c2a):
@@ -53,8 +58,11 @@ services:
       - "3030:80"        # API + web UI (+ same-origin /api/captcha proxy)
       - "6080:6080"      # noVNC — LAN OK nếu có VNC_PASSWORD; đừng mở WAN
       - "3001:3001"      # zalo-server — cho HA/integration trên LAN
-      - "10600:10600"    # Wyoming multi — TTS+STT vi/en (1 port, VieNeu/Kokoro + Zipformer/Parakeet)
-      - "10700:10700"    # WhisperLive WebSocket — Real-time Streaming STT (Faster-Whisper CTranslate2)
+      # Wyoming cho Home Assistant — 106xx ĐỌC, 107xx NGHE; thứ tự tiếng:
+      # 0 việt · 1 anh · 2 nhật · 3 trung · 4 hàn (chỉ dùng vài tiếng thì
+      # publish bấy nhiêu cổng cũng được).
+      - "10600-10604:10600-10604"
+      - "10700-10704:10700-10704"
 
     volumes:
       # Single persistent mount: accounts, config, KB/chroma, captcha profiles, voices
@@ -75,13 +83,19 @@ services:
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:?CHATGPT2API_AUTH_KEY chưa đặt — hãy khai một khoá mạnh}
       # captcha-solver internal auth (claude/gemini/flow web logins)
       CAPTCHA_SOLVER_API_KEY: ${CAPTCHA_SOLVER_API_KEY:?CAPTCHA_SOLVER_API_KEY chưa đặt}
-      # Máy dịch tự dựng trong stack (service `libretranslate` bên dưới). Khai ở
+      # Máy dịch tự dựng trong stack (service `vn-translate` bên dưới). Khai ở
       # ĐÂY chứ không bắt admin sửa config.json: dựng compose là dịch chạy —
-      # lệnh /dich của bot + mục 🌐 khi gửi tệp/ảnh. Xoá biến này = tắt hẳn.
+      # lệnh /dich của bot, tab Dịch trên web, mục 🌐 khi gửi tệp/ảnh. Xoá
+      # biến này = tắt hẳn.
       TRANSLATE_URL: ${TRANSLATE_URL:-http://vn-translate:5000}
+      # TUỲ CHỌN — máy dịch thứ hai chạy GPU (máy khác trong LAN) nhận việc
+      # theo LÔ: phụ đề phim, tài liệu dài. Đo 14/08 trên RTX 2060S: lô 120
+      # câu 0,84s vs 54s trên CPU. Câu lẻ vẫn đi máy CPU (GPU thua ở câu
+      # đơn); GPU lỗi/tắt thì tự rơi về CPU và nghỉ GPU 5 phút. Trống = tắt.
+      TRANSLATE_URL_LO: ${TRANSLATE_URL_LO:-}
       # Dịch sang tiếng Anh trước khi gửi LLM rồi dịch phản hồi về tiếng Việt.
       # MẶC ĐỊNH TẮT — đổi hành vi của MỌI lượt gọi model, phải tự bật.
-      # Xem docs/DICH_LIBRETRANSLATE.md mục 5 trước khi đặt "1".
+      # Xem docs/DICH_MAY_TU_CHU.md mục 5 trước khi đặt "1".
       TRANSLATE_PIVOT: ${TRANSLATE_PIVOT:-0}
       # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
       ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?ZALO_SERVER_API_KEY chưa đặt}
@@ -261,38 +275,25 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # ── LibreTranslate: máy dịch TỰ CHỦ, không qua bên thứ ba ────────────────
+  # ── vn-translate: máy dịch TỰ CHỦ của stack ──────────────────────────────
   #
-  # Cùng nếp SearXNG ở trên: nằm trong stack, không publish cổng, và gateway tự
-  # dùng nhờ biến TRANSLATE_URL đã khai ở service c2a — không ai phải bấm bật.
-  # Nhân dịch là Argos Translate chạy hẳn trong container; sau khi tải model
-  # xong thì không lượt dịch nào ra Internet.
+  # Cùng nếp SearXNG: nằm trong stack, không publish cổng, gateway tự dùng nhờ
+  # TRANSLATE_URL đã khai ở service c2a — không ai phải bấm bật. Sau khi tải
+  # model xong thì không lượt dịch nào ra Internet.
   #
-  # LẦN ĐẦU `up` SẼ TẢI 756 MB MODEL (đo thật 12/08) và mất vài phút mới dịch
-  # được. /health trả 200 ngay nhưng /translate còn báo lỗi trong lúc đó. Model
-  # nằm ở /opt/libretranslate-models nên các lần sau KHÔNG tải lại.
+  # HAI engine chọn theo CẶP ngôn ngữ: EnViT5 (nhúng sẵn trong image) cho
+  # en↔vi — đo FLORES-200 13/08: 42,95 BLEU so với NLLB 38,45, nhanh gấp ~3
+  # lần; NLLB-200 (tải về volume lần chạy đầu ~600 MB) cho ja/ko/zh. Thuật
+  # ngữ chuyên ngành tra bảng. Xem vn-translate/README.md.
   #
   # CỐ Ý KHÔNG `depends_on: condition: service_healthy` từ c2a: c2a không được
-  # chờ 756 MB tải xong mới lên. Trục dịch fail-open — máy dịch chưa sẵn sàng
+  # chờ model tải xong mới lên. Trục dịch fail-open — máy dịch chưa sẵn sàng
   # thì bot vẫn chạy y như chưa có tính năng này.
   #
-  # ĐO THẬT 12/08 — vì sao có `libretranslate-init`: Dockerfile của
-  # LibreTranslate tạo user `libretranslate` uid/gid 1032 rồi `USER
-  # libretranslate`, nhưng thư mục mount vào thì thuộc **root** (Docker tạo mới
-  # thư mục host của bind mount bằng root, và KHÔNG copy quyền từ image vào bind
-  # mount bao giờ). Tiến trình uid 1032 không tạo nổi `.local/share` → chết ngay
-  # ở `import argostranslate` với PermissionError, kèm dòng gây nhiễu
-  # "'' is not a valid port number" vì entrypoint.sh gọi print_args_env.py cũng
-  # chết theo nên PORT thành rỗng.
-  #
-  # Init container đổi chủ thư mục trước, chạy một lần rồi thoát — nhờ vậy tiến
-  # trình chính vẫn KHÔNG phải root, và không ai phải gõ chown bằng tay trên host.
-  # ── vn-translate: máy dịch RIÊNG (NLLB-200 + thuật ngữ chuyên ngành) ─────
-  #
-  # Engine dịch mặc định của stack (TRANSLATE_URL ở trên): dịch thẳng
-  # vi↔ja/ko/zh không bắc cầu, giữ tên riêng tốt hơn Argos, thuật ngữ điện tử/
-  # y tế/xây dựng/CNTT/pháp lý dịch bằng bảng tra. Xem vn-translate/README.md.
-  # libretranslate vẫn ở dưới sau profile — muốn quay lại: đổi TRANSLATE_URL và
+  # Muốn nhanh hơn cho việc theo lô (phụ đề phim, tài liệu dài): dựng thêm bản
+  # GPU trên máy có card NVIDIA rồi khai TRANSLATE_URL_LO — xem
+  # vn-translate/Dockerfile.gpu. libretranslate (Argos) vẫn còn phía dưới sau
+  # profile cho ai muốn quay lại: đổi TRANSLATE_URL và
   # `docker compose --profile libretranslate up -d`.
   vn-translate:
     image: ghcr.io/tritue2011/vn-translate:latest

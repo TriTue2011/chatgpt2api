@@ -527,31 +527,38 @@ POST /v1/audio/speech   {"input":"...","voice":"vieneu:Ngọc Trân","stream":tr
 
 ### 4.2c. Home Assistant dùng thẳng TTS/STT của gateway (Wyoming)
 
-Gateway CÓ SẴN **một Wyoming multi** (bật mặc định, port `10600`) — pattern giống
-[wyoming-microsoft-stt](https://github.com/hugobloem/wyoming-microsoft-stt) /
-[wyoming-microsoft-tts](https://github.com/hugobloem/wyoming-microsoft-tts):
-**1 cổng, 1 integration**, TTS+STT đa ngôn ngữ, streaming "chữ tới đâu đọc tới đó".
-Không cần container tiếng nói riêng (vieneu-wyoming / wyoming-stt / piper).
+Gateway mở Wyoming theo **quy chuẩn cổng** (từ 14/08/2026): mỗi cổng MỘT vai
+MỘT tiếng — HA thêm từng integration, pipeline Assist không bao giờ lẫn
+tiếng/giọng. Không cần container tiếng nói riêng (vieneu-wyoming /
+wyoming-stt / piper).
 
-| Cổng | Vai trò | TTS | STT |
-|------|---------|-----|-----|
-| `10600` | Multi vi+en | VieNeu / Piper / Kokoro | Zipformer (vi) + Parakeet (en) |
+| Tiếng | Đọc (TTS) | Nghe (STT) | Giọng đọc | Model nghe |
+|-------|-----------|------------|-----------|------------|
+| Việt  | `10600` | `10700` | NghiTTS / VieNeu / Piper | Zipformer vi |
+| Anh   | `10601` | `10701` | Kokoro (11 giọng) | Parakeet-TDT 0.6B |
+| Nhật  | `10602` | `10702` | Supertonic | Zipformer ja (ReazonSpeech) |
+| Trung | `10603` | `10703` | Kokoro đa ngữ (100 giọng) | Zipformer zh |
+| Hàn   | `10604` | `10704` | Supertonic | Zipformer ko |
 
-- **STT multi** (đủ 2 model + `voice.stt.language: auto`): auto-detect (thử vi rồi en),
-  **bỏ qua** language picker HA — giống microsoft-stt multi.
-- **STT cố định**: đặt `voice.stt.language` = `vi` hoặc `en`.
-- **TTS**: chọn giọng trong pipeline (Kokoro cho Anh, VieNeu/Piper cho Việt).
+- Cổng chỉ **tự mở khi có model** của (vai, tiếng) đó trên volume; cổng đọc
+  không khai phần nghe với HA và ngược lại.
+- Giọng của từng tiếng chọn trong **Cài đặt → Giọng nói & Loa → "Theo từng
+  tiếng"** (mỗi tiếng một mục thu gọn, có nút Nghe thử); cùng chỗ đó chỉnh
+  được từng cổng (trống = theo chuẩn, `0` = tắt cổng).
 
-1. Publish port: `ports: ["10600:10600"]` rồi recreate container.
-2. Firewall LAN: `deploy/firewall-c2a-ports.sh` (mở **10600** cho IP Home Assistant).
-3. Model EN (tuỳ chọn multi): `scripts/download_kokoro_model.py` +
-   `scripts/download_stt_en_model.py`. Chỉ có VI thì STT/TTS vẫn chạy tiếng Việt.
-4. HA → *Add Integration → Wyoming Protocol*: host = IP gateway, port = **`10600`**
-   (chỉ **một** integration).
-5. Assist pipeline: chọn STT/TTS từ entity đó; pipeline Việt chọn giọng VieNeu/Piper,
-   pipeline Anh chọn Kokoro (cùng server).
-6. Tắt/đổi: `voice.wyoming_server.enabled = false`; cổng: `.port` (mặc định 10600);
-   STT multi/cố định: `voice.stt.language` = `auto` | `vi` | `en`.
+1. Publish port: `ports: ["10600-10604:10600-10604", "10700-10704:10700-10704"]`
+   rồi recreate container (chỉ mở dải mình dùng cũng được).
+2. Firewall LAN: `deploy/firewall-c2a-ports.sh` (mở các cổng trên cho IP HA).
+3. Model: tiếng Việt + Anh tải bằng `scripts/download_stt_model.py`,
+   `download_stt_en_model.py`, `download_kokoro_model.py`; Nhật/Trung/Hàn:
+   `scripts/download_stt_da_ngu.py` (nghe) + `scripts/download_tts_da_ngu.py`
+   (đọc — Kokoro đa ngữ cho Trung, Supertonic cho Nhật+Hàn).
+4. HA → *Add Integration → Wyoming Protocol*: host = IP gateway, port theo
+   bảng — mỗi cổng một integration, thêm đúng những tiếng cần dùng.
+5. Assist pipeline: chọn entity STT/TTS của đúng tiếng đó.
+6. Tắt cả cụm: `voice.wyoming_server.enabled = false`; tắt/đổi từng cổng:
+   `voice.wyoming_server.tts_port_vi` / `stt_port_ja` / … (hoặc UI);
+   ngôn ngữ tin nhắn thoại của bot: `voice.stt.language` = `auto`|`vi`|`en`.
 
 ### 4.2d. Điều khiển loa Google Cast (âm lượng / bật / tắt)
 
