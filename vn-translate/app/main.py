@@ -104,31 +104,49 @@ async def detect(request: Request):
     return [{"confidence": tin, "language": ma}]
 
 
-def _dich_mot(text: str, nguon: str, dich: str) -> tuple[str, list[str]]:
-    """Dịch một chuỗi qua tầng thuật ngữ + engine. Trả (bản dịch, tên ngành đã áp)."""
+def _dich_nhieu(texts: list[str], nguon: str, dich: str) -> tuple[list[str], list[str]]:
+    """Dịch cả LÔ qua tầng thuật ngữ + engine trong MỘT lần gọi model.
+
+    Trước đây mỗi phần tử ``q`` là một lượt engine riêng — model toàn nhận lô
+    1 câu, ``max_batch_size`` không bao giờ có tác dụng và GPU không bõ chuyến
+    (đo 14/08: lô 120 câu chỉ nhanh 1,8× CPU, khớp đúng độ trễ từng-câu-một).
+    Gom mảnh của MỌI phần tử vào một lượt ``translate_batch`` rồi chia lại.
+
+    Chỉ gửi mảnh CÓ CHỮ; mảnh toàn dấu câu đi thẳng qua. Tokenizer NLLB nuốt
+    khoảng trắng ở biên khi decode → phải đắp lại biên của mảnh GỐC, không thì
+    thuật ngữ dính vào chữ bên cạnh ("áp-tô-mátbên cạnh" — đo thật 12/08).
+    """
     nganh_ap: list[str] = []
-    if not (text or "").strip():
-        return text, nganh_ap
-    doan: list[tuple[bool, str]] = [(True, text)]
-    if GLOSSARY_ON:
-        ds = terms.doan_nganh(text, nguon, dich)
-        if ds:
-            nganh_ap = [ten for _, ten, _ in ds]
-            cap = [c for _, _, cs in ds for c in cs]
-            doan = terms.tach_thuat_ngu(text, cap)
-    # Chỉ gửi mảnh CÓ CHỮ; mảnh toàn dấu câu đi thẳng qua. Tokenizer NLLB nuốt
-    # khoảng trắng ở biên khi decode → phải đắp lại biên của mảnh GỐC, không thì
-    # thuật ngữ dính vào chữ bên cạnh ("áp-tô-mátbên cạnh" — đo thật 12/08).
-    can = [i for i, (ok, s) in enumerate(doan) if ok and co_chu(s)]
-    ghep = [s for _, s in doan]
-    if can:
-        ra = engine.dich([doan[i][1] for i in can], nguon, dich)
-        for pos, i in enumerate(can):
-            goc = doan[i][1]
-            trai = goc[:len(goc) - len(goc.lstrip())]
-            phai = goc[len(goc.rstrip()):]
-            ghep[i] = f"{trai}{ra[pos].strip()}{phai}"
-    return "".join(ghep), nganh_ap
+    tung_text: list[list[tuple[bool, str]]] = []
+    for text in texts:
+        if not (text or "").strip():
+            tung_text.append([(False, text)])
+            continue
+        doan: list[tuple[bool, str]] = [(True, text)]
+        if GLOSSARY_ON:
+            ds = terms.doan_nganh(text, nguon, dich)
+            if ds:
+                nganh_ap.extend(ten for _, ten, _ in ds if ten not in nganh_ap)
+                cap = [c for _, _, cs in ds for c in cs]
+                doan = terms.tach_thuat_ngu(text, cap)
+        tung_text.append(doan)
+
+    goi: list[str] = []
+    vi_tri: list[tuple[int, int]] = []
+    for ti, doan in enumerate(tung_text):
+        for pi, (ok, s) in enumerate(doan):
+            if ok and co_chu(s):
+                goi.append(s)
+                vi_tri.append((ti, pi))
+    ra_engine = engine.dich(goi, nguon, dich) if goi else []
+
+    ghep = [[s for _, s in doan] for doan in tung_text]
+    for (ti, pi), ban in zip(vi_tri, ra_engine):
+        goc = tung_text[ti][pi][1]
+        trai = goc[:len(goc) - len(goc.lstrip())]
+        phai = goc[len(goc.rstrip()):]
+        ghep[ti][pi] = f"{trai}{ban.strip()}{phai}"
+    return ["".join(g) for g in ghep], nganh_ap
 
 
 @app.post("/translate")
@@ -153,11 +171,7 @@ async def translate(request: Request):
         da_detect = {"confidence": tin, "language": ma}
         nguon = ma
     try:
-        ra, nganh = [], []
-        for t in texts:
-            b, ng = _dich_mot(t, nguon, dich)
-            ra.append(b)
-            nganh.extend(x for x in ng if x not in nganh)
+        ra, nganh = _dich_nhieu(texts, nguon, dich)
     except KhongCoNgonNgu as exc:
         return JSONResponse({"error": str(exc)}, 400)
 
