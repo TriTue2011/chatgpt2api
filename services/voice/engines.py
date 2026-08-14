@@ -427,7 +427,14 @@ def synthesize_da_ngu(text: str, lang: str, sid: int = -1) -> bytes:
         tts = _get_supertonic()
         gc = sherpa_onnx.GenerationConfig()
         gc.sid = sid if sid >= 0 else vcfg.supertonic_sid(lang)
-        gc.num_steps = 4          # câu ngắn: đổi vài % chất lượng lấy tốc độ
+        # 8 bước, KHÔNG phải 4. Đo bằng scripts/kiem_phat_am.py (đọc lại 3 lần
+        # mỗi câu, cho STT nghe lại): tiếng Hàn ở 4 bước rụng phụ âm — mất /s/
+        # trong 음식 và ㅆ chập chờn — còn 8 và 16 bước đều đọc đủ 16/16 âm.
+        # Chọn 8 vì đó là mức thấp nhất đã đạt: đọc 4,58 giây tiếng Hàn tốn
+        # 2,83 giây (16 bước tốn 4,9 giây, tức CHẬM HƠN thời gian thực nên hại
+        # cho đàm thoại trực tiếp). Đây là model kiểu flow-matching, ít bước thì
+        # phụ âm là phần rụng trước tiên.
+        gc.num_steps = 8
         gc.speed = 1.0
         gc.extra["lang"] = lang   # Supertonic bắt buộc khai tiếng theo lượt
         with _da_ngu_lock:
