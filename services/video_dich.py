@@ -31,11 +31,12 @@ logger = logging.getLogger(__name__)
 #: vừa cho ra tệp không ai đọc trong chat. 2 giờ đã phủ hết phim/hội thảo.
 TRAN_GIAY = 7200
 
-#: Số khung phụ đề gửi mỗi lượt gọi máy dịch. Gửi cả video một cục thì một
-#: video 18 phút (hơn trăm khung) vượt hạn 120 giây và trả về "timed out" —
-#: đo thật 13/08. Chia lô để mỗi lượt gọi chỉ vài giây, còn tổng thời gian thì
-#: dài bao nhiêu cũng được.
-LO_MOI_LUOT = 20
+#: Số khung phụ đề gửi mỗi lượt gọi máy dịch. Hai ràng buộc kéo hai hướng:
+#: gửi cả video một cục thì vượt hạn 120 giây ("timed out" — đo thật 13/08);
+#: gửi lô bé thì máy dịch GPU không bõ chuyến (định tuyến theo lô ở
+#: translate_service — đo 14/08: lô 16 GPU chỉ hơn CPU 1,66×, lô to mới bung).
+#: 100 khung ≈ 30 giây trên CPU (nửa hạn mức) và đủ to cho GPU.
+LO_MOI_LUOT = 100
 
 #: Gộp các đoạn phụ đề ngắn liền nhau lại trước khi dịch. Phụ đề tự sinh của
 #: YouTube cắt ~1–2 giây một mảnh, giữa câu — dịch từng mảnh đó thì máy dịch mất

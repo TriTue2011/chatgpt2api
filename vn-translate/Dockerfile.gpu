@@ -18,8 +18,10 @@
 #     -p 5000:5000 -v vn-translate-data:/data vn-translate-gpu
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
+# python-is-python3: entrypoint.sh (dùng chung với bản CPU nền python:3.12)
+# gọi `python` — nền Ubuntu không có alias đó.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip \
+        python3 python3-pip python-is-python3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv

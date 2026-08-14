@@ -209,6 +209,11 @@ class Engine:
         self.thiet_bi = os.getenv("TT_THIET_BI", "cpu").strip() or "cpu"
         self.kieu_tinh = os.getenv("TT_KIEU_TINH", "").strip() or (
             "int8_float16" if self.thiet_bi == "cuda" else "default")
+        # Lô đưa vào model MỖI LƯỢT decode. CPU giữ 16 (to hơn không nhanh
+        # thêm, chỉ tốn RAM); GPU mặc định 64 — card ăn lô to mới bõ chuyến
+        # (đo 14/08: lô 16 GPU chỉ nhanh 1,66× CPU).
+        mac_dinh_lo = "64" if self.thiet_bi == "cuda" else "16"
+        self.lo_model = max(1, int(os.getenv("TT_LO_MODEL", mac_dinh_lo)))
         self.chi_so = 0            # model đang dùng trong self.models
         self.loi_lien_tiep = 0
         self._tr = None            # ctranslate2.Translator
@@ -251,7 +256,8 @@ class Engine:
         trả về kèm tiền tố đích ("en: …") — khác hẳn NLLB (token FLORES)."""
         vao = [self._e_tok.convert_ids_to_tokens(self._e_tok.encode(f"{nguon}: {m}"))
                for m in manh]
-        kq = self._e_tr.translate_batch(vao, beam_size=4, max_batch_size=16,
+        kq = self._e_tr.translate_batch(vao, beam_size=4,
+                                        max_batch_size=self.lo_model,
                                         batch_type="examples")
         ra: list[str] = []
         for r in kq:
@@ -376,7 +382,7 @@ class Engine:
         vao = [self._tok.convert_ids_to_tokens(self._tok.encode(m)) for m in manh]
         kq = self._tr.translate_batch(
             vao, target_prefix=[[fl_dich]] * len(vao),
-            beam_size=4, max_batch_size=16, batch_type="examples",
+            beam_size=4, max_batch_size=self.lo_model, batch_type="examples",
         )
         ra: list[str] = []
         for r in kq:
