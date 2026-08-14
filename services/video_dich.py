@@ -20,6 +20,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from services import translate_service as ts
@@ -572,6 +573,78 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
 #: 2,5 giờ tiếng ≈ 0,9GB lúc đỉnh, máy còn 8GB — lọt. Đường link YouTube
 #: không dính trần này (phụ đề lấy sẵn, gần như miễn phí).
 TRAN_GIAY_NGHE = 150 * 60
+
+
+#: Đuôi tệp phụ đề đọc được. .ass chưa nhận (định dạng styling phức tạp).
+DUOI_PHU_DE = (".srt", ".vtt")
+
+#: Mốc thời gian SRT ("00:01:02,345") lẫn VTT ("00:01:02.345"; giờ có thể vắng).
+_MOC_PHU_DE = re.compile(
+    r"(?:(\d+):)?(\d\d):(\d\d)[,.](\d{1,3})\s*-->\s*(?:(\d+):)?(\d\d):(\d\d)[,.](\d{1,3})")
+#: Thẻ trong lời phụ đề: <i>…</i> của SRT/VTT, {\an8}/{\pos(...)} của ASS-style.
+_THE_PHU_DE = re.compile(r"<[^>\n]+>|\{\\[^}]*\}")
+
+
+def _giay_moc(gio: str | None, phut: str, giay: str, ms: str) -> float:
+    return (int(gio or 0) * 3600 + int(phut) * 60 + int(giay)
+            + int(ms.ljust(3, "0")) / 1000.0)
+
+
+def doc_phu_de(raw: str) -> list[Doan]:
+    """Nội dung tệp .srt / .vtt → các đoạn có mốc. Khối hỏng thì bỏ qua khối
+    đó chứ không bỏ cả tệp — phụ đề trôi nổi trên mạng bẩn đủ kiểu."""
+    raw = raw.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    ra: list[Doan] = []
+    for khoi in raw.split("\n\n"):
+        dong = [d for d in khoi.split("\n") if d.strip()]
+        vi_tri = next((i for i, d in enumerate(dong) if _MOC_PHU_DE.search(d)), None)
+        if vi_tri is None:
+            continue
+        m = _MOC_PHU_DE.search(dong[vi_tri])
+        chu = " ".join(d.strip() for d in dong[vi_tri + 1:])
+        chu = _THE_PHU_DE.sub("", chu).strip()
+        if not chu:
+            continue
+        bat = _giay_moc(m.group(1), m.group(2), m.group(3), m.group(4))
+        ket = _giay_moc(m.group(5), m.group(6), m.group(7), m.group(8))
+        if ket > bat:
+            ra.append(Doan(bat, ket, chu))
+    ra.sort(key=lambda d: d.bat_dau)
+    return ra
+
+
+def la_tep_phu_de(ten: str) -> bool:
+    return str(ten or "").lower().endswith(DUOI_PHU_DE)
+
+
+def dich_tep_phu_de(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:
+    """Tệp phụ đề có sẵn (.srt/.vtt) → phụ đề đã dịch. KHÔNG raise.
+
+    Đường NHANH + CHUẨN nhất cho phim: chữ gốc do người làm, không dính lỗi
+    nghe nhạc ồn, và chỉ tốn bước dịch (~vài chục giây) thay vì nghe cả
+    tiếng. Đi chung dây chuyền với phụ đề YouTube: gộp trọn câu rồi mới
+    dịch, cắt lại khung đạt chuẩn đọc.
+    """
+    if not ts.is_configured():
+        return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
+    try:
+        raw = Path(duong).read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {"ok": False, "error": f"không đọc được tệp: {exc}"}
+    doan = doc_phu_de(raw)
+    if not doan:
+        return {"ok": False,
+                "error": f"không đọc được khung phụ đề nào trong "
+                         f"{ten or 'tệp'} (nhận .srt và .vtt)"}
+    mau = " ".join(d.chu for d in doan[:60])
+    try:
+        nguon, _ = ts.detect(mau[:5000])
+    except ts.LoiDich as exc:
+        return {"ok": False, "error": str(exc)}
+    dich = ts.giai_ma_target(nguon, target)
+    if nguon and nguon == dich:
+        return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
+    return _dich_va_dong_goi(doan, nguon or "auto", dich, doan[-1].ket_thuc)
 
 
 def _ung_vien_nghe(target: str) -> tuple[str, str]:

@@ -289,6 +289,18 @@ def create_router() -> APIRouter:
                 _xong_phu_de(viec_id, r, kieu_ra)
 
             _chay_nen(viec_id, _video)
+        elif vd.la_tep_phu_de(thap):
+            # Tệp phụ đề sẵn (.srt/.vtt) — đường nhanh + chuẩn nhất cho phim:
+            # không phải nghe, chỉ dịch, và đi chung dây chuyền khung phụ đề.
+            def _phu_de():
+                _cap_nhat(viec_id, buoc="đang dịch phụ đề…")
+                try:
+                    r = vd.dich_tep_phu_de(duong, ten, target)
+                finally:
+                    Path(duong).unlink(missing_ok=True)
+                _xong_phu_de(viec_id, r, kieu_ra)
+
+            _chay_nen(viec_id, _phu_de)
         elif thap.endswith(_DUOI_ANH):
             def _anh():
                 _cap_nhat(viec_id, buoc="đang đọc chữ trong ảnh rồi dịch…")

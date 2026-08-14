@@ -13,7 +13,7 @@ const KHUC = 25 * 1024 * 1024;
 const TRAN_TEP = 4 * 1024 * 1024 * 1024;
 
 const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,"
-  + ".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
+  + ".srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
 
 /** Chọn theo CẶP, máy tự nhận diện chiều: nguồn tiếng Việt thì dịch sang
  *  tiếng kia, ngược lại dịch về tiếng Việt. Với video/âm thanh, cặp đã chọn
@@ -27,8 +27,10 @@ const DICH_SANG = [
   { value: "cap:ko", label: "Việt ↔ Hàn" },
 ];
 
+/** Đuôi cho ra PHỤ ĐỀ (hiện lựa chọn Phụ đề/Bản chữ): video, âm thanh, và
+ *  tệp phụ đề sẵn (.srt/.vtt — đường nhanh nhất cho phim, khỏi nghe). */
 const DUOI_NGHE = [".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp",
-  ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac"];
+  ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".srt", ".vtt"];
 
 type KetQua = {
   kieu: string;                 // "chu" | "tep" | "phu-de"
@@ -185,7 +187,7 @@ function DichPageContent() {
           {tep ? (
             <span className="text-[var(--foreground)]">{tep.name} • {(tep.size / 1024 / 1024).toFixed(1)}MB</span>
           ) : (
-            <span>Bấm chọn hoặc kéo thả — video/âm thanh (≤4GB, ≤150 phút — phim 2h nghe mất ~1,5h), ảnh, PDF/Word/Excel…</span>
+            <span>Bấm chọn hoặc kéo thả — video/âm thanh (≤4GB, ≤150 phút — phim 2h nghe mất ~1,5h), phụ đề .srt/.vtt (dịch vài chục giây), ảnh, PDF/Word/Excel…</span>
           )}
         </button>
         <input ref={chonTep} type="file" accept={DUOI_NHAN} className="hidden"

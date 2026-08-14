@@ -438,3 +438,55 @@ def test_bao_cao_doc_duoc():
 ])
 def test_ung_vien_nghe_theo_cap(target, cho_doi):
     assert vd._ung_vien_nghe(target) == cho_doi
+
+
+# ── Tệp phụ đề có sẵn (.srt/.vtt) ───────────────────────────────────────────
+
+
+@pytest.mark.pure
+def test_doc_phu_de_srt_du_kieu():
+    """SRT chuẩn: số thứ tự, khối nhiều dòng, thẻ <i> và {\\an8} phải bị bóc."""
+    raw = ("﻿1\n00:00:01,500 --> 00:00:03,000\n<i>Hello</i> there\n\n"
+           "2\n00:00:03,500 --> 00:00:05,000\n{\\an8}Line one\nLine two\n\n"
+           "khối hỏng không có mốc\n\n"
+           "3\n00:00:07,000 --> 00:00:06,000\nmốc ngược bị bỏ\n")
+    doan = vd.doc_phu_de(raw)
+    assert [(d.bat_dau, d.chu) for d in doan] == [
+        (1.5, "Hello there"), (3.5, "Line one Line two")]
+
+
+@pytest.mark.pure
+def test_doc_phu_de_vtt():
+    """VTT: header WEBVTT, mili-giây dùng dấu chấm, có thể vắng phần giờ."""
+    raw = ("WEBVTT\n\n00:01.000 --> 00:02.500\nXin chào\n\n"
+           "01:00:03.000 --> 01:00:04.000\nCâu hai\n")
+    doan = vd.doc_phu_de(raw)
+    assert [(d.bat_dau, d.ket_thuc, d.chu) for d in doan] == [
+        (1.0, 2.5, "Xin chào"), (3603.0, 3604.0, "Câu hai")]
+
+
+@pytest.mark.pure
+def test_la_tep_phu_de():
+    assert vd.la_tep_phu_de("phim.srt") and vd.la_tep_phu_de("PHIM.VTT")
+    assert not vd.la_tep_phu_de("phim.ass") and not vd.la_tep_phu_de("phim.mp4")
+
+
+def test_dich_tep_phu_de_ra_srt_dat_chuan(tmp_path, monkeypatch):
+    tep = tmp_path / "phim.srt"
+    tep.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n"
+                   "2\n00:00:02,000 --> 00:00:04,000\nThis is a test.\n",
+                   encoding="utf-8")
+    with install_translate(FakeTranslate(lang="en", codes=("en", "vi"))):
+        r = vd.dich_tep_phu_de(str(tep), "phim.srt")
+    assert r["ok"] is True
+    assert r["nguon"] == "en" and r["dich"] == "vi"
+    assert r["ten"] == "phu-de.vi.srt"
+    assert vd.soat_srt(r["srt"].decode()) == []
+
+
+def test_dich_tep_phu_de_khong_doc_duoc_thi_bao(tmp_path, monkeypatch):
+    tep = tmp_path / "rong.srt"
+    tep.write_text("chỉ có chữ, không có mốc thời gian nào", encoding="utf-8")
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_tep_phu_de(str(tep), "rong.srt")
+    assert r["ok"] is False and "không đọc được khung" in r["error"]
