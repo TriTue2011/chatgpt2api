@@ -275,6 +275,7 @@ function DamThoai() {
   const [tiengKia, setTiengKia] = useState("en");
   const [docTts, setDocTts] = useState(true);
   const [dangGhi, setDangGhi] = useState("");        // "" | mã tiếng đang ghi
+  const [dangMo, setDangMo] = useState("");          // đang xin quyền/mở mic
   const [dangXuLy, setDangXuLy] = useState(false);
   const [loi, setLoi] = useState("");
   const [luot, setLuot] = useState<{ ben: string; goc: string; dich: string }[]>([]);
@@ -291,6 +292,7 @@ function DamThoai() {
       setLoi("Trình duyệt không hỗ trợ micro (cần HTTPS hoặc mở qua domain).");
       return;
     }
+    setDangMo(lang);   // mở mic mất ~nửa giây — nói sớm là mất chữ đầu
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -332,8 +334,10 @@ function DamThoai() {
       };
       mr.start(250);
       mediaRef.current = mr;
+      setDangMo("");
       setDangGhi(lang);
     } catch {
+      setDangMo("");
       setLoi("Không truy cập được micro — kiểm tra quyền Micro của trình duyệt (ổ khóa cạnh URL).");
     }
   }
@@ -370,12 +374,13 @@ function DamThoai() {
             <div className="mb-3 flex items-center justify-between">
               <span className="font-medium">{NGON_NGU[lang]}</span>
               <button type="button" onClick={() => nhanMic(lang)}
-                disabled={dangXuLy || (!!dangGhi && dangGhi !== lang)}
+                disabled={dangXuLy || !!dangMo || (!!dangGhi && dangGhi !== lang)}
                 className={cn(
                   "flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-40",
                   dangGhi === lang ? "animate-pulse bg-red-600 hover:bg-red-700" : "bg-slate-900 hover:bg-slate-800")}>
                 <Mic className="size-4" />
-                {dangGhi === lang ? "Bấm để dừng" : "Bấm rồi nói"}
+                {dangGhi === lang ? "Bấm để dừng"
+                  : dangMo === lang ? "Đang mở mic…" : "Bấm, chờ ĐỎ, rồi nói"}
               </button>
             </div>
             <div className="flex-1 space-y-2 overflow-y-auto text-sm">

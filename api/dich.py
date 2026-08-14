@@ -365,7 +365,19 @@ def create_router() -> APIRouter:
         if len(mau) / rate > 90:
             raise HTTPException(400, detail={
                 "error": "Một lượt nói tối đa 90 giây — video dài thì dùng ô Dịch tệp"})
-        doan = va.cat_doan_tieng(mau, rate) or [(0.0, len(mau) / rate)]
+        # Đệm 0,24s lặng hai đầu: người dùng nói NGAY khi bấm nên phụ âm đầu
+        # hay dính sát mép clip — thiếu ngữ cảnh onset là model nuốt chữ
+        # ("mai là thứ mấy" → "ai là thứ mấy", đo thật 14/08).
+        import numpy as np
+        dem = np.zeros(int(0.24 * rate), dtype=mau.dtype)
+        mau = np.concatenate([dem, mau, dem])
+        # Lượt nói ngắn (≤28s — đại đa số) nghe NGUYÊN CLIP, không qua bộ cắt
+        # đoạn-có-tiếng: bộ đó sinh ra cho video dài, ngưỡng năng lượng tương
+        # đối có thể xén mất âm đầu nói nhỏ. Dài hơn mới phải cắt.
+        if len(mau) / rate <= va.DOAN_TOI_DA:
+            doan = [(0.0, len(mau) / rate)]
+        else:
+            doan = va.cat_doan_tieng(mau, rate) or [(0.0, len(mau) / rate)]
         try:
             rec = eng._get_recognizer(lang_noi)
         except Exception as exc:
