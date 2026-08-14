@@ -73,7 +73,37 @@ curl -s -X POST http://127.0.0.1:5000/translate -H 'Content-Type: application/js
 Biến môi trường: `TT_LANGS` (mặc định `en,vi,ja,ko,zh-Hans` — thêm mã có trong
 `app/engine.py::ISO2FLORES` là xong, không tải thêm gì), `TT_MODELS` (thang model
 NLLB), `TT_THREADS`, `TT_GLOSSARY=0` để tắt tầng thuật ngữ, `TT_ENVIT5_DIR=""`
-để tắt EnViT5 và cho mọi cặp quay về NLLB.
+để tắt EnViT5 và cho mọi cặp quay về NLLB, `TT_LO_MODEL` (lô đưa vào model mỗi
+lượt decode — 16 trên CPU, 64 trên GPU).
+
+## Bản GPU (tuỳ chọn) — cho việc theo LÔ
+
+Đo thật 14/08 trên RTX 2060 Super, lô 120 câu en→vi qua đúng đường HTTP:
+**CPU 54,4 giây · GPU 0,84 giây (~65 lần)**. Nhưng GPU **thua** CPU với câu lẻ
+(overhead khởi động lô), nên gateway chạy **song song hai máy** và định tuyến
+theo cỡ lô — xem `docs/DICH_MAY_TU_CHU.md` mục 2c.
+
+```bash
+# TRÊN MÁY CÓ CARD NVIDIA (không cần cùng máy với gateway)
+# 1. Lấy EnViT5 đã convert từ image CPU đang chạy — khỏi kéo torch 800 MB về
+docker exec vn-translate tar -cC /opt envit5 | tar -x && mv envit5 envit5-ct2
+# 2. Build + chạy
+docker build -f Dockerfile.gpu -t vn-translate-gpu .
+docker run -d --name vn-translate-gpu --gpus all --restart unless-stopped \
+  -p 5001:5000 -v vn-translate-gpu-data:/data \
+  -e TT_KIEU_TINH=float16 vn-translate-gpu
+```
+
+Rồi khai ở gateway: `TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001`.
+
+| Cần biết | Chi tiết |
+|---|---|
+| Nền image | CUDA 12.4 + cuDNN 9 (ctranslate2 ≥ 4.5 đòi đúng cặp này) |
+| Card | Compute Capability ≥ 7.0 cho `float16` (2060S = 7.5); CC 6.1 chỉ int8 |
+| VRAM | ~2 GB — chạy chung máy với camera/AI khác được |
+| `TT_THIET_BI` | `cuda` (Dockerfile.gpu đặt sẵn) |
+| `TT_KIEU_TINH` | `float16` nhanh nhất trên card này; `int8_float16` là mặc định của mã |
+| Cập nhật code | Máy đó **không có watchtower** — scp `app/` sang rồi build lại |
 
 ## Nối vào chatgpt2api
 

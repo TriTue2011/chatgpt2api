@@ -56,7 +56,8 @@ services:
       - "3030:80"      # ← web UI + API (đổi số trái nếu 3030 bị chiếm)
       - "6080:6080"    # noVNC — LAN; BẮT BUỘC đặt VNC_PASSWORD
       - "3001:3001"    # zalo-server (HA/integration có thể ở máy khác)
-      - "10600:10600"  # Wyoming multi — TTS+STT vi/en (1 port; HA khác host; đừng bind 127.0.0.1)
+      - "10600-10604:10600-10604"  # Wyoming ĐỌC: việt/anh/nhật/trung/hàn (HA khác host → đừng bind 127.0.0.1)
+      - "10700-10704:10700-10704"  # Wyoming NGHE: cùng thứ tự tiếng
 
     volumes:
       - /opt/c2a-data:/app/data   # ← đổi /opt/c2a-data thành thư mục BẤT KỲ trên máy bạn
@@ -75,7 +76,7 @@ services:
 | `VNC_PASSWORD` | noVNC không mật khẩu = ai trên LAN cũng điều khiển trình duyệt captcha |
 | `/opt/c2a-data` (vế trái của volume) | Nơi lưu **toàn bộ** dữ liệu — tài khoản, cấu hình, model giọng nói. Thư mục này phải tồn tại và còn chỗ trống (khuyên ≥15 GB) |
 | `3030:80` | Nếu máy đã có dịch vụ khác dùng cổng 3030, đổi số bên trái, vd `8080:80` |
-| `10600` / `3001` | **Không** bind `127.0.0.1` nếu Home Assistant / client nằm máy khác trong LAN (`10600` = Wyoming multi vi/en) |
+| `10600-10604` / `10700-10704` / `3001` | **Không** bind `127.0.0.1` nếu Home Assistant / client nằm máy khác trong LAN (106xx = Wyoming ĐỌC, 107xx = NGHE — mỗi cổng một tiếng, xem 4.2c) |
 
 **Bước 3 — Chạy:**
 
@@ -142,7 +143,8 @@ Mở `https://<ip-máy>:9443`, tạo tài khoản quản trị ở lần đăng 
          - "3030:80"
          - "6080:6080"      # noVNC — đặt VNC_PASSWORD; siết 127.0.0.1 nếu chỉ SSH tunnel
          - "3001:3001"      # zalo — LAN (HA có thể khác host)
-         - "10600:10600"    # Wyoming multi vi/en — HA khác host (không bind 127.0.0.1)
+         - "10600-10604:10600-10604"   # Wyoming ĐỌC (TTS) — HA khác host
+         - "10700-10704:10700-10704"   # Wyoming NGHE (STT)
        volumes:
          - /opt/c2a/data:/app/data
        environment:
@@ -234,7 +236,8 @@ services:
       - "3030:80"
       - "6080:6080"
       - "3001:3001"
-      - "10600:10600"
+      - "10600-10604:10600-10604"
+      - "10700-10704:10700-10704"
     volumes:
       - /opt/c2a/data:/app/data
     environment:
@@ -328,6 +331,7 @@ lời” — thường thấy ngay tài khoản nào chết.
 | **Quản lý ảnh** | Thư viện ảnh đã tạo, gắn thẻ, tải về, xoá hàng loạt |
 | **Tạo video** | Sinh video (Veo 3.1 — Google DeepMind) |
 | **Quản lý video** | Thư viện video đã tạo |
+| **Dịch** | Dịch bằng máy dịch trong stack (không tốn lượt AI): chữ · link YouTube · ảnh · tài liệu · phụ đề `.srt/.vtt` · video/âm thanh. Tab con **Đàm thoại** = phiên dịch hai chiều qua mic. Xem 4.4b |
 
 ### 📡 Kênh
 
@@ -462,9 +466,18 @@ Ba việc: tải model → bật trong Cài đặt → khai báo loa.
 
 ```bash
 # --- CÁCH A: Chạy script trực tiếp trong container c2a (Khuyên dùng) ---
+# Tiếng Việt (đủ để dùng ngay)
 docker exec -it c2a python scripts/download_piper_voices.py --pack minimal
 docker exec -it c2a python scripts/download_stt_model.py
 docker exec -it c2a python scripts/download_vieneu_model.py
+
+# Tiếng Anh (tuỳ chọn) — giọng Kokoro + bộ nghe Parakeet
+docker exec -it c2a python scripts/download_kokoro_model.py
+docker exec -it c2a python scripts/download_stt_en_model.py
+
+# Trung / Nhật / Hàn (tuỳ chọn) — cho tab Dịch, đàm thoại, cổng Wyoming
+docker exec -it c2a python scripts/download_stt_da_ngu.py       # NGHE  ~340 MB
+docker exec -it c2a python scripts/download_tts_da_ngu.py       # ĐỌC   ~263 MB
 
 # --- CÁCH B: Tải thủ công bằng wget từ GitHub Release về host (/opt/c2a/data/) ---
 
@@ -486,16 +499,21 @@ wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1
 wget https://github.com/TriTue2011/chatgpt2api/releases/download/piper-voices-v1/minhkhang.onnx.json
 ```
 
-File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/stt-en/`, `data/kokoro/`.
+File lưu vào `data/piper/`, `data/stt/`, `data/hf/`, `data/stt-en/`, `data/kokoro/`,
+`data/stt-{zh,ja,ko}/`, `data/kokoro-zh/`, `data/supertonic/`.
 **Không** nằm trong image nên cập nhật image không mất, và image không nặng thêm.
+Tải tiếng nào thì tiếng đó dùng được — chưa tải thì mục tương ứng trong Cài đặt
+hiện `✗` và cổng Wyoming của tiếng đó không mở.
 
 ### 4.2. Cài đặt trong `▸ Hệ thống → Cài đặt → Giọng nói & Loa`
 
 | Ô | Ý nghĩa |
 |---|---|
+| **Theo từng tiếng** | Năm mục thu gọn (Việt · Anh · Nhật · Trung · Hàn), bấm để xoè: chọn **giọng đọc** của tiếng đó, **Nghe thử**, và hai ô **cổng Wyoming** (đọc/nghe). Tiêu đề mỗi mục hiện `đọc ✓ · nghe ✓` = model đã tải |
 | **Backend đọc (TTS)** | `Tự động` (khuyên dùng) · `Chỉ local` · `Chỉ Wyoming` · `Tắt` |
 | **Giọng đọc** | Chọn trong các giọng đã tải về. Giọng `vieneu:*` = VieNeu 48 kHz (Việt + Anh xen kẽ); `kokoro:*` = tiếng Anh; còn lại = Piper. Giọng VieNeu/Kokoro lỗi sẽ tự rơi về Piper để trợ lý không bao giờ "câm" |
 | **Wyoming TTS / STT** | Tuỳ chọn — trỏ tới máy chủ giọng nói sẵn có trong nhà |
+| **Nghe (STT) — tin nhắn thoại & API** | Khối này CHỈ chi phối tin nhắn thoại gửi bot và `/v1/audio/transcriptions`. Home Assistant **không** dùng nó (HA đi cổng nghe riêng từng tiếng — mục 4.2c) |
 | **URL công khai của gateway** | **Bắt buộc nếu muốn phát ra loa.** Loa trong nhà tải file từ địa chỉ này nên **không dùng `localhost`** — điền `http://<ip-máy>:3030` |
 
 Hai ô trạng thái phía trên cho biết engine sẵn sàng chưa (có binary chưa, đã tải
@@ -610,6 +628,41 @@ nhiên: *“phát ra loa phòng khách nhắc cả nhà ăn cơm”*.
   **liệt kê danh sách và hỏi lại**, không tự chọn hộ.
 
 ---
+
+### 4.4b. Tab Dịch — dịch chữ, video, phụ đề (không tốn lượt AI)
+
+`▸ Studio → Dịch`. Toàn bộ chạy bằng máy dịch + bộ nghe **trong nhà**, không gọi
+LLM, không qua bên thứ ba. Chi tiết kỹ thuật: [docs/DICH_MAY_TU_CHU.md](docs/DICH_MAY_TU_CHU.md).
+
+**Tab "Dịch":**
+
+| Bỏ vào | Nhận lại | Ghi chú |
+|---|---|---|
+| Chữ dán vào ô | Bản dịch ngay trên trang | Nút chép sẵn |
+| **Link YouTube** | Tệp phụ đề `.srt` đã dịch | Lấy phụ đề có sẵn — vài chục giây, không tải video |
+| Ảnh | Bản dịch chữ trong ảnh | Kèm phần chữ gốc đọc được để đối chiếu |
+| PDF / Word / Excel / PowerPoint | Bản dịch (tệp cùng định dạng nếu dựng lại được) | Dài quá thì đóng `.docx` |
+| **Phụ đề `.srt` / `.vtt`** | `.srt` đã dịch | **Nhanh + chuẩn nhất cho phim** (~1 phút cho phim 2 giờ) |
+| **Video / âm thanh** (≤ 4 GB, ≤ 150 phút) | `.srt` **hoặc** bản chữ lời thoại | Máy tự nghe; phim 2 giờ mất ~20–40 phút tuỳ tiếng |
+
+- **Cặp ngôn ngữ**: Việt ↔ Anh / Trung / Nhật / Hàn. Máy tự nhận chiều: nguồn
+  tiếng Việt thì dịch sang tiếng kia, ngược lại về tiếng Việt.
+- Kết quả video luôn kèm **bản chữ-trên** (`phu-de-tren…`): dùng khi video đã có
+  chữ in cứng ở đáy hình, phụ đề dịch nhảy lên mép trên cho khỏi đè nhau.
+- Ghép phụ đề với video: đặt `.srt` **cùng tên, cùng thư mục** với video rồi mở
+  bằng **VLC** / **MX Player**; hoặc CapCut → nhập phụ đề → xuất video có chữ.
+- Tệp lớn được **cắt khúc 25 MB** gửi tuần tự nên đi qua domain vẫn lọt. Việc
+  chậm chạy ở luồng nền và trang báo tiến độ — **đừng đóng trang** nếu muốn nhận
+  kết quả (việc vẫn chạy tiếp, chỉ mất đường trả về).
+
+**Tab "Đàm thoại"** — phiên dịch trực tiếp cho hai người: chọn cặp tiếng, hai ô
+hai tiếng, ai nói tiếng nào thì bấm mic ô đó → bản dịch hiện sang ô bên kia,
+tick *Đọc bản dịch* thì máy đọc thành tiếng (đủ 5 tiếng, giọng chọn ở mục 4.2).
+Mỗi lượt ≤ 90 giây, bấm-nói-bấm dừng. **Mic chỉ hoạt động qua HTTPS** — mở bằng
+IP LAN thì trình duyệt chặn micro (luật của trình duyệt, không phải lỗi máy).
+
+> Bot chat cũng làm được: `/dich <chữ>`, `/dich <link YouTube>`, hoặc gửi tệp
+> video/âm thanh kèm chú thích `/dich` (Zalo cá nhân nhận tệp ≤ 250 MB).
 
 ## 5. Kết nối bot Telegram / Zalo
 

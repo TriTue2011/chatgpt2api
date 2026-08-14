@@ -31,6 +31,13 @@ Dự án còn đi kèm **Captcha Solver** giúp giải quyết các rào cản t
 - **Federated Multi-Search**: 9 Search engines quốc tế chạy song song (Brave, Mojeek, PubMed, v.v.).
 - **Studio UI**: Quản lý trực quan, tạo KB (Knowledge Base) mới từ Markdown, lưu trữ R2 Cloudflare.
 
+### 🌐 Dịch & phụ đề tự chủ (không bên thứ ba, không LLM)
+- **Máy dịch trong stack** (`vn-translate`): EnViT5 cho en↔vi (42,95 BLEU trên FLORES-200 devtest so với 38,45 của NLLB, nhanh ~3 lần), NLLB-200 cho vi↔nhật/hàn/trung, kèm tầng thuật ngữ chuyên ngành. Tuỳ chọn **bản GPU** nhận việc theo lô (lô 120 câu: 0,84 giây trên RTX 2060S so với 54 giây trên CPU), GPU chết thì tự rơi về CPU.
+- **Phụ đề video**: link YouTube (dùng phụ đề có sẵn) hoặc **tự nghe** video/âm thanh tải lên bằng sherpa-onnx (Zipformer Việt · Parakeet Anh · Zipformer Trung/Nhật/Hàn) có mốc thời gian từng từ; khung phụ đề theo chuẩn Netflix/TED (42 ký tự/dòng, 2 dòng, 20 ký tự/giây) và có bộ soát tự kiểm. Dịch được cả tệp `.srt`/`.vtt` sẵn có.
+- **Tab Dịch** (Studio): chữ · link · ảnh (đọc chữ trong ảnh) · tài liệu · phụ đề · video, hai kiểu kết quả, cặp Việt↔Anh/Trung/Nhật/Hàn, upload cắt khúc cho tệp lớn.
+- **Đàm thoại trực tiếp**: hai ô mic bấm-nói-thả, dịch qua lại và đọc thành tiếng đủ 5 tiếng (NghiTTS · Kokoro · Kokoro đa ngữ · Supertonic).
+- **Wyoming cho Home Assistant**: mỗi cổng một vai một tiếng — ĐỌC `10600-10604`, NGHE `10700-10704`.
+
 ### 🛡️ Captcha Solver
 - **Vượt Cloudflare/Turnstile**: Tự động xử lý Captcha bảo vệ của ChatGPT.
 - **Quản lý VNC/API**: Hỗ trợ debug giao diện trực quan qua cổng 6080.
@@ -112,7 +119,8 @@ services:
       - "3030:80"                # API + giao diện web
       - "127.0.0.1:6080:6080"    # noVNC — chỉ localhost (bỏ 127.0.0.1 nếu cần LAN)
       - "3001:3001"              # zalo-server — chỉ giữ nếu HA ở máy khác
-      - "10600:10600"            # Wyoming (TTS+STT cho Home Assistant)
+      - "10600-10604:10600-10604" # Wyoming ĐỌC (TTS) cho HA — việt/anh/nhật/trung/hàn
+      - "10700-10704:10700-10704" # Wyoming NGHE (STT) — cùng thứ tự tiếng
     volumes:
       # 1 thư mục dữ liệu duy nhất: accounts, config, KB + chroma, profile trình duyệt
       - ./c2a-data:/app/data

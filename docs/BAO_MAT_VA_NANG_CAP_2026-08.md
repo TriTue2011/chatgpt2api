@@ -115,7 +115,8 @@ services:
       - "3030:80"                # API + dashboard
       - "127.0.0.1:6080:6080"    # noVNC — chỉ localhost (bỏ 127.0.0.1 nếu cần LAN)
       - "3001:3001"              # zalo-server — chỉ giữ nếu HA ở máy khác
-      - "10600:10600"            # Wyoming TTS/STT
+      - "10600-10604:10600-10604" # Wyoming ĐỌC (TTS) — một cổng một tiếng
+      - "10700-10704:10700-10704" # Wyoming NGHE (STT)
       - "10700:10700"            # WhisperLive
 
     volumes:

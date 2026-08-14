@@ -33,6 +33,13 @@ The project also comes with a **Captcha Solver** to handle Cloudflare barriers a
 - **OfficeCLI MCP**: Create/read/edit Word, Excel, PowerPoint under `/app/data/office` (see `docs/INTEGRATIONS_OFFICECLI_DEEPTUTOR.md`).
 - **DeepTutor sidecar**: Optional tutoring app (`deploy/deeptutor/`) that uses this gateway as an OpenAI-compatible backend.
 
+### 🌐 Self-hosted translation & subtitles (no third party, no LLM)
+- **In-stack MT server** (`vn-translate`): EnViT5 for en↔vi (42.95 BLEU on FLORES-200 devtest vs 38.45 for NLLB, ~3× faster), NLLB-200 for vi↔ja/ko/zh — plus a domain-glossary layer. Optional **GPU twin** takes batch jobs (120-sentence batch: 0.84s on an RTX 2060S vs 54s on CPU), with automatic fallback to CPU when the GPU host is down.
+- **Video subtitles**: YouTube links (uses existing captions), or **local transcription** of uploaded video/audio via sherpa-onnx (Vietnamese Zipformer · English Parakeet · Chinese/Japanese/Korean Zipformer) with token-level timestamps; output follows Netflix/TED display rules (42 chars/line, 2 lines, 20 CPS) and is verified by a built-in linter. Also translates existing `.srt`/`.vtt` files.
+- **Translate tab** (Studio): text · links · images (OCR) · documents · subtitles · video, two output modes, Vietnamese↔English/Chinese/Japanese/Korean pairs, chunked upload for large files.
+- **Live interpreting**: two-pane push-to-talk mic translation with optional spoken output in all five languages (NghiTTS · Kokoro · Kokoro-multi · Supertonic).
+- **Wyoming for Home Assistant**: one port per role per language — TTS `10600-10604`, STT `10700-10704`.
+
 ### 🛡️ Captcha Solver
 - **Bypass Cloudflare/Turnstile**: Automatically handles ChatGPT's captcha protection.
 - **VNC/API Management**: Supports visual debugging via port 6080.
@@ -79,7 +86,7 @@ Run the Lite variant with:
 ```bash
 docker compose -f docker-compose.lite.yml up -d
 ```
-> ⚠️ noVNC (`6080`) is published for LAN captcha logins — set **`VNC_PASSWORD`**. Never expose `6080` to the open internet. Bind `127.0.0.1:6080` only if you use SSH tunnel. Keep `10600`/`3001` on LAN if Home Assistant runs on another host (`10600` = Wyoming multi vi/en).
+> ⚠️ noVNC (`6080`) is published for LAN captcha logins — set **`VNC_PASSWORD`**. Never expose `6080` to the open internet. Bind `127.0.0.1:6080` only if you use SSH tunnel. Keep `10600-10604`/`10700-10704`/`3001` on LAN if Home Assistant runs on another host (106xx = Wyoming TTS, 107xx = STT; one port per language).
 
 **Step 1: Initialize directory**
 Create a directory to store the configuration and data for the application:
@@ -129,7 +136,8 @@ services:
       - "3030:80"                # API + web dashboard
       - "127.0.0.1:6080:6080"    # noVNC — localhost only (drop the prefix for LAN)
       - "3001:3001"              # zalo-server (only if HA runs on another host)
-      - "10600:10600"            # Wyoming multi — vi/en TTS+STT
+      - "10600-10604:10600-10604" # Wyoming TTS — vi/en/ja/zh/ko (one port per language)
+      - "10700-10704:10700-10704" # Wyoming STT — same language order
     volumes:
       # Single data dir: accounts, config, KB + chroma, browser profiles
       - ./c2a-data:/app/data
@@ -160,7 +168,7 @@ services:
       - no-new-privileges:true
 ```
 > Note: MCP Hub (8005) and Captcha API (8010) run only inside the container, so they don't need to be published.
-> Homelab: do **not** bind `10600`/`3001` to `127.0.0.1` if Home Assistant is on a different machine.
+> Homelab: do **not** bind `10600-10604`/`10700-10704`/`3001` to `127.0.0.1` if Home Assistant is on a different machine.
 > 📘 **Upgrading from an older version, or hitting a crash loop / Zalo `401`?**
 > Read **[docs/BAO_MAT_VA_NANG_CAP_2026-08.md](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)**
 > — it lists every environment variable, the security fixes, migration steps and

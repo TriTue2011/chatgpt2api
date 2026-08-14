@@ -51,11 +51,21 @@ Ghi chú:
   image mới đã ghim `onnxruntime<1.28` trong `deploy/extra-requirements.txt`;
   gặp trên image cũ thì update image.
 
-> **Server 172.16.10.38 (2026-08-12): đã tải đủ VieNeu (14 giọng) + Piper (19)
-> + Kokoro (11) + **NghiTTS (19)** + STT tiếng Việt + STT tiếng Anh, và đã bật
-> sẵn `en_enabled`. Home Assistant qua Wyoming thấy đủ **63 giọng**. Đo tại chỗ:
-> NghiTTS đọc với RTF ≈ 0,15 (nhanh gấp ~7 lần thời gian thực) khi model đã nằm
-> trong RAM; câu lặp lại lấy từ cache, gần như tức thì.**
+> **Server 172.16.10.38 — cập nhật 2026-08-14.** Đã tải đủ:
+> - **Đọc (TTS)**: VieNeu 14 giọng + Piper 19 + NghiTTS 19 (tiếng Việt), Kokoro
+>   11 giọng (Anh), **Kokoro đa ngữ v1.1 — 103 giọng (Trung)**, **Supertonic —
+>   10 giọng (Nhật + Hàn)**.
+> - **Nghe (STT)**: Zipformer tiếng Việt, Parakeet tiếng Anh (`en_enabled` đã
+>   bật), **Zipformer Trung / Nhật / Hàn** (`scripts/download_stt_da_ngu.py`).
+>
+> Home Assistant nối qua **cổng riêng từng tiếng** (ĐỌC 10600-10604 · NGHE
+> 10700-10704) chứ không còn một cổng đa ngữ — mỗi cổng một integration, chọn
+> giọng của tiếng đó trong Cài đặt → Giọng nói & Loa → "Theo từng tiếng".
+>
+> Đo tại chỗ: NghiTTS đọc với RTF ≈ 0,15 (nhanh gấp ~7 lần thời gian thực) khi
+> model đã nằm trong RAM, câu lặp lại lấy từ cache gần như tức thì; bộ nghe
+> tiếng Việt RTF 0,032 và tiếng Anh RTF 0,204 ở 4 luồng (đo 14/08 sau khi cấp
+> `voice.stt.num_threads = 4`).
 
 ### 1.2. Bật STT tiếng Anh (mặc định TẮT)
 
