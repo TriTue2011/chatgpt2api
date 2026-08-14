@@ -298,6 +298,152 @@ class TaoSlideTests(_Nen):
         self.assertEqual(kq["so_slide"], 1)
 
 
+@unittest.skipUnless(_co_lib("pptx"), "cần python-pptx")
+class SlideCoBoCucVaChuDeTests(_Nen):
+    """Bản đầu đổ mọi thứ vào MỘT bố cục, màu theo mẫu trắng trơn, bảng số liệu
+    thành mấy dòng gạch đầu dòng. Nhóm này canh phần bù: bố cục chọn theo nội
+    dung, màu lấy từ một bộ chủ đề, bảng và biểu đồ là ĐỐI TƯỢNG GỐC của
+    PowerPoint (sửa được) chứ không phải chữ hay ảnh."""
+
+    def _mo(self, kq):
+        from pptx import Presentation
+        self.assertTrue(kq["ok"], kq.get("error"))
+        return Presentation(kq["duong_dan"])
+
+    def test_khong_them_slide_nao_ngoai_so_tieu_de(self):
+        """Cái dễ hỏng nhất khi thêm slide bìa: tự chèn thêm một slide, làm lệch
+        số slide mà người soạn đếm được từ dàn ý."""
+        kq = ob.tao_slide("# A\n- x\n## B\n- y\n", "a.pptx")
+        self.assertEqual(kq["so_slide"], 2)
+        self.assertEqual(len(self._mo(kq).slides), 2)
+
+    def test_khoi_16_9(self):
+        """Mẫu trần của python-pptx là 4:3 — chiếu lên là hai vệt đen hai bên."""
+        pres = self._mo(ob.tao_slide("# A\n- x", "a.pptx"))
+        self.assertAlmostEqual(pres.slide_width / pres.slide_height, 16 / 9,
+                               places=2)
+
+    def test_tieu_de_khong_co_y_o_dau_thi_la_slide_bia(self):
+        pres = self._mo(ob.tao_slide("# Bài giảng\n## Nội dung\n- x", "a.pptx"))
+        self.assertEqual(pres.slides[0].slide_layout.name, "Title Slide")
+
+    def test_tieu_de_khong_co_y_o_giua_thi_la_slide_phan_muc(self):
+        pres = self._mo(ob.tao_slide(
+            "# Mở đầu\n- x\n# Phần hai\n## Chi tiết\n- y", "a.pptx"))
+        self.assertEqual(pres.slides[1].slide_layout.name, "Section Header")
+
+    def test_thut_le_hai_dau_cach_thanh_cap_that(self):
+        """Trước đây mọi ý nằm cùng một cấp, dàn ý có ý con thì đọc ra một khối."""
+        pres = self._mo(ob.tao_slide(
+            "# A\n- cha\n  - con\n    - chau\n", "a.pptx"))
+        khung = next(ph.text_frame for ph in pres.slides[0].placeholders
+                     if ph.placeholder_format.idx == 1)
+        self.assertEqual([d.level for d in khung.paragraphs], [0, 1, 2])
+
+    def test_bang_markdown_thanh_BANG_GOC_chu_khong_phai_chu(self):
+        pres = self._mo(ob.tao_slide(
+            "# Điểm\n| Tên | Điểm |\n| --- | --- |\n| An | 8 |\n| Bình | 9 |\n",
+            "a.pptx"))
+        bang = [sh for sh in pres.slides[0].shapes if sh.has_table]
+        self.assertEqual(len(bang), 1, "phải là bảng gốc, không phải text")
+        tb = bang[0].table
+        self.assertEqual((len(tb.rows), len(tb.columns)), (3, 2))
+        self.assertEqual(tb.cell(0, 0).text, "Tên")
+        self.assertEqual(tb.cell(2, 1).text, "9")
+
+    def test_dong_ngan_cua_bang_khong_thanh_hang_du_lieu(self):
+        """`| --- | --- |` là cú pháp, không phải số liệu."""
+        pres = self._mo(ob.tao_slide(
+            "# A\n| a | b |\n| :-- | --: |\n| 1 | 2 |\n", "a.pptx"))
+        tb = next(sh.table for sh in pres.slides[0].shapes if sh.has_table)
+        self.assertEqual(len(tb.rows), 2)
+
+    def test_moc_bieu_do_thi_ra_BIEU_DO_GOC(self):
+        kq = ob.tao_slide(
+            "# Doanh thu\n[biểu đồ]\n| Tháng | Tiền |\n| --- | --- |\n"
+            "| Bảy | 1.200 |\n| Tám | 1.450,5 |\n", "a.pptx")
+        pres = self._mo(kq)
+        self.assertEqual(kq["so_bieu_do"], 1)
+        self.assertEqual(kq["so_bang"], 0)
+        do_thi = [sh for sh in pres.slides[0].shapes if sh.has_chart]
+        self.assertEqual(len(do_thi), 1)
+        ch = do_thi[0].chart
+        self.assertEqual(list(ch.plots[0].categories), ["Bảy", "Tám"])
+        # Số kiểu Việt: '1.200' là một nghìn hai, '1.450,5' có phẩy thập phân.
+        self.assertEqual(list(ch.series[0].values), [1200.0, 1450.5])
+
+    def test_KHONG_co_moc_thi_van_la_bang_du_toan_so(self):
+        """Bảng số liệu tự biến thành biểu đồ là kiểu thông minh gây bất ngờ, mà
+        mất luôn phần đọc được từng con số."""
+        kq = ob.tao_slide("# A\n| x | y |\n| --- | --- |\n| a | 1 |\n| b | 2 |\n",
+                          "a.pptx")
+        self.assertEqual((kq["so_bang"], kq["so_bieu_do"]), (1, 0))
+
+    def test_xin_bieu_do_ma_du_lieu_khong_phai_so_thi_ve_bang(self):
+        """Thà ra bảng đúng còn hơn một biểu đồ rỗng."""
+        kq = ob.tao_slide("# A\n[biểu đồ]\n| x | y |\n| --- | --- |\n"
+                          "| a | nhiều |\n| b | ít |\n", "a.pptx")
+        self.assertEqual((kq["so_bang"], kq["so_bieu_do"]), (1, 0))
+
+    def test_chu_de_doi_mau_nen_that(self):
+        from pptx.dml.color import RGBColor
+        sang = self._mo(ob.tao_slide("# A\n- x", "s.pptx", "trang-sach"))
+        toi = self._mo(ob.tao_slide("# A\n- x", "t.pptx", "xanh-dam"))
+        self.assertEqual(sang.slides[0].background.fill.fore_color.rgb,
+                         RGBColor.from_string("FFFFFF"))
+        self.assertEqual(toi.slides[0].background.fill.fore_color.rgb,
+                         RGBColor.from_string("0F243E"))
+
+    def test_ten_chu_de_la_thi_dung_mac_dinh_chu_khong_bao_hong(self):
+        kq = ob.tao_slide("# A\n- x", "a.pptx", "mau-tim-gradient")
+        self.assertTrue(kq["ok"])
+        self.assertEqual(kq["chu_de"], "trang-sach")
+
+    def test_chu_de_ap_len_TUNG_run_chu_khong_chi_paragraph(self):
+        """Đặt font ở cấp paragraph là không đủ: run sinh sau không thừa hưởng,
+        slide ra nửa theo chủ đề nửa theo mẫu."""
+        pres = self._mo(ob.tao_slide("# A\n- một\n- hai\n- ba\n", "a.pptx",
+                                     "xanh-dam"))
+        khung = next(ph.text_frame for ph in pres.slides[0].placeholders
+                     if ph.placeholder_format.idx == 1)
+        co = [r.font.size for d in khung.paragraphs for r in d.runs]
+        self.assertEqual(len(co), 3)
+        self.assertTrue(all(c is not None for c in co), "có run bị bỏ sót")
+
+    def test_so_hieu_ca_hai_loi_viet(self):
+        """Dấu phân cách cuối là thập phân, trừ khi sau nó đúng ba chữ số."""
+        for chu, mong in [("1.200", 1200.0),        # kiểu Việt: chấm nhóm nghìn
+                          ("1.200,5", 1200.5),      # kiểu Việt đủ hai dấu
+                          ("1,200.5", 1200.5),      # kiểu Anh, ngược dấu
+                          ("1.200.000", 1200000.0),
+                          ("1,5", 1.5), ("1.5", 1.5), ("1.2345", 1.2345),
+                          ("1 200", 1200.0), ("12%", 12.0), ("-2,5", -2.5),
+                          ("8", 8.0)]:
+            self.assertEqual(ob._so(chu), mong, chu)
+        for chu in ("nhiều", "", "   ", "x1", "1.2.3,4,5"):
+            self.assertIsNone(ob._so(chu), chu)
+
+    def test_ca_cot_go_cho_mo_ho_cua_tung_o(self):
+        """`6.750` một mình là mơ hồ; đứng cạnh 7,25 và 8 thì rõ là 6,75. Đọc
+        thành 6750 là cột cao gấp gần nghìn lần hai cột kia — lỗi đo được trên
+        bộ slide thử, không phải lo xa."""
+        self.assertEqual(ob._cot_so(["6.750", "7,25", "8"]), [6.75, 7.25, 8.0])
+        # Có mốc cỡ nghìn thì `1.200` đúng là một nghìn hai.
+        self.assertEqual(ob._cot_so(["1.200", "1.450,5"]), [1200.0, 1450.5])
+        # Cả cột đều mơ hồ → giữ nghĩa nhóm nghìn, lối người Việt hay viết hơn.
+        self.assertEqual(ob._cot_so(["1.200", "1.450"]), [1200.0, 1450.0])
+        # Một ô không phải số là cả cột không vẽ được.
+        self.assertIsNone(ob._cot_so(["1", "nhiều"]))
+
+    def test_bieu_do_lay_dung_so_sau_khi_gio_mo_ho(self):
+        kq = ob.tao_slide(
+            "# Điểm TB\n[biểu đồ]\n| Tháng | Điểm |\n| --- | --- |\n"
+            "| Chín | 6.750 |\n| Mười | 7,25 |\n| Mười một | 8 |\n", "a.pptx")
+        pres = self._mo(kq)
+        ch = next(sh.chart for sh in pres.slides[0].shapes if sh.has_chart)
+        self.assertEqual(list(ch.series[0].values), [6.75, 7.25, 8.0])
+
+
 class CatTheoTieuDeTests(_Nen):
     """Repo cắt bằng `content.split("\n## ")` — CỨNG ở cấp 2. Tài liệu chỉ dùng
     '#' (rất thường gặp với văn bản tiếng Việt một cấp) thì không cắt được mảnh

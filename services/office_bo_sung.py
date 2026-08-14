@@ -288,14 +288,217 @@ def _thay_xlsx(p: Path, tim: str, thay: str, tat_ca: bool) -> int:
 # ── 4. Tạo slide PowerPoint từ dàn ý ───────────────────────────────────────
 # Dự án chưa tạo được .pptx ở bất kỳ đâu (soi cả `services/`: không nơi nào
 # import pptx để GHI). Với đường dạy học thì đây là việc đáng có nhất trong repo.
+#
+# Bản đầu chỉ đổ chữ vào bố cục mặc định của python-pptx: mọi slide một kiểu,
+# màu và cỡ chữ theo mẫu trắng trơn, bảng số liệu thành mấy dòng gạch đầu dòng.
+# Bản này chọn BỐ CỤC THEO LOẠI NỘI DUNG và lấy màu/cỡ chữ từ MỘT bộ chủ đề:
+#
+#     `#` không có ý nào, ở đầu   → slide bìa (tựa lớn + phụ đề)
+#     `#` không có ý nào, ở giữa  → slide phân mục
+#     có dòng `| a | b |`         → BẢNG GỐC của PowerPoint (sửa được trong app)
+#     có `[biểu đồ]` trước bảng   → BIỂU ĐỒ GỐC (chuột phải → Edit Data ra số)
+#     còn lại                     → gạch đầu dòng, thụt lề thành cấp thật
+#
+# Vẫn thuần python-pptx, không thêm thư viện nào. Cố ý KHÔNG đi đường
+# SVG → DrawingML như ppt-master: đường đó đẹp hơn nhưng phải tự bảo trì một
+# tầng chuyển đổi, mà đây chỉ là việc phụ của bot.
 
 _RE_TIEU_DE = re.compile(r"^(#{1,3})\s+(.*)$")
-_RE_GACH_DAU = re.compile(r"^\s*[-*•]\s+(.*)$")
+#: Nhóm 1 giữ phần thụt lề — hai dấu cách là một cấp (xem `_cap_thut_le`).
+_RE_GACH_DAU = re.compile(r"^(\s*)[-*•]\s+(.*)$")
+#: Một hàng bảng Markdown: `| a | b |`.
+_RE_HANG_BANG = re.compile(r"^\s*\|(.+)\|\s*$")
+#: Dòng ngăn dưới hàng tiêu đề bảng: `| --- | :--: |` — bỏ, không phải dữ liệu.
+_RE_NGAN_BANG = re.compile(r"^\s*\|[\s:|+-]+\|\s*$")
+#: Mốc xin biểu đồ. Cố ý bắt người soạn NÓI RÕ thay vì tự đoán theo dữ liệu:
+#: bảng số liệu tự biến thành biểu đồ là kiểu "thông minh" gây bất ngờ, mà mất
+#: luôn phần đọc được từng con số.
+_RE_MOC_BIEU_DO = re.compile(
+    r"^\s*[\[(]\s*(?:bi[eể]u\s*đ[oồ]|chart|graph)\s*[\])]\s*$", re.I)
+
+#: Bộ chủ đề. Cố ý tránh gradient tím/xanh-tím — đó là dấu hiệu dễ nhận nhất
+#: của giao diện do AI sinh, và slide bài giảng thì cần trông có chủ ý.
+#: `font` để Calibri: nó có sẵn trên mọi máy Office và đủ dấu tiếng Việt. Font
+#: lạ mà máy người nhận không có thì PowerPoint thay bừa, slide vỡ hết chữ.
+_CHU_DE: dict[str, dict[str, Any]] = {
+    # Trắng sạch — gần nhất với đầu ra cũ, nên để làm mặc định: bản nâng cấp
+    # không được làm slide người ta đã quen bỗng đổi màu.
+    "trang-sach": {"nen": "FFFFFF", "tua": "1A2433", "chu": "333F4F",
+                   "nhan": "B4553C", "chu_tren_nhan": "FFFFFF"},
+    "xanh-dam":   {"nen": "0F243E", "tua": "F2F5F7", "chu": "C9D4DE",
+                   "nhan": "E0A458", "chu_tren_nhan": "1A2433"},
+    "am":         {"nen": "1C1B1A", "tua": "F5F0E8", "chu": "CFC7BC",
+                   "nhan": "7A9E7E", "chu_tren_nhan": "1C1B1A"},
+}
+_CHU_DE_MAC_DINH = "trang-sach"
+_FONT = "Calibri"
+#: Cỡ chữ (pt). Ý cấp sâu nhỏ dần nhưng có sàn — chữ dưới 14pt thì cuối phòng
+#: học không đọc được, mà slide bài giảng là để cả phòng đọc.
+_CO_TUA_BIA, _CO_PHU_BIA, _CO_TUA, _CO_Y, _CO_Y_SAN, _CO_BANG = 40, 20, 32, 20, 14, 14
 
 
-def tao_slide(dan_y: str, ten_tep: str) -> dict[str, Any]:
+def _cap_thut_le(khoang_trang: str) -> int:
+    """Phần thụt lề → cấp gạch đầu dòng (0–3). Tab tính bằng bốn dấu cách."""
+    n = len(khoang_trang.replace("\t", "    "))
+    return max(0, min(3, n // 2))
+
+
+#: Ba KHUÔN số được chấp. Cố ý khớp khuôn thay vì bóc lấy chữ số: hàm này quyết
+#: định một cột bảng có phải số liệu hay không, nên "bóc được vài chữ số rồi trả
+#: về số" chính là cách vẽ ra một biểu đồ vô nghĩa từ dữ liệu rác.
+#: Kiểu Việt — chấm phân nhóm nghìn, phẩy thập phân: 1.200 · 1.200,5 · 1.200.000
+_RE_SO_VIET = re.compile(r"[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?")
+#: Kiểu Anh — ngược lại: 1,200 · 1,200.5
+_RE_SO_ANH = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?")
+#: Không nhóm nghìn, nhiều nhất một dấu thập phân: 8 · 1200 · 1,5 · 1.5 · -2,5
+_RE_SO_TRON = re.compile(r"[+-]?\d+(?:[.,]\d+)?")
+
+
+def _so(chu: str) -> float | None:
+    """Chuỗi → số, hiểu cả lối viết Việt lẫn Anh. None nếu không phải số.
+
+    Phân biệt hai lối bằng số chữ số sau dấu: đúng BA chữ số thì dấu đó phân
+    nhóm nghìn, khác ba thì nó là dấu thập phân.
+
+        1.200 → 1200      1.200,5 → 1200,5      (Việt)
+        1,200 → 1200      1,200.5 → 1200,5      (Anh)
+        1,5 · 1.5 → 1,5   1 200 → 1200    12% → 12
+
+    Cùng một dấu vừa phân nhóm vừa làm thập phân là SAI khuôn → trả None chứ
+    không bóc chữ số ra đoán bừa: `1.2.3,4,5` phải bị loại.
+
+    Chỗ CỐ Ý bỏ: ai viết `1.200` mà thật sự muốn một phẩy hai thì bị đọc thành
+    một nghìn hai. Không có cách nào phân biệt hai ý đó từ chuỗi, và đây là bot
+    tiếng Việt nên chọn nghĩa người Việt hay dùng hơn.
+    """
+    s = str(chu or "").strip().replace(" ", "").replace(" ", "")
+    s = s.replace("%", "")
+    if not s:
+        return None
+    if _RE_SO_VIET.fullmatch(s):
+        s = s.replace(".", "").replace(",", ".")
+    elif _RE_SO_ANH.fullmatch(s):
+        s = s.replace(",", "")
+    elif _RE_SO_TRON.fullmatch(s):
+        s = s.replace(",", ".")
+    else:
+        return None
+    try:
+        return float(s)
+    except ValueError:                       # khuôn đã chặn; đây là lưới cuối
+        return None
+
+
+#: Dạng MƠ HỒ: một dấu phân cách, đúng ba chữ số sau nó, không dấu nào khác.
+#: `1.200` có thể là một nghìn hai (nhóm nghìn) hoặc một phẩy hai (thập phân).
+_RE_SO_MO_HO = re.compile(r"[+-]?\d{1,3}[.,]\d{3}")
+
+
+def _cot_so(cot: list[str]) -> list[float] | None:
+    """Cột bảng → dãy số, dùng CẢ CỘT để gỡ chỗ mơ hồ. None nếu có ô không phải số.
+
+    Vì sao không đọc từng ô bằng `_so`: một mình thì `6.750` mơ hồ thật, nhưng cả
+    cột thì không — các ô trong một cột là cùng một loại đại lượng, nên phải đọc
+    sao cho chúng cùng cỡ. Điểm trung bình `6.750 / 7,25 / 8` đọc kiểu nhóm nghìn
+    ra 6750 / 7,25 / 8: một cột cao gấp gần nghìn lần hai cột kia, tức là đọc sai.
+    Đọc kiểu thập phân ra 6,75 / 7,25 / 8 mới đúng ý người viết. Đây là lỗi đo
+    được trên bộ slide thử, không phải lo xa.
+
+    Cách gỡ: lấy các ô KHÔNG mơ hồ làm mốc, rồi mỗi ô mơ hồ chọn cách đọc cho giá
+    trị gần cỡ mốc hơn. Cả cột đều mơ hồ (`1.200 / 1.450`) thì giữ nghĩa nhóm
+    nghìn — đó là lối người Việt hay viết hơn.
+    """
+    tho = [str(o or "").strip().replace(" ", "").replace("%", "") for o in cot]
+    gia_tri = [_so(o) for o in tho]
+    if not gia_tri or any(v is None for v in gia_tri):
+        return None
+    mo_ho = [i for i, o in enumerate(tho) if _RE_SO_MO_HO.fullmatch(o)]
+    moc = [abs(v) for i, v in enumerate(gia_tri)
+           if i not in mo_ho and v and abs(v) > 0]
+    if not mo_ho or not moc:
+        return [float(v) for v in gia_tri]      # type: ignore[arg-type]
+    giua = sorted(moc)[len(moc) // 2]
+    for i in mo_ho:
+        nhom = float(gia_tri[i])                # cách đọc mặc định: nhóm nghìn
+        thap_phan = nhom / 1000.0               # cùng chữ số, dời dấu phẩy
+        if abs(thap_phan - giua) < abs(nhom - giua):
+            gia_tri[i] = thap_phan
+    return [float(v) for v in gia_tri]          # type: ignore[arg-type]
+
+
+def _tach_dan_y(noi_dung: str) -> list[dict[str, Any]]:
+    """Dàn ý Markdown → danh sách mô tả slide.
+
+    Mỗi mục: ``{"tua", "cap", "y": [(cấp, chữ)], "bang": [[ô]], "bieu_do": bool}``.
+    Chữ đứng trước tiêu đề đầu tiên vẫn thành một slide mở đầu — giữ đúng hành vi
+    cũ, vì có người gửi dàn ý không đánh tiêu đề nào.
+    """
+    cac_slide: list[dict[str, Any]] = []
+
+    def slide_hien_tai() -> dict[str, Any]:
+        if not cac_slide:
+            cac_slide.append({"tua": "", "cap": 1, "y": [], "bang": [],
+                              "bieu_do": False})
+        return cac_slide[-1]
+
+    xin_bieu_do = False
+    for dong in noi_dung.splitlines():
+        m = _RE_TIEU_DE.match(dong.strip())
+        if m:
+            cac_slide.append({"tua": m.group(2).strip(), "cap": len(m.group(1)),
+                              "y": [], "bang": [], "bieu_do": False})
+            xin_bieu_do = False
+            continue
+        if _RE_MOC_BIEU_DO.match(dong):
+            xin_bieu_do = True
+            continue
+        if _RE_NGAN_BANG.match(dong):
+            continue
+        hb = _RE_HANG_BANG.match(dong)
+        if hb:
+            s = slide_hien_tai()
+            s["bang"].append([o.strip() for o in hb.group(1).split("|")])
+            if xin_bieu_do:
+                s["bieu_do"] = True
+            continue
+        g = _RE_GACH_DAU.match(dong)
+        if g:
+            slide_hien_tai()["y"].append((_cap_thut_le(g.group(1)),
+                                          g.group(2).strip()))
+            continue
+        chu = dong.strip()
+        if chu:
+            slide_hien_tai()["y"].append((0, chu))
+    return cac_slide
+
+
+def _co_the_ve_bieu_do(bang: list[list[str]]) -> bool:
+    """Bảng có vẽ được biểu đồ cột không: ≥2 cột, ≥2 hàng dữ liệu, và cột cuối
+    toàn số. Không đạt thì vẽ bảng — thà đúng còn hơn ra một biểu đồ rỗng."""
+    if len(bang) < 3 or len(bang[0]) < 2:
+        return False
+    return _cot_so([h[-1] for h in bang[1:] if len(h) >= 2]) is not None
+
+
+def tao_slide(dan_y: str, ten_tep: str, chu_de: str = "") -> dict[str, Any]:
     """Dàn ý Markdown → .pptx. Mỗi tiêu đề `#`/`##` là một slide, gạch đầu dòng
-    là các ý trong slide đó."""
+    là các ý trong slide đó.
+
+    `chu_de`: `trang-sach` (mặc định) | `xanh-dam` | `am`. Tên lạ thì dùng mặc
+    định chứ không báo hỏng — tạo slide là việc phụ của lượt chat, không được
+    gãy chỉ vì gõ sai tên màu.
+
+    Bố cục chọn theo NỘI DUNG, không phải một khuôn cho mọi slide:
+      * `#` không có ý nào, đứng đầu dàn ý → slide bìa;
+      * `#` không có ý nào, ở giữa → slide phân mục;
+      * có dòng `| a | b |` → bảng gốc của PowerPoint;
+      * có dòng `[biểu đồ]` trước bảng → biểu đồ cột gốc (cần ≥2 hàng dữ liệu và
+        cột cuối toàn số, không đạt thì vẽ bảng);
+      * còn lại → gạch đầu dòng, thụt lề hai dấu cách thành một cấp.
+
+    Trả thêm `so_bang`, `so_bieu_do`, `chu_de` so với bản cũ; các khoá cũ
+    (`ok`, `duong_dan`, `ten`, `so_slide`) giữ nguyên.
+    """
     noi_dung = str(dan_y or "").strip()
     if not noi_dung:
         return {"ok": False, "error": "chưa có dàn ý"}
@@ -310,52 +513,155 @@ def tao_slide(dan_y: str, ten_tep: str) -> dict[str, Any]:
     except (ValueError, OSError) as exc:
         return {"ok": False, "error": str(exc)}
 
-    cac_slide: list[tuple[str, list[str]]] = []
-    for dong in noi_dung.splitlines():
-        m = _RE_TIEU_DE.match(dong.strip())
-        if m:
-            cac_slide.append((m.group(2).strip(), []))
-            continue
-        g = _RE_GACH_DAU.match(dong)
-        y = (g.group(1) if g else dong).strip()
-        if not y:
-            continue
-        if not cac_slide:                 # chữ trước tiêu đề đầu → slide mở đầu
-            cac_slide.append(("", []))
-        cac_slide[-1][1].append(y)
+    cac_slide = _tach_dan_y(noi_dung)
     if not cac_slide:
         return {"ok": False, "error": "dàn ý không có tiêu đề hay ý nào"}
+    ten_cd = str(chu_de or "").strip().lower() or _CHU_DE_MAC_DINH
+    if ten_cd not in _CHU_DE:               # tên chủ đề lạ → dùng mặc định,
+        ten_cd = _CHU_DE_MAC_DINH           # không báo hỏng vì đây là việc phụ
+    cd = _CHU_DE[ten_cd]
 
+    so_bang = so_bieu_do = 0
     try:
         from pptx import Presentation
-        from pptx.util import Pt
+        from pptx.dml.color import RGBColor
+        from pptx.util import Inches, Pt
+
+        def mau(khoa: str):
+            return RGBColor.from_string(cd[khoa])
+
+        def dat_chu(khung, co, khoa_mau: str, *, dam=False) -> None:
+            """Ép font/cỡ/màu lên TỪNG run. Đặt ở cấp paragraph là không đủ:
+            run sinh sau (add_paragraph) không thừa hưởng, nên slide ra nửa
+            theo chủ đề nửa theo mẫu."""
+            for doan in khung.paragraphs:
+                for r in doan.runs or [doan.add_run()]:
+                    r.font.name, r.font.size = _FONT, Pt(co)
+                    r.font.color.rgb, r.font.bold = mau(khoa_mau), dam
+
         pres = Presentation()
-        for tieu_de, cac_y in cac_slide:
-            bo_cuc = pres.slide_layouts[1 if cac_y else 5]
-            s = pres.slides.add_slide(bo_cuc)
-            s.shapes.title.text = tieu_de or " "
-            if not cac_y:
+        # 16:9. Mẫu trần của python-pptx là 4:3 — khổ đó chiếu lên màn hình hay
+        # máy chiếu bây giờ là hai vệt đen hai bên.
+        pres.slide_width, pres.slide_height = Inches(13.333), Inches(7.5)
+        rong = pres.slide_width
+
+        for thu_tu, sl in enumerate(cac_slide):
+            tua, cac_y, bang = sl["tua"], sl["y"], sl["bang"]
+            ve_bieu_do = bool(sl["bieu_do"]) and _co_the_ve_bieu_do(bang)
+            if bang:
+                bo_cuc = 5                                   # Title Only
+            elif not cac_y and sl["cap"] == 1:
+                bo_cuc = 0 if thu_tu == 0 else 2             # bìa / phân mục
+            else:
+                bo_cuc = 1                                   # Title and Content
+            s = pres.slides.add_slide(pres.slide_layouts[bo_cuc])
+            s.background.fill.solid()
+            s.background.fill.fore_color.rgb = mau("nen")
+            if s.shapes.title is not None:
+                s.shapes.title.text = tua or " "
+                dat_chu(s.shapes.title.text_frame,
+                        _CO_TUA_BIA if bo_cuc == 0 else _CO_TUA, "tua", dam=True)
+
+            if bo_cuc in (0, 2):
+                # Bìa và phân mục: phụ đề chỉ là gạch chân màu nhấn. Đủ để slide
+                # trông có chủ ý mà không bịa thêm chữ người soạn không viết.
+                phu = next((ph for ph in s.placeholders
+                            if ph.placeholder_format.idx == 1), None)
+                if phu is not None:
+                    phu.text_frame.text = ""
+                    dat_chu(phu.text_frame, _CO_PHU_BIA, "chu")
+                from pptx.enum.shapes import MSO_SHAPE
+                gach = s.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE,
+                    Inches(0.9), Inches(4.6), Inches(2.2), Inches(0.06))
+                gach.fill.solid()
+                gach.fill.fore_color.rgb = mau("nhan")
+                gach.line.fill.background()
                 continue
-            khung = None
-            for ph in s.placeholders:
-                if ph.placeholder_format.idx != 0:
-                    khung = ph.text_frame
-                    break
+
+            if bang and ve_bieu_do:
+                so_bieu_do += 1
+                _ve_bieu_do(s, bang, cd, rong)
+                continue
+            if bang:
+                so_bang += 1
+                _ve_bang(s, bang, cd, rong)
+                continue
+
+            khung = next((ph.text_frame for ph in s.placeholders
+                          if ph.placeholder_format.idx == 1), None)
             if khung is None:
                 continue
-            khung.text = cac_y[0]
-            for y in cac_y[1:]:
-                khung.add_paragraph().text = y
+            for i, (cap, chu) in enumerate(cac_y):
+                doan = khung.paragraphs[0] if i == 0 else khung.add_paragraph()
+                doan.text, doan.level = chu, cap
             for doan in khung.paragraphs:
+                cap = doan.level or 0
                 for r in doan.runs:
-                    r.font.size = Pt(20)
+                    r.font.name = _FONT
+                    r.font.size = Pt(max(_CO_Y_SAN, _CO_Y - 2 * cap))
+                    r.font.color.rgb = mau("tua" if cap == 0 else "chu")
+
         p.parent.mkdir(parents=True, exist_ok=True)
         pres.save(str(p))
     except Exception as exc:
         logger.warning("tao_slide %s lỗi: %s", ten, str(exc)[:150])
         return {"ok": False, "error": f"không tạo được slide: {str(exc)[:150]}"}
     return {"ok": True, "duong_dan": str(p), "ten": p.name,
-            "so_slide": len(cac_slide)}
+            "so_slide": len(cac_slide), "so_bang": so_bang,
+            "so_bieu_do": so_bieu_do, "chu_de": ten_cd}
+
+
+def _ve_bang(s, bang: list[list[str]], cd: dict[str, Any], rong) -> None:
+    """Bảng Markdown → BẢNG GỐC của PowerPoint (không phải ảnh): người nhận sửa
+    được từng ô. Hàng đầu tô màu nhấn để đọc ra ngay đâu là tiêu đề cột."""
+    from pptx.dml.color import RGBColor
+    from pptx.util import Inches, Pt
+    so_cot = max(len(h) for h in bang)
+    le, tren = Inches(0.7), Inches(1.9)
+    cao = Inches(min(4.8, 0.42 * len(bang)))
+    tb = s.shapes.add_table(len(bang), so_cot, le, tren,
+                            rong - Inches(1.4), cao).table
+    for i, hang in enumerate(bang):
+        for j in range(so_cot):
+            o = tb.cell(i, j)
+            o.text = hang[j] if j < len(hang) else ""
+            o.fill.solid()
+            o.fill.fore_color.rgb = RGBColor.from_string(
+                cd["nhan"] if i == 0 else cd["nen"])
+            for doan in o.text_frame.paragraphs:
+                for r in doan.runs:
+                    r.font.name, r.font.size = _FONT, Pt(_CO_BANG)
+                    r.font.bold = i == 0
+                    r.font.color.rgb = RGBColor.from_string(
+                        cd["chu_tren_nhan"] if i == 0 else cd["chu"])
+
+
+def _ve_bieu_do(s, bang: list[list[str]], cd: dict[str, Any], rong) -> None:
+    """Bảng số liệu → BIỂU ĐỒ CỘT GỐC. Dữ liệu nằm trong file, chuột phải →
+    Edit Data là ra đúng mấy con số này — không phải ảnh chụp biểu đồ."""
+    from pptx.chart.data import CategoryChartData
+    from pptx.dml.color import RGBColor
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches, Pt
+    nhan = [h[0] for h in bang[1:]]
+    gia_tri = _cot_so([h[-1] for h in bang[1:]]) or []
+    dl = CategoryChartData()
+    dl.categories = nhan
+    dl.add_series(bang[0][-1] or "Số liệu", tuple(gia_tri))
+    kh = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1.0),
+                            Inches(1.8), rong - Inches(2.0), Inches(4.9), dl)
+    ch = kh.chart
+    ch.has_legend = False             # một chuỗi thì chú giải chỉ là chữ thừa
+    # Cột và chữ trục cũng phải theo chủ đề. Bỏ qua thì biểu đồ ra màu xanh mặc
+    # định của Office, lệch hẳn với phần còn lại của bộ slide.
+    to = ch.plots[0].series[0].format.fill
+    to.solid()
+    to.fore_color.rgb = RGBColor.from_string(cd["nhan"])
+    for truc in (ch.category_axis, ch.value_axis):
+        chu = truc.tick_labels.font
+        chu.name, chu.size = _FONT, Pt(_CO_BANG)
+        chu.color.rgb = RGBColor.from_string(cd["chu"])
 
 
 # ── 5. Cắt tài liệu theo tiêu đề ────────────────────────────────────────────

@@ -4407,10 +4407,15 @@ def _h_office_thay_the(args: dict, ctx: dict) -> dict:
 
 def _h_office_tao_slide(args: dict, ctx: dict) -> dict:
     from services import office_bo_sung as ob
-    kq = ob.tao_slide(str(args.get("dan_y") or ""), str(args.get("ten_tep") or ""))
+    kq = ob.tao_slide(str(args.get("dan_y") or ""), str(args.get("ten_tep") or ""),
+                      str(args.get("chu_de") or ""))
     if not kq.get("ok"):
         return {"text": f"Không tạo được slide: {kq.get('error')}"}
-    return {"text": f"🖼️ Đã tạo {kq['ten']} — {kq['so_slide']} slide ạ.",
+    # Nói ra số bảng/biểu đồ: đó là thứ người dùng khó tự đếm mà lại quan tâm,
+    # và cũng để họ biết mốc `[biểu đồ]` trong dàn ý đã ăn hay chưa.
+    them = "".join([f", {kq['so_bang']} bảng" if kq.get("so_bang") else "",
+                    f", {kq['so_bieu_do']} biểu đồ" if kq.get("so_bieu_do") else ""])
+    return {"text": f"🖼️ Đã tạo {kq['ten']} — {kq['so_slide']} slide{them} ạ.",
             "doc_path": kq.get("duong_dan")}
 
 
@@ -5789,10 +5794,16 @@ CAPABILITIES: dict[str, Capability] = {
         parameters={"type": "object", "properties": {
             "dan_y": {"type": "string",
                       "description": "vd '# Mở đầu\n- Chào\n## Nội dung\n- Ý 1'"},
-            "ten_tep": {"type": "string", "description": "vd bai_giang.pptx"}},
+            "ten_tep": {"type": "string", "description": "vd bai_giang.pptx"},
+            "chu_de": {"type": "string",
+                       "enum": ["trang-sach", "xanh-dam", "am"],
+                       "description": "bộ màu, để trống là trang-sach"}},
             "required": ["dan_y", "ten_tep"]},
         workflow=("Tạo xong → office_send gửi cho người dùng. Soạn dàn ý theo "
-                  "đúng yêu cầu, KHÔNG tự bịa thêm slide.")),
+                  "đúng yêu cầu, KHÔNG tự bịa thêm slide. Muốn slide có bảng "
+                  "thì viết hàng '| cột | cột |'; muốn biểu đồ cột thì thêm "
+                  "dòng '[biểu đồ]' NGAY TRƯỚC bảng (cột cuối phải là số). "
+                  "Thụt lề hai dấu cách cho ý con.")),
     "office_files": Capability(
         name="office_files", risk=READ, handler=_h_office_files,
         emoji="📁", label="Xem kho file Office",

@@ -50,6 +50,12 @@ paramiko>=3.4.0
 #    layout (kéo theo PyMuPDF + python-docx); OCR fallback dùng pytesseract sẵn có ──
 pdf2docx>=0.5.8
 
+# ── Tạo slide (services/office_bo_sung.tao_slide) ──
+# Khai TƯỜNG MINH dù markitdown[pptx] ở trên cũng kéo python-pptx về: ở đây nó là
+# thư viện được import THẲNG để GHI file, không phải phần phụ của bộ đọc. Đổi
+# extras của markitdown là mất nó, mà mất thì tính năng tạo slide chết âm thầm.
+python-pptx>=1.0.2
+
 # ── VieNeu-TTS v3 Turbo (giọng "vieneu:" trong services/voice) ──
 # Gói `vieneu` cài --no-deps trong Dockerfile để né gradio (~300MB, chỉ phục vụ
 # web UI riêng của họ). Dep runtime thật của đường ONNX/CPU liệt kê tường minh:
