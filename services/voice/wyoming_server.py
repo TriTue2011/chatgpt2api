@@ -137,7 +137,7 @@ def _lang_codes(*base: str) -> list[str]:
                 out.insert(0, "auto")
             continue
         primary = low.split("-", 1)[0]
-        if primary in {"vi", "en"} and primary not in out:
+        if primary in {"vi", "en", "zh", "ja", "ko"} and primary not in out:
             out.append(primary)
     return out
 
@@ -199,7 +199,17 @@ def _info_data_them(lang: str) -> dict[str, Any]:
     return data
 
 
-def _info_data(lang: str = "") -> dict[str, Any]:
+def _loc_theo_vai(data: dict, vai: str) -> dict:
+    """Cổng một vai chỉ khai đúng vai đó với HA — TTS port không lộ asr
+    và ngược lại (quy chuẩn cổng 106xx/107xx, chốt 14/08)."""
+    if vai == "tts":
+        data.pop("asr", None)
+    elif vai == "stt":
+        data.pop("tts", None)
+    return data
+
+
+def _info_data(lang: str = "", vai: str = "both") -> dict[str, Any]:
     """Danh mục TTS + ASR cho HA Wyoming — pattern microsoft-stt/tts.
 
     ``lang`` giữ tương thích test cũ (``""`` | ``vi`` | ``en``) nhưng production
@@ -208,7 +218,7 @@ def _info_data(lang: str = "") -> dict[str, Any]:
     """
     lang = (lang or "").strip().lower()
     if lang in _NGON_NGU_THEM:
-        return _info_data_them(lang)
+        return _loc_theo_vai(_info_data_them(lang), vai)
     has_vi, has_en = _stt_engines()
 
     if lang == "vi":
@@ -322,7 +332,7 @@ def _info_data(lang: str = "") -> dict[str, Any]:
         }]
     if asr_programs:
         data["asr"] = asr_programs
-    return data
+    return _loc_theo_vai(data, vai)
 
 
 # ── STT language resolve ─────────────────────────────────────────────────────
@@ -689,7 +699,7 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
 
 
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
-                  server_lang: str = "") -> None:
+                  server_lang: str = "", vai: str = "both") -> None:
     sock = writer.get_extra_info("socket")
     if sock is not None:
         try:
@@ -712,7 +722,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                 break
             t = ev["type"]
             if t == "describe":
-                await _write_event(writer, "info", _info_data(server_lang))
+                await _write_event(writer, "info", _info_data(server_lang, vai))
             elif t == "select-program":
                 asr["program"] = str(ev["data"].get("name") or "").strip()
                 logger.info("wyoming: select-program %s", asr["program"])
@@ -808,16 +818,16 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
 # ── Vòng đời ─────────────────────────────────────────────────────────────────
 
 
-async def _main(port: int, server_lang: str) -> None:
+async def _main(port: int, server_lang: str, vai: str = "both") -> None:
     server = await asyncio.start_server(
-        lambda r, w: _handle(r, w, server_lang), "0.0.0.0", port)
+        lambda r, w: _handle(r, w, server_lang, vai), "0.0.0.0", port)
     logger.info("voice: Wyoming server [%s] (TTS+STT cho HA) nghe tai 0.0.0.0:%d",
                 server_lang or "multi", port)
     async with server:
         await server.serve_forever()
 
 
-def _run(port: int, server_lang: str) -> None:
+def _run(port: int, server_lang: str, vai: str = "both") -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with _servers_lock:
@@ -834,6 +844,24 @@ def _run(port: int, server_lang: str) -> None:
             loop.close()
         except Exception:
             pass
+
+
+def _co_vai(vai: str, lang: str) -> bool:
+    """Máy có model cho (vai, tiếng) này chưa — quyết định mở cổng."""
+    if vai == "stt":
+        if lang == "vi":
+            return vcfg.stt_model_dir() is not None
+        if lang == "en":
+            return vcfg.stt_en_model_dir() is not None
+        return vcfg.stt_them_model_dir(lang) is not None
+    # tts
+    if lang in _NGON_NGU_THEM:
+        return _tts_them_san_sang(lang)
+    return any(
+        v.get("downloaded")
+        and vcfg._lang_primary(str(v.get("language") or "vi")) == lang
+        for v in vcfg.voice_catalog()
+    ) or (lang == "en" and vcfg.kokoro_model_dir() is not None)
 
 
 def _has_capability(server_lang: str = "") -> bool:
@@ -858,15 +886,16 @@ def _has_capability(server_lang: str = "") -> bool:
     return True
 
 
-def _start_one(port: int, server_lang: str = "") -> None:
+def _start_one(port: int, server_lang: str = "", vai: str = "both") -> None:
     with _servers_lock:
         for s in _servers:
             if s["port"] == port and s["thread"].is_alive():
                 return
         th = threading.Thread(
-            target=_run, args=(port, server_lang),
-            name=f"wyoming-voice-{server_lang or 'multi'}", daemon=True)
-        _servers.append({"thread": th, "loop": None, "port": port, "lang": server_lang})
+            target=_run, args=(port, server_lang, vai),
+            name=f"wyoming-{vai}-{server_lang or 'multi'}", daemon=True)
+        _servers.append({"thread": th, "loop": None, "port": port,
+                         "lang": server_lang, "vai": vai})
     th.start()
 
 
@@ -881,37 +910,28 @@ def start() -> None:
     if not vcfg.wyoming_enabled():
         logger.info("voice: Wyoming server tat (voice.wyoming_server.enabled=false)")
         return
-    port = vcfg.wyoming_port()
-    if not _has_capability(""):
+    # Quy chuẩn cổng (chốt 14/08): 106xx = TTS, 107xx = STT; xx = 00 việt ·
+    # 01 anh · 02 nhật · 03 trung · 04 hàn. Mỗi cổng MỘT vai MỘT tiếng —
+    # HA thêm từng integration, pipeline Assist không lẫn giọng/tiếng.
+    da_mo: dict[int, str] = {}
+    for vai in ("tts", "stt"):
+        for lang in ("vi", "en", "ja", "zh", "ko"):
+            cong = vcfg.wyoming_cong(vai, lang)
+            if cong <= 0:
+                continue
+            if cong in da_mo:
+                logger.warning("voice: cổng %d (%s-%s) trùng %s — bỏ qua",
+                               cong, vai, lang, da_mo[cong])
+                continue
+            if not _co_vai(vai, lang):
+                logger.info("voice: bỏ Wyoming %s-%s :%d — chưa có model",
+                            vai, lang, cong)
+                continue
+            _start_one(cong, lang, vai)
+            da_mo[cong] = f"{vai}-{lang}"
+            logger.info("voice: Wyoming %s [%s] :%d", vai.upper(), lang, cong)
+    if not da_mo:
         logger.info("voice: bo qua Wyoming (khong co TTS/STT)")
-        return
-    _start_one(port, "")
-    has_vi, has_en = _stt_engines()
-    langs = []
-    if has_vi:
-        langs.append("vi")
-    if has_en:
-        langs.append("en")
-    mode = "multi-auto" if _is_multi_stt() else (
-        f"fixed-{vcfg.stt_language()}" if langs else "tts-only")
-    logger.info(
-        "voice: Wyoming MULTI :%d — STT=%s TTS=all voices — mode=%s",
-        port, "+".join(langs) or "none", mode,
-    )
-    # Cổng RIÊNG theo tiếng (voice.wyoming_server.port_en/zh/ja/ko): HA thêm
-    # mỗi cổng một integration — entity TTS/STT khoá đúng tiếng đó. Nhớ
-    # publish cổng trong compose thì HA máy khác mới gọi vào được.
-    for them_lang, them_port in vcfg.wyoming_port_them().items():
-        if them_port == port:
-            logger.warning("voice: port_%s trùng cổng multi %d — bỏ qua",
-                           them_lang, port)
-            continue
-        if not _has_capability(them_lang):
-            logger.info("voice: bỏ cổng Wyoming %s :%d — chưa tải model",
-                        them_lang, them_port)
-            continue
-        _start_one(them_port, them_lang)
-        logger.info("voice: Wyoming [%s] :%d", them_lang, them_port)
 
 
 def stop() -> None:

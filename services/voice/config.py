@@ -885,22 +885,29 @@ def supertonic_sid(lang: str) -> int:
         return 0
 
 
-def wyoming_port_them() -> dict[str, int]:
-    """Cổng Wyoming RIÊNG theo tiếng — HA thêm mỗi cổng một integration,
-    mỗi integration một entity TTS/STT nói đúng giọng tiếng đó.
+#: Quy chuẩn cổng Wyoming (chủ máy chốt 14/08): **106xx = TTS, 107xx = STT**;
+#: xx theo tiếng: 00 việt · 01 anh · 02 nhật · 03 trung · 04 hàn. Mỗi cổng
+#: một integration HA, một vai — ghép pipeline Assist không lẫn tiếng.
+WYOMING_CHUAN: dict[str, dict[str, int]] = {
+    "tts": {"vi": 10600, "en": 10601, "ja": 10602, "zh": 10603, "ko": 10604},
+    "stt": {"vi": 10700, "en": 10701, "ja": 10702, "zh": 10703, "ko": 10704},
+}
 
-    Config ``voice.wyoming_server.port_en / port_zh / port_ja / port_ko``;
-    0 / rỗng = không mở cổng đó. Nhớ publish cổng trong compose."""
-    w = _wy()
-    ra: dict[str, int] = {}
-    for lang in ("en", "zh", "ja", "ko"):
-        try:
-            p = int(w.get(f"port_{lang}") or 0)
-        except (TypeError, ValueError):
-            p = 0
-        if p > 0:
-            ra[lang] = p
-    return ra
+
+def wyoming_cong(vai: str, lang: str) -> int:
+    """Cổng Wyoming cho (vai ``tts``/``stt``, tiếng). 0 = tắt cổng đó.
+
+    Mặc định theo ``WYOMING_CHUAN``; đè từng cổng qua
+    ``voice.wyoming_server.tts_port_vi`` / ``stt_port_ja`` / … Nhớ publish
+    cổng trong compose thì máy ngoài mới gọi vào được."""
+    mac_dinh = WYOMING_CHUAN.get(vai, {}).get(lang, 0)
+    raw = _wy().get(f"{vai}_port_{lang}")
+    if raw in (None, ""):
+        return mac_dinh
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return mac_dinh
 
 
 def stt_them_model_dir(lang: str) -> Path | None:

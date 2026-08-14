@@ -423,20 +423,28 @@ export function VoiceSpeakersCard() {
                 })}
                 placeholder="0" />
             </div>
+            {/* Quy chuẩn cổng Wyoming cho HA (chốt 14/08): 106xx = TTS,
+                107xx = STT; xx = 00 việt · 01 anh · 02 nhật · 03 trung ·
+                04 hàn. Trống = theo chuẩn (BẬT nếu có model), 0 = tắt.
+                Nhớ publish cổng trong compose. */}
             <div className="sm:col-span-4 text-xs font-medium">
-              Cổng Wyoming riêng từng tiếng cho Home Assistant (trống = tắt — nhớ publish cổng trong compose)
+              Cổng Wyoming cho HA — 106xx đọc (TTS), 107xx nghe (STT) · việt/anh/nhật/trung/hàn · trống = chuẩn, 0 = tắt
             </div>
-            {(["en", "zh", "ja", "ko"] as const).map((lng, i) => (
-              <div key={lng}>
-                <label className="text-xs text-muted-foreground">
-                  Cổng {{ en: "tiếng Anh", zh: "tiếng Trung", ja: "tiếng Nhật", ko: "tiếng Hàn" }[lng]}
-                </label>
-                <Input type="number" min={0} max={65535}
-                  value={String(wyCfg[`port_${lng}`] ?? "")}
-                  onChange={(e) => patchVoice("wyoming_server", {
-                    [`port_${lng}`]: e.target.value === "" ? "" : Number(e.target.value),
-                  })}
-                  placeholder={String(10601 + i)} />
+            {(["tts", "stt"] as const).map((vai) => (
+              <div key={vai} className="sm:col-span-4 grid grid-cols-5 gap-2">
+                {(["vi", "en", "ja", "zh", "ko"] as const).map((lng, i) => (
+                  <div key={`${vai}_${lng}`}>
+                    <label className="text-xs text-muted-foreground">
+                      {vai === "tts" ? "Đọc" : "Nghe"} {{ vi: "Việt", en: "Anh", ja: "Nhật", zh: "Trung", ko: "Hàn" }[lng]}
+                    </label>
+                    <Input type="number" min={0} max={65535}
+                      value={String(wyCfg[`${vai}_port_${lng}`] ?? "")}
+                      onChange={(e) => patchVoice("wyoming_server", {
+                        [`${vai}_port_${lng}`]: e.target.value === "" ? "" : Number(e.target.value),
+                      })}
+                      placeholder={String((vai === "tts" ? 10600 : 10700) + i)} />
+                  </div>
+                ))}
               </div>
             ))}
           </div>

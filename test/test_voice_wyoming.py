@@ -490,14 +490,33 @@ def test_giong_cong_khoa_tieng_la_dangu():
     assert wy._ha_lang_to_stt("en-US", "ja") == "ja"   # cổng khoá thắng HA
 
 
-def test_wyoming_port_them_doc_config(monkeypatch):
+def test_wyoming_cong_theo_quy_chuan(monkeypatch):
+    """Quy chuẩn chốt 14/08: 106xx TTS, 107xx STT; xx = 00 vi · 01 en ·
+    02 ja · 03 zh · 04 ko. Đè được từng cổng, 0 = tắt."""
     from services.config import config
     from services.voice import config as vcfg
 
+    monkeypatch.setitem(config.data, "voice", {})
+    assert vcfg.wyoming_cong("tts", "vi") == 10600
+    assert vcfg.wyoming_cong("tts", "ja") == 10602
+    assert vcfg.wyoming_cong("stt", "vi") == 10700
+    assert vcfg.wyoming_cong("stt", "ko") == 10704
     monkeypatch.setitem(config.data, "voice", {"wyoming_server": {
-        "port_en": 10601, "port_zh": "10602", "port_ja": 0, "port_ko": "",
+        "tts_port_ja": 0, "stt_port_en": "12345",
     }})
-    assert vcfg.wyoming_port_them() == {"en": 10601, "zh": 10602}
+    assert vcfg.wyoming_cong("tts", "ja") == 0        # tắt
+    assert vcfg.wyoming_cong("stt", "en") == 12345    # đè
+    assert vcfg.wyoming_cong("tts", "zh") == 10603    # còn lại giữ chuẩn
+
+
+def test_info_loc_theo_vai():
+    """Cổng TTS không lộ asr với HA và ngược lại."""
+    from services.voice import wyoming_server as wy
+
+    du = {"tts": [1], "asr": [2]}
+    assert "asr" not in wy._loc_theo_vai(dict(du), "tts")
+    assert "tts" not in wy._loc_theo_vai(dict(du), "stt")
+    assert wy._loc_theo_vai(dict(du), "both") == du
 
 
 def test_supertonic_sid_kep_bien(monkeypatch):
