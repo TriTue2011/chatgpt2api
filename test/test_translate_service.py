@@ -444,3 +444,25 @@ def test_khong_khai_gpu_thi_nhu_cu(monkeypatch):
         ts.translate_batch([f"Sentence {i}." for i in range(10)], "vi", "en")
     goi_dich = [p for path, p in fake.calls if path == "/translate"]
     assert goi_dich and goi_dich[0]["_base"] == ""
+
+
+def test_cau_dao_gpu_nghi_5_phut_sau_loi(monkeypatch):
+    """GPU lỗi một lần → các lô sau đi THẲNG CPU không chạm GPU nữa (máy NVR
+    treo làm mỗi lô chờ trọn timeout — cộng dồn cả giờ với phim trăm lô)."""
+    _bat_gpu(monkeypatch)
+
+    class _GpuHong(FakeTranslate):
+        def goi(self, path, payload=None, *, base=""):
+            if base:
+                # ghi sổ lượt THỬ trước khi nổ — test đếm số lần chạm GPU
+                self.calls.append((path, {**dict(payload or {}), "_base": base}))
+                raise ts.LoiDich("timed out")
+            return super().goi(path, payload, base=base)
+
+    with install_translate(_GpuHong(codes=("en", "vi"))) as fake:
+        ts.translate_batch([f"Cau {i} that dai." for i in range(10)], "vi", "en")
+        so_goi_gpu_luot_1 = sum(1 for p, d in fake.calls if d.get("_base"))
+        ts.translate_batch([f"Doan {i} khac han." for i in range(10)], "vi", "en")
+        so_goi_gpu_luot_2 = sum(1 for p, d in fake.calls if d.get("_base"))
+    assert so_goi_gpu_luot_1 == 1          # lượt đầu có thử GPU
+    assert so_goi_gpu_luot_2 == 1          # lượt sau KHÔNG thử thêm

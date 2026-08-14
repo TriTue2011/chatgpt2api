@@ -711,6 +711,7 @@ def install_translate(fake: FakeTranslate | None = None) -> Iterator[FakeTransla
         ts._cache.clear()
         ts._langs_cache = (0.0, [])
         ts._setting_cache = (0.0, {})
+        ts._gpu_nghi_toi = 0.0   # cầu dao GPU không được dính từ test trước
 
     _reset()
     with mock.patch.object(ts, "_goi", side_effect=fake.goi), \

@@ -67,6 +67,9 @@ _cache_lock = threading.Lock()
 _LANGS_TTL = 600.0
 _langs_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
 
+#: Cầu dao máy dịch GPU: lỗi một lần thì nghỉ tới mốc thời gian này.
+_gpu_nghi_toi = 0.0
+
 
 class LoiDich(Exception):
     """Máy chủ dịch không dùng được (chưa cấu hình, mạng lỗi, HTTP lỗi)."""
@@ -235,14 +238,20 @@ def translate_batch(texts: list[str], target: str, source: str = "auto") -> list
     # Định tuyến theo LÔ: lô đủ lớn đi máy GPU (nếu khai), lỗi thì rơi về máy
     # CPU tại chỗ — thêm GPU không bao giờ làm đứt dịch vụ. Câu lẻ luôn đi CPU
     # (GPU thua CPU với câu đơn vì overhead — số đo cộng đồng LibreTranslate).
+    # CẦU DAO: GPU lỗi một lần thì nghỉ 5 phút — máy NVR treo (không tắt hẳn)
+    # làm mỗi lô chờ trọn timeout mới rơi về CPU, phim trăm lô là cộng dồn
+    # hàng giờ; ngắt hẳn một lúc rồi thử lại rẻ hơn nhiều.
+    global _gpu_nghi_toi
     body = None
     gpu = config.translate_url_lo
-    if gpu and len(can_gui) >= config.translate_lo_toi_thieu:
+    if (gpu and len(can_gui) >= config.translate_lo_toi_thieu
+            and time.time() >= _gpu_nghi_toi):
         try:
             body = _goi("/translate", payload, base=gpu)
         except LoiDich as exc:
-            logger.warning("máy dịch GPU %s lỗi (%s) — rơi về máy CPU",
-                           gpu, str(exc)[:120])
+            _gpu_nghi_toi = time.time() + 300
+            logger.warning("máy dịch GPU %s lỗi (%s) — rơi về máy CPU, "
+                           "nghỉ GPU 5 phút", gpu, str(exc)[:120])
     if body is None:
         body = _goi("/translate", payload)
     got = (body or {}).get("translatedText")
