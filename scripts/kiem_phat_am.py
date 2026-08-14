@@ -2,12 +2,16 @@
 """Kiểm phát âm giọng đọc bằng vòng khép kín: TTS đọc ra → STT của chính máy
 nghe lại → so với chữ gốc.
 
-**Vì sao không đo phổ tần.** Cách đo hiển nhiên hơn là lấy năng lượng dải cao ở
-70 ms đầu mỗi từ (vùng phụ âm đầu). Đo thật thì nó chỉ phân biệt được âm xát
-mạnh — x, s — còn h/ph/kh/th thấp ở MỌI giọng, kể cả giọng người nghe thấy rõ
-ràng, nên không kết luận được giọng nào rụng âm. Cho chính máy nghe lại thì mỗi
-câu ra một phán quyết đúng/sai đếm được, và dùng lại y nguyên cho cả năm tiếng
-mà không phải thiết kế lại thước đo cho từng hệ âm vị.
+**Vì sao vòng khép kín, không chỉ đo phổ tần.** Cách đo hiển nhiên hơn là lấy
+năng lượng dải cao ở 70 ms đầu mỗi từ (vùng phụ âm đầu). Đo thật thì nó chỉ phân
+biệt được âm xát mạnh — x, s — còn h/ph/kh/th thấp ở MỌI giọng, kể cả giọng
+người nghe thấy rõ ràng, nên không kết luận được giọng nào rụng âm. Cho chính
+máy nghe lại thì mỗi câu ra một phán quyết đúng/sai đếm được, và dùng lại y
+nguyên cho cả năm tiếng mà không phải thiết kế lại thước đo cho từng hệ âm vị.
+
+Hai phép đo bù nhau nên bảng tiếng Việt in cả hai. Vòng TTS→STT bắt được âm BỊ
+THAY hoặc BỊ MẤT; âm còn mà ĐỌC QUÁ NHẸ thì máy vẫn nghe ra trong khi tai người
+đã thấy lệch — cột "âm xát" đo đúng chỗ đó.
 
 **Cách đọc kết quả.** Câu mà MỌI giọng đều sai là hạn chế của STT (hoặc do chính
 tả đầu ra khác đầu vào, hay gặp ở tiếng Nhật vì chữ Hán), KHÔNG phải lỗi giọng —
@@ -31,30 +35,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.voice import config as vcfg  # noqa: E402
 from services.voice import engines as eng  # noqa: E402
 
-# (câu đọc, các âm tiết phải nghe lại được, nhãn phụ âm đang thử)
+# (câu đọc, các âm phải nghe lại được, nhãn phụ âm đang thử)
+#
+# Tiếng Việt viết âm cần kiểm dưới dạng "x-" (âm ĐẦU) hay "-ng" (âm CUỐI) chứ
+# không phải cả âm tiết. Lý do đo thật: STT hay nghe lệch thanh điệu hoặc nguyên
+# âm ("kem" → "Kèm", "quýt" → "quyết") — so cả âm tiết thì những lệch đó bị tính
+# thành rụng phụ âm, trong khi phụ âm vẫn nguyên. So theo âm đầu/âm cuối thì
+# phép đo trả lời đúng một câu hỏi: phụ âm còn hay mất.
 BO_TEST: dict[str, tuple[tuple[str, tuple[str, ...], str], ...]] = {
     # Đủ phụ âm đầu tiếng Việt, rồi ba câu cuối cho phụ âm cuối.
     "vi": (
-        ("xin chào các bạn", ("xin", "chào"), "x · ch"),
-        ("số sáu và số bảy", ("sáu", "bảy"), "s · b"),
-        ("phở bò rất ngon", ("phở", "rất"), "ph · r"),
-        ("khó khăn lắm", ("khó", "khăn"), "kh"),
-        ("mùa thu về rồi", ("thu", "về"), "th · v"),
-        ("trời mưa to quá", ("trời", "mưa"), "tr · m"),
-        ("nhà em ở gần đây", ("nhà", "gần"), "nh · g"),
-        ("ngày mai nghỉ học", ("ngày", "nghỉ"), "ng · ngh"),
-        ("giá vàng hôm nay", ("giá", "vàng"), "gi"),
-        ("hoa hồng màu đỏ", ("hoa", "hồng"), "h"),
-        ("đi làm về muộn", ("đi", "làm"), "đ · l"),
-        ("bàn ghế bằng gỗ", ("bàn", "ghế"), "b · gh"),
-        ("quả quýt rất ngọt", ("quả", "quýt"), "qu"),
-        ("con cá vàng nhỏ", ("con", "cá"), "c"),
-        ("tôi tên là nam", ("tôi", "tên"), "t · n"),
-        ("kem không đường", ("kem", "không"), "k"),
-        ("da tay hơi khô", ("da", "tay"), "d"),
-        ("học sinh lớp một", ("học", "sinh", "lớp"), "cuối: c · nh · p"),
-        ("hát vang bài ca", ("hát", "vang"), "cuối: t · ng"),
-        ("cách làm bánh mì", ("cách", "bánh"), "cuối: ch · nh"),
+        ("xin chào các bạn", ("x-", "ch-"), "x · ch"),
+        ("số sáu và số bảy", ("s-", "b-"), "s · b"),
+        ("phở bò rất ngon", ("ph-", "r-"), "ph · r"),
+        ("khó khăn lắm", ("kh-",), "kh"),
+        ("mùa thu về rồi", ("th-", "v-"), "th · v"),
+        ("trời mưa to quá", ("tr-", "m-"), "tr · m"),
+        ("nhà em ở gần đây", ("nh-", "g-"), "nh · g"),
+        ("ngày mai nghỉ học", ("ng-", "ngh-"), "ng · ngh"),
+        ("giá vàng hôm nay", ("gi-",), "gi"),
+        ("hoa hồng màu đỏ", ("h-",), "h"),
+        ("đi làm về muộn", ("đ-", "l-"), "đ · l"),
+        ("bàn ghế bằng gỗ", ("gh-",), "gh"),
+        ("quả quýt rất ngọt", ("qu-",), "qu"),
+        ("con cá vàng nhỏ", ("c-",), "c"),
+        ("tôi tên là nam", ("t-", "n-"), "t · n"),
+        ("kem không đường", ("k-",), "k"),
+        ("da tay hơi khô", ("d-",), "d"),
+        ("học sinh lớp một", ("-c", "-nh", "-p"), "cuối: c · nh · p"),
+        ("hát vang bài ca", ("-t", "-ng"), "cuối: t · ng"),
+        ("cách làm bánh mì", ("-ch", "-nh"), "cuối: ch · nh"),
     ),
     "en": (
         ("she sells sea shells", ("she", "sells", "shells"), "sh · s"),
@@ -116,6 +126,16 @@ BO_TEST: dict[str, tuple[tuple[str, tuple[str, ...], str], ...]] = {
 
 _A_DONG = ("zh", "ja", "ko")   # không tách chữ bằng dấu cách
 
+# Dấu THANH tiếng Việt (huyền sắc ngã hỏi nặng) — bỏ khi so, vì đang đo phụ âm.
+# Không bỏ dấu CHỮ (â ă ê ô ơ ư): đó là chữ khác, không phải thanh điệu.
+_DAU_THANH = frozenset(("\u0300", "\u0301", "\u0303", "\u0309", "\u0323"))   # huyền sắc ngã hỏi nặng
+
+# Âm đầu và âm cuối tiếng Việt, xếp dài trước để khớp dài nhất (ngh trước ng).
+_AM_DAU = ("ngh", "ng", "nh", "ch", "tr", "th", "ph", "kh", "gh", "gi", "qu",
+           "b", "c", "d", "đ", "g", "h", "k", "l", "m", "n", "p", "r", "s",
+           "t", "v", "x")
+_AM_CUOI = ("ng", "nh", "ch", "c", "m", "n", "p", "t")
+
 
 def _chuan(s: str) -> str:
     """Bỏ dấu câu, hạ chữ thường, gộp dấu cách — giữ nguyên dấu tiếng Việt."""
@@ -124,11 +144,76 @@ def _chuan(s: str) -> str:
     return " ".join(s.split())
 
 
+def _bo_thanh(s: str) -> str:
+    ra = unicodedata.normalize("NFD", s)
+    return unicodedata.normalize(
+        "NFC", "".join(c for c in ra if c not in _DAU_THANH))
+
+
+def _am_dau(tu: str) -> str:
+    for am in _AM_DAU:
+        if tu.startswith(am):
+            return am
+    return ""
+
+
+def _am_cuoi(tu: str) -> str:
+    for am in _AM_CUOI:
+        if tu.endswith(am):
+            return am
+    return ""
+
+
 def _nghe_thay(dich: str, ra: str, lang: str) -> bool:
-    d, r = _chuan(dich), _chuan(ra)
+    """Âm `dich` có nghe lại được trong `ra` không.
+
+    "x-" = âm đầu, "-ng" = âm cuối, còn lại = cả từ. Tiếng Việt so sau khi bỏ
+    dấu thanh, và âm đầu phải khớp TRỌN: "n-" không ăn khớp với "nhà".
+    """
+    r = _chuan(ra)
     if lang in _A_DONG:
-        return d.replace(" ", "") in r.replace(" ", "")
-    return d in r.split()
+        return _chuan(dich).replace(" ", "") in r.replace(" ", "")
+    tu = [_bo_thanh(t) for t in r.split()]
+    if dich.endswith("-"):
+        return any(_am_dau(t) == dich[:-1] for t in tu)
+    if dich.startswith("-"):
+        return any(_am_cuoi(t) == dich[1:] for t in tu)
+    return _bo_thanh(_chuan(dich)) in tu
+
+
+def _manh_am_xat(giong: str) -> float | None:
+    """Sức mạnh âm xát /s/ (chữ x và s) — tỉ lệ năng lượng >4 kHz trên ≤2 kHz.
+
+    Vì sao vẫn cần phép đo phổ tần bên cạnh vòng TTS→STT: vòng khép kín bắt được
+    âm BỊ THAY hoặc BỊ MẤT, nhưng âm còn mà ĐỌC QUÁ NHẸ thì máy vẫn nghe ra
+    trong khi tai người đã thấy lệch ("xin" nghe như "chin"). Đo phổ chỉ đáng
+    tin với âm xát mạnh nên chỉ dùng cho x và s; lấy giá trị nhỏ hơn của hai.
+    """
+    import io
+    import wave
+
+    import numpy as np
+
+    diem = []
+    for chu in ("xin", "sáu"):
+        w = wave.open(io.BytesIO(eng.synthesize(chu, giong)))
+        rate = w.getframerate()
+        song = (np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+                .astype(np.float32) / 32768.0)
+        khung = int(0.01 * rate)
+        bat = next((i * khung for i in range(len(song) // khung)
+                    if np.sqrt((song[i * khung:(i + 1) * khung] ** 2).mean()) > 0.003),
+                   None)
+        if bat is None:
+            return None
+        doan = song[bat:bat + int(0.07 * rate)]
+        if len(doan) < 16:
+            return None
+        pho = np.abs(np.fft.rfft(doan * np.hanning(len(doan))))
+        tan = np.fft.rfftfreq(len(doan), 1 / rate)
+        diem.append(float(pho[tan > 4000].sum())
+                    / max(float(pho[tan <= 2000].sum()), 1e-9))
+    return min(diem)
 
 
 def _giong_can_do(lang: str) -> list[str]:
@@ -201,13 +286,21 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0) -> None:
         i for i in range(len(bo))
         if all((g, i) in rung for g in giong_ds)
     }
-    print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}   phụ âm rụng")
+    xat = "  âm xát" if lang == "vi" else ""
+    print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}{xat:>9s}   phụ âm rụng")
     xep = sorted(diem.items(), key=lambda kv: -kv[1][0])
     for giong, (dung, tong) in xep:
         loi = [bo[i][2] for i in range(len(bo))
                if (giong, i) in rung and i not in moi_giong_sai]
         tl = 100.0 * dung / max(tong, 1)
-        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%   "
+        cot_xat = ""
+        if lang == "vi":
+            try:
+                m = _manh_am_xat(giong)
+            except Exception:
+                m = None
+            cot_xat = f"{m:>9.1f}" if m is not None else f"{'—':>9s}"
+        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%{cot_xat}   "
               + (", ".join(loi) if loi else "—"))
     if moi_giong_sai:
         print("\nCâu MỌI giọng đều sai — hạn chế của STT, không tính lỗi giọng:")

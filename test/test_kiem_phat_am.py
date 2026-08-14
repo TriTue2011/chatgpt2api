@@ -57,6 +57,38 @@ def test_nghe_thay_tieng_viet_theo_tu_khong_theo_chuoi_con():
     assert kpa._nghe_thay("xin", "xin chào", "vi")
 
 
+def test_am_dau_khop_tron_khong_khop_mot_phan():
+    # Bẫy chính: "n-" không được ăn khớp với "nhà", "ng-" không ăn với "nghỉ".
+    assert kpa._am_dau("nha") == "nh"
+    assert kpa._am_dau("nghi") == "ngh"
+    assert kpa._am_dau("qua") == "qu"
+    assert kpa._am_dau("em") == ""
+    assert not kpa._nghe_thay("n-", "nhà em", "vi")
+    assert kpa._nghe_thay("n-", "nam thanh", "vi")
+    assert not kpa._nghe_thay("ng-", "nghỉ học", "vi")
+
+
+def test_am_cuoi_khop_tron():
+    assert kpa._am_cuoi("sinh") == "nh"
+    assert kpa._am_cuoi("hoc") == "c"
+    assert kpa._am_cuoi("ba") == ""
+    assert kpa._nghe_thay("-ng", "hát vang", "vi")
+    assert not kpa._nghe_thay("-ng", "hát phan", "vi")
+
+
+def test_lech_thanh_dieu_khong_tinh_la_rung_phu_am():
+    """STT nghe "kem" ra "Kèm" là lệch THANH, phụ âm /k/ vẫn nguyên."""
+    assert kpa._nghe_thay("k-", "Kèm không đường", "vi")
+    # Nhưng mất hẳn /k/ ("Em không đường") thì phải báo sai.
+    assert not kpa._nghe_thay("k-", "Em không đường", "vi")
+
+
+def test_bo_thanh_giu_dau_chu():
+    assert kpa._bo_thanh("quýt") == "quyt"
+    assert kpa._bo_thanh("đường") == "đương"   # ư là chữ, không phải thanh
+    assert kpa._bo_thanh("bận") == "bân"
+
+
 def test_nghe_thay_tieng_a_dong_theo_chuoi_con():
     # STT tiếng Trung/Nhật/Hàn không chèn dấu cách nên phải so theo chuỗi con.
     assert kpa._nghe_thay("天気", "今日はいい天気ですね", "ja")
