@@ -338,11 +338,15 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
     print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}{xat:>9s}   phụ âm rụng")
     xep = sorted(diem.items(), key=lambda kv: -kv[1][0])
     for giong, (dung, tong) in xep:
-        loi = [bo[i][2] for i in range(len(bo))
-               if (giong, i) in rung and i not in moi_giong_sai]
+        # Liệt kê ĐÚNG âm đã rụng, không phải nhãn của câu: câu "nhà em ở gần
+        # đây" thử cả nh và g, in nhãn "nh · g" thì đọc thành rụng cả hai.
+        loi = [d.strip("-") for i in range(len(bo))
+               if i not in moi_giong_sai
+               for d in rung.get((giong, i), ())]
         tl = 100.0 * dung / max(tong, 1)
-        hut = [bo[i][2] for i in range(len(bo))
-               if (giong, i) in chap_chon and i not in moi_giong_sai]
+        hut = [d.strip("-") for i in range(len(bo))
+               if i not in moi_giong_sai
+               for d in chap_chon.get((giong, i), ())]
         cot_xat = ""
         if lang == "vi":
             # Đo âm xát cũng phải lặp: VITS đọc khác nhau mỗi lần.
