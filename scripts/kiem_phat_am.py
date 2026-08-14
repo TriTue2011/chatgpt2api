@@ -75,8 +75,9 @@ BO_TEST: dict[str, tuple[tuple[str, tuple[str, ...], str], ...]] = {
         ("the red lorry is yellow", ("red", "lorry", "yellow"), "r · l · y"),
         ("a big black dog", ("big", "black", "dog"), "b · k · d · g"),
         ("happy people clapping", ("happy", "people"), "h · p"),
-        ("the zoo has six animals", ("zoo", "six"), "z · ks"),
-        ("nine numbers and one name", ("nine", "numbers", "name"), "n · m"),
+        ("the zoo has zebras and foxes", ("zoo", "zebras", "foxes"), "z · ks"),
+        # Không dùng từ chỉ số ("nine", "one"): STT viết lại thành chữ số 9, 1.
+        ("my mother is not near", ("mother", "not", "near"), "n · m"),
     ),
     "zh": (
         ("八百八十八块钱", ("八", "百"), "b"),
@@ -136,6 +137,17 @@ _AM_DAU = ("ngh", "ng", "nh", "ch", "tr", "th", "ph", "kh", "gh", "gi", "qu",
            "t", "v", "x")
 _AM_CUOI = ("ng", "nh", "ch", "c", "m", "n", "p", "t")
 
+# Những CHỮ khác nhau nhưng cùng một ÂM, nên máy nghe không tách được và bảng
+# không được tính là rụng. Giọng đang đo phiên âm bằng espeak `vi` (Bắc bộ):
+# d, gi, r đều đọc /z/; s và x đều /s/; ch và tr đều /tɕ/. Máy nghe "da" ra
+# "ra" thì âm /z/ vẫn còn — chỉ là chữ khác. Ở âm cuối thì -t/-c và -n/-ng lẫn
+# nhau theo phương ngữ, nên chỉ đòi CÒN âm cuối, không đòi đúng chữ; mất hẳn
+# ("hát" → "hà") vẫn bị bắt.
+_CUNG_AM_DAU = {"d": "z", "gi": "z", "r": "z",
+                "s": "s", "x": "s",
+                "ch": "tɕ", "tr": "tɕ"}
+_CUNG_AM_CUOI = {"t": "t/c", "c": "t/c", "n": "n/ng", "ng": "n/ng"}
+
 
 def _chuan(s: str) -> str:
     """Bỏ dấu câu, hạ chữ thường, gộp dấu cách — giữ nguyên dấu tiếng Việt."""
@@ -173,11 +185,20 @@ def _nghe_thay(dich: str, ra: str, lang: str) -> bool:
     r = _chuan(ra)
     if lang in _A_DONG:
         return _chuan(dich).replace(" ", "") in r.replace(" ", "")
+    if lang == "en":
+        # So theo chuỗi con, không theo từ: tiếng Anh ghép từ nên STT viết
+        # "sea shells" thành "seashells" — âm /ʃ/ vẫn đọc đủ, chỉ khác cách
+        # tách từ. Bắt buộc đúng ranh giới từ thì phép đo báo oan.
+        return _chuan(dich) in r
     tu = [_bo_thanh(t) for t in r.split()]
     if dich.endswith("-"):
-        return any(_am_dau(t) == dich[:-1] for t in tu)
+        can = _CUNG_AM_DAU.get(dich[:-1], dich[:-1])
+        return any(_CUNG_AM_DAU.get(_am_dau(t), _am_dau(t)) == can
+                   and _am_dau(t) for t in tu)
     if dich.startswith("-"):
-        return any(_am_cuoi(t) == dich[1:] for t in tu)
+        can = _CUNG_AM_CUOI.get(dich[1:], dich[1:])
+        return any(_CUNG_AM_CUOI.get(_am_cuoi(t), _am_cuoi(t)) == can
+                   and _am_cuoi(t) for t in tu)
     return _bo_thanh(_chuan(dich)) in tu
 
 
@@ -255,37 +276,64 @@ def _doc_supertonic(cau: str, lang: str, buoc: int) -> bytes:
         eng._float_to_pcm16(audio.samples), int(audio.sample_rate), 2, 1)
 
 
-def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0) -> None:
+def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
+                 lap: int = 1) -> None:
+    """Đo một tiếng. `lap` > 1 thì mỗi câu đọc nhiều lần rồi lấy đa số.
+
+    Cần lặp vì VITS đọc NGẪU NHIÊN mỗi lần (bộ dự đoán độ dài có nhiễu): đo một
+    mẫu thì một phụ âm chập chờn có thể hiện ra là đạt hay rụng tuỳ lần chạy.
+    Lấy đa số thì "rụng" nghĩa là rụng phần lớn số lần, còn âm chỉ hụt một vài
+    lần được xếp riêng thành "chập chờn" — với người nghe thì cũng là lỗi, nhưng
+    là lỗi khác loại nên không trộn vào.
+    """
     bo = BO_TEST[lang]
     tong_dich = sum(len(t[1]) for t in bo)
     print(f"\n=== tiếng {lang} · {len(giong_ds)} giọng × {len(bo)} câu "
-          f"({tong_dich} âm tiết cần nghe lại)"
+          f"({tong_dich} âm cần nghe lại)"
+          + (f" · đọc lại {lap} lần/câu" if lap > 1 else "")
           + (f" · num_steps={buoc}" if buoc else ""))
-    # (giọng, câu) → những âm tiết KHÔNG nghe lại được
+    # (giọng, câu) → âm rụng (đa số lần) và âm chập chờn (thiểu số lần)
     rung: dict[tuple[str, int], list[str]] = {}
+    chap_chon: dict[tuple[str, int], list[str]] = {}
     diem: dict[str, tuple[int, int]] = {}
     for giong in giong_ds:
         dung = 0
         for i, (cau, dich, _nhan) in enumerate(bo):
-            try:
-                wav = _doc(cau, giong, lang, buoc)
-                ra = eng.transcribe(wav, lang=lang)
-            except Exception as exc:
-                print(f"  {giong}: LỖI {str(exc)[:140]}")
-                rung[(giong, i)] = list(dich)
-                continue
-            mat = [d for d in dich if not _nghe_thay(d, ra, lang)]
+            so_sai = dict.fromkeys(dich, 0)
+            mau = ""
+            for _ in range(max(1, lap)):
+                try:
+                    ra = eng.transcribe(_doc(cau, giong, lang, buoc), lang=lang)
+                except Exception as exc:
+                    print(f"  {giong}: LỖI {str(exc)[:140]}")
+                    for d in dich:
+                        so_sai[d] += 1
+                    continue
+                mau = ra
+                for d in dich:
+                    if not _nghe_thay(d, ra, lang):
+                        so_sai[d] += 1
+            mat = [d for d, n in so_sai.items() if n * 2 > lap]
+            hut = [d for d, n in so_sai.items() if 0 < n * 2 <= lap]
             dung += len(dich) - len(mat)
             if mat:
                 rung[(giong, i)] = mat
-                print(f"  {giong:26s} [{'/'.join(mat)}] ← \"{ra[:60]}\"")
+            if hut:
+                chap_chon[(giong, i)] = hut
+            if mat or hut:
+                dau = "/".join(mat) + ("~" + "/".join(hut) if hut else "")
+                print(f"  {giong:26s} [{dau}] ← \"{mau[:60]}\"")
         diem[giong] = (dung, tong_dich)
 
-    # Câu mọi giọng đều sai = STT không nghe được, không tính là lỗi giọng.
-    moi_giong_sai = {
+    # Câu mà PHẦN LỚN giọng đều sai: hoặc STT nghe không ra, hoặc cả họ model
+    # đọc kém — một nhóm giọng khác họ mới phân biệt được hai khả năng đó. Dù là
+    # khả năng nào thì cũng không dùng để xếp hạng giọng trong CÙNG họ.
+    nguong = max(2, int(0.7 * len(giong_ds)))
+    phan_lon_sai = {
         i for i in range(len(bo))
-        if all((g, i) in rung for g in giong_ds)
+        if sum(1 for g in giong_ds if (g, i) in rung) >= nguong
     }
+    moi_giong_sai = phan_lon_sai
     xat = "  âm xát" if lang == "vi" else ""
     print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}{xat:>9s}   phụ âm rụng")
     xep = sorted(diem.items(), key=lambda kv: -kv[1][0])
@@ -293,17 +341,29 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0) -> None:
         loi = [bo[i][2] for i in range(len(bo))
                if (giong, i) in rung and i not in moi_giong_sai]
         tl = 100.0 * dung / max(tong, 1)
+        hut = [bo[i][2] for i in range(len(bo))
+               if (giong, i) in chap_chon and i not in moi_giong_sai]
         cot_xat = ""
         if lang == "vi":
-            try:
-                m = _manh_am_xat(giong)
-            except Exception:
-                m = None
-            cot_xat = f"{m:>9.1f}" if m is not None else f"{'—':>9s}"
-        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%{cot_xat}   "
-              + (", ".join(loi) if loi else "—"))
+            # Đo âm xát cũng phải lặp: VITS đọc khác nhau mỗi lần.
+            mau = []
+            for _ in range(max(1, min(lap, 3))):
+                try:
+                    m = _manh_am_xat(giong)
+                except Exception:
+                    m = None
+                if m is not None:
+                    mau.append(m)
+            cot_xat = (f"{sum(mau) / len(mau):>9.1f}" if mau
+                       else f"{'—':>9s}")
+        duoi = ", ".join(loi) if loi else "—"
+        if hut:
+            duoi += f"   (chập chờn: {', '.join(hut)})"
+        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%{cot_xat}   {duoi}")
     if moi_giong_sai:
-        print("\nCâu MỌI giọng đều sai — hạn chế của STT, không tính lỗi giọng:")
+        print(f"\nCâu mà ≥{nguong}/{len(giong_ds)} giọng đều sai — KHÔNG dùng để "
+              "xếp hạng giọng cùng họ.\nHoặc STT nghe không ra, hoặc cả họ model "
+              "đọc kém; phải đo một họ giọng khác mới phân biệt được:")
         for i in sorted(moi_giong_sai):
             print(f"  \"{bo[i][0]}\" (thử {bo[i][2]})")
 
@@ -316,6 +376,9 @@ def main() -> None:
                          "cách nhau bằng dấu phẩy")
     ap.add_argument("--buoc", default="",
                     help="ja/ko: thử các num_steps này (ví dụ 4,16)")
+    ap.add_argument("--lap", type=int, default=1,
+                    help="đọc lại mỗi câu bao nhiêu lần rồi lấy đa số "
+                         "(VITS đọc ngẫu nhiên nên 1 lần không đủ kết luận)")
     a = ap.parse_args()
     tiengs = list(BO_TEST) if "all" in a.tieng else a.tieng
     buocs = [int(x) for x in a.buoc.split(",") if x.strip()] or [0]
@@ -326,7 +389,7 @@ def main() -> None:
             print(f"\n=== tiếng {lang}: chưa tải giọng nào — bỏ qua")
             continue
         for b in (buocs if lang in ("ja", "ko") else [0]):
-            do_mot_tieng(lang, ds, b)
+            do_mot_tieng(lang, ds, b, max(1, a.lap))
 
 
 if __name__ == "__main__":

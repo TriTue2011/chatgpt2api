@@ -73,7 +73,8 @@ def test_am_cuoi_khop_tron():
     assert kpa._am_cuoi("hoc") == "c"
     assert kpa._am_cuoi("ba") == ""
     assert kpa._nghe_thay("-ng", "hát vang", "vi")
-    assert not kpa._nghe_thay("-ng", "hát phan", "vi")
+    # "phà" mất hẳn âm cuối → bắt; còn "phan" thì xem test lẫn -n/-ng bên dưới.
+    assert not kpa._nghe_thay("-ng", "hát phà", "vi")
 
 
 def test_lech_thanh_dieu_khong_tinh_la_rung_phu_am():
@@ -81,6 +82,39 @@ def test_lech_thanh_dieu_khong_tinh_la_rung_phu_am():
     assert kpa._nghe_thay("k-", "Kèm không đường", "vi")
     # Nhưng mất hẳn /k/ ("Em không đường") thì phải báo sai.
     assert not kpa._nghe_thay("k-", "Em không đường", "vi")
+
+
+def test_chu_khac_nhung_cung_am_thi_khong_tinh_la_rung():
+    """Bắc bộ: d/gi/r cùng /z/, s/x cùng /s/, ch/tr cùng /tɕ/."""
+    assert kpa._nghe_thay("d-", "Ra tay hơi khô", "vi")      # d → r, âm /z/ còn
+    assert kpa._nghe_thay("x-", "sin chào các bạn", "vi")    # x → s, âm /s/ còn
+    assert kpa._nghe_thay("ch-", "trào buổi sáng", "vi")     # ch → tr
+    # Nhưng thay bằng âm KHÁC hẳn thì vẫn phải bắt.
+    assert not kpa._nghe_thay("d-", "Ta tay hơi khô", "vi")   # d → t, mất /z/
+    assert not kpa._nghe_thay("x-", "chin chào các bạn", "vi")  # đúng ca người dùng báo
+    assert not kpa._nghe_thay("d-", "Chặt tay hơi khô", "vi")
+
+
+def test_am_cuoi_chi_doi_con_am_khong_doi_dung_chu():
+    assert kpa._nghe_thay("-t", "tác văn bài ca", "vi")   # -t → -c, phương ngữ
+    assert kpa._nghe_thay("-ng", "hát văn bài ca", "vi")  # -ng → -n
+    assert not kpa._nghe_thay("-t", "hà vang bài ca", "vi")   # mất hẳn âm cuối
+    assert not kpa._nghe_thay("-p", "học sinh lớ một", "vi")
+
+
+def test_tieng_anh_so_theo_chuoi_con_vi_ghep_tu():
+    """STT viết "sea shells" liền thành "seashells" — /ʃ/ vẫn đọc đủ."""
+    assert kpa._nghe_thay("shells", "She sells seashells.", "en")
+    assert not kpa._nghe_thay("shells", "She sells sea shirts.", "en")
+
+
+def test_cau_thu_tieng_anh_khong_dung_tu_chi_so():
+    """STT viết lại "nine" thành "9" nên từ chỉ số làm phép đo báo oan."""
+    so = ("one", "two", "three", "four", "five", "six", "seven", "eight",
+          "nine", "ten")
+    for _cau, dich, _nhan in kpa.BO_TEST["en"]:
+        for d in dich:
+            assert d not in so, f"câu thử tiếng Anh không nên lấy đích {d!r}"
 
 
 def test_bo_thanh_giu_dau_chu():
