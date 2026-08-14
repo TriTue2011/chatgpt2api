@@ -1156,5 +1156,12 @@ def status() -> dict[str, Any]:
                 for lang in STT_THEM_DIR
             },
         },
+        # Model ĐỌC theo tiếng — cho hàng "Theo từng tiếng" trong Cài đặt.
+        "doc_them_ready": {
+            "en": kokoro_model_dir() is not None,
+            "zh": (KOKORO_ZH_DIR / "voices.bin").is_file(),
+            "ja": (SUPERTONIC_DIR / "tts.json").is_file(),
+            "ko": (SUPERTONIC_DIR / "tts.json").is_file(),
+        },
         "public_base_url": public_base_url(),
     }

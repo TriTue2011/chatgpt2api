@@ -623,6 +623,8 @@ def synthesize(text: str, voice: str = "", *, style: str = "") -> bytes:
     text = (text or "").strip()
     if not text:
         raise VoiceError("Không có nội dung để đọc.")
+    if (voice or "").startswith("dangu:"):
+        return synthesize_da_ngu(text, voice[len("dangu:"):])
     sent_ms, clause_ms, jitter = _silence_plan()
     if sent_ms <= 0 and clause_ms <= 0:
         return _synthesize_one(text, voice, style=style)

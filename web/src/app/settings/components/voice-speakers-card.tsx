@@ -37,6 +37,7 @@ type VoiceStatus = {
           en_model_ready?: boolean; language?: string;
           sherpa_installed?: boolean; wyoming_url?: string;
           them_ready?: Record<string, boolean> };
+  doc_them_ready?: Record<string, boolean>;
   public_base_url?: string;
 };
 
@@ -378,75 +379,114 @@ export function VoiceSpeakersCard() {
               placeholder="tcp://192.0.2.10:10200" />
           </div>
 
-          {/* Giọng THEO TIẾNG — dùng cho phiên dịch đàm thoại (tab Dịch) và
-              các cổng Wyoming khoá tiếng bên dưới. Kokoro EN: 11 giọng của
-              gói kokoro-en-v0_19; Trung: Kokoro đa ngữ v1.1 (100 giọng, sid
-              0–102); Nhật/Hàn: Supertonic (sid 0–4 nam M1-M5, 5–9 nữ F1-F5). */}
-          <div className="sm:col-span-2 grid gap-2 sm:grid-cols-4 rounded-md border border-border/60 bg-muted/20 p-2.5">
-            <div className="sm:col-span-4 text-xs font-medium">Giọng theo tiếng (đàm thoại + Wyoming)</div>
-            <div>
-              <label className="text-xs text-muted-foreground">Tiếng Anh (Kokoro)</label>
-              <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
-                value={String(wyCfg.en_voice || "")}
-                onChange={(e) => patchVoice("wyoming_server", { en_voice: e.target.value })}>
-                <option value="">af (mặc định)</option>
-                {["af", "af_bella", "af_nicole", "af_sarah", "af_sky",
-                  "am_adam", "am_michael", "bf_emma", "bf_isabella",
-                  "bm_george", "bm_lewis"].map((n) => (
-                  <option key={n} value={`kokoro:${n}`}>{n}</option>
-                ))}
-              </select>
+          {/* ── THEO TỪNG TIẾNG — mỗi tiếng một mục THU GỌN (bấm mới xoè):
+              giọng đọc + nghe thử + cổng Wyoming đọc/nghe + trạng thái model.
+              Quy chuẩn cổng (chốt 14/08): đọc 106xx · nghe 107xx; xx = 00
+              việt · 01 anh · 02 nhật · 03 trung · 04 hàn. Trống = theo
+              chuẩn, 0 = tắt. Đổi giọng thì LƯU rồi mới Nghe thử. */}
+          <div className="sm:col-span-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+            <div className="text-xs font-medium">
+              Theo từng tiếng — giọng đọc · cổng Wyoming (đọc 106xx / nghe 107xx) · model
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Tiếng Trung (sid 0–102)</label>
-              <Input type="number" min={0} max={102}
-                value={String(ttsCfg.kokoro_zh_sid ?? "")}
-                onChange={(e) => patchVoice("tts", {
-                  kokoro_zh_sid: e.target.value === "" ? "" : Number(e.target.value),
-                })}
-                placeholder="0" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Tiếng Nhật (sid 0–9)</label>
-              <Input type="number" min={0} max={9}
-                value={String(ttsCfg.supertonic_ja_sid ?? "")}
-                onChange={(e) => patchVoice("tts", {
-                  supertonic_ja_sid: e.target.value === "" ? "" : Number(e.target.value),
-                })}
-                placeholder="0" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Tiếng Hàn (sid 0–9)</label>
-              <Input type="number" min={0} max={9}
-                value={String(ttsCfg.supertonic_ko_sid ?? "")}
-                onChange={(e) => patchVoice("tts", {
-                  supertonic_ko_sid: e.target.value === "" ? "" : Number(e.target.value),
-                })}
-                placeholder="0" />
-            </div>
-            {/* Quy chuẩn cổng Wyoming cho HA (chốt 14/08): 106xx = TTS,
-                107xx = STT; xx = 00 việt · 01 anh · 02 nhật · 03 trung ·
-                04 hàn. Trống = theo chuẩn (BẬT nếu có model), 0 = tắt.
-                Nhớ publish cổng trong compose. */}
-            <div className="sm:col-span-4 text-xs font-medium">
-              Cổng Wyoming cho HA — 106xx đọc (TTS), 107xx nghe (STT) · việt/anh/nhật/trung/hàn · trống = chuẩn, 0 = tắt
-            </div>
-            {(["tts", "stt"] as const).map((vai) => (
-              <div key={vai} className="sm:col-span-4 grid grid-cols-5 gap-2">
-                {(["vi", "en", "ja", "zh", "ko"] as const).map((lng, i) => (
-                  <div key={`${vai}_${lng}`}>
-                    <label className="text-xs text-muted-foreground">
-                      {vai === "tts" ? "Đọc" : "Nghe"} {{ vi: "Việt", en: "Anh", ja: "Nhật", zh: "Trung", ko: "Hàn" }[lng]}
-                    </label>
-                    <Input type="number" min={0} max={65535}
-                      value={String(wyCfg[`${vai}_port_${lng}`] ?? "")}
-                      onChange={(e) => patchVoice("wyoming_server", {
-                        [`${vai}_port_${lng}`]: e.target.value === "" ? "" : Number(e.target.value),
-                      })}
-                      placeholder={String((vai === "tts" ? 10600 : 10700) + i)} />
+            {([
+              { ma: "vi", ten: "🇻🇳 Tiếng Việt", i: 0,
+                doc: Boolean(tts?.model_ready), nghe: Boolean(stt?.model_ready),
+                giongThu: String(ttsCfg.voice || tts?.voice || "") },
+              { ma: "en", ten: "🇬🇧 Tiếng Anh", i: 1,
+                doc: Boolean(status?.doc_them_ready?.en), nghe: Boolean(stt?.en_model_ready),
+                giongThu: String(wyCfg.en_voice || "kokoro:af") },
+              { ma: "ja", ten: "🇯🇵 Tiếng Nhật", i: 2,
+                doc: Boolean(status?.doc_them_ready?.ja), nghe: Boolean(stt?.them_ready?.ja),
+                giongThu: "dangu:ja" },
+              { ma: "zh", ten: "🇨🇳 Tiếng Trung", i: 3,
+                doc: Boolean(status?.doc_them_ready?.zh), nghe: Boolean(stt?.them_ready?.zh),
+                giongThu: "dangu:zh" },
+              { ma: "ko", ten: "🇰🇷 Tiếng Hàn", i: 4,
+                doc: Boolean(status?.doc_them_ready?.ko), nghe: Boolean(stt?.them_ready?.ko),
+                giongThu: "dangu:ko" },
+            ] as const).map((r) => (
+              <details key={r.ma} className="group rounded-md border border-border/50 bg-background/60 px-2.5 py-1.5">
+                <summary className="flex cursor-pointer select-none items-center gap-2 text-xs list-none">
+                  <span className="inline-block text-muted-foreground transition-transform group-open:rotate-90">▸</span>
+                  <span className="font-medium">{r.ten}</span>
+                  <span className="ml-auto text-[11px] text-muted-foreground">
+                    đọc {r.doc ? "✓" : "✗"} · nghe {r.nghe ? "✓" : "✗"}
+                  </span>
+                </summary>
+                <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                  <div className="sm:col-span-2">
+                    <label className="text-xs text-muted-foreground">Giọng đọc</label>
+                    {r.ma === "vi" ? (
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                        value={String(ttsCfg.voice || tts?.voice || "")}
+                        onChange={(e) => patchVoice("tts", { voice: e.target.value })}>
+                        {catalog.length === 0 && <option value="">(chưa tải giọng nào)</option>}
+                        {catalog.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.id}{v.language_label ? ` · ${v.language_label}` : ""}{v.downloaded ? "" : " (chưa tải)"}
+                          </option>
+                        ))}
+                      </select>
+                    ) : r.ma === "en" ? (
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                        value={String(wyCfg.en_voice || "")}
+                        onChange={(e) => patchVoice("wyoming_server", { en_voice: e.target.value })}>
+                        <option value="">af (mặc định)</option>
+                        {["af", "af_bella", "af_nicole", "af_sarah", "af_sky",
+                          "am_adam", "am_michael", "bf_emma", "bf_isabella",
+                          "bm_george", "bm_lewis"].map((n) => (
+                          <option key={n} value={`kokoro:${n}`}>{n}</option>
+                        ))}
+                      </select>
+                    ) : r.ma === "zh" ? (
+                      <Input type="number" min={0} max={102}
+                        value={String(ttsCfg.kokoro_zh_sid ?? "")}
+                        onChange={(e) => patchVoice("tts", {
+                          kokoro_zh_sid: e.target.value === "" ? "" : Number(e.target.value),
+                        })}
+                        placeholder="số giọng 0–102 (mặc định 0)" />
+                    ) : (
+                      <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                        value={String(ttsCfg[`supertonic_${r.ma}_sid`] ?? "")}
+                        onChange={(e) => patchVoice("tts", {
+                          [`supertonic_${r.ma}_sid`]: e.target.value === "" ? "" : Number(e.target.value),
+                        })}>
+                        <option value="">0 · Nam M1 (mặc định)</option>
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((sid) => (
+                          <option key={sid} value={sid}>
+                            {sid} · {sid < 5 ? `Nam M${sid + 1}` : `Nữ F${sid - 4}`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                ))}
-              </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">Cổng đọc (TTS)</label>
+                    <Input type="number" min={0} max={65535}
+                      value={String(wyCfg[`tts_port_${r.ma}`] ?? "")}
+                      onChange={(e) => patchVoice("wyoming_server", {
+                        [`tts_port_${r.ma}`]: e.target.value === "" ? "" : Number(e.target.value),
+                      })}
+                      placeholder={String(10600 + r.i)} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">Cổng nghe (STT)</label>
+                    <Input type="number" min={0} max={65535}
+                      value={String(wyCfg[`stt_port_${r.ma}`] ?? "")}
+                      onChange={(e) => patchVoice("wyoming_server", {
+                        [`stt_port_${r.ma}`]: e.target.value === "" ? "" : Number(e.target.value),
+                      })}
+                      placeholder={String(10700 + r.i)} />
+                  </div>
+                  <div className="sm:col-span-4">
+                    <button type="button" disabled={!r.doc || previewing === r.giongThu}
+                      onClick={() => void preview(r.giongThu)}
+                      className="rounded-md border border-border px-3 py-1.5 text-xs hover:border-slate-400 disabled:opacity-40">
+                      {previewing === r.giongThu ? "Đang đọc…" : "🔊 Nghe thử"}
+                    </button>
+                  </div>
+                </div>
+              </details>
             ))}
           </div>
 

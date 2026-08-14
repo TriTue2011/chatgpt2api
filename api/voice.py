@@ -200,7 +200,16 @@ def create_router() -> APIRouter:
         vname = str(voice or "").strip()
         custom = str(text or "").strip()[:_PREVIEW_MAX_CHARS]
         sample = _PREVIEW_TEXT
-        if vname.startswith(vcfg.VIENEU_PREFIX):
+        if vname.startswith("dangu:"):
+            # Giọng theo tiếng zh/ja/ko (Kokoro đa ngữ / Supertonic) — câu mẫu
+            # đúng tiếng đó, sid lấy theo Cài đặt (lưu trước rồi nghe thử).
+            mau_dangu = {
+                "zh": "你好！这是我的中文声音示例，听起来清楚自然吗？",
+                "ja": "こんにちは！これは日本語の音声サンプルです。自然に聞こえますか？",
+                "ko": "안녕하세요! 한국어 음성 샘플입니다. 자연스럽게 들리나요?",
+            }
+            sample = mau_dangu.get(vname[len("dangu:"):], _PREVIEW_TEXT_EN)
+        elif vname.startswith(vcfg.VIENEU_PREFIX):
             if not vcfg.vieneu_model_ready():
                 raise HTTPException(
                     404, "Model VieNeu chưa tải (chạy scripts/download_vieneu_model.py).")
