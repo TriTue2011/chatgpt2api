@@ -629,6 +629,27 @@ Kết quả đo ngày 14/08/2026 nằm trong `services/voice/chat_luong_giong.py
 hiện thành nhãn ngay trong ô chọn giọng ("đọc rõ" / "⚠ rụng gi, k, d · âm xát
 yếu") nên không cần tra tài liệu mới biết giọng nào tốt.
 
+**Chất lượng NGHE đo được** (150 bản thu tiếng người mỗi tiếng, 14/08/2026):
+
+| Tiếng | Sai từ | Sai ký tự | Không nghe ra chữ nào |
+|---|---|---|---|
+| Việt | 9,3% | 6,5% | 0 |
+| Anh | 16,6% | 15,0% | **11/150 (7%)** |
+| Trung | — | 13,6% | 0 |
+| Nhật | — | 9,8% | 0 |
+| Hàn | — | 55,5% | **67/150 (45%)** |
+
+Hai chỗ cần lưu ý khi làm phụ đề:
+
+- **Tiếng Anh bỏ trắng 7% đoạn** — Parakeet không trả chữ nào mà cũng không báo
+  lỗi, nên phụ đề mất dòng một cách im lặng. Dịch phim tiếng Anh nhiều thì nên
+  cân nhắc đường faster-whisper trên máy GPU (đo riêng: sai 10,3% so với 21,3%).
+- **Tiếng Hàn 55,5% là do lệch miền, không phải model hỏng.** Model học trên
+  tiếng nói hội thoại câu ngắn (KsponSpeech) nên đọc thoại phim khá hơn số này
+  nhiều, còn giọng đọc bản tin câu dài thì hay trả rỗng. Đã kiểm: model đọc đúng
+  bộ thử của chính nó, cắt ngắn audio vẫn rỗng, và bản fp32 cho kết quả y hệt bản
+  int8 — nên không phải lỗi cấu hình bên ta.
+
 ### 4.3. Khai báo loa
 
 Phần **📢 Loa đã kết nối**. Ba kiểu:

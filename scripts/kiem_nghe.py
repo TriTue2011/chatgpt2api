@@ -16,6 +16,28 @@ Ngoài tỉ lệ sai chữ (WER) và sai ký tự (CER), bảng còn đếm **ph
 bị nghe lệch thành phụ âm nào** — đó là thứ trả lời được câu "STT có rụng phụ âm
 giống TTS không", và cũng là thứ cho biết bảng chấm TTS có bị quan toà làm lệch.
 
+**Số nền đo ngày 14/08/2026** (150 bản thu mỗi tiếng, ~24–33 phút tiếng nói),
+để lần sau đổi model thì có mốc so::
+
+    tiếng   sai từ   sai ký tự   không nghe ra chữ nào
+    vi        9,3%        6,5%   0
+    en       16,6%       15,0%   11/150  (7%)
+    zh          —        13,6%   0
+    ja          —         9,8%   0
+    ko          —        55,5%   67/150  (45%)
+
+Hai chỗ cần biết trước khi tin mấy con số này:
+
+- **Tiếng Hàn 55,5% KHÔNG phải model hỏng, mà là lệch miền.** Model
+  `korean-2024-06-24` học trên KsponSpeech — tiếng nói hội thoại câu ngắn — còn
+  FLEURS là giọng đọc bản tin câu dài. Đã kiểm: nó đọc đúng bộ thử của chính nó
+  (3/4 câu khớp từng chữ), không phải giới hạn độ dài (cắt còn 10 giây vẫn rỗng),
+  và không phải do int8 (bản fp32 cho kết quả y hệt). Vậy với thoại phim và tin
+  nhắn thoại thì khá hơn số này nhiều; với bản tin đọc thì đừng tin nó.
+- **Phần lớn lỗi tiếng Việt là chọn CHỮ đồng âm, không phải nghe sai ÂM:** tr→ch,
+  s→x, gi→d, r→d, c→k. Với phụ đề thì vẫn là chữ sai in lên phim, nhưng đó là lỗi
+  chính tả chứ không phải mất phát âm.
+
 Tải bộ đo (một lần, ~200–550 MB mỗi tiếng)::
 
     cd /app/data/fleurs
