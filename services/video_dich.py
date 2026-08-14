@@ -574,6 +574,18 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
 TRAN_GIAY_NGHE = 150 * 60
 
 
+def _ung_vien_nghe(target: str) -> tuple[str, str]:
+    """Cặp model NGHE đem dò theo lựa chọn đích: "cap:zh" → so vi với zh…
+
+    Chỉ dạng cặp mới đổi ứng viên — người dùng đã nói rõ video thuộc cặp nào.
+    Còn lại (mặc định, mã trơ) giữ vi/en như trước.
+    """
+    t = str(target or "").lower()
+    if t.startswith("cap:") and t[4:] in ("zh", "ja", "ko"):
+        return ("vi", t[4:])
+    return ("vi", "en")
+
+
 def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
@@ -584,7 +596,8 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any
     from services import video_asr as va
 
     try:
-        cau, nguon, _giay_tieng = va.nghe_tep(duong, tran_giay=TRAN_GIAY_NGHE)
+        cau, nguon, _giay_tieng = va.nghe_tep(duong, tran_giay=TRAN_GIAY_NGHE,
+                                              ung_vien=_ung_vien_nghe(target))
     except va.LoiNghe as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:

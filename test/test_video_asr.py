@@ -208,6 +208,32 @@ def test_mau_lay_giua_than_video_khong_dinh_nhac_mo_man(monkeypatch):
     assert min(thu[0] for _, thu in ghi) >= 10 * _RATE_GIA
 
 
+def test_ung_vien_theo_cap_viet_trung(monkeypatch):
+    """Người dùng chọn cặp Việt↔Trung → so vi với zh (không phải en),
+    model zh tự tin hơn thì nghe bằng zh."""
+    _lap_engines_gia(monkeypatch, {"vi": (-0.5, 4), "zh": (-0.05, 4)})
+    mau = np.zeros(40 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(40),
+                             ung_vien=("vi", "zh")) == "zh"
+
+
+def test_ung_vien_chua_tai_model_thi_ve_vi(monkeypatch):
+    """Chọn cặp Việt↔Nhật nhưng model ja CHƯA tải (raise) → rơi về vi,
+    không nổ."""
+    import sys
+
+    def _khong_co(lang):
+        raise RuntimeError("chưa tải model")
+
+    _lap_engines_gia(monkeypatch, {"vi": (-0.3, 9)})
+    eng = sys.modules["services.voice.engines"]
+    goc = eng._get_recognizer
+    eng._get_recognizer = lambda lang: goc(lang) if lang == "vi" else _khong_co(lang)
+    mau = np.zeros(10 * _RATE_GIA, dtype=np.float32)
+    assert va._chon_ngon_ngu(mau, _RATE_GIA, _doan_deu(10),
+                             ung_vien=("vi", "ja")) == "vi"
+
+
 def test_doan_it_khong_nghe_trung_lap(monkeypatch):
     """1 đoạn duy nhất mà 3 mốc lấy mẫu đều trỏ vào — chỉ nghe MỘT lần/model."""
     ghi: list = []
@@ -234,7 +260,7 @@ def test_dich_tep_video_ra_srt_dat_chuan(monkeypatch):
     from test._fakes import FakeTranslate, install_translate
     from services import video_dich as vd
 
-    def _nghe_gia(duong, tran_giay=0):
+    def _nghe_gia(duong, tran_giay=0, **kw):
         return ([va.Cau(0.0, 2.0, "Hôm nay chúng ta nấu bít tết"),
                  va.Cau(2.5, 5.0, "Đầu tiên ướp thịt với muối và tiêu")],
                 "vi", 4.5)
@@ -256,7 +282,7 @@ def test_dich_tep_video_cung_ngon_ngu_thi_tra_ban_chep(monkeypatch):
     from services import video_dich as vd
     import services.video_asr as va_mod
 
-    def _nghe_gia(duong, tran_giay=0):
+    def _nghe_gia(duong, tran_giay=0, **kw):
         return [va.Cau(0.0, 2.0, "Xin chào cả nhà")], "vi", 2.0
 
     monkeypatch.setattr(va_mod, "nghe_tep", _nghe_gia)
@@ -270,7 +296,7 @@ def test_dich_tep_video_loi_nghe_khong_nem_ra_ngoai(monkeypatch):
     from services import video_dich as vd
     import services.video_asr as va_mod
 
-    def _no(duong, tran_giay=0):
+    def _no(duong, tran_giay=0, **kw):
         raise va_mod.LoiNghe("không thấy tiếng nói nào trong tệp")
 
     monkeypatch.setattr(va_mod, "nghe_tep", _no)

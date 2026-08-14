@@ -30,6 +30,13 @@ from services.config import BASE_DIR, DATA_DIR, config
 PIPER_DIR = Path(DATA_DIR) / "piper"
 STT_DIR = Path(DATA_DIR) / "stt"
 STT_EN_DIR = Path(DATA_DIR) / "stt-en"   # Parakeet-TDT (tiếng Anh)
+#: Model nghe THÊM (Zipformer transducer k2-fsa — cùng dòng tiếng Việt, có
+#: ys_log_probs + timestamps). Tải bằng scripts/download_stt_da_ngu.py.
+STT_THEM_DIR = {
+    "zh": Path(DATA_DIR) / "stt-zh",
+    "ja": Path(DATA_DIR) / "stt-ja",
+    "ko": Path(DATA_DIR) / "stt-ko",
+}
 KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
 NGHI_DIR = Path(DATA_DIR) / "nghitts"    # 19 giọng NghiTTS (VITS tiếng Việt)
 MEDIA_DIR = Path(DATA_DIR) / "voice" / "media"
@@ -851,6 +858,19 @@ def stt_en_model_present() -> bool:
     """True nếu file model Parakeet đã tải, BẤT KỂ cờ en_enabled bật/tắt
     (giúp caller báo đúng "đang tắt" thay vì "chưa tải")."""
     return _stt_en_dir_raw() is not None
+
+
+def stt_them_model_dir(lang: str) -> Path | None:
+    """Thư mục model nghe của ngôn ngữ THÊM (zh/ja/ko) — ``None`` khi chưa tải.
+
+    Khác tiếng Anh (cờ ``en_enabled``), nhóm này không có cờ bật/tắt: chủ máy
+    chủ động chạy ``scripts/download_stt_da_ngu.py`` là dùng được — chưa tải
+    thì coi như tắt, bộ dò ngôn ngữ tự rơi về tiếng Việt.
+    """
+    base = STT_THEM_DIR.get(str(lang or "").lower())
+    if base is None or not base.is_dir() or not list(base.glob("encoder*.onnx")):
+        return None
+    return base
 
 
 def stt_threads() -> int:

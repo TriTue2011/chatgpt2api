@@ -984,6 +984,13 @@ def _get_recognizer(lang: str = "vi"):
             raise VoiceError(
                 "Chưa tải model STT tiếng Anh (chạy scripts/download_stt_en_model.py).")
         model_type = "nemo_transducer"
+    elif lang in vcfg.STT_THEM_DIR:
+        model_dir = vcfg.stt_them_model_dir(lang)
+        if model_dir is None:
+            raise VoiceError(
+                f"Chưa tải model STT '{lang}' "
+                f"(chạy scripts/download_stt_da_ngu.py {lang}).")
+        model_type = ""   # Zipformer chuẩn k2 — như tiếng Việt
     else:
         model_dir = vcfg.stt_model_dir()
         if model_dir is None:

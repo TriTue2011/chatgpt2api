@@ -16,8 +16,10 @@ const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.
   + ".jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
 
 /** Chọn theo CẶP, máy tự nhận diện chiều: nguồn tiếng Việt thì dịch sang
- *  tiếng kia, ngược lại dịch về tiếng Việt. Video/âm thanh: bộ nghe hiện có
- *  tiếng Việt + Anh; Trung/Nhật/Hàn mới áp cho chữ, ảnh, tài liệu, link. */
+ *  tiếng kia, ngược lại dịch về tiếng Việt. Với video/âm thanh, cặp đã chọn
+ *  quyết định bộ NGHE đem so (Việt↔Trung → so model vi với zh); model
+ *  Trung/Nhật/Hàn tải bằng scripts/download_stt_da_ngu.py — chưa tải thì
+ *  máy nghe bằng tiếng Việt. */
 const DICH_SANG = [
   { value: "", label: "Việt ↔ Anh (tự nhận diện)" },
   { value: "cap:zh", label: "Việt ↔ Trung" },

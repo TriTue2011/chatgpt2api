@@ -181,8 +181,13 @@ _TOKEN_TOI_THIEU = 5
 _CHENH_THANG = 0.1
 
 
-def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]]) -> str:
-    """Video nói tiếng gì — vi hay en.
+def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
+                   ung_vien: tuple[str, str] = ("vi", "en")) -> str:
+    """Video nói tiếng gì — so tiếng Việt với MỘT ứng viên còn lại.
+
+    ``ung_vien``: cặp model đem so, phần tử đầu luôn là ``vi`` (nhà ưu tiên
+    tiếng Việt); phần tử sau do người dùng chọn cặp ngôn ngữ (en/zh/ja/ko).
+    Model ứng viên chưa tải trên đĩa thì phía đó câm → tự rơi về ``vi``.
 
     Nghe THỬ vài mẫu bằng CẢ HAI model rồi so độ tự tin giải mã
     (``ys_log_probs`` của transducer): model đúng ngôn ngữ tự tin ~-0.04,
@@ -234,21 +239,26 @@ def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]]) -> str:
             return -9.9, 0
         return sum(du) / len(du), len(du)
 
+    khac = ung_vien[1] if len(ung_vien) > 1 and ung_vien[1] != "vi" else "en"
     vi_tb, vi_n = _tu_tin("vi")
-    en_tb, en_n = _tu_tin("en")
-    if en_n < _TOKEN_TOI_THIEU:
+    khac_tb, khac_n = _tu_tin(khac)
+    if khac_n < _TOKEN_TOI_THIEU:
         ra = "vi"
     elif vi_n < _TOKEN_TOI_THIEU:
-        ra = "en"
+        ra = khac
     else:
-        ra = "en" if en_tb > vi_tb + _CHENH_THANG else "vi"
-    logger.info("dò ngôn ngữ: vi %.3f (%d token) / en %.3f (%d token) → %s",
-                vi_tb, vi_n, en_tb, en_n, ra)
+        ra = khac if khac_tb > vi_tb + _CHENH_THANG else "vi"
+    logger.info("dò ngôn ngữ: vi %.3f (%d token) / %s %.3f (%d token) → %s",
+                vi_tb, vi_n, khac, khac_tb, khac_n, ra)
     return ra
 
 
-def nghe_tep(duong: str, tran_giay: float = 0) -> tuple[list[Cau], str, float]:
+def nghe_tep(duong: str, tran_giay: float = 0,
+             ung_vien: tuple[str, str] = ("vi", "en")) -> tuple[list[Cau], str, float]:
     """Tệp video/âm thanh → (các khung chữ có mốc, ngôn ngữ, số giây tiếng).
+
+    ``ung_vien``: cặp ngôn ngữ đem dò (xem ``_chon_ngon_ngu``) — người dùng
+    chọn cặp Việt↔Trung thì so vi với zh thay vì en.
 
     ``tran_giay`` > 0 thì từ chối tệp dài hơn — kiểm SAU khi bóc tiếng (rẻ)
     và TRƯỚC khi nghe (đắt). Raise ``LoiNghe`` với thông điệp đưa thẳng được
@@ -267,7 +277,7 @@ def nghe_tep(duong: str, tran_giay: float = 0) -> tuple[list[Cau], str, float]:
         doan = cat_doan_tieng(mau, rate)
         if not doan:
             raise LoiNghe("không thấy tiếng nói nào trong tệp")
-        lang = _chon_ngon_ngu(mau, rate, doan)
+        lang = _chon_ngon_ngu(mau, rate, doan, ung_vien)
         rec = eng._get_recognizer(lang)
 
         ra: list[Cau] = []

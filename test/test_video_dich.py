@@ -428,3 +428,13 @@ def test_bao_cao_doc_duoc():
     ok = vd.bao_cao({"ok": True, "nguon": "en", "dich": "vi", "phut": 18,
                      "so_doan": 42})
     assert "en → vi" in ok and "18 phút" in ok and "42 khung" in ok
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("target, cho_doi", [
+    ("", ("vi", "en")), ("cap:zh", ("vi", "zh")), ("cap:ja", ("vi", "ja")),
+    ("cap:ko", ("vi", "ko")), ("cap:en", ("vi", "en")), ("en", ("vi", "en")),
+    ("vi", ("vi", "en")),
+])
+def test_ung_vien_nghe_theo_cap(target, cho_doi):
+    assert vd._ung_vien_nghe(target) == cho_doi
