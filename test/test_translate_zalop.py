@@ -53,9 +53,39 @@ def test_dich_tren_zalo_ca_nhan_do_code_tra_loi(monkeypatch):
     with install_translate(FakeTranslate(lang="en", codes=("en", "vi"))):
         zp._process_ai(_ev("/dich\naction: ai_task.generate_data"))
 
-    assert sent, "bot phải trả lời ngay bằng bản dịch, không im lặng"
-    assert sent[0].startswith("🌐")
-    assert "vi:" in sent[0]  # nội dung đã qua máy dịch (en → vi), không phải LLM
+    assert sent, "bot phải trả lời ngay, không im lặng"
+    # ĐỔI HÀNH VI 14/08: /dich không nêu tiếng đích thì HỎI, không tự đoán.
+    assert sent[0].startswith("🌐") and "Nhắn số" in sent[0]
+    # Đoạn xem trước (trong «…») là NỘI DUNG cần dịch, không dính chữ lệnh
+    xem = sent[0].split("«", 1)[1].split("»", 1)[0]
+    assert xem.startswith("action: ai_task") and "/dich" not in xem
+
+
+def test_dich_neu_neu_ro_tieng_dich_thi_lam_ngay(monkeypatch):
+    """Nêu rõ đích ("/dich tiếng anh …") thì dịch NGAY, không hỏi lại."""
+    from services import zalo_personal as zp
+    import services.agent as agent_pkg
+    from services.agent import capabilities as caps
+
+    monkeypatch.setattr(caps, "allowed_groups_for_member", lambda *a, **k: None)
+    monkeypatch.setattr(caps, "duoc_giao_tiep", lambda *a, **k: True)
+    monkeypatch.setattr(caps, "mention_required_for", lambda *a, **k: (False, ""))
+    monkeypatch.setattr(zp, "_chat_ids", lambda: ["123"])
+    monkeypatch.setattr(zp, "_is_admin_thread", lambda *a, **k: False)
+    monkeypatch.setattr(zp, "_la_admin_nguoi_gui", lambda *a, **k: False)
+    monkeypatch.setattr(agent_pkg, "orchestrate",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("/dich không được rơi vào LLM")))
+    sent: list[str] = []
+    monkeypatch.setattr(
+        zp, "send_message",
+        lambda tid, text, ttype=0, **k: (sent.append(text), {"ok": True})[1])
+
+    with install_translate(FakeTranslate(lang="vi", codes=("en", "vi"))):
+        zp._process_ai(_ev("/dich tiếng anh xin chào cả nhà"))
+
+    assert sent and "Nhắn số" not in sent[0]
+    assert "en:" in sent[0]             # đã qua máy dịch ngay trong lượt này
 
 
 def test_ten_tep_phuc_vu_khong_dup_duoi():

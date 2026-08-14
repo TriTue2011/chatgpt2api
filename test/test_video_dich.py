@@ -490,3 +490,15 @@ def test_dich_tep_phu_de_khong_doc_duoc_thi_bao(tmp_path, monkeypatch):
     with install_translate(FakeTranslate(codes=("en", "vi"))):
         r = vd.dich_tep_phu_de(str(tep), "rong.srt")
     assert r["ok"] is False and "không đọc được khung" in r["error"]
+
+
+@pytest.mark.pure
+def test_chep_loi_giu_nguyen_tieng_goc(monkeypatch):
+    """Chọn «3. GIỮ nguyên tiếng gốc» → đích = chính tiếng nguồn, KHÔNG dịch."""
+    monkeypatch.setattr(vd, "lay_phu_de", _phu_de_gia(
+        [vd.Doan(0.0, 2.0, "Hello there.")], ma="en"))
+    with install_translate(FakeTranslate(lang="en", codes=("en", "vi"))) as fake:
+        r = vd.dich_video("https://youtu.be/aircAruvnKk", chep_loi=True)
+    assert r["ok"] is True and r["nguon"] == "en" and r["dich"] == "en"
+    assert "Hello there." in r["chu"]      # nguyên văn, không có tiền tố "vi:"
+    assert fake.da_gui == []               # KHÔNG gọi máy dịch lượt nào

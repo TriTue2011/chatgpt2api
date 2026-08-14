@@ -476,7 +476,8 @@ def dinh_tu_goc(nguon: str, ban_dich: str, khoa: set[str]) -> str:
     return f"{ban_dich} [{', '.join(thay)}]" if thay else ban_dich
 
 
-def dich_video(text: str, target: str = "") -> dict[str, Any]:
+def dich_video(text: str, target: str = "", *,
+               chep_loi: bool = False) -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
 
     Trả::
@@ -513,8 +514,10 @@ def dich_video(text: str, target: str = "") -> dict[str, Any]:
                          f"{TRAN_GIAY // 60} phút mà em dịch được"}
 
     ma_nguon = ts._chuan_ma(nguon.split("-")[0], ts.lang_codes()) or nguon.split("-")[0]
-    dich = ts.giai_ma_target(ma_nguon, target)
-    if ma_nguon == dich:
+    # chep_loi: người dùng chọn GIỮ nguyên tiếng gốc — đích = chính tiếng nguồn,
+    # _dich_va_dong_goi thấy nguon == dich thì bỏ hẳn bước dịch.
+    dich = ma_nguon if chep_loi else ts.giai_ma_target(ma_nguon, target)
+    if ma_nguon == dich and not chep_loi:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
 
     return _dich_va_dong_goi(doan, ma_nguon or nguon, dich, dai)
@@ -618,7 +621,8 @@ def la_tep_phu_de(ten: str) -> bool:
     return str(ten or "").lower().endswith(DUOI_PHU_DE)
 
 
-def dich_tep_phu_de(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:
+def dich_tep_phu_de(duong: str, ten: str = "", target: str = "", *,
+                    chep_loi: bool = False) -> dict[str, Any]:
     """Tệp phụ đề có sẵn (.srt/.vtt) → phụ đề đã dịch. KHÔNG raise.
 
     Đường NHANH + CHUẨN nhất cho phim: chữ gốc do người làm, không dính lỗi
@@ -642,8 +646,8 @@ def dich_tep_phu_de(duong: str, ten: str = "", target: str = "") -> dict[str, An
         nguon, _ = ts.detect(mau[:5000])
     except ts.LoiDich as exc:
         return {"ok": False, "error": str(exc)}
-    dich = ts.giai_ma_target(nguon, target)
-    if nguon and nguon == dich:
+    dich = (nguon or "auto") if chep_loi else ts.giai_ma_target(nguon, target)
+    if nguon and nguon == dich and not chep_loi:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
     return _dich_va_dong_goi(doan, nguon or "auto", dich, doan[-1].ket_thuc)
 
@@ -660,7 +664,8 @@ def _ung_vien_nghe(target: str) -> tuple[str, str]:
     return ("vi", "en")
 
 
-def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any]:
+def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
+                   chep_loi: bool = False) -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
     Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
@@ -679,7 +684,7 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "") -> dict[str, Any
         return {"ok": False, "error": f"nghe tệp lỗi: {str(exc)[:200]}"}
 
     doan = [Doan(c.bat_dau, c.ket_thuc, c.chu) for c in cau]
-    dich = ts.giai_ma_target(nguon, target)
+    dich = nguon if chep_loi else ts.giai_ma_target(nguon, target)
     if dich != nguon and not ts.is_configured():
         return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
     return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc)

@@ -1851,6 +1851,77 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
     logger.warning("zalop Word sendFile fail path=%s", link)
 
 
+def _lam_viec_dich(thread_id: str, thread_type: int,
+                   pend: dict | None, chon: dict) -> None:
+    """Chạy việc dịch theo lựa chọn người dùng vừa bấm trong menu.
+
+    Ba nguồn (chữ / link / tệp) × hai kiểu kết quả (.srt / bản chữ) × tiếng đích
+    — tất cả do NGƯỜI DÙNG chọn, không đoán. Xem services/dich_cho.py.
+    """
+    from services import dich_cho as _dc
+    from services import translate_service as _ts
+    from services import video_dich as _vd
+
+    if not pend:
+        return
+    kieu = str(chon.get("kieu") or "phu-de")
+    target = _dc.target_cho_may(chon)
+    try:
+        # ── Chữ: dịch ngay, không có chuyện phụ đề ───────────────────────────
+        if _dc.la_chu(pend):
+            nd = str(pend.get("chu") or "")
+            ma = target[4:] if target.startswith("cap:") else (target or "")
+            try:
+                nguon, _ = _ts.detect(nd[:5000])
+                dich = _ts.giai_ma_target(nguon, target)
+                if nguon and nguon == dich:
+                    send_message(thread_id,
+                                 f"🌐 Đoạn này đã là tiếng `{dich}` rồi ạ.",
+                                 thread_type)
+                    return
+                ban = _ts.translate(nd, dich, nguon or "auto")
+            except _ts.LoiDich as exc:
+                send_message(thread_id, f"🌐 Máy dịch lỗi: {exc}", thread_type)
+                return
+            send_message(thread_id, f"🌐 {nguon or 'auto'} → {dich}\n{ban}",
+                         thread_type, rich=True)
+            return
+
+        # ── Link / tệp: ra phụ đề hoặc bản chữ ───────────────────────────────
+        send_message(thread_id, "🎬 Em làm ngay, video dài có thể mất vài phút ạ…",
+                     thread_type)
+        send_typing(thread_id, thread_type)
+        # "giu-goc" = chép lời, không dịch: truyền cờ để tầng dưới đặt
+        # đích = chính tiếng nguồn sau khi đã nghe/đọc ra tiếng đó.
+        _tg = "" if target == "giu-goc" else target
+        _chep = target == "giu-goc"
+        if pend.get("url"):
+            r = _vd.dich_video(pend["url"], _tg, chep_loi=_chep)
+        elif _vd.la_tep_phu_de(str(pend.get("ten") or "")):
+            r = _vd.dich_tep_phu_de(pend["path"], pend.get("ten") or "", _tg,
+                                    chep_loi=_chep)
+        else:
+            r = _vd.dich_tep_video(pend["path"], pend.get("ten") or "", _tg,
+                                   chep_loi=_chep)
+        send_message(thread_id, _vd.bao_cao(r), thread_type)
+        if not r.get("ok"):
+            return
+        if kieu == "chu":
+            _serve_bytes(thread_id, thread_type, r["chu"].encode("utf-8"),
+                         f"loi-thoai.{r['dich']}.txt", "Bản chữ lời thoại")
+            if len(r["chu"]) <= 1500:
+                send_message(thread_id, r["chu"], thread_type)
+            return
+        _serve_bytes(thread_id, thread_type, r["srt"], r["ten"], "Phụ đề")
+        # Bản chữ-trên cho video đã có chữ in cứng ở đáy hình.
+        _serve_bytes(thread_id, thread_type,
+                     _vd.srt_chu_tren(r["srt"].decode("utf-8")).encode("utf-8"),
+                     f"phu-de-tren.{r['dich']}.srt",
+                     "Bản chữ hiện ở MÉP TRÊN (video đã có chữ sẵn ở dưới)")
+    finally:
+        _dc.don_tep(pend)
+
+
 def _serve_bytes(thread_id: str, thread_type: int, du_lieu: bytes, ten: str,
                  ghi_chu: str = "") -> None:
     """Gửi một tệp có sẵn trong bộ nhớ (phụ đề .srt…) — cùng đường với
@@ -2551,24 +2622,29 @@ def _process_ai(ev: dict) -> None:
     if text:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
-            # Link video → phụ đề .srt (gửi được tệp qua bot server).
+            from services import dich_cho as _dc
             from services import video_dich as _vd
             _nd_vd = _ts._bo_tag_dau(text)
+            _pk_dich = (f"zalop:{ev.get('account_id')}:{thread_id}:"
+                        f"{ev.get('sender_id') or ''}")
+            # Link video → HỎI trước (kiểu kết quả + tiếng đích), không tự đoán.
             if _vd.la_link_video(_nd_vd):
-                send_message(thread_id, "🎬 Đang lấy phụ đề và dịch, chờ em chút ạ…",
-                             thread_type, account=acc_id)
-                _rv = _vd.dich_video(_nd_vd)
-                if not _rv.get("ok"):
-                    send_message(thread_id, _vd.bao_cao(_rv), thread_type,
-                                 account=acc_id)
-                    return
-                send_message(thread_id, _vd.bao_cao(_rv), thread_type,
-                             account=acc_id)
-                _serve_bytes(thread_id, thread_type, _rv["srt"], _rv["ten"],
-                             "Phụ đề đã dịch")
-                if len(_rv["chu"]) <= 1500:
-                    send_message(thread_id, _rv["chu"], thread_type,
-                                 account=acc_id)
+                _dc.set_pending(_pk_dich, url=_vd.la_link_video(_nd_vd),
+                                ten=_vd.la_link_video(_nd_vd))
+                send_message(thread_id, _dc.menu(_dc.get_pending(_pk_dich) or {}),
+                             thread_type, account=acc_id, co_nut_chon=True)
+                return
+            # Chữ KHÔNG nêu tiếng đích → hỏi. Nêu rồi ("/dich tiếng nhật …")
+            # thì làm ngay, khỏi hỏi (chốt 14/08). Phải bóc CHÍNH chữ lệnh ra
+            # trước (_bo_tag_dau chỉ bóc tag bot), kẻo nội dung chờ còn dính
+            # "/dich" và menu hiện ra cả chữ lệnh.
+            _phan_dich = _nd_vd.split(maxsplit=1)
+            _sau_lenh = _phan_dich[1].strip() if len(_phan_dich) > 1 else ""
+            _ma_dich, _con_lai = _ts._phan_giai_dich(_sau_lenh)
+            if not _ma_dich and _con_lai.strip():
+                _dc.set_pending(_pk_dich, chu=_con_lai.strip())
+                send_message(thread_id, _dc.menu(_dc.get_pending(_pk_dich) or {}),
+                             thread_type, account=acc_id, co_nut_chon=True)
                 return
             send_message(thread_id, _ts.lenh_dich(text), thread_type,
                          account=acc_id, rich=True)
@@ -2628,6 +2704,29 @@ def _process_ai(ev: dict) -> None:
     # lời của A — B cướp mất lượt mà không ai biết, và A trả lời sau thì bản chờ
     # đã bị lấy đi rồi. Chờ là chờ theo từng người (chủ máy chốt 05/08).
     # `pkey` đã tính ở trên, ngay trước cổng tag — cổng đó cần tra bản chờ.
+
+    # Dịch chờ: menu chọn kiểu kết quả + tiếng đích (chữ / link / tệp video /
+    # tệp phụ đề). Xét TRƯỚC bản chờ PDF vì hai sổ chờ dùng cùng khoá phiên và
+    # người dùng chỉ có thể đang trả lời MỘT menu — cái vừa gửi.
+    from services import dich_cho as _dc
+    if text and _dc.has_pending(pkey):
+        from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi_dc
+        _p_dc = _dc.get_pending(pkey) or {}
+        _chon = _dc.giai_chon(text, cho_chu=_dc.la_chu(_p_dc))
+        if _chon is None and _la_moi_dc(text):
+            _dc.don_tep(_dc.pop_pending(pkey))   # yêu cầu mới → bỏ menu, đi tiếp
+        elif _chon is not None:
+            if _chon.get("bo"):
+                _dc.don_tep(_dc.pop_pending(pkey))
+                send_message(thread_id, "Vâng, em bỏ ạ.", thread_type)
+                return
+            if _chon.get("thieu_tieng"):
+                send_message(thread_id,
+                             "Tiếng nào ạ? Nhắn lại kèm tên tiếng, ví dụ "
+                             "«4 nhật» hoặc «5 anh».", thread_type)
+                return
+            _lam_viec_dich(thread_id, thread_type, _dc.pop_pending(pkey), _chon)
+            return
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
@@ -2784,13 +2883,11 @@ def _process_ai(ev: dict) -> None:
             _moi_luu_online(ev, thread_id, name or "document.pdf", data,
                             menu_dang_mo=True)
             return
-        # Video / âm thanh → NGHE ra chữ rồi dịch thành phụ đề .srt. Đi thẳng
-        # không hỏi menu: khác PDF (7 ý định), tệp video chỉ có một việc làm
-        # được. Nghe bằng CPU nên nói trước là lâu, kẻo tưởng bot chết.
+        # Video / âm thanh / tệp phụ đề → hỏi menu (kiểu kết quả + tiếng đích)
+        # rồi mới làm. Nghe bằng CPU nên chọn sai là mất cả tiếng chờ lại.
         from services import video_asr as _va
-        if _va.la_tep_nghe_duoc(name):
-            send_message(thread_id, "🎬 Em đang nghe và dịch, video dài có "
-                                    "thể mất vài phút ạ…", thread_type)
+        from services import video_dich as _vd_ten
+        if _va.la_tep_nghe_duoc(name) or _vd_ten.la_tep_phu_de(name):
             send_typing(thread_id, thread_type)
             # Trần 250MB + 5 phút tải: video dài hơn mức nghe được (30 phút)
             # cũng chỉ cỡ này. Trần mặc định 50MB của net_guard giữ nguyên cho
@@ -2802,30 +2899,24 @@ def _process_ai(ev: dict) -> None:
                                         "mạng lỗi). Video YouTube thì gửi em "
                                         "link sẽ nhanh hơn nhiều ạ.", thread_type)
                 return
-            import os as _os
             import tempfile as _tmpf
-            from services import video_dich as _vd
+            from services import dich_cho as _dc
             _suf = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ".mp4"
             with _tmpf.NamedTemporaryFile(suffix=_suf, delete=False) as _f:
                 _f.write(data)
                 _vpath = _f.name
-            try:
-                _rv = _vd.dich_tep_video(_vpath, name)
-            finally:
-                try:
-                    _os.unlink(_vpath)
-                except OSError:
-                    pass
-            send_message(thread_id, _vd.bao_cao(_rv), thread_type)
-            if _rv.get("ok"):
-                _serve_bytes(thread_id, thread_type, _rv["srt"], _rv["ten"],
-                             "Phụ đề")
-                if len(_rv["chu"]) <= 1500:
-                    send_message(thread_id, _rv["chu"], thread_type)
+            # HỎI trước khi nghe: nghe một video 2 giờ xong mới biết người dùng
+            # cần bản chữ chứ không phải .srt là mất cả tiếng (chốt 14/08).
+            _pk_v = (f"zalop:{ev.get('account_id')}:{thread_id}:"
+                     f"{ev.get('sender_id') or ''}")
+            _dc.set_pending(_pk_v, path=_vpath, ten=name, so_byte=len(data))
+            send_message(thread_id, _dc.menu(_dc.get_pending(_pk_v) or {}),
+                         thread_type, co_nut_chon=True)
             return
         send_message(thread_id,
-                     f"📎 Em nhận PDF, Word, Excel và PowerPoint thôi ạ. "
-                     f"File: {name or 'không rõ'}", thread_type)
+                     f"📎 Em nhận PDF, Word, Excel, PowerPoint, video/âm thanh "
+                     f"và tệp phụ đề (.srt/.vtt) ạ. File: {name or 'không rõ'}",
+                     thread_type)
         return
 
     # Ảnh: không caption → menu; có caption → parse intent / hỏi prompt nếu cần.
