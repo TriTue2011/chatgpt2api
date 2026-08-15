@@ -2730,6 +2730,12 @@ def _process_ai(ev: dict) -> None:
                      co_nut_chon=bool(_out_fb.get("choices")))
         return
 
+    # Khoá chờ — tính SỚM, TRƯỚC mọi cổng lệnh. Ba cổng bên dưới (hướng dẫn,
+    # /stt, /tts) đều tra sổ chờ theo khoá này; gán sau chúng thì Python coi
+    # pkey là biến cục bộ chưa gán và ném UnboundLocalError ngay khi người dùng
+    # gõ lệnh — lỗi 15/08, bắt được lúc rà lại runtime.
+    pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
+
     # Lệnh /dich — dịch máy trong stack, do CODE làm, KHÔNG qua LLM (hỏi model
     # dịch thì tốn hạn mức, chậm, và tin dài bị cắt bớt — đo thật 13/08 khi
     # khối này còn thiếu: /dich rơi vào LLM). Cùng nếp /id, /facebook: đứng
@@ -2792,9 +2798,6 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, _ts.lenh_dich(text), thread_type,
                          account=acc_id, rich=True)
             return
-
-    # Khoá chờ — tính SỚM vì cổng tag bên dưới cần tra nó.
-    pkey = f"zalop:{ev.get('account_id')}:{thread_id}:{ev.get('sender_id') or ''}"
 
     # Bộ lọc TAG (nhóm): native mention / keyword / @alias — chung tag_gate_allows.
     if thread_type == 1 and thread_id:

@@ -79,14 +79,14 @@ def test_menu_chu_cat_doan_xem_truoc():
 
 
 @pytest.mark.parametrize("text, kieu, target", [
-    ("1", "phu-de", "cap:vi"),
-    ("2", "chu", "cap:vi"),
+    ("1", "phu-de", "vi"),
+    ("2", "chu", "vi"),
     ("3", "phu-de", "giu-goc"),
-    ("4 anh", "phu-de", "cap:en"),
-    ("4 nhật", "phu-de", "cap:ja"),
-    ("5 trung", "chu", "cap:zh"),
-    ("5 hàn", "chu", "cap:ko"),
-    ("4 japanese", "phu-de", "cap:ja"),
+    ("4 anh", "phu-de", "en"),
+    ("4 nhật", "phu-de", "ja"),
+    ("5 trung", "chu", "zh"),
+    ("5 hàn", "chu", "ko"),
+    ("4 japanese", "phu-de", "ja"),
 ])
 def test_giai_chon_video(text, kieu, target):
     assert dc.giai_chon(text) == {"kieu": kieu, "target": target}
@@ -101,7 +101,7 @@ def test_giai_chon_4_thieu_tieng_thi_bao():
     ("1", "vi"), ("2", "en"), ("3", "ja"), ("4", "zh"), ("5", "ko"),
 ])
 def test_giai_chon_chu(text, ma):
-    assert dc.giai_chon(text, cho_chu=True) == {"kieu": "chu", "target": f"cap:{ma}"}
+    assert dc.giai_chon(text, cho_chu=True) == {"kieu": "chu", "target": ma}
 
 
 @pytest.mark.parametrize("text", ["thôi", "bỏ", "huỷ", "cancel"])
@@ -121,8 +121,12 @@ def test_khong_phai_tra_loi_menu(text):
 
 
 def test_target_cho_may():
-    assert dc.target_cho_may({"target": "cap:vi"}) == ""          # cặp Việt↔Anh mặc định
-    assert dc.target_cho_may({"target": "cap:ja"}) == "cap:ja"
+    # Dạng CẶP cũ (tab Dịch bản cũ còn gửi): để máy tự chọn chiều.
+    assert dc.target_cho_may({"target": "cap:vi"}) == ""
+    # Mã TRƠ: đúng tiếng đó, không suy diễn gì thêm — đây là dạng menu ba bước
+    # dùng, vì nó đã hỏi rõ cả nguồn lẫn đích.
+    assert dc.target_cho_may({"target": "vi"}) == "vi"
+    assert dc.target_cho_may({"target": "ja"}) == "ja"
     # giữ nguyên tiếng gốc: biết nguồn thì dịch-sang-chính-nó = chép lời
     assert dc.target_cho_may({"target": "giu-goc"}, "en") == "en"
     assert dc.target_cho_may({"target": "giu-goc"}) == "giu-goc"

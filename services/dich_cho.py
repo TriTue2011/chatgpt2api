@@ -394,17 +394,21 @@ def giai_chon(text: str, *, cho_chu: bool = False) -> dict[str, Any] | None:
         # Cũng truyền thẳng mã: người dùng bấm số nào là muốn ĐÚNG tiếng đó.
         # Bọc "cap:" thì đoạn chữ tiếng Nhật chọn "Tiếng Anh" lại ra tiếng Việt.
         return {"kieu": "chu", "target": _SO_TIENG_CHU[so]}
+    # Mã trơ ở mọi nhánh, không trộn hai kiểu hợp đồng trong một hàm: "cap:xx"
+    # nghĩa là CẶP với tiếng Việt, còn mã trơ nghĩa là ĐÚNG tiếng đó. Để lẫn
+    # thì chỗ gọi phải nhớ nhánh nào ra kiểu nào — đúng loại nhầm đã làm
+    # Nhật→Hàn dịch ra tiếng Việt.
     if so == "1":
-        return {"kieu": "phu-de", "target": "cap:vi"}
+        return {"kieu": "phu-de", "target": "vi"}
     if so == "2":
-        return {"kieu": "chu", "target": "cap:vi"}
+        return {"kieu": "chu", "target": "vi"}
     if so == "3":
         return {"kieu": "phu-de", "target": "giu-goc"}
     # 4 / 5 — phải kèm tên tiếng
     kieu = "phu-de" if so == "4" else "chu"
     for ma, ten in TIENG.items():
         if any(x in con for x in ten):
-            return {"kieu": kieu, "target": f"cap:{ma}"}
+            return {"kieu": kieu, "target": ma}
     return {"thieu_tieng": True, "kieu": kieu}
 
 
