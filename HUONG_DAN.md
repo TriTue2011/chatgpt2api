@@ -612,7 +612,7 @@ docker exec c2a /app/.venv/bin/python /app/scripts/kiem_nghe.py vi --so 200
 ```
 
 Bảng đọc phủ đủ phụ âm đầu và phụ âm cuối tiếng Việt, cộng 10–16 câu cho mỗi
-tiếng còn lại. Ba điều cần biết khi đọc kết quả:
+tiếng còn lại. Bốn điều cần biết khi đọc kết quả:
 
 - **Câu mà ≥70% giọng đều sai** được tách riêng và không dùng để xếp hạng: đó
   hoặc là STT nghe không ra, hoặc cả họ model đọc kém. Muốn phân định thì đo một
@@ -620,30 +620,66 @@ tiếng còn lại. Ba điều cần biết khi đọc kết quả:
   ở họ đó.
 - **Chữ đồng âm không tính là rụng.** Tiếng Việt Bắc bộ: d/gi/r cùng đọc /z/, s/x
   cùng /s/, ch/tr cùng /tɕ/. Máy nghe "da" ra "ra" là âm vẫn còn, chỉ khác chữ.
+  Tiếng Nhật cũng vậy với kana: máy nghe 今日 ra きょう là đọc đúng mà ghi khác
+  chữ, nên bảng nhận cả hai cách viết.
 - **Cột "âm xát"** đo riêng độ rõ của /s/ (chữ x, s). Cần cột này vì vòng
   TTS→STT chỉ bắt được âm *bị thay* hoặc *bị mất*; âm còn mà đọc quá nhẹ thì máy
   vẫn nghe ra trong khi tai người đã thấy lệch ("xin" nghe như "chin"). Số này
   chỉ đáng tin ở mức thứ tự và mức thô mạnh/yếu.
+- **Xếp hạng theo cột "lượt hụt", đừng theo riêng cột "đúng".** Cột đúng lấy đa
+  số các lần đọc lại nên nó bão hoà: đọc lại càng nhiều lần thì các giọng càng
+  dồn về cùng một điểm. Đo giọng Nhật ra bốn giọng cùng 12/13 mà lượt hụt là
+  2/55 với 10/55 — chênh năm lần.
+
+**Giọng mặc định của tiếng Nhật là giọng 5 (Nữ F1)**, chọn theo đúng bảng đó
+(2/55 lượt hụt, so với 10/55 của giọng 0). Tiếng Hàn giữ giọng 0. Đổi trong
+Cài đặt → Giọng nói & Loa → Theo từng tiếng.
 
 Kết quả đo ngày 14/08/2026 nằm trong `services/voice/chat_luong_giong.py`, và
 hiện thành nhãn ngay trong ô chọn giọng ("đọc rõ" / "⚠ rụng gi, k, d · âm xát
-yếu") nên không cần tra tài liệu mới biết giọng nào tốt.
+yếu") nên không cần tra tài liệu mới biết giọng nào tốt. Đã đo **52 giọng tiếng
+Việt** của cả ba họ; muốn chắc ăn thì chọn theo thứ tự này:
 
-**Chất lượng NGHE đo được** (150 bản thu tiếng người mỗi tiếng, 14/08/2026):
-
-| Tiếng | Sai từ | Sai ký tự | Không nghe ra chữ nào |
+| Họ giọng | Đọc đủ 33/33 âm | Giọng kém nhất | Gợi ý |
 |---|---|---|---|
-| Việt | 9,3% | 6,5% | 0 |
-| Anh | 16,6% | 15,0% | **11/150 (7%)** |
-| Trung | — | 13,6% | 0 |
-| Nhật | — | 9,8% | 0 |
-| Hàn | — | 55,5% | **67/150 (45%)** |
+| **VieNeu** (48 kHz) | 3/14 | 30/33 | Thái Sơn · Mai Anh · Thục Đoan đọc trọn, và cả họ không giọng nào tệ |
+| **Piper** | 10/19 | 28/33 | ngochuyen · ngocngan3701 · tranthanh3870 (âm xát mạnh) |
+| **NghiTTS** | 2/19 | 26/33 | chỉ manh-dung và viet-thao; các giọng khác rụng âm rõ |
+
+Âm /k/ (chữ "kem") là chỗ yếu chung của mọi họ — 8/14 giọng VieNeu, 13/19 giọng
+NghiTTS làm rụng nó, riêng Piper thì 15/19 giọng đọc đúng.
+
+**Chất lượng NGHE đo được** (150 bản thu tiếng người mỗi tiếng — cùng bộ, ba
+đường: model tại chỗ trước 15/08, model tại chỗ **hiện nay**, và máy GPU):
+
+| Tiếng | Tại chỗ (cũ) | **Tại chỗ (nay)** | GPU | Bỏ trắng: cũ → nay → GPU |
+|---|---|---|---|---|
+| Việt | 9,3% sai từ | 9,3% sai từ | 8,4% | 0 → 0 → 0 |
+| Anh | 16,6% sai từ | 16,6% sai từ | **4,5%** | **11/150** → 11/150 → **0** |
+| Trung | 13,6% sai ký tự | **10,2%** | 10,0% | 0 → 0 → 0 |
+| Nhật | 9,8% sai ký tự | **7,0%** | 5,1% | 0 → 0 → 0 |
+| Hàn | 55,5% sai ký tự | **6,2%** | 2,8% | **67/150** → **0** → 0 |
+
+Cột giữa đổi được nhờ **SenseVoice** — một model làm cả Trung/Nhật/Hàn, thay ba
+model Zipformer riêng (`scripts/download_stt_da_ngu.py --sense`; tải 228 MB thay
+cho 1,3 GB, còn trên đĩa thì 229 MB so với 295 MB). Đáng kể nhất là tiếng Hàn:
+model cũ **trả rỗng 45% số đoạn** mà không báo lỗi, nay hết hẳn. Chưa tải
+SenseVoice thì hệ thống tự dùng ba model cũ, không đứt gì.
+
+Hai thứ đã đo và **quyết định không đổi**: model tiếng Việt 70.000 giờ mới
+(`sherpa-onnx-zipformer-vi-2025-04-20`) đo ra 9,8% sai từ, tức không hơn model
+đang chạy; và tiếng Anh giữ Parakeet vì bộ dò ngôn ngữ vi/en đang dựa vào độ tự
+tin của model transducer, mà SenseVoice không trả số đó (dù riêng độ chính xác
+thì SenseVoice hơn: 8,2% sai từ, không bỏ trắng bản nào — ai cần thì bật bằng
+`voice.stt.sense_tieng = "zh,ja,ko,en"`).
 
 Hai chỗ cần lưu ý khi làm phụ đề:
 
 - **Tiếng Anh bỏ trắng 7% đoạn** — Parakeet không trả chữ nào mà cũng không báo
-  lỗi, nên phụ đề mất dòng một cách im lặng. Dịch phim tiếng Anh nhiều thì nên
-  cân nhắc đường faster-whisper trên máy GPU (đo riêng: sai 10,3% so với 21,3%).
+  lỗi, nên phụ đề mất dòng một cách im lặng. Đây là lý do có đường
+  faster-whisper trên máy GPU ([docs/NGHE_GPU.md](docs/NGHE_GPU.md)): mặc định
+  chỉ tiếng Anh và tiếng Hàn đi GPU — đúng hai tiếng bỏ trắng — còn tiếng Việt
+  giữ tại chỗ vì hai đường gần như hoà nhau (9,3% so với 8,4%).
 - **Tiếng Hàn 55,5% là do lệch miền, không phải model hỏng.** Model học trên
   tiếng nói hội thoại câu ngắn (KsponSpeech) nên đọc thoại phim khá hơn số này
   nhiều, còn giọng đọc bản tin câu dài thì hay trả rỗng. Đã kiểm: model đọc đúng

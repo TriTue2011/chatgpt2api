@@ -18,6 +18,53 @@ Chỗ nguy là **bỏ trắng không kèm lỗi**: bộ nghe trả về rỗng, 
 đoạn đó không có tiếng, và phim thiếu dòng mà không ai biết. Sai chữ thì còn đọc
 ra được là sai; mất dòng thì không.
 
+## Máy GPU nghe được bao nhiêu — đo trên ĐÚNG 150 bản thu đó
+
+Cùng ngày 14/08/2026, chạy lại y bộ đo trên đường GPU (faster-whisper large-v3,
+int8_float16, RTX 2060 Super). Hai cột đặt cạnh nhau nên so được trực tiếp:
+
+| Tiếng | Sai từ tại chỗ | **Sai từ GPU** | Sai ký tự tại chỗ | **Sai ký tự GPU** | Bỏ trắng tại chỗ | **Bỏ trắng GPU** |
+|---|---|---|---|---|---|---|
+| Việt | 9,3% | **8,4%** | 6,5% | **5,0%** | 0 | **0** |
+| Anh | 16,6% | **4,5%** | 15,0% | **2,7%** | 11/150 | **0** |
+| Trung | — | — | 13,6% | **10,0%** | 0 | **0** |
+| Nhật | — | — | 9,8% | **5,1%** | 0 | **0** |
+| Hàn | — | — | 55,5% | **2,8%** | 67/150 | **0** |
+
+Ba điều đọc ra được từ bảng:
+
+- **Không bản thu nào bị bỏ trắng**, kể cả 67 bản tiếng Hàn mà model tại chỗ trả
+  rỗng. Đây mới là lý do dựng đường GPU; tỉ lệ sai chỉ là phần thêm.
+- **Tiếng Hàn 55,5% xuống 2,8%** xác nhận chẩn đoán lệch miền: cùng bản thu, một
+  model khác nghe gần như trọn vẹn, nên bản thu không có gì khó bất thường.
+- **Tiếng Việt gần như hoà** (9,3% so với 8,4% sai từ). Đây là căn cứ để tiếng
+  Việt **giữ tại chỗ**: đổi sang GPU đổi lại chưa tới 1 điểm phần trăm, mà phải
+  đánh cược việc thường ngày vào máy thứ hai.
+
+Tiếng Trung và tiếng Nhật thì GPU khá hơn rõ (13,6% xuống 10,0%; 9,8% xuống
+5,1%) nhưng tại chỗ **không bỏ trắng bản nào**, nên mặc định vẫn để tại chỗ. Ai
+dịch nhiều phim Trung/Nhật và chấp nhận phụ thuộc máy GPU thì bật thêm bằng
+`voice.stt.gpu_tieng = "en,ko,ja,zh"`.
+
+## Cập nhật 15/08: phía tại chỗ đã khá lên nhiều, GPU vẫn giữ vai
+
+Đổi model nghe tại chỗ của Trung/Nhật/Hàn sang **SenseVoice** (xem mục 4.2f của
+`HUONG_DAN.md`) thì bảng trên đổi hẳn ý nghĩa ở tiếng Hàn:
+
+| Tiếng | Tại chỗ trước | Tại chỗ nay | GPU |
+|---|---|---|---|
+| Hàn | 55,5% · bỏ trắng 67/150 | **6,2% · bỏ trắng 0** | 2,8% |
+| Nhật | 9,8% | **7,0%** | 5,1% |
+| Trung | 13,6% | **10,2%** | 10,0% |
+
+Vì sao **vẫn giữ tiếng Hàn trong danh sách đi GPU**: 6,2% với 2,8% là hơn gấp
+đôi số lỗi, và phim thì đáng dùng đường tốt hơn khi máy GPU đang bật. Nhưng lý
+do có mặt của đường GPU đổi từ **"cứu bàn thua"** sang **"nâng chất"** — máy GPU
+tắt thì phụ đề tiếng Hàn nay vẫn dùng được, chứ không mất 45% số dòng như trước.
+
+Tiếng Anh thì chưa đổi (vẫn Parakeet, vẫn bỏ trắng 7%), nên với tiếng Anh đường
+GPU vẫn đúng nghĩa cứu bàn thua.
+
 Riêng con số 55,5% của tiếng Hàn là **lệch miền huấn luyện**, không phải model
 hỏng — đã kiểm ba đường: model đọc đúng bộ thử của chính nó (3/4 câu khớp từng
 chữ), cắt audio còn 10 giây vẫn trả rỗng (nên không phải giới hạn độ dài), và bản
@@ -39,7 +86,25 @@ curl -s http://<ip-máy-gpu>:5002/health     # {"status":"ok","model":"large-v3"
 ```
 
 Model large-v3 (~3 GB) tải lần đầu vào volume `fw-nghe-data`, lần sau khởi động
-nhanh. Card 8 GB còn phải gánh camera và máy dịch nên dịch vụ chỉ giải mã **một
+nhanh.
+
+`/health` khai luôn **nhiệt độ card**, để đứng từ máy khác cũng xem được trong
+lúc chạy phép đo dài:
+
+```bash
+curl -s http://172.16.10.220:5002/health
+# {"status":"ok","model":"large-v3","compute":"int8_float16",
+#  "gpu":{"nhiet_do_c":63.0,"tai_pct":97.0,"vram_dung_mb":5893.0,…}}
+```
+
+Cần nhìn số này vì card 8 GB đó còn gánh camera Frigate: nóng tới ngưỡng thì nó
+tự hạ xung, và bảng kết quả vẫn ra số bình thường như thể không có gì — hoá ra
+đo card đang bị bóp chứ không phải đo model. `scripts/kiem_nghe.py` khi chạy
+với `--gpu` sẽ in nhiệt độ mỗi 25 bản thu và cảnh báo từ 80°C.
+
+Bản fw-nghe cũ chưa có khoá `gpu` thì mọi thứ vẫn chạy, chỉ là không có số —
+dựng lại container để có (`docker build -t fw-nghe . && docker rm -f fw-nghe`
+rồi chạy lại lệnh `docker run` ở trên). Card 8 GB còn phải gánh camera và máy dịch nên dịch vụ chỉ giải mã **một
 request một lúc** và dùng lô 2 — đo trên 2060S thì lô 8 và lô 4 đều CUDA OOM với
 video 10 phút.
 

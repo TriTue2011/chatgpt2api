@@ -26,6 +26,16 @@ giống TTS không", và cũng là thứ cho biết bảng chấm TTS có bị q
     ja          —         9,8%   0
     ko          —        55,5%   67/150  (45%)
 
+Cùng ngày, cùng 150 bản thu đó, đo qua ``--gpu`` (faster-whisper large-v3 trên
+RTX 2060 Super) — không tiếng nào còn bỏ trắng bản nào::
+
+    tiếng   sai từ   sai ký tự   không nghe ra chữ nào
+    vi        8,4%        5,0%   0
+    en        4,5%        2,7%   0
+    zh          —        10,0%   0
+    ja          —         5,1%   0
+    ko          —         2,8%   0
+
 Hai chỗ cần biết trước khi tin mấy con số này:
 
 - **Tiếng Hàn 55,5% KHÔNG phải model hỏng, mà là lệch miền.** Model
@@ -99,12 +109,65 @@ def _nghe_gpu(tep: Path, lang: str, url: str, batch: int = 2) -> str:
     return " ".join(d.get("chu") or "" for d in (r.json().get("doan") or []))
 
 
+def _gpu_nhiet(url: str) -> tuple[float, float] | None:
+    """(nhiệt độ °C, tải %) của card bên máy GPU — None nếu nó không khai.
+
+    Đo dài mà không nhìn nhiệt độ thì dễ đo nhầm: card nóng tới ngưỡng sẽ tự hạ
+    xung, và bảng kết quả vẫn ra số bình thường như thể không có gì. Dịch vụ
+    fw-nghe bản cũ chưa trả khoá "gpu" thì hàm này trả None và bảng im lặng như
+    trước, không hỏng.
+    """
+    import requests
+
+    try:
+        d = requests.get(f"{url.rstrip('/')}/health", timeout=5).json()
+        g = d.get("gpu") or {}
+        return float(g["nhiet_do_c"]), float(g["tai_pct"])
+    except Exception:
+        return None
+
+
 def _tu(s: str, lang: str) -> list[str]:
     """Tách thành đơn vị để so: tiếng Trung/Nhật/Hàn tính theo KÝ TỰ."""
     chuan = _chuan(s)
     if lang in _A_DONG:
         return [c for c in chuan if not c.isspace()]
     return chuan.split()
+
+
+# Chữ chỉ SỐ của từng tiếng. Dùng để đếm riêng phần lỗi chỉ là KHÁC CÁCH VIẾT
+# số, không phải nghe sai: bản gốc FLEURS viết "Twentieth century" còn máy viết
+# "20th century" — đọc lên y hệt, phụ đề in ra cũng không sai, nhưng thước đo
+# tính là sai trọn một từ. Cùng loại với chuyện chữ Hán và kana bên bệ đo phát
+# âm: chấm chính tả trong khi đang muốn đo cái nghe.
+_SO_CHU: dict[str, frozenset[str]] = {
+    "en": frozenset((
+        "zero one two three four five six seven eight nine ten eleven twelve "
+        "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty "
+        "thirty forty fifty sixty seventy eighty ninety hundred thousand "
+        "million billion trillion first second third fourth fifth sixth "
+        "seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth "
+        "fifteenth sixteenth seventeenth eighteenth nineteenth twentieth "
+        "thirtieth fortieth fiftieth hundredth thousandth millionth"
+    ).split()),
+    "vi": frozenset((
+        "không một mốt hai ba bốn tư năm lăm sáu bảy tám chín mười mươi trăm "
+        "nghìn ngàn triệu tỷ tỉ"
+    ).split()),
+}
+# Chữ số của ba tiếng viết bằng chữ vuông và Hàn — so theo KÝ TỰ nên liệt kê
+# từng chữ một.
+_SO_KY_TU = frozenset("0123456789〇零一二三四五六七八九十百千万萬億"
+                      "영일이삼사오육칠팔구십백천만억")
+
+
+def _co_so(don_vi: str, lang: str) -> bool:
+    """Đơn vị này là số (chữ số, hay chữ đọc số) hay không."""
+    if any(c.isdigit() for c in don_vi):
+        return True
+    if lang in _A_DONG:
+        return don_vi in _SO_KY_TU
+    return _bo_thanh(don_vi) in _SO_CHU.get(lang, frozenset())
 
 
 def _khoang_cach(a: list[str], b: list[str]) -> int:
@@ -138,7 +201,47 @@ def _lech_phu_am(dung: list[str], nghe: list[str]) -> list[tuple[str, str]]:
     return ra
 
 
-def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
+def _rec_thu(duong: Path, kieu: str, luong: int = 4, lang: str = ""):
+    """Dựng bộ nhận dạng từ MỘT thư mục model bất kỳ, để ĐO THỬ model mới.
+
+    Cố ý không đi qua ``services.voice.engines``: ở đó model gắn với cấu hình
+    đang chạy thật, nên muốn thử model mới thì phải đổi cấu hình của máy đang
+    phục vụ rồi mới đo được — làm ngược. Ở đây đo xong mới quyết định đổi.
+    """
+    import sherpa_onnx
+
+    def _mot(mau: str) -> str:
+        hits = sorted(duong.glob(mau))
+        if not hits:
+            raise SystemExit(f"thiếu file khớp '{mau}' trong {duong}")
+        return str(hits[0])
+
+    if kieu == "sense_voice":
+        # Khai đúng tiếng thay vì để model tự dò: ta biết chắc tiếng của bộ đo,
+        # còn tự dò thì thêm một chỗ hỏng được mà lại tính vào điểm của model.
+        return sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=_mot("model*.onnx"), tokens=str(duong / "tokens.txt"),
+            num_threads=luong, language=lang, use_itn=True)
+    return sherpa_onnx.OfflineRecognizer.from_transducer(
+        encoder=_mot("encoder*.onnx"), decoder=_mot("decoder*.onnx"),
+        joiner=_mot("joiner*.onnx"), tokens=str(duong / "tokens.txt"),
+        num_threads=luong, sample_rate=16000, feature_dim=80,
+        decoding_method="greedy_search")
+
+
+def _nghe_rec(rec, wav16: bytes) -> str:
+    import numpy as np
+
+    rate, _w, _k, pcm = eng._wav_parts(wav16)
+    st = rec.create_stream()
+    st.accept_waveform(rate, np.frombuffer(pcm, dtype=np.int16)
+                       .astype(np.float32) / 32768.0)
+    rec.decode_stream(st)
+    return str(st.result.text or "")
+
+
+def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "",
+                 rec=None) -> None:
     ma = MA_FLEURS[lang]
     tsv = thu_muc / f"{ma}.test.tsv"
     if not tsv.is_file():
@@ -152,13 +255,16 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
     kho = {t.name: t for t in (thu_muc / ma).rglob("*.wav")}
     print(f"\n=== NGHE tiếng {lang} · bộ FLEURS {ma} · {len(cap)} bản thu "
           f"({len(kho)} tệp trên đĩa), đo {min(so, len(cap))} bản"
-          + (f" · qua GPU {gpu}" if gpu else " · model local"))
+          + (f" · qua GPU {gpu}" if gpu else
+             " · model ĐANG THỬ" if rec is not None else " · model local"))
 
     tong_tu = tong_loi = 0
     tong_kt = tong_loi_kt = 0
+    tong_tu_ks = tong_loi_ks = 0   # ks = khi bỏ mọi đơn vị có số ra khỏi cả hai bên
     lech: dict[tuple[str, str], int] = {}
     xong = bo = rong = 0
     giay = 0.0
+    nhiet: list[tuple[float, float]] = []   # (°C, tải %) lấy mỗi 25 bản thu
     for ten, chu_dung in cap:
         if xong >= so:
             break
@@ -180,6 +286,7 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
             continue
         try:
             ra = (_nghe_gpu(tep, lang, gpu) if gpu
+                  else _nghe_rec(rec, wav16) if rec is not None
                   else eng.transcribe(wav16, lang=lang))
         except Exception:
             # "Không nghe ra chữ nào" phải tính là SAI TRỌN, không được bỏ qua:
@@ -195,10 +302,23 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
         kt_nghe = list(_chuan(ra).replace(" ", ""))
         tong_kt += len(kt_dung)
         tong_loi_kt += _khoang_cach(kt_dung, kt_nghe)
+        # Cùng phép so, nhưng bỏ mọi đơn vị có số ra khỏi CẢ HAI bên. Chênh
+        # lệch giữa hai con số là phần lỗi nằm ở chỗ viết số, tức phần mà đổi
+        # model sẽ KHÔNG chữa được.
+        ks_dung = [t for t in dung if not _co_so(t, lang)]
+        ks_nghe = [t for t in nghe if not _co_so(t, lang)]
+        tong_tu_ks += len(ks_dung)
+        tong_loi_ks += _khoang_cach(ks_dung, ks_nghe)
         if lang not in _A_DONG:
             for cap_am in _lech_phu_am(dung, nghe):
                 lech[cap_am] = lech.get(cap_am, 0) + 1
         xong += 1
+        if gpu and xong % 25 == 0:
+            do = _gpu_nhiet(gpu)
+            if do is not None:
+                nhiet.append(do)
+                print(f"  [{xong} bản] GPU {do[0]:.0f}°C · tải {do[1]:.0f}%"
+                      + ("   ⚠ NÓNG — card sắp tự hạ xung" if do[0] >= 80 else ""))
         if xong <= 3:
             print(f"  ví dụ {xong}: đúng  “{chu_dung[:70]}”")
             print(f"            nghe  “{ra[:70]}”")
@@ -210,9 +330,20 @@ def do_mot_tieng(lang: str, so: int, thu_muc: Path, gpu: str = "") -> None:
     if lang not in _A_DONG:      # zh/ja/ko tính theo ký tự nên hai số trùng nhau
         print(f"  sai từ:     {wer:5.1f}%   ({tong_loi}/{tong_tu})")
     print(f"  sai ký tự:  {cer:5.1f}%   ({tong_loi_kt}/{tong_kt})")
+    don_vi = "ký tự" if lang in _A_DONG else "từ"
+    ks = 100.0 * tong_loi_ks / max(tong_tu_ks, 1)
+    print(f"  bỏ chỗ có SỐ: sai {don_vi} {ks:5.1f}%   "
+          f"({tong_loi_ks}/{tong_tu_ks}) — chênh với dòng trên là phần lỗi chỉ "
+          "do KHÁC CÁCH VIẾT số")
     if rong:
         print(f"  KHÔNG NGHE RA CHỮ NÀO: {rong}/{xong} bản "
               f"({100.0 * rong / max(xong, 1):.0f}%) — đã tính là sai trọn")
+    if nhiet:
+        nong = max(t for t, _ in nhiet)
+        print(f"  GPU: nóng nhất {nong:.0f}°C, tải trung bình "
+              f"{sum(u for _, u in nhiet) / len(nhiet):.0f}%"
+              + ("  ⚠ đã chạm ngưỡng hạ xung — số đo có thể là đo card bị bóp"
+                 if nong >= 80 else ""))
     if lech:
         print("\n  Phụ âm đầu hay bị nghe lệch (đúng → nghe ra, số lần):")
         for (a, b), n in sorted(lech.items(), key=lambda kv: -kv[1])[:15]:
@@ -227,10 +358,23 @@ def main() -> None:
     ap.add_argument("--gpu", default="",
                     help="đo qua dịch vụ faster-whisper thay vì model local, "
                          "ví dụ http://172.16.10.220:5002")
+    ap.add_argument("--model", default="",
+                    help="ĐO THỬ model ở thư mục này thay vì model đang cấu "
+                         "hình — không đổi gì của máy đang chạy")
+    ap.add_argument("--kieu", default="transducer",
+                    choices=["transducer", "sense_voice"],
+                    help="loại model của --model")
+    ap.add_argument("--luong", type=int, default=4,
+                    help="số luồng cho --model (mặc định 4, khớp taskset 0-3)")
     a = ap.parse_args()
     tiengs = list(MA_FLEURS) if "all" in a.tieng else a.tieng
     for lang in tiengs:
-        do_mot_tieng(lang, max(1, a.so), Path(a.thu_muc), a.gpu.strip())
+        rec = None
+        if a.model.strip():
+            # Dựng lại theo TỪNG tiếng: SenseVoice nhận tham số tiếng lúc dựng.
+            rec = _rec_thu(Path(a.model.strip()), a.kieu, max(1, a.luong), lang)
+            print(f"\n[đo thử] model {a.model} · kiểu {a.kieu} · tiếng {lang}")
+        do_mot_tieng(lang, max(1, a.so), Path(a.thu_muc), a.gpu.strip(), rec)
 
 
 if __name__ == "__main__":

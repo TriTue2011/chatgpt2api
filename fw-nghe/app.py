@@ -44,9 +44,38 @@ def _lay_model():
     return _model
 
 
+def _gpu_do() -> dict | None:
+    """Nhiệt độ · tải · VRAM · điện của card, đọc bằng nvidia-smi.
+
+    Có mặt ở /health để người ở máy khác xem được card trong lúc chạy phép đo
+    dài. Cần thật, không phải cho vui: card 8 GB này còn gánh camera Frigate,
+    nóng quá thì nó tự hạ xung — lúc đó số đo ra là đo card đang bị bóp chứ
+    không phải đo model, mà bảng kết quả thì trông vẫn bình thường.
+
+    nvidia-smi do nvidia-container-toolkit gắn vào container khi chạy
+    ``--gpus all``; máy nào không có thì trả None chứ không làm hỏng /health.
+    """
+    import subprocess
+
+    try:
+        ra = subprocess.run(
+            ["nvidia-smi",
+             "--query-gpu=temperature.gpu,utilization.gpu,memory.used,"
+             "memory.total,power.draw",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+        cot = [x.strip() for x in ra.stdout.strip().splitlines()[0].split(",")]
+        return {"nhiet_do_c": float(cot[0]), "tai_pct": float(cot[1]),
+                "vram_dung_mb": float(cot[2]), "vram_tong_mb": float(cot[3]),
+                "dien_w": float(cot[4])}
+    except Exception:
+        return None
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL, "compute": COMPUTE}
+    return {"status": "ok", "model": MODEL, "compute": COMPUTE,
+            "gpu": _gpu_do()}
 
 
 @app.post("/nghe")
