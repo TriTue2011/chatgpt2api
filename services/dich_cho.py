@@ -126,7 +126,12 @@ BUOC_VIEC, BUOC_NGUON, BUOC_DICH = "viec", "nguon", "dich"
 VIEC = {
     "phu-de": ("1", "Tạo phụ đề .srt (dịch sang tiếng khác)", True),
     "chu": ("2", "Dịch ra bản chữ (chỉ lời thoại)", True),
-    "chep-loi": ("3", "Chép lời, GIỮ nguyên tiếng gốc (không dịch)", False),
+    "chep-loi": ("3", "Chép lời ra .srt, GIỮ nguyên tiếng gốc", False),
+    # Ô thứ tư này chính là việc "chuyển âm thanh thành văn bản" mà người dùng
+    # hay gọi là STT: không dịch, không mốc thời gian, chỉ chữ. Ba ô trên đều
+    # thiếu nó — ô 3 giữ nguyên tiếng nhưng trả .srt đầy số thứ tự và mốc giờ,
+    # dán vào tài liệu là phải dọn tay.
+    "chu-goc": ("4", "Chép lời ra bản chữ thuần, GIỮ nguyên tiếng gốc", False),
 }
 
 
@@ -205,7 +210,10 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         nguon = ds[int(so) - 1]
         viec = str(pend.get("viec") or "phu-de")
         if not VIEC.get(viec, ("", "", True))[2]:      # chép lời: khỏi hỏi đích
-            return {"kieu": "phu-de", "target": "giu-goc", "nguon": nguon}
+            # "chu-goc" ra BẢN CHỮ, "chep-loi" ra .srt — cùng là không dịch
+            # nhưng khác hẳn thứ người dùng nhận được.
+            return {"kieu": "chu" if viec == "chu-goc" else "phu-de",
+                    "target": "giu-goc", "nguon": nguon}
         _ghi_buoc(key, nguon=nguon, buoc=BUOC_DICH)
         return {"tiep": True}
     ds = _danh_sach_tieng(str(pend.get("nguon") or ""))

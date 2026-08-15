@@ -72,6 +72,27 @@ def docx_song_ngu(cap: Iterable[tuple[str, str]], *, nguon: str = "",
     return buf.getvalue()
 
 
+def docx_mot_ban(chu: str, *, tieu_de: str = "", ghi_chu: str = "") -> bytes:
+    """Một khối chữ → .docx thường (dùng cho bản chép lời, không dịch).
+
+    Tách khỏi ``docx_song_ngu`` vì đây là tài liệu MỘT cột: chép lời xong người
+    ta dán thẳng vào báo cáo, không cần cột đối chiếu nào.
+    """
+    import docx
+
+    d = docx.Document()
+    d.add_heading(tieu_de or "Bản chép lời", level=1)
+    if ghi_chu:
+        p = d.add_paragraph(ghi_chu)
+        p.runs[0].italic = True
+    for dong in str(chu or "").splitlines():
+        if dong.strip():
+            d.add_paragraph(dong.strip())
+    buf = io.BytesIO()
+    d.save(buf)
+    return buf.getvalue()
+
+
 def tach_cap(goc: str, ban: str) -> list[tuple[str, str]]:
     """Hai khối chữ → các cặp theo DÒNG.
 

@@ -60,14 +60,24 @@ def test_tieng_dich_khong_liet_ke_tieng_nguon():
 
 def test_chep_loi_dung_lai_sau_khi_biet_tieng_nguon():
     k = _tep()
-    assert dc.tra_loi_buoc(k, "3") == {"tiep": True}      # chép lời
+    assert dc.tra_loi_buoc(k, "3") == {"tiep": True}      # chép lời ra .srt
     ra = dc.tra_loi_buoc(k, "2")                          # tệp nói tiếng Anh
     assert ra == {"kieu": "phu-de", "target": "giu-goc", "nguon": "en"}
 
 
+def test_chep_loi_ra_ban_chu_la_viec_khac_voi_chep_loi_ra_srt():
+    """Ô 4 chính là việc người dùng gọi là STT: không dịch, không mốc giờ, chỉ
+    chữ. Ô 3 tuy cũng không dịch nhưng trả .srt đầy số thứ tự với mốc giờ, dán
+    vào tài liệu là phải dọn tay."""
+    k = _tep()
+    assert dc.tra_loi_buoc(k, "4") == {"tiep": True}
+    ra = dc.tra_loi_buoc(k, "3")                          # tệp nói tiếng Nhật
+    assert ra == {"kieu": "chu", "target": "giu-goc", "nguon": "ja"}
+
+
 def test_so_ngoai_menu_va_cau_khong_phai_tra_loi():
     k = _tep()
-    assert dc.tra_loi_buoc(k, "4") is None      # bước 1 chỉ có 1..3
+    assert dc.tra_loi_buoc(k, "5") is None      # bước 1 chỉ có 1..4
     assert dc.tra_loi_buoc(k, "mai mình đi ăn") is None
     assert dc.tra_loi_buoc(k, "thôi") == {"bo": True}
 

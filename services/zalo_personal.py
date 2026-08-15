@@ -1923,11 +1923,24 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         if not r.get("ok"):
             return
         if kieu == "chu":
+            from services import song_ngu as _sn
+            # KHÔNG dịch (chép lời ra bản chữ — chính là việc người dùng gọi là
+            # STT): ngắn thì nhắn thẳng, dài thì đóng .docx cho dán được vào tài
+            # liệu. Không kèm .txt nữa: hai tệp cùng nội dung chỉ tổ rối.
+            if target == "giu-goc":
+                if _sn.nen_dong_tep(r["chu"]):
+                    _serve_bytes(
+                        thread_id, thread_type,
+                        _sn.docx_mot_ban(r["chu"], tieu_de="Bản chép lời",
+                                         ghi_chu=f"Tiếng {r.get('nguon') or '?'}"),
+                        f"chep-loi.{r.get('nguon') or 'goc'}.docx", "Bản chép lời")
+                else:
+                    send_message(thread_id, r["chu"], thread_type)
+                return
             _serve_bytes(thread_id, thread_type, r["chu"].encode("utf-8"),
                          f"loi-thoai.{r['dich']}.txt", "Bản chữ lời thoại")
-            # Có dịch (không phải chép lời) và lời thoại dài → kèm bản SONG NGỮ
-            # để đối chiếu được câu nào máy dịch hiểu sai.
-            from services import song_ngu as _sn
+            # Có dịch và lời thoại dài → kèm bản SONG NGỮ để đối chiếu được câu
+            # nào máy dịch hiểu sai.
             cap = r.get("song_ngu") or []
             if cap and r.get("nguon") != r.get("dich") and _sn.nen_dong_tep(r["chu"]):
                 try:
