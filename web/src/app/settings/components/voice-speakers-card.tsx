@@ -422,7 +422,6 @@ export function VoiceSpeakersCard() {
                   <label key={lng} className="flex cursor-pointer items-center gap-1 select-none">
                     <input type="checkbox" className="size-3.5"
                       checked={tiengCua(ma).includes(lng)}
-                      disabled={ma === "dam_thoai"}
                       onChange={(e) => {
                         const cur = tiengCua(ma);
                         const moi = e.target.checked
