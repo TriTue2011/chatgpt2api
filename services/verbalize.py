@@ -115,6 +115,24 @@ def _date_sub(m: re.Match) -> str:
     return s
 
 
+def _time_sub(m: re.Match) -> str:
+    """hh:mm → cách người Việt ĐỌC giờ, không phải cách người Việt VIẾT giờ.
+
+    Ba chỗ khác nhau, đo thật 15/08/2026 bằng vòng TTS → STT trên cả giọng Piper
+    lẫn VieNeu (cả hai giọng đều mắc y hệt):
+
+        "09:00"  cũ → "09 giờ 00" → máy đọc ra "KHÔNG CHÍN GIỜ KHÔNG KHÔNG"
+                 nay → "9 giờ"    → "chín giờ"
+        "14:05"  cũ → "14 giờ 05" → "…giờ không năm"
+                 nay → "14 giờ 5"
+
+    Số 0 đứng đầu là quy ước VIẾT cho thẳng cột, đọc lên thì thành thừa chữ. Phút
+    bằng 00 cũng vậy: người Việt nói "chín giờ", không ai nói "chín giờ không".
+    """
+    gio, phut = int(m.group(1)), int(m.group(2))
+    return f"{gio} giờ" if phut == 0 else f"{gio} giờ {phut}"
+
+
 def verbalize(text: str | None, *, keep_edges: bool = False) -> str:
     """Đổi ký tự/đơn vị sang văn xuôi cho TTS. An toàn để áp lên văn bản model.
 
@@ -126,7 +144,7 @@ def verbalize(text: str | None, *, keep_edges: bool = False) -> str:
         return text or ""
     s = text
     s = _DATE_RE.sub(_date_sub, s)               # 20/06/2026 -> ngày 20 tháng 6 năm 2026
-    s = _TIME_RE.sub(r"\1 giờ \2", s)            # 14:30 / 14h30 -> 14 giờ 30
+    s = _TIME_RE.sub(_time_sub, s)               # 14:30 -> 14 giờ 30; 09:00 -> 9 giờ
     s = _RANGE_RE.sub(r"\1 đến \2", s)           # 28-35 -> 28 đến 35
     s = _UNIT_RE_MULTI.sub(_unit_sub, s)         # 30°C -> 30 độ C; 5 m/s -> 5 mét trên giây
     s = _UNIT_RE_SINGLE.sub(_unit_sub, s)        # 45 W -> 45 oát (đơn vị 1 ký tự cần dấu cách)
