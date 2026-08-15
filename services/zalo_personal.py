@@ -2120,6 +2120,40 @@ def _doc_thanh_tep(thread_id: str, thread_type: int, chu: str,
                  f"doc.{tieng or 'vi'}.wav", "Bản đọc")
 
 
+def _tra_loi_dai_ra_word(thread_id: str, thread_type: int, reply: str) -> bool:
+    """Câu trả lời dài quá ngưỡng → gửi .docx kèm mở đầu ngắn. True = đã gửi.
+
+    Chủ máy chốt 16/08: mọi phản hồi quá 1.800 ký tự thì đóng thành Word, trừ
+    thứ tự nó BẮT BUỘC phải nằm trong chat. Ngưỡng dùng chung với bản chép lời
+    (``song_ngu.NGUONG_DONG_TEP``) để chỉ có MỘT con số phải chỉnh.
+
+    Giữ nguyên trong chat, không đóng tệp:
+
+    - Menu chọn (đã tách ở nơi gọi bằng ``has_choices``) — đóng tệp thì người
+      dùng không bấm số trả lời được nữa.
+    - Câu có khối mã: dán vào Word là hỏng thụt lề, mà người ta cần copy chạy.
+    - Câu chỉ nhỉnh hơn ngưỡng chút ít (dưới 1,5 lần): mở tệp còn phiền hơn đọc.
+    """
+    from services import song_ngu as _sn
+
+    chu = str(reply or "")
+    nguong = _sn.NGUONG_DONG_TEP
+    if len(chu) <= max(nguong, int(nguong * 1.5)):
+        return False
+    if "```" in chu:
+        return False
+    try:
+        _serve_bytes(thread_id, thread_type,
+                     _sn.docx_mot_ban(chu, tieu_de="Trả lời của em"),
+                     "tra-loi.docx",
+                     f"📄 Bài dài ({len(chu):,} ký tự) nên em đóng thành Word cho "
+                     "dễ đọc và dán lại ạ.".replace(",", "."))
+    except Exception as exc:
+        logger.warning("zalop: đóng Word câu trả lời dài lỗi: %s", exc)
+        return False
+    return True
+
+
 def _serve_bytes(thread_id: str, thread_type: int, du_lieu: bytes, ten: str,
                  ghi_chu: str = "") -> None:
     """Gửi một tệp có sẵn trong bộ nhớ (phụ đề .srt…) — cùng đường với
@@ -3512,7 +3546,8 @@ def _process_ai(ev: dict) -> None:
             send_message(thread_id, reply, thread_type, co_nut_chon=True)
             _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply)
         elif not _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply):
-            send_message(thread_id, reply, thread_type)
+            if not _tra_loi_dai_ra_word(thread_id, thread_type, reply):
+                send_message(thread_id, reply, thread_type)
     except Exception as exc:
         logger.warning("Zalo personal orchestrator lỗi %s: %s", thread_id, exc)
         send_message(thread_id, "⏳ Hệ thống bận, thử lại sau ạ.", thread_type)
