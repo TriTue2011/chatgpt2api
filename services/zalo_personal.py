@@ -1268,6 +1268,22 @@ def _parse_event(body: dict) -> dict:
     content = data.get("content")
 
     text, attachment_url, file_name = "", "", ""
+    attachment_size = 0
+    if isinstance(content, dict):
+        # Zalo khai cỡ tệp trong `content.params` (chuỗi JSON). Biết TRƯỚC khi
+        # tải mới nói được lý do thật cho người gửi, và khỏi kéo về 250 MB rồi
+        # mới bỏ dở — đo thật 16/08: tệp 291,7 MB tải tới trần mới báo hỏng.
+        _params = content.get("params")
+        if isinstance(_params, str):
+            try:
+                _params = json.loads(_params)
+            except Exception:
+                _params = {}
+        if isinstance(_params, dict):
+            try:
+                attachment_size = int(str(_params.get("fileSize") or "0").strip() or 0)
+            except (TypeError, ValueError):
+                attachment_size = 0
     if isinstance(content, str):
         text = content.strip()
     elif isinstance(content, dict):
@@ -1310,6 +1326,7 @@ def _parse_event(body: dict) -> dict:
         "msg_type": msg_type,
         "text": text,
         "attachment_url": attachment_url,
+        "attachment_size": attachment_size,
         "file_name": file_name,
         "ts": str(data.get("ts") or "").strip(),
         "ttl": data.get("ttl"),
@@ -1795,6 +1812,26 @@ def _download(url: str, *, tran_byte: int = 0,
     except Exception as exc:
         logger.warning("Zalo personal download lỗi: %s", exc)
         return None
+
+
+# Vừa mời người gửi LINK thay cho tệp quá nặng → nhớ 15 phút. Link video kế
+# tiếp của CHÍNH người đó mở thẳng menu dịch. Không có sổ này thì lời mời của
+# bot thành lời hứa suông: đo thật 16/08 01:03 — bot bảo "gửi em link sẽ nhanh
+# hơn", người dùng gửi link, rồi bị LLM hỏi lại "anh muốn xử lý theo hướng nào".
+_MOI_LINK: dict[str, float] = {}
+_MOI_LINK_TTL = 900.0
+
+
+def _moi_gui_link(pkey: str) -> None:
+    _MOI_LINK[str(pkey)] = time.time() + _MOI_LINK_TTL
+
+
+def _dang_cho_link(pkey: str) -> bool:
+    han = float(_MOI_LINK.get(str(pkey), 0.0))
+    if han >= time.time():
+        return True
+    _MOI_LINK.pop(str(pkey), None)
+    return False
 
 
 def _ten_tep_phuc_vu(ten_goc: str, duoi: str) -> str:
@@ -2876,6 +2913,17 @@ def _process_ai(ev: dict) -> None:
     # tệp phụ đề). Xét TRƯỚC bản chờ PDF vì hai sổ chờ dùng cùng khoá phiên và
     # người dùng chỉ có thể đang trả lời MỘT menu — cái vừa gửi.
     from services import dich_cho as _dc
+    # Bot vừa mời gửi LINK (tệp quá nặng) mà người đó gửi đúng một link video →
+    # mở thẳng menu dịch. Để rơi xuống LLM là nuốt mất lời mời của chính mình.
+    if text and _dang_cho_link(pkey):
+        from services import video_dich as _vd_link
+        _url_moi = _vd_link.la_link_video(text)
+        if _url_moi:
+            _MOI_LINK.pop(pkey, None)
+            _dc.set_pending(pkey, url=_url_moi, ten=_url_moi)
+            send_message(thread_id, _dc.menu_buoc(pkey), thread_type,
+                         account=acc_id, co_nut_chon=True)
+            return
     if text and _dc.dang_cho_chu(pkey):
         # /tts đang đợi đoạn chữ — câu này CHÍNH LÀ nội dung cần đọc, không
         # phải câu trả lời menu, nên không đưa qua bộ giải số.
@@ -3095,12 +3143,29 @@ def _process_ai(ev: dict) -> None:
             # Trần 250MB + 5 phút tải: video dài hơn mức nghe được (30 phút)
             # cũng chỉ cỡ này. Trần mặc định 50MB của net_guard giữ nguyên cho
             # mọi đường tải khác.
+            _tran_tai = 250 * 1024 * 1024
+            _co_tep = int(ev.get("attachment_size") or 0)
+            _pk_link = (f"zalop:{ev.get('account_id')}:{thread_id}:"
+                        f"{ev.get('sender_id') or ''}")
+            if _co_tep > _tran_tai:
+                # Biết trước là quá cỡ thì đừng tải: bản cũ kéo đủ 250 MB rồi
+                # mới bỏ dở, mất vài phút để kết luận điều đã biết từ đầu.
+                _moi_gui_link(_pk_link)
+                send_message(thread_id,
+                             f"🎬 Tệp nặng {_co_tep / 1048576:.0f} MB, quá mức em nhận "
+                             f"trực tiếp ({_tran_tai // 1048576} MB) nên em chưa tải ạ. "
+                             "Video YouTube thì gửi em LINK — em lấy phụ đề thẳng từ "
+                             "đó, vừa nhanh vừa không giới hạn dung lượng.", thread_type)
+                return
             data = _download(ev["attachment_url"],
-                             tran_byte=250 * 1024 * 1024, timeout=300)
+                             tran_byte=_tran_tai, timeout=300)
             if not data:
-                send_message(thread_id, "🎬 Không tải được tệp (quá 250MB hoặc "
-                                        "mạng lỗi). Video YouTube thì gửi em "
-                                        "link sẽ nhanh hơn nhiều ạ.", thread_type)
+                _moi_gui_link(_pk_link)
+                send_message(thread_id,
+                             f"🎬 Em tải tệp không xong (mạng lỗi, hoặc tệp quá "
+                             f"{_tran_tai // 1048576} MB mà Zalo không khai cỡ). "
+                             "Video YouTube thì gửi em link sẽ nhanh hơn nhiều ạ.",
+                             thread_type)
                 return
             import tempfile as _tmpf
             from services import dich_cho as _dc
