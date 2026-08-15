@@ -21,6 +21,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import logging
+import os
 import socket
 import urllib.error
 import urllib.request
@@ -225,6 +226,72 @@ def self_images_fetch(url: str, *, timeout: float = 30,
     if len(data) > max_bytes:
         raise BlockedURL(f"Nội dung vượt trần {max_bytes} byte")
     return data
+
+
+def safe_fetch_to_file(url: str, dest: str, *, allow_hosts: set[str] | None = None,
+                       timeout: float = 30, max_bytes: int = _DEFAULT_MAX_BYTES,
+                       max_redirects: int = _DEFAULT_MAX_REDIRECTS) -> int:
+    """Như ``safe_fetch`` nhưng GHI THẲNG RA TỆP, trả về số byte đã ghi.
+
+    Vì sao cần: ``safe_fetch`` gom cả nội dung vào RAM (``resp.read``). Với
+    trần 50 MB thì không sao, nhưng tệp Zalo được phép tới 1 GB — mà máy chủ
+    chỉ còn cỡ 9,7 GB khả dụng và còn chạy cả bot. Đường này giữ nguyên mọi
+    phép kiểm SSRF (``check_url`` từng hop, opener chặn redirect ngầm và
+    DNS-rebinding), chỉ đổi chỗ chứa.
+
+    Quá trần thì XOÁ tệp dở rồi ném ``BlockedURL`` — không để lại nửa tệp cho
+    tầng trên tưởng là tải xong.
+    """
+    current = check_url(url, allow_hosts=allow_hosts)
+    opener = urllib.request.build_opener(
+        _NoRedirect(), _PeerCheckedHTTPHandler(), _PeerCheckedHTTPSHandler()
+    )
+    for hop in range(max_redirects + 1):
+        try:
+            req = urllib.request.Request(
+                current,
+                headers={"User-Agent": ("Mozilla/5.0 (compatible; "
+                                        "chatgpt2api-net-guard/1.0)"),
+                         "Accept": "*/*"},
+            )
+            with opener.open(req, timeout=timeout) as resp:
+                final = str(resp.geturl() or current)
+                if final != current:
+                    check_url(final, allow_hosts=allow_hosts)
+                da_ghi = 0
+                with open(dest, "wb") as f:
+                    while True:
+                        khuc = resp.read(1 << 20)
+                        if not khuc:
+                            break
+                        da_ghi += len(khuc)
+                        if da_ghi > max_bytes:
+                            f.close()
+                            _xoa_im(dest)
+                            raise BlockedURL(f"Nội dung vượt trần {max_bytes} byte")
+                        f.write(khuc)
+                return da_ghi
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308) and hop < max_redirects:
+                loc = e.headers.get("Location") if e.headers else None
+                if not loc:
+                    raise BlockedURL(f"Redirect {e.code} không có Location") from e
+                current = check_url(urljoin(current, loc), allow_hosts=allow_hosts)
+                logger.info("net_guard redirect hop=%s → %s", hop + 1, current[:160])
+                continue
+            _xoa_im(dest)
+            raise
+        except Exception:
+            _xoa_im(dest)
+            raise
+    raise BlockedURL(f"Quá số lần redirect ({max_redirects})")
+
+
+def _xoa_im(duong: str) -> None:
+    try:
+        os.unlink(duong)
+    except OSError:
+        pass
 
 
 def safe_fetch(url: str, *, allow_hosts: set[str] | None = None,

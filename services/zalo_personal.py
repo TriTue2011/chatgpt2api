@@ -45,8 +45,18 @@ from services.local_gateway import gateway_base_url
 
 logger = logging.getLogger(__name__)
 
-_MAX_LEN = 1990          # Zalo giới hạn 2000 ký tự / tin
+# Zalo Cá Nhân cho 3.000 ký tự mỗi tin, TÍNH CẢ khoảng trắng và xuống dòng.
+# Chừa 50 ký tự vì vài đường gửi còn nối thêm hậu tố vào bản đã cắt (vd
+# "\n(Fallback admin thread)"), cộng vào là vượt trần và Zalo nuốt cả tin.
+_MAX_LEN = 2950
 _MAX_CHUNKS = 6
+
+#: Zalo Cá Nhân nhận tài liệu/tệp tới 1 GB. Trần này áp cho đính kèm video/âm
+#: thanh; tải bằng `_tai_ra_tep` (ghi thẳng ra đĩa) chứ KHÔNG qua `_download`,
+#: vì `net_guard.safe_fetch` gom cả tệp vào RAM — 1 GB trong bộ nhớ của máy chỉ
+#: còn ~9,7 GB khả dụng là quá mạo hiểm. Trần mặc định 50 MB của net_guard giữ
+#: nguyên cho mọi đường tải khác.
+TRAN_TEP_ZALO = 1024 * 1024 * 1024
 
 # Ngữ cảnh tin nhắn ĐANG xử lý trên thread này (account nhận + loại thread) —
 # reminders đọc lúc tạo nhắc hẹn để về sau gửi đúng account, đúng nhóm/cá nhân.
@@ -1834,6 +1844,22 @@ def _dang_cho_link(pkey: str) -> bool:
     return False
 
 
+def _tai_ra_tep(url: str, dest: str, *, tran_byte: int,
+                timeout: float = 600) -> int:
+    """Tải đính kèm THẲNG ra tệp; trả số byte, 0 nếu hỏng.
+
+    Dùng cho video/âm thanh: Zalo cho tệp tới 1 GB, mà `_download` gom hết vào
+    RAM. Giữ nguyên mọi phép kiểm SSRF của net_guard, chỉ đổi chỗ chứa.
+    """
+    try:
+        from services import net_guard
+        return net_guard.safe_fetch_to_file(url, dest, timeout=timeout,
+                                            max_bytes=tran_byte)
+    except Exception as exc:
+        logger.warning("Zalo personal tải ra tệp lỗi: %s", exc)
+        return 0
+
+
 def _ten_tep_phuc_vu(ten_goc: str, duoi: str) -> str:
     """'<tên PDF gốc>' + đuôi mới → tên file NGƯỜI NHẬN nhìn thấy.
 
@@ -3143,7 +3169,7 @@ def _process_ai(ev: dict) -> None:
             # Trần 250MB + 5 phút tải: video dài hơn mức nghe được (30 phút)
             # cũng chỉ cỡ này. Trần mặc định 50MB của net_guard giữ nguyên cho
             # mọi đường tải khác.
-            _tran_tai = 250 * 1024 * 1024
+            _tran_tai = TRAN_TEP_ZALO
             _co_tep = int(ev.get("attachment_size") or 0)
             _pk_link = (f"zalop:{ev.get('account_id')}:{thread_id}:"
                         f"{ev.get('sender_id') or ''}")
@@ -3157,9 +3183,21 @@ def _process_ai(ev: dict) -> None:
                              "Video YouTube thì gửi em LINK — em lấy phụ đề thẳng từ "
                              "đó, vừa nhanh vừa không giới hạn dung lượng.", thread_type)
                 return
-            data = _download(ev["attachment_url"],
-                             tran_byte=_tran_tai, timeout=300)
-            if not data:
+            import tempfile as _tmpf
+            from services import dich_cho as _dc
+            _suf = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ".mp4"
+            with _tmpf.NamedTemporaryFile(suffix=_suf, delete=False) as _f:
+                _vpath = _f.name
+            # Ghi THẲNG ra tệp: tệp Zalo tới 1 GB, gom vào RAM là ăn gần hết
+            # bộ nhớ còn trống của máy chủ.
+            _so_byte = _tai_ra_tep(ev["attachment_url"], _vpath,
+                                   tran_byte=_tran_tai, timeout=900)
+            if not _so_byte:
+                import os as _os_tep
+                try:
+                    _os_tep.unlink(_vpath)
+                except OSError:
+                    pass
                 _moi_gui_link(_pk_link)
                 send_message(thread_id,
                              f"🎬 Em tải tệp không xong (mạng lỗi, hoặc tệp quá "
@@ -3167,12 +3205,6 @@ def _process_ai(ev: dict) -> None:
                              "Video YouTube thì gửi em link sẽ nhanh hơn nhiều ạ.",
                              thread_type)
                 return
-            import tempfile as _tmpf
-            from services import dich_cho as _dc
-            _suf = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ".mp4"
-            with _tmpf.NamedTemporaryFile(suffix=_suf, delete=False) as _f:
-                _f.write(data)
-                _vpath = _f.name
             # HỎI trước khi nghe: nghe một video 2 giờ xong mới biết người dùng
             # cần bản chữ chứ không phải .srt là mất cả tiếng (chốt 14/08).
             _pk_v = (f"zalop:{ev.get('account_id')}:{thread_id}:"
@@ -3181,10 +3213,10 @@ def _process_ai(ev: dict) -> None:
                 # /stt đã nói rõ việc rồi — hỏi lại "làm gì với tệp này" là
                 # bắt người dùng trả lời hai lần cho một ý.
                 send_message(thread_id,
-                             _dc.nap_tep(_pk_v, _vpath, name, len(data)),
+                             _dc.nap_tep(_pk_v, _vpath, name, _so_byte),
                              thread_type, co_nut_chon=True)
                 return
-            _dc.set_pending(_pk_v, path=_vpath, ten=name, so_byte=len(data))
+            _dc.set_pending(_pk_v, path=_vpath, ten=name, so_byte=_so_byte)
             send_message(thread_id, _dc.menu_buoc(_pk_v),
                          thread_type, co_nut_chon=True)
             return
