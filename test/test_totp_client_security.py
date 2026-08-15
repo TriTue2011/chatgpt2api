@@ -21,6 +21,11 @@ class TotpClientSecurityTests(unittest.TestCase):
         self.assertIn("void refresh();", SOURCE)
         self.assertIn("window.setInterval(() => { void refresh(); }, 5000)", SOURCE)
 
+    def test_seed_cu_duoc_di_tru_truoc_khi_xoa(self):
+        self.assertIn("const migrateLegacySeed = useCallback(async () =>", SOURCE)
+        self.assertIn("await request.put(", SOURCE)
+        self.assertIn("void migrateLegacySeed();", SOURCE)
+
 
 if __name__ == "__main__":
     unittest.main()

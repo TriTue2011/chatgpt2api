@@ -45,14 +45,6 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
   const [showInput, setShowInput] = useState(false);
   const [code, setCode] = useState("");
   const [remaining, setRemaining] = useState(30);
-  useEffect(() => {
-    // Component được tái sử dụng khi người dùng mở một account khác. Không
-    // giữ seed đang gõ của account trước, nếu không một lần bấm Lưu có thể ghi
-    // nhầm hạt giống sang email mới.
-    setSecret("");
-    setShowInput(false);
-    donHatGiongCu(email);
-  }, [email]);
 
   const refresh = useCallback(async () => {
     // Chỉ lấy MÃ dùng một lần do máy chủ sinh. Fallback về hạt giống cũ ở
@@ -71,6 +63,34 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
     } catch { /* chưa có seed trên máy chủ hoặc request lỗi */ }
     setCode("");
   }, [email]);
+
+  const migrateLegacySeed = useCallback(async () => {
+    // Bản cũ có thể chỉ giữ seed ở localStorage. Di trú nó thẳng vào server
+    // rồi mới xóa; tuyệt đối không đưa vào state hay dùng để tự sinh mã ở
+    // browser. Nếu server chưa nhận được thì giữ seed cũ để lần mở sau thử lại,
+    // thay vì làm người dùng mất phương án đăng nhập.
+    const seed = String(loadSecrets()[email] || "").trim();
+    if (!seed) return;
+    try {
+      await request.put(
+        `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`,
+        {totp_secret: seed},
+      );
+      donHatGiongCu(email);
+      await refresh();
+    } catch {
+      /* giữ dữ liệu cũ để có thể di trú lại khi server hoạt động */
+    }
+  }, [email, refresh]);
+
+  useEffect(() => {
+    // Component được tái sử dụng khi người dùng mở một account khác. Không
+    // giữ seed đang gõ của account trước, nếu không một lần bấm Lưu có thể ghi
+    // nhầm hạt giống sang email mới.
+    setSecret("");
+    setShowInput(false);
+    void migrateLegacySeed();
+  }, [migrateLegacySeed]);
 
   useEffect(() => {
     void refresh();
