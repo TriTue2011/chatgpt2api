@@ -55,11 +55,18 @@ _GIU_TOI_DA = 40
 class DichChuRequest(BaseModel):
     noi_dung: str
     target: str = ""
+    #: Tiếng NGUỒN người dùng khai. Rỗng = để máy tự nhận như cũ. Khai rõ thì
+    #: dịch được giữa hai tiếng bất kỳ (Nhật → Hàn), còn dạng cặp "cap:xx" cũ
+    #: luôn quy về tiếng Việt khi nguồn không phải tiếng Việt.
+    nguon: str = ""
 
 
 class DichTepRequest(BaseModel):
     viec_id: str
     target: str = ""
+    #: Tiếng NGUỒN người dùng khai — với video/âm thanh còn giúp khoá cứng
+    #: model nghe, khỏi tốn lượt nghe thử để dò.
+    nguon: str = ""
     #: Riêng video/âm thanh: "phu-de" (mặc định, .srt) hay "chu" (văn bản
     #: dịch thuần — người dùng chỉ cần lời thoại, không cần mốc thời gian).
     kieu_ra: str = "phu-de"
@@ -200,7 +207,9 @@ def create_router() -> APIRouter:
             return {"viec_id": viec_id}
 
         try:
-            nguon, _ = ts.detect(nd[:5000])
+            nguon = (body.nguon or "").strip().lower()
+            if not nguon:
+                nguon, _ = ts.detect(nd[:5000])
             dich = ts.giai_ma_target(nguon, body.target)
             if nguon and nguon == dich:
                 raise HTTPException(
@@ -272,6 +281,7 @@ def create_router() -> APIRouter:
             v["buoc"] = "đang chuẩn bị…"
             ten, duong = v["ten"], v["duong"]
         viec_id, target = body.viec_id, body.target
+        nguon_biet = (body.nguon or "").strip().lower()
         kieu_ra = "chu" if body.kieu_ra == "chu" else "phu-de"
 
         from services import video_asr as va
@@ -283,7 +293,8 @@ def create_router() -> APIRouter:
                 _cap_nhat(viec_id, buoc="đang nghe tiếng trong tệp — "
                           "video dài chờ cỡ 2/3 thời lượng…")
                 try:
-                    r = vd.dich_tep_video(duong, ten, target)
+                    r = vd.dich_tep_video(duong, ten, target,
+                                          nguon_biet=nguon_biet)
                 finally:
                     Path(duong).unlink(missing_ok=True)
                 _xong_phu_de(viec_id, r, kieu_ra)

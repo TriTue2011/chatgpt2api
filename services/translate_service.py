@@ -178,6 +178,19 @@ def lang_codes() -> set[str]:
         return set()
 
 
+def ma_dung_hoa_thuong() -> dict[str, str]:
+    """mã hạ chữ thường → mã ĐÚNG CHỮ máy chủ khai ("zh-hans" → "zh-Hans").
+
+    Máy chủ phân biệt hoa thường: gửi "zh-hans" cũng ăn lỗi "not supported"
+    y như gửi "zh", chỉ khác dòng báo lỗi. Mà cả dự án viết mã thường.
+    """
+    try:
+        return {str(x.get("code") or "").lower(): str(x.get("code") or "")
+                for x in languages()}
+    except LoiDich:
+        return {}
+
+
 def detect(text: str) -> tuple[str, float]:
     """(mã ngôn ngữ, độ tự tin 0..100). Chuỗi rỗng → ("", 0.0)."""
     t = (text or "").strip()
@@ -218,8 +231,21 @@ def translate_batch(texts: list[str], target: str, source: str = "auto") -> list
     độ dài). Lô trộn nhiều ngôn ngữ thì nên gọi ``detect`` trước rồi truyền
     ``source`` tường minh.
     """
-    tgt = str(target or "").lower()
+    # Đổi mã sang ĐÚNG tên máy chủ khai ngay tại CỬA RA, không để từng chỗ gọi
+    # tự lo. Máy chủ khai tiếng Trung là "zh-Hans", mà cả dự án gọi nó là "zh":
+    # trước đây chỉ đường phân tích lệnh /dich đổi mã, nên mọi lối khác (menu
+    # của bot, tab Dịch, dịch phụ đề) gửi thẳng "zh" xuống và ăn nguyên lỗi
+    # "zh is not supported" — đo thật 15/08. Một chỗ đổi thì mọi lối vào cùng
+    # đúng, thêm lối mới cũng không phải nhớ.
+    # Giữ ĐÚNG chữ hoa thường của máy chủ: nó khai "zh-Hans" và bắt đúng như
+    # vậy — gửi "zh-hans" vẫn ăn lỗi "not supported", chỉ khác dòng báo lỗi.
+    co = lang_codes()
+    that = ma_dung_hoa_thuong()
+    tgt = _chuan_ma(str(target or "").lower(), co) or str(target or "").lower()
     src = str(source or "auto").lower()
+    if src and src != "auto":
+        src = _chuan_ma(src, co) or src
+    tgt, src = that.get(tgt, tgt), that.get(src, src)
     out: list[str] = list(texts)
     can_gui: list[int] = []
     for i, t in enumerate(texts):

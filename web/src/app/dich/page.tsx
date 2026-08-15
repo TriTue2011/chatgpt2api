@@ -15,16 +15,20 @@ const TRAN_TEP = 4 * 1024 * 1024 * 1024;
 const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.opus,.wav,.flac,"
   + ".srt,.vtt,.jpg,.jpeg,.png,.webp,.gif,.bmp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.odt,.odp,.txt,.epub,.html,.htm";
 
-/** Chọn theo CẶP, máy tự nhận diện chiều: nguồn tiếng Việt thì dịch sang
- *  tiếng kia, ngược lại dịch về tiếng Việt. Với video/âm thanh, cặp đã chọn
- *  quyết định bộ NGHE đem so (Việt↔Trung → so model vi với zh); model
- *  Trung/Nhật/Hàn tải bằng scripts/download_stt_da_ngu.py — chưa tải thì
- *  máy nghe bằng tiếng Việt. */
-const DICH_SANG = [
-  { value: "", label: "Việt ↔ Anh (tự nhận diện)" },
-  { value: "cap:zh", label: "Việt ↔ Trung" },
-  { value: "cap:ja", label: "Việt ↔ Nhật" },
-  { value: "cap:ko", label: "Việt ↔ Hàn" },
+/** Chọn RIÊNG tiếng nguồn và tiếng đích, không chọn theo "cặp".
+ *
+ *  Bản trước chỉ có bốn cặp và cặp nào cũng neo vào tiếng Việt, nên Nhật → Hàn
+ *  hay Anh → Trung là không chọn được — dù máy dịch trong stack làm được đủ 20
+ *  chiều (hỏi /languages ngày 15/08: cả năm tiếng đều nhận cả năm làm đích).
+ *
+ *  Khai tiếng nguồn còn giúp video/âm thanh: biết trước thì bộ nghe khoá cứng
+ *  một model, khỏi tốn lượt nghe thử để dò. Để "tự nhận" thì máy dò như cũ. */
+const CAC_TIENG = [
+  { value: "vi", label: "Tiếng Việt" },
+  { value: "en", label: "Tiếng Anh" },
+  { value: "ja", label: "Tiếng Nhật" },
+  { value: "zh", label: "Tiếng Trung" },
+  { value: "ko", label: "Tiếng Hàn" },
 ];
 
 /** Đuôi cho ra PHỤ ĐỀ (hiện lựa chọn Phụ đề/Bản chữ): video, âm thanh, và
@@ -49,7 +53,8 @@ function layLoi(e: unknown): string {
 
 function DichPageContent() {
   const [chu, setChu] = useState("");
-  const [target, setTarget] = useState("");
+  const [target, setTarget] = useState("vi");
+  const [nguon, setNguon] = useState("");   // "" = để máy tự nhận
   const [tep, setTep] = useState<File | null>(null);
   const [kieuRa, setKieuRa] = useState("phu-de");
   const [dangChay, setDangChay] = useState(false);
@@ -91,7 +96,7 @@ function DichPageContent() {
     if (!nd || dangChay) return;
     batDau();
     try {
-      const res = await request.post("/api/dich/chu", { noi_dung: nd, target });
+      const res = await request.post("/api/dich/chu", { noi_dung: nd, target, nguon });
       const d = res.data as { viec_id?: string } & KetQua;
       if (d.viec_id) {
         setBuoc("đang lấy phụ đề và dịch…");
@@ -129,7 +134,7 @@ function DichPageContent() {
         setTienDo(Math.round(((i + 1) / tong) * 100));
       }
       setTienDo(-1);
-      await request.post("/api/dich/tep", { viec_id: viecId, target, kieu_ra: kieuRa });
+      await request.post("/api/dich/tep", { viec_id: viecId, target, nguon, kieu_ra: kieuRa });
       setBuoc("đang xử lý…");
       await thamDo(viecId);
     } catch (e) {
@@ -158,10 +163,20 @@ function DichPageContent() {
             Chữ, link YouTube, ảnh, tài liệu, video — dịch bằng máy dịch trong stack, không tốn lượt AI.
           </p>
         </div>
-        <select value={target} onChange={(e) => setTarget(e.target.value)} disabled={dangChay}
-          className="ml-auto rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
-          {DICH_SANG.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <div className="ml-auto flex items-center gap-2 text-sm">
+          <select value={nguon} onChange={(e) => setNguon(e.target.value)} disabled={dangChay}
+            className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
+            <option value="">Tự nhận tiếng</option>
+            {CAC_TIENG.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <span className="text-[var(--muted-foreground)]">→</span>
+          <select value={target} onChange={(e) => setTarget(e.target.value)} disabled={dangChay}
+            className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
+            {CAC_TIENG.filter((o) => o.value !== nguon).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Dán chữ hoặc link */}
@@ -272,6 +287,7 @@ const NGON_NGU: Record<string, string> = {
 /** Đàm thoại 2 chiều bấm-nói-thả: bấm mic bên tiếng nào là máy nghe tiếng đó
  *  rồi dịch sang bên kia. Không streaming — mỗi lượt nói là một lần gửi. */
 function DamThoai() {
+  const [tiengA, setTiengA] = useState("vi");
   const [tiengKia, setTiengKia] = useState("en");
   const [docTts, setDocTts] = useState(true);
   const [dangGhi, setDangGhi] = useState("");        // "" | mã tiếng đang ghi
@@ -313,7 +329,7 @@ function DamThoai() {
         setDangXuLy(true);
         try {
           const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
-          const khac = lang === "vi" ? tiengKia : "vi";
+          const khac = lang === tiengA ? tiengKia : tiengA;
           const fd = new FormData();
           fd.append("tieng", blob, `mic.${ext}`);
           fd.append("lang_noi", lang);
@@ -342,17 +358,25 @@ function DamThoai() {
     }
   }
 
-  const hai_ben = ["vi", tiengKia];
+  const hai_ben = [tiengA, tiengKia];
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-sm">
-          Cặp phiên dịch:
+          Phiên dịch giữa:
+          <select value={tiengA} onChange={(e) => { setTiengA(e.target.value); setLuot([]); }}
+            disabled={!!dangGhi || dangXuLy}
+            className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
+            {["vi", "en", "zh", "ja", "ko"].filter((m) => m !== tiengKia).map((m) => (
+              <option key={m} value={m}>{NGON_NGU[m]}</option>
+            ))}
+          </select>
+          <span className="text-[var(--muted-foreground)]">↔</span>
           <select value={tiengKia} onChange={(e) => { setTiengKia(e.target.value); setLuot([]); }}
             disabled={!!dangGhi || dangXuLy}
             className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
-            {["en", "zh", "ja", "ko"].map((m) => (
-              <option key={m} value={m}>Việt ↔ {NGON_NGU[m].replace("Tiếng ", "")}</option>
+            {["vi", "en", "zh", "ja", "ko"].filter((m) => m !== tiengA).map((m) => (
+              <option key={m} value={m}>{NGON_NGU[m]}</option>
             ))}
           </select>
         </label>

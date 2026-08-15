@@ -250,12 +250,17 @@ def test_lenh_dich_viet_sang_nhat():
 
 @pytest.mark.adapter
 def test_lenh_dich_trung_sang_viet_tu_nhan_dien():
-    """Chiều Trung→Việt: /detect của máy chủ trả mã ĐÃ đổi tên (zh-Hans), mã đó
-    phải đi thẳng vào /translate mà không bị client chặn."""
+    """Chiều Trung→Việt: mã gửi lên /translate phải ĐÚNG CHỮ máy chủ khai.
+
+    Bản trước gửi "zh-hans" viết thường và test này chốt đúng như vậy — nhưng
+    máy chủ THẬT phân biệt hoa thường: đo 15/08 thì "zh-hans is not supported"
+    y như khi gửi "zh". Bộ giả nhận mọi kiểu viết nên lỗi sống sót qua test.
+    Nay mã được chuẩn hoá theo đúng danh sách /languages ngay tại cửa ra.
+    """
     with install_translate(FakeTranslate(lang="zh-Hans", codes=_MA_DANG_NAP)) as fake:
         ra = ts.lenh_dich("/dich 你好")
     assert "zh-hans → vi" in ra and "vi:你好" in ra
-    assert fake.calls[-1][1]["source"] == "zh-hans"
+    assert fake.calls[-1][1]["source"] == "zh-Hans"
     assert fake.calls[-1][1]["target"] == "vi"
 
 
@@ -466,3 +471,25 @@ def test_cau_dao_gpu_nghi_5_phut_sau_loi(monkeypatch):
         so_goi_gpu_luot_2 = sum(1 for p, d in fake.calls if d.get("_base"))
     assert so_goi_gpu_luot_1 == 1          # lượt đầu có thử GPU
     assert so_goi_gpu_luot_2 == 1          # lượt sau KHÔNG thử thêm
+
+
+@pytest.mark.adapter
+def test_ma_ngon_ngu_duoc_chuan_hoa_ngay_tai_cua_ra():
+    """Mọi lối gọi đều gửi mã ĐÚNG NHƯ máy chủ khai, không phải chỉ lệnh /dich.
+
+    Đo 15/08 trên máy chủ thật: gửi "zh" ăn lỗi "zh is not supported", gửi
+    "zh-hans" cũng lỗi y vậy vì máy phân biệt hoa thường. Trước đây chỉ đường
+    phân tích lệnh /dich đổi mã, nên menu của bot, tab Dịch và dịch phụ đề đều
+    gửi thẳng "zh" xuống và hỏng — mà không test nào bắt được vì bộ giả nhận
+    mọi kiểu viết.
+    """
+    with install_translate(FakeTranslate(codes=_MA_DANG_NAP)) as fake:
+        ts.translate_batch(["xin chào"], "zh", "vi")
+    assert fake.calls[-1][1]["target"] == "zh-Hans"
+    assert fake.calls[-1][1]["source"] == "vi"
+
+    # Dịch giữa hai tiếng KHÔNG có tiếng Việt cũng phải đi đúng mã.
+    with install_translate(FakeTranslate(codes=_MA_DANG_NAP)) as fake:
+        ts.translate_batch(["こんにちは"], "ko", "ja")
+    assert fake.calls[-1][1]["target"] == "ko"
+    assert fake.calls[-1][1]["source"] == "ja"
