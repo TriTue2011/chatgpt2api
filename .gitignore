@@ -68,6 +68,10 @@ deploy/*
 # Compose chạy RIÊNG máy dịch LibreTranslate. KHÔNG chứa bí mật: chỉ tên image,
 # cờ LT_* và tên mạng. Xem docs/DICH_LIBRETRANSLATE.md.
 !deploy/libretranslate/
+# Compose + README của MÁY GPU (fw-nghe + vn-translate-gpu). Phải theo repo thì
+# người dùng mới `docker compose up -d` được. KHÔNG chứa bí mật: chỉ tên image
+# trên ghcr, cổng và cờ FW_*/TT_*.
+!deploy/gpu-box/
 !deploy/libretranslate/docker-compose.yml
 build_and_push.sh
 update_server.ps1

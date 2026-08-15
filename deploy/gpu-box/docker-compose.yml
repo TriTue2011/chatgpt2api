@@ -1,0 +1,137 @@
+# Stack MÁY GPU — hai dịch vụ dùng chung một card NVIDIA (ở nhà: máy NVR
+# 172.16.10.220, RTX 2060 Super 8 GB). KHÔNG nằm trong stack c2a; gateway trên
+# máy khác gọi sang qua LAN.
+#
+#   docker compose up -d          # kéo image từ ghcr, không build gì
+#
+# Máy này KHÔNG có watchtower (khác stack c2a): lên bản mới là
+# `docker compose pull && docker compose up -d`.
+#
+# Cần sẵn trên máy: driver NVIDIA + nvidia-container-toolkit. Compose không cài
+# hộ được hai thứ đó.
+#
+# Khai ở gateway (service c2a) sau khi chạy:
+#   NGHE_URL_GPU:     http://<ip-máy-gpu>:5002
+#   TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001
+#   VISION_URL_GPU:   http://<ip-máy-gpu>:5003
+services:
+  # Nghe (faster-whisper large-v3) — chỉ tiếng mà model tại chỗ bỏ trắng đoạn
+  # (mặc định en, ko) mới gửi sang đây. Xem fw-nghe/README.md.
+  fw-nghe:
+    image: ghcr.io/tritue2011/fw-nghe:latest
+    container_name: fw-nghe
+    restart: unless-stopped
+    ports:
+      - "5002:5000"
+    environment:
+      FW_MODEL: "large-v3"
+      # Card compute capability ≥ 7.0 (2060S = 7.5) mới chạy được float16;
+      # card cũ hơn (vd GTX 1080, CC 6.1) đổi thành "int8".
+      FW_COMPUTE: "int8_float16"
+    volumes:
+      - fw_nghe_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Image nền CUDA + Ubuntu chỉ có `python3`, không có alias `python`.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health',timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      # Lần đầu tải model large-v3 (~3 GB) rồi mới mở cổng.
+      start_period: 600s
+    security_opt:
+      - no-new-privileges:true
+
+  # Dịch theo LÔ (phụ đề phim, tài liệu dài). Câu lẻ vẫn đi bản CPU trong stack
+  # c2a — GPU thua CPU khi dịch một câu, định tuyến ở translate_service.py.
+  vn-translate-gpu:
+    image: ghcr.io/tritue2011/vn-translate-gpu:latest
+    container_name: vn-translate-gpu
+    restart: unless-stopped
+    ports:
+      - "5001:5000"
+    environment:
+      TT_LANGS: "en,vi,ja,ko,zh-Hans"
+      TT_KIEU_TINH: "float16"
+      # Lô đưa vào model mỗi lượt decode: 64 trên GPU (16 là mức cho CPU).
+      TT_LO_MODEL: "64"
+    volumes:
+      - vn_translate_gpu_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health',timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 300s
+    security_opt:
+      - no-new-privileges:true
+
+  # Qwen3-VL chỉ bật qua profile để máy đang gánh Frigate không tự nạp model.
+  # llama-server tự unload model/KV cache khi rảnh, nhường VRAM công đoạn sau.
+  fw-vision:
+    profiles: ["vision"]
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: fw-vision
+    restart: unless-stopped
+    ports:
+      - "5003:8080"
+    command:
+      - -hf
+      - ${VISION_MODEL:-Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - -ngl
+      - "99"
+      - -c
+      - "4096"
+      - -np
+      - "1"
+      - --sleep-idle-seconds
+      - "2"
+      - --no-warmup
+    volumes:
+      - fw_vision_models:/root/.cache/llama.cpp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Image server-cuda không hứa có curl/wget; binary /app/llama-server là
+      # đường chính thức của image llama.cpp, nên healthcheck không kéo thêm
+      # shell utility vào container chỉ để kiểm HTTP.
+      test: ["CMD", "/app/llama-server", "--version"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 600s
+    security_opt:
+      - no-new-privileges:true
+
+# Tên tuyệt đối để trùng volume của các container dựng bằng `docker run` trước
+# đây — không thì compose tạo volume mới và tải lại từ đầu (3 GB model nghe,
+# ~600 MB NLLB).
+volumes:
+  fw_nghe_data:
+    name: fw-nghe-data
+  vn_translate_gpu_data:
+    name: vn-translate-gpu-data
+  fw_vision_models:
+    name: fw-vision-models

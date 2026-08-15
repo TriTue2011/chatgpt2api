@@ -6,16 +6,23 @@
 # Khác Dockerfile (bản CPU) hai điểm:
 # - Nền nvidia/cuda 12.4 + cuDNN 9 (ctranslate2 ≥4.5 đòi đúng cặp này;
 #   driver máy NVR 590 dư chuẩn).
-# - KHÔNG có tầng chuyển đổi EnViT5: build ngay trên máy đích, thư mục
-#   envit5-ct2/ chép sẵn vào build context từ image CPU đang chạy trên .38
-#   (docker cp từ container vn-translate) — đỡ kéo torch 800MB về máy NVR.
+# - KHÔNG có tầng chuyển đổi EnViT5: chép thẳng thư mục đã convert sẵn TỪ IMAGE
+#   CPU đã publish — đỡ kéo torch 800 MB về máy NVR.
 #
-# Build trên máy NVR:
-#   tar từ .38:  docker exec vn-translate tar -cC /opt envit5 | tar -xC <ctx>/
-#                rồi đổi tên thành envit5-ct2/
+# Bản trước bắt phải chép tay `envit5-ct2/` vào build context (`docker exec
+# vn-translate tar -cC /opt envit5 | tar -x`). Thư mục đó không nằm trong git,
+# nên CI build là chết ngay ở COPY — đó chính là lý do image GPU chưa bao giờ
+# lên được ghcr. Lấy qua tầng `cpu` bên dưới thì cả CI lẫn máy nhà đều build
+# được bằng đúng một lệnh, không có bước tay nào.
+#
+# Có image dựng sẵn: ghcr.io/tritue2011/vn-translate-gpu:latest
+# (xem deploy/gpu-box/docker-compose.yml). Build tay khi cần:
 #   docker build -f Dockerfile.gpu -t vn-translate-gpu .
-#   docker run -d --name vn-translate-gpu --gpus all --restart unless-stopped \
-#     -p 5000:5000 -v vn-translate-data:/data vn-translate-gpu
+
+# Nguồn EnViT5 đã convert. Đổi tag khi muốn ghim bản CPU cụ thể.
+ARG ANH_CPU=ghcr.io/tritue2011/vn-translate:latest
+FROM ${ANH_CPU} AS cpu
+
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 # python-is-python3: entrypoint.sh (dùng chung với bản CPU nền python:3.12)
@@ -28,7 +35,7 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-COPY envit5-ct2 /opt/envit5
+COPY --from=cpu /opt/envit5 /opt/envit5
 COPY app ./app
 
 COPY entrypoint.sh /entrypoint.sh

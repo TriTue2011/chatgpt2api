@@ -83,18 +83,27 @@ lượt decode — 16 trên CPU, 64 trên GPU).
 (overhead khởi động lô), nên gateway chạy **song song hai máy** và định tuyến
 theo cỡ lô — xem `docs/DICH_MAY_TU_CHU.md` mục 2c.
 
+Image dựng sẵn trên ghcr — **không phải build, không phải chép tay gì**:
+
 ```bash
 # TRÊN MÁY CÓ CARD NVIDIA (không cần cùng máy với gateway)
-# 1. Lấy EnViT5 đã convert từ image CPU đang chạy — khỏi kéo torch 800 MB về
-docker exec vn-translate tar -cC /opt envit5 | tar -x && mv envit5 envit5-ct2
-# 2. Build + chạy
-docker build -f Dockerfile.gpu -t vn-translate-gpu .
+cd deploy/gpu-box && docker compose up -d     # kèm luôn fw-nghe
+```
+
+Hoặc chỉ một container:
+
+```bash
 docker run -d --name vn-translate-gpu --gpus all --restart unless-stopped \
   -p 5001:5000 -v vn-translate-gpu-data:/data \
-  -e TT_KIEU_TINH=float16 vn-translate-gpu
+  -e TT_KIEU_TINH=float16 ghcr.io/tritue2011/vn-translate-gpu:latest
 ```
 
 Rồi khai ở gateway: `TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001`.
+
+Build tay (khi sửa `app/`): `docker build -f Dockerfile.gpu -t vn-translate-gpu .`
+— Dockerfile.gpu tự lấy EnViT5 đã convert từ image CPU trên ghcr, không cần
+kéo torch 800 MB về máy GPU và cũng không còn bước `docker exec … tar` như bản
+trước.
 
 | Cần biết | Chi tiết |
 |---|---|
@@ -103,7 +112,7 @@ Rồi khai ở gateway: `TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001`.
 | VRAM | ~2 GB — chạy chung máy với camera/AI khác được |
 | `TT_THIET_BI` | `cuda` (Dockerfile.gpu đặt sẵn) |
 | `TT_KIEU_TINH` | `float16` nhanh nhất trên card này; `int8_float16` là mặc định của mã |
-| Cập nhật code | Máy đó **không có watchtower** — scp `app/` sang rồi build lại |
+| Cập nhật | Máy đó **không có watchtower** — `docker compose pull && docker compose up -d` |
 
 ## Nối vào chatgpt2api
 

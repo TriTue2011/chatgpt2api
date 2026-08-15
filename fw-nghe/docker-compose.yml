@@ -1,0 +1,47 @@
+# fw-nghe chạy trên MÁY CÓ CARD NVIDIA (ở nhà: máy NVR 172.16.10.220), KHÔNG
+# nằm trong stack c2a. Gateway gọi qua LAN: NGHE_URL_GPU=http://<ip-máy-gpu>:5002
+#
+# File này là bản BUILD TỪ NGUỒN — dùng khi đang sửa `app.py`. Chỉ muốn chạy
+# thì đừng dùng file này: `deploy/gpu-box/docker-compose.yml` dựng cả fw-nghe
+# lẫn vn-translate-gpu từ image có sẵn trên ghcr, không build gì.
+#
+# Máy này không có watchtower, nên sau khi sửa code phải
+# `docker compose up -d --build` — không có gì tự kéo bản mới.
+services:
+  fw-nghe:
+    build: .
+    image: ghcr.io/tritue2011/fw-nghe:latest
+    container_name: fw-nghe
+    restart: unless-stopped
+    ports:
+      - "5002:5000"
+    environment:
+      FW_MODEL: "large-v3"
+      # Card compute capability ≥ 7.0 (2060S = 7.5) mới chạy được float16;
+      # card cũ hơn (vd GTX 1080, CC 6.1) phải đổi thành "int8".
+      FW_COMPUTE: "int8_float16"
+    volumes:
+      # Đặt tên tuyệt đối để trùng volume của container dựng bằng `docker run`
+      # trước đây — không thì compose tạo volume mới và tải lại model 3 GB.
+      - fw_nghe_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Image chỉ có `python3` (nền CUDA + ubuntu), không có alias `python`.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/health',timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      # Lần đầu phải tải model large-v3 (~3 GB) rồi mới mở cổng.
+      start_period: 600s
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  fw_nghe_data:
+    name: fw-nghe-data

@@ -88,6 +88,13 @@ curl -s http://<ip-máy-gpu>:5002/health     # {"status":"ok","model":"large-v3"
 Model large-v3 (~3 GB) tải lần đầu vào volume `fw-nghe-data`, lần sau khởi động
 nhanh.
 
+Gọn hơn, và **không phải build gì**: `cd deploy/gpu-box && docker compose up -d`
+— dựng cả máy nghe lẫn máy dịch GPU từ image trên ghcr, khai đúng tên volume
+`fw-nghe-data` nên chuyển từ `docker run` sang không phải tải lại model. Xem
+[`deploy/gpu-box/README.md`](../deploy/gpu-box/README.md). Hợp đồng API
+(`/health`, `/nghe`, cảnh báo tham số `batch`) và hai biến `FW_MODEL` /
+`FW_COMPUTE`: xem [`fw-nghe/README.md`](../fw-nghe/README.md).
+
 `/health` khai luôn **nhiệt độ card**, để đứng từ máy khác cũng xem được trong
 lúc chạy phép đo dài:
 
@@ -106,7 +113,9 @@ Bản fw-nghe cũ chưa có khoá `gpu` thì mọi thứ vẫn chạy, chỉ là
 dựng lại container để có (`docker build -t fw-nghe . && docker rm -f fw-nghe`
 rồi chạy lại lệnh `docker run` ở trên). Card 8 GB còn phải gánh camera và máy dịch nên dịch vụ chỉ giải mã **một
 request một lúc** và dùng lô 2 — đo trên 2060S thì lô 8 và lô 4 đều CUDA OOM với
-video 10 phút.
+video 10 phút. Gateway gọi `POST /unload` ngay sau mỗi lượt nghe, nên model
+Whisper không giữ VRAM giữa hai video. Chạy request tuần tự mà giữ model thường
+trú vẫn có thể OOM y như chạy đồng thời khi card còn phải nhận Qwen3-VL.
 
 ## Bật ở phía gateway
 
