@@ -12,11 +12,11 @@ services:
     environment:
       # === REQUIRED: Authentication key ===
       # Used by hass_local_openai_llm to authenticate API calls
-      - CHATGPT2API_AUTH_KEY=sk-your-secret-key
+      - "CHATGPT2API_AUTH_KEY=${CHATGPT2API_AUTH_KEY:?Đặt CHATGPT2API_AUTH_KEY trong .env hoặc môi trường}"
 
       # === REQUIRED: ChatGPT tokens (at least one) ===
       # Multiple accounts supported via numbered env vars
-      - CHATGPT_TOKEN_1=your_chatgpt_token_here
+      - "CHATGPT_TOKEN_1=${CHATGPT_TOKEN_1:?Đặt CHATGPT_TOKEN_1 trong .env hoặc môi trường}"
       # - CHATGPT_TOKEN_2=another_token
       # - CHATGPT_TOKEN_3=third_token
 
