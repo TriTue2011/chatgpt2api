@@ -563,6 +563,10 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
         "srt": srt.encode("utf-8"),
         "ten": f"phu-de.{dich}.srt",
         "chu": "\n".join(d.chu for d in da_dich),
+        # Cặp (câu gốc, câu dịch) để đóng bản SONG NGỮ. Ghép ở mức `nhom` chứ
+        # không ở `da_dich`: da_dich đã bị cắt lại cho vừa màn hình nên một câu
+        # gốc có thể thành hai ba khung, ghép ở đó là lệch cặp.
+        "song_ngu": [(d.chu, b) for d, b in zip(nhom, ban_dich)],
         "nguon": nguon,
         "dich": dich,
         "so_doan": len(da_dich),

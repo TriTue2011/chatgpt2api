@@ -1883,6 +1883,19 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             except _ts.LoiDich as exc:
                 send_message(thread_id, f"🌐 Máy dịch lỗi: {exc}", thread_type)
                 return
+            # Dài thì đóng .docx SONG NGỮ: gửi thẳng là Zalo cắt thành hàng chục
+            # tin (2000 ký tự/tin) và mất đường đối chiếu với bản gốc đúng lúc
+            # cần nhất — khi máy dịch hiểu sai một câu.
+            from services import song_ngu as _sn
+            goi = _sn.dong_goi(nd, ban, nguon=nguon or "auto", dich=dich,
+                               tieu_de="Bản dịch song ngữ")
+            if goi.get("tep"):
+                send_message(thread_id,
+                             f"🌐 {nguon or 'auto'} → {dich} · bản dài nên em "
+                             "đóng thành tệp song ngữ ạ.", thread_type)
+                _serve_bytes(thread_id, thread_type, goi["tep"], goi["ten"],
+                             "Bản dịch song ngữ")
+                return
             send_message(thread_id, f"🌐 {nguon or 'auto'} → {dich}\n{ban}",
                          thread_type, rich=True)
             return
@@ -1912,6 +1925,20 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         if kieu == "chu":
             _serve_bytes(thread_id, thread_type, r["chu"].encode("utf-8"),
                          f"loi-thoai.{r['dich']}.txt", "Bản chữ lời thoại")
+            # Có dịch (không phải chép lời) và lời thoại dài → kèm bản SONG NGỮ
+            # để đối chiếu được câu nào máy dịch hiểu sai.
+            from services import song_ngu as _sn
+            cap = r.get("song_ngu") or []
+            if cap and r.get("nguon") != r.get("dich") and _sn.nen_dong_tep(r["chu"]):
+                try:
+                    _serve_bytes(
+                        thread_id, thread_type,
+                        _sn.docx_song_ngu(cap, nguon=r.get("nguon", ""),
+                                          dich=r.get("dich", ""),
+                                          tieu_de="Lời thoại song ngữ"),
+                        f"song-ngu.{r['dich']}.docx", "Lời thoại song ngữ")
+                except Exception as exc:
+                    logger.info("đóng lời thoại song ngữ lỗi: %s", str(exc)[:120])
             if len(r["chu"]) <= 1500:
                 send_message(thread_id, r["chu"], thread_type)
             return
