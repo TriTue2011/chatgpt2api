@@ -58,7 +58,12 @@ def _la_kho_sach(collection: str) -> bool:
 
 
 def _key(collection: str, question: str) -> str:
-    h = hashlib.md5(question.strip().lower().encode("utf-8")).hexdigest()[:12]
+    # Đây là khóa dedup + một phần ID Chroma, nên 48-bit MD5 bị cắt ngắn có
+    # thể khiến hai câu hỏi khác nhau đè/bỏ qua nhau. Không cần hash mật khẩu,
+    # nhưng vẫn cần entropy đủ lớn và một thuật toán hiện đại.
+    h = hashlib.blake2s(
+        question.strip().lower().encode("utf-8"), digest_size=16
+    ).hexdigest()
     return f"{collection}::{h}"
 
 
