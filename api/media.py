@@ -54,6 +54,33 @@ def _duong_that(rel: str) -> Path | None:
     return duong_an_toan(config.images_dir, rel)
 
 
+def require_image_access(rel: str, request: Request, exp: str = "", sig: str = "") -> None:
+    """Áp chính sách ảnh đã ký cho mọi biến thể của cùng một ảnh.
+
+    Thumbnail là một biểu diễn của ``/images/<rel>``, không phải một tài sản
+    độc lập. Vì vậy dùng chính chữ ký của ảnh gốc: URL ảnh đã ký khi đổi sang
+    thumbnail vẫn hợp lệ, còn một chữ ký cho ảnh A không mở được ảnh B.
+    """
+    if not bat_buoc_ky():
+        return
+
+    from services.signed_url import kiem_chu_ky
+
+    duong = f"/images/{rel}"
+    hop_le = kiem_chu_ky(duong, exp, sig, pham_vi=PHAM_VI)
+    if not hop_le:
+        # Trình duyệt admin: `<img>` không gửi được Authorization, nhưng cookie
+        # phiên được trình duyệt gửi tự động.
+        try:
+            from services.browser_session_middleware import danh_tinh_cookie
+            hop_le = danh_tinh_cookie.get() is not None
+        except Exception:
+            hop_le = False
+    if not hop_le:
+        logger.warning({"event": "anh_tu_choi_thieu_chu_ky", "path": duong[:120]})
+        raise HTTPException(403, "chữ ký không hợp lệ hoặc đã hết hạn")
+
+
 def create_router() -> APIRouter:
     router = APIRouter(tags=["media"])
 
@@ -63,22 +90,7 @@ def create_router() -> APIRouter:
         if that is None:
             raise HTTPException(404, "not found")
 
-        if bat_buoc_ky():
-            from services.signed_url import kiem_chu_ky
-            duong = f"/images/{rel}"
-            hop_le = kiem_chu_ky(duong, exp, sig, pham_vi=PHAM_VI)
-            if not hop_le:
-                # Trình duyệt admin: `<img>` không gửi được Authorization,
-                # nhưng cookie phiên thì trình duyệt tự kèm.
-                try:
-                    from services.browser_session_middleware import danh_tinh_cookie
-                    hop_le = danh_tinh_cookie.get() is not None
-                except Exception:
-                    hop_le = False
-            if not hop_le:
-                logger.warning({"event": "anh_tu_choi_thieu_chu_ky",
-                                "path": duong[:120]})
-                raise HTTPException(403, "chữ ký không hợp lệ hoặc đã hết hạn")
+        require_image_access(rel, request, exp, sig)
 
         kieu, _ = mimetypes.guess_type(that.name)
         return FileResponse(str(that), media_type=kieu or "application/octet-stream")
@@ -86,4 +98,4 @@ def create_router() -> APIRouter:
     return router
 
 
-__all__ = ["PHAM_VI", "bat_buoc_ky", "create_router"]
+__all__ = ["PHAM_VI", "bat_buoc_ky", "create_router", "require_image_access"]

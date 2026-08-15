@@ -58,6 +58,12 @@ def start_tunnel() -> bool:
     with _lock:
         if _tunnel_process is not None and _tunnel_process.poll() is None:
             return True
+        # Sau restart app, tay cầm Python mất nhưng cloudflared cũ có thể vẫn
+        # chạy. Không spawn thêm tunnel cùng token; process đó vẫn phục vụ được
+        # và operator có thể restart có chủ đích nếu cần lấy lại ownership.
+        if _co_tien_trinh_he_thong():
+            logger.warning("Cloudflare Tunnel is already running without a local handle")
+            return True
         try:
             _tunnel_process = subprocess.Popen(
                 ["cloudflared", "tunnel", "--no-autoupdate", "run", "--token", token],
@@ -107,6 +113,7 @@ def restart_tunnel() -> bool:
 
 
 def _monitor_loop() -> None:
+    global _tunnel_process
     while True:
         time.sleep(30)
         try:

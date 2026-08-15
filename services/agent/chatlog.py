@@ -18,6 +18,7 @@ Nguyên tắc:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -27,6 +28,8 @@ from pathlib import Path
 from typing import Any
 
 from services.config import DATA_DIR, config
+
+logger = logging.getLogger(__name__)
 
 _DB_PATH = Path(DATA_DIR) / "agent" / "chatlog.sqlite"
 _lock = threading.RLock()

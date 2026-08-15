@@ -91,6 +91,10 @@ def has_pending(key: str) -> bool:
 
 def get_pending(key: str) -> dict[str, Any] | None:
     with _lock:
+        # Có đường gọi thẳng `get_pending` (đặc biệt /tts) trước `has_pending`.
+        # Nếu chỉ dọn ở has_pending thì một menu đã hết hạn vẫn bị ăn như câu
+        # trả lời hợp lệ. Mọi cửa đọc/tiêu thụ phải cùng thực thi luật TTL.
+        _gc()
         p = _pending.get(key)
         return dict(p) if p else None
 
@@ -98,6 +102,7 @@ def get_pending(key: str) -> dict[str, Any] | None:
 def pop_pending(key: str) -> dict[str, Any] | None:
     """Lấy bản chờ ra khỏi sổ — người gọi có trách nhiệm xoá tệp tạm."""
     with _lock:
+        _gc()
         return _pending.pop(key, None)
 
 

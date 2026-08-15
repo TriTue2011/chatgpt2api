@@ -53,7 +53,7 @@ function layLoi(e: unknown): string {
 
 function DichPageContent() {
   const [chu, setChu] = useState("");
-  const [target, setTarget] = useState("vi");
+  const [target, setTarget] = useState("en");
   const [nguon, setNguon] = useState("");   // "" = để máy tự nhận
   const [tep, setTep] = useState<File | null>(null);
   const [kieuRa, setKieuRa] = useState("phu-de");
@@ -153,6 +153,17 @@ function DichPageContent() {
 
   const goc = (webConfig.apiUrl || "").replace(/\/$/, "");
 
+  function doiNguon(moi: string) {
+    setNguon(moi);
+    // Nguồn được chọn sau khi đích đã chọn có thể làm UI giữ một state không
+    // hợp lệ (ví dụ đích Nhật rồi đổi nguồn sang Nhật). Đổi đích nguyên tử để
+    // request không bị backend từ chối vì dịch một ngôn ngữ sang chính nó.
+    if (moi && moi === target) {
+      const dichMoi = CAC_TIENG.find((o) => o.value !== moi)?.value;
+      if (dichMoi) setTarget(dichMoi);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -164,7 +175,7 @@ function DichPageContent() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2 text-sm">
-          <select value={nguon} onChange={(e) => setNguon(e.target.value)} disabled={dangChay}
+          <select value={nguon} onChange={(e) => doiNguon(e.target.value)} disabled={dangChay}
             className="rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm">
             <option value="">Tự nhận tiếng</option>
             {CAC_TIENG.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -182,7 +193,7 @@ function DichPageContent() {
       {/* Dán chữ hoặc link */}
       <div className="space-y-3 rounded-[16px] border border-[var(--border)] p-4">
         <textarea value={chu} onChange={(e) => setChu(e.target.value)} rows={5} disabled={dangChay}
-          placeholder="Dán chữ cần dịch, hoặc link YouTube/TikTok để lấy phụ đề dịch…"
+          placeholder="Dán chữ cần dịch, hoặc link YouTube có phụ đề để dịch…"
           className="w-full resize-y rounded-[12px] border border-[var(--border)] bg-transparent p-3 text-sm outline-none focus:border-slate-400" />
         <div className="flex justify-end">
           <button type="button" onClick={dichChu} disabled={dangChay || !chu.trim()}

@@ -203,7 +203,8 @@ def create_router() -> APIRouter:
                 _viec[viec_id] = {"trang_thai": "dang_chay", "luc": time.time(),
                                   "buoc": "đang lấy phụ đề và dịch…"}
             _chay_nen(viec_id, lambda: _xong_phu_de(
-                viec_id, vd.dich_video(nd, body.target)))
+                viec_id, vd.dich_video(nd, body.target,
+                                       nguon_biet=(body.nguon or "").strip())))
             return {"viec_id": viec_id}
 
         try:

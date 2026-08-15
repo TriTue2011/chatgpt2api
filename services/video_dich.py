@@ -153,7 +153,8 @@ def _thu_tu(ban: list[tuple[str, bool]], dich_sang: str = "vi") -> list[str]:
     return [ma for ma, _ in sorted(ban, key=diem)]
 
 
-def lay_phu_de(url: str, dich_sang: str = "vi") -> tuple[list[Doan], str]:
+def lay_phu_de(url: str, dich_sang: str = "vi", *,
+               nguon_biet: str = "") -> tuple[list[Doan], str]:
     """Lấy phụ đề gốc của video → (các đoạn, mã ngôn ngữ). Raise nếu không có."""
     from youtube_transcript_api import YouTubeTranscriptApi
 
@@ -166,8 +167,16 @@ def lay_phu_de(url: str, dich_sang: str = "vi") -> tuple[list[Doan], str]:
     if not ban:
         raise ValueError(LOI_CHUA_CO_TIENG)
     co = [ma for ma, _ in ban]
+    ma_nguon = str(nguon_biet or "").strip().lower().split("-", 1)[0]
+    if ma_nguon:
+        thu_tu = [ma for ma, _ in ban if ma.split("-", 1)[0].lower() == ma_nguon]
+        if not thu_tu:
+            raise ValueError(f"không có phụ đề tiếng `{ma_nguon}` trong video này")
+    else:
+        thu_tu = _thu_tu(ban, dich_sang)
+
     loi_cuoi: Exception | None = None
-    for ma in _thu_tu(ban, dich_sang):
+    for ma in thu_tu:
         try:
             doan = [Doan(float(x.start), float(x.start) + float(x.duration or 0),
                          str(x.text or "").replace("\n", " ").strip())
@@ -476,8 +485,8 @@ def dinh_tu_goc(nguon: str, ban_dich: str, khoa: set[str]) -> str:
     return f"{ban_dich} [{', '.join(thay)}]" if thay else ban_dich
 
 
-def dich_video(text: str, target: str = "", *,
-               chep_loi: bool = False) -> dict[str, Any]:
+def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
+               nguon_biet: str = "") -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
 
     Trả::
@@ -500,7 +509,13 @@ def dich_video(text: str, target: str = "", *,
     if not goi_y or goi_y.startswith("cap:"):
         goi_y = "vi"
     try:
-        doan, nguon = lay_phu_de(url, goi_y)
+        # Không truyền keyword rỗng để các adapter/test cũ chỉ nhận hai tham
+        # số vẫn tương thích. Có nguồn do người dùng chọn thì phải khoá việc
+        # chọn transcript vào đúng tiếng đó, không lặng lẽ lấy một track khác.
+        if str(nguon_biet or "").strip():
+            doan, nguon = lay_phu_de(url, goi_y, nguon_biet=nguon_biet)
+        else:
+            doan, nguon = lay_phu_de(url, goi_y)
     except Exception as exc:
         logger.warning("lấy phụ đề %s lỗi: %s", url, str(exc)[:200])
         return {"ok": False, "error": str(exc)[:300]}
