@@ -111,6 +111,12 @@ services:
       # chỗ. GPU lỗi/tắt thì tự rơi về model tại chỗ và nghỉ GPU 5 phút. Trống =
       # tắt. Dựng dịch vụ: xem fw-nghe/ và docs/NGHE_GPU.md.
       NGHE_URL_GPU: ${NGHE_URL_GPU:-}
+      # TUỲ CHỌN — Qwen3-VL 2B Q4 cho phụ đề video. Cảnh/khung CPU, Qwen GPU;
+      # lỗi/OOM thì vẫn ra SRT từ lời thoại. Dựng profile vision ở gpu-box.
+      VISION_URL_GPU: ${VISION_URL_GPU:-}
+      # URL /health có telemetry nvidia-smi (thường là fw-nghe). Trống thì dùng
+      # NGHE_URL_GPU nếu có; khai riêng nếu Qwen và Whisper khác máy.
+      VISION_GPU_STATUS_URL: ${VISION_GPU_STATUS_URL:-}
       # Dịch sang tiếng Anh trước khi gửi LLM rồi dịch phản hồi về tiếng Việt.
       # MẶC ĐỊNH TẮT — đổi hành vi của MỌI lượt gọi model, phải tự bật.
       # Xem docs/DICH_MAY_TU_CHU.md mục 5 trước khi đặt "1".

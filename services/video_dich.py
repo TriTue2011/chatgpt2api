@@ -284,7 +284,7 @@ def cat_khung(doan: list[Doan]) -> list[Doan]:
     return ra
 
 
-def gop_doan(doan: list[Doan]) -> list[Doan]:
+def gop_doan(doan: list[Doan], *, ranh_canh: list[float] | None = None) -> list[Doan]:
     """Gộp mảnh vụn thành CÂU TRỌN VẸN để máy dịch có ngữ cảnh.
 
     Luật duy nhất: dừng khi hết câu (gặp . ? ! …). Hai trần ``GOP_TOI_GIAY`` /
@@ -293,8 +293,11 @@ def gop_doan(doan: list[Doan]) -> list[Doan]:
     gian lấy từ mảnh đầu tới mảnh cuối của nhóm.
     """
     ra: list[Doan] = []
+    ranh = sorted(float(x) for x in (ranh_canh or []))
     for d in doan:
-        if ra and (len(ra[-1].chu) + len(d.chu) + 1 <= GOP_TOI_KY_TU
+        qua_canh = bool(ra and any(ra[-1].ket_thuc <= x <= d.bat_dau
+                                    for x in ranh))
+        if ra and not qua_canh and (len(ra[-1].chu) + len(d.chu) + 1 <= GOP_TOI_KY_TU
                    and d.ket_thuc - ra[-1].bat_dau <= GOP_TOI_GIAY
                    and not ra[-1].chu.rstrip().endswith((".", "?", "!", "…"))):
             ra[-1] = Doan(ra[-1].bat_dau, d.ket_thuc, f"{ra[-1].chu} {d.chu}")
@@ -539,14 +542,17 @@ def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
 
 
 def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
-                      dai_giay: float) -> dict[str, Any]:
+                      dai_giay: float, *, nghe: dict[str, str] | None = None,
+                      vision: dict[str, Any] | None = None,
+                      ranh_canh: list[float] | None = None
+                      ) -> dict[str, Any]:
     """Các đoạn chữ có mốc → dịch → khung đạt chuẩn → gói kết quả.
 
     Phần dùng chung của hai đường vào: phụ đề lấy từ YouTube và chữ máy tự
     nghe từ tệp. ``nguon == dich`` thì bỏ bước dịch — bản chép lời có mốc thời
     gian tự nó đã hữu ích (video tiếng Việt → phụ đề tiếng Việt).
     """
-    nhom = gop_doan(bo_trung(doan))
+    nhom = gop_doan(bo_trung(doan), ranh_canh=ranh_canh)
     if nguon == dich:
         ban_dich = [d.chu for d in nhom]
     else:
@@ -573,7 +579,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     da_dich = cat_khung([Doan(d.bat_dau, d.ket_thuc, b)
                          for d, b in zip(nhom, ban_dich)])
     srt = lam_srt(da_dich)
-    return {
+    ra = {
         "ok": True,
         "srt": srt.encode("utf-8"),
         "ten": f"phu-de.{dich}.srt",
@@ -587,6 +593,11 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
         "so_doan": len(da_dich),
         "phut": int(round(dai_giay / 60)),
     }
+    if nghe:
+        ra["nghe"] = nghe
+    if vision:
+        ra["vision"] = vision
+    return ra
 
 
 #: Tệp phải NGHE (không có phụ đề sẵn) dài nhất ngần này. Đo thật 13/08: nghe
@@ -714,10 +725,12 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     from services import video_asr as va
 
     try:
-        cau, nguon, _giay_tieng = va.nghe_tep(
+        ket_qua_nghe = va.nghe_tep(
             duong, tran_giay=TRAN_GIAY_NGHE,
             ung_vien=((nguon_biet,) if nguon_biet
-                      else _ung_vien_nghe(target, session_id)))
+                      else _ung_vien_nghe(target, session_id)),
+            chi_tiet=True)
+        cau, nguon, _giay_tieng = ket_qua_nghe
     except va.LoiNghe as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
@@ -725,10 +738,36 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
         return {"ok": False, "error": f"nghe tệp lỗi: {str(exc)[:200]}"}
 
     doan = [Doan(c.bat_dau, c.ket_thuc, c.chu) for c in cau]
+    nghe: dict[str, str] = {}
+    engine = str(getattr(ket_qua_nghe, "engine", "") or "")
+    if engine:
+        nghe["engine"] = engine
+        canh_bao = str(getattr(ket_qua_nghe, "canh_bao", "") or "")
+        if canh_bao:
+            nghe["canh_bao"] = canh_bao
+    # Vision là enrichment thuần: service không có, frame lỗi hoặc Qwen OOM thì
+    # vẫn dịch bằng lời thoại như phiên bản trước. Không để một model nhìn hình
+    # làm toàn bộ công việc phụ đề mất kết quả.
+    from services import video_vision as vv
+    try:
+        ket_qua_vision = vv.phan_tich_video(duong, doan)
+    except Exception as exc:
+        logger.warning("vision tệp %s lỗi ngoài dự kiến: %s", ten, str(exc)[:160])
+        ket_qua_vision = vv.KetQuaVision(
+            "fallback", [], [], "Qwen3-VL GPU lỗi; dùng lời thoại làm ngữ cảnh.")
+    vision = {"engine": ket_qua_vision.engine, "so_canh": ket_qua_vision.so_canh}
+    if ket_qua_vision.mo_ta:
+        # API caller có thể dùng ngữ cảnh trực quan này; không chen vào SRT vì
+        # NLLB/EnViT5 không nhận system prompt và thêm text mô tả sẽ thành lời
+        # phụ đề bịa. Ranh cảnh đã được dùng để tách đơn vị dịch an toàn.
+        vision["ngu_canh"] = ket_qua_vision.mo_ta
+    if ket_qua_vision.canh_bao:
+        vision["canh_bao"] = ket_qua_vision.canh_bao
     dich = nguon if chep_loi else ts.giai_ma_target(nguon, target)
     if dich != nguon and not ts.is_configured():
         return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
-    return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc)
+    return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc, nghe=nghe,
+                             vision=vision, ranh_canh=ket_qua_vision.ranh_canh)
 
 
 def soat_srt(srt: str) -> list[str]:
@@ -774,5 +813,20 @@ def bao_cao(r: dict[str, Any]) -> str:
     """Kết quả → câu để bot gửi. Cùng nếp ``translate_service.bao_cao_dich``."""
     if not r.get("ok"):
         return f"🎬 Không dịch được: {r.get('error') or 'lỗi không rõ'}"
-    return (f"🎬 Phụ đề {r['nguon']} → {r['dich']} • {r['phut']} phút • "
-            f"{r['so_doan']} khung")
+    ra = (f"🎬 Phụ đề {r['nguon']} → {r['dich']} • {r['phut']} phút • "
+          f"{r['so_doan']} khung")
+    nghe = r.get("nghe") or {}
+    if nghe.get("engine") == "gpu":
+        ra += " • Whisper GPU"
+    elif nghe.get("engine") == "local_fallback":
+        ra += " • STT local (GPU lỗi)"
+    elif nghe.get("engine") == "local":
+        ra += " • STT local"
+    if nghe.get("canh_bao"):
+        ra += f"\n⚠️ {nghe['canh_bao']}"
+    vision = r.get("vision") or {}
+    if vision.get("engine") == "gpu":
+        ra += f" • Qwen3-VL GPU ({vision.get('so_canh', 0)} cảnh)"
+    if vision.get("canh_bao"):
+        ra += f"\n⚠️ {vision['canh_bao']}"
+    return ra

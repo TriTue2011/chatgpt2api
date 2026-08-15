@@ -51,6 +51,7 @@ import urllib.request
 from typing import Any
 
 from services.config import config
+from services import gpu_queue
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,12 @@ def translate_batch(texts: list[str], target: str, source: str = "auto") -> list
     if (gpu and len(can_gui) >= config.translate_lo_toi_thieu
             and time.time() >= _gpu_nghi_toi):
         try:
-            body = _goi("/translate", payload, base=gpu)
+            with gpu_queue.giu("dịch GPU"):
+                body = _goi("/translate", payload, base=gpu)
+        except gpu_queue.QuaTaiGpu as exc:
+            # Card bận Qwen/Whisper là tình trạng bình thường, không ngắt cầu
+            # dao 5 phút; đi thẳng máy CPU để các việc ngắn không phải chờ.
+            logger.info("GPU dịch đang bận (%s) — rơi về máy CPU", str(exc)[:120])
         except LoiDich as exc:
             _gpu_nghi_toi = time.time() + 300
             logger.warning("máy dịch GPU %s lỗi (%s) — rơi về máy CPU, "

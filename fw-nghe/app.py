@@ -18,6 +18,7 @@ Chạy trên máy có NVIDIA GPU (ở nhà: máy NVR 172.16.10.220, RTX 2060 Sup
 
 Model tải lần đầu (~3 GB) vào volume `fw-nghe-data`, lần sau khởi động nhanh.
 """
+import gc
 import os
 import tempfile
 import threading
@@ -75,7 +76,27 @@ def _gpu_do() -> dict | None:
 @app.get("/health")
 def health():
     return {"status": "ok", "model": MODEL, "compute": COMPUTE,
+            "loaded": _model is not None,
             "gpu": _gpu_do()}
+
+
+@app.post("/unload")
+def unload():
+    """Nhả hẳn Whisper/CUDA sau một video để Qwen3-VL dùng được card 8 GB."""
+    global _model
+    with _lock:
+        _model = None
+        # faster-whisper/ctranslate2 nhả bộ nhớ khi object hết tham chiếu.
+        # ``torch`` không phải dependency bắt buộc, nhưng nếu có thì dọn luôn
+        # cache CUDA của nó; thiếu torch không được làm API dọn model hỏng.
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+    return {"status": "ok", "loaded": False, "gpu": _gpu_do()}
 
 
 @app.post("/nghe")
@@ -90,9 +111,9 @@ async def nghe(tep: UploadFile = File(...), lang: str = Form(""),
                 if not khuc:
                     break
                 f.write(khuc)
-        model = _lay_model()
         t0 = time.time()
         with _lock:
+            model = _lay_model()
             # batch<=1: đường thường (ít VRAM nhất) — card 8GB còn phải gánh
             # camera + máy dịch, lô to dễ OOM. Đo trên 2060S: batch 8 và 4 đều
             # OOM với video 10 phút, batch 2 chạy được.

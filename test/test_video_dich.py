@@ -74,6 +74,15 @@ def test_gop_mach_vun_toi_het_cau():
 
 
 @pytest.mark.pure
+def test_khong_gop_loi_thoai_qua_ranh_canh_vision():
+    """Đổi cảnh hay đổi nhân vật: không đưa hai vế sang máy dịch như một câu."""
+    doan = [vd.Doan(0.0, 2.0, "He opens the door"),
+            vd.Doan(2.0, 4.0, "and she walks in.")]
+    ra = vd.gop_doan(doan, ranh_canh=[2.0])
+    assert [d.chu for d in ra] == ["He opens the door", "and she walks in."]
+
+
+@pytest.mark.pure
 def test_khong_gop_qua_nguong_thoi_gian():
     """Người nói không ngắt câu suốt cả phút thì vẫn phải cắt, kẻo một khung
     phụ đề dài cả phút không ai đọc kịp."""

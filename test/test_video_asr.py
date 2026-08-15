@@ -276,6 +276,64 @@ def test_dich_tep_video_ra_srt_dat_chuan(monkeypatch):
     assert vd.soat_srt(r["srt"].decode()) == []
 
 
+def test_dich_tep_video_ghi_ro_nguon_nghe_de_kiem_chung_chat_luong(monkeypatch):
+    """Phụ đề tiếng Anh phải nói rõ đã qua Whisper GPU hay chưa.
+
+    Không có dấu vết này, một GPU tắt sẽ rơi im lặng về Parakeet tại chỗ và
+    người dùng chỉ thấy phụ đề sai tên riêng sau cả tiếng chờ. Đây là bệ đỏ cho
+    lỗi triển khai thực tế: file Frozen được nghe bằng local dù image đã mới.
+    """
+    from test._fakes import FakeTranslate, install_translate
+    from services import video_dich as vd
+    import services.video_asr as va_mod
+
+    class _KetQua:
+        engine = "gpu"
+        canh_bao = ""
+
+        def __iter__(self):
+            yield [va.Cau(0.0, 2.0, "Hello, Elsa.")]
+            yield "en"
+            yield 2.0
+
+    monkeypatch.setattr(va_mod, "nghe_tep", lambda *_a, **_kw: _KetQua())
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_tep_video("/tmp/frozen.mp3", "frozen.mp3", target="vi",
+                               nguon_biet="en")
+
+    assert r["nghe"]["engine"] == "gpu"
+    assert "Whisper GPU" in vd.bao_cao(r)
+
+
+def test_vision_loi_van_xuat_srt_va_bao_canh_bao(monkeypatch):
+    """Qwen hỏng chỉ mất ngữ cảnh hình, không được làm rơi toàn bộ phụ đề."""
+    from test._fakes import FakeTranslate, install_translate
+    from services import video_dich as vd
+    import services.video_asr as va_mod
+    from services import video_vision as vv
+
+    class _KetQua:
+        engine = "gpu"
+        canh_bao = ""
+
+        def __iter__(self):
+            yield [va.Cau(0.0, 2.0, "Hello, Elsa.")]
+            yield "en"
+            yield 2.0
+
+    monkeypatch.setattr(va_mod, "nghe_tep", lambda *_a, **_kw: _KetQua())
+    monkeypatch.setattr(vv, "phan_tich_video", lambda *_a, **_kw:
+                        vv.KetQuaVision("fallback", [], [],
+                                        "Qwen3-VL GPU lỗi; dùng lời thoại."))
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_tep_video("/tmp/frozen.mp4", "frozen.mp4", target="vi",
+                               nguon_biet="en")
+
+    assert r["ok"] is True
+    assert r["vision"]["engine"] == "fallback"
+    assert "Qwen3-VL GPU lỗi" in vd.bao_cao(r)
+
+
 def test_dich_tep_video_cung_ngon_ngu_thi_tra_ban_chep(monkeypatch):
     """Video tiếng Việt, đích tiếng Việt → bản CHÉP LỜI, không gọi máy dịch."""
     from test._fakes import FakeTranslate, install_translate

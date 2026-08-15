@@ -23,6 +23,10 @@ vnstock>=4.0.0
 ddddocr>=1.4.0
 requests>=2.31.0
 cloudscraper>=1.2.0
+# Vision cục bộ cho phụ đề: PySceneDetect chạy CPU, OpenCV headless không kéo
+# GUI/X11 vào image gateway. Pin dưới 0.8 theo khuyến nghị migration của dự án.
+scenedetect<0.8
+opencv-python-headless>=4.10
 
 # ── captcha-solver ──
 patchright>=1.49

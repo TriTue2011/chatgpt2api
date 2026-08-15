@@ -47,6 +47,29 @@ class Cau:
     chu: str
 
 
+@dataclass
+class KetQuaNghe:
+    """Kết quả nghe kèm nguồn STT thực tế đã dùng.
+
+    API cũ của :func:`nghe_tep` trả đúng bộ ba ``(câu, tiếng, giây)``. Chi tiết
+    này chỉ được trả khi caller chủ động xin, để các lối dùng cũ không đổi hợp
+    đồng. Nó rất quan trọng với phụ đề tiếng Anh: GPU tắt từng bị rơi im lặng
+    về model tại chỗ, đến khi người dùng mở SRT sai mới biết.
+    """
+
+    cau: list[Cau]
+    ngon_ngu: str
+    giay_tieng: float
+    engine: str                     # ``gpu`` | ``local`` | ``local_fallback``
+    canh_bao: str = ""
+
+    def __iter__(self):
+        """Tương thích với chỗ gọi vẫn unpack ba giá trị như trước."""
+        yield self.cau
+        yield self.ngon_ngu
+        yield self.giay_tieng
+
+
 def la_tep_nghe_duoc(ten: str) -> bool:
     t = str(ten or "").lower()
     return t.endswith(DUOI_VIDEO) or t.endswith(DUOI_TIENG)
@@ -286,11 +309,16 @@ def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
 
 
 def nghe_tep(duong: str, tran_giay: float = 0,
-             ung_vien: tuple[str, ...] = ("vi", "en")) -> tuple[list[Cau], str, float]:
+             ung_vien: tuple[str, ...] = ("vi", "en"), *,
+             chi_tiet: bool = False) -> tuple[list[Cau], str, float] | KetQuaNghe:
     """Tệp video/âm thanh → (các khung chữ có mốc, ngôn ngữ, số giây tiếng).
 
     ``ung_vien``: cặp ngôn ngữ đem dò (xem ``_chon_ngon_ngu``) — người dùng
     chọn cặp Việt↔Trung thì so vi với zh thay vì en.
+
+    ``chi_tiet`` chỉ dành cho đường phụ đề: trả thêm engine thực tế và cảnh
+    báo khi tiếng Anh rơi về local. Mặc định vẫn là bộ ba cũ để không làm gãy
+    các caller đã có.
 
     ``tran_giay`` > 0 thì từ chối tệp dài hơn — kiểm SAU khi bóc tiếng (rẻ)
     và TRƯỚC khi nghe (đắt). Raise ``LoiNghe`` với thông điệp đưa thẳng được
@@ -317,12 +345,21 @@ def nghe_tep(duong: str, tran_giay: float = 0,
         # ngôn ngữ vẫn làm tại chỗ: nó rẻ và đã chạy đúng. Lỗi thì rơi xuống
         # đường tại chỗ ngay bên dưới, phụ đề không bao giờ vì thế mà đứt.
         ra: list[Cau] = []
+        engine = "local"
+        canh_bao = ""
         if nghe_gpu.dung_duoc(lang):
             try:
                 tokens, moc = nghe_gpu.nghe(wav, lang)
                 ra = gom_khung(tokens, moc, 0.0)   # mốc GPU đã là tuyệt đối
-                logger.info("phụ đề: nghe %s bằng máy GPU — %d khung", lang, len(ra))
+                if ra:
+                    engine = "gpu"
+                    logger.info("phụ đề: nghe %s bằng máy GPU — %d khung", lang, len(ra))
             except nghe_gpu.LoiNgheGpu as exc:
+                engine = "local_fallback"
+                # Không ghép chi tiết exception vào tin bot: URL nội bộ và lỗi
+                # requests không giúp người xem SRT, còn log đã giữ để admin dò.
+                canh_bao = ("Whisper GPU không dùng được nên đã nghe lại bằng "
+                             "model tại chỗ.")
                 logger.info("phụ đề: máy GPU không nghe được (%s) — nghe tại chỗ",
                             str(exc)[:120])
 
@@ -341,7 +378,14 @@ def nghe_tep(duong: str, tran_giay: float = 0,
         sach = [c for c in sach if c.chu]
         if not sach:
             raise LoiNghe("không nghe ra chữ nào trong tệp")
-        return sach, lang, sum(k - b for b, k in doan)
+        # FLEURS cho thấy tiếng Anh local có WER cao hơn hẳn Whisper GPU. Báo
+        # rõ ở kết quả thay vì để rơi im lặng — đây là thông tin vận hành, không
+        # phải kết luận rằng mọi phụ đề local đều sai.
+        if lang == "en" and engine == "local":
+            canh_bao = ("Tiếng Anh được nghe bằng model tại chỗ, không phải "
+                         "Whisper GPU; tên riêng và thoại có thể kém chính xác hơn.")
+        ket = KetQuaNghe(sach, lang, sum(k - b for b, k in doan), engine, canh_bao)
+        return ket if chi_tiet else (ket.cau, ket.ngon_ngu, ket.giay_tieng)
     finally:
         try:
             Path(wav).unlink()

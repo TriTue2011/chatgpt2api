@@ -413,6 +413,25 @@ def test_lo_lon_di_may_gpu(monkeypatch):
     assert goi_dich and goi_dich[0]["_base"] == "http://gpu:5000"
 
 
+def test_lo_gpu_di_qua_hang_doi_chung(monkeypatch):
+    """Không được để CTranslate2 đụng Qwen/Whisper cùng lúc trên card 8 GB."""
+    from contextlib import contextmanager
+    from services import gpu_queue
+
+    _bat_gpu(monkeypatch)
+    da_giu = []
+
+    @contextmanager
+    def _giu(nguon):
+        da_giu.append(nguon)
+        yield
+
+    monkeypatch.setattr(gpu_queue, "giu", _giu)
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        ts.translate_batch([f"Sentence {i}." for i in range(10)], "vi", "en")
+    assert da_giu == ["dịch GPU"]
+
+
 def test_cau_le_van_di_cpu(monkeypatch):
     """Câu đơn GPU thua CPU vì overhead — dưới ngưỡng phải đi máy CPU."""
     _bat_gpu(monkeypatch)

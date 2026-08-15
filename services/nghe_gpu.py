@@ -23,6 +23,8 @@ import logging
 import time
 from pathlib import Path
 
+from services import gpu_queue
+
 logger = logging.getLogger(__name__)
 
 #: Cầu dao — mốc thời gian được phép thử lại máy GPU.
@@ -56,6 +58,21 @@ def _ngat_cau_dao(ly_do: str) -> None:
                    ly_do[:160], NGHI_GIAY / 60)
 
 
+def _nha_model(url: str) -> None:
+    """Nhả Whisper sau lượt nghe để Qwen/translator không đụng VRAM của nó.
+
+    Máy fw-nghe cũ chưa có endpoint này vẫn trả phụ đề: chỉ ghi log để admin
+    dựng lại image. Không ngắt cầu dao vì nghe vừa thành công, lỗi là ở bước
+    dọn tài nguyên chứ không phải chất lượng/khả dụng của STT.
+    """
+    import requests
+
+    try:
+        requests.post(f"{url}/unload", timeout=5)
+    except Exception as exc:
+        logger.warning("Whisper GPU nghe xong nhưng chưa nhả model: %s", str(exc)[:120])
+
+
 def nghe(duong_wav: str, lang: str, tran_giay: float = 1800.0
          ) -> tuple[list[str], list[float]]:
     """Gửi cả tệp wav sang máy GPU → (tokens, mốc giây tuyệt đối từng token).
@@ -80,13 +97,22 @@ def nghe(duong_wav: str, lang: str, tran_giay: float = 1800.0
         raise LoiNgheGpu(f"không đọc được tệp wav: {exc}") from exc
     try:
         with f:
-            r = requests.post(
-                f"{url}/nghe",
-                files={"tep": (tep.name, f, "audio/wav")},
-                data={"lang": str(lang or ""), "batch": str(BATCH)},
-                timeout=tran_giay)
-        r.raise_for_status()
-        body = r.json()
+            with gpu_queue.giu("Whisper GPU"):
+                try:
+                    r = requests.post(
+                        f"{url}/nghe",
+                        files={"tep": (tep.name, f, "audio/wav")},
+                        data={"lang": str(lang or ""), "batch": str(BATCH)},
+                        timeout=tran_giay)
+                    r.raise_for_status()
+                    body = r.json()
+                finally:
+                    # Giữ hàng đợi tới khi model thật sự được yêu cầu nhả; nếu nhả
+                    # sau khi mở khoá thì Qwen có thể đụng khoảng VRAM còn sót lại.
+                    _nha_model(url)
+    except gpu_queue.QuaTaiGpu as exc:
+        # GPU bận không có nghĩa STT GPU hỏng, nên không phạt cầu dao 5 phút.
+        raise LoiNgheGpu(str(exc)) from exc
     except Exception as exc:
         _ngat_cau_dao(f"{type(exc).__name__}: {exc}")
         raise LoiNgheGpu(str(exc)[:200]) from exc

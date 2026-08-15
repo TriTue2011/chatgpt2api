@@ -111,6 +111,23 @@ def test_doan_thieu_moc_tung_chu_van_giu_lai_chu(monkeypatch, tmp_path):
     assert tokens == ["cả đoạn"] and moc == [3.0]
 
 
+def test_nghe_xong_phai_yeu_cau_nha_whisper_de_nhuong_vram_cho_vision(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr("services.voice.config.stt_gpu_url", lambda: "http://x:5002")
+    goi = []
+
+    def _post(url, *_a, **_k):
+        goi.append(url)
+        return types.SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"lang": "en", "doan": [
+                {"bat_dau": 0, "chu": "hello", "tu": []}]})
+
+    with mock.patch("requests.post", _post):
+        nghe_gpu.nghe(str(_wav(tmp_path)), "en")
+    assert goi == ["http://x:5002/nghe", "http://x:5002/unload"]
+
+
 # ── Cầu dao ─────────────────────────────────────────────────────────────────
 
 
