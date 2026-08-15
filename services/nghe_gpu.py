@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from services import gpu_queue
@@ -38,6 +39,20 @@ BATCH = 2
 
 class LoiNgheGpu(RuntimeError):
     """Máy GPU không nghe được — caller phải rơi về đường tại chỗ."""
+
+
+@dataclass
+class KetQuaNgheGpu:
+    """Chữ/mốc tương thích API cũ, kèm các đoạn nên ưu tiên đối chiếu."""
+
+    tokens: list[str]
+    moc: list[float]
+    doan_tin_thap: list[tuple[float, float]]
+
+    def __iter__(self):
+        # Caller cũ vẫn dùng ``tokens, moc = nghe(...)`` không bị gãy.
+        yield self.tokens
+        yield self.moc
 
 
 def dung_duoc(lang: str) -> bool:
@@ -74,8 +89,8 @@ def _nha_model(url: str) -> None:
 
 
 def nghe(duong_wav: str, lang: str, tran_giay: float = 1800.0
-         ) -> tuple[list[str], list[float]]:
-    """Gửi cả tệp wav sang máy GPU → (tokens, mốc giây tuyệt đối từng token).
+         ) -> KetQuaNgheGpu:
+    """Gửi cả tệp wav sang máy GPU → chữ/mốc và dải có độ tin cậy thấp.
 
     Ném ``LoiNgheGpu`` khi máy GPU không dùng được; caller nghe lại bằng model
     tại chỗ. Mọi lỗi đều ngắt cầu dao trước khi ném.
@@ -124,10 +139,31 @@ def nghe(duong_wav: str, lang: str, tran_giay: float = 1800.0
 
     tokens: list[str] = []
     moc: list[float] = []
+    doan_tin_thap: list[tuple[float, float]] = []
     for d in doan:
         if not isinstance(d, dict):
             continue
         tu = d.get("tu")
+        try:
+            bat_dau = float(d.get("bat_dau") or 0.0)
+            ket_thuc = float(d.get("ket_thuc") or bat_dau)
+        except (TypeError, ValueError):
+            bat_dau, ket_thuc = 0.0, 0.0
+        try:
+            tu_tin = float(d.get("tu_tin"))
+        except (TypeError, ValueError):
+            tu_tin = 0.0
+        xac_suat_tu = []
+        if isinstance(tu, list):
+            for w in tu:
+                try:
+                    xac_suat_tu.append(float((w or {}).get("p")))
+                except (TypeError, ValueError):
+                    pass
+        if ket_thuc > bat_dau and (tu_tin <= -1.0 or
+                                   (xac_suat_tu and sum(xac_suat_tu) /
+                                    len(xac_suat_tu) < 0.45)):
+            doan_tin_thap.append((bat_dau, ket_thuc))
         if isinstance(tu, list) and tu:
             for w in tu:
                 chu = str((w or {}).get("chu") or "")
@@ -145,4 +181,4 @@ def nghe(duong_wav: str, lang: str, tran_giay: float = 1800.0
     if not tokens:
         # KHÔNG ngắt cầu dao: máy chạy tốt, chỉ là tệp này không có tiếng nói.
         raise LoiNgheGpu("máy GPU không nghe ra chữ nào")
-    return tokens, moc
+    return KetQuaNgheGpu(tokens, moc, doan_tin_thap)

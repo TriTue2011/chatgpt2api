@@ -111,6 +111,19 @@ def test_doan_thieu_moc_tung_chu_van_giu_lai_chu(monkeypatch, tmp_path):
     assert tokens == ["cả đoạn"] and moc == [3.0]
 
 
+def test_doan_tin_cay_thap_duoc_giu_lai_de_canh_bao_chat_luong(monkeypatch, tmp_path):
+    monkeypatch.setattr("services.voice.config.stt_gpu_url", lambda: "http://x:5002")
+    doan = [{"bat_dau": 3.0, "ket_thuc": 5.0, "chu": "mơ hồ",
+             "tu_tin": -1.2,
+             "tu": [{"t": 3.0, "chu": " mơ", "p": 0.2}]}]
+    with mock.patch("requests.post", _tra_loi(doan)):
+        kq = nghe_gpu.nghe(str(_wav(tmp_path)), "en")
+
+    tokens, moc = kq
+    assert tokens == [" mơ"] and moc == [3.0]
+    assert kq.doan_tin_thap == [(3.0, 5.0)]
+
+
 def test_nghe_xong_phai_yeu_cau_nha_whisper_de_nhuong_vram_cho_vision(
         monkeypatch, tmp_path):
     monkeypatch.setattr("services.voice.config.stt_gpu_url", lambda: "http://x:5002")

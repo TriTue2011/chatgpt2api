@@ -44,12 +44,14 @@ TRAN_CHU_XEM = 30_000
 
 _DUOI_ANH = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 
-#: viec_id → trạng thái. Sống trong RAM: mất khi restart là chấp nhận được
-#: (UI báo "không thấy việc", người dùng gửi lại), đổi lấy việc không phải
-#: kéo thêm hàng đợi/DB cho một tab công cụ.
+#: viec_id → trạng thái. RAM cho truy cập nhanh, snapshot JSON để restart không
+#: biến việc đang chạy thành 404 im lặng; thread bị gián đoạn sẽ hiện lỗi rõ.
 _viec: dict[str, dict[str, Any]] = {}
 _khoa = threading.Lock()
 _GIU_TOI_DA = 40
+# Cùng volume dữ liệu với ảnh/tệp kết quả, không dùng /tmp vốn có thể mất lúc
+# container restart. Nội dung chỉ đi qua API admin và file được ghi mode 0600.
+_DUONG_SO_VIEC = config.images_dir.parent / "dich-jobs.json"
 
 
 class DichChuRequest(BaseModel):
@@ -72,6 +74,23 @@ class DichTepRequest(BaseModel):
     kieu_ra: str = "phu-de"
 
 
+def _luu_so_viec_da_khoa() -> None:
+    """Ghi sổ việc. Caller đang giữ ``_khoa`` để snapshot nhất quán."""
+    from services import dich_jobs
+
+    dich_jobs.luu_so_viec(_DUONG_SO_VIEC, _viec)
+
+
+def _tai_lai_so_viec_sau_restart() -> None:
+    from services import dich_jobs
+
+    da_luu = dich_jobs.tai_so_viec(_DUONG_SO_VIEC)
+    if not da_luu:
+        return
+    _viec.update(dich_jobs.khoi_phuc_sau_restart(da_luu))
+    _luu_so_viec_da_khoa()
+
+
 def _don_cu() -> None:
     """Giữ sổ việc gọn. Gọi khi đã giữ ``_khoa``.
 
@@ -88,6 +107,7 @@ def _don_cu() -> None:
     xong.sort(key=lambda k: _viec[k]["luc"])
     while len(_viec) >= _GIU_TOI_DA and xong:
         _viec.pop(xong.pop(0), None)
+    _luu_so_viec_da_khoa()
 
 
 def _cap_nhat(viec_id: str, **thay) -> None:
@@ -95,6 +115,11 @@ def _cap_nhat(viec_id: str, **thay) -> None:
         v = _viec.get(viec_id)
         if v is not None:
             v.update(thay)
+            _luu_so_viec_da_khoa()
+
+
+with _khoa:
+    _tai_lai_so_viec_sau_restart()
 
 
 def _luu_ket_tep(cac_tep: list[tuple[str, bytes]]) -> list[dict[str, str]]:
@@ -191,10 +216,6 @@ def create_router() -> APIRouter:
         if not nd:
             raise HTTPException(400, detail={"error": "Chưa có gì để dịch"})
         from services import translate_service as ts
-        if not ts.is_configured():
-            raise HTTPException(
-                503, detail={"error": "Chưa cấu hình máy chủ dịch (translate_url)"})
-
         from services import video_dich as vd
         if vd.la_link_video(nd):
             with _khoa:
@@ -202,10 +223,15 @@ def create_router() -> APIRouter:
                 viec_id = uuid.uuid4().hex[:12]
                 _viec[viec_id] = {"trang_thai": "dang_chay", "luc": time.time(),
                                   "buoc": "đang lấy phụ đề và dịch…"}
+                _luu_so_viec_da_khoa()
             _chay_nen(viec_id, lambda: _xong_phu_de(
                 viec_id, vd.dich_video(nd, body.target,
                                        nguon_biet=(body.nguon or "").strip())))
             return {"viec_id": viec_id}
+
+        if not ts.is_configured():
+            raise HTTPException(
+                503, detail={"error": "Chưa cấu hình máy chủ dịch (translate_url)"})
 
         try:
             nguon = (body.nguon or "").strip().lower()
@@ -245,6 +271,7 @@ def create_router() -> APIRouter:
                     "duong": str(Path(tempfile.gettempdir())
                                  / f"updich-{viec_id}.part"),
                 }
+                _luu_so_viec_da_khoa()
             v = _viec.get(viec_id)
             if v is None or v["trang_thai"] != "nhan_tep":
                 raise HTTPException(404, detail={"error": "Không thấy việc upload này"})
@@ -254,12 +281,15 @@ def create_router() -> APIRouter:
             if v["size"] + len(du_lieu) > TRAN_TEP:
                 Path(v["duong"]).unlink(missing_ok=True)
                 _viec.pop(viec_id, None)
+                _luu_so_viec_da_khoa()
                 raise HTTPException(
                     413, detail={"error": f"Tệp vượt trần {TRAN_TEP // (1024*1024)}MB"})
             with open(v["duong"], "ab") as f:
                 f.write(du_lieu)
             v["next"] += 1
             v["size"] += len(du_lieu)
+            v["luc"] = time.time()
+            _luu_so_viec_da_khoa()
             return {"viec_id": viec_id, "da_nhan": v["next"], "tong": v["tong"]}
 
     @router.post("/api/dich/tep")
@@ -267,10 +297,6 @@ def create_router() -> APIRouter:
                                authorization: str | None = Header(None)):
         """Đủ khúc rồi → chốt tệp, chọn đường dịch theo đuôi, chạy nền."""
         require_admin(authorization)
-        from services import translate_service as ts
-        if not ts.is_configured():
-            raise HTTPException(
-                503, detail={"error": "Chưa cấu hình máy chủ dịch (translate_url)"})
         with _khoa:
             v = _viec.get(body.viec_id)
             if v is None or v["trang_thai"] != "nhan_tep":
@@ -280,6 +306,8 @@ def create_router() -> APIRouter:
                     400, detail={"error": f"Mới nhận {v['next']}/{v['tong']} khúc"})
             v["trang_thai"] = "dang_chay"
             v["buoc"] = "đang chuẩn bị…"
+            v["luc"] = time.time()
+            _luu_so_viec_da_khoa()
             ten, duong = v["ten"], v["duong"]
         viec_id, target = body.viec_id, body.target
         nguon_biet = (body.nguon or "").strip().lower()
@@ -291,11 +319,12 @@ def create_router() -> APIRouter:
         thap = ten.lower()
         if va.la_tep_nghe_duoc(thap):
             def _video():
-                _cap_nhat(viec_id, buoc="đang nghe tiếng trong tệp — "
-                          "video dài chờ cỡ 2/3 thời lượng…")
+                def _tien_do(buoc: str) -> None:
+                    _cap_nhat(viec_id, buoc=buoc, luc=time.time())
+
                 try:
                     r = vd.dich_tep_video(duong, ten, target,
-                                          nguon_biet=nguon_biet)
+                                          nguon_biet=nguon_biet, tien_do=_tien_do)
                 finally:
                     Path(duong).unlink(missing_ok=True)
                 _xong_phu_de(viec_id, r, kieu_ra)

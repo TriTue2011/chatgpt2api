@@ -436,12 +436,18 @@ def nghe_tep(duong: str, tran_giay: float = 0,
         ra: list[Cau] = []
         engine = "local"
         canh_bao = ""
+        doan_tin_thap: list[tuple[float, float]] = []
         if nghe_gpu.dung_duoc(lang):
             try:
-                tokens, moc = nghe_gpu.nghe(wav, lang)
+                ket_qua_gpu = nghe_gpu.nghe(wav, lang)
+                tokens, moc = ket_qua_gpu
+                doan_tin_thap = list(getattr(ket_qua_gpu, "doan_tin_thap", []) or [])
                 ra = gom_khung(tokens, moc, 0.0)   # mốc GPU đã là tuyệt đối
                 if ra:
                     engine = "gpu"
+                    if doan_tin_thap:
+                        canh_bao = (f"Whisper GPU có {len(doan_tin_thap)} đoạn độ tin cậy "
+                                     "thấp; nên đối chiếu lại lời thoại ở các mốc đó.")
                     logger.info("phụ đề: nghe %s bằng máy GPU — %d khung", lang, len(ra))
             except nghe_gpu.LoiNgheGpu as exc:
                 engine = "local_fallback"
@@ -456,6 +462,7 @@ def nghe_tep(duong: str, tran_giay: float = 0,
         if bo_sot:
             ra_bu: list[Cau] = []
             co_gpu = bool(ra)
+            loi_nghe_bu = False
             try:
                 rec = eng._get_recognizer(lang)
                 for b, k in bo_sot:
@@ -469,25 +476,31 @@ def nghe_tep(duong: str, tran_giay: float = 0,
             except Exception as exc:
                 if not co_gpu:
                     raise
+                loi_nghe_bu = True
                 engine = "gpu_incomplete"
-                canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
-                             "STT local không nghe bù được, cần kiểm tra lại.")
+                canh_bao = " ".join(x for x in (
+                    canh_bao,
+                    f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; STT local "
+                    "không nghe bù được, cần kiểm tra lại.") if x)
                 logger.warning("phụ đề: STT local không bù được %d đoạn GPU bỏ sót: %s",
                                len(bo_sot), str(exc)[:120])
-            if co_gpu and not canh_bao:
+            if co_gpu and not loi_nghe_bu:
                 ra.extend(ra_bu)
                 ra.sort(key=lambda c: (c.bat_dau, c.ket_thuc))
                 con_sot = doan_tieng_bi_bo_sot(doan_audit, ra)
                 da_bu = len(bo_sot) - len(con_sot)
                 if con_sot:
                     engine = "gpu_incomplete"
-                    canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
-                                 f"STT local chỉ bù được {da_bu}, còn "
-                                 f"{len(con_sot)} đoạn cần kiểm tra lại.")
+                    canh_bao = " ".join(x for x in (
+                        canh_bao,
+                        f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; STT local chỉ "
+                        f"bù được {da_bu}, còn {len(con_sot)} đoạn cần kiểm tra lại.") if x)
                 else:
                     engine = "gpu_recovered"
-                    canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
-                                 "đã nghe bù bằng model tại chỗ.")
+                    canh_bao = " ".join(x for x in (
+                        canh_bao,
+                        f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; đã nghe bù "
+                        "bằng model tại chỗ.") if x)
                     logger.warning("phụ đề: Whisper GPU bỏ sót %d đoạn tiếng, đã bù local",
                                    len(bo_sot))
             elif not co_gpu:

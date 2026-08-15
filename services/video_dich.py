@@ -21,11 +21,21 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from services import translate_service as ts
 
 logger = logging.getLogger(__name__)
+
+
+def _bao_tien_do(tien_do: Callable[[str], None] | None, buoc: str) -> None:
+    """Tiến độ là quan sát; callback lỗi không được làm mất phụ đề."""
+    if tien_do is None:
+        return
+    try:
+        tien_do(buoc)
+    except Exception as exc:
+        logger.info("callback tiến độ phụ đề lỗi: %s", str(exc)[:120])
 
 #: Video dài hơn ngần này thì từ chối: phụ đề vài nghìn đoạn dịch xong vừa lâu
 #: vừa cho ra tệp không ai đọc trong chat. 2 giờ đã phủ hết phim/hội thảo.
@@ -658,7 +668,8 @@ def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
 def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                       dai_giay: float, *, nghe: dict[str, str] | None = None,
                       vision: dict[str, Any] | None = None,
-                      ranh_canh: list[float] | None = None
+                      ranh_canh: list[float] | None = None,
+                      tien_do: Callable[[str], None] | None = None,
                       ) -> dict[str, Any]:
     """Các đoạn chữ có mốc → dịch → khung đạt chuẩn → gói kết quả.
 
@@ -679,7 +690,9 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
         chu_goc = [d.chu for d in nhom]
         ban_dich = []
         try:
-            for i in range(0, len(chu_goc), LO_MOI_LUOT):
+            tong_lo = max(1, (len(chu_goc) + LO_MOI_LUOT - 1) // LO_MOI_LUOT)
+            for so_lo, i in enumerate(range(0, len(chu_goc), LO_MOI_LUOT), start=1):
+                _bao_tien_do(tien_do, f"đang dịch phụ đề ({so_lo}/{tong_lo})…")
                 ban_dich.extend(ts.translate_batch(
                     chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
         except ts.LoiDich as exc:
@@ -709,6 +722,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     # ai đọc kịp trên màn hình.
     da_dich = cat_khung([Doan(d.bat_dau, d.ket_thuc, b)
                          for d, b in zip(nhom, ban_dich)])
+    _bao_tien_do(tien_do, "đang đóng tệp SRT…")
     srt = lam_srt(da_dich)
     ra = {
         "ok": True,
@@ -806,7 +820,13 @@ def dich_tep_phu_de(duong: str, ten: str = "", target: str = "", *,
     try:
         nguon, _ = ts.detect(mau[:5000])
     except ts.LoiDich as exc:
-        return {"ok": False, "error": str(exc)}
+        # Không có máy dịch thì không đoán bừa ngôn ngữ tệp SRT. Vẫn chuẩn hoá
+        # và trả bản gốc để người dùng không mất tệp phụ đề họ vừa tải lên.
+        ra = _dich_va_dong_goi(doan, "goc", "goc", doan[-1].ket_thuc)
+        if ra.get("ok"):
+            ra["canh_bao_dich"] = (f"Không nhận được máy dịch: {exc}; đã xuất "
+                                    "phụ đề bản gốc để không mất lời thoại.")
+        return ra
     dich = (nguon or "auto") if chep_loi else ts.giai_ma_target(nguon, target)
     if nguon and nguon == dich and not chep_loi:
         return {"ok": False, "error": f"phụ đề đã là tiếng `{dich}` rồi ạ"}
@@ -841,7 +861,8 @@ def _ung_vien_nghe(target: str, session_id: str = "") -> tuple[str, ...]:
 
 def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
                    chep_loi: bool = False, session_id: str = "",
-                   nguon_biet: str = "") -> dict[str, Any]:
+                   nguon_biet: str = "",
+                   tien_do: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
     Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
@@ -855,6 +876,7 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     """
     from services import video_asr as va
 
+    _bao_tien_do(tien_do, "đang bóc tiếng và nhận lời thoại…")
     try:
         ket_qua_nghe = va.nghe_tep(
             duong, tran_giay=TRAN_GIAY_NGHE,
@@ -880,6 +902,7 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     # vẫn dịch bằng lời thoại như phiên bản trước. Không để một model nhìn hình
     # làm toàn bộ công việc phụ đề mất kết quả.
     from services import video_vision as vv
+    _bao_tien_do(tien_do, "đã nhận lời thoại, đang phân tích cảnh…")
     try:
         ket_qua_vision = vv.phan_tich_video(duong, doan)
     except Exception as exc:
@@ -898,7 +921,8 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
         vision["canh_bao"] = ket_qua_vision.canh_bao
     dich = nguon if chep_loi else ts.giai_ma_target(nguon, target)
     return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc, nghe=nghe,
-                             vision=vision, ranh_canh=ket_qua_vision.ranh_canh)
+                             vision=vision, ranh_canh=ket_qua_vision.ranh_canh,
+                             tien_do=tien_do)
 
 
 def soat_srt(srt: str) -> list[str]:

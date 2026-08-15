@@ -15,6 +15,9 @@ dependencies = [
     # "cannot identify image file". services/image_utils.py tự nạp plugin này.
     "pillow-heif>=1.1.0",
     "pybase64>=1.4.3",
+    # video_asr đo năng lượng WAV bằng mảng float32; trước đây image có thể
+    # dựng sạch mà thiếu NumPy, tới lúc người dùng gửi video mới nổ import.
+    "numpy>=2.0",
     "python-multipart>=0.0.26",
     "tiktoken>=0.12.0",
     "uvicorn>=0.44.0",
@@ -79,4 +82,3 @@ default = true
 
 [tool.uv.sources]
 gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "enable-guest-mode" }
-

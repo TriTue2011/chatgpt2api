@@ -406,6 +406,27 @@ def test_dich_tep_video_ra_srt_dat_chuan(monkeypatch):
     assert vd.soat_srt(r["srt"].decode()) == []
 
 
+def test_dich_tep_video_bao_tien_do_tung_cong_doan(monkeypatch):
+    from test._fakes import FakeTranslate, install_translate
+    from services import video_dich as vd
+    import services.video_asr as va_mod
+
+    monkeypatch.setattr(va_mod, "nghe_tep", lambda *_a, **_kw:
+                        ([va.Cau(0.0, 2.0, "Hello there.")], "en", 2.0))
+    tien_do: list[str] = []
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_tep_video("/tmp/x.mp4", "x.mp4", target="vi",
+                              tien_do=tien_do.append)
+
+    assert r["ok"] is True
+    assert tien_do == [
+        "đang bóc tiếng và nhận lời thoại…",
+        "đã nhận lời thoại, đang phân tích cảnh…",
+        "đang dịch phụ đề (1/1)…",
+        "đang đóng tệp SRT…",
+    ]
+
+
 def test_dich_tep_video_ghi_ro_nguon_nghe_de_kiem_chung_chat_luong(monkeypatch):
     """Phụ đề tiếng Anh phải nói rõ đã qua Whisper GPU hay chưa.
 

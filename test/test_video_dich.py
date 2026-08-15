@@ -159,6 +159,21 @@ def test_may_dich_loi_van_xuat_srt_loi_goc(monkeypatch):
     assert "bản gốc" in r["canh_bao_dich"]
 
 
+def test_tep_srt_khong_co_may_dich_van_tra_ban_goc(monkeypatch, tmp_path):
+    from services.config import config
+
+    monkeypatch.setitem(config.data, "translate_url", "")
+    tep = tmp_path / "goc.srt"
+    tep.write_text("1\n00:00:00,000 --> 00:00:02,000\nHello there.\n", encoding="utf-8")
+
+    r = vd.dich_tep_phu_de(str(tep), "goc.srt", target="vi")
+
+    assert r["ok"] is True
+    assert r["dich"] == "goc"
+    assert "Hello there." in r["srt"].decode()
+    assert "bản gốc" in r["canh_bao_dich"]
+
+
 @pytest.mark.pure
 def test_vision_khong_chac_chan_giu_nguyen_xung_ho(monkeypatch):
     """Không được đổi xưng hô khi frame có cả nam lẫn nữ hoặc không rõ."""
