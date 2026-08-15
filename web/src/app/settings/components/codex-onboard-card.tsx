@@ -26,11 +26,12 @@ export function CodexOnboardCard() {
   const [saveLoading, setSaveLoading] = useState(false);
 
   useEffect(() => {
-    // Prefer server config (T3 recovery reads these); fall back to localStorage
+    // T3 recovery reads the server config. App-password must never fall back
+    // to browser storage: any XSS could otherwise retain it indefinitely.
     const fromCfgEmail = String((config as any)?.codex_imap_gmail_email || "");
     const fromCfgPass = String((config as any)?.codex_imap_gmail_app_password || "");
-    setGmailEmail(fromCfgEmail || localStorage.getItem("codex_gmail_email") || "");
-    setGmailAppPassword(fromCfgPass || localStorage.getItem("codex_gmail_pass") || "");
+    setGmailEmail(fromCfgEmail);
+    setGmailAppPassword(fromCfgPass);
 
     // Get captcha-solver info
     // `config.providers` khai là Record chung nên TypeScript không biết có khoá
@@ -48,8 +49,6 @@ export function CodexOnboardCard() {
       // Persist shared IMAP so T3 auto-recovery uses the same credentials as batch UI
       setField("codex_imap_gmail_email", gmailEmail.trim());
       setField("codex_imap_gmail_app_password", gmailAppPassword.trim());
-      localStorage.setItem("codex_gmail_email", gmailEmail.trim());
-      localStorage.setItem("codex_gmail_pass", gmailAppPassword.trim());
       const next = {
         ...(config || {}),
         codex_auto_list: (config as any)?.codex_auto_list,
@@ -177,7 +176,6 @@ export function CodexOnboardCard() {
                 value={gmailEmail} 
                 onChange={e => {
                   setGmailEmail(e.target.value);
-                  localStorage.setItem("codex_gmail_email", e.target.value);
                   setField("codex_imap_gmail_email", e.target.value);
                 }} 
                 className="mt-1 h-8 rounded-lg text-xs"
@@ -186,12 +184,11 @@ export function CodexOnboardCard() {
             <div>
               <GmailAppPasswordLabel />
               <Input 
-                type="text" 
+                type="password"
                 placeholder="abcd efgh ijkl mnop" 
                 value={gmailAppPassword} 
                 onChange={e => {
                   setGmailAppPassword(e.target.value);
-                  localStorage.setItem("codex_gmail_pass", e.target.value);
                   setField("codex_imap_gmail_app_password", e.target.value);
                 }} 
                 className="mt-1 h-8 rounded-lg text-xs"

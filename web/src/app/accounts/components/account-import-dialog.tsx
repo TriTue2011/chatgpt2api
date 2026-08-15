@@ -141,8 +141,8 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
   const [multiResults, setMultiResults] = useState<Record<string, any>>({});
   const [codexDraft, setCodexDraft] = useState({
     githubEmail: "",
-    gmailEmail: typeof window !== "undefined" ? localStorage.getItem("codex_gmail") || "" : "",
-    gmailAppPassword: typeof window !== "undefined" ? localStorage.getItem("codex_gmail_pass") || "" : ""
+    gmailEmail: "",
+    gmailAppPassword: "",
   });
   const [csCfg, setCsCfg] = useState<{ url: string; apiKey: string }>({
     url: "/api/captcha",
@@ -1038,7 +1038,6 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                     value={codexDraft.gmailEmail} 
                     onChange={e => {
                       setCodexDraft({...codexDraft, gmailEmail: e.target.value});
-                      localStorage.setItem("codex_gmail", e.target.value);
                     }}
                     className="mt-1"
                   />
@@ -1051,7 +1050,6 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
                     value={codexDraft.gmailAppPassword} 
                     onChange={e => {
                       setCodexDraft({...codexDraft, gmailAppPassword: e.target.value});
-                      localStorage.setItem("codex_gmail_pass", e.target.value);
                     }}
                     className="mt-1"
                   />
