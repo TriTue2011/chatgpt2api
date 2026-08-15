@@ -1,9 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
-import { Send, Mic, MicOff, Settings } from 'lucide-react';
+import { Send, Mic, MicOff } from 'lucide-react';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+}
+
+interface BrowserSpeechRecognition {
+  lang: string;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+interface BrowserSpeechRecognitionConstructor {
+  new (): BrowserSpeechRecognition;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: BrowserSpeechRecognitionConstructor;
+    webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor;
+  }
 }
 
 export default function App() {
@@ -19,8 +40,9 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array | null>(null);
-  const animationFrameRef = useRef<number>();
+  const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   
   // Sleep timer
   const lastInteractionTime = useRef<number>(Date.now());
@@ -32,6 +54,14 @@ export default function App() {
       }
     }, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    void audioContextRef.current?.close();
   }, []);
 
   const resetTimer = () => {
@@ -47,35 +77,38 @@ export default function App() {
     }
   };
 
-  // Lip sync animation loop
-  const updateLipSync = () => {
-    if (!analyserRef.current || !dataArrayRef.current) return;
-    
-    analyserRef.current.getByteFrequencyData(dataArrayRef.current);
-    
-    // Calculate average volume
-    let sum = 0;
-    for (let i = 0; i < dataArrayRef.current.length; i++) {
-      sum += dataArrayRef.current[i];
-    }
-    const average = sum / dataArrayRef.current.length;
-    
-    // Map volume to jaw movement (0 to 15px down)
-    const movement = Math.min(15, (average / 100) * 15);
-    setJawOffset(movement);
-
-    if (isTalking) {
-      animationFrameRef.current = requestAnimationFrame(updateLipSync);
-    }
-  };
-
+  // Lip sync animation loop. Keeping the whole loop in the effect gives it a
+  // single lifecycle: it starts with speech and is always cancelled on stop.
   useEffect(() => {
-    if (isTalking) {
-      updateLipSync();
-    } else {
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    if (!isTalking) {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
       setJawOffset(0);
+      return;
     }
+
+    const updateLipSync = () => {
+      if (analyserRef.current && dataArrayRef.current) {
+        analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+        let sum = 0;
+        for (let i = 0; i < dataArrayRef.current.length; i++) {
+          sum += dataArrayRef.current[i];
+        }
+        const average = sum / dataArrayRef.current.length;
+        setJawOffset(Math.min(15, (average / 100) * 15));
+      }
+      animationFrameRef.current = requestAnimationFrame(updateLipSync);
+    };
+
+    updateLipSync();
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
   }, [isTalking]);
 
   const initAudio = () => {
@@ -90,7 +123,7 @@ export default function App() {
       
       analyserRef.current.fftSize = 256;
       const bufferLength = analyserRef.current.frequencyBinCount;
-      dataArrayRef.current = new Uint8Array(bufferLength);
+      dataArrayRef.current = new Uint8Array(new ArrayBuffer(bufferLength));
     }
     if (audioContextRef.current?.state === 'suspended') {
       audioContextRef.current.resume();
@@ -175,20 +208,21 @@ export default function App() {
 
   const toggleRecording = () => {
     resetTimer();
-    const SpeechRecognition = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert("Your browser doesn't support speech recognition.");
       return;
     }
 
     if (isRecording) {
+      recognitionRef.current?.stop();
       setIsRecording(false);
-      // We assume it stops automatically or we rely on onend event
       return;
     }
 
     setIsRecording(true);
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
     recognition.lang = 'vi-VN'; // Assuming Vietnamese, or auto
     recognition.interimResults = false;
     
@@ -200,10 +234,12 @@ export default function App() {
     };
 
     recognition.onerror = () => {
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
       setIsRecording(false);
     };
     
     recognition.onend = () => {
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
       setIsRecording(false);
     };
 
@@ -237,13 +273,13 @@ export default function App() {
       
       <div className="avatar-container" onClick={resetTimer}>
         <img 
-          src="/avatar.jpg" 
+          src="/avatar.svg"
           alt="Avatar Base" 
           className={`avatar-image ${isSleeping ? 'sleeping' : ''}`}
         />
         {/* Jaw overlay for lip sync simulation */}
         <img 
-          src="/avatar.jpg" 
+          src="/avatar.svg"
           alt="Avatar Jaw" 
           className={`avatar-jaw ${isSleeping ? 'sleeping' : ''}`}
           style={{ transform: `translateY(${jawOffset}px)` }}
