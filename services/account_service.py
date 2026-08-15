@@ -391,6 +391,27 @@ class AccountService:
                     return dict(acc)
         return None
 
+    @staticmethod
+    def _giu_danh_tinh_codex(acc: dict | None) -> bool:
+        """Dòng này mang danh tính Codex/OAuth — đường free KHÔNG được đụng vào.
+
+        Vì sao cần: nhóm được suy từ `plan`, nên một tài khoản Codex vừa hết gói
+        trả phí TẠM THỜI trông như free. Nếu đúng lúc đó đường free nhận nó là
+        "dòng free cũ của email này" rồi đóng đinh `type="free"` (bên dưới), việc
+        tụt hạng thành vĩnh viễn. Đo thật trên máy chủ 15/08/2026: 18 email từng
+        nằm nhóm codex, chỉ còn 3; phần lớn số biến mất nay là dòng free mang
+        `type=free`, và 27 lần một dòng đổi nhóm được ghi lại trong nhật ký.
+
+        `refresh_token` là dấu hiệu chắc nhất: chỉ luồng OAuth Codex mới có, còn
+        tài khoản free là JWT web nên không bao giờ có.
+        """
+        if not isinstance(acc, dict):
+            return False
+        if str(acc.get("refresh_token") or "").strip():
+            return True
+        types = {t.strip() for t in str(acc.get("type") or "").split(",") if t.strip()}
+        return bool(types & {"codex", "antigravity"})
+
     def upsert_free_token(self, access_token: str, extra: dict | None = None) -> dict:
         """Insert or replace free-pool account by email (never create duplicate free rows).
 
@@ -405,11 +426,19 @@ class AccountService:
         if extra and extra.get("email"):
             email = str(extra.get("email") or email).strip().lower() or email
         with self._lock:
+            # Cùng access_token mà dòng đang giữ là Codex thì DỪNG hẳn: ghi tiếp
+            # là thay dòng đó bằng một dòng free ở cùng khoá, tức xoá mất
+            # credential OAuth. Thà bỏ lượt ghi còn hơn mất tài khoản.
+            dang_giu = self._accounts.get(access_token)
+            if self._giu_danh_tinh_codex(dang_giu):
+                logger.info({"event": "bo_qua_ghi_free_len_dong_codex",
+                             "email": email or "", "token": anonymize_token(access_token)})
+                return {"added": 0, "updated": 0, "skipped": 1}
             existing_token = None
             existing = None
             if email:
                 for t, acc in list(self._accounts.items()):
-                    if account_group(acc) != GROUP_FREE:
+                    if account_group(acc) != GROUP_FREE or self._giu_danh_tinh_codex(acc):
                         continue
                     if self._email_from_token_or_account(t, acc) == email:
                         existing_token, existing = t, acc
@@ -1507,7 +1536,17 @@ class AccountService:
         if not target_set:
             return {"removed": 0, "items": self.list_accounts()}
         with self._lock:
-            removed = sum(self._accounts.pop(token, None) is not None for token in target_set)
+            # Ghi lại XOÁ AI, không chỉ xoá mấy cái: nhật ký cũ chỉ có
+            # `{"removed": 1}` nên khi tài khoản biến mất dần thì không truy
+            # được cái nào đã đi và đi lúc nào.
+            da_xoa: list[str] = []
+            for token in target_set:
+                acc = self._accounts.pop(token, None)
+                if acc is None:
+                    continue
+                da_xoa.append(str(acc.get("email") or "").strip()[:80]
+                              or anonymize_token(token))
+            removed = len(da_xoa)
             for token in target_set:
                 self._image_inflight.pop(token, None)
             if removed:
@@ -1516,7 +1555,8 @@ class AccountService:
                 else:
                     self._index = 0
                 self._save_accounts()
-                log_service.add(LOG_TYPE_ACCOUNT, f"Đã xóa {removed} tài khoản", {"removed": removed})
+                log_service.add(LOG_TYPE_ACCOUNT, f"Đã xóa {removed} tài khoản",
+                                {"removed": removed, "emails": da_xoa})
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 
