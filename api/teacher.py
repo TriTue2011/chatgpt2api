@@ -1229,22 +1229,6 @@ def create_router() -> APIRouter:
             raise HTTPException(404, f"không có học sinh '{student_key}'")
         return {"ok": True, "profile": {**p, **tp.resolve_grade(p)}}
 
-    @router.delete("/api/teacher/students/{student_key}")
-    async def students_delete(
-        student_key: str,
-        wipe_memory: bool = Query(default=True),
-        authorization: str | None = Header(default=None),
-    ):
-        """Xoá hồ sơ + placement + lộ trình của MỘT học sinh.
-
-        `wipe_memory=true` (mặc định) xoá luôn ghi chú/adaptive của học sinh đó
-        trong các workspace — nếu không thì tạo lại trùng tên sẽ thừa hưởng dữ
-        liệu của người cũ.
-        """
-        require_admin(authorization)
-        from services.agent import teacher_path as tp
-        return {"ok": True, **tp.delete_student(student_key, wipe_memory=wipe_memory)}
-
     @router.get("/api/teacher/school-year")
     async def teacher_school_year(authorization: str | None = Header(default=None)):
         """Năm học đang xét + cách suy lớp từ năm sinh (để UI giải thích cho user)."""

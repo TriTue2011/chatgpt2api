@@ -6,6 +6,7 @@ browser session.
 """
 from __future__ import annotations
 
+import ast
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -154,3 +155,24 @@ def test_batch_codex_import_keeps_credentials_out_of_query_strings_and_marks_new
     assert batch.index("account_service.add_accounts_with_credentials") < batch.index(
         "account_service.update_account"
     )
+
+
+@pytest.mark.pure
+def test_teacher_student_delete_route_is_registered_exactly_once():
+    tree = ast.parse((ROOT / "api" / "teacher.py").read_text(encoding="utf-8"))
+    routes = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "delete"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+            ):
+                continue
+            routes.append(decorator.args[0].value)
+
+    assert routes.count("/api/teacher/students/{student_key}") == 1
