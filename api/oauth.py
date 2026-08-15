@@ -15,7 +15,7 @@ from __future__ import annotations
 import base64
 import json
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header
 from pydantic import BaseModel, Field
 
 from api.support import require_admin
@@ -32,6 +32,10 @@ class ImportTokenRequest(BaseModel):
 
 class ImportTokenBatchRequest(BaseModel):
     tokens: list[dict] = Field(default_factory=list)
+    # Không đưa router password vào query string: URL thường bị giữ lại trong
+    # reverse-proxy/access log, browser history và telemetry. Giữ cùng hợp đồng
+    # với endpoint nhập một token để client Account Studio không cần ngoại lệ.
+    routerPassword: str | None = None
 
 
 def _decode_jwt(token: str) -> dict:
@@ -76,8 +80,13 @@ def _extract_account_info(token: str) -> dict:
 def create_router() -> APIRouter:
     router = APIRouter()
 
-    def _check_auth(request: Request, body: ImportTokenRequest, authorization: str | None) -> None:
-        """Authenticate via Authorization header, body password, or query param."""
+    def _check_auth(body: ImportTokenRequest | ImportTokenBatchRequest,
+                    authorization: str | None) -> None:
+        """Xác thực bằng Bearer header hoặc password trong body.
+
+        Cố ý không nhận query parameter: URL đi qua log/proxy/history nên không
+        phải nơi an toàn cho credential.
+        """
         # Standard Bearer token
         if authorization and authorization.strip():
             require_admin(authorization)
@@ -97,7 +106,6 @@ def create_router() -> APIRouter:
     @router.post("/dashboard/providers/codex")
     async def import_token(
         body: ImportTokenRequest,
-        request: Request,
         authorization: str | None = Header(default=None),
     ):
         """Import a single ChatGPT access token — Codex Account Studio compatible.
@@ -105,13 +113,12 @@ def create_router() -> APIRouter:
         Accepts the same format as 9router's /api/oauth/codex/import-token:
           { accessToken: "eyJ...", name?: "optional label", routerPassword?: "xxx" }
 
-        Auth: Authorization: Bearer <password>, or routerPassword in body,
-        or ?password=xxx query param.
+        Auth: Authorization: Bearer <password>, hoặc routerPassword trong body.
 
         The token is added to the codex account pool and available immediately
         for cx/auto, cx/gpt-5.5, and all other cx/* models.
         """
-        _check_auth(request, body, authorization)
+        _check_auth(body, authorization)
         token = str(body.accessToken or "").strip()
         if not token:
             return {"success": False, "error": "Access token is required"}
@@ -175,7 +182,6 @@ def create_router() -> APIRouter:
     @router.post("/api/oauth/codex/import-tokens")
     async def import_tokens_batch(
         body: ImportTokenBatchRequest,
-        request: Request,
         authorization: str | None = Header(default=None),
     ):
         """Batch import multiple tokens — 9router backup compatible.
@@ -184,22 +190,8 @@ def create_router() -> APIRouter:
 
         Each token is decoded and added to the codex pool with image support.
         """
-        # Auth check — same as single import
-        from fastapi import HTTPException
-        try:
-            # Batch body doesn't have routerPassword, check header + query param only
-            if authorization and authorization.strip():
-                require_admin(authorization)
-            else:
-                qp = str(request.query_params.get("password") or "").strip()
-                if qp:
-                    require_admin(f"Bearer {qp}")
-                else:
-                    raise HTTPException(status_code=401, detail={"error": "Missing authentication"})
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=401, detail={"error": "Missing authentication"})
+        # Cùng cơ chế với nhập một token: header hoặc routerPassword trong body.
+        _check_auth(body, authorization)
 
         if not body.tokens:
             return {"success": False, "error": "tokens array is required"}
@@ -232,13 +224,6 @@ def create_router() -> APIRouter:
                 "email": email,
             })
 
-            account_service.update_account(access_token, {
-                "image_quota_unknown": True,
-                "quota": 10,
-                "status": "active",
-            })
-
-            imported += 1
             results.append({
                 "email": email,
                 "name": name,
@@ -248,6 +233,15 @@ def create_router() -> APIRouter:
 
         if creds:
             add_result = account_service.add_accounts_with_credentials(creds, "codex")
+            # `update_account` trước `add_accounts...` là no-op vì token chưa
+            # có trong pool. Đặt sau khi ghi để account nhập hàng loạt dùng được
+            # ở đường tạo ảnh giống luồng nhập một token/OAuth.
+            for cred in creds:
+                account_service.update_account(str(cred["access_token"]), {
+                    "image_quota_unknown": True,
+                    "quota": 10,
+                    "status": "active",
+                })
             imported = add_result.get("added", 0) + add_result.get("updated", 0)
 
         logger.info({

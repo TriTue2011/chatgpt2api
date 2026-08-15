@@ -142,3 +142,15 @@ def test_translation_page_uses_a_non_vietnamese_default_target_and_resolves_coll
     assert 'const [target, setTarget] = useState("en")' in source
     assert "function doiNguon" in source
     assert "if (moi && moi === target)" in source
+
+
+@pytest.mark.pure
+def test_batch_codex_import_keeps_credentials_out_of_query_strings_and_marks_new_accounts_after_insert():
+    source = (ROOT / "api" / "oauth.py").read_text(encoding="utf-8")
+    batch = source[source.index("async def import_tokens_batch"):]
+
+    assert "routerPassword: str | None = None" in source
+    assert "query_params.get(\"password\")" not in batch
+    assert batch.index("account_service.add_accounts_with_credentials") < batch.index(
+        "account_service.update_account"
+    )
