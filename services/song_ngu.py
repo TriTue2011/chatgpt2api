@@ -20,9 +20,12 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-#: Dài hơn ngần này ký tự thì đóng tệp thay vì nhắn thẳng. Lấy theo giới hạn
-#: một tin Zalo (2000) — dưới mức đó vẫn gọn trong một tin, trên mức đó là bắt
-#: đầu bị cắt vụn.
+#: Dài hơn ngần này ký tự thì đóng tệp thay vì nhắn thẳng.
+#:
+#: Trần thật của một tin Zalo Cá Nhân là 3.000 ký tự (tính cả khoảng trắng và
+#: xuống dòng) chứ không phải 2.000 như chú thích cũ ghi — nhưng mức này CỐ Ý
+#: giữ thấp hơn nhiều: đọc một bản chép lời dài trong khung chat là cực hình dù
+#: nó có lọt vào một tin hay không, còn tệp .docx thì dán được vào tài liệu.
 NGUONG_DONG_TEP = 1800
 
 TEN_TIENG = {"vi": "Việt", "en": "Anh", "ja": "Nhật", "zh": "Trung",

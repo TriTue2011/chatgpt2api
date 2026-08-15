@@ -49,7 +49,11 @@ logger = logging.getLogger(__name__)
 # Chừa 50 ký tự vì vài đường gửi còn nối thêm hậu tố vào bản đã cắt (vd
 # "\n(Fallback admin thread)"), cộng vào là vượt trần và Zalo nuốt cả tin.
 _MAX_LEN = 2950
-_MAX_CHUNKS = 6
+#: Số tin tối đa cho MỘT câu trả lời. Trần 3.000 ký tự là giới hạn kỹ thuật,
+#: không phải mục tiêu: một câu trả lời xé thành sáu tin liên tiếp thì đọc rất
+#: mệt (chủ máy nêu 16/08 với bản chép lời phim). Ba tin là mức còn theo dõi
+#: được; dài hơn thì tóm tắt hoặc đóng thành tệp, và phải BÁO là đã cắt.
+_MAX_CHUNKS = 3
 
 #: Zalo Cá Nhân nhận tài liệu/tệp tới 1 GB. Trần này áp cho đính kèm video/âm
 #: thanh; tải bằng `_tai_ra_tep` (ghi thẳng ra đĩa) chứ KHÔNG qua `_download`,
@@ -774,6 +778,15 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     # marker mồ côi lộ ra ở đầu/cuối chunk.
     from services.telegram.format import split_message
     chunks = split_message(raw, limit=_MAX_LEN, prefer=_MAX_LEN) or ["..."]
+    # Dài quá mức gửi được thì NÓI RA. Bản cũ lặng lẽ bỏ mọi khúc từ thứ
+    # _MAX_CHUNKS+1 trở đi (`chunks[:_MAX_CHUNKS]`), nên bản chép lời dài bị
+    # cụt mà người đọc tưởng đã hết — không có dấu hiệu nào.
+    if len(chunks) > _MAX_CHUNKS:
+        _con = len(chunks) - _MAX_CHUNKS
+        chunks = chunks[:_MAX_CHUNKS]
+        chunks[-1] = (chunks[-1].rstrip()
+                      + f"\n\n… (còn ~{_con} phần nữa, em cắt cho đỡ rối tin. "
+                        "Cần đầy đủ thì bảo em gửi thành tệp ạ.)")
     last: dict = {"ok": False}
     try:
         from services.zalo_markdown import config_markdown_enabled, markdown_to_zalo_message

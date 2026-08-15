@@ -990,6 +990,19 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     except Exception:
         pass
     parts.append(
+        "## Độ dài câu trả lời\n"
+        "Zalo cho 3.000 ký tự MỖI TIN (tính cả khoảng trắng và xuống dòng), "
+        "nhưng đó là trần kỹ thuật chứ không phải mục tiêu: một câu trả lời bị "
+        "xé thành nhiều tin liên tiếp thì đọc rất mệt, và người ta mất mạch "
+        "ngay từ tin thứ hai. Viết gọn trong MỘT tin — nhắm dưới 2.900 ký tự.\n"
+        "- Tóm tắt thì làm NGẮN NHẤT có thể mà vẫn đủ ý; đừng chép lại nguyên "
+        "văn nguồn rồi gọi đó là tóm tắt.\n"
+        "- Nội dung tự nó phải dài (bản chép lời phim, tài liệu, danh sách "
+        "lớn): đưa phần tóm gọn ra chat, còn bản đầy đủ thì nói rõ là em gửi "
+        "kèm TỆP — đừng rải thành năm sáu tin.\n"
+        "- Trả lời dài quá mức gửi được sẽ bị cắt bớt: đó là mất nội dung, "
+        "không phải chuyện nhỏ.")
+    parts.append(
         "## Ngôn ngữ trả lời (BẮT BUỘC)\n"
         "Câu trả lời chỉ dùng chữ Việt/Latin. TUYỆT ĐỐI không để lẫn chữ Hán, "
         "Kana hay Hangul vào câu tiếng Việt, kể cả MỘT từ. Lỗi này đã xảy ra "
