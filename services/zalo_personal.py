@@ -1965,6 +1965,79 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         _dc.don_tep(pend)
 
 
+#: /tts đọc dài nhất ngần này ký tự. Đọc là việc tính bằng phút chứ không phải
+#: giây: đo 15/08 thì 179 chữ ra 52 giây tiếng, nên 3000 ký tự đã là quãng mươi
+#: phút máy chạy — dài hơn thì nên cắt ra chứ không phải bấm một phát.
+_TTS_TOI_DA = 3000
+
+
+def _lam_viec_doc(thread_id: str, thread_type: int, pkey: str,
+                  chu: str, tieng: str) -> None:
+    """/tts: người dùng đã chọn tiếng đọc.
+
+    Cùng tiếng với đoạn chữ thì đọc luôn. Khác tiếng thì DỊCH TRƯỚC rồi gửi cho
+    người dùng xem — đọc xong mới phát hiện dịch sai là mất trắng cả lượt tổng
+    hợp giọng, mà lượt ấy tính bằng phút.
+    """
+    from services import dich_cho as _dc
+    from services import song_ngu as _sn
+    from services import translate_service as _ts
+
+    chu = (chu or "").strip()
+    if not chu:
+        send_message(thread_id, "🔊 Chưa có nội dung để đọc ạ.", thread_type)
+        _dc.pop_pending(pkey)
+        return
+    try:
+        nguon, _ = _ts.detect(chu[:5000])
+    except Exception:
+        nguon = ""
+    if nguon and nguon == tieng:
+        _doc_thanh_tep(thread_id, thread_type, chu, tieng)
+        _dc.pop_pending(pkey)
+        return
+    try:
+        ban = _ts.translate(chu, tieng, nguon or "auto")
+    except _ts.LoiDich as exc:
+        send_message(thread_id, f"🌐 Máy dịch lỗi: {exc}", thread_type)
+        _dc.pop_pending(pkey)
+        return
+    goi = _sn.dong_goi(chu, ban, nguon=nguon or "auto", dich=tieng,
+                       tieu_de="Bản dịch trước khi đọc")
+    if goi.get("tep"):
+        _serve_bytes(thread_id, thread_type, goi["tep"], goi["ten"],
+                     "Bản dịch song ngữ — xem trước khi em đọc")
+    else:
+        send_message(thread_id, f"🌐 {nguon or 'auto'} → {tieng}\n{ban}",
+                     thread_type, rich=True)
+    send_message(thread_id, _dc.dat_ban_dich(pkey, ban, tieng), thread_type,
+                 co_nut_chon=True)
+
+
+def _doc_thanh_tep(thread_id: str, thread_type: int, chu: str,
+                   tieng: str = "") -> None:
+    """Đoạn chữ → tệp âm thanh, giọng lấy theo Cài đặt của tiếng đó."""
+    from services.voice import config as _vcfg
+    from services.voice import engines as _eng
+
+    chu = (chu or "").strip()
+    if len(chu) > _TTS_TOI_DA:
+        send_message(thread_id,
+                     f"🔊 Đoạn này {len(chu)} ký tự, dài quá "
+                     f"{_TTS_TOI_DA} nên em xin đọc phần đầu thôi ạ.",
+                     thread_type)
+        chu = chu[:_TTS_TOI_DA]
+    send_typing(thread_id, thread_type)
+    try:
+        giong = _vcfg.tts_giong_cho("tts", tieng or "vi")
+        wav = _eng.synthesize(chu, giong)
+    except Exception as exc:
+        send_message(thread_id, f"🔊 Không đọc được: {str(exc)[:150]}", thread_type)
+        return
+    _serve_bytes(thread_id, thread_type, wav,
+                 f"doc.{tieng or 'vi'}.wav", "Bản đọc")
+
+
 def _serve_bytes(thread_id: str, thread_type: int, du_lieu: bytes, ten: str,
                  ghi_chu: str = "") -> None:
     """Gửi một tệp có sẵn trong bộ nhớ (phụ đề .srt…) — cùng đường với
@@ -2662,6 +2735,33 @@ def _process_ai(ev: dict) -> None:
     # khối này còn thiếu: /dich rơi vào LLM). Cùng nếp /id, /facebook: đứng
     # TRƯỚC cổng tag để trong nhóm gõ đích danh lệnh là chạy. So trên CHỮ GỐC
     # (không dùng _low) — dịch phải giữ nguyên chữ hoa.
+    # Xin HƯỚNG DẪN — menu số do code dựng. Danh sách năng lực trả lời "em làm
+    # được gì", còn menu này trả lời "bấm gì để dùng"; thiếu nó thì người dùng
+    # đọc xong vẫn đứng im.
+    if text:
+        from services import huong_dan as _hd
+        if _hd.la_xin_huong_dan(text):
+            send_message(thread_id, _hd.mo(pkey), thread_type, co_nut_chon=True)
+            return
+
+    # Lệnh /stt và /tts. Cùng sổ chờ với /dich (services/dich_cho.py) nên một
+    # khoá phiên chỉ có MỘT menu đang mở — hai sổ riêng thì người dùng nhắn "2"
+    # mà cả hai bên cùng nhận.
+    if text:
+        from services import dich_cho as _dc2
+        from services import photo_intent as _phi_cmd
+        _lenh = _phi_cmd.bo_tag(text).strip()
+        _dau = _lenh.split(maxsplit=1)[0].lower() if _lenh else ""
+        if _dau in {"/stt", "/nghe"}:
+            send_message(thread_id, _dc2.mo_stt(pkey), thread_type,
+                         co_nut_chon=True)
+            return
+        if _dau in {"/tts", "/doc"}:
+            _con = _lenh.split(maxsplit=1)[1] if " " in _lenh else ""
+            send_message(thread_id, _dc2.mo_tts(pkey, _con), thread_type,
+                         co_nut_chon=True)
+            return
+
     if text:
         from services import translate_service as _ts
         if _ts.la_lenh_dich(text):
@@ -2752,6 +2852,12 @@ def _process_ai(ev: dict) -> None:
     # tệp phụ đề). Xét TRƯỚC bản chờ PDF vì hai sổ chờ dùng cùng khoá phiên và
     # người dùng chỉ có thể đang trả lời MỘT menu — cái vừa gửi.
     from services import dich_cho as _dc
+    if text and _dc.dang_cho_chu(pkey):
+        # /tts đang đợi đoạn chữ — câu này CHÍNH LÀ nội dung cần đọc, không
+        # phải câu trả lời menu, nên không đưa qua bộ giải số.
+        send_message(thread_id, _dc.nap_chu(pkey, text), thread_type,
+                     co_nut_chon=True)
+        return
     if text and _dc.has_pending(pkey):
         from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi_dc
         _p_dc = _dc.get_pending(pkey) or {}
@@ -2772,11 +2878,33 @@ def _process_ai(ev: dict) -> None:
                              "Tiếng nào ạ? Nhắn lại kèm tên tiếng, ví dụ "
                              "«4 nhật» hoặc «5 anh».", thread_type)
                 return
+            if _chon.get("tts_tieng"):
+                _lam_viec_doc(thread_id, thread_type, pkey,
+                              str(_chon.get("chu") or ""),
+                              str(_chon["tts_tieng"]))
+                return
+            if _chon.get("tts_doc"):
+                _doc_thanh_tep(thread_id, thread_type,
+                               str(_chon["tts_doc"]),
+                               str(_chon.get("tieng") or ""))
+                _dc.pop_pending(pkey)
+                return
             if _chon.get("tiep"):        # còn bước nữa → hỏi tiếp, chưa chạy gì
                 send_message(thread_id, _dc.menu_buoc(pkey), thread_type,
                              co_nut_chon=True)
                 return
             _lam_viec_dich(thread_id, thread_type, _dc.pop_pending(pkey), _chon)
+            return
+
+    # Chọn mục hướng dẫn. Đặt SAU khối dich_cho ở trên có chủ ý: đang mở menu
+    # dịch mà nhắn "2" thì đó là trả lời cho menu dịch, không phải chọn mục.
+    if text:
+        from services import huong_dan as _hd2
+        _chon_hd = _hd2.chon(pkey, text)
+        if _chon_hd is not None:
+            send_message(thread_id,
+                         "Vâng ạ." if _chon_hd.get("bo") else _chon_hd["text"],
+                         thread_type, rich=True)
             return
 
     # PDF chờ: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
@@ -2960,6 +3088,13 @@ def _process_ai(ev: dict) -> None:
             # cần bản chữ chứ không phải .srt là mất cả tiếng (chốt 14/08).
             _pk_v = (f"zalop:{ev.get('account_id')}:{thread_id}:"
                      f"{ev.get('sender_id') or ''}")
+            if _dc.dang_cho_tep(_pk_v):
+                # /stt đã nói rõ việc rồi — hỏi lại "làm gì với tệp này" là
+                # bắt người dùng trả lời hai lần cho một ý.
+                send_message(thread_id,
+                             _dc.nap_tep(_pk_v, _vpath, name, len(data)),
+                             thread_type, co_nut_chon=True)
+                return
             _dc.set_pending(_pk_v, path=_vpath, ten=name, so_byte=len(data))
             send_message(thread_id, _dc.menu_buoc(_pk_v),
                          thread_type, co_nut_chon=True)

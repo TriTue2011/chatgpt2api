@@ -140,6 +140,72 @@ def _danh_sach_tieng(tru: str = "") -> list[str]:
     return [m for m in ("vi", "en", "ja", "zh", "ko") if m != tru]
 
 
+# ── /stt và /tts ────────────────────────────────────────────────────────────
+#
+# Dùng CHUNG sổ chờ này với /dich, cố ý. Một khoá phiên chỉ được có MỘT menu
+# đang mở: hai sổ chờ riêng thì người dùng nhắn "2" mà cả hai bên cùng nhận là
+# hỏng, và bên nào thắng phụ thuộc thứ tự if trong bot — thứ không ai đọc ra
+# được từ giao diện.
+#
+# /stt KHÔNG dựng luồng riêng: nó chỉ là lối tắt vào ô "chép lời ra bản chữ
+# thuần" của menu tệp, rồi hỏi tiếng như thường. Làm hai đường thì mỗi lần đổi
+# phải sửa hai chỗ, và kiểu gì cũng có ngày lệch nhau.
+BUOC_CHO_TEP = "cho-tep"          # /stt: đợi gửi tệp âm thanh
+BUOC_CHO_CHU = "cho-chu"          # /tts: đợi đoạn chữ cần đọc
+BUOC_TIENG_DOC = "tieng-doc"      # /tts: đọc bằng tiếng nào
+BUOC_DUYET_DICH = "duyet-dich"    # /tts: dịch xong, đọc bản nào
+
+
+def mo_stt(key: str) -> str:
+    """Mở lệnh /stt — trả lời câu cần gửi cho người dùng."""
+    set_pending(key, ten="tệp âm thanh")
+    _ghi_buoc(key, viec_chinh="stt", buoc=BUOC_CHO_TEP)
+    return ("🎤 Gửi em tệp âm thanh hoặc video cần chuyển thành chữ ạ. "
+            "Nhắn «thôi» để bỏ.")
+
+
+def mo_tts(key: str, chu: str = "") -> str:
+    """Mở lệnh /tts. Có sẵn đoạn chữ thì hỏi tiếng luôn, không thì xin nội dung."""
+    set_pending(key, chu=chu, ten="đoạn chữ")
+    if chu.strip():
+        _ghi_buoc(key, viec_chinh="tts", buoc=BUOC_TIENG_DOC)
+        return menu_buoc(key)
+    _ghi_buoc(key, viec_chinh="tts", buoc=BUOC_CHO_CHU)
+    return "🔊 Gửi em đoạn chữ cần đọc thành tiếng ạ. Nhắn «thôi» để bỏ."
+
+
+def dang_cho_tep(key: str) -> bool:
+    """Phiên này đang đợi tệp âm thanh (/stt) hay không."""
+    p = get_pending(key) or {}
+    return p.get("buoc") == BUOC_CHO_TEP
+
+
+def dang_cho_chu(key: str) -> bool:
+    p = get_pending(key) or {}
+    return p.get("buoc") == BUOC_CHO_CHU
+
+
+def nap_tep(key: str, path: str, ten: str = "", so_byte: int = 0) -> str:
+    """/stt: tệp về rồi → hỏi tiếng của tệp. Việc đã chốt sẵn là chép lời ra
+    bản chữ, khỏi hỏi lại thứ người dùng đã nói bằng chính tên lệnh."""
+    _ghi_buoc(key, path=path, ten=ten or "tệp âm thanh", so_byte=int(so_byte or 0),
+              viec="chu-goc", buoc=BUOC_NGUON)
+    return menu_buoc(key)
+
+
+def nap_chu(key: str, chu: str) -> str:
+    """/tts: nội dung về rồi → hỏi đọc bằng tiếng nào."""
+    _ghi_buoc(key, chu=chu, buoc=BUOC_TIENG_DOC)
+    return menu_buoc(key)
+
+
+def dat_ban_dich(key: str, ban_dich: str, tieng: str) -> str:
+    """/tts: dịch xong → hỏi đọc bản nào. Cho người dùng xem bản dịch TRƯỚC khi
+    đọc, vì đọc xong mới thấy dịch sai là mất trắng cả lượt tổng hợp giọng."""
+    _ghi_buoc(key, ban_dich=ban_dich, tieng=tieng, buoc=BUOC_DUYET_DICH)
+    return menu_buoc(key)
+
+
 def menu_buoc(key: str) -> str:
     """Menu của BƯỚC hiện tại — tệp và link đi ba bước, chữ đi một bước.
 
@@ -149,9 +215,22 @@ def menu_buoc(key: str) -> str:
     pend = get_pending(key)
     if not pend:
         return ""
+    buoc = str(pend.get("buoc") or BUOC_VIEC)
+    if buoc == BUOC_CHO_TEP:
+        return "🎤 Em đang đợi tệp âm thanh ạ."
+    if buoc == BUOC_CHO_CHU:
+        return "🔊 Em đang đợi đoạn chữ cần đọc ạ."
+    if buoc == BUOC_TIENG_DOC:
+        dong = "\n".join(f"{i}. Tiếng {TEN_TIENG[m]}"
+                         for i, m in enumerate(_danh_sach_tieng(), 1))
+        return (f"🔊 Đọc bằng tiếng nào ạ? Nhắn số:\n{dong}\n"
+                "Khác tiếng của đoạn chữ thì em dịch trước rồi gửi anh xem, "
+                "duyệt xong em mới đọc.")
+    if buoc == BUOC_DUYET_DICH:
+        return ("🔊 Em đọc bản nào ạ?\n1. Bản dịch vừa gửi\n"
+                "2. Bản gốc, giữ nguyên tiếng")
     if la_chu(pend):
         return menu(pend)
-    buoc = str(pend.get("buoc") or BUOC_VIEC)
     if buoc == BUOC_VIEC:
         ten = str(pend.get("ten") or "video")
         mb = pend.get("so_byte") or 0
@@ -197,6 +276,18 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         return None
     so = m.group(1)
     buoc = str(pend.get("buoc") or BUOC_VIEC)
+    if buoc == BUOC_TIENG_DOC:
+        ds = _danh_sach_tieng()
+        if int(so) > len(ds):
+            return None
+        return {"tts_tieng": ds[int(so) - 1], "chu": str(pend.get("chu") or "")}
+    if buoc == BUOC_DUYET_DICH:
+        if so not in ("1", "2"):
+            return None
+        lay_dich = so == "1"
+        return {"tts_doc": (str(pend.get("ban_dich") or "") if lay_dich
+                            else str(pend.get("chu") or "")),
+                "tieng": (str(pend.get("tieng") or "") if lay_dich else "")}
     if buoc == BUOC_VIEC:
         chon = next((k for k, v in VIEC.items() if v[0] == so), "")
         if not chon:

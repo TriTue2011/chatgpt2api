@@ -882,6 +882,14 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     # Capability list — auto-generated from the registry (single source of truth).
     # Lọc theo `allow` để persona KHÔNG khoe chức năng thread này bị cấm.
     parts.append("## Em làm được gì (năng lực THẬT lúc này)\n" + caps.persona_list(allow))
+    # Kể năng lực xong phải MỜI hướng dẫn. Danh sách trên trả lời "làm được
+    # gì", người đọc xong vẫn không biết bấm gì — mà chính họ thường ngại hỏi
+    # tiếp. Menu hướng dẫn do code dựng (services/huong_dan.py) nên câu mời chỉ
+    # cần trỏ đúng chữ khoá, không được tự kể cách dùng kẻo bịa ra lệnh lạ.
+    parts.append(
+        "Khi ai hỏi em làm được gì: kể xong thì hỏi luôn một câu ngắn rằng có "
+        "muốn em hướng dẫn cách dùng không, và nói rõ nhắn «hướng dẫn» là em "
+        "đưa menu đánh số để chọn. Đừng tự kể cách dùng hay tự bịa tên lệnh.")
     if allow is not None:
         # TUYỆT ĐỐI không nêu ví dụ TĨNH về "chức năng bị tắt" ở đây. Bản cũ
         # viết cứng "vd: xem/điều khiển nhà thông minh, xem máy chủ…" cho MỌI
