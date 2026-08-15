@@ -1852,12 +1852,19 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # Only feed the recent tail to the model (summary lives in system prompt).
     model_hist = hist[-max_h:]
     sys_prompt = _build_system_prompt(user_id, allow)
-    # Speech Persona của phiên (nếu cài) — khối nén ~100 token, lưu sẵn.
+    # Speech Persona của phiên (nếu cài) — khối nén, lưu sẵn.
+    #
+    # KHÔNG bơm cho việc đòi nguyên văn (dịch): ở đó người ta cần đúng câu đó
+    # bằng tiếng khác, không cần nó được kể lại bằng giọng nhân vật. Chỉ chặn
+    # đúng loại việc này thôi — lượt gọi tool vẫn giữ persona, vì phần lớn tool
+    # xong là quay ra nói chuyện tiếp với người dùng, gỡ hết thì nhân vật cứ
+    # tắt bật liên tục giữa cuộc.
     try:
         from services.agent import persona as _persona2
-        _pb = _persona2.prompt_for(user_id)
-        if _pb:
-            sys_prompt += "\n\n" + _pb
+        if not _persona2.viec_doi_nguyen_van(user_text):
+            _pb = _persona2.prompt_for(user_id)
+            if _pb:
+                sys_prompt += "\n\n" + _pb
     except Exception:
         pass
     sys_prompt = super_context.maybe_attach(

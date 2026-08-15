@@ -381,6 +381,31 @@ def voice_for(user_id: str) -> dict:
             "style": _TONE_STYLE.get(tone, "")}
 
 
+#: Việc đòi NGUYÊN VĂN thì không bơm persona. Dịch là ca rõ nhất: người ta cần
+#: đúng câu đó bằng tiếng khác, không cần nó được kể lại bằng giọng nhân vật —
+#: mà persona thì kéo model về phía văn phong (xem _SUFFIX), nên "dịch giúp câu
+#: này" với tông Giang hồ rất dễ ra bản dịch bị chế lại.
+#:
+#: Cố ý bắt HẸP. Bỏ sót (vẫn giữ persona) chỉ làm bản dịch hơi có giọng; bắt
+#: nhầm (gỡ persona giữa cuộc trò chuyện thường) thì nhân vật đột ngột biến mất
+#: mà không ai hiểu vì sao — hỏng nặng hơn nhiều. Vì vậy phải có DẤU HIỆU RÕ:
+#: lệnh /dich, hoặc chữ "dịch" đi kèm đích ngôn ngữ.
+#: "dịch vụ" là cái bẫy: chữ "dịch" đứng đầu câu nhưng chẳng liên quan gì tới
+#: dịch thuật ("dịch vụ này giá bao nhiêu"). Nên dạng lệnh phải có DẤU GẠCH,
+#: còn dạng nói thường phải kèm đích ngôn ngữ.
+_DICH_RE = re.compile(
+    r"(^\s*/\s*(dich|dịch|translate|tr)\b)"
+    r"|(^\s*translate\b)"
+    r"|(\b(dịch|dich)(?!\s*vụ)\b[^.\n]{0,40}\b(sang|ra|qua)\s+(tiếng|ngôn ngữ)\b)"
+    r"|(\b(dịch|dich)\s+(giúp|hộ|dùm|giùm)\b[^.\n]{0,40}\b(sang|ra)\b)",
+    re.IGNORECASE)
+
+
+def viec_doi_nguyen_van(text: str) -> bool:
+    """Lượt này có phải việc đòi nguyên văn (dịch) không."""
+    return bool(_DICH_RE.search(str(text or "")))
+
+
 def list_all() -> list[dict]:
     """Toàn bộ persona đã cài (cho Web UI quản lý)."""
     with _LOCK:

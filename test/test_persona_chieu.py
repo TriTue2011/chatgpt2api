@@ -130,3 +130,24 @@ def test_gioi_tinh_vao_duoc_khoi_chu_khong_chi_doi_xung_ho():
     nam = persona.preview({"gender": "Nam", "age": "26-40 tuổi"})
     assert "hihi" in nu and "haha" in nam
     assert nu != nam
+
+
+def test_viec_dich_thi_khong_bom_persona():
+    """Dịch cần nguyên văn, không cần được kể lại bằng giọng nhân vật."""
+    for cau in ("/dich xin chào",
+                "/dịch tiếng nhật: hôm nay trời đẹp",
+                "dịch câu này sang tiếng Hàn giúp em",
+                "dịch giúp anh đoạn này ra tiếng Anh",
+                "translate this please"):
+        assert persona.viec_doi_nguyen_van(cau), f"bỏ sót: {cau}"
+
+
+def test_khong_bat_nham_cuoc_tro_chuyen_thuong():
+    """Bắt nhầm thì nhân vật đột ngột biến mất giữa cuộc mà không ai hiểu vì
+    sao — hỏng nặng hơn là để bản dịch hơi có giọng."""
+    for cau in ("bài dịch của em hay quá",
+                "anh đang dịch tài liệu, mệt ghê",
+                "em thấy bản dịch này ổn không",
+                "tối nay ăn gì",
+                "dịch vụ này giá bao nhiêu"):
+        assert not persona.viec_doi_nguyen_van(cau), f"bắt nhầm: {cau}"
