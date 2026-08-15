@@ -238,7 +238,10 @@ class ThongBaoChiNoiThuDaDo(unittest.TestCase):
         ar._last_attempt.clear()
         goi: list[str] = []
 
-        def _freshen_gia(profile: str) -> bool:
+        # `khi_toi_luot`: hàm thật báo tin khi giành được lượt đăng nhập Google
+        # (xem test_khoi_phuc_tung_tai_khoan_mot). Bản giả này trượt ngay nên
+        # không gọi tới, chỉ cần nhận tham số cho khớp chữ ký.
+        def _freshen_gia(profile: str, *, khi_toi_luot=None) -> bool:
             ar._ghi_ket_qua(profile, trang_thai, ly_do)
             return False
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from utils.log import logger
@@ -219,10 +220,17 @@ def _ghi_ket_qua(profile: str, state: str, note: str = "") -> None:
 _CAN_NGUOI = ("need_captcha", "need_code", "need_tap")
 
 
-def _freshen_google(profile: str) -> bool:
+def _freshen_google(profile: str, *,
+                    khi_toi_luot: Callable[[float], None] | None = None) -> bool:
     """Tầng 2 — 'Đăng nhập tài khoản Google': làm tươi session Google bằng
     credentials đã lưu trong solver (accounts_db, có totp → tự chạy). Trả True
-    nếu login thành công. Password KHÔNG rời khỏi solver."""
+    nếu login thành công. Password KHÔNG rời khỏi solver.
+
+    ``khi_toi_luot`` được gọi ĐÚNG lúc lượt này bắt đầu chạy thật, kèm số giây
+    đã nằm chờ. Người gọi báo tin ở đó chứ đừng báo trước khi gọi hàm này: chờ
+    tới lượt có thể mất hàng chục phút, mà tin báo gửi trước thì nói rằng mọi
+    tài khoản đang đăng nhập cùng lúc — đúng thứ khoá dưới đây sinh ra để tránh.
+    """
     import requests
     url, api_key = _solver_cfg()
     base = url.rstrip("/")
@@ -232,11 +240,17 @@ def _freshen_google(profile: str) -> bool:
     # login đồng thời (thứ làm Google bung captcha). Lock giữ suốt cả lượt poll
     # nên tài khoản sau chỉ bắt đầu khi tài khoản trước đã xong.
     global _glogin_last_done
+    vao_hang = time.time()
     _glogin_serial.acquire()
     try:
         cho = _GLOGIN_GAP_S - (time.time() - _glogin_last_done)
         if cho > 0:
             time.sleep(cho)  # giãn cách như bấm tay lần lượt
+        if khi_toi_luot is not None:
+            try:
+                khi_toi_luot(time.time() - vao_hang)
+            except Exception:
+                pass
         r = requests.post(f"{base}/v1/session/auto-login-saved", headers=H,
                           json={"profile": profile}, timeout=30)
         d = r.json() or {}
@@ -845,10 +859,17 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # mãi qua từng tầng browser. Ca hợp lệ (session Google còn sống) xong T2 trong
     # ~40s nên không đụng trần.
     started = time.time()
+    # Thời gian NẰM CHỜ tới lượt đăng nhập Google — không tính vào ngân sách.
+    # Ngân sách 1200s là để cắt một ca vô vọng, không phải để phạt tài khoản
+    # xếp hàng sau: một lượt T3 giữ khoá tới 700s, nên tài khoản thứ ba trở đi
+    # là hết giờ ngay khi tới lượt, và bước T2 lấy token sau khi đăng nhập
+    # THÀNH CÔNG bị bỏ qua — máy báo "không khôi phục được" cho một tài khoản
+    # vừa đăng nhập xong, rồi để nó nằm chết tới lần quét sau.
+    cho_hang_doi = 0.0
     tried: list[str] = []
 
     def _con_gio() -> bool:
-        return time.time() - started < _RECOVER_BUDGET_S
+        return time.time() - started - cho_hang_doi < _RECOVER_BUDGET_S
 
     # KHÔNG có tầng nào chạy được → bỏ qua im lặng, đừng báo "đang khôi phục…"
     # rồi "KHÔNG khôi phục được (đã thử: none)". Ca điển hình: acc ChatGPT free
@@ -897,10 +918,16 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
 
     def _do_freshen() -> bool:
         tried.append("T3-đăng-nhập-Google")
-        _notify(f"🔧 {label} — {email}\n[T3] Đang đăng nhập lại tài khoản Google "
-                f"(giống nút 'Chỉ đăng nhập')…",
-                {**det, "step": "T3-google-login"})
-        if _freshen_google(profile):
+
+        def _bao_khi_toi_luot(cho_giay: float) -> None:
+            nonlocal cho_hang_doi
+            cho_hang_doi += cho_giay
+            them = f" — sau {cho_giay / 60:.0f} phút xếp hàng" if cho_giay >= 60 else ""
+            _notify(f"🔧 {label} — {email}\n[T3] Đang đăng nhập lại tài khoản Google "
+                    f"(giống nút 'Chỉ đăng nhập'){them}…",
+                    {**det, "step": "T3-google-login", "cho_giay": round(cho_giay)})
+
+        if _freshen_google(profile, khi_toi_luot=_bao_khi_toi_luot):
             return True
         logger.warning({"event": "recover_freshen_failed",
                         "provider": provider, "email": email})

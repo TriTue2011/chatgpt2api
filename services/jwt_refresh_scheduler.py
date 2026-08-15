@@ -161,6 +161,29 @@ def _refresh_one(account: dict[str, Any]) -> dict[str, Any] | None:
             "jwt_refreshed_at": int(time.time())}
 
 
+def _khoi_phuc_lan_luot(accounts: list[dict[str, Any]]) -> None:
+    """Khôi phục các tài khoản free đang kẹt — LẦN LƯỢT, trong MỘT luồng.
+
+    Trước đây mỗi tài khoản một thread, tạo ra trong cùng một khoảnh khắc. Tầng
+    đăng nhập Google có khoá riêng nên nó vẫn chạy từng cái một, nhưng tầng T2
+    (mở onboard trong captcha-solver) thì không: sáu tài khoản kẹt là sáu phiên
+    trình duyệt song song, và sáu tin "đang đăng nhập lại" cùng lúc dù năm cái
+    đang đứng chờ. Một luồng tuần tự làm đúng điều hệ thống vẫn tự nhận: từng
+    tài khoản một.
+
+    Lượt nào hỏng cũng không được cắt lượt sau — mỗi tài khoản một `try`.
+    """
+    from services.account_recovery import recover_provider_account
+
+    for acc in accounts:
+        st = str(acc.get("status") or "").lower()
+        try:
+            recover_provider_account(acc, "free", f"stuck_status={st}")
+        except Exception as exc:
+            logger.warning({"event": "jwt_refresh_stuck_recover_failed",
+                            "error": str(exc)[:160]})
+
+
 def _scan_and_refresh() -> None:
     """Scan all accounts and refresh any near-expiry JWTs."""
     try:
@@ -175,6 +198,7 @@ def _scan_and_refresh() -> None:
         return
     refreshed = 0
     recovered = 0
+    stuck_free: list[dict[str, Any]] = []
     for acc in list(accounts):
         try:
             from services.account_service import account_group
@@ -183,20 +207,11 @@ def _scan_and_refresh() -> None:
             # so reactive 401 recovery never runs — proactively multi-tier them.
             st = str(acc.get("status") or "").lower()
             if account_group(acc) == "free" and st in ("error", "disabled"):
-                try:
-                    import threading as _t
-                    from services.account_recovery import recover_provider_account
-                    _t.Thread(
-                        target=recover_provider_account,
-                        args=(dict(acc), "free", f"stuck_status={st}"),
-                        daemon=True,
-                    ).start()
-                    recovered += 1
-                except Exception as exc:
-                    logger.warning({
-                        "event": "jwt_refresh_stuck_recover_spawn_failed",
-                        "error": str(exc)[:120],
-                    })
+                # Gom lại, chạy LẦN LƯỢT ở một luồng sau vòng quét — xem
+                # `_khoi_phuc_lan_luot`. Nhánh này `continue` nên nó không đi
+                # qua quãng nghỉ rải tải bên dưới; mỗi tài khoản một thread ở
+                # đây nghĩa là chúng khởi động trong cùng một khoảnh khắc.
+                stuck_free.append(dict(acc))
                 continue
 
             # Per-account jitter: spread the burst across the scan so 300+
@@ -216,11 +231,15 @@ def _scan_and_refresh() -> None:
         except Exception as exc:
             logger.warning({"event": "jwt_refresh_one_crashed",
                             "error": str(exc)[:120]})
+    if stuck_free:
+        recovered = len(stuck_free)
+        threading.Thread(target=_khoi_phuc_lan_luot, args=(stuck_free,),
+                         daemon=True, name="stuck-free-recover").start()
     if refreshed or recovered:
         logger.info({
             "event": "jwt_refresh_cycle_done",
             "refreshed": refreshed,
-            "stuck_recover_spawned": recovered,
+            "stuck_recover_queued": recovered,
         })
 
 
