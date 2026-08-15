@@ -224,7 +224,14 @@ def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
             i += 1
 
     def _tu_tin(lang: str) -> tuple[float, int]:
-        """(trung bình log-prob, số token) khi nghe các cửa sổ mẫu."""
+        """(trung bình log-prob, số token) khi nghe các cửa sổ mẫu.
+
+        Model SenseVoice (zh/ja/ko) KHÔNG trả ``ys_log_probs``, nên nhánh dưới
+        chấm nó bằng thứ nó có: chính nó khai tiếng nghe được (``<|ja|>``).
+        Không có nhánh này thì mọi tiếng dùng SenseVoice đều bị chấm -9,9 và
+        thua trắng, tức video tiếng Nhật bị nghe bằng model tiếng Việt mà
+        không ai báo — đúng kiểu hỏng im lặng nguy nhất ở đường phụ đề.
+        """
         du: list[float] = []
         try:
             # Lấy recognizer TRƯỚC khi giữ khoá: _get_recognizer tự xin
@@ -236,8 +243,20 @@ def _chon_ngon_ngu(mau, rate: int, doan: list[tuple[float, float]],
                     stream = rec.create_stream()
                     stream.accept_waveform(rate, thu)
                     rec.decode_stream(stream)
-                    du.extend(float(x) for x in
-                              (getattr(stream.result, "ys_log_probs", None) or []))
+                    kq = stream.result
+                    diem_lp = [float(x) for x in
+                               (getattr(kq, "ys_log_probs", None) or [])]
+                    if diem_lp:
+                        du.extend(diem_lp)
+                        continue
+                    # Quy về CÙNG THANG với log-prob của transducer để hai loại
+                    # model so được với nhau: model đúng tiếng ~-0,04, model sai
+                    # ~-0,5÷-0,6 (đo 13/08). Khai đúng tiếng thì cho -0,04; khai
+                    # tiếng khác thì -0,9, tức thua chắc nhưng vẫn hơn "câm".
+                    khai = str(getattr(kq, "lang", "") or "").strip("<|> ")
+                    if khai and (kq.tokens or []):
+                        du.extend([-0.04 if khai == lang else -0.9]
+                                  * len(kq.tokens))
         except Exception as exc:
             logger.info("dò ngôn ngữ bằng model %s lỗi: %s", lang, str(exc)[:120])
             return -9.9, 0

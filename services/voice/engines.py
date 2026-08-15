@@ -1116,6 +1116,10 @@ def _get_recognizer(lang: str = "vi"):
 
     vi = Zipformer tiếng Việt; en = Parakeet-TDT (kiến trúc NeMo transducer).
     """
+    sense_dir = (vcfg.stt_sense_model_dir()
+                 if lang in vcfg.stt_sense_tieng() else None)
+    if sense_dir is not None:
+        return _get_sense_recognizer(lang, sense_dir)
     if lang == "en":
         model_dir = vcfg.stt_en_model_dir()
         if model_dir is None:
@@ -1174,6 +1178,44 @@ def _get_recognizer(lang: str = "vi"):
             feature_dim=80,
             decoding_method="greedy_search",
             **extra,
+        )
+        _recognizers[lang] = (key, rec)
+        return rec
+
+
+def _get_sense_recognizer(lang: str, model_dir: Path):
+    """Bộ nhận dạng SenseVoice cho một tiếng (zh/ja/ko).
+
+    Khai THẲNG tiếng thay vì để model tự dò: chỗ gọi đã biết chắc tiếng, còn
+    tự dò là thêm một chỗ hỏng được mà lỗi lại tính vào điểm của model.
+
+    Model trả `tokens` + `timestamps` như transducer nên đường cắt khung phụ đề
+    (`video_asr.gom_khung`) dùng lại nguyên vẹn. Nó KHÔNG trả `ys_log_probs` —
+    chỗ dò ngôn ngữ của phụ đề có nhánh riêng cho việc đó.
+
+    Bản model phải là `…-2024-07-17`: bản `2025-09-09` đọc sai cả tệp mẫu của
+    chính nó với sherpa-onnx 1.13.4 (đo 15/08/2026 — tiếng Nhật rụng sạch kana
+    chỉ còn chữ Hán giản thể, tiếng Hàn lẫn chữ Trung).
+    """
+    key = f"sense|{model_dir}|{lang}|{vcfg.stt_threads()}"
+    with _stt_lock:
+        cached = _recognizers.get(lang)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        try:
+            import sherpa_onnx
+        except Exception as exc:
+            raise VoiceError("Chưa cài sherpa-onnx trong image.") from exc
+
+        hits = sorted(model_dir.glob("model*.onnx"))
+        if not hits:
+            raise VoiceError(f"Thiếu file model*.onnx trong {model_dir}.")
+        rec = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=str(hits[0]),
+            tokens=str(model_dir / "tokens.txt"),
+            num_threads=vcfg.stt_threads(),
+            language=lang,
+            use_itn=True,
         )
         _recognizers[lang] = (key, rec)
         return rec
