@@ -477,7 +477,9 @@ export function VoiceSpeakersCard() {
                 giongThu: String(wyCfg.en_voice || "kokoro:af"), sid: -1 },
               { ma: "ja", ten: "🇯🇵 Tiếng Nhật", i: 2,
                 doc: Boolean(status?.doc_them_ready?.ja), nghe: Boolean(stt?.them_ready?.ja),
-                giongThu: "dangu:ja", sid: Number(ttsCfg.supertonic_ja_sid ?? 0) },
+                // Mặc định 5 (Nữ F1) — đo 14/08: giọng 5 hụt 2/55 lượt nghe,
+                // giọng 0 hụt 10/55. Xem SUPERTONIC_SID_MAC_DINH ở backend.
+                giongThu: "dangu:ja", sid: Number(ttsCfg.supertonic_ja_sid ?? 5) },
               { ma: "zh", ten: "🇨🇳 Tiếng Trung", i: 3,
                 doc: Boolean(status?.doc_them_ready?.zh), nghe: Boolean(stt?.them_ready?.zh),
                 giongThu: "dangu:zh", sid: Number(ttsCfg.kokoro_zh_sid ?? 0) },
@@ -536,7 +538,10 @@ export function VoiceSpeakersCard() {
                         onChange={(e) => patchVoice("tts", {
                           [`supertonic_${r.ma}_sid`]: e.target.value === "" ? "" : Number(e.target.value),
                         })}>
-                        <option value="">0 · Nam M1 (mặc định)</option>
+                        <option value="">
+                          {r.ma === "ja" ? "5 · Nữ F1 (mặc định — đọc rõ nhất)"
+                                         : "0 · Nam M1 (mặc định)"}
+                        </option>
                         {Array.from({ length: soGiong[r.ma] || 10 }, (_, sid) => (
                           <option key={sid} value={sid}>
                             {sid} · {sid < 5 ? `Nam M${sid + 1}` : `Nữ F${sid - 4}`}

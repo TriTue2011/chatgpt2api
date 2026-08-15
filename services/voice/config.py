@@ -37,6 +37,17 @@ STT_THEM_DIR = {
     "ja": Path(DATA_DIR) / "stt-ja",
     "ko": Path(DATA_DIR) / "stt-ko",
 }
+#: SenseVoice-Small — MỘT model cho zh/ja/ko (và en/yue), thay ba Zipformer ở
+#: trên. Đo 15/08/2026 trên đúng 150 bản thu FLEURS mỗi tiếng:
+#:
+#:     tiếng   Zipformer riêng từng tiếng      SenseVoice
+#:     ko      55,5% sai ký tự · bỏ trắng 67   6,2% · bỏ trắng 0
+#:     ja       9,8%                           7,0%
+#:     zh      13,6%                          10,2%
+#:
+#: Tải nhẹ hơn hẳn (228 MB thay cho 1,3 GB); trên đĩa thì xấp xỉ nhau (229 MB
+#: so với 295 MB) vì script cũ chỉ giữ lại bản int8.
+STT_SENSE_DIR = Path(DATA_DIR) / "stt-sense"
 KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
 #: TTS cho phiên dịch đàm thoại — tải bằng scripts/download_tts_da_ngu.py.
 KOKORO_ZH_DIR = Path(DATA_DIR) / "kokoro-zh"     # Kokoro đa ngữ v1.1 (100 giọng Trung)
@@ -888,16 +899,35 @@ def kokoro_zh_sid() -> int:
         return 0
 
 
+#: Giọng mặc định của từng tiếng dùng Supertonic, chọn theo SỐ ĐO ngày
+#: 14/08/2026 (``scripts/kiem_phat_am.py ja --giong 0,5,8,9 --lap 5``):
+#:
+#:     giọng   lượt nghe hụt
+#:     5 (F1)      2/55        ← chọn
+#:     8 (F4)      2/55
+#:     9 (F5)      7/55
+#:     0 (M1)     10/55        ← mặc định cũ
+#:
+#: Chốt 5 chứ không phải 8 vì ở vòng đo 10 giọng trước đó, 5 đọc đúng trọn
+#: 13/13 âm còn 8 được 11/13. Tiếng Hàn giữ 0: đo hôm ấy nó đọc đủ 16/16 âm.
+#:
+#: Đừng đọc bảng này bằng cột "đúng/13" như hai vòng đo đầu: cột đó lấy đa số
+#: nên bão hoà — bốn giọng cùng 12/13 trong khi số lượt hụt chênh nhau năm lần.
+SUPERTONIC_SID_MAC_DINH: dict[str, int] = {"ja": 5, "ko": 0}
+
+
 def supertonic_sid(lang: str) -> int:
     """Giọng Supertonic cho ja/ko (sid 0..9: M1-M5 nam, F1-F5 nữ).
 
     Config ``voice.tts.supertonic_ja_sid`` / ``supertonic_ko_sid`` — chỉnh
-    trong Cài đặt → Loa & giọng nói."""
-    raw = _sub("tts").get(f"supertonic_{str(lang or '').lower()}_sid")
+    trong Cài đặt → Loa & giọng nói. Không đặt thì lấy giọng đã đo là đọc rõ
+    nhất của tiếng đó (``SUPERTONIC_SID_MAC_DINH``)."""
+    ma = str(lang or "").lower()
+    raw = _sub("tts").get(f"supertonic_{ma}_sid")
     try:
         return min(9, max(0, int(raw)))
     except (TypeError, ValueError):
-        return 0
+        return SUPERTONIC_SID_MAC_DINH.get(ma, 0)
 
 
 #: Quy chuẩn cổng Wyoming (chủ máy chốt 14/08): **106xx = TTS, 107xx = STT**;
@@ -936,6 +966,35 @@ def stt_them_model_dir(lang: str) -> Path | None:
     if base is None or not base.is_dir() or not list(base.glob("encoder*.onnx")):
         return None
     return base
+
+
+#: Tiếng nghe bằng SenseVoice khi model đó có trên đĩa. Không để tiếng Việt ở
+#: đây: SenseVoice KHÔNG biết tiếng Việt. Tiếng Anh cũng không, vì bộ dò ngôn
+#: ngữ của phụ đề so vi với en bằng ys_log_probs của transducer, mà SenseVoice
+#: không trả số đó — đổi en là đụng vào phép so đang chạy đúng.
+STT_SENSE_TIENG_MAC_DINH = ("zh", "ja", "ko")
+
+
+def stt_sense_model_dir() -> Path | None:
+    """Thư mục model SenseVoice — ``None`` khi chưa tải (rơi về Zipformer).
+
+    Nhận diện bằng chính file model, không bằng tên thư mục: gói phát hành đặt
+    tên ``model.int8.onnx``.
+    """
+    base = STT_SENSE_DIR
+    if not base.is_dir():
+        return None
+    return base if list(base.glob("model*.onnx")) else None
+
+
+def stt_sense_tieng() -> tuple[str, ...]:
+    """Những tiếng dùng SenseVoice. Đặt qua ``voice.stt.sense_tieng``."""
+    raw = _sub("stt").get("sense_tieng")
+    if raw is None or str(raw).strip() == "":
+        return STT_SENSE_TIENG_MAC_DINH
+    muc = ([str(x) for x in raw] if isinstance(raw, (list, tuple))
+           else str(raw).replace(";", ",").split(","))
+    return tuple(dict.fromkeys(x.strip().lower() for x in muc if x.strip()))
 
 
 def stt_threads() -> int:
@@ -1321,7 +1380,9 @@ def status() -> dict[str, Any]:
             # Model nghe theo tiếng (zh/ja/ko) — có trên volume = dùng được
             # (cổng Wyoming 107xx tự mở). Tải: scripts/download_stt_da_ngu.py
             "them_ready": {
-                lang: stt_them_model_dir(lang) is not None
+                lang: (stt_them_model_dir(lang) is not None
+                       or (lang in stt_sense_tieng()
+                           and stt_sense_model_dir() is not None))
                 for lang in STT_THEM_DIR
             },
         },

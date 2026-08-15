@@ -531,6 +531,22 @@ def test_supertonic_sid_kep_bien(monkeypatch):
     assert vcfg.supertonic_sid("xx") == 0
 
 
+def test_supertonic_sid_mac_dinh_theo_so_do(monkeypatch):
+    """Chưa đặt gì thì tiếng Nhật phải ra giọng 5, KHÔNG phải 0.
+
+    Đo 14/08/2026 (kiem_phat_am.py ja --lap 5): giọng 5 hụt 2/55 lượt nghe,
+    giọng 0 hụt 10/55. Ghim ở đây vì 0 là con số "trông như mặc định vô hại"
+    nên rất dễ bị đặt lại, mà đặt lại thì chỉ tai người nghe ra, không test nào
+    báo. Tiếng Hàn giữ 0 (đo hôm ấy đọc đủ 16/16 âm)."""
+    from services.config import config
+    from services.voice import config as vcfg
+
+    monkeypatch.setitem(config.data, "voice", {"tts": {}})
+    assert vcfg.supertonic_sid("ja") == 5
+    assert vcfg.supertonic_sid("ko") == 0
+    assert vcfg.supertonic_sid("xx") == 0
+
+
 def test_run_truyen_vai_xuong_main(monkeypatch):
     """BUG 14/08 (chủ máy phát hiện): _run nhận `vai` nhưng gọi _main thiếu nó
     → mọi cổng chạy "both", HA thấy cổng 10600 và 10700 y như nhau (một
