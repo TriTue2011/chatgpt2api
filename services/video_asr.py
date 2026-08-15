@@ -36,9 +36,10 @@ DOAN_CHONG_GIAY = 0.4
 
 #: GPU đôi lúc trả được một phần tệp nhưng VAD bỏ trắng hẳn một cụm thoại.
 #: Nếu khe trong đoạn năng lượng vượt ngưỡng này, nghe bù RIÊNG khe đó bằng
-#: model tại chỗ. Giá trị cao hơn khoảng nghỉ tự nhiên giữa hai câu, nên không
-#: gọi local chỉ vì người nói ngừng lấy hơi.
-KHE_BO_SOT_GIAY = 4.0
+#: model tại chỗ. ``cat_doan_tieng`` đã tách khoảng lặng >= 0,4 s thành đoạn
+#: khác, nên 1 giây còn lại không phải là nhịp lấy hơi bình thường; giữ 4 giây
+#: khiến câu thoại ngắn (dạng lỗi 1:30/2:23) biến mất im lặng.
+KHE_BO_SOT_GIAY = 1.0
 
 #: Trong một đoạn, hai token cách nhau quá ngưỡng này thì tách khung phụ đề —
 #: ranh giới tự nhiên giữa hai ý.
@@ -117,18 +118,13 @@ def _doc_wav(duong: str):
     return np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0, rate
 
 
-def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
-    """Tìm các đoạn CÓ TIẾNG theo năng lượng → [(bắt đầu, kết thúc)] giây.
-
-    Ngưỡng đặt TƯƠNG ĐỐI theo chính tệp (gấp 3 lần nền ồn phân vị 10) chứ không
-    tuyệt đối: video quay điện thoại nền ồn to, video studio nền gần im — một
-    ngưỡng cứng sẽ hỏng một trong hai.
-    """
+def _khung_co_tieng(mau, rate: int):
+    """Mặt nạ năng lượng 100 ms dùng chung cho nghe và soát độ phủ GPU."""
     import numpy as np
 
     khung = int(rate * 0.1)
     if len(mau) < khung:
-        return []
+        return None, khung
     n = len(mau) // khung
     rms = np.sqrt((mau[: n * khung].reshape(n, khung) ** 2).mean(axis=1))
     # Hai chốt chặn cho hai kiểu tệp cực đoan: "nhân 3 nền ồn" chết ở tệp NÓI
@@ -142,7 +138,18 @@ def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
     nguong_tuong_doi = min(nen * 3.0, dinh * 0.3)
     nguong = max(0.008 if dinh >= 0.008 else 0.0005, nguong_tuong_doi)
     noi = rms > nguong
-    if not bool(noi.any()):
+    return (noi if bool(noi.any()) else None), khung
+
+
+def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
+    """Tìm các đoạn CÓ TIẾNG theo năng lượng → [(bắt đầu, kết thúc)] giây.
+
+    Ngưỡng đặt TƯƠNG ĐỐI theo chính tệp (gấp 3 lần nền ồn phân vị 10) chứ không
+    tuyệt đối: video quay điện thoại nền ồn to, video studio nền gần im — một
+    ngưỡng cứng sẽ hỏng một trong hai.
+    """
+    noi, khung = _khung_co_tieng(mau, rate)
+    if noi is None:
         return []
 
     ra: list[tuple[float, float]] = []
@@ -161,7 +168,7 @@ def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
                 ra.append((bat, t - (lang - 1) * 0.1))
                 bat, lang = None, 0
     if bat is not None:
-        ra.append((bat, n * 0.1))
+        ra.append((bat, len(noi) * 0.1))
 
     # Đệm biên, bỏ mẩu quá ngắn, và CẮT đoạn dài quá sức model.
     dai_tep = len(mau) / rate
@@ -176,6 +183,31 @@ def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
             b = cat - DOAN_CHONG_GIAY
         sach.append((b, k))
     return sach
+
+
+def doan_nang_luong_chi_tiet(mau, rate: int) -> list[tuple[float, float]]:
+    """Các dải năng lượng đang có tiếng, không nối qua khoảng lặng.
+
+    Đây không phải đơn vị đưa vào recognizer: nhận dạng local vẫn dùng
+    :func:`cat_doan_tieng` dài và có đệm. Dải chi tiết chỉ trả lời đúng câu hỏi
+    audit: GPU bỏ phụ đề tại chính thời điểm âm thanh còn có năng lượng hay chỉ
+    là khoảng lặng cuối câu? Nhờ đó ngưỡng 1 giây không tạo lượt nghe bù giả.
+    """
+    noi, _khung = _khung_co_tieng(mau, rate)
+    if noi is None:
+        return []
+    ra: list[tuple[float, float]] = []
+    bat: float | None = None
+    for i, co in enumerate(noi):
+        t = i * 0.1
+        if co and bat is None:
+            bat = t
+        elif not co and bat is not None:
+            ra.append((bat, t))
+            bat = None
+    if bat is not None:
+        ra.append((bat, len(noi) * 0.1))
+    return ra
 
 
 def _nghe_mot_doan(rec, mau, rate: int) -> tuple[list[str], list[float]]:
@@ -232,7 +264,20 @@ def doan_tieng_bi_bo_sot(doan: list[tuple[float, float]], cau: list[Cau]
             den = max(den, min(k, c.ket_thuc))
         if k - den > KHE_BO_SOT_GIAY:
             ra.append((den, k))
-    return ra
+    # Các dải audit là khung 100 ms nên một từ có thể rơi vào vài dải kề nhau.
+    # Gộp rồi đệm một nhịp ở hai biên để recognizer local không nuốt phụ âm
+    # đầu/cuối, đồng thời không xin khoá STT hàng chục lần cho một câu.
+    if not ra:
+        return []
+    ra.sort()
+    gom: list[tuple[float, float]] = []
+    for b, k in ra:
+        if gom and b - gom[-1][1] <= LANG_NOI_LIEN:
+            truoc_b, truoc_k = gom[-1]
+            gom[-1] = (truoc_b, max(truoc_k, k))
+        else:
+            gom.append((b, k))
+    return [(max(0.0, b - DEM), k + DEM) for b, k in gom]
 
 
 #: Mỗi cửa sổ dò tối đa ngần này giây, gom đủ ~8 giây quanh mỗi mốc lấy mẫu.
@@ -377,6 +422,9 @@ def nghe_tep(duong: str, tran_giay: float = 0,
                 f"{tran_giay / 60:.0f} phút mà em nghe được — video YouTube "
                 f"thì gửi em link sẽ nhanh hơn nhiều")
         doan = cat_doan_tieng(mau, rate)
+        # Đơn vị dài/đệm dùng để local STT và dò ngôn ngữ; mặt nạ năng lượng
+        # chi tiết chỉ dùng để soát Whisper GPU bỏ một câu NGẮN trong cùng câu.
+        doan_audit = doan_nang_luong_chi_tiet(mau, rate)
         if not doan:
             raise LoiNghe("không thấy tiếng nói nào trong tệp")
         lang = _chon_ngon_ngu(mau, rate, doan, ung_vien)
@@ -404,7 +452,7 @@ def nghe_tep(duong: str, tran_giay: float = 0,
                 logger.info("phụ đề: máy GPU không nghe được (%s) — nghe tại chỗ",
                             str(exc)[:120])
 
-        bo_sot = doan_tieng_bi_bo_sot(doan, ra) if ra else doan
+        bo_sot = doan_tieng_bi_bo_sot(doan_audit, ra) if ra else doan
         if bo_sot:
             ra_bu: list[Cau] = []
             co_gpu = bool(ra)
@@ -429,7 +477,7 @@ def nghe_tep(duong: str, tran_giay: float = 0,
             if co_gpu and not canh_bao:
                 ra.extend(ra_bu)
                 ra.sort(key=lambda c: (c.bat_dau, c.ket_thuc))
-                con_sot = doan_tieng_bi_bo_sot(doan, ra)
+                con_sot = doan_tieng_bi_bo_sot(doan_audit, ra)
                 da_bu = len(bo_sot) - len(con_sot)
                 if con_sot:
                     engine = "gpu_incomplete"

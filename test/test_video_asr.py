@@ -118,18 +118,61 @@ def test_gpu_co_chu_nhung_bo_sot_mot_doan_tieng_thi_nghe_bu_tai_cho(monkeypatch)
     monkeypatch.setattr(va, "_boc_tieng", lambda _path: "/tmp/nghe-gia.wav")
     monkeypatch.setattr(va, "_doc_wav", lambda _path: (np.zeros(600), 100))
     monkeypatch.setattr(va, "cat_doan_tieng", lambda *_a: [(0.0, 2.0), (4.0, 6.0)])
+    monkeypatch.setattr(va, "doan_nang_luong_chi_tiet",
+                        lambda *_a: [(0.0, 0.55), (4.0, 6.0)])
     monkeypatch.setattr(va, "_chon_ngon_ngu", lambda *_a: "en")
     monkeypatch.setattr(nghe_gpu, "dung_duoc", lambda _lang: True)
     monkeypatch.setattr(nghe_gpu, "nghe", lambda *_a:
                         ([" First", " sentence"], [0.0, 0.2]))
     monkeypatch.setattr(va, "_nghe_mot_doan", lambda *_a:
-                        ([" Second", " sentence"], [0.0, 0.2]))
+                        ([" Second", " sentence", " completed", " now"],
+                         [0.0, 0.5, 1.0, 1.5]))
 
     kq = va.nghe_tep("/tmp/phim.mp4", ung_vien=("en",), chi_tiet=True)
 
-    assert [c.chu for c in kq.cau] == ["First sentence", "Second sentence"]
+    assert [c.chu for c in kq.cau] == ["First sentence", "Second sentence completed now"]
     assert kq.engine == "gpu_recovered"
     assert "bù" in kq.canh_bao.lower()
+
+
+def test_gpu_bo_sot_cau_ngan_hon_bon_giay_van_phai_nghe_bu(monkeypatch):
+    """Câu 2–3 giây có thể bị VAD của Whisper bỏ, không được lọt qua ngưỡng 4s.
+
+    Đây là dạng còn lại của lỗi 1:30/2:23: GPU có câu ngay trước đó nên kết
+    quả không rỗng, nhưng một lượt thoại ngắn trong cùng cụm năng lượng biến
+    mất hoàn toàn.
+    """
+    import sys
+    import threading
+    import types
+
+    from services import nghe_gpu
+
+    eng = types.ModuleType("services.voice.engines")
+    eng._stt_lock = threading.Lock()
+    eng._get_recognizer = lambda _lang: object()
+    eng._normalize_stt = lambda text: str(text).strip()
+    voice = types.ModuleType("services.voice")
+    voice.engines = eng
+    monkeypatch.setitem(sys.modules, "services.voice", voice)
+    monkeypatch.setitem(sys.modules, "services.voice.engines", eng)
+    monkeypatch.setattr(va, "_boc_tieng", lambda _path: "/tmp/nghe-gia.wav")
+    monkeypatch.setattr(va, "_doc_wav", lambda _path: (np.zeros(300), 100))
+    monkeypatch.setattr(va, "cat_doan_tieng", lambda *_a: [(0.0, 3.0)])
+    monkeypatch.setattr(va, "doan_nang_luong_chi_tiet",
+                        lambda *_a: [(0.0, 0.55), (0.8, 3.0)])
+    monkeypatch.setattr(va, "_chon_ngon_ngu", lambda *_a: "en")
+    monkeypatch.setattr(nghe_gpu, "dung_duoc", lambda _lang: True)
+    monkeypatch.setattr(nghe_gpu, "nghe", lambda *_a:
+                        ([" First", " sentence"], [0.0, 0.2]))
+    monkeypatch.setattr(va, "_nghe_mot_doan", lambda *_a:
+                        ([" Missing", " line", " continues", " now"],
+                         [0.0, 0.5, 1.0, 1.85]))
+
+    kq = va.nghe_tep("/tmp/phim.mp4", ung_vien=("en",), chi_tiet=True)
+
+    assert " ".join(c.chu for c in kq.cau) == "First sentence Missing line continues now"
+    assert kq.engine == "gpu_recovered"
 
 
 def test_gpu_bo_sot_nhung_local_loi_van_bao_phu_de_chua_du(monkeypatch):
@@ -151,6 +194,8 @@ def test_gpu_bo_sot_nhung_local_loi_van_bao_phu_de_chua_du(monkeypatch):
     monkeypatch.setattr(va, "_boc_tieng", lambda _path: "/tmp/nghe-gia.wav")
     monkeypatch.setattr(va, "_doc_wav", lambda _path: (np.zeros(600), 100))
     monkeypatch.setattr(va, "cat_doan_tieng", lambda *_a: [(0.0, 2.0), (4.0, 6.0)])
+    monkeypatch.setattr(va, "doan_nang_luong_chi_tiet",
+                        lambda *_a: [(0.0, 0.55), (4.0, 6.0)])
     monkeypatch.setattr(va, "_chon_ngon_ngu", lambda *_a: "en")
     monkeypatch.setattr(nghe_gpu, "dung_duoc", lambda _lang: True)
     monkeypatch.setattr(nghe_gpu, "nghe", lambda *_a:
