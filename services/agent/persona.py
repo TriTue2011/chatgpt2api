@@ -70,7 +70,8 @@ STEPS: list[tuple[str, str, list[str]]] = [
     ("voice", "Voice (giọng văn)", ["Nhẹ nhàng", "Mạnh mẽ", "Hoạt bát",
                                     "Chanh chua", "Lễ phép", "Tếu táo"]),
     ("tone", "Tone (tông cảm xúc)", ["Thân thiện", "Nghiêm túc", "Hài hước",
-                                     "Châm biếm", "Dịu dàng", "Lịch sự"]),
+                                     "Châm biếm", "Dịu dàng", "Lịch sự",
+                                     "Vui tươi", "Ma mị", "Ấm áp", "Giang hồ"]),
     ("style", "Phong cách ngôn ngữ", ["Chuẩn mực", "Nhiều tiếng lóng",
                                       "Ngắn gọn", "Giàu cảm xúc",
                                       "Nhiều thành ngữ", "Nhiều tiếng đệm"]),
@@ -90,6 +91,33 @@ AGE_HINT: dict[str, str] = {
     # alias nhãn cũ — persona đã lưu trước đây vẫn ra hint đúng
     "Thanh niên (18-25)": "năng động, tự nhiên, cởi mở",
     "Trưởng thành (26-40)": "chững chạc, thực tế, rõ việc",
+}
+
+# Tông cảm xúc → CÁCH CƯ XỬ đo được, không phải một tính từ.
+#
+# Vì sao cần bảng này: trước đây tone chỉ vào khối persona dưới dạng một chữ
+# ("tông ma mị") và model tự hiểu — mà tự hiểu thì mỗi lượt một kiểu. Ba tông
+# cuối dựng theo ba bản ghi thật của chủ máy (đo 15/08: giọng vui tươi nữ 203 Hz
+# nói 252 từ/phút, ma mị nam 137 Hz nói 216 từ/phút, ấm áp nữ 229 Hz nói 241
+# từ/phút) — chép lại đúng nết đã nghe được trong đó.
+TONE_HINT: dict[str, str] = {
+    "Thân thiện": "gần gũi, hay hỏi han, không khách sáo",
+    "Nghiêm túc": "đi thẳng việc, câu gọn, không đùa",
+    "Hài hước": "tếu nhẹ đúng lúc, không cợt nhả",
+    "Châm biếm": "mỉa nhẹ có duyên, không xúc phạm",
+    "Dịu dàng": "êm và chậm, an ủi trước rồi mới khuyên",
+    "Lịch sự": "đúng mực, đủ chủ ngữ, không suồng sã",
+    "Vui tươi": "hào hứng, khen thật lòng; tin xấu nói nhẹ rồi chuyển ngay "
+                "sang cách xoay xở",
+    "Ma mị": "trầm và nhẩn nha, ví von mờ ảo; rùng rợn ở CÁCH VÍ chứ không doạ, "
+             "số liệu vẫn đúng tuyệt đối, không thêm điềm gở",
+    "Ấm áp": "chăm sóc: mỗi con số kèm một việc nên làm; khen ngắn, không tâng bốc",
+    # Chất "đại ca nghĩa khí" nằm ở nhịp nói và lối coi trọng anh em, KHÔNG ở
+    # chửi bới: bot chửi tục hay doạ dẫm thì hết đường dùng trong nhà, mà cũng
+    # không phải thứ làm nên chất giang hồ trong phim.
+    "Giang hồ": "câu ngắn và gằn, dứt khoát, trọng nghĩa khí; hay 'anh em', "
+                "'sòng phẳng', 'đàng hoàng'; KHÔNG chửi tục, không doạ nạt, "
+                "không xúi làm bậy",
 }
 
 # Sociolect nén theo nghề (tự sinh khi Web UI chỉ chọn 4 mục).
@@ -243,6 +271,13 @@ _TONE_STYLE: dict[str, str] = {
     "Hài hước": "tu_nhien",
     "Châm biếm": "tu_nhien",
     "Thân thiện": "tu_nhien",
+    # Tông thêm 15/08. Thiếu ở bảng này thì persona vẫn chạy nhưng giọng đọc
+    # rơi về kiểu trung tính — chọn "Ma mị" mà máy đọc giọng bản tin thì công
+    # dựng persona đổ sông.
+    "Vui tươi": "tu_nhien",
+    "Ma mị": "doc_truyen",     # nhẩn nha, ngắt nhiều — hợp lối kể chuyện
+    "Ấm áp": "doc_truyen",
+    "Giang hồ": "tu_nhien",    # nhịp nói đời thường, dứt khoát
 }
 # Preset lưu sel={"preset": tên} nên không có gender có cấu trúc — map sẵn.
 _PRESET_GENDER: dict[str, str] = {
@@ -366,18 +401,32 @@ def _build(sel: dict) -> str:
     xh = _xung(g, a)
     if xh:
         parts.append(xh + ".")
-    # Nét: trait tự chọn (wizard) hoặc TỰ SINH từ tuổi + nghề (Web 4-chọn)
-    vt = [v for v in (sel.get("voice"), sel.get("tone")) if v]
+    # Nét: trait tự chọn + nét của TUỔI và NGHỀ. Bản trước chỉ lấy nét tuổi/nghề
+    # khi KHÔNG chọn gì khác, nên càng chọn kỹ persona càng nhạt: chọn tone là
+    # mất luôn "chững chạc, thực tế" của band 26-40 và "chêm thuật ngữ" của dân
+    # IT. Nay tuổi và nghề luôn góp mặt — đó chính là hai chiều làm nhân vật
+    # khác nhau nhiều nhất khi cùng một tông.
     net: list[str] = []
     if sel.get("trait"):
         net.append(sel["trait"].lower())
-    if not (sel.get("trait") or vt or sel.get("style")):
-        net.extend(h for h in (AGE_HINT.get(a), JOB_HINT.get(job)) if h)
+    net.extend(h for h in (AGE_HINT.get(a), JOB_HINT.get(job)) if h)
     if net:
         parts.append("Nét: " + "; ".join(net) + "; không cụt ngủn, không "
                      "lạnh lùng, gần gũi ấm áp như người quen.")
-    if vt:
-        parts.append("Giọng " + ", tông ".join(v.lower() for v in vt) + ".")
+    # Ghi RIÊNG voice và tone. Bản cũ nối chuỗi kiểu "Giọng " + ", tông ".join()
+    # nên chỉ đúng khi có ĐỦ hai: chọn mỗi tông thì ra "Giọng ma mị" — gọi tông
+    # thành giọng, mà giọng với tông là hai chiều khác nhau của nhân vật.
+    mo_ta = []
+    if sel.get("voice"):
+        mo_ta.append(f"giọng {str(sel['voice']).lower()}")
+    if sel.get("tone"):
+        mo_ta.append(f"tông {str(sel['tone']).lower()}")
+    if mo_ta:
+        parts.append(", ".join(mo_ta).capitalize() + ".")
+    # Tông ghi kèm CÁCH CƯ XỬ, không để model tự hiểu một tính từ.
+    goi_y_tone = TONE_HINT.get(str(sel.get("tone") or ""))
+    if goi_y_tone:
+        parts.append(f"Tông ấy nghĩa là: {goi_y_tone}.")
     if sel.get("style"):
         parts.append(f"Phong cách {sel['style'].lower()}.")
     # GIỌNG & NGÔN NGỮ chi tiết theo vùng (đệm/từ/kiểu cười/câu nói giảm)

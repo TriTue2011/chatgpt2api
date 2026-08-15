@@ -5,8 +5,10 @@
  *   • admin / user 1-1  : chỉ điền User ID
  *   • cả NHÓM (fallback): chỉ điền Nhóm ID — áp mọi user chưa cài riêng
  *   • user TRONG nhóm   : điền cả Nhóm ID + User ID
- * Tick «Bật persona» → chọn 4 mục (Vùng miền · Giới tính · Độ tuổi · Nghề)
- * → backend TỰ SINH khối «NHẬP VAI» nén (~60 token) đầy đủ giọng/nét phù hợp.
+ * Tick «Bật persona» → chọn 5 mục (Vùng miền · Giới tính · Độ tuổi · Nghề ·
+ * Tông) → backend TỰ SINH khối «NHẬP VAI» nén, đầy đủ giọng/nét phù hợp.
+ * Tông vào sau cùng vì nó là chiều đổi hẳn cách nói: cùng một nhân vật, tông
+ * «Ma mị» và tông «Vui tươi» ra hai bản tin nghe khác hẳn nhau.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -21,6 +23,7 @@ import { request } from "@/lib/request";
 type Row = { key: string; prompt: string; sel: Record<string, unknown> };
 type Options = {
   regions: string[]; genders: string[]; ages: string[]; jobs: string[];
+  tones: string[];
 };
 
 const SEL_CLS =
@@ -38,7 +41,7 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
 }) {
   const [on, setOn] = useState(false);
   const [sel, setSel] = useState<Record<string, string>>({
-    region: "", gender: "", age: "", job: "",
+    region: "", gender: "", age: "", job: "", tone: "",
   });
   const [desc, setDesc] = useState("");
   const [opts, setOpts] = useState<Options | null>(null);
@@ -67,7 +70,8 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
           setCustomText(row.prompt || "");
         }
         setSel({ region: s.region || "", gender: s.gender || "",
-                 age: s.age || "", job: s.job || "" });
+                 age: s.age || "", job: s.job || "",
+                 tone: s.tone || "" });
       }
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -139,6 +143,13 @@ export function PersonaInline({ platform, groupId = "", userId = "" }: {
                     onChange={(e) => set("job", e.target.value)}>
               <option value="">Nghề nghiệp…</option>
               {(opts?.jobs || []).map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+            <select className={SEL_XS} value={sel.tone}
+                    onChange={(e) => set("tone", e.target.value)}>
+              <option value="">Tông…</option>
+              {(opts?.tones || []).map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
