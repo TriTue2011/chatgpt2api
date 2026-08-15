@@ -63,7 +63,7 @@ nhìn và sao lưu bằng lệnh thường, không phải lục `/var/lib/docker
 |---|---|---|
 | `/opt/gpu-box/fw-nghe` | `/data` | Model whisper large-v3 (~3 GB) |
 | `/opt/gpu-box/vn-translate-gpu` | `/data` | Model NLLB + bảng thuật ngữ |
-| `/opt/gpu-box/fw-vision` | `/root/.cache/llama.cpp` | GGUF Qwen3-VL + mmproj |
+| `/opt/gpu-box/fw-vision` | `/root/.cache` | GGUF Qwen3-VL + mmproj (llama.cpp tải qua cache Hugging Face) |
 
 Tạo trước khi Deploy: `mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu,fw-vision}`
 (thư mục `fw-vision` chỉ cần khi dựng stack vision)

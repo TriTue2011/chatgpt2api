@@ -37,7 +37,11 @@ services:
       - "2"
       - --no-warmup
     volumes:
-      - /opt/gpu-box/fw-vision:/root/.cache/llama.cpp
+      # Gắn cả /root/.cache chứ không riêng .cache/llama.cpp: bản llama.cpp
+      # này tải model của `-hf` xuống /root/.cache/huggingface/hub (thấy
+      # trong log lần chạy đầu 16/08). Mount sai chỗ thì model nằm trong
+      # lớp ghi của container — mỗi lần recreate là tải lại 1,5 GB.
+      - /opt/gpu-box/fw-vision:/root/.cache
     deploy:
       resources:
         reservations:
