@@ -152,14 +152,23 @@ export default function App() {
       
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      if (audioRef.current) {
-        audioRef.current.src = url;
-        audioRef.current.play();
-        audioRef.current.onended = () => {
-          setIsTalking(false);
-          URL.revokeObjectURL(url);
-        };
+      const audio = audioRef.current;
+      if (!audio) {
+        URL.revokeObjectURL(url);
+        setIsTalking(false);
+        return;
       }
+      // Every way playback can end has to clear isTalking, not just onended:
+      // the lip sync loop keeps running until it does, and a play() the
+      // browser refuses (autoplay policy) never fires onended at all.
+      const finish = () => {
+        setIsTalking(false);
+        URL.revokeObjectURL(url);
+      };
+      audio.src = url;
+      audio.onended = finish;
+      audio.onerror = finish;
+      audio.play().catch(finish);
     } catch (e) {
       console.error(e);
       setIsTalking(false);

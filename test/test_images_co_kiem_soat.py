@@ -37,11 +37,14 @@ class KhongConStaticFilesTests(unittest.TestCase):
         self.assertIn("media_api.create_router()", src)
 
     def test_route_kiem_ca_chu_ky_LAN_phien(self):
+        # Luật giờ nằm trong `require_image_access` để thumbnail đi CHUNG một
+        # cửa với ảnh gốc; route ảnh chỉ còn việc gọi nó.
         src = (GOC / "api/media.py").read_text(encoding="utf-8")
-        i = src.index("async def phuc_vu_anh")
-        than = src[i:]
-        self.assertIn("kiem_chu_ky", than)
-        self.assertIn("danh_tinh_cookie", than,
+        route = src[src.index("async def phuc_vu_anh"):]
+        self.assertIn("require_image_access(", route)
+        cua = src[src.index("def require_image_access"):src.index("def create_router")]
+        self.assertIn("kiem_chu_ky", cua)
+        self.assertIn("danh_tinh_cookie", cua,
                       "`<img>` không gửi được Authorization — thiếu đường cookie "
                       "thì bật cờ lên là trang admin trắng ảnh")
 

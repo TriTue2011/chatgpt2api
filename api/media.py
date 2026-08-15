@@ -26,7 +26,7 @@ import logging
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from services.config import config
@@ -54,7 +54,7 @@ def _duong_that(rel: str) -> Path | None:
     return duong_an_toan(config.images_dir, rel)
 
 
-def require_image_access(rel: str, request: Request, exp: str = "", sig: str = "") -> None:
+def require_image_access(rel: str, exp: str = "", sig: str = "") -> None:
     """Áp chính sách ảnh đã ký cho mọi biến thể của cùng một ảnh.
 
     Thumbnail là một biểu diễn của ``/images/<rel>``, không phải một tài sản
@@ -85,12 +85,12 @@ def create_router() -> APIRouter:
     router = APIRouter(tags=["media"])
 
     @router.get("/images/{rel:path}")
-    async def phuc_vu_anh(rel: str, request: Request, exp: str = "", sig: str = ""):
+    async def phuc_vu_anh(rel: str, exp: str = "", sig: str = ""):
         that = _duong_that(rel)
         if that is None:
             raise HTTPException(404, "not found")
 
-        require_image_access(rel, request, exp, sig)
+        require_image_access(rel, exp, sig)
 
         kieu, _ = mimetypes.guess_type(that.name)
         return FileResponse(str(that), media_type=kieu or "application/octet-stream")

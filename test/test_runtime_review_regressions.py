@@ -91,6 +91,44 @@ def test_cloudflare_start_does_not_duplicate_a_system_process(monkeypatch):
 
 
 @pytest.mark.pure
+def test_cloudflare_restart_takes_ownership_back_from_an_orphan(monkeypatch):
+    """Đổi token / bấm Restart phải giết được cloudflared của lần chạy trước.
+
+    Đường tự động thì nhường tiến trình cũ (khỏi đẻ tunnel trùng), nhưng nếu
+    đường restart cũng nhường thì token mới không bao giờ được áp dụng.
+    """
+    monkeypatch.setattr(tunnel, "_tunnel_process", None)
+    monkeypatch.setattr(tunnel, "_token", lambda: "token-moi")
+    con_song = [True]
+    monkeypatch.setattr(tunnel, "_co_tien_trinh_he_thong", lambda: con_song[0])
+
+    def giet() -> bool:
+        con_song[0] = False
+        return True
+
+    monkeypatch.setattr(tunnel, "_giet_tien_trinh_he_thong", giet)
+    da_chay: list[bool] = []
+    monkeypatch.setattr(tunnel, "start_tunnel", lambda: da_chay.append(True) or True)
+
+    assert tunnel.restart_tunnel() is True
+    assert da_chay == [True]
+
+
+@pytest.mark.pure
+def test_cloudflare_restart_reports_failure_when_the_orphan_survives(monkeypatch):
+    monkeypatch.setattr(tunnel, "_tunnel_process", None)
+    monkeypatch.setattr(tunnel, "_token", lambda: "token-moi")
+    monkeypatch.setattr(tunnel, "_co_tien_trinh_he_thong", lambda: True)
+    monkeypatch.setattr(tunnel, "_giet_tien_trinh_he_thong", lambda: False)
+    monkeypatch.setattr(
+        tunnel, "start_tunnel",
+        lambda: (_ for _ in ()).throw(AssertionError("must not start")),
+    )
+
+    assert tunnel.restart_tunnel() is False
+
+
+@pytest.mark.pure
 def test_chatlog_activity_returns_false_when_scope_resolution_fails():
     with mock.patch(
         "services.agent.scope.tach_khoa_phien",
@@ -133,7 +171,20 @@ def test_thumbnail_route_uses_the_same_access_policy_as_images():
     system_source = (ROOT / "api" / "system.py").read_text(encoding="utf-8")
 
     assert "def require_image_access" in media_source
-    assert "require_image_access(image_path, request, exp, sig)" in system_source
+    assert "require_image_access(image_path, exp, sig)" in system_source
+
+
+@pytest.mark.pure
+def test_zalo_video_link_uses_the_source_language_the_user_picked():
+    """Menu ba bước hỏi video nói tiếng gì — nhánh link phải dùng câu trả lời.
+
+    Nhánh tệp đã truyền ``nguon_biet``; nhánh link thì không, nên người dùng
+    chọn "Nhật" xong bot vẫn có thể lấy track tiếng Anh rồi dịch tiếp.
+    """
+    source = (ROOT / "services" / "zalo_personal.py").read_text(encoding="utf-8")
+    goi = source.index('_vd.dich_video(pend["url"]')
+
+    assert "nguon_biet=" in source[goi:goi + 300]
 
 
 @pytest.mark.pure

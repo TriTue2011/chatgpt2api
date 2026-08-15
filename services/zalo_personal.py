@@ -1909,7 +1909,12 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         _tg = "" if target == "giu-goc" else target
         _chep = target == "giu-goc"
         if pend.get("url"):
-            r = _vd.dich_video(pend["url"], _tg, chep_loi=_chep)
+            # Bước 2 đã hỏi video nói tiếng gì → khoá việc chọn phụ đề vào đúng
+            # tiếng đó. Bỏ câu trả lời ở đây thì video có cả bản Nhật lẫn bản
+            # Anh vẫn có thể bị lấy bản Anh rồi dịch tiếp — dịch hai lần qua ba
+            # thứ tiếng, đúng lỗi đã đo ở đường web.
+            r = _vd.dich_video(pend["url"], _tg, chep_loi=_chep,
+                               nguon_biet=str(chon.get("nguon") or ""))
         elif _vd.la_tep_phu_de(str(pend.get("ten") or "")):
             r = _vd.dich_tep_phu_de(pend["path"], pend.get("ten") or "", _tg,
                                     chep_loi=_chep)

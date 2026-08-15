@@ -802,12 +802,11 @@ def create_router(app_version: str) -> APIRouter:
         return list_images(resolve_image_base_url(request), start_date=start_date.strip(), end_date=end_date.strip(), media_type=media_type.strip())
 
     @router.get("/image-thumbnails/{image_path:path}", include_in_schema=False)
-    async def get_image_thumbnail(image_path: str, request: Request,
-                                  exp: str = "", sig: str = ""):
+    async def get_image_thumbnail(image_path: str, exp: str = "", sig: str = ""):
         # Thumbnail không được là đường vòng qua chính sách /images. Dùng chữ
         # ký của ảnh gốc để URL thumbnail suy ra từ một URL ảnh đã ký vẫn chạy.
         from api.media import require_image_access
-        require_image_access(image_path, request, exp, sig)
+        require_image_access(image_path, exp, sig)
         return get_thumbnail_response(image_path)
 
     @router.post("/api/images/delete")

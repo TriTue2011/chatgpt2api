@@ -41,6 +41,25 @@ def _co_tien_trinh_he_thong() -> bool:
         return False
 
 
+def _giet_tien_trinh_he_thong() -> bool:
+    """Giết cloudflared mồ côi. True nếu sau đó máy không còn cloudflared nào.
+
+    Chỉ dùng cho hành động CÓ CHỦ ĐÍCH của người vận hành (đổi token, bấm
+    Restart). Đường tự động thì thấy tiến trình cũ là nhường, vì giết nó lúc
+    khởi động app nghĩa là mỗi lần deploy lại cắt tunnel đang phục vụ.
+    """
+    try:
+        subprocess.run(["pkill", "-x", "cloudflared"], capture_output=True, timeout=5)
+    except Exception as exc:
+        logger.warning("không gọi được pkill cloudflared: %s", exc)
+        return False
+    for _ in range(10):
+        if not _co_tien_trinh_he_thong():
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def is_running() -> bool:
     with _lock:
         if _tunnel_process is not None and _tunnel_process.poll() is None:
@@ -87,28 +106,38 @@ def start_tunnel() -> bool:
             return False
 
 
-def stop_tunnel() -> bool:
+def stop_tunnel(*, ke_ca_mo_coi: bool = False) -> bool:
     global _tunnel_process
     with _lock:
-        if _tunnel_process is None:
-            return True
-        try:
-            _tunnel_process.terminate()
-            _tunnel_process.wait(timeout=10)
-            _tunnel_process = None
-            return True
-        except Exception:
+        if _tunnel_process is not None:
             try:
-                _tunnel_process.kill()
-                _tunnel_process.wait(timeout=5)
+                _tunnel_process.terminate()
+                _tunnel_process.wait(timeout=10)
             except Exception:
-                pass
+                try:
+                    _tunnel_process.kill()
+                    _tunnel_process.wait(timeout=5)
+                except Exception:
+                    pass
             _tunnel_process = None
-            return True
+        # Tay cầm mất sau khi app restart nhưng cloudflared cũ vẫn chạy bằng
+        # token CŨ. Không giết nó thì `start_tunnel` thấy nó rồi nhường, và
+        # token mới không bao giờ được áp — trong khi giao diện báo thành công.
+        if ke_ca_mo_coi and _co_tien_trinh_he_thong():
+            _giet_tien_trinh_he_thong()
+        return True
 
 
 def restart_tunnel() -> bool:
-    stop_tunnel()
+    """Chạy lại tunnel bằng token HIỆN TẠI — dùng cho người vận hành.
+
+    Khác đường tự động đúng một chỗ: nó giành lại quyền sở hữu, kể cả khi
+    cloudflared đang chạy là tiến trình mồ côi của một lần chạy app trước.
+    """
+    stop_tunnel(ke_ca_mo_coi=True)
+    if _co_tien_trinh_he_thong():
+        logger.error("còn cloudflared cũ không giết được — token mới CHƯA áp dụng")
+        return False
     return start_tunnel()
 
 
