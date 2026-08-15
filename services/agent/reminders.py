@@ -92,25 +92,77 @@ def _chuan_skip(skip: list | None) -> list[str] | None:
     return ra or None
 
 
+# Giờ nêu RÕ trong câu: "20h", "20h30", "19:30", "20 giờ". Chữ `h` phải KHÔNG
+# dính chữ cái phía sau, kẻo "mùng 1 hàng tháng" bị đọc thành 1 giờ (`_extract_hm`
+# rộng hơn nên vướng đúng bẫy này — ở đây thà không thấy giờ rồi HỎI còn hơn
+# nhận nhầm một giờ người dùng không nói).
+_RE_GIO_RO = re.compile(r"(\d{1,2})\s*(?:[:h](?![^\W\d_])|giờ|gio)\s*(\d{1,2})?",
+                        re.IGNORECASE)
+
+
+def _gio_trong_cau(text: str) -> tuple[int, int] | None:
+    m = _RE_GIO_RO.search(text or "")
+    if not m:
+        return None
+    h, mi = _apply_period(int(m.group(1)), int(m.group(2) or 0), text)
+    return (h, mi) if 0 <= h <= 23 and 0 <= mi <= 59 else None
+
+
+def _chuan_times(at_times: list | None) -> list[tuple[int, int]] | None:
+    """['10h','15:00','21'] → [(10,0),(15,0),(21,0)] — tăng dần, bỏ trùng.
+
+    Nhận cả lối viết tiếng Việt ('10 giờ', 'lúc 21h') vì model chép lại nguyên
+    lời người dùng khá thường xuyên.
+    """
+    if not at_times:
+        return None
+    ra: list[tuple[int, int]] = []
+    for t in at_times:
+        hm = _parse_hm(str(t).strip()) or _gio_trong_cau(str(t))
+        if hm and hm not in ra:
+            ra.append(hm)
+    return sorted(ra) or None
+
+
 def _build_rrule(unit: str | None, every_n: int | None, at_hm: str | None,
                  weekdays: list | None, day_of_month: int | None,
                  month: int | None, skip: list | None,
-                 now: datetime) -> dict[str, Any] | None:
+                 now: datetime, at_times: list | None = None,
+                 when_text: str = "") -> dict[str, Any] | None:
     """Dựng spec cho lich_lap từ tham số công cụ. None nếu không phải lịch lặp.
 
-    Kích hoạt khi có `unit`, hoặc khi có `weekdays` (người dùng chỉ nói thứ mà
-    không nói đơn vị → hiểu là lặp theo tuần)."""
+    Kích hoạt khi có `unit`, khi có `weekdays` (người dùng chỉ nói thứ mà không
+    nói đơn vị → lặp theo tuần), hoặc khi có `at_times` (nhiều mốc giờ mà không
+    nói đơn vị → lặp hằng ngày).
+
+    Thiếu GIỜ thì đánh dấu `thieu_gio` để nơi gọi HỎI LẠI, chứ không lấy giờ hiện
+    tại. Bản cũ lấy giờ tạo lịch làm giờ nhắc: câu "mùng 1 hàng tháng nhắc anh
+    đảo công tơ điện" gõ lúc 20:10 thành lịch bắn 20:10 mỗi tháng — một con số
+    người dùng chưa từng nói, mà lời hứa của hệ thống là không tự điền mặc định.
+    """
     wds = _chuan_weekdays(weekdays)
+    times = _chuan_times(at_times)
     u = (unit or "").strip().lower() if unit else ""
     if not u and wds:
         u = "week"
+    if not u and times:
+        u = "day"
     if u not in lich_lap.UNITS:
         return None
     spec: dict[str, Any] = {"unit": u, "n": max(1, int(every_n or 1)),
                             "anchor": now.date().isoformat()}
     if u not in ("second", "minute", "hour"):
-        hm = _parse_hm(at_hm or "") if at_hm else None
-        spec["hour"], spec["minute"] = (hm or (int(now.hour), int(now.minute)))
+        # Thứ tự lấy giờ: các mốc rời → tham số at/every_day_at → giờ nằm trong
+        # câu tiếng Việt kèm theo (model hay để giờ trong `when` thay vì `at`).
+        hm = times[0] if times else (_parse_hm(at_hm or "") if at_hm else None)
+        if hm is None and when_text:
+            hm = _gio_trong_cau(when_text)
+        if hm is None:
+            spec["thieu_gio"] = True
+        else:
+            spec["hour"], spec["minute"] = hm
+        if times and len(times) > 1:
+            spec["times"] = [[h, m] for h, m in times]
     if wds:
         spec["weekdays"] = wds
     if day_of_month and 1 <= int(day_of_month) <= 31:
@@ -281,11 +333,14 @@ def parse_when(
     month: int | None = None,
     skip: list | None = None,
     on_date: str | None = None,
+    at_times: list | None = None,
 ) -> dict[str, Any] | None:
     """Resolve schedule from structured args and/or free-text ``when``.
 
     Returns dict with keys: kind, next_run_at, and optional interval_min/hour/minute/due_at.
     kind='recur' còn kèm 'rrule' (dict spec cho services.lich_lap).
+    kind='thieu_gio' (không có next_run_at) = lịch lặp theo ngày trở lên mà chưa
+    biết giờ → nơi gọi phải HỎI, không được đoán.
     """
     now = now or _now_vn()
 
@@ -294,8 +349,11 @@ def parse_when(
     # cho việc đoán từ chữ. Cũng nhận `weekdays`/`skip` mà không cần `unit` (khi
     # người dùng chỉ nói "T2–T6 lúc 17:30 trừ lễ").
     _spec = _build_rrule(unit, every_n, every_day_at or at, weekdays,
-                         day_of_month, month, skip, now)
+                         day_of_month, month, skip, now, at_times=at_times,
+                         when_text=when)
     if _spec is not None:
+        if _spec.pop("thieu_gio", False):
+            return {"kind": "thieu_gio"}
         nxt = lich_lap.next_run(_spec, now, _TZ)
         if nxt:
             return {"kind": "recur", "rrule": _spec,
@@ -535,7 +593,7 @@ def _fmt_rrule(spec: dict[str, Any]) -> str:
     don_vi = _UNIT_VN.get(unit, unit)
     if unit in ("second", "minute", "hour"):
         return f"mỗi {n} {don_vi}" if n > 1 else f"mỗi {don_vi}"
-    gio = f"{int(spec.get('hour') or 0):02d}:{int(spec.get('minute') or 0):02d}"
+    gio = ", ".join(f"{h:02d}:{m:02d}" for h, m in lich_lap.cac_moc_gio(spec))
     dau = f"mỗi {n} {don_vi}" if n > 1 else f"mỗi {don_vi}"
     wds = spec.get("weekdays")
     if wds:

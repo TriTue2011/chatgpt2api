@@ -13,6 +13,9 @@ Tách riêng khỏi `reminders.py` để kiểm được độc lập (không c�
 
 `spec` (dict):
   n:int=1, unit:str, hour:int, minute:int,
+  times:list|None          (NHIỀU mốc giờ trong cùng một ngày, vd
+                            [[10,0],[15,0],[21,0]]; có thì hour/minute chỉ còn
+                            là mốc đầu để hiển thị),
   weekdays:list[int]|None  (0=Thứ Hai … 6=Chủ Nhật),
   day:int|None             (ngày trong tháng, cho month/year),
   month:int|None           (tháng, cho year),
@@ -45,6 +48,35 @@ def _skip_set(spec: dict[str, Any]) -> frozenset[str]:
     return frozenset(str(x) for x in (spec.get("skip") or []))
 
 
+def cac_moc_gio(spec: dict[str, Any]) -> list[tuple[int, int]]:
+    """Các mốc giờ trong ngày của lịch, tăng dần. Không khai `times` → một mốc
+    duy nhất lấy từ hour/minute (giữ nguyên ngữ nghĩa lịch cũ).
+
+    Nhận cả [[10,0],[15,30]] lẫn ["10:00","15:30"] vì spec đi qua JSON (cột
+    `rrule` trong DB nhắc hẹn) nên tuple thành list, và model có thể ghi chuỗi.
+    """
+    ra: list[tuple[int, int]] = []
+    for t in (spec.get("times") or []):
+        try:
+            if isinstance(t, str):
+                phan = t.strip().lower().replace("h", ":").split(":")
+                h = int(phan[0])
+                m = int(phan[1] or 0) if len(phan) > 1 else 0
+            elif isinstance(t, (list, tuple)) and len(t) >= 2:
+                h, m = int(t[0]), int(t[1])
+            elif isinstance(t, (list, tuple)) and len(t) == 1:
+                h, m = int(t[0]), 0
+            else:
+                continue
+        except (TypeError, ValueError, IndexError):
+            continue
+        if 0 <= h <= 23 and 0 <= m <= 59 and (h, m) not in ra:
+            ra.append((h, m))
+    if ra:
+        return sorted(ra)
+    return [(int(spec.get("hour") or 0), int(spec.get("minute") or 0))]
+
+
 def _add_months(d: _dt.date, months: int) -> _dt.date:
     """Cộng tháng, kẹp ngày về cuối tháng nếu tràn (31/1 + 1 tháng → 28/2)."""
     thang0 = d.month - 1 + months
@@ -70,24 +102,31 @@ def next_run(spec: dict[str, Any], after: _dt.datetime,
     if unit in _GIAY:
         return after + _dt.timedelta(seconds=n * _GIAY[unit])
 
-    hour = int(spec.get("hour") or 0)
-    minute = int(spec.get("minute") or 0)
+    gio = cac_moc_gio(spec)
     skip = _skip_set(spec)
     wds = spec.get("weekdays")
     wdset = {int(w) for w in wds} if wds else None
     anchor = _anchor(spec, after.date())
 
-    def tao(d: _dt.date) -> _dt.datetime:
-        return _dt.datetime(d.year, d.month, d.day, hour, minute, tzinfo=tz)
+    def tao(d: _dt.date, hm: tuple[int, int]) -> _dt.datetime:
+        return _dt.datetime(d.year, d.month, d.day, hm[0], hm[1], tzinfo=tz)
+
+    def moc_sau(d: _dt.date) -> Optional[_dt.datetime]:
+        """Mốc giờ SỚM NHẤT trong ngày `d` mà còn sau `after`; None nếu qua hết."""
+        for hm in gio:
+            cand = tao(d, hm)
+            if cand > after:
+                return cand
+        return None
 
     def bi_nghi(d: _dt.date) -> bool:
         return bool(skip) and _le.la_ngay_nghi(d, skip)
 
     if unit in ("day", "week"):
-        # Ngày đầu tiên có thể xét: hôm nay nếu giờ chưa qua, không thì mai.
+        # Bắt đầu từ CHÍNH hôm nay: lịch nhiều mốc giờ có thể còn mốc chưa qua
+        # (10h đã trôi nhưng 15h và 21h thì chưa) — `moc_sau` tự bỏ mốc đã qua
+        # và trả None nếu hết ngày, lúc đó mới sang ngày kế.
         d = after.date()
-        if tao(d) <= after:
-            d = d + _dt.timedelta(days=1)
         for _ in range(_MAX_NGAY):
             hop = True
             if wdset is not None and d.weekday() not in wdset:
@@ -103,7 +142,9 @@ def next_run(spec: dict[str, Any], after: _dt.datetime,
             if hop and bi_nghi(d):
                 hop = False
             if hop:
-                return tao(d)
+                cand = moc_sau(d)
+                if cand is not None:
+                    return cand
             d = d + _dt.timedelta(days=1)
         return None
 
@@ -133,8 +174,8 @@ def next_run(spec: dict[str, Any], after: _dt.datetime,
                 if not bi_nghi(dd):
                     break
                 dd = dd + _dt.timedelta(days=1)
-            cand = tao(dd)
-            if cand > after:
+            cand = moc_sau(dd)
+            if cand is not None:
                 return cand
             k += 1
         return None

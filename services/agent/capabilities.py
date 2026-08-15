@@ -1246,7 +1246,15 @@ def _h_schedule(args: dict, ctx: dict) -> dict:
         month=args.get("month"),
         skip=(args.get("skip") if isinstance(args.get("skip"), list) else None),
         on_date=(str(args.get("on_date")).strip() if args.get("on_date") else None),
+        at_times=(args.get("at_times") if isinstance(args.get("at_times"), list) else None),
     )
+    # Lịch lặp theo ngày trở lên mà chưa biết GIỜ: hỏi, không đoán. (Bản cũ lấy
+    # luôn giờ tạo lịch — "mùng 1 hàng tháng nhắc anh đảo công tơ điện" gõ lúc
+    # 20:10 thành lịch 20:10 mỗi tháng, giờ đó người dùng chưa từng nói.)
+    if sched and sched.get("kind") == "thieu_gio":
+        return {"text": "Anh/chị muốn em nhắc vào lúc mấy giờ ạ? "
+                        "(vd 7h sáng, 20:30 — nhắc nhiều lần trong ngày thì nói "
+                        "đủ các mốc, vd 10h, 15h và 21h)"}
     if not sched:
         return {
             "text": (
@@ -5179,6 +5187,11 @@ CAPABILITIES: dict[str, Capability] = {
             "Hẹn 1 ngày cụ thể: on_date='dd/mm[/yyyy]' + at. "
             "Vd 'nhắc check-out 17h30 T2–T6 trừ lễ tết': unit=week, at='17:30', "
             "weekdays=[0,1,2,3,4], skip=['le','tet','bu']. Huỷ: op=cancel + id (hoặc id=all). "
+            "NHIỀU LẦN TRONG NGÀY: 'nhắc 3 lần lúc 10h, 15h và 21h' → MỘT lời gọi với "
+            "at_times=['10:00','15:00','21:00'] (không cần gọi 3 lần, không cần 3 lịch). "
+            "Vừa đặt lịch xong mà họ nói thêm mốc giờ = vẫn NỘI DUNG ĐÓ, chỉ đổi giờ: "
+            "op=cancel mã lịch vừa đặt rồi tạo lại với at_times đầy đủ — "
+            "TUYỆT ĐỐI đừng hỏi lại 'nhắc việc gì'. "
             "GỬI TIN HẸN GIỜ (vd 'sau 2 phút gửi nhóm A: cả nhà đi ngủ'): "
             "mode=task + send_to=người/nhóm nhận + text=NỘI DUNG gửi (+send_platform "
             "nếu nêu rõ kênh). Em tra danh bạ NGAY; nếu thiếu/mập mờ (trùng tên, "
@@ -5212,6 +5225,11 @@ CAPABILITIES: dict[str, Capability] = {
                              "description": "Lặp mỗi ngày lúc HH:MM (giờ VN)"},
             "at": {"type": "string",
                    "description": "Mốc tuyệt đối HH:MM hoặc ISO; cũng là GIỜ cho unit/on_date"},
+            "at_times": {"type": "array", "items": {"type": "string"},
+                         "description": "NHIỀU mốc giờ trong CÙNG một ngày — 'nhắc 3 lần "
+                                        "lúc 10h, 15h và 21h' → ['10:00','15:00','21:00']. "
+                                        "Không nêu unit thì hiểu là lặp hằng ngày; kèm "
+                                        "weekdays/unit nếu chỉ vài thứ hoặc theo tháng."},
             "unit": {"type": "string",
                      "enum": ["second", "minute", "hour", "day", "week", "month", "year"],
                      "description": "Đơn vị lặp linh hoạt. Dùng cùng every_n. "
