@@ -22,7 +22,7 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 from services import song_ngu as sn  # noqa: E402
 from services import zalo_personal as zp  # noqa: E402
 
-NGUONG = sn.NGUONG_DONG_TEP
+NGUONG = zp.NGUONG_TRA_LOI_WORD
 
 
 class TestDongWordCauTraLoiDai(unittest.TestCase):
@@ -43,10 +43,11 @@ class TestDongWordCauTraLoiDai(unittest.TestCase):
         self.assertFalse(zp._tra_loi_dai_ra_word("t1", 0, "x" * (NGUONG - 100)))
         self.assertEqual(self.tep, [])
 
-    def test_nhinh_hon_nguong_chut_it_van_o_chat(self) -> None:
-        """Mở tệp cho một câu 2.000 ký tự còn phiền hơn đọc thẳng."""
-        self.assertFalse(zp._tra_loi_dai_ra_word("t1", 0, "x" * (NGUONG + 100)))
-        self.assertEqual(self.tep, [])
+    def test_vua_qua_nguong_la_dong_tep_ngay(self) -> None:
+        """Không có vùng đệm nào: quá 2.900 là không lọt một tin nữa."""
+        with mock.patch.object(sn, "docx_mot_ban", return_value=b"PK\x03\x04"):
+            self.assertTrue(zp._tra_loi_dai_ra_word("t1", 0, "x" * (NGUONG + 1)))
+        self.assertEqual(len(self.tep), 1)
 
     def test_dai_han_thi_dong_word(self) -> None:
         # python-docx không có trên máy dev; chỗ cần kiểm là QUYẾT ĐỊNH đóng
@@ -69,14 +70,15 @@ class TestDongWordCauTraLoiDai(unittest.TestCase):
             self.assertFalse(zp._tra_loi_dai_ra_word("t1", 0, "z" * (NGUONG * 3)))
 
 
-class TestDungChungMotNguong(unittest.TestCase):
-    def test_lay_theo_song_ngu_khong_tu_dat_so_rieng(self) -> None:
-        """Một con số duy nhất để chỉnh, dùng chung với bản chép lời."""
-        with mock.patch.object(sn, "NGUONG_DONG_TEP", 200), \
-             mock.patch.object(sn, "docx_mot_ban", return_value=b"PK\x03\x04"), \
-             mock.patch.object(zp, "_serve_bytes") as gui:
-            self.assertTrue(zp._tra_loi_dai_ra_word("t1", 0, "x" * 900))
-            self.assertTrue(gui.called)
+class TestNguongDungMoc(unittest.TestCase):
+    def test_dung_moc_khong_lot_mot_tin(self) -> None:
+        """2.900 — dưới trần cắt tin (_MAX_LEN) nên tin nào cũng liền mạch."""
+        self.assertEqual(zp.NGUONG_TRA_LOI_WORD, 2900)
+        self.assertLess(zp.NGUONG_TRA_LOI_WORD, zp._MAX_LEN)
+
+    def test_khac_nguong_cua_ban_chep_loi(self) -> None:
+        """Bản chép lời đóng tệp sớm hơn (1.800) — hai việc khác nhau."""
+        self.assertNotEqual(zp.NGUONG_TRA_LOI_WORD, sn.NGUONG_DONG_TEP)
 
 
 if __name__ == "__main__":

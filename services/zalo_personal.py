@@ -62,6 +62,11 @@ _MAX_CHUNKS = 3
 #: nguyên cho mọi đường tải khác.
 TRAN_TEP_ZALO = 1024 * 1024 * 1024
 
+#: Câu trả lời dài quá ngần này thì đóng .docx thay vì nhắn thẳng — đúng mốc nó
+#: không còn lọt MỘT tin Zalo (trần 3.000, `_MAX_LEN` cắt ở 2.950). Dưới mốc là
+#: một tin đọc liền mạch; trên mốc là bị xé, mà xé thì đọc mệt hơn mở tệp.
+NGUONG_TRA_LOI_WORD = 2900
+
 # Ngữ cảnh tin nhắn ĐANG xử lý trên thread này (account nhận + loại thread) —
 # reminders đọc lúc tạo nhắc hẹn để về sau gửi đúng account, đúng nhóm/cá nhân.
 _msg_ctx = threading.local()
@@ -2123,22 +2128,29 @@ def _doc_thanh_tep(thread_id: str, thread_type: int, chu: str,
 def _tra_loi_dai_ra_word(thread_id: str, thread_type: int, reply: str) -> bool:
     """Câu trả lời dài quá ngưỡng → gửi .docx kèm mở đầu ngắn. True = đã gửi.
 
-    Chủ máy chốt 16/08: mọi phản hồi quá 1.800 ký tự thì đóng thành Word, trừ
-    thứ tự nó BẮT BUỘC phải nằm trong chat. Ngưỡng dùng chung với bản chép lời
-    (``song_ngu.NGUONG_DONG_TEP``) để chỉ có MỘT con số phải chỉnh.
+    Ngưỡng là ``NGUONG_TRA_LOI_WORD`` (2.900) — đúng mốc câu trả lời KHÔNG còn
+    lọt một tin Zalo. Dưới mốc đó vẫn là một tin đọc liền mạch, trên mốc đó là
+    bắt đầu bị xé, mà xé thì đọc mệt hơn mở tệp.
+
+    Đây là con số RIÊNG, không dùng chung với ``song_ngu.NGUONG_DONG_TEP``
+    (1.800 cho bản chép lời): bản chép lời đóng tệp sớm hơn vì người ta còn dán
+    vào tài liệu, còn câu trả lời chat thì đọc tại chỗ là chính.
 
     Giữ nguyên trong chat, không đóng tệp:
 
     - Menu chọn (đã tách ở nơi gọi bằng ``has_choices``) — đóng tệp thì người
       dùng không bấm số trả lời được nữa.
     - Câu có khối mã: dán vào Word là hỏng thụt lề, mà người ta cần copy chạy.
-    - Câu chỉ nhỉnh hơn ngưỡng chút ít (dưới 1,5 lần): mở tệp còn phiền hơn đọc.
+
+    Ngưỡng là ĐÚNG 1.800, không nới thêm hệ số nào. Bản đầu em tự cho co giãn
+    tới 1,5 lần (2.700) với lý lẽ "mở tệp còn phiền hơn đọc" — nhưng đó là đặt
+    thêm một con số thứ hai mà chủ máy không hề nêu, và nó đẩy đúng khoảng
+    1.800–2.700 trở lại thành tường chữ trong chat.
     """
     from services import song_ngu as _sn
 
     chu = str(reply or "")
-    nguong = _sn.NGUONG_DONG_TEP
-    if len(chu) <= max(nguong, int(nguong * 1.5)):
+    if len(chu) <= NGUONG_TRA_LOI_WORD:
         return False
     if "```" in chu:
         return False
