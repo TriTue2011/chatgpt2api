@@ -343,32 +343,20 @@ export function VoiceSpeakersCard() {
           <Volume2 className="size-4 text-emerald-500" /> Giọng nói &amp; Loa
         </div>
 
-        {/* Trạng thái engine */}
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-md border border-border p-2 text-[11px] space-y-0.5">
-            <div className="font-semibold">🔊 Đọc (TTS)</div>
-            <div>{tts?.enabled ? "✅ sẵn sàng" : "⚠️ chưa sẵn sàng"} · backend {tts?.backend || "?"}</div>
-            <div>Giọng: <b>{tts?.voice || "-"}</b> {tts?.model_ready ? "" : "(chưa tải file giọng)"}</div>
-            <div className="text-muted-foreground">
-              {tts?.piper_bin ? `piper: ${tts.piper_bin}` : "chưa có binary piper trong image"}
-              {" · "}{(tts?.local_voices || []).length} giọng trên volume
-            </div>
-          </div>
-          <div className="rounded-md border border-border p-2 text-[11px] space-y-0.5">
-            <div className="font-semibold">🎤 Nghe (STT)</div>
-            <div>{stt?.enabled ? "✅ sẵn sàng" : "⚠️ chưa sẵn sàng"} · backend {stt?.backend || "?"}</div>
-            <div>
-              Ngôn ngữ: <b>{
-                stt?.language === "auto" ? "auto (VI→EN)"
-                  : stt?.language === "en" ? "English (en)"
-                  : "Tiếng Việt (vi)"
-              }</b>
-            </div>
-            <div className="text-muted-foreground">
-              VI {stt?.model_ready ? "✓" : "—"} · EN {stt?.en_model_ready ? "✓" : "—"}
-              {" · "}sherpa-onnx {stt?.sherpa_installed ? "có" : "chưa cài"}
-            </div>
-          </div>
+        {/* Trạng thái engine — CHỈ những gì các ô cấu hình bên dưới không nói.
+            Backend, giọng đọc và ngôn ngữ nghe từng hiện ở đây rồi hiện LẠI
+            trong ô select ngay dưới; còn model của từng tiếng thì mục "Theo
+            từng tiếng" hiện đủ cả năm tiếng chứ không phải hai. Giữ lại đúng
+            ba thứ không có chỗ nào khác nói: chạy được hay không, có binary
+            piper không, và có bao nhiêu giọng trên volume. */}
+        <div className="rounded-md border border-border p-2 text-[11px]">
+          🔊 Đọc {tts?.enabled ? "✅" : "⚠️ chưa sẵn sàng"}
+          {" · "}🎤 Nghe {stt?.enabled ? "✅" : "⚠️ chưa sẵn sàng"}
+          <span className="text-muted-foreground">
+            {" · "}{tts?.piper_bin ? "piper có" : "chưa có binary piper"}
+            {" · "}{(tts?.local_voices || []).length} giọng trên volume
+            {" · "}sherpa-onnx {stt?.sherpa_installed ? "có" : "chưa cài"}
+          </span>
         </div>
         <p className="text-[10px] text-muted-foreground -mt-1">
           Model KHÔNG nằm trong image — tải một lần về volume (giữ qua mọi lần update).
@@ -421,10 +409,12 @@ export function VoiceSpeakersCard() {
             <div className="text-xs font-medium">
               Theo từng tính năng — tiếng đem NGHE (bỏ trống = mặc định của tính năng đó)
             </div>
+            {/* Đàm thoại hai chiều KHÔNG có hàng ở đây: nó đi theo cặp ngôn ngữ
+                chọn trong tab Dịch, nên hàng cũ luôn bị disabled — một hàng bấm
+                không được chỉ làm người dùng tưởng mình cài thiếu. */}
             {([
-              ["tin_thoai", "🎙️ Tin nhắn thoại gửi bot", "mặc định: Việt"],
-              ["phu_de", "🎬 Phụ đề video / dịch tệp", "mặc định: Việt + Anh"],
-              ["dam_thoai", "💬 Đàm thoại hai chiều", "theo cặp đã chọn trong tab Dịch"],
+              ["tin_thoai", "🎙️ Tin nhắn thoại gửi bot", "bỏ trống = theo ô Ngôn ngữ nghe bên dưới"],
+              ["phu_de", "🎬 Phụ đề video / dịch tệp", "chỉ dùng khi bot không hỏi được, vd gọi qua API"],
             ] as const).map(([ma, nhan, ghi]) => (
               <div key={ma} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
                 <span className="w-56 shrink-0">{nhan}</span>
@@ -641,8 +631,13 @@ export function VoiceSpeakersCard() {
             </select>
           </div>
           <div>
+            {/* Nhãn cũ ghi "không áp cho HA" là SAI: wyoming_server.py đọc
+                chính ô này để chốt tiếng cho Assist (_ha_lang_to_stt — HA gửi
+                language gì cũng bị đè). Nó còn là đường lui của tin nhắn thoại
+                khi hàng "Theo từng tính năng" ở trên để trống. */}
             <label className="text-xs text-muted-foreground">
-              Ngôn ngữ nghe cho tin nhắn thoại (không áp cho HA)
+              Ngôn ngữ nghe — dùng cho Home Assistant, và cho tin nhắn thoại khi
+              hàng «Theo từng tính năng» để trống
             </label>
             <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
               value={String(sttCfg.language || stt?.language || "vi")}
@@ -668,9 +663,9 @@ export function VoiceSpeakersCard() {
               onChange={(e) => patchVoice("stt", { wyoming_url: e.target.value })}
               placeholder="tcp://… (client; server nhúng đã có port riêng)" />
             <p className="text-[10px] text-muted-foreground mt-1">
-              Ngôn ngữ STT do <b>chatgpt2api</b> quyết định (ô trên). Assist / Wyoming gửi
-              language gì cũng bị bỏ qua. Chọn backend + ngôn ngữ → <b>Lưu cấu hình giọng nói</b>
-              → nói thử (không cần Reload HA).
+              Ngôn ngữ STT do <b>chatgpt2api</b> quyết định (ô «Ngôn ngữ nghe» bên trên).
+              Assist / Wyoming gửi language gì cũng bị bỏ qua. Chọn backend + ngôn ngữ →
+              <b>Lưu cấu hình giọng nói</b> → nói thử (không cần Reload HA).
             </p>
           </div>
         </div>
