@@ -26,6 +26,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote, unquote, urljoin, urlparse
 
+from services.local_gateway import loopback_gateway_url
+
 logger = logging.getLogger(__name__)
 
 # Host được coi là tin cậy sẵn cho từng kênh (nền tảng chính chủ).
@@ -215,7 +217,7 @@ def self_images_fetch(url: str, *, timeout: float = 30,
         raise BlockedURL("URL không phải media nội bộ an toàn")
     u = urlparse(raw)
     relative = u.path[len("/images/"):]
-    local = f"http://127.0.0.1:80/images/{quote(relative, safe='/%')}"
+    local = f"{loopback_gateway_url()}/images/{quote(relative, safe='/%')}"
     if u.query:
         local += f"?{u.query}"
     with urllib.request.urlopen(local, timeout=timeout) as resp:

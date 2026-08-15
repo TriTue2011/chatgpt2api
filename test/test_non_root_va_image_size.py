@@ -27,6 +27,14 @@ class MacDinhKhongDoiHanhViTests(unittest.TestCase):
         self.assertIn("APP_PORT: ${APP_PORT:-80}", COMPOSE)
         self.assertIn("${APP_PORT:-80}", SUPERVISOR)
 
+    def test_healthcheck_theo_APP_PORT(self):
+        """Non-root phải dùng 8080, nên healthcheck không được đóng đinh 80."""
+        expected = "os.getenv('APP_PORT', '80')"
+        self.assertIn(expected, DOCKERFILE)
+        self.assertIn(expected, COMPOSE)
+        self.assertNotIn("localhost:80/version", DOCKERFILE)
+        self.assertNotIn("localhost:80/version", COMPOSE)
+
     def test_co_nguoi_dung_khong_dac_quyen_san(self):
         self.assertRegex(DOCKERFILE, r"useradd .*c2a")
 

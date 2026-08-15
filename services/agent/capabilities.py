@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from services.config import config
+from services.local_gateway import gateway_base_url
 from services.agent import state
 from services.agent.branches import branch_model
 
@@ -3060,7 +3061,7 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
     import datetime as _dt
     when = _dt.datetime.fromtimestamp(newest.stat().st_mtime).strftime("%H:%M %d/%m")
     rel = newest.relative_to(d).as_posix()
-    url = f"http://127.0.0.1:80/images/{rel}"
+    url = f"{gateway_base_url()}/images/{rel}"
     caption = f"{_MEDIA_LABEL.get(kind, 'Media')} mới nhất trong thư viện (tạo lúc {when}) ạ."
     if kind == "image":
         if so <= 1:
@@ -3078,7 +3079,7 @@ def _h_library_media(args: dict, ctx: dict) -> dict:
             if van in da_thay:
                 continue
             da_thay.add(van)
-            chon.append(f"http://127.0.0.1:80/images/{p.relative_to(d).as_posix()}")
+            chon.append(f"{gateway_base_url()}/images/{p.relative_to(d).as_posix()}")
             if len(chon) >= so:
                 break
         if len(chon) <= 1:
@@ -4153,7 +4154,7 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
                      "path": rel, "bytes": len(data)})
         # Cùng dạng URL với thư viện ảnh (xem `_h_library_media`) — kênh gửi tin
         # tự đổi sang đường công khai; hardcode domain ở đây sẽ lệch khi đổi tên miền.
-        cd = f"http://127.0.0.1:80/images/{rel}"
+        cd = f"{gateway_base_url()}/images/{rel}"
         mo_ta = ("📸 Ảnh webcam" if loai == "webcam" else "🖥️ Ảnh màn hình")
         kt = f" ({kq.get('width')}×{kq.get('height')})" if kq.get("width") else ""
         return {"text": f"{mo_ta} máy '{ten}'{kt} ạ.", "image_url": cd}

@@ -41,6 +41,7 @@ from typing import Any
 import httpx
 
 from services.config import config
+from services.local_gateway import gateway_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -168,12 +169,12 @@ def webhook_secret() -> str:
 
 def _webhook_base() -> str:
     """Base URL mà BOT SERVER gọi ngược về gateway. zalo-server nhúng cùng
-    container nên mặc định 127.0.0.1:80 (cổng nội bộ của gateway). Ưu tiên cấu
-    hình riêng, rồi base_url chung, cuối cùng localhost nội bộ."""
+    container nên mặc định loopback theo ``APP_PORT``. Ưu tiên cấu hình riêng,
+    rồi base_url chung, cuối cùng localhost nội bộ."""
     c = _cfg()
     return (str(c.get("zalo_personal_webhook_base") or "").strip()
             or str(c.get("base_url") or "").strip()
-            or "http://127.0.0.1:80").rstrip("/")
+            or gateway_base_url()).rstrip("/")
 
 
 def _public_base() -> str:

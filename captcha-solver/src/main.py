@@ -1931,7 +1931,11 @@ def _chatgpt2api_auth_key() -> str:
 async def _update_chatgpt2api_token(access_token: str) -> None:
     """POST fresh token to chatgpt2api's accounts pool (kèm admin auth)."""
     try:
-        chatgpt2api_url = os.environ.get("CHATGPT2API_URL", "http://chatgpt2api:8100")
+        chatgpt2api_url = (
+            os.environ.get("CHATGPT2API_URL")
+            or os.environ.get("C2A_GATEWAY_URL")
+            or f"http://127.0.0.1:{os.environ.get('APP_PORT', '80')}"
+        )
         headers = {"Content-Type": "application/json"}
         _ak = _chatgpt2api_auth_key()
         if _ak:

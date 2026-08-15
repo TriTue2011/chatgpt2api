@@ -27,6 +27,7 @@ from services.protocol.conversation import (
 from services.account_service import account_service
 from services.backend_router import backend_router
 from services.config import config
+from services.local_gateway import gateway_base_url
 from services.verbalize import verbalize
 from services.model_cooldown import model_cooldown
 from services.provider_circuit import provider_circuit
@@ -211,7 +212,7 @@ def _adapter_image_chat(
     from services.protocol import openai_v1_image_generations as imgen
     # Absolute URLs: the agent/telegram consumers download the image over HTTP,
     # so a bare "/images/…" path is unusable for them.
-    base = str(config.base_url or "").strip().rstrip("/") or "http://127.0.0.1:80"
+    base = str(config.base_url or "").strip().rstrip("/") or gateway_base_url()
     body: dict[str, Any] = {
         "model": model,
         "prompt": prompt,

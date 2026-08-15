@@ -21,6 +21,8 @@ import threading
 import time
 from typing import Any
 
+from services.local_gateway import gateway_base_url
+
 logger = logging.getLogger(__name__)
 
 _pending: dict[str, dict] = {}
@@ -565,7 +567,7 @@ def generate_from_photo(image_bytes: bytes, prompt: str, *, channel: str = "") -
         c = _cfg.get()
         base = (str(c.get("base_url") or "").strip()
                 or str(c.get("telegram_webhook_url") or "").strip()).rstrip("/") \
-            or "http://127.0.0.1:80"
+            or gateway_base_url()
         url = base + (url if url.startswith("/") else "/" + url)
     if url:
         r: dict[str, Any] = {"text": "Đây ạ 🎨", "image_url": url}

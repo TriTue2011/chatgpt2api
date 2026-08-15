@@ -37,7 +37,8 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("device_fs")
 
-GATEWAY = os.getenv("C2A_GATEWAY_URL", "http://127.0.0.1:80").rstrip("/")
+GATEWAY = (os.getenv("C2A_GATEWAY_URL", "").strip().rstrip("/")
+           or f"http://127.0.0.1:{os.getenv('APP_PORT', '80')}")
 AUTH_KEY = os.getenv("CHATGPT2API_AUTH_KEY", "")
 _TIMEOUT = 90
 

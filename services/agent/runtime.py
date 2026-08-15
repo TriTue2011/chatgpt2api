@@ -17,10 +17,11 @@ import uuid
 from typing import Any, Optional
 
 from services.config import config
+from services.local_gateway import gateway_v1_url
 
 logger = logging.getLogger(__name__)
 
-_LOCAL = "http://127.0.0.1:80/v1/chat/completions"
+_LOCAL = f"{gateway_v1_url()}/chat/completions"
 # Markdown image the image-gen pipeline emits: ![[Generated Image 0]](http://…)
 _IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 

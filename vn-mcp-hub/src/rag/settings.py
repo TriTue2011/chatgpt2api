@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -17,16 +18,19 @@ SETTINGS_FILE = Path("/app/data/studio/settings.json")
 # Gateway nhìn từ trong hub. MỘT chỗ khai duy nhất — ba module khác từng tự
 # hardcode fallback riêng và cả bốn đều sai giống nhau, sửa một chỗ thì lệch.
 #
-# Vì sao 127.0.0.1:80 chứ không phải chatgpt2api:3030 (giá trị cũ, sai 2 chỗ):
+# Vì sao loopback theo APP_PORT chứ không phải chatgpt2api:3030 (giá trị cũ,
+# sai 2 chỗ):
 #   - Service trong compose tên `c2a`, KHÔNG có service nào tên `chatgpt2api`.
-#   - Gateway nghe cổng 80 trong container; `"3030:80"` nghĩa là 3030 chỉ là
-#     cổng publish ra HOST. Healthcheck của compose cũng gọi localhost:80.
+#   - Gateway nghe APP_PORT trong container; `"3030:80"` nghĩa là 3030 chỉ là
+#     cổng publish ra HOST. APP_USER non-root dùng APP_PORT=8080.
 #   - Hub chạy CÙNG container với gateway (MCP_HUB_INTERNAL_URL = 127.0.0.1:8005)
 #     nên đi loopback là ngắn nhất và không phụ thuộc tên service / mạng Docker.
 # Cấu hình sai ở đây thì mọi lượt AI tổng hợp trượt IM LẶNG: URLError bị bắt,
 # trả "" và luồng nạp RAG rơi về văn bản gốc — vẫn ra chunks nên rất dễ tưởng
 # là bình thường.
-DEFAULT_API_BASE_URL = "http://127.0.0.1:80/v1"
+_gateway = os.getenv("C2A_GATEWAY_URL", "").strip().rstrip("/") \
+    or f"http://127.0.0.1:{os.getenv('APP_PORT', '80')}"
+DEFAULT_API_BASE_URL = f"{_gateway}/v1"
 
 DEFAULTS = {
     "sync_interval_minutes": 360,     # 6 hours between R2 syncs

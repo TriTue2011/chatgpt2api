@@ -60,7 +60,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CAPTCHA_SOLVER_DISPLAY=:99 \
     CAPTCHA_SOLVER_DATA_DIR=/app/data/captcha \
     ACCOUNTS_DB=/app/data/captcha/accounts.db \
-    CHATGPT2API_URL=http://127.0.0.1:80 \
     CAPTCHA_SOLVER_NOVNC_EXTERNAL_URL=http://localhost:6080/vnc.html?host=localhost&port=6080&autoconnect=1 \
     MCP_HUB_INTERNAL_URL=http://127.0.0.1:8005
 
@@ -276,6 +275,6 @@ COPY deploy/supervisord.conf /etc/supervisor/conf.d/c2a.conf
 EXPOSE 80 6080 3001
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:80/version')" || exit 1
+    CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('APP_PORT', '80') + '/version')" || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/c2a.conf"]

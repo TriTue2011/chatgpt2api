@@ -29,7 +29,10 @@ def _make_llm():
     except Exception:
         from browser_use.llm import ChatOpenAI  # type: ignore
     key = os.getenv("CHATGPT2API_AUTH_KEY") or os.getenv("CAPTCHA_SOLVER_API_KEY") or "sk-none"
-    base = os.getenv("WEB_AGENT_API_BASE", "http://127.0.0.1:80/v1")
+    base = os.getenv("WEB_AGENT_API_BASE") or (
+        os.getenv("C2A_GATEWAY_URL", "").strip().rstrip("/")
+        or f"http://127.0.0.1:{os.getenv('APP_PORT', '80')}"
+    ) + "/v1"
     model = os.getenv("WEB_AGENT_MODEL", "cx/auto")
     return ChatOpenAI(model=model, base_url=base, api_key=key, temperature=0.2)
 
