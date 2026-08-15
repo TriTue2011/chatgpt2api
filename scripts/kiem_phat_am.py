@@ -18,6 +18,14 @@ tả đầu ra khác đầu vào, hay gặp ở tiếng Nhật vì chữ Hán), 
 bảng tách riêng nhóm đó ra. Chỉ những câu mà giọng khác đọc đúng mới tính là
 giọng này rụng âm.
 
+**Cột "đúng" bão hoà, cột "lượt hụt" thì không.** Cột đúng/N lấy đa số các lần
+đọc lại, nên đọc lại càng nhiều lần thì các giọng càng dồn về cùng một điểm: âm
+hụt hai lần trên năm vẫn tính là đạt. Xếp hạng bằng riêng cột đó là xếp hạng
+nhiễu — đo tiếng Nhật 14/08/2026 ra bốn giọng cùng 12/13 trong khi số lượt hụt
+là 2/55 với 10/55, chênh nhau năm lần. Có ``--lap > 1`` thì bảng in thêm cột
+**lượt hụt** đếm thẳng từng lượt nghe, và hai giọng cùng điểm thì giọng hụt ít
+lần hơn đứng trên.
+
 Chạy trong container, vì model nằm trên volume::
 
     docker exec c2a /app/.venv/bin/python /app/scripts/kiem_phat_am.py vi
@@ -97,19 +105,27 @@ BO_TEST: dict[str, tuple[tuple[str, tuple[str, ...], str], ...]] = {
         ("从来没有过", ("从", "来"), "c"),
         ("四十三个人", ("四", "十", "三"), "s"),
     ),
-    # Viết bằng chữ Hán như văn bản thật — đọc sai chữ Hán cũng là một lỗi cần
-    # thấy, vì bản dịch đưa vào TTS chính là văn bản có chữ Hán.
+    # Viết bằng chữ Hán như văn bản thật, nhưng chấp nhận CẢ cách viết kana
+    # ("今日|きょう" = nghe ra chữ nào cũng tính đạt).
+    #
+    # Vì sao phải có phần sau dấu |: bộ nghe tiếng Nhật viết ra kana ở nhiều
+    # chỗ mà câu gốc viết chữ Hán (今日 → きょう, 時間 → じかん, 写真 →
+    # しゃしん). Đó là ĐỌC ĐÚNG mà GHI khác chữ, không phải rụng âm. Đo ngày
+    # 14/08/2026 khi chưa có chỗ này: ba câu bị loại khỏi bảng vì "mọi giọng
+    # đều sai", 10 giọng còn lại dồn vào 8–12/13 và thứ hạng ĐẢO giữa hai lần
+    # chạy — tức bảng không tách nổi giọng nào với giọng nào, mà nhìn vẫn như
+    # một bảng xếp hạng thật.
     "ja": (
-        ("今日はいい天気ですね", ("今日", "天気"), "k · t"),
-        ("私は日本語を勉強します", ("日本語", "勉強"), "n · b"),
-        ("時間がありません", ("時間",), "j"),
-        ("写真を撮ってください", ("写真",), "sh"),
-        ("電話番号を教えて", ("電話", "番号"), "d · b"),
-        ("駅はどこですか", ("駅",), "e"),
-        ("音楽を聞きます", ("音楽",), "ng"),
-        ("三つの質問", ("質問",), "sh · ts"),
-        ("会社に行きます", ("会社",), "k · sh"),
-        ("よろしくお願いします", ("願い",), "y · n"),
+        ("今日はいい天気ですね", ("今日|きょう", "天気|てんき"), "k · t"),
+        ("私は日本語を勉強します", ("日本語|にほんご", "勉強|べんきょう"), "n · b"),
+        ("時間がありません", ("時間|じかん",), "j"),
+        ("写真を撮ってください", ("写真|しゃしん",), "sh"),
+        ("電話番号を教えて", ("電話|でんわ", "番号|ばんごう"), "d · b"),
+        ("駅はどこですか", ("駅|えき",), "e"),
+        ("音楽を聞きます", ("音楽|おんがく",), "ng"),
+        ("三つの質問", ("質問|しつもん",), "sh · ts"),
+        ("会社に行きます", ("会社|かいしゃ",), "k · sh"),
+        ("よろしくお願いします", ("願い|ねがい",), "y · n"),
     ),
     "ko": (
         ("안녕하세요 반갑습니다", ("안녕", "반갑"), "ㅇ · ㅂ"),
@@ -181,7 +197,11 @@ def _nghe_thay(dich: str, ra: str, lang: str) -> bool:
 
     "x-" = âm đầu, "-ng" = âm cuối, còn lại = cả từ. Tiếng Việt so sau khi bỏ
     dấu thanh, và âm đầu phải khớp TRỌN: "n-" không ăn khớp với "nhà".
+    Dấu | ngăn các cách VIẾT cùng một âm ("今日|きょう") — nghe ra cách nào
+    cũng tính đạt, vì phép đo hỏi âm còn hay mất, không hỏi chính tả.
     """
+    if "|" in dich:
+        return any(_nghe_thay(x, ra, lang) for x in dich.split("|") if x)
     r = _chuan(ra)
     if lang in _A_DONG:
         return _chuan(dich).replace(" ", "") in r.replace(" ", "")
@@ -296,6 +316,12 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
     rung: dict[tuple[str, int], list[str]] = {}
     chap_chon: dict[tuple[str, int], list[str]] = {}
     diem: dict[str, tuple[int, int]] = {}
+    # (giọng, câu) → (số LƯỢT nghe hụt, tổng số lượt nghe). Cột "đúng" lấy đa
+    # số nên nó BÃO HOÀ khi đọc lại nhiều lần: âm hụt hai lần trên năm vẫn được
+    # tính là đạt, và mấy giọng gần nhau dồn hết vào cùng một điểm. Đo tiếng
+    # Nhật 14/08/2026 dính đúng chỗ này — 4 giọng cùng 12/13 mà số lần hụt chênh
+    # nhau hơn hai lần. Đếm thẳng số lượt thì thứ hạng mới hiện ra.
+    luot: dict[tuple[str, int], tuple[int, int]] = {}
     for giong in giong_ds:
         dung = 0
         for i, (cau, dich, _nhan) in enumerate(bo):
@@ -315,6 +341,7 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
                         so_sai[d] += 1
             mat = [d for d, n in so_sai.items() if n * 2 > lap]
             hut = [d for d, n in so_sai.items() if 0 < n * 2 <= lap]
+            luot[(giong, i)] = (sum(so_sai.values()), max(1, lap) * len(dich))
             dung += len(dich) - len(mat)
             if mat:
                 rung[(giong, i)] = mat
@@ -335,8 +362,22 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
     }
     moi_giong_sai = phan_lon_sai
     xat = "  âm xát" if lang == "vi" else ""
-    print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}{xat:>9s}   phụ âm rụng")
-    xep = sorted(diem.items(), key=lambda kv: -kv[1][0])
+    cot_luot = f"{'lượt hụt':>12s}" if lap > 1 else ""
+    print(f"\n{'giọng':28s}{'đúng':>10s}{'tỉ lệ':>8s}{cot_luot}{xat:>9s}"
+          "   phụ âm rụng")
+
+    def _luot_cua(g: str) -> tuple[int, int]:
+        sai = tong = 0
+        for i in range(len(bo)):
+            if i in moi_giong_sai:
+                continue
+            s, t = luot.get((g, i), (0, 0))
+            sai, tong = sai + s, tong + t
+        return sai, tong
+
+    # Xếp theo điểm đa số trước, rồi tới số lượt hụt — hai giọng cùng điểm thì
+    # giọng hụt ít lần hơn đứng trên.
+    xep = sorted(diem.items(), key=lambda kv: (-kv[1][0], _luot_cua(kv[0])[0]))
     for giong, (dung, tong) in xep:
         # Liệt kê ĐÚNG âm đã rụng, không phải nhãn của câu: câu "nhà em ở gần
         # đây" thử cả nh và g, in nhãn "nh · g" thì đọc thành rụng cả hai.
@@ -363,7 +404,12 @@ def do_mot_tieng(lang: str, giong_ds: list[str], buoc: int = 0,
         duoi = ", ".join(loi) if loi else "—"
         if hut:
             duoi += f"   (chập chờn: {', '.join(hut)})"
-        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%{cot_xat}   {duoi}")
+        o_luot = ""
+        if lap > 1:
+            sai_l, tong_l = _luot_cua(giong)
+            o_luot = f"{f'{sai_l}/{tong_l}':>12s}"
+        print(f"{giong:28s}{dung:>6d}/{tong:<3d}{tl:>7.0f}%{o_luot}{cot_xat}"
+              f"   {duoi}")
     if moi_giong_sai:
         print(f"\nCâu mà ≥{nguong}/{len(giong_ds)} giọng đều sai — KHÔNG dùng để "
               "xếp hạng giọng cùng họ.\nHoặc STT nghe không ra, hoặc cả họ model "
