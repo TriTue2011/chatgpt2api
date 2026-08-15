@@ -311,7 +311,11 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
     if int(so) > len(ds):
         return None
     kieu = "chu" if str(pend.get("viec")) == "chu" else "phu-de"
-    return {"kieu": kieu, "target": f"cap:{ds[int(so) - 1]}",
+    # Truyền THẲNG mã đích, không bọc "cap:". "cap:ko" nghĩa là "cặp Việt ↔
+    # Hàn", mà giai_ma_target giải nó thành: nguồn tiếng Việt thì sang Hàn,
+    # còn lại về Việt. Menu ba bước đã hỏi rõ cả nguồn lẫn đích, nên chọn
+    # Nhật → Hàn mà bọc cap: thì máy dịch ra TIẾNG VIỆT, không báo gì.
+    return {"kieu": kieu, "target": ds[int(so) - 1],
             "nguon": str(pend.get("nguon") or "")}
 
 
@@ -387,7 +391,9 @@ def giai_chon(text: str, *, cho_chu: bool = False) -> dict[str, Any] | None:
         return None
     so, con = m.group(1), (m.group(2) or "").strip()
     if cho_chu:
-        return {"kieu": "chu", "target": f"cap:{_SO_TIENG_CHU[so]}"}
+        # Cũng truyền thẳng mã: người dùng bấm số nào là muốn ĐÚNG tiếng đó.
+        # Bọc "cap:" thì đoạn chữ tiếng Nhật chọn "Tiếng Anh" lại ra tiếng Việt.
+        return {"kieu": "chu", "target": _SO_TIENG_CHU[so]}
     if so == "1":
         return {"kieu": "phu-de", "target": "cap:vi"}
     if so == "2":

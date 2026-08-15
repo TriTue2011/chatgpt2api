@@ -46,7 +46,8 @@ def test_ba_buoc_di_het_va_nho_duoc_lua_chon_giua_chung():
     m = dc.menu_buoc(k)
     assert "từ tiếng Nhật" in m
     ra = dc.tra_loi_buoc(k, "1")                          # sang tiếng Việt
-    assert ra == {"kieu": "phu-de", "target": "cap:vi", "nguon": "ja"}
+    # target là MÃ TRƠ, không bọc "cap:" — xem test dịch giữa hai tiếng khác.
+    assert ra == {"kieu": "phu-de", "target": "vi", "nguon": "ja"}
 
 
 def test_tieng_dich_khong_liet_ke_tieng_nguon():
@@ -92,3 +93,33 @@ def test_chu_van_di_mot_buoc():
     dc.set_pending("k2", chu="xin chào các bạn")
     m = dc.menu_buoc("k2")
     assert "Dịch sang tiếng nào" in m and "làm gì với tệp" not in m
+
+
+def test_dich_giua_hai_tieng_KHONG_phai_tieng_viet():
+    """Nhật → Hàn phải ra ĐÚNG tiếng Hàn.
+
+    Bug tìm ra 15/08: menu cho chọn Nhật→Hàn nhưng trả về "cap:ko", mà
+    giai_ma_target giải "cap:xx" thành "cặp Việt ↔ xx": nguồn không phải tiếng
+    Việt thì nó luôn trả tiếng VIỆT. Tức người dùng chọn Hàn, máy dịch ra Việt,
+    không báo gì.
+    """
+    k = _tep()
+    dc.tra_loi_buoc(k, "1")               # tạo phụ đề
+    dc.tra_loi_buoc(k, "3")               # tệp nói tiếng Nhật
+    m = dc.menu_buoc(k)
+    assert "Tiếng Hàn" in m
+    so_han = [d.strip()[0] for d in m.splitlines() if "Tiếng Hàn" in d][0]
+    ra = dc.tra_loi_buoc(k, so_han)
+    assert ra["target"] == "ko", f"chọn Hàn mà target = {ra['target']}"
+    assert ra["nguon"] == "ja"
+
+    from services import translate_service as ts
+    assert ts.giai_ma_target(ra["nguon"], ra["target"]) == "ko"
+
+
+def test_menu_chu_cung_tra_thang_ma_tieng():
+    """Đoạn chữ tiếng Nhật chọn "Tiếng Anh" phải ra tiếng Anh, không ra Việt."""
+    from services import translate_service as ts
+    ra = dc.giai_chon("2", cho_chu=True)          # 2 = Tiếng Anh
+    assert ra == {"kieu": "chu", "target": "en"}
+    assert ts.giai_ma_target("ja", ra["target"]) == "en"
