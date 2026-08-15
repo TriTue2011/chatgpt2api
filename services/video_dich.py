@@ -679,19 +679,26 @@ def _ung_vien_nghe(target: str, session_id: str = "") -> tuple[str, ...]:
 
 
 def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
-                   chep_loi: bool = False, session_id: str = "") -> dict[str, Any]:
+                   chep_loi: bool = False, session_id: str = "",
+                   nguon_biet: str = "") -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
     Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
     (``video_asr``) thay vì phụ đề YouTube. Video nói tiếng Việt mà đích cũng
     tiếng Việt thì trả bản CHÉP LỜI — vẫn là phụ đề dùng được.
+
+    ``nguon_biet``: người dùng đã NÓI RÕ tệp nói tiếng gì (menu ba bước của
+    ``dich_cho``). Có nó thì khoá cứng một tiếng, khỏi dò: dò là nghe thử cả
+    cửa sổ mẫu bằng từng model rồi so độ tự tin, nên mỗi tiếng ứng viên là một
+    lượt nghe — biết trước vừa nhanh hơn vừa không có cửa đoán sai.
     """
     from services import video_asr as va
 
     try:
         cau, nguon, _giay_tieng = va.nghe_tep(
             duong, tran_giay=TRAN_GIAY_NGHE,
-            ung_vien=_ung_vien_nghe(target, session_id))
+            ung_vien=((nguon_biet,) if nguon_biet
+                      else _ung_vien_nghe(target, session_id)))
     except va.LoiNghe as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:

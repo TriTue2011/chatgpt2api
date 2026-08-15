@@ -1901,8 +1901,11 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             r = _vd.dich_tep_phu_de(pend["path"], pend.get("ten") or "", _tg,
                                     chep_loi=_chep)
         else:
+            # Người dùng đã nói rõ tệp nói tiếng gì ở bước 2 → khoá cứng model
+            # nghe, khỏi dò. Dò là mỗi tiếng ứng viên thêm một lượt nghe.
             r = _vd.dich_tep_video(pend["path"], pend.get("ten") or "", _tg,
-                                   chep_loi=_chep)
+                                   chep_loi=_chep,
+                                   nguon_biet=str(chon.get("nguon") or ""))
         send_message(thread_id, _vd.bao_cao(r), thread_type)
         if not r.get("ok"):
             return
@@ -2631,7 +2634,7 @@ def _process_ai(ev: dict) -> None:
             if _vd.la_link_video(_nd_vd):
                 _dc.set_pending(_pk_dich, url=_vd.la_link_video(_nd_vd),
                                 ten=_vd.la_link_video(_nd_vd))
-                send_message(thread_id, _dc.menu(_dc.get_pending(_pk_dich) or {}),
+                send_message(thread_id, _dc.menu_buoc(_pk_dich),
                              thread_type, account=acc_id, co_nut_chon=True)
                 return
             # Chữ KHÔNG nêu tiếng đích → hỏi. Nêu rồi ("/dich tiếng nhật …")
@@ -2643,7 +2646,7 @@ def _process_ai(ev: dict) -> None:
             _ma_dich, _con_lai = _ts._phan_giai_dich(_sau_lenh)
             if not _ma_dich and _con_lai.strip():
                 _dc.set_pending(_pk_dich, chu=_con_lai.strip())
-                send_message(thread_id, _dc.menu(_dc.get_pending(_pk_dich) or {}),
+                send_message(thread_id, _dc.menu_buoc(_pk_dich),
                              thread_type, account=acc_id, co_nut_chon=True)
                 return
             send_message(thread_id, _ts.lenh_dich(text), thread_type,
@@ -2712,7 +2715,11 @@ def _process_ai(ev: dict) -> None:
     if text and _dc.has_pending(pkey):
         from services.yeu_cau_moi import la_yeu_cau_moi as _la_moi_dc
         _p_dc = _dc.get_pending(pkey) or {}
-        _chon = _dc.giai_chon(text, cho_chu=_dc.la_chu(_p_dc))
+        # Chữ: một bước (chỉ hỏi tiếng đích). Tệp/link: ba bước — làm gì → tệp
+        # nói tiếng gì → dịch sang tiếng nào, mỗi lần trả lời trả về {"tiep"}
+        # cho tới bước cuối.
+        _chon = (_dc.giai_chon(text, cho_chu=True) if _dc.la_chu(_p_dc)
+                 else _dc.tra_loi_buoc(pkey, text))
         if _chon is None and _la_moi_dc(text):
             _dc.don_tep(_dc.pop_pending(pkey))   # yêu cầu mới → bỏ menu, đi tiếp
         elif _chon is not None:
@@ -2724,6 +2731,10 @@ def _process_ai(ev: dict) -> None:
                 send_message(thread_id,
                              "Tiếng nào ạ? Nhắn lại kèm tên tiếng, ví dụ "
                              "«4 nhật» hoặc «5 anh».", thread_type)
+                return
+            if _chon.get("tiep"):        # còn bước nữa → hỏi tiếp, chưa chạy gì
+                send_message(thread_id, _dc.menu_buoc(pkey), thread_type,
+                             co_nut_chon=True)
                 return
             _lam_viec_dich(thread_id, thread_type, _dc.pop_pending(pkey), _chon)
             return
@@ -2910,7 +2921,7 @@ def _process_ai(ev: dict) -> None:
             _pk_v = (f"zalop:{ev.get('account_id')}:{thread_id}:"
                      f"{ev.get('sender_id') or ''}")
             _dc.set_pending(_pk_v, path=_vpath, ten=name, so_byte=len(data))
-            send_message(thread_id, _dc.menu(_dc.get_pending(_pk_v) or {}),
+            send_message(thread_id, _dc.menu_buoc(_pk_v),
                          thread_type, co_nut_chon=True)
             return
         send_message(thread_id,

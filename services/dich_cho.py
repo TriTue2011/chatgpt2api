@@ -13,8 +13,18 @@ Cùng nếp ``pdf_intent`` / ``photo_intent``: giữ bản chờ theo khoá phi�
 đánh số, người dùng nhắn số thì chạy. Ba loại nguồn dùng chung sổ chờ này:
 TỆP (đường dẫn tạm), LINK (url), CHỮ (chu) — menu khác nhau theo loại.
 
-Ngôn ngữ NGUỒN không có trong menu vì chưa nghe thì chưa biết; máy tự dò trong
-cặp (tiếng Việt ↔ tiếng đích đã chọn) — xem ``video_asr._chon_ngon_ngu``.
+**Ba bước cho tệp và link** (chốt 15/08): làm gì → tệp nói tiếng gì → dịch sang
+tiếng nào. Bản trước gộp cả ba vào một menu năm dòng và KHÔNG hỏi tiếng nguồn —
+để máy tự dò. Hỏi thẳng hơn hẳn ở hai chỗ đo được:
+
+- **Đúng hơn.** Máy dò bằng cách nghe thử bằng từng model rồi so độ tự tin; đo
+  15/08 thì model SenseVoice không trả độ tự tin nên nhánh dò phải chấm bằng
+  tiếng model tự khai. Người dùng biết chắc tệp nói tiếng gì thì khỏi đoán.
+- **Nhanh hơn.** Một tiếng = khoá cứng, không tốn lượt nghe thử nào; hai tiếng
+  trở lên là mỗi tiếng thêm một lượt nghe cả cửa sổ mẫu.
+
+Menu CHỮ vẫn một bước (chỉ hỏi tiếng đích): chữ thì máy dò tiếng bằng bộ dò văn
+bản, rẻ và chắc, không phải nghe gì cả.
 """
 from __future__ import annotations
 
@@ -107,6 +117,111 @@ def _la_phu_de(ten: str) -> bool:
 def la_chu(pend: dict[str, Any]) -> bool:
     """Bản chờ này là ĐOẠN CHỮ (không phải tệp/link) — menu chỉ hỏi tiếng đích."""
     return bool(pend.get("chu"))
+
+
+#: Ba bước của tệp/link. Bản chờ giữ ``buoc`` + những gì đã chọn.
+BUOC_VIEC, BUOC_NGUON, BUOC_DICH = "viec", "nguon", "dich"
+
+#: Việc làm được với tệp: mã → (số menu, nhãn, có phải dịch không).
+VIEC = {
+    "phu-de": ("1", "Tạo phụ đề .srt (dịch sang tiếng khác)", True),
+    "chu": ("2", "Dịch ra bản chữ (chỉ lời thoại)", True),
+    "chep-loi": ("3", "Chép lời, GIỮ nguyên tiếng gốc (không dịch)", False),
+}
+
+
+def _danh_sach_tieng(tru: str = "") -> list[str]:
+    """Mã tiếng theo thứ tự menu, bỏ tiếng ``tru`` (không ai dịch sang chính nó)."""
+    return [m for m in ("vi", "en", "ja", "zh", "ko") if m != tru]
+
+
+def menu_buoc(key: str) -> str:
+    """Menu của BƯỚC hiện tại — tệp và link đi ba bước, chữ đi một bước.
+
+    Phiên đã hết hạn (30 phút) thì trả RỖNG: dựng menu cho một bản chờ không
+    còn tệp nghĩa là mời người dùng chọn cho thứ đã bị dọn mất.
+    """
+    pend = get_pending(key)
+    if not pend:
+        return ""
+    if la_chu(pend):
+        return menu(pend)
+    buoc = str(pend.get("buoc") or BUOC_VIEC)
+    if buoc == BUOC_VIEC:
+        ten = str(pend.get("ten") or "video")
+        mb = pend.get("so_byte") or 0
+        co = f" ({mb / 1024 / 1024:.0f} MB)" if mb else ""
+        dau = (f"🎬 Link video: {ten}{co}" if pend.get("url")
+               else f"📄 Tệp phụ đề: {ten}{co}" if _la_phu_de(ten)
+               else f"🎬 Tệp: {ten}{co}")
+        dong = "\n".join(f"{so}. {nhan}" for so, nhan, _ in VIEC.values())
+        return (f"{dau}\nEm làm gì với tệp này ạ? Nhắn số:\n{dong}\n"
+                "Nhắn «thôi» để bỏ.")
+    if buoc == BUOC_NGUON:
+        dong = "\n".join(f"{i}. Tiếng {TEN_TIENG[m]}"
+                         for i, m in enumerate(_danh_sach_tieng(), 1))
+        return (f"🗣️ Tệp này nói tiếng gì ạ? Nhắn số:\n{dong}\n"
+                "Biết trước tiếng thì em nghe chuẩn hơn và nhanh hơn.")
+    nguon = str(pend.get("nguon") or "")
+    dong = "\n".join(f"{i}. Tiếng {TEN_TIENG[m]}"
+                     for i, m in enumerate(_danh_sach_tieng(nguon), 1))
+    return (f"🌐 Dịch từ tiếng {TEN_TIENG.get(nguon, '?')} sang tiếng nào ạ? "
+            f"Nhắn số:\n{dong}")
+
+
+def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
+    """Trả lời của người dùng cho bước hiện tại của phiên ``key``.
+
+    Trả ``{"bo": True}`` nếu xin bỏ; ``{"tiep": True}`` khi đã ghi nhận và còn
+    bước nữa (tầng gọi gửi ``menu_buoc(key)`` mới); ``{"kieu", "target",
+    "nguon"}`` khi đã đủ để chạy; ``None`` khi câu này không phải trả lời menu.
+
+    Tiến độ ghi thẳng vào sổ chờ theo KHOÁ, không theo đối tượng: ``get_pending``
+    trả bản sao nên sửa vào bản sao là mất.
+    """
+    pend = get_pending(key)
+    if not pend:
+        return None
+    t = str(text or "").strip().lower()
+    if not t:
+        return None
+    if t in _BO:
+        return {"bo": True}
+    m = _SO.match(t)
+    if not m:
+        return None
+    so = m.group(1)
+    buoc = str(pend.get("buoc") or BUOC_VIEC)
+    if buoc == BUOC_VIEC:
+        chon = next((k for k, v in VIEC.items() if v[0] == so), "")
+        if not chon:
+            return None
+        _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
+        return {"tiep": True}
+    if buoc == BUOC_NGUON:
+        ds = _danh_sach_tieng()
+        if int(so) > len(ds):
+            return None
+        nguon = ds[int(so) - 1]
+        viec = str(pend.get("viec") or "phu-de")
+        if not VIEC.get(viec, ("", "", True))[2]:      # chép lời: khỏi hỏi đích
+            return {"kieu": "phu-de", "target": "giu-goc", "nguon": nguon}
+        _ghi_buoc(key, nguon=nguon, buoc=BUOC_DICH)
+        return {"tiep": True}
+    ds = _danh_sach_tieng(str(pend.get("nguon") or ""))
+    if int(so) > len(ds):
+        return None
+    kieu = "chu" if str(pend.get("viec")) == "chu" else "phu-de"
+    return {"kieu": kieu, "target": f"cap:{ds[int(so) - 1]}",
+            "nguon": str(pend.get("nguon") or "")}
+
+
+def _ghi_buoc(key: str, **moi: Any) -> None:
+    """Ghi tiến độ của phiên vào sổ chờ. Phiên đã hết hạn thì bỏ qua lặng lẽ."""
+    with _lock:
+        v = _pending.get(key)
+        if v is not None:
+            v.update(moi)
 
 
 def menu(pend: dict[str, Any]) -> str:
