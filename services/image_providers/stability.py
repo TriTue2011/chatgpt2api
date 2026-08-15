@@ -83,7 +83,10 @@ class StabilityAIAdapter(BaseImageAdapter):
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
         try:
             resp = requests.get("https://api.stability.ai", timeout=10)
-            return resp.status_code < 500
+            try:
+                return resp.status_code < 500
+            finally:
+                resp.close()
         except Exception:
             return False
 

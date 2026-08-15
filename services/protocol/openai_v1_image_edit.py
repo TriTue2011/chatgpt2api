@@ -21,7 +21,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     body = {**body, "prompt": prompt}
     images = body.get("images") or []
     model = str(body.get("model") or "gpt-image-2")
-    n = int(body.get("n") or 1)
+    n = max(1, min(4, int(body.get("n") or 1)))
     size = body.get("size")
     response_format = str(body.get("response_format") or "b64_json")
     base_url = str(body.get("base_url") or "") or None
@@ -31,6 +31,14 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
     adapter = get_image_adapter(prov) if prov else None
 
     if adapter:
+        from services.image_providers._base import first_image_bytes_mime
+        raw, _mime = first_image_bytes_mime(images)
+        if not raw:
+            raise ImageGenerationError("image is required")
+        if not getattr(adapter, "supports_image_edit", False):
+            raise ImageGenerationError(
+                f"Provider '{prov}' does not support image editing; choose Gemini, Flow, NVIDIA, SD WebUI, Fal, or a compatible custom provider"
+            )
         # Build a simple route-like object (tuple unpacking)
         route = type('Route', (), {'provider': prov, 'model': resolved_model, 'is_image': True})()
         return _handle_adapter_edit(adapter, route, body, prompt, images, n, response_format, base_url)
@@ -65,6 +73,8 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
     provider_config = providers_cfg.get(provider_key) or {}
     if not provider_config and provider_key == "gemini":
         provider_config = providers_cfg.get("gemini_free") or {}
+    elif not provider_config and provider_key == "nvidia_nim_image":
+        provider_config = providers_cfg.get("nvidia_nim") or {}
 
     # For custom providers, get config from custom_providers
     if not provider_config and provider_key.startswith("custom:"):
@@ -104,6 +114,7 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
     for idx in range(n):
         for key_try in range(max(max_keys, 1)):
             try:
+                credentials["_key_index"] = key_try
                 try:
                     url = adapter.build_url(route.model, credentials, key_try)
                 except TypeError:
@@ -116,45 +127,50 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
                 headers = adapter.build_headers(credentials, req_body, route.model, body)
 
                 resp = cffi_requests.post(url, headers=headers, json=req_body, timeout=300)
-
-                if resp.status_code >= 400:
-                    error_text = ""
-                    try:
-                        error_text = resp.text[:500]
-                    except Exception:
-                        pass
-                    # Health-based rotation: let the adapter demote a dead
-                    # account (e.g. Flow logged-out profile) to the back of
-                    # its pool so the next request skips it.
-                    if hasattr(adapter, "on_key_failed"):
+                try:
+                    if resp.status_code >= 400:
+                        error_text = ""
                         try:
-                            adapter.on_key_failed(credentials, resp.status_code, error_text)
+                            error_text = resp.text[:500]
                         except Exception:
                             pass
-                    if resp.status_code in (400, 429) and key_try < max_keys - 1:
-                        last_error = error_text
-                        continue
-                    raise RuntimeError(f"Image edit failed: {route.provider} status={resp.status_code}")
+                        # Health-based rotation: let the adapter demote a dead
+                        # account (e.g. Flow logged-out profile) to the back of
+                        # its pool so the next request skips it.
+                        if hasattr(adapter, "on_key_failed"):
+                            try:
+                                adapter.on_key_failed(credentials, resp.status_code, error_text)
+                            except Exception:
+                                pass
+                        if resp.status_code in (400, 401, 403, 429) and key_try < max_keys - 1:
+                            last_error = error_text
+                            continue
+                        raise RuntimeError(f"Image edit failed: {route.provider} status={resp.status_code}")
 
-                parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
-                if parsed is None:
+                    parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
+                    if parsed is None:
+                        try:
+                            parsed = resp.json()
+                        except Exception:
+                            parsed = {"image_bytes": resp.content}
+
+                    normalized = adapter.normalize(parsed, body)
+                    data_items = normalized.get("data") or []
+                    all_data.extend(data_items)
+
+                    # Health-based rotation: promote the account that just worked
+                    # to the front of its pool (mirrors ChatGPT's promote_account).
+                    if data_items and hasattr(adapter, "on_key_success"):
+                        try:
+                            adapter.on_key_success(credentials)
+                        except Exception:
+                            pass
+                    break
+                finally:
                     try:
-                        parsed = resp.json()
-                    except Exception:
-                        parsed = {"image_bytes": resp.content}
-
-                normalized = adapter.normalize(parsed, body)
-                data_items = normalized.get("data") or []
-                all_data.extend(data_items)
-
-                # Health-based rotation: promote the account that just worked
-                # to the front of its pool (mirrors ChatGPT's promote_account).
-                if data_items and hasattr(adapter, "on_key_success"):
-                    try:
-                        adapter.on_key_success(credentials)
+                        resp.close()
                     except Exception:
                         pass
-                break
 
             except Exception as exc:
                 logger.error({"event": "image_edit_adapter_error", "error": str(exc)})

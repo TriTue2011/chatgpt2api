@@ -381,6 +381,7 @@ class FlowImageAdapter(BaseImageAdapter):
     """OpenAI-image-compatible adapter that calls the captcha-solver Flow endpoint."""
 
     no_auth = False
+    supports_image_edit = True
 
     def get_key_count(self, credentials: dict[str, Any] | None) -> int:
         """Tell the dispatch layer how many accounts to retry across."""

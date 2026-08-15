@@ -219,18 +219,24 @@ def generate_music_via_browser(prompt: str, timeout: int = 240) -> dict[str, Any
                 headers={"Authorization": f"Bearer {sc.get('api_key', '')}"},
                 timeout=timeout + 45,
             )
-            if r.status_code == 200:
-                d = r.json()
-                vid = d.get("video") or {}
-                if vid.get("b64") or vid.get("url"):
-                    _logger().info({"event": "gma_music_ok", "profile": profile,
-                                    "elapsed_ms": d.get("elapsed_ms")})
-                    return {"video_b64": vid.get("b64", ""), "url": vid.get("url", ""),
-                            "title": vid.get("title", "Bản nhạc")}
-                last = "solver trả rỗng"
-            else:
-                last = f"HTTP {r.status_code}: {str(r.text)[:150]}"
-                _logger().warning({"event": "gma_music_fail", "profile": profile, "err": last})
+            try:
+                if r.status_code == 200:
+                    d = r.json()
+                    vid = d.get("video") or {}
+                    if vid.get("b64") or vid.get("url"):
+                        _logger().info({"event": "gma_music_ok", "profile": profile,
+                                        "elapsed_ms": d.get("elapsed_ms")})
+                        return {"video_b64": vid.get("b64", ""), "url": vid.get("url", ""),
+                                "title": vid.get("title", "Bản nhạc")}
+                    last = "solver trả rỗng"
+                else:
+                    last = f"HTTP {r.status_code}: {str(r.text)[:150]}"
+                    _logger().warning({"event": "gma_music_fail", "profile": profile, "err": last})
+            finally:
+                try:
+                    r.close()
+                except Exception:
+                    pass
         except Exception as exc:
             last = str(exc)[:150]
             _logger().warning({"event": "gma_music_err", "profile": profile, "err": last})
@@ -333,13 +339,19 @@ def _fetch_cookies_from_solver(profile: str) -> dict[str, str]:
         headers = {"Authorization": f"Bearer {sc['api_key']}"} if sc["api_key"] else {}
         r = requests.get(f"{sc['url']}/v1/gemini-web/{profile}/cookies",
                          headers=headers, timeout=30, impersonate="chrome110")
-        if r.status_code == 200:
-            cookies = (r.json() or {}).get("cookies") or {}
-            if cookies.get("__Secure-1PSID"):
-                _cookie_cache[profile] = (now, cookies)
-                return cookies
-        _logger().warning({"event": "gma_cookie_fetch_failed", "profile": profile,
-                           "status": r.status_code, "body": r.text[:120]})
+        try:
+            if r.status_code == 200:
+                cookies = (r.json() or {}).get("cookies") or {}
+                if cookies.get("__Secure-1PSID"):
+                    _cookie_cache[profile] = (now, cookies)
+                    return cookies
+            _logger().warning({"event": "gma_cookie_fetch_failed", "profile": profile,
+                               "status": r.status_code, "body": r.text[:120]})
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
     except Exception as exc:
         _logger().warning({"event": "gma_cookie_fetch_error", "profile": profile,
                            "error": str(exc)[:120]})
@@ -793,8 +805,13 @@ def _prepare_files(messages: list[dict[str, Any]]) -> list[str]:
                     from services import net_guard
                     data = net_guard.fetch_media(url, timeout=20, max_bytes=25 * 1024 * 1024)
                     mime = "image/png"
-                except Exception:
-                    continue
+                except Exception as exc:
+                    # Không được âm thầm bỏ ảnh rồi vẫn gọi model: kết quả trông
+                    # như đã phân tích ảnh nhưng thật ra model chưa nhận gì.
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"error": f"Không tải được ảnh gửi Gemini: {str(exc)[:160]}"},
+                    ) from exc
             if not data:
                 continue
             data, mime = _downscale(data, mime)
@@ -1635,7 +1652,6 @@ def handle_gemini_web_api_chat(
 def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: str = "url", base_url: str = "") -> dict[str, Any]:
     """OpenAI /v1/images/generations handler for Gemini Web API."""
     from services.account_service import account_service
-    from curl_cffi import requests as cffi_requests
     import base64
     import time
     
@@ -1712,7 +1728,9 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
                 if profile and profile != "static-config":
                     account_service.record_profile_quota_failure(
                         profile=profile,
-                        quota_type="text_limit",
+                        # Đây là image-only quota. Hạ toàn bộ text profile làm
+                        # chat thường bị loại dù chỉ hết lượt tạo ảnh.
+                        quota_type="file_upload",
                         account_type="gemini_web_api"
                     )
                 last_exc = exc
@@ -1734,8 +1752,6 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
     if last_exc:
         raise last_exc
     raise RuntimeError("No available accounts to fulfill image request")
-
-
 
 
 

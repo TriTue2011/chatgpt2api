@@ -25,6 +25,7 @@ class SDWebUIAdapter(BaseImageAdapter):
     """
 
     no_auth = True
+    supports_image_edit = True
 
     def __init__(self, base_url: str = "http://localhost:7860"):
         self.base_url = base_url.rstrip("/")
@@ -85,7 +86,10 @@ class SDWebUIAdapter(BaseImageAdapter):
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
         try:
             resp = requests.get(f"{self.base_url}/sdapi/v1/sd-models", timeout=5)
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False
 

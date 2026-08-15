@@ -25,6 +25,7 @@ class GeminiImageAdapter(BaseImageAdapter):
     """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    supports_image_edit = True
     _key_index: int = 0
 
     def _resolve_base(self) -> str:
@@ -186,7 +187,10 @@ class GeminiImageAdapter(BaseImageAdapter):
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
         try:
             resp = requests.get("https://generativelanguage.googleapis.com", timeout=10)
-            return resp.status_code < 500
+            try:
+                return resp.status_code < 500
+            finally:
+                resp.close()
         except Exception:
             return False
 

@@ -161,8 +161,8 @@ def _synthesize_with_ai(query: str, raw_text: str, *, mode: str = "web") -> str:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         })
-        resp = urllib.request.urlopen(req, timeout=timeout_s)
-        data = json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode())
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if content:
             logger.info("AI synthesis OK: %d chars for query '%s'", len(content), query[:60])

@@ -32,7 +32,13 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from src.general.ssh_exec import connect, find_server, list_servers_safe, set_paths
+from src.general.ssh_exec import (
+    agent_admin_enabled,
+    connect,
+    find_server,
+    list_servers_safe,
+    set_paths,
+)
 
 mcp = FastMCP("fs_remote")
 
@@ -101,6 +107,48 @@ def _check_write(entry: dict[str, Any], path: str) -> str | None:
     return None
 
 
+def _resolve_remote_path(sftp, path: str, prefixes: list[str], *, write: bool = False) -> tuple[str | None, str | None]:
+    """Resolve remote symlinks before applying a configured directory boundary.
+
+    `_within()` alone is lexical: `/safe/link/secret` passes when `link` is a
+    symlink to `/etc`. SFTP's `normalize` is the server-side realpath operation,
+    so validate that result as well. For a new write, resolve the parent and
+    reject an existing symlink target to avoid following it on open/remove.
+    """
+    np = _norm(path)
+    if not np:
+        return None, "Lỗi: đường dẫn phải là tuyệt đối (bắt đầu bằng /)."
+    try:
+        if write:
+            try:
+                existing = sftp.lstat(np)
+                if _stat.S_ISLNK(existing.st_mode or 0):
+                    return None, f"❌ Từ chối ghi '{path}': đường dẫn đích là symlink."
+                resolved = _norm(sftp.normalize(np))
+            except OSError:
+                # File mới: canonicalize parent so a symlinked directory cannot
+                # move the write outside its allowed root.
+                parent = _norm(sftp.normalize(posixpath.dirname(np)))
+                resolved = posixpath.join(parent, posixpath.basename(np)) if parent else ""
+        else:
+            resolved = _norm(sftp.normalize(np))
+    except Exception as exc:
+        return None, f"❌ Không xác minh được đường dẫn thực '{path}': {exc}"
+    if not resolved:
+        return None, f"❌ Không xác minh được đường dẫn thực '{path}'."
+    if not prefixes:
+        return resolved, None
+    try:
+        real_prefixes = [_norm(sftp.normalize(_norm(str(p)))) for p in prefixes]
+    except Exception as exc:
+        return None, f"❌ Không xác minh được phạm vi được cấp: {exc}"
+    real_prefixes = [p for p in real_prefixes if p]
+    if not real_prefixes or not _within(resolved, real_prefixes):
+        return None, (f"❌ Từ chối {'ghi' if write else 'đọc'} '{path}': đường dẫn thực "
+                      f"'{resolved}' nằm ngoài phạm vi cho phép.")
+    return resolved, None
+
+
 class _Conn:
     """Context manager: mở SSH + SFTP, tự đóng."""
 
@@ -141,7 +189,10 @@ def fs_list(server: str, path: str = "/") -> str:
         return err
     try:
         with _Conn(entry) as sftp:
-            items = sftp.listdir_attr(_norm(path))
+            real_path, real_err = _resolve_remote_path(sftp, path, entry.get("read_paths") or [])
+            if real_err:
+                return real_err
+            items = sftp.listdir_attr(real_path)
     except Exception as exc:
         return f"❌ Lỗi liệt kê '{path}' trên '{server}': {exc}"
     items.sort(key=lambda a: (not _stat.S_ISDIR(a.st_mode or 0), a.filename))
@@ -170,7 +221,10 @@ def fs_read(server: str, path: str) -> str:
         return err
     try:
         with _Conn(entry) as sftp:
-            with sftp.open(_norm(path), "r") as f:
+            real_path, real_err = _resolve_remote_path(sftp, path, entry.get("read_paths") or [])
+            if real_err:
+                return real_err
+            with sftp.open(real_path, "r") as f:
                 data = f.read(_MAX_READ + 1)
     except Exception as exc:
         return f"❌ Lỗi đọc '{path}' trên '{server}': {exc}"
@@ -199,16 +253,20 @@ def fs_write(server: str, path: str, content: str, overwrite: bool = True) -> st
         return err
     if len(content or "") > _MAX_WRITE:
         return f"❌ Nội dung quá lớn (>{_MAX_WRITE} ký tự)."
-    np = _norm(path)
     try:
         with _Conn(entry) as sftp:
+            real_path, real_err = _resolve_remote_path(
+                sftp, path, entry.get("write_paths") or [], write=True,
+            )
+            if real_err:
+                return real_err
             if not overwrite:
                 try:
-                    sftp.stat(np)
+                    sftp.stat(real_path)
                     return f"❌ File '{path}' đã tồn tại (overwrite=False)."
                 except IOError:
                     pass
-            with sftp.open(np, "w") as f:
+            with sftp.open(real_path, "w") as f:
                 f.write(content or "")
     except Exception as exc:
         return f"❌ Lỗi ghi '{path}' trên '{server}': {exc}"
@@ -231,7 +289,12 @@ def fs_append(server: str, path: str, content: str) -> str:
         return err
     try:
         with _Conn(entry) as sftp:
-            with sftp.open(_norm(path), "a") as f:
+            real_path, real_err = _resolve_remote_path(
+                sftp, path, entry.get("write_paths") or [], write=True,
+            )
+            if real_err:
+                return real_err
+            with sftp.open(real_path, "a") as f:
                 f.write(content or "")
     except Exception as exc:
         return f"❌ Lỗi ghi thêm '{path}' trên '{server}': {exc}"
@@ -253,7 +316,12 @@ def fs_mkdir(server: str, path: str) -> str:
         return err
     try:
         with _Conn(entry) as sftp:
-            sftp.mkdir(_norm(path))
+            real_path, real_err = _resolve_remote_path(
+                sftp, path, entry.get("write_paths") or [], write=True,
+            )
+            if real_err:
+                return real_err
+            sftp.mkdir(real_path)
     except Exception as exc:
         return f"❌ Lỗi tạo thư mục '{path}' trên '{server}': {exc}"
     return f"✅ Đã tạo thư mục '{path}' trên '{server}'."
@@ -277,7 +345,12 @@ def fs_delete(server: str, path: str, confirm: bool = False) -> str:
         return f"⚠️ Xác nhận xoá: gọi lại fs_delete('{server}', '{path}', confirm=True) để xoá thật."
     try:
         with _Conn(entry) as sftp:
-            sftp.remove(_norm(path))
+            real_path, real_err = _resolve_remote_path(
+                sftp, path, entry.get("write_paths") or [], write=True,
+            )
+            if real_err:
+                return real_err
+            sftp.remove(real_path)
     except Exception as exc:
         return f"❌ Lỗi xoá '{path}' trên '{server}': {exc}"
     return f"✅ Đã xoá '{path}' trên '{server}'."
@@ -298,7 +371,10 @@ def fs_stat(server: str, path: str) -> str:
         return err
     try:
         with _Conn(entry) as sftp:
-            st = sftp.stat(_norm(path))
+            real_path, real_err = _resolve_remote_path(sftp, path, entry.get("read_paths") or [])
+            if real_err:
+                return real_err
+            st = sftp.stat(real_path)
     except Exception as exc:
         return f"❌ Lỗi stat '{path}' trên '{server}': {exc}"
     import datetime
@@ -326,7 +402,10 @@ def fs_find(server: str, path: str, name_contains: str = "") -> str:
     dirs_seen = 0
     try:
         with _Conn(entry) as sftp:
-            stack = [_norm(path)]
+            real_path, real_err = _resolve_remote_path(sftp, path, entry.get("read_paths") or [])
+            if real_err:
+                return real_err
+            stack = [real_path]
             while stack and len(results) < _MAX_FIND and dirs_seen < _FIND_MAX_DIRS:
                 cur = stack.pop()
                 dirs_seen += 1
@@ -374,6 +453,10 @@ def fs_grant_write(server: str, path: str) -> str:
         server: Tên server đã khai báo.
         path: Thư mục cho phép ghi (tuyệt đối, vd "/config", "/tmp").
     """
+    if not agent_admin_enabled():
+        return ("❌ Từ chối: MCP/LLM không được tự cấp thêm quyền ghi. "
+                "Admin hãy cấp trong tab External MCP hoặc đặt "
+                "VN_MCP_HUB_ALLOW_AGENT_ADMIN=1 khi thật sự cần.")
     r = set_paths(server, add_write=path)
     if not r.get("ok"):
         return f"Lỗi: {r.get('error')}"
@@ -391,6 +474,9 @@ def fs_grant_read(server: str, path: str) -> str:
         server: Tên server đã khai báo.
         path: Thư mục cho phép đọc (tuyệt đối).
     """
+    if not agent_admin_enabled():
+        return ("❌ Từ chối: MCP/LLM không được tự mở rộng quyền đọc. "
+                "Admin hãy cấp trong tab External MCP.")
     r = set_paths(server, add_read=path)
     if not r.get("ok"):
         return f"Lỗi: {r.get('error')}"

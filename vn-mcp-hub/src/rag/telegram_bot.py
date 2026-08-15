@@ -9,11 +9,16 @@ Telegram là một kênh chat như web UI:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import json
 import urllib.request
 import time
 from typing import Any
+
+from fastapi import HTTPException
+from fastapi.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +27,7 @@ TELEGRAM_API = "https://api.telegram.org"
 # Conversation history per chat_id (max 20 messages each)
 _conversations: dict[str, list[dict]] = {}
 MAX_HISTORY = 20
+_MAX_WEBHOOK_BYTES = 1024 * 1024
 
 
 def _get_settings() -> dict:
@@ -56,8 +62,8 @@ def _api_call(method: str, data: dict | None = None) -> dict:
                 headers={"Content-Type": "application/json"})
         else:
             req = urllib.request.Request(url)
-        resp = urllib.request.urlopen(req, timeout=15)
-        return json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
     except Exception as exc:
         logger.warning("Telegram API %s: %s", method, exc)
         return {"ok": False, "error": str(exc)}
@@ -69,12 +75,23 @@ def register_webhook() -> bool:
     if not settings["bot_token"] or not settings["webhook_url"]:
         return False
     webhook_url = f"{settings['webhook_url'].rstrip('/')}/telegram/webhook"
-    result = _api_call("setWebhook", {"url": webhook_url, "allowed_updates": ["message", "edited_message"]})
+    result = _api_call("setWebhook", {
+        "url": webhook_url,
+        "secret_token": _webhook_secret(settings["bot_token"]),
+        "allowed_updates": ["message", "edited_message"],
+    })
     if result.get("ok"):
         logger.info("Telegram webhook OK: %s", webhook_url)
         return True
     logger.warning("Telegram webhook failed: %s", result)
     return False
+
+
+def _webhook_secret(bot_token: str) -> str:
+    """Deterministic Telegram secret without persisting an extra plaintext secret."""
+    return hmac.new(
+        bot_token.encode("utf-8"), b"vn-mcp-hub/telegram-webhook", hashlib.sha256
+    ).hexdigest()
 
 
 def send_message(chat_id: int | str, text: str, parse_mode: str = "Markdown") -> dict:
@@ -109,11 +126,28 @@ def send_message(chat_id: int | str, text: str, parse_mode: str = "Markdown") ->
 
 
 async def handle_webhook(request) -> dict:
-    """Handle incoming Telegram webhook POST."""
+    """Authenticate a Telegram update, then run the blocking handler off-loop."""
+    settings = _get_settings()
+    expected = _webhook_secret(settings["bot_token"]) if settings["bot_token"] else ""
+    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not expected or not hmac.compare_digest(received, expected):
+        # Check before reading the body: an unauthenticated request must not be
+        # able to allocate unbounded JSON memory or trigger any bot command.
+        raise HTTPException(status_code=403, detail="Telegram webhook secret không hợp lệ")
     try:
-        body = await request.json()
+        raw = await request.body()
+        if len(raw) > _MAX_WEBHOOK_BYTES:
+            raise HTTPException(status_code=413, detail="Telegram webhook quá lớn")
+        body = json.loads(raw)
+    except HTTPException:
+        raise
     except Exception:
         return {"ok": False}
+    return await run_in_threadpool(_handle_update, body)
+
+
+def _handle_update(body: dict[str, Any]) -> dict:
+    """Synchronous message work: Telegram/HTTP calls must not block FastAPI's loop."""
 
     message = body.get("message") or body.get("edited_message")
     if not message:
@@ -122,6 +156,14 @@ async def handle_webhook(request) -> dict:
     chat = message.get("chat", {})
     chat_id = str(chat.get("id", ""))
     text = (message.get("text") or "").strip()
+
+    # Fail closed. This legacy bot has access to the full MCP pipeline, so an
+    # empty allowlist must mean "disabled", not "everyone can operate it".
+    settings = _get_settings()
+    allowed_ids = [str(c) for c in settings["chat_ids"]]
+    if not allowed_ids or chat_id not in allowed_ids:
+        logger.warning("Rejected legacy Telegram chat_id=%s (not allowlisted)", chat_id)
+        return {"ok": False}
 
     # Handle /start, /help commands
     if text.startswith("/"):
@@ -132,13 +174,6 @@ async def handle_webhook(request) -> dict:
 
     if not text:
         return {"ok": True}
-
-    # Security check
-    settings = _get_settings()
-    allowed_ids = [str(c) for c in settings["chat_ids"]]
-    if allowed_ids and chat_id not in allowed_ids:
-        send_message(chat_id, "⛔ Bạn không được phép sử dụng bot này.")
-        return {"ok": False}
 
     # Typing indicator
     _api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -170,8 +205,8 @@ async def handle_webhook(request) -> dict:
             "Authorization": f"Bearer {settings['api_key']}",
             "Content-Type": "application/json",
         })
-        resp = urllib.request.urlopen(req, timeout=90)
-        data = json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode())
         reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         reply = reply.strip() or "Xin lỗi, tôi không có câu trả lời."
     except Exception as exc:

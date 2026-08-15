@@ -105,6 +105,7 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
     """
 
     BASE_URL = "https://ai.api.nvidia.com/v1/genai"
+    supports_image_edit = True
 
     def _get_keys(self) -> list[str]:
         cfg = config.data.get("providers") or {}
@@ -135,6 +136,8 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
         return f"{self.BASE_URL}/{model}"
 
     def build_body(self, model: str, body: dict[str, Any]) -> dict[str, Any]:
+        from services.image_providers._base import first_image_bytes_mime
+
         prompt = str(body.get("prompt") or "")
         size = str(body.get("size") or "")
         w, h = _nvidia_size(size if size else None)
@@ -156,6 +159,14 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             hop_le = [str(x) for x in ds if str(x or "").startswith("data:image/")]
             if hop_le:
                 ra["image"] = hop_le
+        else:
+            # Protocol image-edits chuyển file upload thành `images` (tuple
+            # bytes, filename, mime), không phải khoá `image`. Bản cũ chỉ nhìn
+            # `image`, khiến mọi edit qua NVIDIA âm thầm thành text-to-image.
+            raw, mime = first_image_bytes_mime(body.get("images") or [])
+            if raw:
+                data_url = base64.b64encode(raw).decode("ascii")
+                ra["image"] = [f"data:{mime or 'image/png'};base64,{data_url}"]
         return ra
 
     def build_headers(
@@ -180,7 +191,9 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             if supplied:
                 api_key = supplied[key_index % len(supplied)]
             else:
-                api_key = str(credentials.get("apiKey") or credentials.get("accessToken") or api_key)
+                configured = self._get_keys()
+                api_key = (str(credentials.get("apiKey") or credentials.get("accessToken") or "")
+                           or (configured[key_index % len(configured)] if configured else api_key))
         return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -260,7 +273,10 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10,
             )
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False
 

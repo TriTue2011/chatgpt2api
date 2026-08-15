@@ -41,11 +41,11 @@ def validate_mcp(url: str, api_key: str = "") -> dict[str, Any]:
 
         req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=10)
-            sid = resp.getheader("mcp-session-id")
-            if sid:
-                session_id = sid
-            raw = resp.read().decode()
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                sid = resp.getheader("mcp-session-id")
+                if sid:
+                    session_id = sid
+                raw = resp.read().decode()
             for line in raw.split("\n"):
                 if line.startswith("data: "):
                     d = json.loads(line[6:])
@@ -55,7 +55,10 @@ def validate_mcp(url: str, api_key: str = "") -> dict[str, Any]:
             sid = e.getheader("mcp-session-id")
             if sid:
                 session_id = sid
-            raw = e.read().decode()
+            try:
+                raw = e.read().decode()
+            finally:
+                e.close()
             for line in raw.split("\n"):
                 if line.startswith("data: "):
                     d = json.loads(line[6:])

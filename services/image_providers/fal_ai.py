@@ -29,6 +29,7 @@ class FalAIAdapter(BaseImageAdapter):
     """
 
     BASE_URL = "https://queue.fal.run"
+    supports_image_edit = True
 
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         return f"{self.BASE_URL}/{model}"
@@ -89,8 +90,13 @@ class FalAIAdapter(BaseImageAdapter):
         data = response.json()
         status_url = data.get("status_url")
         if not status_url:
-            logger.error({"event": "fal_ai_no_status_url", "response": str(data)[:200]})
-            return None
+            raise RuntimeError("Fal.ai không trả về status_url cho tác vụ đã gửi")
+
+        # status_url là dữ liệu từ response bên ngoài, không phải URL cấu hình
+        # do admin tin cậy. Nếu tin mù quáng, một response bị giả mạo có thể biến
+        # worker thành SSRF tới LAN/metadata trong lúc polling.
+        from services.net_guard import check_url
+        status_url = check_url(str(status_url), allow_hosts={"queue.fal.run"})
 
         # Poll for completion
         elapsed = 0.0
@@ -100,7 +106,13 @@ class FalAIAdapter(BaseImageAdapter):
 
             try:
                 poll_resp = requests.get(status_url, timeout=30)
-                poll_data = poll_resp.json()
+                try:
+                    poll_data = poll_resp.json()
+                finally:
+                    try:
+                        poll_resp.close()
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.warning({"event": "fal_ai_poll_error", "error": str(exc)})
                 continue
@@ -122,15 +134,15 @@ class FalAIAdapter(BaseImageAdapter):
                     return {"data": b64_list}
 
                 logger.error({"event": "fal_ai_no_images", "result": str(result)[:200]})
-                return None
+                raise RuntimeError("Fal.ai hoàn tất nhưng không trả ảnh")
 
             elif status in ("FAILED", "CANCELLED"):
                 error_msg = str(poll_data.get("error") or "unknown")
                 logger.error({"event": "fal_ai_failed", "status": status, "error": error_msg})
-                return None
+                raise RuntimeError(f"Fal.ai {status.lower()}: {error_msg[:300]}")
 
         logger.error({"event": "fal_ai_timeout", "elapsed": elapsed})
-        return None
+        raise RuntimeError(f"Fal.ai quá thời gian chờ ({int(POLL_TIMEOUT_S)} giây)")
 
     def normalize(self, parsed: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         data = parsed.get("data") or []
@@ -139,7 +151,10 @@ class FalAIAdapter(BaseImageAdapter):
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
         try:
             resp = requests.get("https://queue.fal.run", timeout=10)
-            return resp.status_code < 500
+            try:
+                return resp.status_code < 500
+            finally:
+                resp.close()
         except Exception:
             return False
 

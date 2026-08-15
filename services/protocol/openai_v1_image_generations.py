@@ -173,7 +173,10 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
                                 adapter.on_key_failed(credentials, resp.status_code, error_text)
                             except Exception:
                                 pass
-                        if resp.status_code in (400, 429) and key_try < max_keys - 1:
+                        # 401/403 thường là khoá API hết hạn/bị chặn theo khoá,
+                        # không phải prompt lỗi. Không thử khoá kế tiếp làm pool
+                        # nhiều khoá mất khả năng failover đúng lúc cần thiết.
+                        if resp.status_code in (400, 401, 403, 429) and key_try < max_keys - 1:
                             logger.warning({
                                 "event": "image_adapter_retry",
                                 "provider": route.provider,

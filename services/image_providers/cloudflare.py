@@ -72,7 +72,10 @@ class CloudflareAIAdapter(BaseImageAdapter):
     def test_connection(self, credentials: dict[str, Any] | None = None) -> bool:
         try:
             resp = requests.get("https://api.cloudflare.com/client/v4/user/tokens/verify", timeout=10)
-            return resp.status_code < 500
+            try:
+                return resp.status_code < 500
+            finally:
+                resp.close()
         except Exception:
             return False
 

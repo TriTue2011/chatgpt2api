@@ -117,7 +117,7 @@ PRESETS: list[MCPPreset] = [
         id="fs_remote", name="File Server (an toàn)", icon="📁", category="general",
         description=(
             "Đọc/ghi file trên server từ xa qua SFTP, giới hạn theo thư mục. Ghi bị CẤM "
-            "mặc định — bot tự cấp quyền từng thư mục qua chat (fs_grant_write). Dùng chung "
+            "mặc định — chỉ admin cấp quyền thư mục ở tab External MCP. Dùng chung "
             "server với SSH Server."
         ),
         url="http://127.0.0.1:8005/fs_remote/mcp",

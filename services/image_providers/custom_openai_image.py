@@ -27,9 +27,26 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
     def __init__(self, provider_id: str):
         self.provider_id = provider_id
 
+    supports_image_edit = True
+
     def _get_provider_config(self) -> dict[str, Any] | None:
         providers = config.data.get("custom_providers") or {}
         return providers.get(self.provider_id)
+
+    def _get_api_keys(self) -> list[str]:
+        cfg = self._get_provider_config() or {}
+        raw = cfg.get("api_keys") or []
+        if not isinstance(raw, list):
+            raw = []
+        keys = [str(key).strip() for key in raw if str(key).strip()]
+        single = str(cfg.get("api_key") or "").strip()
+        if single and single not in keys:
+            keys.insert(0, single)
+        return keys
+
+    def get_key_count(self, credentials: dict[str, Any] | None) -> int:
+        """Expose all configured keys to the shared image retry loop."""
+        return max(1, len(self._get_api_keys()))
 
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         cfg = self._get_provider_config()
@@ -96,14 +113,12 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
         model: str,
         body: dict[str, Any],
     ) -> dict[str, str]:
-        cfg = self._get_provider_config()
-        api_key = ""
-        if cfg:
-            keys = cfg.get("api_keys") or []
-            if not keys:
-                api_key = str(cfg.get("api_key") or "")
-            else:
-                api_key = keys[0]
+        keys = self._get_api_keys()
+        try:
+            key_index = int((credentials or {}).get("_key_index") or 0)
+        except (TypeError, ValueError):
+            key_index = 0
+        api_key = keys[key_index % len(keys)] if keys else ""
         return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -217,6 +232,9 @@ class CustomOpenAIImageAdapter(BaseImageAdapter):
                 headers={"Authorization": f"Bearer {api_key}"},
                 timeout=10,
             )
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False

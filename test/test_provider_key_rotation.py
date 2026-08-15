@@ -11,7 +11,10 @@ os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 from services.config import config  # noqa: E402
 from services.providers import agnes, custom_openai, nvidia_nim  # noqa: E402
 from services.image_providers import get_image_adapter  # noqa: E402
+from services.image_providers.custom_openai_image import CustomOpenAIImageAdapter  # noqa: E402
+from services.image_providers.fal_ai import FalAIAdapter  # noqa: E402
 from services.image_providers.nvidia_nim_image import NvidiaNimImageAdapter  # noqa: E402
+from services.net_guard import BlockedURL  # noqa: E402
 
 
 class _Response:
@@ -147,6 +150,29 @@ class ProviderKeyRotationTests(unittest.TestCase):
             {"apiKeys": ["first", "second"], "_key_index": 1}, {}, "model", {}
         )
         self.assertEqual(headers["Authorization"], "Bearer second")
+
+    def test_nvidia_image_edit_uses_uploaded_images(self):
+        body = NvidiaNimImageAdapter().build_body(
+            "black-forest-labs/flux.2-klein-4b",
+            {"prompt": "edit", "images": [(b"raw-image", "a.png", "image/png")]},
+        )
+        self.assertEqual(body["image"], ["data:image/png;base64,cmF3LWltYWdl"])
+
+    def test_custom_image_adapter_rotates_configured_keys(self):
+        with mock.patch.dict(config.data, {
+            "custom_providers": {
+                "test-image": {"base_url": "https://example.test", "api_keys": ["first", "second"]},
+            },
+        }, clear=False):
+            adapter = CustomOpenAIImageAdapter("test-image")
+            self.assertEqual(adapter.get_key_count({}), 2)
+            headers = adapter.build_headers({"_key_index": 1}, {}, "model", {})
+        self.assertEqual(headers["Authorization"], "Bearer second")
+
+    def test_fal_rejects_untrusted_polling_url(self):
+        response = _Response(200, {"status_url": "http://127.0.0.1:8005/internal"})
+        with self.assertRaises(BlockedURL):
+            FalAIAdapter().parse_response(response)
 
     def test_agnes_stops_when_every_key_is_in_cooldown(self):
         provider = agnes.AgnesProvider()

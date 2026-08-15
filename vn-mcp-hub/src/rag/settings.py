@@ -40,7 +40,7 @@ DEFAULTS = {
     "ai_model": "cx/auto",
     "api_key": "",                    # đọc từ data/studio/settings.json — KHÔNG hardcode
     "telegram_bot_token": "",         # Telegram Bot token for 2-way chat
-    "telegram_chat_ids": [],          # Allowed Telegram chat IDs (empty=allow all)
+    "telegram_chat_ids": [],          # Allowed Telegram chat IDs (empty=deny all)
     "telegram_ai_model": "",          # AI model for Telegram (empty=use default)
     "telegram_webhook_url": "",       # Public webhook URL for Telegram
     "telegram_system_prompt": "",     # Custom system prompt for Telegram bot

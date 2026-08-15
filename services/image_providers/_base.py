@@ -130,8 +130,14 @@ def url_to_base64(url: str, timeout: int = 30) -> str:
         from services import net_guard as _ng
         _ng.assert_egress_or_raise(raw)
         resp = requests.get(raw, timeout=timeout)
-        resp.raise_for_status()
-        return base64.b64encode(resp.content).decode("ascii")
+        try:
+            resp.raise_for_status()
+            return base64.b64encode(resp.content).decode("ascii")
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
 
 def now_sec() -> int:
@@ -157,6 +163,10 @@ class BaseImageAdapter:
     """
 
     no_auth: bool = False
+    # Image edits must fail clearly unless an adapter actually forwards the
+    # reference image. Returning a brand-new text-to-image result is worse
+    # than an error because callers believe their source image was edited.
+    supports_image_edit: bool = False
 
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         raise NotImplementedError

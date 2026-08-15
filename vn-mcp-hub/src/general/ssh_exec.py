@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,22 @@ def _read_registry() -> list[dict[str, Any]]:
 
 def _write_registry(entries: list[dict[str, Any]]) -> None:
     REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Registry chứa mật khẩu SSH. Ghi thẳng vào file vừa có thể để lại JSON dở
+    # khi container chết giữa chừng, vừa phụ thuộc vào umask để bảo vệ bí mật.
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{REGISTRY.name}.", suffix=".tmp", dir=REGISTRY.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+            json.dump(entries, tmp, ensure_ascii=False, indent=2)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_name, REGISTRY)
+        os.chmod(REGISTRY, 0o600)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
 
 
 def _find(name: str) -> dict[str, Any] | None:
@@ -92,9 +108,28 @@ def _norm_paths(paths: Any) -> list[str]:
     out: list[str] = []
     for p in paths:
         p = str(p).strip().replace("\\", "/")
-        if p:
-            out.append(p)
+        if not p:
+            continue
+        if not p.startswith("/"):
+            raise ValueError(f"Đường dẫn phải là tuyệt đối: {p}")
+        normal = "/" + "/".join(part for part in p.split("/") if part and part != ".")
+        if any(part == ".." for part in normal.split("/")):
+            raise ValueError(f"Đường dẫn không được chứa '..': {p}")
+        if normal not in out:
+            out.append(normal or "/")
     return out
+
+
+def agent_admin_enabled() -> bool:
+    """Whether an LLM may change the server/permission registry itself.
+
+    The dashboard REST API is separately admin-authenticated. MCP tool calls
+    can be induced by prompt injection, so they need an explicit deployment
+    opt-in rather than relying on an instruction in a system prompt.
+    """
+    return os.getenv("VN_MCP_HUB_ALLOW_AGENT_ADMIN", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def add_server(name: str, host: str, username: str, password: str = "",
@@ -110,16 +145,27 @@ def add_server(name: str, host: str, username: str, password: str = "",
     username = (username or "").strip()
     if not name or not host or not username:
         return {"ok": False, "error": "name, host, username là bắt buộc"}
+    try:
+        port_num = int(port or 22)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "port phải là số nguyên từ 1 đến 65535"}
+    if not 1 <= port_num <= 65535:
+        return {"ok": False, "error": "port phải trong khoảng 1..65535"}
+    try:
+        normalized_read = _norm_paths(read_paths) if read_paths is not None else None
+        normalized_write = _norm_paths(write_paths) if write_paths is not None else None
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     with _LOCK:
         prev = next((e for e in _read_registry() if str(e.get("name", "")).lower() == name.lower()), {})
         entries = [e for e in _read_registry() if str(e.get("name", "")).lower() != name.lower()]
         entries.append({
-            "name": name, "host": host, "port": int(port or 22),
+            "name": name, "host": host, "port": port_num,
             "username": username, "password": password or prev.get("password", ""),
             "key_path": key_path or prev.get("key_path", ""),
             "allow_dangerous": bool(allow_dangerous),
-            "read_paths": _norm_paths(read_paths) if read_paths is not None else prev.get("read_paths", []),
-            "write_paths": _norm_paths(write_paths) if write_paths is not None else prev.get("write_paths", []),
+            "read_paths": normalized_read if normalized_read is not None else prev.get("read_paths", []),
+            "write_paths": normalized_write if normalized_write is not None else prev.get("write_paths", []),
         })
         _write_registry(entries)
     return {"ok": True, "name": name}
@@ -132,23 +178,30 @@ def set_paths(name: str, add_read: str = "", add_write: str = "",
     - add_read/add_write: THÊM một thư mục vào danh sách hiện có.
     - read_paths/write_paths: THAY THẾ toàn bộ danh sách.
     """
+    try:
+        normalized_read = _norm_paths(read_paths) if read_paths is not None else None
+        normalized_write = _norm_paths(write_paths) if write_paths is not None else None
+        normalized_add_read = _norm_paths(add_read) if add_read else []
+        normalized_add_write = _norm_paths(add_write) if add_write else []
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     with _LOCK:
         entries = _read_registry()
         entry = next((e for e in entries if str(e.get("name", "")).lower() == (name or "").strip().lower()), None)
         if entry is None:
             return {"ok": False, "error": f"Không tìm thấy server '{name}'"}
         if read_paths is not None:
-            entry["read_paths"] = _norm_paths(read_paths)
+            entry["read_paths"] = normalized_read
         if write_paths is not None:
-            entry["write_paths"] = _norm_paths(write_paths)
+            entry["write_paths"] = normalized_write
         if add_read:
             entry.setdefault("read_paths", [])
-            for p in _norm_paths(add_read):
+            for p in normalized_add_read:
                 if p not in entry["read_paths"]:
                     entry["read_paths"].append(p)
         if add_write:
             entry.setdefault("write_paths", [])
-            for p in _norm_paths(add_write):
+            for p in normalized_add_write:
                 if p not in entry["write_paths"]:
                     entry["write_paths"].append(p)
         _write_registry(entries)
@@ -444,6 +497,10 @@ def ssh_add_server(name: str, host: str, username: str, password: str = "",
         port: Cổng SSH (mặc định 22).
         allow_dangerous: Cho phép lệnh phá huỷ dữ liệu (mặc định False).
     """
+    if not agent_admin_enabled():
+        return ("❌ Từ chối: MCP/LLM không được tự thay đổi danh sách server. "
+                "Admin hãy cấu hình ở tab External MCP hoặc đặt "
+                "VN_MCP_HUB_ALLOW_AGENT_ADMIN=1 khi thật sự cần.")
     r = add_server(name, host, username, password, port, allow_dangerous=allow_dangerous)
     return f"✅ Đã thêm server '{r['name']}'." if r.get("ok") else f"Lỗi: {r.get('error')}"
 
@@ -455,5 +512,8 @@ def ssh_remove_server(name: str) -> str:
     Args:
         name: Tên server cần xoá.
     """
+    if not agent_admin_enabled():
+        return ("❌ Từ chối: MCP/LLM không được tự thay đổi danh sách server. "
+                "Admin hãy xoá server trong tab External MCP.")
     r = remove_server(name)
     return f"✅ Đã xoá server '{name}'." if r.get("ok") else f"Lỗi: {r.get('error')}"

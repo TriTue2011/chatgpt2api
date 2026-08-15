@@ -23,8 +23,10 @@
 
 ### Docker CLI
 ```bash
+export VN_MCP_HUB_TOKEN="$(openssl rand -hex 32)"
 docker run -d --name vn-mcp-hub --restart unless-stopped \
   -p 8005:8005 \
+  -e VN_MCP_HUB_TOKEN \
   -v vn_mcp_chroma:/app/chroma_db \
   -v vn_mcp_data:/app/data \
   ghcr.io/tritue2011/vn-mcp-hub:latest
@@ -40,6 +42,8 @@ services:
     image: ghcr.io/tritue2011/vn-mcp-hub:latest
     container_name: vn-mcp-hub
     restart: unless-stopped
+    environment:
+      VN_MCP_HUB_TOKEN: ${VN_MCP_HUB_TOKEN:?set a long random token in .env}
     ports:
       - "8005:8005"
     volumes:
@@ -50,6 +54,13 @@ volumes:
   vn_mcp_chroma:
   vn_mcp_data:
 ```
+
+Khi hub được mở cổng ra mạng, token là bắt buộc: gửi qua `Authorization: Bearer
+<token>` (hoặc `X-MCP-Hub-Token`) cho mọi `/<name>/mcp` và `/api/*` request.
+Với chatgpt2api đóng gói chung, gateway gọi hub qua loopback nên không cần truyền
+token; không mở port 8005 ra ngoài. Bot Telegram cũ của hub mặc định tắt; dùng
+kênh Telegram chính của chatgpt2api, hoặc chỉ bật `VN_MCP_HUB_ENABLE_LEGACY_TELEGRAM=1`
+khi hub được public và đã đặt `telegram_chat_ids` cụ thể.
 
 ### NAS (Synology / QNAP)
 

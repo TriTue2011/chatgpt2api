@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import hmac
 from contextlib import asynccontextmanager, AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,35 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("vn-mcp-hub")
+
+_HUB_TOKEN_HEADER = "X-MCP-Hub-Token"
+
+
+def _hub_token() -> str:
+    """Explicit shared secret for an externally exposed standalone hub."""
+    return os.getenv("VN_MCP_HUB_TOKEN", "").strip()
+
+
+def _loopback_request(request: Request) -> bool:
+    host = str((request.client.host if request.client else "") or "").split("%", 1)[0]
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _presented_hub_token(request: Request) -> str:
+    token = str(request.headers.get(_HUB_TOKEN_HEADER, "") or "").strip()
+    if token:
+        return token
+    auth = str(request.headers.get("Authorization", "") or "")
+    scheme, _, value = auth.partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else ""
+
+
+def _hub_request_authorized(request: Request) -> bool:
+    """Authorize public MCP/admin traffic; same-host gateway calls stay local."""
+    if _loopback_request(request):
+        return True
+    expected = _hub_token()
+    return bool(expected) and hmac.compare_digest(_presented_hub_token(request), expected)
 
 
 # MCP app instances collected during mount — their lifespans are entered
@@ -109,12 +139,20 @@ async def lifespan(app: FastAPI):
             _scheduler_stop = start_scheduler()
         except Exception as exc:
             logger.warning("Scheduler failed to start: %s", exc)
-        # Register Telegram webhook if token configured
-        try:
-            from src.rag.telegram_bot import register_webhook
-            register_webhook()
-        except Exception as exc:
-            logger.warning("Telegram webhook register failed: %s", exc)
+        # Legacy hub Telegram shares a process with the main gateway in the
+        # packaged deployment, where this hub is loopback-only. Do not let it
+        # overwrite the gateway bot's webhook accidentally. A standalone user
+        # can opt in explicitly after setting a non-empty chat allowlist.
+        if os.getenv("VN_MCP_HUB_ENABLE_LEGACY_TELEGRAM", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            try:
+                from src.rag.telegram_bot import register_webhook
+                register_webhook()
+            except Exception as exc:
+                logger.warning("Telegram webhook register failed: %s", exc)
+        else:
+            logger.info("Legacy hub Telegram webhook disabled (use main Telegram channel)")
         yield
         if _scheduler_stop is not None:
             _scheduler_stop.set()
@@ -135,6 +173,27 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def require_hub_token_for_sensitive_routes(request: Request, call_next):
+        """Do not expose MCP tools or hub administration without a real boundary.
+
+        The integrated deployment reaches the hub through 127.0.0.1, where the
+        public gateway already authenticates the user. A standalone deployment
+        must set ``VN_MCP_HUB_TOKEN`` and send it as Bearer auth (or
+        ``X-MCP-Hub-Token``); otherwise every remote request is denied.
+        """
+        path = request.url.path.rstrip("/") or "/"
+        protected = path.startswith("/api/") or path.endswith("/mcp")
+        if protected and not _hub_request_authorized(request):
+            status = 401 if _hub_token() else 503
+            detail = (
+                "Thiếu hoặc sai MCP Hub token"
+                if _hub_token()
+                else "VN_MCP_HUB_TOKEN chưa được cấu hình; từ chối public hub"
+            )
+            return JSONResponse(status_code=status, content={"detail": detail})
+        return await call_next(request)
 
     @app.get("/")
     async def index():
@@ -281,7 +340,8 @@ def create_app() -> FastAPI:
         # lúc chờ, chỉ vì một API base URL không phản hồi.
         def _fetch() -> bytes:
             req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
-            return urllib.request.urlopen(req, timeout=5).read()
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.read()
 
         try:
             from fastapi.concurrency import run_in_threadpool
