@@ -39,6 +39,14 @@ services:
     container_name: c2a
     restart: unless-stopped
 
+    # Docker json-file không tự xoay theo mặc định. Gateway gom log của API,
+    # browser, MCP và solver vào stdout nên để vô hạn sẽ làm đầy đĩa host.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
     # Trần file descriptor. Mặc định của Docker là 1024 — ĐO THẬT ngày
     # 2026-07-27: tiến trình uvicorn giữ 1021 fd (510 socket + 497 eventfd,
     # dấu vân tay của handle libcurl/curl_cffi chưa đóng) tức dính sát trần.

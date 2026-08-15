@@ -5,6 +5,11 @@ services:
       dockerfile: Dockerfile.lite
     container_name: chatgpt2api-lite
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     ports:
       - "3030:80"
     volumes:
