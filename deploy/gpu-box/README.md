@@ -52,6 +52,37 @@ im vài phút; `docker compose logs -f fw-nghe` xem tiến độ.
 **Cập nhật**: máy này không có watchtower (khác stack c2a) —
 `docker compose pull && docker compose up -d`.
 
+## Dựng bằng Portainer (cách đang dùng ở nhà)
+
+Stacks → **Add stack** → **Repository**:
+
+| Ô | Điền |
+|---|---|
+| Repository URL | `https://github.com/TriTue2011/chatgpt2api` |
+| Reference | `refs/heads/main` |
+| Compose path | `deploy/gpu-box/docker-compose.yml` |
+
+Repo công khai nên không cần khai thông tin đăng nhập, và hai image trên ghcr
+cũng kéo được ẩn danh — không phải `docker login`.
+
+**Muốn bật Qwen3-VL thì phải thêm biến môi trường của stack:**
+
+```
+COMPOSE_PROFILES=vision
+```
+
+Portainer không có nút `--profile`. Nó ghi biến môi trường của stack ra `.env`
+cạnh file compose, mà `docker compose` đọc `COMPOSE_PROFILES` từ đúng file đó —
+đã kiểm bằng `docker compose config --services`: không có biến thì ra hai dịch
+vụ, có biến thì ra ba (thêm `fw-vision`). Không đặt biến này thì stack vẫn chạy
+bình thường, chỉ là không có vision.
+
+Khi Update stack nhớ bật **Re-pull image**: image gắn thẻ `:latest`, không bật
+thì Portainer dùng lại bản đã có trong máy.
+
+Endpoint phải trỏ đúng máy có card. Phần cấp GPU nằm ở khối `deploy.resources`
+trong compose — đó là thứ có tác dụng khi triển khai bằng stack.
+
 ## Khai ở gateway
 
 Trong Portainer → Stacks → env của service `c2a`:
