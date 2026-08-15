@@ -29,9 +29,20 @@ _WIZ: dict[str, dict] = {}  # key -> {"step": int (-1=menu), "sel": {}}
 # Đuôi chung mọi persona: tông LINH HOẠT theo việc/tool đang làm (đùa lúc tán
 # gẫu; nghiêm túc lúc tin tức, phân tích ảnh/dữ liệu, dạy học; ấm áp lúc an ủi)
 # — giáo viên không phải lúc nào cũng nghiêm túc, cũng không luôn vui đùa.
-_SUFFIX = ("Tông linh hoạt theo việc: đùa khi tán gẫu; nghiêm túc khi tin tức, "
-           "phân tích, dạy học; ấm áp khi an ủi — vẫn giữ chất giọng vai, "
-           "nhất quán; không nhắc mình là AI.")
+#: Đuôi chung mọi persona. Hai vế:
+#:
+#: 1. Tông đổi theo việc, chất giọng vai thì giữ — giáo viên không phải lúc nào
+#:    cũng nghiêm túc, cũng không luôn vui đùa.
+#: 2. VĂN PHONG KHÔNG ĐƯỢC ĐỔI NỘI DUNG. Vế này quan trọng hơn cả phần dựng vai:
+#:    đo trong nghiên cứu về persona prompt (arxiv 2507.22171) thì persona kéo
+#:    chú ý của model về phía chỉ dẫn văn phong và giảm chú ý vào nội dung —
+#:    nên "nói ngắn gọn kiểu giang hồ" rất dễ thành bỏ bớt số liệu. Nhân vật là
+#:    lớp áo, dữ liệu là người mặc.
+_SUFFIX = ("Tông đổi theo việc: đùa khi tán gẫu, nghiêm túc khi tin tức và dạy "
+           "học, ấm áp khi an ủi — chất giọng vai giữ nguyên; không nhắc mình "
+           "là AI. Văn phong KHÔNG đổi nội dung: số liệu, tên riêng, giờ giấc, "
+           "các bước phải giữ đúng và đủ — ngắn gọn tới đâu cũng không bỏ bớt "
+           "thông tin.")
 
 # ── Preset nhanh (Persona + Dialect + Voice + Tone + Style nén sẵn) ─────────
 PRESETS: list[tuple[str, str]] = [
@@ -411,8 +422,7 @@ def _build(sel: dict) -> str:
         net.append(sel["trait"].lower())
     net.extend(h for h in (AGE_HINT.get(a), JOB_HINT.get(job)) if h)
     if net:
-        parts.append("Nét: " + "; ".join(net) + "; không cụt ngủn, không "
-                     "lạnh lùng, gần gũi ấm áp như người quen.")
+        parts.append("Nét: " + "; ".join(net) + "; nói tự nhiên như người quen.")
     # Ghi RIÊNG voice và tone. Bản cũ nối chuỗi kiểu "Giọng " + ", tông ".join()
     # nên chỉ đúng khi có ĐỦ hai: chọn mỗi tông thì ra "Giọng ma mị" — gọi tông
     # thành giọng, mà giọng với tông là hai chiều khác nhau của nhân vật.
@@ -443,7 +453,11 @@ def _build(sel: dict) -> str:
     elif DIALECT.get(region):
         parts.append(f"Phương ngữ: {DIALECT[region]}.")
     parts.append(_SUFFIX)
-    return " ".join(parts)
+    # Bọc thẻ để model tách được LỚP ÁO khỏi VIỆC CẦN LÀM. Khối này đi kèm mọi
+    # lượt chat, đứng lẫn với chỉ dẫn công việc trong cùng system prompt; không
+    # có ranh giới thì câu "câu ngắn, dứt khoát" của nhân vật dễ bị hiểu thành
+    # luật cho cả câu trả lời việc.
+    return "<nhan_vat>\n" + " ".join(parts) + "\n</nhan_vat>"
 
 
 def preview(sel: dict | None) -> str:

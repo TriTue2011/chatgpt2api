@@ -67,7 +67,8 @@ def test_giang_ho_khong_keo_theo_chui_boi():
 
 def test_khong_chon_gi_thi_khong_no_ra_loi():
     khoi = _khoi()
-    assert "NHÂN VẬT" in khoi and khoi.strip().endswith(".")
+    assert "NHÂN VẬT" in khoi
+    assert khoi.strip().endswith("</nhan_vat>")
 
 
 def test_moi_tong_deu_co_kieu_doc_cho_giong_vieneu():
@@ -75,3 +76,27 @@ def test_moi_tong_deu_co_kieu_doc_cho_giong_vieneu():
     chọn "Ma mị" mà máy đọc giọng bản tin là công dựng persona đổ sông."""
     for t in persona.ui_options()["tones"]:
         assert persona._TONE_STYLE.get(t), f"tông {t} chưa có kiểu đọc"
+
+
+def test_van_phong_khong_duoc_nuot_thong_tin():
+    """Nghiên cứu về persona prompt: persona kéo chú ý của model về phía chỉ dẫn
+    văn phong và giảm chú ý vào nội dung — nên "nói ngắn kiểu giang hồ" rất dễ
+    thành bỏ bớt số liệu. Khối nào cũng phải mang câu chặn đó."""
+    for sel in ({}, {"tone": "Giang hồ"}, {"gender": "Nữ", "region": "Huế"}):
+        khoi = persona.preview(sel)
+        assert "KHÔNG đổi nội dung" in khoi
+        assert "không bỏ bớt" in khoi
+
+
+def test_boc_the_de_tach_lop_ao_khoi_viec():
+    khoi = persona.preview({"tone": "Ấm áp"})
+    assert khoi.startswith("<nhan_vat>") and khoi.endswith("</nhan_vat>")
+
+
+def test_tu_ngu_vung_mien_van_con_nguyen():
+    """Từ ngữ theo vùng là thứ làm nhân vật nổi bật nhất — cắt token ở chỗ khác,
+    không cắt ở đây."""
+    hue = persona.preview({"region": "Huế"})
+    assert "chi, mô, răng, rứa" in hue and "dạ thưa" in hue
+    tay = persona.preview({"region": "Miền Tây"})
+    assert "nghen" in tay and "quá trời" in tay
