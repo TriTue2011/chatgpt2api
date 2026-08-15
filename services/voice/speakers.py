@@ -18,6 +18,7 @@ nhập sẵn danh sách từ Home Assistant nếu có.
 from __future__ import annotations
 
 import json
+import ipaddress
 import logging
 import re
 import socket
@@ -27,6 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
+import urllib.request
 
 from services.config import DATA_DIR
 
@@ -450,9 +452,8 @@ def _dlna_control_url(rec: dict[str, Any]) -> str:
 
 
 def _play_dlna(rec: dict[str, Any], url: str, timeout: int = 20) -> None:
-    import urllib.request
-
     ctrl = _dlna_control_url(rec)
+    opener = urllib.request.build_opener(_KhongTheoRedirect())
 
     def _soap(body: str, action: str) -> None:
         req = urllib.request.Request(
@@ -462,7 +463,7 @@ def _play_dlna(rec: dict[str, Any], url: str, timeout: int = 20) -> None:
                 "SOAPACTION": f'"urn:schemas-upnp-org:service:AVTransport:1#{action}"',
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             resp.read()
 
     _soap(_SOAP_SET.format(url=url), "SetAVTransportURI")
@@ -568,6 +569,48 @@ def _cast_name(ip: str, timeout: float = 1.2) -> str:
         return ""
 
 
+def _ssdp_location_cua_sender(location: str, sender_ip: str) -> str:
+    """Trả LOCATION hợp lệ chỉ khi nó thực sự trỏ lại thiết bị vừa trả lời.
+
+    SSDP dùng UDP broadcast/multicast; bất kỳ máy nào trong LAN cũng có thể gửi
+    header ``LOCATION``. Không được tin một URL do header đó chỉ dẫn — đặc biệt
+    không cho nó biến thao tác "dò loa" thành request đến loopback/metadata.
+    Thiết bị UPnP chuẩn trả device-description từ chính địa chỉ đã phản hồi.
+    """
+    try:
+        source = ipaddress.ip_address(str(sender_ip or "").strip())
+        u = urlparse(str(location or "").strip())
+    except ValueError:
+        return ""
+    if source.is_loopback or source.is_unspecified or source.is_multicast:
+        return ""
+    if (u.scheme != "http" or not u.hostname or u.username or u.password
+            or u.hostname != str(source)):
+        return ""
+    return str(location).strip()
+
+
+def _dlna_control_cung_thiet_bi(location: str, control_url: str) -> bool:
+    """Control URL từ XML phải ở chính host đã phát device description."""
+    try:
+        desc = urlparse(str(location or "").strip())
+        control = urlparse(str(control_url or "").strip())
+    except ValueError:
+        return False
+    return bool(
+        desc.scheme == "http" and desc.hostname
+        and control.scheme == "http" and control.hostname == desc.hostname
+        and not control.username and not control.password
+    )
+
+
+class _KhongTheoRedirect(urllib.request.HTTPRedirectHandler):
+    """DLNA control không được đi theo redirect sang host nội bộ khác."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        return None
+
+
 def _ssdp_search(st: str, timeout: float = 3.0, mx: int = 2, want: int = 12) -> list[str]:
     """M-SEARCH active SSDP → danh sách URL mô tả (LOCATION). Reply là UNICAST nên
     thường vẫn về được qua NAT bridge (khác NOTIFY multicast bị chặn). Rỗng nếu
@@ -587,12 +630,15 @@ def _ssdp_search(st: str, timeout: float = 3.0, mx: int = 2, want: int = 12) -> 
         end = time.time() + timeout
         while time.time() < end:
             try:
-                data, _ = s.recvfrom(65507)
+                data, sender = s.recvfrom(65507)
             except socket.timeout:
                 break
             for line in data.decode("utf-8", "replace").split("\r\n")[1:]:
                 if line.lower().startswith("location:"):
-                    locations.add(line.split(":", 1)[1].strip())
+                    location = _ssdp_location_cua_sender(
+                        line.split(":", 1)[1].strip(), str(sender[0]))
+                    if location:
+                        locations.add(location)
             if len(locations) >= want:
                 break
     except OSError:
@@ -604,13 +650,14 @@ def _ssdp_search(st: str, timeout: float = 3.0, mx: int = 2, want: int = 12) -> 
 
 def _parse_dlna_desc(location: str, timeout: float = 3.0) -> Optional[dict[str, Any]]:
     """Lấy tên + control URL AVTransport từ mô tả UPnP của một DLNA renderer."""
-    import urllib.request
     import xml.etree.ElementTree as ET
     from urllib.parse import urljoin
 
     try:
         with urllib.request.urlopen(location, timeout=timeout) as r:
-            raw = r.read()
+            raw = r.read(1_000_001)
+        if len(raw) > 1_000_000:
+            return None
         root = ET.fromstring(raw)
     except Exception:
         return None
@@ -640,6 +687,8 @@ def _parse_dlna_desc(location: str, timeout: float = 3.0) -> Optional[dict[str, 
                 curl = c.text or ""
         if "AVTransport" in stype and curl:
             ctrl = urljoin(base or location, curl)
+            if not _dlna_control_cung_thiet_bi(location, ctrl):
+                return None
             break
     if not ctrl and not is_renderer:
         return None
