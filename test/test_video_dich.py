@@ -139,6 +139,27 @@ def test_phu_de_hai_phu_nu_loc_nhan_am_thanh_va_giu_xung_ho_trung_tinh(monkeypat
 
 
 @pytest.mark.pure
+def test_chi_bo_nhan_am_thanh_da_biet_khong_xoa_chu_trong_ngoac_vuong():
+    assert vd.loc_nhan_khong_phai_loi("[think] Mã cửa [A-12]") == "Mã cửa [A-12]"
+
+
+def test_may_dich_loi_van_xuat_srt_loi_goc(monkeypatch):
+    """ASR xong thì lỗi dịch không được làm người dùng mất toàn bộ SRT."""
+    def _loi(*_a, **_k):
+        raise vd.ts.LoiDich("CPU dịch đang khởi động")
+
+    monkeypatch.setattr(vd.ts, "translate_batch", _loi)
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 2.0, "Hello there.")], "en", "vi", 2.0,
+    )
+
+    assert r["ok"] is True
+    assert r["dich"] == "en"
+    assert "Hello there." in r["srt"].decode()
+    assert "bản gốc" in r["canh_bao_dich"]
+
+
+@pytest.mark.pure
 def test_vision_khong_chac_chan_giu_nguyen_xung_ho(monkeypatch):
     """Không được đổi xưng hô khi frame có cả nam lẫn nữ hoặc không rõ."""
     monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a:
@@ -322,12 +343,16 @@ def test_khong_lay_duoc_phu_de_thi_khong_nem_ra_ngoai(monkeypatch):
     assert r["ok"] is False and "chưa làm" in r["error"]
 
 
-def test_chua_cau_hinh_may_chu_dich(monkeypatch):
+def test_chua_cau_hinh_may_chu_dich_van_xuat_phu_de_goc(monkeypatch):
     from services.config import config
 
     monkeypatch.setitem(config.data, "translate_url", "")
+    monkeypatch.setattr(vd, "lay_phu_de", _phu_de_gia(
+        [vd.Doan(0.0, 2.0, "Hello there.")], ma="en"))
     r = vd.dich_video("https://youtu.be/aircAruvnKk")
-    assert r["ok"] is False and "chưa cấu hình" in r["error"]
+    assert r["ok"] is True
+    assert r["dich"] == "en"
+    assert "bản gốc" in r["canh_bao_dich"]
 
 
 @pytest.mark.pure

@@ -105,7 +105,17 @@ _ANH_CHU_NGU = re.compile(
 _TAO = re.compile(r"\btao\b", re.I)
 _MAY = re.compile(r"\bmày\b", re.I)
 _LAM_GI_MAY = re.compile(r"\blàm\s+gì\s+mày\b", re.I)
-_NHAN_KHONG_PHAI_LOI = re.compile(r"\[[^\]\n]{1,120}\]")
+# Chỉ bỏ nhãn ASR không phải lời thoại đã biết. Regex cũ bỏ MỌI ``[...]`` nên
+# làm mất cả mã phòng, tên hồ sơ hoặc lời thoại thật kiểu "[A-12]".
+_NHAN_KHONG_PHAI_LOI = re.compile(
+    r"\[\s*(?:"
+    r"think(?:ing)?|music(?:\s+(?:playing|starts?|ends?))?|"
+    r"applause|laugh(?:ter|s|ing)?|sighs?|cough(?:ing|s)?|"
+    r"noise|silence|blank[_ ]audio|inaudible|"
+    r"tiếng\s+nhạc|vỗ\s+tay|cười|thở\s+dài|im\s+lặng|không\s+nghe\s+rõ"
+    r")\s*\]",
+    re.IGNORECASE,
+)
 
 LOI_CHUA_CO_TIENG = (
     "video này không có phụ đề nào để lấy. Dịch được nó cần tải tiếng về rồi "
@@ -607,8 +617,6 @@ def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
     url = la_link_video(text)
     if not url:
         return {"ok": False, "error": "không thấy link video trong tin nhắn"}
-    if not ts.is_configured():
-        return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
     if not _ma_video(url):
         return {"ok": False, "error": LOI_CHUA_CO_TIENG}
 
@@ -663,6 +671,8 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     nhom = gop_doan(bo_trung([d for d in doan if d.chu]), ranh_canh=ranh_canh)
     if not nhom:
         return {"ok": False, "error": "không còn lời thoại sau khi bỏ nhãn âm thanh"}
+    canh_bao_dich = ""
+    da_dich = False
     if nguon == dich:
         ban_dich = [d.chu for d in nhom]
     else:
@@ -673,17 +683,24 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                 ban_dich.extend(ts.translate_batch(
                     chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
         except ts.LoiDich as exc:
-            return {"ok": False, "error": f"máy chủ dịch lỗi: {exc}"}
+            # ASR/lấy phụ đề đã xong thì bản gốc vẫn dùng được. Không để máy
+            # dịch chết (kể cả CPU fallback) làm mất nỗ lực nghe phim dài.
+            ban_dich = chu_goc
+            dich = nguon
+            canh_bao_dich = (f"Máy chủ dịch lỗi: {exc}; đã xuất phụ đề bản gốc "
+                              f"({nguon}) để không mất lời thoại.")
+        else:
+            da_dich = True
         # Video dạy tiếng Anh: đính từ gốc đang được giảng vào khung tương ứng
         # ("…đang cắt [chopping]") — mẫu dò chỉ viết cho tiếng Anh nên chỉ chạy
         # khi nguồn là en. Video thường không có tín hiệu giảng dạy → tập rỗng,
         # không đổi gì.
-        if nguon.startswith("en"):
+        if da_dich and nguon.startswith("en"):
             khoa = tu_khoa_giang_day(nhom)
             if khoa:
                 ban_dich = [dinh_tu_goc(d.chu, b, khoa)
                             for d, b in zip(nhom, ban_dich)]
-        if dich.startswith("vi"):
+        if da_dich and dich.startswith("vi"):
             ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision, nhom)
             if so_xung_ho_sua and vision is not None:
                 vision["so_xung_ho_sua"] = so_xung_ho_sua
@@ -711,6 +728,8 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
         ra["nghe"] = nghe
     if vision:
         ra["vision"] = vision
+    if canh_bao_dich:
+        ra["canh_bao_dich"] = canh_bao_dich
     return ra
 
 
@@ -774,8 +793,6 @@ def dich_tep_phu_de(duong: str, ten: str = "", target: str = "", *,
     tiếng. Đi chung dây chuyền với phụ đề YouTube: gộp trọn câu rồi mới
     dịch, cắt lại khung đạt chuẩn đọc.
     """
-    if not ts.is_configured():
-        return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
     try:
         raw = Path(duong).read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
@@ -880,8 +897,6 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     if ket_qua_vision.canh_bao:
         vision["canh_bao"] = ket_qua_vision.canh_bao
     dich = nguon if chep_loi else ts.giai_ma_target(nguon, target)
-    if dich != nguon and not ts.is_configured():
-        return {"ok": False, "error": "chưa cấu hình máy chủ dịch (translate_url)"}
     return _dich_va_dong_goi(doan, nguon, dich, doan[-1].ket_thuc, nghe=nghe,
                              vision=vision, ranh_canh=ket_qua_vision.ranh_canh)
 
@@ -951,4 +966,6 @@ def bao_cao(r: dict[str, Any]) -> str:
         ra += f" • sửa {vision['so_xung_ho_sua']} xưng hô theo cảnh"
     if vision.get("canh_bao"):
         ra += f"\n⚠️ {vision['canh_bao']}"
+    if r.get("canh_bao_dich"):
+        ra += f"\n⚠️ {r['canh_bao_dich']}"
     return ra
