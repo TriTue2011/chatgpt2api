@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -280,7 +281,7 @@ def kiem_tinh(code: str) -> str:
             "phải nhận xét chủ quan:\n- " + "\n- ".join(van_de))
 
 
-# Trần tài nguyên cho tiến trình con (đặt bằng setrlimit trong preexec_fn).
+# Trần tài nguyên cho tiến trình con (đặt bằng bootstrap sau exec).
 # Báo cáo bảo mật 07/08: bộ chạy KHÔNG giới hạn RAM/CPU nên code sinh (dù đã
 # lọc blacklist) vẫn có thể `[0]*10**10` làm cạn RAM cả container. setrlimit là
 # per-process, không cần root/cgroup, không đổi công tắc bật/tắt.
@@ -288,23 +289,79 @@ _RAM_TRAN_BYTE = 1024 * 1024 * 1024      # 1 GB address space
 _FILE_TRAN_BYTE = 64 * 1024 * 1024       # 64 MB mỗi file (chống ghi đầy đĩa)
 
 
-def _dat_gioi_han_tai_nguyen(han_giay: float):
-    """Trả preexec_fn đặt rlimit CPU/RAM/kích-thước-file; None nếu không có
-    module `resource` (không phải POSIX). RLIMIT_NPROC CỐ Ý bỏ: nó đếm theo UID
-    toàn hệ, đặt thấp sẽ chặn cả tiến trình khác của container."""
+def co_gioi_han_ram() -> bool:
+    """Môi trường hiện tại có giới hạn address-space dùng được hay không.
+
+    Docker Linux có ``RLIMIT_AS``. macOS có hằng số này nhưng không cho hạ giới
+    hạn của Python đang chạy xuống dưới address space hiện có, khiến cả
+    ``preexec_fn`` thất bại trước khi code được chạy. Không quảng cáo trần RAM
+    ở môi trường không áp được nó.
+    """
     try:
         import resource
     except ImportError:
-        return None
+        return False
+    return sys.platform.startswith("linux") and hasattr(resource, "RLIMIT_AS")
 
-    def _dat():
-        # CPU giây: cứng hơn timeout treo tường — chặn vòng lặp ngốn CPU thật.
-        cpu = int(han_giay) + 2
-        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-        resource.setrlimit(resource.RLIMIT_AS, (_RAM_TRAN_BYTE, _RAM_TRAN_BYTE))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (_FILE_TRAN_BYTE, _FILE_TRAN_BYTE))
 
-    return _dat
+_RUNNER_BOOTSTRAP = r"""
+import runpy
+import sys
+
+script, cpu, ram, fsize = sys.argv[1:5]
+try:
+    import resource
+    for kind, limit in (
+        (resource.RLIMIT_CPU, (int(cpu), int(cpu))),
+        (resource.RLIMIT_FSIZE, (int(fsize), int(fsize))),
+    ):
+        try:
+            resource.setrlimit(kind, limit)
+        except (OSError, ValueError):
+            pass
+    if sys.platform.startswith("linux") and hasattr(resource, "RLIMIT_AS"):
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (int(ram), int(ram)))
+        except (OSError, ValueError):
+            pass
+except ImportError:
+    pass
+
+# Giữ trải nghiệm tương đương ``python thu.py`` cho code được chạy thử.
+sys.argv = [script]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+def _lenh_chay(duong_dan: str, han_giay: float) -> list[str]:
+    """Lệnh chạy với rlimit được đặt TRONG tiến trình con trước code người dùng.
+
+    Không dùng ``preexec_fn``: fork từ web server đa luồng rồi chạy Python ở
+    pre-exec có thể deadlock nếu một thread khác đang giữ lock nội bộ. Bootstrap
+    chạy sau exec nên tránh hoàn toàn cửa sổ đó.
+    """
+    return [
+        sys.executable, "-I", "-c", _RUNNER_BOOTSTRAP, duong_dan,
+        str(int(han_giay) + 2), str(_RAM_TRAN_BYTE), str(_FILE_TRAN_BYTE),
+    ]
+
+
+def _diet_nhom_tien_trinh(proc: subprocess.Popen) -> None:
+    """Dừng cả process group tạo bởi ``start_new_session`` khi quá hạn.
+
+    ``Popen.kill`` chỉ dừng process cha. Code do model sinh vẫn có thể tạo cháu
+    bằng thư viện chuẩn (ví dụ ``multiprocessing``), nên phải ưu tiên killpg.
+    """
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
 
 
 def chay(code: str, han_giay: float = HAN_GIAY) -> dict[str, object]:
@@ -328,23 +385,27 @@ def chay(code: str, han_giay: float = HAN_GIAY) -> dict[str, object]:
         with open(duong_dan, "w", encoding="utf-8") as f:
             f.write(code)
         try:
-            p = subprocess.run(
-                [sys.executable, "-I", duong_dan],   # -I: bỏ qua site-packages người dùng + biến PYTHON*
+            p = subprocess.Popen(
+                _lenh_chay(duong_dan, han_giay),
                 cwd=thu_muc,
                 env=_moi_truong_sach(),
-                capture_output=True, text=True, timeout=han_giay,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 start_new_session=True,             # nhóm tiến trình riêng để diệt được cả con cháu
-                preexec_fn=_dat_gioi_han_tai_nguyen(han_giay),  # trần CPU/RAM/file (setrlimit)
             )
+            out_raw, err_raw = p.communicate(timeout=han_giay)
         except subprocess.TimeoutExpired:
+            _diet_nhom_tien_trinh(p)
+            # Đợi reap process cha sau khi killpg để không để zombie và đóng
+            # pipe do các process cháu kế thừa.
+            p.communicate()
             logger.warning({"event": "code_run_timeout", "han_giay": han_giay})
             return {"da_chay": True, "ok": False, "ma_thoat": -9, "stdout": "",
                     "stderr": f"hết hạn {han_giay:.0f}s",
                     "chan_doan": (f"Code chạy quá {han_giay:.0f} giây chưa xong — "
                                   "nghi vòng lặp không có điều kiện dừng."),
                     "ly_do_bo_qua": ""}
-        out = (p.stdout or "")[:TRAN_KY_TU_RA]
-        err = (p.stderr or "")[:TRAN_KY_TU_RA]
+        out = (out_raw or "")[:TRAN_KY_TU_RA]
+        err = (err_raw or "")[:TRAN_KY_TU_RA]
         ok = p.returncode == 0
         logger.info({"event": "code_run_done", "ok": ok, "ma_thoat": p.returncode,
                      "stdout_len": len(out), "stderr_len": len(err)})

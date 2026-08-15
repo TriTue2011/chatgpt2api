@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import os
+import signal
 import unittest
+from unittest import mock
 
 from services import code_runner as cr
 
@@ -94,6 +96,29 @@ class TestChay(unittest.TestCase):
         self.assertFalse(kq["ok"])
         self.assertIn("vòng lặp", kq["chan_doan"])
 
+    @mock.patch("services.code_runner.os.killpg")
+    @mock.patch("services.code_runner.subprocess.Popen")
+    def test_het_han_phai_diet_ca_nhom_tien_trinh(self, popen, killpg):
+        """Tiến trình con có thể sinh cháu; timeout không được để chúng sống sót.
+
+        ``start_new_session`` chỉ tạo process group, không tự giết nó. Kiểm thử
+        giả lập timeout để không tạo tiến trình mồ côi thật trong lúc chạy test.
+        """
+        proc = mock.MagicMock(pid=4242)
+        proc.communicate.side_effect = [
+            cr.subprocess.TimeoutExpired(cmd=["python"], timeout=0.1),
+            ("", ""),
+        ]
+        popen.return_value = proc
+
+        kq = cr.chay("x = 1", han_giay=0.1)
+
+        self.assertTrue(kq["da_chay"])
+        self.assertFalse(kq["ok"])
+        killpg.assert_called_once_with(4242, signal.SIGKILL)
+        self.assertNotIn("preexec_fn", popen.call_args.kwargs,
+                         "preexec_fn có thể deadlock khi gateway đang đa luồng")
+
     def test_bo_qua_thi_khac_voi_that_bai(self):
         """da_chay=False nghĩa là BỎ QUA — bên gọi không được bắt con sửa."""
         kq = cr.chay("from services.config import config\nprint(config)")
@@ -132,11 +157,9 @@ class TestKhongRoSecret(unittest.TestCase):
     def test_bom_ram_bi_gioi_han_chan(self):
         """Code ngốn RAM (qua được blacklist vì không chạm hệ thống) phải bị
         RLIMIT_AS chặn bằng MemoryError, không làm cạn RAM container. Bỏ qua
-        nếu chạy trên nền không có module `resource` (không phải POSIX)."""
-        try:
-            import resource  # noqa: F401
-        except ImportError:
-            self.skipTest("không có module resource (không phải POSIX)")
+        nếu hệ điều hành không áp được RLIMIT_AS (như macOS dev)."""
+        if not cr.co_gioi_han_ram():
+            self.skipTest("môi trường này không áp được RLIMIT_AS")
         kq = cr.chay("x = [0] * (10**10)\nprint(len(x))")
         self.assertTrue(kq["da_chay"], kq)
         self.assertFalse(kq["ok"], "cấp phát 10^10 phần tử phải thất bại vì trần RAM")
