@@ -527,20 +527,36 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
     uid = msg_id or hashlib.sha256(raw[:4096]).hexdigest()[:24]
 
     # Chống gửi trùng: một mail không bao giờ thông báo 2 lần, kể cả khi
-    # mark_seen tắt hoặc IMAP trả lại mail cũ.
+    # mark_seen tắt hoặc IMAP trả lại mail cũ. Chỉ GHI mốc sau khi tác vụ
+    # ngoài (thông báo/SMTP) đã xong: ghi ngay tại đây làm một lỗi tạm thời
+    # khiến poll sau bỏ thư đó vĩnh viễn dù IMAP vẫn còn UNSEEN.
     from services import digest
     if digest.seen(src, uid):
         return "skipped"
-    digest.mark_seen(src, uid)
 
     sent_any = False
     if acc.get("notify_targets"):
-        try:
-            text = _summary_text(acc, from_hdr or from_addr, subject, body, atts)
-            res = digest.notify(src, acc, text)
-            sent_any = bool(res.get("sent_now") or res.get("queued"))
-        except Exception as exc:
-            logger.warning("email_channel: thông báo lỗi: %s", str(exc)[:160])
+        # Mốc RIÊNG cho bước thông báo. Mail giữ trạng thái chưa xử lý khi bước
+        # TRẢ LỜI bên dưới hỏng, nên nếu chỉ có một mốc chung thì mỗi lượt poll
+        # lại bắn thêm một thông báo trùng cho cùng lá thư — hỏng theo kiểu
+        # ngược lại với chuyện mất thư mà bản vá này muốn tránh.
+        moc_bao = f"{uid}:notify"
+        if digest.seen(src, moc_bao):
+            sent_any = True
+        else:
+            try:
+                text = _summary_text(acc, from_hdr or from_addr, subject, body, atts)
+                res = digest.notify(src, acc, text)
+                sent_any = bool(res.get("sent_now") or res.get("queued"))
+            except Exception as exc:
+                logger.warning("email_channel: thông báo lỗi: %s", str(exc)[:160])
+                return "error"
+            if not sent_any:
+                # Không gửi ngay và cũng không xếp được lịch — giữ mail chưa xử lý
+                # để lần sau thử lại khi kênh nhận/đường mạng hồi phục.
+                logger.warning("email_channel: chưa chuyển được thông báo cho %s", from_addr)
+                return "error"
+            digest.mark_seen(src, moc_bao)
 
     # Trả lời thẳng vào email bằng AI — CHỈ khi hộp này bật (mặc định TẮT để hộp
     # chỉ-tóm-tắt không tự đi trả lời người ta).
@@ -573,7 +589,9 @@ def _process_message(acc: dict[str, Any], raw: bytes) -> str:
         if not sent.get("ok"):
             logger.warning("email_channel: trả lời lỗi: %s", sent.get("error"))
             return "error"
+        digest.mark_seen(src, uid)
         return "processed"
+    digest.mark_seen(src, uid)
     return "processed" if sent_any else "skipped"
 
 

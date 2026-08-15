@@ -40,6 +40,14 @@ def get_image_adapter(provider: str) -> BaseImageAdapter | None:
     For custom providers (custom: prefix), returns a generic adapter
     that uses the chat completions endpoint for image generation.
     """
+    # SD WebUI chọn txt2img/img2img và base_url theo TỪNG request. Flow cũng
+    # giữ tập tài khoản đã thử trong một request. Hai adapter này không được là
+    # singleton: hai lượt đồng thời có thể ghi đè trạng thái tạm của nhau và
+    # retry nhầm endpoint/tài khoản.
+    if provider == "sdwebui":
+        return SDWebUIAdapter()
+    if provider == "flow":
+        return FlowImageAdapter()
     if provider in IMAGE_ADAPTERS:
         return IMAGE_ADAPTERS[provider]
     if provider.startswith("custom:"):

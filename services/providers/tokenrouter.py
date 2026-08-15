@@ -126,6 +126,7 @@ class TokenRouterProvider:
     def list_models(self) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
+        r = None
         try:
             r = self._post_get(self._duong_dan("/models"))
             if r.status_code != 200:
@@ -137,6 +138,12 @@ class TokenRouterProvider:
         except Exception as exc:
             logger.warning({"event": "tokenrouter_models_error", "error": str(exc)[:160]})
             return []
+        finally:
+            if r is not None:
+                try:
+                    r.close()
+                except Exception:
+                    pass
 
     def _post_get(self, url: str):
         """GET có thử lại — cùng lý do với _post."""
@@ -193,6 +200,11 @@ class TokenRouterProvider:
                 loi = (resp.text or "")[:400]
             except Exception:
                 pass
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
             logger.error({"event": "tokenrouter_error", "status": resp.status_code,
                           "model": model, "error": loi})
             raise RuntimeError(f"[tokenrouter] Error {resp.status_code}: {loi[:200]}")
@@ -202,15 +214,21 @@ class TokenRouterProvider:
     # ── Đọc phản hồi ────────────────────────────────────────────────────────
 
     def _doc_thuong(self, resp, model: str) -> dict[str, Any]:
-        data = resp.json()
-        if not isinstance(data, dict):
-            raise RuntimeError("[tokenrouter] phản hồi không phải JSON object")
-        data.setdefault("object", "chat.completion")
-        msg = ((data.get("choices") or [{}])[0].get("message")) or {}
-        self._canh_bao_neu_trong(model, str(msg.get("content") or ""),
-                                 bool(msg.get("reasoning_content")),
-                                 data.get("usage") or {})
-        return data
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise RuntimeError("[tokenrouter] phản hồi không phải JSON object")
+            data.setdefault("object", "chat.completion")
+            msg = ((data.get("choices") or [{}])[0].get("message")) or {}
+            self._canh_bao_neu_trong(model, str(msg.get("content") or ""),
+                                     bool(msg.get("reasoning_content")),
+                                     data.get("usage") or {})
+            return data
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _canh_bao_neu_trong(model: str, noi_dung: str, co_suy_luan: bool,

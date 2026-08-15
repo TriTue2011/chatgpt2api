@@ -76,6 +76,20 @@ def _handle_adapter_edit(adapter, route, body, prompt, images, n, response_forma
         "apiKey": str(provider_config.get("api_key") or ""),
         "apiKeys": provider_config.get("api_keys") or [],
     }
+
+    # `build_url()` chạy trước `build_body()` trong vòng lặp. SD WebUI vì thế
+    # cần biết đây là image edit trước khi dựng URL, nếu không sẽ gọi txt2img
+    # (và bỏ qua ảnh gốc). get_image_adapter() trả instance riêng mỗi request,
+    # nên trạng thái này không thể rò sang một user khác.
+    if provider_key == "sdwebui":
+        adapter.base_url = str(provider_config.get("base_url") or "http://localhost:7860").rstrip("/")
+        try:
+            from services.image_providers._base import first_image_bytes_mime
+            raw, _ = first_image_bytes_mime(images)
+            adapter._use_img2img = bool(raw)
+        except Exception:
+            adapter._use_img2img = False
+
     logger.info({
         "event": "image_edit_credentials",
         "provider_key": provider_key,

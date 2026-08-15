@@ -275,6 +275,12 @@ class AgnesProvider:
         max_attempts = max(len(keys) * 2, 4)
 
         for attempt in range(max_attempts):
+            # `api_key` có fallback về một key ngay cả khi TẤT CẢ đã cooldown.
+            # Không chặn ở đây thì một request bắn lặp 4+ lần vào đúng key 429,
+            # vừa vô ích vừa kéo dài lúc dịch vụ đang hết hạn mức.
+            if all(self.is_key_rate_limited(candidate) for candidate in keys):
+                last_detail = "all configured API keys are in cooldown"
+                break
             key = self.api_key
             if not key:
                 break
@@ -303,12 +309,24 @@ class AgnesProvider:
                     self.mark_key_rate_limited(key, 1800.0, status="exhausted")
                 else:
                     self.mark_key_rate_limited(key, 60.0, status="limited")
-                last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                try:
+                    last_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
                 continue
             if resp.status_code in (500, 502, 503, 504):
                 # Service busy / transient server error: sleep briefly and retry
                 time.sleep(1.5)
-                last_detail = f"Máy chủ Agnes AI đang bận (HTTP {resp.status_code})"
+                try:
+                    last_detail = f"Máy chủ Agnes AI đang bận (HTTP {resp.status_code})"
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
                 continue
 
             # Clean up error JSON if present
@@ -323,7 +341,13 @@ class AgnesProvider:
                         err_msg = err_sub
             except Exception:
                 pass
-            raise RuntimeError(f"Agnes AI error (HTTP {resp.status_code}): {err_msg}")
+            try:
+                raise RuntimeError(f"Agnes AI error (HTTP {resp.status_code}): {err_msg}")
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
         raise RuntimeError(f"Agnes AI: Máy chủ đang bận (Service Busy) hoặc API Key bị giới hạn. ({last_detail})")
 
@@ -351,7 +375,10 @@ class AgnesProvider:
         try:
             headers = {"Authorization": f"Bearer {key}"}
             resp = requests.get(f"{_agnes_base_url()}/models", headers=headers, timeout=10)
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False
 
@@ -455,21 +482,33 @@ class AgnesProvider:
             return self._iter_stream(resp)
 
         _, resp = self._post_with_failover(url, body)
-        return resp.json()
+        try:
+            return resp.json()
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def _iter_stream(self, resp: Any) -> Iterator[dict[str, Any]]:
-        for raw_line in resp.iter_lines():
-            if not raw_line:
-                continue
-            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else str(raw_line)
-            if line.startswith("data: "):
-                data_str = line[6:].strip()
-                if data_str == "[DONE]":
-                    break
-                try:
-                    yield json.loads(data_str)
-                except Exception:
+        try:
+            for raw_line in resp.iter_lines():
+                if not raw_line:
                     continue
+                line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else str(raw_line)
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        yield json.loads(data_str)
+                    except Exception:
+                        continue
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def generate_image(
         self, prompt: str, model: str = "agnes-image-2.1-flash",
@@ -515,7 +554,13 @@ class AgnesProvider:
 
         url = f"{_agnes_base_url()}/images/generations"
         _, resp = self._post_with_failover(url, body)
-        return resp.json()
+        try:
+            return resp.json()
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
 
     def generate_video(
         self,
@@ -597,7 +642,13 @@ class AgnesProvider:
         # Reuse the winning key for the async polling requests below.
         headers = {"Authorization": f"Bearer {used_key}", "Content-Type": "application/json"}
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
         task_id = data.get("task_id") or data.get("id") or data.get("video_id")
         video_id = data.get("video_id") or data.get("id") or task_id
 
@@ -627,23 +678,29 @@ class AgnesProvider:
             for poll_url in endpoints:
                 try:
                     poll_resp = requests.get(poll_url, headers=headers, timeout=20)
-                    if poll_resp.status_code == 200:
-                        pdata = poll_resp.json()
-                        status = str(pdata.get("status") or "").lower()
-                        if status in ("completed", "succeeded", "success"):
-                            res_url = (
-                                pdata.get("video_url")
-                                or (pdata.get("metadata") or {}).get("url")
-                                or pdata.get("url")
-                            )
-                            if not res_url and "data" in pdata:
-                                return pdata
-                            return {
-                                "created": int(time.time()),
-                                "data": [{"url": res_url or "", "task_id": task_id}],
-                            }
-                        if status in ("failed", "error"):
-                            raise RuntimeError(f"Agnes AI Video Task failed: {pdata.get('error')}")
+                    try:
+                        if poll_resp.status_code == 200:
+                            pdata = poll_resp.json()
+                            status = str(pdata.get("status") or "").lower()
+                            if status in ("completed", "succeeded", "success"):
+                                res_url = (
+                                    pdata.get("video_url")
+                                    or (pdata.get("metadata") or {}).get("url")
+                                    or pdata.get("url")
+                                )
+                                if not res_url and "data" in pdata:
+                                    return pdata
+                                return {
+                                    "created": int(time.time()),
+                                    "data": [{"url": res_url or "", "task_id": task_id}],
+                                }
+                            if status in ("failed", "error"):
+                                raise RuntimeError(f"Agnes AI Video Task failed: {pdata.get('error')}")
+                    finally:
+                        try:
+                            poll_resp.close()
+                        except Exception:
+                            pass
                 except Exception as exc:
                     if "Video Task failed" in str(exc):
                         raise

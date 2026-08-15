@@ -254,11 +254,17 @@ def _convert_request(messages, tools, *, google_search: bool = False):
     def _fetch_url_part(url: str) -> dict | None:
         """Fetch URL and return Gemini inlineData part."""
         try:
-            from curl_cffi import requests as cffi_requests
-            resp = cffi_requests.get(url, timeout=60, impersonate="chrome110")
-            if resp.status_code == 200:
-                img_data = b64.b64encode(resp.content).decode()
-                ctype = resp.headers.get("content-type", "image/jpeg")
+            # `url` do client cung cấp, không được gọi curl thẳng: một URL
+            # 127.0.0.1/metadata hoặc redirect về LAN sẽ biến provider thành
+            # SSRF. fetch_media kiểm cả DNS, peer thực tế và từng redirect.
+            from mimetypes import guess_type
+            from urllib.parse import urlparse
+            from services import net_guard
+
+            raw = net_guard.fetch_media(url, timeout=60, max_bytes=50 * 1024 * 1024)
+            if raw:
+                img_data = b64.b64encode(raw).decode()
+                ctype = guess_type(urlparse(url).path)[0] or "image/jpeg"
                 return {"inlineData": {"mimeType": ctype, "data": img_data}}
         except Exception:
             pass

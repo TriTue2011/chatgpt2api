@@ -98,6 +98,16 @@ class DiaChiTroDungDuongREST(unittest.TestCase):
             url = AD.build_url("flow/banana-pro", {}, 0)
         self.assertTrue(url.endswith("/v1/google/flow/rest/generate-image"), url)
 
+    def test_retry_khong_duoc_giu_lai_profile_da_het_han_muc(self):
+        """Hết account thứ hai thì không được dùng lại account thứ nhất."""
+        stale = {"profile": "main", "project_id": "p-main"}
+        credentials = {"_flow_account": stale}
+        cfg = {"captcha_solver_url": "http://solver:8010", "accounts": [stale]}
+        with mock.patch.object(M, "_pool_config", return_value=cfg), \
+                mock.patch.object(AD, "_current_account", return_value=None):
+            AD.build_url("flow/banana-pro", credentials, 1)
+        self.assertNotIn("_flow_account", credentials)
+
 
 class _DapGia:
     def __init__(self, payload, status=200):
@@ -112,15 +122,15 @@ class _DapGia:
 class DocDapTheoKhoaURLS(unittest.TestCase):
     def test_doc_urls_va_tai_ve(self):
         anh = b"\xff\xd8\xff\xe0GIA"
-        r2 = mock.Mock(content=anh, headers={"content-type": "image/jpeg"})
-        r2.raise_for_status = mock.Mock()
-        with mock.patch.object(M.requests, "get", return_value=r2):
+        with mock.patch("services.image_providers._base.url_to_base64",
+                        return_value=base64.b64encode(anh).decode()) as fetch:
             ra = AD.parse_response(_DapGia({
                 "urls": ["https://flow-content.google/image/abc?Signature=x"],
                 "media_ids": ["abc"], "model": "GEM_PIX_2", "elapsed_ms": 31000}))
         self.assertEqual(len(ra["data"]), 1)
         self.assertEqual(base64.b64decode(ra["data"][0]["b64_json"]), anh)
         self.assertEqual(ra["data"][0]["_flow_meta"]["media_ids"], ["abc"])
+        fetch.assert_called_once_with("https://flow-content.google/image/abc?Signature=x", timeout=60)
 
     def test_khoa_cu_images_KHONG_con_duoc_doc(self):
         """Nếu ai đó trỏ lại đường giao diện, đáp dạng cũ phải ra rỗng chứ không

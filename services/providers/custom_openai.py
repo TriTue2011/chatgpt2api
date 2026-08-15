@@ -210,15 +210,19 @@ class CustomOpenAIProvider:
 
     @property
     def is_available(self) -> bool:
-        if not self.base_url or not self.api_key:
+        key = self.api_key
+        if not self.base_url or not key:
             return False
         try:
             resp = requests.get(
                 f"{self.base_url}{self._models_path}",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=10,
             )
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False
 
@@ -231,12 +235,14 @@ class CustomOpenAIProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
+        _attempted_keys: set[str] | None = None,
+        _attempted_bases: set[str] | None = None,
         **kwargs,
     ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Forward chat request to custom API endpoint."""
         if not self.base_url:
             raise RuntimeError(f"Custom provider '{self.name}' has no base URL configured")
-        if not self.api_key:
+        if not self._get_keys():
             raise RuntimeError(f"Custom provider '{self.name}' has no API key configured")
 
         body: dict[str, Any] = {
@@ -258,8 +264,20 @@ class CustomOpenAIProvider:
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
 
+        # Refresh `self.base_url` each call so multi-endpoint providers
+        # rotate as endpoints fail. Single-endpoint providers always return
+        # the same URL.
+        if len(self._base_urls) > 1:
+            self.base_url = self._next_healthy_base_url()
+
+        # api_key là property round-robin: chỉ được đọc MỘT lần trên mỗi lượt
+        # HTTP. Đọc lại ở headers rồi ở nhánh 429 sẽ gửi bằng key B nhưng đánh
+        # dấu cooldown key A — pool vì vậy xoay sai và vẫn nã key đang bị limit.
+        selected_key = self.api_key
+        if not selected_key:
+            raise RuntimeError(f"Custom provider '{self.name}' has no usable API key configured")
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {selected_key}",
             "Content-Type": "application/json",
         }
         if stream:
@@ -273,12 +291,6 @@ class CustomOpenAIProvider:
             "stream": stream,
         })
 
-        # Refresh `self.base_url` each call so multi-endpoint providers
-        # rotate as endpoints fail. Single-endpoint providers always return
-        # the same URL.
-        if len(self._base_urls) > 1:
-            self.base_url = self._next_healthy_base_url()
-
         try:
             resp = requests.post(
                 f"{self.base_url}{self._chat_path}",
@@ -290,27 +302,36 @@ class CustomOpenAIProvider:
 
             if resp.status_code == 429:
                 # Rate limited — mark key and retry with next
-                current_key = self.api_key
-                self._rate_limited[current_key] = time.time() + 60
-                attempted = getattr(self, "_attempted_keys", set())
-                attempted.add(current_key)
-                self._attempted_keys = attempted
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                self._rate_limited[selected_key] = time.time() + 60
+                # Bộ key đã thử phải đi xuyên qua lời gọi retry, không lưu vào
+                # instance (instance có thể dùng lại cho request kế tiếp).
+                attempted = _attempted_keys if _attempted_keys is not None else set()
+                attempted.add(selected_key)
                 if len(attempted) < len(self._get_keys()):
                     return self.chat_completions(
                         messages=messages, model=model, stream=stream,
                         temperature=temperature, max_tokens=max_tokens,
-                        tools=tools, tool_choice=tool_choice, **kwargs,
+                        tools=tools, tool_choice=tool_choice,
+                        _attempted_keys=attempted,
+                        _attempted_bases=_attempted_bases, **kwargs,
                     )
                 # All keys exhausted on this base_url — demote it and retry
                 # on the next endpoint in the pool (if any).
-                if len(self._base_urls) > 1:
+                attempted_bases = _attempted_bases if _attempted_bases is not None else set()
+                attempted_bases.add(self.base_url)
+                if len(self._base_urls) > len(attempted_bases):
                     self._demote_base_url(self.base_url)
                     self.base_url = self._next_healthy_base_url()
-                    self._attempted_keys = set()  # reset key tracker for new endpoint
                     return self.chat_completions(
                         messages=messages, model=model, stream=stream,
                         temperature=temperature, max_tokens=max_tokens,
-                        tools=tools, tool_choice=tool_choice, **kwargs,
+                        tools=tools, tool_choice=tool_choice,
+                        _attempted_keys=set(),
+                        _attempted_bases=attempted_bases, **kwargs,
                     )
                 raise RuntimeError(f"[{self.name}] All API keys rate limited")
 
@@ -330,8 +351,6 @@ class CustomOpenAIProvider:
                         error_text = raw.decode("utf-8", errors="ignore")[:500] if raw else ""
                 except Exception:
                     pass
-                # Also log response headers for debugging
-                resp_headers = dict(resp.headers) if hasattr(resp, 'headers') else {}
                 logger.error({
                     "event": "custom_provider_error",
                     "provider": self.name,
@@ -339,9 +358,11 @@ class CustomOpenAIProvider:
                     "error": error_text,
                     "model_sent": body.get("model"),
                     "msg_count": len(body.get("messages", [])),
-                    "key_preview": (self.api_key or "")[:15] + "...",
-                    "headers": {k: str(v)[:200] for k, v in resp_headers.items()},
                 })
+                try:
+                    resp.close()
+                except Exception:
+                    pass
                 raise RuntimeError(f"[{self.name}] Error {resp.status_code}: {error_text[:200]}")
 
             if stream:
@@ -436,9 +457,10 @@ class CustomOpenAIProvider:
 
     def _non_stream_response(self, response, model: str) -> dict[str, Any]:
         """Handle non-streaming response (passthrough)."""
-        data = response.json()
-        # Return as-is — already OpenAI format
-        return data
+        try:
+            return response.json()  # already OpenAI format
+        finally:
+            response.close()
 
     def list_models(self) -> list[dict[str, Any]]:
         """Fetch available models from custom API, prefixed with provider prefix.
@@ -446,7 +468,8 @@ class CustomOpenAIProvider:
         If /v1/models returns empty, falls back to probing /v1/chat/completions
         with a fake model name and parsing the error message for available models.
         """
-        if not self.base_url or not self.api_key:
+        key = self.api_key
+        if not self.base_url or not key:
             return []
 
         prefix = str(self.cfg.get("prefix") or "").strip()
@@ -459,25 +482,28 @@ class CustomOpenAIProvider:
         try:
             resp = requests.get(
                 f"{self.base_url}{self._models_path}",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=15,
             )
-            if resp.status_code == 200:
-                data = resp.json().get("data", [])
-                if isinstance(data, list) and data:
-                    for item in data:
-                        slug = str(item.get("id") or "").strip()
-                        if slug:
-                            if slug.startswith(f"{prefix}/"):
-                                display_id = slug
-                            else:
-                                display_id = f"{prefix}/{slug}"
-                            models.append({
-                                "id": display_id,
-                                "object": "model",
-                                "created": item.get("created", 0),
-                                "owned_by": str(item.get("owned_by") or self.name),
-                            })
+            try:
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    if isinstance(data, list) and data:
+                        for item in data:
+                            slug = str(item.get("id") or "").strip()
+                            if slug:
+                                if slug.startswith(f"{prefix}/"):
+                                    display_id = slug
+                                else:
+                                    display_id = f"{prefix}/{slug}"
+                                models.append({
+                                    "id": display_id,
+                                    "object": "model",
+                                    "created": item.get("created", 0),
+                                    "owned_by": str(item.get("owned_by") or self.name),
+                                })
+            finally:
+                resp.close()
         except Exception:
             pass
 
@@ -488,7 +514,7 @@ class CustomOpenAIProvider:
                 resp = requests.post(
                     f"{self.base_url}{self._chat_path}",
                     headers={
-                        "Authorization": f"Bearer {self.api_key}",
+                        "Authorization": f"Bearer {key}",
                         "Content-Type": "application/json",
                     },
                     json={
@@ -498,31 +524,34 @@ class CustomOpenAIProvider:
                     },
                     timeout=15,
                 )
-                detail = ""
                 try:
-                    detail = resp.json().get("detail", "")
-                except Exception:
-                    detail = resp.text[:500] if resp.text else ""
+                    detail = ""
+                    try:
+                        detail = resp.json().get("detail", "")
+                    except Exception:
+                        detail = resp.text[:500] if resp.text else ""
 
-                # Parse: "Available models: model1, model2, model3"
-                if isinstance(detail, str) and "Available models:" in detail:
-                    parts = detail.split("Available models:", 1)[1].strip().rstrip(".")
-                    found_models = [m.strip() for m in parts.split(",") if m.strip()]
-                    for slug in found_models:
-                        if slug and slug != "unspecified":
-                            display_id = f"{prefix}/{slug}"
-                            models.append({
-                                "id": display_id,
-                                "object": "model",
-                                "created": 0,
-                                "owned_by": self.name,
+                    # Parse: "Available models: model1, model2, model3"
+                    if isinstance(detail, str) and "Available models:" in detail:
+                        parts = detail.split("Available models:", 1)[1].strip().rstrip(".")
+                        found_models = [m.strip() for m in parts.split(",") if m.strip()]
+                        for slug in found_models:
+                            if slug and slug != "unspecified":
+                                display_id = f"{prefix}/{slug}"
+                                models.append({
+                                    "id": display_id,
+                                    "object": "model",
+                                    "created": 0,
+                                    "owned_by": self.name,
+                                })
+                        if models:
+                            logger.info({
+                                "event": "custom_provider_models_fallback",
+                                "provider": self.name,
+                                "count": len(models),
                             })
-                    if models:
-                        logger.info({
-                            "event": "custom_provider_models_fallback",
-                            "provider": self.name,
-                            "count": len(models),
-                        })
+                finally:
+                    resp.close()
             except Exception:
                 pass
 

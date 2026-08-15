@@ -51,7 +51,10 @@ class OpenCodeProvider:
                 headers=DEFAULT_HEADERS,
                 timeout=10,
             )
-            return resp.status_code < 500
+            try:
+                return resp.status_code < 500
+            finally:
+                resp.close()
         except Exception:
             return False
 
@@ -68,6 +71,7 @@ class OpenCodeProvider:
         ):
             return self._models_cache
 
+        resp = None
         try:
             resp = requests.get(OPENCODE_MODELS_URL, headers=DEFAULT_HEADERS, timeout=15)
             if resp.status_code != 200:
@@ -101,6 +105,12 @@ class OpenCodeProvider:
         except Exception as exc:
             logger.warning({"event": "opencode_models_fetch_error", "error": str(exc)})
             return self._models_cache or []
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
     def chat_completions(
         self,
@@ -162,6 +172,11 @@ class OpenCodeProvider:
                     error_text = resp.text[:500]
                 except Exception:
                     pass
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
                 logger.error({
                     "event": "opencode_error",
                     "status": resp.status_code,
@@ -173,8 +188,13 @@ class OpenCodeProvider:
 
             if stream:
                 return self._stream_response(resp)
-            else:
+            try:
                 return resp.json()
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
         except requests.RequestsError as exc:
             logger.error({"event": "opencode_connection_error", "error": str(exc)})
@@ -203,6 +223,11 @@ class OpenCodeProvider:
             }, ensure_ascii=False)
             yield f"data: {error_chunk}\n\n"
             yield "data: [DONE]\n\n"
+        finally:
+            try:
+                response.close()
+            except Exception:
+                pass
 
 
 # Singleton

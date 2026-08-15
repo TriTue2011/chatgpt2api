@@ -90,7 +90,13 @@ class BFLAdapter(BaseImageAdapter):
                     params={"id": task_id},
                     timeout=30,
                 )
-                poll_data = poll_resp.json()
+                try:
+                    poll_data = poll_resp.json()
+                finally:
+                    try:
+                        poll_resp.close()
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.warning({"event": "bfl_poll_error", "error": str(exc)})
                 continue

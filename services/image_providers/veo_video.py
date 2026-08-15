@@ -62,7 +62,10 @@ class VeoVideoAdapter:
     def _build_url(self, credentials: dict[str, Any] | None, key_index: int = 0) -> str:
         keys = self._get_api_keys(credentials)
         api_key = keys[key_index % len(keys)] if keys else ""
-        return f"{VEO_BASE}/{VEO_MODEL}:predictLongRunning?key={api_key}"
+        # Submit phải đi cùng base đã cấu hình với polling. Trước đây submit
+        # luôn gọi Google trực tiếp (`VEO_BASE`) trong khi poll dùng proxy từ
+        # `_veo_base()`: ở mạng bị chặn Google, request chết ngay từ bước 1.
+        return f"{_veo_base()}/models/{VEO_MODEL}:predictLongRunning?key={api_key}"
 
     def _build_body(self, body: dict[str, Any]) -> dict[str, Any]:
         """Build Veo API request body."""
@@ -137,20 +140,26 @@ class VeoVideoAdapter:
 
                 # Step 1: Submit
                 resp = requests.post(url, json=req_body, timeout=60)
-                if resp.status_code >= 400:
-                    error_text = ""
+                try:
+                    if resp.status_code >= 400:
+                        error_text = ""
+                        try:
+                            error_text = resp.text[:500]
+                        except Exception:
+                            pass
+                        # Xoay sang key kế khi lỗi 401/403 (project bị từ chối quyền
+                        # Veo) / 400 / 429 (hết quota) — key khác có thể có quyền.
+                        if resp.status_code in (400, 401, 403, 429) and key_try < max_keys - 1:
+                            last_error = error_text
+                            continue
+                        raise RuntimeError(f"Veo submit error {resp.status_code}: {error_text[:200]}")
+
+                    data = resp.json()
+                finally:
                     try:
-                        error_text = resp.text[:500]
+                        resp.close()
                     except Exception:
                         pass
-                    # Xoay sang key kế khi lỗi 401/403 (project bị từ chối quyền
-                    # Veo) / 400 / 429 (hết quota) — key khác có thể có quyền.
-                    if resp.status_code in (400, 401, 403, 429) and key_try < max_keys - 1:
-                        last_error = error_text
-                        continue
-                    raise RuntimeError(f"Veo submit error {resp.status_code}: {error_text[:200]}")
-
-                data = resp.json()
                 operation_name = data.get("name", "")
                 if not operation_name:
                     raise RuntimeError(f"Veo did not return operation name: {data}")
@@ -169,9 +178,15 @@ class VeoVideoAdapter:
                 while time.time() - start_time < VEO_MAX_WAIT:
                     time.sleep(VEO_POLL_INTERVAL)
                     poll_resp = requests.get(f"{base_url}?key={api_key}", timeout=30)
-                    if poll_resp.status_code >= 400:
-                        continue  # keep polling
-                    poll_data = poll_resp.json()
+                    try:
+                        if poll_resp.status_code >= 400:
+                            continue  # keep polling
+                        poll_data = poll_resp.json()
+                    finally:
+                        try:
+                            poll_resp.close()
+                        except Exception:
+                            pass
                     if poll_data.get("done"):
                         # Step 3: Extract video URI and download
                         video_uri = (
@@ -190,14 +205,20 @@ class VeoVideoAdapter:
                             f"{video_uri}?key={api_key}",
                             timeout=120,
                         )
-                        if dl_resp.status_code == 200:
-                            video_b64 = base64.b64encode(dl_resp.content).decode()
-                            return {
-                                "created": int(time.time()),
-                                "data": [{"b64_json": video_b64}],
-                            }
+                        try:
+                            if dl_resp.status_code == 200:
+                                video_b64 = base64.b64encode(dl_resp.content).decode()
+                                return {
+                                    "created": int(time.time()),
+                                    "data": [{"b64_json": video_b64}],
+                                }
 
-                        raise RuntimeError(f"Veo download error {dl_resp.status_code}")
+                            raise RuntimeError(f"Veo download error {dl_resp.status_code}")
+                        finally:
+                            try:
+                                dl_resp.close()
+                            except Exception:
+                                pass
 
                     logger.info({
                         "event": "veo_polling",

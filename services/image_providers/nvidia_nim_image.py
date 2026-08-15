@@ -118,6 +118,19 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
             keys.insert(0, single)
         return keys
 
+    @staticmethod
+    def _get_api_keys(credentials: dict[str, Any] | None) -> list[str]:
+        """Read request-local keys populated by the image dispatcher."""
+        if not isinstance(credentials, dict):
+            return []
+        many = credentials.get("apiKeys") or credentials.get("api_keys") or []
+        if isinstance(many, list):
+            keys = [str(key).strip() for key in many if str(key).strip()]
+            if keys:
+                return keys
+        one = str(credentials.get("apiKey") or credentials.get("api_key") or "").strip()
+        return [one] if one else []
+
     def build_url(self, model: str, credentials: dict[str, Any] | None) -> str:
         return f"{self.BASE_URL}/{model}"
 
@@ -156,7 +169,18 @@ class NvidiaNimImageAdapter(BaseImageAdapter):
         keys = self._get_keys()
         api_key = keys[0] if keys else ""
         if credentials and isinstance(credentials, dict):
-            api_key = str(credentials.get("apiKey") or credentials.get("accessToken") or api_key)
+            try:
+                key_index = int(credentials.get("_key_index") or 0)
+            except (TypeError, ValueError):
+                key_index = 0
+            # Dispatcher đặt `_key_index` theo từng retry. Không dùng apiKey
+            # cố định ở đây: với api_keys=[A,B], code cũ retry bao nhiêu lần
+            # cũng gửi A nên B không bao giờ có cơ hội chạy.
+            supplied = self._get_api_keys(credentials)
+            if supplied:
+                api_key = supplied[key_index % len(supplied)]
+            else:
+                api_key = str(credentials.get("apiKey") or credentials.get("accessToken") or api_key)
         return {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",

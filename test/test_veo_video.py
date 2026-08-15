@@ -23,9 +23,13 @@ class _FakeResp:
         self._json = jsondata or {}
         self.content = content
         self.text = ""
+        self.closed = False
 
     def json(self) -> dict:
         return self._json
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class VeoGenerateTests(unittest.TestCase):
@@ -87,6 +91,29 @@ class VeoGenerateTests(unittest.TestCase):
         self.assertEqual(inst["image"]["bytesBase64Encoded"], "B64")
         self.assertEqual(body["parameters"]["aspectRatio"], "9:16")
         self.assertEqual(body["parameters"]["durationSeconds"], 8)
+
+    def test_submit_uses_the_configured_proxy_base(self) -> None:
+        adapter = vv.VeoVideoAdapter()
+        with mock.patch.object(vv, "_veo_base", return_value="https://proxy.example/v1beta"):
+            url = adapter._build_url({"apiKeys": ["K"]})
+        self.assertEqual(
+            url,
+            "https://proxy.example/v1beta/models/veo-3.1-generate-preview:predictLongRunning?key=K",
+        )
+
+    def test_generate_closes_submit_poll_and_download_responses(self) -> None:
+        adapter = vv.VeoVideoAdapter()
+        submit = self._submit()
+        poll = self._poll_done()
+        download = _FakeResp(200, content=b"VID")
+        with mock.patch.object(vv, "requests") as rq, \
+                mock.patch.object(vv.time, "sleep", return_value=None):
+            rq.post.return_value = submit
+            rq.get.side_effect = [poll, download]
+            adapter.generate({"prompt": "sunset"}, {"apiKeys": ["K"]})
+        self.assertTrue(submit.closed)
+        self.assertTrue(poll.closed)
+        self.assertTrue(download.closed)
 
 
 if __name__ == "__main__":

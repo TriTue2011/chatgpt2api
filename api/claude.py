@@ -943,7 +943,13 @@ def create_router() -> APIRouter:
         model = str(body.model or "claude/auto")
         messages = body.messages or []
 
-        if not _backend.is_available:
+        # Đường `/v1/claude/*` phải dùng cùng pool với router chính. Kiểm tra
+        # cookie/pool ở thread vì profile captcha-solver có thể cần HTTP; chạy
+        # trực tiếp trong async endpoint sẽ chặn event loop.
+        has_backend = await run_in_threadpool(
+            lambda: bool(_backend.is_available or _pick_session_key_from_pool(set()))
+        )
+        if not has_backend:
             raise HTTPException(
                 status_code=503,
                 detail={"error": "Claude not configured: set providers.claude.session_key in config.json"},
@@ -957,7 +963,9 @@ def create_router() -> APIRouter:
             # entire response before the first byte → TTFB == total.)
             def sse() -> Iterator[str]:
                 try:
-                    for chunk in _backend.chat(messages, model):
+                    # Không gọi `_backend` đơn lẻ: nếu session đầu 429/403 thì
+                    # `handle_claude_chat` mới ghi quota và xoay profile kế.
+                    for chunk in handle_claude_chat(model, messages, True):
                         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
                 except Exception as exc:
                     _logger().error({"event": "claude_chat_failed", "error": str(exc)})
@@ -965,19 +973,12 @@ def create_router() -> APIRouter:
                 yield "data: [DONE]\n\n"
             return StreamingResponse(sse(), media_type="text/event-stream")
 
-        # Non-stream: collect off the event loop.
+        # Non-stream: dùng cùng pool/failover với streaming, off event loop.
         try:
-            chunks = await run_in_threadpool(_backend.chat, messages, model)
-            content = await run_in_threadpool(_collect_text, chunks)
+            return await run_in_threadpool(handle_claude_chat, model, messages, False)
         except Exception as exc:
             _logger().error({"event": "claude_chat_failed", "error": str(exc)})
             raise HTTPException(status_code=502, detail={"error": f"Claude backend error: {exc}"})
-        return {
-            "id": f"chatcmpl-{uuid.uuid4().hex}", "object": "chat.completion",
-            "created": int(time.time()), "model": model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        }
 
     @router.get("/models")
     async def claude_models(authorization: str | None = Header(default=None)):

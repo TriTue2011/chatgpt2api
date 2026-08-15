@@ -20,8 +20,11 @@ Captcha-solver connection reused from providers.flow:
 
 from __future__ import annotations
 
+import base64
+from mimetypes import guess_type
 import time
 import uuid
+from urllib.parse import urlparse
 from typing import Any, Iterator
 
 import httpx
@@ -125,6 +128,26 @@ def _last_user_image(messages: list[dict[str, Any]]) -> str | None:
                 if url and isinstance(url, str):
                     return url
     return None
+
+
+def _safe_vision_image(image: str) -> str:
+    """Return a solver-safe data URL for a client-supplied vision image.
+
+    The captcha solver is a separate process/network namespace. Merely checking
+    a public URL here then forwarding that URL would still let its own DNS
+    lookup follow a rebinding/redirect into its local network. Fetch through
+    net_guard and send bytes instead, so the solver never performs client-led
+    egress.
+    """
+    raw = str(image or "").strip()
+    if raw.startswith("data:"):
+        return raw
+    from services.net_guard import fetch_media
+
+    media = fetch_media(raw, timeout=60, max_bytes=25 * 1024 * 1024)
+    mime = guess_type(urlparse(raw).path)[0] or "image/jpeg"
+    encoded = base64.b64encode(media).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
 def _build_openai_response(text: str, model: str) -> dict[str, Any]:
@@ -241,7 +264,7 @@ def _call_web_vision(
     if cfg["api_key"]:
         headers["Authorization"] = f"Bearer {cfg['api_key']}"
     body = {
-        "profile": profile, "image": image, "prompt": prompt,
+        "profile": profile, "image": _safe_vision_image(image), "prompt": prompt,
         "timeout": timeout, "headless": False,
     }
     try:
@@ -570,5 +593,4 @@ def _resolve_web_profiles(cfg: dict[str, Any], *, default: str) -> list[str]:
     joined = ",".join(parts) if parts else default
     profiles = _expand_profiles(joined)
     return profiles or [default]
-
 

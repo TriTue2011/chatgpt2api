@@ -64,7 +64,6 @@ so future models work without code changes.
 
 from __future__ import annotations
 
-import base64
 import threading
 import time
 from typing import Any
@@ -429,7 +428,11 @@ class FlowImageAdapter(BaseImageAdapter):
                 "flow provider missing captcha_solver_url in config.providers.flow"
             )
         # Stash the chosen account on the credentials dict so build_body
-        # can read it without re-rotating.
+        # can read it without re-rotating. Xoá account của lần thử trước
+        # trước: khi mọi account còn lại vừa vào cooldown, giữ lại giá trị cũ
+        # sẽ làm retry gửi lại ĐÚNG profile vừa báo quota.
+        if credentials is not None:
+            credentials.pop("_flow_account", None)
         account = self._current_account(key_try, credentials=credentials)
         if credentials is not None and account is not None:
             credentials["_flow_account"] = account
@@ -603,12 +606,15 @@ class FlowImageAdapter(BaseImageAdapter):
             try:
                 # Link CDN đã ký sẵn (`Expires` + `Signature`) và trả
                 # `access-control-allow-origin: *` — tải được bằng HTTP thường,
-                # không cần cookie hay bearer. Đo 09/08/2026.
-                r2 = requests.get(url, timeout=60)
-                r2.raise_for_status()
+                # không cần cookie hay bearer. Vẫn đi qua net_guard: URL là dữ
+                # liệu từ captcha-solver/upstream, không được phép biến thành
+                # fetch loopback hoặc metadata service nếu upstream lỗi/bị giả.
+                from services.image_providers._base import url_to_base64
+                image_b64 = url_to_base64(url, timeout=60)
+                if not image_b64:
+                    raise RuntimeError("Flow CDN trả dữ liệu ảnh rỗng")
                 data.append({
-                    "b64_json": base64.b64encode(r2.content).decode("ascii"),
-                    "_mime": r2.headers.get("content-type", "image/jpeg"),
+                    "b64_json": image_b64,
                     "_flow_meta": meta_chung,
                 })
             except Exception as exc:

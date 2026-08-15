@@ -140,7 +140,13 @@ def dang_mot_nhom(group_id: str, message: str) -> dict:
         r = requests.post(f"{base}/v1/facebook/group-post", headers=_headers(),
                           json={"group_id": group_id, "message": message},
                           timeout=_HTTP_TIMEOUT)
-        return r.json() if r.content else {"status": "loi", "detail": f"HTTP {r.status_code}"}
+        try:
+            return r.json() if r.content else {"status": "loi", "detail": f"HTTP {r.status_code}"}
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
     except Exception as exc:
         return {"status": "loi", "detail": str(exc)}
 
@@ -153,7 +159,13 @@ def mo_dang_nhap() -> str:
                           json={"url": "https://www.facebook.com",
                                 "profile": "facebook", "force": True},
                           timeout=60)
-        body = r.json()
+        try:
+            body = r.json()
+        finally:
+            try:
+                r.close()
+            except Exception:
+                pass
         novnc = str(body.get("open_in_browser") or "http://<máy-chủ>:6080")
         return (f"🔑 Em đã mở sẵn trang Facebook trong trình duyệt của bot.\n"
                 f"Anh/chị mở {novnc} , đăng nhập Facebook trong cửa sổ đó MỘT "

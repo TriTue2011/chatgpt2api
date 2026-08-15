@@ -125,6 +125,10 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
         last_error = ""
         for key_try in range(max(max_keys, 1)):
             try:
+                # Adapter không phải nào cũng nhận key_index ở build_url (NVIDIA
+                # chọn khoá trong build_headers). Giữ index trên credentials
+                # cục bộ của request để mọi adapter biết chính xác lượt retry.
+                credentials["_key_index"] = key_try
                 # Try with key_index for adapters that support key rotation
                 try:
                     url = adapter.build_url(route.model, credentials, key_try)
@@ -154,72 +158,81 @@ def _handle_adapter_image(route, body: dict[str, Any]) -> dict[str, Any] | Itera
                     json=req_body,
                     timeout=300,
                 )
-
-                if resp.status_code >= 400:
-                    error_text = ""
-                    try:
-                        error_text = resp.text[:500]
-                    except Exception:
-                        pass
-                    # Health-based rotation: let the adapter demote a dead
-                    # account (e.g. Flow logged-out profile) to the back of
-                    # its pool so the next request skips it.
-                    if hasattr(adapter, "on_key_failed"):
+                try:
+                    if resp.status_code >= 400:
+                        error_text = ""
                         try:
-                            adapter.on_key_failed(credentials, resp.status_code, error_text)
+                            error_text = resp.text[:500]
                         except Exception:
                             pass
-                    if resp.status_code in (400, 429) and key_try < max_keys - 1:
-                        logger.warning({
-                            "event": "image_adapter_retry",
+                        # Health-based rotation: let the adapter demote a dead
+                        # account (e.g. Flow logged-out profile) to the back of
+                        # its pool so the next request skips it.
+                        if hasattr(adapter, "on_key_failed"):
+                            try:
+                                adapter.on_key_failed(credentials, resp.status_code, error_text)
+                            except Exception:
+                                pass
+                        if resp.status_code in (400, 429) and key_try < max_keys - 1:
+                            logger.warning({
+                                "event": "image_adapter_retry",
+                                "provider": route.provider,
+                                "status": resp.status_code,
+                                "key_try": key_try,
+                                "error": error_text[:200],
+                            })
+                            last_error = error_text
+                            continue  # try next key
+                        logger.error({
+                            "event": "image_adapter_error",
                             "provider": route.provider,
                             "status": resp.status_code,
-                            "key_try": key_try,
-                            "error": error_text[:200],
+                            "error": error_text,
                         })
-                        last_error = error_text
-                        continue  # try next key
-                    logger.error({
-                        "event": "image_adapter_error",
-                        "provider": route.provider,
-                        "status": resp.status_code,
-                        "error": error_text,
-                    })
-                    raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code} detail={error_text[:300]}")
+                        raise RuntimeError(f"Image generation failed: {route.provider} status={resp.status_code} detail={error_text[:300]}")
 
-                # Try custom parse_response first (async adapters)
-                parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
+                    # Try custom parse_response first (async adapters)
+                    parsed = adapter.parse_response(resp) if hasattr(adapter, "parse_response") else None
 
-                if parsed is None:
-                    # Default: parse JSON + normalize
+                    if parsed is None:
+                        # Default: parse JSON + normalize
+                        try:
+                            raw_json = resp.json()
+                        except Exception:
+                            # Binary response (image bytes)
+                            raw_json = {"image_bytes": resp.content}
+                        parsed = raw_json
+
+                    normalized = adapter.normalize(parsed, body)
+                    data_items = normalized.get("data") or []
+                    all_data.extend(data_items)
+
+                    # Health-based rotation: promote the account that just worked
+                    # to the front of its pool (mirrors ChatGPT's promote_account).
+                    if data_items and hasattr(adapter, "on_key_success"):
+                        try:
+                            adapter.on_key_success(credentials)
+                        except Exception:
+                            pass
+
+                    if stream:
+                        stream_outputs.append(ImageOutput(
+                            kind="result",
+                            model=body.get("model", "unknown"),
+                            index=idx + 1,
+                            total=n,
+                            data=data_items,
+                        ))
+                    break  # success — stop trying keys
+                finally:
+                    # Adapter contracts return parsed data, not a live HTTP
+                    # stream. Always release the cffi connection, including
+                    # retry/error paths, or a busy image worker exhausts its
+                    # connection pool and starts timing out unrelated calls.
                     try:
-                        raw_json = resp.json()
-                    except Exception:
-                        # Binary response (image bytes)
-                        raw_json = {"image_bytes": resp.content}
-                    parsed = raw_json
-
-                normalized = adapter.normalize(parsed, body)
-                data_items = normalized.get("data") or []
-                all_data.extend(data_items)
-
-                # Health-based rotation: promote the account that just worked
-                # to the front of its pool (mirrors ChatGPT's promote_account).
-                if data_items and hasattr(adapter, "on_key_success"):
-                    try:
-                        adapter.on_key_success(credentials)
+                        resp.close()
                     except Exception:
                         pass
-
-                if stream:
-                    stream_outputs.append(ImageOutput(
-                        kind="result",
-                        model=body.get("model", "unknown"),
-                        index=idx + 1,
-                        total=n,
-                        data=data_items,
-                    ))
-                break  # success — stop trying keys
 
             except Exception as exc:
                 logger.error({"event": "image_adapter_fatal", "provider": route.provider, "error": str(exc)})

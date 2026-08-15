@@ -59,15 +59,19 @@ class NvidiaNimProvider:
 
     @property
     def is_available(self) -> bool:
-        if not self.api_key:
+        key = self.api_key
+        if not key:
             return False
         try:
             resp = requests.get(
                 f"{NVIDIA_BASE_URL}/models",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=10,
             )
-            return resp.status_code == 200
+            try:
+                return resp.status_code == 200
+            finally:
+                resp.close()
         except Exception:
             return False
 
@@ -80,10 +84,11 @@ class NvidiaNimProvider:
         max_tokens: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
+        _attempted_keys: set[str] | None = None,
         **kwargs,
     ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Forward chat request to NVIDIA NIM API."""
-        if not self.api_key:
+        if not self._get_keys():
             raise RuntimeError("NVIDIA NIM API key not configured")
 
         # Strip nv/ prefix if present
@@ -112,8 +117,13 @@ class NvidiaNimProvider:
             if key in kwargs and kwargs[key] is not None:
                 body[key] = kwargs[key]
 
+        # api_key xoay vòng khi đọc. Giữ một key cố định cho toàn bộ request
+        # để 429 được ghi đúng vào key thực sự đã gửi lên NVIDIA.
+        selected_key = self.api_key
+        if not selected_key:
+            raise RuntimeError("All NVIDIA NIM API keys rate limited")
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {selected_key}",
             "Content-Type": "application/json",
         }
         if stream:
@@ -131,16 +141,20 @@ class NvidiaNimProvider:
             )
 
             if resp.status_code == 429:
-                self._rate_limited[self.api_key] = time.time() + 60
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                self._rate_limited[selected_key] = time.time() + 60
                 # Try next key
-                attempted = getattr(self, "_attempted_keys", set())
-                attempted.add(self.api_key)
-                self._attempted_keys = attempted
+                attempted = _attempted_keys if _attempted_keys is not None else set()
+                attempted.add(selected_key)
                 if len(attempted) < len(self._get_keys()):
                     return self.chat_completions(
                         messages=messages, model=model, stream=stream,
                         temperature=temperature, max_tokens=max_tokens,
-                        tools=tools, tool_choice=tool_choice, **kwargs,
+                        tools=tools, tool_choice=tool_choice,
+                        _attempted_keys=attempted, **kwargs,
                     )
                 raise RuntimeError("All NVIDIA NIM API keys rate limited")
 
@@ -155,6 +169,10 @@ class NvidiaNimProvider:
                     "status": resp.status_code,
                     "error": error_text,
                 })
+                try:
+                    resp.close()
+                except Exception:
+                    pass
                 raise RuntimeError(f"NVIDIA NIM error {resp.status_code}: {error_text[:200]}")
 
             if stream:
@@ -250,58 +268,65 @@ class NvidiaNimProvider:
 
     def _non_stream_response(self, response, model: str) -> dict[str, Any]:
         """Handle non-streaming NVIDIA response."""
-        data = response.json()
-        completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-        created = int(time.time())
+        try:
+            data = response.json()
+            completion_id = f"chatcmpl-{uuid.uuid4().hex}"
+            created = int(time.time())
 
-        choices = data.get("choices") or []
-        message = {}
-        for choice in choices:
-            msg = choice.get("message") or {}
-            message = {
-                "role": msg.get("role", "assistant"),
-                "content": msg.get("content", ""),
+            choices = data.get("choices") or []
+            message = {}
+            for choice in choices:
+                msg = choice.get("message") or {}
+                message = {
+                    "role": msg.get("role", "assistant"),
+                    "content": msg.get("content", ""),
+                }
+                if msg.get("tool_calls"):
+                    message["tool_calls"] = msg["tool_calls"]
+
+            usage = data.get("usage") or {}
+            return {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "message": message, "finish_reason": choices[0].get("finish_reason", "stop") if choices else "stop"}],
+                "usage": {
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
             }
-            if msg.get("tool_calls"):
-                message["tool_calls"] = msg["tool_calls"]
-
-        usage = data.get("usage") or {}
-        return {
-            "id": completion_id,
-            "object": "chat.completion",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "message": message, "finish_reason": choices[0].get("finish_reason", "stop") if choices else "stop"}],
-            "usage": {
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
+        finally:
+            response.close()
 
     def list_models(self) -> list[dict[str, Any]]:
         """Fetch available models from NVIDIA API, prefixed with nv/."""
-        if not self.api_key:
+        key = self.api_key
+        if not key:
             return []
         try:
             resp = requests.get(
                 f"{NVIDIA_BASE_URL}/models",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {key}"},
                 timeout=15,
             )
-            if resp.status_code != 200:
-                return []
-            models = []
-            for item in resp.json().get("data", []):
-                slug = str(item.get("id") or "").strip()
-                if slug:
-                    models.append({
-                        "id": f"nv/{slug}",
-                        "object": "model",
-                        "created": item.get("created", 0),
-                        "owned_by": str(item.get("owned_by") or "nvidia"),
-                    })
-            return models
+            try:
+                if resp.status_code != 200:
+                    return []
+                models = []
+                for item in resp.json().get("data", []):
+                    slug = str(item.get("id") or "").strip()
+                    if slug:
+                        models.append({
+                            "id": f"nv/{slug}",
+                            "object": "model",
+                            "created": item.get("created", 0),
+                            "owned_by": str(item.get("owned_by") or "nvidia"),
+                        })
+                return models
+            finally:
+                resp.close()
         except Exception as exc:
             logger.warning({"event": "nvidia_nim_list_models_error", "error": str(exc)})
             return []
