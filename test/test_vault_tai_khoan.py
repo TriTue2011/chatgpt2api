@@ -270,6 +270,6 @@ class KhongGiuHatGiongOTrinhDuyetTests(unittest.TestCase):
         src = (GOC / "web/src/components/account-totp-display.tsx").read_text(encoding="utf-8")
         i = src.index("const refresh = useCallback")
         than = src[i:i + 1200]
-        vi_may_chu = than.index("/totp")
-        vi_cuc_bo = than.index("generateTotpCode")
-        self.assertLess(vi_may_chu, vi_cuc_bo, "vẫn sinh mã cục bộ trước")
+        self.assertIn("/totp", than)
+        self.assertNotIn("generateTotpCode", than,
+                         "không được fallback sang hạt giống ở browser")

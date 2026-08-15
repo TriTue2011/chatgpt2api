@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Shield, Eye, EyeOff, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { generateTotpCode, totpSecondsRemaining } from "@/lib/totp";
 import { request } from "@/lib/request";
 
 const STORAGE_KEY = "chatgpt2api_totp_secrets";
@@ -41,51 +40,43 @@ export function donHatGiongCu(email: string) {
   } catch { /* chế độ riêng tư chặn storage */ }
 }
 
-export function getTotpSecret(email: string): string {
-  const secrets = loadSecrets();
-  return secrets[email] || "";
-}
-
 export function AccountTotpDisplay({ email, label }: { email: string; label?: string }) {
   const [secret, setSecret] = useState("");
   const [showInput, setShowInput] = useState(false);
   const [code, setCode] = useState("");
   const [remaining, setRemaining] = useState(30);
-  const timerRef = useRef<number | null>(null);
-
   useEffect(() => {
-    const saved = getTotpSecret(email);
-    if (saved) setSecret(saved);
+    // Component được tái sử dụng khi người dùng mở một account khác. Không
+    // giữ seed đang gõ của account trước, nếu không một lần bấm Lưu có thể ghi
+    // nhầm hạt giống sang email mới.
+    setSecret("");
+    setShowInput(false);
+    donHatGiongCu(email);
   }, [email]);
 
-  const refresh = useCallback(async (sec: string) => {
-    // Ưu tiên MÃ do máy chủ sinh: hạt giống nằm trong `accounts.db` đã mã hoá,
-    // không cần rời khỏi máy chủ. Chỉ rơi về bản cục bộ khi máy chủ chưa có
-    // tài khoản đó (bản cũ, chưa di trú).
+  const refresh = useCallback(async () => {
+    // Chỉ lấy MÃ dùng một lần do máy chủ sinh. Fallback về hạt giống cũ ở
+    // localStorage vừa kéo dài cửa sổ XSS, vừa làm mã ngừng cập nhật sau reload
+    // vì state `secret` rỗng dù server đã có seed.
     try {
       const r = await request.get(
         `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`);
       const d = r.data as { code?: string; seconds_remaining?: number };
       if (d?.code) {
         setCode(d.code);
-        setRemaining(Number(d.seconds_remaining ?? totpSecondsRemaining()));
+        setRemaining(Number(d.seconds_remaining ?? 30));
         donHatGiongCu(email);
         return;
       }
-    } catch { /* máy chủ chưa có → dùng bản cục bộ bên dưới */ }
-    if (!sec.trim()) { setCode(""); return; }
-    try {
-      setCode(await generateTotpCode(sec));
-      setRemaining(totpSecondsRemaining());
-    } catch { setCode(""); }
+    } catch { /* chưa có seed trên máy chủ hoặc request lỗi */ }
+    setCode("");
   }, [email]);
 
   useEffect(() => {
-    if (!secret.trim()) { setCode(""); return; }
-    void refresh(secret);
-    timerRef.current = window.setInterval(() => { void refresh(secret); }, 5000);
-    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
-  }, [secret, refresh]);
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
 
   // Gửi hạt giống LÊN MÁY CHỦ (nơi nó được mã hoá), không lưu ở trình duyệt.
   const datTotpTrenMayChu = async (seed: string) => {
@@ -98,9 +89,10 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
     try {
       await datTotpTrenMayChu(secret.trim());
       donHatGiongCu(email);
+      setSecret("");
       setShowInput(false);
       toast.success("Đã lưu TOTP secret trên máy chủ");
-      void refresh("");
+      void refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Không lưu được TOTP secret");
     }
