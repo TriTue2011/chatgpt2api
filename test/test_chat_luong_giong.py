@@ -22,6 +22,25 @@ def test_id_nghitts_trong_bang_deu_co_that():
     assert trong_bang == that, f"chưa đo: {sorted(that - trong_bang)}"
 
 
+def test_id_vieneu_trong_bang_deu_co_that():
+    """Tên giọng VieNeu là tên tiếng Việt có dấu ("vieneu:Thái Sơn") nên gõ
+    lệch một dấu là nhãn im lặng biến mất. So với danh sách của chính model —
+    chỉ so được khi máy có gói `vieneu`, còn máy chạy test thì bỏ qua."""
+    from services.voice import config as vcfg
+
+    trong_bang = {k for k in clg.DO_DUOC if k.startswith(vcfg.VIENEU_PREFIX)}
+    assert trong_bang, "chưa đo giọng VieNeu nào"
+    assert all(k[len(vcfg.VIENEU_PREFIX):].strip() for k in trong_bang)
+    try:
+        that = {f"{vcfg.VIENEU_PREFIX}{v['name']}" for v in vcfg.vieneu_voices()}
+    except Exception:
+        that = set()
+    if that:
+        assert trong_bang == that, (
+            f"lệch: thừa {sorted(trong_bang - that)}, "
+            f"chưa đo {sorted(that - trong_bang)}")
+
+
 def test_so_do_nam_trong_khoang_hop_ly():
     for vid, (diem, am_xat, rung) in clg.DO_DUOC.items():
         assert 0 <= diem <= clg.TONG_AM, vid

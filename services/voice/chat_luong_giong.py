@@ -25,6 +25,15 @@ nên giá trị nhảy vài lần giữa hai lượt đo, dù thứ tự các gi
 Một phát hiện ở mức HỌ MODEL, không phải từng giọng: âm /k/ trong "kem" bị 13
 trong 19 giọng NghiTTS làm rụng, còn Piper thì 15 trong 19 giọng đọc đúng. Đo hai
 họ mới tách được "STT nghe kém" khỏi "họ model đọc kém" — ở đây là họ model.
+
+**VieNeu đo sau, cùng thước đo** (14 giọng, cũng `--lap 3`): họ này đọc đủ nhất
+trong ba họ — 3 giọng đạt trọn 33/33 (Thái Sơn, Mai Anh, Thục Đoan) và giọng kém
+nhất vẫn được 30/33, trong khi NghiTTS có giọng xuống tới 26/33. Âm /k/ vẫn là
+chỗ yếu chung của mọi họ: 8 trong 14 giọng VieNeu làm rụng nó.
+
+Chọn giọng thì đừng nhìn mỗi cột điểm: Trúc Ly được 32/33 nhưng âm xát chỉ 0,1
+— tức đúng kiểu "xin" nghe thành "chin" mà máy vẫn chấm là đạt. Nhãn trong danh
+mục ghép cả hai cột nên nó cảnh báo đúng chỗ đó.
 """
 
 from __future__ import annotations
@@ -73,6 +82,21 @@ DO_DUOC: dict[str, tuple[int, float, tuple[str, ...]]] = {
     "nghi:tai-an": (29, 0.1, ("nh", "gi", "k", "d")),
     "nghi:minh-khang": (28, 0.0, ("kh", "nh", "ng", "gi", "k")),
     "nghi:thien-tam": (26, 0.0, ("x", "ph", "r", "kh", "tr", "gh", "k")),
+    # ── VieNeu v3 Turbo (id "vieneu:<Tên>") ──
+    "vieneu:Thái Sơn": (33, 4.4, ()),
+    "vieneu:Mai Anh": (33, 17.3, ()),
+    "vieneu:Thục Đoan": (33, 18.5, ()),
+    "vieneu:Minh Đức": (32, 12.2, ("k",)),
+    "vieneu:Phạm Tuyên": (32, 8.9, ("k",)),
+    "vieneu:Thanh Bình": (32, 33.0, ("k",)),
+    "vieneu:Trúc Ly": (32, 0.1, ("k",)),
+    "vieneu:Quang Sơn": (32, 8.0, ("p",)),
+    "vieneu:Ngọc Trân": (32, 24.8, ("gi",)),
+    "vieneu:Xuân Vĩnh": (31, 1.6, ("tr", "n")),
+    "vieneu:Ngọc Linh": (31, 10.5, ("gi", "k")),
+    "vieneu:Đoan Trang": (31, 4.7, ("k", "t")),
+    "vieneu:Minh Triết": (31, 2.6, ("ph", "k")),
+    "vieneu:Thùy Dung": (30, 6.5, ("ph", "gh", "k")),
 }
 
 # Dưới mốc này thì âm xát /s/ nhẹ tới mức tai nghe lệch sang âm khác — đúng ca
