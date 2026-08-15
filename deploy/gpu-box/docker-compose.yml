@@ -10,6 +10,21 @@
 # Cần sẵn trên máy: driver NVIDIA + nvidia-container-toolkit. Compose không cài
 # hộ được hai thứ đó.
 #
+# DỮ LIỆU nằm ở /opt/gpu-box/<dịch vụ> (bind mount, không phải named volume) —
+# nhìn thấy và sao lưu được bằng lệnh thường, không phải lục
+# /var/lib/docker/volumes. Tạo trước khi Deploy:
+#
+#   mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu,fw-vision}
+#
+# Không phải chown tay: fw-nghe và fw-vision chạy bằng root, còn entrypoint của
+# vn-translate tự `chown /data` rồi mới hạ quyền xuống uid 1033.
+#
+# Đang chạy bằng named volume mà muốn chuyển sang đây thì chép sang cho khỏi
+# tải lại 3 GB model nghe (dừng container trước):
+#
+#   cp -a /var/lib/docker/volumes/fw-nghe-data/_data/.          /opt/gpu-box/fw-nghe/
+#   cp -a /var/lib/docker/volumes/vn-translate-gpu-data/_data/. /opt/gpu-box/vn-translate-gpu/
+#
 # Khai ở gateway (service c2a) sau khi chạy:
 #   NGHE_URL_GPU:     http://<ip-máy-gpu>:5002
 #   TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001
@@ -29,7 +44,7 @@ services:
       # card cũ hơn (vd GTX 1080, CC 6.1) đổi thành "int8".
       FW_COMPUTE: "int8_float16"
     volumes:
-      - fw_nghe_data:/data
+      - /opt/gpu-box/fw-nghe:/data
     deploy:
       resources:
         reservations:
@@ -62,7 +77,7 @@ services:
       # Lô đưa vào model mỗi lượt decode: 64 trên GPU (16 là mức cho CPU).
       TT_LO_MODEL: "64"
     volumes:
-      - vn_translate_gpu_data:/data
+      - /opt/gpu-box/vn-translate-gpu:/data
     deploy:
       resources:
         reservations:
@@ -105,7 +120,7 @@ services:
       - "2"
       - --no-warmup
     volumes:
-      - fw_vision_models:/root/.cache/llama.cpp
+      - /opt/gpu-box/fw-vision:/root/.cache/llama.cpp
     deploy:
       resources:
         reservations:
@@ -124,14 +139,3 @@ services:
       start_period: 600s
     security_opt:
       - no-new-privileges:true
-
-# Tên tuyệt đối để trùng volume của các container dựng bằng `docker run` trước
-# đây — không thì compose tạo volume mới và tải lại từ đầu (3 GB model nghe,
-# ~600 MB NLLB).
-volumes:
-  fw_nghe_data:
-    name: fw-nghe-data
-  vn_translate_gpu_data:
-    name: vn-translate-gpu-data
-  fw_vision_models:
-    name: fw-vision-models

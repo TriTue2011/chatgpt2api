@@ -39,9 +39,14 @@ docker run -d --name fw-nghe --restart unless-stopped --gpus all \
 ```
 
 Model large-v3 (~3 GB, `Systran/faster-whisper-large-v3` trên Hugging Face, giấy
-phép MIT) tải lần đầu vào volume `fw-nghe-data`; lần sau khởi động nhanh. Compose
-đã khai đúng tên volume đó nên chuyển từ `docker run` sang compose **không phải
-tải lại**.
+phép MIT) tải lần đầu vào `/data`; lần sau khởi động nhanh. Stack ở
+`deploy/gpu-box/` gắn `/data` vào **`/opt/gpu-box/fw-nghe`** trên máy chủ (bind
+mount, thấy được bằng `ls`), nên đang chạy bằng named volume mà chuyển sang thì
+chép nội dung cũ vào đó kẻo tải lại 3 GB:
+
+```bash
+cp -a /var/lib/docker/volumes/fw-nghe-data/_data/. /opt/gpu-box/fw-nghe/
+```
 
 **Cập nhật**: máy này *không có watchtower* (khác stack c2a). Chạy bằng image
 sẵn thì lên bản mới là `docker compose pull && docker compose up -d`; đang build

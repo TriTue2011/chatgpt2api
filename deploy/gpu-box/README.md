@@ -46,8 +46,32 @@ Xem [Qwen3-VL 2B GGUF](https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct-GGUF),
 và [sleeping on idle](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#sleeping-on-idle).
 
 Không build gì — hai image lấy từ ghcr. Lần đầu `fw-nghe` còn tải model
-large-v3 (~3 GB) vào volume `fw-nghe-data` rồi mới mở cổng, nên `/health` có thể
-im vài phút; `docker compose logs -f fw-nghe` xem tiến độ.
+large-v3 (~3 GB) rồi mới mở cổng, nên `/health` có thể im vài phút;
+`docker compose logs -f fw-nghe` xem tiến độ.
+
+## Dữ liệu nằm ở đâu
+
+Cả ba dịch vụ dùng **bind mount dưới `/opt/gpu-box`**, không phải named volume —
+nhìn và sao lưu bằng lệnh thường, không phải lục `/var/lib/docker/volumes`:
+
+| Thư mục máy chủ | Trong container | Chứa gì |
+|---|---|---|
+| `/opt/gpu-box/fw-nghe` | `/data` | Model whisper large-v3 (~3 GB) |
+| `/opt/gpu-box/vn-translate-gpu` | `/data` | Model NLLB + bảng thuật ngữ |
+| `/opt/gpu-box/fw-vision` | `/root/.cache/llama.cpp` | GGUF Qwen3-VL + mmproj |
+
+Tạo trước khi Deploy: `mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu,fw-vision}`
+
+Không phải `chown` tay: `fw-nghe` và `fw-vision` chạy bằng root, còn entrypoint
+của `vn-translate` tự `chown /data` rồi mới hạ quyền xuống uid 1033.
+
+Đang chạy bằng named volume mà chuyển sang đây thì chép lại cho khỏi tải lại
+model (dừng container trước):
+
+```bash
+cp -a /var/lib/docker/volumes/fw-nghe-data/_data/.          /opt/gpu-box/fw-nghe/
+cp -a /var/lib/docker/volumes/vn-translate-gpu-data/_data/. /opt/gpu-box/vn-translate-gpu/
+```
 
 **Cập nhật**: máy này không có watchtower (khác stack c2a) —
 `docker compose pull && docker compose up -d`.

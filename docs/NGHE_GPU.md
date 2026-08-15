@@ -89,8 +89,9 @@ Model large-v3 (~3 GB) tải lần đầu vào volume `fw-nghe-data`, lần sau 
 nhanh.
 
 Gọn hơn, và **không phải build gì**: `cd deploy/gpu-box && docker compose up -d`
-— dựng cả máy nghe lẫn máy dịch GPU từ image trên ghcr, khai đúng tên volume
-`fw-nghe-data` nên chuyển từ `docker run` sang không phải tải lại model. Xem
+— dựng cả máy nghe lẫn máy dịch GPU từ image trên ghcr. Dữ liệu của stack đó
+nằm ở `/opt/gpu-box/<dịch vụ>` (bind mount), nên chuyển từ `docker run` sang thì
+chép nội dung volume cũ vào đó nếu không muốn tải lại 3 GB model. Xem
 [`deploy/gpu-box/README.md`](../deploy/gpu-box/README.md). Hợp đồng API
 (`/health`, `/nghe`, cảnh báo tham số `batch`) và hai biến `FW_MODEL` /
 `FW_COMPUTE`: xem [`fw-nghe/README.md`](../fw-nghe/README.md).
