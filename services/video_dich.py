@@ -88,13 +88,14 @@ _YT = re.compile(
 _TIKTOK = re.compile(r"(?:tiktok\.com/[^\s]+|vm\.tiktok\.com/[A-Za-z0-9]+)")
 _LINK = re.compile(r"https?://[^\s<>\"')]+")
 
-# Qwen3-VL chỉ được quyền đổi xưng hô khi nó nhìn rõ HAI phụ nữ trở lên và
-# không thấy nam. Đây là ngưỡng cố ý chặt: không biến mọi "anh" thành "chị"
-# chỉ vì một khung có một phụ nữ, bởi người được gọi có thể đang ngoài hình.
+# Giới tính chỉ đủ để loại một xưng hô sai, không đủ để đoán vai vế. Qwen3-VL
+# chỉ đổi "anh" sang dạng trung tính khi thấy toàn phụ nữ; chỉ dùng "chị" khi
+# mô tả nói rõ họ là chị em.
 _HAI_NU = re.compile(
     r"\b(?:hai|2|ba|3|bốn|4|các|những)\s+(?:người\s+)?"
-    r"(?:phụ\s+nữ|cô\s+gái|chị\s+em|women|female)\b|\bcả\s+hai\s+(?:là\s+)?"
-    r"(?:phụ\s+nữ|cô\s+gái|chị\s+em|women|female)\b", re.I)
+    r"(?:phụ\s+nữ|cô\s+gái|women|female)\b|\bcả\s+hai\s+(?:là\s+)?"
+    r"(?:phụ\s+nữ|cô\s+gái|women|female)\b", re.I)
+_CHI_EM = re.compile(r"\b(?:hai|2|cả\s+hai)\s+chị\s+em\b", re.I)
 _CO_NAM = re.compile(r"\b(?:đàn\s+ông|nam\s+giới|con\s+trai|men|male)\b", re.I)
 _GOI_ANH = re.compile(r"\b(với|cùng|cho|của)\s+anh\b", re.I)
 _ANH_OI = re.compile(r"\banh(?=\s+(?:ơi|à|nhé|nhỉ|hả|chứ)\b)", re.I)
@@ -103,6 +104,7 @@ _ANH_CHU_NGU = re.compile(
     r"sợ|biết|cho|làm|nói|đóng|hãy|được|thể)\b)", re.I)
 _TAO = re.compile(r"\btao\b", re.I)
 _MAY = re.compile(r"\bmày\b", re.I)
+_LAM_GI_MAY = re.compile(r"\blàm\s+gì\s+mày\b", re.I)
 _NHAN_KHONG_PHAI_LOI = re.compile(r"\[[^\]\n]{1,120}\]")
 
 LOI_CHUA_CO_TIENG = (
@@ -145,31 +147,33 @@ def loc_nhan_khong_phai_loi(chu: str) -> str:
 
 def sua_xung_ho_theo_vision(ban_dich: list[str], vision: dict[str, Any] | None
                              ) -> tuple[list[str], int]:
-    """Chuẩn hoá lời phụ đề Việt và sửa ``anh`` → ``chị`` khi đủ bằng chứng.
+    """Chuẩn hoá lời phụ đề Việt mà không đoán vai vế.
 
     LibreTranslate không nhận system prompt, nên trước đây metadata Vision chỉ
     được trả ra API chứ không thể tác động vào bản dịch. Hậu xử lý này giới hạn
     cách đổi giới tính ở các mẫu *người được gọi/chủ ngữ* ("với anh", "anh
-    không thể") và chỉ chạy khi toàn bộ mô tả không hề nói tới nam. ``tao/mày``
-    là bản dịch máy thô nên luôn quy về ``tôi/bạn``; khi cảnh xác nhận toàn nữ,
-    người được gọi là ``chị``.
+    không thể"). Cảnh toàn phụ nữ chỉ đổi sang ``bạn``; ``chị`` chỉ dùng nếu
+    Vision nói rõ "hai chị em". ``tao/mày`` là bản dịch máy thô nên quy về
+    ``tôi/bạn`` (hoặc ``chị`` khi có đúng bằng chứng quan hệ).
     """
     mo_ta = (vision or {}).get("ngu_canh") or []
     mo_ta = [str(x) for x in mo_ta if str(x).strip()] if isinstance(mo_ta, list) else []
-    chi_co_nu = (bool(mo_ta) and any(_HAI_NU.search(x) for x in mo_ta)
+    chi_em = bool(mo_ta) and any(_CHI_EM.search(x) for x in mo_ta)
+    chi_co_nu = (bool(mo_ta) and (chi_em or any(_HAI_NU.search(x) for x in mo_ta))
                   and not any(_CO_NAM.search(x) for x in mo_ta))
+    dai_tu = "chị" if chi_em else "bạn"
 
     so_sua = 0
 
-    def _doi_chi(m):
+    def _doi_dai_tu(m):
         nonlocal so_sua
         so_sua += 1
-        return "Chị" if m.group(0)[:1].isupper() else "chị"
+        return dai_tu.title() if m.group(0)[:1].isupper() else dai_tu
 
     def _doi_goi(m):
         nonlocal so_sua
         so_sua += 1
-        return m.group(1) + " chị"
+        return m.group(1) + " " + dai_tu
 
     def _doi_toi(m):
         nonlocal so_sua
@@ -179,18 +183,24 @@ def sua_xung_ho_theo_vision(ban_dich: list[str], vision: dict[str, Any] | None
     def _doi_nguoi_nghe(m):
         nonlocal so_sua
         so_sua += 1
-        return "Chị" if chi_co_nu and m.group(0)[:1].isupper() else \
-            ("chị" if chi_co_nu else "bạn")
+        return (dai_tu.title() if m.group(0)[:1].isupper() else dai_tu) \
+            if chi_co_nu else "bạn"
+
+    def _doi_lam_gi_may(_m):
+        nonlocal so_sua
+        so_sua += 1
+        return "làm gì với " + dai_tu
 
     ra = []
     for chu in ban_dich:
         chu_moi = loc_nhan_khong_phai_loi(str(chu))
         chu_moi = _TAO.sub(_doi_toi, chu_moi)
+        chu_moi = _LAM_GI_MAY.sub(_doi_lam_gi_may, chu_moi)
         chu_moi = _MAY.sub(_doi_nguoi_nghe, chu_moi)
         if chi_co_nu:
             chu_moi = _GOI_ANH.sub(_doi_goi, chu_moi)
-            chu_moi = _ANH_OI.sub(_doi_chi, chu_moi)
-            chu_moi = _ANH_CHU_NGU.sub(_doi_chi, chu_moi)
+            chu_moi = _ANH_OI.sub(_doi_dai_tu, chu_moi)
+            chu_moi = _ANH_CHU_NGU.sub(_doi_dai_tu, chu_moi)
         ra.append(chu_moi)
     return ra, so_sua
 

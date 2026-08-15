@@ -83,14 +83,27 @@ def test_khong_gop_loi_thoai_qua_ranh_canh_vision():
 
 
 @pytest.mark.pure
-def test_vision_hai_phu_nu_sua_xung_ho_nam_sai(monkeypatch):
-    """Ngữ cảnh Qwen phải đi tới hậu xử lý, không chỉ nằm trong metadata."""
+def test_vision_hai_phu_nu_chi_sua_sang_xung_ho_trung_tinh(monkeypatch):
+    """Biết giới tính không đủ để đoán vai vế chị/em/cô/bà."""
     monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a:
                         ["Tôi nói chuyện với anh được không? Một mình?"])
 
     r = vd._dich_va_dong_goi(
         [vd.Doan(0.0, 3.0, "Can I talk to you? Alone?")], "en", "vi", 3.0,
         vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
+    )
+
+    assert "Tôi nói chuyện với bạn được không?" in r["chu"]
+
+
+@pytest.mark.pure
+def test_vision_noi_ro_hai_chi_em_moi_duoc_dung_chi(monkeypatch):
+    monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a:
+                        ["Tôi nói chuyện với anh được không?"])
+
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 3.0, "Can I talk to you?")], "en", "vi", 3.0,
+        vision={"engine": "gpu", "ngu_canh": ["Hai chị em đang nói chuyện."]},
     )
 
     assert "Tôi nói chuyện với chị được không?" in r["chu"]
@@ -110,8 +123,8 @@ def test_phu_de_hai_phu_nu_loc_nhan_am_thanh_va_giu_xung_ho_trung_tinh(monkeypat
         vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
     )
 
-    assert "chị không thể" in r["chu"]
-    assert "Tôi đã làm gì chị?" in r["chu"]
+    assert "bạn không thể" in r["chu"]
+    assert "Tôi đã làm gì với bạn?" in r["chu"]
     assert "[think]" not in r["chu"]
     assert "Tao" not in r["chu"] and "mày" not in r["chu"]
 
