@@ -40,6 +40,10 @@ _KHOA_BI_MAT = re.compile(
     r"(token|pass|password|secret|key|credentials|client_secret|sa_file)",
     re.I)
 _TEN_REMOTE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+# ``loai`` đứng trước dấu ``--`` của CLI, còn tên option dù đứng sau vẫn phải
+# là định danh rclone chứ không phải cờ/chuỗi có khoảng trắng hay ``=``.
+_LOAI_REMOTE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_KHOA_THAM_SO_REMOTE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 
 
 def _thu_muc_data() -> Path:
@@ -337,17 +341,22 @@ def tao_remote(ten: str, loai: str, tham_so: dict) -> dict:
     if not _TEN_REMOTE.match(ten):
         return {"ok": False, "error": "tên remote chỉ gồm chữ, số, dấu . _ -"}
     loai = str(loai or "").strip()
-    if not loai:
-        return {"ok": False, "error": "thiếu loại remote"}
+    if not _LOAI_REMOTE.match(loai):
+        return {"ok": False, "error": "loại remote không hợp lệ"}
     # `--obscure`: BẮT BUỘC. Mặc định rclone tự làm rối các ô mật khẩu, nhưng
     # tài liệu của họ nói rõ nó không phân biệt được mật khẩu thật với mật khẩu
     # đã làm rối khi chuỗi dài từ 22 ký tự và chỉ gồm ký tự base64 — mà khoá API
     # thì hầu hết đúng dạng đó. Đoán nhầm là lưu nguyên văn, và kết nối hỏng mà
     # không rõ vì sao. Ô ở giao diện luôn nhận mật khẩu THẬT nên ép làm rối là
     # đúng trong mọi trường hợp.
-    args = ["config", "create", ten, loai, "--obscure"]
+    # Rclone cho phép option ở xen giữa tham số. Dấu ``--`` buộc toàn bộ cặp
+    # cấu hình sau nó là positional `key value`, nên chúng không thể ghi đè
+    # global flag (như ``--config``) ngay cả khi dữ liệu đến qua API/admin bot.
+    args = ["config", "create", ten, loai, "--obscure", "--"]
     for k, v in (tham_so or {}).items():
         k = str(k).strip()
+        if k and not _KHOA_THAM_SO_REMOTE.match(k):
+            return {"ok": False, "error": f"tên tham số remote không hợp lệ: {k[:60]}"}
         if k and str(v).strip():
             args += [k, str(v)]
     ok, _, err = _chay(args, timeout=TIMEOUT_TRUYEN)

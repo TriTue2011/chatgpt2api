@@ -13,6 +13,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 GOC = Path(__file__).resolve().parents[1]
@@ -220,6 +221,25 @@ class KhongQuaShellTests(unittest.TestCase):
 
         rc.tao_remote("mega1", "mega", {"user": "a@b.c", "pass": "MatKhauRatDaiVaBase64Nhe123"})
         self.assertIn("--obscure", da_goi["lenh"])
+
+    def test_tao_remote_khong_cho_tham_so_bien_thanh_co_cli(self):
+        """Config key do form gửi lên phải luôn là key, không phải ``--config``.
+
+        Rclone parse option ở bất kỳ vị trí nào trước dấu ``--``. Dù API chỉ
+        dành cho admin, khóa config có thể đi qua trợ lý/model nên không được
+        để một giá trị dữ liệu thay đổi file config hay cờ thực thi.
+        """
+        with mock.patch.object(rc, "_chay", return_value=(True, "{}", "")) as chay:
+            ok = rc.tao_remote("drive1", "drive", {"client_id": "abc"})
+        self.assertTrue(ok["ok"])
+        args = chay.call_args_list[0].args[0]
+        self.assertEqual(args[args.index("--obscure") + 1], "--")
+        self.assertEqual(args[-2:], ["client_id", "abc"])
+
+        for loai, tham_so in (("--config", {}), ("drive", {"--config": "x"})):
+            with mock.patch.object(rc, "_chay") as bad:
+                self.assertFalse(rc.tao_remote("drive1", loai, tham_so)["ok"])
+                bad.assert_not_called()
 
     def test_thieu_rclone_thi_bao_ro_chu_khong_no(self):
         goc = rc.shutil.which
