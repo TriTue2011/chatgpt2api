@@ -24,7 +24,7 @@ import logging
 import socket
 import urllib.error
 import urllib.request
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -167,13 +167,24 @@ def is_http_url(url: str) -> bool:
 
 
 def is_self_images_url(url: str) -> bool:
-    """True nếu URL trỏ media nội bộ ``/images/`` (gateway tự phục vụ)."""
+    """True nếu URL trỏ media nội bộ an toàn dưới ``/images/``.
+
+    Cần xét ``u.path`` chứ không tìm chuỗi trong URL thô: ``/images/`` nằm ở
+    query không biến request thành media, và ``..`` sau prefix không được phép
+    thoát khỏi route images khi ta đổi host sang loopback.
+    """
     raw = str(url or "").strip()
-    if "/images/" not in raw:
-        return False
     try:
         u = urlparse(raw)
     except Exception:
+        return False
+    prefix = "/images/"
+    if not u.path.startswith(prefix):
+        return False
+    relative = unquote(u.path[len(prefix):])
+    if not relative or relative.startswith(("/", "\\")) or "\\" in relative:
+        return False
+    if any(part in (".", "..") for part in relative.split("/")):
         return False
     host = (u.hostname or "").lower()
     # Relative path or localhost/self host only — external host + /images/ still untrusted.
@@ -193,9 +204,20 @@ def is_self_images_url(url: str) -> bool:
 
 def self_images_fetch(url: str, *, timeout: float = 30,
                       max_bytes: int = _DEFAULT_MAX_BYTES) -> bytes:
-    """Fetch media ``/images/…`` qua loopback (tránh hairpin CF 403)."""
-    path = str(url).split("/images/", 1)[1]
-    local = f"http://127.0.0.1:80/images/{path}"
+    """Fetch media ``/images/…`` qua loopback (tránh hairpin CF 403).
+
+    Giữ nguyên query ``exp``/``sig`` của signed media, nhưng chỉ sau khi
+    ``is_self_images_url`` đã xác nhận path không thể trỏ sang route nội bộ
+    khác.
+    """
+    raw = str(url or "").strip()
+    if not is_self_images_url(raw):
+        raise BlockedURL("URL không phải media nội bộ an toàn")
+    u = urlparse(raw)
+    relative = u.path[len("/images/"):]
+    local = f"http://127.0.0.1:80/images/{quote(relative, safe='/%')}"
+    if u.query:
+        local += f"?{u.query}"
     with urllib.request.urlopen(local, timeout=timeout) as resp:
         data = resp.read(max_bytes + 1)
     if len(data) > max_bytes:

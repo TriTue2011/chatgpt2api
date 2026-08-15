@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import unittest
 from unittest import mock
-from urllib.parse import urlparse
 
 from services import net_guard
 from services.privacy_gate import SessionVault
@@ -56,6 +55,21 @@ class NetGuardSSRFTests(unittest.TestCase):
             "http://evil.com/images/x.png"))
         self.assertFalse(net_guard.is_self_images_url(
             "http://169.254.169.254/latest"))
+
+    def test_self_images_does_not_accept_query_or_path_traversal(self) -> None:
+        """Chỉ path thật sự dưới /images/ mới được đổi sang loopback.
+
+        Nếu thấy ``/images/`` trong query, hoặc giữ ``..`` khi ghép URL, caller
+        có thể vô tình gọi một endpoint nội bộ khác qua 127.0.0.1.
+        """
+        for url in (
+            "http://localhost/api?next=/images/../api/settings",
+            "http://localhost/images/../api/settings",
+            "http://localhost/images/%2e%2e/api/settings",
+        ):
+            self.assertFalse(net_guard.is_self_images_url(url), url)
+            with self.assertRaises(net_guard.BlockedURL):
+                net_guard.self_images_fetch(url)
 
     def test_safe_fetch_blocks_private_before_network(self) -> None:
         with self.assertRaises(net_guard.BlockedURL):
