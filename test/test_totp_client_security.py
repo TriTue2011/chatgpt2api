@@ -26,6 +26,16 @@ class TotpClientSecurityTests(unittest.TestCase):
         self.assertIn("await request.put(", SOURCE)
         self.assertIn("void migrateLegacySeed();", SOURCE)
 
+    def test_khong_de_seed_cu_trong_browser_ghi_de_seed_dang_dung(self):
+        """Máy chủ đã có hạt giống thì bản ở trình duyệt là bản CŨ. Đẩy lên là
+        mất phương án đăng nhập hai lớp, nên phải hỏi máy chủ trước khi PUT."""
+        di_tru = SOURCE[SOURCE.index("const migrateLegacySeed"):]
+        di_tru = di_tru[:di_tru.index("useEffect(")]
+        self.assertLess(di_tru.index("await request.get("),
+                        di_tru.index("await request.put("),
+                        "phải kiểm máy chủ TRƯỚC khi đẩy hạt giống cũ lên")
+        self.assertIn("donHatGiongCu(email);\n        return;", di_tru)
+
 
 if __name__ == "__main__":
     unittest.main()

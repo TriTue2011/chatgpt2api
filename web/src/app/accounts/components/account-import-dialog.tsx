@@ -188,6 +188,17 @@ export function AccountImportDialog({ disabled, onImported }: AccountImportDialo
         if (config.codex_auto_list) {
           setCodexDraft(prev => ({ ...prev, githubEmail: config.codex_auto_list }));
         }
+        // IMAP dùng chung với thẻ Settings, lấy từ MÁY CHỦ. Bản cũ đọc từ
+        // localStorage — đã bỏ vì app-password nằm lại trình duyệt vô thời hạn.
+        // Không có nguồn nào thì mỗi lần nhập hàng loạt lại phải gõ tay.
+        if (config.codex_imap_gmail_email || config.codex_imap_gmail_app_password) {
+          setCodexDraft(prev => ({
+            ...prev,
+            gmailEmail: prev.gmailEmail || String(config.codex_imap_gmail_email || ""),
+            gmailAppPassword:
+              prev.gmailAppPassword || String(config.codex_imap_gmail_app_password || ""),
+          }));
+        }
       } catch {/* keep defaults */}
     })();
     return () => {

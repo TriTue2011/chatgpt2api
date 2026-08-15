@@ -63,7 +63,9 @@ services:
         hard: 65536
 
     ports:
-      - "3030:80"        # API + web UI (+ same-origin /api/captcha proxy)
+      # Cổng trong container LẤY THEO APP_PORT: đổi sang non-root là gateway
+      # nghe 8080, ánh xạ cứng 80 ở đây thì cổng 3030 trỏ vào chỗ không ai nghe.
+      - "3030:${APP_PORT:-80}"   # API + web UI (+ same-origin /api/captcha proxy)
       - "6080:6080"      # noVNC — LAN OK nếu có VNC_PASSWORD; đừng mở WAN
       - "3001:3001"      # zalo-server — cho HA/integration trên LAN
       # Wyoming cho Home Assistant — 106xx ĐỌC, 107xx NGHE; thứ tự tiếng:
@@ -174,7 +176,8 @@ services:
       #
       #   APP_USER: c2a
       #   APP_PORT: 8080          # cổng 80 là đặc quyền, non-root không bind được
-      #   ports:  - "3030:8080"   # và sửa ánh xạ cho khớp
+      #
+      # Ánh xạ cổng ở trên đã đọc theo APP_PORT nên KHÔNG phải sửa tay nữa.
       #
       # supervisord tự `chown -R` /app/data trước khi khởi động, nên không phải
       # chown thủ công trên host. Bộ X (noVNC) vẫn chạy root — đây là bước tách
@@ -237,6 +240,10 @@ services:
     restart: unless-stopped
     profiles: ["postgres"]
 
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -264,6 +271,10 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
 
     environment:
       # BẮT BUỘC: mount settings.yml của mình thì entrypoint không tự sinh khoá,
@@ -315,6 +326,9 @@ services:
     image: ghcr.io/tritue2011/vn-translate:latest
     container_name: vn-translate
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
     environment:
       TT_LANGS: ${TT_LANGS:-en,vi,ja,ko,zh-Hans}
       # Thang model: hỏng thì tự chuyển model kế (xem vn-translate/app/engine.py).
@@ -341,12 +355,19 @@ services:
     volumes:
       - /opt/libretranslate-models:/data
     restart: "no"
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
 
   libretranslate:
     profiles: ["libretranslate"]
     image: libretranslate/libretranslate:latest
     container_name: libretranslate
     restart: unless-stopped
+
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
 
     depends_on:
       libretranslate-init:

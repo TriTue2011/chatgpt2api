@@ -72,6 +72,17 @@ export function AccountTotpDisplay({ email, label }: { email: string; label?: st
     const seed = String(loadSecrets()[email] || "").trim();
     if (!seed) return;
     try {
+      // Máy chủ đã có hạt giống thì bản trong trình duyệt là bản CŨ — đẩy lên
+      // là ghi đè hạt giống đang dùng được, tức mất phương án đăng nhập hai
+      // lớp. Chỉ di trú khi máy chủ chưa có gì.
+      const daCo = await request.get(
+        `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`);
+      if ((daCo.data as { code?: string })?.code) {
+        donHatGiongCu(email);
+        return;
+      }
+    } catch { /* máy chủ chưa có seed hoặc lỗi mạng → thử di trú bên dưới */ }
+    try {
       await request.put(
         `/api/captcha/v1/accounts/saved/${encodeURIComponent(email)}/totp`,
         {totp_secret: seed},
