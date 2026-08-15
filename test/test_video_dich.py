@@ -90,7 +90,10 @@ def test_vision_hai_phu_nu_chi_sua_sang_xung_ho_trung_tinh(monkeypatch):
 
     r = vd._dich_va_dong_goi(
         [vd.Doan(0.0, 3.0, "Can I talk to you? Alone?")], "en", "vi", 3.0,
-        vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
+        vision={"engine": "gpu", "ngu_canh_canh": [{
+            "bat_dau": 0.0, "ket_thuc": 3.0,
+            "mo_ta": "Hai phụ nữ đang nói chuyện.",
+        }]},
     )
 
     assert "Tôi nói chuyện với bạn được không?" in r["chu"]
@@ -103,7 +106,10 @@ def test_vision_noi_ro_hai_chi_em_moi_duoc_dung_chi(monkeypatch):
 
     r = vd._dich_va_dong_goi(
         [vd.Doan(0.0, 3.0, "Can I talk to you?")], "en", "vi", 3.0,
-        vision={"engine": "gpu", "ngu_canh": ["Hai chị em đang nói chuyện."]},
+        vision={"engine": "gpu", "ngu_canh_canh": [{
+            "bat_dau": 0.0, "ket_thuc": 3.0,
+            "mo_ta": "Hai chị em đang nói chuyện.",
+        }]},
     )
 
     assert "Tôi nói chuyện với chị được không?" in r["chu"]
@@ -120,7 +126,10 @@ def test_phu_de_hai_phu_nu_loc_nhan_am_thanh_va_giu_xung_ho_trung_tinh(monkeypat
     r = vd._dich_va_dong_goi(
         [vd.Doan(0.0, 6.0, "No, you can't. What did I ever do to you? [think]")],
         "en", "vi", 6.0,
-        vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
+        vision={"engine": "gpu", "ngu_canh_canh": [{
+            "bat_dau": 0.0, "ket_thuc": 6.0,
+            "mo_ta": "Hai phụ nữ đang nói chuyện.",
+        }]},
     )
 
     assert "bạn không thể" in r["chu"]
@@ -137,10 +146,38 @@ def test_vision_khong_chac_chan_giu_nguyen_xung_ho(monkeypatch):
 
     r = vd._dich_va_dong_goi(
         [vd.Doan(0.0, 3.0, "Can I talk to you?")], "en", "vi", 3.0,
-        vision={"engine": "gpu", "ngu_canh": ["Một nam và một nữ đang nói chuyện."]},
+        vision={"engine": "gpu", "ngu_canh_canh": [{
+            "bat_dau": 0.0, "ket_thuc": 3.0,
+            "mo_ta": "Một nam và một nữ đang nói chuyện.",
+        }]},
     )
 
     assert r["chu"] == "Tôi nói chuyện với anh được không?"
+
+
+@pytest.mark.pure
+def test_vision_chi_sua_xung_ho_o_dung_canh(monkeypatch):
+    """Cảnh hai phụ nữ không được đổi đại từ của cảnh kế có nam giới."""
+    monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a: [
+        "Tôi nói chuyện với anh được không?",
+        "Anh nên đi.",
+    ])
+
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 2.0, "Can I talk to you?"),
+         vd.Doan(10.0, 12.0, "You should leave.")],
+        "en", "vi", 12.0,
+        vision={"engine": "gpu", "ngu_canh_canh": [
+            {"bat_dau": 0.0, "ket_thuc": 2.0,
+             "mo_ta": "Hai phụ nữ đang nói chuyện."},
+            {"bat_dau": 10.0, "ket_thuc": 12.0,
+             "mo_ta": "Một người đàn ông đang nói chuyện."},
+        ]},
+        ranh_canh=[2.0],
+    )
+
+    assert "Tôi nói chuyện với bạn được không?" in r["chu"]
+    assert "Anh nên đi." in r["chu"]
 
 
 @pytest.mark.pure

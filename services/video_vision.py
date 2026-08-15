@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import gpu_queue
@@ -36,6 +36,9 @@ class KetQuaVision:
     mo_ta: list[str]
     canh_bao: str = ""
     so_canh_xu_ly: int = 0
+    #: Mô tả gắn với CẢNH đã xem. ``mo_ta`` giữ lại cho API cũ/trạng thái,
+    #: còn code dịch phải dùng trường này để không lấy một frame áp cho phim.
+    ngu_canh_canh: list[dict[str, object]] = field(default_factory=list)
 
     @property
     def so_canh(self) -> int:
@@ -261,15 +264,26 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
                              toi_da_canh=toi_da)
         khung = [trich_khung(duong_video, t) for t in moc]
 
-        def _loi_thoai_o(moc_giay: float) -> str:
+        def _loi_thoai_trong_canh(bat_dau: float, ket_thuc: float) -> str:
             return " ".join(str(getattr(d, "chu", "")) for d in (loi_thoai or [])
-                            if float(getattr(d, "bat_dau", -1)) <= moc_giay
-                            <= float(getattr(d, "ket_thuc", -1)))
+                            if float(getattr(d, "ket_thuc", -1)) > bat_dau
+                            and float(getattr(d, "bat_dau", -1)) < ket_thuc)
+
+        def _chi_so_canh(moc_giay: float) -> int:
+            for i, (bat_dau, ket_thuc) in enumerate(canh):
+                if bat_dau <= moc_giay <= ket_thuc:
+                    return i
+            raise LoiVision(f"không ghép được frame {moc_giay:.2f}s vào cảnh")
 
         mo_ta: list[str] = []
+        mo_ta_theo_canh: list[list[str]] = [[] for _ in canh]
         with gpu_queue.giu("Qwen3-VL"):
             for jpeg, t in zip(khung, moc):
-                mo_ta.append(phan_tich_khung(jpeg, t, _loi_thoai_o(t)))
+                i = _chi_so_canh(t)
+                bat_dau, ket_thuc = canh[i]
+                ket = phan_tich_khung(jpeg, t, _loi_thoai_trong_canh(bat_dau, ket_thuc))
+                mo_ta.append(ket)
+                mo_ta_theo_canh[i].append(ket)
             da_unload = _doi_unload()
         canh_bao = ""
         if len(canh_day_du) > len(canh):
@@ -281,8 +295,18 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
         # Tách câu dịch ở MỌI cut CPU đã biết, không chỉ 40 cảnh lấy mẫu Qwen.
         # ``so_canh_xu_ly`` vẫn là số cảnh thực sự gửi vision để status không
         # đánh lừa người dùng rằng Qwen đã xem hết một phim có hàng nghìn cut.
+        ngu_canh_canh = []
+        for (bat_dau, ket_thuc), mo_ta_mot_canh in zip(canh, mo_ta_theo_canh):
+            # Hai frame có thể trả cùng nhận định. Bỏ bản trùng để không tăng
+            # trọng số vô lý khi caller đọc metadata, nhưng vẫn giữ ``mo_ta``
+            # cũ theo từng frame cho thống kê/debug.
+            mo_ta_hop = " ".join(dict.fromkeys(x for x in mo_ta_mot_canh if x)).strip()
+            if mo_ta_hop:
+                ngu_canh_canh.append({"bat_dau": bat_dau, "ket_thuc": ket_thuc,
+                                       "mo_ta": mo_ta_hop})
         return KetQuaVision("gpu", [b for b, _ in canh_day_du[1:]], mo_ta,
-                             canh_bao, so_canh_xu_ly=len(canh))
+                             canh_bao, so_canh_xu_ly=len(canh),
+                             ngu_canh_canh=ngu_canh_canh)
     except gpu_queue.QuaTaiGpu as exc:
         # Whisper/dịch đang giữ lượt là backpressure bình thường. Không đẩy
         # Qwen vào circuit breaker vì ngay sau khi GPU rảnh nó vẫn tốt.

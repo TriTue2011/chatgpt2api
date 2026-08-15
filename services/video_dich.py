@@ -145,54 +145,76 @@ def loc_nhan_khong_phai_loi(chu: str) -> str:
     return " ".join(_NHAN_KHONG_PHAI_LOI.sub(" ", str(chu or "")).split())
 
 
-def sua_xung_ho_theo_vision(ban_dich: list[str], vision: dict[str, Any] | None
-                             ) -> tuple[list[str], int]:
+def _ngu_canh_cho_doan(vision: dict[str, Any] | None, bat_dau: float,
+                        ket_thuc: float) -> list[str]:
+    """Lấy mô tả Vision giao với đúng đoạn phụ đề, không lấy cả phim."""
+    ra: list[str] = []
+    for canh in (vision or {}).get("ngu_canh_canh") or []:
+        if not isinstance(canh, dict):
+            continue
+        try:
+            b = float(canh.get("bat_dau"))
+            k = float(canh.get("ket_thuc"))
+        except (TypeError, ValueError):
+            continue
+        if k > bat_dau and b < ket_thuc:
+            mo_ta = str(canh.get("mo_ta") or "").strip()
+            if mo_ta:
+                ra.append(mo_ta)
+    return ra
+
+
+def sua_xung_ho_theo_vision(ban_dich: list[str], vision: dict[str, Any] | None,
+                             doan: list[Doan] | None = None) -> tuple[list[str], int]:
     """Chuẩn hoá lời phụ đề Việt mà không đoán vai vế.
 
     LibreTranslate không nhận system prompt, nên trước đây metadata Vision chỉ
     được trả ra API chứ không thể tác động vào bản dịch. Hậu xử lý này giới hạn
     cách đổi giới tính ở các mẫu *người được gọi/chủ ngữ* ("với anh", "anh
     không thể"). Cảnh toàn phụ nữ chỉ đổi sang ``bạn``; ``chị`` chỉ dùng nếu
-    Vision nói rõ "hai chị em". ``tao/mày`` là bản dịch máy thô nên quy về
-    ``tôi/bạn`` (hoặc ``chị`` khi có đúng bằng chứng quan hệ).
+    Vision nói rõ "hai chị em" TRONG CHÍNH CẢNH đang có lời thoại.
+    ``tao/mày`` là bản dịch máy thô nên quy về ``tôi/bạn`` (hoặc ``chị`` khi
+    có đúng bằng chứng quan hệ). Không có diarization thì không thể biết ai
+    đang nói: không đổi ``anh`` chỉ từ một mô tả ở cảnh khác.
     """
-    mo_ta = (vision or {}).get("ngu_canh") or []
-    mo_ta = [str(x) for x in mo_ta if str(x).strip()] if isinstance(mo_ta, list) else []
-    chi_em = bool(mo_ta) and any(_CHI_EM.search(x) for x in mo_ta)
-    chi_co_nu = (bool(mo_ta) and (chi_em or any(_HAI_NU.search(x) for x in mo_ta))
-                  and not any(_CO_NAM.search(x) for x in mo_ta))
-    dai_tu = "chị" if chi_em else "bạn"
-
     so_sua = 0
 
-    def _doi_dai_tu(m):
-        nonlocal so_sua
-        so_sua += 1
-        return dai_tu.title() if m.group(0)[:1].isupper() else dai_tu
-
-    def _doi_goi(m):
-        nonlocal so_sua
-        so_sua += 1
-        return m.group(1) + " " + dai_tu
-
-    def _doi_toi(m):
-        nonlocal so_sua
-        so_sua += 1
-        return "Tôi" if m.group(0)[:1].isupper() else "tôi"
-
-    def _doi_nguoi_nghe(m):
-        nonlocal so_sua
-        so_sua += 1
-        return (dai_tu.title() if m.group(0)[:1].isupper() else dai_tu) \
-            if chi_co_nu else "bạn"
-
-    def _doi_lam_gi_may(_m):
-        nonlocal so_sua
-        so_sua += 1
-        return "làm gì với " + dai_tu
-
     ra = []
-    for chu in ban_dich:
+    for i, chu in enumerate(ban_dich):
+        mot_doan = doan[i] if doan is not None and i < len(doan) else None
+        mo_ta = (_ngu_canh_cho_doan(vision, mot_doan.bat_dau, mot_doan.ket_thuc)
+                 if mot_doan is not None else [])
+        chi_em = bool(mo_ta) and any(_CHI_EM.search(x) for x in mo_ta)
+        chi_co_nu = (bool(mo_ta) and (chi_em or any(_HAI_NU.search(x) for x in mo_ta))
+                      and not any(_CO_NAM.search(x) for x in mo_ta))
+        dai_tu = "chị" if chi_em else "bạn"
+
+        def _doi_dai_tu(m):
+            nonlocal so_sua
+            so_sua += 1
+            return dai_tu.title() if m.group(0)[:1].isupper() else dai_tu
+
+        def _doi_goi(m):
+            nonlocal so_sua
+            so_sua += 1
+            return m.group(1) + " " + dai_tu
+
+        def _doi_toi(m):
+            nonlocal so_sua
+            so_sua += 1
+            return "Tôi" if m.group(0)[:1].isupper() else "tôi"
+
+        def _doi_nguoi_nghe(m):
+            nonlocal so_sua
+            so_sua += 1
+            return (dai_tu.title() if m.group(0)[:1].isupper() else dai_tu) \
+                if chi_co_nu else "bạn"
+
+        def _doi_lam_gi_may(_m):
+            nonlocal so_sua
+            so_sua += 1
+            return "làm gì với " + dai_tu
+
         chu_moi = loc_nhan_khong_phai_loi(str(chu))
         chu_moi = _TAO.sub(_doi_toi, chu_moi)
         chu_moi = _LAM_GI_MAY.sub(_doi_lam_gi_may, chu_moi)
@@ -662,7 +684,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                 ban_dich = [dinh_tu_goc(d.chu, b, khoa)
                             for d, b in zip(nhom, ban_dich)]
         if dich.startswith("vi"):
-            ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision)
+            ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision, nhom)
             if so_xung_ho_sua and vision is not None:
                 vision["so_xung_ho_sua"] = so_xung_ho_sua
 
@@ -853,6 +875,8 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
         # NLLB/EnViT5 không nhận system prompt và thêm text mô tả sẽ thành lời
         # phụ đề bịa. Ranh cảnh đã được dùng để tách đơn vị dịch an toàn.
         vision["ngu_canh"] = ket_qua_vision.mo_ta
+    if ket_qua_vision.ngu_canh_canh:
+        vision["ngu_canh_canh"] = ket_qua_vision.ngu_canh_canh
     if ket_qua_vision.canh_bao:
         vision["canh_bao"] = ket_qua_vision.canh_bao
     dich = nguon if chep_loi else ts.giai_ma_target(nguon, target)

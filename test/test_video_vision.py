@@ -89,3 +89,30 @@ def test_qwen_thanh_cong_tra_ranh_canh_de_khong_gop_loi_thoai_qua_canh(monkeypat
     assert kq.ranh_canh == [2.0]
     assert kq.mo_ta == ["bếp, một người", "bếp, một người"]
     assert kq.so_canh == 2
+
+
+def test_vision_giu_moc_canh_va_dua_ca_loi_thoai_cua_canh_vao_qwen(monkeypatch):
+    monkeypatch.setattr(vv, "dung_duoc", lambda: True)
+    monkeypatch.setattr(vv, "co_vram_an_toan", lambda: True)
+    monkeypatch.setattr(vv, "tach_canh", lambda _p: [(0.0, 2.0), (2.0, 5.0)])
+    monkeypatch.setattr(vv, "trich_khung", lambda _p, _t: b"jpeg")
+    da_nhan = []
+
+    def _qwen(_jpeg, _moc, loi_thoai):
+        da_nhan.append(loi_thoai)
+        return "mô tả cảnh"
+
+    monkeypatch.setattr(vv, "phan_tich_khung", _qwen)
+    loi = [
+        type("D", (), {"bat_dau": 0.1, "ket_thuc": 0.6, "chu": "câu đầu"})(),
+        type("D", (), {"bat_dau": 1.1, "ket_thuc": 1.7, "chu": "câu sau"})(),
+        type("D", (), {"bat_dau": 2.1, "ket_thuc": 2.5, "chu": "cảnh hai"})(),
+    ]
+
+    kq = vv.phan_tich_video("/tmp/phim.mp4", loi)
+
+    assert kq.ngu_canh_canh == [
+        {"bat_dau": 0.0, "ket_thuc": 2.0, "mo_ta": "mô tả cảnh"},
+        {"bat_dau": 2.0, "ket_thuc": 5.0, "mo_ta": "mô tả cảnh"},
+    ]
+    assert da_nhan == ["câu đầu câu sau", "cảnh hai"]
