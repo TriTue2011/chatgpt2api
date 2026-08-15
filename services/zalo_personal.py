@@ -2657,6 +2657,21 @@ def _process_ai(ev: dict) -> None:
         except Exception as exc:
             logger.warning("zalop admin workspace: %s", exc)
 
+        # Lệnh admin nhắc vào một THREAD KHÁC có đủ đích + thời điểm + nội dung
+        # thì không được phụ thuộc LLM.  Nếu rơi vào ngữ cảnh Home Assistant,
+        # model có thể hiểu nhầm «công tơ điện» thành câu hỏi trạng thái nhà và
+        # trả bản tin hôm nay thay vì tạo lịch.  Hàm chỉ nhận đúng form có
+        # ``thread ID``; mọi câu nhắc thông thường vẫn đi xuống orchestrator.
+        try:
+            from services.agent.admin_reminders import handle_zalop_admin_reminder
+            _admin_reminder = handle_zalop_admin_reminder(text, account_id=acc_id)
+            if _admin_reminder:
+                send_message(thread_id, _admin_reminder, int(thread_type or 0),
+                             account=acc_id, rich=True)
+                return
+        except Exception as exc:
+            logger.warning("zalop admin target reminder: %s", exc)
+
     _low = text.lower()
     # Substring như Zalo Bot — tag bot kèm /id ("@Tên bot /id") vẫn nhận ra lệnh.
     if _low in {"/id", "id", "chatid"} or "/id" in _low or "chatid" in _low \
