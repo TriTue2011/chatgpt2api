@@ -1,0 +1,59 @@
+# Stack VISION — Qwen3-VL 2B Q4 cho phụ đề video, cổng 5003.
+#
+# Tách khỏi docker-compose.yml (nghe + dịch) THAY VÌ dùng `profiles`: Portainer
+# không có nút `--profile`, nên dịch vụ nằm sau profile bị bỏ qua im lặng —
+# stack deploy xong mà container không bao giờ xuất hiện, không báo lỗi gì.
+# Hai stack rời thì bật/tắt vision là deploy/remove một stack, thấy rõ ràng.
+#
+# Ba dịch vụ nói chuyện với gateway qua cổng LAN, không cần chung mạng docker.
+#
+#   mkdir -p /opt/gpu-box/fw-vision      # trước khi Deploy
+#
+# Khai ở gateway (service c2a): VISION_URL_GPU: http://<ip-máy-gpu>:5003
+#
+# VRAM: llama-server tự ngủ sau 2 giây rảnh (--sleep-idle-seconds), nhả model
+# và KV cache để Whisper hoặc máy dịch nhận lượt kế trên card 8 GB.
+services:
+  fw-vision:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: fw-vision
+    restart: unless-stopped
+    ports:
+      - "5003:8080"
+    command:
+      - -hf
+      - ${VISION_MODEL:-Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - -ngl
+      - "99"
+      - -c
+      - "4096"
+      - -np
+      - "1"
+      - --sleep-idle-seconds
+      - "2"
+      - --no-warmup
+    volumes:
+      - /opt/gpu-box/fw-vision:/root/.cache/llama.cpp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      # Image server-cuda không hứa có curl/wget; binary /app/llama-server là
+      # đường chính thức của image llama.cpp, nên healthcheck không kéo thêm
+      # shell utility vào container chỉ để kiểm HTTP.
+      test: ["CMD", "/app/llama-server", "--version"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      # Lần đầu tải GGUF Qwen3-VL (~1,5 GB) + mmproj rồi mới mở cổng.
+      start_period: 600s
+    security_opt:
+      - no-new-privileges:true

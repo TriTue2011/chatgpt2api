@@ -7,7 +7,7 @@ khác gọi sang qua LAN. Ở nhà: máy NVR `172.16.10.220`, RTX 2060 Super 8 G
 |---|---|---|---|
 | `fw-nghe` | 5002 | Nghe phụ đề bằng faster-whisper large-v3 | [`fw-nghe/README.md`](../../fw-nghe/README.md), [`docs/NGHE_GPU.md`](../../docs/NGHE_GPU.md) |
 | `vn-translate-gpu` | 5001 | Dịch theo **lô** (phụ đề phim, tài liệu dài) | [`vn-translate/README.md`](../../vn-translate/README.md), [`docs/DICH_MAY_TU_CHU.md`](../../docs/DICH_MAY_TU_CHU.md) |
-| `fw-vision` | 5003 | Qwen3-VL 2B Q4, 1–2 frame/cảnh | phần bên dưới |
+| `fw-vision` | 5003 | Qwen3-VL 2B Q4, 1–2 frame/cảnh — **stack riêng** (`docker-compose.vision.yml`) | phần bên dưới |
 
 Cả hai đều là **tuỳ chọn**: không dựng máy này thì bot vẫn nghe và vẫn dịch, chỉ
 là bằng model tại chỗ trên máy c2a.
@@ -31,12 +31,17 @@ curl -s http://127.0.0.1:5002/health    # nghe:  {"status":"ok","model":"large-v
 curl -s http://127.0.0.1:5001/health    # dịch:  {"status":"ok"}
 ```
 
-Vision là profile riêng, chỉ bật sau khi kiểm VRAM Frigate:
+Vision là **stack riêng**, bật khi muốn (và sau khi ngó VRAM còn trống):
 
 ```bash
-docker compose --profile vision up -d
+docker compose -f docker-compose.vision.yml up -d
 curl -s http://127.0.0.1:5003/health
 ```
+
+Vì sao tách hai file thay vì một `profiles: ["vision"]`: Portainer không có nút
+`--profile`, nên dịch vụ nằm sau profile bị **bỏ qua im lặng** — stack deploy
+xong báo thành công mà container không bao giờ xuất hiện. Đã dính đúng lỗi này
+15/08. Hai stack rời thì bật/tắt vision là deploy hoặc remove một stack.
 
 Runtime dùng đúng GGUF Q4 chính thức của Qwen và `llama-server`: Qwen công bố
 model tương thích llama.cpp/CUDA, còn llama.cpp nhận ảnh qua API
@@ -61,6 +66,7 @@ nhìn và sao lưu bằng lệnh thường, không phải lục `/var/lib/docker
 | `/opt/gpu-box/fw-vision` | `/root/.cache/llama.cpp` | GGUF Qwen3-VL + mmproj |
 
 Tạo trước khi Deploy: `mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu,fw-vision}`
+(thư mục `fw-vision` chỉ cần khi dựng stack vision)
 
 Không phải `chown` tay: `fw-nghe` và `fw-vision` chạy bằng root, còn entrypoint
 của `vn-translate` tự `chown /data` rồi mới hạ quyền xuống uid 1033.
@@ -89,17 +95,15 @@ Stacks → **Add stack** → **Repository**:
 Repo công khai nên không cần khai thông tin đăng nhập, và hai image trên ghcr
 cũng kéo được ẩn danh — không phải `docker login`.
 
-**Muốn bật Qwen3-VL thì phải thêm biến môi trường của stack:**
+**Muốn có Qwen3-VL thì tạo THÊM MỘT STACK**, cùng cách trên nhưng Compose path
+là `deploy/gpu-box/docker-compose.vision.yml` (đặt tên stack khác, vd
+`gpu-box-vision`). Bật/tắt vision từ đó là deploy hoặc remove một stack, không
+đụng tới hai dịch vụ nghe và dịch.
 
-```
-COMPOSE_PROFILES=vision
-```
-
-Portainer không có nút `--profile`. Nó ghi biến môi trường của stack ra `.env`
-cạnh file compose, mà `docker compose` đọc `COMPOSE_PROFILES` từ đúng file đó —
-đã kiểm bằng `docker compose config --services`: không có biến thì ra hai dịch
-vụ, có biến thì ra ba (thêm `fw-vision`). Không đặt biến này thì stack vẫn chạy
-bình thường, chỉ là không có vision.
+Đừng tìm nút bật `profiles` trong Portainer — không có. Bản trước để `fw-vision`
+sau `profiles: ["vision"]` và hậu quả là stack deploy xong báo thành công nhưng
+**container không bao giờ xuất hiện**, cũng không có dòng lỗi nào. Đó là lý do
+file compose tách làm hai.
 
 Khi Update stack nhớ bật **Re-pull image**: image gắn thẻ `:latest`, không bật
 thì Portainer dùng lại bản đã có trong máy.

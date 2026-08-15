@@ -1,4 +1,5 @@
-# Stack MÁY GPU — hai dịch vụ dùng chung một card NVIDIA (ở nhà: máy NVR
+# Stack MÁY GPU — nghe + dịch theo lô, dùng chung một card NVIDIA
+# (vision Qwen3-VL nằm ở docker-compose.vision.yml — stack RIÊNG) (ở nhà: máy NVR
 # 172.16.10.220, RTX 2060 Super 8 GB). KHÔNG nằm trong stack c2a; gateway trên
 # máy khác gọi sang qua LAN.
 #
@@ -14,7 +15,7 @@
 # nhìn thấy và sao lưu được bằng lệnh thường, không phải lục
 # /var/lib/docker/volumes. Tạo trước khi Deploy:
 #
-#   mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu,fw-vision}
+#   mkdir -p /opt/gpu-box/{fw-nghe,vn-translate-gpu}
 #
 # Không phải chown tay: fw-nghe và fw-vision chạy bằng root, còn entrypoint của
 # vn-translate tự `chown /data` rồi mới hạ quyền xuống uid 1033.
@@ -28,7 +29,6 @@
 # Khai ở gateway (service c2a) sau khi chạy:
 #   NGHE_URL_GPU:     http://<ip-máy-gpu>:5002
 #   TRANSLATE_URL_LO: http://<ip-máy-gpu>:5001
-#   VISION_URL_GPU:   http://<ip-máy-gpu>:5003
 services:
   # Nghe (faster-whisper large-v3) — chỉ tiếng mà model tại chỗ bỏ trắng đoạn
   # (mặc định en, ko) mới gửi sang đây. Xem fw-nghe/README.md.
@@ -91,51 +91,5 @@ services:
       timeout: 6s
       retries: 3
       start_period: 300s
-    security_opt:
-      - no-new-privileges:true
-
-  # Qwen3-VL chỉ bật qua profile để máy đang gánh Frigate không tự nạp model.
-  # llama-server tự unload model/KV cache khi rảnh, nhường VRAM công đoạn sau.
-  fw-vision:
-    profiles: ["vision"]
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: fw-vision
-    restart: unless-stopped
-    ports:
-      - "5003:8080"
-    command:
-      - -hf
-      - ${VISION_MODEL:-Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M}
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8080"
-      - -ngl
-      - "99"
-      - -c
-      - "4096"
-      - -np
-      - "1"
-      - --sleep-idle-seconds
-      - "2"
-      - --no-warmup
-    volumes:
-      - /opt/gpu-box/fw-vision:/root/.cache/llama.cpp
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    healthcheck:
-      # Image server-cuda không hứa có curl/wget; binary /app/llama-server là
-      # đường chính thức của image llama.cpp, nên healthcheck không kéo thêm
-      # shell utility vào container chỉ để kiểm HTTP.
-      test: ["CMD", "/app/llama-server", "--version"]
-      interval: 30s
-      timeout: 6s
-      retries: 3
-      start_period: 600s
     security_opt:
       - no-new-privileges:true
