@@ -185,8 +185,10 @@ def phan_tich_khung(jpeg: bytes, moc_giay: float, loi_thoai: str = "") -> str:
     data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
     prompt = (
         f"Đây là frame video tại {moc_giay:.1f}s. Mô tả cực ngắn bằng tiếng Việt: "
-        "người/vật/bối cảnh/hành động có thể nhìn thấy. Không khẳng định danh tính "
-        "người nổi tiếng nếu hình không đủ chắc; không bịa lời thoại."
+        "người/vật/bối cảnh/hành động có thể nhìn thấy. Nếu nhìn rõ, nêu thành phần "
+        "giới tính bằng câu cụ thể như ‘hai phụ nữ’ hoặc ‘một nam một nữ’; không rõ "
+        "thì ghi ‘giới tính không rõ’. Không khẳng định danh tính người nổi tiếng nếu "
+        "hình không đủ chắc; không bịa lời thoại."
     )
     if loi_thoai.strip():
         prompt += " Lời thoại cùng cảnh (chỉ để đối chiếu, không dịch lại): " + loi_thoai[:700]

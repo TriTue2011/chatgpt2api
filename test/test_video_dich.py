@@ -83,6 +83,54 @@ def test_khong_gop_loi_thoai_qua_ranh_canh_vision():
 
 
 @pytest.mark.pure
+def test_vision_hai_phu_nu_sua_xung_ho_nam_sai(monkeypatch):
+    """Ngữ cảnh Qwen phải đi tới hậu xử lý, không chỉ nằm trong metadata."""
+    monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a:
+                        ["Tôi nói chuyện với anh được không? Một mình?"])
+
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 3.0, "Can I talk to you? Alone?")], "en", "vi", 3.0,
+        vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
+    )
+
+    assert "Tôi nói chuyện với chị được không?" in r["chu"]
+
+
+@pytest.mark.pure
+def test_phu_de_hai_phu_nu_loc_nhan_am_thanh_va_giu_xung_ho_trung_tinh(monkeypatch):
+    """Không để nhãn ASR và lối xưng hô thô lọt vào phụ đề phim."""
+    monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a: [
+        "Không, anh không thể, và tôi nghĩ anh nên đi. "
+        "Tao đã làm gì mày? [think]",
+    ])
+
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 6.0, "No, you can't. What did I ever do to you? [think]")],
+        "en", "vi", 6.0,
+        vision={"engine": "gpu", "ngu_canh": ["Hai phụ nữ đang nói chuyện."]},
+    )
+
+    assert "chị không thể" in r["chu"]
+    assert "Tôi đã làm gì chị?" in r["chu"]
+    assert "[think]" not in r["chu"]
+    assert "Tao" not in r["chu"] and "mày" not in r["chu"]
+
+
+@pytest.mark.pure
+def test_vision_khong_chac_chan_giu_nguyen_xung_ho(monkeypatch):
+    """Không được đổi xưng hô khi frame có cả nam lẫn nữ hoặc không rõ."""
+    monkeypatch.setattr(vd.ts, "translate_batch", lambda *_a:
+                        ["Tôi nói chuyện với anh được không?"])
+
+    r = vd._dich_va_dong_goi(
+        [vd.Doan(0.0, 3.0, "Can I talk to you?")], "en", "vi", 3.0,
+        vision={"engine": "gpu", "ngu_canh": ["Một nam và một nữ đang nói chuyện."]},
+    )
+
+    assert r["chu"] == "Tôi nói chuyện với anh được không?"
+
+
+@pytest.mark.pure
 def test_khong_gop_qua_nguong_thoi_gian():
     """Người nói không ngắt câu suốt cả phút thì vẫn phải cắt, kẻo một khung
     phụ đề dài cả phút không ai đọc kịp."""

@@ -29,6 +29,16 @@ DOAN_TOI_DA = 28.0
 LANG_NOI_LIEN = 0.4
 #: Đệm hai đầu mỗi đoạn để không cắt cụt phụ âm đầu/cuối.
 DEM = 0.15
+#: Hai đoạn local kế tiếp chồng lên nhau một nhịp lấy hơi. Whisper nghe cả tệp
+#: nên không cần nó, còn model local phải thấy cả từ ở biên 28 giây để không
+#: nuốt mất lúc GPU bỏ sót và đường bù được kích hoạt.
+DOAN_CHONG_GIAY = 0.4
+
+#: GPU đôi lúc trả được một phần tệp nhưng VAD bỏ trắng hẳn một cụm thoại.
+#: Nếu khe trong đoạn năng lượng vượt ngưỡng này, nghe bù RIÊNG khe đó bằng
+#: model tại chỗ. Giá trị cao hơn khoảng nghỉ tự nhiên giữa hai câu, nên không
+#: gọi local chỉ vì người nói ngừng lấy hơi.
+KHE_BO_SOT_GIAY = 4.0
 
 #: Trong một đoạn, hai token cách nhau quá ngưỡng này thì tách khung phụ đề —
 #: ranh giới tự nhiên giữa hai ý.
@@ -60,7 +70,7 @@ class KetQuaNghe:
     cau: list[Cau]
     ngon_ngu: str
     giay_tieng: float
-    engine: str                     # ``gpu`` | ``local`` | ``local_fallback``
+    engine: str                     # gpu | gpu_recovered | gpu_incomplete | local | local_fallback
     canh_bao: str = ""
 
     def __iter__(self):
@@ -124,10 +134,13 @@ def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
     # Hai chốt chặn cho hai kiểu tệp cực đoan: "nhân 3 nền ồn" chết ở tệp NÓI
     # LIÊN TỤC không nghỉ (phân vị 10 đã là tiếng nói, nhân 3 vượt mọi khung —
     # test lòi ra); nên kẹp trần bằng 30% phân vị 90 (mức "đang nói" điển
-    # hình). Sàn 0.008 cho tệp im lặng hoàn toàn khỏi nhận nhiễu làm tiếng.
+    # hình). Sàn 0.008 cũ lại bỏ trắng hẳn tệp quay nhỏ tiếng (RMS ~0.004),
+    # nên chỉ giữ sàn đó khi đỉnh đủ lớn; tệp rất nhỏ dùng sàn 0.0005 và để STT
+    # quyết định thay vì mất lời thoại ngay từ VAD.
     nen = float(np.percentile(rms, 10))
     dinh = float(np.percentile(rms, 90))
-    nguong = max(0.008, min(nen * 3.0, dinh * 0.3))
+    nguong_tuong_doi = min(nen * 3.0, dinh * 0.3)
+    nguong = max(0.008 if dinh >= 0.008 else 0.0005, nguong_tuong_doi)
     noi = rms > nguong
     if not bool(noi.any()):
         return []
@@ -158,8 +171,9 @@ def cat_doan_tieng(mau, rate: int) -> list[tuple[float, float]]:
         if k - b < 0.3:
             continue
         while k - b > DOAN_TOI_DA:
-            sach.append((b, b + DOAN_TOI_DA))
-            b += DOAN_TOI_DA
+            cat = b + DOAN_TOI_DA
+            sach.append((b, cat))
+            b = cat - DOAN_CHONG_GIAY
         sach.append((b, k))
     return sach
 
@@ -191,6 +205,33 @@ def gom_khung(tokens: list[str], moc: list[float], goc: float) -> list[Cau]:
         if chu:
             ra.append(Cau(goc + moc[dau], goc + moc[i - 1] + 0.35, chu))
         dau = i
+    return ra
+
+
+def doan_tieng_bi_bo_sot(doan: list[tuple[float, float]], cau: list[Cau]
+                          ) -> list[tuple[float, float]]:
+    """Trả các khoảng có tiếng nhưng GPU chưa tạo phụ đề.
+
+    Không chỉ kiểm ``ra == []``: một kết quả Whisper không rỗng vẫn có thể bỏ
+    cả một câu vì VAD. Cắt theo đoạn năng lượng đã dùng cho local rồi tìm khe
+    phụ đề đủ dài; như vậy không phải nghe lại cả phim và không lẫn khoảng im
+    giữa các cảnh với lời thoại bị mất.
+    """
+    ra: list[tuple[float, float]] = []
+    for b, k in doan:
+        khung = sorted((c for c in cau if c.ket_thuc > b and c.bat_dau < k),
+                       key=lambda c: c.bat_dau)
+        if not khung:
+            ra.append((b, k))
+            continue
+        den = b
+        for c in khung:
+            bat = max(b, c.bat_dau)
+            if bat - den > KHE_BO_SOT_GIAY:
+                ra.append((den, bat))
+            den = max(den, min(k, c.ket_thuc))
+        if k - den > KHE_BO_SOT_GIAY:
+            ra.append((den, k))
     return ra
 
 
@@ -363,16 +404,46 @@ def nghe_tep(duong: str, tran_giay: float = 0,
                 logger.info("phụ đề: máy GPU không nghe được (%s) — nghe tại chỗ",
                             str(exc)[:120])
 
-        if not ra:
-            rec = eng._get_recognizer(lang)
-            for b, k in doan:
-                # Khoá theo TỪNG đoạn chứ không cả vòng lặp: bộ nghe dùng chung
-                # với voice note của bot, giữ khoá suốt một video 30 phút là
-                # chặn mọi tin nhắn thoại ngần ấy thời gian.
-                with eng._stt_lock:
-                    tokens, moc = _nghe_mot_doan(
-                        rec, mau[int(b * rate):int(k * rate)], rate)
-                ra.extend(gom_khung(tokens, moc, b))
+        bo_sot = doan_tieng_bi_bo_sot(doan, ra) if ra else doan
+        if bo_sot:
+            ra_bu: list[Cau] = []
+            co_gpu = bool(ra)
+            try:
+                rec = eng._get_recognizer(lang)
+                for b, k in bo_sot:
+                    # Khoá theo TỪNG đoạn chứ không cả vòng lặp: bộ nghe dùng chung
+                    # với voice note của bot, giữ khoá suốt một video 30 phút là
+                    # chặn mọi tin nhắn thoại ngần ấy thời gian.
+                    with eng._stt_lock:
+                        tokens, moc = _nghe_mot_doan(
+                            rec, mau[int(b * rate):int(k * rate)], rate)
+                    ra_bu.extend(gom_khung(tokens, moc, b))
+            except Exception as exc:
+                if not co_gpu:
+                    raise
+                engine = "gpu_incomplete"
+                canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
+                             "STT local không nghe bù được, cần kiểm tra lại.")
+                logger.warning("phụ đề: STT local không bù được %d đoạn GPU bỏ sót: %s",
+                               len(bo_sot), str(exc)[:120])
+            if co_gpu and not canh_bao:
+                ra.extend(ra_bu)
+                ra.sort(key=lambda c: (c.bat_dau, c.ket_thuc))
+                con_sot = doan_tieng_bi_bo_sot(doan, ra)
+                da_bu = len(bo_sot) - len(con_sot)
+                if con_sot:
+                    engine = "gpu_incomplete"
+                    canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
+                                 f"STT local chỉ bù được {da_bu}, còn "
+                                 f"{len(con_sot)} đoạn cần kiểm tra lại.")
+                else:
+                    engine = "gpu_recovered"
+                    canh_bao = (f"Whisper GPU bỏ sót {len(bo_sot)} đoạn tiếng; "
+                                 "đã nghe bù bằng model tại chỗ.")
+                    logger.warning("phụ đề: Whisper GPU bỏ sót %d đoạn tiếng, đã bù local",
+                                   len(bo_sot))
+            elif not co_gpu:
+                ra.extend(ra_bu)
 
         sach = [Cau(c.bat_dau, c.ket_thuc, eng._normalize_stt(c.chu)) for c in ra]
         sach = [c for c in sach if c.chu]

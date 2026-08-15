@@ -88,6 +88,23 @@ _YT = re.compile(
 _TIKTOK = re.compile(r"(?:tiktok\.com/[^\s]+|vm\.tiktok\.com/[A-Za-z0-9]+)")
 _LINK = re.compile(r"https?://[^\s<>\"')]+")
 
+# Qwen3-VL chỉ được quyền đổi xưng hô khi nó nhìn rõ HAI phụ nữ trở lên và
+# không thấy nam. Đây là ngưỡng cố ý chặt: không biến mọi "anh" thành "chị"
+# chỉ vì một khung có một phụ nữ, bởi người được gọi có thể đang ngoài hình.
+_HAI_NU = re.compile(
+    r"\b(?:hai|2|ba|3|bốn|4|các|những)\s+(?:người\s+)?"
+    r"(?:phụ\s+nữ|cô\s+gái|chị\s+em|women|female)\b|\bcả\s+hai\s+(?:là\s+)?"
+    r"(?:phụ\s+nữ|cô\s+gái|chị\s+em|women|female)\b", re.I)
+_CO_NAM = re.compile(r"\b(?:đàn\s+ông|nam\s+giới|con\s+trai|men|male)\b", re.I)
+_GOI_ANH = re.compile(r"\b(với|cùng|cho|của)\s+anh\b", re.I)
+_ANH_OI = re.compile(r"\banh(?=\s+(?:ơi|à|nhé|nhỉ|hả|chứ)\b)", re.I)
+_ANH_CHU_NGU = re.compile(
+    r"\banh(?=\s+(?:không|nên|đã|đang|sẽ|có|phải|muốn|nghĩ|lại|cần|đi|về|"
+    r"sợ|biết|cho|làm|nói|đóng|hãy|được|thể)\b)", re.I)
+_TAO = re.compile(r"\btao\b", re.I)
+_MAY = re.compile(r"\bmày\b", re.I)
+_NHAN_KHONG_PHAI_LOI = re.compile(r"\[[^\]\n]{1,120}\]")
+
 LOI_CHUA_CO_TIENG = (
     "video này không có phụ đề nào để lấy. Dịch được nó cần tải tiếng về rồi "
     "tự nghe — phần đó chưa làm"
@@ -119,6 +136,63 @@ def la_link_video(text: str) -> str:
 def _ma_video(url: str) -> str:
     m = _YT.search(url or "")
     return m.group(1) if m else ""
+
+
+def loc_nhan_khong_phai_loi(chu: str) -> str:
+    """Bỏ nhãn âm thanh/hallucination kiểu ``[think]`` khỏi lời phụ đề."""
+    return " ".join(_NHAN_KHONG_PHAI_LOI.sub(" ", str(chu or "")).split())
+
+
+def sua_xung_ho_theo_vision(ban_dich: list[str], vision: dict[str, Any] | None
+                             ) -> tuple[list[str], int]:
+    """Chuẩn hoá lời phụ đề Việt và sửa ``anh`` → ``chị`` khi đủ bằng chứng.
+
+    LibreTranslate không nhận system prompt, nên trước đây metadata Vision chỉ
+    được trả ra API chứ không thể tác động vào bản dịch. Hậu xử lý này giới hạn
+    cách đổi giới tính ở các mẫu *người được gọi/chủ ngữ* ("với anh", "anh
+    không thể") và chỉ chạy khi toàn bộ mô tả không hề nói tới nam. ``tao/mày``
+    là bản dịch máy thô nên luôn quy về ``tôi/bạn``; khi cảnh xác nhận toàn nữ,
+    người được gọi là ``chị``.
+    """
+    mo_ta = (vision or {}).get("ngu_canh") or []
+    mo_ta = [str(x) for x in mo_ta if str(x).strip()] if isinstance(mo_ta, list) else []
+    chi_co_nu = (bool(mo_ta) and any(_HAI_NU.search(x) for x in mo_ta)
+                  and not any(_CO_NAM.search(x) for x in mo_ta))
+
+    so_sua = 0
+
+    def _doi_chi(m):
+        nonlocal so_sua
+        so_sua += 1
+        return "Chị" if m.group(0)[:1].isupper() else "chị"
+
+    def _doi_goi(m):
+        nonlocal so_sua
+        so_sua += 1
+        return m.group(1) + " chị"
+
+    def _doi_toi(m):
+        nonlocal so_sua
+        so_sua += 1
+        return "Tôi" if m.group(0)[:1].isupper() else "tôi"
+
+    def _doi_nguoi_nghe(m):
+        nonlocal so_sua
+        so_sua += 1
+        return "Chị" if chi_co_nu and m.group(0)[:1].isupper() else \
+            ("chị" if chi_co_nu else "bạn")
+
+    ra = []
+    for chu in ban_dich:
+        chu_moi = loc_nhan_khong_phai_loi(str(chu))
+        chu_moi = _TAO.sub(_doi_toi, chu_moi)
+        chu_moi = _MAY.sub(_doi_nguoi_nghe, chu_moi)
+        if chi_co_nu:
+            chu_moi = _GOI_ANH.sub(_doi_goi, chu_moi)
+            chu_moi = _ANH_OI.sub(_doi_chi, chu_moi)
+            chu_moi = _ANH_CHU_NGU.sub(_doi_chi, chu_moi)
+        ra.append(chu_moi)
+    return ra, so_sua
 
 
 def _thu_tu(ban: list[tuple[str, bool]], dich_sang: str = "vi") -> list[str]:
@@ -552,7 +626,11 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     nghe từ tệp. ``nguon == dich`` thì bỏ bước dịch — bản chép lời có mốc thời
     gian tự nó đã hữu ích (video tiếng Việt → phụ đề tiếng Việt).
     """
-    nhom = gop_doan(bo_trung(doan), ranh_canh=ranh_canh)
+    doan = [Doan(d.bat_dau, d.ket_thuc, loc_nhan_khong_phai_loi(d.chu))
+            for d in doan]
+    nhom = gop_doan(bo_trung([d for d in doan if d.chu]), ranh_canh=ranh_canh)
+    if not nhom:
+        return {"ok": False, "error": "không còn lời thoại sau khi bỏ nhãn âm thanh"}
     if nguon == dich:
         ban_dich = [d.chu for d in nhom]
     else:
@@ -573,6 +651,10 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
             if khoa:
                 ban_dich = [dinh_tu_goc(d.chu, b, khoa)
                             for d, b in zip(nhom, ban_dich)]
+        if dich.startswith("vi"):
+            ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision)
+            if so_xung_ho_sua and vision is not None:
+                vision["so_xung_ho_sua"] = so_xung_ho_sua
 
     # Gộp để DỊCH, cắt lại để ĐỌC: khung 150 ký tự dịch đúng nghĩa nhưng không
     # ai đọc kịp trên màn hình.
@@ -818,6 +900,10 @@ def bao_cao(r: dict[str, Any]) -> str:
     nghe = r.get("nghe") or {}
     if nghe.get("engine") == "gpu":
         ra += " • Whisper GPU"
+    elif nghe.get("engine") == "gpu_recovered":
+        ra += " • Whisper GPU + STT local bù đoạn thiếu"
+    elif nghe.get("engine") == "gpu_incomplete":
+        ra += " • Whisper GPU + STT local bù chưa đủ"
     elif nghe.get("engine") == "local_fallback":
         ra += " • STT local (GPU lỗi)"
     elif nghe.get("engine") == "local":
@@ -827,6 +913,8 @@ def bao_cao(r: dict[str, Any]) -> str:
     vision = r.get("vision") or {}
     if vision.get("engine") == "gpu":
         ra += f" • Qwen3-VL GPU ({vision.get('so_canh', 0)} cảnh)"
+    if vision.get("so_xung_ho_sua"):
+        ra += f" • sửa {vision['so_xung_ho_sua']} xưng hô theo cảnh"
     if vision.get("canh_bao"):
         ra += f"\n⚠️ {vision['canh_bao']}"
     return ra

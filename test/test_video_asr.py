@@ -64,6 +64,13 @@ def test_doan_qua_dai_bi_cat_nho():
     assert all(k - b <= va.DOAN_TOI_DA + 0.01 for b, k in doan)
 
 
+def test_doan_dai_co_chong_len_de_khong_cup_tu_o_mep_cat():
+    """Model nghe từng đoạn cần thấy lại một ít tiếng quanh biên 28 giây."""
+    doan = va.cat_doan_tieng(_tieng(65), 16000)
+    assert any(b_sau < k_truoc
+               for (_, k_truoc), (b_sau, _) in zip(doan, doan[1:]))
+
+
 def test_im_lang_hoan_toan_khong_co_doan_nao():
     assert va.cat_doan_tieng(_lang(10), 16000) == []
 
@@ -78,6 +85,84 @@ def test_nen_on_to_van_tim_ra_tieng():
     assert len(doan) == 1
     b, k = doan[0]
     assert abs(b - 3.0) < 0.4 and abs(k - 5.0) < 0.4
+
+
+def test_tieng_nho_hon_san_cu_van_duoc_dua_vao_stt():
+    """File quay nhỏ tiếng vẫn cần thử STT; sàn 0.008 cũ bỏ trắng cả tệp."""
+    doan = va.cat_doan_tieng(_tieng(3, bien_do=0.006), 16000)
+    assert len(doan) == 1
+    b, k = doan[0]
+    assert b < 0.3 and k > 2.7
+
+
+def test_gpu_co_chu_nhung_bo_sot_mot_doan_tieng_thi_nghe_bu_tai_cho(monkeypatch):
+    """Một kết quả GPU không rỗng chưa có nghĩa là đã nghe hết cả tệp.
+
+    Đây là đúng dạng lỗi người dùng gặp: Whisper trả được câu đầu nên đường cũ
+    coi là xong, trong khi cụm thoại sau hoàn toàn biến mất khỏi SRT.
+    """
+    import sys
+    import threading
+    import types
+
+    from services import nghe_gpu
+
+    eng = types.ModuleType("services.voice.engines")
+    eng._stt_lock = threading.Lock()
+    eng._get_recognizer = lambda _lang: object()
+    eng._normalize_stt = lambda text: str(text).strip()
+    voice = types.ModuleType("services.voice")
+    voice.engines = eng
+    monkeypatch.setitem(sys.modules, "services.voice", voice)
+    monkeypatch.setitem(sys.modules, "services.voice.engines", eng)
+    monkeypatch.setattr(va, "_boc_tieng", lambda _path: "/tmp/nghe-gia.wav")
+    monkeypatch.setattr(va, "_doc_wav", lambda _path: (np.zeros(600), 100))
+    monkeypatch.setattr(va, "cat_doan_tieng", lambda *_a: [(0.0, 2.0), (4.0, 6.0)])
+    monkeypatch.setattr(va, "_chon_ngon_ngu", lambda *_a: "en")
+    monkeypatch.setattr(nghe_gpu, "dung_duoc", lambda _lang: True)
+    monkeypatch.setattr(nghe_gpu, "nghe", lambda *_a:
+                        ([" First", " sentence"], [0.0, 0.2]))
+    monkeypatch.setattr(va, "_nghe_mot_doan", lambda *_a:
+                        ([" Second", " sentence"], [0.0, 0.2]))
+
+    kq = va.nghe_tep("/tmp/phim.mp4", ung_vien=("en",), chi_tiet=True)
+
+    assert [c.chu for c in kq.cau] == ["First sentence", "Second sentence"]
+    assert kq.engine == "gpu_recovered"
+    assert "bù" in kq.canh_bao.lower()
+
+
+def test_gpu_bo_sot_nhung_local_loi_van_bao_phu_de_chua_du(monkeypatch):
+    """Đã có chữ từ GPU thì lỗi đường bù không được làm mất cả SRT."""
+    import sys
+    import threading
+    import types
+
+    from services import nghe_gpu
+
+    eng = types.ModuleType("services.voice.engines")
+    eng._stt_lock = threading.Lock()
+    eng._get_recognizer = lambda _lang: object()
+    eng._normalize_stt = lambda text: str(text).strip()
+    voice = types.ModuleType("services.voice")
+    voice.engines = eng
+    monkeypatch.setitem(sys.modules, "services.voice", voice)
+    monkeypatch.setitem(sys.modules, "services.voice.engines", eng)
+    monkeypatch.setattr(va, "_boc_tieng", lambda _path: "/tmp/nghe-gia.wav")
+    monkeypatch.setattr(va, "_doc_wav", lambda _path: (np.zeros(600), 100))
+    monkeypatch.setattr(va, "cat_doan_tieng", lambda *_a: [(0.0, 2.0), (4.0, 6.0)])
+    monkeypatch.setattr(va, "_chon_ngon_ngu", lambda *_a: "en")
+    monkeypatch.setattr(nghe_gpu, "dung_duoc", lambda _lang: True)
+    monkeypatch.setattr(nghe_gpu, "nghe", lambda *_a:
+                        ([" First", " sentence"], [0.0, 0.2]))
+    monkeypatch.setattr(va, "_nghe_mot_doan", lambda *_a:
+                        (_ for _ in ()).throw(RuntimeError("model local lỗi")))
+
+    kq = va.nghe_tep("/tmp/phim.mp4", ung_vien=("en",), chi_tiet=True)
+
+    assert [c.chu for c in kq.cau] == ["First sentence"]
+    assert kq.engine == "gpu_incomplete"
+    assert "cần kiểm tra" in kq.canh_bao
 
 
 # ── Gom token thành khung phụ đề ────────────────────────────────────────────
