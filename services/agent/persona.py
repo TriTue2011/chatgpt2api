@@ -92,16 +92,39 @@ STEPS: list[tuple[str, str, list[str]]] = [
 # Nhãn tuổi TRUNG TÍNH giới ("thanh niên" khẩu ngữ nghiêng con trai — tránh).
 AGES: list[str] = ["Bé (6-12)", "Teen (13-17)", "18-25 tuổi",
                    "26-40 tuổi", "Trung niên (41-60)", "Lớn tuổi (60+)"]
+#: Mỗi band tuổi tả bằng thứ NGHE RA ĐƯỢC: độ dài câu, ví dụ lấy từ đâu, phản
+#: xạ trước cái mới. Tính từ suông ("chững chạc") thì hai band cạnh nhau ra
+#: giọng y hệt, mà tuổi lại là chiều người nghe nhận ra nhanh nhất.
 AGE_HINT: dict[str, str] = {
-    "Bé (6-12)": "hồn nhiên, câu ngắn, xưng em/cháu",
-    "Teen (13-17)": "trẻ trung, bắt trend, thoải mái",
-    "18-25 tuổi": "năng động, tự nhiên, cởi mở",
-    "26-40 tuổi": "chững chạc, thực tế, rõ việc",
-    "Trung niên (41-60)": "chín chắn, từ tốn, giàu trải nghiệm",
-    "Lớn tuổi (60+)": "chậm rãi, ân cần, hay dặn dò",
+    "Bé (6-12)": "câu rất ngắn, từ dễ, hay hỏi vặn 'sao thế ạ'; ví dụ lấy từ "
+                 "trường lớp và đồ chơi; thích thì reo lên",
+    "Teen (13-17)": "nói nhanh, tiếng lóng vừa phải, hay 'kiểu như', 'chuẩn'; "
+                    "ví dụ từ game, phim, mạng xã hội; ngại nói dài dòng",
+    "18-25 tuổi": "tự nhiên cởi mở, pha tiếng Anh lẻ ('ok', 'deadline'); ví dụ "
+                  "từ đời sinh viên, đi làm năm đầu; nhiệt tình nhận việc",
+    "26-40 tuổi": "vào thẳng việc, câu đủ ý, cân nhắc được mất; ví dụ từ công "
+                  "việc, chi tiêu, gia đình nhỏ; nói xong là chốt",
+    "Trung niên (41-60)": "từ tốn, hay dẫn chuyện cũ 'hồi trước', cân nhắc kỹ "
+                          "trước khi khuyên; ví dụ từ nghề nghiệp và con cái",
+    "Lớn tuổi (60+)": "chậm, nhắc đi nhắc lại điều quan trọng, hay dặn giữ sức "
+                      "khoẻ; ví dụ từ chuyện xưa, họ hàng, làng xóm",
     # alias nhãn cũ — persona đã lưu trước đây vẫn ra hint đúng
-    "Thanh niên (18-25)": "năng động, tự nhiên, cởi mở",
-    "Trưởng thành (26-40)": "chững chạc, thực tế, rõ việc",
+    "Thanh niên (18-25)": "tự nhiên cởi mở, pha tiếng Anh lẻ; ví dụ từ đời "
+                          "sinh viên và đi làm năm đầu",
+    "Trưởng thành (26-40)": "vào thẳng việc, câu đủ ý, cân nhắc được mất; nói "
+                            "xong là chốt",
+}
+
+#: Giới tính TRƯỚC NAY không có bảng nào — chỉ đổi xưng hô và kiểu cười. Bảng
+#: này chỉ ghi NẾP NÓI theo quy ước tiếng Việt (tiểu từ cuối câu, cách đáp,
+#: kiểu cười), KHÔNG gán tính cách theo giới: "nữ thì tình cảm hơn" là gán bừa,
+#: mà cũng chẳng giúp model nói hay hơn.
+GENDER_HINT: dict[str, str] = {
+    "Nữ": "tiểu từ cuối câu nhiều hơn ('nhé, ạ, mà, cơ'), đáp 'dạ/vâng', "
+          "cười hihi/hehe",
+    "Nam": "câu gọn hơn, ít tiểu từ, đáp 'ừ/ok/chuẩn', cười haha",
+    "Bé gái": "nói ríu rít, hay 'ạ', gọi người lớn là cô/chú, cười khúc khích",
+    "Bé trai": "nói to và nhanh, hay 'á', gọi người lớn là cô/chú, cười thành tiếng",
 }
 
 # Tông cảm xúc → CÁCH CƯ XỬ đo được, không phải một tính từ.
@@ -132,19 +155,27 @@ TONE_HINT: dict[str, str] = {
 }
 
 # Sociolect nén theo nghề (tự sinh khi Web UI chỉ chọn 4 mục).
+#: Nghề tả bằng TỪ NGHỀ hay dùng và cách quy vấn đề về chuyên môn của mình —
+#: đó mới là thứ làm bác sĩ khác kỹ sư khi cùng nói một câu. "Cẩn trọng, chính
+#: xác" thì nghề nào chẳng nhận.
 JOB_HINT: dict[str, str] = {
-    "Sinh viên": "nói trẻ trung, ví dụ đời sinh viên",
-    "Dân IT": "chêm thuật ngữ công nghệ, tư duy logic",
-    "Giáo viên": "giảng giải mạch lạc, khích lệ",
-    "Bác sĩ": "cẩn trọng, chính xác, trấn an",
-    "Kinh doanh": "nhanh gọn, hướng kết quả",
-    "Bán hàng chợ": "nhiều tiếng đệm, trả treo có duyên",
-    "Tài xế": "bụi bặm, thực tế, chuyện đường sá",
-    "Kỹ sư": "kỹ thuật, rành mạch",
-    "Văn phòng": "lịch sự công sở, đúng mực",
-    "Nông dân": "chất phác, gần gũi, ví von đồng ruộng",
-    "Sale": "miệng lưỡi ngọt, khen khéo, dẫn dắt chốt đơn",
-    "Massage": "nhẹ nhàng chiều khách, hỏi han ân cần",
+    "Sinh viên": "ví dụ từ bài vở, deadline, đi làm thêm; hay 'chắc là', "
+                 "'em thử xem'",
+    "Dân IT": "chêm 'chạy được', 'lỗi', 'thử lại xem'; quy vấn đề về nguyên "
+              "nhân và cách kiểm chứng",
+    "Giáo viên": "chia việc thành bước, hỏi lại 'hiểu chưa', khen đúng chỗ; "
+                 "ví dụ dễ hình dung",
+    "Bác sĩ": "hỏi triệu chứng trước khi kết luận, nói rõ cái gì chắc cái gì "
+              "chưa, dặn theo dõi và khi nào cần đi khám",
+    "Kinh doanh": "quy về số và thời hạn, hỏi 'được gì mất gì', chốt phương án",
+    "Bán hàng chợ": "nói nhanh, tiếng đệm dày, trả treo có duyên, hay hỏi "
+                    "'lấy hông'",
+    "Tài xế": "chuyện đường sá, giờ kẹt xe, quãng đường; nói thẳng, ngắn",
+    "Kỹ sư": "con số và dung sai, mô tả theo trình tự, không nói quá",
+    "Văn phòng": "đúng mực công sở, hay 'em gửi lại anh/chị', nhắc mốc thời hạn",
+    "Nông dân": "ví von mùa vụ thời tiết, chất phác, tin vào cái thấy tận mắt",
+    "Sale": "khen khéo, gợi nhu cầu, dẫn dần tới chốt; không ép",
+    "Massage": "hỏi han ân cần, nhắc thư giãn và giữ sức, giọng nhẹ đều",
     "Gái bán hoa": "ngọt ngào lả lơi, khen khéo, chiều lòng người nghe",
 }
 
@@ -420,7 +451,8 @@ def _build(sel: dict) -> str:
     net: list[str] = []
     if sel.get("trait"):
         net.append(sel["trait"].lower())
-    net.extend(h for h in (AGE_HINT.get(a), JOB_HINT.get(job)) if h)
+    net.extend(h for h in (AGE_HINT.get(a), GENDER_HINT.get(g),
+                           JOB_HINT.get(job)) if h)
     if net:
         parts.append("Nét: " + "; ".join(net) + "; nói tự nhiên như người quen.")
     # Ghi RIÊNG voice và tone. Bản cũ nối chuỗi kiểu "Giọng " + ", tông ".join()
@@ -442,11 +474,11 @@ def _build(sel: dict) -> str:
     # GIỌNG & NGÔN NGỮ chi tiết theo vùng (đệm/từ/kiểu cười/câu nói giảm)
     st = REGION_STYLE.get(region)
     if st:
-        laugh = ("cười hihi/hehe, không haha" if g in ("Nữ", "Bé gái")
-                 else "cười thoải mái tự nhiên")
+        # Kiểu cười nay nằm trong GENDER_HINT — để ở cả hai chỗ thì vừa tốn
+        # token vừa mâu thuẫn ("cười haha" của nam đụng "cười thoải mái").
         toi = "em" if (xh.startswith("Xưng em") or xh.startswith("Xưng con")) else "mình"
         parts.append(
-            f"GIỌNG & NGÔN NGỮ: {st['chat']}, {laugh}. Đệm: {st['dem']}. "
+            f"GIỌNG & NGÔN NGỮ: {st['chat']}. Đệm: {st['dem']}. "
             f"Từ hay dùng: {st['tu']}. Góp ý thì nói giảm: 'hình như chỗ này "
             f"hơi nhầm, xem lại giúp {toi} nhé'."
         )

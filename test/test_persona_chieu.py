@@ -32,8 +32,8 @@ def test_moi_tong_mang_theo_cach_cu_xu_chu_khong_chi_mot_tinh_tu():
 def test_chon_tong_khong_lam_mat_net_tuoi_va_nghe():
     """Chính là bug cũ: có tone thì AGE_HINT/JOB_HINT bị bỏ."""
     khoi = _khoi(gender="Nam", age="26-40 tuổi", job="Dân IT", tone="Ấm áp")
-    assert "chững chạc" in khoi, "mất nét của band tuổi"
-    assert "thuật ngữ" in khoi, "mất nét của nghề"
+    assert "vào thẳng việc" in khoi, "mất nét của band tuổi"
+    assert "cách kiểm chứng" in khoi, "mất nét của nghề"
     assert "tông ấm áp" in khoi.lower()
 
 
@@ -100,3 +100,33 @@ def test_tu_ngu_vung_mien_van_con_nguyen():
     assert "chi, mô, răng, rứa" in hue and "dạ thưa" in hue
     tay = persona.preview({"region": "Miền Tây"})
     assert "nghen" in tay and "quá trời" in tay
+
+
+def test_moi_lua_chon_deu_co_mo_ta_rieng():
+    """Mục nào trong ô chọn mà thiếu mô tả thì chọn nó cũng như không chọn —
+    người dùng bấm mà nhân vật chẳng đổi gì, không ai báo."""
+    o = persona.ui_options()
+    thieu = []
+    for ten, ds, bang in (("tuổi", o["ages"], persona.AGE_HINT),
+                          ("giới", o["genders"], persona.GENDER_HINT),
+                          ("nghề", o["jobs"], persona.JOB_HINT),
+                          ("tông", o["tones"], persona.TONE_HINT),
+                          ("vùng", o["regions"], persona.REGION_STYLE)):
+        thieu += [f"{ten}: {x}" for x in ds if not bang.get(x)]
+    assert not thieu, f"chưa có mô tả: {thieu}"
+
+
+def test_mo_ta_khong_trung_nhau_giua_cac_muc():
+    """Hai mục cùng một câu mô tả nghĩa là chọn khác nhau mà ra giọng y hệt."""
+    for ten, bang in (("tuổi", persona.AGE_HINT), ("nghề", persona.JOB_HINT),
+                      ("tông", persona.TONE_HINT)):
+        gia_tri = list(bang.values())
+        assert len(set(gia_tri)) >= len(gia_tri) - 2, (
+            f"bảng {ten} có mô tả trùng nhau")
+
+
+def test_gioi_tinh_vao_duoc_khoi_chu_khong_chi_doi_xung_ho():
+    nu = persona.preview({"gender": "Nữ", "age": "26-40 tuổi"})
+    nam = persona.preview({"gender": "Nam", "age": "26-40 tuổi"})
+    assert "hihi" in nu and "haha" in nam
+    assert nu != nam
