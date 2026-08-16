@@ -17,8 +17,12 @@ docker run -d --rm --name fw-tach-am --gpus all -p 5004:5000 \
   -v fw-tach-am-data:/data \
   -e SEPARATOR_API_TOKEN="$TOKEN" fw-tach-am
 curl -H "X-API-Key: $TOKEN" http://127.0.0.1:5004/health
+# Job token là chuỗi ngẫu nhiên MỖI LƯỢT, để /unload hủy đúng tiến trình của
+# job mình. Sinh tại chỗ, đừng viết sẵn chuỗi cứng vào tài liệu — gitleaks đọc
+# nó thành khóa thật và làm đỏ CI.
+JOB_TOKEN="$(openssl rand -hex 12)"
 curl --request POST --upload-file soundtrack.wav \
-  -H "X-API-Key: $TOKEN" -H 'X-Job-Token: thu-nghiem-12345678' \
+  -H "X-API-Key: $TOKEN" -H "X-Job-Token: $JOB_TOKEN" \
   -H 'X-Filename: soundtrack.wav' -H 'Content-Type: audio/wav' \
   'http://127.0.0.1:5004/tach-nen?stem=nen' -o background.wav
 ```

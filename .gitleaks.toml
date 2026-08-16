@@ -32,6 +32,10 @@ regexes = [
   '''ghp_x+''',
   '''sk-[x]{8,}''',
   '''mat_khau_cua_ban''',
+  # Job token ví dụ trong fw-tach-am/README.md. Tài liệu đã đổi sang sinh ngẫu
+  # nhiên tại chỗ, nhưng gitleaks quét CẢ LỊCH SỬ (fetch-depth: 0) nên chuỗi cũ
+  # ở commit cc0a609 vẫn làm đỏ CI mãi nếu không khai ở đây.
+  '''thu[_-]?nghiem[_-]?\d+''',
   '''example|placeholder|changeme|xxxx|<[a-z-]+>''',
   # Gán từ BIẾN hoặc LỜI GỌI HÀM chứ không phải chuỗi cứng:
   # `os.environ.get`, `module.os.environ.get`, `settings.get_config`.
