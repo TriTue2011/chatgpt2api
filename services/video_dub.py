@@ -60,7 +60,9 @@ def _diem_giong(row: dict[str, Any], lang: str) -> tuple[int, str]:
     diem = 0
     if row.get("downloaded"):
         diem += 1000
-    if bool((row.get("phat_am") or {}).get("dat")):
+    # Bảng phát âm hiện chỉ đo bằng câu TIẾNG VIỆT; không được lấy điểm đó để
+    # xếp VieNeu cao hơn Kokoro bản ngữ khi đích là tiếng Anh.
+    if ma == "vi" and bool((row.get("phat_am") or {}).get("dat")):
         diem += 100
     if ma == "vi":
         uu_tien = ["vieneu:Mai Anh", "vieneu:Thái Sơn", "vieneu:Thục Đoan",
@@ -110,7 +112,16 @@ def danh_sach_giong(lang: str) -> list[dict[str, Any]]:
 
     da_tai = [r for r in rows if r["downloaded"]]
     if da_tai:
-        goi_y = max(da_tai, key=lambda r: _diem_giong(r, ma))
+        goi_y = None
+        if ma in ("zh", "ja", "ko"):
+            try:
+                sid = (vcfg.kokoro_zh_sid() if ma == "zh"
+                       else vcfg.supertonic_sid(ma))
+                goi_y = next((r for r in da_tai
+                              if r["id"] == f"dangu:{ma}:{sid}"), None)
+            except Exception:
+                pass
+        goi_y = goi_y or max(da_tai, key=lambda r: _diem_giong(r, ma))
         goi_y["recommended"] = True
         goi_y["label"] += " · Khuyến nghị"
     return rows
@@ -254,6 +265,7 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
             "voice": voice,
             "original_audio": "removed",
             "speaker_detection": "unavailable",
+            "analysis_source": "mixed_original_audio",
             "created_at": int(time.time()),
             "cues": tam,
         }, raw)

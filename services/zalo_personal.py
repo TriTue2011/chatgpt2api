@@ -36,6 +36,7 @@ import secrets
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -1948,6 +1949,7 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         return
     kieu = str(chon.get("kieu") or "phu-de")
     target = _dc.target_cho_may(chon)
+    tep_long_tieng: list[str] = []
     try:
         # ── Chữ: dịch ngay, không có chuyện phụ đề ───────────────────────────
         if _dc.la_chu(pend):
@@ -2022,6 +2024,37 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
                                    chep_loi=_chep,
                                    nguon_biet=str(chon.get("nguon") or ""),
                                    tien_do=_tien_do_zalo)
+        if kieu == "long-tieng" and r.get("ok") and not r.get("canh_bao_dich"):
+            from services import video_dub as _dub
+
+            send_message(thread_id,
+                         "🔊 Đã có phụ đề, em đang tổng hợp giọng và ghép video…",
+                         thread_type)
+            try:
+                giong = _dub.chon_giong(str(r.get("dich") or ""))
+                dub = _dub.long_tieng(pend["path"], r["srt"], str(r["dich"]),
+                                      voice=giong)
+                tep_long_tieng.extend([dub.video_path, dub.prosody_path])
+            except Exception as exc:
+                logger.warning("zalop lồng tiếng lỗi: %s", str(exc)[:200])
+                send_message(
+                    thread_id,
+                    _vd.bao_cao(r) + "\n⚠️ Lồng tiếng không hoàn thành: "
+                    + str(exc)[:220] + "; em vẫn gửi SRT để không mất kết quả.",
+                    thread_type)
+                _serve_bytes(thread_id, thread_type, r["srt"], r["ten"], "Phụ đề")
+                return
+            send_message(
+                thread_id,
+                _vd.bao_cao(r) + f"\n🔊 Đã lồng bằng {dub.voice}; âm thanh gốc đã bỏ."
+                + (f"\n⚠️ {dub.canh_bao}" if dub.canh_bao else ""),
+                thread_type)
+            _serve_path(thread_id, thread_type, dub.video_path,
+                        f"long-tieng.{r['dich']}.mp4", "Video đã lồng tiếng")
+            _serve_path(thread_id, thread_type, dub.prosody_path,
+                        f"prosody.{r['dich']}.json", "Nhịp và giọng từng câu")
+            _serve_bytes(thread_id, thread_type, r["srt"], r["ten"], "Phụ đề")
+            return
         send_message(thread_id, _vd.bao_cao(r), thread_type)
         if not r.get("ok"):
             return
@@ -2065,6 +2098,11 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
                      f"phu-de-tren.{r['dich']}.srt",
                      "Bản chữ hiện ở MÉP TRÊN (video đã có chữ sẵn ở dưới)")
     finally:
+        for p in tep_long_tieng:
+            try:
+                Path(p).unlink(missing_ok=True)
+            except Exception:
+                pass
         _dc.don_tep(pend)
 
 
@@ -2198,6 +2236,26 @@ def _serve_bytes(thread_id: str, thread_type: int, du_lieu: bytes, ten: str,
     send_message(thread_id, f"📎 Em tạo được {fn} nhưng gửi tệp chưa được ạ.",
                  thread_type)
     logger.warning("zalop sendFile fail path=%s", rel)
+
+
+def _serve_path(thread_id: str, thread_type: int, duong: str, ten: str,
+                ghi_chu: str = "") -> None:
+    """Gửi tệp lớn trên đĩa mà không gom toàn bộ video vào RAM."""
+    import shutil
+    import uuid
+
+    out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    duoi = ten[ten.rfind("."):] if "." in ten else Path(duong).suffix or ".bin"
+    fn = _ten_tep_phuc_vu(ten, duoi)
+    with open(duong, "rb") as src, open(out_dir / fn, "wb") as dst:
+        shutil.copyfileobj(src, dst, length=1024 * 1024)
+    rel = f"/images/docs/{out_dir.name}/{fn}"
+    if _send_file_robust(thread_id, rel, ghi_chu or ten, thread_type):
+        return
+    send_message(thread_id, f"📎 Em tạo được {fn} nhưng gửi tệp chưa được ạ.",
+                 thread_type)
+    logger.warning("zalop sendFile tệp lớn fail path=%s", rel)
 
 
 def _moi_luu_online(ev: dict, thread_id: str, ten_tep: str, du_lieu: bytes,

@@ -17,6 +17,7 @@ Kết quả dạng tệp ghi vào ``images_dir/docs/<uuid>/`` và trả đườn
 from __future__ import annotations
 
 import logging
+import shutil
 import tempfile
 import threading
 import time
@@ -72,6 +73,9 @@ class DichTepRequest(BaseModel):
     #: Riêng video/âm thanh: "phu-de" (mặc định, .srt) hay "chu" (văn bản
     #: dịch thuần — người dùng chỉ cần lời thoại, không cần mốc thời gian).
     kieu_ra: str = "phu-de"
+    #: Giọng TTS chỉ dùng khi ``kieu_ra=long-tieng``. Rỗng = backend chọn
+    #: giọng đã tải, rõ tiếng và phù hợp tiếng đích nhất.
+    voice: str = ""
 
 
 def _luu_so_viec_da_khoa() -> None:
@@ -122,7 +126,7 @@ with _khoa:
     _tai_lai_so_viec_sau_restart()
 
 
-def _luu_ket_tep(cac_tep: list[tuple[str, bytes]]) -> list[dict[str, str]]:
+def _luu_ket_tep(cac_tep: list[tuple[str, bytes | str | Path]]) -> list[dict[str, str]]:
     """Ghi các tệp kết quả ra thư mục phục vụ HTTP → [{ten, url}].
 
     Cùng thư mục và cùng phép làm sạch tên với ``_serve_bytes`` của kênh Zalo
@@ -136,7 +140,13 @@ def _luu_ket_tep(cac_tep: list[tuple[str, bytes]]) -> list[dict[str, str]]:
     for ten, du_lieu in cac_tep:
         duoi = ten[ten.rfind("."):] if "." in ten else ".txt"
         fn = _ten_tep_phuc_vu(ten, duoi)
-        (thu_muc / fn).write_bytes(du_lieu)
+        dich = thu_muc / fn
+        if isinstance(du_lieu, bytes):
+            dich.write_bytes(du_lieu)
+        else:
+            # Video hàng trăm MB phải copy theo luồng, không đọc cả tệp vào RAM.
+            with open(Path(du_lieu), "rb") as src, open(dich, "wb") as dst:
+                shutil.copyfileobj(src, dst, length=1024 * 1024)
         ra.append({"ten": fn, "url": f"/images/docs/{thu_muc.name}/{fn}"})
     return ra
 
@@ -166,7 +176,17 @@ def _xong_phu_de(viec_id: str, r: dict[str, Any], kieu_ra: str = "phu-de") -> No
     if not r.get("ok"):
         _cap_nhat(viec_id, trang_thai="loi", loi=vd.bao_cao(r), luc=time.time())
         return
-    if kieu_ra == "chu":
+    long_tieng = r.get("long_tieng") if kieu_ra == "long-tieng" else None
+    if long_tieng:
+        tep = _luu_ket_tep([
+            (f"long-tieng.{r['dich']}.mp4", long_tieng["video_path"]),
+            (f"prosody.{r['dich']}.json", long_tieng["prosody_path"]),
+            (r["ten"], r["srt"]),
+        ])
+        ket_qua = {"kieu": "long-tieng", "text": r["chu"][:TRAN_CHU_XEM],
+                   "nguon": r["nguon"], "dich": r["dich"], "tep": tep,
+                   "voice": long_tieng["voice"]}
+    elif kieu_ra == "chu":
         tep = _luu_ket_tep([(f"loi-thoai.{r['dich']}.txt",
                              r["chu"].encode("utf-8"))])
         ket_qua = {"kieu": "chu", "text": r["chu"][:TRAN_CHU_XEM],
@@ -179,8 +199,15 @@ def _xong_phu_de(viec_id: str, r: dict[str, Any], kieu_ra: str = "phu-de") -> No
                             (ten_tren, vd.srt_chu_tren(srt).encode("utf-8"))])
         ket_qua = {"kieu": "phu-de", "text": r["chu"][:TRAN_CHU_XEM],
                    "nguon": r["nguon"], "dich": r["dich"], "tep": tep}
+    bao_cao = vd.bao_cao(r)
+    if r.get("canh_bao_long_tieng"):
+        bao_cao += "\n⚠️ " + str(r["canh_bao_long_tieng"])
+    elif long_tieng:
+        bao_cao += f"\n🔊 Đã lồng tiếng bằng {long_tieng['voice']}; âm thanh gốc đã bỏ."
+        if long_tieng.get("canh_bao"):
+            bao_cao += "\n⚠️ " + str(long_tieng["canh_bao"])
     _cap_nhat(viec_id, trang_thai="xong", luc=time.time(), phan_tram=100,
-              bao_cao=vd.bao_cao(r), ket_qua=ket_qua)
+              bao_cao=bao_cao, ket_qua=ket_qua)
 
 
 def _xong_chu_hoac_tep(viec_id: str, ket: dict[str, Any], ten: str) -> None:
@@ -206,6 +233,17 @@ def _xong_chu_hoac_tep(viec_id: str, ket: dict[str, Any], ten: str) -> None:
 
 def create_router() -> APIRouter:
     router = APIRouter(tags=["dich"])
+
+    @router.get("/api/dich/giong")
+    async def giong_long_tieng(lang: str = "vi",
+                              authorization: str | None = Header(None)):
+        """Giọng lồng tiếng phù hợp tiếng đích, kèm lựa chọn khuyến nghị."""
+        require_admin(authorization)
+        lang = str(lang or "").lower().split("-", 1)[0]
+        if lang not in {"vi", "en", "zh", "ja", "ko"}:
+            raise HTTPException(400, detail={"error": "Tiếng lồng không hợp lệ"})
+        from services import video_dub
+        return {"voices": video_dub.danh_sach_giong(lang)}
 
     @router.post("/api/dich/chu")
     async def dich_chu(body: DichChuRequest,
@@ -311,26 +349,71 @@ def create_router() -> APIRouter:
             ten, duong = v["ten"], v["duong"]
         viec_id, target = body.viec_id, body.target
         nguon_biet = (body.nguon or "").strip().lower()
-        kieu_ra = "chu" if body.kieu_ra == "chu" else "phu-de"
+        kieu_ra = (body.kieu_ra if body.kieu_ra in
+                   {"chu", "phu-de", "long-tieng"} else "phu-de")
 
         from services import video_asr as va
         from services import video_dich as vd
+        from services import translate_service as ts
 
         thap = ten.lower()
+        if kieu_ra == "long-tieng" and not thap.endswith(
+                (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp")):
+            Path(duong).unlink(missing_ok=True)
+            _cap_nhat(viec_id, trang_thai="loi", luc=time.time(),
+                      loi="Lồng tiếng cần tệp video, không nhận tệp âm thanh/phụ đề.")
+            return {"viec_id": viec_id}
         if va.la_tep_nghe_duoc(thap):
             def _video():
                 def _tien_do(buoc: str, phan_tram: int | None, _moc: bool) -> None:
                     # Web hiện MỌI lượt (kể cả từng lô dịch); cờ mốc chỉ dành
                     # cho kênh chat, nơi mỗi lượt là một tin nhắn.
+                    if kieu_ra == "long-tieng" and phan_tram is not None:
+                        phan_tram = round(phan_tram * 0.8)
                     _cap_nhat(viec_id, buoc=buoc, phan_tram=phan_tram,
                               luc=time.time())
 
+                tep_tam: list[str] = []
                 try:
                     r = vd.dich_tep_video(duong, ten, target,
                                           nguon_biet=nguon_biet, tien_do=_tien_do)
+                    if (kieu_ra == "long-tieng" and r.get("ok")
+                            and not r.get("canh_bao_dich")):
+                        from services import video_dub
+
+                        try:
+                            giong = video_dub.chon_giong(
+                                str(r.get("dich") or target), body.voice.strip())
+
+                            def _tien_do_tts(xong: int, tong: int, buoc: str) -> None:
+                                pt = 80 + round(19 * xong / max(1, tong))
+                                _cap_nhat(viec_id, buoc=buoc, phan_tram=pt,
+                                          luc=time.time())
+
+                            dub = video_dub.long_tieng(
+                                duong, r["srt"], str(r["dich"]), voice=giong,
+                                progress=_tien_do_tts)
+                            tep_tam.extend([dub.video_path, dub.prosody_path])
+                            r["long_tieng"] = {
+                                "video_path": dub.video_path,
+                                "prosody_path": dub.prosody_path,
+                                "voice": dub.voice,
+                                "canh_bao": dub.canh_bao,
+                            }
+                        except Exception as exc:
+                            logger.warning("lồng tiếng %s lỗi: %s", ten, str(exc)[:200])
+                            r["canh_bao_long_tieng"] = (
+                                f"Lồng tiếng không hoàn thành: {str(exc)[:220]}; "
+                                "đã giữ lại SRT để không mất kết quả nghe/dịch.")
+                    elif kieu_ra == "long-tieng" and r.get("canh_bao_dich"):
+                        r["canh_bao_long_tieng"] = (
+                            "Không lồng tiếng vì máy dịch đã rơi về phụ đề gốc; "
+                            "đã giữ lại SRT để tránh đọc sai ngôn ngữ đích.")
+                    _xong_phu_de(viec_id, r, kieu_ra)
                 finally:
                     Path(duong).unlink(missing_ok=True)
-                _xong_phu_de(viec_id, r, kieu_ra)
+                    for p in tep_tam:
+                        Path(p).unlink(missing_ok=True)
 
             _chay_nen(viec_id, _video)
         elif vd.la_tep_phu_de(thap):

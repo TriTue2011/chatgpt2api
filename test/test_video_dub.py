@@ -94,3 +94,17 @@ def test_khuyen_nghi_giong_ro_rang_va_chi_chon_giong_da_tai(monkeypatch):
     assert dub.chon_giong("vi", "") == "vieneu:Mai Anh"
     with pytest.raises(dub.LoiLongTieng, match="chưa được tải"):
         dub.chon_giong("en", "kokoro:af_sky")
+
+
+def test_tieng_anh_uu_tien_kokoro_ban_ngu_hon_diem_phat_am_viet(monkeypatch):
+    from services import video_dub as dub
+    from services.voice import config as vcfg
+
+    monkeypatch.setattr(vcfg, "voice_catalog", lambda: [
+        {"id": "vieneu:Mai Anh", "language": "vi-en", "language_label": "VieNeu",
+         "downloaded": True, "phat_am": {"dat": True}},
+        {"id": "kokoro:af_sky", "language": "en", "language_label": "Kokoro",
+         "downloaded": True},
+    ])
+    en = dub.danh_sach_giong("en")
+    assert next(v for v in en if v["recommended"])["id"] == "kokoro:af_sky"

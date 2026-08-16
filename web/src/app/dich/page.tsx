@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Languages, LoaderCircle, Upload, FileText, Download, Copy, Check, Mic, MessagesSquare } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Languages, LoaderCircle, Upload, FileText, Download, Copy, Check, Mic, MessagesSquare, Volume2 } from "lucide-react";
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { request } from "@/lib/request";
 import webConfig from "@/constants/common-env";
@@ -35,6 +35,14 @@ const CAC_TIENG = [
  *  tệp phụ đề sẵn (.srt/.vtt — đường nhanh nhất cho phim, khỏi nghe). */
 const DUOI_NGHE = [".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp",
   ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac", ".srt", ".vtt"];
+const DUOI_VIDEO = [".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp"];
+
+type GiongLongTieng = {
+  id: string;
+  label: string;
+  downloaded: boolean;
+  recommended: boolean;
+};
 
 type KetQua = {
   kieu: string;                 // "chu" | "tep" | "phu-de"
@@ -44,6 +52,7 @@ type KetQua = {
   dich?: string;
   tep?: { ten: string; url: string }[];
   bao_cao?: string;
+  voice?: string;
 };
 
 function layLoi(e: unknown): string {
@@ -57,6 +66,9 @@ function DichPageContent() {
   const [nguon, setNguon] = useState("");   // "" = để máy tự nhận
   const [tep, setTep] = useState<File | null>(null);
   const [kieuRa, setKieuRa] = useState("phu-de");
+  const [giong, setGiong] = useState("");
+  const [cacGiong, setCacGiong] = useState<GiongLongTieng[]>([]);
+  const [dangTaiGiong, setDangTaiGiong] = useState(false);
   const [dangChay, setDangChay] = useState(false);
   const [tienDo, setTienDo] = useState(0);       // % upload; -1 = không upload
   const [buoc, setBuoc] = useState("");
@@ -67,6 +79,27 @@ function DichPageContent() {
   const [ketQua, setKetQua] = useState<KetQua | null>(null);
   const [daChep, setDaChep] = useState(false);
   const chonTep = useRef<HTMLInputElement>(null);
+
+  const laVideo = !!tep && DUOI_VIDEO.some((d) => tep.name.toLowerCase().endsWith(d));
+
+  useEffect(() => {
+    if (kieuRa !== "long-tieng") return;
+    let conHieuLuc = true;
+    setDangTaiGiong(true);
+    request.get("/api/dich/giong", { params: { lang: target } })
+      .then((res) => {
+        if (!conHieuLuc) return;
+        const rows = ((res.data as { voices?: GiongLongTieng[] }).voices || []);
+        setCacGiong(rows);
+        setGiong((cu) => {
+          if (rows.some((v) => v.id === cu && v.downloaded)) return cu;
+          return rows.find((v) => v.recommended)?.id || "";
+        });
+      })
+      .catch((e) => { if (conHieuLuc) { setCacGiong([]); setGiong(""); setLoi(layLoi(e)); } })
+      .finally(() => { if (conHieuLuc) setDangTaiGiong(false); });
+    return () => { conHieuLuc = false; };
+  }, [kieuRa, target]);
 
   function batDau() {
     setLoi(""); setKetQua(null); setBuoc(""); setTienDo(-1); setPhanTram(null);
@@ -118,8 +151,12 @@ function DichPageContent() {
 
   async function dichTep() {
     if (!tep || dangChay) return;
+    if (kieuRa === "long-tieng" && !giong) {
+      setLoi("Chưa có giọng phù hợp đã tải trên máy; vào Cài đặt → Giọng nói để tải model.");
+      return;
+    }
     if (tep.size > TRAN_TEP) {
-      setLoi(`Tệp ${(tep.size / 1024 / 1024).toFixed(0)}MB vượt trần 250MB`);
+      setLoi(`Tệp ${(tep.size / 1024 / 1024).toFixed(0)}MB vượt trần 4GB`);
       return;
     }
     batDau();
@@ -147,7 +184,9 @@ function DichPageContent() {
         viecId = (res.data as { viec_id: string }).viec_id;
       }
       setTienDo(-1);
-      await request.post("/api/dich/tep", { viec_id: viecId, target, nguon, kieu_ra: kieuRa });
+      await request.post("/api/dich/tep", {
+        viec_id: viecId, target, nguon, kieu_ra: kieuRa, voice: giong,
+      });
       setBuoc("đang xử lý…");
       await thamDo(viecId);
     } catch (e) {
@@ -175,6 +214,12 @@ function DichPageContent() {
       const dichMoi = CAC_TIENG.find((o) => o.value !== moi)?.value;
       if (dichMoi) setTarget(dichMoi);
     }
+  }
+
+  function chonTepMoi(f: File) {
+    setTep(f);
+    const video = DUOI_VIDEO.some((d) => f.name.toLowerCase().endsWith(d));
+    if (!video && kieuRa === "long-tieng") setKieuRa("phu-de");
   }
 
   return (
@@ -219,7 +264,7 @@ function DichPageContent() {
       {/* Tải tệp từ máy */}
       <div className="space-y-3 rounded-[16px] border border-[var(--border)] p-4"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !dangChay) setTep(f); }}>
+        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && !dangChay) chonTepMoi(f); }}>
         <button type="button" onClick={() => chonTep.current?.click()} disabled={dangChay}
           className="flex w-full flex-col items-center gap-2 rounded-[12px] border border-dashed border-[var(--border)] p-6 text-sm text-[var(--muted-foreground)] hover:border-slate-400">
           <Upload className="size-5" />
@@ -230,9 +275,9 @@ function DichPageContent() {
           )}
         </button>
         <input ref={chonTep} type="file" accept={DUOI_NHAN} className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) setTep(f); e.target.value = ""; }} />
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) chonTepMoi(f); e.target.value = ""; }} />
         {tep && DUOI_NGHE.some((d) => tep.name.toLowerCase().endsWith(d)) && (
-          <div className="flex items-center gap-5 text-sm">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
             <span className="text-[var(--muted-foreground)]">Kết quả:</span>
             <label className="flex cursor-pointer items-center gap-1.5">
               <input type="radio" name="kieu-ra" checked={kieuRa === "phu-de"}
@@ -244,12 +289,44 @@ function DichPageContent() {
                 onChange={() => setKieuRa("chu")} disabled={dangChay} />
               Bản chữ (lời thoại đã dịch)
             </label>
+            {laVideo && (
+              <label className="flex cursor-pointer items-center gap-1.5">
+                <input type="radio" name="kieu-ra" checked={kieuRa === "long-tieng"}
+                  onChange={() => setKieuRa("long-tieng")} disabled={dangChay} />
+                <Volume2 className="size-4" /> Lồng tiếng video
+              </label>
+            )}
+          </div>
+        )}
+        {kieuRa === "long-tieng" && laVideo && (
+          <div className="space-y-2 rounded-[12px] bg-[var(--muted)] p-3">
+            <label htmlFor="giong-long-tieng" className="block text-sm font-medium">
+              Giọng dùng cho toàn video
+            </label>
+            <select id="giong-long-tieng" value={giong}
+              onChange={(e) => setGiong(e.target.value)} disabled={dangChay || dangTaiGiong}
+              className="w-full rounded-[10px] border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm">
+              {dangTaiGiong && <option value="">Đang đọc danh sách giọng…</option>}
+              {!dangTaiGiong && !cacGiong.some((v) => v.downloaded) && (
+                <option value="">Chưa có model giọng phù hợp đã tải</option>
+              )}
+              {cacGiong.map((v) => (
+                <option key={v.id} value={v.id} disabled={!v.downloaded}>
+                  {v.label}{v.downloaded ? "" : " · chưa tải"}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Bản này dùng một giọng cho mọi nhân vật, bỏ hoàn toàn âm thanh gốc và xuất kèm
+              <code className="mx-1">prosody.json</code> để giữ nhịp, cao độ và năng lượng từng câu.
+              Khi chưa có diarization, người nói được ghi là <code>UNKNOWN</code> để không gán nhầm giới tính.
+            </p>
           </div>
         )}
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={dichTep} disabled={dangChay || !tep}
             className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
-            Dịch tệp
+            {kieuRa === "long-tieng" ? "Dịch và lồng tiếng" : "Dịch tệp"}
           </button>
         </div>
       </div>
@@ -299,6 +376,12 @@ function DichPageContent() {
           {ketQua.kieu === "phu-de" && (
             <p className="text-xs text-[var(--muted-foreground)]">
               Bản <code>phu-de-tren</code> hiện chữ ở mép trên màn hình — dùng khi video đã có chữ in sẵn ở dưới.
+            </p>
+          )}
+          {ketQua.kieu === "long-tieng" && (
+            <p className="text-xs text-[var(--muted-foreground)]">
+              Video dùng giọng <b>{ketQua.voice}</b>; track âm thanh gốc đã được thay hoàn toàn.
+              Tệp prosody đi kèm lưu nhịp và tông tương đối để tái dựng hoặc đổi giọng sau này.
             </p>
           )}
           {ketQua.text && (
