@@ -41,6 +41,14 @@ class LoiLongTieng(RuntimeError):
     """Đầu vào, giọng hoặc ffmpeg không đủ để tạo bản lồng tiếng."""
 
 
+class LoiLongTiengTamThoi(LoiLongTieng):
+    """Lỗi có khả năng TỰ HẾT (quá giờ vì máy đang tải), đáng thử lại một lần.
+
+    Là lớp con nên mọi ``except LoiLongTieng`` sẵn có vẫn bắt được như cũ; chỉ
+    thêm cho chỗ nào muốn phân biệt "hỏng hẳn" với "lúc này đang bận".
+    """
+
+
 @dataclass(frozen=True)
 class KetQuaLongTieng:
     video_path: str
@@ -158,7 +166,9 @@ def _chay(cmd: list[str], *, input_data: bytes | None = None,
     except FileNotFoundError as exc:
         raise LoiLongTieng("Thiếu ffmpeg/ffprobe trong image.") from exc
     except subprocess.TimeoutExpired as exc:
-        raise LoiLongTieng("Xử lý âm thanh quá thời gian cho phép.") from exc
+        # Quá giờ thường là máy đang tải chứ không phải tệp hỏng — phân loại
+        # riêng để bước căn thời lượng được thử lại thay vì bỏ cả phim.
+        raise LoiLongTiengTamThoi("Xử lý âm thanh quá thời gian cho phép.") from exc
 
 
 def _thoi_luong(duong: str, fallback: float) -> float:
@@ -388,7 +398,8 @@ def _tong_hop(chu: str, voice: str, emotion: str) -> bytes:
 
 def _loi_tts_tam_thoi(exc: Exception) -> bool:
     """Chỉ retry lỗi có khả năng tự hết; cấu hình/media/OOM phải dừng ngay."""
-    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError, ConnectionError)):
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError,
+                        ConnectionError, LoiLongTiengTamThoi)):
         return True
     if isinstance(exc, (FileNotFoundError, ValueError, LoiLongTieng)):
         return False
@@ -400,12 +411,14 @@ def _loi_tts_tam_thoi(exc: Exception) -> bool:
     )
     if any(x in text for x in vinh_vien):
         return False
-    tam_thoi = (
-        "bận", "busy", "tạm thời", "thoáng qua", "temporar", "try again",
-        "timeout", "timed out", "quá thời gian", "kết nối", "connection",
-        "reset by peer", "resource unavailable",
-    )
-    return any(x in text for x in tam_thoi)
+    # KHÔNG nhận ra thì THỬ LẠI. Hai hướng sai không ngang giá nhau: thử thừa
+    # tốn 0,5 giây và một lần tổng hợp, còn dừng nhầm thì vứt cả buổi — đúng
+    # thứ đường retry này sinh ra để tránh. Danh sách "vĩnh viễn" ở trên đã
+    # chặn sẵn các lỗi chắc chắn không tự hết, nên mặc định này không phí.
+    # Thực đo: engine TTS chạy tiến trình con ném CalledProcessError với chuỗi
+    # "returned non-zero exit status 1" — không khớp mẫu tạm thời nào, mà đó
+    # lại là kiểu trục trặc thoáng qua hay gặp nhất.
+    return True
 
 
 def _viet_lang(w: wave.Wave_write, so_mau: int) -> None:
@@ -470,22 +483,36 @@ def _tao_track(meta: dict[str, Any], dai: float, voice: str,
                             continue
                         loi_cue = exc
                         break
-                # Căn thời lượng là pha riêng và mang tính tất định: thiếu
-                # ffmpeg/WAV hỏng không được tổng hợp lại TTS một cách vô ích.
+                # Căn thời lượng là pha riêng: WAV hỏng hay thiếu ffmpeg thì
+                # tổng hợp lại TTS cũng vô ích, nên KHÔNG đọc lại câu. Nhưng
+                # ffmpeg quá giờ vì máy đang tải là chuyện tự hết — dùng lại
+                # đúng bản WAV đã có mà chạy lại, không tốn thêm lượt TTS.
                 if wav is not None and loi_cue is None:
-                    try:
-                        pcm, tempo = _pcm_vua_khung(
-                            wav, (ket - bat) / RATE_DUB,
-                            pitch_relative=cue.get("pitch_relative"),
-                            energy_relative_db=float(
-                                cue.get("energy_relative_db") or 0.0))
-                        cue["tts_tempo"] = round(tempo, 3)
-                        cue["tts_status"] = "ok"
-                        if tempo > 2.0:
-                            canh_bao.append(
-                                f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
-                    except Exception as exc:
-                        loi_cue = exc
+                    for lan_can in range(1, TTS_SO_LAN_TOI_DA + 1):
+                        try:
+                            pcm, tempo = _pcm_vua_khung(
+                                wav, (ket - bat) / RATE_DUB,
+                                pitch_relative=cue.get("pitch_relative"),
+                                energy_relative_db=float(
+                                    cue.get("energy_relative_db") or 0.0))
+                            cue["tts_tempo"] = round(tempo, 3)
+                            cue["tts_status"] = "ok"
+                            if lan_can > 1:
+                                cue["tts_recovered_after_retry"] = True
+                            if tempo > 2.0:
+                                canh_bao.append(
+                                    f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
+                            break
+                        except Exception as exc:
+                            if (lan_can < TTS_SO_LAN_TOI_DA
+                                    and _loi_tts_tam_thoi(exc)):
+                                logger.warning(
+                                    "căn thời lượng câu %d lỗi lần %d, thử lại: %s",
+                                    i + 1, lan_can, str(exc)[:160])
+                                time.sleep(TTS_CHO_THU_LAI_GIAY)
+                                continue
+                            loi_cue = exc
+                            break
                 if loi_cue is not None:
                     loi += 1
                     cue["tts_status"] = "error"

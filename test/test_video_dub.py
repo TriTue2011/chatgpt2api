@@ -343,3 +343,28 @@ def test_tts_loi_vinh_vien_va_loi_can_thoi_luong_deu_khong_retry():
         assert meta["cues"][0]["tts_attempts"] == 1
     finally:
         Path(track).unlink(missing_ok=True)
+
+
+@pytest.mark.pure
+def test_loi_la_thi_van_thu_lai_thay_vi_vut_ca_buoi_tong_hop():
+    """Không nhận ra lỗi thì thử lại: dừng nhầm đắt hơn thử thừa rất nhiều."""
+    import subprocess
+
+    from services import video_dub as dub
+
+    # Kiểu lỗi hay gặp nhất của engine chạy tiến trình con, không khớp mẫu nào.
+    assert dub._loi_tts_tam_thoi(subprocess.CalledProcessError(1, "piper")) is True
+    assert dub._loi_tts_tam_thoi(RuntimeError("engine trả WAV rỗng")) is True
+    # Nhưng lỗi chắc chắn không tự hết thì vẫn phải dừng ngay, khỏi phí lượt.
+    assert dub._loi_tts_tam_thoi(RuntimeError("CUDA out of memory")) is False
+    assert dub._loi_tts_tam_thoi(dub.LoiLongTieng("Thiếu ffmpeg/ffprobe")) is False
+    assert dub._loi_tts_tam_thoi(FileNotFoundError("piper")) is False
+
+
+@pytest.mark.pure
+def test_ffmpeg_qua_gio_duoc_thu_lai_chu_khong_giet_ca_phim():
+    """Quá giờ là máy đang tải, không phải tệp hỏng — phải phân biệt được."""
+    from services import video_dub as dub
+
+    assert issubclass(dub.LoiLongTiengTamThoi, dub.LoiLongTieng)
+    assert dub._loi_tts_tam_thoi(dub.LoiLongTiengTamThoi("quá giờ")) is True
