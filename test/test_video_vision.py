@@ -21,6 +21,23 @@ def test_nhieu_canh_thi_lay_mau_deu_trong_gioi_han():
     assert moc == [0.5, 4.5, 9.5]
 
 
+@pytest.mark.pure
+def test_phim_63_phut_tu_tang_ngan_sach_vision_len_120_canh(monkeypatch):
+    """40/1012 quá thưa cho xưng hô; phim dài dùng mức trần an toàn 120."""
+    monkeypatch.setattr(vv, "_config", lambda name, default="":
+                        "" if name == "VISION_MAX_SCENES" else default)
+    canh = [(i * 3.75, (i + 1) * 3.75) for i in range(1012)]
+    assert vv.gioi_han_canh(canh) == 120
+
+
+@pytest.mark.pure
+def test_vision_uu_tien_canh_co_loi_thoai():
+    canh = [(float(i), float(i + 1)) for i in range(10)]
+    loi = [type("D", (), {"bat_dau": 2.1, "ket_thuc": 2.8})(),
+           type("D", (), {"bat_dau": 7.1, "ket_thuc": 7.8})()]
+    assert vv.chon_canh_phan_tich(canh, loi, 2) == [canh[2], canh[7]]
+
+
 def test_qwen_loi_thi_tra_canh_bao_thay_vi_nem_ra_ngoai(monkeypatch):
     monkeypatch.setattr(vv, "dung_duoc", lambda: True)
     monkeypatch.setattr(vv, "tach_canh", lambda _p: [(0.0, 4.0)])

@@ -137,7 +137,25 @@ VIEC = {
     # thiếu nó — ô 3 giữ nguyên tiếng nhưng trả .srt đầy số thứ tự và mốc giờ,
     # dán vào tài liệu là phải dọn tay.
     "chu-goc": ("4", "Chép lời ra bản chữ thuần, GIỮ nguyên tiếng gốc", False),
+    # Chỉ hiện cho TỆP VIDEO thật: link hiện chưa tải cả hình về gateway, còn
+    # tệp phụ đề/âm thanh không có luồng hình để thay track.
+    "long-tieng": ("5", "Lồng tiếng video (thay âm thanh gốc)", True),
 }
+
+_DUOI_VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp")
+
+
+def _la_tep_video(pend: dict[str, Any]) -> bool:
+    # ``path`` có thể là chuỗi rỗng trong adapter/test trước lúc tệp được chốt;
+    # điểm phân biệt link là trường ``url``, còn loại tệp lấy theo tên đã nhận.
+    return not bool(pend.get("url")) and str(
+        pend.get("ten") or "").lower().endswith(_DUOI_VIDEO)
+
+
+def _viec_hop_le(pend: dict[str, Any]) -> dict[str, tuple[str, str, bool]]:
+    """Các việc thật sự làm được với đúng loại đầu vào đang chờ."""
+    return {ma: gia_tri for ma, gia_tri in VIEC.items()
+            if ma != "long-tieng" or _la_tep_video(pend)}
 
 
 def _danh_sach_tieng(tru: str = "") -> list[str]:
@@ -243,7 +261,8 @@ def menu_buoc(key: str) -> str:
         dau = (f"🎬 Link video: {ten}{co}" if pend.get("url")
                else f"📄 Tệp phụ đề: {ten}{co}" if _la_phu_de(ten)
                else f"🎬 Tệp: {ten}{co}")
-        dong = "\n".join(f"{so}. {nhan}" for so, nhan, _ in VIEC.values())
+        dong = "\n".join(f"{so}. {nhan}"
+                         for so, nhan, _ in _viec_hop_le(pend).values())
         return (f"{dau}\nEm làm gì với tệp này ạ? Nhắn số:\n{dong}\n"
                 "Nhắn «thôi» để bỏ.")
     if buoc == BUOC_NGUON:
@@ -294,7 +313,7 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
                             else str(pend.get("chu") or "")),
                 "tieng": (str(pend.get("tieng") or "") if lay_dich else "")}
     if buoc == BUOC_VIEC:
-        chon = next((k for k, v in VIEC.items() if v[0] == so), "")
+        chon = next((k for k, v in _viec_hop_le(pend).items() if v[0] == so), "")
         if not chon:
             return None
         _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
@@ -315,7 +334,9 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
     ds = _danh_sach_tieng(str(pend.get("nguon") or ""))
     if int(so) > len(ds):
         return None
-    kieu = "chu" if str(pend.get("viec")) == "chu" else "phu-de"
+    viec = str(pend.get("viec") or "phu-de")
+    kieu = "chu" if viec == "chu" else (
+        "long-tieng" if viec == "long-tieng" else "phu-de")
     # Truyền THẲNG mã đích, không bọc "cap:". "cap:ko" nghĩa là "cặp Việt ↔
     # Hàn", mà giai_ma_target giải nó thành: nguồn tiếng Việt thì sang Hàn,
     # còn lại về Việt. Menu ba bước đã hỏi rõ cả nguồn lẫn đích, nên chọn

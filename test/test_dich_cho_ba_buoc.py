@@ -38,6 +38,27 @@ def test_buoc_1_hoi_lam_gi():
         assert f"{so}. {nhan}" in m
 
 
+def test_tep_video_co_lua_chon_long_tieng_nhung_link_va_phu_de_khong_co():
+    k = _tep()
+    assert "5. Lồng tiếng video" in dc.menu_buoc(k)
+
+    dc._pending.clear()
+    dc.set_pending(k, url="https://youtu.be/abcdefghijk", ten="YouTube")
+    assert "Lồng tiếng video" not in dc.menu_buoc(k)
+
+    dc._pending.clear()
+    dc.set_pending(k, path="", ten="phim.srt")
+    assert "Lồng tiếng video" not in dc.menu_buoc(k)
+
+
+def test_long_tieng_di_qua_tieng_nguon_va_tieng_dich():
+    k = _tep()
+    assert dc.tra_loi_buoc(k, "5") == {"tiep": True}
+    assert dc.tra_loi_buoc(k, "2") == {"tiep": True}  # nguồn Anh
+    ra = dc.tra_loi_buoc(k, "1")                       # đích Việt
+    assert ra == {"kieu": "long-tieng", "target": "vi", "nguon": "en"}
+
+
 def test_ba_buoc_di_het_va_nho_duoc_lua_chon_giua_chung():
     k = _tep()
     assert dc.tra_loi_buoc(k, "1") == {"tiep": True}      # tạo phụ đề
@@ -78,7 +99,7 @@ def test_chep_loi_ra_ban_chu_la_viec_khac_voi_chep_loi_ra_srt():
 
 def test_so_ngoai_menu_va_cau_khong_phai_tra_loi():
     k = _tep()
-    assert dc.tra_loi_buoc(k, "5") is None      # bước 1 chỉ có 1..4
+    assert dc.tra_loi_buoc(k, "6") is None      # bước 1 chỉ có 1..5
     assert dc.tra_loi_buoc(k, "mai mình đi ăn") is None
     assert dc.tra_loi_buoc(k, "thôi") == {"bo": True}
 

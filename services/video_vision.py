@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import os
 import subprocess
 import time
@@ -146,6 +147,43 @@ def _lay_mau_deu(canh: list[tuple[float, float]], toi_da_canh: int
     return [canh[i] for i in dict.fromkeys(chi_so)]
 
 
+def gioi_han_canh(canh: list[tuple[float, float]]) -> int:
+    """Ngân sách Qwen theo độ dài phim, trừ khi admin đặt rõ bằng cấu hình.
+
+    Mặc định cũ 40 cảnh hợp video ngắn nhưng chỉ phủ 4% phim 63 phút/1012 cut.
+    Mức tự động lấy xấp xỉ một cảnh mỗi 30 giây, tối thiểu 40 và tối đa 120 để
+    RTX 8 GB vẫn chạy tuần tự trong giới hạn đã đo/đã công bố trước đây.
+    """
+    raw = _config("VISION_MAX_SCENES")
+    if raw:
+        try:
+            return min(120, max(1, int(raw)))
+        except (TypeError, ValueError):
+            pass
+    dai = max((k for _b, k in canh), default=0.0)
+    return min(120, max(40, int(math.ceil(dai / 30.0))))
+
+
+def chon_canh_phan_tich(canh: list[tuple[float, float]],
+                        loi_thoai: list[object] | None,
+                        toi_da_canh: int) -> list[tuple[float, float]]:
+    """Ưu tiên ngân sách Qwen cho cảnh có lời, rồi mới lấp cảnh không lời."""
+    toi_da_canh = max(1, int(toi_da_canh))
+    if len(canh) <= toi_da_canh:
+        return canh
+    co_loi: list[tuple[float, float]] = []
+    khong_loi: list[tuple[float, float]] = []
+    for b, k in canh:
+        trung = any(float(getattr(d, "ket_thuc", -1)) > b
+                    and float(getattr(d, "bat_dau", -1)) < k
+                    for d in (loi_thoai or []))
+        (co_loi if trung else khong_loi).append((b, k))
+    if len(co_loi) >= toi_da_canh:
+        return _lay_mau_deu(co_loi, toi_da_canh)
+    them = _lay_mau_deu(khong_loi, toi_da_canh - len(co_loi))
+    return sorted(co_loi + them, key=lambda x: x[0])
+
+
 def chon_moc_khung(canh: list[tuple[float, float]], *, moi_canh: int = 1,
                    toi_da_canh: int = 40) -> list[float]:
     """Chọn một hoặc hai mốc *bên trong* mỗi cảnh, không lấy chính chỗ cut."""
@@ -258,8 +296,8 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
                              "Frigate đang chiếm VRAM; bỏ Qwen3-VL và dùng lời thoại.")
     try:
         canh_day_du = tach_canh(duong_video)
-        toi_da = _so("VISION_MAX_SCENES", 40, 1, 120)
-        canh = _lay_mau_deu(canh_day_du, toi_da)
+        toi_da = gioi_han_canh(canh_day_du)
+        canh = chon_canh_phan_tich(canh_day_du, loi_thoai, toi_da)
         moc = chon_moc_khung(canh, moi_canh=_so("VISION_FRAMES_PER_SCENE", 1, 1, 2),
                              toi_da_canh=toi_da)
         khung = [trich_khung(duong_video, t) for t in moc]
@@ -288,7 +326,7 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
         canh_bao = ""
         if len(canh_day_du) > len(canh):
             canh_bao = (f"Vision lấy mẫu {len(canh)}/{len(canh_day_du)} cảnh để "
-                         "giữ thời gian xử lý ổn định.")
+                         "giữ thời gian xử lý ổn định; ưu tiên cảnh có lời thoại.")
         if not da_unload:
             canh_bao = (canh_bao + " " if canh_bao else "") + \
                         "Qwen3-VL sẽ tự nhả VRAM khi rảnh."
