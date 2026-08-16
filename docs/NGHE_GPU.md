@@ -184,8 +184,11 @@ vẫn nghe → Vision → dịch trước, sau đó mới gọi TTS từng cue �
 không chạy đồng thời. WebUI chỉ cho chọn giọng phù hợp tiếng đích đã tải và đánh
 dấu một giọng khuyến nghị.
 
-Đầu ra gồm MP4, SRT và `prosody.<lang>.json`. MP4 chỉ map hình gốc với track TTS,
-vì vậy **track âm thanh gốc (kể cả nhạc/hiệu ứng) bị bỏ hoàn toàn**. Metadata mỗi
+Đầu ra gồm MP4, SRT và `prosody.<lang>.json`. MP4 không dùng track âm thanh trộn
+gốc: gateway gửi soundtrack sang model để ước lượng stem nhạc/hiệu ứng, rồi chỉ
+trộn stem đó với TTS. Source separation không lossless; cảnh có tiếng nói chồng
+nhạc/hiệu ứng có thể còn rò giọng, còn giọng hát trong nhạc có thể bị làm mờ.
+Metadata mỗi
 cue có `speaker`, `rate`, `pitch_relative`, `energy`, `energy_relative_db`,
 `pause_before`, `pause_after`, `emotion` và `emphasis`; cao độ, năng lượng và
 thời lượng được áp vào filter âm thanh khi tổng hợp, không chỉ ghi ra JSON.
@@ -193,6 +196,42 @@ thời lượng được áp vào filter âm thanh khi tổng hợp, không ch�
 Hiện chưa có diarization trong đường này nên dùng **một giọng cho toàn video**,
 `speaker=UNKNOWN` và `emphasis=[]`; như vậy không gán nhầm nhân vật/giới tính.
 Muốn nhiều giọng theo nhân vật cần thêm diarization và bước ánh xạ speaker →
-voice riêng. Nếu TTS lỗi, hệ thống giữ SRT đã dịch; nếu chỉ vài cue lỗi, đúng các
-khung đó để im lặng và ghi cảnh báo. MP4/JSON được đánh dấu để dọn sau 24 giờ
+voice riêng. Nếu bất kỳ cue TTS nào lỗi, hệ thống không xuất MP4 thiếu lời mà
+chỉ thử lại đúng cue đó một lần sau 0,5 giây khi lỗi có dấu hiệu tạm thời
+(bận/timeout/kết nối), không làm lại các cue đã xong. Lỗi cấu hình, WAV, ffmpeg
+hoặc OOM dừng ngay. Nếu retry vẫn lỗi thì báo câu/mốc thời gian/nguyên nhân và
+giữ SRT đã dịch; các cue
+chưa tới không bị tổng hợp vô ích. `prosody.json` ghi `tts_attempts`,
+`tts_recovered_after_retry` và chính sách retry để truy vết. MP4/JSON được đánh
+dấu để dọn sau 24 giờ
 (thực hiện ở lượt tạo/dọn kết quả kế tiếp), tránh video lớn lấp đầy volume.
+
+### Máy tách lời (bắt buộc cho lồng tiếng)
+
+Lồng tiếng KHÔNG chạy khi chưa khai `TACH_AM_URL_GPU`. Đây là lựa chọn có chủ ý:
+xuất một bản phim mất sạch nhạc nền thì người dùng chỉ phát hiện sau khi đã xem,
+nên gateway thà báo lỗi và giữ lại SRT. Dịch vụ cần đáp đúng ba endpoint:
+
+```
+GET  {TACH_AM_URL_GPU}/health
+     header: X-API-Key=<TACH_AM_API_TOKEN>
+
+POST {TACH_AM_URL_GPU}/tach?stem=nen
+     body raw: WAV 44.1 kHz stereo (streaming)
+     headers: X-API-Key, X-Job-Token, X-Filename
+  → 200, thân là WAV stem nền ước lượng; header X-Model ghi tên model.
+
+POST {TACH_AM_URL_GPU}/unload
+     headers: X-API-Key, X-Job-Token (chỉ được dừng đúng job sở hữu)
+```
+
+Lượt gọi đi qua cùng hàng đợi GPU với Whisper và Qwen nên ba model không chạy
+chồng nhau, và có cầu dao nghỉ 5 phút khi máy tách lỗi. Repo có sẵn API và stack
+ở `fw-tach-am/` + `deploy/gpu-box/docker-compose.tach-am.yml`; cổng mặc định là
+5004. Model mặc định `UVR-MDX-NET-Inst_HQ_3.onnx` nhẹ hơn BS-Roformer trên card
+8 GB dùng chung, tệp được chia thành khúc 300 giây để giữ đỉnh bộ nhớ hữu hạn.
+API nhận raw body và đếm byte trong lúc stream để không spool trước cả soundtrack
+dài; bắt buộc đặt cùng một `TACH_AM_API_TOKEN` ở gateway và
+`SEPARATOR_API_TOKEN` trong stack GPU. Không mở cổng 5004 ra Internet.
+Xem tài liệu chính thức của
+[`audio-separator`](https://github.com/nomadkaraoke/python-audio-separator).

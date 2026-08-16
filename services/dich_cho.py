@@ -139,7 +139,7 @@ VIEC = {
     "chu-goc": ("4", "Chép lời ra bản chữ thuần, GIỮ nguyên tiếng gốc", False),
     # Chỉ hiện cho TỆP VIDEO thật: link hiện chưa tải cả hình về gateway, còn
     # tệp phụ đề/âm thanh không có luồng hình để thay track.
-    "long-tieng": ("5", "Lồng tiếng video (thay âm thanh gốc)", True),
+    "long-tieng": ("5", "Lồng tiếng video (giữ nhạc và hiệu ứng)", True),
 }
 
 _DUOI_VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp")

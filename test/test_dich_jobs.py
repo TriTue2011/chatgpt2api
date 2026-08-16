@@ -3,6 +3,20 @@
 from __future__ import annotations
 
 
+def test_tien_do_khong_ghi_so_moi_cau_nhung_trang_thai_thi_ghi_ngay():
+    """Lồng tiếng phim dài báo tiến độ cả nghìn lượt; fsync từng lượt là phí."""
+    from services import dich_jobs
+
+    viec = {"trang_thai": "dang_chay", "luu_luc": 1000.0}
+    assert dich_jobs.nen_luu_ngay(viec, {"buoc": "câu 1"}, luc=1000.5) is False
+    assert dich_jobs.nen_luu_ngay(viec, {"buoc": "câu 9"}, luc=1002.5) is True
+    # Trạng thái là thứ khôi phục sau restart cần — không được giãn nhịp.
+    assert dich_jobs.nen_luu_ngay(
+        viec, {"trang_thai": "xong"}, luc=1000.1) is True
+    # Sổ cũ chưa có trường nhịp thì lần đầu phải ghi, không im lặng bỏ qua.
+    assert dich_jobs.nen_luu_ngay({}, {"buoc": "câu 1"}, luc=1000.0) is True
+
+
 def test_chi_xoa_thu_muc_ket_qua_uuid_hop_le(tmp_path):
     from services import dich_jobs
 

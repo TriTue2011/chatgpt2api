@@ -1,4 +1,4 @@
-"""Sổ SEAM — fake chuẩn cho 10 ranh giới ra thế giới ngoài.
+"""Sổ SEAM — fake chuẩn cho 11 ranh giới ra thế giới ngoài.
 
 Đợt 0: mọi test adapter CHỈ mock qua đây (hoặc fixture conftest bọc sẵn).
 Không ``unittest.mock.patch("requests.get")`` / ``call_model`` tùy hứng.
@@ -15,6 +15,7 @@ S7 MCP             — mcp_client transport
 S8 Doc/media libs  — fitz/docx/tesseract/ffmpeg/Vision (thật hoặc stub nhẹ)
 S9 LibreTranslate  — translate_service._goi (máy chủ dịch tự dựng)
 S10 TTS / voice catalog — model giọng nói cục bộ và danh sách giọng đã tải
+S11 Audio separator — máy GPU tách lời gốc khỏi nhạc/hiệu ứng
 
 Usage
 -----
@@ -32,6 +33,7 @@ Usage
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import threading
 from contextlib import ExitStack, contextmanager
@@ -97,6 +99,7 @@ class FakeHttpResponse:
     text: str = "{}"
     headers: dict = field(default_factory=dict)
     _json: Any = None
+    body: bytes = b""
 
     def json(self) -> Any:
         if self._json is not None:
@@ -106,6 +109,10 @@ class FakeHttpResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}: {self.text[:200]}")
+
+    def iter_content(self, chunk_size: int = 8192):
+        for i in range(0, len(self.body), max(1, int(chunk_size))):
+            yield self.body[i:i + chunk_size]
 
 
 class FakeProviderHttp:
@@ -675,8 +682,9 @@ def install_video_vision(fake: FakeVideoVision | None = None) -> Iterator[FakeVi
 class FakeFfmpeg:
     """Lệnh ffmpeg/ffprobe giả cho các nhánh timeout và cleanup (S8)."""
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, result: Any = None) -> None:
         self.error = error
+        self.result = result
         self.calls: list[list[str]] = []
 
     def run(self, cmd: list[str], **_kwargs: Any) -> Any:
@@ -684,6 +692,8 @@ class FakeFfmpeg:
         SEAM_LOG.add("S8", "ffmpeg", *cmd[:2])
         if self.error:
             raise self.error
+        if self.result is not None:
+            return self.result
         raise AssertionError("FakeFfmpeg cần khai kết quả hoặc lỗi")
 
 
@@ -814,20 +824,28 @@ def install_translate(fake: FakeTranslate | None = None) -> Iterator[FakeTransla
 class FakeTTS:
     """TTS cục bộ giả: trả WAV cố định và ghi lại câu/giọng/style đã nhận."""
 
-    def __init__(self, wav: bytes = b"", catalog: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, wav: bytes = b"", catalog: list[dict[str, Any]] | None = None,
+                 responses: list[Any] | None = None) -> None:
         self.wav = wav
         self.catalog = list(catalog or [])
+        self.responses = list(responses or [])
         self.calls: list[dict[str, Any]] = []
+
+    def _next(self) -> bytes:
+        item = self.responses.pop(0) if self.responses else self.wav
+        if isinstance(item, Exception):
+            raise item
+        return bytes(item)
 
     def synthesize(self, text: str, voice: str = "", **kwargs: Any) -> bytes:
         self.calls.append({"text": text, "voice": voice, **kwargs})
         SEAM_LOG.add("S10", "synthesize", text, voice=voice, **kwargs)
-        return self.wav
+        return self._next()
 
     def synthesize_da_ngu(self, text: str, lang: str, sid: int = -1) -> bytes:
         self.calls.append({"text": text, "lang": lang, "sid": sid})
         SEAM_LOG.add("S10", "synthesize_da_ngu", text, lang=lang, sid=sid)
-        return self.wav
+        return self._next()
 
 
 @contextmanager
@@ -845,10 +863,98 @@ def install_tts(fake: FakeTTS | None = None) -> Iterator[FakeTTS]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# S11 — Audio separator GPU (lời gốc → bỏ; nhạc/hiệu ứng → giữ)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class FakeAudioSeparator:
+    """Trả một bản sao track nền đã chuẩn bị, không chạy model thật."""
+
+    def __init__(self, background: str, model: str = "fake-separator") -> None:
+        self.background = background
+        self.model = model
+        self.calls: list[str] = []
+
+    def separate(self, source: str, **_kwargs: Any) -> Any:
+        from services.tach_am_gpu import KetQuaTachAm
+
+        self.calls.append(source)
+        SEAM_LOG.add("S11", "separate", source)
+        suffix = Path(self.background).suffix or ".wav"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(Path(self.background).read_bytes())
+            output = f.name
+        return KetQuaTachAm(output, self.model)
+
+
+@contextmanager
+def install_audio_separator(fake: FakeAudioSeparator) -> Iterator[FakeAudioSeparator]:
+    """Chặn adapter tách lời GPU; mixer/ffmpeg thật vẫn chạy trong integration."""
+    from services import tach_am_gpu
+
+    with mock.patch.object(tach_am_gpu, "tach_nen", side_effect=fake.separate):
+        yield fake
+
+
+class FakeAudioSeparatorTransport:
+    """HTTP + WAV chuẩn bị cho adapter ``tach_am_gpu`` thật."""
+
+    def __init__(self, response_audio: bytes, model: str = "fake-mdx",
+                 *, busy: bool = False) -> None:
+        self.response_audio = response_audio
+        self.model = model
+        self.busy = busy
+        self.calls: list[dict[str, Any]] = []
+        self.curl_calls: list[list[str]] = []
+        self.request_header_texts: list[str] = []
+        self.extracted: list[str] = []
+
+    def extract(self, _video: str) -> str:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(b"RIFF" + b"0" * 100)
+            self.extracted.append(f.name)
+            return f.name
+
+    def curl(self, cmd: list[str], **_kwargs: Any):
+        self.curl_calls.append(list(cmd))
+        request_headers = cmd[cmd.index("--header") + 1]
+        self.request_header_texts.append(Path(request_headers.removeprefix("@")).read_text())
+        output = cmd[cmd.index("-o") + 1]
+        headers = cmd[cmd.index("-D") + 1]
+        Path(output).write_bytes(self.response_audio)
+        Path(headers).write_text(f"HTTP/1.1 200 OK\r\nX-Model: {self.model}\r\n\r\n")
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    def post(self, url: str, **kwargs: Any) -> FakeHttpResponse:
+        self.calls.append({"url": url, **kwargs})
+        return FakeHttpResponse(_json={"status": "ok", "loaded": False})
+
+    def get(self, url: str, **kwargs: Any) -> FakeHttpResponse:
+        self.calls.append({"url": url, **kwargs})
+        return FakeHttpResponse(_json={"status": "ok", "busy": self.busy})
+
+
+@contextmanager
+def install_audio_separator_transport(
+        fake: FakeAudioSeparatorTransport) -> Iterator[FakeAudioSeparatorTransport]:
+    """Chặn đúng biên bóc media + HTTP của adapter tách âm S11."""
+    import requests
+    from services import tach_am_gpu
+
+    with mock.patch.object(tach_am_gpu, "_boc_wav_day_du",
+                           side_effect=fake.extract), \
+            mock.patch.object(tach_am_gpu, "_chay_curl",
+                              side_effect=fake.curl), \
+            mock.patch.object(requests, "get", side_effect=fake.get), \
+            mock.patch.object(requests, "post", side_effect=fake.post):
+        yield fake
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Registry helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10")
+SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11")
 
 SEAM_INSTALLERS = {
     "S1": install_provider_http,
@@ -861,6 +967,9 @@ SEAM_INSTALLERS = {
     "S8": install_fitz,
     "S9": install_translate,
     "S10": install_tts,
+    # S11 cần sẵn track nền để trả về nên không có mặc định None như các seam
+    # khác; registry ở đây là hợp đồng TÊN seam, không phải nơi gọi chung.
+    "S11": install_audio_separator,
 }
 
 

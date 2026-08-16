@@ -34,7 +34,7 @@ from test._fakes import (  # noqa: E402
 class TestSeamRegistry(unittest.TestCase):
     def test_all_seams_registered(self) -> None:
         self.assertEqual(set(SEAM_IDS), set(SEAM_INSTALLERS.keys()))
-        self.assertEqual(len(SEAM_IDS), 10)
+        self.assertEqual(len(SEAM_IDS), 11)
 
 
 @pytest.mark.adapter

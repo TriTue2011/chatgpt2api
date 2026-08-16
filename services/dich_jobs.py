@@ -19,6 +19,28 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+#: Giãn cách tối thiểu giữa hai lần ghi sổ cho các cập nhật TIẾN ĐỘ.
+NHIP_LUU_TIEN_DO = 2.0
+
+
+def nen_luu_ngay(viec: dict[str, Any], thay: dict[str, Any], *, luc: float,
+                 nhip: float = NHIP_LUU_TIEN_DO) -> bool:
+    """Lần cập nhật này có phải ghi sổ xuống đĩa ngay không?
+
+    Lồng tiếng báo tiến độ MỖI CÂU — phim dài là cả nghìn lượt, mà mỗi lượt ghi
+    lại toàn bộ sổ kèm ``fsync`` và giữ khoá trong lúc đó. Mất dòng "đang tổng
+    hợp câu 412" vì cúp điện thì không ai tiếc; mất TRẠNG THÁI mới là thứ khiến
+    giao diện báo 404 sau restart, nên đổi trạng thái là ghi ngay, không giãn.
+    """
+    if "trang_thai" in thay:
+        return True
+    try:
+        lan_cuoi = float(viec.get("luu_luc") or 0.0)
+    except (TypeError, ValueError):
+        lan_cuoi = 0.0
+    return luc - lan_cuoi >= float(nhip)
+
+
 def xoa_ket_qua_da_luu(viec: dict[str, Any], thu_muc_docs: Path) -> None:
     """Xoá đúng thư mục kết quả UUID do API tạo; bỏ qua mọi URL lạ."""
     for tep in ((viec.get("ket_qua") or {}).get("tep") or []):

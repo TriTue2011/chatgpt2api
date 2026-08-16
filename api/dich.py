@@ -137,10 +137,19 @@ def _don_cu() -> None:
 
 
 def _cap_nhat(viec_id: str, **thay) -> None:
+    from services import dich_jobs
+
     with _khoa:
         v = _viec.get(viec_id)
-        if v is not None:
-            v.update(thay)
+        if v is None:
+            return
+        v.update(thay)
+        bay_gio = time.time()
+        # Tiến độ lồng tiếng gọi hàm này mỗi câu thoại; ghi cả sổ kèm fsync
+        # ngần ấy lần là hàng trăm MB I/O thừa và giữ ``_khoa`` — cùng khoá mà
+        # endpoint nhận khúc upload đang cần.
+        if dich_jobs.nen_luu_ngay(v, thay, luc=bay_gio):
+            v["luu_luc"] = bay_gio
             _luu_so_viec_da_khoa()
 
 
@@ -230,7 +239,9 @@ def _xong_phu_de(viec_id: str, r: dict[str, Any], kieu_ra: str = "phu-de") -> No
     if r.get("canh_bao_long_tieng"):
         bao_cao += "\n⚠️ " + str(r["canh_bao_long_tieng"])
     elif long_tieng:
-        bao_cao += f"\n🔊 Đã lồng tiếng bằng {long_tieng['voice']}; âm thanh gốc đã bỏ."
+        bao_cao += (f"\n🔊 Đã lồng tiếng bằng {long_tieng['voice']}; "
+                    "track gốc không được dùng; TTS đã trộn với stem nhạc/hiệu ứng."
+                    " Source separation có thể còn rò giọng ở cảnh âm thanh chồng lấn.")
         if long_tieng.get("canh_bao"):
             bao_cao += "\n⚠️ " + str(long_tieng["canh_bao"])
     _cap_nhat(viec_id, trang_thai="xong", luc=time.time(), phan_tram=100,
@@ -269,8 +280,17 @@ def create_router() -> APIRouter:
         lang = str(lang or "").lower().split("-", 1)[0]
         if lang not in {"vi", "en", "zh", "ja", "ko"}:
             raise HTTPException(400, detail={"error": "Tiếng lồng không hợp lệ"})
-        from services import video_dub
-        return {"voices": video_dub.danh_sach_giong(lang)}
+        from services import tach_am_gpu, video_dub
+        separator_ready = True
+        separator_error = ""
+        try:
+            tach_am_gpu.xac_nhan_san_sang()
+        except tach_am_gpu.LoiTachAm as exc:
+            separator_ready = False
+            separator_error = str(exc)[:180]
+        return {"voices": video_dub.danh_sach_giong(lang),
+                "separator_ready": separator_ready,
+                "separator_error": separator_error}
 
     @router.post("/api/dich/chu")
     async def dich_chu(body: DichChuRequest,
@@ -389,6 +409,18 @@ def create_router() -> APIRouter:
             _cap_nhat(viec_id, trang_thai="loi", luc=time.time(),
                       loi="Lồng tiếng cần tệp video, không nhận tệp âm thanh/phụ đề.")
             return {"viec_id": viec_id}
+        if kieu_ra == "long-tieng":
+            from services import tach_am_gpu
+
+            try:
+                tach_am_gpu.xac_nhan_san_sang()
+            except tach_am_gpu.LoiTachAm as exc:
+                Path(duong).unlink(missing_ok=True)
+                _cap_nhat(
+                    viec_id, trang_thai="loi", luc=time.time(),
+                    loi=f"Chưa thể lồng tiếng: {exc}. Hãy bật máy tách lời hoặc "
+                        "chọn Phụ đề để không phải chờ xử lý cả video.")
+                return {"viec_id": viec_id}
         if va.la_tep_nghe_duoc(thap):
             def _video():
                 def _tien_do(buoc: str, phan_tram: int | None, _moc: bool) -> None:
@@ -412,7 +444,10 @@ def create_router() -> APIRouter:
                                 str(r.get("dich") or target), body.voice.strip())
 
                             def _tien_do_tts(xong: int, tong: int, buoc: str) -> None:
-                                pt = 80 + round(19 * xong / max(1, tong))
+                                if "tách" in buoc or "soundtrack" in buoc:
+                                    pt = 80 + round(5 * xong / max(1, tong))
+                                else:
+                                    pt = 85 + round(14 * xong / max(1, tong))
                                 _cap_nhat(viec_id, buoc=buoc, phan_tram=pt,
                                           luc=time.time())
 

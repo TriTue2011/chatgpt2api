@@ -1,9 +1,9 @@
 """Lồng tiếng video bằng các engine TTS đã có, kèm ``prosody.json``.
 
 Đường này cố ý độc lập với việc tạo phụ đề: caller đưa SRT đã dịch và video
-gốc vào, nhận một video có track TTS THAY hoàn toàn track gốc. Nhạc/hiệu ứng
-gốc cũng bị bỏ theo đúng lựa chọn "thay âm thanh gốc"; muốn giữ chúng cần một
-bước source-separation riêng, không được trộn âm gốc nhỏ đi vì lời cũ sẽ lọt.
+gốc vào, nhận một video trong đó lời thoại gốc được thay bằng TTS nhưng nhạc và
+hiệu ứng vẫn giữ. Muốn làm đúng phải source-separation trước; không được trộn
+âm gốc nhỏ đi vì lời cũ sẽ lọt, cũng không được bỏ cả track khiến phim mất nền.
 
 Prosody đo từ track gốc ở đúng mốc từng cue. Khi chưa có diarization, trường
 ``speaker`` là ``UNKNOWN`` — thà nói chưa biết còn hơn gán nhầm giới tính.
@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 RATE_GOC = 16000
 RATE_DUB = 24000
+#: Hệ số đọc chậm nhất cho phép. Dưới mức này giọng bị kéo nhoè phụ âm và nghe
+#: như máy hỏng; phần khung còn thừa để im lặng thì tự nhiên hơn hẳn.
+TEMPO_CHAM_NHAT = 0.7
+#: Một lần thử lại ngay tại cue lỗi: giữ nguyên track đã tổng hợp trước đó,
+#: đủ cứu lỗi engine thoáng qua mà không nhân đôi thời gian của mọi câu.
+TTS_SO_LAN_TOI_DA = 2
+TTS_CHO_THU_LAI_GIAY = 0.5
 Progress = Callable[[int, int, str], None]
 
 
@@ -163,6 +170,17 @@ def _thoi_luong(duong: str, fallback: float) -> float:
         return fallback
 
 
+def _kiem_tra_nen_du_dai(duong_nen: str, dai_video: float) -> float:
+    """Chặn track separator bị cụt trước khi mux thành phim mất nền đoạn cuối."""
+    dai_nen = _thoi_luong(duong_nen, 0.0)
+    dung_sai = max(1.0, min(3.0, dai_video * 0.001))
+    if dai_nen <= 0 or abs(dai_nen - dai_video) > dung_sai:
+        raise LoiLongTieng(
+            f"Track nhạc/hiệu ứng sai thời lượng ({dai_nen:.2f}s; video "
+            f"{dai_video:.2f}s), nên không xuất MP4 thiếu âm thanh.")
+    return dai_nen
+
+
 def _boc_pcm_goc(duong: str) -> str:
     out = tempfile.NamedTemporaryFile(suffix=".s16le", delete=False).name
     try:
@@ -270,7 +288,13 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
             "version": 1,
             "language": lang,
             "voice": voice,
-            "original_audio": "removed",
+            "original_audio": "dialogue_replaced_background_preserved",
+            "original_dialogue": "pending_source_separation",
+            "background_audio": "pending_source_separation",
+            "separation_quality": "model_estimate_not_lossless",
+            "separation_note": (
+                "Source separation có thể còn rò giọng hoặc làm mờ phần giọng hát "
+                "nằm trong nhạc; track âm thanh gốc không được đưa vào bản mux."),
             "speaker_detection": "unavailable",
             "speaker_note": "one selected voice is used for every cue",
             "analysis_source": "mixed_original_audio",
@@ -311,7 +335,12 @@ def _bo_loc_tts(rate_goc: int, giay_goc: float, giay_dich: float, *,
                 pitch_relative: float | None = None,
                 energy_relative_db: float = 0.0) -> tuple[str, float]:
     """Tạo filter ffmpeg thuần để test được mà không phải giả subprocess."""
-    tempo = giay_goc / max(0.08, giay_dich)
+    # Khung phụ đề dài KHÔNG có nghĩa là câu phải đọc chậm hết khung: cat_khung
+    # ép mỗi khung tối thiểu 1 giây và cho tới 7 giây, nên "Vâng." đọc hết 0,5
+    # giây rơi vào khung 7 giây sẽ ra tempo 0,07× — nghe thành tiếng rên kéo dài
+    # chứ không còn là lời thoại. Chậm nhất TEMPO_CHAM_NHAT rồi để phần dư im
+    # lặng; mốc bắt đầu của khung sau vẫn đúng vì _pcm_vua_khung đệm cho đủ.
+    tempo = max(TEMPO_CHAM_NHAT, giay_goc / max(0.08, giay_dich))
     # Giới hạn để tránh méo giọng vì ước lượng F0 trên track trộn nhạc có thể
     # lệch. asetrate đổi pitch lẫn thời lượng; atempo bù lại phần thời lượng.
     nua_cung = max(-4.0, min(4.0, float(pitch_relative or 0.0)))
@@ -357,6 +386,28 @@ def _tong_hop(chu: str, voice: str, emotion: str) -> bytes:
     return engines.synthesize(chu, voice, style=style)
 
 
+def _loi_tts_tam_thoi(exc: Exception) -> bool:
+    """Chỉ retry lỗi có khả năng tự hết; cấu hình/media/OOM phải dừng ngay."""
+    if isinstance(exc, (subprocess.TimeoutExpired, TimeoutError, ConnectionError)):
+        return True
+    if isinstance(exc, (FileNotFoundError, ValueError, LoiLongTieng)):
+        return False
+    text = str(exc).casefold()
+    vinh_vien = (
+        "không có nội dung", "đang tắt", "chưa cài", "chưa tải", "thiếu ",
+        "không có giọng", "không hợp lệ", "invalid", "not found", "cuda",
+        "out of memory", "oom",
+    )
+    if any(x in text for x in vinh_vien):
+        return False
+    tam_thoi = (
+        "bận", "busy", "tạm thời", "thoáng qua", "temporar", "try again",
+        "timeout", "timed out", "quá thời gian", "kết nối", "connection",
+        "reset by peer", "resource unavailable",
+    )
+    return any(x in text for x in tam_thoi)
+
+
 def _viet_lang(w: wave.Wave_write, so_mau: int) -> None:
     con = max(0, int(so_mau))
     khoi = b"\0" * (RATE_DUB * 2)  # một giây, không cấp hàng trăm MB một lần
@@ -373,6 +424,11 @@ def _tao_track(meta: dict[str, Any], dai: float, voice: str,
     cursor = 0
     loi = 0
     canh_bao: list[str] = []
+    meta["tts_retry_policy"] = {
+        "max_attempts_per_cue": TTS_SO_LAN_TOI_DA,
+        "retry_delay_seconds": TTS_CHO_THU_LAI_GIAY,
+        "fail_fast_after_retries": True,
+    }
     try:
         with wave.open(out, "wb") as w:
             w.setnchannels(1)
@@ -384,24 +440,64 @@ def _tao_track(meta: dict[str, Any], dai: float, voice: str,
                 if bat > cursor:
                     _viet_lang(w, bat - cursor)
                     cursor = bat
-                try:
-                    wav = _tong_hop(str(cue["text"]), voice, str(cue["emotion"]))
-                    pcm, tempo = _pcm_vua_khung(
-                        wav, (ket - bat) / RATE_DUB,
-                        pitch_relative=cue.get("pitch_relative"),
-                        energy_relative_db=float(
-                            cue.get("energy_relative_db") or 0.0))
-                    cue["tts_tempo"] = round(tempo, 3)
-                    cue["tts_status"] = "ok"
-                    if tempo > 2.0:
-                        canh_bao.append(f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
-                except Exception as exc:
+                pcm: bytes | None = None
+                wav: bytes | None = None
+                loi_cue: Exception | None = None
+                cue.pop("tts_error", None)
+                cue["tts_recovered_after_retry"] = False
+                for lan_thu in range(1, TTS_SO_LAN_TOI_DA + 1):
+                    cue["tts_attempts"] = lan_thu
+                    try:
+                        wav = _tong_hop(
+                            str(cue["text"]), voice, str(cue["emotion"]))
+                        if lan_thu > 1:
+                            cue["tts_recovered_after_retry"] = True
+                        break
+                    except Exception as exc:
+                        if (lan_thu < TTS_SO_LAN_TOI_DA
+                                and _loi_tts_tam_thoi(exc)):
+                            logger.warning(
+                                "lồng tiếng câu %d lỗi lần %d, thử lại: %s",
+                                i + 1, lan_thu, str(exc)[:160])
+                            if progress:
+                                try:
+                                    progress(
+                                        i, len(cues),
+                                        f"TTS câu {i + 1} lỗi, đang thử lại…")
+                                except Exception:
+                                    pass
+                            time.sleep(TTS_CHO_THU_LAI_GIAY)
+                            continue
+                        loi_cue = exc
+                        break
+                # Căn thời lượng là pha riêng và mang tính tất định: thiếu
+                # ffmpeg/WAV hỏng không được tổng hợp lại TTS một cách vô ích.
+                if wav is not None and loi_cue is None:
+                    try:
+                        pcm, tempo = _pcm_vua_khung(
+                            wav, (ket - bat) / RATE_DUB,
+                            pitch_relative=cue.get("pitch_relative"),
+                            energy_relative_db=float(
+                                cue.get("energy_relative_db") or 0.0))
+                        cue["tts_tempo"] = round(tempo, 3)
+                        cue["tts_status"] = "ok"
+                        if tempo > 2.0:
+                            canh_bao.append(
+                                f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
+                    except Exception as exc:
+                        loi_cue = exc
+                if loi_cue is not None:
                     loi += 1
-                    pcm = b"\0" * ((ket - bat) * 2)
                     cue["tts_status"] = "error"
-                    cue["tts_error"] = str(exc)[:160]
-                    logger.warning("lồng tiếng câu %d lỗi: %s",
-                                   i + 1, str(exc)[:160])
+                    cue["tts_recovered_after_retry"] = False
+                    cue["tts_error"] = str(loi_cue)[:160]
+                    logger.warning(
+                        "lồng tiếng câu %d vẫn lỗi sau %d lần: %s",
+                        i + 1, int(cue["tts_attempts"]), str(loi_cue)[:160])
+                # Chính sách nghiêm chắc chắn sẽ từ chối MP4: dừng tại đây,
+                # không đốt tiếp hàng trăm cue hoặc ghi hàng trăm MB im lặng.
+                if pcm is None:
+                    break
                 # Cue chồng nhau: bỏ phần đã đi qua, không làm timeline trôi.
                 bo = max(0, cursor - bat) * 2
                 if bo < len(pcm):
@@ -413,28 +509,58 @@ def _tao_track(meta: dict[str, Any], dai: float, voice: str,
                                  f"đang tổng hợp giọng ({i + 1}/{len(cues)})…")
                     except Exception:
                         pass
-            tong = max(cursor, round(dai * RATE_DUB))
-            if tong > cursor:
-                _viet_lang(w, tong - cursor)
-        if loi == len(cues):
-            raise LoiLongTieng("TTS lỗi ở toàn bộ câu thoại; không tạo video im lặng.")
+            if not loi:
+                tong = max(cursor, round(dai * RATE_DUB))
+                if tong > cursor:
+                    _viet_lang(w, tong - cursor)
     except Exception:
         Path(out).unlink(missing_ok=True)
         raise
     return out, loi, canh_bao
 
 
-def _mux(duong_video: str, track: str, dai: float) -> str:
+def _bao_dam_khong_thieu_cau_tts(meta: dict[str, Any], so_loi: int,
+                                 tong: int) -> None:
+    """Thiếu một câu là không xuất phim — nhưng phải nói RÕ câu nào, vì sao.
+
+    ``prosody.json`` (nơi giữ ``tts_error`` từng cue) chỉ được ghi SAU bước này,
+    nên nếu lỗi chỉ đếm số lượng thì người dùng mất sạch manh mối: một câu hỏng
+    cố định sẽ chặn cả phim mà không ai biết phải sửa gì.
+    """
+    if not so_loi:
+        return
+    hong = [c for c in (meta.get("cues") or []) if c.get("tts_status") == "error"]
+    da_thu = [c for c in (meta.get("cues") or []) if c.get("tts_status")]
+    chua_thu = max(0, tong - len(da_thu))
+    so_lan = max((int(c.get("tts_attempts") or 1) for c in hong), default=1)
+    chi_tiet = "; ".join(
+        f"câu {c.get('index')} tại {float(c.get('start') or 0):.1f}s "
+        f"({str(c.get('tts_error') or 'không rõ')[:80]})"
+        for c in hong[:3])
+    if len(hong) > 3:
+        chi_tiet += f"; và {len(hong) - 3} câu nữa"
+    dung_som = f" Đã dừng sớm; {chua_thu} câu chưa tổng hợp." if chua_thu else ""
+    raise LoiLongTieng(
+        f"TTS lỗi {so_loi}/{tong} câu sau khi đã thử {so_lan} lần nên không "
+        f"xuất MP4 bị thiếu lời.{dung_som} Phụ đề SRT vẫn được giữ. "
+        f"Câu hỏng: {chi_tiet or 'không rõ'}")
+
+
+def _mux(duong_video: str, background: str, track: str, dai: float) -> str:
     out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
     lenh_chung = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                  "-i", duong_video, "-i", track, "-map", "0:v:0", "-map", "1:a:0",
+                  "-i", duong_video, "-i", background, "-i", track,
+                  "-filter_complex",
+                  "[1:a][2:a]amix=inputs=2:duration=longest:"
+                  "dropout_transition=0:normalize=0,alimiter=limit=0.95[dub]",
+                  "-map", "0:v:0", "-map", "[dub]",
                   "-map_metadata", "0", "-c:a", "aac", "-b:a", "192k",
                   "-t", f"{dai:.3f}", "-movflags", "+faststart"]
     try:
         p = _chay(lenh_chung + ["-c:v", "copy", out], timeout=max(900, dai * 2))
         if p.returncode:
             # Codec/container gốc không copy được sang MP4 (vd vài AVI/WebM):
-            # đổi riêng hình sang H.264, vẫn không map track âm thanh gốc.
+            # đổi riêng hình sang H.264; audio vẫn là nền đã tách + TTS.
             p = _chay(lenh_chung + ["-c:v", "libx264", "-preset", "veryfast",
                                     "-crf", "20", out],
                       timeout=max(1800, dai * 4))
@@ -449,8 +575,9 @@ def _mux(duong_video: str, track: str, dai: float) -> str:
 
 def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = "",
                progress: Progress | None = None) -> KetQuaLongTieng:
-    """Video + SRT đã dịch → MP4 thay track gốc + sidecar prosody JSON."""
+    """Video + SRT → MP4 bỏ lời gốc, giữ nền, thêm TTS + prosody JSON."""
     from services import video_dich as vd
+    from services import tach_am_gpu
 
     if not Path(duong_video).is_file():
         raise LoiLongTieng("Không thấy tệp video để lồng tiếng.")
@@ -462,19 +589,30 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
     dai = _thoi_luong(duong_video, doan[-1].ket_thuc)
     meta, raw_pcm = _tao_meta(duong_video, doan, lang, voice)
     track: str | None = None
+    background: str | None = None
     video: str | None = None
     prosody: str | None = None
     try:
         prosody = tempfile.NamedTemporaryFile(
             suffix=".prosody.json", delete=False).name
+        tach = tach_am_gpu.tach_nen(duong_video, progress=progress)
+        background = tach.background_path
+        _kiem_tra_nen_du_dai(background, dai)
+        meta["original_dialogue"] = "removed_by_source_separation_best_effort"
+        meta["background_audio"] = "preserved_by_source_separation_best_effort"
+        meta["separator_model"] = tach.model
         track, so_loi, canh_bao = _tao_track(meta, dai, voice, progress)
+        _bao_dam_khong_thieu_cau_tts(meta, so_loi, len(doan))
         Path(prosody).write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
         if progress:
-            progress(len(doan), len(doan), "đang ghép track lồng tiếng vào video…")
-        video = _mux(duong_video, track, dai)
+            progress(len(doan), len(doan),
+                     "đang trộn TTS với nhạc/hiệu ứng và ghép video…")
+        video = _mux(duong_video, background, track, dai)
         tom_tat = ""
-        if so_loi:
-            tom_tat = f"TTS lỗi {so_loi}/{len(doan)} câu; các khung đó để im lặng."
+        da_phuc_hoi = sum(bool(c.get("tts_recovered_after_retry"))
+                          for c in meta.get("cues") or [])
+        if da_phuc_hoi:
+            tom_tat = f"{da_phuc_hoi} câu TTS đã phục hồi sau một lần thử lại."
         if canh_bao:
             nhanh = f"{len(canh_bao)} câu phải tăng tốc trên 2×."
             tom_tat = " ".join(x for x in (tom_tat, nhanh) if x)
@@ -489,3 +627,5 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
         Path(raw_pcm).unlink(missing_ok=True)
         if track:
             Path(track).unlink(missing_ok=True)
+        if background:
+            Path(background).unlink(missing_ok=True)

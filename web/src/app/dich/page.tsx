@@ -68,6 +68,8 @@ function DichPageContent() {
   const [kieuRa, setKieuRa] = useState("phu-de");
   const [giong, setGiong] = useState("");
   const [cacGiong, setCacGiong] = useState<GiongLongTieng[]>([]);
+  const [tachAmSanSang, setTachAmSanSang] = useState<boolean | null>(null);
+  const [loiTachAm, setLoiTachAm] = useState("");
   const [dangTaiGiong, setDangTaiGiong] = useState(false);
   const [dangChay, setDangChay] = useState(false);
   const [tienDo, setTienDo] = useState(0);       // % upload; -1 = không upload
@@ -89,12 +91,17 @@ function DichPageContent() {
     // bấm nhanh, backend sẽ nhận sai ID giọng dù select chưa kịp đổi nhãn.
     setGiong("");
     setCacGiong([]);
+    setTachAmSanSang(null);
+    setLoiTachAm("");
     setDangTaiGiong(true);
     request.get("/api/dich/giong", { params: { lang: target } })
       .then((res) => {
         if (!conHieuLuc) return;
-        const rows = ((res.data as { voices?: GiongLongTieng[] }).voices || []);
+        const data = res.data as { voices?: GiongLongTieng[]; separator_ready?: boolean; separator_error?: string };
+        const rows = (data.voices || []);
         setCacGiong(rows);
+        setTachAmSanSang(data.separator_ready !== false);
+        setLoiTachAm(data.separator_error || "");
         setGiong((cu) => {
           if (rows.some((v) => v.id === cu && v.downloaded)) return cu;
           return rows.find((v) => v.recommended)?.id || "";
@@ -161,6 +168,10 @@ function DichPageContent() {
     }
     if (kieuRa === "long-tieng" && !giong) {
       setLoi("Chưa có giọng phù hợp đã tải trên máy; vào Cài đặt → Giọng nói để tải model.");
+      return;
+    }
+    if (kieuRa === "long-tieng" && tachAmSanSang === false) {
+      setLoi(`Máy tách lời chưa sẵn sàng: ${loiTachAm || "chưa cấu hình"}.`);
       return;
     }
     if (tep.size > TRAN_TEP) {
@@ -325,15 +336,23 @@ function DichPageContent() {
               ))}
             </select>
             <p className="text-xs text-[var(--muted-foreground)]">
-              Bản này dùng một giọng cho mọi nhân vật, bỏ hoàn toàn âm thanh gốc và xuất kèm
+              Track âm thanh trộn gốc không được dùng; TTS được trộn với stem nhạc/hiệu ứng
+              do model ước lượng. Cảnh âm thanh chồng lấn có thể còn rò giọng, và giọng hát
+              trong nhạc có thể bị giảm. Bản này dùng một giọng cho mọi nhân vật và xuất kèm
               <code className="mx-1">prosody.json</code> để giữ nhịp, cao độ và năng lượng từng câu.
               Khi chưa có diarization, người nói được ghi là <code>UNKNOWN</code> để không gán nhầm giới tính.
             </p>
+            {tachAmSanSang === false && (
+              <p className="text-xs text-red-600">
+                Máy tách lời chưa sẵn sàng: {loiTachAm || "chưa cấu hình TACH_AM_URL_GPU"}.
+                Hệ thống không tạo video nếu chưa có stem nhạc/hiệu ứng hợp lệ.
+              </p>
+            )}
           </div>
         )}
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={dichTep}
-            disabled={dangChay || !tep || (kieuRa === "long-tieng" && (dangTaiGiong || !giong))}
+            disabled={dangChay || !tep || (kieuRa === "long-tieng" && (dangTaiGiong || !giong || tachAmSanSang === false))}
             className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {kieuRa === "long-tieng" ? "Dịch và lồng tiếng" : "Dịch tệp"}
           </button>
@@ -389,7 +408,8 @@ function DichPageContent() {
           )}
           {ketQua.kieu === "long-tieng" && (
             <p className="text-xs text-[var(--muted-foreground)]">
-              Video dùng giọng <b>{ketQua.voice}</b>; track âm thanh gốc đã được thay hoàn toàn.
+              Video dùng giọng <b>{ketQua.voice}</b>; track trộn gốc không được dùng,
+              TTS được ghép với stem nhạc/hiệu ứng do model tách.
               Tệp prosody đi kèm lưu nhịp và tông tương đối để tái dựng hoặc đổi giọng sau này.
             </p>
           )}

@@ -1985,6 +1985,18 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             return
 
         # ── Link / tệp: ra phụ đề hoặc bản chữ ───────────────────────────────
+        if kieu == "long-tieng":
+            from services import tach_am_gpu as _tach_am
+
+            try:
+                _tach_am.xac_nhan_san_sang()
+            except _tach_am.LoiTachAm as exc:
+                send_message(
+                    thread_id,
+                    f"⚠️ Chưa thể lồng tiếng: {exc}. Anh chọn tạo phụ đề trước "
+                    "hoặc bật máy tách lời để em giữ được nhạc và hiệu ứng nhé.",
+                    thread_type)
+                return
         send_message(thread_id, "🎬 Em làm ngay, video dài có thể mất vài phút ạ…",
                      thread_type)
         send_typing(thread_id, thread_type)
@@ -2028,7 +2040,8 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             from services import video_dub as _dub
 
             send_message(thread_id,
-                         "🔊 Đã có phụ đề, em đang tổng hợp giọng và ghép video…",
+                         "🔊 Đã có phụ đề, em đang tách lời gốc để giữ nhạc/hiệu ứng, "
+                         "sau đó tổng hợp giọng và ghép video…",
                          thread_type)
             try:
                 giong = _dub.chon_giong(str(r.get("dich") or ""))
@@ -2046,7 +2059,9 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
                 return
             send_message(
                 thread_id,
-                _vd.bao_cao(r) + f"\n🔊 Đã lồng bằng {dub.voice}; âm thanh gốc đã bỏ."
+                _vd.bao_cao(r) + f"\n🔊 Đã lồng bằng {dub.voice}; track âm thanh "
+                "gốc không được dùng, TTS đã trộn với stem nhạc/hiệu ứng."
+                " Source separation có thể còn rò giọng ở cảnh âm thanh chồng lấn."
                 + (f"\n⚠️ {dub.canh_bao}" if dub.canh_bao else ""),
                 thread_type)
             _serve_path(thread_id, thread_type, dub.video_path,

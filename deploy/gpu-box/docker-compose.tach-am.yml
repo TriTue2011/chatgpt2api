@@ -1,0 +1,35 @@
+# Stack RIÊNG cho source separation trước khi lồng tiếng.
+# Portainer: tạo stack thứ ba với Compose path file này.
+# Khai cùng TACH_AM_API_TOKEN ở cả stack này và gateway.
+services:
+  fw-tach-am:
+    image: ghcr.io/tritue2011/fw-tach-am:latest
+    container_name: fw-tach-am
+    restart: unless-stopped
+    ports:
+      - "5004:5000"
+    environment:
+      # Bắt buộc: chuỗi ngẫu nhiên dài, giống hệt TACH_AM_API_TOKEN ở gateway.
+      SEPARATOR_API_TOKEN: ${TACH_AM_API_TOKEN:?Hãy đặt TACH_AM_API_TOKEN}
+      # Model ONNX nhẹ, an toàn hơn BS-Roformer trên RTX 2060S 8 GB dùng chung.
+      SEPARATOR_MODEL: "UVR-MDX-NET-Inst_HQ_3.onnx"
+      # Phim dài chia 5 phút/khúc để chặn đỉnh RAM và VRAM.
+      SEPARATOR_CHUNK_SECONDS: "300"
+      SEPARATOR_TIMEOUT_SECONDS: "10800"
+    volumes:
+      - /opt/gpu-box/fw-tach-am:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:5000/health',headers={'X-API-Key':os.environ['SEPARATOR_API_TOKEN']}); urllib.request.urlopen(r,timeout=5)\""]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
