@@ -52,6 +52,7 @@ E2E: `pytest -m e2e --run-e2e`
 | **Fake registry smoke** | `test_fakes_smoke.py` | Đợt 0 |
 | Lồng tiếng video / prosody | `test_video_dub.py` | seam S10; ffmpeg thật khi có |
 | Vòng đời tệp kết quả tab Dịch | `test_dich_jobs.py` | |
+| Danh sách media/thumbnail WebUI | `test_image_service.py` | seam S5 |
 
 ### Owner dự kiến (chưa có file — Đợt 1+)
 

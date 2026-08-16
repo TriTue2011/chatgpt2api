@@ -116,10 +116,15 @@ def _image_items(start_date: str = "", end_date: str = "", media_type: str = "im
     for path in root.rglob("*"):
         if not path.is_file():
             continue
+        relative = path.relative_to(root)
+        # Marker TTL và file tạm là metadata nội bộ, không phải ảnh/video để
+        # WebUI tạo thumbnail. Bỏ cả file lẫn thư mục ẩn ở mọi cấp.
+        if any(part.startswith(".") for part in relative.parts):
+            continue
         suffix = path.suffix.lower()
         if media_type == "image" and suffix in _MEDIA_EXTS:
             continue
-        rel = path.relative_to(root).as_posix()
+        rel = relative.as_posix()
         parts = rel.split("/")
         day = "-".join(parts[:3]) if len(parts) >= 4 else datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
         if start_date and day < start_date:
