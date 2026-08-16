@@ -9,12 +9,50 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def xoa_ket_qua_da_luu(viec: dict[str, Any], thu_muc_docs: Path) -> None:
+    """Xoá đúng thư mục kết quả UUID do API tạo; bỏ qua mọi URL lạ."""
+    for tep in ((viec.get("ket_qua") or {}).get("tep") or []):
+        url = str((tep or {}).get("url") or "")
+        if "/images/docs/" not in url:
+            continue
+        ma = url.split("/images/docs/", 1)[1].split("/", 1)[0]
+        if re.fullmatch(r"[0-9a-f]{12}", ma):
+            shutil.rmtree(thu_muc_docs / ma, ignore_errors=True)
+
+
+def don_thu_muc_ket_qua(thu_muc_docs: Path, *, cu_hon: float) -> int:
+    """Dọn thư mục UUID có dấu TTL, kể cả file Zalo không có job WebUI."""
+    da_xoa = 0
+    try:
+        cac_thu_muc = list(thu_muc_docs.iterdir())
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        logger.info("không liệt kê được tệp kết quả Dịch: %s", str(exc)[:120])
+        return 0
+    for duong in cac_thu_muc:
+        if not re.fullmatch(r"[0-9a-f]{12}", duong.name) or duong.is_symlink():
+            continue
+        try:
+            co_ttl = duong / ".expire-24h"
+            if (duong.is_dir() and co_ttl.is_file()
+                    and duong.stat().st_mtime < float(cu_hon)):
+                shutil.rmtree(duong)
+                da_xoa += 1
+        except OSError as exc:
+            logger.info("không dọn được tệp kết quả %s: %s",
+                        duong.name, str(exc)[:120])
+    return da_xoa
 
 
 def tai_so_viec(duong: Path) -> dict[str, dict[str, Any]]:

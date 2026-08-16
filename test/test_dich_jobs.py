@@ -2,6 +2,45 @@
 
 from __future__ import annotations
 
+
+def test_chi_xoa_thu_muc_ket_qua_uuid_hop_le(tmp_path):
+    from services import dich_jobs
+
+    hop_le = tmp_path / "abcdef123456"
+    hop_le.mkdir()
+    (hop_le / "video.mp4").write_bytes(b"video")
+    ngoai_le = tmp_path / "khong-duoc-xoa"
+    ngoai_le.mkdir()
+    dich_jobs.xoa_ket_qua_da_luu({"ket_qua": {"tep": [
+        {"url": "/images/docs/abcdef123456/video.mp4"},
+        {"url": "/images/docs/../../khong-duoc-xoa/file"},
+    ]}}, tmp_path)
+
+    assert not hop_le.exists()
+    assert ngoai_le.exists()
+
+
+def test_don_ca_ket_qua_zalo_khong_co_job_nhung_khong_xoa_thu_muc_la(tmp_path):
+    import os
+    from services import dich_jobs
+
+    cu = tmp_path / "123456abcdef"
+    cu.mkdir()
+    (cu / ".expire-24h").touch()
+    moi = tmp_path / "abcdef123456"
+    moi.mkdir()
+    (moi / ".expire-24h").touch()
+    thu_muc_la = tmp_path / "khong-phai-job"
+    thu_muc_la.mkdir()
+    os.utime(cu, (100.0, 100.0))
+    os.utime(moi, (300.0, 300.0))
+
+    assert dich_jobs.don_thu_muc_ket_qua(tmp_path, cu_hon=200.0) == 1
+    assert not cu.exists()
+    assert moi.exists()
+    assert thu_muc_la.exists()
+
+
 def test_viec_dang_chay_sau_restart_duoc_bao_loi_ro_rang(tmp_path):
     from services import dich_jobs
 

@@ -50,6 +50,7 @@ _DUOI_ANH = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 _viec: dict[str, dict[str, Any]] = {}
 _khoa = threading.Lock()
 _GIU_TOI_DA = 40
+_HAN_KET_QUA_GIAY = 24 * 3600
 # Cùng volume dữ liệu với ảnh/tệp kết quả, không dùng /tmp vốn có thể mất lúc
 # container restart. Nội dung chỉ đi qua API admin và file được ghi mode 0600.
 _DUONG_SO_VIEC = config.images_dir.parent / "dich-jobs.json"
@@ -95,22 +96,43 @@ def _tai_lai_so_viec_sau_restart() -> None:
     _luu_so_viec_da_khoa()
 
 
+def _xoa_ket_qua_da_luu(viec: dict[str, Any]) -> None:
+    from services import dich_jobs
+
+    dich_jobs.xoa_ket_qua_da_luu(viec, config.images_dir / "docs")
+
+
 def _don_cu() -> None:
     """Giữ sổ việc gọn. Gọi khi đã giữ ``_khoa``.
 
     - Việc xong/lỗi cũ nhất bị bỏ khi sổ quá trần.
     - Upload bỏ dở quá 6 giờ thì xoá luôn cả tệp ``.part`` — người dùng chọn
       tệp 250MB rồi đóng trình duyệt là rác nằm lại đĩa, không ai dọn hộ.
+    - Tệp kết quả hết hạn sau 24 giờ để MP4 lồng tiếng không lấp volume.
     """
-    han = time.time() - 6 * 3600
+    bay_gio = time.time()
+    from services import dich_jobs
+
+    dich_jobs.don_thu_muc_ket_qua(
+        config.images_dir / "docs", cu_hon=bay_gio - _HAN_KET_QUA_GIAY)
+    han = bay_gio - 6 * 3600
     for k in [k for k, v in _viec.items()
               if v["trang_thai"] == "nhan_tep" and v["luc"] < han]:
         Path(_viec[k]["duong"]).unlink(missing_ok=True)
         _viec.pop(k, None)
+    # MP4 lồng tiếng có thể hàng trăm MB; giữ vô hạn sẽ lấp đầy volume dù sổ
+    # việc bị giới hạn số dòng. Link kết quả có hiệu lực 24 giờ.
+    han_ket_qua = bay_gio - _HAN_KET_QUA_GIAY
+    for k in [k for k, v in _viec.items()
+              if v["trang_thai"] in ("xong", "loi") and v["luc"] < han_ket_qua]:
+        _xoa_ket_qua_da_luu(_viec[k])
+        _viec.pop(k, None)
     xong = [k for k, v in _viec.items() if v["trang_thai"] in ("xong", "loi")]
     xong.sort(key=lambda k: _viec[k]["luc"])
     while len(_viec) >= _GIU_TOI_DA and xong:
-        _viec.pop(xong.pop(0), None)
+        cu = _viec.pop(xong.pop(0), None)
+        if cu:
+            _xoa_ket_qua_da_luu(cu)
     _luu_so_viec_da_khoa()
 
 
@@ -136,19 +158,24 @@ def _luu_ket_tep(cac_tep: list[tuple[str, bytes | str | Path]]) -> list[dict[str
 
     thu_muc = config.images_dir / "docs" / uuid.uuid4().hex[:12]
     thu_muc.mkdir(parents=True, exist_ok=True)
-    ra = []
-    for ten, du_lieu in cac_tep:
-        duoi = ten[ten.rfind("."):] if "." in ten else ".txt"
-        fn = _ten_tep_phuc_vu(ten, duoi)
-        dich = thu_muc / fn
-        if isinstance(du_lieu, bytes):
-            dich.write_bytes(du_lieu)
-        else:
-            # Video hàng trăm MB phải copy theo luồng, không đọc cả tệp vào RAM.
-            with open(Path(du_lieu), "rb") as src, open(dich, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=1024 * 1024)
-        ra.append({"ten": fn, "url": f"/images/docs/{thu_muc.name}/{fn}"})
-    return ra
+    try:
+        (thu_muc / ".expire-24h").touch()
+        ra = []
+        for ten, du_lieu in cac_tep:
+            duoi = ten[ten.rfind("."):] if "." in ten else ".txt"
+            fn = _ten_tep_phuc_vu(ten, duoi)
+            dich = thu_muc / fn
+            if isinstance(du_lieu, bytes):
+                dich.write_bytes(du_lieu)
+            else:
+                # Video hàng trăm MB phải copy theo luồng, không đọc cả tệp vào RAM.
+                with open(Path(du_lieu), "rb") as src, open(dich, "wb") as dst:
+                    shutil.copyfileobj(src, dst, length=1024 * 1024)
+            ra.append({"ten": fn, "url": f"/images/docs/{thu_muc.name}/{fn}"})
+        return ra
+    except Exception:
+        shutil.rmtree(thu_muc, ignore_errors=True)
+        raise
 
 
 def _chay_nen(viec_id: str, ham) -> None:
@@ -357,8 +384,7 @@ def create_router() -> APIRouter:
         from services import translate_service as ts
 
         thap = ten.lower()
-        if kieu_ra == "long-tieng" and not thap.endswith(
-                (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp")):
+        if kieu_ra == "long-tieng" and not thap.endswith(va.DUOI_VIDEO):
             Path(duong).unlink(missing_ok=True)
             _cap_nhat(viec_id, trang_thai="loi", luc=time.time(),
                       loi="Lồng tiếng cần tệp video, không nhận tệp âm thanh/phụ đề.")

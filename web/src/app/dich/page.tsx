@@ -85,6 +85,10 @@ function DichPageContent() {
   useEffect(() => {
     if (kieuRa !== "long-tieng") return;
     let conHieuLuc = true;
+    // Không giữ giọng của tiếng đích cũ trong lúc request mới đang chạy; nếu
+    // bấm nhanh, backend sẽ nhận sai ID giọng dù select chưa kịp đổi nhãn.
+    setGiong("");
+    setCacGiong([]);
     setDangTaiGiong(true);
     request.get("/api/dich/giong", { params: { lang: target } })
       .then((res) => {
@@ -151,6 +155,10 @@ function DichPageContent() {
 
   async function dichTep() {
     if (!tep || dangChay) return;
+    if (kieuRa === "long-tieng" && dangTaiGiong) {
+      setLoi("Danh sách giọng vẫn đang tải, vui lòng chờ một chút.");
+      return;
+    }
     if (kieuRa === "long-tieng" && !giong) {
       setLoi("Chưa có giọng phù hợp đã tải trên máy; vào Cài đặt → Giọng nói để tải model.");
       return;
@@ -324,7 +332,8 @@ function DichPageContent() {
           </div>
         )}
         <div className="flex items-center justify-end gap-3">
-          <button type="button" onClick={dichTep} disabled={dangChay || !tep}
+          <button type="button" onClick={dichTep}
+            disabled={dangChay || !tep || (kieuRa === "long-tieng" && (dangTaiGiong || !giong))}
             className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             {kieuRa === "long-tieng" ? "Dịch và lồng tiếng" : "Dịch tệp"}
           </button>

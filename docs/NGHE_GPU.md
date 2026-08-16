@@ -162,3 +162,37 @@ docker exec c2a /app/.venv/bin/python /app/scripts/kiem_nghe.py vi en zh ja ko -
 
 Hai lệnh chạy trên **cùng** bản thu nên so được trực tiếp. Có `--gpu` thì đo
 đường GPU, không có thì đo model tại chỗ.
+
+## Vision cho phim dài
+
+Vision chạy sau Whisper và dùng chung hàng đợi GPU. Mặc định không còn cố định
+40 cảnh: ngân sách tự tăng xấp xỉ **một cảnh mỗi 30 giây**, tối thiểu 40, tối đa
+120 và ưu tiên cảnh có lời thoại. Với phim 63 phút/1012 cảnh, trạng thái dự kiến
+là `120/1012`, không phải `40/1012`. Đây vẫn là lấy mẫu, không phải Qwen xem hết
+mọi cut; tăng quá 120 trên RTX 2060 Super dùng chung Frigate dễ kéo thời gian và
+VRAM ra ngoài vùng an toàn.
+
+Trong lúc chạy, WebUI nhận tiến độ từng khung. Gateway kiểm tra lại VRAM sau mỗi
+10 khung; nếu Frigate tăng dùng card thì Vision dừng sớm, giữ các mô tả đã có và
+tiếp tục dịch bằng lời thoại. Có thể điều chỉnh bằng `VISION_MAX_SCENES`,
+`VISION_FRAMES_PER_SCENE` (1–2) và `VISION_RECHECK_EVERY`.
+
+## Lồng tiếng theo yêu cầu
+
+Với tệp video, menu và tab Dịch có thêm lựa chọn **Lồng tiếng video**. Dây chuyền
+vẫn nghe → Vision → dịch trước, sau đó mới gọi TTS từng cue để các model GPU
+không chạy đồng thời. WebUI chỉ cho chọn giọng phù hợp tiếng đích đã tải và đánh
+dấu một giọng khuyến nghị.
+
+Đầu ra gồm MP4, SRT và `prosody.<lang>.json`. MP4 chỉ map hình gốc với track TTS,
+vì vậy **track âm thanh gốc (kể cả nhạc/hiệu ứng) bị bỏ hoàn toàn**. Metadata mỗi
+cue có `speaker`, `rate`, `pitch_relative`, `energy`, `energy_relative_db`,
+`pause_before`, `pause_after`, `emotion` và `emphasis`; cao độ, năng lượng và
+thời lượng được áp vào filter âm thanh khi tổng hợp, không chỉ ghi ra JSON.
+
+Hiện chưa có diarization trong đường này nên dùng **một giọng cho toàn video**,
+`speaker=UNKNOWN` và `emphasis=[]`; như vậy không gán nhầm nhân vật/giới tính.
+Muốn nhiều giọng theo nhân vật cần thêm diarization và bước ánh xạ speaker →
+voice riêng. Nếu TTS lỗi, hệ thống giữ SRT đã dịch; nếu chỉ vài cue lỗi, đúng các
+khung đó để im lặng và ghi cảnh báo. MP4/JSON được đánh dấu để dọn sau 24 giờ
+(thực hiện ở lượt tạo/dọn kết quả kế tiếp), tránh video lớn lấp đầy volume.

@@ -2243,13 +2243,21 @@ def _serve_path(thread_id: str, thread_type: int, duong: str, ten: str,
     """Gửi tệp lớn trên đĩa mà không gom toàn bộ video vào RAM."""
     import shutil
     import uuid
+    from services import dich_jobs
 
+    dich_jobs.don_thu_muc_ket_qua(
+        config.images_dir / "docs", cu_hon=time.time() - 24 * 3600)
     out_dir = config.images_dir / "docs" / uuid.uuid4().hex[:12]
     out_dir.mkdir(parents=True, exist_ok=True)
-    duoi = ten[ten.rfind("."):] if "." in ten else Path(duong).suffix or ".bin"
-    fn = _ten_tep_phuc_vu(ten, duoi)
-    with open(duong, "rb") as src, open(out_dir / fn, "wb") as dst:
-        shutil.copyfileobj(src, dst, length=1024 * 1024)
+    try:
+        (out_dir / ".expire-24h").touch()
+        duoi = ten[ten.rfind("."):] if "." in ten else Path(duong).suffix or ".bin"
+        fn = _ten_tep_phuc_vu(ten, duoi)
+        with open(duong, "rb") as src, open(out_dir / fn, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=1024 * 1024)
+    except Exception:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
     rel = f"/images/docs/{out_dir.name}/{fn}"
     if _send_file_robust(thread_id, rel, ghi_chu or ten, thread_type):
         return
