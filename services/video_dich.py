@@ -933,7 +933,13 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     _bao_tien_do(tien_do, "đã nhận lời thoại, đang phân tích cảnh…",
                  PT_NGHE_XONG, moc=True)
     try:
-        ket_qua_vision = vv.phan_tich_video(duong, doan)
+        def _tien_do_vision(xong: int, tong: int) -> None:
+            phan_tram = PT_NGHE_XONG + round(
+                (PT_CANH_XONG - PT_NGHE_XONG) * xong / max(1, tong))
+            _bao_tien_do(tien_do, f"đang phân tích khung Vision ({xong}/{tong})…",
+                         phan_tram)
+
+        ket_qua_vision = vv.phan_tich_video(duong, doan, tien_do=_tien_do_vision)
     except Exception as exc:
         logger.warning("vision tệp %s lỗi ngoài dự kiến: %s", ten, str(exc)[:160])
         ket_qua_vision = vv.KetQuaVision(

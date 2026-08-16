@@ -15,6 +15,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from services import gpu_queue
 
@@ -141,6 +142,9 @@ def _lay_mau_deu(canh: list[tuple[float, float]], toi_da_canh: int
                  ) -> list[tuple[float, float]]:
     if len(canh) <= toi_da_canh:
         return canh
+    if toi_da_canh <= 1:
+        # Một mẫu vẫn phải đại diện cả phim, không mặc định lấy cảnh đầu.
+        return [canh[len(canh) // 2]]
     # Đều từ đầu đến cuối, không lấy 40 cảnh đầu rồi làm mù nửa sau video.
     chi_so = [round(i * (len(canh) - 1) / (toi_da_canh - 1))
               for i in range(toi_da_canh)]
@@ -279,8 +283,9 @@ def _doi_unload() -> bool:
     return False
 
 
-def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
-                     ) -> KetQuaVision:
+def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None,
+                    tien_do: Callable[[int, int], None] | None = None
+                    ) -> KetQuaVision:
     """Video → ngữ cảnh visual; mọi thất bại trả degradation, không raise.
 
     ``ranh_canh`` chỉ được trả khi Qwen thành công: caller dùng nó để không gộp
@@ -300,7 +305,6 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
         canh = chon_canh_phan_tich(canh_day_du, loi_thoai, toi_da)
         moc = chon_moc_khung(canh, moi_canh=_so("VISION_FRAMES_PER_SCENE", 1, 1, 2),
                              toi_da_canh=toi_da)
-        khung = [trich_khung(duong_video, t) for t in moc]
 
         def _loi_thoai_trong_canh(bat_dau: float, ket_thuc: float) -> str:
             return " ".join(str(getattr(d, "chu", "")) for d in (loi_thoai or [])
@@ -315,18 +319,43 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
 
         mo_ta: list[str] = []
         mo_ta_theo_canh: list[list[str]] = [[] for _ in canh]
+        dung_som_vram = False
+        moi_lan_kiem_tra = _so("VISION_RECHECK_EVERY", 10, 1, 30)
         with gpu_queue.giu("Qwen3-VL"):
-            for jpeg, t in zip(khung, moc):
-                i = _chi_so_canh(t)
-                bat_dau, ket_thuc = canh[i]
-                ket = phan_tich_khung(jpeg, t, _loi_thoai_trong_canh(bat_dau, ket_thuc))
-                mo_ta.append(ket)
-                mo_ta_theo_canh[i].append(ket)
-            da_unload = _doi_unload()
+            try:
+                for thu_tu, t in enumerate(moc):
+                    # Phim dài có thể mất hàng chục phút; Frigate có thể tăng
+                    # tải sau lần kiểm tra đầu. Giữ kết quả đã xem thay vì ép
+                    # card tới OOM rồi mất toàn bộ vision.
+                    if thu_tu and thu_tu % moi_lan_kiem_tra == 0 \
+                            and not co_vram_an_toan():
+                        dung_som_vram = True
+                        break
+                    # Trích vừa đủ một frame rồi gửi ngay. Không giữ 120–240
+                    # JPEG trong RAM khi job còn đang chờ hàng đợi GPU.
+                    jpeg = trich_khung(duong_video, t)
+                    i = _chi_so_canh(t)
+                    bat_dau, ket_thuc = canh[i]
+                    ket = phan_tich_khung(
+                        jpeg, t, _loi_thoai_trong_canh(bat_dau, ket_thuc))
+                    mo_ta.append(ket)
+                    mo_ta_theo_canh[i].append(ket)
+                    if tien_do:
+                        try:
+                            tien_do(thu_tu + 1, len(moc))
+                        except Exception:
+                            pass
+            finally:
+                # Kể cả Qwen/ffmpeg lỗi giữa phim, model vẫn phải nhả trước
+                # khi rời hàng đợi để Whisper/máy dịch không gặp OOM dây chuyền.
+                da_unload = _doi_unload()
         canh_bao = ""
         if len(canh_day_du) > len(canh):
             canh_bao = (f"Vision lấy mẫu {len(canh)}/{len(canh_day_du)} cảnh để "
                          "giữ thời gian xử lý ổn định; ưu tiên cảnh có lời thoại.")
+        if dung_som_vram:
+            canh_bao = (canh_bao + " " if canh_bao else "") + (
+                f"Frigate tăng dùng VRAM; dừng Vision sau {len(mo_ta)}/{len(moc)} khung.")
         if not da_unload:
             canh_bao = (canh_bao + " " if canh_bao else "") + \
                         "Qwen3-VL sẽ tự nhả VRAM khi rảnh."
@@ -342,8 +371,9 @@ def phan_tich_video(duong_video: str, loi_thoai: list[object] | None = None
             if mo_ta_hop:
                 ngu_canh_canh.append({"bat_dau": bat_dau, "ket_thuc": ket_thuc,
                                        "mo_ta": mo_ta_hop})
+        so_canh_da_xem = sum(bool(x) for x in mo_ta_theo_canh)
         return KetQuaVision("gpu", [b for b, _ in canh_day_du[1:]], mo_ta,
-                             canh_bao, so_canh_xu_ly=len(canh),
+                             canh_bao, so_canh_xu_ly=so_canh_da_xem,
                              ngu_canh_canh=ngu_canh_canh)
     except gpu_queue.QuaTaiGpu as exc:
         # Whisper/dịch đang giữ lượt là backpressure bình thường. Không đẩy

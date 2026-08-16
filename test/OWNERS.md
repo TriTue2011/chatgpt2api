@@ -2,14 +2,14 @@
 
 **Quy tắc:** Hành vi đã có owner → file khác **không** assert lại logic đó; chỉ dùng fake/fixture và kiểm concern riêng của mình.
 
-**Seam:** mock thế giới ngoài chỉ qua [`_fakes.py`](_fakes.py) (S1…S9). Xem conftest markers: `pure` | `adapter` | `integration` | `e2e`.
+**Seam:** mock thế giới ngoài chỉ qua [`_fakes.py`](_fakes.py) (S1…S10). Xem conftest markers: `pure` | `adapter` | `integration` | `e2e`.
 
 CI gợi ý: `pytest -m "pure or adapter" -q`  
 E2E: `pytest -m e2e --run-e2e`
 
 ---
 
-## Sổ SEAM (8 ranh giới)
+## Sổ SEAM (10 ranh giới)
 
 | ID | Biên | Fake trong `_fakes.py` |
 |----|------|------------------------|
@@ -20,8 +20,9 @@ E2E: `pytest -m e2e --run-e2e`
 | S5 | Storage / DATA_DIR | `tmp_data_dir`, `install_data_dir` |
 | S6 | Bot Telegram/Zalo | `FakeBotAPI`, `install_bot_api` |
 | S7 | MCP | `FakeMCP`, `install_mcp` |
-| S8 | Doc/media (fitz…) | `FakeFitzDoc`, `install_fitz` (ưu tiên lib thật khi rẻ) |
+| S8 | Doc/media (fitz/ffmpeg/Vision…) | `FakeFitzDoc`, `FakeVideoVision`, `FakeFfmpeg` + installers tương ứng |
 | S9 | LibreTranslate HTTP | `FakeTranslate`, `install_translate` |
+| S10 | TTS / voice catalog | `FakeTTS`, `install_tts` |
 
 ---
 
@@ -49,6 +50,8 @@ E2E: `pytest -m e2e --run-e2e`
 | HA service schema | `test_ha_service_schema.py` | |
 | HA/GMA pool helpers | `test_ha_gma_optimize.py` | |
 | **Fake registry smoke** | `test_fakes_smoke.py` | Đợt 0 |
+| Lồng tiếng video / prosody | `test_video_dub.py` | seam S10; ffmpeg thật khi có |
+| Vòng đời tệp kết quả tab Dịch | `test_dich_jobs.py` | |
 
 ### Owner dự kiến (chưa có file — Đợt 1+)
 

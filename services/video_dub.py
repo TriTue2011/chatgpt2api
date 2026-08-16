@@ -165,9 +165,13 @@ def _thoi_luong(duong: str, fallback: float) -> float:
 
 def _boc_pcm_goc(duong: str) -> str:
     out = tempfile.NamedTemporaryFile(suffix=".s16le", delete=False).name
-    p = _chay(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-              "-i", duong, "-vn", "-ac", "1", "-ar", str(RATE_GOC),
-              "-f", "s16le", out], timeout=900)
+    try:
+        p = _chay(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                  "-i", duong, "-vn", "-ac", "1", "-ar", str(RATE_GOC),
+                  "-f", "s16le", out], timeout=900)
+    except Exception:
+        Path(out).unlink(missing_ok=True)
+        raise
     if p.returncode or not Path(out).is_file() or Path(out).stat().st_size < 2:
         Path(out).unlink(missing_ok=True)
         loi = p.stderr.decode("utf-8", "ignore")[:180]
@@ -234,11 +238,13 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
                 "speaker": "UNKNOWN",
                 "rate": round(don_vi / max(0.1, ket - bat), 3),
                 "rate_unit": "words_per_second",
+                "rate_source": "translated_text_per_subtitle_slot",
                 "_pitch_hz": pitch,
                 "energy": round(energy, 5),
                 "pause_before": round(max(0.0, bat - truoc), 3),
                 "pause_after": round(max(0.0, sau - ket), 3),
                 "emphasis": [],
+                "emphasis_source": "unavailable",
             })
         pitches = [float(x["_pitch_hz"]) for x in tam if x["_pitch_hz"]]
         energies = [float(x["energy"]) for x in tam if x["energy"] > 0]
@@ -253,6 +259,7 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
             energy_db = (20.0 * math.log10(max(cue["energy"], 1e-6)
                                            / max(energy_med, 1e-6))
                          if energy_med else 0.0)
+            cue["energy_relative_db"] = round(energy_db, 2)
             if energy_db > 4.0 or (rate_med and cue["rate"] > rate_med * 1.25):
                 cue["emotion"] = "energetic"
             elif energy_db < -4.0 and (not rate_med or cue["rate"] < rate_med * 0.9):
@@ -265,6 +272,7 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
             "voice": voice,
             "original_audio": "removed",
             "speaker_detection": "unavailable",
+            "speaker_note": "one selected voice is used for every cue",
             "analysis_source": "mixed_original_audio",
             "created_at": int(time.time()),
             "cues": tam,
@@ -288,20 +296,41 @@ def _atempo(tempo: float) -> str:
     return ",".join(f"atempo={x:.6f}" for x in ds)
 
 
-def _doc_wav_len(wav_bytes: bytes) -> float:
+def _doc_wav_info(wav_bytes: bytes) -> tuple[float, int]:
     from io import BytesIO
 
     try:
         with wave.open(BytesIO(wav_bytes), "rb") as w:
-            return w.getnframes() / max(1, w.getframerate())
+            rate = max(1, w.getframerate())
+            return w.getnframes() / rate, rate
     except Exception as exc:
         raise LoiLongTieng(f"TTS trả WAV không hợp lệ: {exc}") from exc
 
 
-def _pcm_vua_khung(wav_bytes: bytes, giay_dich: float) -> tuple[bytes, float]:
-    giay_goc = _doc_wav_len(wav_bytes)
+def _bo_loc_tts(rate_goc: int, giay_goc: float, giay_dich: float, *,
+                pitch_relative: float | None = None,
+                energy_relative_db: float = 0.0) -> tuple[str, float]:
+    """Tạo filter ffmpeg thuần để test được mà không phải giả subprocess."""
     tempo = giay_goc / max(0.08, giay_dich)
-    loc = _atempo(tempo) + f",aresample={RATE_DUB}"
+    # Giới hạn để tránh méo giọng vì ước lượng F0 trên track trộn nhạc có thể
+    # lệch. asetrate đổi pitch lẫn thời lượng; atempo bù lại phần thời lượng.
+    nua_cung = max(-4.0, min(4.0, float(pitch_relative or 0.0)))
+    he_so_pitch = 2.0 ** (nua_cung / 12.0)
+    gain = max(-6.0, min(6.0, float(energy_relative_db or 0.0)))
+    loc = (f"asetrate={round(rate_goc * he_so_pitch)},"
+           f"aresample={RATE_DUB},"
+           f"{_atempo(tempo / he_so_pitch)},volume={gain:.3f}dB")
+    return loc, tempo
+
+
+def _pcm_vua_khung(wav_bytes: bytes, giay_dich: float, *,
+                   pitch_relative: float | None = None,
+                   energy_relative_db: float = 0.0) -> tuple[bytes, float]:
+    """Khớp thời lượng đồng thời tái tạo cao độ/năng lượng tương đối của cue."""
+    giay_goc, rate_goc = _doc_wav_info(wav_bytes)
+    loc, tempo = _bo_loc_tts(
+        rate_goc, giay_goc, giay_dich,
+        pitch_relative=pitch_relative, energy_relative_db=energy_relative_db)
     p = _chay(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
               "-af", loc, "-ac", "1", "-ar", str(RATE_DUB),
               "-f", "s16le", "pipe:1"], input_data=wav_bytes, timeout=120)
@@ -323,7 +352,8 @@ def _tong_hop(chu: str, voice: str, emotion: str) -> bytes:
         lang = phan[1] if len(phan) > 1 else ""
         sid = int(phan[2]) if len(phan) > 2 and phan[2].isdigit() else -1
         return engines.synthesize_da_ngu(chu, lang, sid)
-    style = "doc_truyen" if emotion in ("calm", "energetic") else "tu_nhien"
+    style = {"calm": "doc_truyen", "energetic": "tin_tuc"}.get(
+        emotion, "tu_nhien")
     return engines.synthesize(chu, voice, style=style)
 
 
@@ -343,45 +373,54 @@ def _tao_track(meta: dict[str, Any], dai: float, voice: str,
     cursor = 0
     loi = 0
     canh_bao: list[str] = []
-    with wave.open(out, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(RATE_DUB)
-        for i, cue in enumerate(cues):
-            bat = max(0, round(float(cue["start"]) * RATE_DUB))
-            ket = max(bat + 1, round(float(cue["end"]) * RATE_DUB))
-            if bat > cursor:
-                _viet_lang(w, bat - cursor)
-                cursor = bat
-            try:
-                wav = _tong_hop(str(cue["text"]), voice, str(cue["emotion"]))
-                pcm, tempo = _pcm_vua_khung(wav, (ket - bat) / RATE_DUB)
-                cue["tts_tempo"] = round(tempo, 3)
-                cue["tts_status"] = "ok"
-                if tempo > 2.0:
-                    canh_bao.append(f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
-            except Exception as exc:
-                loi += 1
-                pcm = b"\0" * ((ket - bat) * 2)
-                cue["tts_status"] = "error"
-                cue["tts_error"] = str(exc)[:160]
-                logger.warning("lồng tiếng câu %d lỗi: %s", i + 1, str(exc)[:160])
-            # Cue chồng nhau: bỏ phần đã đi qua, không làm timeline trôi.
-            bo = max(0, cursor - bat) * 2
-            if bo < len(pcm):
-                w.writeframesraw(pcm[bo:])
-                cursor += (len(pcm) - bo) // 2
-            if progress:
+    try:
+        with wave.open(out, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE_DUB)
+            for i, cue in enumerate(cues):
+                bat = max(0, round(float(cue["start"]) * RATE_DUB))
+                ket = max(bat + 1, round(float(cue["end"]) * RATE_DUB))
+                if bat > cursor:
+                    _viet_lang(w, bat - cursor)
+                    cursor = bat
                 try:
-                    progress(i + 1, len(cues), f"đang tổng hợp giọng ({i + 1}/{len(cues)})…")
-                except Exception:
-                    pass
-        tong = max(cursor, round(dai * RATE_DUB))
-        if tong > cursor:
-            _viet_lang(w, tong - cursor)
-    if loi == len(cues):
+                    wav = _tong_hop(str(cue["text"]), voice, str(cue["emotion"]))
+                    pcm, tempo = _pcm_vua_khung(
+                        wav, (ket - bat) / RATE_DUB,
+                        pitch_relative=cue.get("pitch_relative"),
+                        energy_relative_db=float(
+                            cue.get("energy_relative_db") or 0.0))
+                    cue["tts_tempo"] = round(tempo, 3)
+                    cue["tts_status"] = "ok"
+                    if tempo > 2.0:
+                        canh_bao.append(f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
+                except Exception as exc:
+                    loi += 1
+                    pcm = b"\0" * ((ket - bat) * 2)
+                    cue["tts_status"] = "error"
+                    cue["tts_error"] = str(exc)[:160]
+                    logger.warning("lồng tiếng câu %d lỗi: %s",
+                                   i + 1, str(exc)[:160])
+                # Cue chồng nhau: bỏ phần đã đi qua, không làm timeline trôi.
+                bo = max(0, cursor - bat) * 2
+                if bo < len(pcm):
+                    w.writeframesraw(pcm[bo:])
+                    cursor += (len(pcm) - bo) // 2
+                if progress:
+                    try:
+                        progress(i + 1, len(cues),
+                                 f"đang tổng hợp giọng ({i + 1}/{len(cues)})…")
+                    except Exception:
+                        pass
+            tong = max(cursor, round(dai * RATE_DUB))
+            if tong > cursor:
+                _viet_lang(w, tong - cursor)
+        if loi == len(cues):
+            raise LoiLongTieng("TTS lỗi ở toàn bộ câu thoại; không tạo video im lặng.")
+    except Exception:
         Path(out).unlink(missing_ok=True)
-        raise LoiLongTieng("TTS lỗi ở toàn bộ câu thoại; không tạo video im lặng.")
+        raise
     return out, loi, canh_bao
 
 
@@ -391,17 +430,21 @@ def _mux(duong_video: str, track: str, dai: float) -> str:
                   "-i", duong_video, "-i", track, "-map", "0:v:0", "-map", "1:a:0",
                   "-map_metadata", "0", "-c:a", "aac", "-b:a", "192k",
                   "-t", f"{dai:.3f}", "-movflags", "+faststart"]
-    p = _chay(lenh_chung + ["-c:v", "copy", out], timeout=max(900, dai * 2))
-    if p.returncode:
-        # Codec/container gốc không copy được sang MP4 (vd vài AVI/WebM): đổi
-        # riêng hình sang H.264, vẫn không đụng/không map track âm thanh gốc.
-        p = _chay(lenh_chung + ["-c:v", "libx264", "-preset", "veryfast",
-                                "-crf", "20", out], timeout=max(1800, dai * 4))
-    if p.returncode or not Path(out).is_file() or Path(out).stat().st_size < 100:
+    try:
+        p = _chay(lenh_chung + ["-c:v", "copy", out], timeout=max(900, dai * 2))
+        if p.returncode:
+            # Codec/container gốc không copy được sang MP4 (vd vài AVI/WebM):
+            # đổi riêng hình sang H.264, vẫn không map track âm thanh gốc.
+            p = _chay(lenh_chung + ["-c:v", "libx264", "-preset", "veryfast",
+                                    "-crf", "20", out],
+                      timeout=max(1800, dai * 4))
+        if p.returncode or not Path(out).is_file() or Path(out).stat().st_size < 100:
+            raise LoiLongTieng("Không ghép được track lồng tiếng vào video: "
+                               + p.stderr.decode("utf-8", "ignore")[:180])
+        return out
+    except Exception:
         Path(out).unlink(missing_ok=True)
-        raise LoiLongTieng("Không ghép được track lồng tiếng vào video: "
-                           + p.stderr.decode("utf-8", "ignore")[:180])
-    return out
+        raise
 
 
 def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = "",
@@ -418,10 +461,12 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
     voice = voice or chon_giong(lang)
     dai = _thoi_luong(duong_video, doan[-1].ket_thuc)
     meta, raw_pcm = _tao_meta(duong_video, doan, lang, voice)
-    track = ""
-    video = ""
-    prosody = tempfile.NamedTemporaryFile(suffix=".prosody.json", delete=False).name
+    track: str | None = None
+    video: str | None = None
+    prosody: str | None = None
     try:
+        prosody = tempfile.NamedTemporaryFile(
+            suffix=".prosody.json", delete=False).name
         track, so_loi, canh_bao = _tao_track(meta, dai, voice, progress)
         Path(prosody).write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
         if progress:
@@ -435,9 +480,12 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
             tom_tat = " ".join(x for x in (tom_tat, nhanh) if x)
         return KetQuaLongTieng(video, prosody, voice, len(doan), so_loi, tom_tat)
     except Exception:
-        Path(video).unlink(missing_ok=True)
-        Path(prosody).unlink(missing_ok=True)
+        if video:
+            Path(video).unlink(missing_ok=True)
+        if prosody:
+            Path(prosody).unlink(missing_ok=True)
         raise
     finally:
         Path(raw_pcm).unlink(missing_ok=True)
-        Path(track).unlink(missing_ok=True)
+        if track:
+            Path(track).unlink(missing_ok=True)

@@ -1,4 +1,4 @@
-"""Sổ SEAM — fake chuẩn cho 8 ranh giới ra thế giới ngoài.
+"""Sổ SEAM — fake chuẩn cho 10 ranh giới ra thế giới ngoài.
 
 Đợt 0: mọi test adapter CHỈ mock qua đây (hoặc fixture conftest bọc sẵn).
 Không ``unittest.mock.patch("requests.get")`` / ``call_model`` tùy hứng.
@@ -12,8 +12,9 @@ S4 Model nội bộ    — agent.runtime.call_model / self-call gateway
 S5 Storage         — DATA_DIR tmp (accounts, config, workspace)
 S6 Bot API         — telegram/zalo send_message / send_photo / _api_call
 S7 MCP             — mcp_client transport
-S8 Doc/media libs  — fitz/docx/tesseract (thật hoặc stub nhẹ)
+S8 Doc/media libs  — fitz/docx/tesseract/ffmpeg/Vision (thật hoặc stub nhẹ)
 S9 LibreTranslate  — translate_service._goi (máy chủ dịch tự dựng)
+S10 TTS / voice catalog — model giọng nói cục bộ và danh sách giọng đã tải
 
 Usage
 -----
@@ -33,7 +34,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
@@ -613,6 +614,89 @@ def install_fitz(pages: list[str] | None = None) -> Iterator[FakeFitzDoc]:
         yield doc
 
 
+class FakeVideoVision:
+    """PySceneDetect/frame/Qwen giả cho test điều phối Vision (cùng seam S8)."""
+
+    def __init__(self, scenes: list[tuple[float, float]] | None = None, *,
+                 description: str = "mô tả", vram: list[bool] | None = None,
+                 error: Exception | None = None) -> None:
+        self.scenes = scenes or [(0.0, 2.0)]
+        self.description = description
+        self.vram = list(vram or [True])
+        self.error = error
+        self.unloaded = False
+        self.calls: list[dict[str, Any]] = []
+
+    def vram_safe(self) -> bool:
+        if len(self.vram) > 1:
+            return self.vram.pop(0)
+        return self.vram[0] if self.vram else True
+
+    def scene_detect(self, _path: str) -> list[tuple[float, float]]:
+        SEAM_LOG.add("S8", "scene_detect", len(self.scenes))
+        return list(self.scenes)
+
+    def extract_frame(self, _path: str, second: float) -> bytes:
+        SEAM_LOG.add("S8", "extract_frame", second)
+        return b"jpeg"
+
+    def analyze_frame(self, _jpeg: bytes, second: float, dialogue: str = "") -> str:
+        self.calls.append({"second": second, "dialogue": dialogue})
+        SEAM_LOG.add("S8", "analyze_frame", second)
+        if self.error:
+            raise self.error
+        return self.description
+
+    def unload(self) -> bool:
+        self.unloaded = True
+        SEAM_LOG.add("S8", "vision_unload")
+        return True
+
+
+@contextmanager
+def install_video_vision(fake: FakeVideoVision | None = None) -> Iterator[FakeVideoVision]:
+    """Chặn PySceneDetect, ffmpeg frame và Qwen qua một adapter S8 duy nhất."""
+    from services import video_vision as vv
+
+    fake = fake or FakeVideoVision()
+    with ExitStack() as stack:
+        for ten, gia_tri in (
+            ("dung_duoc", lambda: True),
+            ("co_vram_an_toan", fake.vram_safe),
+            ("tach_canh", fake.scene_detect),
+            ("trich_khung", fake.extract_frame),
+            ("phan_tich_khung", fake.analyze_frame),
+            ("_doi_unload", fake.unload),
+        ):
+            stack.enter_context(mock.patch.object(vv, ten, side_effect=gia_tri))
+        yield fake
+
+
+class FakeFfmpeg:
+    """Lệnh ffmpeg/ffprobe giả cho các nhánh timeout và cleanup (S8)."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.calls: list[list[str]] = []
+
+    def run(self, cmd: list[str], **_kwargs: Any) -> Any:
+        self.calls.append(list(cmd))
+        SEAM_LOG.add("S8", "ffmpeg", *cmd[:2])
+        if self.error:
+            raise self.error
+        raise AssertionError("FakeFfmpeg cần khai kết quả hoặc lỗi")
+
+
+@contextmanager
+def install_video_dub_media(fake: FakeFfmpeg | None = None) -> Iterator[FakeFfmpeg]:
+    """Chặn adapter `_chay` của video_dub qua seam media S8."""
+    from services import video_dub as dub
+
+    fake = fake or FakeFfmpeg(RuntimeError("ffmpeg lỗi giả"))
+    with mock.patch.object(dub, "_chay", side_effect=fake.run):
+        yield fake
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # S9 — LibreTranslate HTTP (services.translate_service._goi)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -723,10 +807,48 @@ def install_translate(fake: FakeTranslate | None = None) -> Iterator[FakeTransla
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# S10 — TTS engines / voice catalog
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class FakeTTS:
+    """TTS cục bộ giả: trả WAV cố định và ghi lại câu/giọng/style đã nhận."""
+
+    def __init__(self, wav: bytes = b"", catalog: list[dict[str, Any]] | None = None) -> None:
+        self.wav = wav
+        self.catalog = list(catalog or [])
+        self.calls: list[dict[str, Any]] = []
+
+    def synthesize(self, text: str, voice: str = "", **kwargs: Any) -> bytes:
+        self.calls.append({"text": text, "voice": voice, **kwargs})
+        SEAM_LOG.add("S10", "synthesize", text, voice=voice, **kwargs)
+        return self.wav
+
+    def synthesize_da_ngu(self, text: str, lang: str, sid: int = -1) -> bytes:
+        self.calls.append({"text": text, "lang": lang, "sid": sid})
+        SEAM_LOG.add("S10", "synthesize_da_ngu", text, lang=lang, sid=sid)
+        return self.wav
+
+
+@contextmanager
+def install_tts(fake: FakeTTS | None = None) -> Iterator[FakeTTS]:
+    """Chặn model TTS và catalog giọng; ffmpeg thật vẫn do integration test quản."""
+    from services.voice import config as vcfg
+    from services.voice import engines
+
+    fake = fake or FakeTTS()
+    with mock.patch.object(engines, "synthesize", side_effect=fake.synthesize), \
+            mock.patch.object(engines, "synthesize_da_ngu",
+                              side_effect=fake.synthesize_da_ngu), \
+            mock.patch.object(vcfg, "voice_catalog", return_value=fake.catalog):
+        yield fake
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Registry helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
-SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9")
+SEAM_IDS = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10")
 
 SEAM_INSTALLERS = {
     "S1": install_provider_http,
@@ -738,6 +860,7 @@ SEAM_INSTALLERS = {
     "S7": install_mcp,
     "S8": install_fitz,
     "S9": install_translate,
+    "S10": install_tts,
 }
 
 

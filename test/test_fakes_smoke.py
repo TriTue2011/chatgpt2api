@@ -32,9 +32,9 @@ from test._fakes import (  # noqa: E402
 
 @pytest.mark.pure
 class TestSeamRegistry(unittest.TestCase):
-    def test_eight_seams_registered(self) -> None:
+    def test_all_seams_registered(self) -> None:
         self.assertEqual(set(SEAM_IDS), set(SEAM_INSTALLERS.keys()))
-        self.assertEqual(len(SEAM_IDS), 8)
+        self.assertEqual(len(SEAM_IDS), 10)
 
 
 @pytest.mark.adapter

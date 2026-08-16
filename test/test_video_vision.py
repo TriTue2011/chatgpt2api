@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from services import video_vision as vv
+from test._fakes import FakeVideoVision, install_video_vision
 
 
 @pytest.mark.pure
@@ -19,6 +20,12 @@ def test_nhieu_canh_thi_lay_mau_deu_trong_gioi_han():
     canh = [(float(i), float(i + 1)) for i in range(10)]
     moc = vv.chon_moc_khung(canh, moi_canh=1, toi_da_canh=3)
     assert moc == [0.5, 4.5, 9.5]
+
+
+@pytest.mark.pure
+def test_gioi_han_mot_canh_lay_canh_giua_thay_vi_chia_cho_khong():
+    canh = [(float(i), float(i + 1)) for i in range(5)]
+    assert vv.chon_moc_khung(canh, moi_canh=1, toi_da_canh=1) == [2.5]
 
 
 @pytest.mark.pure
@@ -38,18 +45,16 @@ def test_vision_uu_tien_canh_co_loi_thoai():
     assert vv.chon_canh_phan_tich(canh, loi, 2) == [canh[2], canh[7]]
 
 
-def test_qwen_loi_thi_tra_canh_bao_thay_vi_nem_ra_ngoai(monkeypatch):
-    monkeypatch.setattr(vv, "dung_duoc", lambda: True)
-    monkeypatch.setattr(vv, "tach_canh", lambda _p: [(0.0, 4.0)])
-    monkeypatch.setattr(vv, "trich_khung", lambda _p, _t: b"jpeg")
-    monkeypatch.setattr(vv, "phan_tich_khung", lambda *_a, **_k:
-                        (_ for _ in ()).throw(vv.LoiVision("GPU hết VRAM")))
-
-    kq = vv.phan_tich_video("/tmp/phim.mp4")
+@pytest.mark.adapter
+def test_qwen_loi_thi_unload_va_tra_canh_bao_thay_vi_nem_ra_ngoai():
+    fake = FakeVideoVision([(0.0, 4.0)], error=vv.LoiVision("GPU hết VRAM"))
+    with install_video_vision(fake):
+        kq = vv.phan_tich_video("/tmp/phim.mp4")
 
     assert kq.engine == "fallback"
     assert "Qwen3-VL" in kq.canh_bao
     assert kq.ranh_canh == []
+    assert fake.unloaded is True
 
 
 def test_frigate_chiem_vram_thi_bo_vision_nhung_khong_ngat_cau_dao(monkeypatch):
@@ -106,6 +111,32 @@ def test_qwen_thanh_cong_tra_ranh_canh_de_khong_gop_loi_thoai_qua_canh(monkeypat
     assert kq.ranh_canh == [2.0]
     assert kq.mo_ta == ["bếp, một người", "bếp, một người"]
     assert kq.so_canh == 2
+
+
+@pytest.mark.adapter
+def test_vision_bao_tien_do_tung_canh_khi_phim_dai():
+    da_bao = []
+
+    fake = FakeVideoVision([(0.0, 2.0), (2.0, 5.0)])
+    with install_video_vision(fake):
+        vv.phan_tich_video(
+            "/tmp/phim.mp4",
+            tien_do=lambda xong, tong: da_bao.append((xong, tong)))
+
+    assert da_bao == [(1, 2), (2, 2)]
+
+
+@pytest.mark.adapter
+def test_vision_dung_som_va_giu_ket_qua_khi_frigate_tang_vram():
+    fake = FakeVideoVision(
+        [(float(i), float(i + 1)) for i in range(12)], vram=[True, False])
+    with install_video_vision(fake):
+        kq = vv.phan_tich_video("/tmp/phim.mp4")
+
+    assert kq.engine == "gpu"
+    assert kq.so_canh == 10
+    assert len(fake.calls) == 10
+    assert "Frigate tăng dùng VRAM" in kq.canh_bao
 
 
 def test_vision_giu_moc_canh_va_dua_ca_loi_thoai_cua_canh_vao_qwen(monkeypatch):
