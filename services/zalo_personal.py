@@ -2001,11 +2001,27 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             r = _vd.dich_tep_phu_de(pend["path"], pend.get("ten") or "", _tg,
                                     chep_loi=_chep)
         else:
+            # Chat không có thanh tiến độ và Zalo không cho sửa tin đã gửi (bot
+            # server chỉ có `undo`), nên chỉ nhắn ở MỐC chuyển giai đoạn. Báo
+            # từng lô dịch là mười mấy tin nhắn cho một video.
+            _so_moc = 0
+
+            def _tien_do_zalo(buoc: str, _phan_tram: int | None, moc: bool) -> None:
+                nonlocal _so_moc
+                if not moc:
+                    return
+                _so_moc += 1
+                # Mốc đầu là "đang bóc tiếng", mà câu "Em làm ngay…" ở trên vừa
+                # nói đúng điều đó — nhắn lại là hai tin dính nhau cùng một nghĩa.
+                if _so_moc > 1:
+                    send_message(thread_id, f"⏳ {buoc}", thread_type)
+
             # Người dùng đã nói rõ tệp nói tiếng gì ở bước 2 → khoá cứng model
             # nghe, khỏi dò. Dò là mỗi tiếng ứng viên thêm một lượt nghe.
             r = _vd.dich_tep_video(pend["path"], pend.get("ten") or "", _tg,
                                    chep_loi=_chep,
-                                   nguon_biet=str(chon.get("nguon") or ""))
+                                   nguon_biet=str(chon.get("nguon") or ""),
+                                   tien_do=_tien_do_zalo)
         send_message(thread_id, _vd.bao_cao(r), thread_type)
         if not r.get("ok"):
             return
@@ -3247,6 +3263,13 @@ def _process_ai(ev: dict) -> None:
             _suf = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name else ".mp4"
             with _tmpf.NamedTemporaryFile(suffix=_suf, delete=False) as _f:
                 _vpath = _f.name
+            # Menu chỉ hiện SAU khi tải xong, mà tệp lớn mất vài phút. Không báo
+            # ở đây thì bot im như treo — người dùng tưởng tin nhắn rơi mất.
+            send_message(thread_id,
+                         f"📥 Em nhận tệp rồi"
+                         f"{f' ({_co_tep / 1048576:.0f} MB)' if _co_tep else ''}, "
+                         "đang tải về máy. Xong em hỏi anh/chị muốn làm gì với nó ạ.",
+                         thread_type)
             # Ghi THẲNG ra tệp: tệp Zalo tới 1 GB, gom vào RAM là ăn gần hết
             # bộ nhớ còn trống của máy chủ.
             _so_byte = _tai_ra_tep(ev["attachment_url"], _vpath,

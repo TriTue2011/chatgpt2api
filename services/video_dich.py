@@ -28,12 +28,32 @@ from services import translate_service as ts
 logger = logging.getLogger(__name__)
 
 
-def _bao_tien_do(tien_do: Callable[[str], None] | None, buoc: str) -> None:
+#: ``(mô tả bước, phần trăm, có phải mốc giai đoạn không)``.
+#:
+#: ``phần trăm`` là ``None`` khi KHÔNG đo được — Whisper GPU nhận cả tệp trong
+#: một lần POST nên bên trong giai đoạn nghe không có gì để đếm; giao diện chạy
+#: thanh vô định thay vì một con số bịa đứng im.
+#:
+#: ``mốc`` phân biệt hai loại người nghe: tab web cập nhật mọi lượt, còn Zalo
+#: chỉ được nhắn ở lượt ``True`` — báo từng lô dịch là mười mấy tin nhắn cho
+#: một video.
+TienDo = Callable[[str, "int | None", bool], None]
+
+#: Phần trăm khi XONG mỗi giai đoạn của đường tệp (nghe → cảnh → dịch → đóng
+#: gói). Nghe chiếm phần lớn thời gian thật nên giữ 60; đo 16/08 trên video
+#: 3 phút: nghe ~40 s, vision ~12 s, dịch ~15 s.
+PT_NGHE_XONG = 60
+PT_CANH_XONG = 75
+PT_DICH_XONG = 97
+
+
+def _bao_tien_do(tien_do: TienDo | None, buoc: str,
+                 phan_tram: int | None = None, *, moc: bool = False) -> None:
     """Tiến độ là quan sát; callback lỗi không được làm mất phụ đề."""
     if tien_do is None:
         return
     try:
-        tien_do(buoc)
+        tien_do(buoc, phan_tram, moc)
     except Exception as exc:
         logger.info("callback tiến độ phụ đề lỗi: %s", str(exc)[:120])
 
@@ -669,7 +689,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                       dai_giay: float, *, nghe: dict[str, str] | None = None,
                       vision: dict[str, Any] | None = None,
                       ranh_canh: list[float] | None = None,
-                      tien_do: Callable[[str], None] | None = None,
+                      tien_do: TienDo | None = None,
                       ) -> dict[str, Any]:
     """Các đoạn chữ có mốc → dịch → khung đạt chuẩn → gói kết quả.
 
@@ -692,7 +712,13 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
         try:
             tong_lo = max(1, (len(chu_goc) + LO_MOI_LUOT - 1) // LO_MOI_LUOT)
             for so_lo, i in enumerate(range(0, len(chu_goc), LO_MOI_LUOT), start=1):
-                _bao_tien_do(tien_do, f"đang dịch phụ đề ({so_lo}/{tong_lo})…")
+                _bao_tien_do(
+                    tien_do, f"đang dịch phụ đề ({so_lo}/{tong_lo})…",
+                    PT_CANH_XONG + round((PT_DICH_XONG - PT_CANH_XONG)
+                                         * (so_lo - 1) / tong_lo),
+                    # Chỉ lô đầu là mốc: Zalo cần biết "đã sang bước dịch",
+                    # không cần biết lô thứ bảy.
+                    moc=so_lo == 1)
                 ban_dich.extend(ts.translate_batch(
                     chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
         except ts.LoiDich as exc:
@@ -722,7 +748,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
     # ai đọc kịp trên màn hình.
     da_dich = cat_khung([Doan(d.bat_dau, d.ket_thuc, b)
                          for d, b in zip(nhom, ban_dich)])
-    _bao_tien_do(tien_do, "đang đóng tệp SRT…")
+    _bao_tien_do(tien_do, "đang đóng tệp SRT…", PT_DICH_XONG)
     srt = lam_srt(da_dich)
     ra = {
         "ok": True,
@@ -862,7 +888,7 @@ def _ung_vien_nghe(target: str, session_id: str = "") -> tuple[str, ...]:
 def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
                    chep_loi: bool = False, session_id: str = "",
                    nguon_biet: str = "",
-                   tien_do: Callable[[str], None] | None = None) -> dict[str, Any]:
+                   tien_do: TienDo | None = None) -> dict[str, Any]:
     """Tệp video/âm thanh trên đĩa → phụ đề .srt. KHÔNG raise, lỗi trong ``error``.
 
     Khác ``dich_video`` (đường link) đúng một chỗ: chữ đến từ bộ nghe trong máy
@@ -876,7 +902,9 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     """
     from services import video_asr as va
 
-    _bao_tien_do(tien_do, "đang bóc tiếng và nhận lời thoại…")
+    # Không kèm phần trăm: Whisper GPU nghe cả tệp trong một lần gọi, không có
+    # nhịp nào để đếm. Thà thanh chạy vô định còn hơn con số đứng im giả vờ.
+    _bao_tien_do(tien_do, "đang bóc tiếng và nhận lời thoại…", moc=True)
     try:
         ket_qua_nghe = va.nghe_tep(
             duong, tran_giay=TRAN_GIAY_NGHE,
@@ -902,7 +930,8 @@ def dich_tep_video(duong: str, ten: str = "", target: str = "", *,
     # vẫn dịch bằng lời thoại như phiên bản trước. Không để một model nhìn hình
     # làm toàn bộ công việc phụ đề mất kết quả.
     from services import video_vision as vv
-    _bao_tien_do(tien_do, "đã nhận lời thoại, đang phân tích cảnh…")
+    _bao_tien_do(tien_do, "đã nhận lời thoại, đang phân tích cảnh…",
+                 PT_NGHE_XONG, moc=True)
     try:
         ket_qua_vision = vv.phan_tich_video(duong, doan)
     except Exception as exc:

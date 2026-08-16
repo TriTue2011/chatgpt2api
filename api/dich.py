@@ -179,8 +179,8 @@ def _xong_phu_de(viec_id: str, r: dict[str, Any], kieu_ra: str = "phu-de") -> No
                             (ten_tren, vd.srt_chu_tren(srt).encode("utf-8"))])
         ket_qua = {"kieu": "phu-de", "text": r["chu"][:TRAN_CHU_XEM],
                    "nguon": r["nguon"], "dich": r["dich"], "tep": tep}
-    _cap_nhat(viec_id, trang_thai="xong", luc=time.time(), bao_cao=vd.bao_cao(r),
-              ket_qua=ket_qua)
+    _cap_nhat(viec_id, trang_thai="xong", luc=time.time(), phan_tram=100,
+              bao_cao=vd.bao_cao(r), ket_qua=ket_qua)
 
 
 def _xong_chu_hoac_tep(viec_id: str, ket: dict[str, Any], ten: str) -> None:
@@ -319,8 +319,11 @@ def create_router() -> APIRouter:
         thap = ten.lower()
         if va.la_tep_nghe_duoc(thap):
             def _video():
-                def _tien_do(buoc: str) -> None:
-                    _cap_nhat(viec_id, buoc=buoc, luc=time.time())
+                def _tien_do(buoc: str, phan_tram: int | None, _moc: bool) -> None:
+                    # Web hiện MỌI lượt (kể cả từng lô dịch); cờ mốc chỉ dành
+                    # cho kênh chat, nơi mỗi lượt là một tin nhắn.
+                    _cap_nhat(viec_id, buoc=buoc, phan_tram=phan_tram,
+                              luc=time.time())
 
                 try:
                     r = vd.dich_tep_video(duong, ten, target,
@@ -463,8 +466,11 @@ def create_router() -> APIRouter:
                 raise HTTPException(
                     404, detail={"error": "Không thấy việc này (máy chủ có thể "
                                  "vừa khởi động lại) — gửi lại giúp nhé"})
+            # ``phan_tram`` vắng mặt = giai đoạn không đo được (Whisper GPU gửi
+            # cả tệp một lần) → giao diện chạy thanh vô định, không tự điền 0.
             ra: dict[str, Any] = {"trang_thai": v["trang_thai"],
-                                  "buoc": v.get("buoc", "")}
+                                  "buoc": v.get("buoc", ""),
+                                  "phan_tram": v.get("phan_tram")}
             if v["trang_thai"] == "xong":
                 ra["ket_qua"] = v.get("ket_qua")
                 ra["bao_cao"] = v.get("bao_cao", "")

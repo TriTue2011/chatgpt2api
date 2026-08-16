@@ -60,13 +60,17 @@ function DichPageContent() {
   const [dangChay, setDangChay] = useState(false);
   const [tienDo, setTienDo] = useState(0);       // % upload; -1 = không upload
   const [buoc, setBuoc] = useState("");
+  // % của việc đang chạy trên máy chủ. null = giai đoạn không đo được (Whisper
+  // GPU nghe cả tệp trong một lần gọi) → chạy thanh vô định thay vì số giả.
+  const [phanTram, setPhanTram] = useState<number | null>(null);
   const [loi, setLoi] = useState("");
   const [ketQua, setKetQua] = useState<KetQua | null>(null);
   const [daChep, setDaChep] = useState(false);
   const chonTep = useRef<HTMLInputElement>(null);
 
   function batDau() {
-    setLoi(""); setKetQua(null); setBuoc(""); setTienDo(-1); setDangChay(true); setDaChep(false);
+    setLoi(""); setKetQua(null); setBuoc(""); setTienDo(-1); setPhanTram(null);
+    setDangChay(true); setDaChep(false);
   }
 
   /** Thăm dò việc nền tới khi xong/lỗi. Lỗi mạng lẻ tẻ thì thử tiếp,
@@ -78,8 +82,9 @@ function DichPageContent() {
       try {
         const res = await request.get(`/api/dich/viec/${viecId}`);
         hong = 0;
-        const d = res.data as { trang_thai: string; buoc?: string; loi?: string; bao_cao?: string; ket_qua?: KetQua };
+        const d = res.data as { trang_thai: string; buoc?: string; phan_tram?: number | null; loi?: string; bao_cao?: string; ket_qua?: KetQua };
         setBuoc(d.buoc || "");
+        setPhanTram(typeof d.phan_tram === "number" ? d.phan_tram : null);
         if (d.trang_thai === "xong") {
           setKetQua({ ...(d.ket_qua as KetQua), bao_cao: d.bao_cao });
           return;
@@ -129,9 +134,17 @@ function DichPageContent() {
         fd.append("tong", String(tong));
         fd.append("ten", tep.name);
         fd.append("khuc", tep.slice(i * KHUC, (i + 1) * KHUC), tep.name);
-        const res = await request.post("/api/dich/khuc", fd);
+        // Đếm theo BYTE chứ không theo khúc: khúc là 25 MB nên đếm theo khúc
+        // thì tệp 100 MB chỉ nhảy 4 nấc, tệp nhỏ hơn 25 MB nhảy thẳng 0 → 100
+        // và người dùng tưởng máy treo.
+        const daXong = i * KHUC;
+        const res = await request.post("/api/dich/khuc", fd, {
+          onUploadProgress: (e) => {
+            // e.loaded tính cả phần bọc multipart nên có thể vượt cỡ tệp.
+            setTienDo(Math.min(100, Math.round(((daXong + e.loaded) / tep.size) * 100)));
+          },
+        });
         viecId = (res.data as { viec_id: string }).viec_id;
-        setTienDo(Math.round(((i + 1) / tong) * 100));
       }
       setTienDo(-1);
       await request.post("/api/dich/tep", { viec_id: viecId, target, nguon, kieu_ra: kieuRa });
@@ -234,9 +247,6 @@ function DichPageContent() {
           </div>
         )}
         <div className="flex items-center justify-end gap-3">
-          {tienDo >= 0 && dangChay && (
-            <span className="text-sm text-[var(--muted-foreground)]">đang tải lên {tienDo}%</span>
-          )}
           <button type="button" onClick={dichTep} disabled={dangChay || !tep}
             className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             Dịch tệp
@@ -245,12 +255,33 @@ function DichPageContent() {
       </div>
 
       {/* Trạng thái + kết quả */}
-      {dangChay && (
-        <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
-          <LoaderCircle className="size-4 animate-spin" />
-          {buoc || "đang xử lý…"}
-        </div>
-      )}
+      {dangChay && (() => {
+        // MỘT thanh cho cả hai chặng: đẩy tệp lên (đo được từng byte) rồi tới
+        // việc chạy trên máy chủ. Hai chỉ báo rời nhau chỉ làm người xem phải
+        // tự đoán cái nào đang nói về mình.
+        const dangTai = tienDo >= 0;
+        const pt = dangTai ? tienDo : phanTram;
+        return (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]">
+              <LoaderCircle className="size-4 animate-spin" />
+              <span className="flex-1">
+                {dangTai ? "đang tải tệp lên máy chủ…" : (buoc || "đang xử lý…")}
+              </span>
+              {pt !== null && <span className="tabular-nums">{pt}%</span>}
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--border)]">
+              {pt === null ? (
+                // Giai đoạn không đo được: vệt nhấp nháy, cố ý KHÔNG hiện số.
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-slate-900 dark:bg-slate-100" />
+              ) : (
+                <div className="h-full rounded-full bg-slate-900 transition-[width] duration-500 dark:bg-slate-100"
+                  style={{ width: `${pt}%` }} />
+              )}
+            </div>
+          </div>
+        );
+      })()}
       {loi && <div className="rounded-[12px] bg-red-50 p-3 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-400">{loi}</div>}
 
       {ketQua && (

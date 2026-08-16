@@ -413,17 +413,46 @@ def test_dich_tep_video_bao_tien_do_tung_cong_doan(monkeypatch):
 
     monkeypatch.setattr(va_mod, "nghe_tep", lambda *_a, **_kw:
                         ([va.Cau(0.0, 2.0, "Hello there.")], "en", 2.0))
-    tien_do: list[str] = []
+    tien_do: list[tuple[str, int | None, bool]] = []
     with install_translate(FakeTranslate(codes=("en", "vi"))):
         r = vd.dich_tep_video("/tmp/x.mp4", "x.mp4", target="vi",
-                              tien_do=tien_do.append)
+                              tien_do=lambda *a: tien_do.append(a))
 
     assert r["ok"] is True
-    assert tien_do == [
+    assert [x[0] for x in tien_do] == [
         "đang bóc tiếng và nhận lời thoại…",
         "đã nhận lời thoại, đang phân tích cảnh…",
         "đang dịch phụ đề (1/1)…",
         "đang đóng tệp SRT…",
+    ]
+    # Phần trăm phải TĂNG DẦN và chỉ vắng ở giai đoạn nghe — Whisper GPU nhận cả
+    # tệp trong một lần gọi nên không có gì để đếm bên trong.
+    assert tien_do[0][1] is None
+    so = [x[1] for x in tien_do[1:]]
+    assert all(isinstance(x, int) for x in so) and so == sorted(so)
+    assert so[-1] < 100                      # 100 chỉ đặt khi việc đã xong hẳn
+
+
+def test_kenh_chat_chi_nhan_moc_chuyen_giai_doan(monkeypatch):
+    """Zalo không có thanh tiến độ: báo từng lô dịch là spam cả chục tin."""
+    from test._fakes import FakeTranslate, install_translate
+    from services import video_dich as vd
+    import services.video_asr as va_mod
+
+    monkeypatch.setattr(va_mod, "nghe_tep", lambda *_a, **_kw:
+                        ([va.Cau(i * 2.0, i * 2.0 + 1.5, f"Line {i}.")
+                          for i in range(vd.LO_MOI_LUOT * 3)], "en", 90.0))
+    tin: list[str] = []
+    with install_translate(FakeTranslate(codes=("en", "vi"))):
+        r = vd.dich_tep_video(
+            "/tmp/x.mp4", "x.mp4", target="vi",
+            tien_do=lambda buoc, _pt, moc: moc and tin.append(buoc))
+
+    assert r["ok"] is True
+    assert tin == [
+        "đang bóc tiếng và nhận lời thoại…",
+        "đã nhận lời thoại, đang phân tích cảnh…",
+        "đang dịch phụ đề (1/3)…",
     ]
 
 
