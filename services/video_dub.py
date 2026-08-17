@@ -30,6 +30,26 @@ RATE_DUB = 24000
 #: Hệ số đọc chậm nhất cho phép. Dưới mức này giọng bị kéo nhoè phụ âm và nghe
 #: như máy hỏng; phần khung còn thừa để im lặng thì tự nhiên hơn hẳn.
 TEMPO_CHAM_NHAT = 0.7
+#: Trần dịch cao độ, tính bằng nửa cung. Cùng một người nói lên giọng hay trầm
+#: giọng chỉ dao động cỡ một đến hai nửa cung quanh mức trung bình của chính họ;
+#: quá mức đó tai nghe ra NGƯỜI KHÁC chứ không phải người cũ đang lên giọng. Ước
+#: lượng F0 lại chạy trên track còn lẫn nhạc nên vốn đã nhiễu, càng nên siết.
+PITCH_TOI_DA = 2.0
+#: Dải F0 tiếng người. Dưới 70 Hz gần như chỉ còn tiếng trầm của nhạc/máy móc,
+#: trên 350 Hz là hoạ âm chứ hiếm khi là tần số cơ bản của lời thoại.
+F0_THAP = 70.0
+F0_CAO = 350.0
+#: Khung phân tích F0: 64 ms chứa được vài chu kỳ của giọng trầm nhất mà vẫn
+#: ngắn hơn một âm tiết, nên không gộp nhiều cao độ vào một phép đo.
+F0_KHUNG_GIAY = 0.064
+#: Đỉnh tự tương quan chuẩn hoá nằm trong khoảng 0..1 và chính là thước đo mức
+#: tuần hoàn. Dưới ngưỡng này là khung không tuần hoàn — nhiễu, tiếng va đập,
+#: khoảng lặng — nên bỏ hẳn thay vì gán cho nó một cao độ bịa. Lưu ý phép đo này
+#: KHÔNG phân biệt được giọng người với một nốt nhạc ngân đều: cả hai đều tuần
+#: hoàn. Muốn loại nốt nhạc thì phải đo trên stem giọng đã tách.
+F0_NGUONG_TUAN_HOAN = 0.35
+#: Cần vài khung cùng đồng ý thì trung vị mới có nghĩa.
+F0_KHUNG_TOI_THIEU = 3
 #: Một lần thử lại ngay tại cue lỗi: giữ nguyên track đã tổng hợp trước đó,
 #: đủ cứu lỗi engine thoáng qua mà không nhân đôi thời gian của mọi câu.
 TTS_SO_LAN_TOI_DA = 2
@@ -207,28 +227,75 @@ def _boc_pcm_goc(duong: str) -> str:
     return out
 
 
-def _pitch_fft(mau, rate: int) -> float | None:
-    """Ước lượng F0 thô cho metadata tương đối; không dùng để nhận dạng người."""
+def _f0_mot_khung(khung, rate: int) -> tuple[float, float] | None:
+    """F0 và mức tuần hoàn của một khung, bằng tự tương quan chuẩn hoá."""
     import numpy as np
 
-    if len(mau) < int(rate * 0.08):
+    tau_min = max(1, int(rate / F0_CAO))
+    tau_max = int(rate / F0_THAP)
+    if len(khung) <= tau_max + 1:
         return None
-    # Giới hạn 1,5 s giữa cue để phim dài không làm phép FFT quá lớn.
-    n = min(len(mau), int(rate * 1.5))
-    bat = max(0, (len(mau) - n) // 2)
-    x = np.asarray(mau[bat:bat + n], dtype=np.float32)
-    x -= float(x.mean())
-    rms = float(np.sqrt(np.mean(x * x)))
-    if rms < 0.003:
+    x = khung - float(khung.mean())
+    # Tự tương quan qua FFT: rẻ hơn hẳn vòng lặp trên từng độ trễ.
+    n = 1
+    while n < 2 * len(x):
+        n *= 2
+    pho = np.fft.rfft(x, n)
+    acf = np.fft.irfft(pho * np.conj(pho), n)[:tau_max + 1]
+    if float(acf[0]) <= 0.0:
         return None
-    x *= np.hanning(len(x))
-    pho = np.abs(np.fft.rfft(x))
-    tan = np.fft.rfftfreq(len(x), 1.0 / rate)
-    mask = (tan >= 70.0) & (tan <= 350.0)
-    if not bool(mask.any()):
+    # Chia cho acf[0] khiến độ trễ càng lớn càng bị thiệt, nên đỉnh ở BỘI của
+    # chu kỳ thật khó thắng — đúng thứ ta cần để khỏi báo thấp đi một quãng tám.
+    r = acf / float(acf[0])
+    vung = r[tau_min:tau_max + 1]
+    j = int(np.argmax(vung))
+    manh = float(vung[j])
+    tau = tau_min + j
+    # Vẫn còn khả năng bắt trúng chu kỳ gấp đôi. Nếu nửa chu kỳ gần mạnh ngang
+    # thì nó mới là chu kỳ thật.
+    nua = tau // 2
+    if nua >= tau_min and float(r[nua]) > 0.85 * manh:
+        tau, manh = nua, float(r[nua])
+    return rate / float(tau), manh
+
+
+def _pitch_acf(mau, rate: int) -> float | None:
+    """F0 của cue: đo từng khung rồi lấy trung vị các khung có tiếng người.
+
+    Bản trước lấy vạch phổ to nhất trong dải 70-350 Hz của MỘT phép biến đổi dài
+    1,5 giây. Hỏng ba chỗ: hoạ âm bậc hai của giọng thường to hơn tần số cơ bản
+    nên hay báo cao gấp đôi; 1,5 giây gộp cả lên giọng, xuống giọng lẫn khoảng
+    lặng vào một phép tính; và cue chỉ có nhạc hay tiếng máy vẫn được gán một
+    con số vì phép lọc duy nhất là ngưỡng âm lượng.
+    """
+    import numpy as np
+
+    x = np.asarray(mau, dtype=np.float32)
+    if len(x) < int(rate * 0.08):
         return None
-    i = int(np.argmax(pho[mask]))
-    return float(tan[mask][i])
+    # Vẫn giới hạn 1,5 s giữa cue để phim dài không kéo dài thời gian phân tích.
+    n = min(len(x), int(rate * 1.5))
+    bat = max(0, (len(x) - n) // 2)
+    x = x[bat:bat + n]
+    win = int(rate * F0_KHUNG_GIAY)
+    hop = max(1, win // 2)
+    if len(x) < win:
+        return None
+    f0s: list[float] = []
+    for i in range(0, len(x) - win + 1, hop):
+        khung = x[i:i + win]
+        if float(np.sqrt(np.mean(khung * khung))) < 0.003:
+            continue
+        ket = _f0_mot_khung(khung, rate)
+        if ket is None:
+            continue
+        f0, manh = ket
+        if manh < F0_NGUONG_TUAN_HOAN or not (F0_THAP <= f0 <= F0_CAO):
+            continue
+        f0s.append(f0)
+    if len(f0s) < F0_KHUNG_TOI_THIEU:
+        return None
+    return float(median(f0s))
 
 
 def _dac_trung(mau, rate: int, bat: float, ket: float) -> tuple[float, float | None]:
@@ -240,7 +307,7 @@ def _dac_trung(mau, rate: int, bat: float, ket: float) -> tuple[float, float | N
         return 0.0, None
     x = np.asarray(mau[a:b], dtype=np.float32) / 32768.0
     nang_luong = float(np.sqrt(np.mean(x * x))) if len(x) else 0.0
-    return nang_luong, _pitch_fft(x, rate)
+    return nang_luong, _pitch_acf(x, rate)
 
 
 def _tao_meta(duong_video: str, doan: list[Any], lang: str,
@@ -316,20 +383,6 @@ def _tao_meta(duong_video: str, doan: list[Any], lang: str,
         raise
 
 
-def _atempo(tempo: float) -> str:
-    """Chuỗi atempo trong miền 0.5..2.0, ghép được mọi hệ số dương hợp lý."""
-    tempo = max(0.05, min(20.0, float(tempo)))
-    ds: list[float] = []
-    while tempo > 2.0:
-        ds.append(2.0)
-        tempo /= 2.0
-    while tempo < 0.5:
-        ds.append(0.5)
-        tempo /= 0.5
-    ds.append(tempo)
-    return ",".join(f"atempo={x:.6f}" for x in ds)
-
-
 def _doc_wav_info(wav_bytes: bytes) -> tuple[float, int]:
     from io import BytesIO
 
@@ -341,7 +394,7 @@ def _doc_wav_info(wav_bytes: bytes) -> tuple[float, int]:
         raise LoiLongTieng(f"TTS trả WAV không hợp lệ: {exc}") from exc
 
 
-def _bo_loc_tts(rate_goc: int, giay_goc: float, giay_dich: float, *,
+def _bo_loc_tts(giay_goc: float, giay_dich: float, *,
                 pitch_relative: float | None = None,
                 energy_relative_db: float = 0.0) -> tuple[str, float]:
     """Tạo filter ffmpeg thuần để test được mà không phải giả subprocess."""
@@ -351,14 +404,18 @@ def _bo_loc_tts(rate_goc: int, giay_goc: float, giay_dich: float, *,
     # chứ không còn là lời thoại. Chậm nhất TEMPO_CHAM_NHAT rồi để phần dư im
     # lặng; mốc bắt đầu của khung sau vẫn đúng vì _pcm_vua_khung đệm cho đủ.
     tempo = max(TEMPO_CHAM_NHAT, giay_goc / max(0.08, giay_dich))
-    # Giới hạn để tránh méo giọng vì ước lượng F0 trên track trộn nhạc có thể
-    # lệch. asetrate đổi pitch lẫn thời lượng; atempo bù lại phần thời lượng.
-    nua_cung = max(-4.0, min(4.0, float(pitch_relative or 0.0)))
+    # Cao độ để CÙNG MỘT giọng nói cao lên hay trầm xuống, không phải để đổi
+    # người. asetrate kéo giãn cả phổ nên dịch luôn formant — thứ mã hoá chiều
+    # dài đường thanh, tức tai người nghe ra vóc người khác. rubberband dịch F0
+    # riêng và formant=preserved giữ nguyên danh tính giọng đã chọn; nó cũng lo
+    # luôn thời lượng nên không cần chuỗi atempo bù qua bù lại nữa.
+    nua_cung = max(-PITCH_TOI_DA, min(PITCH_TOI_DA, float(pitch_relative or 0.0)))
     he_so_pitch = 2.0 ** (nua_cung / 12.0)
     gain = max(-6.0, min(6.0, float(energy_relative_db or 0.0)))
-    loc = (f"asetrate={round(rate_goc * he_so_pitch)},"
-           f"aresample={RATE_DUB},"
-           f"{_atempo(tempo / he_so_pitch)},volume={gain:.3f}dB")
+    loc = (f"aresample={RATE_DUB},"
+           f"rubberband=tempo={tempo:.6f}:pitch={he_so_pitch:.6f}"
+           f":formant=preserved:pitchq=quality,"
+           f"volume={gain:.3f}dB")
     return loc, tempo
 
 
@@ -366,9 +423,9 @@ def _pcm_vua_khung(wav_bytes: bytes, giay_dich: float, *,
                    pitch_relative: float | None = None,
                    energy_relative_db: float = 0.0) -> tuple[bytes, float]:
     """Khớp thời lượng đồng thời tái tạo cao độ/năng lượng tương đối của cue."""
-    giay_goc, rate_goc = _doc_wav_info(wav_bytes)
+    giay_goc, _ = _doc_wav_info(wav_bytes)
     loc, tempo = _bo_loc_tts(
-        rate_goc, giay_goc, giay_dich,
+        giay_goc, giay_dich,
         pitch_relative=pitch_relative, energy_relative_db=energy_relative_db)
     p = _chay(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
               "-af", loc, "-ac", "1", "-ar", str(RATE_DUB),

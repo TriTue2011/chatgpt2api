@@ -198,11 +198,71 @@ def test_bo_loc_tts_dung_cao_do_va_nang_luong_tuong_doi():
     """Prosody không chỉ ghi JSON: pitch/energy phải đi vào filter âm thanh."""
     from services import video_dub as dub
 
-    loc, tempo = dub._bo_loc_tts(24000, 0.35, 0.5,
-                                 pitch_relative=3.0, energy_relative_db=-2.0)
-    assert "asetrate=" in loc
+    loc, tempo = dub._bo_loc_tts(0.35, 0.5,
+                                 pitch_relative=1.0, energy_relative_db=-2.0)
+    assert f"pitch={2.0 ** (1.0 / 12.0):.6f}" in loc
     assert "volume=-2.000dB" in loc
     assert tempo == pytest.approx(0.7)
+
+
+@pytest.mark.pure
+def test_do_cao_do_khong_bat_nham_hoa_am_bac_hai():
+    """Giọng người thường có hoạ âm bậc hai to hơn cả tần số cơ bản.
+
+    Bản cũ lấy vạch phổ TO NHẤT nên với tín hiệu dưới đây nó trả về 240 Hz cho
+    một giọng 120 Hz — lệch đúng một quãng tám. Tự tương quan bám chu kỳ thật
+    nên không dính lỗi đó.
+    """
+    import numpy as np
+
+    from services import video_dub as dub
+
+    rate = dub.RATE_GOC
+    t = np.arange(int(rate * 1.0)) / rate
+    x = (0.2 * np.sin(2 * np.pi * 120 * t)
+         + 0.6 * np.sin(2 * np.pi * 240 * t)
+         + 0.3 * np.sin(2 * np.pi * 360 * t)).astype(np.float32)
+    assert dub._pitch_acf(x, rate) == pytest.approx(120.0, rel=0.05)
+
+
+@pytest.mark.pure
+def test_cue_khong_tuan_hoan_thi_khong_bia_ra_cao_do():
+    """Không có gì tuần hoàn thì trả None, đừng gán bừa một con số.
+
+    Con số bịa ở đây đi thẳng vào bộ lọc âm thanh, nên thà không chỉnh cao độ
+    còn hơn chỉnh theo tiếng va đập.
+    """
+    import numpy as np
+
+    from services import video_dub as dub
+
+    rate = dub.RATE_GOC
+    rng = np.random.default_rng(7)
+    on = rng.normal(0.0, 0.2, int(rate * 1.0)).astype(np.float32)
+    assert dub._pitch_acf(on, rate) is None
+    assert dub._pitch_acf(np.zeros(int(rate * 1.0), dtype=np.float32), rate) is None
+
+
+@pytest.mark.pure
+def test_cao_do_nang_giong_da_chon_chu_khong_doi_sang_giong_khac():
+    """Cài một giọng thì phải nghe ra một người, dù cao độ có thay đổi.
+
+    asetrate kéo giãn cả phổ nên dịch luôn formant — thứ mã hoá chiều dài đường
+    thanh, tức tai người nghe ra một người có vóc khác. Bản cũ cho lệch tới ±4
+    nửa cung theo cách đó nên một video ra như cả một dàn diễn viên.
+    """
+    from services import video_dub as dub
+
+    loc, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=9.0)
+    assert "asetrate=" not in loc, "asetrate dịch formant nên đổi luôn người nói"
+    assert "formant=preserved" in loc
+    # Đo được 9 nửa cung vẫn chỉ nâng đúng trần: cùng người, nói cao hơn.
+    assert f"pitch={2.0 ** (dub.PITCH_TOI_DA / 12.0):.6f}" in loc
+    tram, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=-9.0)
+    assert f"pitch={2.0 ** (-dub.PITCH_TOI_DA / 12.0):.6f}" in tram
+    # Trần phải nằm trong vùng một người tự lên/xuống giọng, không phải quãng
+    # đủ để thành người khác.
+    assert dub.PITCH_TOI_DA <= 2.0
 
 
 @pytest.mark.pure
@@ -210,13 +270,14 @@ def test_cau_ngan_trong_khung_dai_khong_bi_keo_nhoe():
     """Khung 7 giây không bắt câu 0,5 giây đọc chậm 14× rồi thành tiếng rên."""
     from services import video_dub as dub
 
-    loc, tempo = dub._bo_loc_tts(24000, 0.5, 7.0)
+    loc, tempo = dub._bo_loc_tts(0.5, 7.0)
     assert tempo == pytest.approx(dub.TEMPO_CHAM_NHAT)
-    # Chuỗi atempo phải là MỘT hệ số trong miền hợp lệ, không phải ba lần 0,5
-    # nhân dồn — dấu hiệu của bản cũ kéo giọng cho đầy khung.
-    assert loc.count("atempo=") == 1
+    # Đúng MỘT hệ số tốc độ, không phải chuỗi 0,5 nhân dồn như bản cũ kéo giọng
+    # cho đầy khung. rubberband nhận thẳng hệ số nên không cần ghép nhiều tầng.
+    assert loc.count("tempo=") == 1
+    assert f"tempo={dub.TEMPO_CHAM_NHAT:.6f}" in loc
     # Câu dài hơn khung vẫn phải tăng tốc như cũ, không bị trần này chặn.
-    assert dub._bo_loc_tts(24000, 6.0, 2.0)[1] == pytest.approx(3.0)
+    assert dub._bo_loc_tts(6.0, 2.0)[1] == pytest.approx(3.0)
 
 
 @pytest.mark.pure
