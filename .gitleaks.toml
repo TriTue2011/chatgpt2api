@@ -42,6 +42,19 @@ regexes = [
   # 17784.html) để mọi người cùng gọi. Không có gì để thu hồi và cũng không ai
   # thu hồi được ngoài BTMC. Kiểm chứng 17/08/2026.
   '''3kd8ub1llcg9t45hnoh8hmn7t5kc2v''',
+  # Placeholder trong README và docs — chính là chỗ bảo người đọc thay bằng giá
+  # trị thật. Viết bám đúng lối đặt tên đang dùng chứ không nới rộng luật:
+  # `khoa_..._manh`, `mat_khau_..._manh`, `strong_..._key`, `chuoi_ngau_nhien...`.
+  '''^(khoa|mat_khau)_[a-z0-9_]*manh$''',
+  '''^strong_[a-z0-9_]*key$''',
+  '''^chuoi_ngau_nhien''',
+  # Không phải khoá: base64 của {"name":"auth0-spa-js","version":"1.21.0"} —
+  # header nhận dạng thư viện mà Auth0 SPA JS gắn vào mỗi request.
+  '''^eyJuYW1lIjoiYXV0aDAtc3BhLWpz''',
+  # Khớp vắt qua xuống dòng rồi nuốt trúng TÊN HÀM ở dòng sau
+  # (`if api_key:` → newline → `mark_key_limited`). Là mã bình thường, không
+  # phải giá trị. Chỉ tha đúng tên này thay vì tha mọi định danh trần.
+  '''^mark_key_limited$''',
   # Client secret OAuth của ứng dụng desktop Antigravity — thuộc dự án Google
   # của họ, không phải của dự án này, và đi kèm mọi bản cài nên Google xếp loại
   # non-confidential cho luồng installed-app. Xem chú thích ở
