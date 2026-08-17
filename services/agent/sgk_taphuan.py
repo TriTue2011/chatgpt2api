@@ -589,7 +589,10 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
             if resp.get("error"):
                 last = str(resp["error"])[:150]
                 continue
-            cand = content_of(resp).strip()
+            # Bỏ rào ``` và nhãn ngôn ngữ model chèn thêm. Dùng CHUNG hàm với
+            # đường _scan_markdown_pages: đường này trước không dọn gì, nên chữ
+            # "markdown" của model vào thẳng đầu khối rồi nạp vào RAG.
+            cand = p2w.bo_rao_markdown(content_of(resp))
             # Model hay ghi mốc trần "TRANG 5" thay vì "<<<TRANG 5>>>" (đo
             # 2026-07-29: nội dung ĐÚNG mà mốc thiếu ngoặc, suýt bị chốt chặn
             # từ-chối vứt cả khối). Chuẩn hoá dòng-nguyên-mốc về dạng chuẩn

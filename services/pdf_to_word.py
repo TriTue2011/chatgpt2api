@@ -481,6 +481,33 @@ _VLM_SYS = (
 
 _REFUSE = ("tôi không thể", "xin lỗi", "i cannot", "i'm sorry", "i am sorry")
 
+#: Nhãn ngôn ngữ model hay chèn trước nội dung trang.
+_NHAN_NGON_NGU = {"markdown", "md"}
+
+
+def bo_rao_markdown(out: str) -> str:
+    """Bỏ rào ``` và nhãn ngôn ngữ model chèn thêm trước nội dung trang.
+
+    Đo 18/08 trên máy chủ thật: model trả về đúng chữ ``markdown`` ĐỨNG MỘT
+    MÌNH ở dòng đầu, KHÔNG kèm rào ```. Bản cũ chỉ xử lý nhánh có rào nên chữ
+    đó lọt vào đầu mọi trang do model đọc, rồi được cache bảy ngày và nạp vào
+    RAG như chữ của trang.
+
+    Chỉ bỏ khi CẢ DÒNG đầu đúng bằng nhãn — trang thật không mở đầu bằng một
+    dòng chỉ có mỗi chữ "markdown", nên phép này không ăn nhầm nội dung.
+
+    Dùng chung cho cả hai đường OCR (``_vlm_page_md`` và
+    ``services.agent.sgk_taphuan``); đường sách giáo khoa trước đây không dọn
+    gì cả nên dính nặng hơn.
+    """
+    out = out.strip()
+    if out.startswith("```"):
+        out = out.strip("`\n")
+    dong = out.split("\n", 1)
+    if dong[0].strip().lower() in _NHAN_NGON_NGU:
+        out = dong[1] if len(dong) > 1 else ""
+    return out.strip()
+
 
 def _vlm_page_md(png: bytes) -> str:
     """1 trang scan → Markdown. Model lấy DUY NHẤT từ Nhánh Agent 'Phân tích ảnh'
@@ -511,13 +538,10 @@ def _vlm_page_md(png: bytes) -> str:
     # báo cảnh admin, giống cách xử lý lỗi model.
     if _ocr_rules.looks_degenerate(out):
         raise RuntimeError(f"{model}: OCR lặp vòng, không nhận — {out[:120]}")
-    if out.startswith("```"):
-        out = out.strip("`\n")
-        if out[:8].lower() == "markdown":
-            out = out[8:]
+    out = bo_rao_markdown(out)
     if out and out.lower().startswith(_REFUSE):
         return ""
-    return out.strip()
+    return out
 
 
 def _tess_page(png: bytes) -> str:
