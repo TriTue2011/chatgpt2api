@@ -30,11 +30,23 @@ RATE_DUB = 24000
 #: Hệ số đọc chậm nhất cho phép. Dưới mức này giọng bị kéo nhoè phụ âm và nghe
 #: như máy hỏng; phần khung còn thừa để im lặng thì tự nhiên hơn hẳn.
 TEMPO_CHAM_NHAT = 0.7
-#: Trần dịch cao độ, tính bằng nửa cung. Cùng một người nói lên giọng hay trầm
-#: giọng chỉ dao động cỡ một đến hai nửa cung quanh mức trung bình của chính họ;
-#: quá mức đó tai nghe ra NGƯỜI KHÁC chứ không phải người cũ đang lên giọng. Ước
-#: lượng F0 lại chạy trên track còn lẫn nhạc nên vốn đã nhiễu, càng nên siết.
-PITCH_TOI_DA = 2.0
+#: Trần dịch cao độ theo cue, tính bằng nửa cung. ĐANG TẮT (0.0).
+#:
+#: Đo trên một video thật (53 câu, một giọng) cho thấy vì sao. ``pitch_relative``
+#: đo được trải từ -9,65 đến +4,56 nửa cung — vô lý với một người dẫn duy nhất,
+#: vì nó đo trên track còn lẫn nhạc và tiếng máy. Kẹp một dãy số nhiễu như thế
+#: vào ±2 thì phép kẹp BÃO HOÀ: độ lệch chuẩn của lượng dịch thực áp là 1,81
+#: trên biên 2,0, tức gần như câu nào cũng bị đẩy hẳn về một trong hai đầu.
+#: Kết quả không phải biến hoá nhẹ mà là các câu liên tiếp nhảy qua lại giữa hai
+#: mức cách nhau 4 nửa cung — nghe thành hai người thay phiên.
+#:
+#: Cao độ đầu ra bám lượng dịch với hệ số tương quan +0,83, nên đây là nguyên
+#: nhân chứ không phải trùng hợp. Bỏ hẳn thì trải rộng giảm từ 7,1 xuống 4,4 nửa
+#: cung, phần còn lại là ngữ điệu tự nhiên của chính TTS.
+#:
+#: Chỉ bật lại khi đo được F0 trên stem giọng đã tách; đo trên bản trộn thì con
+#: số không dùng được. Vẫn giữ ``pitch_relative`` trong JSON làm dữ liệu.
+PITCH_TOI_DA = 0.0
 #: Dải F0 tiếng người. Dưới 70 Hz gần như chỉ còn tiếng trầm của nhạc/máy móc,
 #: trên 350 Hz là hoạ âm chứ hiếm khi là tần số cơ bản của lời thoại.
 F0_THAP = 70.0

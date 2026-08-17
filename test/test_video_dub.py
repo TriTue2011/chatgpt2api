@@ -198,9 +198,7 @@ def test_bo_loc_tts_dung_cao_do_va_nang_luong_tuong_doi():
     """Prosody không chỉ ghi JSON: pitch/energy phải đi vào filter âm thanh."""
     from services import video_dub as dub
 
-    loc, tempo = dub._bo_loc_tts(0.35, 0.5,
-                                 pitch_relative=1.0, energy_relative_db=-2.0)
-    assert f"pitch={2.0 ** (1.0 / 12.0):.6f}" in loc
+    loc, tempo = dub._bo_loc_tts(0.35, 0.5, energy_relative_db=-2.0)
     assert "volume=-2.000dB" in loc
     assert tempo == pytest.approx(0.7)
 
@@ -256,12 +254,14 @@ def test_cao_do_nang_giong_da_chon_chu_khong_doi_sang_giong_khac():
     loc, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=9.0)
     assert "asetrate=" not in loc, "asetrate dịch formant nên đổi luôn người nói"
     assert "formant=preserved" in loc
-    # Đo được 9 nửa cung vẫn chỉ nâng đúng trần: cùng người, nói cao hơn.
+    # Trần đang là 0: đo được 9 nửa cung thì vẫn KHÔNG dịch. Phép đo chạy trên
+    # track lẫn nhạc nhiễu tới mức kẹp vào ±2 cũng bão hoà, khiến câu liên tiếp
+    # nhảy giữa hai đầu biên và nghe thành hai người thay phiên.
     assert f"pitch={2.0 ** (dub.PITCH_TOI_DA / 12.0):.6f}" in loc
     tram, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=-9.0)
     assert f"pitch={2.0 ** (-dub.PITCH_TOI_DA / 12.0):.6f}" in tram
-    # Trần phải nằm trong vùng một người tự lên/xuống giọng, không phải quãng
-    # đủ để thành người khác.
+    assert loc == tram, "trần 0 thì cao độ đo được bao nhiêu cũng ra cùng filter"
+    # Bật lại thì vẫn phải nằm trong vùng một người tự lên/xuống giọng.
     assert dub.PITCH_TOI_DA <= 2.0
 
 
