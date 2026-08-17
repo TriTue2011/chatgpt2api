@@ -436,8 +436,17 @@ class TestDoiChieuSoTrang:
         assert "<<<TRANG" in p
 
     def test_prompt_mot_trang(self, m):
+        """Khối một trang: prompt phải nêu ĐÚNG MỘT mốc và số trang thật.
+
+        Bám ý định chứ đừng bám câu chữ. Test này từng tìm cụm "đúng 1 trang",
+        rồi prompt đổi sang "đủ 1 mốc <<<TRANG n>>>" — cùng nghĩa, nhưng test đổ
+        và nằm đỏ một thời gian. Nay kiểm hai thứ thật sự quan trọng: số mốc
+        phải đòi, và số trang thật phải có mặt để còn đối chiếu lại được.
+        """
         p = m._chunk_prompt(7, 7)
-        assert "đúng 1 trang" in p and "trang số 7" in p
+        assert "1 mốc" in p, f"phải đòi đúng một mốc cho khối một trang: {p[-200:]}"
+        assert "<<<TRANG" in p
+        assert "trang số 7" in p, f"phải nêu số trang thật: {p[-200:]}"
 
     def test_prompt_co_quy_tac_chong_bia(self, m):
         """Quy tắc quan trọng nhất: gặp chỗ khó thì ghi dấu, KHÔNG đoán."""
