@@ -280,8 +280,27 @@ def _normalize_auth_key(value: object) -> str:
     return str(value or "").strip()
 
 
+#: Khoá ai cũng đoán được thì coi như CHƯA ĐẶT. `auth_key` không phải một khoá
+#: API bình thường: ``api/support.py::_legacy_admin_identity`` cấp thẳng vai
+#: ``admin`` cho ai gửi đúng nó, và ``services/signed_url.py`` dùng nó ký đường
+#: dẫn ảnh. Add-on Home Assistant từng đặt sẵn ``sk-chatgpt2api`` trong
+#: ``config.yaml`` — tệp nằm trong kho công khai — nên ai cài mà quên đổi là mở
+#: quyền quản trị cho cả mạng nội bộ. Chặn ở đây thì mọi kiểu triển khai đều
+#: được bảo vệ, không phụ thuộc người dùng có nhớ đổi hay không.
+_AUTH_KEY_MAU = {
+    "sk-chatgpt2api", "chatgpt2api", "changeme", "change-me", "your-key",
+    "your_key", "yourkey", "your-auth-key", "placeholder", "example",
+    "test", "secret", "password", "admin", "123456", "sk-xxx", "sk-123",
+}
+#: Khoá thật đều dài. Dưới ngưỡng này là đoán được bằng vét cạn.
+_AUTH_KEY_TOI_THIEU = 8
+
+
 def _is_invalid_auth_key(value: object) -> bool:
-    return _normalize_auth_key(value) == ""
+    khoa = _normalize_auth_key(value)
+    if len(khoa) < _AUTH_KEY_TOI_THIEU:
+        return True
+    return khoa.lower() in _AUTH_KEY_MAU
 
 
 def _read_json_object(path: Path, *, name: str) -> dict[str, object]:
@@ -312,7 +331,11 @@ def _load_settings() -> LoadedSettings:
 
     if _is_invalid_auth_key(auth_key):
         raise ValueError(
-            "❌ auth-key 未设置！\n"
+            "❌ auth-key 未设置，或者太短/太容易猜！\n"
+            f"要求：至少 {_AUTH_KEY_TOI_THIEU} 个字符，且不能是 'sk-chatgpt2api'、"
+            "'changeme'、'admin' 这类示例值。\n"
+            "这个 key 会直接授予管理员权限（见 api/support.py），所以不能用默认值。\n"
+            "生成：openssl rand -hex 32\n"
             "请在环境变量 CHATGPT2API_AUTH_KEY 中设置，或者在 config.json 中填写 auth-key。"
         )
 
