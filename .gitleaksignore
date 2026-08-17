@@ -1,0 +1,17 @@
+# Phát hiện đã rà soát và chấp nhận, khai theo DẤU VÂN TAY của đúng chỗ đó
+# (commit:tệp:luật:dòng) chứ không tha giá trị ở mọi nơi. Khoá đó xuất hiện ở
+# chỗ mới thì vẫn bị bắt như thường — test/test_luat_gitleaks.py chặn việc nới
+# allowlist theo giá trị, và cách khai này giữ nguyên ràng buộc ấy.
+#
+# Client secret OAuth của ứng dụng desktop Antigravity, ở bản chép ĐÃ GỠ khỏi
+# services/oauth_service.py (nay chỉ còn một nguồn duy nhất là
+# services/antigravity_token_refresh.py, nơi đã đọc từ biến môi trường).
+#
+# Vì sao chấp nhận: khoá này thuộc dự án Google của ứng dụng Antigravity, không
+# phải của dự án này, nên bên đây không có quyền thu hồi. Nó đi kèm mọi bản cài
+# Antigravity và Google xếp secret của luồng installed-app là non-confidential.
+# Kiểm chứng 17/08/2026: gọi token endpoint với grant sai trả invalid_grant
+# (client còn sống) chứ không phải invalid_client.
+#
+# Chỉ nằm trong lịch sử; gitleaks quét fetch-depth: 0 nên vẫn thấy commit cũ.
+ff25ae9da9faa7b4a8dc7f61f0363cb01a73205f:services/oauth_service.py:generic-api-key:227

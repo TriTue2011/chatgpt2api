@@ -55,11 +55,6 @@ regexes = [
   # (`if api_key:` → newline → `mark_key_limited`). Là mã bình thường, không
   # phải giá trị. Chỉ tha đúng tên này thay vì tha mọi định danh trần.
   '''^mark_key_limited$''',
-  # Client secret OAuth của ứng dụng desktop Antigravity — thuộc dự án Google
-  # của họ, không phải của dự án này, và đi kèm mọi bản cài nên Google xếp loại
-  # non-confidential cho luồng installed-app. Xem chú thích ở
-  # services/antigravity_token_refresh.py.
-  '''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''',
   # Gán từ BIẾN hoặc LỜI GỌI HÀM chứ không phải chuỗi cứng:
   # `os.environ.get`, `module.os.environ.get`, `settings.get_config`.
   '''^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$''',
