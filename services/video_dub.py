@@ -47,6 +47,22 @@ TEMPO_CHAM_NHAT = 0.7
 #: Chỉ bật lại khi đo được F0 trên stem giọng đã tách; đo trên bản trộn thì con
 #: số không dùng được. Vẫn giữ ``pitch_relative`` trong JSON làm dữ liệu.
 PITCH_TOI_DA = 0.0
+#: Mức to mục tiêu của track lồng tiếng, tính bằng LUFS tích hợp (chuẩn EBU
+#: R128). Video web thường nằm khoảng -16 đến -14. Cả đường ống trước đây không
+#: có bước chuẩn hoá nào: nền lấy từ máy tách âm ở mức nào giữ nguyên mức đó,
+#: TTS ở mức engine trả về, ``amix`` chỉ cộng lại còn ``alimiter`` chỉ chặn đỉnh
+#: chứ không bù lên. Đo bản chạy thật 17/08 được -21,3 LUFS trong khi đỉnh thật
+#: mới -4,1 dBFS — nhỏ hơn thông lệ 5 dB mà vẫn còn thừa 4 dB chưa dùng.
+DO_TO_MUC_TIEU = -16.0
+#: Chặn hai đầu lượng bù. Một phim gần như im lặng đo ra -70 LUFS mà bù thẳng
+#: +54 dB thì tiếng nền nhỏ cũng thành tiếng gào.
+BU_AM_TOI_DA = 12.0
+#: Trần đỉnh sau khi bù, và PHẢI tắt tự cân mức của ``alimiter``. Mặc định bộ
+#: lọc này tự kéo tín hiệu lên sát trần, nên lượng bù tính ra không còn đúng.
+#: Đo thật 17/08 trên cùng một tệp, cùng bù +5,30 dB: để mặc định ra -15,6 LUFS
+#: với đỉnh thật chạm 0,0 dBFS (sát méo), còn tắt tự cân thì ra đúng -16,0 LUFS
+#: với đỉnh -0,9 dBFS — vừa đúng mức vừa còn khoảng an toàn.
+TRAN_DINH = 0.89
 #: Dải F0 tiếng người. Dưới 70 Hz gần như chỉ còn tiếng trầm của nhạc/máy móc,
 #: trên 350 Hz là hoạ âm chứ hiếm khi là tần số cơ bản của lời thoại.
 F0_THAP = 70.0
@@ -642,13 +658,52 @@ def _bao_dam_khong_thieu_cau_tts(meta: dict[str, Any], so_loi: int,
         f"Câu hỏng: {chi_tiet or 'không rõ'}")
 
 
+#: Trộn nền với TTS. Dùng lại y hệt cho cả lượt đo lẫn lượt ghi, để lượng bù đo
+#: được đúng là lượng bù cho hỗn hợp sẽ ghi ra.
+_TRON = ("[1:a][2:a]amix=inputs=2:duration=longest:"
+         "dropout_transition=0:normalize=0")
+
+
+def _doc_lufs(loi_ffmpeg: str) -> float | None:
+    """Độ to tích hợp trong báo cáo cuối của bộ lọc ebur128."""
+    i = loi_ffmpeg.rfind("Integrated loudness")
+    if i < 0:
+        return None
+    m = re.search(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS", loi_ffmpeg[i:])
+    return float(m.group(1)) if m else None
+
+
+def _bu_am(lufs_do: float | None) -> float:
+    """Số dB cần bù để hỗn hợp đạt DO_TO_MUC_TIEU.
+
+    Đo hỏng, hoặc phim gần như im lặng (dưới -60 LUFS thì phép đo R128 hết đáng
+    tin), thì trả 0 — thà giữ nguyên còn hơn khuếch đại một con số vô nghĩa.
+    """
+    if lufs_do is None or not math.isfinite(lufs_do) or lufs_do < -60.0:
+        return 0.0
+    return max(-BU_AM_TOI_DA, min(BU_AM_TOI_DA, DO_TO_MUC_TIEU - lufs_do))
+
+
+def _do_do_to(background: str, track: str, dai: float) -> float | None:
+    """Đo hỗn hợp nền + TTS trước khi ghi. Đo hỏng thì trả None, không chặn job."""
+    p = _chay(["ffmpeg", "-hide_banner", "-nostats", "-i", background,
+               "-i", track, "-filter_complex", _TRON + ",ebur128=peak=true",
+               "-f", "null", "-"], timeout=max(300, dai))
+    return _doc_lufs(p.stderr.decode("utf-8", "ignore"))
+
+
 def _mux(duong_video: str, background: str, track: str, dai: float) -> str:
     out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    try:
+        bu = _bu_am(_do_do_to(background, track, dai))
+    except Exception as exc:                       # đo được thì tốt, không thì thôi
+        logger.warning("không đo được độ to, giữ nguyên mức: %s", str(exc)[:120])
+        bu = 0.0
     lenh_chung = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                   "-i", duong_video, "-i", background, "-i", track,
                   "-filter_complex",
-                  "[1:a][2:a]amix=inputs=2:duration=longest:"
-                  "dropout_transition=0:normalize=0,alimiter=limit=0.95[dub]",
+                  f"{_TRON},volume={bu:.2f}dB,"
+                  f"alimiter=limit={TRAN_DINH}:level=disabled[dub]",
                   "-map", "0:v:0", "-map", "[dub]",
                   "-map_metadata", "0", "-c:a", "aac", "-b:a", "192k",
                   "-t", f"{dai:.3f}", "-movflags", "+faststart"]

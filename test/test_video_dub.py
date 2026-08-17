@@ -9,6 +9,7 @@ import subprocess
 import wave
 from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -187,10 +188,61 @@ def test_mux_bat_buoc_mix_nen_da_tach_loi_voi_tts():
     with install_video_dub_media(fake):
         with pytest.raises(dub.LoiLongTieng):
             dub._mux("phim.mp4", "nen.wav", "tts.wav", 10.0)
-    cmd = fake.calls[0]
+    # Lệnh đầu là lượt ĐO độ to (không map gì cả); lệnh ghép là lệnh có -map.
+    cmd = next(c for c in fake.calls if "-map" in c)
     assert cmd[cmd.index("-filter_complex") + 1].startswith("[1:a][2:a]amix=")
     assert cmd[cmd.index("-map") + 1] == "0:v:0"
     assert "[dub]" in cmd
+
+
+@pytest.mark.pure
+def test_bu_am_dua_ve_muc_to_thong_dung_va_chan_hai_dau():
+    """Đường ống không có bước chuẩn hoá nào nên bản chạy thật ra -21,3 LUFS."""
+    from services import video_dub as dub
+
+    assert dub._bu_am(-21.3) == pytest.approx(dub.DO_TO_MUC_TIEU + 21.3)
+    assert dub._bu_am(dub.DO_TO_MUC_TIEU) == pytest.approx(0.0)
+    # Đo hỏng hoặc phim gần như im lặng: giữ nguyên, đừng khuếch đại số vô nghĩa.
+    assert dub._bu_am(None) == 0.0
+    assert dub._bu_am(float("-inf")) == 0.0
+    assert dub._bu_am(-70.0) == 0.0
+    # Chặn hai đầu.
+    assert dub._bu_am(-50.0) == pytest.approx(dub.BU_AM_TOI_DA)
+    assert dub._bu_am(0.0) == pytest.approx(-dub.BU_AM_TOI_DA)
+
+
+@pytest.mark.adapter
+def test_mux_do_do_to_roi_bu_dung_luong_vao_lenh_ghep():
+    """Đo trên đúng hỗn hợp sẽ ghi ra, rồi bù bằng một hệ số tĩnh."""
+    import subprocess
+
+    from services import video_dub as dub
+
+    bao_cao = (b"[Parsed_ebur128_0 @ 0x1] Summary:\n\n"
+               b"  Integrated loudness:\n    I:         -21.3 LUFS\n"
+               b"    Threshold: -31.5 LUFS\n")
+    goi: list[list[str]] = []
+
+    def _chay_gia(cmd, **_kw):
+        goi.append(list(cmd))
+        if "-f" in cmd and cmd[cmd.index("-f") + 1] == "null":
+            return subprocess.CompletedProcess(cmd, 0, b"", bao_cao)
+        return subprocess.CompletedProcess(cmd, 1, b"", b"loi")
+
+    with mock.patch.object(dub, "_chay", side_effect=_chay_gia):
+        with pytest.raises(dub.LoiLongTieng):
+            dub._mux("phim.mp4", "nen.wav", "tts.wav", 10.0)
+
+    do = goi[0]
+    assert "ebur128" in do[do.index("-filter_complex") + 1]
+    ghep = next(c for c in goi if "-map" in c)
+    loc = ghep[ghep.index("-filter_complex") + 1]
+    assert f"volume={dub.DO_TO_MUC_TIEU + 21.3:.2f}dB" in loc
+    # Vẫn giữ giới hạn đỉnh SAU khi bù, kẻo bù xong thành méo.
+    assert loc.index("volume=") < loc.index("alimiter=")
+    # level=disabled là điều kiện SỐNG CÒN: để mặc định thì alimiter tự kéo tín
+    # hiệu lên sát trần, lượng bù vừa tính thành vô nghĩa và đỉnh chạm 0 dBFS.
+    assert "level=disabled" in loc
 
 
 @pytest.mark.pure
