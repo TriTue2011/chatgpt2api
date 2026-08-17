@@ -177,6 +177,31 @@ def _doc_model_header(duong: str) -> str:
     return model[:160]
 
 
+def _doc_ma_http(duong: str) -> int:
+    """Mã HTTP cuối cùng trong tệp header curl ghi ra; 0 nếu không đọc được."""
+    ma = 0
+    try:
+        for line in Path(duong).read_text("utf-8", errors="replace").splitlines():
+            if line.upper().startswith("HTTP/"):
+                phan = line.split()
+                if len(phan) > 1 and phan[1].isdigit():
+                    ma = int(phan[1])
+    except OSError:
+        pass
+    return ma
+
+
+class _MayBan(RuntimeError):
+    """Máy tách còn sống, chỉ đang kẹt việc khác — KHÔNG phải lỗi dịch vụ."""
+
+
+#: Mã HTTP nói "yêu cầu này không chạy được", không phải "máy hỏng". 429 là
+#: đang bận một soundtrack khác, 413 là tệp quá cỡ. Phạt cầu dao 5 phút vì hai
+#: mã này là oan, và còn khoá luôn việc đang chạy nếu nó cần thử lại — cùng lý
+#: lẽ với ``QuaTaiGpu`` ở ``nghe_gpu``.
+_MA_KHONG_PHAI_LOI_MAY = {429, 413}
+
+
 def tach_nen(duong_video: str, *, progress=None,
              tran_giay: float = 10_800.0) -> KetQuaTachAm:
     """Video → WAV chỉ còn nhạc/hiệu ứng. Ném ``LoiTachAm`` khi không làm được.
@@ -245,6 +270,8 @@ def tach_nen(duong_video: str, *, progress=None,
                         if p.returncode == 22:
                             can_huy_job = False
                         loi = p.stderr.decode("utf-8", "ignore")[:200]
+                        if _doc_ma_http(headers) in _MA_KHONG_PHAI_LOI_MAY:
+                            raise _MayBan(loi or "máy tách âm đang bận")
                         raise RuntimeError(loi or f"curl lỗi {p.returncode}")
                     can_huy_job = False
                     model = _doc_model_header(headers)
@@ -253,8 +280,10 @@ def tach_nen(duong_video: str, *, progress=None,
                     # của job này đã dừng rồi mới thoát khỏi hàng đợi.
                     if can_huy_job and not _nha_model(url, job_token):
                         raise RuntimeError("không xác nhận được GPU tách âm đã dừng")
-        except gpu_queue.QuaTaiGpu as exc:
-            # GPU bận không có nghĩa dịch vụ hỏng — không phạt cầu dao.
+        except (gpu_queue.QuaTaiGpu, _MayBan) as exc:
+            # Bận không có nghĩa dịch vụ hỏng — không phạt cầu dao. Job sau chỉ
+            # mất phần lồng tiếng của chính nó, vẫn giữ SRT, và lượt kế tiếp
+            # gọi lại được ngay thay vì bị chặn thêm 5 phút.
             raise LoiTachAm(str(exc)) from exc
         except Exception as exc:
             _ngat_cau_dao(f"{type(exc).__name__}: {exc}")

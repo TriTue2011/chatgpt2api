@@ -110,3 +110,53 @@ def test_thieu_token_dung_ngay_khong_boc_wav_va_khong_ngat_cau_dao(monkeypatch):
     # Cầu dao phải đứng yên: máy tách âm không có lỗi gì ở đây.
     assert ta._nghi_toi == 0.0
     assert fake.extracted == []
+
+
+@pytest.mark.pure
+def test_may_ban_429_khong_ngat_cau_dao(monkeypatch, tmp_path):
+    """Bận là backpressure, không phải hỏng — phạt 5 phút là khoá luôn job đang chạy."""
+    import subprocess
+
+    from services import tach_am_gpu as ta
+
+    monkeypatch.setenv("TACH_AM_URL_GPU", "http://gpu:5004")
+    monkeypatch.setenv("TACH_AM_API_TOKEN", "bi-mat-thu")
+    ta._nghi_toi = 0.0
+    monkeypatch.setattr(ta, "_boc_wav_day_du", lambda _d: str(tmp_path / "x.wav"))
+    (tmp_path / "x.wav").write_bytes(b"RIFF" + b"\0" * 100)
+
+    def _curl(cmd, *, timeout):
+        # curl ghi header ra tệp sau cờ -D rồi thoát 22 vì HTTP lỗi.
+        Path(cmd[cmd.index("-D") + 1]).write_text(
+            "HTTP/1.1 429 Too Many Requests\r\n\r\n", "utf-8")
+        return subprocess.CompletedProcess(cmd, 22, b"", b"The requested URL returned error: 429")
+
+    monkeypatch.setattr(ta, "_chay_curl", _curl)
+    with pytest.raises(ta.LoiTachAm, match="429"):
+        ta.tach_nen("/tmp/phim.mp4")
+    assert ta._nghi_toi == 0.0, "429 không được mở cầu dao 5 phút"
+
+
+@pytest.mark.pure
+def test_loi_that_van_ngat_cau_dao(monkeypatch, tmp_path):
+    """Ngược lại: 500 là máy hỏng thật, vẫn phải nghỉ để khỏi gọi vô ích."""
+    import subprocess
+
+    from services import tach_am_gpu as ta
+
+    monkeypatch.setenv("TACH_AM_URL_GPU", "http://gpu:5004")
+    monkeypatch.setenv("TACH_AM_API_TOKEN", "bi-mat-thu")
+    ta._nghi_toi = 0.0
+    monkeypatch.setattr(ta, "_boc_wav_day_du", lambda _d: str(tmp_path / "y.wav"))
+    (tmp_path / "y.wav").write_bytes(b"RIFF" + b"\0" * 100)
+
+    def _curl(cmd, *, timeout):
+        Path(cmd[cmd.index("-D") + 1]).write_text(
+            "HTTP/1.1 500 Internal Server Error\r\n\r\n", "utf-8")
+        return subprocess.CompletedProcess(cmd, 22, b"", b"error: 500")
+
+    monkeypatch.setattr(ta, "_chay_curl", _curl)
+    with pytest.raises(ta.LoiTachAm):
+        ta.tach_nen("/tmp/phim.mp4")
+    assert ta._nghi_toi > 0.0
+    ta._nghi_toi = 0.0
