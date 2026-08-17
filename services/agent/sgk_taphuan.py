@@ -525,6 +525,7 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
     out: list[str] = []
     missing: list[tuple[int, int]] = []
     calls = [0]          # đếm lượt gọi model cho cả quyển
+    so_local = [0]       # đếm trang đọc được bằng tesseract, khỏi gọi model
     unverified: list[tuple[int, int]] = []   # khối model phớt lờ mốc trang
 
     def _pages_as_images(blob: bytes) -> list[dict]:
@@ -608,6 +609,36 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
             return cand, ""
         return "", last
 
+    def _khoi_doc_local(a: int, b: int) -> str:
+        """Thử đọc khối trang a..b (0-index) bằng tesseract, ngay tại chỗ.
+
+        Trả Markdown kèm mốc ``<<<TRANG n>>>`` nếu MỌI trang trong khối đều đủ
+        tin, ngược lại trả rỗng để khối đi đường model như cũ.
+
+        Vì sao chặn theo cả khối chứ không từng trang: khối là đơn vị của cơ chế
+        thử lại và chẻ đôi ở dưới. Bóc lẻ vài trang ra khỏi khối sẽ phá thứ tự
+        ghép kết quả, đổi lấy chút tiết kiệm không đáng.
+
+        Vì sao đáng làm: đo 17/08 trên một trang tiếng Việt in sạch, tesseract
+        đạt 93% khớp từ trong 0,5 giây còn model thị giác đạt 58% trong 103,7
+        giây. Trang chữ thường thì đọc local vừa đúng hơn vừa khỏi tốn lượt gọi.
+        """
+        phan: list[str] = []
+        for i in range(a, b + 1):
+            try:
+                png = src[i].get_pixmap(dpi=p2w._RENDER_DPI, alpha=False).tobytes("png")
+                text, tin_cay = p2w._tess_page_conf(png)
+            except Exception as exc:
+                logger.info("sgk_taphuan: tesseract trang %s lỗi (%s) → nhờ model",
+                            i + 1, str(exc)[:80])
+                return ""
+            du_tin, vi_sao = p2w._du_tin_de_bo_qua_vlm(text, tin_cay)
+            if not du_tin:
+                logger.info("sgk_taphuan: trang %s nhờ model — %s", i + 1, vi_sao)
+                return ""
+            phan.append(f"<<<TRANG {i + 1}>>>\n{text.strip()}")
+        return "\n\n".join(phan)
+
     def _range(a: int, b: int, depth: int, blob: bytes | None = None) -> None:
         """OCR trang a..b (0-index) và ghi kết quả vào ``out``/``missing``.
 
@@ -615,6 +646,12 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
         trả 8 trang thì trước đây được nhận như đủ — mất 12 trang không ai
         biết. Giờ thiếu thì chẻ đôi khối rồi hỏi lại từng nửa.
         """
+        # ĐỌC LOCAL TRƯỚC. Cả khối đủ tin thì khỏi gọi model lượt nào.
+        cuc_bo = _khoi_doc_local(a, b)
+        if cuc_bo:
+            so_local[0] += (b - a + 1)
+            out.append(cuc_bo)
+            return
         if blob is None:
             chunk = fitz.open()
             chunk.insert_pdf(src, from_page=a, to_page=b)
@@ -690,6 +727,9 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
         src.close()
 
     body = "\n\n---\n\n".join(out)
+
+    logger.info("sgk_taphuan.book_markdown: %s/%s trang đọc local (tesseract), "
+                "%s lượt gọi model", so_local[0], total, calls[0])
 
     # ── CHẶN LỜI TỪ CHỐI CỦA MODEL ──────────────────────────────────────────
     # Đo thật 2026-07-29 trên sgk-tieng-viet-1-tap-mot, 8 trang: model trả về

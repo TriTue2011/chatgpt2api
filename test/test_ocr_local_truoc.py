@@ -102,3 +102,25 @@ def test_nguong_nam_trong_vung_do_duoc():
     assert p2w.OCR_TIN_CAY_TOI_THIEU <= 90.0
     # Quá thấp thì trang mờ cũng lọt, mất luôn tác dụng của lưới lọc.
     assert p2w.OCR_TIN_CAY_TOI_THIEU >= 60.0
+
+
+@pytest.mark.pure
+def test_ca_hai_duong_ocr_dung_CHUNG_mot_phep_quyet_dinh():
+    """Dự án có HAI đường OCR — cả hai phải hỏi cùng một hàm.
+
+    ``services/ocr_rules`` đã cảnh báo đúng cái bẫy này: "Giữ hai bản prompt
+    song song là bảo đảm mọi lần vá chỉ vá được một nửa dự án." Lần đầu đảo
+    chiều sang đọc local, đúng là chỉ vá được ``pdf_to_word`` còn
+    ``sgk_taphuan`` vẫn gửi hết lên model.
+
+    Test này khoá lại: đường sách giáo khoa phải soi chiếu chính
+    ``pdf_to_word._du_tin_de_bo_qua_vlm``, không được tự viết ngưỡng riêng —
+    nếu không thì lần chỉnh ngưỡng sau lại chỉ ăn một nửa.
+    """
+    import inspect
+
+    from services.agent import sgk_taphuan
+
+    nguon = inspect.getsource(sgk_taphuan.book_markdown)
+    assert "_tess_page_conf" in nguon, "đường SGK không đọc local trước"
+    assert "_du_tin_de_bo_qua_vlm" in nguon, "đường SGK tự nghĩ ngưỡng riêng"
