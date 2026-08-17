@@ -14,6 +14,7 @@ Tools:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -108,9 +109,16 @@ def _fetch_btmc() -> list[dict[str, Any]]:
     interbank price. PNJ itself blocks server-IP scraping with Cloudflare,
     so this is the most reliable way to surface their headline price.
     Format quirks: response uses indexed keys (@n_1, @pb_1, ...) per row.
+
+    Cần BTMC_API_KEY. Không đặt thì bỏ qua nguồn này — SJC và DOJI vẫn chạy,
+    người dùng mất phần giá BTMC/PNJ chứ không mất toàn bộ giá vàng.
     """
+    key = os.environ.get("BTMC_API_KEY", "").strip()
+    if not key:
+        logger.info("BTMC: chưa đặt BTMC_API_KEY — bỏ qua nguồn này")
+        return []
     url = "http://api.btmc.vn/api/BTMCAPI/getpricebtmc"
-    params = {"key": "3kd8ub1llcg9t45hnoh8hmn7t5kc2v"}
+    params = {"key": key}
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.get(url, params=params)

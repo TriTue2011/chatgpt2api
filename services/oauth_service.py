@@ -26,6 +26,9 @@ from typing import Any
 from curl_cffi import requests
 
 from services.account_service import account_service
+# Một nguồn duy nhất cho cặp client Antigravity — xem chú thích tại nơi khai.
+from services.antigravity_token_refresh import (ANTIGRAVITY_CLIENT_ID,
+                                                ANTIGRAVITY_CLIENT_SECRET)
 from utils.log import logger
 
 # Codex OAuth config (from 9router)
@@ -223,8 +226,10 @@ def detect_token_type(access_token: str) -> str:
 
 _pending_antigravity_auths: dict[str, dict[str, str]] = {}
 
-ANTIGRAVITY_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-ANTIGRAVITY_CLIENT_SECRET = "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"
+# ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET nhập từ
+# antigravity_token_refresh, nơi đã đọc chúng từ biến môi trường cùng tên. Chép
+# lại dạng chữ ở đây vừa làm hai file lệch nhau khi đổi khoá, vừa để lộ giá trị
+# trong một kho công khai.
 ANTIGRAVITY_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
 ANTIGRAVITY_SCOPES = [
