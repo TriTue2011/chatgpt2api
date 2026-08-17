@@ -141,10 +141,12 @@ def test_ca_hai_duong_ocr_dung_CHUNG_mot_phep_quyet_dinh():
     ``pdf_to_word._du_tin_de_bo_qua_vlm``, không được tự viết ngưỡng riêng —
     nếu không thì lần chỉnh ngưỡng sau lại chỉ ăn một nửa.
     """
-    import inspect
+    from pathlib import Path
 
-    from services.agent import sgk_taphuan
-
-    nguon = inspect.getsource(sgk_taphuan.book_markdown)
+    # Đọc THẲNG tệp nguồn, không nạp module: nạp services.agent.sgk_taphuan kéo
+    # theo services.config và đòi khoá xác thực, nên test sẽ hỏng trên CI vì lý
+    # do chẳng liên quan gì tới điều nó muốn khoá. Cùng cách với test_ocr_rules.
+    goc = Path(__file__).resolve().parents[1]
+    nguon = (goc / "services" / "agent" / "sgk_taphuan.py").read_text(encoding="utf-8")
     assert "_tess_page_conf" in nguon, "đường SGK không đọc local trước"
     assert "_du_tin_de_bo_qua_vlm" in nguon, "đường SGK tự nghĩ ngưỡng riêng"

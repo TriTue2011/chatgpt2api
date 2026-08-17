@@ -61,9 +61,11 @@ def test_ca_hai_duong_OCR_dung_CHUNG_ham_nay():
     ``services/ocr_rules`` đã cảnh báo đúng cái bẫy này. Lần đo 18/08 cho thấy
     đường sách giáo khoa KHÔNG dọn rào gì cả, còn nặng hơn đường kia.
     """
-    import inspect
+    from pathlib import Path
 
-    from services.agent import sgk_taphuan
-
-    nguon = inspect.getsource(sgk_taphuan.book_markdown)
+    # Đọc THẲNG tệp nguồn, không nạp module: nạp services.agent.sgk_taphuan kéo
+    # theo services.config và đòi khoá xác thực, nên test sẽ hỏng trên CI vì lý
+    # do chẳng liên quan gì tới điều nó muốn khoá. Cùng cách với test_ocr_rules.
+    goc = Path(__file__).resolve().parents[1]
+    nguon = (goc / "services" / "agent" / "sgk_taphuan.py").read_text(encoding="utf-8")
     assert "bo_rao_markdown" in nguon, "đường sách giáo khoa không dọn nhãn model"
