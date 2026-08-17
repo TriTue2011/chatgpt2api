@@ -627,12 +627,12 @@ def book_markdown(pdf_path: str | Path, *, pages_per_call: int = _PAGES_PER_CALL
         for i in range(a, b + 1):
             try:
                 png = src[i].get_pixmap(dpi=p2w._RENDER_DPI, alpha=False).tobytes("png")
-                text, tin_cay = p2w._tess_page_conf(png)
+                text, chi_so = p2w._tess_page_conf(png)
             except Exception as exc:
                 logger.info("sgk_taphuan: tesseract trang %s lỗi (%s) → nhờ model",
                             i + 1, str(exc)[:80])
                 return ""
-            du_tin, vi_sao = p2w._du_tin_de_bo_qua_vlm(text, tin_cay)
+            du_tin, vi_sao = p2w._du_tin_de_bo_qua_vlm(text, chi_so)
             if not du_tin:
                 logger.info("sgk_taphuan: trang %s nhờ model — %s", i + 1, vi_sao)
                 return ""

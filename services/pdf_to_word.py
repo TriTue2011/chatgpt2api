@@ -51,6 +51,21 @@ OCR_TIN_CAY_TOI_THIEU = 80.0
 #: Dưới ngần này ký tự thì trang gần như trống — điểm tin cậy tính trên vài chữ
 #: không nói lên điều gì, nên vẫn nhờ model nhìn lại.
 OCR_CHU_TOI_THIEU = 80
+#: Độ tin cậy của TỪ THẤP NHẤT trong trang. Đây mới là lưới bắt công thức và
+#: bảng, vì trung bình gần như không phân biệt được gì — đo 17/08 trên bốn
+#: trang: chữ thường 96,1 và 96,0; công thức 93,5; bảng 92,8. Nhìn trung bình
+#: thì trang bảng còn "sạch" hơn ngưỡng, nhưng nhìn từ thấp nhất thì lộ ngay:
+#: chữ thường 96 và 94, công thức 70, bảng 64. Đặt 85 tách được hai nhóm với
+#: khoảng dư ở cả hai phía.
+OCR_TIN_CAY_TU_TOI_THIEU = 85.0
+#: Số dòng bị chia cột thì coi là bảng. Đo trên cùng bốn trang: bảng có 3 dòng,
+#: hai trang chữ thường có 0. Lấy 2 để một dòng lệch ngẫu nhiên không đủ kết
+#: tội cả trang.
+OCR_DONG_COT_TOI_DA = 2
+#: Khe ngang giữa hai từ, tính theo TỶ LỆ bề ngang ảnh, để nhận ra ranh giới
+#: cột mà không phụ thuộc DPI render. 4% của 1240 px là ~50 px — rộng hơn hẳn
+#: khoảng cách giữa các từ trong một câu bình thường.
+OCR_KHE_COT_TY_LE = 0.04
 # AI sửa lỗi OCR ở fallback tesseract → chỉ áp cho PDF ngắn.
 MAX_AI_PAGES = 15
 # analyze_pdf: sample trang khi PDF dài (đủ phân loại, không đọc hết 500 trang).
@@ -511,19 +526,31 @@ def _tess_page(png: bytes) -> str:
     return pytesseract.image_to_string(Image.open(io.BytesIO(png)), lang="vie+eng")
 
 
-def _tess_page_conf(png: bytes) -> tuple[str, float]:
-    """Chữ đọc được và ĐỘ TIN CẬY trung bình (0-100) của tesseract cho một trang.
+def _tess_page_conf(png: bytes) -> tuple[str, dict]:
+    """Chữ đọc được và các CHỈ SỐ chấm chất lượng, đo trên dữ liệu GỐC.
 
-    Dựng lại dòng từ ``image_to_data`` thay vì gọi thêm ``image_to_string``: hai
-    lời gọi là OCR hai lần trên cùng một ảnh, tốn gấp đôi mà kết quả như nhau.
+    Vì sao trả chỉ số chứ không chỉ một điểm trung bình: đo thật 17/08 trên bốn
+    trang, trung bình gần như không phân biệt được gì (92,8 đến 96,1 — trang
+    bảng còn cao hơn trang chữ thường). Hai đại lượng khác mới tách bạch:
+
+      trang        trung bình   thấp nhất   dòng có cột
+      chữ thường        96,1        96,0          0
+      công thức         93,5        70,0          0
+      bảng              92,8        64,0          3
+      chữ thường        96,0        94,0          0
+
+    ``thap_nhat`` bắt được chỗ tesseract đọc bừa (ký hiệu toán, ô bảng lệch).
+    ``dong_cot`` đo bằng TOẠ ĐỘ, tức đo trước khi ghép dòng — không thể đo trên
+    chuỗi đã ghép vì bước ghép bóp mọi khoảng trắng thành một dấu cách.
     """
     import pytesseract
     from PIL import Image
 
+    anh = Image.open(io.BytesIO(png))
+    rong = max(1, anh.width)
     d = pytesseract.image_to_data(
-        Image.open(io.BytesIO(png)), lang="vie+eng",
-        output_type=pytesseract.Output.DICT)
-    dong: dict[tuple, list[str]] = {}
+        anh, lang="vie+eng", output_type=pytesseract.Output.DICT)
+    dong: dict[tuple, list[tuple[int, int, str]]] = {}
     diem: list[float] = []
     for i, chu in enumerate(d.get("text") or []):
         chu = (chu or "").strip()
@@ -537,50 +564,55 @@ def _tess_page_conf(png: bytes) -> tuple[str, float]:
         if c < 0:
             continue
         khoa = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
-        dong.setdefault(khoa, []).append(chu)
+        dong.setdefault(khoa, []).append((d["left"][i], d["width"][i], chu))
         diem.append(c)
     if not diem:
-        return "", 0.0
-    text = "\n".join(" ".join(v) for _, v in sorted(dong.items()))
-    return text, sum(diem) / len(diem)
+        return "", {"tb": 0.0, "thap_nhat": 0.0, "dong_cot": 0}
+
+    # Khe ngang rộng giữa hai từ liền nhau = ranh giới cột. Lấy theo TỶ LỆ bề
+    # ngang ảnh để không phụ thuộc DPI render.
+    khe_toi_thieu = rong * OCR_KHE_COT_TY_LE
+    dong_cot = 0
+    phan: list[tuple[tuple, str]] = []
+    for khoa, tu in sorted(dong.items()):
+        tu.sort()
+        khe = [tu[k + 1][0] - (tu[k][0] + tu[k][1]) for k in range(len(tu) - 1)]
+        if sum(1 for x in khe if x > khe_toi_thieu) >= 2:
+            dong_cot += 1
+        phan.append((khoa, " ".join(t[2] for t in tu)))
+    text = "\n".join(v for _, v in phan)
+    return text, {"tb": sum(diem) / len(diem),
+                  "thap_nhat": min(diem), "dong_cot": dong_cot}
 
 
-#: Dấu hiệu ký hiệu toán. Tesseract đọc chữ tốt nhưng công thức thì hỏng — nó
-#: không có khái niệm phân số, chỉ số trên/dưới hay dấu căn, nên "x²" ra "x2" và
-#: phân số ra hai dòng rời. Thấy dấu hiệu này là nhường cho model thị giác.
+#: Dấu hiệu ký hiệu toán CÒN SÓT trong bản đọc. Lưới phụ thôi: tesseract thường
+#: đọc hỏng luôn ký hiệu (π thành m, ² thành ?) nên đến lúc dò thì chẳng còn gì
+#: để bắt — chính vì thế mới cần ``thap_nhat``, xem _du_tin_de_bo_qua_vlm.
 _DAU_HIEU_TOAN = re.compile(
-    r"[√∫∑∏≤≥≠±×÷∞²³⁴⁵₁₂₃½¼¾πΔΩθαβγ]|\\frac|\\sqrt|\b\d+\s*/\s*\d+\b")
+    r"[√∫∑∏≤≥≠±×÷∞²³⁴⁵₁₂₃½¼¾πΔΩθαβγ]|\\frac|\\sqrt")
 
 
-def _co_ve_la_bang(text: str) -> bool:
-    """Trang có vẻ là bảng: nhiều dòng bị chia cột bằng khoảng trắng dài.
-
-    Tesseract trả chữ theo dòng, mất hết ranh giới ô, nên bảng đọc ra thành một
-    mớ chữ dính nhau. Model thị giác dựng lại được bảng Markdown.
-    """
-    nhieu_cot = 0
-    for dong in text.splitlines():
-        if dong.count("|") >= 2 or len(re.findall(r"\s{3,}", dong)) >= 2:
-            nhieu_cot += 1
-    return nhieu_cot >= 3
-
-
-def _du_tin_de_bo_qua_vlm(text: str, tin_cay: float) -> tuple[bool, str]:
+def _du_tin_de_bo_qua_vlm(text: str, chi_so: dict) -> tuple[bool, str]:
     """Bản đọc local có đủ tin để KHỎI gọi model thị giác không, và vì sao không.
 
     Đo thật 17/08 trên một trang hợp đồng tiếng Việt: tesseract đạt 93% khớp từ
     trong 0,5 giây, còn Qwen3-VL-2B đạt 58% trong 103,7 giây. Với chữ thường thì
     đọc local vừa đúng hơn vừa nhanh gấp hai trăm lần. Model thị giác chỉ còn
-    đáng gọi ở ba ca dưới đây.
+    đáng gọi ở những ca tesseract mù.
     """
-    if tin_cay < OCR_TIN_CAY_TOI_THIEU:
-        return False, f"độ tin cậy {tin_cay:.0f} < {OCR_TIN_CAY_TOI_THIEU:.0f}"
+    if chi_so.get("tb", 0.0) < OCR_TIN_CAY_TOI_THIEU:
+        return False, f"độ tin cậy {chi_so.get('tb', 0):.0f} < {OCR_TIN_CAY_TOI_THIEU:.0f}"
     if len(text.strip()) < OCR_CHU_TOI_THIEU:
         return False, f"chỉ đọc được {len(text.strip())} ký tự"
+    # Chỗ đọc bừa kéo tụt ĐIỂM THẤP NHẤT trong khi trung bình vẫn đẹp. Đây là
+    # lưới bắt công thức toán và ô bảng lệch — hai thứ tesseract không đọc nổi.
+    if chi_so.get("thap_nhat", 0.0) < OCR_TIN_CAY_TU_TOI_THIEU:
+        return False, (f"có chữ đọc bừa (thấp nhất {chi_so.get('thap_nhat', 0):.0f}"
+                       f" < {OCR_TIN_CAY_TU_TOI_THIEU:.0f})")
     if _DAU_HIEU_TOAN.search(text):
         return False, "có ký hiệu toán"
-    if _co_ve_la_bang(text):
-        return False, "có vẻ là bảng"
+    if chi_so.get("dong_cot", 0) >= OCR_DONG_COT_TOI_DA:
+        return False, f"có {chi_so['dong_cot']} dòng chia cột — nhiều khả năng là bảng"
     return True, ""
 
 
@@ -785,11 +817,11 @@ def _scan_markdown_pages(
             # cho model thị giác khi bản đọc local không đủ tin — xem
             # _du_tin_de_bo_qua_vlm.
             try:
-                text, tin_cay = _tess_page_conf(p["png"])
+                text, chi_so = _tess_page_conf(p["png"])
             except Exception as exc:
                 logger.warning("tesseract trang %d lỗi: %s", i + 1, str(exc)[:120])
-                text, tin_cay = "", 0.0
-            du_tin, vi_sao = _du_tin_de_bo_qua_vlm(text, tin_cay)
+                text, chi_so = "", {}
+            du_tin, vi_sao = _du_tin_de_bo_qua_vlm(text, chi_so)
             if du_tin:
                 with errs_lock:
                     so_local[0] += 1
