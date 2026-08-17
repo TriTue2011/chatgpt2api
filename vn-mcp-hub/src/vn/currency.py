@@ -110,15 +110,14 @@ def _fetch_btmc() -> list[dict[str, Any]]:
     so this is the most reliable way to surface their headline price.
     Format quirks: response uses indexed keys (@n_1, @pb_1, ...) per row.
 
-    Cần BTMC_API_KEY. Không đặt thì bỏ qua nguồn này — SJC và DOJI vẫn chạy,
-    người dùng mất phần giá BTMC/PNJ chứ không mất toàn bộ giá vàng.
+    Khoá dưới đây KHÔNG phải bí mật: chính BTMC đăng nó trong tài liệu API công
+    khai (btmc.vn/thong-tin/tai-lieu-api/api-gia-vang-17784.html) để ai cũng gọi
+    được, giống một endpoint công cộng hơn là một thông tin xác thực. Vẫn cho
+    ghi đè bằng BTMC_API_KEY phòng khi BTMC đổi khoá công bố.
     """
-    key = os.environ.get("BTMC_API_KEY", "").strip()
-    if not key:
-        logger.info("BTMC: chưa đặt BTMC_API_KEY — bỏ qua nguồn này")
-        return []
     url = "http://api.btmc.vn/api/BTMCAPI/getpricebtmc"
-    params = {"key": key}
+    params = {"key": os.environ.get("BTMC_API_KEY", "").strip()
+                     or "3kd8ub1llcg9t45hnoh8hmn7t5kc2v"}
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.get(url, params=params)
