@@ -27,6 +27,20 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
 
 from services import pdf_intent  # noqa: E402
+import services  # noqa: E402
+
+
+def _thay_pdf_to_word(gia):
+    """Giả lập services.pdf_to_word cho pdf_intent.
+
+    Chỉ vá sys.modules là KHÔNG đủ: pdf_intent dùng ``from services import
+    pdf_to_word``, mà dạng này lấy THUỘC TÍNH trên gói ``services`` khi module
+    con đã từng được nạp — lúc đó bản vá sys.modules bị bỏ qua và test nhận
+    module thật. Trước đây may mà chưa test nào nạp nó trước; thêm một tệp test
+    có nạp là hỏng ngay, đúng như đã xảy ra 18/08.
+    """
+    return (mock.patch.dict(sys.modules, {"services.pdf_to_word": gia}),
+            mock.patch.object(services, "pdf_to_word", gia, create=True))
 
 
 def pdf_toi_thieu(dong: str = "Bao cao thang Bay") -> bytes:
@@ -151,8 +165,8 @@ class GhepVaoExtractMarkdown(unittest.TestCase):
         """Đường cũ mở tài liệu bằng PyMuPDF và có thể gọi model OCR — tốn."""
         tv = _ThuVienGia(_KetQua(markdown="# Xong"))
         p2w = mock.MagicMock()
-        with _voi_thu_vien(tv), \
-             mock.patch.dict(sys.modules, {"services.pdf_to_word": p2w}), \
+        va_sys, va_goi = _thay_pdf_to_word(p2w)
+        with _voi_thu_vien(tv), va_sys, va_goi, \
              mock.patch.object(pdf_intent, "_image_section", return_value=""):
             ra = pdf_intent.extract_markdown("/tmp/a.pdf")
         self.assertEqual(ra, "# Xong")
@@ -170,8 +184,8 @@ class GhepVaoExtractMarkdown(unittest.TestCase):
         p2w = mock.MagicMock()
         p2w.analyze_pdf.return_value = {"scanned": True, "text_quality": "good"}
         p2w.scan_pdf_markdown.return_value = "chữ từ OCR"
-        with _voi_thu_vien(_ThuVienGia(_KetQua(pdf_type="scanned"))), \
-             mock.patch.dict(sys.modules, {"services.pdf_to_word": p2w}):
+        va_sys, va_goi = _thay_pdf_to_word(p2w)
+        with _voi_thu_vien(_ThuVienGia(_KetQua(pdf_type="scanned"))), va_sys, va_goi:
             self.assertEqual(pdf_intent.extract_markdown("/tmp/a.pdf"), "chữ từ OCR")
         p2w.analyze_pdf.assert_called_once()
 
