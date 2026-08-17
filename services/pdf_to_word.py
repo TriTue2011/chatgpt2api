@@ -40,6 +40,17 @@ MAX_OCR_PAGES = 200
 MAX_VLM_PAGES = 60
 _VLM_WORKERS = 3
 _RENDER_DPI = 200
+#: Ngưỡng tin cậy trung bình (0-100) để NHẬN bản đọc tesseract mà không gọi model
+#: thị giác. Đo thật 17/08 trên một trang hợp đồng tiếng Việt: tesseract đạt 93%
+#: khớp từ trong 0,5 giây, còn Qwen3-VL-2B đạt 58% trong 103,7 giây — với chữ
+#: thường thì đọc local vừa đúng hơn vừa nhanh gấp hai trăm lần.
+#:
+#: Chọn 80 vì đó là mức tesseract đạt được trên bản in sạch; trang mờ, nghiêng
+#: hay chụp bằng điện thoại rơi xuống dưới, và đó đúng là lúc cần model thị giác.
+OCR_TIN_CAY_TOI_THIEU = 80.0
+#: Dưới ngần này ký tự thì trang gần như trống — điểm tin cậy tính trên vài chữ
+#: không nói lên điều gì, nên vẫn nhờ model nhìn lại.
+OCR_CHU_TOI_THIEU = 80
 # AI sửa lỗi OCR ở fallback tesseract → chỉ áp cho PDF ngắn.
 MAX_AI_PAGES = 15
 # analyze_pdf: sample trang khi PDF dài (đủ phân loại, không đọc hết 500 trang).
@@ -500,6 +511,79 @@ def _tess_page(png: bytes) -> str:
     return pytesseract.image_to_string(Image.open(io.BytesIO(png)), lang="vie+eng")
 
 
+def _tess_page_conf(png: bytes) -> tuple[str, float]:
+    """Chữ đọc được và ĐỘ TIN CẬY trung bình (0-100) của tesseract cho một trang.
+
+    Dựng lại dòng từ ``image_to_data`` thay vì gọi thêm ``image_to_string``: hai
+    lời gọi là OCR hai lần trên cùng một ảnh, tốn gấp đôi mà kết quả như nhau.
+    """
+    import pytesseract
+    from PIL import Image
+
+    d = pytesseract.image_to_data(
+        Image.open(io.BytesIO(png)), lang="vie+eng",
+        output_type=pytesseract.Output.DICT)
+    dong: dict[tuple, list[str]] = {}
+    diem: list[float] = []
+    for i, chu in enumerate(d.get("text") or []):
+        chu = (chu or "").strip()
+        if not chu:
+            continue
+        try:
+            c = float(d["conf"][i])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        # conf = -1 là ô bố cục (khối/đoạn/dòng), không phải chữ — bỏ.
+        if c < 0:
+            continue
+        khoa = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
+        dong.setdefault(khoa, []).append(chu)
+        diem.append(c)
+    if not diem:
+        return "", 0.0
+    text = "\n".join(" ".join(v) for _, v in sorted(dong.items()))
+    return text, sum(diem) / len(diem)
+
+
+#: Dấu hiệu ký hiệu toán. Tesseract đọc chữ tốt nhưng công thức thì hỏng — nó
+#: không có khái niệm phân số, chỉ số trên/dưới hay dấu căn, nên "x²" ra "x2" và
+#: phân số ra hai dòng rời. Thấy dấu hiệu này là nhường cho model thị giác.
+_DAU_HIEU_TOAN = re.compile(
+    r"[√∫∑∏≤≥≠±×÷∞²³⁴⁵₁₂₃½¼¾πΔΩθαβγ]|\\frac|\\sqrt|\b\d+\s*/\s*\d+\b")
+
+
+def _co_ve_la_bang(text: str) -> bool:
+    """Trang có vẻ là bảng: nhiều dòng bị chia cột bằng khoảng trắng dài.
+
+    Tesseract trả chữ theo dòng, mất hết ranh giới ô, nên bảng đọc ra thành một
+    mớ chữ dính nhau. Model thị giác dựng lại được bảng Markdown.
+    """
+    nhieu_cot = 0
+    for dong in text.splitlines():
+        if dong.count("|") >= 2 or len(re.findall(r"\s{3,}", dong)) >= 2:
+            nhieu_cot += 1
+    return nhieu_cot >= 3
+
+
+def _du_tin_de_bo_qua_vlm(text: str, tin_cay: float) -> tuple[bool, str]:
+    """Bản đọc local có đủ tin để KHỎI gọi model thị giác không, và vì sao không.
+
+    Đo thật 17/08 trên một trang hợp đồng tiếng Việt: tesseract đạt 93% khớp từ
+    trong 0,5 giây, còn Qwen3-VL-2B đạt 58% trong 103,7 giây. Với chữ thường thì
+    đọc local vừa đúng hơn vừa nhanh gấp hai trăm lần. Model thị giác chỉ còn
+    đáng gọi ở ba ca dưới đây.
+    """
+    if tin_cay < OCR_TIN_CAY_TOI_THIEU:
+        return False, f"độ tin cậy {tin_cay:.0f} < {OCR_TIN_CAY_TOI_THIEU:.0f}"
+    if len(text.strip()) < OCR_CHU_TOI_THIEU:
+        return False, f"chỉ đọc được {len(text.strip())} ký tự"
+    if _DAU_HIEU_TOAN.search(text):
+        return False, "có ký hiệu toán"
+    if _co_ve_la_bang(text):
+        return False, "có vẻ là bảng"
+    return True, ""
+
+
 def _alert(text: str) -> None:
     """Báo cảnh admin qua Tele+Zalo (best-effort, theo toggle notifier)."""
     try:
@@ -688,11 +772,30 @@ def _scan_markdown_pages(
         cached = _cache_load(ckey) if ckey else {}
         _cache_purge()
 
+        so_local = [0]
+        ly_do_vlm: list[str] = []
+
         def _one(ip: tuple[int, dict]) -> str:
             i, p = ip
             hit = cached.get(str(i))
             if hit:
                 return hit
+            # ĐỌC LOCAL TRƯỚC. Với trang chữ thường tesseract vừa đúng hơn vừa
+            # nhanh gấp hàng trăm lần, và không tốn lượt model nào. Chỉ nhường
+            # cho model thị giác khi bản đọc local không đủ tin — xem
+            # _du_tin_de_bo_qua_vlm.
+            try:
+                text, tin_cay = _tess_page_conf(p["png"])
+            except Exception as exc:
+                logger.warning("tesseract trang %d lỗi: %s", i + 1, str(exc)[:120])
+                text, tin_cay = "", 0.0
+            du_tin, vi_sao = _du_tin_de_bo_qua_vlm(text, tin_cay)
+            if du_tin:
+                with errs_lock:
+                    so_local[0] += 1
+                return text
+            with errs_lock:
+                ly_do_vlm.append(f"trang {i + 1}: {vi_sao}")
             md = _page_md_vlm(p, i, errs, layer_ok=layer_ok, errs_lock=errs_lock)
             # _cache_save_page tự chặn placeholder/lỗi model.
             if ckey and md:
@@ -704,6 +807,10 @@ def _scan_markdown_pages(
         hits = sum(1 for i in range(len(pages)) if str(i) in cached)
         if hits:
             logger.info("ocr_cache: dùng lại %d/%d trang (%s)", hits, len(pages), ckey[:8])
+        logger.info(
+            "OCR %d trang: %d đọc local (tesseract), %d nhờ model thị giác%s",
+            len(pages), so_local[0], len(ly_do_vlm),
+            (" — " + "; ".join(ly_do_vlm[:5])) if ly_do_vlm else "")
         if errs:
             _alert("⚠️ PDF OCR lỗi {}/{} trang — model '{}' (Nhánh Agent: Phân tích ảnh):\n{}".format(
                 len(errs), len(pages), model, "\n".join(errs[:8])[:800]))
