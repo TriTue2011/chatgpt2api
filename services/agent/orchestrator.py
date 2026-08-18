@@ -164,7 +164,8 @@ _TAT_TAO_MEDIA = re.compile(
     r"(?P<verb>tạo|tao|vẽ|ve|sinh|generate|draw|make)\s+"
     r"(?:cho\s+\S+\s+)?"
     r"(?:(?:một|mot|1|vài|vai|\d+)\s+)?"
-    r"(?P<loai>video|clip|ảnh|anh|hình\s*ảnh|hinh\s*anh|hình|hinh|image|picture|photo)"
+    r"(?P<loai>video|clip|nhạc|nhac|bài\s*hát|bai\s*hat|ca\s*khúc|ca\s*khuc|"
+    r"ảnh|anh|hình\s*ảnh|hinh\s*anh|hình|hinh|image|picture|photo)"
     r"(?![a-zà-ỹ])"
     r"(?P<con_lai>.*)$",
     re.IGNORECASE | re.DOTALL)
@@ -195,8 +196,39 @@ _BO_DAU_MO_TA = re.compile(
     r"^\s*(?::|-|–|về|ve\b|là|la\b|với|voi\b|nội\s*dung|noi\s*dung)\s*", re.I)
 
 
+# Danh từ chỉ RÕ loại media. "anh" trần KHÔNG nằm đây: nó vừa là "ảnh" gõ thiếu
+# dấu, vừa là đại từ trong "tạo anh bản nhạc…" = "tạo giúp anh…". Chỉ khi câu
+# không có danh từ rõ nào thì mới xét tới nó (xem _loai_ro_rang).
+_DANH_TU_RO = (
+    ("music", re.compile(r"\b(nhạc|nhac|bài\s*hát|bai\s*hat|ca\s*khúc|ca\s*khuc|giai\s*điệu|giai\s*dieu)", re.I)),
+    ("video", re.compile(r"\b(video|clip|phim)\b", re.I)),
+    ("image", re.compile(r"(ảnh|hình|hinh\s*ảnh|image|picture|photo)", re.I)),
+)
+
+
+def _loai_ro_rang(t: str) -> str | None:
+    """Loại media do DANH TỪ trong câu quyết định, None nếu không có danh từ rõ.
+
+    Luật do người vận hành chốt 18/08: phải có "tạo" VÀ danh từ — "ảnh", "video"
+    hoặc "nhạc". Chữ "anh" trần không tính, vì nó thường là đại từ.
+
+    Vì sao cần: `_TAT_TAO_MEDIA` nhận "anh" làm danh từ ảnh, nên hai câu thật
+    dưới đây đều bị đẩy sang vẽ ảnh —
+
+        "Tạo anh bản nhạc ballast nhẹ nhàng"  → loai='anh', mô tả='bản nhạc…'
+        "Tạo anh video một chiếc lá phong…"   → loai='anh', mô tả='video một…'
+
+    — và người dùng nhận menu model VẼ cho một yêu cầu nhạc. Quan sát 12:20
+    ngày 18/08 trên bot thật.
+    """
+    for kind, rx in _DANH_TU_RO:
+        if rx.search(t or ""):
+            return kind
+    return None
+
+
 def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
-    """('video'|'image', prompt) nếu câu là yêu cầu TẠO MỚI ảnh/video, None nếu không.
+    """('video'|'image'|'music', prompt) nếu câu là yêu cầu TẠO MỚI, None nếu không.
 
     `prompt` là phần còn lại sau động từ + loại, đã bỏ dấu hai chấm/"về"/"là" mở
     đầu. Rỗng cũng hợp lệ ("tạo video") — capability tự hỏi lại muốn tạo gì.
@@ -207,8 +239,28 @@ def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
     m = _TAT_TAO_MEDIA.match(t)
     if m:
         loai = m.group("loai").lower()
-        kind = "video" if loai in {"video", "clip"} else "image"
-        return kind, _BO_DAU_MO_TA.sub("", m.group("con_lai").strip()).strip()
+        con_lai = m.group("con_lai").strip()
+        # Danh từ rõ trong CẢ CÂU thắng chữ đứng ngay sau động từ. Cần thế vì
+        # "anh" trần lọt vào nhóm loại và luôn đứng trước — xem _loai_ro_rang.
+        def _tu_loai(x: str) -> str:
+            if x in {"video", "clip"}:
+                return "video"
+            if x.replace(" ", "") in {"nhạc", "nhac", "bàihát", "baihat",
+                                      "cakhúc", "cakhuc"}:
+                return "music"
+            return "image"
+
+        kind = _loai_ro_rang(t) or _tu_loai(loai)
+        if kind != _tu_loai(loai):
+            # Chữ sau động từ chỉ là đại từ ("anh") → bỏ nó khỏi mô tả bằng cách
+            # cắt lại từ chính danh từ rõ, kẻo mô tả thành "video một chiếc lá…".
+            for k2, rx in _DANH_TU_RO:
+                if k2 == kind:
+                    mm = rx.search(con_lai)
+                    if mm:
+                        con_lai = con_lai[mm.end():].strip()
+                    break
+        return kind, _BO_DAU_MO_TA.sub("", con_lai).strip()
     m = _TAT_VE_ANH.match(t)
     if m:
         return "image", _BO_DAU_MO_TA.sub("", m.group("con_lai").strip()).strip()
@@ -1695,8 +1747,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
         else:
             _kind, _prompt_media = _yc_media  # type: ignore[misc]
             _args_media = {"prompt": _prompt_media}
-        _cap_name = "generate_video" if _kind == "video" else "generate_image"
-        _nhom = "video" if _kind == "video" else "image"
+        # Nhạc phải có nhánh riêng. Bản cũ viết "video nếu kind==video, còn lại
+        # là ảnh", nên MỌI yêu cầu tạo nhạc rơi vào generate_image.
+        _cap_name = {"video": "generate_video", "music": "generate_music"}.get(
+            _kind, "generate_image")
+        _nhom = {"video": "video", "music": "music"}.get(_kind, "image")
         if allow is None or _nhom in allow:
             try:
                 _cap_m = caps.get(_cap_name)
