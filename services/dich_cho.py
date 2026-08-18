@@ -126,21 +126,40 @@ def la_chu(pend: dict[str, Any]) -> bool:
 
 #: Ba bước của tệp/link. Bản chờ giữ ``buoc`` + những gì đã chọn.
 BUOC_VIEC, BUOC_NGUON, BUOC_DICH = "viec", "nguon", "dich"
+#: Hai bước RIÊNG của ô phụ đề, hỏi sau khi đã biết tiếng đích.
+BUOC_VI_TRI, BUOC_DANG_RA = "vi-tri", "dang-ra"
 
 #: Việc làm được với tệp: mã → (số menu, nhãn, có phải dịch không).
+# Chủ máy chốt 18/08: MỘT menu duy nhất, đủ mục, dùng CHUNG cho link và cho tệp
+# gửi lên. Trước đó có hai menu rời nhau và không mục nào giống mục nào — bot tự
+# bịa danh sách riêng cho link (tóm tắt / ý chính / phân tích / ghi chú), còn
+# bảng này chỉ có phần dịch, lại giấu ô lồng tiếng khỏi link.
+#
+# Kiến trúc do chủ máy chốt: "chuyển thành phụ đề rồi mới qua llm để làm 12345".
+# Nghĩa là MỌI video — link hay tệp — đều đi qua bước tạo phụ đề trước; phụ đề
+# đó là đầu vào cho cả năm ô LLM lẫn hai ô video. Nhờ vậy tệp gửi lên cũng làm
+# được tóm tắt/ý chính, việc mà trước đây chỉ link mới có (nhờ transcript sẵn).
+#
+# Hai ô "chép lời" cũ biến mất KHÔNG phải vì mất chức năng: bước tạo phụ đề
+# chính là chép lời, và ô 6 cho chọn giữ nguyên tiếng gốc.
 VIEC = {
-    "phu-de": ("1", "Tạo phụ đề .srt (dịch sang tiếng khác)", True),
-    "chu": ("2", "Dịch ra bản chữ (chỉ lời thoại)", True),
-    "chep-loi": ("3", "Chép lời ra .srt, GIỮ nguyên tiếng gốc", False),
-    # Ô thứ tư này chính là việc "chuyển âm thanh thành văn bản" mà người dùng
-    # hay gọi là STT: không dịch, không mốc thời gian, chỉ chữ. Ba ô trên đều
-    # thiếu nó — ô 3 giữ nguyên tiếng nhưng trả .srt đầy số thứ tự và mốc giờ,
-    # dán vào tài liệu là phải dọn tay.
-    "chu-goc": ("4", "Chép lời ra bản chữ thuần, GIỮ nguyên tiếng gốc", False),
-    # Chỉ hiện cho TỆP VIDEO thật: link hiện chưa tải cả hình về gateway, còn
-    # tệp phụ đề/âm thanh không có luồng hình để thay track.
-    "long-tieng": ("5", "Lồng tiếng video (giữ nhạc và hiệu ứng)", True),
+    "tom-tat": ("1", "Tóm tắt nội dung video", False),
+    "y-chinh": ("2", "Lấy các ý chính", False),
+    "dich-chu": ("3", "Dịch ra bản chữ (chỉ lời thoại)", True),
+    "phan-tich": ("4", "Phân tích một đoạn cụ thể", False),
+    "ghi-chu": ("5", "Ghi chú học tập / tài liệu", False),
+    "phu-de": ("6", "Phụ đề (chọn vị trí chữ, chọn .srt hay ghép vào video)", True),
+    "long-tieng": ("7", "Lồng tiếng video (giữ nhạc và hiệu ứng)", True),
 }
+
+#: Năm ô đầu chạy trên PHỤ ĐỀ đã có, do LLM làm — không hỏi tiếng đích.
+VIEC_QUA_LLM = ("tom-tat", "y-chinh", "phan-tich", "ghi-chu")
+
+#: Vị trí chữ khi ghép vào hình — cùng tên với services.video_tai.VI_TRI.
+VI_TRI_PHU_DE = {"1": "duoi", "2": "tren"}
+
+#: Dạng trả cho ô phụ đề.
+DANG_RA_PHU_DE = {"1": "srt", "2": "ghep"}
 
 _DUOI_VIDEO = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts", ".3gp")
 
@@ -153,9 +172,23 @@ def _la_tep_video(pend: dict[str, Any]) -> bool:
 
 
 def _viec_hop_le(pend: dict[str, Any]) -> dict[str, tuple[str, str, bool]]:
-    """Các việc thật sự làm được với đúng loại đầu vào đang chờ."""
+    """Các việc thật sự làm được với đúng loại đầu vào đang chờ.
+
+    LINK nay cũng lồng tiếng được: ``services.video_tai.tai_video`` tải cả hình
+    về nên link và tệp video đi chung một đường. Trước đây ô lồng tiếng bị giấu
+    khỏi link vì "link hiện chưa tải cả hình về gateway" — lý do đó hết rồi.
+
+    Vẫn giấu với TỆP PHỤ ĐỀ và TỆP ÂM THANH: chúng không có luồng hình để thay.
+    """
     return {ma: gia_tri for ma, gia_tri in VIEC.items()
-            if ma != "long-tieng" or _la_tep_video(pend)}
+            if ma != "long-tieng" or _co_luong_hinh(pend)}
+
+
+def _co_luong_hinh(pend: dict[str, Any]) -> bool:
+    """Đầu vào này có hình để ghép chữ / thay tiếng không."""
+    if str(pend.get("url") or "").strip():
+        return True                      # link → tải hình về được
+    return _la_tep_video(pend)
 
 
 def _danh_sach_tieng(tru: str = "") -> list[str]:
@@ -252,6 +285,13 @@ def menu_buoc(key: str) -> str:
     if buoc == BUOC_DUYET_DICH:
         return ("🔊 Em đọc bản nào ạ?\n1. Bản dịch vừa gửi\n"
                 "2. Bản gốc, giữ nguyên tiếng")
+    if buoc == BUOC_VI_TRI:
+        return ("📝 Chữ hiện ở đâu ạ?\n1. Ở DƯỚI khung hình (thường dùng)\n"
+                "2. Ở TRÊN khung hình (khi video đã có sẵn chữ ở dưới)")
+    if buoc == BUOC_DANG_RA:
+        return ("📦 Em trả về dạng nào ạ?\n1. Tệp phụ đề .srt (nhẹ, tự nạp "
+                "vào trình phát)\n2. Ghép thẳng vào video rồi gửi lại "
+                "(xem là thấy chữ)")
     if la_chu(pend):
         return menu(pend)
     if buoc == BUOC_VIEC:
@@ -316,6 +356,10 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         chon = next((k for k, v in _viec_hop_le(pend).items() if v[0] == so), "")
         if not chon:
             return None
+        if chon in VIEC_QUA_LLM:
+            # Bốn ô này chạy trên PHỤ ĐỀ đã có rồi giao cho LLM — không có
+            # tiếng nguồn/đích để hỏi, hỏi thêm chỉ làm người dùng bấm thừa.
+            return {"kieu": "llm", "viec": chon}
         _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
         return {"tiep": True}
     if buoc == BUOC_NGUON:
@@ -331,11 +375,32 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
                     "target": "giu-goc", "nguon": nguon}
         _ghi_buoc(key, nguon=nguon, buoc=BUOC_DICH)
         return {"tiep": True}
+    if buoc == BUOC_VI_TRI:
+        vi_tri = VI_TRI_PHU_DE.get(so)
+        if not vi_tri:
+            return None
+        _ghi_buoc(key, vi_tri=vi_tri, buoc=BUOC_DANG_RA)
+        return {"tiep": True}
+    if buoc == BUOC_DANG_RA:
+        dang = DANG_RA_PHU_DE.get(so)
+        if not dang:
+            return None
+        return {"kieu": "phu-de", "dang_ra": dang,
+                "vi_tri": str(pend.get("vi_tri") or "duoi"),
+                "target": str(pend.get("dich") or ""),
+                "nguon": str(pend.get("nguon") or "")}
     ds = _danh_sach_tieng(str(pend.get("nguon") or ""))
     if int(so) > len(ds):
         return None
     viec = str(pend.get("viec") or "phu-de")
-    kieu = "chu" if viec == "chu" else (
+    # Ô phụ đề còn hai câu hỏi nữa — vị trí chữ, rồi dạng trả. Chủ máy chốt
+    # 18/08: "nếu là phụ đề thì phải đưa lựa chọn trên hay dưới, thứ 2 hỏi trả
+    # file phụ đề srt hay ghép luôn vào video". Trước đây bot tự đoán rồi gửi
+    # CẢ HAI tệp .srt (bản thường và bản chữ-trên) — xem zalo_personal.
+    if viec == "phu-de":
+        _ghi_buoc(key, dich=ds[int(so) - 1], buoc=BUOC_VI_TRI)
+        return {"tiep": True}
+    kieu = "chu" if viec == "dich-chu" else (
         "long-tieng" if viec == "long-tieng" else "phu-de")
     # Truyền THẲNG mã đích, không bọc "cap:". "cap:ko" nghĩa là "cặp Việt ↔
     # Hàn", mà giai_ma_target giải nó thành: nguồn tiếng Việt thì sang Hàn,
@@ -390,7 +455,10 @@ def menu(pend: dict[str, Any]) -> str:
 
 
 _BO = ("thôi", "thoi", "bỏ", "bo", "huỷ", "huy", "cancel", "khỏi", "khoi")
-_SO = re.compile(r"^\s*([1-5])\b(.*)$", re.DOTALL)
+# Menu video nay co BAY o (chu may chot 18/08), khong con nam nhu ban cu —
+# giu [1-5] thi bam 6 (Phu de) hay 7 (Long tieng) deu roi xuong duong LLM
+# nhu mot cau noi thuong, va menu hien lai y nguyen.
+_SO = re.compile(r"^\s*([1-9])\b(.*)$", re.DOTALL)
 
 
 #: Số trong menu CHỮ → tiếng đích (khác menu video: ở đó số là kiểu kết quả).
