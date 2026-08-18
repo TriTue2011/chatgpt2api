@@ -106,10 +106,18 @@ class KhongDuocBatSaiTests(unittest.TestCase):
             self.assertIsNone(self.f(c), c)
 
     def test_capability_khac_phai_bo_qua(self):
-        """'tạo' còn dùng cho automation / nhạc / nhắc việc."""
-        for c in ("tạo automation bật đèn", "tạo nhạc vui",
-                  "tạo nhắc việc 7h sáng", "tạo tài khoản mới"):
+        """'tạo' còn dùng cho automation / nhắc việc / tài khoản.
+
+        "tạo nhạc" ĐÃ RA KHỎI danh sách này ngày 19/08: nó là capability TẠO
+        MEDIA thật (generate_music), và để nó rơi xuống đường model thì model
+        quên gọi tool — đo thật 23:33 ngày 18/08, xem test_tao_dung_loai_media.
+        """
+        for c in ("tạo automation bật đèn", "tạo nhắc việc 7h sáng",
+                  "tạo tài khoản mới"):
             self.assertIsNone(self.f(c), c)
+
+    def test_tao_nhac_phai_ra_nhanh_music(self):
+        self.assertEqual(self.f("tạo nhạc vui"), ("music", "vui"))
 
     def test_cau_hoi_va_chao_phai_bo_qua(self):
         for c in ("xin chào", "cho tôi biết tạo ảnh thế nào",

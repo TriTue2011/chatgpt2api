@@ -50,17 +50,40 @@ def test_khong_dinh_chu_video_vao_mo_ta():
 
 
 @pytest.mark.pure
-def test_nhac_nhuong_cho_bo_dinh_tuyen():
-    """Nhạc CỐ Ý không đi đường tắt — đường tắt chỉ lo ảnh/video.
+@pytest.mark.parametrize("cau,mo_ta", [
+    ("tạo nhạc ballast nhẹ nhàng", "ballast nhẹ nhàng"),
+    ("Tạo anh bản nhạc ballast nhẹ nhàng", "ballast nhẹ nhàng"),
+    ("tạo nhạc vui", "vui"),
+    ("tạo bài hát về mùa thu", "mùa thu"),
+    ("tạo ca khúc buồn", "buồn"),
+])
+def test_nhac_di_duong_tat_nhu_anh_va_video(cau, mo_ta):
+    """ĐỔI 19/08: nhạc đi đường tắt, không phó cho model tự nhớ gọi tool.
 
-    Việc duy nhất cần ở đây: ĐỪNG nhận nhầm nhạc thành ảnh. Trả None thì bộ
-    định tuyến gọi generate_music như thiết kế cũ, thay vì hiện menu VẼ.
+    Bản cũ trả None để "bộ định tuyến gọi generate_music". Đo thật 23:33 ngày
+    18/08 trên bot: model CÓ tool (nhóm 'music' bật cho cả hai kênh) mà vẫn trả
+    lời "trong khung chat này em chưa có công cụ xuất ra file nhạc thật" rồi
+    không làm gì — người dùng mất trắng lượt.
+
+    Vì sao nhạc KHÔNG cần qua model như ảnh/video: ảnh và video có nhiều nhà
+    cung cấp nên phải hiện menu chọn; nhạc chỉ có MỘT đường (Gemini/Lyria qua
+    trình duyệt, handler nhận đúng một tham số prompt) — không có gì để hỏi.
     """
     from services.agent.orchestrator import _la_yeu_cau_tao_media
 
-    assert _la_yeu_cau_tao_media("Tạo anh bản nhạc ballast nhẹ nhàng") is None
-    assert _la_yeu_cau_tao_media("tạo nhạc vui") is None
-    assert _la_yeu_cau_tao_media("tạo bài hát về mùa thu") is None
+    kq = _la_yeu_cau_tao_media(cau)
+    assert kq is not None, "nhạc phải được nhận, không được trả None"
+    kind, prompt = kq
+    assert kind == "music"
+    assert prompt == mo_ta, "mô tả phải bỏ cả động từ lẫn danh từ loại"
+
+
+@pytest.mark.pure
+def test_tao_nhac_khong_kem_mo_ta_thi_van_nhan():
+    """Rỗng cũng hợp lệ — handler tự hỏi lại muốn nhạc thế nào."""
+    from services.agent.orchestrator import _la_yeu_cau_tao_media
+
+    assert _la_yeu_cau_tao_media("tạo nhạc") == ("music", "")
 
 
 @pytest.mark.pure
