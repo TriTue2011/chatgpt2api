@@ -130,3 +130,30 @@ def test_long_tieng_van_di_duong_cu(dc):
     assert dc.tra_loi_buoc(k, "2") == {"tiep": True}
     kq = dc.tra_loi_buoc(k, "1")
     assert kq["kieu"] == "long-tieng"
+
+
+@pytest.mark.pure
+def test_cong_bat_tag_chi_mo_cho_dung_cau_tra_loi(dc):
+    """Trong nhóm bắt tag, cửa sổ "vừa tag bot" sống 5 phút còn menu sống 30 —
+    giữa hai mốc đó người dùng bấm số mà cổng nuốt mất. Nhưng mở cổng cho MỌI
+    tin suốt 30 phút thì thành tắt luôn yêu cầu tag của nhóm."""
+    k = "phien_tag"
+    assert dc.la_cau_tra_loi(k, "6") is False, "chưa có menu thì không mở gì"
+
+    dc.set_pending(k, url="https://youtu.be/abc", ten="abc")
+    assert dc.la_cau_tra_loi(k, "6") is True
+    assert dc.la_cau_tra_loi(k, "thôi") is True
+    assert dc.la_cau_tra_loi(k, "mai mình đi ăn phở") is False
+    assert dc.la_cau_tra_loi(k, "") is False
+    # Soi dạng thôi, không được tiêu thụ: hỏi xong menu vẫn ở nguyên bước cũ.
+    assert (dc.get_pending(k) or {}).get("buoc") in (None, dc.BUOC_VIEC)
+
+
+@pytest.mark.pure
+def test_buoc_hoi_doan_thi_cau_nao_cung_la_tra_loi(dc):
+    """Bước này nhận chữ tự do nên không soi dạng được — bù lại nó chỉ mở ra
+    ngay sau khi người dùng vừa bấm 4."""
+    k = "phien_tag2"
+    dc.set_pending(k, url="https://youtu.be/abc", ten="abc")
+    dc.tra_loi_buoc(k, "4")
+    assert dc.la_cau_tra_loi(k, "phần nói về lãi kép") is True

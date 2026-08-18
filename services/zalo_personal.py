@@ -2895,8 +2895,12 @@ def _process_ai(ev: dict) -> None:
         # chờ — mở rộng thế là tắt luôn yêu cầu tag của nhóm đó.
         from services.agent import luu_tru_day as _ltd_cho
         from services import cho_sau_tag as _cst
+        from services import dich_cho as _dc_cho
         _dang_cho = (_phi_cho.dang_cho_anh(pkey) or _phi_cho.has_pending(pkey)
                      or _pi_cho.has_pending(pkey)
+                     # Menu video bảy ô: cùng lý lẽ, và cùng chỉ mở cho ĐÚNG
+                     # dạng câu trả lời chứ không mở suốt 30 phút chờ.
+                     or _dc_cho.la_cau_tra_loi(pkey, text or "")
                      or bool(_ltd_cho.chon_tu_tra_loi(_ltd_cho.khoa_cho_thread(
                          "zalop", str(ev.get("account_id") or ""),
                          str(thread_id)), text or ""))

@@ -458,6 +458,34 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
             "nguon": str(pend.get("nguon") or "")}
 
 
+def la_cau_tra_loi(key: str, text: str) -> bool:
+    """Câu này CÓ PHẢI câu trả lời cho menu đang mở của phiên ``key`` không.
+
+    Không tiêu thụ gì, không đổi bước — chỉ để cổng bắt-tag của nhóm quyết định
+    cho câu này đi tiếp hay loại. Cần vì cửa sổ "vừa tag bot" sống 5 phút còn
+    menu sống 30: đúng quãng giữa hai mốc đó, người dùng bấm số mà cổng nuốt
+    mất, menu treo tới lúc hết hạn.
+
+    Chỉ mở cho ĐÚNG dạng câu trả lời chứ không mở cho mọi tin trong 30 phút —
+    mở rộng thế là tắt luôn yêu cầu tag của nhóm đó (cùng lý lẽ đã ghi ở
+    zalo_personal, chỗ dựng ``_dang_cho``).
+    """
+    pend = get_pending(key)
+    if not pend:
+        return False
+    t = str(text or "").strip().lower()
+    if not t:
+        return False
+    if t in _BO:
+        return True
+    if str(pend.get("buoc") or "") in (BUOC_DOAN, BUOC_CHO_CHU):
+        # Hai bước này nhận CHỮ TỰ DO (đoạn cần phân tích, nội dung cần đọc)
+        # nên không soi dạng được. Chúng chỉ mở ra sau khi người dùng vừa chọn,
+        # tức cửa sổ hẹp chứ không phải cả 30 phút.
+        return True
+    return bool(_SO.match(t))
+
+
 def _ghi_buoc(key: str, **moi: Any) -> None:
     """Ghi tiến độ của phiên vào sổ chờ. Phiên đã hết hạn thì bỏ qua lặng lẽ."""
     with _lock:

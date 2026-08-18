@@ -1744,10 +1744,15 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
         # ngoại lệ này thì đúng 5 phút giữa hai mốc đó, người dùng bấm số mà
         # không có gì xảy ra.
         if _req:
+            from services import dich_cho as _dc_cho
             from services import photo_intent as _phi_cho
             from services import pdf_intent as _pi_cho
+            # Kể cả menu VIDEO: thiếu nó thì trong nhóm bắt tag, bot gửi menu
+            # bảy ô xong người dùng nhắn "6" mà cổng loại im lặng — menu treo
+            # đó tới lúc hết hạn.
             if (_phi_cho.dang_cho_anh(_ckey) or _phi_cho.has_pending(_ckey)
-                    or _pi_cho.has_pending(_ckey)):
+                    or _pi_cho.has_pending(_ckey)
+                    or _dc_cho.la_cau_tra_loi(_ckey, text or "")):
                 _req = False
                 _phi_cho.het_cho_anh(_ckey)   # dùng một lần, tránh mở cổng mãi
         if _req and not _caps.tag_gate_allows(
