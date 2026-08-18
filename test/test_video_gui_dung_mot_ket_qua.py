@@ -201,17 +201,42 @@ def test_link_khong_co_phu_de_san_thi_tai_ban_NHE_ve_tu_nghe(bot, monkeypatch):
     assert len(bot._ghi["tep"]) == 1
 
 
-def test_loi_tai_video_thi_bao_chu_khong_im_lang(bot, phu_de_gia, monkeypatch):
+def test_may_chua_cai_yt_dlp_thi_noi_ro(bot, phu_de_gia, monkeypatch):
+    """Không phụ thuộc máy chạy test có yt-dlp hay không — ép hẳn hai chiều."""
     from services import video_tai as vt
 
-    def _hong(url, thu_muc=None):
-        raise vt.LoiTaiVideo("Máy chủ chưa cài yt-dlp nên chưa tải được video về.")
-
-    monkeypatch.setattr(vt, "tai_video", _hong)
+    monkeypatch.setattr(vt, "co_yt_dlp", lambda: False)
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "phu-de", "dang_ra": "ghep", "vi_tri": "duoi",
                         "target": "vi", "nguon": "en"})
     assert any("yt-dlp" in t for t in bot._ghi["tin"])
+    assert not bot._ghi["duong"]
+
+
+def test_ca_hai_ban_tai_deu_hong_thi_van_gui_phu_de(bot, phu_de_gia, monkeypatch):
+    """Tải hỏng mà vẫn còn phụ đề trong tay thì đừng để cả lượt thành công cốc."""
+    from services import video_tai as vt
+
+    monkeypatch.setattr(vt, "co_yt_dlp", lambda: True)
+
+    class _TaiHong:
+        def __init__(self, url): pass
+        def ban_vua(self): raise vt.LoiTaiVideo("nguồn chặn")
+        def ban_cao(self): return ""
+        def dong(self): pass
+
+    monkeypatch.setattr(vt, "TaiSongSong", _TaiHong)
+
+    def _khong_duoc_goi(*a, **k):
+        raise AssertionError("không có tệp video thì đừng gọi ffmpeg")
+
+    monkeypatch.setattr(vt, "ghep_phu_de", _khong_duoc_goi)
+
+    bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                       {"kieu": "phu-de", "dang_ra": "ghep", "vi_tri": "duoi",
+                        "target": "vi", "nguon": "en"})
+    assert any("không tải được video" in t.lower() for t in bot._ghi["tin"])
+    assert len(bot._ghi["tep"]) == 1, "vẫn phải nhận được tệp .srt"
     assert not bot._ghi["duong"]
 
 

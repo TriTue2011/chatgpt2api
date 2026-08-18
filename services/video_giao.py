@@ -361,10 +361,18 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
         srt_chu = r["srt"].decode("utf-8")
         if vi_tri == "tren":
             srt_chu = _vd.srt_chu_tren(srt_chu)
-        if dang_ra == "ghep" and (duong_xu_ly or tai is not None):
+        if dang_ra == "ghep":
             # Đốt chữ lên bản NÉT — đây là bước duy nhất cần hình đẹp. Bản nét
             # hỏng thì vẫn đốt lên bản vừa: video hơi mờ vẫn hơn không có gì.
             ban_net = (tai.ban_cao() if tai is not None else "") or duong_xu_ly
+            if not ban_net:
+                # Cả hai bản đều không về được. Vẫn còn phụ đề trong tay nên
+                # gửi nó, đừng để cả lượt thành công cốc.
+                kenh.gui_tin("⚠️ Em không tải được video về nên chưa đốt chữ "
+                             "vào hình được. Em gửi tệp .srt để không mất kết "
+                             "quả ạ.")
+                kenh.gui_bytes(srt_chu.encode("utf-8"), r["ten"], "Phụ đề")
+                return
             try:
                 # Ghép thì đưa .srt GỐC: vị trí đã do force_style Alignment lo
                 # (video_tai.VI_TRI). Thêm thẻ {\an8} vào nữa là hai đường cùng
