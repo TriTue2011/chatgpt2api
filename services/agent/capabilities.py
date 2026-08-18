@@ -2988,6 +2988,69 @@ def _anh_cua_nguoi_nay(ctx: dict, so: int) -> list[str]:
     return _media_cua_nguoi_nay(ctx, so, _MEDIA_EXT["image"])
 
 
+def _h_delete_media(args: dict, ctx: dict) -> dict:
+    """Xoá ảnh/video/nhạc trong thư viện theo luật giữ lại — CHỈ ADMIN.
+
+    Hai lớp chặn, cố ý chồng nhau vì xoá là việc không sửa lại được:
+
+      1. `risk=CHANGE` → qua cổng duyệt của orchestrator như mọi hành động đổi
+         trạng thái.
+      2. Chính hàm này: lần gọi ĐẦU chỉ ĐẾM và mô tả, phải có `xac_nhan=true`
+         mới xoá thật. Nhờ vậy người dùng luôn thấy "bao nhiêu tệp, bao nhiêu
+         MB, từ ngày nào" trước khi gật — cổng duyệt chỉ đọc lại tên tool nên
+         một mình nó không nói được điều đó.
+
+    Chỉ admin: thư viện là kho CHUNG (ảnh camera, ảnh người khác tạo). Cùng
+    nguyên tắc với `_h_library_media` — người thường chỉ chạm tới thứ của họ,
+    mà "thứ của họ" trong sổ riêng là URL chứ không phải đường dẫn tệp, nên
+    chưa xoá theo người được; đừng vờ như làm được.
+    """
+    from services import media_don as _md
+
+    if not bool((ctx or {}).get("is_admin")):
+        return {"deliver_now": True,
+                "text": "Xoá thư viện ảnh/video chỉ chủ máy làm được ạ — kho này "
+                        "chung cho cả nhà nên em không xoá giúp người khác."}
+
+    kind = str(args.get("kind") or "image").strip().lower()
+    if kind in ("photo", "ảnh", "anh", "hình"):
+        kind = "image"
+    elif kind in ("nhạc", "nhac", "audio", "bài hát", "song"):
+        kind = "music"
+    elif kind in ("phim", "clip"):
+        kind = "video"
+    che_do = str(args.get("che_do") or _md.VUA_TAO).strip().lower()
+    moc = str(args.get("moc") or _md.HOM_NAY).strip().lower()
+    try:
+        so_ngay = int(args.get("so_ngay") or 0)
+    except (TypeError, ValueError):
+        so_ngay = 0
+
+    try:
+        chon = _md.chon(kind, che_do, so_ngay=so_ngay, moc=moc)
+    except _md.LoiDonMedia as exc:
+        return {"deliver_now": True, "text": f"Em chưa xoá được: {exc} ạ."}
+
+    nhan = {"image": "ảnh", "video": "video", "music": "bản nhạc"}.get(kind, "tệp")
+    if not chon:
+        return {"deliver_now": True,
+                "text": f"Không có {nhan} nào khớp nên em không xoá gì ạ."}
+
+    mo_ta = _md.tom_tat(chon)
+    if not bool(args.get("xac_nhan")):
+        # Kể tên vài tệp đầu: "12 tệp" nghe giống nhau ở mọi lựa chọn, thấy tên
+        # mới biết mình đang xoá đúng thứ định xoá.
+        vai_ten = ", ".join(x["rel"].rsplit("/", 1)[-1] for x in chon[:3])
+        them = f" (ví dụ: {vai_ten}…)" if len(chon) > 3 else f" ({vai_ten})"
+        return {"deliver_now": True,
+                "text": (f"Em sẽ xoá {mo_ta}{them}.\nAnh/chị xác nhận thì em làm "
+                         "ngay ạ — xoá rồi thì không lấy lại được.")}
+
+    so = _md.xoa(chon)
+    return {"deliver_now": True,
+            "text": f"Đã xoá {so} {nhan} khỏi thư viện ({mo_ta}) ạ."}
+
+
 def _h_library_media(args: dict, ctx: dict) -> dict:
     """Lấy media ĐÃ TẠO (ảnh/video/nhạc) và gửi lại — có PHÂN QUYỀN.
 
@@ -4890,6 +4953,37 @@ CAPABILITIES: dict[str, Capability] = {
             "url": {"type": "string", "description": "Link video YouTube"}},
             "required": ["url"]},
         workflow="Phụ đề có thể dài — đọc rồi TÓM TẮT các ý chính, không dán thô."),
+    "delete_media": Capability(
+        name="delete_media", risk=CHANGE, handler=_h_delete_media,
+        emoji="🧹", label="Xoá / dọn thư viện ảnh, video, nhạc",
+        description=(
+            "XOÁ ảnh/video/nhạc trong thư viện. Gọi tool này khi người dùng nói "
+            "'xoá ảnh vừa tạo', 'xoá video vừa tạo', 'xoá hết ảnh/video trong "
+            "thư viện', 'xoá ảnh từ N ngày trở về trước', 'giữ lại ảnh N ngày "
+            "gần nhất', 'giữ lại N ngày kể từ ảnh tạo lần cuối'. Lần gọi đầu "
+            "chỉ ĐẾM và mô tả sẽ xoá gì; người dùng đồng ý thì gọi LẠI với "
+            "xac_nhan=true. Chỉ chủ máy dùng được."),
+        parameters={"type": "object", "properties": {
+            "kind": {"type": "string", "enum": ["image", "video", "music"],
+                     "description": "Loại cần xoá (mặc định image)"},
+            "che_do": {"type": "string", "enum": ["vua-tao", "tat-ca", "cu-hon"],
+                       "description": ("'vua-tao' = đúng tệp mới nhất; 'tat-ca' = "
+                                       "cả thư viện; 'cu-hon' = cũ hơn so_ngay "
+                                       "ngày (dùng cho cả 'xoá từ N ngày trở về "
+                                       "trước' lẫn 'giữ lại N ngày gần nhất')")},
+            "so_ngay": {"type": "integer",
+                        "description": "Số ngày giữ lại, bắt buộc khi che_do='cu-hon'"},
+            "moc": {"type": "string", "enum": ["hom-nay", "lan-cuoi"],
+                    "description": ("Đếm ngược từ đâu: 'hom-nay' (mặc định) hay "
+                                    "'lan-cuoi' = từ tệp mới nhất trong thư viện "
+                                    "— dùng khi người dùng nói 'kể từ ảnh/video "
+                                    "tạo lần cuối'")},
+            "xac_nhan": {"type": "boolean",
+                         "description": ("true = xoá THẬT. Chỉ truyền sau khi "
+                                         "người dùng đã thấy số tệp và đồng ý.")}}},
+        workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
+                  "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
+                  "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
     "library_media": Capability(
         name="library_media", risk=READ, handler=_h_library_media,
         emoji="🗂️", label="Lấy ảnh/video/nhạc đã tạo (thư viện)",
@@ -6006,7 +6100,10 @@ CAPABILITIES: dict[str, Capability] = {
 # "_ungrouped" → tự động BỊ CHẶN với thread có bật lọc (an toàn: deny-by-default),
 # và luôn chạy với thread không bật lọc (allow=None).
 _CAP_GROUP: dict[str, str] = {
-    "generate_image": "image", "library_media": "image",
+    # delete_media theo nhóm "image" cùng library_media, dù nó chạm cả video và
+    # nhạc: hai tool này là một cặp đọc/xoá trên CÙNG kho, tách nhóm thì có
+    # thread xem được thư viện mà không dọn được, hoặc ngược lại.
+    "generate_image": "image", "library_media": "image", "delete_media": "image",
     "generate_music": "music",
     "generate_video": "video",
     "web_search": "web", "read_webpage": "web", "youtube_transcript": "web",
