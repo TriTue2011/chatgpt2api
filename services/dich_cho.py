@@ -128,8 +128,15 @@ def la_chu(pend: dict[str, Any]) -> bool:
 BUOC_VIEC, BUOC_NGUON, BUOC_DICH = "viec", "nguon", "dich"
 #: Hai bước RIÊNG của ô phụ đề, hỏi sau khi đã biết tiếng đích.
 BUOC_VI_TRI, BUOC_DANG_RA = "vi-tri", "dang-ra"
+#: Bước RIÊNG của ô "phân tích một đoạn cụ thể" — đoạn nào thì chỉ người dùng
+#: biết. Đây là bước duy nhất nhận CHỮ TỰ DO chứ không phải số menu.
+BUOC_DOAN = "doan"
 
 #: Việc làm được với tệp: mã → (số menu, nhãn, có phải dịch không).
+#: Cờ thứ ba chỉ để ĐỌC cho hiểu — luồng hỏi tiếng nào là do VIEC_QUA_LLM,
+#: VIEC_KHONG_DICH và VIEC_GIU_GOC bên dưới quyết định. Bản trước lấy cờ
+#: này làm điều kiện rẽ nhánh, và một việc KHÔNG nằm trong bảng thì rơi
+#: vào giá trị mặc định — /stt bị hỏi thêm một câu không ai xin.
 # Chủ máy chốt 18/08: MỘT menu duy nhất, đủ mục, dùng CHUNG cho link và cho tệp
 # gửi lên. Trước đó có hai menu rời nhau và không mục nào giống mục nào — bot tự
 # bịa danh sách riêng cho link (tóm tắt / ý chính / phân tích / ghi chú), còn
@@ -152,8 +159,22 @@ VIEC = {
     "long-tieng": ("7", "Lồng tiếng video (giữ nhạc và hiệu ứng)", True),
 }
 
-#: Năm ô đầu chạy trên PHỤ ĐỀ đã có, do LLM làm — không hỏi tiếng đích.
+#: Bốn ô đầu chạy trên PHỤ ĐỀ đã có, do LLM làm — không hỏi tiếng đích.
 VIEC_QUA_LLM = ("tom-tat", "y-chinh", "phan-tich", "ghi-chu")
+
+#: Việc KHÔNG dịch, không nằm trong menu ``VIEC``: /stt vào thẳng đây (tên lệnh
+#: đã nói rõ ý định) nên bảng menu không có ô nào cho nó. Mã việc → kiểu kết quả.
+#: Phải tra riêng: bản trước dò bằng ``VIEC.get(viec, (..., True))[2]``, mà
+#: "chu-goc" không còn trong VIEC nên rơi vào mặc định "có dịch" — /stt bị hỏi
+#: thêm "dịch sang tiếng nào" rồi trả .srt đã dịch, đúng thứ người dùng không xin.
+VIEC_KHONG_DICH = {"chu-goc": "chu"}
+
+#: Việc CHO PHÉP giữ nguyên tiếng gốc (chép lời, không dịch) — lựa chọn thêm ở
+#: bước hỏi tiếng đích. Menu cũ có hẳn hai ô riêng ("Phụ đề .srt GIỮ nguyên
+#: tiếng gốc" và "Bản chữ giữ nguyên tiếng"); menu bảy ô gộp chúng vào đây, nếu
+#: không thì video tiếng Anh muốn phụ đề tiếng Anh là không bấm được nữa.
+#: Lồng tiếng không có mặt: thay tiếng bằng chính tiếng đang nói là việc vô nghĩa.
+VIEC_GIU_GOC = ("phu-de", "dich-chu")
 
 #: Vị trí chữ khi ghép vào hình — cùng tên với services.video_tai.VI_TRI.
 VI_TRI_PHU_DE = {"1": "duoi", "2": "tren"}
@@ -285,6 +306,9 @@ def menu_buoc(key: str) -> str:
     if buoc == BUOC_DUYET_DICH:
         return ("🔊 Em đọc bản nào ạ?\n1. Bản dịch vừa gửi\n"
                 "2. Bản gốc, giữ nguyên tiếng")
+    if buoc == BUOC_DOAN:
+        return ("🔍 Anh muốn phân tích đoạn nào ạ? Nhắn mốc thời gian (ví dụ "
+                "«từ 10:20 đến 12:00») hoặc nói chủ đề của đoạn đó.")
     if buoc == BUOC_VI_TRI:
         return ("📝 Chữ hiện ở đâu ạ?\n1. Ở DƯỚI khung hình (thường dùng)\n"
                 "2. Ở TRÊN khung hình (khi video đã có sẵn chữ ở dưới)")
@@ -311,8 +335,11 @@ def menu_buoc(key: str) -> str:
         return (f"🗣️ Tệp này nói tiếng gì ạ? Nhắn số:\n{dong}\n"
                 "Biết trước tiếng thì em nghe chuẩn hơn và nhanh hơn.")
     nguon = str(pend.get("nguon") or "")
-    dong = "\n".join(f"{i}. Tiếng {TEN_TIENG[m]}"
-                     for i, m in enumerate(_danh_sach_tieng(nguon), 1))
+    ds = _danh_sach_tieng(nguon)
+    dong = "\n".join(f"{i}. Tiếng {TEN_TIENG[m]}" for i, m in enumerate(ds, 1))
+    if str(pend.get("viec") or "") in VIEC_GIU_GOC and nguon in TEN_TIENG:
+        dong += (f"\n{len(ds) + 1}. Giữ nguyên tiếng {TEN_TIENG[nguon]} — "
+                 "chép lời, không dịch")
     return (f"🌐 Dịch từ tiếng {TEN_TIENG.get(nguon, '?')} sang tiếng nào ạ? "
             f"Nhắn số:\n{dong}")
 
@@ -335,11 +362,16 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         return None
     if t in _BO:
         return {"bo": True}
+    buoc = str(pend.get("buoc") or BUOC_VIEC)
+    if buoc == BUOC_DOAN:
+        # Bước này KHÔNG đi qua bộ giải số: câu trả lời là mốc giờ hay chủ đề
+        # ("từ 10:20", "phần nói về lãi kép"), và "10:20" mà đưa vào _SO thì
+        # thành lựa chọn số 1. Dùng chữ GỐC để giữ hoa/thường.
+        return {"kieu": "llm", "viec": "phan-tich", "doan": str(text).strip()}
     m = _SO.match(t)
     if not m:
         return None
     so = m.group(1)
-    buoc = str(pend.get("buoc") or BUOC_VIEC)
     if buoc == BUOC_TIENG_DOC:
         ds = _danh_sach_tieng()
         if int(so) > len(ds):
@@ -356,8 +388,14 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         chon = next((k for k, v in _viec_hop_le(pend).items() if v[0] == so), "")
         if not chon:
             return None
+        if chon == "phan-tich":
+            # Ô này ghi rõ "một đoạn CỤ THỂ" — đoạn nào thì chỉ người dùng
+            # biết. Không hỏi thì LLM chỉ còn cách tóm tắt cả video, tức là
+            # trùng ô 1 và ô người dùng chọn coi như không có.
+            _ghi_buoc(key, viec=chon, buoc=BUOC_DOAN)
+            return {"tiep": True}
         if chon in VIEC_QUA_LLM:
-            # Bốn ô này chạy trên PHỤ ĐỀ đã có rồi giao cho LLM — không có
+            # Ba ô còn lại chạy trên PHỤ ĐỀ đã có rồi giao cho LLM — không có
             # tiếng nguồn/đích để hỏi, hỏi thêm chỉ làm người dùng bấm thừa.
             return {"kieu": "llm", "viec": chon}
         _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
@@ -368,10 +406,8 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
             return None
         nguon = ds[int(so) - 1]
         viec = str(pend.get("viec") or "phu-de")
-        if not VIEC.get(viec, ("", "", True))[2]:      # chép lời: khỏi hỏi đích
-            # "chu-goc" ra BẢN CHỮ, "chep-loi" ra .srt — cùng là không dịch
-            # nhưng khác hẳn thứ người dùng nhận được.
-            return {"kieu": "chu" if viec == "chu-goc" else "phu-de",
+        if viec in VIEC_KHONG_DICH:                    # chép lời: khỏi hỏi đích
+            return {"kieu": VIEC_KHONG_DICH[viec],
                     "target": "giu-goc", "nguon": nguon}
         _ghi_buoc(key, nguon=nguon, buoc=BUOC_DICH)
         return {"tiep": True}
@@ -379,6 +415,13 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         vi_tri = VI_TRI_PHU_DE.get(so)
         if not vi_tri:
             return None
+        if not _co_luong_hinh(pend):
+            # Tệp .srt / tệp âm thanh: không có hình để ghép chữ vào, nên câu
+            # "trả .srt hay ghép vào video" chỉ có MỘT đáp án làm được. Hỏi
+            # một câu mà đáp án đã biết trước là bắt người dùng bấm thừa.
+            return {"kieu": "phu-de", "dang_ra": "srt", "vi_tri": vi_tri,
+                    "target": str(pend.get("dich") or ""),
+                    "nguon": str(pend.get("nguon") or "")}
         _ghi_buoc(key, vi_tri=vi_tri, buoc=BUOC_DANG_RA)
         return {"tiep": True}
     if buoc == BUOC_DANG_RA:
@@ -389,16 +432,21 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
                 "vi_tri": str(pend.get("vi_tri") or "duoi"),
                 "target": str(pend.get("dich") or ""),
                 "nguon": str(pend.get("nguon") or "")}
-    ds = _danh_sach_tieng(str(pend.get("nguon") or ""))
-    if int(so) > len(ds):
-        return None
+    nguon = str(pend.get("nguon") or "")
+    ds = _danh_sach_tieng(nguon)
     viec = str(pend.get("viec") or "phu-de")
+    giu_goc = int(so) == len(ds) + 1 and viec in VIEC_GIU_GOC and nguon in TEN_TIENG
+    if int(so) > len(ds) and not giu_goc:
+        return None
+    if giu_goc and viec == "dich-chu":
+        return {"kieu": "chu", "target": "giu-goc", "nguon": nguon}
     # Ô phụ đề còn hai câu hỏi nữa — vị trí chữ, rồi dạng trả. Chủ máy chốt
     # 18/08: "nếu là phụ đề thì phải đưa lựa chọn trên hay dưới, thứ 2 hỏi trả
     # file phụ đề srt hay ghép luôn vào video". Trước đây bot tự đoán rồi gửi
     # CẢ HAI tệp .srt (bản thường và bản chữ-trên) — xem zalo_personal.
     if viec == "phu-de":
-        _ghi_buoc(key, dich=ds[int(so) - 1], buoc=BUOC_VI_TRI)
+        _ghi_buoc(key, dich="giu-goc" if giu_goc else ds[int(so) - 1],
+                  buoc=BUOC_VI_TRI)
         return {"tiep": True}
     kieu = "chu" if viec == "dich-chu" else (
         "long-tieng" if viec == "long-tieng" else "phu-de")

@@ -10,9 +10,10 @@ cùng một kết quả kém hơn. Đo trên máy chủ 13/08/2026: video 18 ph�
 Đường ra: một tệp .srt (nạp được vào mọi trình phát) kèm bản chữ để đọc luôn
 trong chat. KHÔNG gọi LLM — dịch bằng máy dịch trong stack (vn-translate).
 
-Chưa làm ở bản này: TikTok và video YouTube KHÔNG có phụ đề nào. Cả hai đều cần
-tải âm thanh về rồi tự nghe (yt-dlp + nhận dạng tiếng nói có dấu thời gian),
-xem ``LOI_CHUA_CO_TIENG``.
+Video KHÔNG có phụ đề sẵn (TikTok, YouTube tắt phụ đề tự động) thì module này
+trả ``LOI_CHUA_CO_TIENG``; đường chữa nằm ở tầng gọi — ``services.video_tai``
+tải hình về rồi ``dich_tep_video`` tự nghe (bot Zalo đã nối, xem
+``zalo_personal._lam_viec_dich``).
 """
 from __future__ import annotations
 
@@ -148,9 +149,18 @@ _NHAN_KHONG_PHAI_LOI = re.compile(
 )
 
 LOI_CHUA_CO_TIENG = (
-    "video này không có phụ đề nào để lấy. Dịch được nó cần tải tiếng về rồi "
-    "tự nghe — phần đó chưa làm"
+    "video này không có phụ đề sẵn để lấy"
 )
+
+
+def thieu_phu_de_san(r: dict[str, Any]) -> bool:
+    """Kết quả hỏng ĐÚNG vì video không có phụ đề sẵn, không phải lỗi khác.
+
+    Người gọi (bot Zalo) dùng nó để quyết định có tải hình về rồi tự nghe
+    không. Phân biệt thật sự cần thiết: "video dài quá mức" hay "link hỏng"
+    mà cũng tải về nghe thì vừa lâu vừa vẫn hỏng.
+    """
+    return str(r.get("error") or "") == LOI_CHUA_CO_TIENG
 
 
 @dataclass

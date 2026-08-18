@@ -1934,6 +1934,68 @@ def _serve_docx(thread_id: str, thread_type: int, docx_path: str, how: str,
     logger.warning("zalop Word sendFile fail path=%s", link)
 
 
+def _tai_video_ve(thread_id: str, thread_type: int, url: str) -> str:
+    """Tải video của một link về máy. Trả đường dẫn, hoặc "" khi hỏng (đã báo).
+
+    Chỉ gọi khi thật sự cần TỆP HÌNH (ghép chữ vào khung, lồng tiếng, hoặc
+    video không có phụ đề sẵn). Đường phụ đề-sẵn-có của ``video_dich`` nhanh
+    hơn nhiều nên vẫn là đường mặc định cho các ô chỉ cần chữ.
+    """
+    from services import video_tai as _vt
+
+    send_message(thread_id,
+                 "⬇️ Em tải video về đã, lấy bản phân giải cao nhất nên video "
+                 "dài thì mất vài phút ạ…", thread_type)
+    send_typing(thread_id, thread_type)
+    try:
+        return _vt.tai_video(url)
+    except _vt.LoiTaiVideo as exc:
+        send_message(thread_id, f"⚠️ {exc}", thread_type)
+    except Exception as exc:
+        logger.warning("zalop tải video lỗi: %s", str(exc)[:200])
+        send_message(thread_id, f"⚠️ Không tải được video: {str(exc)[:200]}",
+                     thread_type)
+    return ""
+
+
+def _tra_loi_tu_phu_de(thread_id: str, thread_type: int, r: dict,
+                       chon: dict) -> None:
+    """Bốn ô đọc-hiểu: tóm tắt · ý chính · phân tích đoạn · ghi chú.
+
+    Chủ máy chốt 18/08: "chuyển thành phụ đề rồi mới qua llm để làm 12345" —
+    nên hàm này KHÔNG nghe lại video, nó nhận kết quả phụ đề đã có trong tay.
+    """
+    from services import video_dich as _vd
+    from services import video_hoi as _vh
+
+    if not r.get("ok"):
+        send_message(thread_id, _vd.bao_cao(r), thread_type)
+        return
+    viec = str(chon.get("viec") or "")
+    # Ô phân tích cần MỐC GIỜ để tìm đúng đoạn người dùng nêu ("từ 10:20"); ba
+    # ô còn lại chỉ cần lời thoại — số thứ tự và mốc giờ của .srt chỉ tổ ăn chỗ
+    # trong cửa sổ ngữ cảnh mà không thêm nghĩa nào.
+    noi_dung = (r["srt"].decode("utf-8") if viec in _vh.CAN_MOC_GIO
+                else str(r.get("chu") or ""))
+    send_message(thread_id, "🧠 Có phụ đề rồi, em đọc và trả lời ngay ạ…",
+                 thread_type)
+    send_typing(thread_id, thread_type)
+    try:
+        tra_loi = _vh.hoi(viec, noi_dung, them=str(chon.get("doan") or ""))
+    except Exception as exc:
+        logger.warning("zalop đọc phụ đề lỗi: %s", str(exc)[:200])
+        send_message(thread_id,
+                     f"⚠️ Em lấy được phụ đề nhưng chưa trả lời được: "
+                     f"{str(exc)[:200]}", thread_type)
+        # Gửi kèm phụ đề: nghe cả video xong mà mất trắng vì model bận thì lần
+        # sau người dùng phải chờ lại từ đầu.
+        _serve_bytes(thread_id, thread_type, r["srt"], r["ten"],
+                     "Phụ đề (để không mất kết quả)")
+        return
+    if not _tra_loi_dai_ra_word(thread_id, thread_type, tra_loi):
+        send_message(thread_id, tra_loi, thread_type, rich=True)
+
+
 def _lam_viec_dich(thread_id: str, thread_type: int,
                    pend: dict | None, chon: dict) -> None:
     """Chạy việc dịch theo lựa chọn người dùng vừa bấm trong menu.
@@ -1949,7 +2011,10 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
         return
     kieu = str(chon.get("kieu") or "phu-de")
     target = _dc.target_cho_may(chon)
-    tep_long_tieng: list[str] = []
+    # Mọi tệp DO EM DỰNG RA trong lượt này (video tải về, bản đã ghép chữ, bản
+    # lồng tiếng) — xoá hết ở finally. Tệp người dùng gửi lên thì không nằm đây:
+    # nó do _dc.don_tep(pend) dọn.
+    tep_tam: list[str] = []
     try:
         # ── Chữ: dịch ngay, không có chuyện phụ đề ───────────────────────────
         if _dc.la_chu(pend):
@@ -1984,7 +2049,14 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
                          thread_type, rich=True)
             return
 
-        # ── Link / tệp: ra phụ đề hoặc bản chữ ───────────────────────────────
+        # ── Link / tệp: phụ đề · bản chữ · video · câu trả lời của LLM ──────
+        from services import video_tai as _vt
+
+        dang_ra = str(chon.get("dang_ra") or "")
+        vi_tri = str(chon.get("vi_tri") or "duoi")
+        # Hai việc cần TỆP HÌNH trong tay: đốt chữ vào khung, và thay tiếng.
+        # Ô .srt thì không — tải mấy trăm MB về để trả một tệp chữ là phí.
+        can_video = kieu == "long-tieng" or (kieu == "phu-de" and dang_ra == "ghep")
         if kieu == "long-tieng":
             from services import tach_am_gpu as _tach_am
 
@@ -1993,49 +2065,86 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             except _tach_am.LoiTachAm as exc:
                 send_message(
                     thread_id,
-                    f"⚠️ Chưa thể lồng tiếng: {exc}. Anh chọn tạo phụ đề trước "
-                    "hoặc bật máy tách lời để em giữ được nhạc và hiệu ứng nhé.",
+                    f"⚠️ Chưa lồng tiếng được: {exc}.\nKhông có GPU tách lời thì "
+                    "em chỉ tạo được PHỤ ĐỀ thôi ạ — anh gửi lại rồi chọn mục 6 nhé.",
                     thread_type)
                 return
+        duong_video = str(pend.get("path") or "")
         send_message(thread_id, "🎬 Em làm ngay, video dài có thể mất vài phút ạ…",
                      thread_type)
         send_typing(thread_id, thread_type)
         # "giu-goc" = chép lời, không dịch: truyền cờ để tầng dưới đặt
         # đích = chính tiếng nguồn sau khi đã nghe/đọc ra tiếng đó.
+        # Bốn ô LLM cũng chép lời: model đọc được tiếng gốc, dịch trước chỉ tốn
+        # thêm một lượt máy dịch và thêm một chỗ cho nghĩa trượt đi.
         _tg = "" if target == "giu-goc" else target
-        _chep = target == "giu-goc"
-        if pend.get("url"):
+        _chep = target == "giu-goc" or kieu == "llm"
+        # Chat không có thanh tiến độ và Zalo không cho sửa tin đã gửi (bot
+        # server chỉ có `undo`), nên chỉ nhắn ở MỐC chuyển giai đoạn. Báo
+        # từng lô dịch là mười mấy tin nhắn cho một video.
+        _so_moc = 0
+
+        def _tien_do_zalo(buoc: str, _phan_tram: int | None, moc: bool) -> None:
+            nonlocal _so_moc
+            if not moc:
+                return
+            _so_moc += 1
+            # Mốc đầu là "đang bóc tiếng", mà câu "Em làm ngay…" ở trên vừa
+            # nói đúng điều đó — nhắn lại là hai tin dính nhau cùng một nghĩa.
+            if _so_moc > 1:
+                send_message(thread_id, f"⏳ {buoc}", thread_type)
+
+        def _nghe_tep_tai_ve() -> dict:
+            # Người dùng đã nói rõ tệp nói tiếng gì ở bước 2 → khoá cứng model
+            # nghe, khỏi dò. Dò là mỗi tiếng ứng viên thêm một lượt nghe.
+            return _vd.dich_tep_video(duong_video,
+                                      ten_goc or Path(duong_video).name, _tg,
+                                      chep_loi=_chep,
+                                      nguon_biet=str(chon.get("nguon") or ""),
+                                      tien_do=_tien_do_zalo)
+
+        ten_goc = str(pend.get("ten") or "")
+        if _vd.la_tep_phu_de(ten_goc):
+            r = _vd.dich_tep_phu_de(pend["path"], ten_goc, _tg, chep_loi=_chep)
+        elif pend.get("url"):
+            # Phụ đề SẴN CÓ của YouTube trước đã: nó khớp đúng khung hình, lấy
+            # trong vài giây, và khỏi nghe lại cả video. Tải hình về chỉ để ghép
+            # chữ / thay tiếng, và làm SAU khi chắc chắn có phụ đề — hỏng ở bước
+            # chữ mà đã tải mấy trăm MB thì phí trắng.
+            #
             # Bước 2 đã hỏi video nói tiếng gì → khoá việc chọn phụ đề vào đúng
             # tiếng đó. Bỏ câu trả lời ở đây thì video có cả bản Nhật lẫn bản
             # Anh vẫn có thể bị lấy bản Anh rồi dịch tiếp — dịch hai lần qua ba
             # thứ tiếng, đúng lỗi đã đo ở đường web.
             r = _vd.dich_video(pend["url"], _tg, chep_loi=_chep,
                                nguon_biet=str(chon.get("nguon") or ""))
-        elif _vd.la_tep_phu_de(str(pend.get("ten") or "")):
-            r = _vd.dich_tep_phu_de(pend["path"], pend.get("ten") or "", _tg,
-                                    chep_loi=_chep)
-        else:
-            # Chat không có thanh tiến độ và Zalo không cho sửa tin đã gửi (bot
-            # server chỉ có `undo`), nên chỉ nhắn ở MỐC chuyển giai đoạn. Báo
-            # từng lô dịch là mười mấy tin nhắn cho một video.
-            _so_moc = 0
-
-            def _tien_do_zalo(buoc: str, _phan_tram: int | None, moc: bool) -> None:
-                nonlocal _so_moc
-                if not moc:
+            if not r.get("ok") and _vd.thieu_phu_de_san(r):
+                # Không có phụ đề sẵn thì tải hình về rồi TỰ NGHE — việc mà
+                # video_dich.LOI_CHUA_CO_TIENG từng ghi là "chưa làm".
+                send_message(thread_id,
+                             "🎬 Video này không có phụ đề sẵn, em tải về nghe "
+                             "trực tiếp nhé — lâu hơn một chút ạ.", thread_type)
+                duong_video = _tai_video_ve(thread_id, thread_type,
+                                            str(pend["url"]))
+                if not duong_video:
                     return
-                _so_moc += 1
-                # Mốc đầu là "đang bóc tiếng", mà câu "Em làm ngay…" ở trên vừa
-                # nói đúng điều đó — nhắn lại là hai tin dính nhau cùng một nghĩa.
-                if _so_moc > 1:
-                    send_message(thread_id, f"⏳ {buoc}", thread_type)
+                tep_tam.append(duong_video)
+                r = _nghe_tep_tai_ve()
+        else:
+            r = _nghe_tep_tai_ve()
+        if can_video and not duong_video and r.get("ok"):
+            duong_video = _tai_video_ve(thread_id, thread_type,
+                                        str(pend.get("url") or ""))
+            if not duong_video:
+                return
+            tep_tam.append(duong_video)
 
-            # Người dùng đã nói rõ tệp nói tiếng gì ở bước 2 → khoá cứng model
-            # nghe, khỏi dò. Dò là mỗi tiếng ứng viên thêm một lượt nghe.
-            r = _vd.dich_tep_video(pend["path"], pend.get("ten") or "", _tg,
-                                   chep_loi=_chep,
-                                   nguon_biet=str(chon.get("nguon") or ""),
-                                   tien_do=_tien_do_zalo)
+        # ── Bốn ô đọc-hiểu: phụ đề vừa xong là ĐẦU VÀO cho LLM ──────────────
+        # Chủ máy chốt 18/08: "chuyển thành phụ đề rồi mới qua llm để làm 12345".
+        if kieu == "llm":
+            _tra_loi_tu_phu_de(thread_id, thread_type, r, chon)
+            return
+
         if kieu == "long-tieng" and r.get("ok") and not r.get("canh_bao_dich"):
             from services import video_dub as _dub
 
@@ -2045,9 +2154,9 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
                          thread_type)
             try:
                 giong = _dub.chon_giong(str(r.get("dich") or ""))
-                dub = _dub.long_tieng(pend["path"], r["srt"], str(r["dich"]),
+                dub = _dub.long_tieng(duong_video, r["srt"], str(r["dich"]),
                                       voice=giong)
-                tep_long_tieng.extend([dub.video_path, dub.prosody_path])
+                tep_tam.extend([dub.video_path, dub.prosody_path])
             except Exception as exc:
                 logger.warning("zalop lồng tiếng lỗi: %s", str(exc)[:200])
                 send_message(
@@ -2106,14 +2215,41 @@ def _lam_viec_dich(thread_id: str, thread_type: int,
             if len(r["chu"]) <= 1500:
                 send_message(thread_id, r["chu"], thread_type)
             return
-        _serve_bytes(thread_id, thread_type, r["srt"], r["ten"], "Phụ đề")
-        # Bản chữ-trên cho video đã có chữ in cứng ở đáy hình.
-        _serve_bytes(thread_id, thread_type,
-                     _vd.srt_chu_tren(r["srt"].decode("utf-8")).encode("utf-8"),
-                     f"phu-de-tren.{r['dich']}.srt",
-                     "Bản chữ hiện ở MÉP TRÊN (video đã có chữ sẵn ở dưới)")
+
+        # ── Ô phụ đề: MỘT tệp duy nhất, đúng vị trí và đúng dạng đã chọn ─────
+        # Bản cũ gửi CẢ HAI tệp .srt (bản thường + bản chữ-trên) vì không hỏi.
+        # Chủ máy chốt 18/08: "nếu phụ đề kèm 2 lựa chọn bên trên hay bên dưới,
+        # KHÔNG gửi 2 cái như bây giờ".
+        srt_chu = r["srt"].decode("utf-8")
+        if vi_tri == "tren":
+            srt_chu = _vd.srt_chu_tren(srt_chu)
+        if dang_ra == "ghep" and duong_video:
+            try:
+                # Ghép thì đưa .srt GỐC: vị trí đã do force_style Alignment lo
+                # (video_tai.VI_TRI). Thêm thẻ {\an8} vào nữa là hai đường cùng
+                # nói một điều, và chỉ cần một đường đổi ý là lệch nhau.
+                video_ra = _vt.ghep_phu_de(duong_video, r["srt"], vi_tri)
+            except Exception as exc:
+                logger.warning("zalop ghép phụ đề lỗi: %s", str(exc)[:200])
+                send_message(
+                    thread_id,
+                    f"⚠️ Ghép chữ vào video hỏng: {str(exc)[:200]}\n"
+                    "Em gửi tệp .srt để không mất kết quả ạ.", thread_type)
+                _serve_bytes(thread_id, thread_type, srt_chu.encode("utf-8"),
+                             r["ten"], "Phụ đề")
+                return
+            tep_tam.append(video_ra)
+            _serve_path(thread_id, thread_type, video_ra,
+                        f"phu-de-{vi_tri}.{r['dich']}.mp4",
+                        "Video đã ghép chữ ở "
+                        + ("MÉP TRÊN" if vi_tri == "tren" else "mép dưới"))
+            return
+        _serve_bytes(
+            thread_id, thread_type, srt_chu.encode("utf-8"),
+            r["ten"] if vi_tri == "duoi" else f"phu-de-tren.{r['dich']}.srt",
+            "Phụ đề" + (" — chữ hiện ở MÉP TRÊN" if vi_tri == "tren" else ""))
     finally:
-        for p in tep_long_tieng:
+        for p in tep_tam:
             try:
                 Path(p).unlink(missing_ok=True)
             except Exception:

@@ -315,9 +315,21 @@ def test_khong_co_link_thi_noi_ro():
     assert r["ok"] is False and "không thấy link" in r["error"]
 
 
-def test_tiktok_noi_ro_chua_lam(monkeypatch):
+def test_tiktok_noi_ro_la_khong_co_phu_de_san(monkeypatch):
+    """Lỗi phải nêu ĐÚNG nguyên nhân để tầng gọi chữa được.
+
+    ĐỔI 18/08: trước đây thông báo ghi "phần đó chưa làm" — nay làm rồi
+    (services.video_tai tải hình về, dich_tep_video tự nghe), nên tầng gọi
+    nhận ra bằng ``thieu_phu_de_san`` rồi tự chữa thay vì báo lỗi cho xong.
+    """
     r = vd.dich_video("https://www.tiktok.com/@ai/video/7300000000000000000")
-    assert r["ok"] is False and "chưa làm" in r["error"]
+    assert r["ok"] is False and vd.thieu_phu_de_san(r)
+    assert "không có phụ đề sẵn" in r["error"]
+
+
+def test_loi_khac_khong_bi_nham_la_thieu_phu_de():
+    """"Video dài quá mức" mà cũng tải về nghe thì vừa lâu vừa vẫn hỏng."""
+    assert not vd.thieu_phu_de_san({"ok": False, "error": "video dài 200 phút"})
 
 
 def test_video_qua_dai_thi_tu_choi(monkeypatch):
@@ -355,7 +367,7 @@ def test_khong_lay_duoc_phu_de_thi_khong_nem_ra_ngoai(monkeypatch):
 
     monkeypatch.setattr(vd, "lay_phu_de", _no)
     r = vd.dich_video("https://youtu.be/aircAruvnKk")
-    assert r["ok"] is False and "chưa làm" in r["error"]
+    assert r["ok"] is False and "không có phụ đề sẵn" in r["error"]
 
 
 def test_chua_cau_hinh_may_chu_dich_van_xuat_phu_de_goc(monkeypatch):

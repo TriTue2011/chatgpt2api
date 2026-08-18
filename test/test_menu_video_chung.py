@@ -89,13 +89,36 @@ def test_chon_srt_thi_khong_ghep(dc):
 
 @pytest.mark.pure
 @pytest.mark.parametrize("so,viec", [("1", "tom-tat"), ("2", "y-chinh"),
-                                     ("4", "phan-tich"), ("5", "ghi-chu")])
-def test_nam_o_llm_khong_hoi_them_tieng(dc, so, viec):
+                                     ("5", "ghi-chu")])
+def test_o_llm_khong_hoi_them_tieng(dc, so, viec):
     """Chạy trên phụ đề đã có → hỏi tiếng nguồn/đích chỉ làm bấm thừa."""
     k = f"phien_{so}"
     dc.set_pending(k, url="https://youtu.be/abc", ten="abc")
     kq = dc.tra_loi_buoc(k, so)
     assert kq == {"kieu": "llm", "viec": viec}
+
+
+@pytest.mark.pure
+def test_phan_tich_phai_hoi_doan_nao(dc):
+    """Ô 4 ghi "một đoạn CỤ THỂ" — không hỏi đoạn nào thì LLM chỉ còn cách tóm
+    tắt cả video, tức là trùng ô 1."""
+    k = "phien_4"
+    dc.set_pending(k, url="https://youtu.be/abc", ten="abc")
+    assert dc.tra_loi_buoc(k, "4") == {"tiep": True}
+    assert "đoạn nào" in dc.menu_buoc(k)
+
+    kq = dc.tra_loi_buoc(k, "từ 10:20 đến 12:00")
+    assert kq == {"kieu": "llm", "viec": "phan-tich", "doan": "từ 10:20 đến 12:00"}
+
+
+@pytest.mark.pure
+def test_moc_gio_khong_bi_doc_thanh_so_menu(dc):
+    """Bước hỏi đoạn nhận CHỮ TỰ DO: "10:20" mà qua bộ giải số thì thành lựa
+    chọn số 1."""
+    k = "phien_4b"
+    dc.set_pending(k, url="https://youtu.be/abc", ten="abc")
+    dc.tra_loi_buoc(k, "4")
+    assert dc.tra_loi_buoc(k, "10:20")["doan"] == "10:20"
 
 
 @pytest.mark.pure
