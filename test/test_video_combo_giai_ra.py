@@ -26,7 +26,9 @@ import pytest
 
 
 def _chay(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.get_event_loop() ném RuntimeError trên Python 3.12+ khi luồng
+    # chính chưa có vòng lặp nào — CI chạy 3.13 nên bản cũ đỏ ngay ở dòng này.
+    return asyncio.run(coro)
 
 
 @pytest.mark.pure
