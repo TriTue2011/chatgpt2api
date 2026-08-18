@@ -88,11 +88,15 @@ def _needs_refresh(account: dict[str, Any]) -> bool:
     return (exp - time.time()) <= REFRESH_THRESHOLD_SECONDS
 
 
-def _refresh_one(account: dict[str, Any]) -> dict[str, Any] | None:
+def _refresh_one(account: dict[str, Any], *,
+                 bo_qua_cache: bool = False) -> dict[str, Any] | None:
     """Refresh a single codex account's OAuth token.
 
     Returns updated account dict (with new access_token + refresh_token +
     expires_at) or None if refresh was skipped or failed.
+
+    ``bo_qua_cache``: hỏi thẳng máy chủ OAuth, bỏ qua mọi lớp cache. Tầng khôi
+    phục T0 phải bật cờ này — xem chú thích trong ``refresh_codex_token``.
     """
     refresh_token = str(account.get("refresh_token") or "").strip()
     if not refresh_token:
@@ -101,7 +105,8 @@ def _refresh_one(account: dict[str, Any]) -> dict[str, Any] | None:
     device_id = str(account.get("device_id") or "").strip() or None
 
     try:
-        result = refresh_codex_token(refresh_token, device_id)
+        result = refresh_codex_token(refresh_token, device_id,
+                                     bo_qua_cache=bo_qua_cache)
     except Exception as exc:
         logger.warning({
             "event": "codex_refresh_scheduler_error",
@@ -129,7 +134,13 @@ def _refresh_one(account: dict[str, Any]) -> dict[str, Any] | None:
     new_refresh = str(result.get("refresh_token") or refresh_token)
     new_expires_at = result.get("expires_at", 0.0)
 
-    if not new_access or new_access == account.get("access_token"):
+    if not new_access:
+        return None
+    # Token trùng chuỗi cũ KHÔNG có nghĩa là refresh hỏng — máy chủ OAuth vẫn
+    # nhận refresh_token và vẫn cấp token. Với lượt quét định kỳ thì bỏ qua cho
+    # đỡ ghi thừa; nhưng tầng khôi phục (bo_qua_cache=True) đang hỏi "giấy tờ
+    # còn sống không", nên trùng chuỗi vẫn là CÂU TRẢ LỜI CÓ.
+    if new_access == account.get("access_token") and not bo_qua_cache:
         return None
 
     email = str(account.get("email") or "")[:40]

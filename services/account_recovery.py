@@ -1104,11 +1104,20 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
     try:
         from services.codex_refresh_scheduler import _refresh_one
         from services.account_service import account_service
-        updated = _refresh_one(account)
+        # bo_qua_cache=True: T0 hỏi "giấy tờ đăng nhập còn sống không", mà
+        # cache thì trả lời được cả khi đã chết. Không bỏ qua thì T0 nhận lại
+        # đúng access_token cũ trong tủ và phép so ngay dưới coi là trượt.
+        updated = _refresh_one(account, bo_qua_cache=True)
         if updated:
             new_token = str(updated.get("access_token") or "")
             old_token = str(account.get("access_token") or "")
-            if new_token and new_token != old_token:
+            # Điều kiện cũ đòi new_token != old_token. Đo 18/08: máy chủ OAuth
+            # nhận refresh_token và trả token hợp lệ, nhưng vì trùng chuỗi cũ
+            # nên T0 báo "Refresh trượt" rồi đẩy sang đăng nhập trình duyệt —
+            # lặp mỗi 2 tiếng, vĩnh viễn, kèm một thông báo trượt mỗi lượt.
+            # Máy chủ đã cấp token tức là giấy tờ còn sống; đó CHÍNH LÀ điều
+            # T0 cần biết, token có trùng chuỗi hay không không liên quan.
+            if new_token:
                 # update_account() DA ho tro re-key qua updates["access_token"]
                 # (services/account_service.py) va merge voi hang LIVE trong
                 # _accounts (khong phai snapshot "account" cu chup truoc luc
@@ -1116,7 +1125,12 @@ def recover_and_notify(account: dict[str, Any], reason: str) -> str | None:
                 # reinsert thu cong, tranh mat field doi song song trong luc
                 # cho refresh network (notes sua tay, mark_image_result bump,
                 # quota_watcher doi status...).
-                result = account_service.update_account(old_token, updated)
+                # Kéo trạng thái về 'active'. _refresh_one trả {**account, …}
+                # nên nó mang theo status='error' cũ; không đặt lại thì T0 báo
+                # "Khôi phục xong" mà tài khoản vẫn nằm lỗi, và vòng quét định
+                # kỳ lại nhặt lên ngay lượt sau — đúng vòng lặp đã quan sát.
+                result = account_service.update_account(
+                    old_token, {**updated, "status": "active"})
                 if result is not None:
                     _notify(f"✅ {label} — {email}\nKhôi phục xong ([T0] refresh token mới). Dùng lại bình thường.",
                             {**det, "step": "T0-refresh-ok"})

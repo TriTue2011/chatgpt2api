@@ -116,7 +116,8 @@ def _lock_for(refresh_token: str) -> Lock:
         return _refresh_locks[refresh_token]
 
 
-def refresh_codex_token(refresh_token: str, device_id: str | None = None) -> dict[str, Any] | None:
+def refresh_codex_token(refresh_token: str, device_id: str | None = None,
+                        *, bo_qua_cache: bool = False) -> dict[str, Any] | None:
     """Exchange a Codex refresh_token for a fresh access_token.
 
     Concurrency-safe: acquires a per-refresh_token Lock so two threads
@@ -127,6 +128,10 @@ def refresh_codex_token(refresh_token: str, device_id: str | None = None) -> dic
 
     Args:
         refresh_token: the refresh_token to exchange.
+        bo_qua_cache: bỏ qua CẢ HAI lớp cache (kết quả 60s gần đây và
+            access_token còn hạn trong pool) và hỏi thẳng máy chủ OAuth.
+            Tầng khôi phục T0 phải dùng cờ này: nó cần biết refresh_token
+            còn sống hay không, mà cache thì trả lời được cả khi đã chết.
         device_id: stable per-account UUID. When set, sent as the
             ``X-Device-Id`` header so the request looks like a real
             persistent Codex CLI install rather than a fresh device on
@@ -148,9 +153,14 @@ def refresh_codex_token(refresh_token: str, device_id: str | None = None) -> dic
         # this exact refresh_token. Return their result instead of POSTing
         # again — POSTing again would either return a duplicate (if OpenAI
         # is lenient) or invalidate the prior result (if rotation kicks in).
-        recent = _peek_recent(refresh_token)
-        if recent is not None:
-            return recent
+        #
+        # `bo_qua_cache` dành cho tầng khôi phục: lúc đó câu hỏi KHÔNG phải
+        # "có token dùng được không" mà là "giấy tờ đăng nhập còn sống không",
+        # nên phải hỏi thật máy chủ OAuth chứ không lấy lại đồ trong tủ.
+        if not bo_qua_cache:
+            recent = _peek_recent(refresh_token)
+            if recent is not None:
+                return recent
         # Re-check: another caller may have already refreshed this token
         # while we waited on the lock. If account_service holds an access
         # token for this refresh_token whose expiry is still > 1h away,
@@ -173,7 +183,7 @@ def refresh_codex_token(refresh_token: str, device_id: str | None = None) -> dic
                         cached_exp = datetime.fromisoformat(str(cached_exp_raw).replace('Z', '+00:00')).timestamp()
                     except Exception:
                         pass
-            if cached_access and cached_exp - time.time() > 3600:
+            if cached_access and cached_exp - time.time() > 3600 and not bo_qua_cache:
                 return {
                     "access_token": cached_access,
                     "refresh_token": refresh_token,
