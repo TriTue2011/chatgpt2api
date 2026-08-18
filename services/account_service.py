@@ -158,14 +158,6 @@ def account_group(account: dict | None) -> str:
     # Codex responses API — so a plus/go plan on it must not divert it to codex.
     if token.startswith("sk-") or "standard" in types or "openai" in types:
         return GROUP_OPENAI
-    # Nhãn `free` cũng là nhãn RÕ RÀNG nên phải thắng plan, đúng nguyên tắc
-    # "type tags beat plan" ghi ở đầu hàm — trước đây chỉ áp cho standard/openai.
-    #
-    # Đo 18/08 trên máy chủ thật: bios.disused99+…@icloud.com mang type=free
-    # nhưng plan=plus, nên rơi xuống luật dưới và bị xếp vào pool Codex, trong
-    # khi nó được thêm vào để dùng như tài khoản free qua chatgpt.com.
-    if GROUP_FREE in types:
-        return GROUP_FREE
     # A chatgpt.com web account on a paid subscription → codex/paid pool.
     if plan in PAID_PLANS:
         return GROUP_CODEX
