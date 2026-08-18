@@ -66,36 +66,29 @@ FALLBACK_MODELS = {
     ],
     "openai_oauth": [
         "cx/auto",
-        # GPT 5.6 — tier Codex dùng cho tài khoản Free (chủ máy chốt 08/08/2026).
-        # Hậu tố sau "cx/" được truyền THẲNG sang Codex (openai_oauth.py), nên
-        # tên này vốn đã route được; thiếu ở đây chỉ làm nó không hiện trong danh
-        # sách và không đưa vào enabled_models được.
+        # Danh sách này ĐO NGÀY 18/08/2026 bằng cách gọi thẳng
+        # https://chatgpt.com/backend-api/codex/responses với token thật của một
+        # tài khoản gói `go`, chứ không chép từ tài liệu.
+        #
+        # Cách phân biệt: model KHÔNG tồn tại thì API trả
+        #   400 "The '<tên>' model is not supported when using Codex with a
+        #        ChatGPT account."
+        # còn model CÒN SỐNG thì đi tiếp một bước và trả
+        #   400 "Stream must be set to true".
+        # Đối chứng: một tên bịa ("khong-ton-tai-abc") nhận đúng câu thứ nhất,
+        # nên câu đó đúng nghĩa là "không có model này".
+        #
+        # Kết quả: 5.3-codex, 5.3-codex-spark, 5.2, 5.1-codex, 5-codex đều đã
+        # CHẾT — cả nhóm đó từng nằm ở đây và làm mọi request Codex trả 400.
+        # GPT 5.6
         "cx/gpt-5.6-terra", "cx/gpt-5.6-terra-review",
+        "cx/gpt-5.6-luna", "cx/gpt-5.6-luna-review",
         # GPT 5.5
         "cx/gpt-5.5", "cx/gpt-5.5-review",
-        "cx/gpt-5-5", "cx/gpt-5-5-instant", "cx/gpt-5-5-thinking",
-        "cx/gpt-5-4-thinking", "cx/gpt-5-3-instant", "cx/o3",
-        # GPT 5.4
+        # GPT 5.4 — OpenAI báo ngừng cho đăng nhập ChatGPT từ 31/08/2026,
+        # thay bằng 5.6-terra (cho 5.4) và 5.6-luna (cho 5.4-mini).
         "cx/gpt-5.4", "cx/gpt-5.4-review",
-        # GPT 5.3 Codex + effort variants
-        "cx/gpt-5.3-codex", "cx/gpt-5.3-codex-review",
-        "cx/gpt-5.3-codex-xhigh", "cx/gpt-5.3-codex-xhigh-review",
-        "cx/gpt-5.3-codex-high", "cx/gpt-5.3-codex-high-review",
-        "cx/gpt-5.3-codex-low", "cx/gpt-5.3-codex-low-review",
-        "cx/gpt-5.3-codex-none", "cx/gpt-5.3-codex-none-review",
-        "cx/gpt-5.3-codex-spark", "cx/gpt-5.3-codex-spark-review",
-        # GPT 5.2 Codex
-        "cx/gpt-5.2-codex", "cx/gpt-5.2-codex-review",
-        "cx/gpt-5.2", "cx/gpt-5.2-review",
-        # GPT 5.1 Codex + variants
-        "cx/gpt-5.1-codex", "cx/gpt-5.1-codex-review",
-        "cx/gpt-5.1-codex-mini", "cx/gpt-5.1-codex-mini-review",
-        "cx/gpt-5.1-codex-mini-high", "cx/gpt-5.1-codex-mini-high-review",
-        "cx/gpt-5.1-codex-max", "cx/gpt-5.1-codex-max-review",
-        "cx/gpt-5.1", "cx/gpt-5.1-review",
-        # GPT 5 Codex
-        "cx/gpt-5-codex", "cx/gpt-5-codex-review",
-        "cx/gpt-5-codex-mini", "cx/gpt-5-codex-mini-review",
+        "cx/gpt-5.4-mini", "cx/gpt-5.4-mini-review",
     ],
     # Static fallback only — the real catalogue is fetched live from the
     # captcha-solver (see `_fetch_web_models` below). These slugs match
