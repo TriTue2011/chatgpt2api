@@ -29,8 +29,8 @@ GOC = pathlib.Path(__file__).resolve().parents[1]
 NGUON = GOC / "services" / "agent" / "orchestrator.py"
 
 _TEN_CAN = ("_TAT_TAO_MEDIA", "_KHONG_PHAI_TAO_MOI", "_TAT_VE_ANH", "_BO_DAU_MO_TA",
-            "_NUT_MENU_A", "_NUT_MENU_B")
-_HAM_CAN = ("_la_yeu_cau_tao_media", "_doc_nut_menu_media")
+            "_NUT_MENU_A", "_NUT_MENU_B", "_NUT_MENU_MAC_DINH", "_DANH_TU_RO")
+_HAM_CAN = ("_la_yeu_cau_tao_media", "_doc_nut_menu_media", "_loai_ro_rang")
 
 
 def _nap_ns() -> dict:
@@ -153,10 +153,30 @@ class NutBamMenuRaTucThiTests(unittest.TestCase):
                                          "params": {"size": "1024x1024",
                                                     "quality": "hd"}}))
 
-    def test_bang_mac_dinh_CO_Y_khong_bat(self):
-        """`_h_generate_video` chỉ dùng model mặc định khi ctx có auto_approve, mà
-        bật cờ đó ở đây sẽ bỏ luôn các bước hỏi thời lượng/số lượng — đổi hành vi."""
-        self.assertIsNone(self.f("tạo video bằng mặc định: cảnh biển"))
+    def test_bang_mac_dinh_PHAI_bat(self):
+        """Đảo lại khẳng định cũ, vì nó khoá đúng một lỗi có thật.
+
+        Bản cũ CỐ Ý không bắt "bằng mặc định", lý do ghi là: bật auto_approve ở
+        đây sẽ bỏ luôn các bước hỏi thời lượng/số lượng. Nỗi lo đó đúng, nhưng
+        cái giá thì không ai lường: nút "Mặc định" là lựa chọn SỐ 1 của mọi
+        menu, không bắt thì câu rơi xuống đường LLM và "bằng mặc định:" bị nuốt
+        vào làm một phần mô tả — menu hiện lại với mô tả đã bẩn, mỗi lần bấm
+        bẩn thêm một lớp. Quan sát thật trên bot 12:20 ngày 18/08:
+
+            muốn vẽ "bản nhạc ballast nhẹ nhàng" …           → bấm 1
+            muốn vẽ "bằng mặc định: bản nhạc ballast…" …     → bấm 1
+            muốn vẽ "bằng mặc định: bằng mặc định: bằng…" …  → không thoát được
+
+        Nay bắt, nhưng trả `tool="mặc định"` chứ KHÔNG bật auto_approve — nên
+        các bước hỏi thời lượng/số lượng vẫn còn nguyên, đúng điều bản cũ lo.
+        """
+        got = self.f("tạo video bằng mặc định: cảnh biển")
+        self.assertIsNotNone(got, "không bắt thì menu lặp vô hạn")
+        kind, args = got
+        self.assertEqual(kind, "video")
+        self.assertEqual(args["prompt"], "cảnh biển")
+        self.assertEqual(args.get("tool"), "mặc định")
+        self.assertNotIn("auto_approve", args)
 
     def test_cau_nguoi_go_va_cau_hoi_khong_lot_vao_day(self):
         for c in ("tạo video cảnh biển", "xin chào",
@@ -171,9 +191,20 @@ class DuocNoiVaoOrchestratorTests(unittest.TestCase):
             if not l.lstrip().startswith("#"))
 
     def test_goi_dung_capability_theo_loai(self):
+        """Loại nào gọi capability nấy — kiểm theo Ý NGHĨA, không theo mặt chữ.
+
+        Bản cũ khớp nguyên văn một biểu thức ba ngôi
+        (`"generate_video" if _kind == "video" else "generate_image"`). Khẳng
+        định kiểu đó gãy ngay khi dòng được viết lại dù hành vi không đổi — và
+        đã gãy đúng như vậy lúc thêm nhánh nhạc, che mất việc cần xem là bản
+        đồ loại → capability có đúng không.
+        """
         i = self.code.index("_nut = _doc_nut_menu_media(user_text)")
         khuc = self.code[i:i + 1800]
-        self.assertIn('"generate_video" if _kind == "video" else "generate_image"', khuc)
+        self.assertIn("_cap_name", khuc)
+        self.assertIn("_kind", khuc)
+        for ten in ("generate_video", "generate_image", "generate_music"):
+            self.assertIn(ten, khuc, f"thiếu nhánh {ten}")
 
     def test_van_di_qua_bo_loc_chuc_nang(self):
         """Đường tắt rút ngắn đường đi, KHÔNG mở thêm quyền."""

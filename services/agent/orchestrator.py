@@ -164,8 +164,7 @@ _TAT_TAO_MEDIA = re.compile(
     r"(?P<verb>tạo|tao|vẽ|ve|sinh|generate|draw|make)\s+"
     r"(?:cho\s+\S+\s+)?"
     r"(?:(?:một|mot|1|vài|vai|\d+)\s+)?"
-    r"(?P<loai>video|clip|nhạc|nhac|bài\s*hát|bai\s*hat|ca\s*khúc|ca\s*khuc|"
-    r"ảnh|anh|hình\s*ảnh|hinh\s*anh|hình|hinh|image|picture|photo)"
+    r"(?P<loai>video|clip|ảnh|anh|hình\s*ảnh|hinh\s*anh|hình|hinh|image|picture|photo)"
     r"(?![a-zà-ỹ])"
     r"(?P<con_lai>.*)$",
     re.IGNORECASE | re.DOTALL)
@@ -242,16 +241,16 @@ def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
         con_lai = m.group("con_lai").strip()
         # Danh từ rõ trong CẢ CÂU thắng chữ đứng ngay sau động từ. Cần thế vì
         # "anh" trần lọt vào nhóm loại và luôn đứng trước — xem _loai_ro_rang.
-        def _tu_loai(x: str) -> str:
-            if x in {"video", "clip"}:
-                return "video"
-            if x.replace(" ", "") in {"nhạc", "nhac", "bàihát", "baihat",
-                                      "cakhúc", "cakhuc"}:
-                return "music"
-            return "image"
-
-        kind = _loai_ro_rang(t) or _tu_loai(loai)
-        if kind != _tu_loai(loai):
+        goc = "video" if loai in {"video", "clip"} else "image"
+        ro = _loai_ro_rang(t)
+        # Nhạc CỐ Ý không đi đường tắt: đường tắt này chỉ lo ảnh/video, còn
+        # "tạo nhạc" để bộ định tuyến gọi generate_music như thiết kế cũ. Việc
+        # của _loai_ro_rang ở đây chỉ là ĐỪNG NHẬN NHẦM nhạc thành ảnh — đúng
+        # cảnh "Tạo anh bản nhạc…" khớp phải "anh" trần rồi hiện menu vẽ.
+        if ro == "music":
+            return None
+        kind = ro or goc
+        if kind != goc:
             # Chữ sau động từ chỉ là đại từ ("anh") → bỏ nó khỏi mô tả bằng cách
             # cắt lại từ chính danh từ rõ, kẻo mô tả thành "video một chiếc lá…".
             for k2, rx in _DANH_TU_RO:

@@ -25,14 +25,10 @@ import pytest
 
 @pytest.mark.pure
 @pytest.mark.parametrize("cau,mong_kind,mong_prompt", [
-    # Đúng hai câu thật đã hỏng
-    ("Tạo anh bản nhạc ballast nhẹ nhàng", "music", "ballast nhẹ nhàng"),
     ("Tạo anh video một chiếc lá phong rụng rơi xuống mặt hồ",
      "video", "một chiếc lá phong rụng rơi xuống mặt hồ"),
-    # Dạng chuẩn vẫn phải chạy như cũ
     ("tạo ảnh con mèo", "image", "con mèo"),
     ("tạo video cảnh biển", "video", "cảnh biển"),
-    ("tạo nhạc giai điệu buồn", "music", "giai điệu buồn"),
 ])
 def test_dinh_tuyen_theo_danh_tu(cau, mong_kind, mong_prompt):
     from services.agent.orchestrator import _la_yeu_cau_tao_media
@@ -54,11 +50,17 @@ def test_khong_dinh_chu_video_vao_mo_ta():
 
 
 @pytest.mark.pure
-def test_khong_dinh_chu_nhac_vao_mo_ta():
+def test_nhac_nhuong_cho_bo_dinh_tuyen():
+    """Nhạc CỐ Ý không đi đường tắt — đường tắt chỉ lo ảnh/video.
+
+    Việc duy nhất cần ở đây: ĐỪNG nhận nhầm nhạc thành ảnh. Trả None thì bộ
+    định tuyến gọi generate_music như thiết kế cũ, thay vì hiện menu VẼ.
+    """
     from services.agent.orchestrator import _la_yeu_cau_tao_media
 
-    _, prompt = _la_yeu_cau_tao_media("Tạo anh bản nhạc ballast nhẹ nhàng")
-    assert "nhạc" not in prompt.lower()
+    assert _la_yeu_cau_tao_media("Tạo anh bản nhạc ballast nhẹ nhàng") is None
+    assert _la_yeu_cau_tao_media("tạo nhạc vui") is None
+    assert _la_yeu_cau_tao_media("tạo bài hát về mùa thu") is None
 
 
 @pytest.mark.pure
