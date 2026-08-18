@@ -53,12 +53,27 @@ def test_thieu_yt_dlp_thi_noi_ro_cach_sua(monkeypatch):
 
 
 @pytest.mark.pure
-def test_ban_gui_lai_van_la_ban_net_nhat():
-    """Chủ máy chốt: bản đem gửi người dùng là bản NÉT NHẤT."""
+def test_ban_gui_lai_tran_1080p():
+    """Chủ máy chốt lại sau khi thấy 4K: 1080p thôi.
+
+    Đốt chữ vào hình mã hoá lại toàn bộ luồng hình bằng CPU, chi phí đi theo số
+    điểm ảnh — 2160p gấp bốn lần 1080p, trên máy chủ đang phục vụ thật, cho một
+    khác biệt không ai thấy trong khung chat điện thoại.
+    """
     from services.video_tai import CHAT_LUONG
 
-    assert "bestvideo" in CHAT_LUONG["cao"] and "bestaudio" in CHAT_LUONG["cao"]
-    assert "height" not in CHAT_LUONG["cao"], "bản gửi lại không được hạ chất lượng"
+    assert "height<=1080" in CHAT_LUONG["cao"]
+    assert "bestaudio" in CHAT_LUONG["cao"], "trần chỉ đặt trên HÌNH"
+    assert "height<=2160" not in CHAT_LUONG["cao"]
+
+
+@pytest.mark.pure
+def test_nguon_khong_co_muc_duoi_tran_thi_van_tai_duoc():
+    """Thà lấy bản nét hơn trần còn hơn không tải được gì."""
+    from services.video_tai import CHAT_LUONG
+
+    for muc, dinh_dang in CHAT_LUONG.items():
+        assert dinh_dang.split("/")[-1] == "best", f"{muc} thiếu lưới đỡ cuối"
 
 
 @pytest.mark.pure

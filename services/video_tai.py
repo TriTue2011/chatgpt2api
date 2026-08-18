@@ -13,7 +13,9 @@ bị giấu khỏi link vì đúng lý do đó; nay link và tệp gửi lên đ
 Ai gọi: ``zalo_personal._lam_viec_dich`` — và chỉ gọi khi THẬT SỰ cần tệp hình
 (ghép chữ, lồng tiếng, hoặc video không có phụ đề sẵn nên phải tự nghe).
 
-Chủ máy chốt 18/08: KHÔNG giới hạn độ dài, tải ở ĐỘ PHÂN GIẢI CAO NHẤT.
+Chủ máy chốt 18/08: KHÔNG giới hạn độ dài. Trần phân giải là 1080p (chốt lại
+sau khi thấy 4K: bước đốt chữ vào hình vẽ lại TỪNG khung bằng CPU, nên 2160p
+tốn gấp bốn lần 1080p cho một khác biệt không ai xem trong khung chat).
 """
 from __future__ import annotations
 
@@ -45,7 +47,7 @@ def co_yt_dlp() -> bool:
 
 #: Hai mức tải. Chủ máy chốt 18/08: tải làm HAI bản chạy song song — bản VỪA
 #: để máy xử lý (nghe, tách lời, tổng hợp giọng), bản CAO để ghép kết quả vào
-#: rồi gửi người dùng.
+#: rồi gửi người dùng. Bản CAO trần 1080p.
 #:
 #: Vì sao chia được mà không mất gì: yt-dlp chọn hình và tiếng RIÊNG, nên
 #: ``height<=480`` chỉ hạ luồng HÌNH — luồng TIẾNG vẫn là bản tốt nhất. Mà mọi
@@ -56,10 +58,16 @@ def co_yt_dlp() -> bool:
 #: Vì sao chạy song song: bản VỪA tải xong sớm hơn hẳn, máy bắt tay vào nghe
 #: ngay trong lúc bản CAO còn đang tải. Trước đây phải chờ xong bản nặng nhất
 #: rồi mới bắt đầu, tức cộng thẳng hai quãng thời gian vào nhau.
+#: Vì sao trần 1080p chứ không lấy bản nét nhất có: bước đốt chữ vào khung
+#: hình mã hoá lại TOÀN BỘ luồng hình bằng CPU, và chi phí đó đi theo số điểm
+#: ảnh — 2160p là gấp bốn lần 1080p. Máy chủ mười nhân đang phục vụ thật, mà
+#: người nhận thì xem trong khung chat điện thoại.
+#:
+#: Nhánh cuối mỗi dòng ('bestvideo*+bestaudio/best') là lưới đỡ cho nguồn
+#: không có mức nào dưới trần: thà lấy bản nét hơn còn hơn không tải được gì.
 CHAT_LUONG = {
-    # bestvideo+bestaudio = độ phân giải cao nhất; 'best' đứng sau làm lưới đỡ
-    # cho nguồn không tách luồng.
-    "cao": "bestvideo*+bestaudio/best",
+    "cao": ("bestvideo[height<=1080]+bestaudio/"
+            "best[height<=1080]/bestvideo*+bestaudio/best"),
     "vua": ("bestvideo[height<=480]+bestaudio/"
             "best[height<=480]/bestvideo*+bestaudio/best"),
 }
@@ -69,8 +77,9 @@ def tai_video(url: str, thu_muc: str | None = None, *,
               chat_luong: str = "cao") -> str:
     """Tải video về, trả đường dẫn tệp. Ném ``LoiTaiVideo`` nếu không được.
 
-    ``chat_luong``: "cao" (mặc định, phân giải cao nhất — bản đem gửi lại người
-    dùng) hoặc "vua" (hình ≤480p, tiếng vẫn tốt nhất — bản cho máy xử lý).
+    ``chat_luong``: "cao" (mặc định, hình ≤1080p — bản đem gửi lại người dùng)
+    hoặc "vua" (hình ≤480p — bản cho máy xử lý). Cả hai đều lấy luồng TIẾNG tốt
+    nhất: trần chỉ đặt trên hình.
 
     KHÔNG chặn theo độ dài — chủ máy chốt 18/08 là tải mọi video, dài mấy cũng tải.
     """
