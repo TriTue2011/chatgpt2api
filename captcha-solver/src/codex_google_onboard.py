@@ -204,6 +204,65 @@ async def _google_chooser_pick(page, email: str) -> bool:
     return False
 
 
+async def _bam_tiep_tuc(page, btn) -> bool:
+    """Bấm nút "Tiếp tục" ở màn chọn không gian làm việc. True nếu bấm được.
+
+    Vì sao phải viết riêng — đo thật 18/08 trên máy chủ đang chạy:
+
+    Bản cũ gọi thẳng ``btn.click(force=True, timeout=3000)`` bên trong một khối
+    ``except Exception: pass``. Cú bấm ném lỗi, ngoại lệ bị nuốt, vòng lặp quay
+    lại bấm tiếp — 24 lần liên tiếp trong 96 giây rồi hết giờ. Nhật ký chỉ thấy
+    dòng "consent Tiếp tục" lặp đi lặp lại, không một chữ nào về nguyên nhân.
+
+    Cách nhận ra: các lần bấm cách nhau ~4,1 giây, trong khi một cú bấm THÀNH
+    CÔNG phải mất tối thiểu 2,5 + 6 + 1,2 ≈ 9,7 giây mới quay lại. Ngắn hơn một
+    nửa nghĩa là click ném ngay lập tức.
+
+    Bấm được thì phần còn lại chạy trót lọt — đo trên đúng trang đó:
+    ``/api/accounts/workspace/select`` 200 → ``/api/accounts/consent`` 302 →
+    ``localhost:1455/auth/callback?code=…``. Tức phần trình duyệt không hỏng,
+    chỉ mỗi cú bấm là hỏng.
+
+    Ba đường, dừng ở đường nào ăn: click thường (đợi đủ lâu để trang render
+    xong) → click bằng JS (bỏ qua mọi lớp phủ) → gửi thẳng form.
+    """
+    try:
+        await btn.click(timeout=8000)
+        return True
+    except Exception as exc:
+        logger.info("codex-g: click thường hỏng (%s) — thử bằng JS",
+                    str(exc)[:120].replace("\n", " "))
+    try:
+        if await page.evaluate(
+            """() => {
+                const bs = Array.from(document.querySelectorAll('button'));
+                const b = bs.find(x => /Tiếp tục|Continue/i.test(x.innerText || ''));
+                if (!b) return false;
+                b.click();
+                return true;
+            }"""
+        ):
+            logger.info("codex-g: đã bấm Tiếp tục bằng JS")
+            return True
+    except Exception as exc:
+        logger.info("codex-g: click JS hỏng: %s", str(exc)[:120])
+    try:
+        if await page.evaluate(
+            """() => {
+                const f = document.querySelector('form');
+                if (!f) return false;
+                if (typeof f.requestSubmit === 'function') f.requestSubmit();
+                else f.submit();
+                return true;
+            }"""
+        ):
+            logger.info("codex-g: đã gửi thẳng form chọn workspace")
+            return True
+    except Exception as exc:
+        logger.info("codex-g: gửi form hỏng: %s", str(exc)[:120])
+    return False
+
+
 async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]:
     ctx = await pool.get(profile=req.profile, headless=req.headless)
     pages = ctx.pages
@@ -440,14 +499,22 @@ async def run_codex_google_onboard(req: CodexGoogleOnboardReq) -> dict[str, Any]
                                 label or "primary",
                                 url[:100],
                             )
-                            await btn.click(force=True, timeout=3000)
+                            if not await _bam_tiep_tuc(page, btn):
+                                # Bấm hỏng thì đừng ngồi chờ callback không bao
+                                # giờ tới — quay lại vòng, lần sau trang đã
+                                # render xong thì bấm lại.
+                                await asyncio.sleep(1.0)
+                                continue
                             await asyncio.sleep(2.5)
                             for _ in range(15):
                                 if captured:
                                     break
                                 await asyncio.sleep(0.4)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # KHÔNG nuốt im lặng: đúng chỗ này đã giấu nguyên nhân thật
+                    # suốt nhiều ngày — xem chú thích ở _bam_tiep_tuc.
+                    logger.info("codex-g: nhánh consent lỗi: %s: %s",
+                                type(exc).__name__, str(exc)[:160])
 
             await asyncio.sleep(1.2)
 
