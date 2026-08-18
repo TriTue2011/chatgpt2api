@@ -6,9 +6,12 @@ Hai việc này là mắt xích duy nhất còn thiếu để một link YouTube
 Vì sao trước đây không có: ``video_dich`` cố ý đi bằng PHỤ ĐỀ SẴN CÓ của
 YouTube — nhanh hơn tải video hàng trăm MB. Cách đó vẫn đúng khi người dùng chỉ
 cần chữ. Nhưng khi họ muốn nhận lại VIDEO (chữ đốt sẵn trong hình, hoặc đã lồng
-tiếng) thì bắt buộc phải có tệp hình trong tay — chú thích trong
-``dich_cho.VIEC`` ghi rõ ô "lồng tiếng" chỉ hiện cho tệp video vì "link hiện
-chưa tải cả hình về gateway".
+tiếng) thì bắt buộc phải có tệp hình trong tay. Trước module này, ô "lồng tiếng"
+bị giấu khỏi link vì đúng lý do đó; nay link và tệp gửi lên đi chung một menu
+(``dich_cho._viec_hop_le``).
+
+Ai gọi: ``zalo_personal._lam_viec_dich`` — và chỉ gọi khi THẬT SỰ cần tệp hình
+(ghép chữ, lồng tiếng, hoặc video không có phụ đề sẵn nên phải tự nghe).
 
 Chủ máy chốt 18/08: KHÔNG giới hạn độ dài, tải ở ĐỘ PHÂN GIẢI CAO NHẤT.
 """
