@@ -7,6 +7,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "curl-cffi>=0.15.0",
+    # Tải video từ link về để ghép phụ đề / lồng tiếng (services/video_tai.py).
+    # Đường phụ đề-sẵn-có của video_dich không cần gói này; chỉ khi người dùng
+    # muốn nhận lại VIDEO thì mới phải có tệp hình trong tay.
+    "yt-dlp>=2025.1.15",
     "fastapi>=0.136.0",
     # JSON nhanh (ORJSONResponse mặc định của app — gateway stream JSON lớn liên tục)
     "orjson>=3.10.0",
