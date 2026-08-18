@@ -510,6 +510,10 @@ def webhook_url(bot: dict | None = None) -> str:
     nếu trống thì ghép base công khai + WEBHOOK_PATH. Docs setWebhook đòi HTTPS
     ("URL nhận thông báo dạng HTTPS") nên URL http:// sẽ bị chặn ở set_webhook.
 
+    Giá trị đặt tay TRÙNG đường gốc thì vẫn được thêm id bot — xem chú thích
+    trong thân hàm; nó từng làm mọi bot đăng ký chung một URL mà không ai nhận
+    ra, vì cấu hình nhìn y như mặc định.
+
     Truyền `bot` → URL RIÊNG của bot đó: `<base>/api/zalo-bot/webhook/<bot_id>`.
     Nhiều bot mà dùng chung một URL thì vẫn chạy (secret trong header phân biệt
     được), nhưng người vận hành không nhìn ra URL nào của bot nào, và
@@ -525,9 +529,18 @@ def webhook_url(bot: dict | None = None) -> str:
     except Exception:
         explicit = ""
     if explicit:
-        # Đặt tay thì tôn trọng nguyên văn — vận hành có thể đang trỏ qua proxy
-        # riêng với đường dẫn khác hẳn.
-        return explicit.rstrip("/")
+        e = explicit.rstrip("/")
+        bid = _bot_public_id(bot) if bot else ""
+        # Đặt tay ĐÚNG BẰNG đường gốc thì vẫn thêm id bot vào (giữ nguyên tên
+        # miền và đường dẫn người vận hành đã ghi). Gặp thật trên máy chủ
+        # 19/08: config ghi cứng ".../api/zalo-bot/webhook" — y hệt thứ code tự
+        # sinh khi để trống — nên không thêm được gì, chỉ âm thầm tắt mất URL
+        # riêng từng bot, và nhìn vào cấu hình thì tưởng vô hại.
+        if bid and e.endswith(WEBHOOK_PATH):
+            return f"{e}/{bid}"
+        # Đường dẫn KHÁC hẳn (proxy riêng) mới là lý do thật sự để có ô đặt
+        # tay → giữ nguyên văn, không chèn gì vào.
+        return e
     base = _public_base()
     if not base:
         return ""

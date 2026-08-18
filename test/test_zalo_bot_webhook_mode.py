@@ -55,11 +55,40 @@ class UrlRiengTungBotTests(unittest.TestCase):
             self.assertEqual(zb.webhook_url(),
                              "https://vi-du.test/api/zalo-bot/webhook")
 
-    def test_dat_tay_zalo_webhook_url_thi_ton_trong_nguyen_van(self):
+    def test_dat_tay_duong_dan_KHAC_thi_ton_trong_nguyen_van(self):
         """Vận hành có thể trỏ qua proxy riêng với đường dẫn khác hẳn."""
         cfg = self._cfg(zalo_webhook_url="https://khac.test/hook-rieng")
         with mock.patch.object(zb.config, "get", return_value=cfg):
             self.assertEqual(zb.webhook_url(BOT_A), "https://khac.test/hook-rieng")
+
+    def test_dat_tay_TRUNG_duong_goc_thi_van_them_id_bot(self):
+        """Cái bẫy gặp thật trên máy chủ 19/08.
+
+        Config ghi cứng ".../api/zalo-bot/webhook" — y hệt thứ code tự sinh khi
+        để trống — nên nó không thêm được gì, chỉ âm thầm tắt mất URL riêng
+        từng bot. Nhìn vào cấu hình thì tưởng vô hại, mà hậu quả là mọi bot
+        đăng ký chung một URL: vẫn chạy (secret trong header phân biệt được),
+        nhưng getWebhookInfo của bot nào cũng trả cùng một chuỗi nên không soi
+        ra bot nào lệch.
+        """
+        cfg = self._cfg(zalo_webhook_url="https://gpt.vi-du.test/api/zalo-bot/webhook")
+        with mock.patch.object(zb.config, "get", return_value=cfg):
+            a = zb.webhook_url(BOT_A)
+            b = zb.webhook_url(BOT_B)
+            goc = zb.webhook_url()
+        # Giữ nguyên tên miền người vận hành đã ghi, chỉ thêm id bot.
+        self.assertEqual(a, "https://gpt.vi-du.test/api/zalo-bot/webhook/111111")
+        self.assertEqual(b, "https://gpt.vi-du.test/api/zalo-bot/webhook/222222")
+        self.assertNotEqual(a, b)
+        # Không truyền bot (URL hiển thị trên trang quản trị) thì vẫn là đường gốc.
+        self.assertEqual(goc, "https://gpt.vi-du.test/api/zalo-bot/webhook")
+
+    def test_dat_tay_da_co_san_id_bot_thi_khong_chen_them(self):
+        """Ai đó dán sẵn URL có id → giữ nguyên, đừng nối thành .../111111/111111."""
+        cfg = self._cfg(zalo_webhook_url="https://gpt.vi-du.test/api/zalo-bot/webhook/111111")
+        with mock.patch.object(zb.config, "get", return_value=cfg):
+            self.assertEqual(zb.webhook_url(BOT_A),
+                             "https://gpt.vi-du.test/api/zalo-bot/webhook/111111")
 
     def test_khong_co_base_thi_tra_rong(self):
         with mock.patch.object(zb.config, "get", return_value={}):
