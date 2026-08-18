@@ -228,9 +228,20 @@ def _la_yeu_cau_tao_media(text: str) -> tuple[str, str] | None:
 #   B) "<việc> '<mô tả>' bằng model <id> params k=v k=v"       (_param_choice_menu
 #      — mô tả nằm TRONG dấu nháy, params ở cuối, KHÔNG có dấu hai chấm)
 #
-# "bằng mặc định" CỐ Ý không bắt: `_h_generate_video` chỉ dùng model mặc định của
-# nhánh khi ctx có auto_approve, mà bật cờ đó ở đây sẽ bỏ luôn các bước hỏi thời
-# lượng/số lượng — đổi hành vi. Để nó đi đường model như cũ, đó là lựa chọn ít gặp.
+# "bằng mặc định" TRƯỚC ĐÂY cố ý không bắt, với lý do "lựa chọn ít gặp". Giả định
+# đó sai: đây là lựa chọn SỐ 1 của mọi menu, tức cái tự nhiên nhất để bấm.
+#
+# Không bắt thì câu rơi xuống đường LLM, và "bằng mặc định:" bị nuốt vào làm một
+# phần mô tả. Lượt sau menu hiện lại với mô tả đã bẩn, người dùng bấm 1 lần nữa,
+# mô tả bẩn thêm một lớp — vòng lặp vô hạn, quan sát thật 18/08 lúc 12:20:
+#
+#   muốn vẽ "bản nhạc ballast nhẹ nhàng" …            → bấm 1
+#   muốn vẽ "bằng mặc định: bản nhạc ballast…" …      → bấm 1
+#   muốn vẽ "bằng mặc định: bằng mặc định: bằng…" …   → không bao giờ thoát
+#
+# Nay bắt luôn, trả về tool="mặc định" — đúng token mà _h_generate_image /
+# _h_generate_video vẫn hiểu là "nhánh tự quyết model". Truyền qua `tool` chứ
+# KHÔNG bật auto_approve, nên các bước hỏi thời lượng/số lượng của video vẫn còn.
 _NUT_MENU_A = re.compile(
     r"^\s*(?P<viec>tạo\s+video|tạo\s+ảnh|tao\s+anh|vẽ|ve)\s+"
     r"bằng\s+model\s+(?P<model>\S+?)"
@@ -243,6 +254,12 @@ _NUT_MENU_B = re.compile(
     re.IGNORECASE | re.DOTALL)
 
 
+_NUT_MENU_MAC_DINH = re.compile(
+    r"^\s*(?P<viec>tạo\s+video|tạo\s+ảnh|tao\s+anh|tạo\s+nhạc|tao\s+nhac|vẽ|ve)\s+"
+    r"bằng\s+mặc\s+định\s*:\s*(?P<prompt>.*)$",
+    re.IGNORECASE | re.DOTALL)
+
+
 def _doc_nut_menu_media(text: str) -> tuple[str, dict] | None:
     """('video'|'image', args cho capability) nếu câu là nội dung nút bấm của menu.
 
@@ -250,7 +267,22 @@ def _doc_nut_menu_media(text: str) -> tuple[str, dict] | None:
     `_h_generate_video`/`_h_generate_image` nhận.
     """
     t = (text or "").strip()
-    if not t or "bằng model" not in t.lower():
+    if not t:
+        return None
+    md = _NUT_MENU_MAC_DINH.match(t)
+    if md:
+        viec = re.sub(r"\s+", " ", md.group("viec").strip().lower())
+        if viec == "tạo video":
+            kind = "video"
+        elif viec in ("tạo nhạc", "tao nhac"):
+            kind = "music"
+        else:
+            kind = "image"
+        args = {"prompt": md.group("prompt").strip().strip("'").strip()}
+        if kind != "music":          # generate_music không có tham số tool
+            args["tool"] = "mặc định"
+        return kind, args
+    if "bằng model" not in t.lower():
         return None
     m = _NUT_MENU_A.match(t) or _NUT_MENU_B.match(t)
     if not m:
