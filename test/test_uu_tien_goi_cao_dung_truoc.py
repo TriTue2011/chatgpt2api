@@ -121,8 +121,17 @@ class DuongTextTests(unittest.TestCase):
         return AccountService(JSONStorageBackend(Path(tmp) / "accounts.json"))
 
     def _them(self, sv: AccountService, token: str, plan: str) -> None:
+        """Thêm một tài khoản CODEX THẬT (có refresh_token).
+
+        `refresh_token` là thứ phân biệt Codex OAuth với đăng nhập web trực
+        tiếp — chính account_service ghi vậy ở `_giu_danh_tinh_codex`. Các test
+        dưới đây nói về thứ tự TRONG pool codex, nên tài khoản phải là Codex
+        thật; thiếu dấu hiệu đó thì từ 18/08 chúng thuộc pool free (xem
+        `test_dang_nhap_truc_tiep_thi_dung_nhu_free`).
+        """
         sv.add_accounts([token])
-        sv.update_account(token, {"status": "active", "plan": plan})
+        sv.update_account(token, {"status": "active", "plan": plan,
+                                  "refresh_token": f"rt-{token}"})
 
     def test_plus_di_truoc_go_va_free_trong_pool_codex(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -151,12 +160,41 @@ class DuongTextTests(unittest.TestCase):
 
     def test_bac_goi_khong_keo_acc_tra_phi_sang_pool_free(self):
         """Ranh giới pool là bất khả xâm phạm: bậc gói xếp thứ tự TRONG pool,
-        không được đưa tài khoản trả phí vào luồng free-tier (HA, n8n)."""
+        không được đưa tài khoản trả phí vào luồng free-tier (HA, n8n).
+
+        Vẫn đúng cho tài khoản CODEX THẬT — `_them` cấp refresh_token cho chúng.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             sv = self._dich_vu(tmp)
             self._them(sv, "tok-plus", "plus")
             self._them(sv, "tok-free", "free")
             self.assertEqual(sv.get_text_access_token(account_type="free"), "tok-free")
+
+    def test_dang_nhap_truc_tiep_thi_dung_nhu_free(self):
+        """Đăng nhập TRỰC TIẾP OpenAI → dùng như ChatGPT free, không qua Codex.
+
+        Người vận hành chốt 18/08. Tài khoản kiểu này là JWT web, KHÔNG có
+        refresh_token — dấu hiệu mà account_service tự ghi ở
+        `_giu_danh_tinh_codex`: "chỉ luồng OAuth Codex mới có".
+
+        Đo cùng ngày trên máy chủ thật: bios.disused99+…@icloud.com mang
+        plan=plus, không refresh_token, vậy mà gói trả phí kéo nó sang pool
+        codex — rồi bộ khôi phục Codex nhận nuôi một tài khoản không phải Codex.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._dich_vu(tmp)
+            sv.add_accounts(["tok-web-plus"])
+            sv.update_account("tok-web-plus", {"status": "active", "plan": "plus"})
+            acc = sv._accounts["tok-web-plus"]
+            self.assertEqual(account_group(acc), "free")
+            self.assertFalse(str(acc.get("refresh_token") or "").strip())
+
+    def test_codex_that_van_o_pool_codex(self):
+        """Chiều ngược lại: có refresh_token thì gói trả phí vẫn đẩy sang codex."""
+        with tempfile.TemporaryDirectory() as tmp:
+            sv = self._dich_vu(tmp)
+            self._them(sv, "tok-oauth-plus", "plus")
+            self.assertEqual(account_group(sv._accounts["tok-oauth-plus"]), "codex")
 
 
 class DuongAnhTests(unittest.TestCase):

@@ -158,8 +158,20 @@ def account_group(account: dict | None) -> str:
     # Codex responses API — so a plus/go plan on it must not divert it to codex.
     if token.startswith("sk-") or "standard" in types or "openai" in types:
         return GROUP_OPENAI
-    # A chatgpt.com web account on a paid subscription → codex/paid pool.
-    if plan in PAID_PLANS:
+    # Gói trả phí trên tài khoản web → pool codex, NHƯNG chỉ khi tài khoản thật
+    # sự đi bằng OAuth Codex. Dấu hiệu là `refresh_token`: chính module này đã
+    # ghi ở _giu_danh_tinh_codex — "chỉ luồng OAuth Codex mới có, còn tài khoản
+    # free là JWT web nên không bao giờ có".
+    #
+    # Người vận hành chốt 18/08: đăng nhập TRỰC TIẾP OpenAI thì dùng như ChatGPT
+    # free, không đi đường Codex. Đo cùng ngày: bios.disused99+…@icloud.com có
+    # plan=plus nhưng KHÔNG có refresh_token (đăng nhập web trực tiếp), vậy mà
+    # bị gói trả phí kéo sang pool codex rồi bị bộ khôi phục Codex nhận nuôi.
+    #
+    # Ranh giới cũ vẫn còn nguyên cho tài khoản Codex THẬT: chúng có
+    # refresh_token nên gói trả phí vẫn đẩy chúng sang codex như trước, luồng
+    # free-tier (HA, n8n) không đụng được.
+    if plan in PAID_PLANS and str(account.get("refresh_token") or "").strip():
         return GROUP_CODEX
     return GROUP_FREE
 
