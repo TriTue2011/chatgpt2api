@@ -175,13 +175,16 @@ def test_thumbnail_route_uses_the_same_access_policy_as_images():
 
 
 @pytest.mark.pure
-def test_zalo_video_link_uses_the_source_language_the_user_picked():
-    """Menu ba bước hỏi video nói tiếng gì — nhánh link phải dùng câu trả lời.
+def test_video_link_uses_the_source_language_the_user_picked():
+    """Menu hỏi video nói tiếng gì — nhánh link phải dùng câu trả lời.
 
     Nhánh tệp đã truyền ``nguon_biet``; nhánh link thì không, nên người dùng
     chọn "Nhật" xong bot vẫn có thể lấy track tiếng Anh rồi dịch tiếp.
+
+    Chỗ chạy việc chuyển sang services/video_giao.py ngày 18/08 (Zalo và
+    Telegram dùng chung một bản) — luật thì không đổi.
     """
-    source = (ROOT / "services" / "zalo_personal.py").read_text(encoding="utf-8")
+    source = (ROOT / "services" / "video_giao.py").read_text(encoding="utf-8")
     goi = source.index('_vd.dich_video(pend["url"]')
 
     assert "nguon_biet=" in source[goi:goi + 300]

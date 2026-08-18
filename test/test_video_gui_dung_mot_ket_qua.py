@@ -61,6 +61,33 @@ def phu_de_gia(monkeypatch):
     return goi
 
 
+@pytest.fixture
+def tai_gia(monkeypatch):
+    """Hai lượt tải song song giả — ghi lại bản nào được dùng vào việc gì."""
+    from services import video_tai as vt
+
+    ghi: dict = {"url": "", "vua": 0, "cao": 0, "dong": 0}
+
+    class _Tai:
+        def __init__(self, url):
+            ghi["url"] = url
+
+        def ban_vua(self):
+            ghi["vua"] += 1
+            return "/tmp/vua/abc.mp4"
+
+        def ban_cao(self):
+            ghi["cao"] += 1
+            return "/tmp/cao/abc.mp4"
+
+        def dong(self):
+            ghi["dong"] += 1
+
+    monkeypatch.setattr(vt, "TaiSongSong", _Tai)
+    monkeypatch.setattr(vt, "co_yt_dlp", lambda: True)
+    return ghi
+
+
 def test_phu_de_srt_chu_tren_chi_gui_mot_tep(bot, phu_de_gia):
     """Chọn .srt + chữ TRÊN → đúng MỘT tệp, và là bản chữ-trên."""
     bot._lam_viec_dich("t1", 0, {"path": "/tmp/a.mp4", "ten": "a.mp4"},
@@ -81,29 +108,54 @@ def test_phu_de_srt_chu_duoi_khong_kem_ban_thu_hai(bot, phu_de_gia):
     assert bot._ghi["tep"][0][1] == SRT
 
 
-def test_link_chon_ghep_thi_tai_video_ve_va_tra_lai_video(bot, phu_de_gia,
-                                                          monkeypatch):
-    """'Khi gửi link thì khi trả lại kèm video nếu là phụ đề'."""
+def test_link_chon_ghep_thi_dot_chu_len_ban_NET(bot, phu_de_gia, tai_gia,
+                                                monkeypatch):
+    """'Khi gửi link thì khi trả lại kèm video nếu là phụ đề' — và bản gửi lại
+    phải là bản NÉT, không phải bản nhẹ dùng để xử lý."""
     from services import video_tai as vt
 
-    da_tai: list[str] = []
     da_ghep: list[tuple] = []
-    monkeypatch.setattr(vt, "tai_video",
-                        lambda url, thu_muc=None: (da_tai.append(url),
-                                                   "/tmp/tai/abc.mp4")[1])
     monkeypatch.setattr(vt, "ghep_phu_de",
                         lambda duong, srt, vi_tri="duoi", duong_ra=None:
-                        (da_ghep.append((duong, vi_tri)), "/tmp/tai/abc_sub.mp4")[1])
+                        (da_ghep.append((duong, vi_tri)), "/tmp/cao/abc_sub.mp4")[1])
 
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "phu-de", "dang_ra": "ghep", "vi_tri": "tren",
                         "target": "vi", "nguon": "en"})
 
-    assert da_tai == ["https://youtu.be/abc"], "link chọn ghép thì phải tải về"
-    assert da_ghep and da_ghep[0][1] == "tren", "phải ghép đúng vị trí đã chọn"
+    assert tai_gia["url"] == "https://youtu.be/abc"
+    assert da_ghep and da_ghep[0][0] == "/tmp/cao/abc.mp4", "đốt chữ lên bản nét"
+    assert da_ghep[0][1] == "tren", "phải ghép đúng vị trí đã chọn"
     assert len(bot._ghi["duong"]) == 1, "trả lại đúng một video"
-    assert bot._ghi["duong"][0][1] == "/tmp/tai/abc_sub.mp4"
+    assert bot._ghi["duong"][0][1] == "/tmp/cao/abc_sub.mp4"
     assert not bot._ghi["tep"], "chọn ghép thì không gửi kèm .srt nữa"
+    assert tai_gia["dong"] == 1, "phải dọn hai thư mục tải tạm"
+
+
+def test_co_phu_de_san_thi_khong_cho_tai_xong_moi_lam(bot, phu_de_gia, tai_gia,
+                                                      monkeypatch):
+    """Hai lượt tải bật NGAY, còn phụ đề vẫn lấy từ YouTube trong lúc đó —
+    không nối đuôi 'tải xong rồi mới lấy chữ'."""
+    from services import video_dich as vd
+    from services import video_tai as vt
+
+    thu_tu: list[str] = []
+    monkeypatch.setattr(vd, "dich_video",
+                        lambda url, target="", **k: (
+                            thu_tu.append("lấy phụ đề"),
+                            {"ok": True, "srt": SRT, "ten": "phu-de.vi.srt",
+                             "chu": "hello", "nguon": "en", "dich": "vi"})[1])
+    monkeypatch.setattr(vt, "ghep_phu_de",
+                        lambda duong, srt, vi_tri="duoi", duong_ra=None: (
+                            thu_tu.append("ghép"), "/tmp/cao/abc_sub.mp4")[1])
+
+    bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                       {"kieu": "phu-de", "dang_ra": "ghep", "vi_tri": "duoi",
+                        "target": "vi", "nguon": "en"})
+
+    assert thu_tu == ["lấy phụ đề", "ghép"]
+    assert tai_gia["vua"] == 0, "có phụ đề sẵn thì khỏi cần bản nhẹ để nghe"
+    assert tai_gia["cao"] == 1
 
 
 def test_chon_srt_thi_khong_tai_video_ve(bot, phu_de_gia, monkeypatch):
@@ -120,8 +172,9 @@ def test_chon_srt_thi_khong_tai_video_ve(bot, phu_de_gia, monkeypatch):
     assert len(bot._ghi["tep"]) == 1
 
 
-def test_link_khong_co_phu_de_san_thi_tai_ve_tu_nghe(bot, monkeypatch):
-    """Lỗi 'không có phụ đề sẵn' nay chữa được, không còn là đường cụt."""
+def test_link_khong_co_phu_de_san_thi_tai_ban_NHE_ve_tu_nghe(bot, monkeypatch):
+    """Lỗi 'không có phụ đề sẵn' nay chữa được, không còn là đường cụt. Chỉ cần
+    bản NHẸ: nghe là việc của luồng tiếng, mà luồng tiếng bản nhẹ vẫn tốt nhất."""
     from services import video_dich as vd
     from services import video_tai as vt
 
@@ -135,12 +188,16 @@ def test_link_khong_co_phu_de_san_thi_tai_ve_tu_nghe(bot, monkeypatch):
                             {"ok": True, "srt": SRT, "ten": "phu-de.vi.srt",
                              "chu": "hello", "nguon": "en", "dich": "vi"})[1])
     monkeypatch.setattr(vd, "bao_cao", lambda r: "✅ xong")
-    monkeypatch.setattr(vt, "tai_video", lambda url, thu_muc=None: "/tmp/x.mp4")
+    muc: list[str] = []
+    monkeypatch.setattr(vt, "tai_video",
+                        lambda url, thu_muc=None, *, chat_luong="cao": (
+                            muc.append(chat_luong), "/tmp/x.mp4")[1])
 
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "phu-de", "dang_ra": "srt", "vi_tri": "duoi",
                         "target": "vi", "nguon": "en"})
     assert nghe == ["/tmp/x.mp4"], "phải tải về rồi tự nghe"
+    assert muc == ["vua"], "ô .srt không cần bản nét, tải nó là phí"
     assert len(bot._ghi["tep"]) == 1
 
 
@@ -228,19 +285,19 @@ def test_llm_hong_van_giu_lai_phu_de(bot, phu_de_gia, monkeypatch):
     assert bot._ghi["tep"] and bot._ghi["tep"][0][1] == SRT
 
 
-def test_long_tieng_tu_link_phai_tai_video_ve_truoc(bot, phu_de_gia, monkeypatch):
-    """Link lồng tiếng được là nhờ có tệp hình trong tay — trước đây ô này bị
-    giấu khỏi link vì gateway chưa tải video về bao giờ."""
+def test_long_tieng_lam_tren_ban_nhe_roi_dua_len_ban_NET(bot, phu_de_gia,
+                                                          tai_gia, monkeypatch):
+    """Tách lời và tổng hợp giọng chạy trên bản nhẹ cho nhanh; giọng xong rồi
+    mới đổi khung hình sang bản nét (chép luồng, không mã hoá lại)."""
     from services import tach_am_gpu as tg
     from services import video_dub as vdub
     from services import video_tai as vt
 
     monkeypatch.setattr(tg, "xac_nhan_san_sang", lambda: None)
-    monkeypatch.setattr(vt, "tai_video", lambda url, thu_muc=None: "/tmp/tai/abc.mp4")
 
     class _Dub:
-        video_path = "/tmp/tai/abc_dub.mp4"
-        prosody_path = "/tmp/tai/abc.json"
+        video_path = "/tmp/vua/abc_dub.mp4"
+        prosody_path = "/tmp/vua/abc.json"
         voice = "vi-VN-A"
         canh_bao = ""
 
@@ -249,10 +306,52 @@ def test_long_tieng_tu_link_phai_tai_video_ve_truoc(bot, phu_de_gia, monkeypatch
     monkeypatch.setattr(vdub, "long_tieng",
                         lambda duong, srt, dich, voice="": (
                             nhan.append(duong), _Dub())[1])
+    doi_hinh: list[tuple] = []
+    monkeypatch.setattr(vt, "thay_tieng",
+                        lambda hinh, tieng, duong_ra=None: (
+                            doi_hinh.append((hinh, tieng)),
+                            "/tmp/cao/abc_dub.mp4")[1])
 
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "long-tieng", "target": "vi", "nguon": "en"})
 
-    assert nhan == ["/tmp/tai/abc.mp4"], "phải lồng tiếng trên tệp vừa tải về"
-    assert [d[1] for d in bot._ghi["duong"]] == ["/tmp/tai/abc_dub.mp4",
-                                                 "/tmp/tai/abc.json"]
+    assert nhan == ["/tmp/vua/abc.mp4"], "xử lý trên bản nhẹ"
+    assert doi_hinh == [("/tmp/cao/abc.mp4", "/tmp/vua/abc_dub.mp4")]
+    assert [d[1] for d in bot._ghi["duong"]] == ["/tmp/cao/abc_dub.mp4",
+                                                 "/tmp/vua/abc.json"]
+
+
+def test_ban_net_hong_thi_van_gui_ban_nhe_da_long_tieng(bot, phu_de_gia,
+                                                        monkeypatch):
+    from services import tach_am_gpu as tg
+    from services import video_dub as vdub
+    from services import video_tai as vt
+
+    monkeypatch.setattr(tg, "xac_nhan_san_sang", lambda: None)
+    monkeypatch.setattr(vt, "co_yt_dlp", lambda: True)
+
+    class _Tai:
+        def __init__(self, url): pass
+        def ban_vua(self): return "/tmp/vua/abc.mp4"
+        def ban_cao(self): return ""        # nguồn chặn bản nét
+        def dong(self): pass
+
+    class _Dub:
+        video_path = "/tmp/vua/abc_dub.mp4"
+        prosody_path = "/tmp/vua/abc.json"
+        voice = "vi-VN-A"
+        canh_bao = ""
+
+    monkeypatch.setattr(vt, "TaiSongSong", _Tai)
+    monkeypatch.setattr(vdub, "chon_giong", lambda dich: "vi-VN-A")
+    monkeypatch.setattr(vdub, "long_tieng",
+                        lambda duong, srt, dich, voice="": _Dub())
+
+    def _khong_duoc_goi(*a, **k):
+        raise AssertionError("không có bản nét thì đừng đổi khung hình")
+
+    monkeypatch.setattr(vt, "thay_tieng", _khong_duoc_goi)
+
+    bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                       {"kieu": "long-tieng", "target": "vi", "nguon": "en"})
+    assert bot._ghi["duong"][0][1] == "/tmp/vua/abc_dub.mp4"

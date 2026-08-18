@@ -43,25 +43,50 @@ def co_yt_dlp() -> bool:
         return False
 
 
-def tai_video(url: str, thu_muc: str | None = None) -> str:
+#: Hai mức tải. Chủ máy chốt 18/08: tải làm HAI bản chạy song song — bản VỪA
+#: để máy xử lý (nghe, tách lời, tổng hợp giọng), bản CAO để ghép kết quả vào
+#: rồi gửi người dùng.
+#:
+#: Vì sao chia được mà không mất gì: yt-dlp chọn hình và tiếng RIÊNG, nên
+#: ``height<=480`` chỉ hạ luồng HÌNH — luồng TIẾNG vẫn là bản tốt nhất. Mà mọi
+#: bước xử lý (nhận lời thoại, tách nhạc khỏi giọng, đo nhịp câu) đều chỉ nghe
+#: chứ không nhìn. Bước duy nhất cần hình nét là bước cuối: đốt chữ vào khung
+#: hoặc thay tiếng — làm trên bản CAO.
+#:
+#: Vì sao chạy song song: bản VỪA tải xong sớm hơn hẳn, máy bắt tay vào nghe
+#: ngay trong lúc bản CAO còn đang tải. Trước đây phải chờ xong bản nặng nhất
+#: rồi mới bắt đầu, tức cộng thẳng hai quãng thời gian vào nhau.
+CHAT_LUONG = {
+    # bestvideo+bestaudio = độ phân giải cao nhất; 'best' đứng sau làm lưới đỡ
+    # cho nguồn không tách luồng.
+    "cao": "bestvideo*+bestaudio/best",
+    "vua": ("bestvideo[height<=480]+bestaudio/"
+            "best[height<=480]/bestvideo*+bestaudio/best"),
+}
+
+
+def tai_video(url: str, thu_muc: str | None = None, *,
+              chat_luong: str = "cao") -> str:
     """Tải video về, trả đường dẫn tệp. Ném ``LoiTaiVideo`` nếu không được.
 
-    Chọn luồng hình TỐT NHẤT rồi ghép với luồng tiếng tốt nhất; không có bản
-    tách luồng thì lấy bản gộp sẵn tốt nhất. KHÔNG chặn theo độ dài — chủ máy
-    chốt 18/08 là tải mọi video, dài mấy cũng tải.
+    ``chat_luong``: "cao" (mặc định, phân giải cao nhất — bản đem gửi lại người
+    dùng) hoặc "vua" (hình ≤480p, tiếng vẫn tốt nhất — bản cho máy xử lý).
+
+    KHÔNG chặn theo độ dài — chủ máy chốt 18/08 là tải mọi video, dài mấy cũng tải.
     """
+    if chat_luong not in CHAT_LUONG:
+        raise ValueError(f"chất lượng phải là {sorted(CHAT_LUONG)}, "
+                         f"nhận {chat_luong!r}")
     if not co_yt_dlp():
         raise LoiTaiVideo(
             "Máy chủ chưa cài yt-dlp nên chưa tải được video về. "
             "Cần cài gói 'yt-dlp' rồi dựng lại image.")
     import yt_dlp
 
-    dich = Path(thu_muc or tempfile.mkdtemp(prefix="tai_video_"))
+    dich = Path(thu_muc or tempfile.mkdtemp(prefix=f"tai_{chat_luong}_"))
     dich.mkdir(parents=True, exist_ok=True)
     tuy_chon = {
-        # bestvideo+bestaudio = độ phân giải cao nhất; 'best' đứng sau làm lưới
-        # đỡ cho nguồn không tách luồng.
-        "format": "bestvideo*+bestaudio/best",
+        "format": CHAT_LUONG[chat_luong],
         "merge_output_format": "mp4",
         "outtmpl": str(dich / "%(id)s.%(ext)s"),
         "quiet": True,
@@ -82,9 +107,88 @@ def tai_video(url: str, thu_muc: str | None = None) -> str:
         if not ung:
             raise LoiTaiVideo("Tải xong nhưng không thấy tệp video đâu.")
         p = ung[0]
-    logger.info({"event": "video_tai_xong", "bytes": p.stat().st_size,
-                 "ten": p.name})
+    logger.info({"event": "video_tai_xong", "chat_luong": chat_luong,
+                 "bytes": p.stat().st_size, "ten": p.name})
     return str(p)
+
+
+class TaiSongSong:
+    """Hai lượt tải CHẠY CÙNG LÚC: bản vừa để xử lý, bản cao để ghép.
+
+    Dùng::
+
+        tai = TaiSongSong(url)          # cả hai bắt đầu ngay
+        xu_ly = tai.ban_vua()           # chờ bản nhẹ — về sớm
+        ...nghe, dịch, tổng hợp giọng...
+        ghep = tai.ban_cao() or xu_ly   # lúc này thường đã tải xong
+        ...
+        tai.dong()                      # xoá cả hai thư mục tạm
+
+    ``ban_cao()`` trả "" khi bản cao hỏng, để việc vẫn xong trên bản vừa thay vì
+    mất trắng: người dùng nhận video hơi mờ vẫn hơn nhận một câu báo lỗi.
+    """
+
+    def __init__(self, url: str) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        self.url = url
+        # Hai thư mục RIÊNG, tạo TRƯỚC khi tải: yt-dlp đặt tên tệp theo mã
+        # video nên chung thư mục là hai lượt ghi đè nhau. Tạo trước còn để
+        # ``dong()`` xoá được cả lượt tải chưa ai lấy kết quả — thường là bản
+        # nét khi người dùng chỉ xin .srt.
+        self._thu_muc = {muc: tempfile.mkdtemp(prefix=f"tai_{muc}_")
+                         for muc in ("vua", "cao")}
+        self._may = ThreadPoolExecutor(max_workers=2,
+                                       thread_name_prefix="tai-video")
+        self._viec = {muc: self._may.submit(tai_video, url, self._thu_muc[muc],
+                                            chat_luong=muc)
+                      for muc in ("vua", "cao")}
+
+    def _lay(self, muc: str) -> str:
+        return self._viec[muc].result()
+
+    def ban_vua(self) -> str:
+        """Bản nhẹ để xử lý. Hỏng thì ném ``LoiTaiVideo`` — không có nó thì
+        không có gì để nghe, cả việc dừng ở đây."""
+        return self._lay("vua")
+
+    def ban_cao(self) -> str:
+        """Bản nét để ghép kết quả vào. Hỏng thì trả "" (xem chú thích lớp)."""
+        try:
+            return self._lay("cao")
+        except Exception as exc:
+            logger.warning({"event": "tai_ban_cao_hong", "loi": str(exc)[:160]})
+            return ""
+
+    def dong(self) -> None:
+        self._may.shutdown(wait=False, cancel_futures=True)
+        for t in self._thu_muc.values():
+            shutil.rmtree(t, ignore_errors=True)
+
+
+def thay_tieng(duong_hinh: str, duong_tieng: str,
+               duong_ra: str | None = None) -> str:
+    """Lấy HÌNH của tệp này ghép với TIẾNG của tệp kia, trả đường dẫn tệp mới.
+
+    Dùng để đưa kết quả lồng tiếng (làm trên bản vừa) lên bản phân giải cao:
+    ``video_dub`` đã trộn xong giọng với nhạc nền rồi, việc còn lại chỉ là đổi
+    khung hình. Chép nguyên cả hai luồng (``-c copy``) nên chạy vài giây bất kể
+    video dài bao nhiêu — không mã hoá lại gì cả.
+    """
+    if not shutil.which("ffmpeg"):
+        raise LoiTaiVideo("Máy chủ không có ffmpeg nên chưa ghép được tiếng.")
+    hinh = Path(duong_hinh)
+    ra = Path(duong_ra or hinh.with_name(f"{hinh.stem}_longtieng.mp4"))
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-i", str(hinh), "-i", str(duong_tieng),
+           "-map", "0:v:0", "-map", "1:a:0", "-c", "copy",
+           "-movflags", "+faststart", str(ra)]
+    r = subprocess.run(cmd, capture_output=True)
+    if r.returncode != 0 or not ra.exists():
+        loi = (r.stderr or b"").decode("utf-8", "ignore")[-300:]
+        raise LoiTaiVideo(f"Ghép tiếng vào bản nét hỏng: {loi}")
+    logger.info({"event": "thay_tieng_xong", "bytes": ra.stat().st_size})
+    return str(ra)
 
 
 def ghep_phu_de(duong_video: str, srt: str | bytes, vi_tri: str = "duoi",

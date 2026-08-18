@@ -53,14 +53,95 @@ def test_thieu_yt_dlp_thi_noi_ro_cach_sua(monkeypatch):
 
 
 @pytest.mark.pure
-def test_tai_o_do_phan_giai_cao_nhat():
-    """Chủ máy chốt: tải bản NÉT NHẤT, không hạ chất lượng cho nhẹ."""
-    import inspect
+def test_ban_gui_lai_van_la_ban_net_nhat():
+    """Chủ máy chốt: bản đem gửi người dùng là bản NÉT NHẤT."""
+    from services.video_tai import CHAT_LUONG
 
-    from services import video_tai
+    assert "bestvideo" in CHAT_LUONG["cao"] and "bestaudio" in CHAT_LUONG["cao"]
+    assert "height" not in CHAT_LUONG["cao"], "bản gửi lại không được hạ chất lượng"
 
-    src = inspect.getsource(video_tai.tai_video)
-    assert "bestvideo" in src and "bestaudio" in src
+
+@pytest.mark.pure
+def test_ban_de_xu_ly_ha_hinh_nhung_giu_nguyen_tieng():
+    """Chia hai bản chỉ đúng khi bản nhẹ KHÔNG hạ luồng tiếng: mọi bước máy làm
+    (nghe lời thoại, tách nhạc khỏi giọng, đo nhịp câu) đều chỉ nghe."""
+    from services.video_tai import CHAT_LUONG
+
+    assert "height<=480" in CHAT_LUONG["vua"]
+    assert "bestaudio" in CHAT_LUONG["vua"], "hạ cả tiếng thì chữ nghe ra sẽ tệ đi"
+
+
+@pytest.mark.pure
+def test_hai_luot_tai_chay_cung_luc_va_khong_de_len_nhau(monkeypatch):
+    """Cùng thư mục là hai lượt ghi đè nhau (yt-dlp đặt tên theo mã video)."""
+    import threading
+    import time
+
+    from services import video_tai as vt
+
+    dang_chay: list[str] = []
+    cao_nhat = []
+
+    def _tai_gia(url, thu_muc=None, *, chat_luong="cao"):
+        dang_chay.append(chat_luong)
+        cao_nhat.append(len(dang_chay))
+        time.sleep(0.2)
+        dang_chay.remove(chat_luong)
+        return f"/tmp/{chat_luong}/abc.mp4"
+
+    monkeypatch.setattr(vt, "tai_video", _tai_gia)
+    tai = vt.TaiSongSong("https://youtu.be/abc")
+    try:
+        assert tai.ban_vua() == "/tmp/vua/abc.mp4"
+        assert tai.ban_cao() == "/tmp/cao/abc.mp4"
+    finally:
+        tai.dong()
+    assert max(cao_nhat) == 2, "hai lượt tải phải chạy cùng lúc, không nối đuôi"
+    assert threading.active_count() >= 1
+
+
+@pytest.mark.pure
+def test_ban_net_hong_thi_van_lam_tiep_tren_ban_nhe(monkeypatch):
+    """Video hơi mờ vẫn hơn một câu báo lỗi."""
+    from services import video_tai as vt
+
+    def _tai_gia(url, thu_muc=None, *, chat_luong="cao"):
+        if chat_luong == "cao":
+            raise vt.LoiTaiVideo("nguồn chặn bản 4K")
+        return "/tmp/vua/abc.mp4"
+
+    monkeypatch.setattr(vt, "tai_video", _tai_gia)
+    tai = vt.TaiSongSong("https://youtu.be/abc")
+    try:
+        assert tai.ban_vua() == "/tmp/vua/abc.mp4"
+        assert tai.ban_cao() == ""
+    finally:
+        tai.dong()
+
+
+@pytest.mark.pure
+def test_ban_nhe_hong_thi_nem_loi_ra_ngoai(monkeypatch):
+    """Không có bản nhẹ thì không nghe được gì — cả việc phải dừng."""
+    from services import video_tai as vt
+
+    def _tai_gia(url, thu_muc=None, *, chat_luong="cao"):
+        raise vt.LoiTaiVideo("link hỏng")
+
+    monkeypatch.setattr(vt, "tai_video", _tai_gia)
+    tai = vt.TaiSongSong("https://youtu.be/abc")
+    try:
+        with pytest.raises(vt.LoiTaiVideo):
+            tai.ban_vua()
+    finally:
+        tai.dong()
+
+
+@pytest.mark.pure
+def test_chat_luong_la_khong_chay_bua(monkeypatch):
+    from services import video_tai as vt
+
+    with pytest.raises(ValueError):
+        vt.tai_video("https://youtu.be/abc", chat_luong="4k")
 
 
 @pytest.mark.pure
