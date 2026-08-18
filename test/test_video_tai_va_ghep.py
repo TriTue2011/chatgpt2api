@@ -82,8 +82,25 @@ def test_ban_de_xu_ly_ha_hinh_nhung_giu_nguyen_tieng():
     (nghe lời thoại, tách nhạc khỏi giọng, đo nhịp câu) đều chỉ nghe."""
     from services.video_tai import CHAT_LUONG
 
-    assert "height<=480" in CHAT_LUONG["vua"]
+    assert "height<=720" in CHAT_LUONG["vua"]
     assert "bestaudio" in CHAT_LUONG["vua"], "hạ cả tiếng thì chữ nghe ra sẽ tệ đi"
+
+
+@pytest.mark.pure
+def test_ban_xu_ly_du_ret_cho_qwen_nhin():
+    """720p chứ không 480p: video_vision.trich_khung ép mọi khung vào khung 768
+    điểm ảnh. Nguồn rộng 1280 thu nhỏ 1,67 lần thì ảnh sạch; nguồn rộng 854 thu
+    nhỏ 0,9 lần, tức nhiễu nén đi thẳng vào model (đo 18/08: khung JPEG nhẹ hơn
+    11%, mất đúng phần chi tiết mịn)."""
+    import re
+
+    from services.video_tai import CHAT_LUONG
+
+    cao_vua = int(re.search(r"height<=(\d+)", CHAT_LUONG["vua"]).group(1))
+    cao_net = int(re.search(r"height<=(\d+)", CHAT_LUONG["cao"]).group(1))
+    # 16:9 → chiều rộng phải vượt 768 đủ nhiều để còn thu nhỏ thật sự.
+    assert cao_vua * 16 / 9 >= 768 * 1.5
+    assert cao_vua < cao_net, "bản xử lý vẫn phải nhẹ hơn bản đem gửi"
 
 
 @pytest.mark.pure

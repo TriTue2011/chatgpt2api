@@ -50,7 +50,7 @@ def co_yt_dlp() -> bool:
 #: rồi gửi người dùng. Bản CAO trần 1080p.
 #:
 #: Vì sao chia được mà không mất gì: yt-dlp chọn hình và tiếng RIÊNG, nên
-#: ``height<=480`` chỉ hạ luồng HÌNH — luồng TIẾNG vẫn là bản tốt nhất. Mà mọi
+#: trần chiều cao chỉ hạ luồng HÌNH — luồng TIẾNG vẫn là bản tốt nhất. Mà mọi
 #: bước xử lý (nhận lời thoại, tách nhạc khỏi giọng, đo nhịp câu) đều chỉ nghe
 #: chứ không nhìn. Bước duy nhất cần hình nét là bước cuối: đốt chữ vào khung
 #: hoặc thay tiếng — làm trên bản CAO.
@@ -68,8 +68,14 @@ def co_yt_dlp() -> bool:
 CHAT_LUONG = {
     "cao": ("bestvideo[height<=1080]+bestaudio/"
             "best[height<=1080]/bestvideo*+bestaudio/best"),
-    "vua": ("bestvideo[height<=480]+bestaudio/"
-            "best[height<=480]/bestvideo*+bestaudio/best"),
+    # 720p chứ không phải 480p, đo trên máy chủ 18/08: video_vision.trich_khung
+    # ép mọi khung vào khung 768 điểm ảnh trước khi đưa Qwen. Nguồn 720p rộng
+    # 1280 nên thu nhỏ 1,67 lần — ảnh sạch; nguồn 480p rộng 854, thu nhỏ 0,9
+    # lần, tức nhiễu nén đi thẳng vào model (khung JPEG nhẹ hơn 11%, mất đúng
+    # phần chi tiết mịn). Giá phải trả trên video 10 phút đã đo: 54 MB lên
+    # 97 MB — vẫn nhẹ hơn 148 MB của bản 1080p nên vẫn về sớm hơn nó nhiều.
+    "vua": ("bestvideo[height<=720]+bestaudio/"
+            "best[height<=720]/bestvideo*+bestaudio/best"),
 }
 
 
@@ -78,7 +84,7 @@ def tai_video(url: str, thu_muc: str | None = None, *,
     """Tải video về, trả đường dẫn tệp. Ném ``LoiTaiVideo`` nếu không được.
 
     ``chat_luong``: "cao" (mặc định, hình ≤1080p — bản đem gửi lại người dùng)
-    hoặc "vua" (hình ≤480p — bản cho máy xử lý). Cả hai đều lấy luồng TIẾNG tốt
+    hoặc "vua" (hình ≤720p — bản cho máy xử lý). Cả hai đều lấy luồng TIẾNG tốt
     nhất: trần chỉ đặt trên hình.
 
     KHÔNG chặn theo độ dài — chủ máy chốt 18/08 là tải mọi video, dài mấy cũng tải.

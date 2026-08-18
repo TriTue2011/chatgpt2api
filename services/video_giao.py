@@ -43,7 +43,7 @@ def _tai_video_ve(kenh: Kenh, url: str, chat_luong: str = "cao") -> str:
     video không có phụ đề sẵn). Đường phụ đề-sẵn-có của ``video_dich`` nhanh
     hơn nhiều nên vẫn là đường mặc định cho các ô chỉ cần chữ.
 
-    ``chat_luong="vua"`` khi chỉ cần NGHE: hạ luồng hình xuống ≤480p, luồng
+    ``chat_luong="vua"`` khi chỉ cần NGHE: hạ luồng hình xuống ≤720p, luồng
     tiếng vẫn là bản tốt nhất nên chữ nhận ra không đổi, mà tải nhanh hơn nhiều.
     """
     from services import video_tai as _vt
