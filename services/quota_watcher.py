@@ -47,6 +47,13 @@ DISABLED_RESET_AFTER = 6 * 3600  # 6 hours
 # Slightly longer than Codex's typical daily window so we don't slam reset.
 LIMITED_FALLBACK_TTL = 26 * 3600  # 26 hours
 
+# Soát lại token dù mọi con số vẫn đẹp. Đo 18/08 trên máy chủ thật: hai tài
+# khoản Codex mang quota 118 và 5, status 'active', nhưng gọi thật trả 401 —
+# token đã chết. Không điều kiện nào trong _should_refresh chạm tới chúng
+# (quota không thấp, không 'limited', không 'error'), nên chúng nằm 'active'
+# vĩnh viễn và bộ định tuyến vẫn giao việc, mỗi lần giao là một cú 401.
+XAC_MINH_LAI_SAU = 6 * 3600  # 6 giờ
+
 
 @dataclass(order=True)
 class QuotaCheckItem:
@@ -329,6 +336,17 @@ class QuotaWatcher:
                     await asyncio.to_thread(
                         account_service.refresh_accounts, [account_id]
                     )
+                    # Đóng dấu giờ soát. Thiếu dấu này thì điều kiện "quá lâu
+                    # chưa soát" luôn đúng với tài khoản chưa từng dùng, và
+                    # watcher sẽ soát lại mỗi vòng.
+                    try:
+                        from datetime import datetime as _dt
+                        account_service.update_account(
+                            account_id,
+                            {"last_checked_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S")},
+                        )
+                    except Exception:
+                        pass
 
                 # Re-schedule with updated next check time
                 now = time.time()
@@ -379,6 +397,14 @@ class QuotaWatcher:
 
         # Abnormal: should refresh to check if recovered
         if status == "error":
+            return True
+
+        # Quá lâu chưa soát lại → soát, kể cả khi mọi con số đều đẹp. Đây là
+        # lưới duy nhất bắt được token đã chết trên một tài khoản trông vẫn
+        # khoẻ; xem chú thích ở XAC_MINH_LAI_SAU.
+        moc = _parse_iso_timestamp(str(account.get("last_checked_at") or "")) \
+            or _parse_iso_timestamp(str(account.get("last_used_at") or ""))
+        if moc is None or (time.time() - moc) >= XAC_MINH_LAI_SAU:
             return True
 
         return False
