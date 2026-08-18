@@ -297,8 +297,20 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                     # Giọng đã trộn xong với nhạc nền trên bản vừa; giờ đổi
                     # khung hình sang bản nét. Chép nguyên cả hai luồng nên
                     # mất vài giây, không mã hoá lại gì.
-                    video_gui = _vt.thay_tieng(ban_net, dub.video_path)
-                    tep_tam.append(video_gui)
+                    #
+                    # Hỏng ở đây KHÔNG được kéo cả lượt xuống: phần đắt nhất
+                    # (tách lời, tổng hợp giọng, trộn nhạc) đã xong rồi, mất nó
+                    # vì một bước chép luồng là quá phí. Gửi bản vừa đã lồng
+                    # tiếng, chỉ nói rõ là hình không nét bằng.
+                    try:
+                        video_gui = _vt.thay_tieng(ban_net, dub.video_path)
+                        tep_tam.append(video_gui)
+                    except Exception as exc_net:
+                        logger.warning("video_giao đổi sang bản nét lỗi: %s",
+                                       str(exc_net)[:200])
+                        kenh.gui_tin("⚠️ Em lồng tiếng xong nhưng chưa đưa lên "
+                                     "được bản nét, nên gửi anh bản hình nhẹ "
+                                     "hơn ạ.")
             except Exception as exc:
                 logger.warning("video_giao lồng tiếng lỗi: %s", str(exc)[:200])
                 kenh.gui_tin(

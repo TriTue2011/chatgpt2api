@@ -380,3 +380,35 @@ def test_ban_net_hong_thi_van_gui_ban_nhe_da_long_tieng(bot, phu_de_gia,
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "long-tieng", "target": "vi", "nguon": "en"})
     assert bot._ghi["duong"][0][1] == "/tmp/vua/abc_dub.mp4"
+
+
+def test_doi_sang_ban_net_hong_thi_van_gui_ban_da_long_tieng(bot, phu_de_gia,
+                                                             tai_gia, monkeypatch):
+    """Phần đắt nhất (tách lời, tổng hợp giọng) đã xong — mất nó vì một bước
+    chép luồng là quá phí."""
+    from services import tach_am_gpu as tg
+    from services import video_dub as vdub
+    from services import video_tai as vt
+
+    monkeypatch.setattr(tg, "xac_nhan_san_sang", lambda: None)
+
+    class _Dub:
+        video_path = "/tmp/vua/abc_dub.mp4"
+        prosody_path = "/tmp/vua/abc.json"
+        voice = "vi-VN-A"
+        canh_bao = ""
+
+    monkeypatch.setattr(vdub, "chon_giong", lambda dich: "vi-VN-A")
+    monkeypatch.setattr(vdub, "long_tieng",
+                        lambda duong, srt, dich, voice="": _Dub())
+
+    def _hong(hinh, tieng, duong_ra=None):
+        raise vt.LoiTaiVideo("codec không chép thẳng sang mp4 được")
+
+    monkeypatch.setattr(vt, "thay_tieng", _hong)
+
+    bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                       {"kieu": "long-tieng", "target": "vi", "nguon": "en"})
+
+    assert bot._ghi["duong"][0][1] == "/tmp/vua/abc_dub.mp4"
+    assert any("bản nét" in t for t in bot._ghi["tin"])
