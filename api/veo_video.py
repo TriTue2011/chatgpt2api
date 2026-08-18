@@ -251,6 +251,39 @@ async def handle_video_generation(
     keyframes = body.get("keyframes")
     model = str(body.get("model") or "veo/veo-3.1-generate-preview")
 
+    # Tên COMBO (vd "AI Video") phải được giải ra model thật trước khi so tiền
+    # tố, nếu không nó rơi khỏi cả hai nhánh agnes/flow rồi đi đường khác.
+    #
+    # Đo 18/08 trên máy chủ thật: nhánh Tạo video đang cấu hình model "AI
+    # Video", và mọi lượt tạo đều hỏng —
+    #
+    #   Agnes AI error (HTTP 400): Model agnes-video-v2.0 is a video model.
+    #                              Use /v1/videos.
+    #
+    # tức model video bị đẩy vào endpoint CHAT. Combo đó gồm cả agnes lẫn flow:
+    #   agnes/agnes-video-v2.0, flow/omni-flash, flow/veo-3.1-lite,
+    #   flow/veo-3.1-fast, flow/veo-3.1-quality
+    # nên giải ra rồi thử lần lượt là chạy được trên cả hai nhà cung cấp.
+    from services.backend_router import backend_router as _br
+    if _br.is_combo(model):
+        thanh_vien = _br._get_combo_models(model) or []
+        loi_cuoi = ""
+        for mv in thanh_vien:
+            try:
+                return await handle_video_generation({**body, "model": mv},
+                                                     authorization)
+            except HTTPException as exc:
+                loi_cuoi = str(getattr(exc, "detail", "") or exc)[:200]
+                logger.warning({"event": "video_combo_thanh_vien_hong",
+                                "combo": model, "model": mv, "error": loi_cuoi})
+            except Exception as exc:
+                loi_cuoi = str(exc)[:200]
+                logger.warning({"event": "video_combo_thanh_vien_hong",
+                                "combo": model, "model": mv, "error": loi_cuoi})
+        raise HTTPException(status_code=502, detail={"error":
+            f"Combo '{model}' không tạo được video: đã thử "
+            f"{len(thanh_vien)} model, lỗi cuối — {loi_cuoi}"})
+
     if model.startswith("agnes/") or "agnes" in model:
         from services.providers.agnes import agnes_provider
         try:
