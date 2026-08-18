@@ -119,18 +119,16 @@ class QuotaWatcher:
             if not acc_id:
                 continue
 
-            # Web-session account (claude / gemini_web_api / gemini_web / chatgpt_web)
-            # dùng session từ captcha-solver, KHÔNG có endpoint quota kiểu chatgpt.
-            # Refresh chúng chỉ 401 rồi đánh dấu status=error NHẦM (account vẫn chạy
-            # qua solver). Bỏ qua — sức khỏe các pool này quản theo solver/sessionKey.
-            if account_group(account) in WEB_SESSION_GROUPS:
-                continue
-
             status = str(account.get("status", ""))
-            quota = int(account.get("quota") or 0)
 
-            # Auto-reset disabled accounts after DISABLED_RESET_AFTER — give free
-            # accounts another chance since they often got 401/403 transiently.
+            # Bật lại tài khoản 'disabled' phải đứng TRƯỚC cửa bỏ qua web-session.
+            #
+            # Cửa dưới bỏ qua nhóm web-session vì chúng không có endpoint hạn mức
+            # để xếp lịch đo. Nhưng đoạn bật lại này KHÔNG gọi endpoint nào cả —
+            # nó chỉ đọc last_used_at rồi đặt lại status. Đặt nó sau cửa nghĩa là
+            # tài khoản Gemini web một khi bị 'disabled' thì nằm đó vĩnh viễn:
+            # đo 18/08 trên máy chủ thật có 3 tài khoản như vậy, một cái mang
+            # dấu hết hạn mức từ 06/07 — hơn một tháng không ai đụng tới.
             if status == "disabled":
                 last_used_str = account.get("last_used_at") or ""
                 last_used_ts = _parse_iso_timestamp(last_used_str) if last_used_str else None
@@ -145,6 +143,14 @@ class QuotaWatcher:
                         status = "active"
                     except Exception as exc:
                         logger.warning({"event": "quota_watcher_reset_failed", "error": str(exc)})
+
+            # Web-session account (claude / gemini_web_api / gemini_web / chatgpt_web)
+            # dùng session từ captcha-solver, KHÔNG có endpoint quota kiểu chatgpt.
+            # Refresh chúng chỉ 401 rồi đánh dấu status=error NHẦM (account vẫn chạy
+            # qua solver). Không xếp vào lịch đo hạn mức — sức khỏe các pool này
+            # quản theo solver/sessionKey.
+            if account_group(account) in WEB_SESSION_GROUPS:
+                continue
 
             # Skip still-disabled or error accounts
             if status in ("disabled", "error"):

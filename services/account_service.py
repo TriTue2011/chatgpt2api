@@ -158,6 +158,14 @@ def account_group(account: dict | None) -> str:
     # Codex responses API — so a plus/go plan on it must not divert it to codex.
     if token.startswith("sk-") or "standard" in types or "openai" in types:
         return GROUP_OPENAI
+    # Nhãn `free` cũng là nhãn RÕ RÀNG nên phải thắng plan, đúng nguyên tắc
+    # "type tags beat plan" ghi ở đầu hàm — trước đây chỉ áp cho standard/openai.
+    #
+    # Đo 18/08 trên máy chủ thật: bios.disused99+…@icloud.com mang type=free
+    # nhưng plan=plus, nên rơi xuống luật dưới và bị xếp vào pool Codex, trong
+    # khi nó được thêm vào để dùng như tài khoản free qua chatgpt.com.
+    if GROUP_FREE in types:
+        return GROUP_FREE
     # A chatgpt.com web account on a paid subscription → codex/paid pool.
     if plan in PAID_PLANS:
         return GROUP_CODEX
@@ -1560,6 +1568,56 @@ class AccountService:
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 
+    def _bao_dong_bi_nuot(self, bi_nuot: dict, giu_lai: dict, token: str) -> None:
+        """Một dòng tài khoản bị đè mất chỗ vì trùng access_token — phải báo.
+
+        Trùng token là chuyện có thật: thêm "ChatGPT free" lấy token từ đúng
+        profile trình duyệt đang đăng nhập sẵn một tài khoản có tên, nên hai
+        dòng cùng token. Pool đánh khoá bằng token nên buộc phải bỏ một dòng.
+
+        Bỏ thì bỏ, nhưng KHÔNG được lặng lẽ: đo 18/08 trên máy chủ thật có 21
+        token từng bị dùng chung, mà nhật ký không có nổi một dòng nào ghi lại,
+        nên tài khoản Codex cứ vơi dần và không ai truy được cái nào đã đi.
+
+        Cùng danh tính (cùng email) thì chỉ là gộp dòng trùng — ghi nhật ký cho
+        đủ vết. KHÁC danh tính là mất dữ liệu thật — báo thẳng cho admin.
+        """
+        em_mat = str(bi_nuot.get("email") or "").strip()
+        em_giu = str(giu_lai.get("email") or "").strip()
+        cung_danh_tinh = em_mat.lower() == em_giu.lower()
+        chi_tiet = {
+            "token": anonymize_token(token),
+            "mat_email": em_mat[:80] or "(không có email)",
+            "mat_provider": account_group(bi_nuot) or "?",
+            "mat_status": str(bi_nuot.get("status") or ""),
+            "giu_email": em_giu[:80] or "(không có email)",
+            "giu_provider": account_group(giu_lai) or "?",
+            "cung_danh_tinh": cung_danh_tinh,
+        }
+        log_service.add(
+            LOG_TYPE_ACCOUNT,
+            ("Gộp dòng trùng token" if cung_danh_tinh
+             else "Mất một dòng tài khoản do trùng access_token"),
+            chi_tiet,
+        )
+        if cung_danh_tinh:
+            return
+        logger.warning({"event": "account_row_overwritten", **chi_tiet})
+        try:
+            from services.notifier import notify_admin
+            notify_admin(
+                "⚠️ Mất một dòng tài khoản (trùng access_token)\n"
+                f"Bị đè mất: {chi_tiet['mat_email']} · {chi_tiet['mat_provider']}"
+                f" · {chi_tiet['mat_status'] or 'không rõ trạng thái'}\n"
+                f"Giữ lại  : {chi_tiet['giu_email']} · {chi_tiet['giu_provider']}\n"
+                "Hai dòng nhận cùng một access_token nên pool chỉ giữ được một. "
+                "Nếu dòng bị mất còn cần thì thêm lại.",
+                category="account_log",
+            )
+        except Exception as exc:
+            logger.warning({"event": "account_row_overwritten_notify_failed",
+                            "error": str(exc)[:120]})
+
     def update_account(self, access_token: str, updates: dict) -> dict | None:
         if not access_token:
             return None
@@ -1584,12 +1642,19 @@ class AccountService:
                                  "email": str(account.get("email") or "")[:80],
                                  "token": anonymize_token(access_token)})
                 return None
+            bi_nuot: dict | None = None
             if new_token != access_token:
                 self._accounts.pop(access_token, None)
-                # If another row already holds new_token, drop it (same free email case)
-                self._accounts.pop(new_token, None)
+                # Pool đánh khoá bằng access_token, nên hai dòng trùng token thì
+                # chỉ một dòng sống. Bản cũ pop thẳng, KHÔNG ghi gì: đo 18/08 có
+                # 21 token từng bị một dòng "free" vô danh và một tài khoản có
+                # tên dùng chung, tức đã có chừng ấy dòng biến mất lặng lẽ —
+                # đúng cái người vận hành báo "tài khoản tự xoá không thấy báo".
+                bi_nuot = self._accounts.pop(new_token, None)
             self._accounts[new_token] = account
             self._save_accounts()
+            if bi_nuot is not None:
+                self._bao_dong_bi_nuot(bi_nuot, account, new_token)
             log_service.add(LOG_TYPE_ACCOUNT, "Cập nhật tài khoản",
                             {"provider": account_group(account),
                              "email": str(account.get("email") or "")[:80],
