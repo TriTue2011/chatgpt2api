@@ -113,7 +113,7 @@ def ghep_phu_de(duong_video: str, srt: str | bytes, vi_tri: str = "duoi",
     # tương đối trong chính thư mục tạm để khỏi phải thoát ký tự.
     style = (f"FontSize=22,Alignment={VI_TRI[vi_tri]},"
              "BorderStyle=1,Outline=2,Shadow=0,MarginV=28")
-    cmd = ["ffmpeg", "-y", "-i", str(goc),
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(goc),
            "-vf", f"subtitles=phu_de.srt:force_style='{style}'",
            "-c:a", "copy", str(ra)]
     r = subprocess.run(cmd, cwd=str(tam), capture_output=True)
