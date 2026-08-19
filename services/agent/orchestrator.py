@@ -1968,6 +1968,49 @@ def _orchestrate_locked(user_text: str, user_id: str,
             _journal(str(out.get("text") or reply), status="ha_fastpath")
             return out
 
+    # 1.6) Workflow tự khai `trigger: tin_nhan` → chạy thẳng pipeline, bỏ lượt
+    # model định tuyến.
+    #
+    # Mượn thiết kế trigger của block/buzz: ở đó workflow bắn theo sự kiện
+    # `message_posted` kèm bộ lọc, thay vì nằm chờ ai đó nhớ ra mà gọi. Cùng lẽ
+    # với đường tắt tạo media (mục 1.47): việc chỉ có MỘT đường đi thì đừng phó
+    # cho model tự nhớ gọi tool.
+    #
+    # Đặt SAU các đường tắt dựng sẵn (media / loa / nhà thông minh) để một từ
+    # khoá lỡ tay trong file .md không cướp được hành vi có sẵn; đặt TRƯỚC lượt
+    # model để nó thật sự là đường tắt.
+    #
+    # Vẫn qua bộ lọc chức năng đúng nhóm của tool `run_workflow` ("skills") —
+    # đường tắt rút ngắn đường đi, không mở thêm quyền.
+    if agent_workflows.is_enabled() and (allow is None or "skills" in allow):
+        try:
+            _wf_bat = agent_workflows.khop_tin_nhan(user_text)
+        except Exception as exc:
+            logger.warning("agent: dò trigger workflow lỗi: %s", exc)
+            _wf_bat = None
+        if _wf_bat is not None:
+            # ctx: để `run()` kiểm được cổng Giáo viên đúng như khi model gọi
+            # tool `run_workflow` — đường tắt không được nới quyền cho ai.
+            _kq_wf = agent_workflows.run(
+                _wf_bat.slug, user_text,
+                ctx={"user_id": user_id, "user_message": user_text,
+                     "is_admin": is_admin},
+            )
+            _txt_wf = str(_kq_wf.get("text") or "").strip()
+            if _txt_wf:
+                logger.info({"event": "agent_workflow_trigger",
+                             "slug": _wf_bat.slug,
+                             "ok": bool(_kq_wf.get("ok")),
+                             "busy": bool(_kq_wf.get("busy"))})
+                out_wf = _finalize(user_id, {"text": _txt_wf})
+                hist.append({"role": "assistant",
+                             "content": out_wf.get("text") or _txt_wf})
+                _persist_history(user_id, hist)
+                tools_used.append("run_workflow")
+                _journal(str(out_wf.get("text") or _txt_wf),
+                         status="workflow_trigger")
+                return out_wf
+
     # Only feed the recent tail to the model (summary lives in system prompt).
     model_hist = hist[-max_h:]
     sys_prompt = _build_system_prompt(user_id, allow)

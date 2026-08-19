@@ -374,6 +374,9 @@ class BackupDeleteRequest(BaseModel):
 class Import9RouterRequest(BaseModel):
     path: str = ""
 
+class WorkflowTriggerRequest(BaseModel):
+    input: str = ""
+
 class RestoreRequest(BaseModel):
     path: str = ""
     passphrase: str = ""  # bắt buộc nếu file backup được mã hóa
@@ -479,6 +482,48 @@ def create_router(app_version: str) -> APIRouter:
         require_admin(authorization)
         from services.agent import branch_health
         return branch_health.check()
+
+    @router.post("/api/agent/workflow/{slug}/trigger")
+    async def agent_workflow_trigger(slug: str, body: WorkflowTriggerRequest,
+                                     authorization: str | None = Header(default=None)):
+        """Bắn một workflow từ ngoài (n8n, Home Assistant, cron của máy khác).
+
+        Chỉ chạy workflow TỰ KHAI `trigger: webhook` trong frontmatter — mượn
+        lối opt-in của buzz (relay chỉ mở đường webhook cho workflow nào đăng
+        ký), để endpoint này không biến mọi file .md trong máy thành thứ gọi
+        được từ ngoài.
+
+        Chạy trong threadpool: workflow là 2–5 lượt gọi model, để nó trên vòng
+        lặp sự kiện là chặn cả gateway.
+        """
+        require_admin(authorization)
+        from services.agent import workflows as wf
+        if not wf.is_enabled():
+            raise HTTPException(status_code=409, detail="Workflow đang tắt")
+        if wf.cho_phep_webhook(slug) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Workflow '{slug}' không tồn tại hoặc chưa khai 'trigger: webhook'",
+            )
+        noi_dung = (body.input or "").strip()
+        if not noi_dung:
+            raise HTTPException(status_code=400, detail="Thiếu 'input'")
+        kq = await run_in_threadpool(wf.run, slug, noi_dung)
+        # Hết chỗ chạy → 429 để bên gọi biết mà thử lại, thay vì tưởng đã xong.
+        if kq.get("busy"):
+            raise HTTPException(status_code=429, detail=str(kq.get("text") or "Đang bận"))
+        return kq
+
+    @router.get("/api/agent/audit/verify")
+    async def agent_audit_verify(authorization: str | None = Header(default=None)):
+        """Kiểm chuỗi băm của nhật ký duyệt (approval_audit.jsonl).
+
+        Phát hiện dòng bị sửa, bị xoá, bị chèn hay bị đảo chỗ. Không gọi model,
+        chỉ đọc file nên chạy nhanh và không tốn tiền.
+        """
+        require_admin(authorization)
+        from services.agent import approval_gate
+        return await run_in_threadpool(approval_gate.verify_chain)
 
     @router.get("/api/privacy/status")
     async def privacy_status(authorization: str | None = Header(default=None)):

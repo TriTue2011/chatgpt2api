@@ -37,6 +37,43 @@ export function ConfigCard() {
   const setField = useSettingsStore((state) => state.setField);
   const saveConfig = useSettingsStore((state) => state.saveConfig);
 
+  // Workflow nằm trong MỘT cụm lồng `agent_workflows`. Backend chỉ trộn sâu cho
+  // `providers`/`custom_providers`, mọi khoá khác bị ghi đè NGUYÊN CỤM — nên khi
+  // đổi một ô phải gửi lại cả cụm, kẻo ba ô kia lặng lẽ về mặc định.
+  // Bản nháp lúc đang gõ, chưa kẹp biên. Rời ô là chốt số rồi xoá nháp đi.
+  const [nhapWorkflow, setNhapWorkflow] = useState<Record<string, string>>({});
+  const wf = ((config as any)?.agent_workflows || {}) as {
+    enabled?: boolean; max_steps?: number; step_timeout?: number; max_concurrent?: number;
+  };
+  const setWorkflowField = (key: string, value: boolean | number) =>
+    setField("agent_workflows", { ...wf, [key]: value });
+  /** Ô số của workflow: giữ NGUYÊN VĂN lúc đang gõ, chỉ kẹp vào biên khi rời ô.
+   *
+   *  Kẹp ngay lúc gõ thì không nhập nổi những số hợp lệ: muốn 60 giây phải gõ
+   *  "6" trước, mà "6" nhỏ hơn trần dưới 30 nên nó nhảy thành 30 ngay dưới tay,
+   *  gõ tiếp số 0 ra 300.
+   *
+   *  Biên khớp backend cho `max_concurrent` (1–8) và `max_steps` (2–8), nên số
+   *  đọc trên màn hình đúng là số có hiệu lực. Riêng `step_timeout` backend chỉ
+   *  chặn dưới ở 30 giây; trần 600 là của riêng ô này, vì một lượt chat đã hết
+   *  hạn ở `_TURN_BUDGET_S = 240` giây — đặt cao hơn nữa chỉ tạo con số không
+   *  bao giờ dùng tới. */
+  const oSoWorkflow = (khoa: "max_steps" | "step_timeout" | "max_concurrent",
+                       macDinh: number, min: number, max: number) => ({
+    value: nhapWorkflow[khoa] ?? String(wf[khoa] ?? macDinh),
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+      setNhapWorkflow((cu) => ({ ...cu, [khoa]: e.target.value })),
+    onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+      const n = parseInt(e.target.value, 10);
+      setWorkflowField(khoa, Number.isFinite(n) ? Math.max(min, Math.min(n, max)) : macDinh);
+      setNhapWorkflow((cu) => {
+        const moi = { ...cu };
+        delete moi[khoa];
+        return moi;
+      });
+    },
+  });
+
   const handleTestProxy = async () => {
     const candidate = String(config?.proxy || "").trim();
     if (!candidate) {
@@ -333,6 +370,65 @@ export function ConfigCard() {
             <div className="space-y-2">
               <label className="text-sm text-[var(--foreground)]">Prompt kiểm duyệt</label>
               <Textarea value={String(config?.ai_review?.prompt || "")} onChange={(event) => setAIReviewField("prompt", event.target.value)} placeholder="Xác định xem yêu cầu của người dùng có được phép hay không. Chỉ trả lời ALLOW hoặc REJECT." className="min-h-24 rounded-xl border-[var(--border)] bg-[var(--card)] text-xs shadow-none" />
+            </div>
+          </div>
+          <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 md:col-span-2">
+            <label className="flex items-center gap-3 text-sm text-[var(--foreground)]">
+              <Checkbox
+                checked={wf.enabled !== false}
+                onCheckedChange={(checked) => setWorkflowField("enabled", Boolean(checked))}
+              />
+              Bật workflow (chuỗi nhiều bước)
+            </label>
+            <p className="text-xs leading-6 text-[var(--muted-foreground)]">
+              Workflow là chuỗi bước gọi model nối tiếp nhau, viết thành file <code>.md</code> đặt trong
+              thư mục <code>data/agent/workflows/</code>. File nào khai <code>trigger: tin_nhan</code> kèm
+              danh sách từ khoá <code>khi:</code> thì tin nhắn chứa từ khoá ấy chạy thẳng workflow, không
+              chờ model tự nhớ gọi công cụ. Tắt ô này là tắt cả đường tự chạy lẫn công cụ{" "}
+              <code>run_workflow</code>.
+            </p>
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <label className="text-sm text-[var(--foreground)]">Chạy cùng lúc tối đa</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={8}
+                  {...oSoWorkflow("max_concurrent", 2, 1, 8)}
+                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)]"
+                />
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Mặc định 2, tối đa 8. Đủ chỗ rồi thì workflow tiếp theo bị từ chối ngay kèm lời nhắn
+                  &laquo;đang bận&raquo; chứ không xếp hàng chờ. Mỗi workflow tốn vài lượt gọi model nối
+                  tiếp, nên tăng số này là tăng tải lên máy chủ và hạn mức nhà cung cấp.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-[var(--foreground)]">Số bước tối đa</label>
+                <Input
+                  type="number"
+                  min={2}
+                  max={8}
+                  {...oSoWorkflow("max_steps", 5, 2, 8)}
+                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)]"
+                />
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  File .md khai nhiều bước hơn thì phần dư bị cắt bỏ. Mặc định 5.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-[var(--foreground)]">Thời gian chờ mỗi bước (giây)</label>
+                <Input
+                  type="number"
+                  min={30}
+                  max={600}
+                  {...oSoWorkflow("step_timeout", 90, 30, 600)}
+                  className="h-10 rounded-xl border-[var(--border)] bg-[var(--card)]"
+                />
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Mặc định 90. Nhân với số bước ra thời gian xấu nhất người dùng phải chờ.
+                </p>
+              </div>
             </div>
           </div>
         </div>

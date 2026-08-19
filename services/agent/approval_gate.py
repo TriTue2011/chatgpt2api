@@ -377,9 +377,10 @@ def log_event(
     *,
     summary: str = "",
 ) -> None:
-    """Append-only audit JSONL (P2#12). Có prev_hash để phát hiện cắt/sửa file."""
-    import hashlib
+    """Append-only audit JSONL (P2#12). Có prev_hash để phát hiện cắt/sửa file.
 
+    Kiểm lại chuỗi bằng `verify_chain()`.
+    """
     row = {
         "ts": time.time(),
         "kind": kind,
@@ -400,21 +401,122 @@ def log_event(
                         step = min(size, 4096)
                         rf.seek(-step, 2)
                         tail = rf.read().decode("utf-8", errors="replace")
-                    last = [ln for ln in tail.splitlines() if ln.strip()][-1]
+                    # split("\n") chứ KHÔNG splitlines(): splitlines() tách thêm ở
+                    # U+2028/U+2029/U+0085, mà `json.dumps(ensure_ascii=False)`
+                    # ghi nguyên các ký tự đó ra file khi người dùng gõ chúng —
+                    # một dòng JSON hợp lệ sẽ bị cắt đôi và chuỗi băm gãy oan.
+                    last = [ln for ln in tail.split("\n") if ln.strip()][-1]
                     prev_obj = json.loads(last)
                     prev = str(prev_obj.get("hash") or prev_obj.get("prev") or "genesis")
                 except Exception:
                     prev = "unknown"
             row["prev"] = prev
-            body = json.dumps(
-                {k: row[k] for k in ("ts", "kind", "user_id", "capability", "summary", "prev")},
-                ensure_ascii=False, sort_keys=True,
-            )
-            row["hash"] = hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+            # Dùng CHUNG `_bam_dong` với `verify_chain` — hai cách tính băm nằm
+            # ở hai chỗ thì sớm muộn cũng lệch nhau, và lúc đó bản kiểm sẽ báo
+            # "đã bị sửa" cho những dòng hoàn toàn lành lặn.
+            row["hash"] = _bam_dong(row)
             with _AUDIT_FILE.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning("approval_gate: audit write failed: %s", exc)
+
+
+_TRUONG_BAM = ("ts", "kind", "user_id", "capability", "summary", "prev")
+
+
+def _bam_dong(row: dict[str, Any]) -> str:
+    """Băm MỘT dòng — phải khớp từng ký tự với cách `log_event` đã ghi."""
+    import hashlib
+
+    body = json.dumps(
+        {k: row.get(k) for k in _TRUONG_BAM},
+        ensure_ascii=False, sort_keys=True,
+    )
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:32]
+
+
+def verify_chain(path: Path | None = None) -> dict[str, Any]:
+    """Đọc lại nhật ký duyệt, tính lại băm từng dòng và soi mắt xích.
+
+    `log_event` đã nối chuỗi băm từ lâu, nhưng không có ai KIỂM nó — chuỗi băm
+    không ai kiểm thì chỉ là chữ thừa trong file. buzz có `verify_chain()` đi
+    kèm ngay từ đầu; đây là bản tương ứng.
+
+    Bắt được ba kiểu can thiệp vào ``approval_audit.jsonl``:
+
+    * sửa nội dung một dòng   → băm tính lại không khớp băm đã ghi
+    * xoá / chèn dòng ở giữa  → `prev` của dòng sau không trỏ vào dòng trước
+    * cắt cụt phần đầu file   → dòng đầu không còn `prev: genesis`
+
+    KHÔNG bắt được ba kiểu sau, vì phần còn lại vẫn là một chuỗi đúng:
+
+    * **cắt cụt phần ĐUÔI** — cách rẻ nhất để xoá dấu vết vừa mới xảy ra. Hàm đi
+      từ đầu file nên một tiền tố lành lặn vẫn cho `ok: true`. Muốn phát hiện thì
+      so `so_dong` và `hash_cuoi` với lần kiểm trước: số dòng chỉ được phép TĂNG,
+      và `hash_cuoi` cũ phải còn nằm trong file.
+    * xoá cả file
+    * ghi lại toàn bộ file bằng chuỗi băm mới (ai ghi được file thì luôn dựng lại
+      được chuỗi)
+
+    Chặn hẳn ba kiểu đó thì phải đẩy băm ra khỏi máy — nằm ngoài phạm vi bản này.
+
+    Dòng có ``prev: "unknown"`` là do lúc ghi không đọc nổi dòng cuối (đĩa lỗi),
+    không phải dấu hiệu bị sửa: đếm riêng ở ``mat_xich_khong_ro`` chứ không kết
+    luận hỏng, kẻo báo động giả làm người ta bỏ luôn thói quen kiểm.
+
+    Trả::
+
+        {"ok": bool, "so_dong": int, "hong_dong": int|None, "ly_do": str,
+         "mat_xich_khong_ro": int, "hash_cuoi": str, "file": str}
+    """
+    f = Path(path) if path is not None else _AUDIT_FILE
+    kq: dict[str, Any] = {
+        "ok": True, "so_dong": 0, "hong_dong": None, "ly_do": "",
+        "mat_xich_khong_ro": 0, "hash_cuoi": "", "file": str(f),
+    }
+    try:
+        if not f.is_file() or f.stat().st_size == 0:
+            return kq
+        raw = f.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        kq["ok"] = False
+        kq["ly_do"] = f"không đọc được file: {exc}"
+        return kq
+
+    mong_doi = "genesis"
+    so = 0
+    # Xem ghi chú ở `log_event`: splitlines() cắt nhầm dòng chứa U+2028/U+2029.
+    for i, line in enumerate(raw.split("\n"), start=1):
+        if not line.strip():
+            continue
+        so += 1
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            kq.update(ok=False, hong_dong=i, ly_do="dòng không phải JSON hợp lệ")
+            break
+        if not isinstance(row, dict) or not row.get("hash"):
+            kq.update(ok=False, hong_dong=i, ly_do="dòng thiếu trường 'hash'")
+            break
+        prev = str(row.get("prev") or "")
+        if prev == "unknown":
+            kq["mat_xich_khong_ro"] = int(kq["mat_xich_khong_ro"]) + 1
+        elif prev != mong_doi:
+            kq.update(
+                ok=False, hong_dong=i,
+                ly_do=("mắt xích đứt: 'prev' trỏ vào "
+                       f"{prev[:16] or '(trống)'} thay vì {mong_doi[:16]} "
+                       "— có dòng bị xoá, chèn, hoặc đảo chỗ"),
+            )
+            break
+        if _bam_dong(row) != str(row.get("hash")):
+            kq.update(ok=False, hong_dong=i,
+                      ly_do="băm không khớp — nội dung dòng đã bị sửa")
+            break
+        mong_doi = str(row.get("hash"))
+        kq["hash_cuoi"] = mong_doi
+    kq["so_dong"] = so
+    return kq
 
 
 def _load_all_pending() -> dict[str, Any]:

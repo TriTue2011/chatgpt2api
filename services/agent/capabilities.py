@@ -1823,17 +1823,11 @@ def _h_run_workflow(args: dict, ctx: dict) -> dict:
             return {"text": "Chưa có workflow. Thêm file .md vào data/agent/workflows/."}
         lines = ["Workflow có sẵn:"] + [w.router_line() for w in items]
         return {"text": "\n".join(lines)}
-    if slug in teach.TEACHER_WORKFLOWS:
-        if not teach.is_enabled():
-            return {"text": "Chế độ Giáo viên đang tắt trong Settings ạ."}
-        if not teach.can_use_teacher(ctx=ctx):
-            return {"text": (
-                "Khung chat này chưa được cấp «Giáo viên tiểu học». "
-                "Admin tick trong Settings → Lọc thread."
-            )}
+    # Cổng Giáo viên chuyển vào `wf.run` (xem workflows.chan_thieu_quyen) để cả
+    # ba đường vào — tool này, trigger tin nhắn, webhook — dùng CHUNG một cổng.
     if not user_input:
         return {"text": "Cần `input` (nội dung/yêu cầu chạy pipeline)."}
-    out = wf.run(slug, user_input)
+    out = wf.run(slug, user_input, ctx=ctx)
     return {"text": out.get("text") or "Workflow xong nhưng không có nội dung."}
 
 
