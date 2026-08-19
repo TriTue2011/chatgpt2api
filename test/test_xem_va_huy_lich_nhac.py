@@ -207,6 +207,10 @@ class KhongTuTiemSearchVaoLuotAgentTests(unittest.TestCase):
 
     Bóc thân `_should_inject_search` ra chạy với stub, vì module gốc cần
     Python ≥3.13 (pyproject) trong khi test có thể chạy trên bản thấp hơn.
+
+    Từ 19/08 có NGOẠI LỆ: model web-reverse không bao giờ phát tool_calls, nên
+    nhường quyền cho nó là không ai tra cứu — lượt của model đó vẫn được tiêm.
+    Stub `_model_bo_qua_tools` bên dưới thay cho hàm thật trong module gốc.
     """
 
     @classmethod
@@ -217,6 +221,7 @@ class KhongTuTiemSearchVaoLuotAgentTests(unittest.TestCase):
             "_thread_denies": lambda body, group: False,
             "_is_trivial_chat": lambda t: False,
             "_is_smarthome_query": lambda t: False,
+            "_model_bo_qua_tools": lambda model: "chatgpt" in str(model or ""),
             "dict": dict,
         }
         exec(_boc_ham(src, "_should_inject_search"), ns)
@@ -229,6 +234,13 @@ class KhongTuTiemSearchVaoLuotAgentTests(unittest.TestCase):
         self.assertFalse(self._goi({"x_agent_internal": True,
                                     "tools": [{"function": {"name": "schedule"}}]}),
                          "vẫn tiêm search vào lượt agent → cướp lượt gọi tool")
+
+    def test_model_web_reverse_thi_VAN_tiem(self) -> None:
+        """Model không gọi được tool: tiêm search là đường tra cứu duy nhất."""
+        self.assertTrue(self._goi({"x_agent_internal": True,
+                                   "model": "chatgpt_free",
+                                   "tools": [{"function": {"name": "web_search"}}]}),
+                        "model web-reverse mà không tiêm → bot không bao giờ tra web")
 
     def test_client_thuong_VAN_tiem_nhu_cu(self) -> None:
         self.assertTrue(self._goi({}), "chặn quá rộng, client thường mất tra web")

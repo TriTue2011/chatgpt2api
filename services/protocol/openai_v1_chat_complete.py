@@ -3791,6 +3791,34 @@ def _thread_denies(body: dict, group: str) -> bool:
     return group not in {str(g) for g in ag}
 
 
+# Provider trả lời qua GIAO DIỆN WEB (reverse) KHÔNG tuân hợp đồng tool calling:
+# vẫn nhận `tools` nhưng không bao giờ phát `tool_calls`, mà viết directive thẳng
+# vào văn bản. Đo thật 19/08 trên máy chủ, lượt mang đủ `web_search` trong tools
+# trả về finish_reason=stop, tool_calls rỗng, kèm nguyên cục `image_group{…}`
+# trong nội dung — tức nó không hề biết mình đang được cấp tool.
+_PROVIDER_KHONG_GOI_TOOL = {"chatgpt"}
+
+
+def _model_bo_qua_tools(model: str) -> bool:
+    """Model sắp chạy có bỏ qua bộ tool được cấp không.
+
+    Combo → xét bước ĐẦU sau khi đã lọc thành viên chết, vì đó mới là model thực
+    sự trả lời; các bước sau chỉ là dự phòng. Không nhận diện được thì trả False
+    để giữ nguyên hành vi cũ (nhường quyền cho model tự gọi tool).
+    """
+    try:
+        ten = _strip_marker(str(model or "").strip())
+        if not ten:
+            return False
+        if backend_router.is_combo(ten):
+            routes = backend_router.route_combo(ten)
+            return bool(routes) and routes[0].provider in _PROVIDER_KHONG_GOI_TOOL
+        provider, _ = backend_router.resolve_model(ten)
+        return provider in _PROVIDER_KHONG_GOI_TOOL
+    except Exception:
+        return False
+
+
 def _should_inject_search(body: dict, ha_pristine: bool, is_vision: bool,
                           has_mcp: bool, text: str) -> bool:
     """Có chạy search SONG SONG (MCP federated + backends + ChatGPT native search)
@@ -3828,7 +3856,15 @@ def _should_inject_search(body: dict, ha_pristine: bool, is_vision: bool,
         # xuống gateway một lượt MỚI không kèm tool → lượt đó vẫn được tiêm đủ
         # (KB nội bộ + các backend + native search) y như trước. Lời gọi phụ khác
         # của capability (tóm tắt, dịch…) cũng vậy.
-        return False
+        #
+        # NHƯNG nhường quyền chỉ có nghĩa khi model THỰC SỰ dùng được quyền ấy.
+        # Model web-reverse (`chatgpt`) không bao giờ phát tool_calls, nên lượt
+        # của nó vừa không được tiêm search, vừa không tự tra web ⇒ bot trả lời
+        # chay mọi câu cần dữ liệu ngoài. Đo thật 19/08: hỏi "sân nhỏ cỏ đen" ba
+        # lượt liền, không lượt nào chạm Internet. Với model như vậy thì tự tiêm
+        # là đường tra cứu DUY NHẤT, nên bỏ ngoại lệ.
+        if not _model_bo_qua_tools(body.get("model")):
+            return False
     is_ha = bool(ha_pristine) or bool(body.get("_is_ha_request"))
     if not is_ha:
         return True
@@ -5389,7 +5425,13 @@ _ENTITY_LEAK = re.compile(
 # It is internal bookkeeping and must never reach the user.
 _SYSLOG_LEAK = re.compile(r"\n*\[System Log:[^\]]*\]\n*")
 # ChatGPT web model leaks image-gen directives: image_group{"aspect_ratio":...}
-_IMAGE_GROUP_LEAK = re.compile(r'\bimage_group\s*\{[^}]*\}', re.DOTALL)
+#
+# `{_PUA}` là BẮT BUỘC, cùng lớp lỗi với _CITE_TURN và _ENTITY_LEAK ở trên: model
+# web chèn ký tự vùng riêng vào GIỮA tên directive và dấu '{'. Đo thật 19/08 trên
+# máy chủ, câu "cho anh xem vài mẫu sân nhỏ cỏ đen" trả về
+# 'image_group\ue202{"layout":"carousel",…}' — `\s*` không khớp \ue202 nên mẫu cũ
+# trượt và nguyên cục directive đi thẳng ra tin nhắn người dùng trên Zalo.
+_IMAGE_GROUP_LEAK = re.compile(rf'\bimage_group{_PUA}\s*\{{[^}}]*\}}', re.DOTALL)
 # After entity[] removal, orphan "- :" bullet lines remain
 _ORPHAN_BULLET = re.compile(r'^-\s*:\s*$', re.MULTILINE)
 
