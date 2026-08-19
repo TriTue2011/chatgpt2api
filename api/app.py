@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, dich, image_tasks, mcp, mcp_admin, oauth, rclone, register, system, voice, zalo_bot, zalo_personal
+from api import accounts, ai, browser_auth, captcha_proxy, channels, claude, devices, dich, image_tasks, mcp, mcp_admin, oauth, ollama_compat, rclone, register, system, voice, zalo_bot, zalo_personal
 from api.support import resolve_web_asset, start_limited_account_watcher, require_admin
 from api.veo_video import handle_video_generation
 from services.backup_service import backup_service
@@ -341,6 +341,10 @@ def create_app() -> FastAPI:
         _log_startup_failure("browser_sessions", exc)
     app.include_router(ai.create_router())
     app.include_router(claude.create_router())  # standalone, OpenAI-compatible /v1/claude/*
+    # Lớp dịch giao thức Ollama → dùng chung đường chat OpenAI. Có nó thì
+    # integration Ollama sẵn trong Home Assistant nối thẳng vào gateway được
+    # (nó tạo entity ai_task mà blueprint cảnh báo camera đòi).
+    app.include_router(ollama_compat.create_router())
     app.include_router(accounts.create_router())
     app.include_router(oauth.create_router())
     app.include_router(browser_auth.create_router())
