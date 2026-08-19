@@ -41,6 +41,10 @@ from utils.log import logger
 # không khai thì dùng "local" — llama.cpp không kiểm khoá.
 _PROVIDER_TU_ENV: dict[str, tuple[str, str]] = {
     "VISION_URL_GPU": ("lv", "Vision GPU (máy tại nhà)"),
+    # Ollama phục vụ luôn giao diện OpenAI ở /v1, nên khai như một provider
+    # bình thường là đủ — model của nó (vd model điều khiển nhà) hiện chung
+    # danh sách với mọi model khác. Khai gọn "http://ip:11434" cũng được.
+    "OLLAMA_URL": ("ol", "Ollama (máy tại nhà)"),
 }
 
 

@@ -21,8 +21,8 @@ def sach(monkeypatch):
     """Config trống + không có biến env nào, để mỗi phép thử tự dựng cảnh."""
     from services.config import config
     monkeypatch.setattr(config, "data", {}, raising=False)
-    monkeypatch.delenv("VISION_URL_GPU", raising=False)
-    monkeypatch.delenv("VISION_URL_GPU_KEY", raising=False)
+    for b in ("VISION_URL_GPU", "VISION_URL_GPU_KEY", "OLLAMA_URL", "OLLAMA_URL_KEY"):
+        monkeypatch.delenv(b, raising=False)
     from services.providers import custom_openai
     return custom_openai
 
@@ -82,3 +82,20 @@ class TestConfigThangEnv:
         monkeypatch.setattr(config, "data", {"custom_providers": {"lv": {
             "prefix": "lv", "base_url": "http://x/v1", "enabled": False}}}, raising=False)
         assert "lv" not in sach.get_custom_providers()
+
+
+class TestOllamaCungCoChe:
+    def test_ollama_tu_hien_khi_dat_bien(self, sach, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://172.16.10.220:11434")
+        p = sach.get_custom_providers().get("ol")
+        assert p, "đặt OLLAMA_URL mà không thấy provider"
+        assert p["base_url"] == "http://172.16.10.220:11434/v1", "Ollama phục vụ giao diện OpenAI ở /v1"
+
+    def test_hai_may_cung_luc(self, sach, monkeypatch):
+        """Máy thị giác và máy Ollama là hai nguồn riêng, phải cùng hiện."""
+        monkeypatch.setenv("VISION_URL_GPU", "http://a:5003")
+        monkeypatch.setenv("OLLAMA_URL", "http://b:11434")
+        ds = sach.get_custom_providers()
+        assert set(ds) == {"lv", "ol"}
+        assert ds["lv"]["base_url"] == "http://a:5003/v1"
+        assert ds["ol"]["base_url"] == "http://b:11434/v1"
