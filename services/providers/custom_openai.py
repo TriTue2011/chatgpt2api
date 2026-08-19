@@ -19,6 +19,7 @@ Config stored in config.data["custom_providers"]:
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from typing import Any, Iterator
@@ -29,11 +30,52 @@ from services.config import config
 from utils.log import logger
 
 
+# Provider khai bằng BIẾN MÔI TRƯỜNG — dành cho máy chạy model tại nhà.
+#
+# Vì sao cần: khai tay qua API thì mỗi lần dựng lại máy (đổi IP máy GPU, cài lại
+# từ đầu, dựng bản sao để thử) đều phải nhớ gọi lại POST /api/v1/custom-providers,
+# và quên là model local biến mất khỏi danh sách mà không báo gì. Đặt biến trong
+# compose thì hạ tầng tự khai lấy.
+#
+# {tên biến: (prefix model, tên hiển thị)}. Khoá API lấy ở "<TÊN BIẾN>_KEY",
+# không khai thì dùng "local" — llama.cpp không kiểm khoá.
+_PROVIDER_TU_ENV: dict[str, tuple[str, str]] = {
+    "VISION_URL_GPU": ("lv", "Vision GPU (máy tại nhà)"),
+}
+
+
+def _providers_tu_env() -> dict[str, dict[str, Any]]:
+    ra: dict[str, dict[str, Any]] = {}
+    for bien, (prefix, ten) in _PROVIDER_TU_ENV.items():
+        url = str(os.getenv(bien) or "").strip().rstrip("/")
+        if not url:
+            continue
+        # Cho khai gọn "http://192.168.1.10:5003" — tự thêm /v1 cho đỡ một lỗi
+        # đánh máy khiến model im lặng không hiện ra.
+        if not url.endswith("/v1"):
+            url = url + "/v1"
+        ra[prefix] = {
+            "name": ten,
+            "prefix": prefix,
+            "base_url": url,
+            "base_urls": [],
+            "api_key": str(os.getenv(bien + "_KEY") or "local"),
+            "api_keys": [],
+            "enabled": True,
+        }
+    return ra
+
+
 def get_custom_providers() -> dict[str, dict[str, Any]]:
-    """Get all enabled custom providers from config."""
-    providers = config.data.get("custom_providers") or {}
-    if not isinstance(providers, dict):
-        return {}
+    """Provider tuỳ chỉnh đang bật: khai trong config, cộng thêm khai bằng env.
+
+    Trùng khoá thì CONFIG THẮNG — người vận hành sửa trên giao diện là có ý,
+    không để một biến môi trường cũ lặng lẽ ghi đè lựa chọn đó.
+    """
+    providers = dict(_providers_tu_env())
+    tu_config = config.data.get("custom_providers") or {}
+    if isinstance(tu_config, dict):
+        providers.update(tu_config)
     return {
         k: v for k, v in providers.items()
         if isinstance(v, dict) and v.get("enabled", True)
