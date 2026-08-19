@@ -48,6 +48,46 @@ _PROVIDER_TU_ENV: dict[str, tuple[str, str]] = {
 }
 
 
+# Prefix của provider khai bằng env — đều là model chạy tại nhà.
+_PREFIX_MAY_NHA = {prefix for prefix, _ in _PROVIDER_TU_ENV.values()}
+
+
+def _tach_khung_anh(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chèn một dòng chữ trước mỗi ảnh khi một lượt gửi nhiều ảnh.
+
+    Vì sao cần: Qwen3-VL nhận được cả video, nên llama.cpp thấy nhiều ảnh nằm
+    sát nhau là coi đó là các khung của một đoạn phim và gộp từng cặp khung
+    liền kề lại. Đo trên fw-vision 19/08: gửi 2 ảnh tốn đúng bằng 1 ảnh (302
+    token), 4 ảnh bằng 2 ảnh; chen chữ vào giữa thì mỗi ảnh về lại 306 token.
+    Hai khoảnh khắc bị chồng lên nhau khiến một người đi ngang phòng bị tả
+    thành hai người mặc đồ giống hệt nhau — sửa prompt không cứu được vì
+    thông tin đã mất trước khi model kịp đọc. Home Assistant gửi ảnh qua
+    `ai_task` dưới dạng danh sách đính kèm thuần nên không tự chèn được, đây
+    là chỗ duy nhất chèn được hộ nó.
+    """
+    ra: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            ra.append(msg)
+            continue
+        so_anh = sum(
+            1 for p in content if isinstance(p, dict) and p.get("type") == "image_url"
+        )
+        if so_anh < 2:
+            ra.append(msg)
+            continue
+        moi: list[Any] = []
+        thu_tu = 0
+        for p in content:
+            if isinstance(p, dict) and p.get("type") == "image_url":
+                thu_tu += 1
+                moi.append({"type": "text", "text": f"Frame {thu_tu} of {so_anh}:"})
+            moi.append(p)
+        ra.append({**msg, "content": moi})
+    return ra
+
+
 def _providers_tu_env() -> dict[str, dict[str, Any]]:
     ra: dict[str, dict[str, Any]] = {}
     for bien, (prefix, ten) in _PROVIDER_TU_ENV.items():
@@ -290,6 +330,9 @@ class CustomOpenAIProvider:
             raise RuntimeError(f"Custom provider '{self.name}' has no base URL configured")
         if not self._get_keys():
             raise RuntimeError(f"Custom provider '{self.name}' has no API key configured")
+
+        if str(self.cfg.get("prefix") or "") in _PREFIX_MAY_NHA:
+            messages = _tach_khung_anh(messages)
 
         body: dict[str, Any] = {
             "model": model,
