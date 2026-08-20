@@ -108,11 +108,18 @@ class TestThongBaoNoiDungNguyenNhan(unittest.TestCase):
         self.assertIn("Kiểm tra profile Google", self._hint("failed"))
 
     def test_ma_nguon_that_co_nhanh_captcha(self):
-        """Khoá lại rằng nhánh này TỒN TẠI trong mã, không chỉ trong test."""
+        """Khoá lại rằng nhánh này TỒN TẠI trong mã, không chỉ trong test.
+
+        Cắt khúc tới đúng chỗ chuỗi chọn hint kết thúc (`_notify(` ngay sau nó),
+        KHÔNG đếm ký tự. Cửa sổ 1400 ký tự của bản trước là một con số tình cờ:
+        thêm một nhánh mới vào chuỗi — nhánh tài khoản OpenAI gốc, 20/08/2026 —
+        là đẩy nhánh captcha ra ngoài cửa sổ, và build đỏ vì một nhánh vẫn còn
+        nguyên vẹn.
+        """
         import inspect
         src = inspect.getsource(ar)
         i = src.index("tried_s = ")
-        khuc = src[i:i + 1400]
+        khuc = src[i:src.index("_notify(", i)]
         self.assertIn("need_captcha", khuc)
         self.assertIn("6080", khuc)
 
