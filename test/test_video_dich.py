@@ -46,6 +46,60 @@ def test_khong_nham_la_link_video(text):
     assert vd.la_link_video(text) == ""
 
 
+# ── Link DÁN TRẦN (mở menu bảy ô) ───────────────────────────────────────────
+#
+# Ca thật 20/08/2026, Zalo cá nhân: dán trần link YouTube thì bot không mở menu
+# mà rơi xuống LLM, rồi LLM tự bịa năm mục của riêng nó. Xin "Lồng tiếng" (ô 7
+# của menu thật) thì nó đòi gửi lại video, và nhắn "3" thì "chưa rõ ý".
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", [
+    "https://youtu.be/5cbuWsRYZss?si=uIm0TFAybquBC5n1",   # đúng tin của ca thật
+    "https://www.youtube.com/watch?v=aircAruvnKk",
+    "  https://youtu.be/aircAruvnKk  ",
+    "https://youtu.be/aircAruvnKk này anh",
+    "xem giúp em cái video này với https://youtu.be/aircAruvnKk",
+    "@Botmitbap https://youtu.be/aircAruvnKk",             # nhóm: tag ở đầu tin
+])
+def test_link_dan_tran_thi_hoi(text):
+    assert vd.chi_la_link_video(text) != ""
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", [
+    "tóm tắt video này https://youtu.be/aircAruvnKk",
+    "dịch giúp em https://youtu.be/aircAruvnKk",
+    "lồng tiếng cái này https://youtu.be/aircAruvnKk",
+    "https://youtu.be/aircAruvnKk có đúng như bài báo hôm qua không",
+])
+def test_da_neu_yeu_cau_thi_khong_nhan_la_link_tran(text):
+    """Nói rồi thì đừng hỏi lại — đường cũ xử lý, hàm này trả rỗng."""
+    assert vd.chi_la_link_video(text) == ""
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("text", ["", "xin chào", "https://example.com/a.mp4"])
+def test_khong_co_link_video_thi_rong(text):
+    assert vd.chi_la_link_video(text) == ""
+
+
+@pytest.mark.pure
+def test_menu_bay_o_co_du_o_long_tieng():
+    """Menu mở ra từ link phải có ĐỦ ô 7 — thứ LLM không có tool để làm."""
+    from services import dich_cho as dc
+
+    khoa = "test:chi-la-link"
+    dc.set_pending(khoa, url="https://youtu.be/aircAruvnKk",
+                   ten="https://youtu.be/aircAruvnKk")
+    try:
+        menu = dc.menu_buoc(khoa)
+    finally:
+        dc.don_tep(dc.pop_pending(khoa))
+    assert "7. Lồng tiếng" in menu
+    assert "6. Phụ đề" in menu
+
+
 @pytest.mark.pure
 def test_lay_dung_ma_video():
     assert vd._ma_video("https://youtu.be/aircAruvnKk") == "aircAruvnKk"

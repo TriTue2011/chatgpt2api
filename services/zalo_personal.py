@@ -2996,6 +2996,29 @@ def _process_ai(ev: dict) -> None:
             _lam_viec_dich(thread_id, thread_type, _dc.pop_pending(pkey), _chon)
             return
 
+    # Dán TRẦN một link video (không kèm yêu cầu) → mở menu bảy ô. Không có khối
+    # này thì link rơi xuống LLM, và LLM chỉ có tool `youtube_transcript` nên nó
+    # tự bịa một danh sách hẹp hơn menu thật — thiếu hẳn ô phụ đề và ô LỒNG
+    # TIẾNG, đúng thứ chủ máy đã bỏ ngày 18/08 khi gộp về MỘT menu. Tệ hơn: menu
+    # nó in ra là văn xuôi, không phải khối <<<ASK>>>, nên không có bản chờ nào
+    # được ghi và người dùng nhắn "3" là không ai nhận.
+    #
+    # Đo thật 20/08 14:07–14:08: chủ máy dán link YouTube → bot kể ra năm mục tự
+    # bịa; xin "Lồng tiếng" (ô 7 của menu thật) → bot đòi gửi lại video vì nó
+    # không có tool đó; dán lại link rồi nhắn "3" → "em thấy anh gửi 3… anh muốn
+    # làm tiếp phần số 3 hay đang chọn một mục nào đó ạ?".
+    #
+    # Đặt SAU khối dich_cho ở trên: đang mở menu mà dán link MỚI thì bản chờ cũ
+    # bị thay (set_pending tự xoá tệp tạm cũ) — video mới là việc mới.
+    if text:
+        from services import video_dich as _vd_tran
+        _url_tran = _vd_tran.chi_la_link_video(text)
+        if _url_tran:
+            _dc.set_pending(pkey, url=_url_tran, ten=_url_tran)
+            send_message(thread_id, _dc.menu_buoc(pkey), thread_type,
+                         account=acc_id, co_nut_chon=True)
+            return
+
     # Chọn mục hướng dẫn. Đặt SAU khối dich_cho ở trên có chủ ý: đang mở menu
     # dịch mà nhắn "2" thì đó là trả lời cho menu dịch, không phải chọn mục.
     if text:

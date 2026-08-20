@@ -1792,6 +1792,19 @@ def _process_message_inner(text: str, chat_id: str, photo: list | None = None, d
             _vg_tg.chay(_kenh_tg(chat_id), _dc_tg.pop_pending(_pk_v_tg), _chon_v)
             return
 
+    # Dán TRẦN một link video → menu bảy ô, cùng lý lẽ với Zalo cá nhân: LLM chỉ
+    # có tool `youtube_transcript` nên nó tự bịa danh sách hẹp hơn (thiếu ô phụ
+    # đề và ô lồng tiếng), lại in ra dạng văn xuôi nên nhắn "3" không ai nhận.
+    # `not video`: video kèm chú thích là việc của nhánh video, nuốt ở đây thì
+    # tệp không bao giờ được xử lý (cùng lý do với khối /dich ở trên).
+    if text and chat_id and not video:
+        from services import video_dich as _vd_tran
+        _url_tran = _vd_tran.chi_la_link_video(text)
+        if _url_tran:
+            _dc_tg.set_pending(_pk_v_tg, url=_url_tran, ten=_url_tran)
+            send_message(chat_id, _dc_tg.menu_buoc(_pk_v_tg))
+            return
+
     # Trả lời ý định PDF: 1 kiến thức / 2 teacher / 3 Word / 4 Excel
     from services import pdf_intent as _pi
     # Kèm NGƯỜI GỬI: bản cũ chỉ tới chat nên trong nhóm, A gửi tệp rồi bot hỏi

@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from services import translate_service as ts
+from services.yeu_cau_moi import bo_dau
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,46 @@ def la_link_video(text: str) -> str:
         return m.group(0) if m and _YT.search(m.group(0)) else _YT.search(s).group(0)
     m = _TIKTOK.search(s)
     return m.group(0) if m else ""
+
+
+#: Chữ CÒN LẠI quanh một link mà không nói lên yêu cầu nào — viết ở dạng đã bỏ
+#: dấu, chữ thường. Cố ý ngắn: nhận nhầm câu ĐÃ nêu yêu cầu ("tóm tắt video này
+#: <link>") thành "link trần" là nuốt mất yêu cầu đó rồi hỏi lại từ đầu, khó
+#: chịu hơn hẳn so với bỏ sót một câu chỉ có chữ đệm.
+_DEM_QUANH_LINK = frozenset({
+    "a", "anh", "bot", "cai", "chi", "co", "day", "do", "em", "gium", "giup",
+    "ha", "hi", "link", "nay", "ne", "nha", "nhe", "nhi", "oi", "ok", "oke",
+    "the", "vay", "video", "voi", "www", "xem",
+})
+
+#: Tag bot người dùng gõ ở đầu tin nhóm ("@Botmitbap <link>") — cùng khuôn với
+#: ``photo_intent._TAG_RE``, bóc tại đây để mọi kênh khỏi phải tự bóc.
+_TAG_BOT = re.compile(r"@[^\s@]{1,32}")
+
+
+def chi_la_link_video(text: str) -> str:
+    """Tin nhắn CHỈ dán link video, không kèm yêu cầu gì → trả LINK, không thì "".
+
+    Dán trần một link là CHƯA nói muốn làm gì với nó (tóm tắt? phụ đề? lồng
+    tiếng?), nên tầng bot phải mở menu bảy ô để HỎI. Đưa xuống LLM là hỏng: LLM
+    chỉ có tool ``youtube_transcript`` nên nó tự bịa một danh sách hẹp hơn menu
+    thật — thiếu hẳn ô phụ đề và ô lồng tiếng — đúng thứ chủ máy đã bỏ ngày 18/08
+    khi gộp về MỘT menu dùng chung cho link và tệp (xem ``services/dich_cho.py``).
+
+    Câu ĐÃ nêu yêu cầu ("tóm tắt video này <link>") trả "" — đường cũ xử lý.
+    """
+    url = la_link_video(text)
+    if not url:
+        return ""
+    # Bóc chính link đã nhận, rồi mọi link khác trong cùng tin (kể cả link
+    # thiếu "https://" mà _LINK không bắt được), rồi tag bot.
+    con = str(text or "").replace(url, " ")
+    for bo in (_LINK, _YT, _TIKTOK, _TAG_BOT):
+        con = bo.sub(" ", con)
+    tu = re.findall(r"[^\W\d_]+", con, re.UNICODE)
+    if all(bo_dau(t).lower() in _DEM_QUANH_LINK for t in tu):
+        return url
+    return ""
 
 
 def _ma_video(url: str) -> str:

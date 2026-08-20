@@ -344,6 +344,68 @@ def menu_buoc(key: str) -> str:
             f"Nhắn số:\n{dong}")
 
 
+#: Nhãn gõ bằng CHỮ → mã việc, ở dạng đã bỏ dấu và bỏ chữ đệm. Người vừa đọc
+#: xong menu hay trả lời bằng đúng chữ trên màn hình ("lồng tiếng") thay vì bấm
+#: số — đo thật 20/08: chủ máy gõ "Lồng tiếng", câu đó rơi xuống LLM, mà LLM
+#: không có tool nào làm việc đó nên nó quay ra đòi gửi lại video.
+#:
+#: KHÔNG có "dich" trơ: menu mở ra có cả ô 3 (dịch ra bản chữ) lẫn ô 6 (phụ đề),
+#: đoán một trong hai là chọn thay người dùng.
+_CHU_THANH_VIEC = {
+    "tom tat": "tom-tat", "tomtat": "tom-tat", "tom tat noi dung": "tom-tat",
+    "y chinh": "y-chinh", "ychinh": "y-chinh", "cac y chinh": "y-chinh",
+    "lay y chinh": "y-chinh", "y chinh cua video": "y-chinh",
+    "dich chu": "dich-chu", "dich ra ban chu": "dich-chu", "ban chu": "dich-chu",
+    "dich ra chu": "dich-chu", "dich loi thoai": "dich-chu",
+    "phan tich": "phan-tich", "phan tich doan": "phan-tich",
+    "ghi chu": "ghi-chu", "ghi chu hoc tap": "ghi-chu",
+    "phu de": "phu-de", "sub": "phu-de", "srt": "phu-de", "phude": "phu-de",
+    "long tieng": "long-tieng", "longtieng": "long-tieng",
+    "thuyet minh": "long-tieng", "long tieng video": "long-tieng",
+}
+
+#: Chữ đệm quanh một nhãn — bỏ đi rồi mới tra bảng, để "lồng tiếng giúp em" và
+#: "em muốn lồng tiếng" cùng ra ô 7. Cố ý KHÔNG khớp kiểu "có chứa": câu thật
+#: ("ghi chú lại giúp em cuộc họp") mà bị nhận thành lựa chọn menu là cướp việc.
+_DEM_TRA_LOI = frozenset({
+    "a", "ah", "anh", "cai", "can", "cho", "chi", "chon", "di", "do", "em",
+    "file", "gium", "giup", "lai", "lam", "link", "luon", "muon", "nay", "nha",
+    "nhe", "o", "oi", "phim", "so", "tep", "thi", "video", "voi", "xin",
+})
+
+
+def _viec_theo_chu(text: str, pend: dict[str, Any]) -> str:
+    """Câu trả lời bằng CHỮ → mã việc, "" nếu không phải nhãn nào của menu."""
+    from services.yeu_cau_moi import bo_dau
+
+    tu = [x for x in bo_dau(str(text or "")).lower().split() if x]
+    goi = " ".join(t for t in tu if t not in _DEM_TRA_LOI)
+    viec = _CHU_THANH_VIEC.get(goi, "")
+    # Chỉ nhận ô THẬT SỰ làm được với đầu vào đang chờ — tệp .srt không có hình
+    # để lồng tiếng, mà nhãn thì người dùng vẫn gõ ra được.
+    return viec if viec in _viec_hop_le(pend) else ""
+
+
+def _chot_viec(key: str, chon: str) -> dict[str, Any]:
+    """Đã biết chọn ô nào → bước kế tiếp.
+
+    Dùng chung cho câu trả lời bằng SỐ và bằng CHỮ: tách ra để hai đường không
+    có cửa nào lệch nhau (ví dụ gõ chữ thì quên mất bước hỏi đoạn của ô 4).
+    """
+    if chon == "phan-tich":
+        # Ô này ghi rõ "một đoạn CỤ THỂ" — đoạn nào thì chỉ người dùng biết.
+        # Không hỏi thì LLM chỉ còn cách tóm tắt cả video, tức là trùng ô 1 và
+        # ô người dùng chọn coi như không có.
+        _ghi_buoc(key, viec=chon, buoc=BUOC_DOAN)
+        return {"tiep": True}
+    if chon in VIEC_QUA_LLM:
+        # Mấy ô này chạy trên PHỤ ĐỀ đã có rồi giao cho LLM — không có tiếng
+        # nguồn/đích để hỏi, hỏi thêm chỉ làm người dùng bấm thừa.
+        return {"kieu": "llm", "viec": chon}
+    _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
+    return {"tiep": True}
+
+
 def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
     """Trả lời của người dùng cho bước hiện tại của phiên ``key``.
 
@@ -370,6 +432,12 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         return {"kieu": "llm", "viec": "phan-tich", "doan": str(text).strip()}
     m = _SO.match(t)
     if not m:
+        # Bước bảy ô còn nhận NHÃN gõ bằng chữ ("lồng tiếng", "tóm tắt"). Các
+        # bước sau chỉ có số và tên tiếng nên không mở rộng thêm.
+        if buoc == BUOC_VIEC:
+            chon = _viec_theo_chu(t, pend)
+            if chon:
+                return _chot_viec(key, chon)
         return None
     so = m.group(1)
     if buoc == BUOC_TIENG_DOC:
@@ -388,18 +456,7 @@ def tra_loi_buoc(key: str, text: str) -> dict[str, Any] | None:
         chon = next((k for k, v in _viec_hop_le(pend).items() if v[0] == so), "")
         if not chon:
             return None
-        if chon == "phan-tich":
-            # Ô này ghi rõ "một đoạn CỤ THỂ" — đoạn nào thì chỉ người dùng
-            # biết. Không hỏi thì LLM chỉ còn cách tóm tắt cả video, tức là
-            # trùng ô 1 và ô người dùng chọn coi như không có.
-            _ghi_buoc(key, viec=chon, buoc=BUOC_DOAN)
-            return {"tiep": True}
-        if chon in VIEC_QUA_LLM:
-            # Ba ô còn lại chạy trên PHỤ ĐỀ đã có rồi giao cho LLM — không có
-            # tiếng nguồn/đích để hỏi, hỏi thêm chỉ làm người dùng bấm thừa.
-            return {"kieu": "llm", "viec": chon}
-        _ghi_buoc(key, viec=chon, buoc=BUOC_NGUON)
-        return {"tiep": True}
+        return _chot_viec(key, chon)
     if buoc == BUOC_NGUON:
         ds = _danh_sach_tieng()
         if int(so) > len(ds):
@@ -482,6 +539,8 @@ def la_cau_tra_loi(key: str, text: str) -> bool:
         # Hai bước này nhận CHỮ TỰ DO (đoạn cần phân tích, nội dung cần đọc)
         # nên không soi dạng được. Chúng chỉ mở ra sau khi người dùng vừa chọn,
         # tức cửa sổ hẹp chứ không phải cả 30 phút.
+        return True
+    if str(pend.get("buoc") or BUOC_VIEC) == BUOC_VIEC and _viec_theo_chu(t, pend):
         return True
     return bool(_SO.match(t))
 

@@ -128,6 +128,65 @@ def test_so_ngoai_menu_va_cau_khong_phai_tra_loi():
     assert dc.tra_loi_buoc(k, "thôi") == {"bo": True}
 
 
+def test_tra_loi_bang_CHU_cung_chon_duoc_o():
+    """Ca thật 20/08: chủ máy gõ "Lồng tiếng" chứ không bấm số 7.
+
+    Menu chỉ đọc số thì câu đó rơi xuống LLM — mà lồng tiếng không phải tool
+    của LLM, nên nó quay ra đòi gửi lại video vừa gửi.
+    """
+    k = _tep()
+    assert dc.tra_loi_buoc(k, "Lồng tiếng") == {"tiep": True}
+    assert (dc.get_pending(k) or {}).get("viec") == "long-tieng"
+
+
+@pytest.mark.parametrize("cau, viec", [
+    ("lồng tiếng giúp em", "long-tieng"),
+    ("em muốn lồng tiếng", "long-tieng"),
+    ("thuyết minh", "long-tieng"),
+    ("Tóm tắt", "tom-tat"),
+    ("tóm tắt nội dung", "tom-tat"),
+    ("phụ đề", "phu-de"),
+    ("ghi chú", "ghi-chu"),
+])
+def test_nhan_gõ_bang_chu_ra_dung_o(cau, viec):
+    k = _tep()
+    assert dc.tra_loi_buoc(k, cau) is not None, cau
+    xong = dc.get_pending(k) or {}
+    # Ô qua LLM trả thẳng kết quả, ba ô còn lại ghi việc rồi hỏi tiếp.
+    assert xong.get("viec") == viec or viec in dc.VIEC_QUA_LLM
+
+
+@pytest.mark.parametrize("cau", [
+    "ghi chú lại giúp em cuộc họp hôm qua",   # câu thật, không phải chọn menu
+    "dịch",                                    # ô 3 hay ô 6? không đoán
+    "mai là thứ mấy",
+])
+def test_khong_cuop_cau_noi_thuong_lam_lua_chon(cau):
+    """Khớp kiểu "có chứa" thì câu thật bị nuốt làm lựa chọn — cố ý không làm."""
+    k = _tep()
+    assert dc.tra_loi_buoc(k, cau) is None, cau
+
+
+def test_o_khong_lam_duoc_thi_go_chu_cung_khong_chon_duoc():
+    """Tệp .srt không có hình để thay tiếng — nhãn gõ ra vẫn phải bị từ chối."""
+    dc.set_pending("k-srt", path="", ten="phu-de.srt")
+    assert dc.tra_loi_buoc("k-srt", "lồng tiếng") is None
+
+
+def test_moi_nhan_chu_deu_tro_vao_mot_o_co_that():
+    """Gõ sai mã việc trong bảng thì nhãn đó chết lặng, không ai thấy."""
+    for nhan, viec in dc._CHU_THANH_VIEC.items():
+        assert viec in dc.VIEC, f"nhãn {nhan!r} trỏ vào mã việc lạ {viec!r}"
+
+
+def test_cong_tag_nhom_coi_nhan_chu_la_cau_tra_loi():
+    """Nhóm bắt tag: gõ "lồng tiếng" mà cổng loại thì menu treo tới lúc hết hạn."""
+    k = _tep()
+    assert dc.la_cau_tra_loi(k, "lồng tiếng") is True
+    assert dc.la_cau_tra_loi(k, "7") is True
+    assert dc.la_cau_tra_loi(k, "mai mình đi ăn") is False
+
+
 def test_phien_het_han_thi_khong_no_ra_loi():
     """Hết hạn thì im, đừng mời chọn cho tệp đã bị dọn mất."""
     assert dc.tra_loi_buoc("khong-co-phien", "1") is None

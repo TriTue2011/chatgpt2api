@@ -56,6 +56,33 @@ def test_menu_tren_telegram_giong_het_ben_zalo(tg):
     dc.don_tep(dc.pop_pending("tg:bot1:123:u9"))
 
 
+def test_link_dan_tran_cung_mo_menu(tg, monkeypatch):
+    """Dán trần link video là CHƯA nói muốn làm gì → hỏi, đừng đưa xuống LLM.
+
+    Ca thật 20/08 xảy ra trên Zalo cá nhân (xem test_link_video_tran_zalop.py),
+    nhưng cổng vào của Telegram giống hệt: chỉ "/dich <link>" mới vào menu, còn
+    link trần rơi xuống LLM — nơi không có tool phụ đề lẫn lồng tiếng.
+    """
+    from services import dich_cho as dc
+    import services.agent as agent_pkg
+    from services.agent import capabilities as caps
+
+    monkeypatch.setattr(caps, "mention_required_for", lambda *a, **k: (False, ""))
+    monkeypatch.setattr(caps, "duoc_giao_tiep", lambda *a, **k: True)
+    monkeypatch.setattr(caps, "allowed_groups_for_member", lambda *a, **k: None)
+    monkeypatch.setattr(agent_pkg, "orchestrate", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("link video dán trần không được rơi vào LLM")))
+
+    link = "https://youtu.be/5cbuWsRYZss?si=uIm0TFAybquBC5n1"
+    try:
+        tg._process_message_inner(link, "123", user_id="u9")
+        menu = tg._ghi["tin"][-1]
+        assert "7. Lồng tiếng video (giữ nhạc và hiệu ứng)" in menu, menu
+        assert (dc.get_pending("tg:bot1:123:u9") or {}).get("url") == link
+    finally:
+        dc.don_tep(dc.pop_pending("tg:bot1:123:u9"))
+
+
 def test_kenh_gui_bytes_thanh_document(tg):
     kenh = tg._kenh_tg("123")
     kenh.gui_bytes(SRT, "phu-de.vi.srt", "Phụ đề")
