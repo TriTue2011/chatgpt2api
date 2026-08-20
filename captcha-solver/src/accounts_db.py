@@ -191,6 +191,36 @@ def loai_theo_profile(profile_or_email: str) -> str:
             else LOAI_GOOGLE)
 
 
+_TIEN_TO_HO_SO = ("google-", "chatgpt-web-", "chatgpt-", "openai-",
+                  "gemini-web-", "gemini-", "claude-web-", "claude-",
+                  "codex-", "github-")
+
+
+def chuan_localpart(ten: str, *, bo_tien_to: bool = True) -> str:
+    """Rút một tên hồ sơ hoặc một địa chỉ email về CHỈ chữ-và-số, để so hai bên.
+
+    Tên hồ sơ sinh ra bằng cách đổi MỌI ký tự không phải chữ/số thành '-'
+    (`account_recovery._profile_for`, `openai-native-card.tsx`), nên
+    `bios.disused99+6e84t67f` thành `bios-disused99-6e84t67f`. Bản cũ chỉ bỏ
+    '-' và '.' nên vế email vẫn còn dấu '+' — hai bên không đời nào khớp.
+
+    Đo thật 20/08/2026 trên máy chủ: `resolve_account("openai-bios-disused99-
+    6e84t67f")` trả None dù kho có đúng bản ghi
+    `bios.disused99+6e84t67f@icloud.com` (kho 'openai', đủ cả mật khẩu lẫn hạt
+    giống TOTP). Hậu quả: tầng đăng nhập lại của
+    `GET /v1/chatgpt/{profile}/refresh-jwt` báo "no saved credentials found for
+    this profile" và tài khoản nằm chết chờ người. Cả hai tài khoản OpenAI gốc
+    đang lưu đều có dấu '+' trong địa chỉ, nên đường này chưa từng chạy được.
+    """
+    s = str(ten or "").strip().lower()
+    if bo_tien_to:
+        for pfx in _TIEN_TO_HO_SO:
+            if s.startswith(pfx):
+                s = s[len(pfx):]
+                break
+    return "".join(ch for ch in s.split("@")[0] if ch.isalnum())
+
+
 def resolve_account(profile_or_email: str, loai: str | None = None) -> Optional[dict]:
     """Tìm credential theo EMAIL chính xác, hoặc theo PROFILE NAME (google-benbap2011,
     chatgpt-benbap2011, claude-web-benbap2011...) bằng cách bỏ tiền tố dịch vụ rồi
@@ -210,19 +240,11 @@ def resolve_account(profile_or_email: str, loai: str | None = None) -> Optional[
     acct = get_account(profile_or_email, kho)     # khớp email chính xác
     if acct:
         return acct
-    name = profile_or_email.strip().lower()
-    for pfx in ("google-", "chatgpt-web-", "chatgpt-", "openai-",
-                "gemini-web-", "gemini-", "claude-web-", "claude-",
-                "codex-", "github-"):
-        if name.startswith(pfx):
-            name = name[len(pfx):]
-            break
-    name = name.replace("-", "").replace(".", "")
+    name = chuan_localpart(profile_or_email)
     if not name:
         return None
     for a in list_accounts(kho):
-        local = str(a.get("email") or "").split("@")[0].lower().replace(".", "").replace("-", "")
-        if local == name:
+        if chuan_localpart(str(a.get("email") or ""), bo_tien_to=False) == name:
             return get_account(a["email"], kho)
     return None
 

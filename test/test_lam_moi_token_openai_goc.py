@@ -117,11 +117,30 @@ class ChonLuongDangNhapLaiTests(unittest.TestCase):
     """Tier 2 phải chọn luồng theo profile, và tra được credential đã lưu."""
 
     def test_resolve_account_biet_tien_to_openai(self):
-        dau = NGUON_DB.index("def resolve_account")
-        than = NGUON_DB[dau:dau + 1500]
-        self.assertIn('"openai-"', than,
-                      "resolve_account không bóc tiền tố openai- thì tier 2 không "
-                      "tra ra mật khẩu đã lưu, dù đã tìm đúng profile")
+        """Gọi thật, không soi chuỗi: tier 2 tra được mật khẩu từ TÊN HỒ SƠ.
+
+        Bản trước tìm chữ `"openai-"` trong 1500 ký tự đầu của `resolve_account`.
+        Danh sách tiền tố sau đó dời sang `chuan_localpart` (bản vá 20/08/2026
+        cho địa chỉ có dấu '+'), nên phép đo bằng chuỗi báo hỏng cho một hành vi
+        vẫn đúng. Đo thẳng hành vi thì không dính chuyện dời chỗ.
+        """
+        import os
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as thu_muc:
+            db = str(Path(thu_muc) / "accounts.db")
+            # `accounts_db` chạy `init_db()` NGAY lúc import, nên biến môi trường
+            # phải đặt trước; `_DB_PATH` vá thêm để lần import sau vẫn đúng chỗ.
+            os.environ["ACCOUNTS_DB"] = db
+            from src import accounts_db as adb
+            with mock.patch.object(adb, "_DB_PATH", db):
+                adb.init_db()
+                adb.save_account("benbap2011@gmail.com", "mat-khau-openai", "",
+                                 "", adb.LOAI_OPENAI)
+                acct = adb.resolve_account("openai-benbap2011")
+        self.assertIsNotNone(acct, "hồ sơ openai-… phải tra ra bản ghi kho openai")
+        self.assertEqual(acct["password"], "mat-khau-openai")
 
     def test_ho_so_openai_dang_nhap_bang_luong_openai_goc(self):
         self.assertIn("start_openai_login", THAN_REFRESH,

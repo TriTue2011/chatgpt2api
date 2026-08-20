@@ -152,44 +152,120 @@ def _has_profile(profile: str) -> bool:
     return os.path.isdir(os.path.join(_CAPTCHA_PROFILES, profile))
 
 
-def _has_google_creds(profile: str, email: str = "") -> bool:
-    """True if captcha accounts_db has password for this profile/email."""
+_ACCOUNTS_DB = "/app/data/captcha/accounts.db"
+
+_TIEN_TO_HO_SO = ("google-", "chatgpt-web-", "chatgpt-", "openai-",
+                  "gemini-web-", "gemini-", "claude-web-", "claude-",
+                  "codex-", "github-")
+
+
+def _localpart(ten: str) -> str:
+    """Tên hồ sơ hoặc email → CHỈ chữ-và-số. Giống `accounts_db.chuan_localpart`
+    của solver, và phải giống: hai bên đang so cùng một thứ.
+
+    Tên hồ sơ đổi MỌI ký tự lạ thành '-', nên bỏ '-' và '.' là chưa đủ — địa chỉ
+    có dấu '+' (mọi tài khoản OpenAI gốc đang lưu) không bao giờ khớp.
+    """
+    s = str(ten or "").strip().lower()
+    for pfx in _TIEN_TO_HO_SO:
+        if s.startswith(pfx):
+            s = s[len(pfx):]
+            break
+    return "".join(ch for ch in s.split("@")[0] if ch.isalnum())
+
+
+def _co_creds(loai: str, profile: str = "", email: str = "") -> bool:
+    """accounts_db của solver có mật khẩu trong KHO `loai` cho tài khoản này không.
+
+    KHO là bắt buộc. Cùng một địa chỉ có thể có bản ghi ở cả kho 'google' lẫn
+    'openai' với hai mật khẩu khác hẳn nhau (xem `captcha-solver/src/accounts_db`).
+    Bản cũ hỏi không kèm kho, nên tài khoản CHỈ có mật khẩu OpenAI vẫn bị tính
+    là "có mật khẩu Google": thang khôi phục đi nhánh Google, mở màn đăng nhập
+    Google, rồi chết ở solver với "no saved Google credentials for this profile".
+
+    Đo thật 20/08/2026 — `bios.disused99+6e84t67f@icloud.com` (ChatGPT free) có
+    ĐÚNG MỘT bản ghi, kho 'openai', đủ mật khẩu và hạt giống TOTP; tin báo cho
+    chủ máy vẫn nói "đã thử: T2-workspace → T3-đăng-nhập-Google".
+    """
     try:
         import os
         import sqlite3
 
-        db = "/app/data/captcha/accounts.db"
-        if not os.path.isfile(db):
+        if not os.path.isfile(_ACCOUNTS_DB):
             return False
-        con = sqlite3.connect(db)
+        con = sqlite3.connect(_ACCOUNTS_DB)
         try:
-            # By email first
+            # Kho cũ chưa có cột `loai` thì chỉ có tài khoản Google — giữ nguyên
+            # hành vi cũ thay vì trả rỗng cho mọi câu hỏi.
+            co_kho = any(r[1] == "loai" for r in con.execute("PRAGMA table_info(accounts)"))
+            if co_kho:
+                loc, tham_so = " AND loai = ?", (loai,)
+            else:
+                loc, tham_so = "", ()
+                if loai != "google":
+                    return False
             if email:
                 row = con.execute(
-                    "SELECT password FROM accounts WHERE lower(email)=lower(?) LIMIT 1",
-                    (email,),
+                    "SELECT password FROM accounts WHERE lower(email)=lower(?)"
+                    + loc + " LIMIT 1",
+                    (email, *tham_so),
                 ).fetchone()
                 if row and row[0]:
                     return True
-            # By profile localpart (same rules as resolve_account)
-            local = profile
-            for pfx in ("google-", "chatgpt-", "codex-", "claude-", "gemini-"):
-                if local.startswith(pfx):
-                    local = local[len(pfx):]
-                    break
-            local = local.replace("-", "").replace(".", "").lower()
-            rows = con.execute("SELECT email, password FROM accounts").fetchall()
-            for em, pw in rows:
-                if not pw:
-                    continue
-                lp = str(em or "").split("@")[0].lower().replace(".", "").replace("-", "")
-                if lp == local:
-                    return True
+            ten = _localpart(profile)
+            if ten:
+                cau = "SELECT email, password FROM accounts"
+                if co_kho:
+                    cau += " WHERE loai = ?"
+                for em, pw in con.execute(cau, tham_so).fetchall():
+                    if pw and _localpart(em) == ten:
+                        return True
         finally:
             con.close()
         return False
     except Exception:
         return False
+
+
+def _has_google_creds(profile: str, email: str = "") -> bool:
+    """Có mật khẩu GOOGLE đã lưu cho tài khoản này không."""
+    return _co_creds("google", profile, email)
+
+
+def _has_openai_creds(profile: str = "", email: str = "") -> bool:
+    """Có mật khẩu của chính OPENAI đã lưu cho tài khoản này không."""
+    return _co_creds("openai", profile, email)
+
+
+def _ho_so_openai(email: str) -> str:
+    """Tên hồ sơ OpenAI gốc của tài khoản, '' nếu tài khoản KHÔNG đi đường đó.
+
+    Bằng chứng theo đúng quy tắc `_ho_so_ung_vien` của solver: thư mục
+    `openai-<localpart>` chỉ có thể do thẻ "OpenAI gốc" tạo ra nên nó LÀ bằng
+    chứng; thư mục `google-<localpart>` thì KHÔNG — mọi lượt mở Chrome đều sinh
+    ra nó, kể cả lượt khôi phục đi nhầm đường. Đo thật 20/08/2026:
+    `bios.disused99+6e84t67f@icloud.com` có CẢ HAI thư mục, và cái `google-`
+    chính là do các lượt khôi phục sai đường tạo ra.
+
+    Chưa có thư mục nào thì hỏi kho: chỉ có mật khẩu OpenAI mà không có mật khẩu
+    Google cũng là tài khoản OpenAI gốc — chỉ là chưa từng đăng nhập ở máy này.
+    """
+    local = (email or "").split("@", 1)[0]
+    if not local:
+        return ""
+    an_toan = "".join(c if c.isalnum() or c == "-" else "-" for c in local)
+    try:
+        import os
+        co_that = {n.lower(): n for n in os.listdir(_CAPTCHA_PROFILES)}
+    except OSError:
+        co_that = {}
+    for ten in (f"openai-{local}", f"openai-{an_toan}", f"openai-{an_toan.lower()}"):
+        thuc = co_that.get(ten.lower())
+        if thuc:
+            return thuc
+    if _has_openai_creds(email=email) and not _has_google_creds("", email):
+        return f"openai-{an_toan}"
+    return ""
 
 
 # Trạng thái auto-login CUỐI của từng profile, để tầng trên báo ĐÚNG nguyên nhân
@@ -573,10 +649,56 @@ def _cgf_reuse(profile: str, email: str) -> str:
     token = _cgf_onboard_once(profile, reuse_session=True)
     if not token or not token.startswith("eyJ"):
         return ""
+    return _cgf_ghi_pool(token, email, profile, "reuse")
+
+
+def _cgf_openai(profile: str, email: str) -> str:
+    """Tầng trình duyệt cho tài khoản OPENAI GỐC — email + mật khẩu của chính
+    OpenAI, KHÔNG có tài khoản Google nào phía sau. Trả JWT hoặc ''.
+
+    Gọi đúng endpoint mà bộ lịch làm mới token vẫn dùng
+    (`GET /v1/chatgpt/{profile}/refresh-jwt`), vì nó đã là một thang hai bước
+    nằm trong solver: quét phiên ChatGPT sẵn có trong hồ sơ trước — rẻ, không mở
+    màn đăng nhập nào — hết đường mới chạy `start_openai_login`, tức luồng đăng
+    nhập của chính OpenAI với mật khẩu và hạt giống TOTP nằm trong solver
+    (không rời khỏi đó, giống `auto-login-saved` của nhánh Google).
+
+    KHÔNG dùng `_cgf_reuse` cho tài khoản kiểu này: `/v1/chatgpt/onboard` cưỡi
+    COOKIE GOOGLE của hồ sơ, nên với hồ sơ OpenAI gốc nó chỉ có thể trả
+    "Hồ sơ không có phiên Google mà lượt gọi cũng không kèm mật khẩu".
+    """
+    import requests
+    url, api_key = _solver_cfg()
+    H = {"Authorization": f"Bearer {api_key}"}
+    try:
+        # Trần khớp ngân sách của endpoint: quét phiên + tối đa 300s đăng nhập lại.
+        r = requests.get(f"{url.rstrip('/')}/v1/chatgpt/{profile}/refresh-jwt",
+                         headers=H, timeout=400)
+        d = r.json() or {}
+    except Exception as exc:
+        _ghi_ket_qua(profile, "error", f"{type(exc).__name__}: {exc}")
+        logger.warning({"event": "cgf_openai_error", "profile": profile,
+                        "error": str(exc)[:200]})
+        return ""
+    token = str(d.get("access_token") or "")
+    if not (d.get("ok") and token.startswith("eyJ")):
+        _ghi_ket_qua(profile, "failed", str(d.get("error") or "")[:200])
+        logger.warning({"event": "cgf_openai_failed", "profile": profile,
+                        "error": str(d.get("error") or "")[:200]})
+        return ""
+    _ghi_ket_qua(profile, "success", str(d.get("method") or ""))
+    return _cgf_ghi_pool(token, email, profile, str(d.get("method") or "openai"))
+
+
+def _cgf_ghi_pool(token: str, email: str, profile: str, nguon: str) -> str:
+    """Ghi JWT vừa lấy được vào pool free. Trả token, '' nếu không ghi.
+
+    CHỈ cập nhật dòng free ĐÃ có trong pool (cùng email) — không tự thêm tài
+    khoản mới từ hồ sơ captcha. Mọi tầng lấy được JWT đều đi qua đây để luật
+    "không tự thêm" chỉ nằm ở một chỗ.
+    """
     try:
         from services.account_service import account_service
-        # Chỉ refresh/cập nhật tài khoản free ĐÃ có trong pool (cùng email).
-        # Không tự thêm email mới từ profile captcha / saved accounts.
         existing = account_service.find_free_by_email(email)
         if not existing:
             logger.info({
@@ -593,7 +715,7 @@ def _cgf_reuse(profile: str, email: str) -> str:
             "event": "cgf_reuse_ok",
             "email": email,
             "profile": profile,
-            "reuse_session": True,
+            "nguon": nguon,
         })
         return token
     except Exception as exc:
@@ -782,7 +904,7 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
               "reuse": _codex_reuse, "batch": _codex_batch},
     # Label dùng trong tin nhắn bot admin (log ChatGPT free / Codex)
     "free": {"enabled": True, "label": "ChatGPT free",
-             "reuse": _cgf_reuse, "batch": None},
+             "reuse": _cgf_reuse, "batch": None, "openai": _cgf_openai},
     # Bật dần tiếp:
     "gemini_web_api": {"enabled": False, "label": "Gemini web"},
     "claude": {"enabled": False, "label": "Claude"},
@@ -806,6 +928,10 @@ def con_tang_trinh_duyet(email: str, provider: str) -> bool:
     prov = _PROVIDERS.get(provider) or {}
     if not prov.get("enabled"):
         return False
+    # Tài khoản OpenAI gốc có tầng trình duyệt RIÊNG, và nhánh Google không tính
+    # cho nó — phải khớp đúng cách `recover_provider_account` rẽ nhánh.
+    if prov.get("openai") and _ho_so_openai(email):
+        return True
     profile = _profile_for(email)
     can_google = bool(prov.get("reuse") and (_has_profile(profile)
                                              or _has_google_creds(profile, email)))
@@ -818,6 +944,12 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
 
     Phân loại tài khoản bằng **danh sách đăng nhập hàng loạt** (`codex_auto_list`),
     không bằng đuôi email — xem `_dong_hang_loat`.
+
+    **Hồ sơ `openai-…` có thật → tài khoản OPENAI GỐC** (email + mật khẩu của
+      chính OpenAI, không có tài khoản Google nào)
+      T2/T3  `refresh-jwt` của solver trên hồ sơ đó: quét lại phiên ChatGPT,
+             phiên chết thì đăng nhập lại bằng mật khẩu OpenAI + TOTP đã lưu.
+             KHÔNG đụng nhánh Google — không có mật khẩu Google nào để mà thử.
 
     **KHÔNG có dòng trong danh sách → tài khoản Google**
       T2  Mở đăng nhập Codex trong workspace của tài khoản đó: `codex-google-onboard`
@@ -852,9 +984,15 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
 
     reuse = prov.get("reuse")
     batch = prov.get("batch")
+    openai_goc = prov.get("openai")
     hang_loat = _dong_hang_loat(email) is not None
-    has_profile = _has_profile(profile)
-    has_creds = _has_google_creds(profile, email)
+    # Tài khoản OpenAI gốc: mật khẩu và 2FA nằm ở OPENAI, không tồn tại đường
+    # Google nào. Tắt hẳn hai cờ Google thay vì để chúng bật lên nhờ một thư mục
+    # `google-…` mà chính lượt khôi phục sai đường trước đó đã tạo ra, và nhờ một
+    # bản ghi kho 'openai' bị đếm nhầm thành "có mật khẩu Google".
+    ho_so_openai = _ho_so_openai(email) if openai_goc else ""
+    has_profile = False if ho_so_openai else _has_profile(profile)
+    has_creds = False if ho_so_openai else _has_google_creds(profile, email)
     # Ngân sách thời gian tổng — ca vô vọng (account bị ban) sẽ bail thay vì treo
     # mãi qua từng tầng browser. Ca hợp lệ (session Google còn sống) xong T2 trong
     # ~40s nên không đụng trần.
@@ -875,12 +1013,13 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # rồi "KHÔNG khôi phục được (đã thử: none)". Ca điển hình: acc ChatGPT free
     # tự thu thập — không có dòng hàng loạt, cũng không có profile/creds Google,
     # tức không tồn tại đường đăng nhập lại nào để mà thử.
+    can_openai = bool(ho_so_openai)
     can_google = bool(reuse and (has_profile or has_creds))
     can_batch = bool(batch and hang_loat)
     # Giữ nguyên phép kiểm tại chỗ (đã có `reuse`/`batch` trong tay) — nó phải
     # cho cùng kết quả với `con_tang_trinh_duyet`, thứ mà T0 dùng để biết có nên
     # im lặng nhường lượt hay không.
-    if not (can_google or can_batch):
+    if not (can_google or can_batch or can_openai):
         logger.info({
             "event": "recover_skip_no_tier",
             "provider": provider,
@@ -888,11 +1027,13 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
             "hang_loat": hang_loat,
             "has_profile": has_profile,
             "has_google_creds": has_creds,
+            "ho_so_openai": ho_so_openai,
             "reason": reason[:120],
         })
         return
 
-    kind = "đăng nhập hàng loạt" if hang_loat else "tài khoản Google"
+    kind = ("tài khoản OpenAI gốc" if can_openai else
+            "đăng nhập hàng loạt" if hang_loat else "tài khoản Google")
     det = {"provider": provider, "email": email}
     _notify(f"⚠️ {label} — {email}\nLỗi: {reason}\n→ Đang tự khôi phục ({kind})…",
             {**det, "step": "start", "reason": reason})
@@ -903,6 +1044,7 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         "hang_loat": hang_loat,
         "has_profile": has_profile,
         "has_google_creds": has_creds,
+        "ho_so_openai": ho_so_openai,
         "reason": reason[:120],
     })
 
@@ -934,6 +1076,26 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
         return False
 
     google_login_failed = False
+
+    # ── Tài khoản OPENAI GỐC: một tầng trình duyệt duy nhất ──────────────────
+    # `refresh-jwt` của solver tự đi hai bước bên trong (quét phiên → đăng nhập
+    # lại bằng mật khẩu OpenAI đã lưu), nên ở đây không cần thang riêng. Xong
+    # nhánh này là DỪNG: các nhánh dưới đều là đường Google/hàng loạt, mà tài
+    # khoản này không có mật khẩu Google lẫn dòng hàng loạt nào để thử.
+    if can_openai and _con_gio():
+        tried.append("T2/T3-OpenAI-gốc")
+        _notify(
+            f"🔧 {label} — {email}\n"
+            f"[T2] Đọc lại phiên ChatGPT trong hồ sơ OpenAI gốc ({ho_so_openai}); "
+            f"phiên chết thì [T3] tự đăng nhập lại bằng mật khẩu OpenAI đã lưu…",
+            {**det, "step": "T2-openai-goc", "profile": ho_so_openai},
+        )
+        if openai_goc(ho_so_openai, email):
+            _notify(f"✅ {label} — {email}\nKhôi phục xong (hồ sơ OpenAI gốc).",
+                    {**det, "step": "T2-openai-goc-ok", "profile": ho_so_openai})
+            logger.info({"event": "recover_ok", "provider": provider,
+                         "tier": "T2/T3-OpenAI-gốc", "email": email})
+            return
 
     # ── Tài khoản ĐĂNG NHẬP HÀNG LOẠT: T3 = chạy lại đúng luồng hàng loạt ─────
     # Cùng endpoint/code với nút "Đăng nhập hàng loạt" (/v1/codex-onboard), chỉ
@@ -1012,7 +1174,13 @@ def recover_provider_account(account: dict[str, Any], provider: str, reason: str
     # thường, nên câu đổ lỗi cho Google vừa sai vừa làm mất tin vào thông báo.
     trang_thai = trang_thai_dang_nhap_cuoi(profile) if can_google else ""
     ly_do = ly_do_dang_nhap_cuoi(profile) if can_google else ""
-    if trang_thai == "need_captcha":
+    if can_openai:
+        vi_sao = ly_do_dang_nhap_cuoi(ho_so_openai) or "không rõ"
+        hint = (f"Tài khoản OpenAI gốc — mật khẩu và 2FA nằm ở OpenAI, KHÔNG có "
+                f"đường Google nào để thử. Lý do: {vi_sao}. Đăng nhập tay MỘT lần "
+                f"ở thẻ 'OpenAI gốc' trong Settings (hoặc noVNC cổng 6080, hồ sơ "
+                f"{ho_so_openai}), xong hệ thống tự dùng lại phiên đó.")
+    elif trang_thai == "need_captcha":
         hint = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
                 "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP/IMAP không liên quan.")
     elif trang_thai in ("need_code", "need_tap"):
