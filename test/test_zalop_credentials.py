@@ -66,3 +66,19 @@ def test_admin_phu_khong_dung_nham_password_chung_cua_admin_chinh(
         },
     ):
         assert zp._credentials() == ("admin-phu", "mat-khau-admin-phu")
+
+
+def test_env_password_ep_dung_username_admin_duoc_quan_ly(tmp_path: Path) -> None:
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        "ZALO_SERVER_ADMIN_PASSWORD": "mat-khau-tu-env",
+    }
+    with patch.dict("os.environ", env, clear=True), patch.object(
+        zp,
+        "_cfg",
+        return_value={
+            "zalo_personal_username": "admin-phu",
+            "zalo_personal_password": "mat-khau-admin-phu",
+        },
+    ):
+        assert zp._credentials() == ("admin", "mat-khau-tu-env")

@@ -119,7 +119,9 @@ def _credentials() -> tuple[str, str]:
     env_u = str(_os.environ.get("ZALO_SERVER_ADMIN_USERNAME") or "").strip()
     env_p = str(_os.environ.get("ZALO_SERVER_ADMIN_PASSWORD") or "").strip()
     managed_user = env_u or "admin"
-    user = env_u or str(c.get("zalo_personal_username") or managed_user).strip()
+    user = managed_user if env_p else (
+        env_u or str(c.get("zalo_personal_username") or managed_user).strip()
+    )
     configured_pw = str(c.get("zalo_personal_password") or "").strip()
     shared_pw = ""
     embedded = _server_url() == _DEFAULT_SERVER_URL
