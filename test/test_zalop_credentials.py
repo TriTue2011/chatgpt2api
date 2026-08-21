@@ -31,7 +31,11 @@ def test_env_password_van_co_uu_tien_cao_nhat(tmp_path: Path) -> None:
 
 def test_server_nhung_uu_tien_file_chung_hon_config_cu(tmp_path: Path) -> None:
     (tmp_path / ".admin_password").write_text("mat-khau-moi", encoding="utf-8")
-    env = {"DATA_DIRECTORY": str(tmp_path)}
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        # Compose export mac dinh cho admin chinh.
+        "ZALO_SERVER_ADMIN_USERNAME": "admin",
+    }
     with patch.dict("os.environ", env, clear=True), patch.object(
         zp, "_cfg", return_value={"zalo_personal_password": "mat-khau-cu"}
     ):
@@ -40,7 +44,11 @@ def test_server_nhung_uu_tien_file_chung_hon_config_cu(tmp_path: Path) -> None:
 
 def test_server_ngoai_van_uu_tien_password_cau_hinh(tmp_path: Path) -> None:
     (tmp_path / ".admin_password").write_text("chi-cua-server-nhung", encoding="utf-8")
-    env = {"DATA_DIRECTORY": str(tmp_path)}
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        # Compose export username mac dinh nhung server ngoai van dung Settings.
+        "ZALO_SERVER_ADMIN_USERNAME": "admin",
+    }
     with patch.dict("os.environ", env, clear=True), patch.object(
         zp,
         "_cfg",
@@ -56,7 +64,11 @@ def test_admin_phu_khong_dung_nham_password_chung_cua_admin_chinh(
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".admin_password").write_text("mat-khau-admin-chinh", encoding="utf-8")
-    env = {"DATA_DIRECTORY": str(tmp_path)}
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        # Compose export mac dinh; Settings admin phu van phai la cap rieng.
+        "ZALO_SERVER_ADMIN_USERNAME": "admin",
+    }
     with patch.dict("os.environ", env, clear=True), patch.object(
         zp,
         "_cfg",

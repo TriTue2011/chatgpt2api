@@ -131,7 +131,9 @@ def _credentials() -> tuple[str, str]:
     if not embedded:
         return (configured_user or "admin", configured_pw or "admin")
 
-    user = env_u or configured_user or managed_user
+    # Username trong Settings la lua chon ro rang (co the la admin phu); bien
+    # env_u mac dinh cua Compose chi mo ta admin chinh duoc Node quan ly.
+    user = configured_user or managed_user
     shared_pw = ""
     if user == managed_user:
         try:
