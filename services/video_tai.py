@@ -79,6 +79,24 @@ CHAT_LUONG = {
 }
 
 
+def _goi_y_403(exc: Exception) -> str:
+    """Lỗi 403 → nói luôn nguyên nhân thường gặp, đừng để người đọc tự đoán.
+
+    YouTube đổi cách ký URL tải vài tuần một lần. Bản yt-dlp cũ hơn đợt đổi vẫn
+    lấy được danh sách format (nên không lộ ra ở bước nào khác) rồi chết đúng
+    lúc tải: "unable to download video data: HTTP Error 403: Forbidden". Đo thật
+    20/08/2026: 2026.7.4 dính 403 trên CẢ máy chủ lẫn máy dev — tức là hỏng theo
+    phiên bản, không phải IP máy chủ bị chặn — còn 2026.8.19 tải trơn.
+
+    Một câu gợi ý ở đây tiết kiệm cả buổi lần mò cho lần sau, vì dòng lỗi này là
+    thứ DUY NHẤT người dùng nhìn thấy.
+    """
+    if "403" not in str(exc):
+        return ""
+    return ("\nThường là do yt-dlp đã cũ hơn lần YouTube đổi cách ký URL. "
+            "Cách chữa: uv lock --upgrade-package yt-dlp rồi dựng lại image.")
+
+
 def tai_video(url: str, thu_muc: str | None = None, *,
               chat_luong: str = "cao") -> str:
     """Tải video về, trả đường dẫn tệp. Ném ``LoiTaiVideo`` nếu không được.
@@ -113,7 +131,8 @@ def tai_video(url: str, thu_muc: str | None = None, *,
             tin = ydl.extract_info(url, download=True)
             duong = ydl.prepare_filename(tin)
     except Exception as exc:
-        raise LoiTaiVideo(f"Không tải được video: {str(exc)[:200]}") from exc
+        raise LoiTaiVideo(f"Không tải được video: {str(exc)[:200]}"
+                          + _goi_y_403(exc)) from exc
 
     p = Path(duong)
     if not p.exists():
@@ -158,6 +177,8 @@ class TaiSongSong:
         self._viec = {muc: self._may.submit(tai_video, url, self._thu_muc[muc],
                                             chat_luong=muc)
                       for muc in ("vua", "cao")}
+        #: Lý do bản nét hỏng, giữ lại cho tầng gọi báo người dùng.
+        self._ly_do = ""
 
     def _lay(self, muc: str) -> str:
         return self._viec[muc].result()
@@ -172,8 +193,19 @@ class TaiSongSong:
         try:
             return self._lay("cao")
         except Exception as exc:
+            self._ly_do = str(exc)[:300]
             logger.warning({"event": "tai_ban_cao_hong", "loi": str(exc)[:160]})
             return ""
+
+    def ly_do_hong(self) -> str:
+        """Vì sao bản nét không về — để tầng gọi NÓI RA, không chỉ ghi log.
+
+        Đo thật 21/08/2026: cả hai lượt tải dính 403, log ghi đủ lý do, nhưng
+        người dùng chỉ nhận đúng câu "Em không tải được video về" — không có
+        403, không có gợi ý nâng yt-dlp. Mất thêm một vòng hỏi han mới lần ra
+        đúng nguyên nhân đã biết từ hôm trước.
+        """
+        return self._ly_do
 
     def dong(self) -> None:
         self._may.shutdown(wait=False, cancel_futures=True)

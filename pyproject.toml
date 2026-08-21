@@ -10,7 +10,17 @@ dependencies = [
     # Tải video từ link về để ghép phụ đề / lồng tiếng (services/video_tai.py).
     # Đường phụ đề-sẵn-có của video_dich không cần gói này; chỉ khi người dùng
     # muốn nhận lại VIDEO thì mới phải có tệp hình trong tay.
-    "yt-dlp>=2025.1.15",
+    #
+    # SÀN PHẢI NÂNG THEO THỜI GIAN, không để nguyên "2025.1.15" được: YouTube
+    # đổi cách ký URL vài tuần một lần, bản yt-dlp cũ hơn đợt đổi thì lấy được
+    # danh sách format nhưng tải là dính "HTTP Error 403: Forbidden". Đo thật
+    # 20/08/2026 trên cả máy chủ lẫn máy dev: 2026.7.4 (bản image đang chạy)
+    # hỏng 403, 2026.8.19 tải trơn — nên đây là hỏng theo phiên bản, không phải
+    # do IP máy chủ bị chặn.
+    #
+    # Lần sau gặp 403 thì việc cần làm là: uv lock --upgrade-package yt-dlp,
+    # rồi dựng lại image (image cài từ uv.lock, sửa mỗi pyproject là không ăn).
+    "yt-dlp>=2026.8.19",
     "fastapi>=0.136.0",
     # JSON nhanh (ORJSONResponse mặc định của app — gateway stream JSON lớn liên tục)
     "orjson>=3.10.0",
@@ -84,5 +94,22 @@ filterwarnings = [
 url = "https://mirrors.aliyun.com/pypi/simple"
 default = true
 
+# RIÊNG yt-dlp lấy thẳng pypi.org, không qua mirror. Lý do: gói này BẮT BUỘC
+# phải mới — YouTube đổi cách ký URL vài tuần một lần, bản cũ hơn đợt đổi là
+# tải dính 403 (xem chú thích ở phần dependencies). Mirror Aliyun chậm hơn
+# pypi.org vài ngày và trong quãng đó nó chỉ có bản nightly `.devN`, nên bám
+# mirror thì hoặc phải chờ, hoặc phải cài bản chưa phát hành chính thức.
+# Đo 20/08/2026: pypi.org đã có 2026.8.19 (bản chữa 403) trong khi mirror mới
+# tới 2026.8.18.122307.dev0.
+# `explicit = true` là BẮT BUỘC, không phải cho gọn: thiếu nó thì index này
+# được hỏi TRƯỚC index mặc định cho mọi gói, và cả 62 gói trong uv.lock chuyển
+# hết sang pypi.org — mất luôn mirror mà chủ máy đã chọn. Có cờ này thì index
+# chỉ phục vụ đúng gói nào trỏ tới nó trong [tool.uv.sources].
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+explicit = true
+
 [tool.uv.sources]
 gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "enable-guest-mode" }
+yt-dlp = { index = "pypi" }

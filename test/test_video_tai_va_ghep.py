@@ -53,6 +53,54 @@ def test_thieu_yt_dlp_thi_noi_ro_cach_sua(monkeypatch):
 
 
 @pytest.mark.pure
+def test_loi_403_thi_chi_luon_cach_chua(monkeypatch):
+    """Ca thật 20/08 20:04: bot chỉ hiện đúng dòng «HTTP Error 403: Forbidden».
+
+    Nguyên nhân là yt-dlp cũ hơn lần YouTube đổi cách ký URL — đo được vì
+    2026.7.4 hỏng trên cả máy chủ lẫn máy dev, còn 2026.8.19 tải trơn. Dòng lỗi
+    này là thứ DUY NHẤT người vận hành nhìn thấy, nên nó phải nói cách chữa.
+    """
+    from services import video_tai
+
+    class _YtGia:
+        class YoutubeDL:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def extract_info(self, *a, **k):
+                raise RuntimeError("ERROR: unable to download video data: "
+                                   "HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr(video_tai, "co_yt_dlp", lambda: True, raising=False)
+    monkeypatch.setitem(__import__("sys").modules, "yt_dlp", _YtGia)
+    with pytest.raises(video_tai.LoiTaiVideo) as e:
+        video_tai.tai_video("https://youtu.be/abc")
+    loi = str(e.value)
+    assert "403" in loi                      # vẫn giữ nguyên văn lỗi gốc
+    assert "yt-dlp" in loi and "image" in loi  # và chỉ ra việc cần làm
+
+
+@pytest.mark.pure
+def test_loi_khac_403_thi_khong_gan_goi_y_sai(monkeypatch):
+    """Mạng đứt hay link hỏng mà cũng khuyên nâng yt-dlp là chỉ sai đường."""
+    from services import video_tai
+
+    class _YtGia:
+        class YoutubeDL:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def extract_info(self, *a, **k):
+                raise RuntimeError("ERROR: Video unavailable")
+
+    monkeypatch.setattr(video_tai, "co_yt_dlp", lambda: True, raising=False)
+    monkeypatch.setitem(__import__("sys").modules, "yt_dlp", _YtGia)
+    with pytest.raises(video_tai.LoiTaiVideo) as e:
+        video_tai.tai_video("https://youtu.be/abc")
+    assert "yt-dlp" not in str(e.value)
+
+
+@pytest.mark.pure
 def test_ban_gui_lai_tran_1080p():
     """Chủ máy chốt lại sau khi thấy 4K: 1080p thôi.
 
@@ -147,6 +195,43 @@ def test_ban_net_hong_thi_van_lam_tiep_tren_ban_nhe(monkeypatch):
     try:
         assert tai.ban_vua() == "/tmp/vua/abc.mp4"
         assert tai.ban_cao() == ""
+    finally:
+        tai.dong()
+
+
+@pytest.mark.pure
+def test_ban_net_hong_thi_giu_lai_LY_DO_cho_tang_goi(monkeypatch):
+    """Ca thật 21/08: cả hai lượt tải dính 403, log ghi đủ, người dùng chỉ nhận
+    «Em không tải được video về» — không lý do, không cách chữa."""
+    from services import video_tai as vt
+
+    def _tai_gia(url, thu_muc=None, *, chat_luong="cao"):
+        if chat_luong == "cao":
+            raise vt.LoiTaiVideo("Không tải được video: ERROR: unable to "
+                                 "download video data: HTTP Error 403: Forbidden")
+        return "/tmp/vua/abc.mp4"
+
+    monkeypatch.setattr(vt, "tai_video", _tai_gia)
+    tai = vt.TaiSongSong("https://youtu.be/abc")
+    try:
+        assert tai.ban_cao() == ""
+        assert "403" in tai.ly_do_hong()
+    finally:
+        tai.dong()
+
+
+@pytest.mark.pure
+def test_chua_hong_thi_khong_co_ly_do_nao(monkeypatch):
+    """Không bịa lý do khi mọi thứ chạy ngon."""
+    from services import video_tai as vt
+
+    monkeypatch.setattr(vt, "tai_video",
+                        lambda url, thu_muc=None, *, chat_luong="cao":
+                        f"/tmp/{chat_luong}/abc.mp4")
+    tai = vt.TaiSongSong("https://youtu.be/abc")
+    try:
+        assert tai.ban_cao() == "/tmp/cao/abc.mp4"
+        assert tai.ly_do_hong() == ""
     finally:
         tai.dong()
 

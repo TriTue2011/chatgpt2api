@@ -380,9 +380,15 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
             if not ban_net:
                 # Cả hai bản đều không về được. Vẫn còn phụ đề trong tay nên
                 # gửi nó, đừng để cả lượt thành công cốc.
+                #
+                # PHẢI kèm LÝ DO: bản trước chỉ nói "không tải được" rồi nuốt
+                # nguyên nhân vào log. Đo thật 21/08 — log ghi rõ 403 mà người
+                # dùng không thấy chữ nào, nên cùng một lỗi phải lần lại từ đầu.
+                ly_do = tai.ly_do_hong() if tai is not None else ""
                 kenh.gui_tin("⚠️ Em không tải được video về nên chưa đốt chữ "
-                             "vào hình được. Em gửi tệp .srt để không mất kết "
-                             "quả ạ.")
+                             "vào hình được"
+                             + (f":\n{ly_do}" if ly_do else ".")
+                             + "\nEm gửi tệp .srt để không mất kết quả ạ.")
                 kenh.gui_bytes(srt_chu.encode("utf-8"), r["ten"], "Phụ đề")
                 return
             try:

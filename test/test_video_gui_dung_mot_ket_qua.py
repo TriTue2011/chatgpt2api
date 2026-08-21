@@ -223,6 +223,9 @@ def test_ca_hai_ban_tai_deu_hong_thi_van_gui_phu_de(bot, phu_de_gia, monkeypatch
         def __init__(self, url): pass
         def ban_vua(self): raise vt.LoiTaiVideo("nguồn chặn")
         def ban_cao(self): return ""
+        def ly_do_hong(self):
+            return ("Không tải được video: ERROR: unable to download video "
+                    "data: HTTP Error 403: Forbidden")
         def dong(self): pass
 
     monkeypatch.setattr(vt, "TaiSongSong", _TaiHong)
@@ -235,7 +238,11 @@ def test_ca_hai_ban_tai_deu_hong_thi_van_gui_phu_de(bot, phu_de_gia, monkeypatch
     bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
                        {"kieu": "phu-de", "dang_ra": "ghep", "vi_tri": "duoi",
                         "target": "vi", "nguon": "en"})
-    assert any("không tải được video" in t.lower() for t in bot._ghi["tin"])
+    bao = [t for t in bot._ghi["tin"] if "không tải được video" in t.lower()]
+    assert bao, "phải báo là không tải được"
+    # Ca thật 21/08: câu báo nuốt mất lý do, người dùng chỉ thấy "không tải
+    # được video về" nên cùng một lỗi 403 phải lần lại từ đầu.
+    assert "403" in bao[0], f"câu báo phải kèm LÝ DO: {bao[0]!r}"
     assert len(bot._ghi["tep"]) == 1, "vẫn phải nhận được tệp .srt"
     assert not bot._ghi["duong"]
 
