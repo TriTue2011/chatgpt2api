@@ -1572,7 +1572,172 @@ class AccountService:
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
 
-    def _bao_dong_bi_nuot(self, bi_nuot: dict, giu_lai: dict, token: str) -> None:
+    @staticmethod
+    def _dang_nghi_han(acc: dict | None) -> bool:
+        """Dòng này đang nghỉ hạn thật sự — có lấy ra dùng cũng chỉ ăn 429.
+
+        Khác `han_nghi_chua_toi` ở đúng một điểm: nó trả False khi KHÔNG có
+        `restore_at` để nhường quyết định cho `revive_stuck_limited`. Ở đây thì
+        `limited` mà không biết bao giờ hồi vẫn là đang nghỉ — dùng không được
+        thì không được.
+        """
+        if not isinstance(acc, dict) or str(acc.get("status") or "") != "limited":
+            return False
+        if not str(acc.get("restore_at") or "").strip():
+            return True
+        return han_nghi_chua_toi(acc)
+
+    # Credential OAuth của dòng Codex phải nhường chỗ được cất dưới tiền tố
+    # `codex_`, KHÔNG gộp thẳng vào `refresh_token`: `account_group` xếp "gói
+    # trả phí + có refresh_token" vào pool codex, nên gộp thẳng sẽ đẩy đúng
+    # dòng free vừa được giữ lại quay về cái pool đang nghỉ.
+    _KHOA_CODEX_CAT_TAM = ("refresh_token", "expires_at", "project_id", "device_id")
+
+    # Dòng Codex nhường chỗ mà upstream KHÔNG báo hạn nghỉ thì không có mốc nào
+    # để chờ. Lấy đúng con số `LIMITED_FALLBACK_TTL` của `quota_watcher` — dài
+    # hơn cửa sổ ngày của Codex một chút, đủ để không bật lại sớm rồi ăn 429.
+    _CODEX_NGHI_TOI_DA_GIO = 26.0
+
+    def _cat_credential_codex(self, dong_song: dict, dong_codex: dict) -> dict:
+        """Cất credential Codex + mốc nghỉ hạn lên dòng sống sót."""
+        ra = dict(dong_song)
+        for khoa in self._KHOA_CODEX_CAT_TAM:
+            gia_tri = dong_codex.get(khoa)
+            if gia_tri:
+                ra[f"codex_{khoa}"] = gia_tri
+        if not str(ra.get("email") or "").strip() and dong_codex.get("email"):
+            ra["email"] = dong_codex["email"]
+        ra["codex_type"] = str(dong_codex.get("type") or "") or None
+        ra["codex_limited_at"] = (str(dong_codex.get("last_quota_exhausted_at") or "").strip()
+                                  or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        ra["codex_restore_at"] = dong_codex.get("restore_at") or None
+        return ra
+
+    def _phan_xu_trung_token(self, dong_vao: dict, dong_cho: dict) -> tuple[dict, dict, bool]:
+        """Hai dòng tranh cùng một access_token — dòng nào sống, dòng nào đi.
+
+        Chủ máy chốt 21/08/2026: **ưu tiên Codex**. Cùng một access_token nghĩa
+        là cùng một tài khoản ChatGPT, nhưng quota Codex và quota web free là
+        hai đồng hồ khác nhau — nên khi dòng Codex đang nghỉ hạn thì giữ dòng
+        free để tài khoản vẫn chạy được đường web, thay vì giữ một dòng chắc
+        chắn 429.
+
+        Dù bên nào thắng, credential OAuth của dòng Codex không bị vứt: nó được
+        cất sang dòng sống dưới tiền tố `codex_` kèm mốc nghỉ hạn, nên sau này
+        đăng nhập/khôi phục lại Codex không phải làm từ đầu.
+
+        Hai dòng cùng loại (đều Codex, hoặc đều không) thì giữ nếp cũ: dòng
+        đang vào thắng vì nó mới hơn.
+
+        Trả về `(dòng sống, dòng bị bỏ, có cất credential Codex hay không)`.
+        """
+        vao_la_codex = self._giu_danh_tinh_codex(dong_vao)
+        cho_la_codex = self._giu_danh_tinh_codex(dong_cho)
+        if vao_la_codex == cho_la_codex:
+            return dong_vao, dong_cho, False
+        dong_codex, dong_free = (dong_vao, dong_cho) if vao_la_codex else (dong_cho, dong_vao)
+        if self._dang_nghi_han(dong_codex):
+            return self._cat_credential_codex(dong_free, dong_codex), dong_codex, True
+        return dong_codex, dong_free, False
+
+    @classmethod
+    def _het_han_nghi_codex(cls, acc: dict, now: datetime) -> bool:
+        """Hạn nghỉ của credential Codex đang cất tạm đã trôi qua chưa."""
+        han = str(acc.get("codex_restore_at") or "").strip()
+        if han:
+            try:
+                t = datetime.fromisoformat(han.replace("Z", "+00:00"))
+            except Exception:
+                return True   # hạn không đọc được → đừng giam dòng đó mãi
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+            return now >= t
+        # Không có hạn do upstream báo → đếm từ lúc bị limit, y như
+        # `revive_stuck_limited` đếm từ `last_quota_exhausted_at`.
+        moc = str(acc.get("codex_limited_at") or "").strip()
+        if not moc:
+            return True
+        try:
+            t = datetime.strptime(moc[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            return True
+        return (now - t).total_seconds() >= cls._CODEX_NGHI_TOI_DA_GIO * 3600
+
+    def _go_credential_codex(self, acc: dict) -> dict:
+        """Gỡ credential Codex khỏi chỗ cất tạm, trả lại dòng đã khôi phục."""
+        ra = dict(acc)
+        for khoa in self._KHOA_CODEX_CAT_TAM:
+            gia_tri = ra.pop(f"codex_{khoa}", None)
+            if gia_tri:
+                ra[khoa] = gia_tri
+        # Gộp nhãn `type` thay vì ghi đè — cùng cách `add_accounts_with_credentials`
+        # gộp khi một tài khoản mang nhiều vai. Có nhãn `codex` là
+        # `account_group` xếp dòng này về lại pool codex.
+        nhan_cu = {t.strip() for t in str(ra.pop("codex_type", "") or "").split(",") if t.strip()}
+        if nhan_cu:
+            nhan_nay = {t.strip() for t in str(ra.get("type") or "").split(",") if t.strip()}
+            ra["type"] = ",".join(sorted(nhan_nay | nhan_cu))
+        ra.pop("codex_limited_at", None)
+        ra.pop("codex_restore_at", None)
+        return ra
+
+    def khoi_phuc_codex_het_nghi(self) -> list[str]:
+        """Hết hạn nghỉ thì trả credential Codex về chỗ cũ — khỏi đăng nhập tay.
+
+        Cặp với `_cat_credential_codex`: lúc dòng Codex nhường chỗ cho free vì
+        đang nghỉ hạn, mọi thứ của nó nằm dưới tiền tố `codex_`. Ở đây gỡ tiền
+        tố ra, gộp lại nhãn `type` nên dòng quay về pool codex, rồi dọn sạch
+        chỗ cất tạm.
+
+        Chạy theo `quota_watcher._rebuild` (30 phút một lần), đứng cạnh
+        `revive_stuck_limited` — cùng kiểu quét cả pool, không thêm bộ đếm mới.
+
+        Trả về danh sách token đã bật lại.
+        """
+        now = datetime.now(timezone.utc)
+        bat_lai: list[dict] = []
+        with self._lock:
+            for token, acc in list(self._accounts.items()):
+                if not str(acc.get("codex_refresh_token") or "").strip():
+                    continue
+                if not self._het_han_nghi_codex(acc, now):
+                    continue
+                norm = self._normalize_account(self._go_credential_codex(acc))
+                if norm is None:
+                    continue
+                self._accounts[token] = norm
+                bat_lai.append(norm)
+            if bat_lai:
+                self._save_accounts()
+        # Nhật ký + thông báo NGOÀI lock: `log_service`/`notifier` có thể gọi
+        # ngược vào pool, mà `self._lock` là Lock thường nên sẽ tự khoá chết.
+        for acc in bat_lai:
+            chi_tiet = {"provider": account_group(acc),
+                        "email": str(acc.get("email") or "")[:80],
+                        "token": anonymize_token(str(acc.get("access_token") or ""))}
+            log_service.add(LOG_TYPE_ACCOUNT, "Hết hạn nghỉ — bật lại Codex", chi_tiet)
+            logger.info({"event": "codex_bat_lai_sau_nghi_han", **chi_tiet})
+        if bat_lai:
+            try:
+                from services.notifier import notify_admin
+                ten = "\n".join(
+                    f"· {str(a.get('email') or '')[:80] or '(không có email)'}"
+                    for a in bat_lai
+                )
+                notify_admin(
+                    "✅ Hết hạn nghỉ — đã bật lại Codex\n"
+                    f"{ten}\n"
+                    "Credential OAuth cất tạm đã trả về chỗ cũ, "
+                    "không phải đăng nhập lại bằng tay.",
+                    category="account_log",
+                )
+            except Exception as exc:
+                logger.warning({"event": "codex_bat_lai_notify_failed",
+                                "error": str(exc)[:120]})
+        return [str(a.get("access_token") or "") for a in bat_lai]
+
+    def _bao_dong_bi_nuot(self, bi_nuot: dict, giu_lai: dict, token: str,
+                          giu_credential: bool = False) -> None:
         """Một dòng tài khoản bị đè mất chỗ vì trùng access_token — phải báo.
 
         Trùng token là chuyện có thật: thêm "ChatGPT free" lấy token từ đúng
@@ -1585,6 +1750,11 @@ class AccountService:
 
         Cùng danh tính (cùng email) thì chỉ là gộp dòng trùng — ghi nhật ký cho
         đủ vết. KHÁC danh tính là mất dữ liệu thật — báo thẳng cho admin.
+
+        `giu_credential=True` là cảnh khác hẳn: dòng Codex tự nhường chỗ vì đang
+        nghỉ hạn, credential OAuth đã được cất sang dòng sống. Không mất gì cả,
+        nên đừng báo động — nhưng vẫn phải báo, kèm mốc nghỉ hạn, để còn biết
+        bao giờ đăng nhập lại Codex.
         """
         em_mat = str(bi_nuot.get("email") or "").strip()
         em_giu = str(giu_lai.get("email") or "").strip()
@@ -1598,6 +1768,30 @@ class AccountService:
             "giu_provider": account_group(giu_lai) or "?",
             "cung_danh_tinh": cung_danh_tinh,
         }
+        if giu_credential:
+            nghi_tu = str(giu_lai.get("codex_limited_at") or "") or "không rõ"
+            het_nghi = str(giu_lai.get("codex_restore_at") or "") or "không rõ"
+            chi_tiet["codex_limited_at"] = nghi_tu
+            chi_tiet["codex_restore_at"] = het_nghi
+            log_service.add(LOG_TYPE_ACCOUNT,
+                            "Codex đang nghỉ hạn — tạm giữ dòng free", chi_tiet)
+            logger.info({"event": "codex_nhuong_cho_free", **chi_tiet})
+            try:
+                from services.notifier import notify_admin
+                notify_admin(
+                    "🔁 Codex đang nghỉ hạn — tạm giữ dòng free\n"
+                    f"Tài khoản: {chi_tiet['giu_email']}\n"
+                    f"Nghỉ từ  : {nghi_tu}\n"
+                    f"Hết nghỉ : {het_nghi}\n"
+                    "Hai dòng dùng chung một access_token nên pool chỉ giữ được một. "
+                    "Credential OAuth của Codex đã cất lại trên dòng đang sống, "
+                    "hết hạn nghỉ sẽ TỰ bật lại — không phải đăng nhập bằng tay.",
+                    category="account_log",
+                )
+            except Exception as exc:
+                logger.warning({"event": "codex_nhuong_cho_free_notify_failed",
+                                "error": str(exc)[:120]})
+            return
         log_service.add(
             LOG_TYPE_ACCOUNT,
             ("Gộp dòng trùng token" if cung_danh_tinh
@@ -1647,6 +1841,7 @@ class AccountService:
                                  "token": anonymize_token(access_token)})
                 return None
             bi_nuot: dict | None = None
+            giu_credential = False
             if new_token != access_token:
                 self._accounts.pop(access_token, None)
                 # Pool đánh khoá bằng access_token, nên hai dòng trùng token thì
@@ -1654,11 +1849,19 @@ class AccountService:
                 # 21 token từng bị một dòng "free" vô danh và một tài khoản có
                 # tên dùng chung, tức đã có chừng ấy dòng biến mất lặng lẽ —
                 # đúng cái người vận hành báo "tài khoản tự xoá không thấy báo".
-                bi_nuot = self._accounts.pop(new_token, None)
+                #
+                # Bản cũ còn cho dòng ĐANG VÀO thắng vô điều kiện, nên một dòng
+                # free re-key trúng token của tài khoản Codex là xoá luôn
+                # credential OAuth. Nay `_phan_xu_trung_token` quyết: Codex
+                # thắng, trừ khi Codex đang nghỉ hạn thì mới nhường cho free.
+                dong_cho = self._accounts.pop(new_token, None)
+                if dong_cho is not None:
+                    thang, bi_nuot, giu_credential = self._phan_xu_trung_token(account, dong_cho)
+                    account = self._normalize_account(thang) or account
             self._accounts[new_token] = account
             self._save_accounts()
             if bi_nuot is not None:
-                self._bao_dong_bi_nuot(bi_nuot, account, new_token)
+                self._bao_dong_bi_nuot(bi_nuot, account, new_token, giu_credential)
             log_service.add(LOG_TYPE_ACCOUNT, "Cập nhật tài khoản",
                             {"provider": account_group(account),
                              "email": str(account.get("email") or "")[:80],

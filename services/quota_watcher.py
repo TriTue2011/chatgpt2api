@@ -171,6 +171,17 @@ class QuotaWatcher:
             self._index[acc_id] = item
             count += 1
 
+        # Dòng Codex từng nhường chỗ cho free vì đang nghỉ hạn → hết hạn thì
+        # trả credential OAuth về chỗ cũ. Đứng cạnh revive_stuck_limited vì
+        # cùng một việc: quét cả pool tìm cái đã tới lúc dùng lại được.
+        try:
+            bat_lai = account_service.khoi_phuc_codex_het_nghi()
+            if bat_lai:
+                logger.info({"event": "quota_watcher_codex_bat_lai", "n": len(bat_lai)})
+        except Exception as exc:
+            logger.warning({"event": "quota_watcher_codex_bat_lai_failed",
+                            "error": str(exc)[:120]})
+
         # GMA / web profiles stuck limited without restore_at → revive
         try:
             revived = account_service.revive_stuck_limited(max_age_hours=24.0)
