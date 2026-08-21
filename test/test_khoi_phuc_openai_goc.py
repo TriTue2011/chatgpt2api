@@ -207,7 +207,8 @@ class KhoCredentialTraDuocTheoTenHoSo(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         db = os.path.join(self._tmp.name, "accounts.db")
         os.environ["ACCOUNTS_DB"] = db
-        from src import accounts_db as adb
+        from test._goi_captcha import nap
+        adb = nap("accounts_db")
         self.adb = adb
         self._vá = mock.patch.object(adb, "_DB_PATH", db)
         self._vá.start()

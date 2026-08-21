@@ -92,10 +92,17 @@ class TestKhopVoiCompose:
 
     def test_cong_trong_container_khop_compose(self):
         compose = (_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        # Dòng dạng:  - "3030:80"        # API + web UI
-        m = re.search(r'-\s*"(\d+):(\d+)"\s*#\s*API', compose)
+        # Dòng dạng:  - "3030:80"  # API + web UI
+        # hoặc          - "3030:${APP_PORT:-80}"  # API + web UI
+        #
+        # Cổng trong container thành BIẾN từ lúc gateway chạy non-root (xem
+        # chính dòng đó trong compose). Hằng số bên `settings.py` cũng đọc
+        # `APP_PORT` với cùng giá trị mặc định, nên lấy giá trị mặc định của
+        # biến ra mà so — đó mới là cổng thật khi không ai đặt APP_PORT.
+        m = re.search(r'-\s*"(\d+):(?:\$\{APP_PORT:-(\d+)\}|(\d+))"\s*#\s*API', compose)
         assert m, "không tìm được dòng publish cổng API trong docker-compose.yml"
-        host_port, container_port = int(m.group(1)), int(m.group(2))
+        host_port = int(m.group(1))
+        container_port = int(m.group(2) or m.group(3))
         assert urlparse(DEFAULT_API_BASE_URL).port == container_port, (
             f"compose map {host_port}->{container_port}; hằng số phải dùng "
             f"{container_port} (cổng trong container)"

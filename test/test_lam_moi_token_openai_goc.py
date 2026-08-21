@@ -133,7 +133,8 @@ class ChonLuongDangNhapLaiTests(unittest.TestCase):
             # `accounts_db` chạy `init_db()` NGAY lúc import, nên biến môi trường
             # phải đặt trước; `_DB_PATH` vá thêm để lần import sau vẫn đúng chỗ.
             os.environ["ACCOUNTS_DB"] = db
-            from src import accounts_db as adb
+            from test._goi_captcha import nap
+            adb = nap("accounts_db")
             with mock.patch.object(adb, "_DB_PATH", db):
                 adb.init_db()
                 adb.save_account("benbap2011@gmail.com", "mat-khau-openai", "",

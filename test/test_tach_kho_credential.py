@@ -33,8 +33,8 @@ sys.path.insert(0, str(GOC / "captcha-solver"))
 def _nap_kho(thu_muc: Path):
     """Nạp lại `accounts_db` với DB nằm trong thư mục tạm."""
     os.environ["ACCOUNTS_DB"] = str(thu_muc / "accounts.db")
-    import src.accounts_db as db
-    return importlib.reload(db)
+    from test._goi_captcha import nap
+    return importlib.reload(nap("accounts_db"))
 
 
 class TachKhoTests(unittest.TestCase):

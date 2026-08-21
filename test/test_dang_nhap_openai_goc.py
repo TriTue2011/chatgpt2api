@@ -57,7 +57,8 @@ class SinhMaTests(unittest.TestCase):
             import pyotp  # noqa: F401
         except ImportError:
             self.skipTest("pyotp chưa cài trên máy này")
-        from src import openai_native_login as m
+        from test._goi_captcha import nap
+        m = nap("openai_native_login")
         self.m = m
 
     def test_ma_khop_voi_bo_sinh_doc_lap(self):
