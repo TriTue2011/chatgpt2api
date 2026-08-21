@@ -349,8 +349,10 @@ def test_long_tieng_lam_tren_ban_nhe_roi_dua_len_ban_NET(bot, phu_de_gia,
 
     assert nhan == ["/tmp/vua/abc.mp4"], "xử lý trên bản nhẹ"
     assert doi_hinh == [("/tmp/cao/abc.mp4", "/tmp/vua/abc_dub.mp4")]
-    assert [d[1] for d in bot._ghi["duong"]] == ["/tmp/cao/abc_dub.mp4",
-                                                 "/tmp/vua/abc.json"]
+    # ĐÚNG MỘT tệp: video lồng tiếng. Bản prosody .json là dữ liệu gỡ rối của
+    # đường ống, .srt là ô 6 — đo thật 21/08 14:49, bấm ô 7 nhận về ba tệp.
+    assert [d[1] for d in bot._ghi["duong"]] == ["/tmp/cao/abc_dub.mp4"]
+    assert not bot._ghi["tep"], "ô lồng tiếng không kèm .srt"
 
 
 def test_ban_net_hong_thi_van_gui_ban_nhe_da_long_tieng(bot, phu_de_gia,

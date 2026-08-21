@@ -323,11 +323,16 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                 "thanh gốc không được dùng, TTS đã trộn với stem nhạc/hiệu ứng."
                 " Source separation có thể còn rò giọng ở cảnh âm thanh chồng "
                 "lấn." + (f"\n⚠️ {dub.canh_bao}" if dub.canh_bao else ""))
+            # MỘT kết quả: đúng thứ người dùng vừa bấm, không kèm gì thêm.
+            # Ô 7 tên là "Lồng tiếng video" nên gửi video, hết. Bản prosody
+            # .json là dữ liệu gỡ rối của chính đường ống (nhịp và giọng từng
+            # câu) — người dùng không xin và cũng không mở ra xem bằng gì; còn
+            # .srt là ô 6, ai cần thì bấm ô đó.
+            #
+            # Cùng luật chủ máy đã chốt 18/08 cho ô phụ đề ("KHÔNG gửi 2 cái
+            # như bây giờ"), và đo thật 21/08 14:49: bấm ô 7 nhận về BA tệp.
             kenh.gui_tep(video_gui, f"long-tieng.{r['dich']}.mp4",
                          "Video đã lồng tiếng")
-            kenh.gui_tep(dub.prosody_path, f"prosody.{r['dich']}.json",
-                         "Nhịp và giọng từng câu")
-            kenh.gui_bytes(r["srt"], r["ten"], "Phụ đề")
             return
         kenh.gui_tin(_vd.bao_cao(r))
         if not r.get("ok"):
