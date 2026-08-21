@@ -65,12 +65,7 @@ jobs:
       - name: Run unit tests
         run: |
           uv run python -m pytest test/ -q \
-            --ignore=test/test_v1_chat_completions.py \
-            --ignore=test/test_v1_images_edits.py \
-            --ignore=test/test_v1_images_generations.py \
-            --ignore=test/test_v1_messages.py \
-            --ignore=test/test_v1_models.py \
-            --ignore=test/test_v1_responses.py \
+            --ignore-glob='test/test_v1_*.py' \
             --ignore=test/test_account_image_capabilities.py
 
       # RBAC của zalo-server là code Node, pytest không chạm tới. Test dùng
