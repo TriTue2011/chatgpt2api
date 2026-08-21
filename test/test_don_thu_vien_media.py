@@ -254,9 +254,44 @@ def test_xoa_video_khong_dung_toi_anh_va_nhac(cap, kho):
 
 def test_thieu_so_ngay_thi_bao_chu_khong_xoa_sach(cap, kho):
     kq = cap.CAPABILITIES["delete_media"].handler(
-        {"kind": "image", "che_do": "cu-hon", "xac_nhan": True}, {"is_admin": True})
+        {"kind": "image", "che_do": "cu-hon"},
+        {"is_admin": True, "user_id": "thieu-so-ngay"})
 
-    assert "chưa xoá được" in kq["text"]
+    assert "phải nói rõ số ngày" in kq["text"]
+    assert len(md.liet_ke("image", kho)) == 4
+
+
+def test_xac_nhan_che_do_sai_bao_dung_nguyen_nhan(cap, kho):
+    ctx = {"is_admin": True, "user_id": "xac-nhan-che-do-sai"}
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "tat-ca"}, ctx)
+
+    kq = cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "tất cả", "xac_nhan": True}, ctx)
+
+    assert "chế độ phải là" in kq["text"]
+    assert "hết hạn" not in kq["text"]
+    assert len(md.liet_ke("image", kho)) == 4
+
+
+def test_xac_nhan_moc_sai_bao_dung_nguyen_nhan(cap, kho):
+    ctx = {"is_admin": True, "user_id": "xac-nhan-moc-sai"}
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "cu-hon", "so_ngay": 7, "moc": "hom-nay"},
+        ctx)
+
+    kq = cap.CAPABILITIES["delete_media"].handler(
+        {
+            "kind": "image",
+            "che_do": "cu-hon",
+            "so_ngay": 7,
+            "moc": "hôm nay",
+            "xac_nhan": True,
+        },
+        ctx)
+
+    assert "mốc phải là" in kq["text"]
+    assert "hết hạn" not in kq["text"]
     assert len(md.liet_ke("image", kho)) == 4
 
 

@@ -3015,6 +3015,18 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
         kind = "video"
     che_do = str(args.get("che_do") or _md.VUA_TAO).strip().lower()
     moc = str(args.get("moc") or _md.HOM_NAY).strip().lower()
+    if che_do not in _md.CHE_DO:
+        return {
+            "deliver_now": True,
+            "text": (f"Em chưa xoá được: chế độ phải là {list(_md.CHE_DO)}, "
+                     f"nhận {che_do!r} ạ."),
+        }
+    if moc not in _md.MOC:
+        return {
+            "deliver_now": True,
+            "text": (f"Em chưa xoá được: mốc phải là {list(_md.MOC)}, "
+                     f"nhận {moc!r} ạ."),
+        }
     try:
         so_ngay = int(args.get("so_ngay") or 0)
     except (TypeError, ValueError):
