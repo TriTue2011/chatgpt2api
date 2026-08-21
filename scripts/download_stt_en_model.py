@@ -18,18 +18,31 @@ import argparse
 import sys
 import tarfile
 import tempfile
-import urllib.request
 from pathlib import Path
+
+try:
+    from scripts.model_download import download_verified
+except ModuleNotFoundError:  # chạy trực tiếp `python scripts/...py`
+    from model_download import download_verified
 
 NAME = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
        f"asr-models/{NAME}.tar.bz2")
+SHA256 = "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"
 DEST = Path(__file__).resolve().parents[1] / "data" / "stt-en"
 NEED = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
+MARKER = ".source.sha256"
+
+
+def _marker_ok() -> bool:
+    try:
+        return (DEST / MARKER).read_text(encoding="ascii").strip() == SHA256
+    except (OSError, UnicodeError):
+        return False
 
 
 def _check() -> bool:
-    ok = True
+    ok = _marker_ok()
     for name in NEED:
         have = (DEST / name).is_file()
         ok = ok and have
@@ -52,7 +65,7 @@ def main() -> int:
     with tempfile.NamedTemporaryFile(suffix=".tar.bz2", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        urllib.request.urlretrieve(URL, tmp_path)
+        download_verified(URL, tmp_path, SHA256)
         print("[giai nen] ...")
         with tarfile.open(tmp_path, "r:bz2") as tar:
             for m in tar.getmembers():
@@ -64,6 +77,7 @@ def main() -> int:
                         continue
                     (DEST / base).write_bytes(src.read())
                     print(f"[ok] {base}")
+        (DEST / MARKER).write_text(SHA256 + "\n", encoding="ascii")
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

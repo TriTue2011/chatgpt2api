@@ -1,0 +1,81 @@
+"""Model STT là input nhị phân cho native runtime: phải ghim và kiểm hash."""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import pytest
+
+
+def test_download_sai_hash_khong_de_len_file_tot(tmp_path: Path, monkeypatch) -> None:
+    from scripts import model_download as guard
+
+    target = tmp_path / "model.onnx"
+    target.write_bytes(b"good-old-model")
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            if getattr(self, "done", False):
+                return b""
+            self.done = True
+            return b"tampered-new-model"
+
+    monkeypatch.setattr(guard.urllib.request, "urlopen", lambda *_a, **_k: _Response())
+    expected = hashlib.sha256(b"expected-new-model").hexdigest()
+
+    with pytest.raises(guard.IntegrityError):
+        guard.download_verified("https://example.invalid/model", target, expected)
+
+    assert target.read_bytes() == b"good-old-model"
+
+
+def test_download_dung_hash_thay_file_nguyen_tu(tmp_path: Path, monkeypatch) -> None:
+    from scripts import model_download as guard
+
+    payload = b"verified-model"
+    target = tmp_path / "model.onnx"
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, size: int = -1) -> bytes:
+            if getattr(self, "done", False):
+                return b""
+            self.done = True
+            return payload
+
+    monkeypatch.setattr(guard.urllib.request, "urlopen", lambda *_a, **_k: _Response())
+    guard.download_verified(
+        "https://example.invalid/model",
+        target,
+        hashlib.sha256(payload).hexdigest(),
+    )
+    assert target.read_bytes() == payload
+
+
+def test_zipformer_vi_ghim_commit_va_hash_tung_file() -> None:
+    from scripts import download_stt_model as vi
+
+    assert len(vi.HF_REVISION) == 40
+    assert set(vi.SHA256) == set(vi.FILES)
+    assert all(len(value) == 64 for value in vi.SHA256.values())
+
+
+def test_moi_goi_stt_release_deu_co_sha256() -> None:
+    from scripts import download_stt_da_ngu as multi
+    from scripts import download_stt_en_model as en
+
+    assert len(en.SHA256) == 64
+    assert set(multi.SHA256) == {*multi.MODELS, "sense"}
+    assert all(len(value) == 64 for value in multi.SHA256.values())

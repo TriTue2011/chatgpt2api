@@ -41,8 +41,12 @@ import argparse
 import sys
 import tarfile
 import tempfile
-import urllib.request
 from pathlib import Path
+
+try:
+    from scripts.model_download import download_verified
+except ModuleNotFoundError:  # chạy trực tiếp `python scripts/...py`
+    from model_download import download_verified
 
 GOC = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 MODELS = {
@@ -50,7 +54,14 @@ MODELS = {
     "ja": ("sherpa-onnx-zipformer-ja-reazonspeech-2024-08-01", "~680 MB"),
     "ko": ("sherpa-onnx-zipformer-korean-2024-06-24", "~320 MB"),
 }
+SHA256 = {
+    "zh": "c4925a6b0f998800d16f80caf90d2decff7b7a8c156d044c6cffdf141c847d94",
+    "ja": "e0981d0d5d7b446d41010831b59091ebf57d2aa7b79980f67ca37af460b5842d",
+    "ko": "24bd409318f389cd2de0e295eb1acf91f4e8dfcc0d650490dd2a01f5b50d2c77",
+    "sense": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+}
 DATA = Path(__file__).resolve().parents[1] / "data"
+MARKER = ".source.sha256"
 
 #: SenseVoice — GHIM bản 2024-07-17. Bản 2025-09-09 đọc SAI cả tệp mẫu của
 #: chính nó với sherpa-onnx 1.13.4 (đo 15/08/2026): tiếng Nhật rụng sạch kana
@@ -64,9 +75,17 @@ def _dest(lang: str) -> Path:
     return DATA / f"stt-{lang}"
 
 
+def _marker_ok(dest: Path, expected: str) -> bool:
+    try:
+        return (dest / MARKER).read_text(encoding="ascii").strip() == expected
+    except (OSError, UnicodeError):
+        return False
+
+
 def _check_sense() -> bool:
     ok = bool(list(SENSE_DEST.glob("model*.onnx"))) \
-        and (SENSE_DEST / "tokens.txt").is_file()
+        and (SENSE_DEST / "tokens.txt").is_file() \
+        and _marker_ok(SENSE_DEST, SHA256["sense"])
     print(f"[{'co' if ok else 'THIEU'}] sense: {SENSE_DEST}")
     return ok
 
@@ -79,7 +98,7 @@ def _tai_sense() -> bool:
     with tempfile.NamedTemporaryFile(suffix=".tar.bz2", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        urllib.request.urlretrieve(url, tmp_path)
+        download_verified(url, tmp_path, SHA256["sense"])
         print("[giai nen] ...")
         with tarfile.open(tmp_path, "r:bz2") as tar:
             for m in tar.getmembers():
@@ -92,6 +111,7 @@ def _tai_sense() -> bool:
                     if src is not None:
                         (SENSE_DEST / base).write_bytes(src.read())
                         print(f"[ok] {base}")
+        (SENSE_DEST / MARKER).write_text(SHA256["sense"] + "\n", encoding="ascii")
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -103,7 +123,8 @@ def _tai_sense() -> bool:
 def _check(lang: str) -> bool:
     d = _dest(lang)
     ok = bool(list(d.glob("encoder*.onnx"))) and (d / "tokens.txt").is_file() \
-        and bool(list(d.glob("decoder*.onnx"))) and bool(list(d.glob("joiner*.onnx")))
+        and bool(list(d.glob("decoder*.onnx"))) and bool(list(d.glob("joiner*.onnx"))) \
+        and _marker_ok(d, SHA256[lang])
     print(f"[{'co' if ok else 'THIEU'}] {lang}: {d}")
     return ok
 
@@ -117,7 +138,7 @@ def _tai(lang: str) -> bool:
     with tempfile.NamedTemporaryFile(suffix=".tar.bz2", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        urllib.request.urlretrieve(url, tmp_path)
+        download_verified(url, tmp_path, SHA256[lang])
         print("[giai nen] ...")
         # Gom ứng viên theo bộ phận, ưu tiên int8; tokens.txt lấy nguyên.
         chon: dict[str, tarfile.TarInfo] = {}
@@ -147,6 +168,7 @@ def _tai(lang: str) -> bool:
                 base = Path(m.name).name
                 (dest / base).write_bytes(src.read())
                 print(f"[ok] {base}")
+        (dest / MARKER).write_text(SHA256[lang] + "\n", encoding="ascii")
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
