@@ -27,6 +27,7 @@ Cổng: ``voice.wyoming_server.port`` (mặc định 10600).
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import socket
@@ -690,22 +691,39 @@ def _transcribe_auto(wav: bytes) -> str:
 # ── TTS stream ───────────────────────────────────────────────────────────────
 
 
+def _put_from_worker(item: Any, queue: asyncio.Queue,
+                     loop: asyncio.AbstractEventLoop,
+                     stop: threading.Event) -> bool:
+    """Đẩy có backpressure nhưng thoát được khi client đã ngắt."""
+    if stop.is_set():
+        return False
+    try:
+        pending = asyncio.run_coroutine_threadsafe(queue.put(item), loop)
+    except RuntimeError:
+        return False
+    while not stop.is_set():
+        try:
+            pending.result(timeout=0.1)
+            return True
+        except concurrent.futures.TimeoutError:
+            continue
+        except Exception:
+            return False
+    pending.cancel()
+    return False
+
+
 def _produce(text: str, voice: str, queue: asyncio.Queue,
-             loop: asyncio.AbstractEventLoop) -> None:
+             loop: asyncio.AbstractEventLoop, stop: threading.Event) -> None:
     """Worker thread: kéo (rate, pcm16) từ generator blocking, đẩy vào queue."""
     try:
         for item in engines.stream_synthesize(text, voice):
-            asyncio.run_coroutine_threadsafe(queue.put(item), loop).result()
+            if not _put_from_worker(item, queue, loop, stop):
+                return
     except Exception as exc:
-        try:
-            asyncio.run_coroutine_threadsafe(queue.put(exc), loop).result()
-        except Exception:
-            pass
+        _put_from_worker(exc, queue, loop, stop)
     finally:
-        try:
-            asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result()
-        except Exception:
-            pass
+        _put_from_worker(_DONE, queue, loop, stop)
 
 
 async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
@@ -715,9 +733,11 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
     logger.info("wyoming: synthesize %d chars, voice=%s", len(text), voice or "(mặc định)")
     queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
     loop = asyncio.get_running_loop()
-    producer = loop.run_in_executor(None, _produce, text, voice, queue, loop)
+    stop = threading.Event()
+    producer = loop.run_in_executor(None, _produce, text, voice, queue, loop, stop)
 
     started = False
+    connection_ok = True
     try:
         while True:
             item = await queue.get()
@@ -733,26 +753,31 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
                 started = True
             await _write_event(writer, "audio-chunk",
                                {"rate": int(rate), "width": 2, "channels": 1}, pcm)
-    except (ConnectionError, asyncio.CancelledError):
-        pass
+    except (ConnectionError, asyncio.CancelledError, TimeoutError):
+        connection_ok = False
     finally:
+        stop.set()
         while True:
             try:
-                leftover = queue.get_nowait()
-                if leftover is _DONE:
-                    break
+                queue.get_nowait()
             except asyncio.QueueEmpty:
-                if producer.done():
-                    break
-                await asyncio.sleep(0.05)
-        try:
-            if not started:
-                await _write_event(writer, "audio-start",
-                                   {"rate": 48000, "width": 2, "channels": 1})
-            await _write_event(writer, "audio-stop")
-            await _write_event(writer, "synthesize-stopped")
-        except Exception:
-            pass
+                break
+        # Đọc exception của Future khi worker đã kịp kết thúc; không chờ worker
+        # blocking vì client đã ngắt phải trả slot kết nối ngay.
+        if producer.done():
+            try:
+                producer.result()
+            except Exception:
+                pass
+        if connection_ok:
+            try:
+                if not started:
+                    await _write_event(writer, "audio-start",
+                                       {"rate": 48000, "width": 2, "channels": 1})
+                await _write_event(writer, "audio-stop")
+                await _write_event(writer, "synthesize-stopped")
+            except Exception:
+                pass
 
 
 # ── Kết nối ──────────────────────────────────────────────────────────────────
@@ -937,6 +962,23 @@ async def probe(port: int | None = None, timeout: float = 2.0) -> bool:
                 await writer.wait_closed()
             except Exception:
                 pass
+
+
+async def health(timeout: float = 2.0) -> dict[str, Any]:
+    """Probe mọi cổng Wyoming đang chạy để API vận hành quan sát được."""
+    with _servers_lock:
+        ports = sorted({
+            int(server["port"])
+            for server in _servers
+            if server.get("thread") is not None and server["thread"].is_alive()
+        })
+    if not ports:
+        return {"ok": not vcfg.wyoming_enabled(), "ports": {}}
+    # Dùng tuần tự: mọi cổng chia sẻ một limiter và chỉ có một slot local dự
+    # phòng; probe đồng thời sẽ tự làm các cổng sau bị từ chối khi max thấp.
+    outcomes = [await probe(port, timeout=timeout) for port in ports]
+    by_port = {str(port): bool(ok) for port, ok in zip(ports, outcomes)}
+    return {"ok": all(by_port.values()), "ports": by_port}
 
 
 async def _main(port: int, server_lang: str, vai: str = "both") -> None:

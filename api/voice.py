@@ -159,7 +159,13 @@ def create_router() -> APIRouter:
     async def voice_status(authorization: str | None = Header(default=None)):
         require_admin(authorization)
         from services import voice
-        return {"ok": True, **voice.status()}
+        from services.voice import wyoming_server
+
+        status = voice.status()
+        wyoming = dict(status.get("wyoming") or {})
+        wyoming["health"] = await wyoming_server.health(timeout=1.0)
+        status["wyoming"] = wyoming
+        return {"ok": True, **status}
 
     @router.get("/api/voice/catalog")
     async def voice_catalog(authorization: str | None = Header(default=None)):
@@ -636,4 +642,3 @@ def create_router() -> APIRouter:
         return {"ok": True, "teacher": new_t}
 
     return router
-

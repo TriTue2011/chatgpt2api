@@ -21,9 +21,19 @@ import tempfile
 from pathlib import Path
 
 try:
-    from scripts.model_download import download_verified
+    from scripts.model_download import (
+        MODEL_MANIFEST,
+        download_verified,
+        install_verified_files,
+        installation_verified,
+    )
 except ModuleNotFoundError:  # chạy trực tiếp `python scripts/...py`
-    from model_download import download_verified
+    from model_download import (  # type: ignore[no-redef]
+        MODEL_MANIFEST,
+        download_verified,
+        install_verified_files,
+        installation_verified,
+    )
 
 NAME = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
 URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
@@ -31,14 +41,11 @@ URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
 SHA256 = "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"
 DEST = Path(__file__).resolve().parents[1] / "data" / "stt-en"
 NEED = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
-MARKER = ".source.sha256"
+MARKER = MODEL_MANIFEST
 
 
 def _marker_ok() -> bool:
-    try:
-        return (DEST / MARKER).read_text(encoding="ascii").strip() == SHA256
-    except (OSError, UnicodeError):
-        return False
+    return installation_verified(DEST, SHA256, NEED)
 
 
 def _check() -> bool:
@@ -67,17 +74,21 @@ def main() -> int:
     try:
         download_verified(URL, tmp_path, SHA256)
         print("[giai nen] ...")
-        with tarfile.open(tmp_path, "r:bz2") as tar:
-            for m in tar.getmembers():
-                base = Path(m.name).name
-                # Chỉ lấy file model ở gốc gói (bỏ test_wavs/, thư mục lồng).
-                if m.isfile() and base in NEED:
-                    src = tar.extractfile(m)
-                    if src is None:
-                        continue
-                    (DEST / base).write_bytes(src.read())
-                    print(f"[ok] {base}")
-        (DEST / MARKER).write_text(SHA256 + "\n", encoding="ascii")
+        with tempfile.TemporaryDirectory(
+            prefix=".stt-en-extract-", dir=DEST.parent
+        ) as raw_staging:
+            staging = Path(raw_staging)
+            with tarfile.open(tmp_path, "r:bz2") as tar:
+                for m in tar.getmembers():
+                    base = Path(m.name).name
+                    # Chỉ lấy file model ở gốc gói (bỏ test_wavs/, thư mục lồng).
+                    if m.isfile() and base in NEED:
+                        src = tar.extractfile(m)
+                        if src is None:
+                            continue
+                        (staging / base).write_bytes(src.read())
+                        print(f"[ok] {base}")
+            install_verified_files(staging, DEST, SHA256, NEED)
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

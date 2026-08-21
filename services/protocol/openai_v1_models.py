@@ -283,15 +283,20 @@ def _merge_runtime_gma_models(data: list[dict[str, Any]]) -> list[dict[str, Any]
     merged = list(data)
     seen = {str(item.get("id") or "") for item in merged}
     for model_id in sorted(_fetch_gemini_web_api_models()):
-        if model_id in seen:
-            continue
-        seen.add(model_id)
-        merged.append({
-            "id": model_id,
-            "object": "model",
-            "created": 0,
-            "owned_by": "gemini_web_api",
-        })
+        rows = [(model_id, "gemini_web_api")]
+        lower = model_id.lower()
+        if not any(word in lower for word in ("image", "video", "imagen")):
+            rows.append((f"{model_id}:text", "gemini_web_api_text"))
+        for row_id, owner in rows:
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            merged.append({
+                "id": row_id,
+                "object": "model",
+                "created": 0,
+                "owned_by": owner,
+            })
     return merged
 
 

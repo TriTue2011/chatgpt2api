@@ -108,3 +108,44 @@ def test_release_dat_file_tam_cung_filesystem_voi_dich(
     assert vi._download_release(destination) == 0
     assert observed["download_dir"].parent == destination
     assert (destination / "model.onnx").read_bytes() == payload
+
+
+def test_manifest_phat_hien_model_da_giai_nen_bi_sua(tmp_path: Path) -> None:
+    from scripts import model_download as guard
+
+    staging = tmp_path / "staging"
+    destination = tmp_path / "model"
+    staging.mkdir()
+    (staging / "encoder.onnx").write_bytes(b"model-tot")
+
+    guard.install_verified_files(
+        staging, destination, "a" * 64, ["encoder.onnx"]
+    )
+    assert guard.installation_verified(
+        destination, "a" * 64, ["encoder.onnx"]
+    )
+
+    (destination / "encoder.onnx").write_bytes(b"model-da-bi-sua")
+    assert not guard.installation_verified(
+        destination, "a" * 64, ["encoder.onnx"]
+    )
+
+
+def test_goi_giai_nen_thieu_file_khong_de_len_ban_cu(tmp_path: Path) -> None:
+    from scripts import model_download as guard
+
+    staging = tmp_path / "staging"
+    destination = tmp_path / "model"
+    staging.mkdir()
+    destination.mkdir()
+    (staging / "encoder.onnx").write_bytes(b"moi")
+    (destination / "encoder.onnx").write_bytes(b"cu")
+
+    with pytest.raises(guard.IntegrityError):
+        guard.install_verified_files(
+            staging,
+            destination,
+            "b" * 64,
+            ["encoder.onnx", "tokens.txt"],
+        )
+    assert (destination / "encoder.onnx").read_bytes() == b"cu"

@@ -744,30 +744,34 @@ def _resolve_model(model: str, prompt: str = ""):
     with _client_lock:
         clients = list(_clients.values())
     co_registry = False
+    da_kham_pha: str | None = None
     for client in clients:
         try:
             if not (client.list_models() or []):
                 continue
             co_registry = True
             resolved = client.resolve_model(m)
+            da_kham_pha = str(getattr(resolved, "model_name", "") or m)
             if getattr(resolved, "is_available", True):
-                return str(getattr(resolved, "model_name", "") or m)
+                return da_kham_pha
         except ValueError:
             continue
         except Exception:
             continue
+    if da_kham_pha is not None:
+        # Guest biết model nhưng không được dùng. Giữ tên canonical để vòng
+        # account phía sau còn thử tài khoản đăng nhập có quyền dùng model đó.
+        return da_kham_pha
     if co_registry and nguoi_dung_chi_dinh:
-        _logger().warning({
-            "event": "gma_unknown_model_fallback",
+        # Registry đang warm có thể chỉ là một phần pool (thường guest warm
+        # trước account đăng nhập). Hoãn 400 tới sau khi mọi credential đều
+        # init/resolve trong `_model_for_client`.
+        _logger().info({
+            "event": "gma_model_defer_to_account_pool",
             "yeu_cau": da_khai,
             "sau_alias": m,
         })
-        raise HTTPException(status_code=400, detail={
-            "error": f"Model '{da_khai}' không tồn tại ở Gemini Web. "
-                     "Xem danh sách hợp lệ trong GET /v1/models (tiền tố gma/), "
-                     "hoặc dùng 'gma/auto'.",
-            "code": "model_not_found",
-        })
+        return m
     # Tách HAI nguyên nhân, đừng gộp: thư viện thiếu/hỏng là lỗi của bản triển
     # khai, không phải của người gọi. Gộp chung thì một lần import hỏng sẽ làm
     # MỌI model hợp lệ trả 400 — hỏng hẳn kênh Gemini (test bắt được đúng chỗ này).
@@ -835,9 +839,12 @@ def _model_for_client(client, model_spec):
     if not callable(resolver):
         return model_spec  # tương thích gemini-webapi cũ
     try:
-        return resolver(model_spec)
+        resolved = resolver(model_spec)
     except ValueError as exc:
         raise _ModelUnavailable(model_spec) from exc
+    if not getattr(resolved, "is_available", True):
+        raise _ModelUnavailable(model_spec)
+    return resolved
 
 
 def _model_unavailable_http(model: str) -> HTTPException:
@@ -1855,7 +1862,5 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
     if last_exc:
         raise last_exc
     raise RuntimeError("No available accounts to fulfill image request")
-
-
 
 

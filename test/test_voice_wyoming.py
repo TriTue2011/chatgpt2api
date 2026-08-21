@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import unittest
 from unittest import mock
 
@@ -489,6 +490,77 @@ class WyomingResourceGuardTests(unittest.TestCase):
                 return healthy
 
         self.assertTrue(_run(go()))
+
+    def test_health_probe_kiem_tra_moi_cong_dang_chay(self) -> None:
+        class _Alive:
+            def is_alive(self) -> bool:
+                return True
+
+        async def fake_probe(port: int, timeout: float = 2.0) -> bool:
+            return port == 10600
+
+        servers = [
+            {"thread": _Alive(), "port": 10600},
+            {"thread": _Alive(), "port": 10700},
+        ]
+        with mock.patch.object(wy, "_servers", servers), \
+                mock.patch.object(wy, "probe", side_effect=fake_probe):
+            result = _run(wy.health(timeout=0.1))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["ports"], {"10600": True, "10700": False})
+
+    def test_api_voice_status_cong_bo_ket_qua_probe(self) -> None:
+        from api import voice as voice_api
+        from services import voice as voice_service
+
+        router = voice_api.create_router()
+        endpoint = next(
+            route.endpoint for route in router.routes
+            if getattr(route, "path", "") == "/api/voice/status"
+        )
+
+        async def go():
+            with mock.patch.object(voice_api, "require_admin"), \
+                    mock.patch.object(
+                        voice_service, "status",
+                        return_value={"wyoming": {"enabled": True}},
+                    ), \
+                    mock.patch.object(
+                        wy, "health", new=mock.AsyncMock(
+                            return_value={"ok": True, "ports": {"10600": True}}
+                        ),
+                    ):
+                return await endpoint(authorization=None)
+
+        result = _run(go())
+        self.assertEqual(result["wyoming"]["health"], {
+            "ok": True,
+            "ports": {"10600": True},
+        })
+
+    def test_write_timeout_khong_cho_worker_tts_chay_het(self) -> None:
+        release = threading.Event()
+
+        def chunks():
+            yield 24000, b"pcm"
+            release.wait(2)
+            yield 24000, b"late"
+
+        async def fail_write(*_args, **_kwargs):
+            raise TimeoutError("client khong doc")
+
+        async def go() -> None:
+            try:
+                with mock.patch.object(wy.engines, "stream_synthesize", return_value=chunks()), \
+                        mock.patch.object(wy, "_write_event", side_effect=fail_write):
+                    await asyncio.wait_for(
+                        wy._handle_synthesize(_DummyWriter(), "xin chao", "voice"),
+                        timeout=0.5,
+                    )
+            finally:
+                release.set()
+
+        _run(go())
 
 
 class SttBufferCapTests(unittest.TestCase):

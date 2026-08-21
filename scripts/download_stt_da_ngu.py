@@ -44,9 +44,19 @@ import tempfile
 from pathlib import Path
 
 try:
-    from scripts.model_download import download_verified
+    from scripts.model_download import (
+        MODEL_MANIFEST,
+        download_verified,
+        install_verified_files,
+        installation_verified,
+    )
 except ModuleNotFoundError:  # chạy trực tiếp `python scripts/...py`
-    from model_download import download_verified
+    from model_download import (  # type: ignore[no-redef]
+        MODEL_MANIFEST,
+        download_verified,
+        install_verified_files,
+        installation_verified,
+    )
 
 GOC = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 MODELS = {
@@ -61,7 +71,7 @@ SHA256 = {
     "sense": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
 }
 DATA = Path(__file__).resolve().parents[1] / "data"
-MARKER = ".source.sha256"
+MARKER = MODEL_MANIFEST
 
 #: SenseVoice — GHIM bản 2024-07-17. Bản 2025-09-09 đọc SAI cả tệp mẫu của
 #: chính nó với sherpa-onnx 1.13.4 (đo 15/08/2026): tiếng Nhật rụng sạch kana
@@ -76,10 +86,7 @@ def _dest(lang: str) -> Path:
 
 
 def _marker_ok(dest: Path, expected: str) -> bool:
-    try:
-        return (dest / MARKER).read_text(encoding="ascii").strip() == expected
-    except (OSError, UnicodeError):
-        return False
+    return installation_verified(dest, expected)
 
 
 def _check_sense() -> bool:
@@ -100,18 +107,32 @@ def _tai_sense() -> bool:
     try:
         download_verified(url, tmp_path, SHA256["sense"])
         print("[giai nen] ...")
-        with tarfile.open(tmp_path, "r:bz2") as tar:
-            for m in tar.getmembers():
-                base = Path(m.name).name
-                if not m.isfile() or "test_wavs" in m.name:
-                    continue
-                if base == "tokens.txt" or (base.startswith("model")
-                                            and base.endswith(".onnx")):
-                    src = tar.extractfile(m)
-                    if src is not None:
-                        (SENSE_DEST / base).write_bytes(src.read())
-                        print(f"[ok] {base}")
-        (SENSE_DEST / MARKER).write_text(SHA256["sense"] + "\n", encoding="ascii")
+        with tempfile.TemporaryDirectory(
+            prefix=".stt-sense-extract-", dir=SENSE_DEST.parent
+        ) as raw_staging:
+            staging = Path(raw_staging)
+            extracted: list[str] = []
+            with tarfile.open(tmp_path, "r:bz2") as tar:
+                for m in tar.getmembers():
+                    base = Path(m.name).name
+                    if not m.isfile() or "test_wavs" in m.name:
+                        continue
+                    if base == "tokens.txt" or (base.startswith("model")
+                                                and base.endswith(".onnx")):
+                        src = tar.extractfile(m)
+                        if src is not None:
+                            (staging / base).write_bytes(src.read())
+                            extracted.append(base)
+                            print(f"[ok] {base}")
+            if "tokens.txt" not in extracted or not any(
+                name.startswith("model") and name.endswith(".onnx")
+                for name in extracted
+            ):
+                print(f"[LOI] gói {ten} thiếu model/tokens")
+                return False
+            install_verified_files(
+                staging, SENSE_DEST, SHA256["sense"], extracted
+            )
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -140,35 +161,41 @@ def _tai(lang: str) -> bool:
     try:
         download_verified(url, tmp_path, SHA256[lang])
         print("[giai nen] ...")
-        # Gom ứng viên theo bộ phận, ưu tiên int8; tokens.txt lấy nguyên.
-        chon: dict[str, tarfile.TarInfo] = {}
-        with tarfile.open(tmp_path, "r:bz2") as tar:
-            for m in tar.getmembers():
-                base = Path(m.name).name
-                if not m.isfile() or "test_wavs" in m.name:
-                    continue
-                if base == "tokens.txt":
-                    chon["tokens.txt"] = m
-                    continue
-                for phan in ("encoder", "decoder", "joiner"):
-                    if base.startswith(phan) and base.endswith(".onnx"):
-                        cu = chon.get(phan)
-                        # int8 thắng fp32; đã có int8 thì thôi.
-                        if cu is None or (".int8." in base
-                                          and ".int8." not in Path(cu.name).name):
-                            chon[phan] = m
-            thieu = {"encoder", "decoder", "joiner", "tokens.txt"} - set(chon)
-            if thieu:
-                print(f"[LOI] gói {ten} thiếu: {thieu}")
-                return False
-            for m in chon.values():
-                src = tar.extractfile(m)
-                if src is None:
-                    continue
-                base = Path(m.name).name
-                (dest / base).write_bytes(src.read())
-                print(f"[ok] {base}")
-        (dest / MARKER).write_text(SHA256[lang] + "\n", encoding="ascii")
+        with tempfile.TemporaryDirectory(
+            prefix=f".stt-{lang}-extract-", dir=dest.parent
+        ) as raw_staging:
+            staging = Path(raw_staging)
+            # Gom ứng viên theo bộ phận, ưu tiên int8; tokens.txt lấy nguyên.
+            chon: dict[str, tarfile.TarInfo] = {}
+            with tarfile.open(tmp_path, "r:bz2") as tar:
+                for m in tar.getmembers():
+                    base = Path(m.name).name
+                    if not m.isfile() or "test_wavs" in m.name:
+                        continue
+                    if base == "tokens.txt":
+                        chon["tokens.txt"] = m
+                        continue
+                    for phan in ("encoder", "decoder", "joiner"):
+                        if base.startswith(phan) and base.endswith(".onnx"):
+                            cu = chon.get(phan)
+                            # int8 thắng fp32; đã có int8 thì thôi.
+                            if cu is None or (".int8." in base
+                                              and ".int8." not in Path(cu.name).name):
+                                chon[phan] = m
+                thieu = {"encoder", "decoder", "joiner", "tokens.txt"} - set(chon)
+                if thieu:
+                    print(f"[LOI] gói {ten} thiếu: {thieu}")
+                    return False
+                extracted: list[str] = []
+                for m in chon.values():
+                    src = tar.extractfile(m)
+                    if src is None:
+                        continue
+                    base = Path(m.name).name
+                    (staging / base).write_bytes(src.read())
+                    extracted.append(base)
+                    print(f"[ok] {base}")
+            install_verified_files(staging, dest, SHA256[lang], extracted)
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

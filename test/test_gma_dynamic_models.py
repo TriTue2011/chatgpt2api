@@ -65,6 +65,25 @@ def test_resolve_model_dung_registry_dong_thay_vi_enum_cung(monkeypatch) -> None
     assert gma._resolve_model("gma/3.6-flash") == "gemini-3.6-flash"
 
 
+def test_guest_warm_khong_chan_model_cua_account_con_lanh(monkeypatch) -> None:
+    from api import gemini_web as gma
+
+    guest_pro = _model("gemini-3-pro", "b2", available=False, aliases=("pro",))
+    monkeypatch.setattr(gma, "_clients", {"guest": _Client([guest_pro])})
+
+    # Registry guest biết model này nhưng không được dùng; account đăng nhập
+    # còn lạnh phải có cơ hội init và resolve nó ở vòng retry phía sau.
+    assert gma._resolve_model("gma/pro") == "gemini-3-pro"
+
+
+def test_account_guest_khong_duoc_dung_model_bi_danh_dau_unavailable() -> None:
+    from api import gemini_web as gma
+
+    guest = _Client([_model("gemini-pro", "b2", available=False)])
+    with pytest.raises(gma._ModelUnavailable):
+        gma._model_for_client(guest, "gemini-pro")
+
+
 def test_model_dong_duoc_noi_vao_catalog_openai(monkeypatch) -> None:
     from api import gemini_web as gma
     from services.protocol import openai_v1_models as catalog
@@ -86,7 +105,10 @@ def test_cache_tinh_van_duoc_ghep_registry_dang_song(monkeypatch) -> None:
     monkeypatch.setattr(
         catalog,
         "_fetch_gemini_web_api_models",
-        lambda: {"gma/gemini-model-vua-xuat-hien"},
+        lambda: {
+            "gma/gemini-model-vua-xuat-hien",
+            "gma/gemini-image-moi",
+        },
     )
     rows = catalog._merge_runtime_gma_models([
         {"id": "gma/auto", "object": "model", "owned_by": "gemini_web_api"},
@@ -94,6 +116,8 @@ def test_cache_tinh_van_duoc_ghep_registry_dang_song(monkeypatch) -> None:
     assert {row["id"] for row in rows} == {
         "gma/auto",
         "gma/gemini-model-vua-xuat-hien",
+        "gma/gemini-model-vua-xuat-hien:text",
+        "gma/gemini-image-moi",
     }
 
 
@@ -106,13 +130,12 @@ def test_dependency_gemini_api_ghim_commit_co_registry_dong() -> None:
     assert f"#{revision}" in lock
 
 
-def test_registry_co_du_lieu_nhung_ten_sai_van_bi_tu_choi(monkeypatch) -> None:
+def test_registry_warm_khong_ket_luan_som_ten_sai_cua_account_con_lanh(
+    monkeypatch,
+) -> None:
     from api import gemini_web as gma
-    from fastapi import HTTPException
 
     monkeypatch.setattr(gma, "_clients", {
         "one": _Client([_model("gemini-flash", "a1")]),
     })
-    with pytest.raises(HTTPException) as caught:
-        gma._resolve_model("gma/khong-ton-tai")
-    assert caught.value.status_code == 400
+    assert gma._resolve_model("gma/khong-ton-tai") == "khong-ton-tai"
