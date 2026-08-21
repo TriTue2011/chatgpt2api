@@ -77,7 +77,11 @@ def _download_release(dest: Path) -> int:
             ok += 1
             continue
         print(f"[tai] {name} ...")
-        with tempfile.TemporaryDirectory(prefix="stt-release-") as raw_tmp:
+        # `replace_verified` dùng os.replace; giữ file tạm ngay trong thư mục
+        # đích để rename luôn cùng filesystem (volume data có thể tách /tmp).
+        with tempfile.TemporaryDirectory(
+            prefix=".stt-release-", dir=dest
+        ) as raw_tmp:
             tmp_dir = Path(raw_tmp)
             proc = subprocess.run(
                 ["gh", "release", "download", TAG, "-R", REPO,

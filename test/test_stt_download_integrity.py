@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,3 +80,31 @@ def test_moi_goi_stt_release_deu_co_sha256() -> None:
     assert len(en.SHA256) == 64
     assert set(multi.SHA256) == {*multi.MODELS, "sense"}
     assert all(len(value) == 64 for value in multi.SHA256.values())
+
+
+def test_release_dat_file_tam_cung_filesystem_voi_dich(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`os.replace` chỉ nguyên tử khi file tạm nằm cùng filesystem."""
+    from scripts import download_stt_model as vi
+
+    payload = b"verified-release-model"
+    digest = hashlib.sha256(payload).hexdigest()
+    destination = tmp_path / "models"
+    observed: dict[str, Path] = {}
+
+    monkeypatch.setattr(vi, "FILES", ["model.onnx"])
+    monkeypatch.setattr(vi, "SHA256", {"model.onnx": digest})
+    monkeypatch.setattr(vi, "_has_gh", lambda: True)
+
+    def _run(command, **_kwargs):
+        download_dir = Path(command[command.index("-D") + 1])
+        observed["download_dir"] = download_dir
+        (download_dir / "model.onnx").write_bytes(payload)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(vi.subprocess, "run", _run)
+
+    assert vi._download_release(destination) == 0
+    assert observed["download_dir"].parent == destination
+    assert (destination / "model.onnx").read_bytes() == payload
