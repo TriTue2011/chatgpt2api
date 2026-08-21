@@ -124,3 +124,31 @@ class TestDangTraLoi:
             "function": {"name": "bat_den", "arguments": {"phong": "bep"}},
         }]
         assert lines[1]["done"] is True
+
+    @pytest.mark.adapter
+    def test_stream_khong_nhap_hai_tool_call_thieu_index_lam_mot(self, monkeypatch):
+        from api import ollama_compat as oc
+
+        calls = [
+            {"id": "call_den", "type": "function",
+             "function": {"name": "bat_den", "arguments": "{\"phong\":\"bep\"}"}},
+            {"id": "call_quat", "type": "function",
+             "function": {"name": "bat_quat", "arguments": "{\"phong\":\"ngu\"}"}},
+        ]
+        chunks = iter([{"choices": [{"delta": {"tool_calls": calls}}]}])
+        monkeypatch.setattr(oc, "require_identity", lambda _auth: {"id": "chu-nha"})
+        monkeypatch.setattr(oc.openai_v1_chat_complete, "handle", lambda _payload: chunks)
+
+        app = FastAPI()
+        app.include_router(oc.create_router())
+        with TestClient(app) as client:
+            response = client.post("/api/chat", headers={"Authorization": "Bearer test"},
+                                   json={"model": "local/model", "stream": True,
+                                         "messages": [{"role": "user", "content": "bật cả hai"}]})
+
+        lines = [json.loads(line) for line in response.text.splitlines() if line]
+        assert [tc["function"]["name"]
+                for tc in lines[0]["message"]["tool_calls"]] == ["bat_den", "bat_quat"]
+        assert [tc["function"]["arguments"]
+                for tc in lines[0]["message"]["tool_calls"]] == [
+                    {"phong": "bep"}, {"phong": "ngu"}]

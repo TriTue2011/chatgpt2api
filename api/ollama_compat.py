@@ -248,13 +248,25 @@ def _lay_phan(chunk: Any) -> dict[str, Any]:
 
 def _gom_tool_delta(acc: dict[int, dict[str, Any]], calls: Any) -> None:
     """Ghép name + arguments bị OpenAI chia qua nhiều delta theo cùng index."""
-    for tc in calls if isinstance(calls, list) else []:
+    dung_trong_chunk: set[int] = set()
+    for vi_tri, tc in enumerate(calls if isinstance(calls, list) else []):
         if not isinstance(tc, dict):
             continue
-        try:
-            index = int(tc.get("index") or 0)
-        except (TypeError, ValueError):
-            index = 0
+        call_id = str(tc.get("id") or "")
+        index = next((i for i, slot in acc.items()
+                      if call_id and str(slot.get("id") or "") == call_id), -1)
+        if index < 0:
+            try:
+                index = int(tc["index"]) if "index" in tc else vi_tri
+            except (TypeError, ValueError):
+                index = vi_tri
+            slot_cu = acc.get(index)
+            id_cu = str((slot_cu or {}).get("id") or "")
+            if index in dung_trong_chunk or (call_id and id_cu and id_cu != call_id):
+                index = 0
+                while index in acc or index in dung_trong_chunk:
+                    index += 1
+        dung_trong_chunk.add(index)
         slot = acc.setdefault(index, {"id": "", "type": "function",
                                       "function": {"name": "", "arguments": ""}})
         if tc.get("id"):
