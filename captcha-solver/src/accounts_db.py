@@ -243,10 +243,14 @@ def resolve_account(profile_or_email: str, loai: str | None = None) -> Optional[
     name = chuan_localpart(profile_or_email)
     if not name:
         return None
-    for a in list_accounts(kho):
-        if chuan_localpart(str(a.get("email") or ""), bo_tien_to=False) == name:
-            return get_account(a["email"], kho)
-    return None
+    khop = [a for a in list_accounts(kho)
+            if chuan_localpart(str(a.get("email") or ""), bo_tien_to=False) == name]
+    # Tên profile thay mọi ký tự lạ bằng '-', nên a+b, a-b, a.b và ab có thể
+    # cùng một dạng chuẩn hoá. Chọn bản ghi đầu tiên ở đây đồng nghĩa đem mật
+    # khẩu/TOTP của tài khoản khác đi thử; khi mơ hồ phải dừng để đăng nhập tay.
+    if len(khop) != 1:
+        return None
+    return get_account(khop[0]["email"], kho)
 
 
 def save_account(email: str, password: str, totp_secret: str = "", label: str = "",

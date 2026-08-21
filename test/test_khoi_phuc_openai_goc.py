@@ -235,6 +235,15 @@ class KhoCredentialTraDuocTheoTenHoSo(unittest.TestCase):
         self.assertIsNotNone(acct)
         self.assertEqual(acct["password"], "mat-khau-google")
 
+    def test_profile_trung_localpart_thi_khong_chon_dai_credential(self):
+        """a+b, a-b, a.b cùng ra a-b trên tên profile: phải từ chối khi mơ hồ."""
+        self.adb.save_account("a+b@example.com", "mat-khau-cong", "", "",
+                              self.adb.LOAI_OPENAI)
+        self.adb.save_account("a-b@example.com", "mat-khau-gach", "", "",
+                              self.adb.LOAI_OPENAI)
+
+        self.assertIsNone(self.adb.resolve_account("openai-a-b"))
+
 
 class GoiDungEndpointCuaSolver(unittest.TestCase):
     """`_cgf_openai` đọc đúng câu trả lời của `GET /v1/chatgpt/{ho_so}/refresh-jwt`."""
