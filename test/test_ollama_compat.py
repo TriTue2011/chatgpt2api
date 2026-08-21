@@ -13,7 +13,11 @@ có ảnh nào, và model vẫn trả lời trơn tru — hỏng âm thầm, kh�
 """
 from __future__ import annotations
 
+import json
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.pure
 
@@ -86,3 +90,27 @@ class TestDangTraLoi:
         from api.ollama_compat import _tra_loi
         tc = [{"function": {"name": "x", "arguments": {}}}]
         assert _tra_loi("m", "", tool_calls=tc)["message"]["tool_calls"] == tc
+
+    @pytest.mark.adapter
+    def test_stream_giu_tool_calls_trong_tung_chunk(self, monkeypatch):
+        from api import ollama_compat as oc
+
+        tc = [{"index": 0, "id": "call_1", "type": "function",
+               "function": {"name": "bat_den", "arguments": "{\"phong\":\"bep\"}"}}]
+        chunks = iter([{"choices": [{"delta": {"tool_calls": tc}}]}])
+        monkeypatch.setattr(oc, "require_identity", lambda _auth: {"id": "chu-nha"})
+        monkeypatch.setattr(oc.openai_v1_chat_complete, "handle", lambda _payload: chunks)
+
+        app = FastAPI()
+        app.include_router(oc.create_router())
+        with TestClient(app) as client:
+            response = client.post("/api/chat", headers={"Authorization": "Bearer test"},
+                                   json={"model": "local/model", "stream": True,
+                                         "messages": [{"role": "user", "content": "bật đèn"}],
+                                         "tools": [{"type": "function",
+                                                    "function": {"name": "bat_den"}}]})
+
+        assert response.status_code == 200
+        lines = [json.loads(line) for line in response.text.splitlines() if line]
+        assert lines[0]["done"] is False
+        assert lines[0]["message"]["tool_calls"] == tc

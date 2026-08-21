@@ -178,8 +178,10 @@ def create_router() -> APIRouter:
         if not payload["stream"]:
             if not isinstance(ket_qua, dict):
                 # Lõi trả iterator dù xin non-stream (nhánh hiếm) → gom lại.
-                gom = "".join(_lay_delta(c) for c in ket_qua)  # type: ignore[arg-type]
-                return _tra_loi(model, gom)
+                cac_phan = [_lay_message(c) for c in ket_qua]  # type: ignore[arg-type]
+                gom = "".join(str(m.get("content") or "") for m in cac_phan)
+                tools = [tc for m in cac_phan for tc in (m.get("tool_calls") or [])]
+                return _tra_loi(model, gom, tools or None)
             ch = (ket_qua.get("choices") or [{}])[0]
             msg = ch.get("message") or {}
             return _tra_loi(model, str(msg.get("content") or ""),
@@ -190,16 +192,16 @@ def create_router() -> APIRouter:
             try:
                 if isinstance(ket_qua, dict):
                     ch = (ket_qua.get("choices") or [{}])[0]
-                    noi = str((ch.get("message") or {}).get("content") or "")
+                    msg = _message_ollama(ch.get("message") or {})
                     yield (json.dumps({"model": model, "created_at": _now(),
-                                       "message": {"role": "assistant", "content": noi},
+                                       "message": msg,
                                        "done": False}, ensure_ascii=False) + "\n").encode()
                 else:
                     for chunk in ket_qua:  # type: ignore[union-attr]
-                        phan = _lay_delta(chunk)
-                        if phan:
+                        msg = _lay_message(chunk)
+                        if msg.get("content") or msg.get("tool_calls"):
                             yield (json.dumps({"model": model, "created_at": _now(),
-                                               "message": {"role": "assistant", "content": phan},
+                                               "message": msg,
                                                "done": False}, ensure_ascii=False) + "\n").encode()
             except Exception as exc:
                 logger.warning({"event": "ollama_stream_loi", "error": str(exc)[:150]})
@@ -210,8 +212,26 @@ def create_router() -> APIRouter:
     return router
 
 
-def _lay_delta(chunk: Any) -> str:
+def _message_ollama(phan: Any) -> dict[str, Any]:
+    """Giữ cả chữ lẫn tool call khi đổi một message/delta sang khuôn Ollama."""
+    phan = phan if isinstance(phan, dict) else {}
+    msg: dict[str, Any] = {
+        "role": "assistant",
+        "content": str(phan.get("content") or ""),
+    }
+    if phan.get("tool_calls"):
+        msg["tool_calls"] = phan["tool_calls"]
+    return msg
+
+
+def _lay_message(chunk: Any) -> dict[str, Any]:
     try:
-        return str(((chunk.get("choices") or [{}])[0].get("delta") or {}).get("content") or "")
+        delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+        return _message_ollama(delta)
     except Exception:
-        return ""
+        return _message_ollama({})
+
+
+def _lay_delta(chunk: Any) -> str:
+    """Tương thích với các caller cũ chỉ cần phần chữ của stream."""
+    return str(_lay_message(chunk).get("content") or "")
