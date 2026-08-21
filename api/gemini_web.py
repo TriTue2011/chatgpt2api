@@ -512,6 +512,33 @@ _STAGGER_MAX = 8.0
 _auth_status: dict[str, tuple[float, bool]] = {}
 
 
+def available_model_ids() -> list[str]:
+    """Danh mục `gma/*` hợp của registry mà các client đã khám phá.
+
+    Guest chỉ được quảng cáo model mặc định có ``is_available``;
+    các tài khoản có thể thấy tập model khác nhau nên phải lấy hợp.
+    Hàm chỉ đọc cache, không làm `/v1/models` chờ init cookie hàng phút.
+    """
+    with _client_lock:
+        clients = list(_clients.values())
+    found: set[str] = set()
+    for client in clients:
+        try:
+            models = client.list_models() or []
+        except Exception:
+            continue
+        for model in models:
+            if not getattr(model, "is_available", True):
+                continue
+            name = str(
+                getattr(model, "model_name", "")
+                or getattr(model, "model_id", "")
+            ).strip()
+            if name:
+                found.add(f"gma/{name}")
+    return sorted(found, key=str.casefold)
+
+
 def _record_auth_status(key: str, cli) -> None:
     try:
         st = getattr(cli, "account_status", None)
@@ -711,6 +738,36 @@ def _resolve_model(model: str, prompt: str = ""):
 
     da_khai = m                      # tên NGƯỜI DÙNG khai, trước khi đổi alias
     m = _GMA_ALIASES.get(m, m)
+    # Registry động là nguồn chân lý. Trả tên canonical (không
+    # trả object của một account): mỗi account sẽ tự resolve lại để
+    # dùng đúng capacity/tier của chính nó.
+    with _client_lock:
+        clients = list(_clients.values())
+    co_registry = False
+    for client in clients:
+        try:
+            if not (client.list_models() or []):
+                continue
+            co_registry = True
+            resolved = client.resolve_model(m)
+            if getattr(resolved, "is_available", True):
+                return str(getattr(resolved, "model_name", "") or m)
+        except ValueError:
+            continue
+        except Exception:
+            continue
+    if co_registry and nguoi_dung_chi_dinh:
+        _logger().warning({
+            "event": "gma_unknown_model_fallback",
+            "yeu_cau": da_khai,
+            "sau_alias": m,
+        })
+        raise HTTPException(status_code=400, detail={
+            "error": f"Model '{da_khai}' không tồn tại ở Gemini Web. "
+                     "Xem danh sách hợp lệ trong GET /v1/models (tiền tố gma/), "
+                     "hoặc dùng 'gma/auto'.",
+            "code": "model_not_found",
+        })
     # Tách HAI nguyên nhân, đừng gộp: thư viện thiếu/hỏng là lỗi của bản triển
     # khai, không phải của người gọi. Gộp chung thì một lần import hỏng sẽ làm
     # MỌI model hợp lệ trả 400 — hỏng hẳn kênh Gemini (test bắt được đúng chỗ này).
@@ -726,6 +783,16 @@ def _resolve_model(model: str, prompt: str = ""):
     try:
         return Model.from_name(m)
     except Exception:
+        # Bản gemini-webapi mới resolve chuỗi theo registry sau khi client
+        # init. Cache còn nguội thì cho tên đi tiếp; `_model_for_client`
+        # sẽ xác minh trên từng account trước khi gửi.
+        try:
+            from gemini_webapi import GeminiClient
+
+            if hasattr(GeminiClient, "list_models") and hasattr(GeminiClient, "resolve_model"):
+                return m if nguoi_dung_chi_dinh else None
+        except Exception:
+            pass
         if nguoi_dung_chi_dinh:
             # Người gọi chọn ĐÍCH DANH một model không tồn tại. Rơi về auto ở
             # đây là trả HTTP 200 bằng MODEL KHÁC — họ tưởng đang dùng A mà
@@ -754,6 +821,30 @@ def _resolve_model(model: str, prompt: str = ""):
                         "mặc định của server. Sửa default_models/enabled_models.",
         })
         return None
+
+
+class _ModelUnavailable(ValueError):
+    """Model không có trong registry của account đang thử."""
+
+
+def _model_for_client(client, model_spec):
+    """Resolve chuỗi canonical theo registry/tier RIÊNG của client."""
+    if not isinstance(model_spec, str):
+        return model_spec
+    resolver = getattr(client, "resolve_model", None)
+    if not callable(resolver):
+        return model_spec  # tương thích gemini-webapi cũ
+    try:
+        return resolver(model_spec)
+    except ValueError as exc:
+        raise _ModelUnavailable(model_spec) from exc
+
+
+def _model_unavailable_http(model: str) -> HTTPException:
+    return HTTPException(status_code=400, detail={
+        "error": f"Model '{model}' không có trên bất kỳ tài khoản Gemini Web nào.",
+        "code": "model_not_found",
+    })
 
 
 def _downscale(data: bytes, mime: str) -> tuple[bytes, str]:
@@ -1424,6 +1515,7 @@ def handle_gemini_web_api_chat(
             co_files = False
             try:
                 client = _get_client(psid, psidts)
+                account_model = _model_for_client(client, model_enum)
                 p, files = _goi_cho(tiep_noi)
                 co_files = bool(files)
                 chat = (client.start_chat(metadata=list(khop["metadata"]))
@@ -1439,7 +1531,7 @@ def handle_gemini_web_api_chat(
                 _cookies = {"__Secure-1PSID": psid}
                 if psidts:
                     _cookies["__Secure-1PSIDTS"] = psidts
-                text = _generate_text(client, p, files, model_enum,
+                text = _generate_text(client, p, files, account_model,
                                       base_url=base_url, cookies=_cookies,
                                       chat_session=chat)
 
@@ -1457,6 +1549,9 @@ def handle_gemini_web_api_chat(
                 except Exception:
                     pass
                 return text, chat, profile
+            except _ModelUnavailable as exc:
+                last_exc = exc
+                continue
             except HTTPException:
                 raise          # lỗi của REQUEST (vd ảnh hỏng) — không phải account
             except Exception as exc:
@@ -1503,6 +1598,8 @@ def handle_gemini_web_api_chat(
                 raise exc
 
         # If we loop through all credentials and fail
+        if isinstance(last_exc, _ModelUnavailable):
+            raise _model_unavailable_http(str(last_exc))
         if last_exc:
             raise last_exc
         raise RuntimeError("No available accounts to fulfill request")
@@ -1519,6 +1616,7 @@ def handle_gemini_web_api_chat(
                     co_files = False
                     try:
                         client = _get_client(psid, psidts)
+                        account_model = _model_for_client(client, model_enum)
                         p, files = _goi_cho(tiep_noi)
                         co_files = bool(files)
                         if files:
@@ -1548,7 +1646,7 @@ def handle_gemini_web_api_chat(
                             full_text += initial_msg
                             da_phat += initial_msg
                             yield _openai_chunk(model, cid, created, {"content": initial_msg})
-                        for chunk in _generate_stream(client, p, files, model_enum,
+                        for chunk in _generate_stream(client, p, files, account_model,
                                                       base_url=base_url, cookies=_cookies,
                                                       chat_session=chat):
                             full_text += chunk
@@ -1590,6 +1688,9 @@ def handle_gemini_web_api_chat(
                         yield _openai_chunk(model, cid, created, {},
                                             finish="tool_calls" if tool_calls else "stop")
                         return
+                    except _ModelUnavailable as exc:
+                        last_exc = exc
+                        continue
                     except HTTPException:
                         raise
                     except Exception as exc:
@@ -1620,6 +1721,8 @@ def handle_gemini_web_api_chat(
                             continue
                         raise
 
+                if isinstance(last_exc, _ModelUnavailable):
+                    raise _model_unavailable_http(str(last_exc))
                 raise (last_exc or RuntimeError("No available accounts to fulfill request"))
             finally:
                 _don_goi()
@@ -1752,8 +1855,6 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
     if last_exc:
         raise last_exc
     raise RuntimeError("No available accounts to fulfill image request")
-
-
 
 
 

@@ -263,6 +263,38 @@ def _fetch_gemini_web_models() -> set[str]:
     return _fetch_web_models("gemini_web", "/v1/gemini-web")
 
 
+def _fetch_gemini_web_api_models() -> set[str]:
+    """Model cookie-API do chính các GeminiClient đã init khám phá."""
+    try:
+        from api.gemini_web import available_model_ids
+
+        return set(available_model_ids())
+    except Exception as exc:
+        logger.warning({"event": "list_models_gma_error", "error": str(exc)[:200]})
+        return set()
+
+
+def _merge_runtime_gma_models(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ghép registry GMA trong RAM vào cả cache đĩa còn hạn.
+
+    Client được prewarm sau lúc cache model có thể đã nạp. Không ghép
+    ở đường cache-hit thì model mới phải chờ tới lượt refresh 6 giờ.
+    """
+    merged = list(data)
+    seen = {str(item.get("id") or "") for item in merged}
+    for model_id in sorted(_fetch_gemini_web_api_models()):
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        merged.append({
+            "id": model_id,
+            "object": "model",
+            "created": 0,
+            "owned_by": "gemini_web_api",
+        })
+    return merged
+
+
 def _fetch_opencode_models() -> set[str]:
     """Fetch available free models from OpenCode API. Returns set of model IDs with oc/ prefix."""
     try:
@@ -815,7 +847,9 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
     # Use cache if: loaded, not forced, config stable, AND inside TTL.
     if _models_cache is not None and not force_refresh and not config_changed and not cache_stale:
         logger.info({"event": "list_models_cache_hit"})
-        cdata = _curate_models(_drop_unavailable(list((_models_cache or {}).get("data") or [])))
+        cached = _merge_runtime_gma_models(
+            list((_models_cache or {}).get("data") or []))
+        cdata = _curate_models(_drop_unavailable(cached))
         if apply_filter:
             cdata = _apply_enabled_filter(cdata)
         return {"object": "list", "data": cdata}
@@ -842,6 +876,7 @@ def list_models(force_refresh: bool = False, apply_filter: bool = False) -> dict
         "openrouter": _fetch_openrouter_models,
         "nvidia_nim": _fetch_nvidia_models,
         "gemini_web": _fetch_gemini_web_models,
+        "gemini_web_api": _fetch_gemini_web_api_models,
         "tokenrouter": _fetch_tokenrouter_models,
     }
 

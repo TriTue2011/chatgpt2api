@@ -111,5 +111,5 @@ url = "https://pypi.org/simple"
 explicit = true
 
 [tool.uv.sources]
-gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "enable-guest-mode" }
+gemini-webapi = { git = "https://github.com/luuquangvu/Gemini-API.git", rev = "b38110e82fe0e41bbf53a03646ef87ddc88a996a" }
 yt-dlp = { index = "pypi" }
