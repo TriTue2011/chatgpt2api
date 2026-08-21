@@ -33,31 +33,36 @@ _SRC = _ROOT / "services" / "agent" / "teacher_path.py"
 D = datetime.date
 
 
-def _load(data_dir: Path):
-    """Nạp teacher_path với DATA_DIR trỏ tmp, chặn chuỗi import nặng."""
+def _load(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    """Nạp teacher_path với DATA_DIR trỏ tmp, chặn chuỗi import nặng.
+
+    Mọi thay đổi `sys.modules` đi qua `monkeypatch` để pytest trả lại nguyên
+    trạng sau mỗi test. Gán trần thì module giả `services.config` còn nằm đó
+    suốt phiên, và MỌI file test chạy sau file này đều chết ở bước import.
+    """
     for name in ("services", "services.config", "services.agent",
                  "services.agent.teacher_path"):
-        sys.modules.pop(name, None)
+        monkeypatch.delitem(sys.modules, name, raising=False)
     pkg = types.ModuleType("services")
     pkg.__path__ = [str(_ROOT / "services")]
-    sys.modules["services"] = pkg
+    monkeypatch.setitem(sys.modules, "services", pkg)
     cfg = types.ModuleType("services.config")
     cfg.DATA_DIR = data_dir
-    sys.modules["services.config"] = cfg
+    monkeypatch.setitem(sys.modules, "services.config", cfg)
     ag = types.ModuleType("services.agent")
     ag.__path__ = [str(_ROOT / "services" / "agent")]
-    sys.modules["services.agent"] = ag
+    monkeypatch.setitem(sys.modules, "services.agent", ag)
     spec = importlib.util.spec_from_file_location(
         "services.agent.teacher_path", _SRC)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    monkeypatch.setitem(sys.modules, spec.name, mod)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
 
 @pytest.fixture()
-def tp(tmp_path: Path):
-    return _load(tmp_path)
+def tp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    return _load(tmp_path, monkeypatch)
 
 
 class TestNamHoc:

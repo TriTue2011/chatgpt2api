@@ -34,23 +34,29 @@ PIL = pytest.importorskip("PIL", reason="cần Pillow để đo mã hoá thật"
 from PIL import Image  # noqa: E402
 
 
-def _load(tmp: Path):
+def _load(tmp: Path, monkeypatch: pytest.MonkeyPatch):
+    """Nạp teacher_images với DATA_DIR trỏ tmp, chặn chuỗi import nặng.
+
+    Mọi thay đổi `sys.modules` đi qua `monkeypatch` để pytest trả lại nguyên
+    trạng sau mỗi test. Gán trần thì module giả `services.config` còn nằm đó
+    suốt phiên, và MỌI file test chạy sau file này đều chết ở bước import.
+    """
     import importlib.util
     import types
     pkg = sys.modules.get("services") or types.ModuleType("services")
     pkg.__path__ = [str(_ROOT / "services")]
-    sys.modules["services"] = pkg
+    monkeypatch.setitem(sys.modules, "services", pkg)
     ag = sys.modules.get("services.agent") or types.ModuleType("services.agent")
     ag.__path__ = [str(_ROOT / "services" / "agent")]
-    sys.modules["services.agent"] = ag
+    monkeypatch.setitem(sys.modules, "services.agent", ag)
     cfg = types.ModuleType("services.config")
     cfg.DATA_DIR = tmp
-    sys.modules["services.config"] = cfg
+    monkeypatch.setitem(sys.modules, "services.config", cfg)
     spec = importlib.util.spec_from_file_location(
         f"_ti_{_load.n}", _ROOT / "services" / "agent" / "teacher_images.py")
     _load.n += 1
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    monkeypatch.setitem(sys.modules, spec.name, mod)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
@@ -59,8 +65,8 @@ _load.n = 0
 
 
 @pytest.fixture()
-def ti(tmp_path):
-    mod = _load(tmp_path)
+def ti(tmp_path, monkeypatch):
+    mod = _load(tmp_path, monkeypatch)
     mod.ROOT = tmp_path / "page_img"
     mod.MAP_DIR = tmp_path / "pages"
     return mod

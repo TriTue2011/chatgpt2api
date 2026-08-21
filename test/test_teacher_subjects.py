@@ -30,36 +30,40 @@ pytestmark = pytest.mark.pure
 _TW_SRC = _ROOT / "services" / "agent" / "teacher_workspace.py"
 
 
-def _load_tw(data_dir: Path):
+def _load_tw(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Nạp teacher_workspace với DATA_DIR trỏ vào tmp, bỏ qua chuỗi import nặng.
 
     Import thẳng `services.agent` sẽ kéo theo orchestrator → sqlalchemy…; ở đây
     chỉ cần một hằng số nên chặn bằng module giả cho nhanh và không phụ thuộc.
+
+    Mọi thay đổi `sys.modules` đi qua `monkeypatch` để pytest trả lại nguyên
+    trạng sau mỗi test. Gán trần thì module giả `services.config` còn nằm đó
+    suốt phiên, và MỌI file test chạy sau file này đều chết ở bước import.
     """
     for name in ("services", "services.config", "services.agent",
                  "services.agent.teacher_workspace"):
-        sys.modules.pop(name, None)
+        monkeypatch.delitem(sys.modules, name, raising=False)
     pkg = types.ModuleType("services")
     pkg.__path__ = [str(_ROOT / "services")]
-    sys.modules["services"] = pkg
+    monkeypatch.setitem(sys.modules, "services", pkg)
     cfg = types.ModuleType("services.config")
     cfg.DATA_DIR = data_dir
-    sys.modules["services.config"] = cfg
+    monkeypatch.setitem(sys.modules, "services.config", cfg)
     ag = types.ModuleType("services.agent")
     ag.__path__ = [str(_ROOT / "services" / "agent")]
-    sys.modules["services.agent"] = ag
+    monkeypatch.setitem(sys.modules, "services.agent", ag)
     spec = importlib.util.spec_from_file_location(
         "services.agent.teacher_workspace", _TW_SRC,
     )
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    monkeypatch.setitem(sys.modules, spec.name, mod)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
 
 @pytest.fixture()
-def tw(tmp_path: Path):
-    return _load_tw(tmp_path)
+def tw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    return _load_tw(tmp_path, monkeypatch)
 
 
 class TestDanhMucMon:
@@ -222,9 +226,10 @@ class TestDiTruVanSangTviet:
         ws.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         return sgk, ws
 
-    def test_doi_ten_file_va_giu_nguyen_noi_dung(self, tmp_path: Path):
+    def test_doi_ten_file_va_giu_nguyen_noi_dung(self, tmp_path: Path,
+                                                 monkeypatch: pytest.MonkeyPatch):
         sgk, _ = self._dung_du_lieu_cu(tmp_path)
-        tw = _load_tw(tmp_path)
+        tw = _load_tw(tmp_path, monkeypatch)
         tw._seeded = False
         tw._ensure_seeded()
         for g in range(1, 6):
@@ -237,9 +242,10 @@ class TestDiTruVanSangTviet:
             )
             assert not (sgk / f"lop{g}" / "van.md").exists(), f"lớp {g}: van.md còn sót"
 
-    def test_chuyen_workspace_lop_1_5_va_khong_dung_lop_6(self, tmp_path: Path):
+    def test_chuyen_workspace_lop_1_5_va_khong_dung_lop_6(self, tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch):
         _, ws = self._dung_du_lieu_cu(tmp_path)
-        tw = _load_tw(tmp_path)
+        tw = _load_tw(tmp_path, monkeypatch)
         tw._seeded = False
         tw._ensure_seeded()
         cur = json.loads(ws.read_text(encoding="utf-8"))
@@ -250,9 +256,10 @@ class TestDiTruVanSangTviet:
             assert cur[f"lop{g}-tviet"]["description"] == "ghi chú cũ", "mất dữ liệu cũ"
         assert cur["lop6-van"]["description"] == "PHẢI GIỮ NGUYÊN", "lop6-van bị đụng"
 
-    def test_chay_lai_nhieu_lan_vo_hai(self, tmp_path: Path):
+    def test_chay_lai_nhieu_lan_vo_hai(self, tmp_path: Path,
+                                       monkeypatch: pytest.MonkeyPatch):
         sgk, _ = self._dung_du_lieu_cu(tmp_path)
-        tw = _load_tw(tmp_path)
+        tw = _load_tw(tmp_path, monkeypatch)
         for _ in range(3):
             tw._seeded = False
             tw._ensure_seeded()
@@ -261,11 +268,12 @@ class TestDiTruVanSangTviet:
                 sgk / f"lop{g}" / "tviet.md"
             ).read_text(encoding="utf-8")
 
-    def test_khong_ghi_de_khi_dich_da_ton_tai(self, tmp_path: Path):
+    def test_khong_ghi_de_khi_dich_da_ton_tai(self, tmp_path: Path,
+                                              monkeypatch: pytest.MonkeyPatch):
         """Đã có tviet.md mới hơn thì van.md cũ KHÔNG được đè lên."""
         sgk, _ = self._dung_du_lieu_cu(tmp_path)
         (sgk / "lop1" / "tviet.md").write_text("BẢN MỚI", encoding="utf-8")
-        tw = _load_tw(tmp_path)
+        tw = _load_tw(tmp_path, monkeypatch)
         tw._seeded = False
         tw._ensure_seeded()
         assert (sgk / "lop1" / "tviet.md").read_text(encoding="utf-8") == "BẢN MỚI"
