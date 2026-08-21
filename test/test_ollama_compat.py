@@ -95,9 +95,15 @@ class TestDangTraLoi:
     def test_stream_giu_tool_calls_trong_tung_chunk(self, monkeypatch):
         from api import ollama_compat as oc
 
-        tc = [{"index": 0, "id": "call_1", "type": "function",
-               "function": {"name": "bat_den", "arguments": "{\"phong\":\"bep\"}"}}]
-        chunks = iter([{"choices": [{"delta": {"tool_calls": tc}}]}])
+        chunks = iter([
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "type": "function",
+                 "function": {"name": "bat_den", "arguments": "{\"phong\":"}},
+            ]}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": "\"bep\"}"}},
+            ]}}]},
+        ])
         monkeypatch.setattr(oc, "require_identity", lambda _auth: {"id": "chu-nha"})
         monkeypatch.setattr(oc.openai_v1_chat_complete, "handle", lambda _payload: chunks)
 
@@ -113,4 +119,8 @@ class TestDangTraLoi:
         assert response.status_code == 200
         lines = [json.loads(line) for line in response.text.splitlines() if line]
         assert lines[0]["done"] is False
-        assert lines[0]["message"]["tool_calls"] == tc
+        assert lines[0]["message"]["tool_calls"] == [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "bat_den", "arguments": {"phong": "bep"}},
+        }]
+        assert lines[1]["done"] is True

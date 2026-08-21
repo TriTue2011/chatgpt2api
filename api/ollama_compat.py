@@ -178,9 +178,13 @@ def create_router() -> APIRouter:
         if not payload["stream"]:
             if not isinstance(ket_qua, dict):
                 # Lõi trả iterator dù xin non-stream (nhánh hiếm) → gom lại.
-                cac_phan = [_lay_message(c) for c in ket_qua]  # type: ignore[arg-type]
-                gom = "".join(str(m.get("content") or "") for m in cac_phan)
-                tools = [tc for m in cac_phan for tc in (m.get("tool_calls") or [])]
+                gom = ""
+                tc_acc: dict[int, dict[str, Any]] = {}
+                for chunk in ket_qua:  # type: ignore[union-attr]
+                    delta = _lay_phan(chunk)
+                    gom += str(delta.get("content") or "")
+                    _gom_tool_delta(tc_acc, delta.get("tool_calls") or [])
+                tools = _tool_calls_ollama([tc_acc[i] for i in sorted(tc_acc)])
                 return _tra_loi(model, gom, tools or None)
             ch = (ket_qua.get("choices") or [{}])[0]
             msg = ch.get("message") or {}
@@ -189,6 +193,7 @@ def create_router() -> APIRouter:
 
         # Ollama stream = JSON từng dòng, KHÔNG phải SSE "data:" như OpenAI.
         def _phat() -> Iterator[bytes]:
+            tc_acc: dict[int, dict[str, Any]] = {}
             try:
                 if isinstance(ket_qua, dict):
                     ch = (ket_qua.get("choices") or [{}])[0]
@@ -198,11 +203,20 @@ def create_router() -> APIRouter:
                                        "done": False}, ensure_ascii=False) + "\n").encode()
                 else:
                     for chunk in ket_qua:  # type: ignore[union-attr]
-                        msg = _lay_message(chunk)
-                        if msg.get("content") or msg.get("tool_calls"):
+                        delta = _lay_phan(chunk)
+                        noi = str(delta.get("content") or "")
+                        _gom_tool_delta(tc_acc, delta.get("tool_calls") or [])
+                        if noi:
                             yield (json.dumps({"model": model, "created_at": _now(),
-                                               "message": msg,
+                                               "message": {"role": "assistant",
+                                                           "content": noi},
                                                "done": False}, ensure_ascii=False) + "\n").encode()
+                    if tc_acc:
+                        tools = _tool_calls_ollama([tc_acc[i] for i in sorted(tc_acc)])
+                        yield (json.dumps({"model": model, "created_at": _now(),
+                                           "message": {"role": "assistant", "content": "",
+                                                       "tool_calls": tools},
+                                           "done": False}, ensure_ascii=False) + "\n").encode()
             except Exception as exc:
                 logger.warning({"event": "ollama_stream_loi", "error": str(exc)[:150]})
             yield (json.dumps(_tra_loi(model, ""), ensure_ascii=False) + "\n").encode()
@@ -220,18 +234,64 @@ def _message_ollama(phan: Any) -> dict[str, Any]:
         "content": str(phan.get("content") or ""),
     }
     if phan.get("tool_calls"):
-        msg["tool_calls"] = phan["tool_calls"]
+        msg["tool_calls"] = _tool_calls_ollama(phan["tool_calls"])
     return msg
 
 
-def _lay_message(chunk: Any) -> dict[str, Any]:
+def _lay_phan(chunk: Any) -> dict[str, Any]:
     try:
         delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
-        return _message_ollama(delta)
+        return delta if isinstance(delta, dict) else {}
     except Exception:
-        return _message_ollama({})
+        return {}
 
 
-def _lay_delta(chunk: Any) -> str:
-    """Tương thích với các caller cũ chỉ cần phần chữ của stream."""
-    return str(_lay_message(chunk).get("content") or "")
+def _gom_tool_delta(acc: dict[int, dict[str, Any]], calls: Any) -> None:
+    """Ghép name + arguments bị OpenAI chia qua nhiều delta theo cùng index."""
+    for tc in calls if isinstance(calls, list) else []:
+        if not isinstance(tc, dict):
+            continue
+        try:
+            index = int(tc.get("index") or 0)
+        except (TypeError, ValueError):
+            index = 0
+        slot = acc.setdefault(index, {"id": "", "type": "function",
+                                      "function": {"name": "", "arguments": ""}})
+        if tc.get("id"):
+            slot["id"] = tc["id"]
+        if tc.get("type"):
+            slot["type"] = tc["type"]
+        fn = tc.get("function") or {}
+        if isinstance(fn, dict):
+            if fn.get("name"):
+                slot["function"]["name"] = fn["name"]
+            if fn.get("arguments") is not None:
+                slot["function"]["arguments"] += str(fn["arguments"])
+
+
+def _tool_calls_ollama(calls: Any) -> list[dict[str, Any]]:
+    """Đổi arguments JSON-string của OpenAI thành object Ollama yêu cầu."""
+    ra: list[dict[str, Any]] = []
+    for tc in calls if isinstance(calls, list) else []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        if not isinstance(fn, dict):
+            continue
+        arguments = fn.get("arguments", {})
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments.strip() else {}
+            except json.JSONDecodeError:
+                # Giữ nguyên để không làm mất dữ liệu model; client sẽ báo đúng
+                # lỗi JSON thay vì nhận một object bịa hoặc một tool call rỗng.
+                pass
+        moi: dict[str, Any] = {
+            "function": {"name": str(fn.get("name") or ""),
+                         "arguments": arguments},
+        }
+        for key in ("id", "type"):
+            if tc.get(key):
+                moi[key] = tc[key]
+        ra.append(moi)
+    return ra
