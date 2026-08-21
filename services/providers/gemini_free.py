@@ -295,6 +295,25 @@ def _convert_request(messages, tools, *, google_search: bool = False):
                         part = _fetch_url_part(media_url)
                     if part:
                         parts.append(part)
+                elif ptype == "file":
+                    # Home Assistant gửi tệp không phải ảnh theo dạng này khi
+                    # dùng tích hợp local_openai bản luuquangvu: base64 thuần
+                    # kèm tên tệp, KHÔNG kèm mime type. Đây là đường duy nhất
+                    # video camera đi được từ Home Assistant tới đây — bản
+                    # skye-harris chặn thẳng mọi thứ không phải image/.
+                    f = p.get("file") or {}
+                    du_lieu = str(f.get("file_data") or "")
+                    ten = str(f.get("filename") or "")
+                    if not du_lieu:
+                        continue
+                    if du_lieu.startswith("data:"):
+                        part = _data_url_part(du_lieu)
+                    else:
+                        from mimetypes import guess_type
+                        mime = guess_type(ten)[0] or "application/octet-stream"
+                        part = {"inlineData": {"mimeType": mime, "data": du_lieu}}
+                    if part:
+                        parts.append(part)
                 elif ptype == "file_data":
                     fd = p.get("file_data", {})
                     file_uri = fd.get("file_uri", "")
