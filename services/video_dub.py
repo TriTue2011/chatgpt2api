@@ -658,10 +658,14 @@ def _bao_dam_khong_thieu_cau_tts(meta: dict[str, Any], so_loi: int,
         f"Câu hỏng: {chi_tiet or 'không rõ'}")
 
 
-#: Trộn nền với TTS. Dùng lại y hệt cho cả lượt đo lẫn lượt ghi, để lượng bù đo
-#: được đúng là lượng bù cho hỗn hợp sẽ ghi ra.
-_TRON = ("[1:a][2:a]amix=inputs=2:duration=longest:"
-         "dropout_transition=0:normalize=0")
+#: Trộn nền với TTS. Hai lượt dùng cùng bộ lọc nhưng KHÁC chỉ số input: lượt đo
+#: chỉ có 2 audio (0, 1), lượt ghi có video đứng trước nên audio là (1, 2).
+_AMIX = "amix=inputs=2:duration=longest:dropout_transition=0:normalize=0"
+
+
+def _tron_audio(nen: int, tts: int) -> str:
+    """Bộ lọc trộn cho đúng vị trí hai input trong từng lệnh ffmpeg."""
+    return f"[{nen}:a][{tts}:a]{_AMIX}"
 
 
 def _doc_lufs(loi_ffmpeg: str) -> float | None:
@@ -687,7 +691,7 @@ def _bu_am(lufs_do: float | None) -> float:
 def _do_do_to(background: str, track: str, dai: float) -> float | None:
     """Đo hỗn hợp nền + TTS trước khi ghi. Đo hỏng thì trả None, không chặn job."""
     p = _chay(["ffmpeg", "-hide_banner", "-nostats", "-i", background,
-               "-i", track, "-filter_complex", _TRON + ",ebur128=peak=true",
+               "-i", track, "-filter_complex", _tron_audio(0, 1) + ",ebur128=peak=true",
                "-f", "null", "-"], timeout=max(300, dai))
     return _doc_lufs(p.stderr.decode("utf-8", "ignore"))
 
@@ -702,7 +706,7 @@ def _mux(duong_video: str, background: str, track: str, dai: float) -> str:
     lenh_chung = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                   "-i", duong_video, "-i", background, "-i", track,
                   "-filter_complex",
-                  f"{_TRON},volume={bu:.2f}dB,"
+                  f"{_tron_audio(1, 2)},volume={bu:.2f}dB,"
                   f"alimiter=limit={TRAN_DINH}:level=disabled[dub]",
                   "-map", "0:v:0", "-map", "[dub]",
                   "-map_metadata", "0", "-c:a", "aac", "-b:a", "192k",

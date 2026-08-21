@@ -245,6 +245,24 @@ def test_mux_do_do_to_roi_bu_dung_luong_vao_lenh_ghep():
     assert "level=disabled" in loc
 
 
+@pytest.mark.adapter
+def test_luot_do_dung_chi_so_cua_hai_audio_input():
+    """Lượt đo chỉ có nền + TTS, nên hai input phải là 0 và 1."""
+    from services import video_dub as dub
+
+    bao_cao = (b"Integrated loudness:\n"
+               b"    I:         -21.3 LUFS\n")
+
+    def _ffmpeg_gia(cmd, **_kw):
+        loc = cmd[cmd.index("-filter_complex") + 1]
+        if loc.startswith("[0:a][1:a]amix="):
+            return subprocess.CompletedProcess(cmd, 0, b"", bao_cao)
+        return subprocess.CompletedProcess(cmd, 1, b"", b"Invalid file index 2")
+
+    with mock.patch.object(dub, "_chay", side_effect=_ffmpeg_gia):
+        assert dub._do_do_to("nen.wav", "tts.wav", 10.0) == pytest.approx(-21.3)
+
+
 @pytest.mark.pure
 def test_bo_loc_tts_dung_cao_do_va_nang_luong_tuong_doi():
     """Prosody không chỉ ghi JSON: pitch/energy phải đi vào filter âm thanh."""
