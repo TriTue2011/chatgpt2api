@@ -204,7 +204,8 @@ def xoa(muc: list[dict[str, Any]], thu_muc: Path | str | None = None) -> int:
         try:
             st = (goc / str(item["rel"])).stat()
             if (st.st_size == int(item["bytes"])
-                    and math.isclose(st.st_mtime, float(item["mtime"]), abs_tol=1e-6)):
+                    and math.isclose(st.st_mtime, float(item["mtime"]),
+                                     rel_tol=0.0, abs_tol=1e-6)):
                 khong_doi.append(item)
         except (KeyError, OSError, TypeError, ValueError):
             continue

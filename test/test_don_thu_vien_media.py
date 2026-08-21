@@ -196,6 +196,23 @@ def test_xac_nhan_chi_xoa_dung_tep_da_xem_truoc(cap, kho):
     assert not (kho / "2026/08/19/moi.png").exists(), "phải xoá đúng tệp đã preview"
 
 
+def test_tep_bi_ghi_de_cung_kich_thuoc_sau_preview_thi_bo_qua(cap, kho):
+    """mtime là epoch lớn: không được dùng rel_tol mặc định của math.isclose."""
+    ctx = {"is_admin": True, "user_id": "ghi-de-cung-size"}
+    dich = kho / "2026/08/19/moi.png"
+    mtime_cu = dich.stat().st_mtime
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao"}, ctx)
+
+    dich.write_bytes(b"y" * 10)
+    os.utime(dich, (mtime_cu + 0.5, mtime_cu + 0.5))
+    kq = cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao", "xac_nhan": True}, ctx)
+
+    assert dich.exists(), "nội dung đã thay sau preview không còn là tệp được duyệt"
+    assert "Bỏ qua 1 tệp" in kq["text"]
+
+
 def test_xoa_video_khong_dung_toi_anh_va_nhac(cap, kho):
     ctx = {"is_admin": True, "user_id": "xoa-video"}
     cap.CAPABILITIES["delete_media"].handler(
