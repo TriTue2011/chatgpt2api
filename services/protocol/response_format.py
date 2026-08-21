@@ -444,6 +444,9 @@ _VISION_SCHEMA = {
         "animals_detected": {"type": "integer"},
         "animals_detected_summary": {"type": "string"},
         "animals_detected_description": {"type": "string"},
+        # Blueprint dùng ô này để chọn tấm ảnh nét nhất khi chỉ gửi một tấm.
+        # Không khai ở đây thì nó bị lược đi và người nhận luôn nhận tấm giữa.
+        "khung_ro_nhat": {"type": "integer"},
     },
     "required": [
         "humans_detected",
@@ -466,6 +469,7 @@ _VISION_SCHEMA_AN_NINH = {
         "humans_detected": {"type": "integer"},
         "human_action": {"type": "string"},
         "security_suspicious": {"type": "boolean"},
+        "khung_ro_nhat": {"type": "integer"},
     },
     "required": ["humans_detected", "human_action", "security_suspicious"],
 }
