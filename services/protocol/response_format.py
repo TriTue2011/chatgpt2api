@@ -456,6 +456,34 @@ _VISION_SCHEMA = {
 }
 
 
+# Chế độ An ninh của cùng blueprint hỏi ba trường khác hẳn. Ép nó về lược đồ
+# người+thú ở trên là xoá mất `human_action` và `security_suspicious`, và Home
+# Assistant đọc ra một lượt "không có ai, không đáng ngờ" — đúng kiểu hỏng im
+# lặng: báo động vẫn chạy, chỉ là không bao giờ báo gì.
+_VISION_SCHEMA_AN_NINH = {
+    "type": "object",
+    "properties": {
+        "humans_detected": {"type": "integer"},
+        "human_action": {"type": "string"},
+        "security_suspicious": {"type": "boolean"},
+    },
+    "required": ["humans_detected", "human_action", "security_suspicious"],
+}
+
+
+def _chon_vision_schema(body: dict[str, Any] | None) -> dict[str, Any]:
+    """Lược đồ nào hợp với lời dặn đang gửi tới.
+
+    Nhận dạng bằng chính tên trường mà lời dặn yêu cầu, thay vì đoán theo chế
+    độ — blueprint đổi chế độ thì tên trường đổi theo, nên đây là dấu hiệu chắc
+    chắn nhất.
+    """
+    joined = "\n".join(_message_text_blobs(body)).lower()
+    if "security_suspicious" in joined or "human_action" in joined:
+        return _VISION_SCHEMA_AN_NINH
+    return _VISION_SCHEMA
+
+
 _VISION_PROMPT_MARKERS = (
     "humans_detected",
     "animals_detected",
@@ -593,7 +621,7 @@ def enforce_vision_json_if_needed(
         # already handled by enforce_response_format
         return result
 
-    meta = {"type": "json_object", "schema": _VISION_SCHEMA, "name": "vision_ha"}
+    meta = {"type": "json_object", "schema": _chon_vision_schema(body), "name": "vision_ha"}
 
     if isinstance(result, dict):
         raw = _content_from_result(result)

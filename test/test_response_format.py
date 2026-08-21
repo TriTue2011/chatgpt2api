@@ -172,6 +172,43 @@ class ResponseFormatTests(unittest.TestCase):
         self.assertEqual(obj["humans_detected"], 1)
         self.assertIn("đàn ông", obj["humans_detected_summary"])
 
+    def test_vision_json_giu_lai_truong_an_ninh(self) -> None:
+        """Chế độ An ninh của blueprint camera hỏi ba trường khác hẳn.
+
+        Trước đây mọi lời gọi camera đều bị ép về lược đồ người+thú, nên
+        `human_action` và `security_suspicious` biến mất và Home Assistant đọc
+        ra một lượt "không có ai, không đáng ngờ" — báo động chạy mà không bao
+        giờ báo gì.
+        """
+        mangled = (
+            "humans detected2,human actionHai người đứng trước cửa,"
+            "security suspicioustrue"
+        )
+        body = {
+            "_is_ha_request": True,
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "Return raw JSON only with this shape: "
+                    '{"humans_detected":0,"human_action":"","security_suspicious":false}'
+                ),
+            }],
+        }
+        result = {
+            "choices": [{
+                "message": {"role": "assistant", "content": mangled},
+                "finish_reason": "stop",
+            }]
+        }
+        out = rf.enforce_vision_json_if_needed(result, body)
+        assert isinstance(out, dict)
+        obj = json.loads(out["choices"][0]["message"]["content"])
+        self.assertEqual(obj["humans_detected"], 2)
+        self.assertIn("trước cửa", obj["human_action"])
+        self.assertIn("security_suspicious", obj)
+        # Không được nhét thêm mấy ô của chế độ người+thú vào đây.
+        self.assertNotIn("animals_detected", obj)
+
 
 if __name__ == "__main__":
     unittest.main()
