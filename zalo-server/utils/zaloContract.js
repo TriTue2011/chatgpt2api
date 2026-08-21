@@ -6,12 +6,17 @@ const ZALO_ID_KEYS = new Set([
   'threadId', 'threadID', 'groupId', 'userId', 'memberId', 'friendId',
   'ownId', 'uid', 'uidFrom', 'idTo', 'conversationId',
   'msgId', 'cliMsgId', 'globalMsgId', 'ownerId', 'actionId',
-  'reminderId', 'topicId', 'photoId',
+  'reminderId', 'topicId', 'photoId', 'pollId', 'itemId',
+  'accountSelection',
 ]);
 
 const ZALO_ID_LIST_KEYS = new Set([
   'threadIds', 'groupIds', 'userIds', 'memberIds', 'friendIds', 'msgIds',
+  'members',
 ]);
+
+// Hai API nay chap nhan ca mot ID va danh sach ID; khong ep scalar thanh array.
+const ZALO_ID_OR_LIST_KEYS = new Set(['itemIds', 'stickerAlbum']);
 
 function normalizeId(value, key) {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) {
@@ -31,6 +36,12 @@ export function normalizeZaloIdsInPlace(value, key = '') {
   if (ZALO_ID_LIST_KEYS.has(key)) {
     const list = Array.isArray(value) ? value : [value];
     return list.map((item) => normalizeId(item, key));
+  }
+
+  if (ZALO_ID_OR_LIST_KEYS.has(key)) {
+    return Array.isArray(value)
+      ? value.map((item) => normalizeId(item, key))
+      : normalizeId(value, key);
   }
 
   if (Array.isArray(value)) {

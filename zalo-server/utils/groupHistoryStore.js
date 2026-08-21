@@ -5,8 +5,12 @@ import { writeFileAtomicSync } from './atomicFile.js';
 
 const DEFAULT_MAX_MESSAGES = 5000;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const DEFAULT_PENDING_MAX = 1000;
 const pendingWrites = new Map();
 const flushTimers = new Map();
+const retryAttempts = new Map();
+const droppedRecords = new Map();
+const needsCompaction = new Set();
 
 function safePart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -60,6 +64,13 @@ function parseFile(file) {
   return messages;
 }
 
+function fileSize(file) {
+  try { return fs.statSync(file).size; } catch (error) {
+    if (error.code === 'ENOENT') return 0;
+    throw error;
+  }
+}
+
 function deduplicate(messages) {
   const seen = new Set();
   return messages.filter((message) => {
@@ -77,9 +88,43 @@ function positiveEnv(name, fallback) {
 
 function compact(file) {
   const maxMessages = positiveEnv('GROUP_HISTORY_MAX_MESSAGES', DEFAULT_MAX_MESSAGES);
-  const kept = deduplicate(parseFile(file)).slice(-maxMessages);
+  const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
+  const candidates = deduplicate(parseFile(file)).slice(-maxMessages);
+  const kept = [];
+  let usedBytes = 0;
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const line = `${stringify(candidates[index])}\n`;
+    const lineBytes = Buffer.byteLength(line);
+    if (lineBytes > maxBytes) break;
+    if (usedBytes + lineBytes > maxBytes) break;
+    kept.unshift(candidates[index]);
+    usedBytes += lineBytes;
+  }
   const content = kept.map(stringify).join('\n');
   writeFileAtomicSync(file, content ? `${content}\n` : '');
+  return kept;
+}
+
+function retryDelay(attempt) {
+  return Math.min(100 * (2 ** Math.min(attempt, 8)), 30_000);
+}
+
+function queueRecords(file, records) {
+  const maxPending = positiveEnv('GROUP_HISTORY_PENDING_MAX', DEFAULT_PENDING_MAX);
+  const combined = [...(pendingWrites.get(file) || []), ...records];
+  if (combined.length > maxPending) {
+    const dropped = combined.length - maxPending;
+    droppedRecords.set(file, (droppedRecords.get(file) || 0) + dropped);
+    pendingWrites.set(file, combined.slice(-maxPending));
+    return;
+  }
+  pendingWrites.set(file, combined);
+}
+
+function scheduleRetry(file) {
+  const attempt = (retryAttempts.get(file) || 0) + 1;
+  retryAttempts.set(file, attempt);
+  scheduleFlush(file, retryDelay(attempt));
 }
 
 function flush(file) {
@@ -87,26 +132,53 @@ function flush(file) {
   if (timer) clearTimeout(timer);
   flushTimers.delete(file);
   const records = pendingWrites.get(file);
-  if (!records?.length) return;
+  if (!records?.length) {
+    if (!needsCompaction.has(file)) return;
+    try {
+      compact(file);
+      needsCompaction.delete(file);
+      retryAttempts.delete(file);
+    } catch (error) {
+      scheduleRetry(file);
+      throw error;
+    }
+    return;
+  }
   pendingWrites.delete(file);
   try {
     fs.appendFileSync(file, records.join(''), { encoding: 'utf8', mode: 0o600 });
-    const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
-    if (fs.statSync(file).size > maxBytes) compact(file);
   } catch (error) {
-    pendingWrites.set(file, [...records, ...(pendingWrites.get(file) || [])]);
+    queueRecords(file, records);
+    scheduleRetry(file);
+    throw error;
+  }
+
+  try {
+    const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
+    if (fileSize(file) > maxBytes) compact(file);
+    needsCompaction.delete(file);
+    retryAttempts.delete(file);
+    const dropped = droppedRecords.get(file) || 0;
+    if (dropped) {
+      console.warn(`[History] Da bo ${dropped} record cu do queue vuot tran.`);
+      droppedRecords.delete(file);
+    }
+  } catch (error) {
+    // Append da thanh cong: khong queue lai record (se nhan doi). Chi hen lai
+    // viec compact voi backoff va queue message moi van co tran rieng.
+    needsCompaction.add(file);
+    scheduleRetry(file);
     throw error;
   }
 }
 
-function scheduleFlush(file) {
+function scheduleFlush(file, delayMs = 100) {
   if (flushTimers.has(file)) return;
   const timer = setTimeout(() => {
     try { flush(file); } catch (error) {
       console.error(`[History] Khong ghi duoc ${file}: ${error.message}`);
-      scheduleFlush(file);
     }
-  }, 100);
+  }, delayMs);
   timer.unref?.();
   flushTimers.set(file, timer);
 }
@@ -119,9 +191,7 @@ export function storeGroupMessage(ownId, message) {
     const record = cloneSerializable(message);
     record._accountId = String(ownId);
     record._storedAt = Date.now();
-    const queue = pendingWrites.get(file) || [];
-    queue.push(`${stringify(record)}\n`);
-    pendingWrites.set(file, queue);
+    queueRecords(file, [`${stringify(record)}\n`]);
     scheduleFlush(file);
     return true;
   } catch (error) {
@@ -134,10 +204,14 @@ export function getCachedGroupHistory(ownId, groupId, count = 50) {
   const safeCount = Math.min(Math.max(Number.parseInt(count, 10) || 50, 1), 200);
   const file = historyFile(ownId, groupId);
   flush(file);
-  const parsedMessages = deduplicate(parseFile(file));
+  let parsedMessages = deduplicate(parseFile(file));
   const maxMessages = positiveEnv('GROUP_HISTORY_MAX_MESSAGES', DEFAULT_MAX_MESSAGES);
+  const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
+  if (parsedMessages.length > maxMessages || fileSize(file) > maxBytes) {
+    compact(file);
+    parsedMessages = deduplicate(parseFile(file));
+  }
   const allMessages = parsedMessages.slice(-maxMessages);
-  if (parsedMessages.length > maxMessages) compact(file);
   const selected = allMessages.slice(-safeCount);
   const latest = selected.at(-1)?.data || {};
   return {
@@ -153,7 +227,8 @@ export function getCachedGroupHistory(ownId, groupId, count = 50) {
 }
 
 export function flushAllGroupHistorySync() {
-  for (const file of [...pendingWrites.keys()]) {
+  const files = new Set([...pendingWrites.keys(), ...needsCompaction]);
+  for (const file of files) {
     try { flush(file); } catch (error) {
       console.error(`[History] Khong flush duoc ${file}: ${error.message}`);
     }

@@ -123,12 +123,13 @@ export async function taiVeVaGuiNhieuAnh(tep, api, imageUrls, threadId, threadTy
  * @param {string[]} duongDan   ảnh cục bộ
  * @param {string}   threadId
  * @param {number}   threadType ThreadType.User | ThreadType.Group
- * @param {object}   tuyChon    {caption, nghiMs, captionChiLoDau}
+ * @param {object}   tuyChon    {caption, ttl, nghiMs, captionChiLoDau}
  * @returns {Promise<{ok, soAnh, soLo, ketQua[], canhBao[]}>}
  */
 export async function guiNhieuAnh(api, duongDan, threadId, threadType, tuyChon = {}) {
     const {
         caption = '',
+        ttl = null,
         nghiMs = NGHI_MAC_DINH_MS,
         captionChiLoDau = true,
     } = tuyChon;
@@ -160,11 +161,13 @@ export async function guiNhieuAnh(api, duongDan, threadId, threadType, tuyChon =
     for (let i = 0; i < cacLo.length; i++) {
         // msg PHẢI có, dù rỗng: zca-js đọc `msg.length` nên thiếu nó là
         // TypeError "Cannot read properties of undefined".
+        const content = {
+            msg: (captionChiLoDau && i > 0) ? '' : caption,
+            attachments: cacLo[i],
+            ...(ttl === null || ttl === undefined ? {} : { ttl }),
+        };
         const res = await api.sendMessage(
-            {
-                msg: (captionChiLoDau && i > 0) ? '' : caption,
-                attachments: cacLo[i],
-            },
+            content,
             threadId,
             threadType,
         );

@@ -29,7 +29,7 @@ function apiGia(maxFile, { thieuSettings = false } = {}) {
       } } },
     }),
     sendMessage: async (content, threadId, type) => {
-      goi.push({ so: content.attachments.length, msg: content.msg, threadId, type });
+      goi.push({ so: content.attachments.length, msg: content.msg, ttl: content.ttl, threadId, type });
       return { message: content.msg ? { msgId: 'm' } : null,
                attachment: content.attachments.map((_, i) => ({ msgId: 'a' + i })) };
     },
@@ -83,6 +83,11 @@ kiem(nem2 && api.goi.length === 0, 'ảnh vượt dung lượng bị chặn sớ
 api = apiGia(5);
 await guiNhieuAnh(api, anh.slice(0, 2), 'T1', 0, { nghiMs: 1 });
 kiem(api.goi.every(g => typeof g.msg === 'string'), 'msg luôn là chuỗi, không undefined');
+
+// TTL cua action HACS phai di theo TUNG lo anh, khong bi mat khi chia lo.
+api = apiGia(5);
+await guiNhieuAnh(api, anh, 'T1', 0, { ttl: 3_600_000, nghiMs: 1 });
+kiem(api.goi.every(g => g.ttl === 3_600_000), 'TTL được giữ trên mọi lô ảnh');
 
 // 8. một lô thì không nghỉ
 api = apiGia(20);

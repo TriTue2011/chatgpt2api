@@ -103,6 +103,10 @@ VAULT_MASTER_KEY=          # python3 -c "import base64,os;print(base64.b64encode
 VAULT_REQUIRE_ENCRYPTION=1
 ```
 
+Nếu để trống hai bí mật Zalo, server nhúng sẽ sinh mỗi bí mật đúng một lần
+trong volume dữ liệu (mode `0600`); gateway Python tự đọc credential admin dùng
+chung. Hãy đặt biến môi trường khi bạn muốn tự quản lý hoặc luân chuyển bí mật.
+
 **Bước 3: Tạo file cấu hình docker-compose.yml**
 ```bash
 nano docker-compose.yml

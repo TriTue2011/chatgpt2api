@@ -137,15 +137,14 @@ services:
       TRANSLATE_PIVOT: ${TRANSLATE_PIVOT:-0}
       # zalo-server :3001 — cùng key (Bearer) cho HA/API gửi tin (P0#4)
       ZALO_SERVER_API_KEY: ${ZALO_SERVER_API_KEY:?ZALO_SERVER_API_KEY chưa đặt}
-      # [KHUYẾN NGHỊ] Bí mật ký session zalo-server. Không đặt thì app tự sinh
-      # NGẪU NHIÊN mỗi lần chạy (an toàn, nhưng session mất sau mỗi restart —
-      # phải đăng nhập lại). Đặt một chuỗi ngẫu nhiên cố định để session bền.
-      # CỐ Ý không bắt buộc: thiếu nó không tạo lỗ hổng, chặn deploy là vô ích.
+      # Bí mật ký session zalo-server. Không đặt thì app tự sinh một lần, lưu
+      # mode 0600 trong volume data và tái dùng qua restart. Đặt env nếu muốn
+      # quản lý/luân chuyển secret bên ngoài ứng dụng.
       SESSION_SECRET: ${SESSION_SECRET:-}
       # [KHUYẾN NGHỊ] Mật khẩu admin zalo-server. CHỈ dùng khi users.json chưa
       # tồn tại (seed lần đầu); đã có file thì không ảnh hưởng. Bot Python đọc
       # CÙNG biến này để đăng nhập, nên nếu seed mới thì phải đặt, kẻo mật khẩu
-      # sinh ngẫu nhiên và bot không đăng nhập được.
+      # sinh ngẫu nhiên bền trong data; bot Python tự đọc cùng file nội bộ.
       ZALO_SERVER_ADMIN_PASSWORD: ${ZALO_SERVER_ADMIN_PASSWORD:-}
       ZALO_SERVER_ADMIN_USERNAME: ${ZALO_SERVER_ADMIN_USERNAME:-admin}
       # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
@@ -160,6 +159,7 @@ services:
       VIDEO_THUMBNAIL_TIMEOUT_MS: ${ZALO_VIDEO_THUMBNAIL_TIMEOUT_MS:-30000}
       GROUP_HISTORY_MAX_MESSAGES: ${ZALO_GROUP_HISTORY_MAX_MESSAGES:-5000}
       GROUP_HISTORY_MAX_FILE_BYTES: ${ZALO_GROUP_HISTORY_MAX_FILE_BYTES:-20971520}
+      GROUP_HISTORY_PENDING_MAX: ${ZALO_GROUP_HISTORY_PENDING_MAX:-1000}
       # Origin được phép mở WebSocket của zalo-server (phẩy ngăn cách). ĐỂ TRỐNG
       # là dùng luật same-host — đúng cho triển khai LAN/Portainer. Chỉ khai khi
       # zalo-server đứng sau một domain cố định, và khai ĐÚNG origin của CHÍNH

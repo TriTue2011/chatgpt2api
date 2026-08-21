@@ -260,8 +260,8 @@ COPY --from=zalo-build /zalo-server /app/zalo-server
 
 # Data layout: single bind mount at /app/data. vn-mcp-hub hardcodes /app/chroma_db
 # → symlink it into the mount so everything persists under one host directory.
-# zalo-server: users.json dùng cwd/data, cookies/sessions/messages dùng
-# DATA_DIRECTORY → symlink data về /app/data/zalo_bot để mọi thứ persist chung.
+# zalo-server dùng DATA_DIRECTORY cho users/cookies/sessions/messages; symlink
+# cwd/data về cùng /app/data/zalo_bot để cả đường legacy cũng persist chung.
 RUN mkdir -p /app/data && ln -sf /app/data/chroma_db /app/chroma_db \
     && rm -rf /app/zalo-server/data \
     && ln -sf /app/data/zalo_bot /app/zalo-server/data

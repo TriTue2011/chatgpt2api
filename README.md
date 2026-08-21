@@ -120,6 +120,11 @@ VAULT_MASTER_KEY=          # python3 -c "import base64,os;print(base64.b64encode
 VAULT_REQUIRE_ENCRYPTION=1
 ```
 
+If the two Zalo secrets are left empty, the embedded server now generates each
+one once in the persistent data volume (mode `0600`); the Python gateway reads
+the shared admin credential automatically. Set the variables when you prefer
+to manage or rotate those secrets outside the application.
+
 **Step 3: Create docker-compose.yml file**
 ```bash
 nano docker-compose.yml

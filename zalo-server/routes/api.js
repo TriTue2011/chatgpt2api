@@ -357,6 +357,15 @@ router.post('/change-password', (req, res) => {
     return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ mật khẩu cũ và mới' });
   }
 
+  const managedAdmin = String(process.env.ZALO_SERVER_ADMIN_USERNAME || 'admin').trim() || 'admin';
+  if (req.session.username === managedAdmin
+      && String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim()) {
+    return res.status(409).json({
+      success: false,
+      message: 'Mật khẩu admin đang do ZALO_SERVER_ADMIN_PASSWORD quản lý; hãy đổi biến môi trường.',
+    });
+  }
+
   const success = changePassword(req.session.username, oldPassword, newPassword);
 
   if (!success) {

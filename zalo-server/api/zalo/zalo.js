@@ -50,7 +50,12 @@ const taiVeVaGuiNhieuAnh = (api, imageUrls, threadId, threadType, tuyChon) =>
 /** Tuỳ chọn gửi ảnh lấy từ body — dùng chung cho cả bốn endpoint. */
 function tuyChonGuiAnh(req) {
     const { caption = "", nghiMs } = req.body || {};
-    return { caption, ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}) };
+    const ttl = normalizeMessageTtl(req.body?.ttl);
+    return {
+        caption,
+        ...(ttl === null ? {} : { ttl }),
+        ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}),
+    };
 }
 
 // Health-check chi QUAN SAT. Timeout/mat mang la loi tam thoi, khong duoc bien
@@ -482,50 +487,58 @@ export async function removeUserFromGroupByAccount(req, res) {
     }
 }
 
-// API gửi hình ảnh đến user với account selection
-export async function sendImageToUserByAccount(req, res) {
+async function sendImageToFixedThreadType(req, res, threadType) {
+    let imagePath = null;
     try {
-        const { imagePath: imageUrl, threadId, accountSelection } = req.body;
+        const { imagePath: imageUrl, threadId, accountSelection, ttl } = req.body;
 
         if (!imageUrl || !threadId) {
             return res.status(400).json({ error: 'Đường dẫn hình ảnh và threadId là bắt buộc' });
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const imagePath = await saveImage(imageUrl);
+        const normalizedTtl = normalizeMessageTtl(ttl);
+        imagePath = await saveImage(imageUrl);
 
         if (!imagePath) {
             return res.status(500).json({ success: false, error: 'Không thể lưu hình ảnh' });
         }
 
         const result = await account.api.sendMessage(
-            {
+            withMessageTtl({
                 msg: "",
                 attachments: [imagePath]
-            },
-            threadId,
-            ThreadType.User
+            }, normalizedTtl),
+            String(threadId),
+            threadType
         );
-
-        removeImage(imagePath);
 
         res.json({
             success: true,
             data: result,
+            messageTtl: messageTtlResult(normalizedTtl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
+    } finally {
+        if (imagePath) removeImage(imagePath);
     }
 }
 
+// API gửi hình ảnh đến user với account selection
+export async function sendImageToUserByAccount(req, res) {
+    return sendImageToFixedThreadType(req, res, ThreadType.User);
+}
+
 // API gửi nhiều hình ảnh đến user với account selection
-export async function sendImagesToUserByAccount(req, res) {
+async function sendImagesToFixedThreadType(req, res, threadType) {
     try {
-        const { imagePaths: imageUrls, threadId, accountSelection } = req.body;
+        const { imagePaths: imageUrls, threadId, accountSelection, ttl } = req.body;
 
         if (!imageUrls || !threadId || !Array.isArray(imageUrls) || imageUrls.length === 0) {
             return res.status(400).json({ error: 'Danh sách hình ảnh và threadId là bắt buộc' });
@@ -539,7 +552,7 @@ export async function sendImagesToUserByAccount(req, res) {
         // Zalo cấp lúc đăng nhập, không có trong code) là zca-js ném "Exceed maximum
         // file of N" và MẤT CẢ LÔ — không tấm nào tới, mà lỗi chỉ hiện lúc chạy.
         const ketQua = await taiVeVaGuiNhieuAnh(
-            account.api, imageUrls, threadId, ThreadType.User, tuyChonGuiAnh(req),
+            account.api, imageUrls, String(threadId), threadType, tuyChonGuiAnh(req),
         );
 
         res.json({
@@ -551,94 +564,34 @@ export async function sendImagesToUserByAccount(req, res) {
             soLo: ketQua.soLo,
             maxFilePerMessage: ketQua.maxFile,
             canhBao: ketQua.canhBao,
+            messageTtl: messageTtlResult(ttl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        res.status(500).json({
+        const status = /ttl/i.test(error.message) ? 400 : 500;
+        res.status(status).json({
             success: false,
             error: error.message,
             ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
         });
     }
+}
+
+export async function sendImagesToUserByAccount(req, res) {
+    return sendImagesToFixedThreadType(req, res, ThreadType.User);
 }
 
 // API gửi hình ảnh đến nhóm với account selection
 export async function sendImageToGroupByAccount(req, res) {
-    try {
-        const { imagePath: imageUrl, threadId, accountSelection } = req.body;
-
-        if (!imageUrl || !threadId) {
-            return res.status(400).json({ error: 'Đường dẫn hình ảnh và threadId là bắt buộc' });
-        }
-
-        const account = getAccountFromSelection(accountSelection);
-        const imagePath = await saveImage(imageUrl);
-
-        if (!imagePath) {
-            return res.status(500).json({ success: false, error: 'Không thể lưu hình ảnh' });
-        }
-
-        const result = await account.api.sendMessage(
-            {
-                msg: "",
-                attachments: [imagePath]
-            },
-            threadId,
-            ThreadType.Group
-        );
-
-        removeImage(imagePath);
-
-        res.json({
-            success: true,
-            data: result,
-            usedAccount: {
-                ownId: account.ownId,
-                phoneNumber: account.phoneNumber
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
+    return sendImageToFixedThreadType(req, res, ThreadType.Group);
 }
 
 // API gửi nhiều hình ảnh đến nhóm với account selection
 export async function sendImagesToGroupByAccount(req, res) {
-    try {
-        const { imagePaths: imageUrls, threadId, accountSelection } = req.body;
-
-        if (!imageUrls || !threadId || !Array.isArray(imageUrls) || imageUrls.length === 0) {
-            return res.status(400).json({ error: 'Danh sách hình ảnh và threadId là bắt buộc' });
-        }
-
-        const account = getAccountFromSelection(accountSelection);
-
-        const ketQua = await taiVeVaGuiNhieuAnh(
-            account.api, imageUrls, threadId, ThreadType.Group, tuyChonGuiAnh(req),
-        );
-
-        res.json({
-            success: true,
-            data: ketQua.ketQua,
-            soAnh: ketQua.soAnh,
-            soLo: ketQua.soLo,
-            maxFilePerMessage: ketQua.maxFile,
-            canhBao: ketQua.canhBao,
-            usedAccount: {
-                ownId: account.ownId,
-                phoneNumber: account.phoneNumber
-            }
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
-        });
-    }
+    return sendImagesToFixedThreadType(req, res, ThreadType.Group);
 }
 
 // API gửi file với account selection

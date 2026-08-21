@@ -85,9 +85,16 @@ const initUserFile = () => {
     if (!fs.existsSync(userFilePath)
         && path.resolve(legacyUserFilePath) !== path.resolve(userFilePath)
         && fs.existsSync(legacyUserFilePath)) {
-      const legacyUsers = JSON.parse(fs.readFileSync(legacyUserFilePath, 'utf8'));
-      writeJsonAtomicSync(userFilePath, legacyUsers);
-      console.log(`Da chuyen users.json cu vao ${userFilePath}`);
+      try {
+        const legacyUsers = JSON.parse(fs.readFileSync(legacyUserFilePath, 'utf8'));
+        if (!Array.isArray(legacyUsers)) throw new Error('users.json phai la mang');
+        writeJsonAtomicSync(userFilePath, legacyUsers);
+        console.log(`Da chuyen users.json cu vao ${userFilePath}`);
+      } catch (migrationError) {
+        // Khong ghi de/xoa file cu: giu no de chu may co the phuc hoi thu cong,
+        // nhung van tao database moi an toan o DATA_DIRECTORY ben duoi.
+        console.warn(`[Auth] Bo qua users.json legacy hong: ${migrationError.message}`);
+      }
     }
 
     // Đường dẫn đầy đủ đến file users.json
@@ -282,6 +289,12 @@ export const validateUser = (username, password) => {
 
 // Thay đổi mật khẩu
 export const changePassword = (username, oldPassword, newPassword) => {
+  if (username === _adminUsername()
+      && String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim()) {
+    // Env la nguon credential cua gateway Python; cho UI doi rieng users.json
+    // se lam hai tien trinh mat dong bo ngay lap tuc.
+    return false;
+  }
   // KHÔNG log password/độ dài/salt/hash (rò băm + độ dài mật khẩu ra log).
   // Đọc dữ liệu trực tiếp từ file để đảm bảo dữ liệu mới nhất
   let users = [];
@@ -317,7 +330,7 @@ export const changePassword = (username, oldPassword, newPassword) => {
 
   try {
     writeJsonAtomicSync(userFilePath, users);
-    if (users[userIndex].role === 'admin') {
+    if (username === _adminUsername()) {
       _storeSharedAdminPassword(newPassword);
     }
 

@@ -31,6 +31,28 @@ test('Zalo ID da mat do chinh xac trong JSON number bi tu choi som', () => {
   );
 });
 
+test('ID poll, quick message va account selection cung duoc bao ve', () => {
+  assert.throws(
+    () => normalizeZaloIdsInPlace({ pollId: Number.MAX_SAFE_INTEGER + 10 }),
+    /chuoi JSON/,
+  );
+  const body = {
+    accountSelection: 'zalo:475796162066271393',
+    pollId: 'zalo:2036121378794772276',
+    itemId: 42,
+    itemIds: ['zalo:1', 2],
+    members: ['zalo:3', 4],
+  };
+  normalizeZaloIdsInPlace(body);
+  assert.deepEqual(body, {
+    accountSelection: '475796162066271393',
+    pollId: '2036121378794772276',
+    itemId: '42',
+    itemIds: ['1', '2'],
+    members: ['3', '4'],
+  });
+});
+
 test('TTL tin nhan tach biet voi Auto Delete cua cuoc tro chuyen', () => {
   assert.equal(normalizeMessageTtl('6h'), 6 * 60 * 60 * 1000);
   assert.equal(normalizeMessageTtl('off'), 0);
