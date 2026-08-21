@@ -119,13 +119,21 @@ def _credentials() -> tuple[str, str]:
     env_u = str(_os.environ.get("ZALO_SERVER_ADMIN_USERNAME") or "").strip()
     env_p = str(_os.environ.get("ZALO_SERVER_ADMIN_PASSWORD") or "").strip()
     managed_user = env_u or "admin"
-    user = managed_user if env_p else (
-        env_u or str(c.get("zalo_personal_username") or managed_user).strip()
-    )
+    configured_user = str(c.get("zalo_personal_username") or "").strip()
     configured_pw = str(c.get("zalo_personal_password") or "").strip()
-    shared_pw = ""
     embedded = _server_url() == _DEFAULT_SERVER_URL
-    if not env_p and embedded and user == managed_user:
+
+    # Credential la mot CAP: khong tron username tu nguon A voi password nguon
+    # B. Co env password thi cap env quan ly server. Server ngoai khong co env
+    # password thi dung tron cap Settings, bo qua username mac dinh cua Compose.
+    if env_p:
+        return (managed_user, env_p)
+    if not embedded:
+        return (configured_user or "admin", configured_pw or "admin")
+
+    user = env_u or configured_user or managed_user
+    shared_pw = ""
+    if user == managed_user:
         try:
             data_dir = str(_os.environ.get("DATA_DIRECTORY") or "/app/data/zalo_bot")
             shared_pw = (Path(data_dir) / ".admin_password").read_text(
@@ -133,10 +141,7 @@ def _credentials() -> tuple[str, str]:
             ).strip()
         except (OSError, UnicodeError):
             shared_pw = ""
-    pw = (env_p or shared_pw or configured_pw or "admin") if embedded else (
-        env_p or configured_pw or "admin"
-    )
-    return (user, pw)
+    return (user, shared_pw or configured_pw or "admin")
 
 
 def _default_account() -> str:

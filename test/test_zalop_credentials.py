@@ -82,3 +82,26 @@ def test_env_password_ep_dung_username_admin_duoc_quan_ly(tmp_path: Path) -> Non
         },
     ):
         assert zp._credentials() == ("admin", "mat-khau-tu-env")
+
+
+def test_server_ngoai_khong_ghep_env_username_voi_config_password(
+    tmp_path: Path,
+) -> None:
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        # Compose luon export bien nay, ke ca khi server ngoai dung user khac.
+        "ZALO_SERVER_ADMIN_USERNAME": "admin",
+    }
+    with patch.dict("os.environ", env, clear=True), patch.object(
+        zp,
+        "_cfg",
+        return_value={
+            "zalo_personal_server_url": "http://zalo-server-khac:3000",
+            "zalo_personal_username": "tai-khoan-server-ngoai",
+            "zalo_personal_password": "mat-khau-server-ngoai",
+        },
+    ):
+        assert zp._credentials() == (
+            "tai-khoan-server-ngoai",
+            "mat-khau-server-ngoai",
+        )
