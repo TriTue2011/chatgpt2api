@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import unittest
 from unittest import mock
 
@@ -7,9 +8,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import api.image_tasks as image_tasks_module
+from services.config import config
 
 
-AUTH_HEADERS = {"Authorization": "Bearer chatgpt2api"}
+# Khoá admin lấy từ config chứ KHÔNG viết cứng: `chatgpt2api` là khoá mặc định
+# thời trước, nay `config.py` bắt buộc khai qua `CHATGPT2API_AUTH_KEY` (tối
+# thiểu 8 ký tự, không được là giá trị mẫu), nên chuỗi cứng luôn trượt 401.
+AUTH_HEADERS = {"Authorization": f"Bearer {config.auth_key}"}
+
+
+def _png(mau: tuple[int, int, int]) -> bytes:
+    """PNG THẬT 1x1. Endpoint edits nay soi định dạng ảnh, vài byte giả bị chặn
+    ngay ở cửa với "Tệp này không phải ảnh". Cùng cách `test_image_guard` dựng
+    ảnh mẫu."""
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1), mau).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 class FakeImageTaskService:
@@ -85,8 +101,8 @@ class ImageTasksApiTests(unittest.TestCase):
             headers=AUTH_HEADERS,
             data={"client_task_id": "edit-1", "prompt": "edit", "model": "gpt-image-2"},
             files=[
-                ("image", ("one.png", b"one", "image/png")),
-                ("image", ("two.png", b"two", "image/png")),
+                ("image", ("one.png", _png((255, 0, 0)), "image/png")),
+                ("image", ("two.png", _png((0, 0, 255)), "image/png")),
             ],
         )
 

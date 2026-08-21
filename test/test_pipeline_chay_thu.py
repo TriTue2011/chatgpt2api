@@ -8,6 +8,11 @@ Test này giả lập con viết code SAI trước, rồi kiểm ba điều:
    xét chủ quan của model.
 3. Chạy thử diễn ra TRƯỚC khi gọi bố soi — mỗi lượt bố là một lần gọi model
    (đo thật: claude/auto 184s), không nên tốn khi code còn chưa chạy nổi.
+
+Test bật `_pipeline_chay_thu_bat` tường minh: chạy THẬT mặc định tắt từ
+07/08/2026 vì tầng chạy chưa phải sandbox thật. Ở đây kiểm hành vi của vòng sửa
+KHI đã bật, không phải kiểm giá trị mặc định — cái đó là việc của
+`test_code_exec_default_off.py`.
 """
 from __future__ import annotations
 
@@ -48,7 +53,12 @@ class TestVongChayThu(unittest.TestCase):
             provider = "gia"
             _la_reviewer = True
 
+        # CHẠY THẬT mặc định TẮT từ 07/08/2026 (`_pipeline_chay_thu_bat`): tầng
+        # chạy chưa phải sandbox thật. Không bật tường minh ở đây thì `CODE_SAI`
+        # qua được soi tĩnh (cú pháp đúng, không có tên lạ) và cả vòng sửa không
+        # bao giờ chạy — đúng thứ test này sinh ra để canh.
         with mock.patch.object(P, "_dispatch", fake_dispatch), \
+             mock.patch.object(P, "_pipeline_chay_thu_bat", lambda: True), \
              mock.patch.object(P.backend_router, "route", lambda m: RB()):
             code = P._run_pipeline_review(
                 "code", con_route, [{"role": "user", "content": "cộng hai số"}],

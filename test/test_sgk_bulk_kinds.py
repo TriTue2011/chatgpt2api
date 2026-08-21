@@ -68,6 +68,12 @@ def _load(tmp: Path):
         "other": "Tài liệu",
     }
     tp.doc_kind = lambda u: "sgk"
+    # `sgk_bulk._theo_tap` hỏi hàm này để biết slug có mang tập hay không (quyển
+    # dùng chung cả năm thì slug KHÔNG có tập). Giữ y hệt bản thật ở
+    # `sgk_taphuan._volume_of_slug` — ống rỗng thiếu nó là AttributeError.
+    tp._volume_of_slug = lambda slug: (
+        "tập một" if "tap-mot" in slug else "tập hai" if "tap-hai" in slug else ""
+    )
     tp.is_sample = lambda u: "bai-mau" in str(u)
     tp.reader_urls = lambda u, k=(): []
     tp.COLLECTION_FOR_SET = lambda bs="", kind="sgk": "kb"

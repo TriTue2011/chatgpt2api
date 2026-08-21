@@ -14,6 +14,7 @@ Bốn nhóm quyền, mặc định TẮT hết trừ đọc:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -255,7 +256,13 @@ class TestGatewayPhanNhomOp:
     def test_op_moi_nam_dung_nhom(self):
         src = self._SRC.read_text(encoding="utf-8")
         assert '_EXEC_OPS = {"exec", "kill"}' in src
-        assert '_POWER_OPS = {"power"}' in src
+        # Kiểm THÀNH VIÊN chứ không ghim nguyên văn cả tập: `_POWER_OPS` có
+        # thêm `unlock` (đổi trạng thái phiên đăng nhập — cùng loại quyền, xem
+        # ghi chú trong api/devices.py), và mọi op mới cùng nhóm sau này cũng
+        # sẽ vào đây. Điều cần giữ là "power" nằm đúng nhóm quyền của nó.
+        nhom_power = re.search(r"_POWER_OPS = \{([^}]*)\}", src)
+        assert nhom_power, "không tìm thấy khai báo _POWER_OPS"
+        assert '"power"' in nhom_power.group(1), "power phải nằm trong _POWER_OPS"
         for op in ("sysinfo", "resources", "processes", "services", "screen"):
             assert f'"{op}"' in src, f"{op} chưa khai trong _INFO_OPS"
 

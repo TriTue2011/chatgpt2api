@@ -41,17 +41,23 @@ class TestNhomMoiKhongBiChanOan(unittest.TestCase):
     def test_ban_ghi_cu_khong_co_known(self):
         """Bản ghi lưu trước khi có cơ chế này: mọi nhóm chưa tick đều là nhóm
         chưa từng được hỏi ý, nên phải cho phép hết."""
+        # `tts_reply` KHÔNG nằm trong đó: xem `_NHOM_KHONG_TU_BAT` trong
+        # capabilities.py — nhóm này không thêm khả năng mà ĐỔI dạng mọi câu
+        # trả lời từ chữ sang file âm thanh, nên không bao giờ được tự bật.
         self.assertEqual(
             _allow({"t1": ["image", "video", "web"]}, {"t1": {"kind": "user"}}),
-            {"image", "video", "web", "device", "office", "tts_reply"})
+            {"image", "video", "web", "device", "office"})
 
     def test_known_thieu_nhom_sinh_sau(self):
-        """`known` chỉ có 3 nhóm cũ → 3 nhóm sinh sau được cộng thêm, còn
-        'video' bị bỏ tick TRONG SỐ nhóm đã biết thì vẫn tắt."""
+        """`known` chỉ có 3 nhóm cũ → nhóm sinh sau được cộng thêm, còn
+        'video' bị bỏ tick TRONG SỐ nhóm đã biết thì vẫn tắt.
+
+        Sinh sau có 3 nhóm nhưng chỉ 2 được cộng: `tts_reply` nằm trong
+        `_NHOM_KHONG_TU_BAT` nên đứng ngoài luật này."""
         self.assertEqual(
             _allow({"t1": ["image", "web"]},
                    {"t1": {"known": ["image", "video", "web"]}}),
-            {"image", "web", "device", "office", "tts_reply"})
+            {"image", "web", "device", "office"})
 
     def test_khong_co_ban_ghi_thi_khong_loc(self):
         self.assertIsNone(_allow({}, {}))

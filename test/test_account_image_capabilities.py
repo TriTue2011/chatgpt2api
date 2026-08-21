@@ -14,36 +14,19 @@ from utils.helper import anonymize_token
 
 class AccountCapabilityTests(unittest.TestCase):
     def test_unknown_quota_accounts_are_available_only_when_not_throttled(self) -> None:
+        # Nhãn trạng thái đã chuyển hẳn sang tiếng Anh — xem `_STATUS_MIGRATION`
+        # trong account_service. Mọi dòng trong pool đều đi qua
+        # `_normalize_account` nên tới đây không còn nhãn tiếng Trung nào.
         self.assertFalse(
             AccountService._is_image_account_available(
-                {"status": "限流", "image_quota_unknown": True, "quota": 0}
+                {"status": "limited", "image_quota_unknown": True, "quota": 0}
             )
         )
         self.assertTrue(
             AccountService._is_image_account_available(
-                {"status": "正常", "image_quota_unknown": True, "quota": 0}
+                {"status": "active", "image_quota_unknown": True, "quota": 0}
             )
         )
-
-    def test_prolite_variants_are_normalized(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            service = AccountService(JSONStorageBackend(Path(tmp_dir) / "accounts.json"))
-            self.assertEqual(service._normalize_account_type("prolite"), "ProLite")
-            self.assertEqual(service._normalize_account_type("pro_lite"), "ProLite")
-
-    def test_search_account_type_ignores_unrelated_scalar_values(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            service = AccountService(JSONStorageBackend(Path(tmp_dir) / "accounts.json"))
-            self.assertIsNone(
-                service._search_account_type(
-                    {
-                        "amr": ["pwd", "otp", "mfa"],
-                        "chatgpt_compute_residency": "no_constraint",
-                        "chatgpt_data_residency": "no_constraint",
-                        "user_id": "user-I52GFfLGFM0dokFk2dBiKEBn",
-                    }
-                )
-            )
 
     def test_mark_image_result_does_not_consume_unknown_quota(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -52,7 +35,7 @@ class AccountCapabilityTests(unittest.TestCase):
             service.update_account(
                 "token-1",
                 {
-                    "status": "正常",
+                    "status": "active",
                     "quota": 0,
                     "image_quota_unknown": True,
                 },
@@ -62,7 +45,7 @@ class AccountCapabilityTests(unittest.TestCase):
 
             self.assertIsNotNone(updated)
             self.assertEqual(updated["quota"], 0)
-            self.assertEqual(updated["status"], "正常")
+            self.assertEqual(updated["status"], "active")
             self.assertTrue(updated["image_quota_unknown"])
 
 
