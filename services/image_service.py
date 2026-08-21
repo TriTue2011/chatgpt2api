@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import os
 import zipfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -164,7 +166,35 @@ def list_images(base_url: str, start_date: str = "", end_date: str = "", media_t
     return {"items": items, "groups": [{"date": key, "items": value} for key, value in groups.items()]}
 
 
-def delete_images(paths: list[str] | None = None, start_date: str = "", end_date: str = "", all_matching: bool = False) -> dict[str, int]:
+def _same_file(st: os.stat_result, expected: dict[str, int]) -> bool:
+    return (st.st_size == int(expected.get("bytes", -1))
+            and st.st_dev == int(expected.get("dev", -1))
+            and st.st_ino == int(expected.get("ino", -1))
+            and st.st_mtime_ns == int(expected.get("mtime_ns", -1))
+            and st.st_ctime_ns == int(expected.get("ctime_ns", -1)))
+
+
+def _same_after_move(before: os.stat_result, after: os.stat_result) -> bool:
+    """Rename đổi ctime trên một số FS; các thuộc tính còn lại phải giữ nguyên."""
+    return (after.st_size == before.st_size
+            and after.st_dev == before.st_dev
+            and after.st_ino == before.st_ino
+            and after.st_mtime_ns == before.st_mtime_ns)
+
+
+def _restore_quarantine(quarantine: Path, original: Path) -> None:
+    """Khôi phục tệp không khớp; nếu tên đã có tệp mới thì giữ lại cả hai."""
+    if not original.exists():
+        os.replace(quarantine, original)
+        return
+    recovered = original.with_name(
+        f"{original.stem}.recovered-{uuid.uuid4().hex[:8]}{original.suffix}")
+    os.replace(quarantine, recovered)
+
+
+def delete_images(paths: list[str] | None = None, start_date: str = "",
+                  end_date: str = "", all_matching: bool = False,
+                  *, expected: dict[str, dict[str, int]] | None = None) -> dict[str, int]:
     root = config.images_dir.resolve()
     targets = [str(item["path"]) for item in _image_items(start_date, end_date)] if all_matching else (paths or [])
     removed = 0
@@ -174,13 +204,38 @@ def delete_images(paths: list[str] | None = None, start_date: str = "", end_date
             path.relative_to(root)
         except ValueError:
             continue
-        if path.is_file():
+        if not path.is_file():
+            continue
+        if expected is not None:
+            identity = expected.get(item)
+            if not identity:
+                continue
+            before = path.stat()
+            if not _same_file(before, identity):
+                continue
+            # Đưa tên hiện tại sang quarantine bằng MỘT rename nguyên tử, rồi
+            # mới kiểm identity. Writer tạo tệp mới sau rename không bị đụng tới.
+            quarantine = path.with_name(f".{path.name}.delete-{uuid.uuid4().hex}")
+            try:
+                os.replace(path, quarantine)
+                if not _same_after_move(before, quarantine.stat()):
+                    _restore_quarantine(quarantine, path)
+                    continue
+                quarantine.unlink()
+            except Exception:
+                if quarantine.exists():
+                    _restore_quarantine(quarantine, path)
+                raise
+        else:
             path.unlink()
+        # Nếu writer đã tạo tệp mới cùng tên sau atomic rename thì thumbnail/tag
+        # có thể thuộc bản mới; giữ nguyên metadata của nó.
+        if not path.exists():
             for thumbnail in (_thumbnail_path(item), config.image_thumbnails_dir / _safe_relative_path(item)):
                 if thumbnail.is_file():
                     thumbnail.unlink()
             remove_tags(item)
-            removed += 1
+        removed += 1
     _cleanup_empty_dirs(root)
     _cleanup_empty_dirs(config.image_thumbnails_dir)
     return {"removed": removed}

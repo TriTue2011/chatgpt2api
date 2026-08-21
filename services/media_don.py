@@ -19,7 +19,6 @@ path traversal, dọn kèm thumbnail, gỡ tag và dọn thư mục rỗng. Vi�
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 from dataclasses import dataclass
@@ -140,7 +139,9 @@ def liet_ke(kind: str, thu_muc: Path | str | None = None) -> list[dict[str, Any]
         if not _khop_loai(p, kind):
             continue
         st = p.stat()
-        ra.append({"rel": rel.as_posix(), "bytes": st.st_size, "mtime": st.st_mtime})
+        ra.append({"rel": rel.as_posix(), "bytes": st.st_size, "mtime": st.st_mtime,
+                   "dev": st.st_dev, "ino": st.st_ino,
+                   "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns})
     ra.sort(key=lambda x: x["mtime"], reverse=True)
     return ra
 
@@ -197,15 +198,17 @@ def xoa(muc: list[dict[str, Any]], thu_muc: Path | str | None = None) -> int:
     goc = Path(thu_muc)
 
     # Một tên tệp có thể bị ghi đè sau preview. Chỉ đường dẫn thôi chưa đủ để
-    # chứng minh đây vẫn là nội dung người dùng đã duyệt, nên đối chiếu cả size
-    # và mtime của snapshot ngay trước khi giao xuống tầng xoá.
+    # chứng minh đây vẫn là nội dung người dùng đã duyệt, nên đối chiếu identity
+    # filesystem đầy đủ ngay trước khi giao xuống tầng xoá nguyên tử.
     khong_doi: list[dict[str, Any]] = []
     for item in muc:
         try:
             st = (goc / str(item["rel"])).stat()
             if (st.st_size == int(item["bytes"])
-                    and math.isclose(st.st_mtime, float(item["mtime"]),
-                                     rel_tol=0.0, abs_tol=1e-6)):
+                    and st.st_dev == int(item["dev"])
+                    and st.st_ino == int(item["ino"])
+                    and st.st_mtime_ns == int(item["mtime_ns"])
+                    and st.st_ctime_ns == int(item["ctime_ns"])):
                 khong_doi.append(item)
         except (KeyError, OSError, TypeError, ValueError):
             continue
@@ -214,7 +217,10 @@ def xoa(muc: list[dict[str, Any]], thu_muc: Path | str | None = None) -> int:
 
     from services.image_service import delete_images
 
-    kq = delete_images(paths=[str(x["rel"]) for x in khong_doi])
+    duyet = {str(x["rel"]): {k: int(x[k]) for k in
+                              ("bytes", "dev", "ino", "mtime_ns", "ctime_ns")}
+             for x in khong_doi}
+    kq = delete_images(paths=list(duyet), expected=duyet)
     so = int(kq.get("removed") or 0)
     logger.info({"event": "don_thu_vien_media", "da_xoa": so, "chon": len(muc),
                  "bo_qua_da_doi": len(muc) - len(khong_doi)})

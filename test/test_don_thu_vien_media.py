@@ -213,6 +213,33 @@ def test_tep_bi_ghi_de_cung_kich_thuoc_sau_preview_thi_bo_qua(cap, kho):
     assert "Bỏ qua 1 tệp" in kq["text"]
 
 
+def test_tep_bi_thay_sau_buoc_kiem_tra_thi_khong_bi_xoa(cap, kho, monkeypatch):
+    """Chặn khe TOCTOU giữa media_don.stat() và image_service.delete_images()."""
+    from services import image_service
+
+    ctx = {"is_admin": True, "user_id": "thay-ngay-truoc-unlink"}
+    dich = kho / "2026/08/19/moi.png"
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao"}, ctx)
+    mtime_da_duyet = dich.stat().st_mtime
+    xoa_that = image_service.delete_images
+
+    def _thay_roi_xoa(*args, **kwargs):
+        ban_moi = kho / "ban-moi-tam.png"
+        ban_moi.write_bytes(b"z" * 10)
+        os.utime(ban_moi, (mtime_da_duyet, mtime_da_duyet))
+        os.replace(ban_moi, dich)
+        return xoa_that(*args, **kwargs)
+
+    monkeypatch.setattr(image_service, "delete_images", _thay_roi_xoa)
+    kq = cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao", "xac_nhan": True}, ctx)
+
+    assert dich.exists(), "tệp thay vào sau bước kiểm tra chưa từng được duyệt"
+    assert dich.read_bytes() == b"z" * 10
+    assert "Bỏ qua 1 tệp" in kq["text"]
+
+
 def test_xoa_video_khong_dung_toi_anh_va_nhac(cap, kho):
     ctx = {"is_admin": True, "user_id": "xoa-video"}
     cap.CAPABILITIES["delete_media"].handler(
