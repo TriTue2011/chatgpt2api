@@ -58,6 +58,63 @@ _TEN_TIENG = {"zh": "Chinese", "ja": "Japanese", "ko": "Korean"}
 _MAX_DATA_BYTES = 64 * 1024          # phần JSON của một event
 _MAX_PAYLOAD_BYTES = 4 * 1024 * 1024  # phần nhị phân (audio) của một event
 _MAX_STT_SECONDS = 120                # trần audio gom cho MỘT lần nhận dạng
+_MAX_HEADER_BYTES = 16 * 1024         # JSON header nhỏ; data lớn đi frame riêng
+
+
+class ConnectionLimiter:
+    """Bộ đếm kết nối dùng chung giữa mọi cổng/loop Wyoming."""
+
+    def __init__(self, maximum: int, local_reserve: int = 1) -> None:
+        if maximum < 1 or local_reserve < 0:
+            raise ValueError("invalid Wyoming connection limit")
+        self.maximum = maximum
+        self.local_reserve = local_reserve
+        self.active = 0
+        self._lock = threading.Lock()
+
+    def try_acquire(self, *, local: bool = False) -> bool:
+        with self._lock:
+            limit = self.maximum + (self.local_reserve if local else 0)
+            if self.active >= limit:
+                return False
+            self.active += 1
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            if self.active < 1:
+                raise RuntimeError("Wyoming connection released without reservation")
+            self.active -= 1
+
+
+class ByteBudget:
+    """Ngân sách RAM PCM dùng chung giữa các connection handler."""
+
+    def __init__(self, maximum: int) -> None:
+        if maximum < 1:
+            raise ValueError("Wyoming byte budget must be positive")
+        self.maximum = maximum
+        self.used = 0
+        self._lock = threading.Lock()
+
+    def try_reserve(self, size: int) -> bool:
+        if size < 0:
+            raise ValueError("cannot reserve negative bytes")
+        with self._lock:
+            if self.used + size > self.maximum:
+                return False
+            self.used += size
+            return True
+
+    def release(self, size: int) -> None:
+        with self._lock:
+            if size < 0 or size > self.used:
+                raise RuntimeError("Wyoming byte release exceeds reservation")
+            self.used -= size
+
+
+_CONNECTIONS = ConnectionLimiter(vcfg.wyoming_max_connections())
+_AUDIO_BUDGET = ByteBudget(vcfg.wyoming_max_stt_buffer_bytes())
 
 
 # ── Khung giao thức ──────────────────────────────────────────────────────────
@@ -71,9 +128,12 @@ async def _read_event(reader: asyncio.StreamReader) -> dict[str, Any] | None:
     """
     try:
         line = await reader.readline()
-    except (ConnectionError, asyncio.IncompleteReadError):
+    except (ConnectionError, asyncio.IncompleteReadError, ValueError):
         return None
     if not line:
+        return None
+    if len(line) > _MAX_HEADER_BYTES or not line.endswith(b"\n"):
+        logger.warning("wyoming: header qua lon/khong ket thuc dong — dong ket noi")
         return None
     try:
         header = json.loads(line)
@@ -111,7 +171,7 @@ async def _write_event(writer: asyncio.StreamWriter, ev_type: str,
     if payload:
         header["payload_length"] = len(payload)
     writer.write(json.dumps(header).encode() + b"\n" + data_bytes + payload)
-    await writer.drain()
+    await asyncio.wait_for(writer.drain(), timeout=vcfg.wyoming_write_timeout())
 
 
 # ── Info (describe) ──────────────────────────────────────────────────────────
@@ -700,6 +760,18 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
 
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                   server_lang: str = "", vai: str = "both") -> None:
+    peer = writer.get_extra_info("peername")
+    host = str(peer[0]) if isinstance(peer, (tuple, list)) and peer else ""
+    is_local = host in {"127.0.0.1", "::1", "localhost"}
+    if not _CONNECTIONS.try_acquire(local=is_local):
+        logger.warning("wyoming: qua gioi han %d ket noi — tu choi %s",
+                       _CONNECTIONS.maximum, peer)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return
     sock = writer.get_extra_info("socket")
     if sock is not None:
         try:
@@ -713,11 +785,18 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
         "program": "",
         "ha_lang": "",  # last HA language (for TTS voice pick)
         "full": False,  # đã chạm trần _MAX_STT_SECONDS (chỉ cảnh báo 1 lần)
+        "reserved": 0,  # byte PCM đang giữ trong ngân sách toàn tiến trình
     }
     loop = asyncio.get_running_loop()
     try:
         while True:
-            ev = await _read_event(reader)
+            try:
+                ev = await asyncio.wait_for(
+                    _read_event(reader), timeout=vcfg.wyoming_event_timeout())
+            except TimeoutError:
+                logger.warning("wyoming: client %s im/khung chua du sau %.2fs — dong",
+                               peer, vcfg.wyoming_event_timeout())
+                break
             if ev is None:
                 break
             t = ev["type"]
@@ -752,6 +831,9 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                     server_lang or "multi", ha_lang or "-", asr["lang"],
                 )
             elif t == "audio-start":
+                if asr["reserved"]:
+                    _AUDIO_BUDGET.release(int(asr["reserved"]))
+                    asr["reserved"] = 0
                 asr["rate"] = int(ev["data"].get("rate") or 16000)
                 asr["width"] = int(ev["data"].get("width") or 2)
                 asr["channels"] = int(ev["data"].get("channels") or 1)
@@ -765,14 +847,21 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                 # câu lệnh nhà thật dài lắm cũng chỉ vài giây.
                 cap = (_MAX_STT_SECONDS * int(asr["rate"])
                        * int(asr["width"]) * int(asr["channels"]))
-                if len(asr["pcm"]) + len(ev["payload"]) > cap:
+                payload_size = len(ev["payload"])
+                if len(asr["pcm"]) + payload_size > cap:
                     if not asr["full"]:
                         asr["full"] = True
                         logger.warning(
                             "wyoming: audio vuot %ds — bo phan du, chi nhan dang %d byte dau",
                             _MAX_STT_SECONDS, len(asr["pcm"]))
-                else:
+                elif _AUDIO_BUDGET.try_reserve(payload_size):
                     asr["pcm"] += ev["payload"]
+                    asr["reserved"] += payload_size
+                elif not asr["full"]:
+                    asr["full"] = True
+                    logger.warning(
+                        "wyoming: het ngan sach PCM %d byte — bo audio du cua %s",
+                        _AUDIO_BUDGET.maximum, peer)
             elif t == "audio-stop":
                 text = ""
                 t0 = time.time()
@@ -801,6 +890,11 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
                         stt_lang, text, len(text), audio_len_s, dt, rtf)
                 except Exception as exc:
                     logger.warning("wyoming: STT loi: %s", str(exc)[:160])
+                finally:
+                    if asr["reserved"]:
+                        _AUDIO_BUDGET.release(int(asr["reserved"]))
+                        asr["reserved"] = 0
+                    asr["pcm"] = bytearray()
                 await _write_event(writer, "transcript", {"text": text})
             elif t == "ping":
                 await _write_event(writer, "pong")
@@ -809,8 +903,13 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
     except Exception as exc:
         logger.warning("wyoming: ket noi loi: %s", str(exc)[:160])
     finally:
+        if asr["reserved"]:
+            _AUDIO_BUDGET.release(int(asr["reserved"]))
+            asr["reserved"] = 0
+        _CONNECTIONS.release()
         try:
             writer.close()
+            await writer.wait_closed()
         except Exception:
             pass
 
@@ -818,9 +917,32 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
 # ── Vòng đời ─────────────────────────────────────────────────────────────────
 
 
+async def probe(port: int | None = None, timeout: float = 2.0) -> bool:
+    """Kết nối loopback, gửi `describe`, và chỉ khoẻ khi nhận `info`."""
+    writer: asyncio.StreamWriter | None = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", int(port or vcfg.wyoming_port())),
+            timeout=timeout,
+        )
+        await asyncio.wait_for(_write_event(writer, "describe"), timeout=timeout)
+        event = await asyncio.wait_for(_read_event(reader), timeout=timeout)
+        return bool(event and event.get("type") == "info" and event.get("data"))
+    except (ConnectionError, OSError, TimeoutError, ValueError):
+        return False
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
 async def _main(port: int, server_lang: str, vai: str = "both") -> None:
     server = await asyncio.start_server(
-        lambda r, w: _handle(r, w, server_lang, vai), "0.0.0.0", port)
+        lambda r, w: _handle(r, w, server_lang, vai), "0.0.0.0", port,
+        limit=_MAX_HEADER_BYTES + 1)
     logger.info("voice: Wyoming server [%s] (TTS+STT cho HA) nghe tai 0.0.0.0:%d",
                 server_lang or "multi", port)
     async with server:
@@ -907,9 +1029,14 @@ def start() -> None:
 
     No-op nếu ``voice.wyoming_server.enabled = false``.
     """
+    global _CONNECTIONS, _AUDIO_BUDGET
     if not vcfg.wyoming_enabled():
         logger.info("voice: Wyoming server tat (voice.wyoming_server.enabled=false)")
         return
+    # Config được nạp xong trước startup; mọi cổng ngôn ngữ
+    # phải chia sẻ cùng giới hạn của toàn tiến trình.
+    _CONNECTIONS = ConnectionLimiter(vcfg.wyoming_max_connections())
+    _AUDIO_BUDGET = ByteBudget(vcfg.wyoming_max_stt_buffer_bytes())
     # Quy chuẩn cổng (chốt 14/08): 106xx = TTS, 107xx = STT; xx = 00 việt ·
     # 01 anh · 02 nhật · 03 trung · 04 hàn. Mỗi cổng MỘT vai MỘT tiếng —
     # HA thêm từng integration, pipeline Assist không lẫn giọng/tiếng.

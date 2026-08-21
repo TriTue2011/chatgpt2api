@@ -1121,6 +1121,45 @@ def wyoming_port() -> int:
     return 10600
 
 
+def _wyoming_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(_wy().get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return min(maximum, max(minimum, value))
+
+
+def _wyoming_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(_wy().get(name, default))
+    except (TypeError, ValueError):
+        return default
+    if value != value:  # NaN
+        return default
+    return min(maximum, max(minimum, value))
+
+
+def wyoming_max_connections() -> int:
+    """Số kết nối Wyoming từ xa đồng thời trên toàn tiến trình."""
+    return _wyoming_int("max_connections", 16, 1, 256)
+
+
+def wyoming_event_timeout() -> float:
+    """Số giây tối đa chờ một frame hoàn chỉnh từ client."""
+    return _wyoming_float("event_timeout_seconds", 30.0, 0.05, 600.0)
+
+
+def wyoming_write_timeout() -> float:
+    """Số giây tối đa chờ peer nhận một frame phản hồi."""
+    return _wyoming_float("write_timeout_seconds", 30.0, 0.05, 600.0)
+
+
+def wyoming_max_stt_buffer_bytes() -> int:
+    """Ngân sách PCM đang gom của TẤT CẢ kết nối Wyoming."""
+    mb = _wyoming_int("max_stt_buffer_mb", 64, 1, 4096)
+    return mb * 1024 * 1024
+
+
 def _lang_primary(language: str) -> str:
     """Ngôn ngữ chính = phần trước dấu '-' (vi-vn-x-south / vi-en → vi; en → en)."""
     return str(language or "").strip().lower().split("-", 1)[0]
@@ -1383,6 +1422,10 @@ def status() -> dict[str, Any]:
             "vi_port": wyoming_port(),
             "en_port": wyoming_port(),
             "en_voice": wyoming_en_voice(),
+            "max_connections": wyoming_max_connections(),
+            "event_timeout_seconds": wyoming_event_timeout(),
+            "write_timeout_seconds": wyoming_write_timeout(),
+            "max_stt_buffer_bytes": wyoming_max_stt_buffer_bytes(),
         },
         "stt": {
             "enabled": is_stt_enabled(),

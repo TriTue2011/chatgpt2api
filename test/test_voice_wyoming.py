@@ -416,6 +416,80 @@ class EventSizeGuardTests(unittest.TestCase):
         hdr = json.dumps({"type": "ping", "payload_length": -5}).encode()
         self.assertIsNone(self._read(hdr + b"\n"))
 
+    def test_header_qua_lon_bi_tu_choi(self) -> None:
+        raw = b'{"type":"' + b"x" * (wy._MAX_HEADER_BYTES + 1) + b'"}\n'
+        self.assertIsNone(self._read(raw))
+
+
+class WyomingResourceGuardTests(unittest.TestCase):
+    def test_connection_limiter_co_slot_du_phong_cho_local_health(self) -> None:
+        limiter = wy.ConnectionLimiter(maximum=2, local_reserve=1)
+        self.assertTrue(limiter.try_acquire())
+        self.assertTrue(limiter.try_acquire())
+        self.assertFalse(limiter.try_acquire())
+        self.assertTrue(limiter.try_acquire(local=True))
+        self.assertFalse(limiter.try_acquire(local=True))
+        for _ in range(3):
+            limiter.release()
+        self.assertEqual(limiter.active, 0)
+
+    def test_byte_budget_khong_cho_cac_ket_noi_cong_don_vuot_ram(self) -> None:
+        budget = wy.ByteBudget(maximum=100)
+        self.assertTrue(budget.try_reserve(60))
+        self.assertFalse(budget.try_reserve(41))
+        self.assertEqual(budget.used, 60)
+        budget.release(60)
+        self.assertEqual(budget.used, 0)
+
+    def test_config_resource_limits_doc_tu_wyoming_server(self) -> None:
+        with mock.patch.object(vcfg, "_wy", return_value={
+            "max_connections": "7",
+            "event_timeout_seconds": "1.5",
+            "write_timeout_seconds": 2,
+            "max_stt_buffer_mb": "3",
+        }):
+            self.assertEqual(vcfg.wyoming_max_connections(), 7)
+            self.assertEqual(vcfg.wyoming_event_timeout(), 1.5)
+            self.assertEqual(vcfg.wyoming_write_timeout(), 2.0)
+            self.assertEqual(vcfg.wyoming_max_stt_buffer_bytes(), 3 * 1024 * 1024)
+
+    def test_client_im_lang_bi_timeout_va_dong(self) -> None:
+        async def go() -> bytes:
+            limiter = wy.ConnectionLimiter(maximum=1)
+            budget = wy.ByteBudget(maximum=1024)
+            with mock.patch.object(wy, "_CONNECTIONS", limiter), \
+                    mock.patch.object(wy, "_AUDIO_BUDGET", budget), \
+                    mock.patch.object(vcfg, "wyoming_event_timeout", return_value=0.05):
+                server = await asyncio.start_server(
+                    lambda r, w: wy._handle(r, w, "vi"), "127.0.0.1", 0)
+                port = server.sockets[0].getsockname()[1]
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                closed = await asyncio.wait_for(reader.read(), timeout=1)
+                writer.close()
+                await writer.wait_closed()
+                server.close()
+                await server.wait_closed()
+                return closed
+
+        self.assertEqual(_run(go()), b"")
+
+    def test_probe_describe_kiem_tra_dung_giao_thuc(self) -> None:
+        async def go() -> bool:
+            limiter = wy.ConnectionLimiter(maximum=1)
+            budget = wy.ByteBudget(maximum=1024)
+            with mock.patch.object(wy, "_CONNECTIONS", limiter), \
+                    mock.patch.object(wy, "_AUDIO_BUDGET", budget), \
+                    mock.patch.object(wy, "_info_data", return_value={"tts": [{"installed": True}]}):
+                server = await asyncio.start_server(
+                    lambda r, w: wy._handle(r, w, "vi"), "127.0.0.1", 0)
+                port = server.sockets[0].getsockname()[1]
+                healthy = await wy.probe(port, timeout=1)
+                server.close()
+                await server.wait_closed()
+                return healthy
+
+        self.assertTrue(_run(go()))
+
 
 class SttBufferCapTests(unittest.TestCase):
     """Satellite treo (audio-start rồi phát mãi) không được nhồi RAM gateway."""
