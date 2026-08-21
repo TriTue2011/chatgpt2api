@@ -296,6 +296,28 @@ def _gpu_do() -> dict | None:
         return None
 
 
+def _cpu_do() -> dict | None:
+    """Tải CPU của MÁY này — đọc thẳng /proc, không gọi tiến trình con nào.
+
+    Vì sao cần bên cạnh telemetry GPU: đo 21/08/2026 cho thấy tách lời chạy
+    1,65 giây cho mỗi giây tiếng trong khi GPU chỉ dùng trung bình 12%. Nghi
+    nút thắt nằm ở CPU, nhưng máy này chỉ có 4 nhân nên SSH vào để đo lại chính
+    là thêm tải và làm hỏng phép đo — thực tế phiên SSH treo hẳn trong lúc
+    tách. Khai qua /health thì gateway đứng NGOÀI hỏi được, không tốn gì của
+    máy đang đo.
+
+    ``tai_1_phut`` so với ``so_nhan``: bằng nhau nghĩa là kín CPU. Ví dụ máy 4
+    nhân mà load 4,0 là đã hết chỗ, thêm nhân sẽ nhanh lên.
+    """
+    try:
+        with open("/proc/loadavg", encoding="utf-8") as f:
+            phan = f.read().split()
+        return {"tai_1_phut": float(phan[0]), "tai_5_phut": float(phan[1]),
+                "so_nhan": os.cpu_count() or 0}
+    except Exception:
+        return None
+
+
 @app.get("/health")
 def health(request: Request):
     _xac_thuc(request)
@@ -305,7 +327,8 @@ def health(request: Request):
         raise HTTPException(503, "Thiếu binary: " + ", ".join(missing))
     return {"status": "ok", "model": MODEL, "chunk_seconds": CHUNK_SECONDS,
             "mdx_batch_size": MDX_BATCH_SIZE,
-            "busy": _busy or _admission.locked(), "gpu": _gpu_do()}
+            "busy": _busy or _admission.locked(), "gpu": _gpu_do(),
+            "cpu": _cpu_do()}
 
 
 @app.post("/tach")
