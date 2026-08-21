@@ -308,14 +308,36 @@ def _cpu_do() -> dict | None:
 
     ``tai_1_phut`` so với ``so_nhan``: bằng nhau nghĩa là kín CPU. Ví dụ máy 4
     nhân mà load 4,0 là đã hết chỗ, thêm nhân sẽ nhanh lên.
+
+    Kèm RAM và SWAP vì thiếu nhớ và thiếu nhân cho ra CÙNG một triệu chứng
+    (chậm, đơ) nhưng cách chữa ngược nhau. Máy này báo swap dùng 59% ngay lúc
+    rảnh — nếu lúc tách còn swap nữa thì thêm nhân CPU sẽ không cứu được gì,
+    phải thêm RAM. Đây đúng là chỗ dễ chẩn nhầm nhất nên phải đo cả hai.
     """
+    ket: dict = {}
     try:
         with open("/proc/loadavg", encoding="utf-8") as f:
             phan = f.read().split()
-        return {"tai_1_phut": float(phan[0]), "tai_5_phut": float(phan[1]),
-                "so_nhan": os.cpu_count() or 0}
+        ket.update({"tai_1_phut": float(phan[0]), "tai_5_phut": float(phan[1]),
+                    "so_nhan": os.cpu_count() or 0})
     except Exception:
         return None
+    try:
+        so: dict[str, float] = {}
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for dong in f:
+                ten, _, phan_con = dong.partition(":")
+                if ten in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
+                    so[ten] = float(phan_con.split()[0]) / 1024.0   # kB → MB
+        ket.update({
+            "ram_tong_mb": round(so.get("MemTotal", 0.0)),
+            "ram_con_mb": round(so.get("MemAvailable", 0.0)),
+            "swap_dung_mb": round(so.get("SwapTotal", 0.0) - so.get("SwapFree", 0.0)),
+            "swap_tong_mb": round(so.get("SwapTotal", 0.0)),
+        })
+    except Exception:
+        pass
+    return ket
 
 
 @app.get("/health")
