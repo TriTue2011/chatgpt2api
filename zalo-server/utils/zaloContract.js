@@ -6,8 +6,7 @@ const ZALO_ID_KEYS = new Set([
   'threadId', 'threadID', 'groupId', 'userId', 'memberId', 'friendId',
   'ownId', 'uid', 'uidFrom', 'idTo', 'conversationId',
   'msgId', 'cliMsgId', 'globalMsgId', 'ownerId', 'actionId',
-  'reminderId', 'topicId', 'photoId', 'pollId', 'itemId',
-  'accountSelection',
+  'reminderId', 'topicId', 'photoId', 'accountSelection',
 ]);
 
 const ZALO_ID_LIST_KEYS = new Set([
@@ -15,8 +14,10 @@ const ZALO_ID_LIST_KEYS = new Set([
   'members',
 ]);
 
-// Hai API nay chap nhan ca mot ID va danh sach ID; khong ep scalar thanh array.
-const ZALO_ID_OR_LIST_KEYS = new Set(['itemIds', 'stickerAlbum']);
+// zca-js 2.1.2 khai cac ID nay la number/number[]. Van phai tu choi so da
+// vuot MAX_SAFE_INTEGER, nhung khong doi sang string lam sai contract SDK.
+const ZCA_NUMBER_ID_KEYS = new Set(['pollId', 'itemId']);
+const ZCA_NUMBER_ID_OR_LIST_KEYS = new Set(['itemIds', 'stickerAlbum']);
 
 function normalizeId(value, key) {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) {
@@ -28,20 +29,32 @@ function normalizeId(value, key) {
   return text.toLowerCase().startsWith('zalo:') ? text.slice(5) : text;
 }
 
+function normalizeNumberId(value, key) {
+  if (typeof value === 'boolean') throw new Error(`${key} khong phai ID hop le.`);
+  const text = String(value).trim();
+  const unprefixed = text.toLowerCase().startsWith('zalo:') ? text.slice(5) : text;
+  const number = Number(unprefixed);
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error(`${key} phai la so nguyen an toan theo contract zca-js.`);
+  }
+  return number;
+}
+
 export function normalizeZaloIdsInPlace(value, key = '') {
   if (value === null || value === undefined) return value;
 
   if (ZALO_ID_KEYS.has(key)) return normalizeId(value, key);
+  if (ZCA_NUMBER_ID_KEYS.has(key)) return normalizeNumberId(value, key);
 
   if (ZALO_ID_LIST_KEYS.has(key)) {
     const list = Array.isArray(value) ? value : [value];
     return list.map((item) => normalizeId(item, key));
   }
 
-  if (ZALO_ID_OR_LIST_KEYS.has(key)) {
+  if (ZCA_NUMBER_ID_OR_LIST_KEYS.has(key)) {
     return Array.isArray(value)
-      ? value.map((item) => normalizeId(item, key))
-      : normalizeId(value, key);
+      ? value.map((item) => normalizeNumberId(item, key))
+      : normalizeNumberId(value, key);
   }
 
   if (Array.isArray(value)) {

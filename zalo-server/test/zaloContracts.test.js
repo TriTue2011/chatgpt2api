@@ -31,24 +31,26 @@ test('Zalo ID da mat do chinh xac trong JSON number bi tu choi som', () => {
   );
 });
 
-test('ID poll, quick message va account selection cung duoc bao ve', () => {
+test('ID number cua zca duoc validate nhung van giu dung kieu number', () => {
   assert.throws(
     () => normalizeZaloIdsInPlace({ pollId: Number.MAX_SAFE_INTEGER + 10 }),
-    /chuoi JSON/,
+    /so nguyen an toan/,
   );
   const body = {
     accountSelection: 'zalo:475796162066271393',
-    pollId: 'zalo:2036121378794772276',
+    pollId: 'zalo:2036121378794772',
     itemId: 42,
     itemIds: ['zalo:1', 2],
+    stickerAlbum: ['zalo:5', 6],
     members: ['zalo:3', 4],
   };
   normalizeZaloIdsInPlace(body);
   assert.deepEqual(body, {
     accountSelection: '475796162066271393',
-    pollId: '2036121378794772276',
-    itemId: '42',
-    itemIds: ['1', '2'],
+    pollId: 2036121378794772,
+    itemId: 42,
+    itemIds: [1, 2],
+    stickerAlbum: [5, 6],
     members: ['3', '4'],
   });
 });

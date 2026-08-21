@@ -110,8 +110,10 @@ def _server_url() -> str:
 
 def _credentials() -> tuple[str, str]:
     # Ưu tiên env dùng CHUNG với zalo-server (ZALO_SERVER_ADMIN_USERNAME/PASSWORD):
-    # đặt env một chỗ thì cả server seed lẫn bot login đều khớp, gỡ được mặc
-    # định admin/admin. Không có env → config → admin/admin (giữ tương thích).
+    # đặt env một chỗ thì cả server seed lẫn bot login đều khớp. Với server
+    # NHÚNG mặc định, file plaintext mode 0600 do Node quản lý phải thắng config
+    # cũ để đổi mật khẩu dashboard không làm gateway kẹt. Server NGOÀI vẫn dùng
+    # password đã nhập trong Settings, không đọc nhầm secret của server nhúng.
     import os as _os
     c = _cfg()
     env_u = str(_os.environ.get("ZALO_SERVER_ADMIN_USERNAME") or "").strip()
@@ -119,16 +121,18 @@ def _credentials() -> tuple[str, str]:
     user = env_u or str(c.get("zalo_personal_username") or "admin").strip()
     configured_pw = str(c.get("zalo_personal_password") or "").strip()
     shared_pw = ""
-    if not env_p and not configured_pw:
+    embedded = _server_url() == _DEFAULT_SERVER_URL
+    if not env_p and embedded:
         try:
-            from pathlib import Path
             data_dir = str(_os.environ.get("DATA_DIRECTORY") or "/app/data/zalo_bot")
             shared_pw = (Path(data_dir) / ".admin_password").read_text(
                 encoding="utf-8"
             ).strip()
         except (OSError, UnicodeError):
             shared_pw = ""
-    pw = env_p or configured_pw or shared_pw or "admin"
+    pw = (env_p or shared_pw or configured_pw or "admin") if embedded else (
+        env_p or configured_pw or "admin"
+    )
     return (user, pw)
 
 
