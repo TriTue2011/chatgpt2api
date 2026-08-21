@@ -26,6 +26,17 @@ app = FastAPI()
 # Có thể đổi model qua env sau benchmark, không cần sửa gateway.
 MODEL = os.getenv("SEPARATOR_MODEL", "UVR-MDX-NET-Inst_HQ_3.onnx")
 CHUNK_SECONDS = max(60, int(os.getenv("SEPARATOR_CHUNK_SECONDS", "300")))
+# Số khối đưa vào GPU mỗi lượt. Khai qua env vì mỗi card một khác — 8 GB dùng
+# chung với Frigate thì khác hẳn một card 24 GB rảnh.
+#
+# Đo 21/08/2026 trên chính máy này (RTX 2060S 8 GB, 4 nhân CPU, tệp 60 giây):
+# batch=1 mất 130 giây, batch=4 mất 123 giây — chênh 5%, gần như không đổi.
+# Cùng lúc đó tải GPU đo từ gateway chỉ trung bình 12% (đỉnh 95%, nền 6%).
+# Nghĩa là nút thắt KHÔNG nằm ở số khối mỗi lượt mà ở phía CPU giữa các lượt
+# gọi GPU; máy này chỉ có 4 nhân và còn cõng Frigate. Nâng batch trên card to
+# và máy nhiều nhân có thể ăn, nên để chỉnh được, nhưng đừng trông đợi nó cứu
+# tốc độ trên cấu hình hiện tại.
+MDX_BATCH_SIZE = max(1, int(os.getenv("SEPARATOR_MDX_BATCH_SIZE", "1")))
 TIMEOUT_SECONDS = max(300, int(os.getenv("SEPARATOR_TIMEOUT_SECONDS", "10800")))
 MAX_UPLOAD_BYTES = max(1 << 20, int(os.getenv(
     "SEPARATOR_MAX_UPLOAD_BYTES", str(2 * 1024 * 1024 * 1024))))
@@ -124,7 +135,7 @@ def _lenh_tach(input_path: str, output_dir: str) -> list[str]:
         "--single_stem", "Instrumental",
         "--sample_rate", "44100",
         "--chunk_duration", str(CHUNK_SECONDS),
-        "--mdx_batch_size", "1",
+        "--mdx_batch_size", str(MDX_BATCH_SIZE),
         "--use_soundfile",
         "--use_autocast",
     ]
@@ -293,6 +304,7 @@ def health(request: Request):
     if missing:
         raise HTTPException(503, "Thiếu binary: " + ", ".join(missing))
     return {"status": "ok", "model": MODEL, "chunk_seconds": CHUNK_SECONDS,
+            "mdx_batch_size": MDX_BATCH_SIZE,
             "busy": _busy or _admission.locked(), "gpu": _gpu_do()}
 
 

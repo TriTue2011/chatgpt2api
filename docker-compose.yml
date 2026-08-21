@@ -116,6 +116,15 @@ services:
       # Dựng stack riêng deploy/gpu-box/docker-compose.tach-am.yml.
       TACH_AM_URL_GPU: ${TACH_AM_URL_GPU:-}
       TACH_AM_API_TOKEN: ${TACH_AM_API_TOKEN:-}
+      # TUỲ CHỌN — số luồng CPU cho giọng đọc VieNeu. Trống = tự tính theo số
+      # nhân (chừa phần lớn CPU cho gateway/LLM). Khai ở đây vì con số này tuỳ
+      # MÁY chứ không tuỳ người dùng — máy mới là khai lại một dòng, khỏi sửa
+      # config.json trong volume.
+      #
+      # Đo 21/08/2026 trên máy chủ 10 nhân, CPU KHÔNG có VNNI (nên chạy fp32):
+      # 2 luồng → 3,91 giây/câu · 5 luồng → 3,10 giây/câu · 8 luồng → 4,07
+      # giây/câu. Nâng lên có ăn một ít rồi QUAY ĐẦU, đừng đặt bằng số nhân.
+      VIENEU_THREADS: ${VIENEU_THREADS:-}
       # TUỲ CHỌN — Qwen3-VL 2B Q4 cho phụ đề video. Cảnh/khung CPU, Qwen GPU;
       # lỗi/OOM thì vẫn ra SRT từ lời thoại. Dựng profile vision ở gpu-box.
       VISION_URL_GPU: ${VISION_URL_GPU:-}

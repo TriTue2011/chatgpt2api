@@ -509,8 +509,24 @@ def vieneu_threads() -> int:
     """Intra-op threads VieNeu ONNX. Mặc định = auto_tts_threads() (cgroup-aware).
 
     Không dùng os.cpu_count() host (dễ lấy 20 trong LXC 4 core). Không chiếm
-    hết quota. Ép: voice.tts.vieneu_threads hoặc voice.tts.num_threads.
+    hết quota. Ép: env VIENEU_THREADS, hoặc voice.tts.vieneu_threads /
+    voice.tts.num_threads trong config.json.
+
+    ENV ĐỨNG TRƯỚC config.json, cùng nếp với VOICE_CPU_VNNI ở trên: số này tuỳ
+    MÁY (số nhân, có VNNI hay không) chứ không tuỳ người dùng, nên chỗ khai
+    đúng của nó là docker compose của từng máy — sửa config.json trong volume
+    thì mỗi lần dựng máy mới lại phải nhớ làm lại.
+
+    Đo 21/08/2026 trên máy chủ (10 nhân, CPU không có VNNI nên chạy fp32):
+    2 luồng → 3,91 giây/câu; 5 luồng → 3,10 giây/câu; 8 luồng → 4,07 giây/câu.
+    Tức nâng lên có ăn một ít rồi QUAY ĐẦU — đừng đặt bằng số nhân của máy.
     """
+    env = os.environ.get("VIENEU_THREADS", "").strip()
+    if env:
+        try:
+            return max(0, int(env))
+        except ValueError:
+            pass
     raw = _sub("tts").get("num_threads")
     raw_vn = _sub("tts").get("vieneu_threads")
     if raw_vn is not None and str(raw_vn).strip() != "":

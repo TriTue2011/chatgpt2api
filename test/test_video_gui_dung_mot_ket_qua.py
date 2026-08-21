@@ -421,3 +421,41 @@ def test_doi_sang_ban_net_hong_thi_van_gui_ban_da_long_tieng(bot, phu_de_gia,
 
     assert bot._ghi["duong"][0][1] == "/tmp/vua/abc_dub.mp4"
     assert any("bản nét" in t for t in bot._ghi["tin"])
+
+
+# ── Mốc thời gian từng khúc ─────────────────────────────────────────────────
+#
+# Ca thật 21/08: video 10 phút chạy 23 phút, mà cả đường ống không ghi dòng nào
+# ngoài lỗi — phải chạy lại từng khúc trên máy chủ để bấm giờ mới biết tách lời
+# ăn 74% và tổng hợp giọng 27%. Mấy mốc này để lần sau mở log là thấy, và để
+# mọi lần chỉnh tốc độ về sau chứng minh được là có ăn hay không.
+
+
+def test_ghi_moc_thoi_gian_khuc_phu_de(bot, phu_de_gia, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="services.video_giao"):
+        bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                           {"kieu": "chu", "target": "vi", "nguon": "en"})
+
+    moc = [r.msg for r in caplog.records
+           if isinstance(r.msg, dict) and r.msg.get("event") == "video_giao_khuc"]
+    assert moc, "phải ghi mốc thời gian, không thì không ai biết khúc nào lâu"
+    phu_de = [m for m in moc if m["khuc"] == "phu_de"]
+    assert phu_de, moc
+    assert isinstance(phu_de[0]["giay"], float)
+
+
+def test_moc_ghi_ca_so_cau_de_biet_khoi_luong(bot, phu_de_gia, caplog):
+    """Số giây trần trụi không đủ: 23 phút cho 96 câu khác hẳn 23 phút cho 5."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="services.video_giao"):
+        bot._lam_viec_dich("t1", 0, {"url": "https://youtu.be/abc", "ten": "abc"},
+                           {"kieu": "chu", "target": "vi", "nguon": "en"})
+
+    phu_de = [r.msg for r in caplog.records
+              if isinstance(r.msg, dict)
+              and r.msg.get("event") == "video_giao_khuc"
+              and r.msg.get("khuc") == "phu_de"]
+    assert phu_de and phu_de[0]["so_doan"] == 1

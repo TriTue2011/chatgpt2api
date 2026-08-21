@@ -498,3 +498,33 @@ class PlayTextOnPipelineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Số luồng TTS khai được từ docker compose ────────────────────────────────
+#
+# Con số này tuỳ MÁY (số nhân, có VNNI hay không) chứ không tuỳ người dùng, nên
+# chỗ khai đúng của nó là compose của từng máy. Đo 21/08/2026 trên máy chủ 10
+# nhân không VNNI: 2 luồng → 3,91 giây/câu, 5 luồng → 3,10, 8 luồng → 4,07 —
+# nâng lên có ăn rồi quay đầu, nên phải chỉnh được chứ không ghim cứng.
+
+
+def test_env_VIENEU_THREADS_de_len_config_json(monkeypatch):
+    from services.voice import config as vcfg
+
+    monkeypatch.setenv("VIENEU_THREADS", "5")
+    assert vcfg.vieneu_threads() == 5
+
+
+def test_env_rong_thi_ve_duong_tu_tinh(monkeypatch):
+    from services.voice import config as vcfg
+
+    monkeypatch.setenv("VIENEU_THREADS", "")
+    assert vcfg.vieneu_threads() == vcfg.auto_tts_threads()
+
+
+def test_env_hong_thi_bo_qua_chu_khong_no(monkeypatch):
+    """Gõ nhầm trong compose thì rơi về mặc định, đừng làm chết cả giọng nói."""
+    from services.voice import config as vcfg
+
+    monkeypatch.setenv("VIENEU_THREADS", "nhieu-vao")
+    assert vcfg.vieneu_threads() == vcfg.auto_tts_threads()

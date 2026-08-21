@@ -11,6 +11,7 @@ Bốn cửa đó là toàn bộ khác biệt giữa Zalo và Telegram trong vi�
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -60,6 +61,14 @@ def _tai_video_ve(kenh: Kenh, url: str, chat_luong: str = "cao") -> str:
     return ""
 
 
+def _ghi_moc(khuc: str, t0: float, **them) -> None:
+    """Ghi SỐ GIÂY của một khúc. Cùng lý lẽ với video_dub._ghi_moc: cả đường
+    ống trước đây chỉ ghi log khi hỏng, nên "sao lâu thế" phải trả lời bằng
+    cách chạy lại từng khúc trên máy chủ để bấm giờ."""
+    logger.info({"event": "video_giao_khuc", "khuc": khuc,
+                 "giay": round(time.monotonic() - t0, 1), **them})
+
+
 def _cho_ban_vua(kenh: Kenh, tai: video_tai.TaiSongSong) -> str:
     """Chờ bản NHẸ của hai lượt tải song song. Trả "" khi hỏng (đã báo).
 
@@ -69,8 +78,11 @@ def _cho_ban_vua(kenh: Kenh, tai: video_tai.TaiSongSong) -> str:
     from services import video_tai as _vt
 
     kenh.dang_go()
+    _t = time.monotonic()
     try:
-        return tai.ban_vua()
+        duong = tai.ban_vua()
+        _ghi_moc("cho_ban_tai_nhe", _t)
+        return duong
     except _vt.LoiTaiVideo as exc:
         kenh.gui_tin(f"⚠️ {exc}")
     except Exception as exc:
@@ -231,6 +243,7 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                                       tien_do=_tien_do_zalo)
 
         ten_goc = str(pend.get("ten") or "")
+        _t_phu_de = time.monotonic()
         if _vd.la_tep_phu_de(ten_goc):
             r = _vd.dich_tep_phu_de(pend["path"], ten_goc, _tg, chep_loi=_chep)
         elif pend.get("url"):
@@ -265,6 +278,8 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                 r = _nghe_tep_tai_ve()
         else:
             r = _nghe_tep_tai_ve()
+        _ghi_moc("phu_de", _t_phu_de, ok=bool(r.get("ok")),
+                 so_doan=int(r.get("so_doan") or 0))
         if (tai is not None and not duong_xu_ly and r.get("ok")
                 and kieu == "long-tieng"):
             # Chỉ LỒNG TIẾNG mới cần tệp hình để xử lý (tách nhạc khỏi giọng,

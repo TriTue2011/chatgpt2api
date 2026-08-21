@@ -15,6 +15,11 @@ services:
       SEPARATOR_MODEL: "UVR-MDX-NET-Inst_HQ_3.onnx"
       # Phim dài chia 5 phút/khúc để chặn đỉnh RAM và VRAM.
       SEPARATOR_CHUNK_SECONDS: "300"
+      # Số khối đưa vào GPU mỗi lượt — tuỳ card, nên để ở đây chứ không ghim
+      # trong code. Đo 21/08/2026 trên máy này (RTX 2060S 8 GB, 4 nhân CPU,
+      # tệp 60 giây): batch=1 → 130 giây, batch=4 → 123 giây, chênh 5%. Card
+      # to hơn và máy nhiều nhân hơn thì nâng lên mới đáng.
+      SEPARATOR_MDX_BATCH_SIZE: "1"
       SEPARATOR_TIMEOUT_SECONDS: "10800"
     volumes:
       - /opt/gpu-box/fw-tach-am:/data

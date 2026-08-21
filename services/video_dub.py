@@ -724,6 +724,19 @@ def _mux(duong_video: str, background: str, track: str, dai: float) -> str:
         raise
 
 
+def _ghi_moc(khuc: str, t0: float, **them: Any) -> None:
+    """Ghi SỐ GIÂY của một khúc trong đường lồng tiếng.
+
+    Vì sao cần: trước đây cả đường ống chỉ ghi log khi HỎNG, nên câu hỏi "video
+    10 phút sao chạy 23 phút" chỉ trả lời được bằng cách chạy lại từng khúc
+    trên máy chủ để bấm giờ — mất cả buổi (đo 21/08/2026). Có mấy dòng này thì
+    mở log là thấy, và mọi lần chỉnh tốc độ sau này đều chứng minh được là có
+    ăn hay không.
+    """
+    logger.info({"event": "long_tieng_khuc", "khuc": khuc,
+                 "giay": round(time.monotonic() - t0, 1), **them})
+
+
 def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = "",
                progress: Progress | None = None) -> KetQuaLongTieng:
     """Video + SRT → MP4 bỏ lời gốc, giữ nền, thêm TTS + prosody JSON."""
@@ -746,19 +759,28 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
     try:
         prosody = tempfile.NamedTemporaryFile(
             suffix=".prosody.json", delete=False).name
+        _t_khuc = time.monotonic()
+        _t_tong = _t_khuc
         tach = tach_am_gpu.tach_nen(duong_video, progress=progress)
+        _ghi_moc("tach_loi", _t_khuc, model=str(getattr(tach, "model", "")))
         background = tach.background_path
         _kiem_tra_nen_du_dai(background, dai)
         meta["original_dialogue"] = "removed_by_source_separation_best_effort"
         meta["background_audio"] = "preserved_by_source_separation_best_effort"
         meta["separator_model"] = tach.model
+        _t_khuc = time.monotonic()
         track, so_loi, canh_bao = _tao_track(meta, dai, voice, progress)
+        _ghi_moc("tong_hop_giong", _t_khuc, so_cau=len(doan), so_loi=so_loi)
         _bao_dam_khong_thieu_cau_tts(meta, so_loi, len(doan))
         Path(prosody).write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
         if progress:
             progress(len(doan), len(doan),
                      "đang trộn TTS với nhạc/hiệu ứng và ghép video…")
+        _t_khuc = time.monotonic()
         video = _mux(duong_video, background, track, dai)
+        _ghi_moc("tron_va_ghep", _t_khuc)
+        _ghi_moc("tong_cong", _t_tong, so_cau=len(doan),
+                 dai_video_giay=round(float(dai), 1))
         tom_tat = ""
         da_phuc_hoi = sum(bool(c.get("tts_recovered_after_retry"))
                           for c in meta.get("cues") or [])
