@@ -19,7 +19,10 @@ path traversal, dọn kèm thumbnail, gỡ tag và dọn thư mục rỗng. Vi�
 from __future__ import annotations
 
 import logging
+import math
+import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +46,64 @@ CHE_DO = (VUA_TAO, TAT_CA, CU_HON)
 HOM_NAY, LAN_CUOI = "hom-nay", "lan-cuoi"
 MOC = (HOM_NAY, LAN_CUOI)
 
+_XAC_NHAN_TTL_S = 600.0
+_xac_nhan_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class YeuCauDon:
+    """Các tham số phải khớp nguyên vẹn giữa preview và xác nhận."""
+
+    kind: str
+    che_do: str
+    so_ngay: int
+    moc: str
+
+
+_xac_nhan_dang_cho: dict[
+    str, tuple[float, YeuCauDon, tuple[dict[str, Any], ...]]
+] = {}
+
 
 class LoiDonMedia(ValueError):
     """Tham số không hợp lệ — người gọi báo lại nguyên văn cho người dùng."""
+
+
+def luu_xem_truoc(khoa: str, yeu_cau: YeuCauDon,
+                  muc: list[dict[str, Any]]) -> None:
+    """Giữ đúng snapshot người dùng vừa xem, tối đa 10 phút và dùng một lần."""
+    khoa = str(khoa or "").strip()
+    if not khoa:
+        raise LoiDonMedia("không xác định được người đang duyệt danh sách xoá")
+    bay_gio = time.monotonic()
+    snapshot = tuple(dict(x) for x in muc)
+    with _xac_nhan_lock:
+        het_han = [k for k, (han, _, _) in _xac_nhan_dang_cho.items()
+                   if han <= bay_gio]
+        for k in het_han:
+            _xac_nhan_dang_cho.pop(k, None)
+        _xac_nhan_dang_cho[khoa] = (bay_gio + _XAC_NHAN_TTL_S,
+                                    yeu_cau, snapshot)
+
+
+def lay_da_duyet(khoa: str, yeu_cau: YeuCauDon) -> list[dict[str, Any]] | None:
+    """Lấy snapshot khớp yêu cầu rồi huỷ ngay, tránh xác nhận lại hai lần."""
+    khoa = str(khoa or "").strip()
+    if not khoa:
+        return None
+    bay_gio = time.monotonic()
+    with _xac_nhan_lock:
+        dang_cho = _xac_nhan_dang_cho.get(khoa)
+        if not dang_cho:
+            return None
+        han, da_xem, snapshot = dang_cho
+        if han <= bay_gio:
+            _xac_nhan_dang_cho.pop(khoa, None)
+            return None
+        if da_xem != yeu_cau:
+            return None
+        _xac_nhan_dang_cho.pop(khoa, None)
+    return [dict(x) for x in snapshot]
 
 
 def _khop_loai(p: Path, kind: str) -> bool:
@@ -125,7 +183,7 @@ def tom_tat(muc: list[dict[str, Any]]) -> str:
     return f"{len(muc)} tệp · {mb:.1f} MB · {khoang}"
 
 
-def xoa(muc: list[dict[str, Any]]) -> int:
+def xoa(muc: list[dict[str, Any]], thu_muc: Path | str | None = None) -> int:
     """Xoá thật danh sách đã chọn, trả số tệp đã xoá.
 
     Giao cho ``image_service.delete_images``: nó đã chặn path traversal, xoá kèm
@@ -133,9 +191,30 @@ def xoa(muc: list[dict[str, Any]]) -> int:
     """
     if not muc:
         return 0
+    if thu_muc is None:
+        from services.config import config
+        thu_muc = config.images_dir
+    goc = Path(thu_muc)
+
+    # Một tên tệp có thể bị ghi đè sau preview. Chỉ đường dẫn thôi chưa đủ để
+    # chứng minh đây vẫn là nội dung người dùng đã duyệt, nên đối chiếu cả size
+    # và mtime của snapshot ngay trước khi giao xuống tầng xoá.
+    khong_doi: list[dict[str, Any]] = []
+    for item in muc:
+        try:
+            st = (goc / str(item["rel"])).stat()
+            if (st.st_size == int(item["bytes"])
+                    and math.isclose(st.st_mtime, float(item["mtime"]), abs_tol=1e-6)):
+                khong_doi.append(item)
+        except (KeyError, OSError, TypeError, ValueError):
+            continue
+    if not khong_doi:
+        return 0
+
     from services.image_service import delete_images
 
-    kq = delete_images(paths=[str(x["rel"]) for x in muc])
+    kq = delete_images(paths=[str(x["rel"]) for x in khong_doi])
     so = int(kq.get("removed") or 0)
-    logger.info({"event": "don_thu_vien_media", "da_xoa": so, "chon": len(muc)})
+    logger.info({"event": "don_thu_vien_media", "da_xoa": so, "chon": len(muc),
+                 "bo_qua_da_doi": len(muc) - len(khong_doi)})
     return so

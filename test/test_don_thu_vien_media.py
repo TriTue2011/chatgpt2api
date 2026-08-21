@@ -164,23 +164,44 @@ def test_nguoi_thuong_khong_xoa_duoc_thu_vien(cap, kho):
 
 def test_lan_goi_dau_chi_dem_chu_khong_xoa(cap, kho):
     kq = cap.CAPABILITIES["delete_media"].handler(
-        {"kind": "image", "che_do": "tat-ca"}, {"is_admin": True})
+        {"kind": "image", "che_do": "tat-ca"},
+        {"is_admin": True, "user_id": "preview-only"})
 
     assert "4 tệp" in kq["text"] and "xác nhận" in kq["text"].lower()
     assert len(md.liet_ke("image", kho)) == 4, "chưa xác nhận thì chưa được xoá"
 
 
 def test_co_xac_nhan_thi_xoa_that(cap, kho):
+    ctx = {"is_admin": True, "user_id": "xoa-anh"}
     cap.CAPABILITIES["delete_media"].handler(
-        {"kind": "image", "che_do": "vua-tao", "xac_nhan": True}, {"is_admin": True})
+        {"kind": "image", "che_do": "vua-tao"}, ctx)
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao", "xac_nhan": True}, ctx)
 
     con = [x["rel"] for x in md.liet_ke("image", kho)]
     assert len(con) == 3 and not any(x.endswith("moi.png") for x in con)
 
 
-def test_xoa_video_khong_dung_toi_anh_va_nhac(cap, kho):
+def test_xac_nhan_chi_xoa_dung_tep_da_xem_truoc(cap, kho):
+    """Media sinh thêm sau preview không được lọt vào lệnh xoá đã duyệt."""
+    ctx = {"is_admin": True, "user_id": "chu-may"}
     cap.CAPABILITIES["delete_media"].handler(
-        {"kind": "video", "che_do": "tat-ca", "xac_nhan": True}, {"is_admin": True})
+        {"kind": "image", "che_do": "vua-tao"}, ctx)
+    moi_hon = _tep(kho, "2026/08/21/moi-hon.png", -1)
+
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "image", "che_do": "vua-tao", "xac_nhan": True}, ctx)
+
+    assert moi_hon.exists(), "tệp sinh sau preview chưa từng được người dùng duyệt"
+    assert not (kho / "2026/08/19/moi.png").exists(), "phải xoá đúng tệp đã preview"
+
+
+def test_xoa_video_khong_dung_toi_anh_va_nhac(cap, kho):
+    ctx = {"is_admin": True, "user_id": "xoa-video"}
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "video", "che_do": "tat-ca"}, ctx)
+    cap.CAPABILITIES["delete_media"].handler(
+        {"kind": "video", "che_do": "tat-ca", "xac_nhan": True}, ctx)
 
     assert md.liet_ke("video", kho) == []
     assert len(md.liet_ke("image", kho)) == 4, "ảnh phải còn nguyên"

@@ -3019,11 +3019,22 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
         so_ngay = int(args.get("so_ngay") or 0)
     except (TypeError, ValueError):
         so_ngay = 0
+    yeu_cau = _md.YeuCauDon(kind=kind, che_do=che_do,
+                            so_ngay=so_ngay, moc=moc)
+    khoa_duyet = str((ctx or {}).get("user_id") or "").strip()
 
-    try:
-        chon = _md.chon(kind, che_do, so_ngay=so_ngay, moc=moc)
-    except _md.LoiDonMedia as exc:
-        return {"deliver_now": True, "text": f"Em chưa xoá được: {exc} ạ."}
+    if bool(args.get("xac_nhan")):
+        chon = _md.lay_da_duyet(khoa_duyet, yeu_cau)
+        if chon is None:
+            return {"deliver_now": True,
+                    "text": ("Em chưa xoá được: danh sách xem trước đã hết hạn, "
+                             "không khớp, hoặc chưa được tạo. Em cần xem trước lại "
+                             "rồi mới xoá ạ.")}
+    else:
+        try:
+            chon = _md.chon(kind, che_do, so_ngay=so_ngay, moc=moc)
+        except _md.LoiDonMedia as exc:
+            return {"deliver_now": True, "text": f"Em chưa xoá được: {exc} ạ."}
 
     nhan = {"image": "ảnh", "video": "video", "music": "bản nhạc"}.get(kind, "tệp")
     if not chon:
@@ -3032,6 +3043,10 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
 
     mo_ta = _md.tom_tat(chon)
     if not bool(args.get("xac_nhan")):
+        try:
+            _md.luu_xem_truoc(khoa_duyet, yeu_cau, chon)
+        except _md.LoiDonMedia as exc:
+            return {"deliver_now": True, "text": f"Em chưa xoá được: {exc} ạ."}
         # Kể tên vài tệp đầu: "12 tệp" nghe giống nhau ở mọi lựa chọn, thấy tên
         # mới biết mình đang xoá đúng thứ định xoá.
         vai_ten = ", ".join(x["rel"].rsplit("/", 1)[-1] for x in chon[:3])
@@ -3041,8 +3056,11 @@ def _h_delete_media(args: dict, ctx: dict) -> dict:
                          "ngay ạ — xoá rồi thì không lấy lại được.")}
 
     so = _md.xoa(chon)
+    bo_qua = len(chon) - so
+    canh_bao = (f" Bỏ qua {bo_qua} tệp đã mất hoặc thay đổi sau lúc xem trước."
+                if bo_qua else "")
     return {"deliver_now": True,
-            "text": f"Đã xoá {so} {nhan} khỏi thư viện ({mo_ta}) ạ."}
+            "text": f"Đã xoá {so} {nhan} khỏi thư viện ({mo_ta}) ạ.{canh_bao}"}
 
 
 def _h_library_media(args: dict, ctx: dict) -> dict:
@@ -4955,8 +4973,9 @@ CAPABILITIES: dict[str, Capability] = {
             "'xoá ảnh vừa tạo', 'xoá video vừa tạo', 'xoá hết ảnh/video trong "
             "thư viện', 'xoá ảnh từ N ngày trở về trước', 'giữ lại ảnh N ngày "
             "gần nhất', 'giữ lại N ngày kể từ ảnh tạo lần cuối'. Lần gọi đầu "
-            "chỉ ĐẾM và mô tả sẽ xoá gì; người dùng đồng ý thì gọi LẠI với "
-            "xac_nhan=true. Chỉ chủ máy dùng được."),
+            "chỉ ĐẾM và mô tả sẽ xoá gì; người dùng đồng ý thì gọi LẠI trong "
+            "10 phút với ĐÚNG các tham số cũ và xac_nhan=true. Hệ thống chỉ xoá "
+            "snapshot đã mô tả, không tính lại danh sách. Chỉ chủ máy dùng được."),
         parameters={"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["image", "video", "music"],
                      "description": "Loại cần xoá (mặc định image)"},
@@ -4973,8 +4992,9 @@ CAPABILITIES: dict[str, Capability] = {
                                     "— dùng khi người dùng nói 'kể từ ảnh/video "
                                     "tạo lần cuối'")},
             "xac_nhan": {"type": "boolean",
-                         "description": ("true = xoá THẬT. Chỉ truyền sau khi "
-                                         "người dùng đã thấy số tệp và đồng ý.")}}},
+                         "description": ("true = xoá THẬT snapshot vừa xem. Chỉ "
+                                         "truyền sau khi người dùng đồng ý; giữ "
+                                         "nguyên kind/che_do/so_ngay/moc.")}}},
         workflow=("Xoá là việc không lấy lại được: lần gọi đầu LUÔN để xac_nhan "
                   "trống để người dùng thấy 'bao nhiêu tệp, bao nhiêu MB, từ "
                   "ngày nào', chờ họ gật rồi mới gọi lại với xac_nhan=true.")),
