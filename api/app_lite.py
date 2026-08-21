@@ -28,6 +28,11 @@ def create_app() -> FastAPI:
     from fastapi.responses import ORJSONResponse
     app = FastAPI(title="chatgpt2api-lite", version=app_version, lifespan=lifespan,
                   default_response_class=ORJSONResponse)
+    from services.ingress_guard import RequestBodyLimitMiddleware, max_request_body_bytes
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_body_bytes=max_request_body_bytes(),
+    )
     app.add_middleware(
         CORSMiddleware,
         # Đồng bộ full app — production đặt cors_allow_origins trong config.

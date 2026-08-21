@@ -289,6 +289,13 @@ def create_app() -> FastAPI:
                   docs_url="/docs" if _docs_on else None,
                   redoc_url="/redoc" if _docs_on else None,
                   openapi_url="/openapi.json" if _docs_on else None)
+    # Gắn TRƯỚC CORS: Starlette chạy middleware theo thứ tự ngược,
+    # nhờ vậy response 413 vẫn mang header CORS cho web client.
+    from services.ingress_guard import RequestBodyLimitMiddleware, max_request_body_bytes
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_body_bytes=max_request_body_bytes(),
+    )
     # Host allowlist THẬT (không chỉ dùng lúc dựng URL ảnh): chặn Host/
     # X-Forwarded-Host giả — kiểu tấn công dùng để đầu độc cache, làm link reset
     # mật khẩu trỏ sang máy kẻ tấn công, hoặc lách reverse proxy.

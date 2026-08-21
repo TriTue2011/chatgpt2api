@@ -17,17 +17,116 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from typing import Any, Callable
+
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
 # Trần body webhook mặc định (JSON điều khiển, không phải upload media).
 DEFAULT_MAX_BODY = 2 * 1024 * 1024
+# Trần cho TOÀN BỘ HTTP app. Cao hơn trần webhook/upload riêng vì
+# request chat có thể mang nhiều ảnh base64. Admin có thể hạ qua
+# `security.max_request_body_bytes` hoặc env; 0 = tắt có chủ ý.
+DEFAULT_MAX_REQUEST_BODY = 256 * 1024 * 1024
 
 
 class BodyTooLarge(Exception):
     """Body vượt trần khi đọc stream — caller trả 413 / {ok:false}."""
+
+
+class _RequestBodyOverflow(Exception):
+    """Tín hiệu nội bộ: ASGI receive đã vượt trần."""
+
+
+def max_request_body_bytes() -> int:
+    """Trần body HTTP toàn app; env thắng config, giá trị sai dùng mặc định."""
+    raw = os.environ.get("CHATGPT2API_MAX_REQUEST_BODY_BYTES")
+    if raw in (None, ""):
+        try:
+            from services.config import config
+
+            security = config.data.get("security") or {}
+            raw = security.get("max_request_body_bytes")
+        except Exception:
+            raw = None
+    if raw in (None, ""):
+        return DEFAULT_MAX_REQUEST_BODY
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        logger.warning("max_request_body_bytes khong hop le: %r; dung mac dinh", raw)
+        return DEFAULT_MAX_REQUEST_BODY
+
+
+class RequestBodyLimitMiddleware:
+    """Chặn body quá trần trước khi FastAPI/route nạp nó vào RAM.
+
+    `Content-Length` chỉ là đường từ chối sớm. Dòng `receive` vẫn được
+    đếm thật để chặn request chunked hoặc header khai nhỏ hơn thực tế.
+    """
+
+    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max(0, int(max_body_bytes))
+
+    def _detail(self) -> dict[str, Any]:
+        return {
+            "error": "Nội dung yêu cầu vượt giới hạn an toàn của máy chủ.",
+            "code": "request_body_too_large",
+            "max_bytes": self.max_body_bytes,
+        }
+
+    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse(status_code=413, content={"detail": self._detail()})
+        await response(scope, receive, send)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self.max_body_bytes == 0:
+            await self.app(scope, receive, send)
+            return
+
+        declared: int | None = None
+        for name, value in scope.get("headers", []):
+            if name.lower() != b"content-length":
+                continue
+            try:
+                declared = int(value)
+            except (TypeError, ValueError):
+                declared = None
+            break
+        if declared is not None and declared > self.max_body_bytes:
+            await self._reject(scope, receive, send)
+            return
+
+        received = 0
+        overflowed = False
+
+        async def limited_receive() -> Message:
+            nonlocal overflowed, received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_bytes:
+                    overflowed = True
+                    raise _RequestBodyOverflow
+            return message
+
+        async def limited_send(message: Message) -> None:
+            # Route có thể biến exception từ receive thành response riêng. Bỏ response
+            # đó để client luôn nhận một envelope 413 nhất quán.
+            if not overflowed:
+                await send(message)
+
+        try:
+            await self.app(scope, limited_receive, limited_send)
+        except _RequestBodyOverflow:
+            pass
+        if overflowed:
+            await self._reject(scope, receive, send)
 
 
 async def read_json_limited(request, max_bytes: int = DEFAULT_MAX_BODY) -> Any:
