@@ -619,6 +619,11 @@ def giai_chon(text: str, *, cho_chu: bool = False) -> dict[str, Any] | None:
     if not m:
         return None
     so, con = m.group(1), (m.group(2) or "").strip()
+    # `_SO` dùng chung với menu bảy ô mới nên nhận 1–9; hai menu cũ trong hàm
+    # này vẫn chỉ có năm lựa chọn. Không chặn ở đây thì "6" bị hiểu nhầm thành
+    # lựa chọn bản chữ còn thiếu tên tiếng.
+    if so not in _SO_TIENG_CHU:
+        return None
     if cho_chu:
         # Cũng truyền thẳng mã: người dùng bấm số nào là muốn ĐÚNG tiếng đó.
         # Bọc "cap:" thì đoạn chữ tiếng Nhật chọn "Tiếng Anh" lại ra tiếng Việt.

@@ -91,7 +91,14 @@ class WsFramingTests(unittest.TestCase):
         ws = ha_live._WS.__new__(ha_live._WS)   # bỏ __init__ (handshake)
         ws.sock = a
         ws.buf = bytearray()
-        b.sendall(server_bytes)
+        # macOS có socket buffer nhỏ hơn payload 70 KB bên dưới. Gửi đồng bộ ở
+        # đây sẽ chặn trước khi `recv_text()` có cơ hội đọc; mô phỏng đúng server
+        # thật bằng một luồng gửi song song.
+        sender = threading.Thread(target=b.sendall, args=(server_bytes,), daemon=True)
+        sender.start()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        self.addCleanup(sender.join, 1.0)
         self._peer = b
         return ws
 

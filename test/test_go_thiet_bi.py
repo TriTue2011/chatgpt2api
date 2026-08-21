@@ -23,7 +23,7 @@ class TestThuTuXoa:
         i = s.index("async def devices_remove")
         body = s[i:s.index("@router.post", i)]
         vt_go = body.index('session.call("uninstall"')
-        vt_xoa = body.index('config.data["device_agents"] = devs')
+        vt_xoa = body.index("config.mutate(_apply)")
         assert vt_go < vt_xoa, "gỡ trên máy phải xảy ra TRƯỚC khi xoá ở dự án"
 
     def test_go_hong_van_xoa_o_du_an(self):
@@ -34,7 +34,7 @@ class TestThuTuXoa:
         body = s[i:s.index("@router.post", i)]
         # nhánh except của lời gọi uninstall KHÔNG được return/raise
         j = body.index('session.call("uninstall"')
-        khoi = body[j:body.index('config.data["device_agents"] = devs')]
+        khoi = body[j:body.index("config.mutate(_apply)")]
         assert "return" not in khoi and "raise" not in khoi
 
     def test_may_offline_thi_noi_ro(self):

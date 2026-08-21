@@ -68,6 +68,7 @@ class TestUiCoChonLoai:
         assert 'fd.append("kind", impKind)' in _PAGE  # đường upload
 
     def test_du_bon_loai(self):
-        for v in ('value="sgk"', 'value="sgv"', 'value="vbt"', 'value="tap_huan"'):
-            assert v in _PAGE, v
-
+        # Loại kho nay do tab quyết định, không còn là các <option value=...>.
+        for kind in ("sgk", "sgv", "vbt", "tap_huan"):
+            khai_bao = f'kind: "{kind}"'
+            assert khai_bao in _PAGE, khai_bao

@@ -67,7 +67,9 @@ class TestToolTraNhieuAnh(unittest.TestCase):
              mock.patch.object(orch, "_persist_history"), \
              mock.patch.object(orch.run_journal, "log_run"), \
              mock.patch.object(orch, "_ghi_so_anh"):
-            return orch.orchestrate("Gửi 3 ảnh mới nhất trong thư viện ảnh cho tôi",
+            # Câu trung tính để test vòng tool giả, không đi tắt qua nhánh đọc
+            # sổ ảnh riêng (nhánh đó có bộ test riêng).
+            return orch.orchestrate("Yêu cầu kiểm thử công cụ thư viện",
                                     "test_nhieu_anh", model="gma/auto:text")
 
     def test_chi_co_image_urls_van_phai_toi_tay_nguoi_dung(self):
