@@ -45,6 +45,23 @@ class ZalopTagTests(unittest.TestCase):
         self.assertTrue(ev["mentions"])
         self.assertTrue(is_bot_tagged(ev, ""))
 
+    def test_parse_event_prefers_template_safe_thread_contract(self) -> None:
+        body = {
+            "_accountId": self.OWN,
+            "_threadRef": "zalo:2036121378794772276",
+            "_threadType": 1,
+            # Truong cu co tinh de sai: contract moi phai duoc uu tien.
+            "threadId": "999",
+            "type": 0,
+            "data": {
+                "uidFrom": "6683680861034270202",
+                "content": "xin chao",
+            },
+        }
+        ev = _parse_event(body)
+        self.assertEqual(ev["thread_id"], "2036121378794772276")
+        self.assertEqual(ev["thread_type"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

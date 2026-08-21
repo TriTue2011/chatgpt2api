@@ -45,6 +45,7 @@ import {
     getAllFriendsByAccount,
     getAliasListByAccount,
     getFriendRecommendationsByAccount,
+    getReceivedFriendRequestsByAccount,
     getSentFriendRequestByAccount,
     undoFriendRequestByAccount,
     // Group Management
@@ -140,8 +141,38 @@ import {
     removeWebhookConfig,
     getAllWebhookConfigs
 } from '../services/webhookService.js';
+import { normalizeZaloIdsInPlace } from '../utils/zaloContract.js';
+import { getDataDirectory } from '../config/addon.js';
+import { writeFileAtomicSync, writeJsonAtomicSync } from '../utils/atomicFile.js';
 
 const router = express.Router();
+
+// Zalo ID thuong lon hon Number.MAX_SAFE_INTEGER. Neu client gui JSON number
+// thi JSON.parse da lam tron mat chu so truoc khi route chay; tu choi som va
+// yeu cau chuoi. ID an toan cung duoc chuan hoa thanh chuoi de moi endpoint co
+// cung mot hop dong, ke ca cu phap template-safe `zalo:<id>` cua HACS moi.
+router.use((req, res, next) => {
+  try {
+    if (req.body && typeof req.body === 'object') {
+      normalizeZaloIdsInPlace(req.body);
+    }
+    next();
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+// Health probe nhe cho Home Assistant/monitoring; khong cham Zalo API nen
+// khong lam tang rate-limit hay bi treo theo ket noi tai khoan.
+router.get('/health', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    success: true,
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    version: process.env.npm_package_version || '1.0.0',
+  });
+});
 
 // Endpoint dev/debug (test-login, test-json, debug-users-file) chỉ bật khi
 // đặt ZALO_DEV_ENDPOINTS=1. Production KHÔNG bật → chúng trả 404, không lộ
@@ -476,6 +507,7 @@ router.post('/removeFriendAliasByAccount', removeFriendAliasByAccount);
 router.post('/getAllFriendsByAccount', getAllFriendsByAccount);
 router.post('/getAliasListByAccount', getAliasListByAccount);
 router.post('/getFriendRecommendationsByAccount', getFriendRecommendationsByAccount);
+router.post('/getReceivedFriendRequestsByAccount', getReceivedFriendRequestsByAccount);
 router.post('/getSentFriendRequestByAccount', getSentFriendRequestByAccount);
 router.post('/undoFriendRequestByAccount', undoFriendRequestByAccount);
 router.post('/removeFriendByAccount', removeFriendByAccount);
@@ -794,7 +826,7 @@ router.get('/debug-users-file', (req, res) => {
     // cho bất kỳ ai. Chỉ bật khi ZALO_DEV_ENDPOINTS=1; production trả 404.
     if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
     try {
-        const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
+        const userFilePath = path.join(getDataDirectory(), 'cookies', 'users.json');
         const fileExists = fs.existsSync(userFilePath);
         let fileContent = null;
         let users = [];
@@ -843,8 +875,14 @@ router.get('/debug-users-file', (req, res) => {
 // và khi chạy thì đặt mật khẩu NGẪU NHIÊN 600.000 vòng, trả về một lần.
 router.post('/reset-admin-password', adminMiddleware, (req, res) => {
     if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
+    if (String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim()) {
+        return res.status(409).json({
+            success: false,
+            error: 'Mat khau admin dang do bien moi truong quan ly; hay doi ZALO_SERVER_ADMIN_PASSWORD.',
+        });
+    }
     try {
-        const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
+        const userFilePath = path.join(getDataDirectory(), 'cookies', 'users.json');
         const fileExists = fs.existsSync(userFilePath);
 
         if (!fileExists) {
@@ -868,7 +906,8 @@ router.post('/reset-admin-password', adminMiddleware, (req, res) => {
         }
 
         // Tìm user admin
-        const adminIndex = users.findIndex(user => user.username === 'admin');
+        const adminUsername = String(process.env.ZALO_SERVER_ADMIN_USERNAME || 'admin').trim() || 'admin';
+        const adminIndex = users.findIndex(user => user.username === adminUsername);
         if (adminIndex === -1) {
             return res.status(404).json({
                 success: false,
@@ -888,12 +927,10 @@ router.post('/reset-admin-password', adminMiddleware, (req, res) => {
 
         // Ghi lại file
         try {
-            // Tạo file tạm thời
-            const tempFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json.tmp');
-            fs.writeFileSync(tempFilePath, JSON.stringify(users, null, 2), { encoding: 'utf8', flag: 'w' });
-
-            // Di chuyển file tạm thời thành file chính thức
-            fs.renameSync(tempFilePath, userFilePath);
+            writeJsonAtomicSync(userFilePath, users);
+            const sharedPath = path.join(getDataDirectory(), '.admin_password');
+            writeFileAtomicSync(sharedPath, `${newPassword}\n`);
+            try { fs.chmodSync(sharedPath, 0o600); } catch { /* best effort */ }
 
             return res.json({
                 success: true,

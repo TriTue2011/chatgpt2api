@@ -1,15 +1,46 @@
 // api/zalo/zalo.js
 import { Zalo, ThreadType } from 'zca-js';
 import { getPROXIES, getAvailableProxyIndex } from '../../services/proxyService.js';
-import { setupEventListeners } from '../../eventListeners.js';
+import { configureReconnectDependencies, setupEventListeners } from '../../eventListeners.js';
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodefetch from "node-fetch";
+import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 import { saveImage, removeImage, saveFileFromUrl, removeFile } from '../../utils/helpers.js';
 import { taiVeVaGuiNhieuAnh as guiTheoLo } from '../../utils/sendImages.js';
+import {
+    getRequestedMessageTtl,
+    filterReceivedFriendRequests,
+    messageTtlResult,
+    normalizeAutoDeleteTtl,
+    normalizeMessageTtl,
+    normalizeThreadType,
+    withMessageTtl,
+} from '../../utils/zaloContract.js';
+import { writeJsonAtomicSync } from '../../utils/atomicFile.js';
+import { createVideoThumbnail } from '../../utils/videoThumbnail.js';
+import { getCachedGroupHistory } from '../../utils/groupHistoryStore.js';
 
 export const zaloAccounts = [];
+configureReconnectDependencies({
+    accounts: zaloAccounts,
+    login: (...args) => loginZaloAccount(...args),
+});
+
+async function withTimeout(promise, timeoutMs, label) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
 
 /** Bốn endpoint gửi nhiều ảnh (user/group × có-chọn-tài-khoản/không) dùng chung
  *  một đường: tải về → chia lô → dọn tệp tạm trong finally. */
@@ -22,90 +53,43 @@ function tuyChonGuiAnh(req) {
     return { caption, ...(nghiMs ? { nghiMs: Number(nghiMs) } : {}) };
 }
 
-// Chức năng tự động kiểm tra trạng thái đăng nhập (10 phút/lần)
+// Health-check chi QUAN SAT. Timeout/mat mang la loi tam thoi, khong duoc bien
+// thanh xoa cookie va bat nguoi dung quet QR lai. Listener/reconnect chiu trach
+// nhiem khoi phuc ket noi; credential chi bi xoa khi nguoi dung yeu cau.
+let healthCheckRunning = false;
 async function checkLoginStatus() {
-    console.log("[Docker] Đang kiểm tra trạng thái đăng nhập của tất cả tài khoản...");
-    
-    if (zaloAccounts.length === 0) {
-        console.log("[Docker] Không có tài khoản nào để kiểm tra");
+    if (healthCheckRunning) {
+        console.log('[Docker] Bo qua health-check vi lan truoc van dang chay.');
         return;
     }
-    
-    // Lấy thư mục lưu cookie (sử dụng dynamic import tương tự như trong loginZaloAccount)
-    const { getCookiesDir } = await import('../../utils/helpers.js');
-    const cookiesDir = getCookiesDir();
-    console.log(`[Docker] Thư mục cookie: ${cookiesDir}`);
-    
-    // Kiểm tra từng tài khoản
-    const checkPromises = zaloAccounts.map(async (account, index) => {
-        try {
-            if (!account || !account.api) {
-                console.log(`[Docker] Tài khoản ${account?.phoneNumber || account?.ownId || 'không xác định'} không có API, bị loại bỏ`);
-                return { account: null, ownId: account?.ownId };
+    healthCheckRunning = true;
+    try {
+        if (zaloAccounts.length === 0) return;
+        const results = await Promise.all(zaloAccounts.map(async (account) => {
+            const label = account?.phoneNumber || account?.ownId || 'khong xac dinh';
+            if (!account?.api) {
+                console.warn(`[Docker] Tai khoan ${label} khong co API; giu credential de reconnect.`);
+                return false;
             }
-            
-            // Lưu ownId để sử dụng sau này nếu cần xóa cookie
-            const ownId = account.ownId;
-            
-            // Thêm timeout để tránh treo container nếu API không phản hồi
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), 30000)
-            );
-            
-            // Gọi fetchAccountInfo với timeout
-            const accountInfoPromise = account.api.fetchAccountInfo();
-            const accountInfo = await Promise.race([accountInfoPromise, timeoutPromise]);
-            
-            if (accountInfo?.profile) {
-                console.log(`[Docker] Tài khoản ${account.phoneNumber || account.ownId} vẫn đăng nhập thành công`);
-                return { account, ownId };
-            } else {
-                console.log(`[Docker] Tài khoản ${account.phoneNumber || account.ownId} đăng nhập thất bại (không có profile)`);
-                return { account: null, ownId };
+            try {
+                const info = await withTimeout(
+                    account.api.fetchAccountInfo(), 30_000, 'Health-check timeout',
+                );
+                const healthy = Boolean(info?.profile);
+                if (!healthy) {
+                    console.warn(`[Docker] ${label} khong tra profile; giu credential.`);
+                }
+                return healthy;
+            } catch (error) {
+                console.warn(`[Docker] Health-check ${label} loi: ${error.message}; giu credential.`);
+                return false;
             }
-        } catch (error) {
-            console.error(`[Docker] Lỗi kiểm tra tài khoản ${account?.phoneNumber || account?.ownId || 'không xác định'}:`, error.message);
-            return { account: null, ownId: account?.ownId };
-        }
-    });
-    
-    // Đợi tất cả promise hoàn thành và lọc ra tài khoản hợp lệ
-    Promise.all(checkPromises)
-        .then(results => {
-            const validResults = results.filter(result => result.account !== null);
-            const invalidResults = results.filter(result => result.account === null && result.ownId);
-            
-            // Cập nhật mảng zaloAccounts với chỉ các tài khoản hợp lệ
-            const removedCount = zaloAccounts.length - validResults.length;
-            
-            if (removedCount > 0) {
-                console.log(`[Docker] Đã loại bỏ ${removedCount} tài khoản không hợp lệ`);
-                
-                // Xóa file cookie của các tài khoản không hợp lệ
-                invalidResults.forEach(result => {
-                    if (result.ownId) {
-                        try {
-                            const cookiePath = path.join(cookiesDir, `cred_${result.ownId}.json`);
-                            if (fs.existsSync(cookiePath)) {
-                                fs.unlinkSync(cookiePath);
-                                console.log(`[Docker] Đã xóa file cookie của tài khoản ${result.ownId}`);
-                            }
-                        } catch (error) {
-                            console.error(`[Docker] Lỗi khi xóa file cookie của tài khoản ${result.ownId}:`, error);
-                        }
-                    }
-                });
-                
-                // Cập nhật danh sách tài khoản
-                zaloAccounts.length = 0;
-                validResults.forEach(result => zaloAccounts.push(result.account));
-            }
-            
-            console.log(`[Docker] Đã hoàn thành kiểm tra: ${validResults.length} tài khoản hợp lệ còn lại`);
-        })
-        .catch(error => {
-            console.error("[Docker] Lỗi khi xử lý kết quả kiểm tra:", error);
-        });
+        }));
+        const healthy = results.filter(Boolean).length;
+        console.log(`[Docker] Health-check: ${healthy}/${results.length} tai khoan khoe; khong xoa cookie.`);
+    } finally {
+        healthCheckRunning = false;
+    }
 }
 
 // Khởi động kiểm tra tự động sau khi server bắt đầu (đảm bảo đã đăng nhập đủ)
@@ -123,7 +107,9 @@ export function startLoginCheck() {
     // Thiết lập kiểm tra định kỳ mỗi 10 phút
     checkLoginInterval = setInterval(() => {
         try {
-            checkLoginStatus();
+            void checkLoginStatus().catch((error) => {
+                console.error('[Docker] Health-check async error:', error);
+            });
         } catch (error) {
             console.error("[Docker] Lỗi khi chạy kiểm tra đăng nhập:", error);
         }
@@ -142,10 +128,12 @@ export function startLoginCheck() {
 export const startLoginStatusCheck = startLoginCheck;
 
 // Chờ server khởi động hoàn tất trước khi bắt đầu kiểm tra
-setTimeout(() => {
+const loginCheckStartupTimer = setTimeout(() => {
     try {
         // Kiểm tra ngay lần đầu
-        checkLoginStatus();
+        void checkLoginStatus().catch((error) => {
+            console.error('[Docker] Health-check khoi dong loi:', error);
+        });
         
         // Bắt đầu kiểm tra định kỳ
         startLoginCheck();
@@ -153,6 +141,7 @@ setTimeout(() => {
         console.error("[Docker] Lỗi khi khởi động hệ thống kiểm tra:", error);
     }
 }, 120 * 1000); // Đợi 2 phút sau khi khởi động để đảm bảo tất cả tài khoản đã được khôi phục và container ổn định
+loginCheckStartupTimer.unref?.();
 
 // API để lấy danh sách tài khoản đã đăng nhập
 export async function getLoggedAccounts(req, res) {
@@ -260,7 +249,7 @@ export async function sendMessageByAccount(req, res) {
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const msgType = type || ThreadType.User;
+        const msgType = normalizeThreadType(type);
         
         // Handle quote message if provided
         let messageContent = message;
@@ -273,15 +262,19 @@ export async function sendMessageByAccount(req, res) {
                 };
             } else if (typeof message === 'object') {
                 // If message is already an object, add the quote to it
-                messageContent.quote = quote;
+                messageContent = { ...messageContent, quote };
             }
         }
 
-        const result = await account.api.sendMessage(messageContent, threadId, msgType);
+        const requestedTtl = getRequestedMessageTtl(req.body, messageContent);
+        messageContent = withMessageTtl(messageContent, requestedTtl);
+
+        const result = await account.api.sendMessage(messageContent, String(threadId), msgType);
 
         res.json({
             success: true,
             data: result,
+            messageTtl: messageTtlResult(requestedTtl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -294,6 +287,7 @@ export async function sendMessageByAccount(req, res) {
 
 // API gửi hình ảnh với account selection
 export async function sendImageByAccount(req, res) {
+    let imagePath = null;
     try {
         const { imagePath: imageUrl, threadId, type, accountSelection, ttl, message } = req.body;
 
@@ -302,35 +296,38 @@ export async function sendImageByAccount(req, res) {
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const imagePath = await saveImage(imageUrl);
+        imagePath = await saveImage(imageUrl);
 
         if (!imagePath) {
             return res.status(500).json({ success: false, error: 'Không thể lưu hình ảnh' });
         }
 
-        const threadType = type === 'group' ? ThreadType.Group : ThreadType.User;
+        const threadType = normalizeThreadType(type);
+        const normalizedTtl = normalizeMessageTtl(ttl) ?? 0;
         const result = await account.api.sendMessage(
             {
                 msg: message || "",  // Thêm message support
                 attachments: [imagePath],
-                ttl: ttl ? parseInt(ttl) : 0  // Thêm TTL support
+                ttl: normalizedTtl
             },
-            threadId,
+            String(threadId),
             threadType
         );
-
-        removeImage(imagePath);
 
         res.json({
             success: true,
             data: result,
+            messageTtl: messageTtlResult(ttl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
+    } finally {
+        if (imagePath) removeImage(imagePath);
     }
 }
 
@@ -646,6 +643,7 @@ export async function sendImagesToGroupByAccount(req, res) {
 
 // API gửi file với account selection
 export async function sendFileByAccount(req, res) {
+    let filePath = null;
     try {
         const { fileUrl, threadId, type, accountSelection, message, ttl } = req.body;
 
@@ -654,36 +652,38 @@ export async function sendFileByAccount(req, res) {
         }
 
         const account = getAccountFromSelection(accountSelection);
-        const filePath = await saveFileFromUrl(fileUrl);
+        filePath = await saveFileFromUrl(fileUrl);
 
         if (!filePath) {
             return res.status(500).json({ success: false, error: 'Không thể tải và lưu file' });
         }
 
-        const threadType = type === 'group' ? ThreadType.Group : ThreadType.User;
+        const threadType = normalizeThreadType(type);
+        const normalizedTtl = normalizeMessageTtl(ttl) ?? 0;
         const result = await account.api.sendMessage(
             {
                 msg: message || "", // Có thể gửi kèm tin nhắn
                 attachments: [filePath],
-                ttl: ttl ? parseInt(ttl) : 0  // Thêm TTL support
+                ttl: normalizedTtl
             },
-            threadId,
+            String(threadId),
             threadType
         );
-
-        removeFile(filePath); // Dọn dẹp file tạm
 
         res.json({
             success: true,
             data: result,
+            messageTtl: messageTtlResult(ttl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
             }
         });
     } catch (error) {
-        removeFile(filePath); // Dọn dẹp file tạm nếu có lỗi
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
+    } finally {
+        if (filePath) removeFile(filePath);
     }
 }
 
@@ -837,6 +837,23 @@ export async function getFriendRecommendationsByAccount(req, res) {
             success: true,
             data: result,
             usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+}
+
+// HACS 2026.8.18.3 co action rieng cho loi moi ket ban DA NHAN. zca-js
+// 2.1.2 gom chung trong getFriendRecommendations, recommType=2 la inbound.
+export async function getReceivedFriendRequestsByAccount(req, res) {
+    try {
+        const { accountSelection } = req.body;
+        const account = getAccountFromSelection(accountSelection);
+        const recommendations = await account.api.getFriendRecommendations();
+        res.json({
+            success: true,
+            data: filterReceivedFriendRequests(recommendations),
+            usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber },
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -1021,14 +1038,29 @@ export async function getAllGroupsByAccount(req, res) {
 
 export async function getGroupChatHistoryByAccount(req, res) {
     try {
-        const { groupId, count, accountSelection } = req.body;
+        const { groupId, count = 50, accountSelection } = req.body;
 
         if (!groupId) {
             return res.status(400).json({ error: 'groupId là bắt buộc' });
         }
 
+        const parsedCount = Number.parseInt(count, 10);
+        if (!Number.isSafeInteger(parsedCount) || parsedCount < 1 || parsedCount > 200) {
+            return res.status(400).json({ error: 'count phai la so nguyen tu 1 den 200' });
+        }
         const account = getAccountFromSelection(accountSelection);
-        const result = await account.api.getGroupChatHistory(groupId, count);
+        let result;
+        let source = 'zca-js-2.1.2';
+        let warning;
+        try {
+            result = await account.api.getGroupChatHistory(String(groupId), parsedCount);
+        } catch (error) {
+            // Zalo da go endpoint history o mot so account/region. Cache listener
+            // giu chuc nang nay hoat dong qua restart thay vi tra 500 vinh vien.
+            result = getCachedGroupHistory(account.ownId, groupId, parsedCount);
+            source = 'local-cache';
+            warning = `Khong lay duoc history truc tiep tu Zalo (${error.message}); dang tra cache local.`;
+        }
 
         // Enrich dName: Zalo API trả dName=null trong history, cần tra qua getUserInfo
         if (result.groupMsgs && result.groupMsgs.length > 0) {
@@ -1065,6 +1097,8 @@ export async function getGroupChatHistoryByAccount(req, res) {
         res.json({
             success: true,
             data: result,
+            source,
+            ...(warning ? { warning } : {}),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -1314,29 +1348,72 @@ export async function sendVideoByAccount(req, res) {
             return res.status(400).json({ error: 'options.videoUrl là bắt buộc' });
         }
         const account = getAccountFromSelection(accountSelection);
+        const threadType = normalizeThreadType(type);
+        const normalizedOptions = { ...options };
+        if (Object.prototype.hasOwnProperty.call(normalizedOptions, 'ttl')) {
+            normalizedOptions.ttl = normalizeMessageTtl(normalizedOptions.ttl) ?? 0;
+        }
 
-        duongVideo = await saveFileFromUrl(options.videoUrl);
-        const [videoDaLen] = await account.api.uploadAttachment([duongVideo], threadId, type);
+        duongVideo = await saveFileFromUrl(normalizedOptions.videoUrl);
+        if (!duongVideo) {
+            throw new Error('Khong the tai video nguon');
+        }
+        const uploadTimeout = Number.parseInt(
+            process.env.VIDEO_UPLOAD_TIMEOUT_MS || '180000', 10,
+        );
+        const [videoDaLen] = await withTimeout(
+            account.api.uploadAttachment([duongVideo], String(threadId), threadType),
+            Number.isSafeInteger(uploadTimeout) && uploadTimeout > 0 ? uploadTimeout : 180000,
+            'Het thoi gian tai video len Zalo',
+        );
         if (!videoDaLen || !videoDaLen.fileUrl) {
             throw new Error('Zalo không trả về địa chỉ video sau khi tải lên');
         }
 
-        let thumbnailUrl = options.thumbnailUrl || '';
-        if (thumbnailUrl) {
-            duongThumb = await saveFileFromUrl(thumbnailUrl);
-            const [thumbDaLen] = await account.api.uploadAttachment([duongThumb], threadId, type);
-            // Ảnh trả về ba cỡ; lấy cỡ nào cũng được, ưu tiên bản nhẹ nhất.
-            thumbnailUrl = (thumbDaLen && (thumbDaLen.thumbUrl || thumbDaLen.normalUrl || thumbDaLen.hdUrl)) || '';
+        let thumbnailUrl = normalizedOptions.thumbnailUrl || '';
+        let thumbnailSource = thumbnailUrl ? 'custom' : 'auto';
+        // Thumbnail la anh nen dung tran IMAGE_DOWNLOAD_MAX_BYTES (mac dinh
+        // 25 MB), khong de mot URL "thumbnail" an het tran video 150 MB.
+        if (thumbnailUrl) duongThumb = await saveImage(thumbnailUrl);
+        if (!duongThumb) {
+            thumbnailSource = 'auto';
+            duongThumb = await createVideoThumbnail(duongVideo);
+        }
+        if (duongThumb) {
+            try {
+                const [thumbDaLen] = await withTimeout(
+                    account.api.uploadAttachment([duongThumb], String(threadId), threadType),
+                    Math.min(Number.isSafeInteger(uploadTimeout) && uploadTimeout > 0
+                        ? uploadTimeout : 180000, 60000),
+                    'Het thoi gian tai thumbnail len Zalo',
+                );
+                // Anh tra ve ba co; uu tien ban nhe nhat.
+                thumbnailUrl = (thumbDaLen
+                    && (thumbDaLen.thumbUrl || thumbDaLen.normalUrl || thumbDaLen.hdUrl)) || '';
+            } catch (error) {
+                console.warn('[Video] Upload thumbnail loi, tiep tuc bang fallback:', error.message);
+                thumbnailUrl = '';
+                thumbnailSource = 'fallback';
+            }
+        } else {
+            thumbnailUrl = '';
+            thumbnailSource = 'fallback';
         }
 
         const result = await account.api.sendVideo(
-            { ...options, videoUrl: videoDaLen.fileUrl, thumbnailUrl },
-            threadId,
-            type
+            { ...normalizedOptions, videoUrl: videoDaLen.fileUrl, thumbnailUrl },
+            String(threadId),
+            threadType
         );
-        res.json({ success: true, data: result, usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber } });
+        res.json({
+            success: true,
+            data: result,
+            thumbnailSource,
+            usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber },
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
     } finally {
         if (duongVideo) removeFile(duongVideo);
         if (duongThumb) removeFile(duongThumb);
@@ -1350,10 +1427,16 @@ export async function sendVoiceByAccount(req, res) {
             return res.status(400).json({ error: 'options và threadId là bắt buộc' });
         }
         const account = getAccountFromSelection(accountSelection);
-        const result = await account.api.sendVoice(options, threadId, type);
+        const threadType = normalizeThreadType(type);
+        const normalizedOptions = { ...options };
+        if (Object.prototype.hasOwnProperty.call(normalizedOptions, 'ttl')) {
+            normalizedOptions.ttl = normalizeMessageTtl(normalizedOptions.ttl) ?? 0;
+        }
+        const result = await account.api.sendVoice(normalizedOptions, String(threadId), threadType);
         res.json({ success: true, data: result, usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber } });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
     }
 }
 
@@ -1759,14 +1842,26 @@ export async function getAutoDeleteChatByAccount(req, res) {
 export async function updateAutoDeleteChatByAccount(req, res) {
     try {
         const { ttl, threadId, type, accountSelection } = req.body;
-        if (!ttl || !threadId) {
+        if (ttl === undefined || ttl === null || ttl === '' || !threadId) {
             return res.status(400).json({ error: 'ttl và threadId là bắt buộc' });
         }
         const account = getAccountFromSelection(accountSelection);
-        const result = await account.api.updateAutoDeleteChat(ttl, threadId, type);
-        res.json({ success: true, data: result, usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber } });
+        const threadType = normalizeThreadType(type);
+        const normalizedTtl = normalizeAutoDeleteTtl(ttl);
+        const result = await account.api.updateAutoDeleteChat(normalizedTtl, String(threadId), threadType);
+        res.json({
+            success: true,
+            data: result,
+            autoDelete: {
+                enabled: normalizedTtl !== 0,
+                ttl: normalizedTtl,
+                scope: 'conversation',
+            },
+            usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber },
+        });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
     }
 }
 
@@ -2349,7 +2444,17 @@ export async function sendFile(req, res) {
     }
 }
 
-export async function loginZaloAccount(customProxy, cred) {
+export async function loginZaloAccount(customProxy, cred, options = {}) {
+    const {
+        allowQrFallback = true,
+        autoSelectProxy = true,
+    } = options;
+    const loginCredential = cred && typeof cred === 'object'
+        ? (() => {
+            const { proxy: _savedProxy, ...credential } = cred;
+            return credential;
+        })()
+        : cred;
     let loginResolve;
     return new Promise(async (resolve, reject) => {
         loginResolve = resolve;
@@ -2367,13 +2472,13 @@ export async function loginZaloAccount(customProxy, cred) {
                 const proxiesJson = fs.readFileSync(proxiesFilePath, 'utf8');
                 proxies = JSON.parse(proxiesJson);
             } else {
-                fs.writeFileSync(proxiesFilePath, '[]', 'utf8');
+                writeJsonAtomicSync(proxiesFilePath, []);
             }
         } catch (error) {
             console.error(`Lỗi đọc proxies.json:`, error.message);
             const proxyDir = path.dirname(proxiesFilePath);
             if (!fs.existsSync(proxyDir)) fs.mkdirSync(proxyDir, { recursive: true });
-            fs.writeFileSync(proxiesFilePath, '[]', 'utf8');
+            writeJsonAtomicSync(proxiesFilePath, []);
             proxies = [];
         }
 
@@ -2384,7 +2489,7 @@ export async function loginZaloAccount(customProxy, cred) {
                 useCustomProxy = true;
                 if (!proxies.includes(customProxy)) {
                     proxies.push(customProxy);
-                    fs.writeFileSync(proxiesFilePath, JSON.stringify(proxies, null, 4), 'utf8');
+                    writeJsonAtomicSync(proxiesFilePath, proxies, 4);
                 }
             } catch (err) {
                 console.log(`Proxy không hợp lệ: ${customProxy}, dùng proxy mặc định`);
@@ -2394,7 +2499,7 @@ export async function loginZaloAccount(customProxy, cred) {
         if (useCustomProxy) {
             console.log('Sử dụng proxy tùy chỉnh:', customProxy);
             agent = new HttpsProxyAgent(customProxy);
-        } else {
+        } else if (autoSelectProxy) {
             // Chọn proxy tự động từ danh sách nếu không có proxy do người dùng nhập hợp lệ
             if (proxies.length > 0) {
                 const proxyIndex = getAvailableProxyIndex();
@@ -2411,86 +2516,37 @@ export async function loginZaloAccount(customProxy, cred) {
             }
         }
         let zalo;
-        // Hàm lấy metadata của hình ảnh
+        // Khong dung image-size: ca ban 1.x/2.x deu co advisory vong lap vo han
+        // voi ICNS/JXL/HEIF. Sharp/libvips co gioi han pixel va khong nam trong
+        // dependency bi npm audit canh bao.
         const getImageMetadata = async (filePath) => {
             try {
-                if (!filePath.startsWith('http://') && !filePath.startsWith('https://') && fs.existsSync(filePath)) {
-                    try {
-                        const stats = fs.statSync(filePath);
-                        try {
-                            const sizeOf = await import('image-size').then(module => module.default || module);
-                            // Đưa BUFFER ĐẦU FILE thay vì đường dẫn.
-                            //
-                            // `image-size` đang có lỗ DoS (high) mà thượng nguồn
-                            // CHƯA có bản vá — `npm audit` báo `fixAvailable:
-                            // false`. Ảnh ở đây do người dùng Zalo gửi lên nên
-                            // là dữ liệu kẻ tấn công điều khiển được.
-                            //
-                            // Truyền đường dẫn thì thư viện tự đọc bao nhiêu tuỳ
-                            // nó; truyền buffer thì nó chỉ thấy đúng phần ta cho
-                            // thấy. Kích thước ảnh của JPEG/PNG/GIF/WebP đều nằm
-                            // trong vài KB đầu, nên 256 KB là thừa cho việc đọc
-                            // đúng mà vẫn chặn được đầu vào khổng lồ.
-                            const TRAN_HEADER = 256 * 1024;
-                            const doDoc = Math.min(stats.size, TRAN_HEADER);
-                            const dau = Buffer.alloc(doDoc);
-                            const fdH = fs.openSync(filePath, 'r');
-                            try { fs.readSync(fdH, dau, 0, doDoc, 0); }
-                            finally { fs.closeSync(fdH); }
-                            const dimensions = sizeOf(dau);
-                            return { width: dimensions.width, height: dimensions.height, size: stats.size };
-                        } catch (importError) {
-                            const buffer = Buffer.alloc(24);
-                            const fd = fs.openSync(filePath, 'r');
-                            fs.readSync(fd, buffer, 0, 24, 0);
-                            fs.closeSync(fd);
-                            
-                            // Kiểm tra các định dạng ảnh phổ biến (JPEG, PNG)
-                            if (buffer[0] === 0xFF && buffer[1] === 0xD8) {
-                                // JPEG: tìm SOF marker để lấy kích thước
-                                const fileData = fs.readFileSync(filePath);
-                                let pos = 2;
-                                while (pos < fileData.length) {
-                                    if (fileData[pos] !== 0xFF) pos++;
-                                    else if (fileData[pos+1] >= 0xC0 && fileData[pos+1] <= 0xCF && fileData[pos+1] !== 0xC4 && fileData[pos+1] !== 0xC8) {
-                                        const height = (fileData[pos+5] << 8) + fileData[pos+6];
-                                        const width = (fileData[pos+7] << 8) + fileData[pos+8];
-                                        console.log(`JPEG: đọc được kích thước ${width}x${height}, size: ${stats.size}`);
-                                        return { width, height, size: stats.size };
-                                    } else {
-                                        pos += 2 + (fileData[pos+2] << 8) + fileData[pos+3];
-                                    }
-                                }
-                            } else if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-                                // PNG: kích thước ở byte 16-23
-                                const width = (buffer[16] << 24) + (buffer[17] << 16) + (buffer[18] << 8) + buffer[19];
-                                const height = (buffer[20] << 24) + (buffer[21] << 16) + (buffer[22] << 8) + buffer[23];
-                                console.log(`PNG: đọc được kích thước ${width}x${height}, size: ${stats.size}`);
-                                return { width, height, size: stats.size };
-                            }
-                            
-                            // Nếu không xác định được kích thước, sử dụng kích thước mặc định
-                            console.warn('Không thể xác định kích thước ảnh từ header, sử dụng kích thước mặc định');
-                        }
-                    } catch (err) {
-                        console.warn(`Không thể đọc thông tin file ${filePath}: ${err.message}`);
+                if (typeof filePath === 'string'
+                    && !filePath.startsWith('http://')
+                    && !filePath.startsWith('https://')
+                    && fs.existsSync(filePath)) {
+                    const stats = await fs.promises.stat(filePath);
+                    const dimensions = await sharp(filePath, {
+                        failOn: 'error',
+                        limitInputPixels: 100_000_000,
+                    }).metadata();
+                    if (dimensions?.width && dimensions?.height) {
+                        return {
+                            width: dimensions.width,
+                            height: dimensions.height,
+                            size: stats.size,
+                        };
                     }
                 }
-                
-                // Nếu là URL hoặc không đọc được file
-                // Sử dụng kích thước mặc định cho ảnh hiện đại
                 return {
                     width: 1280,
                     height: 720,
-                    size: fs.existsSync(filePath) ? fs.statSync(filePath).size : 300000
+                    size: typeof filePath === 'string' && fs.existsSync(filePath)
+                        ? fs.statSync(filePath).size : 300000,
                 };
             } catch (error) {
-                console.error(`Lỗi khi lấy metadata cho ảnh: ${error.message}`);
-                return {
-                    width: 1280,
-                    height: 720,
-                    size: 300000
-                };
+                console.warn(`Khong doc duoc metadata anh: ${error.message}`);
+                return { width: 1280, height: 720, size: 300000 };
             }
         };
         
@@ -2511,11 +2567,12 @@ export async function loginZaloAccount(customProxy, cred) {
 
         let api;
         try {
-            if (cred) {
+            if (loginCredential) {
                 try {
-                    api = await zalo.login(cred);
+                    api = await zalo.login(loginCredential);
                 } catch (error) {
                     console.error("Lỗi đăng nhập cookie:", error.message);
+                    if (!allowQrFallback) throw error;
                     console.log('Chuyển sang đăng nhập bằng mã QR...');
                     api = await zalo.loginQR(null, (qrData) => {
                         if (qrData?.data?.image) {
@@ -2571,7 +2628,14 @@ export async function loginZaloAccount(customProxy, cred) {
             // Lưu cookie
             const context = await api.getContext();
             const {imei, cookie, userAgent} = context;
-            const data = { imei, cookie, userAgent };
+            const data = {
+                imei,
+                cookie,
+                userAgent,
+                // null cung co nghia: account da dang nhap khong qua proxy.
+                // Luu ro de restore/reconnect khong tu doi sang proxy khac.
+                proxy: useCustomProxy ? customProxy : (proxyUsed && proxyUsed.url) || null,
+            };
 
             const { getCookiesDir } = await import('../../utils/helpers.js');
             const cookiesDir = getCookiesDir();
@@ -2581,9 +2645,8 @@ export async function loginZaloAccount(customProxy, cred) {
             }
 
             const credFilePath = path.join(cookiesDir, `cred_${ownId}.json`);
-            fs.writeFile(credFilePath, JSON.stringify(data, null, 4), (err) => {
-                if (err) console.error(`Lỗi ghi cookie:`, err.message);
-            });
+            writeJsonAtomicSync(credFilePath, data, 4);
+            try { fs.chmodSync(credFilePath, 0o600); } catch { /* best effort */ }
 
             console.log(`[Zalo] ${displayName} (${phoneNumber}) — đăng nhập thành công`);
             resolve(true);

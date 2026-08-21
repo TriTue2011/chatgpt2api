@@ -151,6 +151,15 @@ services:
       # Cookie session Secure: đặt =1 khi chạy chỉ-HTTPS (tunnel). Mặc định 0 để
       # không phá đăng nhập LAN qua HTTP.
       ZALO_COOKIE_SECURE: ${ZALO_COOKIE_SECURE:-0}
+      JSON_BODY_LIMIT: ${ZALO_JSON_BODY_LIMIT:-2mb}
+      FORM_BODY_LIMIT: ${ZALO_FORM_BODY_LIMIT:-2mb}
+      FILE_DOWNLOAD_MAX_BYTES: ${ZALO_FILE_DOWNLOAD_MAX_BYTES:-157286400}
+      IMAGE_DOWNLOAD_MAX_BYTES: ${ZALO_IMAGE_DOWNLOAD_MAX_BYTES:-26214400}
+      WEBHOOK_TIMEOUT_MS: ${ZALO_WEBHOOK_TIMEOUT_MS:-10000}
+      VIDEO_UPLOAD_TIMEOUT_MS: ${ZALO_VIDEO_UPLOAD_TIMEOUT_MS:-180000}
+      VIDEO_THUMBNAIL_TIMEOUT_MS: ${ZALO_VIDEO_THUMBNAIL_TIMEOUT_MS:-30000}
+      GROUP_HISTORY_MAX_MESSAGES: ${ZALO_GROUP_HISTORY_MAX_MESSAGES:-5000}
+      GROUP_HISTORY_MAX_FILE_BYTES: ${ZALO_GROUP_HISTORY_MAX_FILE_BYTES:-20971520}
       # Origin được phép mở WebSocket của zalo-server (phẩy ngăn cách). ĐỂ TRỐNG
       # là dùng luật same-host — đúng cho triển khai LAN/Portainer. Chỉ khai khi
       # zalo-server đứng sau một domain cố định, và khai ĐÚNG origin của CHÍNH

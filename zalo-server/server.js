@@ -3,6 +3,12 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import app, { sessionMiddleware } from './app.js';
 import { getDataDirectory } from './config/addon.js';
+import { flushAllGroupHistorySync } from './utils/groupHistoryStore.js';
+import {
+  closeAllWebSocketClients,
+  getWebSocketClientCount,
+  registerWebSocketClient,
+} from './services/websocketHub.js';
 
 const PORT = process.env.PORT || 3000;
 const dataDir = getDataDirectory();
@@ -30,9 +36,6 @@ const _WS_MAX = 50;
 // (LAN dev). "Không dựa vào so sánh host đơn thuần" khi đã có allowlist.
 const _WS_ORIGINS = String(process.env.ZALO_WS_ALLOWED_ORIGINS || '')
   .split(',').map(s => s.trim()).filter(Boolean);
-
-// Lưu trữ kết nối WebSocket
-export const webSocketClients = new Set();
 
 function _originOk(req) {
   const origin = req.headers.origin;
@@ -63,7 +66,7 @@ server.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  if (webSocketClients.size >= _WS_MAX) {
+  if (getWebSocketClientCount() >= _WS_MAX) {
     console.warn('WS upgrade từ chối: quá số kết nối tối đa');
     socket.destroy();
     return;
@@ -90,23 +93,23 @@ server.on('upgrade', (req, socket, head) => {
 
 // Xử lý kết nối WebSocket (đã xác thực ở bước upgrade)
 wss.on('connection', (ws) => {
-  webSocketClients.add(ws);
-  ws.on('close', () => {
-    webSocketClients.delete(ws);
-  });
-  ws.on('error', () => {
-    webSocketClients.delete(ws);
-  });
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  registerWebSocketClient(ws);
 });
 
-// Hàm gửi thông báo đến tất cả client WebSocket
-export function broadcastMessage(message) {
-  webSocketClients.forEach((client) => {
-    if (client.readyState === 1) { // 1 = OPEN
-      client.send(message);
+// Thu hoi ket noi half-open sau khi Wi-Fi/browser bien mat ma khong gui close.
+const wsHeartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
     }
-  });
-}
+    ws.isAlive = false;
+    try { ws.ping(); } catch { ws.terminate(); }
+  }
+}, 30_000);
+wsHeartbeat.unref?.();
 
 // Sử dụng HTTP server thay vì app để hỗ trợ WebSocket
 server.listen(PORT, () => {
@@ -117,6 +120,9 @@ server.listen(PORT, () => {
 process.on('SIGTERM', () => {
   console.log('Nhận tín hiệu SIGTERM (container đang dừng). Đang dọn dẹp...');
   
+  flushAllGroupHistorySync();
+  clearInterval(wsHeartbeat);
+  closeAllWebSocketClients();
   // Đóng server một cách an toàn
   server.close(() => {
     console.log('Server HTTP đã đóng.');
@@ -133,6 +139,9 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('Nhận tín hiệu SIGINT (Ctrl+C). Đang dọn dẹp...');
   
+  flushAllGroupHistorySync();
+  clearInterval(wsHeartbeat);
+  closeAllWebSocketClients();
   server.close(() => {
     console.log('Server HTTP đã đóng.');
     process.exit(0);

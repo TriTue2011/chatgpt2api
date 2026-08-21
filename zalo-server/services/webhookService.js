@@ -2,9 +2,9 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import os from 'os';
 import { getDataFilePath } from '../config/addon.js';
-import { broadcastMessage } from '../server.js';
+import { broadcastMessage } from './websocketHub.js';
+import { writeJsonAtomicSync } from '../utils/atomicFile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,23 +124,14 @@ export function saveWebhookConfig() {
             throw new Error(`Không có quyền ghi vào thư mục ${dir}: ${writeError.message}`);
         }
         
-        // Ghi file cấu hình
-        fs.writeFileSync(webhookConfigPath, JSON.stringify(webhookConfig, null, 2), 'utf8');
+        // Ghi file tam cung thu muc roi rename: mat dien/kill giua luc ghi
+        // khong de lai JSON nua vo lam mat toan bo webhook.
+        writeJsonAtomicSync(webhookConfigPath, webhookConfig);
         console.log(`[WebhookService] Đã lưu cấu hình webhook vào ${webhookConfigPath}`);
         return true;
     } catch (error) {
         console.error("Lỗi khi lưu cấu hình webhook:", error);
-        // Thử ghi vào thư mục tạm nếu thư mục gốc bị lỗi
-        try {
-            const tempDir = os.tmpdir();
-            const tempPath = path.join(tempDir, 'webhookConfig.json');
-            fs.writeFileSync(tempPath, JSON.stringify(webhookConfig, null, 2), 'utf8');
-            console.log(`Đã lưu cấu hình webhook vào thư mục tạm: ${tempPath}`);
-            return false;
-        } catch (tempError) {
-            console.error("Không thể lưu cấu hình webhook vào thư mục tạm:", tempError);
-            return false;
-        }
+        return false;
     }
 }
 

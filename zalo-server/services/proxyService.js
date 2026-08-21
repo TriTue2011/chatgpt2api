@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getProxiesFilePath } from '../utils/helpers.js';
+import { writeJsonAtomicSync } from '../utils/atomicFile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,8 +18,12 @@ class ProxyService {
             const data = fs.readFileSync(proxiesFilePath, 'utf8');
             this.RAW_PROXIES = JSON.parse(data);
         } catch (err) {
-            console.error('Không thể đọc file proxies.json:', err);
             this.RAW_PROXIES = [];
+            if (err.code === 'ENOENT') {
+                writeJsonAtomicSync(proxiesFilePath, []);
+            } else {
+                console.error('Không thể đọc file proxies.json:', err.message);
+            }
         }
         this.PROXIES = this.RAW_PROXIES.map(p => ({ url: p, usedCount: 0, accounts: [] }));
     }
@@ -36,7 +41,7 @@ class ProxyService {
         const newProxy = { url: proxyUrl, usedCount: 0, accounts: [] };
         this.PROXIES.push(newProxy);
         this.RAW_PROXIES.push(proxyUrl);
-        fs.writeFileSync(proxiesFilePath, JSON.stringify(this.RAW_PROXIES, null, 2));
+        writeJsonAtomicSync(proxiesFilePath, this.RAW_PROXIES);
         return newProxy;
     }
 
@@ -50,7 +55,7 @@ class ProxyService {
         if (rawIndex !== -1) {
             this.RAW_PROXIES.splice(rawIndex, 1);
         }
-        fs.writeFileSync(proxiesFilePath, JSON.stringify(this.RAW_PROXIES, null, 2));
+        writeJsonAtomicSync(proxiesFilePath, this.RAW_PROXIES);
         return true;
     }
 

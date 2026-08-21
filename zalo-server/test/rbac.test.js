@@ -26,7 +26,7 @@ process.chdir(tmp);
 process.env.DATA_DIRECTORY = tmp;
 process.env.ZALO_SERVER_API_KEY = 'khoa-tich-hop-cua-home-assistant';
 
-const { authMiddleware, dashboardRoleMiddleware, isApiKeyRoute } =
+const { authMiddleware, changePassword, dashboardRoleMiddleware, isApiKeyRoute, validateUser } =
   await import('../services/authService.js');
 
 /** Giả res của Express, ghi lại kết quả thay vì gửi đi. */
@@ -145,4 +145,24 @@ test('không có phiên và không có key thì 401', () => {
   const { res, daQua } = chay(req);
   assert.equal(daQua, false);
   assert.equal(res.statusCode, 401);
+});
+
+test('mat khau admin tu sinh duoc luu mode rieng cho gateway noi bo', () => {
+  const credentialFile = path.join(tmp, '.admin_password');
+  assert.equal(fs.existsSync(credentialFile), true);
+  const password = fs.readFileSync(credentialFile, 'utf8').trim();
+  assert.ok(password.length >= 20);
+  assert.equal(validateUser('admin', password)?.role, 'admin');
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(credentialFile).mode & 0o077, 0);
+  }
+});
+
+test('doi mat khau admin cap nhat credential dung chung voi gateway', () => {
+  const credentialFile = path.join(tmp, '.admin_password');
+  const oldPassword = fs.readFileSync(credentialFile, 'utf8').trim();
+  const newPassword = 'mat-khau-moi-rat-dai-cho-gateway';
+  assert.equal(changePassword('admin', oldPassword, newPassword), true);
+  assert.equal(fs.readFileSync(credentialFile, 'utf8').trim(), newPassword);
+  assert.equal(validateUser('admin', newPassword)?.role, 'admin');
 });

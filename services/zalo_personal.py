@@ -117,7 +117,18 @@ def _credentials() -> tuple[str, str]:
     env_u = str(_os.environ.get("ZALO_SERVER_ADMIN_USERNAME") or "").strip()
     env_p = str(_os.environ.get("ZALO_SERVER_ADMIN_PASSWORD") or "").strip()
     user = env_u or str(c.get("zalo_personal_username") or "admin").strip()
-    pw = env_p or str(c.get("zalo_personal_password") or "admin").strip()
+    configured_pw = str(c.get("zalo_personal_password") or "").strip()
+    shared_pw = ""
+    if not env_p and not configured_pw:
+        try:
+            from pathlib import Path
+            data_dir = str(_os.environ.get("DATA_DIRECTORY") or "/app/data/zalo_bot")
+            shared_pw = (Path(data_dir) / ".admin_password").read_text(
+                encoding="utf-8"
+            ).strip()
+        except (OSError, UnicodeError):
+            shared_pw = ""
+    pw = env_p or configured_pw or shared_pw or "admin"
     return (user, pw)
 
 
@@ -1290,7 +1301,17 @@ def _parse_event(body: dict) -> dict:
     """Chuẩn hóa event zca-js → dict phẳng dùng chung cho AI + HA forward."""
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
     is_group = str(body.get("type") or data.get("type") or "0").strip() == "1"
-    thread_id = str(body.get("threadId") or data.get("idTo") or data.get("uidFrom") or "").strip()
+    # Server >=1.2.1 gui `_threadRef=zalo:<id>` de Home Assistant/template
+    # khong ep Zalo ID lon thanh so float. Uu tien ref nay, bo prefix mot lan;
+    # van giu fallback payload cu de tuong thich server da trien khai truoc do.
+    thread_ref = str(body.get("_threadRef") or "").strip()
+    if thread_ref.lower().startswith("zalo:"):
+        thread_ref = thread_ref[5:]
+    thread_id = str(thread_ref or body.get("threadId") or data.get("idTo")
+                    or data.get("uidFrom") or "").strip()
+    declared_type = body.get("_threadType")
+    if declared_type in (0, 1, "0", "1"):
+        is_group = str(declared_type) == "1"
     sender_id = str(data.get("uidFrom") or "").strip()
     display_name = str(data.get("dName") or data.get("fromD") or "").strip()
     msg_type = str(data.get("msgType") or "webchat").strip()

@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import { getDataDirectory, loadHomeAssistantOptions } from '../config/addon.js';
+import { writeFileAtomicSync, writeJsonAtomicSync } from '../utils/atomicFile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,8 +23,35 @@ function _hash(password, salt, iters) {
 // báo (không còn 'admin' cứng đoán được). Trả {password, fromEnv}.
 function _initialAdminSecret() {
   const env = String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim();
-  if (env) return { password: env, fromEnv: true };
-  return { password: crypto.randomBytes(18).toString('base64url'), fromEnv: false };
+  if (env) return { password: env, fromEnv: true, reveal: false };
+
+  const sharedPath = path.join(getDataDirectory(), '.admin_password');
+  try {
+    if (fs.existsSync(sharedPath)) {
+      const saved = fs.readFileSync(sharedPath, 'utf8').trim();
+      if (saved.length >= 20) {
+        return { password: saved, fromEnv: false, reveal: false };
+      }
+    }
+    const generated = crypto.randomBytes(18).toString('base64url');
+    writeFileAtomicSync(sharedPath, `${generated}\n`);
+    try { fs.chmodSync(sharedPath, 0o600); } catch { /* best effort */ }
+    return { password: generated, fromEnv: false, reveal: true };
+  } catch (error) {
+    console.warn(`[Auth] Khong luu duoc mat khau noi bo: ${error.message}`);
+    return {
+      password: crypto.randomBytes(18).toString('base64url'),
+      fromEnv: false,
+      reveal: true,
+    };
+  }
+}
+
+function _storeSharedAdminPassword(password) {
+  if (String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim()) return;
+  const sharedPath = path.join(getDataDirectory(), '.admin_password');
+  writeFileAtomicSync(sharedPath, `${String(password)}\n`);
+  try { fs.chmodSync(sharedPath, 0o600); } catch { /* best effort */ }
 }
 
 function _adminUsername() {
@@ -30,7 +59,11 @@ function _adminUsername() {
 }
 
 // Đường dẫn đến file lưu thông tin đăng nhập
-const userFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
+// authService duoc ESM nap truoc phan than app.js. Nap options o day de
+// data_directory cua Home Assistant co hieu luc truoc khi dong bang cac path.
+const cookiesDirectory = path.join(loadHomeAssistantOptions(), 'cookies');
+const userFilePath = path.join(cookiesDirectory, 'users.json');
+const legacyUserFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json');
 
 // Tạo file users.json nếu chưa tồn tại
 const initUserFile = () => {
@@ -38,13 +71,23 @@ const initUserFile = () => {
     console.log("Khởi tạo file người dùng...");
 
     // Kiểm tra và tạo thư mục cookies nếu chưa tồn tại
-    const cookiesDir = path.join(process.cwd(), 'data', 'cookies');
+    const cookiesDir = cookiesDirectory;
     if (!fs.existsSync(cookiesDir)) {
       console.log("Thư mục cookies không tồn tại, đang tạo...");
       fs.mkdirSync(cookiesDir, { recursive: true });
       console.log("Đã tạo thư mục cookies thành công");
     } else {
       console.log("Thư mục cookies đã tồn tại");
+    }
+
+    // Ban cu luu theo process.cwd(), nam ngoai DATA_DIRECTORY va co the mat
+    // khi thay image. Di chuyen mot lan vao volume du lieu neu dich chua co.
+    if (!fs.existsSync(userFilePath)
+        && path.resolve(legacyUserFilePath) !== path.resolve(userFilePath)
+        && fs.existsSync(legacyUserFilePath)) {
+      const legacyUsers = JSON.parse(fs.readFileSync(legacyUserFilePath, 'utf8'));
+      writeJsonAtomicSync(userFilePath, legacyUsers);
+      console.log(`Da chuyen users.json cu vao ${userFilePath}`);
     }
 
     // Đường dẫn đầy đủ đến file users.json
@@ -57,7 +100,7 @@ const initUserFile = () => {
       // Mật khẩu admin ban đầu: env ZALO_SERVER_ADMIN_PASSWORD, hoặc NGẪU NHIÊN.
       // KHÔNG còn mặc định 'admin' đoán được.
       const uname = _adminUsername();
-      const { password, fromEnv } = _initialAdminSecret();
+      const { password, reveal } = _initialAdminSecret();
       const salt = crypto.randomBytes(16).toString('hex');
       const users = [{
         username: uname,
@@ -66,9 +109,9 @@ const initUserFile = () => {
         iterations: PBKDF2_ITERS,
         role: 'admin',
       }];
-      fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
-      if (fromEnv) {
-        console.log(`Đã tạo users.json với admin '${uname}' (mật khẩu từ ZALO_SERVER_ADMIN_PASSWORD)`);
+      writeJsonAtomicSync(userFilePath, users);
+      if (!reveal) {
+        console.log(`Đã tạo users.json với admin '${uname}' (mật khẩu đã cấu hình/lưu nội bộ)`);
       } else {
         // In MỘT LẦN để chủ máy đăng nhập rồi đổi — không có env thì đây là
         // đường duy nhất biết mật khẩu (không còn admin/admin).
@@ -85,7 +128,7 @@ const initUserFile = () => {
         console.error("Lỗi khi đọc/phân tích file users.json:", readError);
         // File hỏng → tạo lại, KHÔNG dùng admin/admin (env hoặc ngẫu nhiên).
         const uname = _adminUsername();
-        const { password, fromEnv } = _initialAdminSecret();
+        const { password, reveal } = _initialAdminSecret();
         const salt = crypto.randomBytes(16).toString('hex');
         const users = [{
           username: uname,
@@ -94,8 +137,8 @@ const initUserFile = () => {
           iterations: PBKDF2_ITERS,
           role: 'admin',
         }];
-        fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
-        if (!fromEnv) {
+        writeJsonAtomicSync(userFilePath, users);
+        if (reveal) {
           console.warn(`[BẢO MẬT] users.json hỏng, đã tạo lại admin '${uname}' với mật khẩu NGẪU NHIÊN:`);
           console.warn(`[BẢO MẬT]   ${password}`);
         }
@@ -147,11 +190,11 @@ export const addUser = (username, password, role = 'user') => {
     role,
   });
 
-  fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
+  writeJsonAtomicSync(userFilePath, users);
   return true;
 };
 
-const lockFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.lock');
+const lockFilePath = path.join(cookiesDirectory, 'users.lock');
 
 async function withUserLock(fn) {
   const maxWaitMs = 30000;
@@ -197,7 +240,7 @@ export const deleteUser = (username) => {
     }
 
     users.splice(idx, 1);
-    fs.writeFileSync(userFilePath, JSON.stringify(users, null, 2));
+    writeJsonAtomicSync(userFilePath, users);
     return { success: true };
   });
 };
@@ -273,10 +316,10 @@ export const changePassword = (username, oldPassword, newPassword) => {
   users[userIndex].iterations = PBKDF2_ITERS;
 
   try {
-    // Ghi qua file tạm rồi rename (atomic) — KHÔNG log nội dung.
-    const tempFilePath = path.join(process.cwd(), 'data', 'cookies', 'users.json.tmp');
-    fs.writeFileSync(tempFilePath, JSON.stringify(users, null, 2), { encoding: 'utf8', flag: 'w' });
-    fs.renameSync(tempFilePath, userFilePath);
+    writeJsonAtomicSync(userFilePath, users);
+    if (users[userIndex].role === 'admin') {
+      _storeSharedAdminPassword(newPassword);
+    }
 
     // Verify the file was written correctly
     const verifyUsers = getUsers();
@@ -421,6 +464,7 @@ export const publicRoutes = [
   '/api/test-login', // API đăng nhập test
   '/api/logout', // API đăng xuất
   '/api/check-auth', // API kiểm tra trạng thái xác thực
+  '/api/health', // Probe nhe cho HA/monitoring, khong doc du lieu tai khoan
   '/api/session-test', // API kiểm tra session
   '/api/account-webhook/', // API webhook có tham số
   '/reset-password', // Trang reset mật khẩu admin

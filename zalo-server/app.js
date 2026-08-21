@@ -14,6 +14,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { loadHomeAssistantOptions, getDataDirectory } from './config/addon.js';
 import { zaloAccounts, loginZaloAccount } from './api/zalo/zalo.js';
+import { writeFileAtomicSync } from './utils/atomicFile.js';
 
 // Dành cho ES Module: xác định __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -59,6 +60,13 @@ if (!_zaloApiKey) {
 }
 
 const app = express();
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  next();
+});
 
 // Cấu hình EJS
 app.set('view engine', 'ejs');
@@ -86,8 +94,11 @@ loadWebhookConfig();
 console.log("Đã tải cấu hình webhook");
 
 // Thiết lập middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Dùng để parse dữ liệu form
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: process.env.FORM_BODY_LIMIT || '2mb',
+}));
 app.use(cookieParser());
 
 // Middleware phát hiện HA ingress proxy — tất cả link phải có prefix này
@@ -135,16 +146,31 @@ app.use((req, res, next) => {
     });
 })();
 
-// SESSION_SECRET: KHÔNG dùng default cứng ('zalo-server-secret-key' đoán được
-// → giả mạo session ký khi service lộ ra mạng). Ưu tiên env; thiếu env thì
-// sinh NGẪU NHIÊN mỗi lần chạy (session không sống qua restart — người dùng
-// đăng nhập lại — nhưng không còn secret đoán được). Đặt SESSION_SECRET để
-// session bền qua restart.
-const sessionSecret = (process.env.SESSION_SECRET || '').trim()
-  || crypto.randomBytes(32).toString('hex');
-if (!(process.env.SESSION_SECRET || '').trim()) {
-  console.warn('[BẢO MẬT] Chưa đặt SESSION_SECRET — dùng secret NGẪU NHIÊN phiên này (session không sống qua restart). Hãy đặt SESSION_SECRET.');
+// Uu tien env. Neu thieu, tao mot secret ngau nhien BEN VUNG trong data dir
+// (mode 0600, atomic) de restart container khong dang xuat moi dashboard. Day
+// van la secret khong doan duoc, khac default cung hoac random moi lan chay.
+function getSessionSecret() {
+  const fromEnv = String(process.env.SESSION_SECRET || '').trim();
+  if (fromEnv) return fromEnv;
+
+  const secretPath = path.join(dataDirectory, 'session-secret');
+  try {
+    if (fs.existsSync(secretPath)) {
+      const existing = fs.readFileSync(secretPath, 'utf8').trim();
+      if (existing.length >= 32) return existing;
+    }
+    const generated = crypto.randomBytes(48).toString('hex');
+    writeFileAtomicSync(secretPath, generated);
+    try { fs.chmodSync(secretPath, 0o600); } catch { /* platform may not support chmod */ }
+    console.log(`[Session] Da tao session secret ben vung tai ${secretPath}`);
+    return generated;
+  } catch (error) {
+    console.warn(`[Session] Khong luu duoc session secret: ${error.message}; dung secret tam thoi.`);
+    return crypto.randomBytes(48).toString('hex');
+  }
 }
+
+const sessionSecret = getSessionSecret();
 
 // ZALO_COOKIE_SECURE chỉ nhận "0" hoặc "1". Mọi giá trị khác ("true", "yes",
 // "on"…) rơi vào nhánh false một cách IM LẶNG — người triển khai tưởng đã bật
@@ -193,12 +219,13 @@ export const sessionMiddleware = session({
 });
 app.use(sessionMiddleware);
 
-// Log để debug session
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  console.log('Session exists:', !!req.session);
-  next();
-});
+// Chi log request khi can debug; production khong ghi I/O cho moi webhook/API.
+if (process.env.DEBUG_HTTP === 'true') {
+  app.use((req, _res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+    next();
+  });
+}
 
 // Middleware xác thực cho tất cả các route trừ những route công khai
 app.use((req, res, next) => {
@@ -218,7 +245,7 @@ app.use('/', routes);
 
 // ── Static file middleware — để sau routes ───────────────────────────────
 // Phải sau routes để ko bị redirect /chat → /chat/
-const publicDir = '/config/www/zalo_bot';
+const publicDir = process.env.PUBLIC_DIR || '/config/www/zalo_bot';
 if (!fs.existsSync(publicDir)) {
   try { fs.mkdirSync(publicDir, { recursive: true }); } catch (error) { console.error(`Lỗi tạo public dir:`, error.message); }
 }
@@ -231,6 +258,19 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.use('/zalo_bot', express.static(publicDir));
 console.log('Static files path:', publicDir, 'và', path.join(__dirname, 'public'));
 
+// Body-parser nem loi truoc khi route chay. Tra JSON gon va khong in stack
+// trace cho payload co chu dich vuot tran.
+app.use((error, req, res, next) => {
+  if (error?.type === 'entity.too.large' || Number(error?.status) === 413) {
+    return res.status(413).json({
+      success: false,
+      code: 'PAYLOAD_TOO_LARGE',
+      error: 'Request body vuot gioi han cho phep',
+    });
+  }
+  return next(error);
+});
+
 // Login từ cookie đã lưu
 // Login từ cookie đã lưu
 import { getCookiesDir } from './utils/helpers.js';
@@ -238,95 +278,67 @@ import { getCookiesDir } from './utils/helpers.js';
 const cookiesDir = getCookiesDir();
 console.log(`Thư mục cookies được cấu hình: ${cookiesDir}`);
 
-if (fs.existsSync(cookiesDir)) {
-    try {
-        const cookieFiles = fs.readdirSync(cookiesDir);
-        console.log(`Tìm thấy ${cookieFiles.length} file cookie trong thư mục ${cookiesDir}`);
+async function restoreSavedAccounts() {
+  let files;
+  try {
+    files = fs.readdirSync(cookiesDir)
+      .filter((file) => file.startsWith('cred_') && file.endsWith('.json'));
+  } catch (error) {
+    console.error(`[Restore] Khong doc duoc ${cookiesDir}: ${error.message}`);
+    return;
+  }
+  if (!files.length) return;
 
-        // Sử dụng IIFE để tránh top-level await
-        (async function() {
-            for (const file of cookieFiles) {
-                if (file.startsWith('cred_') && file.endsWith('.json')) {
-                    const ownId = file.substring(5, file.length - 5);
-                    try {
-                        // Bỏ qua nếu tài khoản đã đăng nhập
-                        if (zaloAccounts.some(a => a.ownId === ownId)) {
-                            console.log(`Tài khoản ${ownId} đã đăng nhập, bỏ qua.`);
-                            continue;
-                        }
+  let nextIndex = 0;
+  async function worker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= files.length) return;
+      const file = files[index];
+      const ownId = file.slice(5, -5);
+      if (zaloAccounts.some((account) => String(account.ownId) === ownId)) continue;
 
-                        const cookiePath = path.join(cookiesDir, file);
-                        if (fs.existsSync(cookiePath)) {
-                            const cookie = JSON.parse(fs.readFileSync(cookiePath, "utf-8"));
-                            // Thử lại nhiều lần TRƯỚC KHI kết luận, và CHỈ xoá
-                            // cookie khi chắc chắn nó không còn hợp lệ.
-                            //
-                            // Vì sao phải sửa: bản cũ xoá file cookie ngay khi
-                            // đăng nhập lại thất bại vì BẤT KỲ lý do gì — kể cả
-                            // mạng chưa sẵn sàng. Mà container khởi động thì
-                            // mạng Docker dựng SAU tiến trình, nên cứ deploy là
-                            // dễ mất phiên Zalo cá nhân, phải quét QR lại. Đo
-                            // thật trên máy chủ 2026-07-30 07:54: container khởi
-                            // động đúng lúc luật NAT vừa dựng lại, log ghi "Tìm
-                            // thấy 0 file cookie" — cookie đã bị chính đoạn này
-                            // xoá ở lần khởi động trước, dù tài khoản vẫn còn
-                            // hiệu lực (thư mục messages/ vẫn nguyên từ 25/7).
-                            //
-                            // Mất mạng là chuyện TẠM THỜI; xoá cookie là mất
-                            // VĨNH VIỄN. Không được đổi cái tạm thời thành cái
-                            // vĩnh viễn.
-                            const LOI_MANG = /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|socket hang up|network|timeout|fetch failed/i;
-                            let thanhCong = false;
-                            let loiCuoi = null;
-                            let loiMang = false;
-                            for (let lan = 1; lan <= 3; lan++) {
-                                try {
-                                    await loginZaloAccount(null, cookie);
-                                    if (zaloAccounts.some(a => a.ownId === ownId)) {
-                                        thanhCong = true;
-                                        break;
-                                    }
-                                    loiCuoi = new Error("đăng nhập không báo lỗi nhưng tài khoản không vào danh sách");
-                                } catch (loginError) {
-                                    loiCuoi = loginError;
-                                    if (LOI_MANG.test(String(loginError && loginError.message))) {
-                                        loiMang = true;
-                                    }
-                                }
-                                if (lan < 3) {
-                                    console.log(`[Restore] ${ownId} — thử lại lần ${lan + 1} sau ${lan * 5}s (${loiCuoi && loiCuoi.message})`);
-                                    await new Promise(r => setTimeout(r, lan * 5000));
-                                }
-                            }
-                            if (thanhCong) {
-                                console.log(`[Restore] ${ownId} — OK`);
-                            } else if (loiMang) {
-                                // GIỮ cookie: lỗi mạng thì lần khởi động sau còn
-                                // cơ hội, xoá đi là bắt người dùng quét QR lại
-                                // chỉ vì mạng chậm mấy giây.
-                                console.error(`[Restore] ${ownId} — LỖI MẠNG, GIỮ cookie để thử lại lần sau: ${loiCuoi && loiCuoi.message}`);
-                            } else {
-                                console.log(`[Restore] ${ownId} — cookie không còn hợp lệ, đã xóa: ${loiCuoi && loiCuoi.message}`);
-                                try { fs.unlinkSync(cookiePath); } catch (e) { /* ignore */ }
-                            }
-                        } else {
-                            console.log(`Không tìm thấy file cookie: ${cookiePath}`);
-                        }
-                    } catch (error) {
-                        console.error(`Lỗi khi đọc/xử lý cookie cho tài khoản ${ownId}:`, error.message);
-                    }
-                }
+      const credentialPath = path.join(cookiesDir, file);
+      try {
+        const credential = JSON.parse(fs.readFileSync(credentialPath, 'utf8'));
+        const hasSavedProxy = Object.prototype.hasOwnProperty.call(credential, 'proxy');
+        const savedProxy = hasSavedProxy ? (credential.proxy || null) : null;
+        let lastError;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            await loginZaloAccount(savedProxy, credential, {
+              allowQrFallback: false,
+              autoSelectProxy: !hasSavedProxy,
+            });
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 3) {
+              await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
             }
-        })().catch(err => {
-            console.error('Lỗi khi xử lý đăng nhập từ cookie:', err);
-        });
-    } catch (dirError) {
-        console.error(`Lỗi khi đọc thư mục cookies:`, dirError);
+          }
+        }
+        if (lastError) {
+          // Khong tu xoa credential ke ca khi SDK bao cookie loi: tai khoan co
+          // the dang bi rate-limit/mat mang. Xoa phien la hanh dong cua user.
+          console.error(`[Restore] ${ownId} chua khoi phuc duoc; GIU credential: ${lastError.message}`);
+        } else {
+          console.log(`[Restore] ${ownId} — OK`);
+        }
+      } catch (error) {
+        console.error(`[Restore] Khong doc/khoi phuc duoc ${ownId}; giu file: ${error.message}`);
+      }
     }
-} else {
-    console.log(`Thư mục cookies không tồn tại: ${cookiesDir}. Đang tạo mới...`);
-    fs.mkdirSync(cookiesDir, { recursive: true });
+  }
+
+  const concurrency = Math.min(3, files.length);
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 }
+
+void restoreSavedAccounts().catch((error) => {
+  console.error('[Restore] Loi ngoai du kien:', error);
+});
 
 // In ra thông tin về biến môi trường dữ liệu
 console.log('DATA_DIRECTORY from process.env:', process.env.DATA_DIRECTORY);
