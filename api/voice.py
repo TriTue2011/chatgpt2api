@@ -162,9 +162,9 @@ def create_router() -> APIRouter:
         from services.voice import wyoming_server
 
         status = voice.status()
-        wyoming = dict(status.get("wyoming") or {})
+        wyoming = dict(status.get("wyoming_server") or {})
         wyoming["health"] = await wyoming_server.health(timeout=1.0)
-        status["wyoming"] = wyoming
+        status["wyoming_server"] = wyoming
         return {"ok": True, **status}
 
     @router.get("/api/voice/catalog")

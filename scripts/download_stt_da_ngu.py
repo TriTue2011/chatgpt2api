@@ -131,7 +131,11 @@ def _tai_sense() -> bool:
                 print(f"[LOI] gói {ten} thiếu model/tokens")
                 return False
             install_verified_files(
-                staging, SENSE_DEST, SHA256["sense"], extracted
+                staging,
+                SENSE_DEST,
+                SHA256["sense"],
+                extracted,
+                managed_patterns=["model*.onnx", "tokens.txt"],
             )
     finally:
         try:
@@ -195,7 +199,15 @@ def _tai(lang: str) -> bool:
                     (staging / base).write_bytes(src.read())
                     extracted.append(base)
                     print(f"[ok] {base}")
-            install_verified_files(staging, dest, SHA256[lang], extracted)
+            install_verified_files(
+                staging,
+                dest,
+                SHA256[lang],
+                extracted,
+                managed_patterns=[
+                    "encoder*.onnx", "decoder*.onnx", "joiner*.onnx", "tokens.txt",
+                ],
+            )
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

@@ -149,3 +149,62 @@ def test_goi_giai_nen_thieu_file_khong_de_len_ban_cu(tmp_path: Path) -> None:
             ["encoder.onnx", "tokens.txt"],
         )
     assert (destination / "encoder.onnx").read_bytes() == b"cu"
+
+
+def test_cai_model_don_file_cu_va_chi_cong_bo_marker_sau_cung(
+    tmp_path: Path,
+) -> None:
+    from scripts import model_download as guard
+
+    staging = tmp_path / "staging"
+    destination = tmp_path / "model"
+    staging.mkdir()
+    destination.mkdir()
+    (staging / "encoder.int8.onnx").write_bytes(b"moi")
+    (destination / "encoder.fp32.onnx").write_bytes(b"cu")
+
+    guard.install_verified_files(
+        staging,
+        destination,
+        "c" * 64,
+        ["encoder.int8.onnx"],
+        managed_patterns=["encoder*.onnx"],
+    )
+
+    assert not (destination / "encoder.fp32.onnx").exists()
+    assert not (destination / guard.MODEL_INSTALLING).exists()
+    assert guard.installation_verified(destination, "c" * 64)
+
+
+def test_runtime_tu_choi_bo_model_bi_ngat_giua_lan_cai(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from scripts import model_download as guard
+    from services.voice import config as vcfg
+
+    staging = tmp_path / "staging"
+    destination = tmp_path / "model"
+    staging.mkdir()
+    destination.mkdir()
+    (staging / "encoder.onnx").write_bytes(b"encoder-moi")
+    (staging / "tokens.txt").write_bytes(b"tokens-moi")
+
+    real_replace = guard.os.replace
+
+    def fail_second(source, target):
+        if Path(source).name == "tokens.txt":
+            raise OSError("mat dien")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(guard.os, "replace", fail_second)
+    with pytest.raises(OSError):
+        guard.install_verified_files(
+            staging,
+            destination,
+            "d" * 64,
+            ["encoder.onnx", "tokens.txt"],
+        )
+
+    assert (destination / guard.MODEL_INSTALLING).is_file()
+    assert not vcfg._stt_install_committed(destination)

@@ -523,7 +523,7 @@ class WyomingResourceGuardTests(unittest.TestCase):
             with mock.patch.object(voice_api, "require_admin"), \
                     mock.patch.object(
                         voice_service, "status",
-                        return_value={"wyoming": {"enabled": True}},
+                        return_value={"wyoming_server": {"enabled": True}},
                     ), \
                     mock.patch.object(
                         wy, "health", new=mock.AsyncMock(
@@ -533,13 +533,14 @@ class WyomingResourceGuardTests(unittest.TestCase):
                 return await endpoint(authorization=None)
 
         result = _run(go())
-        self.assertEqual(result["wyoming"]["health"], {
+        self.assertEqual(result["wyoming_server"]["health"], {
             "ok": True,
             "ports": {"10600": True},
         })
 
     def test_write_timeout_khong_cho_worker_tts_chay_het(self) -> None:
         release = threading.Event()
+        limiter = wy.ConnectionLimiter(maximum=1, local_reserve=0)
 
         def chunks():
             yield 24000, b"pcm"
@@ -551,14 +552,30 @@ class WyomingResourceGuardTests(unittest.TestCase):
 
         async def go() -> None:
             try:
-                with mock.patch.object(wy.engines, "stream_synthesize", return_value=chunks()), \
-                        mock.patch.object(wy, "_write_event", side_effect=fail_write):
+                with mock.patch.object(
+                        wy.engines, "stream_synthesize", side_effect=lambda *_a: chunks()
+                    ) as synthesize, \
+                        mock.patch.object(wy, "_write_event", side_effect=fail_write), \
+                        mock.patch.object(wy, "_TTS_JOBS", limiter, create=True):
                     await asyncio.wait_for(
                         wy._handle_synthesize(_DummyWriter(), "xin chao", "voice"),
                         timeout=0.5,
                     )
+                    # Worker đầu còn kẹt trong native synth nhưng vẫn chiếm job
+                    # budget. Request sau bị từ chối, không xếp thêm CPU work.
+                    self.assertEqual(limiter.active, 1)
+                    await asyncio.wait_for(
+                        wy._handle_synthesize(_DummyWriter(), "lan hai", "voice"),
+                        timeout=0.5,
+                    )
+                    self.assertEqual(synthesize.call_count, 1)
             finally:
                 release.set()
+                for _ in range(20):
+                    if limiter.active == 0:
+                        break
+                    await asyncio.sleep(0.01)
+                self.assertEqual(limiter.active, 0)
 
         _run(go())
 

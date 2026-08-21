@@ -48,6 +48,8 @@ STT_THEM_DIR = {
 #: Tải nhẹ hơn hẳn (228 MB thay cho 1,3 GB); trên đĩa thì xấp xỉ nhau (229 MB
 #: so với 295 MB) vì script cũ chỉ giữ lại bản int8.
 STT_SENSE_DIR = Path(DATA_DIR) / "stt-sense"
+_MODEL_MANIFEST = ".source.sha256"
+_MODEL_INSTALLING = ".installing"
 KOKORO_DIR = Path(DATA_DIR) / "kokoro"   # Kokoro-82M (TTS tiếng Anh)
 #: TTS cho phiên dịch đàm thoại — tải bằng scripts/download_tts_da_ngu.py.
 KOKORO_ZH_DIR = Path(DATA_DIR) / "kokoro-zh"     # Kokoro đa ngữ v1.1 (100 giọng Trung)
@@ -824,11 +826,37 @@ def stt_wyoming_url() -> str:
     return str(_sub("stt").get("wyoming_url") or "").strip()
 
 
+def _stt_install_committed(base: Path) -> bool:
+    """False khi downloader bị ngắt giữa transaction cài model.
+
+    Thư mục legacy chưa có manifest vẫn chạy; downloader mới tạo sentinel
+    trước khi thay file và chỉ xoá nó sau khi công bố manifest nguyên tử.
+    """
+    if (base / _MODEL_INSTALLING).exists():
+        return False
+    marker = base / _MODEL_MANIFEST
+    if not marker.exists():
+        return True
+    try:
+        payload = json.loads(marker.read_text(encoding="ascii"))
+        files = payload.get("files")
+        if not isinstance(files, dict) or not files:
+            return False
+        return all(
+            Path(name).name == name and (base / name).is_file()
+            for name in files
+        )
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def stt_model_dir() -> Path | None:
     """Thư mục model Zipformer (phải có ít nhất encoder*.onnx)."""
     d = str(_sub("stt").get("model_dir") or "").strip()
     base = Path(d) if d else STT_DIR
     if not base.is_dir():
+        return None
+    if not _stt_install_committed(base):
         return None
     if not list(base.glob("encoder*.onnx")):
         return None
@@ -883,6 +911,8 @@ def _stt_en_dir_raw() -> Path | None:
     d = str(_sub("stt").get("en_model_dir") or "").strip()
     base = Path(d) if d else STT_EN_DIR
     if not base.is_dir():
+        return None
+    if not _stt_install_committed(base):
         return None
     if not list(base.glob("encoder*.onnx")):
         return None
@@ -979,7 +1009,8 @@ def stt_them_model_dir(lang: str) -> Path | None:
     thì coi như tắt, bộ dò ngôn ngữ tự rơi về tiếng Việt.
     """
     base = STT_THEM_DIR.get(str(lang or "").lower())
-    if base is None or not base.is_dir() or not list(base.glob("encoder*.onnx")):
+    if (base is None or not base.is_dir() or not _stt_install_committed(base)
+            or not list(base.glob("encoder*.onnx"))):
         return None
     return base
 
@@ -999,6 +1030,8 @@ def stt_sense_model_dir() -> Path | None:
     """
     base = STT_SENSE_DIR
     if not base.is_dir():
+        return None
+    if not _stt_install_committed(base):
         return None
     return base if list(base.glob("model*.onnx")) else None
 

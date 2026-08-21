@@ -88,7 +88,15 @@ def main() -> int:
                             continue
                         (staging / base).write_bytes(src.read())
                         print(f"[ok] {base}")
-            install_verified_files(staging, DEST, SHA256, NEED)
+            install_verified_files(
+                staging,
+                DEST,
+                SHA256,
+                NEED,
+                managed_patterns=[
+                    "encoder*.onnx", "decoder*.onnx", "joiner*.onnx", "tokens.txt",
+                ],
+            )
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

@@ -16,6 +16,7 @@ class IntegrityError(RuntimeError):
 
 
 MODEL_MANIFEST = ".source.sha256"
+MODEL_INSTALLING = ".installing"
 
 
 def sha256_file(path: Path) -> str:
@@ -78,6 +79,8 @@ def install_verified_files(
     destination: Path,
     source_sha256: str,
     filenames: list[str],
+    *,
+    managed_patterns: list[str] | None = None,
 ) -> None:
     """Chỉ công bố bộ file đã đủ; marker chứa hash của từng file đã cài."""
     names = sorted({Path(name).name for name in filenames})
@@ -87,27 +90,42 @@ def install_verified_files(
     hashes = {name: sha256_file(staging / name) for name in names}
     destination.mkdir(parents=True, exist_ok=True)
     marker = destination / MODEL_MANIFEST
-    # Marker cũ không được sống qua một lần cài dở dang.
-    marker.unlink(missing_ok=True)
-    for name in names:
-        os.replace(staging / name, destination / name)
-
-    payload = json.dumps(
-        {"source_sha256": source_sha256, "files": hashes},
-        ensure_ascii=True,
-        sort_keys=True,
-    ).encode("ascii") + b"\n"
-    fd, raw_temp = tempfile.mkstemp(
-        prefix=f".{MODEL_MANIFEST}.", suffix=".tmp", dir=destination
-    )
+    installing = destination / MODEL_INSTALLING
+    # Sentinel có trước mọi thay đổi. Nếu process/máy chết giữa vòng replace,
+    # runtime sẽ không nạp bộ file pha trộn dù thư mục vẫn tồn tại.
+    installing.write_text(source_sha256 + "\n", encoding="ascii")
+    committed = False
     try:
-        with os.fdopen(fd, "wb") as out:
-            out.write(payload)
-            out.flush()
-            os.fsync(out.fileno())
-        os.replace(raw_temp, marker)
+        marker.unlink(missing_ok=True)
+        for name in names:
+            os.replace(staging / name, destination / name)
+
+        keep = set(names)
+        for pattern in managed_patterns or []:
+            for stale in destination.glob(pattern):
+                if stale.is_file() and stale.name not in keep:
+                    stale.unlink()
+
+        payload = json.dumps(
+            {"source_sha256": source_sha256, "files": hashes},
+            ensure_ascii=True,
+            sort_keys=True,
+        ).encode("ascii") + b"\n"
+        fd, raw_temp = tempfile.mkstemp(
+            prefix=f".{MODEL_MANIFEST}.", suffix=".tmp", dir=destination
+        )
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(payload)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(raw_temp, marker)
+        finally:
+            Path(raw_temp).unlink(missing_ok=True)
+        committed = True
     finally:
-        Path(raw_temp).unlink(missing_ok=True)
+        if committed:
+            installing.unlink(missing_ok=True)
 
 
 def installation_verified(

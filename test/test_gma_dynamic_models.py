@@ -76,6 +76,20 @@ def test_guest_warm_khong_chan_model_cua_account_con_lanh(monkeypatch) -> None:
     assert gma._resolve_model("gma/pro") == "gemini-3-pro"
 
 
+def test_auto_roi_ve_mac_dinh_khi_model_cau_hinh_guest_khong_dung_duoc(
+    monkeypatch,
+) -> None:
+    from api import gemini_web as gma
+    from services import config as config_module
+
+    guest_pro = _model("gemini-pro", "b2", available=False)
+    monkeypatch.setattr(gma, "_clients", {"guest": _Client([guest_pro])})
+    monkeypatch.setattr(config_module.config, "data", {})
+    monkeypatch.setattr(gma, "_cfg", lambda: {"model": "gemini-pro"})
+
+    assert gma._resolve_model("gma/auto") is None
+
+
 def test_account_guest_khong_duoc_dung_model_bi_danh_dau_unavailable() -> None:
     from api import gemini_web as gma
 

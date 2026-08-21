@@ -116,6 +116,7 @@ class ByteBudget:
 
 _CONNECTIONS = ConnectionLimiter(vcfg.wyoming_max_connections())
 _AUDIO_BUDGET = ByteBudget(vcfg.wyoming_max_stt_buffer_bytes())
+_TTS_JOBS = ConnectionLimiter(vcfg.wyoming_max_connections(), local_reserve=0)
 
 
 # ── Khung giao thức ──────────────────────────────────────────────────────────
@@ -716,14 +717,37 @@ def _put_from_worker(item: Any, queue: asyncio.Queue,
 def _produce(text: str, voice: str, queue: asyncio.Queue,
              loop: asyncio.AbstractEventLoop, stop: threading.Event) -> None:
     """Worker thread: kéo (rate, pcm16) từ generator blocking, đẩy vào queue."""
+    stream = None
     try:
-        for item in engines.stream_synthesize(text, voice):
+        if stop.is_set():
+            return
+        stream = iter(engines.stream_synthesize(text, voice))
+        while not stop.is_set():
+            try:
+                item = next(stream)
+            except StopIteration:
+                break
             if not _put_from_worker(item, queue, loop, stop):
                 return
     except Exception as exc:
         _put_from_worker(exc, queue, loop, stop)
     finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
         _put_from_worker(_DONE, queue, loop, stop)
+
+
+def _produce_with_lease(text: str, voice: str, queue: asyncio.Queue,
+                        loop: asyncio.AbstractEventLoop, stop: threading.Event,
+                        jobs: ConnectionLimiter) -> None:
+    try:
+        _produce(text, voice, queue, loop, stop)
+    finally:
+        jobs.release()
 
 
 async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
@@ -731,10 +755,27 @@ async def _handle_synthesize(writer: asyncio.StreamWriter, text: str,
     text = (text or "").strip()
     voice = (voice or "").strip()
     logger.info("wyoming: synthesize %d chars, voice=%s", len(text), voice or "(mặc định)")
+    jobs = _TTS_JOBS
+    if not jobs.try_acquire():
+        logger.warning("wyoming: het ngan sach %d TTS job — bo request", jobs.maximum)
+        try:
+            await _write_event(writer, "audio-start",
+                               {"rate": 48000, "width": 2, "channels": 1})
+            await _write_event(writer, "audio-stop")
+            await _write_event(writer, "synthesize-stopped")
+        except Exception:
+            pass
+        return
     queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAX)
     loop = asyncio.get_running_loop()
     stop = threading.Event()
-    producer = loop.run_in_executor(None, _produce, text, voice, queue, loop, stop)
+    try:
+        producer = loop.run_in_executor(
+            None, _produce_with_lease, text, voice, queue, loop, stop, jobs
+        )
+    except Exception:
+        jobs.release()
+        raise
 
     started = False
     connection_ok = True
@@ -1071,7 +1112,7 @@ def start() -> None:
 
     No-op nếu ``voice.wyoming_server.enabled = false``.
     """
-    global _CONNECTIONS, _AUDIO_BUDGET
+    global _CONNECTIONS, _AUDIO_BUDGET, _TTS_JOBS
     if not vcfg.wyoming_enabled():
         logger.info("voice: Wyoming server tat (voice.wyoming_server.enabled=false)")
         return
@@ -1079,6 +1120,7 @@ def start() -> None:
     # phải chia sẻ cùng giới hạn của toàn tiến trình.
     _CONNECTIONS = ConnectionLimiter(vcfg.wyoming_max_connections())
     _AUDIO_BUDGET = ByteBudget(vcfg.wyoming_max_stt_buffer_bytes())
+    _TTS_JOBS = ConnectionLimiter(vcfg.wyoming_max_connections(), local_reserve=0)
     # Quy chuẩn cổng (chốt 14/08): 106xx = TTS, 107xx = STT; xx = 00 việt ·
     # 01 anh · 02 nhật · 03 trung · 04 hàn. Mỗi cổng MỘT vai MỘT tiếng —
     # HA thêm từng integration, pipeline Assist không lẫn giọng/tiếng.

@@ -761,7 +761,9 @@ def _resolve_model(model: str, prompt: str = ""):
     if da_kham_pha is not None:
         # Guest biết model nhưng không được dùng. Giữ tên canonical để vòng
         # account phía sau còn thử tài khoản đăng nhập có quyền dùng model đó.
-        return da_kham_pha
+        # Riêng auto/config mặc định phải để Gemini tự chọn nếu pool hiện tại
+        # không account nào dùng được model cấu hình.
+        return da_kham_pha if nguoi_dung_chi_dinh else None
     if co_registry and nguoi_dung_chi_dinh:
         # Registry đang warm có thể chỉ là một phần pool (thường guest warm
         # trước account đăng nhập). Hoãn 400 tới sau khi mọi credential đều
@@ -1862,5 +1864,4 @@ def handle_gemini_web_api_image_gen(prompt: str, n: int = 1, response_format: st
     if last_exc:
         raise last_exc
     raise RuntimeError("No available accounts to fulfill image request")
-
 
