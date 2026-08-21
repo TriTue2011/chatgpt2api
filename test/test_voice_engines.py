@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import io
 import os
+import sys
+import tempfile
+import types
 import unittest
 import wave
+from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("CHATGPT2API_AUTH_KEY", "test-auth")
@@ -80,6 +84,48 @@ class SttLanguageTests(unittest.TestCase):
             out = engines.transcribe(_wav16(), lang="en")
         self.assertEqual(out, "hello")
         self.assertEqual(seen, ["en"])
+
+
+class SttDecodingMethodTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        engines._recognizers.clear()
+
+    def test_mac_dinh_vi_dung_modified_beam_search(self) -> None:
+        with mock.patch.object(vcfg, "_sub", return_value={}):
+            self.assertEqual(vcfg.stt_decoding_method("vi"), "modified_beam_search")
+            self.assertEqual(vcfg.stt_decoding_method("en"), "greedy_search")
+
+    def test_config_co_the_quay_lai_greedy(self) -> None:
+        with mock.patch.object(
+            vcfg, "_sub", return_value={"decoding_method": "greedy_search"}
+        ):
+            self.assertEqual(vcfg.stt_decoding_method("vi"), "greedy_search")
+
+    def test_recognizer_truyen_phuong_phap_da_cau_hinh(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            model_dir = Path(raw)
+            for name in ("encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"):
+                (model_dir / name).write_bytes(b"x")
+
+            seen: dict = {}
+
+            class _OfflineRecognizer:
+                @staticmethod
+                def from_transducer(**kwargs):
+                    seen.update(kwargs)
+                    return object()
+
+            fake = types.SimpleNamespace(OfflineRecognizer=_OfflineRecognizer)
+            with mock.patch.dict(sys.modules, {"sherpa_onnx": fake}), \
+                    mock.patch.object(vcfg, "stt_sense_model_dir", return_value=None), \
+                    mock.patch.object(vcfg, "stt_model_dir", return_value=model_dir), \
+                    mock.patch.object(vcfg, "stt_threads", return_value=2), \
+                    mock.patch.object(
+                        vcfg, "stt_decoding_method", return_value="modified_beam_search"
+                    ):
+                engines._get_recognizer("vi")
+
+        self.assertEqual(seen["decoding_method"], "modified_beam_search")
 
 
 class SynthesizeRoutingTests(unittest.TestCase):

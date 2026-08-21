@@ -1026,6 +1026,20 @@ def stt_threads() -> int:
         return max(1, auto_tts_threads())
 
 
+def stt_decoding_method(lang: str = "vi") -> str:
+    """Cách giải mã transducer Sherpa-ONNX.
+
+    Zipformer tiếng Việt mặc định dùng ``modified_beam_search`` theo
+    wyoming-vietnamese; model khác giữ greedy để không đổi chất lượng
+    chưa đo. Có thể ép cả hai qua ``voice.stt.decoding_method``.
+    """
+    raw = str(_sub("stt").get("decoding_method") or "").strip().lower()
+    allowed = {"greedy_search", "modified_beam_search"}
+    if raw in allowed:
+        return raw
+    return "modified_beam_search" if str(lang).lower() == "vi" else "greedy_search"
+
+
 def stt_gpu_url() -> str:
     """Máy nghe GPU (faster-whisper) cho PHỤ ĐỀ — ví dụ http://172.16.10.220:5002.
 
@@ -1434,6 +1448,7 @@ def status() -> dict[str, Any]:
             "en_enabled": stt_en_enabled(),
             "en_model_ready": stt_en_model_dir() is not None,
             "language": stt_language(),
+            "decoding_method": stt_decoding_method(stt_language()),
             "sherpa_installed": has_local_stt(),
             "wyoming_url": stt_wyoming_url(),
             # Model nghe theo tiếng (zh/ja/ko) — có trên volume = dùng được

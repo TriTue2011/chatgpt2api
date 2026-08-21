@@ -1143,7 +1143,8 @@ def _get_recognizer(lang: str = "vi"):
         if model_dir is None:
             raise VoiceError("Chưa tải model STT (chạy scripts/download_stt_model.py).")
         model_type = ""
-    key = f"{model_dir}|{vcfg.stt_threads()}"
+    decoding_method = vcfg.stt_decoding_method(lang)
+    key = f"{model_dir}|{vcfg.stt_threads()}|{decoding_method}"
     with _stt_lock:
         cached = _recognizers.get(lang)
         if cached is not None and cached[0] == key:
@@ -1176,7 +1177,7 @@ def _get_recognizer(lang: str = "vi"):
             num_threads=vcfg.stt_threads(),
             sample_rate=16000,
             feature_dim=80,
-            decoding_method="greedy_search",
+            decoding_method=decoding_method,
             **extra,
         )
         _recognizers[lang] = (key, rec)
