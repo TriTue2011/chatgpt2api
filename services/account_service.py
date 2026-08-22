@@ -1759,6 +1759,20 @@ class AccountService:
         em_mat = str(bi_nuot.get("email") or "").strip()
         em_giu = str(giu_lai.get("email") or "").strip()
         cung_danh_tinh = em_mat.lower() == em_giu.lower()
+        # Dòng bị bỏ có gì đáng tiếc không? KHÔNG email (không truy được nó là
+        # tài khoản nào), KHÔNG credential (không đăng nhập lại được), và đã
+        # `error`/`disabled` từ trước — bỏ nó đi thì chẳng mất gì cả.
+        #
+        # Vì sao phân biệt: đo trên máy chủ 22/08, đúng cảnh này bắn cho admin
+        # một cảnh báo "⚠️ Mất một dòng tài khoản" trong khi pool sau đó vẫn đủ
+        # 14 dòng active — hệ thống đã làm ĐÚNG (bỏ dòng rác, giữ tài khoản có
+        # tên) mà lại báo như vừa mất dữ liệu. Báo động sai kiểu này dạy người
+        # ta tắt kênh, rồi lần mất thật sẽ chìm theo.
+        khong_mat_gi = (
+            not em_mat
+            and not str(bi_nuot.get("refresh_token") or "").strip()
+            and str(bi_nuot.get("status") or "") in {"error", "disabled"}
+        )
         chi_tiet = {
             "token": anonymize_token(token),
             "mat_email": em_mat[:80] or "(không có email)",
@@ -1767,6 +1781,7 @@ class AccountService:
             "giu_email": em_giu[:80] or "(không có email)",
             "giu_provider": account_group(giu_lai) or "?",
             "cung_danh_tinh": cung_danh_tinh,
+            "khong_mat_gi": khong_mat_gi,
         }
         if giu_credential:
             nghi_tu = str(giu_lai.get("codex_limited_at") or "") or "không rõ"
@@ -1795,10 +1810,11 @@ class AccountService:
         log_service.add(
             LOG_TYPE_ACCOUNT,
             ("Gộp dòng trùng token" if cung_danh_tinh
+             else "Bỏ dòng rỗng trùng token" if khong_mat_gi
              else "Mất một dòng tài khoản do trùng access_token"),
             chi_tiet,
         )
-        if cung_danh_tinh:
+        if cung_danh_tinh or khong_mat_gi:
             return
         logger.warning({"event": "account_row_overwritten", **chi_tiet})
         try:

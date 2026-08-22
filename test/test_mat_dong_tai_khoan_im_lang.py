@@ -51,11 +51,22 @@ def _bat_nhat_ky(monkeypatch, mod):
 
 
 @pytest.mark.pure
-def test_dong_khac_danh_tinh_bi_de_thi_phai_bao_admin(monkeypatch, tmp_path):
-    """Đúng cảnh 01:01: dòng free vô danh bị tài khoản Codex đè mất."""
+def test_dong_rong_bi_de_thi_ghi_vet_nhung_khong_bao_dong(monkeypatch, tmp_path):
+    """Đúng cảnh 01:01: dòng free vô danh bị tài khoản Codex đè.
+
+    Sự cố gốc than phiền là tài khoản "biến mất KHÔNG ĐỂ LẠI VẾT NÀO" — thứ
+    thiếu là dấu vết, không phải tiếng chuông. Dòng bị bỏ ở đây rỗng theo cả ba
+    nghĩa: không email nên không truy được nó là ai, không credential nên không
+    đăng nhập lại được, và đã `error` từ trước. Bỏ nó đi thì KHÔNG mất gì.
+
+    Đo trên máy chủ 22/08/2026: đúng cảnh này bắn cho admin "⚠️ Mất một dòng
+    tài khoản" trong khi pool sau đó vẫn đủ 14 dòng active — hệ thống làm đúng
+    mà báo như vừa mất dữ liệu. Báo động sai dạy người ta tắt kênh, rồi lần mất
+    THẬT (xem test dưới, hai email khác nhau) sẽ chìm theo.
+    """
     mod, sv = _pool(monkeypatch, tmp_path)
     da_goi = _bat_thong_bao(monkeypatch)
-    _bat_nhat_ky(monkeypatch, mod)
+    ghi = _bat_nhat_ky(monkeypatch, mod)
 
     sv._accounts["tok_free"] = {"access_token": "tok_free", "email": "", "status": "error"}
     sv._accounts["tok_codex"] = {"access_token": "tok_codex",
@@ -67,8 +78,9 @@ def test_dong_khac_danh_tinh_bi_de_thi_phai_bao_admin(monkeypatch, tmp_path):
 
     assert "tok_codex" not in sv._accounts
     assert sv._accounts["tok_free"]["email"] == "nguyenvanviet210290@gmail.com"
-    assert da_goi, "dòng bị đè mất mà không báo admin — đúng lỗi đã xảy ra thật"
-    assert "trùng access_token" in da_goi[0]
+    assert not da_goi, "dòng rỗng bị bỏ mà báo động thì admin sẽ tắt kênh"
+    assert any("Bỏ dòng rỗng trùng token" in str(g) for g in ghi), \
+        "vẫn phải để lại VẾT — đó mới là thứ sự cố gốc thiếu"
 
 
 @pytest.mark.pure
@@ -119,3 +131,44 @@ def test_doi_khoa_binh_thuong_khong_bao_gi(monkeypatch, tmp_path):
     assert "moi" in sv._accounts and "cu" not in sv._accounts
     assert not da_goi
     assert not any("trùng access_token" in str(g) for g in ghi)
+
+
+@pytest.mark.pure
+def test_khong_email_nhung_co_credential_thi_van_phai_bao(monkeypatch, tmp_path):
+    """Ranh giới của luật "bỏ dòng rỗng": có credential là CÓ mất.
+
+    `refresh_token` là thứ đăng nhập lại được — mất nó là mất quyền vào tài
+    khoản, dù dòng đó chưa kịp tra ra email. Nếu ai đó sau này nới điều kiện
+    "rỗng" thành "chỉ cần thiếu email", ca này sẽ đỏ.
+    """
+    mod, sv = _pool(monkeypatch, tmp_path)
+    da_goi = _bat_thong_bao(monkeypatch)
+    _bat_nhat_ky(monkeypatch, mod)
+
+    # Cả hai đều mang danh tính Codex → `_phan_xu_trung_token` giữ nếp cũ (dòng
+    # đang vào thắng), nên dòng cư trú bị bỏ dù nó có credential.
+    sv._accounts["tok_cu"] = {"access_token": "tok_cu", "type": "codex", "email": "",
+                              "status": "error", "refresh_token": "rt-con-dung-duoc"}
+    sv._accounts["tok_moi"] = {"access_token": "tok_moi", "type": "codex",
+                               "email": "ai_do@gmail.com", "status": "active",
+                               "refresh_token": "rt-khac"}
+
+    sv.update_account("tok_moi", {"access_token": "tok_cu"})
+
+    assert da_goi, "mất một credential OAuth mà im lặng"
+    assert "trùng access_token" in da_goi[0]
+
+
+@pytest.mark.pure
+def test_dong_rong_nhung_dang_active_thi_van_bao(monkeypatch, tmp_path):
+    """`active` nghĩa là pool vẫn đang giao việc cho nó — bỏ là mất năng lực thật."""
+    mod, sv = _pool(monkeypatch, tmp_path)
+    da_goi = _bat_thong_bao(monkeypatch)
+    _bat_nhat_ky(monkeypatch, mod)
+
+    sv._accounts["t1"] = {"access_token": "t1", "email": "", "status": "active"}
+    sv._accounts["t2"] = {"access_token": "t2", "email": "co_ten@gmail.com",
+                          "status": "active"}
+    sv.update_account("t2", {"access_token": "t1"})
+
+    assert da_goi, "dòng vô danh nhưng đang active vẫn là năng lực đang dùng"
