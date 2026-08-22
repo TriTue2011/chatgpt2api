@@ -23,6 +23,15 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 _AGENT_SRC = _ROOT / "deploy" / "device_agent" / "c2a_agent.py"
 
+# Máy này có bộ quản lý service để `op_services` hỏi không. Windows luôn có
+# `sc`, macOS luôn có `launchctl`; Linux thì phải thật sự boot bằng systemd —
+# container thường KHÔNG, và đó là nơi phần mềm này chạy thật.
+_CO_BO_QUAN_LY_SERVICE = (
+    sys.platform.startswith("win")
+    or sys.platform == "darwin"
+    or Path("/run/systemd/system").exists()
+)
+
 pytestmark = pytest.mark.pure
 
 
@@ -201,10 +210,35 @@ class TestTraCuuKhongCanQuyen:
         if r.get("locked") is None or r.get("display_on") is None:
             assert str(r.get("note") or "").strip(), "bỏ trống mà không nói lý do"
 
+    @pytest.mark.skipif(not _CO_BO_QUAN_LY_SERVICE,
+                        reason="máy không có bộ quản lý service để hỏi")
     def test_services(self, ag, ro):
+        """Chỉ chạy ở nơi CÓ bộ quản lý service.
+
+        `op_services` gọi `systemctl` (Linux) / `sc` (Windows) / `launchctl`
+        (macOS) thật. Không có cái nào thì nó trả `ok: False` kèm đúng lý do —
+        hành vi ĐÚNG, không phải lỗi. Ca này khẳng định `ok is True` vô điều
+        kiện nên nó ngầm giả định môi trường, và đỏ oan ở nơi không có systemd.
+
+        Đo 22/08/2026: chạy trong container (không systemd) thì đỏ với
+        "System has not been booted with systemd", trong khi CI runner có
+        systemd nên xanh — cùng một mã nguồn, hai kết quả.
+        """
         r = ag.handle(ro, "services", {})
         assert r.get("ok") is True
         assert isinstance(r.get("output"), str)
+
+    def test_khong_co_bo_quan_ly_service_thi_bao_ly_do(self, ag, ro):
+        """Không hỏi được thì phải NÓI vì sao, không trả rỗng như thể không có service.
+
+        Cùng tinh thần `op_screen`: "trả về đúng những gì đo được và ghi rõ cái
+        nào là suy đoán, thay vì đoán bừa một câu trả lời gọn gàng".
+        """
+        r = ag.handle(ro, "services", {})
+        if r.get("ok") is False:
+            assert str(r.get("error") or "").strip(), "hỏng mà không nói lý do"
+        else:
+            assert isinstance(r.get("output"), str)
 
 
 class TestAllowlistFileKhongBiAnhHuong:
