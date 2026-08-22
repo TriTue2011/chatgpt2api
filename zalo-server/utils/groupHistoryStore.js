@@ -56,8 +56,24 @@ function messageKey(message) {
 
 function parseFile(file) {
   if (!fs.existsSync(file)) return [];
+  const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
+  const size = fileSize(file);
+  const readBytes = Math.min(size, maxBytes);
+  if (readBytes <= 0) return [];
+  const descriptor = fs.openSync(file, 'r');
+  const buffer = Buffer.alloc(readBytes);
+  try {
+    fs.readSync(descriptor, buffer, 0, readBytes, size - readBytes);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  let text = buffer.toString('utf8');
+  if (size > readBytes) {
+    const firstNewline = text.indexOf('\n');
+    text = firstNewline === -1 ? '' : text.slice(firstNewline + 1);
+  }
   const messages = [];
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try { messages.push(JSON.parse(line)); } catch { /* bo record dang do */ }
   }
@@ -203,7 +219,11 @@ export function storeGroupMessage(ownId, message) {
 export function getCachedGroupHistory(ownId, groupId, count = 50) {
   const safeCount = Math.min(Math.max(Number.parseInt(count, 10) || 50, 1), 200);
   const file = historyFile(ownId, groupId);
-  flush(file);
+  try {
+    flush(file);
+  } catch (error) {
+    console.warn(`[History] Khong flush duoc ${file}; tra cache cu: ${error.message}`);
+  }
   let parsedMessages = deduplicate(parseFile(file));
   const maxMessages = positiveEnv('GROUP_HISTORY_MAX_MESSAGES', DEFAULT_MAX_MESSAGES);
   const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);

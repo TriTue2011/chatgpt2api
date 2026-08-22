@@ -36,6 +36,7 @@ import secrets
 import threading
 import time
 import urllib.request
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +109,17 @@ def _server_url() -> str:
             or _DEFAULT_SERVER_URL)
 
 
+def _is_embedded_server(server_url: str) -> bool:
+    """Nhận diện các alias loopback của Zalo server nhúng mặc định."""
+    try:
+        parsed = urlparse(server_url)
+        return parsed.scheme == "http" and parsed.port == 3001 and parsed.hostname in {
+            "127.0.0.1", "localhost", "::1",
+        }
+    except ValueError:
+        return False
+
+
 def _credentials() -> tuple[str, str]:
     # Ưu tiên env dùng CHUNG với zalo-server (ZALO_SERVER_ADMIN_USERNAME/PASSWORD):
     # đặt env một chỗ thì cả server seed lẫn bot login đều khớp. Với server
@@ -121,7 +133,7 @@ def _credentials() -> tuple[str, str]:
     managed_user = env_u or "admin"
     configured_user = str(c.get("zalo_personal_username") or "").strip()
     configured_pw = str(c.get("zalo_personal_password") or "").strip()
-    embedded = _server_url() == _DEFAULT_SERVER_URL
+    embedded = _is_embedded_server(_server_url())
 
     # Credential la mot CAP: khong tron username tu nguon A voi password nguon
     # B. Co env password thi cap env quan ly server. Server ngoai khong co env

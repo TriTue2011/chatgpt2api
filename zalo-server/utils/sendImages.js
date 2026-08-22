@@ -33,8 +33,15 @@ const EXT_ALBUM = new Set(['jpg', 'jpeg', 'png', 'webp']);
 // của Zalo — chỉ để không bao giờ bắn một lô khổng lồ khi thiếu thông tin.
 const MAX_FILE_DU_PHONG = 6;
 const NGHI_MAC_DINH_MS = 1500;
+const DEFAULT_MAX_IMAGE_BATCH_ITEMS = 24;
+const DEFAULT_MAX_IMAGE_BATCH_BYTES = 100 * 1024 * 1024;
 
 const extCuaFile = (p) => path.extname(p).slice(1).toLowerCase();
+
+function positiveEnv(name, fallback) {
+    const value = Number.parseInt(process.env[name] || '', 10);
+    return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
 
 /** Giới hạn THẬT từ phiên Zalo. Đọc mỗi lần gửi vì nó thuộc phiên, không phải
  *  hằng số biên dịch — đổi tài khoản là đổi giá trị. */
@@ -103,12 +110,26 @@ export async function soatDanhSachAnh(duongDan, gioiHan) {
  * công. Dọn sau lời gọi là rò tệp tạm ở mọi lần người dùng gửi sai định dạng.
  */
 export async function taiVeVaGuiNhieuAnh(tep, api, imageUrls, threadId, threadType, tuyChon = {}) {
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+        throw new Error('Danh sách ảnh trống');
+    }
+    const maxItems = positiveEnv('IMAGE_BATCH_MAX_ITEMS', DEFAULT_MAX_IMAGE_BATCH_ITEMS);
+    if (imageUrls.length > maxItems) {
+        throw new Error(`Qua nhieu anh trong mot request (toi da ${maxItems})`);
+    }
+    const maxBytes = positiveEnv('IMAGE_BATCH_MAX_BYTES', DEFAULT_MAX_IMAGE_BATCH_BYTES);
     const duongDan = [];
+    let totalBytes = 0;
     try {
         for (const url of imageUrls) {
             const p = await tep.saveImage(url);
             if (!p) throw new Error('Không thể lưu một hoặc nhiều hình ảnh');
             duongDan.push(p);
+            const stat = await fs.stat(p);
+            totalBytes += stat.size;
+            if (totalBytes > maxBytes) {
+                throw new Error(`Tong dung luong anh vuot qua gioi han ${maxBytes} bytes`);
+            }
         }
         return await guiNhieuAnh(api, duongDan, threadId, threadType, tuyChon);
     } finally {

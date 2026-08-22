@@ -8,6 +8,7 @@ import { broadcastMessage } from './services/websocketHub.js';
 import { enrichMessageEvent } from './utils/zaloContract.js';
 import { reconnectDelay } from './services/reconnectPolicy.js';
 import { storeGroupMessage } from './utils/groupHistoryStore.js';
+import { withTimeout } from './utils/timeout.js';
 
 let reconnectLogin = null;
 let accountRegistry = [];
@@ -22,6 +23,11 @@ export function configureReconnectDependencies({ login, accounts }) {
 
 export const reloginAttempts = new Map();
 const reconnectStates = new Map();
+
+function reconnectTimeoutMs() {
+    const timeout = Number.parseInt(process.env.RECONNECT_LOGIN_TIMEOUT_MS || '60000', 10);
+    return Number.isSafeInteger(timeout) && timeout > 0 ? timeout : 60000;
+}
 
 function clearReconnectState(ownId) {
     const state = reconnectStates.get(ownId);
@@ -76,10 +82,14 @@ async function attemptRelogin(ownId) {
         const savedProxy = hasSavedProxy ? (credential.proxy || null) : (account?.proxy || null);
 
         if (!reconnectLogin) throw new Error('Reconnect chua duoc khoi tao');
-        await reconnectLogin(savedProxy, credential, {
-            allowQrFallback: false,
-            autoSelectProxy: !(hasSavedProxy || hasAccountProxy),
-        });
+        await withTimeout(
+            reconnectLogin(savedProxy, credential, {
+                allowQrFallback: false,
+                autoSelectProxy: !(hasSavedProxy || hasAccountProxy),
+            }),
+            reconnectTimeoutMs(),
+            'Reconnect login timeout',
+        );
         clearReconnectState(ownId);
     } catch (error) {
         console.error(`[Reconnect] Lan ${state.attempt + 1} loi cho ${ownId}: ${error.message}`);

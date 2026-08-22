@@ -42,6 +42,25 @@ def test_server_nhung_uu_tien_file_chung_hon_config_cu(tmp_path: Path) -> None:
         assert zp._credentials() == ("admin", "mat-khau-moi")
 
 
+def test_localhost_cung_la_server_nhung_va_doc_mat_khau_chung(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".admin_password").write_text("mat-khau-moi", encoding="utf-8")
+    env = {
+        "DATA_DIRECTORY": str(tmp_path),
+        "ZALO_SERVER_ADMIN_USERNAME": "admin",
+    }
+    with patch.dict("os.environ", env, clear=True), patch.object(
+        zp,
+        "_cfg",
+        return_value={
+            "zalo_personal_server_url": "http://localhost:3001/",
+            "zalo_personal_password": "mat-khau-cu",
+        },
+    ):
+        assert zp._credentials() == ("admin", "mat-khau-moi")
+
+
 def test_server_ngoai_van_uu_tien_password_cau_hinh(tmp_path: Path) -> None:
     (tmp_path / ".admin_password").write_text("chi-cua-server-nhung", encoding="utf-8")
     env = {

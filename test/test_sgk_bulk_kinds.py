@@ -31,7 +31,14 @@ pytestmark = pytest.mark.pure
 _SRC = _ROOT / "services" / "agent" / "sgk_bulk.py"
 
 
-def _load(tmp: Path):
+def _load(tmp: Path, monkeypatch: pytest.MonkeyPatch):
+    """Nạp sgk_bulk trên một bộ module giả, chặn chuỗi import nặng.
+
+    Mọi thay đổi `sys.modules` đi qua `monkeypatch` để pytest trả lại
+    nguyên trạng sau mỗi test. Gán trần thì module giả `services.config`
+    còn nằm đó suốt phiên, và MỌI file test chạy sau file này đều chết ở
+    bước import.
+    """
     pkg = types.ModuleType("services")
     pkg.__path__ = [str(_ROOT / "services")]
     ag = types.ModuleType("services.agent")
@@ -46,7 +53,7 @@ def _load(tmp: Path):
     tw.GRADE_SUBJECTS = {g: ("toan",) for g in range(1, 13)}
     ng = types.ModuleType("services.net_guard")
     ng.safe_fetch = lambda *a, **k: b""
-    sys.modules["services.net_guard"] = ng
+    monkeypatch.setitem(sys.modules, "services.net_guard", ng)
     # TestTachKho nạp sgk_taphuan thật; nó soi chiếu sgk_fetch.KIND_COLLECTION.
     sf = types.ModuleType("services.agent.sgk_fetch")
     sf.SUBJECTS = {}
@@ -58,7 +65,7 @@ def _load(tmp: Path):
         "tap_huan": "kb_giao_duc_tailieu", "slide": "kb_giao_duc_slide",
         "other": "kb_giao_duc_tailieu",
     }
-    sys.modules["services.agent.sgk_fetch"] = sf
+    monkeypatch.setitem(sys.modules, "services.agent.sgk_fetch", sf)
     tp = types.ModuleType("services.agent.sgk_taphuan")
     tp.DOC_KIND_LABEL = {
         "sgk": "SGK",
@@ -83,17 +90,17 @@ def _load(tmp: Path):
                       ("services.config", cfg),
                       ("services.agent.teacher_workspace", tw),
                       ("services.agent.sgk_taphuan", tp)):
-        sys.modules[name] = mod
+        monkeypatch.setitem(sys.modules, name, mod)
     spec = importlib.util.spec_from_file_location("_sgk_bulk_test", _SRC)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
+    monkeypatch.setitem(sys.modules, spec.name, mod)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     return mod
 
 
 @pytest.fixture()
-def sb(tmp_path: Path):
-    return _load(tmp_path)
+def sb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    return _load(tmp_path, monkeypatch)
 
 
 BOOK = {"grade": 4, "slug": "toan-4-tap-mot-939781966", "volume": "tập một",
@@ -196,14 +203,14 @@ class TestKhoaNoiLai:
 
 
 class TestTachKho:
-    def test_moi_loai_mot_kho(self, sb):
+    def test_moi_loai_mot_kho(self, sb, monkeypatch: pytest.MonkeyPatch):
         """Đi qua sgk_taphuan thật, không phải ống rỗng — đây là bất biến quan
         trọng nhất của việc thêm SGV/VBT."""
         import importlib.util as iu
         spec = iu.spec_from_file_location(
             "_tp_real", _ROOT / "services" / "agent" / "sgk_taphuan.py")
         real = iu.module_from_spec(spec)
-        sys.modules["_tp_real"] = real
+        monkeypatch.setitem(sys.modules, "_tp_real", real)
         spec.loader.exec_module(real)  # type: ignore[union-attr]
         got = {k: real.COLLECTION_FOR_SET("", k)
                for k in ("sgk", "sgv", "vbt", "tap_huan")}

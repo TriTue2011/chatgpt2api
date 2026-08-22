@@ -92,4 +92,42 @@ test('queue history dang cho duoc gioi han va bo record cu nhat', () => {
   delete process.env.GROUP_HISTORY_PENDING_MAX;
 });
 
+test('fallback history van tra cache cu khi append bi ENOSPC', () => {
+  const originalAppend = fs.appendFileSync;
+  fs.appendFileSync = () => {
+    const error = new Error('disk full');
+    error.code = 'ENOSPC';
+    throw error;
+  };
+  try {
+    assert.equal(storeGroupMessage('account-full', {
+      threadId: 'group-full', type: 1,
+      data: { msgId: '1', uidFrom: 'sender', content: 'queued' },
+    }), true);
+    const result = getCachedGroupHistory('account-full', 'group-full', 50);
+    assert.deepEqual(result.groupMsgs, []);
+  } finally {
+    fs.appendFileSync = originalAppend;
+  }
+});
+
+test('fallback history chi doc phan duoi cua file legacy qua lon', () => {
+  process.env.GROUP_HISTORY_MAX_FILE_BYTES = '256';
+  const file = path.join(directory, 'history', 'groups', 'account-large', 'group-large.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ data: { msgId: 'old', uidFrom: 'u', content: 'x'.repeat(4096) } })}\n${JSON.stringify({ data: { msgId: 'new', uidFrom: 'u', content: 'new' } })}\n`);
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = (target, ...rest) => {
+    if (target === file) throw new Error('khong duoc doc toan bo file legacy');
+    return originalRead(target, ...rest);
+  };
+  try {
+    const result = getCachedGroupHistory('account-large', 'group-large', 50);
+    assert.equal(result.groupMsgs.at(-1)?.data.msgId, 'new');
+  } finally {
+    fs.readFileSync = originalRead;
+    delete process.env.GROUP_HISTORY_MAX_FILE_BYTES;
+  }
+});
+
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));

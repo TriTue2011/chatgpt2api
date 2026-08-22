@@ -21,6 +21,11 @@ import {
 import { writeJsonAtomicSync } from '../../utils/atomicFile.js';
 import { createVideoThumbnail } from '../../utils/videoThumbnail.js';
 import { getCachedGroupHistory } from '../../utils/groupHistoryStore.js';
+import {
+    OperationTimeoutError,
+    cleanupAfterSettled,
+    withTimeout,
+} from '../../utils/timeout.js';
 
 export const zaloAccounts = [];
 configureReconnectDependencies({
@@ -28,18 +33,11 @@ configureReconnectDependencies({
     login: (...args) => loginZaloAccount(...args),
 });
 
-async function withTimeout(promise, timeoutMs, label) {
-    let timer;
-    try {
-        return await Promise.race([
-            promise,
-            new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(label)), timeoutMs);
-            }),
-        ]);
-    } finally {
-        if (timer) clearTimeout(timer);
-    }
+function deferFileCleanup(task, filePath, label) {
+    cleanupAfterSettled(task, () => removeFile(filePath));
+    void task.catch((error) => {
+        console.warn(`[Video] ${label} ket thuc sau timeout: ${error.message}`);
+    });
 }
 
 /** Bốn endpoint gửi nhiều ảnh (user/group × có-chọn-tài-khoản/không) dùng chung
@@ -1314,11 +1312,22 @@ export async function sendVideoByAccount(req, res) {
         const uploadTimeout = Number.parseInt(
             process.env.VIDEO_UPLOAD_TIMEOUT_MS || '180000', 10,
         );
-        const [videoDaLen] = await withTimeout(
-            account.api.uploadAttachment([duongVideo], String(threadId), threadType),
-            Number.isSafeInteger(uploadTimeout) && uploadTimeout > 0 ? uploadTimeout : 180000,
-            'Het thoi gian tai video len Zalo',
-        );
+        const videoPath = duongVideo;
+        const videoUpload = account.api.uploadAttachment([videoPath], String(threadId), threadType);
+        let videoDaLen;
+        try {
+            [videoDaLen] = await withTimeout(
+                videoUpload,
+                Number.isSafeInteger(uploadTimeout) && uploadTimeout > 0 ? uploadTimeout : 180000,
+                'Het thoi gian tai video len Zalo',
+            );
+        } catch (error) {
+            if (error instanceof OperationTimeoutError) {
+                deferFileCleanup(videoUpload, videoPath, 'Upload video');
+                duongVideo = null;
+            }
+            throw error;
+        }
         if (!videoDaLen || !videoDaLen.fileUrl) {
             throw new Error('Zalo không trả về địa chỉ video sau khi tải lên');
         }
@@ -1333,9 +1342,13 @@ export async function sendVideoByAccount(req, res) {
             duongThumb = await createVideoThumbnail(duongVideo);
         }
         if (duongThumb) {
+            const thumbnailPath = duongThumb;
+            const thumbnailUpload = account.api.uploadAttachment(
+                [thumbnailPath], String(threadId), threadType,
+            );
             try {
                 const [thumbDaLen] = await withTimeout(
-                    account.api.uploadAttachment([duongThumb], String(threadId), threadType),
+                    thumbnailUpload,
                     Math.min(Number.isSafeInteger(uploadTimeout) && uploadTimeout > 0
                         ? uploadTimeout : 180000, 60000),
                     'Het thoi gian tai thumbnail len Zalo',
@@ -1344,6 +1357,10 @@ export async function sendVideoByAccount(req, res) {
                 thumbnailUrl = (thumbDaLen
                     && (thumbDaLen.thumbUrl || thumbDaLen.normalUrl || thumbDaLen.hdUrl)) || '';
             } catch (error) {
+                if (error instanceof OperationTimeoutError) {
+                    deferFileCleanup(thumbnailUpload, thumbnailPath, 'Upload thumbnail');
+                    duongThumb = null;
+                }
                 console.warn('[Video] Upload thumbnail loi, tiep tuc bang fallback:', error.message);
                 thumbnailUrl = '';
                 thumbnailSource = 'fallback';
@@ -1365,7 +1382,8 @@ export async function sendVideoByAccount(req, res) {
             usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber },
         });
     } catch (error) {
-        const status = /ttl|type khong hop le/i.test(error.message) ? 400 : 500;
+        const status = error instanceof OperationTimeoutError
+            ? 504 : (/ttl|type khong hop le/i.test(error.message) ? 400 : 500);
         res.status(status).json({ success: false, error: error.message });
     } finally {
         if (duongVideo) removeFile(duongVideo);
