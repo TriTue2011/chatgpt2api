@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import unittest
 
@@ -8,8 +9,14 @@ import requests
 
 from test.utils import save_image
 
-AUTH_KEY = "chatgpt2api"
-BASE_URL = "http://localhost:8000"
+# Đọc từ biến môi trường, giữ giá trị cũ làm mặc định. Ghim cứng thì bộ test này
+# không chạy được ở đâu cả: `chatgpt2api` là khoá mặc định thời trước, nay
+# config.py bắt buộc khai qua CHATGPT2API_AUTH_KEY và từ chối giá trị mẫu; còn
+# cổng 8000 không phải cổng của bản chạy thật nào (máy chủ publish 3030).
+#
+#   C2A_TEST_BASE_URL=http://172.16.10.38:3030 C2A_TEST_AUTH_KEY=<khoá> pytest ...
+AUTH_KEY = os.getenv("C2A_TEST_AUTH_KEY", "chatgpt2api")
+BASE_URL = os.getenv("C2A_TEST_BASE_URL", "http://localhost:8000")
 TEXT_MODEL = "auto"
 IMAGE_MODEL = "gpt-image-2"
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"

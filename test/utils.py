@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -8,7 +9,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT_DIR / "data" / "output"
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("C2A_TEST_BASE_URL", "http://127.0.0.1:8000")
 
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
