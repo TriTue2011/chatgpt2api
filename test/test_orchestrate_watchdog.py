@@ -35,10 +35,21 @@ class OrchestrateWatchdogTests(unittest.TestCase):
         """Lượt treo cứng phải trả lời trong ngân sách, không đứng im mãi."""
         orch._TURN_BUDGET_S = 1.0
         started = threading.Event()
+        # Treo bằng Event chứ KHÔNG bằng `time.sleep(300)`: `orchestrate` chạy
+        # thân hàm trong `ThreadPoolExecutor`, mà luồng thợ của nó không phải
+        # daemon và `concurrent.futures` đăng ký atexit join hết chúng. Ngủ cứng
+        # 300 giây nghĩa là `orchestrate` vẫn thoát đúng ngân sách, test vẫn
+        # đạt, nhưng TIẾN TRÌNH pytest đứng thêm 5 phút ở lúc thoát — chạy cả
+        # thư mục thì đó là treo cả job CI.
+        #
+        # Event chặn y hệt trong lúc đo, và `addCleanup` gỡ ngay khi test xong
+        # nên luồng thợ kết thúc, nhả khoá lịch sử luôn.
+        thoat = threading.Event()
+        self.addCleanup(thoat.set)
 
         def hung(*a, **k):
             started.set()
-            time.sleep(300)
+            thoat.wait(300)
             return {"text": "không bao giờ tới đây"}
 
         orch._orchestrate_locked = hung

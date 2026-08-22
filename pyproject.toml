@@ -71,6 +71,14 @@ dev = [
     # nhóm này không vào image.
     "paramiko>=3.4.0",
     "pytest>=8",
+    # CHỈ để chạy test_pdf_intent / test_song_ngu. Runtime lấy hai gói này theo
+    # đường khác: `deploy/extra-requirements.txt` cài `pdf2docx`, gói đó kéo
+    # theo PyMuPDF + python-docx vào image. Job test của CI chỉ chạy
+    # `uv sync --frozen` nên không thấy tệp extra đó — khai thẳng ở đây thì
+    # CI mới chạy được hai tệp test kia. Dockerfile dùng `uv sync --no-dev`
+    # nên nhóm này không làm image nặng thêm.
+    "pymupdf>=1.24.0",
+    "python-docx>=1.1.0",
 ]
 
 [tool.pytest.ini_options]
