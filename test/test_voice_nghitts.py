@@ -251,13 +251,34 @@ class EspeakDataTests(unittest.TestCase):
                 self.assertEqual(vcfg.nghi_espeak_data_dir(), want)
 
     def test_incomplete_directory_is_rejected(self) -> None:
-        # Thiếu vi_dict thì đọc tiếng Việt sẽ hỏng — coi như không có.
+        """Thiếu vi_dict thì đọc tiếng Việt sẽ hỏng — thư mục đó không được chọn.
+
+        KHÔNG khẳng định kết quả là None: hàm còn dò tiếp `/opt/piper` và các
+        đường hệ thống (xem chuỗi ứng viên trong `nghi_espeak_data_dir`), mà
+        image chạy thật CÓ bản piper kèm sẵn. Khẳng định None chỉ đúng trên máy
+        chưa cài espeak — nên bản cũ đậu ở CI và máy dev, rồi đỏ khi chạy trong
+        chính image đang phục vụ. Điều cần chốt là thư mục THIẾU không được dùng.
+        """
         with TemporaryDirectory() as td:
             root = Path(td)
             d = _make_espeak(root)
             (d / "vi_dict").unlink()
             with mock.patch.object(vcfg, "_sub", return_value={"nghi_dir": str(root)}), \
                     mock.patch.object(vcfg, "KOKORO_DIR", root / "khong-co"):
+                self.assertNotEqual(vcfg.nghi_espeak_data_dir(), d)
+
+    def test_incomplete_forced_path_returns_none(self) -> None:
+        """Ép đường dẫn thì KHÔNG được lặng lẽ rơi về đường khác.
+
+        Đây mới là chỗ None có nghĩa: người vận hành chỉ đích danh một thư mục
+        mà nó thiếu file, phải báo không dùng được — rơi về bản khác thì họ
+        tưởng cấu hình của mình đang có tác dụng.
+        """
+        with TemporaryDirectory() as td:
+            d = _make_espeak(Path(td))
+            (d / "vi_dict").unlink()
+            with mock.patch.object(vcfg, "_sub",
+                                   return_value={"nghi_espeak_dir": str(d)}):
                 self.assertIsNone(vcfg.nghi_espeak_data_dir())
 
     def test_forced_path_from_config(self) -> None:
