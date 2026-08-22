@@ -114,6 +114,27 @@ class _ModelGia:
         return cls(ten)
 
 
+class _GeminiClientCu:
+    """gemini-webapi CŨ: không có registry động, `_resolve_model` tự quyết."""
+
+
+class _GeminiClientMoi:
+    """gemini-webapi MỚI: có registry động nên `_resolve_model` hoãn phán xét."""
+
+    def list_models(self):
+        return []
+
+    def resolve_model(self, ten):
+        raise ValueError(ten)
+
+
+class _ClientKhongCoModel:
+    """Một account cụ thể không có model được hỏi."""
+
+    def resolve_model(self, ten):
+        raise ValueError(ten)
+
+
 class ModelSaiPhaiBaoLoiTests(unittest.TestCase):
     """Dựng `gemini_webapi.constants` giả để test không phụ thuộc thư viện thật.
 
@@ -124,25 +145,59 @@ class ModelSaiPhaiBaoLoiTests(unittest.TestCase):
 
     def setUp(self):
         import types
-        self._cu = sys.modules.get("gemini_webapi.constants")
+        from api import gemini_web as _gma
+        self._cu = {ten: sys.modules.get(ten)
+                    for ten in ("gemini_webapi", "gemini_webapi.constants")}
+        # `setdefault` là SAI ở đây: khi thư viện thật đã được nạp, gói giả bị
+        # bỏ qua lặng lẽ và `_resolve_model` đi theo nhánh của bản thật. Đó là
+        # lý do bộ test này đậu ở máy dev (chưa cài gemini-webapi) mà đỏ trên
+        # CI (`uv sync --frozen` cài đủ). Thay hẳn để test tự quyết hình dạng
+        # thư viện mà nó đang mô phỏng.
         goi = types.ModuleType("gemini_webapi")
+        goi.GeminiClient = _GeminiClientCu
         hang_so = types.ModuleType("gemini_webapi.constants")
         hang_so.Model = _ModelGia
-        sys.modules.setdefault("gemini_webapi", goi)
+        sys.modules["gemini_webapi"] = goi
         sys.modules["gemini_webapi.constants"] = hang_so
+        self._goi = goi
+        # Registry rỗng: còn client nào warm thì `_resolve_model` hoãn 400 lại
+        # cho vòng account, và kết quả phụ thuộc file test nào chạy trước.
+        self._clients_cu = _gma._clients
+        _gma._clients = {}
+        self._gma = _gma
 
     def tearDown(self):
-        if self._cu is None:
-            sys.modules.pop("gemini_webapi.constants", None)
-        else:
-            sys.modules["gemini_webapi.constants"] = self._cu
+        self._gma._clients = self._clients_cu
+        for ten, cu in self._cu.items():
+            if cu is None:
+                sys.modules.pop(ten, None)
+            else:
+                sys.modules[ten] = cu
 
     def test_model_chi_dinh_khong_ton_tai_thi_400(self):
+        """Thư viện CŨ: `_resolve_model` là chỗ duy nhất biết model có thật không."""
         from api.gemini_web import _resolve_model
         with self.assertRaises(HTTPException) as ctx:
             _resolve_model("gma/3.6-flash")
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(ctx.exception.detail.get("code"), "model_not_found")
+
+    def test_thu_vien_moi_hoan_400_lai_cho_vong_account(self):
+        """Thư viện MỚI: registry chỉ đầy đủ sau khi từng account init, nên
+        `_resolve_model` cho tên đi tiếp — nhưng lời hứa với người gọi KHÔNG
+        đổi, chỉ dời xuống `_model_for_client`. Không có ca này thì việc dời
+        tầng biến thành âm thầm trả HTTP 200 bằng model khác.
+        """
+        from api import gemini_web as gma
+        self._goi.GeminiClient = _GeminiClientMoi
+
+        self.assertEqual(gma._resolve_model("gma/3.6-flash"), "3.6-flash")
+
+        with self.assertRaises(gma._ModelUnavailable):
+            gma._model_for_client(_ClientKhongCoModel(), "3.6-flash")
+        loi = gma._model_unavailable_http("3.6-flash")
+        self.assertEqual(loi.status_code, 400)
+        self.assertEqual(loi.detail.get("code"), "model_not_found")
 
     def test_auto_van_duoc_roi_ve_mac_dinh(self):
         """Người gọi không khai model nào thì không có gì để mà sai."""
