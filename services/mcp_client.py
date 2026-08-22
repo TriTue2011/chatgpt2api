@@ -142,8 +142,41 @@ class MCPSession:
             except json.JSONDecodeError:
                 pass
         except Exception as exc:
-            logger.warning({"event": "mcp_call_failed", "url": self.url, "error": str(exc)})
+            if self._chi_la_hub_chua_len(exc):
+                logger.info({"event": "mcp_hub_chua_len", "url": self.url,
+                             "error": str(exc)})
+            else:
+                logger.warning({"event": "mcp_call_failed", "url": self.url,
+                                "error": str(exc)})
         return None
+
+    def _la_hub_cung_container(self) -> bool:
+        """MCP này có nằm cùng container với gateway không (loopback)."""
+        u = self.url or ""
+        return "127.0.0.1" in u or "localhost" in u or "://[::1]" in u
+
+    def _chi_la_hub_chua_len(self, exc: Exception) -> bool:
+        """Lần dò ĐẦU tới hub cùng container bị từ chối = hub chưa lắng nghe.
+
+        Cùng nhận định mà `_current_cooldown` đã dựa vào để rút cooldown xuống
+        8 giây; ở đây áp nốt cho MỨC LOG. Đo trên máy chủ 22/08 sau một lần
+        khởi động lại: 26 dòng WARNING `mcp_call_failed` dồn trong 17 mili
+        giây, rồi 26 dòng `mcp_tools_loaded` — tức đã nạp đủ cả 26 công cụ.
+
+        Vì sao đáng sửa chứ không chỉ là ồn: một chùm 26 dòng lúc khởi động
+        trông Y HỆT một lần hub chết thật, nên cảnh báo này vừa kêu oan vừa che
+        mất tín hiệu thật. Hạ lần đầu xuống INFO thì hub chết thật vẫn kêu, chỉ
+        chậm 8 giây (một nhịp cooldown) — đổi lại cảnh báo trở lại có nghĩa.
+
+        `_failure_count` là 0 khi và chỉ khi đây là lần hỏng đầu kể từ lần nối
+        thành công gần nhất (xem `ensure_connected`), nên không cần thêm trạng
+        thái mới.
+        """
+        if self._failure_count:
+            return False
+        if not isinstance(getattr(exc, "reason", None), ConnectionRefusedError):
+            return False
+        return self._la_hub_cung_container()
 
     def _current_cooldown(self) -> float:
         """Cooldown grows after repeated failures so a permanently dead MCP
@@ -154,8 +187,7 @@ class MCPSession:
         gateway and hub boot together and the hub takes ~40s to mount all MCPs.
         Keep its cooldown short so tools self-heal within a minute of boot
         instead of being circuit-broken for 30 min."""
-        u = self.url or ""
-        if "127.0.0.1" in u or "localhost" in u or "://[::1]" in u:
+        if self._la_hub_cung_container():
             return 8.0
         if self._failure_count >= _MAX_FAST_RETRIES:
             return _LONG_COOLDOWN

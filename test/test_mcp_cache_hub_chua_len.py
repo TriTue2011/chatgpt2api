@@ -83,3 +83,59 @@ class CacheTtlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MucLogKhiHubChuaLenTests(unittest.TestCase):
+    """Lần dò ĐẦU tới hub cùng container bị từ chối → INFO, không phải WARNING.
+
+    Đo trên máy chủ 22/08/2026 sau một lần khởi động lại: 26 dòng WARNING
+    `mcp_call_failed` dồn trong 17 mili giây, rồi 26 dòng `mcp_tools_loaded`.
+    Tức hệ thống tự hồi đủ 26 công cụ, nhưng vẫn kêu như vừa hỏng nặng.
+
+    Cái giá thật của báo động sai ở đây: một chùm 26 dòng lúc khởi động trông Y
+    HỆT một lần hub chết thật, nên không ai phân biệt được nữa.
+    """
+
+    def _muc_log(self, url: str, exc: Exception, so_lan_hong_truoc: int = 0):
+        """Trả về mức log mà `_call` dùng khi gặp `exc`."""
+        client = mcp_client.MCPSession(url)
+        client._failure_count = so_lan_hong_truoc
+        ghi: list[tuple[str, dict]] = []
+        with mock.patch.object(mcp_client.logger, "info",
+                               lambda d: ghi.append(("info", d))), \
+             mock.patch.object(mcp_client.logger, "warning",
+                               lambda d: ghi.append(("warning", d))), \
+             mock.patch.object(mcp_client.urllib.request, "urlopen",
+                               side_effect=exc):
+            client._call("tools/list")
+        return ghi[0][0] if ghi else None
+
+    @staticmethod
+    def _tu_choi() -> Exception:
+        """Đúng hình dạng lỗi thật: URLError bọc ConnectionRefusedError."""
+        import urllib.error
+        return urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+
+    def test_lan_dau_hub_cung_container_thi_chi_INFO(self):
+        self.assertEqual(
+            self._muc_log("http://127.0.0.1:8005/vn_news/mcp", self._tu_choi()),
+            "info")
+
+    def test_lan_thu_hai_thi_len_WARNING(self):
+        """Hub chết thật vẫn kêu — chỉ chậm một nhịp cooldown 8 giây."""
+        self.assertEqual(
+            self._muc_log("http://127.0.0.1:8005/vn_news/mcp", self._tu_choi(),
+                          so_lan_hong_truoc=1),
+            "warning")
+
+    def test_hub_o_MAY_KHAC_thi_WARNING_ngay_lan_dau(self):
+        """Chỉ hub cùng container mới có cớ 'đang khởi động cùng nhau'."""
+        self.assertEqual(
+            self._muc_log("http://10.9.9.9:8005/vn_news/mcp", self._tu_choi()),
+            "warning")
+
+    def test_loi_KHAC_connection_refused_thi_WARNING(self):
+        """Timeout hay lỗi giao thức không phải chuyện 'chưa kịp lắng nghe'."""
+        self.assertEqual(
+            self._muc_log("http://127.0.0.1:8005/vn_news/mcp", TimeoutError("qua han")),
+            "warning")
