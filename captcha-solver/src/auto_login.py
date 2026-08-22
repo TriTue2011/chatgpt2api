@@ -1059,7 +1059,7 @@ async def do_google_login_steps(
             )
             if not clicked_other:
                 try:
-                    clicked_other = await page.evaluate("""() => {
+                    clicked_other = await page.evaluate(r"""() => {
                         const all = document.querySelectorAll('*');
                         for (const el of all) {
                             let t = (el.innerText || el.textContent || '').normalize('NFC').trim().toLowerCase();
@@ -1122,7 +1122,7 @@ async def do_google_login_steps(
                         pass
                 if not has_other:
                     try:
-                        has_other = await page.evaluate("""() => {
+                        has_other = await page.evaluate(r"""() => {
                             const all = document.querySelectorAll('*');
                             for (const el of all) {
                                 let t = (el.innerText || el.textContent || '').normalize('NFC').trim().toLowerCase();

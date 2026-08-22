@@ -418,8 +418,9 @@ def get_news_sections(per_section: int = 3, kem_tom_tat: bool = True,
         per_section: So tin moi muc (1-5, mac dinh 3). Chi ap dung digest chung.
         kem_tom_tat: True (mac dinh) = moi tin kem mot cau tom tat.
                      False = CHI tieu de, dung khi nguoi dung xin bo tom tat.
-        in_dam: True (mac dinh) = boc ten muc va tieu de trong **dam**.
-                False = chu tron, khi nguoi dung xin ban gon.
+        in_dam: True (mac dinh) = boc TEN MUC trong **dam**; tieu de de
+                tron (Zalo tu choi tin co qua nhieu vung dinh dang).
+                False = chu tron het, khi nguoi dung xin ban gon.
         dung_emoji: True (mac dinh) = ten muc co emoji dan dau.
         chi_tieng_viet: True = chi lay tin co tieu de tieng Viet (bo tin tieng
                         Anh cua BBC/World Monitor). Mac dinh False.

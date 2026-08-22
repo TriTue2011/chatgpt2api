@@ -132,10 +132,20 @@ class TestBanTinChiaMuc(unittest.TestCase):
             return self._goi_duoc()(3)
 
     def test_dinh_dang_gach_dau_dong(self):
+        """`in_dam=True` chỉ tô đậm TÊN MỤC, KHÔNG tô từng tiêu đề.
+
+        Đây là chủ ý, không phải sót: tô cả 24 tiêu đề thì một bản tin có 32
+        vùng định dạng, mức đó bị Zalo từ chối (đo 01/08) rồi rơi về bản thô
+        còn nguyên dấu sao — người dùng thấy `**` giữa câu. Xem chú thích tại
+        `news.get_news_sections`. Test này chốt lại đúng ranh giới đó, nếu
+        không thì lần "sửa cho nhất quán" sau sẽ mở lại lỗi cũ.
+        """
         ket = {"the_thao": [{"title": "Tin A", "summary": "Tóm A.",
                              "source": "X", "link": "https://x/1"}]}
         ra = self._gia_lap(ket)
-        self.assertIn("- **Tin A** — Tóm A.", ra)
+        self.assertIn("**⚽ Thể thao**", ra, "tên mục phải in đậm")
+        self.assertIn("- Tin A — Tóm A.", ra)
+        self.assertNotIn("**Tin A**", ra, "tiêu đề phải để trơn")
         self.assertNotIn("http", ra)          # không dán link
 
     def test_noi_ro_muc_nao_trong(self):
