@@ -43,6 +43,13 @@ function positiveEnv(name, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
+function resourceLimitError(message) {
+    const error = new Error(message);
+    error.status = 413;
+    error.code = 'IMAGE_BATCH_LIMIT';
+    return error;
+}
+
 /** Giới hạn THẬT từ phiên Zalo. Đọc mỗi lần gửi vì nó thuộc phiên, không phải
  *  hằng số biên dịch — đổi tài khoản là đổi giá trị. */
 export function docGioiHan(api) {
@@ -115,20 +122,32 @@ export async function taiVeVaGuiNhieuAnh(tep, api, imageUrls, threadId, threadTy
     }
     const maxItems = positiveEnv('IMAGE_BATCH_MAX_ITEMS', DEFAULT_MAX_IMAGE_BATCH_ITEMS);
     if (imageUrls.length > maxItems) {
-        throw new Error(`Qua nhieu anh trong mot request (toi da ${maxItems})`);
+        throw resourceLimitError(`Qua nhieu anh trong mot request (toi da ${maxItems})`);
     }
     const maxBytes = positiveEnv('IMAGE_BATCH_MAX_BYTES', DEFAULT_MAX_IMAGE_BATCH_BYTES);
     const duongDan = [];
     let totalBytes = 0;
     try {
         for (const url of imageUrls) {
-            const p = await tep.saveImage(url);
+            const remainingBytes = maxBytes - totalBytes;
+            if (remainingBytes <= 0) {
+                throw resourceLimitError(`Tong dung luong anh vuot qua gioi han ${maxBytes} bytes`);
+            }
+            let p;
+            try {
+                p = await tep.saveImage(url, remainingBytes, { throwOnError: true });
+            } catch (error) {
+                if (error?.code === 'DOWNLOAD_SIZE_LIMIT') {
+                    throw resourceLimitError(`Tong dung luong anh vuot qua gioi han ${maxBytes} bytes`);
+                }
+                throw error;
+            }
             if (!p) throw new Error('Không thể lưu một hoặc nhiều hình ảnh');
             duongDan.push(p);
             const stat = await fs.stat(p);
             totalBytes += stat.size;
             if (totalBytes > maxBytes) {
-                throw new Error(`Tong dung luong anh vuot qua gioi han ${maxBytes} bytes`);
+                throw resourceLimitError(`Tong dung luong anh vuot qua gioi han ${maxBytes} bytes`);
             }
         }
         return await guiNhieuAnh(api, duongDan, threadId, threadType, tuyChon);

@@ -218,32 +218,46 @@ export function storeGroupMessage(ownId, message) {
 
 export function getCachedGroupHistory(ownId, groupId, count = 50) {
   const safeCount = Math.min(Math.max(Number.parseInt(count, 10) || 50, 1), 200);
-  const file = historyFile(ownId, groupId);
   try {
-    flush(file);
+    const file = historyFile(ownId, groupId);
+    try {
+      flush(file);
+    } catch (error) {
+      console.warn(`[History] Khong flush duoc ${file}; tra cache cu: ${error.message}`);
+    }
+    let parsedMessages = deduplicate(parseFile(file));
+    const maxMessages = positiveEnv('GROUP_HISTORY_MAX_MESSAGES', DEFAULT_MAX_MESSAGES);
+    const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
+    try {
+      if (parsedMessages.length > maxMessages || fileSize(file) > maxBytes) {
+        compact(file);
+        parsedMessages = deduplicate(parseFile(file));
+      }
+    } catch (error) {
+      console.warn(`[History] Khong compact duoc ${file}; tra cache cu: ${error.message}`);
+      needsCompaction.add(file);
+      scheduleRetry(file);
+    }
+    const allMessages = parsedMessages.slice(-maxMessages);
+    const selected = allMessages.slice(-safeCount);
+    const latest = selected.at(-1)?.data || {};
+    return {
+      lastActionId: String(
+        latest.msgId ?? latest.msgID ?? latest.cliMsgId ?? latest.cliMsgID ?? '',
+      ),
+      lastActionIdOther: '',
+      more: allMessages.length > selected.length ? 1 : 0,
+      groupMsgs: selected,
+      source: 'local_persistent_cache',
+      cachedCount: allMessages.length,
+    };
   } catch (error) {
-    console.warn(`[History] Khong flush duoc ${file}; tra cache cu: ${error.message}`);
+    console.warn(`[History] Khong doc duoc cache group ${groupId}: ${error.message}`);
+    return {
+      lastActionId: '', lastActionIdOther: '', more: 0, groupMsgs: [],
+      source: 'local_persistent_cache', cachedCount: 0,
+    };
   }
-  let parsedMessages = deduplicate(parseFile(file));
-  const maxMessages = positiveEnv('GROUP_HISTORY_MAX_MESSAGES', DEFAULT_MAX_MESSAGES);
-  const maxBytes = positiveEnv('GROUP_HISTORY_MAX_FILE_BYTES', DEFAULT_MAX_FILE_BYTES);
-  if (parsedMessages.length > maxMessages || fileSize(file) > maxBytes) {
-    compact(file);
-    parsedMessages = deduplicate(parseFile(file));
-  }
-  const allMessages = parsedMessages.slice(-maxMessages);
-  const selected = allMessages.slice(-safeCount);
-  const latest = selected.at(-1)?.data || {};
-  return {
-    lastActionId: String(
-      latest.msgId ?? latest.msgID ?? latest.cliMsgId ?? latest.cliMsgID ?? '',
-    ),
-    lastActionIdOther: '',
-    more: allMessages.length > selected.length ? 1 : 0,
-    groupMsgs: selected,
-    source: 'local_persistent_cache',
-    cachedCount: allMessages.length,
-  };
 }
 
 export function flushAllGroupHistorySync() {

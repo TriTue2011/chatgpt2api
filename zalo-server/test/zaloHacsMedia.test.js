@@ -83,6 +83,22 @@ test('bon action anh HACS deu giu TTL va dung thread type', async () => {
   });
 });
 
+test('album HACS vuot ngan sach request tra 413 truoc khi tai anh', async () => {
+  process.env.IMAGE_BATCH_MAX_ITEMS = '1';
+  try {
+    const res = fakeResponse();
+    await sendImagesToUserByAccount({ body: {
+      imagePaths: ['https://example.invalid/one.jpg', 'https://example.invalid/two.jpg'],
+      threadId: '2036121378794772276',
+      accountSelection: 'account-test',
+    } }, res);
+    assert.equal(res.statusCode, 413);
+    assert.match(res.body.error, /qua nhieu anh/i);
+  } finally {
+    delete process.env.IMAGE_BATCH_MAX_ITEMS;
+  }
+});
+
 test.after(() => {
   zaloAccounts.length = 0;
   fs.rmSync(directory, { recursive: true, force: true });

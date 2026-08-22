@@ -7,6 +7,10 @@ import path from 'path';
 import { broadcastMessage } from './services/websocketHub.js';
 import { enrichMessageEvent } from './utils/zaloContract.js';
 import { reconnectDelay } from './services/reconnectPolicy.js';
+import {
+    beginReconnectAttempt,
+    invalidateReconnectAttempt,
+} from './services/reconnectGuard.js';
 import { storeGroupMessage } from './utils/groupHistoryStore.js';
 import { withTimeout } from './utils/timeout.js';
 
@@ -44,7 +48,9 @@ function scheduleRelogin(api) {
 
     let state = reconnectStates.get(ownId);
     if (!state) {
-        state = { attempt: 0, timer: null, running: false, sourceApi: api };
+        state = {
+            attempt: 0, timer: null, running: false, sourceApi: api, generation: 0,
+        };
         reconnectStates.set(ownId, state);
     }
     if (state.running || state.timer) return;
@@ -60,6 +66,7 @@ async function attemptRelogin(ownId) {
     if (!state || state.running) return;
     state.timer = null;
     state.running = true;
+    const isCurrentAttempt = beginReconnectAttempt(reconnectStates, ownId, state);
     reloginAttempts.set(ownId, Date.now());
 
     try {
@@ -86,6 +93,7 @@ async function attemptRelogin(ownId) {
             reconnectLogin(savedProxy, credential, {
                 allowQrFallback: false,
                 autoSelectProxy: !(hasSavedProxy || hasAccountProxy),
+                isCurrentAttempt,
             }),
             reconnectTimeoutMs(),
             'Reconnect login timeout',
@@ -93,6 +101,9 @@ async function attemptRelogin(ownId) {
         clearReconnectState(ownId);
     } catch (error) {
         console.error(`[Reconnect] Lan ${state.attempt + 1} loi cho ${ownId}: ${error.message}`);
+        // Login da timeout co the van dang chay trong SDK. Danh dau no la cu
+        // truoc khi dat retry de no khong duoc phep commit khi ket thuc muon.
+        invalidateReconnectAttempt(state);
         state.running = false;
         state.attempt += 1;
         reconnectStates.set(ownId, state);

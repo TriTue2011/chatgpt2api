@@ -1,4 +1,4 @@
-"""Hai món nợ cuối: tách quyền cho runtime, và chặn đầu vào của image-size.
+"""Hai món nợ cuối: tách quyền cho runtime, và chặn đầu vào của bước đo ảnh.
 
 Cả hai đều là loại "chưa xong hẳn", nên test ở đây chốt đúng những gì ĐÃ làm
 và những gì phải giữ nguyên để bước cuối không hỏng.
@@ -14,6 +14,7 @@ DOCKERFILE = (GOC / "Dockerfile").read_text(encoding="utf-8")
 SUPERVISOR = (GOC / "deploy/supervisord.conf").read_text(encoding="utf-8")
 COMPOSE = (GOC / "docker-compose.yml").read_text(encoding="utf-8")
 ZALO = (GOC / "zalo-server/api/zalo/zalo.js").read_text(encoding="utf-8")
+PKG_ZALO = (GOC / "zalo-server/package.json").read_text(encoding="utf-8")
 
 
 class MacDinhKhongDoiHanhViTests(unittest.TestCase):
@@ -86,30 +87,46 @@ class TachQuyenTests(unittest.TestCase):
                                                   if k != "chuan-bi-quyen"))
 
 
-class ChanDauVaoImageSizeTests(unittest.TestCase):
-    """`image-size` có lỗ DoS mà thượng nguồn CHƯA có bản vá (fixAvailable:false).
+class ChanDauVaoAnhTests(unittest.TestCase):
+    """Đo kích thước ảnh người dùng Zalo gửi lên — dữ liệu kẻ tấn công điều khiển.
 
-    Ảnh ở đây do người dùng Zalo gửi lên — dữ liệu kẻ tấn công điều khiển được.
+    Trước đây dự án dùng `image-size` và tự chặn đầu vào bằng cách chỉ nạp
+    256 KB header vào buffer, vì thượng nguồn không có bản vá cho advisory vòng
+    lặp vô hạn (ICNS/JXL/HEIF). Nay `image-size` đã bị gỡ HẲN và thay bằng
+    `sharp`, nên bộ test chốt lớp chặn MỚI: không được dùng lại thư viện cũ, và
+    sharp phải có trần pixel — thiếu trần thì một ảnh 60000×60000 hợp lệ vẫn đủ
+    làm hết RAM.
     """
 
-    def test_truyen_BUFFER_chu_khong_truyen_duong_dan(self):
-        self.assertNotIn("sizeOf(filePath)", ZALO,
-                         "vẫn để thư viện tự đọc bao nhiêu tuỳ nó")
-        self.assertIn("sizeOf(dau)", ZALO)
+    def test_khong_dung_lai_image_size(self):
+        """Quay lại thư viện cũ là mở lại đúng lỗ đã đóng."""
+        self.assertNotIn("require('image-size')", ZALO)
+        self.assertNotIn('require("image-size")', ZALO)
+        self.assertNotIn("sizeOf(", ZALO, "vẫn còn gọi image-size")
+        self.assertNotIn("image-size", PKG_ZALO,
+                         "image-size vẫn nằm trong dependency")
 
-    def test_co_tran_cho_phan_header_doc_vao(self):
-        i = ZALO.index("TRAN_HEADER")
-        self.assertIn("256 * 1024", ZALO[i:i + 200])
+    def test_sharp_co_tran_pixel(self):
+        """`limitInputPixels` là thứ duy nhất chặn ảnh 'bom giải nén'."""
+        i = ZALO.index("sharp(filePath")
+        khuc = ZALO[i:i + 300]
+        self.assertIn("limitInputPixels", khuc)
+        m = re.search(r"limitInputPixels:\s*([0-9_]+)", khuc)
+        self.assertIsNotNone(m, "trần pixel phải là một số cụ thể")
+        self.assertLessEqual(int(m.group(1).replace("_", "")), 200_000_000,
+                             "trần quá cao thì coi như không có trần")
 
-    def test_khong_doc_qua_kich_thuoc_file_that(self):
-        """File nhỏ hơn trần thì chỉ đọc đúng phần có thật."""
-        i = ZALO.index("TRAN_HEADER")
-        self.assertIn("Math.min(stats.size, TRAN_HEADER)", ZALO[i:i + 300])
+    def test_anh_hong_thi_bao_loi_chu_khong_doan_bua(self):
+        """`failOn: 'error'` — sharp dừng ở ảnh hỏng thay vì cố giải tiếp."""
+        i = ZALO.index("sharp(filePath")
+        self.assertIn("failOn: 'error'", ZALO[i:i + 300])
 
-    def test_dong_file_ke_ca_khi_loi(self):
-        """Rò file descriptor là kiểu lỗi chỉ lộ ra sau nhiều ngày chạy."""
-        i = ZALO.index("const fdH = fs.openSync")
-        self.assertIn("finally { fs.closeSync(fdH); }", ZALO[i:i + 300])
+    def test_khong_doc_anh_tu_URL(self):
+        """Chỉ đo tệp trên đĩa; nhận http(s) là mở đường SSRF vào bước đo ảnh."""
+        i = ZALO.index("getImageMetadata")
+        khuc = ZALO[i:i + 700]
+        self.assertIn("startsWith('http://')", khuc)
+        self.assertIn("startsWith('https://')", khuc)
 
 
 if __name__ == "__main__":

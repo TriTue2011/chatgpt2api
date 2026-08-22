@@ -130,4 +130,25 @@ test('fallback history chi doc phan duoi cua file legacy qua lon', () => {
   }
 });
 
+test('fallback history tra cache cu neu compact khong ghi duoc dia', () => {
+  process.env.GROUP_HISTORY_MAX_FILE_BYTES = '256';
+  const file = path.join(directory, 'history', 'groups', 'account-compact-fail', 'group-compact-fail.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ data: { msgId: 'new', uidFrom: 'u', content: 'x'.repeat(128) } })}\n`.repeat(4));
+  const originalRename = fs.renameSync;
+  fs.renameSync = () => {
+    const error = new Error('disk read-only');
+    error.code = 'EACCES';
+    throw error;
+  };
+  try {
+    const result = getCachedGroupHistory('account-compact-fail', 'group-compact-fail', 50);
+    assert.ok(result.groupMsgs.length > 0);
+    assert.equal(result.source, 'local_persistent_cache');
+  } finally {
+    fs.renameSync = originalRename;
+    delete process.env.GROUP_HISTORY_MAX_FILE_BYTES;
+  }
+});
+
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));

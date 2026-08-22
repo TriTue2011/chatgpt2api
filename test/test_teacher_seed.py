@@ -60,6 +60,21 @@ def _load(tmp: Path, monkeypatch: pytest.MonkeyPatch):
 _load.n = 0
 
 
+def _gan_module_gia(monkeypatch: pytest.MonkeyPatch, ten: str, mod) -> None:
+    """Đặt module giả vào CẢ sys.modules lẫn thuộc tính của gói cha.
+
+    `from services.agent import X` đọc THUỘC TÍNH trên gói trước, chỉ rơi về
+    sys.modules khi gói chưa có thuộc tính đó. Vá mỗi sys.modules thì test đậu
+    hay hỏng tuỳ vào file chạy trước có nạp bản thật hay không — `run()` sẽ gọi
+    bản thật, đi ra mạng, và `pushed` rỗng.
+    """
+    monkeypatch.setitem(sys.modules, ten, mod)
+    goi, _, con = ten.rpartition(".")
+    cha = sys.modules.get(goi)
+    if cha is not None:
+        monkeypatch.setattr(cha, con, mod, raising=False)
+
+
 @pytest.fixture()
 def ts(tmp_path, monkeypatch):
     mod = _load(tmp_path, monkeypatch)
@@ -79,7 +94,7 @@ def ts(tmp_path, monkeypatch):
         return {"ok": True, "chunks_added": 3}
 
     tw.push_sgk_to_rag = _push
-    monkeypatch.setitem(sys.modules, "services.agent.teacher_workspace", tw)
+    _gan_module_gia(monkeypatch, "services.agent.teacher_workspace", tw)
     mod._tw = tw
     return mod
 
@@ -237,7 +252,7 @@ class TestKhongGoiDuLieuVaoImage:
         tp.list_books = lambda g, all_sets=False: (
             [{"url": f"https://x/chi-tiet-sach/toan-{g}.1", "slug": f"toan-{g}.1",
               "subjects": ("toan",), "book_set": ""}] if g == 1 else [])
-        monkeypatch.setitem(sys.modules, "services.agent.sgk_taphuan", tp)
+        _gan_module_gia(monkeypatch, "services.agent.sgk_taphuan", tp)
         rows = ts._books([1, 2])
         assert len(rows) == 1 and rows[0]["subject"] == "toan"
         assert rows[0]["grade"] == 1
@@ -247,7 +262,7 @@ class TestKhongGoiDuLieuVaoImage:
         tp.list_books = lambda g, all_sets=False: [
             {"url": "https://x/1", "slug": "tieng-han-3.1", "subjects": (),
              "book_set": ""}]
-        monkeypatch.setitem(sys.modules, "services.agent.sgk_taphuan", tp)
+        _gan_module_gia(monkeypatch, "services.agent.sgk_taphuan", tp)
         assert ts._books([3]) == []
 
     def test_app_noi_vao_luc_khoi_dong(self):

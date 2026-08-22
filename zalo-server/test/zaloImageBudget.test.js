@@ -29,14 +29,22 @@ test('album vuot tran tong dung luong duoc don tep tam da tai', async () => {
   fs.writeFileSync(image, 'xx');
   process.env.IMAGE_BATCH_MAX_BYTES = '1';
   const removed = [];
+  let requestedMaxBytes;
   try {
     await assert.rejects(
       taiVeVaGuiNhieuAnh(
-        { saveImage: async () => image, removeImage: (value) => removed.push(value) },
+        {
+          saveImage: async (_url, maxBytes) => {
+            requestedMaxBytes = maxBytes;
+            return image;
+          },
+          removeImage: (value) => removed.push(value),
+        },
         {}, ['one.jpg'], 'thread', 0,
       ),
       /Tong dung luong anh/i,
     );
+    assert.equal(requestedMaxBytes, 1);
     assert.deepEqual(removed, [image]);
   } finally {
     delete process.env.IMAGE_BATCH_MAX_BYTES;

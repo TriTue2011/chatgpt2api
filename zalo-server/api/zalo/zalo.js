@@ -7,7 +7,13 @@ import nodefetch from "node-fetch";
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
-import { saveImage, removeImage, saveFileFromUrl, removeFile } from '../../utils/helpers.js';
+import {
+    getCookiesDir,
+    saveImage,
+    removeImage,
+    saveFileFromUrl,
+    removeFile,
+} from '../../utils/helpers.js';
 import { taiVeVaGuiNhieuAnh as guiTheoLo } from '../../utils/sendImages.js';
 import {
     getRequestedMessageTtl,
@@ -38,6 +44,13 @@ function deferFileCleanup(task, filePath, label) {
     void task.catch((error) => {
         console.warn(`[Video] ${label} ket thuc sau timeout: ${error.message}`);
     });
+}
+
+function imageRequestErrorStatus(error) {
+    if (Number.isInteger(error?.status) && error.status >= 400 && error.status < 500) {
+        return error.status;
+    }
+    return /ttl/i.test(error?.message || '') ? 400 : 500;
 }
 
 /** Bốn endpoint gửi nhiều ảnh (user/group × có-chọn-tài-khoản/không) dùng chung
@@ -521,7 +534,7 @@ async function sendImageToFixedThreadType(req, res, threadType) {
             }
         });
     } catch (error) {
-        const status = /ttl/i.test(error.message) ? 400 : 500;
+        const status = imageRequestErrorStatus(error);
         res.status(status).json({ success: false, error: error.message });
     } finally {
         if (imagePath) removeImage(imagePath);
@@ -569,7 +582,7 @@ async function sendImagesToFixedThreadType(req, res, threadType) {
             }
         });
     } catch (error) {
-        const status = /ttl/i.test(error.message) ? 400 : 500;
+        const status = imageRequestErrorStatus(error);
         res.status(status).json({
             success: false,
             error: error.message,
@@ -2302,7 +2315,7 @@ export async function sendImagesToUser(req, res) {
             canhBao: ketQua.canhBao,
         });
     } catch (error) {
-        res.status(500).json({
+        res.status(imageRequestErrorStatus(error)).json({
             success: false,
             error: error.message,
             ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
@@ -2370,7 +2383,7 @@ export async function sendImagesToGroup(req, res) {
             canhBao: ketQua.canhBao,
         });
     } catch (error) {
-        res.status(500).json({
+        res.status(imageRequestErrorStatus(error)).json({
             success: false,
             error: error.message,
             ...(error.chiTiet ? { chiTiet: error.chiTiet } : {}),
@@ -2419,7 +2432,9 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
     const {
         allowQrFallback = true,
         autoSelectProxy = true,
+        isCurrentAttempt,
     } = options;
+    const isCurrent = typeof isCurrentAttempt === 'function' ? isCurrentAttempt : () => true;
     const loginCredential = cred && typeof cred === 'object'
         ? (() => {
             const { proxy: _savedProxy, ...credential } = cred;
@@ -2568,18 +2583,6 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
                 });
             }
 
-            api.listener.onConnected(() => {
-                // Không resolve ở đây — đợi setup xong mới resolve
-            });
-
-            setupEventListeners(api, loginResolve);
-            api.listener.start();
-
-            if (!useCustomProxy && proxyUsed) {
-                proxyUsed.usedCount++;
-                proxyUsed.accounts.push(api);
-            }
-
             const accountInfo = await api.fetchAccountInfo();
             if (!accountInfo?.profile) {
                 throw new Error("Không tìm thấy thông tin profile");
@@ -2588,6 +2591,27 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
             const phoneNumber = profile.phoneNumber;
             const ownId = profile.userId;
             const displayName = profile.displayName;
+            const context = await api.getContext();
+            const {imei, cookie, userAgent} = context;
+
+            // Reconnect timeout khong huy duoc I/O trong zca-js. Neu mot lan
+            // cu ket thuc muon, no tuyet doi khong duoc dang ky listener, doi
+            // account hien tai hay ghi de credential cua lan moi.
+            if (!isCurrent()) {
+                try { api.listener.stop?.(); } catch { /* best effort */ }
+                throw new Error('Phien reconnect da het han');
+            }
+
+            api.listener.onConnected(() => {
+                // Không resolve ở đây — đợi setup xong mới resolve
+            });
+            setupEventListeners(api, loginResolve);
+            api.listener.start();
+
+            if (!useCustomProxy && proxyUsed) {
+                proxyUsed.usedCount++;
+                proxyUsed.accounts.push(api);
+            }
 
             const existingAccountIndex = zaloAccounts.findIndex(acc => acc.ownId === api.getOwnId());
             if (existingAccountIndex !== -1) {
@@ -2596,9 +2620,7 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
                 zaloAccounts.push({ api: api, ownId: api.getOwnId(), proxy: useCustomProxy ? customProxy : (proxyUsed && proxyUsed.url), phoneNumber: phoneNumber });
             }
 
-            // Lưu cookie
-            const context = await api.getContext();
-            const {imei, cookie, userAgent} = context;
+            // Lưu cookie chi sau khi guard da xac nhan day la lan hien hanh.
             const data = {
                 imei,
                 cookie,
@@ -2608,7 +2630,6 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
                 proxy: useCustomProxy ? customProxy : (proxyUsed && proxyUsed.url) || null,
             };
 
-            const { getCookiesDir } = await import('../../utils/helpers.js');
             const cookiesDir = getCookiesDir();
 
             if (!fs.existsSync(cookiesDir)) {

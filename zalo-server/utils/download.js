@@ -46,7 +46,9 @@ function sizeLimiter(maxBytes) {
     transform(chunk, _encoding, callback) {
       received += chunk.length;
       if (received > maxBytes) {
-        callback(new Error(`Tep vuot qua gioi han ${maxBytes} bytes`));
+        const error = new Error(`Tep vuot qua gioi han ${maxBytes} bytes`);
+        error.code = 'DOWNLOAD_SIZE_LIMIT';
+        callback(error);
         return;
       }
       callback(null, chunk);
@@ -81,7 +83,9 @@ export async function downloadToTemp(url, {
     const declaredLength = Number(response.headers.get('content-length'));
     if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
       response.body?.destroy?.();
-      throw new Error(`Tep vuot qua gioi han ${maxBytes} bytes`);
+      const error = new Error(`Tep vuot qua gioi han ${maxBytes} bytes`);
+      error.code = 'DOWNLOAD_SIZE_LIMIT';
+      throw error;
     }
     if (!response.body) throw new Error('Phan hoi tai media khong co body');
 

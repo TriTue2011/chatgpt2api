@@ -79,15 +79,19 @@ export async function saveFileFromUrl(url) {
 // một tệp và mảng đường dẫn chứa N bản của CÙNG một đường dẫn. Zalo nhận đủ N
 // tấm (soAnh báo đúng N) nhưng tấm nào cũng là ảnh tải về CUỐI CÙNG. Hai yêu cầu
 // gửi chạy song song cũng ghi đè lẫn nhau vì lý do này.
-export async function saveImage(url) {
+export async function saveImage(url, maxBytesOverride, { throwOnError = false } = {}) {
     try {
-        const maxBytes = Number.parseInt(
+        const configuredMaxBytes = Number.parseInt(
             process.env.IMAGE_DOWNLOAD_MAX_BYTES || String(25 * 1024 * 1024),
             10,
         );
+        const maxBytes = Number.isSafeInteger(maxBytesOverride) && maxBytesOverride > 0
+            ? Math.min(configuredMaxBytes, maxBytesOverride)
+            : configuredMaxBytes;
         return await downloadToTemp(url, { maxBytes });
     } catch (error) {
         console.error('Error saving image from URL:', error?.message || error);
+        if (throwOnError) throw error;
         return null;
     }
 }
