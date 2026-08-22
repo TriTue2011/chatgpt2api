@@ -31,10 +31,14 @@ env:
 
 jobs:
   # Gate: hermetic unit tests (pytest) + web typecheck TRƯỚC khi build image.
-  # Chạy toàn bộ test/ trừ test_v1_*.py (integration — cần localhost:8000) và
-  # test_account_image_capabilities.py (có test stale so với AccountService
-  # hiện tại). Typecheck = tsc --noEmit (nhanh); next build đầy đủ đã có trong
-  # Docker build stage.
+  # Chạy toàn bộ test/ trừ test_v1_*.py — nhóm này gọi HTTP thật vào một
+  # gateway đang chạy, runner không có. Typecheck = tsc --noEmit (nhanh); next
+  # build đầy đủ đã có trong Docker build stage.
+  #
+  # test_account_image_capabilities.py TỪNG bị loại vì có test stale so với
+  # AccountService (nhãn trạng thái tiếng Trung, và hai ca gọi phương thức
+  # không còn tồn tại). Đã chữa nên bỏ dòng loại trừ — kiểm chứng bằng cả bộ
+  # chạy trên Linux ngày 22/08: có tệp này, không ca nào hỏng.
   test:
     runs-on: ubuntu-latest
     # 25 phút, không phải 10. Đo 06-07/08: bốn lượt liên tiếp chết ở đúng mốc 10
@@ -65,8 +69,7 @@ jobs:
       - name: Run unit tests
         run: |
           uv run python -m pytest test/ -q \
-            --ignore-glob='test/test_v1_*.py' \
-            --ignore=test/test_account_image_capabilities.py
+            --ignore-glob='test/test_v1_*.py'
 
       # RBAC của zalo-server là code Node, pytest không chạm tới. Test dùng
       # runner có sẵn của Node (`node --test`), không thêm dependency nào.

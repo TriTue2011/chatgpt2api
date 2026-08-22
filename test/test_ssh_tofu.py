@@ -90,7 +90,19 @@ class KhoaDoiBiTuChoiTests(unittest.TestCase):
             self.assertIsNotNone(client.get_host_keys().lookup(HOST))
 
 
+# Root BỎ QUA quyền tệp: `chmod 0o500` không chặn nổi root ghi vào thư mục, nên
+# hai ca dưới đây không giả lập được "không lưu được khoá" — chúng ghi thành
+# công rồi đỏ oan ở bước assert. Đo 22/08/2026 khi chạy cả bộ bằng root trên
+# máy chủ 172.16.10.38: đúng hai ca này hỏng, log hiện "ghi nhớ khoá LẦN ĐẦU".
+# CI chạy bằng user thường nên không gặp — nghĩa là nếu không khai báo ra đây,
+# chạy bằng root sẽ tưởng code hỏng, còn tệ hơn là tưởng test đang canh trong
+# khi nó chẳng canh gì.
+LA_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+LY_DO_ROOT = "chạy bằng root: chmod 0o500 không chặn được ghi nên ca này vô nghĩa"
+
+
 class KhongGhiDuocThiTuChoiTests(unittest.TestCase):
+    @unittest.skipIf(LA_ROOT, LY_DO_ROOT)
     def test_thu_muc_chi_doc_thi_tu_choi_ket_noi(self):
         with tempfile.TemporaryDirectory() as d:
             ro = Path(d) / "ro"
@@ -112,6 +124,7 @@ class KhongGhiDuocThiTuChoiTests(unittest.TestCase):
             tofu_policy(None).missing_host_key(paramiko.SSHClient(), HOST, _khoa())
         self.assertIn("Từ chối kết nối", str(ctx.exception))
 
+    @unittest.skipIf(LA_ROOT, LY_DO_ROOT)
     def test_tu_choi_thay_vi_am_tham_chap_nhan(self):
         """Chốt lại điều dễ hồi quy nhất: KHÔNG được nuốt lỗi rồi đi tiếp."""
         with tempfile.TemporaryDirectory() as d:
