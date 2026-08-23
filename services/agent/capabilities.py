@@ -4259,6 +4259,100 @@ def _h_device_capture(args: dict, ctx: dict) -> dict:
                 "text": f"Em chụp được nhưng lưu ảnh lỗi 😥 ({str(exc)[:100]})."}
 
 
+
+def _h_xem_camera(args: dict, ctx: dict) -> dict:
+    """Chụp một khung từ CAMERA NHÀ đã khai trong Cài đặt → Home Assistant.
+
+    Khác `device_capture` (webcam/màn hình của máy tính đã cài agent): camera ở
+    đây là camera giám sát, khai thẳng vào cổng qua go2rtc hoặc RTSP nên KHÔNG
+    cần Home Assistant. Nhiều người dùng bot không cài HA.
+
+    Có câu hỏi thì gọi thêm nhánh vision để trả lời; không hỏi gì thì chỉ gửi
+    ảnh. Ảnh gửi người và ảnh cho AI đọc lấy từ CÙNG một khung, hai cỡ khác nhau
+    — ảnh nét cho mắt người, ảnh nhỏ cho model (đo thật: cùng kết quả nhận dạng,
+    rẻ hơn khoảng hai mươi lần).
+    """
+    from services import camera_nha
+
+    # Mặc định ĐÓNG: chỉ admin. Mở thêm cho ai thì tích trong Cài đặt →
+    # Home Assistant → Camera nhà. Camera giám sát nhìn vào trong nhà nên cài
+    # sót phải nghiêng về phía không cho xem.
+    if not camera_nha.duoc_xem(str((ctx or {}).get("user_id") or ""),
+                               la_admin=bool((ctx or {}).get("is_admin"))):
+        return {"deliver_now": True,
+                "text": "Anh/chị chưa được cấp quyền xem camera nhà ạ. "
+                        "Chủ nhà bật giúp trong Cài đặt → Home Assistant → Camera nhà."}
+
+    ten = str(args.get("camera") or "").strip()
+    hoi = str(args.get("hoi") or "").strip()
+
+    try:
+        ten_that, anh_gui, anh_ai = camera_nha.chup_hai_co(ten or "camera")
+    except camera_nha.LoiCamera as exc:
+        return {"deliver_now": True, "text": f"{exc}"}
+    except Exception as exc:                       # nguồn lạ, lỗi ngoài dự tính
+        logger.warning("xem_camera lỗi: %s", exc)
+        return {"deliver_now": True, "text": f"Em chụp chưa được ạ: {str(exc)[:160]}"}
+
+    # Lưu vào THƯ VIỆN ẢNH — cùng chỗ ảnh AI và ảnh webcam, để "gửi lại ảnh" tìm được.
+    import time as _t
+    from services.config import config as _cfg
+    try:
+        thu_muc = _cfg.images_dir / _t.strftime("%Y") / _t.strftime("%m") / _t.strftime("%d")
+        thu_muc.mkdir(parents=True, exist_ok=True)
+        # Tên camera do người dùng đặt nên có thể chứa '/', '..', dấu câu — ghép
+        # thẳng vào tên tệp là ghi lệch thư mục. Giữ lại đúng chữ, số, gạch.
+        _an = re.sub(r"[^0-9a-z]+", "_", _ten_chat(ten_that)).strip("_")
+        tep = f"camera_{_an or 'cam'}_{int(_t.time())}.jpg"
+        (thu_muc / tep).write_bytes(anh_gui)
+        rel = f"{_t.strftime('%Y/%m/%d')}/{tep}"
+        cd = f"{gateway_base_url()}/images/{rel}"
+        logger.info({"event": "camera_snapshot", "camera": ten_that,
+                     "bytes": len(anh_gui), "path": rel})
+    except Exception as exc:
+        logger.warning("lưu ảnh camera lỗi: %s", exc)
+        return {"deliver_now": True,
+                "text": f"Em chụp được nhưng lưu ảnh lỗi 😥 ({str(exc)[:100]})."}
+
+    if not hoi:
+        return {"text": f"📷 Camera {ten_that} ạ.", "image_url": cd}
+
+    mo_ta = _hoi_ve_anh(anh_ai, hoi)
+    return {"text": f"📷 Camera {ten_that}: {mo_ta}" if mo_ta
+                    else f"📷 Camera {ten_that} ạ (em chưa đọc được ảnh).",
+            "image_url": cd}
+
+
+def _hoi_ve_anh(jpeg: bytes, hoi: str) -> str:
+    """Hỏi nhánh vision một câu về một khung ảnh. Lỗi thì trả chuỗi rỗng.
+
+    Trả lời rỗng KHÔNG được coi là hỏng cả lượt: ảnh vẫn gửi đi được, người dùng
+    tự nhìn. Nhánh vision chết mà nuốt luôn tấm ảnh mới là hỏng.
+    """
+    import base64 as _b64
+
+    from services.agent.branches import branch_model
+    from services.agent.runtime import call_model, content_of
+
+    data_url = "data:image/jpeg;base64," + _b64.b64encode(jpeg).decode("ascii")
+    tin = [{"role": "user", "content": [
+        {"type": "text", "text":
+            f"Ảnh chụp từ camera giám sát ngay lúc này. {hoi}\n"
+            "Trả lời NGẮN bằng tiếng Việt, chỉ nói điều nhìn thấy trong ảnh. "
+            "Không đoán danh tính người. Không thấy thì nói thẳng là không thấy."},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]}]
+    try:
+        resp = call_model(branch_model("vision") or "", tin, timeout=90, max_tokens=300)
+    except Exception as exc:
+        logger.warning("hỏi vision về ảnh camera lỗi: %s", exc)
+        return ""
+    if resp.get("error"):
+        logger.warning("nhánh vision trả lỗi: %s", str(resp["error"])[:200])
+        return ""
+    return (content_of(resp) or "").strip()
+
+
 _POWER_TU = {
     "shutdown": ("shutdown", "tat may", "tat laptop", "tat pc", "tat", "poweroff",
                  "tắt máy", "tắt laptop", "tắt nguồn", "shut down"),
@@ -5180,6 +5274,26 @@ CAPABILITIES: dict[str, Capability] = {
                                             "khi họ muốn chụp gấp. Bỏ trống = cao (1080p)"},
             "monitor": {"type": "integer", "description": "Màn hình thứ mấy (0 = tất cả)"}},
             "required": ["kind"]}),
+    "xem_camera": Capability(
+        name="xem_camera", risk=CHANGE, handler=_h_xem_camera,
+        emoji="📷", label="Xem camera nhà (go2rtc / RTSP)",
+        description=("Chụp ảnh ngay lúc này từ một CAMERA GIÁM SÁT trong nhà và "
+                     "gửi về. Dùng khi người dùng nói 'xem camera sân', 'ngoài "
+                     "cổng có ai không', 'nhìn thử phòng khách'. Có thể kèm câu "
+                     "hỏi để em nhìn ảnh trả lời. KHÁC device_capture (webcam/màn "
+                     "hình MÁY TÍNH) — cái này là camera an ninh."),
+        parameters={"type": "object", "properties": {
+            "camera": {"type": "string",
+                       "description": "Tên camera người dùng nói, vd 'sân trước'. "
+                                      "Bỏ trống nếu nhà chỉ có một camera."},
+            "hoi": {"type": "string",
+                    "description": "Câu hỏi về cảnh trong ảnh, vd 'có ai không', "
+                                   "'xe còn ở đó không'. Bỏ trống = chỉ gửi ảnh."}},
+            "required": []},
+        workflow=("Kết quả gồm ảnh và (nếu có hỏi) câu trả lời — thuật lại ngắn, "
+                  "ĐỪNG mô tả lại ảnh mà em không nhìn thấy. Báo 'chưa rõ camera "
+                  "nào' kèm danh sách nghĩa là tên mập mờ: HỎI LẠI người dùng chọn "
+                  "camera nào, KHÔNG tự chụp đại một cái.")),
     "device_power": Capability(
         name="device_power", risk=CHANGE, handler=_h_device_power,
         emoji="🔌", label="Tắt / khởi động lại / khoá máy tính đã cài agent",
@@ -6145,6 +6259,10 @@ _CAP_GROUP: dict[str, str] = {
     # thread nào được xem máy chủ vẫn KHÔNG tự động được nhìn vào máy người khác.
     "device_capture": "device",
     "device_power": "device",
+    # Camera giám sát nhìn vào TRONG NHÀ — cùng nhóm "device" với webcam vì cùng
+    # tính chất riêng tư, KHÔNG gộp vào "homeassistant": thread nào được bật tắt
+    # đèn vẫn không mặc nhiên được nhìn vào nhà.
+    "xem_camera": "device",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",

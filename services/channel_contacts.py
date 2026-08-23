@@ -62,6 +62,30 @@ def _save() -> None:
         pass
 
 
+def session_key(platform: str, group_id: str, user_id: str = "") -> str:
+    """Khoá phiên orchestrator của một người trên một kênh.
+
+    Đây là ĐÚNG chuỗi mà orchestrator nhận vào ``ctx["user_id"]``, nên mọi cài
+    đặt tính theo người (persona, quyền xem camera) đều tích theo khoá này. Phải
+    là chỗ DUY NHẤT tính nó cho phía web/API — tính lại ở nơi khác là cài đặt
+    tích xong không khớp lúc chạy, mà lỗi kiểu đó im lặng.
+
+    Telegram không có tiền tố (giữ nguyên lịch sử cũ theo ``chat_id``), Zalo Bot
+    dùng ``zalo_``, Zalo Cá Nhân dùng ``zalop_``, Home Assistant là một phiên
+    chung tên ``ha``.
+    """
+    gid = str(group_id or "").strip()
+    uid = str(user_id or "").strip()
+    if platform == "ha":
+        return "ha"
+    if platform == "tg":
+        return f"{gid}:u{uid}" if (gid and uid) else (gid or uid)
+    pre = "zalo_" if platform == "zalo" else "zalop_"
+    if gid and uid:
+        return f"{pre}{gid}:u{uid}"
+    return f"{pre}{gid or uid}" if (gid or uid) else ""
+
+
 def contact_key(platform: str, bot_id: str, chat_id: str, user_id: str = "") -> str:
     """Primary key for DM/group thread. user_id only if you want member-level."""
     p = str(platform or "").strip()

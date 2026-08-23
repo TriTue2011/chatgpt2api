@@ -75,16 +75,8 @@ def create_router() -> APIRouter:
     # ── Speech Persona theo phiên — 4 phạm vi độc lập (giống webhook forward):
     # admin (= user 1-1), user 1-1, cả NHÓM (fallback), từng USER TRONG NHÓM.
     def _persona_key(platform: str, group_id: str, user_id: str) -> str:
-        gid = str(group_id or "").strip()
-        uid = str(user_id or "").strip()
-        if platform == "ha":  # Home Assistant — một phiên chung, key cố định
-            return "ha"
-        if platform == "tg":
-            return f"{gid}:u{uid}" if (gid and uid) else (gid or uid)
-        pre = "zalo_" if platform == "zalo" else "zalop_"
-        if gid and uid:
-            return f"{pre}{gid}:u{uid}"
-        return f"{pre}{gid or uid}" if (gid or uid) else ""
+        from services.channel_contacts import session_key
+        return session_key(platform, group_id, user_id)
 
     @router.get("/api/personas")
     async def personas_list(authorization: str | None = Header(default=None)):

@@ -423,6 +423,43 @@ Hạ tầng dùng chung cho mọi bot:
 Có HA thì AI đọc được trạng thái nhà và điều khiển thiết bị. **Không bắt buộc** —
 phần loa ở Phần 4 chạy được mà không cần HA.
 
+#### Camera nhà (cùng mục, ngay dưới ô HA)
+
+Khai camera **thẳng vào cổng**, không qua Home Assistant — ai không cài HA vẫn
+dùng được. Đặt tên tiếng Việt cho từng cái rồi hỏi bằng tên đó, từ Zalo,
+Telegram hay trợ lý trong nhà: «xem camera sân trước», «ngoài cổng có ai không».
+
+Hai đường vào:
+
+| Kiểu | Cần khai | Khi nào chọn |
+|---|---|---|
+| **go2rtc** | Địa chỉ máy chủ go2rtc (cổng mặc định **1984**) và **tên luồng** đặt trong mục `streams` của nó | Đã chạy go2rtc rồi. Nhanh hơn vì go2rtc giữ sẵn kết nối tới camera |
+| **RTSP** | Một URL `rtsp://…` | Chưa có gì thêm. Mỗi lần chụp tốn vài giây bắt tay |
+
+Với RTSP nên trỏ vào **luồng phụ** (thường có đuôi `-sub` hoặc `stream2`). Đo
+trên máy thật: ba ảnh luồng phụ tốn 978 token và khoảng 1 giây, ba ảnh luồng
+chính tốn 8 425 token và khoảng 20 giây — cùng nhận ra ngần ấy người, cùng mô tả
+như nhau. Ảnh nét chỉ để mắt người xem, đưa vào AI là trả giá gấp hai mươi lần
+mà không được gì thêm.
+
+Ô **Ghi chú** cũng được dùng để nhận tên. Đặt tên camera là `cam1` nhưng ghi chú
+«cổng ngoài» thì hỏi «xem cổng ngoài» vẫn ra đúng cái đó.
+
+Nút **Chụp thử** chỉ chạy được sau khi đã bấm **Lưu**, vì nó đọc camera từ cấu
+hình đã lưu chứ không đọc từ ô đang gõ dở.
+
+> 🔐 **Ai được xem.** Mặc định **chỉ mình bạn (admin)**. Muốn mở cho vợ/con thì
+> chọn «Admin và những người tôi tích bên dưới» rồi tích từng người. Danh sách
+> chỉ hiện **hội thoại 1-1** đã có trong danh bạ — nhóm chat không mở camera
+> được, vì mỗi người trong nhóm là một phiên riêng và mở camera nhà cho cả nhóm
+> cũng không phải thứ nên bấm nhầm một cái là xong. Tích sót thì hệ nghiêng về
+> phía **không** cho xem: chọn chế độ danh sách mà chưa tích ai thì vẫn chỉ mình
+> bạn xem được.
+
+Camera mập mờ tên thì bot **hỏi lại** chứ không chụp đại. Có hai camera cùng chữ
+«sân» mà bạn chỉ nói «xem camera sân» thì nó liệt kê ra để bạn chọn — chụp nhầm
+camera phòng ngủ khi người ta hỏi camera sân là chuyện không sửa lại được.
+
 ### 3.8. Email & Lịch
 
 | Ô | Ý nghĩa |
