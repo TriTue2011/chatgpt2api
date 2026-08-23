@@ -677,7 +677,8 @@ class MCPSearch(SearchBackend):
     # "Unexpected keyword argument" — và text lỗi đó có kèm URL
     # errors.pydantic.dev, nên bộ tách coi LỖI là một kết quả tìm kiếm hợp lệ.
     _LOI = ("unexpected keyword", "validation error", "errors.pydantic.dev",
-            "traceback", "internal server error", "-32600", "-32602")
+            "traceback", "internal server error", "-32600", "-32602",
+            "[mcp lỗi]", "[mcp cần thêm thông tin]")
 
     _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
 
@@ -1420,11 +1421,11 @@ class SearchService:
             # ask_<> reaches the hub via the working mcp_servers URL and does the
             # KB-first hybrid lookup (with its own live fallback when needed).
             try:
-                from services.mcp_client import call_mcp_tool
+                from services.mcp_client import call_mcp_tool, la_loi_mcp
                 suffix = collection[3:] if collection.startswith("kb_") else collection
                 text = str(call_mcp_tool(f"ask_{suffix}", {"question": query}, server_id=collection) or "")
                 low = text.lower()
-                if not text or "chưa có dữ liệu" in low or "chưa sẵn sàng" in low:
+                if not text or la_loi_mcp(text) or "chưa có dữ liệu" in low or "chưa sẵn sàng" in low:
                     return "rag", []
                 return "rag", [{"title": f"[KB {suffix}]", "snippet": text[:3000], "url": ""}]
             except Exception as exc:

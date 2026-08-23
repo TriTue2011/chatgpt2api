@@ -533,6 +533,10 @@ function R2Tab({ showToast }: TabProps) {
 
 // ── Tab: External MCP ──────────────────────────────────────────────────────
 type ExtTool = { name: string; description: string };
+type ExternalMcp = {
+  id: string; name: string; url: string; description?: string;
+  transport?: string; enabled?: boolean; has_api_key?: boolean; header_names?: string[];
+};
 
 // ID trong config.mcp_servers của gateway (phải tính lại được từ tên khi xoá)
 const extSlug = (s: string) =>
@@ -541,47 +545,65 @@ const extSlug = (s: string) =>
 function ExternalTab({ showToast }: TabProps) {
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
-  const [valid, setValid] = useState<{ name: string; version?: string; tools: ExtTool[] } | null>(null);
+  const [headersJson, setHeadersJson] = useState("{}");
+  const [transport, setTransport] = useState("auto");
+  const [valid, setValid] = useState<{
+    name: string; version?: string; protocol_version?: string;
+    transport?: string; tools: ExtTool[];
+  } | null>(null);
   const [extName, setExtName] = useState("");
   const [extDesc, setExtDesc] = useState("");
-  const [list, setList] = useState<{ name: string; url: string; description?: string }[]>([]);
+  const [list, setList] = useState<ExternalMcp[]>([]);
 
   const load = useCallback(async () => {
-    try { const r = await request.get(`${STUDIO}/external-mcps`); setList(r.data?.mcps || []); } catch { /* ignore */ }
+    try { const r = await request.get("/api/mcp/custom"); setList(r.data?.mcps || []); } catch { /* ignore */ }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const parsedHeaders = () => {
+    const parsed: unknown = JSON.parse(headersJson || "{}");
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Headers phải là JSON object");
+    return parsed as Record<string, string>;
+  };
 
   const validate = async () => {
     if (!url.trim()) return;
     setValid(null);
     try {
-      const r = await request.post(`${STUDIO}/validate-mcp`, { url: url.trim(), api_key: key.trim() });
-      if (r.data?.ok) { setValid({ name: r.data.name, version: r.data.version, tools: r.data.tools || [] }); setExtName(r.data.name || ""); }
+      const r = await request.post("/api/mcp/validate", {
+        url: url.trim(), api_key: key.trim(), headers: parsedHeaders(), transport,
+      });
+      if (r.data?.ok) {
+        setValid({
+          name: r.data.name, version: r.data.version,
+          protocol_version: r.data.protocol_version, transport: r.data.transport,
+          tools: r.data.tools || [],
+        });
+        setExtName(r.data.name || "");
+      }
       else showToast("Lỗi: " + (r.data?.errors || []).join(". "), false);
     } catch (e) { showToast(String((e as Error).message), false); }
   };
 
   const add = async () => {
     try {
-      const r = await request.post(`${STUDIO}/external-mcp`, { name: extName.trim(), url: url.trim(), description: extDesc.trim(), api_key: key.trim() });
+      const r = await request.post("/api/mcp/install", {
+        id: extSlug(extName), name: extName.trim(), url_override: url.trim(),
+        description: extDesc.trim(), api_key: key.trim(), headers: parsedHeaders(), transport,
+      });
       if (r.data?.ok) {
-        // Đăng ký vào gateway (config.mcp_servers) — registry của hub chỉ để hiển thị,
-        // agent chỉ dùng tool từ danh sách MCP của gateway.
-        try {
-          await request.post("/api/mcp/install", { id: extSlug(extName), url_override: url.trim(), api_key: key.trim() });
-        } catch { /* hub registry vẫn giữ entry; agent sẽ chưa thấy tool */ }
-        showToast(`Đã thêm ${r.data.name}`); setValid(null); setUrl(""); setKey(""); setExtDesc(""); load();
+        showToast(`Đã thêm ${extName.trim()}`); setValid(null); setUrl(""); setKey("");
+        setHeadersJson("{}"); setExtDesc(""); load();
       }
       else showToast((r.data?.errors || ["Lỗi"]).join(". "), false);
     } catch (e) { showToast(String((e as Error).message), false); }
   };
 
-  const del = async (n: string) => {
-    if (!window.confirm(`Xoá MCP ${n}?`)) return;
+  const del = async (m: ExternalMcp) => {
+    if (!window.confirm(`Xoá MCP ${m.name}?`)) return;
     try {
-      await request.delete(`${STUDIO}/external-mcp/${encodeURIComponent(n)}`);
-      try { await request.post(`/api/mcp/uninstall/${extSlug(n)}`); } catch { /* ignore */ }
-      showToast(`Đã xoá ${n}`); load();
+      await request.post(`/api/mcp/uninstall/${encodeURIComponent(m.id)}`);
+      showToast(`Đã xoá ${m.name}`); load();
     }
     catch { showToast("Lỗi", false); }
   };
@@ -590,12 +612,26 @@ function ExternalTab({ showToast }: TabProps) {
     <div className="space-y-4">
       <div className="card"><div className="card-body space-y-3 max-w-xl">
         <h3 className="font-semibold">Kiểm tra MCP Server</h3>
-        <Field label="URL MCP"><input className={INPUT} placeholder="https://example.com/mcp" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
-        <Field label="API Key (nếu cần)"><input type="password" className={INPUT} value={key} onChange={(e) => setKey(e.target.value)} /></Field>
+        <p className="text-xs text-[var(--muted-foreground)]">
+          n8n cấp hệ thống: <code>https://n8n.example.com/mcp-server/http</code>. MCP Server Trigger: dùng Production URL của node.
+        </p>
+        <Field label="URL MCP"><input className={INPUT} placeholder="https://example.com/mcp" value={url} onChange={(e) => { setUrl(e.target.value); setValid(null); }} /></Field>
+        <Field label="Transport">
+          <select className={INPUT} value={transport} onChange={(e) => { setTransport(e.target.value); setValid(null); }}>
+            <option value="auto">Tự nhận dạng (khuyên dùng)</option>
+            <option value="streamable_http">Streamable HTTP</option>
+            <option value="sse">HTTP + SSE cũ</option>
+          </select>
+        </Field>
+        <Field label="Bearer/API Key (nếu cần)"><input type="password" className={INPUT} value={key} onChange={(e) => { setKey(e.target.value); setValid(null); }} /></Field>
+        <Field label="Custom headers (JSON)">
+          <textarea className={`${INPUT} min-h-24 font-mono`} placeholder={'{"X-API-Key":"..."}'} value={headersJson} onChange={(e) => { setHeadersJson(e.target.value); setValid(null); }} />
+        </Field>
         <button className="btn btn-primary inline-flex items-center gap-1.5" onClick={validate}><Search className="size-4" />Kiểm tra</button>
         {valid && (
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2">
             <p className="text-sm text-emerald-600 inline-flex items-center gap-1.5"><CheckCircle2 className="size-4" />{valid.name} {valid.version} · {valid.tools.length} tools</p>
+            <p className="text-xs text-[var(--muted-foreground)]">{valid.transport} · MCP {valid.protocol_version || "legacy"}</p>
             <input className={INPUT} placeholder="Tên MCP" value={extName} onChange={(e) => setExtName(e.target.value)} />
             <input className={INPUT} placeholder="Mô tả (để AI biết MCP này làm gì)" value={extDesc} onChange={(e) => setExtDesc(e.target.value)} />
             <button className="btn btn-primary inline-flex items-center gap-1.5" onClick={add}><Plug2 className="size-4" />Thêm MCP</button>
@@ -607,11 +643,12 @@ function ExternalTab({ showToast }: TabProps) {
         <div className="space-y-1.5">
           {list.length === 0 && <p className="text-sm text-[var(--muted-foreground)]">Chưa có.</p>}
           {list.map((m) => (
-            <div key={m.name} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3.5 py-2 flex-wrap">
+            <div key={m.id} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3.5 py-2 flex-wrap">
               <span className="text-sm font-medium">{m.name}</span>
               <code className="text-xs text-[var(--muted-foreground)]">{m.url}</code>
               {m.description && <span className="text-xs text-[var(--muted-foreground)]">{m.description}</span>}
-              <button className="ml-auto text-xs px-2 py-1 rounded-md bg-red-500/10 text-red-500" onClick={() => del(m.name)}>Xoá</button>
+              <span className="text-xs text-[var(--muted-foreground)]">{m.transport || "auto"}{m.has_api_key ? " · Bearer" : ""}{m.header_names?.length ? ` · ${m.header_names.join(", ")}` : ""}</span>
+              <button className="ml-auto text-xs px-2 py-1 rounded-md bg-red-500/10 text-red-500" onClick={() => del(m)}>Xoá</button>
             </div>
           ))}
         </div>

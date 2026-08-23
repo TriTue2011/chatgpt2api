@@ -105,7 +105,7 @@ class MucLogKhiHubChuaLenTests(unittest.TestCase):
                                lambda d: ghi.append(("info", d))), \
              mock.patch.object(mcp_client.logger, "warning",
                                lambda d: ghi.append(("warning", d))), \
-             mock.patch.object(mcp_client.urllib.request, "urlopen",
+             mock.patch.object(mcp_client, "_open_url",
                                side_effect=exc):
             client._call("tools/list")
         return ghi[0][0] if ghi else None
