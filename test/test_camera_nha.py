@@ -274,6 +274,52 @@ class ThieuFfmpegTests(unittest.TestCase):
 
 
 @pytest.mark.pure
+class KichThuocJpegTests(unittest.TestCase):
+    """Đọc kích thước từ header, và KHÔNG mã hoá lại ảnh đã đủ nhỏ.
+
+    Đo trên camera thật: khung luồng phụ 640×480 nặng 27 KB, cho qua ffmpeg với
+    đích 1600 px thì ra 69 KB — to gấp hai rưỡi mà chất lượng kém đi.
+    """
+
+    def _jpeg(self, w: int, h: int) -> bytes:
+        import io
+
+        from PIL import Image
+        b = io.BytesIO()
+        Image.new("RGB", (w, h), (10, 20, 30)).save(b, format="JPEG")
+        return b.getvalue()
+
+    def test_doc_dung_kich_thuoc(self) -> None:
+        self.assertEqual(cam.kich_thuoc_jpeg(self._jpeg(640, 480)), (640, 480))
+        self.assertEqual(cam.kich_thuoc_jpeg(self._jpeg(1920, 1080)), (1920, 1080))
+
+    def test_khong_phai_jpeg_thi_tra_none(self) -> None:
+        self.assertIsNone(cam.kich_thuoc_jpeg(b"\x89PNG\r\n\x1a\n"))
+        self.assertIsNone(cam.kich_thuoc_jpeg(b""))
+        self.assertIsNone(cam.kich_thuoc_jpeg(b"\xff\xd8ngan"))
+
+    def test_anh_da_du_nho_thi_giu_nguyen_byte(self) -> None:
+        goc = self._jpeg(640, 480)
+        with mock.patch("subprocess.run") as ff:
+            self.assertEqual(cam._thu_nho(goc, cam.CANH_GUI), goc)
+        ff.assert_not_called()      # không gọi ffmpeg = không phình, không mất chất
+
+    def test_anh_to_hon_dich_thi_van_thu_nho(self) -> None:
+        goc = self._jpeg(1920, 1080)
+        with mock.patch("subprocess.run",
+                        return_value=mock.Mock(returncode=0, stdout=b"nho")) as ff:
+            self.assertEqual(cam._thu_nho(goc, cam.CANH_AI), b"nho")
+        ff.assert_called_once()
+
+    def test_khong_doc_duoc_kich_thuoc_thi_van_thu_nho(self) -> None:
+        # Không biết to hay nhỏ thì cứ thu — an toàn hơn là gửi ảnh khổng lồ.
+        with mock.patch("subprocess.run",
+                        return_value=mock.Mock(returncode=0, stdout=b"nho")) as ff:
+            self.assertEqual(cam._thu_nho(b"khong-phai-jpeg", cam.CANH_AI), b"nho")
+        ff.assert_called_once()
+
+
+@pytest.mark.pure
 class SoHongTests(unittest.TestCase):
     """Bản ghi lạ lọt vào config (sửa tay, card lỗi) phải báo đúng chỗ sai."""
 

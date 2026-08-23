@@ -281,12 +281,46 @@ def duoc_xem(user_id: str, *, la_admin: bool = False) -> bool:
 
 # ── Bóc một khung ảnh ────────────────────────────────────────────────────────
 
+def kich_thuoc_jpeg(jpeg: bytes) -> tuple[int, int] | None:
+    """Đọc rộng×cao từ header JPEG. Không nhận ra thì trả ``None``.
+
+    Đọc bằng tay thay vì gọi ffprobe: chỉ cần lướt vài chục byte đầu, mà mỗi lần
+    tránh được một tiến trình con là mỗi lần bớt vài chục mili-giây.
+    """
+    i, n = 2, len(jpeg)
+    if jpeg[:2] != b"\xff\xd8":
+        return None
+    while i + 9 < n:
+        if jpeg[i] != 0xFF:
+            i += 1
+            continue
+        dau = jpeg[i + 1]
+        # SOF0…SOF15, trừ DHT(C4), JPG(C8), DAC(CC) — chúng không mang kích thước.
+        if 0xC0 <= dau <= 0xCF and dau not in (0xC4, 0xC8, 0xCC):
+            cao = int.from_bytes(jpeg[i + 5:i + 7], "big")
+            rong = int.from_bytes(jpeg[i + 7:i + 9], "big")
+            return (rong, cao) if rong and cao else None
+        if dau in (0xD8, 0x01) or 0xD0 <= dau <= 0xD7:
+            i += 2
+            continue
+        i += 2 + int.from_bytes(jpeg[i + 2:i + 4], "big")
+    return None
+
+
 def _thu_nho(jpeg: bytes, canh: int) -> bytes:
     """Thu nhỏ cạnh dài nhất về ``canh`` px. Lỗi thì trả nguyên bản.
 
     Thu nhỏ là bước làm-đẹp, không phải bước bắt buộc: ffmpeg trục trặc thì thà
     gửi ảnh to còn hơn không có ảnh nào.
+
+    Ảnh đã nhỏ hơn đích thì trả nguyên bản, KHÔNG mã hoá lại. Đo trên camera
+    thật: khung luồng phụ 640×480 nặng 27 KB, cho qua ffmpeg với đích 1600 px
+    thì ffmpeg không phóng to (đã chặn bằng ``decrease``) nhưng vẫn nén lại và
+    ra 69 KB — to gấp hai rưỡi ảnh gốc, mà chất lượng thì kém đi.
     """
+    kt = kich_thuoc_jpeg(jpeg)
+    if kt and max(kt) <= canh:
+        return jpeg
     try:
         p = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
