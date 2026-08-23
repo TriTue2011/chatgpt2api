@@ -4267,10 +4267,16 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
     đây là camera giám sát, khai thẳng vào cổng qua go2rtc hoặc RTSP nên KHÔNG
     cần Home Assistant. Nhiều người dùng bot không cài HA.
 
-    Có câu hỏi thì gọi thêm nhánh vision để trả lời; không hỏi gì thì chỉ gửi
-    ảnh. Ảnh gửi người và ảnh cho AI đọc lấy từ CÙNG một khung, hai cỡ khác nhau
-    — ảnh nét cho mắt người, ảnh nhỏ cho model (đo thật: cùng kết quả nhận dạng,
-    rẻ hơn khoảng hai mươi lần).
+    Ba đường tuỳ người dùng hỏi gì:
+
+    - Chỉ xin ảnh → bấm **luồng chính** một nhát, gửi tấm nét. Không đụng model.
+    - Hỏi về cảnh → bấm **cả hai luồng song song**: model đọc luồng phụ cho rẻ,
+      người dùng nhận tấm luồng chính cho nét, và vì bấm cùng lúc nên hai tấm là
+      cùng một khoảnh khắc.
+    - Camera không khai luồng phụ → bóc một khung rồi thu nhỏ hai kiểu.
+
+    Đo trên camera thật: khung luồng chính 1920×1080 nặng 173 KB, khung luồng
+    phụ 640×480 chỉ 27 KB, mà nhận ra ngần ấy người và mô tả như nhau.
     """
     from services import camera_nha
 
@@ -4287,7 +4293,13 @@ def _h_xem_camera(args: dict, ctx: dict) -> dict:
     hoi = str(args.get("hoi") or "").strip()
 
     try:
-        ten_that, anh_gui, anh_ai = camera_nha.chup_hai_co(ten or "camera")
+        if hoi:
+            ten_that, anh_gui, anh_ai = camera_nha.chup_hai_co(ten or "camera")
+        else:
+            # Không hỏi gì thì khỏi bấm luồng phụ: tốn thêm một lượt gọi camera
+            # cho một tấm ảnh không ai đọc.
+            ten_that, anh_gui = camera_nha.chup(ten or "camera")
+            anh_ai = b""
     except camera_nha.LoiCamera as exc:
         return {"deliver_now": True, "text": f"{exc}"}
     except Exception as exc:                       # nguồn lạ, lỗi ngoài dự tính

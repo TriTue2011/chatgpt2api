@@ -86,7 +86,7 @@ def danh_sach(*, kem_bi_mat: bool = False) -> list[dict[str, Any]]:
         m = dict(c)
         m["name"] = ten
         if not kem_bi_mat:
-            for khoa in ("url", "base"):
+            for khoa in ("url", "url_ai", "base"):
                 if m.get(khoa):
                     m[khoa] = che_bi_mat(str(m[khoa]))
             m.pop("password", None)
@@ -95,11 +95,19 @@ def danh_sach(*, kem_bi_mat: bool = False) -> list[dict[str, Any]]:
 
 
 def them(ten: str, kieu: str, *, url: str = "", base: str = "", src: str = "",
+         url_ai: str = "", src_ai: str = "",
          username: str = "", password: str = "", ghi_chu: str = "") -> dict[str, Any]:
-    """Khai một camera mới. Trả về bản ghi đã che mật khẩu.
+    """Khai hoặc sửa một camera. Trả về bản ghi đã che mật khẩu.
+
+    Tên đã có thì ghi đè — đó cũng là đường "sửa camera" của card web.
 
     ``kieu='go2rtc'`` cần ``base`` (vd ``http://172.16.10.38:1984``) và ``src``
     là tên luồng trong cấu hình go2rtc. ``kieu='rtsp'`` cần ``url``.
+
+    ``url_ai`` / ``src_ai`` là **luồng phụ cho AI đọc**, không bắt buộc. Khai nó
+    thì ảnh gửi bạn lấy từ luồng chính cho nét, còn ảnh đưa model đọc lấy từ
+    luồng phụ cho rẻ. Không khai thì AI đọc luôn luồng chính — chỉ tốn hơn chứ
+    không mất tính năng nào.
     """
     ten = (ten or "").strip()
     if not ten:
@@ -114,13 +122,16 @@ def them(ten: str, kieu: str, *, url: str = "", base: str = "", src: str = "",
         src = (src or "").strip()
         if not base or not src:
             raise LoiCamera("Camera go2rtc cần cả địa chỉ máy chủ và tên luồng (src).")
-        ban_ghi.update(base=base, src=src,
+        ban_ghi.update(base=base, src=src, src_ai=(src_ai or "").strip(),
                        username=(username or "").strip(), password=password or "")
     else:
         url = (url or "").strip()
         if not url.lower().startswith("rtsp://"):
             raise LoiCamera("Địa chỉ RTSP phải bắt đầu bằng rtsp://")
-        ban_ghi["url"] = url
+        url_ai = (url_ai or "").strip()
+        if url_ai and not url_ai.lower().startswith("rtsp://"):
+            raise LoiCamera("Địa chỉ RTSP của luồng phụ phải bắt đầu bằng rtsp://")
+        ban_ghi.update(url=url, url_ai=url_ai)
 
     from services.config import config
 
@@ -136,7 +147,7 @@ def them(ten: str, kieu: str, *, url: str = "", base: str = "", src: str = "",
     m = dict(ban_ghi)
     m["name"] = ten
     m.pop("password", None)
-    for khoa in ("url", "base"):
+    for khoa in ("url", "url_ai", "base"):
         if m.get(khoa):
             m[khoa] = che_bi_mat(str(m[khoa]))
     return m
@@ -388,17 +399,34 @@ def _chup_rtsp(cam: dict[str, Any], timeout: float) -> bytes:
     return p.stdout
 
 
-def chup_tho(ten: str, *, timeout: float = 20.0) -> tuple[str, bytes]:
-    """Bóc một khung nguyên cỡ. Trả ``(tên thật, JPEG)``.
+def _ban_ghi_luong(cam: dict[str, Any], phu: bool) -> dict[str, Any]:
+    """Bản ghi trỏ vào một luồng cụ thể của camera.
 
-    Ném ``LoiCamera`` với câu đã sẵn sàng đọc cho người dùng.
+    ``phu=True`` lấy luồng phụ nếu có khai, không có thì rơi về luồng chính —
+    khai thiếu luồng phụ chỉ tốn thêm token chứ không được im lặng không có ảnh.
     """
+    if not phu:
+        return cam
+    if cam.get("kind") == "go2rtc":
+        src = str(cam.get("src_ai") or "").strip()
+        return dict(cam, src=src) if src else cam
+    url = str(cam.get("url_ai") or "").strip()
+    return dict(cam, url=url) if url else cam
+
+
+def co_luong_phu(cam: dict[str, Any]) -> bool:
+    """Camera này có khai luồng phụ riêng cho AI đọc không."""
+    khoa = "src_ai" if cam.get("kind") == "go2rtc" else "url_ai"
+    return bool(str(cam.get(khoa) or "").strip())
+
+
+def _lay(ten: str) -> tuple[str, dict[str, Any]]:
+    """Tra camera theo tên, ném lỗi đã sẵn sàng đọc nếu chưa chốt được."""
     ten_that, cam, goi_y = tim(ten)
     if cam is None:
         if not goi_y:
             raise LoiCamera("Chưa có camera nào được khai báo.")
         raise LoiCamera("Chưa rõ camera nào. Đang có: " + ", ".join(goi_y))
-
     # Card web ghi thẳng vào config (đúng khuôn mọi card khác) nên bản ghi không
     # bắt buộc đi qua `them()`. Kiểm lại kiểu ở đây thay vì để `else` rơi vào
     # nhánh RTSP với url rỗng — lúc đó lỗi báo ra là "ffmpeg không lấy được
@@ -407,25 +435,79 @@ def chup_tho(ten: str, *, timeout: float = 20.0) -> tuple[str, bytes]:
     if kieu not in KIEU_HOP_LE:
         raise LoiCamera(f"Camera '{ten_that}' khai kiểu '{kieu}' không dùng được — "
                         f"chỉ có: {', '.join(KIEU_HOP_LE)}.")
-    # `tim()` đọc thẳng sổ nên bản ghi còn nguyên mật khẩu — nói rõ ở đây để
-    # người sửa sau không "tiện tay" cho tim() trả bản đã che.
-    jpeg = _chup_go2rtc(cam, timeout) if kieu == "go2rtc" else _chup_rtsp(cam, timeout)
-    return ten_that, jpeg
+    return ten_that, cam
+
+
+def _bocc(cam: dict[str, Any], timeout: float) -> bytes:
+    """Bóc một khung từ bản ghi đã chốt luồng."""
+    return (_chup_go2rtc(cam, timeout) if cam.get("kind") == "go2rtc"
+            else _chup_rtsp(cam, timeout))
+
+
+def chup_tho(ten: str, *, phu: bool = False, timeout: float = 20.0) -> tuple[str, bytes]:
+    """Bóc một khung nguyên cỡ. Trả ``(tên thật, JPEG)``.
+
+    Ném ``LoiCamera`` với câu đã sẵn sàng đọc cho người dùng.
+    """
+    ten_that, cam = _lay(ten)
+    return ten_that, _bocc(_ban_ghi_luong(cam, phu), timeout)
 
 
 def chup(ten: str, *, cho_ai: bool = False, timeout: float = 20.0) -> tuple[str, bytes]:
-    """Chụp một khung đã thu nhỏ sẵn. ``cho_ai=True`` thu nhỏ mạnh hơn."""
-    ten_that, jpeg = chup_tho(ten, timeout=timeout)
+    """Chụp một khung đã thu nhỏ sẵn.
+
+    ``cho_ai=True`` đọc luồng phụ (nếu có khai) và thu nhỏ mạnh hơn, vì ảnh chỉ
+    để model đọc chứ không để người xem.
+    """
+    ten_that, jpeg = chup_tho(ten, phu=cho_ai, timeout=timeout)
     return ten_that, _thu_nho(jpeg, CANH_AI if cho_ai else CANH_GUI)
 
 
 def chup_hai_co(ten: str, *, timeout: float = 20.0) -> tuple[str, bytes, bytes]:
-    """Một lần bóc khung, ra hai cỡ: ``(tên, ảnh gửi người, ảnh cho AI)``.
+    """Ảnh gửi người và ảnh cho AI đọc: ``(tên, ảnh gửi, ảnh cho AI)``.
 
-    Bóc một lần rồi thu nhỏ hai kiểu, thay vì gọi camera hai lượt: hai lượt là
-    hai thời điểm khác nhau, nên câu AI mô tả có thể không khớp tấm người dùng
-    đang nhìn. Cùng lý do với việc blueprint cảnh báo camera bấm cả hai luồng
-    trong một nhịp.
+    Không khai luồng phụ thì bóc **một** khung rồi thu nhỏ hai kiểu — hai tấm
+    chắc chắn cùng một khoảnh khắc, và chỉ tốn một phiên với camera.
+
+    Khai luồng phụ thì bấm hai luồng. Cách bấm khác nhau theo nguồn, và đây là
+    chỗ đo thật đã sửa lại thiết kế:
+
+    - **go2rtc**: bấm song song. go2rtc giữ sẵn một kết nối tới camera rồi phục
+      vụ nhiều khách, nên hai lời gọi HTTP cùng lúc không phiền camera.
+    - **RTSP thẳng**: bấm nối đuôi. Đo trên camera Dahua thật: hai phiên RTSP
+      song song **hỏng cả hai** (hết 25 giây chờ, thử lại vẫn hỏng), trong khi
+      nối đuôi xong trong 8,6 giây. Camera loại này chỉ có vài khe phiên, mở
+      cùng lúc là nghẽn. Nối đuôi thì hai tấm cách nhau vài giây — đó là cái giá
+      của việc khai hai luồng RTSP, và cũng là lý do nên cân nhắc **không khai**
+      luồng phụ khi đi RTSP thẳng.
     """
-    ten_that, jpeg = chup_tho(ten, timeout=timeout)
-    return ten_that, _thu_nho(jpeg, CANH_GUI), _thu_nho(jpeg, CANH_AI)
+    ten_that, cam = _lay(ten)
+
+    if not co_luong_phu(cam):
+        jpeg = _bocc(cam, timeout)
+        return ten_that, _thu_nho(jpeg, CANH_GUI), _thu_nho(jpeg, CANH_AI)
+
+    ban_chinh = _ban_ghi_luong(cam, False)
+    ban_phu = _ban_ghi_luong(cam, True)
+
+    def _phu_hoac_chinh(lay_phu, chinh: bytes) -> bytes:
+        """Luồng phụ hỏng KHÔNG được làm hỏng cả lượt — rơi về luồng chính."""
+        try:
+            return lay_phu()
+        except LoiCamera as exc:
+            logger.warning({"event": "camera_luong_phu_hong",
+                            "camera": ten_that, "loi": str(exc)[:150]})
+            return chinh
+
+    if cam.get("kind") == "go2rtc":
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_chinh = pool.submit(_bocc, ban_chinh, timeout)
+            f_phu = pool.submit(_bocc, ban_phu, timeout)
+            chinh = f_chinh.result()
+            phu = _phu_hoac_chinh(f_phu.result, chinh)
+    else:
+        chinh = _bocc(ban_chinh, timeout)
+        phu = _phu_hoac_chinh(lambda: _bocc(ban_phu, timeout), chinh)
+
+    return ten_that, _thu_nho(chinh, CANH_GUI), _thu_nho(phu, CANH_AI)

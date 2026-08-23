@@ -398,7 +398,7 @@ class XemCameraTests(unittest.TestCase):
         return self.C.CAPABILITIES["xem_camera"].handler(args or {}, {"is_admin": admin})
 
     def test_khong_phai_admin_va_chua_duoc_tich_thi_tu_choi(self) -> None:
-        with _Quyen("admin", []), mock.patch.object(cam, "chup_hai_co") as chup:
+        with _Quyen("admin", []), mock.patch.object(cam, "chup") as chup:
             ra = self._goi(admin=False)
         chup.assert_not_called()
         self.assertNotIn("image_url", ra)
@@ -406,8 +406,7 @@ class XemCameraTests(unittest.TestCase):
 
     def test_nguoi_da_duoc_tich_thi_xem_duoc(self) -> None:
         with _Quyen("danh_sach", ["zalo_9:u7"]), \
-             mock.patch.object(cam, "chup_hai_co",
-                               return_value=("Sân", b"gui", b"ai")):
+             mock.patch.object(cam, "chup", return_value=("Sân", b"gui")):
             ra = self.C.CAPABILITIES["xem_camera"].handler(
                 {}, {"is_admin": False, "user_id": "zalo_9:u7"})
         self.assertIn("image_url", ra)
@@ -415,25 +414,25 @@ class XemCameraTests(unittest.TestCase):
     def test_nguoi_khac_trong_cung_nhom_van_khong_xem_duoc(self) -> None:
         # Khoá phiên khác nhau theo user, nên tích một người không mở cho cả nhóm.
         with _Quyen("danh_sach", ["zalo_9:u7"]), \
-             mock.patch.object(cam, "chup_hai_co") as chup:
+             mock.patch.object(cam, "chup") as chup:
             ra = self.C.CAPABILITIES["xem_camera"].handler(
                 {}, {"is_admin": False, "user_id": "zalo_9:u8"})
         chup.assert_not_called()
         self.assertNotIn("image_url", ra)
 
     def test_gui_anh_khi_khong_hoi_gi(self) -> None:
-        with mock.patch.object(cam, "chup_hai_co",
-                               return_value=("Sân trước", b"gui", b"ai")), \
+        with mock.patch.object(cam, "chup", return_value=("Sân trước", b"gui")), \
+             mock.patch.object(cam, "chup_hai_co") as hai, \
              mock.patch.object(self.C, "_hoi_ve_anh") as vision:
             ra = self._goi({"camera": "sân"})
         vision.assert_not_called()          # không hỏi thì đừng đốt lượt gọi model
+        hai.assert_not_called()             # cũng đừng bấm luồng phụ làm gì
         self.assertIn("Sân trước", ra["text"])
         self.assertTrue(ra["image_url"].startswith("http://cong:5000/images/"))
 
     def test_anh_duoc_ghi_that_ra_thu_vien(self) -> None:
         from pathlib import Path
-        with mock.patch.object(cam, "chup_hai_co",
-                               return_value=("Sân", b"noi-dung-anh", b"ai")):
+        with mock.patch.object(cam, "chup", return_value=("Sân", b"noi-dung-anh")):
             ra = self._goi()
         rel = ra["image_url"].split("/images/", 1)[1]
         self.assertEqual((Path(self.tmp.name) / rel).read_bytes(), b"noi-dung-anh")
@@ -443,8 +442,7 @@ class XemCameraTests(unittest.TestCase):
         # MỘT tên tệp phẳng nằm trong thư mục ảnh, không đục ra ngoài.
         from pathlib import Path
         for ten_cam in ("Cổng ngoài / để xe", "../../etc/passwd", "!!!"):
-            with mock.patch.object(cam, "chup_hai_co",
-                                   return_value=(ten_cam, b"anh", b"ai")):
+            with mock.patch.object(cam, "chup", return_value=(ten_cam, b"anh")):
                 ra = self._goi()
             rel = ra["image_url"].split("/images/", 1)[1]
             tep = Path(self.tmp.name) / rel
@@ -470,14 +468,14 @@ class XemCameraTests(unittest.TestCase):
         self.assertIn("image_url", ra)      # nhánh vision chết không được nuốt ảnh
 
     def test_ten_map_mo_thi_thuat_lai_de_hoi_lai(self) -> None:
-        with mock.patch.object(cam, "chup_hai_co",
+        with mock.patch.object(cam, "chup",
                                side_effect=cam.LoiCamera("Chưa rõ camera nào. Đang có: Bếp, Sân")):
             ra = self._goi({"camera": "cam"})
         self.assertNotIn("image_url", ra)
         self.assertIn("Đang có: Bếp, Sân", ra["text"])
 
     def test_loi_ngoai_du_tinh_khong_lam_vo_luot(self) -> None:
-        with mock.patch.object(cam, "chup_hai_co", side_effect=RuntimeError("bùm")):
+        with mock.patch.object(cam, "chup", side_effect=RuntimeError("bùm")):
             ra = self._goi()
         self.assertIn("bùm", ra["text"])
         self.assertNotIn("image_url", ra)
@@ -620,3 +618,118 @@ class ApiCameraTests(unittest.TestCase):
             d = self.client.post("/api/camera/test", json={"ten": "sân"}).json()
         self.assertFalse(d["ok"])
         self.assertIn("go2rtc", d["error"])
+
+
+# ── Hai luồng: gửi lấy luồng chính, AI đọc luồng phụ ─────────────────────────
+
+HAI_LUONG = {"kind": "rtsp", "url": "rtsp://x/main", "url_ai": "rtsp://x/sub"}
+
+
+@pytest.mark.pure
+class HaiLuongTests(unittest.TestCase):
+    def test_khai_luong_phu_cho_ca_hai_kieu(self) -> None:
+        with _So({}):
+            cam.them("Sân", "rtsp", url="rtsp://x/main", url_ai="rtsp://x/sub")
+            cam.them("Bếp", "go2rtc", base="http://x:1984", src="bep", src_ai="bep_sub")
+            so = {c["name"]: c for c in cam.danh_sach()}
+        self.assertTrue(cam.co_luong_phu(so["Sân"]))
+        self.assertTrue(cam.co_luong_phu(so["Bếp"]))
+
+    def test_khong_khai_thi_khong_co_luong_phu(self) -> None:
+        with _So({}):
+            cam.them("Sân", "rtsp", url="rtsp://x/main")
+            [c] = cam.danh_sach()
+        self.assertFalse(cam.co_luong_phu(c))
+
+    def test_luong_phu_sai_giao_thuc_bi_tu_choi(self) -> None:
+        with _So({}), self.assertRaises(cam.LoiCamera):
+            cam.them("Sân", "rtsp", url="rtsp://x/main", url_ai="http://x/sub")
+
+    def test_mat_khau_luong_phu_cung_bi_che(self) -> None:
+        with _So({"Sân": {"kind": "rtsp", "url": "rtsp://a:BiMat@x/main",
+                          "url_ai": "rtsp://a:BiMat@x/sub"}}):
+            [c] = cam.danh_sach()
+        self.assertNotIn("BiMat", c["url"])
+        self.assertNotIn("BiMat", c["url_ai"])
+
+    def test_chup_gui_dung_luong_chinh_chup_ai_dung_luong_phu(self) -> None:
+        with _So({"Sân": dict(HAI_LUONG)}), \
+             mock.patch.object(cam, "_chup_rtsp",
+                               side_effect=lambda c, t: c["url"].encode()) as boc, \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            _, gui = cam.chup("Sân")
+            _, ai = cam.chup("Sân", cho_ai=True)
+        self.assertEqual(gui, b"rtsp://x/main")
+        self.assertEqual(ai, b"rtsp://x/sub")
+        self.assertEqual(boc.call_count, 2)
+
+    def test_chup_hai_co_bam_ca_hai_luong(self) -> None:
+        with _So({"Sân": dict(HAI_LUONG)}), \
+             mock.patch.object(cam, "_chup_rtsp",
+                               side_effect=lambda c, t: c["url"].encode()), \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            ten, gui, ai = cam.chup_hai_co("Sân")
+        self.assertEqual((ten, gui, ai), ("Sân", b"rtsp://x/main", b"rtsp://x/sub"))
+
+    def test_rtsp_bam_NOI_DUOI_vi_camera_khong_chiu_hai_phien(self) -> None:
+        # Đo trên camera Dahua thật: hai phiên RTSP song song hỏng CẢ HAI (hết
+        # 25 giây chờ), nối đuôi thì 8,6 giây là xong.
+        import time
+        with _So({"Sân": dict(HAI_LUONG)}), \
+             mock.patch.object(cam, "_chup_rtsp",
+                               side_effect=lambda c, t: (time.sleep(0.25), b"x")[1]), \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            t0 = time.time()
+            cam.chup_hai_co("Sân")
+            mat = time.time() - t0
+        self.assertGreater(mat, 0.4, f"mất {mat:.2f}s — RTSP đang bấm song song, sẽ nghẽn camera")
+
+    def test_go2rtc_van_bam_song_song(self) -> None:
+        # go2rtc giữ sẵn kết nối tới camera rồi phục vụ nhiều khách, nên hai lời
+        # gọi HTTP cùng lúc không phiền camera.
+        import time
+        cam_go = {"kind": "go2rtc", "base": "http://x:1984", "src": "s", "src_ai": "s_sub"}
+        with _So({"Sân": dict(cam_go)}), \
+             mock.patch.object(cam, "_chup_go2rtc",
+                               side_effect=lambda c, t: (time.sleep(0.25), b"x")[1]), \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            t0 = time.time()
+            cam.chup_hai_co("Sân")
+            mat = time.time() - t0
+        self.assertLess(mat, 0.45, f"mất {mat:.2f}s — go2rtc đang bấm nối đuôi, chậm gấp đôi")
+
+    def test_luong_phu_hong_thi_dung_luong_chinh_cho_AI(self) -> None:
+        # Luồng phụ chết không được làm hỏng cả lượt: vẫn trả lời được, chỉ tốn hơn.
+        def boc(c, t):
+            if c["url"].endswith("/sub"):
+                raise cam.LoiCamera("camera không trả lời")
+            return b"chinh"
+        with _So({"Sân": dict(HAI_LUONG)}), \
+             mock.patch.object(cam, "_chup_rtsp", side_effect=boc), \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            _, gui, ai = cam.chup_hai_co("Sân")
+        self.assertEqual((gui, ai), (b"chinh", b"chinh"))
+
+    def test_luong_chinh_hong_thi_bao_loi(self) -> None:
+        with _So({"Sân": dict(HAI_LUONG)}), \
+             mock.patch.object(cam, "_chup_rtsp",
+                               side_effect=cam.LoiCamera("camera không trả lời")), \
+             self.assertRaises(cam.LoiCamera):
+            cam.chup_hai_co("Sân")
+
+    def test_khong_co_luong_phu_thi_boc_MOT_lan(self) -> None:
+        with _So({"Sân": {"kind": "rtsp", "url": "rtsp://x/main"}}), \
+             mock.patch.object(cam, "_chup_rtsp", return_value=b"anh") as boc, \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            _, gui, ai = cam.chup_hai_co("Sân")
+        boc.assert_called_once()            # một khung, hai cỡ — đừng gọi camera hai lượt
+        self.assertEqual((gui, ai), (b"anh", b"anh"))
+
+    def test_go2rtc_doi_dung_tham_so_src(self) -> None:
+        cam_go = {"kind": "go2rtc", "base": "http://x:1984", "src": "san", "src_ai": "san_sub"}
+        with _So({"Sân": dict(cam_go)}), \
+             mock.patch.object(cam, "_chup_go2rtc",
+                               side_effect=lambda c, t: c["src"].encode()), \
+             mock.patch.object(cam, "_thu_nho", lambda b, c: b):
+            _, gui, ai = cam.chup_hai_co("Sân")
+        self.assertEqual((gui, ai), (b"san", b"san_sub"))

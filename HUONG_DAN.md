@@ -436,17 +436,45 @@ Hai đường vào:
 | **go2rtc** | Địa chỉ máy chủ go2rtc (cổng mặc định **1984**) và **tên luồng** đặt trong mục `streams` của nó | Đã chạy go2rtc rồi. Nhanh hơn vì go2rtc giữ sẵn kết nối tới camera |
 | **RTSP** | Một URL `rtsp://…` | Chưa có gì thêm. Mỗi lần chụp tốn vài giây bắt tay |
 
-Với RTSP nên trỏ vào **luồng phụ** (thường có đuôi `-sub` hoặc `stream2`). Đo
-trên máy thật: ba ảnh luồng phụ tốn 978 token và khoảng 1 giây, ba ảnh luồng
-chính tốn 8 425 token và khoảng 20 giây — cùng nhận ra ngần ấy người, cùng mô tả
-như nhau. Ảnh nét chỉ để mắt người xem, đưa vào AI là trả giá gấp hai mươi lần
-mà không được gì thêm.
+#### Luồng phụ cho AI — khai hay không
+
+Mỗi camera khai được **hai luồng**: luồng chính để gửi ảnh nét cho bạn, luồng
+phụ để AI đọc. Cách chọn:
+
+| Bạn hỏi gì | Bấm luồng nào |
+|---|---|
+| «Chụp ảnh sân trước» | Chỉ **luồng chính**, gửi tấm nét. Không đụng model |
+| «Sân trước có ai không» | AI đọc **luồng phụ**, bạn nhận tấm **luồng chính** kèm câu trả lời |
+| Camera không khai luồng phụ | Bóc một khung luồng chính, dùng cho cả hai việc |
+
+**Không khai luồng phụ cũng chạy bình thường** — chỉ là AI đọc luôn luồng chính.
+
+⚠️ Với **RTSP thẳng thì thường KHÔNG nên khai luồng phụ.** Ba lý do, đều đo trên
+camera Dahua thật:
+
+1. Ảnh đưa cho model đằng nào cũng được thu về 768px trước khi gửi. Luồng phụ
+   640×480 ra **27,6 KB**, luồng chính thu nhỏ ra **25,1 KB** — luồng phụ còn
+   nhỉnh hơn. Không tiết kiệm gì cả.
+2. Hỏi cùng một câu về hai ảnh đó, model trả lời **giống nhau**. Nên cũng không
+   được thêm độ chính xác nào.
+3. Khai luồng phụ thì mỗi lần hỏi phải bấm camera **hai lần nối đuôi**. Bấm song
+   song thì nhanh hơn, nhưng camera này **không chịu nổi hai phiên RTSP cùng
+   lúc** — thử hai lần, hỏng cả hai, mỗi lần chờ hết 25 giây. Nên hệ thống bấm
+   nối đuôi, và hai tấm cách nhau vài giây.
+
+Con số «rẻ hơn hai mươi lần» hay được nhắc là so ảnh **nguyên cỡ 1920×1080** với
+ảnh luồng phụ. Ở đây không áp dụng, vì hệ thống đã tự thu nhỏ trước khi gửi model.
+
+Luồng phụ **đáng khai khi đi qua go2rtc**: go2rtc giữ sẵn một kết nối tới camera
+rồi phục vụ nhiều khách, nên hai lời gọi cùng lúc không phiền camera, và hệ
+thống bấm song song — hai tấm cùng một khoảnh khắc.
 
 Ô **Ghi chú** cũng được dùng để nhận tên. Đặt tên camera là `cam1` nhưng ghi chú
 «cổng ngoài» thì hỏi «xem cổng ngoài» vẫn ra đúng cái đó.
 
 Nút **Chụp thử** chỉ chạy được sau khi đã bấm **Lưu**, vì nó đọc camera từ cấu
-hình đã lưu chứ không đọc từ ô đang gõ dở.
+hình đã lưu chứ không đọc từ ô đang gõ dở. Nút **Sửa** nạp camera đó lên form để
+chỉnh; đổi tên trong lúc sửa thì bản ghi cũ được bỏ đi, không thành hai cái.
 
 > 🔐 **Ai được xem.** Mặc định **chỉ mình bạn (admin)**. Muốn mở cho vợ/con thì
 > chọn «Admin và những người tôi tích bên dưới» rồi tích từng người. Danh sách

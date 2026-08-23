@@ -22,11 +22,14 @@ import { request } from "@/lib/request";
 type Cam = {
   kind: "go2rtc" | "rtsp";
   base?: string; src?: string; url?: string;
+  // Luồng phụ cho AI đọc — không bắt buộc. Không khai thì AI đọc luồng chính.
+  src_ai?: string; url_ai?: string;
   username?: string; password?: string; note?: string;
 };
 type Nguoi = { key: string; kenh: string; ten: string };
 
-const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", username: "", password: "", note: "" };
+const RONG: Cam = { kind: "go2rtc", base: "", src: "", url: "", src_ai: "", url_ai: "",
+                    username: "", password: "", note: "" };
 
 export function CameraCard() {
   const config = useSettingsStore((s) => s.config);
@@ -39,6 +42,9 @@ export function CameraCard() {
 
   const [ten, setTen] = useState("");
   const [moi, setMoi] = useState<Cam>({ ...RONG });
+  // Tên camera đang sửa; "" = đang thêm mới. Sửa = ghi đè theo tên, nên đổi tên
+  // trong lúc sửa sẽ tạo bản ghi mới — xoá bản cũ để không thành hai cái.
+  const [dangSua, setDangSua] = useState("");
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
@@ -63,7 +69,8 @@ export function CameraCard() {
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
-  const them = async () => {
+  // Thêm mới HOẶC ghi đè camera đang sửa. Cùng một hàm vì lưu là ghi theo tên.
+  const luuCam = async () => {
     const t = ten.trim();
     if (!t) { setMsg("❌ Chưa đặt tên cho camera."); return; }
     if (moi.kind === "go2rtc" && (!moi.base?.trim() || !moi.src?.trim())) {
@@ -72,16 +79,39 @@ export function CameraCard() {
     if (moi.kind === "rtsp" && !moi.url?.trim().toLowerCase().startsWith("rtsp://")) {
       setMsg("❌ Địa chỉ RTSP phải bắt đầu bằng rtsp://"); return;
     }
+    if (moi.kind === "rtsp" && moi.url_ai?.trim()
+        && !moi.url_ai.trim().toLowerCase().startsWith("rtsp://")) {
+      setMsg("❌ Địa chỉ RTSP của luồng phụ phải bắt đầu bằng rtsp://"); return;
+    }
+    if (!dangSua && cams[t]) { setMsg(`❌ Đã có camera tên "${t}" rồi.`); return; }
+
     const ban: Cam = moi.kind === "go2rtc"
       ? { kind: "go2rtc", base: moi.base!.trim().replace(/\/+$/, ""), src: moi.src!.trim(),
-          username: moi.username?.trim() || "", password: moi.password || "", note: moi.note?.trim() || "" }
-      : { kind: "rtsp", url: moi.url!.trim(), note: moi.note?.trim() || "" };
-    const tiep = { ...cams, [t]: ban };
-    setCams(tiep); setTen(""); setMoi({ ...RONG }); setMsg("");
+          src_ai: moi.src_ai?.trim() || "",
+          username: moi.username?.trim() || "", password: moi.password || "",
+          note: moi.note?.trim() || "" }
+      : { kind: "rtsp", url: moi.url!.trim(), url_ai: moi.url_ai?.trim() || "",
+          note: moi.note?.trim() || "" };
+
+    const tiep = { ...cams };
+    // Đổi tên trong lúc sửa: bỏ bản ghi cũ, nếu không thành hai camera.
+    if (dangSua && dangSua !== t) delete tiep[dangSua];
+    tiep[t] = ban;
+    setCams(tiep); huy(); setMsg("");
     await luu(tiep);
   };
 
+  const sua = (t: string) => {
+    setDangSua(t);
+    setTen(t);
+    setMoi({ ...RONG, ...cams[t] });
+    setMsg(""); setXemTruoc("");
+  };
+
+  const huy = () => { setDangSua(""); setTen(""); setMoi({ ...RONG }); };
+
   const xoa = async (t: string) => {
+    if (dangSua === t) huy();
     const tiep = { ...cams };
     delete tiep[t];
     setCams(tiep);
@@ -138,13 +168,21 @@ export function CameraCard() {
               <span className="text-[11px] rounded bg-muted px-1.5 py-0.5">
                 {c.kind === "go2rtc" ? "go2rtc" : "RTSP"}
               </span>
-              <span className="text-xs text-muted-foreground truncate max-w-[22rem]">
+              <span className="text-xs text-muted-foreground truncate max-w-[20rem]">
                 {c.kind === "go2rtc" ? `${c.base} · luồng ${c.src}` : c.url}
               </span>
+              {(c.kind === "go2rtc" ? c.src_ai : c.url_ai)
+                ? <span className="text-[11px] rounded bg-emerald-500/15 px-1.5 py-0.5"
+                    title="Có luồng phụ riêng cho AI đọc">+ luồng phụ</span>
+                : null}
               {c.note ? <span className="text-xs text-muted-foreground">— {c.note}</span> : null}
               <div className="ml-auto flex gap-1">
                 <Button size="sm" variant="outline" disabled={busy === t} onClick={() => thu(t)}>
                   {busy === t ? "…" : "Chụp thử"}
+                </Button>
+                <Button size="sm" variant={dangSua === t ? "default" : "outline"}
+                  onClick={() => (dangSua === t ? huy() : sua(t))}>
+                  {dangSua === t ? "Đang sửa" : "Sửa"}
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => xoa(t)}>Xoá</Button>
               </div>
@@ -159,7 +197,9 @@ export function CameraCard() {
 
         {/* ── Thêm camera ──────────────────────────────────────────────── */}
         <div className="rounded border border-dashed border-border/70 p-3 space-y-2">
-          <p className="text-sm font-medium">Thêm camera</p>
+          <p className="text-sm font-medium">
+            {dangSua ? `Sửa camera «${dangSua}»` : "Thêm camera"}
+          </p>
           <div className="flex flex-wrap gap-2">
             <Input className="w-48" value={ten} onChange={(e) => setTen(e.target.value)}
               placeholder="Tên gọi, vd: Sân trước" />
@@ -182,6 +222,9 @@ export function CameraCard() {
                   placeholder="tên luồng (src)" />
               </div>
               <div className="flex flex-wrap gap-2">
+                <Input className="w-52" value={moi.src_ai || ""}
+                  onChange={(e) => setMoi({ ...moi, src_ai: e.target.value })}
+                  placeholder="luồng phụ cho AI (không bắt buộc)" />
                 <Input className="w-40" value={moi.username || ""}
                   onChange={(e) => setMoi({ ...moi, username: e.target.value })}
                   placeholder="tài khoản (nếu có)" />
@@ -192,25 +235,44 @@ export function CameraCard() {
               <p className="text-xs text-muted-foreground">
                 Cổng mặc định của go2rtc là 1984. Tên luồng là tên bạn đặt trong mục
                 <code className="mx-1">streams</code> của go2rtc. Đường này nhanh hơn RTSP
-                vì go2rtc giữ sẵn kết nối tới camera.
+                vì go2rtc giữ sẵn kết nối tới camera — và cũng vì thế, khai thêm luồng phụ
+                ở đây là an toàn: hai lời gọi cùng lúc không phiền tới camera.
               </p>
             </>
           ) : (
             <>
               <Input value={moi.url || ""}
                 onChange={(e) => setMoi({ ...moi, url: e.target.value })}
-                placeholder="rtsp://admin:matkhau@192.168.1.20:554/stream1" />
+                placeholder="Luồng chính — rtsp://admin:matkhau@192.168.1.20:554/stream1" />
+              <Input value={moi.url_ai || ""}
+                onChange={(e) => setMoi({ ...moi, url_ai: e.target.value })}
+                placeholder="Luồng phụ cho AI (không bắt buộc) — …&subtype=1" />
               <p className="text-xs text-muted-foreground">
-                Trỏ thẳng vào luồng RTSP của camera. Nên dùng <b>luồng phụ</b> (thường có
-                đuôi <code>-sub</code> hoặc stream2): ảnh nhỏ vừa đủ cho AI đọc, mà rẻ hơn
-                luồng chính khoảng hai mươi lần.
+                Xin ảnh thì lấy <b>luồng chính</b> cho nét. Hỏi về cảnh thì AI đọc{" "}
+                <b>luồng phụ</b> cho rẻ, còn bạn vẫn nhận tấm luồng chính kèm câu trả lời.
+                Bỏ trống luồng phụ cũng chạy bình thường: AI đọc luôn luồng chính.
+              </p>
+              <p className="text-xs text-amber-600">
+                ⚠️ Với RTSP thẳng, khai luồng phụ khiến mỗi lần hỏi phải bấm camera{" "}
+                <b>hai lần nối đuôi</b> — nhiều camera không chịu nổi hai phiên RTSP cùng
+                lúc (đo trên Dahua thật: song song hỏng cả hai). Hai tấm vì thế cách nhau
+                vài giây. Mà ảnh đưa model đằng nào cũng được thu về 768px, nên luồng phụ
+                thường <b>không tiết kiệm được bao nhiêu</b>. Chỉ khai khi camera của bạn
+                chịu được, hoặc khi đi qua go2rtc.
               </p>
             </>
           )}
 
           <Input value={moi.note || ""} onChange={(e) => setMoi({ ...moi, note: e.target.value })}
             placeholder="Ghi chú — cũng dùng để nhận tên, vd: cổng ngoài, chỗ để xe" />
-          <Button size="sm" onClick={them}>Thêm camera</Button>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={luuCam}>
+              {dangSua ? "Lưu thay đổi" : "Thêm camera"}
+            </Button>
+            {dangSua ? (
+              <Button size="sm" variant="outline" onClick={huy}>Huỷ</Button>
+            ) : null}
+          </div>
         </div>
 
         {/* ── Ai được xem ──────────────────────────────────────────────── */}
