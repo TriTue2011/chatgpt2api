@@ -7,6 +7,7 @@
 - **[🔐 Security & upgrade notes 2026-08 — new env vars, patched issues, troubleshooting](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)** ⬅️ *required reading when upgrading*
 - **[📖 ChatGPT2API User & Login Guide](README_ChatGPT2API.md)**
 - **[🧠 VN MCP Hub RAG & Configuration Guide](README_VN_MCP_HUB.md)**
+- **[💬 Zalo — accounts, the three moving parts, text formatting, security](docs/ZALO.md)**
 
 **ChatGPT2API** is a comprehensive project that transforms your ChatGPT Web account into a standard OpenAI API, while acting as a powerful **AI Agent Backend**. This version is specially optimized for smart home systems like **Home Assistant** (filtering formats so TTS smart speakers can read 100% naturally), and is perfect for **Open WebUI**, **n8n**, and any application supporting the OpenAI API standard.
 

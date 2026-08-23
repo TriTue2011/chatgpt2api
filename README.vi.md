@@ -5,6 +5,7 @@
 **📚 Các tài liệu hướng dẫn (Click để xem chi tiết):**
 - **[📘 Hướng dẫn CHI TIẾT từng tab, từng ô cài đặt — đọc trước nếu mới cài lần đầu](HUONG_DAN.md)**
 - **[🔐 Bảo mật & nâng cấp 08/2026 — biến môi trường mới, các lỗ hổng đã vá, xử lý sự cố](docs/BAO_MAT_VA_NANG_CAP_2026-08.md)** ⬅️ *bắt buộc đọc nếu đang nâng cấp*
+- **[💬 Zalo — hai loại tài khoản, ba mảnh ghép, định dạng chữ, bảo mật](docs/ZALO.md)**
 - **[📖 Hướng Dẫn Sử Dụng & Đăng Nhập ChatGPT2API](README_ChatGPT2API.vi.md)**
 - **[🧠 Hướng Dẫn Dạy AI & Cấu Hình VN MCP Hub](README_VN_MCP_HUB.vi.md)**
 
