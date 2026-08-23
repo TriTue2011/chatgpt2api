@@ -243,13 +243,37 @@ export function CameraCard() {
             <>
               <Input value={moi.url || ""}
                 onChange={(e) => setMoi({ ...moi, url: e.target.value })}
-                placeholder="Luồng chính — rtsp://admin:matkhau@192.168.1.20:554/stream1" />
+                placeholder="rtsp://admin:matkhau@192.168.1.20/cam/realmonitor?channel=1&subtype=0" />
               <Input value={moi.url_ai || ""}
                 onChange={(e) => setMoi({ ...moi, url_ai: e.target.value })}
-                placeholder="Luồng phụ cho AI (không bắt buộc) — …&subtype=1" />
+                placeholder="Luồng phụ cho AI (không bắt buộc) — cùng URL nhưng subtype=1" />
+              <p className="text-xs text-muted-foreground">
+                <b>Dán nguyên URL vào</b>, cả phần đường dẫn và phần <code>?channel=1&amp;subtype=0</code>
+                {" "}phía sau — không phải cắt bớt hay mã hoá gì. Mật khẩu có ký tự lạ như{" "}
+                <code>@</code> cũng gõ thẳng được.
+              </p>
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none">
+                  Không biết URL camera mình là gì?
+                </summary>
+                <div className="pt-1 space-y-0.5">
+                  <p>Dahua · Amcrest · Lorex · KBVision:{" "}
+                    <code>/cam/realmonitor?channel=1&amp;subtype=0</code> — luồng phụ đổi{" "}
+                    <code>subtype=1</code></p>
+                  <p>Hikvision · Ezviz:{" "}
+                    <code>/Streaming/Channels/101</code> — luồng phụ là{" "}
+                    <code>/102</code></p>
+                  <p>Reolink: <code>/h264Preview_01_main</code> — luồng phụ là{" "}
+                    <code>/h264Preview_01_sub</code></p>
+                  <p>TP-Link Tapo: <code>/stream1</code> — luồng phụ là{" "}
+                    <code>/stream2</code></p>
+                  <p className="pt-1">Không chắc thì cứ điền luồng chính rồi bấm{" "}
+                    <b>Chụp thử</b>: sai URL nó báo ngay chứ không im lặng.</p>
+                </div>
+              </details>
               <p className="text-xs text-muted-foreground">
                 Xin ảnh thì lấy <b>luồng chính</b> cho nét. Hỏi về cảnh thì AI đọc{" "}
-                <b>luồng phụ</b> cho rẻ, còn bạn vẫn nhận tấm luồng chính kèm câu trả lời.
+                <b>luồng phụ</b>, còn bạn vẫn nhận tấm luồng chính kèm câu trả lời.
                 Bỏ trống luồng phụ cũng chạy bình thường: AI đọc luôn luồng chính.
               </p>
               <p className="text-xs text-amber-600">
