@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.config import config
 from services.mcp_presets import PRESETS, find
@@ -12,10 +15,57 @@ from api.support import require_admin
 from utils.log import logger
 
 
-class InstallRequest(BaseModel):
-    id: str
+class ConnectionRequest(BaseModel):
+    url: str = ""
     api_key: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    transport: str = "auto"
+
+
+class InstallRequest(ConnectionRequest):
+    id: str
+    name: str = ""
+    description: str = ""
     url_override: str = ""  # For GitMCP: user fills in owner/repo
+
+
+_HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
+_RESERVED_HEADERS = {
+    "host", "content-length", "transfer-encoding", "connection",
+    "content-type", "accept", "mcp-session-id", "mcp-protocol-version",
+    "mcp-method", "mcp-name",
+}
+
+
+def _validated_connection(body: ConnectionRequest, url: str | None = None) -> tuple[str, dict[str, str], str]:
+    from services.net_guard import is_http_url
+
+    target = str(url if url is not None else body.url).strip()
+    if len(target) > 2048 or not is_http_url(target):
+        raise HTTPException(status_code=400, detail="URL MCP phải là http(s) và có hostname")
+    parsed = urlparse(target)
+    if parsed.username is not None or parsed.password is not None:
+        raise HTTPException(status_code=400, detail="Không đặt credential trong URL MCP")
+    if body.transport not in ("auto", "streamable_http", "sse"):
+        raise HTTPException(status_code=400, detail="Transport MCP không hợp lệ")
+    if len(body.api_key) > 8192:
+        raise HTTPException(status_code=400, detail="API key quá dài")
+    if len(body.headers) > 32:
+        raise HTTPException(status_code=400, detail="Tối đa 32 custom headers")
+    clean: dict[str, str] = {}
+    total = 0
+    for raw_name, raw_value in body.headers.items():
+        name = str(raw_name).strip()
+        value = str(raw_value).strip()
+        if not _HEADER_NAME.fullmatch(name) or name.lower() in _RESERVED_HEADERS:
+            raise HTTPException(status_code=400, detail=f"Header MCP không được phép: {name or '(trống)'}")
+        if not value or "\r" in value or "\n" in value or len(value) > 8192:
+            raise HTTPException(status_code=400, detail=f"Giá trị header không hợp lệ: {name}")
+        total += len(name) + len(value)
+        clean[name] = value
+    if total > 32768:
+        raise HTTPException(status_code=400, detail="Tổng custom headers quá lớn")
+    return target, clean, body.transport
 
 
 def _normalize_mcp(installed) -> dict:
@@ -28,6 +78,48 @@ def _normalize_mcp(installed) -> dict:
 
 def create_router() -> APIRouter:
     router = APIRouter()
+
+    @router.post("/api/mcp/validate")
+    async def validate_server(
+        body: ConnectionRequest,
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin(authorization)
+        url, headers, transport = _validated_connection(body)
+        from services.mcp_client import validate_mcp_server
+
+        return await run_in_threadpool(
+            validate_mcp_server,
+            url,
+            body.api_key,
+            headers=headers,
+            transport=transport,
+        )
+
+    @router.get("/api/mcp/custom")
+    async def list_custom(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        installed = _normalize_mcp(config.data.get("mcp_servers") or {})
+        mcps = []
+        for mcp_id, info in installed.items():
+            # Không phải preset = MCP do người dùng tự khai. Lọc theo cờ
+            # `custom`/tiền tố `ext_` thì mọi MCP thêm TRƯỚC khi có cờ này biến
+            # mất khỏi danh sách — vẫn chạy, nhưng không ai xoá hay sửa được nữa.
+            if any(preset.id == mcp_id for preset in PRESETS):
+                continue
+            raw_headers = info.get("headers") or {}
+            header_names = sorted(raw_headers) if isinstance(raw_headers, dict) else []
+            mcps.append({
+                "id": mcp_id,
+                "name": info.get("name", mcp_id),
+                "description": info.get("description", ""),
+                "url": info.get("url", ""),
+                "transport": info.get("transport", "auto"),
+                "enabled": bool(info.get("enabled", True)),
+                "has_api_key": bool(info.get("api_key")),
+                "header_names": header_names,
+            })
+        return {"mcps": mcps}
 
     @router.get("/api/mcp/presets")
     async def list_presets(authorization: str | None = Header(default=None)):
@@ -56,13 +148,15 @@ def create_router() -> APIRouter:
             if not any(p.id == mcp_id for p in PRESETS):
                 result.append({
                     "id": mcp_id, "name": info.get("name", mcp_id),
-                    "description": "", "url": info.get("url", ""),
+                    "description": info.get("description", ""), "url": info.get("url", ""),
                     "category": "hub", "icon": "🔌",
                     "homepage": "", "requires_api_key": False,
                     "api_key_help": "", "tags": ["hub"],
                     "installed": True,
                     "enabled": bool(info.get("enabled", True)),
                     "has_api_key": bool(info.get("api_key")),
+                    "has_headers": bool(info.get("headers")),
+                    "transport": info.get("transport", "auto"),
                 })
 
         result.sort(key=lambda x: (not x["installed"], x["category"], x["name"]))
@@ -79,19 +173,28 @@ def create_router() -> APIRouter:
         if preset is None and not body.url_override:
             raise HTTPException(status_code=404, detail=f"Unknown preset: {body.id}")
 
-        url = body.url_override or (preset.url if preset else "")
+        url = body.url_override or body.url or (preset.url if preset else "")
         if not url:
             raise HTTPException(
                 status_code=400,
                 detail=f"Preset '{body.id}' cần URL riêng của từng hệ thống — truyền url_override (vd URL webhook ha-mcp)",
             )
-        name = preset.name if preset else body.id
+        url, headers, transport = _validated_connection(body, url)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", body.id):
+            raise HTTPException(status_code=400, detail="ID MCP chỉ gồm chữ, số, _ và - (tối đa 64 ký tự)")
+        name = preset.name if preset else (body.name.strip() or body.id)
+        if len(name) > 120 or len(body.description) > 1000:
+            raise HTTPException(status_code=400, detail="Tên hoặc mô tả MCP quá dài")
         import time
         entry = {
             "url": url,
             "name": name,
+            "description": body.description.strip(),
             "enabled": True,
             "api_key": body.api_key or None,
+            "headers": headers,
+            "transport": transport,
+            "custom": preset is None,
             "requires_api_key": preset.requires_api_key if preset else bool(body.api_key),
             "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -107,7 +210,9 @@ def create_router() -> APIRouter:
             invalidate_tools_cache()
         except Exception:
             pass
-        logger.info({"event": "mcp_installed", "id": body.id, "url": url})
+        parsed_log_url = urlparse(url)
+        safe_log_url = parsed_log_url._replace(query="", fragment="").geturl()
+        logger.info({"event": "mcp_installed", "id": body.id, "url": safe_log_url})
         return {"ok": True, "id": body.id}
 
     @router.post("/api/mcp/uninstall/{preset_id}")

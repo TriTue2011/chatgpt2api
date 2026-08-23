@@ -8,6 +8,7 @@
 - **[💬 Zalo — hai loại tài khoản, ba mảnh ghép, định dạng chữ, bảo mật](docs/ZALO.md)**
 - **[📖 Hướng Dẫn Sử Dụng & Đăng Nhập ChatGPT2API](README_ChatGPT2API.vi.md)**
 - **[🧠 Hướng Dẫn Dạy AI & Cấu Hình VN MCP Hub](README_VN_MCP_HUB.vi.md)**
+- **[🔌 n8n MCP, ChatGPT & Ma Trận Tương Thích](docs/MCP_N8N_VA_TUONG_THICH.md)**
 
 **ChatGPT2API** là dự án toàn diện cho phép biến tài khoản ChatGPT Web của bạn thành một API chuẩn OpenAI, đồng thời đóng vai trò là một **AI Agent Backend** mạnh mẽ. Phiên bản này được thiết kế tối ưu hóa đặc biệt cho các hệ thống nhà thông minh như **Home Assistant** (đặc biệt là lọc sạch định dạng để Loa thông minh TTS có thể đọc tự nhiên 100%), cũng như hoàn hảo cho **Open WebUI**, **n8n** và bất kỳ ứng dụng nào hỗ trợ chuẩn OpenAI API.
 
