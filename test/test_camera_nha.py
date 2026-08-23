@@ -733,3 +733,45 @@ class HaiLuongTests(unittest.TestCase):
              mock.patch.object(cam, "_thu_nho", lambda b, c: b):
             _, gui, ai = cam.chup_hai_co("Sân")
         self.assertEqual((gui, ai), (b"san", b"san_sub"))
+
+
+@pytest.mark.pure
+class UrlCoThamSoTests(unittest.TestCase):
+    """URL kiểu Dahua có ``?channel=1&subtype=0`` phải đi qua nguyên vẹn.
+
+    Đây là dạng URL phổ biến nhất ở VN (Dahua, Amcrest, KBVision), và cũng là
+    dạng dễ bị một hàm che mật khẩu viết ẩu cắt mất phần sau dấu hỏi.
+    """
+
+    DAHUA = "rtsp://CAM_USER:CAM_PASS_DA_XOA@10.0.0.9/cam/realmonitor?channel=1&subtype=0"
+
+    def test_che_mat_khau_giu_nguyen_duong_dan_va_tham_so(self) -> None:
+        ra = cam.che_bi_mat(self.DAHUA)
+        self.assertIn("/cam/realmonitor?channel=1&subtype=0", ra)
+        self.assertNotIn("CAM_PASS_DA_XOA", ra)
+
+    def test_mat_khau_co_dau_a_coi_gõ_thang_van_tach_dung_host(self) -> None:
+        # Người dùng hay gõ thẳng '@' thay vì '%40'. urlsplit lấy '@' CUỐI làm
+        # ranh giới nên vẫn ra đúng host — ffmpeg cũng vậy (đã thử camera thật).
+        ra = cam.che_bi_mat("rtsp://CAM_USER:CAM_PASS_DA_XOA@0610@10.0.0.9/cam/realmonitor?channel=1")
+        self.assertIn("10.0.0.9", ra)
+        self.assertIn("channel=1", ra)
+        self.assertNotIn("CAM_PASS_DA_XOA", ra)
+
+    def test_url_giu_nguyen_khi_dua_cho_ffmpeg(self) -> None:
+        # Truyền dạng danh sách nên '&' không bị shell hiểu thành chạy nền.
+        with _So({"Sân": {"kind": "rtsp", "url": self.DAHUA}}), \
+             mock.patch("subprocess.run",
+                        return_value=mock.Mock(returncode=0, stdout=b"\xff\xd8x")) as sp:
+            cam.chup_tho("Sân")
+        lenh = sp.call_args.args[0]
+        self.assertIn(self.DAHUA, lenh)
+        self.assertIn("-rtsp_transport", lenh)
+
+    def test_luong_phu_dahua_chi_khac_subtype(self) -> None:
+        with _So({}):
+            cam.them("Sân", "rtsp", url=self.DAHUA,
+                     url_ai=self.DAHUA.replace("subtype=0", "subtype=1"))
+            [c] = cam.danh_sach(kem_bi_mat=True)
+        self.assertTrue(cam.co_luong_phu(c))
+        self.assertTrue(c["url_ai"].endswith("subtype=1"))
