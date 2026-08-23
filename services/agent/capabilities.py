@@ -2831,6 +2831,87 @@ def _h_cai_dat_cau_duyet(args: dict, ctx: dict) -> dict:
                      "Dạ từ giờ lúc xin duyệt gửi tin em chỉ đưa ba lựa chọn thôi ạ 🧾")}
 
 
+_DON_VI_GIAY = {
+    "giay": 1, "giây": 1, "s": 1, "sec": 1, "second": 1, "seconds": 1,
+    "phut": 60, "phút": 60, "p": 60, "m": 60, "min": 60, "minute": 60, "minutes": 60,
+    "gio": 3600, "giờ": 3600, "h": 3600, "tieng": 3600, "tiếng": 3600, "hour": 3600,
+    "ngay": 86400, "ngày": 86400, "d": 86400, "day": 86400, "days": 86400,
+}
+
+# Trên ngưỡng này thì dùng auto-delete của Zalo hợp lý hơn: nó xoá sạch, không
+# để lại dòng "Tin nhắn đã được thu hồi", và không phụ thuộc bot còn sống.
+_NGUONG_KHUYEN_AUTO_DELETE = 12 * 3600
+
+
+def _doc_khoang_giay(args: dict) -> int:
+    """Đổi tham số thời lượng của LLM ra giây.
+
+    LLM trả về đủ kiểu: 60, "60", "1 phút", {"sau_bao_lau": "5p"}. Nhận hết,
+    vì bắt nó nhớ đúng một dạng là cách chắc chắn để tính năng hỏng lặng lẽ.
+    """
+    import re as _re
+    if args.get("sau_giay") not in (None, ""):
+        try:
+            return max(0, int(float(args["sau_giay"])))
+        except (TypeError, ValueError):
+            pass
+    raw = str(args.get("sau_bao_lau") or "").strip().lower()
+    if not raw:
+        return 0
+    tong = 0
+    for so, don_vi in _re.findall(r"(\d+(?:[.,]\d+)?)\s*([a-zà-ỹ]*)", raw):
+        try:
+            gia_tri = float(so.replace(",", "."))
+        except ValueError:
+            continue
+        tong += gia_tri * _DON_VI_GIAY.get(don_vi.strip(), 60 if not don_vi else 0)
+    return max(0, int(tong))
+
+
+def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
+    """Hẹn tự xoá câu trả lời của LƯỢT NÀY sau một khoảng thời gian.
+
+    Vì sao phải có: Zalo không cho tin tự huỷ ngắn hạn. `ttl` theo từng tin bị
+    Zalo bỏ qua (đo thật 23/08/2026: năm mốc từ 1 phút tới 7 ngày, không tin nào
+    tự xoá), còn auto-delete của cả cuộc trò chuyện thì mốc ngắn nhất đã là một
+    ngày. Nên zalo-server tự hẹn giờ rồi gọi `undo` — xem
+    zalo-server/services/messageExpiry.js.
+
+    Đánh đổi phải nói cho người dùng biết: thu hồi để lại dòng "Tin nhắn đã được
+    thu hồi". Nội dung mất, nhưng người nhận biết có tin đã bị rút.
+
+    Chỉ áp cho LƯỢT NÀY. Người dùng muốn thành quy tắc ("cứ hỏi thời tiết là xoá
+    sau 1 phút") thì phải gọi thêm `remember` để ghi nhớ, rồi lượt sau tự gọi lại
+    công cụ này — giống hệt cách xử lý sở thích trình bày.
+    """
+    from services import zalo_personal
+
+    kenh = str(ctx.get("channel") or "").strip().lower()
+    if kenh and kenh != "zalo":
+        return {"text": "Tự xoá tin chỉ làm được trên Zalo cá nhân."}
+
+    if _la_bat(args.get("tat")) and "tat" in args:
+        zalo_personal.dat_ttl_luot_nay(0)
+        return {"text": "Rồi, câu trả lời này sẽ không tự xoá."}
+
+    giay = _doc_khoang_giay(args)
+    if giay <= 0:
+        hien = zalo_personal.ttl_luot_nay() // 1000
+        if hien:
+            return {"text": f"Câu trả lời lượt này đang hẹn tự xoá sau {hien} giây."}
+        return {"text": "Chưa hẹn tự xoá cho câu trả lời này. Cho tôi biết sau bao lâu."}
+
+    zalo_personal.dat_ttl_luot_nay(giay)
+    mo_ta = (f"{giay // 60} phút" if giay % 60 == 0 and giay < 3600
+             else f"{giay // 3600} giờ" if giay % 3600 == 0 and giay < 86400
+             else f"{giay} giây")
+    loi = f"Đã hẹn: câu trả lời này tự xoá sau {mo_ta}."
+    if giay >= _NGUONG_KHUYEN_AUTO_DELETE:
+        loi += (" Khoảng này khá dài — đặt 'Tin nhắn tự xoá' cho cả cuộc trò chuyện "
+                "trong Zalo sẽ gọn hơn, vì nó xoá sạch chứ không để lại dấu thu hồi.")
+    return {"text": loi}
+
+
 def _h_cai_dat_dinh_dang(args: dict, ctx: dict) -> dict:
     """Bật/tắt định dạng chữ bằng LỜI, không phải bằng màn cài đặt.
 
@@ -5746,6 +5827,26 @@ CAPABILITIES: dict[str, Capability] = {
             "hien_noi_dung": {"type": "boolean",
                               "description": "true = hiện người nhận + nội dung; "
                                              "false = chỉ ba lựa chọn"}}}),
+    "tu_xoa_tin": Capability(
+        name="tu_xoa_tin", risk=READ, handler=_h_tu_xoa_tin,
+        emoji="⏱️", label="Hẹn tự xoá câu trả lời",
+        description=(
+            "Hẹn tự xoá CÂU TRẢ LỜI CỦA LƯỢT NÀY sau một khoảng thời gian. Dùng khi "
+            "người dùng bảo xoá tin sau bao lâu: 'trả lời rồi xoá sau 1 phút', "
+            "'cho xem thời tiết nhưng 2 phút sau xoá đi', 'lịch hẹn thì 30 phút sau "
+            "xoá'. GỌI TRƯỚC khi trả lời nội dung, trong cùng lượt. "
+            "Nếu người dùng muốn áp cho MỌI lần sau ('cứ hỏi thời tiết là xoá sau 1 "
+            "phút') thì gọi THÊM `remember` để ghi nhớ, rồi các lượt sau tự gọi lại "
+            "công cụ này khi gặp đúng loại câu hỏi đó. "
+            "Chỉ chạy trên Zalo cá nhân. Zalo không có tin tự huỷ ngắn hạn nên bot "
+            "thu hồi tin — Zalo sẽ để lại dòng 'Tin nhắn đã được thu hồi'."
+        ),
+        parameters={"type": "object", "properties": {
+            "sau_bao_lau": {"type": "string",
+                            "description": "Thời lượng bằng lời: '1 phút', '30 giây', '2 tiếng'"},
+            "sau_giay": {"type": "integer", "description": "Hoặc số giây, nếu đã biết chính xác"},
+            "tat": {"type": "boolean", "description": "true = huỷ hẹn xoá cho lượt này"}},
+            "required": []}),
     "cai_dat_dinh_dang": Capability(
         name="cai_dat_dinh_dang", risk=READ, handler=_h_cai_dat_dinh_dang,
         emoji="✍️", label="Định dạng chữ bot gửi",
@@ -6291,6 +6392,7 @@ _CAP_GROUP: dict[str, str] = {
     "contacts": "contacts", "send_to_contact": "contacts",
     "cai_dat_cau_duyet": "contacts",
     "cai_dat_dinh_dang": "contacts",
+    "tu_xoa_tin": "contacts",
     "office_files": "office", "office_create": "office",
     "office_view": "office", "office_query": "office",
     "office_add": "office", "office_set": "office",

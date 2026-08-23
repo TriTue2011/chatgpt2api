@@ -79,6 +79,27 @@ def current_msg_ctx() -> tuple[str, int]:
     return (str(getattr(_msg_ctx, "account", "") or ""),
             int(getattr(_msg_ctx, "thread_type", 0) or 0))
 
+
+def dat_ttl_luot_nay(giay: int) -> int:
+    """Hẹn tự xoá cho MỌI tin bot gửi trong lượt này.
+
+    Zalo không có tin tự huỷ ngắn hạn — `ttl` theo từng tin bị bỏ qua, còn
+    auto-delete của cả cuộc trò chuyện thì mốc ngắn nhất đã là một ngày. Nên
+    zalo-server tự hẹn giờ rồi gọi `undo`; xem services/messageExpiry.js.
+
+    Đặt theo LƯỢT chứ không theo cấu hình, vì đây là ý định nhất thời của người
+    dùng ("trả lời rồi xoá sau 1 phút"), không phải sở thích lâu dài. Muốn thành
+    quy tắc thì bot ghi nhớ bằng `remember` rồi lượt sau tự gọi lại.
+    """
+    giay = max(0, int(giay or 0))
+    _msg_ctx.ttl_ms = giay * 1000
+    return giay
+
+
+def ttl_luot_nay() -> int:
+    """TTL (mili-giây) đã đặt cho lượt này; chưa đặt → 0."""
+    return int(getattr(_msg_ctx, "ttl_ms", 0) or 0)
+
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
 
 def _cfg() -> dict:
@@ -842,7 +863,7 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     # mention nên không chèn (khỏi lòi chữ '@All' vô nghĩa vào tin riêng).
     con_tag = bool(mention_all) and int(thread_type or 0) == 1
     for ch in chunks[:_MAX_CHUNKS]:
-        msg_obj: dict = {"msg": ch, "ttl": 0, "quote": None}
+        msg_obj: dict = {"msg": ch, "ttl": ttl_luot_nay(), "quote": None}
         if md_on and markdown_to_zalo_message is not None:
             try:
                 parsed = markdown_to_zalo_message(
@@ -883,7 +904,7 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
                 # trình bày xấu. Đo thật 01/08: bản tin 32 vùng đậm bị Zalo từ
                 # chối, hai lệnh gửi cách nhau 1 giây, và người dùng nhắn lại
                 # "Trình bày xấu quá, bỏ ** đi".
-                plain = {"msg": msg_obj.get("msg") or ch, "ttl": 0, "quote": None}
+                plain = {"msg": msg_obj.get("msg") or ch, "ttl": ttl_luot_nay(), "quote": None}
                 if msg_obj.get("mentions"):
                     plain["mentions"] = msg_obj["mentions"]   # '@All' đã ở trong msg
                 last = _request("POST", "/api/sendMessageByAccount", {
@@ -926,7 +947,7 @@ def send_photo(thread_id: str, image_url: str, caption: str = "",
         "accountSelection": acc,
         "type": "group" if int(thread_type) == 1 else "user",
         "message": (caption or "")[:1000],
-        "ttl": 0,
+        "ttl": ttl_luot_nay(),
     }, timeout=60.0)
 
 
@@ -941,7 +962,7 @@ def send_file(thread_id: str, file_url: str, caption: str = "",
         "threadId": str(thread_id),
         "accountSelection": acc,
         "type": "group" if int(thread_type) == 1 else "user",
-        "ttl": 0,
+        "ttl": ttl_luot_nay(),
     }, timeout=90.0)
 
 
@@ -3418,6 +3439,10 @@ def _process_ai(ev: dict) -> None:
         # Ngữ cảnh cho reminders (tạo nhắc hẹn trong lượt orchestrate này).
         _msg_ctx.account = _acc
         _msg_ctx.thread_type = int(thread_type or 0)
+        # Xoá TTL của lượt TRƯỚC. threading.local sống theo THREAD, mà thread
+        # được dùng lại cho tin sau — không xoá thì một lần "trả lời rồi xoá sau
+        # 1 phút" sẽ âm thầm áp cho mọi câu trả lời tiếp theo trên cùng luồng.
+        _msg_ctx.ttl_ms = 0
         _fp_map = config.get().get("zalo_personal_account_admins")
         _fp_entry = _fp_map.get(_acc) if isinstance(_fp_map, dict) else None
         # HA: «Lọc thread» (nếu cài riêng) → admin entry (nếu match) → acc → True

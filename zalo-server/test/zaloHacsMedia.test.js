@@ -50,8 +50,10 @@ test('bon action anh HACS deu giu TTL va dung thread type', async () => {
       }),
       sendMessage: async (content, threadId, type) => {
         calls.push({ content, threadId, type });
-        return { ok: true };
+        // Zalo that luon tra msgId; hen tu thu hoi dua vao no.
+        return { message: { msgId: `msg-${calls.length}` }, attachment: [] };
       },
+      undo: async () => ({ status: 0 }),
     },
   });
 
@@ -75,7 +77,11 @@ test('bon action anh HACS deu giu TTL va dung thread type', async () => {
       const res = fakeResponse();
       await handler(req, res);
       assert.equal(res.statusCode, 200);
-      assert.equal(res.body.messageTtl.ttl, 3_600_000);
+      // ttl van duoc chuyen xuong zca-js (vo hai, phong khi Zalo bat lai),
+      // nhung thu THUC SU lam tin bien mat la hen tu thu hoi.
+      assert.equal(res.body.messageTtl.requested, 3_600_000);
+      assert.equal(res.body.messageTtl.applied, true);
+      assert.equal(res.body.messageTtl.scope, 'auto-undo');
       assert.equal(calls.at(-1).content.ttl, 3_600_000);
       assert.equal(calls.at(-1).threadId, '2036121378794772276');
       assert.equal(calls.at(-1).type, expectedType);

@@ -2,6 +2,7 @@
 import { Zalo, ThreadType } from 'zca-js';
 import { getPROXIES, getAvailableProxyIndex } from '../../services/proxyService.js';
 import { configureReconnectDependencies, setupEventListeners } from '../../eventListeners.js';
+import { configureExpiryDependencies, napTuDia, scheduleUndo } from '../../services/messageExpiry.js';
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodefetch from "node-fetch";
 import sharp from 'sharp';
@@ -18,7 +19,6 @@ import { taiVeVaGuiNhieuAnh as guiTheoLo } from '../../utils/sendImages.js';
 import {
     getRequestedMessageTtl,
     filterReceivedFriendRequests,
-    messageTtlResult,
     normalizeAutoDeleteTtl,
     normalizeMessageTtl,
     normalizeThreadType,
@@ -34,6 +34,12 @@ import {
 } from '../../utils/timeout.js';
 
 export const zaloAccounts = [];
+configureExpiryDependencies({
+    layApi: (ownId) => zaloAccounts.find(
+        (acc) => String(acc.ownId) === String(ownId),
+    )?.api || null,
+});
+napTuDia();
 configureReconnectDependencies({
     accounts: zaloAccounts,
     login: (...args) => loginZaloAccount(...args),
@@ -44,6 +50,53 @@ function deferFileCleanup(task, filePath, label) {
     void task.catch((error) => {
         console.warn(`[Video] ${label} ket thuc sau timeout: ${error.message}`);
     });
+}
+
+/**
+ * Hẹn tự thu hồi mọi tin vừa gửi trong một lời gọi.
+ *
+ * Zalo bỏ qua `ttl` theo từng tin (đo thật 23/08/2026, xem
+ * services/messageExpiry.js), nên muốn tin tự mất sau vài phút thì chính bot
+ * phải gọi undo. Một lời gọi có thể đẻ nhiều tin (album ảnh) nên hẹn cho tất cả.
+ */
+function henThuHoi(account, result, threadId, threadType, ttlMs) {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) return null;
+    const ids = [];
+    if (result?.message?.msgId) ids.push(result.message.msgId);
+    for (const phan of result?.attachment || []) {
+        if (phan?.msgId) ids.push(phan.msgId);
+    }
+    let ketQua = null;
+    for (const msgId of ids) {
+        ketQua = scheduleUndo({
+            ownId: account.ownId,
+            msgId,
+            threadId,
+            type: threadType,
+            ttlMs,
+        }) || ketQua;
+    }
+    // Xin TTL mà không hẹn được thì phải NÓI RA. Trả null ở đây sẽ bị người gọi
+    // đọc thành "không yêu cầu tự xoá", tức im lặng nuốt mất yêu cầu.
+    if (!ketQua) {
+        return {
+            requested: ttlMs,
+            applied: false,
+            scope: 'auto-undo',
+            note: 'Zalo không trả msgId cho tin này nên chưa hẹn được thu hồi.',
+        };
+    }
+    return ketQua;
+}
+
+/** Album đi theo nhiều LÔ, mỗi lô là một phản hồi sendMessage riêng. */
+function henThuHoiAlbum(account, cacLo, threadId, threadType, ttlMs) {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) return null;
+    let ketQua = null;
+    for (const lo of Array.isArray(cacLo) ? cacLo : [cacLo]) {
+        ketQua = henThuHoi(account, lo, threadId, threadType, ttlMs) || ketQua;
+    }
+    return ketQua;
 }
 
 function imageRequestErrorStatus(error) {
@@ -290,7 +343,7 @@ export async function sendMessageByAccount(req, res) {
         res.json({
             success: true,
             data: result,
-            messageTtl: messageTtlResult(requestedTtl),
+            messageTtl: henThuHoi(account, result, String(threadId), msgType, normalizeMessageTtl(requestedTtl) ?? 0),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -333,7 +386,7 @@ export async function sendImageByAccount(req, res) {
         res.json({
             success: true,
             data: result,
-            messageTtl: messageTtlResult(ttl),
+            messageTtl: henThuHoi(account, result, String(threadId), threadType, normalizedTtl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -527,7 +580,7 @@ async function sendImageToFixedThreadType(req, res, threadType) {
         res.json({
             success: true,
             data: result,
-            messageTtl: messageTtlResult(normalizedTtl),
+            messageTtl: henThuHoi(account, result, String(threadId), threadType, normalizedTtl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -575,7 +628,8 @@ async function sendImagesToFixedThreadType(req, res, threadType) {
             soLo: ketQua.soLo,
             maxFilePerMessage: ketQua.maxFile,
             canhBao: ketQua.canhBao,
-            messageTtl: messageTtlResult(ttl),
+            messageTtl: henThuHoiAlbum(account, ketQua.ketQua, String(threadId), threadType,
+                normalizeMessageTtl(ttl) ?? 0),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber
@@ -637,7 +691,7 @@ export async function sendFileByAccount(req, res) {
         res.json({
             success: true,
             data: result,
-            messageTtl: messageTtlResult(ttl),
+            messageTtl: henThuHoi(account, result, String(threadId), threadType, normalizedTtl),
             usedAccount: {
                 ownId: account.ownId,
                 phoneNumber: account.phoneNumber

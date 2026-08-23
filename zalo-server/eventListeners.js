@@ -12,6 +12,7 @@ import {
     invalidateReconnectAttempt,
 } from './services/reconnectGuard.js';
 import { storeGroupMessage } from './utils/groupHistoryStore.js';
+import { noteSelfMessage } from './services/messageExpiry.js';
 import { withTimeout } from './utils/timeout.js';
 
 let reconnectLogin = null;
@@ -147,6 +148,9 @@ export function setupEventListeners(api, loginResolve) {
         if (Number(msg?.type) === ThreadType.Group) {
             storeGroupMessage(ownId, msg);
         }
+        // Bản dội về của tin TỰ GỬI là nơi duy nhất lấy được cliMsgId — thứ mà
+        // api.undo đòi nhưng phản hồi lúc gửi không trả. Xem services/messageExpiry.js.
+        if (msg?.isSelf) noteSelfMessage(msg);
         const messageWebhookUrl = getWebhookUrl("messageWebhookUrl", ownId);
         const msgWithOwnId = enrichMessageEvent(msg, ownId);
 
