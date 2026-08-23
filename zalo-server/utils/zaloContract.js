@@ -164,10 +164,29 @@ export function withMessageTtl(message, rawTtl) {
   return message;
 }
 
+// Bao cao TRUNG THUC ve so phan cua ttl theo tung tin.
+//
+// Do that ngay 23/08/2026 tren tai khoan that: gui 5 moc (1 phut, 5 phut, 1 gio,
+// 1 ngay, 7 ngay) qua ca duong chu lan duong anh — KHONG tin nao tu xoa va
+// KHONG tin nao hien bieu tuong dong ho. zca-js co gui `ttl` len (sendMessage.js
+// dong 197/204), nhung Zalo bo qua.
+//
+// Thu duy nhat con hieu luc la auto-delete cho CA cuoc tro chuyen
+// (updateAutoDeleteChat), va no chi nhan 0 / 1 ngay / 7 ngay / 14 ngay.
+//
+// Bo truong `enabled` cu: no tra ve true trong khi thuc te khong co gi duoc ap,
+// khien nguoi goi tuong da dat xong. Ai doc `.enabled` gio nhan undefined —
+// falsy, tuc dung su that.
 export function messageTtlResult(rawTtl) {
   const ttl = normalizeMessageTtl(rawTtl);
   if (ttl === null) return null;
-  return { enabled: ttl !== 0, ttl, scope: 'message' };
+  return {
+    requested: ttl,
+    applied: false,
+    scope: 'message',
+    note: 'Zalo bo qua ttl theo tung tin. Muon tin tu xoa thi dat auto-delete cho '
+      + 'ca cuoc tro chuyen bang updateAutoDeleteChat (0 / 86400000 / 604800000 / 1209600000).',
+  };
 }
 
 export function enrichMessageEvent(message, accountId) {
