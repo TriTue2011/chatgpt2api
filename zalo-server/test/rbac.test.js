@@ -147,41 +147,41 @@ test('không có phiên và không có key thì 401', () => {
   assert.equal(res.statusCode, 401);
 });
 
-test('mat khau admin tu sinh duoc luu mode rieng cho gateway noi bo', () => {
+test('mat khau admin tu sinh duoc luu mode rieng cho gateway noi bo', async () => {
   const credentialFile = path.join(tmp, '.admin_password');
   assert.equal(fs.existsSync(credentialFile), true);
   const password = fs.readFileSync(credentialFile, 'utf8').trim();
   assert.ok(password.length >= 20);
-  assert.equal(validateUser('admin', password)?.role, 'admin');
+  assert.equal((await validateUser('admin', password))?.role, 'admin');
   if (process.platform !== 'win32') {
     assert.equal(fs.statSync(credentialFile).mode & 0o077, 0);
   }
 });
 
-test('doi mat khau admin cap nhat credential dung chung voi gateway', () => {
+test('doi mat khau admin cap nhat credential dung chung voi gateway', async () => {
   const credentialFile = path.join(tmp, '.admin_password');
   const oldPassword = fs.readFileSync(credentialFile, 'utf8').trim();
   const newPassword = 'mat-khau-moi-rat-dai-cho-gateway';
-  assert.equal(changePassword('admin', oldPassword, newPassword), true);
+  assert.equal(await changePassword('admin', oldPassword, newPassword), true);
   assert.equal(fs.readFileSync(credentialFile, 'utf8').trim(), newPassword);
-  assert.equal(validateUser('admin', newPassword)?.role, 'admin');
+  assert.equal((await validateUser('admin', newPassword))?.role, 'admin');
 });
 
-test('admin phu khong duoc ghi de credential cua admin gateway', () => {
+test('admin phu khong duoc ghi de credential cua admin gateway', async () => {
   const credentialFile = path.join(tmp, '.admin_password');
   const gatewayPassword = fs.readFileSync(credentialFile, 'utf8').trim();
-  assert.equal(addUser('admin-phu', 'mat-khau-admin-phu', 'admin'), true);
-  assert.equal(changePassword('admin-phu', 'mat-khau-admin-phu', 'mat-khau-phu-moi'), true);
+  assert.equal(await addUser('admin-phu', 'mat-khau-admin-phu', 'admin'), true);
+  assert.equal(await changePassword('admin-phu', 'mat-khau-admin-phu', 'mat-khau-phu-moi'), true);
   assert.equal(fs.readFileSync(credentialFile, 'utf8').trim(), gatewayPassword);
-  assert.equal(validateUser('admin', gatewayPassword)?.role, 'admin');
+  assert.equal((await validateUser('admin', gatewayPassword))?.role, 'admin');
 });
 
-test('khong doi admin chinh bang UI khi password do env quan ly', () => {
+test('khong doi admin chinh bang UI khi password do env quan ly', async () => {
   const currentPassword = fs.readFileSync(path.join(tmp, '.admin_password'), 'utf8').trim();
   process.env.ZALO_SERVER_ADMIN_PASSWORD = 'credential-do-moi-truong-quan-ly';
   try {
-    assert.equal(changePassword('admin', currentPassword, 'khong-duoc-ghi'), false);
-    assert.equal(validateUser('admin', currentPassword)?.role, 'admin');
+    assert.equal(await changePassword('admin', currentPassword, 'khong-duoc-ghi'), false);
+    assert.equal((await validateUser('admin', currentPassword))?.role, 'admin');
   } finally {
     delete process.env.ZALO_SERVER_ADMIN_PASSWORD;
   }

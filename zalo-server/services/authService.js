@@ -15,8 +15,25 @@ const __dirname = path.dirname(__filename);
 const PBKDF2_ITERS = 600000;
 const PBKDF2_LEGACY = 1000;
 
+// Bản ĐỒNG BỘ chỉ dùng lúc khởi tạo/di trú users.json — thời điểm đó chưa phục
+// vụ yêu cầu nào nên chặn event loop không hại ai.
 function _hash(password, salt, iters) {
   return crypto.pbkdf2Sync(password, salt, iters, 64, 'sha512').toString('hex');
+}
+
+// Bản BẤT ĐỒNG BỘ cho mọi đường đi qua HTTP.
+//
+// pbkdf2Sync chặn TOÀN BỘ event loop của Node trong lúc chạy. Đo trên máy ARM
+// (Armbian aarch64) ngày 23/08/2026: 600.000 vòng mất 3.410 ms. Suốt 3,4 giây
+// đó tiến trình không nhận được tin Zalo nào và không trả lời được yêu cầu nào.
+// crypto.pbkdf2 đẩy việc xuống threadpool của libuv nên event loop vẫn chạy.
+function _hashAsync(password, salt, iters) {
+  return new Promise((resolve, reject) => {
+    crypto.pbkdf2(password, salt, iters, 64, 'sha512', (error, derived) => {
+      if (error) reject(error);
+      else resolve(derived.toString('hex'));
+    });
+  });
 }
 
 // Mật khẩu admin ban đầu: ưu tiên env. KHÔNG có env → sinh NGẪU NHIÊN và cảnh
@@ -180,7 +197,7 @@ const getUsers = () => {
 };
 
 // Thêm người dùng mới
-export const addUser = (username, password, role = 'user') => {
+export const addUser = async (username, password, role = 'user') => {
   const users = getUsers();
 
   // Kiểm tra nếu username đã tồn tại
@@ -192,7 +209,7 @@ export const addUser = (username, password, role = 'user') => {
   users.push({
     username,
     salt,
-    hash: _hash(password, salt, PBKDF2_ITERS),
+    hash: await _hashAsync(password, salt, PBKDF2_ITERS),
     iterations: PBKDF2_ITERS,
     role,
   });
@@ -253,7 +270,7 @@ export const deleteUser = (username) => {
 };
 
 // Xác thực người dùng và trả về thông tin user
-export const validateUser = (username, password) => {
+export const validateUser = async (username, password) => {
   // Đọc dữ liệu trực tiếp từ file để đảm bảo dữ liệu mới nhất
   let users = [];
   try {
@@ -274,7 +291,7 @@ export const validateUser = (username, password) => {
   // rò liên tục ra docker logs (báo cáo bảo mật 07/08 xác nhận trên máy chủ).
   // Xác minh bằng ĐÚNG số vòng của bản ghi (bản cũ 1000, bản mới 600000).
   const iters = Number(user.iterations) || PBKDF2_LEGACY;
-  const hash = _hash(password, user.salt, iters);
+  const hash = await _hashAsync(password, user.salt, iters);
   const stored = Buffer.from(String(user.hash), 'hex');
   const computed = Buffer.from(hash, 'hex');
   const ok = stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
@@ -288,7 +305,7 @@ export const validateUser = (username, password) => {
 };
 
 // Thay đổi mật khẩu
-export const changePassword = (username, oldPassword, newPassword) => {
+export const changePassword = async (username, oldPassword, newPassword) => {
   if (username === _adminUsername()
       && String(process.env.ZALO_SERVER_ADMIN_PASSWORD || '').trim()) {
     // Env la nguon credential cua gateway Python; cho UI doi rieng users.json
@@ -313,7 +330,7 @@ export const changePassword = (username, oldPassword, newPassword) => {
 
   const user = users[userIndex];
   const iters = Number(user.iterations) || PBKDF2_LEGACY;
-  const hash = _hash(oldPassword, user.salt, iters);
+  const hash = await _hashAsync(oldPassword, user.salt, iters);
   const stored = Buffer.from(String(user.hash), 'hex');
   const computed = Buffer.from(hash, 'hex');
   const ok = stored.length === computed.length && crypto.timingSafeEqual(stored, computed);
@@ -323,7 +340,7 @@ export const changePassword = (username, oldPassword, newPassword) => {
 
   // Cập nhật mật khẩu mới — nâng lên số vòng MẠNH (600000).
   const salt = crypto.randomBytes(16).toString('hex');
-  const newHash = _hash(newPassword, salt, PBKDF2_ITERS);
+  const newHash = await _hashAsync(newPassword, salt, PBKDF2_ITERS);
   users[userIndex].salt = salt;
   users[userIndex].hash = newHash;
   users[userIndex].iterations = PBKDF2_ITERS;
@@ -363,12 +380,14 @@ function timingSafeEqualStr(a, b) {
   }
 }
 
+// CHỈ nhận khoá qua header. Bản cũ nhận thêm ?api_key=… trên URL, mà query
+// string đi vào access log của mọi reverse proxy trên đường, vào lịch sử trình
+// duyệt, và vào header Referer khi trang tải tài nguyên bên ngoài.
 function extractApiToken(req) {
   const auth = String(req.headers.authorization || '');
   if (auth.toLowerCase().startsWith('bearer ')) return auth.slice(7).trim();
   const x = req.headers['x-api-key'];
   if (x) return String(x).trim();
-  if (req.query && req.query.api_key) return String(req.query.api_key).trim();
   return '';
 }
 

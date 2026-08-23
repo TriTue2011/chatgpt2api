@@ -218,13 +218,39 @@ function _loginRecordSuccess(req) {
   _loginFails.delete(_loginClientIp(req));
 }
 
+// Cấp cho phiên một ID MỚI ngay khi đăng nhập thành công.
+//
+// Bản cũ gán thẳng req.session.authenticated = true lên phiên đang có. Kẻ tấn
+// công đặt trước được giá trị cookie phiên cho nạn nhân (session fixation) thì
+// sau khi nạn nhân đăng nhập, cái ID nó đã biết trở thành một phiên có quyền.
+// regenerate() cấp ID mới nên ID cũ thành vô giá trị.
+function _taoLaiPhien(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+// Ghi phiên xuống kho TRƯỚC khi trả lời.
+//
+// express-session vốn tự ghi lúc kết thúc phản hồi, nhưng đó là ghi bất đồng
+// bộ: client có thể nhận xong cookie và gửi yêu cầu tiếp theo trước khi tệp
+// phiên kịp nằm trên đĩa, rồi bị trả 401. Trước đây phiên đã có sẵn ID cũ nên
+// hiếm khi lộ ra; từ khi regenerate() cấp ID hoàn toàn mới thì lần ghi này là
+// bắt buộc. Đo được ngay trong lượt kiểm: đăng nhập 200 nhưng /api/accounts
+// ngay sau đó trả 401.
+function _luuPhien(req) {
+  return new Promise((resolve, reject) => {
+    req.session.save((error) => (error ? reject(error) : resolve()));
+  });
+}
+
 // Dành cho ES Module: xác định __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // API xác thực
 // Đăng nhập
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     if (!_loginRateLimit(req, res)) return;
     // KHÔNG log req.body (chứa mật khẩu thô) hay kết quả validateUser.
@@ -234,7 +260,7 @@ router.post('/login', (req, res) => {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' });
     }
 
-    const user = validateUser(username, password);
+    const user = await validateUser(username, password);
 
     if (!user) {
       _loginRecordFail(req);
@@ -251,10 +277,12 @@ router.post('/login', (req, res) => {
       });
     }
 
-    // Thiết lập session
+    // Thiết lập session trên một ID MỚI
+    await _taoLaiPhien(req);
     req.session.authenticated = true;
     req.session.username = user.username;
     req.session.role = user.role;
+    await _luuPhien(req);
 
     res.json({ success: true, user });
   } catch (error) {
@@ -308,14 +336,14 @@ router.get('/users', adminMiddleware, (req, res) => {
 });
 
 // Thêm người dùng mới
-router.post('/users', adminMiddleware, (req, res) => {
+router.post('/users', adminMiddleware, async (req, res) => {
   const { username, password, role } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' });
   }
 
-  const success = addUser(username, password, role || 'user');
+  const success = await addUser(username, password, role || 'user');
   if (!success) {
     return res.status(400).json({ success: false, message: 'Tài khoản đã tồn tại' });
   }
@@ -345,7 +373,7 @@ router.delete('/users', adminMiddleware, async (req, res) => {
 });
 
 // Đổi mật khẩu
-router.post('/change-password', (req, res) => {
+router.post('/change-password', async (req, res) => {
   if (!req.session.authenticated) {
     return res.status(401).json({ success: false, message: 'Chưa đăng nhập' });
   }
@@ -366,7 +394,7 @@ router.post('/change-password', (req, res) => {
     });
   }
 
-  const success = changePassword(req.session.username, oldPassword, newPassword);
+  const success = await changePassword(req.session.username, oldPassword, newPassword);
 
   if (!success) {
     return res.status(400).json({ success: false, message: 'Mật khẩu cũ không chính xác' });
@@ -389,7 +417,7 @@ router.get('/check-auth', (req, res) => {
 });
 
 // API đăng nhập đơn giản (không dùng file users.json)
-router.post('/simple-login', (req, res) => {
+router.post('/simple-login', async (req, res) => {
   try {
     if (!_loginRateLimit(req, res)) return;
     // KHÔNG log req.body (chứa mật khẩu).
@@ -405,7 +433,7 @@ router.post('/simple-login', (req, res) => {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập đầy đủ tài khoản và mật khẩu' });
     }
 
-    const user = validateUser(username, password);
+    const user = await validateUser(username, password);
 
     if (user) {
       // Xử lý trường hợp không có req.session
@@ -415,10 +443,12 @@ router.post('/simple-login', (req, res) => {
         return res.status(500).json({ success: false, message: 'Lỗi server: session không khả dụng' });
       }
 
-      // Thiết lập session với thông tin người dùng đã xác thực
+      // Thiết lập session với thông tin người dùng đã xác thực, trên ID MỚI
+      await _taoLaiPhien(req);
       req.session.authenticated = true;
       req.session.username = user.username;
       req.session.role = user.role;
+      await _luuPhien(req);
       _loginRecordSuccess(req);
 
       // Trả về user THẬT (username/role đã xác thực), không hardcode admin/admin
@@ -653,7 +683,7 @@ router.get('/session-test', (req, res) => {
 });
 
 // Thêm một API đăng nhập đơn giản mới để test - simplified
-router.post('/test-login', (req, res) => {
+router.post('/test-login', async (req, res) => {
   // Endpoint dev — chỉ bật khi ZALO_DEV_ENDPOINTS=1; production trả 404.
   if (!DEV_ENDPOINTS) return res.status(404).json({ success: false, message: 'Not found' });
 
@@ -665,10 +695,11 @@ router.post('/test-login', (req, res) => {
       return res.status(400).json({ success: false, message: 'Tài khoản và mật khẩu không được để trống' });
     }
 
-    const user = validateUser(username, password);
+    const user = await validateUser(username, password);
 
     if (user) {
       if (req.session) {
+        await _taoLaiPhien(req);
         req.session.authenticated = true;
         req.session.username = user.username;
         req.session.role = user.role;

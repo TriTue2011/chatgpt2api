@@ -15,9 +15,9 @@ process.env.ZALO_SERVER_ADMIN_PASSWORD = 'mat-khau-khoi-phuc-sau-migration';
 
 const { validateUser } = await import('../services/authService.js');
 
-test('users legacy hong khong chan tao auth database moi', () => {
+test('users legacy hong khong chan tao auth database moi', async () => {
   assert.equal(
-    validateUser('admin', 'mat-khau-khoi-phuc-sau-migration')?.role,
+    (await validateUser('admin', 'mat-khau-khoi-phuc-sau-migration'))?.role,
     'admin',
   );
   assert.doesNotThrow(() => JSON.parse(
