@@ -363,9 +363,23 @@ def _get_cookies_ranked(required_features: list[str] = None) -> list[tuple[str, 
     Falls back to single psid config if present."""
     cfg = _cfg()
     psid = str(cfg.get("psid") or "").strip()
-    if psid:
-        return [(psid, str(cfg.get("psidts") or "").strip(), "static-config")]
-        
+    # Cookie dán tay trong cấu hình là ĐƯỜNG LÙI, không phải đường chính.
+    #
+    # Bản cũ thấy có `psid` là trả về đúng nó rồi thoát — cả kho tài khoản không
+    # được ngó tới. Đo thật 24/08/2026 trên máy chủ: cấu hình có một psid tĩnh
+    # 153 ký tự ĐÃ CHẾT (log làm nóng ghi `auth: false`), trong khi cùng file
+    # cấu hình liệt kê 9 profile Google thật và kho có 10 tài khoản
+    # gemini_web_api đều `active`. Toàn bộ đường gma chạy bằng một cookie khách
+    # đã hỏng, còn 9 tài khoản khoẻ nằm không.
+    #
+    # Tệ hơn: cookie tĩnh mang profile "static-config" nên không tự chữa được —
+    # đường relogin chỉ nhận profile `google-*` (có creds đã lưu). Hỏng là hỏng
+    # vĩnh viễn cho tới khi có người dán cookie mới bằng tay.
+    #
+    # Nay đúng như docstring vẫn nói: lấy kho trước, kho không ra gì mới lùi về
+    # cookie tĩnh. Ai chỉ cấu hình mỗi psid (không có profile nào) vẫn chạy y cũ.
+    lui_ve = [(psid, str(cfg.get("psidts") or "").strip(), "static-config")] if psid else []
+
     from services.account_service import account_service
     profiles = _profiles()
     raw_accounts = [{"profile": p, "status": "active"} for p in profiles]
@@ -421,7 +435,7 @@ def _get_cookies_ranked(required_features: list[str] = None) -> list[tuple[str, 
         except Exception:
             pass
 
-    return results
+    return results or lui_ve
 
 def is_available() -> bool:
     return len(_get_cookies_ranked()) > 0
