@@ -2909,6 +2909,12 @@ def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
        khi user yêu cầu xoá yêu cầu". Nên MẶC ĐỊNH đặt thành luật của khung
        chat, do code áp ở mỗi tin tới (`zalo_personal.ap_luat_tu_xoa`), không
        nhờ model nhớ gọi lại — model quên là luật chết lặng lẽ.
+
+    LUẬT CHỈ SỐNG TRONG ĐÚNG PHẠM VI ĐẶT NÓ: kênh + khung chat + topic + người.
+    Đo thật 24/08: bản chưa có công cụ này khiến model lưu lời dặn bằng
+    `remember`, mà kho ghi nhớ có "Kết nối bộ nhớ" đọc chéo giữa các khung chat
+    — thế là một câu nói ở khung này đi thu hồi tin ở khung khác. Luật ở đây tra
+    khoá chính xác, không có đường đọc thêm.
     """
     from services import zalo_personal
 
@@ -2916,19 +2922,24 @@ def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
     if kenh and kenh != "zalo":
         return {"text": "Tự xoá tin chỉ làm được trên Zalo cá nhân."}
     acc, thread_id, _ = zalo_personal.khung_dang_xu_ly()
+    # Luật khoá theo PHẠM VI (kênh + khung chat + topic + người), không theo
+    # thread_id trần — xem `zalo_personal._khoa_khung`. `thread_id` vẫn cần
+    # riêng cho việc thu hồi tin đã gửi, vì Zalo nhận thread_id chứ không nhận
+    # khoá phiên.
+    khoa_phien = str((ctx or {}).get("user_id") or "")
 
     if "tat" in args and _la_bat(args.get("tat")):
         zalo_personal.dat_ttl_luot_nay(0)
-        con = bool(thread_id) and bool(zalo_personal.luat_tu_xoa(acc, thread_id))
+        con = bool(khoa_phien) and bool(zalo_personal.luat_tu_xoa(acc, khoa_phien))
         if con:
-            zalo_personal.dat_luat_tu_xoa(acc, thread_id, 0)
+            zalo_personal.dat_luat_tu_xoa(acc, khoa_phien, 0)
             return {"text": "Rồi, em bỏ hẳn việc tự xoá — từ giờ câu trả lời ở "
                             "đây sẽ ở lại bình thường ạ."}
         return {"text": "Rồi, câu trả lời này sẽ không tự xoá."}
 
     giay = _doc_khoang_giay(args)
     if giay <= 0:
-        lt = zalo_personal.luat_tu_xoa(acc, thread_id) if thread_id else None
+        lt = zalo_personal.luat_tu_xoa(acc, khoa_phien) if khoa_phien else None
         if lt:
             pham_vi = (", chỉ khi anh/chị hỏi về: " + ", ".join(lt.get("tu_khoa") or [])
                        if lt.get("tu_khoa") else ", cho mọi câu trả lời")
@@ -2957,11 +2968,14 @@ def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
 
     # Luật lâu dài — mặc định BẬT.
     lau_dai = True if "lau_dai" not in args else _la_bat(args.get("lau_dai"))
-    if lau_dai and thread_id:
+    if lau_dai and khoa_phien:
         tu_khoa = _doc_tu_khoa(args)
-        zalo_personal.dat_luat_tu_xoa(acc, thread_id, giay, tu_khoa)
-        phan.append("Và em giữ luôn nếp này cho các lần sau"
-                    + (" khi anh/chị hỏi về " + ", ".join(tu_khoa) if tu_khoa else "")
+        zalo_personal.dat_luat_tu_xoa(acc, khoa_phien, giay, tu_khoa)
+        # Nói rõ PHẠM VI: người dùng đã một lần thấy lời dặn ở khung này đi xoá
+        # tin ở khung khác, nên câu xác nhận phải tự chứng minh là nó không lan.
+        phan.append("Và em giữ luôn nếp này cho các lần sau, chỉ trong riêng "
+                    "khung chat này"
+                    + (", khi anh/chị hỏi về " + ", ".join(tu_khoa) if tu_khoa else "")
                     + " — tới lúc anh/chị bảo thôi thì em bỏ.")
 
     if giay >= _NGUONG_KHUYEN_AUTO_DELETE:

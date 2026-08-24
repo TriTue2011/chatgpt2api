@@ -127,8 +127,24 @@ def ttl_luot_nay() -> int:
 _KHOA_LUAT_TU_XOA = "zalop_luat_tu_xoa"
 
 
-def _khoa_khung(account_id: str, thread_id: str) -> str:
-    return f"zalop:{str(account_id or '').strip()}:{str(thread_id or '').strip()}"
+def _khoa_khung(account_id: str, khoa_phien: str) -> str:
+    """Khoá luật — tách theo TÀI KHOẢN bot + kênh + khung chat + topic + người.
+
+    Chủ máy chốt 24/08/2026: "cần nó độc lập từng kênh/thread/user". Bản đầu
+    khoá bằng thread_id trần, thiếu cả kênh lẫn người: hai kênh trùng số khung
+    chat là chung luật, và trong nhóm thì mọi thành viên chung một luật.
+
+    Dùng chung bộ tách phạm vi với mọi dữ liệu theo-khung-chat khác
+    (`scope.khoa_du_lieu`), nên quy ước ở đây giống hệt wiki/lịch/ghi chú: chat
+    1-1 luôn tách theo người, nhóm/topic tách theo người khi nhóm đã có bộ lọc
+    user.
+
+    Khác `memory_links` ở chỗ quan trọng nhất: luật này tra khoá CHÍNH XÁC,
+    không có đường "đọc thêm", nên không lan sang khung chat được nối bộ nhớ —
+    đúng thứ đã làm một lời dặn ở khung này đi xoá tin ở khung khác.
+    """
+    from services.agent.scope import khoa_du_lieu
+    return f"{str(account_id or '').strip()}|{khoa_du_lieu(khoa_phien)}"
 
 
 def _bo_dau(s: str) -> str:
@@ -142,16 +158,16 @@ def _cac_luat_tu_xoa() -> dict:
     return dict(m) if isinstance(m, dict) else {}
 
 
-def luat_tu_xoa(account_id: str, thread_id: str) -> dict | None:
-    """Luật tự xoá đang đặt cho khung chat này, hoặc None."""
-    lt = _cac_luat_tu_xoa().get(_khoa_khung(account_id, thread_id))
+def luat_tu_xoa(account_id: str, khoa_phien: str) -> dict | None:
+    """Luật tự xoá đang đặt cho phạm vi này (kênh + khung chat + người), hoặc None."""
+    lt = _cac_luat_tu_xoa().get(_khoa_khung(account_id, khoa_phien))
     return dict(lt) if isinstance(lt, dict) and int(lt.get("giay") or 0) > 0 else None
 
 
-def dat_luat_tu_xoa(account_id: str, thread_id: str, giay: int,
+def dat_luat_tu_xoa(account_id: str, khoa_phien: str, giay: int,
                     tu_khoa: list[str] | None = None, mo_ta: str = "") -> dict:
-    """Đặt/thay luật tự xoá cho khung chat. `giay <= 0` = huỷ luật."""
-    khoa = _khoa_khung(account_id, thread_id)
+    """Đặt/thay luật tự xoá cho ĐÚNG phạm vi này. `giay <= 0` = huỷ luật."""
+    khoa = _khoa_khung(account_id, khoa_phien)
     m = _cac_luat_tu_xoa()
     giay = max(0, int(giay or 0))
     if giay <= 0:
@@ -166,12 +182,15 @@ def dat_luat_tu_xoa(account_id: str, thread_id: str, giay: int,
     return lt
 
 
-def ap_luat_tu_xoa(account_id: str, thread_id: str, text: str) -> int:
-    """Tin vừa tới có khớp luật của khung chat không; khớp thì đặt TTL lượt này.
+def ap_luat_tu_xoa(account_id: str, khoa_phien: str, text: str) -> int:
+    """Tin vừa tới có khớp luật của phạm vi này không; khớp thì đặt TTL lượt này.
+
+    `khoa_phien` là khoá phiên orchestrator (`zalop_<thread>` hoặc
+    `zalop_<thread>:u<người gửi>`), KHÔNG phải thread_id trần — xem `_khoa_khung`.
 
     Trả về số giây đã áp (0 = không áp).
     """
-    lt = luat_tu_xoa(account_id, thread_id)
+    lt = luat_tu_xoa(account_id, khoa_phien)
     if not lt:
         return 0
     tu_khoa = lt.get("tu_khoa") or []
@@ -3592,14 +3611,28 @@ def _process_ai(ev: dict) -> None:
         # được dùng lại cho tin sau — không xoá thì một lần "trả lời rồi xoá sau
         # 1 phút" sẽ âm thầm áp cho mọi câu trả lời tiếp theo trên cùng luồng.
         _msg_ctx.ttl_ms = 0
-        # Rồi mới áp LUẬT tự xoá lâu dài của khung chat (nếu có). Do CODE áp
+        # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
+        # CHỈ hội thoại live tách theo người — bộ nhớ và nhật ký vẫn dùng chung
+        # cả nhóm (`scope.khoa_du_lieu` / `khoa_nhat_ky` tự bỏ người ra).
+        _skey = f"zalop_{thread_id}"
+        try:
+            from services.agent.scope import tach_phien_theo_nguoi as _tach
+            _snd = str(ev.get("sender_id") or "")
+            if int(thread_type) == 1 and _snd and _tach():
+                _skey = f"zalop_{thread_id}:u{_snd}"
+        except Exception:
+            pass
+        # Rồi mới áp LUẬT tự xoá lâu dài của phạm vi này (nếu có). Do CODE áp
         # chứ không nhờ model nhớ gọi lại công cụ — model quên là luật chết
         # lặng lẽ, mà người dùng thì tin rằng đã đặt xong.
+        #
+        # Đưa `_skey` chứ không phải `thread_id`: luật tách theo kênh + khung
+        # chat + người, xem `_khoa_khung`. `_skey` phải dựng TRƯỚC chỗ này.
         try:
-            _giay_tu_xoa = ap_luat_tu_xoa(_acc, thread_id, text)
+            _giay_tu_xoa = ap_luat_tu_xoa(_acc, _skey, text)
             if _giay_tu_xoa:
                 logger.info({"event": "zalop_luat_tu_xoa_ap", "thread": thread_id,
-                             "giay": _giay_tu_xoa})
+                             "pham_vi": _skey, "giay": _giay_tu_xoa})
         except Exception as exc:
             logger.warning("zalop luat tu xoa loi: %s", str(exc)[:160])
         _fp_map = config.get().get("zalo_personal_account_admins")
@@ -3620,17 +3653,6 @@ def _process_ai(ev: dict) -> None:
         except Exception:
             pass
         _model = _ai_model(_acc, thread_id)
-        # Nhóm (thread_type=1): mỗi USER một phiên riêng; 1-1 giữ key cũ.
-        # CHỈ hội thoại live tách theo người — bộ nhớ và nhật ký vẫn dùng chung
-        # cả nhóm (`scope.khoa_du_lieu` / `khoa_nhat_ky` tự bỏ người ra).
-        _skey = f"zalop_{thread_id}"
-        try:
-            from services.agent.scope import tach_phien_theo_nguoi as _tach
-            _snd = str(ev.get("sender_id") or "")
-            if int(thread_type) == 1 and _snd and _tach():
-                _skey = f"zalop_{thread_id}:u{_snd}"
-        except Exception:
-            pass
         out = orchestrate(
             text, _skey,
             allow=_allow, ha_fastpath=_fp, model=_model,

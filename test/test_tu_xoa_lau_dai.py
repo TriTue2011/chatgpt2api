@@ -24,7 +24,10 @@ from services.agent import capabilities as caps     # noqa: E402
 
 ACC = "own-1"
 THREAD = "6643404425553198601"
-KHOA = f"zalop:{ACC}:{THREAD}"
+#: Khoá phiên orchestrator — đây mới là thứ luật tự xoá khoá theo, không phải
+#: thread_id trần. Xem `zalo_personal._khoa_khung`.
+SKEY = f"zalop_{THREAD}"
+KHOA = zp._khoa_khung(ACC, SKEY)
 
 
 class _LuatGia:
@@ -58,37 +61,67 @@ class LuatTheoTuKhoaTests(unittest.TestCase):
 
     def test_khong_co_luat_thi_khong_ap_gi(self):
         with _LuatGia():
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "Tin tức hôm nay"), 0)
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, SKEY, "Tin tức hôm nay"), 0)
             self.assertEqual(zp.ttl_luot_nay(), 0)
 
     def test_khop_tu_khoa_thi_dat_ttl_cho_luot(self):
         with _LuatGia({KHOA: {"giay": 900, "tu_khoa": ["tin tức"]}}):
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "Tin tức hôm nay"), 900)
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, SKEY, "Tin tức hôm nay"), 900)
             self.assertEqual(zp.ttl_luot_nay(), 900_000)
 
     def test_khong_ke_dau_va_hoa_thuong(self):
         with _LuatGia({KHOA: {"giay": 900, "tu_khoa": ["tin tức"]}}):
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "cho xem TIN TUC nào"), 900)
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, SKEY, "cho xem TIN TUC nào"), 900)
 
     def test_lech_chu_de_thi_khong_dung_toi(self):
         with _LuatGia({KHOA: {"giay": 900, "tu_khoa": ["tin tức"]}}):
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "Thời tiết hôm nay?"), 0)
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, SKEY, "Thời tiết hôm nay?"), 0)
             self.assertEqual(zp.ttl_luot_nay(), 0)
 
     def test_khong_neu_tu_khoa_thi_ap_moi_cau(self):
         with _LuatGia({KHOA: {"giay": 60, "tu_khoa": []}}):
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "chào em"), 60)
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, SKEY, "chào em"), 60)
+
+
+class DocLapTungPhamViTests(unittest.TestCase):
+    """Luật đặt ở một nơi TUYỆT ĐỐI không chạy ở nơi khác.
+
+    Đo thật 24/08/2026: người dùng dặn "tự động xoá phản hồi tin tức sau 15
+    phút" ở một khung chat, rồi thấy tin bị thu hồi ở khung chat KHÁC. Lúc đó
+    lời dặn bị lưu bằng `remember`, mà kho ghi nhớ có "Kết nối bộ nhớ" đọc chéo
+    giữa các khung. Chủ máy chốt: "cần nó độc lập từng kênh/thread/user".
+    """
 
     def test_khung_chat_khac_khong_bi_lay(self):
         with _LuatGia({KHOA: {"giay": 900, "tu_khoa": []}}):
-            self.assertEqual(zp.ap_luat_tu_xoa(ACC, "khung-khac", "Tin tức hôm nay"), 0)
+            khac = "zalop_8845089824387263227"
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, khac, "Tin tức hôm nay"), 0)
+            self.assertEqual(zp.ttl_luot_nay(), 0)
+
+    def test_kenh_khac_khong_bi_lay(self):
+        """Cùng số khung chat nhưng khác kênh vẫn là hai luật."""
+        with _LuatGia({KHOA: {"giay": 900, "tu_khoa": []}}):
+            self.assertEqual(zp.ap_luat_tu_xoa(ACC, THREAD, "Tin tức hôm nay"), 0)
+
+    def test_tai_khoan_bot_khac_khong_bi_lay(self):
+        with _LuatGia({KHOA: {"giay": 900, "tu_khoa": []}}):
+            self.assertEqual(zp.ap_luat_tu_xoa("own-2", SKEY, "Tin tức hôm nay"), 0)
+
+    def test_khoa_chua_du_ca_ba_thanh_phan(self):
+        """Khoá phải mang tài khoản bot, kênh và khung chat — thiếu là dính nhau."""
+        self.assertIn(ACC, KHOA)
+        self.assertIn("zalop", KHOA)
+        self.assertIn(THREAD, KHOA)
+        self.assertNotEqual(KHOA, zp._khoa_khung(ACC, "zalop_8845089824387263227"))
+        self.assertNotEqual(KHOA, zp._khoa_khung("own-2", SKEY))
 
 
 class CongCuTuXoaTests(unittest.TestCase):
     def _goi(self, args: dict, thu_hoi=None):
         gia = thu_hoi or (lambda *a, **kw: {"ok": True, "so_tin": 1})
         with mock.patch.object(zp, "hen_thu_hoi_tin_da_gui", side_effect=gia) as m:
-            ra = caps.get("tu_xoa_tin").handler(args, {"channel": "zalo"})
+            ra = caps.get("tu_xoa_tin").handler(
+                args, {"channel": "zalo", "user_id": SKEY})
         return ra, m
 
     def test_dat_ca_ba_phan_trong_mot_lan_goi(self):
@@ -102,6 +135,9 @@ class CongCuTuXoaTests(unittest.TestCase):
             self.assertEqual(kho.luat[KHOA]["giay"], 900, "không giữ luật cho lần sau")
             self.assertEqual(kho.luat[KHOA]["tu_khoa"], ["tin tức"])
         self.assertIn("15 phút", ra.get("text") or "")
+        # Câu xác nhận phải tự nói ra phạm vi — người dùng đã một lần thấy luật
+        # lan sang khung chat khác nên "im lặng về phạm vi" là không đủ.
+        self.assertIn("riêng khung chat này", ra.get("text") or "")
 
     def test_khong_thu_hoi_duoc_tin_cu_thi_noi_ra(self):
         """Im lặng ở đây là người dùng tưởng tin cũ cũng sẽ tự mất."""
