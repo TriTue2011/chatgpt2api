@@ -32,6 +32,7 @@ const NHOM_CHUC_NANG: [string, string][] = [
   ["video", "🎬 Video"], ["music", "🎵 Nhạc"], ["web", "🌐 Web"], ["code", "💻 Code"],
   ["memory", "🧠 Ghi nhớ"], ["rag", "📚 RAG / tài liệu"], ["word", "📝 PDF → Word"],
   ["office", "📄 Tài liệu Office"], ["device", "🔌 Thiết bị"],
+  ["camera", "📷 Camera nhà"],
   ["summary", "🧾 Tổng hợp"], ["schedule", "⏰ Nhắc hẹn"], ["skills", "🧩 Skill"],
   ["wiki", "📖 Wiki"], ["contacts", "📒 Danh bạ"], ["kho_dam_may", "☁️ Kho đám mây"],
   ["tts_reply", "🔉 Trả lời giọng nói"], ["tts_speaker", "📢 Phát loa"],
