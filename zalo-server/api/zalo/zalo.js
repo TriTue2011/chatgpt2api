@@ -18,6 +18,7 @@ import {
     saveImage,
     removeImage,
     saveFileFromUrl,
+    saveVideoFromUrl,
     removeFile,
 } from '../../utils/helpers.js';
 import { taiVeVaGuiNhieuAnh as guiTheoLo } from '../../utils/sendImages.js';
@@ -1413,7 +1414,7 @@ export async function sendVideoByAccount(req, res) {
             normalizedOptions.ttl = normalizeMessageTtl(normalizedOptions.ttl) ?? 0;
         }
 
-        duongVideo = await saveFileFromUrl(normalizedOptions.videoUrl);
+        duongVideo = await saveVideoFromUrl(normalizedOptions.videoUrl);
         if (!duongVideo) {
             throw new Error('Khong the tai video nguon');
         }
