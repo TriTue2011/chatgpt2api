@@ -5452,8 +5452,11 @@ CAPABILITIES: dict[str, Capability] = {
                        "description": "Tên camera người dùng nói, vd 'sân trước'. "
                                       "Bỏ trống nếu nhà chỉ có một camera."},
             "hoi": {"type": "string",
-                    "description": "Câu hỏi về cảnh trong ảnh, vd 'có ai không', "
-                                   "'xe còn ở đó không'. Bỏ trống = chỉ gửi ảnh."}},
+                    "description": "CHỈ điền khi người dùng HỎI về nội dung ảnh và "
+                                   "phải nhìn ảnh mới trả lời được (vd 'có ai không', "
+                                   "'xe còn đó không'). Người dùng chỉ bảo chụp/gửi "
+                                   "ảnh thì BỎ TRỐNG — bỏ trống là chỉ gửi ảnh, "
+                                   "KHÔNG chạy model phân tích."}},
             "required": []},
         workflow=("Kết quả gồm ảnh và (nếu có hỏi) câu trả lời — thuật lại ngắn, "
                   "ĐỪNG mô tả lại ảnh mà em không nhìn thấy. Báo 'chưa rõ camera "
@@ -6457,10 +6460,12 @@ _CAP_GROUP: dict[str, str] = {
     # thread nào được xem máy chủ vẫn KHÔNG tự động được nhìn vào máy người khác.
     "device_capture": "device",
     "device_power": "device",
-    # Camera giám sát nhìn vào TRONG NHÀ — cùng nhóm "device" với webcam vì cùng
-    # tính chất riêng tư, KHÔNG gộp vào "homeassistant": thread nào được bật tắt
-    # đèn vẫn không mặc nhiên được nhìn vào nhà.
-    "xem_camera": "device",
+    # Camera giám sát nhìn vào TRONG NHÀ — nhóm RIÊNG "camera", KHÔNG gộp vào
+    # "device" (webcam/máy tính) lẫn "homeassistant" (đèn/quạt): người chỉ cần
+    # camera không phải mở luôn quyền điều khiển máy tính, và thread bật đèn
+    # không mặc nhiên được nhìn vào nhà. Truy cập THẬT vẫn chốt ở
+    # camera_nha.duoc_xem (mặc định chỉ admin) nên nhóm này bật rộng vẫn kín.
+    "xem_camera": "camera",
     "remember": "memory", "search_history": "memory",
     "model_spec": "image",
     "schedule": "schedule",
