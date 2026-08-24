@@ -566,7 +566,24 @@ def create_router(app_version: str) -> APIRouter:
         from services.settings_secrets import loc_ghi, xoa_theo_duong_dan
         _xoa = _changed.pop("clear_secret_fields", None)
         _changed = loc_ghi(_changed, config.data)
+        # Side-effect webhook chỉ nên chạy khi GIÁ TRỊ đổi THẬT. Vài trang
+        # (Camera nhà, Combos) GET cả config rồi POST NGUYÊN CẢ config, nên mọi
+        # khoá đều "có mặt" trong _changed dù không đổi — kiểm theo `k in _changed`
+        # sẽ đăng ký lại webhook Zalo/Telegram cho MỌI tài khoản mỗi lần lưu, làm
+        # treo (đơ) cả lượt lưu. So trước/sau, chỉ chạy khi khác.
+        import copy as _copy
+        _KHOA_HOOK = ("cloudflare_tunnel_token", "telegram_bot_token",
+                      "telegram_bots", "telegram_webhook_url", "zalo_bot_token",
+                      "zalo_bots", "zalo_webhook_secret", "zalo_webhook_enabled",
+                      "zalo_webhook_url", "base_url")
+        _hook_keys = set(_KHOA_HOOK) | {k for k in _changed
+                                        if k.startswith("zalo_personal_")}
+        _truoc = {k: _copy.deepcopy(config.data.get(k)) for k in _hook_keys}
         result = config.update(_changed)
+
+        def _hook_doi(k: str) -> bool:
+            """True khi khoá `k` được gửi lên VÀ giá trị khác trước khi lưu."""
+            return k in _changed and config.data.get(k) != _truoc.get(k)
         # Xoá hẳn phải TƯỜNG MINH: gửi chuỗi rỗng không xoá được gì, vì một ô
         # input trống do trang chưa nạp xong là chuyện thường và nó không được
         # phép đồng nghĩa với "xoá khoá R2".
@@ -577,14 +594,14 @@ def create_router(app_version: str) -> APIRouter:
                 result = config.update(_du_lieu)
                 logger.info({"event": "settings_xoa_secret", "fields": _da_xoa})
         # If tunnel token changed, restart tunnel
-        if "cloudflare_tunnel_token" in _changed:
+        if _hook_doi("cloudflare_tunnel_token"):
             try:
                 from services.cloudflare_tunnel import restart_tunnel
                 restart_tunnel()
             except Exception:
                 pass
         # If telegram token changed, re-register webhook
-        if any(k in _changed for k in ("telegram_bot_token", "telegram_bots", "telegram_webhook_url")):
+        if any(_hook_doi(k) for k in ("telegram_bot_token", "telegram_bots", "telegram_webhook_url")):
             try:
                 from services.telegram_bot import register_webhook
                 register_webhook()
@@ -593,9 +610,9 @@ def create_router(app_version: str) -> APIRouter:
         # Zalo Bot: đổi token / công tắc webhook / URL công khai đều phải ÁP LẠI
         # chế độ, vì webhook đã đăng ký trên Zalo còn trỏ URL–secret cũ (Zalo giữ
         # cấu hình phía nó, không tự cập nhật khi ta đổi config).
-        if any(k in _changed for k in ("zalo_bot_token", "zalo_bots", "zalo_webhook_secret",
-                                       "zalo_webhook_enabled", "zalo_webhook_url",
-                                       "telegram_webhook_url", "base_url")):
+        if any(_hook_doi(k) for k in ("zalo_bot_token", "zalo_bots", "zalo_webhook_secret",
+                                      "zalo_webhook_enabled", "zalo_webhook_url",
+                                      "telegram_webhook_url", "base_url")):
             try:
                 from services.zalo_bot import register_webhook as _z_reg
                 _z_reg()
@@ -603,7 +620,7 @@ def create_router(app_version: str) -> APIRouter:
                 pass
         # Zalo Cá Nhân (bot server zca-js) — đổi server/user/pass/webhook base
         # thì reset client + tự đăng ký lại webhook về gateway.
-        if any(k.startswith("zalo_personal_") for k in _changed):
+        if any(_hook_doi(k) for k in _changed if k.startswith("zalo_personal_")):
             try:
                 from services.zalo_personal import on_settings_changed as _zp_changed
                 _zp_changed()
