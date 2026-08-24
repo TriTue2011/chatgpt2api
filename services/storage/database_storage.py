@@ -17,7 +17,17 @@ class AccountModel(Base):
     __tablename__ = "accounts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    access_token = Column(String(2048), unique=True, nullable=False, index=True)
+    # KHÔNG đặt trần độ dài. Cột này từng là varchar(2048) và token của nhà cung
+    # cấp cứ dài dần theo thời gian: đo 24/08/2026 trên máy chủ thật, token dài
+    # nhất đang lưu là 1.964 ký tự — sát trần — và mỗi lần làm mới token đều đổ
+    # `StringDataRightTruncation`, sáu lần trong một giờ. Hỏng ở đây không chỉ
+    # mất token: lượt chat nào đi qua provider đó cũng chết theo, rồi rơi xuống
+    # model dự phòng yếu hơn.
+    #
+    # Ràng buộc unique vẫn giữ (bắt trùng token lúc lưu). Lưu ý cho người sau:
+    # chỉ mục btree của Postgres chịu khoảng 2.704 byte một mục, nên nếu token
+    # có ngày vượt mốc đó thì phải chuyển sang so trùng bằng băm.
+    access_token = Column(Text, unique=True, nullable=False, index=True)
     data = Column(Text, nullable=False)  # JSON 格式存储完整账号数据
 
 
@@ -53,7 +63,46 @@ class DatabaseStorageBackend(StorageBackend):
             pool_recycle=3600,   # 1小时回收连接
         )
         Base.metadata.create_all(self.engine)
+        self._noi_cot_access_token()
         self.Session = sessionmaker(bind=self.engine)
+
+    #: Cột nào từng khai có trần độ dài mà nay phải là text tự do.
+    _COT_PHAI_NOI = (("accounts", "access_token"),)
+
+    def _noi_cot_access_token(self) -> None:
+        """Nới cột đã tạo từ trước từ varchar(n) sang text.
+
+        `create_all` chỉ tạo bảng còn THIẾU, nó không sửa cột của bảng đã có.
+        Nên đổi khai báo trong model là đủ cho máy mới, nhưng máy đang chạy vẫn
+        giữ nguyên varchar(2048) và vẫn hỏng — đúng thứ đang xảy ra trên máy chủ
+        ngày 24/08/2026.
+
+        Chạy được nhiều lần: có trần thì mới nới, không có thì thôi. Hỏng thì ghi
+        log rồi đi tiếp — không được để một lần ALTER thất bại làm chết cả tiến
+        trình lúc khởi động.
+        """
+        # SQLite không áp trần độ dài của VARCHAR nên không có gì để nới. MySQL
+        # thì không nới được kiểu này: cột TEXT của nó đòi khai độ dài khoá cho
+        # chỉ mục unique. Máy chủ đang dùng Postgres, nên chỉ làm cho Postgres —
+        # gặp DB khác thì để nguyên chứ không đoán.
+        if self.engine.dialect.name != "postgresql":
+            return
+        try:
+            from sqlalchemy import inspect as _inspect
+            insp = _inspect(self.engine)
+            bang_co_san = set(insp.get_table_names())
+            for bang, cot in self._COT_PHAI_NOI:
+                if bang not in bang_co_san:
+                    continue
+                info = next((c for c in insp.get_columns(bang) if c["name"] == cot), None)
+                if info is None or not getattr(info["type"], "length", None):
+                    continue
+                with self.engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {bang} ALTER COLUMN {cot} TYPE TEXT"))
+                print(f"[storage] Đã nới cột {bang}.{cot} từ varchar"
+                      f"({info['type'].length}) sang TEXT")
+        except Exception as exc:
+            print(f"[storage] Không nới được cột access_token: {exc}")
 
     def load_accounts(self) -> list[dict[str, Any]]:
         """从数据库加载账号数据"""
