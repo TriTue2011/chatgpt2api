@@ -144,5 +144,40 @@ class PivotTests(unittest.TestCase):
         self.assertEqual(tat_ca_vi, {"thuật toán", "tế bào"})
 
 
+
+class OmwTests(unittest.TestCase):
+    """OMW: gióng synset KO↔VI, lĩnh vực lấy theo từ VI qua glossary EN."""
+
+    EN = {"y_khoa": {"cell": "tế bào"}, "sinh_hoc": {"organism": "sinh vật"}}
+
+    def test_chi_muc_vi_domain(self):
+        idx = bg.chi_muc_vi_domain(self.EN)
+        self.assertEqual(idx["tế bào"], {"y_khoa"})
+        self.assertEqual(idx["sinh vật"], {"sinh_hoc"})
+
+    def test_doc_tab_gach_duoi_va_chu_thich(self):
+        d = bg.doc_omw_tab(["# chú thích", "00010-n\tkor:lemma\tNew_York"])
+        self.assertEqual(d["00010-n"], {"New York"})
+
+    def test_nap_omw_ko(self):
+        vi_dom = bg.chi_muc_vi_domain(self.EN)
+        kor = [
+            "00001-n\tkor:lemma\t세포",
+            "00002-n\tkor:lemma\t유기체",
+            "00003-n\tkor:lemma\t의자",   # synset 3: từ VI không phải thuật ngữ → bỏ
+        ]
+        vie = [
+            "# Vietnamese Wordnet",
+            "00001-n\tvie:lemma\ttế bào",
+            "00002-n\tvie:lemma\tsinh vật",
+            "00003-n\tvie:lemma\tcái ghế",
+        ]
+        store = bg.nap_omw(kor, vie, vi_dom)
+        self.assertEqual(store["y_khoa"].get("세포"), "tế bào")
+        self.assertEqual(store["sinh_hoc"].get("유기체"), "sinh vật")
+        tat_ca = {t for b in store.values() for t in b}
+        self.assertNotIn("의자", tat_ca)
+
+
 if __name__ == "__main__":
     unittest.main()
