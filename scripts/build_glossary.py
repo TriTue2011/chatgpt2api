@@ -5,14 +5,16 @@ Sinh dữ liệu cho ``services/thuat_ngu.py`` (đọc lúc chạy). Dạng ghi 
 
     { "<lĩnh vực slug>": { "<term nguồn thường hoá>": "<thuật ngữ VI chuẩn>" } }
 
-BƯỚC 1 (tệp này) — nguồn TIẾNG ANH: Wiktextract (bản kaikki đã bóc của English
-Wiktionary). Mỗi mục có ``senses[].topics`` (lĩnh vực chuẩn hoá) và
-``translations`` (bản dịch, kèm ``code:"vi"`` và ``sense`` mô tả nghĩa). Ta chỉ
-giữ những cặp từ có LĨNH VỰC rõ — đúng thứ cần cho hậu kỳ thuật ngữ, và tự lọc
-bỏ từ đời thường.
+Nguồn CHÍNH — TIẾNG ANH: Wiktextract (bản kaikki đã bóc của English Wiktionary).
+Mỗi mục có ``senses[].topics`` (lĩnh vực chuẩn hoá) và ``translations`` (kèm
+``code:"vi"`` và ``sense`` mô tả nghĩa). Ta chỉ giữ cặp từ có LĨNH VỰC rõ — đúng
+thứ cần cho hậu kỳ thuật ngữ, và tự lọc bỏ từ đời thường.
 
-JA/ZH/KO (pivot qua tiếng Anh bằng FreeDict jpn-eng / CC-CEDICT / OMW) là bước
-sau; khung dữ liệu và hàm ghi ở đây dùng lại được.
+JA/ZH — pivot QUA tiếng Anh: FreeDict ``jpn-eng`` (JA→EN) và CC-CEDICT (ZH→EN),
+tra nghĩa Anh trong glossary EN đã dựng để ra (lĩnh vực, thuật ngữ VI). KO và
+gia cố bằng OMW là bước sau.
+
+Nguồn tải ngoài + lệnh dựng: xem ``docs/GLOSSARY.md``.
 
 Chạy (trên server, nơi tải được tệp lớn)::
 
@@ -149,6 +151,122 @@ def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]]) -> int:
     return them
 
 
+# ── Pivot qua tiếng Anh (JA/ZH/KO) ──────────────────────────────────────────
+# JA/ZH/KO không có termbase sang thẳng tiếng Việt, nhưng có sang tiếng Anh
+# (FreeDict jpn-eng, CC-CEDICT). Ta dùng glossary tiếng Anh ĐÃ DỰNG làm cầu:
+# term nguồn → nghĩa tiếng Anh → tra trong glossary Anh ra (lĩnh vực, thuật ngữ
+# VI). Chỉ term nào có nghĩa Anh TRÙNG một thuật ngữ Anh đã biết mới vào — tự
+# lọc còn đúng từ chuyên ngành, khỏi kéo cả từ đời thường.
+
+def chi_muc_en(en_store: dict[str, dict[str, str]]) -> dict[str, list[tuple[str, str]]]:
+    """Đảo glossary Anh thành: term Anh → [(lĩnh vực, thuật ngữ VI)]."""
+    idx: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for slug, bang in en_store.items():
+        for term_en, vi in bang.items():
+            idx[term_en].append((slug, vi))
+    return idx
+
+
+_NGOAC = re.compile(r"\([^)]*\)|\[[^\]]*\]")
+
+
+def _nghia_sach(gloss: str) -> str:
+    """Chuẩn hoá một nghĩa tiếng Anh để tra cầu: bỏ ngoặc chú, 'to '/'a ' đầu,
+    gộp khoảng trắng, hạ chữ."""
+    g = _NGOAC.sub(" ", str(gloss or ""))
+    g = _thuong(g)
+    g = re.sub(r"^(to|a|an|the) ", "", g)
+    return g.strip()
+
+
+def _pivot(term_nguon: str, glosses: Iterable[str],
+           en_index: dict[str, list[tuple[str, str]]],
+           store: dict[str, dict[str, str]]) -> int:
+    """Gắn term nguồn vào store theo các (lĩnh vực, VI) tra được qua nghĩa Anh."""
+    term = _thuong(term_nguon)
+    if not term:
+        return 0
+    them = 0
+    for g in glosses:
+        cap = en_index.get(_nghia_sach(g))
+        if not cap:
+            continue
+        for slug, vi in cap:
+            bang = store.setdefault(slug, {})
+            if term not in bang:
+                bang[term] = vi
+                them += 1
+    return them
+
+
+_CC_DONG = re.compile(r"^\S+\s+(\S+)\s+\[[^\]]*\]\s+/(.+)/\s*$")
+
+
+def nap_cc_cedict(dong: Iterable[str],
+                  en_index: dict[str, list[tuple[str, str]]],
+                  store: Optional[dict[str, dict[str, str]]] = None
+                  ) -> dict[str, dict[str, str]]:
+    """CC-CEDICT (ZH→EN) → glossary ZH→VI qua cầu tiếng Anh.
+
+    Dòng CC-CEDICT: ``繁 简 [pin1 yin1] /gloss1/gloss2/``. Lấy chữ GIẢN THỂ làm
+    khoá (video hiện đại dùng giản thể), các gloss là nghĩa tiếng Anh để pivot.
+    """
+    if store is None:
+        store = defaultdict(dict)
+    for d in dong:
+        d = d.rstrip("\n")
+        if not d or d.startswith("#"):
+            continue
+        m = _CC_DONG.match(d)
+        if not m:
+            continue
+        gian = m.group(1)
+        glosses = [g for g in m.group(2).split("/") if g.strip()]
+        _pivot(gian, glosses, en_index, store)
+    return store
+
+
+def _localname(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _freedict_entries(source):
+    """Duyệt TEI FreeDict (stream) → (từ nguồn, [nghĩa tiếng Anh]).
+
+    ``source``: đường dẫn tệp .tei hoặc đối tượng file/BytesIO. Chỉ lấy nghĩa
+    trong ``<cit type="trans">`` (bỏ ví dụ dùng từ). Không phụ thuộc namespace.
+    """
+    import xml.etree.ElementTree as ET
+    for _ev, el in ET.iterparse(source, events=("end",)):
+        if _localname(el.tag) != "entry":
+            continue
+        orth = None
+        glosses: list[str] = []
+        for sub in el.iter():
+            ln = _localname(sub.tag)
+            if ln == "orth" and orth is None and (sub.text or "").strip():
+                orth = sub.text.strip()
+            elif ln == "cit" and sub.get("type") == "trans":
+                for q in sub.iter():
+                    if _localname(q.tag) == "quote" and (q.text or "").strip():
+                        glosses.append(q.text.strip())
+        if orth:
+            yield orth, glosses
+        el.clear()
+
+
+def nap_freedict_jpn(source,
+                     en_index: dict[str, list[tuple[str, str]]],
+                     store: Optional[dict[str, dict[str, str]]] = None
+                     ) -> dict[str, dict[str, str]]:
+    """FreeDict ``jpn-eng`` (TEI, JA→EN) → glossary JA→VI qua cầu tiếng Anh."""
+    if store is None:
+        store = defaultdict(dict)
+    for orth, glosses in _freedict_entries(source):
+        _pivot(orth, glosses, en_index, store)
+    return store
+
+
 def _mo(duong: str) -> Iterator[str]:
     """Mở .jsonl hoặc .jsonl.gz, trả từng dòng."""
     if str(duong).endswith(".gz"):
@@ -189,17 +307,37 @@ def ghi_store(store: dict[str, dict[str, str]], src: str, thu_muc: Path) -> Path
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Nạp glossary thuật ngữ")
     ap.add_argument("--kaikki-en", help="Đường dẫn JSONL(.gz) Wiktextract English")
+    ap.add_argument("--cc-cedict", help="Đường dẫn CC-CEDICT (ZH→EN) — cần en.json đã dựng trong --out")
+    ap.add_argument("--freedict-jpn", help="Đường dẫn FreeDict jpn-eng .tei (JA→EN) — cần en.json")
     ap.add_argument("--out", default="data/glossary", help="Thư mục xuất")
     args = ap.parse_args(argv)
 
     thu_muc = Path(args.out)
+    lam_gi = False
     if args.kaikki_en:
         store = nap_kaikki_en(_mo(args.kaikki_en))
         tep = ghi_store(store, "en", thu_muc)
         tong = sum(len(v) for v in store.values())
         print(f"en: {len(store)} lĩnh vực, {tong} thuật ngữ → {tep}")
-    else:
-        ap.error("cần ít nhất --kaikki-en (các nguồn JA/ZH/KO là bước sau)")
+        lam_gi = True
+    if args.cc_cedict:
+        en = json.loads((thu_muc / "en.json").read_text(encoding="utf-8"))
+        idx = chi_muc_en(en)
+        store = nap_cc_cedict(_mo(args.cc_cedict), idx)
+        tep = ghi_store(store, "zh", thu_muc)
+        tong = sum(len(v) for v in store.values())
+        print(f"zh: {len(store)} lĩnh vực, {tong} thuật ngữ (pivot qua en) → {tep}")
+        lam_gi = True
+    if args.freedict_jpn:
+        en = json.loads((thu_muc / "en.json").read_text(encoding="utf-8"))
+        idx = chi_muc_en(en)
+        store = nap_freedict_jpn(args.freedict_jpn, idx)
+        tep = ghi_store(store, "ja", thu_muc)
+        tong = sum(len(v) for v in store.values())
+        print(f"ja: {len(store)} lĩnh vực, {tong} thuật ngữ (pivot qua en) → {tep}")
+        lam_gi = True
+    if not lam_gi:
+        ap.error("cần --kaikki-en / --cc-cedict / --freedict-jpn (KO/OMW là bước sau)")
     return 0
 
 
