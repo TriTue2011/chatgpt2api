@@ -1292,8 +1292,29 @@ async def get_or_create_project(
                 }"""
             )
         if not clicked:
+            # Còn nằm ở accounts.google.com nghĩa là hồ sơ ĐÃ ĐĂNG XUẤT — nói
+            # đúng như thế. Câu "Account may not have Flow access" gửi người đọc
+            # đi kiểm quyền Flow của tài khoản, trong khi việc phải làm là đăng
+            # nhập lại. Đo thật 24/08/2026 (google-benbap2011): trang dừng ở
+            # `/v3/signin/challenge/recaptcha`, giao diện chỉ hiện câu trên, chủ
+            # máy mở noVNC thì thấy màn hình đen — vì lượt "Tái dùng" chạy
+            # headless, không có cửa sổ nào để mà xem.
+            u = page.url
+            if "accounts.google.com" in u:
+                if "/challenge/recaptcha" in u:
+                    raise RuntimeError(
+                        f"Hồ sơ đã đăng xuất và Google đang bắt xác minh reCAPTCHA "
+                        f"({u[:120]}). Phải có người gõ captcha: bấm 'Chỉ đăng nhập' "
+                        f"cho hồ sơ này (nó mở trình duyệt THẤY ĐƯỢC trên noVNC cổng "
+                        f"6080), gõ xong captcha thì hệ thống tự đi tiếp. Nút 'Tái "
+                        f"dùng' chạy ẩn nên noVNC chỉ hiện màn hình đen."
+                    )
+                raise RuntimeError(
+                    f"Hồ sơ chưa đăng nhập Google (trang dừng ở {u[:120]}). "
+                    f"Bấm 'Chỉ đăng nhập' cho hồ sơ này rồi 'Tái dùng' lại."
+                )
             raise RuntimeError(
-                f"Could not find 'Dự án mới' / 'New project' button (page: {page.url[:120]}). "
+                f"Could not find 'Dự án mới' / 'New project' button (page: {u[:120]}). "
                 "Account may not have Flow access or session is expired."
             )
 

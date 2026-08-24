@@ -97,7 +97,9 @@ class KhongBaoDongKhiBanTests(unittest.TestCase):
     def test_mat_that_thi_van_bao_dong_va_chay_T2(self):
         from services import account_recovery as ar
         ar._last_attempt.clear()
+        # Bỏ giấc nghỉ giữa các lượt kiểm của T1 (45s thật/lượt).
         with mock.patch.object(ar, "_flow_session_trang_thai", return_value="mat"), \
+             mock.patch.object(ar.time, "sleep", lambda *_: None), \
              mock.patch.object(ar, "_notify") as notify, \
              mock.patch.object(ar, "_freshen_google", return_value=False) as freshen:
             ar.flow_recover_and_notify("google-benbap2011", reason="quét định kỳ")

@@ -117,7 +117,11 @@ class TestThongBaoNoiDungNguyenNhan(unittest.TestCase):
         nguyên vẹn.
         """
         import inspect
-        src = inspect.getsource(ar)
+        # Cắt trong ĐÚNG hàm cần khoá. Trước đây cắt cả module rồi lấy
+        # `tried_s = ` đầu tiên — mà từ 24/08/2026 thang Flow cũng có một biến
+        # cùng tên nằm trước, nên cửa sổ rơi sang hàm khác và test đỏ trong khi
+        # nhánh captcha vẫn còn nguyên.
+        src = inspect.getsource(ar.recover_provider_account)
         i = src.index("tried_s = ")
         khuc = src[i:src.index("_notify(", i)]
         self.assertIn("need_captcha", khuc)

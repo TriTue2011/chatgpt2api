@@ -72,6 +72,11 @@ _GLOGIN_GAP_S = 25.0              # cách nhau tối thiểu giữa 2 phiên đ�
 #   T2 lặp lại sau khi đăng nhập xong        ≤ 180s
 #   T3 hàng loạt (acc trong codex_auto_list) ≤ 420s
 _RECOVER_BUDGET_S = 1200.0
+# Thang Flow: mỗi tầng kiểm phiên bao nhiêu lượt, và nghỉ bao lâu giữa hai lượt.
+# Prime phiên labs.google chập chờn thật (đo 24/08/2026: trượt 16:02:53, đạt
+# 16:03:55) nên một lần trượt chưa đủ để kết luận là mất phiên.
+_FLOW_KIEM_LAI = 2
+_FLOW_NGHI_S = 45.0
 _CAPTCHA_PROFILES = "/app/data/captcha/profiles"
 
 
@@ -856,8 +861,36 @@ def _flow_session_ok(profile: str) -> bool:
 
 
 def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
-    """Khôi phục 1 profile Flow (thread nền) + Telegram. T1 kiểm/tái lập phiên
-    labs.google → T2 'Đăng nhập tài khoản Google' rồi thử lại. Debounce 30ph."""
+    """Thang khôi phục NHIỀU TẦNG cho một hồ sơ Flow (labs.google) + Telegram.
+
+    Cùng hình dạng với thang của ChatGPT/Codex (`recover_provider_account`): đi
+    từ tầng rẻ nhất lên tầng đắt nhất, mỗi tầng một tin báo, và tin cuối nói đã
+    thử những gì.
+
+      T0  Phiên labs.google còn sống? — `get-or-create-project` tự prime lại
+          phiên bằng session Google SẴN CÓ của hồ sơ (bấm qua màn chọn tài khoản
+          OAuth), nên tầng này đã bao gồm cả việc tái lập phiên không mật khẩu.
+          'ban' (429) = hồ sơ đang tạo ảnh/video → tài khoản KHOẺ, bỏ lượt im
+          lặng, không báo động.
+      T1  Nghỉ rồi KIỂM LẠI, vẫn chưa đụng tới mật khẩu. Bước prime chập chờn
+          thật: đo 24/08/2026 (google-benbap115) prime trượt lúc 16:02:53 rồi
+          ĐẠT lúc 16:03:55, không có gì xen vào giữa. Bản cũ kết luận ngay sau
+          lần trượt đầu nên nhảy thẳng lên tầng đăng nhập — mà mỗi lượt đăng
+          nhập tự động là một lần mời Google bung captcha, tức tự tay đẩy tài
+          khoản vào đúng cái bẫy làm nó không tự chữa được nữa.
+      T2  Đăng nhập lại tài khoản Google (`auto-login-saved`, mật khẩu + TOTP
+          nằm trong solver) — đúng nút "Chỉ đăng nhập". Xếp hàng toàn cục, và
+          chỉ báo tin KHI TỚI LƯỢT: chờ tới lượt có thể mất hàng chục phút, báo
+          trước là nói sai rằng mọi tài khoản đang đăng nhập cùng lúc.
+      T3  Đăng nhập xong thì kiểm lại phiên VÀI LƯỢT, không phải một. Sau khi
+          đăng nhập, 'ban' cũng là tin tốt: hồ sơ đang phục vụ việc khác, tức
+          trình duyệt sống và có phiên — đòi đúng 'ok' là báo hỏng cho một tài
+          khoản vừa khôi phục xong.
+
+    Debounce 30 phút/hồ sơ. Ngân sách 1200s KHÔNG tính thời gian nằm chờ tới
+    lượt đăng nhập — ngân sách để cắt ca vô vọng, không phải để phạt tài khoản
+    xếp hàng sau.
+    """
     key = f"recover:flow:{profile}"
     with _lock:
         if time.time() - _last_attempt.get(key, 0.0) < _GRELOGIN_COOLDOWN_S:
@@ -865,7 +898,19 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
         _last_attempt[key] = time.time()
 
     started = time.time()
+    cho_hang_doi = 0.0
+    tried: list[str] = []
     det = {"provider": "flow", "profile": profile}
+
+    def _con_gio() -> bool:
+        return time.time() - started - cho_hang_doi < _RECOVER_BUDGET_S
+
+    def _xong(tier: str, step: str, note: str) -> None:
+        _notify(f"✅ Flow — {profile}\nKhôi phục xong ({note}).", {**det, "step": step})
+        logger.info({"event": "recover_ok", "provider": "flow", "tier": tier,
+                     "profile": profile})
+
+    # ── T0: phiên còn sống không? ────────────────────────────────────────────
     # Kiểm TRƯỚC khi báo động. Hồ sơ đang bận tạo ảnh/video là tài khoản KHOẺ —
     # báo "đang tự khôi phục" rồi mới phát hiện ra thì người nhận đã hoảng, và
     # dòng "KHÔNG khôi phục được" ở cuối là lời báo sai.
@@ -874,27 +919,96 @@ def flow_recover_and_notify(profile: str, reason: str = "mất phiên") -> None:
         logger.info({"event": "recover_skip_busy", "provider": "flow", "profile": profile,
                      "reason": reason[:120]})
         return
+    tried.append("T0-kiểm-phiên")
     _notify(f"⚠️ Flow — {profile}\nLỗi: {reason}\n→ Đang tự khôi phục…",
             {**det, "step": "start", "reason": reason})
     if tt == "ok":
-        _notify(f"✅ Flow — {profile}\nKhôi phục xong ([T1] phiên labs.google còn sống).",
-                {**det, "step": "T1-reuse-ok"})
-        logger.info({"event": "recover_ok", "provider": "flow", "tier": "reuse", "profile": profile})
+        _xong("T0", "T0-reuse-ok", "[T0] phiên labs.google còn sống")
         return
-    if time.time() - started < _RECOVER_BUDGET_S:
-        _notify(f"🔧 Flow — {profile}\n[T1] mất phiên → [T2] đang đăng nhập lại tài khoản Google…",
-                {**det, "step": "T2-freshen"})
-        # Sau khi đăng nhập lại, 'ban' cũng là tin tốt: hồ sơ đang phục vụ một
-        # lượt việc khác, tức trình duyệt sống và có phiên. Đòi đúng 'ok' ở đây
-        # là lại báo hỏng cho một tài khoản vừa khôi phục xong.
-        if _freshen_google(profile) and _flow_session_trang_thai(profile) in ("ok", "ban"):
-            _notify(f"✅ Flow — {profile}\nKhôi phục xong ([T2] đăng nhập Google + tái lập phiên).",
-                    {**det, "step": "T2-freshen-ok"})
-            logger.info({"event": "recover_ok", "provider": "flow", "tier": "freshen", "profile": profile})
+
+    # ── T1: nghỉ rồi kiểm lại — rẻ, không mời captcha ────────────────────────
+    # MỘT tin cho cả tầng, không phải mỗi lượt một tin: thang này sinh ra để
+    # người nhận đọc được "đang ở tầng nào", chứ không phải để đếm nhịp máy.
+    _notify(f"🔧 Flow — {profile}\n[T1] Chưa vội đăng nhập lại — nghỉ {int(_FLOW_NGHI_S)}s "
+            f"rồi kiểm lại phiên, tối đa {_FLOW_KIEM_LAI} lượt…",
+            {**det, "step": "T1-kiem-lai"})
+    for lan in range(1, _FLOW_KIEM_LAI + 1):
+        if not _con_gio():
+            break
+        tried.append(f"T1-kiểm-lại-{lan}")
+        time.sleep(_FLOW_NGHI_S)
+        tt = _flow_session_trang_thai(profile)
+        if tt == "ok":
+            _xong("T1", "T1-kiem-lai-ok",
+                  f"[T1] phiên lên lại sau {lan} lượt kiểm, không cần đăng nhập")
             return
-    _notify(f"❌ Flow — {profile}\nKHÔNG tự khôi phục được. Cần đăng nhập lại tay (noVNC cổng 6080).",
-            {**det, "step": "failed"})
-    logger.warning({"event": "recover_failed", "provider": "flow", "profile": profile})
+        if tt == "ban":
+            # Hồ sơ vừa được việc khác chiếm để tạo ảnh/video → đang khoẻ.
+            _notify(f"ℹ️ Flow — {profile}\nHoãn khôi phục: hồ sơ đang bận tạo ảnh/video "
+                    f"(tức trình duyệt và phiên đều sống). Vòng quét sau kiểm lại.",
+                    {**det, "step": "T1-ban"})
+            logger.info({"event": "recover_hoan_busy", "provider": "flow", "profile": profile})
+            return
+
+    # ── T2: đăng nhập lại tài khoản Google ───────────────────────────────────
+    dang_nhap_ok = False
+    if _con_gio():
+        tried.append("T2-đăng-nhập-Google")
+
+        def _bao_khi_toi_luot(cho_giay: float) -> None:
+            nonlocal cho_hang_doi
+            cho_hang_doi += cho_giay
+            them = f" — sau {cho_giay / 60:.0f} phút xếp hàng" if cho_giay >= 60 else ""
+            _notify(f"🔧 Flow — {profile}\n[T2] Đang đăng nhập lại tài khoản Google "
+                    f"(giống nút 'Chỉ đăng nhập'){them}…",
+                    {**det, "step": "T2-google-login", "cho_giay": round(cho_giay)})
+
+        dang_nhap_ok = _freshen_google(profile, khi_toi_luot=_bao_khi_toi_luot)
+
+    # ── T3: đăng nhập xong thì kiểm lại vài lượt ─────────────────────────────
+    if dang_nhap_ok:
+        for lan in range(1, _FLOW_KIEM_LAI + 1):
+            if not _con_gio():
+                break
+            tried.append(f"T3-kiểm-lại-{lan}")
+            if _flow_session_trang_thai(profile) in ("ok", "ban"):
+                _xong("T3", "T3-tai-lap-ok",
+                      "[T2] đăng nhập Google + [T3] tái lập phiên labs.google")
+                return
+            if lan < _FLOW_KIEM_LAI:
+                time.sleep(_FLOW_NGHI_S)
+
+    # ── Hết đường: nói ĐÃ THỬ GÌ và VÌ SAO ───────────────────────────────────
+    # Bản cũ chỉ nói "KHÔNG tự khôi phục được" nên người nhận không phân biệt
+    # nổi ba việc xử lý khác hẳn nhau: Google bắt captcha (ra noVNC gõ một lần
+    # là xong), hồ sơ thiếu TOTP (phải thêm TOTP), hay solver lỗi mạng (chẳng
+    # cần làm gì, vòng sau tự chạy lại). Đo thật 24/08/2026 (google-benbap2011):
+    # log ghi rõ trang thử thách reCAPTCHA, tin báo thì im.
+    tt_login = trang_thai_dang_nhap_cuoi(profile)
+    if "T2-đăng-nhập-Google" not in tried:
+        vi_sao = "hết ngân sách khôi phục trước khi kịp đăng nhập lại"
+    elif dang_nhap_ok:
+        # Đăng nhập Google xong mà phiên labs.google vẫn không lên là chuyện
+        # KHÁC hẳn — đừng để nó đội lốt "đăng nhập trượt".
+        vi_sao = (f"đăng nhập Google xong nhưng phiên labs.google vẫn chưa lên "
+                  f"(đã kiểm lại {_FLOW_KIEM_LAI} lượt)")
+    elif tt_login == "need_captcha":
+        vi_sao = ("Google đang bắt CAPTCHA — vào noVNC cổng 6080 gõ captcha, hệ thống "
+                  "TỰ tiếp tục mật khẩu + 2FA. Mật khẩu/TOTP không liên quan.")
+    elif tt_login in ("need_code", "need_tap"):
+        vi_sao = ("Google đòi mã 2FA phải người bấm (hồ sơ này chưa có TOTP) — "
+                  "xử lý trên noVNC cổng 6080, hoặc thêm TOTP cho hồ sơ.")
+    else:
+        vi_sao = (ly_do_dang_nhap_cuoi(profile)
+                  or f"solver báo trạng thái '{tt_login or 'không rõ'}'")
+    tried_s = " → ".join(tried) if tried else "none"
+    _notify(f"❌ Flow — {profile}\n"
+            f"KHÔNG tự khôi phục được (đã thử: {tried_s}).\n"
+            f"→ Lý do: {vi_sao}\n"
+            f"→ Hoặc xử lý tay trên noVNC cổng 6080.",
+            {**det, "step": "failed", "tried": tried, "vi_sao": vi_sao})
+    logger.warning({"event": "recover_failed", "provider": "flow", "profile": profile,
+                    "tried": tried, "vi_sao": vi_sao[:160]})
 
 
 # ── Registry provider (bật dần) ──────────────────────────────────────────────
