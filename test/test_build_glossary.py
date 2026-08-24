@@ -98,5 +98,51 @@ class BuildGlossaryTests(unittest.TestCase):
                 tn._reset_cache_cho_test()
 
 
+
+class PivotTests(unittest.TestCase):
+    """JA/ZH pivot qua tiếng Anh: term nguồn → nghĩa Anh → glossary Anh (lĩnh
+    vực + thuật ngữ VI)."""
+
+    EN = {
+        "cong_nghe": {"cache": "bộ nhớ đệm", "algorithm": "thuật toán"},
+        "y_khoa": {"cell": "tế bào"},
+    }
+
+    def _idx(self):
+        return bg.chi_muc_en(self.EN)
+
+    def test_cc_cedict_zh_pivot(self):
+        dong = [
+            "# CC-CEDICT sample",
+            "高速緩存 高速缓存 [gao1 su4 huan3 cun2] /cache/buffer memory/",
+            "算法 算法 [suan4 fa3] /algorithm/",
+            "你好 你好 [ni3 hao3] /hello/hi/",   # 'hello' không trong glossary → bỏ
+        ]
+        store = bg.nap_cc_cedict(dong, self._idx())
+        self.assertEqual(store["cong_nghe"].get("高速缓存"), "bộ nhớ đệm")
+        self.assertEqual(store["cong_nghe"].get("算法"), "thuật toán")
+        tat_ca = {t for b in store.values() for t in b}
+        self.assertNotIn("你好", tat_ca)
+
+    def test_freedict_jpn_ja_pivot(self):
+        import io
+        tei = (
+            '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body>'
+            '<entry><form><orth>算法</orth></form>'
+            '  <sense><cit type="trans" xml:lang="en"><quote>algorithm</quote></cit>'
+            '         <cit type="example"><quote>not a translation</quote></cit></sense>'
+            '</entry>'
+            '<entry><form><orth>細胞</orth></form>'
+            '  <sense><cit type="trans"><quote>cell</quote></cit></sense></entry>'
+            '</body></text></TEI>'
+        )
+        store = bg.nap_freedict_jpn(io.StringIO(tei), self._idx())
+        self.assertEqual(store["cong_nghe"].get("算法"), "thuật toán")
+        self.assertEqual(store["y_khoa"].get("細胞"), "tế bào")
+        # 'not a translation' (cit example) không được coi là nghĩa
+        tat_ca_vi = {v for b in store.values() for v in b.values()}
+        self.assertEqual(tat_ca_vi, {"thuật toán", "tế bào"})
+
+
 if __name__ == "__main__":
     unittest.main()
