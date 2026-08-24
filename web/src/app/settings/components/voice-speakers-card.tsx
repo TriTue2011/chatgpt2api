@@ -30,6 +30,10 @@ type Speaker = {
 
 type Found = { host: string; port: number; kind: string; name: string; known?: boolean; control_url?: string };
 
+/** Giọng dùng cho ô "Lồng tiếng video" — KHÁC giọng đọc thường của bot: nó lấy
+ *  từ backend/api/dich.py, chỉ gồm giọng đọc được đúng tiếng đích đó. */
+type GiongDub = { id: string; label: string; downloaded: boolean; recommended: boolean };
+
 type VoiceStatus = {
   tts?: { enabled?: boolean; backend?: string; voice?: string; model_ready?: boolean;
           piper_bin?: string; local_voices?: string[]; wyoming_url?: string };
@@ -92,6 +96,12 @@ export function VoiceSpeakersCard() {
   const [haPlayers, setHaPlayers] = useState<{ entity_id: string; name: string }[]>([]);
   // Hẹn giờ thông báo ra loa
   const [ann, setAnn] = useState({ speaker: "", text: "", delayMin: 1, volPct: 20, when: "" });
+  // Giọng lồng tiếng video, theo tiếng đích. `dubGoc` giữ bản đã lưu để lúc
+  // bấm Lưu chỉ gửi đúng tiếng nào vừa đổi — endpoint này nằm ngoài config
+  // chung nên không đi kèm saveConfig() được.
+  const [dubGiong, setDubGiong] = useState<Record<string, GiongDub[]>>({});
+  const [dubChon, setDubChon] = useState<Record<string, string>>({});
+  const [dubGoc, setDubGoc] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -111,6 +121,16 @@ export function VoiceSpeakersCard() {
       const mp = await request.get("/api/voice/ha-media-players");
       setHaPlayers(((mp.data as { rows?: { entity_id: string; name: string }[] })?.rows) || []);
     } catch { /* noop */ }
+    try {
+      const res = await request.get("/api/dich/giong-mac-dinh");
+      const rows = ((res.data as { tiengs?: { lang: string; voices?: GiongDub[]; mac_dinh?: string }[] })?.tiengs) || [];
+      const ds: Record<string, GiongDub[]> = {};
+      const chon: Record<string, string> = {};
+      for (const r of rows) { ds[r.lang] = r.voices || []; chon[r.lang] = r.mac_dinh || ""; }
+      setDubGiong(ds);
+      setDubChon(chon);
+      setDubGoc(chon);
+    } catch { /* chưa có giọng lồng tiếng nào thì bỏ qua */ }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -169,6 +189,15 @@ export function VoiceSpeakersCard() {
   const tiengCua = (ten: string): string[] =>
     String((dungCho[ten] || {}).stt_tieng || "")
       .split(",").map((x) => x.trim()).filter(Boolean);
+
+  /** Gửi những tiếng vừa đổi giọng lồng tiếng. Trả về số tiếng đã gửi. */
+  const luuGiongDub = async (): Promise<number> => {
+    const doi = Object.keys(dubChon).filter((ma) => dubChon[ma] !== (dubGoc[ma] || ""));
+    for (const ma of doi) {
+      await request.post("/api/dich/giong-mac-dinh", { lang: ma, voice: dubChon[ma] });
+    }
+    return doi.length;
+  };
 
   const addSpeaker = async () => {
     if (!draft.name.trim()) { toast.error("Đặt tên loa trước (vd 'loa phòng khách')"); return; }
@@ -455,7 +484,7 @@ export function VoiceSpeakersCard() {
               chuẩn, 0 = tắt. Đổi giọng thì LƯU rồi mới Nghe thử. */}
           <div className="sm:col-span-2 space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
             <div className="text-xs font-medium">
-              Theo từng tiếng — giọng đọc · cổng Wyoming (đọc 106xx / nghe 107xx) · model
+              Theo từng tiếng — giọng đọc · giọng lồng tiếng · cổng Wyoming (đọc 106xx / nghe 107xx) · model
             </div>
             {([
               { ma: "vi", ten: "🇻🇳 Tiếng Việt", i: 0,
@@ -539,6 +568,24 @@ export function VoiceSpeakersCard() {
                       </select>
                     )}
                   </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-xs text-muted-foreground">Giọng lồng tiếng video</label>
+                    <select className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs h-9"
+                      value={dubChon[r.ma] ?? ""}
+                      onChange={(e) => setDubChon({ ...dubChon, [r.ma]: e.target.value })}>
+                      <option value="">
+                        {(() => {
+                          const goiY = (dubGiong[r.ma] || []).find((v) => v.recommended);
+                          return goiY ? `Để máy tự chọn (đang là ${goiY.id})` : "Để máy tự chọn";
+                        })()}
+                      </option>
+                      {(dubGiong[r.ma] || []).map((v) => (
+                        <option key={v.id} value={v.id} disabled={!v.downloaded}>
+                          {v.label}{v.downloaded ? "" : " · chưa tải"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div>
                     <label className="text-xs text-muted-foreground">Cổng đọc (TTS)</label>
                     <Input type="number" min={0} max={65535}
@@ -567,6 +614,13 @@ export function VoiceSpeakersCard() {
                 </div>
               </details>
             ))}
+            <p className="text-[10px] text-muted-foreground">
+              <b>Giọng lồng tiếng video</b> là ô riêng, không phải giọng đọc thường ở trên:
+              nó chỉ dùng khi thay lời thoại của một video, và danh sách chỉ gồm giọng đọc
+              được đúng tiếng đó. Trang Dịch vẫn đổi được giọng cho riêng từng video; bot
+              Zalo/Telegram thì không có chỗ nào để chọn nên luôn dùng giọng chốt ở đây.
+              Để trống là giữ nguyên cách cũ — máy tự chấm điểm rồi chọn giọng đã tải hợp nhất.
+            </p>
           </div>
 
           {/* Nhịp nghỉ khi đọc — áp cho mọi engine, xem services/voice/engines.py */}
@@ -677,7 +731,21 @@ export function VoiceSpeakersCard() {
             placeholder="http://IP-GATEWAY:3030" />
         </div>
 
-        <Button onClick={async () => { await saveConfig(); toast.success("Đã lưu cấu hình giọng nói"); void load(); }}
+        {/* Một nút Lưu cho cả thẻ. Giọng lồng tiếng nằm ở khoá config khác và
+            được backend kiểm (giọng phải đã tải model) nên phải gửi riêng —
+            nhưng người dùng vẫn chỉ thấy đúng một nút. */}
+        <Button onClick={async () => {
+            await saveConfig();
+            try {
+              await luuGiongDub();
+            } catch (e) {
+              toast.error(`Lưu giọng lồng tiếng lỗi: ${e instanceof Error ? e.message : e}`);
+              void load();
+              return;
+            }
+            toast.success("Đã lưu cấu hình giọng nói");
+            void load();
+          }}
           disabled={isSavingConfig} className="w-full" size="sm">
           <Save className="size-3.5 mr-1.5" />
           {isSavingConfig ? "Đang lưu..." : "Lưu cấu hình giọng nói"}

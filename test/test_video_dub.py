@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import shutil
 import subprocess
 import wave
@@ -132,6 +133,86 @@ def test_khuyen_nghi_giong_ro_rang_va_chi_chon_giong_da_tai():
         assert dub.chon_giong("vi", "") == "vieneu:Mai Anh"
         with pytest.raises(dub.LoiLongTieng, match="chưa được tải"):
             dub.chon_giong("en", "kokoro:af_sky")
+
+
+def _catalog_viet(ngochuyen_da_tai: bool = True) -> list[dict]:
+    return [
+        {"id": "ngochuyennew", "language": "vi", "language_label": "Piper",
+         "downloaded": ngochuyen_da_tai},
+        {"id": "vieneu:Mai Anh", "language": "vi-en", "language_label": "VieNeu",
+         "downloaded": True, "phat_am": {"dat": True}},
+    ]
+
+
+@pytest.mark.adapter
+def test_giong_mac_dinh_trong_cai_dat_thang_bang_diem_may_tu_cham(monkeypatch):
+    """Đường chat bot gọi chon_giong tay không, nên nó phải đọc Cài đặt.
+
+    Trang web truyền thẳng giọng người dùng vừa chọn, còn Zalo/Telegram thì
+    không có ô nào để chọn — chốt trong Cài đặt là cách duy nhất để bot đọc
+    bằng giọng chủ máy muốn.
+    """
+    from services import video_dub as dub
+    from services.config import config
+
+    monkeypatch.setattr(
+        config, "get",
+        lambda: {"dich": {"giong_long_tieng": {"vi": "ngochuyennew"}}})
+    with install_tts(FakeTTS(catalog=_catalog_viet())):
+        khuyen_nghi = next(v for v in dub.danh_sach_giong("vi") if v["recommended"])
+        assert khuyen_nghi["id"] == "vieneu:Mai Anh"
+        assert dub.chon_giong("vi") == "ngochuyennew"
+        # Chọn tay cho RIÊNG một video vẫn thắng cài đặt mặc định.
+        assert dub.chon_giong("vi", "vieneu:Mai Anh") == "vieneu:Mai Anh"
+
+
+@pytest.mark.adapter
+def test_giong_mac_dinh_mat_model_thi_quay_ve_khuyen_nghi(monkeypatch):
+    """Xoá model sau khi đã lưu không được làm chết cả ô lồng tiếng."""
+    from services import video_dub as dub
+    from services.config import config
+
+    monkeypatch.setattr(
+        config, "get",
+        lambda: {"dich": {"giong_long_tieng": {"vi": "ngochuyennew"}}})
+    with install_tts(FakeTTS(catalog=_catalog_viet(ngochuyen_da_tai=False))):
+        assert dub.chon_giong("vi") == "vieneu:Mai Anh"
+
+
+@pytest.mark.adapter
+def test_luu_giong_mac_dinh_khong_de_mat_khoa_khac_va_xoa_duoc(monkeypatch):
+    """Ghi vào config phải chừa nguyên các khoá hàng xóm trong cùng nhánh."""
+    from services import video_dub as dub
+    from services.config import config
+
+    hien_co = {"dich": {"ghi_chu": "giữ nguyên"}}
+    da_ghi: dict = {}
+    monkeypatch.setattr(config, "get", lambda: hien_co)
+    monkeypatch.setattr(config, "update", lambda d: da_ghi.update(d))
+    with install_tts(FakeTTS(catalog=_catalog_viet())):
+        assert dub.dat_giong_mac_dinh("vi", "ngochuyennew") == {"vi": "ngochuyennew"}
+    assert da_ghi["dich"]["giong_long_tieng"] == {"vi": "ngochuyennew"}
+    assert da_ghi["dich"]["ghi_chu"] == "giữ nguyên"
+
+    hien_co = {"dich": {"giong_long_tieng": {"vi": "ngochuyennew", "en": "x"}}}
+    with install_tts(FakeTTS(catalog=_catalog_viet())):
+        assert dub.dat_giong_mac_dinh("vi", "") == {"en": "x"}
+
+
+@pytest.mark.adapter
+def test_khong_luu_duoc_giong_chua_tai_hay_tieng_khong_long_duoc(monkeypatch):
+    """Lưu giọng chưa có model thì tới lúc lồng tiếng mới vỡ — chặn ngay lúc lưu."""
+    from services import video_dub as dub
+    from services.config import config
+
+    monkeypatch.setattr(config, "get", lambda: {})
+    with install_tts(FakeTTS(catalog=_catalog_viet(ngochuyen_da_tai=False))):
+        with pytest.raises(dub.LoiLongTieng, match="chưa được tải"):
+            dub.dat_giong_mac_dinh("vi", "ngochuyennew")
+        with pytest.raises(dub.LoiLongTieng, match="không phù hợp"):
+            dub.dat_giong_mac_dinh("vi", "kokoro:af_sky")
+        with pytest.raises(dub.LoiLongTieng, match="Không lồng tiếng được"):
+            dub.dat_giong_mac_dinh("de", "ngochuyennew")
 
 
 @pytest.mark.adapter
@@ -268,9 +349,9 @@ def test_bo_loc_tts_dung_cao_do_va_nang_luong_tuong_doi():
     """Prosody không chỉ ghi JSON: pitch/energy phải đi vào filter âm thanh."""
     from services import video_dub as dub
 
-    loc, tempo = dub._bo_loc_tts(0.35, 0.5, energy_relative_db=-2.0)
+    loc = dub._bo_loc_tts(1.0, energy_relative_db=-2.0)
     assert "volume=-2.000dB" in loc
-    assert tempo == pytest.approx(0.7)
+    assert "tempo=1.000000" in loc
 
 
 @pytest.mark.pure
@@ -321,14 +402,14 @@ def test_cao_do_nang_giong_da_chon_chu_khong_doi_sang_giong_khac():
     """
     from services import video_dub as dub
 
-    loc, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=9.0)
+    loc = dub._bo_loc_tts(1.0, pitch_relative=9.0)
     assert "asetrate=" not in loc, "asetrate dịch formant nên đổi luôn người nói"
     assert "formant=preserved" in loc
     # Trần đang là 0: đo được 9 nửa cung thì vẫn KHÔNG dịch. Phép đo chạy trên
     # track lẫn nhạc nhiễu tới mức kẹp vào ±2 cũng bão hoà, khiến câu liên tiếp
     # nhảy giữa hai đầu biên và nghe thành hai người thay phiên.
     assert f"pitch={2.0 ** (dub.PITCH_TOI_DA / 12.0):.6f}" in loc
-    tram, _ = dub._bo_loc_tts(1.0, 1.0, pitch_relative=-9.0)
+    tram = dub._bo_loc_tts(1.0, pitch_relative=-9.0)
     assert f"pitch={2.0 ** (-dub.PITCH_TOI_DA / 12.0):.6f}" in tram
     assert loc == tram, "trần 0 thì cao độ đo được bao nhiêu cũng ra cùng filter"
     # Bật lại thì vẫn phải nằm trong vùng một người tự lên/xuống giọng.
@@ -336,18 +417,167 @@ def test_cao_do_nang_giong_da_chon_chu_khong_doi_sang_giong_khac():
 
 
 @pytest.mark.pure
-def test_cau_ngan_trong_khung_dai_khong_bi_keo_nhoe():
-    """Khung 7 giây không bắt câu 0,5 giây đọc chậm 14× rồi thành tiếng rên."""
+def test_mot_he_so_toc_do_duy_nhat_trong_filter():
+    """rubberband nhận thẳng hệ số nên không ghép nhiều tầng atempo."""
     from services import video_dub as dub
 
-    loc, tempo = dub._bo_loc_tts(0.5, 7.0)
-    assert tempo == pytest.approx(dub.TEMPO_CHAM_NHAT)
-    # Đúng MỘT hệ số tốc độ, không phải chuỗi 0,5 nhân dồn như bản cũ kéo giọng
-    # cho đầy khung. rubberband nhận thẳng hệ số nên không cần ghép nhiều tầng.
-    assert loc.count("tempo=") == 1
-    assert f"tempo={dub.TEMPO_CHAM_NHAT:.6f}" in loc
-    # Câu dài hơn khung vẫn phải tăng tốc như cũ, không bị trần này chặn.
-    assert dub._bo_loc_tts(6.0, 2.0)[1] == pytest.approx(3.0)
+    assert dub._bo_loc_tts(1.18).count("tempo=") == 1
+    assert "tempo=1.180000" in dub._bo_loc_tts(1.18)
+
+
+@pytest.mark.pure
+def test_khung_du_rong_thi_doc_dung_toc_do_chuan_chu_khong_keo_cham():
+    """Khung 7 giây không bắt câu 0,5 giây đọc lê ra cho đầy khung.
+
+    Bản cũ chia thời lượng TTS cho thời lượng KHUNG, nên câu ngắn lọt khung dài
+    ra 0,07× — tiếng rên. Phần khung còn thừa để im lặng thì tự nhiên hơn hẳn.
+    """
+    from services import video_dub as dub
+
+    tempo, tre, tran = dub._tempo_chung([0.0, 1.0], [0.5, 0.5], 10.0)
+    assert tempo == pytest.approx(dub.TEMPO_CHUAN)
+    assert (tre, tran) == (0.0, 0.0)
+
+
+@pytest.mark.pure
+def test_khong_bao_gio_doc_cham_hon_toc_do_chuan():
+    """Sàn là tốc độ chuẩn: phim thừa chỗ bao nhiêu cũng không kéo giọng ra."""
+    from services import video_dub as dub
+
+    tempo, _, _ = dub._tempo_chung([0.0, 60.0], [1.0, 1.0], 600.0)
+    assert tempo == pytest.approx(dub.TEMPO_CHUAN)
+    assert dub.TEMPO_CHUAN == 1.0
+
+
+@pytest.mark.pure
+def test_loi_dai_hon_hinh_thi_tang_toc_deu_ca_phim_chu_khong_rieng_cau_nao():
+    """Mười câu 1,2 giây nhét vào mười khung 1,0 giây: một hệ số cho tất cả.
+
+    Cách cũ tính theo từng khung sẽ ra 1,2× ở mọi câu tại đây, nhưng chỉ vì các
+    khung đều nhau; khung dài ngắn lẫn lộn là nó vỡ ngay. Phép tính này nhìn cả
+    phim nên con số không phụ thuộc chuyện khung nào dài khung nào ngắn.
+    """
+    from services import video_dub as dub
+
+    moc = [float(i) for i in range(10)]
+    tempo, tre, tran = dub._tempo_chung(moc, [1.2] * 10, 10.0)
+    assert tempo == pytest.approx(1.2, abs=0.01)
+    assert tempo <= dub.TEMPO_NHANH_NHAT
+    assert tre <= dub.TRE_TOI_DA and tran == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.pure
+def test_cham_tran_toc_do_thi_chiu_tre_chu_khong_doc_nhanh_hon_nua():
+    """Đọc nhanh quá thì không ai nghe kịp — thà trễ và nói rõ là trễ."""
+    from services import video_dub as dub
+
+    moc = [float(i) for i in range(10)]
+    tempo, tre, tran = dub._tempo_chung(moc, [3.0] * 10, 10.0)
+    assert tempo == pytest.approx(dub.TEMPO_NHANH_NHAT)
+    assert tre > dub.TRE_TOI_DA or tran > 0.0
+
+
+@pytest.mark.pure
+def test_cau_tran_khung_duoc_khoang_lang_phia_sau_nuot_lai():
+    """Tràn một chỗ KHÔNG phải lỗi: có khoảng lặng là con trỏ bắt kịp mốc.
+
+    Đây là điểm khác cốt lõi so với cách tính theo từng khung — cách cũ thấy
+    câu dài hơn khung là ép tăng tốc ngay, dù ngay sau đó phim im lặng 30 giây.
+    """
+    from services import video_dub as dub
+
+    moc, giay = [0.0, 1.0, 40.0], [1.5, 1.5, 1.0]
+    tre, tran = dub._do_tre(moc, giay, 60.0, 1.0)
+    assert tre == pytest.approx(0.5)      # câu 2 vào muộn nửa giây
+    assert tran == 0.0                    # câu 3 vẫn về đúng mốc 40 giây
+    assert dub._tempo_chung(moc, giay, 60.0)[0] == pytest.approx(dub.TEMPO_CHUAN)
+
+
+class _FfmpegCoGian:
+    """ffmpeg giả BIẾT co giãn: đọc tempo trong ``-af``, trả PCM đúng độ dài.
+
+    FakeFfmpeg trả một khối byte cố định nên không phân biệt được tempo nào đã
+    áp — mà tempo mới là thứ cần kiểm ở đây.
+    """
+
+    def __init__(self) -> None:
+        self.tempos: list[float] = []
+
+    def run(self, cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+        loc = cmd[cmd.index("-af") + 1]
+        tempo = float(re.search(r"tempo=([0-9.]+)", loc).group(1))
+        self.tempos.append(tempo)
+        with wave.open(BytesIO(kwargs["input_data"]), "rb") as w:
+            giay = w.getnframes() / w.getframerate()
+        so_mau = round(giay / tempo * 24000)
+        return subprocess.CompletedProcess(cmd, 0, b"\x01\x00" * so_mau, b"")
+
+
+@pytest.mark.integration
+def test_tao_track_dung_mot_toc_do_cho_ca_phim_du_khung_dai_ngan_lech_nhau():
+    """Khung 0,5 giây và khung 7 giây vẫn phải đọc cùng một nhịp.
+
+    Chênh 14 lần là đúng kiểu chủ máy gặp: cách cũ chia thời lượng TTS cho
+    thời lượng KHUNG nên ra hai tốc độ khác hẳn nhau trong cùng một phim.
+    """
+    from services import video_dub as dub
+
+    tts = FakeTTS(wav=_wav_tone(440, giay=0.5))
+    meta = {"cues": [
+        {"index": 1, "start": 0.0, "end": 0.5, "text": "câu một",
+         "emotion": "neutral"},
+        {"index": 2, "start": 1.0, "end": 8.0, "text": "câu hai",
+         "emotion": "neutral"},
+    ]}
+    ffmpeg = _FfmpegCoGian()
+    with install_tts(tts), mock.patch.object(dub, "_chay", side_effect=ffmpeg.run):
+        track, errors, canh_bao = dub._tao_track(meta, 10.0, "giong-thu", None)
+    try:
+        assert errors == 0 and canh_bao == []
+        assert ffmpeg.tempos == [1.0, 1.0]
+        assert meta["tts_tempo_policy"]["tempo"] == 1.0
+        assert meta["tts_tempo_policy"]["mode"] == "one_rate_for_whole_video"
+        assert {c["tts_tempo"] for c in meta["cues"]} == {1.0}
+        # Câu hai đọc hết 0,5 giây rồi để im lặng, không kéo lê cho đầy 7 giây.
+        assert meta["cues"][1]["tts_start_actual"] == pytest.approx(1.0)
+        with wave.open(track, "rb") as w:
+            assert w.getnframes() == round(10.0 * dub.RATE_DUB)
+    finally:
+        Path(track).unlink(missing_ok=True)
+
+
+@pytest.mark.integration
+def test_cau_dai_hon_khung_khong_bi_cat_duoi_ma_de_cau_sau_vao_muon():
+    """Cắt cho vừa khung là mất chữ. Khoảng lặng phía sau bù lại chỗ trễ."""
+    from services import video_dub as dub
+
+    tts = FakeTTS(responses=[_wav_tone(440, giay=1.5),
+                             _wav_tone(440, giay=1.5),
+                             _wav_tone(440, giay=1.0)])
+    meta = {"cues": [
+        {"index": 1, "start": 0.0, "end": 1.0, "text": "câu một",
+         "emotion": "neutral"},
+        {"index": 2, "start": 1.0, "end": 2.0, "text": "câu hai",
+         "emotion": "neutral"},
+        {"index": 3, "start": 40.0, "end": 41.0, "text": "câu ba",
+         "emotion": "neutral"},
+    ]}
+    ffmpeg = _FfmpegCoGian()
+    with install_tts(tts), mock.patch.object(dub, "_chay", side_effect=ffmpeg.run):
+        track, errors, canh_bao = dub._tao_track(meta, 60.0, "giong-thu", None)
+    try:
+        assert errors == 0 and canh_bao == []
+        assert ffmpeg.tempos == [1.0, 1.0, 1.0]
+        # Câu một tràn 0,5 giây nên câu hai vào muộn đúng 0,5 giây…
+        assert meta["cues"][1]["tts_start_actual"] == pytest.approx(1.5)
+        assert meta["cues"][1]["tts_late_seconds"] == pytest.approx(0.5)
+        # …còn câu ba, sau một quãng im lặng dài, về lại đúng mốc của nó.
+        assert meta["cues"][2]["tts_start_actual"] == pytest.approx(40.0)
+        assert meta["cues"][2]["tts_late_seconds"] == 0.0
+        with wave.open(track, "rb") as w:
+            assert w.getnframes() == round(60.0 * dub.RATE_DUB)
+    finally:
+        Path(track).unlink(missing_ok=True)
 
 
 @pytest.mark.pure

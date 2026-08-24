@@ -7,6 +7,10 @@ hiệu ứng vẫn giữ. Muốn làm đúng phải source-separation trước; 
 
 Prosody đo từ track gốc ở đúng mốc từng cue. Khi chưa có diarization, trường
 ``speaker`` là ``UNKNOWN`` — thà nói chưa biết còn hơn gán nhầm giới tính.
+
+Tốc độ đọc chốt MỘT LẦN cho cả phim (``_tempo_chung``), không tính lại theo
+từng khung phụ đề. Tính theo khung thì câu ngắn lọt khung dài bị kéo lê còn câu
+dài lọt khung ngắn bị đọc vụt qua — nghe ra ngay là máy đọc.
 """
 from __future__ import annotations
 
@@ -27,9 +31,14 @@ logger = logging.getLogger(__name__)
 
 RATE_GOC = 16000
 RATE_DUB = 24000
-#: Hệ số đọc chậm nhất cho phép. Dưới mức này giọng bị kéo nhoè phụ âm và nghe
-#: như máy hỏng; phần khung còn thừa để im lặng thì tự nhiên hơn hẳn.
-TEMPO_CHAM_NHAT = 0.7
+#: Tốc độ đọc CHUẨN — đúng nhịp engine TTS trả về, không co không giãn.
+TEMPO_CHUAN = 1.0
+#: Trần tốc độ chung. Chỉ rời khỏi TEMPO_CHUAN khi lời dịch dài hơn chỗ hình
+#: dành cho nó; 1,3× là mức tai còn nghe thoải mái khi nó ĐỀU trên cả phim.
+TEMPO_NHANH_NHAT = 1.3
+#: Mức trễ cho phép ở mốc mở câu, tính bằng giây. Câu tràn ra ngoài khung thì
+#: câu sau vào muộn; khoảng lặng giữa hai câu sẽ nuốt dần chỗ trễ đó.
+TRE_TOI_DA = 1.0
 #: Trần dịch cao độ theo cue, tính bằng nửa cung. ĐANG TẮT (0.0).
 #:
 #: Đo trên một video thật (53 câu, một giọng) cho thấy vì sao. ``pitch_relative``
@@ -190,8 +199,74 @@ def danh_sach_giong(lang: str) -> list[dict[str, Any]]:
     return rows
 
 
+#: Khoá config giữ giọng lồng tiếng mặc định, tra theo MÃ TIẾNG ĐÍCH. Phải là
+#: một bảng chứ không phải một chuỗi: giọng Việt không đọc được tiếng Anh, nên
+#: "giọng mặc định" chỉ có nghĩa khi gắn với tiếng đích.
+CAU_HINH_DICH = "dich"
+KHOA_GIONG_MAC_DINH = "giong_long_tieng"
+#: Các tiếng đích lồng tiếng được. Trùng danh sách api/dich.py đang chặn.
+TIENG_LONG_DUOC = ("vi", "en", "zh", "ja", "ko")
+
+
+def _ma_tieng(lang: str) -> str:
+    return str(lang or "").lower().split("-", 1)[0]
+
+
+def bang_giong_mac_dinh() -> dict[str, str]:
+    """Cả bảng giọng đã chốt trong Cài đặt, tra theo mã tiếng đích."""
+    from services.config import config
+
+    try:
+        bang = (config.get().get(CAU_HINH_DICH) or {}).get(KHOA_GIONG_MAC_DINH)
+    except Exception as exc:                # config hỏng không được chặn lồng tiếng
+        logger.warning("không đọc được giọng mặc định: %s", str(exc)[:120])
+        bang = None
+    if not isinstance(bang, dict):
+        return {}
+    return {str(k): str(v) for k, v in bang.items()}
+
+
+def giong_mac_dinh(lang: str) -> str:
+    """Giọng đã chốt cho một tiếng đích; rỗng nghĩa là để máy tự chọn."""
+    return bang_giong_mac_dinh().get(_ma_tieng(lang), "")
+
+
+def dat_giong_mac_dinh(lang: str, voice: str) -> dict[str, str]:
+    """Lưu giọng mặc định cho một tiếng đích; ``voice`` rỗng là xoá lựa chọn.
+
+    Chỉ nhận giọng ĐÃ TẢI: lưu một giọng chưa có model thì tới lúc lồng tiếng
+    mới vỡ lẽ, mà lúc đó phim đã dịch xong và người dùng đang chờ.
+    """
+    ma = _ma_tieng(lang)
+    if ma not in TIENG_LONG_DUOC:
+        raise LoiLongTieng(f"Không lồng tiếng được sang tiếng '{lang}'.")
+    bang = bang_giong_mac_dinh()
+    if voice:
+        row = next((r for r in danh_sach_giong(ma) if r["id"] == voice), None)
+        if row is None:
+            raise LoiLongTieng(f"Giọng '{voice}' không phù hợp tiếng {ma}.")
+        if not row["downloaded"]:
+            raise LoiLongTieng(f"Giọng '{voice}' chưa được tải trên máy.")
+        bang[ma] = voice
+    else:
+        bang.pop(ma, None)
+
+    from services.config import config
+
+    cu = config.get().get(CAU_HINH_DICH)
+    moi = dict(cu) if isinstance(cu, dict) else {}
+    moi[KHOA_GIONG_MAC_DINH] = bang
+    config.update({CAU_HINH_DICH: moi})
+    return bang
+
+
 def chon_giong(lang: str, voice: str = "") -> str:
-    """Kiểm tra lựa chọn hoặc tự lấy giọng khuyến nghị đã tải."""
+    """Kiểm tra lựa chọn, hoặc lấy giọng mặc định, hoặc giọng khuyến nghị đã tải.
+
+    Đây là điểm đấu nối DUY NHẤT của cả hai đường: trang web truyền ``voice``
+    người dùng vừa chọn, còn đường chat bot gọi tay không — nên giọng mặc định
+    trong Cài đặt phải chen vào đúng chỗ này thì bot mới dùng tới nó.
+    """
     rows = danh_sach_giong(lang)
     if voice:
         row = next((r for r in rows if r["id"] == voice), None)
@@ -200,6 +275,17 @@ def chon_giong(lang: str, voice: str = "") -> str:
         if not row["downloaded"]:
             raise LoiLongTieng(f"Giọng '{voice}' chưa được tải trên máy.")
         return voice
+    # Cài đặt của chủ máy đứng TRƯỚC bảng điểm máy tự chấm. Nhưng giọng đã lưu
+    # có thể bị xoá model sau đó, và khi ấy thà quay về giọng khuyến nghị còn
+    # hơn để cả ô lồng tiếng chết vì một cài đặt cũ.
+    da_chon = giong_mac_dinh(lang)
+    if da_chon:
+        row = next((r for r in rows if r["id"] == da_chon), None)
+        if row is not None and row["downloaded"]:
+            return da_chon
+        logger.warning(
+            "giọng mặc định %r cho tiếng %s không dùng được, quay về khuyến nghị",
+            da_chon, lang)
     row = next((r for r in rows if r.get("recommended")), None)
     if row is None:
         raise LoiLongTieng(f"Chưa có giọng TTS tiếng {lang} đã tải trên máy.")
@@ -422,16 +508,14 @@ def _doc_wav_info(wav_bytes: bytes) -> tuple[float, int]:
         raise LoiLongTieng(f"TTS trả WAV không hợp lệ: {exc}") from exc
 
 
-def _bo_loc_tts(giay_goc: float, giay_dich: float, *,
+def _bo_loc_tts(tempo: float, *,
                 pitch_relative: float | None = None,
-                energy_relative_db: float = 0.0) -> tuple[str, float]:
-    """Tạo filter ffmpeg thuần để test được mà không phải giả subprocess."""
-    # Khung phụ đề dài KHÔNG có nghĩa là câu phải đọc chậm hết khung: cat_khung
-    # ép mỗi khung tối thiểu 1 giây và cho tới 7 giây, nên "Vâng." đọc hết 0,5
-    # giây rơi vào khung 7 giây sẽ ra tempo 0,07× — nghe thành tiếng rên kéo dài
-    # chứ không còn là lời thoại. Chậm nhất TEMPO_CHAM_NHAT rồi để phần dư im
-    # lặng; mốc bắt đầu của khung sau vẫn đúng vì _pcm_vua_khung đệm cho đủ.
-    tempo = max(TEMPO_CHAM_NHAT, giay_goc / max(0.08, giay_dich))
+                energy_relative_db: float = 0.0) -> str:
+    """Tạo filter ffmpeg thuần để test được mà không phải giả subprocess.
+
+    ``tempo`` là tốc độ chung của CẢ phim, do :func:`_tempo_chung` chốt — hàm
+    này không được tự tính lại theo khung của riêng câu nào.
+    """
     # Cao độ để CÙNG MỘT giọng nói cao lên hay trầm xuống, không phải để đổi
     # người. asetrate kéo giãn cả phổ nên dịch luôn formant — thứ mã hoá chiều
     # dài đường thanh, tức tai người nghe ra vóc người khác. rubberband dịch F0
@@ -440,32 +524,92 @@ def _bo_loc_tts(giay_goc: float, giay_dich: float, *,
     nua_cung = max(-PITCH_TOI_DA, min(PITCH_TOI_DA, float(pitch_relative or 0.0)))
     he_so_pitch = 2.0 ** (nua_cung / 12.0)
     gain = max(-6.0, min(6.0, float(energy_relative_db or 0.0)))
-    loc = (f"aresample={RATE_DUB},"
-           f"rubberband=tempo={tempo:.6f}:pitch={he_so_pitch:.6f}"
-           f":formant=preserved:pitchq=quality,"
-           f"volume={gain:.3f}dB")
-    return loc, tempo
+    return (f"aresample={RATE_DUB},"
+            f"rubberband=tempo={tempo:.6f}:pitch={he_so_pitch:.6f}"
+            f":formant=preserved:pitchq=quality,"
+            f"volume={gain:.3f}dB")
 
 
-def _pcm_vua_khung(wav_bytes: bytes, giay_dich: float, *,
-                   pitch_relative: float | None = None,
-                   energy_relative_db: float = 0.0) -> tuple[bytes, float]:
-    """Khớp thời lượng đồng thời tái tạo cao độ/năng lượng tương đối của cue."""
-    giay_goc, _ = _doc_wav_info(wav_bytes)
-    loc, tempo = _bo_loc_tts(
-        giay_goc, giay_dich,
-        pitch_relative=pitch_relative, energy_relative_db=energy_relative_db)
+def _pcm_theo_tempo(wav_bytes: bytes, tempo: float, *,
+                    pitch_relative: float | None = None,
+                    energy_relative_db: float = 0.0) -> bytes:
+    """Đọc câu ở tốc độ chung, giữ nguyên độ dài mà tốc độ đó sinh ra.
+
+    KHÔNG cắt cho vừa khung phụ đề và KHÔNG đệm im lặng cho đầy khung: cắt là
+    mất chữ, đệm là ép câu sau phải chờ. Việc đặt câu vào đúng mốc là của
+    :func:`_ghi_track`.
+    """
+    loc = _bo_loc_tts(tempo, pitch_relative=pitch_relative,
+                      energy_relative_db=energy_relative_db)
     p = _chay(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
               "-af", loc, "-ac", "1", "-ar", str(RATE_DUB),
               "-f", "s16le", "pipe:1"], input_data=wav_bytes, timeout=120)
     if p.returncode or not p.stdout:
-        raise LoiLongTieng("Không khớp được thời lượng câu TTS: "
+        raise LoiLongTieng("Không căn được tốc độ câu TTS: "
                            + p.stderr.decode("utf-8", "ignore")[:150])
-    can = max(2, round(giay_dich * RATE_DUB) * 2)
-    pcm = p.stdout[:can]
-    if len(pcm) < can:
-        pcm += b"\0" * (can - len(pcm))
-    return pcm, tempo
+    pcm = p.stdout
+    return pcm[:len(pcm) // 2 * 2]
+
+
+def _do_tre(moc: list[float], giay: list[float], dai_video: float,
+            tempo: float) -> tuple[float, float]:
+    """Chạy thử cả phim ở một tốc độ: (trễ lớn nhất ở mốc mở câu, phần tràn đuôi).
+
+    Đây là phép đo "tổng thể video" — chính thứ mà cách tính theo từng khung
+    không có. Câu dài tràn sang khung sau không tự nó là lỗi: nếu sau đó có một
+    khoảng lặng thì con trỏ bắt kịp mốc, và chỗ trễ biến mất.
+    """
+    con_tro = 0.0
+    tre = 0.0
+    for bat, dai in zip(moc, giay):
+        if con_tro > bat:
+            tre = max(tre, con_tro - bat)
+        else:
+            con_tro = bat
+        con_tro += dai / max(0.05, tempo)
+    return tre, max(0.0, con_tro - max(0.0, dai_video))
+
+
+def _tempo_chung(moc: list[float], giay: list[float],
+                 dai_video: float) -> tuple[float, float, float]:
+    """MỘT tốc độ đọc cho cả phim: chậm nhất có thể mà lời vẫn không trôi.
+
+    Vì sao không tính theo từng câu: khung phụ đề dài ngắn không đều, nên chia
+    thời lượng TTS cho thời lượng từng khung sẽ ra mỗi câu một tốc độ — câu này
+    0,7×, câu kia 2,5×. Nghe ra ngay là máy đọc, và đó đúng là thứ chủ máy báo
+    lại. Đổi lại, một tốc độ duy nhất cho cả phim thì tai bắt nhịp được sau vài
+    câu và không còn nhận ra là có co giãn.
+
+    Sàn là TEMPO_CHUAN: thà để khung thừa im lặng còn hơn kéo giọng chậm ra cho
+    đầy khung. Trần là TEMPO_NHANH_NHAT; chạm trần mà vẫn trễ thì đành chịu
+    trễ và báo cảnh báo, chứ đọc nhanh hơn nữa là không ai nghe kịp.
+
+    Trả về ``(tempo, trễ lớn nhất, phần tràn qua đuôi phim)``.
+    """
+    if not giay:
+        return TEMPO_CHUAN, 0.0, 0.0
+
+    def dat(t: float) -> bool:
+        tre, tran = _do_tre(moc, giay, dai_video, t)
+        return tre <= TRE_TOI_DA and tran <= 0.0
+
+    if dat(TEMPO_CHUAN):
+        chon = TEMPO_CHUAN
+    elif not dat(TEMPO_NHANH_NHAT):
+        chon = TEMPO_NHANH_NHAT
+    else:
+        # Cả hai thước đo đều giảm khi tempo tăng, nên chia đôi tìm được đúng
+        # mức chậm nhất còn đạt. 40 vòng cho sai số dưới một phần triệu.
+        thap, cao = TEMPO_CHUAN, TEMPO_NHANH_NHAT
+        for _ in range(40):
+            giua = (thap + cao) / 2.0
+            if dat(giua):
+                cao = giua
+            else:
+                thap = giua
+        chon = cao
+    tre, tran = _do_tre(moc, giay, dai_video, chon)
+    return chon, tre, tran
 
 
 def _tong_hop(chu: str, voice: str, emotion: str) -> bytes:
@@ -515,119 +659,199 @@ def _viet_lang(w: wave.Wave_write, so_mau: int) -> None:
         con -= n
 
 
+@dataclass(frozen=True)
+class _CauDaDoc:
+    """Một câu đã tổng hợp xong, chờ căn tốc độ chung của cả phim."""
+
+    duong: str
+    giay: float
+
+
+def _tong_hop_moi_cau(cues: list[dict[str, Any]], voice: str, thu_muc: str,
+                      progress: Progress | None) -> tuple[list[_CauDaDoc | None], int]:
+    """Pha 1 — đọc hết mọi câu ở tốc độ tự nhiên, chưa co giãn gì.
+
+    Phải đọc xong hết mới biết TỔNG thời lượng lời, mà tổng đó mới là căn cứ
+    chọn tốc độ. WAV thô ghi ra tệp chứ không giữ trong RAM: một phim dài có
+    thể có hàng nghìn câu.
+    """
+    da_doc: list[_CauDaDoc | None] = []
+    loi = 0
+    for i, cue in enumerate(cues):
+        wav: bytes | None = None
+        loi_cue: Exception | None = None
+        cue.pop("tts_error", None)
+        cue["tts_recovered_after_retry"] = False
+        for lan_thu in range(1, TTS_SO_LAN_TOI_DA + 1):
+            cue["tts_attempts"] = lan_thu
+            try:
+                wav = _tong_hop(str(cue["text"]), voice, str(cue["emotion"]))
+                if lan_thu > 1:
+                    cue["tts_recovered_after_retry"] = True
+                break
+            except Exception as exc:
+                if (lan_thu < TTS_SO_LAN_TOI_DA
+                        and _loi_tts_tam_thoi(exc)):
+                    logger.warning(
+                        "lồng tiếng câu %d lỗi lần %d, thử lại: %s",
+                        i + 1, lan_thu, str(exc)[:160])
+                    if progress:
+                        try:
+                            progress(i, len(cues),
+                                     f"TTS câu {i + 1} lỗi, đang thử lại…")
+                        except Exception:
+                            pass
+                    time.sleep(TTS_CHO_THU_LAI_GIAY)
+                    continue
+                loi_cue = exc
+                break
+        # WAV hỏng thì đọc lại cũng ra đúng bản hỏng đó — KHÔNG tốn thêm một
+        # lượt tổng hợp, tính luôn là câu lỗi.
+        cau: _CauDaDoc | None = None
+        if wav is not None and loi_cue is None:
+            try:
+                giay, _ = _doc_wav_info(wav)
+                duong = str(Path(thu_muc) / f"cau-{i + 1:06d}.wav")
+                Path(duong).write_bytes(wav)
+                cau = _CauDaDoc(duong, giay)
+                cue["tts_status"] = "ok"
+            except Exception as exc:
+                loi_cue = exc
+        if loi_cue is not None:
+            loi += 1
+            cue["tts_status"] = "error"
+            cue["tts_recovered_after_retry"] = False
+            cue["tts_error"] = str(loi_cue)[:160]
+            logger.warning(
+                "lồng tiếng câu %d vẫn lỗi sau %d lần: %s",
+                i + 1, int(cue["tts_attempts"]), str(loi_cue)[:160])
+            # Chính sách nghiêm chắc chắn sẽ từ chối MP4: dừng tại đây, không
+            # đốt tiếp hàng trăm cue.
+            da_doc.append(None)
+            break
+        da_doc.append(cau)
+        if progress:
+            try:
+                progress(i + 1, len(cues),
+                         f"đang tổng hợp giọng ({i + 1}/{len(cues)})…")
+            except Exception:
+                pass
+    return da_doc, loi
+
+
+def _ghi_track(w: wave.Wave_write, cues: list[dict[str, Any]],
+               da_doc: list[_CauDaDoc | None], tempo: float,
+               progress: Progress | None) -> tuple[int, int]:
+    """Pha 2 — cùng MỘT tốc độ cho mọi câu, đặt vào đúng mốc mở câu.
+
+    Trả về ``(vị trí con trỏ theo mẫu, số câu lỗi)``.
+    """
+    cursor = 0
+    loi = 0
+    for i, (cue, cau) in enumerate(zip(cues, da_doc)):
+        if cau is None:            # pha 1 đã đếm câu này là lỗi rồi
+            break
+        pcm: bytes | None = None
+        loi_cue: Exception | None = None
+        # Căn tốc độ là pha riêng: WAV hỏng hay thiếu ffmpeg thì tổng hợp lại
+        # TTS cũng vô ích, nên KHÔNG đọc lại câu. Nhưng ffmpeg quá giờ vì máy
+        # đang tải là chuyện tự hết — dùng lại đúng bản WAV đã có mà chạy lại.
+        for lan_can in range(1, TTS_SO_LAN_TOI_DA + 1):
+            try:
+                pcm = _pcm_theo_tempo(
+                    Path(cau.duong).read_bytes(), tempo,
+                    pitch_relative=cue.get("pitch_relative"),
+                    energy_relative_db=float(
+                        cue.get("energy_relative_db") or 0.0))
+                if lan_can > 1:
+                    cue["tts_recovered_after_retry"] = True
+                break
+            except Exception as exc:
+                if (lan_can < TTS_SO_LAN_TOI_DA
+                        and _loi_tts_tam_thoi(exc)):
+                    logger.warning(
+                        "căn tốc độ câu %d lỗi lần %d, thử lại: %s",
+                        i + 1, lan_can, str(exc)[:160])
+                    time.sleep(TTS_CHO_THU_LAI_GIAY)
+                    continue
+                loi_cue = exc
+                break
+        if pcm is None:
+            loi += 1
+            cue["tts_status"] = "error"
+            cue["tts_recovered_after_retry"] = False
+            cue["tts_error"] = str(loi_cue)[:160]
+            logger.warning(
+                "căn tốc độ câu %d vẫn lỗi sau %d lần: %s",
+                i + 1, int(cue.get("tts_attempts") or 1), str(loi_cue)[:160])
+            break
+        bat = max(0, round(float(cue["start"]) * RATE_DUB))
+        if bat > cursor:
+            _viet_lang(w, bat - cursor)
+            cursor = bat
+        # Câu trước tràn qua mốc này thì vào muộn, KHÔNG cắt đầu câu như trước:
+        # cắt là mất chữ. Chỗ trễ được khoảng lặng phía sau nuốt dần, và
+        # _tempo_chung đã chọn tốc độ sao cho nó không vượt TRE_TOI_DA.
+        cue["tts_tempo"] = round(tempo, 3)
+        cue["tts_start_actual"] = round(cursor / RATE_DUB, 3)
+        cue["tts_late_seconds"] = round(
+            max(0.0, cursor / RATE_DUB - float(cue["start"])), 3)
+        w.writeframesraw(pcm)
+        cursor += len(pcm) // 2
+        if progress:
+            try:
+                progress(i + 1, len(cues),
+                         f"đang căn giọng vào hình ({i + 1}/{len(cues)})…")
+            except Exception:
+                pass
+    return cursor, loi
+
+
 def _tao_track(meta: dict[str, Any], dai: float, voice: str,
                 progress: Progress | None) -> tuple[str, int, list[str]]:
     out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
     cues = list(meta.get("cues") or [])
-    cursor = 0
-    loi = 0
     canh_bao: list[str] = []
     meta["tts_retry_policy"] = {
         "max_attempts_per_cue": TTS_SO_LAN_TOI_DA,
         "retry_delay_seconds": TTS_CHO_THU_LAI_GIAY,
         "fail_fast_after_retries": True,
     }
+    thu_muc = tempfile.TemporaryDirectory(prefix="long-tieng-")
     try:
+        da_doc, loi = _tong_hop_moi_cau(cues, voice, thu_muc.name, progress)
+        xong = [(float(c["start"]), d.giay)
+                for c, d in zip(cues, da_doc) if d is not None]
+        tempo, tre, tran = _tempo_chung([x for x, _ in xong],
+                                        [y for _, y in xong], dai)
+        meta["tts_tempo_policy"] = {
+            "mode": "one_rate_for_whole_video",
+            "tempo": round(tempo, 4),
+            "tempo_floor": TEMPO_CHUAN,
+            "tempo_ceiling": TEMPO_NHANH_NHAT,
+            "late_budget_seconds": TRE_TOI_DA,
+            "max_late_seconds": round(tre, 3),
+            "overflow_seconds": round(tran, 3),
+        }
         with wave.open(out, "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(RATE_DUB)
-            for i, cue in enumerate(cues):
-                bat = max(0, round(float(cue["start"]) * RATE_DUB))
-                ket = max(bat + 1, round(float(cue["end"]) * RATE_DUB))
-                if bat > cursor:
-                    _viet_lang(w, bat - cursor)
-                    cursor = bat
-                pcm: bytes | None = None
-                wav: bytes | None = None
-                loi_cue: Exception | None = None
-                cue.pop("tts_error", None)
-                cue["tts_recovered_after_retry"] = False
-                for lan_thu in range(1, TTS_SO_LAN_TOI_DA + 1):
-                    cue["tts_attempts"] = lan_thu
-                    try:
-                        wav = _tong_hop(
-                            str(cue["text"]), voice, str(cue["emotion"]))
-                        if lan_thu > 1:
-                            cue["tts_recovered_after_retry"] = True
-                        break
-                    except Exception as exc:
-                        if (lan_thu < TTS_SO_LAN_TOI_DA
-                                and _loi_tts_tam_thoi(exc)):
-                            logger.warning(
-                                "lồng tiếng câu %d lỗi lần %d, thử lại: %s",
-                                i + 1, lan_thu, str(exc)[:160])
-                            if progress:
-                                try:
-                                    progress(
-                                        i, len(cues),
-                                        f"TTS câu {i + 1} lỗi, đang thử lại…")
-                                except Exception:
-                                    pass
-                            time.sleep(TTS_CHO_THU_LAI_GIAY)
-                            continue
-                        loi_cue = exc
-                        break
-                # Căn thời lượng là pha riêng: WAV hỏng hay thiếu ffmpeg thì
-                # tổng hợp lại TTS cũng vô ích, nên KHÔNG đọc lại câu. Nhưng
-                # ffmpeg quá giờ vì máy đang tải là chuyện tự hết — dùng lại
-                # đúng bản WAV đã có mà chạy lại, không tốn thêm lượt TTS.
-                if wav is not None and loi_cue is None:
-                    for lan_can in range(1, TTS_SO_LAN_TOI_DA + 1):
-                        try:
-                            pcm, tempo = _pcm_vua_khung(
-                                wav, (ket - bat) / RATE_DUB,
-                                pitch_relative=cue.get("pitch_relative"),
-                                energy_relative_db=float(
-                                    cue.get("energy_relative_db") or 0.0))
-                            cue["tts_tempo"] = round(tempo, 3)
-                            cue["tts_status"] = "ok"
-                            if lan_can > 1:
-                                cue["tts_recovered_after_retry"] = True
-                            if tempo > 2.0:
-                                canh_bao.append(
-                                    f"câu {i + 1} phải đọc nhanh {tempo:.1f}×")
-                            break
-                        except Exception as exc:
-                            if (lan_can < TTS_SO_LAN_TOI_DA
-                                    and _loi_tts_tam_thoi(exc)):
-                                logger.warning(
-                                    "căn thời lượng câu %d lỗi lần %d, thử lại: %s",
-                                    i + 1, lan_can, str(exc)[:160])
-                                time.sleep(TTS_CHO_THU_LAI_GIAY)
-                                continue
-                            loi_cue = exc
-                            break
-                if loi_cue is not None:
-                    loi += 1
-                    cue["tts_status"] = "error"
-                    cue["tts_recovered_after_retry"] = False
-                    cue["tts_error"] = str(loi_cue)[:160]
-                    logger.warning(
-                        "lồng tiếng câu %d vẫn lỗi sau %d lần: %s",
-                        i + 1, int(cue["tts_attempts"]), str(loi_cue)[:160])
-                # Chính sách nghiêm chắc chắn sẽ từ chối MP4: dừng tại đây,
-                # không đốt tiếp hàng trăm cue hoặc ghi hàng trăm MB im lặng.
-                if pcm is None:
-                    break
-                # Cue chồng nhau: bỏ phần đã đi qua, không làm timeline trôi.
-                bo = max(0, cursor - bat) * 2
-                if bo < len(pcm):
-                    w.writeframesraw(pcm[bo:])
-                    cursor += (len(pcm) - bo) // 2
-                if progress:
-                    try:
-                        progress(i + 1, len(cues),
-                                 f"đang tổng hợp giọng ({i + 1}/{len(cues)})…")
-                    except Exception:
-                        pass
+            cursor, loi_ghi = _ghi_track(w, cues, da_doc, tempo, progress)
+            loi += loi_ghi
             if not loi:
                 tong = max(cursor, round(dai * RATE_DUB))
                 if tong > cursor:
                     _viet_lang(w, tong - cursor)
+        if not loi and (tre > TRE_TOI_DA + 0.05 or tran > 0.05):
+            canh_bao.append(
+                f"lời dịch dài hơn chỗ hình dành cho nó: đã đọc nhanh "
+                f"{tempo:.2f}× mà vẫn trễ tới {max(tre, tran):.1f} giây")
     except Exception:
         Path(out).unlink(missing_ok=True)
         raise
+    finally:
+        thu_muc.cleanup()
     return out, loi, canh_bao
 
 
@@ -791,8 +1015,7 @@ def long_tieng(duong_video: str, srt: bytes | str, lang: str, *, voice: str = ""
         if da_phuc_hoi:
             tom_tat = f"{da_phuc_hoi} câu TTS đã phục hồi sau một lần thử lại."
         if canh_bao:
-            nhanh = f"{len(canh_bao)} câu phải tăng tốc trên 2×."
-            tom_tat = " ".join(x for x in (tom_tat, nhanh) if x)
+            tom_tat = " ".join(x for x in (tom_tat, *canh_bao) if x)
         return KetQuaLongTieng(video, prosody, voice, len(doan), so_loi, tom_tat)
     except Exception:
         if video:

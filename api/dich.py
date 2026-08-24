@@ -65,6 +65,13 @@ class DichChuRequest(BaseModel):
     nguon: str = ""
 
 
+class GiongMacDinhRequest(BaseModel):
+    #: Tiếng ĐÍCH của bản lồng tiếng. Giọng gắn với tiếng, không phải với máy.
+    lang: str
+    #: Rỗng = xoá lựa chọn, quay về giọng máy tự khuyến nghị.
+    voice: str = ""
+
+
 class DichTepRequest(BaseModel):
     viec_id: str
     target: str = ""
@@ -289,8 +296,42 @@ def create_router() -> APIRouter:
             separator_ready = False
             separator_error = str(exc)[:180]
         return {"voices": video_dub.danh_sach_giong(lang),
+                "mac_dinh": video_dub.giong_mac_dinh(lang),
                 "separator_ready": separator_ready,
                 "separator_error": separator_error}
+
+    @router.get("/api/dich/giong-mac-dinh")
+    async def xem_giong_mac_dinh(authorization: str | None = Header(None)):
+        """Giọng lồng tiếng mặc định của MỌI tiếng đích, kèm danh sách chọn được.
+
+        Cố ý KHÔNG kiểm tra máy tách lời như ``/api/dich/giong``: chọn giọng
+        mặc định không cần tới nó, mà mỗi lượt kiểm là một lượt HTTP có thể
+        ngắt cầu dao 5 phút của chính đường lồng tiếng — thẻ Cài đặt nạp năm
+        tiếng một lúc thì càng chắc dính.
+        """
+        require_admin(authorization)
+        from services import video_dub
+        da_chon = video_dub.bang_giong_mac_dinh()
+        return {"tiengs": [{"lang": ma,
+                            "voices": video_dub.danh_sach_giong(ma),
+                            "mac_dinh": da_chon.get(ma, "")}
+                           for ma in video_dub.TIENG_LONG_DUOC]}
+
+    @router.post("/api/dich/giong-mac-dinh")
+    async def dat_giong_mac_dinh(body: GiongMacDinhRequest,
+                                 authorization: str | None = Header(None)):
+        """Chốt giọng lồng tiếng mặc định cho một tiếng đích.
+
+        Cả trang dịch lẫn đường chat bot (Zalo/Telegram) đều đọc lựa chọn này
+        qua ``video_dub.chon_giong``; bot vốn không có chỗ nào để chọn giọng.
+        """
+        require_admin(authorization)
+        from services import video_dub
+        try:
+            bang = video_dub.dat_giong_mac_dinh(body.lang, body.voice.strip())
+        except video_dub.LoiLongTieng as exc:
+            raise HTTPException(400, detail={"error": str(exc)})
+        return {"ok": True, "giong_long_tieng": bang}
 
     @router.post("/api/dich/chu")
     async def dich_chu(body: DichChuRequest,
