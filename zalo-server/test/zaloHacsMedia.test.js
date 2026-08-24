@@ -25,10 +25,20 @@ function fakeResponse() {
   };
 }
 
+// JPEG 1x1 that. Truoc day cho ay dung Buffer.from('fake-jpeg') — sau khi
+// saveImage soi magic bytes thi chuoi do bi tu choi dung nhu mot trang HTML,
+// nen fixture phai la anh that moi con kiem duoc dung thu can kiem.
+const JPEG_1X1 = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRof'
+  + 'Hh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAAB'
+  + 'AAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==',
+  'base64',
+);
+
 async function withImageServer(run) {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'image/jpeg' });
-    res.end(Buffer.from('fake-jpeg'));
+    res.end(JPEG_1X1);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -108,4 +118,28 @@ test('album HACS vuot ngan sach request tra 413 truoc khi tai anh', async () => 
 test.after(() => {
   zaloAccounts.length = 0;
   fs.rmSync(directory, { recursive: true, force: true });
+});
+
+// Hoi quy cho su co 24/08/2026: add-on tai chinh trang admin-login cua no ve
+// duoi ten .jpg roi day len Zalo nhu mot tam anh. Tin di tron lot, khong loi
+// nao o dau, va nguoi nhan thay mot o den 1280x720. saveImage phai chan tu day.
+test('trang HTML tra ve kem ma 200 khong duoc coi la anh', async () => {
+  const { saveImage } = await import('../utils/helpers.js');
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!DOCTYPE html><html><body>Admin Login</body></html>');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/anh.jpg`;
+
+    assert.equal(await saveImage(url), null);
+
+    await assert.rejects(
+      () => saveImage(url, undefined, { throwOnError: true }),
+      /khong tra ve anh/i,
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

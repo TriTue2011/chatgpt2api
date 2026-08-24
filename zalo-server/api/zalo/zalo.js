@@ -2600,6 +2600,12 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
         // Khong dung image-size: ca ban 1.x/2.x deu co advisory vong lap vo han
         // voi ICNS/JXL/HEIF. Sharp/libvips co gioi han pixel va khong nam trong
         // dependency bi npm audit canh bao.
+        //
+        // Doc khong ra kich thuoc thi tra null, KHONG bia 1280x720. Bia so nghia
+        // la mot tep khong phai anh van di duoc len Zalo: nguoi nhan thay o den
+        // dung ty le 1280x720 va khong co loi nao o dau ca (do that 24/08/2026).
+        // Tra null thi zca-js nem ZaloApiError("Failed to get image metadata"),
+        // loi noi thang ra tan Home Assistant.
         const getImageMetadata = async (filePath) => {
             try {
                 if (typeof filePath === 'string'
@@ -2619,15 +2625,13 @@ export async function loginZaloAccount(customProxy, cred, options = {}) {
                         };
                     }
                 }
-                return {
-                    width: 1280,
-                    height: 720,
-                    size: typeof filePath === 'string' && fs.existsSync(filePath)
-                        ? fs.statSync(filePath).size : 300000,
-                };
+                console.error(
+                    `Khong doc duoc kich thuoc anh: ${filePath} — tu choi gui.`,
+                );
+                return null;
             } catch (error) {
-                console.warn(`Khong doc duoc metadata anh: ${error.message}`);
-                return { width: 1280, height: 720, size: 300000 };
+                console.error(`Khong doc duoc metadata anh ${filePath}: ${error.message}`);
+                return null;
             }
         };
         
