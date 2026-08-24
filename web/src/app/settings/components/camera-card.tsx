@@ -49,6 +49,8 @@ export function CameraCard() {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [xemTruoc, setXemTruoc] = useState("");
+  const [models, setModels] = useState<Record<string, string[]>>({});
+  const [modelAnh, setModelAnh] = useState("");
 
   useEffect(() => {
     const c = ((config as any)?.cameras as Record<string, Cam>) || {};
@@ -64,8 +66,27 @@ export function CameraCard() {
       .catch(() => setNguoi([]));
   }, []);
 
+  useEffect(() => {
+    setModelAnh(String((config as any)?.agent_branches?.vision || ""));
+  }, [(config as any)?.agent_branches]);
+
+  useEffect(() => {
+    request.get("/api/v1/available-models")
+      .then((r) => setModels(((r.data as any)?.providers as Record<string, string[]>) || {}))
+      .catch(() => setModels({}));
+  }, []);
+
   const luu = async (cam: Record<string, Cam>, che_do = cheDo, cho_phep = choPhep) => {
     await saveConfig({ ...config, cameras: cam, camera_quyen: { che_do, cho_phep } } as any);
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  };
+
+  // Model phân tích ảnh = nhánh vision. Lưu cả config (side-effect webhook đã
+  // được backend chặn khi giá trị không đổi) nên không đụng tới webhook nào.
+  const luuModel = async (m: string) => {
+    setModelAnh(m);
+    await saveConfig({ ...config,
+      agent_branches: { ...((config as any)?.agent_branches || {}), vision: m } } as any);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
 
@@ -341,6 +362,29 @@ export function CameraCard() {
               ⚠️ Chưa tích ai — hiện vẫn chỉ mình bạn xem được.
             </p>
           )}
+        </div>
+
+        {/* ── Model phân tích ảnh ──────────────────────────────────────── */}
+        <div className="space-y-1">
+          <p className="text-sm font-medium">🔎 Model phân tích ảnh</p>
+          <p className="text-xs text-muted-foreground">
+            Chỉ chạy khi có câu hỏi về ảnh (vd «ngoài cổng có ai không»); chỉ xin
+            ảnh thì bỏ qua, không tốn model. Để «Mặc định» nếu không chắc.
+          </p>
+          <select
+            className="w-full rounded-lg border border-border bg-background p-2 text-sm"
+            value={modelAnh}
+            onChange={(e) => void luuModel(e.target.value)}
+          >
+            <option value="">Mặc định (gma/auto)</option>
+            {Object.entries(models).map(([owner, ids]) => (
+              <optgroup key={owner} label={owner}>
+                {ids.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
