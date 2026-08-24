@@ -1045,7 +1045,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "'từ giờ em sẽ…' / 'từ lần sau…' mà không gọi `remember` — nói mà không "
         "lưu thì lượt sau quên sạch, còn người dùng thì tin là đã xong.\n"
         "Người dùng dặn thêm/sửa một điều đã dặn trước thì cứ gọi `remember` với "
-        "lời dặn ĐẦY ĐỦ sau khi sửa; hệ thống tự thay bản cũ, không sinh trùng."
+        "lời dặn ĐẦY ĐỦ sau khi sửa; hệ thống tự thay bản cũ, không sinh trùng.\n"
+        "NGOẠI LỆ — lời dặn nào đã có CÔNG CỤ RIÊNG thì gọi công cụ đó, KHÔNG "
+        "gọi `remember`: tự xoá/thu hồi tin → tu_xoa_tin; cách hỏi duyệt gửi tin "
+        "→ cai_dat_cau_duyet; bật/tắt in đậm, danh sách → cai_dat_dinh_dang. Mấy "
+        "thứ này do hệ thống dựng bằng code, ghi nhớ không đổi được chúng — mà "
+        "hỏi duyệt để 'ghi nhớ' rồi không làm gì thì người dùng tưởng đã xong."
     )
     # Compacted earlier turns (durable across restarts)
     try:
@@ -1155,6 +1160,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
         "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
         "người dùng hỏi bằng bản tin tổng hợp chung.\n"
+        "- TỰ XOÁ / THU HỒI CÂU TRẢ LỜI ('tự động xoá phản hồi tin tức sau 15 "
+        "phút', 'trả lời xong 1 phút sau xoá đi', 'thôi đừng xoá nữa') → "
+        "tu_xoa_tin. TUYỆT ĐỐI KHÔNG dùng `remember` cho việc này: ghi nhớ chỉ "
+        "nhắc em, nó không xoá được tin nào. Chính tu_xoa_tin đã giữ luật cho "
+        "các lần sau rồi, khỏi nhớ thêm. Đây KHÔNG phải nhắc hẹn: đừng gọi "
+        "schedule.\n"
         "- Nhắc hẹn / việc định kỳ ('nhắc em sau 30 phút', 'mỗi sáng 7h báo "
         "thời tiết') → schedule (mode=notify|task).\n"
         "- NHẮC NHIỀU LẦN TRONG NGÀY ('nhắc anh 3 lần lúc 10h, 15h và 21h') → "
