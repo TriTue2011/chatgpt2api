@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from services import translate_service as ts
+from services import thuat_ngu as tn
 from services.yeu_cau_moi import bo_dau
 
 logger = logging.getLogger(__name__)
@@ -685,6 +686,42 @@ def dinh_tu_goc(nguon: str, ban_dich: str, khoa: set[str]) -> str:
     return f"{ban_dich} [{', '.join(thay)}]" if thay else ban_dich
 
 
+def _ma_tieng_glossary(nguon: str) -> str:
+    """Đưa mã tiếng nguồn về mã kho glossary (en/ja/zh/ko). Ngoài bốn tiếng có
+    kho thuật ngữ — kể cả 'auto' — trả rỗng để BỎ hậu kỳ (không đoán bừa)."""
+    ma = (nguon or "").strip().lower()[:2]
+    return ma if ma in {"en", "ja", "zh", "ko"} else ""
+
+
+def hau_ky_glossary(nhom: list[Doan], ban_dich: list[str],
+                    nguon: str, dich: str) -> list[str]:
+    """Nắn thuật ngữ chuyên ngành trong bản dịch — TẤT ĐỊNH, KHÔNG LLM.
+
+    Đoán lĩnh vực MỘT LẦN trên toàn bản thoại gốc (thống kê thuần), rồi thay
+    thuật ngữ từng câu bằng thuật ngữ VI chuẩn trong glossary. Chỉ đụng khi
+    nguồn thuộc {en,ja,zh,ko} và đoán được lĩnh vực; ngoài ra trả nguyên
+    ``ban_dich``. ``render`` là CHÍNH máy dịch đang dùng: gọi đơn từng thuật
+    ngữ, có nhớ đệm nên mỗi thuật ngữ chỉ dịch-đơn một lần cho cả phim (vài
+    lệnh nhỏ, không phải mỗi câu một lượt LLM).
+    """
+    src = _ma_tieng_glossary(nguon)
+    if not src:
+        return ban_dich
+    linh_vuc = tn.doan_linh_vuc(" ".join(d.chu for d in nhom), src)
+    if not linh_vuc:
+        return ban_dich
+    cache_render: dict[str, str] = {}
+
+    def render(term: str) -> str:
+        return ts.translate(term, dich, nguon or "auto")
+
+    return [
+        tn.hau_ky_thuat_ngu(b, d.chu, src, linh_vuc, render,
+                            cache_render=cache_render)
+        for d, b in zip(nhom, ban_dich)
+    ]
+
+
 def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
                nguon_biet: str = "") -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
@@ -791,6 +828,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                 ban_dich = [dinh_tu_goc(d.chu, b, khoa)
                             for d, b in zip(nhom, ban_dich)]
         if da_dich and dich.startswith("vi"):
+            ban_dich = hau_ky_glossary(nhom, ban_dich, nguon, dich)
             ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision, nhom)
             if so_xung_ho_sua and vision is not None:
                 vision["so_xung_ho_sua"] = so_xung_ho_sua

@@ -66,10 +66,28 @@ python scripts/build_glossary.py \
     --out data/glossary
 ```
 
+## Trạng thái (2026-08-25)
+
+- **XONG — dữ liệu thật đã commit vào repo**: `data/glossary/{en,zh,ja}.json`
+  (EN 305, ZH 1546, JA 2343 thuật ngữ / 20 lĩnh vực), dựng trên .38. Runtime
+  KHÔNG tải lại bên thứ 3.
+- **XONG — nối vào `video_dich`**: `NLLB → hậu kỳ glossary` cắm ở
+  `services.video_dich.hau_ky_glossary`, chạy trong nhánh dịch-sang-`vi`. Đoán
+  lĩnh vực một lần trên toàn transcript rồi thay thuật ngữ từng câu; hàm render
+  là chính máy dịch, gọi đơn từng thuật ngữ + nhớ đệm (mỗi thuật ngữ dịch một
+  lần cho cả phim). Test: `test/test_video_dich_glossary.py`.
+- **KHÔNG làm bước LLM** — quyết định 2026-08-25: card GPU là **RTX 2060 Super
+  8 GB** (máy NVR .220) và đã xếp hàng chung cho Whisper + Qwen-VL + NLLB
+  (`services/gpu_queue.py`). Nhét LLM vào path lồng tiếng = chạy mỗi câu một
+  lần, tranh 8 GB → chậm hơn nhiều, mà glossary hậu kỳ đã sửa đúng lỗi thuật
+  ngữ. Khi có card to hơn mới cân nhắc, và nên chạy MỘT lượt gộp cả transcript
+  qua Ollama (.220:11434) chứ không từng câu.
+
 ## Còn thiếu (bước sau)
 
-- **Chạy trình nạp trên dữ liệu thật** (server .38) để sinh `data/glossary/*.json`,
-  rồi **commit dữ liệu** vào repo cho tự chủ (không tải lại bên thứ 3).
-- **Nối vào `video_dich`**: NLLB → hậu kỳ thuật ngữ (→ LLM cục bộ nếu bật) — test thật.
+- **Nới coverage EN** (đang mỏng — vài ngành < 10 term): thêm OMW/KO, hạ ngưỡng
+  lọc, mở rộng bản đồ lĩnh vực trong trình nạp.
+- **Test đầu-cuối thật** một video chuyên ngành trên server (.38 điều phối,
+  .220 NLLB) để đo hậu kỳ thay đúng chỗ.
 
 OMW dùng tệp `.tab` per-ngôn-ngữ (vie/kor/jpn/cmn); tải từ OMW / omwn.
