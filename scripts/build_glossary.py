@@ -10,9 +10,9 @@ Mỗi mục có ``senses[].topics`` (lĩnh vực chuẩn hoá) và ``translation
 ``code:"vi"`` và ``sense`` mô tả nghĩa). Ta chỉ giữ cặp từ có LĨNH VỰC rõ — đúng
 thứ cần cho hậu kỳ thuật ngữ, và tự lọc bỏ từ đời thường.
 
-JA/ZH — pivot QUA tiếng Anh: FreeDict ``jpn-eng`` (JA→EN) và CC-CEDICT (ZH→EN),
-tra nghĩa Anh trong glossary EN đã dựng để ra (lĩnh vực, thuật ngữ VI). KO và
-gia cố bằng OMW là bước sau.
+JA/ZH/KO — pivot QUA tiếng Anh: FreeDict ``jpn-eng`` (JA→EN), CC-CEDICT
+(ZH→EN), và OMW (gióng synset nguồn↔VI, lĩnh vực lấy theo từ VI qua glossary
+EN — dùng cho KO và gia cố JA/ZH).
 
 Nguồn tải ngoài + lệnh dựng: xem ``docs/GLOSSARY.md``.
 
@@ -267,6 +267,68 @@ def nap_freedict_jpn(source,
     return store
 
 
+# ── OMW — Open Multilingual Wordnet (gồm KO, và gia cố JA/ZH) ────────────────
+# OMW gióng lemma các tiếng về cùng SYNSET WordNet. Pivot: từ nguồn → synset →
+# từ VI (cùng synset), còn LĨNH VỰC lấy theo chính từ VI tra trong glossary EN
+# đã dựng. Nhờ vậy không cần Princeton WordNet mà vẫn gắn được lĩnh vực, và chỉ
+# giữ cặp mà từ VI là thuật ngữ ĐÃ BIẾT lĩnh vực (tự lọc còn từ chuyên ngành).
+
+def chi_muc_vi_domain(en_store: dict[str, dict[str, str]]) -> dict[str, set[str]]:
+    """Thuật ngữ VI (thường hoá) → tập lĩnh vực, suy từ glossary EN."""
+    idx: dict[str, set[str]] = defaultdict(set)
+    for slug, bang in en_store.items():
+        for vi in bang.values():
+            idx[_thuong(vi)].add(slug)
+    return idx
+
+
+def doc_omw_tab(dong: Iterable[str]) -> dict[str, set[str]]:
+    """Đọc một tệp OMW ``.tab`` (một ngôn ngữ) → {synset: set(lemma)}.
+
+    Dòng: ``<synset>\t<lang>:<type>\t<lemma>``; dòng ``#`` là chú thích. Dấu
+    gạch dưới trong lemma OMW là khoảng trắng ('New_York').
+    """
+    ra: dict[str, set[str]] = defaultdict(set)
+    for d in dong:
+        d = d.rstrip("\n")
+        if not d or d.startswith("#"):
+            continue
+        parts = d.split("\t")
+        if len(parts) < 3:
+            continue
+        synset = parts[0].strip()
+        lemma = parts[-1].strip().replace("_", " ")
+        if synset and lemma:
+            ra[synset].add(lemma)
+    return ra
+
+
+def nap_omw(src_tab: Iterable[str], vi_tab: Iterable[str],
+            vi_dom_index: dict[str, set[str]],
+            store: Optional[dict[str, dict[str, str]]] = None
+            ) -> dict[str, dict[str, str]]:
+    """OMW: gióng synset nguồn↔VI, gắn lĩnh vực theo từ VI (glossary EN)."""
+    if store is None:
+        store = defaultdict(dict)
+    nguon = doc_omw_tab(src_tab)
+    viet = doc_omw_tab(vi_tab)
+    for synset, src_lemmas in nguon.items():
+        vi_lemmas = viet.get(synset)
+        if not vi_lemmas:
+            continue
+        for sl in src_lemmas:
+            sl_n = _thuong(sl)
+            if not sl_n:
+                continue
+            for vl in vi_lemmas:
+                doms = vi_dom_index.get(_thuong(vl))
+                if not doms:
+                    continue
+                for slug in doms:
+                    store.setdefault(slug, {}).setdefault(sl_n, vl)
+    return store
+
+
 def _mo(duong: str) -> Iterator[str]:
     """Mở .jsonl hoặc .jsonl.gz, trả từng dòng."""
     if str(duong).endswith(".gz"):
@@ -309,6 +371,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--kaikki-en", help="Đường dẫn JSONL(.gz) Wiktextract English")
     ap.add_argument("--cc-cedict", help="Đường dẫn CC-CEDICT (ZH→EN) — cần en.json đã dựng trong --out")
     ap.add_argument("--freedict-jpn", help="Đường dẫn FreeDict jpn-eng .tei (JA→EN) — cần en.json")
+    ap.add_argument("--omw-src", help="OMW .tab tiếng nguồn (kor/jpn/cmn) — cần en.json + --omw-vi + --omw-lang")
+    ap.add_argument("--omw-vi", help="OMW .tab tiếng Việt (vie)")
+    ap.add_argument("--omw-lang", help="mã tiếng nguồn để ghi ra (ko/ja/zh)")
     ap.add_argument("--out", default="data/glossary", help="Thư mục xuất")
     args = ap.parse_args(argv)
 
@@ -336,8 +401,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         tong = sum(len(v) for v in store.values())
         print(f"ja: {len(store)} lĩnh vực, {tong} thuật ngữ (pivot qua en) → {tep}")
         lam_gi = True
+    if args.omw_src:
+        if not (args.omw_vi and args.omw_lang):
+            ap.error("--omw-src cần kèm --omw-vi và --omw-lang")
+        en = json.loads((thu_muc / "en.json").read_text(encoding="utf-8"))
+        vi_dom = chi_muc_vi_domain(en)
+        store = nap_omw(_mo(args.omw_src), _mo(args.omw_vi), vi_dom)
+        tep = ghi_store(store, args.omw_lang, thu_muc)
+        tong = sum(len(v) for v in store.values())
+        print(f"{args.omw_lang} (OMW): {len(store)} lĩnh vực, {tong} thuật ngữ → {tep}")
+        lam_gi = True
     if not lam_gi:
-        ap.error("cần --kaikki-en / --cc-cedict / --freedict-jpn (KO/OMW là bước sau)")
+        ap.error("cần --kaikki-en / --cc-cedict / --freedict-jpn / --omw-src")
     return 0
 
 

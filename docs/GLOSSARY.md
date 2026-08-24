@@ -59,9 +59,17 @@ python scripts/build_glossary.py \
 # 3) JA — pivot qua en.json
 python scripts/build_glossary.py \
     --freedict-jpn jpn-eng.tei --out data/glossary
+
+# 4) KO (và gia cố JA/ZH) — OMW gióng synset nguồn↔VI, lĩnh vực theo từ VI
+python scripts/build_glossary.py \
+    --omw-src wn-data-kor.tab --omw-vi wn-data-vie.tab --omw-lang ko \
+    --out data/glossary
 ```
 
 ## Còn thiếu (bước sau)
 
-- **KO** và **gia cố bằng OMW** (gióng synset) — cần tích hợp thư viện `wn`.
-- Nối kho này vào `video_dich` (NLLB → hậu kỳ thuật ngữ → LLM) và test thật.
+- **Chạy trình nạp trên dữ liệu thật** (server .38) để sinh `data/glossary/*.json`,
+  rồi **commit dữ liệu** vào repo cho tự chủ (không tải lại bên thứ 3).
+- **Nối vào `video_dich`**: NLLB → hậu kỳ thuật ngữ (→ LLM cục bộ nếu bật) — test thật.
+
+OMW dùng tệp `.tab` per-ngôn-ngữ (vie/kor/jpn/cmn); tải từ OMW / omwn.
