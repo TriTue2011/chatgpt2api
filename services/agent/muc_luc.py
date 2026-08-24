@@ -11,9 +11,15 @@ Cách làm — CODE, không nhờ model:
   * ``danh_so(text)`` soi bố cục sẵn có của tin nhắn (đầu mục + gạch đầu dòng)
     rồi thay dấu đầu dòng bằng MÃ MỤC phân cấp;
   * mã được lưu theo user (RAM + SQLite, sống qua restart) như ``ask_choices``;
-  * người dùng trả đúng một mã ("A1", "a1", "3") → ``resolve_reply`` đổi câu đó
-    thành yêu cầu xem chi tiết ĐÚNG mục ấy, rồi orchestrator chạy tiếp như một
-    câu hỏi bình thường.
+  * người dùng trả đúng một mã ("A1", "a1", "3") → ``resolve_reply`` trả về
+    ĐÚNG mục ấy (mã, nội dung, nguồn) cho orchestrator xử lý tiếp.
+
+Mục của BẢN TIN (``nguon="tin"``) được tra THẲNG bằng chính TIÊU ĐỀ, không bọc
+lời dặn quanh nó. Đo thật 24/08 16:55 và 16:57: bản cũ bơm nguyên câu «Xem chi
+tiết mục này: "…". Tra cứu thêm rồi kể đầy đủ.» vào vòng trợ lý, mà mọi tầng tra
+cứu phía sau (searxng, PubMed/CrossRef/Wikipedia, RAG kho tri thức) đều lấy
+NGUYÊN VĂN câu đó làm truy vấn — nên chọn một tin giáo dục thì nhận về sách giáo
+khoa Tiếng Việt lớp 2, chọn lần nữa thì nhận về điều khoản VTVgo/iQIYI.
 
 Bậc mã theo độ sâu: ``A`` (đầu mục) → ``1`` (tin) → ``a`` → ``i``. Mã của một
 dòng là NỐI mã các bậc cha: mục A, tin 2 → ``A2``; tin con → ``A2a``. Chủ máy
@@ -235,25 +241,34 @@ def _gan_ma_dau_muc(dong: str, ma: str) -> str:
 
 # ── Bản chờ ──────────────────────────────────────────────────────────────────
 
-def set_pending(user_id: str, muc: list[dict[str, str]]) -> None:
+def set_pending(user_id: str, muc: list[dict[str, str]], nguon: str = "") -> None:
+    """`nguon` = danh sách này từ đâu ra ("tin" = bản tin). Quyết định cách xem
+    chi tiết: mục bản tin thì tra mạng theo tiêu đề, mục thường thì hỏi trợ lý."""
     if not user_id or not muc:
         return
     now = time.time()
+    ng = str(nguon or "")
     with _lock:
-        _pending[str(user_id)] = {"muc": list(muc), "ts": now}
+        _pending[str(user_id)] = {"muc": list(muc), "nguon": ng, "ts": now}
     try:
         import json
         c = _db()
         if c is not None:
+            # Gói `nguon` VÀO cột `muc` (JSON) thay vì thêm cột: bảng cũ đã nằm
+            # sẵn trên máy chủ, mà CREATE TABLE IF NOT EXISTS không thêm cột.
             c.execute("INSERT OR REPLACE INTO muc_pending(user_id, muc, ts) "
                       "VALUES (?,?,?)",
-                      (str(user_id), json.dumps(list(muc), ensure_ascii=False), now))
+                      (str(user_id),
+                       json.dumps({"muc": list(muc), "nguon": ng},
+                                  ensure_ascii=False),
+                       now))
             c.commit()
     except Exception as exc:
         logger.warning("muc_luc: lưu pending lỗi: %s", exc)
 
 
-def get_pending(user_id: str) -> Optional[list[dict[str, str]]]:
+def get_pending(user_id: str) -> Optional[dict[str, Any]]:
+    """Bản chờ còn hiệu lực → ``{"muc": [...], "nguon": "…"}``, hết hạn → None."""
     uid = str(user_id)
     with _lock:
         p = _pending.get(uid)
@@ -261,7 +276,8 @@ def get_pending(user_id: str) -> Optional[list[dict[str, str]]]:
         if time.time() - float(p.get("ts") or 0) > _TTL:
             clear_pending(uid)
             return None
-        return list(p.get("muc") or [])
+        return {"muc": list(p.get("muc") or []),
+                "nguon": str(p.get("nguon") or "")}
     try:
         import json
         c = _db()
@@ -274,10 +290,18 @@ def get_pending(user_id: str) -> Optional[list[dict[str, str]]]:
         if time.time() - float(row[1] or 0) > _TTL:
             clear_pending(uid)
             return None
-        muc = json.loads(row[0] or "[]")
+        data = json.loads(row[0] or "[]")
+        # Bản ghi ghi trước bản này là LIST TRẦN (chưa có `nguon`) — vẫn đọc được,
+        # để lần nâng cấp không làm người đang đọc dở bản tin gõ mã ra "chưa rõ ý".
+        if isinstance(data, list):
+            data = {"muc": data, "nguon": ""}
+        muc = list(data.get("muc") or [])
+        nguon = str(data.get("nguon") or "")
+        if not muc:
+            return None
         with _lock:
-            _pending[uid] = {"muc": muc, "ts": row[1]}
-        return list(muc)
+            _pending[uid] = {"muc": muc, "nguon": nguon, "ts": row[1]}
+        return {"muc": muc, "nguon": nguon}
     except Exception as exc:
         logger.warning("muc_luc: đọc pending lỗi: %s", exc)
         return None
@@ -302,8 +326,13 @@ def clear_pending(user_id: str) -> None:
 _RE_CHON = re.compile(r"^[\s.\-–)(]*([A-Za-z]{0,2}\d{0,2}[A-Za-z]{0,3})[\s.\-–)(]*$")
 
 
-def resolve_reply(user_id: str, user_text: str) -> Optional[str]:
-    """Người dùng vừa gõ một mã mục? → trả câu hỏi chi tiết cho mục đó."""
+def resolve_reply(user_id: str, user_text: str) -> Optional[dict[str, str]]:
+    """Người dùng vừa gõ một mã mục? → ``{"ma","noi_dung","nguon","cau_hoi"}``.
+
+    ``cau_hoi`` là câu bơm vào vòng trợ lý, dùng cho danh sách THƯỜNG (việc cần
+    làm, danh mục…). Mục BẢN TIN (``nguon="tin"``) KHÔNG dùng câu này —
+    orchestrator đem thẳng ``noi_dung`` đi tra tin, vì câu bọc lời dặn làm hỏng
+    truy vấn của mọi tầng tra cứu phía sau (xem docstring đầu file)."""
     t = (user_text or "").strip()
     if not t or len(t) > 8:
         return None
@@ -313,18 +342,22 @@ def resolve_reply(user_id: str, user_text: str) -> Optional[str]:
     ma = m.group(1).strip()
     if not ma:
         return None
-    muc = get_pending(user_id)
-    if not muc:
+    ban = get_pending(user_id)
+    if not ban:
         return None
-    for it in muc:
+    nguon = str(ban.get("nguon") or "")
+    for it in ban.get("muc") or []:
         if str(it.get("ma") or "").lower() == ma.lower():
             noi_dung = str(it.get("noi_dung") or "").strip()
             if not noi_dung:
                 return None
             clear_pending(user_id)
-            logger.info({"event": "muc_luc_chon", "ma": it.get("ma")})
-            return (f'Xem chi tiết mục này: "{noi_dung}". '
-                    "Tra cứu thêm rồi kể đầy đủ.")
+            logger.info({"event": "muc_luc_chon", "ma": it.get("ma"),
+                         "nguon": nguon})
+            return {"ma": str(it.get("ma") or ""), "noi_dung": noi_dung,
+                    "nguon": nguon,
+                    "cau_hoi": (f'Xem chi tiết mục này: "{noi_dung}". '
+                                "Tra cứu thêm rồi kể đầy đủ.")}
     return None
 
 
@@ -336,6 +369,9 @@ def apply_to_result(result: dict[str, Any], user_id: str) -> dict[str, Any]:
     """
     if not isinstance(result, dict):
         return result
+    # Cờ NỘI BỘ do đường tắt tin tức gắn. Lấy ra rồi BỎ khỏi kết quả để nó không
+    # lọt xuống kênh chat cùng câu trả lời.
+    nguon = str(result.pop("muc_luc_nguon", "") or "")
     text = str(result.get("text") or "")
     if result.get("silent") or not text or result.get("choices"):
         return result
@@ -344,8 +380,8 @@ def apply_to_result(result: dict[str, Any], user_id: str) -> dict[str, Any]:
         return result
     result["text"] = moi
     result["muc_luc"] = True
-    set_pending(user_id, muc)
-    logger.info({"event": "muc_luc_danh_so", "so_muc": len(muc)})
+    set_pending(user_id, muc, nguon)
+    logger.info({"event": "muc_luc_danh_so", "so_muc": len(muc), "nguon": nguon})
     return result
 
 
