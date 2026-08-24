@@ -140,5 +140,41 @@ class CongCuTuXoaTests(unittest.TestCase):
         self.assertIn("Zalo", ra.get("text") or "")
 
 
+
+class DinhTuyenTuXoaTests(unittest.TestCase):
+    """System prompt phải chỉ thẳng "xoá tin" về `tu_xoa_tin`, không về `remember`.
+
+    Đo thật 24/08 lúc 08:56: người dùng nhắn "Tự động xóa phản hồi tin tức hôm
+    nay sau 15 phút". Bot không gọi `tu_xoa_tin` mà gọi `remember`, nên thứ tới
+    tay họ là câu xin duyệt "Em định Ghi nhớ: …" — ghi nhớ thì không xoá được
+    tin nào, mà người dùng lại tưởng đã đặt xong.
+
+    Prompt có một mệnh lệnh rất to "lời dặn dài hạn thì BẮT BUỘC gọi remember",
+    trong khi việc này đã có công cụ riêng. Khoá cả hai vế ở đây.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from pathlib import Path
+        goc = Path(__file__).resolve().parents[1]
+        cls.src = (goc / "services/agent/orchestrator.py").read_text(encoding="utf-8")
+        i = cls.src.index("## Bảng chỉ đường")
+        cls.bang = cls.src[i:i + 5000]
+
+    def test_bang_chi_duong_co_nhanh_tu_xoa(self):
+        self.assertIn("tu_xoa_tin", self.bang)
+        self.assertIn("tự động xoá phản hồi", self.bang.lower())
+
+    def test_noi_ro_khong_dung_remember_cho_viec_nay(self):
+        i = self.bang.index("tu_xoa_tin")
+        quanh = self.bang[i - 200:i + 400]
+        self.assertIn("KHÔNG dùng `remember`", quanh)
+
+    def test_khoi_ep_remember_co_ngoai_le_cho_viec_da_co_cong_cu(self):
+        i = self.src.index("BẮT BUỘC ghi nhớ: lời dặn về cách trả lời")
+        khoi = self.src[i:i + 1500]
+        self.assertIn("NGOẠI LỆ", khoi)
+        self.assertIn("tu_xoa_tin", khoi)
+
 if __name__ == "__main__":
     unittest.main()
