@@ -34,6 +34,7 @@ thật, gọi hàm.
 from __future__ import annotations
 
 import pathlib
+import re
 import unittest
 
 GOC = pathlib.Path(__file__).resolve().parents[1]
@@ -144,11 +145,22 @@ class TestKienTriNhuChiDangNhap(unittest.TestCase):
         self.assertNotIn("email field not found", self.code)
 
     def test_captcha_thi_khong_pha_trang_cua_nguoi_dung(self):
-        """Người đang gõ captcha trên noVNC — không bấm/điền gì đè lên."""
-        i = self.code.index('captcha_flagged = True')
-        khuc = self.code[i:i + 400]
-        self.assertIn("if captcha_flagged:", khuc)
-        self.assertIn("continue", khuc)
+        """Người đang gõ captcha trên noVNC — không bấm/điền gì đè lên.
+
+        Neo vào ranh giới câu lệnh, KHÔNG đếm ký tự: từ 24/08/2026 có HAI chỗ
+        bật cờ (trang thử thách reCAPTCHA nhận theo URL, captcha ảnh đời cũ nhận
+        theo bộ chọn), nên cửa sổ 400 ký tự tính từ chỗ bật cờ đầu tiên chỉ là
+        một con số tình cờ — nó đỏ trong khi cái cổng chặn vẫn còn nguyên.
+        """
+        i_cong = self.code.index("if captcha_flagged:")
+        khuc = self.code[i_cong:self.code.index(
+            "if any(b in body for b in _BLOCK_TEXTS)", i_cong)]
+        self.assertIn("continue", khuc,
+                      "gặp captcha thì bỏ lượt này, đừng bấm/điền tiếp")
+        # Và mọi chỗ bật cờ đều phải nằm TRƯỚC cái cổng đó, kẻo bật xong vẫn
+        # rơi thẳng vào nhánh bấm "Thử lại".
+        for vt in re.finditer(r"captcha_flagged = True", self.code):
+            self.assertLess(vt.start(), i_cong)
 
     def test_that_bai_noi_ro_da_thu_bao_nhieu_lan(self):
         i = self.code.index("Không lọt được ô mật khẩu")

@@ -317,6 +317,22 @@ class BrowserPool:
                 to_evict = []
                 async with self._global_lock:
                     for profile, entry in list(self._contexts.items()):
+                        # ĐANG ĐĂNG NHẬP thì không đụng vào, dù `last_used` đã cũ.
+                        # `auto_login` gọi `pool.get()` ĐÚNG MỘT LẦN rồi lái trang
+                        # suốt 420 giây mà không chạm lại pool, nên `last_used`
+                        # đứng im từ giây đầu và tới phút thứ 5 vòng này đóng ngay
+                        # trình duyệt của lượt đăng nhập ĐANG chạy.
+                        #
+                        # Đo thật 24/08/2026 (google-benbap2011): mở context
+                        # 15:26:39 → "auto-evicting idle" 15:31:51 → hai phút cuối
+                        # lái một trang đã đóng, mọi thao tác ném lỗi rồi bị nuốt,
+                        # kết luận "Không lọt được ô mật khẩu". Và người được mời
+                        # ra noVNC gõ captcha thì không còn trình duyệt nào để gõ.
+                        #
+                        # Đây đúng cái bẫy `close_profile` đã có cờ
+                        # `bo_qua_khi_dang_nhap` để tránh — vòng quét này thì chưa.
+                        if self.dang_dang_nhap(profile):
+                            continue
                         # Warm-pool: keep tabs alive 5 min idle (was 30 min).
                         # The prewarmer re-warms every 25 min so a healthy
                         # warmed profile never sees this branch.
@@ -329,7 +345,10 @@ class BrowserPool:
                     if not lock.locked():
                         async with lock:
                             entry = self._contexts.get(profile)
-                            if entry and now - entry.last_used > 300:
+                            # Kiểm lại cờ: lượt đăng nhập có thể vừa bắt đầu trong
+                            # lúc đang xếp hàng chờ khoá.
+                            if (entry and now - entry.last_used > 300
+                                    and not self.dang_dang_nhap(profile)):
                                 logger.info("auto-evicting idle profile=%s", profile)
                                 await self._evict(profile)
             except asyncio.CancelledError:
@@ -690,9 +709,26 @@ class BrowserPool:
         # with HTTP 429 so the upstream chatgpt2api router rotates to the
         # next account (web_proxy.AccountBusyError → next profile in loop).
         # Queuing on a single account just stacks latency.
-        if lock.locked():
+        #
+        # ĐANG ĐĂNG NHẬP cũng là BẬN, dù khoá hồ sơ đang rảnh: `auto_login` gọi
+        # `get()` một lần rồi NHẢ KHOÁ, và giữ trình duyệt suốt 420 giây. Chỗ này
+        # nhìn thấy khoá rảnh nên vô tư mở chồng lên — khác chế độ headless thì
+        # đóng luôn trình duyệt đăng nhập dở dang, cùng chế độ thì hai Chrome
+        # chung một user-data-dir.
+        #
+        # Đo thật 24/08/2026 (google-benbap2011): lượt đăng nhập headful chạy từ
+        # 15:56:40 (đang ở màn thử thách reCAPTCHA, chờ người gõ trên noVNC);
+        # 16:00:01 một cú bấm "Tái dùng" trên giao diện — tức
+        # get-or-create-project, headless — mở tiếp trên đúng hồ sơ đó; lượt đăng
+        # nhập kết thúc `state=failed` lúc 16:03:48.
+        #
+        # 429 là câu trả lời ĐÚNG chứ không phải lỗi: `_flow_session_trang_thai`
+        # đọc 429 thành 'ban' (bận) chứ không phải 'mất phiên', nên không kéo
+        # theo một lượt khôi phục oan.
+        if lock.locked() or self.dang_dang_nhap(profile):
             from fastapi import HTTPException
-            logger.info("fast-failover profile=%s already busy → 429", profile)
+            ly_do = "đang có luồng đăng nhập" if self.dang_dang_nhap(profile) else "already busy"
+            logger.info("fast-failover profile=%s %s → 429", profile, ly_do)
             raise HTTPException(status_code=429, detail="Account Busy")
         await lock.acquire()
         try:

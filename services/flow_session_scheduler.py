@@ -19,8 +19,9 @@ solver, tức khôi phục được ngay — chỉ là chẳng có gì gọi. Đ
 (``api/veo_video.py``) thì không có móc khôi phục nào cả.
 
 Bộ quét này cắt vòng đó: định kỳ tự kiểm phiên từng tài khoản Flow, cái nào chết
-thì gọi đúng ``flow_recover_and_notify`` (T1 kiểm/tái lập phiên → T2 đăng nhập
-lại Google). Không phụ thuộc việc tài khoản có được traffic chạm tới hay không.
+thì gọi đúng ``flow_recover_and_notify`` — thang nhiều tầng: T0 kiểm/tái lập
+phiên → T1 nghỉ rồi kiểm lại → T2 đăng nhập lại Google → T3 kiểm lại vài lượt.
+Không phụ thuộc việc tài khoản có được traffic chạm tới hay không.
 """
 
 from __future__ import annotations

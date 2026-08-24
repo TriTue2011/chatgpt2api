@@ -873,6 +873,26 @@ async def do_google_login_steps(
     _CAPTCHA_SELECTORS = ('img#captchaimg', 'img[src*="Captcha"]', 'input[name="ca"]',
                           'input[aria-label*="văn bản" i]', 'input[aria-label*="hear" i]')
 
+    # Trang THỬ THÁCH reCAPTCHA của Google — thứ mà các bộ chọn ảnh ở trên không
+    # bao giờ thấy, vì captcha nằm trong iframe reCAPTCHA chứ không phải
+    # `img#captchaimg` của captcha ảnh đời cũ.
+    #
+    # Đo thật 24/08/2026 (google-benbap2011): phiên Flow chết, kiểm phiên rơi vào
+    # `accounts.google.com/v3/signin/challenge/recaptcha`, rồi lượt đăng nhập lại
+    # quay 135 vòng "bấm lại vào mail" trong 420 giây, đóng máy với lý do "Không
+    # lọt được ô mật khẩu" — trong khi việc cần làm chỉ là một người gõ captcha.
+    # Càng quay thì càng giống bot, tức càng khó thoát cái thử thách đó.
+    #
+    # Chỉ nhận ĐÚNG nhánh recaptcha: `/challenge/pwd` là màn mật khẩu bình
+    # thường, `/challenge/totp` là 2FA — hai cái đó máy tự đi tiếp được.
+    _CAPTCHA_URL_PATHS = ("/challenge/recaptcha",)
+
+    def _url_hien_tai() -> str:
+        try:
+            return (page.url or "").lower()
+        except Exception:
+            return ""
+
     # ── MỘT vòng kiên trì tới khi vào được ô mật khẩu ────────────────────────
     # Làm đúng như người dùng bấm "Chỉ đăng nhập" rồi ngồi thử: Google chặn thì
     # bấm "Thử lại", XONG BẤM LẠI VÀO MAIL như lần đầu, rồi xem đã có ô mật khẩu
@@ -888,6 +908,7 @@ async def do_google_login_steps(
     block_retries = 0
     tile_clicks = 0
     vong = 0
+    url_hien = ""
     pwd_deadline = time.time() + _VAO_O_MAT_KHAU_S
     while time.time() < pwd_deadline:
         vong += 1
@@ -911,6 +932,15 @@ async def do_google_login_steps(
                         "(Thử lại %d lần, bấm vào mail %d lần) — %s",
                         vong, block_retries, tile_clicks, session.profile)
             break
+
+        url_hien = _url_hien_tai()
+        if not captcha_flagged and any(p in url_hien for p in _CAPTCHA_URL_PATHS):
+            session.state = "need_captcha"
+            session.message = ("Google bắt xác minh reCAPTCHA — gõ captcha trên noVNC, "
+                               "hệ thống sẽ TỰ tiếp tục password+2FA")
+            logger.info("auto_login: reCAPTCHA challenge cho %s (url=%s) — chờ người giải",
+                        session.profile, url_hien)
+            captcha_flagged = True
 
         try:
             body = (await page.locator("body").inner_text(timeout=1500)).strip().lower()
@@ -948,8 +978,8 @@ async def do_google_login_steps(
             # PHẢI ra logger: session.message chỉ ai poll status mới thấy; thất
             # bại câm lặng là thứ đã làm mất 20 phút chẩn đoán.
             if block_retries == 1 or block_retries % 5 == 0:
-                logger.info("auto_login: Google chặn — bấm Thử lại lần %d (%s)",
-                            block_retries, session.profile)
+                logger.info("auto_login: Google chặn — bấm Thử lại lần %d (%s, url=%s)",
+                            block_retries, session.profile, url_hien)
             await _click_try_again()
             await asyncio.sleep(2.0)
 
@@ -959,15 +989,15 @@ async def do_google_login_steps(
             session.message = (f"Đã bấm lại vào mail lần {tile_clicks} "
                                f"— chờ ô mật khẩu...")
             if tile_clicks == 1 or tile_clicks % 5 == 0:
-                logger.info("auto_login: bấm lại vào mail lần %d (%s)",
-                            tile_clicks, session.profile)
+                logger.info("auto_login: bấm lại vào mail lần %d (%s, url=%s)",
+                            tile_clicks, session.profile, url_hien)
         await asyncio.sleep(2.0)
     if pwd_input is None:
         session.state = "failed"
         session.error = (
             f"Không lọt được ô mật khẩu sau {int(_VAO_O_MAT_KHAU_S)}s / {vong} vòng "
             f"(bấm Thử lại {block_retries} lần, bấm lại vào mail {tile_clicks} lần"
-            f"{', captcha chưa ai giải' if captcha_flagged else ''})"
+            f"{', captcha chưa ai giải' if captcha_flagged else ''}, url={url_hien or '?'})"
         )
         session.completed_at = time.time()
         return False
