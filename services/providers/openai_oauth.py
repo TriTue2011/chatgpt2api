@@ -813,10 +813,15 @@ class CodexOAuthProvider:
                 "has_jwt": sum(1 for i in codex_items if str(i.get("access_token","")).startswith("eyJ")),
             })
             candidates: list[tuple[str, dict]] = []
+            da_thu = 0          # đã dùng trong CHÍNH request này
+            nghi_tam = 0        # limited/disabled/error — hết quota, tự hồi
             for item in codex_items:
                 if item.get("status") in ("disabled", "error", "limited"):
+                    nghi_tam += 1
                     continue
                 token = item.get("access_token") or ""
+                if token and token in excluded:
+                    da_thu += 1
                 if not token or not token.startswith("eyJ"):
                     continue
                 if token in excluded:
@@ -844,7 +849,28 @@ class CodexOAuthProvider:
                 except Exception:
                     pass
                 return token
-            raise RuntimeError("No Codex OAuth tokens available. Add via OAuth login or import 9router backup.")
+            # Một câu lỗi, HAI tình huống hoàn toàn khác nhau — phải nói rõ là
+            # cái nào, không thì người đọc log đi sai đường.
+            #
+            # Bản cũ luôn khuyên "Add via OAuth login or import 9router backup",
+            # kể cả khi kho có đủ tài khoản khoẻ. Đo thật 24/08/2026: kho có 8
+            # tài khoản codex, tất cả `active`, token đều là JWT hợp lệ — mà log
+            # vẫn đúng câu đó, vì cả 8 đã bị chính request này thử hết. Chủ máy
+            # phải chỉ ra thì mới rõ: codex là đường mặc định, hết lượt thì tụt
+            # xuống free rồi tự quay lại khi quota hồi, chứ không thiếu tài khoản.
+            #
+            # GIỮ nguyên cụm "No Codex OAuth tokens available" ở đầu: bộ xếp
+            # thứ tự provider (services/provider_order.py) nhận diện "cạn cả
+            # pool" bằng chính cụm này để hạ provider xuống cuối.
+            if not codex_items:
+                raise RuntimeError(
+                    "No Codex OAuth tokens available. Add via OAuth login or "
+                    "import 9router backup.")
+            raise RuntimeError(
+                f"No Codex OAuth tokens available: {len(codex_items)} tài khoản "
+                f"codex trong kho đều không dùng được lúc này "
+                f"({da_thu} đã thử trong request này, {nghi_tam} đang nghỉ vì hết "
+                f"lượt). Không thiếu tài khoản — chờ quota hồi là tự về.")
 
 
 def _try_refresh_token(stale_access_token: str) -> str | None:
