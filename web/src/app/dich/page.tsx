@@ -97,14 +97,17 @@ function DichPageContent() {
     request.get("/api/dich/giong", { params: { lang: target } })
       .then((res) => {
         if (!conHieuLuc) return;
-        const data = res.data as { voices?: GiongLongTieng[]; separator_ready?: boolean; separator_error?: string };
+        const data = res.data as { voices?: GiongLongTieng[]; mac_dinh?: string; separator_ready?: boolean; separator_error?: string };
         const rows = (data.voices || []);
         setCacGiong(rows);
         setTachAmSanSang(data.separator_ready !== false);
         setLoiTachAm(data.separator_error || "");
         setGiong((cu) => {
           if (rows.some((v) => v.id === cu && v.downloaded)) return cu;
-          return rows.find((v) => v.recommended)?.id || "";
+          // Giọng chốt trong Cài đặt đứng trước giọng máy tự khuyến nghị — cùng
+          // thứ tự backend dùng cho đường chat bot, để web và bot không lệch nhau.
+          const macDinh = rows.find((v) => v.id === data.mac_dinh && v.downloaded);
+          return macDinh?.id || rows.find((v) => v.recommended)?.id || "";
         });
       })
       .catch((e) => { if (conHieuLuc) { setCacGiong([]); setGiong(""); setLoi(layLoi(e)); } })
