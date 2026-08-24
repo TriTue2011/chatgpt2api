@@ -151,31 +151,90 @@ class NhanRaTrangThuThachRecaptchaTests(unittest.TestCase):
 
 
 class LoiTaiDungPhaiChiDungViecCanLamTests(unittest.TestCase):
-    """Hồ sơ đăng xuất thì nói "chưa đăng nhập", đừng nói "thiếu quyền Flow".
+    """Dừng ở trang Google thì nói ĐÚNG trang nào, và chỉ đúng nút phải bấm.
 
-    Chủ máy bấm "Tái dùng" cho google-benbap2011, nhận đúng câu
-    "Could not find 'Dự án mới' … Account may not have Flow access", mở noVNC
-    theo phản xạ thì thấy MÀN HÌNH ĐEN — vì "Tái dùng" chạy headless, không có
-    cửa sổ nào để xem. Việc thật sự phải làm là "Chỉ đăng nhập" (headful).
+    Chủ máy bấm "Tái dùng" và nhận:
+
+        Could not find 'Dự án mới' / 'New project' button (page:
+        .../v3/signin/rejected?app_domain=https%3A%2F%2Flabs.google&client_id=…).
+        Account may not have Flow access or session is expired.
+
+    rồi nói lại: "chỉ đăng nhập bằng tay tôi bình thường". Đúng — tài khoản
+    không thiếu quyền Flow, và cũng không hẳn là "đăng xuất". Log 24/08/2026
+    cho thấy chuỗi thật: chooser → bấm tile → `/signin/challenge/pwd` (Google
+    hỏi lại mật khẩu cho labs.google) → `_prime_flow_session` chỉ biết BẤM chứ
+    không gõ được mật khẩu nên bấm lại tile → Google chốt bằng
+    `/signin/rejected`.
     """
 
-    # Neo vào đúng nhánh bí của `get_or_create_project` — file có 5 chỗ
-    # `if not clicked:` nên không lấy cái đó làm mốc.
-    THAN = _than(NGUON_FLOW, "# Còn nằm ở accounts.google.com", "session is expired.")
+    # Hàm dựng câu này chỉ ăn một chuỗi URL nên bóc ra chạy thẳng được — kiểm
+    # hành vi thật, không phải kiểm mã nguồn có chứa chữ gì.
+    _NS: dict = {}
+    exec(compile(_than(NGUON_FLOW, "def _loi_chua_vao_duoc_flow",
+                       "async def get_or_create_project"),
+                 "flow_google.py", "exec"), _NS)
+    _loi = staticmethod(_NS["_loi_chua_vao_duoc_flow"])
 
-    def test_nhan_ra_dang_o_trang_dang_nhap_Google(self):
-        self.assertIn("accounts.google.com", self.THAN)
+    def test_trang_rejected_khong_do_cho_quyen_Flow(self):
+        tin = self._loi("https://accounts.google.com/v3/signin/rejected"
+                        "?app_domain=https%3A%2F%2Flabs.google&client_id=365941595420")
+        self.assertIn("TỪ CHỐI", tin)
+        self.assertIn("Chỉ đăng nhập", tin)
+        self.assertNotIn("Flow access", tin)
 
-    def test_chi_dung_nut_phai_bam(self):
-        self.assertIn("Chỉ đăng nhập", self.THAN)
+    def test_trang_hoi_mat_khau_noi_dung_ly_do(self):
+        tin = self._loi("https://accounts.google.com/v3/signin/challenge/pwd?TL=abc")
+        self.assertIn("mật khẩu", tin)
+        self.assertIn("Chỉ đăng nhập", tin)
 
-    def test_noi_ro_vi_sao_noVNC_den_si(self):
-        self.assertIn("6080", self.THAN)
-        self.assertIn("headless", self.THAN.lower())
+    def test_trang_captcha_van_chi_ra_noVNC(self):
+        tin = self._loi("https://accounts.google.com/v3/signin/challenge/recaptcha?TL=abc")
+        self.assertIn("reCAPTCHA", tin)
+        self.assertIn("6080", tin)
+        self.assertIn("màn hình đen", tin,
+                      "phải nói vì sao noVNC đen: nút 'Tái dùng' chạy ẩn")
 
-    def test_van_giu_cau_cu_cho_truong_hop_khac(self):
-        """Không ở trang đăng nhập mà vẫn không thấy nút thì đúng là chuyện khác."""
-        self.assertIn("Could not find 'Dự án mới'", self.THAN)
+    def test_trang_Google_khac_van_co_cau_tra_loi(self):
+        tin = self._loi("https://accounts.google.com/v3/signin/identifier?abc")
+        self.assertIn("Chỉ đăng nhập", tin)
+
+    def test_luon_kem_dia_chi_trang_de_con_lan_ra(self):
+        for u in ("https://accounts.google.com/v3/signin/rejected?x=1",
+                  "https://accounts.google.com/v3/signin/challenge/pwd?x=1",
+                  "https://accounts.google.com/v3/signin/identifier?x=1"):
+            self.assertIn("accounts.google.com", self._loi(u))
+
+
+class CoDuAnCuThiDungTaoDuAnMoiTests(unittest.TestCase):
+    """"Nếu dự án cũ rồi thì không tạo dự án mới."
+
+    Phép dò cũ quét DOM ĐÚNG MỘT LẦN ngay sau khi prime xong. Danh sách dự án
+    render sau, nên "không thấy link /project/ nào" phần lớn là "chưa kịp hiện"
+    — mà kết luận đó đi thẳng xuống nhánh bấm "Dự án mới", tức đẻ thêm một dự
+    án nữa vào tài khoản đã có sẵn dự án.
+    """
+
+    THAN = _than(NGUON_FLOW, "async def get_or_create_project",
+                 'raise RuntimeError(\n                f"Could not find')
+
+    def test_do_nhieu_luot_truoc_khi_ket_luan_chua_co_du_an(self):
+        self.assertIn("_SO_LUOT_DO_DU_AN", self.THAN)
+        so = int(_than(NGUON_FLOW, "_SO_LUOT_DO_DU_AN = ", "\n").split("=")[1])
+        self.assertGreaterEqual(so, 2, "một lượt quét DOM là quá sớm")
+
+    def test_dung_lai_du_an_cu_TRUOC_khi_bam_tao_moi(self):
+        vi_tri_dung_lai = self.THAN.index('"use_existing"')
+        vi_tri_tao_moi = self.THAN.index("dự án mới|new project")
+        self.assertLess(vi_tri_dung_lai, vi_tri_tao_moi)
+
+    def test_chua_vao_duoc_Flow_thi_KHONG_bam_tao_moi(self):
+        """Trang đăng nhập Google cũng 'không có dự án nào' theo phép dò trên."""
+        khuc = self.THAN[self.THAN.index('"use_existing"'):]
+        vi_tri_chan = khuc.index("accounts.google.com")
+        vi_tri_tao_moi = khuc.index("dự án mới|new project")
+        self.assertLess(vi_tri_chan, vi_tri_tao_moi,
+                        "phải chặn trước khi bấm tạo mới, không phải sau ba lượt "
+                        "bấm hụt + re-prime")
 
 
 class TinBaoFlowNoiDungLyDoTests(unittest.TestCase):

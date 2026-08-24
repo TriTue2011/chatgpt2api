@@ -1183,6 +1183,44 @@ async def _prime_flow_session(page) -> None:
     logger.info("flow_prime: priming ended without app shell (url=%s)", page.url[:80])
 
 
+# Dò dự án cũ mấy lượt trước khi kết luận "tài khoản chưa có dự án nào".
+_SO_LUOT_DO_DU_AN = 3
+_NGHI_DO_DU_AN_S = 2.5
+
+
+def _loi_chua_vao_duoc_flow(url: str) -> str:
+    """Câu giải thích khi luồng dừng lại ở accounts.google.com thay vì vào Flow.
+
+    Câu cũ — "Could not find 'Dự án mới' … Account may not have Flow access" —
+    gửi người đọc đi kiểm quyền Flow của tài khoản, trong khi ba trang dưới đây
+    là ba nguyên nhân khác hẳn, và cả ba đều cần đúng một việc: chạy "Chỉ đăng
+    nhập" cho hồ sơ đó rồi mới "Tái dùng" lại.
+
+    Đo thật 24/08/2026: `_prime_flow_session` chỉ biết BẤM chọn tài khoản, không
+    gõ được mật khẩu. Nên khi Google hỏi lại mật khẩu cho labs.google
+    (`/challenge/pwd`), nó bấm đi bấm lại vào cùng cái tile, và Google kết thúc
+    bằng `/signin/rejected?app_domain=https://labs.google`.
+    """
+    u = url or ""
+    dau = f" (trang dừng ở {u[:120]})"
+    if "/challenge/recaptcha" in u:
+        return (f"Google đang bắt xác minh reCAPTCHA{dau}. Phải có người gõ: bấm "
+                f"'Chỉ đăng nhập' cho hồ sơ này — nút đó mở trình duyệt THẤY ĐƯỢC "
+                f"trên noVNC cổng 6080 — gõ xong captcha thì hệ thống tự đi tiếp. "
+                f"Nút 'Tái dùng' chạy ẩn nên noVNC chỉ hiện màn hình đen.")
+    if "/challenge/pwd" in u:
+        return (f"Google đòi nhập lại mật khẩu cho labs.google{dau}. Lượt 'Tái dùng' "
+                f"chỉ bấm chọn tài khoản chứ không gõ mật khẩu được — bấm 'Chỉ đăng "
+                f"nhập' cho hồ sơ này rồi 'Tái dùng' lại.")
+    if "/signin/rejected" in u:
+        return (f"Google TỪ CHỐI lượt đăng nhập vào labs.google từ phiên này{dau} — "
+                f"thường là hệ quả của việc bị hỏi lại mật khẩu mà lượt 'Tái dùng' "
+                f"không trả lời được. Bấm 'Chỉ đăng nhập' cho hồ sơ này rồi 'Tái "
+                f"dùng' lại.")
+    return (f"Hồ sơ chưa vào được labs.google, còn dừng ở trang đăng nhập Google{dau}. "
+            f"Bấm 'Chỉ đăng nhập' cho hồ sơ này rồi 'Tái dùng' lại.")
+
+
 async def get_or_create_project(
     profile: str,
     headless: bool = False,
@@ -1219,16 +1257,28 @@ async def get_or_create_project(
                 "elapsed_ms": int((time.time() - started) * 1000),
             }
 
-        # Otherwise look for existing project links on /tools/flow root.
-        result = await page.evaluate(
-            """() => {
-                const links = Array.from(document.querySelectorAll('a[href*="/project/"]'))
-                    .map(a => (a.href.match(/\\/project\\/([0-9a-f-]+)/i) || [])[1])
-                    .filter(Boolean);
-                return {existing: links};
-            }"""
-        )
-        existing = result.get("existing", [])
+        # Dự án CŨ: dò nhiều lượt rồi mới dám kết luận "tài khoản chưa có dự án".
+        #
+        # Một lượt quét DOM duy nhất là quá sớm. Danh sách dự án render sau khi
+        # trang đã domcontentloaded, nên "không thấy link /project/ nào" phần lớn
+        # là "chưa kịp hiện" chứ không phải "chưa có dự án" — mà kết luận sai đó
+        # đi thẳng xuống nhánh bấm "Dự án mới", tức ĐẺ THÊM một dự án nữa vào
+        # tài khoản đã có sẵn dự án. Có dự án cũ thì dùng lại, đừng tạo mới.
+        existing: list[str] = []
+        for lan in range(_SO_LUOT_DO_DU_AN):
+            result = await page.evaluate(
+                """() => {
+                    const links = Array.from(document.querySelectorAll('a[href*="/project/"]'))
+                        .map(a => (a.href.match(/\\/project\\/([0-9a-f-]+)/i) || [])[1])
+                        .filter(Boolean);
+                    return {existing: links};
+                }"""
+            )
+            existing = result.get("existing", [])
+            if existing:
+                break
+            if lan < _SO_LUOT_DO_DU_AN - 1:
+                await asyncio.sleep(_NGHI_DO_DU_AN_S)
         if existing:
             return {
                 "project_id": existing[0],
@@ -1236,6 +1286,13 @@ async def get_or_create_project(
                 "project_count": len(existing),
                 "elapsed_ms": int((time.time() - started) * 1000),
             }
+
+        # Chưa vào được ứng dụng Flow thì DỪNG, đừng đi bấm "Dự án mới": trang
+        # đăng nhập của Google cũng "không có dự án nào" theo đúng phép dò trên,
+        # và ba lượt bấm + re-prime phía dưới chỉ tốn thêm ~20 giây để rồi ném ra
+        # một câu đổ lỗi cho quyền Flow của tài khoản.
+        if "accounts.google.com" in (page.url or ""):
+            raise RuntimeError(_loi_chua_vao_duoc_flow(page.url))
 
         # No projects — click "Dự án mới" / "New project" button.
         clicked = await page.evaluate(
@@ -1292,27 +1349,9 @@ async def get_or_create_project(
                 }"""
             )
         if not clicked:
-            # Còn nằm ở accounts.google.com nghĩa là hồ sơ ĐÃ ĐĂNG XUẤT — nói
-            # đúng như thế. Câu "Account may not have Flow access" gửi người đọc
-            # đi kiểm quyền Flow của tài khoản, trong khi việc phải làm là đăng
-            # nhập lại. Đo thật 24/08/2026 (google-benbap2011): trang dừng ở
-            # `/v3/signin/challenge/recaptcha`, giao diện chỉ hiện câu trên, chủ
-            # máy mở noVNC thì thấy màn hình đen — vì lượt "Tái dùng" chạy
-            # headless, không có cửa sổ nào để mà xem.
             u = page.url
             if "accounts.google.com" in u:
-                if "/challenge/recaptcha" in u:
-                    raise RuntimeError(
-                        f"Hồ sơ đã đăng xuất và Google đang bắt xác minh reCAPTCHA "
-                        f"({u[:120]}). Phải có người gõ captcha: bấm 'Chỉ đăng nhập' "
-                        f"cho hồ sơ này (nó mở trình duyệt THẤY ĐƯỢC trên noVNC cổng "
-                        f"6080), gõ xong captcha thì hệ thống tự đi tiếp. Nút 'Tái "
-                        f"dùng' chạy ẩn nên noVNC chỉ hiện màn hình đen."
-                    )
-                raise RuntimeError(
-                    f"Hồ sơ chưa đăng nhập Google (trang dừng ở {u[:120]}). "
-                    f"Bấm 'Chỉ đăng nhập' cho hồ sơ này rồi 'Tái dùng' lại."
-                )
+                raise RuntimeError(_loi_chua_vao_duoc_flow(u))
             raise RuntimeError(
                 f"Could not find 'Dự án mới' / 'New project' button (page: {u[:120]}). "
                 "Account may not have Flow access or session is expired."
