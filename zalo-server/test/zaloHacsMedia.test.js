@@ -143,3 +143,41 @@ test('trang HTML tra ve kem ma 200 khong duoc coi la anh', async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// Hoi quy cho su co 24/08/2026: automation Home Assistant gui anh camera bang
+// URL /api/image_proxy/image.cua_nha_last_motion_image. path.extname() cua
+// duong dan do ra ".cua_nha_last_motion_image", nen downloadToTemp tuong tep da
+// co duoi va bo qua Content-Type image/jpeg; zca-js phan loai dinh kem bang duoi
+// ten nen anh len Zalo duoi dang share.file (fileExt "cua_nha_last_motion_image")
+// chu khong phai anh. Cung anh do Telegram nhan dung vi Telegram soi noi dung.
+test('URL kieu image_proxy cua Home Assistant van ra tep .jpg', async () => {
+  const { saveImage, removeImage } = await import('../utils/helpers.js');
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'image/jpeg' });
+    res.end(JPEG_1X1);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const goc = `http://127.0.0.1:${server.address().port}`;
+
+    const duongDan = await saveImage(
+      `${goc}/api/image_proxy/image.cua_nha_last_motion_image?token=abc`,
+    );
+    try {
+      assert.equal(path.extname(duongDan), '.jpg');
+      assert.equal(fs.readFileSync(duongDan).length, JPEG_1X1.length);
+    } finally {
+      removeImage(duongDan);
+    }
+
+    // Duoi da dung thi khong doi ten — tranh de ra "anh.jpeg.jpg".
+    const giuNguyen = await saveImage(`${goc}/anh.jpeg`);
+    try {
+      assert.equal(path.extname(giuNguyen), '.jpeg');
+    } finally {
+      removeImage(giuNguyen);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
