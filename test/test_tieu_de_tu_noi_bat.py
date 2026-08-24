@@ -134,5 +134,30 @@ class KhongAnSangDongSauTests(unittest.TestCase):
         self.assertIn("**28°C**", _nhan("Nhiệt độ: 28°C"))
 
 
+
+class TelegramCungHieuNghiengTests(unittest.TestCase):
+    """Dòng ghi chú in nghiêng phải hiện đúng trên CẢ Telegram.
+
+    Đường "rich message" của Telegram dựng entity riêng và bản cũ chỉ biết
+    `**đậm**` với `` `mã` `` — thiếu nhánh nghiêng thì người dùng Telegram nhận
+    nguyên hai dấu sao quanh câu ghi chú.
+    """
+
+    def _spans(self, text: str):
+        from services.telegram.rich import _inline_rich_text
+        return _inline_rich_text(text)
+
+    def test_nghieng_thanh_entity_chu_khong_lot_dau_sao(self):
+        ra = self._spans("*Lưu ý: mưa lớn.*")
+        self.assertEqual(ra, [{"type": "italic", "text": "Lưu ý: mưa lớn."}])
+
+    def test_dam_van_dung_khi_di_chung_voi_nghieng(self):
+        ra = self._spans("Có **đậm** và *nghiêng*")
+        kieu = [p["type"] for p in ra if isinstance(p, dict)]
+        self.assertEqual(kieu, ["bold", "italic"])
+
+    def test_chu_thuong_van_tra_ve_chuoi_khong_boc_gi(self):
+        self.assertEqual(self._spans("Bình thường"), "Bình thường")
+
 if __name__ == "__main__":
     unittest.main()

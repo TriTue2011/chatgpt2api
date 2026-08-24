@@ -22,6 +22,10 @@ _OL = re.compile(r"^(\d+)[.)]\s+(.*)$")
 _FENCE = re.compile(r"^```(\w+)?\s*$")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _CODE = re.compile(r"`([^`]+)`")
+# Nghiêng bằng MỘT dấu sao, không dính vào cặp `**`. Bộ nhấn mạnh dùng kiểu này
+# cho dòng ghi chú ("Lưu ý:", "Nguồn:"); thiếu nhánh này thì người dùng
+# Telegram nhận nguyên hai dấu sao quanh câu.
+_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
 
 
 def plain_paragraph(text: str) -> dict[str, Any]:
@@ -224,20 +228,23 @@ def _inline_rich_text(text: str) -> Any:
     no markers, else a list of {type,text} / string parts for bold/code.
     """
     s = text or ""
-    if not _BOLD.search(s) and not _CODE.search(s):
+    if not _BOLD.search(s) and not _CODE.search(s) and not _ITALIC.search(s):
         return s
 
     parts: list[Any] = []
     pos = 0
-    # Combined scan
-    pattern = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+    # Combined scan — `**đậm**` phải đứng TRƯỚC `*nghiêng*` trong nhánh, không
+    # thì dấu mở của cặp đậm bị đọc thành dấu nghiêng.
+    pattern = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`|(?<!\*)\*([^*\n]+)\*(?!\*)")
     for m in pattern.finditer(s):
         if m.start() > pos:
             parts.append(s[pos:m.start()])
         if m.group(1) is not None:
             parts.append({"type": "bold", "text": m.group(1)})
-        else:
+        elif m.group(2) is not None:
             parts.append({"type": "code", "text": m.group(2)})
+        else:
+            parts.append({"type": "italic", "text": m.group(3)})
         pos = m.end()
     if pos < len(s):
         parts.append(s[pos:])
