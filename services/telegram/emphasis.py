@@ -29,17 +29,23 @@ _NUM_UNIT = re.compile(
 )
 
 # Label: value  → bold the value (thông tin chính)
+#
+# Khoảng trắng ở đây phải là ` ` / tab, KHÔNG được dùng `\s`: `\s` nuốt cả dấu
+# xuống dòng, nên một dòng kết thúc bằng dấu hai chấm sẽ ăn luôn DÒNG SAU làm
+# "giá trị" và bôi đậm cả dòng đó. Đo thật 24/08/2026: "- Quảng Ninh:\n- Hải
+# Phòng:" ra "- Quảng Ninh:\n**- Hải Phòng:**" — đậm sai dòng và nuốt dấu đầu
+# dòng. Câu trả lời chia mục (tiêu đề kết thúc bằng ':') dính lỗi này ở MỌI mục.
 _KEY_VALUE = re.compile(
-    r"(?m)^(\s*(?:[-*•]\s*)?(?:"
+    r"(?m)^([ \t]*(?:[-*•][ \t]*)?(?:"
     r"Nhiệt\s*độ|Độ\s*ẩm|Độ\s*ẩm|Humidity|Temp(?:erature)?|"
     r"Trạng\s*thái|Status|Pin|Battery|Điện\s*áp|Dòng|Công\s*suất|"
     r"Áp\s*suất|Chất\s*lượng\s*KK|AQI|PM2\.?5|PM10|"
     r"Giá|Số\s*dư|Tổng|Còn\s*lại|Mức|"
     r"[A-ZÀ-Ỵ][\wÀ-ỹ ]{1,28}"
-    r")\s*[:：]\s*)"
+    r")[ \t]*[:：][ \t]*)"
     r"(?![\*`*_])"
     r"([^\n*`]{1,80}?)"
-    r"(\s*)$",
+    r"([ \t]*)$",
     re.IGNORECASE,
 )
 
@@ -53,6 +59,38 @@ _STATUS = re.compile(
 )
 
 _ALREADY_MD = re.compile(r"(\*\*.+?\*\*|`[^`]+`|__.+?__)", re.DOTALL)
+
+# ── Tiêu đề mục: model viết chữ trơn, bot tự làm nổi ─────────────────────────
+#
+# Yêu cầu 24/08/2026: "kể cả không tô màu nhưng những tiêu đề nổi bật vẫn in đậm
+# hoặc in nghiêng tùy vào phản hồi". Model hay chia câu trả lời dài thành mục
+# bằng một dòng ngắn có emoji hoặc kết thúc bằng dấu hai chấm — nhưng viết chữ
+# trơn, không đánh dấu markdown. Bộ chuyển sang định dạng Zalo/Telegram chỉ tô
+# thứ ĐÃ được đánh dấu, nên mấy dòng đó tới nơi phẳng lì như phần thân.
+#
+# Đo thật trên tin bão Narra gửi 09:58 cùng ngày: bốn dòng "🌧️ Ảnh hưởng chính
+# hiện nay:", "🌀 Vì sao bão đứng yên, đi lòng vòng?", "📍 Dự báo tiếp theo:"…
+# đều là chữ trơn.
+#
+# ĐẬM hay NGHIÊNG tuỳ loại dòng: tiêu đề mục là cấu trúc → đậm; dòng ghi chú /
+# nguồn là phần phụ → nghiêng. Cả hai đều KHÔNG phụ thuộc màu: màu tắt thì
+# `zalo_markdown` giữ nguyên mã `b`/`i`, chỉ bỏ mã `c_…`.
+
+#: Dòng dài hơn ngần này là câu văn, không phải tiêu đề.
+_TRAN_TIEU_DE = 80
+
+#: Emoji mở đầu dòng — dấu hiệu tiêu đề mục quen thuộc nhất của model.
+_RE_EMOJI_DAU = re.compile(
+    "^[\U0001F000-\U0001FAFF☀-➿⬀-⯿←-⇿]")
+
+#: Dòng phụ chú → nghiêng chứ không đậm.
+_RE_GHI_CHU = re.compile(
+    r"^(lưu ý|luu y|ghi chú|ghi chu|chú ý|chu y|nguồn|nguon|tham khảo|note)\b",
+    re.I)
+
+#: Dòng đã có cấu trúc riêng (danh sách, tiêu đề markdown, trích dẫn, bảng, rào
+#: code) thì để yên — chúng đã có đường xử lý khác.
+_RE_DA_CO_CAU_TRUC = re.compile(r"^([-*+•>#|]|\d{1,2}[.)]\s|```|~~~)")
 
 
 def _la_so_thu_tu_dau_dong(text: str, m: "re.Match") -> bool:
@@ -161,6 +199,47 @@ def _wrap(fragment: str, style: str) -> str:
     return f"**{frag}**"
 
 
+def _la_tieu_de(than: str) -> bool:
+    """Dòng này có phải TIÊU ĐỀ MỤC do model viết chữ trơn không."""
+    if len(than) > _TRAN_TIEU_DE or _RE_DA_CO_CAU_TRUC.match(than):
+        return False
+    if "**" in than or "`" in than or "*" in than:
+        return False
+    if not re.search(r"[A-Za-zÀ-ỹ]", than):     # toàn số/ký hiệu thì không phải
+        return False
+    if than.startswith("http"):
+        return False
+    return than.endswith(":") or bool(_RE_EMOJI_DAU.match(than))
+
+
+def _lam_noi_tieu_de(text: str) -> str:
+    """Tự làm nổi tiêu đề mục / dòng ghi chú mà model để chữ trơn.
+
+    Chạy TRƯỚC bước nhấn mạnh số liệu: dòng đã bọc `**` sẽ được coi là "đã có
+    markdown" ở bước sau, nên số nằm trong tiêu đề không bị bọc thêm một lớp
+    nữa (lồng `**` là cách chắc chắn để bộ chuyển đọc lệch).
+    """
+    ra: list[str] = []
+    trong_code = False
+    for dong in text.split("\n"):
+        than = dong.strip()
+        if than.startswith("```") or than.startswith("~~~"):
+            trong_code = not trong_code
+            ra.append(dong)
+            continue
+        if trong_code or not than:
+            ra.append(dong)
+            continue
+        le = dong[:len(dong) - len(dong.lstrip())]
+        if _RE_GHI_CHU.match(than) and len(than) <= _TRAN_TIEU_DE and "*" not in than:
+            ra.append(f"{le}*{than}*")
+        elif _la_tieu_de(than):
+            ra.append(f"{le}**{than}**")
+        else:
+            ra.append(dong)
+    return "\n".join(ra)
+
+
 def emphasize_text(
     text: str,
     *,
@@ -181,6 +260,10 @@ def emphasize_text(
     if not (st.get("numbers") or st.get("units") or st.get("key_info")):
         return t
     style = str(st.get("style") or "bold")
+
+    # Tiêu đề mục đi cùng nhóm "ý chính": tắt nhấn mạnh ý chính là tắt luôn.
+    if st.get("key_info"):
+        t = _lam_noi_tieu_de(t)
 
     parts: list[str] = []
     pos = 0
