@@ -55,6 +55,10 @@ Dự án còn đi kèm **Captcha Solver** giúp giải quyết các rào cản t
 | **Disk** | 5GB | 20GB+ (Dành cho lưu trữ RAG và Cache) |
 | **Phần Mềm** | Docker & Docker Compose | Phiên bản Docker mới nhất (24.0+) |
 
+> 📦 **Trước khi `docker pull`**, đọc [CHUAN_BI_TRUOC_KHI_PULL.md](CHUAN_BI_TRUOC_KHI_PULL.md):
+> cần bao nhiêu đĩa thật, cài Docker trên Linux / Portainer / NAS ra sao, và
+> những thứ **không** nằm sẵn trong image (model giọng nói) phải tải riêng.
+
 ---
 
 ## 🚀 Hướng Dẫn Cài Đặt Chi Tiết Từng Bước

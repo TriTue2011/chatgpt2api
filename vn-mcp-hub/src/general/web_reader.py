@@ -29,6 +29,24 @@ _UA = (
 )
 
 
+def _chrome_launch_kwargs() -> dict[str, str]:
+    """Tham số để mở Chrome/Chromium ĐÃ CÀI SẴN trong image.
+
+    Image không còn tải bản Chromium riêng của patchright, nên gọi
+    `p.chromium.launch()` trống là lỗi "Executable doesn't exist". Trỏ thẳng
+    vào Google Chrome (amd64) hoặc chromium của Debian (arm64).
+    """
+    import os.path
+    import shutil
+
+    if shutil.which("google-chrome") or shutil.which("google-chrome-stable"):
+        return {"channel": "chrome"}
+    for duong in ("/usr/bin/chromium", "/usr/bin/chromium-browser"):
+        if os.path.exists(duong):
+            return {"executable_path": duong}
+    return {}
+
+
 def _fetch_html(url: str, timeout: float = 20.0) -> tuple[str, str]:
     """Return (html, engine). Try Scrapling (stealth HTTP) then httpx.
 
@@ -156,7 +174,7 @@ async def read_url_rendered(url: str, max_chars: int = 12000) -> str:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=True, **_chrome_launch_kwargs())
             try:
                 page = await browser.new_page(user_agent=_UA)
                 await page.route("**/*", _chan_noi_bo)

@@ -70,11 +70,28 @@ def _detect_chrome_major(default: str = "148") -> str:
 _CHROME_MAJOR = _detect_chrome_major()
 
 # Google Chrome is amd64-only; on arm64 the image ships Debian chromium instead.
-# Use Playwright channel="chrome" only when real Chrome is present, else the
-# "chromium" channel (bundled patchright chromium) so the fallback launch works
-# on both architectures.
+#
+# Image KHÔNG còn tải bản Chromium riêng của patchright (tiết kiệm 651 MB), nên
+# nhánh dự phòng bắt buộc phải trỏ vào trình duyệt CÓ THẬT trong image:
+#   amd64 → Google Chrome (channel="chrome")
+#   arm64 → chromium của Debian (executable_path=/usr/bin/chromium)
+# Trước đây nhánh arm64 trả channel="chromium", tức bản patchright tải về — bỏ
+# bản đó mà giữ nguyên dòng cũ là arm64 chết ngay lúc mở trình duyệt.
+import os.path as _os_path
 import shutil as _shutil
-_CHROME_CHANNEL = "chrome" if (_shutil.which("google-chrome") or _shutil.which("google-chrome-stable")) else "chromium"
+
+
+def _chrome_launch_kwargs() -> dict[str, str]:
+    if _shutil.which("google-chrome") or _shutil.which("google-chrome-stable"):
+        return {"channel": "chrome"}
+    for _duong in ("/usr/bin/chromium", "/usr/bin/chromium-browser"):
+        if _os_path.exists(_duong):
+            return {"executable_path": _duong}
+    # Không có trình duyệt hệ thống (máy dev): để patchright tự tìm bản của nó.
+    return {"channel": "chromium"}
+
+
+_CHROME_LAUNCH_KWARGS = _chrome_launch_kwargs()
 
 _CHROME_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -527,7 +544,7 @@ class BrowserPool:
                     "--media-cache-size=1048576",
                 ],
                 ignore_default_args=["--enable-automation"],
-                channel=_CHROME_CHANNEL,
+                **_CHROME_LAUNCH_KWARGS,
             )
             await context.add_init_script(_select_stealth_script())
 

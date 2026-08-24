@@ -20,7 +20,10 @@ markitdown[pdf,docx,xlsx,xls,pptx]>=0.0.1
 pytesseract>=0.3.0
 pdf2image>=1.17.0
 vnstock>=4.0.0
-ddddocr>=1.4.0
+# ddddocr ĐÃ BỎ (24/08/2026): không một dòng `import ddddocr` nào trong repo,
+# nhưng gói này chiếm 85 MB và còn kéo theo opencv-python bản GUI. Captcha ảnh
+# đang được giải bằng playwright-recaptcha (âm thanh) và CloakBrowser, không
+# qua ddddocr. Cần lại thì thêm dòng `ddddocr>=1.4.0` vào đây.
 requests>=2.31.0
 cloudscraper>=1.2.0
 # Vision cục bộ cho phụ đề: PySceneDetect chạy CPU, OpenCV headless không kéo

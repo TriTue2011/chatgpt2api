@@ -27,9 +27,13 @@ Tài liệu này dành cho người **mới cài lần đầu**. Đọc theo th�
 |---|---|---|
 | Docker + Docker Compose | ✅ | Bản mới bất kỳ |
 | RAM | ✅ | Tối thiểu 2 GB; bật giọng nói local nên có 4 GB |
-| Ổ đĩa | ✅ | ~10 GB cho image (có sẵn Chrome để tự động hoá web) |
+| Ổ đĩa | ✅ | ~12 GB: image 5,7 GB (kèm Chrome để tự động hoá web) + chỗ cho dữ liệu và model giọng nói |
 | Tài khoản AI | ✅ | ít nhất một: ChatGPT, Gemini, Claude… |
 | Domain HTTPS | ❌ | chỉ cần khi dùng bot Telegram/Zalo (xem Cloudflare Tunnel) |
+
+Bảng trên là mức tối thiểu để chạy. Muốn biết con số đĩa đã đo thật, cách cài
+Docker trên NAS (Synology / QNAP / TrueNAS / Unraid), và danh sách những thứ
+**không** đóng gói sẵn trong image: [CHUAN_BI_TRUOC_KHI_PULL.md](CHUAN_BI_TRUOC_KHI_PULL.md).
 
 ### 1.2. Cách A — Docker Compose (dòng lệnh)
 
