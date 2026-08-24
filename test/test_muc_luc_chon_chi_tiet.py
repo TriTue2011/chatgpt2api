@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -145,7 +146,8 @@ class MaKhongTrungTests(unittest.TestCase):
         with patch.object(ml, "_db", lambda: None):
             ml._reset_for_tests()
             ml.set_pending("u5", [{"ma": "AA2", "noi_dung": "tin xa tít"}])
-            self.assertIn("tin xa tít", ml.resolve_reply("u5", "aa2") or "")
+            self.assertEqual((ml.resolve_reply("u5", "aa2") or {}).get("noi_dung"),
+                             "tin xa tít")
 
 
 class ChonMucTests(unittest.TestCase):
@@ -158,10 +160,12 @@ class ChonMucTests(unittest.TestCase):
         _, muc = ml.danh_so(BAN_TIN)
         ml.set_pending("u1", muc)
 
-    def test_go_ma_ra_cau_hoi_chi_tiet_dung_muc(self):
-        cau = ml.resolve_reply("u1", "B2")
-        self.assertIsNotNone(cau)
-        self.assertIn("Người trẻ Mỹ từ bỏ giấc mơ mua nhà", cau)
+    def test_go_ma_ra_dung_muc(self):
+        chon = ml.resolve_reply("u1", "B2")
+        self.assertIsNotNone(chon)
+        self.assertEqual(chon["ma"], "B2")
+        self.assertEqual(chon["noi_dung"], "Người trẻ Mỹ từ bỏ giấc mơ mua nhà")
+        self.assertIn("Người trẻ Mỹ từ bỏ giấc mơ mua nhà", chon["cau_hoi"])
 
     def test_khong_phan_biet_hoa_thuong_va_dau_cham(self):
         for go in ("b2", "B2.", " b2 ", "B2)"):
@@ -190,8 +194,8 @@ class ChonMucTests(unittest.TestCase):
         """Câu bơm vào phải ĐỦ DÀI để `_la_yeu_cau_tin_tuc` bỏ qua — nếu không,
         chọn một tin lại nhận về nguyên bản tin tổng hợp lần nữa."""
         from services.agent.orchestrator import _la_yeu_cau_tin_tuc
-        cau = ml.resolve_reply("u1", "C1")
-        self.assertIsNone(_la_yeu_cau_tin_tuc(cau))
+        chon = ml.resolve_reply("u1", "C1")
+        self.assertIsNone(_la_yeu_cau_tin_tuc(chon["cau_hoi"]))
 
 
 class GanVaoKetQuaTests(unittest.TestCase):
@@ -228,6 +232,180 @@ class GanVaoKetQuaTests(unittest.TestCase):
         self.assertIn("A1. ", kq.get("text") or "")
         self.assertTrue(kq.get("muc_luc"))
         self.assertIsNotNone(ml.resolve_reply("u_finalize", "A1"))
+
+
+class NguonBanTinTests(unittest.TestCase):
+    """Mục của BẢN TIN phải được đánh dấu `nguon="tin"`.
+
+    Đó là thứ duy nhất phân biệt "tra tin theo tiêu đề" với "hỏi trợ lý". Mất
+    dấu này thì tiêu đề tin lại chui vào vòng trợ lý, và mọi tầng tra cứu phía
+    sau nhận nguyên câu lời dặn làm truy vấn — đúng lỗi ngày 24/08 (bot kể sách
+    giáo khoa Tiếng Việt lớp 2 cho tin "Thần đồng 7 tuổi đi học ở đại học").
+    """
+
+    def setUp(self):
+        ml._reset_for_tests()
+        self._db = patch.object(ml, "_db", lambda: None)
+        self._db.start()
+        self.addCleanup(self._db.stop)
+
+    def test_ban_tin_giu_nguon_tin(self):
+        kq = ml.apply_to_result({"text": BAN_TIN, "muc_luc_nguon": "tin"}, "u1")
+        self.assertNotIn("muc_luc_nguon", kq,
+                         "cờ nội bộ không được lọt xuống kênh chat")
+        chon = ml.resolve_reply("u1", "B2")
+        self.assertEqual(chon["nguon"], "tin")
+        self.assertEqual(chon["noi_dung"], "Người trẻ Mỹ từ bỏ giấc mơ mua nhà")
+
+    def test_danh_sach_thuong_khong_mang_nguon_tin(self):
+        """Danh sách việc cần làm vẫn đi đường hỏi trợ lý như cũ."""
+        ml.apply_to_result({"text": BAN_TIN}, "u2")
+        self.assertEqual(ml.resolve_reply("u2", "B2")["nguon"], "")
+
+    def test_ban_ghi_cu_khong_co_nguon_van_doc_duoc(self):
+        """Bản chờ ghi trước lần nâng cấp này là list trần trong SQLite. Đọc
+        không ra thì người đang đọc dở bản tin gõ mã xong nhận 'chưa rõ ý'."""
+        import json
+        ban = [{"ma": "A1", "noi_dung": "tin cũ"}]
+
+        class _GiaDB:
+            def execute(self, sql, args=()):
+                self.sql = sql
+                return self
+
+            def fetchone(self):
+                return (json.dumps(ban, ensure_ascii=False), time.time())
+
+            def commit(self):
+                pass
+
+        with patch.object(ml, "_db", lambda: _GiaDB()):
+            ml._reset_for_tests()
+            chon = ml.resolve_reply("u3", "A1")
+        self.assertEqual(chon["noi_dung"], "tin cũ")
+        self.assertEqual(chon["nguon"], "")
+
+
+class DauNoiTinTucTests(unittest.TestCase):
+    """Khoá ĐIỂM ĐẤU NỐI phía tin tức: đường tắt bản tin phải gắn cờ nguồn, và
+    orchestrator phải có nhánh tra thẳng tiêu đề (mục 1.3)."""
+
+    def test_duong_tat_ban_tin_gan_co_nguon(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parents[1]
+               / "services" / "agent" / "orchestrator.py").read_text("utf-8")
+        self.assertIn('_kq_ws["muc_luc_nguon"] = "tin"', src,
+                      "bản tin không gắn nguồn thì mã mục mất đường tra tin")
+        self.assertIn("_tin_da_chon", src,
+                      "thiếu nhánh tra thẳng tiêu đề tin vừa chọn")
+
+    def test_tra_thang_bang_tieu_de_tran(self):
+        """Query phải là TIÊU ĐỀ TRẦN. Thêm chữ 'tin tức' vào là gateway tắt
+        phần tiêm kết quả tìm kiếm (dedicated_mcp) rồi trông chờ MCP tin tức —
+        mà MCP đó chỉ có bản tin tổng hợp, không có bài chi tiết."""
+        from services.mcp_client import query_has_specialized_mcp as _qhs
+        ml._reset_for_tests()
+        with patch.object(ml, "_db", lambda: None):
+            ml.apply_to_result({"text": BAN_TIN, "muc_luc_nguon": "tin"}, "u4")
+            chon = ml.resolve_reply("u4", "A1")
+        self.assertFalse(_qhs(chon["noi_dung"]),
+                         "tiêu đề trần không được kích hoạt MCP chuyên dụng")
+
+
+class ChonTinChayThatTests(unittest.TestCase):
+    """Chạy THẬT qua `orchestrate`: gõ mã tin → tra web bằng ĐÚNG tiêu đề.
+
+    Test nguồn (đọc chuỗi trong file) chỉ chứng minh dòng code còn đó. Cái hỏng
+    hôm 24/08 nằm ở ĐƯỜNG ĐI: câu bơm ra bị mọi tầng tra cứu phía sau lấy nguyên
+    văn làm truy vấn. Nên chỗ cần khoá là truy vấn thật sự gửi đi.
+    """
+
+    def setUp(self):
+        from test._fakes import FakeCallModel, install_call_model, install_data_dir
+        import services.agent.orchestrator as orch
+        self.orch = orch
+        self._uid = "zalop_test_ma_muc"
+        ml._reset_for_tests()
+        self._data = install_data_dir()
+        self._data.__enter__()
+        self.addCleanup(lambda: self._data.__exit__(None, None, None))
+        self._db = patch.object(ml, "_db", lambda: None)
+        self._db.start()
+        self.addCleanup(self._db.stop)
+        # Model giả: câu THƯỜNG vẫn đi qua nó, còn tin đã chọn thì KHÔNG được.
+        self._llm = install_call_model(FakeCallModel(text="dạ em nghe ạ"))
+        self.model = self._llm.__enter__()
+        self.addCleanup(lambda: self._llm.__exit__(None, None, None))
+
+        self.da_tra: list[str] = []
+        _that = orch.caps.get
+
+        def _tra_gia(args, ctx):
+            self.da_tra.append(str(args.get("query") or ""))
+            return {"text": "Chi tiết vụ này: … (bản tin đầy đủ)"}
+
+        class _CapGia:
+            handler = staticmethod(_tra_gia)
+
+        def _gia(ten):
+            return _CapGia if ten == "web_search" else _that(ten)
+
+        self._caps = patch.object(orch.caps, "get", _gia)
+        self._caps.start()
+        self.addCleanup(self._caps.stop)
+
+    def test_go_ma_tin_thi_tra_dung_tieu_de_tran(self):
+        self.orch._finalize(self._uid, {"text": BAN_TIN, "muc_luc_nguon": "tin"})
+        out = self.orch.orchestrate("B2", self._uid)
+        self.assertEqual(self.da_tra, ["Người trẻ Mỹ từ bỏ giấc mơ mua nhà"],
+                         "truy vấn phải là TIÊU ĐỀ TRẦN, không bọc lời dặn")
+        self.assertIn("Chi tiết vụ này", out.get("text") or "")
+        self.assertEqual(self.model.calls, [],
+                         "tin đã chọn thì tra thẳng, không vòng qua model")
+
+    def test_ma_khong_co_trong_ban_cho_thi_khong_tra_gi(self):
+        """Không có bản chờ thì "B2" là câu thường — không được tự đi tra web."""
+        out = self.orch.orchestrate("B2", self._uid)
+        self.assertEqual(self.da_tra, [])
+        self.assertIn("dạ em nghe ạ", out.get("text") or "")
+
+
+class HuongDanChoTroLyTests(unittest.TestCase):
+    """Lời dặn cho model phải KHỚP thứ code thật sự làm.
+
+    Hai chỗ lệch đã đo được ngày 24/08:
+      * model không hề được kể MÃ MỤC là gì (mã do code gắn) — nên khi người
+        dùng nhắc "có lựa chọn E1 mà" thì nó đáp "Dạ đúng rồi anh ạ… anh chọn
+        lại E1 giúp em nhé", tức là gật đầu với một thứ nó không thấy;
+      * bảng chỉ đường kể tên 8 mục bản tin KHÁC hẳn 8 mục code gửi đi, nên khi
+        phải nói về chính bản tin vừa gửi thì nó đối chiếu với bố cục không có
+        thật.
+    """
+
+    def setUp(self):
+        from test._fakes import install_data_dir
+        import services.agent.orchestrator as orch
+        self.orch = orch
+        self._data = install_data_dir()
+        self._data.__enter__()
+        self.addCleanup(lambda: self._data.__exit__(None, None, None))
+        self.prompt = orch._build_system_prompt("u_huong_dan", None)
+
+    def test_co_day_du_luat_ve_ma_muc(self):
+        self.assertIn("MÃ MỤC", self.prompt)
+        for y in ("hết hiệu lực", "KHÔNG tự đánh mã",
+                  "không đoán mục đó nói về gì"):
+            self.assertIn(y, self.prompt, f"thiếu ý «{y}» trong lời dặn mã mục")
+
+    def test_ten_8_muc_ban_tin_dung_nhu_code_gui(self):
+        for ten in ("⚽ Thể thao", "💼 Kinh tế", "🏙️ Xã hội",
+                    "💻 Công nghệ thông tin", "🎓 Giáo dục", "🩺 Y tế",
+                    "🎬 Giải trí", "🌍 Thế giới"):
+            self.assertIn(ten, self.prompt, f"bảng chỉ đường thiếu mục {ten}")
+        for sai in ("Thời sự Việt Nam", "Pháp luật & Xã hội",
+                    "Sức khỏe & Đời sống", "Công nghệ & Khoa học"):
+            self.assertNotIn(sai, self.prompt,
+                             f"còn kể mục «{sai}» — bản tin thật không có mục này")
 
 
 if __name__ == "__main__":

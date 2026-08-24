@@ -73,6 +73,17 @@ _TAT_KHO = ("thư viện", "thu vien", "trong kho", "vừa tạo", "đã tạo",
 _TAT_LOAI = ((("video", "clip", "phim"), "video"),
              (("nhạc", "nhac", "bài hát", "bai hat", "audio"), "music"),
              (("ảnh", "anh", "hình", "hinh", "photo"), "image"))
+# "anh" trần vừa là "ảnh" gõ thiếu dấu, vừa là ĐẠI TỪ xưng hô — mà đại từ ấy có
+# mặt trong gần như mọi câu người dùng nói với bot. Đo thật 24/08 16:58:42: câu
+# "Em xem lại nhé, em trả lời ANH tin tức hôm nay có E1, anh chọn sao không trả
+# lời" khớp đủ ba dấu hiệu (xem · xem lại · anh) nên bot gửi về một tấm ảnh
+# trong thư viện giữa lúc đang nói chuyện tin tức.
+#
+# Câu CÓ DẤU thì người dùng viết "ảnh" có dấu; chỉ câu gõ KHÔNG DẤU mới được
+# tính "anh" là ảnh. Cùng lý lẽ với chú thích của `_TAT_VE_ANH` bên dưới.
+_CO_DAU_VN = re.compile(
+    r"[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]",
+    re.I)
 _TAT_SO = re.compile(r"\b(\d{1,2})\s*(?:tấm|tam|cái|cai|bức|buc|)\s*"
                      r"(?:ảnh|anh|hình|hinh|video|clip)?", re.I)
 # PHẠM VI: "của TÔI tạo" ≠ "trong THƯ VIỆN" (cả kho). Chủ máy chốt 31/07:
@@ -100,8 +111,10 @@ def _tat_lay_media(text: str) -> dict | None:
         return None
     if not any(k in t for k in _TAT_KHO):
         return None
+    co_dau = bool(_CO_DAU_VN.search(t))
     for tu, kind in _TAT_LOAI:
-        if any(x in t for x in tu):
+        dau_hieu = [x for x in tu if not (x == "anh" and co_dau)]
+        if any(x in t for x in dau_hieu):
             ra: dict[str, Any] = {"kind": kind}
             m = _TAT_SO.search(t)
             if m and kind == "image":
@@ -136,6 +149,16 @@ _TIN_NGAY_KHAC = re.compile(
     r"thang truoc|năm ngoái|nam ngoai|ngày\s*\d{1,2}|\d{1,2}[/-]\d{1,2})", re.I)
 
 
+# Câu NHẮC LẠI / PHÀN NÀN về bản tin vừa gửi KHÔNG phải lời xin bản tin mới.
+# Đo thật 24/08 16:55:52: "Nhầm à E1 tin tức mà" khớp chữ "tin tức" rồi được đem
+# NGUYÊN VĂN làm chủ đề tra tin, nên bot đáp "Chưa tìm thấy tin nào về 'Nhầm E1
+# mà'" — người dùng đang sửa lưng bot thì bị bot tra cứu chính lời sửa lưng ấy.
+_TIN_NOI_VE_BOT = re.compile(
+    r"(nhầm|nham\b|sai rồi|sai roi|không phải|khong phai|sao không|sao khong|"
+    r"sao chưa|sao chua|anh hỏi|anh hoi|em trả lời|em tra loi|vừa nói|vua noi|"
+    r"vừa gửi|vua gui|lựa chọn|lua chon|mã mục|ma muc)", re.I)
+
+
 def _la_yeu_cau_tin_tuc(text: str) -> str | None:
     """Câu xin TIN TỨC tổng hợp → 'moi' (tin mới, dùng MCP) | 'ngay' (ngày khác,
     dùng web_search) | None (không phải xin bản tin).
@@ -145,6 +168,8 @@ def _la_yeu_cau_tin_tuc(text: str) -> str | None:
     if len(t) > 40:            # câu dài = hỏi cụ thể, không phải xin bản tin chung
         return None
     if not _TAT_TIN_TUC.search(t):
+        return None
+    if _TIN_NOI_VE_BOT.search(t):   # đang nói VỀ bản tin cũ, không xin tin mới
         return None
     return "ngay" if _TIN_NGAY_KHAC.search(t) else "moi"
 
@@ -1145,16 +1170,37 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "<<<END>>>\n"
         "Hệ thống tự vẽ nút (Telegram) hoặc danh sách số (Zalo). "
         "Chỉ dùng khi THẬT SỰ cần chọn; đừng lạm dụng mỗi câu.")
+    # Mã mục do CODE gắn (services/agent/muc_luc.py) nên model không hề biết nó
+    # tồn tại. Đo thật 24/08 16:57:20: người dùng nhắc "Anh hỏi tin tức hôm nay,
+    # có lựa chọn E1 mà" thì bot đáp "Dạ đúng rồi anh ạ… Anh chọn lại E1 giúp em
+    # nhé" — nói như đã hiểu trong khi không biết E1 là gì, rồi mời chọn lại một
+    # thứ vừa hỏng. Trước đó một phút, người dùng dán chính bản tin ấy trở lại
+    # thì bot bảo "nội dung bị cắt ở đoạn C" và tự dựng bảng 1-4 của riêng nó.
+    parts.append(
+        "## Danh sách có MÃ MỤC (A1, B2…)\n"
+        "Bản tin và danh sách dài em gửi đi được HỆ THỐNG tự gắn mã mục (A1, "
+        "B2…) kèm câu mời «nhắn mã mục đó cho em». Người dùng nhắn lại đúng một "
+        "mã thì hệ thống tự tra rồi đưa thẳng nội dung mục ấy — em không phải "
+        "nhớ danh sách, và cũng KHÔNG tự đánh mã vào câu trả lời của mình.\n"
+        "Nếu một mã trần ('E1', 'B2') đi tới được em, nghĩa là danh sách cũ đã "
+        "hết hiệu lực (quá 30 phút) hoặc mã đó không có trong danh sách. Khi ấy "
+        "nói THẲNG một câu đúng như vậy rồi mời họ nhắn lại yêu cầu cũ ('tin "
+        "tức hôm nay') để chọn tiếp. TUYỆT ĐỐI không đoán mục đó nói về gì, "
+        "không đáp 'dạ đúng rồi' cho một thứ em không thấy, và không dựng bảng "
+        "đánh số của riêng em để thay thế.")
     parts.append(
         "## Bảng chỉ đường (định tuyến việc — LÀM ĐÚNG NHÁNH, KHÔNG HỎI LẠI)\n"
         "- Vẽ/tạo ảnh → generate_image. Tạo nhạc/bài hát → generate_music. "
         "Tạo video → generate_video. Viết/sửa code → write_code. "
         "Tra cứu tin tức/giá cả → web_search. HAI KIỂU tin, xử lý KHÁC nhau:\n"
+        # Tên 8 mục phải khớp `MUC_BAN_TIN` của vn-mcp-hub — đó là bản tin
+        # người dùng THẬT SỰ nhận. Bản cũ kể tám mục khác hẳn (Thời sự Việt
+        # Nam, Pháp luật & Xã hội…), nên khi phải nói về chính bản tin vừa gửi
+        # thì model đối chiếu với một bố cục không tồn tại.
         "  • Tin CHUNG (không nêu chủ đề): 'tin tức hôm nay', 'bản tin', 'điểm "
-        "tin', 'có gì mới' → chia ĐẦY ĐỦ 8 đầu mục (🇻🇳 Thời sự Việt Nam, 🌎 Thế "
-        "giới, 💼 Kinh doanh & Kinh tế, 📱 Công nghệ & Khoa học, ⚽ Thể thao, 🎨 "
-        "Giải trí & Văn hóa, 🏥 Sức khỏe & Đời sống, ⚖️ Pháp luật & Xã hội), mỗi "
-        "mục đúng 3 tiêu đề mới nhất kèm tóm tắt ngắn.\n"
+        "tin', 'có gì mới' → chia ĐẦY ĐỦ 8 đầu mục (⚽ Thể thao, 💼 Kinh tế, "
+        "🏙️ Xã hội, 💻 Công nghệ thông tin, 🎓 Giáo dục, 🩺 Y tế, 🎬 Giải trí, "
+        "🌍 Thế giới), mỗi mục đúng 3 tiêu đề mới nhất kèm tóm tắt ngắn.\n"
         "  • Tin về MỘT CHỦ ĐỀ cụ thể: 'tin bão', 'tin về <sự kiện/người/nơi>', "
         "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → search ĐÚNG chủ đề "
         "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
@@ -1534,12 +1580,15 @@ def _orchestrate_locked(user_text: str, user_id: str,
     # 0.1) Không phải lựa chọn của câu hỏi nào → có thể là MÃ MỤC của danh sách
     # vừa gửi ("A1", "3"). Tra sau ask_choices: câu hỏi model chủ động đặt được
     # ưu tiên, vì bản chờ mã mục sống tới 30 phút nên hay còn tồn.
+    _tin_da_chon = ""      # tiêu đề tin vừa được chọn bằng mã mục (mục 1.44)
     if not picked:
         try:
             from services.agent import muc_luc as _ml
             _chon_muc = _ml.resolve_reply(user_id, user_text)
             if _chon_muc:
-                user_text = _chon_muc
+                user_text = _chon_muc["cau_hoi"]
+                if _chon_muc.get("nguon") == "tin":
+                    _tin_da_chon = _chon_muc["noi_dung"]
         except Exception:
             pass
 
@@ -1606,6 +1655,44 @@ def _orchestrate_locked(user_text: str, user_id: str,
     max_h = sess.max_history() if sess.is_enabled() else 16
     if len(hist) > max_h * 2:
         del hist[: len(hist) - max_h * 2]
+
+    # 1.3) Chọn MỘT TIN trong bản tin bằng mã mục (A1/E1…) → tra THẲNG bằng
+    # chính TIÊU ĐỀ đó, không đưa vào vòng trợ lý.
+    #
+    # Vì sao phải làm bằng code ở đây: truy vấn tra cứu ở mọi tầng phía sau là
+    # NGUYÊN VĂN câu người dùng. Bản đầu bơm câu «Xem chi tiết mục này: "…". Tra
+    # cứu thêm rồi kể đầy đủ.» vào vòng trợ lý, nên searxng, PubMed, CrossRef,
+    # Wikipedia và RAG kho tri thức đều đi tìm cả phần lời dặn. Đo thật 24/08:
+    # chọn tin "Thần đồng 7 tuổi đi học ở đại học top đầu châu Á" thì kho giáo
+    # dục khớp chữ "học" (khoảng cách 0,47 — rất xa) rồi bot kể về sách giáo
+    # khoa Tiếng Việt lớp 2; lần trước đó là điều khoản sử dụng VTVgo/iQIYI.
+    #
+    # Query là TIÊU ĐỀ TRẦN, KHÔNG thêm chữ "tin tức": `query_has_specialized_mcp`
+    # thấy "tin tức" là tắt luôn phần tiêm kết quả tìm kiếm của gateway
+    # (search_skipped=dedicated_mcp) rồi trông chờ model tự gọi MCP tin tức —
+    # mà MCP đó chỉ có bản tin tổng hợp, không có bài chi tiết.
+    #
+    # Đặt TRƯỚC mọi đường tắt khác: ý người dùng đã được chốt bằng mã mục rồi,
+    # không để đường tắt nào diễn giải lại tiêu đề tin thành việc khác.
+    if _tin_da_chon and (allow is None or "web" in allow):
+        try:
+            _cap_tin = caps.get("web_search")
+            _kq_tin = (_cap_tin.handler({"query": _tin_da_chon},
+                                        {"user_id": user_id})
+                       if _cap_tin else None)
+        except Exception as exc:
+            logger.warning({"event": "agent_chon_tin_loi", "error": str(exc)[:150]})
+            _kq_tin = None
+        if _kq_tin and str(_kq_tin.get("text") or "").strip():
+            logger.info({"event": "agent_chon_tin", "tieu_de": _tin_da_chon[:80]})
+            # Danh sách tin liên quan trong câu trả lời cũng được đánh mã tiếp,
+            # và vẫn tính là "tin" — gõ mã lần nữa lại tra thẳng như lần này.
+            _kq_tin["muc_luc_nguon"] = "tin"
+            out_c = _finalize(user_id, _kq_tin)
+            hist.append({"role": "assistant", "content": out_c.get("text") or ""})
+            _persist_history(user_id, hist)
+            _journal(str(out_c.get("text") or ""))
+            return out_c
 
     # 1.35) Luồng Facebook CÓ TRẠNG THÁI CHỜ (chữ / link / video-URL). Chặn
     # TRƯỚC LLM: tin nhập link/nội dung phải được bắt đúng làm input của bài
@@ -1754,6 +1841,9 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 _kq_ws = None
         if _kq_ws and str(_kq_ws.get("text") or "").strip():
             logger.info({"event": "agent_tat_tintuc", "loai": _loai_tin})
+            # Đánh dấu NGUỒN cho `muc_luc`: mã mục của bản tin phải được tra
+            # bằng đường tin tức (mục 1.44), không phải hỏi trợ lý.
+            _kq_ws["muc_luc_nguon"] = "tin"
             # KHÔNG nhờ model bày lại bản tin nữa: định dạng (chia mục, gạch
             # đầu dòng, bỏ tóm tắt, không link) đã làm trọn bằng code ở trên, mà
             # bản tin lại quá dài để model kịp xử lý trong hạn chờ.
