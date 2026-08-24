@@ -2,7 +2,12 @@
 import { Zalo, ThreadType } from 'zca-js';
 import { getPROXIES, getAvailableProxyIndex } from '../../services/proxyService.js';
 import { configureReconnectDependencies, setupEventListeners } from '../../eventListeners.js';
-import { configureExpiryDependencies, napTuDia, scheduleUndo } from '../../services/messageExpiry.js';
+import {
+    configureExpiryDependencies,
+    napTuDia,
+    scheduleUndo,
+    scheduleUndoRecent,
+} from '../../services/messageExpiry.js';
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodefetch from "node-fetch";
 import sharp from 'sharp';
@@ -351,6 +356,42 @@ export async function sendMessageByAccount(req, res) {
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
+    }
+}
+
+// API hẹn thu hồi những tin bot ĐÃ GỬI trong một khung chat.
+//
+// Khác `ttl` lúc gửi ở chỗ: tin đã nằm trong khung chat rồi. Người dùng nói
+// "xoá phản hồi vừa nãy sau 15 phút" thì đây là đường duy nhất — msgId của tin
+// cũ không ai còn giữ, chỉ messageExpiry nhớ qua bản dội về của listener.
+export async function scheduleUndoRecentByAccount(req, res) {
+    try {
+        const { threadId, accountSelection, ttl, soTin } = req.body;
+
+        if (!threadId) {
+            return res.status(400).json({ success: false, error: 'threadId là bắt buộc' });
+        }
+        const ttlMs = normalizeMessageTtl(ttl);
+        if (!ttlMs) {
+            return res.status(400).json({ success: false, error: 'ttl phải lớn hơn 0' });
+        }
+
+        const account = getAccountFromSelection(accountSelection);
+        const ketQua = scheduleUndoRecent({
+            ownId: account.ownId,
+            threadId: String(threadId),
+            soTin,
+            ttlMs,
+        });
+
+        res.json({
+            success: true,
+            messageTtl: ketQua,
+            usedAccount: { ownId: account.ownId, phoneNumber: account.phoneNumber },
+        });
+    } catch (error) {
+        const status = /ttl/i.test(error.message || '') ? 400 : 500;
+        res.status(status).json({ success: false, error: error.message });
     }
 }
 

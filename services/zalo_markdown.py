@@ -6,6 +6,22 @@ Zalo personal API ``sendMessageByAccount`` nhận::
 
 - ``start`` / ``len`` tính theo UTF-16 (JS), không phải len Python thuần.
 - Màu: red / orange / yellow / green (token ``c_…``) + bold.
+
+CÁCH DỰNG: ĐỌC THEO DÒNG, KHÔNG QUÉT CẢ BÀI
+
+Bản trước quét cả chuỗi bằng một ngăn xếp dấu mở/đóng. Một dấu ``*`` lẻ ở bất
+kỳ đâu — mà dấu đầu dòng kiểu ``* mục`` thì luôn lẻ — làm lệch ngăn xếp cho
+TOÀN BỘ phần còn lại: hai dòng gạch đầu dòng liền nhau bị ghép thành một vùng
+nghiêng, còn ``## Tiêu đề`` và ``**đậm**` nằm giữa thì lọt ra nguyên dấu.
+Đo thật trên tin gửi lúc 06:26 ngày 24/08/2026: người dùng nhận nguyên chuỗi
+``## Goose là gì?`` và ``**1**. MCP rất mạnh``.
+
+Nay mỗi dòng được đọc riêng: cấu trúc (tiêu đề / trích dẫn / gạch đầu dòng /
+đánh số / bảng / đường kẻ) nhận diện trước, phần chữ còn lại mới soi dấu inline
+bằng biểu thức chính quy có cặp. Dấu lẻ không khớp cặp thì ở nguyên tại chỗ và
+KHÔNG kéo theo phần sau. Vị trí style tính thẳng lúc ghép dòng, nên không còn
+bước "dời style sau khi bỏ ký tự" — chính bước đó từng để vùng đậm tràn sang
+dòng kế (``**1. mục**`` → vùng đậm dài 15 trong khi dòng chỉ còn 12 ký tự).
 """
 from __future__ import annotations
 
@@ -32,6 +48,13 @@ HEADING_STYLES: dict[int, str] = {
     5: "f_13",
     6: "f_13",
 }
+
+#: Zalo không có bảng. Ô của một hàng nối bằng dấu này cho dễ đọc trên chat.
+NOI_O_BANG = " · "
+
+#: Đường kẻ ngang markdown (``---``) vẽ bằng ký tự kẻ, vì gửi nguyên "---" thì
+#: người đọc thấy đúng ba dấu gạch.
+KE_NGANG = "─" * 12
 
 
 def _js_len(s: str) -> int:
@@ -60,9 +83,20 @@ def _resolve_color_token(color: str | None) -> str | None:
     return c
 
 
-_RE_CHAM = re.compile(r"^([ \t]*)[-*•][ \t]+(?=\S)")
+# ── Nhận dạng cấu trúc DÒNG ───────────────────────────────────────────────────
+
+_RE_CHAM = re.compile(r"^([ \t]*)[-*+•][ \t]+(?=\S)")
 _RE_SO = re.compile(r"^([ \t]*)\d{1,2}[.)][ \t]+(?=\S)")
 _RE_THUT = re.compile(r"^([ \t]+)(?=\S)")
+_RE_TIEU_DE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]+(.*)$")
+_RE_TRICH = re.compile(r"^[ \t]{0,3}>[ \t]?(.*)$")
+#: ``---`` / ``***`` / ``___`` đứng một mình = đường kẻ ngang.
+_RE_KE_NGANG = re.compile(r"^[ \t]{0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$")
+_RE_HANG_BANG = re.compile(r"^[ \t]*\|(.+)\|[ \t]*$")
+#: Hàng ngăn cách của bảng: ``|---|:--:|`` — bỏ hẳn, không có gì để đọc.
+_RE_NGAN_BANG = re.compile(r"^[ \t]*\|[\s:|.-]+\|[ \t]*$")
+_RE_RAO_CODE = re.compile(r"^[ \t]*(```|~~~)")
+
 _MUC_THUT_TOI_DA = 4
 
 
@@ -72,82 +106,126 @@ def _muc_thut(khoang: str) -> int:
     return min(_MUC_THUT_TOI_DA, cot // 2)
 
 
-def _kieu_theo_dong(
-    msg: str,
-    styles: list[dict[str, Any]],
-    *,
-    danh_sach: bool = True,
-    thut_le: bool = True,
-) -> tuple[str, list[dict[str, Any]]]:
-    """Bóc dấu đầu dòng "- " / "1. " + khoảng thụt lề, đổi thành style của Zalo.
+# ── Dấu inline TRONG MỘT DÒNG ────────────────────────────────────────────────
 
-    Zalo có sẵn ``lst_1`` (chấm đầu dòng), ``lst_2`` (đánh số) và ``ind_10…40``
-    (thụt lề) — xem bảng TextStyle trong zca-js. Trước đây bot không dùng cái
-    nào, nên mọi danh sách tới tay người đọc dưới dạng chữ "-" và "1." thô.
+_RE_LIEN_KET = re.compile(r"\[([^\]\n]*)\]\((\S*?)\)")
 
-    Ký tự dấu đầu dòng bị BỎ khỏi chuỗi (Zalo tự vẽ chấm/số), nên mọi style
-    inline nằm sau đó phải dời trái đúng số ký tự đã bỏ — không thì vùng đậm
-    tô lệch sang chữ bên cạnh.
+#: Thứ tự nhánh là thứ tự ưu tiên tại mỗi vị trí: ``***`` trước ``**``, ``__``
+#: trước ``_``. Mỗi nhánh đòi ĐỦ CẶP trong cùng một dòng — dấu lẻ không khớp thì
+#: nằm nguyên tại chỗ, không nuốt phần sau như ngăn xếp cũ.
+_RE_INLINE = re.compile(
+    r"(?P<bi>\*\*\*(?P<bi_t>[^\n]+?)\*\*\*)"
+    r"|(?P<b>\*\*(?P<b_t>[^\n]+?)\*\*)"
+    r"|(?P<s>~~(?P<s_t>[^\n]+?)~~)"
+    r"|(?P<u>__(?P<u_t>[^\n]+?)__)"
+    r"|(?P<code>`(?P<code_t>[^`\n]+)`)"
+    r"|(?P<i>(?<!\*)\*(?P<i_t>[^*\n]+?)\*(?!\*))"
+    r"|(?P<i2>(?<![\w_])_(?P<i2_t>[^_\n]+?)_(?![\w_]))"
+)
 
-    ``lst_`` và ``ind_`` để RIÊNG hai mục style cùng vùng: zca-js mô hình styles
-    là danh sách, chưa có gì bảo đảm Zalo hiểu chuỗi gộp "lst_1,ind_10".
-    """
-    if not (danh_sach or thut_le):
-        return msg, styles
+_TOKEN_INLINE = {
+    "bi": "b,i", "b": "b", "s": "s", "u": "u",
+    # Zalo không có kiểu "code"; nghiêng là thứ gần nhất — giữ như bản cũ.
+    "code": "i", "i": "i", "i2": "i",
+}
+_THU_TU_INLINE = ("bi", "b", "s", "u", "code", "i", "i2")
 
+_SAU_TOI_DA = 2   # **đậm có *nghiêng* bên trong** — sâu hơn nữa thì thôi
+
+
+def _boc_lien_ket(dong: str) -> str:
+    """``[chữ](url)`` → giữ URL trần (Zalo tự bắt link, không hiểu cú pháp md)."""
+    return _RE_LIEN_KET.sub(lambda m: m.group(2) or m.group(1), dong)
+
+
+def _inline(than: str, *, gach_chan: bool, sau: int = 0) -> tuple[str, list[dict]]:
+    """Bóc dấu inline của MỘT dòng → (chữ trơn, các vùng style theo dòng)."""
     manh: list[str] = []
-    style_dong: list[dict[str, Any]] = []
-    moc_bo: list[tuple[int, int]] = []   # (vị trí CŨ, tổng ký tự đã bỏ tới đó)
-    vi_tri_cu = 0
-    vi_tri_moi = 0
-    da_bo = 0
-    for dong in msg.split("\n"):
-        dau_dong_cu = vi_tri_cu
-        vi_tri_cu += len(dong) + 1       # +1 cho '\n'
-        tok: list[str] = []
-        bo_dau = 0
-        m = _RE_CHAM.match(dong) if danh_sach else None
-        if m is None and danh_sach:
-            m = _RE_SO.match(dong)
-            if m is not None:
-                tok.append("lst_2")
-        elif m is not None:
-            tok.append("lst_1")
-        if m is not None:
-            bo_dau = m.end()
-            cap = _muc_thut(m.group(1))
+    spans: list[dict] = []
+    vi_tri = 0      # đã ăn tới đâu trong `than`
+    dai = 0         # độ dài chữ trơn đã dựng
+    for m in _RE_INLINE.finditer(than):
+        if m.start() < vi_tri:
+            continue
+        ten = next((t for t in _THU_TU_INLINE if m.group(t) is not None), "")
+        if not ten or (ten == "u" and not gach_chan):
+            continue
+        truoc = than[vi_tri:m.start()]
+        manh.append(truoc)
+        dai += len(truoc)
+        noi_dung = m.group(ten + "_t")
+        if sau < _SAU_TOI_DA:
+            con_txt, con_spans = _inline(noi_dung, gach_chan=gach_chan, sau=sau + 1)
         else:
-            mt = _RE_THUT.match(dong) if thut_le else None
-            cap = _muc_thut(mt.group(1)) if mt else 0
-            if mt is not None and cap:
-                bo_dau = mt.end()
-        if thut_le and cap:
-            tok.append(f"ind_{cap}0")
+            con_txt, con_spans = noi_dung, []
+        if con_txt:
+            spans.append({"start": dai, "len": len(con_txt), "st": _TOKEN_INLINE[ten]})
+            for s in con_spans:
+                spans.append({"start": dai + s["start"], "len": s["len"], "st": s["st"]})
+        manh.append(con_txt)
+        dai += len(con_txt)
+        vi_tri = m.end()
+    manh.append(than[vi_tri:])
+    return "".join(manh), spans
 
-        than = dong[bo_dau:]
-        if bo_dau:
-            da_bo += bo_dau
-            moc_bo.append((dau_dong_cu + bo_dau, da_bo))
-        for t in tok:
-            style_dong.append({"start": vi_tri_moi, "len": len(than), "st": t})
-        manh.append(than)
-        vi_tri_moi += len(than) + 1
 
-    if not moc_bo and not style_dong:
-        return msg, styles
+def _doc_dong(dong: str, *, gach_chan: bool, danh_sach: bool, thut_le: bool,
+              dau_bang: bool) -> tuple[str, list[str], list[dict]] | None:
+    """Một dòng markdown → (chữ hiện ra, style cả dòng, style inline).
 
-    def _doi(p: int) -> int:
-        d = 0
-        for moc, tong in moc_bo:
-            if p >= moc:
-                d = tong
-            else:
-                break
-        return max(0, p - d)
+    Trả None nghĩa là BỎ HẲN dòng — không để lại dòng trống thế chỗ.
+    """
+    if _RE_KE_NGANG.match(dong):
+        return KE_NGANG, [], []
 
-    for s in styles:
-        s["start"] = _doi(int(s["start"]))
-    return "\n".join(manh), styles + style_dong
+    if _RE_NGAN_BANG.match(dong):
+        return None
+    m_bang = _RE_HANG_BANG.match(dong)
+    if m_bang:
+        o = [c.strip() for c in m_bang.group(1).split("|")]
+        than, spans = _inline(_boc_lien_ket(NOI_O_BANG.join(c for c in o if c)),
+                              gach_chan=gach_chan)
+        # Hàng đầu của bảng là tiêu đề cột → đậm CẢ DÒNG (một vùng), chứ không
+        # tô từng ô: mỗi ô một vùng là cách nhanh nhất để một bảng 6 hàng ăn hết
+        # ngân sách vùng định dạng của cả tin.
+        return than, (["b"] if dau_bang and than else []), spans
+
+    m_td = _RE_TIEU_DE.match(dong)
+    if m_td:
+        cap = len(m_td.group(1))
+        than, spans = _inline(_boc_lien_ket(m_td.group(2).strip()), gach_chan=gach_chan)
+        return than, ([HEADING_STYLES.get(cap, "b")] if than else []), spans
+
+    m_tr = _RE_TRICH.match(dong)
+    if m_tr:
+        than, spans = _inline(_boc_lien_ket(m_tr.group(1)), gach_chan=gach_chan)
+        return than, (["i"] if than else []), spans
+
+    tok: list[str] = []
+    bo_dau = 0
+    cap = 0
+    m = _RE_CHAM.match(dong) if danh_sach else None
+    if m is not None:
+        tok.append("lst_1")
+    elif danh_sach:
+        m = _RE_SO.match(dong)
+        if m is not None:
+            tok.append("lst_2")
+    if m is not None:
+        bo_dau = m.end()
+        cap = _muc_thut(m.group(1))
+    else:
+        mt = _RE_THUT.match(dong) if thut_le else None
+        cap = _muc_thut(mt.group(1)) if mt else 0
+        if mt is not None and cap:
+            bo_dau = mt.end()
+    if thut_le and cap:
+        tok.append(f"ind_{cap}0")
+
+    than, spans = _inline(_boc_lien_ket(dong[bo_dau:]), gach_chan=gach_chan)
+    if not than:
+        tok = []
+    return than, tok, spans
 
 
 def markdown_to_zalo_message(
@@ -161,9 +239,11 @@ def markdown_to_zalo_message(
 ) -> dict[str, Any]:
     """Convert markdown-ish LLM text → {msg, styles} cho Zalo personal (zca-js).
 
-    Hỗ trợ: **bold**, *italic*, __underline__, ~~strike~~, ``code``, # headings,
-    > quote, [t](url), "- " / "1. " thành danh sách, khoảng trắng đầu dòng thành
-    thụt lề. size: normal | big → thêm ``f_18`` (TextStyle.Big trong zca-js).
+    Hỗ trợ: **bold**, *italic*, _italic_, __underline__, ~~strike~~, ``code``,
+    # headings, > quote, [t](url), bảng ``| a | b |``, đường kẻ ``---``,
+    "- " / "* " / "1. " thành danh sách, khoảng trắng đầu dòng thành thụt lề.
+    Khối ``` giữ nguyên chữ bên trong, chỉ bỏ dòng rào.
+    size: normal | big → thêm ``f_18`` (TextStyle.Big trong zca-js).
 
     Ba công tắc `gach_chan` / `danh_sach` / `thut_le` lấy từ cài đặt của tài
     khoản (xem `zalo_bot_format.resolve_zalo_rtf`).
@@ -171,142 +251,47 @@ def markdown_to_zalo_message(
     if not text or not isinstance(text, str):
         return {"msg": str(text or ""), "styles": []}
 
-    matched: list[tuple[int, int, str, str]] = []  # start, end, content, style_token
-    stack: list[tuple[str, int, str]] = []  # marker, pos, kind
-    i = 0
-    n = len(text)
-
-    while i < n:
-        # link [text](url) → keep URL plain
-        if text[i] == "[":
-            close_br = text.find("](", i)
-            if close_br != -1:
-                close_pr = text.find(")", close_br + 2)
-                if close_pr != -1:
-                    url = text[close_br + 2 : close_pr]
-                    matched.append((i, close_pr + 1, url, ""))
-                    i = close_pr + 1
-                    continue
-
-        # *** bold+italic
-        if i + 2 < n and text[i : i + 3] == "***":
-            if stack and stack[-1][2] == "bi":
-                _, open_pos, _ = stack.pop()
-                content = text[open_pos + 3 : i]
-                matched.append((open_pos, i + 3, content, "b,i"))
-            else:
-                stack.append(("***", i, "bi"))
-            i += 3
-            continue
-
-        # headings
-        if text[i] == "#" and (i == 0 or text[i - 1] == "\n"):
-            level = 0
-            j = i
-            while j < n and text[j] == "#":
-                level += 1
-                j += 1
-            if j < n and text[j] == " ":
-                j += 1
-                end = text.find("\n", j)
-                if end < 0:
-                    end = n
-                content = text[j:end]
-                st = HEADING_STYLES.get(level, "i")
-                matched.append((i, end, content, st))
-                i = end
-                continue
-
-        # blockquote
-        if text[i] == ">" and (i == 0 or text[i - 1] == "\n"):
-            j = i + 1
-            if j < n and text[j] == " ":
-                j += 1
-            end = text.find("\n", j)
-            if end < 0:
-                end = n
-            content = text[j:end]
-            matched.append((i, end, content, "i"))
-            i = end
-            continue
-
-        # inline code
-        if text[i] == "`":
-            j = text.find("`", i + 1)
-            if j != -1:
-                content = text[i + 1 : j]
-                matched.append((i, j + 1, content, "i"))
-                i = j + 1
-                continue
-
-        if i + 1 < n and text[i : i + 2] == "**":
-            if stack and stack[-1][2] == "b":
-                _, open_pos, _ = stack.pop()
-                content = text[open_pos + 2 : i]
-                matched.append((open_pos, i + 2, content, "b"))
-            else:
-                stack.append(("**", i, "b"))
-            i += 2
-            continue
-
-        if i + 1 < n and text[i : i + 2] == "~~":
-            if stack and stack[-1][2] == "s":
-                _, open_pos, _ = stack.pop()
-                content = text[open_pos + 2 : i]
-                matched.append((open_pos, i + 2, content, "s"))
-            else:
-                stack.append(("~~", i, "s"))
-            i += 2
-            continue
-
-        if gach_chan and i + 1 < n and text[i : i + 2] == "__":
-            if stack and stack[-1][2] == "u":
-                _, open_pos, _ = stack.pop()
-                content = text[open_pos + 2 : i]
-                matched.append((open_pos, i + 2, content, "u"))
-            else:
-                stack.append(("__", i, "u"))
-            i += 2
-            continue
-
-        if text[i] == "*":
-            if stack and stack[-1][2] == "i":
-                _, open_pos, _ = stack.pop()
-                content = text[open_pos + 1 : i]
-                matched.append((open_pos, i + 1, content, "i"))
-            else:
-                stack.append(("*", i, "i"))
-            i += 1
-            continue
-
-        i += 1
-
-    final_msg = text
+    dong_ra: list[str] = []
     styles: list[dict[str, Any]] = []
-    if matched:
-        matched.sort(key=lambda m: m[0])
-        parts: list[str] = []
-        offset = 0
-        last_end = 0
-        for orig_start, orig_end, content, token in matched:
-            parts.append(text[last_end:orig_start])
-            out_start = orig_start - offset
-            styles.append({"start": out_start, "len": len(content), "st": token})
-            parts.append(content)
-            offset += (orig_end - orig_start) - len(content)
-            last_end = orig_end
-        parts.append(text[last_end:])
-        final_msg = "".join(parts)
+    vi_tri = 0
+    trong_code = False
+    dang_bang = False
 
-    # Dấu đầu dòng + thụt lề → style THEO DÒNG của Zalo (lst_1/lst_2/ind_).
-    final_msg, styles = _kieu_theo_dong(
-        final_msg, styles, danh_sach=danh_sach, thut_le=thut_le)
+    for dong in text.split("\n"):
+        if _RE_RAO_CODE.match(dong):
+            # Bỏ cả dòng rào lẫn nhãn ngôn ngữ ("```bash"): để lại thì người đọc
+            # thấy một dòng "bash" trơ trọi không hiểu ở đâu ra.
+            trong_code = not trong_code
+            continue
+        if trong_code:
+            than, tok, spans = dong, [], []
+        else:
+            la_bang = bool(_RE_HANG_BANG.match(dong) or _RE_NGAN_BANG.match(dong))
+            doc = _doc_dong(
+                dong, gach_chan=gach_chan, danh_sach=danh_sach,
+                thut_le=thut_le, dau_bang=la_bang and not dang_bang)
+            dang_bang = la_bang
+            if doc is None:
+                continue
+            than, tok, spans = doc
+
+        for t in tok:
+            styles.append({"start": vi_tri, "len": len(than), "st": t})
+        for s in spans:
+            styles.append({"start": vi_tri + s["start"], "len": s["len"], "st": s["st"]})
+        dong_ra.append(than)
+        vi_tri += len(than) + 1
+
+    final_msg = "\n".join(dong_ra)
+    # Vùng rỗng là rác: Zalo không có gì để tô, mà mỗi vùng vẫn ăn chỗ trong
+    # `textProperties` — chính chỗ đó là thứ làm tin bị từ chối khi quá nhiều.
+    styles = [s for s in styles if s["len"] > 0]
     if not styles:
         return {"msg": final_msg, "styles": []}
 
     # Python pos → JS UTF-16
     for s in styles:
-        frag = final_msg[s["start"] : s["start"] + s["len"]]
+        frag = final_msg[s["start"]: s["start"] + s["len"]]
         s["start"] = _py_to_js_pos(final_msg, s["start"])
         s["len"] = _js_len(frag)
 
