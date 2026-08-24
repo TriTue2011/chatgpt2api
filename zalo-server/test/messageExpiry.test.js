@@ -22,6 +22,7 @@ process.env.DATA_DIRECTORY = dataDirectory;
 const {
   configureExpiryDependencies,
   scheduleUndo,
+  scheduleUndoRecent,
   noteSelfMessage,
   napTuDia,
   _trangThai,
@@ -157,6 +158,77 @@ test('tai khoan chua san sang thi giu lai, khong mat tin', async () => {
   await new Promise((r) => setTimeout(r, 20));
 
   assert.equal(_trangThai().dangCho.length, 1, 'khong co api thi phai giu de thu lai');
+});
+
+// ── Thu hoi tin DA GUI ROI ────────────────────────────────────────────────
+//
+// Do that 24/08/2026 luc 06:23: nguoi dung nhan ban tin xong moi noi "Tu dong
+// xoa phan hoi tin tuc hom nay sau 15 phut". Luc do tin da nam trong khung
+// chat, khong con duong nao di qua scheduleUndo — bot tra loi "em chua co cong
+// cu tu xoa phan hoi trong khung chat nay".
+
+test('hen thu hoi duoc tin BOT VUA GUI trong khung chat', async () => {
+  const { daGoi, api } = apiGia();
+  configureExpiryDependencies({ layApi: () => api });
+
+  // Ban doi ve cua tin tu gui — day la noi duy nhat co ca msgId lan cliMsgId.
+  noteSelfMessage({ isSelf: true, threadId: 'tA', type: 0,
+    data: { msgId: 'cu-1', cliMsgId: 'cli-1' } }, 'own-A');
+
+  const kq = scheduleUndoRecent({ ownId: 'own-A', threadId: 'tA', soTin: 1, ttlMs: 1 });
+  assert.equal(kq.applied, true);
+  assert.equal(kq.count, 1);
+
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(daGoi.length, 1, 'khong thu hoi tin da gui');
+  assert.deepEqual(daGoi[0].payload, { msgId: 'cu-1', cliMsgId: 'cli-1' });
+  assert.equal(daGoi[0].threadId, 'tA');
+});
+
+test('chi lay dung so tin duoc yeu cau, tinh nguoc tu tin moi nhat', () => {
+  const { api } = apiGia();
+  configureExpiryDependencies({ layApi: () => api });
+
+  for (const n of [1, 2, 3]) {
+    noteSelfMessage({ isSelf: true, threadId: 'tB', type: 0,
+      data: { msgId: `m-${n}`, cliMsgId: `c-${n}` } }, 'own-B');
+  }
+  const kq = scheduleUndoRecent({ ownId: 'own-B', threadId: 'tB', soTin: 2, ttlMs: 60_000 });
+
+  assert.equal(kq.count, 2);
+  assert.deepEqual(_trangThai().dangCho.map((x) => x.msgId).sort(), ['m-2', 'm-3']);
+});
+
+test('khong dung khung chat thi khong dong toi', () => {
+  const { api } = apiGia();
+  configureExpiryDependencies({ layApi: () => api });
+
+  noteSelfMessage({ isSelf: true, threadId: 'tC', type: 0,
+    data: { msgId: 'cua-C', cliMsgId: 'c' } }, 'own-C');
+  const kq = scheduleUndoRecent({ ownId: 'own-C', threadId: 'khung-khac', ttlMs: 60_000 });
+
+  assert.equal(kq.applied, false);
+  assert.equal(_trangThai().dangCho.length, 0);
+});
+
+test('khong nho tin nao thi NOI RA, khong im lang bao da dat', () => {
+  const { api } = apiGia();
+  configureExpiryDependencies({ layApi: () => api });
+
+  const kq = scheduleUndoRecent({ ownId: 'own-D', threadId: 'tD', ttlMs: 60_000 });
+  assert.equal(kq.applied, false);
+  assert.equal(kq.count, 0);
+  assert.ok(kq.note && kq.note.length > 0, 'phai co ly do de bao lai nguoi dung');
+});
+
+test('tin da gui nho co han, khong phinh vo han', () => {
+  for (let i = 0; i < 30; i += 1) {
+    noteSelfMessage({ isSelf: true, threadId: 'tE', type: 0,
+      data: { msgId: `e-${i}`, cliMsgId: `c-${i}` } }, 'own-E');
+  }
+  const ds = _trangThai().vuaGui.find(([khoa]) => khoa === 'own-E|tE')[1];
+  assert.equal(ds.length, 20, 'phai cat bot tin cu');
+  assert.equal(ds[ds.length - 1].msgId, 'e-29', 'phai giu tin moi nhat');
 });
 
 test.after(() => fs.rmSync(dataDirectory, { recursive: true, force: true }));

@@ -57,6 +57,20 @@ let timApi = null;
 const dangCho = new Map();
 const henGio = new Map();
 
+// Tin BOT VỪA GỬI, nhớ tạm để còn thu hồi được tin ĐÃ GỬI RỒI.
+//
+// Vì sao cần: `scheduleUndo` chỉ hẹn được lúc đang gửi. Nhưng câu người dùng
+// hay nói là "xoá phản hồi vừa nãy sau 15 phút" — lúc đó tin đã nằm trong khung
+// chat, `msgId` của nó không ai còn giữ. Bản dội về qua listener có đủ cả
+// `msgId` lẫn `cliMsgId`, nên giữ lại vài tin gần nhất mỗi khung chat là đủ.
+//
+// Chỉ nằm trong RAM, KHÔNG ghi đĩa: đây là thứ dùng trong vài phút sau khi gửi,
+// còn danh sách đã hẹn thu hồi (`dangCho`) thì vẫn ghi đĩa như cũ.
+const SO_TIN_NHO_MOI_KHUNG = 20;
+const SO_KHUNG_NHO = 200;
+/** `${ownId}|${threadId}` -> [{ msgId, cliMsgId, type, ts }] (cũ → mới) */
+const vuaGui = new Map();
+
 let daNap = false;
 let timerQuet = null;
 
@@ -174,17 +188,92 @@ export function scheduleUndo({ ownId, msgId, threadId, type, ttlMs }) {
   };
 }
 
+function khoaKhung(ownId, threadId) {
+  return `${String(ownId || '')}|${String(threadId || '')}`;
+}
+
+function ghiNhoTinVuaGui(khoa, muc) {
+  let ds = vuaGui.get(khoa);
+  if (!ds) {
+    ds = [];
+    // Map giữ thứ tự chèn → khung cũ nhất nằm đầu, bỏ nó khi quá sức chứa.
+    if (vuaGui.size >= SO_KHUNG_NHO) vuaGui.delete(vuaGui.keys().next().value);
+    vuaGui.set(khoa, ds);
+  }
+  if (ds.some((x) => x.msgId === muc.msgId)) return;
+  ds.push(muc);
+  if (ds.length > SO_TIN_NHO_MOI_KHUNG) ds.splice(0, ds.length - SO_TIN_NHO_MOI_KHUNG);
+}
+
+/**
+ * Hẹn thu hồi những tin bot ĐÃ GỬI trong một khung chat.
+ *
+ * Dùng cho câu "xoá phản hồi vừa nãy sau 15 phút": lúc đó tin đã gửi xong rồi,
+ * không còn đường nào đi qua `scheduleUndo`.
+ *
+ * `soTin` đếm ngược từ tin mới nhất. Trả về mô tả để route báo lại cho người
+ * gọi — kể cả khi KHÔNG hẹn được, vì im lặng sẽ bị đọc thành "đã đặt xong".
+ */
+export function scheduleUndoRecent({ ownId, threadId, soTin = 1, ttlMs }) {
+  napTuDia();
+  if (!threadId || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+    return { requested: ttlMs, applied: false, count: 0, scope: 'auto-undo-recent',
+      note: 'Thieu threadId hoac ttl khong hop le.' };
+  }
+  const ds = vuaGui.get(khoaKhung(ownId, threadId)) || [];
+  const lay = Math.max(1, Math.min(SO_TIN_NHO_MOI_KHUNG, Number(soTin) || 1));
+  const chon = ds.slice(-lay);
+  if (!chon.length) {
+    return { requested: ttlMs, applied: false, count: 0, scope: 'auto-undo-recent',
+      note: 'Khong con nho tin nao bot vua gui trong khung chat nay '
+        + '(may chu vua khoi dong lai, hoac tin gui truoc do qua lau).' };
+  }
+  const hetHan = Date.now() + ttlMs;
+  for (const m of chon) {
+    const muc = {
+      ownId: String(ownId || ''),
+      msgId: String(m.msgId),
+      cliMsgId: m.cliMsgId ? String(m.cliMsgId) : null,
+      threadId: String(threadId),
+      type: Number(m.type) || 0,
+      hetHan,
+    };
+    dangCho.set(muc.msgId, muc);
+    datHenGio(muc);
+  }
+  ghiXuongDia();
+  return {
+    requested: ttlMs,
+    applied: true,
+    count: chon.length,
+    scope: 'auto-undo-recent',
+    expiresAt: new Date(hetHan).toISOString(),
+    note: 'Bot se tu thu hoi tin khi het gio. Zalo de lai dong "Tin nhan da duoc thu hoi".',
+  };
+}
+
 /**
  * Nhận `cliMsgId` từ bản dội về của listener (selfListen).
  *
- * Gọi cho MỌI tin tự gửi; hàm tự bỏ qua tin không nằm trong danh sách chờ.
+ * Gọi cho MỌI tin tự gửi. Hai việc: nhớ tin vừa gửi (để còn thu hồi được tin đã
+ * gửi rồi), và điền `cliMsgId` cho tin đang chờ thu hồi.
  */
-export function noteSelfMessage(msg) {
-  if (dangCho.size === 0) return;
+export function noteSelfMessage(msg, ownId) {
   const msgId = msg?.data?.msgId ?? msg?.msgId;
   const cliMsgId = msg?.data?.cliMsgId ?? msg?.cliMsgId;
   if (!msgId || !cliMsgId) return;
 
+  const threadId = String(msg?.threadId ?? msg?.data?.idTo ?? '');
+  if (threadId) {
+    ghiNhoTinVuaGui(khoaKhung(ownId ?? msg?._accountId, threadId), {
+      msgId: String(msgId),
+      cliMsgId: String(cliMsgId),
+      type: Number(msg?.type ?? msg?._threadType ?? 0) || 0,
+      ts: Date.now(),
+    });
+  }
+
+  if (dangCho.size === 0) return;
   const muc = dangCho.get(String(msgId));
   if (!muc || muc.cliMsgId) return;
 
@@ -242,13 +331,14 @@ export function napTuDia() {
 
 /** Chỉ dùng cho kiểm thử. */
 export function _trangThai() {
-  return { dangCho: [...dangCho.values()], daNap };
+  return { dangCho: [...dangCho.values()], daNap, vuaGui: [...vuaGui.entries()] };
 }
 
 /** Chỉ dùng cho kiểm thử: xoá sạch trạng thái trong bộ nhớ. */
 export function _datLai() {
   for (const msgId of henGio.keys()) huyHenGio(msgId);
   dangCho.clear();
+  vuaGui.clear();
   daNap = false;
   if (timerQuet) { clearInterval(timerQuet); timerQuet = null; }
 }

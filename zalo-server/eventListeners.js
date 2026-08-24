@@ -150,7 +150,7 @@ export function setupEventListeners(api, loginResolve) {
         }
         // Bản dội về của tin TỰ GỬI là nơi duy nhất lấy được cliMsgId — thứ mà
         // api.undo đòi nhưng phản hồi lúc gửi không trả. Xem services/messageExpiry.js.
-        if (msg?.isSelf) noteSelfMessage(msg);
+        if (msg?.isSelf) noteSelfMessage(msg, ownId);
         const messageWebhookUrl = getWebhookUrl("messageWebhookUrl", ownId);
         const msgWithOwnId = enrichMessageEvent(msg, ownId);
 

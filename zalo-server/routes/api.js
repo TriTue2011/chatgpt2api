@@ -24,6 +24,7 @@ import {
     getUserInfoByAccount,
     sendFriendRequestByAccount,
     sendMessageByAccount,
+    scheduleUndoRecentByAccount,
     createGroupByAccount,
     getGroupInfoByAccount,
     addUserToGroupByAccount,
@@ -499,6 +500,9 @@ router.post('/findUserByAccount', findUserByAccount);
 
 // API gửi tin nhắn với account selection
 router.post('/sendMessageByAccount', sendMessageByAccount);
+
+// API hẹn thu hồi tin bot ĐÃ GỬI trong khung chat (xoá phản hồi vừa nãy)
+router.post('/scheduleUndoRecentByAccount', scheduleUndoRecentByAccount);
 
 // API gửi hình ảnh với account selection
 router.post('/sendImageByAccount', sendImageByAccount);

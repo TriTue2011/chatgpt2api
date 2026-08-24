@@ -80,6 +80,17 @@ def current_msg_ctx() -> tuple[str, int]:
             int(getattr(_msg_ctx, "thread_type", 0) or 0))
 
 
+def khung_dang_xu_ly() -> tuple[str, str, int]:
+    """(account_id, thread_id, thread_type) của tin đang xử lý.
+
+    Công cụ tự xoá cần ĐỦ CẢ BA để hẹn đúng khung chat; `current_msg_ctx` thiếu
+    thread_id nên giữ nguyên chữ ký cũ và thêm hàm này.
+    """
+    return (str(getattr(_msg_ctx, "account", "") or ""),
+            str(getattr(_msg_ctx, "thread_id", "") or ""),
+            int(getattr(_msg_ctx, "thread_type", 0) or 0))
+
+
 def dat_ttl_luot_nay(giay: int) -> int:
     """Hẹn tự xoá cho MỌI tin bot gửi trong lượt này.
 
@@ -87,9 +98,8 @@ def dat_ttl_luot_nay(giay: int) -> int:
     auto-delete của cả cuộc trò chuyện thì mốc ngắn nhất đã là một ngày. Nên
     zalo-server tự hẹn giờ rồi gọi `undo`; xem services/messageExpiry.js.
 
-    Đặt theo LƯỢT chứ không theo cấu hình, vì đây là ý định nhất thời của người
-    dùng ("trả lời rồi xoá sau 1 phút"), không phải sở thích lâu dài. Muốn thành
-    quy tắc thì bot ghi nhớ bằng `remember` rồi lượt sau tự gọi lại.
+    Chỉ là TTL của LƯỢT NÀY. Muốn áp cho cả các lượt sau thì đặt LUẬT — xem
+    `dat_luat_tu_xoa`; luật ghi xuống config nên sống qua khởi động lại.
     """
     giay = max(0, int(giay or 0))
     _msg_ctx.ttl_ms = giay * 1000
@@ -99,6 +109,78 @@ def dat_ttl_luot_nay(giay: int) -> int:
 def ttl_luot_nay() -> int:
     """TTL (mili-giây) đã đặt cho lượt này; chưa đặt → 0."""
     return int(getattr(_msg_ctx, "ttl_ms", 0) or 0)
+
+
+# ── Luật tự xoá LÂU DÀI (không chỉ lượt này) ─────────────────────────────────
+#
+# Chủ máy nói rõ 24/08/2026: "thu hồi này là thực hiện cả sau này, trừ khi user
+# yêu cầu xoá yêu cầu". Nên một câu "xoá phản hồi tin tức sau 15 phút" phải
+# thành LUẬT của khung chat, chứ không phải ý định của đúng một lượt.
+#
+# Vì sao ghi xuống config chứ không nhờ `remember`: `remember` chỉ nhắc model,
+# và model phải nhớ gọi lại công cụ ở mọi lượt sau — đúng chỗ đã hỏng. Luật ở
+# đây do CODE áp: mỗi tin tới, `ap_luat_tu_xoa` tự đặt TTL cho lượt đó.
+#
+# Từ khoá để luật chỉ bắt ĐÚNG loại câu hỏi người dùng nêu ("tin tức"), không
+# quét sạch mọi câu trả lời trong khung chat. Không nêu từ khoá = áp cho mọi
+# câu trả lời, vì lúc đó chính người dùng đã nói vậy.
+_KHOA_LUAT_TU_XOA = "zalop_luat_tu_xoa"
+
+
+def _khoa_khung(account_id: str, thread_id: str) -> str:
+    return f"zalop:{str(account_id or '').strip()}:{str(thread_id or '').strip()}"
+
+
+def _bo_dau(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", str(s or "").lower())
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+def _cac_luat_tu_xoa() -> dict:
+    m = _cfg().get(_KHOA_LUAT_TU_XOA)
+    return dict(m) if isinstance(m, dict) else {}
+
+
+def luat_tu_xoa(account_id: str, thread_id: str) -> dict | None:
+    """Luật tự xoá đang đặt cho khung chat này, hoặc None."""
+    lt = _cac_luat_tu_xoa().get(_khoa_khung(account_id, thread_id))
+    return dict(lt) if isinstance(lt, dict) and int(lt.get("giay") or 0) > 0 else None
+
+
+def dat_luat_tu_xoa(account_id: str, thread_id: str, giay: int,
+                    tu_khoa: list[str] | None = None, mo_ta: str = "") -> dict:
+    """Đặt/thay luật tự xoá cho khung chat. `giay <= 0` = huỷ luật."""
+    khoa = _khoa_khung(account_id, thread_id)
+    m = _cac_luat_tu_xoa()
+    giay = max(0, int(giay or 0))
+    if giay <= 0:
+        m.pop(khoa, None)
+        lt: dict = {}
+    else:
+        lt = {"giay": giay,
+              "tu_khoa": [str(t).strip() for t in (tu_khoa or []) if str(t).strip()],
+              "mo_ta": str(mo_ta or "").strip()}
+        m[khoa] = lt
+    config.update({_KHOA_LUAT_TU_XOA: m})
+    return lt
+
+
+def ap_luat_tu_xoa(account_id: str, thread_id: str, text: str) -> int:
+    """Tin vừa tới có khớp luật của khung chat không; khớp thì đặt TTL lượt này.
+
+    Trả về số giây đã áp (0 = không áp).
+    """
+    lt = luat_tu_xoa(account_id, thread_id)
+    if not lt:
+        return 0
+    tu_khoa = lt.get("tu_khoa") or []
+    if tu_khoa:
+        goc = _bo_dau(text)
+        if not any(_bo_dau(t) in goc for t in tu_khoa):
+            return 0
+    return dat_ttl_luot_nay(int(lt.get("giay") or 0))
+
 
 # ── Cấu hình ──────────────────────────────────────────────────────────────────
 
@@ -819,11 +901,6 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     rtf = {"gach_chan": True, "danh_sach": True, "thut_le": True}
     if rich:
         try:
-            from services.telegram.emphasis import emphasize_text
-            raw = emphasize_text(raw, bot=bot_like if bot_like else None, chat_id=thread_id)
-        except Exception:
-            pass
-        try:
             from services.zalo_bot_format import (
                 resolve_zalo_bot_color, resolve_zalo_bot_size, resolve_zalo_rtf,
             )
@@ -840,6 +917,11 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
     # Cắt theo ranh giới đoạn/dòng/khoảng trắng (giống Telegram split_message) —
     # cắt cứng theo offset ký tự cũ có thể chẻ đôi 1 span **đậm**/styles khiến
     # marker mồ côi lộ ra ở đầu/cuối chunk.
+    #
+    # Cắt trên bản CHƯA nhấn mạnh, rồi mới nhấn mạnh từng khúc: dấu `**` do
+    # emphasis thêm vào sẽ bị bóc lại lúc dựng styles, nên tính nó vào trần độ
+    # dài là tự cắt sớm hơn cần thiết. Nhấn mạnh cũng chỉ soi trong một dòng nên
+    # làm theo khúc không đổi kết quả.
     from services.telegram.format import split_message
     chunks = split_message(raw, limit=_MAX_LEN, prefer=_MAX_LEN) or ["..."]
     # Dài quá mức gửi được thì NÓI RA. Bản cũ lặng lẽ bỏ mọi khúc từ thứ
@@ -856,66 +938,132 @@ def send_message(thread_id: str, text: str, thread_type: int = 0, account: str =
         from services.zalo_markdown import config_markdown_enabled, markdown_to_zalo_message
         md_on = rich and config_markdown_enabled()
     except Exception:
-        md_on = rich
+        md_on = False
         markdown_to_zalo_message = None  # type: ignore
+
+    def _nhan_manh(txt: str) -> str:
+        """Tự tô đậm số/đơn vị/ý chính. Chỉ có nghĩa khi còn dựng styles."""
+        if not (rich and md_on):
+            return txt
+        try:
+            from services.telegram.emphasis import emphasize_text
+            return emphasize_text(txt, bot=bot_like if bot_like else None,
+                                  chat_id=thread_id)
+        except Exception:
+            return txt
+
+    def _dung(txt: str, *, dong: bool) -> tuple[str, list[dict]]:
+        p = markdown_to_zalo_message(
+            txt, color=color, size=size,
+            gach_chan=rtf["gach_chan"],
+            # Menu chọn giữ "1." DẠNG CHỮ: để Zalo tự đánh số thì con số rời
+            # khỏi phần chữ, mà cả `ask_choices.format_numbered` lẫn thói quen
+            # gõ "1" của người dùng đều bám vào con số đó.
+            danh_sach=dong and rtf["danh_sach"] and not co_nut_chon,
+            thut_le=dong and rtf["thut_le"])
+        return (p.get("msg") or txt, list(p.get("styles") or []))
+
+    def _cac_ban_dung(ch: str) -> list[tuple[str, list[dict]]]:
+        """Các bản dựng của MỘT khúc, từ đầy đủ nhất tới trơn nhất.
+
+        Zalo từ chối tin có quá nhiều vùng định dạng, và từ chối trong im lặng —
+        HTTP 500 với một câu lỗi, không nói vùng nào sai. Đo thật 01/08: bản tin
+        32 vùng bị từ chối, 8 vùng gửi lọt. Từ 05/08 mỗi dấu đầu dòng cũng thành
+        một vùng (`lst_1`), nên bản tin 8 mục × 3 tin lại vọt lên 48 vùng và
+        hỏng y như cũ — đo lại 24/08 lúc 06:23, log có ĐÚNG hai lệnh gửi cách
+        nhau 144 ms.
+
+        Bản cũ chỉ có một bậc lùi: hỏng thì bỏ SẠCH định dạng. Mà chuỗi lúc đó
+        đã bị bóc dấu đầu dòng (Zalo lẽ ra tự vẽ chấm), nên người dùng nhận một
+        khối chữ phẳng — không đậm, không cả gạch đầu dòng. Nay lùi từng nấc:
+
+        1. nhấn mạnh + danh sách/thụt lề của Zalo (đẹp nhất, nhiều vùng nhất);
+        2. bỏ nhấn mạnh tự thêm và bỏ style theo dòng — dấu "- " ở lại DẠNG CHỮ,
+           chỉ còn phần đậm do chính model viết (bản tin: 8 vùng, mốc đã đo được);
+        3. chữ trơn, vẫn sạch dấu `**` và vẫn còn "- ".
+        """
+        if not (md_on and markdown_to_zalo_message is not None):
+            return [(ch, [])]
+        ds: list[tuple[str, list[dict]]] = []
+        try:
+            ds.append(_dung(_nhan_manh(ch), dong=True))
+        except Exception as exc:
+            logger.warning("zalo markdown convert fail: %s", exc)
+        try:
+            gon = _dung(ch, dong=False)
+        except Exception as exc:
+            logger.warning("zalo markdown convert fail: %s", exc)
+            gon = (ch, [])
+        if not ds or gon != ds[-1]:
+            ds.append(gon)
+        if gon[1]:
+            ds.append((gon[0], []))
+        return ds
 
     # Tag cả nhóm CHỈ ở khúc đầu, và chỉ khi là NHÓM. Chat 1-1 thì Zalo bỏ
     # mention nên không chèn (khỏi lòi chữ '@All' vô nghĩa vào tin riêng).
     con_tag = bool(mention_all) and int(thread_type or 0) == 1
     for ch in chunks[:_MAX_CHUNKS]:
-        msg_obj: dict = {"msg": ch, "ttl": ttl_luot_nay(), "quote": None}
-        if md_on and markdown_to_zalo_message is not None:
-            try:
-                parsed = markdown_to_zalo_message(
-                    ch, color=color, size=size,
-                    gach_chan=rtf["gach_chan"],
-                    # Menu chọn giữ "1." DẠNG CHỮ: để Zalo tự đánh số thì con số
-                    # rời khỏi phần chữ, mà cả `ask_choices.format_numbered` lẫn
-                    # thói quen gõ "1" của người dùng đều bám vào con số đó.
-                    danh_sach=rtf["danh_sach"] and not co_nut_chon,
-                    thut_le=rtf["thut_le"])
-                msg_obj["msg"] = parsed.get("msg") or ch
-                styles = parsed.get("styles") or []
-                if styles:
-                    msg_obj["styles"] = styles
-            except Exception as exc:
-                logger.warning("zalo markdown convert fail: %s", exc)
-        if con_tag:
-            # Chèn '@All ' đầu tin. Vùng đậm lưu vị trí theo JS/UTF-16 (khoá
-            # 'start'); '@All ' là 5 ký tự ASCII = 5 đơn vị JS nên DỜI mọi style
-            # đi 5, không thì chữ đậm tô lệch. mention len=4 ('@All'), pos=0.
-            _tien = _NHAN_ALL + " "
-            msg_obj["msg"] = _tien + str(msg_obj.get("msg") or "")
-            for s in (msg_obj.get("styles") or []):
-                s["start"] = int(s.get("start") or 0) + len(_tien)
-            msg_obj["mentions"] = [{"pos": 0, "uid": "-1", "len": len(_NHAN_ALL)}]
-            con_tag = False
-        last = _request("POST", "/api/sendMessageByAccount", {
-            "message": msg_obj,
-            "threadId": str(thread_id),
-            "accountSelection": acc,
-            "type": int(thread_type),
-        })
-        if not last.get("ok"):
-            if msg_obj.get("styles"):
-                # Bản dự phòng phải dùng CHUỖI ĐÃ BÓC MARKDOWN, không phải `ch`
-                # thô. Dùng `ch` thì gửi-có-định-dạng thất bại là người dùng nhận
-                # nguyên `**Tiêu đề**` — họ thấy đúng hai dấu sao và tưởng bot
-                # trình bày xấu. Đo thật 01/08: bản tin 32 vùng đậm bị Zalo từ
-                # chối, hai lệnh gửi cách nhau 1 giây, và người dùng nhắn lại
-                # "Trình bày xấu quá, bỏ ** đi".
-                plain = {"msg": msg_obj.get("msg") or ch, "ttl": ttl_luot_nay(), "quote": None}
-                if msg_obj.get("mentions"):
-                    plain["mentions"] = msg_obj["mentions"]   # '@All' đã ở trong msg
-                last = _request("POST", "/api/sendMessageByAccount", {
-                    "message": plain,
-                    "threadId": str(thread_id),
-                    "accountSelection": acc,
-                    "type": int(thread_type),
-                })
-            if not last.get("ok"):
+        ban_dung = _cac_ban_dung(ch)
+        for thu, (msg, styles) in enumerate(ban_dung):
+            msg_obj: dict = {"msg": msg, "ttl": ttl_luot_nay(), "quote": None}
+            if styles:
+                msg_obj["styles"] = [dict(s) for s in styles]
+            if con_tag:
+                # Chèn '@All ' đầu tin. Vùng đậm lưu vị trí theo JS/UTF-16 (khoá
+                # 'start'); '@All ' là 5 ký tự ASCII = 5 đơn vị JS nên DỜI mọi
+                # style đi 5, không thì chữ đậm tô lệch. mention len=4, pos=0.
+                _tien = _NHAN_ALL + " "
+                msg_obj["msg"] = _tien + str(msg_obj.get("msg") or "")
+                for s in (msg_obj.get("styles") or []):
+                    s["start"] = int(s.get("start") or 0) + len(_tien)
+                msg_obj["mentions"] = [{"pos": 0, "uid": "-1", "len": len(_NHAN_ALL)}]
+            last = _request("POST", "/api/sendMessageByAccount", {
+                "message": msg_obj,
+                "threadId": str(thread_id),
+                "accountSelection": acc,
+                "type": int(thread_type),
+            })
+            if last.get("ok"):
                 break
+            # Ghi lại VÌ SAO Zalo từ chối. Bản cũ nuốt câu lỗi, nên ba tuần liền
+            # mọi tin có gạch đầu dòng đều âm thầm rơi về bản trơn mà log không
+            # có một dòng nào.
+            logger.warning({"event": "zalop_gui_hong", "ban_dung": thu,
+                            "so_vung": len(styles), "dai": len(msg),
+                            "error": str(last.get("error") or "")[:200]})
+        con_tag = False
+        if not last.get("ok"):
+            break
     return last
+
+
+def hen_thu_hoi_tin_da_gui(thread_id: str, giay: int, so_tin: int = 1,
+                           account: str = "") -> dict:
+    """Hẹn thu hồi những tin bot ĐÃ GỬI trong khung chat này.
+
+    Khác `dat_ttl_luot_nay` ở chỗ tin đã nằm trong khung chat rồi — đúng tình
+    huống người dùng gặp 24/08: nhận bản tin xong mới bảo "tự động xoá phản hồi
+    tin tức hôm nay sau 15 phút". `msgId` của tin cũ chỉ còn zalo-server nhớ
+    (qua bản dội về của listener), nên phải hỏi nó.
+    """
+    acc = _account_for_send(account)
+    if not acc:
+        return {"ok": False, "error": "Chưa có tài khoản Zalo nào đăng nhập"}
+    giay = max(0, int(giay or 0))
+    if giay <= 0:
+        return {"ok": False, "error": "Phải nêu sau bao lâu thì xoá"}
+    r = _request("POST", "/api/scheduleUndoRecentByAccount", {
+        "threadId": str(thread_id),
+        "accountSelection": acc,
+        "soTin": max(1, int(so_tin or 1)),
+        "ttl": giay * 1000,
+    })
+    if not r.get("ok"):
+        return {"ok": False, "error": r.get("error") or "Không hẹn được thu hồi"}
+    kq = ((r.get("data") or {}).get("messageTtl")) or {}
+    return {"ok": bool(kq.get("applied")), "so_tin": int(kq.get("count") or 0),
+            "error": "" if kq.get("applied") else str(kq.get("note") or "")}
 
 
 def gui_chu_dong(thread_id: str, text: str, *, account: str = "") -> dict:
@@ -3438,11 +3586,22 @@ def _process_ai(ev: dict) -> None:
         _acc = str(ev.get("account_id") or "").strip()
         # Ngữ cảnh cho reminders (tạo nhắc hẹn trong lượt orchestrate này).
         _msg_ctx.account = _acc
+        _msg_ctx.thread_id = str(thread_id)
         _msg_ctx.thread_type = int(thread_type or 0)
         # Xoá TTL của lượt TRƯỚC. threading.local sống theo THREAD, mà thread
         # được dùng lại cho tin sau — không xoá thì một lần "trả lời rồi xoá sau
         # 1 phút" sẽ âm thầm áp cho mọi câu trả lời tiếp theo trên cùng luồng.
         _msg_ctx.ttl_ms = 0
+        # Rồi mới áp LUẬT tự xoá lâu dài của khung chat (nếu có). Do CODE áp
+        # chứ không nhờ model nhớ gọi lại công cụ — model quên là luật chết
+        # lặng lẽ, mà người dùng thì tin rằng đã đặt xong.
+        try:
+            _giay_tu_xoa = ap_luat_tu_xoa(_acc, thread_id, text)
+            if _giay_tu_xoa:
+                logger.info({"event": "zalop_luat_tu_xoa_ap", "thread": thread_id,
+                             "giay": _giay_tu_xoa})
+        except Exception as exc:
+            logger.warning("zalop luat tu xoa loi: %s", str(exc)[:160])
         _fp_map = config.get().get("zalo_personal_account_admins")
         _fp_entry = _fp_map.get(_acc) if isinstance(_fp_map, dict) else None
         # HA: «Lọc thread» (nếu cài riêng) → admin entry (nếu match) → acc → True

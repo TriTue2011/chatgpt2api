@@ -1,17 +1,22 @@
-"""Người dùng KHÔNG BAO GIỜ được thấy dấu `**` trong tin nhắn.
+"""Zalo từ chối tin nhiều vùng định dạng — lùi từng nấc, đừng bỏ sạch.
 
-`send_message` gửi bản có định dạng (styles zca-js) trước; thất bại thì gửi lại
-bản chữ trơn. Bản trơn cũ dùng `ch` — tức chuỗi markdown THÔ — nên mỗi lần lệnh
-gửi-có-định-dạng bị từ chối là người dùng nhận nguyên `**Tiêu đề**`.
+`send_message` gửi bản đầy đủ nhất trước; Zalo từ chối thì lùi một nấc rồi gửi
+lại. Hai điều phải đúng ở MỌI nấc:
+
+  * không nấc nào để lọt dấu `**` cho người dùng;
+  * nấc lùi vẫn giữ được phần đậm do chính model viết, và giữ dấu "- " dạng chữ
+    (Zalo chỉ tự vẽ chấm đầu dòng khi tin còn style `lst_1`; bỏ style mà đã bóc
+    mất dấu gạch thì người đọc nhận một khối chữ phẳng).
 
 Đo thật 01/08: bản tin bọc đậm cả 8 tên mục lẫn 24 tiêu đề = 32 vùng định dạng
 trong một tin; Zalo từ chối, log có HAI lệnh gửi cách nhau 1 giây, và người dùng
 nhắn lại "Trình bày xấu quá, bỏ ** đi". Sau khi chỉ tô đậm tên mục (8 vùng),
 lệnh gửi thành công ngay lần đầu — log chỉ còn MỘT lệnh.
 
-Hai lớp cùng khoá ở đây:
-  * bản dự phòng phải là chuỗi ĐÃ bóc markdown;
-  * bản tin chỉ tô đậm TÊN MỤC, không tô từng tiêu đề.
+Đo lại 24/08 lúc 06:23: từ 05/08 mỗi dấu đầu dòng cũng thành một vùng `lst_1`,
+nên bản tin 8 mục × 3 tin vọt lên 48 vùng và hỏng y như cũ — log có đúng hai
+lệnh gửi cách nhau 144 ms, và người dùng nhận bản phẳng, hỏi "không thấy màu
+nhấn mạnh hay in đậm tiêu đề".
 """
 from __future__ import annotations
 
@@ -54,18 +59,33 @@ class TestBanDuPhongKhongLotDauSao(unittest.TestCase):
         self.assertEqual(len(da_gui), 1)
         self.assertNotIn("**", str(da_gui[0]["message"]["msg"]))
 
-    def test_that_bai_thi_ban_du_phong_KHONG_con_dau_sao(self):
-        """Chốt chính: gửi-có-định-dạng lỗi → bản trơn vẫn phải sạch dấu sao."""
-        da_gui = self._gui_voi_ket_qua([{"ok": False}, {"ok": True}])
-        self.assertEqual(len(da_gui), 2, "phải có bản dự phòng")
-        trơn = str(da_gui[1]["message"]["msg"])
-        self.assertNotIn("**", trơn, "bản dự phòng để lọt dấu ** cho người dùng")
-        self.assertIn("Thể thao", trơn, "bóc dấu sao không được bóc luôn chữ")
+    def test_moi_nac_deu_sach_dau_sao(self):
+        """Chốt chính: nấc nào cũng phải sạch `**`, kể cả nấc trơn cuối cùng."""
+        da_gui = self._gui_voi_ket_qua([{"ok": False}])
+        self.assertGreaterEqual(len(da_gui), 2, "phải có nấc lùi")
+        for i, p in enumerate(da_gui):
+            chu = str(p["message"]["msg"])
+            self.assertNotIn("**", chu, f"nấc {i} để lọt dấu ** cho người dùng")
+            self.assertIn("Thể thao", chu, "bóc dấu sao không được bóc luôn chữ")
 
-    def test_ban_du_phong_khong_kem_styles(self):
-        """Gửi lại thì phải bỏ styles — chính nó làm lần đầu thất bại."""
+    def test_nac_lui_van_con_dam_va_con_dau_gach_dau_dong(self):
+        """Hỏng một lần KHÔNG có nghĩa là bỏ hết định dạng.
+
+        Nấc 2 bỏ style theo dòng (`lst_1`) nên dấu "- " phải ở lại dạng chữ,
+        còn phần đậm do model viết thì giữ nguyên.
+        """
         da_gui = self._gui_voi_ket_qua([{"ok": False}, {"ok": True}])
-        self.assertNotIn("styles", da_gui[1]["message"])
+        self.assertEqual(len(da_gui), 2)
+        tin = da_gui[1]["message"]
+        self.assertIn("- Tin một", str(tin["msg"]), "mất luôn dấu đầu dòng")
+        self.assertTrue(any("b" in s["st"].split(",") for s in tin.get("styles") or []),
+                        "nấc lùi bỏ sạch phần đậm của model")
+
+    def test_hong_het_thi_nac_cuoi_khong_kem_styles(self):
+        """Còn hỏng nữa thì mới bỏ styles — chính nó là thứ bị Zalo từ chối."""
+        da_gui = self._gui_voi_ket_qua([{"ok": False}])
+        self.assertNotIn("styles", da_gui[-1]["message"])
+        self.assertIn("- Tin một", str(da_gui[-1]["message"]["msg"]))
 
 
 @unittest.skipIf(news is None, "vn-mcp-hub chưa cài phụ thuộc trong môi trường này")

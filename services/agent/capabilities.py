@@ -2868,8 +2868,26 @@ def _doc_khoang_giay(args: dict) -> int:
     return max(0, int(tong))
 
 
+def _mo_ta_khoang(giay: int) -> str:
+    if giay % 3600 == 0 and 3600 <= giay < 86400:
+        return f"{giay // 3600} giờ"
+    if giay % 60 == 0 and giay < 3600:
+        return f"{giay // 60} phút"
+    return f"{giay} giây"
+
+
+def _doc_tu_khoa(args: dict) -> list[str]:
+    """`ap_cho` của LLM ra danh sách từ khoá: "tin tức, bản tin" → hai từ."""
+    raw = args.get("ap_cho")
+    if isinstance(raw, (list, tuple)):
+        ds = [str(x) for x in raw]
+    else:
+        ds = str(raw or "").replace(";", ",").split(",")
+    return [t.strip() for t in ds if t.strip()]
+
+
 def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
-    """Hẹn tự xoá câu trả lời của LƯỢT NÀY sau một khoảng thời gian.
+    """Hẹn tự xoá câu trả lời — cho lượt này VÀ cho các lượt sau.
 
     Vì sao phải có: Zalo không cho tin tự huỷ ngắn hạn. `ttl` theo từng tin bị
     Zalo bỏ qua (đo thật 23/08/2026: năm mốc từ 1 phút tới 7 ngày, không tin nào
@@ -2880,36 +2898,76 @@ def _h_tu_xoa_tin(args: dict, ctx: dict) -> dict:
     Đánh đổi phải nói cho người dùng biết: thu hồi để lại dòng "Tin nhắn đã được
     thu hồi". Nội dung mất, nhưng người nhận biết có tin đã bị rút.
 
-    Chỉ áp cho LƯỢT NÀY. Người dùng muốn thành quy tắc ("cứ hỏi thời tiết là xoá
-    sau 1 phút") thì phải gọi thêm `remember` để ghi nhớ, rồi lượt sau tự gọi lại
-    công cụ này — giống hệt cách xử lý sở thích trình bày.
+    BA PHẦN, VÌ MỘT CÂU CỦA NGƯỜI DÙNG THƯỜNG ĐÒI CẢ BA:
+
+    1. LƯỢT NÀY — TTL cho mọi tin bot sắp gửi trong lượt.
+    2. TIN ĐÃ GỬI — câu "xoá phản hồi tin tức hôm nay sau 15 phút" nói về tin
+       ĐANG NẰM trong khung chat rồi. Đo thật 24/08 lúc 06:23: bot trả lời "em
+       chưa có công cụ tự xoá phản hồi trong khung chat này" — đúng theo nghĩa
+       đen của bản cũ, nhưng với người dùng thì là tính năng không chạy.
+    3. LÂU DÀI — chủ máy chốt 24/08: "thu hồi này là thực hiện cả sau này, trừ
+       khi user yêu cầu xoá yêu cầu". Nên MẶC ĐỊNH đặt thành luật của khung
+       chat, do code áp ở mỗi tin tới (`zalo_personal.ap_luat_tu_xoa`), không
+       nhờ model nhớ gọi lại — model quên là luật chết lặng lẽ.
     """
     from services import zalo_personal
 
     kenh = str(ctx.get("channel") or "").strip().lower()
     if kenh and kenh != "zalo":
         return {"text": "Tự xoá tin chỉ làm được trên Zalo cá nhân."}
+    acc, thread_id, _ = zalo_personal.khung_dang_xu_ly()
 
-    if _la_bat(args.get("tat")) and "tat" in args:
+    if "tat" in args and _la_bat(args.get("tat")):
         zalo_personal.dat_ttl_luot_nay(0)
+        con = bool(thread_id) and bool(zalo_personal.luat_tu_xoa(acc, thread_id))
+        if con:
+            zalo_personal.dat_luat_tu_xoa(acc, thread_id, 0)
+            return {"text": "Rồi, em bỏ hẳn việc tự xoá — từ giờ câu trả lời ở "
+                            "đây sẽ ở lại bình thường ạ."}
         return {"text": "Rồi, câu trả lời này sẽ không tự xoá."}
 
     giay = _doc_khoang_giay(args)
     if giay <= 0:
+        lt = zalo_personal.luat_tu_xoa(acc, thread_id) if thread_id else None
+        if lt:
+            pham_vi = (", chỉ khi anh/chị hỏi về: " + ", ".join(lt.get("tu_khoa") or [])
+                       if lt.get("tu_khoa") else ", cho mọi câu trả lời")
+            return {"text": "Đang đặt: câu trả lời tự xoá sau "
+                            f"{_mo_ta_khoang(int(lt['giay']))}{pham_vi}."}
         hien = zalo_personal.ttl_luot_nay() // 1000
         if hien:
             return {"text": f"Câu trả lời lượt này đang hẹn tự xoá sau {hien} giây."}
         return {"text": "Chưa hẹn tự xoá cho câu trả lời này. Cho tôi biết sau bao lâu."}
 
     zalo_personal.dat_ttl_luot_nay(giay)
-    mo_ta = (f"{giay // 60} phút" if giay % 60 == 0 and giay < 3600
-             else f"{giay // 3600} giờ" if giay % 3600 == 0 and giay < 86400
-             else f"{giay} giây")
-    loi = f"Đã hẹn: câu trả lời này tự xoá sau {mo_ta}."
+    phan: list[str] = [f"Đã hẹn: câu trả lời tự xoá sau {_mo_ta_khoang(giay)}."]
+
+    # Tin ĐÃ GỬI trước lượt này (mặc định có, vì người dùng thường nói về đúng
+    # cái họ vừa nhận). Hỏng thì nói ra, không im lặng.
+    so_tin_cu = args.get("tin_da_gui")
+    so_tin_cu = 1 if so_tin_cu in (None, "", True) else int(so_tin_cu or 0)
+    if so_tin_cu > 0 and thread_id:
+        kq = zalo_personal.hen_thu_hoi_tin_da_gui(thread_id, giay, so_tin_cu,
+                                                  account=acc)
+        if kq.get("ok"):
+            phan.append(f"Tin em vừa gửi trước đó cũng sẽ tự thu hồi sau {_mo_ta_khoang(giay)}.")
+        elif kq.get("error"):
+            phan.append("Riêng tin đã gửi trước đó thì em chưa thu hồi được: "
+                        + str(kq.get("error"))[:120])
+
+    # Luật lâu dài — mặc định BẬT.
+    lau_dai = True if "lau_dai" not in args else _la_bat(args.get("lau_dai"))
+    if lau_dai and thread_id:
+        tu_khoa = _doc_tu_khoa(args)
+        zalo_personal.dat_luat_tu_xoa(acc, thread_id, giay, tu_khoa)
+        phan.append("Và em giữ luôn nếp này cho các lần sau"
+                    + (" khi anh/chị hỏi về " + ", ".join(tu_khoa) if tu_khoa else "")
+                    + " — tới lúc anh/chị bảo thôi thì em bỏ.")
+
     if giay >= _NGUONG_KHUYEN_AUTO_DELETE:
-        loi += (" Khoảng này khá dài — đặt 'Tin nhắn tự xoá' cho cả cuộc trò chuyện "
-                "trong Zalo sẽ gọn hơn, vì nó xoá sạch chứ không để lại dấu thu hồi.")
-    return {"text": loi}
+        phan.append("Khoảng này khá dài — đặt 'Tin nhắn tự xoá' cho cả cuộc trò chuyện "
+                    "trong Zalo sẽ gọn hơn, vì nó xoá sạch chứ không để lại dấu thu hồi.")
+    return {"text": " ".join(phan)}
 
 
 def _h_cai_dat_dinh_dang(args: dict, ctx: dict) -> dict:
@@ -5831,13 +5889,17 @@ CAPABILITIES: dict[str, Capability] = {
         name="tu_xoa_tin", risk=READ, handler=_h_tu_xoa_tin,
         emoji="⏱️", label="Hẹn tự xoá câu trả lời",
         description=(
-            "Hẹn tự xoá CÂU TRẢ LỜI CỦA LƯỢT NÀY sau một khoảng thời gian. Dùng khi "
-            "người dùng bảo xoá tin sau bao lâu: 'trả lời rồi xoá sau 1 phút', "
-            "'cho xem thời tiết nhưng 2 phút sau xoá đi', 'lịch hẹn thì 30 phút sau "
-            "xoá'. GỌI TRƯỚC khi trả lời nội dung, trong cùng lượt. "
-            "Nếu người dùng muốn áp cho MỌI lần sau ('cứ hỏi thời tiết là xoá sau 1 "
-            "phút') thì gọi THÊM `remember` để ghi nhớ, rồi các lượt sau tự gọi lại "
-            "công cụ này khi gặp đúng loại câu hỏi đó. "
+            "Hẹn tự xoá câu trả lời sau một khoảng thời gian. Dùng khi người dùng bảo "
+            "xoá tin sau bao lâu: 'trả lời rồi xoá sau 1 phút', 'tự động xoá phản hồi "
+            "tin tức sau 15 phút', 'lịch hẹn thì 30 phút sau xoá'. GỌI TRƯỚC khi trả "
+            "lời nội dung, trong cùng lượt. "
+            "MẶC ĐỊNH công cụ làm cả ba việc: (1) xoá câu trả lời lượt này, (2) xoá "
+            "luôn tin em VỪA GỬI trước đó — người dùng thường đang nói về đúng cái họ "
+            "vừa nhận, (3) GIỮ LUẬT cho các lần sau, tới khi họ bảo thôi. KHÔNG cần "
+            "gọi `remember`: luật này do hệ thống áp, không phải do em nhớ. "
+            "Người dùng chỉ nói về một loại nội dung ('phản hồi tin tức') thì truyền "
+            "`ap_cho` để luật chỉ bắt đúng loại đó. "
+            "Họ bảo thôi đừng xoá nữa / bỏ yêu cầu xoá → gọi lại với tat=true. "
             "Chỉ chạy trên Zalo cá nhân. Zalo không có tin tự huỷ ngắn hạn nên bot "
             "thu hồi tin — Zalo sẽ để lại dòng 'Tin nhắn đã được thu hồi'."
         ),
@@ -5845,7 +5907,16 @@ CAPABILITIES: dict[str, Capability] = {
             "sau_bao_lau": {"type": "string",
                             "description": "Thời lượng bằng lời: '1 phút', '30 giây', '2 tiếng'"},
             "sau_giay": {"type": "integer", "description": "Hoặc số giây, nếu đã biết chính xác"},
-            "tat": {"type": "boolean", "description": "true = huỷ hẹn xoá cho lượt này"}},
+            "ap_cho": {"type": "string",
+                       "description": "Từ khoá loại câu hỏi mà luật áp, cách nhau dấu phẩy "
+                                      "('tin tức, bản tin'). Bỏ trống = mọi câu trả lời."},
+            "tin_da_gui": {"type": "integer",
+                           "description": "Số tin em ĐÃ gửi trước đó cũng thu hồi luôn "
+                                          "(mặc định 1; 0 = không đụng tin cũ)"},
+            "lau_dai": {"type": "boolean",
+                        "description": "false = chỉ lượt này, không giữ luật cho lần sau"},
+            "tat": {"type": "boolean",
+                    "description": "true = bỏ hẳn việc tự xoá (cả luật lâu dài)"}},
             "required": []}),
     "cai_dat_dinh_dang": Capability(
         name="cai_dat_dinh_dang", risk=READ, handler=_h_cai_dat_dinh_dang,
