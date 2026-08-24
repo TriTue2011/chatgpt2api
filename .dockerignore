@@ -18,3 +18,27 @@ zalo-server/node_modules
 # Không đưa data runtime của zalo-server (cookies/users.json/sessions) vào
 # build context — tránh nhúng credential vào image.
 zalo-server/data
+
+# ── Bối cảnh build: những thứ không có lệnh COPY nào dùng tới ──────────────
+# Đo 24/08/2026: android-ai-avatar 702 MB, data 104 MB, test 84 MB. Chúng bị
+# gửi sang Docker daemon mỗi lần build dù không vào image. Bỏ đi thì chỉ nhanh
+# hơn chứ image không nhỏ đi — các lệnh COPY đều liệt kê thư mục tường minh.
+# Dấu / đầu dòng: chỉ khớp thư mục ở GỐC bối cảnh. Viết trần `data` cũng có
+# cùng nghĩa với Docker, nhưng ghi rõ để không ai đọc nhầm là khớp cả
+# `vn-mcp-hub/data` — thư mục đó CÓ được COPY vào image.
+/android-ai-avatar
+/data
+/test
+/docs
+/assets
+fw-nghe
+fw-tach-am
+vn-translate
+scripts/__pycache__
+.pytest_cache
+.ruff_cache
+.serena
+.agents
+.claude
+.github
+*.md

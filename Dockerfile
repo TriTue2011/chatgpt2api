@@ -36,6 +36,88 @@ COPY zalo-server/package.json zalo-server/package-lock.json* ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY zalo-server ./
 
+# ── Stage 1c: dựng /app/.venv ở stage riêng ────────────────────────────────
+# LÝ DO TÁCH RA: trước đây Python deps được cài THẲNG trong stage runtime, nên
+# hai thứ chỉ cần lúc cài lại nằm vĩnh viễn trong image phát hành. Đo trên máy
+# chủ 24/08/2026, bên trong container đang chạy:
+#   /root/.cache/uv  1,8 GB  — `UV_LINK_MODE=copy` ép uv CHÉP thay vì hardlink,
+#                              nên mỗi wheel có hai bản (một trong cache, một
+#                              trong .venv 1,7 GB). Cache không bao giờ bị xoá.
+#   gcc/g++/build-essential/*-dev  266 MB — chỉ dùng lúc cài.
+# Ở stage này cache là `--mount=type=cache` (nằm ngoài layer) còn compiler chết
+# theo stage; runtime chỉ nhận đúng thư mục .venv.
+#
+# PHẢI DÙNG ĐÚNG BASE IMAGE VÀ ĐÚNG DIGEST của stage runtime: .venv chứa phần
+# mở rộng đã biên dịch và ghi đường tuyệt đối `/app/.venv` vào shebang, đổi nền
+# hay đổi chỗ đặt là hỏng.
+FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS python-builder
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc g++ build-essential libpq-dev libcurl4-openssl-dev \
+        ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir uv
+WORKDIR /app
+
+# pyproject ghim mirror aliyun (default=true — nhanh ở VN, hay TIMEOUT trên GH
+# runner: đã fail vnstock rồi posthog). CI truyền build-arg ép PyPI chính hãng;
+# build tay ở VN không truyền gì → vẫn aliyun như cũ.
+ARG UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
+
+# chatgpt2api locked deps (reproducible) → /app/.venv
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+
+# vn-mcp-hub + captcha-solver + proxy deps on top of the same venv
+COPY deploy/extra-requirements.txt /tmp/extra-requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python -r /tmp/extra-requirements.txt
+
+# VieNeu-TTS: --no-deps để không kéo gradio/pandas (~300MB, chỉ cần cho web UI
+# riêng của họ). Dep runtime thật (sea-g2p, tokenizers…) nằm trong
+# extra-requirements.txt ở trên. Model KHÔNG trong image — tải về volume
+# data/hf bằng scripts/download_vieneu_model.py (engine đọc qua HF_HOME).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python --no-deps vieneu
+
+# OpenCV bị cài HAI BẢN. extra-requirements xin bản `-headless`, nhưng pdf2docx,
+# scenedetect và pillow-heif đều khai phụ thuộc `opencv-python` (bản GUI) nên uv
+# kéo về cả hai. Cả hai cùng ghi vào một thư mục `cv2/`, còn thư viện native thì
+# nằm ở hai thư mục riêng — đo được 116 MB (`opencv_python.libs`) + 81 MB
+# (`opencv_python_headless.libs`) trong image đang chạy, tức một trong hai là
+# rác hoàn toàn. Cài đè bản headless sau cùng để `cv2/` chắc chắn thuộc về nó,
+# rồi xoá phần thừa của bản GUI. Câu `import cv2` cuối là chốt kiểm: sai là VỠ
+# BUILD ngay tại đây chứ không đợi tới lúc người dùng gửi video.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python --force-reinstall --no-deps \
+        "opencv-python-headless>=4.10" \
+    && rm -rf /app/.venv/lib/python3.13/site-packages/opencv_python.libs \
+              /app/.venv/lib/python3.13/site-packages/opencv_python-*.dist-info \
+    && /app/.venv/bin/python -c "import cv2; print('cv2 OK', cv2.__version__)"
+
+# ── GPU (build-arg GPU=1 → tag :gpu, amd64) ────────────────────────────────
+# Torch CUDA (~6GB cài đặt) để VieNeu tự chuyển engine PyTorch khi thấy GPU
+# (voice.tts.vieneu_backend mặc định "auto"). transformers ghim theo README
+# VieNeu — bản ổn định nhất cho SDK GPU. Image thường (GPU=0) không cài gì.
+# Host cần driver NVIDIA + nvidia-container-toolkit + compose `gpus: all`.
+ARG GPU=0
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ "$GPU" = "1" ]; then \
+      uv pip install --python /app/.venv/bin/python \
+        "torch==2.8.0" "torchaudio==2.8.0" \
+        --index-url https://download.pytorch.org/whl/cu128 && \
+      uv pip install --python /app/.venv/bin/python "transformers==4.57.6" ; \
+    fi
+
+# Bytecode: runtime chạy với PYTHONDONTWRITEBYTECODE=1 nên .pyc trong venv chỉ
+# là chỗ chiếm đĩa, không ai đọc lại.
+RUN find /app/.venv -name '__pycache__' -type d -prune -exec rm -rf {} + ; \
+    find /app/.venv -name '*.pyc' -delete
+
 # ── Stage 2: unified runtime ───────────────────────────────────────────────
 FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6 AS app
 # NOTE (P1#10): image runs as root for browser/VNC stack. Do NOT switch USER yet
@@ -46,8 +128,8 @@ FROM python:3.13-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe
 # Node.js runtime (chạy zalo-server nhúng). Copy nguyên bản cài đặt Node từ image
 # node:22 — python:3.13-slim và node:22 cùng nền Debian bookworm nên ABI khớp.
 COPY --from=node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+# KHÔNG copy npm: zalo-server đã có sẵn node_modules dựng ở stage `zalo-build`
+# và chạy bằng `node server.js`, không gọi npm/npx lúc nào cả.
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -69,17 +151,24 @@ WORKDIR /app
 #  - chatgpt2api : git, libpq-dev, gcc, openssl, libcurl, libnss3, wget, cloudflared
 #  - vn-mcp-hub  : tesseract-ocr(+vie), poppler-utils
 #  - captcha     : Xvfb, x11vnc, supervisor, fluxbox, novnc, websockify, chromium libs, fonts
+# BỎ KHỎI RUNTIME (đã chuyển sang stage python-builder): gcc g++ build-essential
+# libpq-dev libcurl4-openssl-dev — 266 MB chỉ dùng lúc biên dịch wheel.
+# psycopg2-binary và curl-cffi tự mang libpq/libssl/libcurl trong wheel (đã kiểm
+# bằng `ldd` trên máy chủ), nên runtime không cần libpq5 hay libcurl4 nào cả.
+# THÊM TƯỜNG MINH libstdc++6 + libatomic1: trước đây chúng vào image nhờ đi kèm
+# g++; bỏ g++ mà quên hai gói này là onnxruntime/chromadb gãy lúc import.
+# GIỮ git: services/storage/git_storage.py dùng GitPython, cần binary git lúc chạy.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git libpq-dev gcc g++ build-essential ca-certificates openssl \
-        libcurl4-openssl-dev wget curl gnupg \
+        git ca-certificates openssl libstdc++6 libatomic1 \
+        wget curl gnupg \
         tesseract-ocr tesseract-ocr-vie poppler-utils \
         ffmpeg \
         xvfb x11vnc supervisor fluxbox novnc websockify \
         libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
         libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
         libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
-        libatspi2.0-0 libxshmfence1 fonts-noto-cjk fonts-liberation \
-        fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
+        libatspi2.0-0 libxshmfence1 fonts-liberation \
+        fonts-noto-color-emoji fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
 
 # Piper TTS — CHỈ binary (~25 MB), KHÔNG kèm giọng .onnx. Giọng nằm ngoài image
@@ -182,42 +271,12 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
     fi \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python deps ─────────────────────────────────────────────────────────────
-RUN pip install --no-cache-dir uv
-
-# pyproject ghim mirror aliyun (default=true — nhanh ở VN, hay TIMEOUT trên GH
-# runner: đã fail vnstock rồi posthog). CI truyền build-arg ép PyPI chính hãng;
-# build tay ở VN không truyền gì → vẫn aliyun như cũ.
-ARG UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
-ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX}
-
-# chatgpt2api locked deps (reproducible) → /app/.venv
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-
-# vn-mcp-hub + captcha-solver + proxy deps on top of the same venv
-COPY deploy/extra-requirements.txt /tmp/extra-requirements.txt
-RUN uv pip install --python /app/.venv/bin/python -r /tmp/extra-requirements.txt
-
-# VieNeu-TTS: --no-deps để không kéo gradio/pandas (~300MB, chỉ cần cho web UI
-# riêng của họ). Dep runtime thật (sea-g2p, tokenizers…) nằm trong
-# extra-requirements.txt ở trên. Model KHÔNG trong image — tải về volume
-# data/hf bằng scripts/download_vieneu_model.py (engine đọc qua HF_HOME).
-RUN uv pip install --python /app/.venv/bin/python --no-deps vieneu
+# ── Python deps: nhận nguyên .venv từ stage python-builder ─────────────────
+# Toàn bộ việc cài đặt (uv, compiler, cache tải về) diễn ra ở stage kia và chết
+# theo nó. Đường dẫn PHẢI giữ đúng /app/.venv vì venv ghi đường tuyệt đối vào
+# shebang của mọi script trong .venv/bin.
+COPY --from=python-builder /app/.venv /app/.venv
 ENV HF_HOME=/app/data/hf
-
-# ── GPU (build-arg GPU=1 → tag :gpu, amd64) ────────────────────────────────
-# Torch CUDA (~6GB cài đặt) để VieNeu tự chuyển engine PyTorch khi thấy GPU
-# (voice.tts.vieneu_backend mặc định "auto"). transformers ghim theo README
-# VieNeu — bản ổn định nhất cho SDK GPU. Image thường (GPU=0) không cài gì.
-# Host cần driver NVIDIA + nvidia-container-toolkit + compose `gpus: all`.
-ARG GPU=0
-RUN if [ "$GPU" = "1" ]; then \
-      uv pip install --python /app/.venv/bin/python \
-        "torch==2.8.0" "torchaudio==2.8.0" \
-        --index-url https://download.pytorch.org/whl/cu128 && \
-      uv pip install --python /app/.venv/bin/python "transformers==4.57.6" ; \
-    fi
 
 # sherpa-onnx (STT) nạp thư viện native qua dlopen("libonnxruntime.so") nhưng
 # gói onnxruntime chỉ có file libonnxruntime.so.<version> → loader không thấy.
@@ -232,10 +291,26 @@ RUN ORT_DIR=$(find /app/.venv -type d -path '*/onnxruntime/capi' | head -1) && \
         echo "onnxruntime symlink OK: $SO" ; \
     else echo "WARN: khong tim thay libonnxruntime.so.* (STT se loi)" ; fi
 
-# Browsers for the captcha-solver (patchright Chromium + Firefox + cloakbrowser)
-RUN /app/.venv/bin/patchright install chromium \
-    && /app/.venv/bin/patchright install firefox \
-    && /app/.venv/bin/python -m cloakbrowser install
+# Trình duyệt cho captcha-solver: CHỈ CloakBrowser.
+#
+# Trước đây image tải về BỐN bộ máy trình duyệt. Đo trong container đang chạy
+# ngày 24/08/2026: /ms-playwright 957 MB (Chromium 389, headless-shell 262,
+# Firefox 302) + /root/.cloakbrowser 697 MB + Google Chrome 432 MB.
+#
+# Bỏ được hai bộ trong /ms-playwright vì:
+#   • CloakBrowser là đường CHÍNH (log máy chủ chỉ ghi engine=cloakbrowser) và
+#     nó mang Chromium vá sẵn của riêng nó.
+#   • Đường lùi của captcha-solver gọi qua channel="chrome", tức Google Chrome
+#     thật đã cài ở trên — đã chạy thử trong chính container: mở được
+#     example.com với channel="chrome".
+#   • Firefox chỉ chạy khi đặt CAPTCHA_SOLVER_BROWSER=firefox, mặc định là
+#     "chromium" và không nơi nào trong compose/env đặt biến đó.
+#
+# BA CHỖ GỌI đã được sửa để trỏ vào Chrome/Chromium hệ thống thay vì bản tải
+# riêng: captcha-solver/src/browser_pool.py, vn-mcp-hub/src/general/web_reader.py
+# và vn-mcp-hub/src/general/web_agent.py. Nếu bật lại Firefox thì phải thêm lại
+# `patchright install firefox` ở đây.
+RUN /app/.venv/bin/python -m cloakbrowser install
 
 # ── Application code ────────────────────────────────────────────────────────
 # chatgpt2api at /app

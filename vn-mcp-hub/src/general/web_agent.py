@@ -23,6 +23,32 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("web_agent")
 
 
+def _ho_so_trinh_duyet() -> dict:
+    """Trỏ browser-use vào Chrome/Chromium đã cài sẵn trong image.
+
+    Image không còn tải bản Chromium riêng của patchright, nên để browser-use
+    tự chọn là nó đi tìm một bản không tồn tại và tác vụ chết ngay bước mở
+    trình duyệt. Trả về dict rỗng khi không tìm thấy gì (máy dev) để giữ nguyên
+    hành vi mặc định của thư viện.
+    """
+    import os.path
+    import shutil
+
+    duong = shutil.which("google-chrome") or shutil.which("google-chrome-stable")
+    if not duong:
+        for ung_vien in ("/usr/bin/chromium", "/usr/bin/chromium-browser"):
+            if os.path.exists(ung_vien):
+                duong = ung_vien
+                break
+    if not duong:
+        return {}
+    try:
+        from browser_use import BrowserProfile  # lazy: cùng lý do với Agent
+    except Exception:
+        return {}
+    return {"browser_profile": BrowserProfile(executable_path=duong)}
+
+
 def _make_llm():
     try:
         from browser_use import ChatOpenAI  # lazy
@@ -58,7 +84,7 @@ async def run_web_task(task: str, max_steps: int = 12) -> str:
         except Exception:
             from browser_use.beta import Agent  # type: ignore
         llm = _make_llm()
-        agent = Agent(task=task, llm=llm)
+        agent = Agent(task=task, llm=llm, **_ho_so_trinh_duyet())
         try:
             history = await agent.run(max_steps=max(1, min(30, max_steps)))
         except TypeError:
