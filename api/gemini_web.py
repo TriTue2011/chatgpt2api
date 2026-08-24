@@ -632,6 +632,25 @@ def prewarm_clients() -> int:
         try:
             _get_client(psid, psidts)
             warmed += 1
+            # Init XONG mà vẫn là khách thì cookie phiên đã chết: xoay
+            # `__Secure-1PSIDTS` nữa cũng vô ích, phải đăng nhập lại.
+            #
+            # Lúc này hệ thống ĐÃ BIẾT tài khoản hỏng — log ghi
+            # {"event": "gma_client_init", "auth": false}. Bản cũ vẫn đi tiếp,
+            # vì việc tự chữa chỉ nổ khi một request THẬT hỏng. Nên người dùng
+            # đầu tiên rơi vào tài khoản đó phải ăn một lần lỗi rồi mới có
+            # chữa. Đo thật 24/08/2026 lúc 09:30 trên máy chủ: làm nóng xong,
+            # auth=false, không có gì xảy ra tiếp.
+            #
+            # Chữa ở NỀN, không chặn vòng làm nóng: `_tu_chua_phien_nen` tự bỏ
+            # qua profile không phải `google-*` (không có creds đã lưu thì gọi
+            # recover chỉ tổ spam), và bản thân recover có debounce 30 phút mỗi
+            # profile nên khởi động lại liên tiếp cũng không nã.
+            if _auth_status.get(psid[:32], (0, None))[1] is False:
+                _logger().info({"event": "gma_prewarm_khach",
+                                "profile": str(profile)[:40]})
+                _tu_chua_phien_nen(str(profile or ""),
+                                   RuntimeError("làm nóng thấy phiên là khách"))
         except Exception as exc:
             _logger().warning({"event": "gma_prewarm_failed", "profile": str(profile)[:40],
                                "error": str(exc)[:120]})
