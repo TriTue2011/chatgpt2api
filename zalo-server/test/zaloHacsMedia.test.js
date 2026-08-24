@@ -181,3 +181,47 @@ test('URL kieu image_proxy cua Home Assistant van ra tep .jpg', async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// Header ISO BMFF toi thieu: 4 byte kich thuoc box, 'ftyp', roi major brand.
+const MP4_HEADER = Buffer.concat([
+  Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypisom', 'latin1'), Buffer.alloc(32),
+]);
+const MOV_HEADER = Buffer.concat([
+  Buffer.from([0x00, 0x00, 0x00, 0x14]), Buffer.from('ftypqt  ', 'latin1'), Buffer.alloc(32),
+]);
+
+// Cung mot co che hong nhu anh, o duong video: zca-js chi cho dinh kem di duong
+// video khi duoi ten dung "mp4", moi duoi khac roi vao nhanh "others" va bay len
+// endpoint asyncfile — toi noi thanh tep dinh kem chu khong phai doan phim bam
+// phat duoc. URL khong noi duoc duoi va Content-Type cung khong thi phai soi noi
+// dung. Doi lai: .mov khong duoc doi ten thanh .mp4, do la noi doi.
+test('video that duoc dat lai duoi .mp4, con .mov thi de nguyen', async () => {
+  const { saveVideoFromUrl, removeFile } = await import('../utils/helpers.js');
+  let than = MP4_HEADER;
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(than);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const goc = `http://127.0.0.1:${server.address().port}`;
+
+    const duongMp4 = await saveVideoFromUrl(`${goc}/api/camera_proxy_stream/camera.cua_nha`);
+    try {
+      assert.equal(path.extname(duongMp4), '.mp4');
+      assert.equal(fs.readFileSync(duongMp4).length, MP4_HEADER.length);
+    } finally {
+      removeFile(duongMp4);
+    }
+
+    than = MOV_HEADER;
+    const duongMov = await saveVideoFromUrl(`${goc}/phim.mov`);
+    try {
+      assert.equal(path.extname(duongMov), '.mov');
+    } finally {
+      removeFile(duongMov);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -92,3 +92,73 @@ test('reconnect tang backoff va dung o 5 phut', () => {
     [5000, 15000, 30000, 60000, 120000, 300000, 300000, 300000],
   );
 });
+
+// Hoi quy cho su co 24/08/2026, nhanh thu hai: path.extname() goi MOI THU sau
+// dau cham cuoi la phan mo rong, ke ca mot manh ten thuc the dai ngoang. URL
+// media cua Home Assistant (/api/image_proxy/image.cua_nha_last_motion_image,
+// /api/camera_proxy_stream/camera.cua_nha) vi the "co duoi" roi nhay qua nhanh
+// doc Content-Type. Zalo phan loai dinh kem bang duoi ten nen anh thanh tep va
+// video thanh tep. Chi tin duoi nao TRONG NHU duoi that.
+test('duoi troi oi trong URL bi thay bang duoi theo Content-Type', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zalo-download-'));
+  await withServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'video/mp4' });
+    res.end(Buffer.alloc(64));
+  }, async (base) => {
+    const duongDan = await downloadToTemp(
+      `${base}/api/camera_proxy_stream/camera.cua_nha`,
+      { tempDir: dir, maxBytes: 4096 },
+    );
+    assert.equal(path.extname(duongDan), '.mp4');
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('duoi that trong URL duoc giu nguyen', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zalo-download-'));
+  await withServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'video/mp4' });
+    res.end(Buffer.alloc(64));
+  }, async (base) => {
+    const duongDan = await downloadToTemp(`${base}/phim.mkv`, { tempDir: dir, maxBytes: 4096 });
+    assert.equal(path.extname(duongDan), '.mkv');
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Content-Disposition la ten may chu TU KHAI, khong phai ten minh doan tu URL —
+// suy doan cua minh khong duoc de len tren loi khai cua no.
+test('ten trong Content-Disposition duoc giu nguyen du duoi la gi', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zalo-download-'));
+  await withServer((_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-disposition': 'attachment; filename="ban_sao_luu.thang_tam_2026"',
+    });
+    res.end(Buffer.alloc(64));
+  }, async (base) => {
+    const duongDan = await downloadToTemp(`${base}/tai-ve`, { tempDir: dir, maxBytes: 4096 });
+    assert.ok(duongDan.endsWith('ban_sao_luu.thang_tam_2026'), duongDan);
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Duoi troi oi ma Content-Type cung khong noi duoc la gi thi de nguyen ten goc:
+// dap them ".bin" chi lam ten nguoi nhan thay xau di ma chang mo duoc hon.
+test('khong ro Content-Type thi duoi la thi giu nguyen, khong dap .bin', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zalo-download-'));
+  await withServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/octet-stream' });
+    res.end(Buffer.alloc(64));
+  }, async (base) => {
+    const laDuoi = await downloadToTemp(`${base}/ban_sao_luu.thang_tam_2026`, {
+      tempDir: dir, maxBytes: 4096,
+    });
+    assert.ok(laDuoi.endsWith('ban_sao_luu.thang_tam_2026'), laDuoi);
+
+    // Con khong co duoi nao ca thi van phai dat mot cai — hanh vi cu, giu nguyen.
+    const khongDuoi = await downloadToTemp(`${base}/tai-ve`, { tempDir: dir, maxBytes: 4096 });
+    assert.equal(path.extname(khongDuoi), '.bin');
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
