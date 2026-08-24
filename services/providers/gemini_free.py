@@ -272,11 +272,63 @@ def _convert_request(messages, tools, *, google_search: bool = False):
 
     contents = []
     system_parts = []
+    #: tool_call_id → tên hàm. Gemini gắn kết quả công cụ theo TÊN, còn OpenAI
+    #: gắn theo id, nên phải tra ngược qua lượt assistant đã gọi hàm đó.
+    ten_theo_id: dict[str, str] = {}
 
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
         parts = []
+
+        # Lượt assistant có gọi công cụ → functionCall của Gemini.
+        #
+        # Bản cũ chỉ lấy phần chữ, mà lượt gọi công cụ thì chữ rỗng, nên nó gửi
+        # lên một lượt "model" trống rỗng và mất luôn việc model đã gọi hàm gì.
+        if role == "assistant" and msg.get("tool_calls"):
+            if isinstance(content, str) and content.strip():
+                parts.append({"text": content.strip()})
+            for tc in msg.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                ten = str(fn.get("name") or "").strip()
+                if not ten:
+                    continue
+                tham_so = fn.get("arguments")
+                if isinstance(tham_so, str):
+                    try:
+                        tham_so = json.loads(tham_so or "{}")
+                    except json.JSONDecodeError:
+                        tham_so = {}
+                parts.append({"functionCall": {
+                    "name": ten,
+                    "args": tham_so if isinstance(tham_so, dict) else {}}})
+                ten_theo_id[str(tc.get("id") or "")] = ten
+            if parts:
+                contents.append({"role": "model", "parts": parts})
+            continue
+
+        # Kết quả công cụ là lượt của NGƯỜI DÙNG trong mô hình của Gemini.
+        #
+        # Bản cũ gộp mọi vai không phải user/system thành "model", nên kết quả
+        # công cụ bị gửi lên như thể chính model nói ra — và hội thoại kết thúc
+        # bằng lượt model. Đo thật 24/08/2026 lúc 08:57 trên máy chủ: Gemini
+        # trả 400 "Requests ending with a model turn are not supported", cả hai
+        # khoá đều hỏng, lượt chat rơi tiếp xuống provider thứ tư.
+        if role == "tool":
+            ket_qua = content if isinstance(content, str) else json.dumps(
+                content, ensure_ascii=False)
+            ten = (str(msg.get("name") or "").strip()
+                   or ten_theo_id.get(str(msg.get("tool_call_id") or ""), ""))
+            if ten:
+                parts = [{"functionResponse": {
+                    "name": ten, "response": {"result": ket_qua}}}]
+            else:
+                # Không tra ra tên hàm thì gửi dạng chữ — mất cấu trúc nhưng vẫn
+                # còn nội dung, hơn là ném đi hoặc gửi một functionResponse thiếu
+                # tên (Gemini từ chối cả request).
+                parts = [{"text": f"Kết quả công cụ: {ket_qua}"}]
+            contents.append({"role": "user", "parts": parts})
+            continue
 
         if isinstance(content, list):
             text_content = ""
@@ -337,6 +389,16 @@ def _convert_request(messages, tools, *, google_search: bool = False):
         if not parts:
             parts = [{"text": content}]
         contents.append({"role": "user" if role == "user" else "model", "parts": parts})
+
+    # Gemini không nhận request kết thúc bằng lượt của model. Chuyện này xảy ra
+    # khi một provider khác đã trả lời dở rồi hỏng, và orchestrator gửi lại đúng
+    # danh sách tin nhắn đó sang đây. Thêm một lượt người dùng tối thiểu còn hơn
+    # để cả lượt chat chết — nhưng ghi log, vì nó là dấu hiệu hội thoại bị dựng
+    # lệch ở tầng trên.
+    if contents and contents[-1].get("role") == "model":
+        logger.warning({"event": "gemini_them_luot_user",
+                        "ly_do": "hội thoại kết thúc bằng lượt model"})
+        contents.append({"role": "user", "parts": [{"text": "Tiếp tục."}]})
 
     si = {"parts": [{"text": "\n".join(system_parts)}]} if system_parts else None
 
