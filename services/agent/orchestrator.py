@@ -1210,6 +1210,14 @@ def _finalize(user_id: str, result: dict[str, Any]) -> dict[str, Any]:
         result = ask_choices.apply_to_result(result, user_id)
     except Exception:
         pass
+    # Danh sách dài (bản tin, danh mục…) → đánh mã mục A1/B2 để người dùng chọn
+    # xem chi tiết. Chạy SAU ask_choices và tự bỏ qua khi tin đã là menu chọn,
+    # nên hai hệ mã không bao giờ nằm chung một tin.
+    try:
+        from services.agent import muc_luc as _ml
+        result = _ml.apply_to_result(result, user_id)
+    except Exception as exc:
+        logger.debug("agent: đánh mã mục lỗi: %s", exc)
     # LLM/tool output = untrusted — chặn SSRF trước khi bot channel fetch/gửi.
     try:
         from services import net_guard
@@ -1515,12 +1523,25 @@ def _orchestrate_locked(user_text: str, user_id: str,
         return {"text": "Dạ anh/chị cần em giúp gì ạ? 😊"}
 
     # 0) Resolve a pending ask-choice (user tapped button or replied 1/2/…)
+    picked = None
     try:
         picked = ask_choices.resolve_reply(user_id, user_text)
         if picked:
             user_text = picked
     except Exception:
         pass
+
+    # 0.1) Không phải lựa chọn của câu hỏi nào → có thể là MÃ MỤC của danh sách
+    # vừa gửi ("A1", "3"). Tra sau ask_choices: câu hỏi model chủ động đặt được
+    # ưu tiên, vì bản chờ mã mục sống tới 30 phút nên hay còn tồn.
+    if not picked:
+        try:
+            from services.agent import muc_luc as _ml
+            _chon_muc = _ml.resolve_reply(user_id, user_text)
+            if _chon_muc:
+                user_text = _chon_muc
+        except Exception:
+            pass
 
     # 0a) Lệnh admin xử lý Codex account_deactivated: "xóa <email>" / "giữ <email>".
     # Chỉ khớp khi có pending deactivated cho email đó (do refresh nhiều tầng tạo),

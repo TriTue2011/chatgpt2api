@@ -3777,10 +3777,14 @@ def _process_ai(ev: dict) -> None:
                 reply = _ask.format_numbered(reply, choices)
             except Exception:
                 pass
+        # Danh sách đã được đánh mã mục (A1, B2…) thì xử như MENU: giữ con số
+        # dạng chữ và Ở LẠI CHAT. Đóng thành Word là người dùng hết chọn được —
+        # mã mục sinh ra chính để nhắn lại, mà tệp .docx thì không nhắn lại được.
+        co_ma_muc = bool(out.get("muc_luc")) and not has_choices
         # «Trả lời bằng giọng nói» = chỉ âm thanh; có nút chọn số thì vẫn gửi chữ
         # (kèm voice). Ngược lại: gửi được voice → bỏ chữ; không → gửi chữ.
         _sender = str(ev.get("sender_id") or "")
-        if has_choices:
+        if has_choices or co_ma_muc:
             send_message(thread_id, reply, thread_type, co_nut_chon=True)
             _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply)
         elif not _maybe_voice_reply(thread_id, thread_type, _acc, _sender, reply):
