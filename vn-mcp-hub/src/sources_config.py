@@ -26,6 +26,7 @@ DEFAULTS: dict[str, dict[str, bool]] = {
         "tuoitre": True,
         "thanhnien": True,
         "dantri": True,
+        "nchmf": True,          # Trung tâm Dự báo KTTV Quốc gia, bóc HTML
         "bbc_news": True,
         "google_news": True,
         "worldmonitor": True,

@@ -106,11 +106,24 @@ class TestBanTinChiaMuc(unittest.TestCase):
     MUC_YEU_CAU = ["Thể thao", "Kinh tế", "Xã hội", "Công nghệ thông tin",
                    "Giáo dục", "Y tế", "Giải trí", "Thế giới"]
 
-    def test_du_8_muc_dung_thu_tu(self):
+    # Thêm 25/08 theo yêu cầu người dùng: hỏi tin tức thì lấy cả bản tin mới
+    # nhất của Trung tâm Dự báo KTTV Quốc gia. Đặt CUỐI và tách riêng vì đây là
+    # nguồn nhà nước, không phải báo chí — trộn vào "Xã hội" thì tin bão nằm lẫn
+    # giữa tin thời sự và vòng trộn theo nguồn có thể đẩy nó ra ngoài.
+    MUC_THEM = ["Thời tiết"]
+
+    def test_du_muc_dung_thu_tu(self):
         nhan = [t for _, _, t in news.MUC_BAN_TIN]
-        self.assertEqual(len(nhan), 8)
-        for mong, that in zip(self.MUC_YEU_CAU, nhan):
+        mong_doi = self.MUC_YEU_CAU + self.MUC_THEM
+        self.assertEqual(len(nhan), len(mong_doi))
+        for mong, that in zip(mong_doi, nhan):
             self.assertIn(mong, that, f"mục '{mong}' sai chỗ hoặc thiếu")
+
+    def test_tam_muc_bao_chi_van_dung_dau(self):
+        """Mục thêm về sau không được chen lên trước tám mục người dùng chốt."""
+        nhan = [t for _, _, t in news.MUC_BAN_TIN]
+        for mong, that in zip(self.MUC_YEU_CAU, nhan[:len(self.MUC_YEU_CAU)]):
+            self.assertIn(mong, that)
 
     def test_moi_muc_tro_toi_chu_de_co_that(self):
         """Sai một mã chủ đề là mục đó im lặng rỗng mãi mãi."""
