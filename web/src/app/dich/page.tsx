@@ -112,6 +112,45 @@ function DichPageContent() {
     }
   };
 
+  // Sửa thuật ngữ dịch — bản sửa tay THẮNG cả từ điển gốc, hiệu lực ngay lần
+  // sau. Lưu ở máy chủ (glossary/<src>.sua.json), không mất khi cập nhật.
+  const [suaSrc, setSuaSrc] = useState("en");
+  const [dsLinhVuc, setDsLinhVuc] = useState<{ slug: string; ten: string }[]>([]);
+  const [dsSua, setDsSua] = useState<Record<string, Record<string, string>>>({});
+  const [suaLinhVuc, setSuaLinhVuc] = useState("cong_nghe");
+  const [suaTerm, setSuaTerm] = useState("");
+  const [suaVi, setSuaVi] = useState("");
+  const [suaMsg, setSuaMsg] = useState("");
+
+  useEffect(() => {
+    request.get(`/api/dich/glossary?src=${suaSrc}`)
+      .then((r) => {
+        setDsLinhVuc(((r.data as any)?.linh_vuc as { slug: string; ten: string }[]) || []);
+        setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
+      })
+      .catch(() => { setDsLinhVuc([]); setDsSua({}); });
+  }, [suaSrc]);
+
+  const tenLinhVuc = (slug: string) => dsLinhVuc.find((x) => x.slug === slug)?.ten || slug;
+
+  const luuSua = async () => {
+    const term = suaTerm.trim(), vi = suaVi.trim();
+    if (!term || !vi) { setSuaMsg("❌ Nhập cả từ gốc và từ Việt."); return; }
+    try {
+      const r = await request.post("/api/dich/glossary",
+        { src: suaSrc, linh_vuc: suaLinhVuc, term, vi });
+      setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
+      setSuaTerm(""); setSuaVi(""); setSuaMsg("✓ Đã lưu — lần dịch sau sẽ dùng từ này.");
+    } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+  };
+
+  const xoaSua = async (linh_vuc: string, term: string) => {
+    try {
+      const r = await request.post("/api/dich/glossary/xoa", { src: suaSrc, linh_vuc, term });
+      setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
+    } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+  };
+
   const laVideo = !!tep && DUOI_VIDEO.some((d) => tep.name.toLowerCase().endsWith(d));
 
   useEffect(() => {
@@ -333,6 +372,71 @@ function DichPageContent() {
             — nên chọn <b>model cục bộ</b>. Dùng model online cũng được, khi đó hệ thống tự chắt
             lọc thuật ngữ mới vào từ điển để lần sau bớt cần LLM. Cài đặt dùng chung cho mọi lượt
             dịch phụ đề/lồng tiếng.
+          </p>
+        </div>
+      </details>
+
+      {/* Sửa thuật ngữ dịch — thắng cả từ điển gốc, hiệu lực ngay lần sau */}
+      <details className="rounded-[16px] border border-[var(--border)] px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          Sửa thuật ngữ dịch (khi thấy từ chuyên ngành dịch sai)
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm">
+              <span className="mr-2 text-[var(--muted-foreground)]">Tiếng gốc</span>
+              <select value={suaSrc} onChange={(e) => setSuaSrc(e.target.value)}
+                className="rounded-[10px] border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm">
+                <option value="en">Anh</option>
+                <option value="ja">Nhật</option>
+                <option value="zh">Trung</option>
+                <option value="ko">Hàn</option>
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="mr-2 text-[var(--muted-foreground)]">Lĩnh vực</span>
+              <select value={suaLinhVuc} onChange={(e) => setSuaLinhVuc(e.target.value)}
+                className="rounded-[10px] border border-[var(--border)] bg-transparent px-2 py-1.5 text-sm">
+                {dsLinhVuc.map((lv) => <option key={lv.slug} value={lv.slug}>{lv.ten}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={suaTerm} onChange={(e) => setSuaTerm(e.target.value)}
+              placeholder="từ gốc (vd: cache)"
+              className="min-w-[160px] flex-1 rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm" />
+            <span className="text-[var(--muted-foreground)]">→</span>
+            <input value={suaVi} onChange={(e) => setSuaVi(e.target.value)}
+              placeholder="từ Việt đúng (vd: bộ nhớ đệm)"
+              className="min-w-[160px] flex-1 rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm" />
+            <button type="button" onClick={luuSua}
+              className="rounded-[10px] bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+              Lưu
+            </button>
+          </div>
+          {suaMsg && <p className="text-xs">{suaMsg}</p>}
+          {Object.keys(dsSua).length > 0 && (
+            <div className="space-y-2 rounded-[12px] bg-[var(--muted)] p-3">
+              {Object.entries(dsSua).map(([lv, cap]) => (
+                <div key={lv} className="space-y-1">
+                  <div className="text-xs font-medium text-[var(--muted-foreground)]">{tenLinhVuc(lv)}</div>
+                  {Object.entries(cap).map(([term, vi]) => (
+                    <div key={term} className="flex items-center gap-2 text-sm">
+                      <span className="flex-1"><b>{term}</b> → {vi}</span>
+                      <button type="button" onClick={() => xoaSua(lv, term)}
+                        className="rounded px-1.5 text-[var(--muted-foreground)] hover:text-red-600" title="Xóa">
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Sửa ở đây <b>thắng cả từ điển gốc</b>, có hiệu lực ngay lượt dịch sau. Nhập
+            <b> từ gốc</b> ở tiếng nguồn (vd tiếng Anh &quot;cache&quot;), không phải bản dịch —
+            hệ thống sẽ tự thay đúng từ Việt anh đặt mỗi khi gặp từ đó trong lĩnh vực này.
           </p>
         </div>
       </details>

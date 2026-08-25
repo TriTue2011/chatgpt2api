@@ -113,6 +113,34 @@ Backend ([services/dich_llm.py](../services/dich_llm.py), gọi từ
 > nhẹ qua Ollama (.220:11434) và chấp nhận chậm, hoặc dùng model online. Để đúng
 > lỗi thuật ngữ thì **bước 2 (glossary) đã đủ**, không cần bật LLM.
 
+## Sửa thuật ngữ tay (web) — thắng cả từ điển gốc
+
+Tab **Dịch** có hộp *"Sửa thuật ngữ dịch"*: chọn tiếng gốc + lĩnh vực, gõ
+`từ gốc → từ Việt đúng`, Lưu. Ghi vào `<src>.sua.json`, **hiệu lực ngay lượt
+dịch sau** (không phải dựng lại từ điển). API: `GET/POST /api/dich/glossary`,
+`POST /api/dich/glossary/xoa`.
+
+Ba tầng khi đọc glossary (`thuat_ngu.nap`): **curated `<src>.json`** (nền) <
+**`<src>.hoc.json`** (LLM tự học, chỉ lấp chỗ trống) < **`<src>.sua.json`**
+(người dùng sửa, ĐÈ tất cả). Sửa lỗi thì bản tay phải thắng.
+
+## Triển khai lên server — DATA KHÔNG đi qua git
+
+⚠️ `.dockerignore` loại `/data` khỏi image, và `/app/data` bị **bind-mount đè**
+bởi volume host. Nên **commit `data/glossary/*.json` vào git KHÔNG deploy** tới
+bot đang chạy. Đường thật:
+
+- Bot c2a chạy trên **.38**, mount thật (theo `docker inspect c2a`, do Portainer
+  quản, KHÁC git compose): **`/opt/c2a/data` → `/app/data`**.
+- Runtime đọc `/app/data/glossary/*.json` = **host `/opt/c2a/data/glossary/`**.
+- Deploy dữ liệu = **copy JSON vào `/opt/c2a/data/glossary/` trên .38** rồi
+  `docker restart c2a` (tiến trình nhớ đệm glossary, phải restart để nạp lại).
+- `<src>.hoc.json` (LLM học) và `<src>.sua.json` (người sửa) ghi thẳng vào
+  `/app/data/glossary` = cùng volume → **bền qua cập nhật image**.
+
+> Code (services/api/web) VẪN deploy qua image như thường (git push → build →
+> watchtower). Chỉ DỮ LIỆU glossary mới cần copy tay vào volume.
+
 ## Trạng thái (2026-08-25)
 
 - **XONG — dữ liệu thật đã commit vào repo**: `data/glossary/{en,zh,ja}.json`

@@ -116,3 +116,56 @@ class ThuatNguTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SuaThuatNguTests(unittest.TestCase):
+    """Tầng NGƯỜI DÙNG SỬA: base (curated) < hoc (tự học) < sua (sửa tay)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._data = Path(self._tmp.name)
+        (self._data / "glossary").mkdir(parents=True)
+        (self._data / "glossary" / "en.json").write_text(json.dumps(
+            {"cong_nghe": {"cache": "bộ nhớ đệm"}}, ensure_ascii=False), encoding="utf-8")
+        (self._data / "glossary" / "en.hoc.json").write_text(json.dumps(
+            {"cong_nghe": {"kernel": "nhân (học)"}}, ensure_ascii=False), encoding="utf-8")
+        self._cu = cfg.DATA_DIR
+        cfg.DATA_DIR = self._data
+        tn._reset_cache_cho_test()
+
+    def tearDown(self) -> None:
+        cfg.DATA_DIR = self._cu
+        tn._reset_cache_cho_test()
+        self._tmp.cleanup()
+
+    def test_sua_thang_curated(self):
+        tn.ghi_sua("en", "cong_nghe", "CACHE", "bộ đệm SỬA")   # hoa cũng khớp
+        self.assertEqual(tn.nap_glossary("en")["cong_nghe"]["cache"], "bộ đệm SỬA")
+
+    def test_sua_thang_tu_hoc(self):
+        tn.ghi_sua("en", "cong_nghe", "kernel", "nhân SỬA")
+        self.assertEqual(tn.nap_glossary("en")["cong_nghe"]["kernel"], "nhân SỬA")
+
+    def test_them_tu_moi(self):
+        tn.ghi_sua("en", "cong_nghe", "socket", "ổ cắm")
+        self.assertEqual(tn.nap_glossary("en")["cong_nghe"]["socket"], "ổ cắm")
+
+    def test_doc_sua_liet_ke(self):
+        tn.ghi_sua("en", "cong_nghe", "socket", "ổ cắm")
+        self.assertEqual(tn.doc_sua("en"), {"cong_nghe": {"socket": "ổ cắm"}})
+
+    def test_xoa_sua_tro_ve_curated(self):
+        tn.ghi_sua("en", "cong_nghe", "cache", "bộ đệm SỬA")
+        self.assertTrue(tn.xoa_sua("en", "cong_nghe", "cache"))
+        self.assertEqual(tn.nap_glossary("en")["cong_nghe"]["cache"], "bộ nhớ đệm")
+        self.assertFalse(tn.xoa_sua("en", "cong_nghe", "cache"))  # xóa lần hai: không có
+
+    def test_ghi_sua_thieu_field_bao_loi(self):
+        with self.assertRaises(ValueError):
+            tn.ghi_sua("en", "cong_nghe", "  ", "x")
+
+    def test_danh_sach_linh_vuc_co_nhan(self):
+        ds = {x["slug"]: x["ten"] for x in tn.danh_sach_linh_vuc()}
+        self.assertEqual(ds["cong_nghe"], "Công nghệ")
+        self.assertEqual(ds["y_khoa"], "Y khoa")
+

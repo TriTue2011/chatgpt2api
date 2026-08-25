@@ -106,6 +106,12 @@ class _KhoTinh:
             ban = goi.setdefault(lv, {})
             for term, vi in cap.items():
                 ban.setdefault(term, vi)
+        # Bản NGƯỜI DÙNG SỬA (<src>.sua.json) THẮNG tất cả — sửa lỗi thì phải
+        # đè cả curated lẫn tự học, và có hiệu lực ngay lượt dịch sau.
+        for lv, cap in _doc_glossary_file(thu_muc / f"{src}.sua.json").items():
+            ban = goi.setdefault(lv, {})
+            for term, vi in cap.items():
+                ban[term] = vi
         self._theo_src[src] = goi
         return goi
 
@@ -161,6 +167,61 @@ def ghi_hoc(src: str, moi: dict[str, dict[str, str]]) -> int:
                            encoding="utf-8")
         _KHO.xoa()
     return them
+
+
+LINH_VUC_NHAN: dict[str, str] = {
+    "cong_nghe": "Công nghệ", "ky_thuat": "Kỹ thuật", "toan_hoc": "Toán học",
+    "vat_ly": "Vật lý", "hoa_hoc": "Hóa học", "sinh_hoc": "Sinh học",
+    "y_khoa": "Y khoa", "tam_ly": "Tâm lý", "phap_ly": "Pháp lý",
+    "tai_chinh": "Tài chính", "kinh_doanh": "Kinh doanh", "quan_su": "Quân sự",
+    "am_nhac": "Âm nhạc", "ngon_ngu": "Ngôn ngữ", "thien_van": "Thiên văn",
+    "dia_chat": "Địa chất", "am_thuc": "Ẩm thực", "the_thao": "Thể thao",
+    "hang_hai": "Hàng hải", "hang_khong": "Hàng không", "kien_truc": "Kiến trúc",
+}
+
+
+def danh_sach_linh_vuc() -> list[dict[str, str]]:
+    """[{'slug','ten'}] cho ô chọn lĩnh vực trên UI (thứ tự khai bên trên)."""
+    return [{"slug": s, "ten": t} for s, t in LINH_VUC_NHAN.items()]
+
+
+def doc_sua(src: str) -> dict[str, dict[str, str]]:
+    """Bảng người dùng SỬA của một tiếng — đọc thẳng file, để UI liệt kê."""
+    return _doc_glossary_file(_thu_muc_glossary() / f"{str(src or '').lower().strip()}.sua.json")
+
+
+def _ghi_sua_file(src: str, bang: dict[str, dict[str, str]]) -> None:
+    tep = _thu_muc_glossary() / f"{src}.sua.json"
+    tep.parent.mkdir(parents=True, exist_ok=True)
+    tep.write_text(json.dumps({lv: cap for lv, cap in bang.items() if cap},
+                              ensure_ascii=False, indent=1), encoding="utf-8")
+    _KHO.xoa()
+
+
+def ghi_sua(src: str, linh_vuc: str, term: str, vi: str) -> None:
+    """Thêm/ghi đè một sửa tay vào ``<src>.sua.json`` (thắng mọi tầng). Xoá cache."""
+    src = str(src or "").lower().strip()
+    lv = str(linh_vuc or "").strip()
+    term_n = thuong_hoa(term)
+    vi_s = str(vi or "").strip()
+    if not (src and lv and term_n and vi_s):
+        raise ValueError("thiếu tiếng / lĩnh vực / từ gốc / từ Việt")
+    bang = doc_sua(src)
+    bang.setdefault(lv, {})[term_n] = vi_s
+    _ghi_sua_file(src, bang)
+
+
+def xoa_sua(src: str, linh_vuc: str, term: str) -> bool:
+    """Bỏ một sửa tay. Trả True nếu có xoá."""
+    src = str(src or "").lower().strip()
+    lv = str(linh_vuc or "").strip()
+    term_n = thuong_hoa(term)
+    bang = doc_sua(src)
+    if term_n not in bang.get(lv, {}):
+        return False
+    del bang[lv][term_n]
+    _ghi_sua_file(src, bang)
+    return True
 
 
 def doan_linh_vuc(text_nguon: str, src: str) -> list[str]:
