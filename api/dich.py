@@ -86,6 +86,21 @@ class DichTepRequest(BaseModel):
     voice: str = ""
 
 
+class SuaThuatNguRequest(BaseModel):
+    #: Tiếng NGUỒN của glossary cần sửa: en/ja/zh/ko.
+    src: str
+    linh_vuc: str
+    #: Từ ở TIẾNG NGUỒN (vd 'cache'); thuật ngữ VI đúng cần thay ra.
+    term: str
+    vi: str
+
+
+class XoaThuatNguRequest(BaseModel):
+    src: str
+    linh_vuc: str
+    term: str
+
+
 def _luu_so_viec_da_khoa() -> None:
     """Ghi sổ việc. Caller đang giữ ``_khoa`` để snapshot nhất quán."""
     from services import dich_jobs
@@ -662,5 +677,48 @@ def create_router() -> APIRouter:
             elif v["trang_thai"] == "loi":
                 ra["loi"] = v.get("loi", "lỗi không rõ")
         return ra
+
+    @router.get("/api/dich/glossary")
+    async def xem_glossary(src: str = "en", authorization: str | None = Header(None)):
+        """Bảng thuật ngữ NGƯỜI DÙNG SỬA của một tiếng nguồn + danh sách lĩnh vực.
+
+        Chỉ trả bản sửa tay (``<src>.sua.json``) — thứ người dùng quản được —
+        kèm số thuật ngữ nền (curated + tự học) mỗi lĩnh vực để biết đang có gì.
+        """
+        require_admin(authorization)
+        from services import thuat_ngu as tn
+        src = str(src or "").lower().strip()
+        if src not in {"en", "ja", "zh", "ko"}:
+            raise HTTPException(400, detail={"error": "Tiếng nguồn phải là en/ja/zh/ko"})
+        nen = tn.nap_glossary(src)
+        return {"src": src,
+                "linh_vuc": tn.danh_sach_linh_vuc(),
+                "sua": tn.doc_sua(src),
+                "so_nen": {lv: len(cap) for lv, cap in nen.items()}}
+
+    @router.post("/api/dich/glossary")
+    async def luu_glossary(body: SuaThuatNguRequest,
+                           authorization: str | None = Header(None)):
+        """Sửa một thuật ngữ — thắng cả từ điển gốc, hiệu lực ngay lượt dịch sau."""
+        require_admin(authorization)
+        from services import thuat_ngu as tn
+        src = str(body.src or "").lower().strip()
+        if src not in {"en", "ja", "zh", "ko"}:
+            raise HTTPException(400, detail={"error": "Tiếng nguồn phải là en/ja/zh/ko"})
+        try:
+            tn.ghi_sua(src, body.linh_vuc, body.term, body.vi)
+        except ValueError as exc:
+            raise HTTPException(400, detail={"error": str(exc)})
+        return {"ok": True, "sua": tn.doc_sua(src)}
+
+    @router.post("/api/dich/glossary/xoa")
+    async def xoa_glossary(body: XoaThuatNguRequest,
+                           authorization: str | None = Header(None)):
+        """Bỏ một thuật ngữ đã sửa tay."""
+        require_admin(authorization)
+        from services import thuat_ngu as tn
+        src = str(body.src or "").lower().strip()
+        co = tn.xoa_sua(src, body.linh_vuc, body.term)
+        return {"ok": True, "da_xoa": co, "sua": tn.doc_sua(src)}
 
     return router
