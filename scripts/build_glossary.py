@@ -115,6 +115,22 @@ def _slug_toan_muc(entry: dict) -> set[str]:
     return ra
 
 
+def _rac_vi(vi: str) -> bool:
+    """Bản dịch VI 'rác' cần bỏ: ghi chú tiếng Anh lọt vào ô dịch, hoặc quá dài.
+
+    Wiktextract đôi khi để ghi chú như 'no exact matching verb' vào chỗ bản
+    dịch. Term chuyên ngành VI thật thì ngắn và không phải câu ghi chú Anh.
+    """
+    s = str(vi or "").strip().lower()
+    if not s or len(s) > 60:
+        return True
+    if "matching verb" in s or re.search(r"\bno\b.*\bmatch", s):
+        return True
+    if s.startswith("(") or s.startswith("["):
+        return True
+    return False
+
+
 def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
                       *, noi_long: bool = False) -> int:
     """Rút cặp (term Anh → thuật ngữ VI) có lĩnh vực từ MỘT mục Wiktextract.
@@ -131,20 +147,22 @@ def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
         return 0
     dich_vi = [t for t in (entry.get("translations") or [])
                if (t.get("code") == "vi" or t.get("lang") == "Vietnamese")
-               and str(t.get("word") or "").strip()]
+               and str(t.get("word") or "").strip() and not _rac_vi(t.get("word"))]
     if not dich_vi:
         return 0
     slug_muc = _slug_toan_muc(entry)
+    cum_nhieu_tu = " " in tu     # 'machine learning' vs 'account'
     them = 0
     for t in dich_vi:
         slugs = _slug_tu_sense(t.get("sense", ""))
         if not slugs:
             if len(slug_muc) == 1:
                 slugs = set(slug_muc)
-            elif noi_long and slug_muc:
-                # NỚI: dịch không rõ nghĩa nhưng mục CÓ lĩnh vực → gán vào MỌI
-                # lĩnh vực của mục (thay vì bỏ). Vẫn không nhận từ vô-lĩnh-vực,
-                # nên không kéo từ đời thường vào; chỉ mở rộng phủ chuyên ngành.
+            elif noi_long and slug_muc and cum_nhieu_tu:
+                # NỚI mà GIỮ CHÍNH XÁC: chỉ nhận CỤM NHIỀU TỪ đa lĩnh vực
+                # ('artificial intelligence') → gán vào mọi lĩnh vực của mục.
+                # Cụm dài gần như luôn là thuật ngữ thật. TỪ ĐƠN đa lĩnh vực
+                # ('account', 'bear') nhập nhằng nặng → vẫn BỎ, khỏi thay bừa.
                 slugs = set(slug_muc)
             else:
                 continue

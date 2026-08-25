@@ -184,25 +184,50 @@ if __name__ == "__main__":
 
 
 class NoiLongTests(unittest.TestCase):
-    """Cờ hạ ngưỡng lọc: mục đa lĩnh vực, dịch không rõ sense."""
+    """Cờ hạ ngưỡng lọc: chỉ CỤM NHIỀU TỪ đa lĩnh vực mới được nới; từ đơn bỏ."""
 
-    ENTRY = {
+    # Từ ĐƠN đa lĩnh vực, dịch không sense → nhập nhằng, phải BỎ kể cả noi_long.
+    TU_DON = {
         "word": "port", "pos": "noun", "lang_code": "en",
         "senses": [{"topics": ["computing"]}, {"topics": ["nautical"]}],
-        # dịch KHÔNG ghi sense, mà mục thuộc HAI lĩnh vực.
         "translations": [{"code": "vi", "word": "cổng", "sense": ""}],
     }
+    # CỤM nhiều từ đa lĩnh vực, dịch không sense → noi_long nhận vào mọi lĩnh vực.
+    CUM = {
+        "word": "alpha particle", "pos": "noun", "lang_code": "en",
+        "senses": [{"topics": ["physics"]}, {"topics": ["medicine"]}],
+        "translations": [{"code": "vi", "word": "hạt alpha", "sense": ""}],
+    }
 
-    def test_chat_thi_bo(self):
-        store = bg.nap_kaikki_en([json.dumps(self.ENTRY, ensure_ascii=False)])
-        tat_ca = {t for b in store.values() for t in b}
-        self.assertNotIn("port", tat_ca)   # nhập nhằng → bỏ
+    def test_tu_don_chat_thi_bo(self):
+        store = bg.nap_kaikki_en([json.dumps(self.TU_DON, ensure_ascii=False)])
+        self.assertNotIn("port", {t for b in store.values() for t in b})
 
-    def test_noi_long_gan_moi_linh_vuc(self):
-        store = bg.nap_kaikki_en([json.dumps(self.ENTRY, ensure_ascii=False)],
+    def test_tu_don_noi_long_van_bo(self):
+        # từ đơn đa lĩnh vực: noi_long KHÔNG cứu (chống 'account→chuyện kể').
+        store = bg.nap_kaikki_en([json.dumps(self.TU_DON, ensure_ascii=False)],
                                  noi_long=True)
-        self.assertEqual(store["cong_nghe"].get("port"), "cổng")
-        self.assertEqual(store["hang_hai"].get("port"), "cổng")
+        self.assertNotIn("port", {t for b in store.values() for t in b})
+
+    def test_cum_nhieu_tu_noi_long_nhan(self):
+        store = bg.nap_kaikki_en([json.dumps(self.CUM, ensure_ascii=False)],
+                                 noi_long=True)
+        self.assertEqual(store["vat_ly"].get("alpha particle"), "hạt alpha")
+        self.assertEqual(store["y_khoa"].get("alpha particle"), "hạt alpha")
+
+    def test_cum_nhieu_tu_chat_van_bo(self):
+        # không noi_long thì cụm đa lĩnh vực dịch không sense vẫn bỏ.
+        store = bg.nap_kaikki_en([json.dumps(self.CUM, ensure_ascii=False)])
+        self.assertNotIn("alpha particle", {t for b in store.values() for t in b})
+
+    def test_loc_rac_ghi_chu_tieng_anh(self):
+        entry = {"word": "age", "pos": "noun", "lang_code": "en",
+                 "senses": [{"topics": ["computing"]}],
+                 "translations": [{"code": "vi", "word": "no exact matching verb",
+                                   "sense": ""}]}
+        store = bg.nap_kaikki_en([json.dumps(entry, ensure_ascii=False)])
+        tat_ca_vi = {v for b in store.values() for v in b.values()}
+        self.assertNotIn("no exact matching verb", tat_ca_vi)
 
 
 class OmwGiaCoTests(unittest.TestCase):

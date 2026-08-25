@@ -59,9 +59,11 @@ dưới rồi chạy trình nạp trên **server** (.38, nơi tải/chạy đư�
 Dựng EN TRƯỚC (mọi pivot cần `en.json` làm cầu):
 
 ```bash
-# 1) EN — nguồn chính. Thêm --noi-long để HẠ NGƯỠNG LỌC (phủ rộng hơn:
-#    nhận cả term đa lĩnh vực mà bản dịch không ghi sense → gán vào mọi lĩnh
-#    vực của mục; vẫn không nhận từ vô-lĩnh-vực).
+# 1) EN — nguồn chính. Thêm --noi-long để HẠ NGƯỠNG LỌC nhưng GIỮ CHÍNH XÁC:
+#    chỉ nhận thêm CỤM NHIỀU TỪ đa lĩnh vực dịch không sense ('artificial
+#    intelligence') — cụm dài gần như luôn là thuật ngữ thật. TỪ ĐƠN đa lĩnh
+#    vực ('account', 'bear') nhập nhằng nặng nên VẪN BỎ (tránh thay 'tài khoản'
+#    thành nghĩa đời thường). Kèm lọc rác 'no exact matching verb'.
 python scripts/build_glossary.py \
     --kaikki-en kaikki.org-dictionary-English.jsonl.gz \
     --noi-long --out data/glossary
@@ -127,8 +129,11 @@ Backend ([services/dich_llm.py](../services/dich_llm.py), gọi từ
 - **XONG — bước LLM tùy chọn** (mặc định TẮT): công tắc + chọn model ở web UI
   tab Dịch; backend `services/dich_llm.py`, tự chắt lọc thuật ngữ vào
   `<src>.hoc.json`. Test: `test/test_dich_llm.py`. Xem mục *Bước LLM* trên.
-- **XONG — nới trình nạp**: cờ `--noi-long` (hạ ngưỡng lọc EN) và OMW gộp
-  (gia cố JA/ZH, không ghi đè). Test bổ sung trong `test/test_build_glossary.py`.
+- **XONG — nới trình nạp + dựng lại dữ liệu**: cờ `--noi-long` (chỉ nhận CỤM
+  nhiều từ, giữ chính xác) + lọc rác + OMW gộp. Dữ liệu commit lại:
+  **EN 377, ZH 1715, JA 2570** thuật ngữ (từ 305/1546/2343). Thử bản nới toàn bộ
+  (từ đơn) cho ~2288/16691/25720 nhưng BỎ vì kéo từ sai nghĩa ('account→chuyện
+  kể') — hại hơn lợi. Test bổ sung trong `test/test_build_glossary.py`.
 
 ## Còn thiếu (chạy trên SERVER, máy dev không làm được)
 
