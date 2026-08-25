@@ -40,7 +40,7 @@ dưới rồi chạy trình nạp trên **server** (.38, nơi tải/chạy đư�
 | **Wiktextract (kaikki, English Wiktionary)** | EN→VI + lĩnh vực (nguồn CHÍNH, và là cầu pivot) | https://kaikki.org/dictionary/English/ → tệp `kaikki.org-dictionary-English.jsonl(.gz)` | CC BY-SA (Wiktionary) |
 | **CC-CEDICT** | ZH→EN (pivot ra VI qua glossary EN) | https://www.mdbg.net/chinese/dictionary?page=cc-cedict → `cedict_1_0_ts_utf-8_mdbg.txt(.gz)` | CC BY-SA 4.0 |
 | **FreeDict `jpn-eng`** (TEI) | JA→EN (pivot) | https://download.freedict.org/dictionaries/jpn-eng/ → tệp `.tei` | GPL/khác (xem trong bản phát hành) |
-| **OMW — Open Multilingual Wordnet** | JA/ZH/KO/VI gióng theo synset (KO + gia cố) | https://github.com/globalwordnet/OMW ; dữ liệu qua `pip install wn` → `python -m wn download omw` | Theo từng wordnet |
+| **OMW — Open Multilingual Wordnet** | (⚠️ xem cảnh báo dưới — KHÔNG dùng được cho VI) | https://github.com/globalwordnet/OMW | Theo từng wordnet |
 
 > Pivot: JA/ZH/KO không có termbase sang thẳng tiếng Việt, nên đi vòng qua tiếng
 > Anh — term nguồn → nghĩa Anh → tra trong glossary EN ra (lĩnh vực, thuật ngữ
@@ -76,16 +76,13 @@ python scripts/build_glossary.py \
 python scripts/build_glossary.py \
     --freedict-jpn jpn-eng.tei --out data/glossary
 
-# 4) KO — OMW gióng synset nguồn↔VI, lĩnh vực theo từ VI. Chạy lần lượt cho
-#    từng tiếng. Với ja/zh, OMW GỘP vào file pivot sẵn có (không ghi đè) → gia cố.
-python scripts/build_glossary.py \
-    --omw-src wn-data-kor.tab --omw-vi wn-data-vie.tab --omw-lang ko \
-    --out data/glossary
-# gia cố JA/ZH (chạy SAU bước 2/3, cần ja.json/zh.json đã có):
-python scripts/build_glossary.py \
-    --omw-src wn-data-jpn.tab --omw-vi wn-data-vie.tab --omw-lang ja --out data/glossary
-python scripts/build_glossary.py \
-    --omw-src wn-data-cmn.tab --omw-vi wn-data-vie.tab --omw-lang zh --out data/glossary
+# 4) OMW / KO — ⚠️ KHÔNG KHẢ THI với dữ liệu công khai (đã dò 2026-08-25):
+#    OMW (bản NLTK omw-1.4 lẫn chỉ mục `wn`) gồm 32 tiếng nhưng KHÔNG có
+#    wordnet TIẾNG VIỆT lẫn TIẾNG HÀN → không gióng synset sang VI được, và
+#    KO không có nguồn nào khác (FreeDict không có cặp kor, CC-CEDICT chỉ ZH,
+#    Wiktextract chỉ EN). Code OMW (--omw-src/--omw-vi/--omw-lang) VẪN GIỮ và
+#    có test — chạy được NGAY khi có `wn-data-vie.tab` + `wn-data-<src>.tab`.
+#    Muốn thêm KO: cần một từ điển Hàn→Anh (pivot như JA) hoặc Hàn→Việt.
 ```
 
 ## Bước LLM (tùy chọn) + tự chắt lọc từ điển
@@ -137,9 +134,9 @@ Backend ([services/dich_llm.py](../services/dich_llm.py), gọi từ
 
 ## Còn thiếu (chạy trên SERVER, máy dev không làm được)
 
-- **Chạy lại trình nạp với `--noi-long` + OMW (ko/ja/zh)** trên .38 để phủ rộng
-  EN và thêm KO, rồi commit lại `data/glossary/*.json`. Kho làm việc để ở
-  **`/opt`** (đã chuyển khỏi `/root`).
+- **KO / OMW**: bị chặn vì thiếu dữ liệu công khai (không có wordnet VI/KO —
+  xem bước 4). Cần tìm từ điển Hàn→Anh (hoặc Hàn→Việt) mới thêm được KO. Kho
+  dựng để ở **`/opt/glossary-build`** trên .38 (đã rời `/root`).
 - **Test đầu-cuối thật** một video chuyên ngành: .38 điều phối, .220 NLLB (và
   LLM nếu bật) — đo hậu kỳ thay đúng chỗ, và nếu bật LLM thì xem `.hoc.json` có
   lớn dần không.
