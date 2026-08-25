@@ -18,9 +18,11 @@ import logging
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
 
 import feedparser
+import httpx
 from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,13 @@ _VI_SOURCES = [
     ("Tuoi Tre", "tuoitre"),
     ("Thanh Nien", "thanhnien"),
     ("Dan Tri", "dantri"),
+    ("NCHMF", "nchmf"),
 ]
+# Trung tâm Dự báo Khí tượng Thủy văn Quốc gia. Không phải RSS: đường feed mà
+# chính trang họ quảng cáo (`/1/homerss.html`) trả 404, nên trang chủ là chỗ duy
+# nhất lấy được. Xem `_fetch_nchmf`.
+_NCHMF_URL = "https://www.nchmf.gov.vn/kttv/vi-VN/1/index.html"
+
 _INTL_SOURCES = [
     ("BBC News", "bbc_news"),
     ("Google News", "google_news"),
@@ -62,6 +70,14 @@ _RSS_URLS: dict[str, dict[str, str]] = {
     "thanhnien": {
         "moi_nhat": "https://thanhnien.vn/rss/home.rss",
         "the_thao": "https://thanhnien.vn/rss/the-thao.rss",
+    },
+    # Bản tin cảnh báo của cơ quan khí tượng nhà nước. Có mặt ở "tin mới nhất"
+    # để lọt vào bản tin chung, và có mục riêng "thoi_tiet" mà không báo nào
+    # khác đưa tin vào — mục ấy vì thế luôn là tiếng nói chính thức, không bị
+    # tin báo chí trộn lẫn.
+    "nchmf": {
+        "moi_nhat": _NCHMF_URL,
+        "thoi_tiet": _NCHMF_URL,
     },
     "dantri": {
         "moi_nhat": "https://dantri.com.vn/rss/home.rss",
@@ -123,6 +139,7 @@ def _get_feeds(topic: str) -> list[tuple[str, str]]:
 
 TOPICS = {
     "moi_nhat": "Tin moi nhat",
+    "thoi_tiet": "Thoi tiet - thien tai (NCHMF)",
     "thoi_su": "Thoi su",
     "the_gioi": "The gioi",
     "kinh_doanh": "Kinh doanh",
@@ -164,7 +181,90 @@ def _lam_sach_tom_tat(raw: str, tran: int = 280) -> str:
     return (cat or s[:tran]).rstrip(" ,;:-") + "…"
 
 
+# Một bản tin trên trang chủ NCHMF: liên kết bài, tiêu đề sạch nằm ở thuộc tính
+# `alt` của thẻ a, và giờ phát trong thẻ <label> ngay sau.
+_NCHMF_ITEM = re.compile(
+    r'<a\s+href="([^"]+post\d+\.html)"[^>]*alt="([^"]*)"[^>]*>.*?'
+    r"<label>\s*\(([^)]+)\)\s*</label>",
+    re.S,
+)
+
+_NCHMF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    ),
+    "Accept-Language": "vi-VN,vi;q=0.9",
+}
+
+
+def _nchmf_moc_gio(raw: str) -> datetime:
+    """Mốc giờ của một bản tin, để xếp mới trước cũ.
+
+    Trang ghi hai dạng: "25/08/2026 16:28:01" cho bản tin cảnh báo, và
+    "25/08/2026" cho bản tin định kỳ. Không đọc được thì đẩy xuống cuối chứ
+    không loại — một bản tin không rõ giờ vẫn là một bản tin.
+    """
+    raw = (raw or "").strip()
+    for dang in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(raw, dang)
+        except ValueError:
+            continue
+    return datetime.min
+
+
+def _fetch_nchmf(source: str) -> list[dict[str, Any]]:
+    """Bản tin cảnh báo của cơ quan khí tượng nhà nước, mới nhất trước.
+
+    Bóc HTML chứ không đọc feed: đường RSS mà chính trang họ quảng cáo trả 404
+    (đo 25/08/2026), nên trang chủ là chỗ duy nhất lấy được. Trang chủ còn nhiều
+    hơn trang "thời tiết nguy hiểm": ở đây có cả tin lũ khẩn cấp, lũ quét và sạt
+    lở đất.
+
+    Tóm tắt để trống có chủ ý — tiêu đề bản tin đã tự nó là nội dung, mà lấy
+    thân từng bản tin thì thành 20 request mỗi lượt hỏi lên một trang nhà nước.
+    """
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+            resp = client.get(_NCHMF_URL, headers=_NCHMF_HEADERS)
+        if resp.status_code != 200:
+            logger.warning("NCHMF tra ve HTTP %s", resp.status_code)
+            return []
+        page = resp.text
+    except Exception as exc:
+        logger.warning("NCHMF fetch failed: %s", exc)
+        return []
+
+    items: list[dict[str, Any]] = []
+    da_co: set[str] = set()
+    for link, tieu_de, moc in _NCHMF_ITEM.findall(page):
+        # Cùng một bản tin xuất hiện ở nhiều khối trên trang chủ.
+        if link in da_co:
+            continue
+        da_co.add(link)
+        tieu_de = _lam_sach_tom_tat(tieu_de, tran=200)
+        if not tieu_de:
+            continue
+        items.append({
+            "source": source,
+            "title": tieu_de,
+            "link": link.strip(),
+            "summary": "",
+            "published": moc.strip(),
+            "_moc": _nchmf_moc_gio(moc),
+        })
+
+    # Trang không xếp sẵn theo giờ: khối "tin nổi bật" nằm trước khối tin thường.
+    items.sort(key=lambda it: it["_moc"], reverse=True)
+    for it in items:
+        it.pop("_moc", None)
+    return items
+
+
 def _fetch_feed(source: str, url: str) -> list[dict[str, Any]]:
+    if url == _NCHMF_URL:
+        return _fetch_nchmf(source)
     try:
         feed = feedparser.parse(url)
     except Exception as exc:
@@ -292,6 +392,9 @@ MUC_BAN_TIN: list[tuple[str, str, str]] = [
     ("suc_khoe", "🩺", "Y tế"),
     ("giai_tri", "🎬", "Giải trí"),
     ("the_gioi", "🌍", "Thế giới"),
+    # Nguồn nhà nước, không phải báo chí: bản tin bão, lũ, nắng nóng đúng như
+    # cơ quan khí tượng phát ra lúc được hỏi.
+    ("thoi_tiet", "⛈️", "Thời tiết – thiên tai"),
 ]
 
 _TRAN_TOM_TAT_MUC = 140     # 8 mục × 3 tin: tóm tắt dài thành bức tường chữ
