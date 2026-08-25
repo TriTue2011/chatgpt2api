@@ -32,6 +32,7 @@ import {
 } from '../../utils/zaloContract.js';
 import { writeJsonAtomicSync } from '../../utils/atomicFile.js';
 import { createVideoThumbnail } from '../../utils/videoThumbnail.js';
+import { readVideoDuration } from '../../utils/videoDuration.js';
 import { getCachedGroupHistory } from '../../utils/groupHistoryStore.js';
 import {
     OperationTimeoutError,
@@ -1418,6 +1419,11 @@ export async function sendVideoByAccount(req, res) {
         if (!duongVideo) {
             throw new Error('Khong the tai video nguon');
         }
+
+        // Zalo in nhan thoi luong tu con so gui kem tin nhan chu khong tu do tep,
+        // nen phai do o day. Day cung la noi duy nhat chac chan cam tep that: ke ca
+        // khi nguoi goi chi dua vao mot dia chi URL thi video da duoc tai ve dia.
+        const thoiLuongMs = await readVideoDuration(duongVideo);
         const uploadTimeout = Number.parseInt(
             process.env.VIDEO_UPLOAD_TIMEOUT_MS || '180000', 10,
         );
@@ -1480,7 +1486,7 @@ export async function sendVideoByAccount(req, res) {
         }
 
         const result = await account.api.sendVideo(
-            { ...normalizedOptions, videoUrl: videoDaLen.fileUrl, thumbnailUrl },
+            { ...normalizedOptions, videoUrl: videoDaLen.fileUrl, thumbnailUrl, duration: thoiLuongMs ?? normalizedOptions.duration ?? 0 },
             String(threadId),
             threadType
         );
