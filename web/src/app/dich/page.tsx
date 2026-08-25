@@ -82,6 +82,36 @@ function DichPageContent() {
   const [daChep, setDaChep] = useState(false);
   const chonTep = useRef<HTMLInputElement>(null);
 
+  // Bước LLM chỉnh nghĩa chuyên ngành — TÙY CHỌN, mặc định TẮT (giữ tự chủ).
+  // Cấu hình dùng chung, lưu ở config.dich_llm; đọc/ghi qua /api/settings.
+  const [llmBat, setLlmBat] = useState(false);
+  const [llmModel, setLlmModel] = useState("");
+  const [modelsLlm, setModelsLlm] = useState<Record<string, string[]>>({});
+  const [luuLlm, setLuuLlm] = useState<"" | "saved" | "err">("");
+
+  useEffect(() => {
+    request.get("/api/settings")
+      .then((r) => {
+        const d = ((r.data as any)?.config?.dich_llm) || {};
+        setLlmBat(Boolean(d.bat));
+        setLlmModel(String(d.model || ""));
+      })
+      .catch(() => {});
+    request.get("/api/v1/available-models")
+      .then((r) => setModelsLlm(((r.data as any)?.providers as Record<string, string[]>) || {}))
+      .catch(() => setModelsLlm({}));
+  }, []);
+
+  const luuDichLlm = async (bat: boolean, model: string) => {
+    setLlmBat(bat); setLlmModel(model);
+    try {
+      await request.post("/api/settings", { dich_llm: { bat, model } });
+      setLuuLlm("saved"); setTimeout(() => setLuuLlm(""), 2000);
+    } catch {
+      setLuuLlm("err");
+    }
+  };
+
   const laVideo = !!tep && DUOI_VIDEO.some((d) => tep.name.toLowerCase().endsWith(d));
 
   useEffect(() => {
@@ -269,6 +299,43 @@ function DichPageContent() {
           </select>
         </div>
       </div>
+
+      {/* Chỉnh nghĩa chuyên ngành bằng LLM — tùy chọn, mặc định TẮT */}
+      <details className="rounded-[16px] border border-[var(--border)] px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          Chỉnh nghĩa chuyên ngành bằng LLM (tùy chọn)
+          {llmBat && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">đang bật</span>}
+          {luuLlm === "saved" && <span className="ml-2 text-xs text-emerald-600">✓ đã lưu</span>}
+          {luuLlm === "err" && <span className="ml-2 text-xs text-red-600">lưu lỗi</span>}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" checked={llmBat}
+              onChange={(e) => luuDichLlm(e.target.checked, llmModel)} />
+            Bật LLM chỉnh nghĩa + mượt câu (sau khi thay thuật ngữ chuẩn)
+          </label>
+          <div className="space-y-1">
+            <label className="block text-sm text-[var(--muted-foreground)]">Model chỉnh dịch</label>
+            <select value={llmModel} disabled={!llmBat}
+              onChange={(e) => luuDichLlm(llmBat, e.target.value)}
+              className="w-full rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm disabled:opacity-50">
+              <option value="">— Chọn model (gồm cả model cục bộ) —</option>
+              {Object.entries(modelsLlm).map(([nha, ds]) => (
+                <optgroup key={nha} label={nha}>
+                  {ds.map((m) => <option key={m} value={m}>{m}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Mặc định TẮT để giữ tự chủ: tắt thì chỉ dùng máy dịch trong stack + kho thuật ngữ,
+            không gọi bên thứ ba. Bật thì thêm một model chỉnh nghĩa theo ngữ cảnh và làm mượt câu
+            — nên chọn <b>model cục bộ</b>. Dùng model online cũng được, khi đó hệ thống tự chắt
+            lọc thuật ngữ mới vào từ điển để lần sau bớt cần LLM. Cài đặt dùng chung cho mọi lượt
+            dịch phụ đề/lồng tiếng.
+          </p>
+        </div>
+      </details>
 
       {/* Dán chữ hoặc link */}
       <div className="space-y-3 rounded-[16px] border border-[var(--border)] p-4">

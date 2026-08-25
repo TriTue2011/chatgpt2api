@@ -181,3 +181,50 @@ class OmwTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoiLongTests(unittest.TestCase):
+    """Cờ hạ ngưỡng lọc: mục đa lĩnh vực, dịch không rõ sense."""
+
+    ENTRY = {
+        "word": "port", "pos": "noun", "lang_code": "en",
+        "senses": [{"topics": ["computing"]}, {"topics": ["nautical"]}],
+        # dịch KHÔNG ghi sense, mà mục thuộc HAI lĩnh vực.
+        "translations": [{"code": "vi", "word": "cổng", "sense": ""}],
+    }
+
+    def test_chat_thi_bo(self):
+        store = bg.nap_kaikki_en([json.dumps(self.ENTRY, ensure_ascii=False)])
+        tat_ca = {t for b in store.values() for t in b}
+        self.assertNotIn("port", tat_ca)   # nhập nhằng → bỏ
+
+    def test_noi_long_gan_moi_linh_vuc(self):
+        store = bg.nap_kaikki_en([json.dumps(self.ENTRY, ensure_ascii=False)],
+                                 noi_long=True)
+        self.assertEqual(store["cong_nghe"].get("port"), "cổng")
+        self.assertEqual(store["hang_hai"].get("port"), "cổng")
+
+
+class OmwGiaCoTests(unittest.TestCase):
+    """OMW cho ja/zh phải GỘP vào file pivot sẵn có, không ghi đè."""
+
+    def test_omw_gop_khong_de_pivot(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            thu = Path(d)
+            (thu / "en.json").write_text(json.dumps(
+                {"y_khoa": {"cell": "tế bào"}}, ensure_ascii=False), encoding="utf-8")
+            # zh.json "pivot" đã có sẵn 1 term công nghệ.
+            (thu / "zh.json").write_text(json.dumps(
+                {"cong_nghe": {"算法": "thuật toán"}}, ensure_ascii=False), encoding="utf-8")
+            (thu / "cmn.tab").write_text(
+                "00001-n\tcmn:lemma\t细胞\n", encoding="utf-8")
+            (thu / "vie.tab").write_text(
+                "00001-n\tvie:lemma\ttế bào\n", encoding="utf-8")
+            bg.main(["--omw-src", str(thu / "cmn.tab"),
+                     "--omw-vi", str(thu / "vie.tab"),
+                     "--omw-lang", "zh", "--out", str(thu)])
+            zh = json.loads((thu / "zh.json").read_text(encoding="utf-8"))
+            self.assertEqual(zh["cong_nghe"]["算法"], "thuật toán")  # pivot còn
+            self.assertEqual(zh["y_khoa"]["细胞"], "tế bào")          # OMW thêm
+

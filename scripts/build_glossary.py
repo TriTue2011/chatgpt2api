@@ -115,7 +115,8 @@ def _slug_toan_muc(entry: dict) -> set[str]:
     return ra
 
 
-def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]]) -> int:
+def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
+                      *, noi_long: bool = False) -> int:
     """Rút cặp (term Anh → thuật ngữ VI) có lĩnh vực từ MỘT mục Wiktextract.
 
     Gán lĩnh vực theo thứ tự ưu tiên:
@@ -139,6 +140,11 @@ def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]]) -> int:
         slugs = _slug_tu_sense(t.get("sense", ""))
         if not slugs:
             if len(slug_muc) == 1:
+                slugs = set(slug_muc)
+            elif noi_long and slug_muc:
+                # NỚI: dịch không rõ nghĩa nhưng mục CÓ lĩnh vực → gán vào MỌI
+                # lĩnh vực của mục (thay vì bỏ). Vẫn không nhận từ vô-lĩnh-vực,
+                # nên không kéo từ đời thường vào; chỉ mở rộng phủ chuyên ngành.
                 slugs = set(slug_muc)
             else:
                 continue
@@ -340,9 +346,14 @@ def _mo(duong: str) -> Iterator[str]:
 
 
 def nap_kaikki_en(dong: Iterable[str],
-                  store: Optional[dict[str, dict[str, str]]] = None
-                  ) -> dict[str, dict[str, str]]:
-    """Nạp một luồng dòng JSONL Wiktextract (English) vào store {slug:{từ:vi}}."""
+                  store: Optional[dict[str, dict[str, str]]] = None,
+                  *, noi_long: bool = False) -> dict[str, dict[str, str]]:
+    """Nạp một luồng dòng JSONL Wiktextract (English) vào store {slug:{từ:vi}}.
+
+    ``noi_long``: hạ ngưỡng lọc — nhận cả term đa lĩnh vực mà bản dịch không ghi
+    sense (gán vào mọi lĩnh vực của mục). Phủ rộng hơn, đổi lại lẫn ngành nhiều
+    hơn — nhưng hậu kỳ vẫn có cổng (term phải có ở câu gốc + lĩnh vực phải được
+    đoán ra) nên rủi ro có hạn."""
     if store is None:
         store = defaultdict(dict)
     for d in dong:
@@ -353,7 +364,7 @@ def nap_kaikki_en(dong: Iterable[str],
             entry = json.loads(d)
         except Exception:
             continue
-        them_tu_kaikki_en(entry, store)
+        them_tu_kaikki_en(entry, store, noi_long=noi_long)
     return store
 
 
@@ -374,13 +385,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--omw-src", help="OMW .tab tiếng nguồn (kor/jpn/cmn) — cần en.json + --omw-vi + --omw-lang")
     ap.add_argument("--omw-vi", help="OMW .tab tiếng Việt (vie)")
     ap.add_argument("--omw-lang", help="mã tiếng nguồn để ghi ra (ko/ja/zh)")
+    ap.add_argument("--noi-long", action="store_true",
+                    help="Hạ ngưỡng lọc EN: nhận cả term đa lĩnh vực dịch không rõ sense")
     ap.add_argument("--out", default="data/glossary", help="Thư mục xuất")
     args = ap.parse_args(argv)
 
     thu_muc = Path(args.out)
     lam_gi = False
     if args.kaikki_en:
-        store = nap_kaikki_en(_mo(args.kaikki_en))
+        store = nap_kaikki_en(_mo(args.kaikki_en), noi_long=args.noi_long)
         tep = ghi_store(store, "en", thu_muc)
         tong = sum(len(v) for v in store.values())
         print(f"en: {len(store)} lĩnh vực, {tong} thuật ngữ → {tep}")
@@ -406,10 +419,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             ap.error("--omw-src cần kèm --omw-vi và --omw-lang")
         en = json.loads((thu_muc / "en.json").read_text(encoding="utf-8"))
         vi_dom = chi_muc_vi_domain(en)
-        store = nap_omw(_mo(args.omw_src), _mo(args.omw_vi), vi_dom)
+        # GIA CỐ: nếu <lang>.json đã có (ja/zh dựng từ pivot), nạp làm nền để OMW
+        # CHỈ THÊM term mới, không ghi đè — không thì chạy OMW cho ja/zh sẽ xoá
+        # mất bản pivot. KO chưa có file thì bắt đầu rỗng.
+        nen: dict[str, dict[str, str]] = defaultdict(dict)
+        tep_cu = thu_muc / f"{args.omw_lang}.json"
+        if tep_cu.exists():
+            for lv, cap in json.loads(tep_cu.read_text(encoding="utf-8")).items():
+                nen[lv].update(cap)
+        so_truoc = sum(len(v) for v in nen.values())
+        store = nap_omw(_mo(args.omw_src), _mo(args.omw_vi), vi_dom, nen)
         tep = ghi_store(store, args.omw_lang, thu_muc)
         tong = sum(len(v) for v in store.values())
-        print(f"{args.omw_lang} (OMW): {len(store)} lĩnh vực, {tong} thuật ngữ → {tep}")
+        print(f"{args.omw_lang} (OMW): {len(store)} lĩnh vực, {tong} thuật ngữ "
+              f"(+{tong - so_truoc} mới) → {tep}")
         lam_gi = True
     if not lam_gi:
         ap.error("cần --kaikki-en / --cc-cedict / --freedict-jpn / --omw-src")

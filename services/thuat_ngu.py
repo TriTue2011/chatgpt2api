@@ -60,6 +60,32 @@ def thuong_hoa(s: str) -> str:
     return s
 
 
+def _doc_glossary_file(tep: Path) -> dict[str, dict[str, str]]:
+    """Đọc một tệp glossary → {lĩnh vực: {term nguồn đã THƯỜNG HOÁ: thuật ngữ VI}}.
+
+    Thiếu tệp trả rỗng; tệp hỏng cũng trả rỗng (ghi cảnh báo). Thường hoá khoá
+    ngay lúc đọc để khớp không phụ thuộc hoa/thường.
+    """
+    try:
+        raw = json.loads(tep.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        logger.warning("glossary %s hỏng, bỏ qua: %s", tep, str(exc)[:200])
+        return {}
+    goi: dict[str, dict[str, str]] = {}
+    if isinstance(raw, dict):
+        for linh_vuc, cap in raw.items():
+            if not isinstance(cap, dict):
+                continue
+            goi[str(linh_vuc)] = {
+                thuong_hoa(k): str(v)
+                for k, v in cap.items()
+                if str(k).strip() and str(v).strip()
+            }
+    return goi
+
+
 class _KhoTinh:
     """Bộ nhớ đệm glossary đã nạp theo tiếng nguồn (đọc file một lần)."""
 
@@ -72,27 +98,14 @@ class _KhoTinh:
         if src in self._da_doc:
             return self._theo_src.get(src, {})
         self._da_doc.add(src)
-        tep = _thu_muc_glossary() / f"{src}.json"
-        try:
-            raw = json.loads(tep.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            self._theo_src[src] = {}
-            return {}
-        except Exception as exc:
-            logger.warning("glossary %s hỏng, bỏ qua: %s", tep, str(exc)[:200])
-            self._theo_src[src] = {}
-            return {}
-        # Thường hoá KHOÁ term nguồn ngay lúc nạp để khớp không phụ thuộc hoa/thường.
-        goi: dict[str, dict[str, str]] = {}
-        if isinstance(raw, dict):
-            for linh_vuc, cap in raw.items():
-                if not isinstance(cap, dict):
-                    continue
-                goi[str(linh_vuc)] = {
-                    thuong_hoa(k): str(v)
-                    for k, v in cap.items()
-                    if str(k).strip() and str(v).strip()
-                }
+        thu_muc = _thu_muc_glossary()
+        # Bản CURATED (dựng từ termbase) là chuẩn. Bản TỰ HỌC (<src>.hoc.json,
+        # chắt lọc từ LLM) chỉ BỔ SUNG term chưa có — curated luôn thắng khi trùng.
+        goi = _doc_glossary_file(thu_muc / f"{src}.json")
+        for lv, cap in _doc_glossary_file(thu_muc / f"{src}.hoc.json").items():
+            ban = goi.setdefault(lv, {})
+            for term, vi in cap.items():
+                ban.setdefault(term, vi)
         self._theo_src[src] = goi
         return goi
 
@@ -111,6 +124,43 @@ def nap_glossary(src: str) -> dict[str, dict[str, str]]:
 
 def _reset_cache_cho_test() -> None:
     _KHO.xoa()
+
+
+def ghi_hoc(src: str, moi: dict[str, dict[str, str]]) -> int:
+    """Thêm thuật ngữ TỰ HỌC (chắt lọc từ LLM) vào ``<src>.hoc.json``.
+
+    Chỉ thêm term CHƯA có trong bản curated (``<src>.json``) lẫn bản học sẵn —
+    tuyệt đối không đè thuật ngữ đã chuẩn. Trả số term thực thêm mới, và xoá
+    cache để lượt dịch sau dùng được ngay. ``moi`` = {lĩnh vực: {term: thuật ngữ VI}}.
+    """
+    src = str(src or "").lower().strip()
+    if not src or not moi:
+        return 0
+    thu_muc = _thu_muc_glossary()
+    thu_muc.mkdir(parents=True, exist_ok=True)
+    base = _doc_glossary_file(thu_muc / f"{src}.json")
+    tep_hoc = thu_muc / f"{src}.hoc.json"
+    hoc = _doc_glossary_file(tep_hoc)   # khoá đã thường hoá
+    them = 0
+    for lv, cap in moi.items():
+        if not isinstance(cap, dict):
+            continue
+        lv = str(lv)
+        base_lv = base.get(lv, {})
+        hoc_lv = hoc.setdefault(lv, {})
+        for term, vi in cap.items():
+            term_n = thuong_hoa(term)
+            vi_s = str(vi).strip()
+            if not term_n or not vi_s or term_n in base_lv or term_n in hoc_lv:
+                continue
+            hoc_lv[term_n] = vi_s
+            them += 1
+    if them:
+        sach = {lv: cap for lv, cap in hoc.items() if cap}
+        tep_hoc.write_text(json.dumps(sach, ensure_ascii=False, indent=1),
+                           encoding="utf-8")
+        _KHO.xoa()
+    return them
 
 
 def doan_linh_vuc(text_nguon: str, src: str) -> list[str]:
