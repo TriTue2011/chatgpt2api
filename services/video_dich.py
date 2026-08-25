@@ -722,6 +722,35 @@ def hau_ky_glossary(nhom: list[Doan], ban_dich: list[str],
     ]
 
 
+def _chinh_llm_neu_bat(nhom: list[Doan], ban_dich: list[str],
+                       nguon: str, dich: str) -> list[str]:
+    """Bước LLM TÙY CHỌN (mặc định TẮT). Bật bằng config ``dich_llm``:
+    ``{"bat": true, "model": "<model id>"}`` (đặt trong tab Dịch của web UI).
+
+    Model có thể là cục bộ hay online — list lấy từ /available-models. Dùng
+    online thì phần "học" chắt lọc thuật ngữ vào ``<src>.hoc.json`` để lần sau
+    bớt cần LLM. Mọi trục trặc → trả nguyên ``ban_dich`` (LLM chỉ làm tốt hơn).
+    """
+    from services.config import config
+    llm = (config.get() or {}).get("dich_llm") or {}
+    model = str(llm.get("model") or "").strip()
+    if not (llm.get("bat") and model):
+        return ban_dich
+    src = _ma_tieng_glossary(nguon)
+    linh_vuc = tn.doan_linh_vuc(" ".join(d.chu for d in nhom), src) if src else []
+    from services import dich_llm
+
+    def goi_model(m: str, messages: list[dict]) -> str:
+        from services.agent.runtime import call_model, content_of
+        resp = call_model(m, messages, timeout=180, max_tokens=4000)
+        if resp.get("error"):
+            raise dich_llm.LoiLLM(str(resp["error"]))
+        return content_of(resp)
+
+    cap = list(zip((d.chu for d in nhom), ban_dich))
+    return dich_llm.chinh_va_hoc(cap, linh_vuc, src, model, goi_model)
+
+
 def dich_video(text: str, target: str = "", *, chep_loi: bool = False,
                nguon_biet: str = "") -> dict[str, Any]:
     """Link video → bản dịch. KHÔNG raise: lỗi nằm trong khoá ``error``.
@@ -829,6 +858,7 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                             for d, b in zip(nhom, ban_dich)]
         if da_dich and dich.startswith("vi"):
             ban_dich = hau_ky_glossary(nhom, ban_dich, nguon, dich)
+            ban_dich = _chinh_llm_neu_bat(nhom, ban_dich, nguon, dich)
             ban_dich, so_xung_ho_sua = sua_xung_ho_theo_vision(ban_dich, vision, nhom)
             if so_xung_ho_sua and vision is not None:
                 vision["so_xung_ho_sua"] = so_xung_ho_sua

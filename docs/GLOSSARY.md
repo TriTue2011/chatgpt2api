@@ -1,12 +1,19 @@
 # Kho thuật ngữ (glossary) cho dịch lồng tiếng
 
-Glossary giúp bước **hậu kỳ thay thuật ngữ** trong dịch phụ đề/lồng tiếng
-([services/thuat_ngu.py](../services/thuat_ngu.py)): NLLB dịch thô → thay thuật
-ngữ theo lĩnh vực cho đúng chuyên ngành → (bước sau) LLM chỉnh nghĩa + mượt.
+Đường dịch phụ đề/lồng tiếng gồm ba bước, cắm ở
+[services/video_dich.py](../services/video_dich.py) trong `_dich_va_dong_goi`:
 
-Tại sao cần: NLLB **không nhận glossary** (đã có tiền lệ hỏng trong repo —
-`video_dich.py`, CTranslate2 #1798), nên phải xử lý PHÍA ĐÍCH bằng kho thuật ngữ
-dựng sẵn.
+1. **NLLB** (CTranslate2) dịch thô từng câu.
+2. **Hậu kỳ thay thuật ngữ** — tất định, KHÔNG LLM
+   ([services/thuat_ngu.py](../services/thuat_ngu.py), hàm `hau_ky_glossary`):
+   đoán lĩnh vực rồi thay thuật ngữ NLLB dịch sai/đời-thường bằng thuật ngữ VI
+   chuẩn trong kho. Đây là thứ sửa lỗi *dùng từ không đúng chuyên ngành*.
+3. **LLM chỉnh nghĩa + mượt câu** — TÙY CHỌN, **mặc định TẮT**
+   ([services/dich_llm.py](../services/dich_llm.py)). Xem mục *Bước LLM* dưới.
+
+Tại sao bước 2 xử lý phía đích: NLLB **không nhận glossary** (đã có tiền lệ hỏng
+trong repo — `video_dich.py`, CTranslate2 #1798), nên phải thay chuỗi SAU dịch
+bằng kho thuật ngữ dựng sẵn.
 
 ## Dữ liệu sinh ra
 
@@ -16,6 +23,11 @@ dựng sẵn.
 { "cong_nghe": { "cache": "bộ nhớ đệm", "algorithm": "thuật toán" },
   "y_khoa":   { "cell": "tế bào" } }
 ```
+
+Ngoài bản **curated** `<tiếng>.json` còn có bản **tự học** `<tiếng>.hoc.json`
+cùng dạng: thuật ngữ do bước LLM chắt lọc (xem mục *Bước LLM*). Khi đọc,
+`thuat_ngu` GỘP hai file — **curated luôn thắng** khi trùng, bản học chỉ bổ sung
+term chưa có. Có thể xem/tỉa `.hoc.json` bằng tay; nó cũng được commit vào repo.
 
 Sinh bằng [scripts/build_glossary.py](../scripts/build_glossary.py). **Không tải
 tệp nguồn vào repo** — chúng lớn (GB) và có giấy phép riêng; tải ngoài theo bảng
@@ -47,10 +59,12 @@ dưới rồi chạy trình nạp trên **server** (.38, nơi tải/chạy đư�
 Dựng EN TRƯỚC (mọi pivot cần `en.json` làm cầu):
 
 ```bash
-# 1) EN — nguồn chính
+# 1) EN — nguồn chính. Thêm --noi-long để HẠ NGƯỠNG LỌC (phủ rộng hơn:
+#    nhận cả term đa lĩnh vực mà bản dịch không ghi sense → gán vào mọi lĩnh
+#    vực của mục; vẫn không nhận từ vô-lĩnh-vực).
 python scripts/build_glossary.py \
     --kaikki-en kaikki.org-dictionary-English.jsonl.gz \
-    --out data/glossary
+    --noi-long --out data/glossary
 
 # 2) ZH — pivot qua en.json vừa dựng
 python scripts/build_glossary.py \
@@ -60,11 +74,45 @@ python scripts/build_glossary.py \
 python scripts/build_glossary.py \
     --freedict-jpn jpn-eng.tei --out data/glossary
 
-# 4) KO (và gia cố JA/ZH) — OMW gióng synset nguồn↔VI, lĩnh vực theo từ VI
+# 4) KO — OMW gióng synset nguồn↔VI, lĩnh vực theo từ VI. Chạy lần lượt cho
+#    từng tiếng. Với ja/zh, OMW GỘP vào file pivot sẵn có (không ghi đè) → gia cố.
 python scripts/build_glossary.py \
     --omw-src wn-data-kor.tab --omw-vi wn-data-vie.tab --omw-lang ko \
     --out data/glossary
+# gia cố JA/ZH (chạy SAU bước 2/3, cần ja.json/zh.json đã có):
+python scripts/build_glossary.py \
+    --omw-src wn-data-jpn.tab --omw-vi wn-data-vie.tab --omw-lang ja --out data/glossary
+python scripts/build_glossary.py \
+    --omw-src wn-data-cmn.tab --omw-vi wn-data-vie.tab --omw-lang zh --out data/glossary
 ```
+
+## Bước LLM (tùy chọn) + tự chắt lọc từ điển
+
+Mặc định **TẮT** để giữ tự chủ (không gọi bên thứ ba). Bật ở **web UI → tab Dịch
+→ hộp "Chỉnh nghĩa chuyên ngành bằng LLM"**: một công tắc + ô chọn model (list
+lấy từ `/api/v1/available-models`, **gồm cả model cục bộ**). Lưu vào config:
+
+```json
+{ "dich_llm": { "bat": true, "model": "<model id>" } }
+```
+
+Backend ([services/dich_llm.py](../services/dich_llm.py), gọi từ
+`video_dich._chinh_llm_neu_bat`):
+
+- **Chỉnh**: sau hậu kỳ glossary, gửi từng lô câu (gốc + bản nháp) cho model,
+  yêu cầu chỉnh đúng nghĩa-ngữ-cảnh + mượt, **giữ nguyên thuật ngữ đã chuẩn**.
+  Lệch số dòng / model lỗi → **giữ nguyên bản nháp** (LLM chỉ được làm tốt hơn).
+- **Tự học**: hỏi model liệt kê thuật ngữ (nguồn → VI) rồi ghi vào
+  `<src>.hoc.json` (chỉ term CHƯA có ở curated/đã học). Lần sau bước 2 tất định
+  lo được, LLM bớt việc → **tiến tới bỏ hẳn LLM**. Đặc biệt đáng dùng khi model
+  là **online** (giảm phụ thuộc bên thứ ba); dùng model cục bộ vẫn học để sau
+  này tắt cả LLM cục bộ cho nhanh.
+
+> **Card GPU (2026-08-25)**: máy .220 là **RTX 2060 Super 8 GB**, đã xếp hàng
+> chung cho Whisper/Qwen-VL/NLLB ([services/gpu_queue.py](../services/gpu_queue.py)).
+> Chạy LLM **mỗi câu** trên card này sẽ tranh VRAM → chậm. Nếu bật, nên trỏ model
+> nhẹ qua Ollama (.220:11434) và chấp nhận chậm, hoặc dùng model online. Để đúng
+> lỗi thuật ngữ thì **bước 2 (glossary) đã đủ**, không cần bật LLM.
 
 ## Trạng thái (2026-08-25)
 
@@ -76,18 +124,19 @@ python scripts/build_glossary.py \
   lĩnh vực một lần trên toàn transcript rồi thay thuật ngữ từng câu; hàm render
   là chính máy dịch, gọi đơn từng thuật ngữ + nhớ đệm (mỗi thuật ngữ dịch một
   lần cho cả phim). Test: `test/test_video_dich_glossary.py`.
-- **KHÔNG làm bước LLM** — quyết định 2026-08-25: card GPU là **RTX 2060 Super
-  8 GB** (máy NVR .220) và đã xếp hàng chung cho Whisper + Qwen-VL + NLLB
-  (`services/gpu_queue.py`). Nhét LLM vào path lồng tiếng = chạy mỗi câu một
-  lần, tranh 8 GB → chậm hơn nhiều, mà glossary hậu kỳ đã sửa đúng lỗi thuật
-  ngữ. Khi có card to hơn mới cân nhắc, và nên chạy MỘT lượt gộp cả transcript
-  qua Ollama (.220:11434) chứ không từng câu.
+- **XONG — bước LLM tùy chọn** (mặc định TẮT): công tắc + chọn model ở web UI
+  tab Dịch; backend `services/dich_llm.py`, tự chắt lọc thuật ngữ vào
+  `<src>.hoc.json`. Test: `test/test_dich_llm.py`. Xem mục *Bước LLM* trên.
+- **XONG — nới trình nạp**: cờ `--noi-long` (hạ ngưỡng lọc EN) và OMW gộp
+  (gia cố JA/ZH, không ghi đè). Test bổ sung trong `test/test_build_glossary.py`.
 
-## Còn thiếu (bước sau)
+## Còn thiếu (chạy trên SERVER, máy dev không làm được)
 
-- **Nới coverage EN** (đang mỏng — vài ngành < 10 term): thêm OMW/KO, hạ ngưỡng
-  lọc, mở rộng bản đồ lĩnh vực trong trình nạp.
-- **Test đầu-cuối thật** một video chuyên ngành trên server (.38 điều phối,
-  .220 NLLB) để đo hậu kỳ thay đúng chỗ.
+- **Chạy lại trình nạp với `--noi-long` + OMW (ko/ja/zh)** trên .38 để phủ rộng
+  EN và thêm KO, rồi commit lại `data/glossary/*.json`. Kho làm việc để ở
+  **`/opt`** (đã chuyển khỏi `/root`).
+- **Test đầu-cuối thật** một video chuyên ngành: .38 điều phối, .220 NLLB (và
+  LLM nếu bật) — đo hậu kỳ thay đúng chỗ, và nếu bật LLM thì xem `.hoc.json` có
+  lớn dần không.
 
 OMW dùng tệp `.tab` per-ngôn-ngữ (vie/kor/jpn/cmn); tải từ OMW / omwn.
