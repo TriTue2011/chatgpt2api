@@ -4,8 +4,10 @@ Trang có quảng cáo một đường RSS (`/kttv/vi-VN/1/homerss.html`) nhưng
 trả 404 — đo 25/08/2026, cả bốn biến thể đường dẫn đều 404. Nên nguồn này bóc
 HTML trang chủ, và mọi thứ dưới đây khoá đúng những chỗ dễ hỏng của việc đó:
 
+  * chỉ lấy MỘT bản tin mới nhất, không đổ cả trang vào bản tin;
+  * phải xếp theo giờ TRƯỚC rồi mới cắt — trang để khối "tin nổi bật" lên đầu,
+    cắt trước khi xếp là lấy nhầm tin cũ;
   * cùng một bản tin xuất hiện ở nhiều khối trên trang, phải bỏ trùng;
-  * trang KHÔNG xếp sẵn theo giờ (khối tin nổi bật nằm trước), phải tự xếp;
   * hai dạng mốc giờ cùng tồn tại: có giờ phút giây và chỉ có ngày;
   * mục "thoi_tiet" phải CHỈ có NCHMF — đó là chỗ đặt tiếng nói chính thức,
     không để tin báo chí trộn vào.
@@ -35,20 +37,21 @@ def _muc(link: str, tieu_de: str, moc: str) -> str:
             f"<label>({moc})</label><img src=\"x.jpg\" /></a></li>")
 
 
-TRANG = "<ul class=\"uk-list list-news\">" + "".join([
-    _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/tin-bien-post53385.html",
-         "TIN DỰ BÁO GIÓ MẠNH, SÓNG LỚN VÀ MƯA DÔNG TRÊN BIỂN",
-         "25/08/2026 16:00:00"),
-    _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/tin-lu-quet-post53447.html",
-         "TIN CẢNH BÁO LŨ QUÉT SẠT LỞ ĐẤT", "25/08/2026 16:28:01"),
-    # Trùng với mục đầu — trang chủ thật lặp lại bản tin giữa các khối.
-    _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/tin-bien-post53385.html",
-         "TIN DỰ BÁO GIÓ MẠNH, SÓNG LỚN VÀ MƯA DÔNG TRÊN BIỂN",
-         "25/08/2026 16:00:00"),
-    # Bản tin định kỳ: chỉ có ngày, không có giờ.
-    _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/ban-tin-song-post53098.html",
-         "Bản tin dự báo sóng 10 ngày tới", "25/08/2026"),
-]) + "</ul>"
+def _trang(*muc: str) -> str:
+    return '<ul class="uk-list list-news">' + "".join(muc) + "</ul>"
+
+
+_BIEN = _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/tin-bien-post53385.html",
+             "TIN DỰ BÁO GIÓ MẠNH, SÓNG LỚN VÀ MƯA DÔNG TRÊN BIỂN",
+             "25/08/2026 16:00:00")
+_LU_QUET = _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/tin-lu-quet-post53447.html",
+                "TIN CẢNH BÁO LŨ QUÉT SẠT LỞ ĐẤT", "25/08/2026 16:28:01")
+_SONG = _muc("https://www.nchmf.gov.vn/kttv/vi-VN/1/ban-tin-song-post53098.html",
+             "Bản tin dự báo sóng 10 ngày tới", "25/08/2026")
+
+# Đúng thứ tự khó chịu của trang thật: tin CŨ hơn nằm TRƯỚC tin mới, và bản tin
+# đầu bị lặp lại ở khối sau.
+TRANG = _trang(_BIEN, _LU_QUET, _BIEN, _SONG)
 
 
 class _PhanHoi:
@@ -81,19 +84,33 @@ class TestBocTrangChuNCHMF(unittest.TestCase):
         with mock.patch.object(news.httpx, "Client", _ClientGia(_PhanHoi(status, text))):
             return news._fetch_nchmf("NCHMF")
 
+    def test_chi_lay_mot_ban_tin(self):
+        """Người dùng chỉ cần tin mới nhất, không phải cả trang 20 mục."""
+        self.assertEqual(len(self._lay()), news._NCHMF_SO_TIN)
+        self.assertEqual(news._NCHMF_SO_TIN, 1)
+
+    def test_lay_dung_tin_moi_nhat_chu_khong_phai_tin_dau_trang(self):
+        """Chốt chặn quan trọng nhất: trang để tin CŨ hơn lên trước, nên cắt
+        trước khi xếp là lấy nhầm — và lấy nhầm thì im lặng, không ai biết."""
+        it = self._lay()[0]
+        self.assertEqual(it["published"], "25/08/2026 16:28:01")
+        self.assertIn("LŨ QUÉT", it["title"])
+
+    def test_ban_tin_chi_co_ngay_van_dung_duoc(self):
+        """Không đọc được giờ thì xếp sau, nhưng nếu chỉ có nó thì vẫn phải ra."""
+        with mock.patch.object(news.httpx, "Client",
+                               _ClientGia(_PhanHoi(200, _trang(_SONG)))):
+            ra = news._fetch_nchmf("NCHMF")
+        self.assertEqual([it["title"] for it in ra],
+                         ["Bản tin dự báo sóng 10 ngày tới"])
+
     def test_bo_ban_tin_trung_lap(self):
-        self.assertEqual(len(self._lay()), 3)
-
-    def test_xep_moi_truoc_cu_sau(self):
-        moc = [it["published"] for it in self._lay()]
-        self.assertEqual(moc[0], "25/08/2026 16:28:01")
-        self.assertEqual(moc[1], "25/08/2026 16:00:00")
-
-    def test_ban_tin_chi_co_ngay_van_giu_lai(self):
-        """Không đọc được giờ thì đẩy xuống cuối, KHÔNG loại khỏi bản tin."""
-        tieu_de = [it["title"] for it in self._lay()]
-        self.assertIn("Bản tin dự báo sóng 10 ngày tới", tieu_de)
-        self.assertEqual(tieu_de[-1], "Bản tin dự báo sóng 10 ngày tới")
+        """Trang lặp cùng một bản tin; đếm trùng thì hụt mất tin thật."""
+        with mock.patch.object(news.httpx, "Client",
+                               _ClientGia(_PhanHoi(200, _trang(_BIEN, _BIEN, _BIEN)))):
+            ra = news._fetch_nchmf("NCHMF")
+        self.assertEqual(len(ra), 1)
+        self.assertIn("TRÊN BIỂN", ra[0]["title"])
 
     def test_tieu_de_sach_va_co_lien_ket(self):
         it = self._lay()[0]

@@ -189,6 +189,12 @@ _NCHMF_ITEM = re.compile(
     re.S,
 )
 
+# Chỉ lấy MỘT bản tin — bản mới nhất tại đúng lúc được hỏi. Trang có 20 mục,
+# nhưng đây là nguồn ĐIỂM THÊM vào bản tin chứ không phải một chuyên mục báo
+# chí: đổ cả chục tin cảnh báo vào thì lấn hết tin thường, mà người đọc bản tin
+# hằng ngày chỉ cần biết cơ quan khí tượng vừa phát cái gì.
+_NCHMF_SO_TIN = 1
+
 _NCHMF_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -222,8 +228,10 @@ def _fetch_nchmf(source: str) -> list[dict[str, Any]]:
     hơn trang "thời tiết nguy hiểm": ở đây có cả tin lũ khẩn cấp, lũ quét và sạt
     lở đất.
 
+    Trả về đúng `_NCHMF_SO_TIN` bản tin mới nhất, không phải cả trang.
+
     Tóm tắt để trống có chủ ý — tiêu đề bản tin đã tự nó là nội dung, mà lấy
-    thân từng bản tin thì thành 20 request mỗi lượt hỏi lên một trang nhà nước.
+    thân từng bản tin thì thành thêm request mỗi lượt hỏi lên một trang nhà nước.
     """
     try:
         with httpx.Client(timeout=15.0, follow_redirects=True) as client:
@@ -255,8 +263,10 @@ def _fetch_nchmf(source: str) -> list[dict[str, Any]]:
             "_moc": _nchmf_moc_gio(moc),
         })
 
-    # Trang không xếp sẵn theo giờ: khối "tin nổi bật" nằm trước khối tin thường.
+    # Trang không xếp sẵn theo giờ: khối "tin nổi bật" nằm trước khối tin
+    # thường, nên phải xếp trước rồi mới cắt — cắt trước thì lấy nhầm tin cũ.
     items.sort(key=lambda it: it["_moc"], reverse=True)
+    items = items[:_NCHMF_SO_TIN]
     for it in items:
         it.pop("_moc", None)
     return items
