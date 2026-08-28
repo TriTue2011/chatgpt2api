@@ -904,4 +904,14 @@ def lenh_dich(text: str) -> str:
     nhan = f"{nguon or 'auto'} → {dich_sang}"
     if nguon and tin:
         nhan += f" ({tin:.0f}%)"
-    return f"🌐 {nhan}\n{ket}"
+    ra = f"🌐 {nhan}\n{ket}"
+    # Tra MỘT từ thì đính thêm các nghĩa từ điển: máy dịch chọn một nghĩa,
+    # khối này cho thấy những nghĩa còn lại. Đây là hàm dùng chung cho MỌI kênh
+    # bot (Zalo, Telegram, Zalo cá nhân) — nên ô tra cứu của web nay có mặt cả
+    # trên chat. Chỉ khi dịch sang tiếng Việt và input một-hai từ.
+    if dich_sang == VI and len(noi_dung.split()) <= 2:
+        from services import tu_dien
+        khoi = tu_dien.dong_tra_cho_chat(noi_dung.strip(), (nguon or "").lower())
+        if khoi:
+            ra += f"\n\n{khoi}"
+    return ra

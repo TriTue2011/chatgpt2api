@@ -241,6 +241,54 @@ def test_khong_doan_khi_may_chu_nap_ca_hai_bien_the_chu_han():
         assert ts._phan_giai_dich("zt a")[0] == "zh-hant"
 
 
+@pytest.fixture
+def co_tu_dien(tmp_path, monkeypatch):
+    """DATA_DIR tạm có từ điển tí hon cho 'stroke' (3 nghĩa + IPA)."""
+    import sqlite3
+    (tmp_path / "tudien").mkdir()
+    db = sqlite3.connect(tmp_path / "tudien" / "en-vi.db")
+    db.executescript(
+        "CREATE TABLE words(id INTEGER PRIMARY KEY,word TEXT,lang_code TEXT DEFAULT 'en');"
+        "CREATE TABLE definitions(id INTEGER PRIMARY KEY AUTOINCREMENT,definition TEXT,pos TEXT,sub_pos TEXT);"
+        "CREATE TABLE word_definitions(id INTEGER PRIMARY KEY AUTOINCREMENT,word_id INT,definition_id INT,example TEXT);"
+        "CREATE TABLE pronunciations(id INTEGER PRIMARY KEY AUTOINCREMENT,word_id INT,ipa TEXT,region TEXT);")
+    db.execute("INSERT INTO words(id,word) VALUES(1,'stroke')")
+    db.execute("INSERT INTO pronunciations(word_id,ipa) VALUES(1,'/strəʊk/')")
+    for i, (vi, pos) in enumerate([("Cú đánh.", "N"), ("Đột quỵ.", "N")], 1):
+        db.execute("INSERT INTO definitions(id,definition,pos) VALUES(?,?,?)", (i, vi, pos))
+        db.execute("INSERT INTO word_definitions(word_id,definition_id) VALUES(1,?)", (i,))
+    db.commit(); db.close()
+    import services.config as _cfg
+    monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path)
+
+
+@pytest.mark.adapter
+def test_lenh_dich_mot_tu_dinh_nghia_tu_dien(co_tu_dien):
+    """/dich một từ sang Việt → bản dịch KÈM các nghĩa từ điển (ô web nay có
+    cả trên kênh chat). Đây là hàm dùng chung cho Zalo/Telegram/Zalo cá nhân."""
+    with install_translate(FakeTranslate(lang="en")):
+        ra = ts.lenh_dich("/dich vi stroke")
+    assert "📖 stroke /strəʊk/" in ra
+    assert "1. (danh từ) Cú đánh." in ra
+    assert "2. (danh từ) Đột quỵ." in ra
+
+
+@pytest.mark.adapter
+def test_lenh_dich_cau_dai_khong_dinh_tu_dien(co_tu_dien):
+    with install_translate(FakeTranslate(lang="en")):
+        ra = ts.lenh_dich("/dich vi the quick stroke")
+    assert "📖" not in ra
+
+
+@pytest.mark.adapter
+def test_lenh_dich_khong_co_tu_dien_van_dich(co_tu_dien):
+    """Từ không có trong từ điển → chỉ bản dịch, không khối 📖, không lỗi."""
+    with install_translate(FakeTranslate(lang="en")):
+        ra = ts.lenh_dich("/dich vi biopsy")
+    assert "📖" not in ra
+    assert "vi:biopsy" in ra
+
+
 @pytest.mark.adapter
 def test_lenh_dich_viet_sang_nhat():
     with install_translate(FakeTranslate(lang="vi", codes=_MA_DANG_NAP)):
