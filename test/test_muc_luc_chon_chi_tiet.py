@@ -286,6 +286,47 @@ class NguonBanTinTests(unittest.TestCase):
         self.assertEqual(chon["nguon"], "")
 
 
+class CauBomKhongEpTraCuuTests(unittest.TestCase):
+    """Chọn một mục KHÔNG được ép bot đi tra web.
+
+    Đo thật trên Zalo 29/08: người dùng tra "stroke", bot liệt kê 12 nghĩa rồi
+    mời nhắn mã mục. Bấm «1» (nghĩa y khoa: đột quỵ) thì câu bơm vào vòng trợ
+    lý ra lệnh "Tra cứu thêm rồi kể đầy đủ", nên bot chạy searxng tìm "đột quỵ"
+    rồi mới trả lời — trong khi nghĩa đó là định nghĩa từ điển CHÍNH NÓ vừa
+    đưa ra, đang nằm sẵn trong ngữ cảnh. Người dùng báo "phản hồi hơi lâu".
+
+    Vẫn KHÔNG cấm tra cứu: có mục thật sự cần dữ liệu mới (một tin trong bản
+    tin, một chủ đề mới nêu tên), chặn hẳn thì hỏng chiều ngược lại.
+    """
+
+    def setUp(self):
+        ml._reset_for_tests()
+        self._db = patch.object(ml, "_db", lambda: None)
+        self._db.start()
+        self.addCleanup(self._db.stop)
+
+    def test_khong_con_menh_lenh_tra_cuu(self):
+        cau = ml._cau_hoi("Trong y khoa: đột quỵ")
+        self.assertNotIn("Tra cứu thêm rồi kể đầy đủ", cau)
+
+    def test_bao_uu_tien_dung_ngu_canh_san_co(self):
+        cau = ml._cau_hoi("Trong y khoa: đột quỵ")
+        self.assertIn("có sẵn trong ngữ cảnh", cau)
+        self.assertIn("trả lời thẳng", cau)
+
+    def test_van_cho_phep_tra_khi_that_su_can(self):
+        self.assertIn("tra cứu", ml._cau_hoi("Giá vàng hôm nay"))
+
+    def test_van_mang_nguyen_noi_dung_muc(self):
+        self.assertIn("Trong y khoa: đột quỵ", ml._cau_hoi("Trong y khoa: đột quỵ"))
+
+    def test_resolve_reply_dung_cau_moi(self):
+        ml.apply_to_result({"text": BAN_TIN}, "u_bom")
+        chon = ml.resolve_reply("u_bom", "B2")
+        self.assertNotIn("Tra cứu thêm rồi kể đầy đủ", chon["cau_hoi"])
+        self.assertIn(chon["noi_dung"], chon["cau_hoi"])
+
+
 class DauNoiTinTucTests(unittest.TestCase):
     """Khoá ĐIỂM ĐẤU NỐI phía tin tức: đường tắt bản tin phải gắn cờ nguồn, và
     orchestrator phải có nhánh tra thẳng tiêu đề (mục 1.3)."""

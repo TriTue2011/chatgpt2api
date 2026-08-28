@@ -16,10 +16,10 @@ Cách làm — CODE, không nhờ model:
 
 Mục của BẢN TIN (``nguon="tin"``) được tra THẲNG bằng chính TIÊU ĐỀ, không bọc
 lời dặn quanh nó. Đo thật 24/08 16:55 và 16:57: bản cũ bơm nguyên câu «Xem chi
-tiết mục này: "…". Tra cứu thêm rồi kể đầy đủ.» vào vòng trợ lý, mà mọi tầng tra
-cứu phía sau (searxng, PubMed/CrossRef/Wikipedia, RAG kho tri thức) đều lấy
-NGUYÊN VĂN câu đó làm truy vấn — nên chọn một tin giáo dục thì nhận về sách giáo
-khoa Tiếng Việt lớp 2, chọn lần nữa thì nhận về điều khoản VTVgo/iQIYI.
+tiết mục này: "…". …» (xem ``_cau_hoi``) vào vòng trợ lý, mà mọi tầng tra cứu
+phía sau (searxng, PubMed/CrossRef/Wikipedia, RAG kho tri thức) đều lấy NGUYÊN
+VĂN câu đó làm truy vấn — nên chọn một tin giáo dục thì nhận về sách giáo khoa
+Tiếng Việt lớp 2, chọn lần nữa thì nhận về điều khoản VTVgo/iQIYI.
 
 Bậc mã theo độ sâu: ``A`` (đầu mục) → ``1`` (tin) → ``a`` → ``i``. Mã của một
 dòng là NỐI mã các bậc cha: mục A, tin 2 → ``A2``; tin con → ``A2a``. Chủ máy
@@ -326,6 +326,25 @@ def clear_pending(user_id: str) -> None:
 _RE_CHON = re.compile(r"^[\s.\-–)(]*([A-Za-z]{0,2}\d{0,2}[A-Za-z]{0,3})[\s.\-–)(]*$")
 
 
+def _cau_hoi(noi_dung: str) -> str:
+    """Câu bơm vào vòng trợ lý khi người dùng chọn một mục.
+
+    KHÔNG ra lệnh "tra cứu thêm". Bản cũ viết cứng câu đó cho MỌI loại danh
+    sách, nên chọn một nghĩa từ điển — thứ chính bot vừa đưa ra và đang nằm sẵn
+    trong ngữ cảnh — cũng khiến nó đi tra web rồi mới trả lời. Đo thật 29/08
+    trên Zalo: người dùng tra "stroke", bấm «1» (nghĩa y khoa: đột quỵ), bot
+    chạy searxng tìm "đột quỵ" rồi mới nói, và người dùng thấy "phản hồi hơi
+    lâu".
+
+    Giờ để MODEL tự quyết: đủ dữ kiện thì nói luôn, thiếu mới đi tra. Không cấm
+    tra cứu — có mục thật sự cần dữ liệu mới (một tin trong bản tin, một chủ đề
+    chỉ mới nêu tên), chặn hẳn thì lại hỏng chiều ngược lại.
+    """
+    return (f'Nói kỹ hơn về mục này: "{noi_dung}". '
+            "Nội dung đã có sẵn trong ngữ cảnh thì trả lời thẳng; chỉ khi cần "
+            "dữ kiện mới hoặc số liệu cập nhật mới đi tra cứu.")
+
+
 def resolve_reply(user_id: str, user_text: str) -> Optional[dict[str, str]]:
     """Người dùng vừa gõ một mã mục? → ``{"ma","noi_dung","nguon","cau_hoi"}``.
 
@@ -355,9 +374,7 @@ def resolve_reply(user_id: str, user_text: str) -> Optional[dict[str, str]]:
             logger.info({"event": "muc_luc_chon", "ma": it.get("ma"),
                          "nguon": nguon})
             return {"ma": str(it.get("ma") or ""), "noi_dung": noi_dung,
-                    "nguon": nguon,
-                    "cau_hoi": (f'Xem chi tiết mục này: "{noi_dung}". '
-                                "Tra cứu thêm rồi kể đầy đủ.")}
+                    "nguon": nguon, "cau_hoi": _cau_hoi(noi_dung)}
     return None
 
 
