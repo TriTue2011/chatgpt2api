@@ -60,12 +60,34 @@ const TIENG_GOOGLE: { value: string; label: string }[] = [
   { value: "tl", label: "Philippines" },
 ];
 
+// Tiếng cho MÁY DỊCH TRONG STACK (kết quả hiện ngay trong app, tự chủ, không
+// bên thứ ba). Khớp đúng engine.ISO2FLORES của vn-translate — model NLLB-200 đã
+// nạp dịch trực tiếp giữa hai tiếng bất kỳ ở đây (en↔vi dùng EnViT5, còn lại
+// NLLB). Đo 28/08 trên máy chủ: fr/ru/th → vi đều chạy. Thêm tiếng = thêm vào
+// ISO2FLORES rồi dựng lại image vn-translate (NLLB có sẵn 200 tiếng, không tải
+// thêm). KHÁC TIENG_GOOGLE (mở trình duyệt) — đây là bản dịch tại chỗ.
 const CAC_TIENG = [
   { value: "vi", label: "Tiếng Việt" },
   { value: "en", label: "Tiếng Anh" },
-  { value: "ja", label: "Tiếng Nhật" },
   { value: "zh", label: "Tiếng Trung" },
+  { value: "ja", label: "Tiếng Nhật" },
   { value: "ko", label: "Tiếng Hàn" },
+  { value: "fr", label: "Tiếng Pháp" },
+  { value: "de", label: "Tiếng Đức" },
+  { value: "es", label: "Tiếng Tây Ban Nha" },
+  { value: "pt", label: "Tiếng Bồ Đào Nha" },
+  { value: "it", label: "Tiếng Ý" },
+  { value: "ru", label: "Tiếng Nga" },
+  { value: "uk", label: "Tiếng Ukraina" },
+  { value: "pl", label: "Tiếng Ba Lan" },
+  { value: "nl", label: "Tiếng Hà Lan" },
+  { value: "tr", label: "Tiếng Thổ Nhĩ Kỳ" },
+  { value: "ar", label: "Tiếng Ả Rập" },
+  { value: "hi", label: "Tiếng Hindi" },
+  { value: "th", label: "Tiếng Thái" },
+  { value: "id", label: "Tiếng Indonesia" },
+  { value: "km", label: "Tiếng Khmer" },
+  { value: "lo", label: "Tiếng Lào" },
 ];
 
 /** Đuôi cho ra PHỤ ĐỀ (hiện lựa chọn Phụ đề/Bản chữ): video, âm thanh, và
@@ -446,6 +468,7 @@ function DichPageContent() {
           <h1 className="text-xl font-semibold">Dịch</h1>
           <p className="text-sm text-[var(--muted-foreground)]">
             Chữ, link YouTube, ảnh, tài liệu, video — dịch bằng máy dịch trong stack, không tốn lượt AI.
+            Hơn 20 thứ tiếng (Pháp, Nga, Thái, Đức…) dịch tại chỗ; tiếng khác thì mở Google ở khối trên.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2 text-sm">

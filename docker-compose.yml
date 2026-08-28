@@ -362,7 +362,12 @@ services:
       driver: json-file
       options: {max-size: "10m", max-file: "5"}
     environment:
-      TT_LANGS: ${TT_LANGS:-en,vi,ja,ko,zh-Hans}
+      # Tiếng vn-translate QUẢNG BÁ ở /languages. Model NLLB-200 đã nạp dịch
+      # được cả 200 tiếng; danh sách này chỉ để tab Dịch biết chào tiếng nào —
+      # thêm tiếng vào đây KHÔNG tải thêm gì (phải có trong engine.ISO2FLORES).
+      # Mở rộng 28/08 để dịch nhiều thứ tiếng tại chỗ, khỏi phụ thuộc Google
+      # (endpoint không chính thức bị chặn IP máy chủ — HTTP 429).
+      TT_LANGS: ${TT_LANGS:-en,vi,ja,ko,zh-Hans,fr,de,es,pt,it,ru,uk,pl,nl,tr,ar,hi,th,id,km,lo}
       # Thang model: hỏng thì tự chuyển model kế (xem vn-translate/app/engine.py).
       TT_MODELS: ${TT_MODELS:-JustFrederik/nllb-200-distilled-600M-ct2-int8,JustFrederik/nllb-200-distilled-1.3B-ct2-int8}
       TT_THREADS: "4"
