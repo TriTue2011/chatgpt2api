@@ -26,12 +26,26 @@ logger = logging.getLogger(__name__)
 #: ISO 639-1 (mã LibreTranslate dùng) → mã FLORES-200 của NLLB. Chỉ liệt kê
 #: ngôn ngữ đã kiểm; thêm dần khi cần — NLLB có đủ 200.
 ISO2FLORES: dict[str, str] = {
+    # 22 tiếng đã kiểm từ đầu
     "en": "eng_Latn", "vi": "vie_Latn", "ja": "jpn_Jpan", "ko": "kor_Hang",
     "zh-Hans": "zho_Hans", "zh-Hant": "zho_Hant",
     "fr": "fra_Latn", "de": "deu_Latn", "es": "spa_Latn", "ru": "rus_Cyrl",
     "th": "tha_Thai", "id": "ind_Latn", "km": "khm_Khmr", "lo": "lao_Laoo",
     "pt": "por_Latn", "it": "ita_Latn", "nl": "nld_Latn", "ar": "arb_Arab",
     "hi": "hin_Deva", "tr": "tur_Latn", "pl": "pol_Latn", "uk": "ukr_Cyrl",
+    # Mở rộng 28/08 — NLLB-200 có sẵn, KHÔNG tải thêm model. Mã FLORES-200 chuẩn.
+    "fa": "pes_Arab", "he": "heb_Hebr", "el": "ell_Grek", "cs": "ces_Latn",
+    "sk": "slk_Latn", "ro": "ron_Latn", "hu": "hun_Latn", "fi": "fin_Latn",
+    "sv": "swe_Latn", "da": "dan_Latn", "no": "nob_Latn", "bg": "bul_Cyrl",
+    "hr": "hrv_Latn", "sr": "srp_Cyrl", "sl": "slv_Latn", "lt": "lit_Latn",
+    "lv": "lvs_Latn", "et": "est_Latn", "ca": "cat_Latn", "ms": "zsm_Latn",
+    "tl": "tgl_Latn", "my": "mya_Mymr", "bn": "ben_Beng", "ta": "tam_Taml",
+    "te": "tel_Telu", "ml": "mal_Mlym", "kn": "kan_Knda", "gu": "guj_Gujr",
+    "mr": "mar_Deva", "pa": "pan_Guru", "ur": "urd_Arab", "ne": "npi_Deva",
+    "si": "sin_Sinh", "sw": "swh_Latn", "am": "amh_Ethi", "az": "azj_Latn",
+    "ka": "kat_Geor", "hy": "hye_Armn", "kk": "kaz_Cyrl", "uz": "uzn_Latn",
+    "mn": "khk_Cyrl", "af": "afr_Latn", "sq": "als_Latn", "is": "isl_Latn",
+    "cy": "cym_Latn", "eu": "eus_Latn", "gl": "glg_Latn", "ceb": "ceb_Latn",
 }
 TEN_NGON_NGU: dict[str, str] = {
     "en": "English", "vi": "Vietnamese", "ja": "Japanese", "ko": "Korean",
@@ -40,6 +54,18 @@ TEN_NGON_NGU: dict[str, str] = {
     "id": "Indonesian", "km": "Khmer", "lo": "Lao", "pt": "Portuguese",
     "it": "Italian", "nl": "Dutch", "ar": "Arabic", "hi": "Hindi",
     "tr": "Turkish", "pl": "Polish", "uk": "Ukrainian",
+    "fa": "Persian", "he": "Hebrew", "el": "Greek", "cs": "Czech",
+    "sk": "Slovak", "ro": "Romanian", "hu": "Hungarian", "fi": "Finnish",
+    "sv": "Swedish", "da": "Danish", "no": "Norwegian", "bg": "Bulgarian",
+    "hr": "Croatian", "sr": "Serbian", "sl": "Slovenian", "lt": "Lithuanian",
+    "lv": "Latvian", "et": "Estonian", "ca": "Catalan", "ms": "Malay",
+    "tl": "Filipino", "my": "Burmese", "bn": "Bengali", "ta": "Tamil",
+    "te": "Telugu", "ml": "Malayalam", "kn": "Kannada", "gu": "Gujarati",
+    "mr": "Marathi", "pa": "Punjabi", "ur": "Urdu", "ne": "Nepali",
+    "si": "Sinhala", "sw": "Swahili", "am": "Amharic", "az": "Azerbaijani",
+    "ka": "Georgian", "hy": "Armenian", "kk": "Kazakh", "uz": "Uzbek",
+    "mn": "Mongolian", "af": "Afrikaans", "sq": "Albanian", "is": "Icelandic",
+    "cy": "Welsh", "eu": "Basque", "gl": "Galician", "ceb": "Cebuano",
 }
 
 #: Dịch lỗi ngần này lần LIÊN TIẾP thì bỏ model hiện tại, chuyển model kế.
