@@ -5,6 +5,11 @@ Không qua bên thứ ba. Không Google, không Azure, không `libretranslate.co
 là một container trong chính stack của mình; sau khi model tải xong, không lượt
 dịch nào ra Internet.
 
+> Từ 28/08/2026 có **hai đường phụ tuỳ chọn, mặc định TẮT**, không đụng gì tới
+> đường dịch chính nói trên: một model LLM chỉnh nghĩa (mục 5 bên dưới), và một
+> ô đối chiếu với Google Dịch. Bật hay không là quyết định về **dữ liệu** —
+> bật là chữ rời máy. Xem [`TU_DIEN.md`](TU_DIEN.md).
+
 > Tài liệu này thay bản cũ viết cho LibreTranslate/Argos (13/08/2026). Argos vẫn
 > còn trong compose sau `--profile libretranslate` cho ai muốn quay lại.
 
@@ -231,6 +236,15 @@ Menu **Studio → Dịch** (chỉ admin). Hai tab con:
   request ~100 MB, gửi nguyên khối một video 720p là chết ở proxy chứ chưa tới
   máy. Việc chậm chạy ở luồng nền, trang thăm dò tiến độ (đóng trang không mất
   việc, nhưng mất đường nhận kết quả).
+
+- **Sửa thuật ngữ dịch** (khối gập lại): tra từ trong từ điển tại chỗ để xem
+  MỌI nghĩa, chọn nghĩa đúng rồi lưu — từ đó về sau máy luôn dịch đúng chữ ấy,
+  ở cả tab này lẫn phụ đề video. Trước 28/08/2026 bảng sửa tay chỉ có tác dụng
+  với phụ đề: đường dán chữ gọi thẳng máy dịch nên bỏ qua nó, thêm "stroke →
+  đột quỵ" xong dịch vẫn ra "cú đánh". Nay thuật ngữ được **cắt ra trước** khi
+  gửi đi (cách của DeepL glossary), nên máy dịch không có cơ hội đoán sai.
+- **Google Dịch (đối chiếu)**: xem [`TU_DIEN.md`](TU_DIEN.md) — cài từ điển và
+  hai đường dùng Google.
 
 **Đàm thoại** — phiên dịch hai chiều tại chỗ: hai ô cho hai tiếng, bấm mic bên
 nào thì máy nghe bằng model tiếng đó (không đoán — người bấm đã khai) rồi dịch

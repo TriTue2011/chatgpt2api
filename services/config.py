@@ -1033,6 +1033,18 @@ class ConfigStore:
         return val if val <= 300 else 300
 
     @property
+    def google_dich_timeout(self) -> int:
+        """Giây chờ Google Dịch (ý kiến thứ hai, tuỳ chọn). Mặc định 20.
+
+        Ngắn hơn ``translate_timeout`` rất nhiều và cố ý: đây là ô phụ hiện bên
+        cạnh bản dịch chính, chờ lâu thì người dùng ngồi nhìn màn hình trống vì
+        một thứ họ không bắt buộc phải có. Google trả trong khoảng một giây khi
+        bình thường; quá 20 giây gần như luôn là bị chặn chứ không phải chậm.
+        """
+        return _normalize_positive_int(self.data.get("google_dich_timeout"), 20,
+                                       minimum=1)
+
+    @property
     def translate_docx_threshold(self) -> int:
         """Bản dịch dài hơn ngần này KÝ TỰ thì gửi bằng tệp .docx thay vì tin nhắn.
 

@@ -23,6 +23,18 @@ const DUOI_NHAN = ".mp4,.mov,.mkv,.webm,.avi,.m4v,.ts,.3gp,.mp3,.m4a,.aac,.ogg,.
  *
  *  Khai tiếng nguồn còn giúp video/âm thanh: biết trước thì bộ nghe khoá cứng
  *  một model, khỏi tốn lượt nghe thử để dò. Để "tự nhận" thì máy dò như cũ. */
+/** Trần ký tự nhét vào URL Google Dịch. Trình duyệt và máy chủ đều cắt URL quá
+ *  dài, mà cắt thì mất im lặng — nên chặn ở đây và nói rõ cho người dùng. */
+const GOOGLE_TRAN_KY_TU = 1800;
+
+type NghiaTu = { vi: string; tu_loai: string; vi_du: string };
+type TraCuu = {
+  tu: string; goc?: string; ipa: string; nghia: NghiaTu[]; co_tu_dien: boolean;
+  /** Bản dịch máy của Google, chỉ có khi từ điển tại chỗ không trả gì VÀ
+   *  chủ máy đã bật Google — dùng cho Nhật/Trung/Hàn, thứ kho chưa phủ. */
+  google?: string;
+};
+
 const CAC_TIENG = [
   { value: "vi", label: "Tiếng Việt" },
   { value: "en", label: "Tiếng Anh" },
@@ -84,6 +96,12 @@ function DichPageContent() {
 
   // Bước LLM chỉnh nghĩa chuyên ngành — TÙY CHỌN, mặc định TẮT (giữ tự chủ).
   // Cấu hình dùng chung, lưu ở config.dich_llm; đọc/ghi qua /api/settings.
+  // Google Dịch — ý kiến thứ hai, mặc định TẮT vì chữ sẽ rời máy chủ này.
+  const [googleBat, setGoogleBat] = useState(false);
+  const [googleKq, setGoogleKq] = useState("");
+  const [googleLoi, setGoogleLoi] = useState("");
+  const [googleDangChay, setGoogleDangChay] = useState(false);
+
   const [llmBat, setLlmBat] = useState(false);
   const [llmModel, setLlmModel] = useState("");
   const [modelsLlm, setModelsLlm] = useState<Record<string, string[]>>({});
@@ -95,12 +113,32 @@ function DichPageContent() {
         const d = ((r.data as any)?.config?.dich_llm) || {};
         setLlmBat(Boolean(d.bat));
         setLlmModel(String(d.model || ""));
+        setGoogleBat(Boolean((((r.data as any)?.config?.dich_google) || {}).bat));
       })
       .catch(() => {});
     request.get("/api/v1/available-models")
       .then((r) => setModelsLlm(((r.data as any)?.providers as Record<string, string[]>) || {}))
       .catch(() => setModelsLlm({}));
   }, []);
+
+  const luuDichGoogle = async (bat: boolean) => {
+    setGoogleBat(bat);
+    if (!bat) { setGoogleKq(""); setGoogleLoi(""); }
+    try { await request.post("/api/settings", { dich_google: { bat } }); }
+    catch { setGoogleBat(!bat); }
+  };
+
+  const xemGoogle = async () => {
+    const q = chu.trim();
+    if (!q) return;
+    setGoogleDangChay(true); setGoogleLoi(""); setGoogleKq("");
+    try {
+      const r = await request.post("/api/dich/google",
+        { q, target: ketQua?.dich || target, source: nguon });
+      setGoogleKq(String((r.data as any)?.text || ""));
+    } catch (e) { setGoogleLoi(layLoi(e)); }
+    finally { setGoogleDangChay(false); }
+  };
 
   const luuDichLlm = async (bat: boolean, model: string) => {
     setLlmBat(bat); setLlmModel(model);
@@ -133,6 +171,34 @@ function DichPageContent() {
 
   const tenLinhVuc = (slug: string) => dsLinhVuc.find((x) => x.slug === slug)?.ten || slug;
 
+  // Tra từ điển tại chỗ. Máy dịch buộc phải CHỌN một nghĩa; ô này cho thấy hết
+  // các nghĩa rồi để người dùng tự chọn cái đúng ngữ cảnh của mình — "stroke"
+  // có tới mười nghĩa, không ngữ cảnh thì không engine nào đoán đúng được.
+  const [traTu, setTraTu] = useState("");
+  const [traKq, setTraKq] = useState<TraCuu | null>(null);
+  const [traDangChay, setTraDangChay] = useState(false);
+
+  const traCuu = async (tu?: string) => {
+    const q = (tu ?? traTu).trim();
+    if (!q) return;
+    setTraDangChay(true);
+    try {
+      const r = await request.get(
+        `/api/dich/tra-cuu?src=${suaSrc}&q=${encodeURIComponent(q)}`);
+      setTraKq(r.data as TraCuu);
+    } catch { setTraKq(null); }
+    finally { setTraDangChay(false); }
+  };
+
+  // Chọn một nghĩa = ĐỔ vào ô sửa thuật ngữ ngay bên dưới, không lưu thẳng:
+  // nghĩa trong từ điển hay ở dạng "Cú, cú đánh, đòn." — người dùng phải được
+  // cắt lại còn đúng chữ mình muốn trước khi nó thành luật cho mọi lượt dịch.
+  const dungNghia = (tu: string, vi: string) => {
+    setSuaTerm(tu);
+    setSuaVi(vi.replace(/\.$/, "").trim());
+    setSuaMsg("Sửa lại cho gọn nếu cần rồi bấm Lưu.");
+  };
+
   const luuSua = async () => {
     const term = suaTerm.trim(), vi = suaVi.trim();
     if (!term || !vi) { setSuaMsg("❌ Nhập cả từ gốc và từ Việt."); return; }
@@ -149,6 +215,28 @@ function DichPageContent() {
       const r = await request.post("/api/dich/glossary/xoa", { src: suaSrc, linh_vuc, term });
       setDsSua(((r.data as any)?.sua as Record<string, Record<string, string>>) || {});
     } catch (e) { setSuaMsg("❌ " + layLoi(e)); }
+  };
+
+  // Mở Google Dịch trong TAB MỚI, điền sẵn nội dung. Đây KHÔNG phải tích hợp
+  // API: trình duyệt của người dùng tự gọi Google, máy chủ này không gửi gì đi,
+  // không cần khoá và không tốn tiền. Đổi lại, kết quả nằm bên đó chứ không
+  // quay về app được. Có để dùng cho những tiếng ngoài 5 tiếng máy dịch trong
+  // stack hỗ trợ — Google có hơn 130 tiếng, đổi ở ô nguồn/đích là ra sl/tl.
+  const moGoogle = (op: "translate" | "websites" | "images" | "docs" = "translate") => {
+    const sl = nguon || "auto";
+    const nd = chu.trim();
+    let url = `https://translate.google.com/?sl=${sl}&tl=${target}&op=${op}`;
+    if (op === "translate") {
+      url += `&text=${encodeURIComponent(nd.slice(0, GOOGLE_TRAN_KY_TU))}`;
+    } else if (op === "websites" && /^https?:\/\//i.test(nd)) {
+      // Dạng này Google chuyển hướng thẳng sang bản dịch của trang
+      // (kiểm 28/08: 302 → <tên-miền>.translate.goog), khỏi phải dán lại link.
+      url = `https://translate.google.com/translate?sl=${sl}&tl=${target}`
+        + `&u=${encodeURIComponent(nd)}`;
+    }
+    // Ảnh và tài liệu chỉ MỞ được đúng chế độ — tệp phải tự chọn bên đó, URL
+    // không đính kèm tệp được.
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const laVideo = !!tep && DUOI_VIDEO.some((d) => tep.name.toLowerCase().endsWith(d));
@@ -376,6 +464,59 @@ function DichPageContent() {
         </div>
       </details>
 
+      {/* Google Dịch — đối chiếu và mở sang bản web, tuỳ chọn, mặc định TẮT */}
+      <details className="rounded-[16px] border border-[var(--border)] px-4 py-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          Google Dịch (đối chiếu — tuỳ chọn)
+          {googleBat && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">đang bật</span>}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" checked={googleBat}
+              onChange={(e) => luuDichGoogle(e.target.checked)} />
+            Cho phép máy chủ hỏi Google để hiện bản dịch đối chiếu
+          </label>
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Bật thì sau mỗi lần dịch chữ sẽ có nút xem thêm bản của Google để so.
+            <b> Chữ được gửi sang máy chủ Google</b> — đó là lý do mặc định tắt.
+            Đường dịch chính vẫn là máy trong stack, Google hỏng hay bị chặn cũng
+            không ảnh hưởng gì.
+          </p>
+          <div className="space-y-1">
+            <div className="text-sm text-[var(--muted-foreground)]">
+              Hoặc mở thẳng trang Google Dịch (không gửi gì từ máy chủ này — trình
+              duyệt của anh tự mở, có hơn 130 tiếng):
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => moGoogle("translate")} disabled={!chu.trim()}
+                className="rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)] disabled:opacity-50">
+                Văn bản
+              </button>
+              <button type="button" onClick={() => moGoogle("websites")}
+                disabled={!/^https?:\/\//i.test(chu.trim())}
+                title="Dán link trang web vào ô chữ rồi bấm — Google mở luôn bản dịch của trang đó"
+                className="rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)] disabled:opacity-50">
+                Trang web
+              </button>
+              <button type="button" onClick={() => moGoogle("images")}
+                className="rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)]">
+                Hình ảnh
+              </button>
+              <button type="button" onClick={() => moGoogle("docs")}
+                className="rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)]">
+                Tài liệu
+              </button>
+            </div>
+            <p className="text-xs text-[var(--muted-foreground)]">
+              <b>Văn bản</b> và <b>Trang web</b> mang sẵn nội dung/link trong ô chữ sang.
+              <b> Hình ảnh</b> và <b>Tài liệu</b> chỉ mở đúng chế độ — tệp phải tự chọn
+              bên đó, link không đính kèm tệp được. Ảnh và tài liệu thì tab này đã dịch
+              được tại chỗ ở phần tải tệp bên dưới.
+            </p>
+          </div>
+        </div>
+      </details>
+
       {/* Sửa thuật ngữ dịch — thắng cả từ điển gốc, hiệu lực ngay lần sau */}
       <details className="rounded-[16px] border border-[var(--border)] px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium">
@@ -400,6 +541,73 @@ function DichPageContent() {
                 {dsLinhVuc.map((lv) => <option key={lv.slug} value={lv.slug}>{lv.ten}</option>)}
               </select>
             </label>
+          </div>
+          {/* Tra từ điển: thấy MỌI nghĩa rồi tự chọn, thay vì để máy chọn hộ */}
+          <div className="space-y-2 rounded-[12px] border border-[var(--border)] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <input value={traTu} onChange={(e) => setTraTu(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") traCuu(); }}
+                placeholder="tra một từ (vd: stroke)"
+                className="min-w-[160px] flex-1 rounded-[10px] border border-[var(--border)] bg-transparent px-3 py-2 text-sm" />
+              <button type="button" onClick={() => traCuu()} disabled={traDangChay || !traTu.trim()}
+                className="rounded-[10px] border border-[var(--border)] px-4 py-2 text-sm hover:bg-[var(--muted)] disabled:opacity-50">
+                {traDangChay ? "Đang tra…" : "Tra từ điển"}
+              </button>
+            </div>
+            {traKq && !traKq.co_tu_dien && (
+              <p className="text-xs text-[var(--muted-foreground)]">
+                Chưa cài từ điển cho tiếng này — hiện chỉ có Anh–Việt, cài bằng
+                <code className="mx-1">scripts/tai_tu_dien.py</code> trên máy chủ.
+                Nhật/Trung/Hàn thì bật Google Dịch ở khối bên trên là tra được.
+              </p>
+            )}
+            {traKq && traKq.co_tu_dien && traKq.nghia.length === 0 && !traKq.google && (
+              <p className="text-xs text-[var(--muted-foreground)]">Không có từ này trong từ điển.</p>
+            )}
+            {traKq && traKq.nghia.length === 0 && traKq.google && (
+              <div className="flex items-start gap-2 text-sm">
+                <div className="flex-1">
+                  <span className="text-[var(--muted-foreground)]">Google dịch </span>
+                  {traKq.google}
+                  <div className="text-xs text-[var(--muted-foreground)]">
+                    Bản dịch máy, không phải mục từ điển — chỉ có một nghĩa và
+                    không kèm ví dụ.
+                  </div>
+                </div>
+                <button type="button" onClick={() => dungNghia(traKq.tu, traKq.google || "")}
+                  className="shrink-0 rounded-[8px] border border-[var(--border)] px-2 py-1 text-xs hover:bg-[var(--muted)]">
+                  Dùng nghĩa này
+                </button>
+              </div>
+            )}
+            {traKq && traKq.nghia.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-sm">
+                  <b>{traKq.tu}</b>
+                  {traKq.ipa && <span className="ml-2 text-[var(--muted-foreground)]">{traKq.ipa}</span>}
+                  {traKq.goc && (
+                    <span className="ml-2 text-xs text-[var(--muted-foreground)]">
+                      (tra theo dạng gốc của &quot;{traKq.goc}&quot;)
+                    </span>
+                  )}
+                </div>
+                {traKq.nghia.map((n, i) => (
+                  <div key={i} className="flex items-start gap-2 border-t border-[var(--border)] pt-1 text-sm">
+                    <div className="flex-1">
+                      {n.tu_loai && <span className="text-[var(--muted-foreground)]">{n.tu_loai} </span>}
+                      {n.vi}
+                      {n.vi_du && (
+                        <div className="text-xs italic text-[var(--muted-foreground)]">{n.vi_du}</div>
+                      )}
+                    </div>
+                    <button type="button" onClick={() => dungNghia(traKq.tu, n.vi)}
+                      className="shrink-0 rounded-[8px] border border-[var(--border)] px-2 py-1 text-xs hover:bg-[var(--muted)]">
+                      Dùng nghĩa này
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input value={suaTerm} onChange={(e) => setSuaTerm(e.target.value)}
@@ -446,7 +654,17 @@ function DichPageContent() {
         <textarea value={chu} onChange={(e) => setChu(e.target.value)} rows={5} disabled={dangChay}
           placeholder="Dán chữ cần dịch, hoặc link YouTube có phụ đề để dịch…"
           className="w-full resize-y rounded-[12px] border border-[var(--border)] bg-transparent p-3 text-sm outline-none focus:border-slate-400" />
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {chu.trim().length > GOOGLE_TRAN_KY_TU && (
+            <span className="mr-auto text-xs text-[var(--muted-foreground)]">
+              Google Dịch chỉ nhận ~{GOOGLE_TRAN_KY_TU} ký tự đầu — phần còn lại phải dán tay.
+            </span>
+          )}
+          <button type="button" onClick={() => moGoogle("translate")} disabled={!chu.trim()}
+            className="rounded-[12px] border border-[var(--border)] px-4 py-2.5 text-[14px] hover:bg-[var(--muted)] disabled:opacity-50"
+            title="Mở tab mới sang translate.google.com với nội dung điền sẵn (dùng cho tiếng máy dịch trong stack chưa có)">
+            Mở trên Google Dịch
+          </button>
           <button type="button" onClick={dichChu} disabled={dangChay || !chu.trim()}
             className="rounded-[12px] bg-slate-900 px-6 py-2.5 text-[14px] font-medium text-white hover:bg-slate-800 disabled:opacity-50">
             Dịch chữ / link
@@ -594,6 +812,21 @@ function DichPageContent() {
                 className="absolute right-2 top-2 rounded-[8px] border border-[var(--border)] bg-[var(--background)] p-1.5 hover:border-slate-400">
                 {daChep ? <Check className="size-4 text-emerald-600" /> : <Copy className="size-4" />}
               </button>
+            </div>
+          )}
+          {googleBat && ketQua.kieu === "chu" && (
+            <div className="space-y-2">
+              <button type="button" onClick={xemGoogle} disabled={googleDangChay}
+                className="rounded-[10px] border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)] disabled:opacity-50">
+                {googleDangChay ? "Đang hỏi Google…" : "Xem bản Google để đối chiếu"}
+              </button>
+              {googleLoi && <p className="text-xs text-red-600">{googleLoi}</p>}
+              {googleKq && (
+                <div>
+                  <div className="text-xs text-[var(--muted-foreground)]">Bản của Google</div>
+                  <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-[12px] bg-[var(--muted)] p-3 text-sm">{googleKq}</pre>
+                </div>
+              )}
             </div>
           )}
           {ketQua.goc && (

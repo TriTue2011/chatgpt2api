@@ -95,6 +95,14 @@ class SuaThuatNguRequest(BaseModel):
     vi: str
 
 
+class GoogleDichRequest(BaseModel):
+    """Ý kiến thứ hai từ Google — chỉ chạy khi chủ máy đã bật ``dich_google``."""
+    q: str
+    target: str
+    #: Rỗng = để Google tự nhận tiếng nguồn (nó trả lại mã đã nhận).
+    source: str = ""
+
+
 class XoaThuatNguRequest(BaseModel):
     src: str
     linh_vuc: str
@@ -695,6 +703,55 @@ def create_router() -> APIRouter:
                 "linh_vuc": tn.danh_sach_linh_vuc(),
                 "sua": tn.doc_sua(src),
                 "so_nen": {lv: len(cap) for lv, cap in nen.items()}}
+
+    @router.post("/api/dich/google")
+    async def dich_qua_google(body: GoogleDichRequest,
+                              authorization: str | None = Header(None)):
+        """Dịch cùng một đoạn qua Google để ĐỐI CHIẾU với bản dịch trong stack.
+
+        Tách khỏi ``/api/dich/chu`` có chủ đích: đường dịch chính phải chạy y
+        nguyên khi Google hỏng hay bị chặn, và chữ chỉ rời máy khi người dùng
+        thật sự bấm xem bản của Google.
+        """
+        require_admin(authorization)
+        from services import google_dich as gd
+        if not gd.dang_bat():
+            raise HTTPException(400, detail={
+                "error": "Chưa bật Google Dịch — bật ở tab Dịch nếu chấp nhận "
+                         "gửi chữ ra ngoài"})
+        try:
+            text, nhan = gd.dich(body.q, body.target, body.source or "auto")
+        except gd.LoiGoogle as exc:
+            raise HTTPException(502, detail={"error": str(exc)})
+        return {"text": text, "nguon": nhan}
+
+    @router.get("/api/dich/tra-cuu")
+    async def tra_cuu(q: str = "", src: str = "en",
+                      authorization: str | None = Header(None)):
+        """Tra một từ trong từ điển tại chỗ — MỌI nghĩa, không chọn hộ.
+
+        Máy dịch buộc phải chọn một nghĩa; ô này cho người dùng thấy hết rồi tự
+        chọn, và bấm "dùng nghĩa này" là ghi vào bảng sửa tay qua
+        ``POST /api/dich/glossary``. ``co_tu_dien`` false = chưa cài tệp từ
+        điển, UI ẩn ô này đi (xem ``scripts/tai_tu_dien.py``).
+        """
+        require_admin(authorization)
+        from services import tu_dien as td
+        from services import google_dich as gd
+        src = str(src or "").lower().strip()
+        ra = td.tra(q, src)
+        ra["co_tu_dien"] = td.co_tu_dien(src)
+        # Từ điển tại chỗ chỉ có Anh–Việt. Nhật/Trung/Hàn — và cả từ tiếng Anh
+        # kho không có — thì hỏi Google, NẾU chủ máy đã bật. Để riêng ô ``google``
+        # chứ không trộn vào ``nghia``: một bản dịch máy không phải một mục từ
+        # điển, người dùng cần thấy rõ cái nào là cái nào.
+        ra["google"] = ""
+        if not ra["nghia"] and str(q or "").strip() and gd.dang_bat():
+            try:
+                ra["google"] = gd.dich(q, "vi", src or "auto")[0]
+            except gd.LoiGoogle:
+                pass    # ô Google để trống, phần từ điển vẫn trả bình thường
+        return ra
 
     @router.post("/api/dich/glossary")
     async def luu_glossary(body: SuaThuatNguRequest,
