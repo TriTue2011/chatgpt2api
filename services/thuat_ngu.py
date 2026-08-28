@@ -92,6 +92,9 @@ class _KhoTinh:
     def __init__(self) -> None:
         self._theo_src: dict[str, dict[str, dict[str, str]]] = {}
         self._da_doc: set[str] = set()
+        #: Bảng SỬA TAY đã làm phẳng (bỏ lĩnh vực) — dùng ở MỌI lượt dịch chữ
+        #: nên không đọc lại file mỗi lần. ``xoa()`` dọn cùng lúc với phần trên.
+        self._sua_phang: dict[str, list[tuple[str, str]]] = {}
 
     def nap(self, src: str) -> dict[str, dict[str, str]]:
         src = str(src or "").lower().strip()
@@ -115,9 +118,21 @@ class _KhoTinh:
         self._theo_src[src] = goi
         return goi
 
+    def sua_phang(self, src: str) -> list[tuple[str, str]]:
+        src = str(src or "").lower().strip()
+        if src not in self._sua_phang:
+            gop: dict[str, str] = {}
+            for cap in _doc_glossary_file(_thu_muc_glossary() / f"{src}.sua.json").values():
+                for term, vi in cap.items():
+                    if term and vi:
+                        gop[term] = vi
+            self._sua_phang[src] = list(gop.items())
+        return self._sua_phang[src]
+
     def xoa(self) -> None:
         self._theo_src.clear()
         self._da_doc.clear()
+        self._sua_phang.clear()
 
 
 _KHO = _KhoTinh()
@@ -222,6 +237,62 @@ def xoa_sua(src: str, linh_vuc: str, term: str) -> bool:
     del bang[lv][term_n]
     _ghi_sua_file(src, bang)
     return True
+
+
+# ── Thuật ngữ NGƯỜI DÙNG tự thêm: áp thẳng, KHÔNG qua đoán lĩnh vực ─────────
+# Đoán lĩnh vực (``doan_linh_vuc``) sinh ra để bảo vệ văn bản DÀI khỏi một từ
+# trùng ngẫu nhiên. Từ do người dùng gõ tay ở tab Dịch thì không cần lớp bảo vệ
+# đó — họ đã nói rõ ý rồi. Lỗi thật đã gặp: thêm "stroke → đột quỵ" xong gõ mỗi
+# chữ "stroke", văn bản không đủ 3 thuật ngữ y khoa nên không lĩnh vực nào được
+# nhận, và bản sửa tay chưa bao giờ có cơ hội chạy.
+
+
+def cap_nguoi_dung(src: str) -> list[tuple[str, str]]:
+    """[(term nguồn, thuật ngữ VI)] người dùng TỰ THÊM cho tiếng ``src``.
+
+    Gộp mọi lĩnh vực trong ``<src>.sua.json`` — lúc áp không hỏi lĩnh vực nữa.
+    Trùng term giữa hai lĩnh vực thì bản đọc sau thắng; hiếm, và cả hai đều là
+    ý người dùng nên không có lựa chọn nào đúng hơn.
+    """
+    return _KHO.sua_phang(src)
+
+
+def tach_thuat_ngu(text: str, cap: list[tuple[str, str]]) -> list[tuple[bool, str]]:
+    """Cắt đoạn thành [(gửi_máy_dịch, chữ)] — thuật ngữ thành mảnh KHOÁ đã mang
+    sẵn bản dịch bắt buộc, phần còn lại để máy dịch lo.
+
+    Đây là cách DeepL glossary và Microsoft dynamic dictionary làm: không "dạy"
+    engine mà THAY trước rồi chỉ dịch phần còn lại, nên thuật ngữ ra đúng trăm
+    lần như một, với mọi engine, 0 token.
+
+    Khớp không phân biệt hoa thường và ưu tiên cụm DÀI trước ("short circuit
+    breaker" không để "circuit breaker" cướp mất thành hai mảnh). Chữ hoa đầu
+    câu của bản gốc được giữ sang bản dịch bắt buộc.
+
+    Bản SINH ĐÔI chạy trong máy dịch là ``vn-translate/app/terms.py``
+    (hàm cùng tên) — hai tiến trình tách rời nên không dùng chung code được;
+    sửa một bên nhớ ngó bên kia.
+    """
+    if not cap or not text:
+        return [(True, text)] if text else []
+    thu_tu = sorted(cap, key=lambda c: len(c[0]), reverse=True)
+    mau = "|".join(re.escape(goc) for goc, _ in thu_tu)
+    rx = re.compile(rf"(?<!\w)({mau})(?!\w)", re.IGNORECASE)
+    tra = {thuong_hoa(goc): dich for goc, dich in thu_tu}
+    ra: list[tuple[bool, str]] = []
+    vt = 0
+    text = unicodedata.normalize("NFC", text)
+    for m in rx.finditer(text):
+        if m.start() > vt:
+            ra.append((True, text[vt:m.start()]))
+        thay = tra[thuong_hoa(m.group(1))]
+        if m.group(1)[:1].isupper() and thay[:1].islower():
+            thay = thay[0].upper() + thay[1:]
+        ra.append((False, thay))
+        vt = m.end()
+    if vt < len(text):
+        ra.append((True, text[vt:]))
+    return ra
 
 
 def doan_linh_vuc(text_nguon: str, src: str) -> list[str]:

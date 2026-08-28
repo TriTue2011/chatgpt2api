@@ -836,7 +836,10 @@ def _dich_va_dong_goi(doan: list[Doan], nguon: str, dich: str,
                     # Chỉ lô đầu là mốc: Zalo cần biết "đã sang bước dịch",
                     # không cần biết lô thứ bảy.
                     moc=so_lo == 1)
-                ban_dich.extend(ts.translate_batch(
+                # Dùng bản GIỮ THUẬT NGỮ chứ không phải translate_batch trần:
+                # thuật ngữ người dùng tự thêm ở tab Dịch phải có hiệu lực cho
+                # cả phụ đề và lồng tiếng, không riêng đường dán chữ.
+                ban_dich.extend(ts.translate_giu_thuat_ngu(
                     chu_goc[i:i + LO_MOI_LUOT], dich, nguon or "auto"))
         except ts.LoiDich as exc:
             # ASR/lấy phụ đề đã xong thì bản gốc vẫn dùng được. Không để máy

@@ -512,3 +512,90 @@ def test_ma_ngon_ngu_duoc_chuan_hoa_ngay_tai_cua_ra():
         ts.translate_batch(["こんにちは"], "ko", "ja")
     assert fake.calls[-1][1]["target"] == "ko"
     assert fake.calls[-1][1]["source"] == "ja"
+
+# ── Thuật ngữ người dùng tự thêm được tôn trọng ở MỌI lối dịch chữ ───────────
+# Lỗi thật đã vá: tab Dịch có ô "sửa thuật ngữ" ghi vào <data>/glossary/
+# en.sua.json, nhưng đường dán chữ gọi thẳng máy dịch nên bản sửa tay chưa bao
+# giờ được dùng — thêm "stroke → đột quỵ" xong dịch vẫn ra nghĩa phổ thông.
+
+
+@pytest.fixture
+def co_sua_thuat_ngu(tmp_path, monkeypatch):
+    """DATA_DIR tạm có sẵn en.sua.json ghi 'stroke → đột quỵ'."""
+    import services.config as cfg
+    from services import thuat_ngu as tn
+
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    tn._reset_cache_cho_test()
+    tn.ghi_sua("en", "y_khoa", "stroke", "đột quỵ")
+    yield
+    tn._reset_cache_cho_test()
+
+
+@pytest.mark.pure
+def test_ca_cau_la_thuat_ngu_khong_cham_may_dich(co_sua_thuat_ngu):
+    with install_translate(FakeTranslate(lang="en")) as fake:
+        assert ts.translate("stroke", "vi", "en") == "đột quỵ"
+    assert fake.da_gui == []      # không đoạn nào phải gửi đi
+
+
+@pytest.mark.pure
+def test_thuat_ngu_bi_cat_ra_truoc_khi_gui(co_sua_thuat_ngu):
+    with install_translate(FakeTranslate(lang="en")) as fake:
+        ra = ts.translate("He had a stroke today", "vi", "en")
+    assert "đột quỵ" in ra
+    # Máy dịch không bao giờ nhìn thấy thuật ngữ — nên không thể đoán sai nó.
+    assert fake.da_gui == ["He had a ", " today"]
+
+
+@pytest.mark.pure
+def test_nguon_auto_thi_khong_ap_bang_sua_tay(co_sua_thuat_ngu):
+    # "auto" = chưa biết tiếng nguồn nên không biết đọc bảng của tiếng nào.
+    with install_translate(FakeTranslate(lang="en")) as fake:
+        ts.translate("stroke", "vi", "auto")
+    assert fake.da_gui == ["stroke"]
+
+
+@pytest.mark.pure
+def test_dich_sang_tieng_khac_khong_ap_bang_sua_tay(co_sua_thuat_ngu):
+    # Bảng chỉ có bản dịch VI; dịch en→ja thì không liên quan.
+    with install_translate(FakeTranslate(lang="en", codes=("en", "ja"))) as fake:
+        ts.translate("stroke", "ja", "en")
+    assert fake.da_gui == ["stroke"]
+
+# ── Phụ đề và lồng tiếng cũng phải tôn trọng bảng sửa tay ───────────────────
+# Trước 28/08 đường phụ đề gọi thẳng translate_batch nên bỏ qua bảng sửa tay;
+# nó chỉ được nắn ở bước hậu kỳ, mà bước đó lại đòi đoán được lĩnh vực (≥3
+# thuật ngữ cùng ngành) nên phim nói một câu y khoa là trượt.
+
+
+@pytest.mark.pure
+def test_lo_giu_thuat_ngu_dung_thu_tu_va_do_dai(co_sua_thuat_ngu):
+    cau = ["He had a stroke", "", "Nothing special here", "stroke"]
+    with install_translate(FakeTranslate(lang="en")):
+        ra = ts.translate_giu_thuat_ngu(cau, "vi", "en")
+    assert len(ra) == len(cau)
+    assert ra[1] == ""                     # câu rỗng đi thẳng qua
+    assert "đột quỵ" in ra[0]
+    assert ra[3] == "đột quỵ"              # cả câu là thuật ngữ
+    assert ra[2] == "vi:Nothing special here"
+
+
+@pytest.mark.pure
+def test_lo_giu_thuat_ngu_gop_MOT_luot_goi(co_sua_thuat_ngu):
+    """Gộp cả lô vào một lượt — tách ra từng câu là mất lợi ích của máy GPU."""
+    cau = ["He had a stroke", "Blood pressure was high", "stroke"]
+    with install_translate(FakeTranslate(lang="en")) as fake:
+        ts.translate_giu_thuat_ngu(cau, "vi", "en")
+    goi_dich = [p for p, _ in fake.calls if p == "/translate"]
+    assert len(goi_dich) == 1
+    # Thuật ngữ không có trong thứ gửi đi, kể cả khi đứng lẻ một câu.
+    assert "stroke" not in " ".join(fake.da_gui)
+
+
+@pytest.mark.pure
+def test_lo_toan_thuat_ngu_khong_goi_may_dich(co_sua_thuat_ngu):
+    with install_translate(FakeTranslate(lang="en")) as fake:
+        assert ts.translate_giu_thuat_ngu(["stroke", "stroke"], "vi", "en") == \
+            ["đột quỵ", "đột quỵ"]
+    assert fake.da_gui == []

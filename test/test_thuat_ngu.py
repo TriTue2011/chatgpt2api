@@ -169,3 +169,50 @@ class SuaThuatNguTests(unittest.TestCase):
         self.assertEqual(ds["cong_nghe"], "Công nghệ")
         self.assertEqual(ds["y_khoa"], "Y khoa")
 
+    # ── Áp thẳng thuật ngữ sửa tay, không qua đoán lĩnh vực ─────────────────
+    # Lỗi thật: thêm "stroke → đột quỵ" rồi gõ mỗi chữ "stroke" vẫn ra sai, vì
+    # một từ không đủ NGUONG_LINH_VUC nên chưa lĩnh vực nào được nhận.
+
+    def test_cap_nguoi_dung_gop_moi_linh_vuc(self):
+        tn.ghi_sua("en", "y_khoa", "stroke", "đột quỵ")
+        tn.ghi_sua("en", "cong_nghe", "socket", "ổ cắm")
+        self.assertEqual(dict(tn.cap_nguoi_dung("en")),
+                         {"stroke": "đột quỵ", "socket": "ổ cắm"})
+
+    def test_cap_nguoi_dung_khong_lay_curated(self):
+        # 'cache' nằm ở bản curated chứ không phải người dùng thêm.
+        self.assertEqual(tn.cap_nguoi_dung("en"), [])
+
+    def test_cap_nguoi_dung_thay_doi_thay_ngay(self):
+        tn.ghi_sua("en", "y_khoa", "stroke", "đột quỵ")
+        self.assertEqual(dict(tn.cap_nguoi_dung("en")), {"stroke": "đột quỵ"})
+        tn.xoa_sua("en", "y_khoa", "stroke")
+        self.assertEqual(tn.cap_nguoi_dung("en"), [])
+
+    def test_tach_ca_cau_la_mot_thuat_ngu(self):
+        self.assertEqual(tn.tach_thuat_ngu("stroke", [("stroke", "đột quỵ")]),
+                         [(False, "đột quỵ")])
+
+    def test_tach_giu_phan_con_lai_cho_may_dich(self):
+        ra = tn.tach_thuat_ngu("He had a stroke today",
+                               [("stroke", "đột quỵ")])
+        self.assertEqual(ra, [(True, "He had a "), (False, "đột quỵ"),
+                              (True, " today")])
+
+    def test_tach_hoa_thuong_va_chu_hoa_dau_cau(self):
+        ra = tn.tach_thuat_ngu("Stroke is serious", [("stroke", "đột quỵ")])
+        self.assertEqual(ra[0], (False, "Đột quỵ"))
+
+    def test_tach_khong_nuot_giua_tu_khac(self):
+        # 'strokes' và 'keystroke' KHÔNG được coi là 'stroke'.
+        self.assertEqual(tn.tach_thuat_ngu("keystroke logger",
+                                           [("stroke", "đột quỵ")]),
+                         [(True, "keystroke logger")])
+
+    def test_tach_cum_dai_thay_truoc(self):
+        cap = [("stroke", "đột quỵ"), ("heat stroke", "say nắng")]
+        self.assertEqual(tn.tach_thuat_ngu("heat stroke", cap),
+                         [(False, "say nắng")])
+
+    def test_tach_khong_co_cap_thi_de_nguyen(self):
+        self.assertEqual(tn.tach_thuat_ngu("bất kỳ", []), [(True, "bất kỳ")])

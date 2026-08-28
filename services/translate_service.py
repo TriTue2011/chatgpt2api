@@ -52,6 +52,7 @@ from typing import Any
 
 from services.config import config
 from services import gpu_queue
+from services import thuat_ngu
 
 logger = logging.getLogger(__name__)
 
@@ -296,8 +297,67 @@ def translate_batch(texts: list[str], target: str, source: str = "auto") -> list
     return out
 
 
+def _cat_thuat_ngu(doan: list[tuple[bool, str]], target: str,
+                   source: str) -> list[tuple[bool, str]]:
+    """Cắt thêm THUẬT NGỮ NGƯỜI DÙNG tự thêm ra khỏi phần gửi đi máy dịch.
+
+    Vì sao ở đây chứ không phải trong máy dịch: bảng sửa tay nằm trong volume
+    của gateway (``<data>/glossary/<src>.sua.json``, chỗ tab Dịch ghi vào), còn
+    ``vn-translate`` chạy trên volume riêng và không đọc tới. Cắt tại cửa ra
+    này thì MỌI lối gọi ``translate`` — tab Dịch, lệnh /dich của bot, dịch tệp,
+    dịch ảnh — cùng tôn trọng bảng sửa tay, không lối nào phải nhớ tự làm.
+
+    Chỉ áp cho chiều về tiếng Việt và khi đã biết CHẮC tiếng nguồn: ``auto``
+    thì không biết đọc bảng của tiếng nào, để nguyên cho máy dịch lo.
+    """
+    src = str(source or "").lower()
+    if str(target or "").lower() != VI or src not in ("en", "ja", "zh", "ko"):
+        return doan
+    cap = thuat_ngu.cap_nguoi_dung(src)
+    if not cap:
+        return doan
+    ra: list[tuple[bool, str]] = []
+    for dich_duoc, s in doan:
+        if dich_duoc and s.strip():
+            ra.extend(thuat_ngu.tach_thuat_ngu(s, cap))
+        else:
+            ra.append((dich_duoc, s))
+    return ra
+
+
+def translate_giu_thuat_ngu(texts: list[str], target: str,
+                            source: str = "auto") -> list[str]:
+    """Dịch LÔ mà vẫn giữ thuật ngữ người dùng tự thêm — cho phụ đề/lồng tiếng.
+
+    ``translate_batch`` là hàm nền 1:1, cố ý KHÔNG biết gì về thuật ngữ (chính
+    ``translate`` gọi nó SAU khi đã cắt, cho nó cắt nữa là thay hai lần). Phụ
+    đề thì cần cả hai thứ cùng lúc: tôn trọng bảng sửa tay, mà vẫn gộp cả lô
+    vào MỘT lượt gọi — máy dịch GPU chỉ bõ chuyến khi lô đủ lớn, tách ra dịch
+    từng câu là mất sạch phần lợi.
+
+    Nên gom mảnh của MỌI câu vào một lô rồi chia lại, đúng như
+    ``vn-translate/app/main.py::_dich_nhieu`` làm ở phía máy dịch. Trả danh
+    sách cùng độ dài, cùng thứ tự.
+    """
+    tung_cau = [_cat_thuat_ngu([(True, t)], target, source) if str(t or "").strip()
+                else [(True, t)] for t in texts]
+    gui: list[str] = []
+    vi_tri: list[tuple[int, int]] = []
+    for ci, doan in enumerate(tung_cau):
+        for pi, (dich_duoc, s_) in enumerate(doan):
+            if dich_duoc and s_.strip():
+                gui.append(s_)
+                vi_tri.append((ci, pi))
+    ra_dich = translate_batch(gui, target, source) if gui else []
+    ghep = [[s_ for _, s_ in doan] for doan in tung_cau]
+    for (ci, pi), ban in zip(vi_tri, ra_dich):
+        ghep[ci][pi] = ban
+    return ["".join(g) for g in ghep]
+
+
 def translate(text: str, target: str, source: str = "auto") -> str:
-    """Dịch một chuỗi, GIỮ NGUYÊN khối mã / URL / email / thẻ / marker ảnh.
+    """Dịch một chuỗi, GIỮ NGUYÊN khối mã / URL / email / thẻ / marker ảnh, và
+    tôn trọng thuật ngữ người dùng tự thêm ở tab Dịch.
 
     Cách làm: cắt chuỗi thành các đoạn dịch-được và đoạn được-bảo-vệ, gửi TẤT
     CẢ đoạn dịch-được trong một lượt gọi lô, rồi ghép lại theo thứ tự gốc.
@@ -305,12 +365,15 @@ def translate(text: str, target: str, source: str = "auto") -> str:
     raw = text or ""
     if not raw.strip():
         return raw
-    doan = _tach_doan(raw)
+    doan = _cat_thuat_ngu(_tach_doan(raw), target, source)
     idx = [i for i, (dich_duoc, s) in enumerate(doan) if dich_duoc and s.strip()]
-    if not idx:
-        return raw
-    dich = translate_batch([doan[i][1] for i in idx], target, source)
     ket: list[str] = [s for _, s in doan]
+    # Không còn gì để gửi vẫn phải GHÉP LẠI, không trả ``raw``: cả câu có thể
+    # đã là thuật ngữ trong bảng sửa tay (gõ mỗi chữ "stroke"), lúc đó trả bản
+    # gốc là nuốt mất đúng bản dịch vừa tra được.
+    if not idx:
+        return "".join(ket)
+    dich = translate_batch([doan[i][1] for i in idx], target, source)
     for pos, i in enumerate(idx):
         ket[i] = dich[pos]
     return "".join(ket)
