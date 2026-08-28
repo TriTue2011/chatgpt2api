@@ -478,6 +478,40 @@ def test_cham_tran_toc_do_thi_chiu_tre_chu_khong_doc_nhanh_hon_nua():
 
 
 @pytest.mark.pure
+def test_cau_dai_muon_cho_trong_cau_truoc_de_giu_1x():
+    """#5: câu DÀI HƠN KHUNG mượn chỗ trống câu TRƯỚC → bớt trễ, giữ 1×.
+
+    moc=[0, 2, 3], TTS=[1,0; 2,5; 1,0], phim 10s.
+    - Câu 2 (2,5s) lọt khung chỉ 1s → bị ép. Câu 1 (1,0s) để trống [1;2].
+    - Mượn chỗ trống: câu 2 vào SỚM ở giây 1 thay vì giây 2 → trễ còn 0,5s
+      (không mượn thì 1,5s, vượt TRE_TOI_DA và phải tăng tốc cả phim).
+    """
+    from services import video_dub as dub
+
+    moc, giay = [0.0, 2.0, 3.0], [1.0, 2.5, 1.0]
+    tre, tran = dub._do_tre(moc, giay, 10.0, 1.0)
+    assert tre == pytest.approx(0.5)
+    assert tran == 0.0
+    # Nhờ mượn được nên tốc độ giữ nguyên 1×, không phải tăng tốc cả phim.
+    assert dub._tempo_chung(moc, giay, 10.0)[0] == pytest.approx(dub.TEMPO_CHUAN)
+
+
+@pytest.mark.pure
+def test_cau_vua_khung_khong_bi_keo_som_giu_dong_bo_hinh():
+    """Câu VỪA khung thì đặt đúng mốc, KHÔNG kéo sớm — giữ đồng bộ với hình.
+
+    Câu 3 ở giây 40 chỉ đọc 1s, thừa chỗ mênh mông: không được vào sớm giây 39
+    chỉ vì có chỗ. Mượn chỗ trống chỉ dành cho câu bị ép (xem test trên).
+    """
+    from services import video_dub as dub
+
+    moc, giay = [0.0, 1.0, 40.0], [1.5, 1.5, 1.0]
+    tre, tran = dub._do_tre(moc, giay, 60.0, 1.0)
+    assert tre == pytest.approx(0.5)   # câu 2 muộn 0,5s như cũ
+    assert tran == 0.0                 # câu 3 vẫn về đúng mốc 40s, không kéo sớm
+
+
+@pytest.mark.pure
 def test_cau_tran_khung_duoc_khoang_lang_phia_sau_nuot_lai():
     """Tràn một chỗ KHÔNG phải lỗi: có khoảng lặng là con trỏ bắt kịp mốc.
 

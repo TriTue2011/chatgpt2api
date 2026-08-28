@@ -39,6 +39,14 @@ TEMPO_NHANH_NHAT = 1.3
 #: Mức trễ cho phép ở mốc mở câu, tính bằng giây. Câu tràn ra ngoài khung thì
 #: câu sau vào muộn; khoảng lặng giữa hai câu sẽ nuốt dần chỗ trễ đó.
 TRE_TOI_DA = 1.0
+#: Câu được phép VÀO SỚM hơn mốc phụ đề tối đa ngần này giây, để MƯỢN chỗ trống
+#: mà câu trước để lại và giữ tốc độ 1×. Trước đây con trỏ luôn NHẢY tới đúng
+#: mốc câu sau, vứt mất chỗ trống — nên câu dài chỉ còn cách tăng tốc CẢ PHIM.
+#: Nay chỗ trống dồn về sau (chặn ngần này để giọng không chạy trước hình quá
+#: xa; chủ máy chốt: phim dài hơn lồng tiếng thì chấp nhận, cố giữ 1×). Khoảng
+#: lặng NHỎ hơn ngần này bị nuốt hẳn → lồng tiếng liền mạch hơn; khoảng lặng
+#: LỚN (đổi cảnh, phim im) vẫn giữ, chỉ kéo câu sớm lại tối đa ngần này.
+SOM_TOI_DA = 1.0
 #: Trần dịch cao độ theo cue, tính bằng nửa cung. ĐANG TẮT (0.0).
 #:
 #: Đo trên một video thật (53 câu, một giọng) cho thấy vì sao. ``pitch_relative``
@@ -561,12 +569,21 @@ def _do_tre(moc: list[float], giay: list[float], dai_video: float,
     """
     con_tro = 0.0
     tre = 0.0
-    for bat, dai in zip(moc, giay):
+    n = len(moc)
+    for i, (bat, dai) in enumerate(zip(moc, giay)):
+        dur = dai / max(0.05, tempo)
+        # Khung dành cho câu này = tới mốc câu sau (câu cuối: tới hết phim).
+        khung = (moc[i + 1] - bat) if i + 1 < n else (dai_video - bat)
+        if dur > khung and con_tro < bat:
+            # Câu DÀI HƠN KHUNG và câu trước còn để chỗ trống phía trước: MƯỢN
+            # chỗ đó, cho câu vào sớm (chặn ở SOM_TOI_DA) để chạy 1×. Đây là #5.
+            con_tro = max(con_tro, max(0.0, bat - SOM_TOI_DA))
+        elif con_tro < bat:
+            # Câu vừa khung: đặt đúng mốc, GIỮ đồng bộ với hình (không kéo sớm).
+            con_tro = bat
         if con_tro > bat:
             tre = max(tre, con_tro - bat)
-        else:
-            con_tro = bat
-        con_tro += dai / max(0.05, tempo)
+        con_tro += dur
     return tre, max(0.0, con_tro - max(0.0, dai_video))
 
 
@@ -786,12 +803,26 @@ def _ghi_track(w: wave.Wave_write, cues: list[dict[str, Any]],
                 i + 1, int(cue.get("tts_attempts") or 1), str(loi_cue)[:160])
             break
         bat = max(0, round(float(cue["start"]) * RATE_DUB))
-        if bat > cursor:
-            _viet_lang(w, bat - cursor)
-            cursor = bat
-        # Câu trước tràn qua mốc này thì vào muộn, KHÔNG cắt đầu câu như trước:
-        # cắt là mất chữ. Chỗ trễ được khoảng lặng phía sau nuốt dần, và
-        # _tempo_chung đã chọn tốc độ sao cho nó không vượt TRE_TOI_DA.
+        # Khung dành cho câu = tới mốc câu sau (câu cuối: coi như vô hạn, không
+        # ép). Câu DÀI HƠN KHUNG và con trỏ còn trước mốc → MƯỢN chỗ trống câu
+        # trước, cho vào sớm (chặn SOM_TOI_DA) để giữ 1× — khớp đúng _do_tre.
+        # Câu vừa khung thì đặt ĐÚNG MỐC, giữ đồng bộ hình.
+        dai_pcm = len(pcm) // 2
+        if i + 1 < len(cues):
+            khung = max(0, round(float(cues[i + 1]["start"]) * RATE_DUB)) - bat
+        else:
+            khung = dai_pcm + 1     # câu cuối: không bao giờ tính là ép
+        if dai_pcm > khung and cursor < bat:
+            moc_dat = max(cursor, max(0, round(
+                (float(cue["start"]) - SOM_TOI_DA) * RATE_DUB)))
+        else:
+            moc_dat = max(cursor, bat)
+        if moc_dat > cursor:
+            _viet_lang(w, moc_dat - cursor)
+            cursor = moc_dat
+        # Câu trước tràn qua mốc này thì vào muộn, KHÔNG cắt đầu câu: cắt là mất
+        # chữ. Chỗ trễ được khoảng lặng phía sau nuốt dần, và _tempo_chung đã
+        # chọn tốc độ sao cho nó không vượt TRE_TOI_DA.
         cue["tts_tempo"] = round(tempo, 3)
         cue["tts_start_actual"] = round(cursor / RATE_DUB, 3)
         cue["tts_late_seconds"] = round(
