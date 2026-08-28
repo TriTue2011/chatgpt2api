@@ -201,14 +201,35 @@ jobs:
     steps:
       - name: Free runner disk space
         run: |
-          # Xoá MẠNH hơn: cả hostedtoolcache (~8GB), swift, jvm, node_modules —
-          # build GPU 15GB cần gần hết đĩa runner. Đo trước/sau bằng df.
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift \
-            /usr/lib/jvm /usr/local/lib/node_modules /usr/local/.ghcup
+          # Build GPU 15GB cần gần hết đĩa runner (~14GB trống). Xoá các bộ công
+          # cụ dựng sẵn KHÔNG dùng để build image này. Đo TRƯỚC/SAU để thấy rõ.
+          echo "=== đĩa TRƯỚC khi dọn ==="; df -h /
+          # Ngốn nhiều nhất (đo trên ubuntu-latest): android SDK ~9GB,
+          # hostedtoolcache ~8GB, ghcup/Haskell ~5,5GB, CodeQL, dotnet, swift…
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /opt/hostedtoolcache \
+            /usr/local/.ghcup \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /usr/lib/jvm \
+            /usr/local/lib/node_modules \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /usr/share/miniconda \
+            /opt/microsoft /opt/az /opt/ghc \
+            /usr/local/share/chromium /usr/local/share/vcpkg \
+            /usr/local/graalvm "$AGENT_TOOLSDIRECTORY" || true
+          # Gỡ vài gói lớn không cần cho build Docker (giới hạn thời gian: bỏ
+          # qua nếu apt chậm, rm ở trên đã giải phóng phần lớn).
+          sudo apt-get purge -y \
+            '^dotnet-.*' '^llvm-.*' '^mysql-.*' azure-cli google-cloud-cli \
+            firefox google-chrome-stable microsoft-edge-stable mono-devel \
+            2>/dev/null || true
+          sudo apt-get autoremove -y || true
           sudo apt-get clean || true
           sudo docker image prune -af || true
-          df -h /
+          echo "=== đĩa SAU khi dọn ==="; df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
