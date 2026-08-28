@@ -989,7 +989,191 @@ def _now_line() -> str:
             f"ngày {now.day} tháng {now.month} năm {now.year} (giờ Việt Nam).")
 
 
-def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
+# Từ khoá NHẬN DIỆN yêu cầu ĐỔI CÁCH TRÌNH BÀY / lời dặn dài hạn về cách trả
+# lời. Khối «Khi người dùng xin đổi cách trình bày» (~450 token) chỉ cần khi
+# CHÍNH lượt này là một yêu cầu như vậy — nạp nó vào mọi lượt (kể cả «bật đèn»,
+# «tin tức») là chèn prompt lạc đề. Điều kiện kích hoạt = điều kiện gặp lỗi:
+# lỗi «mẫu rỗng» chỉ xảy ra khi người dùng xin đổi cách bày, mà đúng lúc đó các
+# từ khoá này khớp → khối được nạp. Nên gate theo tin nhắn ở đây là AN TOÀN.
+_RE_DOI_TRINH_BAY = _re_mod.compile(
+    r"(bỏ\s*tóm\s*tắt|đừng\s*tóm|không\s*tóm|tóm\s*tắt\s*lại|"
+    r"ngắn\s*hơn|gọn\s*hơn|gọn\s*lại|rút\s*gọn|dài\s*dòng|dài\s*quá|khó\s*đọc|"
+    r"chia\s*mục|tách\s*mục|gạch\s*đầu\s*dòng|xuống\s*dòng|liền\s*mạch|"
+    r"bỏ\s*link|không\s*cần\s*link|đừng\s*.{0,12}link|bỏ\s*ảnh|"
+    r"trình\s*bày|định\s*dạng|format|bày\s*lại|viết\s*lại|trả\s*lời\s*lại|"
+    r"đổi\s*cách|cách\s*(?:trả\s*lời|bày|trình\s*bày)|"
+    r"(?:từ\s*giờ|từ\s*nay|lần\s*sau|về\s*sau).{0,30}"
+    r"(?:trả\s*lời|tóm\s*tắt|trình\s*bày|bày|in\s*đậm|danh\s*sách|ngắn|gọn|dài))",
+    _re_mod.IGNORECASE)
+
+
+def _xin_doi_trinh_bay(user_text: str) -> bool:
+    """Lượt này có phải yêu cầu ĐỔI CÁCH TRÌNH BÀY / dặn cách trả lời không."""
+    return bool(_RE_DOI_TRINH_BAY.search(user_text or ""))
+
+
+# Nghỉ quá mốc này (giây) thì coi hội thoại cũ đã ĐÓNG: lượt mới chạy từ đầu,
+# không để chủ đề nguội bám vào. Chủ máy chốt 10 phút — đủ để hỏi tiếp liền
+# mạch, nhưng một câu ngắn ("có") gõ sau đó lâu thì không bị chủ đề cũ cướp.
+_NGHI_DONG_PHIEN = 600.0
+
+
+def _phien_da_nghi(user_id: str) -> bool:
+    """Phiên đã im lặng quá `_NGHI_DONG_PHIEN` → nên đóng, chạy lượt mới sạch."""
+    if not sess.is_enabled():
+        return False
+    try:
+        last = sess.last_activity(user_id)
+    except Exception:
+        return False
+    if not last:
+        return False
+    import time
+    return (time.time() - last) > _NGHI_DONG_PHIEN
+
+
+# Từ khoá NHẬN DIỆN việc của lượt (viết KHÔNG DẤU vì so trên `_bo_dau`). Mỗi
+# nhánh Bảng chỉ đường chỉ nạp khi thread BẬT nhóm đó VÀ tin nhắn lượt này chạm
+# từ khoá — không còn nhồi cả bảng vào mọi lượt. Cố ý rộng tay: sót một từ thì
+# model vẫn có schema tool để tự gọi, không gãy; nhồi thừa mới là cái phải bỏ.
+_KW_IMAGE = _re_mod.compile(
+    r"ve (anh|hinh|tranh|con|mot|giup|cho|nhan vat|canh|logo|chan dung|bo)|"
+    r"tao (anh|hinh|tranh|logo|avatar|buc)|lam (anh|hinh)|thiet ke (anh|logo|banner)|"
+    r"minh hoa|hinh anh|buc tranh|buc anh|\bdraw\b|generate.?image")
+_KW_MUSIC = _re_mod.compile(
+    r"\bnhac\b|bai hat|bai nhac|ca khuc|giai dieu|sang tac|\bbeat\b|lam nhac|"
+    r"tao nhac|viet nhac|hoa tau")
+_KW_VIDEO = _re_mod.compile(r"\bvideo\b|\bclip\b|lam phim|dung phim|tao video|doan phim")
+_KW_CODE = _re_mod.compile(
+    r"\bcode\b|lap trinh|viet ham|viet chuong trinh|sua (code|loi)|debug|"
+    r"\bscript\b|\bpython\b|javascript|thuat toan")
+_KW_WEB = _re_mod.compile(
+    r"tin tuc|ban tin|diem tin|co gi moi|thoi su|gia vang|gia usd|gia dola|"
+    r"ty gia|chung khoan|thoi tiet|tim kiem|tra cuu|\bsearch\b|tinh hinh|"
+    r"ket qua tran|ty so|\btin\b|moi nhat|gia ca|gia dien|gia xang|xang dau")
+_KW_TUXOA = _re_mod.compile(
+    r"tu dong xoa|tu xoa|thu hoi|xoa phan hoi|xoa (di|sau)|dung xoa|khong xoa")
+_KW_LICH = _re_mod.compile(
+    r"nhac (toi|em|anh|chi|minh|luc|vao|lai|nho)|nhac nho|dat lich|len lich|"
+    r"lich nhac|lich hen|bao thuc|dinh ky|moi (sang|toi|ngay|tuan)|"
+    r"hang (ngay|tuan)|\d{1,2}\s*(h|gio)|luc \d|xem lich|huy lich|bo nhac|"
+    r"co lich nao|lich cua|lich hom|lich gi")
+_KW_CHUYENCU = _re_mod.compile(
+    r"chuyen cu|tim lai|hom truoc|luc truoc|da tung noi|noi truoc|lich su chat")
+_KW_SKILL = _re_mod.compile(r"quy trinh|playbook|cac buoc|\bworkflow\b|kich ban|theo skill")
+_KW_WIKI = _re_mod.compile(r"\bwiki\b|ghi chu|kho tri thuc|so tay|luu vao wiki")
+_KW_GOALS = _re_mod.compile(r"muc tieu|dang lam|nho lam|con dang lam|theo doi tien do")
+_KW_ADMIN = _re_mod.compile(
+    r"ai vua nhan|danh ba|dat ten|gui tin cho|gui cho (nhom|anh|chi|ban|em)|luu nguoi")
+_KW_THUVIEN = _re_mod.compile(
+    r"thu vien|anh moi nhat|anh vua tao|video moi nhat|nhac moi nhat|"
+    r"trong thu vien|(anh|media) da tao")
+
+#: Khối «phát loa / gửi tin theo lịch / báo cáo» chỉ nạp khi lượt này ĐÚNG là
+#: việc đó. Rộng: phủ phát loa, gửi tin/file, báo cáo, và mọi biến thể đặt lịch.
+_KW_PHATLOA_BAOCAO = _re_mod.compile(
+    r"phat loa|loa phong|noi tren loa|doc tren loa|gui (tin|file|bao cao|cho)|"
+    r"bao cao|\bxuat\b|dat lich|len lich|nhac (toi|em|anh|chi|luc|vao)|nhac nho|"
+    r"moi (sang|toi|ngay|tuan)|dinh ky|\d{1,2}\s*(h|gio)|xem lich|huy lich")
+#: Mã mục trần ('A1','E1','B2'…) người dùng gõ để chọn — cũng là lúc cần lời dặn.
+_RE_MA_TRAN = _re_mod.compile(r"^[a-z]{1,2}\d{1,2}[a-z]{0,3}$")
+
+
+def _bang_chi_duong(allow: set[str] | None, user_text: str = "") -> str:
+    """Bảng chỉ đường — nạp nhánh theo CẢ HAI cửa: nhóm thread ĐANG BẬT (`allow`)
+    và VIỆC của tin nhắn lượt này (từ khoá `_KW_*`).
+
+    Tin không chạm nhánh nào (tán gẫu, chào hỏi) → trả "" (không bảng nào), model
+    vẫn có schema tool để tự gọi. `allow=None` chỉ mở cửa nhóm; cửa việc vẫn do
+    tin nhắn quyết — nên một lượt hỏi «tin tức» không kéo theo nhánh vẽ ảnh/đặt
+    lịch. Heading đặt ĐẦU chuỗi để test soi mã nguồn cắt đúng cửa sổ.
+    """
+    def co(g: str) -> bool:
+        return caps.nhom_duoc_phep(g, allow)
+
+    low = _bo_dau(user_text)
+    out = "## Bảng chỉ đường (định tuyến việc — LÀM ĐÚNG NHÁNH, KHÔNG HỎI LẠI)\n"
+    # (nhóm, từ khoá, đoạn chỉ đường). Thứ tự literal giữ nguyên để cửa sổ soi
+    # mã nguồn (schedule/tu_xoa) vẫn nằm sau heading trong ~4.000 ký tự.
+    bang: list[tuple[str, Any, str]] = [
+        ("image", _KW_IMAGE, "- Vẽ/tạo ảnh → generate_image."),
+        ("music", _KW_MUSIC, "- Tạo nhạc/bài hát → generate_music."),
+        ("video", _KW_VIDEO, "- Tạo video → generate_video."),
+        ("code", _KW_CODE, "- Viết/sửa code → write_code."),
+        ("web", _KW_WEB,
+         "- Tra cứu tin tức/giá cả → web_search. HAI KIỂU tin, xử lý KHÁC nhau:\n"
+         # Tên 8 mục phải khớp `MUC_BAN_TIN` của vn-mcp-hub — đó là bản tin
+         # người dùng THẬT SỰ nhận. Bản cũ kể tám mục khác hẳn (Thời sự Việt
+         # Nam, Pháp luật & Xã hội…), nên khi phải nói về chính bản tin vừa
+         # gửi thì model đối chiếu với một bố cục không tồn tại.
+         "  • Tin CHUNG (không nêu chủ đề): 'tin tức hôm nay', 'bản tin', 'điểm "
+         "tin', 'có gì mới' → chia ĐẦY ĐỦ 8 đầu mục (⚽ Thể thao, 💼 Kinh tế, "
+         "🏙️ Xã hội, 💻 Công nghệ thông tin, 🎓 Giáo dục, 🩺 Y tế, 🎬 Giải trí, "
+         "🌍 Thế giới), mỗi mục đúng 3 tiêu đề mới nhất kèm tóm tắt ngắn.\n"
+         "  • Tin về MỘT CHỦ ĐỀ cụ thể: 'tin bão', 'tin về <sự kiện/người/nơi>', "
+         "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → search ĐÚNG chủ đề "
+         "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
+         "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
+         "người dùng hỏi bằng bản tin tổng hợp chung."),
+        ("contacts", _KW_TUXOA,  # tu_xoa_tin thuộc nhóm contacts
+         "- TỰ XOÁ / THU HỒI CÂU TRẢ LỜI ('tự động xoá phản hồi tin tức sau 15 "
+         "phút', 'trả lời xong 1 phút sau xoá đi', 'thôi đừng xoá nữa') → "
+         "tu_xoa_tin. TUYỆT ĐỐI KHÔNG dùng `remember` cho việc này: ghi nhớ chỉ "
+         "nhắc em, nó không xoá được tin nào. Chính tu_xoa_tin đã giữ luật cho "
+         "các lần sau rồi, khỏi nhớ thêm. Đây KHÔNG phải nhắc hẹn: đừng gọi "
+         "schedule."),
+        ("schedule", _KW_LICH,
+         "- Nhắc hẹn / việc định kỳ ('nhắc em sau 30 phút', 'mỗi sáng 7h báo "
+         "thời tiết') → schedule (mode=notify|task).\n"
+         "- NHẮC NHIỀU LẦN TRONG NGÀY ('nhắc anh 3 lần lúc 10h, 15h và 21h') → "
+         "MỘT lời gọi schedule với at_times=['10:00','15:00','21:00']. Câu này "
+         "thường đi ngay sau một lịch vừa đặt: nội dung là nội dung lịch đó, "
+         "huỷ lịch cũ rồi đặt lại — KHÔNG hỏi lại 'nhắc việc gì'. Và tuyệt đối "
+         "không trả lời 'em chưa tạo được lịch trong phiên này': cứ gọi tool, "
+         "hỏng thì chính tool báo lỗi.\n"
+         "- HỎI VỀ LỊCH ĐÃ ĐẶT ('có lịch nào', 'xem lịch nhắc', 'lịch hẹn của "
+         "tôi', 'hiện nay tôi có lịch gì', 'còn việc gì theo lịch') → BẮT BUỘC "
+         "schedule(op=list). Chữ 'lịch' ở đây là lịch NHẮC của họ — không phải "
+         "lịch âm/dương, KHÔNG tra web. Danh sách do CHÍNH em giữ: tuyệt đối "
+         "không trả lời 'em không xem được' hay 'anh/chị mở ứng dụng ra xem'.\n"
+         "- HUỶ LỊCH ('huỷ lịch báo cáo nhân sự', 'bỏ nhắc uống thuốc') → "
+         "schedule(op=cancel, text=<tên lịch họ vừa gọi>). Biết mã thì truyền id; "
+         "KHÔNG biết thì cứ truyền text, em tự tra theo nội dung. ĐỪNG hỏi mã "
+         "trước khi thử — mã chỉ hiện lúc đặt lịch nên họ thường không có."),
+        ("memory", _KW_CHUYENCU, "- Tìm chuyện cũ → search_history."),
+        ("skills", _KW_SKILL,
+         "- Quy trình / playbook khớp skill → use_skill(slug=…) rồi làm theo.\n"
+         "- Chuỗi nhiều bước (thu thập→xử lý→kiểm chứng) → run_workflow(slug, input)."),
+        ("wiki", _KW_WIKI,
+         "- Lưu ghi chú dài vào wiki → ingest; tìm/đọc wiki → wiki_search / wiki_read; "
+         "tóm tắt ngày → wiki_digest."),
+        ("memory", _KW_GOALS,
+         "- Mục tiêu dài hơi trong chat ('nhớ làm…', 'đang làm…', 'xong…') → goals."),
+        ("contacts", _KW_ADMIN,
+         "- Admin: 'ai vừa nhắn' / danh bạ / đặt tên → contacts; gửi tin cho alias "
+         "(chọn bot) → send_to_contact (duyệt)."),
+        ("image", _KW_THUVIEN,  # library_media thuộc nhóm image
+         "- Hỏi về media ĐÃ TẠO ('gửi ảnh/video/nhạc mới nhất', 'ảnh vừa tạo', "
+         "'trong thư viện có gì') → BẮT BUỘC gọi tool library_media (kind=image/video/music). "
+         "LƯU Ý CỰC KỲ QUAN TRỌNG: Khi user nhắc đến 'thư viện', 'ảnh mới nhất', họ ĐANG NÓI TỚI thư viện ảnh do AI tạo ra trên máy chủ, KHÔNG PHẢI thư viện iCloud hay Google Photos trên điện thoại của họ! TUYỆT ĐỐI KHÔNG được trả lời là 'em không truy cập được thư viện ảnh của anh' — hãy gọi ngay tool library_media để lấy ảnh ra!"),
+    ]
+    lines = [text for (grp, rx, text) in bang if co(grp) and rx.search(low)]
+    if not lines:
+        return ""          # tán gẫu / không chạm việc nào → không nạp bảng
+    # expand_tool_result là tool hạ tầng — nêu kèm khi đã có ít nhất một nhánh.
+    lines.append("- Tool output bị nén (có marker ⟦tc:…⟧) mà cần chi tiết → expand_tool_result.")
+    # Đuôi quy tắc chung — chỉ đi kèm khi bảng có nhánh.
+    lines.append(
+        "- Mỗi việc đã có công cụ + model mặc định cấu hình sẵn — cứ gọi tool "
+        "ngay, KHÔNG hỏi người dùng chọn công cụ/model.")
+    lines.append(
+        "- Một yêu cầu = một nhánh chính; đừng gọi nhiều tool tạo media cho "
+        "cùng một yêu cầu.")
+    return out + "\n".join(lines)
+
+
+def _build_system_prompt(user_id: str, allow: set[str] | None = None,
+                         user_text: str = "") -> str:
     name = config.agent_name
     soul = state.load_soul().replace("{agent_name}", name)
     parts = [soul, _now_line()]
@@ -1053,7 +1237,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     # 3 / … và các mục còn lại"). Người dùng không nhận được tin nào, mà lại
     # tưởng bot đã hiểu và làm xong. Lượt trước đó cũng đúng kiểu này ("Trình bày
     # xấu, không có tóm tắt" → bot trả mẫu "Tin 1: tóm tắt 1 câu ngắn").
-    parts.append(
+    _rf_block = (
         "## Khi người dùng xin đổi cách trình bày\n"
         "Nếu họ vừa nhận một nội dung (bản tin, danh sách, kết quả) rồi xin đổi "
         "cách bày — 'bỏ tóm tắt đi', 'ngắn hơn', 'chia mục', 'không cần link' — "
@@ -1077,6 +1261,11 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "thứ này do hệ thống dựng bằng code, ghi nhớ không đổi được chúng — mà "
         "hỏi duyệt để 'ghi nhớ' rồi không làm gì thì người dùng tưởng đã xong."
     )
+    # Chỉ nạp khi CHÍNH lượt này xin đổi cách trình bày — không chèn ~450 token
+    # lạc đề vào lượt «bật đèn», «tin tức»… Điều kiện gặp lỗi «mẫu rỗng» chính là
+    # lúc từ khoá này khớp, nên gate ở đây không làm mất lá chắn.
+    if _xin_doi_trinh_bay(user_text):
+        parts.append(_rf_block)
     # Compacted earlier turns (durable across restarts)
     try:
         summary = sess.load_summary(user_id)
@@ -1143,7 +1332,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "Khi cần làm việc cụ thể, GỌI đúng tool. Với việc THAY ĐỔI chưa được "
         "phép, cứ gọi tool bình thường — hệ thống sẽ tự hỏi xin phép người dùng. "
         "Nếu chỉ trò chuyện/giải thích thì trả lời thẳng, không gọi tool.")
-    parts.append(
+    _tts_block = (
         "## HỎI-ĐỦ-THÔNG-TIN-MỚI-LÀM (Quy tắc BẮT BUỘC cho gửi tin, nhắc hẹn, phát loa, báo cáo, thực thi)\n"
         "Trước khi gọi bất kỳ tool thực thi nào (schedule, send_to_contact, v.v.), BẮT BUỘC kiểm tra xem đã ĐỦ các yếu tố bắt buộc chưa:\n"
         "- Với Gửi tin chat / Báo cáo dạng Tin nhắn Text / File (Word/Excel): (1) Khi nào - (2) Bằng kênh gì (Zalo cá nhân/Zalo bot/Telegram) - (3) Nhóm/Người nào - (4) Nội dung/Số liệu gì.\n"
@@ -1160,6 +1349,13 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "3. QUẢN LÝ VÀ DỌN DẸP FILE:\n"
         "   - Lần duy nhất (1 lần): Tự động xóa file tạm sau khi phát/gửi xong.\n"
         "   - Định kỳ (Hằng ngày/mỗi tuần): Giữ lại mẫu/lịch cho các lần sau.")
+    # Quy trình phát loa / gửi tin theo lịch / xuất báo cáo (~530 token) chỉ nạp
+    # khi thread ĐƯỢC làm việc đó VÀ lượt này ĐANG là việc đó. Không nhồi vào
+    # lượt hỏi thời tiết hay chat thường.
+    if (any(caps.nhom_duoc_phep(g, allow)
+            for g in ("tts_speaker", "schedule", "contacts", "office"))
+            and _KW_PHATLOA_BAOCAO.search(_bo_dau(user_text))):
+        parts.append(_tts_block)
     parts.append(
         "## Hỏi lại có lựa chọn (khi cần user chọn)\n"
         "Khi phải hỏi chọn (công cụ vẽ, phương án…), cuối câu trả lời thêm khối:\n"
@@ -1176,7 +1372,7 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
     # nhé" — nói như đã hiểu trong khi không biết E1 là gì, rồi mời chọn lại một
     # thứ vừa hỏng. Trước đó một phút, người dùng dán chính bản tin ấy trở lại
     # thì bot bảo "nội dung bị cắt ở đoạn C" và tự dựng bảng 1-4 của riêng nó.
-    parts.append(
+    _ml_block = (
         "## Danh sách có MÃ MỤC (A1, B2…)\n"
         "Bản tin và danh sách dài em gửi đi được HỆ THỐNG tự gắn mã mục (A1, "
         "B2…) kèm câu mời «nhắn mã mục đó cho em». Người dùng nhắn lại đúng một "
@@ -1188,65 +1384,17 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None) -> str:
         "tức hôm nay') để chọn tiếp. TUYỆT ĐỐI không đoán mục đó nói về gì, "
         "không đáp 'dạ đúng rồi' cho một thứ em không thấy, và không dựng bảng "
         "đánh số của riêng em để thay thế.")
-    parts.append(
-        "## Bảng chỉ đường (định tuyến việc — LÀM ĐÚNG NHÁNH, KHÔNG HỎI LẠI)\n"
-        "- Vẽ/tạo ảnh → generate_image. Tạo nhạc/bài hát → generate_music. "
-        "Tạo video → generate_video. Viết/sửa code → write_code. "
-        "Tra cứu tin tức/giá cả → web_search. HAI KIỂU tin, xử lý KHÁC nhau:\n"
-        # Tên 8 mục phải khớp `MUC_BAN_TIN` của vn-mcp-hub — đó là bản tin
-        # người dùng THẬT SỰ nhận. Bản cũ kể tám mục khác hẳn (Thời sự Việt
-        # Nam, Pháp luật & Xã hội…), nên khi phải nói về chính bản tin vừa gửi
-        # thì model đối chiếu với một bố cục không tồn tại.
-        "  • Tin CHUNG (không nêu chủ đề): 'tin tức hôm nay', 'bản tin', 'điểm "
-        "tin', 'có gì mới' → chia ĐẦY ĐỦ 8 đầu mục (⚽ Thể thao, 💼 Kinh tế, "
-        "🏙️ Xã hội, 💻 Công nghệ thông tin, 🎓 Giáo dục, 🩺 Y tế, 🎬 Giải trí, "
-        "🌍 Thế giới), mỗi mục đúng 3 tiêu đề mới nhất kèm tóm tắt ngắn.\n"
-        "  • Tin về MỘT CHỦ ĐỀ cụ thể: 'tin bão', 'tin về <sự kiện/người/nơi>', "
-        "'giá vàng', 'kết quả trận …', 'tình hình <chủ đề>' → search ĐÚNG chủ đề "
-        "đó, CHỈ trả tin LIÊN QUAN chủ đề (5–8 tin mới nhất, gạch đầu dòng ngắn). "
-        "TUYỆT ĐỐI KHÔNG chia 8 mục, KHÔNG chèn tin lạc đề, KHÔNG thay chủ đề "
-        "người dùng hỏi bằng bản tin tổng hợp chung.\n"
-        "- TỰ XOÁ / THU HỒI CÂU TRẢ LỜI ('tự động xoá phản hồi tin tức sau 15 "
-        "phút', 'trả lời xong 1 phút sau xoá đi', 'thôi đừng xoá nữa') → "
-        "tu_xoa_tin. TUYỆT ĐỐI KHÔNG dùng `remember` cho việc này: ghi nhớ chỉ "
-        "nhắc em, nó không xoá được tin nào. Chính tu_xoa_tin đã giữ luật cho "
-        "các lần sau rồi, khỏi nhớ thêm. Đây KHÔNG phải nhắc hẹn: đừng gọi "
-        "schedule.\n"
-        "- Nhắc hẹn / việc định kỳ ('nhắc em sau 30 phút', 'mỗi sáng 7h báo "
-        "thời tiết') → schedule (mode=notify|task).\n"
-        "- NHẮC NHIỀU LẦN TRONG NGÀY ('nhắc anh 3 lần lúc 10h, 15h và 21h') → "
-        "MỘT lời gọi schedule với at_times=['10:00','15:00','21:00']. Câu này "
-        "thường đi ngay sau một lịch vừa đặt: nội dung là nội dung lịch đó, "
-        "huỷ lịch cũ rồi đặt lại — KHÔNG hỏi lại 'nhắc việc gì'. Và tuyệt đối "
-        "không trả lời 'em chưa tạo được lịch trong phiên này': cứ gọi tool, "
-        "hỏng thì chính tool báo lỗi.\n"
-        "- HỎI VỀ LỊCH ĐÃ ĐẶT ('có lịch nào', 'xem lịch nhắc', 'lịch hẹn của "
-        "tôi', 'hiện nay tôi có lịch gì', 'còn việc gì theo lịch') → BẮT BUỘC "
-        "schedule(op=list). Chữ 'lịch' ở đây là lịch NHẮC của họ — không phải "
-        "lịch âm/dương, KHÔNG tra web. Danh sách do CHÍNH em giữ: tuyệt đối không "
-        "trả lời 'em không xem được' hay 'anh/chị mở ứng dụng ra xem'.\n"
-        "- HUỶ LỊCH ('huỷ lịch báo cáo nhân sự', 'bỏ nhắc uống thuốc') → "
-        "schedule(op=cancel, text=<tên lịch họ vừa gọi>). Biết mã thì truyền id; "
-        "KHÔNG biết thì cứ truyền text, em tự tra theo nội dung. ĐỪNG hỏi mã "
-        "trước khi thử — mã chỉ hiện lúc đặt lịch nên họ thường không có.\n"
-        "- Tìm chuyện cũ → search_history.\n"
-        "- Quy trình / playbook khớp skill → use_skill(slug=…) rồi làm theo.\n"
-        "- Chuỗi nhiều bước (thu thập→xử lý→kiểm chứng) → run_workflow(slug, input).\n"
-        "- Lưu ghi chú dài vào wiki → ingest; tìm/đọc wiki → wiki_search / wiki_read; "
-        "tóm tắt ngày → wiki_digest.\n"
-        "- Mục tiêu dài hơi trong chat ('nhớ làm…', 'đang làm…', 'xong…') → goals.\n"
-        "- Tool output bị nén (có marker ⟦tc:…⟧) mà cần chi tiết → expand_tool_result.\n"
-        "- Admin: 'ai vừa nhắn' / danh bạ / đặt tên → contacts; gửi tin cho alias "
-        "(chọn bot) → send_to_contact (duyệt).\n"
-        "- Hỏi về media ĐÃ TẠO ('gửi ảnh/video/nhạc mới nhất', 'ảnh vừa tạo', "
-        "'trong thư viện có gì') → BẮT BUỘC gọi tool library_media (kind=image/video/music). "
-        "LƯU Ý CỰC KỲ QUAN TRỌNG: Khi user nhắc đến 'thư viện', 'ảnh mới nhất', họ ĐANG NÓI TỚI thư viện ảnh do AI tạo ra trên máy chủ, KHÔNG PHẢI thư viện iCloud hay Google Photos trên điện thoại của họ! TUYỆT ĐỐI KHÔNG được trả lời là 'em không truy cập được thư viện ảnh của anh' — hãy gọi ngay tool library_media để lấy ảnh ra!\n"
-        "- Mỗi việc đã có công cụ + model mặc định cấu hình sẵn — cứ gọi tool "
-        "ngay, KHÔNG hỏi người dùng chọn công cụ/model.\n"
-        "- Chỉ làm khác mặc định khi người dùng NÊU RÕ (vd 'vẽ bằng chatgpt', "
-        "'video chất lượng đẹp').\n"
-        "- Một yêu cầu = một nhánh chính; đừng gọi nhiều tool tạo media cho "
-        "cùng một yêu cầu.")
+    # Mã mục A1/B2 chỉ gắn lên bản tin/danh sách dài (nhóm web), nên chỉ dặn khi
+    # thread có web VÀ lượt này hoặc hỏi tin/danh sách, hoặc chính là một mã trần
+    # ('E1') gõ tới — đúng hai lúc lời dặn có tác dụng.
+    _low_ml = _bo_dau(user_text)
+    if caps.nhom_duoc_phep("web", allow) and (
+            _KW_WEB.search(_low_ml) or _RE_MA_TRAN.match(_low_ml.strip())):
+        parts.append(_ml_block)
+    # Bảng chỉ đường: chỉ nạp nhánh khớp CẢ nhóm thread lẫn việc của lượt này.
+    _bcd = _bang_chi_duong(allow, user_text)
+    if _bcd:
+        parts.append(_bcd)
     return "\n\n".join(parts)
 
 
@@ -1676,6 +1824,14 @@ def _orchestrate_locked(user_text: str, user_id: str,
         approval_gate.clear_pending(user_id)
 
     hist = _get_history(user_id)
+    # ĐÓNG hội thoại cũ khi đã nghỉ lâu (xem _phien_da_nghi). Hai lượt cách nhau
+    # quá 10 phút thì cuộc cũ coi như xong: bỏ phần đối thoại từng lượt đã nguội
+    # để chủ đề cũ (vd vừa tra "đột quỵ") KHÔNG bám vào một câu ngắn không liên
+    # quan ("có"). Tóm tắt dài hạn + trí nhớ vẫn giữ, chỉ dọn cái tail đã cũ.
+    if hist and _phien_da_nghi(user_id):
+        logger.info({"event": "phien_dong_do_nghi",
+                     "user_id": str(user_id)[:40], "bo_luot": len(hist)})
+        hist.clear()
     # Snapshot for SuperContext (before this turn becomes "history").
     hist_before = list(hist)
     hist.append({"role": "user", "content": user_text})
@@ -2163,7 +2319,7 @@ def _orchestrate_locked(user_text: str, user_id: str,
 
     # Only feed the recent tail to the model (summary lives in system prompt).
     model_hist = hist[-max_h:]
-    sys_prompt = _build_system_prompt(user_id, allow)
+    sys_prompt = _build_system_prompt(user_id, allow, user_text)
     # Speech Persona của phiên (nếu cài) — khối nén, lưu sẵn.
     #
     # KHÔNG bơm cho việc đòi nguyên văn (dịch): ở đó người ta cần đúng câu đó

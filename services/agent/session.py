@@ -121,6 +121,25 @@ def set_summary(user_id: str, summary: str) -> None:
         db.commit()
 
 
+def last_activity(user_id: str) -> float:
+    """Thời điểm (epoch giây) phiên này được ghi gần nhất; 0.0 nếu chưa có.
+
+    Dùng để ĐÓNG hội thoại đã nghỉ lâu: `updated_at` được cập nhật mỗi lần
+    `save_history`/`set_summary`, nên khoảng cách tới `time.time()` là thời gian
+    im lặng của người này.
+    """
+    if not is_enabled() or not user_id:
+        return 0.0
+    with _lock:
+        row = _db().execute(
+            "SELECT updated_at FROM sessions WHERE user_id=?", (str(user_id),)
+        ).fetchone()
+    try:
+        return float(row[0]) if row and row[0] is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def load_history(user_id: str) -> list[dict[str, Any]]:
     """Load recent user/assistant messages for the model (tail of max_history)."""
     if not is_enabled() or not user_id:

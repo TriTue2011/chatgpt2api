@@ -389,7 +389,9 @@ class HuongDanChoTroLyTests(unittest.TestCase):
         self._data = install_data_dir()
         self._data.__enter__()
         self.addCleanup(lambda: self._data.__exit__(None, None, None))
-        self.prompt = orch._build_system_prompt("u_huong_dan", None)
+        # Prompt giờ nạp theo VIỆC: khối mã mục + 8 mục bản tin chỉ hiện khi lượt
+        # này là yêu cầu tin tức — nên dựng prompt với đúng một câu hỏi tin.
+        self.prompt = orch._build_system_prompt("u_huong_dan", None, "tin tức hôm nay")
 
     def test_co_day_du_luat_ve_ma_muc(self):
         self.assertIn("MÃ MỤC", self.prompt)
