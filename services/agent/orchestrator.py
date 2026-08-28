@@ -1108,9 +1108,14 @@ _KW_IMAGE = _re_mod.compile(
     r"ve (anh|hinh|tranh|con|mot|giup|cho|nhan vat|canh|logo|chan dung|bo)|"
     r"tao (anh|hinh|tranh|logo|avatar|buc)|lam (anh|hinh)|thiet ke (anh|logo|banner)|"
     r"minh hoa|hinh anh|buc tranh|buc anh|\bdraw\b|generate.?image")
+# CỐ Ý không có `\bnhac\b` trần: bỏ dấu thì "nhắc" cũng thành "nhac", nên
+# "nhắc anh 7h sáng mai uống thuốc" bị nhận là việc NHẠC — vừa tốn schema oan
+# vừa có nguy cơ model gọi generate_music cho một lời nhắc. `scripts/do_context.py
+# --trung-lap` bắt được ca này (mục ③). "Nhạc" thật luôn đi kèm động từ hoặc
+# danh từ ghép, nên đòi thêm một chữ là đủ tách bạch.
 _KW_MUSIC = _re_mod.compile(
-    r"\bnhac\b|bai hat|bai nhac|ca khuc|giai dieu|sang tac|\bbeat\b|lam nhac|"
-    r"tao nhac|viet nhac|hoa tau")
+    r"bai hat|bai nhac|ca khuc|giai dieu|sang tac|\bbeat\b|hoa tau|"
+    r"(lam|tao|viet|mo|bat|phat|nghe|doi) nhac|nhac (khong loi|nen|thieu nhi|tre)")
 _KW_VIDEO = _re_mod.compile(r"\bvideo\b|\bclip\b|lam phim|dung phim|tao video|doan phim")
 _KW_CODE = _re_mod.compile(
     r"\bcode\b|lap trinh|viet ham|viet chuong trinh|sua (code|loi)|debug|"
@@ -1435,7 +1440,12 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
                          user_text: str = "") -> str:
     name = config.agent_name
     soul = state.load_soul().replace("{agent_name}", name)
-    parts = [soul, _now_line()]
+    # `_now_line()` CỐ Ý không đứng ở đây mà nằm CUỐI prompt (xem cuối hàm):
+    # nó đổi mỗi phút, mà bộ nhớ đệm prompt của nhà cung cấp chỉ ăn phần TIỀN
+    # TỐ giống hệt nhau. Đặt ở vị trí thứ hai thì mọi thứ phía sau — persona,
+    # năng lực, luật trả lời, trí nhớ — đều hết cache sau đúng một phút. Đo
+    # 29/08: để ở đầu thì tiền tố dùng lại được chỉ còn 30%.
+    parts = [soul]
     # Capability list — auto-generated from the registry (single source of truth).
     # Lọc theo `allow` để persona KHÔNG khoe chức năng thread này bị cấm.
     parts.append("## Em làm được gì (năng lực THẬT lúc này)\n" + caps.persona_list(allow))
@@ -1663,6 +1673,10 @@ def _build_system_prompt(user_id: str, allow: set[str] | None = None,
     _bcd = _bang_chi_duong(allow, user_text)
     if _bcd:
         parts.append(_bcd)
+    # Đồng hồ đặt CUỐI CÙNG — phần đổi nhanh nhất phải nằm sau cùng để không
+    # cắt cụt tiền tố dùng lại được. Nằm cuối còn sát câu hỏi hơn, model đọc
+    # giờ hiện tại rõ hơn chứ không kém đi.
+    parts.append(_now_line())
     return "\n\n".join(parts)
 
 

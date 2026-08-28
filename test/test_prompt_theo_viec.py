@@ -125,6 +125,22 @@ class TungNhomBanDungTool(_Base):
 class KhongKeoNhanhLacDe(_Base):
     """Một việc KHÔNG kéo theo nhánh của việc khác."""
 
+    def test_nhac_khong_dinh_nham_nhac(self):
+        """«nhắc» bỏ dấu thành «nhac» — không được nhận nhầm là việc NHẠC.
+
+        `scripts/do_context.py --trung-lap` bắt được ca này: "nhắc anh 7h sáng
+        mai uống thuốc" chạm cả nhóm music — vừa tốn schema oan, vừa có nguy cơ
+        model gọi generate_music cho một lời nhắc.
+        """
+        for c in ("nhắc anh 7h sáng mai uống thuốc", "nhắc em mua sữa",
+                  "nhắc nhở lịch họp"):
+            self.assertNotIn("music", orch._nhom_viec(c, None), f"«{c}»")
+
+    def test_nhac_that_van_nhan_dung(self):
+        for c in ("mở nhạc không lời", "tạo nhạc cho anh",
+                  "làm bài hát về mùa thu", "bật nhạc lofi", "viết nhạc nền"):
+            self.assertIn("music", orch._nhom_viec(c, None), f"«{c}»")
+
     def test_hoi_tin_khong_keo_ve_anh_dat_lich(self):
         b = orch._bang_chi_duong(None, "tin tức hôm nay")
         for cam in ("generate_image", "schedule(op=list)", "office_bao_cao",
@@ -307,6 +323,44 @@ class DoiCachTrinhBay(_Base):
             p = self.prompt(None, viec)
             self.assertIn("## Khi người dùng xin đổi cách trình bày", p)
             self.assertIn("TUYỆT ĐỐI KHÔNG trả về bản mẫu", p)
+
+
+class TienToDungLaiDuoc(_Base):
+    """Prompt phải giữ TIỀN TỐ ổn định để bộ nhớ đệm của nhà cung cấp ăn được.
+
+    Cache prompt chỉ khớp phần đầu giống hệt nhau. Dòng đồng hồ đổi mỗi phút,
+    nên đặt nó ở đầu là cắt cụt mọi thứ phía sau. Đo 29/08: đặt ở vị trí thứ
+    hai thì tiền tố dùng lại được chỉ còn 30%; chuyển xuống cuối thành 99%.
+    """
+
+    @staticmethod
+    def _chung(a: str, b: str) -> int:
+        n = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            n += 1
+        return n
+
+    def _voi_gio(self, phut: str, txt: str) -> str:
+        from unittest import mock
+        gio = (f"Bây giờ là 08:{phut}, thứ Sáu, ngày 29 tháng 8 năm 2026 "
+               f"(giờ Việt Nam).")
+        with mock.patch.object(orch, "_now_line", lambda: gio):
+            return self.prompt(None, txt)
+
+    def test_dong_ho_nam_cuoi_prompt(self):
+        p = self.prompt(None, "tin tức hôm nay")
+        self.assertIn("Bây giờ là", p, "vẫn phải có giờ hiện tại")
+        self.assertTrue(p.rstrip().endswith("(giờ Việt Nam)."),
+                        "đồng hồ phải nằm CUỐI, nếu không sẽ cắt cụt tiền tố cache")
+
+    def test_khac_mot_phut_van_giu_gan_het_tien_to(self):
+        a = self._voi_gio("15", "tin tức hôm nay")
+        b = self._voi_gio("16", "tin tức hôm nay")
+        ty_le = self._chung(a, b) * 100 // len(a)
+        self.assertGreater(ty_le, 90,
+                           f"chỉ còn {ty_le}% tiền tố dùng lại được sau MỘT phút")
 
 
 class PhienDaNghi(_Base):
