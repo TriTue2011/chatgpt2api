@@ -6542,7 +6542,31 @@ _FLOW_GROUPS = {"rag", "word", "summary", "tts_reply", "teacher"}
 # cá nhân, lượt xử lý xong sau 1,7 giây nhưng tổng hợp giọng nói mất tới 2 phút
 # 1 giây mới gửi — trong 2 phút đó người dùng thấy bot im lặng hoàn toàn — và
 # thứ nhận được là file .wav, mất sạch danh sách tin kèm đường dẫn bài báo.
-_NHOM_KHONG_TU_BAT = {"tts_reply"}
+# `camera` cùng luật vì lý do khác: camera giám sát nhìn vào TRONG NHÀ, nên
+# một thread cũ tự nhiên có thêm quyền chụp ảnh trong nhà là điều không được
+# phép xảy ra sau một lần cập nhật.
+_NHOM_KHONG_TU_BAT = {"tts_reply", "camera"}
+
+# Nhóm PHẢI ĐƯỢC TÍCH TƯỜNG MINH mới dùng được — "chưa cấu hình" nghĩa là KHÔNG,
+# ngược hẳn với luật chung.
+#
+# Luật chung: thread không có bản ghi trong `thread_filters` → `allow is None` →
+# mở hết. Với camera nhà thì mặc định đó sai hướng: người lạ vừa nhắn bot lần
+# đầu (chưa ai đặt bộ lọc cho họ) sẽ xin được ảnh trong nhà. Camera vì thế phải
+# TÍCH mới có, kể cả ở thread chưa cấu hình gì.
+_NHOM_PHAI_TICH = {"camera"}
+
+
+def nhom_duoc_phep(nhom: str, allow: set[str] | None) -> bool:
+    """Nhóm chức năng này có dùng được với bộ lọc `allow` không.
+
+    `allow is None` = thread chưa cấu hình bộ lọc = mở hết, TRỪ `_NHOM_PHAI_TICH`.
+    Một chỗ duy nhất tính luật này, để schema, persona, và chốt chặn dispatch
+    không lệch nhau — lệch là tool hiện ra cho model rồi bị chặn im lặng lúc gọi.
+    """
+    if nhom in _NHOM_PHAI_TICH:
+        return allow is not None and nhom in allow
+    return allow is None or nhom in allow
 
 
 def all_groups() -> list[str]:
@@ -6964,13 +6988,11 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
 
 
 def tools_schema(allow: set[str] | None = None) -> list[dict]:
-    """Schema công cụ cho model. `allow` = tập nhóm được phép (None = tất cả).
-    Lọc theo nhóm để giới hạn chức năng cho từng threadID."""
-    caps = CAPABILITIES.values()
-    if allow is not None:
-        caps = [c for c in caps
-                if c.name in _CORE_TOOLS or group_of(c.name) in allow]
-    return [c.schema() for c in caps]
+    """Schema công cụ cho model. `allow` = tập nhóm được phép (None = chưa cấu
+    hình bộ lọc → tất cả, TRỪ `_NHOM_PHAI_TICH`). Lọc theo nhóm để giới hạn chức
+    năng cho từng threadID."""
+    return [c.schema() for c in CAPABILITIES.values()
+            if c.name in _CORE_TOOLS or nhom_duoc_phep(group_of(c.name), allow)]
 
 
 def get(name: str) -> Capability | None:
@@ -6988,8 +7010,8 @@ def persona_list(allow: set[str] | None = None) -> str:
     """
     lines = []
     for c in CAPABILITIES.values():
-        if (allow is not None and c.name not in _CORE_TOOLS
-                and group_of(c.name) not in allow):
+        if (c.name not in _CORE_TOOLS
+                and not nhom_duoc_phep(group_of(c.name), allow)):
             continue
         text = c.label or c.description
         gate = " (cần anh/chị duyệt)" if c.risk == CHANGE else ""
