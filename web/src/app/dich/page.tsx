@@ -131,6 +131,7 @@ type KetQua = {
   tep?: { ten: string; url: string }[];
   bao_cao?: string;
   voice?: string;
+  tudien?: TraCuu | null;       // MỘT từ dịch sang Việt → nghĩa từ điển đầy đủ
 };
 
 function layLoi(e: unknown): string {
@@ -899,8 +900,35 @@ function DichPageContent() {
               Tệp prosody đi kèm lưu nhịp và tông tương đối để tái dựng hoặc đổi giọng sau này.
             </p>
           )}
+          {ketQua.tudien && ketQua.tudien.nghia.length > 0 && (
+            <div className="space-y-1 rounded-[12px] border border-[var(--border)] p-3">
+              <div className="text-sm">
+                <b>{ketQua.tudien.tu}</b>
+                {ketQua.tudien.ipa && <span className="ml-2 text-[var(--muted-foreground)]">{ketQua.tudien.ipa}</span>}
+                {ketQua.tudien.goc && (
+                  <span className="ml-2 text-xs text-[var(--muted-foreground)]">
+                    (dạng gốc của &quot;{ketQua.tudien.goc}&quot;)
+                  </span>
+                )}
+                <span className="ml-2 text-xs text-[var(--muted-foreground)]">— tra từ điển, {ketQua.tudien.nghia.length} nghĩa</span>
+              </div>
+              {ketQua.tudien.nghia.map((n, i) => (
+                <div key={i} className="border-t border-[var(--border)] pt-1 text-sm">
+                  {n.tu_loai && <span className="text-[var(--muted-foreground)]">{n.tu_loai} </span>}
+                  {n.vi}
+                  {n.vi_du && <div className="text-xs italic text-[var(--muted-foreground)]">{n.vi_du}</div>}
+                </div>
+              ))}
+              <p className="pt-1 text-xs text-[var(--muted-foreground)]">
+                Từ đơn thì từ điển đáng tin hơn máy dịch. Bản máy dịch bên dưới chỉ để tham khảo.
+              </p>
+            </div>
+          )}
           {ketQua.text && (
             <div className="relative">
+              {ketQua.tudien && ketQua.tudien.nghia.length > 0 && (
+                <div className="mb-1 text-xs text-[var(--muted-foreground)]">Bản máy dịch (tham khảo)</div>
+              )}
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-[12px] bg-[var(--muted)] p-3 text-sm">{ketQua.text}</pre>
               <button type="button" onClick={chepKetQua} title="Chép kết quả"
                 className="absolute right-2 top-2 rounded-[8px] border border-[var(--border)] bg-[var(--background)] p-1.5 hover:border-slate-400">

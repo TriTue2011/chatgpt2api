@@ -112,3 +112,30 @@ def test_google_loi_thi_o_google_trong_chu_khong_vo_ca_endpoint(client):
 def test_endpoint_google_tu_choi_khi_chua_bat(client):
     r = client.post("/api/dich/google", json={"q": "stroke", "target": "vi"})
     assert r.status_code == 400
+
+def test_dich_chu_mot_tu_tra_kem_tu_dien(client, monkeypatch):
+    """MỘT từ dịch sang Việt → kèm nghĩa từ điển (máy dịch đoán bừa từ đơn)."""
+    from services import translate_service as ts
+    monkeypatch.setattr(ts, "is_configured", lambda: True)
+    monkeypatch.setattr(ts, "detect", lambda t: ("en", 99.0))
+    monkeypatch.setattr(ts, "giai_ma_target", lambda n, t: "vi")
+    monkeypatch.setattr(ts, "translate", lambda t, d, s="auto": "stroke")
+    r = client.post("/api/dich/chu",
+                    json={"noi_dung": "stroke", "target": "cap:vi", "nguon": "en"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["text"] == "stroke"                 # bản máy dịch giữ để tham khảo
+    assert d["tudien"] is not None
+    assert d["tudien"]["nghia"][0]["vi"] == "Đột quỵ."
+
+
+def test_dich_chu_cau_dai_khong_kem_tu_dien(client, monkeypatch):
+    from services import translate_service as ts
+    monkeypatch.setattr(ts, "is_configured", lambda: True)
+    monkeypatch.setattr(ts, "detect", lambda t: ("en", 99.0))
+    monkeypatch.setattr(ts, "giai_ma_target", lambda n, t: "vi")
+    monkeypatch.setattr(ts, "translate", lambda t, d, s="auto": "đã dịch")
+    r = client.post("/api/dich/chu",
+                    json={"noi_dung": "he had a stroke", "target": "cap:vi", "nguon": "en"})
+    assert r.json()["tudien"] is None
+

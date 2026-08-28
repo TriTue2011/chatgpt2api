@@ -393,7 +393,18 @@ def create_router() -> APIRouter:
             text = ts.translate(nd, dich, nguon or "auto")
         except ts.LoiDich as exc:
             raise HTTPException(502, detail={"error": str(exc)})
-        return {"kieu": "chu", "text": text, "nguon": nguon or "auto",
+        # MỘT TỪ dịch sang Việt: máy dịch/LLM đoán bừa ("stroke" → "đột nhịp"
+        # hoặc trả nguyên chữ). Từ điển mới đáng tin — trả kèm MỌI nghĩa + IPA
+        # để người dùng tự chọn, thay vì một bản dịch máy sai. UI hiện khối này
+        # làm kết quả chính khi có.
+        tudien = None
+        if dich == "vi" and len((nd or "").split()) <= 2:
+            from services import tu_dien as td
+            r = td.tra(nd, nguon or "en")
+            if r["nghia"]:
+                tudien = r
+        return {"kieu": "chu", "text": text, "tudien": tudien,
+                "nguon": nguon or "auto",
                 "dich": dich}
 
     @router.post("/api/dich/khuc")
