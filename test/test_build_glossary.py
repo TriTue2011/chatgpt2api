@@ -253,3 +253,131 @@ class OmwGiaCoTests(unittest.TestCase):
             self.assertEqual(zh["cong_nghe"]["算法"], "thuật toán")  # pivot còn
             self.assertEqual(zh["y_khoa"]["细胞"], "tế bào")          # OMW thêm
 
+# ── Chế độ CHẶT: lĩnh vực lấy từ ĐÚNG nghĩa bản dịch trỏ tới ────────────────
+# Ba mục dưới đây chép nguyên cấu trúc đo được từ kaikki thật 28/08/2026. Kho
+# dựng 25/08 nhét cả ba vào glossary chuyên ngành, trong đó hai mục phá bản
+# dịch: một video y tế nhắc "region" bị thay thành "tỉnh".
+
+_FIXTURE_CHAT = [
+    # region: mục CÓ một nghĩa giải phẫu, nhưng bản dịch "tỉnh" trỏ tới nghĩa
+    # HÀNH CHÍNH (topics rỗng) → không được vào y khoa.
+    {"word": "region", "lang_code": "en",
+     "senses": [
+         {"glosses": ["An administrative subdivision of a city, a territory, a country."],
+          "topics": []},
+         {"glosses": ["A place in or a part of the body in any way indicated."],
+          "topics": ["anatomy", "medicine", "sciences"]}],
+     "translations": [{"code": "vi", "word": "tỉnh",
+                       "sense": "an administrative subdivision"}]},
+    # kitchen: mục có nghĩa âm nhạc (bộ gõ dàn nhạc), bản dịch trỏ nghĩa "phòng".
+    {"word": "kitchen", "lang_code": "en",
+     "senses": [
+         {"glosses": ["A room or area for preparing food."], "topics": []},
+         {"glosses": ["The percussion section of an orchestra."],
+          "topics": ["entertainment", "lifestyle", "music"]}],
+     "translations": [{"code": "vi", "word": "nhà bếp", "sense": "room"}]},
+    # neurosurgery: nghĩa bản dịch trỏ tới CHÍNH LÀ nghĩa chuyên ngành → giữ.
+    {"word": "neurosurgery", "lang_code": "en",
+     "senses": [{"glosses": ["The surgical discipline focused on treating those "
+                             "central and peripheral nervous systems"],
+                 "topics": ["medicine", "neurology", "neuroscience", "sciences"]}],
+     "translations": [{"code": "vi", "word": "phẫu thuật thần kinh",
+                       "sense": "surgical discipline focused on treating the nervous systems"}]},
+]
+
+
+class ChatTests(unittest.TestCase):
+    """Luật CHẶT phải bỏ mục rác mà KHÔNG bỏ nhầm mục chuyên ngành thật."""
+
+    def _dung(self, chat: bool) -> dict:
+        store: dict = {}
+        for e in _FIXTURE_CHAT:
+            bg.them_tu_kaikki_en(e, store, chat=chat)
+        return store
+
+    def test_luat_cu_nhet_ca_muc_rac(self):
+        cu = self._dung(chat=False)
+        self.assertEqual(cu["y_khoa"]["region"], "tỉnh")       # đúng cái sai cũ
+        self.assertEqual(cu["am_nhac"]["kitchen"], "nhà bếp")
+
+    def test_chat_bo_tu_don_lac_nghia(self):
+        moi = self._dung(chat=True)
+        self.assertNotIn("region", moi.get("y_khoa", {}))
+        self.assertNotIn("kitchen", moi.get("am_nhac", {}))
+
+    def test_chat_giu_thuat_ngu_that(self):
+        moi = self._dung(chat=True)
+        self.assertEqual(moi["y_khoa"]["neurosurgery"], "phẫu thuật thần kinh")
+
+    def test_chat_khong_doi_muc_co_sense_ghi_ro_linh_vuc(self):
+        """Bản dịch tự ghi 'computing: …' thì luật 1 vẫn thắng, chặt hay không."""
+        cache = _FIXTURE[0]
+        a, b = {}, {}
+        bg.them_tu_kaikki_en(cache, a)
+        bg.them_tu_kaikki_en(cache, b, chat=True)
+        self.assertEqual(a, b)
+        self.assertEqual(b["cong_nghe"]["cache"], "bộ nhớ đệm")
+
+    # Hai trạng thái KHÁC HẲN nhau, lẫn là hỏng: None = không có bằng chứng
+    # (phải rơi xuống luật cũ), set() = có bằng chứng NGƯỢC (phải bỏ hẳn).
+    def test_khong_khop_nghia_nao_tra_None(self):
+        """Sense viết tắt tới mức không chung chữ nào → KHÔNG có bằng chứng."""
+        e = {"senses": [{"glosses": ["zzz qqq"], "topics": ["medicine"]}]}
+        self.assertIsNone(bg._slug_tu_nghia_khop(e, "completely unrelated wording"))
+
+    def test_sense_rong_tra_None(self):
+        self.assertIsNone(bg._slug_tu_nghia_khop(_FIXTURE_CHAT[0], ""))
+
+    def test_khop_nghia_doi_thuong_tra_set_rong(self):
+        """'tỉnh' khớp gloss hành chính, gloss đó không lĩnh vực → bằng chứng NGƯỢC."""
+        self.assertEqual(
+            bg._slug_tu_nghia_khop(_FIXTURE_CHAT[0], "an administrative subdivision"),
+            set())
+
+    def test_khong_co_bang_chung_thi_van_giu_thuat_ngu_that(self):
+        """gout/spleen: sense quá vắn nên không khớp gloss — KHÔNG được bỏ.
+
+        Đây là nửa còn lại của luật. Bản đầu tiên (28/08) bỏ tuốt khi không
+        khớp, và mất luôn gout, spleen, diarrhea, acid, embryo — toàn thuật ngữ
+        y sinh thật.
+        """
+        gout = {"word": "gout", "lang_code": "en",
+                "senses": [
+                    {"glosses": ["An extremely painful inflammation of joints"],
+                     "topics": ["medicine", "pathology"]},
+                    {"glosses": ["A drop; a spurt or splotch."], "topics": []}],
+                "translations": [{"code": "vi", "word": "thống phong",
+                                  "sense": "arthritic disease"}]}
+        st: dict = {}
+        bg.them_tu_kaikki_en(gout, st, chat=True)
+        self.assertEqual(st["y_khoa"]["gout"], "thống phong")
+
+class DaSoatLaSaiTests(unittest.TestCase):
+    """Danh sách soát tay: luật tự động không bắt được vì lĩnh vực GẮN ĐÚNG,
+    chỉ bản dịch sai."""
+
+    def test_bo_dung_cap_da_soat(self):
+        store = {"phap_ly": {"tenant": "chủ sở hữu", "defendant": "bị cáo"},
+                 "toan_hoc": {"angle": "gốc", "integral": "tích phân"}}
+        bo = bg.bo_cap_da_soat(store)
+        self.assertEqual(bo, 2)
+        self.assertEqual(store, {"phap_ly": {"defendant": "bị cáo"},
+                                 "toan_hoc": {"integral": "tích phân"}})
+
+    def test_chi_bo_dung_linh_vuc_ghi_trong_danh_sach(self):
+        """'quantum' sai ở pháp lý nhưng ĐÚNG ở vật lý — không được bỏ nhầm."""
+        store = {"vat_ly": {"quantum": "lượng tử"},
+                 "phap_ly": {"quantum": "số lượng"}}
+        bg.bo_cap_da_soat(store)
+        self.assertEqual(store["vat_ly"]["quantum"], "lượng tử")
+        self.assertNotIn("phap_ly", store)      # lĩnh vực rỗng thì bỏ luôn
+
+    def test_khong_co_gi_de_bo_thi_khong_doi(self):
+        store = {"y_khoa": {"sepsis": "nhiễm khuẩn huyết"}}
+        self.assertEqual(bg.bo_cap_da_soat(store), 0)
+        self.assertEqual(store, {"y_khoa": {"sepsis": "nhiễm khuẩn huyết"}})
+
+    def test_moi_muc_deu_co_ly_do(self):
+        """Danh sách chặn tay phải giải thích được, nếu không sau khỏi soát lại."""
+        for khoa, ly_do in bg._DA_SOAT_LA_SAI.items():
+            self.assertTrue(str(ly_do).strip(), f"{khoa} thiếu lý do")

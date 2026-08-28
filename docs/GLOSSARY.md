@@ -64,9 +64,11 @@ Dựng EN TRƯỚC (mọi pivot cần `en.json` làm cầu):
 #    intelligence') — cụm dài gần như luôn là thuật ngữ thật. TỪ ĐƠN đa lĩnh
 #    vực ('account', 'bear') nhập nhằng nặng nên VẪN BỎ (tránh thay 'tài khoản'
 #    thành nghĩa đời thường). Kèm lọc rác 'no exact matching verb'.
+#
+#    --chat BẮT BUỘC từ 28/08/2026 (xem "Vì sao --chat" bên dưới).
 python scripts/build_glossary.py \
     --kaikki-en kaikki.org-dictionary-English.jsonl.gz \
-    --noi-long --out data/glossary
+    --chat --noi-long --out data/glossary
 
 # 2) ZH — pivot qua en.json vừa dựng
 python scripts/build_glossary.py \
@@ -84,6 +86,34 @@ python scripts/build_glossary.py \
 #    có test — chạy được NGAY khi có `wn-data-vie.tab` + `wn-data-<src>.tab`.
 #    Muốn thêm KO: cần một từ điển Hàn→Anh (pivot như JA) hoặc Hàn→Việt.
 ```
+
+## Vì sao `--chat` (thêm 28/08/2026)
+
+Kho dựng 25/08 **có dữ liệu phá bản dịch**. Lĩnh vực y khoa chứa `region → tỉnh`,
+`purple → tía`, `failure → thất bại`, `terror → sự khiếp`; âm nhạc chứa
+`kitchen → nhà bếp`. Hậu quả không phải là "thiếu thuật ngữ" mà là **dịch sai
+thêm**: một video y tế nhắc "region" bị thay thành "tỉnh".
+
+Cơ chế sinh ra chúng, đo trên kaikki 28/08:
+
+| từ | topics của cả MỤC | sense của BẢN DỊCH | gloss khớp | topics của gloss đó |
+|---|---|---|---|---|
+| region | anatomy, medicine | "an administrative subdivision" | "An administrative subdivision of a city…" | *(rỗng)* |
+| kitchen | entertainment, music | "room" | "A room or area for preparing food." | *(rỗng)* |
+| neurosurgery | medicine, neurology, surgery | "surgical discipline focused on…" | "The surgical discipline focused on…" | medicine, neurology… |
+
+Luật 2 cũ hỏi *"TỪ này có nghĩa nào thuộc chuyên ngành không?"* — mục "region"
+có một nghĩa giải phẫu nên MỌI bản dịch trong mục, kể cả "tỉnh", bị gán vào y
+khoa.
+
+`--chat` hỏi đúng câu hỏi: *"NGHĨA này có thuộc chuyên ngành không?"* — ghép
+chuỗi `sense` của bản dịch với `glosses` của từng nghĩa (theo số từ nội dung
+trùng nhau), rồi lấy `topics` của đúng nghĩa khớp. Cùng một luật bỏ được
+`region`/`kitchen` mà vẫn giữ `neurosurgery`. Không nghĩa nào trùng lấy một từ
+thì bỏ, không đoán.
+
+Từ đơn còn thêm một rào: phải có tín hiệu lĩnh vực ở sense bản dịch mới được
+nhận. Cụm nhiều từ vẫn hưởng luật cũ vì cụm dài gần như luôn là thuật ngữ thật.
 
 ## Bước LLM (tùy chọn) + tự chắt lọc từ điển
 
@@ -124,6 +154,32 @@ Ba tầng khi đọc glossary (`thuat_ngu.nap`): **curated `<src>.json`** (nền
 **`<src>.hoc.json`** (LLM tự học, chỉ lấp chỗ trống) < **`<src>.sua.json`**
 (người dùng sửa, ĐÈ tất cả). Sửa lỗi thì bản tay phải thắng.
 
+Cạnh hộp đó có ô **tra từ điển** (Anh–Việt tại chỗ, xem [`TU_DIEN.md`](TU_DIEN.md)):
+gõ một từ ra hết các nghĩa kèm IPA và ví dụ, bấm *Dùng nghĩa này* là đổ xuống
+hai ô bên dưới để sửa cho gọn rồi Lưu. Nhật/Trung/Hàn chưa có từ điển tại chỗ —
+bật Google Dịch thì ô này hỏi Google thay.
+
+### Bản sửa tay chạy ở ĐÂU (sửa 28/08/2026)
+
+Trước 28/08 nó **chỉ có tác dụng với phụ đề**, và ngay cả ở đó cũng phải đoán
+được lĩnh vực (≥ `NGUONG_LINH_VUC` = 3 thuật ngữ cùng ngành) mới được áp. Hệ quả
+đúng như báo lỗi thật: thêm `stroke → đột quỵ` rồi dán mỗi chữ "stroke" vào tab
+Dịch, máy vẫn trả nghĩa phổ thông.
+
+Nay thuật ngữ người dùng tự thêm được **CẮT khỏi câu trước khi gửi đi máy dịch**
+rồi ghép lại sau (`translate_service._cat_thuat_ngu`, cùng cách DeepL glossary
+làm) — máy dịch không nhìn thấy nó nên không thể đoán sai. Hai điểm quan trọng:
+
+- **Không qua đoán lĩnh vực.** Tự tay thêm là đã nói rõ ý; không có lý do bắt
+  chờ đủ 3 thuật ngữ cùng ngành.
+- **Mọi lối vào đều ăn**: tab Dịch, `/dich` của bot, dịch tệp, dịch ảnh (qua
+  `translate`), và **phụ đề + lồng tiếng** (qua `translate_giu_thuat_ngu`, gộp
+  cả lô vào một lượt gọi để không mất lợi ích của máy dịch GPU).
+
+Tầng hậu kỳ theo lĩnh vực (`hau_ky_thuat_ngu`) vẫn giữ nguyên cho thuật ngữ
+CURATED — hai tầng không giẫm chân nhau: thuật ngữ tay đã được thay từ trước nên
+bước hậu kỳ không còn gì để sửa.
+
 ## Triển khai lên server — DATA KHÔNG đi qua git
 
 ⚠️ `.dockerignore` loại `/data` khỏi image, và `/app/data` bị **bind-mount đè**
@@ -140,6 +196,32 @@ bot đang chạy. Đường thật:
 
 > Code (services/api/web) VẪN deploy qua image như thường (git push → build →
 > watchtower). Chỉ DỮ LIỆU glossary mới cần copy tay vào volume.
+
+## Trạng thái (2026-08-28) — dựng lại vì kho cũ PHÁ bản dịch
+
+`data/glossary/{en,zh,ja}.json` = **EN 312, ZH 936, JA 1538** thuật ngữ / 21
+lĩnh vực. Kho nhỏ đi so với bản 25/08 (377/1715/2570) và đó là **chủ đích**:
+bản cũ chứa hàng trăm cặp làm bản dịch XẤU ĐI, không phải chỉ vô dụng.
+
+Ba lớp lọc, theo đúng thứ tự:
+
+1. **`--chat`** — lĩnh vực lấy từ đúng nghĩa bản dịch trỏ tới. Bỏ `region→tỉnh`,
+   `purple→tía`, `failure→thất bại`, `kitchen→nhà bếp`, `house→nhà`, `tea→trà`,
+   `police→cảnh sát`, `and→và`… (xem mục *Vì sao `--chat`*).
+2. **Ngưỡng ghép nghĩa = 1 từ nội dung.** Đã đo cả mức 2 trên kaikki 28/08: mức
+   2 kéo về `kitchen`, `purple`, `terror`, `silly→ngu`, `murder→giết` mà lại mất
+   `photosynthesis→quang hợp`, `derivative→đạo hàm`, `ecliptic→hoàng đạo`. Giữ 1.
+3. **`_DA_SOAT_LA_SAI`** — 21 cặp soát tay, mỗi cặp ghi lý do. Chúng được gắn
+   ĐÚNG lĩnh vực nên hai lớp trên không bắt được, ví dụ `tenant→chủ sở hữu`
+   (ngược nghĩa), `angle→gốc` (sai dấu), `account→chuyện kể`, `cent→phần trăm`.
+
+Đã thử và **BỎ** một hướng: thẩm định lại bằng từ điển Anh–Việt 104k mục. Nó
+bắt đúng rác nhưng giết nhầm `neurosurgery`, `theorem`, `pandemic`, `diarrhea`
+— từ điển diễn đạt khác chữ ("Khoa giải phẫu thần kinh", "Định lý"). Với danh
+sách ngắn thế này, soát tay trung thực hơn.
+
+ZH/JA nhỏ theo vì chúng **pivot qua `en.json`** — bỏ nguồn rác thì bản pivot
+sạch theo.
 
 ## Trạng thái (2026-08-25)
 

@@ -104,6 +104,78 @@ def _slug_tu_sense(sense_text: str) -> set[str]:
     return ra
 
 
+#: Từ chức năng — bỏ khi so gloss với sense, không mang thông tin phân biệt.
+_TU_RONG = {
+    "a", "an", "the", "of", "or", "and", "to", "in", "for", "with", "on", "at",
+    "by", "from", "as", "is", "are", "be", "was", "were", "that", "this",
+    "which", "any", "some", "other", "such", "its", "it", "he", "she", "they",
+    "one", "two", "esp", "especially", "etc", "eg", "ie",
+}
+
+
+#: Số TỪ NỘI DUNG phải trùng thì mới coi là ghép được nghĩa. Đặt 1 sau khi đo
+#: cả hai mức trên kaikki 28/08 — xem docs/GLOSSARY.md mục "Vì sao --chat".
+DIEM_KHOP_TOI_THIEU = 1
+
+
+def _tu_noi_dung(s: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z]+", str(s or "").lower())
+            if len(t) >= 3 and t not in _TU_RONG}
+
+
+def _slug_tu_nghia_khop(entry: dict, sense_text: str) -> Optional[set[str]]:
+    """Slug lấy từ topics của ĐÚNG nghĩa mà bản dịch trỏ tới.
+
+    Đây là chỗ sửa cái sai gốc của kho dựng 25/08. ``_slug_toan_muc`` gộp topics
+    của MỌI nghĩa trong mục, nên mục "region" — có một nghĩa giải phẫu — kéo cả
+    bản dịch "tỉnh" (nghĩa hành chính) vào lĩnh vực y khoa. Đo thật trên kaikki
+    28/08::
+
+        region  dịch "tỉnh"   sense 'an administrative subdivision'
+                → gloss 'An administrative subdivision of a city…'  topics []
+        neurosurgery  dịch "phẫu thuật thần kinh"
+                → gloss 'The surgical discipline focused on…'
+                  topics ['medicine','neurology','neuroscience','sciences']
+
+    Cùng một luật giữ được mục tốt và bỏ được mục rác, vì nó hỏi đúng câu hỏi:
+    *nghĩa NÀY* có thuộc chuyên ngành không, chứ không phải *từ này* có nghĩa
+    nào thuộc chuyên ngành không.
+
+    Ghép nghĩa bằng số TỪ NỘI DUNG trùng nhau giữa chuỗi ``sense`` của bản dịch
+    và ``glosses`` của nghĩa — ``sense`` là bản tóm gọn của gloss chứ không
+    trùng khít ('colour' ↔ 'A colour between red and blue; violet…').
+
+    Phân biệt HAI trạng thái khác hẳn nhau, đây là chỗ dễ sai nhất:
+
+    * ``None`` — **không khớp được nghĩa nào**, tức KHÔNG CÓ BẰNG CHỨNG. Xảy ra
+      khi sense viết tắt tới mức không chung chữ nào với gloss: 'gout' dịch
+      "thống phong" ghi sense *arthritic disease*, còn gloss là *An extremely
+      painful inflammation of joints*. Nơi gọi phải rơi xuống luật cũ, đừng bỏ
+      — bỏ là mất đúng những thuật ngữ y khoa thật (đo 28/08: gout, spleen,
+      diarrhea, acid, embryo đều rơi vào ô này).
+    * ``set()`` — **khớp được nghĩa, và nghĩa đó KHÔNG thuộc chuyên ngành nào**,
+      tức BẰNG CHỨNG NGƯỢC. 'region' dịch "tỉnh" khớp gloss *An administrative
+      subdivision…* topics rỗng. Nơi gọi phải BỎ, không được rơi xuống luật cũ.
+    """
+    can = _tu_noi_dung(sense_text)
+    if not can:
+        return None
+    tot, diem_tot = None, DIEM_KHOP_TOI_THIEU - 1
+    for ng in entry.get("senses") or []:
+        for g in ng.get("glosses") or []:
+            diem = len(can & _tu_noi_dung(g))
+            if diem > diem_tot:
+                tot, diem_tot = ng, diem
+    if tot is None:
+        return None
+    ra: set[str] = set()
+    for t in tot.get("topics") or []:
+        sl = slug_cho_topic(t)
+        if sl:
+            ra.add(sl)
+    return ra
+
+
 def _slug_toan_muc(entry: dict) -> set[str]:
     """Mọi slug suy ra từ topics của tất cả senses trong một mục."""
     ra: set[str] = set()
@@ -132,7 +204,7 @@ def _rac_vi(vi: str) -> bool:
 
 
 def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
-                      *, noi_long: bool = False) -> int:
+                      *, noi_long: bool = False, chat: bool = False) -> int:
     """Rút cặp (term Anh → thuật ngữ VI) có lĩnh vực từ MỘT mục Wiktextract.
 
     Gán lĩnh vực theo thứ tự ưu tiên:
@@ -141,6 +213,17 @@ def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
          dùng lĩnh vực đó,
       3. nhập nhằng (nhiều lĩnh vực, dịch không rõ) → BỎ, không đoán bừa.
     Trả số cặp đã thêm. Giữ term VI ĐẦU TIÊN cho mỗi (lĩnh vực, từ).
+
+    ``chat`` (CHẶT): thêm một bước TRƯỚC luật 2 — lấy lĩnh vực từ ĐÚNG nghĩa mà
+    bản dịch trỏ tới (``_slug_tu_nghia_khop``). Khớp được nghĩa mà nghĩa đó
+    không thuộc chuyên ngành nào thì BỎ hẳn; không khớp được nghĩa nào thì coi
+    như không có bằng chứng và vẫn theo luật 2 như cũ. Luật 2 chính là nguồn gốc của những
+    cặp phá bản dịch trong kho dựng 25/08 — ``region → tỉnh``, ``failure →
+    thất bại``, ``purple → tía`` đều nằm trong lĩnh vực y khoa. Cơ chế: mục
+    "region" của Wiktionary chỉ mang đúng một topic, nên MỌI bản dịch trong mục
+    ấy — kể cả bản lạc nghĩa — bị gán hết vào lĩnh vực đó. Cụm nhiều từ vẫn
+    được hưởng luật 2: "artificial intelligence" thì dài tới mức gần như luôn
+    là thuật ngữ thật.
     """
     tu = _thuong(entry.get("word"))
     if not tu or entry.get("lang_code") not in (None, "en", "English"):
@@ -155,6 +238,15 @@ def them_tu_kaikki_en(entry: dict, store: dict[str, dict[str, str]],
     them = 0
     for t in dich_vi:
         slugs = _slug_tu_sense(t.get("sense", ""))
+        if not slugs and chat:
+            khop = _slug_tu_nghia_khop(entry, t.get("sense", ""))
+            if khop is not None:
+                # Khớp được nghĩa: nghĩa ĐÓ nói lên tất cả. Không mang lĩnh vực
+                # nào nghĩa là bản dịch này thuộc nghĩa đời thường → bỏ hẳn,
+                # tuyệt đối không rơi xuống luật cả-mục (chính là 'region').
+                if not khop:
+                    continue
+                slugs = khop
         if not slugs:
             if len(slug_muc) == 1:
                 slugs = set(slug_muc)
@@ -365,7 +457,8 @@ def _mo(duong: str) -> Iterator[str]:
 
 def nap_kaikki_en(dong: Iterable[str],
                   store: Optional[dict[str, dict[str, str]]] = None,
-                  *, noi_long: bool = False) -> dict[str, dict[str, str]]:
+                  *, noi_long: bool = False,
+                  chat: bool = False) -> dict[str, dict[str, str]]:
     """Nạp một luồng dòng JSONL Wiktextract (English) vào store {slug:{từ:vi}}.
 
     ``noi_long``: hạ ngưỡng lọc — nhận cả term đa lĩnh vực mà bản dịch không ghi
@@ -382,8 +475,54 @@ def nap_kaikki_en(dong: Iterable[str],
             entry = json.loads(d)
         except Exception:
             continue
-        them_tu_kaikki_en(entry, store, noi_long=noi_long)
+        them_tu_kaikki_en(entry, store, noi_long=noi_long, chat=chat)
     return store
+
+
+#: Cặp ĐÃ SOÁT TAY và xác định là SAI — luật tự động không bắt được vì chúng
+#: được Wiktionary gắn đúng lĩnh vực, chỉ sai ở bản dịch. Đã thử thẩm định lại
+#: bằng từ điển Anh–Việt 104k mục (28/08) và BỎ hướng đó: từ điển diễn đạt khác
+#: chữ nên nó giết nhầm 'neurosurgery', 'theorem', 'pandemic'. Soát tay là cách
+#: trung thực hơn cho một danh sách ngắn thế này.
+#:
+#: Khoá theo (lĩnh vực, từ) chứ không theo từ: 'quantum → lượng tử' đúng trong
+#: vật lý, chỉ sai khi nằm ở pháp lý.
+_DA_SOAT_LA_SAI: dict[tuple[str, str], str] = {
+    ("phap_ly", "appealable"): "bản dịch là chữ tục, rác hoàn toàn",
+    ("phap_ly", "tenant"): "NGƯỢC nghĩa — tenant là người THUÊ, không phải chủ",
+    ("phap_ly", "quantum"): "trong pháp lý là mức bồi thường, không phải số lượng",
+    ("kinh_doanh", "account"): "phải là 'tài khoản'; 'chuyện kể' là nghĩa tường thuật",
+    ("tai_chinh", "account"): "như trên",
+    ("kinh_doanh", "cent"): "cent là 'xu', không phải 'phần trăm'",
+    ("tai_chinh", "cent"): "như trên",
+    ("toan_hoc", "angle"): "sai dấu: phải là 'góc', không phải 'gốc'",
+    ("toan_hoc", "lemon"): "không phải thuật ngữ toán, lại còn sai chính tả",
+    ("dia_chat", "today"): "không phải thuật ngữ địa chất",
+    ("kien_truc", "tympanum"): "trong kiến trúc là 'trán tường'; đây là nghĩa y khoa",
+    ("hoa_hoc", "gas"): "'khí tê' sai; gas là 'khí'",
+    ("am_thuc", "nut"): "nut là 'hạt', không phải 'đậu'",
+    ("cong_nghe", "user"): "user là 'người dùng', không phải 'thành viên'",
+    ("ky_thuat", "user"): "như trên",
+    ("toan_hoc", "user"): "như trên",
+    ("y_khoa", "cream"): "trong y khoa là 'kem bôi'; 'màu kem' là nghĩa màu sắc",
+    ("y_khoa", "empiricism"): "thuộc triết học, không phải y khoa",
+    # Tiếng lóng nhạc công bị dịch thành tên con vật: clam = nốt sai, frog = gót
+    # vĩ (bộ phận cây vĩ), wolf = tiếng sói (cộng hưởng lỗi của đàn dây).
+    ("am_nhac", "clam"): "tiếng lóng 'nốt đánh sai', không phải con nghêu",
+    ("am_nhac", "frog"): "là gót cây vĩ đàn dây, không phải con ếch",
+    ("am_nhac", "wolf"): "là 'tiếng sói' — cộng hưởng lỗi, không phải con sói",
+}
+
+
+def bo_cap_da_soat(store: dict[str, dict[str, str]]) -> int:
+    """Bỏ các cặp trong ``_DA_SOAT_LA_SAI``. Trả số cặp đã bỏ."""
+    bo = 0
+    for (lv, tu) in _DA_SOAT_LA_SAI:
+        if store.get(lv, {}).pop(tu, None) is not None:
+            bo += 1
+    for lv in [k for k, v in store.items() if not v]:
+        del store[lv]
+    return bo
 
 
 def ghi_store(store: dict[str, dict[str, str]], src: str, thu_muc: Path) -> Path:
@@ -403,6 +542,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--omw-src", help="OMW .tab tiếng nguồn (kor/jpn/cmn) — cần en.json + --omw-vi + --omw-lang")
     ap.add_argument("--omw-vi", help="OMW .tab tiếng Việt (vie)")
     ap.add_argument("--omw-lang", help="mã tiếng nguồn để ghi ra (ko/ja/zh)")
+    ap.add_argument("--chat", action="store_true",
+                    help="CHẶT: từ đơn phải có tín hiệu lĩnh vực ngay trong "
+                         "sense của bản dịch (bỏ suy lĩnh vực từ cả mục)")
     ap.add_argument("--noi-long", action="store_true",
                     help="Hạ ngưỡng lọc EN: nhận cả term đa lĩnh vực dịch không rõ sense")
     ap.add_argument("--out", default="data/glossary", help="Thư mục xuất")
@@ -411,8 +553,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     thu_muc = Path(args.out)
     lam_gi = False
     if args.kaikki_en:
-        store = nap_kaikki_en(_mo(args.kaikki_en), noi_long=args.noi_long)
+        store = nap_kaikki_en(_mo(args.kaikki_en), noi_long=args.noi_long,
+                              chat=args.chat)
+        bo = bo_cap_da_soat(store)
         tep = ghi_store(store, "en", thu_muc)
+        if bo:
+            print(f"bỏ {bo} cặp đã soát tay là sai")
         tong = sum(len(v) for v in store.values())
         print(f"en: {len(store)} lĩnh vực, {tong} thuật ngữ → {tep}")
         lam_gi = True
