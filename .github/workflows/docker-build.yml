@@ -189,15 +189,25 @@ jobs:
   build-gpu:
     needs: test
     runs-on: ubuntu-latest
+    # Image PHỤ (:gpu, ~15GB) — chỉ dùng nếu chạy VieNeu trên máy có card. Máy
+    # chủ chính chạy :latest (CPU) nên KHÔNG phụ thuộc job này. Runner GitHub
+    # chỉ ~14GB đĩa trống nên build 15GB thỉnh thoảng hết đĩa giữa chừng (runner
+    # chết, KHÔNG phải lỗi mã — chạy lại là đạt). continue-on-error để một lần
+    # hết đĩa không nhuộm đỏ cả run và không chặn :latest; :gpu cũ vẫn còn dùng.
+    continue-on-error: true
     permissions:
       contents: read
       packages: write
     steps:
       - name: Free runner disk space
         run: |
+          # Xoá MẠNH hơn: cả hostedtoolcache (~8GB), swift, jvm, node_modules —
+          # build GPU 15GB cần gần hết đĩa runner. Đo trước/sau bằng df.
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          sudo docker image prune -af
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift \
+            /usr/lib/jvm /usr/local/lib/node_modules /usr/local/.ghcup
+          sudo apt-get clean || true
+          sudo docker image prune -af || true
           df -h /
 
       - name: Checkout
