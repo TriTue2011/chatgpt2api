@@ -764,3 +764,13 @@ table.data-table { width: 100%; border-collapse: collapse; }
    variables directly (see the recolor of web/src), so the !important overrides
    are no longer needed. A few intentionally-dark panels (bg-stone-800/900)
    remain literal and look correct on the dark theme. */
+
+/* ═══ Ô chọn (select) — sửa lỗi option vô hình trên giao diện tối ═══
+   <option> để trình duyệt tự vẽ: mặc định nền trắng, mà chữ lại thừa kế màu
+   sáng của theme → sáng trên trắng, không đọc được (đo 28/08: ô chọn tiếng ở
+   tab Dịch chỉ thấy mục đang bôi đen). Ép nền + chữ theo biến theme. */
+select option,
+select optgroup {
+  background-color: var(--background);
+  color: var(--foreground);
+}

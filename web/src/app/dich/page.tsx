@@ -35,6 +35,31 @@ type TraCuu = {
   google?: string;
 };
 
+// Nhiều tiếng cho ĐƯỜNG GOOGLE (mở trên trình duyệt): máy dịch trong stack chỉ
+// có 5 tiếng, còn Google 100+. Chỉ liệt kê các tiếng hay dùng; "auto" = tự nhận.
+const TIENG_GOOGLE: { value: string; label: string }[] = [
+  { value: "auto", label: "Tự nhận tiếng" },
+  { value: "vi", label: "Việt" }, { value: "en", label: "Anh" },
+  { value: "zh-CN", label: "Trung (giản thể)" }, { value: "zh-TW", label: "Trung (phồn thể)" },
+  { value: "ja", label: "Nhật" }, { value: "ko", label: "Hàn" },
+  { value: "fr", label: "Pháp" }, { value: "de", label: "Đức" },
+  { value: "es", label: "Tây Ban Nha" }, { value: "pt", label: "Bồ Đào Nha" },
+  { value: "it", label: "Ý" }, { value: "ru", label: "Nga" },
+  { value: "th", label: "Thái" }, { value: "id", label: "Indonesia" },
+  { value: "ms", label: "Mã Lai" }, { value: "km", label: "Khmer" },
+  { value: "lo", label: "Lào" }, { value: "hi", label: "Hindi" },
+  { value: "ar", label: "Ả Rập" }, { value: "nl", label: "Hà Lan" },
+  { value: "pl", label: "Ba Lan" }, { value: "tr", label: "Thổ Nhĩ Kỳ" },
+  { value: "uk", label: "Ukraina" }, { value: "fa", label: "Ba Tư" },
+  { value: "he", label: "Do Thái" }, { value: "sv", label: "Thụy Điển" },
+  { value: "el", label: "Hy Lạp" }, { value: "cs", label: "Séc" },
+  { value: "ro", label: "Rumani" }, { value: "hu", label: "Hungary" },
+  { value: "fi", label: "Phần Lan" }, { value: "da", label: "Đan Mạch" },
+  { value: "no", label: "Na Uy" }, { value: "my", label: "Miến Điện" },
+  { value: "bn", label: "Bengal" }, { value: "ta", label: "Tamil" },
+  { value: "tl", label: "Philippines" },
+];
+
 const CAC_TIENG = [
   { value: "vi", label: "Tiếng Việt" },
   { value: "en", label: "Tiếng Anh" },
@@ -98,6 +123,10 @@ function DichPageContent() {
   // Cấu hình dùng chung, lưu ở config.dich_llm; đọc/ghi qua /api/settings.
   // Google Dịch — ý kiến thứ hai, mặc định TẮT vì chữ sẽ rời máy chủ này.
   const [googleBat, setGoogleBat] = useState(false);
+  // Tiếng nguồn/đích RIÊNG cho đường Google (mở trình duyệt) — tách khỏi ô chọn
+  // của máy dịch trong stack vì Google phủ nhiều tiếng hơn hẳn.
+  const [gSl, setGSl] = useState("auto");
+  const [gTl, setGTl] = useState("vi");
   const [googleKq, setGoogleKq] = useState("");
   const [googleLoi, setGoogleLoi] = useState("");
   const [googleDangChay, setGoogleDangChay] = useState(false);
@@ -136,8 +165,15 @@ function DichPageContent() {
       const r = await request.post("/api/dich/google",
         { q, target: ketQua?.dich || target, source: nguon });
       setGoogleKq(String((r.data as any)?.text || ""));
-    } catch (e) { setGoogleLoi(layLoi(e)); }
-    finally { setGoogleDangChay(false); }
+    } catch (e) {
+      // 429 = Google chặn IP máy chủ (endpoint không chính thức). Không phải
+      // lỗi tạm — chỉ đường qua trình duyệt (nút bên dưới) mới chắc chắn.
+      const msg = layLoi(e);
+      setGoogleLoi(/429|too many|chặn/i.test(msg)
+        ? "Google đang chặn IP máy chủ. Dùng nút “Mở trên Google Dịch” ở khối "
+          + "trên — trình duyệt của anh tự mở, không bị chặn."
+        : msg);
+    } finally { setGoogleDangChay(false); }
   };
 
   const luuDichLlm = async (bat: boolean, model: string) => {
@@ -223,15 +259,16 @@ function DichPageContent() {
   // quay về app được. Có để dùng cho những tiếng ngoài 5 tiếng máy dịch trong
   // stack hỗ trợ — Google có hơn 130 tiếng, đổi ở ô nguồn/đích là ra sl/tl.
   const moGoogle = (op: "translate" | "websites" | "images" | "docs" = "translate") => {
-    const sl = nguon || "auto";
+    const sl = gSl || "auto";
+    const tl = gTl || "vi";
     const nd = chu.trim();
-    let url = `https://translate.google.com/?sl=${sl}&tl=${target}&op=${op}`;
+    let url = `https://translate.google.com/?sl=${sl}&tl=${tl}&op=${op}`;
     if (op === "translate") {
       url += `&text=${encodeURIComponent(nd.slice(0, GOOGLE_TRAN_KY_TU))}`;
     } else if (op === "websites" && /^https?:\/\//i.test(nd)) {
       // Dạng này Google chuyển hướng thẳng sang bản dịch của trang
       // (kiểm 28/08: 302 → <tên-miền>.translate.goog), khỏi phải dán lại link.
-      url = `https://translate.google.com/translate?sl=${sl}&tl=${target}`
+      url = `https://translate.google.com/translate?sl=${sl}&tl=${tl}`
         + `&u=${encodeURIComponent(nd)}`;
     }
     // Ảnh và tài liệu chỉ MỞ được đúng chế độ — tệp phải tự chọn bên đó, URL
@@ -482,10 +519,25 @@ function DichPageContent() {
             Đường dịch chính vẫn là máy trong stack, Google hỏng hay bị chặn cũng
             không ảnh hưởng gì.
           </p>
-          <div className="space-y-1">
+          <div className="space-y-2">
             <div className="text-sm text-[var(--muted-foreground)]">
-              Hoặc mở thẳng trang Google Dịch (không gửi gì từ máy chủ này — trình
-              duyệt của anh tự mở, có hơn 130 tiếng):
+              Mở thẳng trang Google Dịch — trình duyệt của anh tự mở (không gửi
+              gì từ máy chủ này, không bị chặn IP), <b>tự nhận tiếng</b> và hơn
+              130 tiếng. Đây là đường tin cậy nhất cho các tiếng máy dịch trong
+              stack chưa có:
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <select value={gSl} onChange={(e) => setGSl(e.target.value)}
+                className="rounded-[10px] border border-[var(--border)] bg-transparent px-2 py-1.5">
+                {TIENG_GOOGLE.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <span className="text-[var(--muted-foreground)]">→</span>
+              <select value={gTl} onChange={(e) => setGTl(e.target.value)}
+                className="rounded-[10px] border border-[var(--border)] bg-transparent px-2 py-1.5">
+                {TIENG_GOOGLE.filter((o) => o.value !== "auto").map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => moGoogle("translate")} disabled={!chu.trim()}
