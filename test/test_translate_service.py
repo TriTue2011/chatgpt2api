@@ -647,3 +647,22 @@ def test_lo_toan_thuat_ngu_khong_goi_may_dich(co_sua_thuat_ngu):
         assert ts.translate_giu_thuat_ngu(["stroke", "stroke"], "vi", "en") == \
             ["đột quỵ", "đột quỵ"]
     assert fake.da_gui == []
+
+@pytest.mark.pure
+def test_detect_tu_latin_ngan_la_tieng_anh_khong_hoi_bo_do():
+    """Một-hai từ Latin → EN ngay, không gọi máy chủ (bộ dò đoán bậy đoạn ngắn:
+    'stroke'→Slovak, 'hello'→Phần Lan — đo 28/08 sau khi thêm nhiều tiếng)."""
+    with install_translate(FakeTranslate(lang="sk", confidence=99.0)) as fake:
+        assert ts.detect("stroke") == ("en", 100.0)
+        assert ts.detect("circuit breaker") == ("en", 100.0)
+    # KHÔNG gọi /detect cho các đoạn này.
+    assert not any(p == "/detect" for p, _ in fake.calls)
+
+
+@pytest.mark.pure
+def test_detect_cau_dai_hoac_phi_latin_van_hoi_bo_do():
+    with install_translate(FakeTranslate(lang="vi", confidence=88.0)) as fake:
+        assert ts.detect("He had a stroke today")[0] == "vi"   # câu dài → bộ dò
+        assert ts.detect("日本語")[0] == "vi"
+    assert any(p == "/detect" for p, _ in fake.calls)
+

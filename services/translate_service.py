@@ -193,11 +193,24 @@ def ma_dung_hoa_thuong() -> dict[str, str]:
         return {}
 
 
+#: Đoạn Latin ngắn (một-hai từ, chỉ chữ cái a-z) — bộ dò ngôn ngữ thống kê
+#: đoán BẬY hẳn ở độ dài này: đo 28/08 "stroke"→sk(Slovak), "hello"→fi, "computer"
+#: →ro. Với bot dịch tiếng Việt, một từ Latin gần như luôn là TIẾNG ANH (người
+#: dùng tra từ Anh). Nhận thẳng "en", khỏi hỏi bộ dò.
+_LATIN_NGAN = re.compile(r"^[A-Za-z][A-Za-z'\-]*(?:\s+[A-Za-z][A-Za-z'\-]*)?$")
+
+
 def detect(text: str) -> tuple[str, float]:
-    """(mã ngôn ngữ, độ tự tin 0..100). Chuỗi rỗng → ("", 0.0)."""
+    """(mã ngôn ngữ, độ tự tin 0..100). Chuỗi rỗng → ("", 0.0).
+
+    Một-hai từ toàn chữ Latin → coi là tiếng Anh ngay: bộ dò thống kê đoán bậy
+    ở đoạn ngắn (xem ``_LATIN_NGAN``), làm hỏng cả nhãn lẫn khối tra từ điển.
+    """
     t = (text or "").strip()
     if not t:
         return "", 0.0
+    if _LATIN_NGAN.match(t):
+        return "en", 100.0
     body = _goi("/detect", {"q": t})
     if not isinstance(body, list) or not body:
         return "", 0.0
