@@ -1894,6 +1894,39 @@ def _h_wiki_read(args: dict, ctx: dict) -> dict:
     return {"text": body}
 
 
+def _h_mo_nhom_cong_cu(args: dict, ctx: dict) -> dict:
+    """MỞ MỘT CHƯƠNG công cụ — mắt xích cuối của lối đọc 'mục lục → chi tiết'.
+
+    Vì sao phải có: schema tool nạp theo VIỆC của lượt (xem `tools_schema`), dò
+    bằng từ khoá nên có lúc trượt. Không có đường mở thêm thì một lần trượt là
+    model KHÔNG THỂ làm việc đó — hỏng hẳn, mà người dùng chỉ thấy bot chối.
+
+    Model vẫn luôn đọc được MỤC LỤC đầy đủ (`persona_list` trong system prompt),
+    nên nó biết năng lực đó có thật. Tool này cho nó lật đúng chương ra: trả về
+    danh sách tool của nhóm, và orchestrator thấy lời gọi này thì thêm nhóm đó
+    vào bộ lọc cho các bước sau — lượt kế tiếp có schema thật để gọi.
+
+    Không nới quyền: nhóm nào thread không được phép thì vẫn từ chối ở đây.
+    """
+    nhom = str(args.get("nhom") or args.get("group") or "").strip()
+    allow = ctx.get("allowed_groups") if isinstance(ctx, dict) else None
+    if isinstance(allow, (list, tuple)):
+        allow = set(allow)
+    co = sorted(set(_CAP_GROUP.values()))
+    if not nhom:
+        return {"text": "Cần tên nhóm. Các nhóm có: " + ", ".join(co)}
+    if nhom not in co:
+        return {"text": f"Không có nhóm «{nhom}». Các nhóm có: " + ", ".join(co)}
+    if not nhom_duoc_phep(nhom, allow if isinstance(allow, set) else None):
+        return {"text": f"Khung chat này không được dùng nhóm «{nhom}»."}
+    dong = [f"- {c.name}: {c.description[:160]}"
+            for c in CAPABILITIES.values() if group_of(c.name) == nhom]
+    if not dong:
+        return {"text": f"Nhóm «{nhom}» không có công cụ nào."}
+    return {"text": (f"Công cụ nhóm «{nhom}» (gọi thẳng ở lượt tiếp theo):\n"
+                     + "\n".join(dong))}
+
+
 def _h_expand_tool_result(args: dict, ctx: dict) -> dict:
     """Recover full tool output that was compressed (⟦tc:hash⟧)."""
     from services.agent import tool_compress as tc
@@ -5729,6 +5762,22 @@ CAPABILITIES: dict[str, Capability] = {
         parameters={"type": "object", "properties": {
             "slug": {"type": "string", "description": "Mã ghi chú"}},
             "required": ["slug"]}),
+    "mo_nhom_cong_cu": Capability(
+        name="mo_nhom_cong_cu", risk=READ, handler=_h_mo_nhom_cong_cu,
+        emoji="📖", label="Mở nhóm công cụ cần dùng",
+        description=(
+            "Mở danh sách công cụ của MỘT nhóm khi việc người dùng nhờ nằm "
+            "trong «Em làm được gì» nhưng công cụ tương ứng chưa có sẵn lượt "
+            "này. Gọi tool này TRƯỚC khi nói không làm được — gọi xong là lượt "
+            "sau có công cụ thật để dùng. Nhóm: image, music, video, code, web, "
+            "homeassistant, tts_speaker, office, teacher, server, device, "
+            "camera, facebook, kho_dam_may, schedule, memory, skills, wiki, "
+            "contacts."
+        ),
+        parameters={"type": "object", "properties": {
+            "nhom": {"type": "string",
+                     "description": "Tên nhóm công cụ cần mở"}},
+            "required": ["nhom"]}),
     "expand_tool_result": Capability(
         name="expand_tool_result", risk=READ, handler=_h_expand_tool_result,
         emoji="📦", label="Mở rộng tool output đã nén",
@@ -6511,7 +6560,10 @@ _CAP_GROUP: dict[str, str] = {
 # mở được bản đầy đủ của output đã nén ở mọi thread (marker ⟦tc:…⟧ xuất hiện
 # không phụ thuộc quyền nhóm). Schema, chốt chặn dispatch, và persona_list
 # đều tôn trọng set này (không lệch nhau).
-_CORE_TOOLS = frozenset({"expand_tool_result", "send_voice_message"})
+_CORE_TOOLS = frozenset({"expand_tool_result", "send_voice_message",
+                         # Đường mở chương công cụ — phải LUÔN có, vì nó chính
+                         # là lối thoát khi bộ lọc theo việc dò trượt.
+                         "mo_nhom_cong_cu"})
 
 
 def group_of(name: str) -> str:
@@ -6982,12 +7034,41 @@ def forward_event(platform: str, bot_id: str, chat_id: str, user_id: str | None,
         return False
 
 
-def tools_schema(allow: set[str] | None = None) -> list[dict]:
-    """Schema công cụ cho model. `allow` = tập nhóm được phép (None = chưa cấu
-    hình bộ lọc → tất cả, TRỪ `_NHOM_PHAI_TICH`). Lọc theo nhóm để giới hạn chức
-    năng cho từng threadID."""
-    return [c.schema() for c in CAPABILITIES.values()
-            if c.name in _CORE_TOOLS or nhom_duoc_phep(group_of(c.name), allow)]
+#: Tool LUÔN gửi kèm dù lượt này không chạm nhóm của chúng — vì người dùng có
+#: thể dặn ghi nhớ, hỏi lại chuyện cũ, hay cần tra web ở BẤT KỲ câu nào, kể cả
+#: giữa một việc khác. Rẻ (vài trăm token) mà chặn đúng ca hụt tool khó chịu nhất.
+_TOOL_THONG_DUNG = frozenset({
+    "remember", "search_history", "web_search",
+})
+
+
+def tools_schema(allow: set[str] | None = None,
+                 nhom_viec: set[str] | None = None) -> list[dict]:
+    """Schema công cụ cho model.
+
+    `allow` = tập nhóm THREAD được phép (None = chưa cấu hình bộ lọc → tất cả,
+    TRỪ `_NHOM_PHAI_TICH`). Đây là cửa QUYỀN, không được nới.
+
+    `nhom_viec` = tập nhóm mà LƯỢT này đang làm (None = không lọc theo việc,
+    giữ nguyên nết cũ). Đây là cửa VIỆC: gửi cả 74 tool mỗi lượt tốn ~17.000
+    token và làm model khó chọn — nghiên cứu tool-retrieval gọi đúng tên hiện
+    tượng này. Lọc bớt thì rẻ hơn và model chọn đúng hơn.
+
+    Cửa việc CỐ Ý rộng tay: luôn kèm `_CORE_TOOLS` (hạ tầng) và
+    `_TOOL_THONG_DUNG`, vì thiếu một tool là model KHÔNG THỂ gọi — hụt tool khó
+    chịu hơn nhiều so với thừa vài schema.
+    """
+    ra = []
+    for c in CAPABILITIES.values():
+        if c.name not in _CORE_TOOLS and not nhom_duoc_phep(group_of(c.name), allow):
+            continue                      # cửa QUYỀN — chặn tuyệt đối
+        if (nhom_viec is not None
+                and c.name not in _CORE_TOOLS
+                and c.name not in _TOOL_THONG_DUNG
+                and group_of(c.name) not in nhom_viec):
+            continue                      # cửa VIỆC — lượt này không cần
+        ra.append(c.schema())
+    return ra
 
 
 def get(name: str) -> Capability | None:

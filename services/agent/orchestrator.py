@@ -1377,6 +1377,28 @@ def _nhom_viec(user_text: str, allow: set[str] | None = None) -> set[str]:
             if rx.search(low) and caps.nhom_duoc_phep(g, allow)}
 
 
+#: Số lượt NGƯỜI DÙNG gần nhất được tính vào ngữ cảnh chọn tool. Việc thường
+#: kéo dài vài lượt ("vẽ con mèo" → "thêm cái mũ đi" → "đổi màu"), mà câu nối
+#: tiếp hầu như không nhắc lại từ khoá — chỉ nhìn câu hiện tại là mất tool giữa
+#: chừng. Bốn lượt đủ phủ một mạch việc mà không kéo theo việc của nửa giờ trước.
+_LUOT_NHO_NGU_CANH = 4
+
+
+def _nhom_ngu_canh(user_text: str, hist: list[dict[str, Any]] | None,
+                   allow: set[str] | None = None) -> set[str]:
+    """Nhóm việc của lượt này CỘNG mấy lượt người dùng gần nhất.
+
+    Không giữ state riêng: đọc thẳng lịch sử đang có nên sống qua restart và
+    không thể lệch với thứ model đang đọc. Rộng tay là CỐ Ý — thiếu một tool thì
+    model không tài nào gọi được, còn thừa vài schema chỉ tốn ít token.
+    """
+    nhom = _nhom_viec(user_text, allow)
+    cu = [m for m in (hist or []) if (m.get("role") or "") == "user"]
+    for m in cu[-_LUOT_NHO_NGU_CANH:]:
+        nhom |= _nhom_viec(str(m.get("content") or ""), allow)
+    return nhom
+
+
 def _bang_chi_duong(allow: set[str] | None, user_text: str = "") -> str:
     """Bảng chỉ đường — nạp nhánh theo CẢ HAI cửa: nhóm thread ĐANG BẬT (`allow`)
     và VIỆC của tin nhắn lượt này (từ khoá `_KW_*`).
@@ -2587,6 +2609,11 @@ def _orchestrate_locked(user_text: str, user_id: str,
     messages = [{"role": "system", "content": sys_prompt}] + list(model_hist)
 
     # 2) Agentic loop.
+    # Nhóm việc dùng để lọc schema tool. Tính MỘT lần từ câu này + mấy lượt gần
+    # nhất, rồi NỚI DẦN theo tool model thực sự gọi: bước sau của một việc có
+    # thể cần tool nhóm khác (vẽ ảnh xong đòi gửi lên kho đám mây), mà lúc tính
+    # ban đầu chưa có dấu hiệu nào.
+    _nhom_tool = _nhom_ngu_canh(user_text, hist_before, allow)
     seen_workflows: set[str] = set()  # tier-2: inject each workflow note once/turn
     for _step in range(_MAX_STEPS):
         steps_done = _step + 1
@@ -2595,7 +2622,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
         # cạn token. Tiếng Việt tốn khoảng 2 token/từ, mà bài dài nhất luồng
         # Facebook đặt hàng là 1000 từ → cần cỡ 2000 chỉ cho phần bài, chưa tính
         # lời dẫn. Đây là TRẦN, không phải đích: câu trả lời thường không dài ra.
-        resp = call_model(main_model, messages, tools=caps.tools_schema(allow),
+        resp = call_model(main_model, messages,
+                          tools=caps.tools_schema(allow, _nhom_tool),
                           max_tokens=4000,
                           no_smart_home=(allow is not None and "homeassistant" not in allow),
                           allowed_groups=allow, channel=caps._channel_of({"user_id": user_id}),
@@ -2667,10 +2695,21 @@ def _orchestrate_locked(user_text: str, user_id: str,
         for tc in tool_calls:
             fn = (tc.get("function") or {})
             name = fn.get("name") or ""
+            # NỚI cửa việc theo tool vừa gọi: model đã bước vào nhóm này thì các
+            # bước sau của cùng việc phải còn đủ tool của nhóm đó.
+            if name:
+                _nhom_tool = _nhom_tool | {caps.group_of(name)}
             try:
                 args = json.loads(fn.get("arguments") or "{}")
             except Exception:
                 args = {}
+            # Model tự XIN mở một chương công cụ (bộ lọc theo việc dò trượt) →
+            # mở đúng nhóm nó xin, để bước sau có schema thật mà gọi. Quyền vẫn
+            # do `tools_schema(allow, …)` gác, mở ở đây không nới quyền.
+            if name == "mo_nhom_cong_cu" and isinstance(args, dict):
+                _xin = str(args.get("nhom") or args.get("group") or "").strip()
+                if _xin:
+                    _nhom_tool = _nhom_tool | {_xin}
             # P2: tool runtime resolves vault refs (AI never had plaintext)
             try:
                 from services.privacy_gate import resolve_secret_ref

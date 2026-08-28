@@ -225,6 +225,77 @@ class TriNhoTheoViec(unittest.TestCase):
         self.assertEqual(so, sorted(so), "thứ tự gốc bị đảo")
 
 
+class LocSchemaToolTheoViec(unittest.TestCase):
+    """Schema tool (~17.000 token/lượt) nạp theo việc — khoản lớn nhất.
+
+    Đọc như đọc sách: mục lục (persona_list) luôn có, còn CHI TIẾT (schema) chỉ
+    mở chương đang cần. Dò trượt thì model tự gọi `mo_nhom_cong_cu` để lật
+    chương — nên trượt không còn nghĩa là hỏng.
+    """
+
+    def _ten(self, allow, nhom):
+        return {t["function"]["name"] for t in caps.tools_schema(allow, nhom)}
+
+    def test_khong_truyen_nhom_thi_giu_net_cu(self):
+        self.assertEqual(len(caps.tools_schema(None, None)),
+                         len(caps.tools_schema(None)))
+
+    def test_loc_theo_viec_giam_manh(self):
+        it = caps.tools_schema(None, {"web"})
+        self.assertLess(len(it), len(caps.tools_schema(None)) // 3)
+
+    def test_tool_lo_i_va_thong_dung_luon_con(self):
+        ten = self._ten(None, set())
+        for phai_co in ("mo_nhom_cong_cu", "expand_tool_result",
+                        "remember", "search_history", "web_search"):
+            self.assertIn(phai_co, ten, f"«{phai_co}» phải luôn có mặt")
+
+    def test_cua_quyen_van_chan_du_cua_viec_mo(self):
+        """Nhóm thread không được phép thì cửa việc mở cũng không lọt."""
+        self.assertNotIn("xem_camera", self._ten({"web"}, {"camera"}))
+
+    def test_nho_ngu_canh_giu_tool_cho_cau_noi_tiep(self):
+        """«thêm cái mũ đi» không có từ khoá ảnh — vẫn phải còn tool vẽ."""
+        hist = [{"role": "user", "content": "vẽ cho anh con mèo"},
+                {"role": "assistant", "content": "đây ạ"}]
+        nhom = orch._nhom_ngu_canh("thêm cái mũ đi", hist, None)
+        self.assertIn("image", nhom)
+        self.assertIn("generate_image", self._ten(None, nhom))
+
+    def test_khong_ngu_canh_thi_khong_co_tool_ve(self):
+        nhom = orch._nhom_ngu_canh("thêm cái mũ đi", [], None)
+        self.assertNotIn("generate_image", self._ten(None, nhom))
+
+
+class MoNhomCongCu(unittest.TestCase):
+    """Lối thoát khi bộ lọc dò trượt — model tự lật chương."""
+
+    def _goi(self, args, ctx=None):
+        return caps.CAPABILITIES["mo_nhom_cong_cu"].handler(args, ctx or {})
+
+    def test_mo_dung_chuong(self):
+        ra = self._goi({"nhom": "office"})["text"]
+        self.assertIn("office_bao_cao", ra)
+        self.assertIn("office_send", ra)
+
+    def test_nhom_bia_thi_bao_va_ke_nhom_that(self):
+        ra = self._goi({"nhom": "khong_ton_tai"})["text"]
+        self.assertIn("Không có nhóm", ra)
+        self.assertIn("office", ra, "phải kể ra các nhóm có thật")
+
+    def test_thieu_ten_nhom_thi_ke_muc_luc(self):
+        self.assertIn("office", self._goi({})["text"])
+
+    def test_khong_noi_quyen(self):
+        ra = self._goi({"nhom": "camera"}, {"allowed_groups": ["web"]})["text"]
+        self.assertIn("không được dùng", ra.lower())
+
+    def test_la_tool_lo_i_nen_moi_thread_deu_co(self):
+        self.assertIn("mo_nhom_cong_cu", caps._CORE_TOOLS)
+        ten = {t["function"]["name"] for t in caps.tools_schema({"web"}, {"web"})}
+        self.assertIn("mo_nhom_cong_cu", ten)
+
+
 class DoiCachTrinhBay(_Base):
     def test_luot_thuong_khong_nap(self):
         for viec in ("bật đèn phòng khách", "tin tức hôm nay", "tạo ảnh con mèo"):
