@@ -154,3 +154,28 @@ def tra(tu: str, src: str = "en") -> dict:
     except sqlite3.Error as exc:
         logger.warning("tra từ điển '%s' lỗi: %s", goc, str(exc)[:200])
     return ra
+
+
+def dong_tra_cho_chat(tu: str, src: str = "en", *, toi_da: int = 8) -> str:
+    """Khối chữ tra từ điển GỌN cho tin nhắn bot — rỗng nếu không tra được gì.
+
+    Khác ô web (``tra`` trả cấu trúc để render): đây trả sẵn chữ và CẮT cho hợp
+    khổ tin Zalo/Telegram — bỏ câu ví dụ, mỗi nghĩa một dòng. Dùng để đính vào
+    sau bản dịch của lệnh ``/dich`` khi người dùng tra MỘT từ: máy dịch chọn
+    một nghĩa, khối này cho thấy các nghĩa còn lại.
+    """
+    r = tra(tu, src)
+    if not r["nghia"]:
+        return ""
+    dau = r["tu"] + (f" {r['ipa']}" if r["ipa"] else "")
+    if r.get("goc"):
+        dau += f" (dạng gốc của “{r['goc']}”)"
+    dong = [f"📖 {dau}"]
+    for i, n in enumerate(r["nghia"][:toi_da], 1):
+        tl = f"({n['tu_loai']}) " if n["tu_loai"] else ""
+        dong.append(f"{i}. {tl}{n['vi']}")
+    con = len(r["nghia"]) - toi_da
+    if con > 0:
+        dong.append(f"…và {con} nghĩa nữa")
+    return "\n".join(dong)
+

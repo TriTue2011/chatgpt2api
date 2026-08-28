@@ -172,7 +172,17 @@ def chay(kenh: Kenh, pend: dict | None, chon: dict) -> None:
                              "đóng thành tệp song ngữ ạ.")
                 kenh.gui_bytes(goi["tep"], goi["ten"], "Bản dịch song ngữ")
                 return
-            kenh.gui_tin(f"🌐 {nguon or 'auto'} → {dich}\n{ban}")
+            # Tra MỘT từ thì đính thêm các nghĩa từ điển: máy dịch chọn một
+            # nghĩa, khối này cho thấy những nghĩa còn lại — đúng thứ ô tra cứu
+            # trên web làm, nay có cả trên kênh chat. Chỉ khi dịch SANG tiếng
+            # Việt và input đủ ngắn (một-hai từ); câu dài thì bỏ qua.
+            tin = f"🌐 {nguon or 'auto'} → {dich}\n{ban}"
+            if dich == "vi" and len(nd.split()) <= 2:
+                from services import tu_dien as _td
+                khoi = _td.dong_tra_cho_chat(nd.strip(), (nguon or "").lower())
+                if khoi:
+                    tin += f"\n\n{khoi}"
+            kenh.gui_tin(tin)
             return
 
         # ── Link / tệp: phụ đề · bản chữ · video · câu trả lời của LLM ──────

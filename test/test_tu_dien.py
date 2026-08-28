@@ -125,5 +125,25 @@ class TuDienTests(unittest.TestCase):
         self.assertEqual(td.tra("stroke")["nghia"], [])
 
 
+    # ── khối chữ gọn cho tin nhắn bot ───────────────────────────────────────
+    def test_dong_chat_co_ipa_va_danh_so(self):
+        kq = td.dong_tra_cho_chat("stroke")
+        self.assertIn("📖 stroke /strəʊk/", kq)
+        self.assertIn("1. (danh từ) Cú, cú đánh, đòn.", kq)
+        self.assertIn("2. (danh từ) Đột quỵ.", kq)
+
+    def test_dong_chat_cat_bot_va_bao_con_lai(self):
+        kq = td.dong_tra_cho_chat("stroke", toi_da=2)
+        self.assertIn("1. ", kq)
+        self.assertNotIn("3. ", kq)
+        self.assertIn("…và 1 nghĩa nữa", kq)
+
+    def test_dong_chat_dang_goc_ghi_ro(self):
+        self.assertIn("dạng gốc của", td.dong_tra_cho_chat("strokes"))
+
+    def test_dong_chat_khong_co_thi_rong(self):
+        self.assertEqual(td.dong_tra_cho_chat("khongcotu"), "")
+        self.assertEqual(td.dong_tra_cho_chat("x", "ja"), "")
+
 if __name__ == "__main__":
     unittest.main()
