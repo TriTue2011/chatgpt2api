@@ -1287,6 +1287,34 @@ def _get_history(user_id: str) -> list[dict[str, Any]]:
     return _history.setdefault(user_id, [])
 
 
+def ghi_luot_ngoai(user_id: str, user_text: str, bot_reply: str) -> None:
+    """Ghi một lượt XỬ LÝ NGOÀI LLM (vd lệnh /dich) vào lịch sử hội thoại.
+
+    Vì sao cần: lệnh /dich (và các lệnh khác) được kênh chat xử lý THẲNG rồi
+    return, không vào vòng LLM — nên lịch sử LLM không có chúng. Hậu quả đo
+    thật trên Zalo 28/08: người dùng «/dich stroke» → bot «đột quỵ», rồi hỏi
+    «còn nghĩa khác không». Câu hỏi này vào LLM nhưng lịch sử KHÔNG có «stroke»,
+    nên LLM bám ngữ cảnh cũ còn sót (chuyện «đảo điện» lượt trước) và trả lời
+    lạc đề hoàn toàn.
+
+    Ghi lượt lệnh vào đây thì câu hỏi tiếp có đúng ngữ cảnh. Dùng CÙNG khoá +
+    CÙNG user_id với ``orchestrate`` để không đua ghi đè. Nuốt mọi lỗi: ghi
+    lịch sử hỏng không được làm đứt việc chính (lệnh đã trả lời xong rồi).
+    """
+    ut = str(user_text or "").strip()
+    br = str(bot_reply or "").strip()
+    if not ut or not br:
+        return
+    try:
+        with _user_history_lock(user_id):
+            hist = _get_history(user_id)
+            hist.append({"role": "user", "content": ut})
+            hist.append({"role": "assistant", "content": br})
+            _persist_history(user_id, hist)
+    except Exception as exc:
+        logger.warning("ghi_luot_ngoai lỗi (user=%s): %s", user_id, str(exc)[:160])
+
+
 def _persist_history(user_id: str, hist: list[dict[str, Any]]) -> None:
     """Write history + searchable turns; compact when long."""
     _history[user_id] = list(hist)
@@ -2270,8 +2298,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # Model đòi ghi nhớ điều ĐÃ có trong bộ nhớ (hay lôi nhầm ngữ cảnh,
                 # vd thông tin SSH) → KHÔNG đề xuất/không lưu lại, chỉ xác nhận ngắn.
                 result = {"text": "Dạ điều này em ghi nhớ rồi ạ 🧠, không cần lưu lại nữa."}
-            elif (allow is not None and name not in caps._CORE_TOOLS
-                    and caps.group_of(name) not in allow):
+            elif (name not in caps._CORE_TOOLS
+                    and not caps.nhom_duoc_phep(caps.group_of(name), allow)):
                 # Chốt chặn tầng 2 — model KHÔNG nên gọi (đã lọc schema) nhưng nếu
                 # cố gọi thì BỎ QUA im lặng theo bộ lọc chức năng của threadID.
                 #
@@ -2281,7 +2309,8 @@ def _orchestrate_locked(user_text: str, user_id: str,
                 # và triệu chứng nhìn từ ngoài y hệt bot hỏng: hỏi mà không
                 # thấy trả lời, cũng chẳng có dòng log nào.
                 logger.warning({"event": "agent_tool_blocked_silent", "tool": name,
-                                "group": caps.group_of(name), "allow": sorted(allow)})
+                                "group": caps.group_of(name),
+                                "allow": sorted(allow) if allow is not None else None})
                 if hist and hist[-1].get("role") == "user":
                     hist.pop()
                 return {"text": "", "silent": True}

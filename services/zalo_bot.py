@@ -1893,7 +1893,23 @@ def _process_message_inner(text: str, chat_id: str, photo_url: str = "", bot: di
                                 "gửi được tệp .srt, nhắn qua Telegram để nhận "
                                 "đủ phụ đề)" if _dai else _chu))
                 return
-            send_message(chat_id, _ts.lenh_dich(text))
+            _kq_dich = _ts.lenh_dich(text)
+            send_message(chat_id, _kq_dich)
+            # Ghi lượt /dich vào lịch sử LLM (CÙNG khoá với orchestrate) để câu
+            # hỏi tiếp ("còn nghĩa khác không") có đúng ngữ cảnh, không bám
+            # chuyện cũ và trả lời lạc đề — lỗi thật đo trên Zalo 28/08.
+            try:
+                from services.agent.orchestrator import ghi_luot_ngoai as _ghi
+                _sk = f"zalo_{chat_id}"
+                try:
+                    from services.agent.scope import tach_phien_theo_nguoi as _tach
+                    if is_group and user_id and _tach():
+                        _sk = f"zalo_{chat_id}:u{user_id}"
+                except Exception:
+                    pass
+                _ghi(_sk, text, _kq_dich)
+            except Exception:
+                pass
             return
 
     # Chuyển tiếp webhook — tagged = keyword / text @bot / platform group delivery
