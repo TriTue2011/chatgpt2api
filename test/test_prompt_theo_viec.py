@@ -1,21 +1,27 @@
 """System prompt CHỈ nạp phần cần cho VIỆC của lượt này.
 
 Bối cảnh: prompt của MỌI lượt (`orchestrator._build_system_prompt`) từng gộp
-~3.240 token khối chỉ dẫn CỐ ĐỊNH — kể cả khối chỉ dùng cho một loại việc. Gộp
-hết vào mọi lượt làm prompt phình to và chèn chỉ dẫn lạc đề, khiến model lan man.
+mọi khối chỉ dẫn — kể cả khối chỉ dùng cho một loại việc. Kiểm kê 28/08 còn
+lộ ra bảng chỉ đường cũ chỉ phủ 10/19 nhóm tool: office (18 tool), teacher
+(10), homeassistant (14), server, device, camera, facebook, kho đám mây, loa
+đều KHÔNG có dòng chỉ đường nào.
 
-Giờ mỗi khối nạp theo HAI cửa:
-- Cửa nhóm (`allow`): thread không bật nhóm nào thì bỏ nhánh của nhóm đó.
-- Cửa việc (từ khoá tin nhắn): lượt hỏi «tin tức» KHÔNG kéo theo nhánh vẽ ảnh,
-  đặt lịch… Tán gẫu → không nạp Bảng chỉ đường / phát loa / mã mục.
+Ba việc file này khoá:
+1. Bảng chỉ đường phủ ĐỦ mọi nhóm tool, và mỗi nhánh chỉ nạp khi khớp CẢ hai
+   cửa — quyền của thread (`allow`) và việc của tin nhắn.
+2. Skill router chỉ nạp skill CHUNG + skill đúng việc (17 skill mọi lượt là
+   ~730 token, gồm cả skill dạy học lẫn skill nhà).
+3. Trí nhớ sắp theo mức liên quan trong CÙNG ngân sách — không mất dòng nào so
+   với trước, và lời dặn cách trả lời không bao giờ bị rơi.
 
-Khối lõi (persona, ngôn ngữ, bảo mật, độ dài, cách dùng công cụ) LUÔN giữ.
+Cộng thêm: đóng hội thoại đã nghỉ >10 phút.
 """
 
 import unittest
 
 from test._fakes import install_data_dir  # noqa: E402
 
+import services.agent.capabilities as caps  # noqa: E402
 import services.agent.orchestrator as orch  # noqa: E402
 
 
@@ -29,96 +35,201 @@ class _Base(unittest.TestCase):
         return orch._build_system_prompt("u_test", allow, user_text)
 
 
-class HoiTinTuc(_Base):
-    """Lượt hỏi tin tức → nạp nhánh web + khối mã mục, KHÔNG kéo nhánh khác."""
+class PhuDuMoiNhomViec(unittest.TestCase):
+    """Không nhóm tool nào bị bỏ quên, và không nhánh nào trỏ nhóm ma."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.p = self.prompt(None, "tin tức hôm nay")
+    def test_moi_nhom_tool_deu_co_nhanh(self):
+        thieu = set(caps._CAP_GROUP.values()) - {g for g, _, _ in orch._BANG_CHI_DUONG}
+        self.assertFalse(thieu, f"nhóm tool chưa có nhánh chỉ đường: {sorted(thieu)}")
 
-    def test_co_nhanh_tin_va_8_muc(self):
-        self.assertIn("## Bảng chỉ đường", self.p)
-        self.assertIn("web_search", self.p)
-        for ten in ("⚽ Thể thao", "🌍 Thế giới", "🩺 Y tế"):
-            self.assertIn(ten, self.p)
-
-    def test_co_khoi_ma_muc(self):
-        self.assertIn("## Danh sách có MÃ MỤC", self.p)
-
-    def test_khong_keo_nhanh_ve_anh_dat_lich_phat_loa(self):
-        for cam in ("generate_image", "generate_music", "schedule(op=list)",
-                    "tu_xoa_tin", "QUY TRÌNH PHÁT LOA"):
-            self.assertNotIn(cam, self.p, f"lượt tin tức không nên có «{cam}»")
+    def test_khong_co_nhanh_tro_nhom_ma(self):
+        thua = {g for g, _, _ in orch._BANG_CHI_DUONG} - set(caps._CAP_GROUP.values())
+        self.assertFalse(thua, f"nhánh trỏ nhóm không tồn tại: {sorted(thua)}")
 
 
-class VeAnh(_Base):
-    def setUp(self) -> None:
-        super().setUp()
-        self.p = self.prompt(None, "vẽ cho anh con mèo dễ thương")
+class TungNhomBanDungTool(_Base):
+    """Mỗi việc bắn ra ĐÚNG tool của nó — soi từng nhóm một, không bỏ sót."""
 
-    def test_co_nhanh_ve_anh(self):
-        self.assertIn("generate_image", self.p)
+    #: (câu người dùng, tool phải có mặt, nhóm cần tích nếu có)
+    CA = [
+        ("vẽ cho anh con mèo", "generate_image", None),
+        ("làm bài hát về mùa thu", "generate_music", None),
+        ("tạo video giới thiệu", "generate_video", None),
+        ("viết chương trình python", "write_code", None),
+        ("tin tức hôm nay", "web_search", None),
+        ("nhắc anh 7h sáng mai", "schedule(op=list)", None),
+        ("tự động xoá phản hồi sau 15 phút", "tu_xoa_tin", None),
+        ("tìm lại chuyện cũ hôm trước", "search_history", None),
+        ("quy trình các bước làm việc này", "use_skill", None),
+        ("lưu ghi chú vào wiki", "wiki_search", None),
+        ("mục tiêu đang làm tới đâu", "goals", None),
+        ("ai vừa nhắn trong danh bạ", "contacts", None),
+        ("ảnh mới nhất trong thư viện", "library_media", None),
+        ("bật đèn phòng khách", "home_status", None),
+        ("phát ra loa phòng ngủ", "speak_to_speaker", None),
+        ("tạo báo cáo excel cho anh", "office_bao_cao", None),
+        ("ra bài tập lớp 4 toán", "search_sgk", None),
+        ("máy chủ còn bao nhiêu ram", "system_status", None),
+        ("chụp webcam máy tính", "device_capture", None),
+        ("đăng bài lên facebook", "dang_facebook", None),
+        ("tải file lên google drive", "kho_dam_may", None),
+        ("xem camera ngoài cổng", "xem_camera", {"camera"}),
+        # Việc lẻ trong nhóm — trước nay không dòng nào nhắc tới.
+        ("đọc giúp anh trang https://vnexpress.net/abc", "read_webpage", None),
+        ("video này nói gì vậy youtube", "youtube_transcript", None),
+        ("nhớ là anh thích cà phê đen", "remember", None),
+        ("xoá ảnh vừa tạo đi", "delete_media", None),
+        ("dạy em quy trình làm báo cáo này", "teach_skill", None),
+        ("tìm sách nâng cao lớp 5", "sgk_fetch", None),
+        ("xem tác giả và số trang tài liệu", "office_thong_tin", None),
+        ("sửa cấu hình home assistant", "ha_write_config_file", None),
+        ("tạo helper input_boolean", "ha_upsert_helper", None),
+    ]
 
-    def test_khong_co_nhanh_tin_lich(self):
-        for cam in ("web_search", "schedule(op=list)", "## Danh sách có MÃ MỤC"):
-            self.assertNotIn(cam, self.p)
+    #: Ba tool này có chỉ đường ở CHỖ KHÁC, cố ý không nằm trong bảng:
+    #: expand_tool_result ở đuôi bảng (hạ tầng, luôn nêu), hai cai_dat_* nằm
+    #: trong khối «đổi cách trình bày» — đúng lúc người dùng dặn cách trả lời.
+    NGOAI_BANG = {"expand_tool_result", "cai_dat_cau_duyet", "cai_dat_dinh_dang"}
+
+    def test_moi_tool_deu_co_chi_duong_o_dau_do(self):
+        """Không tool nào bị bỏ quên — soi TỪNG tool của TỪNG nhóm."""
+        noi = {}
+        for g, _rx, text in orch._BANG_CHI_DUONG:
+            noi[g] = noi.get(g, "") + " " + text
+        thieu = [f"{g}/{t}" for t, g in caps._CAP_GROUP.items()
+                 if t not in self.NGOAI_BANG and t not in noi.get(g, "")]
+        self.assertFalse(thieu, f"tool chưa có chỉ đường: {sorted(thieu)}")
+
+    def test_ba_tool_ngoai_bang_van_co_cho(self):
+        self.assertIn("expand_tool_result",
+                      orch._bang_chi_duong(None, "tin tức hôm nay"))
+        p = orch._build_system_prompt("u_test", None, "bỏ tóm tắt đi")
+        self.assertIn("cai_dat_cau_duyet", p)
+        self.assertIn("cai_dat_dinh_dang", p)
+
+    def test_moi_viec_ra_dung_tool(self):
+        for cau, tool, allow in self.CA:
+            with self.subTest(cau=cau):
+                b = orch._bang_chi_duong(allow, cau)
+                self.assertIn(tool, b, f"«{cau}» phải chỉ đường tới {tool}")
+
+    def test_moi_ca_deu_duoc_phu(self):
+        """Bộ ca trên phải chạm ĐỦ mọi nhóm — kẻo thêm nhóm mà quên thêm ca."""
+        cham = set()
+        for cau, _tool, allow in self.CA:
+            cham |= orch._nhom_viec(cau, allow)
+        thieu = set(caps._CAP_GROUP.values()) - cham
+        self.assertFalse(thieu, f"chưa có ca kiểm cho nhóm: {sorted(thieu)}")
 
 
-class DatLich(_Base):
-    """Lượt đặt lịch → nhánh schedule + khối phát loa/báo cáo bật."""
+class KhongKeoNhanhLacDe(_Base):
+    """Một việc KHÔNG kéo theo nhánh của việc khác."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.p = self.prompt(None, "nhắc anh 7h sáng mai uống thuốc")
+    def test_hoi_tin_khong_keo_ve_anh_dat_lich(self):
+        b = orch._bang_chi_duong(None, "tin tức hôm nay")
+        for cam in ("generate_image", "schedule(op=list)", "office_bao_cao",
+                    "search_sgk", "system_status", "dang_facebook"):
+            self.assertNotIn(cam, b, f"lượt tin tức không nên có «{cam}»")
 
-    def test_co_nhanh_schedule(self):
-        self.assertIn("schedule(op=list)", self.p)
-        self.assertIn("op=cancel", self.p)
+    def test_bat_den_khong_keo_tin_anh_lich(self):
+        b = orch._bang_chi_duong(None, "bật đèn phòng khách")
+        for cam in ("web_search", "generate_image", "schedule(op=list)",
+                    "office_bao_cao", "search_sgk"):
+            self.assertNotIn(cam, b, f"lượt bật đèn không nên có «{cam}»")
 
-    def test_co_khoi_phat_loa_bao_cao(self):
-        self.assertIn("QUY TRÌNH PHÁT LOA", self.p)
-
-    def test_khong_co_nhanh_anh_tin(self):
-        self.assertNotIn("generate_image", self.p)
-        self.assertNotIn("web_search", self.p)
+    def test_tan_gau_khong_co_bang(self):
+        self.assertEqual(orch._bang_chi_duong(None, "chào em, khỏe không"), "")
 
 
-class TanGau(_Base):
-    """Chào hỏi / tán gẫu → KHÔNG nạp Bảng chỉ đường / phát loa / mã mục."""
+class CuaQuyenVanChan(_Base):
+    """Cửa VIỆC mở nhưng cửa QUYỀN đóng thì vẫn không nạp."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.p = self.prompt(None, "chào em, hôm nay khỏe không")
+    def test_thread_chi_co_nha_thi_khong_ra_nhanh_ve_anh(self):
+        b = orch._bang_chi_duong({"homeassistant"}, "vẽ con mèo")
+        self.assertNotIn("generate_image", b)
 
-    def test_khong_co_bang_chi_duong(self):
-        self.assertNotIn("## Bảng chỉ đường", self.p)
+    def test_camera_phai_tich_moi_co(self):
+        """`camera` thuộc _NHOM_PHAI_TICH — thread chưa cấu hình KHÔNG được."""
+        self.assertNotIn("xem_camera", orch._bang_chi_duong(None, "xem camera sân"))
+        self.assertIn("xem_camera", orch._bang_chi_duong({"camera"}, "xem camera sân"))
 
-    def test_khong_co_phat_loa_ma_muc(self):
-        self.assertNotIn("QUY TRÌNH PHÁT LOA", self.p)
-        self.assertNotIn("## Danh sách có MÃ MỤC", self.p)
 
-    def test_van_giu_khoi_loi(self):
+class KhoiLoiLuonCon(_Base):
+    """Khối lõi không bao giờ bị gác mất, kể cả lượt tán gẫu."""
+
+    def test_tan_gau_van_du_khoi_loi(self):
+        p = self.prompt(None, "chào em")
         for y in ("## Ngôn ngữ trả lời", "## Bảo mật secret",
                   "## Độ dài câu trả lời", "## Cách dùng công cụ"):
-            self.assertIn(y, self.p, f"mất khối lõi «{y}»")
+            self.assertIn(y, p, f"mất khối lõi «{y}»")
 
 
-class CuaNhomVanChan(_Base):
-    """Cửa việc mở nhưng cửa NHÓM đóng thì vẫn không nạp nhánh."""
+class GacSkillTheoViec(_Base):
+    """Skill router chỉ nạp skill CHUNG + skill đúng việc."""
 
-    def test_ve_anh_nhung_thread_khong_co_image(self):
-        # Thread chỉ bật nhà thông minh: câu «vẽ ảnh» khớp việc, nhưng nhóm image
-        # tắt → không có nhánh vẽ (tool cũng không có trong schema).
-        p = self.prompt({"homeassistant"}, "vẽ con mèo")
-        self.assertNotIn("generate_image", p)
-        self.assertNotIn("## Bảng chỉ đường", p)
+    def test_anh_xa_nhan_nhom(self):
+        from services.agent import skills as sk
+        self.assertEqual(sk.nhom_nang_luc("Nhà thông minh"), "homeassistant")
+        self.assertEqual(sk.nhom_nang_luc("Nhà"), "homeassistant")
+        self.assertEqual(sk.nhom_nang_luc("Học tập"), "teacher")
+        self.assertEqual(sk.nhom_nang_luc("Hệ thống"), "server")
+        self.assertEqual(sk.nhom_nang_luc("Nội dung"), "facebook")
+
+    def test_nhan_la_thi_coi_la_chung_luon_nap(self):
+        """Nhãn người dùng tự đặt → không ánh xạ được → phải LUÔN nạp."""
+        from services.agent import skills as sk
+        for la in ("Chung", "Chat", "Giao tiếp", "Nhãn tự chế 123", ""):
+            self.assertEqual(sk.nhom_nang_luc(la), "",
+                             f"nhãn «{la}» phải coi là CHUNG")
+
+    def test_day_hoc_khong_lot_vao_luot_khac(self):
+        from services.agent import skills as sk
+        b = sk.router_block({"homeassistant"})
+        self.assertNotIn("giao-vien-tieu-hoc", b)
+        self.assertIn("dieu-khien-nha", b)
+
+    def test_none_thi_giu_net_cu_nap_het(self):
+        from services.agent import skills as sk
+        self.assertGreaterEqual(len(sk.router_block(None)),
+                                len(sk.router_block({"homeassistant"})))
+
+
+class TriNhoTheoViec(unittest.TestCase):
+    """Sắp theo liên quan trong CÙNG ngân sách — không mất hơn trước."""
+
+    def test_kho_nho_hon_tran_thi_nguyen_ven(self):
+        nho = "\n".join(f"- fact {i}" for i in range(20))
+        self.assertEqual(orch._tri_nho_theo_viec(nho, "bất kỳ"), nho.strip())
+
+    def test_loi_dan_khong_bao_gio_roi(self):
+        loidan = "- chủ nhà dặn: bỏ tóm tắt đi, chỉ ghi tiêu đề"
+        rac = "\n".join(f"- chuyện vặt {i} không liên quan" for i in range(400))
+        ra = orch._tri_nho_theo_viec(loidan + "\n" + rac, "bật đèn phòng khách")
+        self.assertIn(loidan, ra, "lời dặn cách trả lời bị rơi khi kho tràn")
+
+    def test_fact_cu_dung_viec_van_voi_toi(self):
+        cu = "- mã wifi phòng khách là ABC123"
+        rac = "\n".join(f"- chuyện vặt {i} không liên quan" for i in range(400))
+        ra = orch._tri_nho_theo_viec(cu + "\n" + rac, "wifi phòng khách mã gì")
+        self.assertIn(cu, ra, "fact cũ đúng việc phải giữ được")
+
+    def test_khong_vuot_tran(self):
+        rac = "\n".join(f"- chuyện vặt {i} không liên quan" for i in range(900))
+        ra = orch._tri_nho_theo_viec(rac, "wifi")
+        self.assertLessEqual(len(ra), orch._TRAN_TRI_NHO)
+
+    def test_giu_thu_tu_goc(self):
+        dong = [f"- fact {i} wifi" for i in range(500)]
+        ra = orch._tri_nho_theo_viec("\n".join(dong), "wifi")
+        so = [int(l.split()[2]) for l in ra.splitlines() if l.strip()]
+        self.assertEqual(so, sorted(so), "thứ tự gốc bị đảo")
 
 
 class DoiCachTrinhBay(_Base):
     def test_luot_thuong_khong_nap(self):
         for viec in ("bật đèn phòng khách", "tin tức hôm nay", "tạo ảnh con mèo"):
-            p = self.prompt(None, viec)
-            self.assertNotIn("## Khi người dùng xin đổi cách trình bày", p)
+            self.assertNotIn("## Khi người dùng xin đổi cách trình bày",
+                             self.prompt(None, viec))
 
     def test_luot_xin_doi_thi_nap(self):
         for viec in ("bỏ tóm tắt đi", "trình bày ngắn hơn", "chia mục ra"):
@@ -127,33 +238,8 @@ class DoiCachTrinhBay(_Base):
             self.assertIn("TUYỆT ĐỐI KHÔNG trả về bản mẫu", p)
 
 
-class NhanDienViec(unittest.TestCase):
-    """Đơn vị: bộ dò từ khoá theo nhánh (đã bỏ dấu)."""
-
-    def test_image(self):
-        for t in ("vẽ con mèo", "tao anh phong canh", "minh hoạ giúp anh"):
-            self.assertTrue(orch._KW_IMAGE.search(orch._bo_dau(t)), t)
-
-    def test_web(self):
-        for t in ("tin tức hôm nay", "giá vàng", "thời tiết Hà Nội", "tra cứu giúp"):
-            self.assertTrue(orch._KW_WEB.search(orch._bo_dau(t)), t)
-
-    def test_lich(self):
-        for t in ("nhắc anh 7h", "đặt lịch báo cáo", "mỗi sáng nhắc em", "xem lịch nhắc"):
-            self.assertTrue(orch._KW_LICH.search(orch._bo_dau(t)), t)
-
-    def test_khong_dinh_tuyen_khi_tan_gau(self):
-        for t in ("chào em", "cảm ơn nhé", "hôm nay khỏe không", "ừ được"):
-            low = orch._bo_dau(t)
-            self.assertFalse(
-                any(rx.search(low) for rx in (orch._KW_IMAGE, orch._KW_WEB,
-                                              orch._KW_LICH, orch._KW_MUSIC,
-                                              orch._KW_VIDEO, orch._KW_CODE)),
-                f"tán gẫu «{t}» không nên khớp nhánh nào")
-
-
 class PhienDaNghi(_Base):
-    """Idle-close: phiên nghỉ quá mốc thì lượt mới bỏ lịch sử cũ."""
+    """Idle-close: phiên nghỉ >10 phút thì lượt mới bỏ lịch sử cũ."""
 
     def test_moc_10_phut(self):
         self.assertEqual(orch._NGHI_DONG_PHIEN, 600.0)

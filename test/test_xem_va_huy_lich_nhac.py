@@ -289,9 +289,11 @@ class BangChiDuongTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.src = (GOC / "services/agent/orchestrator.py").read_text(encoding="utf-8")
-        i = cls.src.index("## Bảng chỉ đường")
-        cls.bang = cls.src[i:i + 4000]
+        # Soi BẢNG THẬT sinh ra cho một lượt hỏi lịch, thay vì cắt cửa sổ ký tự
+        # trong mã nguồn: bảng giờ nạp theo việc (mỗi lượt một tập nhánh) nên
+        # vị trí chữ trong file không còn phản ánh thứ model thật sự đọc.
+        from services.agent import orchestrator as _o
+        cls.bang = _o._bang_chi_duong(None, "xem lịch nhắc và huỷ lịch của tôi")
 
     def test_co_duong_xem_danh_sach(self) -> None:
         self.assertIn("schedule(op=list)", self.bang)

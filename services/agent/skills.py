@@ -262,9 +262,56 @@ def load_body(slug: str) -> Optional[str]:
     return body or text.strip()
 
 
-def router_block() -> str:
-    """Short index for the system prompt (description only, capped)."""
+#: Nhãn `group:` trong SKILL.md → nhóm NĂNG LỰC của bot. Dùng để chỉ nạp skill
+#: liên quan tới việc của lượt (mô tả skill vào prompt MỌI LƯỢT — 17 skill là
+#: ~730 token, trong đó có cả skill dạy học lẫn skill nhà, mà lượt nào cũng đọc).
+#:
+#: So khớp trên nhãn ĐÃ BỎ DẤU và theo TRỌN TỪ. Trọn từ là bắt buộc, không phải
+#: cho đẹp: khớp chuỗi con thì "Nhãn tự chế" (bỏ dấu → "nhan tu che") dính khoá
+#: "nha" và bị gán nhầm vào nhóm nhà thông minh — skill ấy sẽ biến mất khỏi mọi
+#: lượt không phải việc nhà. Test `test_nhan_la_thi_coi_la_chung_luon_nap` khoá.
+#:
+#: Nhãn LẠ (người dùng tự đặt) → không ánh xạ được → coi là skill CHUNG và LUÔN
+#: nạp: thà thừa vài dòng còn hơn giấu mất skill của người ta khỏi bộ định tuyến.
+_NHAN_NHOM: tuple[tuple[str, str], ...] = (
+    ("nha thong minh", "homeassistant"),
+    ("nha", "homeassistant"),
+    ("hoc tap", "teacher"),
+    ("day hoc", "teacher"),
+    ("giao vien", "teacher"),
+    ("he thong", "server"),
+    ("may chu", "server"),
+    ("noi dung", "facebook"),
+    ("facebook", "facebook"),
+    ("van phong", "office"),
+    ("tai lieu", "office"),
+)
+
+
+def nhom_nang_luc(nhan: str) -> str:
+    """Nhãn group của skill → nhóm năng lực; "" nếu là skill CHUNG (luôn nạp)."""
+    s = str(nhan or "").lower().replace("đ", "d")
+    s = "".join(c for c in unicodedata.normalize("NFD", s)
+                if not unicodedata.combining(c))
+    for khoa, nhom in _NHAN_NHOM:
+        if re.search(rf"(?<![0-9a-z]){re.escape(khoa)}(?![0-9a-z])", s):
+            return nhom
+    return ""
+
+
+def router_block(nhom_viec: set[str] | None = None) -> str:
+    """Short index for the system prompt (description only, capped).
+
+    `nhom_viec` = nhóm năng lực mà lượt này chạm tới (xem
+    `orchestrator._nhom_viec`). Truyền vào thì CHỈ nạp skill CHUNG cộng skill
+    thuộc đúng nhóm đó — hỏi thời tiết không phải đọc ba skill dạy học. Bỏ
+    trống (None) = giữ nguyên nết cũ, nạp tất cả.
+    """
     skills = list_enabled()
+    if nhom_viec is not None:
+        skills = [s for s in skills
+                  if not nhom_nang_luc(s.group)
+                  or nhom_nang_luc(s.group) in nhom_viec]
     if not skills:
         return ""
     lines = [

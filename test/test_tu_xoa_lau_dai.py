@@ -194,8 +194,12 @@ class DinhTuyenTuXoaTests(unittest.TestCase):
         from pathlib import Path
         goc = Path(__file__).resolve().parents[1]
         cls.src = (goc / "services/agent/orchestrator.py").read_text(encoding="utf-8")
-        i = cls.src.index("## Bảng chỉ đường")
-        cls.bang = cls.src[i:i + 5000]
+        # Soi BẢNG THẬT sinh ra cho lượt xin tự xoá, thay vì cắt cửa sổ ký tự
+        # trong mã nguồn: bảng giờ nạp theo việc nên vị trí chữ trong file
+        # không còn phản ánh thứ model thật sự đọc.
+        from services.agent import orchestrator as _o
+        cls.bang = _o._bang_chi_duong(
+            None, "tự động xoá phản hồi tin tức sau 15 phút")
 
     def test_bang_chi_duong_co_nhanh_tu_xoa(self):
         self.assertIn("tu_xoa_tin", self.bang)
